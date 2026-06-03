@@ -376,6 +376,148 @@ def init_dsc_motion_wf(
     return workflow
 
 
+def init_dsc_preload_wf(
+    *,
+    preload: Union[str, float],
+    agent_standard_dose: float,
+    baseline_frames: int,
+    leakage_method: str,
+    kep: Optional[float],
+    mem_gb: float,
+    name: str = "dsc_preload_wf",
+) -> pe.Workflow:
+    """Build the DSC preload-detection + K2 leakage-correction sub-workflow.
+
+    Detects/corrects contrast preload and computes the K2 leakage map (which
+    requires the AIF), then extracts the preload classification.
+
+    Parameters
+    ----------
+    preload : "auto" or float
+        Administered preload dose multiplier ("auto" to detect).
+    agent_standard_dose : float
+        Agent's standard dose (mmol Gd/kg).
+    baseline_frames : int
+        Pre-bolus baseline frames.
+    leakage_method : str
+        K2 leakage-correction method ("bsw" or "bidirectional").
+    kep : float or None
+        EES efflux rate (s⁻¹) for bidirectional correction, or None.
+    mem_gb : float
+        Memory estimate (GB) for the heavy correction node.
+    name : str
+        Workflow name.
+
+    Returns
+    -------
+    workflow : nipype.pipeline.engine.Workflow
+        The preload/K2 sub-workflow.
+
+    Inputs
+    ------
+    concentration_file, signal_file, aif_file, brain_mask_file, te,
+    field_strength, tr
+        ΔR2* concentration + raw signal, AIF curve, DSC brain mask, and
+        acquisition parameters.
+
+    Outputs
+    -------
+    corrected_concentration_file
+        Leakage-corrected concentration.
+    k2_map_file
+        K2 leakage map.
+    qc_dict
+        Preload/leakage QC.
+    preload_classification
+        Discrete preload class (for K2 uncertainty tuning downstream).
+    """
+    workflow = pe.Workflow(name=name)
+    inputnode = pe.Node(
+        niu.IdentityInterface(
+            fields=[
+                "concentration_file",
+                "signal_file",
+                "aif_file",
+                "brain_mask_file",
+                "te",
+                "field_strength",
+                "tr",
+            ]
+        ),
+        name="inputnode",
+    )
+    outputnode = pe.Node(
+        niu.IdentityInterface(
+            fields=[
+                "corrected_concentration_file",
+                "k2_map_file",
+                "qc_dict",
+                "preload_classification",
+            ]
+        ),
+        name="outputnode",
+    )
+
+    # Node 4: Preload Detection and K2 Correction (needs the AIF)
+    preload_correct = pe.Node(
+        niu.Function(
+            input_names=[
+                "concentration_file",
+                "aif_file",
+                "brain_mask_file",
+                "te",
+                "field_strength",
+                "tr",
+                "preload",
+                "signal_file",
+                "baseline_frames",
+                "leakage_method",
+                "kep",
+                "agent_standard_dose",
+            ],
+            output_names=["corrected_concentration_file", "k2_map_file", "qc_dict"],
+            function=_detect_and_correct_preload,
+        ),
+        name="preload_correct",
+        mem_gb=mem_gb,
+    )
+    preload_correct.inputs.preload = preload
+    preload_correct.inputs.agent_standard_dose = agent_standard_dose
+    preload_correct.inputs.baseline_frames = baseline_frames
+    preload_correct.inputs.leakage_method = leakage_method
+    preload_correct.inputs.kep = kep
+
+    # Node 4b: Extract preload classification from QC dict
+    extract_preload = pe.Node(
+        niu.Function(
+            input_names=["qc_dict"],
+            output_names=["preload_classification"],
+            function=_extract_preload_class,
+        ),
+        name="extract_preload",
+    )
+
+    workflow.connect([
+        (inputnode, preload_correct, [
+            ("concentration_file", "concentration_file"),
+            ("signal_file", "signal_file"),
+            ("aif_file", "aif_file"),
+            ("brain_mask_file", "brain_mask_file"),
+            ("te", "te"),
+            ("field_strength", "field_strength"),
+            ("tr", "tr"),
+        ]),
+        (preload_correct, extract_preload, [("qc_dict", "qc_dict")]),
+        (preload_correct, outputnode, [
+            ("corrected_concentration_file", "corrected_concentration_file"),
+            ("k2_map_file", "k2_map_file"),
+            ("qc_dict", "qc_dict"),
+        ]),
+        (extract_preload, outputnode, [("preload_classification", "preload_classification")]),
+    ])
+    return workflow
+
+
 def init_dsc_preproc_wf(
     bids_dir: Union[str, Path],
     output_dir: Union[str, Path],
@@ -742,44 +884,13 @@ def init_dsc_preproc_wf(
     # Node 4: Preload Detection and K2 Correction
     # K2 correction needs the AIF, so runs after AIF detection
     # -------------------------------------------------------------------
-    preload_correct = pe.Node(
-        niu.Function(
-            input_names=[
-                "concentration_file",
-                "aif_file",
-                "brain_mask_file",
-                "te",
-                "field_strength",
-                "tr",
-                "preload",
-                "signal_file",
-                "baseline_frames",
-                "leakage_method",
-                "kep",
-                "agent_standard_dose",
-            ],
-            output_names=["corrected_concentration_file", "k2_map_file", "qc_dict"],
-            function=_detect_and_correct_preload,
-        ),
-        name="preload_correct",
+    preload_wf = init_dsc_preload_wf(
+        preload=config.preload,
+        agent_standard_dose=config.agent_standard_dose,
+        baseline_frames=config.pre_bolus,
+        leakage_method=config.leakage_method,
+        kep=config.kep,
         mem_gb=_heavy_mem,
-    )
-    preload_correct.inputs.preload = config.preload
-    preload_correct.inputs.agent_standard_dose = config.agent_standard_dose
-    preload_correct.inputs.baseline_frames = config.pre_bolus
-    preload_correct.inputs.leakage_method = config.leakage_method
-    preload_correct.inputs.kep = config.kep
-
-    # -------------------------------------------------------------------
-    # Node 4b: Extract preload classification from QC dict
-    # -------------------------------------------------------------------
-    extract_preload = pe.Node(
-        niu.Function(
-            input_names=["qc_dict"],
-            output_names=["preload_classification"],
-            function=_extract_preload_class,
-        ),
-        name="extract_preload",
     )
 
     # -------------------------------------------------------------------
@@ -1334,32 +1445,27 @@ def init_dsc_preproc_wf(
     # AIF Detection and Signal Conversion to Preload Correction
     # Use DSC-space brain mask for proper geometry match
     workflow.connect([
-        (conc_aif_wf, preload_correct, [
-            ("outputnode.concentration_file", "concentration_file"),
-            ("outputnode.signal_file", "signal_file"),
-            ("outputnode.out_aif_curve", "aif_file"),
+        (conc_aif_wf, preload_wf, [
+            ("outputnode.concentration_file", "inputnode.concentration_file"),
+            ("outputnode.signal_file", "inputnode.signal_file"),
+            ("outputnode.out_aif_curve", "inputnode.aif_file"),
         ]),
-        (hdbet_dsc, preload_correct, [
-            ("dsc_brain_mask_file", "brain_mask_file"),
+        (hdbet_dsc, preload_wf, [
+            ("dsc_brain_mask_file", "inputnode.brain_mask_file"),
         ]),
-        (inputnode, preload_correct, [
-            ("te", "te"),
-            ("field_strength", "field_strength"),
-            ("tr", "tr"),
+        (inputnode, preload_wf, [
+            ("te", "inputnode.te"),
+            ("field_strength", "inputnode.field_strength"),
+            ("tr", "inputnode.tr"),
         ]),
-    ])
-
-    # Preload QC dict → extract_preload classification
-    workflow.connect([
-        (preload_correct, extract_preload, [("qc_dict", "qc_dict")]),
     ])
 
     # Preload Correction to DSC Map Computation
     # Use DSC-space brain mask for proper geometry match
     workflow.connect([
-        (preload_correct, compute_maps, [
-            ("corrected_concentration_file", "concentration_file"),
-            ("k2_map_file", "k2_map_input_file"),
+        (preload_wf, compute_maps, [
+            ("outputnode.corrected_concentration_file", "concentration_file"),
+            ("outputnode.k2_map_file", "k2_map_input_file"),
         ]),
         (conc_aif_wf, compute_maps, [
             ("outputnode.out_aif_curve", "aif_file"),
@@ -1387,8 +1493,8 @@ def init_dsc_preproc_wf(
             ("outputnode.signal_file", "signal_file"),
             ("outputnode.concentration_file", "raw_concentration_file"),
         ]),
-        (extract_preload, compute_maps, [
-            ("preload_classification", "preload_classification"),
+        (preload_wf, compute_maps, [
+            ("outputnode.preload_classification", "preload_classification"),
         ]),
     ])
 
@@ -1563,9 +1669,9 @@ def init_dsc_preproc_wf(
         ]),
         (hdbet_dsc, dsc_leakage_qc, [("dsc_brain_mask_file", "brain_mask_file")]),
         (conc_aif_wf, dsc_leakage_qc, [("outputnode.concentration_file", "concentration_file")]),
-        (preload_correct, dsc_leakage_qc, [
-            ("corrected_concentration_file", "corrected_concentration_file"),
-            ("qc_dict", "preload_qc"),
+        (preload_wf, dsc_leakage_qc, [
+            ("outputnode.corrected_concentration_file", "corrected_concentration_file"),
+            ("outputnode.qc_dict", "preload_qc"),
         ]),
         (inputnode, dsc_leakage_qc, [("tr", "tr")]),
     ])
@@ -1833,7 +1939,7 @@ def init_dsc_preproc_wf(
     # Merge QC metrics
     workflow.connect([
         (motion_wf, merge_qc, [("outputnode.motion_qc_metrics", "motion_qc")]),
-        (preload_correct, merge_qc, [("qc_dict", "preload_qc")]),
+        (preload_wf, merge_qc, [("outputnode.qc_dict", "preload_qc")]),
         (conc_aif_wf, merge_qc, [("outputnode.qc_metrics", "aif_qc")]),
         (compute_maps, merge_qc, [("qc_metrics", "deconv_qc")]),
         (register, merge_qc, [("qc_metrics", "registration_qc")]),
@@ -1982,7 +2088,7 @@ def init_dsc_preproc_wf(
     workflow.connect([
         # QC metrics
         (merge_qc, outputnode, [("merged_qc", "qc_metrics")]),
-        (preload_correct, outputnode, [("qc_dict", "preload_qc")]),
+        (preload_wf, outputnode, [("outputnode.qc_dict", "preload_qc")]),
         (motion_wf, outputnode, [("outputnode.motion_qc_metrics", "motion_qc")]),
         (aif_qc_plot, outputnode, [("out_aif_metrics", "aif_metrics")]),
     ])
