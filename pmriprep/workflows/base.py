@@ -2688,10 +2688,10 @@ def init_pmriprep_wf(
                         ("outputnode.ncbv_map", "inputnode.dsc_ncbv_file"),
                         ("outputnode.dsc_to_t1w_xfm", "inputnode.dsc_to_t1w_xfm"),
                         # AIF QC is a JSON file, no spatial resampling needed
-                        ("outputnode.aif_qc", "pk_modeling.dsc_aif_qc"),
-                        ("outputnode.preload_qc", "pk_modeling.dsc_preload_qc"),
+                        ("outputnode.aif_qc", "dce_pk_modeling_wf.pk_modeling.dsc_aif_qc"),
+                        ("outputnode.preload_qc", "dce_pk_modeling_wf.pk_modeling.dsc_preload_qc"),
                         # CNR coverage for CBV quality assessment
-                        ("outputnode.preprocessing_stats", "pk_modeling.dsc_preprocessing_stats"),
+                        ("outputnode.preprocessing_stats", "dce_pk_modeling_wf.pk_modeling.dsc_preprocessing_stats"),
                     ]),
                 ])
 
