@@ -502,6 +502,146 @@ def init_dce_smoothing_wf(
     return workflow
 
 
+def init_dce_lesion_stats_wf(
+    *,
+    subject_id: str,
+    session_id: Optional[str],
+    name: str = "dce_lesion_stats_wf",
+) -> pe.Workflow:
+    """Build the DCE lesion / ROI / user-mask statistics sub-workflow.
+
+    Extracts per-region statistics from the DCE PK and model-free maps within
+    three (independently optional) masks: the tumor-segmentation lesion mask, a
+    user-supplied ROI mask, and a user-supplied lesion mask. The maps, NAWM
+    reference, and field strength are shared across all three extractions; the
+    ROI and user-lesion extractions force a binary mask.
+
+    Parameters
+    ----------
+    subject_id : str
+        BIDS subject label.
+    session_id : str or None
+        BIDS session label.
+    name : str
+        Workflow name.
+
+    Returns
+    -------
+    workflow : nipype.pipeline.engine.Workflow
+        The lesion-statistics sub-workflow.
+
+    Inputs
+    ------
+    ktrans_map, ve_map, vp_map, kep_map
+        PK parameter maps (shared by all three nodes).
+    iauc60_map, iauc90_map, iauc120_map, peak_enhancement_map, ttp_map, ser_map, wash_in_map, wash_out_map
+        Model-free maps.
+    nktrans_map, niauc60_map
+        NAWM-normalized maps.
+    nawm_mask, field_strength_t
+        NAWM reference mask and field strength.
+    tumor_lesion_mask, mask_origin
+        Tumor-segmentation lesion mask (DCE space) and its provenance label.
+    roi_mask
+        Validated user ROI mask (DCE native space).
+    user_mask
+        Validated user lesion mask (DCE native space).
+
+    Outputs
+    -------
+    lesion_stats_json
+        Tumor-lesion statistics sidecar.
+    roi_stats_json
+        User-ROI statistics sidecar.
+    user_lesion_stats_json
+        User-lesion statistics sidecar.
+    """
+    from pmriprep.interfaces.dce_lesion_stats import DCELesionStats
+
+    workflow = pe.Workflow(name=name)
+    inputnode = pe.Node(
+        niu.IdentityInterface(
+            fields=[
+                "ktrans_map",
+                "ve_map",
+                "vp_map",
+                "kep_map",
+                "iauc60_map",
+                "iauc90_map",
+                "iauc120_map",
+                "peak_enhancement_map",
+                "ttp_map",
+                "ser_map",
+                "wash_in_map",
+                "wash_out_map",
+                "nktrans_map",
+                "niauc60_map",
+                "nawm_mask",
+                "field_strength_t",
+                "tumor_lesion_mask",
+                "mask_origin",
+                "roi_mask",
+                "user_mask",
+            ]
+        ),
+        name="inputnode",
+    )
+    outputnode = pe.Node(
+        niu.IdentityInterface(
+            fields=["lesion_stats_json", "roi_stats_json", "user_lesion_stats_json"]
+        ),
+        name="outputnode",
+    )
+
+    lesion_stats = pe.Node(DCELesionStats(), name="lesion_stats")
+    lesion_stats.inputs.subject_id = subject_id
+    lesion_stats.inputs.session_id = session_id
+
+    user_lesion_stats = pe.Node(
+        DCELesionStats(force_binary=True), name="user_lesion_stats"
+    )
+    user_lesion_stats.inputs.subject_id = subject_id
+    user_lesion_stats.inputs.session_id = session_id
+
+    roi_stats = pe.Node(DCELesionStats(force_binary=True), name="roi_stats")
+    roi_stats.inputs.subject_id = subject_id
+    roi_stats.inputs.session_id = session_id
+
+    # PK / model-free / normalized maps + NAWM + field strength are shared by all
+    # three stats nodes; the lesion mask differs (tumor-seg / ROI / user), and
+    # only the tumor-seg node receives the mask-origin provenance label.
+    shared_inputs = [
+        ("ktrans_map", "ktrans_map"),
+        ("ve_map", "ve_map"),
+        ("vp_map", "vp_map"),
+        ("kep_map", "kep_map"),
+        ("iauc60_map", "iauc60_map"),
+        ("iauc90_map", "iauc90_map"),
+        ("iauc120_map", "iauc120_map"),
+        ("peak_enhancement_map", "peak_enhancement_map"),
+        ("ttp_map", "ttp_map"),
+        ("ser_map", "ser_map"),
+        ("wash_in_map", "wash_in_map"),
+        ("wash_out_map", "wash_out_map"),
+        ("nktrans_map", "nktrans_map"),
+        ("niauc60_map", "niauc60_map"),
+        ("nawm_mask", "nawm_mask"),
+        ("field_strength_t", "field_strength_t"),
+    ]
+    workflow.connect([
+        (inputnode, lesion_stats, shared_inputs + [
+            ("tumor_lesion_mask", "lesion_mask"),
+            ("mask_origin", "mask_origin"),
+        ]),
+        (inputnode, user_lesion_stats, shared_inputs + [("user_mask", "lesion_mask")]),
+        (inputnode, roi_stats, shared_inputs + [("roi_mask", "lesion_mask")]),
+        (lesion_stats, outputnode, [("stats_json", "lesion_stats_json")]),
+        (user_lesion_stats, outputnode, [("stats_json", "user_lesion_stats_json")]),
+        (roi_stats, outputnode, [("stats_json", "roi_stats_json")]),
+    ])
+    return workflow
+
+
 def init_dce_preproc_wf(
     bids_dir: Union[str, Path],
     output_dir: Union[str, Path],
@@ -2175,82 +2315,48 @@ def init_dce_preproc_wf(
         (dce_registration, transform_stats_lesion, [("out_matrix", "transform_matrix")]),
     ])
 
-    # Lesion statistics extraction
-    from pmriprep.interfaces.dce_lesion_stats import DCELesionStats
-
-    lesion_stats = pe.Node(
-        DCELesionStats(),
-        name="lesion_stats",
+    # Lesion / ROI / user-mask statistics extraction
+    lesion_stats_wf = init_dce_lesion_stats_wf(
+        subject_id=subject_id,
+        session_id=session_id,
     )
-    lesion_stats.inputs.subject_id = subject_id
-    lesion_stats.inputs.session_id = session_id
 
+    # PK + normalized maps + NAWM + field strength are shared by all three
+    # stats nodes (fanned out inside the sub-wf); the three lesion masks
+    # (tumor-seg, user ROI, user lesion) route to their respective nodes.
     workflow.connect([
-        (transform_stats_lesion, lesion_stats, [("lesion_mask_dce_file", "lesion_mask")]),
-        (combine_masks, lesion_stats, [("mask_origin", "mask_origin")]),
-        (transform_nawm_mask, lesion_stats, [("out_file", "nawm_mask")]),
-        (pk_wf, lesion_stats, [
-            ("outputnode.out_ktrans", "ktrans_map"),
-            ("outputnode.out_ve", "ve_map"),
-            ("outputnode.out_vp", "vp_map"),
-            ("outputnode.out_kep", "kep_map"),
-            ("outputnode.out_iauc60", "iauc60_map"),
-            ("outputnode.out_iauc90", "iauc90_map"),
-            ("outputnode.out_iauc120", "iauc120_map"),
-            ("outputnode.out_peak_enhancement", "peak_enhancement_map"),
-            ("outputnode.out_time_to_peak", "ttp_map"),
-            ("outputnode.out_ser", "ser_map"),
-            ("outputnode.out_wash_in_slope", "wash_in_map"),
-            ("outputnode.out_wash_out_slope", "wash_out_map"),
+        (pk_wf, lesion_stats_wf, [
+            ("outputnode.out_ktrans", "inputnode.ktrans_map"),
+            ("outputnode.out_ve", "inputnode.ve_map"),
+            ("outputnode.out_vp", "inputnode.vp_map"),
+            ("outputnode.out_kep", "inputnode.kep_map"),
+            ("outputnode.out_iauc60", "inputnode.iauc60_map"),
+            ("outputnode.out_iauc90", "inputnode.iauc90_map"),
+            ("outputnode.out_iauc120", "inputnode.iauc120_map"),
+            ("outputnode.out_peak_enhancement", "inputnode.peak_enhancement_map"),
+            ("outputnode.out_time_to_peak", "inputnode.ttp_map"),
+            ("outputnode.out_ser", "inputnode.ser_map"),
+            ("outputnode.out_wash_in_slope", "inputnode.wash_in_map"),
+            ("outputnode.out_wash_out_slope", "inputnode.wash_out_map"),
         ]),
-        (normalization_wf, lesion_stats, [("outputnode.nktrans", "nktrans_map")]),
-        (normalization_wf, lesion_stats, [("outputnode.niauc60", "niauc60_map")]),
-        (inputnode, lesion_stats, [("field_strength", "field_strength_t")]),
+        (normalization_wf, lesion_stats_wf, [
+            ("outputnode.nktrans", "inputnode.nktrans_map"),
+            ("outputnode.niauc60", "inputnode.niauc60_map"),
+        ]),
+        (transform_nawm_mask, lesion_stats_wf, [("out_file", "inputnode.nawm_mask")]),
+        (inputnode, lesion_stats_wf, [("field_strength", "inputnode.field_strength_t")]),
+        (transform_stats_lesion, lesion_stats_wf, [("lesion_mask_dce_file", "inputnode.tumor_lesion_mask")]),
+        (combine_masks, lesion_stats_wf, [("mask_origin", "inputnode.mask_origin")]),
+        (validate_user_lesion_mask, lesion_stats_wf, [("validated_mask", "inputnode.user_mask")]),
+        (validate_roi_mask, lesion_stats_wf, [("validated_mask", "inputnode.roi_mask")]),
     ])
 
-    # ==========================================================================
-    # Node 11b: User lesion statistics (conditional on user_lesion_mask)
-    # user_lesion_mask is in DCE native space — no FLIRT transform.
-    # Additive: runs alongside tumor seg lesion_stats when both exist.
-    # ==========================================================================
-    from pmriprep.interfaces.dce_lesion_stats import DCELesionStats as _DCELesionStatsUser
-
-    user_lesion_stats = pe.Node(
-        _DCELesionStatsUser(force_binary=True),
-        name="user_lesion_stats",
-    )
-    user_lesion_stats.inputs.subject_id = subject_id
-    user_lesion_stats.inputs.session_id = session_id
-
-    workflow.connect([
-        (validate_user_lesion_mask, user_lesion_stats, [
-            ("validated_mask", "lesion_mask"),
-        ]),
-        (transform_nawm_mask, user_lesion_stats, [("out_file", "nawm_mask")]),
-        (pk_wf, user_lesion_stats, [
-            ("outputnode.out_ktrans", "ktrans_map"),
-            ("outputnode.out_ve", "ve_map"),
-            ("outputnode.out_vp", "vp_map"),
-            ("outputnode.out_kep", "kep_map"),
-            ("outputnode.out_iauc60", "iauc60_map"),
-            ("outputnode.out_iauc90", "iauc90_map"),
-            ("outputnode.out_iauc120", "iauc120_map"),
-            ("outputnode.out_peak_enhancement", "peak_enhancement_map"),
-            ("outputnode.out_time_to_peak", "ttp_map"),
-            ("outputnode.out_ser", "ser_map"),
-            ("outputnode.out_wash_in_slope", "wash_in_map"),
-            ("outputnode.out_wash_out_slope", "wash_out_map"),
-        ]),
-        (normalization_wf, user_lesion_stats, [("outputnode.nktrans", "nktrans_map")]),
-        (normalization_wf, user_lesion_stats, [("outputnode.niauc60", "niauc60_map")]),
-        (inputnode, user_lesion_stats, [("field_strength", "field_strength_t")]),
-    ])
     workflow.connect([
         (validate_user_lesion_mask, outputnode, [
             ("validated_mask", "user_lesion_mask_dce"),
         ]),
-        (user_lesion_stats, outputnode, [
-            ("stats_json", "user_lesion_stats_json"),
+        (lesion_stats_wf, outputnode, [
+            ("outputnode.user_lesion_stats_json", "user_lesion_stats_json"),
         ]),
     ])
 
@@ -2498,54 +2604,22 @@ def init_dce_preproc_wf(
     # Use the combined tumor mask (with multi-label support) for lesion_mask_dce output
     workflow.connect([
         (transform_stats_lesion, outputnode, [("lesion_mask_dce_file", "lesion_mask_dce")]),
-        (lesion_stats, outputnode, [
-            ("stats_json", "lesion_stats_json"),
+        (lesion_stats_wf, outputnode, [
+            ("outputnode.lesion_stats_json", "lesion_stats_json"),
         ]),
     ])
 
-    # -------------------------------------------------------------------
-    # ROI statistics (conditional on roi_mask input)
-    # roi_mask is user-supplied in DCE native space — no FLIRT transform.
-    # -------------------------------------------------------------------
-    from pmriprep.interfaces.dce_lesion_stats import DCELesionStats as _DCELesionStatsROI
-
-    roi_stats = pe.Node(
-        _DCELesionStatsROI(force_binary=True),
-        name="roi_stats",
-    )
-    roi_stats.inputs.subject_id = subject_id
-    roi_stats.inputs.session_id = session_id
-
-    # Connect validated ROI mask
+    # Connect validated ROI mask to the PK-maps QC overlay
     workflow.connect([
-        (validate_roi_mask, roi_stats, [("validated_mask", "lesion_mask")]),
-        (transform_nawm_mask, roi_stats, [("out_file", "nawm_mask")]),
-        (inputnode, roi_stats, [("field_strength", "field_strength_t")]),
         (validate_roi_mask, dce_pk_maps_qc, [
             ("validated_mask", "roi_mask_file"),
         ]),
-        (pk_wf, roi_stats, [
-            ("outputnode.out_ktrans", "ktrans_map"),
-            ("outputnode.out_ve", "ve_map"),
-            ("outputnode.out_vp", "vp_map"),
-            ("outputnode.out_kep", "kep_map"),
-            ("outputnode.out_iauc60", "iauc60_map"),
-            ("outputnode.out_iauc90", "iauc90_map"),
-            ("outputnode.out_iauc120", "iauc120_map"),
-            ("outputnode.out_peak_enhancement", "peak_enhancement_map"),
-            ("outputnode.out_time_to_peak", "ttp_map"),
-            ("outputnode.out_ser", "ser_map"),
-            ("outputnode.out_wash_in_slope", "wash_in_map"),
-            ("outputnode.out_wash_out_slope", "wash_out_map"),
-        ]),
-        (normalization_wf, roi_stats, [("outputnode.nktrans", "nktrans_map")]),
-        (normalization_wf, roi_stats, [("outputnode.niauc60", "niauc60_map")]),
     ])
     # Connect ROI stats outputs to outputnode
     workflow.connect([
         (validate_roi_mask, outputnode, [("validated_mask", "roi_mask_dce")]),
-        (roi_stats, outputnode, [
-            ("stats_json", "roi_stats_json"),
+        (lesion_stats_wf, outputnode, [
+            ("outputnode.roi_stats_json", "roi_stats_json"),
         ]),
     ])
 
