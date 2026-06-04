@@ -2234,7 +2234,7 @@
       "bet_frac": 0.3,
       "hdbet_conda_env": "",
       "hdbet_device": "auto",
-      "use_gpu": true
+      "use_gpu": false
     },
     "inputnode": {
       "field_strength": 3.0,

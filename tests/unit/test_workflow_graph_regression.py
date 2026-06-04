@@ -396,10 +396,8 @@ DCE_MATRIX: list[tuple[str, Builder]] = [
     ("dce_external_t1_b1none", lambda b: _dce(b, t1_map_file=_ext_t1(b), b1_method="none")),
     ("dce_b1_none_vfa", lambda b: _dce(b, b1_method="none")),
     ("dce_smooth", lambda b: _dce(b, smooth_fwhm=4.0)),
-    ("dce_underlay_t1precon", lambda b: _dce(b, underlays=["t1w_precon"])),
-    ("dce_underlay_t1postcon", lambda b: _dce(b, underlays=["t1w_postcon"])),
-    ("dce_underlay_flair", lambda b: _dce(b, underlays=["flair"])),
-    ("dce_underlay_t2w", lambda b: _dce(b, underlays=["t2w"])),
+    # The single-underlay rows are subsumed for detection by ``dce_underlays_all``
+    # (underlay handling is independent per-key blocks, no single-underlay branch).
     ("dce_underlays_all", lambda b: _dce(b, underlays=list(_ALL_UNDERLAYS))),
     # model != "auto" drops the one model-driven edge (dce/base.py:1349).
     ("dce_model_fixed", lambda b: _dce(b, model="extended_tofts")),
@@ -414,12 +412,9 @@ DSC_MATRIX: list[tuple[str, Builder]] = [
     # smooth_fwhm>0 is the only branch instantiating build_hemo_dict /
     # build_auc_dict -> load-bearing for verifying PR3's embedded-def pull.
     ("dsc_smooth", lambda b: _dsc(b, smooth_fwhm=4.0)),
-    ("dsc_underlay_t1precon", lambda b: _dsc(b, underlays=["t1w_precon"])),
-    ("dsc_underlay_t1postcon", lambda b: _dsc(b, underlays=["t1w_postcon"])),
-    ("dsc_underlay_flair", lambda b: _dsc(b, underlays=["flair"])),
-    ("dsc_underlay_t2w", lambda b: _dsc(b, underlays=["t2w"])),
+    # Single-underlay rows and the smooth+underlays combo are subsumed for detection
+    # by ``dsc_underlays_all`` plus ``dsc_smooth`` (underlay/smooth axes are orthogonal).
     ("dsc_underlays_all", lambda b: _dsc(b, underlays=list(_ALL_UNDERLAYS))),
-    ("dsc_smooth_underlays", lambda b: _dsc(b, smooth_fwhm=4.0, underlays=list(_ALL_UNDERLAYS))),
 ]
 
 MATRIX: list[tuple[str, Builder]] = DCE_MATRIX + DSC_MATRIX
@@ -428,6 +423,18 @@ MATRIX: list[tuple[str, Builder]] = DCE_MATRIX + DSC_MATRIX
 # ---------------------------------------------------------------------------
 # Regression test
 # ---------------------------------------------------------------------------
+@pytest.fixture(autouse=True)
+def _deterministic_device(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin device detection so the graph signature is hardware-independent.
+
+    ``use_gpu`` is resolved at construction time (``resolve_device_uses_gpu`` ->
+    ``detect_torch_device``), which yields ``"mps"`` on Apple Silicon and ``"cpu"``
+    on a Linux CI runner. Forcing ``"cpu"`` keeps the captured signature identical
+    across dev and CI so the committed baselines stay portable.
+    """
+    monkeypatch.setattr("pmriprep.utils.device.detect_torch_device", lambda: "cpu")
+
+
 @pytest.fixture
 def bids(tmp_path: Path) -> Path:
     return _write_bids(tmp_path)

@@ -2321,7 +2321,7 @@
       "hdbet_conda_env": "",
       "hdbet_device": "auto",
       "method": "hdbet",
-      "use_gpu": true
+      "use_gpu": false
     },
     "dce_brain_mask_qc": {
       "session_id": "0001",
