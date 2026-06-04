@@ -330,6 +330,178 @@ def init_dce_normalization_wf(
     return workflow
 
 
+def init_dce_smoothing_wf(
+    *,
+    fwhm: float,
+    name: str = "dce_smoothing_wf",
+) -> pe.Workflow:
+    """Build the DCE perfusion-map smoothing sub-workflow.
+
+    Spatially smooths the PK maps (Ktrans, ve, vp, kep), the model-free maps
+    (IAUC60/90/120, peak, TTP, SER, wash-in/out), and the Bayesian uncertainty
+    std maps within the brain mask. The orchestrator instantiates this
+    sub-workflow only when ``config.smooth_fwhm > 0``.
+
+    Parameters
+    ----------
+    fwhm : float
+        Smoothing-kernel full-width-at-half-maximum (mm).
+    name : str
+        Workflow name.
+
+    Returns
+    -------
+    workflow : nipype.pipeline.engine.Workflow
+        The smoothing sub-workflow.
+
+    Inputs
+    ------
+    ktrans, ve, vp, kep
+        PK parameter maps.
+    iauc60, iauc90, iauc120, peak, ttp, ser, wash_in_slope, wash_out_slope
+        Model-free maps.
+    ktrans_std, ve_std, vp_std, fp_std, ps_std
+        Bayesian uncertainty (std) maps.
+    brain_mask_file
+        DCE-space brain mask (smoothing restricted to brain voxels).
+
+    Outputs
+    -------
+    smoothed_pk
+        Smoothed PK map files.
+    smoothed_model_free
+        Smoothed model-free map files.
+    smoothed_uncertainty
+        Smoothed uncertainty map files.
+    """
+    workflow = pe.Workflow(name=name)
+    inputnode = pe.Node(
+        niu.IdentityInterface(
+            fields=[
+                "ktrans",
+                "ve",
+                "vp",
+                "kep",
+                "iauc60",
+                "iauc90",
+                "iauc120",
+                "peak",
+                "ttp",
+                "ser",
+                "wash_in_slope",
+                "wash_out_slope",
+                "ktrans_std",
+                "ve_std",
+                "vp_std",
+                "fp_std",
+                "ps_std",
+                "brain_mask_file",
+            ]
+        ),
+        name="inputnode",
+    )
+    outputnode = pe.Node(
+        niu.IdentityInterface(
+            fields=["smoothed_pk", "smoothed_model_free", "smoothed_uncertainty"]
+        ),
+        name="outputnode",
+    )
+
+    build_pk_dict = pe.Node(
+        niu.Function(
+            input_names=["ktrans", "ve", "vp", "kep"],
+            output_names=["map_dict"],
+            function=_build_pk_map_dict,
+        ),
+        name="build_pk_dict",
+    )
+    smooth_pk = pe.Node(
+        niu.Function(
+            input_names=["map_files", "brain_mask_file", "fwhm"],
+            output_names=["smoothed_files"],
+            function=_smooth_dce_maps,
+        ),
+        name="smooth_pk_maps",
+    )
+    smooth_pk.inputs.fwhm = fwhm
+
+    build_mf_dict = pe.Node(
+        niu.Function(
+            input_names=["iauc60", "iauc90", "iauc120", "peak", "ttp", "ser", "wash_in_slope", "wash_out_slope"],
+            output_names=["map_dict"],
+            function=_build_model_free_map_dict,
+        ),
+        name="build_model_free_dict",
+    )
+    smooth_model_free = pe.Node(
+        niu.Function(
+            input_names=["map_files", "brain_mask_file", "fwhm"],
+            output_names=["smoothed_files"],
+            function=_smooth_dce_maps,
+        ),
+        name="smooth_model_free_maps",
+    )
+    smooth_model_free.inputs.fwhm = fwhm
+
+    # Only the Bayesian std maps are smoothed; CV and CI95 maps are excluded.
+    build_uncertainty_dict = pe.Node(
+        niu.Function(
+            input_names=[
+                "ktrans_std", "ve_std", "vp_std",
+                "fp_std", "ps_std",
+            ],
+            output_names=["map_dict"],
+            function=_build_uncertainty_map_dict,
+        ),
+        name="build_uncertainty_dict",
+    )
+    smooth_uncertainty = pe.Node(
+        niu.Function(
+            input_names=["map_files", "brain_mask_file", "fwhm"],
+            output_names=["smoothed_files"],
+            function=_smooth_dce_maps,
+        ),
+        name="smooth_uncertainty_maps",
+    )
+    smooth_uncertainty.inputs.fwhm = fwhm
+
+    workflow.connect([
+        (inputnode, build_pk_dict, [
+            ("ktrans", "ktrans"),
+            ("ve", "ve"),
+            ("vp", "vp"),
+            ("kep", "kep"),
+        ]),
+        (build_pk_dict, smooth_pk, [("map_dict", "map_files")]),
+        (inputnode, smooth_pk, [("brain_mask_file", "brain_mask_file")]),
+        (inputnode, build_mf_dict, [
+            ("iauc60", "iauc60"),
+            ("iauc90", "iauc90"),
+            ("iauc120", "iauc120"),
+            ("peak", "peak"),
+            ("ttp", "ttp"),
+            ("ser", "ser"),
+            ("wash_in_slope", "wash_in_slope"),
+            ("wash_out_slope", "wash_out_slope"),
+        ]),
+        (build_mf_dict, smooth_model_free, [("map_dict", "map_files")]),
+        (inputnode, smooth_model_free, [("brain_mask_file", "brain_mask_file")]),
+        (inputnode, build_uncertainty_dict, [
+            ("ktrans_std", "ktrans_std"),
+            ("ve_std", "ve_std"),
+            ("vp_std", "vp_std"),
+            ("fp_std", "fp_std"),
+            ("ps_std", "ps_std"),
+        ]),
+        (build_uncertainty_dict, smooth_uncertainty, [("map_dict", "map_files")]),
+        (inputnode, smooth_uncertainty, [("brain_mask_file", "brain_mask_file")]),
+        (smooth_pk, outputnode, [("smoothed_files", "smoothed_pk")]),
+        (smooth_model_free, outputnode, [("smoothed_files", "smoothed_model_free")]),
+        (smooth_uncertainty, outputnode, [("smoothed_files", "smoothed_uncertainty")]),
+    ])
+    return workflow
+
+
 def init_dce_preproc_wf(
     bids_dir: Union[str, Path],
     output_dir: Union[str, Path],
@@ -1757,122 +1929,34 @@ def init_dce_preproc_wf(
     # ==========================================================================
     # Node 9b: Smoothing (conditional on config.smooth_fwhm > 0)
     # ==========================================================================
-    smooth_pk = None
-    smooth_model_free = None
-    smooth_uncertainty = None
+    smoothing_wf = None
     if config.smooth_fwhm > 0:
-        # Build dict of PK maps for smoothing
-        build_pk_dict = pe.Node(
-            niu.Function(
-                input_names=["ktrans", "ve", "vp", "kep"],
-                output_names=["map_dict"],
-                function=_build_pk_map_dict,
-            ),
-            name="build_pk_dict",
-        )
+        smoothing_wf = init_dce_smoothing_wf(fwhm=config.smooth_fwhm)
 
+    if smoothing_wf is not None:
+        # PK / model-free / uncertainty-std maps from PK modeling; the DCE brain
+        # mask fans out to all three smoothers inside the sub-workflow.
         workflow.connect([
-            (pk_wf, build_pk_dict, [
-                ("outputnode.out_ktrans", "ktrans"),
-                ("outputnode.out_ve", "ve"),
-                ("outputnode.out_vp", "vp"),
-                ("outputnode.out_kep", "kep"),
+            (pk_wf, smoothing_wf, [
+                ("outputnode.out_ktrans", "inputnode.ktrans"),
+                ("outputnode.out_ve", "inputnode.ve"),
+                ("outputnode.out_vp", "inputnode.vp"),
+                ("outputnode.out_kep", "inputnode.kep"),
+                ("outputnode.out_iauc60", "inputnode.iauc60"),
+                ("outputnode.out_iauc90", "inputnode.iauc90"),
+                ("outputnode.out_iauc120", "inputnode.iauc120"),
+                ("outputnode.out_peak_enhancement", "inputnode.peak"),
+                ("outputnode.out_time_to_peak", "inputnode.ttp"),
+                ("outputnode.out_ser", "inputnode.ser"),
+                ("outputnode.out_wash_in_slope", "inputnode.wash_in_slope"),
+                ("outputnode.out_wash_out_slope", "inputnode.wash_out_slope"),
+                ("outputnode.out_ktrans_std", "inputnode.ktrans_std"),
+                ("outputnode.out_ve_std", "inputnode.ve_std"),
+                ("outputnode.out_vp_std", "inputnode.vp_std"),
+                ("outputnode.out_fp_std", "inputnode.fp_std"),
+                ("outputnode.out_ps_std", "inputnode.ps_std"),
             ]),
-        ])
-
-        # Smoothing for PK maps
-        smooth_pk = pe.Node(
-            niu.Function(
-                input_names=["map_files", "brain_mask_file", "fwhm"],
-                output_names=["smoothed_files"],
-                function=_smooth_dce_maps,
-            ),
-            name="smooth_pk_maps",
-        )
-        smooth_pk.inputs.fwhm = config.smooth_fwhm
-
-        workflow.connect([
-            (build_pk_dict, smooth_pk, [("map_dict", "map_files")]),
-            (dce_brain_extract, smooth_pk, [("out_mask", "brain_mask_file")]),
-        ])
-
-        # Build dict of model-free maps for smoothing
-        build_mf_dict = pe.Node(
-            niu.Function(
-                input_names=["iauc60", "iauc90", "iauc120", "peak", "ttp", "ser", "wash_in_slope", "wash_out_slope"],
-                output_names=["map_dict"],
-                function=_build_model_free_map_dict,
-            ),
-            name="build_model_free_dict",
-        )
-
-        workflow.connect([
-            (pk_wf, build_mf_dict, [
-                ("outputnode.out_iauc60", "iauc60"),
-                ("outputnode.out_iauc90", "iauc90"),
-                ("outputnode.out_iauc120", "iauc120"),
-                ("outputnode.out_peak_enhancement", "peak"),
-                ("outputnode.out_time_to_peak", "ttp"),
-                ("outputnode.out_ser", "ser"),
-                ("outputnode.out_wash_in_slope", "wash_in_slope"),
-                ("outputnode.out_wash_out_slope", "wash_out_slope"),
-            ]),
-        ])
-
-        # Smoothing for model-free maps
-        smooth_model_free = pe.Node(
-            niu.Function(
-                input_names=["map_files", "brain_mask_file", "fwhm"],
-                output_names=["smoothed_files"],
-                function=_smooth_dce_maps,
-            ),
-            name="smooth_model_free_maps",
-        )
-        smooth_model_free.inputs.fwhm = config.smooth_fwhm
-
-        workflow.connect([
-            (build_mf_dict, smooth_model_free, [("map_dict", "map_files")]),
-            (dce_brain_extract, smooth_model_free, [("out_mask", "brain_mask_file")]),
-        ])
-
-        # Build dict of uncertainty std maps for smoothing (Bayesian outputs)
-        # Only std maps are smoothed; CV and CI95 are excluded (see docstring)
-        build_uncertainty_dict = pe.Node(
-            niu.Function(
-                input_names=[
-                    "ktrans_std", "ve_std", "vp_std",
-                    "fp_std", "ps_std",
-                ],
-                output_names=["map_dict"],
-                function=_build_uncertainty_map_dict,
-            ),
-            name="build_uncertainty_dict",
-        )
-
-        workflow.connect([
-            (pk_wf, build_uncertainty_dict, [
-                ("outputnode.out_ktrans_std", "ktrans_std"),
-                ("outputnode.out_ve_std", "ve_std"),
-                ("outputnode.out_vp_std", "vp_std"),
-                ("outputnode.out_fp_std", "fp_std"),
-                ("outputnode.out_ps_std", "ps_std"),
-            ]),
-        ])
-
-        # Smoothing for uncertainty maps
-        smooth_uncertainty = pe.Node(
-            niu.Function(
-                input_names=["map_files", "brain_mask_file", "fwhm"],
-                output_names=["smoothed_files"],
-                function=_smooth_dce_maps,
-            ),
-            name="smooth_uncertainty_maps",
-        )
-        smooth_uncertainty.inputs.fwhm = config.smooth_fwhm
-
-        workflow.connect([
-            (build_uncertainty_dict, smooth_uncertainty, [("map_dict", "map_files")]),
-            (dce_brain_extract, smooth_uncertainty, [("out_mask", "brain_mask_file")]),
+            (dce_brain_extract, smoothing_wf, [("out_mask", "inputnode.brain_mask_file")]),
         ])
 
     # ==========================================================================
@@ -2466,11 +2550,13 @@ def init_dce_preproc_wf(
     ])
 
     # Smoothing output connections (only if config.smooth_fwhm > 0)
-    if smooth_pk is not None:
+    if smoothing_wf is not None:
         workflow.connect([
-            (smooth_pk, outputnode, [("smoothed_files", "smooth_pk_maps")]),
-            (smooth_model_free, outputnode, [("smoothed_files", "smooth_model_free_maps")]),
-            (smooth_uncertainty, outputnode, [("smoothed_files", "smooth_uncertainty_maps")]),
+            (smoothing_wf, outputnode, [
+                ("outputnode.smoothed_pk", "smooth_pk_maps"),
+                ("outputnode.smoothed_model_free", "smooth_model_free_maps"),
+                ("outputnode.smoothed_uncertainty", "smooth_uncertainty_maps"),
+            ]),
         ])
 
     # Normalized map output connections (requires NAWM mask from tumor segmentation)
