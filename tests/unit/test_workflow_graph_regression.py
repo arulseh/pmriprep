@@ -641,31 +641,10 @@ def test_wrong_decomposition_broken_handoff_caught() -> None:
     assert graph_signature(_toy_chain_monolith()) != graph_signature(_toy_chain_two_subwf(broken=True))
 
 
-def test_flatten_collapse_matches_legacy_flat_on_monolith(bids: Path) -> None:
-    """On a still-FLAT monolith, flatten+collapse reproduces the legacy flat
-    graph exactly -- the equivalence that kept the original baseline tiers
-    unchanged across the harness rewrite.
-
-    Scope shrinks as decomposition progresses: a workflow that has been split
-    into sub-workflows no longer satisfies this (its ``_graph`` holds an opaque
-    sub-wf node) -- its correctness is instead proven by ``test_graph_matches_
-    baseline`` (collapsed graph == committed baseline). DSC is now partly
-    decomposed (``init_dsc_motion_wf``), so only DCE remains here until it too is
-    decomposed, at which point this test is retired.
-    """
-    for build in (_dce,):
-        wf = build(bids)
-        legacy_nodes = sorted(
-            (n.name, type(_iface(n) or n).__qualname__) for n in wf._graph.nodes()
-        )
-        legacy_edges: list[EdgeTuple] = []
-        for u, v, d in wf._graph.edges(data=True):
-            for s, dd in d.get("connect", []) or []:
-                legacy_edges.append((u.name, _canon_src(s), v.name, str(dd)))
-        legacy_edges.sort()
-        g = flatten_collapsed_graph(wf)
-        assert extract_nodes(g) == legacy_nodes
-        assert extract_edges(g) == legacy_edges
+# NOTE: ``test_flatten_collapse_matches_legacy_flat_on_monolith`` was retired once
+# DCE began decomposing (no production monolith remains). The flatten-collapse ==
+# legacy-flat invariant is now covered by the toy-monolith self-tests above and by
+# ``test_graph_matches_baseline`` (collapsed graph == committed baseline).
 
 
 def test_determinism_path_independent(tmp_path: Path) -> None:

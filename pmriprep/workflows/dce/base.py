@@ -63,6 +63,194 @@ from pmriprep.workflows.dce._helpers import (  # noqa: F401
 )
 
 
+def init_dce_pk_modeling_wf(
+    *,
+    pk_kwargs: dict[str, Any],
+    mem_gb: float,
+    name: str = "dce_pk_modeling_wf",
+) -> pe.Workflow:
+    """Build the DCE pharmacokinetic-modeling sub-workflow.
+
+    Wraps :class:`~pmriprep.interfaces.dce_compute.ComputeDCEMaps`, which fits the
+    configured tracer-kinetic model (Tofts / extended-Tofts / 2CXM, NLLS or
+    Bayesian) to the concentration time series and AIF, producing Ktrans, ve, vp,
+    kep, IAUC, model-free, and uncertainty maps.
+
+    Parameters
+    ----------
+    pk_kwargs : dict
+        Keyword arguments forwarded verbatim to ``ComputeDCEMaps`` (model,
+        inference, mcmc_samples, thresholds, constraint mode, hematocrit,
+        ``random_seed`` when set, etc.). Built by the orchestrator from the run
+        configuration.
+    mem_gb : float
+        Memory estimate (GB) for the PK-modeling node.
+    name : str
+        Workflow name.
+
+    Returns
+    -------
+    workflow : nipype.pipeline.engine.Workflow
+        The PK-modeling sub-workflow.
+
+    Inputs
+    ------
+    concentration_file, aif_file, aif_detection_method, aif_uncertainty_inflation_factor
+        Tissue concentration time series and arterial input function (with
+        detection provenance).
+    brain_mask_file, dce_signal_file, baseline_frames, fd_values, bolus_arrival_frame
+        DCE brain mask, raw signal (for tSNR), baseline/bolus timing, and motion.
+    tr, volume_tr, dsc_dose, dsc_agent_standard_dose
+        Acquisition timing and DSC dose scaling (defaults apply on DCE-only runs).
+    dsc_cbv_file, dsc_ncbv_file
+        DSC CBV / NAWM-normalized CBV resampled to DCE space (vp constraint / prior).
+
+    Outputs
+    -------
+    PK parameter maps (Ktrans, ve, vp, kep), IAUC, model-free and
+    Bayesian-uncertainty maps, fit diagnostics, and the ``qc_metrics`` dict --
+    one outputnode field per distinct ``ComputeDCEMaps`` output consumed
+    downstream.
+    """
+    workflow = pe.Workflow(name=name)
+    inputnode = pe.Node(
+        niu.IdentityInterface(
+            fields=[
+                "concentration_file",
+                "aif_file",
+                "aif_detection_method",
+                "aif_uncertainty_inflation_factor",
+                "brain_mask_file",
+                "tr",
+                "volume_tr",
+                "dsc_dose",
+                "dsc_agent_standard_dose",
+                "dce_signal_file",
+                "baseline_frames",
+                "fd_values",
+                "bolus_arrival_frame",
+                "dsc_cbv_file",
+                "dsc_ncbv_file",
+            ]
+        ),
+        name="inputnode",
+    )
+    outputnode = pe.Node(
+        niu.IdentityInterface(
+            fields=[
+                "out_ktrans",
+                "out_iauc60",
+                "out_vp",
+                "qc_metrics",
+                "out_model_selection",
+                "out_ve",
+                "out_fp",
+                "out_ps",
+                "out_delta_bic",
+                "out_vp_at_bound_map",
+                "out_r2",
+                "out_qc_mask",
+                "out_fitted_curves",
+                "out_kep",
+                "out_iauc90",
+                "out_iauc120",
+                "out_peak_enhancement",
+                "out_time_to_peak",
+                "out_ser",
+                "out_wash_in_slope",
+                "out_wash_out_slope",
+                "out_ktrans_std",
+                "out_ve_std",
+                "out_vp_std",
+                "out_fp_std",
+                "out_ps_std",
+                "out_bat",
+                "out_curve_type",
+                "out_tsnr",
+                "out_quality_flag",
+                "out_ktrans_cv",
+                "out_ve_cv",
+                "out_vp_cv",
+                "out_ktrans_ci95_lower",
+                "out_ktrans_ci95_upper",
+                "out_ve_ci95_lower",
+                "out_ve_ci95_upper",
+                "out_vp_ci95_lower",
+                "out_vp_ci95_upper",
+            ]
+        ),
+        name="outputnode",
+    )
+
+    pk_modeling = pe.Node(
+        ComputeDCEMaps(**pk_kwargs),
+        name="pk_modeling",
+        mem_gb=mem_gb,
+    )
+
+    workflow.connect([
+        (inputnode, pk_modeling, [
+            ("concentration_file", "concentration_file"),
+            ("aif_file", "aif_file"),
+            ("aif_detection_method", "aif_detection_method"),
+            ("aif_uncertainty_inflation_factor", "aif_uncertainty_inflation_factor"),
+            ("brain_mask_file", "brain_mask_file"),
+            ("tr", "tr"),
+            ("volume_tr", "volume_tr"),
+            ("dsc_dose", "dsc_dose"),
+            ("dsc_agent_standard_dose", "dsc_agent_standard_dose"),
+            ("dce_signal_file", "dce_signal_file"),
+            ("baseline_frames", "baseline_frames"),
+            ("fd_values", "fd_values"),
+            ("bolus_arrival_frame", "bolus_arrival_frame"),
+            ("dsc_cbv_file", "dsc_cbv_file"),
+            ("dsc_ncbv_file", "dsc_ncbv_file"),
+        ]),
+        (pk_modeling, outputnode, [
+            ("out_ktrans", "out_ktrans"),
+            ("out_iauc60", "out_iauc60"),
+            ("out_vp", "out_vp"),
+            ("qc_metrics", "qc_metrics"),
+            ("out_model_selection", "out_model_selection"),
+            ("out_ve", "out_ve"),
+            ("out_fp", "out_fp"),
+            ("out_ps", "out_ps"),
+            ("out_delta_bic", "out_delta_bic"),
+            ("out_vp_at_bound_map", "out_vp_at_bound_map"),
+            ("out_r2", "out_r2"),
+            ("out_qc_mask", "out_qc_mask"),
+            ("out_fitted_curves", "out_fitted_curves"),
+            ("out_kep", "out_kep"),
+            ("out_iauc90", "out_iauc90"),
+            ("out_iauc120", "out_iauc120"),
+            ("out_peak_enhancement", "out_peak_enhancement"),
+            ("out_time_to_peak", "out_time_to_peak"),
+            ("out_ser", "out_ser"),
+            ("out_wash_in_slope", "out_wash_in_slope"),
+            ("out_wash_out_slope", "out_wash_out_slope"),
+            ("out_ktrans_std", "out_ktrans_std"),
+            ("out_ve_std", "out_ve_std"),
+            ("out_vp_std", "out_vp_std"),
+            ("out_fp_std", "out_fp_std"),
+            ("out_ps_std", "out_ps_std"),
+            ("out_bat", "out_bat"),
+            ("out_curve_type", "out_curve_type"),
+            ("out_tsnr", "out_tsnr"),
+            ("out_quality_flag", "out_quality_flag"),
+            ("out_ktrans_cv", "out_ktrans_cv"),
+            ("out_ve_cv", "out_ve_cv"),
+            ("out_vp_cv", "out_vp_cv"),
+            ("out_ktrans_ci95_lower", "out_ktrans_ci95_lower"),
+            ("out_ktrans_ci95_upper", "out_ktrans_ci95_upper"),
+            ("out_ve_ci95_lower", "out_ve_ci95_lower"),
+            ("out_ve_ci95_upper", "out_ve_ci95_upper"),
+            ("out_vp_ci95_lower", "out_vp_ci95_lower"),
+            ("out_vp_ci95_upper", "out_vp_ci95_upper"),
+        ]),
+    ])
+    return workflow
+
+
 def init_dce_preproc_wf(
     bids_dir: Union[str, Path],
     output_dir: Union[str, Path],
@@ -1067,45 +1255,43 @@ def init_dce_preproc_wf(
     )
     if random_seed is not None:
         pk_kwargs["random_seed"] = random_seed
-    pk_modeling = pe.Node(
-        ComputeDCEMaps(**pk_kwargs),
-        name="pk_modeling",
+    pk_wf = init_dce_pk_modeling_wf(
+        pk_kwargs=pk_kwargs,
         mem_gb=_heavy_mem,
     )
 
     workflow.connect([
-        (signal_to_conc, pk_modeling, [
-            ("concentration_file", "concentration_file"),
+        (signal_to_conc, pk_wf, [
+            ("concentration_file", "inputnode.concentration_file"),
         ]),
-        (aif_detection, pk_modeling, [
-            ("out_aif_curve", "aif_file"),
-            ("detection_method", "aif_detection_method"),
-            ("aif_uncertainty_inflation_factor",
-             "aif_uncertainty_inflation_factor"),
+        (aif_detection, pk_wf, [
+            ("out_aif_curve", "inputnode.aif_file"),
+            ("detection_method", "inputnode.aif_detection_method"),
+            ("aif_uncertainty_inflation_factor", "inputnode.aif_uncertainty_inflation_factor"),
         ]),
         # Use native DCE brain mask (from HD-BET) for PK modeling
         # This avoids registration-induced edge artifacts and ensures
         # the mask accurately reflects the DCE field of view
-        (dce_brain_extract, pk_modeling, [
-            ("out_mask", "brain_mask_file"),
+        (dce_brain_extract, pk_wf, [
+            ("out_mask", "inputnode.brain_mask_file"),
         ]),
-        (inputnode, pk_modeling, [
-            ("tr", "tr"),
-            ("volume_tr", "volume_tr"),  # For model auto-selection
+        (inputnode, pk_wf, [
+            ("tr", "inputnode.tr"),
+            ("volume_tr", "inputnode.volume_tr"),  # For model auto-selection
             # DSC dose parameters scale CNR coverage thresholds in the
             # vp constraint quality gate. Defaults (1.0, 0.1) apply on
             # DCE-only runs.
-            ("dsc_dose", "dsc_dose"),
-            ("dsc_agent_standard_dose", "dsc_agent_standard_dose"),
+            ("dsc_dose", "inputnode.dsc_dose"),
+            ("dsc_agent_standard_dose", "inputnode.dsc_agent_standard_dose"),
         ]),
         # Raw DCE signal for tSNR computation
         # Also wire baseline_frames so pk_modeling uses the same value
         # as signal_to_concentration (avoids re-auto-detection mismatch)
-        (dce_preprocess, pk_modeling, [
-            ("out_file", "dce_signal_file"),
-            ("baseline_frames", "baseline_frames"),
-            ("fd", "fd_values"),
-            ("bolus_arrival_frame", "bolus_arrival_frame"),
+        (dce_preprocess, pk_wf, [
+            ("out_file", "inputnode.dce_signal_file"),
+            ("baseline_frames", "inputnode.baseline_frames"),
+            ("fd", "inputnode.fd_values"),
+            ("bolus_arrival_frame", "inputnode.bolus_arrival_frame"),
         ]),
     ])
 
@@ -1142,8 +1328,8 @@ def init_dce_preproc_wf(
         ]),
         # Feed resampled CBV (absolute/relative) to PK modeling and
         # cross-validation — NOT used for vp prior (see resample_dsc_ncbv).
-        (resample_dsc_cbv, pk_modeling, [
-            ("cbv_in_dce", "dsc_cbv_file"),
+        (resample_dsc_cbv, pk_wf, [
+            ("cbv_in_dce", "inputnode.dsc_cbv_file"),
         ]),
     ])
     # Note: resample_dsc_cbv → dsc_dce_validation connected after Node 9 creation
@@ -1176,8 +1362,8 @@ def init_dce_preproc_wf(
             ("mean_img", "dce_reference"),
         ]),
         # Feed resampled nCBV to PK modeling for the vp prior path.
-        (resample_dsc_ncbv, pk_modeling, [
-            ("cbv_in_dce", "dsc_ncbv_file"),
+        (resample_dsc_ncbv, pk_wf, [
+            ("cbv_in_dce", "inputnode.dsc_ncbv_file"),
         ]),
     ])
 
@@ -1287,9 +1473,9 @@ def init_dce_preproc_wf(
     )
 
     workflow.connect([
-        (pk_modeling, normalize_ktrans, [("out_ktrans", "param_map")]),
+        (pk_wf, normalize_ktrans, [("outputnode.out_ktrans", "param_map")]),
         (transform_nawm_mask, normalize_ktrans, [("out_file", "nawm_mask")]),
-        (pk_modeling, normalize_iauc60, [("out_iauc60", "param_map")]),
+        (pk_wf, normalize_iauc60, [("outputnode.out_iauc60", "param_map")]),
         (transform_nawm_mask, normalize_iauc60, [("out_file", "nawm_mask")]),
     ])
 
@@ -1322,9 +1508,9 @@ def init_dce_preproc_wf(
     # when present, validation uses the nCBV-anchored expected ratio.
 
     workflow.connect([
-        (pk_modeling, dsc_dce_validation, [
-            ("out_vp", "vp_file"),
-            ("qc_metrics", "pk_qc"),
+        (pk_wf, dsc_dce_validation, [
+            ("outputnode.out_vp", "vp_file"),
+            ("outputnode.qc_metrics", "pk_qc"),
         ]),
         (transform_brain_mask, dsc_dce_validation, [
             ("out_file", "brain_mask"),
@@ -1364,9 +1550,9 @@ def init_dce_preproc_wf(
     dsc_dce_xval_plot.inputs.model_selection_file = None
 
     workflow.connect([
-        (pk_modeling, dsc_dce_xval_plot, [
-            ("out_vp", "vp_file"),
-            ("qc_metrics", "pk_qc"),
+        (pk_wf, dsc_dce_xval_plot, [
+            ("outputnode.out_vp", "vp_file"),
+            ("outputnode.qc_metrics", "pk_qc"),
         ]),
         (resample_dsc_cbv, dsc_dce_xval_plot, [
             ("cbv_in_dce", "dsc_cbv_file"),
@@ -1384,8 +1570,8 @@ def init_dce_preproc_wf(
 
     # Color scatter by model when model selection is auto
     if config.model == "auto":
-        workflow.connect([(pk_modeling, dsc_dce_xval_plot, [
-            ("out_model_selection", "model_selection_file"),
+        workflow.connect([(pk_wf, dsc_dce_xval_plot, [
+            ("outputnode.out_model_selection", "model_selection_file"),
         ])])
 
     # ==========================================================================
@@ -1418,15 +1604,15 @@ def init_dce_preproc_wf(
     dce_pk_maps_qc.inputs.session_id = session_id or ""
 
     workflow.connect([
-        (pk_modeling, dce_pk_maps_qc, [
-            ("out_ktrans", "ktrans_file"),
-            ("out_ve", "ve_file"),
-            ("out_vp", "vp_file"),
-            ("out_fp", "fp_file"),
-            ("out_ps", "ps_file"),
-            ("out_model_selection", "model_selection_file"),
-            ("out_delta_bic", "delta_bic_file"),
-            ("out_vp_at_bound_map", "vp_at_bound_map_file"),
+        (pk_wf, dce_pk_maps_qc, [
+            ("outputnode.out_ktrans", "ktrans_file"),
+            ("outputnode.out_ve", "ve_file"),
+            ("outputnode.out_vp", "vp_file"),
+            ("outputnode.out_fp", "fp_file"),
+            ("outputnode.out_ps", "ps_file"),
+            ("outputnode.out_model_selection", "model_selection_file"),
+            ("outputnode.out_delta_bic", "delta_bic_file"),
+            ("outputnode.out_vp_at_bound_map", "vp_at_bound_map_file"),
         ]),
         (dce_brain_extract, dce_pk_maps_qc, [
             ("out_mask", "brain_mask_file"),
@@ -1480,16 +1666,16 @@ def init_dce_preproc_wf(
         (dce_brain_extract, dce_pk_fit_qc, [
             ("out_mask", "brain_mask_file"),
         ]),
-        (pk_modeling, dce_pk_fit_qc, [
-            ("out_ktrans", "ktrans_file"),
-            ("out_ve", "ve_file"),
-            ("out_vp", "vp_file"),
-            ("out_fp", "fp_file"),
-            ("out_ps", "ps_file"),
-            ("out_r2", "r2_file"),
-            ("out_qc_mask", "qc_mask_file"),
-            ("out_fitted_curves", "fitted_curves_file"),
-            ("out_model_selection", "model_selection_file"),
+        (pk_wf, dce_pk_fit_qc, [
+            ("outputnode.out_ktrans", "ktrans_file"),
+            ("outputnode.out_ve", "ve_file"),
+            ("outputnode.out_vp", "vp_file"),
+            ("outputnode.out_fp", "fp_file"),
+            ("outputnode.out_ps", "ps_file"),
+            ("outputnode.out_r2", "r2_file"),
+            ("outputnode.out_qc_mask", "qc_mask_file"),
+            ("outputnode.out_fitted_curves", "fitted_curves_file"),
+            ("outputnode.out_model_selection", "model_selection_file"),
         ]),
         (inputnode, dce_pk_fit_qc, [
             ("volume_tr", "volume_tr"),
@@ -1520,11 +1706,11 @@ def init_dce_preproc_wf(
         )
 
         workflow.connect([
-            (pk_modeling, build_pk_dict, [
-                ("out_ktrans", "ktrans"),
-                ("out_ve", "ve"),
-                ("out_vp", "vp"),
-                ("out_kep", "kep"),
+            (pk_wf, build_pk_dict, [
+                ("outputnode.out_ktrans", "ktrans"),
+                ("outputnode.out_ve", "ve"),
+                ("outputnode.out_vp", "vp"),
+                ("outputnode.out_kep", "kep"),
             ]),
         ])
 
@@ -1555,15 +1741,15 @@ def init_dce_preproc_wf(
         )
 
         workflow.connect([
-            (pk_modeling, build_mf_dict, [
-                ("out_iauc60", "iauc60"),
-                ("out_iauc90", "iauc90"),
-                ("out_iauc120", "iauc120"),
-                ("out_peak_enhancement", "peak"),
-                ("out_time_to_peak", "ttp"),
-                ("out_ser", "ser"),
-                ("out_wash_in_slope", "wash_in_slope"),
-                ("out_wash_out_slope", "wash_out_slope"),
+            (pk_wf, build_mf_dict, [
+                ("outputnode.out_iauc60", "iauc60"),
+                ("outputnode.out_iauc90", "iauc90"),
+                ("outputnode.out_iauc120", "iauc120"),
+                ("outputnode.out_peak_enhancement", "peak"),
+                ("outputnode.out_time_to_peak", "ttp"),
+                ("outputnode.out_ser", "ser"),
+                ("outputnode.out_wash_in_slope", "wash_in_slope"),
+                ("outputnode.out_wash_out_slope", "wash_out_slope"),
             ]),
         ])
 
@@ -1598,12 +1784,12 @@ def init_dce_preproc_wf(
         )
 
         workflow.connect([
-            (pk_modeling, build_uncertainty_dict, [
-                ("out_ktrans_std", "ktrans_std"),
-                ("out_ve_std", "ve_std"),
-                ("out_vp_std", "vp_std"),
-                ("out_fp_std", "fp_std"),
-                ("out_ps_std", "ps_std"),
+            (pk_wf, build_uncertainty_dict, [
+                ("outputnode.out_ktrans_std", "ktrans_std"),
+                ("outputnode.out_ve_std", "ve_std"),
+                ("outputnode.out_vp_std", "vp_std"),
+                ("outputnode.out_fp_std", "fp_std"),
+                ("outputnode.out_ps_std", "ps_std"),
             ]),
         ])
 
@@ -1735,8 +1921,8 @@ def init_dce_preproc_wf(
         (aif_detection, collect_qc, [
             ("qc_metrics", "aif_qc"),
         ]),
-        (pk_modeling, collect_qc, [
-            ("qc_metrics", "pk_qc"),
+        (pk_wf, collect_qc, [
+            ("outputnode.qc_metrics", "pk_qc"),
         ]),
         (dsc_dce_validation, collect_qc, [
             ("validation_result", "validation_result"),
@@ -1853,19 +2039,19 @@ def init_dce_preproc_wf(
         (transform_stats_lesion, lesion_stats, [("lesion_mask_dce_file", "lesion_mask")]),
         (combine_masks, lesion_stats, [("mask_origin", "mask_origin")]),
         (transform_nawm_mask, lesion_stats, [("out_file", "nawm_mask")]),
-        (pk_modeling, lesion_stats, [
-            ("out_ktrans", "ktrans_map"),
-            ("out_ve", "ve_map"),
-            ("out_vp", "vp_map"),
-            ("out_kep", "kep_map"),
-            ("out_iauc60", "iauc60_map"),
-            ("out_iauc90", "iauc90_map"),
-            ("out_iauc120", "iauc120_map"),
-            ("out_peak_enhancement", "peak_enhancement_map"),
-            ("out_time_to_peak", "ttp_map"),
-            ("out_ser", "ser_map"),
-            ("out_wash_in_slope", "wash_in_map"),
-            ("out_wash_out_slope", "wash_out_map"),
+        (pk_wf, lesion_stats, [
+            ("outputnode.out_ktrans", "ktrans_map"),
+            ("outputnode.out_ve", "ve_map"),
+            ("outputnode.out_vp", "vp_map"),
+            ("outputnode.out_kep", "kep_map"),
+            ("outputnode.out_iauc60", "iauc60_map"),
+            ("outputnode.out_iauc90", "iauc90_map"),
+            ("outputnode.out_iauc120", "iauc120_map"),
+            ("outputnode.out_peak_enhancement", "peak_enhancement_map"),
+            ("outputnode.out_time_to_peak", "ttp_map"),
+            ("outputnode.out_ser", "ser_map"),
+            ("outputnode.out_wash_in_slope", "wash_in_map"),
+            ("outputnode.out_wash_out_slope", "wash_out_map"),
         ]),
         (normalize_ktrans, lesion_stats, [("out_file", "nktrans_map")]),
         (normalize_iauc60, lesion_stats, [("out_file", "niauc60_map")]),
@@ -1891,19 +2077,19 @@ def init_dce_preproc_wf(
             ("validated_mask", "lesion_mask"),
         ]),
         (transform_nawm_mask, user_lesion_stats, [("out_file", "nawm_mask")]),
-        (pk_modeling, user_lesion_stats, [
-            ("out_ktrans", "ktrans_map"),
-            ("out_ve", "ve_map"),
-            ("out_vp", "vp_map"),
-            ("out_kep", "kep_map"),
-            ("out_iauc60", "iauc60_map"),
-            ("out_iauc90", "iauc90_map"),
-            ("out_iauc120", "iauc120_map"),
-            ("out_peak_enhancement", "peak_enhancement_map"),
-            ("out_time_to_peak", "ttp_map"),
-            ("out_ser", "ser_map"),
-            ("out_wash_in_slope", "wash_in_map"),
-            ("out_wash_out_slope", "wash_out_map"),
+        (pk_wf, user_lesion_stats, [
+            ("outputnode.out_ktrans", "ktrans_map"),
+            ("outputnode.out_ve", "ve_map"),
+            ("outputnode.out_vp", "vp_map"),
+            ("outputnode.out_kep", "kep_map"),
+            ("outputnode.out_iauc60", "iauc60_map"),
+            ("outputnode.out_iauc90", "iauc90_map"),
+            ("outputnode.out_iauc120", "iauc120_map"),
+            ("outputnode.out_peak_enhancement", "peak_enhancement_map"),
+            ("outputnode.out_time_to_peak", "ttp_map"),
+            ("outputnode.out_ser", "ser_map"),
+            ("outputnode.out_wash_in_slope", "wash_in_map"),
+            ("outputnode.out_wash_out_slope", "wash_out_map"),
         ]),
         (normalize_ktrans, user_lesion_stats, [("out_file", "nktrans_map")]),
         (normalize_iauc60, user_lesion_stats, [("out_file", "niauc60_map")]),
@@ -2009,53 +2195,53 @@ def init_dce_preproc_wf(
             ("out_params", "motion_params"),
         ]),
         # Pharmacokinetic parameter maps
-        (pk_modeling, outputnode, [
-            ("out_ktrans", "ktrans_map"),
-            ("out_ve", "ve_map"),
-            ("out_vp", "vp_map"),
-            ("out_kep", "kep_map"),
+        (pk_wf, outputnode, [
+            ("outputnode.out_ktrans", "ktrans_map"),
+            ("outputnode.out_ve", "ve_map"),
+            ("outputnode.out_vp", "vp_map"),
+            ("outputnode.out_kep", "kep_map"),
         ]),
         # Model-free maps
-        (pk_modeling, outputnode, [
-            ("out_iauc60", "iauc60_map"),
-            ("out_iauc90", "iauc90_map"),
-            ("out_iauc120", "iauc120_map"),
-            ("out_peak_enhancement", "peak_enhancement_map"),
-            ("out_time_to_peak", "time_to_peak_map"),
-            ("out_ser", "ser_map"),
-            ("out_wash_in_slope", "wash_in_slope_map"),
-            ("out_wash_out_slope", "wash_out_slope_map"),
-            ("out_bat", "bat_map"),
-            ("out_curve_type", "curve_type_map"),
+        (pk_wf, outputnode, [
+            ("outputnode.out_iauc60", "iauc60_map"),
+            ("outputnode.out_iauc90", "iauc90_map"),
+            ("outputnode.out_iauc120", "iauc120_map"),
+            ("outputnode.out_peak_enhancement", "peak_enhancement_map"),
+            ("outputnode.out_time_to_peak", "time_to_peak_map"),
+            ("outputnode.out_ser", "ser_map"),
+            ("outputnode.out_wash_in_slope", "wash_in_slope_map"),
+            ("outputnode.out_wash_out_slope", "wash_out_slope_map"),
+            ("outputnode.out_bat", "bat_map"),
+            ("outputnode.out_curve_type", "curve_type_map"),
         ]),
         # QC maps
-        (pk_modeling, outputnode, [
-            ("out_tsnr", "tsnr_map"),
-            ("out_qc_mask", "qc_mask"),
-            ("out_r2", "r2_map"),
-            ("out_quality_flag", "quality_flag_map"),
-            ("out_model_selection", "model_selection_map"),
-            ("out_delta_bic", "delta_bic_map"),
+        (pk_wf, outputnode, [
+            ("outputnode.out_tsnr", "tsnr_map"),
+            ("outputnode.out_qc_mask", "qc_mask"),
+            ("outputnode.out_r2", "r2_map"),
+            ("outputnode.out_quality_flag", "quality_flag_map"),
+            ("outputnode.out_model_selection", "model_selection_map"),
+            ("outputnode.out_delta_bic", "delta_bic_map"),
         ]),
         # Uncertainty maps (if Bayesian)
-        (pk_modeling, outputnode, [
-            ("out_ktrans_std", "ktrans_uncertainty"),
-            ("out_ve_std", "ve_uncertainty"),
-            ("out_vp_std", "vp_uncertainty"),
-            ("out_fp_std", "fp_uncertainty"),
-            ("out_ps_std", "ps_uncertainty"),
+        (pk_wf, outputnode, [
+            ("outputnode.out_ktrans_std", "ktrans_uncertainty"),
+            ("outputnode.out_ve_std", "ve_uncertainty"),
+            ("outputnode.out_vp_std", "vp_uncertainty"),
+            ("outputnode.out_fp_std", "fp_uncertainty"),
+            ("outputnode.out_ps_std", "ps_uncertainty"),
         ]),
         # Bayesian CV and CI maps (if Bayesian)
-        (pk_modeling, outputnode, [
-            ("out_ktrans_cv", "ktrans_cv"),
-            ("out_ve_cv", "ve_cv"),
-            ("out_vp_cv", "vp_cv"),
-            ("out_ktrans_ci95_lower", "ktrans_ci95_lower"),
-            ("out_ktrans_ci95_upper", "ktrans_ci95_upper"),
-            ("out_ve_ci95_lower", "ve_ci95_lower"),
-            ("out_ve_ci95_upper", "ve_ci95_upper"),
-            ("out_vp_ci95_lower", "vp_ci95_lower"),
-            ("out_vp_ci95_upper", "vp_ci95_upper"),
+        (pk_wf, outputnode, [
+            ("outputnode.out_ktrans_cv", "ktrans_cv"),
+            ("outputnode.out_ve_cv", "ve_cv"),
+            ("outputnode.out_vp_cv", "vp_cv"),
+            ("outputnode.out_ktrans_ci95_lower", "ktrans_ci95_lower"),
+            ("outputnode.out_ktrans_ci95_upper", "ktrans_ci95_upper"),
+            ("outputnode.out_ve_ci95_lower", "ve_ci95_lower"),
+            ("outputnode.out_ve_ci95_upper", "ve_ci95_upper"),
+            ("outputnode.out_vp_ci95_lower", "vp_ci95_lower"),
+            ("outputnode.out_vp_ci95_upper", "vp_ci95_upper"),
         ]),
         # AIF outputs
         (aif_detection, outputnode, [
@@ -2188,19 +2374,19 @@ def init_dce_preproc_wf(
         (validate_roi_mask, dce_pk_maps_qc, [
             ("validated_mask", "roi_mask_file"),
         ]),
-        (pk_modeling, roi_stats, [
-            ("out_ktrans", "ktrans_map"),
-            ("out_ve", "ve_map"),
-            ("out_vp", "vp_map"),
-            ("out_kep", "kep_map"),
-            ("out_iauc60", "iauc60_map"),
-            ("out_iauc90", "iauc90_map"),
-            ("out_iauc120", "iauc120_map"),
-            ("out_peak_enhancement", "peak_enhancement_map"),
-            ("out_time_to_peak", "ttp_map"),
-            ("out_ser", "ser_map"),
-            ("out_wash_in_slope", "wash_in_map"),
-            ("out_wash_out_slope", "wash_out_map"),
+        (pk_wf, roi_stats, [
+            ("outputnode.out_ktrans", "ktrans_map"),
+            ("outputnode.out_ve", "ve_map"),
+            ("outputnode.out_vp", "vp_map"),
+            ("outputnode.out_kep", "kep_map"),
+            ("outputnode.out_iauc60", "iauc60_map"),
+            ("outputnode.out_iauc90", "iauc90_map"),
+            ("outputnode.out_iauc120", "iauc120_map"),
+            ("outputnode.out_peak_enhancement", "peak_enhancement_map"),
+            ("outputnode.out_time_to_peak", "ttp_map"),
+            ("outputnode.out_ser", "ser_map"),
+            ("outputnode.out_wash_in_slope", "wash_in_map"),
+            ("outputnode.out_wash_out_slope", "wash_out_map"),
         ]),
         (normalize_ktrans, roi_stats, [("out_file", "nktrans_map")]),
         (normalize_iauc60, roi_stats, [("out_file", "niauc60_map")]),
