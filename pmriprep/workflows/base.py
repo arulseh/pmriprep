@@ -92,6 +92,7 @@ def decide_pipelines(
     """Decide which pipelines to run based on data and skip flags.
 
     This function applies the following rules:
+
     1. anat always runs (unless explicitly skipped)
     2. tumor_seg runs if all 4 modalities are present (unless skipped)
        and the requested GPU device is available
@@ -1650,7 +1651,7 @@ def init_pmriprep_wf(
                 ImageType.T1W_POSTCON: "postcon",
                 ImageType.T1W_PRECON: "precon",
             }.get(dsc_ref_selection.candidate.image_type, "any")
-            dsc_wf.inputs.register.reference_type = dsc_reg_ref_type
+            dsc_wf.inputs.dsc_registration_wf.register.reference_type = dsc_reg_ref_type
             _ref_logger.info(
                 "DSC registration: reference_type=%s (from selection)",
                 dsc_reg_ref_type,
@@ -2741,11 +2742,11 @@ def init_pmriprep_wf(
                     "skip-dsc: loaded DSC CBV from %s", prev_dsc["rel_cbv_map"]
                 )
                 if prev_dsc["aif_qc"]:
-                    dce_wf.inputs.pk_modeling.dsc_aif_qc = prev_dsc["aif_qc"]
+                    dce_wf.inputs.dce_pk_modeling_wf.pk_modeling.dsc_aif_qc = prev_dsc["aif_qc"]
                 if prev_dsc.get("preload_qc"):
-                    dce_wf.inputs.pk_modeling.dsc_preload_qc = prev_dsc["preload_qc"]
+                    dce_wf.inputs.dce_pk_modeling_wf.pk_modeling.dsc_preload_qc = prev_dsc["preload_qc"]
                 if prev_dsc.get("preprocessing_stats"):
-                    dce_wf.inputs.pk_modeling.dsc_preprocessing_stats = prev_dsc["preprocessing_stats"]
+                    dce_wf.inputs.dce_pk_modeling_wf.pk_modeling.dsc_preprocessing_stats = prev_dsc["preprocessing_stats"]
                 if not prev_dsc["aif_qc"]:
                     _log.warning(
                         "skip-dsc: AIF QC not found in previous DSC outputs; "
