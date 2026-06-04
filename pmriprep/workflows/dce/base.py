@@ -251,6 +251,85 @@ def init_dce_pk_modeling_wf(
     return workflow
 
 
+def init_dce_normalization_wf(
+    *,
+    name: str = "dce_normalization_wf",
+) -> pe.Workflow:
+    """Build the DCE NAWM-normalization sub-workflow.
+
+    Normalizes the Ktrans and IAUC60 maps to normal-appearing white matter
+    (NAWM), producing nKtrans and nIAUC60. Both maps use the same NAWM reference
+    and normalization method.
+
+    Parameters
+    ----------
+    name : str
+        Workflow name.
+
+    Returns
+    -------
+    workflow : nipype.pipeline.engine.Workflow
+        The normalization sub-workflow.
+
+    Inputs
+    ------
+    ktrans_map
+        Ktrans map to normalize.
+    iauc60_map
+        IAUC60 map to normalize.
+    nawm_mask
+        NAWM reference mask (DCE space).
+
+    Outputs
+    -------
+    nktrans
+        NAWM-normalized Ktrans map.
+    niauc60
+        NAWM-normalized IAUC60 map.
+    """
+    workflow = pe.Workflow(name=name)
+    inputnode = pe.Node(
+        niu.IdentityInterface(fields=["ktrans_map", "iauc60_map", "nawm_mask"]),
+        name="inputnode",
+    )
+    outputnode = pe.Node(
+        niu.IdentityInterface(fields=["nktrans", "niauc60"]),
+        name="outputnode",
+    )
+
+    normalize_ktrans = pe.Node(
+        niu.Function(
+            input_names=["param_map", "nawm_mask"],
+            output_names=["out_file"],
+            function=_normalize_by_nawm,
+        ),
+        name="normalize_ktrans",
+    )
+
+    normalize_iauc60 = pe.Node(
+        niu.Function(
+            input_names=["param_map", "nawm_mask"],
+            output_names=["out_file"],
+            function=_normalize_by_nawm,
+        ),
+        name="normalize_iauc60",
+    )
+
+    workflow.connect([
+        (inputnode, normalize_ktrans, [
+            ("ktrans_map", "param_map"),
+            ("nawm_mask", "nawm_mask"),
+        ]),
+        (inputnode, normalize_iauc60, [
+            ("iauc60_map", "param_map"),
+            ("nawm_mask", "nawm_mask"),
+        ]),
+        (normalize_ktrans, outputnode, [("out_file", "nktrans")]),
+        (normalize_iauc60, outputnode, [("out_file", "niauc60")]),
+    ])
+    return workflow
+
+
 def init_dce_preproc_wf(
     bids_dir: Union[str, Path],
     output_dir: Union[str, Path],
@@ -1454,29 +1533,16 @@ def init_dce_preproc_wf(
     # ==========================================================================
     # Node 8a: NAWM Normalization (nKtrans, nIAUC60)
     # ==========================================================================
-    normalize_ktrans = pe.Node(
-        niu.Function(
-            input_names=["param_map", "nawm_mask"],
-            output_names=["out_file"],
-            function=_normalize_by_nawm,
-        ),
-        name="normalize_ktrans",
-    )
+    normalization_wf = init_dce_normalization_wf()
 
-    normalize_iauc60 = pe.Node(
-        niu.Function(
-            input_names=["param_map", "nawm_mask"],
-            output_names=["out_file"],
-            function=_normalize_by_nawm,
-        ),
-        name="normalize_iauc60",
-    )
-
+    # The NAWM reference mask fans out to both the Ktrans and IAUC60
+    # normalizers inside the sub-workflow.
     workflow.connect([
-        (pk_wf, normalize_ktrans, [("outputnode.out_ktrans", "param_map")]),
-        (transform_nawm_mask, normalize_ktrans, [("out_file", "nawm_mask")]),
-        (pk_wf, normalize_iauc60, [("outputnode.out_iauc60", "param_map")]),
-        (transform_nawm_mask, normalize_iauc60, [("out_file", "nawm_mask")]),
+        (pk_wf, normalization_wf, [
+            ("outputnode.out_ktrans", "inputnode.ktrans_map"),
+            ("outputnode.out_iauc60", "inputnode.iauc60_map"),
+        ]),
+        (transform_nawm_mask, normalization_wf, [("out_file", "inputnode.nawm_mask")]),
     ])
 
     # ==========================================================================
@@ -1939,8 +2005,8 @@ def init_dce_preproc_wf(
             ("vp_at_bound_fractions", "vp_at_bound_fractions"),
         ]),
         # out_file is a path (truthy) when normalization ran, "" otherwise
-        (normalize_ktrans, collect_qc, [
-            ("out_file", "nawm_available"),
+        (normalization_wf, collect_qc, [
+            ("outputnode.nktrans", "nawm_available"),
         ]),
     ])
 
@@ -2053,8 +2119,8 @@ def init_dce_preproc_wf(
             ("outputnode.out_wash_in_slope", "wash_in_map"),
             ("outputnode.out_wash_out_slope", "wash_out_map"),
         ]),
-        (normalize_ktrans, lesion_stats, [("out_file", "nktrans_map")]),
-        (normalize_iauc60, lesion_stats, [("out_file", "niauc60_map")]),
+        (normalization_wf, lesion_stats, [("outputnode.nktrans", "nktrans_map")]),
+        (normalization_wf, lesion_stats, [("outputnode.niauc60", "niauc60_map")]),
         (inputnode, lesion_stats, [("field_strength", "field_strength_t")]),
     ])
 
@@ -2091,8 +2157,8 @@ def init_dce_preproc_wf(
             ("outputnode.out_wash_in_slope", "wash_in_map"),
             ("outputnode.out_wash_out_slope", "wash_out_map"),
         ]),
-        (normalize_ktrans, user_lesion_stats, [("out_file", "nktrans_map")]),
-        (normalize_iauc60, user_lesion_stats, [("out_file", "niauc60_map")]),
+        (normalization_wf, user_lesion_stats, [("outputnode.nktrans", "nktrans_map")]),
+        (normalization_wf, user_lesion_stats, [("outputnode.niauc60", "niauc60_map")]),
         (inputnode, user_lesion_stats, [("field_strength", "field_strength_t")]),
     ])
     workflow.connect([
@@ -2388,8 +2454,8 @@ def init_dce_preproc_wf(
             ("outputnode.out_wash_in_slope", "wash_in_map"),
             ("outputnode.out_wash_out_slope", "wash_out_map"),
         ]),
-        (normalize_ktrans, roi_stats, [("out_file", "nktrans_map")]),
-        (normalize_iauc60, roi_stats, [("out_file", "niauc60_map")]),
+        (normalization_wf, roi_stats, [("outputnode.nktrans", "nktrans_map")]),
+        (normalization_wf, roi_stats, [("outputnode.niauc60", "niauc60_map")]),
     ])
     # Connect ROI stats outputs to outputnode
     workflow.connect([
@@ -2409,8 +2475,8 @@ def init_dce_preproc_wf(
 
     # Normalized map output connections (requires NAWM mask from tumor segmentation)
     workflow.connect([
-        (normalize_ktrans, outputnode, [("out_file", "nktrans_map")]),
-        (normalize_iauc60, outputnode, [("out_file", "niauc60_map")]),
+        (normalization_wf, outputnode, [("outputnode.nktrans", "nktrans_map")]),
+        (normalization_wf, outputnode, [("outputnode.niauc60", "niauc60_map")]),
     ])
 
     # Anatomical masks in DCE space output connections
