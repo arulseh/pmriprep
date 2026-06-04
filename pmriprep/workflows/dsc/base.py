@@ -1235,6 +1235,327 @@ def init_dsc_lesion_stats_wf(
     return workflow
 
 
+def init_dsc_qc_wf(
+    *,
+    subject_id: str,
+    session_id: Optional[str],
+    aif_source: str,
+    registration_bbr: bool,
+    baseline_frames: int,
+    name: str = "dsc_qc_wf",
+) -> pe.Workflow:
+    """Build the DSC quality-control / reports sub-workflow.
+
+    Generates the per-stage QC figures (registration filmstrip, AIF plots,
+    preprocessing, parameter-map, leakage, fit, and brain-mask filmstrips) and
+    merges the per-sub-workflow QC metric dicts into a single ``qc_metrics``
+    payload for the reports/sidecars.
+
+    Parameters
+    ----------
+    subject_id : str
+        BIDS subject label.
+    session_id : str or None
+        BIDS session label.
+    aif_source : str
+        AIF provenance label for the merged QC ("external", "synthetic", "auto").
+    registration_bbr : bool
+        Whether boundary-based registration was used (recorded in merged QC).
+    baseline_frames : int
+        Pre-bolus baseline frame count (S0) for the preprocessing QC plot.
+    name : str
+        Workflow name.
+
+    Returns
+    -------
+    workflow : nipype.pipeline.engine.Workflow
+        The QC sub-workflow.
+
+    Inputs
+    ------
+    motion_qc_metrics, motion_summary, preload_qc_dict, aif_qc_metrics, deconv_qc_metrics, registration_qc_metrics, normalization_factor
+        Per-sub-workflow QC metric dicts / scalars merged into ``qc_metrics``.
+    prebolus_mean_file, dsc_moco, registered_t1w, brain_mask_file
+        Images for the registration / preprocessing / brain-mask filmstrips.
+    out_aif_curve, out_aif_mask, out_raw_aif_curve, gamma_fit_applied, concentration_file, corrected_concentration_file
+        AIF, concentration, and leakage-QC inputs.
+    rel_cbf, rel_cbv_auc, mtt, tmax, psr, ttp_corrected, k2, auc_raw, auc_corr, auc_diff, qc_fit_data
+        DSC parameter / leakage / fit maps for the QC plots.
+    t1w_to_dsc_matrix, t1w_to_mni_xfm, tr, te
+        Transforms and acquisition parameters.
+
+    Outputs
+    -------
+    qc_metrics
+        Merged QC-metrics payload.
+    registration_filmstrip, brain_mask_filmstrip
+        Registration and brain-mask filmstrip figures.
+    aif_curve_plot, aif_location_plot, aif_candidates_plot, aif_metrics
+        AIF QC figures and metrics.
+    dsc_preprocessing_qc_plot, preprocessing_stats, dsc_param_maps_qc_plot, dsc_leakage_qc_plot, dsc_fit_qc_plot
+        DSC preprocessing / parameter-map / leakage / fit QC figures and stats.
+    """
+    workflow = pe.Workflow(name=name)
+    inputnode = pe.Node(
+        niu.IdentityInterface(
+            fields=[
+                "motion_qc_metrics",
+                "motion_summary",
+                "prebolus_mean_file",
+                "dsc_moco",
+                "preload_qc_dict",
+                "corrected_concentration_file",
+                "aif_qc_metrics",
+                "out_aif_curve",
+                "out_aif_mask",
+                "out_raw_aif_curve",
+                "gamma_fit_applied",
+                "concentration_file",
+                "deconv_qc_metrics",
+                "rel_cbf",
+                "rel_cbv_auc",
+                "mtt",
+                "tmax",
+                "psr",
+                "ttp_corrected",
+                "k2",
+                "auc_raw",
+                "auc_corr",
+                "auc_diff",
+                "qc_fit_data",
+                "registration_qc_metrics",
+                "registered_t1w",
+                "t1w_to_dsc_matrix",
+                "normalization_factor",
+                "brain_mask_file",
+                "tr",
+                "te",
+                "t1w_to_mni_xfm",
+            ]
+        ),
+        name="inputnode",
+    )
+    outputnode = pe.Node(
+        niu.IdentityInterface(
+            fields=[
+                "registration_filmstrip",
+                "aif_curve_plot",
+                "aif_location_plot",
+                "aif_candidates_plot",
+                "aif_metrics",
+                "dsc_preprocessing_qc_plot",
+                "preprocessing_stats",
+                "dsc_param_maps_qc_plot",
+                "dsc_leakage_qc_plot",
+                "brain_mask_filmstrip",
+                "dsc_fit_qc_plot",
+                "qc_metrics",
+            ]
+        ),
+        name="outputnode",
+    )
+
+    merge_qc = pe.Node(
+        niu.Function(
+            input_names=[
+                "motion_qc",
+                "preload_qc",
+                "aif_qc",
+                "deconv_qc",
+                "registration_qc",
+                "normalization_factor",
+                "motion_summary",
+                "aif_metrics",
+                "preprocessing_stats",
+                "aif_source",
+                "registration_bbr",
+            ],
+            output_names=["merged_qc"],
+            function=_merge_qc_metrics,
+        ),
+        name="merge_qc",
+    )
+    merge_qc.inputs.aif_source = aif_source
+    merge_qc.inputs.registration_bbr = registration_bbr
+
+    reg_filmstrip = pe.Node(
+        niu.Function(
+            input_names=["dsc_mean_file", "registered_t1w_file", "brain_mask_file",
+                         "subject_id", "session_id"],
+            output_names=["filmstrip_file"],
+            function=_create_registration_filmstrip,
+        ),
+        name="reg_filmstrip",
+    )
+    reg_filmstrip.inputs.subject_id = subject_id
+    reg_filmstrip.inputs.session_id = session_id or ""
+
+    aif_qc_plot = pe.Node(
+        AIFQCPlot(
+            subject_id=subject_id,
+            session_id=session_id or "",
+        ),
+        name="aif_qc_plot",
+    )
+
+    dsc_preproc_qc = pe.Node(
+        niu.Function(
+            input_names=[
+                "dsc_signal_file", "brain_mask_file",
+                "baseline_frames",
+                "tr", "te", "subject_id", "session_id",
+            ],
+            output_names=["plot_file", "stats"],
+            function=_generate_dsc_preprocessing_qc,
+        ),
+        name="dsc_preproc_qc",
+    )
+    dsc_preproc_qc.inputs.baseline_frames = baseline_frames
+    dsc_preproc_qc.inputs.subject_id = subject_id
+    dsc_preproc_qc.inputs.session_id = session_id or ""
+
+    dsc_param_maps_qc = pe.Node(
+        niu.Function(
+            input_names=[
+                "rel_cbf_file", "rel_cbv_file", "mtt_file",
+                "tmax_file", "psr_file", "ttp_file",
+                "brain_mask_file", "subject_id", "session_id",
+            ],
+            output_names=["plot_file"],
+            function=_generate_dsc_param_maps_qc,
+        ),
+        name="dsc_param_maps_qc",
+    )
+    dsc_param_maps_qc.inputs.subject_id = subject_id
+    dsc_param_maps_qc.inputs.session_id = session_id or ""
+
+    dsc_leakage_qc = pe.Node(
+        niu.Function(
+            input_names=[
+                "k2_map_file", "auc_raw_file", "auc_corr_file",
+                "auc_diff_file", "brain_mask_file",
+                "concentration_file", "corrected_concentration_file",
+                "psr_file", "tr", "subject_id", "session_id",
+                "preload_qc",
+            ],
+            output_names=["plot_file"],
+            function=_generate_dsc_leakage_qc,
+        ),
+        name="dsc_leakage_qc",
+    )
+    dsc_leakage_qc.inputs.subject_id = subject_id
+    dsc_leakage_qc.inputs.session_id = session_id or ""
+
+    dsc_fit_qc = pe.Node(
+        niu.Function(
+            input_names=[
+                "qc_fit_data_file", "brain_mask_file", "cbf_file",
+                "subject_id", "session_id",
+            ],
+            output_names=["plot_file"],
+            function=_generate_dsc_fit_qc,
+        ),
+        name="dsc_fit_qc",
+    )
+    dsc_fit_qc.inputs.subject_id = subject_id
+    dsc_fit_qc.inputs.session_id = session_id or ""
+
+    dsc_brain_mask_qc = pe.Node(
+        niu.Function(
+            input_names=["mean_file", "brain_mask_file", "subject_id", "session_id"],
+            output_names=["out_file"],
+            function=_create_perfusion_brain_mask_filmstrip,
+        ),
+        name="dsc_brain_mask_qc",
+    )
+    dsc_brain_mask_qc.inputs.subject_id = subject_id
+    dsc_brain_mask_qc.inputs.session_id = session_id or ""
+
+    workflow.connect([
+        (inputnode, merge_qc, [
+            ("motion_qc_metrics", "motion_qc"),
+            ("motion_summary", "motion_summary"),
+            ("preload_qc_dict", "preload_qc"),
+            ("aif_qc_metrics", "aif_qc"),
+            ("deconv_qc_metrics", "deconv_qc"),
+            ("registration_qc_metrics", "registration_qc"),
+            ("normalization_factor", "normalization_factor"),
+        ]),
+        (inputnode, reg_filmstrip, [
+            ("prebolus_mean_file", "dsc_mean_file"),
+            ("registered_t1w", "registered_t1w_file"),
+            ("brain_mask_file", "brain_mask_file"),
+        ]),
+        (inputnode, aif_qc_plot, [
+            ("dsc_moco", "dsc_file"),
+            ("aif_qc_metrics", "qc_metrics"),
+            ("out_aif_curve", "aif_curve_file"),
+            ("out_aif_mask", "aif_mask_file"),
+            ("out_raw_aif_curve", "raw_aif_curve_file"),
+            ("gamma_fit_applied", "gamma_fit_applied"),
+            ("t1w_to_dsc_matrix", "t1w_to_dsc_xfm"),
+            ("brain_mask_file", "brain_mask_file"),
+            ("tr", "tr"),
+            ("t1w_to_mni_xfm", "t1w_to_mni_xfm"),
+        ]),
+        (inputnode, dsc_preproc_qc, [
+            ("dsc_moco", "dsc_signal_file"),
+            ("brain_mask_file", "brain_mask_file"),
+            ("tr", "tr"),
+            ("te", "te"),
+        ]),
+        (inputnode, dsc_param_maps_qc, [
+            ("rel_cbf", "rel_cbf_file"),
+            ("rel_cbv_auc", "rel_cbv_file"),
+            ("mtt", "mtt_file"),
+            ("tmax", "tmax_file"),
+            ("psr", "psr_file"),
+            ("ttp_corrected", "ttp_file"),
+            ("brain_mask_file", "brain_mask_file"),
+        ]),
+        (inputnode, dsc_leakage_qc, [
+            ("preload_qc_dict", "preload_qc"),
+            ("corrected_concentration_file", "corrected_concentration_file"),
+            ("concentration_file", "concentration_file"),
+            ("psr", "psr_file"),
+            ("k2", "k2_map_file"),
+            ("auc_raw", "auc_raw_file"),
+            ("auc_corr", "auc_corr_file"),
+            ("auc_diff", "auc_diff_file"),
+            ("brain_mask_file", "brain_mask_file"),
+            ("tr", "tr"),
+        ]),
+        (inputnode, dsc_fit_qc, [
+            ("rel_cbf", "cbf_file"),
+            ("qc_fit_data", "qc_fit_data_file"),
+            ("brain_mask_file", "brain_mask_file"),
+        ]),
+        (inputnode, dsc_brain_mask_qc, [
+            ("prebolus_mean_file", "mean_file"),
+            ("brain_mask_file", "brain_mask_file"),
+        ]),
+        (aif_qc_plot, merge_qc, [("out_aif_metrics", "aif_metrics")]),
+        (dsc_preproc_qc, merge_qc, [("stats", "preprocessing_stats")]),
+        (merge_qc, outputnode, [("merged_qc", "qc_metrics")]),
+        (reg_filmstrip, outputnode, [("filmstrip_file", "registration_filmstrip")]),
+        (aif_qc_plot, outputnode, [
+            ("out_aif_plot", "aif_curve_plot"),
+            ("out_aif_location", "aif_location_plot"),
+            ("out_aif_candidates", "aif_candidates_plot"),
+            ("out_aif_metrics", "aif_metrics"),
+        ]),
+        (dsc_preproc_qc, outputnode, [
+            ("plot_file", "dsc_preprocessing_qc_plot"),
+            ("stats", "preprocessing_stats"),
+        ]),
+        (dsc_param_maps_qc, outputnode, [("plot_file", "dsc_param_maps_qc_plot")]),
+        (dsc_leakage_qc, outputnode, [("plot_file", "dsc_leakage_qc_plot")]),
+        (dsc_fit_qc, outputnode, [("plot_file", "dsc_fit_qc_plot")]),
+        (dsc_brain_mask_qc, outputnode, [("out_file", "brain_mask_filmstrip")]),
+    ])
+    return workflow
+
+
 def init_dsc_preproc_wf(
     bids_dir: Union[str, Path],
     output_dir: Union[str, Path],
@@ -1790,128 +2111,13 @@ def init_dsc_preproc_wf(
     else:
         aif_source = "auto"
 
-    merge_qc = pe.Node(
-        niu.Function(
-            input_names=[
-                "motion_qc",
-                "preload_qc",
-                "aif_qc",
-                "deconv_qc",
-                "registration_qc",
-                "normalization_factor",
-                "motion_summary",
-                "aif_metrics",
-                "preprocessing_stats",
-                "aif_source",
-                "registration_bbr",
-            ],
-            output_names=["merged_qc"],
-            function=_merge_qc_metrics,
-        ),
-        name="merge_qc",
+    qc_wf = init_dsc_qc_wf(
+        subject_id=subject_id,
+        session_id=session_id,
+        aif_source=aif_source,
+        registration_bbr=config.registration == "flirt_bbr",
+        baseline_frames=config.pre_bolus,
     )
-    merge_qc.inputs.aif_source = aif_source
-    merge_qc.inputs.registration_bbr = config.registration == "flirt_bbr"
-
-    # -------------------------------------------------------------------
-    # Node 9: Registration QC Filmstrip
-    # -------------------------------------------------------------------
-    reg_filmstrip = pe.Node(
-        niu.Function(
-            input_names=["dsc_mean_file", "registered_t1w_file", "brain_mask_file",
-                         "subject_id", "session_id"],
-            output_names=["filmstrip_file"],
-            function=_create_registration_filmstrip,
-        ),
-        name="reg_filmstrip",
-    )
-    reg_filmstrip.inputs.subject_id = subject_id
-    reg_filmstrip.inputs.session_id = session_id or ""
-
-    # -------------------------------------------------------------------
-    # Node 9b: AIF QC Plots
-    # -------------------------------------------------------------------
-    aif_qc_plot = pe.Node(
-        AIFQCPlot(
-            subject_id=subject_id,
-            session_id=session_id or "",
-        ),
-        name="aif_qc_plot",
-    )
-
-    # -------------------------------------------------------------------
-    # Node 9c: DSC Preprocessing QC Plot
-    # -------------------------------------------------------------------
-    dsc_preproc_qc = pe.Node(
-        niu.Function(
-            input_names=[
-                "dsc_signal_file", "brain_mask_file",
-                "baseline_frames",
-                "tr", "te", "subject_id", "session_id",
-            ],
-            output_names=["plot_file", "stats"],
-            function=_generate_dsc_preprocessing_qc,
-        ),
-        name="dsc_preproc_qc",
-    )
-    dsc_preproc_qc.inputs.baseline_frames = config.pre_bolus  # S0 baseline (pipeline value)
-    dsc_preproc_qc.inputs.subject_id = subject_id
-    dsc_preproc_qc.inputs.session_id = session_id or ""
-
-    # -------------------------------------------------------------------
-    # Node 9d: DSC Parameter Maps QC Plot
-    # -------------------------------------------------------------------
-    dsc_param_maps_qc = pe.Node(
-        niu.Function(
-            input_names=[
-                "rel_cbf_file", "rel_cbv_file", "mtt_file",
-                "tmax_file", "psr_file", "ttp_file",
-                "brain_mask_file", "subject_id", "session_id",
-            ],
-            output_names=["plot_file"],
-            function=_generate_dsc_param_maps_qc,
-        ),
-        name="dsc_param_maps_qc",
-    )
-    dsc_param_maps_qc.inputs.subject_id = subject_id
-    dsc_param_maps_qc.inputs.session_id = session_id or ""
-
-    # -------------------------------------------------------------------
-    # Node 9e: DSC Leakage Correction QC Plot (conditional on K2)
-    # -------------------------------------------------------------------
-    dsc_leakage_qc = pe.Node(
-        niu.Function(
-            input_names=[
-                "k2_map_file", "auc_raw_file", "auc_corr_file",
-                "auc_diff_file", "brain_mask_file",
-                "concentration_file", "corrected_concentration_file",
-                "psr_file", "tr", "subject_id", "session_id",
-                "preload_qc",
-            ],
-            output_names=["plot_file"],
-            function=_generate_dsc_leakage_qc,
-        ),
-        name="dsc_leakage_qc",
-    )
-    dsc_leakage_qc.inputs.subject_id = subject_id
-    dsc_leakage_qc.inputs.session_id = session_id or ""
-
-    # -------------------------------------------------------------------
-    # Node 9e2: DSC Fit QC Plot (all deconvolution methods)
-    # -------------------------------------------------------------------
-    dsc_fit_qc = pe.Node(
-        niu.Function(
-            input_names=[
-                "qc_fit_data_file", "brain_mask_file", "cbf_file",
-                "subject_id", "session_id",
-            ],
-            output_names=["plot_file"],
-            function=_generate_dsc_fit_qc,
-        ),
-        name="dsc_fit_qc",
-    )
-    dsc_fit_qc.inputs.subject_id = subject_id
-    dsc_fit_qc.inputs.session_id = session_id or ""
 
     # -------------------------------------------------------------------
     # Node 9f: Transform structural underlays to DSC Space
@@ -1985,26 +2191,6 @@ def init_dsc_preproc_wf(
     # HD-BET on pre-bolus mean for brain-extracted DSC (improves registration)
     workflow.connect([
         (motion_wf, hdbet_dsc, [("outputnode.prebolus_mean_file", "dsc_mean_file")]),
-    ])
-
-    # Brain mask filmstrip QC (after HD-BET)
-    dsc_brain_mask_qc = pe.Node(
-        niu.Function(
-            input_names=["mean_file", "brain_mask_file", "subject_id", "session_id"],
-            output_names=["out_file"],
-            function=_create_perfusion_brain_mask_filmstrip,
-        ),
-        name="dsc_brain_mask_qc",
-    )
-    dsc_brain_mask_qc.inputs.subject_id = subject_id
-    dsc_brain_mask_qc.inputs.session_id = session_id or ""
-    workflow.connect([
-        (motion_wf, dsc_brain_mask_qc, [
-            ("outputnode.prebolus_mean_file", "mean_file"),
-        ]),
-        (hdbet_dsc, dsc_brain_mask_qc, [
-            ("dsc_brain_mask_file", "brain_mask_file"),
-        ]),
     ])
 
     # NOTE: transform_brain_mask disconnected — using HD-BET mask directly.
@@ -2203,82 +2389,54 @@ def init_dsc_preproc_wf(
         ]),
     ])
 
-    # Registration QC filmstrip
+    # Feed the QC sub-workflow: per-stage QC metrics from every
+    # sub-workflow, perfusion/leakage maps, the DSC brain mask, and
+    # acquisition parameters.
     workflow.connect([
-        (motion_wf, reg_filmstrip, [("outputnode.prebolus_mean_file", "dsc_mean_file")]),
-        (registration_wf, reg_filmstrip, [("outputnode.registered_t1w", "registered_t1w_file")]),
-        (hdbet_dsc, reg_filmstrip, [
-            ("dsc_brain_mask_file", "brain_mask_file"),
+        (motion_wf, qc_wf, [
+            ("outputnode.motion_qc_metrics", "inputnode.motion_qc_metrics"),
+            ("outputnode.motion_summary", "inputnode.motion_summary"),
+            ("outputnode.prebolus_mean_file", "inputnode.prebolus_mean_file"),
+            ("outputnode.dsc_moco", "inputnode.dsc_moco"),
         ]),
-    ])
-
-    # AIF QC plots
-    workflow.connect([
-        (conc_aif_wf, aif_qc_plot, [
-            ("outputnode.out_aif_curve", "aif_curve_file"),
-            ("outputnode.out_aif_mask", "aif_mask_file"),
-            ("outputnode.qc_metrics", "qc_metrics"),
-            ("outputnode.out_raw_aif_curve", "raw_aif_curve_file"),
-            ("outputnode.gamma_fit_applied", "gamma_fit_applied"),
+        (preload_wf, qc_wf, [
+            ("outputnode.qc_dict", "inputnode.preload_qc_dict"),
+            ("outputnode.corrected_concentration_file", "inputnode.corrected_concentration_file"),
         ]),
-        (motion_wf, aif_qc_plot, [("outputnode.dsc_moco", "dsc_file")]),
-        (hdbet_dsc, aif_qc_plot, [
-            ("dsc_brain_mask_file", "brain_mask_file"),
+        (conc_aif_wf, qc_wf, [
+            ("outputnode.qc_metrics", "inputnode.aif_qc_metrics"),
+            ("outputnode.out_aif_curve", "inputnode.out_aif_curve"),
+            ("outputnode.out_aif_mask", "inputnode.out_aif_mask"),
+            ("outputnode.out_raw_aif_curve", "inputnode.out_raw_aif_curve"),
+            ("outputnode.gamma_fit_applied", "inputnode.gamma_fit_applied"),
+            ("outputnode.concentration_file", "inputnode.concentration_file"),
         ]),
-        (inputnode, aif_qc_plot, [
-            ("tr", "tr"),
-            ("t1w_to_mni_xfm", "t1w_to_mni_xfm"),
+        (deconvolution_wf, qc_wf, [
+            ("outputnode.qc_metrics", "inputnode.deconv_qc_metrics"),
+            ("outputnode.out_rel_cbf", "inputnode.rel_cbf"),
+            ("outputnode.out_rel_cbv_auc", "inputnode.rel_cbv_auc"),
+            ("outputnode.out_mtt", "inputnode.mtt"),
+            ("outputnode.out_tmax", "inputnode.tmax"),
+            ("outputnode.out_psr", "inputnode.psr"),
+            ("outputnode.out_ttp_corrected", "inputnode.ttp_corrected"),
+            ("outputnode.out_k2", "inputnode.k2"),
+            ("outputnode.out_auc_raw", "inputnode.auc_raw"),
+            ("outputnode.out_auc_corr", "inputnode.auc_corr"),
+            ("outputnode.out_auc_diff", "inputnode.auc_diff"),
+            ("outputnode.out_qc_fit_data", "inputnode.qc_fit_data"),
         ]),
-        (registration_wf, aif_qc_plot, [
-            ("outputnode.t1w_to_dsc_matrix", "t1w_to_dsc_xfm"),
+        (registration_wf, qc_wf, [
+            ("outputnode.qc_metrics", "inputnode.registration_qc_metrics"),
+            ("outputnode.registered_t1w", "inputnode.registered_t1w"),
+            ("outputnode.t1w_to_dsc_matrix", "inputnode.t1w_to_dsc_matrix"),
         ]),
-    ])
-
-    # DSC Preprocessing QC
-    workflow.connect([
-        (motion_wf, dsc_preproc_qc, [("outputnode.dsc_moco", "dsc_signal_file")]),
-        (hdbet_dsc, dsc_preproc_qc, [("dsc_brain_mask_file", "brain_mask_file")]),
-        (inputnode, dsc_preproc_qc, [("tr", "tr"), ("te", "te")]),
-    ])
-
-    # DSC Parameter Maps QC
-    workflow.connect([
-        (deconvolution_wf, dsc_param_maps_qc, [
-            ("outputnode.out_rel_cbf", "rel_cbf_file"),
-            ("outputnode.out_rel_cbv_auc", "rel_cbv_file"),
-            ("outputnode.out_mtt", "mtt_file"),
-            ("outputnode.out_tmax", "tmax_file"),
-            ("outputnode.out_psr", "psr_file"),
-            ("outputnode.out_ttp_corrected", "ttp_file"),
+        (normalization_wf, qc_wf, [("outputnode.normalization_factor", "inputnode.normalization_factor")]),
+        (hdbet_dsc, qc_wf, [("dsc_brain_mask_file", "inputnode.brain_mask_file")]),
+        (inputnode, qc_wf, [
+            ("tr", "inputnode.tr"),
+            ("te", "inputnode.te"),
+            ("t1w_to_mni_xfm", "inputnode.t1w_to_mni_xfm"),
         ]),
-        (hdbet_dsc, dsc_param_maps_qc, [("dsc_brain_mask_file", "brain_mask_file")]),
-    ])
-
-    # DSC Leakage Correction QC
-    workflow.connect([
-        (deconvolution_wf, dsc_leakage_qc, [
-            ("outputnode.out_k2", "k2_map_file"),
-            ("outputnode.out_auc_raw", "auc_raw_file"),
-            ("outputnode.out_auc_corr", "auc_corr_file"),
-            ("outputnode.out_auc_diff", "auc_diff_file"),
-            ("outputnode.out_psr", "psr_file"),
-        ]),
-        (hdbet_dsc, dsc_leakage_qc, [("dsc_brain_mask_file", "brain_mask_file")]),
-        (conc_aif_wf, dsc_leakage_qc, [("outputnode.concentration_file", "concentration_file")]),
-        (preload_wf, dsc_leakage_qc, [
-            ("outputnode.corrected_concentration_file", "corrected_concentration_file"),
-            ("outputnode.qc_dict", "preload_qc"),
-        ]),
-        (inputnode, dsc_leakage_qc, [("tr", "tr")]),
-    ])
-
-    # DSC Fit QC (all deconvolution methods)
-    workflow.connect([
-        (deconvolution_wf, dsc_fit_qc, [
-            ("outputnode.out_qc_fit_data", "qc_fit_data_file"),
-            ("outputnode.out_rel_cbf", "cbf_file"),
-        ]),
-        (hdbet_dsc, dsc_fit_qc, [("dsc_brain_mask_file", "brain_mask_file")]),
     ])
 
     # -------------------------------------------------------------------
@@ -2416,19 +2574,6 @@ def init_dsc_preproc_wf(
             ]),
         ])
 
-    # Merge QC metrics
-    workflow.connect([
-        (motion_wf, merge_qc, [("outputnode.motion_qc_metrics", "motion_qc")]),
-        (preload_wf, merge_qc, [("outputnode.qc_dict", "preload_qc")]),
-        (conc_aif_wf, merge_qc, [("outputnode.qc_metrics", "aif_qc")]),
-        (deconvolution_wf, merge_qc, [("outputnode.qc_metrics", "deconv_qc")]),
-        (registration_wf, merge_qc, [("outputnode.qc_metrics", "registration_qc")]),
-        (normalization_wf, merge_qc, [("outputnode.normalization_factor", "normalization_factor")]),
-        (motion_wf, merge_qc, [("outputnode.motion_summary", "motion_summary")]),
-        (aif_qc_plot, merge_qc, [("out_aif_metrics", "aif_metrics")]),
-        (dsc_preproc_qc, merge_qc, [("stats", "preprocessing_stats")]),
-    ])
-
     # Connect to Output Node
     workflow.connect([
         # Motion correction outputs
@@ -2501,7 +2646,7 @@ def init_dsc_preproc_wf(
         (registration_wf, outputnode, [("outputnode.t1w_to_dsc_matrix", "t1w_to_dsc_xfm")]),
         # Registration (.h5 for derivatives)
         (registration_wf, outputnode, [("outputnode.t1w_to_dsc_h5", "t1w_to_dsc_h5")]),
-        (reg_filmstrip, outputnode, [("filmstrip_file", "registration_filmstrip")]),
+        (qc_wf, outputnode, [("outputnode.registration_filmstrip", "registration_filmstrip")]),
     ])
 
     # Convert inverted DSC→T1w .mat to .h5 (ref/mov swapped for inverse)
@@ -2543,34 +2688,34 @@ def init_dsc_preproc_wf(
 
     workflow.connect([
         # AIF QC plots
-        (aif_qc_plot, outputnode, [
-            ("out_aif_plot", "aif_curve_plot"),
-            ("out_aif_location", "aif_location_plot"),
-            ("out_aif_candidates", "aif_candidates_plot"),
+        (qc_wf, outputnode, [
+            ("outputnode.aif_curve_plot", "aif_curve_plot"),
+            ("outputnode.aif_location_plot", "aif_location_plot"),
+            ("outputnode.aif_candidates_plot", "aif_candidates_plot"),
         ]),
         # Motion QC plot
         (motion_wf, outputnode, [("outputnode.motion_qc_plot_file", "motion_qc_plot")]),
         # DSC QC plots
-        (dsc_preproc_qc, outputnode, [
-            ("plot_file", "dsc_preprocessing_qc_plot"),
-            ("stats", "preprocessing_stats"),
+        (qc_wf, outputnode, [
+            ("outputnode.dsc_preprocessing_qc_plot", "dsc_preprocessing_qc_plot"),
+            ("outputnode.preprocessing_stats", "preprocessing_stats"),
         ]),
-        (dsc_param_maps_qc, outputnode, [("plot_file", "dsc_param_maps_qc_plot")]),
-        (dsc_leakage_qc, outputnode, [("plot_file", "dsc_leakage_qc_plot")]),
+        (qc_wf, outputnode, [("outputnode.dsc_param_maps_qc_plot", "dsc_param_maps_qc_plot")]),
+        (qc_wf, outputnode, [("outputnode.dsc_leakage_qc_plot", "dsc_leakage_qc_plot")]),
         # Brain mask filmstrip
-        (dsc_brain_mask_qc, outputnode, [("out_file", "brain_mask_filmstrip")]),
+        (qc_wf, outputnode, [("outputnode.brain_mask_filmstrip", "brain_mask_filmstrip")]),
     ])
 
     workflow.connect([
-        (dsc_fit_qc, outputnode, [("plot_file", "dsc_fit_qc_plot")]),
+        (qc_wf, outputnode, [("outputnode.dsc_fit_qc_plot", "dsc_fit_qc_plot")]),
     ])
 
     workflow.connect([
         # QC metrics
-        (merge_qc, outputnode, [("merged_qc", "qc_metrics")]),
+        (qc_wf, outputnode, [("outputnode.qc_metrics", "qc_metrics")]),
         (preload_wf, outputnode, [("outputnode.qc_dict", "preload_qc")]),
         (motion_wf, outputnode, [("outputnode.motion_qc_metrics", "motion_qc")]),
-        (aif_qc_plot, outputnode, [("out_aif_metrics", "aif_metrics")]),
+        (qc_wf, outputnode, [("outputnode.aif_metrics", "aif_metrics")]),
     ])
 
     # Smoothed outputs (only if smooth_fwhm > 0)
