@@ -1296,6 +1296,11 @@ def enrich_dce_pk_map_sidecar(
         from pmriprep.utils.aif_provenance import apply_aif_sidecar
 
         apply_aif_sidecar(sidecar, map_key, qc_metrics, modality="DCE")
+    # AIF->tissue BAT pre-alignment provenance (records the applied shift, or
+    # the reason none was applied) on every AIF-dependent PK map.
+    bat = qc_metrics.get("bat_correction")
+    if isinstance(bat, dict):
+        sidecar.setdefault("PerfusionProcessing", {})["BATCorrection"] = dict(bat)
     if map_key == "ktrans":
         xval = qc_metrics.get("dsc_dce_validation")
         if isinstance(xval, dict):

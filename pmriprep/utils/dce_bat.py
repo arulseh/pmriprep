@@ -5,9 +5,18 @@ methods, with a default fallback.
 """
 
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 import numpy.typing as npt
+
+#: Largest plausible AIF-to-tissue bolus transit delay (seconds). Beyond this,
+#: the estimate is treated as a detection failure and no shift is applied.
+MAX_AIF_TISSUE_DELAY_S: float = 12.0
+#: A delay below this fraction of the volume TR is below temporal resolution
+#: (sub-frame) and is not applied — at coarse TR, sub-frame "delays" are
+#: quantization noise that would harm test-retest reproducibility.
+AIF_DELAY_SUBFRAME_FRACTION: float = 0.25
 
 
 @dataclass
@@ -134,3 +143,143 @@ def detect_bolus_arrival_time(
         confidence="low",
         method="default",
     )
+
+
+def shift_aif(
+    aif: npt.NDArray[np.floating],
+    time_points: npt.NDArray[np.floating],
+    delay_seconds: float,
+) -> npt.NDArray[np.float64]:
+    """Time-shift an AIF curve by a delay via linear interpolation.
+
+    Aligns the AIF to delayed tissue by resampling it at ``t - delay``:
+    ``aif_aligned(t) = aif(t - delay)``. A positive ``delay_seconds`` shifts
+    the AIF later in time, so its rise meets a tissue curve that enhances
+    after the sampling artery (the expected sign for a contralateral AIF).
+
+    Pre-acquisition query times (``t - delay`` below the first sample) are
+    filled with the AIF baseline value ``aif[0]`` (not zero), so no spurious
+    negative ramp or acausal signal is introduced; query times past the last
+    sample are filled with ``aif[-1]``.
+
+    Parameters
+    ----------
+    aif : numpy.ndarray
+        1D AIF plasma concentration curve (mM).
+    time_points : numpy.ndarray
+        1D time array in minutes (the axis the PK models convolve on). May be
+        non-uniform.
+    delay_seconds : float
+        Delay in seconds. Zero returns the AIF unchanged.
+
+    Returns
+    -------
+    numpy.ndarray
+        The time-shifted AIF, same shape as ``aif``.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> t = np.arange(10) * 0.1  # minutes
+    >>> aif = np.array([0, 0, 0, 1.0, 2, 1, 0.5, 0.4, 0.3, 0.2])
+    >>> shifted = shift_aif(aif, t, delay_seconds=6.0)  # +1 frame (0.1 min)
+    >>> bool(shifted[4] == aif[3])
+    True
+    """
+    arr: npt.NDArray[np.float64] = np.asarray(aif, dtype=np.float64)
+    if delay_seconds == 0.0 or arr.shape[0] < 2:
+        unchanged: npt.NDArray[np.float64] = arr.copy()
+        return unchanged
+    delay_minutes = delay_seconds / 60.0
+    query = np.asarray(time_points, dtype=np.float64) - delay_minutes
+    shifted: npt.NDArray[np.float64] = np.interp(
+        query, time_points, arr, left=float(arr[0]), right=float(arr[-1]),
+    )
+    return shifted
+
+
+def compute_aif_tissue_delay(
+    aif_curve: npt.NDArray[np.floating],
+    tissue_roi_curve: npt.NDArray[np.floating],
+    time_points_min: npt.NDArray[np.floating],
+    tr_seconds: float,
+    baseline_frames: int = 5,
+) -> tuple[float, dict[str, Any]]:
+    """Compute the guarded AIF-to-tissue bolus-arrival delay, in seconds.
+
+    The delay is ``tissue_BAT - AIF_BAT``, where both arrival times come from
+    :func:`detect_bolus_arrival_time` applied to the arterial AIF curve and an
+    aggregate tissue ROI curve respectively, on the same acquisition time grid
+    (so the difference is a true common-clock transit interval). The arterial
+    AIF curve must be the measured AIF — never a brain-mean surrogate, which
+    measures tissue transit rather than arterial arrival.
+
+    A series of physics guards return ``0.0`` (no shift) whenever the delay is
+    unreliable or below what the temporal resolution can resolve, so applying
+    the result is always safe.
+
+    Parameters
+    ----------
+    aif_curve : numpy.ndarray
+        1D measured arterial input function curve.
+    tissue_roi_curve : numpy.ndarray
+        1D aggregate (e.g. median) tissue concentration curve over the ROI.
+    time_points_min : numpy.ndarray
+        1D time array in minutes (passed to ``detect_bolus_arrival_time``,
+        which returns seconds).
+    tr_seconds : float
+        Volume TR (temporal resolution between dynamics) in seconds. Sets the
+        sub-frame no-op threshold; this is the volume TR, not the pulse TR.
+    baseline_frames : int, optional
+        Number of pre-contrast baseline frames.
+
+    Returns
+    -------
+    tuple of (float, dict)
+        ``(delay_seconds, provenance)``. ``delay_seconds`` is ``0.0`` when no
+        shift should be applied; ``provenance`` records both arrival times,
+        the raw delay, whether it was applied, and the reason.
+    """
+    aif_bat = detect_bolus_arrival_time(aif_curve, time_points_min, baseline_frames)
+    tissue_bat = detect_bolus_arrival_time(
+        tissue_roi_curve, time_points_min, baseline_frames,
+    )
+    delay = float(tissue_bat.bat_seconds - aif_bat.bat_seconds)
+    subframe = AIF_DELAY_SUBFRAME_FRACTION * float(tr_seconds)
+
+    prov: dict[str, Any] = {
+        "bat_aif_seconds": round(aif_bat.bat_seconds, 4),
+        "bat_tissue_seconds": round(tissue_bat.bat_seconds, 4),
+        "bat_aif_method": aif_bat.method,
+        "bat_tissue_method": tissue_bat.method,
+        "raw_delay_seconds": round(delay, 4),
+    }
+
+    def _noop(reason: str) -> tuple[float, dict[str, Any]]:
+        return 0.0, {**prov, "applied": False, "reason": reason}
+
+    # A guessed (default-method) or low-confidence arrival on either curve
+    # makes the delay sign meaningless — never shift on it.
+    if (
+        aif_bat.confidence == "low"
+        or aif_bat.method == "default"
+        or tissue_bat.confidence == "low"
+        or tissue_bat.method == "default"
+    ):
+        return _noop("low_bat_confidence")
+    # A contralateral AIF should not arrive after the tissue; a clearly
+    # negative delay signals a detection failure.
+    if delay < -subframe:
+        return _noop("negative_delay_rejected")
+    # Beyond the physiological ceiling, treat as a detection failure.
+    if abs(delay) > MAX_AIF_TISSUE_DELAY_S:
+        return _noop("delay_clamped")
+    # Sub-frame delay is below temporal resolution — applying it would inject
+    # quantization noise (the documented coarse-TR repeatability hazard).
+    if abs(delay) < subframe:
+        return _noop("delay_below_resolution")
+
+    return delay, {
+        **prov, "applied": True, "reason": "applied",
+        "delay_seconds": round(delay, 4),
+    }

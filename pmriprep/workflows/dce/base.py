@@ -1643,6 +1643,7 @@ def init_dce_preproc_wf(
         hematocrit=config.hematocrit,
         n_procs=max(1, config.num_processes),
         sloppy=config.sloppy,
+        aif_bat_alignment=config.aif_bat_alignment,
     )
     if random_seed is not None:
         pk_kwargs["random_seed"] = random_seed

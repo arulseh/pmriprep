@@ -261,6 +261,7 @@ dce:
 | `aif_mask_file` | path | `null` | Custom AIF mask file (search constraint; DCE space) |
 | `n_aif_candidates` | int | `10` | Number of AIF candidate voxels to average |
 | `lesion_distance` | float | `15.0` | Minimum distance (mm) from lesion for AIF candidates |
+| `aif_bat_alignment` | str | `"off"` | AIF→tissue bolus-arrival pre-alignment: `auto`, `off`. `auto` shifts a measured AIF to correct the arterial-to-tissue delay (benefits fine temporal resolution ≲3 s); `off` = no shift |
 | `no_t1` | bool | `false` | Skip T1 mapping |
 | `t1_method` | str | `"hybrid"` | VFA T1 fitting: `hybrid`, `wlls`, `nlls` |
 | `t1_map_file` | path | `null` | External T1 map (NIfTI, ms). Bypasses VFA fitting |

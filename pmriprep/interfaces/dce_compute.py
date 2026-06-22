@@ -1016,12 +1016,23 @@ class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
         desc="Bolus arrival frame index for phase-adaptive weighting",
     )
 
-    # AIF detection method (for BAT correction logic)
+    # AIF detection method (gates AIF->tissue BAT pre-alignment)
     aif_detection_method = traits.Str(
         "population",
         usedefault=True,
-        desc="AIF detection method: 'population', 'automatic', 'atlas'. "
-             "BAT correction is applied only for population AIFs.",
+        desc="AIF detection method: 'population', 'automatic', 'atlas', "
+             "'external'. Gates BAT pre-alignment, which applies only to "
+             "measured 'automatic'/'atlas' AIFs (see aif_bat_alignment).",
+    )
+
+    aif_bat_alignment = traits.Enum(
+        "off",
+        "auto",
+        usedefault=True,
+        desc="AIF-to-tissue bolus-arrival pre-alignment. 'auto' shifts a "
+             "measured (automatic/atlas) AIF in time to correct the "
+             "arterial-to-tissue delay (guarded: no-op below temporal "
+             "resolution; benefits fine temporal resolution). 'off' = no shift.",
     )
 
     aif_uncertainty_inflation_factor = traits.Float(
@@ -1558,29 +1569,50 @@ class ComputeDCEMaps(BaseInterface):
             )
 
         # =====================================================================
-        # BAT Correction
+        # AIF->tissue BAT pre-alignment
         # =====================================================================
-        # Population AIF is pre-aligned to baseline_frames during generation
-        # (see _generate_population_aif in dce_aif.py). The Parker AIF has
-        # ~7s of intrinsic rise time before reaching significant levels,
-        # which naturally aligns with the first post-baseline tissue
-        # enhancement frame. The Tofts/2CXM convolution handles residual
-        # sub-TR timing offsets. BAT correction was evaluated but found to
-        # worsen test-retest reproducibility: at coarse TR (~5s), tissue BAT
-        # detection has ~1-frame quantization uncertainty that introduces
-        # per-visit noise, breaking the consistency of identical AIF placement
-        # across visits.
-        # Auto-detected AIFs share the same temporal frame as tissue data
-        # and do not require BAT correction.
+        # The PK convolution is delay-free, so a measured AIF sampled from a
+        # vessel the bolus reaches before the tissue (e.g. the contralateral
+        # default) carries an uncorrected arterial-to-tissue delay that biases
+        # absolute Ktrans/ve/vp. When enabled, shift the measured AIF in time
+        # to align its arrival with the enhancing tissue (a pre-correction
+        # shift, not a fit parameter; mirrors the OSIPI approach). Population
+        # AIFs are already pre-aligned at generation (baseline_frames*TR; see
+        # dce_aif.py) and external/user AIFs have unknown alignment, so both
+        # are left untouched. compute_aif_tissue_delay returns a zero shift
+        # (no-op) when the delay is below temporal resolution or unreliable,
+        # which avoids the documented coarse-TR repeatability hazard.
         aif_detection_method = str(self.inputs.aif_detection_method)
-        bat_correction: dict[str, Any] = {
-            "applied": False,
-            "reason": (
-                "population_aif_pre_aligned"
-                if aif_detection_method == "population"
-                else "not_population_aif"
-            ),
-        }
+        bat_alignment_mode = str(self.inputs.aif_bat_alignment)
+        bat_correction: dict[str, Any]
+        if bat_alignment_mode == "off":
+            bat_correction = {"applied": False, "reason": "alignment_off"}
+        elif aif_detection_method in ("population", "external"):
+            bat_correction = {
+                "applied": False,
+                "reason": f"{aif_detection_method}_aif_not_aligned",
+            }
+        elif not np.any(fitting_mask):
+            bat_correction = {"applied": False, "reason": "bat_detection_failed"}
+        else:
+            from pmriprep.utils.dce_bat import (
+                compute_aif_tissue_delay,
+                shift_aif,
+            )
+            # Aggregate enhancing-tissue arrival from the (brain & tSNR &
+            # enhancement) fitting mask; median is robust to high-leakage
+            # tumor voxels.
+            roi_curve = np.median(conc_data[fitting_mask], axis=0)
+            delay_s, bat_correction = compute_aif_tissue_delay(
+                aif_curve=aif,
+                tissue_roi_curve=roi_curve,
+                time_points_min=time_points,
+                tr_seconds=selection_tr_seconds,
+                baseline_frames=baseline_frames,
+            )
+            bat_correction["granularity"] = "roi_enhancement"
+            if delay_s != 0.0:
+                aif = shift_aif(aif, time_points, delay_s)
 
         spatial_shape = conc_data.shape[:3]
 
@@ -1704,6 +1736,9 @@ class ComputeDCEMaps(BaseInterface):
                     and str(self.inputs.constraint_mode) == "auto"
                     and vp_constraint_map is not None
                 ):
+                    # ``aif`` here is post-BAT-alignment when enabled; peak
+                    # amplitude is shift-invariant, and peak_alignment_lag_s
+                    # below then reflects the residual post-alignment lag.
                     aif_peak = float(np.max(aif))
                     if aif_peak > 0:
                         valid_constrained = (

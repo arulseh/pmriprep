@@ -90,6 +90,10 @@ class DCEConfig:
     aif_mask_file: Optional[Path] = None
     lesion_distance: float = 15.0
     n_aif_candidates: int = 10
+    # AIF->tissue bolus-arrival pre-alignment: "auto" shifts a measured AIF to
+    # correct the arterial-to-tissue delay (guarded; benefits fine temporal
+    # resolution), "off" applies no shift.
+    aif_bat_alignment: Literal["auto", "off"] = "off"
 
     # Structural settings
     underlays: List[str] = field(default_factory=list)
