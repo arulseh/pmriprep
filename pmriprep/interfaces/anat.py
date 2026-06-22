@@ -949,7 +949,7 @@ class TissueSegmentationOutputSpec(TraitedSpec):
 
 
 class TissueSegmentation(CommandLine):
-    """FSL FAST tissue segmentation for WM/GM/CSF probability maps.
+    r"""FSL FAST tissue segmentation for WM/GM/CSF probability maps.
 
     This interface wraps FSL FAST (FMRIB's Automated Segmentation Tool) to
     perform tissue classification on brain-extracted T1w images. FAST uses
@@ -994,10 +994,10 @@ class TissueSegmentation(CommandLine):
     Notes
     -----
     FSL FAST output naming convention for 3-class segmentation:
-    - *_pve_0.nii.gz: CSF probability (class 0)
-    - *_pve_1.nii.gz: GM probability (class 1)
-    - *_pve_2.nii.gz: WM probability (class 2)
-    - *_seg.nii.gz: Combined hard segmentation (0=background, 1=CSF, 2=GM, 3=WM)
+    - \*_pve_0.nii.gz: CSF probability (class 0)
+    - \*_pve_1.nii.gz: GM probability (class 1)
+    - \*_pve_2.nii.gz: WM probability (class 2)
+    - \*_seg.nii.gz: Combined hard segmentation (0=background, 1=CSF, 2=GM, 3=WM)
 
     Note that FSL FAST class numbering differs from BIDS convention:
     - FAST: 0=CSF, 1=GM, 2=WM

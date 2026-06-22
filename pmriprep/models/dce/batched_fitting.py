@@ -116,6 +116,7 @@ def concat_fit_results(
     back into one whole-volume FitResult preserving voxel order.
 
     Invariants (fail-fast via ``assert``):
+
     - All chunks share the same ``model_name``.
     - ``fitted_curves`` is either None on every chunk or non-None on
       every chunk (mixed → AssertionError, caller bug).
@@ -312,11 +313,13 @@ def batched_patlak_lstsq(
       ``fixed_vp``, 1-param Ktrans-only solve.
     - ``fixed_vp`` provided, ``vp_uncertainty > 0`` → SOFT box constraint:
       vp constrained to ``[fixed_vp·(1−σ), fixed_vp·(1+σ)]`` per voxel via
-      active-set two-pass:
+      active-set two-pass::
+
         Pass 1: unconstrained 2-param solve on all voxels (closed-form lstsq).
         Pass 2: for voxels where unconstrained vp* strictly violates a bound,
                 clamp vp at the violated bound and re-solve for Ktrans only
                 (closed-form 1-param). Merged per-voxel via ``np.where``.
+
       Voxels with ``fixed_vp == 0`` are treated as unconstrained (active-mask).
 
     ``vp_uncertainty == 0.0`` raises ``ValueError`` — pass ``None`` for HARD.

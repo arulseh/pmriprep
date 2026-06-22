@@ -2798,7 +2798,7 @@ class DCEPreprocess(SimpleInterface):
     Motion parameters are output in FSL format:
     rot_x, rot_y, rot_z (radians), trans_x, trans_y, trans_z (mm)
 
-    Framewise displacement formula: FD = |Δtrans| + r × |Δrot|
+    Framewise displacement formula: ``FD = |Δtrans| + r × |Δrot|``
 
     Requires FSL to be installed and available in PATH.
 

@@ -135,7 +135,7 @@ def calculate_dice(
 ) -> float:
     """Calculate DICE coefficient for two binary masks.
 
-    DICE = 2 * |A ∩ B| / (|A| + |B|)
+    ``DICE = 2 * |A ∩ B| / (|A| + |B|)``
 
     Parameters
     ----------

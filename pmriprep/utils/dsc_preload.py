@@ -344,14 +344,14 @@ def classify_preload_adequacy_from_k2(
 
     * ``k2_median < K2_PRIMARY_ADEQUATE (0.005)`` AND
       ``percent_leaky < LEAKY_PRIMARY_ADEQUATE (1.0%)``
-        → ``PreloadClass.HALF_DOSE`` (K2-suppressed; trust CBV — tight sigma)
+      → ``PreloadClass.HALF_DOSE`` (K2-suppressed; trust CBV — tight sigma)
     * ``k2_median < K2_PRIMARY_INADEQUATE (0.01)`` AND
       ``percent_leaky < LEAKY_PRIMARY_INADEQUATE (5.0%)``
-        → ``PreloadClass.MINIMAL`` (partial suppression; default sigma)
+      → ``PreloadClass.MINIMAL`` (partial suppression; default sigma)
     * otherwise
-        → ``PreloadClass.NONE`` (K2 too high; widen sigma)
+      → ``PreloadClass.NONE`` (K2 too high; widen sigma)
     * empty / missing ``k2_metrics``
-        → ``PreloadClass.UNKNOWN`` (caller SKIPs the constraint)
+      → ``PreloadClass.UNKNOWN`` (caller SKIPs the constraint)
 
     The HALF_DOSE label is an *adequacy* heuristic — it cannot distinguish
     "preload given + suppressed" from "no preload + intact BBB". Both

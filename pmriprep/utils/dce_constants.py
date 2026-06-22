@@ -724,7 +724,7 @@ def get_b1_thresholds(field_strength: float) -> B1Thresholds:
 #: Signal ratio validity range for AFI: r = S1/S2 in (low, high) for stable arccos.
 B1_RATIO_VALID_RANGE: Final[tuple[float, float]] = (0.05, 1.5)
 
-#: Minimum |n - r| for denominator stability in AFI equation.
+#: Minimum ``|n - r|`` for denominator stability in AFI equation.
 B1_DENOMINATOR_THRESHOLD: Final[float] = 0.1
 
 #: Minimum normalized convolution coverage for reliable local B1+ estimate.

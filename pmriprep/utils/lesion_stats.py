@@ -651,6 +651,7 @@ def combine_tumor_masks(
     """Select the best tumor mask for lesion statistics.
 
     Priority:
+
     1. If tumor segmentation present: use it (already multi-label:
        0=bg, 1=non-enhancing, 2=enhancing)
     2. If only whole_tumor present: use as binary mask

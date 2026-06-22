@@ -45,7 +45,7 @@ def extract_tumor_masks(
         Output directory for extracted masks. If None, uses same directory
         as input file.
     prefix : str, optional
-        Prefix for output filenames (e.g., "sub-001_ses-01_")
+        Prefix for output filenames (e.g., ``"sub-001_ses-01_"``)
 
     Returns
     -------
@@ -834,6 +834,7 @@ def create_nawm_roi(
         Dictionary containing:
         - "output_file": Path to output NAWM mask file
         - "analysis": Dictionary with analysis details:
+
             - "tumor_laterality": "left", "right", or "bilateral"
             - "tumor_supratentorial": bool
             - "selected_hemisphere": "left" or "right"

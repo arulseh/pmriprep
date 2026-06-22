@@ -40,14 +40,17 @@ class PatlakModel(PKModel):
     The Patlak model describes unidirectional contrast agent transfer from
     the blood plasma to the extravascular space, assuming negligible backflux
     (kep ≈ 0). This assumption is valid when:
-        - BBB is intact (kep << Ktrans)
-        - Only early post-injection time points are used
-        - ve is large relative to Ktrans × t_max
 
-    Model equation:
+    - BBB is intact (kep << Ktrans)
+    - Only early post-injection time points are used
+    - ve is large relative to Ktrans × t_max
+
+    Model equation::
+
         C_t(t) = vp × Cp(t) + Ktrans × ∫₀ᵗ Cp(τ)dτ
 
-    Graphical analysis (Patlak plot):
+    Graphical analysis (Patlak plot)::
+
         Y = C_t(t) / Cp(t)
         X = ∫₀ᵗ Cp(τ)dτ / Cp(t)
 

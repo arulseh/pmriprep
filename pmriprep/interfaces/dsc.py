@@ -165,7 +165,7 @@ class MotionCorrection(CommandLine):
 
     Notes
     -----
-    Framewise displacement formula: FD = |Δtrans| + r × |Δrot|
+    Framewise displacement formula: ``FD = |Δtrans| + r × |Δrot|``
     where r is head radius (default 50mm), rotations in radians.
 
     FSL mcflirt outputs motion parameters in columns:

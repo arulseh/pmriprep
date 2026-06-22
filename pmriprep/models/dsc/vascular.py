@@ -29,7 +29,7 @@ class VascularModel(DSCModel):
     """Gamma-variate vascular model for transit time heterogeneity.
 
     The residue function is derived from assuming a gamma distribution
-    of capillary transit times:
+    of capillary transit times::
 
         R(t) = CBF × [1 - gammainc(α, (t - delay) / β)]
 
@@ -53,7 +53,8 @@ class VascularModel(DSCModel):
                Can be negative for tissue ahead of AIF sampling site.
                Range: -3 to +10s.
 
-    Derived physiological parameters:
+    Derived physiological parameters::
+
         MTT: Mean transit time = α × β (seconds)
         CTH: Capillary transit time heterogeneity = β × √α (seconds)
              Standard deviation of the transit time distribution.
@@ -361,7 +362,8 @@ class VascularModel(DSCModel):
     ) -> dict[str, float]:
         """Compute derived physiological parameters from model parameters.
 
-        Derived parameters:
+        Derived parameters::
+
             mtt: Mean transit time = α × β (seconds)
             cbv: Cerebral blood volume = CBF × MTT (relative, dimensionless)
             cth: Capillary transit heterogeneity = β × √α (seconds)

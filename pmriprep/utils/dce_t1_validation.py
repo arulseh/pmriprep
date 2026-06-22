@@ -457,6 +457,7 @@ def apply_t1_correction(
     """Apply T1 map correction based on median T1 validation.
 
     Correction modes:
+
     - ``none``: No correction, use VFA T1 as-is.
     - ``offset``: Apply uniform offset to match expected median
       (preserves spatial variation).

@@ -19,3 +19,7 @@ htmlcov/
 work/
 sourcedata/
 
+# Documentation site
+docs/_build/
+docs/api/
+

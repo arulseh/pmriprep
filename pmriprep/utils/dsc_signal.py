@@ -501,8 +501,10 @@ def compute_psr_legacy(
 ) -> Union[float, npt.NDArray[np.floating]]:
     """Compute PSR using the legacy formula.
 
-    Legacy formula:
+    Legacy formula::
+
         PSR = 100 × (S1 - Smin) / (S0 - Smin)
+
     where S0 = mean baseline signal, S1 = mean tail signal,
     Smin = minimum signal in post-baseline frames.
 
@@ -645,8 +647,10 @@ def compute_peak_height_legacy(
 ) -> Union[float, npt.NDArray[np.floating]]:
     """Compute peak height using the legacy formula.
 
-    Legacy formula (standard % signal drop):
+    Legacy formula (standard % signal drop)::
+
         PH = 100 × (S0 - Smin) / S0
+
     where S0 = mean baseline signal and Smin = minimum signal in
     post-baseline frames only.
 

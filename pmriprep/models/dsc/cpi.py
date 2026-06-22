@@ -193,6 +193,7 @@ class CPIModel(DSCModel):
         """Get parameter definitions for CPI model (FABBER-parity priors).
 
         Priors mirror ``fabber_models_dsc/fwdmodel_dsc_cpi.cc``:
+
         - CBF: identity transform, mean=1.0, var=1e6 (essentially flat).
         - Fractions f_i: SIGMOID transform (FABBER ``TRANSFORM_FRACTIONAL``),
           fitting-space prior N(0.5, sqrt(1e7)).

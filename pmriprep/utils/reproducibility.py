@@ -68,7 +68,8 @@ def compute_percent_difference(
 ) -> float:
     """Compute percent difference between two scalar or array summaries.
 
-    For scalar inputs (e.g., session medians):
+    For scalar inputs (e.g., session medians)::
+
         %diff = 2 * |v1 - v2| / (v1 + v2) * 100
 
     For array inputs, computes the median of voxel-wise percent differences,

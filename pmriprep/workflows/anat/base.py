@@ -463,6 +463,7 @@ def init_anat_preproc_wf(
     11. Optional ACPC alignment (rigid to MNI)
 
     When postcon is the reference:
+
     - T1w post-contrast is used as the structural reference
     - Hybrid FAST: if precon meets quality gate, it is coregistered to
       postcon space for tissue segmentation; otherwise FAST is skipped

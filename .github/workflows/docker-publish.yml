@@ -25,6 +25,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # Static version lives in pyproject.toml (no git-tag/semver scheme), so read
+      # it directly for an image tag; sanitize the branch name for Docker tag rules.
+      - name: Read package version and branch
+        id: meta_prep
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          echo "version=$(grep -m1 '^version = ' pyproject.toml | sed -E 's/^version = "([^"]+)".*/\1/')" >> "$GITHUB_OUTPUT"
+          echo "branch=${REF_NAME//\//-}" >> "$GITHUB_OUTPUT"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -42,10 +52,10 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=ref,event=branch
-            type=ref,event=pr
-            type=sha,prefix=sha-
             type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=${{ steps.meta_prep.outputs.version }}
+            type=raw,value=${{ steps.meta_prep.outputs.branch }}
+            type=sha,prefix=sha-
 
       # Build and load locally for testing (don't push yet)
       - name: Build Docker image

@@ -437,7 +437,7 @@ class HDGLIOSegment(BaseInterface):
     """HD-GLIO deep learning tumor segmentation interface.
 
     This interface wraps the HD-GLIO (High-Definition GlioMa) deep learning
-    model for automated brain tumor segmentation. HD-GLIO produces multi-class
+    model for automated brain tumor segmentation [1]_. HD-GLIO produces multi-class
     segmentation masks with the following labels:
 
     - 0: Background (non-tumor)

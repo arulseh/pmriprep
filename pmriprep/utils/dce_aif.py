@@ -445,6 +445,7 @@ def assess_dce_aif_quality(
     Comparison to Parker population AIF:
     - The Parker model is the reference standard for DCE AIF
     - Deviations from Parker parameters may indicate:
+
       - Partial volume effects (lower peak)
       - Timing issues (shifted peak)
       - Venous contamination (slow washout)

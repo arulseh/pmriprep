@@ -6,8 +6,9 @@ The key optimization is vectorizing forward model evaluations across all
 voxels simultaneously.
 
 Supported models:
+
 - **CPI**: Control-point interpolation with PCHIP residue functions.
-    Vectorized Fritsch-Carlson PCHIP on CPU + shared Toeplitz matmul.
+  Vectorized Fritsch-Carlson PCHIP on CPU + shared Toeplitz matmul.
 - **Vascular**: Gamma-variate residue with FFT convolution + delay shift.
 """
 

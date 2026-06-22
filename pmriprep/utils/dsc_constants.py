@@ -346,7 +346,8 @@ LESION_EXCLUSION_DISTANCE_MM: Final[float] = 15.0
 #: In-vivo tissue transverse relaxivity r2* by field strength (T) in s^-1 per mM
 #: tissue Gd, for gradient-echo DSC with Gd-DTPA in cortical tissue.
 #:
-#: Sources:
+#: Sources::
+#:
 #:   Kjølby BF, Østergaard L, Kiselev VG. "Theoretical model of intravascular
 #:     paramagnetic tracers effect on tissue relaxation." Magn Reson Med
 #:     2006;56:187-197.

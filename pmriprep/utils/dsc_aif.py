@@ -2248,16 +2248,19 @@ def generate_synthetic_aif(
        to partially compensate for AIF uncertainty.
 
     The synthetic AIF is flagged with:
+
     - is_synthetic = True
     - absolute_quantification_valid = False
     - warning_message explaining limitations
 
     Downstream processing should check these flags and:
+
     - Mark outputs as relative-only
     - Warn users about quantification limitations
     - Recommend rCBV normalization
 
     Clinical context:
+
     - Synthetic AIFs may be necessary in tumor patients where lesions
       affect vessel selection
     - Multi-site studies benefit from synthetic AIFs for consistency

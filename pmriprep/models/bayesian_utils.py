@@ -24,11 +24,11 @@ class TransformType(enum.Enum):
     IDENTITY: No transform (unconstrained or can-be-negative params).
     LOG: Natural logarithm for strictly positive params (CBF, Ktrans, Fp, etc).
     LOG_LOGIT: Log-odds for bounded fraction params (ve, vp).
-        Requires an upper bound: theta' = ln(theta / (ub - theta)).
+    Requires an upper bound: theta' = ln(theta / (ub - theta)).
     SIGMOID: FABBER TRANSFORM_FRACTIONAL — natural value lives in (0, 1)
-        with no explicit upper bound; theta = 1/(1+exp(theta')) so the
-        fitting-space prior mean=0.5 corresponds to natural=0.5. Used for
-        CPI control-point fractions.
+    with no explicit upper bound; theta = 1/(1+exp(theta')) so the
+    fitting-space prior mean=0.5 corresponds to natural=0.5. Used for
+    CPI control-point fractions.
 
     """
 
@@ -205,13 +205,14 @@ def log_jacobian_det(
     transform: TransformType,
     upper_bound: float | None = None,
 ) -> float | npt.NDArray[np.floating]:
-    """Log absolute Jacobian determinant |dtheta/dtheta'|.
+    """Log absolute Jacobian determinant ``|dtheta/dtheta'|``.
 
-    Used to correct the MAP objective when optimizing in transformed space:
+    Used to correct the MAP objective when optimizing in transformed space::
+
         neg_log_posterior_transformed = neg_log_posterior_natural - log|J|
 
-    For log: |J| = theta, so log|J| = log(theta).
-    For log-logit: |J| = theta*(ub-theta)/ub, so log|J| = log(theta) + log(ub-theta) - log(ub).
+    For ``log``: ``|J| = theta``, so ``log|J| = log(theta)``.
+    For ``log-logit``: ``|J| = theta*(ub-theta)/ub``, so ``log|J| = log(theta) + log(ub-theta) - log(ub)``.
 
     Parameters
     ----------

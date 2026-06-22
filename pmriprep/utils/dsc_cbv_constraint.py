@@ -961,6 +961,7 @@ def prepare_vp_constraint_from_data(
     """Prepare vp constraint map from DSC nCBV for DCE PK modeling.
 
     Orchestrates:
+
     1. Quality assessment on the AIF QC dict + nCBV distribution
     2. nCBV→vp prior conversion via ``ncbv_to_vp_prior``
        (vp = NAWM_VP_REFERENCE × nCBV)

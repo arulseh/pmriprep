@@ -1010,8 +1010,10 @@ def svd_deconvolve_oscillation(
     Uses a block-circulant matrix for delay-insensitive
     deconvolution with adaptive OI-based threshold selection.
 
-    The oscillation index is defined as:
+    The oscillation index is defined as::
+
         OI = (1/N) * sum|R(t+1) - R(t)| / max(R)
+
     computed on the N causal points extracted from the 2N circulant residue.
 
     A linear search from low to high threshold finds the first (lowest)
@@ -1424,7 +1426,8 @@ def tikhonov_deconvolve(
     """First-order Tikhonov regularised deconvolution with L-curve λ selection.
 
     Solves the regularised least squares problem with a first-derivative
-    smoothness penalty:
+    smoothness penalty::
+
         minimize ||A·r - C||² + λ²||L·r||²
 
     where ``A`` is the Toeplitz convolution matrix built from the AIF, ``r``

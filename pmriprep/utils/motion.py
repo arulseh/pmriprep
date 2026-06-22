@@ -20,7 +20,7 @@ def calculate_framewise_displacement(
     Framewise displacement (FD) is calculated as the sum of absolute
     displacements, with rotations converted to mm using head radius.
 
-    FD formula: |Δtrans| + r × |Δrot|
+    FD formula: ``|Δtrans| + r × |Δrot|``
 
     Parameters
     ----------
