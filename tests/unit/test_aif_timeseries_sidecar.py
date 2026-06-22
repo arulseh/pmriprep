@@ -15,7 +15,10 @@ import nibabel as nib  # type: ignore[import-untyped]
 import numpy as np
 import pytest
 
-from pmriprep.utils.sidecar_builders import build_aif_timeseries_sidecar
+from pmriprep.utils.sidecar_builders import (
+    aif_timeseries_columns,
+    build_aif_timeseries_sidecar,
+)
 
 
 @pytest.fixture
@@ -158,3 +161,55 @@ class TestRejectsBadModality:
                 session=None,
                 aif_qc=None,
             )
+
+
+class TestColumnHeaderSingleSource:
+    """The TSV column header and the sidecar ``Columns`` share one source.
+
+    Regression guard for the bug where the AIF ``_timeseries.tsv`` header was
+    hardcoded ``concentration_mM`` (wrong for DSC, which is ΔR2* in 1/s) and
+    drifted from the sidecar's declared ``Columns``.
+    """
+
+    @pytest.mark.parametrize(
+        "modality, name, units",
+        [
+            ("DSC", "delta_r2_star", "1/s"),
+            ("DCE", "plasma_concentration_mM", "mM"),
+        ],
+    )
+    def test_aif_timeseries_columns_values(self, modality, name, units):
+        col_name, col_units, col_desc = aif_timeseries_columns(modality)
+        assert (col_name, col_units) == (name, units)
+        assert col_desc  # non-empty description
+        # DSC AIF is ΔR2* (1/s) — explicitly NOT a mM concentration label
+        if modality == "DSC":
+            assert "mM" not in col_name and col_units == "1/s"
+
+    def test_aif_timeseries_columns_bad_modality(self):
+        with pytest.raises(ValueError, match="modality must be"):
+            aif_timeseries_columns("ASL")
+
+    @pytest.mark.parametrize("modality", ["DSC", "DCE"])
+    def test_written_tsv_header_matches_sidecar(self, modality, bids_root, tmp_path):
+        """The on-disk TSV header equals the sidecar ``Columns[0]``.
+
+        Exercises the real write path (``_write_aif_timeseries_tsv``), so a
+        future re-hardcode in qc_writers is caught — a helper-vs-sidecar
+        comparison alone would not.
+        """
+        from pmriprep.interfaces.qc_writers import _write_aif_timeseries_tsv
+
+        out = tmp_path / f"sub-X_ses-Y_desc-{modality.lower()}Aif_timeseries.tsv"
+        _write_aif_timeseries_tsv(out, np.array([1.0, 2.0, 3.0]), modality)
+
+        written_header = out.read_text().splitlines()[0]
+        sidecar = build_aif_timeseries_sidecar(
+            modality=modality,
+            source_paths=[],
+            bids_dir=bids_root,
+            subject="X",
+            session=None,
+            aif_qc=None,
+        )
+        assert written_header == sidecar["Columns"][0]

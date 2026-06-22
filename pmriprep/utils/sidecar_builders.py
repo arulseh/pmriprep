@@ -872,6 +872,45 @@ def _aif_cosmetic_keys(aif_qc: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     return out
 
 
+def aif_timeseries_columns(modality: str) -> tuple[str, str, str]:
+    """Column name, units, and description for an AIF timeseries TSV.
+
+    Single source of truth for both the TSV column header (written by the
+    ``qc_writers`` AIF emitters) and the JSON sidecar
+    ``Columns``/``Units``/``ColumnDescriptions`` built by
+    :func:`build_aif_timeseries_sidecar`, so the two cannot drift.
+
+    Parameters
+    ----------
+    modality : str
+        ``"DCE"`` or ``"DSC"``.
+
+    Returns
+    -------
+    tuple of (str, str, str)
+        ``(column_name, units, column_description)``.
+    """
+    if modality not in {"DCE", "DSC"}:
+        raise ValueError(f"modality must be 'DCE' or 'DSC'; got {modality!r}")
+
+    # AIF curve content differs by modality:
+    #   DSC: ΔR2* (1/s) — susceptibility-induced relaxation-rate change
+    #   DCE: plasma [Gd] in mM (after /(1-Hct) conversion)
+    if modality == "DSC":
+        return (
+            "delta_r2_star",
+            "1/s",
+            "Susceptibility-induced change in transverse relaxation rate "
+            "(delta-R2*) at the AIF voxel(s).",
+        )
+    return (  # DCE
+        "plasma_concentration_mM",
+        "mM",
+        "Plasma gadolinium concentration after blood-to-plasma "
+        "conversion (/(1-Hct)).",
+    )
+
+
 def build_aif_timeseries_sidecar(
     *,
     modality: str,
@@ -916,26 +955,7 @@ def build_aif_timeseries_sidecar(
     """
     from pmriprep.utils.provenance import get_bids_derivative_provenance
 
-    if modality not in {"DCE", "DSC"}:
-        raise ValueError(f"modality must be 'DCE' or 'DSC'; got {modality!r}")
-
-    # AIF curve content differs by modality:
-    #   DSC: ΔR2* (1/s) — susceptibility-induced relaxation-rate change
-    #   DCE: plasma [Gd] in mM (after /(1-Hct) conversion)
-    if modality == "DSC":
-        column_name = "delta_r2_star"
-        units = "1/s"
-        column_description = (
-            "Susceptibility-induced change in transverse relaxation rate "
-            "(delta-R2*) at the AIF voxel(s)."
-        )
-    else:  # DCE
-        column_name = "plasma_concentration_mM"
-        units = "mM"
-        column_description = (
-            "Plasma gadolinium concentration after blood-to-plasma "
-            "conversion (/(1-Hct))."
-        )
+    column_name, units, column_description = aif_timeseries_columns(modality)
 
     sidecar: Dict[str, Any] = {
         **get_bids_derivative_provenance(),

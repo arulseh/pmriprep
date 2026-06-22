@@ -141,6 +141,21 @@ class AnatFiguresWriter(SimpleInterface):
 # ---------------------------------------------------------------------------
 
 
+def _write_aif_timeseries_tsv(out_path: Path, values: np.ndarray, modality: str) -> None:
+    """Write an AIF curve as a single-column ``_timeseries.tsv``.
+
+    The column header is sourced from
+    :func:`pmriprep.utils.sidecar_builders.aif_timeseries_columns` — the same
+    single source the JSON sidecar's ``Columns`` is built from — so the TSV
+    header and the sidecar cannot drift (``delta_r2_star`` for DSC ΔR2* in 1/s,
+    ``plasma_concentration_mM`` for DCE plasma [Gd] in mM).
+    """
+    from pmriprep.utils.sidecar_builders import aif_timeseries_columns
+
+    header = aif_timeseries_columns(modality)[0]
+    np.savetxt(str(out_path), values, header=header, comments="")
+
+
 def _write_aif_timeseries_sidecar(
     *,
     modality: str,
@@ -340,7 +355,7 @@ class DSCFiguresWriter(SimpleInterface):
         if isdefined(self.inputs.aif_curve) and self.inputs.aif_curve:
             dst = perf_dir / f"{prefix}_desc-dscAif_timeseries.tsv"
             vals = np.loadtxt(str(self.inputs.aif_curve), dtype=np.float64)
-            np.savetxt(str(dst), vals, header="concentration_mM", comments="")
+            _write_aif_timeseries_tsv(dst, vals, "DSC")
             self._results["aif_curve_txt"] = str(dst)
             _write_aif_timeseries_sidecar(
                 modality="DSC",
@@ -479,7 +494,7 @@ class DCEFiguresWriter(SimpleInterface):
         if isdefined(self.inputs.aif_curve) and self.inputs.aif_curve:
             dst = perf_dir / f"{prefix}_desc-dceAif_timeseries.tsv"
             vals = np.loadtxt(str(self.inputs.aif_curve), dtype=np.float64)
-            np.savetxt(str(dst), vals, header="concentration_mM", comments="")
+            _write_aif_timeseries_tsv(dst, vals, "DCE")
             self._results["aif_curve_txt"] = str(dst)
             _write_aif_timeseries_sidecar(
                 modality="DCE",
