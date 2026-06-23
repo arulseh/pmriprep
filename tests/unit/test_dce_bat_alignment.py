@@ -67,6 +67,8 @@ class TestComputeAifTissueDelay:
         assert prov["applied"] is True
         assert prov["reason"] == "applied"
         assert abs(d - 6.0) < 1e-6      # (9-6) frames * 2 s
+        assert prov["delay_frames"] == 3.0       # quantization breadcrumb
+        assert prov["raw_delay_frames"] == 3.0
         assert "granularity" not in prov  # added by the caller, not the helper
 
     def test_subresolution_noop(self):
@@ -76,6 +78,7 @@ class TestComputeAifTissueDelay:
         )
         assert d == 0.0
         assert prov["reason"] == "delay_below_resolution"
+        assert prov["raw_delay_frames"] == 0.0   # frames breadcrumb present even on no-op
 
     def test_ceiling_clamp(self):
         n, tr = 40, 2.0                 # (25-6)*2 = 38 s > 12 s ceiling

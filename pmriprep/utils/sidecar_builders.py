@@ -1297,8 +1297,10 @@ def enrich_dce_pk_map_sidecar(
 
         apply_aif_sidecar(sidecar, map_key, qc_metrics, modality="DCE")
     # AIF->tissue BAT pre-alignment provenance (records the applied shift, or
-    # the reason none was applied) on every AIF-dependent PK map.
-    bat = qc_metrics.get("bat_correction")
+    # the reason none was applied) on every AIF-dependent PK map. Read from both
+    # nesting levels (top-level for a direct node qc dict; under "pk_modeling"
+    # for the merged pipeline qc) — same both-levels handling as the AIF block.
+    bat = qc_metrics.get("bat_correction") or qc_metrics.get("pk_modeling", {}).get("bat_correction")
     if isinstance(bat, dict):
         sidecar.setdefault("PerfusionProcessing", {})["BATCorrection"] = dict(bat)
     if map_key == "ktrans":

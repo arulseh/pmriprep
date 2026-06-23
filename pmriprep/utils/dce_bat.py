@@ -245,7 +245,12 @@ def compute_aif_tissue_delay(
         tissue_roi_curve, time_points_min, baseline_frames,
     )
     delay = float(tissue_bat.bat_seconds - aif_bat.bat_seconds)
-    subframe = AIF_DELAY_SUBFRAME_FRACTION * float(tr_seconds)
+    tr_s = float(tr_seconds)
+    subframe = AIF_DELAY_SUBFRAME_FRACTION * tr_s
+    # Delay expressed in frames makes the frame-quantization auditable: a
+    # 1-frame shift reads as ~1.0, which is what drives coarse-TR per-visit
+    # inconsistency.
+    delay_frames = round(delay / tr_s, 2) if tr_s > 0 else 0.0
 
     prov: dict[str, Any] = {
         "bat_aif_seconds": round(aif_bat.bat_seconds, 4),
@@ -253,6 +258,7 @@ def compute_aif_tissue_delay(
         "bat_aif_method": aif_bat.method,
         "bat_tissue_method": tissue_bat.method,
         "raw_delay_seconds": round(delay, 4),
+        "raw_delay_frames": delay_frames,
     }
 
     def _noop(reason: str) -> tuple[float, dict[str, Any]]:
@@ -282,4 +288,5 @@ def compute_aif_tissue_delay(
     return delay, {
         **prov, "applied": True, "reason": "applied",
         "delay_seconds": round(delay, 4),
+        "delay_frames": delay_frames,
     }

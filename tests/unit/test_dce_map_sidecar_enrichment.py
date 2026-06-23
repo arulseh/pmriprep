@@ -32,6 +32,15 @@ def pk_qc_metrics() -> dict[str, Any]:
             "candidate_models": ["tofts", "extended_tofts", "patlak"],
             "qc_voxel_rsquared": 0.87,
             "inference": "vi",
+            # ComputeDCEMaps emits bat_correction at the top of its node qc;
+            # _collect_qc_metrics nests that whole dict under "pk_modeling".
+            "bat_correction": {
+                "applied": True,
+                "reason": "applied",
+                "delay_seconds": 7.38,
+                "delay_frames": 1.0,
+                "granularity": "roi_enhancement",
+            },
         },
         "dsc_dce_validation": {"metrics": {"correlation": 0.72}},
         "cbv_constraint": {"cbv_negative_fraction": 0.012},
@@ -101,6 +110,41 @@ class TestPKMapKeyDriftGuard:
             f"_PK_MAP_KEY drift: missing {pk_in_attrs - set(_PK_MAP_KEY)}; "
             f"extra {set(_PK_MAP_KEY) - pk_in_attrs}"
         )
+
+
+class TestBATCorrectionProvenance:
+    """Regression: BATCorrection must surface from the MERGED qc dict.
+
+    ``_collect_qc_metrics`` nests the PK node qc under ``pk_modeling``, so
+    ``bat_correction`` lives at ``qc_metrics["pk_modeling"]["bat_correction"]``,
+    not the top level. The enricher must read both levels (this is the bug
+    that left BATCorrection off every PK-map sidecar in v0.62.0).
+    """
+
+    def test_surfaces_from_merged_pipeline_qc(self, base_sidecar, pk_qc_metrics):
+        out = enrich_dce_pk_map_sidecar(
+            dict(base_sidecar), qc_metrics=pk_qc_metrics, map_key="ktrans",
+        )
+        bat = out["PerfusionProcessing"]["BATCorrection"]
+        assert bat["applied"] is True
+        assert bat["reason"] == "applied"
+        assert bat["delay_frames"] == 1.0
+
+    def test_surfaces_from_flat_node_qc(self, base_sidecar):
+        # Direct node-output shape: bat_correction at the top level.
+        flat = {"bat_correction": {"applied": False, "reason": "alignment_off"}}
+        out = enrich_dce_pk_map_sidecar(
+            dict(base_sidecar), qc_metrics=flat, map_key="vp",
+        )
+        assert out["PerfusionProcessing"]["BATCorrection"]["reason"] == "alignment_off"
+
+    def test_absent_when_no_bat_correction(self, base_sidecar):
+        out = enrich_dce_pk_map_sidecar(
+            dict(base_sidecar),
+            qc_metrics={"pk_modeling": {"model": "auto"}},
+            map_key="ktrans",
+        )
+        assert "BATCorrection" not in out.get("PerfusionProcessing", {})
 
 
 class TestEmptyInputs:
