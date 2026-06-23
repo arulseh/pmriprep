@@ -104,6 +104,9 @@ def init_dce_pk_modeling_wf(
         Acquisition timing and DSC dose scaling (defaults apply on DCE-only runs).
     dsc_cbv_file, dsc_ncbv_file
         DSC CBV / NAWM-normalized CBV resampled to DCE space (vp constraint / prior).
+    tumor_mask_file
+        Enhancing-tumor mask (DCE grid) — tissue-arrival reference for AIF BAT
+        pre-alignment; empty when tumor segmentation is unavailable.
 
     Outputs
     -------
@@ -131,6 +134,7 @@ def init_dce_pk_modeling_wf(
                 "bolus_arrival_frame",
                 "dsc_cbv_file",
                 "dsc_ncbv_file",
+                "tumor_mask_file",
             ]
         ),
         name="inputnode",
@@ -205,6 +209,7 @@ def init_dce_pk_modeling_wf(
             ("bolus_arrival_frame", "bolus_arrival_frame"),
             ("dsc_cbv_file", "dsc_cbv_file"),
             ("dsc_ncbv_file", "dsc_ncbv_file"),
+            ("tumor_mask_file", "tumor_mask_file"),
         ]),
         (pk_modeling, outputnode, [
             ("out_ktrans", "out_ktrans"),
@@ -1839,6 +1844,13 @@ def init_dce_preproc_wf(
         (inputnode, transform_enhancing_mask, [("enhancing_mask", "mask_file")]),
         (dce_preprocess, transform_enhancing_mask, [("mean_img", "reference_file")]),
         (dce_registration, transform_enhancing_mask, [("out_matrix", "transform_matrix")]),
+        # Enhancing tumor (DCE grid) = tissue-arrival reference for AIF BAT
+        # pre-alignment (no-op unless dce.aif_bat_alignment is on). Mirrors the
+        # resample_dsc_cbv -> pk_wf edge: pk_wf is defined earlier but nipype
+        # schedules by data dependency, so this feeds it with no cycle.
+        (transform_enhancing_mask, pk_wf, [
+            ("out_file", "inputnode.tumor_mask_file"),
+        ]),
     ])
 
     # User-supplied lesion mask is already in DCE native space — no FLIRT.

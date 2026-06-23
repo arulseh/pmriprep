@@ -37,9 +37,10 @@ def pk_qc_metrics() -> dict[str, Any]:
             "bat_correction": {
                 "applied": True,
                 "reason": "applied",
-                "delay_seconds": 7.38,
+                "delay_seconds": 7.0,
                 "delay_frames": 1.0,
-                "granularity": "roi_enhancement",
+                "granularity": "enhancing_tumor",
+                "n_reference_voxels": 142,
             },
         },
         "dsc_dce_validation": {"metrics": {"correlation": 0.72}},

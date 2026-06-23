@@ -13,10 +13,6 @@ import numpy.typing as npt
 #: Largest plausible AIF-to-tissue bolus transit delay (seconds). Beyond this,
 #: the estimate is treated as a detection failure and no shift is applied.
 MAX_AIF_TISSUE_DELAY_S: float = 12.0
-#: A delay below this fraction of the volume TR is below temporal resolution
-#: (sub-frame) and is not applied — at coarse TR, sub-frame "delays" are
-#: quantization noise that would harm test-retest reproducibility.
-AIF_DELAY_SUBFRAME_FRACTION: float = 0.25
 #: Leading-edge level, as a fraction of peak enhancement above baseline, at
 #: which the sub-frame arrival time is read. Anchoring at a fixed fraction of
 #: each curve's own peak samples the AIF and tissue at corresponding points on
@@ -24,13 +20,6 @@ AIF_DELAY_SUBFRAME_FRACTION: float = 0.25
 #: difference. The 0.10 fraction is a pipeline design choice (low enough to
 #: catch the leading edge, above the 3-sigma noise the gate already enforces).
 BAT_ARRIVAL_PEAK_FRACTION: float = 0.10
-#: Physical lower bound (seconds) on a resolvable arterial-to-tissue transit,
-#: combined with AIF_DELAY_SUBFRAME_FRACTION * TR into a hybrid floor. This is a
-#: soft-ramp floor on the applied shift, not a hard reject threshold.
-MIN_AIF_TISSUE_DELAY_S: float = 1.5
-#: Top of the soft-ramp band as a multiple of the floor: the applied shift ramps
-#: linearly from zero at the floor to full magnitude at this multiple of it.
-BAT_RAMP_BAND_FACTOR: float = 2.0
 
 
 @dataclass
@@ -304,12 +293,12 @@ def compute_aif_tissue_delay(
     Returns
     -------
     tuple of (float, dict)
-        ``(applied_seconds, provenance)``. ``applied_seconds`` is the shift to
-        apply — the soft-ramped delay, or ``0.0`` when no shift should be
-        applied. ``provenance`` records both arrival times, whether their
-        detection methods match, the raw delay (seconds and frames), the
-        resolution floor, whether the applied shift was attenuated by the ramp,
-        the applied shift, and the reason.
+        ``(applied_seconds, provenance)``. ``applied_seconds`` is the delay
+        snapped to a whole number of acquisition frames, or ``0.0`` when no
+        shift should be applied (sub-frame, low-confidence, negative, or beyond
+        the physiological ceiling). ``provenance`` records both arrival times,
+        whether their detection methods match, the raw (unsnapped) delay in
+        seconds and frames, the applied shift, and the reason.
     """
     aif_bat = detect_bolus_arrival_time(aif_curve, time_points_min, baseline_frames)
     tissue_bat = detect_bolus_arrival_time(
@@ -317,14 +306,13 @@ def compute_aif_tissue_delay(
     )
     delay = float(tissue_bat.bat_seconds - aif_bat.bat_seconds)
     tr_s = float(tr_seconds)
-    # Hybrid floor: the larger of a fraction of the volume TR and a physical
-    # lower bound on a resolvable transit. The physical term holds the floor at
-    # fast TR, where a fraction of TR alone would fall below what a sub-frame
-    # leading-edge estimate can resolve.
-    floor = max(AIF_DELAY_SUBFRAME_FRACTION * tr_s, MIN_AIF_TISSUE_DELAY_S)
-    # Delay in frames makes the quantization auditable: a ~1-frame raw delay
-    # reads as ~1.0, which is what drove the coarse-TR per-visit inconsistency.
     raw_delay_frames = round(delay / tr_s, 2) if tr_s > 0 else 0.0
+    # Integer-frame snap: a delay can only be applied as a whole number of
+    # acquisition frames, so shifting the AIF is an exact translation on the
+    # uniform time grid (no sub-frame regridding, which injects a visit-dependent
+    # fractional-shift artifact). A sub-frame delay (|raw| < 0.5 frame) rounds to
+    # zero frames and is not applied.
+    n_frames = int(round(delay / tr_s)) if tr_s > 0 else 0
 
     prov: dict[str, Any] = {
         "bat_aif_seconds": round(aif_bat.bat_seconds, 4),
@@ -334,7 +322,6 @@ def compute_aif_tissue_delay(
         "methods_match": aif_bat.method == tissue_bat.method,
         "raw_delay_seconds": round(delay, 4),
         "raw_delay_frames": raw_delay_frames,
-        "floor_seconds": round(floor, 4),
     }
 
     def _noop(reason: str) -> tuple[float, dict[str, Any]]:
@@ -349,44 +336,26 @@ def compute_aif_tissue_delay(
         or tissue_bat.method == "default"
     ):
         return _noop("low_bat_confidence")
-    # The comparators below tile the no-op, ramp, and full bands without gap or
-    # overlap. A contralateral AIF should not arrive after the tissue; a clearly
-    # negative delay signals a detection failure.
-    if delay < -floor:
-        return _noop("negative_delay_rejected")
     # Beyond the physiological ceiling, treat as a detection failure.
     if abs(delay) > MAX_AIF_TISSUE_DELAY_S:
         return _noop("delay_clamped")
-    # At or below the floor the delay is below what the sub-frame estimate can
-    # resolve — applying it would inject noise (the coarse-TR repeatability
-    # hazard).
-    if abs(delay) <= floor:
+    # A contralateral/upstream AIF should not arrive after the tissue; a delay
+    # that snaps to a negative frame count signals a detection failure.
+    if n_frames < 0:
+        return _noop("negative_delay_rejected")
+    # Sub-frame delay (rounds to zero frames): below temporal resolution.
+    if n_frames == 0:
         return _noop("delay_below_resolution")
 
-    # Soft ramp between the floor and twice the floor: attenuate the applied
-    # shift linearly from zero to full magnitude so the correction is continuous
-    # in the estimated delay. A hard cutoff would reintroduce a per-visit
-    # zero-or-full discontinuity at the boundary. The formula is sign-preserving,
-    # though negative in-band delays are already rejected above.
-    band_top = BAT_RAMP_BAND_FACTOR * floor
-    if abs(delay) < band_top:
-        applied = delay * (abs(delay) - floor) / floor
-        attenuated = True
-    else:
-        applied = delay
-        attenuated = False
-    applied_frames = round(applied / tr_s, 2) if tr_s > 0 else 0.0
-
-    # delay_seconds/delay_frames are the back-compat alias of the applied shift;
-    # applied_delay_* is the self-documenting name (keep both — existing
-    # consumers and tests read delay_frames).
+    applied = n_frames * tr_s
+    # Snapping can round a near-ceiling raw delay up past the physiological
+    # bound; reject so the applied shift never exceeds it.
+    if abs(applied) > MAX_AIF_TISSUE_DELAY_S:
+        return _noop("delay_clamped")
     return applied, {
         **prov,
         "applied": True,
         "reason": "applied",
-        "attenuated": attenuated,
         "delay_seconds": round(applied, 4),
-        "delay_frames": applied_frames,
-        "applied_delay_seconds": round(applied, 4),
-        "applied_delay_frames": applied_frames,
+        "delay_frames": float(n_frames),
     }

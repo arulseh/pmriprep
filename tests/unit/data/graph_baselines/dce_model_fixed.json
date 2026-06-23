@@ -1777,6 +1777,12 @@
       "enhancing_mask_file"
     ],
     [
+      "transform_enhancing_mask",
+      "out_file",
+      "pk_modeling",
+      "tumor_mask_file"
+    ],
+    [
       "transform_gm_probseg",
       "out_file",
       "t1_mapping",

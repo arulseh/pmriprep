@@ -560,6 +560,67 @@ def _fit_single_voxel(
 
 _MODEL_HAS_VP = {"extended_tofts", "patlak", "2cxm"}
 
+#: Minimum enhancing-tumor voxels (after intersecting with the PK fitting mask)
+#: needed to estimate a tissue arrival time for AIF BAT pre-alignment. Below
+#: this the reference is too small to be reliable and BAT no-ops.
+BAT_TUMOR_REFERENCE_MIN_VOXELS = 10
+
+
+def _resolve_bat_tissue_reference(
+    tumor_mask_file: str,
+    fitting_mask: npt.NDArray[Any],
+    conc_data: npt.NDArray[Any],
+) -> tuple[Optional[npt.NDArray[Any]], dict[str, Any]]:
+    """Select the enhancing-tumor ROI used as the BAT tissue-arrival reference.
+
+    Parameters
+    ----------
+    tumor_mask_file : str
+        Path to the enhancing-tumor mask (HD-GLIO label 2) resampled to the DCE
+        grid, or an empty string when tumor segmentation is unavailable.
+    fitting_mask : numpy.ndarray
+        Boolean PK fitting mask (brain & tSNR & enhancement) on the DCE grid.
+    conc_data : numpy.ndarray
+        4-D concentration-time data; only its spatial shape is used here.
+
+    Returns
+    -------
+    tuple of (numpy.ndarray or None, dict)
+        ``(roi_mask, info)``. ``roi_mask`` is the boolean reference ROI
+        (enhancing tumor intersected with the fitting mask) when a reliable
+        reference is available, else ``None``. When ``None``, ``info`` carries
+        the no-op ``reason``; otherwise ``info`` carries the reference voxel
+        count.
+
+    Notes
+    -----
+    The enhancing tumor is a tissue-arrival *proxy* (leaky, delayed tissue),
+    not arterial ground truth; the BAT correction targets the AIF-to-tissue
+    transit interval. The mask is intersected with the fitting mask so the
+    reference is enhancing tumor that also passed the tSNR/enhancement gate,
+    dropping necrotic and partial-volume voxels a nearest-neighbour resample
+    clips in. Without a tumor segmentation there is no reliable reference
+    (whole-brain arrival is too noisy and white matter's arrival is not the
+    tumor's), so the caller no-ops.
+    """
+    import nibabel as nib  # type: ignore[import-untyped]
+
+    if not tumor_mask_file:
+        return None, {"applied": False, "reason": "no_tumor_reference"}
+    enhancing = nib.load(tumor_mask_file).get_fdata() > 0  # type: ignore[attr-defined]
+    if enhancing.shape != conc_data.shape[:3]:
+        return None, {"applied": False, "reason": "tumor_reference_grid_mismatch"}
+    roi_mask = enhancing & fitting_mask
+    n_roi = int(roi_mask.sum())
+    if n_roi < BAT_TUMOR_REFERENCE_MIN_VOXELS:
+        return None, {
+            "applied": False,
+            "reason": "tumor_reference_too_small",
+            "n_reference_voxels": n_roi,
+        }
+    return roi_mask, {"n_reference_voxels": n_roi}
+
+
 #: K2 leakage correction metric keys to extract from preload QC dict.
 #:
 #: These keys are part of the producer-shape ``preload_qc`` dict that the
@@ -950,6 +1011,11 @@ class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
         desc="DSC NAWM-normalized CBV (nCBV, dimensionless ratio) used for "
              "the vp prior via vp = NAWM_VP_REFERENCE × nCBV. Empty string "
              "when DSC has no NAWM reference → constraint cleanly SKIPs.",
+    )
+    tumor_mask_file = traits.Str(
+        desc="Enhancing-tumor mask (HD-GLIO label 2) on the DCE grid, used as "
+             "the tissue-arrival reference for AIF BAT pre-alignment. Empty "
+             "string when tumor segmentation is unavailable → BAT no-ops.",
     )
     dsc_aif_qc = traits.Dict(
         mandatory=False,
@@ -1599,20 +1665,31 @@ class ComputeDCEMaps(BaseInterface):
                 compute_aif_tissue_delay,
                 shift_aif,
             )
-            # Aggregate enhancing-tissue arrival from the (brain & tSNR &
-            # enhancement) fitting mask; median is robust to high-leakage
-            # tumor voxels.
-            roi_curve = np.median(conc_data[fitting_mask], axis=0)
-            delay_s, bat_correction = compute_aif_tissue_delay(
-                aif_curve=aif,
-                tissue_roi_curve=roi_curve,
-                time_points_min=time_points,
-                tr_seconds=selection_tr_seconds,
-                baseline_frames=baseline_frames,
+            tumor_mask_file = (
+                self.inputs.tumor_mask_file
+                if isdefined(self.inputs.tumor_mask_file)
+                else ""
             )
-            bat_correction["granularity"] = "roi_enhancement"
-            if delay_s != 0.0:
-                aif = shift_aif(aif, time_points, delay_s)
+            roi_mask, ref_info = _resolve_bat_tissue_reference(
+                tumor_mask_file, fitting_mask, conc_data,
+            )
+            if roi_mask is None:
+                bat_correction = ref_info
+            else:
+                # Median enhancing-tumor concentration curve is the tissue-
+                # arrival proxy; median is robust to high-leakage spikes.
+                roi_curve = np.median(conc_data[roi_mask], axis=0)
+                delay_s, bat_correction = compute_aif_tissue_delay(
+                    aif_curve=aif,
+                    tissue_roi_curve=roi_curve,
+                    time_points_min=time_points,
+                    tr_seconds=selection_tr_seconds,
+                    baseline_frames=baseline_frames,
+                )
+                bat_correction["granularity"] = "enhancing_tumor"
+                bat_correction["n_reference_voxels"] = ref_info["n_reference_voxels"]
+                if delay_s != 0.0:
+                    aif = shift_aif(aif, time_points, delay_s)
 
         spatial_shape = conc_data.shape[:3]
 

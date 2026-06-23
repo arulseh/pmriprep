@@ -1,15 +1,20 @@
-"""Unit tests for DCE AIF->tissue BAT pre-alignment (``pmriprep.utils.dce_bat``).
+"""Unit tests for DCE AIF->tissue BAT pre-alignment.
 
-Covers the ``shift_aif`` time-shift helper, every guard branch of
-``compute_aif_tissue_delay``, and the minute-vs-second units contract of the
-underlying BAT detector (guards the 60x conversion trap).
+Covers ``pmriprep.utils.dce_bat`` -- the ``shift_aif`` time-shift helper, every
+guard branch of ``compute_aif_tissue_delay`` (incl. the integer-frame snap), and
+the minute-vs-second units contract of the BAT detector (the 60x conversion
+trap) -- plus the enhancing-tumor tissue-reference selector
+``pmriprep.interfaces.dce_compute._resolve_bat_tissue_reference``.
 """
 from __future__ import annotations
 
 import numpy as np
 
+from pmriprep.interfaces.dce_compute import (
+    BAT_TUMOR_REFERENCE_MIN_VOXELS,
+    _resolve_bat_tissue_reference,
+)
 from pmriprep.utils.dce_bat import (
-    AIF_DELAY_SUBFRAME_FRACTION,
     MAX_AIF_TISSUE_DELAY_S,
     compute_aif_tissue_delay,
     detect_bolus_arrival_time,
@@ -66,10 +71,9 @@ class TestComputeAifTissueDelay:
         )
         assert prov["applied"] is True
         assert prov["reason"] == "applied"
-        assert prov["attenuated"] is False       # 6.0 s >= 2*floor (full shift)
         assert prov["methods_match"] is True     # both arrivals via threshold
         assert abs(d - 6.0) < 1e-6      # (9-6) frames * 2 s
-        assert prov["delay_frames"] == 3.0       # quantization breadcrumb
+        assert prov["delay_frames"] == 3.0       # snapped frame count
         assert prov["raw_delay_frames"] == 3.0
         assert "granularity" not in prov  # added by the caller, not the helper
 
@@ -160,25 +164,28 @@ class TestSubFrameDetection:
         assert _interp_crossing(time_sec, flat, 4, 5.0) == time_sec[4]  # denom 0
         assert _interp_crossing(time_sec, flat, 0, 1.0) == time_sec[0]  # i <= 0
 
-    def test_soft_ramp_attenuates_in_band(self):
-        # floor = max(0.25*2, 1.5) = 1.5; ramp band (1.5, 3.0). A 1-frame step
-        # difference at TR=2 gives a raw delay of 2.0 s -> inside the band.
+    def test_integer_frame_snap(self):
+        # The applied shift is snapped to a whole number of frames -- an exact
+        # translation on the uniform grid (no sub-frame regridding). A 1-frame
+        # step difference at TR=2 snaps to exactly one frame; the soft-ramp
+        # provenance keys are gone.
         n, tr = 30, 2.0
         t = _minutes(n, tr)
         d, prov = compute_aif_tissue_delay(
             _step(n, 6), _step(n, 7), t, tr, baseline_frames=3,
         )
         assert prov["applied"] is True
-        assert prov["attenuated"] is True
-        assert prov["raw_delay_frames"] == 1.0
-        assert 0.0 < d < prov["raw_delay_seconds"]   # attenuated, same sign
-        assert abs(prov["applied_delay_frames"]) < abs(prov["raw_delay_frames"])
-        # >= 2*floor is the full, unattenuated regime
-        d_full, prov_full = compute_aif_tissue_delay(
+        assert prov["delay_frames"] == 1.0            # one whole frame
+        assert abs(d - tr) < 1e-9                     # exact multiple of TR
+        assert "attenuated" not in prov
+        assert "floor_seconds" not in prov
+        assert "applied_delay_frames" not in prov
+        # A 3-frame separation snaps to exactly three frames.
+        d3, prov3 = compute_aif_tissue_delay(
             _step(n, 6), _step(n, 9), t, tr, baseline_frames=3,
         )
-        assert prov_full["attenuated"] is False
-        assert abs(d_full - 6.0) < 1e-6
+        assert prov3["delay_frames"] == 3.0
+        assert abs(d3 - prov3["delay_frames"] * tr) < 1e-9
 
     def test_methods_match_flag(self):
         n, tr = 30, 2.0
@@ -195,5 +202,55 @@ class TestSubFrameDetection:
         assert prov_mixed["methods_match"] is False
 
 
-def test_subframe_fraction_constant_is_quarter():
-    assert AIF_DELAY_SUBFRAME_FRACTION == 0.25
+class TestResolveBatTissueReference:
+    """The enhancing-tumor tissue-reference selector used by ``ComputeDCEMaps``
+    for AIF BAT pre-alignment. The reference is the enhancing-tumor mask
+    intersected with the PK fitting mask; selection no-ops (returns ``None`` and
+    a reason) when no tumor mask, a grid mismatch, or too few voxels."""
+
+    @staticmethod
+    def _write_mask(path, arr: np.ndarray) -> str:
+        import nibabel as nib
+        nib.save(nib.Nifti1Image(arr.astype(np.uint8), np.eye(4)), str(path))
+        return str(path)
+
+    def test_no_tumor_reference_when_empty_path(self):
+        fm = np.ones((4, 4, 4), dtype=bool)
+        conc = np.ones((4, 4, 4, 10))
+        roi, info = _resolve_bat_tissue_reference("", fm, conc)
+        assert roi is None
+        assert info == {"applied": False, "reason": "no_tumor_reference"}
+
+    def test_grid_mismatch_noop(self, tmp_path):
+        fm = np.ones((4, 4, 4), dtype=bool)
+        conc = np.ones((4, 4, 4, 10))
+        mask = np.ones((5, 5, 5))            # wrong spatial shape vs conc[:3]
+        f = self._write_mask(tmp_path / "m.nii.gz", mask)
+        roi, info = _resolve_bat_tissue_reference(f, fm, conc)
+        assert roi is None
+        assert info["reason"] == "tumor_reference_grid_mismatch"
+
+    def test_too_small_noop_reports_voxel_count(self, tmp_path):
+        fm = np.ones((4, 4, 4), dtype=bool)
+        conc = np.ones((4, 4, 4, 10))
+        mask = np.zeros((4, 4, 4))
+        mask[0, 0, :3] = 1                   # 3 enhancing voxels < floor (10)
+        f = self._write_mask(tmp_path / "m.nii.gz", mask)
+        roi, info = _resolve_bat_tissue_reference(f, fm, conc)
+        assert roi is None
+        assert info["reason"] == "tumor_reference_too_small"
+        assert info["n_reference_voxels"] == 3
+        assert BAT_TUMOR_REFERENCE_MIN_VOXELS == 10
+
+    def test_returns_roi_intersected_with_fitting_mask(self, tmp_path):
+        conc = np.ones((4, 4, 4, 10))
+        mask = np.zeros((4, 4, 4))
+        mask[:, :, 0] = 1                    # 16-voxel enhancing slab on z=0
+        fm = np.ones((4, 4, 4), dtype=bool)
+        fm[0, :, 0] = False                  # fitting mask drops 4 of the 16
+        f = self._write_mask(tmp_path / "m.nii.gz", mask)
+        roi, info = _resolve_bat_tissue_reference(f, fm, conc)
+        assert roi is not None
+        expected = mask.astype(bool) & fm    # the intersection, not the bare mask
+        assert np.array_equal(roi, expected)
+        assert info["n_reference_voxels"] == int(expected.sum()) == 12

@@ -1,11 +1,13 @@
 """DRO accuracy tests for DCE AIF->tissue BAT pre-alignment.
 
-A known arterial-to-tissue delay is injected into a synthetic enhancing voxel
-(the tissue sees the AIF arriving later than the sampling artery). Because the
-Tofts convolution is delay-free, fitting the unshifted AIF biases vp; BAT
-pre-alignment ('auto') is expected to remove most of that bias at fine temporal
-resolution, and to leave the fit unchanged when the delay is unresolvable
-(coarse TR / same arrival frame) — the no-op that keeps default behavior intact.
+A known arterial-to-tissue delay is injected into synthetic tissue (the tissue
+sees the AIF arriving later than the sampling artery). Because the Tofts
+convolution is delay-free, fitting the unshifted AIF biases the parameters; BAT
+pre-alignment ('auto') detects the delay, snaps it to a whole number of
+acquisition frames, and shifts the AIF before fitting. These tests cover the
+accuracy side of the documented accuracy/repeatability trade: BAT removes the
+delay component of arterial-input bias (lower Ktrans/vp RMSE vs ground truth),
+including at coarse (clinical) TR, and is a no-op when no real delay is present.
 """
 from __future__ import annotations
 
@@ -14,7 +16,6 @@ import numpy as np
 from pmriprep.models.dce.extended_tofts import ExtendedToftsModel
 from pmriprep.utils.dce_bat import (
     compute_aif_tissue_delay,
-    detect_bolus_arrival_time,
     shift_aif,
 )
 
@@ -90,48 +91,111 @@ def test_bat_alignment_noop_when_delay_unresolvable():
     assert vp_auto == vp_off and kt_auto == kt_off   # identical fit (no-op)
 
 
-def test_subframe_visit_consistency_near_frame_boundary():
-    # Two "visits" whose true AIF->tissue delay differs only by sub-frame jitter,
-    # placed so the tissue arrival straddles a frame-grid boundary. A grid-snapped
-    # (pre-0.63 frame-quantized) detector jumps a full frame between visits -- the
-    # test-retest hazard that motivated sub-frame detection; sub-frame keeps the
-    # recovered delays within a small fraction of a frame. The consistency
-    # assertion below fails if the detector is reverted to frame quantization
-    # (then both recovered delays become grid values and flip by a full frame).
+def _bat_montecarlo(
+    model, tr_s, delay_true_s, *, kt=0.05, ve=0.30, vp=0.04,
+    n_real=50, noise_frac=0.04, seed=20260623,
+):
+    """Monte-Carlo off-vs-BAT(snapped) fit over noise realizations at one TR/delay.
+
+    Generates tissue with known ground-truth parameters fed by a ``delay_true_s``
+    delayed AIF, then fits with the undelayed (measured) AIF both ways: 'off'
+    carries the uncorrected delay; BAT detects it, snaps to whole frames, shifts
+    the AIF, and refits. Reuses the pipeline's ExtendedTofts model and dce_bat
+    helpers. Returns the mean uncorrected Ktrans bias, off/BAT Ktrans and vp
+    RMSE vs ground truth, and the fraction of realizations BAT applied a shift.
+    """
+    rng = np.random.default_rng(seed)
+    dt = tr_s / 60.0
+    n = int(round(300.0 / tr_s))                  # ~5 min acquisition
+    t = np.arange(n, dtype=np.float64) * dt
+    aif = _gamma_aif(t, t0_min=30.0 / 60.0)       # arterial bolus arrives ~30 s
+    aif_peak = float(aif.max())
+    clean = model.evaluate([kt, ve, vp], shift_aif(aif, t, delay_true_s), t)
+    tissue_peak = max(float(clean.max()), 1e-6)
+    baseline = max(2, int(round(30.0 / tr_s)))
+    bias_off, sq_off, sq_bat, sqv_off, sqv_bat = [], [], [], [], []
+    n_applied = 0
+    for _ in range(n_real):
+        tissue = clean + rng.normal(0.0, noise_frac * tissue_peak, n)
+        aif_noisy = aif + rng.normal(0.0, noise_frac * aif_peak, n)
+        r_off = model.fit(tissue, aif_noisy, t)
+        d_est, prov = compute_aif_tissue_delay(
+            aif_noisy, tissue, t, tr_s, baseline_frames=baseline,
+        )
+        n_applied += int(bool(prov.get("applied")))
+        aif_sh = shift_aif(aif_noisy, t, d_est) if d_est != 0.0 else aif_noisy
+        r_bat = model.fit(tissue, aif_sh, t)
+        if not (r_off.converged and r_bat.converged):
+            continue
+        ko, kb = r_off.parameters["Ktrans"], r_bat.parameters["Ktrans"]
+        vo, vb = r_off.parameters["vp"], r_bat.parameters["vp"]
+        bias_off.append(ko - kt)
+        sq_off.append((ko - kt) ** 2)
+        sq_bat.append((kb - kt) ** 2)
+        sqv_off.append((vo - vp) ** 2)
+        sqv_bat.append((vb - vp) ** 2)
+    return {
+        "bias_off": float(np.mean(bias_off)),
+        "ktrans_rmse_off": float(np.sqrt(np.mean(sq_off))),
+        "ktrans_rmse_bat": float(np.sqrt(np.mean(sq_bat))),
+        "vp_rmse_off": float(np.sqrt(np.mean(sqv_off))),
+        "vp_rmse_bat": float(np.sqrt(np.mean(sqv_bat))),
+        "frac_applied": n_applied / n_real,
+    }
+
+
+def test_bat_reduces_ktrans_bias_with_real_delay_coarse_tr():
+    # Delay-bearing DRO at coarse (clinical) TR: a real arterial->tissue delay
+    # biases the uncorrected ('off') Ktrans, and BAT (snapped to whole frames)
+    # reduces total Ktrans RMSE vs ground truth and improves vp -- the accuracy
+    # side of the accuracy/repeatability trade. With no injected delay BAT is a
+    # no-op. Thresholds are physics/direction criteria with margin (the campaign
+    # and this DRO put off bias at ~50% of GT and the BAT/off RMSE ratio at ~0.3),
+    # not tuned to pass.
+    model = ExtendedToftsModel()
+    tr_s, kt_true = 4.76, 0.05
+    delayed = _bat_montecarlo(model, tr_s, delay_true_s=6.0, kt=kt_true)
+    nodelay = _bat_montecarlo(model, tr_s, delay_true_s=0.0, kt=kt_true)
+
+    # (i) a real delay biases the uncorrected Ktrans (> 10% of GT), growing from
+    #     the no-delay case.
+    assert abs(delayed["bias_off"]) > 0.1 * kt_true, delayed
+    assert abs(delayed["bias_off"]) > abs(nodelay["bias_off"]), (delayed, nodelay)
+    # (ii) BAT substantially reduces Ktrans and vp RMSE vs ground truth.
+    assert delayed["ktrans_rmse_bat"] < 0.75 * delayed["ktrans_rmse_off"], delayed
+    assert delayed["vp_rmse_bat"] < 0.75 * delayed["vp_rmse_off"], delayed
+    # (iii) no injected delay -> BAT no-ops at coarse TR (mostly) and does no harm.
+    assert nodelay["frac_applied"] <= 0.2, nodelay
+    assert nodelay["ktrans_rmse_bat"] <= 1.1 * nodelay["ktrans_rmse_off"] + 1e-9, nodelay
+
+
+def test_detector_subframe_but_applied_shift_is_frame_snapped():
+    # The 10%-of-peak detector returns a sub-frame (non-integer) raw delay, but
+    # the APPLIED shift is snapped to a whole number of frames -- an exact
+    # translation on the uniform grid. The redesign deliberately trades the
+    # sub-frame detector's visit-to-visit smoothness for this honest integer
+    # shift (removing the fractional-regrid artifact); the near-boundary
+    # repeatability cost is documented and accepted.
     tr_s = 4.0
     dt = tr_s / 60.0
     n = 80
     t = np.arange(n, dtype=np.float64) * dt
     aif = _gamma_aif(t, t0_min=8 * dt)
+    # A true delay near 1.5 frames: the raw estimate is sub-frame, the applied
+    # shift snaps to a whole frame.
+    tissue = shift_aif(aif, t, 1.5 * tr_s)
+    applied, prov = compute_aif_tissue_delay(aif, tissue, t, tr_s, baseline_frames=5)
 
-    aif_bat = detect_bolus_arrival_time(aif, t, baseline_frames=5).bat_seconds
-    # A true delay near 1.5 frames places the tissue arrival astride a grid
-    # boundary, so the two jittered visits snap to different frames.
-    base = 1.5 * tr_s
-    jit = 0.15 * tr_s
+    # Detector raw delay is genuinely sub-frame (non-integer multiple of TR).
+    raw_frames = prov["raw_delay_seconds"] / tr_s
+    assert not np.isclose(raw_frames % 1.0, 0.0, atol=0.05), raw_frames
 
-    def recovered(delay_s):
-        tissue = shift_aif(aif, t, delay_s)
-        _, prov = compute_aif_tissue_delay(aif, tissue, t, tr_s, baseline_frames=5)
-        tissue_bat = detect_bolus_arrival_time(tissue, t, baseline_frames=5).bat_seconds
-        return prov["raw_delay_seconds"], tissue_bat
-
-    d_sub_lo, bat_lo = recovered(base - jit)
-    d_sub_hi, bat_hi = recovered(base + jit)
-
-    # Grid-quantized arrivals (round to nearest frame), representative of the
-    # pre-0.63 detector that returned a frame time.
-    def grid(bat: float) -> float:
-        return round(bat / tr_s) * tr_s
-
-    d_grid_lo = grid(bat_lo) - grid(aif_bat)
-    d_grid_hi = grid(bat_hi) - grid(aif_bat)
-
-    # Construction check: grid quantization flips ~one whole frame between visits.
-    assert abs(d_grid_hi - d_grid_lo) >= 0.9 * tr_s, (d_grid_lo, d_grid_hi)
-    # Regression guard: sub-frame detection stays consistent, well under a frame
-    # (this fails if detection regresses to frame quantization).
-    assert abs(d_sub_hi - d_sub_lo) <= 0.5 * tr_s, (d_sub_lo, d_sub_hi)
-    # The recovered delay is genuinely non-integer -- a grid detector could only
-    # return integer multiples of TR.
-    assert not np.isclose((d_sub_lo / tr_s) % 1.0, 0.0, atol=0.05)
+    # Applied shift is an exact integer number of frames ...
+    assert prov["applied"] is True, prov
+    assert prov["delay_frames"] == float(int(prov["delay_frames"])), prov
+    assert abs(applied - prov["delay_frames"] * tr_s) < 1e-9
+    # ... so shift_aif is an exact frame translation on the uniform grid
+    # (baseline left-fill, no sub-frame regridding).
+    n_shift = int(round(applied / tr_s))
+    shifted = shift_aif(aif, t, applied)
+    assert np.allclose(shifted[n_shift:], aif[:n - n_shift])

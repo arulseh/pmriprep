@@ -1855,6 +1855,12 @@
       "enhancing_mask_file"
     ],
     [
+      "transform_enhancing_mask",
+      "out_file",
+      "pk_modeling",
+      "tumor_mask_file"
+    ],
+    [
       "transform_flair_underlay",
       "out_file",
       "outputnode",

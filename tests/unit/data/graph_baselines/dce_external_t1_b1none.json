@@ -1597,6 +1597,12 @@
       "enhancing_mask_file"
     ],
     [
+      "transform_enhancing_mask",
+      "out_file",
+      "pk_modeling",
+      "tumor_mask_file"
+    ],
+    [
       "transform_lesion",
       "lesion_mask_dce_file",
       "select_aif_exclusion",
