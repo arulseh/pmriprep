@@ -17,6 +17,20 @@ MAX_AIF_TISSUE_DELAY_S: float = 12.0
 #: (sub-frame) and is not applied — at coarse TR, sub-frame "delays" are
 #: quantization noise that would harm test-retest reproducibility.
 AIF_DELAY_SUBFRAME_FRACTION: float = 0.25
+#: Leading-edge level, as a fraction of peak enhancement above baseline, at
+#: which the sub-frame arrival time is read. Anchoring at a fixed fraction of
+#: each curve's own peak samples the AIF and tissue at corresponding points on
+#: the bolus, so a shared timing bias cancels in the tissue-minus-AIF
+#: difference. The 0.10 fraction is a pipeline design choice (low enough to
+#: catch the leading edge, above the 3-sigma noise the gate already enforces).
+BAT_ARRIVAL_PEAK_FRACTION: float = 0.10
+#: Physical lower bound (seconds) on a resolvable arterial-to-tissue transit,
+#: combined with AIF_DELAY_SUBFRAME_FRACTION * TR into a hybrid floor. This is a
+#: soft-ramp floor on the applied shift, not a hard reject threshold.
+MIN_AIF_TISSUE_DELAY_S: float = 1.5
+#: Top of the soft-ramp band as a multiple of the floor: the applied shift ramps
+#: linearly from zero at the floor to full magnitude at this multiple of it.
+BAT_RAMP_BAND_FACTOR: float = 2.0
 
 
 @dataclass
@@ -41,6 +55,53 @@ class BATResult:
     method: str
 
 
+def _interp_crossing(
+    time_sec: npt.NDArray[np.floating],
+    series: npt.NDArray[np.floating],
+    i: int,
+    level: float,
+) -> float:
+    """Linearly interpolate the sub-frame time at which ``series`` crosses ``level``.
+
+    The crossing is located between frames ``i-1`` and ``i`` (where ``series[i]``
+    is the first sample at or above ``level``) by linear interpolation of the
+    rising segment, resolving the arrival to a fraction of a frame rather than
+    snapping it to the frame grid.
+
+    Parameters
+    ----------
+    time_sec : numpy.ndarray
+        1D time array in seconds.
+    series : numpy.ndarray
+        1D series whose ``level`` crossing is being located (concentration for
+        the threshold method, derivative for the gradient method).
+    i : int
+        Index of the first frame at or above ``level``.
+    level : float
+        Crossing level.
+
+    Returns
+    -------
+    float
+        Sub-frame crossing time in seconds. Falls back to ``time_sec[i]`` (the
+        frame-quantized crossing) when no prior frame exists (``i <= 0``) or the
+        segment is non-rising/degenerate (``series[i] - series[i-1] <= 0``).
+
+    Notes
+    -----
+    The interpolation fraction is clamped to ``[0, 1]`` so the result never
+    precedes ``time_sec[i-1]`` nor follows ``time_sec[i]``.
+    """
+    if i <= 0:
+        return float(time_sec[i])
+    denom = float(series[i] - series[i - 1])
+    if denom <= 0.0:
+        return float(time_sec[i])
+    frac = (float(level) - float(series[i - 1])) / denom
+    frac = min(1.0, max(0.0, frac))
+    return float(time_sec[i - 1]) + frac * float(time_sec[i] - time_sec[i - 1])
+
+
 def detect_bolus_arrival_time(
     curve: npt.NDArray[np.floating],
     time_points: npt.NDArray[np.floating],
@@ -49,7 +110,9 @@ def detect_bolus_arrival_time(
     """Detect bolus arrival time using threshold then gradient fallback.
 
     Methods attempted in order:
-    1. Threshold: first time concentration exceeds baseline + 3*std
+    1. Threshold: the peak must clear baseline + 3*std (genuine enhancement);
+       the arrival is then read at ``BAT_ARRIVAL_PEAK_FRACTION`` of the peak on
+       the leading edge, interpolated to sub-frame precision.
     2. Gradient: first time the derivative exceeds 3*std(derivative_baseline)
     3. Default: 10% of total acquisition time
 
@@ -103,17 +166,22 @@ def detect_bolus_arrival_time(
     bl_mean = float(np.mean(baseline))
     bl_std = float(np.std(baseline))
 
-    # Method 1: Threshold detection
-    # Start search after baseline frames (use n_baseline for consistency)
-    threshold = bl_mean + 3.0 * max(bl_std, 1e-9)
-    for i in range(n_baseline, n):
-        if curve[i] > threshold:
-            return BATResult(
-                bat_seconds=float(time_sec[i]),
-                peak_seconds=peak_seconds,
-                confidence="high",
-                method="threshold",
-            )
+    # Method 1: Threshold detection with sub-frame, peak-relative timing.
+    # The peak must clear the noise floor (genuine enhancement) and fall after
+    # the baseline window; the arrival is then read at a fixed fraction of the
+    # peak on the leading edge, interpolated to sub-frame precision.
+    noise = 3.0 * max(bl_std, 1e-9)
+    peak_enh = float(curve[peak_idx] - bl_mean)
+    if peak_enh > noise and peak_idx >= n_baseline:
+        arrival_level = bl_mean + BAT_ARRIVAL_PEAK_FRACTION * peak_enh
+        for j in range(n_baseline, peak_idx + 1):
+            if curve[j] >= arrival_level:
+                return BATResult(
+                    bat_seconds=_interp_crossing(time_sec, curve, j, arrival_level),
+                    peak_seconds=peak_seconds,
+                    confidence="high",
+                    method="threshold",
+                )
 
     # Method 2: Gradient detection
     if n > n_baseline + 1:
@@ -236,9 +304,12 @@ def compute_aif_tissue_delay(
     Returns
     -------
     tuple of (float, dict)
-        ``(delay_seconds, provenance)``. ``delay_seconds`` is ``0.0`` when no
-        shift should be applied; ``provenance`` records both arrival times,
-        the raw delay, whether it was applied, and the reason.
+        ``(applied_seconds, provenance)``. ``applied_seconds`` is the shift to
+        apply — the soft-ramped delay, or ``0.0`` when no shift should be
+        applied. ``provenance`` records both arrival times, whether their
+        detection methods match, the raw delay (seconds and frames), the
+        resolution floor, whether the applied shift was attenuated by the ramp,
+        the applied shift, and the reason.
     """
     aif_bat = detect_bolus_arrival_time(aif_curve, time_points_min, baseline_frames)
     tissue_bat = detect_bolus_arrival_time(
@@ -246,19 +317,24 @@ def compute_aif_tissue_delay(
     )
     delay = float(tissue_bat.bat_seconds - aif_bat.bat_seconds)
     tr_s = float(tr_seconds)
-    subframe = AIF_DELAY_SUBFRAME_FRACTION * tr_s
-    # Delay expressed in frames makes the frame-quantization auditable: a
-    # 1-frame shift reads as ~1.0, which is what drives coarse-TR per-visit
-    # inconsistency.
-    delay_frames = round(delay / tr_s, 2) if tr_s > 0 else 0.0
+    # Hybrid floor: the larger of a fraction of the volume TR and a physical
+    # lower bound on a resolvable transit. The physical term holds the floor at
+    # fast TR, where a fraction of TR alone would fall below what a sub-frame
+    # leading-edge estimate can resolve.
+    floor = max(AIF_DELAY_SUBFRAME_FRACTION * tr_s, MIN_AIF_TISSUE_DELAY_S)
+    # Delay in frames makes the quantization auditable: a ~1-frame raw delay
+    # reads as ~1.0, which is what drove the coarse-TR per-visit inconsistency.
+    raw_delay_frames = round(delay / tr_s, 2) if tr_s > 0 else 0.0
 
     prov: dict[str, Any] = {
         "bat_aif_seconds": round(aif_bat.bat_seconds, 4),
         "bat_tissue_seconds": round(tissue_bat.bat_seconds, 4),
         "bat_aif_method": aif_bat.method,
         "bat_tissue_method": tissue_bat.method,
+        "methods_match": aif_bat.method == tissue_bat.method,
         "raw_delay_seconds": round(delay, 4),
-        "raw_delay_frames": delay_frames,
+        "raw_delay_frames": raw_delay_frames,
+        "floor_seconds": round(floor, 4),
     }
 
     def _noop(reason: str) -> tuple[float, dict[str, Any]]:
@@ -273,20 +349,44 @@ def compute_aif_tissue_delay(
         or tissue_bat.method == "default"
     ):
         return _noop("low_bat_confidence")
-    # A contralateral AIF should not arrive after the tissue; a clearly
+    # The comparators below tile the no-op, ramp, and full bands without gap or
+    # overlap. A contralateral AIF should not arrive after the tissue; a clearly
     # negative delay signals a detection failure.
-    if delay < -subframe:
+    if delay < -floor:
         return _noop("negative_delay_rejected")
     # Beyond the physiological ceiling, treat as a detection failure.
     if abs(delay) > MAX_AIF_TISSUE_DELAY_S:
         return _noop("delay_clamped")
-    # Sub-frame delay is below temporal resolution — applying it would inject
-    # quantization noise (the documented coarse-TR repeatability hazard).
-    if abs(delay) < subframe:
+    # At or below the floor the delay is below what the sub-frame estimate can
+    # resolve — applying it would inject noise (the coarse-TR repeatability
+    # hazard).
+    if abs(delay) <= floor:
         return _noop("delay_below_resolution")
 
-    return delay, {
-        **prov, "applied": True, "reason": "applied",
-        "delay_seconds": round(delay, 4),
-        "delay_frames": delay_frames,
+    # Soft ramp between the floor and twice the floor: attenuate the applied
+    # shift linearly from zero to full magnitude so the correction is continuous
+    # in the estimated delay. A hard cutoff would reintroduce a per-visit
+    # zero-or-full discontinuity at the boundary. The formula is sign-preserving,
+    # though negative in-band delays are already rejected above.
+    band_top = BAT_RAMP_BAND_FACTOR * floor
+    if abs(delay) < band_top:
+        applied = delay * (abs(delay) - floor) / floor
+        attenuated = True
+    else:
+        applied = delay
+        attenuated = False
+    applied_frames = round(applied / tr_s, 2) if tr_s > 0 else 0.0
+
+    # delay_seconds/delay_frames are the back-compat alias of the applied shift;
+    # applied_delay_* is the self-documenting name (keep both — existing
+    # consumers and tests read delay_frames).
+    return applied, {
+        **prov,
+        "applied": True,
+        "reason": "applied",
+        "attenuated": attenuated,
+        "delay_seconds": round(applied, 4),
+        "delay_frames": applied_frames,
+        "applied_delay_seconds": round(applied, 4),
+        "applied_delay_frames": applied_frames,
     }
