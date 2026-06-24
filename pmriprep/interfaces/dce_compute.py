@@ -1092,8 +1092,8 @@ class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
     )
 
     aif_bat_alignment = traits.Enum(
-        "off",
         "auto",
+        "off",
         usedefault=True,
         desc="AIF-to-tissue bolus-arrival pre-alignment. 'auto' shifts a "
              "measured (automatic/atlas) AIF in time to correct the "

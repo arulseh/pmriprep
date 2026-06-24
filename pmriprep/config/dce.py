@@ -93,7 +93,7 @@ class DCEConfig:
     # AIF->tissue bolus-arrival pre-alignment: "auto" shifts a measured AIF to
     # correct the arterial-to-tissue delay (guarded; benefits fine temporal
     # resolution), "off" applies no shift.
-    aif_bat_alignment: Literal["auto", "off"] = "off"
+    aif_bat_alignment: Literal["auto", "off"] = "auto"
 
     # Structural settings
     underlays: List[str] = field(default_factory=list)

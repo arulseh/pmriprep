@@ -2961,7 +2961,7 @@
       "subject_id": "0001"
     },
     "pk_modeling": {
-      "aif_bat_alignment": "off",
+      "aif_bat_alignment": "auto",
       "aif_detection_method": "population",
       "aif_uncertainty_inflation_factor": 1.0,
       "baseline_frames": 0,
