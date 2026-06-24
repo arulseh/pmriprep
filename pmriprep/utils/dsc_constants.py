@@ -19,7 +19,6 @@ DSCDetectionLevel = Literal[
     "full_atlas_permissive",
     "brain_relaxed",
     "brain_permissive",
-    "accumulated",
     "single_best",
     "synthetic",
     "external",

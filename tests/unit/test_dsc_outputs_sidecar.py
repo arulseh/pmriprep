@@ -297,7 +297,7 @@ class TestTemplateAifUsageCoverage:
             "full_atlas_permissive", "brain_relaxed", "brain_permissive",
             "external", "synthetic",
         }
-        _QC_GENERIC_REVIEW = {"accumulated", "single_best"}
+        _QC_GENERIC_REVIEW = {"single_best"}
         covered = _QC_ROUTED_TIERS | _QC_GENERIC_REVIEW
         missing = set(DSC_DETECTION_LEVELS) - covered
         assert not missing, (

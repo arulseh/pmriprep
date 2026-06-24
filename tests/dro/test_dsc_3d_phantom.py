@@ -13,7 +13,6 @@ import numpy as np
 import numpy.typing as npt
 import pytest
 
-from pmriprep.utils.dsc_aif import atlas_based_aif_search
 from pmriprep.utils.dsc_deconvolution import (
     svd_deconvolve_oscillation,
     svd_deconvolve_standard,
