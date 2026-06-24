@@ -265,49 +265,6 @@ def compute_aif_washout_fraction(
     return max(0.0, min(1.0, washout))
 
 
-def compute_aif_fwhm_frames(
-    aif_curve: npt.NDArray[Any],
-    baseline_frames: int = 5,
-) -> int:
-    """Compute full width at half maximum (FWHM) of AIF peak in frames.
-
-    Parameters
-    ----------
-    aif_curve : np.ndarray
-        1D AIF concentration time course.
-    baseline_frames : int
-        Number of pre-bolus baseline frames (default: 5).
-
-    Returns
-    -------
-    int
-        FWHM in number of frames. Arterial curves typically 5-15 frames.
-    """
-    if len(aif_curve) < baseline_frames + 1:
-        return 0
-
-    baseline_mean = float(np.mean(aif_curve[:baseline_frames]))
-    peak = float(np.max(aif_curve))
-    peak_idx = int(np.argmax(aif_curve))
-
-    half_max = baseline_mean + (peak - baseline_mean) / 2.0
-
-    rising_idx = 0
-    for i in range(baseline_frames, peak_idx):
-        if aif_curve[i] >= half_max:
-            rising_idx = i
-            break
-
-    falling_idx = len(aif_curve) - 1
-    for i in range(peak_idx + 1, len(aif_curve)):
-        if aif_curve[i] <= half_max:
-            falling_idx = i
-            break
-
-    fwhm = falling_idx - rising_idx
-    return max(0, fwhm)
-
-
 def _compute_aif_peak_ratio(
     aif_curve: npt.NDArray[Any],
     baseline_frames: int,
@@ -2491,6 +2448,8 @@ class AIFDetection(BaseInterface):
                 "Values < 0.5 suggest wrong units (mM instead of s⁻¹).",
                 peak,
             )
+
+        from pmriprep.utils.dsc_aif import compute_aif_fwhm_frames
 
         # Compute QC metrics
         baseline_frames = int(self.inputs.baseline_frames)
