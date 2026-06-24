@@ -797,8 +797,8 @@ def determine_constraint_mode(
 
     Decision logic:
 
-    - User override (if not 'auto') takes priority. Valid overrides are
-      'soft' and 'skip'; config validation rejects everything else.
+    - User override (if not 'auto') takes priority. The only non-auto
+      override is 'skip' (force off); config validation rejects everything else.
     - High quality → SOFT at unified σ; moderate → SOFT at unified σ with
       preload/K2 reason annotation; low → SKIP (unconstrained).
 
@@ -813,8 +813,8 @@ def determine_constraint_mode(
     dsc_quality : CBVQualityAssessment
         Quality assessment from assess_dsc_cbv_quality.
     user_override : str, optional
-        User-specified mode override ('auto', 'soft',
-        'skip'). If 'auto' or None, auto-determined from quality.
+        User-specified mode override ('auto', 'skip'). If 'auto' or None,
+        auto-determined from quality.
     preload_classification : str, optional
         DSC preload classification string from QC
         (e.g., 'half_dose', 'significant', 'severe', 'none').
@@ -871,28 +871,27 @@ def determine_constraint_mode(
 
     # User override
     if not _is_auto(user_override):
-        try:
-            mode = ConstraintMode(user_override)
-            reason = f"User override: {user_override}"
-        except ValueError:
-            mode = ConstraintMode.SKIP
-            logger.warning(
-                "Unrecognized constraint user_override %r — falling back to "
-                "SKIP. Valid values: 'auto', 'soft', 'skip'.",
-                user_override,
+        # Only 'skip' (force off) is a valid non-auto override; the auto gate
+        # owns when the prior is applied, so there is no force-on. Anything
+        # else falls back to SKIP.
+        if user_override == "skip":
+            return ConstraintConfig(
+                mode=ConstraintMode.SKIP,
+                vp_uncertainty=0.0,
+                reason="User override: skip",
             )
-            reason = (
-                f"Unrecognized user_override {user_override!r} -> SKIP "
-                "(valid: 'auto', 'soft', 'skip')"
-            )
-        if mode == ConstraintMode.SOFT:
-            uncertainty = SIGMA_SOFT_DEFAULT
-        else:
-            uncertainty = 0.0
+        logger.warning(
+            "Unrecognized constraint user_override %r — falling back to "
+            "SKIP. Valid values: 'auto', 'skip'.",
+            user_override,
+        )
         return ConstraintConfig(
-            mode=mode,
-            vp_uncertainty=uncertainty,
-            reason=reason,
+            mode=ConstraintMode.SKIP,
+            vp_uncertainty=0.0,
+            reason=(
+                f"Unrecognized user_override {user_override!r} -> SKIP "
+                "(valid: 'auto', 'skip')"
+            ),
         )
 
     confidence = dsc_quality.confidence

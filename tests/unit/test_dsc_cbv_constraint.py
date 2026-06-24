@@ -360,15 +360,15 @@ class TestDetermineConstraintMode:
         config = determine_constraint_mode(quality, user_override="skip")
         assert config.mode == ConstraintMode.SKIP
 
-    def test_user_override_soft(self) -> None:
-        """``soft`` user override forces SOFT even on low quality."""
+    def test_low_quality_auto_skips(self) -> None:
+        """Low DSC confidence under ``auto`` → SKIP (no prior)."""
         quality = CBVQualityAssessment(
             confidence="low",
             use_constraint=False,
             reasons=["CNR coverage 0.50 < 0.84"],
         )
-        config = determine_constraint_mode(quality, user_override="soft")
-        assert config.mode == ConstraintMode.SOFT
+        config = determine_constraint_mode(quality, user_override="auto")
+        assert config.mode == ConstraintMode.SKIP
 
 
 # =============================================================================
@@ -704,19 +704,6 @@ class TestPreloadAwareUncertainty:
         )
         assert config.mode == ConstraintMode.SKIP
 
-    def test_user_override_ignores_preload(self) -> None:
-        """User override 'soft' + preload data → default 0.40 (override path)."""
-        k2 = {"k2_median": 0.002, "percent_leaky_voxels": 2.0}
-        config = determine_constraint_mode(
-            self._MODERATE_QUALITY,
-            user_override="soft",
-            preload_classification="half_dose",
-            k2_metrics=k2,
-        )
-        assert config.mode == ConstraintMode.SOFT
-        assert config.vp_uncertainty == pytest.approx(0.40)
-        assert "User override" in config.reason
-
 
 # =============================================================================
 # NAWM-normalized CBV → vp prior
@@ -996,20 +983,6 @@ class TestDetermineConstraintModeUnknownSkips:
         )
         assert config.mode == ConstraintMode.SKIP
 
-    def test_explicit_user_override_skip_still_wins_over_unknown(self) -> None:
-        """UNKNOWN auto path bypasses preload check, but explicit override is honored."""
-        quality = CBVQualityAssessment(
-            confidence="high",
-            use_constraint=True,
-            reasons=["All quality checks passed"],
-        )
-        config = determine_constraint_mode(
-            quality,
-            user_override="soft",
-            preload_classification="unknown",
-        )
-        assert config.mode == ConstraintMode.SOFT
-
 
 class TestBolusGdFractionValidation:
     """_bolus_gd_fraction rejects invalid dose."""
@@ -1236,14 +1209,6 @@ class TestDetermineConstraintModeSyntheticOverride:
             detection_level=detection_level,
         )
 
-    def test_synthetic_overrides_user_soft(self) -> None:
-        quality = self._make_quality(detection_level="synthetic")
-        config = determine_constraint_mode(
-            dsc_quality=quality,
-            user_override="soft",
-        )
-        assert config.mode == ConstraintMode.SKIP
-
     def test_synthetic_auto_still_skips(self) -> None:
         quality = self._make_quality(detection_level="synthetic")
         config = determine_constraint_mode(
@@ -1251,12 +1216,3 @@ class TestDetermineConstraintModeSyntheticOverride:
             user_override="auto",
         )
         assert config.mode == ConstraintMode.SKIP
-
-    def test_measured_soft_honored_when_aif_real(self) -> None:
-        quality = self._make_quality(detection_level="atlas_strict")
-        config = determine_constraint_mode(
-            dsc_quality=quality,
-            user_override="soft",
-        )
-        # Real AIF → user override honored.
-        assert config.mode == ConstraintMode.SOFT

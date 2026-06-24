@@ -1031,10 +1031,9 @@ class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
     )
     constraint_mode = traits.Enum(
         "auto",
-        "soft",
         "skip",
         usedefault=True,
-        desc="DSC CBV constraint mode: auto, soft, or skip",
+        desc="DSC CBV constraint mode: auto or skip",
     )
     hematocrit = traits.Float(
         HEMATOCRIT_ARTERIAL,

@@ -120,7 +120,7 @@ class DCEConfig:
     r1_relaxivity: Optional[float] = None  # User-supplied r1 (s^-1/mM)
 
     # DSC CBV constraint settings
-    cbv_constraint_mode: str = "auto"  # "auto", "soft", "skip"
+    cbv_constraint_mode: str = "auto"  # "auto", "skip"
     hematocrit: float = 0.42  # Arterial Hct; Parker 2006 MRM used 0.42 in the original population-AIF derivation, so using Parker's fallback with 0.42 is internally self-consistent. Closer to GBM-cohort mean (~0.38) than QIBA Profile v2.0's adult-healthy-male 0.45.
 
     # Resource settings
@@ -156,7 +156,7 @@ class DCEConfig:
             )
 
         # Validate cbv_constraint_mode
-        _VALID_CBV_CONSTRAINT_MODES = {"auto", "soft", "skip"}
+        _VALID_CBV_CONSTRAINT_MODES = {"auto", "skip"}
         if self.cbv_constraint_mode not in _VALID_CBV_CONSTRAINT_MODES:
             raise ValueError(
                 f"Invalid cbv_constraint_mode: {self.cbv_constraint_mode!r}. "
