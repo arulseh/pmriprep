@@ -139,11 +139,9 @@ class TestSSVDRecovery:
         mtt_tol: float,
     ) -> None:
         """Test sSVD recovery of CBF and MTT."""
-        # SVD regularization systematically inflates MTT for low-CBF residues
-        # (MC N=100: low_flow mtt mean+3sigma = 1.22-1.66).
-        if cbf <= 0.015 and noise_frac > 0:
-            pytest.xfail("SVD regularization inflates MTT for low-CBF residues")
-
+        # SVD regularization systematically inflates MTT for low-CBF residues;
+        # the loose mtt_tol absorbs it (MC N=100: low_flow mtt mean+3sigma =
+        # 1.22-1.66), so the bound is asserted rather than xfailed.
         tissue, aif, dt, time_sec = _make_dsc_test_data(cbf, mtt, noise_frac)
 
         result = svd_deconvolve_standard(tissue, aif, dt, threshold=threshold)
@@ -238,9 +236,8 @@ class TestOSVDRecovery:
         mtt_tol: float,
     ) -> None:
         """Test oSVD recovery of CBF and MTT with noise."""
-        if cbf <= 0.015:
-            pytest.xfail("SVD regularization inflates MTT for low-CBF residues")
-
+        # SVD MTT inflation at low CBF is absorbed by the loose mtt_tol (MC
+        # mean+3sigma), so the bound is asserted rather than xfailed.
         tissue, aif, dt, time_sec = _make_dsc_test_data(
             cbf, mtt, noise_frac,
             forward_model=dsc_forward_model_circulant,
@@ -467,10 +464,11 @@ class TestVascularRecovery:
         if cbf < 0.03 and noise_frac >= 0.10:
             pytest.xfail("Prior bias overwhelms low-SNR signal at 10% noise")
 
-        # MAP prior systematically pulls low-CBF tissues toward prior mean
-        # at all noise levels.
-        if cbf <= 0.04 and noise_frac > 0:
-            pytest.xfail("MAP prior bias pulls low CBF toward prior mean")
+        # At 10% noise the low CNR widens the MAP CBF posterior past tolerance
+        # on some noise realizations (a variance effect, not a prior-mean pull;
+        # 2%/5% noise recover within tol).
+        if cbf <= 0.04 and noise_frac >= 0.10:
+            pytest.xfail("low CNR (10% noise) widens MAP CBF variance past tolerance")
 
         tissue, aif, time_sec = _make_vascular_test_data(
             cbf, alpha, beta, delay, noise_frac
@@ -749,8 +747,9 @@ class TestBatchedMAPVascularRecovery:
     ) -> None:
         if cbf < 0.03 and noise_frac >= 0.10:
             pytest.xfail("Prior bias overwhelms low-SNR signal at 10% noise")
-        if cbf <= 0.04 and noise_frac > 0:
-            pytest.xfail("MAP prior bias pulls low CBF toward prior mean")
+        # 10%-noise CBF variance (see test_vascular); 2%/5% recover within tol.
+        if cbf <= 0.04 and noise_frac >= 0.10:
+            pytest.xfail("low CNR (10% noise) widens MAP CBF variance past tolerance")
 
         n_seeds = 5
         tissues = []
@@ -813,9 +812,6 @@ class TestBatchedMAPCPIRecovery:
         mtt_tol: float,
     ) -> None:
         true_mtt = alpha * beta
-
-        if cbf <= 0.02:
-            pytest.xfail(f"CBF prior overwhelms low-flow signal (CBF={cbf})")
 
         n_seeds = 5
         tissues = []

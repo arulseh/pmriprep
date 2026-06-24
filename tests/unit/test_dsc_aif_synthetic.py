@@ -9,6 +9,11 @@ from pmriprep.utils.dsc_aif import (
     generate_synthetic_aif,
 )
 
+# This module exercises the legacy generate_synthetic_aif() helper directly; its
+# deprecation warning (production uses AIFDetection._generate_synthetic_aif) is
+# expected here and would otherwise spam the suite.
+pytestmark = pytest.mark.filterwarnings("ignore:generate_synthetic_aif")
+
 
 class TestGenerateSyntheticAIF:
     """Tests for generate_synthetic_aif."""

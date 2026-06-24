@@ -20,9 +20,8 @@ test file enforces the structural invariants that a future backend
      SOFT implementations ARE different by design.
   7. fraction_vp_at_bound diagnostic: synthetic cohort with controlled
      boundary pressure produces a fraction in the expected range.
-  8. Serial byte-identity: serial NLLS outputs match the committed
-     baseline. Hashes committed at
-     tests/fixtures/dce_soft_v0_27_3_hashes.json. (Slow-marked.)
+  8. Serial byte-identity: serial NLLS outputs match the baseline hashes in
+     tests/fixtures/dce_soft_serial_hashes.json. (Slow-marked.)
   9. fixed_vp unit consistency: array values lie in the physical vp range.
 
 These contracts make cross-backend invariants structural — a future
@@ -354,7 +353,7 @@ def test_fraction_vp_at_bound_in_expected_range(aif_and_time):
 # Assertion 8: serial byte-identity against committed baseline (slow)
 # ---------------------------------------------------------------------------
 
-_FIXTURE_PATH = Path(__file__).parent.parent / "fixtures" / "dce_soft_v0_27_3_hashes.json"
+_FIXTURE_PATH = Path(__file__).parent.parent / "fixtures" / "dce_soft_serial_hashes.json"
 
 
 def _compute_serial_hashes(aif, time_points):

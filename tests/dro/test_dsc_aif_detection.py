@@ -242,14 +242,16 @@ class TestAIFDetectionAccuracy:
         assert len(result.candidates) > 0
         assert result.aif_curve.shape[0] == volume.shape[3]
 
-    @pytest.mark.parametrize(
-        "snr",
-        [pytest.param(np.inf, id="noiseless"),
-         pytest.param(50.0, id="SNR50")],
-    )
-    def test_aif_curve_shape_matches_ground_truth(self, snr: float) -> None:
-        """Detected AIF curve shape should correlate with ground truth."""
-        volume, masks, aif_coords_true, aif_true = _build_test_phantom(snr=snr)
+    def test_aif_curve_shape_matches_ground_truth(self) -> None:
+        """Detected AIF curve shape should correlate with ground truth.
+
+        Noiseless concentration domain only. Realistic-SNR curve shape is
+        validated with the physical signal-domain noise model in
+        ``TestAIFDetectionSignalDomain::test_curve_shape_at_snr50``;
+        concentration-domain noise gives the baseline a zero mean and thus an
+        undefined baseline CV, which is non-physical (see ``_build_test_phantom``).
+        """
+        volume, masks, aif_coords_true, aif_true = _build_test_phantom(snr=np.inf)
 
         atlas_mask = np.zeros(volume.shape[:3], dtype=np.uint8)
         for x, y, z in aif_coords_true:
@@ -264,8 +266,7 @@ class TestAIFDetectionAccuracy:
             n_candidates=5,
         )
 
-        if result.detection_level == "none":
-            pytest.skip("AIF detection failed — cannot test curve shape")
+        assert result.detection_level != "none", "noiseless AIF detection must succeed"
 
         # Pearson correlation between detected and ground truth AIF
         detected = result.aif_curve

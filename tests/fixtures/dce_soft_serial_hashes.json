@@ -1,0 +1,5 @@
+{
+  "_comment": "SHA-256 byte-identity hashes of the serial-path Patlak NLLS fit (vp, Ktrans) on the deterministic _compute_serial_hashes cohort. Regenerate with this script only on intentional serial-path changes; otherwise a mismatch is accidental drift to revert.",
+  "patlak_vp_sha256": "10bbbc000944bd841f36dcdfb2090be784e7d42033b2f3ef755b6bc405801345",
+  "patlak_ktrans_sha256": "970307f3c61b63d412005f7cd9c0ef05c9da9510f0923c05a6fbe3dfc5c0ce64"
+}

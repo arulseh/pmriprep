@@ -605,7 +605,6 @@ class BayesianDSCFitter:
                         bounds=opt_bounds,
                         options={
                             "maxiter": max_iter,
-                            "disp": False,
                             "ftol": 1e-3 if sloppy else 1e-6,
                         },
                     )
