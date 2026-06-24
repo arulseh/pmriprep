@@ -320,6 +320,8 @@ def _build_dce_underlay_wf(
     present_inputs: set, work_subdir: str,
     *, t1w_in_dce: str | None = None,
     t1w_postcon_in_dce: str | None = None,
+    flair_in_dce: str | None = None,
+    flair_postcon_in_dce: str | None = None,
 ):
     """Helper: build the DCE datasinks workflow with the given underlays."""
     from pmriprep.workflows.dce.datasinks import init_dce_datasinks_wf
@@ -339,6 +341,10 @@ def _build_dce_underlay_wf(
         inp.t1w_in_dce = t1w_in_dce
     if t1w_postcon_in_dce is not None:
         inp.t1w_postcon_in_dce = t1w_postcon_in_dce
+    if flair_in_dce is not None:
+        inp.flair_in_dce = flair_in_dce
+    if flair_postcon_in_dce is not None:
+        inp.flair_postcon_in_dce = flair_postcon_in_dce
     wf.run()
 
 
@@ -421,6 +427,84 @@ def test_dce_both_t1w_underlays(
     pre_meta = json.loads(precon.with_suffix("").with_suffix(".json").read_text())
     post_meta = json.loads(postcon.with_suffix("").with_suffix(".json").read_text())
     assert "Pre-contrast" in pre_meta["Description"]
+    assert "Post-contrast" in post_meta["Description"]
+
+
+def test_dce_flair_precon_underlay_lands_in_anat(
+    tmp_path: Path, minimal_bids: tuple[Path, str]
+) -> None:
+    """Precon FLAIR underlay: lands in anat/ with no ce- entity."""
+    bids, src = minimal_bids
+    out = tmp_path / "out"
+    underlay = _write_nii(tmp_path / "flair_in_dce.nii.gz")
+
+    _build_dce_underlay_wf(
+        bids, src, out, tmp_path,
+        present_inputs={"flair_in_dce"},
+        work_subdir="work-flair-precon",
+        flair_in_dce=underlay,
+    )
+
+    anat_dir = out / "pmriprep" / "sub-01" / "ses-0001" / "anat"
+    expected = anat_dir / "sub-01_ses-0001_space-dceref_FLAIR.nii.gz"
+    assert expected.exists(), (
+        f"precon FLAIR underlay missing at {expected}; "
+        f"anat/ contains: {sorted(p.name for p in anat_dir.iterdir())}"
+    )
+    assert not (anat_dir / "sub-01_ses-0001_ce-GAD_space-dceref_FLAIR.nii.gz").exists()
+
+
+def test_dce_flair_postcon_underlay_lands_in_anat(
+    tmp_path: Path, minimal_bids: tuple[Path, str]
+) -> None:
+    """Postcon FLAIR underlay: lands in anat/ with ce-GAD entity."""
+    bids, src = minimal_bids
+    out = tmp_path / "out"
+    underlay = _write_nii(tmp_path / "flair_postcon_in_dce.nii.gz")
+
+    _build_dce_underlay_wf(
+        bids, src, out, tmp_path,
+        present_inputs={"flair_postcon_in_dce"},
+        work_subdir="work-flair-postcon",
+        flair_postcon_in_dce=underlay,
+    )
+
+    anat_dir = out / "pmriprep" / "sub-01" / "ses-0001" / "anat"
+    expected = anat_dir / "sub-01_ses-0001_ce-GAD_space-dceref_FLAIR.nii.gz"
+    assert expected.exists(), (
+        f"postcon FLAIR underlay missing at {expected}; "
+        f"anat/ contains: {sorted(p.name for p in anat_dir.iterdir())}"
+    )
+    assert not (anat_dir / "sub-01_ses-0001_space-dceref_FLAIR.nii.gz").exists()
+    sidecar = json.loads(expected.with_suffix("").with_suffix(".json").read_text())
+    assert "Post-contrast" in sidecar["Description"]
+
+
+def test_dce_both_flair_underlays(
+    tmp_path: Path, minimal_bids: tuple[Path, str]
+) -> None:
+    """Both FLAIR underlays configured: two anat/ outputs differing by ce- entity."""
+    bids, src = minimal_bids
+    out = tmp_path / "out"
+    pre = _write_nii(tmp_path / "flair_in_dce.nii.gz")
+    post = _write_nii(tmp_path / "flair_postcon_in_dce.nii.gz")
+
+    _build_dce_underlay_wf(
+        bids, src, out, tmp_path,
+        present_inputs={"flair_in_dce", "flair_postcon_in_dce"},
+        work_subdir="work-flair-both",
+        flair_in_dce=pre,
+        flair_postcon_in_dce=post,
+    )
+
+    anat_dir = out / "pmriprep" / "sub-01" / "ses-0001" / "anat"
+    precon = anat_dir / "sub-01_ses-0001_space-dceref_FLAIR.nii.gz"
+    postcon = anat_dir / "sub-01_ses-0001_ce-GAD_space-dceref_FLAIR.nii.gz"
+    assert precon.exists() and postcon.exists(), (
+        f"both FLAIR underlays expected; anat/ contains: "
+        f"{sorted(p.name for p in anat_dir.iterdir())}"
+    )
+    post_meta = json.loads(postcon.with_suffix("").with_suffix(".json").read_text())
     assert "Post-contrast" in post_meta["Description"]
 
 

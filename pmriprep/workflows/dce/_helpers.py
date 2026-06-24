@@ -1626,25 +1626,26 @@ def _transform_structural_to_dce(  # type: ignore[no-untyped-def]
 
     Returns
     -------
-    str or None
-        Path to transformed structural image in DCE space, or None if inputs
+    str
+        Path to transformed structural image in DCE space, or '' if inputs
         missing.
     """
     from nipype.interfaces.base import isdefined
 
-    # Handle both None and Nipype Undefined
+    # Returns "" (not None) because downstream traits.Str / niworkflows
+    # File rejects None.
     if not isdefined(structural_file) or structural_file is None:
-        return None
+        return ""
     if not isdefined(reference_file) or reference_file is None:
-        return None
+        return ""
     if not isdefined(transform_matrix) or transform_matrix is None:
-        return None
+        return ""
 
     from pathlib import Path
     import subprocess
 
     if not Path(structural_file).is_file():
-        return None
+        return ""
 
     out_file = str(Path.cwd() / output_name)
     subprocess.run(

@@ -908,6 +908,12 @@
     ],
     [
       "inputnode",
+      "flair_postcon_in_t1w",
+      "transform_flair_postcon_to_dsc",
+      "structural_file"
+    ],
+    [
+      "inputnode",
       "nawm_mask",
       "transform_nawm",
       "nawm_mask_file"
@@ -1257,6 +1263,12 @@
     [
       "prebolus_mean",
       "prebolus_mean_file",
+      "transform_flair_postcon_to_dsc",
+      "reference_file"
+    ],
+    [
+      "prebolus_mean",
+      "prebolus_mean_file",
       "transform_flair_to_dsc",
       "reference_file"
     ],
@@ -1401,6 +1413,12 @@
     [
       "register",
       "out_matrix",
+      "transform_flair_postcon_to_dsc",
+      "transform_matrix"
+    ],
+    [
+      "register",
+      "out_matrix",
       "transform_flair_to_dsc",
       "transform_matrix"
     ],
@@ -1511,6 +1529,12 @@
       "lesion_mask_dsc_file",
       "compute_maps",
       "enhancing_mask_file"
+    ],
+    [
+      "transform_flair_postcon_to_dsc",
+      "out_file",
+      "outputnode",
+      "flair_postcon_in_dsc"
     ],
     [
       "transform_flair_to_dsc",
@@ -1882,6 +1906,17 @@
         "lesion_mask_dsc_file"
       ]
     },
+    "transform_flair_postcon_to_dsc": {
+      "input_names": [
+        "output_name",
+        "reference_file",
+        "structural_file",
+        "transform_matrix"
+      ],
+      "output_names": [
+        "out_file"
+      ]
+    },
     "transform_flair_to_dsc": {
       "input_names": [
         "output_name",
@@ -1988,12 +2023,13 @@
     "select_aif_exclusion": "0b303ff465515a7109b9052be5452308da6f459f21918a8a5973a5109bddc06d",
     "signal_to_conc": "f03941de96bf6e269874c43378eda8ef3ed9908a4a26169cb934df700db77fca",
     "transform_enhancing_mask": "586e867241f5c90ec720a3cab141633e4cf1d7ddfba4fd27eb5d764332c7717d",
-    "transform_flair_to_dsc": "d7e0a6ca9b2b039366d449fca6a7afc8757b24f4bab9104d1ac97c3f7d0067c1",
+    "transform_flair_postcon_to_dsc": "94ff0f695c56672e4793a4b3573a0d4199bd466baad7e2ef07791744af16ce3e",
+    "transform_flair_to_dsc": "94ff0f695c56672e4793a4b3573a0d4199bd466baad7e2ef07791744af16ce3e",
     "transform_lesion": "586e867241f5c90ec720a3cab141633e4cf1d7ddfba4fd27eb5d764332c7717d",
     "transform_nawm": "f475cf00602ca2e81455efd4b6b16fb30f8e99c2a93b0f90a10a028808fdaa39",
-    "transform_t1_postcon_to_dsc": "d7e0a6ca9b2b039366d449fca6a7afc8757b24f4bab9104d1ac97c3f7d0067c1",
-    "transform_t1_to_dsc": "d7e0a6ca9b2b039366d449fca6a7afc8757b24f4bab9104d1ac97c3f7d0067c1",
-    "transform_t2w_to_dsc": "d7e0a6ca9b2b039366d449fca6a7afc8757b24f4bab9104d1ac97c3f7d0067c1",
+    "transform_t1_postcon_to_dsc": "94ff0f695c56672e4793a4b3573a0d4199bd466baad7e2ef07791744af16ce3e",
+    "transform_t1_to_dsc": "94ff0f695c56672e4793a4b3573a0d4199bd466baad7e2ef07791744af16ce3e",
+    "transform_t2w_to_dsc": "94ff0f695c56672e4793a4b3573a0d4199bd466baad7e2ef07791744af16ce3e",
     "validate_roi_mask": "101bbd09f95c1cce98d73492199f454568b79d5dffec25ec04a6ccd7b67139c8",
     "validate_user_lesion_mask": "101bbd09f95c1cce98d73492199f454568b79d5dffec25ec04a6ccd7b67139c8"
   },
@@ -2132,6 +2168,10 @@
       "n_procs": 1
     },
     "transform_enhancing_mask": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "transform_flair_postcon_to_dsc": {
       "mem_gb": 0.2,
       "n_procs": 1
     },
@@ -2342,6 +2382,9 @@
       "apply_xfm": true,
       "interp": "nearestneighbour"
     },
+    "transform_flair_postcon_to_dsc": {
+      "output_name": "flair_postcon_in_dsc.nii.gz"
+    },
     "transform_flair_to_dsc": {
       "output_name": "flair_in_dsc.nii.gz"
     },
@@ -2512,6 +2555,10 @@
       "Function"
     ],
     [
+      "transform_flair_postcon_to_dsc",
+      "Function"
+    ],
+    [
       "transform_flair_to_dsc",
       "Function"
     ],
@@ -2585,6 +2632,7 @@
     "dsc_to_t1w_xfm",
     "fallback_mask",
     "flair_in_dsc",
+    "flair_postcon_in_dsc",
     "k2_map",
     "lesion_mask_dsc",
     "lesion_stats_json",

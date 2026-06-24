@@ -483,3 +483,51 @@ class TestStructuralUnderlayDatatype:
         postcon_meta = json.loads(postcon.with_suffix("").with_suffix(".json").read_text())
         assert "Pre-contrast" in precon_meta["Description"]
         assert "Post-contrast" in postcon_meta["Description"]
+
+    def test_flair_in_dsc_lands_in_anat(self, minimal_inputs, tmp_path) -> None:
+        """Precon FLAIR underlay: lands in anat/ with no ce- entity."""
+        minimal_inputs["flair_in_dsc"] = _write_dummy_nifti(tmp_path / "flair_in_dsc.nii.gz")
+        ses = self._build_and_run(minimal_inputs, tmp_path, "work-flair-precon")
+
+        anat_dir = ses / "anat"
+        expected = anat_dir / "sub-test01_ses-01_space-dscref_FLAIR.nii.gz"
+        assert expected.exists(), (
+            f"precon FLAIR underlay missing at {expected}; "
+            f"anat/ contains: {sorted(p.name for p in anat_dir.iterdir())}"
+        )
+        assert not (anat_dir / "sub-test01_ses-01_ce-GAD_space-dscref_FLAIR.nii.gz").exists()
+
+    def test_flair_postcon_in_dsc_lands_in_anat(self, minimal_inputs, tmp_path) -> None:
+        """Postcon FLAIR underlay: lands in anat/ with ce-GAD entity."""
+        minimal_inputs["flair_postcon_in_dsc"] = _write_dummy_nifti(
+            tmp_path / "flair_postcon_in_dsc.nii.gz",
+        )
+        ses = self._build_and_run(minimal_inputs, tmp_path, "work-flair-postcon")
+
+        anat_dir = ses / "anat"
+        expected = anat_dir / "sub-test01_ses-01_ce-GAD_space-dscref_FLAIR.nii.gz"
+        assert expected.exists(), (
+            f"postcon FLAIR underlay missing at {expected}; "
+            f"anat/ contains: {sorted(p.name for p in anat_dir.iterdir())}"
+        )
+        assert not (anat_dir / "sub-test01_ses-01_space-dscref_FLAIR.nii.gz").exists()
+        meta = json.loads(expected.with_suffix("").with_suffix(".json").read_text())
+        assert "Post-contrast" in meta["Description"]
+
+    def test_both_flair_underlays_in_dsc(self, minimal_inputs, tmp_path) -> None:
+        """Both FLAIR underlays configured: two anat/ outputs differing by ce- entity."""
+        minimal_inputs["flair_in_dsc"] = _write_dummy_nifti(tmp_path / "flair_in_dsc.nii.gz")
+        minimal_inputs["flair_postcon_in_dsc"] = _write_dummy_nifti(
+            tmp_path / "flair_postcon_in_dsc.nii.gz",
+        )
+        ses = self._build_and_run(minimal_inputs, tmp_path, "work-flair-both")
+
+        anat_dir = ses / "anat"
+        precon = anat_dir / "sub-test01_ses-01_space-dscref_FLAIR.nii.gz"
+        postcon = anat_dir / "sub-test01_ses-01_ce-GAD_space-dscref_FLAIR.nii.gz"
+        assert precon.exists() and postcon.exists(), (
+            f"both FLAIR underlays expected; anat/ contains: "
+            f"{sorted(p.name for p in anat_dir.iterdir())}"
+        )
+        postcon_meta = json.loads(postcon.with_suffix("").with_suffix(".json").read_text())
+        assert "Post-contrast" in postcon_meta["Description"]

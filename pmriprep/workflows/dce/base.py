@@ -848,7 +848,8 @@ def init_dce_preproc_wf(
                 # Structural underlay inputs
                 "t1w_underlay",  # precontrast (or single-source) T1w underlay
                 "t1w_postcon_underlay",  # postcontrast T1w underlay (independent of t1w_underlay)
-                "flair_in_t1w",  # FLAIR coregistered to T1w space (from anat)
+                "flair_in_t1w",  # pre-contrast FLAIR coregistered to T1w space (from anat)
+                "flair_postcon_in_t1w",  # post-contrast FLAIR coregistered to T1w space (from anat)
                 "t2w_in_t1w",  # T2w coregistered to T1w space (from anat)
                 # NAWM mask input (for normalization)
                 "nawm_mask",
@@ -956,6 +957,7 @@ def init_dce_preproc_wf(
                 "t1w_in_dce",
                 "t1w_postcon_in_dce",
                 "flair_in_dce",
+                "flair_postcon_in_dce",
                 "t2w_in_dce",
                 # Lesion statistics (conditional on lesion mask)
                 "lesion_stats_json",
@@ -2401,7 +2403,7 @@ def init_dce_preproc_wf(
         transform_t1w_postcon_underlay.inputs.output_name = "t1w_postcon_in_dce.nii.gz"
 
     transform_flair_underlay = None
-    if "flair" in config.underlays:
+    if "flair_precon" in config.underlays:
         transform_flair_underlay = pe.Node(
             niu.Function(
                 input_names=["structural_file", "reference_file", "transform_matrix", "output_name"],
@@ -2411,6 +2413,18 @@ def init_dce_preproc_wf(
             name="transform_flair_underlay",
         )
         transform_flair_underlay.inputs.output_name = "flair_in_dce.nii.gz"
+
+    transform_flair_postcon_underlay = None
+    if "flair_postcon" in config.underlays:
+        transform_flair_postcon_underlay = pe.Node(
+            niu.Function(
+                input_names=["structural_file", "reference_file", "transform_matrix", "output_name"],
+                output_names=["out_file"],
+                function=_transform_structural_to_dce,
+            ),
+            name="transform_flair_postcon_underlay",
+        )
+        transform_flair_postcon_underlay.inputs.output_name = "flair_postcon_in_dce.nii.gz"
 
     transform_t2w_underlay = None
     if "t2w" in config.underlays:
@@ -2444,6 +2458,13 @@ def init_dce_preproc_wf(
             (inputnode, transform_flair_underlay, [("flair_in_t1w", "structural_file")]),
             (dce_preprocess, transform_flair_underlay, [("mean_img", "reference_file")]),
             (dce_registration, transform_flair_underlay, [("out_matrix", "transform_matrix")]),
+        ])
+
+    if transform_flair_postcon_underlay is not None:
+        workflow.connect([
+            (inputnode, transform_flair_postcon_underlay, [("flair_postcon_in_t1w", "structural_file")]),
+            (dce_preprocess, transform_flair_postcon_underlay, [("mean_img", "reference_file")]),
+            (dce_registration, transform_flair_postcon_underlay, [("out_matrix", "transform_matrix")]),
         ])
 
     if transform_t2w_underlay is not None:
@@ -2606,6 +2627,11 @@ def init_dce_preproc_wf(
     if transform_flair_underlay is not None:
         workflow.connect([
             (transform_flair_underlay, outputnode, [("out_file", "flair_in_dce")]),
+        ])
+
+    if transform_flair_postcon_underlay is not None:
+        workflow.connect([
+            (transform_flair_postcon_underlay, outputnode, [("out_file", "flair_postcon_in_dce")]),
         ])
 
     if transform_t2w_underlay is not None:

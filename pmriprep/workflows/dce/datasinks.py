@@ -994,7 +994,7 @@ def init_dce_datasinks_wf(
                 "aif_curve", "aif_mask",
                 # Structural underlays + xfm
                 "t1w_in_dce", "t1w_postcon_in_dce",
-                "flair_in_dce", "t2w_in_dce", "dce_to_t1w_xfm",
+                "flair_in_dce", "flair_postcon_in_dce", "t2w_in_dce", "dce_to_t1w_xfm",
                 # Lesion/ROI
                 "lesion_mask_dce", "lesion_stats_json",
                 "user_lesion_mask_dce", "user_lesion_stats_json",
@@ -1521,6 +1521,14 @@ def init_dce_datasinks_wf(
             workflow, inputnode, base_minimal,
             name="flair_in_dce", in_attr="flair_in_dce", label="FLAIR",
             description="FLAIR registered to DCE space",
+        )
+        sink_outputs.append((sink, "out_file"))
+    if "flair_postcon_in_dce" in present:
+        sink = _add_anat_image_sink(
+            workflow, inputnode, base_minimal,
+            name="flair_postcon_in_dce", in_attr="flair_postcon_in_dce", label="FLAIR",
+            description="Post-contrast FLAIR registered to DCE space",
+            ce_label="GAD",
         )
         sink_outputs.append((sink, "out_file"))
     if "t2w_in_dce" in present:

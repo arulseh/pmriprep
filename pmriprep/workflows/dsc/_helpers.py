@@ -902,7 +902,7 @@ def _transform_structural_to_dsc(structural_file=None, reference_file=None, tran
     Returns
     -------
     str
-        Path to transformed structural image in DSC space, or None if no input.
+        Path to transformed structural image in DSC space, or '' if no input.
     """
     from nipype.interfaces.base import isdefined
 

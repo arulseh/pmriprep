@@ -2557,6 +2557,7 @@
     "dsc_to_t1w_xfm",
     "fallback_mask",
     "flair_in_dsc",
+    "flair_postcon_in_dsc",
     "k2_map",
     "lesion_mask_dsc",
     "lesion_stats_json",

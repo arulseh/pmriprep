@@ -815,7 +815,7 @@ def init_dsc_datasinks_wf(
                 "user_lesion_mask_dsc", "user_lesion_stats_json",
                 "roi_mask_dsc", "roi_stats_json",
                 "t1w_in_dsc", "t1w_postcon_in_dsc",
-                "flair_in_dsc", "t2w_in_dsc",
+                "flair_in_dsc", "flair_postcon_in_dsc", "t2w_in_dsc",
                 "dsc_to_t1w_xfm", "t1w_to_dsc_xfm",
                 # Sidecar drivers
                 "qc_metrics", "provenance_dict", "preflight_warnings",
@@ -1361,6 +1361,16 @@ def init_dsc_datasinks_wf(
             in_attr="flair_in_dsc",
             desc_value=None, suffix="FLAIR",
             description="FLAIR registered to DSC space",
+        )
+        sink_outputs.append((sink, "out_file"))
+    if "flair_postcon_in_dsc" in present:
+        sink = _add_anat_sink(
+            workflow, inputnode, base_minimal,
+            name="flair_postcon_in_dsc",
+            in_attr="flair_postcon_in_dsc",
+            desc_value=None, suffix="FLAIR",
+            description="Post-contrast FLAIR registered to DSC space",
+            ce_value="GAD",
         )
         sink_outputs.append((sink, "out_file"))
     if "t2w_in_dsc" in present:

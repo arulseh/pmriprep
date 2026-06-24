@@ -1700,19 +1700,25 @@ def init_pmriprep_wf(
                     logging.getLogger("pmriprep.workflows").warning(
                         "DSC: 't1w_postcon' underlay requested but no post-contrast T1w available. Skipping."
                     )
-            # FLAIR underlay (prefer precon, fall back to postcon)
-            if "flair" in dsc_config.underlays:
+            # FLAIR underlays — independent precon and postcon paths
+            # (precon → flair_in_t1w, postcon → flair_postcon_in_t1w).
+            if "flair_precon" in dsc_config.underlays:
                 if session_data.modalities.flair:
                     workflow.connect([
                         (anat_wf, dsc_wf, [("outputnode.flair_coreg", "inputnode.flair_in_t1w")]),
                     ])
-                elif session_data.modalities.flair_postcon:
+                else:
+                    logging.getLogger("pmriprep.workflows").warning(
+                        "DSC: 'flair_precon' underlay requested but no pre-contrast FLAIR available. Skipping."
+                    )
+            if "flair_postcon" in dsc_config.underlays:
+                if session_data.modalities.flair_postcon:
                     workflow.connect([
-                        (anat_wf, dsc_wf, [("outputnode.flair_postcon_coreg", "inputnode.flair_in_t1w")]),
+                        (anat_wf, dsc_wf, [("outputnode.flair_postcon_coreg", "inputnode.flair_postcon_in_t1w")]),
                     ])
                 else:
                     logging.getLogger("pmriprep.workflows").warning(
-                        "DSC: 'flair' underlay requested but no FLAIR available. Skipping."
+                        "DSC: 'flair_postcon' underlay requested but no post-contrast FLAIR available. Skipping."
                     )
             # T2w underlay
             if "t2w" in dsc_config.underlays:
@@ -1760,13 +1766,18 @@ def init_pmriprep_wf(
             if prev_anat["t1w_to_mni_xfm"]:
                 dsc_wf.inputs.inputnode.t1w_to_mni_xfm = prev_anat["t1w_to_mni_xfm"]
                 _log.info("skip-anat: loaded t1w_to_mni_xfm from %s", prev_anat["t1w_to_mni_xfm"])
-            if "flair" in dsc_config.underlays:
+            if "flair_precon" in dsc_config.underlays:
                 if prev_anat["flair_coreg"]:
                     dsc_wf.inputs.inputnode.flair_in_t1w = prev_anat["flair_coreg"]
-                    _log.info("skip-anat: loaded flair_in_t1w from %s", prev_anat["flair_coreg"])
-                elif prev_anat.get("flair_postcon_coreg"):
-                    dsc_wf.inputs.inputnode.flair_in_t1w = prev_anat["flair_postcon_coreg"]
-                    _log.info("skip-anat: loaded flair_in_t1w (postcon) from %s", prev_anat["flair_postcon_coreg"])
+                    _log.info("skip-anat: loaded flair_in_t1w (precon) from %s", prev_anat["flair_coreg"])
+                else:
+                    _log.warning("DSC: 'flair_precon' underlay requested but unavailable in skip-anat. Skipping.")
+            if "flair_postcon" in dsc_config.underlays:
+                if prev_anat.get("flair_postcon_coreg"):
+                    dsc_wf.inputs.inputnode.flair_postcon_in_t1w = prev_anat["flair_postcon_coreg"]
+                    _log.info("skip-anat: loaded flair_postcon_in_t1w from %s", prev_anat["flair_postcon_coreg"])
+                else:
+                    _log.warning("DSC: 'flair_postcon' underlay requested but unavailable in skip-anat. Skipping.")
             if "t2w" in dsc_config.underlays and prev_anat["t2w_coreg"]:
                 dsc_wf.inputs.inputnode.t2w_in_t1w = prev_anat["t2w_coreg"]
                 _log.info("skip-anat: loaded t2w_in_t1w from %s", prev_anat["t2w_coreg"])
@@ -1999,9 +2010,13 @@ def init_pmriprep_wf(
             "t1w_postcon" in dsc_underlays
             and session_data.modalities.t1w_ce_gad is not None
         )
-        _has_flair_underlay = (
-            "flair" in dsc_underlays
+        _has_flair_precon_underlay = (
+            "flair_precon" in dsc_underlays
             and session_data.modalities.flair is not None
+        )
+        _has_flair_postcon_underlay = (
+            "flair_postcon" in dsc_underlays
+            and session_data.modalities.flair_postcon is not None
         )
         _has_t2w_underlay = (
             "t2w" in dsc_underlays
@@ -2011,13 +2026,16 @@ def init_pmriprep_wf(
             dsc_present.add("t1w_in_dsc")
         if _has_t1w_postcon_underlay:
             dsc_present.add("t1w_postcon_in_dsc")
-        if _has_flair_underlay:
+        if _has_flair_precon_underlay:
             dsc_present.add("flair_in_dsc")
+        if _has_flair_postcon_underlay:
+            dsc_present.add("flair_postcon_in_dsc")
         if _has_t2w_underlay:
             dsc_present.add("t2w_in_dsc")
         if (
             _has_t1w_precon_underlay or _has_t1w_postcon_underlay
-            or _has_flair_underlay or _has_t2w_underlay
+            or _has_flair_precon_underlay or _has_flair_postcon_underlay
+            or _has_t2w_underlay
         ):
             dsc_present.add("t1w_to_dsc_xfm")
 
@@ -2105,6 +2123,7 @@ def init_pmriprep_wf(
                 ("outputnode.t1w_in_dsc", "inputnode.t1w_in_dsc"),
                 ("outputnode.t1w_postcon_in_dsc", "inputnode.t1w_postcon_in_dsc"),
                 ("outputnode.flair_in_dsc", "inputnode.flair_in_dsc"),
+                ("outputnode.flair_postcon_in_dsc", "inputnode.flair_postcon_in_dsc"),
                 ("outputnode.t2w_in_dsc", "inputnode.t2w_in_dsc"),
                 ("outputnode.t1w_to_dsc_h5", "inputnode.t1w_to_dsc_xfm"),
                 # AIF QC plots
@@ -2428,19 +2447,25 @@ def init_pmriprep_wf(
                     logging.getLogger("pmriprep.workflows").warning(
                         "DCE: 't1w_postcon' underlay requested but no post-contrast T1w available. Skipping."
                     )
-            # FLAIR underlay (prefer precon, fall back to postcon)
-            if "flair" in dce_config.underlays:
+            # FLAIR underlays — independent precon and postcon paths
+            # (precon → flair_in_t1w, postcon → flair_postcon_in_t1w).
+            if "flair_precon" in dce_config.underlays:
                 if session_data.modalities.flair:
                     workflow.connect([
                         (anat_wf, dce_wf, [("outputnode.flair_coreg", "inputnode.flair_in_t1w")]),
                     ])
-                elif session_data.modalities.flair_postcon:
+                else:
+                    logging.getLogger("pmriprep.workflows").warning(
+                        "DCE: 'flair_precon' underlay requested but no pre-contrast FLAIR available. Skipping."
+                    )
+            if "flair_postcon" in dce_config.underlays:
+                if session_data.modalities.flair_postcon:
                     workflow.connect([
-                        (anat_wf, dce_wf, [("outputnode.flair_postcon_coreg", "inputnode.flair_in_t1w")]),
+                        (anat_wf, dce_wf, [("outputnode.flair_postcon_coreg", "inputnode.flair_postcon_in_t1w")]),
                     ])
                 else:
                     logging.getLogger("pmriprep.workflows").warning(
-                        "DCE: 'flair' underlay requested but no FLAIR available. Skipping."
+                        "DCE: 'flair_postcon' underlay requested but no post-contrast FLAIR available. Skipping."
                     )
             # T2w underlay
             if "t2w" in dce_config.underlays:
@@ -2497,13 +2522,18 @@ def init_pmriprep_wf(
                     _log.info("skip-anat (DCE): loaded t1w_postcon_underlay (postcon-only) from %s", prev_anat["t1w_preproc"])
                 else:
                     _log.warning("DCE: 't1w_postcon' underlay requested but unavailable in skip-anat. Skipping.")
-            if "flair" in dce_config.underlays:
+            if "flair_precon" in dce_config.underlays:
                 if prev_anat["flair_coreg"]:
                     dce_wf.inputs.inputnode.flair_in_t1w = prev_anat["flair_coreg"]
-                    _log.info("skip-anat (DCE): loaded flair_in_t1w from %s", prev_anat["flair_coreg"])
-                elif prev_anat.get("flair_postcon_coreg"):
-                    dce_wf.inputs.inputnode.flair_in_t1w = prev_anat["flair_postcon_coreg"]
-                    _log.info("skip-anat (DCE): loaded flair_in_t1w (postcon) from %s", prev_anat["flair_postcon_coreg"])
+                    _log.info("skip-anat (DCE): loaded flair_in_t1w (precon) from %s", prev_anat["flair_coreg"])
+                else:
+                    _log.warning("DCE: 'flair_precon' underlay requested but unavailable in skip-anat. Skipping.")
+            if "flair_postcon" in dce_config.underlays:
+                if prev_anat.get("flair_postcon_coreg"):
+                    dce_wf.inputs.inputnode.flair_postcon_in_t1w = prev_anat["flair_postcon_coreg"]
+                    _log.info("skip-anat (DCE): loaded flair_postcon_in_t1w from %s", prev_anat["flair_postcon_coreg"])
+                else:
+                    _log.warning("DCE: 'flair_postcon' underlay requested but unavailable in skip-anat. Skipping.")
             if "t2w" in dce_config.underlays and prev_anat["t2w_coreg"]:
                 dce_wf.inputs.inputnode.t2w_in_t1w = prev_anat["t2w_coreg"]
                 _log.info("skip-anat (DCE): loaded t2w_in_t1w from %s", prev_anat["t2w_coreg"])
@@ -2878,9 +2908,13 @@ def init_pmriprep_wf(
             "t1w_postcon" in dce_underlays
             and session_data.modalities.t1w_ce_gad is not None
         )
-        _dce_has_flair_underlay = (
-            "flair" in dce_underlays
+        _dce_has_flair_precon_underlay = (
+            "flair_precon" in dce_underlays
             and session_data.modalities.flair is not None
+        )
+        _dce_has_flair_postcon_underlay = (
+            "flair_postcon" in dce_underlays
+            and session_data.modalities.flair_postcon is not None
         )
         _dce_has_t2w_underlay = (
             "t2w" in dce_underlays
@@ -2890,8 +2924,10 @@ def init_pmriprep_wf(
             dce_present.add("t1w_in_dce")
         if _dce_has_t1w_postcon_underlay:
             dce_present.add("t1w_postcon_in_dce")
-        if _dce_has_flair_underlay:
+        if _dce_has_flair_precon_underlay:
             dce_present.add("flair_in_dce")
+        if _dce_has_flair_postcon_underlay:
+            dce_present.add("flair_postcon_in_dce")
         if _dce_has_t2w_underlay:
             dce_present.add("t2w_in_dce")
 
@@ -3005,6 +3041,7 @@ def init_pmriprep_wf(
                 ("outputnode.t1w_in_dce", "inputnode.t1w_in_dce"),
                 ("outputnode.t1w_postcon_in_dce", "inputnode.t1w_postcon_in_dce"),
                 ("outputnode.flair_in_dce", "inputnode.flair_in_dce"),
+                ("outputnode.flair_postcon_in_dce", "inputnode.flair_postcon_in_dce"),
                 ("outputnode.t2w_in_dce", "inputnode.t2w_in_dce"),
                 # Lesion statistics
                 ("outputnode.lesion_stats_json", "inputnode.lesion_stats_json"),

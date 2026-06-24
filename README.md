@@ -208,7 +208,7 @@ dsc:
   dose: 0.75
   lesion_mask: /path/to/lesion_mask.nii.gz
   nawm_mask: /path/to/nawm_mask.nii.gz
-  underlays: [t1w_postcon, flair]
+  underlays: [t1w_postcon, flair_precon]
 
 dce:
   model: extended_tofts
@@ -216,7 +216,7 @@ dce:
   dose: 0.75
   lesion_mask: /path/to/lesion_mask.nii.gz
   nawm_mask: /path/to/nawm_mask.nii.gz
-  underlays: [t1w_postcon, flair]
+  underlays: [t1w_postcon, flair_precon]
 ```
 
 ### DSC Configuration
@@ -243,7 +243,7 @@ dce:
 | `nawm_mask` | path | `null` | NAWM mask for normalization (DSC space) |
 | `roi_mask` | path | `null` | ROI mask for statistics extraction. Multi-label integer masks produce per-label stats (DSC space) |
 | `smooth_fwhm` | float | `0.0` | Smoothing kernel FWHM in mm (0 = none); additional outputs |
-| `underlays` | list | `[]` | Structural images to save in perfusion space: `t1w_precon`, `t1w_postcon`, `flair`, `t2w` |
+| `underlays` | list | `[]` | Structural images to save in perfusion space: `t1w_precon`, `t1w_postcon`, `flair_precon`, `flair_postcon`, `t2w` |
 
 ### DCE Configuration
 
@@ -275,7 +275,7 @@ dce:
 | `nawm_mask` | path | `null` | NAWM mask for normalization (DCE space) |
 | `roi_mask` | path | `null` | ROI mask for statistics extraction. Multi-label integer masks produce per-label stats (DCE space) |
 | `smooth_fwhm` | float | `0.0` | Smoothing kernel FWHM in mm (0 = none); additional outputs |
-| `underlays` | list | `[]` | Structural images to save in perfusion space: `t1w_precon`, `t1w_postcon`, `flair`, `t2w` |
+| `underlays` | list | `[]` | Structural images to save in perfusion space: `t1w_precon`, `t1w_postcon`, `flair_precon`, `flair_postcon`, `t2w` |
 
 ### Anatomical Configuration
 

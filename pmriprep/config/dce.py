@@ -138,13 +138,14 @@ class DCEConfig:
         YAML/JSON config files or CLI arguments.
         """
         # Validate underlay values
-        _VALID_UNDERLAYS = {"t1w_precon", "t1w_postcon", "flair", "t2w"}
+        _VALID_UNDERLAYS = {"t1w_precon", "t1w_postcon", "flair_precon", "flair_postcon", "t2w"}
         invalid = set(self.underlays) - _VALID_UNDERLAYS
         if invalid:
             raise ValueError(
                 f"Invalid underlay(s): {sorted(invalid)}. "
                 f"Valid: {sorted(_VALID_UNDERLAYS)}. "
-                f"Note: 't1w' is no longer valid — use 't1w_precon' or 't1w_postcon'."
+                f"Note: 't1w' and 'flair' are no longer valid — use their "
+                f"'_precon'/'_postcon' variants."
             )
 
         # Validate b1_method

@@ -1705,7 +1705,8 @@ def init_dsc_preproc_wf(
                 "te",  # Echo time in seconds
                 "field_strength",  # Magnetic field strength
                 "tr",  # Repetition time in seconds
-                "flair_in_t1w",  # FLAIR coregistered to T1w space (from anat)
+                "flair_in_t1w",  # pre-contrast FLAIR coregistered to T1w space (from anat)
+                "flair_postcon_in_t1w",  # post-contrast FLAIR coregistered to T1w space (from anat)
                 "t2w_in_t1w",  # T2w coregistered to T1w space (from anat)
             ]
         ),
@@ -1784,6 +1785,7 @@ def init_dsc_preproc_wf(
                 "t1w_in_dsc",
                 "t1w_postcon_in_dsc",
                 "flair_in_dsc",
+                "flair_postcon_in_dsc",
                 "t2w_in_dsc",
                 # AIF QC plots
                 "aif_curve_plot",
@@ -2150,7 +2152,7 @@ def init_dsc_preproc_wf(
         transform_t1_postcon_to_dsc.inputs.output_name = "t1w_postcon_in_dsc.nii.gz"
 
     transform_flair_to_dsc = None
-    if "flair" in config.underlays:
+    if "flair_precon" in config.underlays:
         transform_flair_to_dsc = pe.Node(
             niu.Function(
                 input_names=["structural_file", "reference_file", "transform_matrix", "output_name"],
@@ -2160,6 +2162,18 @@ def init_dsc_preproc_wf(
             name="transform_flair_to_dsc",
         )
         transform_flair_to_dsc.inputs.output_name = "flair_in_dsc.nii.gz"
+
+    transform_flair_postcon_to_dsc = None
+    if "flair_postcon" in config.underlays:
+        transform_flair_postcon_to_dsc = pe.Node(
+            niu.Function(
+                input_names=["structural_file", "reference_file", "transform_matrix", "output_name"],
+                output_names=["out_file"],
+                function=_transform_structural_to_dsc,
+            ),
+            name="transform_flair_postcon_to_dsc",
+        )
+        transform_flair_postcon_to_dsc.inputs.output_name = "flair_postcon_in_dsc.nii.gz"
 
     transform_t2w_to_dsc = None
     if "t2w" in config.underlays:
@@ -2544,6 +2558,13 @@ def init_dsc_preproc_wf(
             (registration_wf, transform_flair_to_dsc, [("outputnode.t1w_to_dsc_matrix", "transform_matrix")]),
         ])
 
+    if transform_flair_postcon_to_dsc is not None:
+        workflow.connect([
+            (inputnode, transform_flair_postcon_to_dsc, [("flair_postcon_in_t1w", "structural_file")]),
+            (motion_wf, transform_flair_postcon_to_dsc, [("outputnode.prebolus_mean_file", "reference_file")]),
+            (registration_wf, transform_flair_postcon_to_dsc, [("outputnode.t1w_to_dsc_matrix", "transform_matrix")]),
+        ])
+
     if transform_t2w_to_dsc is not None:
         workflow.connect([
             (inputnode, transform_t2w_to_dsc, [("t2w_in_t1w", "structural_file")]),
@@ -2679,6 +2700,11 @@ def init_dsc_preproc_wf(
     if transform_flair_to_dsc is not None:
         workflow.connect([
             (transform_flair_to_dsc, outputnode, [("out_file", "flair_in_dsc")]),
+        ])
+
+    if transform_flair_postcon_to_dsc is not None:
+        workflow.connect([
+            (transform_flair_postcon_to_dsc, outputnode, [("out_file", "flair_postcon_in_dsc")]),
         ])
 
     if transform_t2w_to_dsc is not None:
