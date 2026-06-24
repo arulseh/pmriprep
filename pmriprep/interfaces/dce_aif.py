@@ -1,7 +1,7 @@
 """AIF (Arterial Input Function) detection interfaces for DCE-MRI.
 
 This module implements Nipype interfaces for AIF detection in DCE perfusion
-processing, with multi-level detection strategies (atlas-based, automatic,
+processing, with multi-level detection strategies (atlas-based, whole-brain,
 population) and comprehensive quality metrics for DCE-specific requirements.
 
 The DCE AIF differs from DSC AIF in several important ways:
@@ -385,7 +385,7 @@ def compute_dce_aif_peak_amplitude_warning(
         Dose-scaled Parker plasma ``peak_max`` (mM).
     detection_method : str
         Cascade detection method label
-        ("atlas" / "automatic" / "population" / "external" /
+        ("atlas" / "whole_brain" / "population" / "external" /
         "fallback"). Warning is suppressed when this equals
         ``"population"``.
     threshold : float, optional
@@ -1150,7 +1150,7 @@ class DCEAIFDetectionOutputSpec(TraitedSpec):
     out_aif_mask = File(desc="AIF voxel mask NIfTI (None for population AIF)")
     aif_curve = traits.List(traits.Float, desc="AIF concentration curve values (mM)")
     detection_method = traits.Str(
-        desc="Detection method used: 'atlas', 'automatic', 'population'"
+        desc="Detection method used: 'atlas', 'whole_brain', 'population'"
     )
     quality_score = traits.Float(desc="Overall AIF quality score (0-1)")
     peak_concentration = traits.Float(desc="Peak AIF concentration in mM")
@@ -1240,7 +1240,7 @@ class AIFDetection(BaseInterface):
     aif_curve : list
         AIF concentration values in mM.
     detection_method : str
-        Method used: 'atlas', 'automatic', or 'population'.
+        Method used: 'atlas', 'whole_brain', or 'population'.
     quality_score : float
         Overall quality score (0-1).
     peak_concentration : float
@@ -2889,7 +2889,7 @@ class AIFDetection(BaseInterface):
         -------
         CascadeResult
             Aggregated cascade outcome. Notable fields:
-            - ``detection_method``: ``"atlas"`` / ``"automatic"`` /
+            - ``detection_method``: ``"atlas"`` / ``"whole_brain"`` /
               ``"population"``; ``"population"`` indicates no anchored
               keeper anywhere (caller handles Parker fallback).
             - ``atlas_tier_used``: ``f"{atlas_name}_{crit}"`` for the
@@ -3105,7 +3105,7 @@ class AIFDetection(BaseInterface):
                             evaluation.gate_decisions,
                         )
                         _record_single_keeper(
-                            cands, scs, mets, "automatic", "wb_relaxed",
+                            cands, scs, mets, "whole_brain", "wb_relaxed",
                         )
                     else:
                         candidates = tier_result.candidates
@@ -3114,12 +3114,12 @@ class AIFDetection(BaseInterface):
                         _record_tier_gate_outcome(
                             "wb_relaxed", "PASS", evaluation.gate_decisions,
                         )
-                        detection_method = "automatic"
+                        detection_method = "whole_brain"
                         pass1_succeeded = True
                 else:
                     candidates, scores, metrics_list = cands, scs, mets
                     _record_tier_gate_outcome("wb_relaxed", "PASS", None)
-                    detection_method = "automatic"
+                    detection_method = "whole_brain"
                     pass1_succeeded = True
             else:
                 _record_tier_gate_outcome(
@@ -3128,7 +3128,7 @@ class AIFDetection(BaseInterface):
                     None,
                 )
                 _record_single_keeper(
-                    cands, scs, mets, "automatic", "wb_relaxed",
+                    cands, scs, mets, "whole_brain", "wb_relaxed",
                 )
 
         # Pass 2: best anchored single-keeper tier
@@ -4070,7 +4070,7 @@ class AIFDetection(BaseInterface):
         voxel_sizes = tuple(float(v) for v in header.get_zooms()[:3])  # type: ignore[attr-defined]
 
         # Initialize results
-        detection_method: Literal["atlas", "automatic", "population"] = "population"
+        detection_method: Literal["atlas", "whole_brain", "population"] = "population"
         candidates: list[tuple[int, int, int]] = []
         scores: list[float] = []
         metrics_list: list[dict[str, float]] = []
@@ -4192,7 +4192,7 @@ class AIFDetection(BaseInterface):
             # Narrow back to Literal for the typed local.
             detection_method = (  # type: ignore[assignment]
                 "atlas" if detection_method_str == "atlas"
-                else "automatic" if detection_method_str == "automatic"
+                else "whole_brain" if detection_method_str == "whole_brain"
                 else "population"
             )
 

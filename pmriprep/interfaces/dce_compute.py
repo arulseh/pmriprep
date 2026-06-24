@@ -1086,9 +1086,9 @@ class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
     aif_detection_method = traits.Str(
         "population",
         usedefault=True,
-        desc="AIF detection method: 'population', 'automatic', 'atlas', "
+        desc="AIF detection method: 'population', 'whole_brain', 'atlas', "
              "'external'. Gates BAT pre-alignment, which applies only to "
-             "measured 'automatic'/'atlas' AIFs (see aif_bat_alignment).",
+             "measured 'whole_brain'/'atlas' AIFs (see aif_bat_alignment).",
     )
 
     aif_bat_alignment = traits.Enum(
@@ -1096,7 +1096,7 @@ class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
         "off",
         usedefault=True,
         desc="AIF-to-tissue bolus-arrival pre-alignment. 'auto' shifts a "
-             "measured (automatic/atlas) AIF in time to correct the "
+             "measured (whole_brain/atlas) AIF in time to correct the "
              "arterial-to-tissue delay (guarded: no-op below temporal "
              "resolution; benefits fine temporal resolution). 'off' = no shift.",
     )

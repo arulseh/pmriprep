@@ -13,7 +13,7 @@ from typing import Final, Literal, NamedTuple, get_args
 
 DCEDetectionLevel = Literal[
     "atlas",
-    "automatic",
+    "whole_brain",
     "population",
     "external",
 ]

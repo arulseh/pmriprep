@@ -36,10 +36,10 @@ class TestDeriveAifSource:
 
         assert _derive_aif_source({"detection_method": "atlas"}, "DCE") == "measured"
 
-    def test_dce_automatic(self) -> None:
+    def test_dce_whole_brain(self) -> None:
         from pmriprep.utils.aif_provenance import _derive_aif_source
 
-        assert _derive_aif_source({"detection_method": "automatic"}, "DCE") == "measured"
+        assert _derive_aif_source({"detection_method": "whole_brain"}, "DCE") == "measured"
 
     def test_dce_external(self) -> None:
         from pmriprep.utils.aif_provenance import _derive_aif_source
