@@ -4703,13 +4703,10 @@ class AIFDetection(BaseInterface):
             else:
                 aif_status = QCStatus.POOR
         else:
-            method_to_status = {
-                "auto": QCStatus.PASS,
-                "external": QCStatus.PASS,
-                "population": QCStatus.WARN,
-                "fallback": QCStatus.POOR,
-            }
-            aif_status = method_to_status.get(detection_method, QCStatus.WARN)
+            # quality_score could not be computed (no per-candidate scores
+            # to average); quality is unknown, so flag for review rather than
+            # certify or condemn the AIF.
+            aif_status = QCStatus.WARN
 
         # Add final metrics to QC dict
         qc_metrics.update(
