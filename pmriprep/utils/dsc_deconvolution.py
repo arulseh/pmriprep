@@ -33,6 +33,7 @@ from scipy import linalg
 from pmriprep.utils.dsc_constants import (
     DEFAULT_LAMBDA_RANGE,
     DEFAULT_OI_THRESHOLD,
+    DEFAULT_OSVD_GRID_STEPS,
     DEFAULT_SVD_THRESHOLD,
     EPSILON_CONCENTRATION,
     LCURVE_CURVATURE_FALLBACK,
@@ -50,8 +51,11 @@ class DeconvolutionResultBase:
     ----------
         residue: Residue function R(t).
         cbf: Cerebral blood flow, max(R(t)).
-        cbv: Cerebral blood volume, integral of R(t).
-        mtt: Mean transit time (seconds), CBV/CBF via central volume theorem.
+        cbv: Residue-integral CBV (integral of R(t)); feeds the deconvolution
+            rel_cbv map and the parametric oSVD fallback. The primary reported
+            CBV is the AUC ratio (cbv_auc / rel_cbv_auc) computed in the interface.
+        mtt: Residue transit time, CBV/CBF. The reported SVD MTT is computed in
+            the interface as AUC-CBV / CBF.
     """
 
     residue: npt.NDArray[np.floating]
@@ -95,22 +99,19 @@ def build_toeplitz_matrix(
     aif: npt.NDArray[np.floating],
     dt: float = 1.0,
 ) -> npt.NDArray[np.floating]:
-    """Build Toeplitz convolution matrix from AIF.
+    """Build the (1, 4, 1)/6 convolution matrix from the AIF.
 
-    Creates the lower-triangular Toeplitz matrix A such that:
-        C_tissue = A @ R
-
-    where the convolution integral is discretized using trapezoidal
-    weighting, consistent with the Volterra discretization (Østergaard 1996).
-
-    Trapezoidal weighting applies 0.5× weight to the first and last
-    points of each row's integration interval, and 1.0× to interior
-    points.
+    Creates the lower-triangular Toeplitz matrix A such that
+    ``C_tissue = A @ R``. The convolution integral is discretized by
+    pre-smoothing the AIF on its interior with the (1, 4, 1)/6 three-point
+    stencil (endpoints left unsmoothed), then forming the lower-triangular
+    Toeplitz of the smoothed AIF scaled by ``dt``.
 
     Parameters
     ----------
     aif : np.ndarray
         Arterial input function concentration curve, shape (n_timepoints,).
+        Must contain at least 2 samples.
     dt : float
         Time step in seconds for integration.
 
@@ -118,28 +119,22 @@ def build_toeplitz_matrix(
     -------
     np.ndarray
         Toeplitz matrix of shape (n_timepoints, n_timepoints).
-
-    References
-    ----------
-        Østergaard L, et al. Magn Reson Med. 1996;36(5):715-725.
-        Sourbron S, Luypaert R. Phys Med Biol. 2007;52:6761-6778.
     """
     from scipy.linalg import toeplitz  # type: ignore[import-untyped]
 
     n = len(aif)
+    if n < 2:
+        raise ValueError(f"aif must contain at least 2 samples, got {n}")
     aif64 = np.asarray(aif, dtype=np.float64)
 
-    # Lower-triangular Toeplitz: T[i, j] = aif[i-j] for i>=j, else 0.
-    matrix = toeplitz(aif64, np.zeros(n, dtype=np.float64))
+    # (1, 4, 1)/6 pre-smoothed AIF on the interior; endpoints left unsmoothed.
+    aif_smooth = aif64.copy()
+    aif_smooth[1:-1] = (aif64[:-2] + 4.0 * aif64[1:-1] + aif64[2:]) / 6.0
 
-    # Trapezoidal weights: 0.5 on the first column (j==0) and on the
-    # diagonal (j==i); 1.0 in the strict interior.
-    weights = np.ones((n, n), dtype=np.float64)
-    weights[:, 0] = 0.5
-    idx = np.arange(n)
-    weights[idx, idx] = 0.5
+    # Lower-triangular Toeplitz of the smoothed AIF, scaled by dt.
+    matrix = toeplitz(aif_smooth, np.zeros(n, dtype=np.float64))
 
-    return matrix * weights * dt  # type: ignore[no-any-return]
+    return matrix * dt  # type: ignore[no-any-return]
 
 
 def svd_deconvolve_standard(
@@ -459,20 +454,23 @@ def build_block_circulant_matrix(
     aif: npt.NDArray[np.floating],
     dt: float = 1.0,
 ) -> npt.NDArray[np.floating]:
-    """Build block-circulant convolution matrix for delay-insensitive deconvolution.
+    """Build the (1, 4, 1)/6 block-circulant convolution matrix from the AIF.
 
-    Creates a circulant matrix by zero-padding the AIF to length 2N and
-    constructing a circulant (periodic) convolution matrix. This allows
-    the deconvolution to estimate arbitrary positive or negative delays
-    between the AIF and tissue curve.
+    Constructs a 2N x 2N circulant (periodic) convolution matrix whose
+    generating column is the AIF pre-smoothed with the (1, 4, 1)/6 stencil
+    and zero-padded to length 2N. Treating the convolution as circular lets
+    the deconvolution estimate arbitrary positive or negative delays between
+    the AIF and tissue curve without boundary artifacts.
 
-    The block-circulant matrix approach treats the convolution as circular,
-    so that delays "wrap around" rather than causing boundary artifacts.
+    The generating column applies the (1, 4, 1)/6 stencil on the interior, a
+    one-sided stencil at the last AIF sample, and carries the trailing stencil
+    mass one sample into the zero-pad region (index N).
 
     Parameters
     ----------
     aif : np.ndarray
         Arterial input function concentration curve, shape (n_timepoints,).
+        Must contain at least 2 samples.
     dt : float
         Time step in seconds for integration weighting.
 
@@ -480,24 +478,24 @@ def build_block_circulant_matrix(
     -------
     np.ndarray
         Block-circulant matrix of shape (2N, 2N) where N = len(aif).
-
-    References
-    ----------
-        Wu O, Østergaard L, Weisskoff RM, Benner T, Rosen BR, Sorensen AG.
-        Tracer arrival timing-insensitive technique for estimating flow in
-        MR perfusion-weighted imaging using singular value decomposition
-        with a block-circulant deconvolution matrix.
-        Magn Reson Med. 2003;50(1):164-174.
     """
     n = len(aif)
+    if n < 2:
+        raise ValueError(f"aif must contain at least 2 samples, got {n}")
     m = 2 * n
+    aif64 = np.asarray(aif, dtype=np.float64)
 
-    # Zero-pad AIF to length 2N for full delay range
-    aif_padded = np.zeros(m, dtype=np.float64)
-    aif_padded[:n] = aif
+    # (1, 4, 1)/6 pre-smoothed AIF as the circulant generating column,
+    # zero-padded to length 2N. The trailing stencil mass leaks one sample
+    # into the pad region (index N), and the last AIF sample uses a one-sided
+    # stencil.
+    col = np.zeros(m, dtype=np.float64)
+    col[0] = aif64[0]
+    col[1 : n - 1] = (aif64[: n - 2] + 4.0 * aif64[1 : n - 1] + aif64[2:n]) / 6.0
+    col[n - 1] = (aif64[n - 2] + 4.0 * aif64[n - 1]) / 6.0
+    col[n] = aif64[n - 1] / 6.0
 
-    # Rectangular weighting (cyclic shifts are incompatible with trapezoidal)
-    matrix: npt.NDArray[np.floating] = linalg.circulant(aif_padded) * dt
+    matrix: npt.NDArray[np.floating] = linalg.circulant(col) * dt
 
     return matrix
 
@@ -638,15 +636,16 @@ def svd_deconvolve_circulant(
         delay_frames = peak_position - m
     delay_seconds = float(delay_frames) * dt
 
-    # Extract N causal points starting at peak position
-    # (Østergaard 1996: CBV = integral over causal response only)
+    # Extract N causal points starting at the residue peak (the delay),
+    # wrapping the 2N circulant residue.
     causal_indices = (peak_position + np.arange(n)) % m
     causal_residue = residue[causal_indices]
 
     # Extract perfusion parameters from causal portion
     cbf = float(np.max(causal_residue))
 
-    # CBV via trapezoidal integration of causal residue (Østergaard 1996)
+    # Residue-integral CBV diagnostic (feeds the deconvolution rel_cbv map);
+    # the primary reported CBV is the interface AUC ratio.
     cbv = float(np.trapezoid(causal_residue, dx=dt))
 
     # MTT from central volume theorem: MTT = CBV / CBF
@@ -781,8 +780,8 @@ def svd_deconvolve_circulant_batch(
         )
         delay_masked = delay_frames.astype(np.float64) * dt
 
-        # Extract N causal points from each voxel's 2N residue
-        # (Østergaard 1996: CBV = integral over causal response only)
+        # Extract N causal points from each voxel's 2N residue, starting at
+        # the per-voxel residue peak (the delay), wrapping the circulant.
         vox_idx = np.arange(len(masked_indices))[:, None]
         time_idx = (peak_positions[:, None] + np.arange(n_timepoints)[None, :]) % m
         causal_residues = residues_masked[vox_idx, time_idx]  # (n_vox, N)
@@ -790,7 +789,8 @@ def svd_deconvolve_circulant_batch(
         # Extract parameters from causal portion
         cbf_masked = np.max(causal_residues, axis=1)
 
-        # CBV via trapezoidal integration of causal residue (Østergaard 1996)
+        # Residue-integral CBV diagnostic (feeds the deconvolution rel_cbv
+        # map); the primary reported CBV is the interface AUC ratio.
         cbv_masked = np.trapezoid(causal_residues, dx=dt, axis=1)
 
         # MTT = CBV / CBF
@@ -833,7 +833,7 @@ class OscillationDeconvolutionResult(DeconvolutionResultBase):
     ----------
         delay: Tracer arrival delay in seconds.
         delay_frames: Tracer arrival delay in frame units.
-        oscillation_index: OI = (1/N) * sum|R(t+1) - R(t)| / max(R).
+        oscillation_index: OI = (1/L) * sum|R(k) - 2R(k-1) + R(k-2)| / max(R).
         threshold_used: The optimal SVD truncation threshold.
         n_singular_values: Number of singular values retained after truncation.
         condition_number: Condition number of the truncated matrix.
@@ -869,17 +869,15 @@ class OscillationDeconvolutionResult(DeconvolutionResultBase):
 def compute_oscillation_index(residue: npt.NDArray[np.floating]) -> float:
     """Compute the oscillation index of a residue function.
 
-    The oscillation index (OI) measures the smoothness of the residue function.
-    It is defined as the mean absolute first-order difference normalized by
-    the maximum value:
+    The oscillation index (OI) measures oscillation in the residue function as
+    the summed absolute second-order difference (discrete curvature) normalized
+    by the number of points and the maximum value:
 
-        OI = (1/N) × Σ|R(t+1) - R(t)| / max(R)
+        OI = (1/L) × Σ|R(k) − 2R(k−1) + R(k−2)| / max(R)
 
-    where N is the number of timepoints.
-
-    A lower OI indicates a smoother residue function with fewer oscillations.
-    Typical target: OI ≤ 0.065 provides good balance between noise suppression
-    and preserving physiological detail.
+    where L is the number of points. The second difference targets oscillation
+    (sign changes in the slope) while tolerating a smooth monotonic rise; a
+    lower OI indicates a smoother residue.
 
     Parameters
     ----------
@@ -889,31 +887,26 @@ def compute_oscillation_index(residue: npt.NDArray[np.floating]) -> float:
     Returns
     -------
     float
-        Oscillation index (dimensionless, typically in range 0-0.5).
-        Returns 0.0 if residue is all zeros.
+        Oscillation index (dimensionless). Returns 0.0 if the residue is all
+        zeros or has fewer than 3 points.
 
     References
     ----------
-        Wu O, Østergaard L, Korber M, Yenari M, Weisskoff RM, Sorensen AG.
-        Oscillation index: a novel technique for measurement of cerebral
-        blood flow using an oscillation-index-driven deconvolution method.
-        ISMRM 2000.
+        Wu O, Østergaard L, Weisskoff RM, Benner T, Rosen BR, Sorensen AG.
+        Magn Reson Med. 2003;50(1):164-174 (Eq. 6).
     """
-    # Handle edge cases
-    if len(residue) < 2:
+    # Handle edge cases (the second difference needs >= 3 points)
+    if len(residue) < 3:
         return 0.0
 
     max_residue = float(np.max(residue))
     if max_residue <= EPSILON_CONCENTRATION:
         return 0.0
 
-    # Compute first-order differences
-    diff = np.abs(np.diff(residue))
-
-    # Sum of absolute differences normalized by length and maximum
-    # OI = sum(diff) / (N * max_residue)
-    # Using len(residue) (not len(diff)) as the normalizer
-    oi = float(np.sum(diff)) / (len(residue) * max_residue)
+    # Summed absolute second-order difference (discrete curvature), normalized
+    # by length and maximum: OI = sum|R[k] − 2R[k-1] + R[k-2]| / (L * max).
+    diff2 = np.abs(np.diff(residue, n=2))
+    oi = float(np.sum(diff2)) / (len(residue) * max_residue)
 
     return oi
 
@@ -984,13 +977,14 @@ def _deconvolve_with_threshold(
     else:
         residue = residue_raw
 
-    # Peak from clipped residue (physical peak)
+    # Peak (for the delay) is the global maximum of the residue.
     peak_position = int(np.argmax(residue))
-    causal_indices = (peak_position + np.arange(n_original)) % m
 
-    # OI from raw causal residue — negative oscillations are the signal
-    # OI is designed to detect
-    oi = compute_oscillation_index(residue_raw[causal_indices])
+    # OI on the FULL residue: the gate must detect oscillation anywhere in the
+    # residue, so an under-regularized solution with a spurious wrap-boundary
+    # lobe is correctly rejected. Computed on the raw (unclipped) residue so
+    # negative oscillations — the signal the OI targets — are not hidden.
+    oi = compute_oscillation_index(residue_raw)
 
     return residue, oi, n_retained, condition_number, peak_position
 
@@ -1002,7 +996,7 @@ def svd_deconvolve_oscillation(
     oi_target: float = DEFAULT_OI_THRESHOLD,
     threshold_min: float = 0.01,
     threshold_max: float = 0.50,
-    max_iterations: int = 20,
+    max_iterations: int = DEFAULT_OSVD_GRID_STEPS,
     apply_non_negativity: bool = True,
 ) -> OscillationDeconvolutionResult:
     """Oscillation-index limited SVD deconvolution (oSVD).
@@ -1012,7 +1006,7 @@ def svd_deconvolve_oscillation(
 
     The oscillation index is defined as::
 
-        OI = (1/N) * sum|R(t+1) - R(t)| / max(R)
+        OI = (1/L) * sum|R(k) - 2R(k-1) + R(k-2)| / max(R)
 
     computed on the N causal points extracted from the 2N circulant residue.
 
@@ -1029,13 +1023,13 @@ def svd_deconvolve_oscillation(
     dt : float, optional
         Time step in seconds. Default 1.0 gives results in frame units.
     oi_target : float, optional
-        Target oscillation index threshold. Default is 0.065.
+        Target oscillation index threshold. Default :data:`DEFAULT_OI_THRESHOLD`.
     threshold_min : float, optional
         Minimum SVD threshold to consider. Default 0.01.
     threshold_max : float, optional
         Maximum SVD threshold to consider. Default 0.50.
     max_iterations : int, optional
-        Number of evenly-spaced thresholds. Default 20.
+        Number of evenly-spaced thresholds. Default :data:`DEFAULT_OSVD_GRID_STEPS`.
     apply_non_negativity : bool, optional
         If True, clip negative residue values to zero.
 
@@ -1163,7 +1157,7 @@ def svd_deconvolve_oscillation_batch(
     oi_target: float = DEFAULT_OI_THRESHOLD,
     threshold_min: float = 0.01,
     threshold_max: float = 0.50,
-    max_iterations: int = 20,
+    max_iterations: int = DEFAULT_OSVD_GRID_STEPS,
     apply_non_negativity: bool = True,
     mask: Optional[npt.NDArray[np.bool_]] = None,
 ) -> tuple[
@@ -1190,13 +1184,13 @@ def svd_deconvolve_oscillation_batch(
     dt : float, optional
         Time step in seconds.
     oi_target : float, optional
-        Target oscillation index threshold. Default 0.065.
+        Target oscillation index threshold. Default :data:`DEFAULT_OI_THRESHOLD`.
     threshold_min : float, optional
         Minimum SVD threshold. Default 0.01.
     threshold_max : float, optional
         Maximum SVD threshold. Default 0.50.
     max_iterations : int, optional
-        Number of linear search steps per voxel. Default 20.
+        Number of linear search steps per voxel. Default :data:`DEFAULT_OSVD_GRID_STEPS`.
     apply_non_negativity : bool, optional
         Apply non-negativity constraint on residue.
     mask : np.ndarray, optional

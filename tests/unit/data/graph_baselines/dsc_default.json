@@ -2052,7 +2052,7 @@
       "mcmc_samples": 500,
       "method": "oSVD",
       "n_procs": 1,
-      "oi_threshold": 0.065,
+      "oi_threshold": 0.095,
       "preload_classification": "none",
       "save_residue": false,
       "sloppy": false,

@@ -97,23 +97,6 @@ class DSCVoxelResult:
     mtt_credible_lower: Optional[float] = None
     mtt_credible_upper: Optional[float] = None
 
-    def compute_derived_metrics(self) -> None:
-        """Compute derived metrics from core parameters.
-
-        Updates MTT from CBV/CBF (central volume theorem) and CTH
-        from vascular model parameters if available.
-        """
-        # MTT from central volume theorem
-        if self.cbf > 0:
-            # CBV is in mL/100g, CBF is in mL/100g/min
-            # MTT = CBV / CBF * 60 to convert from min to seconds
-            self.mtt = (self.cbv / self.cbf) * 60.0
-
-        # CTH from vascular model
-        if self.alpha is not None and self.beta is not None:
-            import math
-            self.cth = self.beta * math.sqrt(self.alpha)
-
     def has_uncertainty(self) -> bool:
         """Check if Bayesian uncertainty estimates are available.
 

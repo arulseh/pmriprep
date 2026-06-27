@@ -179,16 +179,21 @@ LEAKY_PRIMARY_INADEQUATE: Final[float] = 5.0  # percent, == LEAKY_SIGMA_LOW
 #: Default singular value truncation threshold (fraction of max) for sSVD
 DEFAULT_SVD_THRESHOLD: Final[float] = 0.2
 
-#: Default oscillation index threshold for oSVD.
-#: Adapted for 3T clinical SNR (~20-40); literature range 0.04-0.10
-#: (Liu 1999 MRM 42:167; Wu 2003 used 0.095 at SNR~100).
-#: OI(λ) is decreasing in λ, so tightening the OI target forces the
-#: linspace search upward to a higher truncation threshold, suppressing
-#: noise-driven MTT inflation. Loosening (e.g. to Wu's 0.095) lets the
-#: algorithm pick smaller thresholds where residue-tail noise inflates
-#: AUC and hence MTT. See Willats & Calamante 2013 NMR Biomed 26:913 on the
-#: intrinsic MTT noise sensitivity of oSVD at clinical SNR.
-DEFAULT_OI_THRESHOLD: Final[float] = 0.065
+#: Default oscillation index threshold for oSVD. OI(λ) decreases with the
+#: truncation threshold λ, so a tighter (smaller) OI target forces the search
+#: to a higher threshold, suppressing noise-driven residue-tail oscillation and
+#: the MTT inflation it causes; a looser target permits smaller thresholds. The
+#: value is the SNR-robust in-basin choice across the clinical TR range, where
+#: the oSVD CBF optimum rises modestly with TR and falls with SNR.
+DEFAULT_OI_THRESHOLD: Final[float] = 0.095
+
+#: Default Linear search-grid resolution (number of evenly-spaced truncation
+#: thresholds) for the oSVD oscillation-index search. Grid-resolution
+#: sensitivity is modest and saturates by ~50 steps at the clinical operating
+#: point; adaptive bisection is avoided as it converges to the smallest
+#: qualifying threshold at the noise edge, inflating the residue-tail integral
+#: and the MTT estimate.
+DEFAULT_OSVD_GRID_STEPS: Final[int] = 50
 
 
 # =============================================================================

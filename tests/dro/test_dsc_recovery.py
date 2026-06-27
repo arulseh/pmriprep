@@ -25,11 +25,210 @@ from pmriprep.utils.dsc_deconvolution import (
 
 from .conftest import (
     add_gaussian_noise,
+    apply_recirculation,
+    apply_vtf_dispersion,
+    delay_aif,
     dsc_forward_model,
     dsc_forward_model_circulant,
     generate_dsc_aif_dro,
+    make_boxcar_residue,
+    make_cbf_mtt_grid,
     make_exponential_residue,
+    make_gamma_residue,
+    make_triangle_residue,
+    score_percent_repeatability,
 )
+
+
+# =============================================================================
+# Residue builders
+# =============================================================================
+
+
+class TestResidueBuilders:
+    """Box-car and triangle residue families (each with integral CBF*MTT)."""
+
+    def test_boxcar_shape(self) -> None:
+        r = make_boxcar_residue(2.0, 4.0, 20, 1.0)
+        assert r[0] == 2.0
+        assert np.all(r[:5] == 2.0)   # t = 0..4 <= MTT
+        assert np.all(r[5:] == 0.0)   # t > MTT
+
+    def test_triangle_shape(self) -> None:
+        r = make_triangle_residue(2.0, 4.0, 20, 1.0)
+        assert r[0] == 2.0
+        assert r[4] == pytest.approx(1.0)   # R(MTT) = CBF/2
+        assert r[8] == pytest.approx(0.0)   # R(2*MTT) = 0
+        assert np.all(r[9:] == 0.0)
+
+    def test_central_volume_theorem(self) -> None:
+        # integral R(t) == CBF*MTT (triangle exact; box-car has a sharp-edge
+        # discretization artifact, hence the looser tolerance).
+        cbf, mtt, dt, n = 2.0, 4.0, 0.25, 160
+        tri = np.trapezoid(make_triangle_residue(cbf, mtt, n, dt), dx=dt)
+        box = np.trapezoid(make_boxcar_residue(cbf, mtt, n, dt), dx=dt)
+        assert tri == pytest.approx(cbf * mtt, rel=1e-3)
+        assert box == pytest.approx(cbf * mtt, rel=0.1)
+
+    def test_gamma_residue_central_volume_and_monotone(self) -> None:
+        # gamma (CTH) survival residue: R(0)=CBF, monotone decreasing,
+        # integral == CBF*MTT for every shape alpha.
+        cbf, mtt, dt, n = 2.0, 4.0, 0.05, 4000
+        for alpha in [1.0, 2.0, 5.0, 20.0]:
+            r = make_gamma_residue(cbf, mtt, alpha, n, dt)
+            assert r[0] == pytest.approx(cbf)
+            assert np.all(np.diff(r) <= 1e-9)  # monotone non-increasing
+            assert np.trapezoid(r, dx=dt) == pytest.approx(cbf * mtt, rel=1e-3)
+
+    def test_gamma_alpha1_equals_exponential(self) -> None:
+        # alpha=1 gamma survival reduces exactly to CBF*exp(-t/MTT).
+        cbf, mtt, dt, n = 2.0, 4.0, 0.1, 400
+        gamma1 = make_gamma_residue(cbf, mtt, 1.0, n, dt)
+        expo = make_exponential_residue(cbf, mtt, n, dt)
+        assert np.allclose(gamma1, expo, atol=1e-12)
+
+
+# =============================================================================
+# AIF effects (recirculation, dispersion)
+# =============================================================================
+
+
+class TestAifEffects:
+    """Recirculation (delayed exponential) and dispersion (log-normal VTF)."""
+
+    def test_recirculation_adds_unit_area_second_pass(self) -> None:
+        aif, _ = generate_dsc_aif_dro(n_timepoints=200, dt_sec=1.0)
+        out = apply_recirculation(aif, 1.0, delay_sec=8.0, tau_sec=30.0)
+        recirc = out - aif
+        # unit-area kernel -> recirculation area equals the first-pass area
+        assert np.trapezoid(recirc, dx=1.0) == pytest.approx(
+            np.trapezoid(aif, dx=1.0), rel=0.05
+        )
+        # total mass strictly increases
+        assert np.trapezoid(out, dx=1.0) > np.trapezoid(aif, dx=1.0)
+
+    def test_recirculation_lands_on_the_tail(self) -> None:
+        aif, _ = generate_dsc_aif_dro(n_timepoints=200, dt_sec=1.0)
+        recirc = apply_recirculation(aif, 1.0, delay_sec=8.0, tau_sec=30.0) - aif
+        # the returning bolus is later than, and lower than, the first pass
+        assert int(np.argmax(recirc)) > int(np.argmax(aif))
+        assert recirc.max() < aif.max()
+
+    def test_dispersion_conserves_mass(self) -> None:
+        aif, _ = generate_dsc_aif_dro(n_timepoints=200, dt_sec=1.0)
+        for sigma, mu in [(1.0, -1.0), (0.75, -0.15), (0.78, 0.59)]:
+            out = apply_vtf_dispersion(aif, 1.0, sigma, mu)
+            assert np.trapezoid(out, dx=1.0) == pytest.approx(
+                np.trapezoid(aif, dx=1.0), rel=0.05
+            )
+
+    def test_dispersion_shifts_centroid_by_mean_transit_time(self) -> None:
+        # Convolution adds first moments: dispersed centroid - original centroid
+        # == E(VTF) = exp(mu + sigma^2/2). Verifies the implemented log-normal
+        # against the analytical mean for mild/moderate/severe severities.
+        aif, _ = generate_dsc_aif_dro(n_timepoints=800, dt_sec=0.25)
+        dt = 0.25
+        t = np.arange(len(aif), dtype=np.float64) * dt
+        c0 = float(np.sum(t * aif) / np.sum(aif))
+        cases = [((1.0, -1.0), 0.61), ((0.75, -0.15), 1.14), ((0.78, 0.59), 2.45)]
+        shifts = []
+        for (sigma, mu), e_vtf in cases:
+            out = apply_vtf_dispersion(aif, dt, sigma, mu)
+            shift = float(np.sum(t * out) / np.sum(out)) - c0
+            shifts.append(shift)
+            assert shift == pytest.approx(e_vtf, abs=0.1)
+        # worse dispersion -> later centroid (mild < moderate < severe)
+        assert shifts[0] < shifts[1] < shifts[2]
+
+    def test_dispersion_lowers_peak(self) -> None:
+        aif, _ = generate_dsc_aif_dro(n_timepoints=200, dt_sec=1.0)
+        peak0 = aif.max()
+        peaks = [
+            apply_vtf_dispersion(aif, 1.0, sigma, mu).max()
+            for sigma, mu in [(1.0, -1.0), (0.75, -0.15), (0.78, 0.59)]
+        ]
+        # every severity spreads the bolus, lowering the peak vs undispersed.
+        # On this broad AIF mild/moderate are near-tied (sub-second E(VTF)); the
+        # severity ordering is checked properly via the centroid test above.
+        assert all(p < peak0 for p in peaks)
+        assert peaks[2] < peaks[0] and peaks[2] < peaks[1]
+
+
+# =============================================================================
+# DRO scaffolding (factorial grid, delay, repeatability scoring)
+# =============================================================================
+
+
+class TestDroScaffolding:
+    """CBF x MTT grid, AIF delay, and %RC repeatability helpers."""
+
+    def test_grid_keeps_only_physiological_cbv(self) -> None:
+        grid = make_cbf_mtt_grid([10, 30, 50, 70], [2, 4, 8, 16, 24])
+        assert grid  # non-empty
+        for cbf, mtt, cbv in grid:
+            assert cbv == pytest.approx(cbf * mtt / 60.0)
+            assert 1.0 <= cbv <= 14.0
+
+    def test_grid_drops_supraphysiological_combo(self) -> None:
+        # CBF=70, MTT=24 -> CBV=28% (out of range) must be excluded;
+        # CBF=60, MTT=4 -> CBV=4% (GM-like) must be kept.
+        grid = make_cbf_mtt_grid([60, 70], [4, 24])
+        assert (60.0, 4.0, pytest.approx(4.0)) in grid
+        assert not any(cbf == 70 and mtt == 24 for cbf, mtt, _ in grid)
+
+    def test_delay_shifts_aif_later(self) -> None:
+        aif, time_sec = generate_dsc_aif_dro(n_timepoints=120, dt_sec=1.0)
+        delayed = delay_aif(aif, time_sec, 5.0)
+        assert int(np.argmax(delayed)) - int(np.argmax(aif)) == 5
+        # zero delay is a no-op
+        assert np.allclose(delay_aif(aif, time_sec, 0.0), aif)
+
+    def test_percent_repeatability_zero_for_identical(self) -> None:
+        v = np.array([10.0, 20.0, 30.0])
+        assert score_percent_repeatability(v, v) == pytest.approx(0.0)
+
+    def test_percent_repeatability_scales_with_spread(self) -> None:
+        v1 = np.array([10.0, 20.0, 30.0])
+        small = score_percent_repeatability(v1, v1 * 1.02)
+        large = score_percent_repeatability(v1, v1 * 1.10)
+        assert 0.0 < small < large
+
+    @staticmethod
+    def _fwhm_seconds(aif: np.ndarray, dt: float) -> float:
+        idx = np.where(aif >= aif.max() / 2.0)[0]
+        return float((idx[-1] - idx[0]) * dt)
+
+    def test_aif_default_is_broad(self) -> None:
+        # default alpha=2.5/beta=3.0 is the broad regression-guard operating
+        # point: FWHM ~10 s, analytic peak ~7.5 s after arrival (idx 10).
+        aif, _ = generate_dsc_aif_dro(n_timepoints=120, dt_sec=1.0)
+        assert self._fwhm_seconds(aif, 1.0) == pytest.approx(10.0, abs=1.0)
+        assert int(np.argmax(aif)) - 10 == pytest.approx(8, abs=1)
+
+    def test_aif_alpha_beta_narrows_to_arterial(self) -> None:
+        broad, _ = generate_dsc_aif_dro(n_timepoints=120, dt_sec=1.0)
+        arterial, _ = generate_dsc_aif_dro(
+            n_timepoints=120, dt_sec=1.0, alpha=3.0, beta=1.5
+        )
+        assert self._fwhm_seconds(arterial, 1.0) < self._fwhm_seconds(broad, 1.0)
+        assert self._fwhm_seconds(arterial, 1.0) == pytest.approx(5.0, abs=1.0)
+
+    def test_aif_oversample_preserves_auc_and_is_noop_at_one(self) -> None:
+        direct, _ = generate_dsc_aif_dro(
+            n_timepoints=120, dt_sec=1.5, alpha=3.0, beta=1.5
+        )
+        fine, _ = generate_dsc_aif_dro(
+            n_timepoints=120, dt_sec=1.5, alpha=3.0, beta=1.5, oversample=15
+        )
+        # fine-grid build conserves AUC (it only re-bins the within-TR shape)
+        assert np.trapezoid(fine, dx=1.5) == pytest.approx(
+            np.trapezoid(direct, dx=1.5), rel=0.05
+        )
+        # oversample=1 is the plain coarse evaluation
+        os1, _ = generate_dsc_aif_dro(
+            n_timepoints=120, dt_sec=1.5, alpha=3.0, beta=1.5, oversample=1
+        )
+        assert np.array_equal(os1, direct)
 
 
 # =============================================================================
@@ -116,6 +315,13 @@ DSC_PARAMS = [
 # At zero noise, threshold=0.001 gives < 5% CBF error.
 # At higher noise, higher thresholds control noise amplification at
 # the cost of increased regularization bias (underestimated CBF).
+#
+# These tolerance bands are Monte-Carlo-derived REGRESSION GUARDS (mean +
+# 3*sigma over N=100 realizations) pinning the numerical behavior of this
+# deconvolution on the broad (default alpha=2.5/beta=3.0, FWHM ~10 s) DRO AIF.
+# They are NOT physiology-derived tolerances. Physiological realism (arterial
+# AIF, delay, dispersion) and literature comparison live in the published DRO
+# generator and the OI threshold sweep, not in these method-recovery guards.
 SSVD_NOISE_LEVELS = [
     pytest.param(0.0, 0.001, 0.05, 0.05, id="zero"),
     pytest.param(0.02, 0.02, 0.40, 1.59, id="low"),
@@ -218,10 +424,14 @@ class TestOSVDRecovery:
         _assert_param_recovery(result.cbf, cbf, 0.10, param_name="CBF")
         _assert_param_recovery(result.mtt, mtt, 0.10, param_name="MTT")
 
+    # MC-derived regression guards (mean + 3*sigma, N=100) on the broad-AIF
+    # operating point, not physiology-derived tolerances; the wide MTT bands
+    # absorb the intrinsic oSVD MTT inflation at clinical noise. Realism and
+    # literature comparison live in the published DRO and the OI sweep.
     OSVD_NOISY_LEVELS = [
-        pytest.param(0.02, 0.005, 0.46, 0.95, id="low"),
-        pytest.param(0.05, 0.01, 0.52, 1.79, id="medium"),
-        pytest.param(0.10, 0.01, 0.70, 2.24, id="high"),
+        pytest.param(0.02, 0.005, 0.50, 1.45, id="low"),
+        pytest.param(0.05, 0.01, 0.65, 2.25, id="medium"),
+        pytest.param(0.10, 0.01, 0.72, 3.20, id="high"),
     ]
 
     @pytest.mark.parametrize("noise_frac,thresh_min,cbf_tol,mtt_tol", OSVD_NOISY_LEVELS)

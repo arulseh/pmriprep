@@ -535,7 +535,7 @@ def test_sensitivity_physics_param_drift(bids: Path) -> None:
     g = flatten_collapsed_graph(_dsc(bids))
     before = extract_node_params(g)
     cm = next(n for n in g.nodes() if n.name == "compute_maps")
-    assert before["compute_maps"]["oi_threshold"] == 0.065
+    assert before["compute_maps"]["oi_threshold"] == 0.095
     _iface(cm).inputs.oi_threshold = 0.1
     after = extract_node_params(g)
     assert before != after

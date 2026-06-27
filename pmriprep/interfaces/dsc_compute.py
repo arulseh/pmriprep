@@ -631,7 +631,7 @@ class ComputeDSCMaps(BaseInterface):
     svd_threshold : float
         SVD truncation threshold. Default: 0.2.
     oi_threshold : float
-        Oscillation index target for oSVD. Default: 0.065.
+        Oscillation index target for oSVD. Default :data:`DEFAULT_OI_THRESHOLD`.
     cpi_control_points : int
         Number of CPI control points (0=auto). Default: 0.
     tr : float
@@ -2276,9 +2276,7 @@ class ComputeDSCMaps(BaseInterface):
         # -----------------------------------------------------------
         # AUC decomposition: raw (pre-K2), corrected (post-K2), diff
         # -----------------------------------------------------------
-        # Rectangular integration (np.sum * dt) is algebraically consistent
-        # with the rectangular Toeplitz matrix used for deconvolution CBV
-        # (Ostergaard 1996).
+        # Rectangular integration (np.sum * dt) of the bolus passage.
         # For future absolute quantification, trapezoidal (O(dt^2)) can
         # be used instead:
         #   auc_corr = np.trapezoid(conc_data, dx=dt, axis=-1)
@@ -2385,6 +2383,25 @@ class ComputeDSCMaps(BaseInterface):
         else:
             snr = np.zeros(spatial_shape, dtype=np.float64)
             tsnr = np.zeros(spatial_shape, dtype=np.float64)
+
+        # -----------------------------------------------------------
+        # SVD-family MTT via the central volume theorem: MTT = CBV / CBF
+        # with the AUC-based CBV. cbv_auc = int(tissue) / int(AIF) = CBF * MTT,
+        # so dividing by the un-scaled s^-1 CBF gives MTT in seconds (the x60
+        # to min^-1 is applied later, to rel_cbf only). The AUC numerator is
+        # robust to the residue broadening the OI gate applies at clinical
+        # noise, so it degrades more gracefully than the residue ratio
+        # int R / max R. Where the measured AIF is absent cbv_auc is NaN
+        # (warned above) and MTT falls to 0. Parametric models keep their
+        # native CBV / CBF MTT and are not re-routed here.
+        # -----------------------------------------------------------
+        if method in ("sSVD", "oSVD", "tikhonov"):
+            with np.errstate(divide="ignore", invalid="ignore"):
+                mtt = np.where(
+                    (cbf > EPSILON_CONCENTRATION) & np.isfinite(cbv_auc),
+                    cbv_auc / cbf,
+                    0.0,
+                )
 
         # -----------------------------------------------------------
         # Clip maps to physiological ranges

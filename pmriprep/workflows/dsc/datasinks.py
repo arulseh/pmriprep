@@ -32,7 +32,8 @@ from pmriprep.interfaces.qc_writers import (
 # Always-present DSC perfusion maps. Each entry:
 # (input_attr, desc_value, suffix, description, units, map_key, extra_fields)
 _CORE_MAPS: tuple[tuple[str, str, str, str, str, str, dict | None], ...] = (
-    ("mtt_map", "dsc", "mtt", "Mean transit time", "s", "mtt", None),
+    ("mtt_map", "dsc", "mtt", "Mean transit time", "s", "mtt",
+     {"MTTMethod": "auc_cbv_over_cbf"}),
     ("tmax_map", "dsc", "tmax", "Time to maximum of residue function", "s", "tmax", None),
     ("psr_map", "dsc", "psr", "Percent signal recovery", "%", "psr", None),
     ("ph_map", "dsc", "ph", "Peak height", "arbitrary", "ph", None),

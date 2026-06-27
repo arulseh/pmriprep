@@ -6,6 +6,7 @@ from pmriprep.utils.dsc_constants import (
     CBF_BOUNDS,
     CBV_BOUNDS,
     DEFAULT_OI_THRESHOLD,
+    DEFAULT_OSVD_GRID_STEPS,
     DEFAULT_SVD_THRESHOLD,
     DSC_DETECTION_LEVELS,
     EPSILON_CONCENTRATION,
@@ -97,7 +98,8 @@ class TestDefaultThresholds:
     def test_default_thresholds(self) -> None:
         """SVD and OI thresholds have expected values."""
         assert DEFAULT_SVD_THRESHOLD == 0.2
-        assert DEFAULT_OI_THRESHOLD == 0.065
+        assert DEFAULT_OI_THRESHOLD == 0.095
+        assert DEFAULT_OSVD_GRID_STEPS == 50
 
 
 class TestEpsilonGuards:

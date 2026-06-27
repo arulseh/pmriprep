@@ -28,33 +28,83 @@ class TestBuildToeplitzMatrix:
                 assert matrix[i, j] == 0.0, f"matrix[{i},{j}] = {matrix[i, j]}"
 
     def test_first_column(self) -> None:
-        """First column should be proportional to AIF with trapezoidal weights."""
+        """First column = (1, 4, 1)/6-smoothed AIF (interior) times dt.
+
+        Endpoints are left unsmoothed: matrix[0, 0] = aif[0]*dt and
+        matrix[n-1, 0] = aif[n-1]*dt.
+        """
         aif = np.array([2.0, 4.0, 6.0, 8.0], dtype=np.float64)
         dt = 1.5
         matrix = build_toeplitz_matrix(aif, dt=dt)
 
-        # First column: matrix[i, 0] = aif[i] * 0.5 * dt (j==0 always gets 0.5 weight)
+        smooth = aif.copy()
+        smooth[1:-1] = (aif[:-2] + 4.0 * aif[1:-1] + aif[2:]) / 6.0
         for i in range(len(aif)):
-            expected = aif[i] * 0.5 * dt
+            expected = smooth[i] * dt
             assert matrix[i, 0] == pytest.approx(expected, rel=1e-10), (
                 f"matrix[{i},0] = {matrix[i, 0]}, expected {expected}"
             )
 
     def test_diagonal(self) -> None:
-        """Diagonal elements should all be 0.5 * aif[0] * dt.
+        """Diagonal elements all equal aif[0] * dt.
 
-        For diagonal element (i, i): j == 0 AND j == i, so weight = 0.5.
-        The AIF value is aif[i - j] = aif[0].
+        The diagonal is the generating column's first entry (aif[i - j] = aif[0]),
+        i.e. the unsmoothed first AIF sample.
         """
         aif = np.array([3.0, 7.0, 11.0, 5.0, 2.0], dtype=np.float64)
         dt = 2.0
         matrix = build_toeplitz_matrix(aif, dt=dt)
 
-        expected_diag = 0.5 * aif[0] * dt
+        expected_diag = aif[0] * dt
         for i in range(len(aif)):
             assert matrix[i, i] == pytest.approx(expected_diag, rel=1e-10), (
                 f"matrix[{i},{i}] = {matrix[i, i]}, expected {expected_diag}"
             )
+
+    def test_interior_141_stencil(self) -> None:
+        """Interior first-column entries use the (1, 4, 1)/6 stencil."""
+        aif = np.array([1.0, 5.0, 2.0, 9.0, 3.0, 4.0], dtype=np.float64)
+        dt = 1.0
+        matrix = build_toeplitz_matrix(aif, dt=dt)
+        for i in range(1, len(aif) - 1):
+            expected = (aif[i - 1] + 4.0 * aif[i] + aif[i + 1]) / 6.0 * dt
+            assert matrix[i, 0] == pytest.approx(expected, rel=1e-12)
+
+    def test_requires_two_samples(self) -> None:
+        """A single-sample AIF cannot be smoothed and must raise."""
+        with pytest.raises(ValueError):
+            build_toeplitz_matrix(np.array([1.0]), dt=1.0)
+
+
+class TestBuildBlockCirculantMatrix:
+    """Tests for build_block_circulant_matrix ((1, 4, 1)/6 generating column)."""
+
+    def test_generating_column_141_and_boundary(self) -> None:
+        """First column = (1,4,1)/6-smoothed AIF + one-sided + pad-leak terms."""
+        aif = np.array([1.0, 5.0, 2.0, 9.0, 3.0, 4.0], dtype=np.float64)
+        n = len(aif)
+        dt = 1.5
+        matrix = build_block_circulant_matrix(aif, dt=dt)
+        col = matrix[:, 0] / dt  # undo the dt scaling
+
+        assert col[0] == pytest.approx(aif[0])  # unsmoothed endpoint
+        for k in range(1, n - 1):
+            assert col[k] == pytest.approx((aif[k - 1] + 4 * aif[k] + aif[k + 1]) / 6)
+        assert col[n - 1] == pytest.approx((aif[n - 2] + 4 * aif[n - 1]) / 6)  # one-sided
+        assert col[n] == pytest.approx(aif[n - 1] / 6)  # pad-leak into index N
+        assert np.allclose(col[n + 1:], 0.0)  # zero pad beyond
+
+    def test_shape_and_circulant(self) -> None:
+        """Matrix is 2N x 2N and circulant (each column a cyclic shift)."""
+        aif = np.array([1.0, 5.0, 2.0, 9.0], dtype=np.float64)
+        n = len(aif)
+        matrix = build_block_circulant_matrix(aif, dt=1.0)
+        assert matrix.shape == (2 * n, 2 * n)
+        assert np.allclose(matrix[:, 1], np.roll(matrix[:, 0], 1))
+
+    def test_requires_two_samples(self) -> None:
+        with pytest.raises(ValueError):
+            build_block_circulant_matrix(np.array([1.0]), dt=1.0)
 
 
 class TestSVDDeconvolveStandard:
@@ -212,8 +262,12 @@ class TestOSVDDelayDetection:
     def test_osvd_relative_delay_recovery(self) -> None:
         """oSVD delay differences should match injected delay differences.
 
-        Uses circulant forward model. Small delays (0-3) to avoid
-        wrap-around artifacts from minimal regularization.
+        Uses the circulant forward model. The peak search is restricted to
+        physical delays (|d| <= N/2), excluding the wrap-boundary region where
+        an under-regularized deconvolution plants a spurious peak; the
+        recovered delay tracks the injected delay even at minimal
+        regularization (regression guard for the boundary-wrap bug: with plain
+        argmax, injected delay 3 wraps to -40).
         """
         n = 40
         dt = 1.5
@@ -391,6 +445,16 @@ class TestComputeOscillationIndex:
     def test_single_element(self) -> None:
         """Single element returns OI=0."""
         assert compute_oscillation_index(np.array([5.0])) == 0.0
+
+    def test_two_elements(self) -> None:
+        """Two elements return OI=0 (the second difference needs >= 3 points)."""
+        assert compute_oscillation_index(np.array([5.0, 3.0])) == 0.0
+
+    def test_second_difference_formula(self) -> None:
+        """OI is summed |R[k]-2R[k-1]+R[k-2]| / (L*max) (Wu 2003 Eq. 6)."""
+        residue = np.array([0.0, 1.0, 0.0, 1.0, 0.0])
+        # second differences = -2, +2, -2 -> sum|.| = 6; OI = 6/(5*1) = 1.2
+        assert compute_oscillation_index(residue) == pytest.approx(1.2)
 
 
 class TestDeconvolutionResultTmax:

@@ -5,11 +5,12 @@ signal-domain helpers, and pytest fixtures for parametric recovery tests.
 """
 
 from dataclasses import dataclass
-from typing import Dict, NamedTuple, Optional, Set, Tuple
+from typing import Dict, List, NamedTuple, Optional, Sequence, Set, Tuple
 
 import numpy as np
 import numpy.typing as npt
 import pytest
+from scipy.special import gammainc
 
 from tests.conftest import generate_parker_aif
 
@@ -132,8 +133,20 @@ def generate_dsc_aif_dro(
     dt_sec: float = 1.5,
     baseline_frames: int = 10,
     peak_delta_r2: float = 40.0,
+    alpha: float = 2.5,
+    beta: float = 3.0,
+    oversample: int = 1,
 ) -> Tuple[npt.NDArray[np.floating], npt.NDArray[np.floating]]:
     """Generate a gamma-variate AIF in concentration domain for DSC DRO tests.
+
+    The AIF is a(t) = A*(t-t0)^alpha * exp(-(t-t0)/beta) for t > t0 (t0 the
+    bolus arrival), with A set so the analytic peak height equals
+    peak_delta_r2. The default alpha=2.5/beta=3.0 is a broad (venous-tier,
+    FWHM ~10 s) bolus used by the method-recovery regression guards; the
+    arterial first-pass shape is alpha=3.0/beta=1.5 (FWHM ~5 s). For a narrow
+    AIF on a coarse axis, pass oversample>1 to build the curve on a fine grid
+    (dt_sec/oversample) and block-average back to dt_sec, which models the TR
+    integration and avoids a peak-sampling bias in the ground-truth convolution.
 
     Parameters
     ----------
@@ -144,33 +157,170 @@ def generate_dsc_aif_dro(
     baseline_frames : int
         Number of pre-bolus baseline frames.
     peak_delta_r2 : float
-        Peak delta-R2* value (s^-1).
+        Analytic peak delta-R2* value (s^-1).
+    alpha : float
+        Gamma-variate shape (power) parameter.
+    beta : float
+        Gamma-variate scale (decay) parameter in seconds.
+    oversample : int
+        Fine-grid oversampling factor; 1 evaluates on the coarse axis directly.
 
     Returns
     -------
     Tuple[npt.NDArray[np.floating], npt.NDArray[np.floating]]
         Tuple of (aif_concentration, time_sec).
     """
-    time_sec = np.arange(n_timepoints, dtype=np.float64) * dt_sec
+    os_factor = max(int(oversample), 1)
+    fine_dt = dt_sec / os_factor
+    n_fine = n_timepoints * os_factor
+    time_fine = np.arange(n_fine, dtype=np.float64) * fine_dt
     arrival_time = baseline_frames * dt_sec
 
-    aif = np.zeros(n_timepoints, dtype=np.float64)
+    aif_fine = np.zeros(n_fine, dtype=np.float64)
+    peak_time = alpha * beta
+    peak_factor = (peak_time**alpha) * np.exp(-alpha)
+    amplitude = peak_delta_r2 / peak_factor if peak_factor > 1e-10 else peak_delta_r2
 
-    alpha = 2.5
-    beta = 3.0
-
-    mask = time_sec > arrival_time
+    mask = time_fine > arrival_time
     if np.any(mask):
-        dt = time_sec[mask] - arrival_time
-        peak_time = alpha * beta
-        peak_factor = (peak_time**alpha) * np.exp(-alpha)
-        if peak_factor > 1e-10:
-            amplitude = peak_delta_r2 / peak_factor
-        else:
-            amplitude = peak_delta_r2
-        aif[mask] = amplitude * (dt**alpha) * np.exp(-dt / beta)
+        dt = time_fine[mask] - arrival_time
+        aif_fine[mask] = amplitude * (dt**alpha) * np.exp(-dt / beta)
 
-    return aif, time_sec
+    if os_factor == 1:
+        aif = aif_fine
+    else:
+        aif = aif_fine.reshape(n_timepoints, os_factor).mean(axis=1)
+
+    time_sec = np.arange(n_timepoints, dtype=np.float64) * dt_sec
+    return np.asarray(aif, dtype=np.float64), time_sec
+
+
+# =============================================================================
+# AIF effect helpers (recirculation, dispersion)
+# =============================================================================
+
+
+def apply_recirculation(
+    aif: npt.NDArray[np.floating],
+    dt: float,
+    delay_sec: float = 8.0,
+    tau_sec: float = 30.0,
+) -> npt.NDArray[np.floating]:
+    """Add a recirculation second pass to a first-pass AIF.
+
+    The recirculation component is the first-pass AIF convolved with a delayed
+    exponential kernel h(t) = exp(-(t - delay)/tau) for t >= delay (zero
+    before), normalized to unit area so the second pass conserves the bolus
+    mass. The tau time constant disperses and the delay shifts the returning
+    bolus, producing a low, broad second hump on the AIF tail.
+
+    Parameters
+    ----------
+    aif : npt.NDArray[np.floating]
+        First-pass AIF concentration array (1D).
+    dt : float
+        Time step in seconds.
+    delay_sec : float
+        Recirculation delay in seconds.
+    tau_sec : float
+        Exponential dispersion time constant in seconds.
+
+    Returns
+    -------
+    npt.NDArray[np.floating]
+        AIF with recirculation added (same length as input).
+    """
+    n = len(aif)
+    t = np.arange(n, dtype=np.float64) * dt
+    kernel = np.where(t >= delay_sec, np.exp(-(t - delay_sec) / tau_sec), 0.0)
+    kernel_area = float(kernel.sum()) * dt
+    if kernel_area > 1e-12:
+        kernel = kernel / kernel_area
+    recirc = np.convolve(aif, kernel)[:n] * dt
+    return np.asarray(aif + recirc, dtype=np.float64)
+
+
+def apply_vtf_dispersion(
+    aif: npt.NDArray[np.floating],
+    dt: float,
+    sigma: float,
+    mu: float,
+) -> npt.NDArray[np.floating]:
+    """Disperse an AIF by convolving with a log-normal vascular transport function.
+
+    The tissue-input AIF is the measured AIF convolved with a vascular
+    transport function (VTF) describing the distribution of transit times
+    between the AIF measurement site and the tissue input. The VTF is a
+    unit-area log-normal density
+    VTF(t) = 1/(t*sigma*sqrt(2*pi)) * exp(-(ln t - mu)^2 / (2*sigma^2)), t > 0,
+    with mean transit time E = exp(mu + sigma^2/2). Representative dispersion
+    severities (sigma, mu): mild (1.0, -1.0), moderate (0.75, -0.15), severe
+    (0.78, 0.59), giving E = 0.61, 1.14, 2.45 s respectively.
+
+    Parameters
+    ----------
+    aif : npt.NDArray[np.floating]
+        Measured AIF concentration array (1D).
+    dt : float
+        Time step in seconds.
+    sigma : float
+        Log-normal shape parameter (standard deviation of ln t).
+    mu : float
+        Log-normal scale parameter (mean of ln t).
+
+    Returns
+    -------
+    npt.NDArray[np.floating]
+        Dispersed AIF (same length as input).
+    """
+    n = len(aif)
+    t = np.arange(n, dtype=np.float64) * dt
+    vtf = np.zeros(n, dtype=np.float64)
+    pos = t > 0
+    vtf[pos] = (
+        1.0
+        / (t[pos] * sigma * np.sqrt(2.0 * np.pi))
+        * np.exp(-((np.log(t[pos]) - mu) ** 2) / (2.0 * sigma**2))
+    )
+    vtf_area = float(vtf.sum()) * dt
+    if vtf_area > 1e-12:
+        vtf = vtf / vtf_area
+    dispersed = np.convolve(aif, vtf)[:n] * dt
+    return np.asarray(dispersed, dtype=np.float64)
+
+
+def delay_aif(
+    aif: npt.NDArray[np.floating],
+    time_sec: npt.NDArray[np.floating],
+    delay_sec: float,
+) -> npt.NDArray[np.floating]:
+    """Delay a DSC AIF by ``delay_sec`` seconds (positive = later arrival).
+
+    Thin seconds-native wrapper over ``pmriprep.utils.dce_bat.shift_aif``,
+    which resamples the AIF at ``t - delay`` on a minutes axis. The seconds
+    time axis is converted to minutes so the shared, validated interpolation
+    and baseline fill apply. A positive delay shifts the AIF later, modelling
+    tissue that enhances after the AIF sampling site — the arrival offset sSVD
+    is sensitive to and the block-circulant methods are not.
+
+    Parameters
+    ----------
+    aif : npt.NDArray[np.floating]
+        AIF concentration array (1D).
+    time_sec : npt.NDArray[np.floating]
+        Time axis in seconds (may be non-uniform).
+    delay_sec : float
+        Delay in seconds. Positive shifts later; zero returns the AIF unchanged.
+
+    Returns
+    -------
+    npt.NDArray[np.floating]
+        The time-shifted AIF, same shape as the input.
+    """
+    from pmriprep.utils.dce_bat import shift_aif
+
+    time_min = np.asarray(time_sec, dtype=np.float64) / 60.0
+    return np.asarray(shift_aif(aif, time_min, delay_sec), dtype=np.float64)
 
 
 # =============================================================================
@@ -650,7 +800,7 @@ def dsc_forward_model(
 ) -> npt.NDArray[np.floating]:
     """Compute tissue concentration via Toeplitz convolution.
 
-    C(t) = A @ R where A is the trapezoidal Toeplitz matrix of the AIF.
+    C(t) = A @ R where A is the (1, 4, 1)/6 Toeplitz matrix of the AIF.
     Matched forward model for sSVD, Tikhonov, and CPI deconvolution.
 
     Parameters
@@ -681,7 +831,7 @@ def dsc_forward_model_circulant(
     """Compute tissue concentration via block-circulant convolution.
 
     Matched forward model for oSVD and cSVD deconvolution (Wu 2003).
-    Uses rectangular weighting, consistent with the circulant inverse.
+    Uses the (1, 4, 1)/6 stencil, consistent with the circulant inverse.
 
     Parameters
     ----------
@@ -733,6 +883,184 @@ def make_exponential_residue(
     t = np.arange(n_points, dtype=np.float64) * dt
     mtt_safe = max(mtt, 1e-6)
     return np.asarray(cbf * np.exp(-t / mtt_safe), dtype=np.float64)
+
+
+def make_boxcar_residue(
+    cbf: float,
+    mtt: float,
+    n_points: int,
+    dt: float,
+) -> npt.NDArray[np.floating]:
+    """Create a box-car (plug-flow) residue R(t) = CBF for t <= MTT, else 0.
+
+    Models a vascular bed with plug flow (capillaries in parallel with equal
+    transit times): the residue is constant until MTT then drops to zero. Its
+    integral is CBF*MTT (central volume theorem), matching the other families.
+
+    Parameters
+    ----------
+    cbf : float
+        Cerebral blood flow (relative units).
+    mtt : float
+        Mean transit time in seconds.
+    n_points : int
+        Number of time points.
+    dt : float
+        Time step in seconds.
+
+    Returns
+    -------
+    npt.NDArray[np.floating]
+        Residue array: CBF for t <= MTT, 0 otherwise.
+    """
+    t = np.arange(n_points, dtype=np.float64) * dt
+    return np.asarray(np.where(t <= mtt, cbf, 0.0), dtype=np.float64)
+
+
+def make_triangle_residue(
+    cbf: float,
+    mtt: float,
+    n_points: int,
+    dt: float,
+) -> npt.NDArray[np.floating]:
+    """Create a triangular residue R(t) = CBF*(1 - t/(2*MTT)) for t <= 2*MTT, else 0.
+
+    A linearly decreasing residue reaching zero at 2*MTT. Its integral is
+    CBF*MTT and its mean transit time (integral / R(0)) is MTT, consistent with
+    the exponential and box-car families.
+
+    Parameters
+    ----------
+    cbf : float
+        Cerebral blood flow (relative units).
+    mtt : float
+        Mean transit time in seconds.
+    n_points : int
+        Number of time points.
+    dt : float
+        Time step in seconds.
+
+    Returns
+    -------
+    npt.NDArray[np.floating]
+        Residue array: CBF*(1 - t/(2*MTT)) for t <= 2*MTT, 0 otherwise.
+    """
+    t = np.arange(n_points, dtype=np.float64) * dt
+    mtt_safe = max(mtt, 1e-6)
+    residue = cbf * (1.0 - t / (2.0 * mtt_safe))
+    return np.asarray(np.where(t <= 2.0 * mtt_safe, residue, 0.0), dtype=np.float64)
+
+
+def make_gamma_residue(
+    cbf: float,
+    mtt: float,
+    alpha: float,
+    n_points: int,
+    dt: float,
+) -> npt.NDArray[np.floating]:
+    """Create a gamma (CTH) residue: the survival function of gamma transit times.
+
+    Transit times follow a gamma distribution with shape alpha and scale
+    beta = MTT/alpha (so the mean alpha*beta == MTT). The residue is the
+    fraction of tracer remaining, R(t) = CBF*(1 - P(alpha, t/beta)), where P is
+    the regularized lower incomplete gamma function. R(0) = CBF, R is
+    monotonically decreasing, and its integral is CBF*MTT (central volume
+    theorem). alpha = 1 recovers the exponential residue CBF*exp(-t/MTT); large
+    alpha approaches a box-car, spanning the capillary-transit-heterogeneity
+    range with a single shape parameter.
+
+    Parameters
+    ----------
+    cbf : float
+        Cerebral blood flow (relative units).
+    mtt : float
+        Mean transit time in seconds.
+    alpha : float
+        Gamma shape parameter (transit-time heterogeneity); alpha=1 -> exponential.
+    n_points : int
+        Number of time points.
+    dt : float
+        Time step in seconds.
+
+    Returns
+    -------
+    npt.NDArray[np.floating]
+        Gamma-survival residue array R(t).
+    """
+    t = np.arange(n_points, dtype=np.float64) * dt
+    mtt_safe = max(mtt, 1e-6)
+    alpha_safe = max(alpha, 1e-6)
+    beta = mtt_safe / alpha_safe
+    survival = 1.0 - gammainc(alpha_safe, t / beta)
+    return np.asarray(cbf * survival, dtype=np.float64)
+
+
+def make_cbf_mtt_grid(
+    cbf_values: Sequence[float],
+    mtt_values: Sequence[float],
+    cbv_min_pct: float = 1.0,
+    cbv_max_pct: float = 14.0,
+) -> List[Tuple[float, float, float]]:
+    """Build a CBF x MTT factorial grid of physiological tissue conditions.
+
+    Returns every (CBF, MTT, CBV%) triple whose CBV = CBF*MTT/60 falls within
+    [cbv_min_pct, cbv_max_pct], the physiological cerebral blood volume range.
+    Combinations outside that range (e.g. high CBF with long MTT giving
+    supra-physiological CBV) are dropped, so the grid holds only realisable
+    tissues. Units: CBF in mL/100g/min, MTT in s, CBV in mL/100g (== % by mass).
+
+    Parameters
+    ----------
+    cbf_values : Sequence[float]
+        CBF grid values in mL/100g/min.
+    mtt_values : Sequence[float]
+        MTT grid values in seconds.
+    cbv_min_pct : float
+        Lower CBV bound in percent (inclusive).
+    cbv_max_pct : float
+        Upper CBV bound in percent (inclusive).
+
+    Returns
+    -------
+    List[Tuple[float, float, float]]
+        List of (CBF, MTT, CBV%) triples within the CBV bounds.
+    """
+    grid: List[Tuple[float, float, float]] = []
+    for cbf in cbf_values:
+        for mtt in mtt_values:
+            cbv_pct = cbf * mtt / 60.0
+            if cbv_min_pct <= cbv_pct <= cbv_max_pct:
+                grid.append((float(cbf), float(mtt), float(cbv_pct)))
+    return grid
+
+
+def score_percent_repeatability(
+    measurement_a: npt.NDArray[np.floating],
+    measurement_b: npt.NDArray[np.floating],
+) -> float:
+    """Percent repeatability coefficient %RC = 2.77 * within-subject CV.
+
+    Wraps ``pmriprep.utils.reproducibility.compute_within_subject_cv`` (the k=2
+    test-retest within-subject CV, in percent) and scales by 2.77 (1.96*sqrt(2))
+    to give the repeatability coefficient as a percentage, the standard
+    quantitative-imaging metrology summary of reproducibility across two
+    realisations.
+
+    Parameters
+    ----------
+    measurement_a : npt.NDArray[np.floating]
+        First realisation (scalar-like or 1D array of per-condition estimates).
+    measurement_b : npt.NDArray[np.floating]
+        Second realisation, same shape as ``measurement_a``.
+
+    Returns
+    -------
+    float
+        Percent repeatability coefficient.
+    """
+    from pmriprep.utils.reproducibility import compute_within_subject_cv
+
+    return 2.77 * compute_within_subject_cv(measurement_a, measurement_b)
 
 
 def make_dsc_tissue_concentration(

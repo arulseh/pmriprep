@@ -19,6 +19,7 @@ from pmriprep.interfaces.dsc import MotionCorrection, DSCRegistration
 from pmriprep.interfaces.dsc_aif import AIFDetection
 from pmriprep.interfaces.dsc_aif_qc import AIFQCPlot
 from pmriprep.interfaces.dsc_compute import ComputeDSCMaps
+from pmriprep.utils.dsc_constants import DEFAULT_OI_THRESHOLD, DEFAULT_SVD_THRESHOLD
 
 # FSL CommandLine wrappers, Function-node helpers, and the (formerly embedded)
 # smoothing dict-builders now live in ``_helpers.py``; re-exported here so
@@ -1938,8 +1939,8 @@ def init_dsc_preproc_wf(
     # -------------------------------------------------------------------
     dsc_map_kwargs: dict[str, Any] = dict(
         method=config.method,
-        svd_threshold=0.2,  # Default SVD threshold
-        oi_threshold=0.065,  # Default OI threshold for oSVD
+        svd_threshold=DEFAULT_SVD_THRESHOLD,
+        oi_threshold=DEFAULT_OI_THRESHOLD,
         cpi_control_points=config.cpi_control_points,
         cpi_infer_cpt=config.cpi_infer_cpt,
         inference=config.inference,
