@@ -269,7 +269,10 @@ MTT_BOUNDS: Final[ParameterBounds] = ParameterBounds(0.0, 30.0)
 # Vascular (Gamma-Variate) Model Parameters
 # =============================================================================
 
-#: Alpha (shape) parameter bounds for gamma-variate model
+#: Alpha (shape) parameter bounds for gamma-variate model. The upper bound is
+#: capped at 10: above ~20-30 the shape α is effectively unidentifiable (CBV
+#: = CBF·MTT is invariant in α at fixed MTT), so the cap bounds an
+#: ill-conditioned shape parameter at no cost to CBF/CBV/MTT.
 VASCULAR_ALPHA_BOUNDS: Final[ParameterBounds] = ParameterBounds(0.5, 10.0)
 
 #: Beta (scale) parameter bounds in seconds for gamma-variate model
@@ -277,6 +280,13 @@ VASCULAR_BETA_BOUNDS: Final[ParameterBounds] = ParameterBounds(0.1, 10.0)
 
 #: Delay parameter bounds in seconds (can be negative for early arrival)
 VASCULAR_DELAY_BOUNDS: Final[ParameterBounds] = ParameterBounds(-3.0, 10.0)
+
+#: AIF temporal upsampling factor for the vascular forward-model convolution.
+#: The AIF and residue are resampled onto an 8x-finer grid by cubic spline
+#: before convolution to cut Riemann-sum discretization error at clinical TR,
+#: then the result is downsampled to the native grid. Shared by the scalar
+#: (tissue_curve) and batched (batched_vascular_forward) forward models.
+AIF_UPSAMPLE_FACTOR: Final[int] = 8
 
 
 # =============================================================================

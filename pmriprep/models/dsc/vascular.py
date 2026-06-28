@@ -10,6 +10,7 @@ microvasculature, which affects the relationship between CBF and CBV.
 import numpy as np
 import numpy.typing as npt
 from scipy import special  # type: ignore[import-untyped]
+from scipy.interpolate import CubicSpline  # type: ignore[import-untyped]
 from scipy.signal import fftconvolve  # type: ignore[import-untyped]
 
 from pmriprep.models.dsc.base import (
@@ -18,6 +19,7 @@ from pmriprep.models.dsc.base import (
     ParamsLike,
 )
 from pmriprep.utils.dsc_constants import (
+    AIF_UPSAMPLE_FACTOR,
     CBF_BOUNDS,
     VASCULAR_ALPHA_BOUNDS,
     VASCULAR_BETA_BOUNDS,
@@ -31,9 +33,11 @@ class VascularModel(DSCModel):
     The residue function is derived from assuming a gamma distribution
     of capillary transit times::
 
-        R(t) = CBF × [1 - gammainc(α, (t - delay) / β)]
+        R(t) = CBF × [1 - gammainc(α, t / β)]
 
-    where gammainc is the regularized lower incomplete gamma function.
+    where gammainc is the regularized lower incomplete gamma function. The
+    residue is delay-agnostic; bolus-arrival delay is applied at the AIF level
+    in :meth:`tissue_curve`.
 
     This model captures the physiology of capillary transit time
     heterogeneity (CTH), which affects oxygen extraction and is
@@ -49,9 +53,10 @@ class VascularModel(DSCModel):
         beta: Scale parameter of the gamma distribution (seconds).
               Controls the spread of transit times.
               Range: 0.1 to 10s.
-        delay: Bolus arrival delay relative to AIF (seconds).
-               Can be negative for tissue ahead of AIF sampling site.
-               Range: -3 to +10s.
+        delay: Bolus arrival delay relative to AIF (seconds). Applied as a
+               time shift of the convolved curve in tissue_curve, not to the
+               residue shape. Can be negative for tissue ahead of the AIF
+               sampling site. Range: -3 to +10s.
 
     Derived physiological parameters::
 
@@ -61,6 +66,18 @@ class VascularModel(DSCModel):
         RCTH: Relative CTH = 1/√α (dimensionless)
               Also known as coefficient of variation (CV) of transit times.
               RCTH = CTH / MTT = 1/√α
+
+    Notes
+    -----
+    Two modelling choices are deliberate and documented:
+
+    - Priors are fixed, weakly-informative population priors (centred on the
+      typical range, wide in log space) so the data dominate the fit. Per-voxel
+      priors seeded from an SVD pre-fit are deliberately avoided: they would
+      re-import the SVD delay and low-flow bias this model exists to remove.
+    - The shape parameter α is capped at 10. Above ~20-30 α is effectively
+      unidentifiable (CBV = CBF·MTT is invariant in α at fixed MTT), so the
+      cap bounds an ill-conditioned shape parameter at no cost to CBF/CBV/MTT.
 
     """
 
@@ -241,17 +258,23 @@ class VascularModel(DSCModel):
     ) -> npt.NDArray[np.floating]:
         """Compute the residue function R(t) from vascular model parameters.
 
-        The residue function represents the fraction of contrast agent
-        remaining at time t, based on a gamma distribution of transit times:
+        The residue function is the fraction of contrast still present at
+        time t, the survival function of a gamma transit-time distribution
+        (shape α, scale β):
 
-            R(t) = CBF × [1 - gammainc(α, (t - delay) / β)]
+            R(t) = CBF × [1 - gammainc(α, t / β)]
 
-        For t < delay, R(t) = CBF (no contrast has left yet).
+        where gammainc is the regularized lower incomplete gamma function, so
+        R(0) = CBF (the maximum). The residue is delay-agnostic: bolus-arrival
+        ``delay`` is a property of the arterial input and is applied as a time
+        shift in :meth:`tissue_curve`, not of the residue shape. It is accepted
+        in ``params`` for signature consistency but does not affect R(t).
 
         Parameters
         ----------
         params : ParamsLike
-            [cbf, alpha, beta, delay] parameter values.
+            [cbf, alpha, beta, delay] parameter values. ``delay`` is ignored
+            here (the arrival shift is applied in :meth:`tissue_curve`).
         time_points : npt.NDArray[np.floating]
             Time points (seconds) at which to evaluate R(t).
 
@@ -260,32 +283,17 @@ class VascularModel(DSCModel):
         npt.NDArray[np.floating]
             Residue function values R(t) at each time point.
         """
-        cbf, alpha, beta, delay = params
+        cbf, alpha, beta, _ = params
 
         # Guard against degenerate shape/scale parameters
         alpha = max(float(alpha), 1e-10)
         beta = max(float(beta), 1e-10)
 
-        # Shift time by delay
-        t_shifted = time_points - delay
-
-        # Initialize residue array
-        residue = np.zeros_like(time_points, dtype=np.float64)
-
-        # For t < delay (or t_shifted < 0): R(t) = CBF
-        # No contrast has left the tissue yet
-        early_mask = t_shifted <= 0
-        residue[early_mask] = cbf
-
-        # For t >= delay: R(t) = CBF × [1 - gammainc(α, t_shifted/β)]
-        # gammainc is the regularized lower incomplete gamma function
-        late_mask = t_shifted > 0
-        if np.any(late_mask):
-            x = t_shifted[late_mask] / beta
-            # scipy.special.gammainc is the regularized lower incomplete gamma
-            # P(a,x) = gammainc(a, x) = γ(a,x) / Γ(a)
-            gamma_inc = special.gammainc(alpha, x)
-            residue[late_mask] = cbf * (1.0 - gamma_inc)
+        # R(t) = CBF × [1 - P(α, t/β)]; P = regularized lower incomplete gamma
+        # (scipy.special.gammainc). Times ≤ 0 evaluate to R = CBF (the t=0 max).
+        x = np.maximum(np.asarray(time_points, dtype=np.float64), 0.0) / beta
+        gamma_inc = special.gammainc(alpha, x)
+        residue: npt.NDArray[np.floating] = float(cbf) * (1.0 - gamma_inc)
 
         return residue
 
@@ -299,9 +307,10 @@ class VascularModel(DSCModel):
 
         C_tissue(t) = AIF(t) ⊗ R(t)
 
-        Uses FFT convolution with post-hoc delay shift.
-        The residue is computed without delay, then the convolved result is
-        shifted by delay_samples to apply the arrival time offset.
+        The AIF and residue are resampled onto an 8x-finer grid by cubic
+        spline before FFT convolution to reduce discretization error, then the
+        result is downsampled to the native grid. The bolus-arrival delay is
+        applied last, as a post-hoc shift of the downsampled curve.
 
         Parameters
         ----------
@@ -329,12 +338,32 @@ class VascularModel(DSCModel):
         cbf, alpha, beta, delay = params
         dt = float(time_points[1] - time_points[0])
 
-        # Compute residue WITHOUT delay
-        params_no_delay = [cbf, alpha, beta, 0.0]
-        R = self.residue_function(params_no_delay, time_points)
-
-        # FFT convolution
-        conv = fftconvolve(aif, R, mode='full')[:n_times] * dt
+        # Forward-model convolution C(t) = ∫ AIF(τ) R(t−τ) dτ. The AIF and the
+        # (delay-agnostic) residue are resampled onto an 8x-finer grid by cubic
+        # spline before convolution to cut Riemann-sum discretization error at
+        # clinical TR, then the result is downsampled to the native grid. The
+        # delay shift below is applied AFTER downsampling, so it stays
+        # differentiable for the MAP/VB Jacobian and the (delay-independent)
+        # resampling does not perturb that gradient.
+        up = AIF_UPSAMPLE_FACTOR
+        if n_times >= 4:
+            n_fine = (n_times - 1) * up + 1
+            t_fine = np.linspace(
+                float(time_points[0]), float(time_points[-1]), n_fine
+            )
+            aif_fine = CubicSpline(
+                np.asarray(time_points, dtype=np.float64),
+                np.asarray(aif, dtype=np.float64),
+            )(t_fine)
+            R_fine = self.residue_function(params, t_fine)
+            conv_fine = fftconvolve(
+                aif_fine, R_fine, mode='full'
+            )[:n_fine] * (dt / up)
+            conv = conv_fine[::up]
+        else:
+            # Too few samples for a cubic spline: convolve at native dt.
+            R = self.residue_function(params, time_points)
+            conv = fftconvolve(aif, R, mode='full')[:n_times] * dt
 
         # Apply delay as post-hoc shift with linear interpolation
         # (smooth, differentiable w.r.t. delay for MAP/VB Jacobian)

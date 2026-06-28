@@ -21,6 +21,7 @@ from typing import Final, Optional
 
 import numpy as np
 import numpy.typing as npt
+from scipy.interpolate import CubicSpline
 from scipy.special import gammainc
 
 from pmriprep.models.bayesian_utils import (
@@ -30,7 +31,10 @@ from pmriprep.models.bayesian_utils import (
     to_transformed_batch,
     transform_prior,
 )
-from pmriprep.utils.dsc_constants import EPSILON_CONCENTRATION
+from pmriprep.utils.dsc_constants import (
+    AIF_UPSAMPLE_FACTOR,
+    EPSILON_CONCENTRATION,
+)
 
 logger = logging.getLogger("nipype.interface")
 
@@ -122,25 +126,47 @@ def batched_vascular_forward(
     alpha_safe = np.maximum(alpha, 1e-10)
     beta_safe = np.maximum(beta, 1e-10)
 
-    # Compute residue WITHOUT delay: R(t) = CBF * [1 - gammainc(alpha, t/beta)]
-    # Shape: (N, T)
-    x = time_points[None, :] / beta_safe[:, None]  # (N, T)
-    gamma_vals = gammainc(alpha_safe[:, None], x)  # (N, T) — vectorized
-    R_no_delay = cbf[:, None] * (1.0 - gamma_vals)
+    # Forward-model convolution C = AIF ⊗ R per voxel. The AIF and the
+    # (delay-agnostic) residue R(t) = CBF·[1 − gammainc(α, t/β)] are resampled
+    # onto an 8x-finer grid by cubic spline before convolution to cut
+    # Riemann-sum discretization error at clinical TR, then downsampled to the
+    # native grid. The delay shift below is applied AFTER downsampling, matching
+    # the scalar tissue_curve forward model.
+    up = AIF_UPSAMPLE_FACTOR
+    if n_times >= 4:
+        n_grid = (n_times - 1) * up + 1
+        t_grid = np.linspace(
+            float(time_points[0]), float(time_points[-1]), n_grid
+        )
+        aif_grid = CubicSpline(
+            np.asarray(time_points, dtype=np.float64),
+            np.asarray(aif, dtype=np.float64),
+        )(t_grid)
+        grid_dt = dt / up
+        stride = up
+    else:
+        n_grid = n_times
+        t_grid = np.asarray(time_points, dtype=np.float64)
+        aif_grid = np.asarray(aif, dtype=np.float64)
+        grid_dt = dt
+        stride = 1
 
-    # FFT convolution: C = AIF ⊗ R for each voxel
-    # Use batch FFT: pad to avoid circular artifacts
-    pad_len = 2 * n_times
+    # Residue on the (fine) grid, shape (N, n_grid). Delay-agnostic.
+    x = np.maximum(t_grid, 0.0)[None, :] / beta_safe[:, None]
+    gamma_vals = gammainc(alpha_safe[:, None], x)
+    R_grid = cbf[:, None] * (1.0 - gamma_vals)
+
+    # Batched FFT convolution, padded to avoid circular wrap-around.
+    pad_len = 2 * n_grid
     aif_padded = np.zeros(pad_len)
-    aif_padded[:n_times] = aif
-
+    aif_padded[:n_grid] = aif_grid
     R_padded = np.zeros((n_voxels, pad_len))
-    R_padded[:, :n_times] = R_no_delay
+    R_padded[:, :n_grid] = R_grid
 
     aif_fft = np.fft.fft(aif_padded)
     R_fft = np.fft.fft(R_padded, axis=1)
     conv_full = np.fft.ifft(aif_fft[None, :] * R_fft, axis=1).real
-    conv = conv_full[:, :n_times] * dt  # (N, T)
+    conv = (conv_full[:, :n_grid] * grid_dt)[:, ::stride]  # (N, T)
 
     # Apply delay as post-hoc shift with linear interpolation (vectorized)
     delay_frac = delay / dt

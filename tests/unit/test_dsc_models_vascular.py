@@ -193,3 +193,91 @@ class TestVascularModel:
         """Parameter names are returned in expected order."""
         model = VascularModel()
         assert model.get_parameter_names() == ["cbf", "alpha", "beta", "delay"]
+
+    def test_residue_function_is_delay_agnostic(self) -> None:
+        """The residue SHAPE does not depend on the delay parameter.
+
+        Delay is an arterial-input arrival property, applied in tissue_curve,
+        not in the residue. residue_function([..., delta]) must equal
+        residue_function([..., 0]) for any delta.
+        """
+        model = VascularModel()
+        t = np.arange(0, 60, 1.5, dtype=np.float64)
+        r0 = model.residue_function([0.08, 3.0, 2.0, 0.0], t)
+        for delay in (3.0, -2.0, 7.5):
+            r = model.residue_function([0.08, 3.0, 2.0, delay], t)
+            assert np.allclose(r, r0), f"residue shape changed at delay={delay}"
+
+    def test_fitted_residue_cbv_independent_of_delay(self) -> None:
+        """compute_fitted_residue integrates to a delay-independent CBV.
+
+        Guards the historical footgun where a delay-shifted residue inflated
+        the integral by cbf*delay (a flat-at-CBF prefix).
+        """
+        model = VascularModel()
+        dt = 1.5
+        t = np.arange(0, 90, dt, dtype=np.float64)
+        cbf, alpha, beta = 0.08, 3.0, 2.0
+        cbv0 = float(
+            np.trapezoid(
+                model.compute_fitted_residue([cbf, alpha, beta, 0.0], t), dx=dt
+            )
+        )
+        for delay in (3.0, 6.0):
+            cbv = float(
+                np.trapezoid(
+                    model.compute_fitted_residue(
+                        [cbf, alpha, beta, delay], t
+                    ),
+                    dx=dt,
+                )
+            )
+            assert cbv == pytest.approx(cbv0, rel=1e-10), (
+                f"fitted_residue CBV changed at delay={delay} "
+                f"(footgun would add cbf*delay={cbf * delay:.3f})"
+            )
+
+    def test_aif_upsampling_improves_forward_model_accuracy(self) -> None:
+        """8x AIF upsampling brings tissue_curve closer to continuous truth.
+
+        Can-fail in the upsampling's favour: ground-truth tissue is the
+        convolution on a 16x-finer grid (continuous-time proxy) sampled to
+        native dt. Production tissue_curve (8x internal upsampling) must be
+        closer to that truth than a plain native-dt convolution. If
+        tissue_curve did NOT upsample, c_model == c_native and this fails.
+        """
+        from scipy.signal import fftconvolve
+
+        model = VascularModel()
+        dt = 1.5          # clinical TR
+        n = 60
+        t = np.arange(n) * dt
+        params = [0.08, 3.0, 2.0, 0.0]   # delay=0 isolates the convolution
+
+        def aif_fn(tt: np.ndarray) -> np.ndarray:
+            x = np.maximum(tt - 9.0, 0.0)   # sharp bolus arriving at 9 s
+            a = (x ** 3) * np.exp(-x / 1.2)
+            return np.asarray(a / (a.max() + 1e-12), dtype=np.float64)
+
+        # Continuous-time truth at 16x (finer than the model's 8x).
+        factor = 16
+        n_fine = (n - 1) * factor + 1
+        t_fine = np.linspace(0.0, float(t[-1]), n_fine)
+        truth_fine = fftconvolve(
+            aif_fn(t_fine), model.residue_function(params, t_fine), mode="full"
+        )[:n_fine] * (dt / factor)
+        truth = truth_fine[::factor]     # native grid, n points
+
+        # Production (8x) vs plain native-dt convolution.
+        aif_native = aif_fn(t)
+        c_model = model.tissue_curve(params, aif_native, t)
+        c_native = fftconvolve(
+            aif_native, model.residue_function(params, t), mode="full"
+        )[:n] * dt
+
+        err_model = float(np.max(np.abs(c_model - truth)))
+        err_native = float(np.max(np.abs(c_native - truth)))
+        assert err_model < err_native, (
+            f"upsampled forward model not closer to truth "
+            f"(8x err={err_model:.4g} vs native err={err_native:.4g})"
+        )
