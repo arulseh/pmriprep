@@ -35,6 +35,7 @@ from pmriprep.utils.dsc_constants import (
     DEFAULT_OI_THRESHOLD,
     DEFAULT_OSVD_GRID_STEPS,
     DEFAULT_SVD_THRESHOLD,
+    DEFAULT_TIKHONOV_PENALTY_P,
     EPSILON_CONCENTRATION,
     LCURVE_CURVATURE_FALLBACK,
     LCURVE_N_LAMBDAS,
@@ -1316,16 +1317,15 @@ def svd_deconvolve_oscillation_batch(
 class TikhonovDeconvolutionResult(DeconvolutionResultBase):
     """Result from Tikhonov regularised deconvolution.
 
-    First-derivative penalty operator with L-curve corner detection.
-    Replaces the legacy zeroth-order + GCV implementation
-    that failed on noisy DSC data.
+    Modified first-difference penalty operator (identity block on the
+    leading residue samples) with L-curve corner detection.
 
     Attributes
     ----------
         lambda_optimal: λ at the L-curve corner (or fallback default).
         residual_norm: ||A·r - C||² at the unclipped solution.
         solution_norm: ||L·r||² at the unclipped solution (where L is
-            the first-derivative operator).
+            the modified first-difference penalty operator).
         lcurve_corner_found: True if the L-curve has a detectable corner
             (curvature ≥ ``LCURVE_CURVATURE_FALLBACK``); False if the
             curve was too flat / monotone and the caller fell back to a
@@ -1338,19 +1338,31 @@ class TikhonovDeconvolutionResult(DeconvolutionResultBase):
     lcurve_corner_found: bool = False
 
 
-def _build_first_derivative_matrix(n: int) -> npt.NDArray[np.float64]:
-    """Build the (n-1, n) forward-difference operator L.
+def _build_modified_first_derivative_matrix(
+    n: int, p: int = DEFAULT_TIKHONOV_PENALTY_P
+) -> npt.NDArray[np.float64]:
+    """Build the (n, n) modified first-difference penalty operator L.
 
-    L[i, i] = -1, L[i, i+1] = +1, used for first-order Tikhonov:
+    The first ``p`` rows form an identity block, so the penalty ``||L·r||²``
+    constrains the *magnitude* of the leading ``p`` residue samples; the
+    remaining rows are forward differences ``r[i] - r[i-1]`` that constrain
+    the *derivative* of the tail. The difference across the boundary
+    (``r[p-1] - r[p-2]``) is left unpenalised, so the regulariser does not
+    oversmooth the sharp initial rise of a dispersed residue (which would
+    depress ``CBF = max R``). Used for::
+
         min ||A·r - C||² + λ² ||L·r||²
 
-    The penalty ||L·r||² is the sum of squared first differences,
-    appropriate for residue functions that should vary smoothly.
+    ``p`` is clamped to ``n``; for ``n <= p`` the operator degenerates to a
+    pure identity (magnitude-only) penalty.
     """
-    L = np.zeros((n - 1, n), dtype=np.float64)
-    idx = np.arange(n - 1)
-    L[idx, idx] = -1.0
-    L[idx, idx + 1] = 1.0
+    L = np.zeros((n, n), dtype=np.float64)
+    p_eff = min(p, n)
+    ip = np.arange(p_eff)
+    L[ip, ip] = 1.0
+    tail = np.arange(p_eff, n)
+    L[tail, tail - 1] = -1.0
+    L[tail, tail] = 1.0
     return L
 
 
@@ -1409,85 +1421,48 @@ def _select_lambda_lcurve(
     return best_idx, corner_found
 
 
-def tikhonov_deconvolve(
+def _tikhonov_solve(
     tissue_curve: npt.NDArray[np.floating],
     aif: npt.NDArray[np.floating],
-    dt: float = 1.0,
-    lambda_min: float = DEFAULT_LAMBDA_RANGE.min,
-    lambda_max: float = DEFAULT_LAMBDA_RANGE.max,
-    apply_non_negativity: bool = True,
+    dt: float,
+    lambda_min: float,
+    lambda_max: float,
+    apply_non_negativity: bool,
+    L: npt.NDArray[np.floating],
 ) -> TikhonovDeconvolutionResult:
-    """First-order Tikhonov regularised deconvolution with L-curve λ selection.
+    """L-curve-regularised Tikhonov solve for a single curve.
 
-    Solves the regularised least squares problem with a first-derivative
-    smoothness penalty::
-
-        minimize ||A·r - C||² + λ²||L·r||²
-
-    where ``A`` is the Toeplitz convolution matrix built from the AIF, ``r``
-    is the residue function, and ``L`` is the (n-1, n) forward-difference
-    operator that penalises oscillations rather than residue magnitude.
-    First-order Tikhonov is more appropriate than zeroth-order for DSC
-    residues, which physically should vary smoothly.
-
-    The optimal λ is selected via the L-curve corner method:
-    sweep λ on a log grid, record (||A·r_λ - C||, ||L·r_λ||), find the
-    point of maximum curvature in log-log space.
+    Shared core of :func:`tikhonov_deconvolve`: builds the Toeplitz matrix
+    from the AIF, forms the normal equations with penalty operator ``L``,
+    sweeps λ on a σ_max-scaled log grid, selects the L-curve corner (falling
+    back to ``0.1 σ_max`` when no corner is found), and returns the residue
+    with its perfusion summaries. The caller owns input validation and the
+    choice of ``L``.
 
     Parameters
     ----------
     tissue_curve : np.ndarray
-        Tissue concentration curve, shape (n_timepoints,).
+        Tissue concentration curve, shape (n,).
     aif : np.ndarray
-        Arterial input function, shape (n_timepoints,). Must match
-        ``tissue_curve`` length.
-    dt : float, optional
-        Frame period in seconds. Default 1.0 gives frame-unit timings;
-        provide the actual TR for MTT/Tmax in seconds.
-    lambda_min, lambda_max : float, optional
-        Bounds of the log-spaced λ sweep,
-        **expressed as fractions of σ_max(A)** (the largest singular
-        value of the AIF Toeplitz matrix). The natural scale for
-        first-order Tikhonov is the operator norm; absolute λ values
-        are AIF-dependent and not portable. Defaults from
-        ``DEFAULT_LAMBDA_RANGE`` = (1e-3, 10.0).
-    apply_non_negativity : bool, optional
-        If True, clip negative residue values to zero
-        after solving.
+        Arterial input function, shape (n,).
+    dt : float
+        Frame period in seconds, used for CBV/MTT integration.
+    lambda_min, lambda_max : float
+        Bounds of the log-spaced λ sweep, as fractions of σ_max(A).
+    apply_non_negativity : bool
+        If True, clip negative residue values to zero after solving.
+    L : np.ndarray
+        Penalty operator applied in the smoothness term.
 
     Returns
     -------
     TikhonovDeconvolutionResult
-        TikhonovDeconvolutionResult with the residue, perfusion parameters,
-        chosen λ, and a flag indicating whether the L-curve had a detectable
-        corner.
-
-    References
-    ----------
-        Hansen PC. Rank-Deficient and Discrete Ill-Posed Problems. SIAM, 1998.
-        Calamante F et al. MRM 50:1237-1247 (2003).
+        Residue, perfusion parameters, chosen λ, and the L-curve corner flag.
     """
-    # Validate inputs
-    if len(tissue_curve) != len(aif):
-        raise ValueError(
-            f"tissue_curve and aif must have same length, "
-            f"got {len(tissue_curve)} and {len(aif)}"
-        )
-
-    if len(tissue_curve) == 0:
-        raise ValueError("Arrays cannot be empty")
-
-    if lambda_min >= lambda_max:
-        raise ValueError(
-            f"lambda_min must be less than lambda_max, "
-            f"got {lambda_min} >= {lambda_max}"
-        )
-
     n = len(tissue_curve)
     tissue = tissue_curve.astype(np.float64, copy=False)
 
     A = build_toeplitz_matrix(aif, dt)
-    L = _build_first_derivative_matrix(n)
     AtA = A.T @ A
     LtL = L.T @ L
     AtC = A.T @ tissue
@@ -1527,7 +1502,6 @@ def tikhonov_deconvolve(
         best_residual_norm_unsq = residual_norms[best_idx]
         best_solution_norm_unsq = solution_norms[best_idx]
     else:
-        # Hansen 1998 default for cornerless / monotone L-curves
         best_lambda = 0.1 * sigma_max
         M = AtA + (best_lambda ** 2) * LtL
         best_residue = np.linalg.solve(M, AtC)
@@ -1553,6 +1527,82 @@ def tikhonov_deconvolve(
         residual_norm=residual_norm,
         solution_norm=solution_norm,
         lcurve_corner_found=bool(corner_found),
+    )
+
+
+def tikhonov_deconvolve(
+    tissue_curve: npt.NDArray[np.floating],
+    aif: npt.NDArray[np.floating],
+    dt: float = 1.0,
+    lambda_min: float = DEFAULT_LAMBDA_RANGE.min,
+    lambda_max: float = DEFAULT_LAMBDA_RANGE.max,
+    apply_non_negativity: bool = True,
+) -> TikhonovDeconvolutionResult:
+    """First-order Tikhonov regularised deconvolution with L-curve λ selection.
+
+    Solves the regularised least squares problem with a modified
+    first-difference smoothness penalty::
+
+        minimize ||A·r - C||² + λ²||L·r||²
+
+    where ``A`` is the Toeplitz convolution matrix built from the AIF, ``r``
+    is the residue function, and ``L`` is the (n, n) modified first-difference
+    operator: an identity block constrains the magnitude of the leading
+    residue samples while forward differences constrain the smoothness of the
+    tail, so the sharp initial rise of a dispersed residue is preserved
+    rather than oversmoothed.
+
+    The optimal λ is selected via the L-curve corner method:
+    sweep λ on a log grid, record (||A·r_λ - C||, ||L·r_λ||), find the
+    point of maximum curvature in log-log space.
+
+    Parameters
+    ----------
+    tissue_curve : np.ndarray
+        Tissue concentration curve, shape (n_timepoints,).
+    aif : np.ndarray
+        Arterial input function, shape (n_timepoints,). Must match
+        ``tissue_curve`` length.
+    dt : float, optional
+        Frame period in seconds. Default 1.0 gives frame-unit timings;
+        provide the actual TR for MTT/Tmax in seconds.
+    lambda_min, lambda_max : float, optional
+        Bounds of the log-spaced λ sweep,
+        **expressed as fractions of σ_max(A)** (the largest singular
+        value of the AIF Toeplitz matrix). The natural scale for
+        first-order Tikhonov is the operator norm; absolute λ values
+        are AIF-dependent and not portable. Defaults from
+        ``DEFAULT_LAMBDA_RANGE`` = (1e-3, 10.0).
+    apply_non_negativity : bool, optional
+        If True, clip negative residue values to zero
+        after solving.
+
+    Returns
+    -------
+    TikhonovDeconvolutionResult
+        TikhonovDeconvolutionResult with the residue, perfusion parameters,
+        chosen λ, and a flag indicating whether the L-curve had a detectable
+        corner.
+    """
+    # Validate inputs
+    if len(tissue_curve) != len(aif):
+        raise ValueError(
+            f"tissue_curve and aif must have same length, "
+            f"got {len(tissue_curve)} and {len(aif)}"
+        )
+
+    if len(tissue_curve) == 0:
+        raise ValueError("Arrays cannot be empty")
+
+    if lambda_min >= lambda_max:
+        raise ValueError(
+            f"lambda_min must be less than lambda_max, "
+            f"got {lambda_min} >= {lambda_max}"
+        )
+
+    L = _build_modified_first_derivative_matrix(len(tissue_curve))
+    return _tikhonov_solve(
+        tissue_curve, aif, dt, lambda_min, lambda_max, apply_non_negativity, L
     )
 
 
@@ -1610,6 +1660,14 @@ def tikhonov_deconvolve_batch(
     original_shape = tissue_curves.shape
     n_timepoints = original_shape[-1]
 
+    if n_timepoints == 0:
+        raise ValueError("Arrays cannot be empty")
+    if len(aif) != n_timepoints:
+        raise ValueError(
+            f"aif length ({len(aif)}) must match the time axis "
+            f"({n_timepoints})"
+        )
+
     if tissue_curves.ndim > 2:
         spatial_shape = original_shape[:-1]
         n_voxels = int(np.prod(spatial_shape))
@@ -1627,7 +1685,7 @@ def tikhonov_deconvolve_batch(
         mask_flat = np.ones(n_voxels, dtype=bool)
 
     A = build_toeplitz_matrix(aif, dt)
-    L = _build_first_derivative_matrix(n_timepoints)
+    L = _build_modified_first_derivative_matrix(n_timepoints)
     AtA = A.T @ A
     LtL = L.T @ L
 

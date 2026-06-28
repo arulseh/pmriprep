@@ -183,11 +183,6 @@ class TestOSIPIDSCDRO:
             f"GT={case.cbf:.0f} ml/100ml/min"
         )
 
-    @pytest.mark.xfail(
-        reason="GCV under-regularizes gamma-variate residues — "
-               "known limitation (Hansen, SIAM 1998)",
-        strict=False,
-    )
     @pytest.mark.parametrize(
         "cbv_cbf", _REPRESENTATIVE_CASES,
         ids=["low_CBF", "mid_CBF", "high_CBF"],
@@ -195,13 +190,11 @@ class TestOSIPIDSCDRO:
     def test_tikhonov_cbf_recovery(
         self, cbv_cbf: Tuple[float, float],
     ) -> None:
-        """Tikhonov CBF recovery on representative cases.
+        """Tikhonov CBF recovery on representative OSIPI synthetic cases.
 
-        GCV-regularized Tikhonov with adaptive range expansion. GCV
-        under-regularizes gamma-variate residues at mid-high CBF because
-        the GCV minimum is interior but suboptimal — a known limitation
-        of GCV on smooth residues (Hansen, SIAM 1998). Low CBF benefits
-        from boundary expansion (lambda_max=1.0 → 10.0).
+        L-curve-selected modified-penalty Tikhonov (the production operator)
+        recovers CBF within the tolerance band across the low/mid/high-CBF
+        representative cases of the OSIPI synthetic DRO.
         """
         cases = _get_cases()
         case = _get_case_by_params(cases, cbv_cbf[0], cbv_cbf[1])

@@ -604,7 +604,7 @@ class ComputeDSCMaps(BaseInterface):
     Supported deconvolution methods:
     - sSVD: Standard SVD (Østergaard method)
     - oSVD: Oscillation-index limited SVD (adaptive regularization, delay-insensitive)
-    - tikhonov: Tikhonov regularization with GCV
+    - tikhonov: L-curve-selected first-order Tikhonov regularization
     - vascular: Gamma-variate vascular model
     - cpi: Control Point Interpolation model
 

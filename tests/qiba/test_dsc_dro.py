@@ -391,16 +391,18 @@ class TestQIBAOSVDExponential:
 
 
 class TestQIBATikhonovExponential:
-    """Tikhonov recovery with QIBA AIF, zero noise only.
+    """Tikhonov recovery with QIBA AIF, zero noise — the non-dispersed corner.
 
-    Uses first-order (smoothness) Tikhonov with L-curve corner λ
-    selection (Hansen 1998). The first-derivative penalty has a known
-    smoothing bias on sharply-peaked (exponential) residues: the
-    recovered residue is broader than the true t→0⁺ peak, which biases
-    CBF down and MTT up relative to truth. Tolerances reflect this
-    structural bias on exponential residues; gamma-variate residues
-    (Vascular model) do not exhibit it — see TestTikhonovRecovery in
-    tests/dro/test_dsc_recovery.py.
+    Exponential residues are non-dispersed (R(0) = max, monotone decay). The
+    production modified penalty operator imposes a magnitude penalty on the
+    first residue samples, which for a peak-at-zero residue shrinks
+    max(R) = CBF — biasing CBF down and MTT up here. This is the expected,
+    accepted cost of running the dispersed-regime operator on the non-dispersed
+    corner: real DSC tissue is fed through downstream transport (dispersed),
+    where this operator instead wins — see TestTikhonovRecovery in
+    tests/dro/test_dsc_recovery.py. Tolerances reflect this structural bias
+    (the max per-tissue error at zero noise, plus headroom); they are not a
+    target to optimise.
     """
 
     @pytest.mark.parametrize("tissue_key", SVD_TISSUES)
@@ -412,8 +414,8 @@ class TestQIBATikhonovExponential:
 
         result = tikhonov_deconvolve(tissue, aif, dt)
 
-        _assert_param_recovery(result.cbf, cbf, 0.30, param_name="CBF")
-        _assert_param_recovery(result.mtt, mtt, 0.50, param_name="MTT")
+        _assert_param_recovery(result.cbf, cbf, 0.35, param_name="CBF")
+        _assert_param_recovery(result.mtt, mtt, 0.58, param_name="MTT")
 
 
 # =============================================================================

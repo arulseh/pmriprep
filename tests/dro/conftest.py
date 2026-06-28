@@ -240,6 +240,14 @@ def apply_recirculation(
     return np.asarray(aif + recirc, dtype=np.float64)
 
 
+#: Pre-committed moderate dispersion severity (log-normal VTF sigma, mu) for the
+#: dispersed DSC DRO: mean transit E = exp(mu + sigma**2/2) = 1.14 s, a physiological
+#: arterial-to-tissue bolus dispersion. The middle of the mild/moderate/severe
+#: presets, fixed independent of any deconvolution result (not tuned to favour an
+#: operator).
+DSC_DRO_VTF_MODERATE = (0.75, -0.15)
+
+
 def apply_vtf_dispersion(
     aif: npt.NDArray[np.floating],
     dt: float,

@@ -364,10 +364,10 @@ class TestCrossMethodAgreement3D:
 
         oSVD excluded: it uses a block-circulant matrix (different
         integration scheme), so exact agreement with Toeplitz methods
-        is not expected. Tolerance widened to 30% because first-order
-        Tikhonov + L-curve applies a smoothness penalty (Hansen 1998
-        fallback λ = 0.1·σ_max at zero noise) that biases CBF below the
-        sSVD threshold-truncated estimate.
+        is not expected. Tolerance widened to 30% because the production
+        modified-penalty Tikhonov, an L-curve-regularised dispersed-regime
+        operator, biases CBF below the sSVD threshold-truncated estimate on
+        this non-dispersed exponential phantom.
         """
         volume, masks, aif_full = _build_full_chain_phantom()
         aif_post = aif_full[_BASELINE:]
@@ -412,15 +412,23 @@ class TestCrossMethodAgreement3D:
                     )
 
     def test_mtt_agreement_across_methods(self) -> None:
-        """MTT should agree within 25% pairwise (MTT compounds CBV/CBF)."""
+        """SVD-family MTT should agree within 25% pairwise (MTT compounds CBV/CBF).
+
+        Tikhonov is excluded from this MTT comparison: its production modified
+        penalty is a dispersed-regime operator and biases MTT up on this
+        non-dispersed exponential phantom (the documented non-dispersed cost;
+        CBV, being dispersion-invariant, still agrees — see the CBV test
+        above). Tikhonov's MTT is validated on the dispersed regime it is built
+        for in TestTikhonovRecovery (tests/dro/test_dsc_recovery.py).
+        """
         volume, masks, aif_full = _build_full_chain_phantom()
         aif_post = aif_full[_BASELINE:]
         results = self._deconvolve_per_tissue(volume, masks, aif_post)
 
         import itertools
-        method_names = list(self.METHODS.keys())
+        svd_methods = ["ssvd", "osvd"]
         for tissue_key in ["gm", "wm", "tumor"]:
-            for m1, m2 in itertools.combinations(method_names, 2):
+            for m1, m2 in itertools.combinations(svd_methods, 2):
                 mtt1 = results[m1][tissue_key].mtt
                 mtt2 = results[m2][tissue_key].mtt
                 mean_mtt = (mtt1 + mtt2) / 2.0

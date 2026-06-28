@@ -218,18 +218,28 @@ class TikhonovRange(NamedTuple):
 DEFAULT_LAMBDA_RANGE: Final[TikhonovRange] = TikhonovRange(1e-3, 10.0)
 
 #: Number of log-spaced lambda values in the L-curve sweep. 50 is a
-#: defensible compromise between corner-localization quality (Hansen
-#: recommends ~30 minimum) and per-voxel runtime cost.
+#: defensible compromise between corner-localization quality (which
+#: degrades below ~30 samples) and per-voxel runtime cost.
 LCURVE_N_LAMBDAS: Final[int] = 50
 
 #: Curvature threshold (log-log space) for L-curve corner detection.
 #: Below this, the curve is treated as cornerless and the caller falls
-#: back to ``λ = 0.1 · σ_max(A)`` (Hansen 1998 default). Empirically on
+#: back to ``λ = 0.1 · σ_max(A)``. Empirically on
 #: the gamma-variate DSC DRO: noiseless data peaks at curvature ≈1.0
 #: (no real corner; the bend is the over-regularization elbow), while
 #: any real noise (≥0.5%) gives peak curvature ≥10. A threshold of 2.0
 #: cleanly separates the two regimes across all four manuscript tissues.
 LCURVE_CURVATURE_FALLBACK: Final[float] = 2.0
+
+#: Number of leading residue samples excluded from the first-difference
+#: penalty in the modified Tikhonov operator. For these samples the side
+#: constraint penalizes the residue magnitude (an identity block) instead
+#: of its derivative, so the regularizer does not oversmooth the sharp
+#: initial rise of a dispersed residue (which would depress CBF = max R).
+#: p = 2 is the smallest count that protects the rise without leaving the
+#: initial samples unregularized; it is stable across SNR, MTT, and clinical
+#: DSC repetition times (coarser TR under-protects the rise).
+DEFAULT_TIKHONOV_PENALTY_P: Final[int] = 2
 
 
 # =============================================================================

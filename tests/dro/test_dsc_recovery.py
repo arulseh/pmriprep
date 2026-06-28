@@ -15,7 +15,10 @@ from pmriprep.models.dsc.batched_fitting import batched_dsc_map_fit
 from pmriprep.models.dsc.bayesian import fit_dsc_model
 from pmriprep.models.dsc.cpi import CPIModel
 from pmriprep.models.dsc.vascular import VascularModel
+from pmriprep.utils.dsc_constants import DEFAULT_LAMBDA_RANGE
 from pmriprep.utils.dsc_deconvolution import (
+    _build_modified_first_derivative_matrix,
+    _tikhonov_solve,
     build_toeplitz_matrix,
     svd_deconvolve_circulant,
     svd_deconvolve_oscillation,
@@ -24,6 +27,7 @@ from pmriprep.utils.dsc_deconvolution import (
 )
 
 from .conftest import (
+    DSC_DRO_VTF_MODERATE,
     add_gaussian_noise,
     apply_recirculation,
     apply_vtf_dispersion,
@@ -492,52 +496,64 @@ class TestOSVDRecovery:
 
 
 class TestTikhonovRecovery:
-    """Test Tikhonov regularization deconvolution parameter recovery.
+    """Tikhonov recovery on the DISPERSED DSC residue regime (production).
 
-    Uses first-order (smoothness) Tikhonov with L-curve corner λ
-    selection (Hansen 1998) on gamma-variate residues, which match the
-    DSC manuscript figure tissue model. Tolerances are mean+3σ from
-    20-seed Monte Carlo on the production defaults
+    Production deconvolves tissue against an auto-detected arterial AIF, but
+    the tissue is fed by that artery through downstream transport, so the
+    effective residue the deconvolver must recover is dispersed — it rises
+    from zero to an interior peak (Calamante's dispersed regime), where the
+    production modified penalty operator (identity block on the leading
+    samples + first-difference) belongs.
+
+    The DRO models this honestly: the forward tissue is generated from a
+    VTF-dispersed AIF (``apply_vtf_dispersion`` at the pre-committed moderate
+    severity ``DSC_DRO_VTF_MODERATE``), and the deconvolution uses the
+    un-dispersed AIF — the production mismatch. Ground truth is the effective
+    residue R_eff = VTF ⊗ R_true: CBF = max(R_eff) (below the nominal CBF,
+    since dispersion lowers the peak) and AUC-MTT = ∫R_eff / max(R_eff).
+    AUC-CBV is dispersion-invariant, so AUC-MTT carries only the peak (CBF)
+    error and is the reported MTT here; the internal residue-MTT is too
+    dispersion/noise sensitive to bound usefully.
+
+    Tolerances are mean+3σ from 20-seed Monte Carlo on the production defaults
     (``DEFAULT_LAMBDA_RANGE = (1e-3, 10) · σ_max(A)``,
-    ``LCURVE_CURVATURE_FALLBACK = 2.0``).
-
-    First-order Tikhonov has a known smoothing bias on sharply-peaked
-    (e.g. exponential) residues, which is why the recovery test runs on
-    the gamma-variate residue family used in production validation —
-    not the exponential residue used by sSVD/oSVD/cSVD tests above.
+    ``LCURVE_CURVATURE_FALLBACK = 2.0``, ``DEFAULT_TIKHONOV_PENALTY_P = 2``).
+    That the modified operator beats pure L₁ on this regime is asserted
+    directly in ``test_modified_penalty_beats_l1_on_dispersed``.
     """
 
-    # (cbf, alpha, beta, mtt = α·β) — gamma-variate residue (Vascular model).
+    # (cbf, alpha, beta) — survival-function residue (Vascular model); cbf is
+    # the un-dispersed peak. The dispersed ground truth is recomputed per case.
     GAMMA_PARAMS = [
-        pytest.param(0.10, 3.0, 1.5, 4.5, id="normal_gm"),
-        pytest.param(0.04, 4.0, 1.5, 6.0, id="normal_wm"),
-        pytest.param(0.16, 2.0, 3.0, 6.0, id="tumor"),
-        pytest.param(0.13, 3.0, 4.0, 12.0, id="long_mtt"),
+        pytest.param(0.10, 3.0, 1.5, id="normal_gm"),
+        pytest.param(0.04, 4.0, 1.5, id="normal_wm"),
+        pytest.param(0.16, 2.0, 3.0, id="tumor"),
+        pytest.param(0.13, 3.0, 4.0, id="long_mtt"),
     ]
 
-    # Tolerances per (noise_frac, cbf_tol, mtt_tol). MC mean+3σ:
-    #   noiseless: max |CBF| 5.4%, max |MTT| 5.4% → 8% covers all
-    #   2% noise:  CBF max 6.2+3·2.7=14%, MTT max 16+3·9=43%
-    #   5% noise:  CBF max 14.1+3·4.6=28%, MTT max 29.3+3·13=68%
+    # Tolerances per (noise_frac, cbf_tol, aucmtt_tol). MC mean+3σ on the
+    # dispersed DRO (max across the four tissues), rounded up for headroom:
+    #   noiseless: CBF 14.5%, AUC-MTT 16.9%
+    #   2% noise:  CBF 20.2%, AUC-MTT 22.9%
+    #   5% noise:  CBF 29.4%, AUC-MTT 39.3%
     NOISE_LEVELS = [
-        pytest.param(0.0,  0.10, 0.10, id="zero"),
-        pytest.param(0.02, 0.20, 0.50, id="low"),
-        pytest.param(0.05, 0.35, 0.75, id="medium"),
+        pytest.param(0.0,  0.16, 0.18, id="zero"),
+        pytest.param(0.02, 0.22, 0.25, id="low"),
+        pytest.param(0.05, 0.32, 0.42, id="medium"),
     ]
 
-    @pytest.mark.parametrize("cbf,alpha,beta,mtt", GAMMA_PARAMS)
-    @pytest.mark.parametrize("noise_frac,cbf_tol,mtt_tol", NOISE_LEVELS)
+    @pytest.mark.parametrize("cbf,alpha,beta", GAMMA_PARAMS)
+    @pytest.mark.parametrize("noise_frac,cbf_tol,aucmtt_tol", NOISE_LEVELS)
     def test_tikhonov(
         self,
         cbf: float,
         alpha: float,
         beta: float,
-        mtt: float,
         noise_frac: float,
         cbf_tol: float,
-        mtt_tol: float,
+        aucmtt_tol: float,
     ) -> None:
-        """Tikhonov recovers CBF and MTT on gamma-variate residues."""
+        """L₁,mod recovers CBF and AUC-MTT on the dispersed residue regime."""
         aif, time_sec = generate_dsc_aif_dro(
             n_timepoints=60, dt_sec=1.5, baseline_frames=10,
             peak_delta_r2=40.0,
@@ -546,15 +562,84 @@ class TestTikhonovRecovery:
         residue = VascularModel().residue_function(
             [cbf, alpha, beta, 0.0], time_sec
         )
-        tissue = dsc_forward_model(aif, residue, dt)
+        # Dispersed forward: tissue from the VTF-dispersed AIF; deconvolve with
+        # the un-dispersed AIF (the production mismatch that makes the effective
+        # residue rise from zero).
+        aif_disp = apply_vtf_dispersion(aif, dt, *DSC_DRO_VTF_MODERATE)
+        tissue = dsc_forward_model(aif_disp, residue, dt)
         if noise_frac > 0:
             peak = float(np.max(np.abs(tissue)))
             tissue = add_gaussian_noise(tissue, noise_frac * peak, seed=42)
 
-        result = tikhonov_deconvolve(tissue, aif, dt)
+        # Ground truth = effective residue R_eff = VTF ⊗ R_true.
+        r_eff = apply_vtf_dispersion(residue, dt, *DSC_DRO_VTF_MODERATE)
+        cbf_gt = float(np.max(r_eff))
+        aucmtt_gt = float(np.trapezoid(r_eff, dx=dt)) / cbf_gt
 
-        _assert_param_recovery(result.cbf, cbf, cbf_tol, param_name="CBF")
-        _assert_param_recovery(result.mtt, mtt, mtt_tol, param_name="MTT")
+        result = tikhonov_deconvolve(tissue, aif, dt)
+        cbv_auc = float(np.trapezoid(tissue, dx=dt)) / float(
+            np.trapezoid(aif, dx=dt)
+        )
+        auc_mtt = cbv_auc / result.cbf if result.cbf > 0 else 0.0
+
+        _assert_param_recovery(result.cbf, cbf_gt, cbf_tol, param_name="CBF")
+        _assert_param_recovery(
+            auc_mtt, aucmtt_gt, aucmtt_tol, param_name="AUC-MTT"
+        )
+
+    def test_modified_penalty_beats_l1_on_dispersed(self) -> None:
+        """The production modified penalty recovers CBF better than pure L₁.
+
+        This is the assertion that justifies the production operator: on the
+        dispersed regime the modified penalty frees the rising edge from the
+        derivative penalty and no longer shrinks a t=0 peak, so CBF = max(R) is
+        recovered closer to truth than with the pure first-difference L₁. The
+        comparison can fail; if it does, the modified operator does not belong
+        in production.
+        """
+        aif, time_sec = generate_dsc_aif_dro(
+            n_timepoints=60, dt_sec=1.5, baseline_frames=10, peak_delta_r2=40.0,
+        )
+        dt = 1.5
+        aif_disp = apply_vtf_dispersion(aif, dt, *DSC_DRO_VTF_MODERATE)
+        # Both operators run through the same private solve on the same
+        # aif/dt (the core builds the identical Toeplitz A), so the only
+        # difference is the penalty. L_mod is the production modified
+        # first-difference; l1 is the pure first-difference (non-dispersed).
+        n = len(aif)
+        L_mod = _build_modified_first_derivative_matrix(n)
+        l1 = np.zeros((n - 1, n), dtype=np.float64)
+        di = np.arange(n - 1)
+        l1[di, di] = -1.0
+        l1[di, di + 1] = 1.0
+        lo, hi = DEFAULT_LAMBDA_RANGE.min, DEFAULT_LAMBDA_RANGE.max
+        losses = 0
+        for cbf, alpha, beta in [
+            (0.10, 3.0, 1.5), (0.04, 4.0, 1.5),
+            (0.16, 2.0, 3.0), (0.13, 3.0, 4.0),
+        ]:
+            residue = VascularModel().residue_function(
+                [cbf, alpha, beta, 0.0], time_sec
+            )
+            tissue = dsc_forward_model(aif_disp, residue, dt)
+            tissue = add_gaussian_noise(
+                tissue, 0.02 * float(np.max(np.abs(tissue))), seed=7
+            )
+            cbf_gt = float(np.max(apply_vtf_dispersion(
+                residue, dt, *DSC_DRO_VTF_MODERATE
+            )))
+            err_modified = abs(
+                _tikhonov_solve(tissue, aif, dt, lo, hi, True, L_mod).cbf - cbf_gt
+            )
+            err_l1 = abs(
+                _tikhonov_solve(tissue, aif, dt, lo, hi, True, l1).cbf - cbf_gt
+            )
+            if err_modified >= err_l1:
+                losses += 1
+        assert losses == 0, (
+            f"modified penalty lost to pure L₁ on {losses}/4 dispersed "
+            f"tissues at 2% noise"
+        )
 
 
 # =============================================================================
@@ -1220,11 +1305,10 @@ class TestDSCEdgeCases:
         """sSVD and Tikhonov (both Toeplitz) should agree at zero noise.
 
         Tolerance is 25%: sSVD with threshold=0.001 is essentially the
-        unregularised pseudo-inverse, while first-order Tikhonov + L-curve
-        always applies a smoothness penalty even at zero noise (its
-        L-curve has no real corner there, so it falls back to the
-        Hansen 1998 default λ = 0.1·σ_max). The smoothing biases CBF
-        down ~5–25% on exponential residues.
+        unregularised pseudo-inverse, while the production modified-penalty
+        Tikhonov always applies a smoothness penalty (L-curve-selected) even
+        at zero noise. The smoothing biases CBF down ~5–25% on exponential
+        residues.
         """
         tissue, aif, dt, time_sec = _make_dsc_test_data(
             cbf=0.10, mtt=4.0, noise_frac=0.0
