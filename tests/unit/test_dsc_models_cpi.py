@@ -10,7 +10,7 @@ from pmriprep.models.dsc.cpi import (
     select_n_by_bic,
     select_n_control_points,
 )
-from pmriprep.utils.dsc_deconvolution import build_toeplitz_matrix
+from pmriprep.utils.dsc_deconvolution import build_volterra_matrix
 
 
 class TestCPIModelConstruction:
@@ -213,7 +213,7 @@ class TestSelectionFunctions:
         aif[0] = 0.0
         # Create synthetic tissue: convolution with exponential residue
         residue = 0.1 * np.exp(-t / 10.0)
-        matrix = build_toeplitz_matrix(aif, dt)
+        matrix = build_volterra_matrix(aif, dt)
         tissue = matrix @ residue
         # Add small noise
         rng = np.random.default_rng(42)
@@ -225,3 +225,76 @@ class TestSelectionFunctions:
         # Each result should be a (n, bic, rss) tuple
         for entry in results:
             assert len(entry) == 3
+
+
+class TestCPIDelay:
+    """Optional bolus delay (FABBER inferdelay): param layout + forward shift."""
+
+    @staticmethod
+    def _aif(tp):
+        tb = tp - 8.0
+        return np.where(tb > 0, (tb / 3.0) ** 3 * np.exp(-tb / 3.0), 0.0)
+
+    def test_delay_param_layout(self) -> None:
+        """delay is the trailing param; identity transform, mean 0, var 25."""
+        nt, dt, n_cp = 40, 1.5, 6
+        m_none = CPIModel(n_control_points=n_cp, n_acquisition_frames=nt, dt=dt)
+        m_delay = CPIModel(
+            n_control_points=n_cp, n_acquisition_frames=nt, dt=dt, infer_delay=True
+        )
+        m_both = CPIModel(
+            n_control_points=n_cp, n_acquisition_frames=nt, dt=dt,
+            infer_cpt=True, infer_delay=True,
+        )
+        assert m_none.n_parameters == 1 + n_cp
+        assert m_delay.n_parameters == 1 + n_cp + 1
+        assert m_both.n_parameters == 1 + 2 * n_cp + 1
+        assert m_delay.get_parameter_names()[-1] == "delay"
+        assert m_both.get_parameter_names()[-1] == "delay"
+        assert m_delay.get_initial_guess()[-1] == 0.0
+        ddef = m_delay.get_parameter_definitions()[-1]
+        assert ddef.name == "delay"
+        assert ddef.transform == TransformType.IDENTITY
+        assert ddef.transformed_prior_sigma == pytest.approx(np.sqrt(25.0))
+
+    def test_delay_zero_matches_no_delay(self) -> None:
+        """tissue_curve with delay=0 reproduces the no-delay curve exactly."""
+        nt, dt, n_cp = 40, 1.5, 6
+        tp = np.arange(nt) * dt
+        aif = self._aif(tp)
+        fr = [0.85, 0.7, 0.55, 0.4, 0.28, 0.18]
+        m0 = CPIModel(n_control_points=n_cp, n_acquisition_frames=nt, dt=dt)
+        md = CPIModel(
+            n_control_points=n_cp, n_acquisition_frames=nt, dt=dt, infer_delay=True
+        )
+        t0 = m0.tissue_curve([0.1] + fr, aif, tp)
+        td0 = md.tissue_curve([0.1] + fr + [0.0], aif, tp)
+        np.testing.assert_allclose(td0, t0, atol=1e-12)
+
+    def test_delay_shifts_peak_later(self) -> None:
+        """A positive delay shifts the tissue-curve peak to a later frame."""
+        nt, dt, n_cp = 40, 1.5, 6
+        tp = np.arange(nt) * dt
+        aif = self._aif(tp)
+        fr = [0.85, 0.7, 0.55, 0.4, 0.28, 0.18]
+        md = CPIModel(
+            n_control_points=n_cp, n_acquisition_frames=nt, dt=dt, infer_delay=True
+        )
+        t0 = md.tissue_curve([0.1] + fr + [0.0], aif, tp)
+        t3 = md.tissue_curve([0.1] + fr + [3.0], aif, tp)
+        assert int(np.argmax(t3)) > int(np.argmax(t0))
+
+    def test_cbv_mtt_delay_invariant(self) -> None:
+        """CBV and MTT (residue integrals) are unaffected by the delay."""
+        nt, dt, n_cp = 40, 1.5, 6
+        tp = np.arange(nt) * dt
+        fr = [0.85, 0.7, 0.55, 0.4, 0.28, 0.18]
+        md = CPIModel(
+            n_control_points=n_cp, n_acquisition_frames=nt, dt=dt, infer_delay=True
+        )
+        assert md.get_cbv([0.1] + fr + [0.0], tp) == pytest.approx(
+            md.get_cbv([0.1] + fr + [3.0], tp), abs=1e-9
+        )
+        assert md.get_mtt([0.1] + fr + [0.0], tp) == pytest.approx(
+            md.get_mtt([0.1] + fr + [3.0], tp), abs=1e-9
+        )

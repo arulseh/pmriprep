@@ -106,7 +106,8 @@ def build_toeplitz_matrix(
     ``C_tissue = A @ R``. The convolution integral is discretized by
     pre-smoothing the AIF on its interior with the (1, 4, 1)/6 three-point
     stencil (endpoints left unsmoothed), then forming the lower-triangular
-    Toeplitz of the smoothed AIF scaled by ``dt``.
+    Toeplitz of the smoothed AIF scaled by ``dt``. This (1, 4, 1)/6 Simpson-like
+    quadrature is used by the SVD/Tikhonov deconvolution paths.
 
     Parameters
     ----------
@@ -134,6 +135,63 @@ def build_toeplitz_matrix(
 
     # Lower-triangular Toeplitz of the smoothed AIF, scaled by dt.
     matrix = toeplitz(aif_smooth, np.zeros(n, dtype=np.float64))
+
+    return matrix * dt  # type: ignore[no-any-return]
+
+
+def build_volterra_matrix(
+    aif: npt.NDArray[np.floating],
+    dt: float = 1.0,
+) -> npt.NDArray[np.floating]:
+    """Build the Volterra (1, 4, 1)/6 convolution matrix from the AIF.
+
+    Creates the lower-triangular matrix A such that ``C_tissue = A @ R``,
+    discretizing the convolution integral with the product-integration Volterra
+    quadrature: the interior uses the (1, 4, 1)/6 stencil centred on the lag,
+    the first column uses the two-point rule ``(2*aif[i] + aif[i-1])/6``, and
+    the main diagonal (including the ``[0, 0]`` corner) is the constant
+    ``(2*aif[0] + aif[1])/6``. The whole matrix is scaled by ``dt``. This is the
+    operator used by the CPI parametric model.
+
+    Parameters
+    ----------
+    aif : np.ndarray
+        Arterial input function concentration curve, shape (n_timepoints,).
+        Must contain at least 2 samples.
+    dt : float
+        Time step in seconds for integration.
+
+    Returns
+    -------
+    np.ndarray
+        Volterra convolution matrix of shape (n_timepoints, n_timepoints).
+    """
+    from scipy.linalg import toeplitz  # type: ignore[import-untyped]
+
+    n = len(aif)
+    if n < 2:
+        raise ValueError(f"aif must contain at least 2 samples, got {n}")
+    aif64 = np.asarray(aif, dtype=np.float64)
+
+    # Toeplitz kernel k[m] = A[r, r - m]: the constant diagonal A_0^+ at m=0, and
+    # the (1, 4, 1)/6 stencil centred on the lag for the interior (m >= 1). The
+    # last kernel entry only lands at (n-1, 0), which the first-column rule
+    # overwrites, so it is left zero.
+    kern = np.zeros(n, dtype=np.float64)
+    kern[0] = (2.0 * aif64[0] + aif64[1]) / 6.0
+    if n > 2:
+        kern[1 : n - 1] = (aif64[:-2] + 4.0 * aif64[1:-1] + aif64[2:]) / 6.0
+    matrix = toeplitz(kern, np.zeros(n, dtype=np.float64))
+
+    # First column: two-point rule A_i^- = (2*aif[i] + aif[i-1])/6.
+    aif_prev = np.empty(n, dtype=np.float64)
+    aif_prev[0] = 0.0
+    aif_prev[1:] = aif64[:-1]
+    matrix[:, 0] = (2.0 * aif64 + aif_prev) / 6.0
+
+    # Corner [0, 0]: the convolution at t=0 is zero (empty integral), so row 0
+    # is all-zero; the first-column write above put a spurious value here.
+    matrix[0, 0] = 0.0
 
     return matrix * dt  # type: ignore[no-any-return]
 

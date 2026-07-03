@@ -189,7 +189,7 @@ class TestSpatialVIIntegration:
     ) -> tuple:
         """Create synthetic NxNx1 homogeneous phantom."""
         from pmriprep.models.dsc.cpi import CPIModel
-        from pmriprep.utils.dsc_deconvolution import build_toeplitz_matrix
+        from pmriprep.utils.dsc_deconvolution import build_volterra_matrix
 
         n_voxels = n_side * n_side
         t = np.linspace(0, 40, n_timepoints)
@@ -202,7 +202,7 @@ class TestSpatialVIIntegration:
             n_acquisition_frames=n_timepoints,
             dt=dt,
         )
-        toeplitz = build_toeplitz_matrix(aif, dt)
+        toeplitz = build_volterra_matrix(aif, dt)
 
         rng = np.random.default_rng(42)
         params = [cbf, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4]  # cbf + 6 fractions
@@ -329,7 +329,7 @@ class TestSpatialVIIntegration:
         aif[0] = 0.0
 
         from pmriprep.models.dsc.cpi import CPIModel
-        from pmriprep.utils.dsc_deconvolution import build_toeplitz_matrix
+        from pmriprep.utils.dsc_deconvolution import build_volterra_matrix
 
         dt = float(t[1] - t[0])
         model = CPIModel(
@@ -337,7 +337,7 @@ class TestSpatialVIIntegration:
             n_acquisition_frames=int(len(t)),
             dt=dt,
         )
-        toeplitz = build_toeplitz_matrix(aif, dt)
+        toeplitz = build_volterra_matrix(aif, dt)
         params = [0.1, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4]  # cbf + 6 fractions
         tissue = model.tissue_curve(params, aif, t).reshape(1, -1)
 

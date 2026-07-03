@@ -1943,6 +1943,7 @@ def init_dsc_preproc_wf(
         oi_threshold=DEFAULT_OI_THRESHOLD,
         cpi_control_points=config.cpi_control_points,
         cpi_infer_cpt=config.cpi_infer_cpt,
+        cpi_infer_delay=config.cpi_infer_delay,
         inference=config.inference,
         mcmc_samples=config.mcmc_samples,
         n_procs=config.num_processes if config.num_processes > 0 else 1,

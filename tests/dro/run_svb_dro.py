@@ -16,7 +16,7 @@ from pmriprep.models.dsc.batched_fitting import batched_dsc_vi_fit, batched_dsc_
 from pmriprep.models.dsc.cpi import CPIModel
 from pmriprep.models.dsc.spatial_vb import batched_dsc_spatial_vi_fit
 from pmriprep.models.dsc.vascular import VascularModel
-from pmriprep.utils.dsc_deconvolution import build_toeplitz_matrix
+from pmriprep.utils.dsc_deconvolution import build_volterra_matrix
 
 from tests.dro.conftest import (
     dsc_forward_model,
@@ -100,7 +100,7 @@ def build_cpi_fit_kwargs(aif, time_sec):
     fitting_defs = list(model.get_fitting_parameter_definitions())
     priors = build_priors_from_params(fitting_defs)
     cp_times = np.array(model._control_point_times, dtype=np.float64)
-    toeplitz = build_toeplitz_matrix(aif, dt)
+    toeplitz = build_volterra_matrix(aif, dt)
 
     return dict(
         model_type="cpi",

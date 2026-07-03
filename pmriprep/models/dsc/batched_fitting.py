@@ -168,7 +168,24 @@ def batched_vascular_forward(
     conv_full = np.fft.ifft(aif_fft[None, :] * R_fft, axis=1).real
     conv = (conv_full[:, :n_grid] * grid_dt)[:, ::stride]  # (N, T)
 
-    # Apply delay as post-hoc shift with linear interpolation (vectorized)
+    # Apply delay as a post-hoc linear-interp shift of the convolved curve.
+    return _apply_post_hoc_delay_shift(conv, delay, dt)
+
+
+def _apply_post_hoc_delay_shift(
+    conv: npt.NDArray[np.floating],
+    delay: npt.NDArray[np.floating],
+    dt: float,
+) -> npt.NDArray[np.floating]:
+    """Shift each row of a convolved curve by its per-voxel delay (seconds).
+
+    Linear-interpolation shift of ``conv`` (shape (N, T)) by ``delay`` (shape
+    (N,)); out-of-range shifted samples are zero-filled. For a linear
+    convolution this equals shifting the AIF by ``delay`` before convolving, so
+    a precomputed convolution operator can be reused. Shared by the vascular
+    and CPI batched forwards; the residue (hence CBV and MTT) is unaffected.
+    """
+    n_voxels, n_times = conv.shape
     delay_frac = delay / dt
     n_shift = np.floor(delay_frac).astype(int)
     f_shift = delay_frac - n_shift  # fractional part, (N,)
@@ -180,23 +197,25 @@ def batched_vascular_forward(
     # Integer-shift contribution: (1 - f) * conv[i - n_shift]
     valid_lo = (src_all >= 0) & (src_all < n_times)
     src_clipped = np.clip(src_all, 0, n_times - 1)
-    C_t = np.where(
+    shifted: npt.NDArray[np.floating] = np.where(
         valid_lo,
         (1.0 - f_shift[:, None]) * conv[row_idx, src_clipped],
         0.0,
     )
 
-    # Fractional contribution: f * conv[i - n_shift - 1]
+    # Fractional contribution: f * conv[i - n_shift - 1]. Gate on valid_lo (the
+    # integer tap) so a fractional tap is never added where the integer tap was
+    # zero-filled — matches the scalar shift exactly, incl. negative non-integer
+    # delays at the curve tail.
     src_hi = src_all - 1
-    valid_hi = (src_hi >= 0) & (src_hi < n_times)
+    valid_hi = valid_lo & (src_hi >= 0) & (src_hi < n_times)
     src_hi_clipped = np.clip(src_hi, 0, n_times - 1)
-    C_t += np.where(
+    shifted += np.where(
         valid_hi,
         f_shift[:, None] * conv[row_idx, src_hi_clipped],
         0.0,
     )
-
-    return C_t
+    return shifted
 
 
 # ---------------------------------------------------------------------------
@@ -277,64 +296,63 @@ def _append_terminal_anchor_per_voxel(
     return cp_times_ext, cp_vals_ext
 
 
-def batched_cpi_forward(
+def batched_cpi_residue(
     params: npt.NDArray[np.floating],
-    aif: npt.NDArray[np.floating],
     time_points: npt.NDArray[np.floating],
     control_point_times: npt.NDArray[np.floating],
-    toeplitz_matrix: npt.NDArray[np.floating],
     t_terminal: float | None = None,
+    infer_delay: bool = False,
 ) -> npt.NDArray[np.floating]:
-    """Batched CPI model forward evaluation for N voxels.
+    """Batched dimensionless CPI residue R_norm(t) for N voxels.
 
-    Computes tissue concentration via PCHIP-interpolated residue
-    convolved with AIF using a precomputed Toeplitz matrix.
+    Shared residue construction for both the forward model
+    (:func:`batched_cpi_forward`) and the CBV/MTT readout, so the two cannot
+    drift apart. Builds the PCHIP-interpolated residue from the multiplicative
+    fraction parameters, with the (t=0, amp=1) boundary anchor and the terminal
+    R=0 anchor applied at construction time. Output is independent of CBF.
 
-    C_tissue(t) = CBF * (Toeplitz @ R_norm(t))
-
-    Supports both fixed and per-voxel control point times. When
-    ``params`` has 2*n_cp - 1 columns, columns ``[n_cp..2n_cp-2]``
-    are interpreted as log-spacings between CPs (FABBER ``infer-cpt``)
-    and per-voxel CP times are reconstructed via cumulative-sum.
+    Supports both fixed and per-voxel control point times. When ``params`` has
+    width ``1 + 2*n_cp``, columns ``[1+n_cp..2*n_cp]`` are log-spacings between
+    CPs (FABBER ``infer-cpt``) and per-voxel CP times are reconstructed via
+    cumulative sum; otherwise the fixed ``control_point_times`` are used.
 
     Parameters
     ----------
     params : npt.NDArray[np.floating]
-        Parameter matrix, shape (N, P).
-        P = n_cp: column 0 = CBF, columns 1..n_cp-1 = fractions.
-        P = 2*n_cp - 1: above plus columns [n_cp..2*n_cp-2] = log-spacings.
-    aif : npt.NDArray[np.floating]
-        Arterial input function, shape (T,).
+        Parameter matrix, shape (N, P). P = 1 + n_cp: column 0 = CBF (not used
+        here), columns 1..n_cp = fractions. P = 1 + 2*n_cp: above plus columns
+        [1+n_cp..2*n_cp] = log-spacings.
     time_points : npt.NDArray[np.floating]
         Time points (seconds), shape (T,).
     control_point_times : npt.NDArray[np.floating]
-        Default control point time locations, shape (K,).
-    toeplitz_matrix : npt.NDArray[np.floating]
-        Precomputed Toeplitz convolution matrix, shape (T, T).
+        Default control point time locations, shape (n_cp,).
     t_terminal : float or None, optional
-        Terminal anchor time (seconds) for fixed-CP layout.
+        Terminal anchor time (seconds) for the fixed-CP layout. If None,
+        defaults to ``control_point_times[-1] + spacing``.
+    infer_delay : bool, optional
+        Whether ``params`` carries a trailing ``delay`` column (delay-agnostic
+        here; only widens the layout check so the column is not mistaken for a
+        log-spacing).
 
     Returns
     -------
     npt.NDArray[np.floating]
-        Tissue concentration curves, shape (N, T).
+        Dimensionless residue R_norm in [0, 1], shape (N, T).
     """
-    n_voxels = params.shape[0]
-    n_times = len(time_points)
     n_cp = len(control_point_times)
     # FABBER layout: params = [cbf, f_1..f_N] (no infer_cpt) or
-    # [cbf, f_1..f_N, s_1..s_N] (infer_cpt). All N fractions are free;
-    # the (t=0, amp=1) BC is added at PCHIP-construction time.
-    has_log_spacings = params.shape[1] == 1 + 2 * n_cp
-
-    cbf = params[:, 0]  # (N,)
+    # [cbf, f_1..f_N, s_1..s_N] (infer_cpt), with an optional trailing `delay`
+    # column when infer_delay. All N fractions are free; the (t=0, amp=1) BC is
+    # added at PCHIP-construction time. The delay column does not affect R(t).
+    has_log_spacings = params.shape[1] == 1 + 2 * n_cp + (1 if infer_delay else 0)
 
     # Cumulative product of multiplicative fractions: R(tpos[k]) = f1*...*fk
     fracs = np.clip(params[:, 1 : 1 + n_cp], 0.0, 1.0)  # (N, n_cp)
     cp_vals: npt.NDArray[np.floating] = np.cumprod(fracs, axis=1).astype(np.float64)
 
+    R_norm: npt.NDArray[np.floating]
     if has_log_spacings:
-        log_s = params[:, 1 + n_cp :]  # (N, n_cp)
+        log_s = params[:, 1 + n_cp : 1 + 2 * n_cp]  # (N, n_cp)
         spacings = np.exp(np.clip(log_s, -50.0, 50.0))
         per_voxel_cp_times = np.cumsum(spacings, axis=1)
         cp_times_ext, cp_vals_ext = _append_terminal_anchor_per_voxel(
@@ -348,6 +366,63 @@ def batched_cpi_forward(
         R_norm = _batched_pchip(cp_times_ext, cp_vals_ext, time_points)
 
     R_norm = np.clip(R_norm, 0.0, 1.0)  # (N, T)
+    return R_norm
+
+
+def batched_cpi_forward(
+    params: npt.NDArray[np.floating],
+    aif: npt.NDArray[np.floating],
+    time_points: npt.NDArray[np.floating],
+    control_point_times: npt.NDArray[np.floating],
+    toeplitz_matrix: npt.NDArray[np.floating],
+    t_terminal: float | None = None,
+    infer_delay: bool = False,
+) -> npt.NDArray[np.floating]:
+    """Batched CPI model forward evaluation for N voxels.
+
+    Computes tissue concentration via the PCHIP-interpolated residue convolved
+    with the AIF using a precomputed (1,4,1)/6 convolution matrix.
+
+    C_tissue(t) = CBF * (A @ R_norm(t))
+
+    Supports both fixed and per-voxel control point times. When ``params`` has
+    width ``1 + 2*n_cp``, columns ``[1+n_cp..2*n_cp]`` are log-spacings between
+    CPs (FABBER ``infer-cpt``) and per-voxel CP times are reconstructed via
+    cumulative sum.
+
+    Parameters
+    ----------
+    params : npt.NDArray[np.floating]
+        Parameter matrix, shape (N, P). P = 1 + n_cp: column 0 = CBF, columns
+        1..n_cp = fractions. P = 1 + 2*n_cp: above plus columns
+        [1+n_cp..2*n_cp] = log-spacings.
+    aif : npt.NDArray[np.floating]
+        Arterial input function, shape (T,).
+    time_points : npt.NDArray[np.floating]
+        Time points (seconds), shape (T,).
+    control_point_times : npt.NDArray[np.floating]
+        Default control point time locations, shape (K,).
+    toeplitz_matrix : npt.NDArray[np.floating]
+        Precomputed (1,4,1)/6 convolution matrix, shape (T, T).
+    t_terminal : float or None, optional
+        Terminal anchor time (seconds) for fixed-CP layout.
+    infer_delay : bool, optional
+        If True, ``params[:, -1]`` is a per-voxel bolus delay applied as a
+        post-hoc shift of the convolved curve (residue/CBV/MTT unaffected).
+
+    Returns
+    -------
+    npt.NDArray[np.floating]
+        Tissue concentration curves, shape (N, T).
+    """
+    n_voxels = params.shape[0]
+    n_times = len(time_points)
+
+    cbf = params[:, 0]  # (N,)
+    R_norm = batched_cpi_residue(
+        params, time_points, control_point_times, t_terminal=t_terminal,
+        infer_delay=infer_delay,
+    )
 
     # Toeplitz matmul: C = CBF * (A @ R_norm^T)^T
     # Memory batching: (T,T) @ (T,N) costs T*N*8 bytes for the result.
@@ -359,6 +434,12 @@ def batched_cpi_forward(
         tissue[start:end] = cbf[start:end, None] * (
             toeplitz_matrix @ R_norm[start:end].T
         ).T
+
+    # Optional bolus delay: post-hoc linear-interp shift of the convolved curve
+    # (equivalent to shifting the AIF before convolving; residue unaffected).
+    if infer_delay:
+        dt = float(time_points[1] - time_points[0]) if n_times > 1 else 1.0
+        return _apply_post_hoc_delay_shift(tissue, params[:, -1], dt)
 
     return tissue
 
@@ -889,6 +970,7 @@ def batched_dsc_vi_fit(
     control_point_times: Optional[npt.NDArray[np.floating]] = None,
     toeplitz_matrix: Optional[npt.NDArray[np.floating]] = None,
     cpi_t_terminal: Optional[float] = None,
+    cpi_infer_delay: bool = False,
     nlls_seeds: Optional[npt.NDArray[np.floating]] = None,
     prior_means_transformed: Optional[npt.NDArray[np.floating]] = None,
     prior_stds_transformed: Optional[npt.NDArray[np.floating]] = None,
@@ -1017,6 +1099,7 @@ def batched_dsc_vi_fit(
                 control_point_times=control_point_times,
                 toeplitz_matrix=toeplitz_matrix,
                 cpi_t_terminal=cpi_t_terminal,
+                cpi_infer_delay=cpi_infer_delay,
                 nlls_seeds=nlls_seeds,
                 prior_means_transformed=prior_means_transformed,
                 prior_stds_transformed=prior_stds_transformed,
@@ -1137,6 +1220,7 @@ def batched_dsc_vi_fit(
                 params_fitting, aif, time_points,
                 control_point_times, toeplitz_matrix,
                 t_terminal=cpi_t_terminal,
+                infer_delay=cpi_infer_delay,
             )
 
     # --- Noise posterior init ---
@@ -1736,6 +1820,7 @@ def batched_dsc_map_fit(
     control_point_times: Optional[npt.NDArray[np.floating]] = None,
     toeplitz_matrix: Optional[npt.NDArray[np.floating]] = None,
     cpi_t_terminal: Optional[float] = None,
+    cpi_infer_delay: bool = False,
     nlls_seeds: Optional[npt.NDArray[np.floating]] = None,
     prior_means_transformed: Optional[npt.NDArray[np.floating]] = None,
     prior_stds_transformed: Optional[npt.NDArray[np.floating]] = None,
@@ -1843,6 +1928,7 @@ def batched_dsc_map_fit(
             control_point_times=control_point_times,
             toeplitz_matrix=toeplitz_matrix,
             cpi_t_terminal=cpi_t_terminal,
+            cpi_infer_delay=cpi_infer_delay,
             nlls_seeds=nlls_seeds,
             prior_means_transformed=prior_means_transformed,
             prior_stds_transformed=prior_stds_transformed,
@@ -1937,6 +2023,7 @@ def batched_dsc_map_fit(
                 params_fitting, aif, time_points,
                 control_point_times, toeplitz_matrix,
                 t_terminal=cpi_t_terminal,
+                infer_delay=cpi_infer_delay,
             )
 
     # --- Multi-start initialization ---

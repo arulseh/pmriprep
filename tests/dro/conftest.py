@@ -809,7 +809,7 @@ def dsc_forward_model(
     """Compute tissue concentration via Toeplitz convolution.
 
     C(t) = A @ R where A is the (1, 4, 1)/6 Toeplitz matrix of the AIF.
-    Matched forward model for sSVD, Tikhonov, and CPI deconvolution.
+    Matched forward model for sSVD and Tikhonov deconvolution.
 
     Parameters
     ----------
@@ -828,6 +828,36 @@ def dsc_forward_model(
     from pmriprep.utils.dsc_deconvolution import build_toeplitz_matrix
 
     A = build_toeplitz_matrix(aif, dt)
+    return np.asarray(A @ residue, dtype=np.float64)
+
+
+def dsc_forward_model_volterra(
+    aif: npt.NDArray[np.floating],
+    residue: npt.NDArray[np.floating],
+    dt: float,
+) -> npt.NDArray[np.floating]:
+    """Compute tissue concentration via Volterra convolution.
+
+    C(t) = A @ R where A is the (1, 4, 1)/6 Volterra matrix of the AIF.
+    Matched forward model for the CPI parametric deconvolution.
+
+    Parameters
+    ----------
+    aif : npt.NDArray[np.floating]
+        Arterial input function concentration array.
+    residue : npt.NDArray[np.floating]
+        Residue function array (CBF * R(t)).
+    dt : float
+        Time step in seconds.
+
+    Returns
+    -------
+    npt.NDArray[np.floating]
+        Tissue concentration array.
+    """
+    from pmriprep.utils.dsc_deconvolution import build_volterra_matrix
+
+    A = build_volterra_matrix(aif, dt)
     return np.asarray(A @ residue, dtype=np.float64)
 
 

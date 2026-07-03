@@ -2046,6 +2046,7 @@
       "baseline_frames": 5,
       "cpi_control_points": 0,
       "cpi_infer_cpt": true,
+      "cpi_infer_delay": false,
       "fallback_baseline_frames": 5,
       "field_strength": 3.0,
       "inference": "vi",

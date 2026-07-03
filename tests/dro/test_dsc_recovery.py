@@ -19,7 +19,7 @@ from pmriprep.utils.dsc_constants import DEFAULT_LAMBDA_RANGE
 from pmriprep.utils.dsc_deconvolution import (
     _build_modified_first_derivative_matrix,
     _tikhonov_solve,
-    build_toeplitz_matrix,
+    build_volterra_matrix,
     svd_deconvolve_circulant,
     svd_deconvolve_oscillation,
     svd_deconvolve_standard,
@@ -34,6 +34,7 @@ from .conftest import (
     delay_aif,
     dsc_forward_model,
     dsc_forward_model_circulant,
+    dsc_forward_model_volterra,
     generate_dsc_aif_dro,
     make_boxcar_residue,
     make_cbf_mtt_grid,
@@ -835,7 +836,9 @@ def _make_cpi_gamma_test_data(
         Tuple of (tissue_concentration, aif, time_sec, true_mtt).
     """
     if forward_model is None:
-        forward_model = dsc_forward_model
+        # CPI fits with the Volterra operator, so the matched GT default is
+        # Volterra; SVD borrowers pass dsc_forward_model explicitly.
+        forward_model = dsc_forward_model_volterra
     aif, time_sec = generate_dsc_aif_dro(
         n_timepoints=n_timepoints,
         dt_sec=dt_sec,
@@ -1128,7 +1131,7 @@ class TestBatchedMAPCPIRecovery:
         fitting_defs = list(model.get_fitting_parameter_definitions())
         priors = build_priors_from_params(fitting_defs)
         cp_times = np.array(model._control_point_times, dtype=np.float64)
-        toeplitz = build_toeplitz_matrix(aif, dt)
+        toeplitz = build_volterra_matrix(aif, dt)
 
         result = batched_dsc_map_fit(
             model_type="cpi",
@@ -1160,6 +1163,139 @@ class TestBatchedMAPCPIRecovery:
             recovered_mtt = model.get_mtt(p_list, time_sec)
             _assert_param_recovery(recovered_cbf, cbf, cbf_tol, param_name="CBF")
             _assert_param_recovery(recovered_mtt, true_mtt, mtt_tol, param_name="MTT")
+
+    def test_batched_cpi_map_readout_matches_gt(self) -> None:
+        """The production readout (_batched_result_to_voxel_dicts) CBV/MTT must
+        recover ground truth — the other CPI tests check model.get_mtt, not this
+        readout's trapezoid integral, which is what the pipeline actually writes.
+        """
+        from pmriprep.interfaces.dsc_compute import ComputeDSCMaps
+
+        cbf, alpha, beta = 0.10, 3.0, 1.5
+        true_mtt = alpha * beta
+        n_seeds = 5
+        tissues = []
+        aif = time_sec = None
+        for seed in range(n_seeds):
+            t, aif, time_sec, _ = _make_cpi_gamma_test_data(
+                cbf, alpha, beta, 0.02, seed=seed,
+            )
+            tissues.append(t)
+        tissue_curves = np.stack(tissues)
+        dt = float(time_sec[1] - time_sec[0])
+        model = CPIModel(
+            n_control_points=10, n_acquisition_frames=int(len(time_sec)), dt=dt,
+        )
+        fitting_defs = list(model.get_fitting_parameter_definitions())
+        priors = build_priors_from_params(fitting_defs)
+        cp_times = np.array(model._control_point_times, dtype=np.float64)
+        toeplitz = build_volterra_matrix(aif, dt)
+        result = batched_dsc_map_fit(
+            model_type="cpi",
+            tissue_curves=tissue_curves,
+            aif=aif,
+            time_points=time_sec,
+            prior_means_nat=np.array([p.mean for p in priors]),
+            prior_stds_nat=np.array([p.std for p in priors]),
+            transforms=[p.transform for p in priors],
+            upper_bounds=[p.upper_bound for p in priors],
+            fitting_param_names=[p.name for p in fitting_defs],
+            fitting_bounds=[(p.bounds[0], p.bounds[1]) for p in fitting_defs],
+            control_point_times=cp_times,
+            toeplitz_matrix=toeplitz,
+            prior_means_transformed=np.array([p.mean_transformed for p in priors]),
+            prior_stds_transformed=np.array([p.std_transformed for p in priors]),
+            compute_uncertainties=False,
+        )
+        conv = result.converged
+        assert int(np.sum(conv)) >= 3, f"Only {int(np.sum(conv))}/{n_seeds} converged"
+        mask_coords = (
+            np.arange(n_seeds), np.zeros(n_seeds, dtype=int), np.zeros(n_seeds, dtype=int),
+        )
+        outs = ComputeDSCMaps._batched_result_to_voxel_dicts(
+            None, result, mask_coords, "cpi", n_seeds, dt, cp_times, time_sec,
+            float(model.terminal_time),
+        )
+        for i in range(n_seeds):
+            if not conv[i]:
+                continue
+            _assert_param_recovery(outs[i]["mtt"], true_mtt, 0.30, param_name="readout MTT")
+            assert outs[i]["cbv"] == pytest.approx(
+                outs[i]["cbf"] * outs[i]["mtt"], rel=1e-6
+            )
+            assert outs[i]["tmax"] == 0.0  # no infer_delay
+
+
+class TestCPIDelayRecovery:
+    """CPI infer_delay recovers a known bolus delay; CBV/MTT stay delay-invariant.
+
+    Ground truth is a no-delay gamma-variate tissue curve shifted by a known
+    delay (a continuous linear-interp shift, distinct from the model's two-tap
+    shift). The infer_delay fit must recover the delay and leave MTT near the
+    no-delay truth (the residue integral is delay-invariant). delay=0 is a
+    regression guard that infer_delay is a clean superset of the no-delay fit.
+    """
+
+    @pytest.mark.parametrize("delay_true", [0.0, 3.0])
+    def test_cpi_delay_recovery_map(self, delay_true: float) -> None:
+        cbf, alpha, beta = 0.10, 3.0, 1.5
+        true_mtt = alpha * beta
+        n_seeds = 5
+        tissues = []
+        aif = time_sec = None
+        for seed in range(n_seeds):
+            t0, aif, time_sec, _ = _make_cpi_gamma_test_data(
+                cbf, alpha, beta, 0.02, seed=seed,
+            )
+            t_del = np.interp(time_sec - delay_true, time_sec, t0, left=0.0)
+            tissues.append(t_del)
+        tissue_curves = np.stack(tissues)
+
+        dt = float(time_sec[1] - time_sec[0])
+        model = CPIModel(
+            n_control_points=10, n_acquisition_frames=int(len(time_sec)),
+            dt=dt, infer_delay=True,
+        )
+        fitting_defs = list(model.get_fitting_parameter_definitions())
+        priors = build_priors_from_params(fitting_defs)
+        cp_times = np.array(model._control_point_times, dtype=np.float64)
+        toeplitz = build_volterra_matrix(aif, dt)
+
+        result = batched_dsc_map_fit(
+            model_type="cpi",
+            tissue_curves=tissue_curves,
+            aif=aif,
+            time_points=time_sec,
+            prior_means_nat=np.array([p.mean for p in priors]),
+            prior_stds_nat=np.array([p.std for p in priors]),
+            transforms=[p.transform for p in priors],
+            upper_bounds=[p.upper_bound for p in priors],
+            fitting_param_names=[p.name for p in fitting_defs],
+            fitting_bounds=[(p.bounds[0], p.bounds[1]) for p in fitting_defs],
+            control_point_times=cp_times,
+            toeplitz_matrix=toeplitz,
+            cpi_infer_delay=True,
+            prior_means_transformed=np.array([p.mean_transformed for p in priors]),
+            prior_stds_transformed=np.array([p.std_transformed for p in priors]),
+            compute_uncertainties=False,
+        )
+
+        conv = result.converged
+        assert int(np.sum(conv)) >= 3, f"Only {int(np.sum(conv))}/{n_seeds} converged"
+        rec_delays = [float(result.params["delay"][i]) for i in range(n_seeds) if conv[i]]
+        rec_mtts = []
+        for i in range(n_seeds):
+            if not conv[i]:
+                continue
+            p_dict = {n: float(result.params[n][i]) for n in [p.name for p in fitting_defs]}
+            rec_mtts.append(model.get_mtt(model.dict_to_params(p_dict), time_sec))
+
+        med_delay = float(np.median(rec_delays))
+        med_mtt = float(np.median(rec_mtts))
+        assert abs(med_delay - delay_true) < 1.5 * dt, (
+            f"recovered delay {med_delay:.2f}s vs true {delay_true:.2f}s"
+        )
+        _assert_param_recovery(med_mtt, true_mtt, 0.30, param_name="MTT")
 
 
 # =============================================================================
@@ -1212,7 +1348,8 @@ class TestSVDGammaRecovery:
     ) -> None:
         """Test sSVD recovery of CBF and MTT from gamma-variate residue."""
         tissue, aif, time_sec, true_mtt = _make_cpi_gamma_test_data(
-            cbf, alpha, beta, noise_frac
+            cbf, alpha, beta, noise_frac,
+            forward_model=dsc_forward_model,
         )
 
         dt = float(time_sec[1] - time_sec[0])

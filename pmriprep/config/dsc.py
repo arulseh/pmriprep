@@ -118,8 +118,15 @@ class DSCConfig:
     cpi_control_points: int = 0  # 0 = auto-select
     # Default True: lets CPs migrate to optimal locations via inferred
     # log-spacings; cuts CBF bias on Normal WM and Long MTT tissues by ~50%.
-    # Costs ~3x per-voxel compute. Set False to match FABBER --infer-cpt false.
+    # Costs ~3x per-voxel compute. Deliberate deviation from FABBER, which ships
+    # infer-cpt off ("not recommended"); the log-spacing parameterization
+    # (positive, ordered by construction) avoids the instability FABBER warns of.
+    # Set False to match FABBER --infer-cpt false.
     cpi_infer_cpt: bool = True
+    # FABBER dsc_cpi `inferdelay`, OFF by default (matches FABBER default).
+    # When True, fits a per-voxel bolus arrival delay applied as a post-hoc
+    # shift of the convolved curve; the residue (hence CBV and MTT) is unaffected.
+    cpi_infer_delay: bool = False
 
     # AIF detection settings
     aif_file: Optional[Path] = None
@@ -178,6 +185,7 @@ class DSCConfig:
             self.mcmc_samples = int(self.mcmc_samples)
             self.cpi_control_points = int(self.cpi_control_points)
             self.cpi_infer_cpt = bool(self.cpi_infer_cpt)
+            self.cpi_infer_delay = bool(self.cpi_infer_delay)
             self.n_aif_candidates = int(self.n_aif_candidates)
             self.num_processes = int(self.num_processes)
         except (ValueError, TypeError) as e:

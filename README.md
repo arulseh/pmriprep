@@ -226,6 +226,8 @@ dce:
 | `method` | str | `"oSVD"` | Deconvolution method: `sSVD`, `oSVD`, `tikhonov`, `vascular`, `cpi` |
 | `inference` | str | `"vi"` | Inference engine: `nlls`, `map`, `vi`, `svb` (CPI and Vascular only; SVD and Tikhonov ignore) |
 | `cpi_control_points` | int | `0` | Control points for CPI (0 = auto) |
+| `cpi_infer_cpt` | bool | `true` | Infer CPI control-point times (deviates from FABBER default; cuts long-MTT/low-CBF bias) |
+| `cpi_infer_delay` | bool | `false` | Infer per-voxel bolus delay for CPI (FABBER inferdelay; off by default) |
 | `preload` | str or float | `"auto"` | Preload dose fraction: `"auto"` (detect from signal) or a float (0.0–2.0) |
 | `dose` | float | `1.0` | Dose multiplier (default: 1.0). Accepts a float or presets: `half`, `full`, `double` |
 | `agent_standard_dose` | float | `0.1` | Override agent standard dose in mmol Gd/kg (auto-detected from `ContrastBolusAgent` sidecar field when available) |

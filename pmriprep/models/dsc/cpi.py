@@ -11,7 +11,7 @@ distribution is unknown or doesn't follow a standard parametric form.
 The parameterization follows the Quantiphyse convention:
 - R(t) is **dimensionless** (0-1), with R(0) = 1.0 fixed
 - CBF is a **separate** scaling parameter
-- C_tissue(t) = CBF × [A_trap @ R_norm]
+- C_tissue(t) = CBF × [A @ R_norm]
 """
 
 from typing import Sequence
@@ -30,6 +30,7 @@ from pmriprep.models.dsc.base import (
 from pmriprep.utils.dsc_constants import (
     CBF_BOUNDS,
     EPSILON_CONCENTRATION,
+    VASCULAR_DELAY_BOUNDS,
 )
 
 
@@ -49,7 +50,7 @@ class CPIModel(DSCModel):
     Following FABBER's multiplicative fraction parameterization:
         - R(t) is dimensionless (0-1), with R(0) = 1.0 fixed
         - CBF is a separate scaling parameter (relative units, s⁻¹)
-        - C(t) = CBF × [A_trap @ R_norm]
+        - C(t) = CBF × [A @ R_norm]
 
     Monotonicity is guaranteed by construction: each parameter f_i ∈ (0,1)
     is a multiplicative fraction, so R(t_i) = f_1 × f_2 × ... × f_i is
@@ -87,6 +88,7 @@ class CPIModel(DSCModel):
         n_acquisition_frames: int | None = None,
         dt: float | None = None,
         infer_cpt: bool = False,
+        infer_delay: bool = False,
     ) -> None:
         """Initialize the CPI model.
 
@@ -110,9 +112,13 @@ class CPIModel(DSCModel):
         infer_cpt : bool, optional
             If True, optimize control point positions (log-spacing
             parameterization). Doubles parameter count to 2N-1.
+        infer_delay : bool, optional
+            If True, fit a per-voxel bolus arrival delay applied as a
+            post-hoc shift of the convolved curve (off by default).
         """
         self._n_control_points = max(CPI_N_MIN, min(CPI_N_MAX, n_control_points))
         self._infer_cpt = infer_cpt
+        self._infer_delay = bool(infer_delay)
 
         if n_acquisition_frames is None or dt is None:
             raise ValueError(
@@ -136,9 +142,9 @@ class CPIModel(DSCModel):
         # FABBER terminal anchor: one acquisition frame beyond the data
         self._terminal_time = (self._n_acquisition_frames + 1) * self._dt
 
-        # Cache for the Toeplitz matrix (built on first use)
-        self._toeplitz_cache: npt.NDArray[np.floating] | None = None
-        self._toeplitz_aif_id: int | None = None
+        # Cache for the convolution matrix (built on first use)
+        self._conv_cache: npt.NDArray[np.floating] | None = None
+        self._conv_aif_id: int | None = None
 
 
     @property
@@ -148,21 +154,30 @@ class CPIModel(DSCModel):
 
     @property
     def n_parameters(self) -> int:
-        """Number of free parameters: CBF + N fractions [+ N log-spacings].
+        """Number of free parameters: CBF + N fractions [+ N log-spacings] [+ delay].
 
         FABBER convention: each CP has its own free amplitude fraction. The
         boundary condition R(0)=1 is enforced by prepending a (t=0, amp=1)
         anchor at PCHIP-construction time, not by forcing the first
-        amplitude parameter.
+        amplitude parameter. The optional bolus delay (infer_delay) appends one
+        trailing parameter.
         """
+        n = 1 + self._n_control_points
         if self._infer_cpt:
-            return 1 + 2 * self._n_control_points
-        return 1 + self._n_control_points
+            n += self._n_control_points
+        if self._infer_delay:
+            n += 1
+        return n
 
     @property
     def infer_cpt(self) -> bool:
         """Whether control point times are optimized."""
         return self._infer_cpt
+
+    @property
+    def infer_delay(self) -> bool:
+        """Whether a per-voxel bolus arrival delay is fitted."""
+        return self._infer_delay
 
     @property
     def terminal_time(self) -> float:
@@ -199,6 +214,7 @@ class CPIModel(DSCModel):
           fitting-space prior N(0.5, sqrt(1e7)).
         - Log-spacings (infer_cpt): identity, mean=log(uniform_spacing),
           var=10 (FABBER ``cpt_i`` variance, units anchored to seconds).
+        - Delay (infer_delay): identity, mean=0, var=25 (FABBER ``inferdelay``).
 
         Returns
         -------
@@ -260,6 +276,19 @@ class CPIModel(DSCModel):
                     )
                 )
 
+        if self._infer_delay:
+            params.append(
+                DSCModelParameter(
+                    name="delay",
+                    bounds=(VASCULAR_DELAY_BOUNDS.min, VASCULAR_DELAY_BOUNDS.max),
+                    typical_range=(0.0, 0.0),  # mean=0
+                    transform=TransformType.IDENTITY,
+                    transformed_prior_sigma=float(np.sqrt(25.0)),
+                    description="Bolus arrival delay (FABBER inferdelay)",
+                    units="s",
+                )
+            )
+
         return params
 
     def get_initial_guess(self) -> list[float]:
@@ -289,6 +318,9 @@ class CPIModel(DSCModel):
             for _i in range(self._n_control_points):
                 x0.append(log_spacing)
 
+        if self._infer_delay:
+            x0.append(0.0)
+
         return x0
 
     def get_parameter_names(self) -> list[str]:
@@ -297,11 +329,14 @@ class CPIModel(DSCModel):
         Returns
         -------
         list[str]
-            List: ['cbf', 'f1', ..., 'fN'] (+ 's1'...'sN' when infer_cpt).
+            List: ['cbf', 'f1', ..., 'fN'] (+ 's1'...'sN' when infer_cpt,
+            + 'delay' when infer_delay).
         """
         names = ["cbf"] + [f"f{i + 1}" for i in range(self._n_control_points)]
         if self._infer_cpt:
             names += [f"s{i + 1}" for i in range(self._n_control_points)]
+        if self._infer_delay:
+            names.append("delay")
         return names
 
     def enforce_constraints(
@@ -455,10 +490,9 @@ class CPIModel(DSCModel):
     ) -> npt.NDArray[np.floating]:
         """Compute tissue concentration curve by convolving AIF with residue.
 
-        C_tissue(t) = CBF × [A_trap @ R_norm]
+        C_tissue(t) = CBF × [A @ R_norm]
 
-        Uses trapezoidal Toeplitz matrix for convolution, consistent with
-        the SVD deconvolution path.
+        Uses the Volterra (1, 4, 1)/6 convolution matrix.
 
         Parameters
         ----------
@@ -489,17 +523,36 @@ class CPIModel(DSCModel):
         # Compute dimensionless residue function R(t) with R(0)=1.0
         residue = self.residue_function(params, time_points)
 
-        # Build or reuse Toeplitz matrix (includes dt in its elements)
+        # Build or reuse the convolution matrix (includes dt in its elements)
         aif_id = id(aif)
-        if self._toeplitz_cache is None or self._toeplitz_aif_id != aif_id:
-            from pmriprep.utils.dsc_deconvolution import build_toeplitz_matrix
+        if self._conv_cache is None or self._conv_aif_id != aif_id:
+            from pmriprep.utils.dsc_deconvolution import build_volterra_matrix
             dt = float(time_points[1] - time_points[0])
-            self._toeplitz_cache = build_toeplitz_matrix(aif, dt)
-            self._toeplitz_aif_id = aif_id
+            self._conv_cache = build_volterra_matrix(aif, dt)
+            self._conv_aif_id = aif_id
 
-        # C(t) = CBF × (A_trap @ R_norm)
-        # Toeplitz already includes dt, so no additional multiplication
-        tissue = cbf * (self._toeplitz_cache @ residue)
+        # C(t) = CBF × (A @ R_norm)
+        # matrix already includes dt, so no additional multiplication
+        tissue = cbf * (self._conv_cache @ residue)
+
+        # Optional bolus delay: shift the convolved curve by delay via linear
+        # interpolation. For a linear convolution, shifting the result equals
+        # shifting the AIF before convolving, so the precomputed matrix is
+        # reused. The residue (hence CBV and MTT) is unaffected by delay.
+        if self._infer_delay:
+            delay = float(params[-1])
+            dt = float(time_points[1] - time_points[0])
+            delay_frac = delay / dt
+            n_shift = int(np.floor(delay_frac))
+            f_shift = delay_frac - n_shift
+            src = np.arange(n_times) - n_shift
+            shifted = np.zeros(n_times, dtype=np.float64)
+            lo = (src >= 0) & (src < n_times)
+            shifted[lo] = (1.0 - f_shift) * tissue[src[lo]]
+            hi_src = src - 1
+            hi = lo & (hi_src >= 0) & (hi_src < n_times)
+            shifted[hi] += f_shift * tissue[hi_src[hi]]
+            tissue = shifted
 
         return tissue
 

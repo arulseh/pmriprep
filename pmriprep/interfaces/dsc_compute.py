@@ -158,6 +158,7 @@ def _dsc_init_worker(
     sloppy: bool = False,
     random_seed: Optional[int] = None,
     cpi_infer_cpt: bool = True,
+    cpi_infer_delay: bool = False,
     mean_tissue: Any = None,
 ) -> None:
     """Initialise shared state once per worker process."""
@@ -199,11 +200,12 @@ def _dsc_init_worker(
             )
         n_frames = int(len(time_points))
         _dsc_worker_ctx["model_factory"] = (
-            lambda _ncp=n_cp, _nf=n_frames, _dt=dt, _ic=bool(cpi_infer_cpt): CPIModel(
+            lambda _ncp=n_cp, _nf=n_frames, _dt=dt, _ic=bool(cpi_infer_cpt), _id=bool(cpi_infer_delay): CPIModel(
                 n_control_points=_ncp,
                 n_acquisition_frames=_nf,
                 dt=_dt,
                 infer_cpt=_ic,
+                infer_delay=_id,
             )
         )
 
@@ -268,12 +270,10 @@ def _dsc_fit_single_voxel(voxel_data: _DSCVoxelInput) -> dict[str, Any]:
                 cbv_val = float(np.trapezoid(res, dx=dt))
                 out["cbv"] = cbv_val
                 out["mtt"] = cbv_val / cbf_val if cbf_val > EPSILON_CONCENTRATION else 0.0
-                # CPI does not model delay; Vascular delay is in parameters.
-                # Use argmax only for Vascular; CPI tmax is always 0.
-                if method == "vascular":
-                    out["tmax"] = float(np.argmax(res)) * dt
-                else:
-                    out["tmax"] = 0.0
+                # CPI reports the fitted bolus delay (FABBER inferdelay) when
+                # enabled; the residue (CBV/MTT) is delay-invariant. Without
+                # infer_delay the parameter is absent, so tmax is 0.
+                out["tmax"] = float(result.parameters.get("delay", 0.0))
             else:
                 out["cbv"] = 0.0
                 out["mtt"] = 0.0
@@ -427,6 +427,13 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
              "(default True). Lets CPs migrate to optimal locations; cuts "
              "bias on long-MTT/low-CBF tissues by ~50%. Costs ~3x per-voxel "
              "compute. Set False to match FABBER --infer-cpt false.",
+    )
+    cpi_infer_delay = traits.Bool(
+        False,
+        usedefault=True,
+        desc="Infer a per-voxel bolus arrival delay for CPI (FABBER "
+             "inferdelay), off by default. Applied as a post-hoc shift of the "
+             "convolved curve; the residue (CBV/MTT) is unaffected.",
     )
 
     # Time parameters
@@ -909,6 +916,7 @@ class ComputeDSCMaps(BaseInterface):
         mcmc_samples: int,
         cpi_control_points: int,
         cpi_infer_cpt: bool,
+        cpi_infer_delay: bool,
         motion_weights: Optional[npt.NDArray[np.floating]] = None,
     ) -> tuple[
         npt.NDArray[Any],  # cbf
@@ -1013,7 +1021,7 @@ class ComputeDSCMaps(BaseInterface):
             aif, time_points, method, inference, mcmc_samples,
             cpi_control_points, bolus_duration_frames, dt,
             motion_weights, sloppy, random_seed, cpi_infer_cpt,
-            mean_tissue,
+            cpi_infer_delay, mean_tissue,
         )
 
         n_procs = max(1, int(self.inputs.n_procs))
@@ -1030,6 +1038,7 @@ class ComputeDSCMaps(BaseInterface):
                 n_voxels=n_voxels,
                 cpi_control_points=cpi_control_points,
                 cpi_infer_cpt=cpi_infer_cpt,
+                cpi_infer_delay=cpi_infer_delay,
                 bolus_duration_frames=bolus_duration_frames,
                 mean_tissue=mean_tissue,
                 motion_weights=motion_weights,
@@ -1047,6 +1056,7 @@ class ComputeDSCMaps(BaseInterface):
                 n_voxels=n_voxels,
                 cpi_control_points=cpi_control_points,
                 cpi_infer_cpt=cpi_infer_cpt,
+                cpi_infer_delay=cpi_infer_delay,
                 bolus_duration_frames=bolus_duration_frames,
                 mean_tissue=mean_tissue,
                 motion_weights=motion_weights,
@@ -1203,6 +1213,7 @@ class ComputeDSCMaps(BaseInterface):
         cpi_control_points: int,
         bolus_duration_frames: int,
         cpi_infer_cpt: bool = True,
+        cpi_infer_delay: bool = False,
         mean_tissue: Optional[npt.NDArray[np.floating]] = None,
     ) -> dict[str, Any]:
         """Build model, priors, and fitting kwargs for batched DSC fitting.
@@ -1218,7 +1229,7 @@ class ComputeDSCMaps(BaseInterface):
         """
         from pmriprep.models.bayesian_utils import build_priors_from_params
         from pmriprep.models.dsc import CPIModel, VascularModel, select_n_control_points
-        from pmriprep.utils.dsc_deconvolution import build_toeplitz_matrix
+        from pmriprep.utils.dsc_deconvolution import build_volterra_matrix
 
         tissue_curves = concentration_data[
             mask_coords[0], mask_coords[1], mask_coords[2], :
@@ -1251,6 +1262,7 @@ class ComputeDSCMaps(BaseInterface):
                 n_acquisition_frames=n_timepoints,
                 dt=float(dt),
                 infer_cpt=bool(cpi_infer_cpt),
+                infer_delay=bool(cpi_infer_delay),
             )
             fitting_defs = list(cpi_model.get_fitting_parameter_definitions())
             priors = build_priors_from_params(fitting_defs)
@@ -1259,7 +1271,7 @@ class ComputeDSCMaps(BaseInterface):
             mono_prec = None
             mono_eta = None
             cp_times = np.array(cpi_model._control_point_times, dtype=np.float64)
-            toeplitz = build_toeplitz_matrix(aif, dt)
+            toeplitz = build_volterra_matrix(aif, dt)
             cpi_t_terminal = float(cpi_model.terminal_time)
 
         means_nat = np.array([p.mean for p in priors], dtype=np.float64)
@@ -1278,6 +1290,7 @@ class ComputeDSCMaps(BaseInterface):
             cp_times=cp_times,
             toeplitz=toeplitz,
             cpi_t_terminal=cpi_t_terminal,
+            cpi_infer_delay=bool(cpi_infer_delay),
             means_nat=means_nat,
             stds_nat=stds_nat,
             means_t=means_t,
@@ -1297,6 +1310,7 @@ class ComputeDSCMaps(BaseInterface):
         n_voxels: int,
         cpi_control_points: int,
         cpi_infer_cpt: bool,
+        cpi_infer_delay: bool,
         bolus_duration_frames: int,
         motion_weights: Optional[npt.NDArray[np.floating]],
         sloppy: bool,
@@ -1346,6 +1360,7 @@ class ComputeDSCMaps(BaseInterface):
             method, concentration_data, mask_coords, aif, dt,
             cpi_control_points, bolus_duration_frames,
             cpi_infer_cpt=cpi_infer_cpt,
+            cpi_infer_delay=cpi_infer_delay,
             mean_tissue=mean_tissue,
         )
 
@@ -1368,6 +1383,7 @@ class ComputeDSCMaps(BaseInterface):
             control_point_times=s["cp_times"],
             toeplitz_matrix=s["toeplitz"],
             cpi_t_terminal=s["cpi_t_terminal"],
+            cpi_infer_delay=s["cpi_infer_delay"],
             prior_means_transformed=s["means_t"],
             prior_stds_transformed=s["stds_t"],
             weights=motion_weights,
@@ -1395,7 +1411,8 @@ class ComputeDSCMaps(BaseInterface):
 
         return self._batched_result_to_voxel_dicts(
             batched_result, mask_coords, method, n_voxels, dt,
-            s["cp_times"], time_points,
+            s["cp_times"], time_points, s["cpi_t_terminal"],
+            s["cpi_infer_delay"],
         )
 
     def _batched_result_to_voxel_dicts(
@@ -1407,6 +1424,8 @@ class ComputeDSCMaps(BaseInterface):
         dt: float,
         cp_times: Optional[npt.NDArray[np.floating]],
         time_points: npt.NDArray[np.floating],
+        cpi_t_terminal: Optional[float] = None,
+        cpi_infer_delay: bool = False,
     ) -> list[dict[str, Any]]:
         """Convert DSCBatchedFitResult to per-voxel result dicts.
 
@@ -1428,18 +1447,48 @@ class ComputeDSCMaps(BaseInterface):
             CPI control point times or None.
         time_points : npt.NDArray[np.floating]
             Time points (seconds), shape (T,).
+        cpi_t_terminal : float or None, optional
+            CPI terminal anchor time (seconds); must match the value the forward
+            model used so the readout integrates the residue that was fitted.
+        cpi_infer_delay : bool, optional
+            Whether the CPI fit carried a per-voxel ``delay`` parameter; when
+            True ``out["tmax"]`` reports it (CBV/MTT stay delay-invariant).
 
         Returns
         -------
         list of dict
             List of per-voxel result dicts.
         """
-        from pmriprep.models.dsc.batched_fitting import (
-            _append_terminal_anchor,
-            _batched_pchip,
-        )
+        from pmriprep.models.dsc.batched_fitting import batched_cpi_residue
 
         results: list[dict[str, Any]] = []
+
+        # Precompute the CPI residue for every voxel via the SAME helper the
+        # forward model uses, so the readout integrates the residue that was
+        # fitted (parity with the NLLS fitted_residue integral). Reassemble the
+        # (N, P) parameter matrix in canonical order [cbf, f1..fN (, s1..sN)].
+        cpi_r_norm: Optional[npt.NDArray[np.floating]] = None
+        if method == "cpi" and cp_times is not None:
+            n_cp_local = len(cp_times)
+            cols = [np.asarray(batched_result.params["cbf"], dtype=np.float64)]
+            cols += [
+                np.asarray(batched_result.params[f"f{k}"], dtype=np.float64)
+                for k in range(1, n_cp_local + 1)
+            ]
+            if "s1" in batched_result.params:
+                cols += [
+                    np.asarray(batched_result.params[f"s{k}"], dtype=np.float64)
+                    for k in range(1, n_cp_local + 1)
+                ]
+            if cpi_infer_delay and "delay" in batched_result.params:
+                cols.append(
+                    np.asarray(batched_result.params["delay"], dtype=np.float64)
+                )
+            params_matrix = np.column_stack(cols)
+            cpi_r_norm = batched_cpi_residue(
+                params_matrix, time_points, cp_times,
+                t_terminal=cpi_t_terminal, infer_delay=cpi_infer_delay,
+            )
 
         for i in range(n_voxels):
             x = int(mask_coords[0][i])
@@ -1468,27 +1517,16 @@ class ComputeDSCMaps(BaseInterface):
             else:  # cpi
                 cbf_val = float(batched_result.params["cbf"][i])
                 out["cbf"] = cbf_val
-                if cbf_val > EPSILON_CONCENTRATION and cp_times is not None:
-                    n_cp_local = len(cp_times)
-                    cp_vals_i = np.ones((1, n_cp_local))
-                    for k in range(1, n_cp_local):
-                        fk = np.clip(
-                            float(batched_result.params[f"f{k}"][i]), 0.0, 1.0,
-                        )
-                        cp_vals_i[0, k] = cp_vals_i[0, k - 1] * fk
-                    cp_times_ext, cp_vals_ext = _append_terminal_anchor(
-                        cp_times, cp_vals_i
-                    )
-                    r_norm = np.clip(
-                        _batched_pchip(cp_times_ext, cp_vals_ext, time_points)[0],
-                        0.0, 1.0,
-                    )
-                    cbv_val = cbf_val * float(np.trapezoid(r_norm, dx=dt))
+                if cbf_val > EPSILON_CONCENTRATION and cpi_r_norm is not None:
+                    cbv_val = cbf_val * float(np.trapezoid(cpi_r_norm[i], dx=dt))
                 else:
                     cbv_val = 0.0
                 out["cbv"] = cbv_val
                 out["mtt"] = cbv_val / cbf_val if cbf_val > EPSILON_CONCENTRATION else 0.0
-                out["tmax"] = 0.0
+                if cpi_infer_delay and "delay" in batched_result.params:
+                    out["tmax"] = float(batched_result.params["delay"][i])
+                else:
+                    out["tmax"] = 0.0
 
             cbf_std_val = 0.0
             if batched_result.uncertainties:
@@ -1550,6 +1588,7 @@ class ComputeDSCMaps(BaseInterface):
         n_voxels: int,
         cpi_control_points: int,
         cpi_infer_cpt: bool,
+        cpi_infer_delay: bool,
         bolus_duration_frames: int,
         motion_weights: Optional[npt.NDArray[np.floating]],
         sloppy: bool,
@@ -1596,6 +1635,7 @@ class ComputeDSCMaps(BaseInterface):
             method, concentration_data, mask_coords, aif, dt,
             cpi_control_points, bolus_duration_frames,
             cpi_infer_cpt=cpi_infer_cpt,
+            cpi_infer_delay=cpi_infer_delay,
             mean_tissue=mean_tissue,
         )
 
@@ -1615,6 +1655,7 @@ class ComputeDSCMaps(BaseInterface):
             control_point_times=s["cp_times"],
             toeplitz_matrix=s["toeplitz"],
             cpi_t_terminal=s["cpi_t_terminal"],
+            cpi_infer_delay=s["cpi_infer_delay"],
             prior_means_transformed=s["means_t"],
             prior_stds_transformed=s["stds_t"],
             weights=motion_weights,
@@ -1625,7 +1666,8 @@ class ComputeDSCMaps(BaseInterface):
 
         return self._batched_result_to_voxel_dicts(
             batched_result, mask_coords, method, n_voxels, dt,
-            s["cp_times"], time_points,
+            s["cp_times"], time_points, s["cpi_t_terminal"],
+            s["cpi_infer_delay"],
         )
 
     def _save_qc_fit_data(
@@ -1640,6 +1682,7 @@ class ComputeDSCMaps(BaseInterface):
         mcmc_samples: int,
         cpi_control_points: int,
         cpi_infer_cpt: bool,
+        cpi_infer_delay: bool,
         signal_data: npt.NDArray[Any] | None = None,
     ) -> None:
         """Select a QC voxel and save its fit data as JSON.
@@ -1749,6 +1792,7 @@ class ComputeDSCMaps(BaseInterface):
                     n_acquisition_frames=n_timepoints,
                     dt=float(dt),
                     infer_cpt=bool(cpi_infer_cpt),
+                    infer_delay=bool(cpi_infer_delay),
                 )
 
             # Fit the QC voxel
@@ -1994,6 +2038,7 @@ class ComputeDSCMaps(BaseInterface):
         oi_threshold = float(self.inputs.oi_threshold)
         cpi_control_points = int(self.inputs.cpi_control_points)
         cpi_infer_cpt = bool(self.inputs.cpi_infer_cpt)
+        cpi_infer_delay = bool(self.inputs.cpi_infer_delay)
         inference = str(self.inputs.inference)
         mcmc_samples = int(self.inputs.mcmc_samples)
 
@@ -2183,6 +2228,7 @@ class ComputeDSCMaps(BaseInterface):
              fallback_mask) = self._deconvolve_parametric(
                 conc_data, aif, mask, method, dt, inference, mcmc_samples, cpi_control_points,
                 cpi_infer_cpt,
+                cpi_infer_delay,
                 motion_weights=motion_weights,
             )
             # Merge motion weighting QC into parametric QC dict
@@ -2601,6 +2647,7 @@ class ComputeDSCMaps(BaseInterface):
                 rel_cbf, conc_data, aif, mask_bool, dt, method,
                 inference, mcmc_samples, cpi_control_points,
                 cpi_infer_cpt,
+                cpi_infer_delay,
                 signal_data=signal_data,
             )
         else:
