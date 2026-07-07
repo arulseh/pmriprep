@@ -38,7 +38,9 @@ from pmriprep.utils.dsc_constants import (
     DEFAULT_TIKHONOV_PENALTY_P,
     EPSILON_CONCENTRATION,
     LCURVE_CURVATURE_FALLBACK,
+    LCURVE_EDGE_REJECT_SAMPLES,
     LCURVE_N_LAMBDAS,
+    TIKHONOV_FALLBACK_LAMBDA_FRACTION,
 )
 
 logger = logging.getLogger(__name__)
@@ -205,9 +207,9 @@ def svd_deconvolve_standard(
 ) -> DeconvolutionResult:
     """Perform standard SVD deconvolution (sSVD) using the Østergaard method.
 
-    Performs deconvolution by constructing a Toeplitz convolution matrix
-    from the AIF and solving via truncated SVD. Singular values below
-    a fraction of the maximum are set to zero for regularization.
+    Performs deconvolution by constructing the Volterra (product-integration)
+    convolution matrix from the AIF and solving via truncated SVD. Singular
+    values below a fraction of the maximum are set to zero for regularization.
 
     The deconvolution equation is:
         C_tissue(t) = CBF × ∫_0^t R(t-τ) × AIF(τ) dτ
@@ -215,7 +217,7 @@ def svd_deconvolve_standard(
     In matrix form:
         C = A @ R
 
-    where A is the Toeplitz matrix built from AIF.
+    where A is the Volterra (product-integration) matrix built from AIF.
 
     Parameters
     ----------
@@ -277,8 +279,8 @@ def svd_deconvolve_standard(
 
     n = len(tissue_curve)
 
-    # Build Toeplitz convolution matrix
-    matrix = build_toeplitz_matrix(aif, dt)
+    # Build Volterra (product-integration) convolution matrix
+    matrix = build_volterra_matrix(aif, dt)
 
     # Perform SVD
     u, s, vh = linalg.svd(matrix, full_matrices=False)
@@ -351,7 +353,7 @@ def svd_deconvolve_standard_batch(
     """Batch sSVD deconvolution for multiple voxels.
 
     Efficiently deconvolves multiple tissue curves by precomputing
-    the SVD decomposition of the Toeplitz matrix once.
+    the SVD decomposition of the Volterra (product-integration) matrix once.
 
     Parameters
     ----------
@@ -395,8 +397,8 @@ def svd_deconvolve_standard_batch(
     else:
         mask_flat = np.ones(n_voxels, dtype=bool)
 
-    # Build Toeplitz matrix and compute SVD once
-    matrix = build_toeplitz_matrix(aif, dt)
+    # Build Volterra (product-integration) matrix and compute SVD once
+    matrix = build_volterra_matrix(aif, dt)
     u, s, vh = linalg.svd(matrix, full_matrices=False)
 
     # Truncate singular values
@@ -1436,7 +1438,7 @@ def _precompute_tikhonov_inverses(
     positive definite for any λ > 0 even though L^T L is rank-deficient
     on its own. This avoids the ill-conditioning of the
     generalised-eigenvalue pencil (which has near-zero L^T L modes
-    aligned with near-zero A^T A modes for DSC Toeplitz matrices).
+    aligned with near-zero A^T A modes for DSC deconvolution operators).
 
     Returns an array of shape (n_lambdas, n, n).
     """
@@ -1490,12 +1492,13 @@ def _tikhonov_solve(
 ) -> TikhonovDeconvolutionResult:
     """L-curve-regularised Tikhonov solve for a single curve.
 
-    Shared core of :func:`tikhonov_deconvolve`: builds the Toeplitz matrix
-    from the AIF, forms the normal equations with penalty operator ``L``,
-    sweeps λ on a σ_max-scaled log grid, selects the L-curve corner (falling
-    back to ``0.1 σ_max`` when no corner is found), and returns the residue
-    with its perfusion summaries. The caller owns input validation and the
-    choice of ``L``.
+    Shared core of :func:`tikhonov_deconvolve`: builds the Volterra
+    (product-integration) matrix from the AIF, forms the normal equations with
+    penalty operator ``L``, sweeps λ on a σ_max-scaled log grid, selects the
+    L-curve corner (falling back to ``TIKHONOV_FALLBACK_LAMBDA_FRACTION ·
+    σ_max`` when no corner is found), and returns the residue with its
+    perfusion summaries. The caller owns input validation and the choice of
+    ``L``.
 
     Parameters
     ----------
@@ -1520,7 +1523,7 @@ def _tikhonov_solve(
     n = len(tissue_curve)
     tissue = tissue_curve.astype(np.float64, copy=False)
 
-    A = build_toeplitz_matrix(aif, dt)
+    A = build_volterra_matrix(aif, dt)
     AtA = A.T @ A
     LtL = L.T @ L
     AtC = A.T @ tissue
@@ -1528,14 +1531,14 @@ def _tikhonov_solve(
     sigma_max = float(linalg.svdvals(A)[0])
     if sigma_max <= 0.0:
         raise ValueError(
-            "AIF produces a degenerate Toeplitz matrix (σ_max = 0)."
+            "AIF produces a degenerate convolution matrix (σ_max = 0)."
         )
 
     # λ_min, λ_max are interpreted as fractions of σ_max(A). First-order
     # Tikhonov has no problem-independent λ scale; absolute values are
     # AIF-dependent and not portable across protocols. The 4-decade
     # default sweep keeps the system well-conditioned at the low end
-    # (where AtA alone is rank-deficient for DSC Toeplitz operators).
+    # (where AtA alone is rank-deficient for DSC deconvolution operators).
     lambdas = np.logspace(
         np.log10(lambda_min), np.log10(lambda_max), LCURVE_N_LAMBDAS
     ) * sigma_max
@@ -1554,13 +1557,23 @@ def _tikhonov_solve(
         residual_norms, solution_norms
     )
 
+    # Reject a corner at the grid's low-λ edge: with noise the triangle method
+    # can latch onto the λ_min boundary (a spurious low-λ curvature peak) and
+    # return a noise-amplified per-voxel CBF blow-up. The latch is index-based
+    # (independent of AIF shape); a genuine low-λ corner from a sharp AIF sits
+    # above the edge and is kept. Treat an edge latch as cornerless and fall
+    # back.
+    fallback_lambda = TIKHONOV_FALLBACK_LAMBDA_FRACTION * sigma_max
+    if corner_found and best_idx <= LCURVE_EDGE_REJECT_SAMPLES:
+        corner_found = False
+
     if corner_found:
         best_lambda = float(lambdas[best_idx])
         best_residue = residues_sweep[best_idx].copy()
         best_residual_norm_unsq = residual_norms[best_idx]
         best_solution_norm_unsq = solution_norms[best_idx]
     else:
-        best_lambda = 0.1 * sigma_max
+        best_lambda = fallback_lambda
         M = AtA + (best_lambda ** 2) * LtL
         best_residue = np.linalg.solve(M, AtC)
         best_residual_norm_unsq = float(np.linalg.norm(A @ best_residue - tissue))
@@ -1603,8 +1616,9 @@ def tikhonov_deconvolve(
 
         minimize ||A·r - C||² + λ²||L·r||²
 
-    where ``A`` is the Toeplitz convolution matrix built from the AIF, ``r``
-    is the residue function, and ``L`` is the (n, n) modified first-difference
+    where ``A`` is the Volterra (product-integration) convolution matrix built from
+    the AIF, ``r`` is the residue function, and ``L`` is the (n, n) modified
+    first-difference
     operator: an identity block constrains the magnitude of the leading
     residue samples while forward differences constrain the smoothness of the
     tail, so the sharp initial rise of a dispersed residue is preserved
@@ -1627,7 +1641,7 @@ def tikhonov_deconvolve(
     lambda_min, lambda_max : float, optional
         Bounds of the log-spaced λ sweep,
         **expressed as fractions of σ_max(A)** (the largest singular
-        value of the AIF Toeplitz matrix). The natural scale for
+        value of the AIF convolution matrix). The natural scale for
         first-order Tikhonov is the operator norm; absolute λ values
         are AIF-dependent and not portable. Defaults from
         ``DEFAULT_LAMBDA_RANGE`` = (1e-3, 10.0).
@@ -1682,8 +1696,8 @@ def tikhonov_deconvolve_batch(
 ]:
     """Batch first-order Tikhonov deconvolution with L-curve λ selection.
 
-    Vectorised counterpart of :func:`tikhonov_deconvolve`. The Toeplitz
-    matrix ``A`` and its first-derivative pencil ``(A^T A, L^T L)``
+    Vectorised counterpart of :func:`tikhonov_deconvolve`. The Volterra
+    (product-integration) matrix ``A`` and its first-derivative pencil ``(A^T A, L^T L)``
     eigendecomposition are computed once and shared across all voxels;
     each voxel runs its own L-curve corner search.
 
@@ -1742,7 +1756,7 @@ def tikhonov_deconvolve_batch(
     else:
         mask_flat = np.ones(n_voxels, dtype=bool)
 
-    A = build_toeplitz_matrix(aif, dt)
+    A = build_volterra_matrix(aif, dt)
     L = _build_modified_first_derivative_matrix(n_timepoints)
     AtA = A.T @ A
     LtL = L.T @ L
@@ -1750,9 +1764,9 @@ def tikhonov_deconvolve_batch(
     sigma_max = float(linalg.svdvals(A)[0])
     if sigma_max <= 0.0:
         raise ValueError(
-            "AIF produces a degenerate Toeplitz matrix (σ_max = 0)."
+            "AIF produces a degenerate convolution matrix (σ_max = 0)."
         )
-    fallback_lambda = 0.1 * sigma_max
+    fallback_lambda = TIKHONOV_FALLBACK_LAMBDA_FRACTION * sigma_max
 
     # λ bounds are fractions of σ_max(A); see scalar tikhonov_deconvolve
     # for the rationale. Scale once and reuse for the precomputed inverses.
@@ -1762,7 +1776,7 @@ def tikhonov_deconvolve_batch(
 
     # Shared precompute: (A^T A + λ² L^T L)^{-1} for each λ. Each system is
     # SPD for any λ > 0, so np.linalg.solve is rock-solid even where
-    # AtA alone is rank-deficient (typical for DSC Toeplitz matrices).
+    # AtA alone is rank-deficient (typical for DSC deconvolution operators).
     inverses = _precompute_tikhonov_inverses(AtA, LtL, lambdas)
     M_fallback = AtA + (fallback_lambda ** 2) * LtL
 
@@ -1789,6 +1803,11 @@ def tikhonov_deconvolve_batch(
         best_idx, corner_found = _select_lambda_lcurve(
             residual_norms, solution_norms
         )
+
+        # Reject a corner at the grid's low-λ edge (index-based latch guard);
+        # see _tikhonov_solve.
+        if corner_found and best_idx <= LCURVE_EDGE_REJECT_SAMPLES:
+            corner_found = False
 
         if corner_found:
             best_lambda = float(lambdas[best_idx])

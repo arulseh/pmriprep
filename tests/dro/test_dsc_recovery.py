@@ -279,7 +279,10 @@ def _make_dsc_test_data(
 ]:
     """Generate DSC test data with known parameters."""
     if forward_model is None:
-        forward_model = dsc_forward_model
+        # sSVD/Tikhonov deconvolve with the Volterra (product-integration) operator,
+        # so the matched GT default is Volterra; circulant borrowers (cSVD/oSVD)
+        # pass dsc_forward_model_circulant explicitly.
+        forward_model = dsc_forward_model_volterra
     aif, time_sec = generate_dsc_aif_dro(
         n_timepoints=n_timepoints,
         dt_sec=dt_sec,
@@ -317,21 +320,23 @@ DSC_PARAMS = [
 
 # (noise_fraction, svd_threshold, cbf_tol, mtt_tol)
 # SVD threshold must scale with noise to balance bias vs variance.
-# At zero noise, threshold=0.001 gives < 5% CBF error.
+# At zero noise, threshold=0.001 gives ~2% CBF error (MTT floor ~9%).
 # At higher noise, higher thresholds control noise amplification at
 # the cost of increased regularization bias (underestimated CBF).
 #
 # These tolerance bands are Monte-Carlo-derived REGRESSION GUARDS (mean +
-# 3*sigma over N=100 realizations) pinning the numerical behavior of this
-# deconvolution on the broad (default alpha=2.5/beta=3.0, FWHM ~10 s) DRO AIF.
+# 3*sigma over N=100 realizations) for the Volterra (product-integration) operator,
+# pinning the numerical behavior of this deconvolution on the broad (default
+# alpha=2.5/beta=3.0, FWHM ~10 s) DRO AIF. Zero-noise rows are the per-tissue
+# max (deterministic, n=1/tissue).
 # They are NOT physiology-derived tolerances. Physiological realism (arterial
 # AIF, delay, dispersion) and literature comparison live in the published DRO
 # generator and the OI threshold sweep, not in these method-recovery guards.
 SSVD_NOISE_LEVELS = [
-    pytest.param(0.0, 0.001, 0.05, 0.05, id="zero"),
-    pytest.param(0.02, 0.02, 0.40, 1.59, id="low"),
-    pytest.param(0.05, 0.05, 0.50, 1.43, id="medium"),
-    pytest.param(0.10, 0.10, 0.62, 1.99, id="high"),
+    pytest.param(0.0, 0.001, 0.04, 0.11, id="zero"),
+    pytest.param(0.02, 0.02, 0.33, 1.15, id="low"),
+    pytest.param(0.05, 0.05, 0.40, 1.45, id="medium"),
+    pytest.param(0.10, 0.10, 0.50, 1.60, id="high"),
 ]
 
 
@@ -532,15 +537,16 @@ class TestTikhonovRecovery:
         pytest.param(0.13, 3.0, 4.0, id="long_mtt"),
     ]
 
-    # Tolerances per (noise_frac, cbf_tol, aucmtt_tol). MC mean+3σ on the
-    # dispersed DRO (max across the four tissues), rounded up for headroom:
-    #   noiseless: CBF 14.5%, AUC-MTT 16.9%
-    #   2% noise:  CBF 20.2%, AUC-MTT 22.9%
-    #   5% noise:  CBF 29.4%, AUC-MTT 39.3%
+    # Tolerances per (noise_frac, cbf_tol, aucmtt_tol). MC mean+3σ (N=100) on
+    # the Volterra (product-integration) dispersed DRO, max across the four tissues,
+    # rounded up for headroom (zero-noise = deterministic per-tissue max):
+    #   noiseless: CBF 13.2%, AUC-MTT 10.3%
+    #   2% noise:  CBF 29.1%, AUC-MTT 21.4%
+    #   5% noise:  CBF 35.6%, AUC-MTT 35.6%
     NOISE_LEVELS = [
-        pytest.param(0.0,  0.16, 0.18, id="zero"),
-        pytest.param(0.02, 0.22, 0.25, id="low"),
-        pytest.param(0.05, 0.32, 0.42, id="medium"),
+        pytest.param(0.0,  0.16, 0.13, id="zero"),
+        pytest.param(0.02, 0.30, 0.23, id="low"),
+        pytest.param(0.05, 0.37, 0.37, id="medium"),
     ]
 
     @pytest.mark.parametrize("cbf,alpha,beta", GAMMA_PARAMS)
@@ -567,7 +573,7 @@ class TestTikhonovRecovery:
         # the un-dispersed AIF (the production mismatch that makes the effective
         # residue rise from zero).
         aif_disp = apply_vtf_dispersion(aif, dt, *DSC_DRO_VTF_MODERATE)
-        tissue = dsc_forward_model(aif_disp, residue, dt)
+        tissue = dsc_forward_model_volterra(aif_disp, residue, dt)
         if noise_frac > 0:
             peak = float(np.max(np.abs(tissue)))
             tissue = add_gaussian_noise(tissue, noise_frac * peak, seed=42)
@@ -604,7 +610,7 @@ class TestTikhonovRecovery:
         dt = 1.5
         aif_disp = apply_vtf_dispersion(aif, dt, *DSC_DRO_VTF_MODERATE)
         # Both operators run through the same private solve on the same
-        # aif/dt (the core builds the identical Toeplitz A), so the only
+        # aif/dt (the core builds the identical Volterra A), so the only
         # difference is the penalty. L_mod is the production modified
         # first-difference; l1 is the pure first-difference (non-dispersed).
         n = len(aif)
@@ -622,7 +628,7 @@ class TestTikhonovRecovery:
             residue = VascularModel().residue_function(
                 [cbf, alpha, beta, 0.0], time_sec
             )
-            tissue = dsc_forward_model(aif_disp, residue, dt)
+            tissue = dsc_forward_model_volterra(aif_disp, residue, dt)
             tissue = add_gaussian_noise(
                 tissue, 0.02 * float(np.max(np.abs(tissue))), seed=7
             )
@@ -1349,7 +1355,7 @@ class TestSVDGammaRecovery:
         """Test sSVD recovery of CBF and MTT from gamma-variate residue."""
         tissue, aif, time_sec, true_mtt = _make_cpi_gamma_test_data(
             cbf, alpha, beta, noise_frac,
-            forward_model=dsc_forward_model,
+            forward_model=dsc_forward_model_volterra,
         )
 
         dt = float(time_sec[1] - time_sec[0])
@@ -1405,7 +1411,7 @@ class TestDSCEdgeCases:
         residue = np.zeros(n, dtype=np.float64)
         residue[0] = cbf
 
-        tissue = dsc_forward_model(aif, residue, dt)
+        tissue = dsc_forward_model_volterra(aif, residue, dt)
         result = svd_deconvolve_standard(tissue, aif, dt, threshold=0.001)
 
         _assert_param_recovery(result.cbf, cbf, 0.10, param_name="CBF")

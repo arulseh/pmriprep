@@ -208,7 +208,7 @@ class TikhonovRange(NamedTuple):
 
 
 #: Default lambda search range for Tikhonov regularization, expressed
-#: as fractions of σ_max(A) (largest singular value of the AIF Toeplitz
+#: as fractions of σ_max(A) (largest singular value of the AIF convolution
 #: matrix). The natural scale for first-order Tikhonov is the operator
 #: norm; absolute λ values are AIF-dependent and not portable. The 4-decade
 #: span (1e-3 to 10) covers the well-conditioned regime where the L-curve
@@ -224,12 +224,40 @@ LCURVE_N_LAMBDAS: Final[int] = 50
 
 #: Curvature threshold (log-log space) for L-curve corner detection.
 #: Below this, the curve is treated as cornerless and the caller falls
-#: back to ``λ = 0.1 · σ_max(A)``. Empirically on
-#: the gamma-variate DSC DRO: noiseless data peaks at curvature ≈1.0
-#: (no real corner; the bend is the over-regularization elbow), while
-#: any real noise (≥0.5%) gives peak curvature ≥10. A threshold of 2.0
-#: cleanly separates the two regimes across all four manuscript tissues.
+#: back to ``λ = TIKHONOV_FALLBACK_LAMBDA_FRACTION · σ_max(A)``. On the
+#: Volterra (product-integration) operator: noise-free data peaks at curvature ≈0.88 (no
+#: real corner — the residual norm decreases monotonically toward zero as
+#: λ→0), while real noise (≥2%) gives peak curvature ≈2.4–6.5. A threshold
+#: of 2.0 sits in that gap; the separation margin is tighter than for the
+#: older smoothed-Toeplitz operator.
 LCURVE_CURVATURE_FALLBACK: Final[float] = 2.0
+
+#: Fallback λ (as a fraction of σ_max(A)) used when the L-curve has no
+#: detectable corner. With no noise floor the residual norm decreases
+#: monotonically to zero as λ→0, so corner detection legitimately fails on
+#: clean data and the fallback must supply the smallest regularization that
+#: still controls amplification of the smallest singular values. 0.015 is an
+#: EMPIRICAL fraction measured on the DRO AIF (the CBF-optimal noiseless
+#: fraction is ≈0.013; 0.015 adds a small margin toward more regularization).
+#: It is AIF-shape-dependent, not a fixed property of the operator, so sites
+#: with markedly sharper or broader AIFs may prefer a different value. The
+#: margin favours over- over under-regularization because under-regularization
+#: amplifies noise into a large CBF = max(R) overshoot (bounded only by the
+#: non-negativity clip and the downstream CBF clamp), whereas over-
+#: regularization only mildly depresses CBF.
+TIKHONOV_FALLBACK_LAMBDA_FRACTION: Final[float] = 0.015
+
+#: L-curve corners within this many samples of the sweep's low-λ edge are
+#: rejected as boundary latches. At noise the triangle-method corner detector
+#: can fix on a spurious curvature peak at the λ_min grid boundary, returning a
+#: strongly under-regularized, noise-amplified residue (a per-voxel CBF blow-up
+#: of hundreds of percent). The latch sits at the first interior grid point
+#: regardless of AIF shape, whereas a genuine low-λ corner from a sharp AIF
+#: sits several samples above it — so an index-based reject is AIF-shape-
+#: independent, unlike an absolute-λ threshold (which also discards good
+#: sharp-AIF corners). Rejected corners fall back to
+#: TIKHONOV_FALLBACK_LAMBDA_FRACTION·σ_max.
+LCURVE_EDGE_REJECT_SAMPLES: Final[int] = 1
 
 #: Number of leading residue samples excluded from the first-difference
 #: penalty in the modified Tikhonov operator. For these samples the side

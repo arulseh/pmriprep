@@ -1900,7 +1900,7 @@ class ComputeDSCMaps(BaseInterface):
             svd_deconvolve_oscillation,
             tikhonov_deconvolve,
             build_block_circulant_matrix,
-            build_toeplitz_matrix,
+            build_volterra_matrix,
         )
 
         try:
@@ -1950,7 +1950,7 @@ class ComputeDSCMaps(BaseInterface):
                 residue = svd_deconvolve_standard(
                     tissue_curve, aif, dt=dt, threshold=threshold,
                 ).residue
-                c_recon = build_toeplitz_matrix(aif, dt) @ residue
+                c_recon = build_volterra_matrix(aif, dt) @ residue
             elif method == "oSVD":
                 full_residue = svd_deconvolve_oscillation(
                     tissue_curve, aif, dt=dt, oi_target=oi_threshold,
@@ -1961,7 +1961,7 @@ class ComputeDSCMaps(BaseInterface):
                 residue = tikhonov_deconvolve(
                     tissue_curve, aif, dt=dt,
                 ).residue
-                c_recon = build_toeplitz_matrix(aif, dt) @ residue
+                c_recon = build_volterra_matrix(aif, dt) @ residue
             else:
                 return
 
