@@ -522,8 +522,8 @@ class TestTikhonovRecovery:
     dispersion/noise sensitive to bound usefully.
 
     Tolerances are mean+3σ from 20-seed Monte Carlo on the production defaults
-    (``DEFAULT_LAMBDA_RANGE = (1e-3, 10) · σ_max(A)``,
-    ``LCURVE_CURVATURE_FALLBACK = 2.0``, ``DEFAULT_TIKHONOV_PENALTY_P = 2``).
+    (``DEFAULT_LAMBDA_RANGE = (1e-3, 10) · σ_max(A)``, Morozov discrepancy
+    λ-selection at ``TIKHONOV_MOROZOV_TAU = 1.0``, ``DEFAULT_TIKHONOV_PENALTY_P = 2``).
     That the modified operator beats pure L₁ on this regime is asserted
     directly in ``test_modified_penalty_beats_l1_on_dispersed``.
     """
@@ -538,15 +538,20 @@ class TestTikhonovRecovery:
     ]
 
     # Tolerances per (noise_frac, cbf_tol, aucmtt_tol). MC mean+3σ (N=100) on
-    # the Volterra (product-integration) dispersed DRO, max across the four tissues,
-    # rounded up for headroom (zero-noise = deterministic per-tissue max):
-    #   noiseless: CBF 13.2%, AUC-MTT 10.3%
-    #   2% noise:  CBF 29.1%, AUC-MTT 21.4%
-    #   5% noise:  CBF 35.6%, AUC-MTT 35.6%
+    # the Volterra dispersed DRO with the Morozov discrepancy λ-selector, max
+    # across the four tissues (zero-noise = deterministic per-tissue max, taken
+    # via the degenerate near-noise-free fallback path):
+    #   noiseless: CBF 13.2%, AUC-MTT 8.0%
+    #   2% noise:  CBF 39.9%, AUC-MTT 43.0%
+    #   5% noise:  CBF 53.6%, AUC-MTT 81.1%
+    # The noisy bands are wider than the old L-curve selector: Morozov is more
+    # conservative (more regularization -> CBF under-read, the SAFE direction vs
+    # the OSIPI over-read it fixes; a CBF under-read inflates AUC-MTT). The OSIPI
+    # DRO test is the can-fail guard against any regression back toward over-read.
     NOISE_LEVELS = [
         pytest.param(0.0,  0.16, 0.13, id="zero"),
-        pytest.param(0.02, 0.30, 0.23, id="low"),
-        pytest.param(0.05, 0.37, 0.37, id="medium"),
+        pytest.param(0.02, 0.42, 0.45, id="low"),
+        pytest.param(0.05, 0.56, 0.85, id="medium"),
     ]
 
     @pytest.mark.parametrize("cbf,alpha,beta", GAMMA_PARAMS)
@@ -1449,7 +1454,7 @@ class TestDSCEdgeCases:
 
         Tolerance is 25%: sSVD with threshold=0.001 is essentially the
         unregularised pseudo-inverse, while the production modified-penalty
-        Tikhonov always applies a smoothness penalty (L-curve-selected) even
+        Tikhonov always applies a smoothness penalty (discrepancy-selected) even
         at zero noise. The smoothing biases CBF down ~5–25% on exponential
         residues.
         """

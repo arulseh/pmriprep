@@ -9,6 +9,7 @@ import pytest
 from pmriprep.utils.dsc_deconvolution import (
     build_block_circulant_matrix,
     build_toeplitz_matrix,
+    build_volterra_matrix,
     compute_oscillation_index,
     svd_deconvolve_circulant,
     svd_deconvolve_circulant_batch,
@@ -36,8 +37,9 @@ def _make_synthetic_data(
     aif[0] = 0.0
     # Exponential residue
     true_residue = true_cbf * np.exp(-t / true_mtt)
-    # Create tissue via Toeplitz convolution
-    matrix = build_toeplitz_matrix(aif, dt=dt)
+    # Create tissue via the Volterra (product-integration) convolution, which
+    # sSVD/Tikhonov now use as the inverse operator (matched forward).
+    matrix = build_volterra_matrix(aif, dt=dt)
     tissue = matrix @ true_residue
     return aif, tissue, t, true_residue
 
@@ -155,7 +157,7 @@ class TestTikhonovSingleVoxel:
         assert result.residual_norm >= 0
         assert result.solution_norm >= 0
         assert result.lambda_optimal > 0
-        assert isinstance(result.lcurve_corner_found, bool)
+        assert isinstance(result.data_driven_lambda, bool)
 
     def test_tikhonov_validation(self) -> None:
         """Empty arrays, length mismatch, and invalid lambda raise ValueError."""
@@ -298,6 +300,43 @@ class TestBatchMethods:
         np.testing.assert_allclose(batch_cbf, single_cbf, rtol=1e-8)
         np.testing.assert_allclose(batch_cbv, single_cbv, rtol=1e-8)
         np.testing.assert_allclose(batch_mtt, single_mtt, rtol=1e-8)
+
+    def test_tikhonov_batch_matches_single_noisy(self) -> None:
+        """Batch and single agree on NOISY data, exercising the Morozov
+        discrepancy selector (not just the degenerate fallback).
+
+        Both paths run the SAME noise estimator, selection rule, and degenerate
+        guard (the partial-harmonization guard), so their results agree. The
+        batch precomputes inverses while single re-solves per λ, so their
+        residual norms differ at ~1e-10; the discrete λ pick therefore matches
+        for representative data (asserted here) but could differ by one grid
+        step on a measure-zero voxel whose discrepancy crossing lands exactly on
+        a grid knot.
+        """
+        tissues, aif, dt = self._make_batch_data()
+        rng = np.random.default_rng(7)
+        noisy = tissues + rng.normal(
+            0.0, 0.02 * float(np.max(np.abs(tissues))), size=tissues.shape
+        )
+
+        single_cbf = np.zeros(3)
+        single_res = np.zeros_like(noisy)
+        single_data_driven = np.zeros(3, dtype=bool)
+        for i in range(3):
+            r = tikhonov_deconvolve(noisy[i], aif, dt=dt)
+            single_cbf[i] = r.cbf
+            single_res[i] = r.residue
+            single_data_driven[i] = r.data_driven_lambda
+
+        batch_res, batch_cbf, _, _, _, batch_data_driven = (
+            tikhonov_deconvolve_batch(noisy, aif, dt=dt)
+        )
+
+        # Logic parity: both paths take the data-driven (non-degenerate) path.
+        assert batch_data_driven.all() and single_data_driven.all()
+        # Numerical agreement on this representative (non-knot) data.
+        np.testing.assert_allclose(batch_res, single_res, rtol=1e-8, atol=1e-10)
+        np.testing.assert_allclose(batch_cbf, single_cbf, rtol=1e-8)
 
     def test_oscillation_batch_with_mask(self) -> None:
         """Masked voxels have zero CBF; unmasked voxels match single-voxel."""

@@ -876,7 +876,7 @@ class ComputeDSCMaps(BaseInterface):
             qc_metrics["threshold_mean"] = float(np.mean(thresholds_used[mask_bool]))
 
         elif method == "tikhonov":
-            res, cbf, cbv, mtt, lambda_opt, lcurve_corner_found = (
+            res, cbf, cbv, mtt, lambda_opt, data_driven_lambda = (
                 tikhonov_deconvolve_batch(  # type: ignore[assignment]
                     concentration_data,
                     aif,
@@ -887,17 +887,17 @@ class ComputeDSCMaps(BaseInterface):
             tmax = np.argmax(res, axis=-1).astype(np.float64) * dt
             residues = res if self.inputs.save_residue else None
             qc_metrics["lambda_mean"] = float(np.mean(lambda_opt[mask_bool]))
-            # Fraction of voxels where the L-curve had no detectable
-            # corner and the solver fell back to λ = 0.1·σ_max(A).
-            # High fraction → over-regularised CBF/CBV; investigate AIF
-            # conditioning or noise floor.
+            # Fraction of voxels where the Morozov discrepancy selector chose a
+            # data-driven λ from the measured noise floor, vs the degenerate
+            # near-noise-free fallback. A high fallback fraction on real data
+            # would be unexpected (real acquisitions have measurable noise).
             n_mask = int(np.sum(mask_bool))
             if n_mask > 0:
-                qc_metrics["lcurve_corner_found_fraction"] = float(
-                    np.sum(lcurve_corner_found[mask_bool]) / n_mask
+                qc_metrics["data_driven_lambda_fraction"] = float(
+                    np.sum(data_driven_lambda[mask_bool]) / n_mask
                 )
-                qc_metrics["lcurve_fallback_lambda_fraction"] = float(
-                    1.0 - qc_metrics["lcurve_corner_found_fraction"]
+                qc_metrics["degenerate_fallback_fraction"] = float(
+                    1.0 - qc_metrics["data_driven_lambda_fraction"]
                 )
 
         else:
@@ -1224,7 +1224,7 @@ class ComputeDSCMaps(BaseInterface):
         -------
         dict
             Dict with keys: tissue_curves, fitting_names, fitting_bounds,
-            mono_prec, mono_eta, cp_times, toeplitz, means_nat, stds_nat,
+            mono_prec, mono_eta, cp_times, conv_matrix, means_nat, stds_nat,
             means_t, stds_t, transforms, ubs.
         """
         from pmriprep.models.bayesian_utils import build_priors_from_params
@@ -1245,7 +1245,7 @@ class ComputeDSCMaps(BaseInterface):
             mono_prec = None
             mono_eta = None
             cp_times = None
-            toeplitz = None
+            conv_matrix = None
             cpi_t_terminal = None
         else:  # cpi
             n_cp = cpi_control_points
@@ -1271,7 +1271,7 @@ class ComputeDSCMaps(BaseInterface):
             mono_prec = None
             mono_eta = None
             cp_times = np.array(cpi_model._control_point_times, dtype=np.float64)
-            toeplitz = build_volterra_matrix(aif, dt)
+            conv_matrix = build_volterra_matrix(aif, dt)
             cpi_t_terminal = float(cpi_model.terminal_time)
 
         means_nat = np.array([p.mean for p in priors], dtype=np.float64)
@@ -1288,7 +1288,7 @@ class ComputeDSCMaps(BaseInterface):
             mono_prec=mono_prec,
             mono_eta=mono_eta,
             cp_times=cp_times,
-            toeplitz=toeplitz,
+            conv_matrix=conv_matrix,
             cpi_t_terminal=cpi_t_terminal,
             cpi_infer_delay=bool(cpi_infer_delay),
             means_nat=means_nat,
@@ -1381,7 +1381,7 @@ class ComputeDSCMaps(BaseInterface):
             mono_prec=s["mono_prec"],
             mono_eta=s["mono_eta"],
             control_point_times=s["cp_times"],
-            toeplitz_matrix=s["toeplitz"],
+            toeplitz_matrix=s["conv_matrix"],
             cpi_t_terminal=s["cpi_t_terminal"],
             cpi_infer_delay=s["cpi_infer_delay"],
             prior_means_transformed=s["means_t"],
@@ -1653,7 +1653,7 @@ class ComputeDSCMaps(BaseInterface):
             mono_prec=s["mono_prec"],
             mono_eta=s["mono_eta"],
             control_point_times=s["cp_times"],
-            toeplitz_matrix=s["toeplitz"],
+            toeplitz_matrix=s["conv_matrix"],
             cpi_t_terminal=s["cpi_t_terminal"],
             cpi_infer_delay=s["cpi_infer_delay"],
             prior_means_transformed=s["means_t"],

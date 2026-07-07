@@ -894,6 +894,48 @@ def dsc_forward_model_circulant(
     return np.asarray((A @ residue_padded)[:n], dtype=np.float64)
 
 
+def fine_grid_forward(
+    aif: npt.NDArray[np.floating],
+    residue: npt.NDArray[np.floating],
+    dt: float,
+    oversample: int = 20,
+) -> npt.NDArray[np.floating]:
+    """Neutral (non-inverse-crime) tissue forward via fine-grid convolution.
+
+    Approximates C(t) = ∫ AIF(τ)·R(t-τ) dτ by resampling both the AIF and the
+    residue onto a ``dt/oversample`` grid, convolving with ``np.convolve``, and
+    downsampling back to frames. Because it never touches any deconvolution
+    matrix, it is matched to NONE of the sSVD/Tikhonov (Volterra), oSVD/cSVD
+    (block-circulant), or CPI operators — so cross-method comparisons on this
+    ground truth reflect genuine method accuracy rather than an inverse-crime
+    advantage. Drop-in replacement for :func:`dsc_forward_model`.
+
+    Parameters
+    ----------
+    aif : npt.NDArray[np.floating]
+        Arterial input function concentration array, shape (n,).
+    residue : npt.NDArray[np.floating]
+        Residue function array (CBF * R(t)), shape (n,).
+    dt : float
+        Frame period in seconds.
+    oversample : int
+        Fine-grid oversampling factor.
+
+    Returns
+    -------
+    npt.NDArray[np.floating]
+        Tissue concentration array, shape (n,).
+    """
+    n = len(aif)
+    fine_dt = dt / oversample
+    t_frame = np.arange(n) * dt
+    t_fine = np.arange(n * oversample) * fine_dt
+    aif_fine = np.interp(t_fine, t_frame, aif)
+    res_fine = np.interp(t_fine, t_frame, residue)
+    conv = np.convolve(aif_fine, res_fine)[: n * oversample] * fine_dt
+    return np.asarray(conv[::oversample], dtype=np.float64)
+
+
 def make_exponential_residue(
     cbf: float,
     mtt: float,

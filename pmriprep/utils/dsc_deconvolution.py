@@ -37,10 +37,10 @@ from pmriprep.utils.dsc_constants import (
     DEFAULT_SVD_THRESHOLD,
     DEFAULT_TIKHONOV_PENALTY_P,
     EPSILON_CONCENTRATION,
-    LCURVE_CURVATURE_FALLBACK,
-    LCURVE_EDGE_REJECT_SAMPLES,
     LCURVE_N_LAMBDAS,
     TIKHONOV_FALLBACK_LAMBDA_FRACTION,
+    TIKHONOV_MOROZOV_DEGENERATE_FRAC,
+    TIKHONOV_MOROZOV_TAU,
 )
 
 logger = logging.getLogger(__name__)
@@ -1378,24 +1378,24 @@ class TikhonovDeconvolutionResult(DeconvolutionResultBase):
     """Result from Tikhonov regularised deconvolution.
 
     Modified first-difference penalty operator (identity block on the
-    leading residue samples) with L-curve corner detection.
+    leading residue samples) with Morozov discrepancy λ-selection.
 
     Attributes
     ----------
-        lambda_optimal: λ at the L-curve corner (or fallback default).
+        lambda_optimal: selected λ (Morozov discrepancy, or the degenerate
+            near-noise-free fallback default).
         residual_norm: ||A·r - C||² at the unclipped solution.
         solution_norm: ||L·r||² at the unclipped solution (where L is
             the modified first-difference penalty operator).
-        lcurve_corner_found: True if the L-curve has a detectable corner
-            (curvature ≥ ``LCURVE_CURVATURE_FALLBACK``); False if the
-            curve was too flat / monotone and the caller fell back to a
-            default λ.
+        data_driven_lambda: True if a data-driven (Morozov discrepancy) λ was
+            selected from the measured noise floor; False if the noise was
+            unmeasurable (near-noise-free) and the fixed fallback λ was used.
     """
 
     lambda_optimal: float
     residual_norm: float
     solution_norm: float
-    lcurve_corner_found: bool = False
+    data_driven_lambda: bool = False
 
 
 def _build_modified_first_derivative_matrix(
@@ -1451,34 +1451,75 @@ def _precompute_tikhonov_inverses(
     return inverses
 
 
-def _select_lambda_lcurve(
-    residual_norms: npt.NDArray[np.floating],
-    solution_norms: npt.NDArray[np.floating],
-) -> tuple[int, bool]:
-    """Triangle-method L-curve corner detection.
+def _estimate_noise_mad(curve: npt.NDArray[np.floating]) -> float:
+    """Robust noise SD from the MAD of successive differences.
 
-    Returns (best_index, corner_found). ``corner_found=False`` indicates
-    the L-curve is approximately monotone — the caller should fall back
-    to a conservative default λ.
+    DSC concentration noise is heteroscedastic (highest at the bolus peak, where
+    the source signal is lowest), so a pre-bolus baseline SD under-reads the
+    deconvolution-relevant noise. The MAD of successive differences samples the
+    whole curve, and its median is insensitive to the sparse bolus excursion, so
+    it reads the effective noise level. Scaled by 1.4826 (MAD→Gaussian σ) and
+    1/√2 (successive differencing doubles the variance).
+
+    Assumes the bolus excursion is SPARSE relative to the acquisition window (a
+    majority-flat baseline + tail), which holds for clinical DSC. On very short
+    windows or broad/heavily-dispersed curves deterministic signal slope leaks
+    into the differences and inflates σ_n, biasing λ toward mild
+    over-regularization (a CBF under-read, the safe direction).
+
+    Parameters
+    ----------
+    curve : np.ndarray
+        Tissue concentration curve, shape (n,).
+
+    Returns
+    -------
+    float
+        Estimated per-curve noise standard deviation.
     """
-    log_rho = np.log10(np.maximum(residual_norms, 1e-30))
-    log_eta = np.log10(np.maximum(solution_norms, 1e-30))
-    n = len(log_rho)
-    curvatures = np.zeros(n, dtype=np.float64)
-    for i in range(1, n - 1):
-        P_i = np.array([log_rho[i], log_eta[i]])
-        P_lt = np.array([log_rho[i - 1], log_eta[i - 1]])
-        P_rt = np.array([log_rho[i + 1], log_eta[i + 1]])
-        a = float(np.linalg.norm(P_lt - P_i))
-        b = float(np.linalg.norm(P_i - P_rt))
-        c = float(np.linalg.norm(P_lt - P_rt))
-        s = 0.5 * (a + b + c)
-        area2 = max(s * (s - a) * (s - b) * (s - c), 0.0)
-        if a * b * c > 1e-30:
-            curvatures[i] = 4.0 * np.sqrt(area2) / (a * b * c)
-    best_idx = int(np.argmax(curvatures))
-    corner_found = bool(curvatures[best_idx] >= LCURVE_CURVATURE_FALLBACK)
-    return best_idx, corner_found
+    diffs = np.diff(np.asarray(curve, dtype=np.float64))
+    if diffs.size == 0:
+        return 0.0
+    mad = float(np.median(np.abs(diffs - np.median(diffs))))
+    return float(1.4826 * mad / np.sqrt(2.0))
+
+
+def _select_lambda_morozov(
+    residual_norms: npt.NDArray[np.floating],
+    sigma_n: float,
+    n: int,
+    tau: float,
+) -> int:
+    """Morozov discrepancy λ-selection index.
+
+    ``residual_norms`` is monotonically increasing in λ (higher regularization
+    → larger fit residual). Returns the index of the SMALLEST λ whose residual
+    reaches the expected noise magnitude ``τ·σ_n·√n`` — regularize until the fit
+    matches the noise floor and no further.
+
+    Parameters
+    ----------
+    residual_norms : np.ndarray
+        ``||A·r_λ - C||`` at each swept λ, non-decreasing in λ, shape (n_λ,).
+    sigma_n : float
+        Estimated per-voxel noise standard deviation.
+    n : int
+        Number of timepoints (frames); the discrepancy floor is ``τ·σ_n·√n``.
+    tau : float
+        Morozov discrepancy factor.
+
+    Returns
+    -------
+    int
+        Index of the selected λ. Edge cases: if even the largest λ stays below
+        the floor (noise dominates) the last index (most regularized) is
+        returned; if the smallest λ already meets it, the first.
+    """
+    target = tau * sigma_n * np.sqrt(n)
+    reached = np.nonzero(np.asarray(residual_norms) >= target)[0]
+    if reached.size == 0:
+        return len(residual_norms) - 1
+    return int(reached[0])
 
 
 def _tikhonov_solve(
@@ -1490,14 +1531,15 @@ def _tikhonov_solve(
     apply_non_negativity: bool,
     L: npt.NDArray[np.floating],
 ) -> TikhonovDeconvolutionResult:
-    """L-curve-regularised Tikhonov solve for a single curve.
+    """Discrepancy-regularised Tikhonov solve for a single curve.
 
     Shared core of :func:`tikhonov_deconvolve`: builds the Volterra
     (product-integration) matrix from the AIF, forms the normal equations with
-    penalty operator ``L``, sweeps λ on a σ_max-scaled log grid, selects the
-    L-curve corner (falling back to ``TIKHONOV_FALLBACK_LAMBDA_FRACTION ·
-    σ_max`` when no corner is found), and returns the residue with its
-    perfusion summaries. The caller owns input validation and the choice of
+    penalty operator ``L``, sweeps λ on a σ_max-scaled log grid, selects λ by
+    the Morozov discrepancy principle (smallest λ whose fit residual reaches the
+    measured noise floor τ·σ_n·√n; near-noise-free curves fall back to
+    ``TIKHONOV_FALLBACK_LAMBDA_FRACTION · σ_max``), and returns the residue with
+    its perfusion summaries. The caller owns input validation and the choice of
     ``L``.
 
     Parameters
@@ -1518,7 +1560,7 @@ def _tikhonov_solve(
     Returns
     -------
     TikhonovDeconvolutionResult
-        Residue, perfusion parameters, chosen λ, and the L-curve corner flag.
+        Residue, perfusion parameters, chosen λ, and the data-driven-λ flag.
     """
     n = len(tissue_curve)
     tissue = tissue_curve.astype(np.float64, copy=False)
@@ -1553,31 +1595,34 @@ def _tikhonov_solve(
         residual_norms[k] = float(np.linalg.norm(A @ r - tissue))
         solution_norms[k] = float(np.linalg.norm(L @ r))
 
-    best_idx, corner_found = _select_lambda_lcurve(
-        residual_norms, solution_norms
+    # Morozov discrepancy λ-selection: regularize until the fit residual reaches
+    # the measured per-voxel noise floor. On near-noise-free data the floor is
+    # unmeasurable, so fall through to the fixed fallback fraction (clamped into
+    # the caller's [lambda_min, lambda_max]).
+    fallback_lambda = (
+        float(np.clip(TIKHONOV_FALLBACK_LAMBDA_FRACTION, lambda_min, lambda_max))
+        * sigma_max
     )
-
-    # Reject a corner at the grid's low-λ edge: with noise the triangle method
-    # can latch onto the λ_min boundary (a spurious low-λ curvature peak) and
-    # return a noise-amplified per-voxel CBF blow-up. The latch is index-based
-    # (independent of AIF shape); a genuine low-λ corner from a sharp AIF sits
-    # above the edge and is kept. Treat an edge latch as cornerless and fall
-    # back.
-    fallback_lambda = TIKHONOV_FALLBACK_LAMBDA_FRACTION * sigma_max
-    if corner_found and best_idx <= LCURVE_EDGE_REJECT_SAMPLES:
-        corner_found = False
-
-    if corner_found:
-        best_lambda = float(lambdas[best_idx])
-        best_residue = residues_sweep[best_idx].copy()
-        best_residual_norm_unsq = residual_norms[best_idx]
-        best_solution_norm_unsq = solution_norms[best_idx]
-    else:
+    sigma_n = _estimate_noise_mad(tissue)
+    tissue_peak = float(np.max(np.abs(tissue)))
+    # `data_driven` now records whether a data-driven (discrepancy) λ was
+    # selected (True) vs the degenerate near-noise-free fallback (False).
+    if sigma_n < TIKHONOV_MOROZOV_DEGENERATE_FRAC * tissue_peak:
+        data_driven = False
         best_lambda = fallback_lambda
         M = AtA + (best_lambda ** 2) * LtL
         best_residue = np.linalg.solve(M, AtC)
         best_residual_norm_unsq = float(np.linalg.norm(A @ best_residue - tissue))
         best_solution_norm_unsq = float(np.linalg.norm(L @ best_residue))
+    else:
+        data_driven = True
+        best_idx = _select_lambda_morozov(
+            residual_norms, sigma_n, n, TIKHONOV_MOROZOV_TAU
+        )
+        best_lambda = float(lambdas[best_idx])
+        best_residue = residues_sweep[best_idx].copy()
+        best_residual_norm_unsq = residual_norms[best_idx]
+        best_solution_norm_unsq = solution_norms[best_idx]
 
     residual_norm = float(best_residual_norm_unsq ** 2)
     solution_norm = float(best_solution_norm_unsq ** 2)
@@ -1597,7 +1642,7 @@ def _tikhonov_solve(
         lambda_optimal=float(best_lambda),
         residual_norm=residual_norm,
         solution_norm=solution_norm,
-        lcurve_corner_found=bool(corner_found),
+        data_driven_lambda=bool(data_driven),
     )
 
 
@@ -1609,7 +1654,7 @@ def tikhonov_deconvolve(
     lambda_max: float = DEFAULT_LAMBDA_RANGE.max,
     apply_non_negativity: bool = True,
 ) -> TikhonovDeconvolutionResult:
-    """First-order Tikhonov regularised deconvolution with L-curve λ selection.
+    """First-order Tikhonov regularised deconvolution with Morozov discrepancy λ selection.
 
     Solves the regularised least squares problem with a modified
     first-difference smoothness penalty::
@@ -1624,9 +1669,19 @@ def tikhonov_deconvolve(
     tail, so the sharp initial rise of a dispersed residue is preserved
     rather than oversmoothed.
 
-    The optimal λ is selected via the L-curve corner method:
-    sweep λ on a log grid, record (||A·r_λ - C||, ||L·r_λ||), find the
-    point of maximum curvature in log-log space.
+    The regularization λ is selected by the Morozov discrepancy principle: over
+    a log-spaced λ sweep, the smallest λ whose fit residual ``||A·r_λ - C||``
+    reaches the measured per-voxel noise level ``τ·σ_n·√n`` (σ_n from the robust
+    MAD of successive concentration differences) is chosen — regularize until
+    the fit matches the noise floor and no further. Near-noise-free curves fall
+    back to a fixed λ fraction.
+
+    Off Tikhonov's dispersed operating regime, on higher-noise non-dispersed
+    data the discrepancy selector regularizes more than an L-curve would, so
+    CBF = max(residue) is under-read; because MTT = ∫residue / max(residue), a
+    CBF under-read inflates the deconvolution MTT. This is a documented
+    limitation — deconvolution MTT is semi-quantitative and AUC-CBV is the
+    primary volume metric.
 
     Parameters
     ----------
@@ -1653,8 +1708,8 @@ def tikhonov_deconvolve(
     -------
     TikhonovDeconvolutionResult
         TikhonovDeconvolutionResult with the residue, perfusion parameters,
-        chosen λ, and a flag indicating whether the L-curve had a detectable
-        corner.
+        chosen λ, and a flag indicating whether a data-driven (discrepancy) λ
+        was selected.
     """
     # Validate inputs
     if len(tissue_curve) != len(aif):
@@ -1692,14 +1747,14 @@ def tikhonov_deconvolve_batch(
     npt.NDArray[np.floating],  # cbv
     npt.NDArray[np.floating],  # mtt
     npt.NDArray[np.floating],  # lambda_optimal
-    npt.NDArray[np.bool_],  # corner_found_map
+    npt.NDArray[np.bool_],  # data_driven_map
 ]:
-    """Batch first-order Tikhonov deconvolution with L-curve λ selection.
+    """Batch first-order Tikhonov deconvolution with Morozov discrepancy λ selection.
 
     Vectorised counterpart of :func:`tikhonov_deconvolve`. The Volterra
     (product-integration) matrix ``A`` and its first-derivative pencil ``(A^T A, L^T L)``
     eigendecomposition are computed once and shared across all voxels;
-    each voxel runs its own L-curve corner search.
+    each voxel runs its own Morozov discrepancy λ-selection.
 
     Parameters
     ----------
@@ -1723,9 +1778,9 @@ def tikhonov_deconvolve_batch(
     Returns
     -------
     tuple
-        Tuple of (residues, cbf, cbv, mtt, lambda_optimal, corner_found_map)
+        Tuple of (residues, cbf, cbv, mtt, lambda_optimal, data_driven_map)
         arrays. All spatial outputs share the input spatial shape (excluding
-        time). corner_found_map is True where L-curve found a corner; False
+        time). data_driven_map is True where a data-driven λ was selected; False
         where the per-voxel solver fell back to ``λ = 0.1 σ_max(A)``. Use
         the fraction of False voxels in QC to detect over-regularization.
     """
@@ -1766,7 +1821,13 @@ def tikhonov_deconvolve_batch(
         raise ValueError(
             "AIF produces a degenerate convolution matrix (σ_max = 0)."
         )
-    fallback_lambda = TIKHONOV_FALLBACK_LAMBDA_FRACTION * sigma_max
+    # Clamp the fallback fraction into the caller's requested [lambda_min,
+    # lambda_max] so a custom sweep range is honored (default range contains
+    # 0.015, so production behavior is unchanged).
+    fallback_lambda = (
+        float(np.clip(TIKHONOV_FALLBACK_LAMBDA_FRACTION, lambda_min, lambda_max))
+        * sigma_max
+    )
 
     # λ bounds are fractions of σ_max(A); see scalar tikhonov_deconvolve
     # for the rationale. Scale once and reuse for the precomputed inverses.
@@ -1785,7 +1846,7 @@ def tikhonov_deconvolve_batch(
     cbv = np.zeros(n_voxels, dtype=np.float64)
     mtt = np.zeros(n_voxels, dtype=np.float64)
     lambda_optimal = np.zeros(n_voxels, dtype=np.float64)
-    corner_found_map = np.zeros(n_voxels, dtype=bool)
+    data_driven_map = np.zeros(n_voxels, dtype=bool)
 
     masked_indices = np.where(mask_flat)[0]
     for idx in masked_indices:
@@ -1795,26 +1856,25 @@ def tikhonov_deconvolve_batch(
         # R[k, :] = inverses[k] @ AtC — shape (LCURVE_N_LAMBDAS, n)
         R = inverses @ AtC
 
-        AR = R @ A.T
-        LR = R @ L.T
-        residual_norms = np.linalg.norm(AR - tissue, axis=1)
-        solution_norms = np.linalg.norm(LR, axis=1)
+        # Morozov selection uses only the residual norm (fit vs noise floor);
+        # the batch return carries no solution norm, so ‖L·r‖ is not computed.
+        residual_norms = np.linalg.norm(R @ A.T - tissue, axis=1)
 
-        best_idx, corner_found = _select_lambda_lcurve(
-            residual_norms, solution_norms
-        )
-
-        # Reject a corner at the grid's low-λ edge (index-based latch guard);
-        # see _tikhonov_solve.
-        if corner_found and best_idx <= LCURVE_EDGE_REJECT_SAMPLES:
-            corner_found = False
-
-        if corner_found:
-            best_lambda = float(lambdas[best_idx])
-            best_residue = R[best_idx].copy()
-        else:
+        # Morozov discrepancy selection; degenerate near-noise-free voxels take
+        # the precomputed fallback. Same rule as _tikhonov_solve (parity).
+        sigma_n = _estimate_noise_mad(tissue)
+        tissue_peak = float(np.max(np.abs(tissue)))
+        if sigma_n < TIKHONOV_MOROZOV_DEGENERATE_FRAC * tissue_peak:
+            data_driven = False
             best_lambda = fallback_lambda
             best_residue = np.linalg.solve(M_fallback, AtC)
+        else:
+            data_driven = True
+            best_idx = _select_lambda_morozov(
+                residual_norms, sigma_n, n_timepoints, TIKHONOV_MOROZOV_TAU
+            )
+            best_lambda = float(lambdas[best_idx])
+            best_residue = R[best_idx].copy()
 
         if apply_non_negativity:
             best_residue = np.maximum(best_residue, 0.0)
@@ -1825,7 +1885,7 @@ def tikhonov_deconvolve_batch(
         if cbf[idx] > EPSILON_CONCENTRATION:
             mtt[idx] = cbv[idx] / cbf[idx]
         lambda_optimal[idx] = best_lambda
-        corner_found_map[idx] = bool(corner_found)
+        data_driven_map[idx] = bool(data_driven)
 
     if tissue_curves.ndim > 2:
         residues = residues.reshape(original_shape)  # type: ignore[assignment]
@@ -1833,7 +1893,7 @@ def tikhonov_deconvolve_batch(
         cbv = cbv.reshape(spatial_shape)  # type: ignore[assignment]
         mtt = mtt.reshape(spatial_shape)  # type: ignore[assignment]
         lambda_optimal = lambda_optimal.reshape(spatial_shape)  # type: ignore[assignment]
-        corner_found_map = corner_found_map.reshape(spatial_shape)  # type: ignore[assignment]
+        data_driven_map = data_driven_map.reshape(spatial_shape)  # type: ignore[assignment]
 
-    return residues, cbf, cbv, mtt, lambda_optimal, corner_found_map
+    return residues, cbf, cbv, mtt, lambda_optimal, data_driven_map
 

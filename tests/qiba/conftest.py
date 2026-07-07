@@ -44,6 +44,7 @@ from scipy.special import gammainc
 from tests.dro.conftest import (
     add_gaussian_noise,
     dsc_forward_model,
+    fine_grid_forward,
     make_exponential_residue,
 )
 
@@ -65,6 +66,7 @@ __all__ = [
     "generate_cth_residue",
     "add_gaussian_noise",
     "dsc_forward_model",
+    "fine_grid_forward",
     "make_exponential_residue",
     "deconvolve_dro_batch",
     # TCIA GBM-DSC-MRI-DRO (Phase 4)

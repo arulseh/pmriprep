@@ -28,7 +28,7 @@ from pmriprep.utils.dsc_signal import (
 from .conftest import (
     DSC_TISSUE_PARAMS,
     concentration_to_signal,
-    dsc_forward_model,
+    fine_grid_forward,
     generate_dsc_3d_phantom,
     generate_dsc_aif_dro,
     generate_leaky_dsc_tissue,
@@ -78,7 +78,7 @@ def _build_full_chain_phantom(
     tissue_curves: Dict[str, npt.NDArray[np.floating]] = {}
     for name, params in DSC_TISSUE_PARAMS.items():
         residue = make_exponential_residue(params.cbf, params.mtt, n_tp, _DT)
-        c = dsc_forward_model(aif_tissue, residue, _DT)
+        c = fine_grid_forward(aif_tissue, residue, _DT)
         if name == "tumor" and k2_tumor > 0:
             c = generate_leaky_dsc_tissue(c, aif_tissue, k2_tumor, _DT)
         tissue_curves[name] = c

@@ -19,8 +19,16 @@ rather than AUC-CBV / CBF (which would propagate the CBF bias into MTT).
 """
 import numpy as np
 import pytest
+from scipy.linalg import svd
 
-from pmriprep.utils.dsc_deconvolution import svd_deconvolve_oscillation
+from pmriprep.utils.dsc_deconvolution import (
+    build_toeplitz_matrix,
+    build_volterra_matrix,
+    svd_deconvolve_oscillation,
+    svd_deconvolve_standard,
+    tikhonov_deconvolve,
+)
+from pmriprep.utils.dsc_constants import DEFAULT_SVD_THRESHOLD
 
 
 def _gamma_aif(t, t0=10.0, alpha=3.0, beta=1.5, peak=4.0):
@@ -73,3 +81,81 @@ def test_osvd_recovers_independent_tissue(name, cbf_true, mtt_true):
 
     mtt_err = (res.mtt - mtt_true) / mtt_true
     assert -0.20 < mtt_err < 0.10, f"{name} oSVD residue-MTT error {mtt_err:.1%}"
+
+
+def _ssvd_cbf_with_operator(tissue, aif, dt, builder, threshold):
+    """Truncated-SVD CBF using an explicit forward operator.
+
+    Mirrors :func:`svd_deconvolve_standard`'s math so the Volterra and Toeplitz
+    operators can be compared head to head on identical tissue.
+    """
+    A = builder(aif, dt)
+    u, s, vh = svd(A, full_matrices=False)
+    s_inv = np.where(s > threshold * s.max(), 1.0 / s, 0.0)
+    residue = vh.T @ (s_inv * (u.T @ tissue))
+    return float(np.max(residue))
+
+
+@pytest.mark.parametrize("name,cbf_true,mtt_true", TISSUES)
+def test_ssvd_recovers_independent_tissue(name, cbf_true, mtt_true):
+    """sSVD (Volterra) recovers CBF and residue-MTT from physically-convolved tissue.
+
+    Non-inverse-crime accuracy of the production sSVD with a sharp arterial AIF
+    at clinical TR (measured: CBF -8 to -18%, the known SVD underestimation
+    regime; residue-MTT within [-15%, +40%]).
+    """
+    dt, n = 1.5, 60
+    t = np.arange(n) * dt
+    aif = _gamma_aif(t)
+    tissue = _independent_tissue(aif, cbf_true, mtt_true, dt)
+
+    res = svd_deconvolve_standard(tissue, aif, dt=dt)
+
+    cbf_err = (res.cbf - cbf_true) / cbf_true
+    assert -0.30 < cbf_err < 0.10, f"{name} sSVD CBF error {cbf_err:.1%}"
+    mtt_err = (res.mtt - mtt_true) / mtt_true
+    assert -0.15 < mtt_err < 0.40, f"{name} sSVD residue-MTT error {mtt_err:.1%}"
+
+
+@pytest.mark.parametrize("name,cbf_true,mtt_true", TISSUES)
+def test_ssvd_volterra_beats_toeplitz(name, cbf_true, mtt_true):
+    """The Volterra operator recovers CBF closer to truth than smoothed-Toeplitz.
+
+    The can-fail thesis for the operator migration: on independent
+    (non-inverse-crime) tissue, the production Volterra sSVD must beat the old
+    smoothed-Toeplitz sSVD per tissue, or the change does not belong in
+    production.
+    """
+    dt, n = 1.5, 60
+    t = np.arange(n) * dt
+    aif = _gamma_aif(t)
+    tissue = _independent_tissue(aif, cbf_true, mtt_true, dt)
+    thr = DEFAULT_SVD_THRESHOLD
+
+    cbf_volterra = _ssvd_cbf_with_operator(tissue, aif, dt, build_volterra_matrix, thr)
+    cbf_toeplitz = _ssvd_cbf_with_operator(tissue, aif, dt, build_toeplitz_matrix, thr)
+    err_v = abs(cbf_volterra - cbf_true) / cbf_true
+    err_t = abs(cbf_toeplitz - cbf_true) / cbf_true
+
+    assert err_v < err_t, (
+        f"{name}: Volterra CBF err {err_v:.1%} not < Toeplitz {err_t:.1%}"
+    )
+
+
+@pytest.mark.parametrize("name,cbf_true,mtt_true", TISSUES)
+def test_tikhonov_recovers_independent_tissue(name, cbf_true, mtt_true):
+    """Tikhonov (Volterra + Morozov) recovers CBF from physically-convolved tissue.
+
+    Noise-free accuracy of the production Tikhonov on independent tissue: with no
+    measurable noise floor the degenerate fallback applies a small fixed λ, which
+    keeps the noise-free CBF within a few percent of truth (measured ~0-3%).
+    """
+    dt, n = 1.5, 60
+    t = np.arange(n) * dt
+    aif = _gamma_aif(t)
+    tissue = _independent_tissue(aif, cbf_true, mtt_true, dt)
+
+    res = tikhonov_deconvolve(tissue, aif, dt=dt)
+
+    cbf_err = (res.cbf - cbf_true) / cbf_true
+    assert -0.15 < cbf_err < 0.10, f"{name} Tikhonov CBF error {cbf_err:.1%}"

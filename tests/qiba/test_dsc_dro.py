@@ -46,7 +46,7 @@ from .conftest import (
     add_gaussian_noise,
     deconvolve_dro_batch,
     deconvolve_tcia_regions,
-    dsc_forward_model,
+    fine_grid_forward,
     generate_cth_residue,
     generate_qiba_aif,
     load_tcia_dro,
@@ -129,7 +129,7 @@ def _make_qiba_exponential_data(
     )
 
     residue = make_exponential_residue(params.cbf, params.mtt, N_TIMEPOINTS, DT_SEC)
-    tissue = dsc_forward_model(aif, residue, DT_SEC)
+    tissue = fine_grid_forward(aif, residue, DT_SEC)
 
     if noise.fraction > 0:
         peak = float(np.max(np.abs(tissue)))
@@ -174,7 +174,7 @@ def _make_qiba_cth_data(
 
     beta = params.mtt / cth.alpha
     residue = generate_cth_residue(params.cbf, cth.alpha, beta, N_TIMEPOINTS, DT_SEC)
-    tissue = dsc_forward_model(aif, residue, DT_SEC)
+    tissue = fine_grid_forward(aif, residue, DT_SEC)
 
     if noise.fraction > 0:
         peak = float(np.max(np.abs(tissue)))
@@ -336,9 +336,12 @@ OSVD_QIBA_NOISY = [
 class TestQIBAOSVDExponential:
     """oSVD recovery with QIBA AIF (recirculation) and exponential residue.
 
-    oSVD uses a block-circulant matrix (Wu 2003). At zero noise, the
-    Toeplitz/circulant forward-inverse mismatch causes systematic CBF
-    underestimation (~12-39%). MTT is well-preserved (ratio cancels).
+    oSVD uses an OI-regularized block-circulant matrix. Evaluated
+    against a neutral fine-grid (non-inverse-crime) ground truth, so
+    cross-method comparison is fair. MTT = CBV/CBF is semi-quantitative:
+    regularization under-recovers CBV (~30%) and CBF = max(R̂) is mis-estimated
+    at the residue peak, giving up to ~17% MTT error on exponential residues
+    even at zero noise.
     """
 
     @pytest.mark.parametrize("tissue_key", SVD_TISSUES)
@@ -355,7 +358,9 @@ class TestQIBAOSVDExponential:
         result = svd_deconvolve_oscillation(tissue, aif, dt)
         assert result.cbf > 0, f"CBF should be positive, got {result.cbf}"
         assert result.mtt > 0, f"MTT should be positive, got {result.mtt}"
-        _assert_param_recovery(result.mtt, mtt, 0.15, param_name="MTT")
+        # 0.20 = per-tissue max |MTT err| measured on the neutral fine-grid GT
+        # (deterministic at zero noise); oSVD MTT is semi-quantitative.
+        _assert_param_recovery(result.mtt, mtt, 0.20, param_name="MTT")
 
     @pytest.mark.parametrize("noise_key,thresh_min,cbf_tol,mtt_tol", OSVD_QIBA_NOISY)
     @pytest.mark.parametrize("tissue_key", SVD_TISSUES)
@@ -601,8 +606,14 @@ OSVD_CTH_NOISY = [
 class TestQIBAOSVDCTH:
     """oSVD recovery with QIBA AIF and CTH gamma-variate residue.
 
-    Block-circulant oSVD has ~20-30% CBF underestimation at zero noise
-    from the Toeplitz/circulant mismatch. Zero-noise tests check MTT only.
+    Evaluated against a neutral fine-grid (non-inverse-crime) ground truth. The
+    acquisition window (120s) captures the full residue, so the bias is not tail
+    truncation. MTT = CBV/CBF is semi-quantitative: regularization under-recovers
+    CBV by ~30% (roughly shape-independent), and CBF = max(R̂) overshoots at a
+    sharp residue shoulder. MTT error is therefore largest for the
+    least-dispersed (near-exponential, high-α / low-CTH) residues — up to ~47% —
+    and decreases as dispersion softens the shoulder (high-CTH ~29%). Zero-noise
+    tests check MTT.
     """
 
     @pytest.mark.parametrize("tissue_key,cth_key", CTH_COMBOS)
@@ -615,8 +626,17 @@ class TestQIBAOSVDCTH:
         )
         # Production default threshold_min (0.01); see test_osvd_zero_noise.
         result = svd_deconvolve_oscillation(tissue, aif, dt)
-        assert result.cbf > 0, f"CBF should be positive, got {result.cbf}"
-        _assert_param_recovery(result.mtt, mtt, 0.35, param_name="MTT")
+        # CBF is the reliable oSVD output (the OI threshold is selected on CBF);
+        # assert it in a measured band (max |CBF err| ~20% at zero noise on the
+        # fair fine-grid GT).
+        _assert_param_recovery(result.cbf, cbf, 0.25, param_name="CBF")
+        # MTT = CBV/CBF is semi-quantitative and NOT an accuracy claim here:
+        # ~30% CBV under-recovery (smoothing) + CBF = max(R̂) overshoot at a
+        # sharp residue shoulder give up to ~47% error (largest at the
+        # least-dispersed near-exponential residue), and the bias even inverts
+        # cross-tissue MTT ordering. The 0.55 bound is a regression ceiling, not
+        # an accuracy tolerance.
+        _assert_param_recovery(result.mtt, mtt, 0.55, param_name="MTT")
 
     @pytest.mark.parametrize("noise_key,thresh_min,cbf_tol,mtt_tol", OSVD_CTH_NOISY)
     @pytest.mark.parametrize("tissue_key,cth_key", CTH_COMBOS)

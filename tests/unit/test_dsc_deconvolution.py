@@ -6,6 +6,7 @@ import pytest
 from pmriprep.utils.dsc_deconvolution import (
     build_block_circulant_matrix,
     build_toeplitz_matrix,
+    build_volterra_matrix,
     compute_oscillation_index,
     svd_deconvolve_circulant,
     svd_deconvolve_oscillation,
@@ -147,8 +148,9 @@ class TestSVDDeconvolveStandard:
         true_mtt = 8.0
         true_residue = true_cbf * np.exp(-t / true_mtt)
 
-        # Create tissue curve: C = A @ R using the same Toeplitz matrix
-        matrix = build_toeplitz_matrix(aif, dt=dt)
+        # Create tissue curve: C = A @ R with the Volterra (product-integration)
+        # operator that svd_deconvolve_standard now inverts (matched forward).
+        matrix = build_volterra_matrix(aif, dt=dt)
         tissue = matrix @ true_residue
 
         # Deconvolve and recover
