@@ -59,7 +59,7 @@ class TestCalculateKH:
 
     def test_calculate_k_h_standard(self) -> None:
         """Default parameters produce expected K_H value."""
-        expected = (1.04 / 1.05) * (1.0 / (1.0 - 0.40)) * 100.0
+        expected = (1.04 / 1.05) * (1.0 / (1.0 - 0.42)) * 100.0
         result = calculate_k_h()
         assert result == pytest.approx(expected, rel=1e-6)
 

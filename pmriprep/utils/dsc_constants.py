@@ -493,8 +493,10 @@ def get_r2_star(field_strength: float) -> float:
 # Absolute Quantification Calibration
 # =============================================================================
 
-#: Large vessel hematocrit (population average)
-HEMATOCRIT_LV: Final[float] = 0.40
+#: Large vessel hematocrit; QIBA DCE-MRI v2.0 value, matched to
+#: dce_constants.HEMATOCRIT_ARTERIAL so the large-vessel Hct is consistent
+#: across the DSC and DCE modules.
+HEMATOCRIT_LV: Final[float] = 0.42
 
 #: Brain tissue density (g/mL)
 RHO_BRAIN: Final[float] = 1.04
