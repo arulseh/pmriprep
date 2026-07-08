@@ -229,17 +229,18 @@ class B1Mapping(SimpleInterface):
 
     Notes
     -----
-    The AFI method calculates B1+ using:
+    The AFI method calculates B1+ from the ratio of the long-TR to the
+    short-TR signal:
 
-        r = S1/S2 = (1 + n*cos(alpha)*E2) / (n + cos(alpha)*E2)
+        r = S2/S1 = (1 + n*cos(alpha)) / (n + cos(alpha))
 
     Where:
-        - S1, S2 are the signal intensities from TR1 and TR2
+        - S1, S2 are the signal intensities from TR1 (short) and TR2 (long)
         - n = TR2/TR1 (TR ratio)
         - alpha is the actual flip angle
-        - E2 = exp(-TR2/T1)
 
-    For TR2 >> T1, E2 ≈ 0, and the equation simplifies to:
+    In the regime TR1, TR2 << T1 the relaxation terms cancel and the flip
+    angle follows from:
 
         cos(alpha) = (r*n - 1) / (n - r)
 
@@ -518,10 +519,11 @@ class B1Mapping(SimpleInterface):
         signal_mask = (s1 > signal_threshold) & (s2 > signal_threshold)
 
         # -----------------------------------------------------------------
-        # Compute signal ratio r = S1/S2
+        # Compute signal ratio r = S2/S1 (long-TR over short-TR); this is
+        # the orientation required by cos(alpha) = (r*n - 1) / (n - r).
         # -----------------------------------------------------------------
         r = np.ones(shape, dtype=np.float64)
-        r[signal_mask] = s1[signal_mask] / np.maximum(s2[signal_mask], EPSILON_RATIO)
+        r[signal_mask] = s2[signal_mask] / np.maximum(s1[signal_mask], EPSILON_RATIO)
 
         # -----------------------------------------------------------------
         # Ratio validation + denominator stability (Gaps 1, 9).

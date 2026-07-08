@@ -316,14 +316,16 @@ class TwoCompartmentExchangeModel(PKModel):
         # Compute coefficients A1 and A2 for the impulse response:
         # h(t) = A1 × exp(-K1×t) + A2 × exp(-K2×t)
         #
-        # From the analytical solution (Sourbron & Buckley 2011):
-        # The tissue concentration impulse response is:
-        # h(t) = Fp/vp × [(K1 - k_ep) × exp(-K1×t) + (k_ep - K2) × exp(-K2×t)] / (K1 - K2)
+        # A1, A2 are the residues of the bi-exponential tissue impulse
+        # response I(t) = Fp·R(t) for the 2-compartment exchange system,
+        # obtained from the eigen-decomposition of the exchange matrix:
+        # A1 = Fp × (K1 - k_ep - k_pe) / (K1 - K2)
+        # A2 = Fp × (k_ep + k_pe - K2) / (K1 - K2)
         #
-        # This can be rewritten as:
-        # h(t) = A1 × exp(-K1×t) + A2 × exp(-K2×t)
-        #
-        # where A1 + A2 = Fp_rate (partial fractions sum to input rate)
+        # The k_pe terms cancel in A1 + A2 = Fp, so the impulse response
+        # starts at the plasma inflow rate I(0) = Fp. Omitting k_pe (which
+        # preserves I(0) but not the fast/slow partition) collapses the slow
+        # extravascular amplitude toward zero and breaks the Tofts limit.
 
         # Avoid division by zero in degenerate case
         if abs(k1 - k2) < EPSILON_EIGENVALUE:
@@ -333,9 +335,8 @@ class TwoCompartmentExchangeModel(PKModel):
             k2 = k1
         else:
             # Standard two-exponential case
-            # Coefficients derived from partial fraction expansion
-            a1 = fp_rate * (k1 - k_ep) / (k1 - k2)
-            a2 = fp_rate * (k_ep - k2) / (k1 - k2)
+            a1 = fp_rate * (k1 - k_ep - k_pe) / (k1 - k2)
+            a2 = fp_rate * (k_ep + k_pe - k2) / (k1 - k2)
 
         return k1, k2, a1, a2
 

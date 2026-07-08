@@ -576,12 +576,12 @@ def batched_2cxm_model(
         a1 = np.where(
             degenerate,
             fp_rate,
-            fp_rate * (k1_final - k_ep) / denom_safe,
+            fp_rate * (k1_final - k_ep - k_pe) / denom_safe,
         )
         a2 = np.where(
             degenerate,
             np.zeros_like(fp_rate),
-            fp_rate * (k_ep - k2_used) / denom_safe,
+            fp_rate * (k_ep + k_pe - k2_used) / denom_safe,
         )
 
         exp1 = _build_exp_kernel(k1_final, time_points)
