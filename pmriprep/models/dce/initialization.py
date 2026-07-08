@@ -5,13 +5,13 @@ Provides data-driven initial parameter estimation for Tofts-family models
 from the observed tissue concentration curve and AIF shape.
 
 Functions:
-    estimate_ktrans_patlak: Estimate Ktrans via Patlak regression on post-bolus data.
+    estimate_ktrans_uptake: Estimate Ktrans from the initial-uptake slope.
     estimate_ve_late_phase: Estimate ve from late-phase quasi-equilibrium ratio.
     estimate_vp_peak_ratio: Estimate vp from tissue-to-AIF peak ratio.
 """
 
 __all__ = [
-    "estimate_ktrans_patlak",
+    "estimate_ktrans_uptake",
     "estimate_ve_late_phase",
     "estimate_vp_peak_ratio",
 ]
@@ -20,17 +20,23 @@ import numpy as np
 import numpy.typing as npt
 
 
-def estimate_ktrans_patlak(
+def estimate_ktrans_uptake(
     tissue_curve: npt.NDArray[np.floating],
     aif: npt.NDArray[np.floating],
     time_points: npt.NDArray[np.floating],
     peak_idx: int,
 ) -> float:
-    """Estimate Ktrans via Patlak regression on post-bolus data.
+    """Estimate Ktrans from the initial-uptake slope.
 
-    Performs linear regression on the Patlak plot (C_t/C_p vs integral(C_p)/C_p)
-    using post-bolus time points where the AIF is above 5% of the peak.
-    Requires at least 4 valid post-bolus points.
+    During the uptake phase, before efflux is significant, the tissue
+    concentration follows C_t(t) ~ Ktrans * integral(Cp) (+ vp * Cp), so a
+    linear least-squares solve of C_t against the cumulative AIF integral over
+    the window from the AIF peak to the tissue peak recovers Ktrans
+    independently of kep. Unlike a late-time divided-plot slope, this does not
+    saturate for reversible (high-kep) tissue, where C_t/Cp plateaus at ve and
+    the divided-plot slope collapses toward zero. A plasma-volume term is
+    carried as a nuisance regressor so the vascular contribution does not bias
+    the recovered slope.
 
     Parameters
     ----------
@@ -46,25 +52,29 @@ def estimate_ktrans_patlak(
     Returns
     -------
     float
-        Estimated Ktrans value, or 0.1 if regression cannot be performed.
+        Estimated Ktrans value, or 0.1 if the slope cannot be estimated.
     """
     n = len(time_points)
     dt = float(np.mean(np.diff(time_points)))
 
-    post_bolus = np.arange(peak_idx + 1, n)
-    cp_post = aif[post_bolus]
-    valid = cp_post > 0.05 * np.max(aif)
-
-    if np.sum(valid) < 4:
+    tissue_peak_idx = int(np.argmax(tissue_curve))
+    start = peak_idx + 1
+    end = min(max(tissue_peak_idx, start + 3), n - 1)
+    if end - start < 3:
         return 0.1
 
-    idx = post_bolus[valid]
-    cp = aif[idx]
-    ct = tissue_curve[idx]
-    cum_aif = np.cumsum(aif[: idx[-1] + 1]) * dt
-    X = cum_aif[idx] / cp
-    Y = ct / cp
-    slope = float(np.polyfit(X, Y, 1)[0])
+    idx = np.arange(start, end + 1)
+    cum_aif = np.cumsum(aif) * dt
+    if float(np.max(np.abs(cum_aif[idx]))) < 1e-9:
+        return 0.1
+    design = np.column_stack([cum_aif[idx], aif[idx]])
+    try:
+        sol, _resid, _rank, _sv = np.linalg.lstsq(
+            design, tissue_curve[idx], rcond=None
+        )
+    except np.linalg.LinAlgError:
+        return 0.1
+    slope = float(sol[0])
     if not np.isfinite(slope):
         return 0.1
     return max(slope, 0.001)

@@ -23,6 +23,7 @@ from scipy.optimize import curve_fit
 
 from pmriprep.models.bayesian_utils import TransformType
 from pmriprep.models.dce.base import FitResult, ModelParameter, ParamsType, PKModel
+from pmriprep.models.dce.initialization import estimate_ktrans_uptake
 from pmriprep.utils.dce_constants import (
     EPSILON_EIGENVALUE,
     EPSILON_FLOW,
@@ -30,7 +31,7 @@ from pmriprep.utils.dce_constants import (
     EPSILON_VP,
     FP_BOUNDS,
     MAX_EIGENVALUE_SLOW,
-    MAX_KEP,
+    KEP_BOUNDS,
     PS_BOUNDS,
     VE_BOUNDS,
     VP_BOUNDS,
@@ -191,7 +192,6 @@ class TwoCompartmentExchangeModel(PKModel):
         try:
             peak_idx = int(np.argmax(aif))
             n = len(time_points)
-            dt = float(np.mean(np.diff(time_points)))
 
             # Estimate vp from peak ratio
             aif_peak = float(np.max(aif))
@@ -201,20 +201,8 @@ class TwoCompartmentExchangeModel(PKModel):
             else:
                 vp_init = 0.02
 
-            # --- Ktrans via Patlak regression (post-bolus) ---
-            post_bolus = np.arange(peak_idx + 1, n)
-            cp_post = aif[post_bolus]
-            valid = cp_post > 0.05 * np.max(aif)
-            ktrans_est = 0.1  # fallback
-
-            if np.sum(valid) >= 4:
-                idx = post_bolus[valid]
-                cp = aif[idx]
-                ct = tissue_curve[idx]
-                cum_aif = np.cumsum(aif[: idx[-1] + 1]) * dt
-                X = cum_aif[idx] / cp
-                Y = ct / cp
-                ktrans_est = max(float(np.polyfit(X, Y, 1)[0]), 0.001)
+            # --- Ktrans via the initial-uptake slope (kep-robust) ---
+            ktrans_est = estimate_ktrans_uptake(tissue_curve, aif, time_points, peak_idx)
 
             # For 2CXM: assume mixed regime, Fp ~ 2*Ktrans, PS ~ Ktrans
             fp_init = float(np.clip(ktrans_est * 120.0, FP_BOUNDS.min + 1e-3, FP_BOUNDS.max))
@@ -232,6 +220,11 @@ class TwoCompartmentExchangeModel(PKModel):
                     ve_init = 0.2
             else:
                 ve_init = 0.2
+
+            # Project onto the ve + vp <= 1 feasible set.
+            fp_init, ps_init, ve_init, vp_init = self._apply_volume_constraint(
+                [fp_init, ps_init, ve_init, vp_init]
+            )
 
             return [fp_init, ps_init, ve_init, vp_init]
         except Exception:
@@ -482,12 +475,14 @@ class TwoCompartmentExchangeModel(PKModel):
         lower_bounds = [b[0] for b in bounds]
         upper_bounds = [b[1] for b in bounds]
 
-        # curve_fit wrapper with volume constraint
+        # curve_fit wrapper. The ve + vp <= 1 constraint is enforced by the
+        # feasible initial guess and the post-fit projection, NOT inside the
+        # objective: an in-objective proportional rescale is non-smooth at
+        # ve + vp = 1 and corrupts the finite-difference Jacobian, trapping TRF.
         def _curve_func(
             t: npt.NDArray[np.floating], *params: float
         ) -> npt.NDArray[np.floating]:
-            fp, ps, ve, vp = self._apply_volume_constraint(list(params))
-            return self.evaluate([fp, ps, ve, vp], aif, t)
+            return self.evaluate(list(params), aif, t)
 
         converged = False
         fitted_params = x0
@@ -714,7 +709,8 @@ class TwoCompartmentExchangeModel(PKModel):
         # Volume transfer constant (equivalent to Tofts Ktrans, min^-1)
         ktrans = e * fp / 100.0
 
-        # Efflux rate constant
-        kep = min(ktrans / ve, MAX_KEP)
+        # Efflux rate constant (reported kep clamped to the physiological cap,
+        # matching tofts/extended_tofts; above it kep is non-identifiable).
+        kep = min(ktrans / ve, KEP_BOUNDS.max)
 
         return {"E": e, "Ktrans": ktrans, "kep": kep}

@@ -28,12 +28,13 @@ from scipy.optimize import curve_fit
 from pmriprep.models.bayesian_utils import TransformType
 from pmriprep.models.dce.base import FitResult, ModelParameter, ParamsType, PKModel
 from pmriprep.models.dce.initialization import (
-    estimate_ktrans_patlak,
+    estimate_ktrans_uptake,
     estimate_ve_late_phase,
     estimate_vp_peak_ratio,
 )
 from pmriprep.utils.dce_constants import (
     EPSILON_VE,
+    KEP_BOUNDS,
     KTRANS_BOUNDS,
     MAX_KEP,
     VE_BOUNDS,
@@ -155,12 +156,17 @@ class ExtendedToftsModel(PKModel):
             peak_idx = int(np.argmax(aif))
 
             vp_init = estimate_vp_peak_ratio(tissue_curve, aif)
-            ktrans_init = estimate_ktrans_patlak(tissue_curve, aif, time_points, peak_idx)
+            ktrans_init = estimate_ktrans_uptake(tissue_curve, aif, time_points, peak_idx)
             ve_init = estimate_ve_late_phase(tissue_curve, aif, peak_idx)
 
             ktrans_init = float(np.clip(ktrans_init, KTRANS_BOUNDS.min + 1e-6, KTRANS_BOUNDS.max))
             ve_init = float(np.clip(ve_init, VE_BOUNDS.min, VE_BOUNDS.max))
             vp_init = float(np.clip(vp_init, VP_BOUNDS.min, VP_BOUNDS.max))
+            # Project onto the ve + vp <= 1 feasible set so the optimizer starts
+            # on the physical side of the volume constraint.
+            ktrans_init, ve_init, vp_init = self._apply_volume_constraint(
+                [ktrans_init, ve_init, vp_init]
+            )
             return [ktrans_init, ve_init, vp_init]
         except Exception:
             return self.get_initial_guess()
@@ -300,12 +306,14 @@ class ExtendedToftsModel(PKModel):
         lower_bounds = [b[0] for b in bounds]
         upper_bounds = [b[1] for b in bounds]
 
-        # curve_fit wrapper with volume constraint
+        # curve_fit wrapper. The ve + vp <= 1 constraint is enforced by the
+        # feasible initial guess and the post-fit projection, NOT inside the
+        # objective: an in-objective proportional rescale is non-smooth at
+        # ve + vp = 1 and corrupts the finite-difference Jacobian, trapping TRF.
         def _curve_func(
             t: npt.NDArray[np.floating], *params: float
         ) -> npt.NDArray[np.floating]:
-            ktrans, ve, vp = self._apply_volume_constraint(list(params))
-            return self.evaluate([ktrans, ve, vp], aif, t)
+            return self.evaluate(list(params), aif, t)
 
         converged = False
         fitted_params = x0
@@ -476,8 +484,8 @@ class ExtendedToftsModel(PKModel):
         aic = float(n_obs * np.log(max(rss, EPSILON_RSS) / n_obs) + 2 * n_free) if n_obs > 0 else float("inf")
         bic = float(n_obs * np.log(max(rss, EPSILON_RSS) / n_obs) + n_free * np.log(n_obs)) if n_obs > 0 else float("inf")
 
-        # Derived parameters
-        kep = min(ktrans / ve, MAX_KEP) if ve > EPSILON_VE else 0.0
+        # Derived parameters (reported kep clamped to the physiological cap)
+        kep = min(ktrans / ve, KEP_BOUNDS.max) if ve > EPSILON_VE else 0.0
 
         param_dict = {"Ktrans": ktrans, "ve": ve, "vp": fixed_vp, "kep": kep}
 
@@ -515,8 +523,10 @@ class ExtendedToftsModel(PKModel):
         ktrans = params[0]
         ve = params[1]
 
+        # Reported kep is clamped to the physiological cap; above it kep is
+        # intrinsically non-identifiable (see _compute_derived_params).
         if ve > EPSILON_VE:
-            kep = min(ktrans / ve, MAX_KEP)
+            kep = min(ktrans / ve, KEP_BOUNDS.max)
         else:
             kep = 0.0
 

@@ -1,6 +1,6 @@
 """Unit tests for DCE pharmacokinetic model initialization utilities.
 
-Tests cover Patlak-based Ktrans estimation, late-phase ve estimation,
+Tests cover uptake-slope Ktrans estimation, late-phase ve estimation,
 and peak-ratio vp estimation, including fallback behavior.
 """
 
@@ -8,20 +8,20 @@ import numpy as np
 import pytest
 
 from pmriprep.models.dce.initialization import (
-    estimate_ktrans_patlak,
+    estimate_ktrans_uptake,
     estimate_ve_late_phase,
     estimate_vp_peak_ratio,
 )
 
 
 # ---------------------------------------------------------------------------
-# Test 1: Patlak Ktrans estimation with synthetic data
+# Test 1: uptake-slope Ktrans estimation with synthetic data
 # ---------------------------------------------------------------------------
 
-class TestEstimateKtransPatlak:
-    """Patlak regression: Ct/Cp = Ktrans * integral(Cp)/Cp + vp."""
+class TestEstimateKtransUptake:
+    """Uptake-slope regression: Ct = Ktrans * integral(Cp) + vp * Cp."""
 
-    def test_estimate_ktrans_patlak_synthetic(self) -> None:
+    def test_estimate_ktrans_uptake_synthetic(self) -> None:
         true_ktrans = 0.1
         true_vp = 0.02
 
@@ -39,35 +39,36 @@ class TestEstimateKtransPatlak:
         tissue_curve = true_vp * aif + true_ktrans * cum_aif
 
         peak_idx = int(np.argmax(aif))
-        ktrans_est = estimate_ktrans_patlak(tissue_curve, aif, time, peak_idx)
+        ktrans_est = estimate_ktrans_uptake(tissue_curve, aif, time, peak_idx)
 
         # Recovery within 20%
         np.testing.assert_allclose(
             ktrans_est,
             true_ktrans,
             rtol=0.20,
-            err_msg=f"Patlak Ktrans estimate {ktrans_est:.4f} not within 20% of {true_ktrans}",
+            err_msg=f"Uptake Ktrans estimate {ktrans_est:.4f} not within 20% of {true_ktrans}",
         )
 
-    def test_estimate_ktrans_patlak_fallback(self) -> None:
-        """With insufficient data (< 4 valid post-bolus points), return 0.1."""
-        # Very short data: 6 points total, peak at end -> few post-bolus points
+    def test_estimate_ktrans_uptake_fallback(self) -> None:
+        """With too short an uptake window (< 3 points), return 0.1."""
+        # Very short data: 6 points total, so the AIF-peak-to-tissue-peak
+        # uptake window has too few points to regress.
         time = np.arange(6) * 0.1
         aif = np.array([0.0, 0.1, 0.5, 1.0, 0.8, 0.6])
         tissue_curve = np.array([0.0, 0.01, 0.05, 0.1, 0.08, 0.06])
-        peak_idx = 3  # peak at index 3, only 2 post-bolus points
+        peak_idx = 3  # uptake window from peak_idx+1 is too short
 
-        ktrans_est = estimate_ktrans_patlak(tissue_curve, aif, time, peak_idx)
+        ktrans_est = estimate_ktrans_uptake(tissue_curve, aif, time, peak_idx)
         assert ktrans_est == 0.1, f"Expected fallback 0.1, got {ktrans_est}"
 
-    def test_estimate_ktrans_patlak_zero_aif(self) -> None:
+    def test_estimate_ktrans_uptake_zero_aif(self) -> None:
         """All-zero AIF should return fallback."""
         time = np.arange(50) * 0.1
         aif = np.zeros(50)
         tissue_curve = np.zeros(50)
         peak_idx = 0
 
-        ktrans_est = estimate_ktrans_patlak(tissue_curve, aif, time, peak_idx)
+        ktrans_est = estimate_ktrans_uptake(tissue_curve, aif, time, peak_idx)
         assert ktrans_est == 0.1, f"Expected fallback 0.1 for zero AIF, got {ktrans_est}"
 
 

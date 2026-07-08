@@ -28,6 +28,7 @@ from pmriprep.utils.dce_constants import (
     DEFAULT_TSNR_THRESHOLD,
     FP_BOUNDS,
     HEMATOCRIT_ARTERIAL,
+    KEP_BOUNDS,
     KTRANS_BOUNDS,
     MIN_ENHANCEMENT_MM,
     PS_BOUNDS,
@@ -533,14 +534,25 @@ def _fit_single_voxel(
         if _worker_ctx.get("save_fitted_curves") and result.fitted_curve is not None:
             fitted_curve = result.fitted_curve
 
+        # Clamp the reported kep and flag the non-identifiable high-kep corner,
+        # matching the batched-assembly path so the QC flag has full parity.
+        params = dict(result.parameters)
+        kep_railed = _compute_derived_params(params, effective_model)
+        base_quality = getattr(result, "quality_flag", "good")
+        quality_flag = (
+            "unreliable_high_kep"
+            if kep_railed and base_quality == "good"
+            else base_quality
+        )
+
         return {
             "coords": (x, y, z),
-            "params": dict(result.parameters),
+            "params": params,
             "r_squared": result.r_squared,
             "converged": result.converged,
             "uncertainties": uncertainties,
             "fitted_curve": fitted_curve,
-            "quality_flag": getattr(result, "quality_flag", "good"),
+            "quality_flag": quality_flag,
             "rhat": getattr(result, "rhat", {}),
             "ess": getattr(result, "ess", {}),
             "failed": False,
@@ -661,8 +673,14 @@ def _normalize_param_name(pname: str) -> str:
 def _compute_derived_params(
     params_out: dict[str, float],
     model_name: str,
-) -> None:
+) -> bool:
     """Compute derived parameters (kep, E, Ktrans) in place.
+
+    The reported kep is clamped to the physiological cap ``KEP_BOUNDS.max``.
+    A raw kep = Ktrans/ve above that cap marks the kep->inf / ve->0 corner
+    where the reversible (ve*Cp) and vascular (vp*Cp) forms coincide and kep
+    is intrinsically non-identifiable; the exact value there is not
+    trustworthy, so it is capped and the voxel is reported as low-confidence.
 
     Parameters
     ----------
@@ -670,10 +688,19 @@ def _compute_derived_params(
         Parameter dict to augment with derived values.
     model_name : str
         Model name for determining which derivations to apply.
+
+    Returns
+    -------
+    bool
+        True if the raw kep exceeded ``KEP_BOUNDS.max`` (the reported kep was
+        clamped), flagging the voxel as low-confidence.
     """
+    kep_railed = False
     if model_name in ("tofts", "extended_tofts"):
         ve_val = params_out.get("ve", EPSILON_VE)
-        params_out["kep"] = params_out.get("Ktrans", 0.0) / max(ve_val, EPSILON_VE)
+        raw_kep = params_out.get("Ktrans", 0.0) / max(ve_val, EPSILON_VE)
+        kep_railed = raw_kep > KEP_BOUNDS.max
+        params_out["kep"] = min(raw_kep, KEP_BOUNDS.max)
     elif model_name == "2cxm":
         fp_val = params_out.get("Fp", 0.0)
         ps_val = params_out.get("PS", 0.0)
@@ -681,7 +708,10 @@ def _compute_derived_params(
         params_out["E"] = E
         params_out["Ktrans"] = E * fp_val / 100.0
         ve_val = params_out.get("ve", EPSILON_VE)
-        params_out["kep"] = params_out["Ktrans"] / max(ve_val, EPSILON_VE)
+        raw_kep = params_out["Ktrans"] / max(ve_val, EPSILON_VE)
+        kep_railed = raw_kep > KEP_BOUNDS.max
+        params_out["kep"] = min(raw_kep, KEP_BOUNDS.max)
+    return kep_railed
 
 
 def _merge_fit_results(
@@ -1199,7 +1229,7 @@ class ComputeDCEMapsOutputSpec(TraitedSpec):
     out_delta_bic = File(desc="Delta-BIC confidence map (runner-up BIC minus winner BIC; >2 = positive evidence)")
 
     # QC outputs
-    out_quality_flag = File(desc="Quality flag map (0=unfitted, 1=good, 2=poor_convergence, 3=high_uncertainty)")
+    out_quality_flag = File(desc="Quality flag map (0=unfitted, 1=good, 2=poor_convergence, 3=high_uncertainty, 4=unreliable_high_kep)")
     out_r2 = File(desc="R² (goodness of fit) map")
     out_tsnr = File(desc="tSNR map (always computed)")
     out_qc_mask = File(desc="QC mask (1=good fit, 0=unfitted/poor)")
@@ -1979,9 +2009,15 @@ class ComputeDCEMaps(BaseInterface):
         ps_map = np.zeros(spatial_shape, dtype=np.float64)
         e_map = np.zeros(spatial_shape, dtype=np.float64)
 
-        # Quality flag map: 0=unfitted, 1=good, 2=poor_convergence, 3=high_uncertainty
+        # Quality flag map: 0=unfitted, 1=good, 2=poor_convergence,
+        # 3=high_uncertainty, 4=unreliable_high_kep (non-identifiable kep corner)
         quality_flag_map = np.zeros(spatial_shape, dtype=np.int8)
-        _QUALITY_FLAG_CODES = {"good": 1, "poor_convergence": 2, "high_uncertainty": 3}
+        _QUALITY_FLAG_CODES = {
+            "good": 1,
+            "poor_convergence": 2,
+            "high_uncertainty": 3,
+            "unreliable_high_kep": 4,
+        }
 
         # Model selection map: complexity-ordered encoding
         _MODEL_SELECTION_CODES: dict[str, int] = {
@@ -2379,6 +2415,7 @@ class ComputeDCEMaps(BaseInterface):
         qc_metrics["quality_n_good"] = int(np.sum(qf_vals == 1))
         qc_metrics["quality_n_poor_convergence"] = int(np.sum(qf_vals == 2))
         qc_metrics["quality_n_high_uncertainty"] = int(np.sum(qf_vals == 3))
+        qc_metrics["quality_n_unreliable_high_kep"] = int(np.sum(qf_vals == 4))
 
         if r2_list:
             qc_metrics["r2_mean"] = float(np.mean(r2_list))
@@ -3158,7 +3195,7 @@ class ComputeDCEMaps(BaseInterface):
             for pname, parr in winner_result.params.items():
                 params_out[_normalize_param_name(pname)] = float(parr[i])
 
-            _compute_derived_params(params_out, winner_name)
+            kep_railed = _compute_derived_params(params_out, winner_name)
 
             # Uncertainties
             uncertainties: dict[str, float] = {}
@@ -3183,7 +3220,11 @@ class ComputeDCEMaps(BaseInterface):
                 "converged": bool(winner_result.converged[i]),
                 "uncertainties": uncertainties,
                 "fitted_curve": fitted_curve,
-                "quality_flag": "good" if winner_result.converged[i] else "poor_convergence",
+                "quality_flag": (
+                    "poor_convergence" if not winner_result.converged[i]
+                    else "unreliable_high_kep" if kep_railed
+                    else "good"
+                ),
                 "rhat": {},
                 "ess": {},
                 "failed": not bool(winner_result.converged[i]) and float(winner_result.r_squared[i]) < -0.5,
@@ -3247,7 +3288,7 @@ class ComputeDCEMaps(BaseInterface):
             for pname, parr in fit_result.params.items():
                 params_out[_normalize_param_name(pname)] = float(parr[i])
 
-            _compute_derived_params(params_out, model_name)
+            kep_railed = _compute_derived_params(params_out, model_name)
 
             # Uncertainties
             uncertainties: dict[str, float] = {}
@@ -3271,7 +3312,11 @@ class ComputeDCEMaps(BaseInterface):
                 "converged": bool(fit_result.converged[i]),
                 "uncertainties": uncertainties,
                 "fitted_curve": fitted_curve,
-                "quality_flag": "good" if fit_result.converged[i] else "poor_convergence",
+                "quality_flag": (
+                    "poor_convergence" if not fit_result.converged[i]
+                    else "unreliable_high_kep" if kep_railed
+                    else "good"
+                ),
                 "rhat": {},
                 "ess": {},
                 "failed": not bool(fit_result.converged[i]) and float(fit_result.r_squared[i]) < -0.5,

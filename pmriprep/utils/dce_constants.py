@@ -721,7 +721,8 @@ def get_b1_thresholds(field_strength: float) -> B1Thresholds:
 # B1+ Math-Derived Constants (not field-dependent)
 # =============================================================================
 
-#: Signal ratio validity range for AFI: r = S1/S2 in (low, high) for stable arccos.
+#: Signal ratio validity range for AFI: r = S2/S1 (long-TR over short-TR) in
+#: (low, high) for stable arccos.
 B1_RATIO_VALID_RANGE: Final[tuple[float, float]] = (0.05, 1.5)
 
 #: Minimum ``|n - r|`` for denominator stability in AFI equation.

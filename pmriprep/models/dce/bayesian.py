@@ -703,6 +703,10 @@ class BayesianPKFitter:
 
         def _to_t(x_nat: npt.NDArray) -> npt.NDArray:
             x_nat = np.clip(x_nat, lower, upper)
+            # Project the seed onto the ve + vp <= 1 feasible set so the simplex
+            # starts inside the posterior support (the ve + vp > 1 region is a
+            # hard 1e30 barrier); starting on it would stall Nelder-Mead.
+            x_nat = np.asarray(self._apply_volume_constraint(x_nat), dtype=np.float64)
             return np.array([
                 float(to_transformed(x_nat[i], transforms[i], upper_bounds_t[i]))
                 for i in range(n_params)

@@ -1205,7 +1205,7 @@ def init_dce_datasinks_wf(
             desc_value="dceQualityFlag", suffix="",
             description=(
                 "Quality flag map (0=unfitted, 1=good, 2=poor_convergence, "
-                "3=high_uncertainty)"
+                "3=high_uncertainty, 4=unreliable_high_kep)"
             ),
             units=None, extra=None, model_entity=model_entity,
             bids_suffix="mask",

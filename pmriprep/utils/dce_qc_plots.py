@@ -287,7 +287,7 @@ def generate_b1_qc_plot(
     """Generate a 6-panel QC plot for AFI B1+ mapping.
 
     Layout (2 rows x 3 columns):
-        Row 1: TR1 image, TR2 image, Signal ratio (S_TR1/S_TR2)
+        Row 1: TR1 image, TR2 image, Signal ratio (S_TR2/S_TR1)
         Row 2: B1+ map, Actual flip angle map, B1+ histogram
 
     Parameters
@@ -297,7 +297,7 @@ def generate_b1_qc_plot(
     s2 : ndarray
         3D TR2 (long TR) signal array.
     signal_ratio : ndarray
-        3D S1/S2 ratio array.
+        3D S2/S1 ratio array.
     b1_map : ndarray
         3D B1+ correction factor map.
     nominal_flip_angle : float
@@ -364,7 +364,7 @@ def generate_b1_qc_plot(
         ratio_display, cmap="coolwarm", vmin=0.2, vmax=0.8, origin="upper",
     )
     plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-    ax.set_title("Signal Ratio (S\u2081/S\u2082)", fontsize=11)
+    ax.set_title("Signal Ratio (S\u2082/S\u2081)", fontsize=11)
     ax.axis("off")
 
     # ---- Panel 4: B1+ map ----

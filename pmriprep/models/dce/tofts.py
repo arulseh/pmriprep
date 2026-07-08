@@ -23,8 +23,17 @@ from scipy.optimize import curve_fit
 
 from pmriprep.models.bayesian_utils import TransformType
 from pmriprep.models.dce.base import FitResult, ModelParameter, ParamsType, PKModel
-from pmriprep.models.dce.initialization import estimate_ktrans_patlak, estimate_ve_late_phase
-from pmriprep.utils.dce_constants import EPSILON_VE, KTRANS_BOUNDS, MAX_KEP, VE_BOUNDS
+from pmriprep.models.dce.initialization import (
+    estimate_ktrans_uptake,
+    estimate_ve_late_phase,
+)
+from pmriprep.utils.dce_constants import (
+    EPSILON_VE,
+    KEP_BOUNDS,
+    KTRANS_BOUNDS,
+    MAX_KEP,
+    VE_BOUNDS,
+)
 
 
 class ToftsModel(PKModel):
@@ -122,7 +131,7 @@ class ToftsModel(PKModel):
         try:
             peak_idx = int(np.argmax(aif))
 
-            ktrans_init = estimate_ktrans_patlak(tissue_curve, aif, time_points, peak_idx)
+            ktrans_init = estimate_ktrans_uptake(tissue_curve, aif, time_points, peak_idx)
             ve_init = estimate_ve_late_phase(tissue_curve, aif, peak_idx)
 
             ktrans_init = float(np.clip(ktrans_init, KTRANS_BOUNDS.min + 1e-6, KTRANS_BOUNDS.max))
@@ -339,8 +348,10 @@ class ToftsModel(PKModel):
         ktrans = params[0]
         ve = params[1]
 
+        # Reported kep is clamped to the physiological cap; above it kep is
+        # intrinsically non-identifiable (see _compute_derived_params).
         if ve > EPSILON_VE:
-            kep = min(ktrans / ve, MAX_KEP)
+            kep = min(ktrans / ve, KEP_BOUNDS.max)
         else:
             kep = 0.0
 
