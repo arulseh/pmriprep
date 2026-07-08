@@ -26,6 +26,7 @@ from scipy import optimize
 from scipy.optimize import curve_fit
 
 from pmriprep.models.bayesian_utils import TransformType
+from pmriprep.models.dce._convolution import analytic_exp_convolution
 from pmriprep.models.dce.base import FitResult, ModelParameter, ParamsType, PKModel
 from pmriprep.models.dce.initialization import (
     estimate_ktrans_uptake,
@@ -212,10 +213,10 @@ class ExtendedToftsModel(PKModel):
 
         dt = float(time_points[1] - time_points[0])
 
-        # Compute convolution using np.convolve
-        # C_t(t) = vp × Cp(t) + Ktrans × [Cp ⊗ exp(-kep×t)] × dt
-        exp_kernel = np.exp(-kep * dt * np.arange(n_times))
-        conv_term = np.convolve(aif, exp_kernel, mode="full")[:n_times] * dt * ktrans
+        # C_t(t) = vp*Cp(t) + Ktrans * [Cp (*) exp(-kep*t)], the convolution via
+        # exact analytic (piecewise-linear AIF) integration instead of the
+        # left-Riemann np.convolve, which under-reads high-kep kernels.
+        conv_term = ktrans * analytic_exp_convolution(aif, kep, dt)
         c_tissue = vp * aif + conv_term
 
         # Sanitize: replace non-finite values with 0

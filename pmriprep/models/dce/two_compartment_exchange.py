@@ -22,6 +22,7 @@ from scipy import optimize
 from scipy.optimize import curve_fit
 
 from pmriprep.models.bayesian_utils import TransformType
+from pmriprep.models.dce._convolution import analytic_exp_convolution
 from pmriprep.models.dce.base import FitResult, ModelParameter, ParamsType, PKModel
 from pmriprep.models.dce.initialization import estimate_ktrans_uptake
 from pmriprep.utils.dce_constants import (
@@ -377,15 +378,14 @@ class TwoCompartmentExchangeModel(PKModel):
         # Compute eigenvalues and coefficients
         k1, k2, a1, a2 = self._compute_eigenvalues_and_coefficients(fp, ps, ve, vp)
 
-        # Build the impulse response function h(t)
-        # h(t) = A1 × exp(-K1×t) + A2 × exp(-K2×t)
-        time_array = np.arange(n_times) * dt
-        impulse_response = a1 * np.exp(-k1 * time_array) + a2 * np.exp(-k2 * time_array)
-
-        # Tissue concentration is convolution of impulse response with AIF
-        # C_t(t) = h(t) ⊗ Ca(t) = ∫₀ᵗ h(τ) × Ca(t-τ) dτ
-        # Vectorized rectangular-rule convolution (matches Tofts/Extended Tofts pattern)
-        c_tissue = np.convolve(aif, impulse_response, mode='full')[:n_times] * dt
+        # Tissue concentration = bi-exponential IRF (*) AIF. Convolution is
+        # linear, so convolve each exponential exactly (piecewise-linear AIF)
+        # and sum: C_t = A1*[Cp (*) exp(-K1 t)] + A2*[Cp (*) exp(-K2 t)].
+        # No separate vp term: the 2CXM IRF is a bounded bi-exponential.
+        c_tissue = (
+            a1 * analytic_exp_convolution(aif, k1, dt)
+            + a2 * analytic_exp_convolution(aif, k2, dt)
+        )
 
         # Sanitize: replace non-finite values with 0
         c_tissue = np.where(np.isfinite(c_tissue), c_tissue, 0.0)

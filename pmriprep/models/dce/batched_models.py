@@ -1,8 +1,8 @@
 """Batched DCE pharmacokinetic model evaluation.
 
 This module provides vectorized pharmacokinetic model evaluation for
-DCE-MRI analysis. The key optimization is using FFT-based convolution for
-efficient batch processing across many voxels.
+DCE-MRI analysis. The key optimization is the exact analytic (piecewise-linear
+AIF) convolution vectorized across many voxels.
 
 Supported models:
 - Standard Tofts: C_t(t) = Ktrans * [Cp ⊗ exp(-kep*t)]
@@ -22,6 +22,7 @@ import numpy.typing as npt
 
 logger = logging.getLogger("nipype.interface")
 
+from pmriprep.models.dce._convolution import analytic_exp_convolution
 from pmriprep.utils.dce_constants import (
     EPSILON_EIGENVALUE,
     EPSILON_FLOW,
@@ -39,7 +40,7 @@ class ModelResult:
     """Result from batched model evaluation.
 
     Contains tissue concentration curves computed via vectorized
-    FFT-based convolution.
+    exact analytic convolution.
 
     Attributes
     ----------
@@ -57,83 +58,14 @@ class ModelResult:
     model_type: str
 
 
-def _fft_convolve(
-    aif: npt.NDArray[np.floating],
-    exp_kernel: npt.NDArray[np.floating],
-    dt: float,
-) -> npt.NDArray[np.floating]:
-    """Perform FFT-based convolution.
-
-    Computes the convolution: result = aif ⊗ exp_kernel
-    using the convolution theorem: conv(a, b) = ifft(fft(a) * fft(b))
-
-    Parameters
-    ----------
-    aif : np.ndarray
-        Arterial input function, shape (n_timepoints,).
-    exp_kernel : np.ndarray
-        Exponential decay kernel, shape (n_voxels, n_timepoints).
-    dt : float
-        Time step in minutes.
-
-    Returns
-    -------
-    np.ndarray
-        Convolution result, shape (n_voxels, n_timepoints).
-    """
-    n_timepoints = aif.shape[0]
-    n_voxels = exp_kernel.shape[0]
-
-    pad_length = 2 * n_timepoints
-
-    aif_padded = np.zeros(pad_length, dtype=np.float64)
-    aif_padded[:n_timepoints] = aif
-
-    exp_padded = np.zeros((n_voxels, pad_length), dtype=np.float64)
-    exp_padded[:, :n_timepoints] = exp_kernel
-
-    aif_fft = np.fft.fft(aif_padded)
-    exp_fft = np.fft.fft(exp_padded, axis=1)
-
-    product_fft = aif_fft[None, :] * exp_fft
-
-    conv_result = np.fft.ifft(product_fft, axis=1).real
-
-    return conv_result[:, :n_timepoints] * dt
-
-
-def _build_exp_kernel(
-    kep: npt.NDArray[np.floating],
-    time_points: npt.NDArray[np.floating],
-) -> npt.NDArray[np.floating]:
-    """Build exponential decay kernels for all voxels.
-
-    Computes exp(-kep * t) for each voxel.
-
-    Parameters
-    ----------
-    kep : np.ndarray
-        Efflux rate constants, shape (n_voxels,).
-    time_points : np.ndarray
-        Time points in minutes, shape (n_timepoints,).
-
-    Returns
-    -------
-    np.ndarray
-        Exponential kernels, shape (n_voxels, n_timepoints).
-    """
-    lag_times = time_points - time_points[0]
-    result: npt.NDArray[np.floating] = np.exp(-kep[:, None] * lag_times[None, :])
-    return result
-
-
 def _validate_uniform_time_points(
     time_points: npt.NDArray[np.floating],
 ) -> float:
     """Validate that time points are uniformly spaced and return dt.
 
-    FFT convolution assumes uniform temporal spacing. Warns if variation
-    exceeds 5% but does not error, since DCE data is almost always uniform.
+    The analytic convolution assumes uniform temporal spacing. Warns if
+    variation exceeds 5% but does not error, since DCE data is almost always
+    uniform.
 
     Parameters
     ----------
@@ -159,7 +91,7 @@ def _validate_uniform_time_points(
         if variation > 0.05:
             logger.warning(
                 "Non-uniform temporal spacing (%.1f%% variation). "
-                "FFT convolution assumes uniform dt=%.4f min.",
+                "Analytic convolution assumes uniform dt=%.4f min.",
                 variation * 100,
                 dt,
             )
@@ -176,7 +108,7 @@ def batched_tofts_model(
     """Batched Standard Tofts model evaluation.
 
     Computes tissue concentration curves for multiple voxels using
-    FFT-based convolution.
+    exact analytic convolution.
 
     Model equation:
         C_t(t) = Ktrans * [Cp ⊗ exp(-kep*t)]
@@ -245,14 +177,12 @@ def batched_tofts_model(
         ve_batch = ve[batch_start:batch_end]
 
         ve_safe = np.maximum(ve_batch, EPSILON_VE)
-        # Cap kep to match scalar tofts.fit() — degenerate voxels with
-        # ve at EPSILON_VE and moderate Ktrans otherwise produce
-        # exp(-kep·t) that underflows to 0 immediately and wipes the
-        # convolution kernel, breaking scalar/batched parity.
+        # Cap kep to match the scalar path (tofts.evaluate also caps at
+        # MAX_KEP), so the analytic convolution gives identical scalar/batched
+        # output at the ve->0 degenerate limit; also a physical bound.
         kep = np.minimum(ktrans_batch / ve_safe, MAX_KEP)
 
-        exp_kernel = _build_exp_kernel(kep, time_points)
-        conv_result = _fft_convolve(aif, exp_kernel, dt)
+        conv_result = analytic_exp_convolution(aif, kep, dt)
 
         tissue_curves[batch_start:batch_end, :] = ktrans_batch[:, None] * conv_result
 
@@ -274,7 +204,7 @@ def batched_extended_tofts_model(
     """Batched Extended Tofts model evaluation.
 
     Computes tissue concentration curves for multiple voxels using
-    FFT-based convolution. Includes the vascular plasma volume
+    exact analytic convolution. Includes the vascular plasma volume
     term (vp).
 
     Model equation:
@@ -353,8 +283,7 @@ def batched_extended_tofts_model(
         # Cap kep — see tofts batch above for rationale.
         kep = np.minimum(ktrans_batch / ve_safe, MAX_KEP)
 
-        exp_kernel = _build_exp_kernel(kep, time_points)
-        conv_result = _fft_convolve(aif, exp_kernel, dt)
+        conv_result = analytic_exp_convolution(aif, kep, dt)
 
         extravasation_term = ktrans_batch[:, None] * conv_result
 
@@ -458,7 +387,7 @@ def batched_2cxm_model(
     """Batched Two-Compartment Exchange Model (2CXM) evaluation.
 
     Computes tissue concentration curves using eigenvalue decomposition
-    and FFT-based convolution.
+    and exact analytic convolution.
 
     Model equation:
         C_t(t) = [A1*exp(-K1*t) + A2*exp(-K2*t)] ⊗ Ca(t)
@@ -584,10 +513,8 @@ def batched_2cxm_model(
             fp_rate * (k_ep + k_pe - k2_used) / denom_safe,
         )
 
-        exp1 = _build_exp_kernel(k1_final, time_points)
-        exp2 = _build_exp_kernel(k2_used, time_points)
-        conv1 = _fft_convolve(aif, exp1, dt)
-        conv2 = _fft_convolve(aif, exp2, dt)
+        conv1 = analytic_exp_convolution(aif, k1_final, dt)
+        conv2 = analytic_exp_convolution(aif, k2_used, dt)
 
         tissue_curves[batch_start:batch_end, :] = a1[:, None] * conv1 + a2[:, None] * conv2
 
