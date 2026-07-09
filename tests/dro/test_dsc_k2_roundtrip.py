@@ -433,37 +433,29 @@ class TestBidirectionalK2Correction:
         )
 
 
-class TestK2NeutralQuadrature:
-    """Neutral (non-inverse-crime) K2 accuracy.
+class TestK2RecoveryNeutral:
+    """K2 recovery on independent (non-inverse-crime) tissue.
 
-    The round-trip tests above generate the leakage with the same quadrature
-    the estimator uses (cumulative_trapezoid == estimator), so they prove
-    parity but are structurally blind to a quadrature bias. Here the leakage
-    integral K2 * int_0^t C_bar is built on a dt/20 fine grid and the tissue
-    curves come from the fine-grid forward, so the production estimator's
-    coarse trapezoidal cumulative regressor is tested against a truth it did
-    not generate. Recovery is dominated by mean-reference contamination from
-    the (few) enhancing voxels plus the sub-percent coarse-vs-fine quadrature
-    floor, so the neutral tolerance is tighter than the round-trip's rel=0.5.
+    Distinct from the round-trip tests above: the brain and tumor curves are
+    built by the dt/20 fine-grid forward (fine_grid_forward), and the leakage is
+    driven by the CLEAN mean reference, while the estimator computes its own mean
+    reference from the full brain mask -- contaminated by the enhancing voxels.
+    So the estimator recovers K2 from data whose reference it does not know
+    exactly. Guards against a broken K2 regression (wrong sign, scale, slice or
+    conditioning); tolerance is the mean-reference-contamination + conditioning
+    floor (measured within ~20%).
+
+    This deliberately does NOT probe the rectangular->trapezoidal cumulative
+    switch: the BSW K2 estimate is provably quadrature-invariant. The rect-trap
+    difference of the cumulative integral equals 0.5*dt*C_bar, which is collinear
+    with the C_bar column of the [C_bar, integral(C_bar)] design matrix, so it is
+    absorbed into that coefficient and leaves the K2 (integral) coefficient
+    unchanged. The quadrature choice therefore has no measurable effect on K2,
+    and no test can be can-fail for it here.
     """
 
-    @staticmethod
-    def _fine_cumulative(
-        curve: np.ndarray, dt: float, oversample: int = 20
-    ) -> np.ndarray:
-        """int_0^t curve on a dt/oversample grid, downsampled to frames.
-
-        Independent of the estimator's coarse cumulative_trapezoid.
-        """
-        n = len(curve)
-        t_frame = np.arange(n) * dt
-        t_fine = np.arange(n * oversample) * (dt / oversample)
-        fine = np.interp(t_fine, t_frame, curve)
-        cum = cumulative_trapezoid(fine, dx=dt / oversample, initial=0.0)
-        return np.asarray(cum[::oversample], dtype=np.float64)
-
     @pytest.mark.parametrize("k2_true", [0.02, 0.05, 0.1])
-    def test_k2_recovers_from_fine_grid_leakage(self, k2_true: float) -> None:
+    def test_k2_recovers_from_independent_leakage(self, k2_true: float) -> None:
         dt = 1.5
         n_bl, n_post = 8, 52
         n = n_bl + n_post
@@ -472,8 +464,8 @@ class TestK2NeutralQuadrature:
         )
         rng = np.random.default_rng(0)
 
-        # Non-enhancing brain: varied CBF/MTT, tissue via the neutral fine-grid
-        # forward (never touches the estimator's cumulative quadrature).
+        # Non-enhancing brain: varied CBF/MTT, tissue via the fine-grid forward
+        # (an independent forward the estimator does not invert).
         n_brain, n_enh = 200, 8
         brain = np.empty((n_brain, n), dtype=np.float64)
         for i in range(n_brain):
@@ -484,14 +476,17 @@ class TestK2NeutralQuadrature:
                 dt,
             )
             brain[i] = fine_grid_forward(aif, residue, dt)
-        c_bar = brain.mean(axis=0)
+        # Leakage is driven by the CLEAN mean reference; the estimator will
+        # instead see a mean contaminated by the enhancing voxels below.
+        c_bar_clean = brain.mean(axis=0)
 
-        # Enhancing (tumor) leaky curves: clean forward minus a FINE-grid
-        # leakage integral of the mean reference.
+        # Enhancing (tumor) leaky curves: clean forward minus the BSW leakage
+        # integral K2 * int_0^t C_bar of the clean reference.
         tumor_clean = fine_grid_forward(
             aif, make_exponential_residue(100.0, 6.0, n, dt), dt
         )
-        tumor_leaky = tumor_clean - k2_true * self._fine_cumulative(c_bar, dt)
+        leakage = k2_true * cumulative_trapezoid(c_bar_clean, dx=dt, initial=0.0)
+        tumor_leaky = tumor_clean - leakage
 
         # Assemble a single-slice 4D phantom + masks.
         nx = 16
@@ -513,5 +508,5 @@ class TestK2NeutralQuadrature:
         )
         k2_enh = float(np.median(k2_map[enh_mask]))
         assert k2_enh == pytest.approx(k2_true, rel=0.20), (
-            f"neutral K2={k2_enh:.4f} outside 20% of true {k2_true}"
+            f"recovered K2={k2_enh:.4f} outside 20% of true {k2_true}"
         )

@@ -163,14 +163,20 @@ def test_tikhonov_recovers_independent_tissue(name, cbf_true, mtt_true):
 
 @pytest.mark.parametrize("name,cbf_true,mtt_true", TISSUES)
 def test_auc_cbv_recovers_independent_tissue(name, cbf_true, mtt_true):
-    """AUC-CBV (∫tissue / ∫aif, trapezoidal) recovers CBV = CBF·MTT.
+    """The AUC-CBV ratio recovers CBV = CBF·MTT on independent tissue.
 
-    Neutral accuracy anchor for the AUC-CBV path (previously untested in-repo by
-    any code-generated DRO): the tissue curve comes from the dt/20 fine-grid
-    forward, so the production trapezoidal ratio is validated against a truth it
-    did not generate. Exercises the convolution-area identity
-    ∫(AIF ⊗ R) = ∫AIF · ∫R that AUC-CBV relies on; the only error source is the
-    tissue-tail truncation at the 90 s window, which is sub-percent for MTT ≤ 6 s.
+    Guards the identity AUC-CBV rests on: ∫(AIF⊗R) = ∫AIF·∫R, so
+    ∫tissue/∫aif = ∫R = CBF·MTT. The tissue comes from the dt/20 fine-grid
+    forward, so the identity is checked on data the ratio did not generate, and
+    the CBF·MTT recovery lands within the tissue-tail-truncation floor (<1% here
+    for MTT<=6s). This is the accuracy anchor; production additionally applies a
+    bolus window and NAWM normalization (whose constant factors cancel in the
+    reported rCBV) -- that plumbing is covered by the integration tests, not
+    here, so full-window integrals are used to isolate the identity.
+
+    It does NOT probe the rectangular->trapezoidal switch: AUC-CBV is a ratio,
+    the half-sample endpoint bias cancels between numerator and denominator
+    (measured 0.000% no-leak), so the ratio is quadrature-invariant.
     """
     dt, n = 1.5, 60
     t = np.arange(n) * dt

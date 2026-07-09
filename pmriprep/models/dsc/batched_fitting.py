@@ -21,7 +21,6 @@ from typing import Final, Optional
 
 import numpy as np
 import numpy.typing as npt
-from scipy.interpolate import CubicSpline
 from scipy.special import gammainc
 
 from pmriprep.models.bayesian_utils import (
@@ -32,9 +31,9 @@ from pmriprep.models.bayesian_utils import (
     transform_prior,
 )
 from pmriprep.utils.dsc_constants import (
-    AIF_UPSAMPLE_FACTOR,
     EPSILON_CONCENTRATION,
 )
+from pmriprep.utils.dsc_deconvolution import build_volterra_matrix
 
 logger = logging.getLogger("nipype.interface")
 
@@ -92,11 +91,13 @@ def batched_vascular_forward(
     delay: npt.NDArray[np.floating],
     aif: npt.NDArray[np.floating],
     time_points: npt.NDArray[np.floating],
+    volterra_matrix: Optional[npt.NDArray[np.floating]] = None,
 ) -> npt.NDArray[np.floating]:
     """Batched Vascular model forward evaluation for N voxels.
 
-    Computes tissue concentration via FFT convolution of AIF with
-    gamma-variate residue function, with post-hoc delay shift.
+    Computes tissue concentration via the shared Sourbron (1, 4, 1)/6
+    product-integration (Volterra) operator applied to the gamma-variate
+    residue, with post-hoc delay shift.
 
     Parameters
     ----------
@@ -112,6 +113,10 @@ def batched_vascular_forward(
         Arterial input function, shape (T,).
     time_points : npt.NDArray[np.floating]
         Time points (seconds), shape (T,).
+    volterra_matrix : npt.NDArray[np.floating], optional
+        Precomputed (T, T) Volterra operator from ``build_volterra_matrix(aif,
+        dt)``. Pass it to avoid rebuilding the constant matrix on every call
+        inside a fitting loop; if None it is built here.
 
     Returns
     -------
@@ -121,54 +126,25 @@ def batched_vascular_forward(
     n_voxels = len(cbf)
     n_times = len(time_points)
     dt = float(time_points[1] - time_points[0]) if n_times > 1 else 1.0
+    if n_times < 2:
+        return np.zeros((n_voxels, n_times), dtype=np.float64)
 
     # Guard parameters
     alpha_safe = np.maximum(alpha, 1e-10)
     beta_safe = np.maximum(beta, 1e-10)
 
-    # Forward-model convolution C = AIF ⊗ R per voxel. The AIF and the
-    # (delay-agnostic) residue R(t) = CBF·[1 − gammainc(α, t/β)] are resampled
-    # onto an 8x-finer grid by cubic spline before convolution to cut
-    # Riemann-sum discretization error at clinical TR, then downsampled to the
-    # native grid. The delay shift below is applied AFTER downsampling, matching
-    # the scalar tissue_curve forward model.
-    up = AIF_UPSAMPLE_FACTOR
-    if n_times >= 4:
-        n_grid = (n_times - 1) * up + 1
-        t_grid = np.linspace(
-            float(time_points[0]), float(time_points[-1]), n_grid
-        )
-        aif_grid = CubicSpline(
-            np.asarray(time_points, dtype=np.float64),
-            np.asarray(aif, dtype=np.float64),
-        )(t_grid)
-        grid_dt = dt / up
-        stride = up
-    else:
-        n_grid = n_times
-        t_grid = np.asarray(time_points, dtype=np.float64)
-        aif_grid = np.asarray(aif, dtype=np.float64)
-        grid_dt = dt
-        stride = 1
+    # Residue on the native grid, shape (N, T). Delay-agnostic:
+    # R(t) = CBF·[1 − gammainc(α, t/β)].
+    x = np.maximum(np.asarray(time_points, dtype=np.float64), 0.0)[None, :] / beta_safe[:, None]
+    R = cbf[:, None] * (1.0 - gammainc(alpha_safe[:, None], x))
 
-    # Residue on the (fine) grid, shape (N, n_grid). Delay-agnostic.
-    x = np.maximum(t_grid, 0.0)[None, :] / beta_safe[:, None]
-    gamma_vals = gammainc(alpha_safe[:, None], x)
-    R_grid = cbf[:, None] * (1.0 - gamma_vals)
+    # Forward via the shared Sourbron (1, 4, 1)/6 product-integration (Volterra)
+    # operator: per voxel C = A @ R, batched as C = R @ Aᵀ. One quadrature across
+    # every direct forward (sSVD/Tikhonov/CPI/vascular), matching the scalar
+    # tissue_curve. The delay shift is applied AFTER, matching the scalar model.
+    A = volterra_matrix if volterra_matrix is not None else build_volterra_matrix(aif, dt)
+    conv = R @ A.T
 
-    # Batched FFT convolution, padded to avoid circular wrap-around.
-    pad_len = 2 * n_grid
-    aif_padded = np.zeros(pad_len)
-    aif_padded[:n_grid] = aif_grid
-    R_padded = np.zeros((n_voxels, pad_len))
-    R_padded[:, :n_grid] = R_grid
-
-    aif_fft = np.fft.fft(aif_padded)
-    R_fft = np.fft.fft(R_padded, axis=1)
-    conv_full = np.fft.ifft(aif_fft[None, :] * R_fft, axis=1).real
-    conv = (conv_full[:, :n_grid] * grid_dt)[:, ::stride]  # (N, T)
-
-    # Apply delay as a post-hoc linear-interp shift of the convolved curve.
     return _apply_post_hoc_delay_shift(conv, delay, dt)
 
 
@@ -1201,6 +1177,14 @@ def batched_dsc_vi_fit(
         m[:, j] = to_transformed_batch(m_nat[:, j], transforms[j], upper_bounds[j])
 
     # --- Forward model dispatch ---
+    # Precompute the constant Volterra operator once (aif/dt are fixed across the
+    # fit) so the vascular forward does not rebuild it on every _evaluate call.
+    _vasc_volterra = (
+        build_volterra_matrix(aif, float(time_points[1] - time_points[0]))
+        if model_type == "vascular" and len(time_points) >= 2
+        else None
+    )
+
     def _evaluate(params_fitting: npt.NDArray[np.floating]) -> npt.NDArray[np.floating]:
         """Evaluate forward model from fitting-space natural parameters."""
         if model_type == "vascular":
@@ -1212,6 +1196,7 @@ def batched_dsc_vi_fit(
             beta_v = mtt_v / np.maximum(alpha_v, 1e-10)
             return batched_vascular_forward(
                 cbf_v, alpha_v, beta_v, delay_v, aif, time_points,
+                volterra_matrix=_vasc_volterra,
             )
         else:  # cpi
             if control_point_times is None or toeplitz_matrix is None:
@@ -2006,6 +1991,14 @@ def batched_dsc_map_fit(
         )
 
     # --- Forward model dispatch ---
+    # Precompute the constant Volterra operator once (aif/dt are fixed across the
+    # fit) so the vascular forward does not rebuild it on every _evaluate call.
+    _vasc_volterra = (
+        build_volterra_matrix(aif, float(time_points[1] - time_points[0]))
+        if model_type == "vascular" and len(time_points) >= 2
+        else None
+    )
+
     def _evaluate(params_fitting: npt.NDArray[np.floating]) -> npt.NDArray[np.floating]:
         if model_type == "vascular":
             cbf_v = params_fitting[:, 0]
@@ -2015,6 +2008,7 @@ def batched_dsc_map_fit(
             beta_v = mtt_v / np.maximum(alpha_v, 1e-10)
             return batched_vascular_forward(
                 cbf_v, alpha_v, beta_v, delay_v, aif, time_points,
+                volterra_matrix=_vasc_volterra,
             )
         else:  # cpi
             if control_point_times is None or toeplitz_matrix is None:

@@ -10,8 +10,6 @@ microvasculature, which affects the relationship between CBF and CBV.
 import numpy as np
 import numpy.typing as npt
 from scipy import special  # type: ignore[import-untyped]
-from scipy.interpolate import CubicSpline  # type: ignore[import-untyped]
-from scipy.signal import fftconvolve  # type: ignore[import-untyped]
 
 from pmriprep.models.dsc.base import (
     DSCModel,
@@ -19,12 +17,12 @@ from pmriprep.models.dsc.base import (
     ParamsLike,
 )
 from pmriprep.utils.dsc_constants import (
-    AIF_UPSAMPLE_FACTOR,
     CBF_BOUNDS,
     VASCULAR_ALPHA_BOUNDS,
     VASCULAR_BETA_BOUNDS,
     VASCULAR_DELAY_BOUNDS,
 )
+from pmriprep.utils.dsc_deconvolution import build_volterra_matrix
 
 
 class VascularModel(DSCModel):
@@ -307,10 +305,9 @@ class VascularModel(DSCModel):
 
         C_tissue(t) = AIF(t) ⊗ R(t)
 
-        The AIF and residue are resampled onto an 8x-finer grid by cubic
-        spline before FFT convolution to reduce discretization error, then the
-        result is downsampled to the native grid. The bolus-arrival delay is
-        applied last, as a post-hoc shift of the downsampled curve.
+        The convolution uses the Sourbron (1, 4, 1)/6 product-integration
+        (Volterra) operator shared with the sSVD/Tikhonov/CPI methods. The
+        bolus-arrival delay is applied last, as a post-hoc shift of the curve.
 
         Parameters
         ----------
@@ -338,32 +335,13 @@ class VascularModel(DSCModel):
         cbf, alpha, beta, delay = params
         dt = float(time_points[1] - time_points[0])
 
-        # Forward-model convolution C(t) = ∫ AIF(τ) R(t−τ) dτ. The AIF and the
-        # (delay-agnostic) residue are resampled onto an 8x-finer grid by cubic
-        # spline before convolution to cut Riemann-sum discretization error at
-        # clinical TR, then the result is downsampled to the native grid. The
-        # delay shift below is applied AFTER downsampling, so it stays
-        # differentiable for the MAP/VB Jacobian and the (delay-independent)
-        # resampling does not perturb that gradient.
-        up = AIF_UPSAMPLE_FACTOR
-        if n_times >= 4:
-            n_fine = (n_times - 1) * up + 1
-            t_fine = np.linspace(
-                float(time_points[0]), float(time_points[-1]), n_fine
-            )
-            aif_fine = CubicSpline(
-                np.asarray(time_points, dtype=np.float64),
-                np.asarray(aif, dtype=np.float64),
-            )(t_fine)
-            R_fine = self.residue_function(params, t_fine)
-            conv_fine = fftconvolve(
-                aif_fine, R_fine, mode='full'
-            )[:n_fine] * (dt / up)
-            conv = conv_fine[::up]
-        else:
-            # Too few samples for a cubic spline: convolve at native dt.
-            R = self.residue_function(params, time_points)
-            conv = fftconvolve(aif, R, mode='full')[:n_times] * dt
+        # Forward-model convolution C(t) = ∫ AIF(τ) R(t−τ) dτ via the Sourbron
+        # (1, 4, 1)/6 product-integration (Volterra) operator shared with the
+        # sSVD/Tikhonov/CPI methods, so every direct forward uses one quadrature.
+        # The delay shift below is applied AFTER, so it stays differentiable for
+        # the MAP/VB Jacobian and the delay-agnostic residue is unaffected.
+        R = self.residue_function(params, time_points)
+        conv = build_volterra_matrix(aif, dt) @ R
 
         # Apply delay as post-hoc shift with linear interpolation
         # (smooth, differentiable w.r.t. delay for MAP/VB Jacobian)

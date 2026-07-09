@@ -1385,9 +1385,8 @@ def _compute_ees_concentration(
 
     """
     # Exact convolution of the piecewise-linear reference with the washout
-    # exponential (Sourbron & Buckley 2011 expconv); rate·dt is dimensionless
-    # so kep [s⁻¹] and tr [s] are consistent. Causal (C_e(0)=0), matching the
-    # baseline-subtracted reference.
+    # exponential; rate·dt is dimensionless so kep [s⁻¹] and tr [s] are
+    # consistent. Causal (C_e(0)=0), matching the baseline-subtracted reference.
     c_e = analytic_exp_convolution(c_bar, kep, tr)
 
     return np.asarray(c_e, dtype=np.float64)

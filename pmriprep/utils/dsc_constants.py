@@ -304,13 +304,6 @@ VASCULAR_BETA_BOUNDS: Final[ParameterBounds] = ParameterBounds(0.1, 10.0)
 #: Delay parameter bounds in seconds (can be negative for early arrival)
 VASCULAR_DELAY_BOUNDS: Final[ParameterBounds] = ParameterBounds(-3.0, 10.0)
 
-#: AIF temporal upsampling factor for the vascular forward-model convolution.
-#: The AIF and residue are resampled onto an 8x-finer grid by cubic spline
-#: before convolution to cut Riemann-sum discretization error at clinical TR,
-#: then the result is downsampled to the native grid. Shared by the scalar
-#: (tissue_curve) and batched (batched_vascular_forward) forward models.
-AIF_UPSAMPLE_FACTOR: Final[int] = 8
-
 
 # =============================================================================
 # Bayesian Inference Defaults

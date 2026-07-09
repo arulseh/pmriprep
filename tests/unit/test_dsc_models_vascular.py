@@ -237,47 +237,51 @@ class TestVascularModel:
                 f"(footgun would add cbf*delay={cbf * delay:.3f})"
             )
 
-    def test_aif_upsampling_improves_forward_model_accuracy(self) -> None:
-        """8x AIF upsampling brings tissue_curve closer to continuous truth.
+    @pytest.mark.parametrize(
+        "cbf,alpha,beta",
+        [(0.08, 3.0, 1.3), (0.10, 4.0, 1.5), (0.04, 2.5, 1.9)],
+    )
+    def test_forward_matches_fine_truth(
+        self, cbf: float, alpha: float, beta: float
+    ) -> None:
+        """The production Volterra forward matches the dt/100 truth in area AND shape.
 
-        Can-fail in the upsampling's favour: ground-truth tissue is the
-        convolution on a 16x-finer grid (continuous-time proxy) sampled to
-        native dt. Production tissue_curve (8x internal upsampling) must be
-        closer to that truth than a plain native-dt convolution. If
-        tissue_curve did NOT upsample, c_model == c_native and this fails.
+        Locks in the accuracy of the shared Sourbron (1, 4, 1)/6 operator on the
+        vascular forward. On a realistically-sampled arterial bolus (FWHM ~9 s,
+        ~6 samples at TR 1.5 s) the measured AUC error is 0.4-0.5% and the max
+        pointwise error is 0.7-1.3% of peak. AUC is checked at 1.0% (between the
+        Volterra floor and the ~1.5-2.2% over-read of the rectangular
+        product-integration it replaced, so it is can-fail against that
+        regression without being brittle); the shape is checked at 2% so a
+        regression that preserves total area but distorts the curve (peak-timing
+        or kernel error) also fails. The ratios are scale-free in CBF, so the
+        shape parameters set the error.
         """
-        from scipy.signal import fftconvolve
-
         model = VascularModel()
-        dt = 1.5          # clinical TR
-        n = 60
+        dt, n = 1.5, 60
         t = np.arange(n) * dt
-        params = [0.08, 3.0, 2.0, 0.0]   # delay=0 isolates the convolution
+        params = [cbf, alpha, beta, 0.0]   # delay=0 isolates the convolution
 
         def aif_fn(tt: np.ndarray) -> np.ndarray:
-            x = np.maximum(tt - 9.0, 0.0)   # sharp bolus arriving at 9 s
-            a = (x ** 3) * np.exp(-x / 1.2)
+            x = np.maximum(tt - 10.0, 0.0)   # arterial bolus, realistic width
+            a = (x ** 3) * np.exp(-x / 2.5)
             return np.asarray(a / (a.max() + 1e-12), dtype=np.float64)
 
-        # Continuous-time truth at 16x (finer than the model's 8x).
-        factor = 16
-        n_fine = (n - 1) * factor + 1
-        t_fine = np.linspace(0.0, float(t[-1]), n_fine)
-        truth_fine = fftconvolve(
-            aif_fn(t_fine), model.residue_function(params, t_fine), mode="full"
-        )[:n_fine] * (dt / factor)
-        truth = truth_fine[::factor]     # native grid, n points
+        aif = aif_fn(t)
+        # dt/100 rectangular convolution converges to the continuous integral
+        # (~0.02% residual), so it is a valid continuous-truth proxy.
+        oversample = 100
+        t_fine = np.arange(n * oversample) * (dt / oversample)
+        truth = np.convolve(
+            aif_fn(t_fine), model.residue_function(params, t_fine)
+        )[: n * oversample][::oversample] * (dt / oversample)
 
-        # Production (8x) vs plain native-dt convolution.
-        aif_native = aif_fn(t)
-        c_model = model.tissue_curve(params, aif_native, t)
-        c_native = fftconvolve(
-            aif_native, model.residue_function(params, t), mode="full"
-        )[:n] * dt
+        c_model = model.tissue_curve(params, aif, t)
+        auc_true = float(np.trapezoid(truth, dx=dt))
+        rel = (float(np.trapezoid(c_model, dx=dt)) - auc_true) / auc_true
+        assert abs(rel) < 0.01, f"vascular forward AUC error {rel:+.2%} exceeds 1%"
 
-        err_model = float(np.max(np.abs(c_model - truth)))
-        err_native = float(np.max(np.abs(c_native - truth)))
-        assert err_model < err_native, (
-            f"upsampled forward model not closer to truth "
-            f"(8x err={err_model:.4g} vs native err={err_native:.4g})"
-        )
+        # Shape guard: an area-preserving distortion (peak-timing/kernel error)
+        # must still fail. Measured max pointwise error is 0.7-1.3% of peak.
+        shape_err = float(np.max(np.abs(c_model - truth))) / float(truth.max())
+        assert shape_err < 0.02, f"vascular forward shape error {shape_err:.2%} exceeds 2%"

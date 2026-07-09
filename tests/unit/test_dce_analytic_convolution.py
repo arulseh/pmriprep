@@ -191,24 +191,25 @@ def _fine_gt_model(model, params: list[float], oversample: int = 100) -> np.ndar
 
 
 @pytest.mark.parametrize(
-    "ktrans,vp,tol",
-    [(0.05, 0.02, 0.05), (0.10, 0.05, 0.05), (0.02, 0.01, 0.08)],
+    "ktrans,vp",
+    [(0.05, 0.02), (0.10, 0.05), (0.02, 0.01)],
 )
-def test_patlak_recovers_from_fine_grid(ktrans: float, vp: float, tol: float) -> None:
+def test_patlak_recovers_from_fine_grid(ktrans: float, vp: float) -> None:
     """Patlak Ktrans/vp recovered from a fine-grid (dt/100) Patlak forward.
 
     Validates the trapezoidal ∫₀ᵗCp regressor against a continuous truth the
     coarse fit did not generate; prior Patlak coverage was structural /
-    inverse-crime only. Recovery is limited by the coarse-vs-fine ∫Cp floor.
+    inverse-crime only. Tolerances are pinned to the measured zero-noise
+    coarse-vs-fine ∫Cp floor (Ktrans -0.5%, vp within 3e-4), not to a wide band.
     """
     aif, t = _coarse()
     model = PatlakModel()
     gt = _fine_gt_model(model, [ktrans, vp])
     fit = model.fit(gt, aif, t).parameters
-    assert fit["Ktrans"] == pytest.approx(ktrans, rel=tol), (
+    assert fit["Ktrans"] == pytest.approx(ktrans, rel=0.02), (
         f"Patlak Ktrans {fit['Ktrans']:.4f} vs {ktrans}"
     )
-    assert fit["vp"] == pytest.approx(vp, abs=0.01), (
+    assert fit["vp"] == pytest.approx(vp, abs=0.002), (
         f"Patlak vp {fit['vp']:.4f} vs {vp}"
     )
 
@@ -233,9 +234,11 @@ def test_2cxm_recovers_from_fine_grid(
     gt = _fine_gt_model(model, [fp, ps, ve, vp])
     fit = model.fit(gt, aif, t).parameters
 
+    # Tolerances pinned to the measured zero-noise recovery (Ktrans -1.2 to
+    # -1.8% from 2CXM conditioning; ve/vp within 7e-4), not a wide band.
     ktrans_true = (ps / (fp + ps)) * fp / 100.0
-    assert fit["Ktrans"] == pytest.approx(ktrans_true, rel=0.12), (
+    assert fit["Ktrans"] == pytest.approx(ktrans_true, rel=0.04), (
         f"2CXM derived Ktrans {fit['Ktrans']:.4f} vs {ktrans_true:.4f}"
     )
-    assert fit["ve"] == pytest.approx(ve, abs=0.04), f"2CXM ve {fit['ve']:.3f} vs {ve}"
-    assert fit["vp"] == pytest.approx(vp, abs=0.02), f"2CXM vp {fit['vp']:.3f} vs {vp}"
+    assert fit["ve"] == pytest.approx(ve, abs=0.005), f"2CXM ve {fit['ve']:.3f} vs {ve}"
+    assert fit["vp"] == pytest.approx(vp, abs=0.003), f"2CXM vp {fit['vp']:.3f} vs {vp}"
