@@ -2,6 +2,7 @@
 
 import numpy as np
 import pytest
+from scipy.integrate import cumulative_trapezoid
 
 from pmriprep.utils.dsc_preload import (
     PreloadClass,
@@ -121,14 +122,16 @@ class TestComputeEESConcentration:
         c_e = _compute_ees_concentration(c_bar, kep=0.005, tr=1.5)
         assert np.allclose(c_e, 0)
 
-    def test_zero_kep_approaches_cumsum(self) -> None:
-        """When kep=0, exp(-kep*t)=1, so convolution gives cumsum."""
+    def test_zero_kep_approaches_trapezoidal_integral(self) -> None:
+        """When kep=0, exp(-kep*t)=1, so C_e = ∫₀ᵗ C̄(τ)dτ (trapezoidal)."""
         c_bar = np.ones(10)  # Step function
         tr = 1.0
 
-        # kep=0 gives exp_kernel=1 everywhere, so convolution = cumsum * tr
+        # kep=0 makes the washout kernel unity, so the exact expconv reduces
+        # to the trapezoidal cumulative integral (matching the BSW quadrature),
+        # NOT the rectangular cumsum. For a unit step, ∫₀ᵗ 1 dτ = t.
         c_e = _compute_ees_concentration(c_bar, kep=0.0, tr=tr)
-        expected = np.cumsum(c_bar) * tr
+        expected = cumulative_trapezoid(c_bar, dx=tr, initial=0.0)
 
         np.testing.assert_allclose(c_e, expected, rtol=1e-10)
 

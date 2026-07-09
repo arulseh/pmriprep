@@ -2322,10 +2322,8 @@ class ComputeDSCMaps(BaseInterface):
         # -----------------------------------------------------------
         # AUC decomposition: raw (pre-K2), corrected (post-K2), diff
         # -----------------------------------------------------------
-        # Rectangular integration (np.sum * dt) of the bolus passage.
-        # For future absolute quantification, trapezoidal (O(dt^2)) can
-        # be used instead:
-        #   auc_corr = np.trapezoid(conc_data, dx=dt, axis=-1)
+        # Trapezoidal integration (O(dt^2)) of the bolus passage, per the
+        # QIBA DSC Profile.
         #
         # raw_conc_data is pre-K2 and pre-baseline-subtraction (preloaded
         # subjects carry residual ΔR2* baseline). Subtract per-voxel
@@ -2338,8 +2336,8 @@ class ComputeDSCMaps(BaseInterface):
         # bound: half-rectifying symmetric noise biases NAWM voxels (the
         # nCBV denominator) upward, depressing tumor nCBV near the 1.75
         # progression cutoff.
-        auc_corr = np.minimum(np.sum(conc_data, axis=-1) * dt, 10000.0)
-        auc_raw = np.minimum(np.sum(raw_conc_for_auc, axis=-1) * dt, 10000.0)
+        auc_corr = np.minimum(np.trapezoid(conc_data, dx=dt, axis=-1), 10000.0)
+        auc_raw = np.minimum(np.trapezoid(raw_conc_for_auc, dx=dt, axis=-1), 10000.0)
         auc_diff = auc_raw - auc_corr
 
         # -----------------------------------------------------------
@@ -2367,8 +2365,8 @@ class ComputeDSCMaps(BaseInterface):
         ):
             measured_aif = np.loadtxt(self.inputs.measured_aif_file)
             aif_for_auc = measured_aif - float(np.mean(measured_aif[:n_bl]))
-            aif_auc = float(np.sum(aif_for_auc[bolus_slice]) * dt)
-            tissue_auc_bolus = np.sum(conc_data[..., bolus_slice], axis=-1) * dt
+            aif_auc = float(np.trapezoid(aif_for_auc[bolus_slice], dx=dt))
+            tissue_auc_bolus = np.trapezoid(conc_data[..., bolus_slice], dx=dt, axis=-1)
 
             if aif_auc < EPSILON_SIGNAL:
                 logger.warning("AIF AUC near-zero (%.6f); AUC CBV unavailable", aif_auc)

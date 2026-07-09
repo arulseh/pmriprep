@@ -19,6 +19,7 @@ from pmriprep.models.dce.batched_models import (
     batched_tofts_model,
 )
 from pmriprep.models.dce.extended_tofts import ExtendedToftsModel
+from pmriprep.models.dce.patlak import PatlakModel
 from pmriprep.models.dce.tofts import ToftsModel
 from pmriprep.models.dce.two_compartment_exchange import (
     TwoCompartmentExchangeModel,
@@ -177,3 +178,64 @@ def test_extended_tofts_recovers_with_vp() -> None:
     )[::100]
     recovered = ExtendedToftsModel().fit(gt, aif, t).parameters["Ktrans"]
     assert recovered == pytest.approx(ktrans, rel=0.04)
+
+
+def _fine_gt_model(model, params: list[float], oversample: int = 100) -> np.ndarray:
+    """Neutral fine-grid GT: evaluate the model's exact forward on a dt/100
+    piecewise-linear Parker AIF (converges to the continuous forward) and
+    downsample to coarse frames. Fitting at coarse dt then tests the model's
+    own quadrature (∫Cp for Patlak, bi-exp expconv for 2CXM) against a truth it
+    did not generate at the fit resolution."""
+    ft = np.arange(_N * oversample) * (_DT / oversample)
+    return np.asarray(model.evaluate(list(params), _parker(ft), ft))[::oversample]
+
+
+@pytest.mark.parametrize(
+    "ktrans,vp,tol",
+    [(0.05, 0.02, 0.05), (0.10, 0.05, 0.05), (0.02, 0.01, 0.08)],
+)
+def test_patlak_recovers_from_fine_grid(ktrans: float, vp: float, tol: float) -> None:
+    """Patlak Ktrans/vp recovered from a fine-grid (dt/100) Patlak forward.
+
+    Validates the trapezoidal ∫₀ᵗCp regressor against a continuous truth the
+    coarse fit did not generate; prior Patlak coverage was structural /
+    inverse-crime only. Recovery is limited by the coarse-vs-fine ∫Cp floor.
+    """
+    aif, t = _coarse()
+    model = PatlakModel()
+    gt = _fine_gt_model(model, [ktrans, vp])
+    fit = model.fit(gt, aif, t).parameters
+    assert fit["Ktrans"] == pytest.approx(ktrans, rel=tol), (
+        f"Patlak Ktrans {fit['Ktrans']:.4f} vs {ktrans}"
+    )
+    assert fit["vp"] == pytest.approx(vp, abs=0.01), (
+        f"Patlak vp {fit['vp']:.4f} vs {vp}"
+    )
+
+
+@pytest.mark.parametrize(
+    "fp,ps,ve,vp",
+    [(50.0, 4.0, 0.15, 0.03), (60.0, 12.0, 0.30, 0.04)],
+)
+def test_2cxm_recovers_from_fine_grid(
+    fp: float, ps: float, ve: float, vp: float
+) -> None:
+    """2CXM parameter recovery from a fine-grid (dt/100) bi-exponential forward.
+
+    The only end-to-end neutral 2CXM accuracy test: the IRF coefficients are
+    validated against an ODE elsewhere, and the shared expconv is validated for
+    Tofts, but the full bi-exp-IRF ⊗ AIF → fit composition was inverse-crime
+    only. Asserts on the robust quantities (derived Ktrans, ve, vp) at zero
+    noise; PS carries a wider IQR (F3) and is not pinned tightly here.
+    """
+    aif, t = _coarse()
+    model = TwoCompartmentExchangeModel()
+    gt = _fine_gt_model(model, [fp, ps, ve, vp])
+    fit = model.fit(gt, aif, t).parameters
+
+    ktrans_true = (ps / (fp + ps)) * fp / 100.0
+    assert fit["Ktrans"] == pytest.approx(ktrans_true, rel=0.12), (
+        f"2CXM derived Ktrans {fit['Ktrans']:.4f} vs {ktrans_true:.4f}"
+    )
+    assert fit["ve"] == pytest.approx(ve, abs=0.04), f"2CXM ve {fit['ve']:.3f} vs {ve}"
+    assert fit["vp"] == pytest.approx(vp, abs=0.02), f"2CXM vp {fit['vp']:.3f} vs {vp}"

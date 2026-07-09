@@ -10,7 +10,10 @@ from typing import Dict, List, NamedTuple, Optional, Sequence, Set, Tuple
 import numpy as np
 import numpy.typing as npt
 import pytest
+from scipy.integrate import cumulative_trapezoid
 from scipy.special import gammainc
+
+from pmriprep.models.dce._convolution import analytic_exp_convolution
 
 from tests.conftest import generate_parker_aif
 
@@ -392,9 +395,10 @@ def generate_leaky_dsc_tissue(
 
     T1 leakage reduces apparent ΔR2*, so the leaky curve is LOWER than
     the non-leaky curve:
-        C_leaky(t) = C_noleak(t) - K2 * cumsum(reference) * dt
+        C_leaky(t) = C_noleak(t) - K2 * ∫₀ᵗ reference(τ)dτ
 
-    The reference_curve should be C̄(t) (mean brain reference) for K2 DRO
+    matching the estimator's trapezoidal cumulative integral. The
+    reference_curve should be C̄(t) (mean brain reference) for K2 DRO
     phantoms, matching the estimator. For single-voxel tests, AIF
     may be used as reference.
 
@@ -421,7 +425,7 @@ def generate_leaky_dsc_tissue(
             f"Tissue ({len(c_tissue_noleak)}) and reference ({len(reference_curve)}) "
             f"must have same length"
         )
-    cumsum_ref = np.cumsum(reference_curve) * dt
+    cumsum_ref = cumulative_trapezoid(reference_curve, dx=dt, initial=0.0)
     c_leaky = c_tissue_noleak - k2 * cumsum_ref
     return np.asarray(c_leaky, dtype=np.float64)
 
@@ -467,12 +471,8 @@ def generate_leaky_dsc_tissue_bidirectional(
             f"Tissue ({len(c_tissue_noleak)}) and reference ({len(reference_curve)}) "
             f"must have same length"
         )
-    n_tp = len(reference_curve)
-    time = np.arange(n_tp) * dt
-    exp_kernel = np.exp(-kep * time)
-
-    # Convolve and scale by dt (rectangular integration)
-    c_e = np.convolve(reference_curve, exp_kernel, mode="full")[:n_tp] * dt
+    # Exact expconv, matching the estimator's _compute_ees_concentration
+    c_e = analytic_exp_convolution(reference_curve, kep, dt)
 
     c_leaky = c_tissue_noleak - k2 * c_e
     return np.asarray(c_leaky, dtype=np.float64)

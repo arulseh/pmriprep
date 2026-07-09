@@ -18,6 +18,7 @@ __all__ = [
 
 import numpy as np
 import numpy.typing as npt
+from scipy.integrate import cumulative_trapezoid
 
 
 def estimate_ktrans_uptake(
@@ -64,7 +65,7 @@ def estimate_ktrans_uptake(
         return 0.1
 
     idx = np.arange(start, end + 1)
-    cum_aif = np.cumsum(aif) * dt
+    cum_aif = cumulative_trapezoid(aif, dx=dt, initial=0.0)
     if float(np.max(np.abs(cum_aif[idx]))) < 1e-9:
         return 0.1
     design = np.column_stack([cum_aif[idx], aif[idx]])

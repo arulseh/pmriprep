@@ -159,3 +159,27 @@ def test_tikhonov_recovers_independent_tissue(name, cbf_true, mtt_true):
 
     cbf_err = (res.cbf - cbf_true) / cbf_true
     assert -0.15 < cbf_err < 0.10, f"{name} Tikhonov CBF error {cbf_err:.1%}"
+
+
+@pytest.mark.parametrize("name,cbf_true,mtt_true", TISSUES)
+def test_auc_cbv_recovers_independent_tissue(name, cbf_true, mtt_true):
+    """AUC-CBV (∫tissue / ∫aif, trapezoidal) recovers CBV = CBF·MTT.
+
+    Neutral accuracy anchor for the AUC-CBV path (previously untested in-repo by
+    any code-generated DRO): the tissue curve comes from the dt/20 fine-grid
+    forward, so the production trapezoidal ratio is validated against a truth it
+    did not generate. Exercises the convolution-area identity
+    ∫(AIF ⊗ R) = ∫AIF · ∫R that AUC-CBV relies on; the only error source is the
+    tissue-tail truncation at the 90 s window, which is sub-percent for MTT ≤ 6 s.
+    """
+    dt, n = 1.5, 60
+    t = np.arange(n) * dt
+    aif = _gamma_aif(t)
+    tissue = _independent_tissue(aif, cbf_true, mtt_true, dt)
+
+    cbv_true = cbf_true * mtt_true
+    cbv_est = float(np.trapezoid(tissue, dx=dt) / np.trapezoid(aif, dx=dt))
+    rel = (cbv_est - cbv_true) / cbv_true
+    assert abs(rel) < 0.02, (
+        f"{name} AUC-CBV {cbv_est:.1f} vs true {cbv_true:.1f} ({rel:+.1%})"
+    )

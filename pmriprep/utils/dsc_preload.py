@@ -11,8 +11,10 @@ from typing import Any, Final, NamedTuple, Optional
 
 import numpy as np
 import numpy.typing as npt
+from scipy.integrate import cumulative_trapezoid
 from scipy.stats import norm
 
+from pmriprep.models.dce._convolution import analytic_exp_convolution
 from pmriprep.utils.dsc_constants import (
     EPSILON_CONCENTRATION,
     EPSILON_SIGNAL,
@@ -1106,8 +1108,9 @@ def estimate_k2_per_voxel(
     # Build design matrix ONCE (same for all voxels)
     # c_bar_post: instantaneous reference (sliced from regression_start)
     c_bar_post = c_bar[regression_start:]
-    # cumsum_c_bar: integral from t=0, preserving first-pass leakage contribution
-    cumsum_c_bar = np.cumsum(c_bar) * tr
+    # cumsum_c_bar: trapezoidal integral from t=0, preserving first-pass leakage
+    # contribution (QIBA DSC Profile specifies trapezoidal AUC)
+    cumsum_c_bar = cumulative_trapezoid(c_bar, dx=tr, initial=0.0)
     # Then sliced — different time origin from c_bar_post by design
     cumsum_c_bar_post = cumsum_c_bar[regression_start:]
 
@@ -1205,9 +1208,9 @@ def apply_k2_correction(
     conc_bl = np.mean(concentration[..., :n_bl], axis=-1, keepdims=True)
     concentration = concentration - conc_bl
 
-    # Compute AUC before any early returns (needed for QC regardless)
-    cumsum_tissue = np.cumsum(concentration, axis=-1) * tr
-    auc_tissue = cumsum_tissue[..., -1].copy()
+    # Compute AUC before any early returns (needed for QC regardless).
+    # Trapezoidal integration per the QIBA DSC Profile.
+    auc_tissue = np.trapezoid(concentration, dx=tr, axis=-1)
 
     # Estimate K2 if not provided
     if k2_map is None:
@@ -1238,8 +1241,8 @@ def apply_k2_correction(
             method="bsw",
         )
 
-    # Compute cumulative integral of mean brain reference
-    cumsum_ref = np.cumsum(c_bar) * tr
+    # Compute cumulative trapezoidal integral of mean brain reference
+    cumsum_ref = cumulative_trapezoid(c_bar, dx=tr, initial=0.0)
     cumsum_ref_4d = cumsum_ref[np.newaxis, np.newaxis, np.newaxis, :]
 
     # Expand K2 map to match time dimension for broadcasting
@@ -1363,8 +1366,8 @@ def _compute_ees_concentration(
 
     where ⊗ denotes convolution and kep is the EES efflux rate constant.
 
-    When kep → 0, exp(-kep × t) → 1, and C_e(t) → cumsum(C̄) × TR
-    (approaches standard BSW cumulative integral).
+    When kep → 0, exp(-kep × t) → 1, and C_e(t) → ∫₀ᵗ C̄(τ)dτ, converging
+    on the trapezoidal BSW cumulative integral (same quadrature).
 
     Parameters
     ----------
@@ -1381,14 +1384,11 @@ def _compute_ees_concentration(
         Instantaneous EES concentration C_e(t), shape (n_timepoints,).
 
     """
-    n_tp = len(c_bar)
-    time = np.arange(n_tp) * tr
-
-    # Exponential washout kernel
-    exp_kernel = np.exp(-kep * time)
-
-    # Convolve and scale by TR (rectangular integration)
-    c_e = np.convolve(c_bar, exp_kernel, mode="full")[:n_tp] * tr
+    # Exact convolution of the piecewise-linear reference with the washout
+    # exponential (Sourbron & Buckley 2011 expconv); rate·dt is dimensionless
+    # so kep [s⁻¹] and tr [s] are consistent. Causal (C_e(0)=0), matching the
+    # baseline-subtracted reference.
+    c_e = analytic_exp_convolution(c_bar, kep, tr)
 
     return np.asarray(c_e, dtype=np.float64)
 
@@ -1554,9 +1554,9 @@ def apply_k2_correction_bidirectional(
     conc_bl = np.mean(concentration[..., :n_bl], axis=-1, keepdims=True)
     concentration = concentration - conc_bl
 
-    # Compute AUC before any early returns (needed for QC)
-    cumsum_tissue = np.cumsum(concentration, axis=-1) * tr
-    auc_tissue = cumsum_tissue[..., -1].copy()
+    # Compute AUC before any early returns (needed for QC).
+    # Trapezoidal integration per the QIBA DSC Profile.
+    auc_tissue = np.trapezoid(concentration, dx=tr, axis=-1)
 
     # Estimate K2 if not provided
     if k2_map is None:

@@ -151,8 +151,8 @@ class ToftsModel(PKModel):
 
         Computes C_t(t) = Ktrans × [Cp ⊗ exp(-kep×t)]
 
-        The convolution is implemented using the rectangular rule
-        (left Riemann sum via np.convolve).
+        The convolution is evaluated exactly for a piecewise-linear Cp
+        (analytic expconv).
 
         Parameters
         ----------
@@ -182,8 +182,7 @@ class ToftsModel(PKModel):
         dt = float(time_points[1] - time_points[0])
 
         # Exact analytic convolution C_t(t) = Ktrans * [Cp (*) exp(-kep*t)]
-        # for a piecewise-linear AIF; replaces the left-Riemann np.convolve
-        # quadrature, which under-reads fast-decaying (high-kep) kernels.
+        # for a piecewise-linear AIF.
         c_tissue = ktrans * analytic_exp_convolution(aif, kep, dt)
 
         # Sanitize: replace non-finite values with 0

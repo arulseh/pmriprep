@@ -10,6 +10,7 @@ Exercises:
 
 import numpy as np
 import pytest
+from scipy.integrate import cumulative_trapezoid
 
 from pmriprep.utils.dsc_preload import (
     K2CorrectionResult,
@@ -22,8 +23,11 @@ from pmriprep.utils.dsc_preload import (
 from pmriprep.utils.dsc_constants import KEP_DSC_DEFAULT
 
 from .conftest import (
+    fine_grid_forward,
+    generate_dsc_aif_dro,
     generate_k2_dro_phantom,
     generate_leaky_dsc_tissue_bidirectional,
+    make_exponential_residue,
 )
 
 
@@ -426,4 +430,88 @@ class TestBidirectionalK2Correction:
             f"Bidirectional correction should not make things much worse: "
             f"RMSE_corrected={rmse_corrected:.4f} vs "
             f"RMSE_uncorrected={rmse_uncorrected:.4f}"
+        )
+
+
+class TestK2NeutralQuadrature:
+    """Neutral (non-inverse-crime) K2 accuracy.
+
+    The round-trip tests above generate the leakage with the same quadrature
+    the estimator uses (cumulative_trapezoid == estimator), so they prove
+    parity but are structurally blind to a quadrature bias. Here the leakage
+    integral K2 * int_0^t C_bar is built on a dt/20 fine grid and the tissue
+    curves come from the fine-grid forward, so the production estimator's
+    coarse trapezoidal cumulative regressor is tested against a truth it did
+    not generate. Recovery is dominated by mean-reference contamination from
+    the (few) enhancing voxels plus the sub-percent coarse-vs-fine quadrature
+    floor, so the neutral tolerance is tighter than the round-trip's rel=0.5.
+    """
+
+    @staticmethod
+    def _fine_cumulative(
+        curve: np.ndarray, dt: float, oversample: int = 20
+    ) -> np.ndarray:
+        """int_0^t curve on a dt/oversample grid, downsampled to frames.
+
+        Independent of the estimator's coarse cumulative_trapezoid.
+        """
+        n = len(curve)
+        t_frame = np.arange(n) * dt
+        t_fine = np.arange(n * oversample) * (dt / oversample)
+        fine = np.interp(t_fine, t_frame, curve)
+        cum = cumulative_trapezoid(fine, dx=dt / oversample, initial=0.0)
+        return np.asarray(cum[::oversample], dtype=np.float64)
+
+    @pytest.mark.parametrize("k2_true", [0.02, 0.05, 0.1])
+    def test_k2_recovers_from_fine_grid_leakage(self, k2_true: float) -> None:
+        dt = 1.5
+        n_bl, n_post = 8, 52
+        n = n_bl + n_post
+        aif, _ = generate_dsc_aif_dro(
+            n_timepoints=n, dt_sec=dt, baseline_frames=n_bl, peak_delta_r2=40.0
+        )
+        rng = np.random.default_rng(0)
+
+        # Non-enhancing brain: varied CBF/MTT, tissue via the neutral fine-grid
+        # forward (never touches the estimator's cumulative quadrature).
+        n_brain, n_enh = 200, 8
+        brain = np.empty((n_brain, n), dtype=np.float64)
+        for i in range(n_brain):
+            residue = make_exponential_residue(
+                float(rng.uniform(20.0, 60.0)),
+                float(rng.uniform(3.0, 6.0)),
+                n,
+                dt,
+            )
+            brain[i] = fine_grid_forward(aif, residue, dt)
+        c_bar = brain.mean(axis=0)
+
+        # Enhancing (tumor) leaky curves: clean forward minus a FINE-grid
+        # leakage integral of the mean reference.
+        tumor_clean = fine_grid_forward(
+            aif, make_exponential_residue(100.0, 6.0, n, dt), dt
+        )
+        tumor_leaky = tumor_clean - k2_true * self._fine_cumulative(c_bar, dt)
+
+        # Assemble a single-slice 4D phantom + masks.
+        nx = 16
+        ny = (n_brain + n_enh + nx - 1) // nx + 1
+        conc = np.zeros((nx, ny, 1, n), dtype=np.float64)
+        brain_mask = np.zeros((nx, ny, 1), dtype=bool)
+        enh_mask = np.zeros((nx, ny, 1), dtype=bool)
+        for idx in range(n_brain):
+            conc[idx % nx, idx // nx, 0, :] = brain[idx]
+            brain_mask[idx % nx, idx // nx, 0] = True
+        for j in range(n_enh):
+            idx = n_brain + j
+            conc[idx % nx, idx // nx, 0, :] = tumor_leaky
+            brain_mask[idx % nx, idx // nx, 0] = True
+            enh_mask[idx % nx, idx // nx, 0] = True
+
+        k2_map = estimate_k2_per_voxel(
+            concentration=conc, brain_mask=brain_mask, tr=dt
+        )
+        k2_enh = float(np.median(k2_map[enh_mask]))
+        assert k2_enh == pytest.approx(k2_true, rel=0.20), (
+            f"neutral K2={k2_enh:.4f} outside 20% of true {k2_true}"
         )
