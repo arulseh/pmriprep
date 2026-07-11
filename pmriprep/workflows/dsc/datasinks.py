@@ -237,6 +237,7 @@ def _build_dsc_preproc_meta(  # type: ignore[no-untyped-def]
         enrich_dsc_preproc_sidecar,
         enrich_recommendation_keys,
         filter_pipeline_qc,
+        sanitize_for_json,
     )
 
     out = dict(base)
@@ -266,7 +267,7 @@ def _build_dsc_preproc_meta(  # type: ignore[no-untyped-def]
         out["PipelineQC"] = filter_pipeline_qc(qc_metrics)
     if isinstance(config_dict, dict):
         out["PipelineConfiguration"] = build_provenance_block(config_dict)
-    return out
+    return sanitize_for_json(out)
 
 
 def _write_dsc_resume_checkpoint(  # type: ignore[no-untyped-def]
@@ -367,7 +368,6 @@ def _copy_perf_map(  # type: ignore[no-untyped-def]
     ``suffix=""`` when ``desc`` already encodes everything and only the
     BIDS suffix is needed.
     """
-    import json as _json
     import logging
     import shutil
     from pathlib import Path
@@ -402,7 +402,9 @@ def _copy_perf_map(  # type: ignore[no-untyped-def]
     json_out = out_root / f"{stem}.json"
 
     shutil.copy2(in_file, nii_out)
-    json_out.write_text(_json.dumps(meta_dict, indent=2, default=str))
+    from pmriprep.utils.sidecar_builders import dump_sidecar_json
+
+    json_out.write_text(dump_sidecar_json(meta_dict))
     return str(nii_out)
 
 

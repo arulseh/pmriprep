@@ -964,6 +964,20 @@ QC_DCE_BASELINE_TSNR_MIN: Final[float] = 3.0
 #: Below tSNR ~8, Ktrans wCV is expected to exceed the QIBA 20% target (QIBA DCE v2.0)
 QC_DCE_BASELINE_TSNR_WARN: Final[float] = 8.0
 
+#: Per-voxel baseline-SNR floor below which the Rician baseline-floor bias
+#: 1/(2*SNR^2) on the mean-baseline S0 exceeds ~5-6% (SNR 3 -> ~5.6%), which
+#: deflates the enhancement ratio and under-reads Ktrans. Only meaningful when
+#: several post-baseline time points are available.
+QC_DCE_BASELINE_SNR_MIN: Final[float] = 3.0
+
+#: Fraction of brain voxels below QC_DCE_BASELINE_SNR_MIN that triggers a
+#: report-only REVIEW note (never EXCLUDE); processing is unaffected. A good
+#: acquisition already carries several percent sub-floor voxels (low-signal
+#: background and partial-volume voxels near the brain-mask edge), so the
+#: threshold sits above that band. Provisional heuristic pending per-cohort
+#: calibration (~90-95th percentile of the observed whole-brain fraction).
+QC_DCE_BASELINE_SNR_LOW_FRACTION_WARN: Final[float] = 0.15
+
 #: B1+ mean acceptable range for QC gating
 #: Values outside this range trigger REVIEW (not EXCLUDE — B1 bias is correctable)
 #: Uses 1.5T extreme thresholds as conservative bound across field strengths

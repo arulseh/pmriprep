@@ -1413,16 +1413,20 @@ def _generate_dsc_fit_qc(
     with open(qc_fit_data_file) as f:
         fit_data = json.load(f)
 
-    tissue_conc = np.array(fit_data["tissue_concentration"])
-    model_pred = np.array(fit_data["model_prediction"])
-    aif_curve = np.array(fit_data["aif"])
-    time_points = np.array(fit_data["time_points"])
+    # dtype=float coerces JSON null (a sanitized non-finite element) back to nan
+    # so the curves stay float arrays and plot as gaps rather than object arrays.
+    tissue_conc = np.array(fit_data["tissue_concentration"], dtype=float)
+    model_pred = np.array(fit_data["model_prediction"], dtype=float)
+    aif_curve = np.array(fit_data["aif"], dtype=float)
+    time_points = np.array(fit_data["time_points"], dtype=float)
     voxel = tuple(fit_data["voxel"])
-    voxel_cbf = fit_data["voxel_cbf"]
+    voxel_cbf = fit_data.get("voxel_cbf", float("nan"))
     r_squared = fit_data.get("r_squared", 0.0)
     method = fit_data.get("method", "")
     raw_signal_data = fit_data.get("raw_signal")
-    raw_signal = np.array(raw_signal_data) if raw_signal_data is not None else None
+    raw_signal = (
+        np.array(raw_signal_data, dtype=float) if raw_signal_data is not None else None
+    )
 
     # Load CBF map for spatial context panel
     cbf_img = nib.load(cbf_file)

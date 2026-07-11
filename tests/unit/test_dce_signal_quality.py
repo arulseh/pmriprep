@@ -30,6 +30,16 @@ class TestDCESignalQualityConstants:
         assert QC_DCE_BASELINE_TSNR_MIN == 3.0
         assert QC_DCE_BASELINE_TSNR_WARN == 8.0
 
+    def test_baseline_snr_thresholds(self) -> None:
+        """Baseline-SNR floor and low-fraction WARN thresholds are set."""
+        from pmriprep.utils.dce_constants import (
+            QC_DCE_BASELINE_SNR_LOW_FRACTION_WARN,
+            QC_DCE_BASELINE_SNR_MIN,
+        )
+
+        assert QC_DCE_BASELINE_SNR_MIN == 3.0
+        assert QC_DCE_BASELINE_SNR_LOW_FRACTION_WARN == 0.15
+
     def test_b1_bias_thresholds(self) -> None:
         """B1+ bias thresholds match 1.5T extreme values."""
         assert QC_B1_MEAN_LOW == 0.7
@@ -316,3 +326,192 @@ class TestB1BiasGating:
 
         assert "recommendation" in result
         assert result["recommendation"]["action"] == QCAction.INCLUDE
+
+
+class TestBaselineSNRLowFractionGating:
+    """Report-only baseline-SNR low-fraction caution (never gates processing)."""
+
+    @staticmethod
+    def _build_qc_metrics(low_fraction: float | None) -> dict:
+        """Build minimal QC metrics dict for testing."""
+        preproc: dict = {}
+        if low_fraction is not None:
+            preproc["baseline_snr_low_fraction"] = low_fraction
+        return {
+            "preprocessing": preproc,
+            "aif_detection": {},
+            "pk_modeling": {},
+        }
+
+    def test_high_fraction_review(self) -> None:
+        """Fraction above WARN triggers a REVIEW (never EXCLUDE)."""
+        from pmriprep.utils.qc_standards import recommend_dce_qc
+
+        qc = self._build_qc_metrics(low_fraction=0.30)
+        result = recommend_dce_qc(qc)
+
+        rec = result["recommendation"]
+        assert rec["action"] == QCAction.REVIEW
+        assert "rician" in rec["reason"].lower() or "baseline snr" in rec["reason"].lower()
+        assert "30%" in rec["reason"]
+
+    def test_low_fraction_no_gating(self) -> None:
+        """Fraction below WARN does not flag."""
+        from pmriprep.utils.qc_standards import recommend_dce_qc
+
+        qc = self._build_qc_metrics(low_fraction=0.0)
+        result = recommend_dce_qc(qc)
+
+        assert result["recommendation"]["action"] == QCAction.INCLUDE
+
+    def test_boundary_at_warn_is_review(self) -> None:
+        """Exactly at the WARN fraction triggers REVIEW (box color and note aligned)."""
+        from pmriprep.utils.dce_constants import (
+            QC_DCE_BASELINE_SNR_LOW_FRACTION_WARN,
+        )
+        from pmriprep.utils.qc_standards import recommend_dce_qc
+
+        qc = self._build_qc_metrics(low_fraction=QC_DCE_BASELINE_SNR_LOW_FRACTION_WARN)
+        result = recommend_dce_qc(qc)
+
+        assert result["recommendation"]["action"] == QCAction.REVIEW
+
+    def test_nan_fraction_no_spurious_warn(self) -> None:
+        """NaN fraction (metric unavailable) must not raise or flag."""
+        from pmriprep.utils.qc_standards import recommend_dce_qc
+
+        qc = self._build_qc_metrics(low_fraction=float("nan"))
+        result = recommend_dce_qc(qc)
+
+        assert result["recommendation"]["action"] == QCAction.INCLUDE
+
+    def test_absent_fraction_no_crash(self) -> None:
+        """Missing key does not raise."""
+        from pmriprep.utils.qc_standards import recommend_dce_qc
+
+        qc = self._build_qc_metrics(low_fraction=None)
+        result = recommend_dce_qc(qc)
+
+        assert result["recommendation"]["action"] == QCAction.INCLUDE
+
+    def test_never_excludes(self) -> None:
+        """Even a fully-low-SNR brain is REVIEW, never EXCLUDE, from this axis."""
+        from pmriprep.utils.qc_standards import recommend_dce_qc
+
+        qc = self._build_qc_metrics(low_fraction=1.0)
+        result = recommend_dce_qc(qc)
+
+        assert result["recommendation"]["action"] == QCAction.REVIEW
+
+
+class TestBaselineSNRComputation:
+    """The robust baseline-SNR low-fraction computed in the preprocessing plot."""
+
+    @staticmethod
+    def _signal(shape_xyz, n_low, n_high, n_const, n_t=40):
+        """Build a 4D signal with planted low/high-SNR and constant voxels.
+
+        Thermal noise is seeded Gaussian, so the successive-difference MAD
+        recovers the per-frame sigma. Low-SNR voxels sit far below the SNR-3
+        floor, high-SNR voxels far above; constant voxels have sigma == 0 and
+        must drop out of the fraction denominator.
+        """
+        import numpy as np
+
+        rng = np.random.default_rng(0)
+        nx, ny, nz = shape_xyz
+        n_vox = nx * ny * nz
+        assert n_low + n_high + n_const <= n_vox
+        flat = np.zeros((n_vox, n_t), dtype=np.float64)
+        idx = 0
+        for _ in range(n_low):
+            flat[idx] = 5.0 + rng.normal(0.0, 20.0, n_t)   # SNR ~0.25 -> low
+            idx += 1
+        for _ in range(n_high):
+            flat[idx] = 2000.0 + rng.normal(0.0, 10.0, n_t)  # SNR ~200 -> not low
+            idx += 1
+        for _ in range(n_const):
+            flat[idx] = 500.0  # sigma == 0 -> excluded
+            idx += 1
+        return flat.reshape(nx, ny, nz, n_t)
+
+    def test_planted_fraction(self, tmp_path) -> None:
+        """Fraction matches the planted low-SNR count over finite-sigma voxels."""
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import numpy as np
+
+        from pmriprep.utils.dce_pk_qc_plots import generate_preprocessing_qc_plot
+
+        sig = self._signal((4, 4, 2), n_low=8, n_high=24, n_const=0)
+        mask = np.ones((4, 4, 2), dtype=bool)
+        _, stats = generate_preprocessing_qc_plot(
+            sig, mask, baseline_frames=5, bolus_arrival_frame=8,
+            volume_tr_s=4.0, output_path=str(tmp_path / "qc.png"),
+        )
+        # 8 low of 32 finite-sigma voxels = 0.25
+        assert stats["baseline_snr_low_fraction"] == pytest.approx(0.25, abs=1e-3)
+
+    def test_sigma_zero_voxels_excluded(self, tmp_path) -> None:
+        """Constant (sigma==0) voxels leave the denominator, not counted as low."""
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import numpy as np
+
+        from pmriprep.utils.dce_pk_qc_plots import generate_preprocessing_qc_plot
+
+        # 8 low + 24 high finite-sigma, plus 32 constant voxels that must be excluded.
+        sig = self._signal((4, 4, 4), n_low=8, n_high=24, n_const=32)
+        mask = np.ones((4, 4, 4), dtype=bool)
+        _, stats = generate_preprocessing_qc_plot(
+            sig, mask, baseline_frames=5, bolus_arrival_frame=8,
+            volume_tr_s=4.0, output_path=str(tmp_path / "qc.png"),
+        )
+        # Denominator excludes the 32 constant voxels: 8 / 32 = 0.25 (not 8/64).
+        assert stats["baseline_snr_low_fraction"] == pytest.approx(0.25, abs=1e-3)
+
+    def test_too_few_volumes_is_nan(self, tmp_path) -> None:
+        """Fewer than 3 volumes yields NaN, never None."""
+        import math
+
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import numpy as np
+
+        from pmriprep.utils.dce_pk_qc_plots import generate_preprocessing_qc_plot
+
+        sig = np.ones((4, 4, 2, 2), dtype=np.float64) * 100.0
+        mask = np.ones((4, 4, 2), dtype=bool)
+        _, stats = generate_preprocessing_qc_plot(
+            sig, mask, baseline_frames=1, bolus_arrival_frame=1,
+            volume_tr_s=4.0, output_path=str(tmp_path / "qc.png"),
+        )
+        frac = stats["baseline_snr_low_fraction"]
+        assert isinstance(frac, float)
+        assert math.isnan(frac)
+
+    def test_all_sigma_zero_is_nan(self, tmp_path) -> None:
+        """Enough volumes but every voxel constant (0/0) yields NaN, never 0.0."""
+        import math
+
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import numpy as np
+
+        from pmriprep.utils.dce_pk_qc_plots import generate_preprocessing_qc_plot
+
+        # n_volumes >= 3 so the guard passes, but all voxels constant -> sigma==0
+        # everywhere -> n_valid == 0 -> the 0/0 branch must return NaN (not 0.0).
+        sig = self._signal((4, 4, 2), n_low=0, n_high=0, n_const=16)
+        mask = np.ones((4, 4, 2), dtype=bool)
+        _, stats = generate_preprocessing_qc_plot(
+            sig, mask, baseline_frames=5, bolus_arrival_frame=8,
+            volume_tr_s=4.0, output_path=str(tmp_path / "qc.png"),
+        )
+        frac = stats["baseline_snr_low_fraction"]
+        assert isinstance(frac, float)
+        assert math.isnan(frac)

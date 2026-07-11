@@ -181,10 +181,10 @@ class AIFQCPlot(BaseInterface):
             aif_metrics["gamma_fit"] = True
             r_sq = qc.get("gamma_fit_r_squared")
             if r_sq is not None:
-                aif_metrics["gamma_r_squared"] = round(r_sq, 3)
+                aif_metrics["gamma_r_squared"] = round(float(r_sq), 3)
             auc_ratio = qc.get("gamma_fit_auc_ratio")
             if auc_ratio is not None:
-                aif_metrics["gamma_auc_ratio"] = round(auc_ratio, 3)
+                aif_metrics["gamma_auc_ratio"] = round(float(auc_ratio), 3)
 
         # Generate glass brain candidates plot if transforms are available
         aif_candidates_path: str | None = None

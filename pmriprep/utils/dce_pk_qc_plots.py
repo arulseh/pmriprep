@@ -281,12 +281,48 @@ def generate_preprocessing_qc_plot(
     else:
         # Cannot compute tSNR from single frame
         mean_baseline_tsnr = float("nan")
+
+    # Baseline SNR (robust): fraction of brain voxels whose baseline signal-to-
+    # noise falls below the Rician-bias floor. Below that floor the mean-baseline
+    # S0 is inflated by rectified noise, deflating the enhancement ratio and
+    # under-reading Ktrans. sigma is a robust successive-difference MAD over the
+    # whole time course (the thermal noise is time-invariant, so more samples
+    # give a less biased sigma than a MAD over the few pre-bolus frames). Read
+    # from the raw magnitude signal; report-only, never gates processing.
+    from pmriprep.utils.baseline_detection import robust_noise_sigma
+    from pmriprep.utils.dce_constants import (
+        QC_DCE_BASELINE_SNR_LOW_FRACTION_WARN,
+        QC_DCE_BASELINE_SNR_MIN,
+    )
+    baseline_snr_low_fraction = float("nan")
+    if n_volumes >= 3 and np.any(mask_bool):
+        brain_ts = dce_signal_4d[mask_bool]  # (n_brain, T), restrict work to brain
+        sigma_mad = robust_noise_sigma(brain_ts, axis=-1)  # (n_brain,)
+        baseline_mean_sig = np.mean(brain_ts[:, :n_baseline], axis=-1)
+        valid = sigma_mad > 1e-6
+        n_valid = int(valid.sum())
+        if n_valid > 0:
+            with np.errstate(divide="ignore", invalid="ignore"):
+                snr = np.where(valid, baseline_mean_sig / sigma_mad, np.inf)
+            n_low = int(np.count_nonzero(valid & (snr < QC_DCE_BASELINE_SNR_MIN)))
+            baseline_snr_low_fraction = round(n_low / n_valid, 3)
+
     tsnr_slice = get_radiological_slice(tsnr, axis=2)
     tsnr_vmax = float(np.nanpercentile(tsnr[mask_bool], 95)) if np.any(mask_bool) else 50.0
     im = ax.imshow(tsnr_slice, cmap="hot", vmin=0, vmax=tsnr_vmax, aspect="equal")
     ax.set_title("tSNR Map", fontsize=10)
     ax.axis("off")
     fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="tSNR")
+    if (
+        baseline_snr_low_fraction == baseline_snr_low_fraction  # not NaN
+        and baseline_snr_low_fraction >= QC_DCE_BASELINE_SNR_LOW_FRACTION_WARN
+    ):
+        ax.text(
+            0.02, 0.02,
+            f"Baseline SNR<{QC_DCE_BASELINE_SNR_MIN:g}: {baseline_snr_low_fraction:.0%} of brain",
+            transform=ax.transAxes, fontsize=7, va="bottom",
+            bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8),
+        )
 
     # --- (1, 3) CV Map ---
     ax = fig.add_subplot(gs[1, 3])
@@ -318,6 +354,7 @@ def generate_preprocessing_qc_plot(
         "peak_enh_pct": round(peak_enh_pct, 1),
         "mean_tsnr": round(mean_tsnr, 1),
         "baseline_tsnr": round(mean_baseline_tsnr, 1),
+        "baseline_snr_low_fraction": baseline_snr_low_fraction,
         "mean_cnr": cnr_dce,
         "n_brain_voxels": int(mask_bool.sum()),
         "voxel_size_mm": (

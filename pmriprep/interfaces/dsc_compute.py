@@ -1715,7 +1715,6 @@ class ComputeDSCMaps(BaseInterface):
         signal_data : npt.NDArray[Any] or None, optional
             4D raw signal data (optional, for QC plot).
         """
-        import json
         import nibabel as nib  # type: ignore[import-untyped]
         from scipy.ndimage import binary_erosion  # type: ignore[import-untyped]
         from pmriprep.utils.dsc_qc_plots import _select_dsc_qc_voxel
@@ -1845,8 +1844,9 @@ class ComputeDSCMaps(BaseInterface):
                 "raw_signal": raw_signal,
             }
 
+            from pmriprep.utils.sidecar_builders import dump_sidecar_json
             with open(qc_fit_path, "w") as f:
-                json.dump(qc_fit_dict, f, indent=2)
+                f.write(dump_sidecar_json(qc_fit_dict))
 
             self._results["out_qc_fit_data"] = qc_fit_path
 
@@ -1893,7 +1893,6 @@ class ComputeDSCMaps(BaseInterface):
         signal_data : npt.NDArray[Any] or None, optional
             4D raw signal data (optional, for QC plot).
         """
-        import json
         import nibabel as nib  # type: ignore[import-untyped]
         from scipy.ndimage import binary_erosion  # type: ignore[import-untyped]
         from pmriprep.utils.dsc_qc_plots import _select_dsc_qc_voxel
@@ -1992,8 +1991,9 @@ class ComputeDSCMaps(BaseInterface):
                 "raw_signal": raw_signal,
             }
 
+            from pmriprep.utils.sidecar_builders import dump_sidecar_json
             with open(qc_fit_path, "w") as f:
-                json.dump(qc_fit_dict, f, indent=2)
+                f.write(dump_sidecar_json(qc_fit_dict))
 
             self._results["out_qc_fit_data"] = qc_fit_path
 

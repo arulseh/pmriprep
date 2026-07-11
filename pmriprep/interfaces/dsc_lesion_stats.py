@@ -10,7 +10,6 @@ Supports:
 - Clinical interpretation thresholds
 """
 
-import json
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
@@ -293,8 +292,9 @@ class DSCLesionStats(BaseInterface):
         # JSON output
         desc = "roi-stats" if self.inputs.force_binary else "lesion-stats"
         json_path = output_dir / f"{prefix}_{desc}.json"
+        from pmriprep.utils.sidecar_builders import dump_sidecar_json
         with open(json_path, "w") as f:
-            json.dump(result.to_dict(), f, indent=2, default=str)
+            f.write(dump_sidecar_json(result.to_dict()))
 
         # Set outputs
         self._results["stats_json"] = str(json_path)

@@ -107,6 +107,13 @@ class TestClassifyMetricInverse:
         """NaN values return 'na'."""
         assert _classify_metric_inverse(float("nan"), 5, 10) == "na"
 
+    def test_warn_capped_never_poor(self) -> None:
+        """poor=inf warn-caps the class (baseline-SNR usage): never returns 'poor'."""
+        assert _classify_metric_inverse(0.05, 0.10, float("inf")) == "pass"
+        assert _classify_metric_inverse(0.50, 0.10, float("inf")) == "warn"
+        assert _classify_metric_inverse(1.00, 0.10, float("inf")) == "warn"
+        assert _classify_metric_inverse(float("nan"), 0.10, float("inf")) == "na"
+
 
 # ---------------------------------------------------------------------------
 # BIDS run-entity handling in report sidecar discovery

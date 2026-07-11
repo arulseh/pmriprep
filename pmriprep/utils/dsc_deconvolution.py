@@ -1477,11 +1477,12 @@ def _estimate_noise_mad(curve: npt.NDArray[np.floating]) -> float:
     float
         Estimated per-curve noise standard deviation.
     """
-    diffs = np.diff(np.asarray(curve, dtype=np.float64))
-    if diffs.size == 0:
+    from pmriprep.utils.baseline_detection import robust_noise_sigma
+
+    curve = np.asarray(curve, dtype=np.float64)
+    if curve.size < 2:
         return 0.0
-    mad = float(np.median(np.abs(diffs - np.median(diffs))))
-    return float(1.4826 * mad / np.sqrt(2.0))
+    return float(robust_noise_sigma(curve))
 
 
 def _select_lambda_morozov(

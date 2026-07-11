@@ -15,7 +15,6 @@ DataSink model:
 """
 from __future__ import annotations
 
-import json
 import shutil
 from pathlib import Path
 from typing import Any, Optional
@@ -180,7 +179,10 @@ def _write_aif_timeseries_sidecar(
     if not aif_qc:
         return
 
-    from pmriprep.utils.sidecar_builders import build_aif_timeseries_sidecar
+    from pmriprep.utils.sidecar_builders import (
+        build_aif_timeseries_sidecar,
+        dump_sidecar_json,
+    )
 
     sources = [source_path] if source_path else []
     sidecar = build_aif_timeseries_sidecar(
@@ -192,7 +194,7 @@ def _write_aif_timeseries_sidecar(
         aif_qc=aif_qc,
     )
     json_path = aif_txt.with_suffix(".json")
-    json_path.write_text(json.dumps(sidecar, indent=2, default=str))
+    json_path.write_text(dump_sidecar_json(sidecar))
 
 
 # ---------------------------------------------------------------------------

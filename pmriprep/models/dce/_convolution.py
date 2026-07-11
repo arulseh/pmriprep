@@ -1,10 +1,10 @@
 """Exact analytic convolution of a piecewise-linear AIF with an exponential.
 
-Implements the standard exact-convolution (``expconv``) used by reference DCE
-software: the integral ``I(t) = integral_0^t Cp(tau) exp(-rate (t-tau)) dtau``
-for a piecewise-linear Cp, evaluated exactly on the sample grid. This replaces
-the left-Riemann ``np.convolve`` quadrature, which under-reads fast-decaying
-(high-rate) kernels and biases high-kep tissue concentration low.
+Implements the exact-convolution (``expconv``) used by reference DCE software:
+the integral ``I(t) = integral_0^t Cp(tau) exp(-rate (t-tau)) dtau`` for a
+piecewise-linear Cp, evaluated exactly on the sample grid. Being exact, it
+introduces no quadrature bias for fast-decaying (high-rate) kernels and so does
+not under-read the concentration of high-kep tissue.
 
 The recursion increment over each segment [t_i, t_{i+1}] is
 ``J_i = Cp_i * dt * g0(x) + (Cp_{i+1}-Cp_i) * dt * g1(x)`` with ``x = rate*dt``,

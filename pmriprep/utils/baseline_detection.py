@@ -30,6 +30,37 @@ from pmriprep.utils.dsc_constants import EPSILON_CONCENTRATION
 
 logger = logging.getLogger(__name__)
 
+
+def robust_noise_sigma(
+    values: npt.NDArray[np.floating],
+    axis: int = -1,
+) -> npt.NDArray[np.floating]:
+    """Robust noise SD from the MAD of successive differences along ``axis``.
+
+    Scales the MAD of first differences by 1.4826 (MAD to Gaussian sigma) and
+    1/sqrt(2) (successive differencing doubles the variance). The median is
+    insensitive to a sparse signal excursion (e.g. a bolus), so it reads the
+    effective noise level. Assumes the excursion is sparse relative to the series
+    length; a sustained deterministic slope leaks into the differences and
+    inflates sigma. Callers must ensure at least two samples along ``axis``.
+
+    Parameters
+    ----------
+    values : np.ndarray
+        Input array; noise is estimated along ``axis``.
+    axis : int, optional
+        Axis along which to difference (default last).
+
+    Returns
+    -------
+    np.ndarray
+        Estimated noise standard deviation with ``axis`` reduced.
+    """
+    diffs = np.diff(np.asarray(values, dtype=np.float64), axis=axis)
+    med = np.median(diffs, axis=axis, keepdims=True)
+    mad = np.median(np.abs(diffs - med), axis=axis)
+    return np.asarray(1.4826 * mad / np.sqrt(2.0), dtype=np.float64)
+
 #: Minimum fractional signal change to accept Phase 2 earlier refinement.
 #: At clinical Gd doses (0.1 mmol/kg), first-frame tissue enhancement
 #: is 5-15%. 1.5% is conservatively below this for low-dose/saturated cases.

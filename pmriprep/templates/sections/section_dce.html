@@ -314,6 +314,12 @@
                 <div class="metric-value {{ dce.display_status.baseline_tsnr }}">{{ "%.1f"|format(dce.qc_metrics.preprocessing.baseline_tsnr) }}</div>
             </div>
             {% endif %}
+            {% if dce.qc_metrics.preprocessing.baseline_snr_low_fraction is defined and dce.qc_metrics.preprocessing.baseline_snr_low_fraction == dce.qc_metrics.preprocessing.baseline_snr_low_fraction %}
+            <div class="metric">
+                <div class="metric-label">Low Baseline SNR</div>
+                <div class="metric-value {{ dce.display_status.baseline_snr_low_fraction }}">{{ "%.0f"|format(dce.qc_metrics.preprocessing.baseline_snr_low_fraction * 100) }}%</div>
+            </div>
+            {% endif %}
             {% if dce.qc_metrics.preprocessing.mean_cnr is defined %}
             <div class="metric">
                 <div class="metric-label">Mean CNR</div>

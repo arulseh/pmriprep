@@ -40,6 +40,7 @@ def dce_qc_metrics() -> dict[str, Any]:
             "fd_mean": 0.21, "fd_max": 0.78, "percent_outliers": 2.1,
             "motion_status": "PASS",
             "baseline_tsnr": 32.4, "peak_enh_pct": 65.0,
+            "baseline_snr_low_fraction": 0.04,
             "n_volumes": 75, "tr_ms": 4060.0,
         },
         "nawm_normalization": True,
@@ -72,10 +73,29 @@ class TestMotionAndSignalKeys:
         assert out["MotionPercentOutliers"] == pytest.approx(2.1)
         assert out["MotionStatus"] == "PASS"
         assert out["BaselineTSNR"] == pytest.approx(32.4)
+        assert out["BaselineSNRLowFraction"] == pytest.approx(0.04)
         assert out["PeakEnhancementPercent"] == pytest.approx(65.0)
         assert out["NumberOfVolumes"] == 75
         # tr_ms (4060ms) → RepetitionTime in seconds
         assert out["RepetitionTime"] == pytest.approx(4.06)
+
+    def test_baseline_snr_key_absent_when_missing(self, base_sidecar, dce_qc_metrics):
+        """No BaselineSNRLowFraction key when the metric is absent (membership guard)."""
+        dce_qc_metrics["preprocessing"].pop("baseline_snr_low_fraction")
+        out = enrich_dce_preproc_sidecar(dict(base_sidecar), qc_metrics=dce_qc_metrics)
+        assert "BaselineSNRLowFraction" not in out
+
+    def test_baseline_snr_nan_dropped(self, base_sidecar, dce_qc_metrics):
+        """NaN fraction is dropped (finiteness guard) so the sidecar stays valid JSON."""
+        dce_qc_metrics["preprocessing"]["baseline_snr_low_fraction"] = float("nan")
+        out = enrich_dce_preproc_sidecar(dict(base_sidecar), qc_metrics=dce_qc_metrics)
+        assert "BaselineSNRLowFraction" not in out
+
+    def test_baseline_tsnr_nan_dropped(self, base_sidecar, dce_qc_metrics):
+        """NaN baseline tSNR is dropped from the flat key (symmetry with SNR fraction)."""
+        dce_qc_metrics["preprocessing"]["baseline_tsnr"] = float("nan")
+        out = enrich_dce_preproc_sidecar(dict(base_sidecar), qc_metrics=dce_qc_metrics)
+        assert "BaselineTSNR" not in out
 
 
 class TestTopLevelFlags:
@@ -110,3 +130,127 @@ class TestEmptyInputs:
         assert "T1B1Correction" not in out
         assert "B1MeanWholeBrain" not in out
         assert "MotionFDMean" not in out
+
+
+class TestSanitizeForJson:
+    """The recursive sanitizer that keeps sidecars valid, number-typed JSON."""
+
+    def test_drops_nan_and_inf_dict_entries(self):
+        from pmriprep.utils.sidecar_builders import sanitize_for_json
+
+        out = sanitize_for_json({"a": 1.0, "b": float("nan"), "c": float("inf"), "d": "x"})
+        assert out == {"a": 1.0, "d": "x"}
+
+    def test_recurses_into_nested_dicts(self):
+        from pmriprep.utils.sidecar_builders import sanitize_for_json
+
+        out = sanitize_for_json({"outer": {"ok": 2, "bad": float("nan")}})
+        assert out == {"outer": {"ok": 2}}
+
+    def test_nulls_nonfinite_list_elements(self):
+        from pmriprep.utils.sidecar_builders import sanitize_for_json
+
+        out = sanitize_for_json({"vals": [1.0, float("nan"), 3.0]})
+        assert out == {"vals": [1.0, None, 3.0]}
+
+    def test_keeps_finite_and_non_float(self):
+        from pmriprep.utils.sidecar_builders import sanitize_for_json
+
+        payload = {"i": 5, "f": 1.5, "s": "y", "b": True, "n": None}
+        assert sanitize_for_json(payload) == payload
+
+    def test_numpy_scalars_dropped_or_coerced(self):
+        """numpy NaN/Inf dropped; finite numpy scalars coerced to native (not strings)."""
+        import json
+
+        import numpy as np
+
+        from pmriprep.utils.sidecar_builders import sanitize_for_json
+
+        out = sanitize_for_json(
+            {"a": np.float32("nan"), "b": np.float64("inf"),
+             "c": np.float32(2.5), "n": np.int32(7)}
+        )
+        assert "a" not in out and "b" not in out
+        # Finite numpy scalars coerced to python-native so they serialize as
+        # numbers, not quoted strings under a default=str encoder.
+        assert not isinstance(out["c"], np.generic)
+        assert not isinstance(out["n"], np.generic)
+        assert out["c"] == pytest.approx(2.5)
+        assert out["n"] == 7
+        assert json.loads(json.dumps(out)) == {"c": pytest.approx(2.5), "n": 7}
+
+    def test_handles_tuples_like_lists(self):
+        """A tuple with a non-finite element must not re-emit a bare NaN token."""
+        from pmriprep.utils.sidecar_builders import sanitize_for_json
+
+        out = sanitize_for_json({"shape": (4, float("nan"), 3)})
+        assert out == {"shape": [4, None, 3]}
+
+    def test_coerces_numpy_arrays(self):
+        """np.ndarray is coerced to a list, with non-finite elements nulled."""
+        import numpy as np
+
+        from pmriprep.utils.sidecar_builders import sanitize_for_json
+
+        out = sanitize_for_json({"arr": np.array([1.0, np.nan, 2.0], dtype=np.float32)})
+        assert out == {"arr": [pytest.approx(1.0), None, pytest.approx(2.0)]}
+
+    def test_dump_sidecar_json_strict_valid_and_numeric(self):
+        """dump_sidecar_json emits strict JSON: no bare NaN/Infinity, numpy as numbers."""
+        import numpy as np
+
+        from pmriprep.utils.sidecar_builders import dump_sidecar_json
+
+        s = dump_sidecar_json(
+            {"nan": float("nan"), "f32": np.float32(1.5),
+             "curve": [1.0, float("inf"), 2.0]}
+        )
+        assert "NaN" not in s and "Infinity" not in s
+        # numpy scalar rendered as a bare number, not a quoted string
+        assert "1.5" in s and '"1.5"' not in s
+
+
+class TestPreprocMetaNoNaN:
+    """End-to-end: the assembled preproc sidecar never carries a bare NaN token."""
+
+    def test_dce_nan_absent_flat_and_nested_and_valid_json(self):
+        import json
+
+        import numpy as np
+
+        from pmriprep.workflows.dce.datasinks import _build_dce_preproc_meta
+
+        base = {"Description": "x", "Sources": ["bids::sub-X/perf/sub-X_dce.nii.gz"]}
+        qc = {
+            "preprocessing": {
+                "baseline_tsnr": float("nan"),
+                "baseline_snr_low_fraction": np.float32("nan"),  # numpy scalar path
+                "mean_tsnr": 20.0,
+                "shape": (4, float("nan"), 3),  # tuple path
+            },
+        }
+        meta = _build_dce_preproc_meta(base, "desc", qc_metrics=qc)
+        # Flat cosmetic keys dropped
+        assert "BaselineTSNR" not in meta
+        assert "BaselineSNRLowFraction" not in meta
+        # Nested PipelineQC block sanitized (finite metric survives)
+        nested = meta["PipelineQC"]["preprocessing"]
+        assert "baseline_tsnr" not in nested
+        assert "baseline_snr_low_fraction" not in nested
+        assert nested["mean_tsnr"] == 20.0
+        assert nested["shape"] == [4, None, 3]
+        # Strict: allow_nan=False raises on ANY NaN/Inf token (bare or numpy-leaked)
+        json.dumps(meta, allow_nan=False)
+
+    def test_dsc_preproc_meta_sanitized(self):
+        """The DSC sibling builder is sanitized too (symmetry)."""
+        import json
+
+        from pmriprep.workflows.dsc.datasinks import _build_dsc_preproc_meta
+
+        qc = {"preprocessing": {"baseline_tsnr": float("nan"), "mean_cnr": 4.2}}
+        meta = _build_dsc_preproc_meta({"Description": "x"}, "desc", qc_metrics=qc)
+        assert "baseline_tsnr" not in meta["PipelineQC"]["preprocessing"]
+        assert meta["PipelineQC"]["preprocessing"]["mean_cnr"] == 4.2
+        json.dumps(meta, allow_nan=False)

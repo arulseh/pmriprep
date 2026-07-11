@@ -23,12 +23,15 @@ Sidecar field strategy (M3):
 from __future__ import annotations
 
 import copy
+import json
 import logging
 import math
 import os
 import subprocess
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Union
+
+import numpy as np
 
 from pmriprep.config.constants import HDGLIO_BIDS_LABELS
 
@@ -68,6 +71,81 @@ def filter_pipeline_qc(qc: Dict[str, Any]) -> Dict[str, Any]:
 
     _strip(filtered)
     return filtered
+
+
+def _is_nonfinite_number(value: Any) -> bool:
+    """True only for a NaN/Inf real number (python OR numpy scalar).
+
+    Uses ``math.isfinite``, which accepts anything with ``__float__`` (so it
+    catches numpy float32/float16 that ``isinstance(v, float)`` misses), and
+    returns False for containers, strings, None, and bool (bool is finite).
+    """
+    if isinstance(value, bool):
+        return False
+    try:
+        return not math.isfinite(value)
+    except (TypeError, ValueError, OverflowError):
+        return False
+
+
+def sanitize_for_json(obj: Any) -> Any:
+    """Recursively make a structure safe for strict JSON serialization.
+
+    Two problems this solves for sidecars serialized with ``json.dumps``:
+
+    1. Non-finite numbers (NaN/Inf) have no JSON representation and are emitted
+       as bare ``NaN``/``Infinity`` tokens that strict parsers (e.g. the BIDS
+       validator) reject. A non-finite numeric value means "not available", so
+       dict entries are dropped (readers see the key as absent) and non-finite
+       sequence elements become ``null``.
+    2. Numpy scalars that are not python-float subclasses (float32/float16/
+       int32/...) are not natively serializable, so under a ``default=str``
+       encoder they become quoted strings instead of numbers. Finite numpy
+       scalars are coerced to their python-native equivalents.
+
+    Tuples are treated like lists.
+
+    Parameters
+    ----------
+    obj : Any
+        A JSON-serializable structure (dict/list/tuple/scalar), possibly nested.
+
+    Returns
+    -------
+    Any
+        The sanitized structure.
+    """
+    if isinstance(obj, dict):
+        out: Dict[str, Any] = {}
+        for k, v in obj.items():
+            cv = v.item() if isinstance(v, np.generic) else v
+            if _is_nonfinite_number(cv):
+                continue
+            out[k] = sanitize_for_json(cv)
+        return out
+    if isinstance(obj, (list, tuple)):
+        cleaned: List[Any] = []
+        for x in obj:
+            cx = x.item() if isinstance(x, np.generic) else x
+            cleaned.append(None if _is_nonfinite_number(cx) else sanitize_for_json(cx))
+        return cleaned
+    if isinstance(obj, np.ndarray):
+        return sanitize_for_json(obj.tolist())
+    if isinstance(obj, np.generic):
+        native = obj.item()
+        return None if _is_nonfinite_number(native) else native
+    return obj
+
+
+def dump_sidecar_json(obj: Any) -> str:
+    """Serialize a sidecar/QC dict to a JSON string, sanitized for strict validity.
+
+    Runs :func:`sanitize_for_json` first (drops NaN/Inf, coerces numpy scalars to
+    native types) so the output never carries a bare ``NaN``/``Infinity`` token or
+    a numpy-scalar-turned-string, then dumps with the pipeline's standard
+    ``indent=2`` and a ``default=str`` fallback for any remaining non-serializable.
+    """
+    return json.dumps(sanitize_for_json(obj), indent=2, default=str)
 
 
 def build_provenance_block(config_dict: Dict[str, Any]) -> Dict[str, Any]:
@@ -245,8 +323,6 @@ def get_xfm_filename(
 
 def extract_contrast_agent(source_nifti_path: str) -> Optional[str]:
     """Read ``ContrastBolusAgent`` from a BIDS sidecar; return generic name."""
-    import json
-
     src = Path(source_nifti_path)
     sidecar_path = src.with_name(
         src.name.replace(".nii.gz", ".json").replace(".nii", ".json")
@@ -370,7 +446,6 @@ def build_anat_mask_sidecar(
 def _tumor_volumetrics(seg_path: PathLike) -> Dict[str, Any]:
     """Compute per-region tumor volumes from the dseg NIfTI."""
     import nibabel as nib  # type: ignore[import-untyped]
-    import numpy as np
 
     from pmriprep.config.constants import HDGLIO_LABEL_TO_NAME
     from pmriprep.utils.lesion_stats import compute_region_volume
@@ -1241,8 +1316,12 @@ def _dce_preprocessing_cosmetic_keys(
         out["MotionPercentOutliers"] = float(preproc["percent_outliers"])
     if "motion_status" in preproc:
         out["MotionStatus"] = str(preproc["motion_status"])
-    if "baseline_tsnr" in preproc:
-        out["BaselineTSNR"] = float(preproc["baseline_tsnr"])
+    tsnr = preproc.get("baseline_tsnr")
+    if tsnr is not None and tsnr == tsnr:  # present and not NaN
+        out["BaselineTSNR"] = float(tsnr)
+    snr_low = preproc.get("baseline_snr_low_fraction")
+    if snr_low is not None and snr_low == snr_low:  # present and not NaN
+        out["BaselineSNRLowFraction"] = float(snr_low)
     if "peak_enh_pct" in preproc:
         out["PeakEnhancementPercent"] = float(preproc["peak_enh_pct"])
     if "n_volumes" in preproc:
