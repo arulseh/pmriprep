@@ -28,7 +28,11 @@ logger = logging.getLogger("pmriprep.interfaces.dce")
 
 
 def _reorient_to_ras(in_file: Optional[str]) -> Optional[str]:
-    """Reorient NIfTI to RAS orientation using fslreorient2std.
+    """Reorient a NIfTI to canonical RAS orientation.
+
+    Reorders the data array and affine together so the voxel axes run R, A, S;
+    physical (world) positions are preserved. The reoriented volume is read back
+    into numpy for the B1 fit, so no external tools are required.
 
     Parameters
     ----------
@@ -38,44 +42,25 @@ def _reorient_to_ras(in_file: Optional[str]) -> Optional[str]:
     Returns
     -------
     str or None
-        Path to reoriented NIfTI file, or None if input was None.
+        Path to the reoriented NIfTI (or the input path if already RAS); None if
+        input was None or missing.
     """
     if in_file is None:
         return None
-
-    import subprocess
 
     in_path = Path(in_file)
     if not in_path.exists():
         return None
 
-    # Generate output filename (always .nii.gz — FSLOUTPUTTYPE=NIFTI_GZ)
-    from pmriprep.utils.nifti import nifti_gz_name
+    from pmriprep.utils.nifti import nifti_gz_name, reorient_img_to_ras
+
+    img = nib.load(str(in_path))
+    reoriented = reorient_img_to_ras(img)
+    if reoriented is img:
+        return in_file  # already RAS; no rewrite needed
 
     out_file = str(Path.cwd() / nifti_gz_name(in_file, "_reoriented"))
-
-    # Run fslreorient2std
-    cmd = ["fslreorient2std", str(in_file), out_file]
-    try:
-        subprocess.run(cmd, check=True, capture_output=True)
-    except subprocess.CalledProcessError as e:
-        logger.warning("fslreorient2std failed for %s: %s", in_file, e.stderr.decode())
-        return None
-
-    # Enforce true RAS orientation (fslreorient2std only reorders axes,
-    # doesn't flip handedness — e.g. LAS stays LAS)
-    import nibabel as _nib
-    from nibabel.orientations import axcodes2ornt, io_orientation, ornt_transform
-    import numpy as _np
-
-    _img = _nib.load(str(out_file))
-    _ornt = io_orientation(_img.affine)  # type: ignore[attr-defined]
-    _ras_ornt = axcodes2ornt(("R", "A", "S"))
-    if not _np.array_equal(_ornt, _ras_ornt):
-        _transform = ornt_transform(_ornt, _ras_ornt)
-        _img_ras = _img.as_reoriented(_transform)  # type: ignore[attr-defined]
-        _nib.save(_img_ras, str(out_file))
-
+    nib.save(reoriented, out_file)
     return out_file
 
 
@@ -288,10 +273,11 @@ class B1Mapping(SimpleInterface):
         tr1_override = self.inputs.tr1 if isdefined(self.inputs.tr1) else None
         tr2_override = self.inputs.tr2 if isdefined(self.inputs.tr2) else None
 
-        # Reorient AFI 4D file to RAS before loading
+        # Reorient AFI 4D file to RAS before loading (returns the input path
+        # unchanged when it is already RAS)
         if afi_4d is not None:
             afi_4d_reoriented = _reorient_to_ras(afi_4d)
-            if afi_4d_reoriented:
+            if afi_4d_reoriented and afi_4d_reoriented != afi_4d:
                 afi_4d = afi_4d_reoriented
                 logger.info("Reoriented 4D AFI to RAS")
 

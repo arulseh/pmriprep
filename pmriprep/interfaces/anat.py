@@ -22,7 +22,7 @@ from nipype.interfaces.base import (  # type: ignore[import-untyped]
 )
 
 
-class ReorientAndCropInputSpec(CommandLineInputSpec):
+class ReorientAndCropInputSpec(BaseInterfaceInputSpec):
     """Input specification for ReorientAndCrop interface."""
 
     in_file = File(
@@ -49,16 +49,17 @@ class ReorientAndCropOutputSpec(TraitedSpec):
     out_file = File(exists=True, desc="Reoriented and cropped image")
 
 
-class ReorientAndCrop(CommandLine):
-    """Reorient to standard orientation and crop field of view.
+class ReorientAndCrop(SimpleInterface):
+    """Reorient to canonical RAS orientation and (optionally) crop field of view.
 
-    This interface wraps FSL fslreorient2std and robustfov commands to:
-    1. Reorient the image to standard (RAS) orientation
-    2. Crop the field of view to remove neck and excess air
+    Two steps:
+    1. Reorient the image to RAS with nibabel (no external tool).
+    2. When ``crop_fov`` is set, crop the field of view with FSL ``robustfov``
+       to remove neck and excess air (T1w only; disable for FLAIR/T2w).
 
-    The interface executes a two-step pipeline internally:
-    - fslreorient2std: Reorients to standard LAS/RAS orientation
-    - robustfov: Automatically crops to the brain FOV
+    A robustfov crop is run on the RAS-oriented image, then an idempotent RAS
+    reorientation is re-applied to guarantee the output is RAS regardless of
+    whether robustfov altered orientation.
 
     Examples
     --------
@@ -69,73 +70,63 @@ class ReorientAndCrop(CommandLine):
 
     Notes
     -----
-    Requires FSL to be installed and available in PATH.
+    Reorientation is pure nibabel; FSL is required only for the ``robustfov``
+    crop (``crop_fov=True``).
 
     See Also
     --------
-    FSL fslreorient2std: https://fsl.fmrib.ox.ac.uk/fsl/fslwiki/Orientation
     FSL robustfov: https://fsl.fmrib.ox.ac.uk/fsl/fslwiki/robustfov
     """
 
     input_spec = ReorientAndCropInputSpec
     output_spec = ReorientAndCropOutputSpec
 
-    _cmd = "fslreorient2std"
-
     def _gen_outfilename(self) -> str:
         """Generate output filename if not specified."""
-        if self.inputs.out_file:
+        if isdefined(self.inputs.out_file) and self.inputs.out_file:
             return str(self.inputs.out_file)
 
         return str(Path.cwd() / nifti_gz_name(self.inputs.in_file, "_reoriented"))
 
-    @property
-    def cmdline(self) -> str:
-        """Build the fslreorient2std (+ optional robustfov) command chain."""
+    def _run_interface(self, runtime: Any) -> Any:
+        """Reorient to RAS (nibabel), optionally crop the FOV (FSL robustfov)."""
+        import subprocess
+        import tempfile
+
+        import nibabel as nib
+
+        from pmriprep.utils.nifti import reorient_img_to_ras
+
         in_file = str(self.inputs.in_file)
         out_file = self._gen_outfilename()
+        ras_img = reorient_img_to_ras(nib.load(in_file))
 
         if not self.inputs.crop_fov:
-            # Reorient only — no robustfov cropping
-            return f"fslreorient2std {in_file} {out_file}"
+            nib.save(ras_img, out_file)
+            self._results["out_file"] = out_file
+            return runtime
 
-        # Create intermediate filename for reorient step
-        in_path = Path(in_file)
-        ext = ".nii.gz"
-        intermediate = str(Path(out_file).parent / f"_tmp_reoriented{ext}")
+        # Crop the FOV with FSL robustfov on the RAS-oriented image.
+        fd, ras_tmp = tempfile.mkstemp(suffix=".nii.gz", dir=str(Path(out_file).parent))
+        os.close(fd)
+        nib.save(ras_img, ras_tmp)
+        try:
+            subprocess.run(
+                ["robustfov", "-i", ras_tmp, "-r", out_file],
+                check=True,
+                capture_output=True,
+                env={**os.environ, "FSLOUTPUTTYPE": "NIFTI_GZ"},
+            )
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(
+                f"robustfov failed for {in_file}: {e.stderr.decode(errors='replace')}"
+            ) from e
+        finally:
+            Path(ras_tmp).unlink(missing_ok=True)
 
-        # Chain: fslreorient2std -> robustfov
-        return (
-            f"bash -c 'fslreorient2std {in_file} {intermediate} && "
-            f"robustfov -i {intermediate} -r {out_file} && "
-            f"rm -f {intermediate}'"
-        )
-
-    def _list_outputs(self) -> dict[str, Any]:  # type: ignore[override]
-        """List expected outputs."""
-        outputs: dict[str, Any] = self.output_spec().get()  # type: ignore[misc]
-        outputs["out_file"] = self._gen_outfilename()
-        return outputs
-
-    def _post_run_hook(self, runtime: Any) -> Any:
-        """Enforce true RAS after fslreorient2std completes.
-
-        fslreorient2std only reorders axes but doesn't flip handedness.
-        This post-run hook applies nibabel's ``as_reoriented()`` to ensure
-        the output is truly RAS.
-        """
-        import nibabel as nib
-        import numpy as np
-        from nibabel.orientations import axcodes2ornt, io_orientation, ornt_transform
-
-        out_file = self._gen_outfilename()
-        img = nib.load(out_file)
-        ornt = io_orientation(img.affine)  # type: ignore[attr-defined]
-        ras_ornt = axcodes2ornt(("R", "A", "S"))
-        if not np.array_equal(ornt, ras_ornt):
-            transform = ornt_transform(ornt, ras_ornt)
-            img_ras = img.as_reoriented(transform)  # type: ignore[attr-defined]
-            nib.save(img_ras, out_file)
+        # Idempotent RAS enforcement after robustfov (no-op if it preserved RAS).
+        nib.save(reorient_img_to_ras(nib.load(out_file)), out_file)
+        self._results["out_file"] = out_file
         return runtime
 
     def _gen_filename(self, name: str) -> Optional[str]:

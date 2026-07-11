@@ -1,7 +1,43 @@
-"""NIfTI filename utilities."""
+"""NIfTI filename and orientation utilities."""
 
 from pathlib import Path
-from typing import Union
+from typing import TypeVar, Union
+
+import numpy as np
+
+_ImageT = TypeVar("_ImageT")
+
+
+def reorient_img_to_ras(img: _ImageT) -> _ImageT:
+    """Reorient a NIfTI image to canonical RAS orientation.
+
+    Reorders the data array and affine together so the voxel axes run R, A, S;
+    physical (world) positions are preserved. Idempotent: an image already in
+    RAS is returned unchanged (no copy). Works on 3D and 4D data (only the first
+    three axes are permuted/flipped).
+
+    Parameters
+    ----------
+    img : nibabel spatial image
+        Input image in any orientation.
+
+    Returns
+    -------
+    nibabel spatial image
+        The image reoriented to RAS (same type as the input), or the input image
+        itself if it was already RAS.
+    """
+    from nibabel.orientations import (  # type: ignore[import-untyped]
+        axcodes2ornt,
+        io_orientation,
+        ornt_transform,
+    )
+
+    ornt = io_orientation(img.affine)  # type: ignore[attr-defined]
+    ras_ornt = axcodes2ornt(("R", "A", "S"))
+    if np.array_equal(ornt, ras_ornt):
+        return img
+    return img.as_reoriented(ornt_transform(ornt, ras_ornt))  # type: ignore[attr-defined, no-any-return]
 
 
 def nifti_gz_name(filename: Union[str, Path], suffix: str) -> str:
