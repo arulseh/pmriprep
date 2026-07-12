@@ -65,6 +65,7 @@ from pmriprep.utils.dce_constants import (
     LESION_EXCLUSION_DISTANCE_MM,
     LESION_EXCLUSION_FLOOR_MM,
     MIDLINE_EXCLUSION_FRACTION,
+    MIN_MEANINGFUL_ENHANCEMENT_MM,
     PARKER_R1_REFERENCE,
     SLAB_EDGE_EXCLUSION_MM_ROLLOFF,
     SSS_EXCLUSION_MM,
@@ -298,7 +299,7 @@ def compute_dce_aif_fwhm_seconds(
         if aif_curve[i] >= half_max:
             if i > baseline_frames and aif_curve[i - 1] < half_max:
                 denom = aif_curve[i] - aif_curve[i - 1]
-                if abs(denom) > EPSILON_T1:
+                if abs(denom) > MIN_MEANINGFUL_ENHANCEMENT_MM:
                     frac = (half_max - aif_curve[i - 1]) / denom
                     rising_time = (i - 1 + frac) * tr
                 else:
@@ -313,7 +314,7 @@ def compute_dce_aif_fwhm_seconds(
         if aif_curve[i] <= half_max:
             if aif_curve[i - 1] > half_max:
                 denom = aif_curve[i - 1] - aif_curve[i]
-                if abs(denom) > EPSILON_T1:
+                if abs(denom) > MIN_MEANINGFUL_ENHANCEMENT_MM:
                     frac = (aif_curve[i - 1] - half_max) / denom
                     falling_time = (i - 1 + frac) * tr
                 else:
@@ -357,7 +358,7 @@ def compute_dce_aif_washout(
     peak = float(np.max(aif_curve))
 
     denom = peak - baseline_mean
-    if denom < EPSILON_T1:
+    if denom < MIN_MEANINGFUL_ENHANCEMENT_MM:
         return 0.0
 
     washout = (peak - tail_mean) / denom
@@ -673,8 +674,8 @@ def _apply_aif_scale(
     """Pure-function AIF amplitude rescale to a dose-corrected target.
 
     Mirrors the production scaling block but is callable per trim
-    iteration. Preserves the EPSILON_T1 peak-amplitude guard: when the
-    detected peak is below ``EPSILON_T1`` the input curve is returned
+    iteration. Preserves the peak-amplitude guard: when the detected peak is
+    below ``MIN_MEANINGFUL_ENHANCEMENT_MM`` the input curve is returned
     unscaled with a scaling factor of 1.0.
 
     Parameters
@@ -698,7 +699,7 @@ def _apply_aif_scale(
         ``(scaled_curve, scaling_factor)``.
     """
     current_peak = float(np.max(aif_curve))
-    if current_peak <= EPSILON_T1:
+    if current_peak <= MIN_MEANINGFUL_ENHANCEMENT_MM:
         return aif_curve, 1.0
     plasma_conv = 1.0 / (1.0 - hct)
     if target_peak > 0:
@@ -1388,11 +1389,11 @@ class AIFDetection(BaseInterface):
         else:
             tail_mean = curves[:, -1]
         denom = peak_values - baseline
-        safe_denom = np.where(np.abs(denom) > EPSILON_T1, denom, 1.0)
+        safe_denom = np.where(np.abs(denom) > MIN_MEANINGFUL_ENHANCEMENT_MM, denom, 1.0)
         washout_fraction = np.clip(
             (peak_values - tail_mean) / safe_denom, 0.0, 1.0
         )
-        washout_fraction = np.where(np.abs(denom) > EPSILON_T1, washout_fraction, 0.0)
+        washout_fraction = np.where(np.abs(denom) > MIN_MEANINGFUL_ENHANCEMENT_MM, washout_fraction, 0.0)
 
         # Upstroke slope: max dC/dt during wash-in (baseline to peak)
         upstroke_slope = np.zeros(n_voxels, dtype=np.float64)
@@ -2263,7 +2264,9 @@ class AIFDetection(BaseInterface):
 
         # Peak contribution (0-0.20): closer to expected range is better
         expected_peak = (peak_min + peak_max) / 2.0
-        peak_deviation = abs(peak - expected_peak) / max(expected_peak, EPSILON_T1)
+        peak_deviation = abs(peak - expected_peak) / max(
+            expected_peak, EPSILON_CONCENTRATION
+        )
         peak_score = max(0.0, 1.0 - peak_deviation)
         score += 0.20 * peak_score
 
@@ -2283,7 +2286,8 @@ class AIFDetection(BaseInterface):
 
         # Upstroke slope contribution (0-0.15): steeper is better for arteries
         if upstroke > 0:
-            upstroke_score = min(1.0, upstroke / (peak / max(tr * 3, EPSILON_T1)))
+            # tr*3 is a time (s); guard only against a missing/zero TR.
+            upstroke_score = min(1.0, upstroke / (peak / max(tr * 3.0, 1e-6)))
             score += 0.15 * upstroke_score
 
         # Timing contribution: AIF should peak before tissue
@@ -4604,7 +4608,7 @@ class AIFDetection(BaseInterface):
             and tier_result is None
         ):
             current_peak = float(np.max(aif_curve))
-            if current_peak > EPSILON_T1:
+            if current_peak > MIN_MEANINGFUL_ENHANCEMENT_MM:
                 # Unit convention:
                 # - aif_curve is in PLASMA [Gd] units at this point (detected
                 #   path /(1-Hct) at line 2744, population path at line 2895).

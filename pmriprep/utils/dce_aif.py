@@ -19,7 +19,7 @@ import numpy.typing as npt
 
 from pmriprep.utils.dce_constants import (
     EPSILON_CONCENTRATION,
-    EPSILON_T1,
+    MIN_MEANINGFUL_ENHANCEMENT_MM,
     get_aif_thresholds,
 )
 from pmriprep.utils.qc_standards import QCStatus
@@ -240,7 +240,7 @@ def compute_dce_washout_fraction(
     peak = float(np.max(aif_curve))
 
     denom = peak - baseline_mean
-    if denom < EPSILON_T1:
+    if denom < MIN_MEANINGFUL_ENHANCEMENT_MM:
         return 0.0
 
     washout = (peak - tail_mean) / denom
@@ -718,7 +718,7 @@ def _get_dce_criteria_details(
 
     # Baseline evaluation (lower std is better)
     baseline_noise_fraction = metrics.baseline_std / max(
-        metrics.peak_concentration, EPSILON_T1
+        metrics.peak_concentration, EPSILON_CONCENTRATION
     )
     if baseline_noise_fraction <= ParkerAIFExpected.BASELINE_STD_MAX_FRACTION:
         details["baseline"] = QCStatus.PASS
@@ -843,7 +843,7 @@ def _generate_validation_notes(
 
     # Baseline notes
     baseline_noise_frac = metrics.baseline_std / max(
-        metrics.peak_concentration, EPSILON_T1
+        metrics.peak_concentration, EPSILON_CONCENTRATION
     )
     if baseline_noise_frac > ParkerAIFExpected.BASELINE_STD_MAX_FRACTION * 2:
         notes.append(
@@ -934,7 +934,7 @@ def _compute_dce_quality_score(
 
     # Baseline contribution (0-0.05): lower noise is better
     baseline_noise_frac = metrics.baseline_std / max(
-        metrics.peak_concentration, EPSILON_T1
+        metrics.peak_concentration, EPSILON_CONCENTRATION
     )
     baseline_score = max(
         0.0, 1.0 - baseline_noise_frac / ParkerAIFExpected.BASELINE_STD_MAX_FRACTION

@@ -1862,8 +1862,8 @@ def test_compute_ratio_30s_zero_peak_returns_none():
 
 # ----- _apply_aif_scale ---------------------------------------------------
 
-def test_apply_aif_scale_preserves_epsilon_guard():
-    """Below-EPSILON_T1 peak returns input unchanged."""
+def test_apply_aif_scale_preserves_min_enhancement_guard():
+    """A peak below MIN_MEANINGFUL_ENHANCEMENT_MM returns the input unchanged."""
     curve = np.full(20, 1e-6)
     out, sf = _apply_aif_scale(curve, hct=0.42, target_peak=0.0,
                                 expected_range_fn=lambda: (5.0, 7.6))

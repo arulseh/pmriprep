@@ -93,6 +93,14 @@ MIN_SIGNAL_STD: Final[float] = 0.01
 #: Minimum enhancement in mM for voxel to be considered valid
 MIN_ENHANCEMENT_MM: Final[float] = 1e-8
 
+#: Minimum meaningful contrast enhancement / bolus amplitude (mM). Below this a
+#: curve is noise, not a bolus; real tissue enhancement is >= ~0.1 mM (measured
+#: p50 0.13, p99 0.9 mM). Used to reject degenerate AIF/washout/FWHM curves. The
+#: 0.01 value coincides numerically with MIN_SIGNAL_STD and the (now-vacated)
+#: EPSILON_T1 use in the AIF code; that coincidence is incidental — the point of
+#: this constant is to de-conflate the roles.
+MIN_MEANINGFUL_ENHANCEMENT_MM: Final[float] = 0.01
+
 
 #: Maximum number of slices for 2D per-slice erosion.
 #: 3D VIBE thin slabs (≤30 slices) have well-defined slice profile —

@@ -2,7 +2,9 @@
 
 import pytest
 
+from pmriprep.utils import dce_constants
 from pmriprep.utils.dce_constants import (
+    EPSILON_CONCENTRATION,
     EPSILON_T1,
     EPSILON_VE,
     FAHRAEUS_RATIO,
@@ -11,6 +13,8 @@ from pmriprep.utils.dce_constants import (
     capillary_hematocrit,
     KTRANS_BOUNDS,
     MAX_KEP,
+    MIN_ENHANCEMENT_MM,
+    MIN_MEANINGFUL_ENHANCEMENT_MM,
     VE_BOUNDS,
     VP_BOUNDS,
     compute_fwhm_threshold_frames,
@@ -22,6 +26,24 @@ from pmriprep.utils.dce_constants import (
     get_tissue_t1_ranges,
     is_low_temporal_resolution,
 )
+
+
+class TestMinMeaningfulEnhancement:
+    """The AIF minimum-meaningful-enhancement floor is its own named role."""
+
+    def test_value_pinned(self) -> None:
+        """Value is 0.01 mM (noise floor, ~13x below the smallest real bolus)."""
+        assert MIN_MEANINGFUL_ENHANCEMENT_MM == 0.01
+
+    def test_distinct_symbol_from_near_zero_guards(self) -> None:
+        """It is a distinct constant from the near-zero concentration guards.
+
+        The numeric coincidence with MIN_SIGNAL_STD / the vacated EPSILON_T1 use
+        is incidental; these are different physical roles and different values.
+        """
+        assert "MIN_MEANINGFUL_ENHANCEMENT_MM" in dir(dce_constants)
+        assert MIN_MEANINGFUL_ENHANCEMENT_MM != MIN_ENHANCEMENT_MM  # 0.01 vs 1e-8
+        assert MIN_MEANINGFUL_ENHANCEMENT_MM != EPSILON_CONCENTRATION  # 0.01 vs 1e-6
 
 
 class TestR1Relaxivity:
