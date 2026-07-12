@@ -135,6 +135,7 @@ def merge_cli_config(
         "dce_aif_method": ("dce", "aif_method"),
         "dce_aif_file": ("dce", "aif_file"),
         "dce_b1_method": ("dce", "b1_method"),
+        "dce_b1_map_encoding": ("dce", "b1_map_encoding"),
         "dce_no_t1": ("dce", "no_t1"),
         "dce_t1_map": ("dce", "t1_map_file"),
         "dce_dose": ("dce", "dose"),

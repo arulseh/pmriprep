@@ -166,7 +166,8 @@ pmriprep bids_dir output_dir {participant} [options]
 | `--dce-aif-file FILE` | External AIF curve file (true plasma [Gd] in mM, already Hct-corrected); bypasses detection — the pipeline does not re-scale |
 | `--dce-dose DOSE` | Dose multiplier (default: 1.0). Accepts a float or presets: `half`, `full`, `double` |
 | `--dce-r1 R1` | Override r1 relaxivity (s⁻¹/mM) for concentration conversion |
-| `--dce-b1-method {auto,afi,tfl_b1map,none}` | B1+ correction method (default: auto) |
+| `--dce-b1-method {auto,afi,precomputed,none}` | B1+ correction method (default: auto) |
+| `--dce-b1-map-encoding {auto,actual_flip_deci_deg,actual_flip_deg,percent,ratio}` | Pre-computed B1+ map pixel encoding (default: auto, from BIDS suffix/Units) |
 | `--dce-no-t1` | Skip T1 mapping (use default T1 for field strength) |
 | `--dce-t1-map FILE` | External T1 map (NIfTI, units: milliseconds). Bypasses VFA T1 fitting. Useful for MP2RAGE, MOLLI, or ground-truth T1 maps. |
 
@@ -268,7 +269,8 @@ dce:
 | `t1_method` | str | `"hybrid"` | VFA T1 fitting: `hybrid`, `wlls`, `nlls` |
 | `t1_map_file` | path | `null` | External T1 map (NIfTI, ms). Bypasses VFA fitting |
 | `t1_correction_mode` | str | `"auto"` | T1 correction mode: `auto`, `none`, `offset`, `fallback` |
-| `b1_method` | str | `"auto"` | B1+ correction: `auto`, `afi`, `tfl_b1map`, `none` |
+| `b1_method` | str | `"auto"` | B1+ correction: `auto`, `afi`, `precomputed`, `none` |
+| `b1_map_encoding` | str | `"auto"` | Pre-computed B1+ map encoding: `auto` (from suffix/Units), `actual_flip_deci_deg`, `actual_flip_deg`, `percent`, `ratio` |
 | `cbv_constraint_mode` | str | `"auto"` | DSC→DCE vp constraint. `auto`: `soft` prior when DSC CBV is reliable, `skip` otherwise. Options: `auto`, `skip` |
 | `no_dsc_validation` | bool | `false` | Skip DSC-DCE cross-validation. Requires a NAWM mask; automatically skipped when unavailable |
 | `baseline_frames` | int | `0` | Baseline frames (0 = auto-detect) |
@@ -329,6 +331,8 @@ bids_dir/
         sub-01_ses-01_run-1_TB1AFI.json
         sub-01_ses-01_acq-famp_run-1_TB1TFL.nii.gz           # B1+ mapping (Siemens tfl_b1map, alternative to AFI)
         sub-01_ses-01_acq-famp_run-1_TB1TFL.json
+        sub-01_ses-01_run-1_TB1map.nii.gz                    # B1+ mapping (vendor-neutral pre-computed map)
+        sub-01_ses-01_run-1_TB1map.json
 ```
 
 > The `acq-<label>` entity is optional but used to rank candidates when multiple files share the same suffix: T1w prefers `acq-mprage` over other sequences and excludes `acq-se`; FLAIR prefers `acq-3d`; B1+ mapping matches `acq-famp` for Siemens tfl_b1map.
@@ -338,10 +342,10 @@ bids_dir/
 | Pipeline | Required | Optional |
 |----------|----------|----------|
 | DSC | `*_dsc.nii.gz`, T1w | — |
-| DCE | `*_dce.nii.gz`, T1w | VFA (T1 mapping), B1+ map (`*_TB1AFI` or `*_TB1TFL`) |
+| DCE | `*_dce.nii.gz`, T1w | VFA (T1 mapping), B1+ map (`*_TB1AFI`, `*_TB1TFL`, or `*_TB1map`) |
 | HD-GLIO | T1w pre-contrast, T1w post-contrast, T2w, FLAIR | — |
 
-B1+ correction accepts either AFI (`*_TB1AFI`) or Siemens pre-computed flip angle maps (`*_TB1TFL`). Auto-detected via `--dce-b1-method auto`.
+B1+ correction accepts AFI (`*_TB1AFI`), Siemens pre-computed flip angle maps (`*_TB1TFL`), or vendor-neutral pre-computed maps (`*_TB1map`). Auto-detected via `--dce-b1-method auto`. A `*_TB1map` pixel encoding is read from its `Units` sidecar (`p.u.` = percent, `1` = ratio, `deg`); when absent, it is inferred from the pixel median or set with `--dce-b1-map-encoding`.
 
 ### JSON Sidecar Fields
 
@@ -400,6 +404,14 @@ Required: `RepetitionTime` (scalar or 2-element array for 4D), `FlipAngle`.
 }
 ```
 Required: `RepetitionTime`, `FlipAngle`.
+
+**TB1map sidecar (`*_TB1map.json`):**
+```json
+{
+  "Units": "p.u."
+}
+```
+`Units` sets the pixel encoding (`p.u.` = percent of nominal, `1` = ratio, `deg` = actual flip). Recommended; when absent the encoding is inferred from the pixel median or set with `--dce-b1-map-encoding`.
 
 ## Output Structure
 

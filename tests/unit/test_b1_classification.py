@@ -82,7 +82,8 @@ def test_tfl_b1map_famp_detected(tmp_path: Path) -> None:
     )
     result = _classify_b1_data([anat, famp], _MockLayout())
     assert result["afi_mode"] == "precomputed"
-    assert result["b1_method_detected"] == "tfl_b1map"
+    assert result["b1_method_detected"] == "precomputed"
+    assert result["b1_map_encoding"] == "actual_flip_deci_deg"
     assert result["b1_precomputed_file"] == famp
     assert result["b1_nominal_prep_fa"] == pytest.approx(80.0)
 
@@ -110,4 +111,42 @@ def test_tfl_b1map_imagetype_fallback_detects_famp(tmp_path: Path) -> None:
     )
     result = _classify_b1_data([f], _MockLayout())
     assert result["afi_mode"] == "precomputed"
-    assert result["b1_method_detected"] == "tfl_b1map"
+    assert result["b1_method_detected"] == "precomputed"
+    assert result["b1_map_encoding"] == "actual_flip_deci_deg"
+
+
+def test_tb1map_percent_units_detected(tmp_path: Path) -> None:
+    """A vendor-neutral TB1map with Units='p.u.' → percent encoding, no FA raise."""
+    m = tmp_path / "sub-01_TB1map.nii.gz"
+    _write_nii(m, (4, 4, 4))
+    (tmp_path / "sub-01_TB1map.json").write_text(
+        json.dumps({"Units": "p.u.", "FlipAngle": 8})
+    )
+    result = _classify_b1_data([m], _MockLayout())
+    assert result["afi_mode"] == "precomputed"
+    assert result["b1_method_detected"] == "precomputed"
+    assert result["b1_map_encoding"] == "percent"
+    assert result["b1_precomputed_file"] == m
+    # FlipAngle < 20 must NOT raise for a TB1map (only the TB1TFL famp guard does).
+    assert result["b1_nominal_prep_fa"] == pytest.approx(8.0)
+
+
+def test_tb1map_deg_units_detected(tmp_path: Path) -> None:
+    """TB1map with Units='deg' → actual_flip_deg encoding."""
+    m = tmp_path / "sub-01_TB1map.nii.gz"
+    _write_nii(m, (4, 4, 4))
+    (tmp_path / "sub-01_TB1map.json").write_text(
+        json.dumps({"Units": "deg", "FlipAngle": 70})
+    )
+    result = _classify_b1_data([m], _MockLayout())
+    assert result["b1_map_encoding"] == "actual_flip_deg"
+
+
+def test_tb1map_no_units_is_auto(tmp_path: Path) -> None:
+    """TB1map without Units → encoding hint 'auto' (interface infers from pixels)."""
+    m = tmp_path / "sub-01_TB1map.nii.gz"
+    _write_nii(m, (4, 4, 4))
+    (tmp_path / "sub-01_TB1map.json").write_text(json.dumps({"FlipAngle": 70}))
+    result = _classify_b1_data([m], _MockLayout())
+    assert result["afi_mode"] == "precomputed"
+    assert result["b1_map_encoding"] == "auto"

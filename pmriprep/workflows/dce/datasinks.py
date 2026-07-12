@@ -1434,8 +1434,10 @@ def init_dce_datasinks_wf(
             ),
             name="b1_map_meta",
         )
-        meta.inputs.description = "B1+ transmit field map (ratio)"
-        meta.inputs.units = "ratio"
+        meta.inputs.description = (
+            "B1+ transmit field map (dimensionless ratio, 1.0 = nominal flip angle)"
+        )
+        meta.inputs.units = "1"
         meta.inputs.extra = None
         workflow.connect(base_minimal, "meta_dict", meta, "base")
         sink = pe.Node(

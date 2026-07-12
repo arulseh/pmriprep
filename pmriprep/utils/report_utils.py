@@ -77,7 +77,7 @@ _B1_CORRECTION_TEXT: dict[str, str] = {
         " with B1+ transmit field correction using the actual flip angle imaging "
         "(AFI) method [@yarnykh_2007]"
     ),
-    "tfl_b1map": " with B1+ transmit field correction",
+    "precomputed": " with B1+ transmit field correction",
     "none": "",
 }
 

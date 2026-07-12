@@ -403,10 +403,18 @@ Examples:
     )
     dce_group.add_argument(
         "--dce-b1-method",
-        choices=["auto", "afi", "tfl_b1map", "none"],
+        choices=["auto", "afi", "precomputed", "none"],
         default=None,
         help="B1+ correction method: auto (detect from data), afi (Yarnykh AFI), "
-             "tfl_b1map (pre-computed flip angle map), none (skip B1+ correction).",
+             "precomputed (pre-computed B1+ map), none (skip B1+ correction).",
+    )
+    dce_group.add_argument(
+        "--dce-b1-map-encoding",
+        choices=["auto", "actual_flip_deci_deg", "actual_flip_deg", "percent", "ratio"],
+        default=None,
+        help="Pixel encoding of a pre-computed B1+ map: auto (infer from BIDS "
+             "suffix/Units, else pixel median), actual_flip_deci_deg (Siemens tfl), "
+             "actual_flip_deg, percent (BIDS p.u.), ratio.",
     )
     dce_group.add_argument(
         "--dce-no-t1",

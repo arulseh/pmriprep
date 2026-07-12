@@ -47,9 +47,14 @@ class DCEConfig:
         Number of AIF candidate voxels to average.
     underlays : List[str]
         List of underlay images for QC visualizations.
-    b1_method : Literal["auto", "afi", "tfl_b1map", "none"]
+    b1_method : Literal["auto", "afi", "precomputed", "none"]
         B1+ correction method: auto (detect from data), afi (Yarnykh AFI),
-        tfl_b1map (pre-computed flip angle map), none (skip B1+ correction).
+        precomputed (pre-computed B1+ map), none (skip B1+ correction).
+    b1_map_encoding : Literal["auto", "actual_flip_deci_deg", "actual_flip_deg", "percent", "ratio"]
+        Pixel encoding of a pre-computed B1+ map: auto (infer from BIDS
+        suffix/Units, else pixel median), actual_flip_deci_deg (Siemens tfl,
+        pixel = flip×10), actual_flip_deg, percent (BIDS p.u., 100=nominal),
+        or ratio (1.0=nominal).
     no_t1 : bool
         Skip T1 mapping (use field-strength-appropriate default T1).
     no_dsc_validation : bool
@@ -99,7 +104,10 @@ class DCEConfig:
     underlays: List[str] = field(default_factory=list)
 
     # T1 mapping settings
-    b1_method: Literal["auto", "afi", "tfl_b1map", "none"] = "auto"
+    b1_method: Literal["auto", "afi", "precomputed", "none"] = "auto"
+    b1_map_encoding: Literal[
+        "auto", "actual_flip_deci_deg", "actual_flip_deg", "percent", "ratio"
+    ] = "auto"
     no_t1: bool = False
     t1_correction_mode: Literal["auto", "none", "offset", "fallback"] = "auto"
     t1_method: Literal["hybrid", "wlls", "nlls"] = "hybrid"
@@ -149,11 +157,21 @@ class DCEConfig:
             )
 
         # Validate b1_method
-        _VALID_B1_METHODS = {"auto", "afi", "tfl_b1map", "none"}
+        _VALID_B1_METHODS = {"auto", "afi", "precomputed", "none"}
         if self.b1_method not in _VALID_B1_METHODS:
             raise ValueError(
                 f"Invalid b1_method: {self.b1_method!r}. "
                 f"Valid: {sorted(_VALID_B1_METHODS)}"
+            )
+
+        # Validate b1_map_encoding
+        _VALID_B1_ENCODINGS = {
+            "auto", "actual_flip_deci_deg", "actual_flip_deg", "percent", "ratio",
+        }
+        if self.b1_map_encoding not in _VALID_B1_ENCODINGS:
+            raise ValueError(
+                f"Invalid b1_map_encoding: {self.b1_map_encoding!r}. "
+                f"Valid: {sorted(_VALID_B1_ENCODINGS)}"
             )
 
         # Validate cbv_constraint_mode

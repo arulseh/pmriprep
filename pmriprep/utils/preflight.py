@@ -997,9 +997,9 @@ def run_preflight(
                 validate_vfa_metadata(vfa_flip_angles, vfa_trs)
             )
 
-        # AFI validation (only if AFI data present and method is AFI, not tfl_b1map)
+        # AFI validation (only if AFI data present and method is AFI, not precomputed)
         if (session_data.modalities.afi
-                and session_data.modalities.b1_method_detected != "tfl_b1map"):
+                and session_data.modalities.b1_method_detected != "precomputed"):
             report.messages.extend(
                 validate_afi_metadata(
                     session_data.modalities.afi_tr1_ms,

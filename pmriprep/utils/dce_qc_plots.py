@@ -446,29 +446,38 @@ def generate_b1_precomputed_qc_plot(
     b1_raw: npt.NDArray[np.floating],
     b1_map: npt.NDArray[np.floating],
     valid_mask: npt.NDArray[np.bool_],
-    nominal_prep_fa: float,
+    divisor: float,
+    nominal_prep_fa: Optional[float] = None,
+    encoding: str = "",
     mean_b1: float = 1.0,
     std_b1: float = 0.0,
     output_path: Optional[str] = None,
     subject_id: str = "",
     session_id: str = "",
 ) -> str:
-    """Generate a QC plot for pre-computed B1+ mapping (e.g., tfl_b1map).
+    """Generate a QC plot for a pre-computed B1+ map (any encoding).
 
     Layout (2 rows, GridSpec):
-        Row 1: Raw FA map (x0.1 deg), B1+ ratio map, Actual FA map
+        Row 1: raw pixel map, B1+ ratio map, actual-flip map (or B1+ percent when
+        the flip angle is unknown)
         Row 2: Valid mask overlay, B1+ histogram (spans 2 cols)
 
     Parameters
     ----------
     b1_raw : ndarray
-        3D raw pixel values from pre-computed B1+ map (0.1 degree units).
+        3D raw pixel values from the pre-computed B1+ map (native encoding).
     b1_map : ndarray
         3D B1+ correction factor map (ratio, after scaling and smoothing).
     valid_mask : ndarray
         Boolean mask of voxels with valid B1+ data.
-    nominal_prep_fa : float
-        Nominal preparation/saturation flip angle in degrees.
+    divisor : float
+        Pixel value corresponding to B1+ = 1.0 (nominal full scale), used to
+        scale the raw-pixel panel independent of encoding.
+    nominal_prep_fa : float or None
+        Nominal flip angle in degrees; the actual-flip panel is shown only when
+        it is known (actual-flip encodings).
+    encoding : str
+        Resolved encoding label, for panel annotation.
     mean_b1 : float
         Mean B1+ value in brain.
     std_b1 : float
@@ -503,7 +512,7 @@ def generate_b1_precomputed_qc_plot(
     gs = gridspec.GridSpec(2, 3, figure=fig)
     from pmriprep.utils.qc_utils import qc_figure_title
     fig.suptitle(
-        qc_figure_title(subject_id, session_id, "tfl_b1map B1+ Mapping QC"),
+        qc_figure_title(subject_id, session_id, "Pre-computed B1+ Mapping QC"),
         fontsize=14, fontweight="bold", y=0.98,
     )
 
@@ -512,17 +521,17 @@ def generate_b1_precomputed_qc_plot(
     mask_sl = get_radiological_slice(valid_mask.astype(float), axis=2, slice_idx=mid_slice)
     b1_sl = get_radiological_slice(b1_map, axis=2, slice_idx=mid_slice)
 
-    # ---- Panel [0,0]: Raw pixel map ----
+    # ---- Panel [0,0]: Raw pixel map (scaled by divisor = nominal full scale) ----
     ax = fig.add_subplot(gs[0, 0])
     raw_display = np.where(mask_sl > 0.5, raw_sl, np.nan)
-    expected_center = nominal_prep_fa * 10.0
     im = ax.imshow(
         raw_display, cmap="viridis",
-        vmin=expected_center * 0.5, vmax=expected_center * 1.5,
+        vmin=divisor * 0.5, vmax=divisor * 1.5,
         origin="upper",
     )
-    plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="0.1\u00b0")
-    ax.set_title(f"Raw FA Map (\u00d70.1\u00b0, nom={nominal_prep_fa:.0f}\u00b0)", fontsize=11)
+    plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="pixel")
+    enc_label = f" ({encoding})" if encoding else ""
+    ax.set_title(f"Raw B1+ Map{enc_label}", fontsize=11)
     ax.axis("off")
 
     # ---- Panel [0,1]: B1+ ratio map ----
@@ -535,18 +544,26 @@ def generate_b1_precomputed_qc_plot(
     ax.set_title("B1+ Ratio Map", fontsize=11)
     ax.axis("off")
 
-    # ---- Panel [0,2]: Actual FA map ----
+    # ---- Panel [0,2]: Actual FA map (if FA known) or B1+ percent-of-nominal ----
     ax = fig.add_subplot(gs[0, 2])
-    fa_map = b1_map * nominal_prep_fa
-    fa_sl = get_radiological_slice(fa_map, axis=2, slice_idx=mid_slice)
-    fa_display = np.where(mask_sl > 0.5, fa_sl, np.nan)
-    im = ax.imshow(
-        fa_display, cmap="jet",
-        vmin=nominal_prep_fa * 0.5, vmax=nominal_prep_fa * 1.5,
-        origin="upper",
-    )
-    plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="\u00b0")
-    ax.set_title(f"Actual FA (nominal={nominal_prep_fa:.0f}\u00b0)", fontsize=11)
+    if nominal_prep_fa is not None and nominal_prep_fa > 0:
+        fa_map = b1_map * nominal_prep_fa
+        fa_sl = get_radiological_slice(fa_map, axis=2, slice_idx=mid_slice)
+        fa_display = np.where(mask_sl > 0.5, fa_sl, np.nan)
+        im = ax.imshow(
+            fa_display, cmap="jet",
+            vmin=nominal_prep_fa * 0.5, vmax=nominal_prep_fa * 1.5,
+            origin="upper",
+        )
+        plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="\u00b0")
+        ax.set_title(f"Actual FA (nominal={nominal_prep_fa:.0f}\u00b0)", fontsize=11)
+    else:
+        pct_display = np.where(mask_sl > 0.5, b1_sl * 100.0, np.nan)
+        im = ax.imshow(
+            pct_display, cmap="jet", vmin=50.0, vmax=150.0, origin="upper",
+        )
+        plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="%")
+        ax.set_title("B1+ (% of nominal)", fontsize=11)
     ax.axis("off")
 
     # ---- Panel [1,0]: Valid mask overlay ----

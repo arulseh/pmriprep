@@ -44,7 +44,7 @@ class ModalityAvailability:
     b1_nominal_prep_fa : float, optional
         Nominal preparation flip angle (degrees) from famp JSON sidecar.
     b1_method_detected : str, optional
-        Detected B1+ method ("afi" or "tfl_b1map"), if any.
+        Detected B1+ method ("afi" or "precomputed"), if any.
     dsc_n_volumes : int, optional
         Number of volumes in the DSC 4D series, if loaded.
     dce_n_volumes : int, optional
@@ -67,9 +67,10 @@ class ModalityAvailability:
     afi_flip_angle: Optional[float] = None  # Nominal flip angle in degrees (from sidecar)
     dsc_n_volumes: Optional[int] = None
     dce_n_volumes: Optional[int] = None
-    b1_precomputed_file: Optional[Path] = None  # Pre-computed B1+ map (e.g., tfl_b1map famp)
-    b1_nominal_prep_fa: Optional[float] = None  # FlipAngle from famp JSON sidecar
-    b1_method_detected: Optional[str] = None  # "afi" or "tfl_b1map"
+    b1_precomputed_file: Optional[Path] = None  # Pre-computed B1+ map (TB1TFL famp or TB1map)
+    b1_nominal_prep_fa: Optional[float] = None  # FlipAngle sidecar (actual-flip encodings)
+    b1_method_detected: Optional[str] = None  # "afi" or "precomputed"
+    b1_map_encoding: Optional[str] = None  # Pixel encoding hint for a precomputed map
 
 
 @dataclass
@@ -696,7 +697,7 @@ def _find_b1_data(
         f for f in candidates
         if any(
             tag in f.name.upper()
-            for tag in ("TB1TFL", "TB1AFI", "AFI", "B1MAP")
+            for tag in ("TB1TFL", "TB1AFI", "TB1MAP", "AFI", "B1MAP")
         )
         or "b1map" in f.name.lower()
         or f.name.upper().endswith("_B1.NII.GZ")
@@ -740,6 +741,7 @@ def _classify_b1_data(
         "b1_precomputed_file": None,
         "b1_nominal_prep_fa": None,
         "b1_method_detected": None,
+        "b1_map_encoding": None,
     }
 
     if not b1_files:
@@ -804,11 +806,53 @@ def _classify_b1_data(
         result["afi_mode"] = "precomputed"
         result["b1_precomputed_file"] = b1_path
         result["b1_nominal_prep_fa"] = nominal_prep_fa
-        result["b1_method_detected"] = "tfl_b1map"
+        result["b1_method_detected"] = "precomputed"
+        # Siemens tfl famp pixels are the actual flip in 0.1° units.
+        result["b1_map_encoding"] = "actual_flip_deci_deg"
+        return result
+
+    # --- Phase 1b: vendor-neutral pre-computed TB1map (Units-driven) ---
+    # BIDS TB1map is a preprocessed parametric map whose encoding is signaled by
+    # the ``Units`` sidecar (RECOMMENDED, so may be absent → "auto" median infer).
+    _UNITS_TO_ENCODING = {
+        "p.u.": "percent", "pu": "percent", "%": "percent", "percent": "percent",
+        "1": "ratio", "ratio": "ratio",
+        "deg": "actual_flip_deg", "degree": "actual_flip_deg",
+        "degrees": "actual_flip_deg",
+    }
+    for b1_path in b1_files:
+        fname = b1_path.name.upper()
+        if "TB1MAP" not in fname or "TB1TFL" in fname:
+            continue
+
+        meta = _meta(b1_path)
+        units = str(meta.get("Units", "")).strip().lower()
+        encoding = _UNITS_TO_ENCODING.get(units, "auto")
+
+        nominal_prep_fa = None
+        fa = meta.get("FlipAngle")
+        if fa is not None:
+            if isinstance(fa, list):
+                fa = fa[0]
+            nominal_prep_fa = float(fa)
+
+        logger.info(
+            "Found pre-computed TB1map B1+ map: %s (Units=%r → encoding=%s, "
+            "FlipAngle=%s°)",
+            b1_path.name, units or None, encoding, nominal_prep_fa,
+        )
+        result["afi_mode"] = "precomputed"
+        result["b1_precomputed_file"] = b1_path
+        result["b1_nominal_prep_fa"] = nominal_prep_fa
+        result["b1_method_detected"] = "precomputed"
+        result["b1_map_encoding"] = encoding
         return result
 
     # --- Phase 2: 4D AFI (TB1AFI or non-canonical *AFI* with 2 volumes) ---
-    afi_files = [f for f in b1_files if "TB1TFL" not in f.name.upper()]
+    afi_files = [
+        f for f in b1_files
+        if "TB1TFL" not in f.name.upper() and "TB1MAP" not in f.name.upper()
+    ]
     if not afi_files:
         return result
 
@@ -1006,13 +1050,15 @@ def discover_session_data(
             modalities.afi_tr2_ms = float(b1_info["afi_tr2_ms"])  # type: ignore[arg-type]
         if b1_info.get("afi_flip_angle") is not None:
             modalities.afi_flip_angle = float(b1_info["afi_flip_angle"])  # type: ignore[arg-type]
-        # Wire tfl_b1map-specific fields
+        # Wire pre-computed-B1-map fields
         if b1_info.get("b1_precomputed_file") is not None:
             modalities.b1_precomputed_file = Path(str(b1_info["b1_precomputed_file"]))
         if b1_info.get("b1_nominal_prep_fa") is not None:
             modalities.b1_nominal_prep_fa = float(b1_info["b1_nominal_prep_fa"])  # type: ignore[arg-type]
         if b1_info.get("b1_method_detected") is not None:
             modalities.b1_method_detected = str(b1_info["b1_method_detected"])
+        if b1_info.get("b1_map_encoding") is not None:
+            modalities.b1_map_encoding = str(b1_info["b1_map_encoding"])
 
     # Determine pipeline availability
     pipelines = _determine_pipeline_availability(modalities)

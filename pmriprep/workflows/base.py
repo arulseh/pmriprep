@@ -2196,7 +2196,7 @@ def init_pmriprep_wf(
             )
             dce_config.no_t1 = True
             # Without VFA, AFI-based B1+ is unnecessary (no flip angles to correct).
-            # tfl_b1map still works — it directly corrects the DCE flip angle.
+            # A pre-computed B1+ map still works — it directly corrects the flip angle.
             if not session_data.modalities.b1_precomputed_file:
                 dce_config.b1_method = "none"
 
@@ -2204,7 +2204,7 @@ def init_pmriprep_wf(
         b1_method = dce_config.b1_method
         if b1_method == "auto":
             detected = session_data.modalities.b1_method_detected
-            if detected in ("afi", "tfl_b1map"):
+            if detected in ("afi", "precomputed"):
                 b1_method = detected  # type: ignore[assignment]
             elif (
                 session_data.modalities.afi
@@ -2220,7 +2220,7 @@ def init_pmriprep_wf(
                 b1_method = "none"
             else:
                 _log.warning(
-                    "No B1+ data (AFI or tfl_b1map) found for sub-%s ses-%s; "
+                    "No B1+ data (AFI or pre-computed map) found for sub-%s ses-%s; "
                     "skipping B1+ correction (using nominal flip angles)",
                     subject_id, session_id,
                 )
@@ -2664,7 +2664,7 @@ def init_pmriprep_wf(
                 )
         # Wire B1+ data based on resolved method
         b1_method = dce_config.b1_method
-        if b1_method == "tfl_b1map" and session_data.modalities.b1_precomputed_file:
+        if b1_method == "precomputed" and session_data.modalities.b1_precomputed_file:
             dce_wf.inputs.inputnode.precomputed_b1_file = str(
                 session_data.modalities.b1_precomputed_file
             )
@@ -2672,6 +2672,12 @@ def init_pmriprep_wf(
                 dce_wf.inputs.inputnode.b1_nominal_prep_fa = (
                     session_data.modalities.b1_nominal_prep_fa
                 )
+            # Encoding precedence: config override > discovery hint > auto.
+            dce_wf.inputs.inputnode.b1_map_encoding = (
+                dce_config.b1_map_encoding
+                if dce_config.b1_map_encoding != "auto"
+                else (session_data.modalities.b1_map_encoding or "auto")
+            )
         elif b1_method == "afi" and session_data.modalities.afi:
             # Only 4D AFI is supported.
             if (

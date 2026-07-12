@@ -638,6 +638,12 @@
     ],
     [
       "inputnode",
+      "b1_map_encoding",
+      "b1_mapping",
+      "b1_map_encoding"
+    ],
+    [
+      "inputnode",
       "b1_nominal_prep_fa",
       "b1_mapping",
       "b1_nominal_prep_fa"
@@ -2452,6 +2458,7 @@
       "tr": 1.5
     },
     "b1_mapping": {
+      "b1_map_encoding": "auto",
       "field_strength": 3.0,
       "nominal_flip_angle": 60.0,
       "session_id": "0001",

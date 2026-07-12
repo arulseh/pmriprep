@@ -24,6 +24,12 @@ from nipype.interfaces.base import (  # type: ignore[import-untyped]
 )
 from nipype.interfaces.fsl import FLIRT  # type: ignore[import-untyped]
 
+from pmriprep.utils.b1_encoding import (
+    B1Encoding,
+    expected_pixel_max,
+    resolve_b1_divisor,
+)
+
 logger = logging.getLogger("pmriprep.interfaces.dce")
 
 
@@ -145,13 +151,20 @@ class B1MappingInputSpec(BaseInterfaceInputSpec):
     )
     precomputed_b1_file = File(
         exists=True,
-        desc="Pre-computed B1+ flip angle map (e.g., tfl_b1map). "
-             "Values in 0.1 degree units (Siemens convention).",
+        desc="Pre-computed B1+ map (vendor-neutral). Pixel encoding is set by "
+             "b1_map_encoding (auto-detected from BIDS suffix/Units when 'auto').",
+    )
+    b1_map_encoding = traits.Enum(
+        *[e.value for e in B1Encoding],
+        usedefault=True,
+        desc="Pixel-value encoding of the pre-computed B1+ map: 'auto' "
+             "(infer from suffix/Units, else pixel median), 'actual_flip_deci_deg' "
+             "(Siemens tfl, pixel = flip×10), 'actual_flip_deg', 'percent' "
+             "(BIDS p.u., 100=nominal), or 'ratio' (1.0=nominal).",
     )
     b1_nominal_prep_fa = traits.Float(
-        desc="Nominal preparation/saturation flip angle (degrees) for "
-             "pre-computed B1+ map scaling. Read from FlipAngle in the "
-             "acq-famp JSON sidecar.",
+        desc="Nominal preparation/saturation flip angle (degrees), required only "
+             "for actual-flip encodings. Read from FlipAngle in the sidecar.",
     )
 
 
@@ -793,10 +806,13 @@ class B1Mapping(SimpleInterface):
         return runtime
 
     def _run_precomputed_b1(self, runtime: Any) -> Any:
-        """Process pre-computed B1+ flip angle map (e.g., Siemens tfl_b1map).
+        """Process a pre-computed B1+ map into a B1+ correction ratio map.
 
-        Scaling: b1_ratio = pixel_value / (nominal_prep_fa * 10)
-        where pixel values are in 0.1 degree units (Siemens convention).
+        The pixel encoding is resolved from ``b1_map_encoding`` (one of
+        ``actual_flip_deci_deg`` = Siemens tfl 0.1° units, ``actual_flip_deg``,
+        ``percent`` = BIDS p.u., ``ratio``), or inferred when ``auto``. The B1+
+        ratio is ``pixel / divisor`` where ``divisor`` is the pixel value at the
+        nominal flip angle (see :mod:`pmriprep.utils.b1_encoding`).
         """
         import nibabel as nib  # type: ignore[import-untyped]
         from scipy.ndimage import gaussian_filter  # type: ignore[import-untyped]
@@ -830,37 +846,43 @@ class B1Mapping(SimpleInterface):
         header = b1_img.header  # type: ignore[attr-defined]
         shape = b1_raw.shape[:3]
 
-        # Read nominal preparation flip angle
-        if not isdefined(self.inputs.b1_nominal_prep_fa) or not self.inputs.b1_nominal_prep_fa:
-            raise ValueError(
-                "b1_nominal_prep_fa is required for pre-computed B1+ maps. "
-                "This should be set from the FlipAngle field in the acq-famp "
-                "JSON sidecar."
-            )
-        nominal_prep_fa = float(self.inputs.b1_nominal_prep_fa)
-        scale_factor = nominal_prep_fa * 10.0
+        # Resolve the pixel→ratio scaling from the encoding (auto → inferred
+        # from suffix/Units upstream, or from the pixel median as a last resort).
+        nominal_prep_fa = (
+            float(self.inputs.b1_nominal_prep_fa)
+            if isdefined(self.inputs.b1_nominal_prep_fa)
+            and self.inputs.b1_nominal_prep_fa
+            else None
+        )
+        b1_res = resolve_b1_divisor(
+            encoding=B1Encoding(self.inputs.b1_map_encoding),
+            nominal_prep_fa=nominal_prep_fa,
+            b1_raw=b1_raw,
+        )
+        scale_factor = b1_res.divisor
         logger.info(
-            "Pre-computed B1+ scaling: pixel / %.1f "
-            "(FlipAngle=%.0f°, scale=FA×10)",
-            scale_factor, nominal_prep_fa,
+            "Pre-computed B1+ scaling: pixel / %.1f (encoding=%s, source=%s)",
+            scale_factor, b1_res.resolved_encoding.value, b1_res.source,
         )
 
         # Validate pixel values — catch grossly wrong files (e.g., anatomical
         # companion with signal-intensity values), but allow high B1+ at FOV
         # edges. Downstream physiological clipping handles the actual range.
+        full_scale = expected_pixel_max(scale_factor)
         p99 = float(np.percentile(b1_raw[b1_raw > 0], 99)) if np.any(b1_raw > 0) else 0.0
-        if p99 > scale_factor * 5.0:
+        if p99 > full_scale * 5.0:
             raise ValueError(
                 f"Pre-computed B1+ map pixel p99={p99:.0f} exceeds "
-                f"5× expected maximum ({scale_factor * 5.0:.0f}). "
-                f"Check that this is the correct file (acq-famp, not acq-anat)."
+                f"5× expected maximum ({full_scale * 5.0:.0f}) for encoding "
+                f"{b1_res.resolved_encoding.value}. Check that this is the correct "
+                "B1+ map file and that its encoding is set correctly."
             )
-        if p99 > scale_factor * 2.0:
+        if p99 > full_scale * 2.0:
             logger.warning(
                 "Pre-computed B1+ map pixel p99=%.0f exceeds 2× nominal "
                 "(%.0f). Some voxels have B1+ ratio > 2.0 — likely edge/artifact "
                 "voxels that will be clipped.",
-                p99, scale_factor * 2.0,
+                p99, full_scale * 2.0,
             )
 
         # Create valid mask (non-zero pixels)
@@ -966,7 +988,9 @@ class B1Mapping(SimpleInterface):
         b1_status = QCStatus.PASS if qc_pass else QCStatus.WARN
 
         qc_metrics = {
-            "method": "tfl_b1map",
+            "method": "precomputed",
+            "encoding": b1_res.resolved_encoding.value,
+            "encoding_source": b1_res.source,
             "mean_b1": mean_b1,
             "std_b1": std_b1,
             "median_b1": median_b1,
@@ -977,7 +1001,7 @@ class B1Mapping(SimpleInterface):
             "clip_low": b1_thresh.clip_low,
             "clip_high": b1_thresh.clip_high,
             "nominal_prep_fa_deg": nominal_prep_fa,
-            "scale_factor": scale_factor,
+            "divisor": scale_factor,
             "pixel_p99": p99,
             "b1_range_expected": b1_thresh.mean_range,
             "b1_max_std_expected": b1_thresh.max_std,
@@ -1008,7 +1032,9 @@ class B1Mapping(SimpleInterface):
                 b1_raw=b1_raw,
                 b1_map=b1_map,
                 valid_mask=valid_mask,
+                divisor=scale_factor,
                 nominal_prep_fa=nominal_prep_fa,
+                encoding=b1_res.resolved_encoding.value,
                 mean_b1=mean_b1,
                 std_b1=std_b1,
                 subject_id=self.inputs.subject_id,

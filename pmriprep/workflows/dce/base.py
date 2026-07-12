@@ -820,9 +820,10 @@ def init_dce_preproc_wf(
                 "afi_tr1",
                 "afi_tr2",
                 "afi_flip_angle",
-                # Pre-computed B1+ mapping inputs (e.g., tfl_b1map)
+                # Pre-computed B1+ mapping inputs (TB1TFL or TB1map)
                 "precomputed_b1_file",
                 "b1_nominal_prep_fa",
+                "b1_map_encoding",
                 # DSC integration inputs
                 "dsc_cbv_file",       # Relative/absolute CBV — cross-validation + QC
                 "dsc_ncbv_file",      # NAWM-normalized CBV (nCBV) — vp prior input
@@ -1042,6 +1043,7 @@ def init_dce_preproc_wf(
                 ("dce_file", "reference_file"),
                 ("precomputed_b1_file", "precomputed_b1_file"),
                 ("b1_nominal_prep_fa", "b1_nominal_prep_fa"),
+                ("b1_map_encoding", "b1_map_encoding"),
             ]),
         ])
 
