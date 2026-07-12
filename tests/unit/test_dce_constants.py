@@ -173,7 +173,18 @@ class TestB1Thresholds:
         assert t.clip_low == 0.2
         assert t.clip_high == 2.0
         assert t.dce_clip_low == 0.5
-        assert t.dce_clip_high == 1.5
+        assert t.dce_clip_high == 1.7
+
+    def test_vfa_and_dce_clip_ranges_harmonized(self) -> None:
+        """The VFA-fit and signal->concentration paths clip B1 identically.
+
+        A split range biases C(t)->Ktrans for voxels whose true B1 falls between
+        the two ceilings, so the two clips must stay equal at every field.
+        """
+        for field in (1.5, 3.0, 7.0):
+            t = get_b1_thresholds(field)
+            assert t.vfa_clip_low == t.dce_clip_low
+            assert t.vfa_clip_high == t.dce_clip_high
 
     def test_b1_thresholds_nearest(self) -> None:
         """Intermediate field returns nearest known thresholds."""

@@ -1501,11 +1501,15 @@ class T1Mapping(SimpleInterface):
             valid_nrmse = (t1_s > 0) & np.isfinite(t1_s) & brain_mask
             e1_fit = np.exp(-tr_s / np.where(valid_nrmse, t1_s, 1.0))
 
-            # S0 from closed-form LS: S_i = S0·f_i → S0 = Σ(S·f)/Σ(f²)
-            f_all = np.array([
-                np.sin(fa) * (1 - e1_fit) / (1 - e1_fit * np.cos(fa))
-                for fa in flip_angles_rad
-            ])
+            # S0 from closed-form LS: S_i = S0·f_i → S0 = Σ(S·f)/Σ(f²).
+            # Use the per-voxel B1-corrected flip angles the T1 was fit from, not
+            # the nominal ones, so the goodness-of-fit is evaluated at the same
+            # angles (otherwise NRMSE is inflated wherever B1 != 1).
+            f_all = (
+                np.sin(corrected_fa_rad)
+                * (1 - e1_fit[np.newaxis])
+                / (1 - e1_fit[np.newaxis] * np.cos(corrected_fa_rad))
+            )
             f2_sum = np.sum(f_all ** 2, axis=0)
             f2_sum = np.where(f2_sum > 1e-20, f2_sum, 1e-20)  # guard
             s0_fit = np.sum(signal_data * f_all, axis=0) / f2_sum
@@ -2100,7 +2104,13 @@ class T1Mapping(SimpleInterface):
             T1 map in seconds
 
         """
-        from pmriprep.utils.dce_constants import EPSILON_E1_UPPER, EPSILON_T1
+        from pmriprep.utils.dce_constants import (
+            EPSILON_DENOM_ABS,
+            EPSILON_DENOM_RTOL,
+            EPSILON_E1_LOWER,
+            EPSILON_E1_UPPER,
+            EPSILON_WEIGHT_DENOM,
+        )
 
         n_fa = x_data.shape[0]
         n_voxels = int(np.prod(shape))
@@ -2118,22 +2128,27 @@ class T1Mapping(SimpleInterface):
         sum_x2 = np.sum(x_flat * x_flat, axis=0)
 
         denom = n_fa * sum_x2 - sum_x * sum_x
-        degenerate = np.abs(denom) < EPSILON_T1
+        # Scale-relative degeneracy guard (amplitude-invariant collinearity test),
+        # kept strictly positive so an all-zero-signal voxel (sum_x2=0) yields a
+        # finite E1 (0, then clipped) rather than 0/0 = NaN.
+        thr = np.maximum(EPSILON_DENOM_RTOL * (n_fa * sum_x2), EPSILON_DENOM_ABS)
         denom = np.where(
-            degenerate,
-            np.where(denom >= 0, EPSILON_T1, -EPSILON_T1),
+            np.abs(denom) < thr,
+            np.where(denom >= 0, thr, -thr),
             denom,
         )
         e1 = (n_fa * sum_xy - sum_x * sum_y) / denom
-        e1 = np.clip(e1, EPSILON_T1, 1.0 - EPSILON_E1_UPPER)
+        e1 = np.clip(e1, EPSILON_E1_LOWER, 1.0 - EPSILON_E1_UPPER)
 
         # Iterative reweighting
         for _ in range(n_iterations):
-            # w_i = (sin(a_i) / (1 - E1 * cos(a_i)))^2
+            # w_i = (sin(a_i) / (1 - E1 * cos(a_i)))^2. The denominator is meant to
+            # become small (large weight) for the informative long-T1/small-flip
+            # points, so it is floored only against a true divide-by-zero.
             denom_w = 1.0 - e1[np.newaxis, :] * cos_flat  # (n_fa, n_voxels)
             denom_w = np.where(
-                np.abs(denom_w) < EPSILON_T1,
-                np.where(denom_w >= 0, EPSILON_T1, -EPSILON_T1),
+                np.abs(denom_w) < EPSILON_WEIGHT_DENOM,
+                np.where(denom_w >= 0, EPSILON_WEIGHT_DENOM, -EPSILON_WEIGHT_DENOM),
                 denom_w,
             )
             w = (sin_flat / denom_w) ** 2  # (n_fa, n_voxels)
@@ -2146,14 +2161,16 @@ class T1Mapping(SimpleInterface):
             sum_wx2 = np.sum(w * x_flat * x_flat, axis=0)
 
             denom_reg = sum_w * sum_wx2 - sum_wx * sum_wx
-            degenerate_w = np.abs(denom_reg) < EPSILON_T1
+            thr_reg = np.maximum(
+                EPSILON_DENOM_RTOL * (sum_w * sum_wx2), EPSILON_DENOM_ABS
+            )
             denom_reg = np.where(
-                degenerate_w,
-                np.where(denom_reg >= 0, EPSILON_T1, -EPSILON_T1),
+                np.abs(denom_reg) < thr_reg,
+                np.where(denom_reg >= 0, thr_reg, -thr_reg),
                 denom_reg,
             )
             e1 = (sum_w * sum_wxy - sum_wx * sum_wy) / denom_reg
-            e1 = np.clip(e1, EPSILON_T1, 1.0 - EPSILON_E1_UPPER)
+            e1 = np.clip(e1, EPSILON_E1_LOWER, 1.0 - EPSILON_E1_UPPER)
 
         # T1 = -TR / ln(E1)
         t1_flat = -tr_s / np.log(e1)
@@ -2210,7 +2227,7 @@ class T1Mapping(SimpleInterface):
         numpy.ndarray
             T1 map in seconds, shape (x, y, z). Unfitted voxels are 0.
         """
-        from pmriprep.utils.dce_constants import EPSILON_E1_UPPER, EPSILON_T1
+        from pmriprep.utils.dce_constants import EPSILON_E1_LOWER, EPSILON_E1_UPPER
 
         n_fa = signal_data.shape[0]
         n_voxels = int(np.prod(shape))
@@ -2242,10 +2259,10 @@ class T1Mapping(SimpleInterface):
         if e1_init is not None:
             # Use WLLS E1 estimate → R1 = -ln(E1) / TR
             e1_sub = e1_init[fit_idx]
-            # Use EPSILON_E1_UPPER (1e-4), not EPSILON_T1 (0.01), as the
-            # upper bound: at short pulse TR (e.g., 4 ms) E1=0.99 caps T1
-            # at ~397 ms, miscapping long-T1 tissue at the seed.
-            e1_sub = np.clip(e1_sub, EPSILON_T1, 1.0 - EPSILON_E1_UPPER)
+            # Upper bound uses the small EPSILON_E1_UPPER (1e-4) offset, not the
+            # E1 lower clip value: at short pulse TR (e.g., 4 ms) an E1=0.99 cap
+            # would limit T1 to ~397 ms, miscapping long-T1 tissue at the seed.
+            e1_sub = np.clip(e1_sub, EPSILON_E1_LOWER, 1.0 - EPSILON_E1_UPPER)
             r1 = -np.log(e1_sub) / tr_s
         else:
             # Unweighted GLLS: single-pass linearized regression (no IRLS)
@@ -2262,7 +2279,7 @@ class T1Mapping(SimpleInterface):
             denom = np.where(np.abs(denom) < 1e-12, 1e-12, denom)
             e1_glls = np.clip(
                 (n_fa * sum_xy - sum_x * sum_y) / denom,
-                EPSILON_T1, 1.0 - EPSILON_E1_UPPER,
+                EPSILON_E1_LOWER, 1.0 - EPSILON_E1_UPPER,
             )
             r1 = -np.log(e1_glls) / tr_s
 

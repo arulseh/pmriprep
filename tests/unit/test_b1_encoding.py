@@ -141,6 +141,11 @@ class TestMissingFlipAngle:
 class TestInterfacePrecomputed:
     """End-to-end B1Mapping precomputed path across encodings."""
 
+    @pytest.fixture(autouse=True)
+    def _run_in_tmp(self, tmp_path, monkeypatch):
+        """Keep B1Mapping's cwd-relative outputs (B1+ map, QC PNG) in tmp."""
+        monkeypatch.chdir(tmp_path)
+
     def _run(self, tmp_path, pixel, encoding, fa=None):
         import nibabel as nib
 

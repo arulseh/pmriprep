@@ -38,6 +38,27 @@ VP_VE_TOTAL_MAX: Final[float] = 0.999
 #: Minimum T1 value in seconds
 EPSILON_T1: Final[float] = 0.01
 
+#: Dimensionless E1 lower clip (E1 = exp(-TR/T1)). Distinct role from EPSILON_T1
+#: (which is a T1-in-seconds floor); at TR 4 ms this implies T1 >= ~0.87 ms, well
+#: below any tissue, so it only catches noise-driven near-zero/negative slopes.
+EPSILON_E1_LOWER: Final[float] = 0.01
+
+#: Dimensionless floor on the DESPOT1 weight denominator ``1 - E1*cos(alpha)``.
+#: With E1 clipped to <= 1 - EPSILON_E1_UPPER the denominator is >= ~1e-4 for real
+#: flip angles, so this is a pure divide-by-zero guard that never binds; it must be
+#: far below that so the correct large weights for long-T1/small-flip points survive.
+EPSILON_WEIGHT_DENOM: Final[float] = 1e-6
+
+#: Relative tolerance for degeneracy of the DESPOT1 normal-equation determinants
+#: (``n_fa*sum_x2 - sum_x^2`` and its weighted analogue). Amplitude-invariant, so it
+#: keys on collinearity of the flip-angle signals rather than signal magnitude.
+EPSILON_DENOM_RTOL: Final[float] = 1e-9
+
+#: Absolute strictly-positive backstop for the determinant guard. Keeps the floored
+#: denominator non-zero when the signal scale is ~0 (all-zero-signal voxel), so E1
+#: resolves to a finite 0 rather than 0/0 = NaN.
+EPSILON_DENOM_ABS: Final[float] = 1e-12
+
 #: Minimum Ktrans value in min^-1
 EPSILON_KTRANS: Final[float] = 0.001
 
@@ -47,7 +68,7 @@ EPSILON_VP: Final[float] = 0.001
 #: Minimum B1+ correction factor
 EPSILON_B1: Final[float] = 1e-6
 
-#: E1 upper bound offset (E1 clipped to [EPSILON_T1, 1.0 - EPSILON_E1_UPPER])
+#: E1 upper bound offset (E1 clipped to [EPSILON_E1_LOWER, 1.0 - EPSILON_E1_UPPER])
 #: Upper bound offset 1e-4 gives E1 <= 0.9999, preserving long-T1 voxels
 EPSILON_E1_UPPER: Final[float] = 1e-4
 
@@ -660,7 +681,7 @@ B1_THRESHOLDS_BY_FIELD: Final[dict[float, B1Thresholds]] = {
         vfa_clip_low=0.5,
         vfa_clip_high=1.7,
         dce_clip_low=0.5,
-        dce_clip_high=1.5,
+        dce_clip_high=1.7,
         outlier_deviation=0.30,
         max_std=0.25,
         extreme_low=0.50,

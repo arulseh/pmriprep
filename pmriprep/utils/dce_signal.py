@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 from pmriprep.utils.dce_constants import (
     DEFAULT_BASELINE_FRAMES,
+    EPSILON_E1_LOWER,
     EPSILON_E1_UPPER,
     EPSILON_SIGNAL,
     EPSILON_T1,
@@ -175,7 +176,7 @@ def solve_e1_from_signal_ratio(
     # Clip E1 to valid range (0, 1) since E1 = exp(-TR/T1)
     # E1 must be positive (T1 > 0) and less than 1 (TR > 0)
     # Use EPSILON_E1_UPPER (1e-4) for upper bound to preserve long-T1 voxels
-    e1_clipped = np.clip(e1, EPSILON_T1, 1.0 - EPSILON_E1_UPPER)
+    e1_clipped = np.clip(e1, EPSILON_E1_LOWER, 1.0 - EPSILON_E1_UPPER)
 
     return e1_clipped  # type: ignore[no-any-return]
 
@@ -207,7 +208,7 @@ def e1_to_r1(
     - R1 = 1/T1, so typical values are 0.5-2.0 s^-1 for tissue.
     """
     # Ensure E1 is in valid range for log
-    e1_safe = np.clip(e1, EPSILON_T1, 1.0 - EPSILON_E1_UPPER)
+    e1_safe = np.clip(e1, EPSILON_E1_LOWER, 1.0 - EPSILON_E1_UPPER)
 
     r1 = -np.log(e1_safe) / tr
 

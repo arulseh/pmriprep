@@ -74,7 +74,7 @@ def filter_pipeline_qc(qc: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _is_nonfinite_number(value: Any) -> bool:
-    """True only for a NaN/Inf real number (python OR numpy scalar).
+    """Return True only for a NaN/Inf real number (python OR numpy scalar).
 
     Uses ``math.isfinite``, which accepts anything with ``__float__`` (so it
     catches numpy float32/float16 that ``isinstance(v, float)`` misses), and

@@ -1,5 +1,4 @@
-"""FSL CommandLine wrappers and Function-node/construction helpers for the
-DSC preproc workflow.
+"""FSL CommandLine wrappers and Function-node/construction helpers for the DSC preproc workflow.
 
 Extracted verbatim from ``base.py`` (the two smoothing dict-builders were
 dedented out of ``init_dsc_preproc_wf``) to keep that function navigable.
