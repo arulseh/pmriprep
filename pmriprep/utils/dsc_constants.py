@@ -146,6 +146,14 @@ SYNTH_AIF_DOSE_CAP: Final[float] = 2.5
 #: per-voxel ΔR2* noise ≈ 1/(TE×SNR) ≈ 1.7 s⁻¹; 3.0 is ~2 sigma guard.
 SYNTH_AIF_MIN_PEAK: Final[float] = 3.0
 
+#: Peak-ΔR2* candidate rejection bounds at 3T / full dose (s⁻¹). Arterial peak
+#: ΔR2* scales ∝ B0·dose (Kjølby 2006 MRM 56:187), so both bounds are
+#: B0·dose-scaled at the use site — tracking the same law as the synthetic AIF
+#: peak. Floor separates artery (~35 s⁻¹ median) from tissue first-pass and is
+#: clamped to ``SYNTH_AIF_MIN_PEAK``; ceiling rejects susceptibility artifact.
+AIF_PEAK_FLOOR_3T: Final[float] = 5.0
+AIF_PEAK_CEILING_3T: Final[float] = 120.0
+
 
 # =============================================================================
 # K2 residual thresholds (two tiers — different decision commitment levels)
@@ -354,6 +362,15 @@ AIF_SMOOTHING_TARGET_SECONDS: Final[float] = 7.5
 #: count via ``max(1, ceil(SECONDS / tr))``. At TR=1.5 s → 2 frames; at
 #: TR=2.0 s → 2 frames; at TR=0.5 s (high-temp DSC) → 6 frames.
 AIF_PEAK_SPREAD_MAX_SECONDS: Final[float] = 3.0
+
+#: Tissue-TTP causality tolerance (s) for arterial-vs-venous candidate gating.
+#: A feeding artery peaks before parenchyma (artery→tissue transit ~1-4 s;
+#: Calamante 2000, Ibaraki 2007), so a candidate peaking more than
+#: ``AIF_TTP_REJECT_AFTER_TISSUE_S`` after tissue is venous and hard-rejected;
+#: ``AIF_TTP_NEAR_TISSUE_S`` bounds the mild near-tissue penalty band. Applied
+#: in seconds (frame difference × tr) so the gate is TR-invariant.
+AIF_TTP_REJECT_AFTER_TISSUE_S: Final[float] = 2.0
+AIF_TTP_NEAR_TISSUE_S: Final[float] = 2.0
 
 #: Maximum tail/peak fraction for an AIF voxel (mean ΔR2* over the last
 #: ``AIF_TAIL_WINDOW_S`` divided by first-pass peak). Catches BBB-leakage

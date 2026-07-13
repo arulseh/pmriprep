@@ -28,9 +28,13 @@ from nipype.interfaces.base import (  # type: ignore[import-untyped]
 )
 
 from pmriprep.utils.dsc_constants import (
+    AIF_PEAK_CEILING_3T,
+    AIF_PEAK_FLOOR_3T,
     AIF_PEAK_SPREAD_MAX_SECONDS,
     AIF_TAIL_FRACTION_MAX,
     AIF_TAIL_WINDOW_S,
+    AIF_TTP_NEAR_TISSUE_S,
+    AIF_TTP_REJECT_AFTER_TISSUE_S,
     EPSILON_CONCENTRATION,
     EPSILON_SIGNAL,
     GD_DOTA_STANDARD_DOSE,
@@ -967,7 +971,6 @@ class AIFDetection(BaseInterface):
         if n_time < baseline_frames + 10:
             return None
 
-        baseline_end_time = (baseline_frames - 1) * tr if baseline_frames > 0 else 0.0
         baseline_conc = float(np.mean(conc_curve[:baseline_frames]))
 
         # First-pass window: _FP_GAP_SECONDS-40 s after baseline
@@ -1035,10 +1038,17 @@ class AIFDetection(BaseInterface):
 
         # FWHM in seconds (absolute half-max, from concentration curve)
         half_max = fp_peak_val / 2.0
-        above = conc_curve > half_max
-        if np.any(above):
-            idxs = np.where(above)[0]
-            fwhm = float(idxs[-1] - idxs[0]) * tr if len(idxs) >= 2 else tr
+        # Contiguous first-pass width: walk the rising/falling edges outward from
+        # the first-pass peak so a recirculation/leakage lobe above half-max does
+        # not inflate the width (which would trip the strict fwhm_max reject).
+        if fp_peak_val > EPSILON_SIGNAL and conc_curve[fp_peak_abs] > half_max:
+            lo = fp_peak_abs
+            while lo > 0 and conc_curve[lo - 1] > half_max:
+                lo -= 1
+            hi = fp_peak_abs
+            while hi < n_time - 1 and conc_curve[hi + 1] > half_max:
+                hi += 1
+            fwhm = float(hi - lo) * tr
         else:
             fwhm = float("nan")
 
@@ -1214,7 +1224,6 @@ class AIFDetection(BaseInterface):
         # 5c. FWHM min — reject sub-TR spikes (not physiological).
         # Arterial first-pass FWHM is typically 4-8 s; anything below
         # ~2 s is noise or intravoxel dephasing artifact.
-        dt = metrics.get("dt", 1.5)
         fwhm_min = {"strict": 3.0, "relaxed": 2.5, "permissive": 2.0}
         if not np.isnan(fwhm) and fwhm < fwhm_min.get(criteria, 2.0):
             return float("inf")
@@ -1246,24 +1255,31 @@ class AIFDetection(BaseInterface):
         if not np.isnan(ph) and ph < ph_min.get(criteria, 12):
             return float("inf")
 
-        # 8b. Peak concentration bounds — dose-scaled artifact rejection
-        # Calibrated from 20+ subjects: valid AIFs have peak_conc 5-50 s^-1 at
-        # effective_dose=1.0 (standard GBCA full). Artifact example: 486 s^-1.
+        # 8b. Peak concentration bounds — B0- and dose-scaled artifact rejection.
+        # Arterial peak ΔR2* scales ∝ B0·dose, so both floor and ceiling ride the
+        # same law as the synthetic AIF peak (a fixed floor would only be valid at
+        # its 3T/full-dose calibration point). Floor is clamped to the ΔR2* noise
+        # guard; ceiling scales up for super-doses but never below its 3T value.
         effective_dose = 1.0  # default, overwritten below if peak_conc available
         peak_conc = metrics.get("peak_conc", float("nan"))
         if not np.isnan(peak_conc):
-            BASE_PEAK_FLOOR = 5.0  # s^-1 — tissue contamination floor (dose-independent)
-            BASE_PEAK_CEILING = 120.0  # s^-1 — susceptibility artifact ceiling
-
             # Cap 3.0 (vs 2.5 for synthetic AIF): artifact rejection tolerates
             # slight nonlinearity; synthetic AIF amplitude must stay linear.
             effective_dose = float(np.clip(
                 self._effective_dose(dose, agent_standard_dose, gd_multiplicity),
                 0.2, 3.0,
             ))
+            field_strength = (
+                float(self.inputs.field_strength)
+                if isdefined(self.inputs.field_strength) else 3.0
+            )
+            b0_scale = field_strength / 3.0
 
-            peak_floor = BASE_PEAK_FLOOR
-            peak_ceiling = max(BASE_PEAK_CEILING * effective_dose, BASE_PEAK_CEILING)
+            peak_floor = max(
+                AIF_PEAK_FLOOR_3T * b0_scale * effective_dose,
+                SYNTH_AIF_MIN_PEAK,
+            )
+            peak_ceiling = AIF_PEAK_CEILING_3T * b0_scale * max(effective_dose, 1.0)
 
             if peak_conc < peak_floor or peak_conc > peak_ceiling:
                 return float("inf")
@@ -1374,16 +1390,18 @@ class AIFDetection(BaseInterface):
 
             cost = self._score_candidate_cost(m, criteria=criteria, median_s0=median_s0)
 
-            # Tissue TTP cross-validation
+            # Tissue TTP cross-validation. Compared in seconds (not frames) so
+            # the causality tolerance is TR-invariant: a feeding artery peaks
+            # before parenchyma, so a candidate peaking after tissue is venous.
             candidate_ttp_frame = m["ttp"] / tr
-            frames_before_tissue = tissue_ttp_frame - candidate_ttp_frame
+            seconds_before_tissue = (tissue_ttp_frame - candidate_ttp_frame) * tr
 
             if np.isfinite(cost):
-                if frames_before_tissue < -2:
-                    cost = float("inf")  # Peaks >2 frames after tissue → venous
-                elif frames_before_tissue < 0:
-                    cost += 10.0  # Peaks 0-2 frames after tissue
-                elif frames_before_tissue < 2:
+                if seconds_before_tissue < -AIF_TTP_REJECT_AFTER_TISSUE_S:
+                    cost = float("inf")  # Peaks well after tissue → venous
+                elif seconds_before_tissue < 0.0:
+                    cost += 10.0  # Peaks just after tissue
+                elif seconds_before_tissue < AIF_TTP_NEAR_TISSUE_S:
                     cost += 2.0  # Mild penalty: close to tissue
 
             # Atlas-preference penalty — prefer known arterial territories
@@ -3048,6 +3066,10 @@ class AIFDetection(BaseInterface):
                         best_coord,
                         tiers_attempted[-1] if tiers_attempted else "single_best",
                     )
+                    # Provenance must describe the single emitted voxel, not the
+                    # full pre-fallback union pool the trim loop left in
+                    # union_tier_provenance.
+                    union_tier_provenance = {detection_level: 1}
                     filter_meta = dict(accepted_filter_meta)
                     _logger.warning(
                         "AIF cascade: using single-best candidate "

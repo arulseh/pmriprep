@@ -35,6 +35,8 @@ def compute_aif_fwhm_frames(
     -------
     int
         FWHM in number of frames. Arterial curves typically 5-15 frames.
+        Returns 0 when the curve is too short or the global maximum lies within
+        the baseline window (a spike/artifact with no measurable first pass).
     """
     if len(aif_curve) < baseline_frames + 1:
         return 0
@@ -42,6 +44,10 @@ def compute_aif_fwhm_frames(
     baseline_mean = float(np.mean(aif_curve[:baseline_frames]))
     peak = float(np.max(aif_curve))
     peak_idx = int(np.argmax(aif_curve))
+    if peak_idx <= baseline_frames:
+        # Global max inside the baseline window: the rising-edge search would be
+        # empty and yield a spurious near-full-curve width, so report 0.
+        return 0
 
     half_max = baseline_mean + (peak - baseline_mean) / 2.0
 
