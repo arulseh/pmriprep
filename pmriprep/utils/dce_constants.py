@@ -1046,13 +1046,15 @@ def compute_timing_margin_frames(tr: float) -> int:
 
 
 def compute_fwhm_threshold_frames(tr: float, strict: bool = True) -> float:
-    """Compute TR-adaptive FWHM threshold in frames.
+    """Compute the max-FWHM ("narrow bolus") threshold in frames.
 
-    Takes the minimum of the frame-based threshold and
-    a seconds-based threshold converted to frames. This ensures the
-    threshold is meaningful at any TR:
-    - At TR=2s: min(5, 25/2=12.5) = 5 frames (frame-based dominates)
-    - At TR=8s: min(5, 25/8=3.1) = 3.1 frames (seconds-based dominates)
+    The ceiling is intrinsically a TIME (the maximum physiological arterial
+    FWHM), so it is expressed in seconds and converted to frames at the given
+    TR. A small integer floor keeps it numerically usable at very coarse TR; it
+    must never pull the effective seconds-ceiling below real arterial FWHM.
+    - At TR=2s: 25/2 = 12.5 frames (= 25 s)
+    - At TR=0.5s: 25/0.5 = 50 frames (= 25 s) — sub-second TR no longer collapses
+    - At TR=15s: max(2, 25/15=1.7) = 2 frames (resolution floor)
 
     Parameters
     ----------
@@ -1064,14 +1066,13 @@ def compute_fwhm_threshold_frames(tr: float, strict: bool = True) -> float:
     Returns
     -------
     float
-        FWHM threshold in frames.
+        Max-FWHM threshold in frames.
     """
     if tr <= 0:
         return 5.0 if strict else 8.0
-    frame_based = 5.0 if strict else 8.0
     sec_based = (AIF_FWHM_MAX_STRICT_SECONDS if strict
                  else AIF_FWHM_MAX_RELAXED_SECONDS) / tr
-    return min(frame_based, sec_based)
+    return max(2.0, sec_based)
 
 
 def is_low_temporal_resolution(tr: float) -> bool:

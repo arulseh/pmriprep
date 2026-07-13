@@ -12,6 +12,7 @@ The DCE AIF differs from DSC AIF in several important ways:
 """
 
 import logging
+import re
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal, Optional, TypedDict
@@ -65,7 +66,6 @@ from pmriprep.utils.dce_constants import (
     LESION_EXCLUSION_FLOOR_MM,
     MIDLINE_EXCLUSION_FRACTION,
     MIN_MEANINGFUL_ENHANCEMENT_MM,
-    PARKER_R1_REFERENCE,
     SLAB_EDGE_EXCLUSION_MM_ROLLOFF,
     SSS_EXCLUSION_MM,
     SUPERIOR_EXCLUSION_FRACTION,
@@ -172,7 +172,6 @@ class ParkerAIFParams:
 def parker_population_aif(
     t: npt.NDArray[Any],
     dose_factor: float = 1.0,
-    r1_actual: float | None = None,
 ) -> npt.NDArray[Any]:
     """Generate Parker population AIF.
 
@@ -181,6 +180,11 @@ def parker_population_aif(
     peak amplitudes, producing ~6 mM peak for full dose (0.1 mmol/kg), which
     matches the population value (6.3 ± 1.5 mM).
 
+    Output is a true-mM concentration curve. Concentration is relaxivity-
+    independent (both tissue and detected AIF are ΔR1/r1_true = true mM), so NO
+    r1 scaling is applied — only the molar-dose factor. The agent's r1 governs
+    signal, which is already divided out upstream.
+
     Parameters
     ----------
     t : np.ndarray
@@ -188,12 +192,6 @@ def parker_population_aif(
     dose_factor : float, optional
         Scaling factor for dose (1.0 = full dose 0.1 mmol/kg,
         0.5 = half dose, 2.0 = double dose).
-    r1_actual : float or None, optional
-        Actual r1 relaxivity (s^-1 mM^-1) of the contrast agent
-        used.  If provided, a relaxivity correction is applied:
-        ``effective_factor = dose_factor * (r1_actual / PARKER_R1_REFERENCE)``
-        where ``PARKER_R1_REFERENCE = 4.1`` (Gd-DTPA at 1.5T).
-        Use this for non-Gd-DTPA agents (e.g. Vueway r1=11.6).
 
     Returns
     -------
@@ -204,10 +202,7 @@ def parker_population_aif(
     # Convert time to minutes
     t_min = t / 60.0
 
-    # Apply relaxivity correction if non-standard agent
     effective_factor = dose_factor
-    if r1_actual is not None and r1_actual > 0:
-        effective_factor = dose_factor * (r1_actual / PARKER_R1_REFERENCE)
 
     # Get parameters
     p = ParkerAIFParams()
@@ -289,6 +284,11 @@ def compute_dce_aif_fwhm_seconds(
     baseline_mean = float(np.mean(aif_curve[:baseline_frames]))
     peak = float(np.max(aif_curve))
     peak_idx = int(np.argmax(aif_curve))
+
+    if peak_idx < baseline_frames:
+        # Global max sits inside the baseline window -> no real bolus enhancement;
+        # the rising-edge search would be empty and yield a spurious near-full FWHM.
+        return 0.0
 
     half_max = baseline_mean + (peak - baseline_mean) / 2.0
 
@@ -422,9 +422,10 @@ def detect_dce_aif_multi_bump_tail(
     QC-only flag for motion / inflow / venous mixing artifacts; does not
     alter AIF detection or candidate selection.
 
-    A clean physiologic AIF has exactly one secondary maximum
-    (recirculation hump at ~30s post-peak), so the caller should treat
-    ``count > 1`` as the abnormality threshold.
+    The 60s post-peak shoulder (``DCE_AIF_TAIL_SHOULDER_SECONDS``) excludes the
+    physiologic recirculation hump, so a clean AIF has NO counted secondary
+    maxima in-window; ``count > 1`` flags late-tail anomalies (venous mixing /
+    motion / inflow) beyond 60s post-peak.
 
     Window parameters are specified in seconds and converted to frames
     via ``tr`` so the detector behaves consistently across acquisitions
@@ -735,7 +736,9 @@ def _compute_pool_qc(
     r30 = compute_dce_aif_ratio_30s(scaled_curve, tr, peak_idx=peak_idx)
 
     if tr > 0 and peak_val > 0:
-        idx_120 = int(120.0 / tr)
+        # Window is "2 min POST-PEAK" (the 0.35 threshold's basis), not from scan
+        # start — else a delayed bolus counts first-pass as tail.
+        idx_120 = peak_idx + int(120.0 / tr)
         if idx_120 < n_volumes:
             late_tail = float(scaled_curve[idx_120:].mean() / peak_val)
         else:
@@ -836,6 +839,14 @@ def _evaluate_gates(
         return _record("FAIL_G4", "G4")
     if g5_state == "HARD":
         return _record("FAIL_G5", "G5")
+
+    # C5: a sub-threshold peak is no real bolus — a HARD amplitude reject that the
+    # G6 escape (which rescues dilution/over-scale, not a ~0-peak AIF) must NOT
+    # rescue. Placed with the other HARD gates, before the G6 clause. This is
+    # caught gate-side because _apply_aif_scale returns scale=1.0 for such a peak,
+    # which would otherwise pass the scale-based G1.
+    if qc["peak_mm"] < MIN_MEANINGFUL_ENHANCEMENT_MM:
+        return _record("FAIL_G1", "G1")
 
     if not g1_fail:
         if warns:
@@ -1106,20 +1117,6 @@ class DCEAIFDetectionInputSpec(BaseInterfaceInputSpec):
         usedefault=True,
         desc="Contrast agent dose multiplier (0.5=half, 1.0=full, 2.0=double)",
     )
-    r1_relaxivity = traits.Float(
-        0.0,
-        usedefault=True,
-        desc=(
-            "r1 relaxivity (s^-1 mM^-1) of the contrast agent.  "
-            "0 = assume Gd-DTPA (no correction).  Set to actual "
-            "relaxivity for non-standard agents (e.g. Vueway r1=11.6)."
-        ),
-    )
-    agent_r1_known = traits.Bool(
-        False, usedefault=True,
-        desc="True when r1_relaxivity is from a confirmed agent lookup "
-             "(not generic field-strength default). Controls Parker AIF correction.",
-    )
     agent_standard_dose = traits.Float(
         0.1,
         usedefault=True,
@@ -1228,8 +1225,6 @@ class AIFDetection(BaseInterface):
         Temporal resolution in seconds.
     dose : float
         Contrast dose multiplier (0.5=half, 1.0=full, 2.0=double).
-    r1_relaxivity : float
-        Contrast agent relaxivity for Parker AIF correction.
 
     Returns
     -------
@@ -1309,19 +1304,14 @@ class AIFDetection(BaseInterface):
     def _get_expected_peak_range(self) -> tuple[float, float]:
         """Get expected peak concentration range based on dose.
 
-        Returns values in **plasma units** — the population AIF
-        is the Tofts plasma input function, so
-        ``DCE_AIF_EXPECTED_FULL_DOSE`` inherits plasma scaling. The
-        cluster-mean QC warning at ``final_peak_mm`` compares correctly
-        against this in plasma: ``aif_curve`` is ``(1-Hct)``-divided at
-        its scaling site before ``final_peak`` is computed.
-
-        NB unit-mismatch in upstream candidate-tier callers: per-voxel
-        gates compare per-voxel ``peak`` (blood units, pre-Hct division)
-        against ``peak_min/peak_max`` (plasma units from this function)
-        — a ~1/(1-Hct) ≈ 1.7x systematic mis-scale. The QC warning at
-        ``final_peak_mm`` is unit-correct; upstream candidate selection
-        is not.
+        Returns values in **blood-voxel units** (raw Parker C_p, pre-Hct
+        division) — ``DCE_AIF_EXPECTED_FULL_DOSE`` is on the same ~6 mM scale as
+        the raw ``parker_population_aif`` output. Per-voxel candidate gates
+        compare per-voxel ``peak`` (also blood, pre-Hct division) against this
+        range — blood-vs-blood, consistent. Consumers that compare against a
+        plasma (``/(1-Hct)``-divided) curve must convert this range by
+        ``1/(1-Hct)`` first, as the scaling sites and the ``final_peak`` QC
+        warning do.
         """
         dose_factor = self._get_dose_factor()
         base_min = DCE_AIF_EXPECTED_FULL_DOSE.peak_min_mm
@@ -3926,6 +3916,16 @@ class AIFDetection(BaseInterface):
         """
         import nibabel as nib  # type: ignore[import-untyped]
 
+        # Hematocrit gates the blood->plasma conversion (/(1-Hct)) at every AIF
+        # scaling site; it must be in [0, 1) or the AIF goes inf/negative. Fail
+        # fast on a bad config/sidecar value rather than writing a corrupt AIF.
+        _hct_in = float(self.inputs.hematocrit)
+        if not (0.0 <= _hct_in < 1.0):
+            raise ValueError(
+                "hematocrit must be in [0, 1) for blood->plasma AIF conversion, "
+                f"got {_hct_in!r}."
+            )
+
         # Load data
         conc_img = nib.load(self.inputs.concentration_file)
         conc_data: npt.NDArray[Any] = conc_img.get_fdata()  # type: ignore[attr-defined]
@@ -3948,7 +3948,7 @@ class AIFDetection(BaseInterface):
         if isdefined(self.inputs.aif_mask_file) and self.inputs.aif_mask_file:
             atlas_img = nib.load(self.inputs.aif_mask_file)
             atlas_masks = [atlas_img.get_fdata()]  # type: ignore[attr-defined]
-            atlas_names = [Path(self.inputs.aif_mask_file).name.split(".")[0].replace("MNI_2mm_MRA_arterial_", "")]
+            atlas_names = [re.sub(r"^MNI_\d+mm_MRA_arterial_", "", Path(self.inputs.aif_mask_file).name.split(".")[0])]
         else:
             # Load tiered atlas cascade (atlas_mask_files, tightest first)
             if isdefined(self.inputs.atlas_mask_files):
@@ -3959,7 +3959,7 @@ class AIFDetection(BaseInterface):
                             nib.load(str(af_path)).get_fdata()  # type: ignore[attr-defined]
                         )
                         atlas_names.append(
-                            af_path.name.split(".")[0].replace("MNI_2mm_MRA_arterial_", "")
+                            re.sub(r"^MNI_\d+mm_MRA_arterial_", "", af_path.name.split(".")[0])
                         )
             # Backward compat: single atlas_mask_file appended if not already loaded
             if (
@@ -3971,7 +3971,7 @@ class AIFDetection(BaseInterface):
                 atlas_masks = [
                     nib.load(self.inputs.atlas_mask_file).get_fdata()  # type: ignore[attr-defined]
                 ]
-                atlas_names = [Path(self.inputs.atlas_mask_file).name.split(".")[0].replace("MNI_2mm_MRA_arterial_", "")]
+                atlas_names = [re.sub(r"^MNI_\d+mm_MRA_arterial_", "", Path(self.inputs.atlas_mask_file).name.split(".")[0])]
 
         # Optional lesion mask
         lesion_mask: Optional[npt.NDArray[Any]] = None
@@ -3989,7 +3989,6 @@ class AIFDetection(BaseInterface):
         scale_aif = bool(self.inputs.scale_aif)
         target_peak = float(self.inputs.target_peak)
         lesion_distance = float(self.inputs.lesion_distance)
-        r1_relaxivity = float(self.inputs.r1_relaxivity)
 
         n_timepoints = conc_data.shape[3]
 
@@ -4265,6 +4264,43 @@ class AIFDetection(BaseInterface):
                         aif_curve, hct, target_peak,
                         self._get_expected_peak_range,
                     )
+                    # C2: post-cascade filters shrank the accepted pool. Re-gate
+                    # the EMITTED subset (single evaluation, no trim) and rebuild
+                    # tier_result so downstream provenance (confidence /
+                    # uncertainty / gate decisions) describes the emitted AIF, not
+                    # the pre-filter pool. Provenance-only: a re-gate FAIL is
+                    # recorded (downgrades confidence below) but does NOT trigger a
+                    # new population fallback here.
+                    _re_qc = _compute_pool_qc(aif_curve, tr, baseline_frames)
+                    _nl = sum(
+                        1 for cx, cy, cz in candidates
+                        if (affine[:3, :3] @ np.array([cx, cy, cz])
+                            + affine[:3, 3])[0] < 0
+                    )
+                    _nr = len(candidates) - _nl
+                    _hemi = (
+                        "bilateral" if _nl and _nr
+                        else "unilateral_left" if _nl else "unilateral_right"
+                    )
+                    _re_slabs = _count_slabs_spanned(candidates)
+                    _re_status, _re_decision = _evaluate_gates(
+                        scaling_factor, _re_qc, tier_result.atlas_tier,
+                        len(candidates), _hemi, _re_slabs,
+                    )
+                    tier_result = TierResult(
+                        candidates=list(candidates),
+                        scores=list(scores),
+                        metrics=list(metrics_list),
+                        curve_unscaled=aif_curve,
+                        curve_scaled=aif_curve,
+                        scale_factor=scaling_factor,
+                        qc=_re_qc,
+                        atlas_tier=tier_result.atlas_tier,
+                        hemisphere=_hemi,
+                        n_slabs=_re_slabs,
+                        status=_re_status,
+                        gate_decisions=[_re_decision],
+                    )
                 else:
                     aif_curve = tier_result.curve_scaled
                     scaling_factor = tier_result.scale_factor
@@ -4393,21 +4429,10 @@ class AIFDetection(BaseInterface):
             bat_shift = baseline_frames * tr
             t_shifted = t - bat_shift
 
-            # Apply r1 relaxivity correction for non-standard agents.
-            # Parker AIF was calibrated with Gd-DTPA (r1=4.1). Tissue
-            # concentrations use the actual agent's r1 (e.g. 11.6 for Vueway).
-            # The correction ensures AIF and tissue are in the same
-            # "relaxivity space".
-            r1_arg: float | None = None
-            if bool(self.inputs.agent_r1_known):
-                r1_relaxivity = float(self.inputs.r1_relaxivity)
-                if r1_relaxivity > 0:
-                    r1_arg = r1_relaxivity
-
+            # Population AIF is a true-mM concentration curve; NO relaxivity
+            # scaling (concentration is r1-independent — see parker_population_aif).
             t_for_parker = np.maximum(t_shifted, 0.0)
-            aif_curve = parker_population_aif(
-                t_for_parker, dose_factor, r1_actual=r1_arg
-            )
+            aif_curve = parker_population_aif(t_for_parker, dose_factor)
 
             # Zero out pre-bolus values (where t_shifted < 0)
             # Use small positive value (1e-6) to avoid log(0) issues downstream
@@ -4423,9 +4448,7 @@ class AIFDetection(BaseInterface):
             if pop_peak < expected_min_peak:
                 # BAT shift is wrong - regenerate without shift
                 t_unshifted = np.arange(n_timepoints) * tr
-                aif_curve = parker_population_aif(
-                    t_unshifted, dose_factor, r1_actual=r1_arg
-                )
+                aif_curve = parker_population_aif(t_unshifted, dose_factor)
                 bat_override = True
 
             # Scale population AIF to match pipeline's plasma-Tofts
@@ -4503,10 +4526,18 @@ class AIFDetection(BaseInterface):
                     qc_metrics["aif_uncertainty_inflation_factor"] = 3.0
                 else:
                     qc_metrics["aif_uncertainty_inflation_factor"] = 2.0
-            else:
+            elif tier_result.status in ("PASS", "PASS_WARN"):
                 qc_metrics["aif_confidence"] = "standard"
                 qc_metrics["aif_g6_admitted"] = False
                 qc_metrics["aif_uncertainty_inflation_factor"] = 1.0
+            else:
+                # C2 re-gate of the emitted subset FAILED a gate: emit the
+                # detected AIF (no new fallback) but downgrade confidence and
+                # inflate uncertainty honestly. Only reachable via the divergence
+                # re-gate; the cascade itself only ever sets PASS/PASS_WARN/G6.
+                qc_metrics["aif_confidence"] = "reduced"
+                qc_metrics["aif_g6_admitted"] = False
+                qc_metrics["aif_uncertainty_inflation_factor"] = 2.0
         elif detection_method == "population":
             qc_metrics["aif_confidence"] = "low"
             qc_metrics["aif_g6_admitted"] = False
@@ -4573,12 +4604,16 @@ class AIFDetection(BaseInterface):
         final_auc = compute_dce_aif_auc(aif_curve, tr)
         final_washout = compute_dce_aif_washout(aif_curve, baseline_frames)
 
-        # Peak-amplitude QC warning. Both final_peak (post-Hct division
-        # at the aif_curve scaling site) and expected_max_mm (population
-        # plasma input) are plasma units — no Hct conversion needed.
-        # Suppressed for population fallback (population AIF is
-        # tautologically within its own expected range).
-        _, expected_max_mm = self._get_expected_peak_range()
+        # Peak-amplitude QC warning. final_peak is PLASMA (post-Hct division at
+        # the scaling site), but _get_expected_peak_range returns BLOOD-scale
+        # (raw Parker), so convert it to plasma (/(1-Hct)) before comparing —
+        # mirroring the scaling sites. Suppressed for population fallback
+        # (population AIF is tautologically within its own expected range).
+        _, expected_max_blood = self._get_expected_peak_range()
+        _hct = float(self.inputs.hematocrit)
+        expected_max_mm = (
+            expected_max_blood / (1.0 - _hct) if _hct < 1.0 else expected_max_blood
+        )
         peak_amplitude_ratio, peak_amplitude_warning = (
             compute_dce_aif_peak_amplitude_warning(
                 final_peak, expected_max_mm, detection_method,
@@ -4648,7 +4683,10 @@ class AIFDetection(BaseInterface):
                 "aif_status": aif_status,
                 "hematocrit": float(self.inputs.hematocrit),
                 "expected_peak_max_mm": float(expected_max_mm),
-                "peak_amplitude_ratio": float(peak_amplitude_ratio),
+                "peak_amplitude_ratio": (
+                    None if not np.isfinite(peak_amplitude_ratio)
+                    else float(peak_amplitude_ratio)
+                ),
                 "peak_amplitude_warning": bool(peak_amplitude_warning),
                 "multi_bump_tail_count": int(multi_bump_count),
                 "multi_bump_tail_heights_mm": multi_bump_heights,

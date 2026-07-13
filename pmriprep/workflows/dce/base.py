@@ -840,7 +840,6 @@ def init_dce_preproc_wf(
                 "mr_acquisition_type",  # BIDS MRAcquisitionType ('3D'/'2D')
                 "field_strength",
                 "r1_relaxivity",
-                "agent_r1_known",  # True when r1 is from confirmed agent lookup
                 "agent_standard_dose",  # Standard clinical dose (mmol/kg) for this agent
                 # Registration transforms (from anat pipeline)
                 "t1w_to_mni_xfm",  # T1w to MNI transform for atlas-guided AIF
@@ -1629,8 +1628,6 @@ def init_dce_preproc_wf(
         (inputnode, aif_detection, [
             ("volume_tr", "tr"),  # Use volume TR for time array, not pulse TR
             ("field_strength", "field_strength"),
-            ("r1_relaxivity", "r1_relaxivity"),
-            ("agent_r1_known", "agent_r1_known"),
             ("agent_standard_dose", "agent_standard_dose"),
             ("mr_acquisition_type", "mr_acquisition_type"),
         ]),

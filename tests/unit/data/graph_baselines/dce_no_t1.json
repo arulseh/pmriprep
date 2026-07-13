@@ -554,12 +554,6 @@
     ],
     [
       "inputnode",
-      "agent_r1_known",
-      "aif_detection",
-      "agent_r1_known"
-    ],
-    [
-      "inputnode",
       "agent_standard_dose",
       "aif_detection",
       "agent_standard_dose"
@@ -695,12 +689,6 @@
       "non_enhancing_mask",
       "transform_non_enhancing_mask",
       "mask_file"
-    ],
-    [
-      "inputnode",
-      "r1_relaxivity",
-      "aif_detection",
-      "r1_relaxivity"
     ],
     [
       "inputnode",
@@ -2291,7 +2279,6 @@
   },
   "node_params": {
     "aif_detection": {
-      "agent_r1_known": false,
       "agent_standard_dose": 0.1,
       "aif_method": "auto",
       "baseline_frames": 0,
@@ -2302,7 +2289,6 @@
       "lesion_distance": 15.0,
       "mr_acquisition_type": "",
       "n_candidates": 10,
-      "r1_relaxivity": 0.0,
       "scale_aif": true,
       "target_peak": 0.0
     },

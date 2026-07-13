@@ -2306,7 +2306,6 @@ def init_pmriprep_wf(
                 _resolved_r1 = dce_config.r1_relaxivity
                 _agent_source = ParameterSource.USER_OVERRIDE
                 dce_wf.inputs.inputnode.r1_relaxivity = dce_config.r1_relaxivity
-                dce_wf.inputs.inputnode.agent_r1_known = True
                 logger.info(
                     f"Using user-supplied r1={dce_config.r1_relaxivity:.1f} "
                     f"s^-1/mM (overrides sidecar lookup)"
@@ -2317,7 +2316,6 @@ def init_pmriprep_wf(
                 _agent_name = dce_sidecar.get("contrast_agent")
                 _bids_agent_string = dce_sidecar.get("bids_agent_string")
                 dce_wf.inputs.inputnode.r1_relaxivity = dce_sidecar["r1_relaxivity"]
-                dce_wf.inputs.inputnode.agent_r1_known = True
                 logger.info(
                     f"Using r1={dce_sidecar['r1_relaxivity']:.1f} s^-1/mM "
                     f"for contrast agent: {dce_sidecar['contrast_agent']}"

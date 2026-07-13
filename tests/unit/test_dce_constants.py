@@ -229,11 +229,15 @@ class TestTRAdaptiveFunctions:
         assert compute_timing_margin_frames(0.0) == 1
 
     def test_compute_fwhm_threshold_frames(self) -> None:
-        """FWHM threshold is min of frame-based and seconds-based."""
-        # TR=2s strict: min(5, 25/2) = min(5, 12.5) = 5
-        assert compute_fwhm_threshold_frames(2.0, strict=True) == pytest.approx(5.0)
-        # TR=8s strict: min(5, 25/8) = min(5, 3.125) = 3.125
+        """Max-FWHM ceiling is seconds-based (25 s strict), floored at 2 frames."""
+        # TR=2s strict: 25/2 = 12.5 frames (= 25 s)
+        assert compute_fwhm_threshold_frames(2.0, strict=True) == pytest.approx(12.5)
+        # TR=8s strict: 25/8 = 3.125 frames (seconds-based, above the 2-frame floor)
         assert compute_fwhm_threshold_frames(8.0, strict=True) == pytest.approx(3.125)
+        # Sub-second TR must NOT collapse the ceiling (was min(5,50)=5 -> now 50 = 25 s)
+        assert compute_fwhm_threshold_frames(0.5, strict=True) == pytest.approx(50.0)
+        # Very coarse TR floored at 2 frames for numerical resolution
+        assert compute_fwhm_threshold_frames(20.0, strict=True) == pytest.approx(2.0)
 
     def test_is_low_temporal_resolution(self) -> None:
         """TR > 5s is flagged as low temporal resolution."""
