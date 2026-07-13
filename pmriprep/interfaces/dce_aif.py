@@ -58,7 +58,6 @@ from pmriprep.utils.dce_constants import (
     DCE_AIF_TAIL_PEAK_FRACTION,
     DCE_AIF_TAIL_SHOULDER_SECONDS,
     EPSILON_CONCENTRATION,
-    EPSILON_T1,
     HEMATOCRIT_ARTERIAL,
     INFLOW_EXCLUSION_MAX_SLAB_FRACTION,
     INFLOW_EXCLUSION_MM_INFERIOR_BASE,
@@ -3684,79 +3683,6 @@ class AIFDetection(BaseInterface):
         return best_curve, best_mask, validation_qc
 
     # -----------------------------------------------------------------
-    # S0-based Partial Volume Rejection (Phase 5)
-    # -----------------------------------------------------------------
-
-    @staticmethod
-    def _reject_partial_volume_candidates(
-        candidates: list[tuple[int, int, int]],
-        scores: list[float],
-        metrics_list: list[dict[str, float]],
-        conc_data: npt.NDArray[Any],
-        brain_mask: npt.NDArray[Any],
-        baseline_frames: int,
-    ) -> tuple[list[tuple[int, int, int]], list[float], list[dict[str, float]]]:
-        """Reject candidates with high baseline signal (partial volume).
-
-        Candidates with baseline signal (S0) above median brain S0 indicate
-        tissue contamination (large tissue fraction = partial volume AIF).
-
-        Parameters
-        ----------
-        candidates : list
-            Candidate coordinates.
-        scores : list
-            Candidate scores.
-        metrics_list : list
-            Candidate metrics.
-        conc_data : np.ndarray
-            4D concentration data.
-        brain_mask : np.ndarray
-            3D brain mask.
-        baseline_frames : int
-            Number of baseline frames.
-
-        Returns
-        -------
-        tuple of (list, list, list)
-            Filtered (candidates, scores, metrics).
-        """
-        if not candidates or baseline_frames < 1:
-            return candidates, scores, metrics_list
-
-        # Compute S0 (mean baseline) for each candidate
-        s0_candidates = np.array([
-            float(np.mean(conc_data[x, y, z, :baseline_frames]))
-            for x, y, z in candidates
-        ])
-
-        # Compute median S0 across brain
-        baseline_mean_vol = np.mean(conc_data[..., :baseline_frames], axis=-1)
-        brain_s0 = baseline_mean_vol[brain_mask > 0.5]
-        if len(brain_s0) == 0:
-            return candidates, scores, metrics_list
-        median_brain_s0 = float(np.median(brain_s0))
-
-        if median_brain_s0 < EPSILON_T1:
-            return candidates, scores, metrics_list
-
-        # Reject candidates with S0 > 2× median (high tissue content)
-        keep_idx = [
-            i for i, s0 in enumerate(s0_candidates)
-            if s0 <= median_brain_s0 * 2.0
-        ]
-
-        if not keep_idx or len(keep_idx) < 3:
-            # Don't reject if it would leave too few candidates
-            return candidates, scores, metrics_list
-
-        return (
-            [candidates[i] for i in keep_idx],
-            [scores[i] for i in keep_idx],
-            [metrics_list[i] for i in keep_idx],
-        )
-
-    # -----------------------------------------------------------------
     # External AIF Handling
     # -----------------------------------------------------------------
 
@@ -4217,13 +4143,6 @@ class AIFDetection(BaseInterface):
                     "AIF cascade: all %d tiers exhausted without producing "
                     "any anchored keeper. Falling back to Parker population AIF.",
                     cascade_tiers_attempted,
-                )
-
-            # ===== Phase 5: S0-based partial volume rejection =====
-            if candidates:
-                candidates, scores, metrics_list = self._reject_partial_volume_candidates(
-                    candidates, scores, metrics_list,
-                    conc_data, brain_mask, baseline_frames,
                 )
 
             # ===== Phase 6: Soft contralateral penalty =====
