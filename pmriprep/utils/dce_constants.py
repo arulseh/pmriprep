@@ -1158,7 +1158,7 @@ MAX_NCBV_FOR_VALIDATION: Final[float] = 5.0
 #: constants below are retained (vs collapsed) as hooks for a future
 #: re-stratification review; all currently equal 0.40.
 SIGMA_SOFT_DEFAULT: Final[float] = 0.40
-SIGMA_SOFT_PRELOAD_SUPPRESSED: Final[float] = 0.40
+SIGMA_SOFT_K2_SUPPRESSED: Final[float] = 0.40
 SIGMA_SOFT_HIGH_K2: Final[float] = 0.40
 
 #: Circular-detector std threshold when cross-validation uses nCBV.

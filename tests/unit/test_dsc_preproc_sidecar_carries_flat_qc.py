@@ -32,9 +32,9 @@ def preload_qc() -> dict[str, Any]:
     return {
         "k2_method": "bsw",
         "kep_used": None,  # bsw → omitted from sidecar
-        "preload_classification": "none",
+        "preload_classification": "inadequate",
         "preload_classification_source": "k2_primary",
-        "preload_k2_classification": "none",
+        "preload_k2_classification": "inadequate",
         "preload_k2_confidence": "high",
         "k2_median": 0.012,
         "percent_leaky_voxels": 4.7,
@@ -67,8 +67,9 @@ class TestPreloadCosmeticKeys:
             preprocessing_stats=preprocessing_stats,
         )
         assert out["PreloadK2Method"] == "bsw"
-        assert out["PreloadClassification"] == "none"
+        assert out["PreloadClassification"] == "inadequate"
         assert out["PreloadClassificationSource"] == "k2_primary"
+        assert out["PreloadK2Adequacy"] == "inadequate"
         assert out["PreloadK2Confidence"] == "high"
         assert out["PreloadK2Median"] == pytest.approx(0.012)
         assert out["PreloadPercentLeakyVoxels"] == pytest.approx(4.7)

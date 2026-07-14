@@ -5,6 +5,7 @@ import pytest
 from scipy.integrate import cumulative_trapezoid
 
 from pmriprep.utils.dsc_preload import (
+    K2Adequacy,
     PreloadClass,
     classify_preload,
     classify_preload_adequacy_from_k2,
@@ -455,56 +456,56 @@ class TestConfidenceScore:
 
 
 class TestClassifyPreloadAdequacyFromK2:
-    """K2-primary classifier (dsc_preload.classify_preload_adequacy_from_k2)."""
+    """K2-adequacy classifier (dsc_preload.classify_preload_adequacy_from_k2)."""
 
     def test_cohort_center_is_adequate(self) -> None:
-        """k2_median=0.002, leaky=0.1% (institutional cohort center) → HALF_DOSE."""
+        """k2_median=0.002, leaky=0.1% (institutional cohort center) → ADEQUATE."""
         cls, conf, reason = classify_preload_adequacy_from_k2(
             {"k2_median": 0.002, "percent_leaky_voxels": 0.1}
         )
-        assert cls == PreloadClass.HALF_DOSE
+        assert cls == K2Adequacy.ADEQUATE
         assert conf >= 0.5
         assert "adequate" in reason.lower()
 
     def test_boundary_below_adequate_threshold(self) -> None:
-        """k2_median=0.004 just below 0.005 threshold, leaky=0.5% < 1.0% → HALF_DOSE."""
+        """k2_median=0.004 just below 0.005 threshold, leaky=0.5% < 1.0% → ADEQUATE."""
         cls, conf, _ = classify_preload_adequacy_from_k2(
             {"k2_median": 0.004, "percent_leaky_voxels": 0.5}
         )
-        assert cls == PreloadClass.HALF_DOSE
+        assert cls == K2Adequacy.ADEQUATE
         assert conf >= 0.5
 
     def test_partial_tier(self) -> None:
-        """k2_median=0.007, leaky=2% → MINIMAL (between adequate and inadequate)."""
+        """k2_median=0.007, leaky=2% → PARTIAL (between adequate and inadequate)."""
         cls, _, reason = classify_preload_adequacy_from_k2(
             {"k2_median": 0.007, "percent_leaky_voxels": 2.0}
         )
-        assert cls == PreloadClass.MINIMAL
+        assert cls == K2Adequacy.PARTIAL
         assert "partial" in reason.lower()
 
     def test_inadequate_k2_high(self) -> None:
-        """k2_median=0.02 exceeds INADEQUATE threshold → NONE."""
+        """k2_median=0.02 exceeds INADEQUATE threshold → INADEQUATE."""
         cls, _, reason = classify_preload_adequacy_from_k2(
             {"k2_median": 0.02, "percent_leaky_voxels": 0.1}
         )
-        assert cls == PreloadClass.NONE
+        assert cls == K2Adequacy.INADEQUATE
         assert "inadequate" in reason.lower()
 
     def test_empty_dict_is_unknown(self) -> None:
         cls, conf, _ = classify_preload_adequacy_from_k2({})
-        assert cls == PreloadClass.UNKNOWN
+        assert cls == K2Adequacy.UNKNOWN
         assert conf == 0.0
 
     def test_none_is_unknown(self) -> None:
         cls, conf, _ = classify_preload_adequacy_from_k2(None)
-        assert cls == PreloadClass.UNKNOWN
+        assert cls == K2Adequacy.UNKNOWN
         assert conf == 0.0
 
     def test_missing_leaky_key_is_unknown(self) -> None:
         cls, _, _ = classify_preload_adequacy_from_k2(
             {"k2_median": 0.002}  # no percent_leaky_voxels
         )
-        assert cls == PreloadClass.UNKNOWN
+        assert cls == K2Adequacy.UNKNOWN
 
 
 class TestPreloadClassHasUnknown:

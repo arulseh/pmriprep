@@ -1073,7 +1073,7 @@ def _preload_cosmetic_keys(preload_qc: Optional[Dict[str, Any]]) -> Dict[str, An
     if "preload_classification_source" in preload_qc:
         out["PreloadClassificationSource"] = str(preload_qc["preload_classification_source"])
     if "preload_k2_classification" in preload_qc:
-        out["PreloadK2Classification"] = str(preload_qc["preload_k2_classification"])
+        out["PreloadK2Adequacy"] = str(preload_qc["preload_k2_classification"])
     if "preload_k2_confidence" in preload_qc:
         out["PreloadK2Confidence"] = str(preload_qc["preload_k2_confidence"])
     if "k2_median" in preload_qc:
@@ -1230,9 +1230,7 @@ def enrich_recommendation_keys(
         from pmriprep.utils.contrast_agent import collect_default_warnings
 
         if modality == "DSC":
-            prov = collect_default_warnings(
-                provenance_dict, "DSC", qc_metrics=qc_metrics,
-            )
+            prov = collect_default_warnings(provenance_dict, "DSC")
         else:
             prov = collect_default_warnings(provenance_dict, "DCE")
         if prov:

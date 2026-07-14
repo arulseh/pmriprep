@@ -24,7 +24,12 @@ import nibabel as nib  # type: ignore[import-untyped]
 import numpy as np
 import pytest
 
-from pmriprep.utils.dsc_preload import K2CorrectionResult, PreloadClass, PreloadResult
+from pmriprep.utils.dsc_preload import (
+    K2Adequacy,
+    K2CorrectionResult,
+    PreloadClass,
+    PreloadResult,
+)
 from pmriprep.workflows.dsc.base import _detect_and_correct_preload
 
 
@@ -93,7 +98,7 @@ class TestPreloadPrecedence:
             return_value=_advisory(PreloadClass.MINIMAL),
         ), mock.patch(
             "pmriprep.utils.dsc_preload.classify_preload_adequacy_from_k2",
-            return_value=(PreloadClass.SIGNIFICANT, "high", "stub"),
+            return_value=(K2Adequacy.PARTIAL, "high", "stub"),
         ), mock.patch(
             "pmriprep.utils.dsc_preload.preload_class_from_dose",
             return_value=PreloadClass.HALF_DOSE,
@@ -111,12 +116,12 @@ class TestPreloadPrecedence:
         assert qc["preload_classification_source"] == "user_specified"
         assert qc["preload_classification"] == PreloadClass.HALF_DOSE.value
         assert qc["preload_user_specified"] is True
-        # K2 class still recorded for reference, but not effective.
-        assert qc["preload_k2_classification"] == PreloadClass.SIGNIFICANT.value
+        # K2 adequacy still recorded for reference, but not effective.
+        assert qc["preload_k2_classification"] == K2Adequacy.PARTIAL.value
         assert "preload_k2_confidence" in qc
 
     def test_k2_primary_when_user_auto(self, tmp_path: Path) -> None:
-        """preload='auto' + concrete K2 class → effective = K2 class."""
+        """preload='auto' + concrete K2 adequacy → effective = adequacy."""
         conc, mask, aif = _write_fixtures(tmp_path)
         with mock.patch(
             "pmriprep.utils.dsc_preload.apply_k2_correction",
@@ -126,7 +131,7 @@ class TestPreloadPrecedence:
             return_value=_advisory(PreloadClass.MINIMAL),
         ), mock.patch(
             "pmriprep.utils.dsc_preload.classify_preload_adequacy_from_k2",
-            return_value=(PreloadClass.HALF_DOSE, "moderate", "stub"),
+            return_value=(K2Adequacy.ADEQUATE, "moderate", "stub"),
         ):
             _, _, qc = _detect_and_correct_preload(
                 concentration_file=conc,
@@ -139,12 +144,12 @@ class TestPreloadPrecedence:
             )
 
         assert qc["preload_classification_source"] == "k2_primary"
-        assert qc["preload_classification"] == PreloadClass.HALF_DOSE.value
+        assert qc["preload_classification"] == K2Adequacy.ADEQUATE.value
         assert qc["preload_advisory_classification"] == PreloadClass.MINIMAL.value
         assert qc["preload_user_specified"] is False
 
-    def test_advisory_disagreement_logged(self, tmp_path: Path) -> None:
-        """Advisory ΔR2* disagrees with K2 (both concrete) → K2 drives, disagreement flagged."""
+    def test_k2_adequacy_drives_auto_classification(self, tmp_path: Path) -> None:
+        """Auto path: K2 adequacy drives the effective classification; advisory is separate."""
         conc, mask, aif = _write_fixtures(tmp_path)
         with mock.patch(
             "pmriprep.utils.dsc_preload.apply_k2_correction",
@@ -154,7 +159,7 @@ class TestPreloadPrecedence:
             return_value=_advisory(PreloadClass.NONE),
         ), mock.patch(
             "pmriprep.utils.dsc_preload.classify_preload_adequacy_from_k2",
-            return_value=(PreloadClass.HALF_DOSE, "moderate", "stub"),
+            return_value=(K2Adequacy.ADEQUATE, "moderate", "stub"),
         ):
             _, _, qc = _detect_and_correct_preload(
                 concentration_file=conc,
@@ -166,11 +171,12 @@ class TestPreloadPrecedence:
                 preload="auto",
             )
 
-        assert qc["preload_k2_vs_advisory_disagreement"] is True
-        assert qc["preload_classification"] == PreloadClass.HALF_DOSE.value
+        assert qc["preload_classification"] == K2Adequacy.ADEQUATE.value
         assert qc["preload_advisory_classification"] == PreloadClass.NONE.value
         assert qc["preload_classification_source"] == "k2_primary"
         assert qc["preload_user_specified"] is False
+        # Decouple removed the ΔR2*-vs-K2 disagreement key.
+        assert "preload_k2_vs_advisory_disagreement" not in qc
 
     def test_k2_unavailable_skips_constraint(self, tmp_path: Path) -> None:
         """preload='auto' + K2 returns UNKNOWN → source='k2_unavailable'."""
@@ -183,7 +189,7 @@ class TestPreloadPrecedence:
             return_value=_advisory(PreloadClass.MINIMAL),
         ), mock.patch(
             "pmriprep.utils.dsc_preload.classify_preload_adequacy_from_k2",
-            return_value=(PreloadClass.UNKNOWN, 0.0, "stub"),
+            return_value=(K2Adequacy.UNKNOWN, 0.0, "stub"),
         ):
             _, _, qc = _detect_and_correct_preload(
                 concentration_file=conc,
@@ -196,5 +202,5 @@ class TestPreloadPrecedence:
             )
 
         assert qc["preload_classification_source"] == "k2_unavailable"
-        assert qc["preload_classification"] == PreloadClass.UNKNOWN.value
+        assert qc["preload_classification"] == K2Adequacy.UNKNOWN.value
         assert qc["preload_user_specified"] is False

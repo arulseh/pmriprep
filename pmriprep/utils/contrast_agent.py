@@ -1061,7 +1061,6 @@ def _build_scanner_metadata_block(
 def collect_default_warnings(
     provenance_dict: dict[str, Any],
     modality: str,
-    qc_metrics: Optional[dict[str, Any]] = None,
 ) -> list[str]:
     """Generate human-readable warnings for defaulted parameters.
 
@@ -1075,9 +1074,6 @@ def collect_default_warnings(
         build_dsc_provenance.
     modality : str
         "DCE" or "DSC".
-    qc_metrics : dict, optional
-        Optional QC metrics dict for enriching preload
-        warnings with detection results.
 
     Returns
     -------
@@ -1145,27 +1141,6 @@ def collect_default_warnings(
                 f"Use --dsc-agent-standard-dose for non-standard agents "
                 f"(e.g., 0.05 for Vueway)."
             )
-
-        # Check preload source — only warn when preload was detected,
-        # not when auto-detection found no preload (the safe default).
-        preload = perf.get("PreloadDetection", {})
-        if preload.get("Source") == ParameterSource.AUTO_DETECTED:
-            classification = ""
-            delta_r2 = None
-            if qc_metrics:
-                preload_qc = qc_metrics.get("preload", {})
-                classification = preload_qc.get(
-                    "preload_classification", ""
-                )
-                delta_r2 = preload_qc.get("preload_baseline_delta_r2_advisory")
-            if classification not in ("", "none"):
-                detail = ""
-                if delta_r2 is not None:
-                    detail = f" (baseline \u0394R2*={delta_r2:.3f} s\u207b\u00b9)"
-                warnings.append(
-                    f"DSC preload auto-detected{detail}. "
-                    f"Use --dsc-preload to confirm or override."
-                )
 
     return warnings
 

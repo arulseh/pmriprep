@@ -269,26 +269,43 @@ def _dsc_ctx_with_preload(**preload) -> dict:
     }
 
 
-def test_preload_labels_are_unambiguous(env):
-    """Preload panel labels name what they classify (no bare 'Classification'/'Source')."""
+def test_preload_auto_shows_k2_adequacy(env):
+    """Auto (k2_primary) path labels the box 'K2 Adequacy', not a preload dose."""
+    template = env.get_template("sections/section_dsc.html")
+    dsc_ctx = _dsc_ctx_with_preload(
+        preload_classification="adequate",
+        preload_classification_source="k2_primary",
+    )
+    rendered = template.render(dsc=dsc_ctx)
+    assert '<div class="metric-label" title="Reliability of the K2 leakage correction / CBV trustworthiness — not a preload measurement.">K2 Adequacy</div>' in rendered
+    assert "Adequate" in rendered
+    # No preload-dose framing on the auto path, and the "Preload Source" box removed.
+    assert '<div class="metric-label">Preload Status</div>' not in rendered
+    assert '<div class="metric-label">Preload Source</div>' not in rendered
+    assert '<div class="metric-label">Classification</div>' not in rendered
+    assert '<div class="metric-label">Source</div>' not in rendered
+
+
+def test_preload_user_specified_keeps_preload_status(env):
+    """User-specified path keeps the 'Preload Status' label; K2 box reads 'K2 Adequacy'."""
     template = env.get_template("sections/section_dsc.html")
     dsc_ctx = _dsc_ctx_with_preload(
         preload_classification="half_dose",
-        preload_classification_source="k2_primary",
-        preload_k2_classification="half_dose",
+        preload_classification_source="user_specified",
+        preload_k2_classification="adequate",
     )
     rendered = template.render(dsc=dsc_ctx)
     assert '<div class="metric-label">Preload Status</div>' in rendered
-    assert '<div class="metric-label">Preload Source</div>' in rendered
-    assert '<div class="metric-label">Classification</div>' not in rendered
-    assert '<div class="metric-label">Source</div>' not in rendered
+    assert "Half Dose" in rendered
+    assert "K2 Adequacy" in rendered
+    assert "Adequate" in rendered
 
 
 def test_preload_user_specified_dose_shows_na_when_absent(env):
     """The User-Specified Dose box always renders, reading N/A on auto-detect runs."""
     template = env.get_template("sections/section_dsc.html")
     dsc_ctx = _dsc_ctx_with_preload(
-        preload_classification="half_dose",
+        preload_classification="adequate",
         preload_classification_source="k2_primary",
     )
     rendered = template.render(dsc=dsc_ctx)

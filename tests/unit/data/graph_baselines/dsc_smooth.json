@@ -1950,14 +1950,14 @@
     "dsc_leakage_qc": "124852ff33fda716417010474698147edcd1064062650ffaa75e529472bddc2c",
     "dsc_param_maps_qc": "2013fae75a4f9b5774e6ba751d857a4d15859c722f77c3841f8a77af2c750706",
     "dsc_preproc_qc": "69e4bd3ba56fa6500819c9d68913bd744e4997d68ab59d3f782e0a60fc3e4f9a",
-    "extract_preload": "0b463ed71941468d683c2ff0f9384c03b0e346c6b3cd874d72c77efe3fc580a1",
+    "extract_preload": "30e76685c4720bdfc9f73f1c810487cee496bab150391eaef74cfd67f9f7e9bd",
     "hist_match_t1w": "33d0ceadebcfcf66ed403151737f0e0d429e96320c2101825b356309caf68f0e",
     "merge_qc": "8c649ca4d8bc9f2a38d3d4480d6b0f0727be2e11c8911d22bf1d3b0a1e12d6d1",
     "motion_qc_plot": "177768cd3ec56e704e5bc83b1f234ca5d1452fb2ffd62e9285277bd876b2ba0a",
     "normalize": "61ecadb429344a24ddcde8c925b2b63699499840efea317115803ee8f3e0a2d8",
     "normalize_cbf": "a6759ae7b3ebaba71e2a3e65ea17ae95f5e4a7f029016c50bb8a58fff80b8e56",
     "prebolus_mean": "94ade71cddc7afb13dce74a47091860d8d7ee30fce12cc69505ee224e72fdc8d",
-    "preload_correct": "c5493a764cbf6c31c3d31d74049a8ae69ccc28155d068bb304efaccab0b4213a",
+    "preload_correct": "84abd451be5cd77a71e45878348a29ce0a4d4ba8d9df451fec544a67fa939e32",
     "reg_filmstrip": "ad2f2b5f783947acdc2f01c196f56e391b4ce435fda927871e609a01ff5014b2",
     "select_aif_exclusion": "0b303ff465515a7109b9052be5452308da6f459f21918a8a5973a5109bddc06d",
     "signal_to_conc": "f03941de96bf6e269874c43378eda8ef3ed9908a4a26169cb934df700db77fca",
@@ -2229,7 +2229,7 @@
       "subject_id": "0001"
     },
     "extract_preload": {
-      "function_str": "def _extract_preload_class(qc_dict):  # type: ignore[no-untyped-def]\n    \"\"\"Extract preload classification from preload_correct QC dict.\n\n    Parameters\n    ----------\n    qc_dict : dict\n        QC metrics dictionary from preload correction node.\n\n    Returns\n    -------\n    str\n        Preload classification string (e.g. 'none', 'minimal', 'half_dose').\n    \"\"\"\n    if not qc_dict:\n        return \"none\"\n    return qc_dict.get(\"preload_classification\", \"none\")  # type: ignore[no-any-return]\n"
+      "function_str": "def _extract_preload_class(qc_dict):  # type: ignore[no-untyped-def]\n    \"\"\"Extract preload classification from preload_correct QC dict.\n\n    Parameters\n    ----------\n    qc_dict : dict\n        QC metrics dictionary from preload correction node.\n\n    Returns\n    -------\n    str\n        Effective classification string: a K2-adequacy value on the auto\n        path (e.g. 'adequate', 'partial', 'inadequate', 'unknown') or a\n        preload-dose class on the user path (e.g. 'none', 'half_dose').\n    \"\"\"\n    if not qc_dict:\n        return \"none\"\n    return qc_dict.get(\"preload_classification\", \"none\")  # type: ignore[no-any-return]\n"
     },
     "hdbet_dsc": {
       "bet_frac": 0.3,

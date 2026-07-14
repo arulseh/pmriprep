@@ -522,54 +522,51 @@ class TestQcReportSchema:
 
 
 class TestClassifyPreloadK2:
-    """Tests for _classify_preload_k2 helper."""
+    """Tests for _classify_preload_k2 helper (keyed off k2_metrics only)."""
 
-    def test_preloaded_well_suppressed(self) -> None:
-        """Preloaded with low K2 and low leaky voxels → well_suppressed."""
+    def test_low_k2_is_suppressed(self) -> None:
+        """Low K2 and low leaky voxels → k2_suppressed."""
         k2 = {"k2_median": 0.0005, "percent_leaky_voxels": 3.0}
-        is_pre, well, high = _classify_preload_k2("half_dose", k2)
-        assert is_pre is True
-        assert well is True
+        suppressed, high = _classify_preload_k2(k2)
+        assert suppressed is True
         assert high is False
 
-    def test_not_preloaded_high_correction(self) -> None:
-        """No preload with high leaky voxels → high_correction."""
+    def test_high_leaky_is_high_correction(self) -> None:
+        """High leaky voxels → high_correction."""
         k2 = {"k2_median": 0.002, "percent_leaky_voxels": 20.0}
-        is_pre, well, high = _classify_preload_k2("none", k2)
-        assert is_pre is False
-        assert well is False
+        suppressed, high = _classify_preload_k2(k2)
+        assert suppressed is False
         assert high is True
 
     def test_none_inputs(self) -> None:
-        """None inputs → (False, False, False)."""
-        assert _classify_preload_k2(None, None) == (False, False, False)
+        """None input → (False, False)."""
+        assert _classify_preload_k2(None) == (False, False)
 
     def test_boundary_k2_median_at_threshold(self) -> None:
-        """k2_median exactly at K2_MEDIAN_SUPPRESSED (0.01) → NOT well_suppressed."""
+        """k2_median exactly at K2_SIGMA_SUPPRESSED → NOT suppressed."""
         k2 = {"k2_median": 0.01, "percent_leaky_voxels": 1.0}
-        _, well, _ = _classify_preload_k2("half_dose", k2)
-        assert well is False
+        suppressed, _ = _classify_preload_k2(k2)
+        assert suppressed is False
 
     def test_boundary_leaky_at_low_threshold(self) -> None:
-        """percent_leaky_voxels exactly at LEAKY_VOXELS_LOW (5.0) → NOT well_suppressed."""
+        """percent_leaky_voxels exactly at LEAKY_SIGMA_LOW → NOT suppressed."""
         k2 = {"k2_median": 0.005, "percent_leaky_voxels": 5.0}
-        _, well, _ = _classify_preload_k2("significant", k2)
-        assert well is False
+        suppressed, _ = _classify_preload_k2(k2)
+        assert suppressed is False
 
     def test_boundary_leaky_at_high_threshold(self) -> None:
-        """percent_leaky_voxels exactly at LEAKY_VOXELS_HIGH (15.0) → NOT high_correction."""
+        """percent_leaky_voxels exactly at LEAKY_SIGMA_HIGH → NOT high_correction."""
         k2 = {"k2_median": 0.003, "percent_leaky_voxels": 15.0}
-        _, _, high = _classify_preload_k2("none", k2)
+        _, high = _classify_preload_k2(k2)
         assert high is False
 
-    def test_preloaded_moderate_k2(self) -> None:
-        """Preloaded with moderate K2 → not well_suppressed, not high_correction."""
-        # leaky between LOW (5%) and HIGH (15%), k2_median below K2_MEDIAN_CORRECTION (0.005)
+    def test_moderate_k2(self) -> None:
+        """Moderate K2 → neither suppressed nor high_correction."""
+        # leaky between LOW (5%) and HIGH (15%), k2_median below K2_SIGMA_CORRECTION
         k2 = {"k2_median": 0.004, "percent_leaky_voxels": 10.0}
-        is_pre, well, high = _classify_preload_k2("half_dose", k2)
-        assert is_pre is True
-        assert well is False  # pct_leaky >= LEAKY_VOXELS_LOW
-        assert high is False  # pct_leaky <= LEAKY_VOXELS_HIGH and k2_med <= K2_MEDIAN_CORRECTION
+        suppressed, high = _classify_preload_k2(k2)
+        assert suppressed is False  # pct_leaky >= LEAKY_SIGMA_LOW
+        assert high is False  # pct_leaky <= LEAKY_SIGMA_HIGH and k2_med <= K2_SIGMA_CORRECTION
 
 
 # =============================================================================
@@ -637,21 +634,21 @@ class TestPreloadAwareUncertainty:
     )
 
     def test_preload_low_k2_uses_unified_sigma(self) -> None:
-        """Preload + low K2 tier uses unified σ = 0.40.
+        """K2-suppressed tier uses unified σ = 0.40.
 
-        The preload/K2 tiers set their reason-string suffix for QC
-        provenance, but σ does not stratify — biological uncertainty on
-        vp dominates and is DSC-SNR-independent.
+        The K2 tiers set their reason-string suffix for QC provenance, but
+        σ does not stratify — biological uncertainty on vp dominates and is
+        DSC-SNR-independent.
         """
         k2 = {"k2_median": 0.002, "percent_leaky_voxels": 2.0}
         config = determine_constraint_mode(
             self._MODERATE_QUALITY,
-            preload_classification="half_dose",
+            preload_classification="adequate",
             k2_metrics=k2,
         )
         assert config.mode == ConstraintMode.SOFT
         assert config.vp_uncertainty == pytest.approx(0.40)
-        assert "preload" in config.reason.lower()
+        assert "suppressed" in config.reason.lower()
 
     def test_no_preload_high_k2_uses_unified_sigma(self) -> None:
         """No preload + high leaky uses unified σ = 0.40, unified with default."""
@@ -1079,6 +1076,46 @@ class TestSigmaUnification:
         assert cfg_preload.vp_uncertainty == pytest.approx(0.40)
         assert cfg_highk2.vp_uncertainty == pytest.approx(0.40)
         assert cfg_default.vp_uncertainty == pytest.approx(0.40)
+
+    @pytest.mark.parametrize(
+        "preload_classification, k2_metrics",
+        [
+            # Auto path: K2-adequacy labels.
+            ("adequate", {"k2_median": 0.002, "percent_leaky_voxels": 2.0}),
+            ("partial", {"k2_median": 0.007, "percent_leaky_voxels": 2.0}),
+            ("inadequate", {"k2_median": 0.02, "percent_leaky_voxels": 20.0}),
+            # User path: preload-dose classes.
+            ("half_dose", {"k2_median": 0.002, "percent_leaky_voxels": 2.0}),
+            ("none", {"k2_median": 0.002, "percent_leaky_voxels": 2.0}),
+        ],
+    )
+    def test_sigma_is_byte_identical_040(
+        self, preload_classification: str, k2_metrics: dict[str, float],
+    ) -> None:
+        """Every non-SKIP preload/K2 label emits vp_uncertainty == 0.40 exactly.
+
+        Guards the decouple's byte-identical-sigma promise: renaming the
+        K2-adequacy enum and reason strings must not move any map.
+        """
+        mod = CBVQualityAssessment(
+            confidence="moderate", use_constraint=True, reasons=[],
+        )
+        cfg = determine_constraint_mode(
+            mod,
+            preload_classification=preload_classification,
+            k2_metrics=k2_metrics,
+        )
+        assert cfg.mode == ConstraintMode.SOFT
+        assert cfg.vp_uncertainty == 0.40  # exact, not approx
+
+    def test_unknown_adequacy_skips_constraint(self) -> None:
+        """K2-UNKNOWN short-circuits to SKIP (vp_uncertainty 0.0), not σ = 0.40."""
+        mod = CBVQualityAssessment(
+            confidence="moderate", use_constraint=True, reasons=[],
+        )
+        cfg = determine_constraint_mode(mod, preload_classification="unknown")
+        assert cfg.mode == ConstraintMode.SKIP
+        assert cfg.vp_uncertainty == 0.0
 
 
 class TestNAWMVpReferenceAnchor:

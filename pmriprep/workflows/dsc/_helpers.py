@@ -495,7 +495,7 @@ def _detect_and_correct_preload(concentration_file, aif_file, brain_mask_file, t
     # distribution is then used to classify
     # preload adequacy (ADEQUATE / PARTIAL / INADEQUATE / UNKNOWN).
     from pmriprep.utils.dsc_preload import (
-        PreloadClass,
+        K2Adequacy,
         classify_preload_adequacy_from_k2,
         detect_preload,
         preload_class_from_dose,
@@ -575,7 +575,7 @@ def _detect_and_correct_preload(concentration_file, aif_file, brain_mask_file, t
         qc_metrics["preload_k2_classification"] = effective_class
         qc_metrics["preload_k2_confidence"] = k2_confidence
         qc_metrics["preload_k2_reason"] = k2_reason
-        if k2_class == PreloadClass.UNKNOWN:
+        if k2_class == K2Adequacy.UNKNOWN:
             qc_metrics["preload_classification_source"] = "k2_unavailable"
             logging.getLogger("pmriprep.workflows").warning(
                 "K2-primary preload classification unavailable (%s); "
@@ -600,11 +600,6 @@ def _detect_and_correct_preload(concentration_file, aif_file, brain_mask_file, t
         qc_metrics["preload_k2_confidence"] = k2_confidence
 
     qc_metrics["preload_classification"] = effective_class
-    # Disagreement between K2-primary and ΔR2* advisory is expected when
-    # the advisory hits its tissue-heterogeneity floor; flag for HTML.
-    qc_metrics["preload_k2_vs_advisory_disagreement"] = (
-        qc_metrics.get("preload_k2_classification") != advisory_class
-    )
 
     # Save corrected concentration
     conc_path = Path(concentration_file)
@@ -1133,7 +1128,9 @@ def _extract_preload_class(qc_dict):  # type: ignore[no-untyped-def]
     Returns
     -------
     str
-        Preload classification string (e.g. 'none', 'minimal', 'half_dose').
+        Effective classification string: a K2-adequacy value on the auto
+        path (e.g. 'adequate', 'partial', 'inadequate', 'unknown') or a
+        preload-dose class on the user path (e.g. 'none', 'half_dose').
     """
     if not qc_dict:
         return "none"

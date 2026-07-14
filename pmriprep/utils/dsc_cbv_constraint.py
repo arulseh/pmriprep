@@ -32,7 +32,7 @@ from pmriprep.utils.dce_constants import (
     VP_MEDIAN_MIN,
     VP_MEDIAN_MAX,
     SIGMA_SOFT_DEFAULT,
-    SIGMA_SOFT_PRELOAD_SUPPRESSED,
+    SIGMA_SOFT_K2_SUPPRESSED,
     SIGMA_SOFT_HIGH_K2,
 )
 from pmriprep.utils.dsc_aif import (
@@ -164,12 +164,12 @@ class CBVQualityAssessment:
     n_aif_voxels: Optional[int] = None
     gamma_peak_ratio: Optional[float] = None
     reasons: list[str] = field(default_factory=list)
-    #: Cached (is_preloaded, well_suppressed, high_correction) triple from
+    #: Cached (k2_suppressed, high_correction) pair from
     #: :func:`_classify_preload_k2`; populated during quality assessment so
     #: :func:`determine_constraint_mode` can reuse the classification instead
-    #: of recomputing it. Avoids a second source of truth for the "no
-    #: preload + high K2 correction" decision.
-    preload_k2_classification: Optional[tuple[bool, bool, bool]] = None
+    #: of recomputing it. Avoids a second source of truth for the "high K2
+    #: correction" decision.
+    preload_k2_classification: Optional[tuple[bool, bool]] = None
 
 
 @dataclass
@@ -316,36 +316,34 @@ def _downgrade_confidence(current: str, target: str) -> str:
 
 
 def _classify_preload_k2(
-    preload_classification: Optional[str],
     k2_metrics: Optional[dict[str, Any]],
-) -> tuple[bool, bool, bool]:
-    """Classify preload/K2 status for quality and uncertainty logic.
+) -> tuple[bool, bool]:
+    """Classify K2-correction status for quality and uncertainty logic.
+
+    Keyed entirely off the K2 residual distribution; the preload label is
+    not consulted (low K2 means the correction is reliable regardless of
+    whether preload was administered).
 
     Parameters
     ----------
-    preload_classification : Optional[str]
-        Preload classification string from DSC QC.
     k2_metrics : Optional[dict[str, Any]]
         K2 leakage correction metrics from dsc_preload.
 
     Returns
     -------
-    tuple[bool, bool, bool]
-        Tuple of (is_preloaded, well_suppressed, high_correction).
+    tuple[bool, bool]
+        Tuple of (k2_suppressed, high_correction).
     """
-    if not k2_metrics or not preload_classification:
-        return False, False, False
+    if not k2_metrics:
+        return False, False
 
     k2_med = float(k2_metrics.get("k2_median", 0.0))
     pct_leaky = float(k2_metrics.get("percent_leaky_voxels", 0.0))
 
-    is_preloaded = preload_classification in (
-        "half_dose", "significant", "severe",
-    )
-    well_suppressed = k2_med < K2_SIGMA_SUPPRESSED and pct_leaky < LEAKY_SIGMA_LOW
+    k2_suppressed = k2_med < K2_SIGMA_SUPPRESSED and pct_leaky < LEAKY_SIGMA_LOW
     high_correction = pct_leaky > LEAKY_SIGMA_HIGH or k2_med > K2_SIGMA_CORRECTION
 
-    return is_preloaded, well_suppressed, high_correction
+    return k2_suppressed, high_correction
 
 
 def _bolus_gd_fraction(
@@ -650,16 +648,14 @@ def assess_dsc_cbv_quality(
                     )
 
     result.preload_status = preload_classification
-    classification = _classify_preload_k2(
-        preload_classification, k2_metrics,
-    )
+    classification = _classify_preload_k2(k2_metrics)
     result.preload_k2_classification = classification
-    is_preloaded, _well_suppressed, high_correction = classification
-    if not is_preloaded and high_correction:
+    _k2_suppressed, high_correction = classification
+    if high_correction:
         k2_med = float((k2_metrics or {}).get("k2_median", 0.0))
         pct_leaky = float((k2_metrics or {}).get("percent_leaky_voxels", 0.0))
         result.reasons.append(
-            f"No preload with substantial leakage correction "
+            f"Substantial leakage correction "
             f"(K2 median={k2_med:.4f}, leaky={pct_leaky:.1f}%): "
             "CBV relies on large K2 correction"
         )
@@ -854,11 +850,11 @@ def determine_constraint_mode(
     # any prior. Short-circuits before quality-confidence branches and
     # before user override (user can still request SOFT/SKIP explicitly;
     # UNKNOWN only bypasses the auto branch).
-    from pmriprep.utils.dsc_preload import PreloadClass as _PreloadClass
+    from pmriprep.utils.dsc_preload import K2Adequacy as _K2Adequacy
 
     if (
         _is_auto(user_override)
-        and preload_classification == _PreloadClass.UNKNOWN.value
+        and preload_classification == _K2Adequacy.UNKNOWN.value
     ):
         return ConstraintConfig(
             mode=ConstraintMode.SKIP,
@@ -913,17 +909,17 @@ def determine_constraint_mode(
         # available; fall back to recomputing only if the quality object
         # predates this field (legacy callers building it by hand).
         if dsc_quality.preload_k2_classification is not None:
-            is_preloaded, well_suppressed, high_correction = (
+            k2_suppressed, high_correction = (
                 dsc_quality.preload_k2_classification
             )
         else:
-            is_preloaded, well_suppressed, high_correction = (
-                _classify_preload_k2(preload_classification, k2_metrics)
+            k2_suppressed, high_correction = (
+                _classify_preload_k2(k2_metrics)
             )
-        if is_preloaded and well_suppressed:
-            uncertainty = SIGMA_SOFT_PRELOAD_SUPPRESSED
-            reason_suffix = " + preload suppressed"
-        elif not is_preloaded and high_correction:
+        if k2_suppressed:
+            uncertainty = SIGMA_SOFT_K2_SUPPRESSED
+            reason_suffix = " + K2 suppressed"
+        elif high_correction:
             uncertainty = SIGMA_SOFT_HIGH_K2
             reason_suffix = " + high K2"
 

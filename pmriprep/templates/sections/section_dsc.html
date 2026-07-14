@@ -294,22 +294,23 @@
                 'significant': 'Significant',
                 'severe': 'Severe',
             } %}
+            {% set adequacy_labels = {
+                'adequate': 'Adequate',
+                'partial': 'Partial',
+                'inadequate': 'Inadequate',
+                'unknown': 'Unavailable',
+            } %}
+            {% if dsc.qc_metrics.preload.preload_classification_source == 'user_specified' %}
             <div class="metric">
                 <div class="metric-label">Preload Status</div>
                 <div class="metric-value">{{ preload_labels[dsc.qc_metrics.preload.preload_classification] | default(dsc.qc_metrics.preload.preload_classification | replace("_", " ") | title) }}</div>
             </div>
-            {% endif %}
-            {% if dsc.qc_metrics.preload.preload_classification_source is defined
-                 and dsc.qc_metrics.preload.preload_classification_source != 'user_specified' %}
+            {% else %}
             <div class="metric">
-                <div class="metric-label">Preload Source</div>
-                <div class="metric-value">
-                    {%- set src = dsc.qc_metrics.preload.preload_classification_source -%}
-                    {%- if src == 'k2_primary' -%}K2 primary
-                    {%- elif src == 'k2_unavailable' -%}K2 unavailable (constraint SKIP)
-                    {%- else -%}{{ src }}{%- endif -%}
-                </div>
+                <div class="metric-label" title="Reliability of the K2 leakage correction / CBV trustworthiness — not a preload measurement.">K2 Adequacy</div>
+                <div class="metric-value">{{ adequacy_labels[dsc.qc_metrics.preload.preload_classification] | default(dsc.qc_metrics.preload.preload_classification | replace("_", " ") | title) }}</div>
             </div>
+            {% endif %}
             {% endif %}
             <div class="metric">
                 <div class="metric-label">User-Specified Dose</div>
@@ -317,8 +318,8 @@
             </div>
             {% if dsc.qc_metrics.preload.preload_k2_classification is defined and dsc.qc_metrics.preload.preload_classification_source == 'user_specified' %}
             <div class="metric">
-                <div class="metric-label">K2-Derived Class</div>
-                <div class="metric-value">{{ preload_labels[dsc.qc_metrics.preload.preload_k2_classification] | default(dsc.qc_metrics.preload.preload_k2_classification | replace("_", " ") | title) }}</div>
+                <div class="metric-label" title="Reliability of the K2 leakage correction / CBV trustworthiness — not a preload measurement.">K2 Adequacy</div>
+                <div class="metric-value">{{ adequacy_labels[dsc.qc_metrics.preload.preload_k2_classification] | default(dsc.qc_metrics.preload.preload_k2_classification | replace("_", " ") | title) }}</div>
             </div>
             {% endif %}
             {% if dsc.qc_metrics.preload.preload_baseline_delta_r2_advisory is defined and dsc.qc_metrics.preload.preload_baseline_delta_r2_advisory is not none %}
@@ -380,9 +381,6 @@
         </div>
         {% if dsc.qc_metrics.preload.preload_classification_source == 'k2_unavailable' %}
         <p class="preload-note warning">&#9888; K2 metrics empty &mdash; DCE vp constraint skipped.</p>
-        {% endif %}
-        {% if dsc.qc_metrics.preload.preload_k2_vs_advisory_disagreement is defined and dsc.qc_metrics.preload.preload_k2_vs_advisory_disagreement and dsc.qc_metrics.preload.preload_classification_source != 'user_specified' %}
-        <p class="preload-note warning">&#9888; Baseline &Delta;R2* advisory ({{ dsc.qc_metrics.preload.preload_advisory_classification | replace("_", " ") | title }}) differs from the K2 preload classification used here; the &Delta;R2* reading is biased by tissue heterogeneity and is a sanity-check only.</p>
         {% endif %}
         {% if dsc.qc_metrics.preload.preload_correction_applied and dsc.images.dsc_leakage_qc %}
         <div class="figure-container" style="margin-top: 20px;">

@@ -390,7 +390,9 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
     preload_classification = traits.Str(
         "none",
         usedefault=True,
-        desc="Preload severity: 'none', 'minimal', 'half_dose', 'significant', 'severe'",
+        desc="Effective classification: K2 adequacy ('adequate', 'partial', "
+        "'inadequate', 'unknown') on the auto path, or preload-dose class "
+        "('none', 'minimal', 'half_dose', 'significant', 'severe') on the user path",
     )
 
     # Deconvolution method

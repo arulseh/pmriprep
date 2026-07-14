@@ -525,41 +525,6 @@ class TestCollectDefaultWarnings:
         warnings = collect_default_warnings(prov, "DSC")
         assert any("dose" in w.lower() for w in warnings)
 
-    def test_dsc_preload_auto_warning(self) -> None:
-        """Warning when DSC preload is auto-detected and found."""
-        prov = build_dsc_provenance(
-            preload_source=ParameterSource.AUTO_DETECTED,
-        )
-        qc = {"preload": {"preload_classification": "minimal"}}
-        warnings = collect_default_warnings(prov, "DSC", qc_metrics=qc)
-        assert any("preload" in w.lower() for w in warnings)
-
-    def test_dsc_no_preload_warning_when_none_detected(self) -> None:
-        """No preload warning when auto-detection found no preload."""
-        prov = build_dsc_provenance(
-            preload_source=ParameterSource.AUTO_DETECTED,
-        )
-        qc = {"preload": {"preload_classification": "none"}}
-        warnings = collect_default_warnings(prov, "DSC", qc_metrics=qc)
-        assert not any("preload" in w.lower() for w in warnings)
-
-    def test_dsc_preload_warning_with_qc_detail(self) -> None:
-        """Preload warning includes baseline ΔR2* advisory from qc_metrics."""
-        prov = build_dsc_provenance(
-            preload_source=ParameterSource.AUTO_DETECTED,
-        )
-        qc = {
-            "preload": {
-                "preload_classification": "minimal",
-                # Advisory key: preload_baseline_delta_r2_advisory.
-                "preload_baseline_delta_r2_advisory": 0.85,
-            }
-        }
-        warnings = collect_default_warnings(prov, "DSC", qc_metrics=qc)
-        preload_w = [w for w in warnings if "preload" in w.lower()]
-        assert len(preload_w) >= 1
-        assert "0.850" in preload_w[0]
-
     def test_dsc_no_preload_warning_when_specified(self) -> None:
         """No preload warning when user-specified."""
         prov = build_dsc_provenance(
