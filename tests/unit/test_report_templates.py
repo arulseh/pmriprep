@@ -259,3 +259,51 @@ def test_summary_hides_processing_warnings_when_empty(env):
     ctx = _summary_ctx()
     rendered = template.render(**ctx)
     assert "Processing Advisory" not in rendered
+
+
+def _dsc_ctx_with_preload(**preload) -> dict:
+    return {
+        "qc_metrics": {"preload": preload},
+        "images": {},
+        "display_status": {"leaky_voxels": "pass"},
+    }
+
+
+def test_preload_labels_are_unambiguous(env):
+    """Preload panel labels name what they classify (no bare 'Classification'/'Source')."""
+    template = env.get_template("sections/section_dsc.html")
+    dsc_ctx = _dsc_ctx_with_preload(
+        preload_classification="half_dose",
+        preload_classification_source="k2_primary",
+        preload_k2_classification="half_dose",
+    )
+    rendered = template.render(dsc=dsc_ctx)
+    assert '<div class="metric-label">Preload Status</div>' in rendered
+    assert '<div class="metric-label">Preload Source</div>' in rendered
+    assert '<div class="metric-label">Classification</div>' not in rendered
+    assert '<div class="metric-label">Source</div>' not in rendered
+
+
+def test_preload_user_specified_dose_shows_na_when_absent(env):
+    """The User-Specified Dose box always renders, reading N/A on auto-detect runs."""
+    template = env.get_template("sections/section_dsc.html")
+    dsc_ctx = _dsc_ctx_with_preload(
+        preload_classification="half_dose",
+        preload_classification_source="k2_primary",
+    )
+    rendered = template.render(dsc=dsc_ctx)
+    assert "User-Specified Dose" in rendered
+    assert '<div class="metric-value">N/A</div>' in rendered
+
+
+def test_preload_user_specified_dose_shows_value(env):
+    """When the user specified a preload dose, the box shows the formatted value."""
+    template = env.get_template("sections/section_dsc.html")
+    dsc_ctx = _dsc_ctx_with_preload(
+        preload_classification="none",
+        preload_classification_source="user_specified",
+        preload_user_specified_dose=0.0,
+    )
+    rendered = template.render(dsc=dsc_ctx)
+    assert "User-Specified Dose" in rendered
+    assert '<div class="metric-value">0.00</div>' in rendered

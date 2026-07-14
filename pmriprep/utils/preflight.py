@@ -318,20 +318,23 @@ def validate_dsc_metadata(
                         "preload is present, T1 shine-through will be "
                         "disproportionately severe."
                     )
+                    lead = "without confirmed preload"
+                    cta = " Use --dsc-preload to confirm preload status."
                 else:
                     detail = (
                         "No-preload configuration with a high-r1 agent "
                         "produces severe T1 shine-through."
                     )
+                    lead = "with no preload (user-specified)"
+                    cta = ""
                 msgs.append(PreflightMessage(
                     level="warning",
                     code="DSC_HIGH_R1_NO_PRELOAD",
                     message=(
                         f"High-r1 agent ({agent_raw}, r1={r1:.1f} s-1/mM) "
-                        f"without confirmed preload. {detail} "
+                        f"{lead}. {detail} "
                         f"BW leakage correction is unvalidated for agents "
-                        f"with r1 >= {HIGH_R1_THRESHOLD}. Use --dsc-preload "
-                        f"to confirm preload status."
+                        f"with r1 >= {HIGH_R1_THRESHOLD}.{cta}"
                     ),
                 ))
 
@@ -343,18 +346,22 @@ def validate_dsc_metadata(
                     "If no preload is present, this FA maximizes "
                     "T1 contamination."
                 )
+                fa_lead = "without confirmed preload"
+                fa_cta = " Use --dsc-preload to confirm."
             else:
                 detail = (
                     "No-preload DSC at this FA maximizes T1 contamination."
                 )
+                fa_lead = "with no preload (user-specified)"
+                fa_cta = ""
             msgs.append(PreflightMessage(
                 level="warning",
                 code="DSC_HIGH_FA_NO_PRELOAD",
                 message=(
-                    f"DSC FlipAngle={fa:.0f} deg without confirmed preload. "
+                    f"DSC FlipAngle={fa:.0f} deg {fa_lead}. "
                     f"DSC consensus recommends 30 deg FA for no-preload "
                     f"protocols; 60 deg is for preloaded acquisitions. "
-                    f"{detail} Use --dsc-preload to confirm."
+                    f"{detail}{fa_cta}"
                 ),
             ))
 

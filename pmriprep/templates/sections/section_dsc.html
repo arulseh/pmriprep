@@ -295,14 +295,14 @@
                 'severe': 'Severe',
             } %}
             <div class="metric">
-                <div class="metric-label">Classification</div>
+                <div class="metric-label">Preload Status</div>
                 <div class="metric-value">{{ preload_labels[dsc.qc_metrics.preload.preload_classification] | default(dsc.qc_metrics.preload.preload_classification | replace("_", " ") | title) }}</div>
             </div>
             {% endif %}
             {% if dsc.qc_metrics.preload.preload_classification_source is defined
                  and dsc.qc_metrics.preload.preload_classification_source != 'user_specified' %}
             <div class="metric">
-                <div class="metric-label">Source</div>
+                <div class="metric-label">Preload Source</div>
                 <div class="metric-value">
                     {%- set src = dsc.qc_metrics.preload.preload_classification_source -%}
                     {%- if src == 'k2_primary' -%}K2 primary
@@ -311,12 +311,10 @@
                 </div>
             </div>
             {% endif %}
-            {% if dsc.qc_metrics.preload.preload_user_specified_dose is defined %}
             <div class="metric">
                 <div class="metric-label">User-Specified Dose</div>
-                <div class="metric-value">{{ "%.2f" | format(dsc.qc_metrics.preload.preload_user_specified_dose) }}</div>
+                <div class="metric-value">{% if dsc.qc_metrics.preload.preload_user_specified_dose is defined %}{{ "%.2f" | format(dsc.qc_metrics.preload.preload_user_specified_dose) }}{% else %}N/A{% endif %}</div>
             </div>
-            {% endif %}
             {% if dsc.qc_metrics.preload.preload_k2_classification is defined and dsc.qc_metrics.preload.preload_classification_source == 'user_specified' %}
             <div class="metric">
                 <div class="metric-label">K2-Derived Class</div>
@@ -384,7 +382,7 @@
         <p class="preload-note warning">&#9888; K2 metrics empty &mdash; DCE vp constraint skipped.</p>
         {% endif %}
         {% if dsc.qc_metrics.preload.preload_k2_vs_advisory_disagreement is defined and dsc.qc_metrics.preload.preload_k2_vs_advisory_disagreement and dsc.qc_metrics.preload.preload_classification_source != 'user_specified' %}
-        <p class="preload-note warning">&#9888; &Delta;R2* advisory ({{ dsc.qc_metrics.preload.preload_advisory_classification | replace("_", " ") | title }}) disagrees with K2-primary.</p>
+        <p class="preload-note warning">&#9888; Baseline &Delta;R2* advisory ({{ dsc.qc_metrics.preload.preload_advisory_classification | replace("_", " ") | title }}) differs from the K2 preload classification used here; the &Delta;R2* reading is biased by tissue heterogeneity and is a sanity-check only.</p>
         {% endif %}
         {% if dsc.qc_metrics.preload.preload_correction_applied and dsc.images.dsc_leakage_qc %}
         <div class="figure-container" style="margin-top: 20px;">

@@ -804,6 +804,40 @@ class TestDSCAgentGuardrails:
         codes = [m.code for m in msgs]
         assert "DSC_HIGH_R1_NO_PRELOAD" not in codes
 
+    def test_high_r1_user_no_preload_omits_cta(self):
+        # User explicitly set preload=0: warning still fires (real shine-through
+        # risk) but must not tell them to set the option they already set.
+        sc = _valid_dsc_sidecar()
+        sc["contrast_agent"] = "gadopiclenol"
+        sc["flip_angle"] = 30.0
+        cfg = _make_dsc_config(preload=0.0, agent_standard_dose=0.05)
+        msgs = validate_dsc_metadata(sc, dsc_config=cfg)
+        msg = next(m for m in msgs if m.code == "DSC_HIGH_R1_NO_PRELOAD")
+        assert "Use --dsc-preload" not in msg.message
+        assert "without confirmed preload" not in msg.message
+        assert "no preload (user-specified)" in msg.message
+
+    def test_high_r1_auto_preload_includes_cta(self):
+        # Auto-detect keeps the confirmation call-to-action.
+        sc = _valid_dsc_sidecar()
+        sc["contrast_agent"] = "gadopiclenol"
+        sc["flip_angle"] = 30.0
+        cfg = _make_dsc_config(preload="auto", agent_standard_dose=0.05)
+        msgs = validate_dsc_metadata(sc, dsc_config=cfg)
+        msg = next(m for m in msgs if m.code == "DSC_HIGH_R1_NO_PRELOAD")
+        assert "Use --dsc-preload to confirm preload status." in msg.message
+        assert "without confirmed preload" in msg.message
+
+    def test_high_fa_user_no_preload_omits_cta(self):
+        # Same fix for the high-FA advisory.
+        sc = _valid_dsc_sidecar()
+        sc["flip_angle"] = 60.0
+        cfg = _make_dsc_config(preload=0.0)
+        msgs = validate_dsc_metadata(sc, dsc_config=cfg)
+        msg = next(m for m in msgs if m.code == "DSC_HIGH_FA_NO_PRELOAD")
+        assert "Use --dsc-preload" not in msg.message
+        assert "no preload (user-specified)" in msg.message
+
     def test_high_fa_no_preload_warning(self):
         sc = _valid_dsc_sidecar()
         sc["flip_angle"] = 60.0
