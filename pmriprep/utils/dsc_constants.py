@@ -179,6 +179,21 @@ K2_PRIMARY_INADEQUATE: Final[float] = 0.01    # s⁻¹, == K2_SIGMA_SUPPRESSED
 LEAKY_PRIMARY_ADEQUATE: Final[float] = 1.0    # percent
 LEAKY_PRIMARY_INADEQUATE: Final[float] = 5.0  # percent, == LEAKY_SIGMA_LOW
 
+#: Positive-tail (BSW-blind overestimate) detector. With preload, residual
+#: extravasation flips to a T2*-dominant persistent POSITIVE ΔR2* tail that
+#: the non-negative BSW correction cannot remove (it would need K2 < 0), so
+#: K2 pins at 0 and the full-integral CBV over-estimates. A voxel is flagged
+#: when its late-window tail persists AND its K2 is zero:
+#:   late_tail_ratio = mean(conc[final TAIL_LATE_FRAC of frames]) / peak(conc)
+#: The ratio is TE-invariant (the −1/TE factor cancels), so it is scale- and
+#: protocol-portable. Thresholds calibrated on the Semmineh GBM DSC DRO
+#: (fire on the +40% preloaded overestimate configs, silent on the T1-dip
+#: underestimate configs) and validated silent on 16 real clinical scans.
+TAIL_LATE_FRAC: Final[float] = 0.25            # final fraction of frames = "late window"
+TAIL_RATIO_TAU: Final[float] = 0.08            # per-voxel late/peak ratio to count as positive-tail
+POSITIVE_TAIL_PRESENT_FRAC: Final[float] = 0.60  # tumor-voxel fraction → widen vp anchor (σ 0.60)
+POSITIVE_TAIL_SEVERE_FRAC: Final[float] = 0.80   # tumor-voxel fraction → skip vp anchor
+
 
 # =============================================================================
 # SVD Deconvolution Thresholds

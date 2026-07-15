@@ -645,6 +645,7 @@ _K2_QC_KEYS = {
     "percent_leaky_voxels", "percent_severe_leakage",
     "percent_above_clinical_max",
     "n_brain_voxels", "auc_mean",
+    "cbv_positive_tail_fraction",
 }
 
 

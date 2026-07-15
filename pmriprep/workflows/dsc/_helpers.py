@@ -622,6 +622,74 @@ def _detect_and_correct_preload(concentration_file, aif_file, brain_mask_file, t
     return corrected_file, k2_map_file, qc_metrics
 
 
+def _augment_qc_positive_tail(qc_dict, concentration_file, k2_map_file, lesion_mask_dsc=None):  # type: ignore[no-untyped-def]
+    """Add the positive-tail (BSW-blind overestimate) fraction to the preload QC.
+
+    A T2*-dominant persistent positive ΔR2* tail makes K2 pin at 0 (the
+    non-negative BSW gate) while the full-integral CBV over-estimates. This
+    flags the tumor-voxel fraction where the late-window tail persists AND K2
+    is zero. Runs as a separate node (after preload correction AND the tumor-
+    mask transform) so the expensive deconvolution — fed directly by the
+    correction node — is not serialized behind tumor segmentation.
+
+    Parameters
+    ----------
+    qc_dict : dict
+        Preload/K2 QC dict from ``_detect_and_correct_preload``.
+    concentration_file : str
+        Path to the (uncorrected) 4D concentration NIfTI — the tail is measured
+        on the observed curve, before add-back.
+    k2_map_file : str
+        Path to the K2 map NIfTI (gated to 0.0 where BSW applied no correction).
+    lesion_mask_dsc : str, optional
+        Whole-tumor mask in DSC space (empty/None → fraction 0.0).
+
+    Returns
+    -------
+    dict
+        ``qc_dict`` with ``cbv_positive_tail_fraction`` added.
+    """
+    import logging
+    import numpy as np
+    import nibabel as nib  # type: ignore[import-untyped]
+
+    from pmriprep.utils.dsc_constants import TAIL_LATE_FRAC, TAIL_RATIO_TAU
+
+    qc_dict = dict(qc_dict) if qc_dict else {}
+    positive_tail_fraction = 0.0
+    if lesion_mask_dsc and k2_map_file:
+        try:
+            conc = nib.load(concentration_file).get_fdata()  # type: ignore[attr-defined]
+            k2_map = nib.load(k2_map_file).get_fdata()  # type: ignore[attr-defined]
+            tumor = nib.load(lesion_mask_dsc).get_fdata() > 0.5  # type: ignore[attr-defined]
+            if (
+                tumor.shape[:3] == conc.shape[:3]
+                and tumor.shape[:3] == k2_map.shape[:3]
+                and int(tumor.sum()) >= 10
+            ):
+                t_curves = conc[tumor]  # (nvox, T)
+                k2_vox = k2_map[tumor]
+                n_late = max(1, int(round(TAIL_LATE_FRAC * t_curves.shape[-1])))
+                peak = np.nanmax(t_curves, axis=-1)
+                late = np.nanmean(t_curves[:, -n_late:], axis=-1)
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    ratio = np.where(peak > 1e-6, late / peak, 0.0)
+                # k2_map is gated to exactly 0.0 by apply_k2_correction; a zero
+                # here is precisely a BSW-uncorrected (blind) voxel.
+                positive_tail_fraction = float(
+                    np.mean((ratio > TAIL_RATIO_TAU) & (k2_vox == 0.0))
+                )
+        except Exception as exc:  # noqa: BLE001 — QC metric must never break the node
+            logging.getLogger("pmriprep.workflows").warning(
+                "Positive-tail fraction computation failed (%s); defaulting to 0.0.",
+                exc,
+            )
+            positive_tail_fraction = 0.0
+
+    qc_dict["cbv_positive_tail_fraction"] = positive_tail_fraction
+    return qc_dict
+
+
 def _compute_prebolus_mean(moco_file: str, baseline_frames: int) -> str:
     """Compute mean of pre-bolus frames as a clean reference volume.
 

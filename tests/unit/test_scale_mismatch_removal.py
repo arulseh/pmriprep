@@ -197,10 +197,11 @@ class TestSafeguardRemovalRegression:
     absent from the live source (sigma widening, HARD→SKIP downgrade)."""
 
     def test_no_sigma_widening_to_05_in_dce_compute(self) -> None:
-        """The removed safeguard wrote constraint_vp_uncertainty = 0.5.
-        The legitimate SOFT default is 0.40 (SIGMA_SOFT_DEFAULT). If
-        another 0.5 appears in dce_compute.py's SOFT-path logic, the
-        safeguard came back."""
+        """The removed safeguard wrote constraint_vp_uncertainty = 0.5 directly
+        in dce_compute.py's SOFT-path logic. The σ tiers now live in
+        dce_constants (0.40/0.50/0.60 by K2 adequacy) and reach the fit via
+        the constraint, never as a literal here. If the literal assignment
+        pattern reappears in dce_compute.py, the safeguard came back."""
         import inspect
 
         from pmriprep.interfaces.dce_compute import ComputeDCEMaps

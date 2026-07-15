@@ -20,6 +20,7 @@ from pmriprep.utils.dsc_cbv_constraint import (
     ConstraintMode,
     VP_MAX_PHYSIOLOGICAL,
     _classify_preload_k2,
+    _sigma_from_k2,
     _normalize_aif_qc_keys,
     assess_dsc_cbv_quality,
     cbv_to_vp,
@@ -311,32 +312,33 @@ class TestAssessDSCCBVQuality:
 class TestDetermineConstraintMode:
     """Tests for determine_constraint_mode."""
 
-    def test_high_quality_soft_uses_unified_sigma(self) -> None:
-        """High confidence in auto mode emits SOFT at unified σ = 0.40.
+    def test_high_quality_soft_adequate_k2(self) -> None:
+        """High confidence + adequate K2 emits SOFT at the tight tier σ = 0.40.
 
         DSC CBV and DCE vp measure different vascular compartments; HARD
         equality is an unsupported physics claim, so ``auto`` caps at SOFT.
-        σ is unified at 0.40 across confidence tiers because the residual
-        scale uncertainty is biological (Hct heterogeneity + compartment
-        partitioning) and does not reduce with DSC SNR.
+        Confidence (random error) governs MODE; K2 adequacy (systematic bias)
+        governs σ. Adequate K2 → the biological-floor tier 0.40.
         """
         quality = CBVQualityAssessment(
             confidence="high",
             use_constraint=True,
             reasons=["All quality checks passed"],
         )
-        config = determine_constraint_mode(quality)
+        k2 = {"k2_median": 0.002, "percent_leaky_voxels": 2.0}  # adequate
+        config = determine_constraint_mode(quality, k2_metrics=k2)
         assert config.mode == ConstraintMode.SOFT
         assert config.vp_uncertainty == pytest.approx(0.40)
 
     def test_moderate_quality_soft(self) -> None:
-        """Moderate confidence produces soft constraint with widened sigma."""
+        """Moderate confidence + adequate K2 → SOFT at the tight tier σ = 0.40."""
         quality = CBVQualityAssessment(
             confidence="moderate",
             use_constraint=True,
             reasons=["CNR coverage 0.90 < 0.99"],
         )
-        config = determine_constraint_mode(quality)
+        k2 = {"k2_median": 0.002, "percent_leaky_voxels": 2.0}  # adequate
+        config = determine_constraint_mode(quality, k2_metrics=k2)
         assert config.mode == ConstraintMode.SOFT
         assert config.vp_uncertainty == pytest.approx(0.40)
 
@@ -633,13 +635,8 @@ class TestPreloadAwareUncertainty:
         reasons=["CNR coverage 0.90 < 0.99"],
     )
 
-    def test_preload_low_k2_uses_unified_sigma(self) -> None:
-        """K2-suppressed tier uses unified σ = 0.40.
-
-        The K2 tiers set their reason-string suffix for QC provenance, but
-        σ does not stratify — biological uncertainty on vp dominates and is
-        DSC-SNR-independent.
-        """
+    def test_adequate_k2_uses_tight_sigma(self) -> None:
+        """K2-suppressed (adequate) tier → tight σ = 0.40 (trustworthy anchor)."""
         k2 = {"k2_median": 0.002, "percent_leaky_voxels": 2.0}
         config = determine_constraint_mode(
             self._MODERATE_QUALITY,
@@ -648,10 +645,10 @@ class TestPreloadAwareUncertainty:
         )
         assert config.mode == ConstraintMode.SOFT
         assert config.vp_uncertainty == pytest.approx(0.40)
-        assert "suppressed" in config.reason.lower()
+        assert "adequate" in config.reason.lower()
 
-    def test_no_preload_high_k2_uses_unified_sigma(self) -> None:
-        """No preload + high leaky uses unified σ = 0.40, unified with default."""
+    def test_inadequate_k2_uses_wide_sigma(self) -> None:
+        """High leaky / high K2 (inadequate) → wide σ = 0.60 (loosen the anchor)."""
         k2 = {"k2_median": 0.002, "percent_leaky_voxels": 20.0}
         config = determine_constraint_mode(
             self._MODERATE_QUALITY,
@@ -659,26 +656,38 @@ class TestPreloadAwareUncertainty:
             k2_metrics=k2,
         )
         assert config.mode == ConstraintMode.SOFT
-        assert config.vp_uncertainty == pytest.approx(0.40)
-        assert "k2" in config.reason.lower()
+        assert config.vp_uncertainty == pytest.approx(0.60)
+        assert "inadequate" in config.reason.lower()
 
-    def test_default_uncertainty_unchanged(self) -> None:
-        """No preload info → SIGMA_SOFT_DEFAULT (0.40)."""
+    def test_partial_k2_uses_mid_sigma(self) -> None:
+        """Neither suppressed nor high-correction (partial) → mid σ = 0.50."""
+        k2 = {"k2_median": 0.003, "percent_leaky_voxels": 8.0}
+        config = determine_constraint_mode(
+            self._MODERATE_QUALITY,
+            preload_classification="partial",
+            k2_metrics=k2,
+        )
+        assert config.mode == ConstraintMode.SOFT
+        assert config.vp_uncertainty == pytest.approx(0.50)
+        assert "partial" in config.reason.lower()
+
+    def test_no_k2_info_defaults_to_partial(self) -> None:
+        """No K2 metrics → cannot confirm adequacy → mid tier 0.50 (partial)."""
         config = determine_constraint_mode(self._MODERATE_QUALITY)
-        assert config.vp_uncertainty == pytest.approx(0.40)
+        assert config.vp_uncertainty == pytest.approx(0.50)
 
-    def test_preload_high_k2_default_uncertainty(self) -> None:
-        """Preloaded but NOT well-suppressed → default 0.40."""
+    def test_preload_high_k2_wide_sigma(self) -> None:
+        """Preloaded but NOT well-suppressed (k2_median high) → inadequate 0.60."""
         k2 = {"k2_median": 0.02, "percent_leaky_voxels": 10.0}
         config = determine_constraint_mode(
             self._MODERATE_QUALITY,
             preload_classification="half_dose",
             k2_metrics=k2,
         )
-        assert config.vp_uncertainty == pytest.approx(0.40)
+        assert config.vp_uncertainty == pytest.approx(0.60)
 
     def test_high_confidence_caps_at_soft(self) -> None:
-        """High confidence in auto mode emits SOFT at unified σ = 0.40, never HARD."""
+        """High confidence in auto mode caps at SOFT (never HARD); adequate K2 → σ = 0.40."""
         quality = CBVQualityAssessment(
             confidence="high", use_constraint=True, reasons=["All quality checks passed"],
         )
@@ -1037,76 +1046,48 @@ class TestCnrBypassFallThrough:
         assert result.confidence == "high"
 
 
-class TestSigmaUnification:
-    """σ unified at 0.40 across all DSC-confidence + preload/K2 tiers.
-
-    Residual scale uncertainty on vp is
-    dominated by biological sources (Hct heterogeneity ~15% CoV, capillary-
-    vs-total vessel partitioning ~20%) which are DSC-SNR-independent.
-    Stratifying σ by DSC confidence confuses orthogonal uncertainties.
+class TestSigmaDifferentiation:
+    """σ is differentiated by K2 leakage-correction adequacy (systematic bias),
+    NOT by DSC confidence (random error, which governs SOFT-vs-SKIP mode):
+    adequate 0.40, partial 0.50, inadequate 0.60.
     """
 
-    def test_all_confidence_tiers_emit_unified_sigma(self) -> None:
-        """High/moderate/low confidence paths (where SOFT emits) all use σ = 0.40."""
+    def test_confidence_does_not_stratify_sigma(self) -> None:
+        """High vs moderate confidence (same K2) → same σ; confidence sets MODE."""
         high = CBVQualityAssessment(confidence="high", use_constraint=True, reasons=[])
         mod = CBVQualityAssessment(confidence="moderate", use_constraint=True, reasons=[])
+        adequate = {"k2_median": 0.002, "percent_leaky_voxels": 2.0}
 
-        cfg_high = determine_constraint_mode(high)
-        cfg_mod = determine_constraint_mode(mod)
+        cfg_high = determine_constraint_mode(high, k2_metrics=adequate)
+        cfg_mod = determine_constraint_mode(mod, k2_metrics=adequate)
 
         assert cfg_high.mode == ConstraintMode.SOFT
         assert cfg_mod.mode == ConstraintMode.SOFT
         assert cfg_high.vp_uncertainty == pytest.approx(0.40)
-        assert cfg_mod.vp_uncertainty == pytest.approx(0.40)
-
-    def test_all_preload_k2_tiers_emit_unified_sigma(self) -> None:
-        """Preload-suppressed / high-K2 / default moderate paths all use σ = 0.40."""
-        mod = CBVQualityAssessment(confidence="moderate", use_constraint=True, reasons=[])
-        low_k2 = {"k2_median": 0.002, "percent_leaky_voxels": 2.0}
-        high_k2 = {"k2_median": 0.002, "percent_leaky_voxels": 20.0}
-
-        cfg_preload = determine_constraint_mode(
-            mod, preload_classification="half_dose", k2_metrics=low_k2,
-        )
-        cfg_highk2 = determine_constraint_mode(
-            mod, preload_classification="none", k2_metrics=high_k2,
-        )
-        cfg_default = determine_constraint_mode(mod)
-
-        assert cfg_preload.vp_uncertainty == pytest.approx(0.40)
-        assert cfg_highk2.vp_uncertainty == pytest.approx(0.40)
-        assert cfg_default.vp_uncertainty == pytest.approx(0.40)
+        assert cfg_mod.vp_uncertainty == cfg_high.vp_uncertainty
 
     @pytest.mark.parametrize(
-        "preload_classification, k2_metrics",
+        "k2_metrics, expected_sigma, tier",
         [
-            # Auto path: K2-adequacy labels.
-            ("adequate", {"k2_median": 0.002, "percent_leaky_voxels": 2.0}),
-            ("partial", {"k2_median": 0.007, "percent_leaky_voxels": 2.0}),
-            ("inadequate", {"k2_median": 0.02, "percent_leaky_voxels": 20.0}),
-            # User path: preload-dose classes.
-            ("half_dose", {"k2_median": 0.002, "percent_leaky_voxels": 2.0}),
-            ("none", {"k2_median": 0.002, "percent_leaky_voxels": 2.0}),
+            # Adequate: k2_suppressed (k2_med<0.01 AND leaky<5%).
+            ({"k2_median": 0.002, "percent_leaky_voxels": 2.0}, 0.40, "adequate"),
+            # Partial: neither suppressed nor high-correction.
+            ({"k2_median": 0.003, "percent_leaky_voxels": 8.0}, 0.50, "partial"),
+            # Inadequate: high_correction (leaky>15% or k2_med>0.005, not suppressed).
+            ({"k2_median": 0.02, "percent_leaky_voxels": 20.0}, 0.60, "inadequate"),
         ],
     )
-    def test_sigma_is_byte_identical_040(
-        self, preload_classification: str, k2_metrics: dict[str, float],
+    def test_sigma_by_k2_adequacy_tier(
+        self, k2_metrics: dict[str, float], expected_sigma: float, tier: str,
     ) -> None:
-        """Every non-SKIP preload/K2 label emits vp_uncertainty == 0.40 exactly.
-
-        Guards the decouple's byte-identical-sigma promise: renaming the
-        K2-adequacy enum and reason strings must not move any map.
-        """
+        """Each K2-adequacy tier emits its own σ (0.40 / 0.50 / 0.60), exact."""
         mod = CBVQualityAssessment(
             confidence="moderate", use_constraint=True, reasons=[],
         )
-        cfg = determine_constraint_mode(
-            mod,
-            preload_classification=preload_classification,
-            k2_metrics=k2_metrics,
-        )
+        cfg = determine_constraint_mode(mod, k2_metrics=k2_metrics)
         assert cfg.mode == ConstraintMode.SOFT
-        assert cfg.vp_uncertainty == 0.40  # exact, not approx
+        assert cfg.vp_uncertainty == expected_sigma  # exact, not approx
+        assert tier in cfg.reason.lower()
 
     def test_unknown_adequacy_skips_constraint(self) -> None:
         """K2-UNKNOWN short-circuits to SKIP (vp_uncertainty 0.0), not σ = 0.40."""
@@ -1116,6 +1097,67 @@ class TestSigmaUnification:
         cfg = determine_constraint_mode(mod, preload_classification="unknown")
         assert cfg.mode == ConstraintMode.SKIP
         assert cfg.vp_uncertainty == 0.0
+
+
+class TestSigmaFromK2:
+    """_sigma_from_k2 maps the (k2_suppressed, high_correction) pair to σ+label."""
+
+    def test_suppressed_is_adequate_tight(self) -> None:
+        assert _sigma_from_k2(True, False) == (0.40, "adequate")
+
+    def test_suppressed_wins_when_both_set(self) -> None:
+        # Mid-range K2 can set both flags; suppressed (adequate) takes priority.
+        assert _sigma_from_k2(True, True) == (0.40, "adequate")
+
+    def test_high_correction_is_inadequate_wide(self) -> None:
+        assert _sigma_from_k2(False, True) == (0.60, "inadequate")
+
+    def test_neither_is_partial_mid(self) -> None:
+        assert _sigma_from_k2(False, False) == (0.50, "partial")
+
+
+class TestPositiveTailOverride:
+    """A5 positive-tail (BSW-blind overestimate) → widen σ / skip, overriding K2."""
+
+    _ADEQUATE_K2 = {"k2_median": 0.002, "percent_leaky_voxels": 2.0}
+
+    def test_present_overrides_adequate_to_wide(self) -> None:
+        """PRESENT positive tail forces σ=0.60 even when K2 looks adequate (0.40)."""
+        mod = CBVQualityAssessment(confidence="moderate", use_constraint=True, reasons=[])
+        k2 = dict(self._ADEQUATE_K2, cbv_positive_tail_fraction=0.70)  # > 0.60
+        cfg = determine_constraint_mode(mod, k2_metrics=k2)
+        assert cfg.mode == ConstraintMode.SOFT
+        assert cfg.vp_uncertainty == pytest.approx(0.60)
+        assert "positive-tail" in cfg.reason.lower()
+
+    def test_present_overrides_in_high_confidence_branch(self) -> None:
+        """The override fires in the high-confidence branch too (not just moderate)."""
+        high = CBVQualityAssessment(confidence="high", use_constraint=True, reasons=[])
+        k2 = dict(self._ADEQUATE_K2, cbv_positive_tail_fraction=0.70)
+        cfg = determine_constraint_mode(high, k2_metrics=k2)
+        assert cfg.vp_uncertainty == pytest.approx(0.60)
+
+    def test_severe_skips_even_at_high_confidence(self) -> None:
+        """SEVERE positive tail → SKIP regardless of DSC confidence."""
+        high = CBVQualityAssessment(confidence="high", use_constraint=True, reasons=[])
+        k2 = dict(self._ADEQUATE_K2, cbv_positive_tail_fraction=0.90)  # > 0.80
+        cfg = determine_constraint_mode(high, k2_metrics=k2)
+        assert cfg.mode == ConstraintMode.SKIP
+        assert cfg.vp_uncertainty == 0.0
+        assert "positive-tail" in cfg.reason.lower()
+
+    def test_low_confidence_with_present_tail_still_skips(self) -> None:
+        """Ordering guard: PRESENT tail must NOT promote a low-confidence SKIP to SOFT."""
+        low = CBVQualityAssessment(confidence="low", use_constraint=False, reasons=["bad"])
+        k2 = dict(self._ADEQUATE_K2, cbv_positive_tail_fraction=0.70)  # PRESENT, not SEVERE
+        cfg = determine_constraint_mode(low, k2_metrics=k2)
+        assert cfg.mode == ConstraintMode.SKIP
+
+    def test_no_tail_fraction_leaves_k2_sigma(self) -> None:
+        """Absent/zero positive-tail fraction → K2-adequacy σ unchanged."""
+        mod = CBVQualityAssessment(confidence="moderate", use_constraint=True, reasons=[])
+        cfg = determine_constraint_mode(mod, k2_metrics=self._ADEQUATE_K2)
+        assert cfg.vp_uncertainty == pytest.approx(0.40)
 
 
 class TestNAWMVpReferenceAnchor:

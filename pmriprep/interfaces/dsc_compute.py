@@ -2389,13 +2389,17 @@ class ComputeDSCMaps(BaseInterface):
             cbv_auc = np.full(spatial_shape, np.nan, dtype=np.float64)
             qc_metrics["cbv_auc_measured_aif_missing"] = True
 
-        # Preload QC warning: full-bolus AUC amplifies residual T1
-        # contamination when K2 tail fit under-corrects on preloaded data.
+        # Preload QC warning: residual extravasation biases full-bolus AUC CBV
+        # in EITHER direction, and BSW is blind to one of them. No/low preload
+        # → T1-dominant negative ΔR2* dip → BSW under-recovers → CBV biased LOW.
+        # Over/atypical preload → persistent positive T2* tail → K2 pins at 0
+        # (non-negative gate) → CBV biased HIGH and BSW cannot correct it.
         _PRELOAD_INDICATORS = {"half_dose", "significant", "severe"}
         if _preload_class_auc in _PRELOAD_INDICATORS:
             qc_metrics["cbv_auc_preload_warning"] = (
-                f"Preload classification '{_preload_class_auc}': K2 tail fit "
-                "may under-correct, biasing full-bolus AUC CBV low. "
+                f"Preload classification '{_preload_class_auc}': residual "
+                "leakage may bias full-bolus AUC CBV low (T1-dip, BSW "
+                "under-recovers) or high (positive T2* tail, BSW-uncorrectable). "
                 "Interpret with caution."
             )
 

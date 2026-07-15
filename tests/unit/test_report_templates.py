@@ -324,3 +324,30 @@ def test_preload_user_specified_dose_shows_value(env):
     rendered = template.render(dsc=dsc_ctx)
     assert "User-Specified Dose" in rendered
     assert '<div class="metric-value">0.00</div>' in rendered
+
+
+def test_positive_tail_leakage_warning_renders(env):
+    """cbv_positive_tail_fraction > 0.6 → leakage-section over-estimate warning."""
+    template = env.get_template("sections/section_dsc.html")
+    dsc_ctx = _dsc_ctx_with_preload(
+        preload_classification="adequate",
+        preload_classification_source="k2_primary",
+        cbv_positive_tail_fraction=0.72,
+    )
+    rendered = template.render(dsc=dsc_ctx)
+    assert "over-estimated" in rendered
+    assert "72%" in rendered
+    # Leakage section must not leak vp/constraint language into this warning.
+    assert "vp anchor" not in rendered.split("Preload &amp; Leakage")[-1].split("</div>")[0]
+
+
+def test_positive_tail_warning_silent_when_low(env):
+    """Below threshold → no over-estimate warning."""
+    template = env.get_template("sections/section_dsc.html")
+    dsc_ctx = _dsc_ctx_with_preload(
+        preload_classification="adequate",
+        preload_classification_source="k2_primary",
+        cbv_positive_tail_fraction=0.30,
+    )
+    rendered = template.render(dsc=dsc_ctx)
+    assert "over-estimated" not in rendered

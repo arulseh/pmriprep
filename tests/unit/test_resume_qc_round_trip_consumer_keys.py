@@ -33,6 +33,7 @@ _PRELOAD_QC_CONSUMER_KEYS = {
     "n_brain_voxels",
     "auc_mean",
     "kep_used",
+    "cbv_positive_tail_fraction",
 }
 
 _PREPROC_STATS_CONSUMER_KEYS = {
@@ -74,6 +75,7 @@ def representative_in_process_dicts():
         "n_brain_voxels": 142_000,
         "auc_mean": 1.23,
         "kep_used": None,
+        "cbv_positive_tail_fraction": 0.0,
     }
     preprocessing_stats = {
         "fraction_cnr_gt_4": 0.81,

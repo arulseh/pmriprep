@@ -30,7 +30,10 @@ from pmriprep.utils.dsc_preload import (
     PreloadClass,
     PreloadResult,
 )
-from pmriprep.workflows.dsc.base import _detect_and_correct_preload
+from pmriprep.workflows.dsc.base import (
+    _augment_qc_positive_tail,
+    _detect_and_correct_preload,
+)
 
 
 def _write_fixtures(tmp_path: Path) -> tuple[str, str, str]:
@@ -204,3 +207,64 @@ class TestPreloadPrecedence:
         assert qc["preload_classification_source"] == "k2_unavailable"
         assert qc["preload_classification"] == K2Adequacy.UNKNOWN.value
         assert qc["preload_user_specified"] is False
+
+
+def _write_tail_fixtures(tmp_path: Path, tail_ratio: float, k2_value: float, n_tumor: int = 12):
+    """Concentration + K2 map + lesion mask for _augment_qc_positive_tail.
+
+    Each tumor voxel: linear rise to peak (10) at t=5, then plateau at
+    ``tail_ratio * peak`` — so late/peak == ``tail_ratio``. K2 map is uniform
+    ``k2_value`` (0.0 = BSW-blind, >0 = corrected).
+    """
+    shape = (4, 4, 4, 20)
+    conc = np.zeros(shape, dtype=np.float32)
+    curve = np.zeros(20, dtype=np.float32)
+    curve[:6] = np.linspace(0.0, 10.0, 6)
+    curve[6:] = tail_ratio * 10.0
+    tumor = np.zeros(shape[:3], dtype=np.float32)
+    coords = [tuple(c) for c in np.argwhere(np.ones(shape[:3]))[:n_tumor]]
+    for (x, y, z) in coords:
+        conc[x, y, z, :] = curve
+        tumor[x, y, z] = 1.0
+    conc_path = tmp_path / "conc.nii.gz"
+    nib.save(nib.Nifti1Image(conc, np.eye(4)), str(conc_path))
+    k2_path = tmp_path / "k2map.nii.gz"
+    nib.save(nib.Nifti1Image(np.full(shape[:3], k2_value, np.float32), np.eye(4)), str(k2_path))
+    lesion_path = tmp_path / "lesion.nii.gz"
+    nib.save(nib.Nifti1Image(tumor, np.eye(4)), str(lesion_path))
+    return str(conc_path), str(k2_path), str(lesion_path)
+
+
+class TestPositiveTailDetector:
+    """cbv_positive_tail_fraction: fires on positive tail AND k2==0 over tumor."""
+
+    def _run(self, tmp_path, tail_ratio, k2_value, with_mask=True):
+        conc, k2, lesion = _write_tail_fixtures(tmp_path, tail_ratio, k2_value)
+        qc = _augment_qc_positive_tail(
+            qc_dict={"k2_median": 0.002},
+            concentration_file=conc,
+            k2_map_file=k2,
+            lesion_mask_dsc=(lesion if with_mask else None),
+        )
+        return qc
+
+    def test_preexisting_qc_preserved(self, tmp_path: Path) -> None:
+        qc = self._run(tmp_path, tail_ratio=0.5, k2_value=0.0)
+        assert qc["k2_median"] == 0.002  # augment, don't replace
+
+    def test_positive_tail_with_zero_k2_fires(self, tmp_path: Path) -> None:
+        qc = self._run(tmp_path, tail_ratio=0.5, k2_value=0.0)
+        assert qc["cbv_positive_tail_fraction"] == pytest.approx(1.0)
+
+    def test_positive_tail_but_k2_corrected_is_silent(self, tmp_path: Path) -> None:
+        # Non-zero K2 = BSW applied a correction here → not the blind regime.
+        qc = self._run(tmp_path, tail_ratio=0.5, k2_value=0.02)
+        assert qc["cbv_positive_tail_fraction"] == pytest.approx(0.0)
+
+    def test_mild_tail_below_tau_is_silent(self, tmp_path: Path) -> None:
+        qc = self._run(tmp_path, tail_ratio=0.04, k2_value=0.0)  # < TAIL_RATIO_TAU 0.08
+        assert qc["cbv_positive_tail_fraction"] == pytest.approx(0.0)
+
+    def test_no_lesion_mask_defaults_zero(self, tmp_path: Path) -> None:
+        qc = self._run(tmp_path, tail_ratio=0.5, k2_value=0.0, with_mask=False)
+        assert qc["cbv_positive_tail_fraction"] == pytest.approx(0.0)

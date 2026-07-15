@@ -1149,17 +1149,21 @@ VP_NCBV_RATIO_MAX: Final[float] = 0.02
 MIN_NCBV_FOR_VALIDATION: Final[float] = 0.3
 MAX_NCBV_FOR_VALIDATION: Final[float] = 5.0
 
-#: Soft-prior sigma for the DCE vp constraint under NAWM-normalized nCBV.
-#: Unified at 0.40 — the ~40–50% residual scale uncertainty is dominated
-#: by Hct heterogeneity (~15% CoV) and capillary-vs-total-vessel volume
-#: partitioning (~20%), which are biological and do not diminish with
-#: better DSC SNR. Stratifying σ by DSC confidence confuses orthogonal
-#: uncertainties; a single σ = 0.40 is the physical floor. The three
-#: constants below are retained (vs collapsed) as hooks for a future
-#: re-stratification review; all currently equal 0.40.
-SIGMA_SOFT_DEFAULT: Final[float] = 0.40
-SIGMA_SOFT_K2_SUPPRESSED: Final[float] = 0.40
-SIGMA_SOFT_HIGH_K2: Final[float] = 0.40
+#: Soft-prior sigma for the DCE vp constraint under NAWM-normalized nCBV,
+#: differentiated by K2 leakage-correction adequacy. The ~40% biological
+#: floor (Hct heterogeneity ~15% CoV + capillary-vs-total-vessel volume
+#: partitioning ~20%) does not diminish with DSC SNR, so DSC *confidence*
+#: (random/noise error) governs the constraint MODE, not σ. K2 adequacy
+#: (systematic/bias error in the CBV anchor) governs σ: a known-inadequate
+#: leakage correction leaves a residual CBV-scale bias that the prior must
+#: not lean on tightly. Values are quadrature sums of the 0.40 floor with
+#: the post-BSW residual CBV-scale error:
+#:   adequate   = 0.40                (biological floor only)
+#:   partial    ≈ √(0.40² + 0.25²) = 0.50   (modest residual)
+#:   inadequate ≈ √(0.40² + 0.40²) = 0.60   (large residual)
+SIGMA_SOFT_K2_SUPPRESSED: Final[float] = 0.40   # adequate
+SIGMA_SOFT_DEFAULT: Final[float] = 0.50         # partial
+SIGMA_SOFT_HIGH_K2: Final[float] = 0.60         # inadequate
 
 #: Circular-detector std threshold when cross-validation uses nCBV.
 #: Ratio vp/nCBV is centered at NAWM_VP_REFERENCE;

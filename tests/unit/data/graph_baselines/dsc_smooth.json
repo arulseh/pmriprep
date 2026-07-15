@@ -1255,6 +1255,30 @@
       "ncbf_map"
     ],
     [
+      "positive_tail",
+      "qc_dict",
+      "dsc_leakage_qc",
+      "preload_qc"
+    ],
+    [
+      "positive_tail",
+      "qc_dict",
+      "extract_preload",
+      "qc_dict"
+    ],
+    [
+      "positive_tail",
+      "qc_dict",
+      "merge_qc",
+      "preload_qc"
+    ],
+    [
+      "positive_tail",
+      "qc_dict",
+      "outputnode",
+      "preload_qc"
+    ],
+    [
       "prebolus_mean",
       "prebolus_mean_file",
       "combine_masks",
@@ -1340,27 +1364,15 @@
     ],
     [
       "preload_correct",
-      "qc_dict",
-      "dsc_leakage_qc",
-      "preload_qc"
+      "k2_map_file",
+      "positive_tail",
+      "k2_map_file"
     ],
     [
       "preload_correct",
       "qc_dict",
-      "extract_preload",
+      "positive_tail",
       "qc_dict"
-    ],
-    [
-      "preload_correct",
-      "qc_dict",
-      "merge_qc",
-      "preload_qc"
-    ],
-    [
-      "preload_correct",
-      "qc_dict",
-      "outputnode",
-      "preload_qc"
     ],
     [
       "reg_filmstrip",
@@ -1461,6 +1473,12 @@
     [
       "signal_to_conc",
       "concentration_file",
+      "positive_tail",
+      "concentration_file"
+    ],
+    [
+      "signal_to_conc",
+      "concentration_file",
       "preload_correct",
       "concentration_file"
     ],
@@ -1528,6 +1546,12 @@
       "transform_lesion",
       "lesion_mask_dsc_file",
       "outputnode",
+      "lesion_mask_dsc"
+    ],
+    [
+      "transform_lesion",
+      "lesion_mask_dsc_file",
+      "positive_tail",
       "lesion_mask_dsc"
     ],
     [
@@ -1806,6 +1830,17 @@
         "normalization_factor"
       ]
     },
+    "positive_tail": {
+      "input_names": [
+        "concentration_file",
+        "k2_map_file",
+        "lesion_mask_dsc",
+        "qc_dict"
+      ],
+      "output_names": [
+        "qc_dict"
+      ]
+    },
     "prebolus_mean": {
       "input_names": [
         "baseline_frames",
@@ -1956,6 +1991,7 @@
     "motion_qc_plot": "177768cd3ec56e704e5bc83b1f234ca5d1452fb2ffd62e9285277bd876b2ba0a",
     "normalize": "61ecadb429344a24ddcde8c925b2b63699499840efea317115803ee8f3e0a2d8",
     "normalize_cbf": "a6759ae7b3ebaba71e2a3e65ea17ae95f5e4a7f029016c50bb8a58fff80b8e56",
+    "positive_tail": "e3855557f1e643e4c60e3020030fc1e7329b9c81264e4784dbf040cc325eb9dc",
     "prebolus_mean": "94ade71cddc7afb13dce74a47091860d8d7ee30fce12cc69505ee224e72fdc8d",
     "preload_correct": "84abd451be5cd77a71e45878348a29ce0a4d4ba8d9df451fec544a67fa939e32",
     "reg_filmstrip": "ad2f2b5f783947acdc2f01c196f56e391b4ce435fda927871e609a01ff5014b2",
@@ -2076,6 +2112,10 @@
       "n_procs": 1
     },
     "outputnode": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "positive_tail": {
       "mem_gb": 0.2,
       "n_procs": 1
     },
@@ -2455,6 +2495,10 @@
     [
       "outputnode",
       "IdentityInterface"
+    ],
+    [
+      "positive_tail",
+      "Function"
     ],
     [
       "prebolus_mean",
