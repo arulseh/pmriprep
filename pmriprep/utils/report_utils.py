@@ -31,8 +31,8 @@ logger = logging.getLogger(__name__)
 
 # Boilerplate text mappings for DSC deconvolution methods
 _DSC_DECONV_TEXT: dict[str, str] = {
-    "sSVD": "standard singular value decomposition (sSVD) [@ostergaard_1996]",
-    "oSVD": "oscillation-index regularized SVD (oSVD) [@wu_2003]",
+    "sSVD": "standard singular value decomposition [@ostergaard_1996]",
+    "oSVD": "oscillation-index regularized singular value decomposition [@wu_2003]",
     "tikhonov": (
         "Tikhonov-regularized deconvolution with L-curve corner detection "
         "[@calamante_2003; @hansen_1998]"
@@ -41,7 +41,7 @@ _DSC_DECONV_TEXT: dict[str, str] = {
         "the vascular model with gamma-variate transit time distribution "
         "[@mouridsen_2006]"
     ),
-    "cpi": "control point interpolation (CPI) [@mehndiratta_2013]",
+    "cpi": "control point interpolation [@mehndiratta_2013]",
 }
 
 # Boilerplate text mappings for DCE pharmacokinetic models
@@ -55,16 +55,16 @@ _DCE_PK_MODEL_TEXT: dict[str, str] = {
 # Boilerplate text for T1 mapping methods
 _T1_METHOD_TEXT: dict[str, str] = {
     "hybrid": (
-        "Baseline T1 was estimated from variable flip angle (VFA) images using "
+        "Baseline T1 was estimated from variable flip angle images using "
         "hybrid fitting (linearized DESPOT1 with nonlinear refinement for "
         "ill-conditioned voxels) [@deoni_2003]"
     ),
     "wlls": (
-        "Baseline T1 was estimated from variable flip angle (VFA) images using "
+        "Baseline T1 was estimated from variable flip angle images using "
         "linearized DESPOT1 fitting [@deoni_2003]"
     ),
     "nlls": (
-        "Baseline T1 was estimated from variable flip angle (VFA) images using "
+        "Baseline T1 was estimated from variable flip angle images using "
         "nonlinear least squares fitting"
     ),
     "external": "using a user-supplied T1 map",
@@ -75,7 +75,7 @@ _T1_METHOD_TEXT: dict[str, str] = {
 _B1_CORRECTION_TEXT: dict[str, str] = {
     "afi": (
         " with B1+ transmit field correction using the actual flip angle imaging "
-        "(AFI) method [@yarnykh_2007]"
+        "method [@yarnykh_2007]"
     ),
     "precomputed": " with B1+ transmit field correction",
     "none": "",
@@ -92,7 +92,7 @@ _INFERENCE_TEXT: dict[str, str] = {
         "M-prior [@penny_2005; @groves_2009]."
     ),
     "map": (
-        "Parameter estimation used maximum a posteriori (MAP) inference "
+        "Parameter estimation used maximum a posteriori inference "
         "with Laplace approximation for uncertainty quantification "
         "[@woolrich_2009]."
     ),
@@ -137,8 +137,7 @@ def _generate_boilerplate_text(
     # Opening sentence
     sentences.append(
         f"Data were preprocessed using PMRIPrep version {version} "
-        "[@rulseh_inprep], a Nipype-based [@gorgolewski_2011] tool for MRI "
-        "perfusion and permeability analysis."
+        "[@rulseh_inprep], a Nipype-based [@gorgolewski_2011] tool."
     )
 
     # Anatomical preprocessing
@@ -152,8 +151,9 @@ def _generate_boilerplate_text(
     if ran_pipelines.get("tumor_seg"):
         sentences.append(
             "Automated lesion segmentation was performed using HD-GLIO "
-            "[@kickingereder_2019], providing lesion masks for AIF candidate "
-            "exclusion and contralateral NAWM ROI lateralization."
+            "[@kickingereder_2019], providing lesion masks for arterial input "
+            "function candidate exclusion and lateralization of a contralateral "
+            "normal-appearing white matter region of interest."
         )
 
     # DSC perfusion
@@ -195,7 +195,7 @@ def _build_anat_boilerplate(anat_qc: dict[str, Any]) -> str:
     )
     preprocessing = anat_qc.get("preprocessing", {})
     if preprocessing.get("denoising"):
-        bias_text += " with prior denoising using ANTs DenoiseImage"
+        bias_text += " with prior denoising using ANTs DenoiseImage [@manjon_2010]"
     bias_text += "."
     sentences.append(bias_text)
 
@@ -214,18 +214,44 @@ def _build_anat_boilerplate(anat_qc: dict[str, Any]) -> str:
     # Tissue segmentation (check for tissue_segmentation key)
     if anat_qc.get("tissue_segmentation"):
         sentences.append(
-            "Tissue segmentation (GM, WM, CSF) was performed using "
-            "FSL FAST [@zhang_2001]."
+            "Tissue segmentation of the pre-contrast T1-weighted image into "
+            "gray matter, white matter, and cerebrospinal fluid was performed "
+            "using FAST [@zhang_2001]."
         )
 
-    sentences.append(
-        "Secondary structural modalities were coregistered to the "
-        "T1-weighted reference using FLIRT [@jenkinson_2002]. "
-        "A rigid-body transform between T1-weighted and MNI152 space "
-        "was computed using FLIRT."
-    )
+    # Registration. The secondary-modality coregistration clause is emitted
+    # only when secondary structurals were actually coregistered; the T1w->MNI152
+    # transform always runs. When both apply they share a single FLIRT citation.
+    if anat_qc.get("coregistration", {}).get("secondary_modalities"):
+        sentences.append(
+            "Secondary structural modalities were coregistered to the "
+            "T1-weighted reference, and a rigid-body transform between "
+            "T1-weighted and MNI152 space was computed, both using FLIRT "
+            "[@jenkinson_2002]."
+        )
+    else:
+        sentences.append(
+            "A rigid-body transform between T1-weighted and MNI152 space "
+            "was computed using FLIRT [@jenkinson_2002]."
+        )
 
     return " ".join(sentences)
+
+
+def _motion_was_applied(pipeline_qc: dict[str, Any]) -> bool:
+    """Read the ``motion_applied`` provenance flag from a pipeline QC dict.
+
+    Both DSC and DCE surface a flat ``preprocessing.motion_applied``; a nested
+    ``motion_summary.motion_applied`` is accepted as a fallback for live (unfiltered)
+    QC dicts. Defaults to True (motion correction applied) when absent.
+    """
+    preproc = pipeline_qc.get("preprocessing", {})
+    return bool(
+        preproc.get(
+            "motion_applied",
+            preproc.get("motion_summary", {}).get("motion_applied", True),
+        )
+    )
 
 
 def _build_dsc_boilerplate(dsc_qc: dict[str, Any]) -> str:
@@ -243,17 +269,30 @@ def _build_dsc_boilerplate(dsc_qc: dict[str, Any]) -> str:
     """
     sentences: list[str] = []
 
-    # Opening: motion correction and concentration conversion
-    sentences.append(
-        "DSC perfusion images were motion-corrected using FSL MCFLIRT "
-        "[@jenkinson_2002] and converted to concentration-time "
-        "curves via ΔR2* estimation."
-    )
+    # Motion correction (conditional). Kept a separate sentence so concentration
+    # conversion can follow the baseline (S0) detection it depends on.
+    if _motion_was_applied(dsc_qc):
+        sentences.append(
+            "DSC perfusion images were motion-corrected using MCFLIRT "
+            "[@jenkinson_2002]."
+        )
+    else:
+        sentences.append(
+            "DSC perfusion images were assumed to be already motion-corrected, "
+            "so no additional motion correction was applied (residual motion "
+            "was assessed for quality control)."
+        )
 
     # Baseline detection
     sentences.append(
         "Baseline frames were automatically identified using a "
         "multi-phase detection algorithm."
+    )
+
+    # Concentration conversion (uses the S0 baseline)
+    sentences.append(
+        "The signal was converted to concentration-time curves via ΔR2* "
+        "estimation."
     )
 
     # Registration
@@ -277,11 +316,26 @@ def _build_dsc_boilerplate(dsc_qc: dict[str, Any]) -> str:
         sentences.append("A user-supplied arterial input function was used.")
     else:
         sentences.append(
-            "The DSC arterial input function (AIF) was automatically "
+            "The DSC arterial input function was automatically "
             "detected using MRA-atlas-guided voxel selection with a "
-            "multi-level criteria cascade and bilateral hemisphere "
-            "preference [@rulseh_inprep]."
+            "multi-level criteria cascade [@rulseh_inprep]."
         )
+
+    # Leakage correction is applied to the concentration curves BEFORE
+    # deconvolution, so it precedes the map-quantification sentence.
+    preload = dsc_qc.get("preload", {})
+    if preload.get("preload_correction_applied"):
+        k2_method = preload.get("k2_method", "bsw")
+        if k2_method == "bidirectional":
+            sentences.append(
+                "Bidirectional K2 leakage correction was applied to account for "
+                "contrast extravasation and washout [@leu_2016]."
+            )
+        else:
+            sentences.append(
+                "K2 leakage correction was applied to account for contrast "
+                "extravasation [@weisskoff_1994; @boxerman_2006]."
+            )
 
     # Deconvolution method (citation lives in the _DSC_DECONV_TEXT @key marker)
     deconv = dsc_qc.get("deconvolution", {})
@@ -300,28 +354,13 @@ def _build_dsc_boilerplate(dsc_qc: dict[str, Any]) -> str:
         if inference in _INFERENCE_TEXT:
             sentences.append(_INFERENCE_TEXT[inference])
 
-    # Leakage correction
-    preload = dsc_qc.get("preload", {})
-    if preload.get("preload_correction_applied"):
-        k2_method = preload.get("k2_method", "bsw")
-        if k2_method == "bidirectional":
-            sentences.append(
-                "Bidirectional K2 leakage correction was applied to account for "
-                "contrast extravasation and washout [@leu_2016]."
-            )
-        else:
-            sentences.append(
-                "K2 leakage correction was applied to account for contrast "
-                "extravasation [@weisskoff_1994; @boxerman_2006]."
-            )
-
     # NAWM normalization
     norm_factor = dsc_qc.get("normalization_factor")
     if norm_factor is not None and norm_factor > 0:
         sentences.append(
             "Hemodynamic maps (CBF, CBV) were normalized to "
             "automatically segmented contralateral normal-appearing "
-            "white matter (NAWM)."
+            "white matter."
         )
 
     return " ".join(sentences)
@@ -342,11 +381,19 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> str:
     """
     sentences: list[str] = []
 
-    # Opening: motion correction and signal conversion
-    opening = (
-        "DCE permeability images were motion-corrected and converted to "
-        "gadolinium concentration using the spoiled gradient echo signal model"
-    )
+    # Motion correction (conditional). Kept a separate sentence so concentration
+    # conversion can follow the T1 mapping it depends on (strict pipeline order).
+    if _motion_was_applied(dce_qc):
+        sentences.append(
+            "DCE permeability images were motion-corrected using MCFLIRT "
+            "[@jenkinson_2002]."
+        )
+    else:
+        sentences.append(
+            "DCE permeability images were assumed to be already "
+            "motion-corrected, so no additional motion correction was applied "
+            "(residual motion was assessed for quality control)."
+        )
 
     # T1 mapping
     t1_info = dce_qc.get("t1_mapping", {})
@@ -357,8 +404,14 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> str:
     b1_method = t1_info.get("b1_correction", "none")
     b1_text = _B1_CORRECTION_TEXT.get(b1_method, "")
 
-    # Combine T1 and B1+ into opening
+    conc = (
+        "The signal was converted to gadolinium concentration using the "
+        "spoiled gradient echo signal model"
+    )
+
     if t1_method in ("external", "assumed"):
+        # T1 source stated inline in the concentration sentence (no separate
+        # mapping step to order before it).
         t1_correction = t1_info.get("t1_correction", {})
         tissue_used = (
             t1_correction.get("tissue_t1_used", False)
@@ -366,15 +419,15 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> str:
         )
         if t1_method == "assumed" and tissue_used:
             sentences.append(
-                opening + " using a tissue-segmented T1 map constructed "
+                conc + " using a tissue-segmented T1 map constructed "
                 "from WM/GM probability maps with literature T1 values "
-                "(no VFA T1 mapping performed)."
+                "(no variable flip angle T1 mapping performed)."
             )
         else:
-            sentences.append(opening + f" {t1_text}.")
+            sentences.append(conc + f" {t1_text}.")
     else:
-        # Full T1 mapping text
-        sentences.append(opening + ".")
+        # Full VFA T1 mapping: describe the mapping first, then the
+        # concentration conversion that uses it.
         t1_sentence = t1_text
         if b1_text:
             t1_sentence += b1_text
@@ -391,11 +444,13 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> str:
             )
         elif t1_correction.get("tissue_t1_used", False):
             sentences.append(
-                "Due to poor VFA conditioning, a tissue-segmented T1 "
-                "map constructed from WM/GM probability maps using "
-                "literature T1 values was used for concentration "
+                "Due to poor variable flip angle conditioning, a "
+                "tissue-segmented T1 map constructed from WM/GM probability "
+                "maps using literature T1 values was used for concentration "
                 "conversion."
             )
+
+        sentences.append(conc + ".")
 
     # Registration
     sentences.append(
@@ -415,7 +470,7 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> str:
         sentences.append("A user-supplied arterial input function was used.")
     else:
         sentences.append(
-            "The DCE arterial input function (AIF) was automatically "
+            "The DCE arterial input function was automatically "
             "detected using MRA-atlas-guided candidate selection with "
             "dose-aware scaling and quality-weighted averaging "
             "[@rulseh_inprep]."
@@ -426,8 +481,8 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> str:
     if aif_source not in ("population", "external"):
         hct = aif_info.get("hematocrit", 0.42)
         sentences.append(
-            f"The AIF was corrected from whole-blood to plasma "
-            f"concentration using an assumed hematocrit of {hct}."
+            f"The arterial input function was corrected from whole-blood to "
+            f"plasma concentration using an assumed hematocrit of {hct}."
         )
 
     # Pharmacokinetic modeling
@@ -445,12 +500,13 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> str:
                 model_list = model_names[0] if model_names else "available models"
             sentences.append(
                 f"Pharmacokinetic analysis was performed using per-voxel "
-                f"model selection (BIC) among {model_list}."
+                f"model selection by the Bayesian information criterion "
+                f"among {model_list}."
             )
         else:
             sentences.append(
                 "Pharmacokinetic analysis was performed using per-voxel "
-                "model selection (BIC)."
+                "model selection by the Bayesian information criterion."
             )
     else:
         model_text = _DCE_PK_MODEL_TEXT.get(model, model)
@@ -471,7 +527,7 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> str:
         sentences.append(
             "Permeability maps (Ktrans, IAUC60) were normalized to "
             "automatically segmented contralateral normal-appearing "
-            "white matter (NAWM)."
+            "white matter."
         )
 
     return " ".join(sentences)
@@ -944,6 +1000,25 @@ def _anat_nested_from_sidecars(
                 probsegs[tissue] = tissue_block
         if probsegs:
             out["tissue_segmentation"] = probsegs
+
+    # coregistration — a coregistered secondary structural output (post-contrast
+    # T1w, T2w, or FLAIR) carries a flat ``Coregistration<Modality>*`` metadata
+    # key. Keying on that key (not just the filename) excludes the post-contrast
+    # T1w that serves as the *reference* in postcon-only runs, which is ce-GAD
+    # but has no Coregistration block. Absence => a run with no secondary
+    # modalities to coregister.
+    coreg_candidates = (
+        f"anat/{prefix}*_ce-GAD_desc-preproc_T1w.json",
+        f"anat/{prefix}*_desc-preproc_T2w.json",
+        f"anat/{prefix}*_desc-preproc_FLAIR.json",
+    )
+    for pat in coreg_candidates:
+        cand = _resolve_bids_anchor(ses_dir, pat)
+        if cand.exists() and any(
+            k.startswith("Coregistration") for k in _read_json_safe(cand)
+        ):
+            out["coregistration"] = {"secondary_modalities": True}
+            break
 
     return out
 

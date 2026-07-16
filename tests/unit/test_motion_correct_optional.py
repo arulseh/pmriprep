@@ -303,3 +303,65 @@ class TestDCEInterfacePassthrough:
         in_data, out, res = self._run(tmp_path, monkeypatch, apply_moco=True)
         assert np.allclose(out, in_data + 100.0)
         assert res.outputs.qc_metrics["motion_applied"] is True
+
+
+# ---------------------------------------------------------------------------
+# Methods boilerplate: motion-correction sentence must be conditional
+# ---------------------------------------------------------------------------
+class TestBoilerplateConditionalMoco:
+    def test_dsc_applied_says_motion_corrected(self) -> None:
+        from pmriprep.utils.report_utils import _build_dsc_boilerplate
+
+        text = _build_dsc_boilerplate({"preprocessing": {"motion_applied": True}})
+        assert "motion-corrected using MCFLIRT" in text
+
+    def test_dsc_off_does_not_claim_correction(self) -> None:
+        from pmriprep.utils.report_utils import _build_dsc_boilerplate
+
+        text = _build_dsc_boilerplate({"preprocessing": {"motion_applied": False}})
+        assert "motion-corrected using MCFLIRT" not in text
+        assert "assumed to be already motion-corrected" in text
+        assert "no additional motion correction was applied" in text
+
+    def test_dsc_default_absent_flag_claims_correction(self) -> None:
+        # Absent flag (older sidecars / default runs) → assume applied.
+        from pmriprep.utils.report_utils import _build_dsc_boilerplate
+
+        text = _build_dsc_boilerplate({"preprocessing": {}})
+        assert "motion-corrected using MCFLIRT" in text
+
+    def test_dce_applied_says_motion_corrected(self) -> None:
+        from pmriprep.utils.report_utils import _build_dce_boilerplate
+
+        text = _build_dce_boilerplate({"preprocessing": {"motion_applied": True}})
+        # DCE names MCFLIRT + cites it, mirroring DSC.
+        assert "motion-corrected using MCFLIRT [@jenkinson_2002]" in text
+
+    def test_dce_off_does_not_claim_correction(self) -> None:
+        from pmriprep.utils.report_utils import _build_dce_boilerplate
+
+        text = _build_dce_boilerplate({"preprocessing": {"motion_applied": False}})
+        assert "motion-corrected using MCFLIRT" not in text
+        assert "assumed" in text and "no additional motion correction" in text
+
+
+class TestMotionAppliedSurvivesPipelineQCFilter:
+    """The DSC flat motion_applied must survive filter_pipeline_qc (motion_summary
+    is stripped), so the report boilerplate can read it from the sidecar."""
+
+    def test_flat_key_present_and_survives_strip(self) -> None:
+        from pmriprep.utils.sidecar_builders import filter_pipeline_qc
+        from pmriprep.workflows.dsc._helpers import _merge_qc_metrics
+
+        merged = _merge_qc_metrics(
+            motion_qc={"motion_status": "pass"},
+            preload_qc={}, aif_qc={}, deconv_qc={}, registration_qc={},
+            normalization_factor=0.0,
+            motion_summary={"motion_applied": False, "fd_mean": 0.05},
+        )
+        assert merged["preprocessing"]["motion_applied"] is False
+
+        filtered = filter_pipeline_qc(merged)
+        # motion_summary is stripped, but the flat flag remains.
+        assert "motion_summary" not in filtered["preprocessing"]
+        assert filtered["preprocessing"]["motion_applied"] is False

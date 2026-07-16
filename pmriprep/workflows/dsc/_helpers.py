@@ -1790,6 +1790,12 @@ def _merge_qc_metrics(motion_qc, preload_qc, aif_qc, deconv_qc, registration_qc,
     if motion_summary:
         motion_data = dict(motion_data) if motion_data else {}
         motion_data["motion_summary"] = motion_summary
+        # Surface a flat motion_applied alongside the (strippable) motion_summary
+        # so it survives filter_pipeline_qc into the sidecar PipelineQC — the
+        # report boilerplate reads it from there. Mirrors DCE's flat placement.
+        motion_data["motion_applied"] = bool(
+            motion_summary.get("motion_applied", True)
+        )
 
     preprocessing = dict(preprocessing_stats) if preprocessing_stats else {}
     if motion_data:

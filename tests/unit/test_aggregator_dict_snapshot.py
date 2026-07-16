@@ -193,6 +193,37 @@ def test_anat_boilerplate_unknown_tool_omits_citation() -> None:
     assert "@isensee_2019" in text3
 
 
+def test_anat_boilerplate_coregistration_is_conditional() -> None:
+    """The secondary-modality coregistration clause only appears when secondary
+    structurals were coregistered; the MNI152 transform is always stated."""
+    from pmriprep.utils.report_utils import _build_anat_boilerplate
+
+    # T1w-only run: no secondary coregistration -> MNI152 transform only.
+    t1w_only = _build_anat_boilerplate({})
+    assert "Secondary structural modalities were coregistered" not in t1w_only
+    assert "T1-weighted and MNI152 space" in t1w_only
+
+    # Secondary modalities present -> combined clause, single FLIRT citation.
+    multi = _build_anat_boilerplate(
+        {"coregistration": {"secondary_modalities": True}},
+    )
+    assert "Secondary structural modalities were coregistered" in multi
+    assert "T1-weighted and MNI152 space" in multi
+    # Combined into one sentence -> only one FLIRT citation in the reg clause.
+    assert multi.count("using FLIRT [@jenkinson_2002]") == 1
+
+
+def test_anat_boilerplate_denoising_cites_manjon() -> None:
+    """The optional ANTs DenoiseImage step names + cites Manjón 2010."""
+    from pmriprep.utils.report_utils import _build_anat_boilerplate
+
+    off = _build_anat_boilerplate({})
+    assert "DenoiseImage" not in off
+
+    on = _build_anat_boilerplate({"preprocessing": {"denoising": True}})
+    assert "ANTs DenoiseImage [@manjon_2010]" in on
+
+
 def test_load_pipeline_sidecars_anat_tool_normalization(tmp_path: Path) -> None:
     """Brain-extraction tool token is lowercased (defensive against ``HD-BET``)."""
     ses = tmp_path / "pmriprep" / "sub-08" / "ses-0001"
