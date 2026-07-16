@@ -15,6 +15,9 @@ from pmriprep.utils.dsc_constants import (
     SYNTH_AIF_BASE_PEAK_3T,
     SYNTH_AIF_DOSE_CAP,
     SYNTH_AIF_MIN_PEAK,
+    SYNTH_AIF_RECIRC_ALPHA,
+    SYNTH_AIF_RECIRC_DELAY_S,
+    SYNTH_AIF_RECIRC_FRACTION,
 )
 
 
@@ -216,8 +219,38 @@ class TestShapePreserved:
         _, metrics_dbl = det._generate_synthetic_aif(
             n_timepoints=60, field_strength=3.0, effective_dose=2.0,
         )
-        assert metrics_std["synthetic_aif_recirc_fraction"] == pytest.approx(0.35)
-        assert metrics_dbl["synthetic_aif_recirc_fraction"] == pytest.approx(0.35)
+        # Dose-invariant fraction, pinned to the physics-governed constant.
+        assert (metrics_std["synthetic_aif_recirc_fraction"]
+                == pytest.approx(SYNTH_AIF_RECIRC_FRACTION))
+        assert (metrics_dbl["synthetic_aif_recirc_fraction"]
+                == pytest.approx(SYNTH_AIF_RECIRC_FRACTION))
+
+    def test_recirculation_lobe_is_physiological(self):
+        """The recirculation lobe is small and dispersed vs the first pass:
+        second-peak amplitude ~0.12x first pass and recirc area ~0.25x first-pass
+        area (anti-regression against the old 0.35/alpha=4 lobe, area ~0.62x)."""
+        det = _make_aif_detection()
+        tr, baseline_frames = 1.5, 5
+        aif, metrics = det._generate_synthetic_aif(
+            n_timepoints=60, tr=tr, baseline_frames=baseline_frames,
+        )
+        assert (metrics["synthetic_aif_recirc_alpha"]
+                == pytest.approx(SYNTH_AIF_RECIRC_ALPHA))
+
+        # Split first-pass vs recirculation at the recirc onset (derived from
+        # constants; the first pass has decayed to ~1e-5 of peak by then).
+        arrival = baseline_frames + 2
+        recirc_t0 = (arrival * tr
+                     + metrics["synthetic_aif_time_to_peak_s"]
+                     + SYNTH_AIF_RECIRC_DELAY_S)
+        idx = round(recirc_t0 / tr)
+        first_pass, recirc = aif[:idx], aif[idx:]
+
+        amp_ratio = recirc.max() / first_pass.max()
+        assert amp_ratio == pytest.approx(SYNTH_AIF_RECIRC_FRACTION, abs=0.01)
+
+        area_ratio = np.trapezoid(recirc) / np.trapezoid(first_pass)
+        assert 0.20 <= area_ratio <= 0.27, area_ratio
 
     def test_baseline_is_zero(self):
         det = _make_aif_detection()

@@ -146,6 +146,17 @@ SYNTH_AIF_DOSE_CAP: Final[float] = 2.5
 #: per-voxel ΔR2* noise ≈ 1/(TE×SNR) ≈ 1.7 s⁻¹; 3.0 is ~2 sigma guard.
 SYNTH_AIF_MIN_PEAK: Final[float] = 3.0
 
+#: Synthetic-AIF recirculation (second-pass) lobe. A dispersed ΔR2* second pass
+#: is small relative to the first pass, and flatter/broader than it.
+#: Second-pass peak amplitude as a fraction of the first-pass peak.
+SYNTH_AIF_RECIRC_FRACTION: Final[float] = 0.12
+#: Recirculation gamma-variate shape parameter; flatter than the first pass.
+SYNTH_AIF_RECIRC_ALPHA: Final[float] = 3.0
+#: Seconds from the first-pass peak to the recirculation peak.
+SYNTH_AIF_RECIRC_DELAY_S: Final[float] = 20.0
+#: Recirculation gamma-variate time-to-peak (s); broader than the first pass.
+SYNTH_AIF_RECIRC_DISPERSION_S: Final[float] = 8.0
+
 #: Peak-ΔR2* candidate rejection bounds at 3T / full dose (s⁻¹). Arterial peak
 #: ΔR2* scales ∝ B0·dose (Kjølby 2006 MRM 56:187), so both bounds are
 #: B0·dose-scaled at the use site — tracking the same law as the synthetic AIF

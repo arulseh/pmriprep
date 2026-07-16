@@ -43,6 +43,10 @@ from pmriprep.utils.dsc_constants import (
     SYNTH_AIF_BASE_PEAK_3T,
     SYNTH_AIF_DOSE_CAP,
     SYNTH_AIF_MIN_PEAK,
+    SYNTH_AIF_RECIRC_ALPHA,
+    SYNTH_AIF_RECIRC_DELAY_S,
+    SYNTH_AIF_RECIRC_DISPERSION_S,
+    SYNTH_AIF_RECIRC_FRACTION,
 )
 
 # Seconds after baseline end before first-pass window begins.
@@ -2185,10 +2189,12 @@ class AIFDetection(BaseInterface):
         )
         amplitude_source = "population_calibrated"
 
-        # Recirculation parameters
-        recirc_fraction = 0.35
-        recirc_delay = 20.0  # seconds after first-pass peak
-        recirc_dispersion = 8.0  # seconds (broadening)
+        # Recirculation (second-pass) parameters — dispersed, so a smaller,
+        # flatter lobe than the first pass (its own alpha, not the first-pass 4.0)
+        recirc_fraction = SYNTH_AIF_RECIRC_FRACTION
+        recirc_alpha = SYNTH_AIF_RECIRC_ALPHA
+        recirc_delay = SYNTH_AIF_RECIRC_DELAY_S  # seconds after first-pass peak
+        recirc_dispersion = SYNTH_AIF_RECIRC_DISPERSION_S  # seconds (broadening)
 
         # --- Build time axis ---
         t = np.arange(n_timepoints) * tr
@@ -2211,8 +2217,8 @@ class AIFDetection(BaseInterface):
             t_recirc = t[post_recirc] - recirc_t0
             ratio_r = t_recirc / recirc_dispersion
             recirc_peak = peak * recirc_fraction
-            aif[post_recirc] += recirc_peak * (ratio_r ** alpha) * np.exp(
-                alpha * (1.0 - ratio_r)
+            aif[post_recirc] += recirc_peak * (ratio_r ** recirc_alpha) * np.exp(
+                recirc_alpha * (1.0 - ratio_r)
             )
 
         # Clip negative values (numerical safety)
@@ -2230,6 +2236,7 @@ class AIFDetection(BaseInterface):
             "synthetic_aif_time_to_peak_s": time_to_peak,
             "synthetic_aif_arrival_frame": arrival_frame,
             "synthetic_aif_recirc_fraction": recirc_fraction,
+            "synthetic_aif_recirc_alpha": recirc_alpha,
             "synthetic_aif_recirc_delay_s": recirc_delay,
         }
         if tissue_max_delta_r2star is not None:
