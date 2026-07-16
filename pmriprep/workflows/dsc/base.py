@@ -53,6 +53,7 @@ from pmriprep.workflows.dsc._helpers import (  # noqa: F401
     _transform_lesion_mask_to_dsc,
     _transform_nawm_to_dsc,
     _transform_structural_to_dsc,
+    _transform_wm_probseg_to_dsc,
     _validate_native_mask,
 )
 
@@ -751,6 +752,7 @@ def init_dsc_deconvolution_wf(
                 "raw_concentration_file",
                 "preload_classification",
                 "nawm_mask_file",
+                "wm_mask_dsc",
             ]
         ),
         name="inputnode",
@@ -761,6 +763,7 @@ def init_dsc_deconvolution_wf(
                 "out_rel_cbf",
                 "out_rel_cbv",
                 "out_rel_cbv_auc",
+                "out_rel_cbv_firstpass",
                 "out_rel_auc_raw",
                 "out_rel_auc_corr",
                 "out_mtt",
@@ -823,11 +826,13 @@ def init_dsc_deconvolution_wf(
             ("raw_concentration_file", "raw_concentration_file"),
             ("preload_classification", "preload_classification"),
             ("nawm_mask_file", "nawm_mask_file"),
+            ("wm_mask_dsc", "wm_mask_dsc"),
         ]),
         (compute_maps, outputnode, [
             ("out_rel_cbf", "out_rel_cbf"),
             ("out_rel_cbv", "out_rel_cbv"),
             ("out_rel_cbv_auc", "out_rel_cbv_auc"),
+            ("out_rel_cbv_firstpass", "out_rel_cbv_firstpass"),
             ("out_rel_auc_raw", "out_rel_auc_raw"),
             ("out_rel_auc_corr", "out_rel_auc_corr"),
             ("out_mtt", "out_mtt"),
@@ -1795,6 +1800,8 @@ def init_dsc_preproc_wf(
                 "rel_cbv_auc_map",
                 "rel_auc_raw_map",
                 "rel_auc_corr_map",
+                # First-pass CBV (optional, opt-in)
+                "rel_cbv_firstpass_map",
                 # Quality metrics
                 "snr_map",
                 "tsnr_map",
@@ -1981,6 +1988,7 @@ def init_dsc_preproc_wf(
         # baseline_frames wired dynamically from conc_aif_wf.outputnode.aif_baseline_frames
         fallback_baseline_frames=config.pre_bolus,
         tail_frames=5,  # Post-bolus frames for PSR
+        first_pass_cbv=config.first_pass_cbv,
         sloppy=config.sloppy,
     )
     if random_seed is not None:
@@ -2047,6 +2055,21 @@ def init_dsc_preproc_wf(
         ),
         name="transform_nawm",
     )
+
+    # -------------------------------------------------------------------
+    # Node 6c-b: Threshold + erode FAST WM probseg into DSC space
+    # (first-pass-CBV normalization reference; only built when the optional
+    # first-pass map is requested, else the FLIRT resample never runs)
+    # -------------------------------------------------------------------
+    if config.first_pass_cbv:
+        transform_wm = pe.Node(
+            niu.Function(
+                input_names=["wm_probseg", "reference_file", "transform_matrix"],
+                output_names=["wm_mask_dsc_file"],
+                function=_transform_wm_probseg_to_dsc,
+            ),
+            name="transform_wm",
+        )
 
     # -------------------------------------------------------------------
     # Node 6c-ii: Validate user-supplied masks against DSC reference grid
@@ -2426,6 +2449,23 @@ def init_dsc_preproc_wf(
         ]),
     ])
 
+    # Wire eroded WM mask to compute_maps for first-pass-CBV normalization
+    # (only when the optional first-pass map is requested; otherwise
+    # deconvolution_wf.inputnode.wm_mask_dsc stays unconnected -> default "").
+    if config.first_pass_cbv:
+        workflow.connect([
+            (inputnode, transform_wm, [("wm_probseg", "wm_probseg")]),
+            (motion_wf, transform_wm, [
+                ("outputnode.prebolus_mean_file", "reference_file"),
+            ]),
+            (registration_wf, transform_wm, [
+                ("outputnode.t1w_to_dsc_matrix", "transform_matrix"),
+            ]),
+            (transform_wm, deconvolution_wf, [
+                ("wm_mask_dsc_file", "inputnode.wm_mask_dsc"),
+            ]),
+        ])
+
     # Feed the normalization sub-workflow (rel-CBV / rel-CBF + masks).
     # The NAWM (preferred) and brain (fallback) masks fan out to both the CBV
     # and CBF normalizers inside the sub-workflow.
@@ -2659,6 +2699,7 @@ def init_dsc_preproc_wf(
             ("outputnode.out_rel_cbf", "rel_cbf_map"),
             ("outputnode.out_rel_cbv", "rel_cbv_map"),
             ("outputnode.out_rel_cbv_auc", "rel_cbv_auc_map"),
+            ("outputnode.out_rel_cbv_firstpass", "rel_cbv_firstpass_map"),
             ("outputnode.out_rel_auc_raw", "rel_auc_raw_map"),
             ("outputnode.out_rel_auc_corr", "rel_auc_corr_map"),
         ]),

@@ -542,6 +542,12 @@
     ],
     [
       "compute_maps",
+      "out_rel_cbv_firstpass",
+      "outputnode",
+      "rel_cbv_firstpass_map"
+    ],
+    [
+      "compute_maps",
       "out_rttp",
       "lesion_stats",
       "rttp_map"
@@ -2089,6 +2095,7 @@
       "cpi_infer_delay": false,
       "fallback_baseline_frames": 5,
       "field_strength": 3.0,
+      "first_pass_cbv": false,
       "inference": "vi",
       "mcmc_samples": 500,
       "method": "oSVD",
@@ -2464,6 +2471,7 @@
     "rel_auc_raw_map",
     "rel_cbf_map",
     "rel_cbv_auc_map",
+    "rel_cbv_firstpass_map",
     "rel_cbv_map",
     "roi_mask_dsc",
     "roi_stats_json",

@@ -811,6 +811,90 @@ def _transform_nawm_to_dsc(  # type: ignore[no-untyped-def]
     return out_file
 
 
+def _transform_wm_probseg_to_dsc(  # type: ignore[no-untyped-def]
+    wm_probseg=None,
+    reference_file=None,
+    transform_matrix=None,
+):
+    """Threshold + erode the FAST WM probability map into DSC space.
+
+    Resamples the T1w-space white-matter probability map into DSC space with
+    FLIRT (trilinear, since it is a probability map, not a binary mask),
+    thresholds at 0.5, and erodes one voxel in DSC space to drop GM/CSF
+    partial-volume edges. The eroded binary mask is the first-pass-CBV
+    normalization reference. Returns ``""`` when no probability map is
+    supplied, in which case the first-pass map is not produced.
+
+    Parameters
+    ----------
+    wm_probseg : str or None
+        Path to the FAST white-matter probability map in T1w space (or None).
+    reference_file : str or None
+        Path to the DSC reference image for output geometry.
+    transform_matrix : str or None
+        Path to the T1w→DSC FLIRT matrix.
+
+    Returns
+    -------
+    str
+        Path to the eroded binary WM mask in DSC space, or ``""`` if no map.
+    """
+    from nipype.interfaces.base import isdefined
+
+    if (
+        not isdefined(wm_probseg)
+        or wm_probseg is None
+        or not isdefined(reference_file)
+        or reference_file is None
+        or not isdefined(transform_matrix)
+        or transform_matrix is None
+    ):
+        return ""
+
+    from pathlib import Path
+
+    if not Path(str(wm_probseg)).is_file():
+        return ""
+
+    import logging
+    import subprocess
+
+    import nibabel as nib
+    import numpy as np
+    from scipy import ndimage
+
+    out_dir = Path.cwd()
+    resampled = str(out_dir / "wm_probseg_dsc.nii.gz")
+    cmd = [
+        "flirt",
+        "-in", str(wm_probseg),
+        "-ref", str(reference_file),
+        "-out", resampled,
+        "-init", str(transform_matrix),
+        "-applyxfm",
+        "-interp", "trilinear",
+    ]
+    # The first-pass map is an opt-in additive output, so a resample failure
+    # must not abort the DSC run: fail soft to "" (map simply not produced).
+    try:
+        subprocess.run(cmd, check=True, capture_output=True)
+        img = nib.load(resampled)
+        prob = img.get_fdata()
+        mask = ndimage.binary_erosion(prob > 0.5, iterations=1)
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger("nipype.interface").warning(
+            "First-pass CBV WM reference resample failed (%s); "
+            "map not produced.", exc,
+        )
+        return ""
+
+    out_file = str(out_dir / "wm_mask_dsc.nii.gz")
+    out_img = nib.Nifti1Image(mask.astype(np.uint8), img.affine, img.header)
+    out_img.header.set_data_dtype(np.uint8)
+    nib.save(out_img, out_file)
+    return out_file
+
+
 def _transform_lesion_mask_to_dsc(  # type: ignore[no-untyped-def]
     lesion_mask_file=None,
     reference_file=None,

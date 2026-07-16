@@ -246,6 +246,7 @@ dce:
 | `nawm_mask` | path | `null` | NAWM mask for normalization (DSC space) |
 | `roi_mask` | path | `null` | ROI mask for statistics extraction. Multi-label integer masks produce per-label stats (DSC space) |
 | `smooth_fwhm` | float | `0.0` | Smoothing kernel FWHM in mm (0 = none); additional outputs |
+| `first_pass_cbv` | bool | `false` | Add a first-pass relative CBV map (`desc-dscRelFirstPassCbv`) for stroke/non-tumor use |
 | `underlays` | list | `[]` | Structural images to save in perfusion space: `t1w_precon`, `t1w_postcon`, `flair_precon`, `flair_postcon`, `t2w` |
 
 ### DCE Configuration
@@ -524,6 +525,7 @@ output_dir/pmriprep/
 | `*_desc-dscRelCbf_stat` | Cerebral blood flow (relative) | 1/min |
 | `*_desc-dscRelCbv_stat` | Cerebral blood volume (relative, deconvolution) | arbitrary |
 | `*_desc-dscRelAUCCbv_stat` | Cerebral blood volume (K2-corrected full-bolus AUC, relative) | arbitrary |
+| `*_desc-dscRelFirstPassCbv_stat` | First-pass CBV (relative, gamma-variate fit; opt-in) | arbitrary |
 | `*_desc-dscRelAuc_stat` | Relative area under curve | arbitrary |
 | `*_desc-dscMtt_stat` | Mean transit time | seconds |
 | `*_desc-dscTmax_stat` | Time to maximum of residue function | seconds |

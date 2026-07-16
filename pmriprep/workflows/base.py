@@ -1972,6 +1972,9 @@ def init_pmriprep_wf(
         dsc_present.add("ttp_corrected_map")
         if dsc_has_nawm:
             dsc_present.add("rttp_map")
+        # First-pass CBV — opt-in additive stroke/non-tumor map
+        if dsc_config.first_pass_cbv:
+            dsc_present.add("rel_cbv_firstpass_map")
         # Parametric methods only (oSVD/sSVD/tikhonov produce no
         # vascular params, no Bayesian uncertainty, no parametric R²)
         if dsc_method in ("cpi", "vascular"):
@@ -2078,6 +2081,8 @@ def init_pmriprep_wf(
                 ("outputnode.rel_cbf_map", "inputnode.rel_cbf_map"),
                 ("outputnode.rel_cbv_map", "inputnode.rel_cbv_map"),
                 ("outputnode.rel_cbv_auc_map", "inputnode.rel_cbv_auc_map"),
+                ("outputnode.rel_cbv_firstpass_map",
+                 "inputnode.rel_cbv_firstpass_map"),
                 ("outputnode.rel_auc_raw_map", "inputnode.rel_auc_raw_map"),
                 ("outputnode.rel_auc_corr_map", "inputnode.rel_auc_corr_map"),
                 # Normalized maps

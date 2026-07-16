@@ -78,6 +78,50 @@ _OPTIONAL_MAPS: tuple[tuple[str, str, str, str, str | None, str, dict | None], .
      "Leakage contribution (AUC_raw - AUC_corr)", None, "auc_diff", None),
     ("snr_map", "dsc", "snr", "Signal-to-noise ratio (baseline)", "arbitrary", "snr", None),
     ("tsnr_map", "dsc", "tsnr", "Temporal signal-to-noise ratio", "arbitrary", "tsnr", None),
+    ("rel_cbv_firstpass_map", "dscRelFirstPass", "cbv",
+     "First-pass cerebral blood volume, relative. "
+     "Stroke / non-tumor first-pass convention.",
+     "arbitrary", "cbv_firstpass",
+     {
+         "CBVMethod": "gamma_variate_first_pass_area",
+         "Normalization": (
+             "Tissue-to-tissue: divided by the median first-pass area of the "
+             "eroded whole-WM (FAST) reference. rCBV = 1.0 is the WM median. "
+             "Requires a WM segmentation; without one the map is not produced."
+         ),
+         "NormalizationReference": (
+             "firstpass-WM-FAST (eroded whole-WM FAST median in DSC space)"
+         ),
+         "AbsoluteCalibration": (
+             "none: relative tissue-to-tissue only; no arterial input, density, "
+             "or hematocrit calibration; NOT mL/100 g"
+         ),
+         "ConcentrationInput": (
+             "raw (pre-K2) delta-R2*; assumes an intact blood-brain barrier "
+             "(the first-pass CBV convention) and is invalid where the barrier "
+             "is disrupted"
+         ),
+         "Estimator": (
+             "per-voxel gamma-variate fit to the first pass (decoupled "
+             "log-linear form, y-squared weighted); CBV is the analytic gamma "
+             "area, so recirculation and washout are excluded. A light fixed-FWHM "
+             "spatial pre-smoothing raises the per-voxel fit CNR"
+         ),
+         "UnfittableVoxels": (
+             "voxels whose gamma fit is rejected are left NaN, not filled by a "
+             "truncating fallback; see FirstPassUnfittableFraction for the rate, "
+             "which rises at low CNR/SNR"
+         ),
+         "Includes": (
+             "CBV only; no CBF / MTT / Tmax (penumbra assessment needs the "
+             "deconvolution Tmax)"
+         ),
+         "NotTumorCBV": (
+             "NOT the validated tumor CBV. The K2-corrected full-bolus AUC-rCBV "
+             "(desc-dscRelAUCCbv) is the primary CBV; do not use this map for "
+             "tumor grading."
+         ),
+     }),
 )
 
 
@@ -792,6 +836,7 @@ def init_dsc_datasinks_wf(
                 # Relative
                 "rel_cbf_map", "rel_cbv_map", "rel_cbv_auc_map",
                 "rel_auc_raw_map", "rel_auc_corr_map",
+                "rel_cbv_firstpass_map",
                 # Optional
                 "ttp_map", "ttp_corrected_map", "rttp_map",
                 "cnr_map", "auc_diff_map", "snr_map", "tsnr_map",

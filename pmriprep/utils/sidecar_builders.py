@@ -737,6 +737,21 @@ def build_dsc_map_sidecar(
         sidecar["Units"] = units
     if extra:
         sidecar.update(extra)
+    # Surface the per-run first-pass-CBV reference so the named reference and
+    # its voxel count land on the map's own sidecar.
+    if map_key == "cbv_firstpass" and isinstance(qc_metrics, dict):
+        ref = qc_metrics.get("firstpass_reference")
+        if ref is not None:
+            sidecar["FirstPassReference"] = str(ref)
+        ref_n = qc_metrics.get("firstpass_reference_n")
+        if ref_n is not None:
+            sidecar["FirstPassReferenceVoxelCount"] = int(ref_n)
+        unfit = qc_metrics.get("firstpass_unfittable_fraction")
+        if unfit is not None:
+            sidecar["FirstPassUnfittableFraction"] = float(unfit)
+        fwhm = qc_metrics.get("firstpass_prefit_fwhm_mm")
+        if fwhm is not None:
+            sidecar["FirstPassPreSmoothingFWHMmm"] = float(fwhm)
     apply_aif_sidecar(sidecar, map_key, qc_metrics)
     return sidecar
 

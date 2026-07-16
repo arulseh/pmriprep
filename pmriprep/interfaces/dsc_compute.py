@@ -328,6 +328,14 @@ def _dsc_fit_single_voxel(voxel_data: _DSCVoxelInput) -> dict[str, Any]:
         return {"coords": (x, y, z), "failed": True, "needs_fallback": True}
 
 
+#: Minimum reference voxels for the first-pass-CBV WM median to be trusted;
+#: below this the map has no valid anchor and is not produced.
+_FIRSTPASS_MIN_REFERENCE_VOXELS: int = 50
+#: Fixed FWHM (mm) of the light spatial pre-fit smoothing applied before the
+#: per-voxel gamma fit, to raise its effective CNR (standard DSC preprocessing).
+_FIRSTPASS_PREFIT_FWHM_MM: float = 5.0
+
+
 class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
     """Input specification for ComputeDSCMaps interface."""
 
@@ -507,6 +515,19 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
     nawm_mask_file = traits.Str(
         desc="NAWM mask in DSC space for rTTP normalization",
     )
+    wm_mask_dsc = traits.Str(
+        desc="Eroded whole-WM mask in DSC space (FAST-derived) used as the "
+        "first-pass-CBV normalization reference. Empty string when "
+        "unavailable, in which case the first-pass map is not produced.",
+    )
+
+    # First-pass CBV — opt-in additive stroke/non-tumor output.
+    first_pass_cbv = traits.Bool(
+        False,
+        usedefault=True,
+        desc="Compute the additive gamma-variate first-pass relative CBV "
+        "map. Inert: nothing internal consumes it.",
+    )
 
     # Sloppy / reproducibility
     sloppy = traits.Bool(
@@ -535,6 +556,11 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
     out_rel_cbf = File(genfile=True, desc="Output relative CBF map NIfTI")
     out_rel_cbv = File(genfile=True, desc="Output relative CBV map NIfTI (deconvolution)")
     out_rel_cbv_auc = File(genfile=True, desc="Output AUC-based relative CBV map NIfTI")
+    out_rel_cbv_firstpass = File(
+        genfile=True,
+        desc="Output gamma-variate first-pass relative CBV map NIfTI "
+        "(optional; only when first_pass_cbv is set)",
+    )
     out_rel_auc_raw = File(genfile=True, desc="Output relative AUC raw map NIfTI")
     out_rel_auc_corr = File(genfile=True, desc="Output relative AUC corrected map NIfTI")
 
@@ -579,6 +605,10 @@ class ComputeDSCMapsOutputSpec(TraitedSpec):
     out_qc_fit_data = File(desc="JSON with QC voxel fit data for fit QC plot")
 
     # Optional extras
+    out_rel_cbv_firstpass = File(
+        desc="Gamma-variate first-pass relative CBV map (stroke/non-tumor "
+        "convention). Empty string when first_pass_cbv is off."
+    )
     out_delay = File(desc="Delay map (oSVD method)")
     out_residues = File(desc="Residue functions (if save_residue=True)")
     out_alpha = File(desc="Alpha map (vascular method only)")
@@ -709,6 +739,154 @@ class ComputeDSCMaps(BaseInterface):
         else:
             base = in_file.stem
         return str(Path.cwd() / f"{base}{suffix}.nii.gz")
+
+    def _first_pass_reference(
+        self,
+        fp_area: npt.NDArray[Any],
+        mask_bool: npt.NDArray[Any],
+    ) -> "tuple[float, int] | None":
+        """Median first-pass area over the eroded whole-WM (FAST) reference.
+
+        Returns ``(median, n_voxels)`` when a valid WM reference is available
+        (a matching-grid mask with at least ``_FIRSTPASS_MIN_REFERENCE_VOXELS``
+        finite voxels and a positive median), else ``None`` (the reference is
+        rejected as too small, degenerate, or off-grid).
+
+        There is no whole-brain fallback. A whole-brain percentile and a
+        GMM-largest-component are both biased, cross-subject-unstable WM
+        proxies on real data (the first-pass-AUC histogram has no clean GM/WM
+        separation), so without a WM segmentation the map has no valid anchor
+        and is not produced.
+
+        The median is taken over all finite voxels (signed, not positive-
+        filtered): dropping the negative-noise tail would bias the median
+        upward and inflate the denominator, deflating the map, the same
+        unbiased-negatives principle the primary AUC-CBV encodes.
+        """
+        import nibabel as nib  # type: ignore[import-untyped]
+
+        wm = self.inputs.wm_mask_dsc
+        if (
+            not isdefined(wm)
+            or str(wm) in ("", "None")
+            or not Path(str(wm)).exists()
+        ):
+            return None
+        wm_mask = nib.load(str(wm)).get_fdata() > 0  # type: ignore[attr-defined]
+        # An off-grid WM mask (e.g. a partial-FOV reference) would raise on the
+        # boolean AND; a mismatched reference is not usable, so reject it.
+        if wm_mask.shape != mask_bool.shape:
+            return None
+        wm_vals = fp_area[wm_mask & mask_bool]
+        wm_vals = wm_vals[np.isfinite(wm_vals)]
+        if wm_vals.size < _FIRSTPASS_MIN_REFERENCE_VOXELS:
+            return None
+        med = float(np.median(wm_vals))
+        if med <= EPSILON_CONCENTRATION:
+            return None
+        return med, int(wm_vals.size)
+
+    def _compute_first_pass_cbv(
+        self,
+        *,
+        raw_conc_data: npt.NDArray[Any],
+        mask_bool: npt.NDArray[Any],
+        spatial_shape: tuple[int, ...],
+        dt: float,
+        n_bl: int,
+        affine: npt.NDArray[Any],
+        header: Any,
+        qc_metrics: dict[str, Any],
+    ) -> str:
+        """Compute + save the first-pass gamma-variate relative CBV map.
+
+        Per-voxel gamma-variate fit to the first pass of the RAW concentration
+        (recirculation removed by the gamma model), with the analytic gamma area
+        as CBV, normalized tissue-to-tissue by the eroded whole-WM (FAST) median.
+        Voxels whose fit is rejected are left NaN and counted in
+        ``firstpass_unfittable_fraction``; there is no truncating fallback. A
+        light fixed-FWHM spatial pre-smoothing raises the effective CNR of the
+        per-voxel fit (standard DSC preprocessing), applied to a copy for this
+        map only. Requires a WM segmentation: with no valid WM reference the map
+        has no anchor and is not produced (returns ``""``). Emits
+        ``firstpass_reference`` / ``firstpass_reference_n`` /
+        ``firstpass_unfittable_fraction`` into ``qc_metrics``.
+        """
+        import nibabel as nib  # type: ignore[import-untyped]
+        from scipy.ndimage import gaussian_filter
+
+        from pmriprep.utils.dsc_aif import batched_gamma_firstpass_auc
+
+        # No WM segmentation input at all: skip before the per-voxel fit, since
+        # the map has no valid anchor without one.
+        wm = self.inputs.wm_mask_dsc
+        if (
+            not isdefined(wm)
+            or str(wm) in ("", "None")
+            or not Path(str(wm)).exists()
+        ):
+            qc_metrics["firstpass_reference"] = "unavailable-no-wm-segmentation"
+            logger.warning(
+                "First-pass CBV requested but no WM segmentation is available; "
+                "map not produced."
+            )
+            return ""
+
+        # Light spatial pre-fit smoothing (fixed FWHM), applied per frame to a
+        # copy so the primary maps are unaffected. Sigma is derived from the
+        # voxel spacing so the FWHM is a fixed physical size across resolutions.
+        zooms = [float(z) for z in header.get_zooms()[:3]]
+        sigma_vox = [
+            (_FIRSTPASS_PREFIT_FWHM_MM / 2.3548) / max(z, 1e-3) for z in zooms
+        ]
+        # Sanitize before smoothing: gaussian_filter would otherwise spread a
+        # single non-finite voxel across a ~sigma neighbourhood (a hole in the
+        # map). The fit's own nan_to_num runs too late to prevent that.
+        smoothed = gaussian_filter(
+            np.nan_to_num(raw_conc_data, nan=0.0, posinf=0.0, neginf=0.0),
+            sigma=(sigma_vox[0], sigma_vox[1], sigma_vox[2], 0.0),
+        )
+
+        fp_res = batched_gamma_firstpass_auc(
+            smoothed[mask_bool], tr=dt, baseline_frames=n_bl,
+        )
+        fp_area = np.full(spatial_shape, np.nan, dtype=np.float64)
+        fp_area[mask_bool] = fp_res.auc  # NaN on unfittable voxels
+
+        reference = self._first_pass_reference(fp_area, mask_bool)
+        if reference is None:
+            qc_metrics["firstpass_reference"] = "unavailable-wm-reference-rejected"
+            logger.warning(
+                "First-pass CBV: WM reference rejected (too few fitted voxels, "
+                "degenerate median, or off-grid mask); map not produced."
+            )
+            return ""
+        reference_value, reference_n = reference
+
+        rel_cbv_fp = np.full(spatial_shape, np.nan, dtype=np.float64)
+        np.divide(fp_area, reference_value, out=rel_cbv_fp, where=mask_bool)
+        # Upper sentinel only (mirror the primary AUC-CBV clamp at 10). No lower
+        # clip; half-rectifying biases low-CBV voxels and inflates the reference
+        # median. Unfittable (NaN) and out-of-mask voxels stay NaN.
+        with np.errstate(invalid="ignore"):
+            rel_cbv_fp = np.where(mask_bool, np.minimum(rel_cbv_fp, 10.0), np.nan)
+
+        path = self._gen_outfilename("_rel_cbv_firstpass")
+        cast_data = rel_cbv_fp.astype(np.float32)
+        local_header = cast("nib.Nifti1Header", header.copy())
+        local_header.set_data_dtype(np.float32)
+        img = nib.Nifti1Image(cast_data, affine, local_header)  # type: ignore[attr-defined]
+        nib.save(img, path)  # type: ignore[attr-defined]
+
+        qc_metrics["firstpass_reference"] = "firstpass-WM-FAST"
+        qc_metrics["firstpass_reference_n"] = int(reference_n)
+        qc_metrics["firstpass_unfittable_fraction"] = round(
+            float(fp_res.unfittable_fraction), 4
+        )
+        # Disclose the pre-fit smoothing so the effective-resolution change
+        # lands in the map's own sidecar provenance, not only the docstring.
+        qc_metrics["firstpass_prefit_fwhm_mm"] = float(_FIRSTPASS_PREFIT_FWHM_MM)
+        return path
 
     def _detect_baseline_frames(
         self,
@@ -2615,6 +2793,33 @@ class ComputeDSCMaps(BaseInterface):
             "out_tsnr": out_tsnr,
             "qc_metrics": qc_metrics,
         }
+
+        # -----------------------------------------------------------
+        # Optional: gamma-variate first-pass relative CBV map.
+        # Purely additive stroke / non-tumor output. INERT: nothing
+        # internal (vp constraint, MTT, NAWM normalization) consumes it.
+        # Per-voxel gamma fit to the first pass of RAW (intact-BBB)
+        # concentration (recirculation removed), analytic area normalized
+        # tissue-to-tissue by the eroded whole-WM median. Requires a WM
+        # segmentation; with none the map has no valid anchor and is skipped.
+        # -----------------------------------------------------------
+        # Left unset when off (like out_delay/out_alpha) OR when no WM
+        # reference is available: the output trait has no exists=True, so
+        # nipype reports it Undefined and the datasink's isdefined guard skips
+        # it.
+        if self.inputs.first_pass_cbv:
+            fp_path = self._compute_first_pass_cbv(
+                raw_conc_data=raw_conc_data,
+                mask_bool=mask_bool,
+                spatial_shape=spatial_shape,
+                dt=dt,
+                n_bl=n_bl,
+                affine=affine,
+                header=header,
+                qc_metrics=qc_metrics,
+            )
+            if fp_path:
+                self._results["out_rel_cbv_firstpass"] = fp_path
 
         # NAWM-relative TTP (conditional on NAWM mask availability)
         if rttp is not None:

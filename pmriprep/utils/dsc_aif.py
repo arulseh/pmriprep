@@ -602,6 +602,230 @@ def fit_gamma_variate(
 
 
 # =============================================================================
+# Batched first-pass gamma-variate CBV (tissue voxels)
+# =============================================================================
+
+
+@dataclass
+class BatchedGammaFirstPassResult:
+    """Result of the batched first-pass gamma-variate area estimate.
+
+    Attributes
+    ----------
+    auc : npt.NDArray[Any]
+        Per-voxel first-pass area (concentration x seconds) from the analytic
+        gamma integral ``A * beta^(alpha+1) * Gamma(alpha+1) * tr``. NaN where
+        the fit is rejected (no truncation fallback: an unfittable voxel is
+        reported as missing, not biased low).
+    alpha, beta, t0 : npt.NDArray[Any]
+        Per-voxel gamma parameters (frame units for beta / t0); NaN on
+        unfittable voxels.
+    r_squared : npt.NDArray[Any]
+        Per-voxel weighted log-domain coefficient of determination; NaN on
+        unfittable voxels.
+    unfittable_fraction : float
+        Fraction of voxels whose gamma fit was rejected (a CNR/SNR indicator).
+    n_fit, n_unfittable : int
+        Voxel counts.
+    """
+
+    auc: npt.NDArray[Any]
+    alpha: npt.NDArray[Any]
+    beta: npt.NDArray[Any]
+    t0: npt.NDArray[Any]
+    r_squared: npt.NDArray[Any]
+    unfittable_fraction: float
+    n_fit: int
+    n_unfittable: int
+
+
+#: Minimum usable first-pass samples for the 2-parameter gamma fit
+#: (n >= p+3 = 5 for a stable, over-determined least-squares solve).
+FIRSTPASS_MIN_SAMPLES: int = 5
+#: Minimum weighted log-domain R^2 for the gamma fit to be accepted.
+FIRSTPASS_R2_THRESHOLD: float = 0.7
+#: Gamma shape/scale bounds (frame units); mirror ``fit_gamma_variate``.
+FIRSTPASS_ALPHA_BOUNDS: Tuple[float, float] = (0.1, 10.0)
+FIRSTPASS_BETA_BOUNDS: Tuple[float, float] = (0.1, 20.0)
+
+
+def batched_gamma_firstpass_auc(
+    tissue_curves: npt.NDArray[Any],
+    tr: float = 1.0,
+    baseline_frames: int = 5,
+) -> BatchedGammaFirstPassResult:
+    """Estimate per-voxel first-pass contrast area by a batched gamma fit.
+
+    Vectorized (all voxels solved at once, no per-voxel Python loop) weighted
+    log-linear gamma-variate fit to the first pass of each tissue concentration
+    curve. The first-pass area is the classic non-tumour CBV surrogate; the
+    gamma model isolates the first pass and its area is the analytic integral,
+    so recirculation and the washout tail are excluded.
+
+    The fit uses the decoupled log-linear form of the gamma-variate,
+    ``ln y(t') = ln y_max + alpha * (1 + ln t' - t')`` with
+    ``t' = (t - t0) / (t_max - t0)`` and ``beta = (t_max - t0) / alpha``. This
+    is a two-parameter (intercept, ``alpha``) weighted linear solve per voxel.
+    Two guards are mandatory: only positive samples enter the log fit
+    (``ln y`` is undefined for ``y <= 0``), and residuals are weighted by
+    ``y**2`` so the log-domain solve reproduces a linear-domain least-squares
+    fit (``Var[ln y] ~ Var[y] / y**2``); an unweighted log fit over-weights the
+    noisy tail and biases the area.
+
+    Voxels whose fit fails the quality gates are returned as NaN and counted in
+    ``unfittable_fraction``. There is no windowed-trapezoid fallback: a
+    truncated-tail fallback biases the area low, whereas NaN reports the
+    unfittable voxel honestly as missing data.
+
+    Parameters
+    ----------
+    tissue_curves : npt.NDArray[Any]
+        RAW (pre-K2) concentration curves, shape ``(N, T)`` for ``N`` voxels
+        and ``T`` frames. Raw (intact-BBB) input by design; the first-pass CBV
+        convention assumes no leakage.
+    tr : float
+        Frame duration in seconds (scales the area to concentration x seconds;
+        the downstream ratio normalization cancels it).
+    baseline_frames : int
+        Number of pre-bolus baseline frames for per-voxel baseline subtraction.
+
+    Returns
+    -------
+    BatchedGammaFirstPassResult
+        Per-voxel area (NaN where unfittable), gamma parameters, and the
+        unfittable fraction.
+    """
+    from scipy.special import gamma as _gamma_fn
+
+    curves = np.asarray(tissue_curves, dtype=np.float64)
+    if curves.ndim != 2:
+        raise ValueError(
+            f"tissue_curves must be 2D (N, T); got shape {curves.shape}"
+        )
+    n_vox, n_frames = curves.shape
+    curves = np.nan_to_num(curves, nan=0.0, posinf=0.0, neginf=0.0)
+
+    t = np.arange(n_frames, dtype=np.float64)
+    eps = float(EPSILON_CONCENTRATION)
+
+    # Per-voxel baseline subtraction.
+    nbl = int(max(1, min(baseline_frames, n_frames)))
+    base = np.mean(curves[:, :nbl], axis=1, keepdims=True)
+    y = curves - base
+
+    # Per-voxel first-pass peak (global max; for first-pass-dominant curves the
+    # recirculation bump is smaller than the first pass).
+    peak_idx = np.argmax(y, axis=1)
+    peak_val = np.max(y, axis=1)
+    valid_peak = peak_val > eps
+
+    # t0 (arrival): first frame at/above 10% of peak, before the peak.
+    thr = 0.1 * peak_val
+    before_peak = t[None, :] <= peak_idx[:, None]
+    rise = (y >= thr[:, None]) & before_peak
+    has_rise = np.any(rise, axis=1)
+    first_rise = np.argmax(rise, axis=1)
+    t0f = np.where(has_rise, first_rise.astype(np.float64) - 0.5, float(nbl))
+    t0f = np.maximum(t0f, 0.0)
+
+    # Fit window: arrival -> 70%-of-peak on the downslope. Recirculation is
+    # assumed to begin after the 70% point, so the fit sees the clean first
+    # pass and the gamma analytic integral supplies the excluded washout tail.
+    win_start = np.clip(np.ceil(t0f).astype(int), 0, n_frames - 1)
+    after_peak = t[None, :] > peak_idx[:, None]
+    below_70 = (y <= 0.70 * peak_val[:, None]) & after_peak
+    cutoff = np.where(
+        np.any(below_70, axis=1), np.argmax(below_70, axis=1), n_frames - 1
+    )
+    win_end = cutoff + 1  # include the 70%-downslope frame
+    in_window = (t[None, :] >= win_start[:, None]) & (t[None, :] < win_end[:, None])
+
+    # Normalized time t' and the single decoupled regressor g(t').
+    tau = np.maximum(peak_idx.astype(np.float64) - t0f, 1e-3)[:, None]
+    tprime = (t[None, :] - t0f[:, None]) / tau
+    positive = (y > eps) & (tprime > eps) & in_window
+    with np.errstate(divide="ignore", invalid="ignore"):
+        g = 1.0 + np.log(np.where(positive, tprime, 1.0)) - tprime
+        lny = np.log(np.where(positive, y, 1.0))
+    g = np.where(positive, g, 0.0)
+    lny = np.where(positive, lny, 0.0)
+
+    # y**2 weighting restores a linear-domain least-squares solve.
+    w = np.where(positive, y * y, 0.0)
+    n_samples = np.sum(positive, axis=1)
+
+    # Weighted 2-parameter normal equations per voxel: columns [1, g].
+    s_w = np.sum(w, axis=1)
+    s_wg = np.sum(w * g, axis=1)
+    s_wgg = np.sum(w * g * g, axis=1)
+    s_wl = np.sum(w * lny, axis=1)
+    s_wgl = np.sum(w * g * lny, axis=1)
+    det = s_w * s_wgg - s_wg * s_wg
+    det_ok = np.abs(det) > eps
+    det_safe = np.where(det_ok, det, 1.0)
+    b0 = (s_wgg * s_wl - s_wg * s_wgl) / det_safe
+    alpha = (s_w * s_wgl - s_wg * s_wl) / det_safe
+
+    # Weighted log-domain R^2.
+    lny_hat = b0[:, None] + alpha[:, None] * g
+    lny_bar = np.where(s_w > eps, s_wl / np.where(s_w > eps, s_w, 1.0), 0.0)
+    ss_res = np.sum(w * (lny - lny_hat) ** 2, axis=1)
+    ss_tot = np.sum(w * (lny - lny_bar[:, None]) ** 2, axis=1)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        r_squared = np.where(
+            ss_tot > eps, 1.0 - ss_res / np.where(ss_tot > eps, ss_tot, 1.0), 0.0
+        )
+
+    # Reconstruct gamma parameters and the analytic first-pass area.
+    y_max = np.exp(np.clip(b0, -50.0, 50.0))
+    tau_flat = tau[:, 0]
+    alpha_c = np.clip(alpha, *FIRSTPASS_ALPHA_BOUNDS)
+    beta = tau_flat / np.maximum(alpha_c, 1e-6)
+    with np.errstate(over="ignore", invalid="ignore"):
+        amplitude = y_max * np.exp(alpha_c) / np.power(tau_flat, alpha_c)
+        gamma_auc = (
+            amplitude
+            * np.power(beta, alpha_c + 1.0)
+            * _gamma_fn(alpha_c + 1.0)
+            * tr
+        )
+
+    beta_in_bounds = (beta >= FIRSTPASS_BETA_BOUNDS[0]) & (
+        beta <= FIRSTPASS_BETA_BOUNDS[1]
+    )
+    alpha_in_bounds = (alpha >= FIRSTPASS_ALPHA_BOUNDS[0]) & (
+        alpha <= FIRSTPASS_ALPHA_BOUNDS[1]
+    )
+    gamma_ok = (
+        valid_peak
+        & det_ok
+        & (n_samples >= FIRSTPASS_MIN_SAMPLES)
+        & alpha_in_bounds
+        & beta_in_bounds
+        & (r_squared >= FIRSTPASS_R2_THRESHOLD)
+        & np.isfinite(gamma_auc)
+        & (gamma_auc > 0.0)
+    )
+
+    # No fallback: unfittable voxels are NaN (reported, not biased low).
+    auc = np.where(gamma_ok, gamma_auc, np.nan)
+    n_fit = int(np.sum(gamma_ok))
+    n_unfittable = int(n_vox - n_fit)
+    unfittable_fraction = float(n_unfittable / n_vox) if n_vox > 0 else 0.0
+
+    return BatchedGammaFirstPassResult(
+        auc=auc,
+        alpha=np.where(gamma_ok, alpha, np.nan),
+        beta=np.where(gamma_ok, beta, np.nan),
+        t0=np.where(gamma_ok, t0f, np.nan),
+        r_squared=np.where(gamma_ok, r_squared, np.nan),
+        unfittable_fraction=unfittable_fraction,
+        n_fit=n_fit,
+        n_unfittable=n_unfittable,
+    )
+
+
+# =============================================================================
 # Auto Gamma-Variate Decision Logic
 # =============================================================================
 

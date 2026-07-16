@@ -159,6 +159,12 @@ class DSCConfig:
     leakage_method: Literal["bsw", "bidirectional"] = "bsw"
     kep: Optional[float] = None  # s⁻¹, only used when leakage_method="bidirectional"
 
+    # Additional outputs
+    # First-pass relative CBV map for stroke / non-tumor users. Off by default:
+    # adds a per-voxel gamma-variate first-pass fit over the brain mask (extra
+    # compute, incl. a FAST-WM resample) and is inert (nothing internal uses it).
+    first_pass_cbv: bool = False
+
     # Testing / debug
     sloppy: bool = False  # Use fast, low-quality settings for testing
 

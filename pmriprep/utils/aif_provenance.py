@@ -31,6 +31,7 @@ AIF_INDEPENDENT_MAPS: Final[frozenset[str]] = frozenset({
     "ttp", "ttpCorrected", "rttp",
     "parametric_r2",
     "fallback",
+    "cbv_firstpass",
 })
 
 
@@ -44,6 +45,8 @@ TEMPLATE_AIF_USAGE: Final[dict[str, TemplateAIFUsageCategory]] = {
     "cbf": "ratio_defensible",
     "cbv": "ratio_defensible",
     "cbv_auc": "ratio_defensible",
+    # First-pass CBV is normalized tissue-to-tissue (no AIF): AIF-independent.
+    "cbv_firstpass": "safe",
     "auc": "ratio_defensible",
     "auc_corr": "ratio_defensible",
     "mtt": "qualitative_only",
