@@ -1168,6 +1168,21 @@ def collect_aif_fallback_warning(
 
     if modality == "DSC":
         aif_qc = qc_metrics.get("aif_detection") or {}
+        # A real AIF retained below the gamma-fit floor (synthetic fallback
+        # disabled) is flagged but NOT swapped, so it wouldn't otherwise surface.
+        if aif_qc.get("aif_gamma_fit_below_floor_retained"):
+            r2 = aif_qc.get("gamma_r2_retained")
+            r2_txt = ""
+            if r2 is not None:
+                try:
+                    r2_txt = f" (R²={float(r2):.2f})"
+                except (TypeError, ValueError):
+                    pass
+            return (
+                f"DSC AIF retained despite a catastrophic gamma fit{r2_txt} "
+                f"— synthetic fallback is disabled. CBF, MTT, and Tmax may "
+                f"be unreliable; AUC-nCBV, raw TTP, and PSR remain interpretable."
+            )
         if aif_qc.get("detection_method") != "synthetic":
             return None
         reason = (

@@ -179,6 +179,43 @@ def _stamp_synthetic_fallback_common(
         qc_metrics["cascade_tiers_attempted"] = list(tiers_attempted)
 
 
+def _flag_retained_below_floor(
+    qc_metrics: dict[str, Any],
+    *,
+    disable_fallback: bool,
+    detection_level: str,
+    gamma_fit_applied: bool,
+    floor: float = GAMMA_R2_SYNTHETIC_FALLBACK,
+) -> None:
+    """Flag a real AIF retained below the gamma-fit floor when fallback is disabled.
+
+    With synthetic fallback enabled, a sub-floor gamma fit (R² < ``floor`` = fits
+    worse than a flat line = no bolus shape) triggers a synthetic swap. With
+    ``disable_aif_fallback`` the detected AIF is retained instead; this annotates
+    that case so it is not silent — the AIF itself is NOT modified, only flagged.
+
+    No-ops unless fallback is disabled, a real (non-synthetic) AIF was detected, the
+    gamma fit was not applied, and ``gamma_fit_r_squared`` is present and below the
+    floor (it is absent in the fit-exception and ``gamma_fit_mode=="off"`` paths,
+    which therefore stay unflagged — symmetric with the fallback-enabled behaviour).
+    """
+    if gamma_fit_applied or not disable_fallback or detection_level == "synthetic":
+        return
+    gamma_r2 = qc_metrics.get("gamma_fit_r_squared")
+    if gamma_r2 is None or gamma_r2 >= floor:
+        return
+    import logging
+
+    qc_metrics["aif_gamma_fit_below_floor_retained"] = True
+    qc_metrics["gamma_r2_retained"] = gamma_r2
+    logging.getLogger(__name__).warning(
+        "Gamma fit R²=%.3f < %.1f but synthetic AIF fallback is disabled; retaining "
+        "the detected AIF. Deconvolution maps (CBF, MTT, Tmax) may be unreliable; "
+        "AUC-nCBV, raw TTP, and PSR remain interpretable.",
+        gamma_r2, floor,
+    )
+
+
 def _costs_to_scores(costs: list[float]) -> list[float]:
     """Convert DSC AIF candidate costs (lower=better) to scores (higher=better)."""
     if not costs:
@@ -3218,7 +3255,8 @@ class AIFDetection(BaseInterface):
             qc_metrics["synthetic_aif_warnings"] = [
                 "Synthetic AIF used - automatic detection failed",
                 "Relative quantification only (rCBV, rCBF normalized to contralateral)",
-                "TTP and Tmax are valid (timing independent of AIF amplitude)",
+                "Raw TTP remains valid (tissue-derived, AIF-independent); Tmax "
+                "is derived from the deconvolution residue and is unreliable",
                 "Manual AIF selection recommended for clinical use",
             ]
         # Capture measured AIF in caller scope BEFORE gamma fit (which may
@@ -3289,7 +3327,8 @@ class AIFDetection(BaseInterface):
                 qc_metrics["synthetic_aif_warnings"] = [
                     "Synthetic AIF used - gamma fit R2 below threshold",
                     "Relative quantification only (rCBV, rCBF normalized to contralateral)",
-                    "TTP and Tmax are valid (timing independent of AIF amplitude)",
+                    "Raw TTP remains valid (tissue-derived, AIF-independent); Tmax "
+                    "is derived from the deconvolution residue and is unreliable",
                     "Manual AIF selection recommended for clinical use",
                 ]
                 gamma_fitted_curve = None
@@ -3297,6 +3336,15 @@ class AIFDetection(BaseInterface):
                 # with what deconv sees, and marks AUC denominator as synthetic.
                 measured_aif = aif_curve.copy()
                 qc_metrics["cbv_auc_denominator_is_synthetic"] = True
+
+        # Fallback disabled: a sub-floor gamma fit is NOT swapped for synthetic
+        # (the AIF is retained), so flag it here rather than leaving it silent.
+        _flag_retained_below_floor(
+            qc_metrics,
+            disable_fallback=disable_fallback,
+            detection_level=detection_level,
+            gamma_fit_applied=gamma_fit_applied,
+        )
 
         # Surface per-tier postfilter diagnostics whenever the cascade
         # was downgraded (final tier ≠ initial) OR fell to synthetic

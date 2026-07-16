@@ -300,10 +300,11 @@ Examples:
         type=_preload_type,
         default=None,
         metavar="{auto|FLOAT}",
-        help="DSC preload as 'auto' (detect from signal) or a float dose "
-        "multiplier relative to the agent's standard dose (e.g., 0.5 for "
-        "half-dose preload). Accepts 0.0 to 2.0. Internally binned to a "
-        "class for K2 constraint tuning.",
+        help="DSC preload as 'auto' (classify preload adequacy from the K2 "
+        "leakage residuals) or a float administered-dose multiplier relative "
+        "to the agent's standard dose (e.g., 0.5 for half-dose preload). "
+        "Accepts 0.0 to 2.0. Internally binned to a class for K2 constraint "
+        "tuning.",
     )
     dsc_group.add_argument(
         "--dsc-dose",

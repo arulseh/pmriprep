@@ -71,9 +71,32 @@ class TestGeneratedByToolEntries:
             get_hdglio_version,
         )
 
-        # HD-BET/HD-GLIO aren't importable in the test env → pinned fallback.
+        # HD-BET/HD-GLIO aren't installed in the test env → PackageNotFoundError
+        # → Dockerfile-pinned fallback.
         assert get_hdbet_version() == "2.0.1"
         assert get_hdglio_version() == "2.0"
+
+    def test_version_probe_does_not_import_package(self) -> None:
+        """Regression: version probing must NOT import HD_BET/hd_glio.
+
+        HD-BET prints a citation banner to stdout on import; reading the version
+        from package metadata must avoid executing the package ``__init__``.
+        """
+        import sys
+
+        from pmriprep.utils.sidecar_builders import (
+            build_tool_generatedby_entries,
+            get_hdbet_version,
+            get_hdglio_version,
+        )
+
+        for mod in ("HD_BET", "hd_glio"):
+            sys.modules.pop(mod, None)
+        get_hdbet_version()
+        get_hdglio_version()
+        build_tool_generatedby_entries()
+        assert "HD_BET" not in sys.modules
+        assert "hd_glio" not in sys.modules
 
 
 # ---------------------------------------------------------------------------

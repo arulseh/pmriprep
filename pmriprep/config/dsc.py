@@ -8,13 +8,13 @@ from typing import List, Literal, Optional, Union
 
 from .constants import DOSE_PRESETS
 
-#: User-specified preload input: "auto" (detect from signal) or a float
-#: multiplier of the agent's standard administered dose (0.0 = no preload,
-#: 0.5 = half-dose preload, 1.0 = full standard dose administered as preload).
-#: Internally binned to a PreloadClass (utils/dsc_preload.py) for K2
-#: uncertainty tuning. Auto-detection measures residual-equivalent ΔR2* and
-#: uses a separate set of bin edges — user-administered and auto-residual
-#: are physically distinct quantities that share class names but not edges.
+#: Preload input: "auto" classifies preload adequacy from the K2 leakage
+#: residuals (K2-primary; the ΔR2* signal detection still runs but is an
+#: advisory QC diagnostic only, not used for classification). A float is the
+#: administered preload as a multiplier of the agent's standard dose (0.0 = no
+#: preload, 0.5 = half-dose, 1.0 = full standard dose). Both map to a
+#: PreloadClass (utils/dsc_preload.py) for K2 uncertainty tuning, via separate
+#: bin-edge tables (administered dose vs K2-residual adequacy are distinct).
 PreloadInput = Union[Literal["auto"], float]
 
 logger = logging.getLogger(__name__)
@@ -34,16 +34,16 @@ class DSCConfig:
     Attributes
     ----------
     preload : "auto" or float
-        Preload administered dose as a multiplier of the agent's standard
-        single dose. `"auto"` (default) detects from the baseline ΔR2*
-        signal. A float (0.0–2.0) represents the administered fraction:
-        0.0 = no preload, 0.25 = quarter-dose, 0.5 = half-dose, 1.0 = full
-        standard dose, etc. Auto-detection always runs; if a user value is
-        set it is recorded alongside the auto result. User float and
-        auto-detection measure different physical quantities (administered
-        vs residual-equivalent) and use separate bin-edge tables in
-        `dsc_preload.py`, but both map to the same class system for K2
-        uncertainty tuning.
+        Contrast preload from a prior injection. `"auto"` (default) classifies
+        preload adequacy from the K2 leakage-correction residuals (K2-primary
+        classifier); the baseline ΔR2* signal detection still runs but is an
+        advisory acquisition-QC diagnostic only and does not drive the
+        classification. A float (0.0–2.0) instead specifies the administered
+        preload as a fraction of the agent's standard dose (0.0 = no preload,
+        0.25 = quarter, 0.5 = half, 1.0 = full). User float and K2 adequacy are
+        distinct quantities (administered dose vs residual leakage) and use
+        separate bin-edge tables in `dsc_preload.py`, but both map to the same
+        class system for K2 uncertainty tuning.
     dose : float
         Contrast agent dose multiplier (0.5 = half, 1.0 = full, 2.0 = double).
     agent_standard_dose : float
@@ -70,7 +70,12 @@ class DSCConfig:
     n_aif_candidates : int
         Number of AIF candidate voxels to average.
     disable_aif_fallback : bool
-        Disable synthetic AIF fallback when detection fails.
+        Disable the synthetic AIF fallback. Default False (on a detection
+        failure the pipeline substitutes a synthetic gamma-variate AIF and flags
+        it). When True, the pipeline instead **errors** if no AIF candidate is
+        found at any cascade tier, and **retains the detected AIF (flagged in
+        QC)** rather than substituting synthetic when its gamma fit is below the
+        quality floor.
     lesion_mask : Optional[Path]
         Path to lesion mask in DSC native space for AIF exclusion and
         lesion statistics.

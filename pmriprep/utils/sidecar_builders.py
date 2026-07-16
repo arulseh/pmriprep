@@ -319,30 +319,33 @@ def _normalize_tool_version(raw: str) -> str:
     return match.group(0) if match else ""
 
 
+def _dist_version(dist_name: str, fallback: str) -> str:
+    """Read an installed distribution's version from package metadata.
+
+    Uses ``importlib.metadata`` (reads the dist-info, does NOT import the
+    package) so probing e.g. HD-BET does not execute its ``__init__`` — which
+    prints a citation banner to stdout. Falls back to the Dockerfile-pinned
+    value when the distribution is not installed.
+    """
+    try:
+        from importlib.metadata import PackageNotFoundError, version
+
+        try:
+            return version(dist_name)
+        except PackageNotFoundError:
+            return fallback
+    except Exception:
+        return fallback
+
+
 def get_hdbet_version() -> str:
     """Return the HD-BET version, falling back to the Dockerfile-pinned value."""
-    try:
-        import HD_BET  # type: ignore[import-untyped]
-
-        version = getattr(HD_BET, "__version__", None)
-        if version:
-            return str(version)
-    except Exception:
-        pass
-    return _HDBET_PINNED_VERSION
+    return _dist_version("hd-bet", _HDBET_PINNED_VERSION)
 
 
 def get_hdglio_version() -> str:
     """Return the HD-GLIO version, falling back to the Dockerfile-pinned value."""
-    try:
-        import hd_glio  # type: ignore[import-untyped]
-
-        version = getattr(hd_glio, "__version__", None)
-        if version:
-            return str(version)
-    except Exception:
-        pass
-    return _HDGLIO_PINNED_VERSION
+    return _dist_version("hd-glio", _HDGLIO_PINNED_VERSION)
 
 
 def get_imaging_software_versions() -> Dict[str, str]:
@@ -386,7 +389,7 @@ def build_tool_generatedby_entries() -> List[Dict[str, Any]]:
                 "correction (FLIRT, MCFLIRT)", "https://fsl.fmrib.ox.ac.uk"),
         "ANTs": ("Intensity non-uniformity correction (N4BiasFieldCorrection) "
                  "and denoising (DenoiseImage)", "https://github.com/ANTsX/ANTs"),
-        "Nipype": ("Workflow engine", "https://nipype.readthedocs.io"),
+        "Nipype": ("Workflow engine", "https://github.com/nipy/nipype"),
         "HD-BET": ("Brain extraction", "https://github.com/MIC-DKFZ/HD-BET"),
         "HD-GLIO": ("Automated glioma segmentation",
                     "https://github.com/NeuroAI-HD/HD-GLIO"),

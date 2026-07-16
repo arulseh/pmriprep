@@ -150,7 +150,7 @@ pmriprep bids_dir output_dir {participant} [options]
 |------|-------------|
 | `--dsc-deconv-method {sSVD,oSVD,tikhonov,vascular,cpi}` | Deconvolution method (default: oSVD) |
 | `--dsc-inference {nlls,map,vi,svb}` | Inference engine for parametric methods (cpi, vascular). Default: `vi` (FABBER variational Bayes). SVD/Tikhonov ignore. |
-| `--dsc-preload {auto\|FLOAT}` | Preload: `auto` (detect from signal) or float dose multiplier (0.0–2.0, e.g. `0.5` for half-dose preload) |
+| `--dsc-preload {auto\|FLOAT}` | Preload: `auto` (classify adequacy from K2 leakage residuals) or float administered-dose multiplier (0.0–2.0, e.g. `0.5` for half-dose preload) |
 | `--dsc-dose DOSE` | Dose multiplier (default: 1.0). Accepts a float or presets: `half`, `full`, `double` |
 | `--dsc-agent-standard-dose DOSE` | Override agent standard dose in mmol Gd/kg (auto-detected from `ContrastBolusAgent` sidecar field when available). Default: `0.1` |
 | `--dsc-aif-method {auto,synthetic}` | AIF detection method (default: auto) |
@@ -229,7 +229,7 @@ dce:
 | `cpi_control_points` | int | `0` | Control points for CPI (0 = auto) |
 | `cpi_infer_cpt` | bool | `true` | Infer CPI control-point times (deviates from FABBER default; cuts long-MTT/low-CBF bias) |
 | `cpi_infer_delay` | bool | `false` | Infer per-voxel bolus delay for CPI (FABBER inferdelay; off by default) |
-| `preload` | str or float | `"auto"` | Preload dose fraction: `"auto"` (detect from signal) or a float (0.0–2.0) |
+| `preload` | str or float | `"auto"` | Preload: `"auto"` (classify adequacy from K2 leakage residuals) or a float administered-dose fraction (0.0–2.0) |
 | `dose` | float | `1.0` | Dose multiplier (default: 1.0). Accepts a float or presets: `half`, `full`, `double` |
 | `agent_standard_dose` | float | `0.1` | Override agent standard dose in mmol Gd/kg (auto-detected from `ContrastBolusAgent` sidecar field when available) |
 | `aif_method` | str | `"auto"` | AIF method: `auto`, `synthetic` |
@@ -237,7 +237,7 @@ dce:
 | `aif_mask_file` | path | `null` | Custom AIF mask file (search constraint; DSC space) |
 | `n_aif_candidates` | int | `10` | Number of AIF candidate voxels to average |
 | `lesion_distance` | float | `15.0` | Minimum distance (mm) from lesion for AIF candidates |
-| `disable_aif_fallback` | bool | `false` | Disable synthetic AIF fallback |
+| `disable_aif_fallback` | bool | `false` | Disable synthetic AIF fallback: error if no AIF found, otherwise retain a flagged low-quality AIF |
 | `leakage_method` | str | `"bsw"` | K2 leakage correction: `bsw` (standard), `bidirectional` |
 | `kep` | float | `0.005` | EES efflux rate for bidirectional correction (s⁻¹); ignored for bsw |
 | `pre_bolus` | int | `5` | Initial baseline for motion correction. Baseline is re-estimated after AIF detection |

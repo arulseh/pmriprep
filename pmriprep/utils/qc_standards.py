@@ -602,6 +602,17 @@ def recommend_dsc_qc(qc_metrics: dict[str, Any]) -> dict[str, Any]:
         )
     recommendations.append(aif_rec)
 
+    # A real AIF retained below the gamma-fit floor (synthetic fallback disabled)
+    # is an additive concern on top of the detection-tier verdict above.
+    if aif_qc.get("aif_gamma_fit_below_floor_retained"):
+        recommendations.append(QCRecommendation(
+            QCAction.REVIEW,
+            "AIF retained despite a catastrophic gamma fit (R²<0) because "
+            "synthetic fallback is disabled; CBF/MTT/Tmax may be unreliable "
+            "(AUC-nCBV, raw TTP, and PSR remain interpretable)",
+            2,
+        ))
+
     # Motion via composite status
     preprocessing = qc_metrics.get("preprocessing", {})
     motion_status = preprocessing.get("motion_status")
