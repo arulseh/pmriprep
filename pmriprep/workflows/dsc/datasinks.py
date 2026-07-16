@@ -61,17 +61,17 @@ _REL_MAPS: tuple[tuple[str, str, str, str, str, str, dict | None], ...] = (
 
 # Optional maps with per-map desc + bids_suffix
 _OPTIONAL_MAPS: tuple[tuple[str, str, str, str, str | None, str, dict | None], ...] = (
-    ("ttp_map", "dsc", "ttp", "Time to peak concentration", "seconds", "ttp",
+    ("ttp_map", "dsc", "ttp", "Time to peak concentration", "s", "ttp",
      {"ReferencePoint": "start of acquisition (volume 0)"}),
     ("ttp_corrected_map", "dscAifCorrected", "ttp",
      "Time to peak, corrected for AIF bolus arrival delay. "
      "Comparable across patients and centers.",
-     "seconds", "ttpCorrected",
+     "s", "ttpCorrected",
      {"ReferencePoint": "AIF bolus arrival time"}),
     ("rttp_map", "dscNawmRel", "ttp",
      "Time to peak relative to contralateral NAWM median. "
      "Positive values indicate delayed perfusion.",
-     "seconds", "rttp",
+     "s", "rttp",
      {"ReferencePoint": "contralateral NAWM median TTP"}),
     ("cnr_map", "dsc", "cnr", "Contrast-to-noise ratio", "arbitrary", "cnr", None),
     ("auc_diff_map", "dscLeakage", "auc",
@@ -128,9 +128,9 @@ _OPTIONAL_MAPS: tuple[tuple[str, str, str, str, str | None, str, dict | None], .
 # Normalized maps
 _NORMALIZED_MAPS: tuple[tuple[str, str, str, str, str, str, dict | None], ...] = (
     ("ncbv_map", "dscNawmNorm", "cbv",
-     "Normalized CBV (NAWM-normalized)", "ratio", "ncbv", None),
+     "Normalized CBV (NAWM-normalized)", "1", "ncbv", None),
     ("ncbf_map", "dscNawmNorm", "cbf",
-     "Normalized CBF (NAWM-normalized)", "ratio", "ncbf", None),
+     "Normalized CBF (NAWM-normalized)", "1", "ncbf", None),
 )
 
 
@@ -482,9 +482,9 @@ def _split_smooth_dict(  # type: ignore[no-untyped-def]
         "rel_cbv": ("Cerebral blood volume, AUC-based (smoothed)",
                     f"dscRelAUC{sm_label}", "cbv", "arbitrary"),
         "ncbf": ("Normalized CBF (smoothed)",
-                 f"dscNawmNorm{sm_label}", "cbf", "ratio"),
+                 f"dscNawmNorm{sm_label}", "cbf", "1"),
         "ncbv": ("Normalized CBV (smoothed)",
-                 f"dscNawmNorm{sm_label}", "cbv", "ratio"),
+                 f"dscNawmNorm{sm_label}", "cbv", "1"),
     }
     if isdefined(smooth_hemo) and smooth_hemo:
         for name, fp in smooth_hemo.items():

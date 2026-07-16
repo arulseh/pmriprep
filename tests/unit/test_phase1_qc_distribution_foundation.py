@@ -302,7 +302,7 @@ def test_tumor_seg_dseg_sidecar_describes_tsv_columns(tmp_path: Path) -> None:
     assert set(sc["Columns"].keys()) == expected_cols
     # Per-column metadata follows BIDS Columns convention
     assert "Description" in sc["Columns"]["voxel_count"]
-    assert sc["Columns"]["voxel_count"]["Units"] == "voxels"
+    assert sc["Columns"]["voxel_count"]["Units"] == "1"
     assert "Description" in sc["Columns"]["abbreviation"]
 
     # TumorVolumetrics block carries per-region volumes

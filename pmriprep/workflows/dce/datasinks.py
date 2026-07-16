@@ -36,9 +36,9 @@ from pmriprep.interfaces.qc_writers import (
 # (input_attr, suffix, description, units)
 _PK_MAPS: tuple[tuple[str, str, str, str], ...] = (
     ("ktrans_map", "Ktrans", "Volume transfer constant (1/min)", "1/min"),
-    ("ve_map", "ve", "Extravascular extracellular space volume fraction", "fraction"),
+    ("ve_map", "ve", "Extravascular extracellular space volume fraction", "1"),
     ("kep_map", "kep", "Efflux rate constant (1/min)", "1/min"),
-    ("vp_map", "vp", "Plasma volume fraction", "fraction"),
+    ("vp_map", "vp", "Plasma volume fraction", "1"),
 )
 
 
@@ -81,7 +81,7 @@ _MODEL_FREE_MAPS: tuple[tuple[str, str, str, str, dict | None], ...] = (
     ("iauc120_map", "IAUC120", "Initial Area Under Curve at 120s (mM*min)", "mM*min", None),
     ("peak_enhancement_map", "peakEnhancement", "Peak enhancement percentage", "%", None),
     ("time_to_peak_map", "ttp", "Time to peak (seconds)", "s", None),
-    ("ser_map", "SER", "Signal Enhancement Ratio (washout characterization)", "ratio", None),
+    ("ser_map", "SER", "Signal Enhancement Ratio (washout characterization)", "1", None),
     ("wash_in_slope_map", "washInSlope",
      "Maximum upslope of concentration during wash-in (mM/min)", "mM/min",
      {"SmoothingMethod": "Savitzky-Golay", "SmoothingWindow": 5,
@@ -103,12 +103,12 @@ _MODEL_FREE_MAPS: tuple[tuple[str, str, str, str, dict | None], ...] = (
 
 
 _PK_UNITS = {
-    "ktrans": "1/min", "ve": "fraction", "kep": "1/min", "vp": "fraction",
+    "ktrans": "1/min", "ve": "1", "kep": "1/min", "vp": "1",
     "fp": "mL/min/100mL", "ps": "mL/min/100mL",
 }
 _MF_UNITS = {
     "iauc60": "mM*min", "iauc90": "mM*min", "iauc120": "mM*min",
-    "peak_enhancement": "%", "ser": "ratio",
+    "peak_enhancement": "%", "ser": "1",
     "wash_in_slope": "mM/min", "wash_out_slope": "mM/min",
 }
 
@@ -1305,7 +1305,7 @@ def init_dce_datasinks_wf(
             name="nktrans_map", in_attr="nktrans_map",
             desc_value="dceNawmNorm", suffix="Ktrans",
             description="Ktrans normalized by NAWM (normal-appearing white matter) mean",
-            units="ratio", extra=None, model_entity=model_entity,
+            units="1", extra=None, model_entity=model_entity,
             map_key="nktrans",
         )
         sink_outputs.append((sink, "out_file"))
@@ -1315,7 +1315,7 @@ def init_dce_datasinks_wf(
             name="niauc60_map", in_attr="niauc60_map",
             desc_value="dceNawmNorm", suffix="IAUC60",
             description="IAUC at 60s normalized by NAWM (normal-appearing white matter) mean",
-            units="ratio", extra=None, model_entity="",
+            units="1", extra=None, model_entity="",
             map_key="niauc60",
         )
         sink_outputs.append((sink, "out_file"))

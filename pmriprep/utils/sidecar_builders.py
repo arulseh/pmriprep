@@ -541,7 +541,7 @@ def build_tumor_seg_dseg_sidecar(
             "voxel_count": {
                 "LongName": "Voxel count",
                 "Description": "Number of voxels with this label.",
-                "Units": "voxels",
+                "Units": "1",
             },
             "volume_mm3": {
                 "LongName": "Region volume",
