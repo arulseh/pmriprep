@@ -241,6 +241,7 @@ dce:
 | `leakage_method` | str | `"bsw"` | K2 leakage correction: `bsw` (standard), `bidirectional` |
 | `kep` | float | `0.005` | EES efflux rate for bidirectional correction (s⁻¹); ignored for bsw |
 | `pre_bolus` | int | `5` | Initial baseline for motion correction. Baseline is re-estimated after AIF detection |
+| `motion_correct` | bool | `true` | Apply motion correction. `false` assumes input already motion-corrected (residual motion still reported) |
 | `motion_thresh` | float | `0.5` | Framewise displacement threshold in mm |
 | `lesion_mask` | path | `null` | Lesion mask for AIF exclusion and lesion statistics (DSC space) |
 | `nawm_mask` | path | `null` | NAWM mask for normalization (DSC space) |
@@ -275,6 +276,8 @@ dce:
 | `cbv_constraint_mode` | str | `"auto"` | DSC→DCE vp constraint. `auto`: `soft` prior when DSC CBV is reliable, `skip` otherwise. Options: `auto`, `skip` |
 | `no_dsc_validation` | bool | `false` | Skip DSC-DCE cross-validation. Requires a NAWM mask; automatically skipped when unavailable |
 | `baseline_frames` | int | `0` | Baseline frames (0 = auto-detect) |
+| `motion_correct` | bool | `true` | Apply motion correction. `false` assumes input already motion-corrected (residual motion still reported) |
+| `motion_thresh` | float | `0.5` | Framewise displacement threshold in mm |
 | `tsnr_threshold` | float | `0.0` | tSNR threshold for voxel inclusion (0 = none) |
 | `lesion_mask` | path | `null` | Lesion mask for AIF exclusion and lesion statistics (DCE space) |
 | `nawm_mask` | path | `null` | NAWM mask for normalization (DCE space) |

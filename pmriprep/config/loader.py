@@ -295,6 +295,7 @@ def build_dce_config(config_dict: Dict[str, Any]) -> DCEConfig:
     _coerce_float(dce_dict, "smooth_fwhm")
     _coerce_float(dce_dict, "lesion_distance")
     _coerce_float(dce_dict, "tsnr_threshold")
+    _coerce_float(dce_dict, "motion_thresh")
     _coerce_float(dce_dict, "hematocrit")
     _coerce_float(dce_dict, "target_peak")
     _coerce_float(dce_dict, "r1_relaxivity")

@@ -1669,6 +1669,7 @@ def _generate_dce_motion_qc_plot(
     tr: float,
     subject_id: str = "",
     session_id: str = "",
+    motion_applied: bool = True,
 ) -> str:
     """Generate motion QC plot from DCE motion parameters.
 
@@ -1685,6 +1686,10 @@ def _generate_dce_motion_qc_plot(
         Subject identifier.
     session_id : str, optional
         Session identifier.
+    motion_applied : bool, optional
+        Whether motion correction was applied. When False, the plotted values
+        are residual motion (mcflirt was run for measurement only) and the
+        figure is annotated accordingly.
 
     Returns
     -------
@@ -1695,11 +1700,19 @@ def _generate_dce_motion_qc_plot(
     from pathlib import Path
     from pmriprep.utils.qc_utils import plot_motion_qc, qc_figure_title
 
+    note = None
+    if not motion_applied:
+        note = (
+            "Motion correction NOT applied (input assumed pre-corrected); "
+            "plotted values are residual motion, near the registration noise floor."
+        )
+
     motion_params = np.loadtxt(motion_params_file)
     out_path = Path.cwd() / "dce_motion_qc.png"
     plot_motion_qc(
         motion_params, out_path, tr=tr,
         title=qc_figure_title(subject_id, session_id, "DCE Motion QC"),
+        note=note,
     )
     return str(out_path)
 

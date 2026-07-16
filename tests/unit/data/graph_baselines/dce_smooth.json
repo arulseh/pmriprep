@@ -2288,6 +2288,7 @@
     },
     "motion_qc_plot": {
       "input_names": [
+        "motion_applied",
         "motion_params_file",
         "session_id",
         "subject_id",
@@ -2592,7 +2593,7 @@
     "dce_pk_maps_qc": "e453624a9a6d0d73ac80fb14acc7d13a4c2ca7c85b13564f8745bbcb972a9b1a",
     "dsc_dce_validation": "ff1a94c06c128e100317f14dbabece00fe52775a9abb44100f43262848eb3b93",
     "dsc_dce_xval_plot": "bbab5abd886211ba8c1f24039ce5f006740668f11625fdcb04bb1ba8cbb5da36",
-    "motion_qc_plot": "d389d3cd0b4f25ac78b2c7d20b7f474d884e2cce3cf4af2ded9bcf7a96cfab36",
+    "motion_qc_plot": "36616aba56123999797c0b5e14d6ec9903e15bea44b1958923c89616b1fb1b2f",
     "normalize_iauc60": "f599513e90d8019df154ba66d77f3c2c8b57df345170d2359aa84ed466623f5b",
     "normalize_ktrans": "f599513e90d8019df154ba66d77f3c2c8b57df345170d2359aa84ed466623f5b",
     "preprocessing_qc": "b1c4d39a3ffc4ea4fdd15a5e541d924bf74a37859e0d53dc5941141a6a9f79a4",
@@ -2907,6 +2908,7 @@
       "subject_id": "0001"
     },
     "dce_preprocess": {
+      "apply_motion_correction": true,
       "baseline_frames": 0,
       "contrast_threshold": 1.5,
       "cost": "normcorr",
@@ -2950,6 +2952,7 @@
       "subject_id": "0001"
     },
     "motion_qc_plot": {
+      "motion_applied": true,
       "session_id": "0001",
       "subject_id": "0001"
     },

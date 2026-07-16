@@ -405,6 +405,11 @@ DCE_MATRIX: list[tuple[str, Builder]] = [
         b, has_tissue_seg=False, t1_map_file=_ext_t1(b), b1_method="none",
         smooth_fwhm=4.0, underlays=list(_ALL_UNDERLAYS),
     )),
+    # motion_correct=False: DCEPreprocess branches internally (no topology
+    # change), so this row differs from dce_default only at the node_params
+    # tier (the apply_motion_correction=False input on dce_preprocess + the
+    # motion_applied inputs on motion_qc_plot / figures_writer).
+    ("dce_no_moco", lambda b: _dce(b, motion_correct=False)),
 ]
 
 DSC_MATRIX: list[tuple[str, Builder]] = [
@@ -415,6 +420,10 @@ DSC_MATRIX: list[tuple[str, Builder]] = [
     # Single-underlay rows and the smooth+underlays combo are subsumed for detection
     # by ``dsc_underlays_all`` plus ``dsc_smooth`` (underlay/smooth axes are orthogonal).
     ("dsc_underlays_all", lambda b: _dsc(b, underlays=list(_ALL_UNDERLAYS))),
+    # motion_correct=False: adds the reorient_mean node and reroutes dsc_moco /
+    # dsc_mean off dsc_reorient in dsc_motion_wf (a topology change confined to
+    # the motion subgraph); the quantification subgraph downstream is unchanged.
+    ("dsc_no_moco", lambda b: _dsc(b, motion_correct=False)),
 ]
 
 MATRIX: list[tuple[str, Builder]] = DCE_MATRIX + DSC_MATRIX

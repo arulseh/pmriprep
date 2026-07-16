@@ -333,6 +333,7 @@ def write_confounds_sidecar(
     output_path: Union[str, Path],
     source_path: Optional[str] = None,
     bids_dir: str = "",
+    motion_applied: bool = True,
 ) -> Path:
     """Write the JSON sidecar for a BIDS confounds TSV.
 
@@ -347,6 +348,11 @@ def write_confounds_sidecar(
         Raw BIDS source NIfTI (for Sources URI).
     bids_dir : str, optional
         BIDS rawdata root (for Sources URI construction).
+    motion_applied : bool, optional
+        Whether motion correction was applied. When False, these columns
+        describe residual motion (the input was assumed already corrected);
+        a ``MotionCorrectionApplied`` flag and a note record that provenance
+        so cohort-level motion summaries do not pool them with corrected runs.
 
     Returns
     -------
@@ -363,9 +369,23 @@ def write_confounds_sidecar(
         [source_path] if source_path else [], bids_dir or ".",
     )
 
+    residual_note = (
+        {
+            "Note": (
+                "Motion correction was not applied (input assumed "
+                "pre-corrected); these values are residual motion measured "
+                "for QC only."
+            )
+        }
+        if not motion_applied
+        else {}
+    )
+
     sidecar: Dict[str, Any] = {
         **get_bids_derivative_provenance(),
         **({"Sources": sources} if sources else {}),
+        "MotionCorrectionApplied": bool(motion_applied),
+        **residual_note,
         "trans_x": {
             "Description": "Translation along the x-axis",
             "Units": "mm",

@@ -8,7 +8,7 @@ References
 - Paul Tol's color schemes: https://personal.sron.nl/~pault/
 """
 
-from typing import Any, Final, NamedTuple
+from typing import Any, Final, NamedTuple, Optional
 
 
 # =============================================================================
@@ -497,6 +497,51 @@ def build_qc_summary(
 # ---------------------------------------------------------------------------
 
 
+def _motion_applied_flag(preprocessing: dict[str, Any]) -> bool:
+    """Read the ``motion_applied`` provenance flag from a preprocessing dict.
+
+    DCE stores it at the top level of the interface QC dict; DSC nests it under
+    ``motion_summary``. Defaults to True (motion correction applied) when absent.
+    """
+    return bool(
+        preprocessing.get(
+            "motion_applied",
+            preprocessing.get("motion_summary", {}).get("motion_applied", True),
+        )
+    )
+
+
+def _build_motion_recommendation(
+    motion_status: Any, detail: str, motion_applied: bool,
+) -> Optional["QCRecommendation"]:
+    """Build the motion QC recommendation from composite status.
+
+    When motion correction was not applied (input assumed pre-corrected), the
+    plotted values are residual motion: elevated residual motion is escalated to
+    an explicit bias warning (the sole guardrail if the pre-correction
+    assumption is wrong), and an acceptable status is annotated as residual.
+    """
+    if not motion_applied and motion_status in (QCStatus.WARN, QCStatus.POOR):
+        return QCRecommendation(
+            QCAction.REVIEW,
+            f"Residual motion above threshold {detail}: motion correction not "
+            "applied (input assumed pre-corrected); scanner correction may have "
+            "failed or the input was not motion-corrected — quantitative "
+            "maps may be biased.",
+            2,
+        )
+    if motion_status == QCStatus.PASS:
+        suffix = " (residual; correction not applied)" if not motion_applied else ""
+        return QCRecommendation(
+            QCAction.INCLUDE, f"Motion acceptable {detail}{suffix}", 0,
+        )
+    if motion_status == QCStatus.WARN:
+        return QCRecommendation(QCAction.REVIEW, f"Motion marginal {detail}", 1)
+    if motion_status == QCStatus.POOR:
+        return QCRecommendation(QCAction.REVIEW, f"Excessive motion {detail}", 2)
+    return None
+
+
 def recommend_dsc_qc(qc_metrics: dict[str, Any]) -> dict[str, Any]:
     """Add a NiPreps-style overall ``recommendation`` block to DSC QC metrics.
 
@@ -573,14 +618,9 @@ def recommend_dsc_qc(qc_metrics: dict[str, Any]) -> dict[str, Any]:
             parts.append(f"outliers={pct_outliers:.1f}%")
         detail = f"({', '.join(parts)})" if parts else ""
 
-        if motion_status == QCStatus.PASS:
-            motion_rec = QCRecommendation(QCAction.INCLUDE, f"Motion acceptable {detail}", 0)
-        elif motion_status == QCStatus.WARN:
-            motion_rec = QCRecommendation(QCAction.REVIEW, f"Motion marginal {detail}", 1)
-        elif motion_status == QCStatus.POOR:
-            motion_rec = QCRecommendation(QCAction.REVIEW, f"Excessive motion {detail}", 2)
-        else:
-            motion_rec = None
+        motion_rec = _build_motion_recommendation(
+            motion_status, detail, _motion_applied_flag(preprocessing),
+        )
         if motion_rec is not None:
             recommendations.append(motion_rec)
 
@@ -683,14 +723,9 @@ def recommend_dce_qc(qc_metrics: dict[str, Any]) -> dict[str, Any]:
         if pct_outliers is not None:
             parts.append(f"outliers={pct_outliers:.1f}%")
         detail = f"({', '.join(parts)})" if parts else ""
-        if motion_status == QCStatus.PASS:
-            motion_rec = QCRecommendation(QCAction.INCLUDE, f"Motion acceptable {detail}", 0)
-        elif motion_status == QCStatus.WARN:
-            motion_rec = QCRecommendation(QCAction.REVIEW, f"Motion marginal {detail}", 1)
-        elif motion_status == QCStatus.POOR:
-            motion_rec = QCRecommendation(QCAction.REVIEW, f"Excessive motion {detail}", 2)
-        else:
-            motion_rec = None
+        motion_rec = _build_motion_recommendation(
+            motion_status, detail, _motion_applied_flag(preprocessing_qc),
+        )
         if motion_rec is not None:
             recommendations.append(motion_rec)
 

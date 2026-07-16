@@ -292,6 +292,10 @@ class DSCFiguresWriterInputSpec(BaseInterfaceInputSpec):
 
     aif_curve = File(exists=True, desc="AIF curve text file")
     motion_params = File(exists=True, desc=".par motion file (converted to confounds TSV)")
+    motion_applied = traits.Bool(
+        True, usedefault=True,
+        desc="Whether motion correction was applied (recorded in confounds JSON)",
+    )
 
     brain_mask_filmstrip = _optional_figure_file()
     motion_qc_plot = _optional_figure_file()
@@ -377,7 +381,10 @@ class DSCFiguresWriter(SimpleInterface):
             tsv_path = perf_dir / f"{prefix}_desc-dscConfounds_timeseries.tsv"
             json_path = perf_dir / f"{prefix}_desc-dscConfounds_timeseries.json"
             par_to_confounds_tsv(self.inputs.motion_params, tsv_path)
-            write_confounds_sidecar(json_path, source_path=source_path, bids_dir=bids_dir)
+            write_confounds_sidecar(
+                json_path, source_path=source_path, bids_dir=bids_dir,
+                motion_applied=bool(self.inputs.motion_applied),
+            )
             self._results["confounds_tsv"] = str(tsv_path)
 
         figures_dir = ses_dir / "figures"
@@ -426,6 +433,10 @@ class DCEFiguresWriterInputSpec(BaseInterfaceInputSpec):
 
     aif_curve = File(exists=True, desc="AIF curve text file")
     motion_params = File(exists=True, desc=".par motion file (→ confounds TSV)")
+    motion_applied = traits.Bool(
+        True, usedefault=True,
+        desc="Whether motion correction was applied (recorded in confounds JSON)",
+    )
 
     brain_mask_filmstrip = _optional_figure_file()
     motion_qc_plot = _optional_figure_file()
@@ -516,7 +527,10 @@ class DCEFiguresWriter(SimpleInterface):
             tsv_path = perf_dir / f"{prefix}_desc-dceConfounds_timeseries.tsv"
             json_path = perf_dir / f"{prefix}_desc-dceConfounds_timeseries.json"
             par_to_confounds_tsv(self.inputs.motion_params, tsv_path)
-            write_confounds_sidecar(json_path, source_path=source_path, bids_dir=bids_dir)
+            write_confounds_sidecar(
+                json_path, source_path=source_path, bids_dir=bids_dir,
+                motion_applied=bool(self.inputs.motion_applied),
+            )
             self._results["confounds_tsv"] = str(tsv_path)
 
         # Stale AIF location figure cleanup (population/external AIF)

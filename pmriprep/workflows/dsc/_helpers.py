@@ -27,6 +27,7 @@ __all__ = [
     "_FLIRTApplyXFMOutputSpec",
     "_build_auc_corr_dict",
     "_build_hemodynamic_dict",
+    "_compute_mean_4d",
     "_compute_prebolus_mean",
     "_create_perfusion_brain_mask_filmstrip",
     "_create_registration_filmstrip",
@@ -731,6 +732,40 @@ def _compute_prebolus_mean(moco_file: str, baseline_frames: int) -> str:
     return out_file
 
 
+def _compute_mean_4d(in_file: str) -> str:
+    """Compute the temporal mean of a 4D series as a reference volume.
+
+    Full-volume equivalent of the mean that ``MotionCorrection`` emits, for the
+    ``motion_correct=False`` path where the reoriented (uncorrected) series is
+    processed and no realigned mean is available.
+
+    Parameters
+    ----------
+    in_file : str
+        Path to a 4D (or 3D) DSC NIfTI.
+
+    Returns
+    -------
+    str
+        Path to the mean NIfTI file.
+    """
+    import numpy as np
+    import nibabel as nib
+    from pathlib import Path
+
+    img = nib.load(in_file)
+    data = img.get_fdata()  # type: ignore[attr-defined]
+    mean_data = np.mean(data, axis=-1) if data.ndim == 4 else data
+
+    out_file = str(Path.cwd() / "dsc_mean.nii.gz")
+    mean_img = nib.Nifti1Image(
+        mean_data.astype(np.float32), img.affine, img.header  # type: ignore[attr-defined]
+    )
+    nib.save(mean_img, out_file)
+
+    return out_file
+
+
 def _transform_nawm_to_dsc(  # type: ignore[no-untyped-def]
     nawm_mask_file=None,
     reference_file=None,
@@ -1290,7 +1325,7 @@ def _extract_preload_class(qc_dict):  # type: ignore[no-untyped-def]
 
 
 def _generate_motion_qc_plot(  # type: ignore[no-untyped-def]
-    motion_params_file, tr, subject_id="", session_id=""
+    motion_params_file, tr, subject_id="", session_id="", motion_applied=True
 ):
     """Generate motion QC plot from motion parameters.
 
@@ -1307,22 +1342,37 @@ def _generate_motion_qc_plot(  # type: ignore[no-untyped-def]
         Subject ID for QC figure title.
     session_id : str, optional
         Session ID for QC figure title.
+    motion_applied : bool, optional
+        Whether motion correction was applied. When False, the plotted values
+        are residual motion (mcflirt was run for measurement only), and the
+        figure/summary are annotated accordingly.
 
     Returns
     -------
     tuple of (str, dict)
-        Tuple of (plot_file path, motion_summary dict).
+        Tuple of (plot_file path, motion_summary dict). ``motion_summary``
+        carries ``motion_applied`` and, when False, a ``motion_note``.
     """
     import numpy as np
     from pathlib import Path
     from pmriprep.utils.qc_utils import plot_motion_qc
 
+    note = None
+    if not motion_applied:
+        note = (
+            "Motion correction NOT applied (input assumed pre-corrected); "
+            "plotted values are residual motion, near the registration noise floor."
+        )
+
     motion_params = np.loadtxt(motion_params_file)
     out_path = Path.cwd() / "dsc_motion_qc.png"
     _, motion_summary = plot_motion_qc(
         motion_params, out_path, tr=tr,
-        subject_id=subject_id, session_id=session_id,
+        subject_id=subject_id, session_id=session_id, note=note,
     )
+    motion_summary["motion_applied"] = bool(motion_applied)
+    if note:
+        motion_summary["motion_note"] = note
     return str(out_path), motion_summary
 
 

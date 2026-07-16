@@ -1157,6 +1157,8 @@ def init_dce_preproc_wf(
     dce_preprocess = pe.Node(
         DCEPreprocess(
             baseline_frames=config.baseline_frames,
+            apply_motion_correction=config.motion_correct,
+            motion_thresh=config.motion_thresh,
         ),
         name="dce_preprocess",
         mem_gb=_heavy_mem,
@@ -1178,7 +1180,10 @@ def init_dce_preproc_wf(
     # ==========================================================================
     motion_qc_plot = pe.Node(
         niu.Function(
-            input_names=["motion_params_file", "tr", "subject_id", "session_id"],
+            input_names=[
+                "motion_params_file", "tr", "subject_id", "session_id",
+                "motion_applied",
+            ],
             output_names=["plot_file"],
             function=_generate_dce_motion_qc_plot,
         ),
@@ -1186,6 +1191,7 @@ def init_dce_preproc_wf(
     )
     motion_qc_plot.inputs.subject_id = subject_id
     motion_qc_plot.inputs.session_id = session_id or ""
+    motion_qc_plot.inputs.motion_applied = config.motion_correct
     # Connect motion QC plot
     workflow.connect([
         (dce_preprocess, motion_qc_plot, [("out_params", "motion_params_file")]),

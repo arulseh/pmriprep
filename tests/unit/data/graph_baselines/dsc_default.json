@@ -1706,6 +1706,7 @@
     },
     "motion_qc_plot": {
       "input_names": [
+        "motion_applied",
         "motion_params_file",
         "session_id",
         "subject_id",
@@ -1880,7 +1881,7 @@
     "extract_preload": "30e76685c4720bdfc9f73f1c810487cee496bab150391eaef74cfd67f9f7e9bd",
     "hist_match_t1w": "33d0ceadebcfcf66ed403151737f0e0d429e96320c2101825b356309caf68f0e",
     "merge_qc": "8c649ca4d8bc9f2a38d3d4480d6b0f0727be2e11c8911d22bf1d3b0a1e12d6d1",
-    "motion_qc_plot": "177768cd3ec56e704e5bc83b1f234ca5d1452fb2ffd62e9285277bd876b2ba0a",
+    "motion_qc_plot": "e0befb49aac7c83e0ccecb4b16c881ba5a94803836fbbb9b16ede1c0169eb32e",
     "normalize": "61ecadb429344a24ddcde8c925b2b63699499840efea317115803ee8f3e0a2d8",
     "normalize_cbf": "a6759ae7b3ebaba71e2a3e65ea17ae95f5e4a7f029016c50bb8a58fff80b8e56",
     "positive_tail": "e3855557f1e643e4c60e3020030fc1e7329b9c81264e4784dbf040cc325eb9dc",
@@ -2181,6 +2182,7 @@
       "stages": 3
     },
     "motion_qc_plot": {
+      "motion_applied": true,
       "session_id": "0001",
       "subject_id": "0001"
     },

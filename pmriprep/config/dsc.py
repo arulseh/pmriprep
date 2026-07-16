@@ -87,6 +87,11 @@ class DSCConfig:
         List of underlay images for QC visualizations.
     motion_thresh : float
         Framewise displacement threshold (mm) for motion outliers.
+    motion_correct : bool
+        Apply motion correction. True (default) runs mcflirt and processes the
+        realigned series. False assumes the input was already motion-corrected
+        (e.g. on-scanner); mcflirt still runs to report residual motion for QC,
+        but the uncorrected series is processed to avoid a second interpolation.
     pre_bolus : int
         Number of pre-bolus baseline frames for S0 estimation.
         AIF detection auto-detects actual bolus arrival independently.
@@ -148,6 +153,7 @@ class DSCConfig:
     smooth_fwhm: float = 0.0  # No smoothing by default
     underlays: List[str] = field(default_factory=list)
     motion_thresh: float = 0.5
+    motion_correct: bool = True  # False = assume input already motion-corrected
     pre_bolus: int = 5
 
     # Resource settings

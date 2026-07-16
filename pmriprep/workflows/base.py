@@ -2049,6 +2049,7 @@ def init_pmriprep_wf(
             session_id=session_id,
             present_inputs=dsc_present,
             has_smoothing=dsc_config.smooth_fwhm > 0,
+            motion_correct=dsc_config.motion_correct,
         )
         _dsc_cfg = dataclasses.asdict(dsc_config)
         for _k, _v in _dsc_cfg.items():
@@ -2948,6 +2949,7 @@ def init_pmriprep_wf(
             pk_model=dce_model,
             present_inputs=dce_present,
             has_smoothing=dce_config.smooth_fwhm > 0,
+            motion_correct=dce_config.motion_correct,
         )
         _dce_cfg = dataclasses.asdict(dce_config)
         for _k, _v in _dce_cfg.items():

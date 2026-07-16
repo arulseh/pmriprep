@@ -31,6 +31,7 @@ from pmriprep.workflows.dsc._helpers import (  # noqa: F401
     _augment_qc_positive_tail,
     _build_auc_corr_dict,
     _build_hemodynamic_dict,
+    _compute_mean_4d,
     _compute_prebolus_mean,
     _create_perfusion_brain_mask_filmstrip,
     _create_registration_filmstrip,
@@ -243,6 +244,7 @@ def init_dsc_motion_wf(
     subject_id: str,
     session_id: Optional[str],
     mem_gb: float,
+    apply_moco: bool = True,
     name: str = "dsc_motion_wf",
 ) -> pe.Workflow:
     """Build the DSC motion-correction sub-workflow.
@@ -250,6 +252,11 @@ def init_dsc_motion_wf(
     Reorients the raw DSC series to RAS, runs motion correction, and computes a
     pre-bolus mean reference (used downstream for brain extraction, registration,
     and mask/atlas resampling), plus a motion-QC plot.
+
+    When ``apply_moco`` is False the input is assumed to have been motion-
+    corrected already (e.g. on-scanner); mcflirt still runs so residual motion is
+    reported for QC, but the reoriented (uncorrected) series is passed downstream
+    to avoid a second interpolation.
 
     Parameters
     ----------
@@ -263,6 +270,9 @@ def init_dsc_motion_wf(
         BIDS session label (for the motion-QC plot annotation).
     mem_gb : float
         Memory estimate (GB) for the heavy motion-correction node.
+    apply_moco : bool
+        Apply motion correction (default True). When False, the reoriented
+        series is used downstream and mcflirt runs for measurement only.
     name : str
         Workflow name.
 
@@ -337,7 +347,10 @@ def init_dsc_motion_wf(
     # Node 1a: Motion QC Plot
     motion_qc_plot = pe.Node(
         niu.Function(
-            input_names=["motion_params_file", "tr", "subject_id", "session_id"],
+            input_names=[
+                "motion_params_file", "tr", "subject_id", "session_id",
+                "motion_applied",
+            ],
             output_names=["plot_file", "motion_summary"],
             function=_generate_motion_qc_plot,
         ),
@@ -345,6 +358,7 @@ def init_dsc_motion_wf(
     )
     motion_qc_plot.inputs.subject_id = subject_id
     motion_qc_plot.inputs.session_id = session_id or ""
+    motion_qc_plot.inputs.motion_applied = apply_moco
 
     # Node 1b: Pre-Bolus Mean Reference
     prebolus_mean = pe.Node(
@@ -357,15 +371,14 @@ def init_dsc_motion_wf(
     )
     prebolus_mean.inputs.baseline_frames = baseline_frames
 
+    # Connections common to both branches: motion_correct always runs so
+    # motion params / FD / QC report (residual) motion regardless of apply_moco.
     workflow.connect([
         (inputnode, dsc_reorient, [("dsc_file", "in_file")]),
         (dsc_reorient, motion_correct, [("out_file", "in_file")]),
-        (motion_correct, prebolus_mean, [("out_file", "moco_file")]),
         (motion_correct, motion_qc_plot, [("out_params", "motion_params_file")]),
         (inputnode, motion_qc_plot, [("tr", "tr")]),
         (motion_correct, outputnode, [
-            ("out_file", "dsc_moco"),
-            ("mean_img", "dsc_mean"),
             ("out_params", "motion_params"),
             ("fd", "fd_values"),
             ("qc_metrics", "motion_qc_metrics"),
@@ -376,6 +389,35 @@ def init_dsc_motion_wf(
             ("motion_summary", "motion_summary"),
         ]),
     ])
+
+    if apply_moco:
+        # Process the realigned series and its mean.
+        workflow.connect([
+            (motion_correct, prebolus_mean, [("out_file", "moco_file")]),
+            (motion_correct, outputnode, [
+                ("out_file", "dsc_moco"),
+                ("mean_img", "dsc_mean"),
+            ]),
+        ])
+    else:
+        # Process the reoriented (uncorrected) series; mcflirt output is
+        # measurement-only. dsc_mean is recomputed from the passthrough series
+        # so the registration/datasink reference matches the quantified data.
+        reorient_mean = pe.Node(
+            niu.Function(
+                input_names=["in_file"],
+                output_names=["mean_file"],
+                function=_compute_mean_4d,
+            ),
+            name="reorient_mean",
+        )
+        workflow.connect([
+            (dsc_reorient, prebolus_mean, [("out_file", "moco_file")]),
+            (dsc_reorient, outputnode, [("out_file", "dsc_moco")]),
+            (dsc_reorient, reorient_mean, [("out_file", "in_file")]),
+            (reorient_mean, outputnode, [("mean_file", "dsc_mean")]),
+        ])
+
     return workflow
 
 
@@ -1880,6 +1922,7 @@ def init_dsc_preproc_wf(
         subject_id=subject_id,
         session_id=session_id,
         mem_gb=_heavy_mem,
+        apply_moco=config.motion_correct,
     )
     workflow.connect([
         (inputnode, motion_wf, [

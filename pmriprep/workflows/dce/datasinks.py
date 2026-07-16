@@ -225,6 +225,10 @@ def _build_dce_preproc_meta(  # type: ignore[no-untyped-def]
 
     out = dict(base)
     out["Description"] = description
+    if isinstance(config_dict, dict):
+        out["MotionCorrectionApplied"] = bool(
+            config_dict.get("motion_correct", True)
+        )
     enrich_dce_preproc_sidecar(
         out,
         qc_metrics=qc_metrics if isinstance(qc_metrics, dict) else None,
@@ -942,6 +946,7 @@ def init_dce_datasinks_wf(
     pk_model: str,
     present_inputs: Optional[set[str]] = None,
     has_smoothing: bool = False,
+    motion_correct: bool = True,
     name: str = "dce_datasinks_wf",
 ) -> pe.Workflow:
     """Build the DCE-pipeline DerivativesDataSink chain.
@@ -1655,6 +1660,7 @@ def init_dce_datasinks_wf(
 
     # --- DCE figures writer (figures, AIF curve, confounds TSV/JSON) ---
     figures_writer = pe.Node(DCEFiguresWriter(), name="figures_writer")
+    figures_writer.inputs.motion_applied = motion_correct
     workflow.connect([
         (inputnode, figures_writer, [
             ("output_dir", "output_dir"),

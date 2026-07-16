@@ -59,6 +59,13 @@ class DCEConfig:
         Skip T1 mapping (use field-strength-appropriate default T1).
     no_dsc_validation : bool
         Skip DSC-DCE cross-validation.
+    motion_correct : bool
+        Apply motion correction. True (default) runs mcflirt and processes the
+        realigned series. False assumes the input was already motion-corrected
+        (e.g. on-scanner); mcflirt still runs to report residual motion for QC,
+        but the uncorrected series is processed to avoid a second interpolation.
+    motion_thresh : float
+        Framewise-displacement threshold (mm) for flagging motion outliers in QC.
     smooth_fwhm : float
         Smoothing kernel FWHM (mm) for output maps.
     baseline_frames : int
@@ -114,6 +121,8 @@ class DCEConfig:
     t1_map_file: Optional[Path] = None  # External T1 map (NIfTI, milliseconds)
     # Processing settings
     no_dsc_validation: bool = False
+    motion_correct: bool = True  # False = assume input already motion-corrected
+    motion_thresh: float = 0.5  # Framewise-displacement outlier threshold (mm)
     smooth_fwhm: float = 0.0  # No smoothing by default
     baseline_frames: int = 0  # 0 = auto-detect
     dose: float = 1.0
@@ -221,6 +230,7 @@ class DCEConfig:
             self.lesion_distance = float(self.lesion_distance)
             self.tsnr_threshold = float(self.tsnr_threshold)
             self.hematocrit = float(self.hematocrit)
+            self.motion_thresh = float(self.motion_thresh)
         except (ValueError, TypeError) as e:
             raise TypeError(f"DCEConfig float field has invalid type: {e}") from e
 

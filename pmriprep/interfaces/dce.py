@@ -2726,6 +2726,14 @@ class DCEPreprocessInputSpec(BaseInterfaceInputSpec):
         usedefault=True,
         desc="Volume TR in seconds for TR-adaptive baseline smoothing (0 = use default sigma)",
     )
+    apply_motion_correction = traits.Bool(
+        True,
+        usedefault=True,
+        desc="Apply motion correction. When False, the input is assumed already "
+        "motion-corrected: mcflirt still runs to report residual motion for QC, "
+        "but the uncorrected series is passed through to avoid a second "
+        "interpolation.",
+    )
 
 
 class DCEPreprocessOutputSpec(TraitedSpec):
@@ -3031,6 +3039,7 @@ class DCEPreprocess(SimpleInterface):
                     "confidence", "unknown"
                 ),
                 "reference_type": str(ref_vol),
+                "motion_applied": bool(self.inputs.apply_motion_correction),
             }
             if baseline_diag.get("confidence", "high") != "high":
                 logger.warning(
@@ -3056,10 +3065,13 @@ class DCEPreprocess(SimpleInterface):
             self._results["n_outliers"] = 0
             self._results["outlier_frames"] = []
 
-        # Compute mean of motion-corrected data for downstream registration.
-        # Always compute from the 4D output rather than relying on mcflirt's
-        # _meanvol.nii.gz, which is an undocumented side effect of -stats and
-        # may not be produced in all configurations.
+        # Select the series to process. mcflirt always ran above (so residual
+        # motion is reported for QC), and it wrote the realigned series to
+        # moco_path == out_file. When motion correction is disabled the input is
+        # assumed already corrected: overwrite out_file with the (reoriented)
+        # input and derive every mean from that same series, so downstream
+        # processing and the registration reference share one interpolation-free
+        # grid instead of a second re-resampling.
         mean_out = self._gen_mean_filename()
         moco_path = f"{out_base}.nii.gz"
 
@@ -3068,13 +3080,24 @@ class DCEPreprocess(SimpleInterface):
                 f"Motion-corrected output not found: {moco_path}"
             )
 
-        moco_img = nib.load(moco_path)
-        moco_data = moco_img.get_fdata()  # type: ignore[attr-defined]
-        mean_data = np.mean(moco_data, axis=3).astype(np.float32)
+        if bool(self.inputs.apply_motion_correction):
+            series_path = moco_path
+        else:
+            import shutil
+
+            shutil.copyfile(in_file, out_file)
+            series_path = in_file
+
+        # Compute means from the 4D series rather than relying on mcflirt's
+        # _meanvol.nii.gz, which is an undocumented side effect of -stats and
+        # may not be produced in all configurations.
+        series_img = nib.load(series_path)
+        series_data = series_img.get_fdata()  # type: ignore[attr-defined]
+        mean_data = np.mean(series_data, axis=3).astype(np.float32)
         mean_nii = nib.Nifti1Image(
             mean_data,
-            moco_img.affine,  # type: ignore[attr-defined]
-            moco_img.header,  # type: ignore[attr-defined]
+            series_img.affine,  # type: ignore[attr-defined]
+            series_img.header,  # type: ignore[attr-defined]
         )
         nib.save(mean_nii, mean_out)
 
@@ -3087,11 +3110,11 @@ class DCEPreprocess(SimpleInterface):
         # Using pre-contrast baseline mean avoids contrast-enhanced vessels
         # inflating the brain mask
         baseline_mean_out = self._gen_baseline_mean_filename()
-        baseline_data = np.mean(moco_data[..., :baseline_frames], axis=3)
+        baseline_data = np.mean(series_data[..., :baseline_frames], axis=3)
         baseline_nii = nib.Nifti1Image(
             baseline_data.astype(np.float32),
-            moco_img.affine,  # type: ignore[attr-defined]
-            moco_img.header,  # type: ignore[attr-defined]
+            series_img.affine,  # type: ignore[attr-defined]
+            series_img.header,  # type: ignore[attr-defined]
         )
         nib.save(baseline_nii, baseline_mean_out)
 

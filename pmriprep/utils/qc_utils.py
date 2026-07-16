@@ -601,6 +601,7 @@ def plot_motion_qc(
     radius: float = 50.0,
     subject_id: str = "",
     session_id: str = "",
+    note: Optional[str] = None,
 ) -> tuple[Path, dict[str, Any]]:
     """Create a 3-panel motion QC plot.
 
@@ -624,6 +625,9 @@ def plot_motion_qc(
         Optional title for the figure
     radius : float, optional
         Head radius in mm for FD calculation (default 50.0)
+    note : str, optional
+        Caption rendered below the panels (e.g. a residual-motion disclaimer
+        when motion correction was not applied).
 
     Returns
     -------
@@ -730,6 +734,13 @@ def plot_motion_qc(
         fig.suptitle(qc_figure_title(subject_id, session_id, "Motion QC"), fontsize=11)
 
     fig.tight_layout(rect=(0, 0.12, 1, 0.985))
+
+    # Optional caption (e.g. residual-motion disclaimer when moco not applied)
+    if note:
+        fig.text(
+            0.5, 0.04, note, ha="center", va="center", fontsize=9,
+            color="#CC3311", wrap=True,
+        )
 
     # Save figure
     output_path = Path(output_path)
