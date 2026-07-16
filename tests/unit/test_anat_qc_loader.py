@@ -56,7 +56,8 @@ class TestAnatNestedFromSidecars:
         be = out["brain_extraction"]
         # Tool name normalized to lowercase token (HD-BET → hdbet)
         assert be["tool"] == "hdbet"
-        assert be["version"] == "1.2.3"
+        # Tool version retired from per-file sidecars → dataset-level GeneratedBy.
+        assert "version" not in be
         assert be["voxel_count"] == 1742445
         assert be["brain_volume_ml"] == pytest.approx(1742.445)
         assert be["brain_volume_mm3"] == pytest.approx(1742445.0)

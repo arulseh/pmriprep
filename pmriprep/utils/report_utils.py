@@ -106,10 +106,93 @@ _BRAIN_EXTRACTION_TEXT: dict[str, str] = {
 }
 
 
+def _inject_tool_versions(
+    md: str, versions: Optional[dict[str, str]],
+) -> str:
+    """Insert third-party software versions before each tool's citation marker.
+
+    Post-assembly substitution keyed on the tool-name-then-citation pattern so
+    every tool site (including HD-BET, whose name and cite are fused) is handled
+    uniformly. Tokens use
+    a bare "(x.y.z)" when the suite name already precedes the tool (ANTs, HD-BET,
+    HD-GLIO) and "(FSL x.y.z)" for FSL binaries (FSL is not otherwise named).
+    Unknown/missing versions inject nothing, so the wording is byte-identical to
+    the version-less boilerplate.
+    """
+    if not versions:
+        return md
+
+    def bare(name: str) -> str:
+        ver = versions.get(name)
+        return f" (v{ver})" if ver else ""
+
+    def suite(name: str) -> str:
+        ver = versions.get(name)
+        return f" ({name} v{ver})" if ver else ""
+
+    # Order matters: MCFLIRT before FLIRT (FLIRT is a substring of MCFLIRT).
+    rules = [
+        ("N4BiasFieldCorrection", bare("ANTs")),
+        ("DenoiseImage", bare("ANTs")),
+        ("ANTs brain extraction", bare("ANTs")),
+        ("FAST", suite("FSL")),
+        ("MCFLIRT", suite("FSL")),
+        ("FLIRT", suite("FSL")),
+        ("HD-BET", bare("HD-BET")),
+        ("HD-GLIO", bare("HD-GLIO")),
+    ]
+    # Insert before the citation's opening bracket (each tool is followed by a
+    # Pandoc citation in the rendered text). Anchoring on the bracket rather than
+    # the citation marker keeps this source free of stray citation-key patterns.
+    for anchor, token in rules:
+        if token:
+            md = md.replace(f"{anchor} [", f"{anchor}{token} [")
+
+    nipype_ver = versions.get("Nipype")
+    if nipype_ver:
+        md = md.replace("a Nipype-based", f"a Nipype v{nipype_ver}-based")
+    return md
+
+
+def _load_tool_versions(ses_path: Path, session_id: str) -> dict[str, str]:
+    """Build the ``{tool: version}`` map for boilerplate version rendering.
+
+    Prefers versions recorded at run time in the pipeline-root
+    ``dataset_description.json`` ``GeneratedBy`` (keeping ``--report-only``
+    faithful to the run); falls back to a live query only when the file or its
+    entries are missing. Only tools with a resolvable version are included.
+    """
+    from pmriprep.utils.sidecar_builders import (
+        _normalize_tool_version,
+        get_imaging_software_versions,
+    )
+
+    pipeline_dir = ses_path.parent.parent if session_id else ses_path.parent
+    versions: dict[str, str] = {}
+    dd_path = pipeline_dir / "dataset_description.json"
+    if dd_path.exists():
+        try:
+            generated_by = json.loads(dd_path.read_text()).get("GeneratedBy", [])
+            for entry in generated_by:
+                name, ver = entry.get("Name"), entry.get("Version")
+                if name and ver and name != "pmriprep":
+                    versions[str(name)] = str(ver)
+        except (OSError, ValueError):
+            versions = {}
+
+    if not versions:
+        for name, raw in get_imaging_software_versions().items():
+            norm = _normalize_tool_version(raw)
+            if norm:
+                versions[name] = norm
+    return versions
+
+
 def _generate_boilerplate_text(
     version: str,
     ran_pipelines: dict[str, bool],
     pipeline_data: dict[str, Optional[dict[str, Any]]],
+    versions: Optional[dict[str, str]] = None,
 ) -> str:
     """Generate copy-paste methods text from processing results.
 
@@ -170,7 +253,7 @@ def _generate_boilerplate_text(
         if dce_text:
             sentences.append(dce_text)
 
-    return " ".join(sentences)
+    return _inject_tool_versions(" ".join(sentences), versions)
 
 
 def _build_anat_boilerplate(anat_qc: dict[str, Any]) -> str:
@@ -952,8 +1035,6 @@ def _anat_nested_from_sidecars(
         # expects (e.g. "HD-BET" → "hdbet").
         raw_tool = str(mask_sidecar["BrainExtractionTool"])
         brain_ex["tool"] = raw_tool.lower().replace("-", "")
-    if "BrainExtractionVersion" in mask_sidecar:
-        brain_ex["version"] = str(mask_sidecar["BrainExtractionVersion"])
     if "BrainExtractionVolume" in mask_sidecar:
         brain_ex["brain_volume_ml"] = float(mask_sidecar["BrainExtractionVolume"])
     if "BrainExtractionVolumeMm3" in mask_sidecar:
@@ -1371,7 +1452,8 @@ def generate_unified_report(
         pipeline_data, "processing_warnings",
     )
     boilerplate_md = _generate_boilerplate_text(
-        pmriprep.__version__, ran_pipelines, pipeline_data
+        pmriprep.__version__, ran_pipelines, pipeline_data,
+        versions=_load_tool_versions(ses_path, session_id),
     )
     boilerplate_html, boilerplate_md = _render_citations(boilerplate_md, ses_path)
 

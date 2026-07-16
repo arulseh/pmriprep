@@ -29,7 +29,9 @@ def test_first_run_writes_pmriprep_entry(tmp_path: Path) -> None:
     assert desc["BIDSVersion"] == BIDS_DERIVATIVES_VERSION
     assert desc["DatasetType"] == "derivative"
     names = [e["Name"] for e in desc["GeneratedBy"]]
-    assert names == ["pmriprep"]
+    # pmriprep first, then the per-suite third-party tool entries.
+    assert names[0] == "pmriprep"
+    assert {"FSL", "ANTs", "Nipype", "HD-BET", "HD-GLIO"} <= set(names)
     pmri = desc["GeneratedBy"][0]
     assert pmri["CodeURL"] == PMRIPREP_CODE_URL
     assert "DOI" not in pmri  # not provided
@@ -101,10 +103,11 @@ def test_handles_malformed_existing_json(tmp_path: Path) -> None:
     pipeline_dir.mkdir(parents=True)
     (pipeline_dir / "dataset_description.json").write_text("{not valid json")
 
-    # Must not raise; falls back to fresh GeneratedBy.
+    # Must not raise; falls back to fresh GeneratedBy (pmriprep + tool suites).
     write_dataset_description(pipeline_dir, str(tmp_path / "raw_bids"))
     desc = _read(pipeline_dir / "dataset_description.json")
     names = [e["Name"] for e in desc["GeneratedBy"]]
-    assert names == ["pmriprep"]
+    assert names[0] == "pmriprep"
+    assert {"FSL", "ANTs", "Nipype", "HD-BET", "HD-GLIO"} <= set(names)
 
 

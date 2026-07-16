@@ -108,9 +108,18 @@ def write_dataset_description(
     if citation_doi:
         pmriprep_entry["DOI"] = citation_doi
 
-    # Preserve any GeneratedBy entries from other NiPreps tools that
-    # previously wrote into this derivative root. Drop a stale pmriprep
-    # entry so version/DOI stays current.
+    # This function runs once per pipeline datasink (anat/DSC/DCE/tumor-seg), so
+    # it must be idempotent: drop EVERY pmriprep-managed entry (pmriprep + the
+    # third-party suites) before re-appending the freshly rebuilt managed block,
+    # otherwise the tool entries accumulate across the 4 calls. Genuinely-foreign
+    # entries are preserved; a foreign entry literally named e.g. "FSL" would be
+    # collapsed, but pmriprep writes only to its own ``pmriprep/`` root so that
+    # never occurs in practice.
+    from pmriprep.utils.sidecar_builders import (
+        _PMRIPREP_MANAGED_TOOL_NAMES,
+        build_tool_generatedby_entries,
+    )
+
     existing_generated_by: List[Dict[str, Any]] = []
     if desc_path.exists():
         try:
@@ -118,16 +127,18 @@ def write_dataset_description(
                 existing = json.load(f)
             existing_generated_by = [
                 e for e in existing.get("GeneratedBy", [])
-                if e.get("Name") != "pmriprep"
+                if e.get("Name") not in _PMRIPREP_MANAGED_TOOL_NAMES
             ]
         except (OSError, json.JSONDecodeError):
             existing_generated_by = []
+
+    managed_generated_by = [pmriprep_entry] + build_tool_generatedby_entries()
 
     description: Dict[str, Any] = {
         "Name": "PMRIPrep - Perfusion MRI Preprocessing Pipeline",
         "BIDSVersion": BIDS_DERIVATIVES_VERSION,
         "DatasetType": "derivative",
-        "GeneratedBy": existing_generated_by + [pmriprep_entry],
+        "GeneratedBy": existing_generated_by + managed_generated_by,
         "SourceDatasets": [
             {"URL": f"bids::{Path(bids_dir).name}"},
         ],

@@ -150,14 +150,11 @@ def dump_sidecar_json(obj: Any) -> str:
 
 def build_provenance_block(config_dict: Dict[str, Any]) -> Dict[str, Any]:
     """Build the ``PipelineConfiguration`` block for a paired sidecar."""
-    from pmriprep.utils.provenance import get_software_versions
-
     return {
         "ProcessingConfiguration": {
             k: v for k, v in config_dict.items()
             if k not in _CONFIG_STRIP_KEYS and v is not None
         },
-        "SoftwareVersions": get_software_versions(),
     }
 
 
@@ -293,13 +290,118 @@ def get_ants_version() -> str:
     return "unknown"
 
 
+# Dockerfile-pinned fallback versions for tools that expose no ``__version__``.
+_HDBET_PINNED_VERSION = "2.0.1"
+_HDGLIO_PINNED_VERSION = "2.0"
+
+# Third-party software suites credited in the dataset-level ``GeneratedBy`` and
+# rendered (with version) in the methods boilerplate. One entry per *suite*
+# (a suite has a single install version) — binaries are named in Description.
+# The idempotency filter (``_PMRIPREP_MANAGED_TOOL_NAMES``) is derived from the
+# same list so it can never drift from ``build_tool_generatedby_entries``.
+_THIRD_PARTY_TOOL_NAMES = ("FSL", "ANTs", "Nipype", "HD-BET", "HD-GLIO")
+_PMRIPREP_MANAGED_TOOL_NAMES = frozenset({"pmriprep", *_THIRD_PARTY_TOOL_NAMES})
+
+
+def _normalize_tool_version(raw: str) -> str:
+    """Reduce a version probe to a bare version string, or ``""`` if unresolved.
+
+    ``"fsl-6.0.7.1"`` -> ``"6.0.7.1"``, ``"ANTs Version: 2.6.5"`` -> ``"2.6.5"``.
+    Not forced to 3-component semver (FSL ``6.0.7.1`` is kept as-is). Any probe
+    without a dotted numeric version (``"unknown"``, ``"not installed"``, empty)
+    returns ``""`` so callers omit the key rather than emit a garbage version.
+    """
+    import re
+
+    if not raw:
+        return ""
+    match = re.search(r"\d+(?:\.\d+)+[A-Za-z0-9.\-]*", raw.strip())
+    return match.group(0) if match else ""
+
+
+def get_hdbet_version() -> str:
+    """Return the HD-BET version, falling back to the Dockerfile-pinned value."""
+    try:
+        import HD_BET  # type: ignore[import-untyped]
+
+        version = getattr(HD_BET, "__version__", None)
+        if version:
+            return str(version)
+    except Exception:
+        pass
+    return _HDBET_PINNED_VERSION
+
+
+def get_hdglio_version() -> str:
+    """Return the HD-GLIO version, falling back to the Dockerfile-pinned value."""
+    try:
+        import hd_glio  # type: ignore[import-untyped]
+
+        version = getattr(hd_glio, "__version__", None)
+        if version:
+            return str(version)
+    except Exception:
+        pass
+    return _HDGLIO_PINNED_VERSION
+
+
 def get_imaging_software_versions() -> Dict[str, str]:
-    """Return version dict for FSL, ANTs, and HD-BET."""
+    """Return the version map for the third-party imaging tools pmriprep uses.
+
+    Keys match the ``GeneratedBy`` ``Name`` values so the boilerplate's
+    live-query fallback aligns with the recorded provenance.
+    """
+    from pmriprep.utils.provenance import get_software_versions
+
     return {
         "FSL": get_fsl_version(),
         "ANTs": get_ants_version(),
-        "HD-BET": "unknown",
+        "Nipype": get_software_versions().get("nipype", "unknown"),
+        "HD-BET": get_hdbet_version(),
+        "HD-GLIO": get_hdglio_version(),
     }
+
+
+def build_tool_generatedby_entries() -> List[Dict[str, Any]]:
+    """Build per-suite ``GeneratedBy`` objects for pmriprep's third-party tools.
+
+    One object per software suite (FSL, ANTs, Nipype, HD-BET, HD-GLIO), each with
+    ``Name`` (+ ``Version`` when resolvable — never the literal ``"unknown"``),
+    ``Description`` naming the constituent binaries, and ``CodeURL``. Version
+    probes run once here (they carry subprocess timeouts).
+    """
+    from pmriprep.utils.provenance import get_software_versions
+
+    # Keyed by the shared _THIRD_PARTY_TOOL_NAMES so the entry set and the
+    # idempotency filter stay in lockstep. Version probes run once here.
+    raw_versions = {
+        "FSL": get_fsl_version(),
+        "ANTs": get_ants_version(),
+        "Nipype": get_software_versions().get("nipype", ""),
+        "HD-BET": get_hdbet_version(),
+        "HD-GLIO": get_hdglio_version(),
+    }
+    metadata = {
+        "FSL": ("Tissue segmentation (FAST), linear registration and motion "
+                "correction (FLIRT, MCFLIRT)", "https://fsl.fmrib.ox.ac.uk"),
+        "ANTs": ("Intensity non-uniformity correction (N4BiasFieldCorrection) "
+                 "and denoising (DenoiseImage)", "https://github.com/ANTsX/ANTs"),
+        "Nipype": ("Workflow engine", "https://nipype.readthedocs.io"),
+        "HD-BET": ("Brain extraction", "https://github.com/MIC-DKFZ/HD-BET"),
+        "HD-GLIO": ("Automated glioma segmentation",
+                    "https://github.com/NeuroAI-HD/HD-GLIO"),
+    }
+    entries: List[Dict[str, Any]] = []
+    for name in _THIRD_PARTY_TOOL_NAMES:
+        description, code_url = metadata[name]
+        entry: Dict[str, Any] = {"Name": name}
+        version = _normalize_tool_version(raw_versions[name])
+        if version:
+            entry["Version"] = version
+        entry["Description"] = description
+        entry["CodeURL"] = code_url
+        entries.append(entry)
+    return entries
 
 
 # ---------------------------------------------------------------------------
@@ -405,7 +507,6 @@ def build_anat_preproc_sidecar(
         **resolution_native_block(reference_voxel_source),
         "OriginalResolution": compute_original_resolution(reference_voxel_source),
         "ProcessingSteps": list(_ANAT_PREPROC_STEPS),
-        "SoftwareVersions": get_imaging_software_versions(),
     }
     if contrast_agent is not None:
         from pmriprep.utils.contrast_agent import get_brand_name
@@ -439,7 +540,6 @@ def build_anat_mask_sidecar(
         **resolution_native_block(reference_voxel_source),
         "OriginalResolution": compute_original_resolution(reference_voxel_source),
         "ProcessingSteps": list(_ANAT_PREPROC_STEPS),
-        "SoftwareVersions": get_imaging_software_versions(),
     }
 
 
@@ -769,7 +869,6 @@ def build_anat_probseg_sidecar(
     """Build sidecar for a tissue probability map (``label-{WM,GM,CSF}``)."""
     from pmriprep.utils.provenance import get_bids_derivative_provenance
 
-    fsl_version = get_fsl_version()
     return {
         **get_bids_derivative_provenance(),
         "Description": f"{tissue_type} probability map from FAST tissue segmentation",
@@ -777,7 +876,6 @@ def build_anat_probseg_sidecar(
         "Sources": build_sources_list(source_paths, bids_dir),
         **resolution_native_block(reference_voxel_source),
         "ReferenceContrastType": "precon",
-        "SoftwareVersions": {"FSL": fsl_version, "FAST": "part of FSL"},
         "ProcessingSteps": [
             "FAST 3-class tissue segmentation (T1-weighted)",
             "Parameters: -t 1 -n 3 -H 0.1 -I 4 -l 20.0",
@@ -818,8 +916,6 @@ def enrich_brain_mask_sidecar(
         return sidecar
     if "tool" in be:
         sidecar["BrainExtractionTool"] = str(be["tool"])
-    if "version" in be:
-        sidecar["BrainExtractionVersion"] = str(be["version"])
     if "device" in be:
         sidecar["BrainExtractionDevice"] = str(be["device"])
     if "voxel_count" in be:

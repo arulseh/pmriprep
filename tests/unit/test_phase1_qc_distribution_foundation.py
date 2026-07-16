@@ -149,7 +149,9 @@ def test_enrich_brain_mask_sidecar_happy_path() -> None:
     qc = {"brain_extraction": {"tool": "hdbet", "version": "v1.0", "device": "mps"}}
     out = enrich_brain_mask_sidecar({}, qc)
     assert out["BrainExtractionTool"] == "hdbet"
-    assert out["BrainExtractionVersion"] == "v1.0"
+    # Tool version is no longer stamped per-file — it lives in the dataset-level
+    # GeneratedBy (BIDS-Derivatives idiom); the custom key was retired.
+    assert "BrainExtractionVersion" not in out
     assert out["BrainExtractionDevice"] == "mps"
     # No nested block (regression guard against round-1 convention)
     assert "BrainExtraction" not in out

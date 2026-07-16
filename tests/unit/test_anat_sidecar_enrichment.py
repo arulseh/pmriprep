@@ -40,7 +40,8 @@ class TestBrainMaskFlatKeys:
         }
         out = enrich_brain_mask_sidecar(dict(base_sidecar), qc)
         assert out["BrainExtractionTool"] == "hdbet"
-        assert out["BrainExtractionVersion"] == "v1.0"
+        # Retired per-file key; tool version now lives in dataset-level GeneratedBy.
+        assert "BrainExtractionVersion" not in out
         assert out["BrainExtractionDevice"] == "mps"
         assert out["BrainExtractionVoxelCount"] == 1_500_000
         assert out["BrainExtractionVolume"] == pytest.approx(1500.0)

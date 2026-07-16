@@ -65,7 +65,6 @@ def create_provenance_dict(
     processing_description: Optional[str] = None,
     config_used: Optional[Dict[str, Any]] = None,
     scanner_metadata: Optional[Dict[str, Any]] = None,
-    include_versions: bool = True,
     include_timestamp: bool = True,
     additional_metadata: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
@@ -85,8 +84,6 @@ def create_provenance_dict(
         Configuration parameters used for processing.
     scanner_metadata : dict, optional
         Scanner metadata from BIDS JSON sidecar.
-    include_versions : bool, optional
-        Whether to include software version information.
     include_timestamp : bool, optional
         Whether to include processing timestamp.
     additional_metadata : dict, optional
@@ -130,10 +127,6 @@ def create_provenance_dict(
             k: v for k, v in config_used.items()
             if k not in _PROVENANCE_EXCLUDE and v is not None
         }
-
-    # Software versions
-    if include_versions:
-        provenance["SoftwareVersions"] = get_software_versions()
 
     # Scanner metadata
     if scanner_metadata:

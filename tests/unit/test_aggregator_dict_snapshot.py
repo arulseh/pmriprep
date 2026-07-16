@@ -154,7 +154,9 @@ def test_load_pipeline_sidecars_anat_boilerplate_fields(tmp_path: Path) -> None:
     assert out["preprocessing"]["bias_correction"] == "N4"
     assert out["preprocessing"]["acpc_aligned"] is True
     assert out["brain_extraction"]["tool"] == "hdbet"
-    assert out["brain_extraction"]["version"] == "1.0"
+    # BrainExtractionVersion retired: tool version now lives in dataset-level
+    # GeneratedBy, not the per-file sidecar, so it is not surfaced here.
+    assert "version" not in out["brain_extraction"]
     assert set(out["tissue_segmentation"].keys()) == {"WM", "GM", "CSF"}
     assert out["tissue_segmentation"]["WM"]["mean_probability"] == 0.8
 
