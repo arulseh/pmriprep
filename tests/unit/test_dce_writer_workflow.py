@@ -320,6 +320,7 @@ def _build_dce_underlay_wf(
     present_inputs: set, work_subdir: str,
     *, t1w_in_dce: str | None = None,
     t1w_postcon_in_dce: str | None = None,
+    t1w_subtraction_in_dce: str | None = None,
     flair_in_dce: str | None = None,
     flair_postcon_in_dce: str | None = None,
 ):
@@ -341,6 +342,8 @@ def _build_dce_underlay_wf(
         inp.t1w_in_dce = t1w_in_dce
     if t1w_postcon_in_dce is not None:
         inp.t1w_postcon_in_dce = t1w_postcon_in_dce
+    if t1w_subtraction_in_dce is not None:
+        inp.t1w_subtraction_in_dce = t1w_subtraction_in_dce
     if flair_in_dce is not None:
         inp.flair_in_dce = flair_in_dce
     if flair_postcon_in_dce is not None:
@@ -398,6 +401,52 @@ def test_dce_t1w_postcon_underlay_lands_in_anat(
     assert not (anat_dir / "sub-01_ses-0001_space-dceref_T1w.nii.gz").exists()
     sidecar = json.loads(expected.with_suffix("").with_suffix(".json").read_text())
     assert "Post-contrast" in sidecar["Description"]
+
+
+def test_dce_t1w_subtraction_underlay_lands_in_anat(
+    tmp_path: Path, minimal_bids: tuple[Path, str]
+) -> None:
+    """Subtraction underlay: anat/ with desc-subtraction (C3 desc plumbing), no ce-."""
+    bids, src = minimal_bids
+    out = tmp_path / "out"
+    underlay = _write_nii(tmp_path / "t1w_subtraction_in_dce.nii.gz")
+
+    _build_dce_underlay_wf(
+        bids, src, out, tmp_path,
+        present_inputs={"t1w_subtraction_in_dce"},
+        work_subdir="work-subtraction",
+        t1w_subtraction_in_dce=underlay,
+    )
+
+    anat_dir = out / "pmriprep" / "sub-01" / "ses-0001" / "anat"
+    expected = anat_dir / "sub-01_ses-0001_space-dceref_desc-subtraction_T1w.nii.gz"
+    assert expected.exists(), (
+        f"subtraction underlay missing at {expected}; "
+        f"anat/ contains: {sorted(p.name for p in anat_dir.iterdir())}"
+    )
+    # desc distinguishes it from the plain precon underlay in the same space.
+    assert not (anat_dir / "sub-01_ses-0001_space-dceref_T1w.nii.gz").exists()
+    assert not (anat_dir / "sub-01_ses-0001_ce-GAD_space-dceref_desc-subtraction_T1w.nii.gz").exists()
+    sidecar = json.loads(expected.with_suffix("").with_suffix(".json").read_text())
+    assert "subtraction" in sidecar["Description"].lower()
+    assert "SpatialReference" in sidecar
+
+
+def test_dce_t1w_subtraction_absent_skips_cleanly(
+    tmp_path: Path, minimal_bids: tuple[Path, str]
+) -> None:
+    """Present-set without the subtraction key => no sink built, no error."""
+    bids, src = minimal_bids
+    out = tmp_path / "out"
+    # present_inputs excludes t1w_subtraction_in_dce -> mandatory ktrans only.
+    _build_dce_underlay_wf(
+        bids, src, out, tmp_path,
+        present_inputs=set(),
+        work_subdir="work-sub-absent",
+    )
+    anat_dir = out / "pmriprep" / "sub-01" / "ses-0001" / "anat"
+    subtraction = list(anat_dir.glob("*desc-subtraction*")) if anat_dir.exists() else []
+    assert not subtraction, f"subtraction must not be emitted; got {subtraction}"
 
 
 def test_dce_both_t1w_underlays(

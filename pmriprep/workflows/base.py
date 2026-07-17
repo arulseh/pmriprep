@@ -256,7 +256,8 @@ def _find_previous_anat_outputs(
     Returns
     -------
     dict
-        Dict with keys: t1w_preproc, brain_mask, wm_probseg, csf_probseg, t1w_to_mni_xfm, flair_coreg, t2w_coreg.
+        Dict with keys: t1w_preproc, t1w_postcon_coreg, t1w_subtraction, brain_mask, wm_probseg, gm_probseg,
+        csf_probseg, t1w_to_mni_xfm, flair_coreg, flair_postcon_coreg, t2w_coreg.
         Values are file paths (str) or None if not found.
     """
     session_label = f"ses-{session_id}" if session_id else "no-session"
@@ -266,6 +267,7 @@ def _find_previous_anat_outputs(
     outputs: dict[str, Optional[str]] = {
         "t1w_preproc": None,
         "t1w_postcon_coreg": None,
+        "t1w_subtraction": None,
         "brain_mask": None,
         "wm_probseg": None,
         "gm_probseg": None,
@@ -346,6 +348,13 @@ def _find_previous_anat_outputs(
         candidates = sorted(flair_postcon_dir.glob("*_masked.nii.gz"))
         if candidates:
             outputs["flair_postcon_coreg"] = str(candidates[0])
+
+    # T1w subtraction (post - pre)
+    subtraction_dir = anat_dir / "create_subtraction"
+    if subtraction_dir.exists():
+        candidates = sorted(subtraction_dir.glob("*_subtraction.nii.gz"))
+        if candidates:
+            outputs["t1w_subtraction"] = str(candidates[0])
 
     return outputs
 
@@ -1700,6 +1709,22 @@ def init_pmriprep_wf(
                     logging.getLogger("pmriprep.workflows").warning(
                         "DSC: 't1w_postcon' underlay requested but no post-contrast T1w available. Skipping."
                     )
+            # Subtraction underlay — post-pre difference; available only when
+            # both pre- and post-contrast T1w exist AND anat computed it.
+            if "t1w_subtraction" in dsc_config.underlays:
+                if (
+                    session_data.modalities.t1w_pre
+                    and session_data.modalities.t1w_ce_gad
+                    and anat_config.create_subtraction
+                ):
+                    workflow.connect([
+                        (anat_wf, dsc_wf, [("outputnode.t1w_subtraction", "inputnode.t1w_subtraction_underlay")]),
+                    ])
+                else:
+                    logging.getLogger("pmriprep.workflows").warning(
+                        "DSC: 't1w_subtraction' underlay requested but unavailable "
+                        "(requires pre- and post-contrast T1w and create_subtraction). Skipping."
+                    )
             # FLAIR underlays — independent precon and postcon paths
             # (precon → flair_in_t1w, postcon → flair_postcon_in_t1w).
             if "flair_precon" in dsc_config.underlays:
@@ -1757,6 +1782,12 @@ def init_pmriprep_wf(
                     _log.info("skip-anat (DSC): loaded t1w_postcon_underlay (postcon-only) from %s", prev_anat["t1w_preproc"])
                 else:
                     _log.warning("DSC: 't1w_postcon' underlay requested but unavailable in skip-anat. Skipping.")
+            if "t1w_subtraction" in dsc_config.underlays:
+                if prev_anat["t1w_subtraction"]:
+                    dsc_wf.inputs.inputnode.t1w_subtraction_underlay = prev_anat["t1w_subtraction"]
+                    _log.info("skip-anat (DSC): loaded t1w_subtraction_underlay from %s", prev_anat["t1w_subtraction"])
+                else:
+                    _log.warning("DSC: 't1w_subtraction' underlay requested but unavailable in skip-anat. Skipping.")
             if prev_anat["brain_mask"]:
                 dsc_wf.inputs.inputnode.brain_mask = prev_anat["brain_mask"]
                 _log.info("skip-anat: loaded brain_mask from %s", prev_anat["brain_mask"])
@@ -2013,6 +2044,16 @@ def init_pmriprep_wf(
             "t1w_postcon" in dsc_underlays
             and session_data.modalities.t1w_ce_gad is not None
         )
+        # Subtraction requires both pre- and post-contrast T1w AND that anat
+        # actually computed it (create_subtraction gates the outputnode field);
+        # without the create_subtraction term the sink builds but the transform
+        # gets Undefined → "" → File(exists=True) crash.
+        _has_t1w_subtraction_underlay = (
+            "t1w_subtraction" in dsc_underlays
+            and session_data.modalities.t1w_pre is not None
+            and session_data.modalities.t1w_ce_gad is not None
+            and anat_config.create_subtraction
+        )
         _has_flair_precon_underlay = (
             "flair_precon" in dsc_underlays
             and session_data.modalities.flair is not None
@@ -2029,6 +2070,8 @@ def init_pmriprep_wf(
             dsc_present.add("t1w_in_dsc")
         if _has_t1w_postcon_underlay:
             dsc_present.add("t1w_postcon_in_dsc")
+        if _has_t1w_subtraction_underlay:
+            dsc_present.add("t1w_subtraction_in_dsc")
         if _has_flair_precon_underlay:
             dsc_present.add("flair_in_dsc")
         if _has_flair_postcon_underlay:
@@ -2037,6 +2080,7 @@ def init_pmriprep_wf(
             dsc_present.add("t2w_in_dsc")
         if (
             _has_t1w_precon_underlay or _has_t1w_postcon_underlay
+            or _has_t1w_subtraction_underlay
             or _has_flair_precon_underlay or _has_flair_postcon_underlay
             or _has_t2w_underlay
         ):
@@ -2128,6 +2172,7 @@ def init_pmriprep_wf(
                 # Structural underlays
                 ("outputnode.t1w_in_dsc", "inputnode.t1w_in_dsc"),
                 ("outputnode.t1w_postcon_in_dsc", "inputnode.t1w_postcon_in_dsc"),
+                ("outputnode.t1w_subtraction_in_dsc", "inputnode.t1w_subtraction_in_dsc"),
                 ("outputnode.flair_in_dsc", "inputnode.flair_in_dsc"),
                 ("outputnode.flair_postcon_in_dsc", "inputnode.flair_postcon_in_dsc"),
                 ("outputnode.t2w_in_dsc", "inputnode.t2w_in_dsc"),
@@ -2451,6 +2496,22 @@ def init_pmriprep_wf(
                     logging.getLogger("pmriprep.workflows").warning(
                         "DCE: 't1w_postcon' underlay requested but no post-contrast T1w available. Skipping."
                     )
+            # Subtraction underlay — post-pre difference; available only when
+            # both pre- and post-contrast T1w exist AND anat computed it.
+            if "t1w_subtraction" in dce_config.underlays:
+                if (
+                    session_data.modalities.t1w_pre
+                    and session_data.modalities.t1w_ce_gad
+                    and anat_config.create_subtraction
+                ):
+                    workflow.connect([
+                        (anat_wf, dce_wf, [("outputnode.t1w_subtraction", "inputnode.t1w_subtraction_underlay")]),
+                    ])
+                else:
+                    logging.getLogger("pmriprep.workflows").warning(
+                        "DCE: 't1w_subtraction' underlay requested but unavailable "
+                        "(requires pre- and post-contrast T1w and create_subtraction). Skipping."
+                    )
             # FLAIR underlays — independent precon and postcon paths
             # (precon → flair_in_t1w, postcon → flair_postcon_in_t1w).
             if "flair_precon" in dce_config.underlays:
@@ -2526,6 +2587,12 @@ def init_pmriprep_wf(
                     _log.info("skip-anat (DCE): loaded t1w_postcon_underlay (postcon-only) from %s", prev_anat["t1w_preproc"])
                 else:
                     _log.warning("DCE: 't1w_postcon' underlay requested but unavailable in skip-anat. Skipping.")
+            if "t1w_subtraction" in dce_config.underlays:
+                if prev_anat["t1w_subtraction"]:
+                    dce_wf.inputs.inputnode.t1w_subtraction_underlay = prev_anat["t1w_subtraction"]
+                    _log.info("skip-anat (DCE): loaded t1w_subtraction_underlay from %s", prev_anat["t1w_subtraction"])
+                else:
+                    _log.warning("DCE: 't1w_subtraction' underlay requested but unavailable in skip-anat. Skipping.")
             if "flair_precon" in dce_config.underlays:
                 if prev_anat["flair_coreg"]:
                     dce_wf.inputs.inputnode.flair_in_t1w = prev_anat["flair_coreg"]
@@ -2918,6 +2985,12 @@ def init_pmriprep_wf(
             "t1w_postcon" in dce_underlays
             and session_data.modalities.t1w_ce_gad is not None
         )
+        _dce_has_t1w_subtraction_underlay = (
+            "t1w_subtraction" in dce_underlays
+            and session_data.modalities.t1w_pre is not None
+            and session_data.modalities.t1w_ce_gad is not None
+            and anat_config.create_subtraction
+        )
         _dce_has_flair_precon_underlay = (
             "flair_precon" in dce_underlays
             and session_data.modalities.flair is not None
@@ -2934,6 +3007,8 @@ def init_pmriprep_wf(
             dce_present.add("t1w_in_dce")
         if _dce_has_t1w_postcon_underlay:
             dce_present.add("t1w_postcon_in_dce")
+        if _dce_has_t1w_subtraction_underlay:
+            dce_present.add("t1w_subtraction_in_dce")
         if _dce_has_flair_precon_underlay:
             dce_present.add("flair_in_dce")
         if _dce_has_flair_postcon_underlay:
@@ -3051,6 +3126,7 @@ def init_pmriprep_wf(
                 # Structural underlays
                 ("outputnode.t1w_in_dce", "inputnode.t1w_in_dce"),
                 ("outputnode.t1w_postcon_in_dce", "inputnode.t1w_postcon_in_dce"),
+                ("outputnode.t1w_subtraction_in_dce", "inputnode.t1w_subtraction_in_dce"),
                 ("outputnode.flair_in_dce", "inputnode.flair_in_dce"),
                 ("outputnode.flair_postcon_in_dce", "inputnode.flair_postcon_in_dce"),
                 ("outputnode.t2w_in_dce", "inputnode.t2w_in_dce"),

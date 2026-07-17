@@ -373,7 +373,7 @@ def _dsc(bids: Path, **cfg: Any) -> pe.Workflow:
     )
 
 
-_ALL_UNDERLAYS = ["t1w_precon", "t1w_postcon", "flair_precon", "flair_postcon", "t2w"]
+_ALL_UNDERLAYS = ["t1w_precon", "t1w_postcon", "t1w_subtraction", "flair_precon", "flair_postcon", "t2w"]
 
 # Each row exercises >= 1 verified construction-gating branch. Non-topological
 # axes (DCE mask presence; DSC method/registration/leakage/aif/inference) are

@@ -2941,6 +2941,7 @@
       "dsc_to_t1w_xfm": null,
       "nawm_needs_transform": true,
       "t1w_postcon_underlay": null,
+      "t1w_subtraction_underlay": null,
       "t1w_underlay": null,
       "t2w_in_t1w": null
     },
@@ -3329,6 +3330,7 @@
     "t1_qc_plot",
     "t1w_in_dce",
     "t1w_postcon_in_dce",
+    "t1w_subtraction_in_dce",
     "t2w_in_dce",
     "time_to_peak_map",
     "tsnr_map",

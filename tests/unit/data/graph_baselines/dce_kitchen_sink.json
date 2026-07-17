@@ -405,6 +405,12 @@
     [
       "dce_preprocess",
       "mean_img",
+      "transform_t1w_subtraction_underlay",
+      "reference_file"
+    ],
+    [
+      "dce_preprocess",
+      "mean_img",
       "transform_t1w_underlay",
       "reference_file"
     ],
@@ -568,6 +574,12 @@
       "dce_registration",
       "out_matrix",
       "transform_t1w_postcon_underlay",
+      "transform_matrix"
+    ],
+    [
+      "dce_registration",
+      "out_matrix",
+      "transform_t1w_subtraction_underlay",
       "transform_matrix"
     ],
     [
@@ -785,6 +797,12 @@
       "t1w_reference",
       "dce_registration",
       "t1w_file"
+    ],
+    [
+      "inputnode",
+      "t1w_subtraction_underlay",
+      "transform_t1w_subtraction_underlay",
+      "structural_file"
     ],
     [
       "inputnode",
@@ -1873,6 +1891,12 @@
       "t1w_postcon_in_dce"
     ],
     [
+      "transform_t1w_subtraction_underlay",
+      "out_file",
+      "outputnode",
+      "t1w_subtraction_in_dce"
+    ],
+    [
       "transform_t1w_underlay",
       "out_file",
       "outputnode",
@@ -2368,6 +2392,17 @@
         "out_file"
       ]
     },
+    "transform_t1w_subtraction_underlay": {
+      "input_names": [
+        "output_name",
+        "reference_file",
+        "structural_file",
+        "transform_matrix"
+      ],
+      "output_names": [
+        "out_file"
+      ]
+    },
     "transform_t1w_underlay": {
       "input_names": [
         "output_name",
@@ -2447,6 +2482,7 @@
     "transform_non_enhancing_mask": "a60e7196ef6760f26ec0cec310d8f28255efef89e4e82f36d8d6c9c24d7a9c17",
     "transform_stats_lesion": "4abf45e3f5f8a38ad2a95d087249688ef4d8e0c5dca15377e7e5a899b3090318",
     "transform_t1w_postcon_underlay": "a49a3958349d57afb3bea923716b53473ffa653fec12530a0ab8ad68c94c6d59",
+    "transform_t1w_subtraction_underlay": "a49a3958349d57afb3bea923716b53473ffa653fec12530a0ab8ad68c94c6d59",
     "transform_t1w_underlay": "a49a3958349d57afb3bea923716b53473ffa653fec12530a0ab8ad68c94c6d59",
     "transform_t2w_underlay": "a49a3958349d57afb3bea923716b53473ffa653fec12530a0ab8ad68c94c6d59",
     "validate_roi_mask": "60777a76a8f5106aff8e2330d86fca1680c0e4cd7ad24f14f71ae82aaf328496",
@@ -2638,6 +2674,10 @@
       "mem_gb": 0.2,
       "n_procs": 1
     },
+    "transform_t1w_subtraction_underlay": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
     "transform_t1w_underlay": {
       "mem_gb": 0.2,
       "n_procs": 1
@@ -2748,6 +2788,7 @@
       "dsc_to_t1w_xfm": null,
       "nawm_needs_transform": true,
       "t1w_postcon_underlay": null,
+      "t1w_subtraction_underlay": null,
       "t1w_underlay": null,
       "t2w_in_t1w": null
     },
@@ -2834,6 +2875,9 @@
     },
     "transform_t1w_postcon_underlay": {
       "output_name": "t1w_postcon_in_dce.nii.gz"
+    },
+    "transform_t1w_subtraction_underlay": {
+      "output_name": "t1w_subtraction_in_dce.nii.gz"
     },
     "transform_t1w_underlay": {
       "output_name": "t1w_in_dce.nii.gz"
@@ -3043,6 +3087,10 @@
       "Function"
     ],
     [
+      "transform_t1w_subtraction_underlay",
+      "Function"
+    ],
+    [
       "transform_t1w_underlay",
       "Function"
     ],
@@ -3122,6 +3170,7 @@
     "t1_qc_plot",
     "t1w_in_dce",
     "t1w_postcon_in_dce",
+    "t1w_subtraction_in_dce",
     "t2w_in_dce",
     "time_to_peak_map",
     "tsnr_map",

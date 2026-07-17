@@ -817,6 +817,7 @@ def _add_anat_image_sink(
     label: str,
     description: str,
     ce_label: str = "",
+    desc: str = "",
     skull_stripped: bool = False,
     units: Optional[str] = None,
     source_attr: str = "source_dce",
@@ -865,6 +866,8 @@ def _add_anat_image_sink(
     )
     if ce_label:
         sink.inputs.ceagent = ce_label
+    if desc:
+        sink.inputs.desc = desc
     workflow.connect([
         (inputnode, sink, [
             ("output_dir", "base_directory"),
@@ -1001,7 +1004,7 @@ def init_dce_datasinks_wf(
                 "dce_moco", "dce_mean", "motion_params",
                 "aif_curve", "aif_mask",
                 # Structural underlays + xfm
-                "t1w_in_dce", "t1w_postcon_in_dce",
+                "t1w_in_dce", "t1w_postcon_in_dce", "t1w_subtraction_in_dce",
                 "flair_in_dce", "flair_postcon_in_dce", "t2w_in_dce", "dce_to_t1w_xfm",
                 # Lesion/ROI
                 "lesion_mask_dce", "lesion_stats_json",
@@ -1524,6 +1527,14 @@ def init_dce_datasinks_wf(
             label="T1w",
             description="Post-contrast T1w registered to DCE space",
             ce_label="GAD",
+        )
+        sink_outputs.append((sink, "out_file"))
+    if "t1w_subtraction_in_dce" in present:
+        sink = _add_anat_image_sink(
+            workflow, inputnode, base_minimal,
+            name="t1w_subtraction_in_dce", in_attr="t1w_subtraction_in_dce",
+            label="T1w", desc="subtraction",
+            description="Post-pre T1w subtraction registered to DCE space",
         )
         sink_outputs.append((sink, "out_file"))
     if "flair_in_dce" in present:

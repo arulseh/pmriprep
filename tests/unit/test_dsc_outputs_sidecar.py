@@ -484,6 +484,37 @@ class TestStructuralUnderlayDatatype:
         assert "Pre-contrast" in precon_meta["Description"]
         assert "Post-contrast" in postcon_meta["Description"]
 
+    def test_t1w_subtraction_in_dsc_lands_in_anat(self, minimal_inputs, tmp_path) -> None:
+        """Subtraction underlay: anat/ with desc-subtraction, no ce- entity."""
+        minimal_inputs["t1w_subtraction_in_dsc"] = _write_dummy_nifti(
+            tmp_path / "t1w_subtraction_in_dsc.nii.gz",
+        )
+        ses = self._build_and_run(minimal_inputs, tmp_path, "work-subtraction")
+
+        anat_dir = ses / "anat"
+        expected = anat_dir / "sub-test01_ses-01_space-dscref_desc-subtraction_T1w.nii.gz"
+        assert expected.exists(), (
+            f"subtraction underlay missing at {expected}; "
+            f"anat/ contains: {sorted(p.name for p in anat_dir.iterdir())}"
+        )
+        # No ce- entity, and distinct from the plain precon underlay.
+        assert not (anat_dir / "sub-test01_ses-01_ce-GAD_space-dscref_desc-subtraction_T1w.nii.gz").exists()
+        assert not (anat_dir / "sub-test01_ses-01_space-dscref_T1w.nii.gz").exists()
+        # Custom space => SpatialReference is required and present.
+        meta = json.loads(expected.with_suffix("").with_suffix(".json").read_text())
+        assert "subtraction" in meta["Description"].lower()
+        assert "SpatialReference" in meta
+
+    def test_t1w_subtraction_absent_skips_cleanly(self, minimal_inputs, tmp_path) -> None:
+        """Present-set without the subtraction key => no sink built, no error."""
+        # No t1w_subtraction_in_dsc in minimal_inputs -> excluded from present.
+        ses = self._build_and_run(minimal_inputs, tmp_path, "work-sub-absent")
+        anat_dir = ses / "anat"
+        subtraction = (
+            list(anat_dir.glob("*desc-subtraction*")) if anat_dir.exists() else []
+        )
+        assert not subtraction, f"subtraction must not be emitted; got {subtraction}"
+
     def test_flair_in_dsc_lands_in_anat(self, minimal_inputs, tmp_path) -> None:
         """Precon FLAIR underlay: lands in anat/ with no ce- entity."""
         minimal_inputs["flair_in_dsc"] = _write_dummy_nifti(tmp_path / "flair_in_dsc.nii.gz")

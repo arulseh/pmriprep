@@ -41,3 +41,7 @@ class TestUnderlayValidation:
     def test_flair_precon_and_postcon_accepted(self, config_cls) -> None:
         cfg = config_cls(underlays=["flair_precon", "flair_postcon"])
         assert cfg.underlays == ["flair_precon", "flair_postcon"]
+
+    def test_t1w_subtraction_accepted(self, config_cls) -> None:
+        cfg = config_cls(underlays=["t1w_subtraction"])
+        assert cfg.underlays == ["t1w_subtraction"]

@@ -1771,6 +1771,7 @@ def init_dsc_preproc_wf(
                 "t1w_reference",  # T1w reference for registration
                 "t1w_underlay",  # precontrast (or single-source) T1w underlay
                 "t1w_postcon_underlay",  # postcontrast T1w underlay (independent of t1w_underlay)
+                "t1w_subtraction_underlay",  # post-pre subtraction underlay (precon-anchored T1w space)
                 "brain_mask",  # Brain mask in T1w space
                 "wm_probseg",  # White matter probability map (optional)
                 "whole_tumor_mask",  # Whole-tumor mask for AIF exclusion + lesion stats (optional, T1w space)
@@ -1865,6 +1866,7 @@ def init_dsc_preproc_wf(
                 # Structural underlays
                 "t1w_in_dsc",
                 "t1w_postcon_in_dsc",
+                "t1w_subtraction_in_dsc",
                 "flair_in_dsc",
                 "flair_postcon_in_dsc",
                 "t2w_in_dsc",
@@ -2249,6 +2251,18 @@ def init_dsc_preproc_wf(
             name="transform_t1_postcon_to_dsc",
         )
         transform_t1_postcon_to_dsc.inputs.output_name = "t1w_postcon_in_dsc.nii.gz"
+
+    transform_t1_subtraction_to_dsc = None
+    if "t1w_subtraction" in config.underlays:
+        transform_t1_subtraction_to_dsc = pe.Node(
+            niu.Function(
+                input_names=["structural_file", "reference_file", "transform_matrix", "output_name"],
+                output_names=["out_file"],
+                function=_transform_structural_to_dsc,
+            ),
+            name="transform_t1_subtraction_to_dsc",
+        )
+        transform_t1_subtraction_to_dsc.inputs.output_name = "t1w_subtraction_in_dsc.nii.gz"
 
     transform_flair_to_dsc = None
     if "flair_precon" in config.underlays:
@@ -2673,6 +2687,13 @@ def init_dsc_preproc_wf(
             (registration_wf, transform_t1_postcon_to_dsc, [("outputnode.t1w_to_dsc_matrix", "transform_matrix")]),
         ])
 
+    if transform_t1_subtraction_to_dsc is not None:
+        workflow.connect([
+            (inputnode, transform_t1_subtraction_to_dsc, [("t1w_subtraction_underlay", "structural_file")]),
+            (motion_wf, transform_t1_subtraction_to_dsc, [("outputnode.prebolus_mean_file", "reference_file")]),
+            (registration_wf, transform_t1_subtraction_to_dsc, [("outputnode.t1w_to_dsc_matrix", "transform_matrix")]),
+        ])
+
     if transform_flair_to_dsc is not None:
         workflow.connect([
             (inputnode, transform_flair_to_dsc, [("flair_in_t1w", "structural_file")]),
@@ -2818,6 +2839,11 @@ def init_dsc_preproc_wf(
     if transform_t1_postcon_to_dsc is not None:
         workflow.connect([
             (transform_t1_postcon_to_dsc, outputnode, [("out_file", "t1w_postcon_in_dsc")]),
+        ])
+
+    if transform_t1_subtraction_to_dsc is not None:
+        workflow.connect([
+            (transform_t1_subtraction_to_dsc, outputnode, [("out_file", "t1w_subtraction_in_dsc")]),
         ])
 
     if transform_flair_to_dsc is not None:

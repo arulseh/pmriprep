@@ -186,7 +186,10 @@ class DSCConfig:
         YAML/JSON config files or CLI arguments.
         """
         # Validate underlay values
-        _VALID_UNDERLAYS = {"t1w_precon", "t1w_postcon", "flair_precon", "flair_postcon", "t2w"}
+        _VALID_UNDERLAYS = {
+            "t1w_precon", "t1w_postcon", "t1w_subtraction",
+            "flair_precon", "flair_postcon", "t2w",
+        }
         invalid = set(self.underlays) - _VALID_UNDERLAYS
         if invalid:
             raise ValueError(

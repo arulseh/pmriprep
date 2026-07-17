@@ -2643,6 +2643,7 @@
     "snr_map",
     "t1w_in_dsc",
     "t1w_postcon_in_dsc",
+    "t1w_subtraction_in_dsc",
     "t1w_to_dsc_h5",
     "t1w_to_dsc_xfm",
     "t2w_in_dsc",
