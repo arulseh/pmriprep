@@ -1135,6 +1135,44 @@ def _count_slabs_spanned(candidates: list[tuple[int, int, int]]) -> int:
     return len({int(k) for (_i, _j, k) in candidates})
 
 
+def _classify_hemisphere(
+    candidates: list[tuple[int, int, int]],
+    affine: npt.NDArray[Any],
+) -> tuple[str, int, int]:
+    """Classify a candidate pool's hemisphere spread via RAS x-coordinate.
+
+    A candidate's world x-coordinate ``< 0`` (RAS convention) is left.
+
+    Parameters
+    ----------
+    candidates : list of (int, int, int)
+        Voxel ``(i, j, k)`` coordinates.
+    affine : np.ndarray
+        4x4 voxel-to-world affine.
+
+    Returns
+    -------
+    (str, int, int)
+        ``(hemisphere, n_left, n_right)`` where hemisphere is
+        ``"bilateral"`` / ``"unilateral_left"`` / ``"unilateral_right"``.
+    """
+    n_left = 0
+    n_right = 0
+    for cx, cy, cz in candidates:
+        world = affine[:3, :3] @ np.array([cx, cy, cz]) + affine[:3, 3]
+        if world[0] < 0:
+            n_left += 1
+        else:
+            n_right += 1
+    if n_left > 0 and n_right > 0:
+        hemisphere = "bilateral"
+    elif n_left > 0:
+        hemisphere = "unilateral_left"
+    else:
+        hemisphere = "unilateral_right"
+    return hemisphere, n_left, n_right
+
+
 @dataclass
 class TierResult:
     """Outcome of a single tier's progressive-trim acceptance attempt.
@@ -1146,7 +1184,6 @@ class TierResult:
     candidates: list[tuple[int, int, int]]
     scores: list[float]
     metrics: list[dict[str, float]]
-    curve_unscaled: npt.NDArray[Any]
     curve_scaled: npt.NDArray[Any]
     scale_factor: float
     qc: GateQC
@@ -1155,6 +1192,26 @@ class TierResult:
     n_slabs: int
     status: GateStatus
     gate_decisions: list[GateDecision] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class PoolGateOutcome:
+    """Scored + gated result of averaging a single candidate pool.
+
+    Returned by ``_score_and_gate_pool`` (the shared "average ->
+    plasma-convert -> rescale -> QC -> hemisphere/slabs -> gate" body used
+    by both the progressive-trim loop and the C2 re-gate). ``curve_scaled``
+    is the exact curve the gates evaluated, so callers emit it directly to
+    preserve the "gates saw this curve" invariant.
+    """
+
+    curve_scaled: npt.NDArray[Any]
+    scale_factor: float
+    qc: GateQC
+    hemisphere: str
+    n_slabs: int
+    status: GateStatus
+    decision: GateDecision
 
 
 @dataclass(frozen=True)
@@ -2920,6 +2977,78 @@ class AIFDetection(BaseInterface):
             earliest_post_arr_s,
         )
 
+    def _score_and_gate_pool(
+        self,
+        cands: list[tuple[int, int, int]],
+        scores: list[float],
+        conc_data: npt.NDArray[Any],
+        brain_mask: npt.NDArray[Any],
+        affine: npt.NDArray[Any],
+        tr: float,
+        baseline_frames: int,
+        hct: float,
+        target_peak: float,
+        atlas_tier_label: str,
+    ) -> PoolGateOutcome:
+        """Average a candidate pool and score it against the G1-G6 gates.
+
+        Runs the shared sequence: weighted-ROI average -> plasma-convert
+        (``/ (1 - Hct)``) -> amplitude rescale -> QC -> hemisphere / slab
+        span -> gate evaluation. Used by both the progressive-trim loop and
+        the post-cascade C2 re-gate so the two paths cannot drift.
+
+        Parameters
+        ----------
+        cands : list of (int, int, int)
+            Candidate voxel coordinates for this pool.
+        scores : list of float
+            Per-candidate composite scores (averaging weights).
+        conc_data, brain_mask, affine : np.ndarray
+            Concentration series, brain mask, and voxel-to-world affine.
+        tr : float
+            Repetition time (s).
+        baseline_frames : int
+            Pre-contrast baseline frame count.
+        hct : float
+            Arterial hematocrit (``0 <= hct < 1``).
+        target_peak : float
+            Scaling target-peak override (``<= 0`` -> field default).
+        atlas_tier_label : str
+            Tier label passed through to the gate evaluation (G6 (f)).
+
+        Returns
+        -------
+        PoolGateOutcome
+            The scaled curve, scale factor, QC, hemisphere, slab span,
+            gate status, and gate decision for this pool.
+        """
+        curve_blood, _ = self._compute_weighted_roi_aif(
+            cands, scores, conc_data, brain_mask, tr=tr,
+        )
+        curve_plasma = curve_blood / (1.0 - hct) if hct < 1.0 else curve_blood
+        curve_scaled, scale_factor = _apply_aif_scale(
+            curve_plasma,
+            hct,
+            target_peak,
+            self._get_expected_peak_range,
+        )
+        qc = _compute_pool_qc(curve_scaled, tr, baseline_frames)
+        hemisphere, _n_left, _n_right = _classify_hemisphere(cands, affine)
+        n_slabs = _count_slabs_spanned(cands)
+        status, decision = _evaluate_gates(
+            scale_factor, qc, atlas_tier_label,
+            len(cands), hemisphere, n_slabs,
+        )
+        return PoolGateOutcome(
+            curve_scaled=curve_scaled,
+            scale_factor=scale_factor,
+            qc=qc,
+            hemisphere=hemisphere,
+            n_slabs=n_slabs,
+            status=status,
+            decision=decision,
+        )
+
     def _evaluate_pool_with_gates_and_trim(
         self,
         candidates: list[tuple[int, int, int]],
@@ -2955,64 +3084,33 @@ class AIFDetection(BaseInterface):
             sub_scores = [scores[i] for i in pool_idx]
             sub_metrics = [metrics_list[i] for i in pool_idx]
 
-            # Average + plasma-convert + rescale.
-            curve_blood, _ = self._compute_weighted_roi_aif(
-                sub_cands, sub_scores, conc_data, brain_mask, tr=tr,
+            # Average + plasma-convert + rescale + QC + hemisphere/slabs + gate
+            # (recomputed each iter because dropping a candidate may change them).
+            outcome = self._score_and_gate_pool(
+                sub_cands, sub_scores, conc_data, brain_mask, affine, tr,
+                baseline_frames, hct, target_peak, atlas_tier_label,
             )
-            curve_plasma = curve_blood / (1.0 - hct) if hct < 1.0 else curve_blood
-            curve_scaled, scale_factor = _apply_aif_scale(
-                curve_plasma,
-                hct,
-                target_peak,
-                self._get_expected_peak_range,
-            )
+            gate_decisions.append(outcome.decision)
 
-            qc = _compute_pool_qc(curve_scaled, tr, baseline_frames)
-
-            # Hemisphere + slab span on the current pool (recomputed each iter
-            # because dropping a candidate may change them).
-            n_left = 0
-            n_right = 0
-            for cx, cy, cz in sub_cands:
-                world = affine[:3, :3] @ np.array([cx, cy, cz]) + affine[:3, 3]
-                if world[0] < 0:
-                    n_left += 1
-                else:
-                    n_right += 1
-            if n_left > 0 and n_right > 0:
-                hemisphere = "bilateral"
-            elif n_left > 0:
-                hemisphere = "unilateral_left"
-            else:
-                hemisphere = "unilateral_right"
-            n_slabs = _count_slabs_spanned(sub_cands)
-
-            status, decision = _evaluate_gates(
-                scale_factor, qc, atlas_tier_label,
-                len(pool_idx), hemisphere, n_slabs,
-            )
-            gate_decisions.append(decision)
-
-            if status in ("PASS", "PASS_WARN", "G6_ADMIT"):
+            if outcome.status in ("PASS", "PASS_WARN", "G6_ADMIT"):
                 return TierEvaluation(
                     result=TierResult(
                         candidates=sub_cands,
                         scores=sub_scores,
                         metrics=sub_metrics,
-                        curve_unscaled=curve_plasma,
-                        curve_scaled=curve_scaled,
-                        scale_factor=scale_factor,
-                        qc=qc,
+                        curve_scaled=outcome.curve_scaled,
+                        scale_factor=outcome.scale_factor,
+                        qc=outcome.qc,
                         atlas_tier=atlas_tier_label,
-                        hemisphere=hemisphere,
-                        n_slabs=n_slabs,
-                        status=status,
+                        hemisphere=outcome.hemisphere,
+                        n_slabs=outcome.n_slabs,
+                        status=outcome.status,
                         gate_decisions=gate_decisions,
                     ),
                     gate_decisions=gate_decisions,
                 )
 
-            failing_gate = decision.get("failing_gate") or ""
+            failing_gate = outcome.decision.get("failing_gate") or ""
 
             if failing_gate in ("G6_f", "G6_g"):
                 return TierEvaluation(result=None, gate_decisions=gate_decisions)
@@ -4442,15 +4540,6 @@ class AIFDetection(BaseInterface):
                 tier_cand_set = set(tuple(c) for c in tier_result.candidates)
                 cur_cand_set = set(tuple(c) for c in candidates)
                 if cur_cand_set != tier_cand_set:
-                    aif_curve, aif_mask = self._compute_weighted_roi_aif(
-                        candidates, scores, conc_data, brain_mask, tr=tr,
-                    )
-                    hct = float(self.inputs.hematocrit)
-                    aif_curve = aif_curve / (1.0 - hct)
-                    aif_curve, scaling_factor = _apply_aif_scale(
-                        aif_curve, hct, target_peak,
-                        self._get_expected_peak_range,
-                    )
                     # C2: post-cascade filters shrank the accepted pool. Re-gate
                     # the EMITTED subset (single evaluation, no trim) and rebuild
                     # tier_result so downstream provenance (confidence /
@@ -4458,35 +4547,25 @@ class AIFDetection(BaseInterface):
                     # the pre-filter pool. Provenance-only: a re-gate FAIL is
                     # recorded (downgrades confidence below) but does NOT trigger a
                     # new population fallback here.
-                    _re_qc = _compute_pool_qc(aif_curve, tr, baseline_frames)
-                    _nl = sum(
-                        1 for cx, cy, cz in candidates
-                        if (affine[:3, :3] @ np.array([cx, cy, cz])
-                            + affine[:3, 3])[0] < 0
+                    outcome = self._score_and_gate_pool(
+                        candidates, scores, conc_data, brain_mask, affine, tr,
+                        baseline_frames, float(self.inputs.hematocrit),
+                        target_peak, tier_result.atlas_tier,
                     )
-                    _nr = len(candidates) - _nl
-                    _hemi = (
-                        "bilateral" if _nl and _nr
-                        else "unilateral_left" if _nl else "unilateral_right"
-                    )
-                    _re_slabs = _count_slabs_spanned(candidates)
-                    _re_status, _re_decision = _evaluate_gates(
-                        scaling_factor, _re_qc, tier_result.atlas_tier,
-                        len(candidates), _hemi, _re_slabs,
-                    )
+                    aif_curve = outcome.curve_scaled
+                    scaling_factor = outcome.scale_factor
                     tier_result = TierResult(
                         candidates=list(candidates),
                         scores=list(scores),
                         metrics=list(metrics_list),
-                        curve_unscaled=aif_curve,
                         curve_scaled=aif_curve,
                         scale_factor=scaling_factor,
-                        qc=_re_qc,
+                        qc=outcome.qc,
                         atlas_tier=tier_result.atlas_tier,
-                        hemisphere=_hemi,
-                        n_slabs=_re_slabs,
-                        status=_re_status,
-                        gate_decisions=[_re_decision],
+                        hemisphere=outcome.hemisphere,
+                        n_slabs=outcome.n_slabs,
+                        status=outcome.status,
+                        gate_decisions=[outcome.decision],
                     )
                 else:
                     aif_curve = tier_result.curve_scaled
@@ -4556,22 +4635,10 @@ class AIFDetection(BaseInterface):
 
             # Hemisphere coverage: classify candidates as left/right via RAS x-coord
             if candidates:
-                n_left = 0
-                n_right = 0
-                for cx, cy, cz in candidates:
-                    world = affine[:3, :3] @ np.array([cx, cy, cz]) + affine[:3, 3]
-                    if world[0] < 0:
-                        n_left += 1
-                    else:
-                        n_right += 1
+                hemi_cov, n_left, n_right = _classify_hemisphere(candidates, affine)
                 qc_metrics["n_left_candidates"] = n_left
                 qc_metrics["n_right_candidates"] = n_right
-                if n_left > 0 and n_right > 0:
-                    qc_metrics["hemisphere_coverage"] = "bilateral"
-                elif n_left > 0:
-                    qc_metrics["hemisphere_coverage"] = "unilateral_left"
-                else:
-                    qc_metrics["hemisphere_coverage"] = "unilateral_right"
+                qc_metrics["hemisphere_coverage"] = hemi_cov
 
             # Venous contamination detection and warning
             # Check if any candidates were flagged as likely venous

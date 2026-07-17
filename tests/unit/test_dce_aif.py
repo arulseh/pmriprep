@@ -7,6 +7,11 @@ import pytest
 
 from pmriprep.interfaces.dce_aif import (
     AIFDetection,
+    _apply_aif_scale,
+    _classify_hemisphere,
+    _compute_pool_qc,
+    _count_slabs_spanned,
+    _evaluate_gates,
     _inflow_exclusion_mm,
     compute_dce_aif_fwhm_seconds,
     compute_dce_aif_peak_amplitude_warning,
@@ -2862,3 +2867,131 @@ class TestCascadeGateDecisions:
         for entry in result.tier_gate_decisions:
             if entry["outcome"].startswith("skipped"):
                 assert entry["decisions"] == []
+
+
+# =============================================================================
+# _score_and_gate_pool extraction (v0.81.1)
+# =============================================================================
+
+
+class TestScoreAndGatePool:
+    """Pin the extracted ``_score_and_gate_pool`` helper.
+
+    The helper must reproduce the exact average -> plasma-convert -> scale ->
+    QC -> hemisphere/slabs -> gate sequence the progressive-trim loop and the
+    post-cascade C2 re-gate previously inlined. The extraction is
+    behavior-preserving only if the helper is a faithful composition of those
+    primitives; these tests pin it against a manual replay and exercise the C2
+    candidate-set-divergence path that was previously uncovered.
+    """
+
+    @staticmethod
+    def _make_detector(hematocrit: float = 0.42) -> AIFDetection:
+        det = AIFDetection()
+        det.inputs.hematocrit = hematocrit
+        det.inputs.dose = 1.0
+        det.inputs.agent_standard_dose = 0.1
+        det.inputs.target_peak = 0.0
+        det.inputs.field_strength = 3.0
+        return det
+
+    @staticmethod
+    def _bilateral_affine() -> np.ndarray:
+        # world_x = vox_i - 5  ->  i < 5 is left (x < 0), i >= 5 is right.
+        aff = np.eye(4, dtype=np.float64)
+        aff[0, 3] = -5.0
+        return aff
+
+    def test_matches_manual_primitive_composition(self) -> None:
+        """Helper output is bit-for-bit the manual primitive sequence."""
+        tr, baseline_frames, hct = 4.0, 5, 0.42
+        cands = [(3, 10, 1), (7, 10, 2), (7, 11, 3)]  # left + right, 3 slabs
+        conc_data, brain_mask = _make_synthetic_dce_4d(
+            shape=(12, 14, 6, 40), baseline_frames=baseline_frames, tr=tr,
+            arterial_coords=cands, arterial_peak=5.0,
+        )
+        affine = self._bilateral_affine()
+        scores = [0.9, 0.8, 0.7]
+        det = self._make_detector(hematocrit=hct)
+
+        outcome = det._score_and_gate_pool(
+            cands, scores, conc_data, brain_mask, affine, tr,
+            baseline_frames, hct, 0.0, "MCA_ACA_dce_strict",
+        )
+
+        # Manual replay of the identical primitive sequence.
+        curve_blood, _ = AIFDetection._compute_weighted_roi_aif(
+            cands, scores, conc_data, brain_mask, tr=tr,
+        )
+        curve_plasma = curve_blood / (1.0 - hct)
+        curve_scaled, sf = _apply_aif_scale(
+            curve_plasma, hct, 0.0, det._get_expected_peak_range,
+        )
+        qc = _compute_pool_qc(curve_scaled, tr, baseline_frames)
+        hemi, _nl, _nr = _classify_hemisphere(cands, affine)
+        n_slabs = _count_slabs_spanned(cands)
+        status, decision = _evaluate_gates(
+            sf, qc, "MCA_ACA_dce_strict", len(cands), hemi, n_slabs,
+        )
+
+        np.testing.assert_array_equal(outcome.curve_scaled, curve_scaled)
+        assert outcome.scale_factor == sf
+        assert outcome.qc == qc
+        assert outcome.hemisphere == hemi == "bilateral"
+        assert outcome.n_slabs == n_slabs == 3
+        assert outcome.status == status
+        assert outcome.decision == decision
+
+    def test_emitted_curve_is_anchored_to_plasma_target(self) -> None:
+        """Emitted curve is amplitude-anchored (the C2 emit invariant).
+
+        Its peak lands at the plasma-unit target, not the raw detected peak.
+        """
+        tr, baseline_frames, hct = 4.0, 5, 0.42
+        cands = [(3, 10, 1), (7, 10, 2)]
+        conc_data, brain_mask = _make_synthetic_dce_4d(
+            shape=(12, 14, 6, 40), baseline_frames=baseline_frames, tr=tr,
+            arterial_coords=cands, arterial_peak=5.0,
+        )
+        det = self._make_detector(hematocrit=hct)
+
+        outcome = det._score_and_gate_pool(
+            cands, [0.9, 0.8], conc_data, brain_mask, self._bilateral_affine(),
+            tr, baseline_frames, hct, 0.0, "MCA_ACA_dce_strict",
+        )
+
+        peak_min, peak_max = det._get_expected_peak_range()
+        target = (peak_min + peak_max) / 2.0 / (1.0 - hct)
+        assert float(np.max(outcome.curve_scaled)) == pytest.approx(
+            target, rel=1e-4,
+        )
+
+    def test_c2_divergence_rescores_shrunken_subset(self) -> None:
+        """C2 path re-scores the EMITTED (post-filter) subset.
+
+        A shrunken candidate set (not the pre-filter pool) produces its own
+        scaled curve and a gate decision sized to the subset.
+        """
+        tr, baseline_frames, hct = 4.0, 5, 0.42
+        full = [(3, 10, 1), (7, 10, 2), (7, 11, 3)]
+        conc_data, brain_mask = _make_synthetic_dce_4d(
+            shape=(12, 14, 6, 40), baseline_frames=baseline_frames, tr=tr,
+            arterial_coords=full, arterial_peak=5.0,
+        )
+        affine = self._bilateral_affine()
+        det = self._make_detector(hematocrit=hct)
+
+        subset = full[:2]  # emulate a post-cascade filter dropping one voxel
+        outcome = det._score_and_gate_pool(
+            subset, [0.9, 0.8], conc_data, brain_mask, affine, tr,
+            baseline_frames, hct, 0.0, "MCA_ACA_dce_strict",
+        )
+
+        assert outcome.decision["n_pool"] == 2
+        assert outcome.n_slabs == _count_slabs_spanned(subset)
+        assert np.all(np.isfinite(outcome.curve_scaled))
+        peak_min, peak_max = det._get_expected_peak_range()
+        target = (peak_min + peak_max) / 2.0 / (1.0 - hct)
+        assert float(np.max(outcome.curve_scaled)) == pytest.approx(
+            target, rel=1e-4,
+        )
