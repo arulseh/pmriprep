@@ -1,6 +1,6 @@
 """Unit tests for DCE AIF detection fixes: ROI averaging, FWHM validation, atlas cascade."""
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
@@ -22,6 +22,8 @@ from pmriprep.data import get_arterial_atlas_cascade
 from pmriprep.utils.dce_constants import (
     AIF_THRESHOLDS_PERMISSIVE,
     DCE_AIF_PEAK_RATIO_WARN_THRESHOLD,
+    DCE_AIF_SCALE_WARN_SUBSTANTIAL,
+    DCE_AIF_SCALE_WARN_UNRELIABLE,
     DCE_AIF_TAIL_PEAK_FRACTION,
     INFLOW_EXCLUSION_MAX_SLAB_FRACTION,
     INFLOW_EXCLUSION_MM_INFERIOR_BASE,
@@ -545,20 +547,18 @@ class TestAIFScalingUnitFix:
         assert plasma_target == pytest.approx(8.621, rel=1e-3)
 
     def test_warning_thresholds_calibrated_for_plasma_scale(self) -> None:
-        """Warning thresholds 3.4 and 5.2 are ~1/(1-Hct) × old thresholds 2.0/3.0.
+        """Pass-2 WARN thresholds are fixed Hct-invariant scale-ratio bars.
 
-        Regression guard: scaling_factor=2.5 should NOT trigger warning
-        (would have under the old 2.0 threshold). Scaling_factor=3.5 triggers
-        the low-confidence warning (>3.4). Scaling_factor=5.3 triggers
-        unreliable (>5.2).
+        scaling_factor is a pure blood-amplitude ratio (the 1/(1-Hct) cancels),
+        so the thresholds are fixed. Guard: 2.5 does NOT warn, 3.5 trips
+        SUBSTANTIAL, 5.3 trips UNRELIABLE. Bound to the production constants so
+        this actually pins their values.
         """
-        # Proportional scaling
-        assert 2.0 / (1.0 - 0.42) == pytest.approx(3.448, rel=1e-3)  # ~3.4
-        assert 3.0 / (1.0 - 0.42) == pytest.approx(5.172, rel=1e-3)  # ~5.2
-        # Regression guard
-        assert 2.5 <= 3.4  # below new low-confidence threshold
-        assert 3.5 > 3.4   # above new low-confidence threshold
-        assert 5.3 > 5.2   # above new unreliable threshold
+        assert DCE_AIF_SCALE_WARN_SUBSTANTIAL == pytest.approx(3.4)
+        assert DCE_AIF_SCALE_WARN_UNRELIABLE == pytest.approx(5.2)
+        assert 2.5 <= DCE_AIF_SCALE_WARN_SUBSTANTIAL  # below → no warning
+        assert 3.5 > DCE_AIF_SCALE_WARN_SUBSTANTIAL   # trips SUBSTANTIAL
+        assert 5.3 > DCE_AIF_SCALE_WARN_UNRELIABLE    # trips UNRELIABLE
 
     def test_scaling_block_end_to_end_on_plasma_curve(self) -> None:
         """Integration-flavored: replay the landed scaling arithmetic against
@@ -1790,7 +1790,11 @@ class TestDCEAIFDetectionLesionMaskFileTrait:
 # =============================================================================
 
 from pmriprep.interfaces.dce_aif import (  # noqa: E402
+    CascadeResult,
+    GateDecision,
     GateQC,
+    PoolGateOutcome,
+    TierResult,
     _apply_aif_scale,
     _compute_pool_qc,
     _count_slabs_spanned,
@@ -2995,3 +2999,108 @@ class TestScoreAndGatePool:
         assert float(np.max(outcome.curve_scaled)) == pytest.approx(
             target, rel=1e-4,
         )
+
+
+# =============================================================================
+# In-situ C2 divergence branch inside _run_interface (v0.81.2)
+# =============================================================================
+
+
+class TestC2DivergenceInSitu:
+    """Drive the C2 re-gate/rebuild branch inside ``_run_interface``.
+
+    The `if cur_cand_set != tier_cand_set:` routing is otherwise pinned only
+    via the direct `_score_and_gate_pool` helper tests. This forces divergence
+    (the cascade's `tier_result.candidates` a strict superset of the emitted
+    `candidates`) with a mocked cascade + a spy on `_score_and_gate_pool`, and
+    asserts `_run_interface` routes the spy's outcome into the emitted AIF and
+    rebuilds `tier_result` from it (so the emitted status — not the original
+    cascade status — drives provenance).
+    """
+
+    @staticmethod
+    def _write_niftis(tmp_path):
+        import nibabel as nib
+
+        conc_data, brain_mask = _make_synthetic_dce_4d(shape=(20, 20, 20, 40))
+        affine = np.eye(4, dtype=np.float64)
+        conc_f = tmp_path / "conc.nii.gz"
+        mask_f = tmp_path / "brain.nii.gz"
+        nib.save(nib.Nifti1Image(conc_data, affine), str(conc_f))
+        nib.save(nib.Nifti1Image(brain_mask.astype(np.uint8), affine), str(mask_f))
+        return str(conc_f), str(mask_f)
+
+    @staticmethod
+    def _full_metric(peak_mm: float = 4.0) -> dict:
+        return {
+            "peak_mm": peak_mm, "fwhm_seconds": 12.0, "fwhm_frames": 3.0,
+            "washout": 0.8, "cnr": 20.0, "auc": 60.0, "upstroke_slope": 1.0,
+            "tier_used": 1, "is_likely_venous": False, "peak_time_frame": 7,
+        }
+
+    def test_c2_branch_routes_rebuilt_outcome(self, tmp_path, monkeypatch) -> None:
+        """Divergent pool routes the spy outcome into the emitted AIF + rebuild."""
+        conc_f, mask_f = self._write_niftis(tmp_path)
+        monkeypatch.chdir(tmp_path)
+
+        a, b, c = (10, 10, 10), (10, 12, 10), (12, 10, 10)
+        emitted = [a, b]        # post-cascade pool that reaches the emit block
+        tier_pool = [a, b, c]   # strict superset -> divergence at C2
+        scores = [0.9, 0.8]
+        metrics = [self._full_metric(), self._full_metric()]
+
+        # The cascade's tier_result carries a PASSing status; only the C2
+        # rebuild (via the spy's FAIL outcome) can flip provenance to reduced.
+        orig_tier = TierResult(
+            candidates=tier_pool, scores=[0.9, 0.8, 0.7],
+            metrics=[self._full_metric()] * 3,
+            curve_scaled=np.zeros(40), scale_factor=1.5, qc=_make_qc(),
+            atlas_tier="MCA_ACA_dce_strict", hemisphere="bilateral",
+            n_slabs=2, status="PASS", gate_decisions=[],
+        )
+        cascade = CascadeResult(
+            candidates=emitted, scores=scores, metrics_list=metrics,
+            detection_method="atlas", atlas_tier_used="MCA_ACA_dce_strict",
+            cascade_tiers_attempted=1, anchor_outcomes=[],
+            tier_result=orig_tier, tier_gate_decisions=[],
+        )
+
+        t = np.arange(40.0)
+        sentinel_curve = 7.0 * np.exp(-0.5 * ((t - 8.0) / 2.0) ** 2)
+        sentinel_curve[:5] = 0.0
+        sentinel = PoolGateOutcome(
+            curve_scaled=sentinel_curve, scale_factor=2.5, qc=_make_qc(),
+            hemisphere="bilateral", n_slabs=2, status="FAIL_G2",
+            decision=GateDecision(
+                tier="MCA_ACA_dce_strict", n_pool=2, scale_factor=2.5,
+                qc=_make_qc(), status="FAIL_G2", failing_gate="G2", warns=[],
+            ),
+        )
+        spy = MagicMock(return_value=sentinel)
+
+        iface = AIFDetection()
+        iface.inputs.concentration_file = conc_f
+        iface.inputs.brain_mask_file = mask_f
+        iface.inputs.tr = 4.0
+
+        with patch.object(
+            AIFDetection, "_run_two_pass_cascade", return_value=cascade,
+        ), patch.object(
+            AIFDetection, "_ensure_bilateral_balance",
+            side_effect=lambda cands, scs, mets, *a, **k: (cands, scs, mets),
+        ), patch.object(AIFDetection, "_score_and_gate_pool", spy):
+            iface.run()
+
+        # C2 entered: the spy was invoked once, on the diverged (emitted) pool.
+        spy.assert_called_once()
+        assert list(spy.call_args.args[0]) == emitted
+
+        res = iface._results
+        # Emitted AIF + scale factor come from the spy's outcome.
+        np.testing.assert_allclose(res["aif_curve"], sentinel_curve)
+        assert res["scaling_factor"] == pytest.approx(2.5)
+        assert res["candidate_count"] == 2
+        # Rebuilt tier_result carried the FAIL status through: the original
+        # cascade tier_result was PASS, so a "reduced" confidence proves the
+        # C2 rebuild (not the original) drives downstream provenance.
+        assert res["aif_confidence"] == "reduced"

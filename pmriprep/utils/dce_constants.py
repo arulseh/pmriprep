@@ -435,6 +435,16 @@ DCE_AIF_GATE_SCALE_G6_CEILING: Final[float] = 8.0
 #: AIF noise amplification warrants population-equivalent uncertainty.
 DCE_AIF_GATE_SCALE_G6_HIGH: Final[float] = 6.0
 
+#: Pass-2 fallback amplitude-scaling WARN thresholds (report-only; unlike the
+#: DCE_AIF_GATE_SCALE_* gates above, these never reject). They act on the
+#: Hct-invariant blood-amplitude scale ratio (population target / detected
+#: peak): the (1-Hct) plasma conversion cancels between numerator and
+#: denominator, so a fixed bar is correct and must not be re-derived per Hct.
+#: SUBSTANTIAL: detected peak below ~1/3.4 (~29%) of the population target.
+DCE_AIF_SCALE_WARN_SUBSTANTIAL: Final[float] = 3.4
+#: UNRELIABLE: detected peak below ~1/5.2 (~19%) of the population target.
+DCE_AIF_SCALE_WARN_UNRELIABLE: Final[float] = 5.2
+
 #: G2 — late-tail/peak ratio HARD reject threshold.
 #: Parker bi-exponential arterial plasma decays to <=0.20 by 2 min
 #: post-peak; venous mixing produces persistent late-tail above 0.40.

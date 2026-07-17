@@ -62,6 +62,8 @@ from pmriprep.utils.dce_constants import (
     DCE_AIF_GATE_SCALE_HARD,
     DCE_AIF_MIN_TRIM_POOL,
     DCE_AIF_PEAK_RATIO_WARN_THRESHOLD,
+    DCE_AIF_SCALE_WARN_SUBSTANTIAL,
+    DCE_AIF_SCALE_WARN_UNRELIABLE,
     DCE_AIF_TAIL_MIN_SEPARATION_SECONDS,
     DCE_AIF_TAIL_PEAK_FRACTION,
     DCE_AIF_TAIL_SHOULDER_SECONDS,
@@ -898,7 +900,9 @@ def _apply_aif_scale(
     Returns
     -------
     (np.ndarray, float)
-        ``(scaled_curve, scaling_factor)``.
+        ``(scaled_curve, scaling_factor)``. Given plasma-converted input the
+        factor is a pure blood-amplitude ratio (target / detected peak); the
+        ``1 / (1 - Hct)`` on both cancels, so it is Hct-invariant.
     """
     current_peak = float(np.max(aif_curve))
     if current_peak <= MIN_MEANINGFUL_ENHANCEMENT_MM:
@@ -4821,20 +4825,22 @@ class AIFDetection(BaseInterface):
                 target_peak,
                 self._get_expected_peak_range,
             )
-            # Warning thresholds scaled by 1/(1-Hct) ≈ 1.72 at Hct=0.42 so the same
-            # fraction of subjects triggers as pre-fix (2.0→3.4, 3.0→5.2 at Hct=0.42).
-            if scaling_factor > 5.2:
+            # scaling_factor is a pure blood-amplitude ratio (population target /
+            # detected peak): the 1/(1-Hct) plasma conversion cancels between the
+            # two, so these WARN thresholds are fixed and Hct-invariant — a
+            # detected arterial peak far below the population target.
+            if scaling_factor > DCE_AIF_SCALE_WARN_UNRELIABLE:
                 logger.warning(
-                    "AIF scaling factor %.2f > 5.2 — detected AIF peak "
+                    "AIF scaling factor %.2f > %.1f — detected AIF peak "
                     "(%.2f mM plasma) is far below expected arterial range. "
                     "Results may be unreliable.",
-                    scaling_factor, current_peak,
+                    scaling_factor, DCE_AIF_SCALE_WARN_UNRELIABLE, current_peak,
                 )
-            elif scaling_factor > 3.4:
+            elif scaling_factor > DCE_AIF_SCALE_WARN_SUBSTANTIAL:
                 logger.warning(
-                    "AIF scaling factor %.2f > 3.4 — detected AIF peak "
+                    "AIF scaling factor %.2f > %.1f — detected AIF peak "
                     "(%.2f mM plasma) is substantially below expected range.",
-                    scaling_factor, current_peak,
+                    scaling_factor, DCE_AIF_SCALE_WARN_SUBSTANTIAL, current_peak,
                 )
 
         # Compute final AIF metrics
@@ -4915,7 +4921,7 @@ class AIFDetection(BaseInterface):
                 "blood_t1_seconds": blood_t1,
                 "field_strength_t": field_strength,
                 "scaling_factor": scaling_factor,
-                "scaling_factor_warning": scaling_factor > 3.4,
+                "scaling_factor_warning": scaling_factor > DCE_AIF_SCALE_WARN_SUBSTANTIAL,
                 "detection_method": detection_method,
                 "quality_score": quality_score,
                 "baseline_frames": baseline_frames,
