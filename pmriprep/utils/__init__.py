@@ -25,20 +25,6 @@ from pmriprep.utils.outputs import (
     has_input,
     write_json_sidecar,
 )
-from pmriprep.utils.dce_aif import (
-    DCEAIFQualityMetrics,
-    DCEAIFQualityResult,
-    assess_dce_aif_quality,
-    assess_dce_aif_quality_from_file,
-    compute_dce_auc,
-    compute_dce_baseline_mean,
-    compute_dce_baseline_std,
-    compute_dce_cnr,
-    compute_dce_fwhm_seconds,
-    compute_dce_peak_concentration,
-    compute_dce_time_to_peak,
-    compute_dce_washout_fraction,
-)
 from pmriprep.utils.dce_dsc_validation import (
     ValidationMetrics,
     ValidationResult,
@@ -95,19 +81,6 @@ __all__ = [
     "copy_derivative",
     "has_input",
     "write_json_sidecar",
-    # dce_aif
-    "DCEAIFQualityMetrics",
-    "DCEAIFQualityResult",
-    "assess_dce_aif_quality",
-    "assess_dce_aif_quality_from_file",
-    "compute_dce_auc",
-    "compute_dce_baseline_mean",
-    "compute_dce_baseline_std",
-    "compute_dce_cnr",
-    "compute_dce_fwhm_seconds",
-    "compute_dce_peak_concentration",
-    "compute_dce_time_to_peak",
-    "compute_dce_washout_fraction",
     # dce_dsc_validation
     "ValidationMetrics",
     "ValidationResult",

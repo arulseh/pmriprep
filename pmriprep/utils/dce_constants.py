@@ -1023,6 +1023,51 @@ AIF_FWHM_MAX_RELAXED_SECONDS: Final[float] = 45.0
 #: Ideal arterial FWHM in seconds for scoring.
 AIF_IDEAL_FWHM_SECONDS: Final[float] = 12.0
 
+#: Half-width (seconds) of the FWHM acceptance band around the ideal, used by the
+#: averaged-AIF fidelity scorer.
+AIF_FWHM_BAND_HALFWIDTH_SECONDS: Final[float] = 8.0
+
+#: Averaged-AIF fidelity scorer — physiologic first-pass arterial washout fraction
+#: (peak vs late-tail-mean), the two-sided band center. The true DCE AIF sits ~0.78
+#: (measured on the OSIPI DRO GT; Parker-derived range 0.75-0.9). A tail-collapsed /
+#: partial-volume AIF over-washes (>~0.90) and is penalized; a tissue-diluted AIF
+#: under-washes (<~0.6) and is penalized. NOT the thin-tailed pure-Parker-template
+#: value (~0.90), which would reward collapse.
+AIF_WASHOUT_PHYSIOLOGIC_CENTER: Final[float] = 0.78
+
+#: Lower half-width of the washout acceptance band (strict). An under-washed AIF
+#: (washout < center) is the strong contamination signal — persistent enhancement
+#: from tissue / venous / partial-volume-with-parenchyma — so penalize it steeply.
+AIF_WASHOUT_BAND_HALFWIDTH: Final[float] = 0.13
+
+#: Upper half-width of the washout band (lenient). An over-washed AIF (washout >
+#: center) is mostly the benign consequence of a long acquisition: the fixed
+#: last-frames tail is sampled deeper into renal clearance, so a genuine sharp
+#: artery reads ~0.85-0.91 on an 8-10 min scan. Tail-collapse contamination is not
+#: distinguished by washout magnitude (peak/FWHM/upslope/multi-bump catch it), so
+#: the upper penalty is soft — this keeps long-acquisition arteries above the
+#: candidate accept gate (generalizability across 2-8+ min DCE).
+AIF_WASHOUT_BAND_HALFWIDTH_UPPER: Final[float] = 0.20
+
+#: Averaged-AIF fidelity scorer — physiologic late-tail persistence (late-tail-mean
+#: / peak). Recirculation plus renal clearance sustain a plateau ~0.2-0.3 of peak;
+#: below the floor is a collapsed (over-washed / partial-volume-diluted) tail.
+AIF_TAIL_PERSISTENCE_TARGET: Final[float] = 0.25
+AIF_TAIL_PERSISTENCE_FLOOR: Final[float] = 0.15
+
+#: Averaged-AIF fidelity scorer — CNR reward saturates here (peak-SNR beyond ~15-20
+#: adds no reliability), so a multi-voxel average cannot buy back a degraded tail
+#: through CNR alone.
+AIF_CNR_SATURATION: Final[float] = 17.5
+
+# NOTE: the averaged-AIF fidelity composite (interfaces/dce_aif.py) is a QC /
+# regression-sentinel scalar, NOT a runtime accept/reject gate. Real detected AIFs
+# cluster low (they systematically under-recover the real-MCA late tail, which is
+# second-order for Ktrans), so no threshold on this scalar cleanly separates a good
+# detection from gross contamination. Contamination is gated on the specific
+# signatures (DCE_AIF_GATE_LATE_TAIL_RATIO_MAX, washout floors, peak band, FWHM,
+# causality); no fidelity threshold constant is defined by design.
+
 
 def compute_timing_margin_frames(tr: float) -> int:
     """Compute TR-adaptive timing margin in frames.

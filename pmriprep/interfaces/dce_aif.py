@@ -30,12 +30,19 @@ from nipype.interfaces.base import (  # type: ignore[import-untyped]
 )
 
 from pmriprep.utils.dce_constants import (
+    AIF_CNR_SATURATION,
+    AIF_FWHM_BAND_HALFWIDTH_SECONDS,
     AIF_FWHM_NOISE_SCORE,
     AIF_FWHM_SCORING_WIDTH,
     AIF_FWHM_VENOUS_SCORE,
     AIF_FWHM_MAX_RELAXED_SECONDS,
     AIF_IDEAL_FWHM_SECONDS,
     AIF_PEAK_TIMING_FRACTION,
+    AIF_TAIL_PERSISTENCE_FLOOR,
+    AIF_TAIL_PERSISTENCE_TARGET,
+    AIF_WASHOUT_BAND_HALFWIDTH,
+    AIF_WASHOUT_BAND_HALFWIDTH_UPPER,
+    AIF_WASHOUT_PHYSIOLOGIC_CENTER,
     AIF_WASHOUT_THRESHOLD_RELAXED,
     AIF_WASHOUT_THRESHOLD_STRICT,
     BRAIN_EROSION_ITERATIONS,
@@ -618,6 +625,201 @@ def compute_dce_aif_ratio_30s(
     if f_post >= aif_curve.size:
         return None
     return float(aif_curve[f_post] / pk)
+
+
+def resample_parker_template(
+    frame_times_s: npt.NDArray[Any],
+    dose_factor: float = 1.0,
+) -> npt.NDArray[Any]:
+    """Parker population AIF sampled on the acquisition frame grid.
+
+    Wraps :func:`parker_population_aif` so the reference shape is defined at the
+    *actual* frame times rather than a fixed grid. This keeps every downstream
+    fidelity comparison invariant to temporal resolution and acquisition length.
+
+    Parameters
+    ----------
+    frame_times_s : np.ndarray
+        Frame times in seconds (monotonic, starting at 0).
+    dose_factor : float, optional
+        Molar-dose scaling passed through to :func:`parker_population_aif`.
+
+    Returns
+    -------
+    np.ndarray
+        Parker template concentration (mM) at ``frame_times_s``.
+    """
+    return parker_population_aif(np.asarray(frame_times_s, dtype=float), dose_factor)
+
+
+def _two_sided_band_score(value: float, center: float, half_width: float) -> float:
+    """Tent score in [0, 1]: 1 at ``center``, 0 at ``center +/- half_width``."""
+    if half_width <= 0.0:
+        return 1.0 if value == center else 0.0
+    return float(max(0.0, 1.0 - abs(value - center) / half_width))
+
+
+def _asymmetric_band_score(
+    value: float, center: float, lower_half_width: float, upper_half_width: float,
+) -> float:
+    """Asymmetric tent in [0, 1]: 1 at ``center``, with independent widths.
+
+    Used for washout, where deviation below the physiologic center is a strong
+    contamination signal (strict, ``lower_half_width``) but deviation above is
+    mostly benign long-acquisition drift (lenient, ``upper_half_width``).
+    """
+    hw = lower_half_width if value <= center else upper_half_width
+    if hw <= 0.0:
+        return 1.0 if value == center else 0.0
+    return float(max(0.0, 1.0 - abs(value - center) / hw))
+
+
+def score_averaged_aif_fidelity(
+    aif_curve: npt.NDArray[Any],
+    tr: float,
+    baseline_frames: int = 5,
+    dose_factor: float = 1.0,
+) -> tuple[float, dict[str, float]]:
+    """Physics-grounded fidelity score (0-1) for a *pooled/averaged* DCE AIF.
+
+    Unlike the per-candidate scorer (whose mean over voxels never inspects the
+    pooled curve), this evaluates the emitted, pooled AIF directly. It is a QC /
+    regression-sentinel scalar: it rank-orders a faithful arterial AIF above a
+    tail-collapsed (over-washed) or partial-volume-diluted one — the two failure
+    modes that bias Ktrans. It is NOT a runtime accept/reject gate (real detected
+    AIFs cluster low because they systematically under-recover the real-MCA late
+    tail, a second-order effect for Ktrans); per-subject contamination is gated on
+    the specific signatures (tail-ratio, washout floors, peak band, FWHM, causality).
+
+    Caveat: the washout and tail-persistence terms use a fixed last-frames tail, so
+    this QC scalar reads slightly higher on acquisitions longer than ~7 min (the tail
+    is sampled deeper into renal clearance). Cosmetic here — this scalar never gates;
+    the gating per-candidate scorer uses an asymmetric washout band to absorb the drift.
+
+    Anchored to physiologic arterial targets, not to pmriprep's Parker template:
+    the true DCE AIF is a real hematocrit-corrected middle-cerebral-artery curve
+    (per the OSIPI DRO ground truth) with a heavier recirculation tail than
+    idealized Parker, so a shape residual vs Parker would penalize the true AIF.
+
+    Terms (each in [0, 1], then weighted):
+
+    - **washout**: two-sided deviation from the physiologic arterial washout
+      (:data:`AIF_WASHOUT_PHYSIOLOGIC_CENTER`); never "more is better".
+    - **tail**: late-tail-mean / peak, two-sided around the physiologic persistence
+      plateau — penalizes both a collapsed tail and a tissue-diluted (too-high) one.
+    - **scale**: peak in the dose-scaled band + a one-sided AUC floor vs Parker
+      (a normalized-only score would hide the amplitude error that biases
+      Ktrans ~ 1 / AIF integral; a richer-than-Parker AUC is physiologic).
+    - **width**: FWHM near :data:`AIF_IDEAL_FWHM_SECONDS` + a positive upslope (a
+      broad venous curve fails the sharp arterial upstroke).
+
+    Parameters
+    ----------
+    aif_curve : np.ndarray
+        Emitted AIF concentration (mM), plasma-corrected as delivered.
+    tr : float
+        Temporal resolution in seconds.
+    baseline_frames : int, optional
+        Number of pre-contrast frames.
+    dose_factor : float, optional
+        Molar-dose factor for the template + peak band (1.0 = full dose).
+
+    Returns
+    -------
+    tuple of (float, dict)
+        The composite fidelity score and the per-term sub-scores/metrics.
+    """
+    curve = np.asarray(aif_curve, dtype=float)
+    metrics: dict[str, float] = {}
+    # Need >= baseline + 6 frames so the last-5-frame washout tail is meaningful,
+    # a positive tr for the time-based windows, and a positive peak.
+    if (
+        tr <= 0.0
+        or curve.size < baseline_frames + 6
+        or float(np.max(curve)) <= 0.0
+    ):
+        return 0.0, {"fidelity_valid": 0.0}
+
+    frame_times = np.arange(curve.size, dtype=float) * tr
+    # Arrival-aligned Parker template, used only as a one-sided AUC floor (a real
+    # MCA AIF — the OSIPI DRO ground truth is a hematocrit-corrected middle-
+    # cerebral-artery curve, not a Parker form — carries a heavier recirculation
+    # tail than idealized Parker, so a full post-peak *shape* residual vs Parker
+    # would penalize the true richer AIF. Discrimination therefore comes from the
+    # physiologic scalar terms below, not a shape-vs-Parker residual.)
+    native = resample_parker_template(frame_times, dose_factor)
+    t_shift = float(np.argmax(curve)) * tr - float(np.argmax(native)) * tr
+    template = resample_parker_template(frame_times - t_shift, dose_factor)
+
+    # --- scale: absolute peak (two-sided band) + AUC (one-sided floor) ---
+    peak = compute_dce_aif_peak_concentration(curve)
+    peak_min = DCE_AIF_EXPECTED_FULL_DOSE.peak_min_mm * dose_factor
+    peak_max = DCE_AIF_EXPECTED_FULL_DOSE.peak_max_mm * dose_factor
+    peak_center = 0.5 * (peak_min + peak_max)
+    peak_score = _two_sided_band_score(
+        peak, peak_center, 0.5 * (peak_max - peak_min) + peak_center * 0.15
+    )
+    auc = compute_dce_aif_auc(curve, tr)
+    template_auc = compute_dce_aif_auc(template, tr)
+    auc_ratio = auc / template_auc if template_auc > 0 else 0.0
+    # One-sided: a richer-than-Parker AUC is physiologic; only penalize a deficient
+    # AUC (tail collapse / partial-volume dilution → too little tracer delivered).
+    auc_score = 1.0 if auc_ratio >= 1.0 else max(0.0, 1.0 - (1.0 - auc_ratio) / 0.5)
+    scale_score = 0.5 * peak_score + 0.5 * auc_score
+    metrics["peak_mm"] = peak
+    metrics["auc_ratio"] = auc_ratio
+    metrics["scale_score"] = scale_score
+
+    # --- width: FWHM band + positive upslope ---
+    fwhm = compute_dce_aif_fwhm_seconds(curve, tr, baseline_frames)
+    fwhm_score = _two_sided_band_score(
+        fwhm, AIF_IDEAL_FWHM_SECONDS, AIF_FWHM_BAND_HALFWIDTH_SECONDS
+    )
+    peak_idx = int(np.argmax(curve))
+    upslope = 0.0
+    if peak_idx > baseline_frames:
+        seg = curve[baseline_frames:peak_idx + 1]
+        if seg.size > 1:
+            upslope = float(np.max(np.diff(seg) / tr))
+    upslope_score = 1.0 if upslope > 0.0 else 0.0
+    width_score = 0.7 * fwhm_score + 0.3 * upslope_score
+    metrics["fwhm_seconds"] = fwhm
+    metrics["width_score"] = width_score
+
+    # --- tail persistence: late-tail-mean / peak (two-sided physiologic band) ---
+    # Peaked at the physiologic recirculation plateau; penalized both below the
+    # collapse floor (tail-collapse / over-washout — V1, over-selected AIFs) AND
+    # above it (a tissue-diluted partial-volume AIF does not wash out, so its tail
+    # sits too high). Half-width = target - floor puts the lower zero at the floor.
+    tail_frames = max(1, int(round(30.0 / tr)))
+    tail_ratio = float(np.mean(curve[-tail_frames:])) / peak if peak > 0 else 0.0
+    tail_score = _two_sided_band_score(
+        tail_ratio,
+        AIF_TAIL_PERSISTENCE_TARGET,
+        AIF_TAIL_PERSISTENCE_TARGET - AIF_TAIL_PERSISTENCE_FLOOR,
+    )
+    metrics["tail_ratio"] = tail_ratio
+    metrics["tail_score"] = tail_score
+
+    # --- washout: two-sided deviation from the physiologic arterial center ---
+    washout = compute_dce_aif_washout(curve, baseline_frames)
+    washout_score = _two_sided_band_score(
+        washout, AIF_WASHOUT_PHYSIOLOGIC_CENTER, AIF_WASHOUT_BAND_HALFWIDTH
+    )
+    metrics["washout"] = washout
+    metrics["washout_score"] = washout_score
+
+    # Washout and tail-persistence jointly carry the tail-collapse / partial-volume
+    # discrimination; scale guards the amplitude (Ktrans ~ 1/AIF integral); width
+    # rejects broad venous curves.
+    fidelity = (
+        0.30 * washout_score
+        + 0.30 * tail_score
+        + 0.25 * scale_score
+        + 0.15 * width_score
+    )
+    metrics["fidelity"] = fidelity
+    return float(fidelity), metrics
 
 
 # =============================================================================
@@ -1266,9 +1468,6 @@ class AIFDetection(BaseInterface):
     reference. It represents a well-characterized arterial input for
     standard contrast dose.
 
-    See Also
-    --------
-    pmriprep.utils.dce_aif : Core DCE AIF utilities (US-061, US-062)
     """
 
     input_spec = DCEAIFDetectionInputSpec
@@ -2259,13 +2458,24 @@ class AIFDetection(BaseInterface):
         peak_score = max(0.0, 1.0 - peak_deviation)
         score += 0.20 * peak_score
 
-        # CNR contribution (0-0.15): higher is better
-        cnr_score = min(1.0, cnr / 50.0)
+        # CNR contribution (0-0.15): higher is better, but saturated so a
+        # multi-voxel average cannot buy back a degraded tail through CNR alone.
+        cnr_score = min(1.0, cnr / AIF_CNR_SATURATION)
         score += 0.15 * cnr_score
 
-        # Washout contribution: higher washout = more arterial
-        washout_score = min(1.0, washout / 0.7)
-        score += w_washout * max(0.0, washout_score)
+        # Washout contribution: asymmetric band around the physiologic arterial
+        # washout. A monotonic "higher washout = better" reward is wrong — it
+        # rewards an under-washed (tissue-diluted) or collapsed tail. Penalize
+        # under-washing steeply (contamination) but over-washing softly: on a long
+        # acquisition a genuine artery reads high simply because the fixed tail is
+        # sampled deeper into renal clearance, and it must still clear the accept gate.
+        washout_score = _asymmetric_band_score(
+            washout,
+            AIF_WASHOUT_PHYSIOLOGIC_CENTER,
+            AIF_WASHOUT_BAND_HALFWIDTH,
+            AIF_WASHOUT_BAND_HALFWIDTH_UPPER,
+        )
+        score += w_washout * washout_score
 
         # FWHM contribution: closer to ideal first-pass width
         ideal_fwhm = AIF_IDEAL_FWHM_SECONDS
@@ -3809,26 +4019,11 @@ class AIFDetection(BaseInterface):
         final_auc = compute_dce_aif_auc(aif_curve, tr)
         final_washout = compute_dce_aif_washout(aif_curve, baseline_frames)
 
-        # Compute quality score from measured metrics (not hardcoded)
-        quality_score = 0.0
-        # Peak in physiological range (0-0.3)
-        if 2.0 <= final_peak <= 15.0:
-            quality_score += 0.3
-        elif 1.0 <= final_peak <= 20.0:
-            quality_score += 0.15
-        # FWHM in expected range (0-0.25): 8-25s typical
-        if 5.0 <= final_fwhm <= 40.0:
-            quality_score += 0.25
-        elif final_fwhm > 0:
-            quality_score += 0.1
-        # Washout > 0.2 is arterial (0-0.25)
-        quality_score += min(final_washout / 0.6, 1.0) * 0.25
-        # Baseline stability (0-0.2)
-        if baseline_frames > 1 and baseline_mean < 0.1:
-            quality_score += 0.2
-        elif baseline_mean < 0.5:
-            quality_score += 0.1
-        quality_score = min(quality_score, 1.0)
+        # Quality score: the same consolidated averaged-AIF fidelity metric used
+        # for detected AIFs (external AIF is assumed pre-scaled full-dose plasma).
+        quality_score, _ = score_averaged_aif_fidelity(
+            aif_curve, tr, baseline_frames, dose_factor=1.0
+        )
 
         # QC metrics
         from pmriprep.utils.qc_standards import QCStatus
@@ -4322,7 +4517,14 @@ class AIFDetection(BaseInterface):
                 # (tissue conc is in blood units; AIF must be in plasma units
                 #  for Tofts model: plasma = blood / (1 - Hct))
                 aif_curve = aif_curve / (1.0 - float(self.inputs.hematocrit))
-            quality_score = float(np.mean(scores))
+            # Emitted quality score = fidelity of the POOLED/averaged AIF (report /
+            # regression sentinel), not the mean of per-voxel scores — the latter
+            # never inspected the averaged curve, so a tail-diluted pool could score
+            # high. Reported for QC; contamination is gated on the specific gates.
+            quality_score, _ = score_averaged_aif_fidelity(
+                np.asarray(aif_curve, dtype=float), tr, baseline_frames,
+                dose_factor=self._get_dose_factor(),
+            )
 
             # Aggregate QC metrics
             if metrics_list:
