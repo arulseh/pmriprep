@@ -32,8 +32,6 @@ class DCEConfig:
         Path to ROI mask in DCE native space for stats extraction only.
     aif_method : Literal["auto", "population"]
         AIF detection method: auto or population.
-    scale_aif : bool
-        Scale AIF amplitude to population reference.
     target_peak : Optional[float]
         Target AIF peak concentration (mM) for scaling, in blood-voxel units
         (pre-Hct-correction). The pipeline divides
@@ -97,7 +95,6 @@ class DCEConfig:
     # AIF detection settings
     aif_method: Literal["auto", "population"] = "auto"
     aif_file: Optional[Path] = None  # External AIF curve file (bypasses detection)
-    scale_aif: bool = True
     target_peak: Optional[float] = None  # None = use field-strength default
     aif_mask_file: Optional[Path] = None
     lesion_distance: float = 15.0

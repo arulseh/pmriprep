@@ -1273,11 +1273,6 @@ class DCEAIFDetectionInputSpec(BaseInterfaceInputSpec):
         usedefault=True,
         desc="Minimum distance (mm) from lesion for AIF candidates",
     )
-    scale_aif = traits.Bool(
-        False,
-        usedefault=True,
-        desc="Scale detected AIF to population reference peak",
-    )
     target_peak = traits.Float(
         0.0,
         usedefault=True,
@@ -1415,8 +1410,6 @@ class AIFDetection(BaseInterface):
         Initial criteria level: 'strict' or 'relaxed'.
     n_candidates : int
         Number of top candidate voxels to average for final AIF.
-    scale_aif : bool
-        If True, scale AIF to population reference peak.
     target_peak : float
         Target peak for scaling (0 = use default for field strength).
     baseline_frames : int
@@ -4181,7 +4174,6 @@ class AIFDetection(BaseInterface):
         baseline_frames = int(self.inputs.baseline_frames)
         field_strength = float(self.inputs.field_strength)
         tr = float(self.inputs.tr)
-        scale_aif = bool(self.inputs.scale_aif)
         target_peak = float(self.inputs.target_peak)
         lesion_distance = float(self.inputs.lesion_distance)
 
@@ -4749,56 +4741,34 @@ class AIFDetection(BaseInterface):
             qc_metrics["aif_g6_admitted"] = False
             qc_metrics["aif_uncertainty_inflation_factor"] = 1.0
 
-        # Apply AIF scaling if requested
-        # External AIFs bypass this block: they must be supplied in plasma
-        # [Gd] (mM), Hct-corrected; the pipeline does not re-scale. See README.
-        # The cascade-with-gates path also bypasses (already scaled inside
-        # the per-tier trim loop; tier_result.scale_factor was recorded).
-        if (
-            scale_aif
-            and detection_method not in ("population", "external")
-            and tier_result is None
-        ):
+        # Amplitude-anchor the Pass-2 fallback AIF to the dose-scaled population
+        # target via the shared _apply_aif_scale helper (identical math to the
+        # per-tier trim loop and the C2 re-gate). External AIFs bypass (supplied
+        # pre-scaled in plasma mM, Hct-corrected — see README); the gated cascade
+        # path bypasses (already scaled inside the trim loop, scale_factor recorded).
+        if detection_method not in ("population", "external") and tier_result is None:
             current_peak = float(np.max(aif_curve))
-            if current_peak > MIN_MEANINGFUL_ENHANCEMENT_MM:
-                # Unit convention:
-                # - aif_curve is in PLASMA [Gd] units at this point (detected
-                #   path /(1-Hct) at line 2744, population path at line 2895).
-                # - Parker's peak_min/peak_max (and user-supplied target_peak)
-                #   are in BLOOD-VOXEL units = (1-Hct) × true_plasma_Cp, per
-                #   the Parker AIF derivation (see comment block above population
-                #   Hct-correction for details).
-                # The target must therefore be divided by (1-Hct) so its
-                # scale matches current_peak.
-                hct = float(self.inputs.hematocrit)
-                plasma_conv = 1.0 / (1.0 - hct)
-                if target_peak > 0:
-                    # User-supplied target interpreted as blood-voxel units
-                    # (matches the fallback convention and Parker-style configs).
-                    target = target_peak * plasma_conv
-                else:
-                    peak_min, peak_max = self._get_expected_peak_range()
-                    target = (peak_min + peak_max) / 2.0 * plasma_conv
-
-                scaling_factor = target / current_peak
-                aif_curve = aif_curve * scaling_factor
-
-                # Warning thresholds scaled by 1/(1-Hct) ≈ 1.72 at Hct=0.42
-                # so the same fraction of subjects triggers as pre-fix
-                # (2.0→3.4, 3.0→5.2 at default Hct).
-                if scaling_factor > 5.2:
-                    logger.warning(
-                        "AIF scaling factor %.2f > 5.2 — detected AIF peak "
-                        "(%.2f mM plasma) is far below expected arterial range. "
-                        "Results may be unreliable.",
-                        scaling_factor, current_peak,
-                    )
-                elif scaling_factor > 3.4:
-                    logger.warning(
-                        "AIF scaling factor %.2f > 3.4 — detected AIF peak "
-                        "(%.2f mM plasma) is substantially below expected range.",
-                        scaling_factor, current_peak,
-                    )
+            aif_curve, scaling_factor = _apply_aif_scale(
+                aif_curve,
+                float(self.inputs.hematocrit),
+                target_peak,
+                self._get_expected_peak_range,
+            )
+            # Warning thresholds scaled by 1/(1-Hct) ≈ 1.72 at Hct=0.42 so the same
+            # fraction of subjects triggers as pre-fix (2.0→3.4, 3.0→5.2 at Hct=0.42).
+            if scaling_factor > 5.2:
+                logger.warning(
+                    "AIF scaling factor %.2f > 5.2 — detected AIF peak "
+                    "(%.2f mM plasma) is far below expected arterial range. "
+                    "Results may be unreliable.",
+                    scaling_factor, current_peak,
+                )
+            elif scaling_factor > 3.4:
+                logger.warning(
+                    "AIF scaling factor %.2f > 3.4 — detected AIF peak "
+                    "(%.2f mM plasma) is substantially below expected range.",
+                    scaling_factor, current_peak,
+                )
 
         # Compute final AIF metrics
         final_peak = compute_dce_aif_peak_concentration(aif_curve)

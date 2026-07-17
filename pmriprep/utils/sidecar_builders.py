@@ -54,7 +54,6 @@ _CONFIG_STRIP_KEYS = frozenset({
     "n_procs", "nprocs", "hdbet_device", "tumor_seg_device",
     "disable_aif_fallback", "n_aif_candidates", "cpi_infer_cpt", "cpi_infer_delay",
     "underlays", "no_t1", "no_dsc_validation",
-    "scale_aif",
 })
 
 

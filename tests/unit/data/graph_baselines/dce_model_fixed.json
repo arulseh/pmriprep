@@ -2597,7 +2597,6 @@
       "lesion_distance": 15.0,
       "mr_acquisition_type": "",
       "n_candidates": 10,
-      "scale_aif": true,
       "target_peak": 0.0
     },
     "aif_qc_plot": {

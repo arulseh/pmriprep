@@ -417,7 +417,7 @@ DCE_AIF_TAIL_MIN_SEPARATION_SECONDS: Final[float] = 10.0
 # DCE AIF acceptance gates (G1-G6 + G6 escape)
 # =============================================================================
 
-#: G1 — scale_aif amplitude floor. Scaling factor above this threshold
+#: G1 — AIF amplitude-scaling floor. Scaling factor above this threshold
 #: triggers HARD reject; G6 escape allows up to G6_SCALE_CEILING.
 #: Plasma peak ~10 mM at 1.5T full-dose Gd-DTPA; scale_factor is
 #: dimensionless against the dose-corrected

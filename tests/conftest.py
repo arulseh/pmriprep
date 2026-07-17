@@ -1110,16 +1110,3 @@ def sample_dsc_config() -> Dict[str, Any]:
         "pre_bolus": 5,
     }
 
-
-@pytest.fixture
-def sample_dce_config() -> Dict[str, Any]:
-    """Fixture providing a sample DCE configuration dict."""
-    return {
-        "model": "extended_tofts",
-        "inference": "nlls",
-        "aif_method": "auto",
-        "scale_aif": False,
-        "b1_method": "auto",
-        "no_t1": False,
-        "tsnr_threshold": 0.0,
-    }

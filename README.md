@@ -260,7 +260,6 @@ dce:
 | `r1_relaxivity` | float | `null` | Override r1 relaxivity (s⁻¹/mM); null = lookup from BIDS sidecar |
 | `hematocrit` | float | `0.42` | Arterial hematocrit for AIF plasma correction |
 | `aif_method` | str | `"auto"` | AIF method: `auto`, `population` |
-| `scale_aif` | bool | `true` | Scale AIF to population reference |
 | `target_peak` | float | `null` | Target AIF peak (mM); null = field-strength default |
 | `aif_file` | path | `null` | External AIF file (plasma [Gd] in mM, Hct-corrected). Bypasses AIF detection |
 | `aif_mask_file` | path | `null` | Custom AIF mask file (search constraint; DCE space) |
