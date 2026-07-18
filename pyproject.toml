@@ -90,6 +90,12 @@ ignore = [
 [tool.ruff.lint.pydocstyle]
 convention = "numpy"
 
+[tool.ruff.lint.per-file-ignores]
+# The NumPy-docstring guard is a production standard; test modules use a
+# terse no-docstring style (test names are self-documenting), so the `D`
+# rules do not apply to them.
+"tests/**" = ["D"]
+
 [tool.mypy]
 python_version = "3.10"
 warn_return_any = true

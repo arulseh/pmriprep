@@ -19,6 +19,7 @@ fixed input. Cascade-dependent cells mock ``_run_two_pass_cascade`` with a fixed
 from __future__ import annotations
 
 import json
+import math
 import os
 from pathlib import Path
 from typing import Any
@@ -349,6 +350,32 @@ def _run_all(tmp_root: Path) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+def _golden_close(a: Any, b: Any, *, rel_tol: float = 1e-9, abs_tol: float = 1e-12) -> bool:
+    """Structural equality with float leaves compared within a tolerance.
+
+    The canonical snapshot stores floats as exact ``float.hex()`` under an
+    ``{"__f__": ...}`` leaf. Exact hex is bit-reproducible on one machine but
+    the low mantissa bits differ across libm/BLAS builds (the baseline is
+    regenerated on macOS-ARM; CI runs on the Linux-x86 image), so float leaves
+    are compared with a relative tolerance while everything else — ints,
+    strings, enums, structure, mask coords — stays exact. The tolerance is
+    far above the ~1e-15 platform noise yet far below any real reimplementation
+    delta, so it does not weaken the regression guard.
+    """
+    if isinstance(a, dict) and isinstance(b, dict):
+        if len(a) == 1 and len(b) == 1 and "__f__" in a and "__f__" in b:
+            fa, fb = float.fromhex(a["__f__"]), float.fromhex(b["__f__"])
+            if math.isnan(fa) and math.isnan(fb):
+                return True
+            return math.isclose(fa, fb, rel_tol=rel_tol, abs_tol=abs_tol)
+        if a.keys() != b.keys():
+            return False
+        return all(_golden_close(a[k], b[k]) for k in a)
+    if isinstance(a, list) and isinstance(b, list):
+        return len(a) == len(b) and all(_golden_close(x, y) for x, y in zip(a, b))
+    return bool(a == b)
+
+
 def test_run_interface_golden(tmp_path: Path) -> None:
     """Every matrix cell's canonical snapshot matches the committed baseline."""
     current = _run_all(tmp_path)
@@ -364,6 +391,11 @@ def test_run_interface_golden(tmp_path: Path) -> None:
     baseline = json.loads(_BASELINE.read_text())
     assert set(current) == set(baseline), "cell set changed"
     for name in baseline:
+        if current[name] == baseline[name]:
+            continue  # bit-identical (same platform as the committed baseline)
+        if _golden_close(current[name], baseline[name]):
+            continue  # differs only within float tolerance (cross-platform noise)
+        # Real divergence — re-assert for pytest's rich structural diff.
         assert current[name] == baseline[name], f"golden mismatch in cell '{name}'"
 
 
