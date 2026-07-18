@@ -1,0 +1,2004 @@
+{
+  "c2_divergence": {
+    "aif_mask": {
+      "dtype": "uint8",
+      "nonzero_coords": [
+        [
+          10,
+          10,
+          10
+        ],
+        [
+          10,
+          11,
+          10
+        ]
+      ],
+      "nonzero_count": 2,
+      "present": true
+    },
+    "results": {
+      "aif_confidence": "standard",
+      "aif_curve": [
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x1.a112676e30c83p-1"
+        },
+        {
+          "__f__": "0x1.1812f531dc4e5p+2"
+        },
+        {
+          "__f__": "0x1.21d6b3183a446p+3"
+        },
+        {
+          "__f__": "0x1.5b9611a7b9611p+3"
+        },
+        {
+          "__f__": "0x1.1da84b993acbfp+3"
+        },
+        {
+          "__f__": "0x1.37c253bd987c1p+2"
+        },
+        {
+          "__f__": "0x1.a95f6c05d75b9p+0"
+        },
+        {
+          "__f__": "0x1.2fbe8135949e8p-2"
+        },
+        {
+          "__f__": "0x1.10f020101b242p-9"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x1.83f74e5793676p-252"
+        }
+      ],
+      "aif_uncertainty_inflation_factor": {
+        "__f__": "0x1.0000000000000p+0"
+      },
+      "auc": {
+        "__f__": "0x1.46f2f2f50d1d5p+7"
+      },
+      "blood_t1": {
+        "__f__": "0x1.a666666666666p+0"
+      },
+      "candidate_count": 2,
+      "detection_method": "atlas",
+      "fwhm_seconds": {
+        "__f__": "0x1.ccb0b0d9963bcp+3"
+      },
+      "peak_concentration": {
+        "__f__": "0x1.5b9611a7b9611p+3"
+      },
+      "qc_metrics": {
+        "aif_before_tissue_frames": {
+          "__f__": "0x1.4000000000000p+2"
+        },
+        "aif_confidence": "standard",
+        "aif_g6_admitted": false,
+        "aif_gate_decisions": [
+          {
+            "failing_gate": null,
+            "n_pool": 2,
+            "qc": {
+              "auc_mm_s": {
+                "__f__": "0x1.46f2f2f50d1d5p+7"
+              },
+              "fwhm_seconds": {
+                "__f__": "0x1.ccb0b0d9963bcp+3"
+              },
+              "late_tail_per_peak": {
+                "__f__": "0x1.7cfc9c09109dep-257"
+              },
+              "multi_bump_count": 0,
+              "peak_mm": {
+                "__f__": "0x1.5b9611a7b9611p+3"
+              },
+              "ratio_30": {
+                "__f__": "0x0.0p+0"
+              },
+              "washout": {
+                "__f__": "0x1.0000000000000p+0"
+              }
+            },
+            "scale_factor": {
+              "__f__": "0x1.4e7f1bd66e75ep+0"
+            },
+            "status": "PASS",
+            "tier": "MCA_ACA_dce_strict",
+            "warns": []
+          }
+        ],
+        "aif_source": "auto",
+        "aif_status": "POOR",
+        "aif_ttp_frame": 7,
+        "aif_uncertainty_inflation_factor": {
+          "__f__": "0x1.0000000000000p+0"
+        },
+        "arterial_cascade_tier": 1,
+        "atlas_tier_used": "MCA_ACA_dce_strict",
+        "auc_mean": {
+          "__f__": "0x1.e000000000000p+5"
+        },
+        "baseline_frames": 5,
+        "blood_t1_seconds": {
+          "__f__": "0x1.a666666666666p+0"
+        },
+        "candidate_coords": [
+          [
+            10,
+            10,
+            10
+          ],
+          [
+            10,
+            11,
+            10
+          ]
+        ],
+        "candidate_scores": [
+          {
+            "__f__": "0x1.ccccccccccccdp-1"
+          },
+          {
+            "__f__": "0x1.999999999999ap-1"
+          }
+        ],
+        "cnr_mean": {
+          "__f__": "0x1.4000000000000p+4"
+        },
+        "detection_method": "atlas",
+        "expected_peak_max_mm": {
+          "__f__": "0x1.a34f72c234f72p+3"
+        },
+        "field_strength_t": {
+          "__f__": "0x1.8000000000000p+1"
+        },
+        "final_auc": {
+          "__f__": "0x1.46f2f2f50d1d5p+7"
+        },
+        "final_fwhm_seconds": {
+          "__f__": "0x1.ccb0b0d9963bcp+3"
+        },
+        "final_peak_mm": {
+          "__f__": "0x1.5b9611a7b9611p+3"
+        },
+        "final_washout": {
+          "__f__": "0x1.0000000000000p+0"
+        },
+        "fwhm_frames_mean": {
+          "__f__": "0x1.8000000000000p+1"
+        },
+        "fwhm_seconds_mean": {
+          "__f__": "0x1.8000000000000p+3"
+        },
+        "hematocrit": {
+          "__f__": "0x1.ae147ae147ae1p-2"
+        },
+        "hemisphere_coverage": "unilateral_right",
+        "is_likely_venous": false,
+        "low_tr_mode": false,
+        "multi_bump_tail_count": 0,
+        "multi_bump_tail_heights_mm": [],
+        "multi_bump_tail_warning": false,
+        "n_aif_voxels_filtered_out": 0,
+        "n_aif_voxels_selected": 2,
+        "n_left_candidates": 0,
+        "n_right_candidates": 2,
+        "peak_amplitude_ratio": {
+          "__f__": "0x1.a86bca1af286cp-1"
+        },
+        "peak_amplitude_warning": false,
+        "peak_mm_mean": {
+          "__f__": "0x1.0000000000000p+2"
+        },
+        "quality_score": {
+          "__f__": "0x1.f2c7bd5db5010p-3"
+        },
+        "scaling_factor": {
+          "__f__": "0x1.4e7f1bd66e75ep+0"
+        },
+        "scaling_factor_warning": false,
+        "tissue_ttp_frame": {
+          "__f__": "0x1.8000000000000p+3"
+        },
+        "upstroke_slope_mean": {
+          "__f__": "0x1.0000000000000p+0"
+        },
+        "washout_mean": {
+          "__f__": "0x1.999999999999ap-1"
+        }
+      },
+      "quality_score": {
+        "__f__": "0x1.f2c7bd5db5010p-3"
+      },
+      "scaling_factor": {
+        "__f__": "0x1.4e7f1bd66e75ep+0"
+      }
+    }
+  },
+  "c2_nondivergent": {
+    "aif_mask": {
+      "dtype": "uint8",
+      "nonzero_coords": [
+        [
+          10,
+          10,
+          10
+        ],
+        [
+          10,
+          11,
+          10
+        ],
+        [
+          11,
+          10,
+          10
+        ]
+      ],
+      "nonzero_count": 3,
+      "present": true
+    },
+    "results": {
+      "aif_confidence": "standard",
+      "aif_curve": [
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x1.f2aa8b6b380b0p+0"
+        },
+        {
+          "__f__": "0x1.d1d0c7aa7610fp+1"
+        },
+        {
+          "__f__": "0x1.52e0f9bb2219ap+2"
+        },
+        {
+          "__f__": "0x1.8000000000000p+2"
+        },
+        {
+          "__f__": "0x1.52e0f9bb2219ap+2"
+        },
+        {
+          "__f__": "0x1.d1d0c7aa7610fp+1"
+        },
+        {
+          "__f__": "0x1.f2aa8b6b380b0p+0"
+        },
+        {
+          "__f__": "0x1.9fbfff59f42b2p-1"
+        },
+        {
+          "__f__": "0x1.0df2d237fa35dp-2"
+        },
+        {
+          "__f__": "0x1.1103c34f05311p-4"
+        },
+        {
+          "__f__": "0x1.ae1408704be22p-7"
+        },
+        {
+          "__f__": "0x1.07d18c30c1dc2p-9"
+        },
+        {
+          "__f__": "0x1.f8235b43f0972p-13"
+        },
+        {
+          "__f__": "0x1.77231ef8eacecp-16"
+        },
+        {
+          "__f__": "0x1.b2cc2c5d14f3ap-20"
+        },
+        {
+          "__f__": "0x1.88793d29e6f72p-24"
+        },
+        {
+          "__f__": "0x1.13e7c6c6bf6a3p-28"
+        },
+        {
+          "__f__": "0x1.2e1c5e13503b3p-33"
+        },
+        {
+          "__f__": "0x1.01a1a1a309966p-38"
+        },
+        {
+          "__f__": "0x1.5634bb9890b4ep-44"
+        },
+        {
+          "__f__": "0x1.61ffe9768e55ap-50"
+        },
+        {
+          "__f__": "0x1.1d32593367804p-56"
+        },
+        {
+          "__f__": "0x1.65e256ad2f541p-63"
+        },
+        {
+          "__f__": "0x1.5dc1dff5e862fp-70"
+        },
+        {
+          "__f__": "0x1.0a34b1744349ap-77"
+        },
+        {
+          "__f__": "0x1.3b974fb3da30ep-85"
+        },
+        {
+          "__f__": "0x1.236103dcb83adp-93"
+        },
+        {
+          "__f__": "0x1.a308693711628p-102"
+        },
+        {
+          "__f__": "0x1.d5509ccc871ecp-111"
+        },
+        {
+          "__f__": "0x1.995c89fafbe0cp-120"
+        },
+        {
+          "__f__": "0x1.161580a70c621p-129"
+        },
+        {
+          "__f__": "0x1.263d6230d26c6p-139"
+        },
+        {
+          "__f__": "0x1.e4ef40b686b92p-150"
+        },
+        {
+          "__f__": "0x1.37372f309d2f9p-160"
+        },
+        {
+          "__f__": "0x1.3718d594487fcp-171"
+        }
+      ],
+      "aif_uncertainty_inflation_factor": {
+        "__f__": "0x1.0000000000000p+0"
+      },
+      "auc": {
+        "__f__": "0x1.cebfe59a549d8p+6"
+      },
+      "blood_t1": {
+        "__f__": "0x1.a666666666666p+0"
+      },
+      "candidate_count": 3,
+      "detection_method": "atlas",
+      "fwhm_seconds": {
+        "__f__": "0x1.30600f8d231c1p+4"
+      },
+      "peak_concentration": {
+        "__f__": "0x1.8000000000000p+2"
+      },
+      "qc_metrics": {
+        "aif_before_tissue_frames": {
+          "__f__": "0x1.0000000000000p+2"
+        },
+        "aif_confidence": "standard",
+        "aif_g6_admitted": false,
+        "aif_gate_decisions": [],
+        "aif_source": "auto",
+        "aif_status": "POOR",
+        "aif_ttp_frame": 8,
+        "aif_uncertainty_inflation_factor": {
+          "__f__": "0x1.0000000000000p+0"
+        },
+        "arterial_cascade_tier": 1,
+        "atlas_tier_used": "MCA_ACA_dce_strict",
+        "auc_mean": {
+          "__f__": "0x1.e000000000000p+5"
+        },
+        "baseline_frames": 5,
+        "blood_t1_seconds": {
+          "__f__": "0x1.a666666666666p+0"
+        },
+        "candidate_coords": [
+          [
+            10,
+            10,
+            10
+          ],
+          [
+            10,
+            11,
+            10
+          ],
+          [
+            11,
+            10,
+            10
+          ]
+        ],
+        "candidate_scores": [
+          {
+            "__f__": "0x1.ccccccccccccdp-1"
+          },
+          {
+            "__f__": "0x1.999999999999ap-1"
+          },
+          {
+            "__f__": "0x1.6666666666666p-1"
+          }
+        ],
+        "cnr_mean": {
+          "__f__": "0x1.4000000000000p+4"
+        },
+        "detection_method": "atlas",
+        "expected_peak_max_mm": {
+          "__f__": "0x1.a34f72c234f72p+3"
+        },
+        "field_strength_t": {
+          "__f__": "0x1.8000000000000p+1"
+        },
+        "final_auc": {
+          "__f__": "0x1.cebfe59a549d8p+6"
+        },
+        "final_fwhm_seconds": {
+          "__f__": "0x1.30600f8d231c1p+4"
+        },
+        "final_peak_mm": {
+          "__f__": "0x1.8000000000000p+2"
+        },
+        "final_washout": {
+          "__f__": "0x1.0000000000000p+0"
+        },
+        "fwhm_frames_mean": {
+          "__f__": "0x1.8000000000000p+1"
+        },
+        "fwhm_seconds_mean": {
+          "__f__": "0x1.8000000000000p+3"
+        },
+        "hematocrit": {
+          "__f__": "0x1.ae147ae147ae1p-2"
+        },
+        "hemisphere_coverage": "unilateral_right",
+        "is_likely_venous": false,
+        "low_tr_mode": false,
+        "multi_bump_tail_count": 0,
+        "multi_bump_tail_heights_mm": [],
+        "multi_bump_tail_warning": false,
+        "n_aif_voxels_filtered_out": 0,
+        "n_aif_voxels_selected": 3,
+        "n_left_candidates": 0,
+        "n_right_candidates": 3,
+        "peak_amplitude_ratio": {
+          "__f__": "0x1.d4e25b9efd4e3p-2"
+        },
+        "peak_amplitude_warning": false,
+        "peak_mm_mean": {
+          "__f__": "0x1.0000000000000p+2"
+        },
+        "quality_score": {
+          "__f__": "0x1.cb892804dbaf9p-3"
+        },
+        "scaling_factor": {
+          "__f__": "0x1.8000000000000p+0"
+        },
+        "scaling_factor_warning": false,
+        "tissue_ttp_frame": {
+          "__f__": "0x1.8000000000000p+3"
+        },
+        "upstroke_slope_mean": {
+          "__f__": "0x1.0000000000000p+0"
+        },
+        "washout_mean": {
+          "__f__": "0x1.999999999999bp-1"
+        }
+      },
+      "quality_score": {
+        "__f__": "0x1.cb892804dbaf9p-3"
+      },
+      "scaling_factor": {
+        "__f__": "0x1.8000000000000p+0"
+      }
+    }
+  },
+  "external": {
+    "aif_mask": {
+      "dtype": "uint8",
+      "nonzero_coords": [],
+      "nonzero_count": 0,
+      "present": true
+    },
+    "results": {
+      "aif_curve": [
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x1.f2aa8b6b380b0p+0"
+        },
+        {
+          "__f__": "0x1.d1d0c7aa7610fp+1"
+        },
+        {
+          "__f__": "0x1.52e0f9bb2219ap+2"
+        },
+        {
+          "__f__": "0x1.8000000000000p+2"
+        },
+        {
+          "__f__": "0x1.52e0f9bb2219ap+2"
+        },
+        {
+          "__f__": "0x1.d1d0c7aa7610fp+1"
+        },
+        {
+          "__f__": "0x1.f2aa8b6b380b0p+0"
+        },
+        {
+          "__f__": "0x1.9fbfff59f42b2p-1"
+        },
+        {
+          "__f__": "0x1.0df2d237fa35dp-2"
+        },
+        {
+          "__f__": "0x1.1103c34f05311p-4"
+        },
+        {
+          "__f__": "0x1.ae1408704be22p-7"
+        },
+        {
+          "__f__": "0x1.07d18c30c1dc2p-9"
+        },
+        {
+          "__f__": "0x1.f8235b43f0972p-13"
+        },
+        {
+          "__f__": "0x1.77231ef8eacecp-16"
+        },
+        {
+          "__f__": "0x1.b2cc2c5d14f3ap-20"
+        },
+        {
+          "__f__": "0x1.88793d29e6f72p-24"
+        },
+        {
+          "__f__": "0x1.13e7c6c6bf6a3p-28"
+        },
+        {
+          "__f__": "0x1.2e1c5e13503b3p-33"
+        },
+        {
+          "__f__": "0x1.01a1a1a309966p-38"
+        },
+        {
+          "__f__": "0x1.5634bb9890b4ep-44"
+        },
+        {
+          "__f__": "0x1.61ffe9768e55ap-50"
+        },
+        {
+          "__f__": "0x1.1d32593367804p-56"
+        },
+        {
+          "__f__": "0x1.65e256ad2f541p-63"
+        },
+        {
+          "__f__": "0x1.5dc1dff5e862fp-70"
+        },
+        {
+          "__f__": "0x1.0a34b1744349ap-77"
+        },
+        {
+          "__f__": "0x1.3b974fb3da30ep-85"
+        },
+        {
+          "__f__": "0x1.236103dcb83adp-93"
+        },
+        {
+          "__f__": "0x1.a308693711628p-102"
+        },
+        {
+          "__f__": "0x1.d5509ccc871ecp-111"
+        },
+        {
+          "__f__": "0x1.995c89fafbe0cp-120"
+        },
+        {
+          "__f__": "0x1.161580a70c621p-129"
+        },
+        {
+          "__f__": "0x1.263d6230d26c6p-139"
+        },
+        {
+          "__f__": "0x1.e4ef40b686b92p-150"
+        },
+        {
+          "__f__": "0x1.37372f309d2f9p-160"
+        },
+        {
+          "__f__": "0x1.3718d594487fcp-171"
+        }
+      ],
+      "auc": {
+        "__f__": "0x1.cebfe59a549d8p+6"
+      },
+      "blood_t1": {
+        "__f__": "0x1.a666666666666p+0"
+      },
+      "candidate_count": 0,
+      "detection_method": "external",
+      "fwhm_seconds": {
+        "__f__": "0x1.30600f8d231c1p+4"
+      },
+      "peak_concentration": {
+        "__f__": "0x1.8000000000000p+2"
+      },
+      "qc_metrics": {
+        "aif_source": "external",
+        "aif_status": "PASS",
+        "baseline_frames": 5,
+        "blood_t1_seconds": {
+          "__f__": "0x1.a666666666666p+0"
+        },
+        "detection_method": "external",
+        "external_aif": true,
+        "external_aif_file": "external_aif.txt",
+        "field_strength_t": {
+          "__f__": "0x1.8000000000000p+1"
+        },
+        "final_auc": {
+          "__f__": "0x1.cebfe59a549d8p+6"
+        },
+        "final_fwhm_seconds": {
+          "__f__": "0x1.30600f8d231c1p+4"
+        },
+        "final_peak_mm": {
+          "__f__": "0x1.8000000000000p+2"
+        },
+        "final_washout": {
+          "__f__": "0x1.0000000000000p+0"
+        },
+        "n_aif_voxels_selected": 0,
+        "quality_score": {
+          "__f__": "0x1.cb892804dbaf9p-3"
+        },
+        "scaling_factor": {
+          "__f__": "0x1.0000000000000p+0"
+        }
+      },
+      "quality_score": {
+        "__f__": "0x1.cb892804dbaf9p-3"
+      },
+      "scaling_factor": {
+        "__f__": "0x1.0000000000000p+0"
+      }
+    }
+  },
+  "filtered_nonzero": {
+    "aif_mask": {
+      "dtype": "uint8",
+      "nonzero_coords": [
+        [
+          10,
+          10,
+          10
+        ],
+        [
+          10,
+          11,
+          10
+        ]
+      ],
+      "nonzero_count": 2,
+      "present": true
+    },
+    "results": {
+      "aif_confidence": "standard",
+      "aif_curve": [
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x1.a112676e30c83p-1"
+        },
+        {
+          "__f__": "0x1.1812f531dc4e5p+2"
+        },
+        {
+          "__f__": "0x1.21d6b3183a446p+3"
+        },
+        {
+          "__f__": "0x1.5b9611a7b9611p+3"
+        },
+        {
+          "__f__": "0x1.1da84b993acbfp+3"
+        },
+        {
+          "__f__": "0x1.37c253bd987c1p+2"
+        },
+        {
+          "__f__": "0x1.a95f6c05d75b9p+0"
+        },
+        {
+          "__f__": "0x1.2fbe8135949e8p-2"
+        },
+        {
+          "__f__": "0x1.10f020101b242p-9"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x1.83f74e5793676p-252"
+        }
+      ],
+      "aif_uncertainty_inflation_factor": {
+        "__f__": "0x1.0000000000000p+0"
+      },
+      "auc": {
+        "__f__": "0x1.46f2f2f50d1d5p+7"
+      },
+      "blood_t1": {
+        "__f__": "0x1.a666666666666p+0"
+      },
+      "candidate_count": 2,
+      "detection_method": "atlas",
+      "fwhm_seconds": {
+        "__f__": "0x1.ccb0b0d9963bcp+3"
+      },
+      "peak_concentration": {
+        "__f__": "0x1.5b9611a7b9611p+3"
+      },
+      "qc_metrics": {
+        "aif_before_tissue_frames": {
+          "__f__": "0x1.4000000000000p+2"
+        },
+        "aif_confidence": "standard",
+        "aif_g6_admitted": false,
+        "aif_gate_decisions": [
+          {
+            "failing_gate": null,
+            "n_pool": 2,
+            "qc": {
+              "auc_mm_s": {
+                "__f__": "0x1.46f2f2f50d1d5p+7"
+              },
+              "fwhm_seconds": {
+                "__f__": "0x1.ccb0b0d9963bcp+3"
+              },
+              "late_tail_per_peak": {
+                "__f__": "0x1.7cfc9c09109dep-257"
+              },
+              "multi_bump_count": 0,
+              "peak_mm": {
+                "__f__": "0x1.5b9611a7b9611p+3"
+              },
+              "ratio_30": {
+                "__f__": "0x0.0p+0"
+              },
+              "washout": {
+                "__f__": "0x1.0000000000000p+0"
+              }
+            },
+            "scale_factor": {
+              "__f__": "0x1.4e7f1bd66e75ep+0"
+            },
+            "status": "PASS",
+            "tier": "MCA_ACA_dce_strict",
+            "warns": []
+          }
+        ],
+        "aif_source": "auto",
+        "aif_status": "POOR",
+        "aif_ttp_frame": 7,
+        "aif_uncertainty_inflation_factor": {
+          "__f__": "0x1.0000000000000p+0"
+        },
+        "arterial_cascade_tier": 1,
+        "atlas_tier_used": "MCA_ACA_dce_strict",
+        "auc_mean": {
+          "__f__": "0x1.e000000000000p+5"
+        },
+        "baseline_frames": 5,
+        "blood_t1_seconds": {
+          "__f__": "0x1.a666666666666p+0"
+        },
+        "candidate_coords": [
+          [
+            10,
+            10,
+            10
+          ],
+          [
+            10,
+            11,
+            10
+          ]
+        ],
+        "candidate_scores": [
+          {
+            "__f__": "0x1.ccccccccccccdp-1"
+          },
+          {
+            "__f__": "0x1.999999999999ap-1"
+          }
+        ],
+        "cnr_mean": {
+          "__f__": "0x1.4000000000000p+4"
+        },
+        "detection_method": "atlas",
+        "expected_peak_max_mm": {
+          "__f__": "0x1.a34f72c234f72p+3"
+        },
+        "field_strength_t": {
+          "__f__": "0x1.8000000000000p+1"
+        },
+        "final_auc": {
+          "__f__": "0x1.46f2f2f50d1d5p+7"
+        },
+        "final_fwhm_seconds": {
+          "__f__": "0x1.ccb0b0d9963bcp+3"
+        },
+        "final_peak_mm": {
+          "__f__": "0x1.5b9611a7b9611p+3"
+        },
+        "final_washout": {
+          "__f__": "0x1.0000000000000p+0"
+        },
+        "fwhm_frames_mean": {
+          "__f__": "0x1.8000000000000p+1"
+        },
+        "fwhm_seconds_mean": {
+          "__f__": "0x1.8000000000000p+3"
+        },
+        "hematocrit": {
+          "__f__": "0x1.ae147ae147ae1p-2"
+        },
+        "hemisphere_coverage": "unilateral_right",
+        "is_likely_venous": false,
+        "low_tr_mode": false,
+        "multi_bump_tail_count": 0,
+        "multi_bump_tail_heights_mm": [],
+        "multi_bump_tail_warning": false,
+        "n_aif_voxels_filtered_out": 1,
+        "n_aif_voxels_selected": 2,
+        "n_left_candidates": 0,
+        "n_right_candidates": 2,
+        "peak_amplitude_ratio": {
+          "__f__": "0x1.a86bca1af286cp-1"
+        },
+        "peak_amplitude_warning": false,
+        "peak_mm_mean": {
+          "__f__": "0x1.0000000000000p+2"
+        },
+        "quality_score": {
+          "__f__": "0x1.f2c7bd5db5010p-3"
+        },
+        "scaling_factor": {
+          "__f__": "0x1.4e7f1bd66e75ep+0"
+        },
+        "scaling_factor_warning": false,
+        "tissue_ttp_frame": {
+          "__f__": "0x1.8000000000000p+3"
+        },
+        "upstroke_slope_mean": {
+          "__f__": "0x1.0000000000000p+0"
+        },
+        "washout_mean": {
+          "__f__": "0x1.999999999999ap-1"
+        }
+      },
+      "quality_score": {
+        "__f__": "0x1.f2c7bd5db5010p-3"
+      },
+      "scaling_factor": {
+        "__f__": "0x1.4e7f1bd66e75ep+0"
+      }
+    }
+  },
+  "hs2_emptied": {
+    "aif_mask": {
+      "dtype": "uint8",
+      "nonzero_coords": [],
+      "nonzero_count": 0,
+      "present": true
+    },
+    "results": {
+      "aif_confidence": "standard",
+      "aif_curve": [
+        {
+          "__f__": "0x1.ced1db3fbe030p-20"
+        },
+        {
+          "__f__": "0x1.ced1db3fbe030p-20"
+        },
+        {
+          "__f__": "0x1.ced1db3fbe030p-20"
+        },
+        {
+          "__f__": "0x1.ced1db3fbe030p-20"
+        },
+        {
+          "__f__": "0x1.ced1db3fbe030p-20"
+        },
+        {
+          "__f__": "0x1.1bd74f452046ep-3"
+        },
+        {
+          "__f__": "0x1.f0c07197fd28fp+0"
+        },
+        {
+          "__f__": "0x1.0a44d5fe203b1p+3"
+        },
+        {
+          "__f__": "0x1.2ccd598d6f219p+3"
+        },
+        {
+          "__f__": "0x1.cca0d6df85a16p+1"
+        },
+        {
+          "__f__": "0x1.d3b8283fbce4ap+0"
+        },
+        {
+          "__f__": "0x1.bb40a9f85aad9p+0"
+        },
+        {
+          "__f__": "0x1.dce2f0ca4de84p+0"
+        },
+        {
+          "__f__": "0x1.1a414695165f1p+1"
+        },
+        {
+          "__f__": "0x1.f851395d641d7p+0"
+        },
+        {
+          "__f__": "0x1.be267844f6555p+0"
+        },
+        {
+          "__f__": "0x1.a28536904050bp+0"
+        },
+        {
+          "__f__": "0x1.96ee26c521737p+0"
+        },
+        {
+          "__f__": "0x1.90cce6dbfd7a1p+0"
+        },
+        {
+          "__f__": "0x1.8c0c08d7e48cap+0"
+        },
+        {
+          "__f__": "0x1.879609ff4902ep+0"
+        },
+        {
+          "__f__": "0x1.8335463c23f0ep+0"
+        },
+        {
+          "__f__": "0x1.7ee1ebe12fb0ep+0"
+        },
+        {
+          "__f__": "0x1.7a9b028f171acp+0"
+        },
+        {
+          "__f__": "0x1.7660556e36fc3p+0"
+        },
+        {
+          "__f__": "0x1.7231c06c22c44p+0"
+        },
+        {
+          "__f__": "0x1.6e0f20e5b451bp+0"
+        },
+        {
+          "__f__": "0x1.69f854a7aeb2bp+0"
+        },
+        {
+          "__f__": "0x1.65ed39e11ca47p+0"
+        },
+        {
+          "__f__": "0x1.61edaf21c0354p+0"
+        },
+        {
+          "__f__": "0x1.5df99358fac06p+0"
+        },
+        {
+          "__f__": "0x1.5a10c5d4bb68fp+0"
+        },
+        {
+          "__f__": "0x1.5633264070b56p+0"
+        },
+        {
+          "__f__": "0x1.526094a3fd311p+0"
+        },
+        {
+          "__f__": "0x1.4e98f162af0a4p+0"
+        },
+        {
+          "__f__": "0x1.4adc1d3a3aa3ep+0"
+        },
+        {
+          "__f__": "0x1.4729f941b8133p+0"
+        },
+        {
+          "__f__": "0x1.438266e8a380fp+0"
+        },
+        {
+          "__f__": "0x1.3fe547f5e0649p+0"
+        },
+        {
+          "__f__": "0x1.3c527e86bf936p+0"
+        }
+      ],
+      "aif_uncertainty_inflation_factor": {
+        "__f__": "0x1.0000000000000p+0"
+      },
+      "auc": {
+        "__f__": "0x1.100af04f21517p+8"
+      },
+      "blood_t1": {
+        "__f__": "0x1.a666666666666p+0"
+      },
+      "candidate_count": 0,
+      "detection_method": "population",
+      "fwhm_seconds": {
+        "__f__": "0x1.3056b800c1544p+3"
+      },
+      "peak_concentration": {
+        "__f__": "0x1.2ccd598d6f219p+3"
+      },
+      "qc_metrics": {
+        "aif_confidence": "standard",
+        "aif_g6_admitted": false,
+        "aif_gate_decisions": [],
+        "aif_source": "population",
+        "aif_status": "WARN",
+        "aif_uncertainty_inflation_factor": {
+          "__f__": "0x1.0000000000000p+0"
+        },
+        "auto_best_score": {
+          "__f__": "0x1.999999999999ap-3"
+        },
+        "auto_detection_attempted": true,
+        "auto_fallback_reason": "all 1 cascade tiers exhausted; final tier: 0/3 candidates scored >= 0.5",
+        "auto_n_above_threshold": 0,
+        "auto_n_candidates": 3,
+        "baseline_frames": 5,
+        "bat_method": "baseline_frames",
+        "bat_seconds": {
+          "__f__": "0x1.4000000000000p+4"
+        },
+        "blood_t1_seconds": {
+          "__f__": "0x1.a666666666666p+0"
+        },
+        "cascade_best_score": {
+          "__f__": "0x1.999999999999ap-3"
+        },
+        "cascade_tiers_attempted": 1,
+        "detection_method": "population",
+        "dose_factor": {
+          "__f__": "0x1.0000000000000p+0"
+        },
+        "expected_peak_max_mm": {
+          "__f__": "0x1.a34f72c234f72p+3"
+        },
+        "field_strength_t": {
+          "__f__": "0x1.8000000000000p+1"
+        },
+        "final_auc": {
+          "__f__": "0x1.100af04f21517p+8"
+        },
+        "final_fwhm_seconds": {
+          "__f__": "0x1.3056b800c1544p+3"
+        },
+        "final_peak_mm": {
+          "__f__": "0x1.2ccd598d6f219p+3"
+        },
+        "final_washout": {
+          "__f__": "0x1.bb28fc85de212p-1"
+        },
+        "hematocrit": {
+          "__f__": "0x1.ae147ae147ae1p-2"
+        },
+        "multi_bump_tail_count": 0,
+        "multi_bump_tail_heights_mm": [],
+        "multi_bump_tail_warning": false,
+        "n_aif_voxels_selected": 0,
+        "peak_amplitude_ratio": null,
+        "peak_amplitude_warning": false,
+        "population_aif": true,
+        "quality_score": {
+          "__f__": "0x1.0000000000000p-1"
+        },
+        "scaling_factor": {
+          "__f__": "0x1.0000000000000p+0"
+        },
+        "scaling_factor_warning": false
+      },
+      "quality_score": {
+        "__f__": "0x1.0000000000000p-1"
+      },
+      "scaling_factor": {
+        "__f__": "0x1.0000000000000p+0"
+      }
+    }
+  },
+  "lesion_mask": {
+    "aif_mask": {
+      "dtype": "uint8",
+      "nonzero_coords": [],
+      "nonzero_count": 0,
+      "present": true
+    },
+    "results": {
+      "aif_confidence": "low",
+      "aif_curve": [
+        {
+          "__f__": "0x1.ced1db3fbe030p-20"
+        },
+        {
+          "__f__": "0x1.ced1db3fbe030p-20"
+        },
+        {
+          "__f__": "0x1.ced1db3fbe030p-20"
+        },
+        {
+          "__f__": "0x1.ced1db3fbe030p-20"
+        },
+        {
+          "__f__": "0x1.ced1db3fbe030p-20"
+        },
+        {
+          "__f__": "0x1.1bd74f452046ep-3"
+        },
+        {
+          "__f__": "0x1.f0c07197fd28fp+0"
+        },
+        {
+          "__f__": "0x1.0a44d5fe203b1p+3"
+        },
+        {
+          "__f__": "0x1.2ccd598d6f219p+3"
+        },
+        {
+          "__f__": "0x1.cca0d6df85a16p+1"
+        },
+        {
+          "__f__": "0x1.d3b8283fbce4ap+0"
+        },
+        {
+          "__f__": "0x1.bb40a9f85aad9p+0"
+        },
+        {
+          "__f__": "0x1.dce2f0ca4de84p+0"
+        },
+        {
+          "__f__": "0x1.1a414695165f1p+1"
+        },
+        {
+          "__f__": "0x1.f851395d641d7p+0"
+        },
+        {
+          "__f__": "0x1.be267844f6555p+0"
+        },
+        {
+          "__f__": "0x1.a28536904050bp+0"
+        },
+        {
+          "__f__": "0x1.96ee26c521737p+0"
+        },
+        {
+          "__f__": "0x1.90cce6dbfd7a1p+0"
+        },
+        {
+          "__f__": "0x1.8c0c08d7e48cap+0"
+        },
+        {
+          "__f__": "0x1.879609ff4902ep+0"
+        },
+        {
+          "__f__": "0x1.8335463c23f0ep+0"
+        },
+        {
+          "__f__": "0x1.7ee1ebe12fb0ep+0"
+        },
+        {
+          "__f__": "0x1.7a9b028f171acp+0"
+        },
+        {
+          "__f__": "0x1.7660556e36fc3p+0"
+        },
+        {
+          "__f__": "0x1.7231c06c22c44p+0"
+        },
+        {
+          "__f__": "0x1.6e0f20e5b451bp+0"
+        },
+        {
+          "__f__": "0x1.69f854a7aeb2bp+0"
+        },
+        {
+          "__f__": "0x1.65ed39e11ca47p+0"
+        },
+        {
+          "__f__": "0x1.61edaf21c0354p+0"
+        },
+        {
+          "__f__": "0x1.5df99358fac06p+0"
+        },
+        {
+          "__f__": "0x1.5a10c5d4bb68fp+0"
+        },
+        {
+          "__f__": "0x1.5633264070b56p+0"
+        },
+        {
+          "__f__": "0x1.526094a3fd311p+0"
+        },
+        {
+          "__f__": "0x1.4e98f162af0a4p+0"
+        },
+        {
+          "__f__": "0x1.4adc1d3a3aa3ep+0"
+        },
+        {
+          "__f__": "0x1.4729f941b8133p+0"
+        },
+        {
+          "__f__": "0x1.438266e8a380fp+0"
+        },
+        {
+          "__f__": "0x1.3fe547f5e0649p+0"
+        },
+        {
+          "__f__": "0x1.3c527e86bf936p+0"
+        }
+      ],
+      "aif_uncertainty_inflation_factor": {
+        "__f__": "0x1.8000000000000p+1"
+      },
+      "auc": {
+        "__f__": "0x1.100af04f21517p+8"
+      },
+      "blood_t1": {
+        "__f__": "0x1.a666666666666p+0"
+      },
+      "candidate_count": 0,
+      "detection_method": "population",
+      "fwhm_seconds": {
+        "__f__": "0x1.3056b800c1544p+3"
+      },
+      "peak_concentration": {
+        "__f__": "0x1.2ccd598d6f219p+3"
+      },
+      "qc_metrics": {
+        "aif_confidence": "low",
+        "aif_g6_admitted": false,
+        "aif_source": "population",
+        "aif_status": "WARN",
+        "aif_uncertainty_inflation_factor": {
+          "__f__": "0x1.8000000000000p+1"
+        },
+        "auto_best_score": {
+          "__f__": "0x0.0p+0"
+        },
+        "auto_detection_attempted": true,
+        "auto_fallback_reason": "all 1 cascade tiers exhausted; no tier produced any anchored keeper",
+        "auto_n_above_threshold": 0,
+        "auto_n_candidates": 0,
+        "baseline_frames": 5,
+        "bat_method": "baseline_frames",
+        "bat_seconds": {
+          "__f__": "0x1.4000000000000p+4"
+        },
+        "blood_t1_seconds": {
+          "__f__": "0x1.a666666666666p+0"
+        },
+        "cascade_anchor_outcomes": [
+          {
+            "earliest_post_arr_s": {
+              "__f__": "inf"
+            },
+            "has_anchor": false,
+            "n_candidates": 0,
+            "quorum_count": 0,
+            "tier": "wb_relaxed"
+          }
+        ],
+        "cascade_best_score": {
+          "__f__": "0x0.0p+0"
+        },
+        "cascade_gate_decisions": [
+          {
+            "decisions": [],
+            "outcome": "skipped_anchor",
+            "tier": "wb_relaxed"
+          }
+        ],
+        "cascade_tiers_attempted": 1,
+        "detection_method": "population",
+        "dose_factor": {
+          "__f__": "0x1.0000000000000p+0"
+        },
+        "expected_peak_max_mm": {
+          "__f__": "0x1.a34f72c234f72p+3"
+        },
+        "field_strength_t": {
+          "__f__": "0x1.8000000000000p+1"
+        },
+        "final_auc": {
+          "__f__": "0x1.100af04f21517p+8"
+        },
+        "final_fwhm_seconds": {
+          "__f__": "0x1.3056b800c1544p+3"
+        },
+        "final_peak_mm": {
+          "__f__": "0x1.2ccd598d6f219p+3"
+        },
+        "final_washout": {
+          "__f__": "0x1.bb28fc85de212p-1"
+        },
+        "hematocrit": {
+          "__f__": "0x1.ae147ae147ae1p-2"
+        },
+        "multi_bump_tail_count": 0,
+        "multi_bump_tail_heights_mm": [],
+        "multi_bump_tail_warning": false,
+        "n_aif_voxels_selected": 0,
+        "peak_amplitude_ratio": null,
+        "peak_amplitude_warning": false,
+        "population_aif": true,
+        "quality_score": {
+          "__f__": "0x1.0000000000000p-1"
+        },
+        "scaling_factor": {
+          "__f__": "0x1.0000000000000p+0"
+        },
+        "scaling_factor_warning": false
+      },
+      "quality_score": {
+        "__f__": "0x1.0000000000000p-1"
+      },
+      "scaling_factor": {
+        "__f__": "0x1.0000000000000p+0"
+      }
+    }
+  },
+  "population": {
+    "aif_mask": {
+      "dtype": "uint8",
+      "nonzero_coords": [],
+      "nonzero_count": 0,
+      "present": true
+    },
+    "results": {
+      "aif_confidence": "low",
+      "aif_curve": [
+        {
+          "__f__": "0x1.ced1db3fbe030p-20"
+        },
+        {
+          "__f__": "0x1.ced1db3fbe030p-20"
+        },
+        {
+          "__f__": "0x1.ced1db3fbe030p-20"
+        },
+        {
+          "__f__": "0x1.ced1db3fbe030p-20"
+        },
+        {
+          "__f__": "0x1.ced1db3fbe030p-20"
+        },
+        {
+          "__f__": "0x1.1bd74f452046ep-3"
+        },
+        {
+          "__f__": "0x1.f0c07197fd28fp+0"
+        },
+        {
+          "__f__": "0x1.0a44d5fe203b1p+3"
+        },
+        {
+          "__f__": "0x1.2ccd598d6f219p+3"
+        },
+        {
+          "__f__": "0x1.cca0d6df85a16p+1"
+        },
+        {
+          "__f__": "0x1.d3b8283fbce4ap+0"
+        },
+        {
+          "__f__": "0x1.bb40a9f85aad9p+0"
+        },
+        {
+          "__f__": "0x1.dce2f0ca4de84p+0"
+        },
+        {
+          "__f__": "0x1.1a414695165f1p+1"
+        },
+        {
+          "__f__": "0x1.f851395d641d7p+0"
+        },
+        {
+          "__f__": "0x1.be267844f6555p+0"
+        },
+        {
+          "__f__": "0x1.a28536904050bp+0"
+        },
+        {
+          "__f__": "0x1.96ee26c521737p+0"
+        },
+        {
+          "__f__": "0x1.90cce6dbfd7a1p+0"
+        },
+        {
+          "__f__": "0x1.8c0c08d7e48cap+0"
+        },
+        {
+          "__f__": "0x1.879609ff4902ep+0"
+        },
+        {
+          "__f__": "0x1.8335463c23f0ep+0"
+        },
+        {
+          "__f__": "0x1.7ee1ebe12fb0ep+0"
+        },
+        {
+          "__f__": "0x1.7a9b028f171acp+0"
+        },
+        {
+          "__f__": "0x1.7660556e36fc3p+0"
+        },
+        {
+          "__f__": "0x1.7231c06c22c44p+0"
+        },
+        {
+          "__f__": "0x1.6e0f20e5b451bp+0"
+        },
+        {
+          "__f__": "0x1.69f854a7aeb2bp+0"
+        },
+        {
+          "__f__": "0x1.65ed39e11ca47p+0"
+        },
+        {
+          "__f__": "0x1.61edaf21c0354p+0"
+        },
+        {
+          "__f__": "0x1.5df99358fac06p+0"
+        },
+        {
+          "__f__": "0x1.5a10c5d4bb68fp+0"
+        },
+        {
+          "__f__": "0x1.5633264070b56p+0"
+        },
+        {
+          "__f__": "0x1.526094a3fd311p+0"
+        },
+        {
+          "__f__": "0x1.4e98f162af0a4p+0"
+        },
+        {
+          "__f__": "0x1.4adc1d3a3aa3ep+0"
+        },
+        {
+          "__f__": "0x1.4729f941b8133p+0"
+        },
+        {
+          "__f__": "0x1.438266e8a380fp+0"
+        },
+        {
+          "__f__": "0x1.3fe547f5e0649p+0"
+        },
+        {
+          "__f__": "0x1.3c527e86bf936p+0"
+        }
+      ],
+      "aif_uncertainty_inflation_factor": {
+        "__f__": "0x1.8000000000000p+1"
+      },
+      "auc": {
+        "__f__": "0x1.100af04f21517p+8"
+      },
+      "blood_t1": {
+        "__f__": "0x1.a666666666666p+0"
+      },
+      "candidate_count": 0,
+      "detection_method": "population",
+      "fwhm_seconds": {
+        "__f__": "0x1.3056b800c1544p+3"
+      },
+      "peak_concentration": {
+        "__f__": "0x1.2ccd598d6f219p+3"
+      },
+      "qc_metrics": {
+        "aif_confidence": "low",
+        "aif_g6_admitted": false,
+        "aif_source": "population",
+        "aif_status": "WARN",
+        "aif_uncertainty_inflation_factor": {
+          "__f__": "0x1.8000000000000p+1"
+        },
+        "baseline_frames": 5,
+        "bat_method": "baseline_frames",
+        "bat_seconds": {
+          "__f__": "0x1.4000000000000p+4"
+        },
+        "blood_t1_seconds": {
+          "__f__": "0x1.a666666666666p+0"
+        },
+        "detection_method": "population",
+        "dose_factor": {
+          "__f__": "0x1.0000000000000p+0"
+        },
+        "expected_peak_max_mm": {
+          "__f__": "0x1.a34f72c234f72p+3"
+        },
+        "field_strength_t": {
+          "__f__": "0x1.8000000000000p+1"
+        },
+        "final_auc": {
+          "__f__": "0x1.100af04f21517p+8"
+        },
+        "final_fwhm_seconds": {
+          "__f__": "0x1.3056b800c1544p+3"
+        },
+        "final_peak_mm": {
+          "__f__": "0x1.2ccd598d6f219p+3"
+        },
+        "final_washout": {
+          "__f__": "0x1.bb28fc85de212p-1"
+        },
+        "hematocrit": {
+          "__f__": "0x1.ae147ae147ae1p-2"
+        },
+        "multi_bump_tail_count": 0,
+        "multi_bump_tail_heights_mm": [],
+        "multi_bump_tail_warning": false,
+        "n_aif_voxels_selected": 0,
+        "peak_amplitude_ratio": null,
+        "peak_amplitude_warning": false,
+        "population_aif": true,
+        "quality_score": {
+          "__f__": "0x1.0000000000000p-1"
+        },
+        "scaling_factor": {
+          "__f__": "0x1.0000000000000p+0"
+        },
+        "scaling_factor_warning": false
+      },
+      "quality_score": {
+        "__f__": "0x1.0000000000000p-1"
+      },
+      "scaling_factor": {
+        "__f__": "0x1.0000000000000p+0"
+      }
+    }
+  },
+  "real_detection": {
+    "aif_mask": {
+      "dtype": "uint8",
+      "nonzero_coords": [],
+      "nonzero_count": 0,
+      "present": true
+    },
+    "results": {
+      "aif_confidence": "low",
+      "aif_curve": [
+        {
+          "__f__": "0x1.ced1db3fbe030p-20"
+        },
+        {
+          "__f__": "0x1.ced1db3fbe030p-20"
+        },
+        {
+          "__f__": "0x1.ced1db3fbe030p-20"
+        },
+        {
+          "__f__": "0x1.ced1db3fbe030p-20"
+        },
+        {
+          "__f__": "0x1.ced1db3fbe030p-20"
+        },
+        {
+          "__f__": "0x1.1bd74f452046ep-3"
+        },
+        {
+          "__f__": "0x1.f0c07197fd28fp+0"
+        },
+        {
+          "__f__": "0x1.0a44d5fe203b1p+3"
+        },
+        {
+          "__f__": "0x1.2ccd598d6f219p+3"
+        },
+        {
+          "__f__": "0x1.cca0d6df85a16p+1"
+        },
+        {
+          "__f__": "0x1.d3b8283fbce4ap+0"
+        },
+        {
+          "__f__": "0x1.bb40a9f85aad9p+0"
+        },
+        {
+          "__f__": "0x1.dce2f0ca4de84p+0"
+        },
+        {
+          "__f__": "0x1.1a414695165f1p+1"
+        },
+        {
+          "__f__": "0x1.f851395d641d7p+0"
+        },
+        {
+          "__f__": "0x1.be267844f6555p+0"
+        },
+        {
+          "__f__": "0x1.a28536904050bp+0"
+        },
+        {
+          "__f__": "0x1.96ee26c521737p+0"
+        },
+        {
+          "__f__": "0x1.90cce6dbfd7a1p+0"
+        },
+        {
+          "__f__": "0x1.8c0c08d7e48cap+0"
+        },
+        {
+          "__f__": "0x1.879609ff4902ep+0"
+        },
+        {
+          "__f__": "0x1.8335463c23f0ep+0"
+        },
+        {
+          "__f__": "0x1.7ee1ebe12fb0ep+0"
+        },
+        {
+          "__f__": "0x1.7a9b028f171acp+0"
+        },
+        {
+          "__f__": "0x1.7660556e36fc3p+0"
+        },
+        {
+          "__f__": "0x1.7231c06c22c44p+0"
+        },
+        {
+          "__f__": "0x1.6e0f20e5b451bp+0"
+        },
+        {
+          "__f__": "0x1.69f854a7aeb2bp+0"
+        },
+        {
+          "__f__": "0x1.65ed39e11ca47p+0"
+        },
+        {
+          "__f__": "0x1.61edaf21c0354p+0"
+        },
+        {
+          "__f__": "0x1.5df99358fac06p+0"
+        },
+        {
+          "__f__": "0x1.5a10c5d4bb68fp+0"
+        },
+        {
+          "__f__": "0x1.5633264070b56p+0"
+        },
+        {
+          "__f__": "0x1.526094a3fd311p+0"
+        },
+        {
+          "__f__": "0x1.4e98f162af0a4p+0"
+        },
+        {
+          "__f__": "0x1.4adc1d3a3aa3ep+0"
+        },
+        {
+          "__f__": "0x1.4729f941b8133p+0"
+        },
+        {
+          "__f__": "0x1.438266e8a380fp+0"
+        },
+        {
+          "__f__": "0x1.3fe547f5e0649p+0"
+        },
+        {
+          "__f__": "0x1.3c527e86bf936p+0"
+        }
+      ],
+      "aif_uncertainty_inflation_factor": {
+        "__f__": "0x1.8000000000000p+1"
+      },
+      "auc": {
+        "__f__": "0x1.100af04f21517p+8"
+      },
+      "blood_t1": {
+        "__f__": "0x1.a666666666666p+0"
+      },
+      "candidate_count": 0,
+      "detection_method": "population",
+      "fwhm_seconds": {
+        "__f__": "0x1.3056b800c1544p+3"
+      },
+      "peak_concentration": {
+        "__f__": "0x1.2ccd598d6f219p+3"
+      },
+      "qc_metrics": {
+        "aif_confidence": "low",
+        "aif_g6_admitted": false,
+        "aif_source": "population",
+        "aif_status": "WARN",
+        "aif_uncertainty_inflation_factor": {
+          "__f__": "0x1.8000000000000p+1"
+        },
+        "auto_best_score": {
+          "__f__": "0x0.0p+0"
+        },
+        "auto_detection_attempted": true,
+        "auto_fallback_reason": "all 1 cascade tiers exhausted; no tier produced any anchored keeper",
+        "auto_n_above_threshold": 0,
+        "auto_n_candidates": 0,
+        "baseline_frames": 5,
+        "bat_method": "baseline_frames",
+        "bat_seconds": {
+          "__f__": "0x1.4000000000000p+4"
+        },
+        "blood_t1_seconds": {
+          "__f__": "0x1.a666666666666p+0"
+        },
+        "cascade_anchor_outcomes": [
+          {
+            "earliest_post_arr_s": {
+              "__f__": "inf"
+            },
+            "has_anchor": false,
+            "n_candidates": 0,
+            "quorum_count": 0,
+            "tier": "wb_relaxed"
+          }
+        ],
+        "cascade_best_score": {
+          "__f__": "0x0.0p+0"
+        },
+        "cascade_gate_decisions": [
+          {
+            "decisions": [],
+            "outcome": "skipped_anchor",
+            "tier": "wb_relaxed"
+          }
+        ],
+        "cascade_tiers_attempted": 1,
+        "detection_method": "population",
+        "dose_factor": {
+          "__f__": "0x1.0000000000000p+0"
+        },
+        "expected_peak_max_mm": {
+          "__f__": "0x1.a34f72c234f72p+3"
+        },
+        "field_strength_t": {
+          "__f__": "0x1.8000000000000p+1"
+        },
+        "final_auc": {
+          "__f__": "0x1.100af04f21517p+8"
+        },
+        "final_fwhm_seconds": {
+          "__f__": "0x1.3056b800c1544p+3"
+        },
+        "final_peak_mm": {
+          "__f__": "0x1.2ccd598d6f219p+3"
+        },
+        "final_washout": {
+          "__f__": "0x1.bb28fc85de212p-1"
+        },
+        "hematocrit": {
+          "__f__": "0x1.ae147ae147ae1p-2"
+        },
+        "multi_bump_tail_count": 0,
+        "multi_bump_tail_heights_mm": [],
+        "multi_bump_tail_warning": false,
+        "n_aif_voxels_selected": 0,
+        "peak_amplitude_ratio": null,
+        "peak_amplitude_warning": false,
+        "population_aif": true,
+        "quality_score": {
+          "__f__": "0x1.0000000000000p-1"
+        },
+        "scaling_factor": {
+          "__f__": "0x1.0000000000000p+0"
+        },
+        "scaling_factor_warning": false
+      },
+      "quality_score": {
+        "__f__": "0x1.0000000000000p-1"
+      },
+      "scaling_factor": {
+        "__f__": "0x1.0000000000000p+0"
+      }
+    }
+  }
+}

@@ -1252,6 +1252,83 @@ class CascadeResult:
     tier_gate_decisions: list[dict[str, Any]] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class LoadedInputs:
+    """Loaded 4D concentration + geometry + brain mask for one AIF run."""
+
+    conc_data: npt.NDArray[Any]
+    affine: npt.NDArray[Any]
+    header: Any
+    brain_mask: npt.NDArray[Any]
+
+
+@dataclass(frozen=True)
+class AIFParams:
+    """Scalar detection parameters + derived geometry, read once per run."""
+
+    aif_method: str
+    n_candidates: int
+    baseline_frames: int
+    field_strength: float
+    tr: float
+    target_peak: float
+    lesion_distance: float
+    n_timepoints: int
+    blood_t1: float
+    voxel_sizes: tuple[float, ...]
+
+
+@dataclass(frozen=True)
+class DetectionState:
+    """Outcome of the detection phase (or its population-fallback defaults).
+
+    Bundles the ~11 locals the detection cascade + post-cascade filters produce
+    and that the emit / finalize phases consume. ``population_default()``
+    reproduces the pre-detection init block for the population path.
+    """
+
+    detection_method: Literal["atlas", "whole_brain", "population"]
+    candidates: list[tuple[int, int, int]]
+    scores: list[float]
+    metrics_list: list[dict[str, float]]
+    tissue_ttp_frame: float | None
+    detection_attempt: dict[str, Any] | None
+    atlas_tier_used: str | None
+    anchor_outcomes: list[dict[str, Any]]
+    tier_gate_decisions: list[dict[str, Any]]
+    tier_result: TierResult | None
+    n_filtered_out: int
+
+    @classmethod
+    def population_default(cls) -> "DetectionState":
+        """Init values for the population path (no detection run)."""
+        return cls(
+            detection_method="population", candidates=[], scores=[],
+            metrics_list=[], tissue_ttp_frame=None, detection_attempt=None,
+            atlas_tier_used=None, anchor_outcomes=[], tier_gate_decisions=[],
+            tier_result=None, n_filtered_out=0,
+        )
+
+
+@dataclass(frozen=True)
+class EmitResult:
+    """The emitted AIF curve + mask + provenance, shared by both emit branches.
+
+    ``tier_result``/``detection_method`` ride here (not on ``DetectionState``)
+    because the emit branches rebuild/override them: the C2 re-gate rebuilds
+    ``tier_result``, and the population emit branch reassigns
+    ``detection_method`` to ``"population"`` when the detected pool was emptied.
+    """
+
+    aif_curve: npt.NDArray[Any]
+    aif_mask: npt.NDArray[Any]
+    quality_score: float
+    scaling_factor: float
+    qc_metrics: dict[str, Any]
+    tier_result: TierResult | None
+    detection_method: Literal["atlas", "whole_brain", "population"]
+
+
 # =============================================================================
 # DCE AIF Detection Interface
 # =============================================================================
@@ -4177,33 +4254,8 @@ class AIFDetection(BaseInterface):
     # Main Interface Execution
     # -----------------------------------------------------------------
 
-    def _run_interface(self, runtime: Any) -> Any:
-        """Execute DCE AIF detection.
-
-        Notes
-        -----
-        Two distinct gate-decision QC fields are emitted to the
-        ``Metrics.aif_detection`` block of the per-session sidecar:
-
-        - ``aif_gate_decisions``: per-iteration ``GateDecision`` log of
-          the **winning** tier's progressive trim loop. Empty when no
-          tier wins (population fallback). Consumers reading this for
-          QC pass/fail summaries see only the accepted pool's history.
-        - ``cascade_gate_decisions``: per-tier outcome list, one entry
-          per attempted tier in cascade order (atlas tightest →
-          broadest × strict → permissive, then ``wb_relaxed``). Each
-          entry has ``tier`` (label), ``outcome`` (``"PASS"`` /
-          ``"trim_exhausted"`` / ``"skipped_quorum"`` /
-          ``"skipped_anchor"``), and ``decisions`` (the full
-          per-iteration ``GateDecision`` log; empty when the tier was
-          skipped before gates ran). This field captures the
-          diagnostic trail for tiers whose pool was discarded — needed
-          for diagnosing cascades that exhaust to population.
-
-        Order of ``cascade_gate_decisions`` matches
-        ``cascade_anchor_outcomes`` and is asserted in
-        ``tests/unit/test_dce_aif.py``.
-        """
+    def _load_and_validate_inputs(self) -> LoadedInputs:
+        """Validate hematocrit + load the concentration series and brain mask (P0)."""
         import nibabel as nib  # type: ignore[import-untyped]
 
         # Hematocrit gates the blood->plasma conversion (/(1-Hct)) at every AIF
@@ -4225,11 +4277,15 @@ class AIFDetection(BaseInterface):
         brain_img = nib.load(self.inputs.brain_mask_file)
         brain_mask: npt.NDArray[Any] = brain_img.get_fdata()  # type: ignore[attr-defined]
 
-        # ===== External AIF: bypass all detection if provided =====
-        if isdefined(self.inputs.external_aif_file) and self.inputs.external_aif_file:
-            return self._handle_external_aif(
-                runtime, conc_data, affine, brain_mask,
-            )
+        return LoadedInputs(
+            conc_data=conc_data, affine=affine, header=header, brain_mask=brain_mask,
+        )
+
+    def _load_atlas_and_lesion_masks(
+        self,
+    ) -> tuple[list[npt.NDArray[Any]], list[str], Optional[npt.NDArray[Any]]]:
+        """Load the optional atlas cascade masks + lesion mask (P2)."""
+        import nibabel as nib  # type: ignore[import-untyped]
 
         # Optional atlas masks — build ordered list (tightest → broadest)
         # User-supplied aif_mask_file overrides all atlas masks.
@@ -4269,9 +4325,13 @@ class AIFDetection(BaseInterface):
             lesion_img = nib.load(self.inputs.lesion_mask_file)
             lesion_mask = lesion_img.get_fdata()  # type: ignore[attr-defined]
 
-        # Parameters
+        return atlas_masks, atlas_names, lesion_mask
+
+    def _read_params(
+        self, conc_data: npt.NDArray[Any], header: Any,
+    ) -> AIFParams:
+        """Read scalar detection parameters + derive geometry (P3)."""
         aif_method = str(self.inputs.aif_method)
-        criteria = str(self.inputs.criteria)
         n_candidates = int(self.inputs.n_candidates)
         baseline_frames = int(self.inputs.baseline_frames)
         field_strength = float(self.inputs.field_strength)
@@ -4287,465 +4347,559 @@ class AIFDetection(BaseInterface):
         # Voxel sizes from header
         voxel_sizes = tuple(float(v) for v in header.get_zooms()[:3])  # type: ignore[attr-defined]
 
-        # Initialize results
-        detection_method: Literal["atlas", "whole_brain", "population"] = "population"
-        candidates: list[tuple[int, int, int]] = []
-        scores: list[float] = []
-        metrics_list: list[dict[str, float]] = []
-        tissue_ttp_frame: float | None = None
+        return AIFParams(
+            aif_method=aif_method, n_candidates=n_candidates,
+            baseline_frames=baseline_frames, field_strength=field_strength, tr=tr,
+            target_peak=target_peak, lesion_distance=lesion_distance,
+            n_timepoints=n_timepoints, blood_t1=blood_t1, voxel_sizes=voxel_sizes,
+        )
+
+    def _run_detection(
+        self,
+        loaded: LoadedInputs,
+        atlas_masks: list[npt.NDArray[Any]],
+        atlas_names: list[str],
+        lesion_mask: Optional[npt.NDArray[Any]],
+        params: AIFParams,
+    ) -> DetectionState:
+        """Run the detection cascade + post-cascade filters (P5)."""
+        conc_data = loaded.conc_data
+        brain_mask = loaded.brain_mask
+        affine = loaded.affine
+        aif_method = params.aif_method
+        n_candidates = params.n_candidates
+        baseline_frames = params.baseline_frames
+        tr = params.tr
+        target_peak = params.target_peak
+        lesion_distance = params.lesion_distance
+        voxel_sizes = params.voxel_sizes
+        # _detection_attempt is assigned only conditionally in the body
+        # (cascade exhaustion / 0-survivor); re-init so the success path binds.
         _detection_attempt: dict[str, Any] | None = None
-        atlas_tier_used: str | None = None
-        validation_qc: dict[str, Any] = {}
-        anchor_outcomes: list[dict[str, Any]] = []
-        tier_gate_decisions: list[dict[str, Any]] = []
-        tier_result: TierResult | None = None
-
-        # Skip auto detection if population method requested
-        if aif_method == "population":
-            pass
+        # Restore the Literal type the narrowing (below) relies on.
+        detection_method: Literal["atlas", "whole_brain", "population"]
+        # ===== Phase 1: Prepare search masks =====
+        if lesion_distance < LESION_EXCLUSION_FLOOR_MM:
+            logger.warning(
+                "lesion_distance=%.1f mm is below hard minimum (%.1f mm); "
+                "clamping to %.1f mm.",
+                lesion_distance, LESION_EXCLUSION_FLOOR_MM,
+                LESION_EXCLUSION_FLOOR_MM,
+            )
+            _lesion_dist = LESION_EXCLUSION_FLOOR_MM
+        elif lesion_distance < LESION_EXCLUSION_DISTANCE_MM:
+            logger.warning(
+                "lesion_distance=%.1f mm is below recommended minimum "
+                "(%.1f mm); peritumoral vascular abnormalities may "
+                "contaminate AIF candidates.",
+                lesion_distance, LESION_EXCLUSION_DISTANCE_MM,
+            )
+            _lesion_dist = lesion_distance
         else:
-            # ===== Phase 1: Prepare search masks =====
-            if lesion_distance < LESION_EXCLUSION_FLOOR_MM:
+            _lesion_dist = lesion_distance
+        # Inferior inflow exclusion is applied universally — BIDS
+        # MRAcquisitionType does not reliably distinguish slab-
+        # selective 2D-prep sequences (Look-Locker, FAIR, MOTSA
+        # inferior partitions, slab-encoded TWIST) from plain 2D-MS,
+        # and the latter are the only case where slab-entry inflow
+        # is genuinely absent. Cost on plain 2D-MS DCE is ~5
+        # inferior slices in WB search; benefit is correct behavior
+        # for all slab-selective acquisitions.
+        inferior_inflow_mm = _inflow_exclusion_mm(
+            voxel_sizes[2], conc_data.shape[2],
+        )
+        if self.inputs.mr_acquisition_type:
+            logger.info(
+                "DCE MRAcquisitionType=%s; inflow exclusion applied "
+                "universally.",
+                (self.inputs.mr_acquisition_type or "").upper(),
+            )
+
+        # Atlas search: skip midline exclusion (MRA-derived atlas
+        # already excludes venous structures, including SSS) and use
+        # rolloff-only superior margin.
+        atlas_search_mask = self._prepare_search_mask(
+            brain_mask,
+            voxel_sizes,
+            lesion_mask=lesion_mask,
+            lesion_distance_mm=_lesion_dist,
+            skip_midline=True,
+            slab_edge_inferior_mm=inferior_inflow_mm,
+            slab_edge_superior_mm=SLAB_EDGE_EXCLUSION_MM_ROLLOFF,
+            erosion_iterations=BRAIN_EROSION_ITERATIONS_ATLAS,
+        )
+        # Whole-brain fallback: full erosion, midline exclusion,
+        # SSS-sized superior margin, and a 10 mm physical-depth cut
+        # to strip the lateral cortical surface where cortical-vein
+        # drainage produces arterial-shaped curves at clinical TR.
+        # Atlas search skips this cut so it
+        # retains 75-94 % of MCA_ACA territory.
+        wb_search_mask = self._prepare_search_mask(
+            brain_mask,
+            voxel_sizes,
+            lesion_mask=lesion_mask,
+            lesion_distance_mm=_lesion_dist,
+            skip_midline=False,
+            slab_edge_inferior_mm=inferior_inflow_mm,
+            slab_edge_superior_mm=SSS_EXCLUSION_MM,
+            erosion_iterations=BRAIN_EROSION_ITERATIONS,
+            physical_erosion_mm=WB_FALLBACK_DEPTH_EROSION_MM,
+        )
+
+        # ===== Phase 3: Compute tissue TTP reference =====
+        tissue_ttp_frame = self._calculate_tissue_ttp_reference(
+            conc_data, brain_mask, baseline_frames
+        )
+
+        # ===== Two-pass multi-level detection cascade =====
+        # See ``_run_two_pass_cascade`` docstring for contract details.
+        # Brain mask, affine, hct, and target_peak enable per-tier
+        # G1-G6 acceptance gates with progressive trim; without them
+        # the cascade falls back to its legacy quorum + anchor
+        # acceptance criterion.
+        cascade_result = self._run_two_pass_cascade(
+            conc_data,
+            atlas_search_mask=atlas_search_mask,
+            wb_search_mask=wb_search_mask,
+            atlas_masks=atlas_masks,
+            atlas_names=atlas_names,
+            n_candidates=n_candidates,
+            tr=tr,
+            baseline_frames=baseline_frames,
+            tissue_ttp_frame=tissue_ttp_frame,
+            brain_mask=brain_mask,
+            affine=affine,
+            hct=float(self.inputs.hematocrit),
+            target_peak=target_peak,
+        )
+        candidates = cascade_result.candidates
+        scores = cascade_result.scores
+        metrics_list = cascade_result.metrics_list
+        detection_method_str = cascade_result.detection_method
+        atlas_tier_used = cascade_result.atlas_tier_used
+        cascade_tiers_attempted = cascade_result.cascade_tiers_attempted
+        anchor_outcomes = cascade_result.anchor_outcomes
+        tier_result = cascade_result.tier_result
+        tier_gate_decisions = cascade_result.tier_gate_decisions
+        # Narrow back to Literal for the typed local.
+        detection_method = (  # type: ignore[assignment]
+            "atlas" if detection_method_str == "atlas"
+            else "whole_brain" if detection_method_str == "whole_brain"
+            else "population"
+        )
+
+        # Cascade-exhaustion provenance: when the two-pass cascade
+        # returns ``detection_method="population"`` (no tier produced
+        # any anchored keeper anywhere), record the fact + tier-attempt
+        # count + per-tier anchor outcomes so QC reviewers can see why
+        # each tier failed. The downstream per-candidate quality
+        # filter only writes provenance when ``candidates`` is
+        # non-empty, so this branch is the only path that captures
+        # Pass-3 exhaustion.
+        if not candidates and detection_method_str == "population":
+            _detection_attempt = self._cascade_exhaustion_provenance(
+                cascade_tiers_attempted,
+                anchor_outcomes=anchor_outcomes,
+            )
+            logger.warning(
+                "AIF cascade: all %d tiers exhausted without producing "
+                "any anchored keeper. Falling back to Parker population AIF.",
+                cascade_tiers_attempted,
+            )
+
+        # ===== Phase 6: Soft contralateral penalty =====
+        if candidates and lesion_mask is not None:
+            tumor_lat = self._determine_tumor_laterality(lesion_mask, affine)
+            candidates, scores, metrics_list = self._filter_candidates_by_hemisphere(
+                candidates, scores, metrics_list,
+                conc_data.shape[:3], affine, tumor_lat,
+            )
+
+        # ===== Bilateral balance (always applied) =====
+        if candidates:
+            candidates, scores, metrics_list = self._ensure_bilateral_balance(
+                candidates, scores, metrics_list,
+                affine, n_candidates,
+            )
+
+        # ===== Take top N =====
+        if candidates and len(candidates) > n_candidates:
+            sorted_idx = sorted(
+                range(len(candidates)), key=lambda i: scores[i], reverse=True
+            )[:n_candidates]
+            candidates = [candidates[i] for i in sorted_idx]
+            scores = [scores[i] for i in sorted_idx]
+            metrics_list = [metrics_list[i] for i in sorted_idx]
+
+        # Venous filtering already applied inside _find_candidates_in_mask
+        # (after cluster selection). No need to duplicate here.
+
+        # ===== Per-candidate quality filter =====
+        # Low-scoring candidates (< 0.5) are partial-volume contaminated
+        # (tiers 6-7). Averaging them in degrades the AIF. Filter by
+        # individual score, then decide based on survivor count.
+        n_filtered_out = 0
+        if candidates and aif_method != "population":
+            n_before = len(candidates)
+            keep = [i for i, s in enumerate(scores) if s >= _MIN_CANDIDATE_SCORE]
+            n_filtered_out = n_before - len(keep)
+
+            if len(keep) >= _MIN_CANDIDATES_FOR_DETECTED:
+                # Enough high-quality candidates survive
+                if n_filtered_out > 0:
+                    logger.info(
+                        "AIF quality filter: kept %d/%d candidates "
+                        "(removed %d with score < %.2f).",
+                        len(keep), n_before, n_filtered_out,
+                        _MIN_CANDIDATE_SCORE,
+                    )
+                candidates = [candidates[i] for i in keep]
+                scores = [scores[i] for i in keep]
+                metrics_list = [metrics_list[i] for i in keep]
+            elif len(keep) == 1:
+                # Single high-quality voxel — use it but warn
                 logger.warning(
-                    "lesion_distance=%.1f mm is below hard minimum (%.1f mm); "
-                    "clamping to %.1f mm.",
-                    lesion_distance, LESION_EXCLUSION_FLOOR_MM,
-                    LESION_EXCLUSION_FLOOR_MM,
+                    "AIF quality filter: only 1/%d candidate with "
+                    "score >= %.2f. Using single voxel AIF "
+                    "(no consistency check possible).",
+                    n_before, _MIN_CANDIDATE_SCORE,
                 )
-                _lesion_dist = LESION_EXCLUSION_FLOOR_MM
-            elif lesion_distance < LESION_EXCLUSION_DISTANCE_MM:
-                logger.warning(
-                    "lesion_distance=%.1f mm is below recommended minimum "
-                    "(%.1f mm); peritumoral vascular abnormalities may "
-                    "contaminate AIF candidates.",
-                    lesion_distance, LESION_EXCLUSION_DISTANCE_MM,
-                )
-                _lesion_dist = lesion_distance
+                candidates = [candidates[keep[0]]]
+                scores = [scores[keep[0]]]
+                metrics_list = [metrics_list[keep[0]]]
             else:
-                _lesion_dist = lesion_distance
-            # Inferior inflow exclusion is applied universally — BIDS
-            # MRAcquisitionType does not reliably distinguish slab-
-            # selective 2D-prep sequences (Look-Locker, FAIR, MOTSA
-            # inferior partitions, slab-encoded TWIST) from plain 2D-MS,
-            # and the latter are the only case where slab-entry inflow
-            # is genuinely absent. Cost on plain 2D-MS DCE is ~5
-            # inferior slices in WB search; benefit is correct behavior
-            # for all slab-selective acquisitions.
-            inferior_inflow_mm = _inflow_exclusion_mm(
-                voxel_sizes[2], conc_data.shape[2],
-            )
-            if self.inputs.mr_acquisition_type:
-                logger.info(
-                    "DCE MRAcquisitionType=%s; inflow exclusion applied "
-                    "universally.",
-                    (self.inputs.mr_acquisition_type or "").upper(),
-                )
-
-            # Atlas search: skip midline exclusion (MRA-derived atlas
-            # already excludes venous structures, including SSS) and use
-            # rolloff-only superior margin.
-            atlas_search_mask = self._prepare_search_mask(
-                brain_mask,
-                voxel_sizes,
-                lesion_mask=lesion_mask,
-                lesion_distance_mm=_lesion_dist,
-                skip_midline=True,
-                slab_edge_inferior_mm=inferior_inflow_mm,
-                slab_edge_superior_mm=SLAB_EDGE_EXCLUSION_MM_ROLLOFF,
-                erosion_iterations=BRAIN_EROSION_ITERATIONS_ATLAS,
-            )
-            # Whole-brain fallback: full erosion, midline exclusion,
-            # SSS-sized superior margin, and a 10 mm physical-depth cut
-            # to strip the lateral cortical surface where cortical-vein
-            # drainage produces arterial-shaped curves at clinical TR.
-            # Atlas search skips this cut so it
-            # retains 75-94 % of MCA_ACA territory.
-            wb_search_mask = self._prepare_search_mask(
-                brain_mask,
-                voxel_sizes,
-                lesion_mask=lesion_mask,
-                lesion_distance_mm=_lesion_dist,
-                skip_midline=False,
-                slab_edge_inferior_mm=inferior_inflow_mm,
-                slab_edge_superior_mm=SSS_EXCLUSION_MM,
-                erosion_iterations=BRAIN_EROSION_ITERATIONS,
-                physical_erosion_mm=WB_FALLBACK_DEPTH_EROSION_MM,
-            )
-
-            # ===== Phase 3: Compute tissue TTP reference =====
-            tissue_ttp_frame = self._calculate_tissue_ttp_reference(
-                conc_data, brain_mask, baseline_frames
-            )
-
-            # ===== Two-pass multi-level detection cascade =====
-            # See ``_run_two_pass_cascade`` docstring for contract details.
-            # Brain mask, affine, hct, and target_peak enable per-tier
-            # G1-G6 acceptance gates with progressive trim; without them
-            # the cascade falls back to its legacy quorum + anchor
-            # acceptance criterion.
-            cascade_result = self._run_two_pass_cascade(
-                conc_data,
-                atlas_search_mask=atlas_search_mask,
-                wb_search_mask=wb_search_mask,
-                atlas_masks=atlas_masks,
-                atlas_names=atlas_names,
-                n_candidates=n_candidates,
-                tr=tr,
-                baseline_frames=baseline_frames,
-                tissue_ttp_frame=tissue_ttp_frame,
-                brain_mask=brain_mask,
-                affine=affine,
-                hct=float(self.inputs.hematocrit),
-                target_peak=target_peak,
-            )
-            candidates = cascade_result.candidates
-            scores = cascade_result.scores
-            metrics_list = cascade_result.metrics_list
-            detection_method_str = cascade_result.detection_method
-            atlas_tier_used = cascade_result.atlas_tier_used
-            cascade_tiers_attempted = cascade_result.cascade_tiers_attempted
-            anchor_outcomes = cascade_result.anchor_outcomes
-            tier_result = cascade_result.tier_result
-            tier_gate_decisions = cascade_result.tier_gate_decisions
-            # Narrow back to Literal for the typed local.
-            detection_method = (  # type: ignore[assignment]
-                "atlas" if detection_method_str == "atlas"
-                else "whole_brain" if detection_method_str == "whole_brain"
-                else "population"
-            )
-
-            # Cascade-exhaustion provenance: when the two-pass cascade
-            # returns ``detection_method="population"`` (no tier produced
-            # any anchored keeper anywhere), record the fact + tier-attempt
-            # count + per-tier anchor outcomes so QC reviewers can see why
-            # each tier failed. The downstream per-candidate quality
-            # filter only writes provenance when ``candidates`` is
-            # non-empty, so this branch is the only path that captures
-            # Pass-3 exhaustion.
-            if not candidates and detection_method_str == "population":
-                _detection_attempt = self._cascade_exhaustion_provenance(
-                    cascade_tiers_attempted,
-                    anchor_outcomes=anchor_outcomes,
-                )
+                # No candidates above threshold — fall back to population.
+                # With the two-pass cascade above, this branch is now
+                # only reachable when no tier produced any keeper across
+                # the entire cascade (population is Pass 3).
+                best_score = max(scores) if scores else 0.0
+                _detection_attempt = {
+                    "auto_detection_attempted": True,
+                    "auto_best_score": float(best_score),
+                    "auto_n_candidates": n_before,
+                    "auto_n_above_threshold": 0,
+                    "auto_fallback_reason": (
+                        f"all {cascade_tiers_attempted} cascade tiers "
+                        f"exhausted; final tier: 0/{n_before} candidates "
+                        f"scored >= {_MIN_CANDIDATE_SCORE}"
+                    ),
+                    "cascade_tiers_attempted": cascade_tiers_attempted,
+                    "cascade_best_score": float(best_score),
+                }
                 logger.warning(
-                    "AIF cascade: all %d tiers exhausted without producing "
-                    "any anchored keeper. Falling back to Parker population AIF.",
+                    "AIF quality filter: 0/%d candidates scored >= %.2f "
+                    "(best=%.2f) after %d cascade tiers. "
+                    "Falling back to Parker population AIF.",
+                    n_before, _MIN_CANDIDATE_SCORE, best_score,
                     cascade_tiers_attempted,
                 )
+                candidates = []
+                scores = []
+                metrics_list = []
 
-            # ===== Phase 6: Soft contralateral penalty =====
-            if candidates and lesion_mask is not None:
-                tumor_lat = self._determine_tumor_laterality(lesion_mask, affine)
-                candidates, scores, metrics_list = self._filter_candidates_by_hemisphere(
-                    candidates, scores, metrics_list,
-                    conc_data.shape[:3], affine, tumor_lat,
-                )
+        return DetectionState(
+            detection_method=detection_method,
+            candidates=candidates,
+            scores=scores,
+            metrics_list=metrics_list,
+            tissue_ttp_frame=tissue_ttp_frame,
+            detection_attempt=_detection_attempt,
+            atlas_tier_used=atlas_tier_used,
+            anchor_outcomes=anchor_outcomes,
+            tier_gate_decisions=tier_gate_decisions,
+            tier_result=tier_result,
+            n_filtered_out=n_filtered_out,
+        )
 
-            # ===== Bilateral balance (always applied) =====
-            if candidates:
-                candidates, scores, metrics_list = self._ensure_bilateral_balance(
-                    candidates, scores, metrics_list,
-                    affine, n_candidates,
-                )
-
-            # ===== Take top N =====
-            if candidates and len(candidates) > n_candidates:
-                sorted_idx = sorted(
-                    range(len(candidates)), key=lambda i: scores[i], reverse=True
-                )[:n_candidates]
-                candidates = [candidates[i] for i in sorted_idx]
-                scores = [scores[i] for i in sorted_idx]
-                metrics_list = [metrics_list[i] for i in sorted_idx]
-
-            # Venous filtering already applied inside _find_candidates_in_mask
-            # (after cluster selection). No need to duplicate here.
-
-            # ===== Per-candidate quality filter =====
-            # Low-scoring candidates (< 0.5) are partial-volume contaminated
-            # (tiers 6-7). Averaging them in degrades the AIF. Filter by
-            # individual score, then decide based on survivor count.
-            n_filtered_out = 0
-            if candidates and aif_method != "population":
-                n_before = len(candidates)
-                keep = [i for i, s in enumerate(scores) if s >= _MIN_CANDIDATE_SCORE]
-                n_filtered_out = n_before - len(keep)
-
-                if len(keep) >= _MIN_CANDIDATES_FOR_DETECTED:
-                    # Enough high-quality candidates survive
-                    if n_filtered_out > 0:
-                        logger.info(
-                            "AIF quality filter: kept %d/%d candidates "
-                            "(removed %d with score < %.2f).",
-                            len(keep), n_before, n_filtered_out,
-                            _MIN_CANDIDATE_SCORE,
-                        )
-                    candidates = [candidates[i] for i in keep]
-                    scores = [scores[i] for i in keep]
-                    metrics_list = [metrics_list[i] for i in keep]
-                elif len(keep) == 1:
-                    # Single high-quality voxel — use it but warn
-                    logger.warning(
-                        "AIF quality filter: only 1/%d candidate with "
-                        "score >= %.2f. Using single voxel AIF "
-                        "(no consistency check possible).",
-                        n_before, _MIN_CANDIDATE_SCORE,
-                    )
-                    candidates = [candidates[keep[0]]]
-                    scores = [scores[keep[0]]]
-                    metrics_list = [metrics_list[keep[0]]]
-                else:
-                    # No candidates above threshold — fall back to population.
-                    # With the two-pass cascade above, this branch is now
-                    # only reachable when no tier produced any keeper across
-                    # the entire cascade (population is Pass 3).
-                    best_score = max(scores) if scores else 0.0
-                    _detection_attempt = {
-                        "auto_detection_attempted": True,
-                        "auto_best_score": float(best_score),
-                        "auto_n_candidates": n_before,
-                        "auto_n_above_threshold": 0,
-                        "auto_fallback_reason": (
-                            f"all {cascade_tiers_attempted} cascade tiers "
-                            f"exhausted; final tier: 0/{n_before} candidates "
-                            f"scored >= {_MIN_CANDIDATE_SCORE}"
-                        ),
-                        "cascade_tiers_attempted": cascade_tiers_attempted,
-                        "cascade_best_score": float(best_score),
-                    }
-                    logger.warning(
-                        "AIF quality filter: 0/%d candidates scored >= %.2f "
-                        "(best=%.2f) after %d cascade tiers. "
-                        "Falling back to Parker population AIF.",
-                        n_before, _MIN_CANDIDATE_SCORE, best_score,
-                        cascade_tiers_attempted,
-                    )
-                    candidates = []
-                    scores = []
-                    metrics_list = []
-
-        # ===== Generate AIF curve =====
+    def _emit_detected_aif(
+        self, state: DetectionState, loaded: LoadedInputs, params: AIFParams,
+    ) -> EmitResult:
+        """Average + emit the detected AIF curve (P6, detected branch)."""
+        conc_data = loaded.conc_data
+        brain_mask = loaded.brain_mask
+        affine = loaded.affine
+        tr = params.tr
+        baseline_frames = params.baseline_frames
+        target_peak = params.target_peak
+        candidates = state.candidates
+        scores = state.scores
+        metrics_list = state.metrics_list
+        detection_method = state.detection_method
+        atlas_tier_used = state.atlas_tier_used
+        tissue_ttp_frame = state.tissue_ttp_frame
+        tier_result = state.tier_result
+        n_filtered_out = state.n_filtered_out
+        # validation_qc is emit-local (relocated from the pre-detection init);
+        # the C2/reuse sub-branches never assign it before its read.
+        validation_qc: dict[str, Any] = {}
         aif_curve: npt.NDArray[Any]
         aif_mask = np.zeros(conc_data.shape[:3], dtype=np.uint8)
         quality_score = 0.0
         scaling_factor = 1.0
         qc_metrics: dict[str, Any] = {}
 
-        if candidates:
-            # Phase 5: Weighted ROI averaging + smoothing
-            # When the cascade ran G1-G6 acceptance gates with progressive
-            # trim (gates_enabled in _run_two_pass_cascade), the accepted
-            # tier's averaged + Hct-corrected + rescaled curve is already
-            # in ``tier_result``; reuse it to avoid double-scaling and to
-            # propagate the per-iteration gate decisions downstream. The
-            # legacy averaging path runs only when the cascade fell back to
-            # its pre-gate accept-on-quorum-and-anchor contract (no inputs
-            # were supplied to enable gates).
-            if tier_result is not None:
-                tier_cand_set = set(tuple(c) for c in tier_result.candidates)
-                cur_cand_set = set(tuple(c) for c in candidates)
-                if cur_cand_set != tier_cand_set:
-                    # C2: post-cascade filters shrank the accepted pool. Re-gate
-                    # the EMITTED subset (single evaluation, no trim) and rebuild
-                    # tier_result so downstream provenance (confidence /
-                    # uncertainty / gate decisions) describes the emitted AIF, not
-                    # the pre-filter pool. Provenance-only: a re-gate FAIL is
-                    # recorded (downgrades confidence below) but does NOT trigger a
-                    # new population fallback here.
-                    outcome = self._score_and_gate_pool(
-                        candidates, scores, conc_data, brain_mask, affine, tr,
-                        baseline_frames, float(self.inputs.hematocrit),
-                        target_peak, tier_result.atlas_tier,
-                    )
-                    aif_curve = outcome.curve_scaled
-                    scaling_factor = outcome.scale_factor
-                    tier_result = TierResult(
-                        candidates=list(candidates),
-                        scores=list(scores),
-                        metrics=list(metrics_list),
-                        curve_scaled=aif_curve,
-                        scale_factor=scaling_factor,
-                        qc=outcome.qc,
-                        atlas_tier=tier_result.atlas_tier,
-                        hemisphere=outcome.hemisphere,
-                        n_slabs=outcome.n_slabs,
-                        status=outcome.status,
-                        gate_decisions=[outcome.decision],
-                    )
-                else:
-                    aif_curve = tier_result.curve_scaled
-                    scaling_factor = tier_result.scale_factor
-                aif_mask = np.zeros(conc_data.shape[:3], dtype=np.uint8)
-                for cx, cy, cz in candidates:
-                    aif_mask[cx, cy, cz] = 1
+        # Phase 5: Weighted ROI averaging + smoothing
+        # When the cascade ran G1-G6 acceptance gates with progressive
+        # trim (gates_enabled in _run_two_pass_cascade), the accepted
+        # tier's averaged + Hct-corrected + rescaled curve is already
+        # in ``tier_result``; reuse it to avoid double-scaling and to
+        # propagate the per-iteration gate decisions downstream. The
+        # legacy averaging path runs only when the cascade fell back to
+        # its pre-gate accept-on-quorum-and-anchor contract (no inputs
+        # were supplied to enable gates).
+        if tier_result is not None:
+            tier_cand_set = set(tuple(c) for c in tier_result.candidates)
+            cur_cand_set = set(tuple(c) for c in candidates)
+            if cur_cand_set != tier_cand_set:
+                # C2: post-cascade filters shrank the accepted pool. Re-gate
+                # the EMITTED subset (single evaluation, no trim) and rebuild
+                # tier_result so downstream provenance (confidence /
+                # uncertainty / gate decisions) describes the emitted AIF, not
+                # the pre-filter pool. Provenance-only: a re-gate FAIL is
+                # recorded (downgrades confidence below) but does NOT trigger a
+                # new population fallback here.
+                outcome = self._score_and_gate_pool(
+                    candidates, scores, conc_data, brain_mask, affine, tr,
+                    baseline_frames, float(self.inputs.hematocrit),
+                    target_peak, tier_result.atlas_tier,
+                )
+                aif_curve = outcome.curve_scaled
+                scaling_factor = outcome.scale_factor
+                tier_result = TierResult(
+                    candidates=list(candidates),
+                    scores=list(scores),
+                    metrics=list(metrics_list),
+                    curve_scaled=aif_curve,
+                    scale_factor=scaling_factor,
+                    qc=outcome.qc,
+                    atlas_tier=tier_result.atlas_tier,
+                    hemisphere=outcome.hemisphere,
+                    n_slabs=outcome.n_slabs,
+                    status=outcome.status,
+                    gate_decisions=[outcome.decision],
+                )
             else:
-                aif_curve, aif_mask = self._compute_weighted_roi_aif(
-                    candidates, scores, conc_data, brain_mask, tr=tr,
-                )
-
-                # Phase 5b: Validate averaged AIF FWHM against candidate FWHM
-                aif_curve, aif_mask, validation_qc = self._validate_dce_averaged_aif(
-                    aif_curve, candidates, scores, metrics_list,
-                    conc_data, brain_mask, tr, baseline_frames,
-                )
-
-                # Convert measured AIF from blood to plasma concentration
-                # (tissue conc is in blood units; AIF must be in plasma units
-                #  for Tofts model: plasma = blood / (1 - Hct))
-                aif_curve = aif_curve / (1.0 - float(self.inputs.hematocrit))
-            # Emitted quality score = fidelity of the POOLED/averaged AIF (report /
-            # regression sentinel), not the mean of per-voxel scores — the latter
-            # never inspected the averaged curve, so a tail-diluted pool could score
-            # high. Reported for QC; contamination is gated on the specific gates.
-            quality_score, _ = score_averaged_aif_fidelity(
-                np.asarray(aif_curve, dtype=float), tr, baseline_frames,
-                dose_factor=self._get_dose_factor(),
-            )
-
-            # Aggregate QC metrics
-            if metrics_list:
-                # Get tier used from first candidate (all from same tier)
-                tier_used = int(metrics_list[0].get("tier_used", 0))
-                fwhm_frames_mean = float(
-                    np.mean([m.get("fwhm_frames", 0.0) for m in metrics_list])
-                )
-                qc_metrics = {
-                    "aif_source": "auto",  # For boilerplate text generation
-                    "peak_mm_mean": float(np.mean([m["peak_mm"] for m in metrics_list])),
-                    "fwhm_seconds_mean": float(
-                        np.mean([m["fwhm_seconds"] for m in metrics_list])
-                    ),
-                    "fwhm_frames_mean": fwhm_frames_mean,
-                    "washout_mean": float(
-                        np.mean([m["washout"] for m in metrics_list])
-                    ),
-                    "cnr_mean": float(np.mean([m["cnr"] for m in metrics_list])),
-                    "auc_mean": float(np.mean([m["auc"] for m in metrics_list])),
-                    "upstroke_slope_mean": float(
-                        np.mean([m.get("upstroke_slope", 0.0) for m in metrics_list])
-                    ),
-                    "n_aif_voxels_selected": len(candidates),
-                    "n_aif_voxels_filtered_out": n_filtered_out,
-                    "candidate_coords": [list(c) for c in candidates],
-                    "candidate_scores": [float(s) for s in scores],
-                    "arterial_cascade_tier": tier_used,
-                    "low_tr_mode": is_low_temporal_resolution(tr),
-                }
-                if atlas_tier_used is not None:
-                    qc_metrics["atlas_tier_used"] = atlas_tier_used
-
-            # Merge FWHM validation QC
-            if validation_qc:
-                qc_metrics.update(validation_qc)
-
-            # Hemisphere coverage: classify candidates as left/right via RAS x-coord
-            if candidates:
-                hemi_cov, n_left, n_right = _classify_hemisphere(candidates, affine)
-                qc_metrics["n_left_candidates"] = n_left
-                qc_metrics["n_right_candidates"] = n_right
-                qc_metrics["hemisphere_coverage"] = hemi_cov
-
-            # Venous contamination detection and warning
-            # Check if any candidates were flagged as likely venous
-            n_venous = sum(
-                1 for m in metrics_list if m.get("is_likely_venous", False)
-            )
-            if n_venous > 0:
-                qc_metrics["n_likely_venous_candidates"] = n_venous
-                qc_metrics["venous_fraction"] = n_venous / len(metrics_list)
-
-            # Cross-validate final AIF peak timing against tissue TTP
-            if tissue_ttp_frame is not None:
-                aif_peak_frame = int(np.argmax(aif_curve))
-                timing_diff = tissue_ttp_frame - aif_peak_frame
-                qc_timing_margin = compute_timing_margin_frames(tr)
-                low_tr = is_low_temporal_resolution(tr)
-                qc_metrics["aif_ttp_frame"] = aif_peak_frame
-                qc_metrics["tissue_ttp_frame"] = tissue_ttp_frame
-                qc_metrics["aif_before_tissue_frames"] = timing_diff
-
-                # At high TR, only flag as venous if peak is >1 frame after tissue
-                if low_tr:
-                    qc_metrics["is_likely_venous"] = timing_diff < -1
-                else:
-                    qc_metrics["is_likely_venous"] = timing_diff < qc_timing_margin
-
-                if timing_diff < -1:
-                    logger.warning(
-                        "VENOUS CONTAMINATION: AIF peaks %.0f frames AFTER tissue TTP. "
-                        "Likely SSS or venous structure.",
-                        abs(timing_diff),
-                    )
-                elif not low_tr and timing_diff < qc_timing_margin:
-                    logger.warning(
-                        "MARGINAL AIF TIMING: AIF peaks only %.0f frames before tissue TTP "
-                        "(expected >= %d). May have venous contamination.",
-                        timing_diff,
-                        qc_timing_margin,
-                    )
-
+                aif_curve = tier_result.curve_scaled
+                scaling_factor = tier_result.scale_factor
+            aif_mask = np.zeros(conc_data.shape[:3], dtype=np.uint8)
+            for cx, cy, cz in candidates:
+                aif_mask[cx, cy, cz] = 1
         else:
-            # Generate BAT-aligned Parker population AIF
-            dose_factor = self._get_dose_factor()
-            t = np.arange(n_timepoints) * tr
+            aif_curve, aif_mask = self._compute_weighted_roi_aif(
+                candidates, scores, conc_data, brain_mask, tr=tr,
+            )
 
-            # For population AIF, use baseline_frames * TR as BAT. Data-driven BAT
-            # detection on mean brain concentration detects tissue transit
-            # delay, not arterial arrival.
-            bat_shift = baseline_frames * tr
-            t_shifted = t - bat_shift
+            # Phase 5b: Validate averaged AIF FWHM against candidate FWHM
+            aif_curve, aif_mask, validation_qc = self._validate_dce_averaged_aif(
+                aif_curve, candidates, scores, metrics_list,
+                conc_data, brain_mask, tr, baseline_frames,
+            )
 
-            # Population AIF is a true-mM concentration curve; NO relaxivity
-            # scaling (concentration is r1-independent — see parker_population_aif).
-            t_for_parker = np.maximum(t_shifted, 0.0)
-            aif_curve = parker_population_aif(t_for_parker, dose_factor)
-
-            # Zero out pre-bolus values (where t_shifted < 0)
-            # Use small positive value (1e-6) to avoid log(0) issues downstream
-            aif_curve = np.where(t_shifted < 0, 1e-6, aif_curve)
-
-            # Sanity check: population AIF must have proper peak
-            # If BAT shift clipped the AIF too early, regenerate without shift
-            pop_peak = float(np.max(aif_curve))
-            expected_min_peak = 2.5 * dose_factor  # ~2.5 mM minimum for full dose
-            bat_override = False
-            original_bat_seconds = bat_shift
-
-            if pop_peak < expected_min_peak:
-                # BAT shift is wrong - regenerate without shift
-                t_unshifted = np.arange(n_timepoints) * tr
-                aif_curve = parker_population_aif(t_unshifted, dose_factor)
-                bat_override = True
-
-            # Scale population AIF to match pipeline's plasma-Tofts
-            # convention.
-            # Parker's published AIF parameters were derived from blood-voxel
-            # ΔR1/r1 in a cohort with Hct = 0.42, so under FXL the published
-            # "C_p" values are effectively (1-Hct) × C_p_true. Dividing by
-            # (1-Hct) brings the population AIF into the same plasma scale
-            # as the Hct-corrected detected AIF (line 2744) — required for
-            # longitudinal consistency when a subject flips between detected
-            # and population across sessions. OSIPI/QIBA DROs distribute
-            # Parker as C_p directly (test-harness convention); pmriprep's
-            # (1-Hct) ≈ 0.58× offset against OSIPI GT is a known harness-vs-
-            # clinical convention mismatch documented in the manuscript.
+            # Convert measured AIF from blood to plasma concentration
+            # (tissue conc is in blood units; AIF must be in plasma units
+            #  for Tofts model: plasma = blood / (1 - Hct))
             aif_curve = aif_curve / (1.0 - float(self.inputs.hematocrit))
+        # Emitted quality score = fidelity of the POOLED/averaged AIF (report /
+        # regression sentinel), not the mean of per-voxel scores — the latter
+        # never inspected the averaged curve, so a tail-diluted pool could score
+        # high. Reported for QC; contamination is gated on the specific gates.
+        quality_score, _ = score_averaged_aif_fidelity(
+            np.asarray(aif_curve, dtype=float), tr, baseline_frames,
+            dose_factor=self._get_dose_factor(),
+        )
 
-            detection_method = "population"
-            quality_score = 0.5  # Moderate score for population AIF
-
+        # Aggregate QC metrics
+        if metrics_list:
+            # Get tier used from first candidate (all from same tier)
+            tier_used = int(metrics_list[0].get("tier_used", 0))
+            fwhm_frames_mean = float(
+                np.mean([m.get("fwhm_frames", 0.0) for m in metrics_list])
+            )
             qc_metrics = {
-                "population_aif": True,
-                "aif_source": "population",  # For boilerplate text generation
-                "dose_factor": dose_factor,
-                "n_aif_voxels_selected": 0,
-                "bat_seconds": bat_shift,
-                "bat_method": "baseline_frames",
+                "aif_source": "auto",  # For boilerplate text generation
+                "peak_mm_mean": float(np.mean([m["peak_mm"] for m in metrics_list])),
+                "fwhm_seconds_mean": float(
+                    np.mean([m["fwhm_seconds"] for m in metrics_list])
+                ),
+                "fwhm_frames_mean": fwhm_frames_mean,
+                "washout_mean": float(
+                    np.mean([m["washout"] for m in metrics_list])
+                ),
+                "cnr_mean": float(np.mean([m["cnr"] for m in metrics_list])),
+                "auc_mean": float(np.mean([m["auc"] for m in metrics_list])),
+                "upstroke_slope_mean": float(
+                    np.mean([m.get("upstroke_slope", 0.0) for m in metrics_list])
+                ),
+                "n_aif_voxels_selected": len(candidates),
+                "n_aif_voxels_filtered_out": n_filtered_out,
+                "candidate_coords": [list(c) for c in candidates],
+                "candidate_scores": [float(s) for s in scores],
+                "arterial_cascade_tier": tier_used,
+                "low_tr_mode": is_low_temporal_resolution(tr),
             }
-            if bat_override:
-                qc_metrics["bat_override"] = True
-                qc_metrics["original_bat_seconds"] = original_bat_seconds
-            if _detection_attempt is not None:
-                qc_metrics.update(_detection_attempt)
+            if atlas_tier_used is not None:
+                qc_metrics["atlas_tier_used"] = atlas_tier_used
+
+        # Merge FWHM validation QC
+        if validation_qc:
+            qc_metrics.update(validation_qc)
+
+        # Hemisphere coverage: classify candidates as left/right via RAS x-coord
+        if candidates:
+            hemi_cov, n_left, n_right = _classify_hemisphere(candidates, affine)
+            qc_metrics["n_left_candidates"] = n_left
+            qc_metrics["n_right_candidates"] = n_right
+            qc_metrics["hemisphere_coverage"] = hemi_cov
+
+        # Venous contamination detection and warning
+        # Check if any candidates were flagged as likely venous
+        n_venous = sum(
+            1 for m in metrics_list if m.get("is_likely_venous", False)
+        )
+        if n_venous > 0:
+            qc_metrics["n_likely_venous_candidates"] = n_venous
+            qc_metrics["venous_fraction"] = n_venous / len(metrics_list)
+
+        # Cross-validate final AIF peak timing against tissue TTP
+        if tissue_ttp_frame is not None:
+            aif_peak_frame = int(np.argmax(aif_curve))
+            timing_diff = tissue_ttp_frame - aif_peak_frame
+            qc_timing_margin = compute_timing_margin_frames(tr)
+            low_tr = is_low_temporal_resolution(tr)
+            qc_metrics["aif_ttp_frame"] = aif_peak_frame
+            qc_metrics["tissue_ttp_frame"] = tissue_ttp_frame
+            qc_metrics["aif_before_tissue_frames"] = timing_diff
+
+            # At high TR, only flag as venous if peak is >1 frame after tissue
+            if low_tr:
+                qc_metrics["is_likely_venous"] = timing_diff < -1
+            else:
+                qc_metrics["is_likely_venous"] = timing_diff < qc_timing_margin
+
+            if timing_diff < -1:
+                logger.warning(
+                    "VENOUS CONTAMINATION: AIF peaks %.0f frames AFTER tissue TTP. "
+                    "Likely SSS or venous structure.",
+                    abs(timing_diff),
+                )
+            elif not low_tr and timing_diff < qc_timing_margin:
+                logger.warning(
+                    "MARGINAL AIF TIMING: AIF peaks only %.0f frames before tissue TTP "
+                    "(expected >= %d). May have venous contamination.",
+                    timing_diff,
+                    qc_timing_margin,
+                )
+
+        return EmitResult(
+            aif_curve=aif_curve, aif_mask=aif_mask, quality_score=quality_score,
+            scaling_factor=scaling_factor, qc_metrics=qc_metrics,
+            tier_result=tier_result, detection_method=detection_method,
+        )
+
+    def _emit_population_aif(
+        self, state: DetectionState, loaded: LoadedInputs, params: AIFParams,
+    ) -> EmitResult:
+        """Emit the BAT-aligned Parker population AIF (P6, population branch)."""
+        conc_data = loaded.conc_data
+        tr = params.tr
+        n_timepoints = params.n_timepoints
+        baseline_frames = params.baseline_frames
+        _detection_attempt = state.detection_attempt
+        detection_method: Literal["atlas", "whole_brain", "population"]
+        # Prologue defaults the population branch relies on (it assigns neither).
+        aif_mask = np.zeros(conc_data.shape[:3], dtype=np.uint8)
+        scaling_factor = 1.0
+        # Generate BAT-aligned Parker population AIF
+        dose_factor = self._get_dose_factor()
+        t = np.arange(n_timepoints) * tr
+
+        # For population AIF, use baseline_frames * TR as BAT. Data-driven BAT
+        # detection on mean brain concentration detects tissue transit
+        # delay, not arterial arrival.
+        bat_shift = baseline_frames * tr
+        t_shifted = t - bat_shift
+
+        # Population AIF is a true-mM concentration curve; NO relaxivity
+        # scaling (concentration is r1-independent — see parker_population_aif).
+        t_for_parker = np.maximum(t_shifted, 0.0)
+        aif_curve = parker_population_aif(t_for_parker, dose_factor)
+
+        # Zero out pre-bolus values (where t_shifted < 0)
+        # Use small positive value (1e-6) to avoid log(0) issues downstream
+        aif_curve = np.where(t_shifted < 0, 1e-6, aif_curve)
+
+        # Sanity check: population AIF must have proper peak
+        # If BAT shift clipped the AIF too early, regenerate without shift
+        pop_peak = float(np.max(aif_curve))
+        expected_min_peak = 2.5 * dose_factor  # ~2.5 mM minimum for full dose
+        bat_override = False
+        original_bat_seconds = bat_shift
+
+        if pop_peak < expected_min_peak:
+            # BAT shift is wrong - regenerate without shift
+            t_unshifted = np.arange(n_timepoints) * tr
+            aif_curve = parker_population_aif(t_unshifted, dose_factor)
+            bat_override = True
+
+        # Scale population AIF to match pipeline's plasma-Tofts
+        # convention.
+        # Parker's published AIF parameters were derived from blood-voxel
+        # ΔR1/r1 in a cohort with Hct = 0.42, so under FXL the published
+        # "C_p" values are effectively (1-Hct) × C_p_true. Dividing by
+        # (1-Hct) brings the population AIF into the same plasma scale
+        # as the Hct-corrected detected AIF (line 2744) — required for
+        # longitudinal consistency when a subject flips between detected
+        # and population across sessions. OSIPI/QIBA DROs distribute
+        # Parker as C_p directly (test-harness convention); pmriprep's
+        # (1-Hct) ≈ 0.58× offset against OSIPI GT is a known harness-vs-
+        # clinical convention mismatch documented in the manuscript.
+        aif_curve = aif_curve / (1.0 - float(self.inputs.hematocrit))
+
+        detection_method = "population"
+        quality_score = 0.5  # Moderate score for population AIF
+
+        qc_metrics = {
+            "population_aif": True,
+            "aif_source": "population",  # For boilerplate text generation
+            "dose_factor": dose_factor,
+            "n_aif_voxels_selected": 0,
+            "bat_seconds": bat_shift,
+            "bat_method": "baseline_frames",
+        }
+        if bat_override:
+            qc_metrics["bat_override"] = True
+            qc_metrics["original_bat_seconds"] = original_bat_seconds
+        if _detection_attempt is not None:
+            qc_metrics.update(_detection_attempt)
+
+        return EmitResult(
+            aif_curve=aif_curve, aif_mask=aif_mask, quality_score=quality_score,
+            scaling_factor=scaling_factor, qc_metrics=qc_metrics,
+            tier_result=state.tier_result, detection_method=detection_method,
+        )
+
+    def _finalize_and_save(
+        self, runtime: Any, emit: EmitResult, state: DetectionState,
+        loaded: LoadedInputs, params: AIFParams,
+    ) -> Any:
+        """Provenance + confidence + Pass-2 anchor + final metrics + save (P7-P11)."""
+        import nibabel as nib  # type: ignore[import-untyped]
+        aif_curve = emit.aif_curve
+        aif_mask = emit.aif_mask
+        quality_score = emit.quality_score
+        scaling_factor = emit.scaling_factor
+        qc_metrics = emit.qc_metrics
+        tier_result = emit.tier_result
+        detection_method = emit.detection_method
+        anchor_outcomes = state.anchor_outcomes
+        tier_gate_decisions = state.tier_gate_decisions
+        candidates = state.candidates
+        affine = loaded.affine
+        tr = params.tr
+        baseline_frames = params.baseline_frames
+        target_peak = params.target_peak
+        blood_t1 = params.blood_t1
+        field_strength = params.field_strength
 
         # ===== Cascade provenance (fires on both detected and population) =====
         if anchor_outcomes:
@@ -4969,6 +5123,55 @@ class AIFDetection(BaseInterface):
         }
 
         return runtime
+
+    def _run_interface(self, runtime: Any) -> Any:
+        """Execute DCE AIF detection.
+
+        Notes
+        -----
+        Two distinct gate-decision QC fields are emitted to the
+        ``Metrics.aif_detection`` block of the per-session sidecar:
+
+        - ``aif_gate_decisions``: per-iteration ``GateDecision`` log of
+          the **winning** tier's progressive trim loop. Empty when no
+          tier wins (population fallback). Consumers reading this for
+          QC pass/fail summaries see only the accepted pool's history.
+        - ``cascade_gate_decisions``: per-tier outcome list, one entry
+          per attempted tier in cascade order (atlas tightest →
+          broadest × strict → permissive, then ``wb_relaxed``). Each
+          entry has ``tier`` (label), ``outcome`` (``"PASS"`` /
+          ``"trim_exhausted"`` / ``"skipped_quorum"`` /
+          ``"skipped_anchor"``), and ``decisions`` (the full
+          per-iteration ``GateDecision`` log; empty when the tier was
+          skipped before gates ran). This field captures the
+          diagnostic trail for tiers whose pool was discarded — needed
+          for diagnosing cascades that exhaust to population.
+
+        Order of ``cascade_gate_decisions`` matches
+        ``cascade_anchor_outcomes`` and is asserted in
+        ``tests/unit/test_dce_aif.py``.
+        """
+        loaded = self._load_and_validate_inputs()
+        if isdefined(self.inputs.external_aif_file) and self.inputs.external_aif_file:
+            return self._handle_external_aif(
+                runtime, loaded.conc_data, loaded.affine, loaded.brain_mask,
+            )
+        atlas_masks, atlas_names, lesion_mask = self._load_atlas_and_lesion_masks()
+        params = self._read_params(loaded.conc_data, loaded.header)
+
+        if params.aif_method == "population":
+            state = DetectionState.population_default()
+        else:
+            state = self._run_detection(
+                loaded, atlas_masks, atlas_names, lesion_mask, params,
+            )
+
+        if state.candidates:
+            emit = self._emit_detected_aif(state, loaded, params)
+        else:
+            emit = self._emit_population_aif(state, loaded, params)
+
+        return self._finalize_and_save(runtime, emit, state, loaded, params)
 
     def _list_outputs(self) -> dict[str, Any]:  # type: ignore[override]
         """List interface outputs."""
