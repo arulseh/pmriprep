@@ -5,6 +5,7 @@ perf-plus reference value loading, and DRO ground truth loading.
 """
 
 import json
+import os
 import shutil
 import subprocess
 import tempfile
@@ -21,8 +22,12 @@ from numpy.typing import NDArray
 # ---------------------------------------------------------------------------
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-OUTPUT_ROOT = PROJECT_ROOT / "debug" / "osipi"
-ANAT_OUTPUT_ROOT = PROJECT_ROOT / "debug" / "osipi"
+OUTPUT_ROOT = Path(
+    os.environ.get(
+        "PMRIPREP_OSIPI_OUTPUT_ROOT",
+        PROJECT_ROOT / "test_outputs" / "pmriprep" / "osipi",
+    )
+).expanduser()
 
 PERFPLUS_REFERENCE_JSON = (
     Path.home()
@@ -63,6 +68,28 @@ DRO_SESSION_MAP: Dict[Tuple[str, str], Tuple[str, str]] = {
 }
 
 DRO_SESSIONS = list(DRO_SESSION_MAP.keys())
+
+
+def get_subject_output_root(subject: str) -> Path:
+    """Return the cohort output directory containing a subject.
+
+    Parameters
+    ----------
+    subject : str
+        BIDS subject identifier.
+
+    Returns
+    -------
+    Path
+        Synthetic DRO subjects resolve below ``synthetic``; clinical
+        test-retest subjects resolve below ``test-retest``.
+    """
+    cohort = (
+        "synthetic"
+        if any(key[0] == subject for key in DRO_SESSION_MAP)
+        else "test-retest"
+    )
+    return OUTPUT_ROOT / cohort
 
 # File name patterns (BIDS-Common-Derivatives compliant).
 # Native-space perf/ outputs omit the space- entity (perf/ directory
@@ -117,7 +144,7 @@ def load_map(
 
     map_suffix = MAP_SUFFIXES.get(suffix, suffix)
     fname = f"{subject}_{session}_{PERF_SPACE_PREFIX}{map_suffix}.nii.gz"
-    fpath = OUTPUT_ROOT / subject / session / "perf" / fname
+    fpath = get_subject_output_root(subject) / subject / session / "perf" / fname
 
     if not fpath.exists():
         return None
@@ -151,13 +178,13 @@ def load_mask(
 
     if mask_type == "brain":
         fname = f"{subject}_{session}_{ANAT_SPACE_PREFIX}desc-brain_mask.nii.gz"
-        fpath = OUTPUT_ROOT / subject / session / "anat" / fname
+        fpath = get_subject_output_root(subject) / subject / session / "anat" / fname
     elif mask_type == "qc":
         fname = f"{subject}_{session}_{PERF_SPACE_PREFIX}desc-dceQc_mask.nii.gz"
-        fpath = OUTPUT_ROOT / subject / session / "perf" / fname
+        fpath = get_subject_output_root(subject) / subject / session / "perf" / fname
     elif mask_type == "aif":
         fname = f"{subject}_{session}_{PERF_SPACE_PREFIX}desc-dceAif_mask.nii.gz"
-        fpath = OUTPUT_ROOT / subject / session / "perf" / fname
+        fpath = get_subject_output_root(subject) / subject / session / "perf" / fname
     else:
         raise ValueError(f"Unknown mask type: {mask_type}")
 
@@ -189,7 +216,7 @@ def load_ref_dce(
     import nibabel as nib
 
     fname = f"{subject}_{session}_{PERF_SPACE_PREFIX}desc-dceMean_stat.nii.gz"
-    fpath = OUTPUT_ROOT / subject / session / "perf" / fname
+    fpath = get_subject_output_root(subject) / subject / session / "perf" / fname
 
     if not fpath.exists():
         return None
@@ -201,24 +228,24 @@ def load_ref_dce(
 def get_ref_dce_path(subject: str, session: str) -> Path:
     """Get path to DCE reference image."""
     fname = f"{subject}_{session}_{PERF_SPACE_PREFIX}desc-dceMean_stat.nii.gz"
-    return OUTPUT_ROOT / subject / session / "perf" / fname
+    return get_subject_output_root(subject) / subject / session / "perf" / fname
 
 
 def get_map_path(subject: str, session: str, suffix: str) -> Path:
     """Get path to a parameter map file."""
     map_suffix = MAP_SUFFIXES.get(suffix, suffix)
     fname = f"{subject}_{session}_{PERF_SPACE_PREFIX}{map_suffix}.nii.gz"
-    return OUTPUT_ROOT / subject / session / "perf" / fname
+    return get_subject_output_root(subject) / subject / session / "perf" / fname
 
 
 def get_mask_path(subject: str, session: str, mask_type: str) -> Path:
     """Get path to a mask file."""
     if mask_type == "brain":
         fname = f"{subject}_{session}_{ANAT_SPACE_PREFIX}desc-brain_mask.nii.gz"
-        return OUTPUT_ROOT / subject / session / "anat" / fname
+        return get_subject_output_root(subject) / subject / session / "anat" / fname
     elif mask_type == "qc":
         fname = f"{subject}_{session}_{PERF_SPACE_PREFIX}desc-dceQc_mask.nii.gz"
-        return OUTPUT_ROOT / subject / session / "perf" / fname
+        return get_subject_output_root(subject) / subject / session / "perf" / fname
     else:
         raise ValueError(f"Unknown mask type: {mask_type}")
 
@@ -308,12 +335,12 @@ def has_fsl() -> bool:
 def _get_anat_path(subject: str, session: str) -> Path:
     """Get path to preprocessed T1w in anat reference space."""
     fname = f"{subject}_{session}_space-T1w_desc-preproc_T1w.nii.gz"
-    return OUTPUT_ROOT / subject / session / "anat" / fname
+    return get_subject_output_root(subject) / subject / session / "anat" / fname
 
 
 def _get_dce_to_anat_xfm(subject: str, session: str) -> Path:
     """Get path to the pipeline's DCE-to-T1w transform (.h5, with .mat fallback)."""
-    base = OUTPUT_ROOT / subject / session / "anat"
+    base = get_subject_output_root(subject) / subject / session / "anat"
     h5 = base / f"{subject}_{session}_from-dceref_to-T1w_mode-image_xfm.h5"
     if h5.exists():
         return h5
@@ -438,7 +465,7 @@ def register_sessions(
 
     # Create output directory
     out_dir = (
-        PROJECT_ROOT / "test_outputs" / "pmriprep" / subject
+        get_subject_output_root(subject) / subject
         / "test_retest_qc"
     )
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -876,7 +903,7 @@ def load_ci_map(
 
     suffix = f"desc-dceCI95{bound}{parameter[:1].upper()}{parameter[1:]}_stat"
     fname = f"{subject}_{session}_{PERF_SPACE_PREFIX}{suffix}.nii.gz"
-    fpath = OUTPUT_ROOT / subject / session / "perf" / fname
+    fpath = get_subject_output_root(subject) / subject / session / "perf" / fname
 
     if not fpath.exists():
         return None
@@ -899,7 +926,10 @@ def _dro_gt_exists() -> bool:
 
 skip_no_dro_outputs = pytest.mark.skipif(
     not _dro_outputs_exist(),
-    reason="PMRIPrep DRO outputs not found for sub-0091 ses-0001",
+    reason=(
+        "PMRIPrep DRO outputs not found below "
+        f"{OUTPUT_ROOT} (override with PMRIPREP_OSIPI_OUTPUT_ROOT)"
+    ),
 )
 
 skip_no_dro_gt = pytest.mark.skipif(
