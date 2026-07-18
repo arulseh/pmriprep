@@ -4216,6 +4216,10 @@ class AIFDetection(BaseInterface):
             "baseline_frames": baseline_frames,
             "n_aif_voxels_selected": 0,
             "aif_status": QCStatus.PASS,
+            # User-supplied AIF is trusted (already PASS); mark confidence
+            # "standard" so the provenance flag and QC recommendation agree
+            # rather than falling through to the report-only quality_score.
+            "aif_confidence": "standard",
         }
 
         # Write AIF curve
@@ -4937,6 +4941,17 @@ class AIFDetection(BaseInterface):
                 }
                 for d in tier_result.gate_decisions
             ]
+        # Confidence describes the EMITTED curve, not the (possibly discarded)
+        # detected pool. A population emit is always "low" even when a detected
+        # tier_result is forwarded for provenance — the post-cascade quality
+        # filter can empty the detected pool after its tier passed the aggregate
+        # gates, so tier_result being non-None does not mean a detected AIF was
+        # emitted. Check detection_method first.
+        if detection_method == "population":
+            qc_metrics["aif_confidence"] = "low"
+            qc_metrics["aif_g6_admitted"] = False
+            qc_metrics["aif_uncertainty_inflation_factor"] = 3.0
+        elif tier_result is not None:
             if tier_result.status == "G6_ADMIT":
                 qc_metrics["aif_confidence"] = "reduced"
                 qc_metrics["aif_g6_admitted"] = True
@@ -4957,10 +4972,6 @@ class AIFDetection(BaseInterface):
                 qc_metrics["aif_confidence"] = "reduced"
                 qc_metrics["aif_g6_admitted"] = False
                 qc_metrics["aif_uncertainty_inflation_factor"] = 2.0
-        elif detection_method == "population":
-            qc_metrics["aif_confidence"] = "low"
-            qc_metrics["aif_g6_admitted"] = False
-            qc_metrics["aif_uncertainty_inflation_factor"] = 3.0
         else:
             qc_metrics["aif_confidence"] = "standard"
             qc_metrics["aif_g6_admitted"] = False
@@ -5050,19 +5061,20 @@ class AIFDetection(BaseInterface):
                 DCE_AIF_TAIL_PEAK_FRACTION * 100,
             )
 
-        # Compute AIF status for HTML report
+        # Compute AIF status for HTML report from the gate-based confidence,
+        # NOT the report-only fidelity score (quality_score). The fidelity
+        # metric is systematically compressed (~0.26 for essentially every
+        # detected AIF, from the known MCA-tail under-recovery) and is
+        # physics-scoped as report-only, so thresholding it mislabels a normal
+        # detected AIF as POOR. aif_confidence already encodes the G1-G6 gate
+        # outcome: "standard" (gates passed) / "reduced" (G6-admitted or C2
+        # re-gate fail) / "low" (population fallback).
         from pmriprep.utils.qc_standards import QCStatus
-        if not np.isnan(quality_score):
-            if quality_score >= 0.7:
-                aif_status = QCStatus.PASS
-            elif quality_score >= 0.4:
-                aif_status = QCStatus.WARN
-            else:
-                aif_status = QCStatus.POOR
-        else:
-            # quality_score could not be computed (no per-candidate scores
-            # to average); quality is unknown, so flag for review rather than
-            # certify or condemn the AIF.
+        _aif_confidence = qc_metrics.get("aif_confidence", "reduced")
+        if _aif_confidence == "standard":
+            aif_status = QCStatus.PASS
+        else:  # "reduced" (marginal / G6-admitted / C2 re-gate fail) or
+            # "low" (population fallback) — flag for review, not certify
             aif_status = QCStatus.WARN
 
         # Add final metrics to QC dict

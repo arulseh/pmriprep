@@ -178,15 +178,27 @@ def _derive_aif_source(
 def _derive_quality_flag(
     aif_qc: dict[str, Any],
     source: str,
+    modality: Modality = "DSC",
 ) -> str:
-    """Derive ``QualityFlag`` from score and source.
+    """Derive ``QualityFlag`` from source and gate/score quality.
 
-    Thresholds 0.7 / 0.5 align with Willats & Calamante / Mouridsen
-    composite AIF-QC heuristics. Non-subject-specific sources
-    (synthetic, population) are forced to ``poor``.
+    Non-subject-specific sources (synthetic, population) are forced to
+    ``poor``. For DCE the emitted ``quality_score`` is a report-only
+    AIF-shape-fidelity metric (systematically compressed, physics-scoped
+    as not for accept/reject), so the flag is derived from the gate-based
+    ``aif_confidence`` instead — otherwise every normal detected AIF is
+    mislabelled ``poor``. DSC's ``quality_score`` is a 0-1 composite whose
+    0.7 / 0.5 thresholds (Willats & Calamante / Mouridsen heuristics) hold.
     """
     if source in {"synthetic", "population"}:
         return "poor"
+    if modality == "DCE":
+        confidence = aif_qc.get("aif_confidence")
+        if confidence == "standard":
+            return "pass"
+        if confidence in {"reduced", "low"}:
+            return "warn"
+        # confidence absent — fall through to the score heuristic
     score = aif_qc.get("quality_score")
     if score is None:
         return "warn"
@@ -232,7 +244,7 @@ def build_aif_provenance_block(
     block: dict[str, Any] = {
         "Source": source,
         "DetectionLevel": aif_qc.get("detection_method", "unknown"),
-        "QualityFlag": _derive_quality_flag(aif_qc, source),
+        "QualityFlag": _derive_quality_flag(aif_qc, source, modality),
         "CrossSubjectComparable": source in {
             "measured", "gamma_fit_measured", "external",
         },

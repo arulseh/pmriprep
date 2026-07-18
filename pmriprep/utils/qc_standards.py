@@ -686,10 +686,23 @@ def recommend_dce_qc(qc_metrics: dict[str, Any]) -> dict[str, Any]:
     recommendations: list[QCRecommendation] = []
     enhanced = dict(qc_metrics)
 
-    # AIF quality
+    # AIF quality: recommend from the gate-based aif_confidence, NOT the
+    # report-only fidelity quality_score (systematically compressed ~0.26 for
+    # detected AIFs, physics-scoped as not for accept/reject — thresholding it
+    # would wrongly recommend EXCLUDE for a normal detected AIF).
     aif_qc = qc_metrics.get("aif_detection", {})
+    confidence = aif_qc.get("aif_confidence")
     quality_score = aif_qc.get("quality_score")
-    if quality_score is not None:
+    if confidence == "standard":
+        recommendations.append(
+            QCRecommendation(QCAction.INCLUDE, "AIF quality good (gates passed)", 0)
+        )
+    elif confidence in {"reduced", "low"}:
+        recommendations.append(
+            QCRecommendation(QCAction.REVIEW, "AIF quality marginal (gate-admitted or population fallback)", 1)
+        )
+    elif quality_score is not None:
+        # No confidence flag (e.g. external AIF): fall back to the score.
         if quality_score >= 0.7:
             aif_rec = QCRecommendation(QCAction.INCLUDE, f"AIF quality good ({quality_score:.2f})", 0)
         elif quality_score >= 0.4:
