@@ -334,8 +334,15 @@ def has_fsl() -> bool:
 
 def _get_anat_path(subject: str, session: str) -> Path:
     """Get path to preprocessed T1w in anat reference space."""
-    fname = f"{subject}_{session}_space-T1w_desc-preproc_T1w.nii.gz"
-    return get_subject_output_root(subject) / subject / session / "anat" / fname
+    anat_dir = get_subject_output_root(subject) / subject / session / "anat"
+    pattern = f"{subject}_{session}_*space-T1w_desc-preproc_T1w.nii.gz"
+    matches = sorted(anat_dir.glob(pattern))
+    if len(matches) == 1:
+        return matches[0]
+
+    # Preserve a useful nonexistent path when the derivative is absent;
+    # callers already use ``Path.exists()`` to select the direct fallback.
+    return anat_dir / f"{subject}_{session}_space-T1w_desc-preproc_T1w.nii.gz"
 
 
 def _get_dce_to_anat_xfm(subject: str, session: str) -> Path:
