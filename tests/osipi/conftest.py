@@ -195,6 +195,63 @@ def load_mask(
     return np.asarray(img.get_fdata(), dtype=np.float64)  # type: ignore[attr-defined]
 
 
+def load_clinical_tumor_mask(
+    subject: str,
+    session: str,
+) -> Optional[NDArray[np.bool_]]:
+    """Load an OSIPI clinical tumor mask in the DCE output grid.
+
+    Parameters
+    ----------
+    subject : str
+        Clinical subject identifier (``sub-0081`` through ``sub-0088``).
+    session : str
+        Session identifier (``ses-0001`` or ``ses-0002``).
+
+    Returns
+    -------
+    Optional[NDArray[np.bool_]]
+        Nearest-neighbor-resampled tumor mask, or ``None`` when the mask
+        or reference map is unavailable.
+    """
+    import nibabel as nib
+    from nilearn.image import resample_to_img
+
+    try:
+        patient = int(subject.removeprefix("sub-")) - 80
+        visit = {"ses-0001": 1, "ses-0002": 2}[session]
+    except (KeyError, ValueError):
+        return None
+    if patient not in range(1, 9):
+        return None
+
+    mask_path = (
+        OSIPI_GT_ROOT
+        / "clinical_masks"
+        / f"Clinical_P{patient}_Visit{visit}_TumorMask.nii"
+    )
+    reference_path = get_map_path(subject, session, "Ktrans")
+    if not mask_path.exists() or not reference_path.exists():
+        return None
+
+    mask_img = nib.load(mask_path)
+    reference_img = nib.load(reference_path)
+    if int(mask_img.header["sform_code"]) == 0:
+        # OSIPI masks carry their spatial transform in a valid qform only.
+        # Mirror it into the in-memory sform expected by nilearn; do not
+        # modify the source image on disk.
+        mask_img.set_sform(mask_img.affine, code="aligned")
+    if not np.allclose(mask_img.affine, reference_img.affine, atol=0.01):
+        mask_img = resample_to_img(
+            mask_img,
+            reference_img,
+            interpolation="nearest",
+            force_resample=True,
+            copy_header=True,
+        )
+    return np.asarray(mask_img.get_fdata(), dtype=np.float64) > 0.5  # type: ignore[attr-defined]
+
+
 def load_ref_dce(
     subject: str,
     session: str,

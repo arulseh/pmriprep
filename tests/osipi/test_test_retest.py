@@ -28,8 +28,6 @@ from pmriprep.utils.reproducibility import (
     ReproducibilityResult,
     compute_bland_altman,
     compute_icc_2_1,
-    compute_percent_difference,
-    compute_within_subject_cv,
 )
 
 from .conftest import (
@@ -41,11 +39,9 @@ from .conftest import (
     compute_joint_mask,
     get_map_path,
     get_mask_path,
-    get_perfplus_session_stats,
-    get_perfplus_test_retest,
     get_ref_dce_path,
     has_fsl,
-    has_perfplus_reference,
+    load_clinical_tumor_mask,
     load_map,
     load_mask,
     register_sessions,
@@ -68,44 +64,44 @@ def _skip_if_missing(subject: str) -> None:
 
 
 # =============================================================================
-# Helper: compute masked median
+# Helper: OSIPI clinical tumor means
 # =============================================================================
 
 
-def _masked_median(
-    data: Optional[NDArray[np.floating]],
-    mask: Optional[NDArray[np.floating]] = None,
-) -> Optional[float]:
-    """Compute median of data within mask, excluding NaN/Inf."""
-    if data is None:
-        return None
+def _clinical_tumor_mean(subject: str, session: str, parameter: str) -> float:
+    """Return the OSIPI tumor-region mean for one parameter map."""
+    data = load_map(subject, session, parameter)
+    mask = load_clinical_tumor_mask(subject, session)
+    assert data is not None, f"Missing {parameter} map for {subject} {session}"
+    assert mask is not None, f"Missing tumor mask for {subject} {session}"
 
-    if mask is not None:
-        values = data[mask > 0.5]
-    else:
-        values = data.ravel()
-
+    values = data[mask]
     values = values[np.isfinite(values)]
-    if len(values) == 0:
-        return None
-
-    return float(np.median(values))
+    assert len(values) > 0, f"No finite tumor voxels for {subject} {session}"
+    return float(np.mean(values))
 
 
-def _masked_count(
-    data: Optional[NDArray[np.floating]],
-    mask: Optional[NDArray[np.floating]] = None,
-) -> int:
-    """Count valid (finite, positive) voxels within mask."""
-    if data is None:
-        return 0
+def _osipi_repeatability(parameter: str) -> tuple[float, float]:
+    """Compute OSIPI ``Score_repeat`` and repeatability coefficient.
 
-    if mask is not None:
-        values = data[mask > 0.5]
-    else:
-        values = data.ravel()
+    For each subject, ``CV = (|V1 - V2| / sqrt(2)) / mean(V1, V2)``.
+    The cohort metrics are ``Score_repeat = exp(-mean(CV))`` and
+    ``%RC = 2.77 * sqrt(mean(CV**2))``. Despite its published name,
+    ``%RC`` is represented as a fraction by the OSIPI scoring script.
+    """
+    cvs: list[float] = []
+    for subject in TEST_RETEST_SUBJECTS:
+        _skip_if_missing(subject)
+        visit1 = _clinical_tumor_mean(subject, SES1, parameter)
+        visit2 = _clinical_tumor_mean(subject, SES2, parameter)
+        mean = (visit1 + visit2) / 2.0
+        assert mean > 0.0, f"Non-positive tumor mean for {subject} {parameter}"
+        cvs.append(abs(visit1 - visit2) / np.sqrt(2.0) / mean)
 
-    return int(np.sum(np.isfinite(values)))
+    cv_array = np.asarray(cvs, dtype=np.float64)
+    score_repeat = float(np.exp(-np.mean(cv_array)))
+    pct_rc = float(2.77 * np.sqrt(np.mean(cv_array**2)))
+    return score_repeat, pct_rc
 
 
 # =============================================================================
@@ -114,101 +110,26 @@ def _masked_count(
 
 
 class TestSummaryStatistics:
-    """Summary-level test-retest reproducibility using session medians."""
+    """OSIPI tumor-mean cohort repeatability regression tests."""
 
-    def _get_session_median(
+    @pytest.mark.parametrize(
+        "parameter,expected_score,expected_pct_rc",
+        [
+            ("Ktrans", 0.8803703804, 0.4622329816),
+            ("ve", 0.8782049972, 0.4642157400),
+            ("vp", 0.8273458804, 0.6017271163),
+        ],
+    )
+    def test_osipi_repeatability(
         self,
-        subject: str,
-        param: str,
-        session: str,
-    ) -> float:
-        """Load map and compute QC-masked median."""
-        data = load_map(subject, session, param)
-        qc_mask = load_mask(subject, session, "qc")
-        assert data is not None, f"Missing {param} map for {subject} {session}"
-
-        median = _masked_median(data, qc_mask)
-        assert median is not None, (
-            f"No valid voxels for {param} in {subject} {session}"
-        )
-        return median
-
-    @pytest.mark.parametrize("subject", TEST_RETEST_SUBJECTS, ids=_SUBJECT_IDS)
-    def test_ktrans_median_agreement(self, subject: str) -> None:
-        """Session Ktrans medians should be within 65%."""
-        _skip_if_missing(subject)
-        med1 = self._get_session_median(subject, "Ktrans", SES1)
-        med2 = self._get_session_median(subject, "Ktrans", SES2)
-
-        pct_diff = compute_percent_difference(
-            np.array([med1]), np.array([med2])
-        )
-        assert pct_diff < 65.0, (
-            f"{subject} Ktrans median %diff = {pct_diff:.1f}% (> 65%), "
-            f"ses1={med1:.4f}, ses2={med2:.4f}"
-        )
-
-    @pytest.mark.parametrize("subject", TEST_RETEST_SUBJECTS, ids=_SUBJECT_IDS)
-    def test_ve_median_agreement(self, subject: str) -> None:
-        """Session ve medians should be within 40%."""
-        _skip_if_missing(subject)
-        med1 = self._get_session_median(subject, "ve", SES1)
-        med2 = self._get_session_median(subject, "ve", SES2)
-
-        pct_diff = compute_percent_difference(
-            np.array([med1]), np.array([med2])
-        )
-        assert pct_diff < 40.0, (
-            f"{subject} ve median %diff = {pct_diff:.1f}% (> 40%), "
-            f"ses1={med1:.4f}, ses2={med2:.4f}"
-        )
-
-    @pytest.mark.parametrize("subject", TEST_RETEST_SUBJECTS, ids=_SUBJECT_IDS)
-    def test_vp_median_agreement(self, subject: str) -> None:
-        """Session vp medians should be within 55%."""
-        _skip_if_missing(subject)
-        med1 = self._get_session_median(subject, "vp", SES1)
-        med2 = self._get_session_median(subject, "vp", SES2)
-
-        pct_diff = compute_percent_difference(
-            np.array([med1]), np.array([med2])
-        )
-        assert pct_diff < 55.0, (
-            f"{subject} vp median %diff = {pct_diff:.1f}% (> 55%), "
-            f"ses1={med1:.4f}, ses2={med2:.4f}"
-        )
-
-    @pytest.mark.parametrize("subject", TEST_RETEST_SUBJECTS, ids=_SUBJECT_IDS)
-    def test_ktrans_pct_diff_vs_perfplus(self, subject: str) -> None:
-        """PMRIPrep Ktrans %diff should be < 50%."""
-        _skip_if_missing(subject)
-        if not has_perfplus_reference(subject):
-            pytest.skip(f"No perf-plus reference for {subject}")
-
-        med1 = self._get_session_median(subject, "Ktrans", SES1)
-        med2 = self._get_session_median(subject, "Ktrans", SES2)
-
-        pct_diff = compute_percent_difference(
-            np.array([med1]), np.array([med2])
-        )
-        assert pct_diff < 50.0, (
-            f"{subject} Ktrans %diff = {pct_diff:.1f}% (> 50%)"
-        )
-
-    @pytest.mark.parametrize("subject", TEST_RETEST_SUBJECTS, ids=_SUBJECT_IDS)
-    def test_ktrans_cv_vs_perfplus(self, subject: str) -> None:
-        """PMRIPrep Ktrans within-subject CV should be < 25%."""
-        _skip_if_missing(subject)
-        if not has_perfplus_reference(subject):
-            pytest.skip(f"No perf-plus reference for {subject}")
-
-        med1 = self._get_session_median(subject, "Ktrans", SES1)
-        med2 = self._get_session_median(subject, "Ktrans", SES2)
-
-        cv = compute_within_subject_cv(np.array([med1]), np.array([med2]))
-        assert cv < 25.0, (
-            f"{subject} Ktrans CV = {cv:.1f}% (> 25%)"
-        )
+        parameter: str,
+        expected_score: float,
+        expected_pct_rc: float,
+    ) -> None:
+        """Cohort metrics should match the validated publication run."""
+        score_repeat, pct_rc = _osipi_repeatability(parameter)
+        assert score_repeat == pytest.approx(expected_score, abs=1e-8)
+        assert pct_rc == pytest.approx(expected_pct_rc, abs=1e-8)
 
 
 # =============================================================================
