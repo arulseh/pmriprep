@@ -141,22 +141,32 @@ class TestAveragedFidelityRanking:
         """A faithful AIF out-scores an over-washed (tail-collapsed) one."""
         clean = _clean_arterial()
         v1 = _tail_collapse(clean)
-        f_clean, _ = score_averaged_aif_fidelity(clean, TR, BASELINE_FRAMES)
-        f_v1, _ = score_averaged_aif_fidelity(v1, TR, BASELINE_FRAMES)
+        f_clean, _ = score_averaged_aif_fidelity(
+            clean, TR, BASELINE_FRAMES, hematocrit=0.0
+        )
+        f_v1, _ = score_averaged_aif_fidelity(
+            v1, TR, BASELINE_FRAMES, hematocrit=0.0
+        )
         assert f_clean > f_v1
 
     def test_truth_above_partial_volume(self) -> None:
         """A faithful AIF out-scores a tissue partial-volume-diluted one."""
         clean = _clean_arterial()
         v2 = _partial_volume(clean)
-        f_clean, _ = score_averaged_aif_fidelity(clean, TR, BASELINE_FRAMES)
-        f_v2, _ = score_averaged_aif_fidelity(v2, TR, BASELINE_FRAMES)
+        f_clean, _ = score_averaged_aif_fidelity(
+            clean, TR, BASELINE_FRAMES, hematocrit=0.0
+        )
+        f_v2, _ = score_averaged_aif_fidelity(
+            v2, TR, BASELINE_FRAMES, hematocrit=0.0
+        )
         assert f_clean > f_v2
 
     def test_partial_volume_two_sided_tail(self) -> None:
         """V2's tissue-raised tail must NOT earn full marks (two-sided tail term)."""
         v2 = _partial_volume(_clean_arterial())
-        _, m = score_averaged_aif_fidelity(v2, TR, BASELINE_FRAMES)
+        _, m = score_averaged_aif_fidelity(
+            v2, TR, BASELINE_FRAMES, hematocrit=0.0
+        )
         assert m["tail_ratio"] > 0.35  # tissue-diluted tail sits high
         assert m["tail_score"] < 0.5   # ...and is penalized, not rewarded
 
@@ -181,10 +191,16 @@ class TestOsipiGroundTruthAnchor:
     def test_gt_scores_high_and_above_contamination(self) -> None:
         """The true MCA AIF is the single highest-fidelity curve."""
         gt = self._gt()
-        f_gt, _ = score_averaged_aif_fidelity(gt, TR, BASELINE_FRAMES)
+        f_gt, _ = score_averaged_aif_fidelity(
+            gt, TR, BASELINE_FRAMES, hematocrit=0.0
+        )
         clean = _clean_arterial()
-        f_v1, _ = score_averaged_aif_fidelity(_tail_collapse(clean), TR, BASELINE_FRAMES)
-        f_v2, _ = score_averaged_aif_fidelity(_partial_volume(clean), TR, BASELINE_FRAMES)
+        f_v1, _ = score_averaged_aif_fidelity(
+            _tail_collapse(clean), TR, BASELINE_FRAMES, hematocrit=0.0
+        )
+        f_v2, _ = score_averaged_aif_fidelity(
+            _partial_volume(clean), TR, BASELINE_FRAMES, hematocrit=0.0
+        )
         # The true AIF is the single highest-fidelity curve.
         assert f_gt > 0.6, f"true GT AIF scored low: {f_gt:.3f}"
         assert f_gt > f_v1
@@ -199,3 +215,37 @@ class TestOsipiGroundTruthAnchor:
         )
         w = compute_dce_aif_washout(self._gt(), BASELINE_FRAMES)
         assert abs(w - AIF_WASHOUT_PHYSIOLOGIC_CENTER) < AIF_WASHOUT_BAND_HALFWIDTH
+
+
+class TestPlasmaReferenceConsistency:
+    """Reference scaling must be invariant to a consistent Hct conversion."""
+
+    @pytest.mark.parametrize("hematocrit", [0.20, 0.42, 0.55])
+    def test_consistent_blood_to_plasma_conversion_is_score_invariant(
+        self, hematocrit: float,
+    ) -> None:
+        """The same blood curve receives the same score at any stated Hct."""
+        blood_curve = _clean_arterial()
+        reference_score, reference_metrics = score_averaged_aif_fidelity(
+            blood_curve, TR, BASELINE_FRAMES, hematocrit=0.0
+        )
+        plasma_curve = blood_curve / (1.0 - hematocrit)
+        plasma_score, plasma_metrics = score_averaged_aif_fidelity(
+            plasma_curve, TR, BASELINE_FRAMES, hematocrit=hematocrit
+        )
+
+        assert plasma_score == pytest.approx(reference_score, abs=1e-12)
+        assert plasma_metrics["scale_score"] == pytest.approx(
+            reference_metrics["scale_score"], abs=1e-12
+        )
+        assert plasma_metrics["auc_ratio"] == pytest.approx(
+            reference_metrics["auc_ratio"], abs=1e-12
+        )
+
+    @pytest.mark.parametrize("hematocrit", [-0.01, 1.0, 1.1])
+    def test_invalid_hematocrit_is_rejected(self, hematocrit: float) -> None:
+        """Invalid hematocrit cannot define a plasma reference scale."""
+        with pytest.raises(ValueError, match="hematocrit must be in"):
+            score_averaged_aif_fidelity(
+                _clean_arterial(), TR, BASELINE_FRAMES, hematocrit=hematocrit
+            )

@@ -32,10 +32,6 @@ from nipype.interfaces.base import (  # type: ignore[import-untyped]
 from pmriprep.utils.dce_constants import (
     AIF_CNR_SATURATION,
     AIF_FWHM_BAND_HALFWIDTH_SECONDS,
-    AIF_FWHM_NOISE_SCORE,
-    AIF_FWHM_SCORING_WIDTH,
-    AIF_FWHM_VENOUS_SCORE,
-    AIF_FWHM_MAX_RELAXED_SECONDS,
     AIF_IDEAL_FWHM_SECONDS,
     AIF_PEAK_TIMING_FRACTION,
     AIF_TAIL_PERSISTENCE_FLOOR,
@@ -681,6 +677,7 @@ def score_averaged_aif_fidelity(
     tr: float,
     baseline_frames: int = 5,
     dose_factor: float = 1.0,
+    hematocrit: float = HEMATOCRIT_ARTERIAL,
 ) -> tuple[float, dict[str, float]]:
     """Physics-grounded fidelity score (0-1) for a *pooled/averaged* DCE AIF.
 
@@ -725,12 +722,19 @@ def score_averaged_aif_fidelity(
         Number of pre-contrast frames.
     dose_factor : float, optional
         Molar-dose factor for the template + peak band (1.0 = full dose).
+    hematocrit : float, optional
+        Arterial hematocrit used to convert the Parker whole-blood reference
+        template and peak band to plasma concentration. The input curve is
+        already plasma concentration and is not converted again.
 
     Returns
     -------
     tuple of (float, dict)
         The composite fidelity score and the per-term sub-scores/metrics.
     """
+    if not 0.0 <= hematocrit < 1.0:
+        raise ValueError(f"hematocrit must be in [0, 1), got {hematocrit}")
+
     curve = np.asarray(aif_curve, dtype=float)
     metrics: dict[str, float] = {}
     # Need >= baseline + 6 frames so the last-5-frame washout tail is meaningful,
@@ -749,14 +753,22 @@ def score_averaged_aif_fidelity(
     # tail than idealized Parker, so a full post-peak *shape* residual vs Parker
     # would penalize the true richer AIF. Discrimination therefore comes from the
     # physiologic scalar terms below, not a shape-vs-Parker residual.)
-    native = resample_parker_template(frame_times, dose_factor)
+    plasma_factor = 1.0 / (1.0 - hematocrit)
+    native = resample_parker_template(frame_times, dose_factor) * plasma_factor
     t_shift = float(np.argmax(curve)) * tr - float(np.argmax(native)) * tr
-    template = resample_parker_template(frame_times - t_shift, dose_factor)
+    template = (
+        resample_parker_template(frame_times - t_shift, dose_factor)
+        * plasma_factor
+    )
 
     # --- scale: absolute peak (two-sided band) + AUC (one-sided floor) ---
     peak = compute_dce_aif_peak_concentration(curve)
-    peak_min = DCE_AIF_EXPECTED_FULL_DOSE.peak_min_mm * dose_factor
-    peak_max = DCE_AIF_EXPECTED_FULL_DOSE.peak_max_mm * dose_factor
+    peak_min = (
+        DCE_AIF_EXPECTED_FULL_DOSE.peak_min_mm * dose_factor * plasma_factor
+    )
+    peak_max = (
+        DCE_AIF_EXPECTED_FULL_DOSE.peak_max_mm * dose_factor * plasma_factor
+    )
     peak_center = 0.5 * (peak_min + peak_max)
     peak_score = _two_sided_band_score(
         peak, peak_center, 0.5 * (peak_max - peak_min) + peak_center * 0.15
@@ -769,6 +781,7 @@ def score_averaged_aif_fidelity(
     auc_score = 1.0 if auc_ratio >= 1.0 else max(0.0, 1.0 - (1.0 - auc_ratio) / 0.5)
     scale_score = 0.5 * peak_score + 0.5 * auc_score
     metrics["peak_mm"] = peak
+    metrics["reference_hematocrit"] = hematocrit
     metrics["auc_ratio"] = auc_ratio
     metrics["scale_score"] = scale_score
 
@@ -2858,38 +2871,33 @@ class AIFDetection(BaseInterface):
 
             cluster_size = len(cluster_indices)
 
-            # FWHM score: Gaussian centered on ideal arterial FWHM
-            # Convert fwhm_seconds to frames using actual TR
+            # FWHM score in physical units. Candidate FWHM is already measured
+            # in seconds, so scoring it in frames would make the same physical
+            # curve receive a different cluster score at different TRs.
             fwhm_vals = [
                 metrics_list[i].get("fwhm_seconds", 30.0) for i in cluster_indices
             ]
             mean_fwhm = float(np.mean(fwhm_vals))
-            effective_tr = max(tr, 0.1)  # Guard against zero TR
-            mean_fwhm_frames = mean_fwhm / effective_tr
+            fwhm_score = _two_sided_band_score(
+                mean_fwhm,
+                AIF_IDEAL_FWHM_SECONDS,
+                AIF_FWHM_BAND_HALFWIDTH_SECONDS,
+            )
 
-            # TR-adaptive ideal FWHM and venous threshold in frames
-            ideal_fwhm_frames = AIF_IDEAL_FWHM_SECONDS / effective_tr
-            venous_threshold_frames = AIF_FWHM_MAX_RELAXED_SECONDS / effective_tr
-
-            if mean_fwhm_frames < 0.5:
-                # Noise spike - too narrow
-                fwhm_score = AIF_FWHM_NOISE_SCORE
-            elif mean_fwhm_frames > venous_threshold_frames:
-                # Venous - too broad
-                fwhm_score = AIF_FWHM_VENOUS_SCORE
-            else:
-                # Gaussian scoring centered on ideal FWHM
-                deviation = (
-                    (mean_fwhm_frames - ideal_fwhm_frames)
-                    / AIF_FWHM_SCORING_WIDTH
-                )
-                fwhm_score = float(np.exp(-deviation**2))
-
-            # Washout score: prefer high washout (arterial)
+            # Match the per-candidate asymmetric physiologic washout band.
+            # A monotonic raw washout reward favors tail-collapsed curves.
             washout_vals = [
                 metrics_list[i].get("washout", 0.0) for i in cluster_indices
             ]
-            washout_score = float(np.mean(washout_vals))
+            washout_score = float(np.mean([
+                _asymmetric_band_score(
+                    value,
+                    AIF_WASHOUT_PHYSIOLOGIC_CENTER,
+                    AIF_WASHOUT_BAND_HALFWIDTH,
+                    AIF_WASHOUT_BAND_HALFWIDTH_UPPER,
+                )
+                for value in washout_vals
+            ]))
 
             # Upstroke score: prefer steep upstroke (arterial)
             upstroke_vals = [
@@ -4194,7 +4202,11 @@ class AIFDetection(BaseInterface):
         # Quality score: the same consolidated averaged-AIF fidelity metric used
         # for detected AIFs (external AIF is assumed pre-scaled full-dose plasma).
         quality_score, _ = score_averaged_aif_fidelity(
-            aif_curve, tr, baseline_frames, dose_factor=1.0
+            aif_curve,
+            tr,
+            baseline_frames,
+            dose_factor=1.0,
+            hematocrit=float(self.inputs.hematocrit),
         )
 
         # QC metrics
@@ -4710,6 +4722,7 @@ class AIFDetection(BaseInterface):
         quality_score, _ = score_averaged_aif_fidelity(
             np.asarray(aif_curve, dtype=float), tr, baseline_frames,
             dose_factor=self._get_dose_factor(),
+            hematocrit=float(self.inputs.hematocrit),
         )
 
         # Aggregate QC metrics

@@ -281,7 +281,7 @@
           "__f__": "0x1.0000000000000p+2"
         },
         "quality_score": {
-          "__f__": "0x1.f2c7bd5db5010p-3"
+          "__f__": "0x1.107853b22952cp-2"
         },
         "scaling_factor": {
           "__f__": "0x1.4e7f1bd66e75ep+0"
@@ -298,7 +298,7 @@
         }
       },
       "quality_score": {
-        "__f__": "0x1.f2c7bd5db5010p-3"
+        "__f__": "0x1.107853b22952cp-2"
       },
       "scaling_factor": {
         "__f__": "0x1.4e7f1bd66e75ep+0"
@@ -568,7 +568,7 @@
           "__f__": "0x1.0000000000000p+2"
         },
         "quality_score": {
-          "__f__": "0x1.cb892804dbaf9p-3"
+          "__f__": "0x1.d9a36e88ff955p-5"
         },
         "scaling_factor": {
           "__f__": "0x1.8000000000000p+0"
@@ -585,7 +585,7 @@
         }
       },
       "quality_score": {
-        "__f__": "0x1.cb892804dbaf9p-3"
+        "__f__": "0x1.d9a36e88ff955p-5"
       },
       "scaling_factor": {
         "__f__": "0x1.8000000000000p+0"
@@ -764,14 +764,14 @@
         },
         "n_aif_voxels_selected": 0,
         "quality_score": {
-          "__f__": "0x1.cb892804dbaf9p-3"
+          "__f__": "0x1.d9a36e88ff955p-5"
         },
         "scaling_factor": {
           "__f__": "0x1.0000000000000p+0"
         }
       },
       "quality_score": {
-        "__f__": "0x1.cb892804dbaf9p-3"
+        "__f__": "0x1.d9a36e88ff955p-5"
       },
       "scaling_factor": {
         "__f__": "0x1.0000000000000p+0"
@@ -1060,7 +1060,7 @@
           "__f__": "0x1.0000000000000p+2"
         },
         "quality_score": {
-          "__f__": "0x1.f2c7bd5db5010p-3"
+          "__f__": "0x1.107853b22952cp-2"
         },
         "scaling_factor": {
           "__f__": "0x1.4e7f1bd66e75ep+0"
@@ -1077,7 +1077,7 @@
         }
       },
       "quality_score": {
-        "__f__": "0x1.f2c7bd5db5010p-3"
+        "__f__": "0x1.107853b22952cp-2"
       },
       "scaling_factor": {
         "__f__": "0x1.4e7f1bd66e75ep+0"

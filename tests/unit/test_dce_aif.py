@@ -20,6 +20,8 @@ from pmriprep.interfaces.dce_aif import (
 )
 from pmriprep.data import get_arterial_atlas_cascade
 from pmriprep.utils.dce_constants import (
+    AIF_IDEAL_FWHM_SECONDS,
+    AIF_WASHOUT_PHYSIOLOGIC_CENTER,
     AIF_THRESHOLDS_PERMISSIVE,
     DCE_AIF_PEAK_RATIO_WARN_THRESHOLD,
     DCE_AIF_SCALE_WARN_SUBSTANTIAL,
@@ -30,6 +32,73 @@ from pmriprep.utils.dce_constants import (
     SLAB_EDGE_EXCLUSION_MM_ROLLOFF,
     SSS_EXCLUSION_MM,
 )
+
+
+class TestDCEClusterScoring:
+    """Whole-brain cluster ranking uses physical, physiologic metrics."""
+
+    @staticmethod
+    def _cluster_inputs(
+        first_size: int,
+        second_size: int,
+        first_metrics: dict[str, float],
+        second_metrics: dict[str, float],
+    ) -> tuple[
+        list[tuple[int, int, int]], list[float], list[dict[str, float]]
+    ]:
+        """Build two disconnected candidate clusters with uniform metrics."""
+        first = [(1 + i, 1, 1) for i in range(first_size)]
+        second = [(10 + i, 10, 10) for i in range(second_size)]
+        candidates = first + second
+        scores = [0.8] * len(candidates)
+        metrics = (
+            [first_metrics.copy() for _ in first]
+            + [second_metrics.copy() for _ in second]
+        )
+        return candidates, scores, metrics
+
+    def test_physiologic_washout_beats_tail_collapsed_cluster(self) -> None:
+        """A higher raw washout cannot beat the physiologic washout center."""
+        physiologic = {
+            "fwhm_seconds": AIF_IDEAL_FWHM_SECONDS,
+            "washout": AIF_WASHOUT_PHYSIOLOGIC_CENTER,
+            "upstroke_slope": 1.0,
+        }
+        collapsed = {
+            **physiologic,
+            "washout": 0.99,
+        }
+        candidates, scores, metrics = self._cluster_inputs(
+            3, 3, physiologic, collapsed
+        )
+
+        selected, _, _ = AIFDetection._score_and_select_cluster(
+            candidates, scores, metrics, (20, 20, 20), tr=4.8
+        )
+
+        assert selected == candidates[:3]
+
+    @pytest.mark.parametrize("tr", [2.0, 4.8, 6.0])
+    def test_physical_fwhm_ranking_is_tr_invariant(self, tr: float) -> None:
+        """The same physical cluster wins across temporal resolutions."""
+        ideal = {
+            "fwhm_seconds": AIF_IDEAL_FWHM_SECONDS,
+            "washout": AIF_WASHOUT_PHYSIOLOGIC_CENTER,
+            "upstroke_slope": 1.0,
+        }
+        broad = {
+            **ideal,
+            "fwhm_seconds": 20.0,
+        }
+        # The broad cluster is larger, so this also proves the physical-width
+        # term remains discriminative instead of collapsing at coarse TR.
+        candidates, scores, metrics = self._cluster_inputs(3, 4, ideal, broad)
+
+        selected, _, _ = AIFDetection._score_and_select_cluster(
+            candidates, scores, metrics, (20, 20, 20), tr=tr
+        )
+
+        assert selected == candidates[:3]
 
 
 # =============================================================================
