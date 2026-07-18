@@ -881,11 +881,10 @@ def _find_previous_dsc_outputs(
                     outputs["preload_qc"] = data["preload_qc"]
                 if isinstance(data.get("preprocessing_stats"), dict):
                     outputs["preprocessing_stats"] = data["preprocessing_stats"]
-        else:
-            logging.getLogger("pmriprep.workflows").warning(
-                "DSC resume checkpoint not found in work directory — "
-                "AIF/preload/preprocessing QC will not be available for DCE.",
-            )
+        # A missing checkpoint leaves aif_qc/preload_qc/preprocessing_stats at
+        # their None default; the caller reports the user-facing consequence
+        # (no previous DSC CBV/transform -> vp constraint skipped, or QC
+        # defaults used) with the full context this helper lacks.
 
     return outputs
 
