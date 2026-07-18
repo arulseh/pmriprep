@@ -9,10 +9,11 @@ outputs are gracefully skipped; as new subjects are processed, tests
 automatically pick them up.
 
 Tier 1 — Summary statistics (no registration, always runs):
-    Session medians within expected %diff.
+    OSIPI tumor-mean Score_repeat and repeatability coefficient.
 
-Tier 2 — Voxel-wise (requires FLIRT registration, skips gracefully):
-    Pearson correlation, ICC, DICE, Bland-Altman.
+Tier 2 — Registration QC (requires FLIRT, skips gracefully):
+    Brain/QC mask overlap and diagnostic visualizations. Voxelwise
+    visit-to-visit PK-map correlation is not an OSIPI validation endpoint.
 """
 
 from pathlib import Path
@@ -27,7 +28,6 @@ from pmriprep.utils.reproducibility import (
     BlandAltmanResult,
     ReproducibilityResult,
     compute_bland_altman,
-    compute_icc_2_1,
 )
 
 from .conftest import (
@@ -418,96 +418,6 @@ def _setup_for_subject(
                 )
 
     return mat_file, out_dir, joint
-
-
-@skip_no_fsl
-class TestVoxelwiseReproducibility:
-    """Voxel-wise test-retest reproducibility after inter-session registration."""
-
-    @pytest.mark.parametrize("subject", TEST_RETEST_SUBJECTS, ids=_SUBJECT_IDS)
-    def test_pearson_ktrans(self, subject: str) -> None:
-        """Ktrans Pearson r across sessions should be > 0.20."""
-        mat_file, out_dir, joint = _setup_for_subject(subject)
-        v1, v2 = _load_registered_pair(
-            subject, "Ktrans", mat_file, out_dir, joint,
-            require_positive=True,
-        )
-        r = float(np.corrcoef(v1, v2)[0, 1])
-        assert r > 0.20, f"{subject} Ktrans Pearson r = {r:.3f} (< 0.20)"
-
-    @pytest.mark.parametrize("subject", TEST_RETEST_SUBJECTS, ids=_SUBJECT_IDS)
-    def test_pearson_ve(self, subject: str) -> None:
-        """ve Pearson r across sessions should be > 0.30."""
-        mat_file, out_dir, joint = _setup_for_subject(subject)
-        v1, v2 = _load_registered_pair(
-            subject, "ve", mat_file, out_dir, joint,
-            require_positive=True,
-        )
-        r = float(np.corrcoef(v1, v2)[0, 1])
-        assert r > 0.30, f"{subject} ve Pearson r = {r:.3f} (< 0.30)"
-
-    @pytest.mark.parametrize("subject", TEST_RETEST_SUBJECTS, ids=_SUBJECT_IDS)
-    def test_pearson_vp(self, subject: str) -> None:
-        """vp Pearson r across sessions should be > 0.25."""
-        mat_file, out_dir, joint = _setup_for_subject(subject)
-        v1, v2 = _load_registered_pair(
-            subject, "vp", mat_file, out_dir, joint,
-            require_positive=True,
-        )
-        r = float(np.corrcoef(v1, v2)[0, 1])
-        assert r > 0.25, f"{subject} vp Pearson r = {r:.3f} (< 0.25)"
-
-    @pytest.mark.parametrize("subject", TEST_RETEST_SUBJECTS, ids=_SUBJECT_IDS)
-    def test_ktrans_icc(self, subject: str) -> None:
-        """Ktrans ICC(2,1) should be > 0.15."""
-        mat_file, out_dir, joint = _setup_for_subject(subject)
-        v1, v2 = _load_registered_pair(
-            subject, "Ktrans", mat_file, out_dir, joint,
-            require_positive=True,
-        )
-        icc = compute_icc_2_1(v1, v2)
-        assert icc > 0.15, f"{subject} Ktrans ICC(2,1) = {icc:.3f} (< 0.15)"
-
-    @pytest.mark.parametrize("subject", TEST_RETEST_SUBJECTS, ids=_SUBJECT_IDS)
-    def test_modelfree_iauc60_correlation(self, subject: str) -> None:
-        """IAUC60 Pearson r across sessions should be > 0.20."""
-        mat_file, out_dir, joint = _setup_for_subject(subject)
-        v1, v2 = _load_registered_pair(
-            subject, "IAUC60", mat_file, out_dir, joint,
-            require_positive=True,
-        )
-        r = float(np.corrcoef(v1, v2)[0, 1])
-        assert r > 0.20, f"{subject} IAUC60 Pearson r = {r:.3f} (< 0.20)"
-
-    @pytest.mark.parametrize("subject", TEST_RETEST_SUBJECTS, ids=_SUBJECT_IDS)
-    def test_modelfree_iauc90_correlation(self, subject: str) -> None:
-        """IAUC90 Pearson r across sessions should be > 0.20."""
-        mat_file, out_dir, joint = _setup_for_subject(subject)
-        v1, v2 = _load_registered_pair(
-            subject, "IAUC90", mat_file, out_dir, joint,
-            require_positive=True,
-        )
-        r = float(np.corrcoef(v1, v2)[0, 1])
-        assert r > 0.20, f"{subject} IAUC90 Pearson r = {r:.3f} (< 0.20)"
-
-    @pytest.mark.parametrize("subject", TEST_RETEST_SUBJECTS, ids=_SUBJECT_IDS)
-    def test_modelfree_iauc120_correlation(self, subject: str) -> None:
-        """IAUC120 Pearson r across sessions should be > 0.20."""
-        mat_file, out_dir, joint = _setup_for_subject(subject)
-        v1, v2 = _load_registered_pair(
-            subject, "IAUC120", mat_file, out_dir, joint,
-            require_positive=True,
-        )
-        r = float(np.corrcoef(v1, v2)[0, 1])
-        assert r > 0.20, f"{subject} IAUC120 Pearson r = {r:.3f} (< 0.20)"
-
-    @pytest.mark.parametrize("subject", TEST_RETEST_SUBJECTS, ids=_SUBJECT_IDS)
-    def test_modelfree_ser_correlation(self, subject: str) -> None:
-        """SER Pearson r across sessions should be > -0.10."""
-        mat_file, out_dir, joint = _setup_for_subject(subject)
-        v1, v2 = _load_registered_pair(subject, "SER", mat_file, out_dir, joint)
-        r = float(np.corrcoef(v1, v2)[0, 1])
-        assert r > -0.10, f"{subject} SER Pearson r = {r:.3f} (< -0.10)"
 
 
 # =============================================================================
