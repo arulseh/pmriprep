@@ -40,8 +40,8 @@ _CORE_MAPS: tuple[tuple[str, str, str, str, str, str, dict | None], ...] = (
 )
 
 
-# Relative maps (always produced, but inputs may be undefined). Note the
-# bids_suffix/desc remap retained from the legacy writer for back-compat.
+# Relative maps (always produced, but inputs may be undefined). The
+# bids_suffix/desc mapping defines the public derivative naming contract.
 _REL_MAPS: tuple[tuple[str, str, str, str, str, str, dict | None], ...] = (
     ("rel_cbf_map", "dscRel", "cbf",
      "Cerebral blood flow (relative)", "1/min", "cbf", None),
@@ -175,16 +175,16 @@ _DSC_OUTPUT_KEYS: frozenset[str] = frozenset(
 # ---------------------------------------------------------------------------
 
 
-def _build_base(  # type: ignore[no-untyped-def]
-    source_paths,
-    reference_voxel_source,
-    bids_dir,
-    subject,
-    session,
-    provenance_dict=None,
-    qc_metrics=None,
-    minimal=False,
-):
+def _build_base(
+    source_paths: list[str],
+    reference_voxel_source: str,
+    bids_dir: str,
+    subject: str,
+    session: str | None,
+    provenance_dict: dict | None = None,
+    qc_metrics: dict | None = None,
+    minimal: bool = False,
+) -> dict:
     from pmriprep.utils.sidecar_builders import build_dsc_base_sidecar
 
     return build_dsc_base_sidecar(
@@ -199,17 +199,17 @@ def _build_base(  # type: ignore[no-untyped-def]
     )
 
 
-def _build_map_meta(  # type: ignore[no-untyped-def]
-    base,
-    description,
-    map_key,
-    qc_metrics=None,
-    units=None,
-    extra=None,
-    lesion_stats_json=None,
-    user_lesion_stats_json=None,
-    roi_stats_json=None,
-):
+def _build_map_meta(
+    base: dict,
+    description: str,
+    map_key: str,
+    qc_metrics: dict | None = None,
+    units: str | None = None,
+    extra: dict | None = None,
+    lesion_stats_json: str | None = None,
+    user_lesion_stats_json: str | None = None,
+    roi_stats_json: str | None = None,
+) -> dict:
     """Compose a DSC per-map sidecar; injects per-map stats fragments.
 
     Each aggregate stats JSON (lesion, user-lesion, ROI) is loaded when
@@ -232,22 +232,21 @@ def _build_map_meta(  # type: ignore[no-untyped-def]
     roi_fragment = load_lesion_stats_fragment(roi_stats_json, map_key)
     if roi_fragment:
         merged_extra["ROIStats"] = roi_fragment
-    if not merged_extra:
-        merged_extra = extra
-
     return build_dsc_map_sidecar(
         base=base,
         description=description,
         map_key=map_key,
         qc_metrics=qc_metrics,
         units=units,
-        extra=merged_extra,
+        extra=merged_extra or extra,
     )
 
 
-def _build_minimal_meta(  # type: ignore[no-untyped-def]
-    base, description, skull_stripped=False,
-):
+def _build_minimal_meta(
+    base: dict,
+    description: str,
+    skull_stripped: bool = False,
+) -> dict:
     out = dict(base)
     out["Description"] = description
     if skull_stripped:
@@ -255,17 +254,17 @@ def _build_minimal_meta(  # type: ignore[no-untyped-def]
     return out
 
 
-def _build_dsc_preproc_meta(  # type: ignore[no-untyped-def]
-    base,
-    description,
-    preload_qc=None,
-    preprocessing_stats=None,
-    qc_metrics=None,
-    provenance_dict=None,
-    preflight_warnings=None,
-    presence_warnings=None,
-    config_dict=None,
-):
+def _build_dsc_preproc_meta(
+    base: dict,
+    description: str,
+    preload_qc: dict | None = None,
+    preprocessing_stats: dict | None = None,
+    qc_metrics: dict | None = None,
+    provenance_dict: dict | None = None,
+    preflight_warnings: list | None = None,
+    presence_warnings: list | None = None,
+    config_dict: dict | None = None,
+) -> dict:
     """Compose the ``desc-dscPreproc_dsc.json`` sidecar.
 
     Starts from the minimal-base meta, layers on flat-prefixed cosmetic
@@ -315,14 +314,19 @@ def _build_dsc_preproc_meta(  # type: ignore[no-untyped-def]
         out["PipelineQC"] = filter_pipeline_qc(qc_metrics)
     if isinstance(config_dict, dict):
         out["PipelineConfiguration"] = build_provenance_block(config_dict)
-    return sanitize_for_json(out)
+    return dict(sanitize_for_json(out))
 
 
-def _write_dsc_resume_checkpoint(  # type: ignore[no-untyped-def]
-    work_dir, subject_id, session_id,
-    aif_qc=None, preload_qc=None, preprocessing_stats=None,
-    motion_qc=None, aif_metrics=None,
-):
+def _write_dsc_resume_checkpoint(
+    work_dir: str,
+    subject_id: str,
+    session_id: str | None,
+    aif_qc: dict | None = None,
+    preload_qc: dict | None = None,
+    preprocessing_stats: dict | None = None,
+    motion_qc: dict | None = None,
+    aif_metrics: dict | None = None,
+) -> str | None:
     """Write the DSC→DCE handoff checkpoint to the work directory."""
     import json as _json
     from pathlib import Path
@@ -368,9 +372,15 @@ def _write_dsc_resume_checkpoint(  # type: ignore[no-untyped-def]
     return str(out_path)
 
 
-def _copy_xfm(  # type: ignore[no-untyped-def]
-    in_file, output_dir, subject, session, from_space, to_space, datatype="anat",
-):
+def _copy_xfm(
+    in_file: str | None,
+    output_dir: str,
+    subject: str,
+    session: str | None,
+    from_space: str,
+    to_space: str,
+    datatype: str = "anat",
+) -> str:
     """Copy a transform .h5 into the derivatives ``anat/`` directory."""
     import logging
     import shutil
@@ -404,10 +414,17 @@ def _copy_xfm(  # type: ignore[no-untyped-def]
     return str(out_path)
 
 
-def _copy_perf_map(  # type: ignore[no-untyped-def]
-    in_file, output_dir, subject, session, desc, suffix, meta_dict,
-    datatype="perf", bids_suffix="stat",
-):
+def _copy_perf_map(
+    in_file: str | None,
+    output_dir: str,
+    subject: str,
+    session: str | None,
+    desc: str,
+    suffix: str,
+    meta_dict: dict,
+    datatype: str = "perf",
+    bids_suffix: str = "stat",
+) -> str:
     """Copy a DSC perfusion map + write its sidecar with BIDS-compliant naming.
 
     ``suffix`` is the parameter name (e.g. ``"mtt"``, ``"cbf"``) which
@@ -456,24 +473,26 @@ def _copy_perf_map(  # type: ignore[no-untyped-def]
     return str(nii_out)
 
 
-def _split_smooth_dict(  # type: ignore[no-untyped-def]
-    smooth_hemo=None, smooth_auc=None, fwhm=0.0,
-):
+def _split_smooth_dict(
+    smooth_hemo: dict[str, str] | None = None,
+    smooth_auc: dict[str, str] | None = None,
+    fwhm: float = 0.0,
+) -> tuple[list[str], list[str], list[str], list[str], list[str], list[str]]:
     """Flatten the two smoothed-map dicts into per-output ``(name, path, descs)`` tuples.
 
-    Returns three lists: ``in_files``, ``descs``, ``map_keys``,
-    ``map_suffixes``, ``desc_prefixes``, ``units_list`` matching the legacy
-    writer's templated naming (``dsc{Sm{N}}``, ``dscRel{Sm{N}}``, etc.).
+    Returns six lists: ``in_files``, ``descs``, ``map_keys``,
+    ``map_suffixes``, ``desc_prefixes``, and ``units_list`` matching the
+    derivative naming templates (``dsc{Sm{N}}``, ``dscRel{Sm{N}}``, etc.).
     """
     from pathlib import Path
     from nipype.interfaces.base import isdefined  # type: ignore[import-untyped]
 
-    out_files = []
-    out_descs = []
-    out_keys = []
-    out_map_suffixes = []
-    out_desc_prefixes = []
-    out_units = []
+    out_files: list[str] = []
+    out_descs: list[str] = []
+    out_keys: list[str] = []
+    out_map_suffixes: list[str] = []
+    out_desc_prefixes: list[str] = []
+    out_units: list[str] = []
 
     if not (isdefined(fwhm) and fwhm and float(fwhm) > 0):
         return out_files, out_descs, out_keys, out_map_suffixes, out_desc_prefixes, out_units
@@ -532,11 +551,9 @@ def _split_smooth_dict(  # type: ignore[no-untyped-def]
     return out_files, out_descs, out_keys, out_map_suffixes, out_desc_prefixes, out_units
 
 
-def _build_k2_extra(  # type: ignore[no-untyped-def]
-    preload_qc=None,
-):
+def _build_k2_extra(preload_qc: dict | None = None) -> dict:
     """Compose the K2 sidecar's ``extra`` dict from ``preload_qc``."""
-    extra = {"LeakageCorrectionMethod": "bsw"}
+    extra: dict[str, object] = {"LeakageCorrectionMethod": "bsw"}
     if isinstance(preload_qc, dict):
         method = preload_qc.get("k2_method")
         if method:
@@ -548,11 +565,9 @@ def _build_k2_extra(  # type: ignore[no-untyped-def]
     return extra
 
 
-def _build_parametric_extra(  # type: ignore[no-untyped-def]
-    qc_metrics=None,
-):
+def _build_parametric_extra(qc_metrics: dict | None = None) -> dict:
     """FitMethod + InferenceEngine + FallbackThreshold from qc_metrics.deconvolution."""
-    extra = {"FallbackThreshold": 0.5}
+    extra: dict[str, object] = {"FallbackThreshold": 0.5}
     if isinstance(qc_metrics, dict):
         deconv = qc_metrics.get("deconvolution") or {}
         if isinstance(deconv, dict):
@@ -563,18 +578,14 @@ def _build_parametric_extra(  # type: ignore[no-untyped-def]
     return extra
 
 
-def _build_bayes_extra(  # type: ignore[no-untyped-def]
-    config_dict=None, umap_key="cbf_std",
-):
+def _build_bayes_extra(
+    config_dict: dict | None = None,
+    umap_key: str = "cbf_std",
+) -> dict:
     """EstimationMethod + UncertaintyMethod for Bayesian uncertainty maps."""
     estimation = "unknown"
     if isinstance(config_dict, dict):
-        # Newer field is "inference"; legacy key was "bayesian".
-        estimation = (
-            config_dict.get("inference")
-            or config_dict.get("bayesian")
-            or "unknown"
-        )
+        estimation = config_dict.get("inference") or "unknown"
     if "CV" in umap_key:
         kind = "coefficient_of_variation"
     elif "CI95" in umap_key:
@@ -587,9 +598,14 @@ def _build_bayes_extra(  # type: ignore[no-untyped-def]
     }
 
 
-def _build_smoothed_meta(  # type: ignore[no-untyped-def]
-    base, description, map_key, qc_metrics, units, fwhm,
-):
+def _build_smoothed_meta(
+    base: dict,
+    description: str,
+    map_key: str,
+    qc_metrics: dict | None,
+    units: str | None,
+    fwhm: float,
+) -> dict:
     from pmriprep.utils.sidecar_builders import build_dsc_map_sidecar
 
     extra = {
