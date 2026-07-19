@@ -36,7 +36,7 @@ _CORE_MAPS: tuple[tuple[str, str, str, str, str, str, dict | None], ...] = (
      {"MTTMethod": "auc_cbv_over_cbf"}),
     ("tmax_map", "dsc", "tmax", "Time to maximum of residue function", "s", "tmax", None),
     ("psr_map", "dsc", "psr", "Percent signal recovery", "%", "psr", None),
-    ("ph_map", "dsc", "ph", "Peak height", "arbitrary", "ph", None),
+    ("ph_map", "dsc", "ph", "Peak height", "%", "ph", None),
 )
 
 
@@ -136,26 +136,26 @@ _NORMALIZED_MAPS: tuple[tuple[str, str, str, str, str, str, dict | None], ...] =
 
 # Vascular model parameters
 _VASCULAR_MAPS: tuple[tuple[str, str, str, str, str | None, str, dict | None], ...] = (
-    ("alpha_map", "dsc", "alpha", "Vascular model alpha parameter", None, "alpha", None),
-    ("beta_map", "dsc", "beta", "Vascular model beta parameter", None, "beta", None),
-    ("cth_map", "dsc", "cth", "Capillary transit time heterogeneity", None, "cth", None),
+    ("alpha_map", "dsc", "alpha", "Vascular model alpha parameter", "1", "alpha", None),
+    ("beta_map", "dsc", "beta", "Vascular model beta parameter", "s", "beta", None),
+    ("cth_map", "dsc", "cth", "Capillary transit time heterogeneity", "s", "cth", None),
 )
 
 
 # Bayesian uncertainty maps. Same shape as above.
-_BAYESIAN_MAPS: tuple[tuple[str, str, str, str, None, str, None], ...] = (
-    ("cbf_std_map", "dscUncertainty", "cbf", "CBF uncertainty (posterior std)", None, "cbf_std", None),
-    ("cbv_std_map", "dscUncertainty", "cbv", "CBV uncertainty (posterior std)", None, "cbv_std", None),
-    ("cbf_cv_map", "dscCV", "cbf", "CBF coefficient of variation", None, "cbfCV", None),
-    ("cbv_cv_map", "dscCV", "cbv", "CBV coefficient of variation", None, "cbvCV", None),
+_BAYESIAN_MAPS: tuple[tuple[str, str, str, str, str, str, None], ...] = (
+    ("cbf_std_map", "dscUncertainty", "cbf", "CBF uncertainty (posterior std)", "1/min", "cbf_std", None),
+    ("cbv_std_map", "dscUncertainty", "cbv", "CBV uncertainty (posterior std)", "arbitrary", "cbv_std", None),
+    ("cbf_cv_map", "dscCV", "cbf", "CBF coefficient of variation", "1", "cbfCV", None),
+    ("cbv_cv_map", "dscCV", "cbv", "CBV coefficient of variation", "1", "cbvCV", None),
     ("cbf_ci95_lower_map", "dscCI95lower", "cbf",
-     "CBF 95% credible interval lower bound", None, "cbfCI95lower", None),
+     "CBF 95% credible interval lower bound", "1/min", "cbfCI95lower", None),
     ("cbf_ci95_upper_map", "dscCI95upper", "cbf",
-     "CBF 95% credible interval upper bound", None, "cbfCI95upper", None),
+     "CBF 95% credible interval upper bound", "1/min", "cbfCI95upper", None),
     ("cbv_ci95_lower_map", "dscCI95lower", "cbv",
-     "CBV 95% credible interval lower bound", None, "cbvCI95lower", None),
+     "CBV 95% credible interval lower bound", "arbitrary", "cbvCI95lower", None),
     ("cbv_ci95_upper_map", "dscCI95upper", "cbv",
-     "CBV 95% credible interval upper bound", None, "cbvCI95upper", None),
+     "CBV 95% credible interval upper bound", "arbitrary", "cbvCI95upper", None),
 )
 
 

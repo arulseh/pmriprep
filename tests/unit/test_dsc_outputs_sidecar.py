@@ -338,6 +338,28 @@ class TestWriterAifBlockPresentOnAllMaps:
         assert sidecar["AIFDependent"] is False
         assert sidecar["TemplateAIFUsage"] == "safe"
 
+    def test_map_units_match_computed_quantities(self, minimal_inputs, tmp_path) -> None:
+        minimal_inputs.update({
+            "alpha_map": _write_dummy_nifti(tmp_path / "alpha.nii.gz"),
+            "beta_map": _write_dummy_nifti(tmp_path / "beta.nii.gz"),
+            "cth_map": _write_dummy_nifti(tmp_path / "cth.nii.gz"),
+            "cbf_std_map": _write_dummy_nifti(tmp_path / "cbf_std.nii.gz"),
+            "cbv_cv_map": _write_dummy_nifti(tmp_path / "cbv_cv.nii.gz"),
+            "config_dict": {},
+        })
+        derivatives = _run_writer(minimal_inputs, {}, tmp_path)
+
+        expected = {
+            "dscPh_stat": "%",
+            "dscAlpha_stat": "1",
+            "dscBeta_stat": "s",
+            "dscCth_stat": "s",
+            "dscUncertaintyCbf_stat": "1/min",
+            "dscCVCbv_stat": "1",
+        }
+        for suffix, units in expected.items():
+            assert _load_sidecar(derivatives, suffix)["Units"] == units
+
     def test_synthetic_template_flags(self, minimal_inputs, tmp_path) -> None:
         qc = {
             "aif_detection": {"detection_method": "synthetic", "quality_score": 0.3},

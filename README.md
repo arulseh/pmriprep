@@ -546,8 +546,8 @@ output_dir/pmriprep/
 | `*_desc-dscLeakageAuc_stat` | Leakage contribution (AUC_raw - AUC_corr) | arbitrary |
 | `*_desc-dscNawmNormCbf_stat` | CBF normalized by NAWM | ratio |
 | `*_desc-dscNawmNormCbv_stat` | CBV normalized by NAWM | ratio |
-| `*_desc-dscAlpha_stat` | Vascular model alpha (vascular method only) | — |
-| `*_desc-dscBeta_stat` | Vascular model beta (vascular method only) | — |
+| `*_desc-dscAlpha_stat` | Vascular model alpha (vascular method only) | dimensionless |
+| `*_desc-dscBeta_stat` | Vascular model beta (vascular method only) | seconds |
 | `*_desc-dscCth_stat` | Capillary transit heterogeneity (vascular method only) | seconds |
 | `*_desc-dscUncertaintyCbf_stat` | CBF posterior standard deviation (CPI/Vascular) | 1/min |
 | `*_desc-dscCVCbf_stat` | CBF coefficient of variation (CPI/Vascular) | fraction |
