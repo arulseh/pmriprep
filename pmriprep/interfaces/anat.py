@@ -180,7 +180,6 @@ class BiasCorrectionOutputSpec(TraitedSpec):
     """Output specification for BiasCorrection interface."""
 
     out_file = File(exists=True, desc="Bias-corrected image")
-    bias_field = File(desc="Estimated bias field (if saved)")
 
 
 class BiasCorrection(CommandLine):
