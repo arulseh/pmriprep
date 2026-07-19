@@ -473,6 +473,22 @@ def _compute_dce_coefficient_of_variation(
     return result
 
 
+def _compute_dce_credible_interval(
+    values: npt.NDArray[Any],
+    standard_deviation: npt.NDArray[Any],
+    upper_bound: Optional[float] = None,
+) -> tuple[npt.NDArray[np.float32], npt.NDArray[np.float32]]:
+    """Compute normal-approximation 95% credible interval maps."""
+    lower = np.maximum(values - 1.96 * standard_deviation, 0.0)
+    upper = values + 1.96 * standard_deviation
+    if upper_bound is not None:
+        lower = np.minimum(lower, upper_bound)
+        upper = np.clip(upper, 0.0, upper_bound)
+    lower_result: npt.NDArray[np.float32] = lower.astype(np.float32)
+    upper_result: npt.NDArray[np.float32] = upper.astype(np.float32)
+    return lower_result, upper_result
+
+
 def _validate_dce_time_axis(
     time_points: npt.ArrayLike,
     n_dce_frames: int,
@@ -3245,8 +3261,10 @@ class ComputeDCEMaps(BaseInterface):
 
             # Compute and save 95% Credible Intervals (mean ± 1.96 * std)
             # Assuming approximately normal posterior (valid for MAP/MLE)
-            ktrans_ci95_lower = np.maximum(ktrans - 1.96 * ktrans_std, 0.0).astype(np.float32)
-            ktrans_ci95_upper = (ktrans + 1.96 * ktrans_std).astype(np.float32)
+            ktrans_ci95_lower, ktrans_ci95_upper = _compute_dce_credible_interval(
+                ktrans,
+                ktrans_std,
+            )
 
             out_ktrans_ci95_lower = self._gen_outfilename("_Ktrans_ci95lower")
             out_ktrans_ci95_upper = self._gen_outfilename("_Ktrans_ci95upper")
@@ -3258,8 +3276,11 @@ class ComputeDCEMaps(BaseInterface):
             self._results["out_ktrans_ci95_upper"] = out_ktrans_ci95_upper
 
             if save_ve:
-                ve_ci95_lower = np.clip(ve - 1.96 * ve_std, 0.0, 1.0).astype(np.float32)
-                ve_ci95_upper = np.clip(ve + 1.96 * ve_std, 0.0, 1.0).astype(np.float32)
+                ve_ci95_lower, ve_ci95_upper = _compute_dce_credible_interval(
+                    ve,
+                    ve_std,
+                    upper_bound=1.0,
+                )
 
                 out_ve_ci95_lower = self._gen_outfilename("_ve_ci95lower")
                 out_ve_ci95_upper = self._gen_outfilename("_ve_ci95upper")
@@ -3271,8 +3292,11 @@ class ComputeDCEMaps(BaseInterface):
                 self._results["out_ve_ci95_upper"] = out_ve_ci95_upper
 
             if save_vp:
-                vp_ci95_lower = np.clip(vp - 1.96 * vp_std, 0.0, 1.0).astype(np.float32)
-                vp_ci95_upper = np.clip(vp + 1.96 * vp_std, 0.0, 1.0).astype(np.float32)
+                vp_ci95_lower, vp_ci95_upper = _compute_dce_credible_interval(
+                    vp,
+                    vp_std,
+                    upper_bound=1.0,
+                )
 
                 out_vp_ci95_lower = self._gen_outfilename("_vp_ci95lower")
                 out_vp_ci95_upper = self._gen_outfilename("_vp_ci95upper")
