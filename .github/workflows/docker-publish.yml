@@ -75,6 +75,8 @@ jobs:
         run: |
           IMAGE_TAG=$(echo "${{ steps.meta.outputs.tags }}" | head -n1)
           docker run --rm "$IMAGE_TAG" --help
+          test "$(docker run --rm "$IMAGE_TAG" --version)" = \
+            "pmriprep ${{ steps.meta_prep.outputs.version }}"
 
       # Run unit tests inside the container
       - name: Unit tests
@@ -89,4 +91,3 @@ jobs:
           echo "${{ steps.meta.outputs.tags }}" | while read -r tag; do
             docker push "$tag"
           done
-

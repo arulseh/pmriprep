@@ -19,7 +19,20 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
-      - run: pip install -e ".[test]"
+      - run: pip install ".[test]"
+      - name: Verify installed CLI version
+        run: |
+          python - <<'PY'
+          import pathlib
+          import subprocess
+          import toml
+
+          expected = toml.load(pathlib.Path("pyproject.toml"))["project"]["version"]
+          actual = subprocess.check_output(
+              ["pmriprep", "--version"], text=True,
+          ).strip()
+          assert actual == f"pmriprep {expected}", (actual, expected)
+          PY
       - run: pytest tests/unit/ -q --maxfail=20
 
   synthetic-dro-tests:
