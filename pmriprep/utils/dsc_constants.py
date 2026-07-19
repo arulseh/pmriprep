@@ -90,9 +90,8 @@ EPSILON_SHAPE: Final[float] = 1e-10
 # Leakage Correction (K2)
 # =============================================================================
 
-#: Numerical safety bound for K2 leakage fits (s⁻¹). This is not a claimed
-#: physiological maximum. Local round-trip validation covers K2 through
-#: 0.2 s⁻¹; larger unconstrained OLS estimates are treated as degenerate.
+#: Numerical safety bound for K2 leakage fits (s⁻¹), not a physiological
+#: maximum. Larger unconstrained OLS estimates are treated as degenerate.
 K2_UPPER_BOUND: Final[float] = 0.2
 
 # Bidirectional K2

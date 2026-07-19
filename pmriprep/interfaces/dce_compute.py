@@ -27,7 +27,6 @@ from pmriprep.utils.dce_constants import (
     EPSILON_VE,
     DEFAULT_TSNR_THRESHOLD,
     FP_BOUNDS,
-    HEMATOCRIT_ARTERIAL,
     KEP_BOUNDS,
     KTRANS_BOUNDS,
     MIN_ENHANCEMENT_MM,
@@ -1129,11 +1128,6 @@ class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
         "skip",
         usedefault=True,
         desc="DSC CBV constraint mode: auto or skip",
-    )
-    hematocrit = traits.Float(
-        HEMATOCRIT_ARTERIAL,
-        usedefault=True,
-        desc="Arterial hematocrit. Capillary Hct derived via Fahraeus ratio.",
     )
     dsc_dose = traits.Float(
         1.0,

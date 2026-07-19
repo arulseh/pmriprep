@@ -1652,7 +1652,6 @@ def init_dce_preproc_wf(
         mcmc_samples=config.mcmc_samples,
         tsnr_threshold=config.tsnr_threshold,
         constraint_mode=config.cbv_constraint_mode,
-        hematocrit=config.hematocrit,
         n_procs=max(1, config.num_processes),
         sloppy=config.sloppy,
         aif_bat_alignment=config.aif_bat_alignment,
