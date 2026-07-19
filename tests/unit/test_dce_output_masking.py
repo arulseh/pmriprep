@@ -14,6 +14,7 @@ from pmriprep.interfaces.dce_compute import (
     _compute_dce_coefficient_of_variation,
     _compute_dce_credible_interval,
     _write_dce_map,
+    _write_dce_fitted_curves,
     _zero_dce_background,
 )
 from pmriprep.utils.dce_constants import EPSILON_VE
@@ -148,6 +149,19 @@ def test_write_dce_map_overrides_inherited_header_dtype(tmp_path) -> None:
     assert image.get_data_dtype() == np.dtype(np.float32)
     np.testing.assert_allclose(image.get_fdata(), [[[0.25, 1.5]]])
     assert header.get_data_dtype() == np.dtype(np.int16)
+
+
+def test_write_dce_fitted_curves_preserves_four_dimensions(tmp_path) -> None:
+    """Fitted-curve serialization retains shape, affine, values, and dtype."""
+    curves = np.arange(12, dtype=np.float32).reshape(1, 2, 2, 3)
+    affine = np.diag([2.0, 3.0, 4.0, 1.0])
+    output = tmp_path / "curves.nii.gz"
+    _write_dce_fitted_curves(curves, str(output), affine)
+    image = nib.load(output)
+    assert image.shape == curves.shape
+    assert image.get_data_dtype() == np.dtype(np.float32)
+    np.testing.assert_array_equal(image.get_fdata(), curves)
+    np.testing.assert_array_equal(image.affine, affine)
 
 
 def test_saved_dce_categorical_maps_are_brain_masked(tmp_path) -> None:

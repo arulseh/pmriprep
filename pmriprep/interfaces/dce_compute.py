@@ -508,6 +508,18 @@ def _write_dce_map(
     nib.save(image, path)
 
 
+def _write_dce_fitted_curves(
+    data: npt.NDArray[Any],
+    path: str,
+    affine: npt.NDArray[Any],
+) -> None:
+    """Write fitted DCE curves with their existing affine-only header."""
+    import nibabel as nib  # type: ignore[import-untyped]
+
+    image = nib.Nifti1Image(data, affine)
+    nib.save(image, path)
+
+
 def _validate_dce_time_axis(
     time_points: npt.ArrayLike,
     n_dce_frames: int,
@@ -2748,8 +2760,6 @@ class ComputeDCEMaps(BaseInterface):
 
     def _run_interface(self, runtime: Any) -> Any:
         """Execute DCE map computation."""
-        import nibabel as nib  # type: ignore[import-untyped]
-
         prepared = self._prepare_fit_inputs()
         conc_data = prepared.concentration
         affine = prepared.affine
@@ -3349,8 +3359,7 @@ class ComputeDCEMaps(BaseInterface):
         # Save fitted curves
         if save_fitted_curves and fitted_curves is not None:
             out_fitted = self._gen_outfilename("_fitted_curves")
-            fitted_img = nib.Nifti1Image(fitted_curves, affine)  # type: ignore[attr-defined]
-            nib.save(fitted_img, out_fitted)  # type: ignore[attr-defined]
+            _write_dce_fitted_curves(fitted_curves, out_fitted, affine)
             self._results["out_fitted_curves"] = out_fitted
 
         return runtime
