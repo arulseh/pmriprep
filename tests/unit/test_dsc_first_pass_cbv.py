@@ -45,6 +45,7 @@ def dsc_inputs(tmp_path):
     conc_f = str(tmp_path / "conc.nii.gz")
     nib.save(nib.Nifti1Image(conc.astype(np.float32), aff), conc_f)
     mask = np.ones((nx, ny, nz), dtype=np.uint8)
+    mask[0, :, :] = 0
     mask_f = str(tmp_path / "mask.nii.gz")
     nib.save(nib.Nifti1Image(mask, aff), mask_f)
     aif = _gamma(t, 3.0, 7.0, 3.0, 2.0)
@@ -112,6 +113,25 @@ def test_config_on_wm_median_normalized(dsc_inputs, tmp_path):
     assert qc["firstpass_reference"] == "firstpass-WM-FAST"
     assert qc["firstpass_reference_n"] >= 50
     assert 0.0 <= qc["firstpass_unfittable_fraction"] <= 1.0
+
+
+def test_saved_dsc_diagnostics_are_brain_masked(dsc_inputs, tmp_path):
+    """Saved first-pass, K2, delay, and residue outputs have zero background."""
+    res = _run(
+        dsc_inputs,
+        tmp_path,
+        first_pass_cbv=True,
+        wm_mask_dsc=dsc_inputs["wm_mask_file"],
+        save_residue=True,
+    )
+    mask = nib.load(dsc_inputs["brain_mask_file"]).get_fdata() > 0
+
+    for output_name in ("out_rel_cbv_firstpass", "out_k2", "out_delay"):
+        data = nib.load(getattr(res.outputs, output_name)).get_fdata()
+        assert np.all(data[~mask] == 0), output_name
+
+    residues = nib.load(res.outputs.out_residues).get_fdata()
+    assert np.all(residues[~mask, :] == 0)
 
 
 def test_no_wm_produces_no_map(dsc_inputs, tmp_path):

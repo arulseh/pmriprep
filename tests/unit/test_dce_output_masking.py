@@ -1,0 +1,66 @@
+"""Integration tests for masking saved DCE quantitative derivatives."""
+
+from __future__ import annotations
+
+import os
+
+import nibabel as nib
+import numpy as np
+
+from pmriprep.interfaces.dce_compute import ComputeDCEMaps
+from pmriprep.models.dce.batched_models import batched_tofts_model
+
+
+def test_saved_dce_categorical_maps_are_brain_masked(tmp_path) -> None:
+    """Saved curve, fit-quality, and model-selection labels have zero background."""
+    shape = (4, 4, 4)
+    n_timepoints = 40
+    time_points = np.linspace(0.0, 4.0, n_timepoints)
+    aif = (
+        5.0 * np.exp(-0.5 * ((time_points - 0.5) / 0.15) ** 2)
+        + 1.5 * np.exp(-0.3 * np.maximum(time_points - 0.5, 0.0))
+    )
+    tissue_curve = batched_tofts_model(
+        np.array([0.15]),
+        np.array([0.3]),
+        aif,
+        time_points,
+    ).tissue_curves[0]
+
+    concentration = np.broadcast_to(tissue_curve, (*shape, n_timepoints)).copy()
+    mask = np.ones(shape, dtype=np.uint8)
+    mask[0, :, :] = 0
+
+    concentration_file = tmp_path / "concentration.nii.gz"
+    mask_file = tmp_path / "mask.nii.gz"
+    aif_file = tmp_path / "aif.txt"
+    time_points_file = tmp_path / "time_points.txt"
+    nib.save(nib.Nifti1Image(concentration.astype(np.float32), np.eye(4)), concentration_file)
+    nib.save(nib.Nifti1Image(mask, np.eye(4)), mask_file)
+    np.savetxt(aif_file, aif)
+    np.savetxt(time_points_file, time_points)
+
+    interface = ComputeDCEMaps(
+        concentration_file=str(concentration_file),
+        aif_file=str(aif_file),
+        brain_mask_file=str(mask_file),
+        model="auto",
+        inference="nlls",
+        time_points_file=str(time_points_file),
+        baseline_frames=5,
+        constraint_mode="skip",
+        n_procs=1,
+    )
+    workdir = tmp_path / "run"
+    workdir.mkdir()
+    previous_cwd = os.getcwd()
+    os.chdir(workdir)
+    try:
+        result = interface.run()
+    finally:
+        os.chdir(previous_cwd)
+
+    background = mask == 0
+    for output_name in ("out_curve_type", "out_quality_flag", "out_model_selection"):
+        data = nib.load(getattr(result.outputs, output_name)).get_fdata()
+        assert np.all(data[background] == 0), output_name

@@ -2580,6 +2580,9 @@ class ComputeDCEMaps(BaseInterface):
         wash_in_slope = np.where(mask_bool, wash_in_slope, 0.0)
         wash_out_slope = np.where(mask_bool, wash_out_slope, 0.0)
         bat = np.where(mask_bool, bat, 0.0)
+        curve_type = np.where(mask_bool, curve_type, 0)
+        quality_flag_map = np.where(mask_bool, quality_flag_map, 0)
+        model_selection_map = np.where(mask_bool, model_selection_map, 0)
         if peak_enh is not None:
             peak_enh = np.where(mask_bool, peak_enh, 0.0)
         if fitted_curves is not None:

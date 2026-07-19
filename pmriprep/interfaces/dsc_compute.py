@@ -840,9 +840,9 @@ class ComputeDSCMaps(BaseInterface):
         np.divide(fp_area, reference_value, out=rel_cbv_fp, where=mask_bool)
         # Upper sentinel only (mirror the primary AUC-CBV clamp at 10). No lower
         # clip; half-rectifying biases low-CBV voxels and inflates the reference
-        # median. Unfittable (NaN) and out-of-mask voxels stay NaN.
+        # median. Unfittable in-mask voxels stay NaN; the image background is 0.
         with np.errstate(invalid="ignore"):
-            rel_cbv_fp = np.where(mask_bool, np.minimum(rel_cbv_fp, 10.0), np.nan)
+            rel_cbv_fp = np.where(mask_bool, np.minimum(rel_cbv_fp, 10.0), 0.0)
 
         path = self._gen_outfilename("_rel_cbv_firstpass")
         cast_data = rel_cbv_fp.astype(np.float32)
@@ -2628,6 +2628,10 @@ class ComputeDSCMaps(BaseInterface):
         ttp_corrected = np.where(mask_bool, np.where(np.isnan(ttp_corrected), 0.0, ttp_corrected), 0.0)
         if rttp is not None:
             rttp = np.where(mask_bool, np.where(np.isnan(rttp), 0.0, rttp), 0.0)
+        if delay is not None:
+            delay = np.where(mask_bool, delay, 0.0)
+        if residues is not None:
+            residues = np.where(mask_bool[..., np.newaxis], residues, 0.0)
 
         # Add general QC metrics
         qc_metrics.update({
@@ -2770,7 +2774,12 @@ class ComputeDSCMaps(BaseInterface):
 
         # K2 map (recomputed or pass-through) — always set
         if k2_map_out_path is not None:
-            self._results["out_k2"] = k2_map_out_path
+            k2_data = np.asarray(
+                nib.load(k2_map_out_path).get_fdata(),  # type: ignore[attr-defined]
+                dtype=np.float32,
+            )
+            k2_data = np.where(mask_bool, k2_data, 0.0)
+            self._results["out_k2"] = _save_map(k2_data, "_k2")
         else:
             # No K2 available — save a zeros map so downstream nodes always get a file
             k2_zeros = np.zeros(spatial_shape, dtype=np.float32)
