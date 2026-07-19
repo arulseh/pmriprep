@@ -23,7 +23,10 @@ from pmriprep.interfaces.anat import (
 )
 
 
-def _merge_qc_metrics(brain_qc, denoising=False):  # type: ignore[no-untyped-def]
+def _merge_qc_metrics(
+    brain_qc: dict[str, object] | None,
+    denoising: bool = False,
+) -> dict[str, object]:
     """Merge QC metrics from preprocessing steps.
 
     Parameters
@@ -38,7 +41,7 @@ def _merge_qc_metrics(brain_qc, denoising=False):  # type: ignore[no-untyped-def
     dict
         Merged QC metrics dictionary.
     """
-    merged = {}
+    merged: dict[str, object] = {}
 
     # Add brain extraction QC
     if brain_qc:
@@ -52,12 +55,14 @@ def _merge_qc_metrics(brain_qc, denoising=False):  # type: ignore[no-untyped-def
     return merged
 
 
-def _determine_processing_mode(t1w_precon=None, t1w_postcon=None):  # type: ignore[no-untyped-def]
+def _determine_processing_mode(
+    t1w_precon: str | None = None,
+    t1w_postcon: str | None = None,
+) -> tuple[str, bool]:
     """Determine reference T1w and processing mode using confidence scoring.
 
-    Uses _determine_processing_mode_v2 from structural_reference module for
-    physics-validated confidence-based selection. Returns backward-compatible
-    2-tuple (reference_t1w, is_postcon_ref) for the workflow node interface.
+    Uses confidence-based structural-reference selection and returns the
+    reference image with its contrast state.
 
     Parameters
     ----------
@@ -809,12 +814,12 @@ def init_anat_preproc_wf(
     # Node to route FAST input: handles normal, hybrid, and skip modes.
     # In hybrid mode (postcon reference + acceptable precon), FAST runs
     # on a coregistered precon image prepared by a parallel path below.
-    def _route_fast_input(  # type: ignore[no-untyped-def]
-        in_file,
-        t1w_precon=None,
-        t1w_postcon=None,
-        is_postcon_ref=False,
-    ):
+    def _route_fast_input(
+        in_file: str | None,
+        t1w_precon: str | None = None,
+        t1w_postcon: str | None = None,
+        is_postcon_ref: bool = False,
+    ) -> str | None:
         """Route FAST input based on processing mode and precon quality.
 
         Normal mode: FAST on brain-extracted precon (in_file).
@@ -862,12 +867,13 @@ def init_anat_preproc_wf(
         name="check_fast_mode",
     )
 
-    def _guarded_tissue_segment(in_file):  # type: ignore[no-untyped-def]
+    def _guarded_tissue_segment(
+        in_file: str | None,
+    ) -> tuple[str | None, str | None, str | None]:
         """Run FAST tissue segmentation, or return None triplet if skipped.
 
-        Returns (None, None, None) when in_file is None (Case 4: postcon
-        reference and precon fails quality gate). Otherwise runs
-        TissueSegmentation and returns (wm, gm, csf) probability maps.
+        Returns ``(None, None, None)`` without a segmentation input. Otherwise
+        returns WM, GM, and CSF probability maps.
         """
         if in_file is None:
             return None, None, None
@@ -907,14 +913,14 @@ def init_anat_preproc_wf(
     # avoiding File(exists=True) crashes on CommandLine nodes.
     # -------------------------------------------------------------------
 
-    def _run_hybrid_fast_chain(  # type: ignore[no-untyped-def]
-        t1w_precon=None,
-        t1w_postcon=None,
-        is_postcon_ref=False,
-        reference_file=None,
-        brain_mask=None,
-        denoise=True,
-    ):
+    def _run_hybrid_fast_chain(
+        t1w_precon: str | None = None,
+        t1w_postcon: str | None = None,
+        is_postcon_ref: bool = False,
+        reference_file: str | None = None,
+        brain_mask: str | None = None,
+        denoise: bool = True,
+    ) -> str | None:
         """Run full hybrid FAST preprocessing chain or return None.
 
         When postcon is reference and precon passes the quality gate,
@@ -976,7 +982,10 @@ def init_anat_preproc_wf(
     ])
 
     # Merge: pick normal FAST input or hybrid FAST input
-    def _merge_fast_inputs(normal_input, hybrid_input):  # type: ignore[no-untyped-def]
+    def _merge_fast_inputs(
+        normal_input: str | None,
+        hybrid_input: str | None,
+    ) -> str | None:
         """Select whichever FAST input is available."""
         if normal_input is not None:
             return normal_input
