@@ -337,7 +337,7 @@ def init_dce_smoothing_wf(
     """Build the DCE perfusion-map smoothing sub-workflow.
 
     Spatially smooths the PK maps (Ktrans, ve, vp, kep), the model-free maps
-    (IAUC60/90/120, peak, TTP, SER, wash-in/out), and the Bayesian uncertainty
+    (IAUC60/90/120, peak, SER, wash-in/out), and the Bayesian uncertainty
     std maps within the brain mask. The orchestrator instantiates this
     sub-workflow only when ``config.smooth_fwhm > 0``.
 
@@ -357,7 +357,7 @@ def init_dce_smoothing_wf(
     ------
     ktrans, ve, vp, kep
         PK parameter maps.
-    iauc60, iauc90, iauc120, peak, ttp, ser, wash_in_slope, wash_out_slope
+    iauc60, iauc90, iauc120, peak, ser, wash_in_slope, wash_out_slope
         Model-free maps.
     ktrans_std, ve_std, vp_std, fp_std, ps_std
         Bayesian uncertainty (std) maps.
@@ -385,7 +385,6 @@ def init_dce_smoothing_wf(
                 "iauc90",
                 "iauc120",
                 "peak",
-                "ttp",
                 "ser",
                 "wash_in_slope",
                 "wash_out_slope",
@@ -426,7 +425,7 @@ def init_dce_smoothing_wf(
 
     build_mf_dict = pe.Node(
         niu.Function(
-            input_names=["iauc60", "iauc90", "iauc120", "peak", "ttp", "ser", "wash_in_slope", "wash_out_slope"],
+            input_names=["iauc60", "iauc90", "iauc120", "peak", "ser", "wash_in_slope", "wash_out_slope"],
             output_names=["map_dict"],
             function=_build_model_free_map_dict,
         ),
@@ -478,7 +477,6 @@ def init_dce_smoothing_wf(
             ("iauc90", "iauc90"),
             ("iauc120", "iauc120"),
             ("peak", "peak"),
-            ("ttp", "ttp"),
             ("ser", "ser"),
             ("wash_in_slope", "wash_in_slope"),
             ("wash_out_slope", "wash_out_slope"),
@@ -2087,7 +2085,6 @@ def init_dce_preproc_wf(
                 ("outputnode.out_iauc90", "inputnode.iauc90"),
                 ("outputnode.out_iauc120", "inputnode.iauc120"),
                 ("outputnode.out_peak_enhancement", "inputnode.peak"),
-                ("outputnode.out_time_to_peak", "inputnode.ttp"),
                 ("outputnode.out_ser", "inputnode.ser"),
                 ("outputnode.out_wash_in_slope", "inputnode.wash_in_slope"),
                 ("outputnode.out_wash_out_slope", "inputnode.wash_out_slope"),

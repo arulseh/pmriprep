@@ -1064,7 +1064,23 @@ def _dsc_dce_xval_plot_node(
         return None
 
 
-def _collect_qc_metrics(b1_qc, t1_qc, preprocess_qc, registration_qc, aif_qc, pk_qc, validation_result, preproc_display=None, pk_fit_qc_metrics=None, pk_maps_qc_metrics=None, vp_at_bound_fractions=None, use_external_t1=False, no_t1=False, b1_method='auto', nawm_available=False):  # type: ignore[no-untyped-def]
+def _collect_qc_metrics(
+    b1_qc: dict[str, object] | None,
+    t1_qc: dict[str, object] | None,
+    preprocess_qc: dict[str, object] | None,
+    registration_qc: dict[str, object] | None,
+    aif_qc: dict[str, object] | None,
+    pk_qc: dict[str, object] | None,
+    validation_result: dict[str, object] | None,
+    preproc_display: dict[str, object] | None = None,
+    pk_fit_qc_metrics: dict[str, object] | None = None,
+    pk_maps_qc_metrics: dict[str, object] | None = None,
+    vp_at_bound_fractions: dict[str, object] | None = None,
+    use_external_t1: bool = False,
+    no_t1: bool = False,
+    b1_method: str = "auto",
+    nawm_available: bool = False,
+) -> dict[str, object]:
     """Collect all QC metrics into a single dictionary.
 
     Parameters
@@ -1105,7 +1121,7 @@ def _collect_qc_metrics(b1_qc, t1_qc, preprocess_qc, registration_qc, aif_qc, pk
     dict
         Combined QC metrics dictionary.
     """
-    qc_metrics = {}
+    qc_metrics: dict[str, object] = {}
 
     if b1_qc is not None:
         qc_metrics["b1_mapping"] = b1_qc
@@ -1140,20 +1156,27 @@ def _collect_qc_metrics(b1_qc, t1_qc, preprocess_qc, registration_qc, aif_qc, pk
         qc_metrics["registration"] = registration_qc
     if aif_qc is not None:
         qc_metrics["aif_detection"] = aif_qc
-    if pk_qc is not None:
-        qc_metrics["pk_modeling"] = pk_qc
+    pk_modeling = dict(pk_qc) if pk_qc is not None else {}
+    have_pk_modeling = pk_qc is not None
     if pk_fit_qc_metrics is not None:
-        qc_metrics.setdefault("pk_modeling", {}).update(pk_fit_qc_metrics)
+        pk_modeling.update(pk_fit_qc_metrics)
+        have_pk_modeling = True
     if pk_maps_qc_metrics is not None:
-        qc_metrics.setdefault("pk_modeling", {})["model_selection_regions"] = pk_maps_qc_metrics
+        pk_modeling["model_selection_regions"] = pk_maps_qc_metrics
+        have_pk_modeling = True
     if vp_at_bound_fractions:
-        qc_metrics.setdefault("pk_modeling", {})["vp_at_bound_fractions"] = vp_at_bound_fractions
+        pk_modeling["vp_at_bound_fractions"] = vp_at_bound_fractions
+        have_pk_modeling = True
+    if have_pk_modeling:
+        qc_metrics["pk_modeling"] = pk_modeling
     if validation_result is not None:
         qc_metrics["dsc_dce_validation"] = validation_result
 
-    # Merge display stats (TR, tSNR, peak enh) into preprocessing metrics
+    # Merge display stats (TR, tSNR, peak enhancement) into preprocessing.
     if preproc_display is not None:
-        qc_metrics.setdefault("preprocessing", {}).update(preproc_display)
+        preprocessing = dict(preprocess_qc) if preprocess_qc is not None else {}
+        preprocessing.update(preproc_display)
+        qc_metrics["preprocessing"] = preprocessing
 
     qc_metrics["nawm_normalization"] = bool(nawm_available)
 
@@ -1737,7 +1760,17 @@ def _generate_dce_motion_qc_plot(
     return str(out_path)
 
 
-def _generate_preprocessing_qc(dce_file, brain_mask_file, baseline_frames, bolus_arrival_frame, tr_ms, volume_tr_s, te=None, subject_id='', session_id=''):  # type: ignore[no-untyped-def]
+def _generate_preprocessing_qc(
+    dce_file: str,
+    brain_mask_file: str,
+    baseline_frames: int,
+    bolus_arrival_frame: int,
+    tr_ms: float | None,
+    volume_tr_s: float | None,
+    te: object = None,
+    subject_id: str = "",
+    session_id: str = "",
+) -> tuple[str, dict[str, object]]:
     """Generate DCE preprocessing QC plot.
 
     Thin wrapper that loads NIfTI data and delegates to
@@ -1805,7 +1838,7 @@ def _generate_preprocessing_qc(dce_file, brain_mask_file, baseline_frames, bolus
         voxel_size_mm=voxel_size_mm,
     )
 
-    preproc_display_stats = {
+    preproc_display_stats: dict[str, object] = {
         "tr_ms": tr_ms_val,
         "volume_tr_s": volume_tr_val,
         "n_volumes": dce_data.shape[3],
@@ -1816,7 +1849,13 @@ def _generate_preprocessing_qc(dce_file, brain_mask_file, baseline_frames, bolus
     return plot_file, preproc_display_stats
 
 
-def _create_dce_registration_filmstrip(dce_mean_file=None, registered_t1w_file=None, brain_mask_file=None, subject_id='', session_id=''):  # type: ignore[no-untyped-def]
+def _create_dce_registration_filmstrip(
+    dce_mean_file: str | None = None,
+    registered_t1w_file: str | None = None,
+    brain_mask_file: str | None = None,
+    subject_id: str = "",
+    session_id: str = "",
+) -> str | None:
     """Create registration QC filmstrip for DCE-T1w registration.
 
     Generates a multi-slice filmstrip showing the DCE mean image with
@@ -1883,11 +1922,11 @@ def _create_dce_registration_filmstrip(dce_mean_file=None, registered_t1w_file=N
     return str(out_path)
 
 
-def _smooth_dce_maps(  # type: ignore[no-untyped-def]
-    map_files,
-    brain_mask_file,
-    fwhm,
-):
+def _smooth_dce_maps(
+    map_files: dict[str, str],
+    brain_mask_file: str | None,
+    fwhm: float,
+) -> dict[str, str]:
     """Apply Gaussian smoothing to a dict of DCE maps.
 
     Uses normalized convolution for maps containing NaN (PK maps in auto
@@ -1925,7 +1964,7 @@ def _smooth_dce_maps(  # type: ignore[no-untyped-def]
         "peak_enhancement", "ser",
     }
 
-    results = {}
+    results: dict[str, str] = {}
     if not map_files:
         return results
     if not brain_mask_file or not isdefined(brain_mask_file):
@@ -1995,11 +2034,16 @@ def _smooth_dce_maps(  # type: ignore[no-untyped-def]
     return results
 
 
-def _build_pk_map_dict(ktrans=None, ve=None, vp=None, kep=None):  # type: ignore[no-untyped-def]
+def _build_pk_map_dict(
+    ktrans: str | None = None,
+    ve: str | None = None,
+    vp: str | None = None,
+    kep: str | None = None,
+) -> dict[str, str]:
     """Build dictionary of PK maps for smoothing."""
     from nipype.interfaces.base import isdefined
 
-    d = {}
+    d: dict[str, str] = {}
     if ktrans and isdefined(ktrans):
         d["ktrans"] = ktrans
     if ve and isdefined(ve):
@@ -2011,17 +2055,24 @@ def _build_pk_map_dict(ktrans=None, ve=None, vp=None, kep=None):  # type: ignore
     return d
 
 
-def _build_model_free_map_dict(iauc60=None, iauc90=None, iauc120=None, peak=None, ttp=None, ser=None, wash_in_slope=None, wash_out_slope=None):  # type: ignore[no-untyped-def]
+def _build_model_free_map_dict(
+    iauc60: str | None = None,
+    iauc90: str | None = None,
+    iauc120: str | None = None,
+    peak: str | None = None,
+    ser: str | None = None,
+    wash_in_slope: str | None = None,
+    wash_out_slope: str | None = None,
+) -> dict[str, str]:
     """Build dictionary of model-free maps for smoothing.
 
-    Note: TTP is excluded from smoothing because it is a discrete timing
-    parameter (quantized to TR). Smoothing creates non-physical intermediate
-    time values. The ttp parameter is accepted but not included in the dict.
-    BAT and curve_type are also excluded (discrete/categorical maps).
+    TTP and BAT are discrete timing maps, and curve type is categorical; none
+    are included because smoothing would create non-physical intermediate
+    values.
     """
     from nipype.interfaces.base import isdefined
 
-    d = {}
+    d: dict[str, str] = {}
     if iauc60 and isdefined(iauc60):
         d["iauc60"] = iauc60
     if iauc90 and isdefined(iauc90):
@@ -2039,7 +2090,13 @@ def _build_model_free_map_dict(iauc60=None, iauc90=None, iauc120=None, peak=None
     return d
 
 
-def _build_uncertainty_map_dict(ktrans_std=None, ve_std=None, vp_std=None, fp_std=None, ps_std=None):  # type: ignore[no-untyped-def]
+def _build_uncertainty_map_dict(
+    ktrans_std: str | None = None,
+    ve_std: str | None = None,
+    vp_std: str | None = None,
+    fp_std: str | None = None,
+    ps_std: str | None = None,
+) -> dict[str, str]:
     """Build dictionary of uncertainty std maps for smoothing.
 
     Only posterior std maps are smoothed. CV (std/mean ratio) and CI95 bounds
@@ -2048,7 +2105,7 @@ def _build_uncertainty_map_dict(ktrans_std=None, ve_std=None, vp_std=None, fp_st
     """
     from nipype.interfaces.base import isdefined
 
-    d = {}
+    d: dict[str, str] = {}
     if ktrans_std and isdefined(ktrans_std):
         d["Ktrans_std"] = ktrans_std
     if ve_std and isdefined(ve_std):
@@ -2063,7 +2120,10 @@ def _build_uncertainty_map_dict(ktrans_std=None, ve_std=None, vp_std=None, fp_st
     return d
 
 
-def _normalize_by_nawm(param_map=None, nawm_mask=None):  # type: ignore[no-untyped-def]
+def _normalize_by_nawm(
+    param_map: str | None = None,
+    nawm_mask: str | None = None,
+) -> str:
     """Normalize parameter map by NAWM median.
 
     Median is used (matching DSC nCBV in ``utils/dsc_signal.py``) so the
@@ -2081,10 +2141,8 @@ def _normalize_by_nawm(param_map=None, nawm_mask=None):  # type: ignore[no-untyp
     Returns
     -------
     str
-        Path to normalized parameter map, or "" if normalization failed.
-        Empty string (not None) is the project-wide Function-node-returns-empty
-        sentinel — downstream consumers declare ``traits.Str`` which rejects
-        ``None`` (see ``TestTransformHelpersReturnEmptyString`` for the contract).
+        Path to normalized parameter map, or ``""`` if normalization fails.
+        The empty string is compatible with downstream ``traits.Str`` inputs.
     """
     from pathlib import Path
 
