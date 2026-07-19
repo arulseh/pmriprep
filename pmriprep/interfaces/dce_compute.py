@@ -222,6 +222,17 @@ class _DCEParameterMaps(NamedTuple):
     save_2cxm: bool
 
 
+class _DCEFitDispatch(NamedTuple):
+    """Voxel ordering and worker state shared by all DCE fitting paths."""
+
+    mask_coords: tuple[npt.NDArray[Any], ...]
+    voxel_data: list[VoxelInput]
+    init_args: tuple[Any, ...]
+    n_procs: int
+    sloppy: bool
+    random_seed: Optional[int]
+
+
 # Import-time pickle-safety assertion (S1 from code review round 3):
 # BatchedChunkArgs MUST be defined at module top-level for pickling across
 # ProcessPoolExecutor boundaries. A nested definition (e.g. inside a
@@ -2202,6 +2213,60 @@ class ComputeDCEMaps(BaseInterface):
             (prepared.is_auto and "2cxm" in candidate_names) or model_name == "2cxm",
         )
 
+    def _prepare_fit_dispatch(
+        self,
+        prepared: _DCEFitPreparation,
+        aif: npt.NDArray[Any],
+        vp_constraint: _DCEVPConstraint,
+        motion_weights: Optional[npt.NDArray[np.floating]],
+    ) -> _DCEFitDispatch:
+        """Build ordered voxel inputs and shared worker initialization state."""
+        from pmriprep.utils.dsc_cbv_constraint import ConstraintMode
+
+        mask_coords = np.where(prepared.fitting_mask)
+        voxel_data: list[VoxelInput] = []
+        for x_raw, y_raw, z_raw in zip(*mask_coords):
+            x, y, z = int(x_raw), int(y_raw), int(z_raw)
+            voxel_vp: Optional[float] = None
+            if (
+                vp_constraint.vp_map is not None
+                and vp_constraint.mode != ConstraintMode.SKIP
+            ):
+                vp_value = float(vp_constraint.vp_map[x, y, z])
+                if np.isfinite(vp_value) and vp_value > 0:
+                    voxel_vp = vp_value
+            voxel_data.append(
+                VoxelInput(x, y, z, prepared.concentration[x, y, z, :], voxel_vp)
+            )
+
+        sloppy = bool(self.inputs.sloppy)
+        random_seed = (
+            int(self.inputs.random_seed) if isdefined(self.inputs.random_seed) else None
+        )
+        init_args = (
+            aif,
+            prepared.time_points,
+            vp_constraint.model_name,
+            prepared.inference,
+            prepared.mcmc_samples,
+            prepared.baseline_frames,
+            vp_constraint.mode.value,
+            vp_constraint.vp_uncertainty,
+            prepared.save_fitted_curves,
+            motion_weights,
+            sloppy,
+            random_seed,
+            vp_constraint.candidate_names if prepared.is_auto else None,
+        )
+        return _DCEFitDispatch(
+            mask_coords,
+            voxel_data,
+            init_args,
+            max(1, int(self.inputs.n_procs)),
+            sloppy,
+            random_seed,
+        )
+
     def _run_interface(self, runtime: Any) -> Any:
         """Execute DCE map computation."""
         import nibabel as nib  # type: ignore[import-untyped]
@@ -2314,35 +2379,15 @@ class ComputeDCEMaps(BaseInterface):
         motion_weights = motion.weights
         qc_metrics["motion_weighting"] = motion.qc
 
-        # Build voxel data list for parallel/serial processing
-        voxel_data_list: list[VoxelInput] = []
-        for i in range(n_voxels):
-            x, y, z = (
-                int(mask_coords[0][i]),
-                int(mask_coords[1][i]),
-                int(mask_coords[2][i]),
-            )
-            tissue_curve = conc_data[x, y, z, :]
-            voxel_vp: Optional[float] = None
-            if vp_constraint_map is not None and constraint_mode != ConstraintMode.SKIP:
-                vp_val = float(vp_constraint_map[x, y, z])
-                if np.isfinite(vp_val) and vp_val > 0:
-                    voxel_vp = vp_val
-            voxel_data_list.append(VoxelInput(x, y, z, tissue_curve, voxel_vp))
-
-        # Worker initializer args (shared across all paths)
-        sloppy = bool(self.inputs.sloppy)
-        random_seed = (
-            int(self.inputs.random_seed) if isdefined(self.inputs.random_seed) else None
+        dispatch = self._prepare_fit_dispatch(
+            prepared, aif, vp_constraint, motion_weights,
         )
-        init_args = (
-            aif, time_points, model_name, inference, mcmc_samples,
-            baseline_frames, constraint_mode.value, constraint_vp_uncertainty,
-            save_fitted_curves, motion_weights, sloppy, random_seed,
-            candidate_names if is_auto else None,
-        )
-
-        n_procs = max(1, int(self.inputs.n_procs))
+        mask_coords = dispatch.mask_coords
+        voxel_data_list = dispatch.voxel_data
+        init_args = dispatch.init_args
+        n_procs = dispatch.n_procs
+        sloppy = dispatch.sloppy
+        random_seed = dispatch.random_seed
 
         # Always use batched fitting (vectorized operations)
         results = self._fit_batched(

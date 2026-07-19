@@ -8,7 +8,11 @@ import nibabel as nib
 import numpy as np
 import pytest
 
-from pmriprep.interfaces.dce_compute import ComputeDCEMaps, _DCEFitPreparation
+from pmriprep.interfaces.dce_compute import (
+    ComputeDCEMaps,
+    _DCEFitPreparation,
+    _DCEVPConstraint,
+)
 from pmriprep.utils.dsc_cbv_constraint import ConstraintMode
 
 
@@ -150,3 +154,39 @@ def test_prepare_vp_constraint_marks_synthetic_aif_diagnostics_inapplicable(
     assert result.qc["overshoot_applicable"] is False
     assert result.qc["overshoot_reason"] == "synthetic_aif"
     assert result.candidate_names == ["patlak"]
+
+
+def test_prepare_fit_dispatch_preserves_voxel_order_and_prior_admission() -> None:
+    """Dispatch state keeps NumPy mask order and admits only finite positive vp."""
+    prepared = _prepared(populated=True)
+    vp_map = np.full(prepared.mask.shape, 0.1, dtype=float)
+    vp_map[0, 0, 0] = np.nan
+    vp_map[0, 0, 1] = -0.1
+    constraint = _DCEVPConstraint(
+        vp_map=vp_map,
+        mode=ConstraintMode.SOFT,
+        vp_uncertainty=0.25,
+        qc={"mode": "soft"},
+        model_name="extended_tofts",
+        candidate_names=["patlak", "extended_tofts"],
+    )
+    motion_weights = np.array([1.0, 0.5, 1.0, 1.0])
+    interface = ComputeDCEMaps(n_procs=0, sloppy=True, random_seed=17)
+
+    dispatch = interface._prepare_fit_dispatch(
+        prepared, prepared.aif, constraint, motion_weights,
+    )
+
+    assert len(dispatch.voxel_data) == 125
+    assert dispatch.voxel_data[0].x == 0
+    assert dispatch.voxel_data[0].y == 0
+    assert dispatch.voxel_data[0].z == 0
+    assert dispatch.voxel_data[0].voxel_vp is None
+    assert dispatch.voxel_data[1].voxel_vp is None
+    assert dispatch.voxel_data[2].voxel_vp == 0.1
+    assert dispatch.n_procs == 1
+    assert dispatch.sloppy is True
+    assert dispatch.random_seed == 17
+    assert dispatch.init_args[0] is prepared.aif
+    assert dispatch.init_args[9] is motion_weights
+    assert dispatch.init_args[-1] == ["patlak", "extended_tofts"]
