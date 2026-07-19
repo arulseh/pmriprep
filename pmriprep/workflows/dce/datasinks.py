@@ -231,6 +231,7 @@ def _build_dce_preproc_meta(
 
     out = dict(base)
     out["Description"] = description
+    out["SkullStripped"] = False
     if isinstance(config_dict, dict):
         out["MotionCorrectionApplied"] = bool(
             config_dict.get("motion_correct", True)
