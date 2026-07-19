@@ -468,6 +468,10 @@ output_dir/pmriprep/
       sub-01_ses-01_desc-dscCVCbf_stat.nii.gz
       sub-01_ses-01_desc-dscCI95lowerCbf_stat.nii.gz
       sub-01_ses-01_desc-dscCI95upperCbf_stat.nii.gz
+      sub-01_ses-01_desc-dscUncertaintyCbv_stat.nii.gz
+      sub-01_ses-01_desc-dscCVCbv_stat.nii.gz
+      sub-01_ses-01_desc-dscParametricRsquared_stat.nii.gz
+      sub-01_ses-01_desc-dscFallback_mask.nii.gz
       # DSC vascular model (optional)
       sub-01_ses-01_desc-dscAlpha_stat.nii.gz
       sub-01_ses-01_desc-dscBeta_stat.nii.gz
@@ -492,6 +496,7 @@ output_dir/pmriprep/
       sub-01_ses-01_desc-dceModelSelection_dseg.nii.gz
       sub-01_ses-01_desc-dceDeltaBIC_stat.nii.gz
       sub-01_ses-01_desc-dceQualityFlag_mask.nii.gz
+      sub-01_ses-01_desc-dceQc_mask.nii.gz
       # DCE model-free maps
       sub-01_ses-01_desc-dceIAUC60_stat.nii.gz
       sub-01_ses-01_desc-dcePeakEnhancement_stat.nii.gz
@@ -505,7 +510,9 @@ output_dir/pmriprep/
       sub-01_ses-01_desc-dceNawmNormIAUC60_stat.nii.gz
       # AIF
       sub-01_ses-01_desc-dscAif_timeseries.tsv
+      sub-01_ses-01_desc-dscAif_mask.nii.gz
       sub-01_ses-01_desc-dceAif_timeseries.tsv
+      sub-01_ses-01_desc-dceAif_mask.nii.gz
     # HTML report
     sub-01_ses-01.html
 ```
@@ -553,6 +560,12 @@ output_dir/pmriprep/
 | `*_desc-dscCVCbf_stat` | CBF coefficient of variation (CPI/Vascular) | fraction |
 | `*_desc-dscCI95lowerCbf_stat` | CBF 95% credible interval lower bound (CPI/Vascular) | 1/min |
 | `*_desc-dscCI95upperCbf_stat` | CBF 95% credible interval upper bound (CPI/Vascular) | 1/min |
+| `*_desc-dscUncertaintyCbv_stat` | CBV posterior standard deviation (CPI/Vascular) | arbitrary |
+| `*_desc-dscCVCbv_stat` | CBV coefficient of variation (CPI/Vascular) | fraction |
+| `*_desc-dscCI95lowerCbv_stat` | CBV 95% credible interval lower bound (CPI/Vascular) | arbitrary |
+| `*_desc-dscCI95upperCbv_stat` | CBV 95% credible interval upper bound (CPI/Vascular) | arbitrary |
+| `*_desc-dscParametricRsquared_stat` | Parametric-fit R-squared (CPI/Vascular) | fraction |
+| `*_desc-dscFallback_mask` | Voxels replaced by oSVD after parametric-fit rejection | binary |
 
 **DCE preprocessing:**
 
@@ -591,6 +604,16 @@ output_dir/pmriprep/
 | `*_desc-dceModelSelection_dseg` | Per-voxel model selection (auto mode only) | categorical |
 | `*_desc-dceDeltaBIC_stat` | Delta-BIC confidence (auto mode only) | — |
 | `*_desc-dceQualityFlag_mask` | Voxel quality flags (auto mode only) | categorical |
+| `*_desc-dceQc_mask` | Successfully fitted voxels | binary |
+
+**AIF outputs:**
+
+| File Pattern | Description |
+|--------------|-------------|
+| `*_desc-dscAif_timeseries.tsv` | DSC arterial input function (ΔR2*, s⁻¹) |
+| `*_desc-dscAif_mask` | DSC-space voxels used to estimate the AIF |
+| `*_desc-dceAif_timeseries.tsv` | DCE plasma arterial input function (mM) |
+| `*_desc-dceAif_mask` | DCE-space voxels used to estimate the AIF |
 
 
 ## QC Reports

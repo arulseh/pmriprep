@@ -75,7 +75,7 @@ _OPTIONAL_MAPS: tuple[tuple[str, str, str, str, str | None, str, dict | None], .
      {"ReferencePoint": "contralateral NAWM median TTP"}),
     ("cnr_map", "dsc", "cnr", "Contrast-to-noise ratio", "arbitrary", "cnr", None),
     ("auc_diff_map", "dscLeakage", "auc",
-     "Leakage contribution (AUC_raw - AUC_corr)", None, "auc_diff", None),
+     "Leakage contribution (AUC_raw - AUC_corr)", "arbitrary", "auc_diff", None),
     ("snr_map", "dsc", "snr", "Signal-to-noise ratio (baseline)", "arbitrary", "snr", None),
     ("tsnr_map", "dsc", "tsnr", "Temporal signal-to-noise ratio", "arbitrary", "tsnr", None),
     ("rel_cbv_firstpass_map", "dscRelFirstPass", "cbv",
@@ -1160,7 +1160,7 @@ def init_dsc_datasinks_wf(
         )
         param_meta.inputs.description = description
         param_meta.inputs.map_key = key
-        param_meta.inputs.units = None
+        param_meta.inputs.units = "1" if in_attr == "parametric_r2_map" else None
         workflow.connect([
             (base_perf, param_meta, [("meta_dict", "base")]),
             (inputnode, param_meta, [

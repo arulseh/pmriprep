@@ -345,6 +345,8 @@ class TestWriterAifBlockPresentOnAllMaps:
             "cth_map": _write_dummy_nifti(tmp_path / "cth.nii.gz"),
             "cbf_std_map": _write_dummy_nifti(tmp_path / "cbf_std.nii.gz"),
             "cbv_cv_map": _write_dummy_nifti(tmp_path / "cbv_cv.nii.gz"),
+            "auc_diff_map": _write_dummy_nifti(tmp_path / "auc_diff.nii.gz"),
+            "parametric_r2_map": _write_dummy_nifti(tmp_path / "parametric_r2.nii.gz"),
             "config_dict": {},
         })
         derivatives = _run_writer(minimal_inputs, {}, tmp_path)
@@ -356,6 +358,8 @@ class TestWriterAifBlockPresentOnAllMaps:
             "dscCth_stat": "s",
             "dscUncertaintyCbf_stat": "1/min",
             "dscCVCbv_stat": "1",
+            "dscLeakageAuc_stat": "arbitrary",
+            "dscParametricRsquared_stat": "1",
         }
         for suffix, units in expected.items():
             assert _load_sidecar(derivatives, suffix)["Units"] == units
