@@ -8,7 +8,7 @@ curves and AIF using various PK models.
 import logging
 from functools import partial
 from pathlib import Path
-from typing import Any, NamedTuple, Optional
+from typing import Any, Callable, NamedTuple, Optional
 
 import numpy as np
 import numpy.typing as npt
@@ -518,6 +518,38 @@ def _write_dce_fitted_curves(
 
     image = nib.Nifti1Image(data, affine)
     nib.save(image, path)
+
+
+def _write_dce_model_free_maps(
+    maps: "_DCEModelFreeMaps",
+    generate_path: Callable[[str], str],
+    write_map: Callable[..., None],
+) -> dict[str, str]:
+    """Write model-free DCE maps and return their interface result paths."""
+    outputs = {
+        "out_iauc60": generate_path("_IAUC60"),
+        "out_iauc90": generate_path("_IAUC90"),
+        "out_iauc120": generate_path("_IAUC120"),
+        "out_peak_enhancement": generate_path("_peak_enhancement"),
+        "out_time_to_peak": generate_path("_time_to_peak"),
+        "out_ser": generate_path("_SER"),
+        "out_wash_in_slope": generate_path("_wash_in_slope"),
+        "out_wash_out_slope": generate_path("_wash_out_slope"),
+        "out_bat": generate_path("_BAT"),
+        "out_curve_type": generate_path("_curve_type"),
+    }
+    write_map(maps.iauc60, outputs["out_iauc60"])
+    write_map(maps.iauc90, outputs["out_iauc90"])
+    write_map(maps.iauc120, outputs["out_iauc120"])
+    if maps.peak_enhancement is not None:
+        write_map(maps.peak_enhancement, outputs["out_peak_enhancement"])
+    write_map(maps.time_to_peak, outputs["out_time_to_peak"])
+    write_map(maps.signal_enhancement_ratio, outputs["out_ser"])
+    write_map(maps.wash_in_slope, outputs["out_wash_in_slope"])
+    write_map(maps.wash_out_slope, outputs["out_wash_out_slope"])
+    write_map(maps.bolus_arrival_time, outputs["out_bat"])
+    write_map(maps.curve_type, outputs["out_curve_type"], dtype=np.int8)
+    return outputs
 
 
 def _validate_dce_time_axis(
@@ -3136,56 +3168,33 @@ class ComputeDCEMaps(BaseInterface):
         out_vp_at_bound_map = self._gen_outfilename("_vpAtBound")
         _save_dce_map(vp_at_bound_map, out_vp_at_bound_map)
 
-        # Save model-free maps
-        out_iauc60_path = self._gen_outfilename("_IAUC60")
-        out_iauc90_path = self._gen_outfilename("_IAUC90")
-        out_iauc120_path = self._gen_outfilename("_IAUC120")
-        out_peak_enh_path = self._gen_outfilename("_peak_enhancement")
-        out_ttp_path = self._gen_outfilename("_time_to_peak")
-        out_ser_path = self._gen_outfilename("_SER")
-
-        out_wash_in_path = self._gen_outfilename("_wash_in_slope")
-        out_wash_out_path = self._gen_outfilename("_wash_out_slope")
-        out_bat_path = self._gen_outfilename("_BAT")
-        out_curve_type_path = self._gen_outfilename("_curve_type")
-
-        save_list: list[tuple[Any, str]] = [
-            (iauc60, out_iauc60_path),
-            (iauc90, out_iauc90_path),
-            (iauc120, out_iauc120_path),
-            (ttp, out_ttp_path),
-            (ser, out_ser_path),
-            (wash_in_slope, out_wash_in_path),
-            (wash_out_slope, out_wash_out_path),
-            (bat, out_bat_path),
-        ]
-        if peak_enh is not None:
-            save_list.insert(3, (peak_enh, out_peak_enh_path))
-        for arr, path in save_list:
-            _save_dce_map(arr, path)
-
-        # Save curve type as int8 (categorical)
-        _save_dce_map(curve_type, out_curve_type_path, dtype=np.int8)
+        model_free_outputs = _write_dce_model_free_maps(
+            _DCEModelFreeMaps(
+                iauc60,
+                iauc90,
+                iauc120,
+                peak_enh,
+                ttp,
+                ser,
+                wash_in_slope,
+                wash_out_slope,
+                bat,
+                curve_type,
+            ),
+            self._gen_outfilename,
+            _save_dce_map,
+        )
 
         # Initialize results
         self._results: dict[str, Any] = {
             "out_ktrans": out_ktrans,
             "out_r2": out_r2,
             "out_quality_flag": out_quality_flag,
-            "out_iauc60": out_iauc60_path,
-            "out_iauc90": out_iauc90_path,
-            "out_iauc120": out_iauc120_path,
-            "out_peak_enhancement": out_peak_enh_path,
-            "out_time_to_peak": out_ttp_path,
-            "out_ser": out_ser_path,
-            "out_wash_in_slope": out_wash_in_path,
-            "out_wash_out_slope": out_wash_out_path,
-            "out_bat": out_bat_path,
-            "out_curve_type": out_curve_type_path,
             "out_vp_at_bound_map": out_vp_at_bound_map,
             "qc_metrics": qc_metrics,
             "constraint_qc": constraint_qc,
         }
+        self._results.update(model_free_outputs)
 
         if save_ve:
             self._results["out_ve"] = out_ve

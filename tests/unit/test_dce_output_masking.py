@@ -10,11 +10,13 @@ import pytest
 
 from pmriprep.interfaces.dce_compute import (
     ComputeDCEMaps,
+    _DCEModelFreeMaps,
     _build_dce_qc_mask,
     _compute_dce_coefficient_of_variation,
     _compute_dce_credible_interval,
     _write_dce_map,
     _write_dce_fitted_curves,
+    _write_dce_model_free_maps,
     _zero_dce_background,
 )
 from pmriprep.utils.dce_constants import EPSILON_VE
@@ -162,6 +164,31 @@ def test_write_dce_fitted_curves_preserves_four_dimensions(tmp_path) -> None:
     assert image.get_data_dtype() == np.dtype(np.float32)
     np.testing.assert_array_equal(image.get_fdata(), curves)
     np.testing.assert_array_equal(image.affine, affine)
+
+
+@pytest.mark.parametrize("has_peak", [True, False])
+def test_write_dce_model_free_maps_preserves_output_contract(has_peak: bool) -> None:
+    """Model-free serialization retains suffixes, dtype, and peak optionality."""
+    array = np.ones((1, 1, 1))
+    maps = _DCEModelFreeMaps(
+        array, array, array, array if has_peak else None, array,
+        array, array, array, array, array.astype(np.int8),
+    )
+    writes: list[tuple[str, object]] = []
+
+    def generate_path(suffix: str) -> str:
+        return f"output{suffix}.nii.gz"
+
+    def write_map(data: np.ndarray, path: str, dtype: object = np.float32) -> None:
+        writes.append((path, dtype))
+
+    outputs = _write_dce_model_free_maps(maps, generate_path, write_map)
+    assert outputs["out_iauc60"] == "output_IAUC60.nii.gz"
+    assert outputs["out_peak_enhancement"] == "output_peak_enhancement.nii.gz"
+    assert outputs["out_curve_type"] == "output_curve_type.nii.gz"
+    assert writes[-1] == ("output_curve_type.nii.gz", np.int8)
+    peak_writes = [path for path, _ in writes if "peak_enhancement" in path]
+    assert bool(peak_writes) is has_peak
 
 
 def test_saved_dce_categorical_maps_are_brain_masked(tmp_path) -> None:
