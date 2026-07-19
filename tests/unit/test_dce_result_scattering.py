@@ -15,6 +15,7 @@ from pmriprep.interfaces.dce_compute import (
     _is_degenerate_dce_fit,
     _scatter_degenerate_dce_fit,
     _scatter_dce_fit_artifacts,
+    _scatter_dce_fit_results,
     _scatter_dce_parameters,
     _scatter_dce_uncertainties,
     _summarize_dce_categorical_qc,
@@ -501,3 +502,27 @@ def test_summarize_dce_fit_outcomes_zero_voxels_has_zero_rate() -> None:
     """An empty fit domain retains the guarded zero convergence rate."""
     summary = _summarize_dce_fit_outcomes(0, 0, 0, 0, 0, 0, {})
     assert summary["convergence_rate"] == 0.0
+
+
+def test_scatter_dce_fit_results_counts_failures_before_map_access() -> None:
+    """Failed fits preserve reason counts without mutating output maps."""
+    voxels = [VoxelInput(0, 0, 0, np.zeros(3), None) for _ in range(3)]
+    results = [
+        {"failed": True, "failure_reason": "optimizer_failed"},
+        {"failed": True, "failure_reason": "optimizer_failed"},
+        {"failed": True},
+    ]
+    summary = _scatter_dce_fit_results(
+        voxels,
+        results,
+        SimpleNamespace(),
+        "tofts",
+        False,
+        "nlls",
+        ConstraintMode.SKIP,
+        0.0,
+    )
+    assert summary.n_failed == 3
+    assert summary.failure_reasons == {"optimizer_failed": 2, "unknown": 1}
+    assert summary.n_converged == 0
+    assert summary.r2_values == []

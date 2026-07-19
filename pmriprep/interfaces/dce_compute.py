@@ -232,6 +232,86 @@ def _account_retained_dce_fit(
     )
 
 
+def _scatter_dce_fit_results(
+    voxel_data: list["VoxelInput"],
+    results: list[dict[str, Any]],
+    maps: "_DCEParameterMaps",
+    model_name: str,
+    is_auto: bool,
+    inference: str,
+    constraint_mode: Any,
+    constraint_vp_uncertainty: float,
+) -> "_DCEFitSummary":
+    """Scatter fitted voxels and accumulate their QC diagnostics."""
+    n_converged = n_failed = n_constrained = 0
+    n_unconstrained_fallback = n_rejected_postfit = 0
+    r2_values: list[float] = []
+    failure_reasons: dict[str, int] = {}
+    mcmc_rhat: dict[str, list[float]] = {}
+    mcmc_ess: dict[str, list[float]] = {}
+    n_mcmc_voxels = 0
+    vp_prior_departures: list[float] = []
+    for voxel, result in zip(voxel_data, results):
+        if result["failed"]:
+            n_failed += 1
+            reason = result.get("failure_reason", "unknown")
+            failure_reasons[reason] = failure_reasons.get(reason, 0) + 1
+            continue
+        coords = tuple(result["coords"])
+        params = result["params"]
+        selected_model = result.get("selected_model_name", model_name)
+        maps.model_selection[coords] = maps.model_selection_codes.get(selected_model, 0)
+        maps.delta_bic[coords] = float(result.get("delta_bic", np.nan))
+        is_constrained = result.get("constrained", False)
+        if _is_degenerate_dce_fit(selected_model, params, is_constrained):
+            _scatter_degenerate_dce_fit(
+                maps, coords, selected_model, is_auto, result["r_squared"]
+            )
+            n_rejected_postfit += 1
+            continue
+        _scatter_dce_parameters(
+            maps, coords, selected_model, params, result["r_squared"]
+        )
+        if inference != "nlls" and result["uncertainties"]:
+            _scatter_dce_uncertainties(
+                maps, coords, selected_model, result["uncertainties"]
+            )
+        _scatter_dce_fit_artifacts(maps, coords, result)
+        departure = _compute_vp_prior_departure(
+            constraint_mode,
+            inference,
+            selected_model,
+            voxel.voxel_vp,
+            params.get("vp", 0.0),
+            constraint_vp_uncertainty,
+        )
+        if departure is not None:
+            vp_prior_departures.append(departure)
+        accounting = _account_retained_dce_fit(voxel, result, constraint_mode)
+        n_converged += accounting.n_converged
+        n_failed += accounting.n_failed
+        n_constrained += accounting.n_constrained
+        n_unconstrained_fallback += accounting.n_unconstrained_fallback
+        if accounting.r_squared is not None:
+            r2_values.append(accounting.r_squared)
+        n_mcmc_voxels += _accumulate_mcmc_diagnostics(
+            result, mcmc_rhat, mcmc_ess
+        )
+    return _DCEFitSummary(
+        n_converged,
+        n_failed,
+        n_constrained,
+        n_unconstrained_fallback,
+        n_rejected_postfit,
+        r2_values,
+        failure_reasons,
+        mcmc_rhat,
+        mcmc_ess,
+        n_mcmc_voxels,
+        vp_prior_departures,
+    )
+
+
 def _summarize_mcmc_diagnostics(
     n_mcmc_voxels: int,
     rhat_lists: dict[str, list[float]],
@@ -907,6 +987,22 @@ class _DCEFitAccountingUpdate(NamedTuple):
     n_constrained: int
     n_unconstrained_fallback: int
     r_squared: Optional[float]
+
+
+class _DCEFitSummary(NamedTuple):
+    """Aggregate counters and diagnostics produced while scattering fits."""
+
+    n_converged: int
+    n_failed: int
+    n_constrained: int
+    n_unconstrained_fallback: int
+    n_rejected_postfit: int
+    r2_values: list[float]
+    failure_reasons: dict[str, int]
+    mcmc_rhat: dict[str, list[float]]
+    mcmc_ess: dict[str, list[float]]
+    n_mcmc_voxels: int
+    vp_prior_departures: list[float]
 
 
 # Import-time pickle-safety assertion (S1 from code review round 3):
@@ -3032,18 +3128,6 @@ class ComputeDCEMaps(BaseInterface):
             "bat_correction": bat_correction,
         }
 
-        n_converged = 0
-        n_failed = 0
-        n_constrained = 0
-        n_unconstrained_fallback = 0
-        n_rejected_postfit = 0
-        r2_list: list[float] = []
-        failure_reason_counts: dict[str, int] = {}
-        mcmc_rhat_lists: dict[str, list[float]] = {}
-        mcmc_ess_lists: dict[str, list[float]] = {}
-        n_mcmc_voxels: int = 0
-        z_departure_list: list[float] = []  # soft constraint prior departure
-
         motion = self._prepare_motion_weighting(header, n_timepoints)
         motion_weights = motion.weights
         qc_metrics["motion_weighting"] = motion.qc
@@ -3085,117 +3169,29 @@ class ComputeDCEMaps(BaseInterface):
         # Clear worker state to avoid stale references across runs
         _worker_ctx.clear()
 
-        # Per-voxel model selection tracking
-        from collections import Counter
-        model_counts: Counter[str] = Counter()
-
-        # Scatter results into output arrays
-        # For auto mode, we always save ve/vp/2cxm maps (NaN where not applicable)
         save_ve = is_auto or self._has_ve(model_name)
         save_vp = is_auto or self._has_vp(model_name)
-        for vd, res in zip(voxel_data_list, results):
-            if res["failed"]:
-                n_failed += 1
-                reason = res.get("failure_reason", "unknown")
-                failure_reason_counts[reason] = failure_reason_counts.get(reason, 0) + 1
-                continue
-
-            x, y, z = res["coords"]
-            params = res["params"]
-
-            # Per-voxel effective model name (may differ from global model_name
-            # when BIC model selection is active)
-            effective_model_name = res.get("selected_model_name", model_name)
-
-            # Record model selection
-            model_selection_map[x, y, z] = _MODEL_SELECTION_CODES.get(
-                effective_model_name, 0
-            )
-            model_counts[effective_model_name] += 1
-
-            # Record delta-BIC
-            delta_bic_map[x, y, z] = float(res.get("delta_bic", np.nan))
-
-            # Post-fit validation: reject bound-railing fits only.
-            # Parameters at exact optimizer bounds are degenerate (optimizer
-            # wanted to exceed the bound). R² is NOT used for rejection —
-            # low-R² voxels with valid params have uncertain but informative
-            # estimates. Zeroing them biases distributions upward and
-            # destroys information. R² quality gating belongs in the QC mask
-            # (line 1354: r2_map >= 0.5), separate from parameter estimation.
-            is_constrained = res.get("constrained", False)
-            degenerate = _is_degenerate_dce_fit(
-                effective_model_name,
-                params,
-                is_constrained,
-            )
-            if degenerate:
-                _scatter_degenerate_dce_fit(
-                    parameter_maps,
-                    (x, y, z),
-                    effective_model_name,
-                    is_auto,
-                    res["r_squared"],
-                )
-                n_rejected_postfit += 1
-                continue
-
-            _scatter_dce_parameters(
-                parameter_maps,
-                (x, y, z),
-                effective_model_name,
-                params,
-                res["r_squared"],
-            )
-
-            # Uncertainty (Bayesian only). Per-parameter inflation
-            # propagates AIF reduced-confidence to PK posterior sigma;
-            # ve uninflated.
-            if inference != "nlls" and res["uncertainties"]:
-                _scatter_dce_uncertainties(
-                    parameter_maps,
-                    (x, y, z),
-                    effective_model_name,
-                    res["uncertainties"],
-                )
-
-            _scatter_dce_fit_artifacts(parameter_maps, (x, y, z), res)
-
-            z_departure = _compute_vp_prior_departure(
-                constraint_mode,
-                inference,
-                effective_model_name,
-                vd.voxel_vp,
-                params.get("vp", 0.0),
-                constraint_vp_uncertainty,
-            )
-            if z_departure is not None:
-                z_departure_list.append(z_departure)
-
-            accounting = _account_retained_dce_fit(vd, res, constraint_mode)
-            n_converged += accounting.n_converged
-            n_failed += accounting.n_failed
-            n_constrained += accounting.n_constrained
-            n_unconstrained_fallback += accounting.n_unconstrained_fallback
-            if accounting.r_squared is not None:
-                r2_list.append(accounting.r_squared)
-
-            n_mcmc_voxels += _accumulate_mcmc_diagnostics(
-                res,
-                mcmc_rhat_lists,
-                mcmc_ess_lists,
-            )
+        fit_summary = _scatter_dce_fit_results(
+            voxel_data_list,
+            results,
+            parameter_maps,
+            model_name,
+            is_auto,
+            inference,
+            constraint_mode,
+            constraint_vp_uncertainty,
+        )
 
         # Compile QC metrics
         qc_metrics.update(
             _summarize_dce_fit_outcomes(
-                n_converged,
-                n_failed,
+                fit_summary.n_converged,
+                fit_summary.n_failed,
                 n_voxels,
-                n_constrained,
-                n_unconstrained_fallback,
-                n_rejected_postfit,
-                failure_reason_counts,
+                fit_summary.n_constrained,
+                fit_summary.n_unconstrained_fallback,
+                fit_summary.n_rejected_postfit,
+                fit_summary.failure_reasons,
             )
         )
 
@@ -3221,17 +3217,19 @@ class ComputeDCEMaps(BaseInterface):
             )
         )
 
-        qc_metrics.update(_summarize_dce_r2(r2_list))
+        qc_metrics.update(_summarize_dce_r2(fit_summary.r2_values))
 
         mcmc_diag = _summarize_mcmc_diagnostics(
-            n_mcmc_voxels,
-            mcmc_rhat_lists,
-            mcmc_ess_lists,
+            fit_summary.n_mcmc_voxels,
+            fit_summary.mcmc_rhat,
+            fit_summary.mcmc_ess,
         )
         if mcmc_diag is not None:
             qc_metrics["mcmc_diagnostics"] = mcmc_diag
 
-        qc_metrics.update(_summarize_vp_prior_departures(z_departure_list))
+        qc_metrics.update(
+            _summarize_vp_prior_departures(fit_summary.vp_prior_departures)
+        )
 
         qc_metrics.update(
             _summarize_dce_fitted_parameters(
