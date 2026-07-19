@@ -149,6 +149,25 @@ def _scatter_dce_parameters(
         maps.extraction_fraction[x, y, z] = params.get("E", 0.0)
 
 
+def _scatter_degenerate_dce_fit(
+    maps: "_DCEParameterMaps",
+    coords: tuple[int, int, int],
+    model_name: str,
+    is_auto: bool,
+    r_squared: float,
+) -> None:
+    """Scatter the model-applicable sentinels for a rejected fit."""
+    x, y, z = coords
+    fill_value = np.nan if is_auto else 0.0
+    maps.ktrans[x, y, z] = fill_value
+    if model_name in ("tofts", "extended_tofts", "2cxm"):
+        maps.ve[x, y, z] = fill_value
+        maps.kep[x, y, z] = fill_value
+    if model_name in ("extended_tofts", "patlak", "2cxm"):
+        maps.vp[x, y, z] = fill_value
+    maps.r_squared[x, y, z] = r_squared
+
+
 def _validate_dce_time_axis(
     time_points: npt.ArrayLike,
     n_dce_frames: int,
@@ -2569,14 +2588,13 @@ class ComputeDCEMaps(BaseInterface):
                 is_constrained,
             )
             if degenerate:
-                degen_fill = np.nan if is_auto else 0.0
-                ktrans[x, y, z] = degen_fill
-                if self._has_ve(effective_model_name):
-                    ve[x, y, z] = degen_fill
-                    kep[x, y, z] = degen_fill
-                if self._has_vp(effective_model_name):
-                    vp[x, y, z] = degen_fill
-                r2_map[x, y, z] = res["r_squared"]
+                _scatter_degenerate_dce_fit(
+                    parameter_maps,
+                    (x, y, z),
+                    effective_model_name,
+                    is_auto,
+                    res["r_squared"],
+                )
                 n_rejected_postfit += 1
                 continue
 

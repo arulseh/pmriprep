@@ -7,6 +7,7 @@ import pytest
 
 from pmriprep.interfaces.dce_compute import (
     _is_degenerate_dce_fit,
+    _scatter_degenerate_dce_fit,
     _scatter_dce_fit_artifacts,
     _scatter_dce_parameters,
     _scatter_dce_uncertainties,
@@ -179,3 +180,31 @@ def test_parameter_scatter_writes_all_2cxm_fields() -> None:
     assert maps.fp[0, 0, 0] == 20.0
     assert maps.ps[0, 0, 0] == 5.0
     assert maps.extraction_fraction[0, 0, 0] == 0.2
+
+
+def test_degenerate_scatter_uses_auto_nan_for_applicable_patlak_maps() -> None:
+    """Auto Patlak rejection marks Ktrans/vp non-applicable without touching ve."""
+    maps = _uncertainty_maps()
+    maps.ktrans[:] = 1.0
+    maps.ve[:] = 2.0
+    maps.vp[:] = 3.0
+    _scatter_degenerate_dce_fit(maps, (0, 0, 0), "patlak", True, -0.2)
+    assert np.isnan(maps.ktrans[0, 0, 0])
+    assert np.isnan(maps.vp[0, 0, 0])
+    assert maps.ve[0, 0, 0] == 2.0
+    assert maps.r_squared[0, 0, 0] == -0.2
+
+
+def test_degenerate_scatter_uses_fixed_zero_for_tofts_maps() -> None:
+    """Fixed Tofts rejection restores zero sentinels for Ktrans/ve/kep."""
+    maps = _uncertainty_maps()
+    maps.ktrans[:] = 1.0
+    maps.ve[:] = 2.0
+    maps.kep[:] = 3.0
+    maps.vp[:] = 4.0
+    _scatter_degenerate_dce_fit(maps, (0, 0, 0), "tofts", False, 0.1)
+    assert maps.ktrans[0, 0, 0] == 0.0
+    assert maps.ve[0, 0, 0] == 0.0
+    assert maps.kep[0, 0, 0] == 0.0
+    assert maps.vp[0, 0, 0] == 4.0
+    assert maps.r_squared[0, 0, 0] == 0.1
