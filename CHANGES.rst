@@ -1,7 +1,7 @@
-1.0.0rc1 (July 19, 2026)
-========================
+1.0.0rc1 (unreleased)
+=====================
 
-First release candidate of PMRIPrep, a BIDS App for preprocessing and
+Planned first release candidate of PMRIPrep, a BIDS App for preprocessing and
 quantifying dynamic susceptibility contrast (DSC) and dynamic contrast-enhanced
 (DCE) MRI.
 

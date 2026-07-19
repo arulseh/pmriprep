@@ -57,7 +57,7 @@ FROM condaforge/miniforge3:24.11.3-2
 LABEL maintainer="PMRIPrep Developers"
 LABEL org.opencontainers.image.title="PMRIPrep"
 LABEL org.opencontainers.image.description="Perfusion MRI Preprocessing Pipeline - A NiPreps-compatible BIDS-App"
-LABEL org.opencontainers.image.version="1.0.0rc1"
+LABEL org.opencontainers.image.version="0.82.74"
 LABEL org.opencontainers.image.source="https://github.com/arulseh/pmriprep"
 LABEL org.opencontainers.image.licenses="Apache-2.0 AND CC0-1.0"
 
