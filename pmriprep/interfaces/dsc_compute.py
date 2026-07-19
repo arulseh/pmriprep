@@ -2239,8 +2239,8 @@ class ComputeDSCMaps(BaseInterface):
                         aif = np.mean(roi_voxels, axis=0)
                         if len(aif) >= 5:
                             from scipy.signal import savgol_filter  # type: ignore[import-untyped]
-                            from pmriprep.utils.dsc_constants import (
-                                AIF_SMOOTHING_TARGET_SECONDS,
+                            from pmriprep.utils.dsc_aif import (
+                                get_aif_smoothing_window,
                             )
 
                             # Window length scales with TR so smoothing
@@ -2248,16 +2248,7 @@ class ComputeDSCMaps(BaseInterface):
                             # rate. Hardcoded window=5 was correct only
                             # for TR≈1.5 s; under-smoothed at TR=0.5 s,
                             # peak-distorting at TR=3 s.
-                            if not np.isfinite(dt) or dt <= 0.0:
-                                window_length = 5
-                            else:
-                                target_samples = int(
-                                    round(AIF_SMOOTHING_TARGET_SECONDS / dt)
-                                )
-                                window_length = max(5, target_samples | 1)
-                            # Clamp to the largest odd value ≤ len(aif).
-                            cap = len(aif) if len(aif) % 2 else len(aif) - 1
-                            window_length = min(window_length, cap)
+                            window_length = get_aif_smoothing_window(len(aif), dt)
                             aif = savgol_filter(
                                 aif, window_length=window_length, polyorder=2
                             )

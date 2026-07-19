@@ -14,8 +14,42 @@ import numpy.typing as npt
 from scipy import optimize
 
 from pmriprep.utils.dsc_constants import (
+    AIF_SMOOTHING_TARGET_SECONDS,
     EPSILON_CONCENTRATION,
 )
+
+
+def get_aif_smoothing_window(n_timepoints: int, tr: float) -> int:
+    """Return an odd Savitzky-Golay window near the DSC time target.
+
+    Parameters
+    ----------
+    n_timepoints : int
+        Length of the AIF curve.
+    tr : float
+        Frame period in seconds. Invalid values retain the historical
+        five-frame fallback.
+
+    Returns
+    -------
+    int
+        Odd window length no larger than ``n_timepoints``. Curves shorter
+        than five frames return their largest odd length; callers decide
+        whether smoothing is appropriate.
+    """
+    if n_timepoints < 1:
+        raise ValueError("n_timepoints must be positive")
+
+    if not np.isfinite(tr) or tr <= 0.0:
+        window = 5
+    else:
+        target_samples = int(round(AIF_SMOOTHING_TARGET_SECONDS / tr))
+        # Quadratic Savitzky-Golay requires at least three samples. A five-frame
+        # floor would span 15 s at TR=3 s and flatten the arterial peak.
+        window = max(3, target_samples | 1)
+
+    largest_odd = n_timepoints if n_timepoints % 2 else n_timepoints - 1
+    return min(window, largest_odd)
 
 
 def compute_aif_fwhm_frames(

@@ -1725,6 +1725,7 @@ class AIFDetection(BaseInterface):
         top_candidates: list[tuple[float, tuple[int, int, int], dict[str, Any]]],
         conc_data: npt.NDArray[Any],
         brain_mask: npt.NDArray[Any],
+        tr: float,
         roi_size: int = 3,
     ) -> tuple[npt.NDArray[Any], npt.NDArray[Any]]:
         """Compute inverse-cost weighted AIF with 3x3x3 ROI averaging.
@@ -1737,6 +1738,9 @@ class AIFDetection(BaseInterface):
             4D concentration data.
         brain_mask : ndarray
             3D brain mask.
+        tr : float
+            Frame period in seconds, used to keep temporal smoothing
+            consistent across acquisition rates.
         roi_size : int
             Side length of cubic ROI around each candidate.
 
@@ -1793,9 +1797,15 @@ class AIFDetection(BaseInterface):
 
             aif_curve = weighted_aif
 
-        # Savitzky-Golay smoothing (window=5, polyorder=2)
+        # Smooth over a fixed duration rather than a fixed frame count so the
+        # arterial peak receives comparable filtering across acquisition TRs.
         if len(aif_curve) >= 5:
-            aif_curve = savgol_filter(aif_curve, window_length=5, polyorder=2)
+            from pmriprep.utils.dsc_aif import get_aif_smoothing_window
+
+            window_length = get_aif_smoothing_window(len(aif_curve), tr)
+            aif_curve = savgol_filter(
+                aif_curve, window_length=window_length, polyorder=2
+            )
 
         # Negative ΔR2* is physically valid (symmetric noise, T1 recirculation).
         # Do NOT clip to zero — it biases the AIF integral, corrupts the SVD
@@ -1943,7 +1953,7 @@ class AIFDetection(BaseInterface):
             ``None`` otherwise.
         """
         curve, mask = self._compute_roi_averaged_aif(
-            candidates, conc_data, brain_mask, roi_size=1,
+            candidates, conc_data, brain_mask, tr, roi_size=1,
         )
         qr = self._aif_passes_quality(curve, baseline_frames, tr)
         if qr.passes:
@@ -2077,7 +2087,7 @@ class AIFDetection(BaseInterface):
 
         # Retry 1: re-average with roi_size=1 (no neighborhood)
         retry_curve, retry_mask = AIFDetection._compute_roi_averaged_aif(
-            top_candidates, conc_data, brain_mask, roi_size=1,
+            top_candidates, conc_data, brain_mask, tr, roi_size=1,
         )
         spr_r1, _, _ = _compute_spr(retry_curve)
         validation_qc["averaged_aif_spr_retry1"] = round(spr_r1, 1)
@@ -2090,7 +2100,7 @@ class AIFDetection(BaseInterface):
         # Retry 2: single best candidate only, roi_size=1
         best_only = [top_candidates[0]]
         retry2_curve, retry2_mask = AIFDetection._compute_roi_averaged_aif(
-            best_only, conc_data, brain_mask, roi_size=1,
+            best_only, conc_data, brain_mask, tr, roi_size=1,
         )
         spr_r2, _, _ = _compute_spr(retry2_curve)
         validation_qc["averaged_aif_spr_retry2"] = round(spr_r2, 1)
@@ -3077,6 +3087,7 @@ class AIFDetection(BaseInterface):
                 for roi_size in (1, 3):
                     curve, mask = self._compute_roi_averaged_aif(
                         best_only, conc_data, brain_mask,
+                        tr,
                         roi_size=roi_size,
                     )
                     if not self._aif_global_max_in_fp(
