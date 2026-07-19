@@ -655,6 +655,56 @@ def _write_dce_uncertainty_maps(
     return outputs
 
 
+def _write_dce_terminal_outputs(
+    maps: "_DCEParameterMaps",
+    fitting_mask: npt.NDArray[np.bool_],
+    tsnr: npt.NDArray[Any],
+    peak_enhancement: Optional[npt.NDArray[Any]],
+    is_auto: bool,
+    model_name: str,
+    save_fitted_curves: bool,
+    affine: npt.NDArray[Any],
+    generate_path: Callable[[str], str],
+    write_map: Callable[..., None],
+) -> dict[str, str]:
+    """Write terminal QC, model-selection, and fitted-curve outputs."""
+    outputs = {"out_tsnr": generate_path("_tSNR")}
+    write_map(tsnr, outputs["out_tsnr"])
+    qc_mask = _build_dce_qc_mask(
+        fitting_mask,
+        tsnr,
+        peak_enhancement,
+        maps.ktrans,
+        maps.r_squared,
+        maps.ve,
+        maps.vp,
+        maps.kep,
+        maps.model_selection,
+        maps.model_selection_codes,
+        is_auto,
+        model_name,
+    )
+    outputs["out_qc_mask"] = generate_path("_qc_mask")
+    write_map(qc_mask, outputs["out_qc_mask"], dtype=np.uint8)
+    if is_auto:
+        outputs["out_model_selection"] = generate_path("_modelSelection")
+        outputs["out_delta_bic"] = generate_path("_deltaBIC")
+        write_map(
+            maps.model_selection,
+            outputs["out_model_selection"],
+            dtype=np.int8,
+        )
+        write_map(maps.delta_bic, outputs["out_delta_bic"])
+    if save_fitted_curves and maps.fitted_curves is not None:
+        outputs["out_fitted_curves"] = generate_path("_fitted_curves")
+        _write_dce_fitted_curves(
+            maps.fitted_curves,
+            outputs["out_fitted_curves"],
+            affine,
+        )
+    return outputs
+
+
 def _validate_dce_time_axis(
     time_points: npt.ArrayLike,
     n_dce_frames: int,
@@ -3309,47 +3359,29 @@ class ComputeDCEMaps(BaseInterface):
                 )
             )
 
-        # Save tSNR map (always computed)
-        out_tsnr = self._gen_outfilename("_tSNR")
-        _save_dce_map(tsnr_map, out_tsnr)
-        self._results["out_tsnr"] = out_tsnr
-
-        # Create QC mask using physiological bounds
-        # Include voxels with: good R², physiological parameter values, adequate SNR
-        qc_mask = _build_dce_qc_mask(
-            fitting_mask,
-            tsnr_map,
-            peak_enh,
-            ktrans,
-            r2_map,
-            ve,
-            vp,
-            kep,
-            model_selection_map,
-            _MODEL_SELECTION_CODES,
-            is_auto,
-            model_name,
+        self._results.update(
+            _write_dce_terminal_outputs(
+                parameter_maps._replace(
+                    ktrans=ktrans,
+                    ve=ve,
+                    vp=vp,
+                    kep=kep,
+                    r_squared=r2_map,
+                    model_selection=model_selection_map,
+                    delta_bic=delta_bic_map,
+                    fitted_curves=fitted_curves,
+                ),
+                fitting_mask,
+                tsnr_map,
+                peak_enh,
+                is_auto,
+                model_name,
+                save_fitted_curves,
+                affine,
+                self._gen_outfilename,
+                _save_dce_map,
+            )
         )
-        out_qc_mask = self._gen_outfilename("_qc_mask")
-        _save_dce_map(qc_mask, out_qc_mask, dtype=np.uint8)
-        self._results["out_qc_mask"] = out_qc_mask
-
-        # Save model selection map (auto/BIC mode)
-        if is_auto:
-            out_model_sel = self._gen_outfilename("_modelSelection")
-            _save_dce_map(model_selection_map, out_model_sel, dtype=np.int8)
-            self._results["out_model_selection"] = out_model_sel
-
-            # Save delta-BIC confidence map
-            out_delta_bic = self._gen_outfilename("_deltaBIC")
-            _save_dce_map(delta_bic_map, out_delta_bic)
-            self._results["out_delta_bic"] = out_delta_bic
-
-        # Save fitted curves
-        if save_fitted_curves and fitted_curves is not None:
-            out_fitted = self._gen_outfilename("_fitted_curves")
-            _write_dce_fitted_curves(fitted_curves, out_fitted, affine)
-            self._results["out_fitted_curves"] = out_fitted
 
         return runtime
 

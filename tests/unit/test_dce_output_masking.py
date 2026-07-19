@@ -19,6 +19,7 @@ from pmriprep.interfaces.dce_compute import (
     _write_dce_fitted_curves,
     _write_dce_model_free_maps,
     _write_dce_parameter_maps,
+    _write_dce_terminal_outputs,
     _write_dce_uncertainty_maps,
     _zero_dce_background,
 )
@@ -269,6 +270,47 @@ def test_write_dce_uncertainty_maps_preserves_applicability(
     assert "out_ktrans_cv" in outputs
     assert "out_ktrans_ci95_lower" in outputs
     assert ("out_fp_std" in outputs) is save_2cxm
+
+
+@pytest.mark.parametrize("is_auto", [False, True])
+def test_write_dce_terminal_outputs_preserves_auto_applicability(is_auto: bool) -> None:
+    """Terminal output assembly emits selection maps only in auto mode."""
+    shape = (1, 1, 1)
+    values = np.full(shape, 0.2)
+    maps = SimpleNamespace(
+        ktrans=values,
+        r_squared=np.full(shape, 0.8),
+        ve=values,
+        vp=values,
+        kep=np.full(shape, 0.01),
+        model_selection=np.ones(shape, dtype=np.int8),
+        model_selection_codes={"patlak": 1},
+        delta_bic=values,
+        fitted_curves=None,
+    )
+    writes: list[tuple[str, object]] = []
+
+    def write_map(data: np.ndarray, path: str, dtype: object = np.float32) -> None:
+        writes.append((path, dtype))
+
+    outputs = _write_dce_terminal_outputs(
+        maps,
+        np.ones(shape, dtype=bool),
+        np.full(shape, 20.0),
+        None,
+        is_auto,
+        "auto" if is_auto else "tofts",
+        False,
+        np.eye(4),
+        lambda suffix: f"output{suffix}.nii.gz",
+        write_map,
+    )
+    assert {"out_tsnr", "out_qc_mask"}.issubset(outputs)
+    assert ("out_model_selection" in outputs) is is_auto
+    assert ("out_delta_bic" in outputs) is is_auto
+    assert next(dtype for path, dtype in writes if "qc_mask" in path) is np.uint8
+    if is_auto:
+        assert next(dtype for path, dtype in writes if "modelSelection" in path) is np.int8
 
 
 def test_saved_dce_categorical_maps_are_brain_masked(tmp_path) -> None:
