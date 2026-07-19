@@ -1320,6 +1320,51 @@ class TestCPIPCHIPConsistency:
     so it cannot silently widen.
     """
 
+    def test_readout_does_not_claim_cbv_uncertainty_without_covariance(
+        self, dsc_aif_and_time
+    ):
+        """CPI marginal errors cannot define uncertainty of integrated CBV."""
+        import types
+
+        from pmriprep.interfaces.dsc_compute import ComputeDSCMaps
+
+        _aif, tp = dsc_aif_and_time
+        dt = float(tp[1] - tp[0])
+        n_cp = 6
+        model = CPIModel(
+            n_control_points=n_cp, n_acquisition_frames=len(tp), dt=dt,
+        )
+        names = model.get_parameter_names()
+        params = np.array([[0.1] + [0.8] * n_cp])
+        result = types.SimpleNamespace(
+            params={name: params[:, j] for j, name in enumerate(names)},
+            uncertainties={"cbf": np.array([0.01])},
+            r_squared=np.ones(1),
+            converged=np.ones(1, dtype=bool),
+        )
+        mask_coords = (
+            np.zeros(1, dtype=int),
+            np.zeros(1, dtype=int),
+            np.zeros(1, dtype=int),
+        )
+
+        out = ComputeDSCMaps._batched_result_to_voxel_dicts(
+            None,
+            result,
+            mask_coords,
+            "cpi",
+            1,
+            dt,
+            model.control_point_times,
+            tp,
+            model.terminal_time,
+        )[0]
+
+        assert out["cbf_std"] == pytest.approx(0.01)
+        assert "cbv_std" not in out
+        assert "cbv_ci95_lower" not in out
+        assert "cbv_ci95_upper" not in out
+
     @pytest.mark.parametrize("infer_cpt", [False, True])
     def test_scalar_vs_batched_residue_within_gap(self, dsc_aif_and_time, infer_cpt):
         aif, tp = dsc_aif_and_time
@@ -1392,4 +1437,3 @@ class TestPostHocDelayShiftParity:
         for i in range(2):
             ref = _ref_scalar_delay_shift(conv[i], delay, dt)
             np.testing.assert_allclose(batched[i], ref, atol=1e-12)
-

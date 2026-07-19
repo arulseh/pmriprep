@@ -291,8 +291,6 @@ def _dsc_fit_single_voxel(voxel_data: _DSCVoxelInput) -> dict[str, Any]:
                     (mtt_val * sigma_cbf) ** 2
                     + (cbf_val * sigma_mtt) ** 2
                 ))
-            else:
-                out["cbv_std"] = 0.0
 
         # Extract credible intervals (available for all Bayesian methods)
         if result.credible_intervals:
@@ -304,9 +302,6 @@ def _dsc_fit_single_voxel(voxel_data: _DSCVoxelInput) -> dict[str, Any]:
                 mtt_ci = result.credible_intervals.get("mtt", (0.0, 0.0))
                 out["cbv_ci95_lower"] = max(cbf_ci[0] * mtt_ci[0], 0.0)
                 out["cbv_ci95_upper"] = cbf_ci[1] * mtt_ci[1]
-            else:
-                out["cbv_ci95_lower"] = 0.0
-                out["cbv_ci95_upper"] = 0.0
 
         out["r_squared"] = result.r_squared
         out["converged"] = result.passes_convergence()
@@ -1135,7 +1130,11 @@ class ComputeDSCMaps(BaseInterface):
         beta_map = np.zeros(spatial_shape, dtype=np.float64) if method == "vascular" else None
         cth_map = np.zeros(spatial_shape, dtype=np.float64) if method == "vascular" else None
         cbf_std_map = np.zeros(spatial_shape, dtype=np.float64) if method in ("cpi", "vascular") else None
-        cbv_std_map = np.zeros(spatial_shape, dtype=np.float64) if method in ("cpi", "vascular") else None
+        # CPI CBV depends jointly on CBF and every residue control point.
+        # Marginal parameter standard deviations are insufficient to propagate
+        # that uncertainty without their posterior covariance, so do not emit
+        # misleading zero-valued CPI CBV uncertainty maps.
+        cbv_std_map = np.zeros(spatial_shape, dtype=np.float64) if method == "vascular" else None
         # Parametric-fit R² map and oSVD-fallback mask (parametric only).
         # R² inits to NaN so plotting tools render outside-brain voxels
         # transparent; raw parametric R² is preserved on fallback voxels
@@ -1152,8 +1151,14 @@ class ComputeDSCMaps(BaseInterface):
         has_ci = inference in ("vi", "svb", "mcmc", "map", "nlls")
         cbf_ci_lower_map = np.zeros(spatial_shape, dtype=np.float64) if has_ci else None
         cbf_ci_upper_map = np.zeros(spatial_shape, dtype=np.float64) if has_ci else None
-        cbv_ci_lower_map = np.zeros(spatial_shape, dtype=np.float64) if has_ci else None
-        cbv_ci_upper_map = np.zeros(spatial_shape, dtype=np.float64) if has_ci else None
+        cbv_ci_lower_map = (
+            np.zeros(spatial_shape, dtype=np.float64)
+            if has_ci and method == "vascular" else None
+        )
+        cbv_ci_upper_map = (
+            np.zeros(spatial_shape, dtype=np.float64)
+            if has_ci and method == "vascular" else None
+        )
 
         qc_metrics: dict[str, Any] = {
             "method": method,
@@ -1721,8 +1726,6 @@ class ComputeDSCMaps(BaseInterface):
                     out["cbv_std"] = float(np.sqrt(
                         (mtt_val * sig_cbf) ** 2 + (cbf_val * sig_mtt) ** 2
                     ))
-                else:
-                    out["cbv_std"] = 0.0
 
             out["cbf_ci95_lower"] = max(cbf_val - 1.96 * cbf_std_val, 0.0)
             out["cbf_ci95_upper"] = cbf_val + 1.96 * cbf_std_val
@@ -1737,9 +1740,6 @@ class ComputeDSCMaps(BaseInterface):
                           * (mtt_val + 1.96 * sig_mtt_ci))
                 out["cbv_ci95_lower"] = cbv_lo
                 out["cbv_ci95_upper"] = cbv_hi
-            else:
-                out["cbv_ci95_lower"] = 0.0
-                out["cbv_ci95_upper"] = 0.0
 
             out["r_squared"] = float(batched_result.r_squared[i])
             out["converged"] = bool(batched_result.converged[i])
