@@ -25,9 +25,7 @@ from pmriprep.interfaces.dce_aif_qc import DCEAIFQCPlot
 from pmriprep.interfaces.dce_compute import ComputeDCEMaps
 from pmriprep.data import get_arterial_atlas_cascade
 
-# Function-node / construction helpers live in ``_helpers.py``; they are
-# re-exported here so ``init_dce_preproc_wf`` and external importers (tests,
-# cross-pipeline references) keep resolving them from ``...dce.base``.
+# Function-node and construction helpers used by the DCE workflow graph.
 from pmriprep.workflows.dce._helpers import (  # noqa: F401
     _build_model_free_map_dict,
     _build_pk_map_dict,

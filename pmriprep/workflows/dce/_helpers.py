@@ -1,14 +1,8 @@
-"""Function-node and construction helpers for the DCE preproc workflow.
+"""Serializable function-node helpers for the DCE preprocessing workflow.
 
-Extracted verbatim from ``base.py`` to keep ``init_dce_preproc_wf`` navigable.
-Re-exported from ``pmriprep.workflows.dce.base`` for backward compatibility, so
-existing ``from pmriprep.workflows.dce.base import _foo`` imports keep working.
-
-Each helper is self-contained (imports inside its body) so nipype can serialise
-it into a ``niu.Function`` node via ``getsource``; the module-level imports below
-cover only what the helper *signatures* reference at definition time.
+Each helper imports its runtime dependencies locally so Nipype can execute the
+source captured by ``niu.Function`` in an isolated worker.
 """
-from typing import Optional
 
 __all__ = [
     "_build_model_free_map_dict",
@@ -45,11 +39,11 @@ __all__ = [
 ]
 
 
-def _validate_native_mask(  # type: ignore[no-untyped-def]
-    mask_file=None,
-    reference_file=None,
-    mask_label="mask",
-):
+def _validate_native_mask(
+    mask_file: str | None = None,
+    reference_file: str | None = None,
+    mask_label: str = "mask",
+) -> str:
     """Validate that a user-supplied mask matches the perfusion volume grid.
 
     Parameters
@@ -76,13 +70,15 @@ def _validate_native_mask(  # type: ignore[no-untyped-def]
 
     mask_img = nib.load(str(mask_file))
     ref_img = nib.load(str(reference_file))
-    if mask_img.shape[:3] != ref_img.shape[:3]:
+    if mask_img.shape[:3] != ref_img.shape[:3]:  # type: ignore[attr-defined]
         raise ValueError(
-            f"User-supplied {mask_label} shape {mask_img.shape[:3]} does not "
-            f"match perfusion volume shape {ref_img.shape[:3]}. "
+            f"User-supplied {mask_label} shape {mask_img.shape[:3]} does not "  # type: ignore[attr-defined]
+            f"match perfusion volume shape {ref_img.shape[:3]}. "  # type: ignore[attr-defined]
             f"Masks under config must be in perfusion native space."
         )
-    affine_diff = float(np.abs(mask_img.affine - ref_img.affine).max())
+    affine_diff = float(
+        np.abs(mask_img.affine - ref_img.affine).max()  # type: ignore[attr-defined]
+    )
     if affine_diff > 1.0:
         raise ValueError(
             f"User-supplied {mask_label} affine differs from perfusion volume "
@@ -92,10 +88,10 @@ def _validate_native_mask(  # type: ignore[no-untyped-def]
     return str(mask_file)
 
 
-def _select_aif_exclusion_mask(  # type: ignore[no-untyped-def]
-    user_lesion_mask=None,
-    transformed_lesion_mask=None,
-):
+def _select_aif_exclusion_mask(
+    user_lesion_mask: str | None = None,
+    transformed_lesion_mask: str | None = None,
+) -> str:
     """Pick the AIF exclusion mask: user-supplied overrides tumor seg.
 
     Parameters
@@ -122,11 +118,11 @@ def _select_aif_exclusion_mask(  # type: ignore[no-untyped-def]
     return ""
 
 
-def _transform_mask_to_dce(  # type: ignore[no-untyped-def]
-    mask_file=None,
-    reference_file=None,
-    transform_matrix=None,
-):
+def _transform_mask_to_dce(
+    mask_file: str | None = None,
+    reference_file: str | None = None,
+    transform_matrix: str | None = None,
+) -> str:
     """Transform brain mask from T1w space to DCE space.
 
     Thin Nipype Function-node wrapper around
@@ -154,12 +150,12 @@ def _transform_mask_to_dce(  # type: ignore[no-untyped-def]
     return transform_mask_to_grid(mask_file, reference_file, transform_matrix)
 
 
-def _transform_mask_to_dce_conditional(  # type: ignore[no-untyped-def]
-    mask_file=None,
-    reference_file=None,
-    transform_matrix=None,
-    needs_transform=True,
-):
+def _transform_mask_to_dce_conditional(
+    mask_file: str | None = None,
+    reference_file: str | None = None,
+    transform_matrix: str | None = None,
+    needs_transform: bool = True,
+) -> str:
     """Transform mask to DCE space, or pass through if already native.
 
     When ``needs_transform`` is True (tumor-seg mask in T1w space), delegates
@@ -198,13 +194,15 @@ def _transform_mask_to_dce_conditional(  # type: ignore[no-untyped-def]
 
         mask_img = nib.load(str(mask_file))
         ref_img = nib.load(str(reference_file))
-        if mask_img.shape[:3] != ref_img.shape[:3]:
+        if mask_img.shape[:3] != ref_img.shape[:3]:  # type: ignore[attr-defined]
             raise ValueError(
-                f"User-supplied mask shape {mask_img.shape[:3]} does not "
-                f"match DCE volume shape {ref_img.shape[:3]}. "
+                f"User-supplied mask shape {mask_img.shape[:3]} does not "  # type: ignore[attr-defined]
+                f"match DCE volume shape {ref_img.shape[:3]}. "  # type: ignore[attr-defined]
                 f"Masks under [dce] config must be in DCE native space."
             )
-        affine_diff = float(np.abs(mask_img.affine - ref_img.affine).max())
+        affine_diff = float(
+            np.abs(mask_img.affine - ref_img.affine).max()  # type: ignore[attr-defined]
+        )
         if affine_diff > 1.0:
             raise ValueError(
                 f"User-supplied mask affine differs from DCE volume by "
@@ -218,11 +216,11 @@ def _transform_mask_to_dce_conditional(  # type: ignore[no-untyped-def]
     return transform_mask_to_grid(mask_file, reference_file, transform_matrix)
 
 
-def _transform_probseg_to_dce(  # type: ignore[no-untyped-def]
-    probseg_file=None,
-    reference_file=None,
-    transform_matrix=None,
-):
+def _transform_probseg_to_dce(
+    probseg_file: str | None = None,
+    reference_file: str | None = None,
+    transform_matrix: str | None = None,
+) -> str:
     """Transform a probability segmentation map from T1w space to DCE space.
 
     Uses FSL FLIRT with trilinear interpolation (appropriate for continuous
@@ -311,11 +309,11 @@ def _transform_probseg_to_dce(  # type: ignore[no-untyped-def]
     return out_file
 
 
-def _transform_lesion_mask_to_dce(  # type: ignore[no-untyped-def]
-    lesion_mask_file=None,
-    reference_file=None,
-    transform_matrix=None,
-):
+def _transform_lesion_mask_to_dce(
+    lesion_mask_file: str | None = None,
+    reference_file: str | None = None,
+    transform_matrix: str | None = None,
+) -> str:
     """Transform lesion mask from T1w space to DCE space.
 
     Uses FSL FLIRT with nearest-neighbour interpolation to resample
@@ -369,11 +367,11 @@ def _transform_lesion_mask_to_dce(  # type: ignore[no-untyped-def]
     return out_file
 
 
-def _create_aif_search_mask(  # type: ignore[no-untyped-def]
-    t1w_mask_in_dce=None,
-    dce_native_mask=None,
-):
-    """Create conservative AIF search mask (Gap 5).
+def _create_aif_search_mask(
+    t1w_mask_in_dce: str | None = None,
+    dce_native_mask: str | None = None,
+) -> str | None:
+    """Create a conservative AIF search mask.
 
     Creates an intersection of T1w-transformed mask with the native DCE
     brain mask (from HD-BET or BET) to exclude non-brain regions that may
@@ -440,12 +438,12 @@ def _create_aif_search_mask(  # type: ignore[no-untyped-def]
 
 
 def _transform_atlas_to_dce(
-    atlas_file: Optional[str] = None,
-    t1w_to_mni_xfm: Optional[str] = None,
-    t1w_to_dce_xfm: Optional[str] = None,
-    reference_file: Optional[str] = None,
-) -> Optional[str]:
-    """Transform MNI atlas mask to DCE space via T1w (Gap 6).
+    atlas_file: str | None = None,
+    t1w_to_mni_xfm: str | None = None,
+    t1w_to_dce_xfm: str | None = None,
+    reference_file: str | None = None,
+) -> str | None:
+    """Transform an MNI atlas mask to DCE space via T1w.
 
     Creates a concatenated transform MNI→T1w→DCE and applies it to the
     atlas mask. Includes morphological refinement (dilate-dilate-erode)
@@ -554,7 +552,12 @@ def _transform_atlas_to_dce(
     return out_file
 
 
-def _transform_atlas_cascade_to_dce(atlas_files=None, t1w_to_mni_xfm=None, t1w_to_dce_xfm=None, reference_file=None):  # type: ignore[no-untyped-def]
+def _transform_atlas_cascade_to_dce(
+    atlas_files: list[str] | None = None,
+    t1w_to_mni_xfm: str | None = None,
+    t1w_to_dce_xfm: str | None = None,
+    reference_file: str | None = None,
+) -> list[str]:
     """Transform a list of MNI atlas masks to DCE space via T1w.
 
     Computes the MNI→DCE composite transform once, then applies it to each
@@ -617,7 +620,7 @@ def _transform_atlas_cascade_to_dce(atlas_files=None, t1w_to_mni_xfm=None, t1w_t
         return []
 
     # Step 2: Apply the composite transform to each atlas
-    out_files = []
+    out_files: list[str] = []
     for atlas_file in atlas_files:
         atlas_path = Path(atlas_file)
         if not atlas_path.is_file():

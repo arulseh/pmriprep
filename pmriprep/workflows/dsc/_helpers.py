@@ -1223,7 +1223,7 @@ def _normalize_cbv(
         derivatives_dir=derivatives_dir,
         subject=subject_id,
         session=session_id,
-        brain_mask_file=None,  # Don't use fallback
+        brain_mask_file=None,
     )
 
     return str(output_path), norm_factor
@@ -1289,7 +1289,7 @@ def _normalize_cbf(
         derivatives_dir=derivatives_dir,
         subject=subject_id,
         session=session_id,
-        brain_mask_file=None,  # Don't use fallback
+        brain_mask_file=None,
     )
 
     return str(output_path), norm_factor

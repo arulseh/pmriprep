@@ -284,6 +284,18 @@ class TestNormalizeCBV:
         assert factor == 1.0
         np.testing.assert_array_equal(ncbv, cbv)
 
+    def test_zero_background_remains_zero(self) -> None:
+        """NAWM normalization preserves a zero-valued image background."""
+        cbv = np.zeros((5, 5, 5), dtype=np.float64)
+        cbv[1:4, 1:4, 1:4] = 4.0
+        nawm_mask = np.zeros_like(cbv, dtype=bool)
+        nawm_mask[2, 2, 2] = True
+
+        ncbv = normalize_cbv(cbv, nawm_mask=nawm_mask)
+
+        np.testing.assert_array_equal(ncbv[cbv == 0], 0.0)
+        np.testing.assert_array_equal(ncbv[cbv > 0], 1.0)
+
 
 class TestGetBaselineSignal:
     """Tests for get_baseline_signal."""
