@@ -4,7 +4,7 @@ Installation
 .. include:: links.rst
 
 PMRIPrep is distributed as a Docker_ / Apptainer_ container image (recommended) and can
-be installed from source for development. It is not yet published on PyPI.
+also be installed from source for development.
 
 Docker (recommended)
 --------------------
@@ -49,8 +49,10 @@ Source installation (development)
    cd pmriprep
    python -m pip install .
 
-Requires FSL_ and ANTs_ on ``$PATH``; see the ``Dockerfile`` for the full system
-dependency list.
+Source installations are tested on Python 3.10, 3.11, and 3.12 and require FSL_
+and ANTs_ on ``$PATH``. Newer Python versions are not yet part of the release test
+matrix. The container currently uses Python 3.10; see the ``Dockerfile`` for the
+full system dependency list.
 
 System requirements
 -------------------

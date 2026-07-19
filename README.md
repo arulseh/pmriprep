@@ -93,7 +93,8 @@ cd pmriprep
 python -m pip install .
 ```
 
-PMRIPrep is not yet published on PyPI. A source installation requires FSL and ANTs on `$PATH`; see the Dockerfile for the full list of system dependencies.
+Source installations are tested on Python 3.10–3.12 and require FSL and ANTs on
+`$PATH`; see the Dockerfile for the full system dependency list.
 
 ## System Requirements
 
