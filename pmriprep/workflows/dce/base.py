@@ -833,8 +833,6 @@ def init_dce_preproc_wf(
                 "agent_standard_dose",  # Standard clinical dose (mmol/kg) for this agent
                 # Registration transforms (from anat pipeline)
                 "t1w_to_mni_xfm",  # T1w to MNI transform for atlas-guided AIF
-                # Atlas inputs (optional)
-                "atlas_mask_file",  # MNI-space atlas mask for AIF search territories
                 # Structural underlay inputs
                 "t1w_underlay",  # precontrast (or single-source) T1w underlay
                 "t1w_postcon_underlay",  # postcontrast T1w underlay (independent of t1w_underlay)

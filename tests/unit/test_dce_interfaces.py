@@ -31,4 +31,6 @@ def test_dce_aif_inputs_match_cascade_controls() -> None:
     traits = DCEAIFDetectionInputSpec().traits()
     assert "aif_method" in traits
     assert "n_candidates" in traits
+    assert "atlas_mask_files" in traits
+    assert "atlas_mask_file" not in traits
     assert "criteria" not in traits

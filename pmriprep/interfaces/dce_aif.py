@@ -1360,9 +1360,6 @@ class DCEAIFDetectionInputSpec(BaseInterfaceInputSpec):
         mandatory=True,
         desc="3D brain mask NIfTI",
     )
-    atlas_mask_file = traits.Str(
-        desc="Optional 3D arterial atlas mask in DCE space (broadest)",
-    )
     atlas_mask_files = traits.List(
         traits.Str,
         desc=(
@@ -1545,8 +1542,9 @@ class AIFDetection(BaseInterface):
         4D NIfTI with concentration time courses in mM.
     brain_mask_file : str
         3D brain mask NIfTI.
-    atlas_mask_file : str, optional
-        3D arterial atlas mask for constrained search.
+    atlas_mask_files : list of str, optional
+        Arterial atlas masks for constrained search, ordered from tightest to
+        broadest territory.
     lesion_mask_file : str, optional
         3D lesion mask for excluding potentially abnormal regions.
     aif_method : str
@@ -4275,18 +4273,6 @@ class AIFDetection(BaseInterface):
                         atlas_names.append(
                             re.sub(r"^MNI_\d+mm_MRA_arterial_", "", af_path.name.split(".")[0])
                         )
-            # Backward compat: single atlas_mask_file appended if not already loaded
-            if (
-                not atlas_masks
-                and isdefined(self.inputs.atlas_mask_file)
-                and str(self.inputs.atlas_mask_file) not in ("", "None")
-                and Path(self.inputs.atlas_mask_file).exists()
-            ):
-                atlas_masks = [
-                    nib.load(self.inputs.atlas_mask_file).get_fdata()  # type: ignore[attr-defined]
-                ]
-                atlas_names = [re.sub(r"^MNI_\d+mm_MRA_arterial_", "", Path(self.inputs.atlas_mask_file).name.split(".")[0])]
-
         # Optional lesion mask
         lesion_mask: Optional[npt.NDArray[Any]] = None
         if self.inputs.lesion_mask_file:
