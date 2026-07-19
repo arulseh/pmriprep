@@ -365,6 +365,29 @@ def _fraction_vp_at_bound(
     return float(np.mean(values[finite] > 0.5))
 
 
+def _fraction_fxl_risk(
+    concentration: npt.NDArray[Any],
+    fitting_mask: npt.NDArray[Any],
+) -> float:
+    """Return the fitted-voxel fraction exceeding the FXL concentration limit."""
+    peak_concentration = np.nanmax(concentration, axis=-1)
+    valid = fitting_mask & np.isfinite(peak_concentration)
+    if not np.any(valid):
+        return 0.0
+    return float(np.mean(peak_concentration[valid] > 0.8))
+
+
+def _summarize_dce_r2(values: list[float]) -> dict[str, float]:
+    """Summarize retained-fit coefficients of determination."""
+    if not values:
+        return {}
+    return {
+        "r2_mean": float(np.mean(values)),
+        "r2_std": float(np.std(values)),
+        "r2_median": float(np.median(values)),
+    }
+
+
 def _validate_dce_time_axis(
     time_points: npt.ArrayLike,
     n_dce_frames: int,
@@ -2864,14 +2887,10 @@ class ComputeDCEMaps(BaseInterface):
         # (C_t = (R1(t) - R1(0))/r1). Tumor-mask-stratified fraction
         # emitted in _generate_dce_pk_fit_qc. Shutter-speed model is not
         # viable at this pipeline's clinical TR_vol — report only.
-        _fxl_peak_ct = np.nanmax(conc_data, axis=-1)
-        _in_brain = fitting_mask & np.isfinite(_fxl_peak_ct)
-        if np.any(_in_brain):
-            qc_metrics["frac_fxl_risk_whole_brain"] = float(
-                np.mean(_fxl_peak_ct[_in_brain] > 0.8)
-            )
-        else:
-            qc_metrics["frac_fxl_risk_whole_brain"] = 0.0
+        qc_metrics["frac_fxl_risk_whole_brain"] = _fraction_fxl_risk(
+            conc_data,
+            fitting_mask,
+        )
 
         qc_metrics.update(
             _summarize_dce_categorical_qc(
@@ -2884,10 +2903,7 @@ class ComputeDCEMaps(BaseInterface):
             )
         )
 
-        if r2_list:
-            qc_metrics["r2_mean"] = float(np.mean(r2_list))
-            qc_metrics["r2_std"] = float(np.std(r2_list))
-            qc_metrics["r2_median"] = float(np.median(r2_list))
+        qc_metrics.update(_summarize_dce_r2(r2_list))
 
         mcmc_diag = _summarize_mcmc_diagnostics(
             n_mcmc_voxels,

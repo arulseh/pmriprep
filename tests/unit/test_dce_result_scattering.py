@@ -10,6 +10,7 @@ from pmriprep.interfaces.dce_compute import (
     _account_retained_dce_fit,
     _accumulate_mcmc_diagnostics,
     _compute_vp_prior_departure,
+    _fraction_fxl_risk,
     _fraction_vp_at_bound,
     _is_degenerate_dce_fit,
     _scatter_degenerate_dce_fit,
@@ -18,6 +19,7 @@ from pmriprep.interfaces.dce_compute import (
     _scatter_dce_uncertainties,
     _summarize_dce_categorical_qc,
     _summarize_dce_fitted_parameters,
+    _summarize_dce_r2,
     _summarize_mcmc_diagnostics,
     _summarize_vp_prior_departures,
 )
@@ -452,3 +454,29 @@ def test_fraction_vp_at_bound_uses_finite_in_mask_values(
 ) -> None:
     """Whole-brain bound fractions ignore background and non-finite values."""
     assert _fraction_vp_at_bound(np.array(mask), np.array(values)) == expected
+
+
+def test_fraction_fxl_risk_uses_peak_fitted_concentration() -> None:
+    """FXL prevalence uses fitted voxels and a strict 0.8 mM threshold."""
+    concentration = np.array(
+        [[[[0.1, 0.8, 0.2], [0.1, 0.9, 0.3], [0.2, 1.2, 0.4]]]]
+    )
+    fitting_mask = np.array([[[True, True, False]]])
+    assert _fraction_fxl_risk(concentration, fitting_mask) == pytest.approx(0.5)
+
+
+def test_fraction_fxl_risk_empty_finite_domain_is_zero() -> None:
+    """An empty fitting domain retains the serialized zero prevalence."""
+    concentration = np.zeros((1, 1, 1, 2))
+    assert _fraction_fxl_risk(
+        concentration,
+        np.zeros((1, 1, 1), dtype=bool),
+    ) == 0.0
+
+
+def test_summarize_dce_r2_preserves_population_statistics() -> None:
+    """R-squared summaries retain mean, population SD, and median."""
+    assert _summarize_dce_r2([0.2, 0.5, 0.8]) == pytest.approx(
+        {"r2_mean": 0.5, "r2_std": np.std([0.2, 0.5, 0.8]), "r2_median": 0.5}
+    )
+    assert _summarize_dce_r2([]) == {}
