@@ -63,9 +63,8 @@ def _validate_uniform_time_points(
 ) -> float:
     """Validate that time points are uniformly spaced and return dt.
 
-    The analytic convolution assumes uniform temporal spacing. Warns if
-    variation exceeds 5% but does not error, since DCE data is almost always
-    uniform.
+    The analytic convolution assumes uniform temporal spacing, so unsupported
+    axes fail rather than being evaluated with the first interval.
 
     Parameters
     ----------
@@ -77,24 +76,26 @@ def _validate_uniform_time_points(
     float
         Time step dt in minutes.
     """
+    time_points = np.asarray(time_points, dtype=np.float64)
+    if time_points.ndim != 1:
+        raise ValueError(
+            f"Time points must be one-dimensional; got shape {time_points.shape}."
+        )
+    if not np.all(np.isfinite(time_points)):
+        raise ValueError("Time points must contain only finite values.")
+
     n = len(time_points)
     if n <= 1:
         return 1.0
     dts = np.diff(time_points)
     dt = float(dts[0])
-    if dt <= 0:
+    if np.any(dts <= 0.0):
+        raise ValueError("Time points must be strictly increasing.")
+    if not np.allclose(dts, dt, rtol=1e-5, atol=1e-8):
         raise ValueError(
-            "Time points must be strictly increasing; got first dt=%.6f min." % dt
+            "Nonuniform time points are unsupported by the analytic "
+            "convolution models."
         )
-    if len(dts) > 1:
-        variation = (np.max(dts) - np.min(dts)) / np.mean(dts)
-        if variation > 0.05:
-            logger.warning(
-                "Non-uniform temporal spacing (%.1f%% variation). "
-                "Analytic convolution assumes uniform dt=%.4f min.",
-                variation * 100,
-                dt,
-            )
     return dt
 
 

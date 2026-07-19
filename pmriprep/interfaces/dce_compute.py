@@ -40,6 +40,67 @@ from pmriprep.utils.dce_voxel_prep import prepare_voxel_for_fitting
 logger = logging.getLogger(__name__)
 
 
+def _validate_dce_time_axis(
+    time_points: npt.ArrayLike,
+    n_dce_frames: int,
+    n_aif_samples: int,
+) -> npt.NDArray[np.float64]:
+    """Validate the uniformly sampled time axis required by DCE fitting.
+
+    Parameters
+    ----------
+    time_points : array-like
+        Acquisition times in minutes.
+    n_dce_frames : int
+        Number of frames in the DCE concentration series.
+    n_aif_samples : int
+        Number of samples in the arterial input function.
+
+    Returns
+    -------
+    numpy.ndarray
+        Validated one-dimensional time axis as ``float64``.
+
+    Raises
+    ------
+    ValueError
+        If the time axis is not one-dimensional, finite, length-matched,
+        strictly increasing, or uniformly spaced.
+
+    Notes
+    -----
+    The Tofts-family and 2CXM analytic convolution implementations use one
+    constant sample interval. Nonuniform sampling is therefore rejected rather
+    than silently evaluated using only the first interval.
+    """
+    axis = np.asarray(time_points, dtype=np.float64)
+    if axis.ndim != 1:
+        raise ValueError(
+            f"DCE time points must be one-dimensional; got shape {axis.shape}."
+        )
+    if axis.size < 2:
+        raise ValueError(
+            f"DCE time points must contain at least two samples; got {axis.size}."
+        )
+    if axis.size != n_dce_frames or axis.size != n_aif_samples:
+        raise ValueError(
+            "DCE time-point, concentration-frame, and AIF lengths must match; "
+            f"got {axis.size}, {n_dce_frames}, and {n_aif_samples}."
+        )
+    if not np.all(np.isfinite(axis)):
+        raise ValueError("DCE time points must contain only finite values.")
+
+    intervals = np.diff(axis)
+    if np.any(intervals <= 0.0):
+        raise ValueError("DCE time points must be strictly increasing.")
+    if not np.allclose(intervals, intervals[0], rtol=1e-5, atol=1e-8):
+        raise ValueError(
+            "Nonuniform DCE time points are unsupported by the current "
+            "analytic convolution models."
+        )
+    return axis
+
+
 class VoxelInput(NamedTuple):
     """Typed container for per-voxel fitting input data."""
 
@@ -999,7 +1060,10 @@ class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
     )
     time_points_file = File(
         exists=True,
-        desc="Optional 1D text file with time points (minutes); if not provided, uses TR",
+        desc=(
+            "Optional 1D text file with uniformly spaced time points (minutes); "
+            "if not provided, uses volume TR"
+        ),
     )
 
     # Inference engine options
@@ -1583,6 +1647,12 @@ class ComputeDCEMaps(BaseInterface):
                 "(BIDS RepetitionTime). Pulse TR (RepetitionTimeExcitation) "
                 "must not be used as a substitute for 3D acquisitions."
             )
+
+        time_points = _validate_dce_time_axis(
+            time_points,
+            n_dce_frames=n_timepoints,
+            n_aif_samples=int(np.size(aif)),
+        )
 
         # TR for auto-model selection: must be the volume TR (temporal
         # sampling), not the pulse TR — model eligibility depends on
