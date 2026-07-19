@@ -664,7 +664,17 @@ def _transform_atlas_cascade_to_dce(
     return out_files
 
 
-def _signal_to_concentration_node(dce_file, t1_map_file, b1_map_file, flip_angle, tr, field_strength, r1_relaxivity, baseline_frames, no_t1):  # type: ignore[no-untyped-def]
+def _signal_to_concentration_node(
+    dce_file: str,
+    t1_map_file: str | None,
+    b1_map_file: str | None,
+    flip_angle: float,
+    tr: float,
+    field_strength: float,
+    r1_relaxivity: float | None,
+    baseline_frames: int,
+    no_t1: bool,
+) -> str:
     """Convert DCE signal to contrast-agent concentration.
 
     This function wraps the signal_to_concentration utility for use in
@@ -722,10 +732,7 @@ def _signal_to_concentration_node(dce_file, t1_map_file, b1_map_file, flip_angle
                 "Failed to load T1 map (%s) — using default T1", exc,
             )
 
-    # Load B1 map. Do NOT pre-clip here: signal_to_concentration captures
-    # the b1<=0 sentinel before its own clip, then resets those voxels to
-    # nominal flip angle. Pre-clipping would map the sentinel to the lower
-    # bound (e.g., 0.5 at 3T), silently halving the effective flip angle.
+    # Preserve the nonpositive B1 sentinel consumed by signal_to_concentration.
     b1_map = None
     if b1_map_file:
         try:
@@ -768,7 +775,15 @@ def _signal_to_concentration_node(dce_file, t1_map_file, b1_map_file, flip_angle
     return out_file
 
 
-def _dsc_dce_validation_node(vp_file=None, dsc_cbv_file=None, dsc_ncbv_file=None, brain_mask=None, no_dsc_validation=False, pk_qc=None, dsc_preload_configured=None):  # type: ignore[no-untyped-def]
+def _dsc_dce_validation_node(
+    vp_file: str | None = None,
+    dsc_cbv_file: str | None = None,
+    dsc_ncbv_file: str | None = None,
+    brain_mask: str | None = None,
+    no_dsc_validation: bool = False,
+    pk_qc: dict[str, object] | str | None = None,
+    dsc_preload_configured: bool | None = None,
+) -> dict[str, object]:
     """Run DSC-DCE cross-validation.
 
     Parameters
@@ -786,13 +801,10 @@ def _dsc_dce_validation_node(vp_file=None, dsc_cbv_file=None, dsc_ncbv_file=None
     no_dsc_validation : bool
         If True, skip cross-validation.
     pk_qc : dict or str or None
-        Full ``pk_modeling.qc_metrics`` dict (or a bare string for
-        backwards compatibility). The function extracts
+        Full ``pk_modeling.qc_metrics`` dict or a constraint-mode string. The
+        function extracts
         ``dsc_cbv_constraint.mode`` and
-        ``dsc_cbv_constraint.aif_tissue_overshoot_fraction`` — the
-        latter is only emitted for NAWM-anchored auto-mode subjects
-        with ≥100 valid voxels; missing values fall back to legacy
-        tight-band behavior cleanly.
+        ``dsc_cbv_constraint.aif_tissue_overshoot_fraction`` when present.
     dsc_preload_configured : bool or None
         Whether DSC preload was configured.
 
@@ -811,14 +823,23 @@ def _dsc_dce_validation_node(vp_file=None, dsc_cbv_file=None, dsc_ncbv_file=None
         SYNTHETIC_AIF_REASON_STRING,
     )
 
-    resolved_mode = None
-    overshoot = None
-    constraint_skip_reason = None
+    resolved_mode: str | None = None
+    overshoot: float | None = None
+    constraint_skip_reason: str | None = None
     if isinstance(pk_qc, dict):
-        cbv_constraint = pk_qc.get("dsc_cbv_constraint", {}) or {}
-        resolved_mode = cbv_constraint.get("mode")
-        overshoot = cbv_constraint.get("aif_tissue_overshoot_fraction")
-        constraint_skip_reason = cbv_constraint.get("skip_reason")
+        constraint_value = pk_qc.get("dsc_cbv_constraint")
+        if isinstance(constraint_value, dict):
+            mode_value = constraint_value.get("mode")
+            if isinstance(mode_value, str):
+                resolved_mode = mode_value
+            overshoot_value = constraint_value.get(
+                "aif_tissue_overshoot_fraction"
+            )
+            if isinstance(overshoot_value, (int, float)):
+                overshoot = float(overshoot_value)
+            skip_value = constraint_value.get("skip_reason")
+            if isinstance(skip_value, str):
+                constraint_skip_reason = skip_value
     elif isinstance(pk_qc, str):
         resolved_mode = pk_qc
 
@@ -835,14 +856,8 @@ def _dsc_dce_validation_node(vp_file=None, dsc_cbv_file=None, dsc_ncbv_file=None
             "reason": "Validation skipped or missing data",
         }
 
-    # Synthetic-AIF short-circuit: the DSC CBV constraint upstream
-    # already SKIPped with reason=synthetic_aif, so running the xval
-    # on absolute-scale-invalid CBV would emit spurious POOR/CIRCULAR.
-    # The xval ratio bands are calibrated against calibrated-scale
-    # (NAWM-anchored) CBV; with a synthetic AIF the scale is not
-    # comparable across subjects. Check BEFORE the no-DSC guard so
-    # the explicit reason surfaces even if downstream files haven't
-    # arrived yet (the constraint's QC is the authoritative signal).
+    # Synthetic-AIF CBV does not have the subject-specific scale required by
+    # the NAWM-anchored cross-validation ratio bands.
     if constraint_skip_reason == SKIP_REASON_SYNTHETIC_AIF:
         return {
             "skipped": True,
@@ -859,11 +874,9 @@ def _dsc_dce_validation_node(vp_file=None, dsc_cbv_file=None, dsc_ncbv_file=None
             "skip_reason": SKIP_REASON_NO_DSC_RUN,
         }
 
-    # xval requires nCBV (NAWM-normalized). PMRIPrep only produces
-    # dimensionless relative CBV. No universal expected ratio exists for
-    # vp / rel_AUC_CBV without NAWM anchoring. Skip cleanly rather than
-    # emit false POOR on subjects with no NAWM mask.
-    if not have_ncbv:
+    # Cross-validation is defined for NAWM-normalized CBV; the expected
+    # vp-to-CBV ratio is undefined for unanchored relative CBV.
+    if dsc_ncbv_file is None or not have_ncbv:
         return {
             "skipped": True,
             "status": "SKIPPED",
@@ -875,8 +888,7 @@ def _dsc_dce_validation_node(vp_file=None, dsc_cbv_file=None, dsc_ncbv_file=None
             ),
         }
 
-    # Past the no-NAWM guard above, brain_mask is required by the validator;
-    # surface a clean skip rather than letting nib.load raise.
+    # The file-based validator requires a DCE-space brain mask.
     if not brain_mask:
         return {
             "skipped": True,
@@ -885,7 +897,6 @@ def _dsc_dce_validation_node(vp_file=None, dsc_cbv_file=None, dsc_ncbv_file=None
         }
 
     try:
-        # nCBV is the only valid comparator.
         result = validate_vp_cbv_from_files(
             vp_path=vp_file,
             ncbv_path=dsc_ncbv_file,
@@ -949,15 +960,22 @@ def _compute_early_mean(dce_file: str, n_frames: int = 3) -> str:
     return out_file
 
 
-def _dsc_dce_xval_plot_node(vp_file=None, dsc_cbv_file=None, dsc_ncbv_file=None, brain_mask=None, validation_result=None, subject_id='', session_id='', pk_qc=None, model_selection_file=None):  # type: ignore[no-untyped-def]
+def _dsc_dce_xval_plot_node(
+    vp_file: str | None = None,
+    dsc_ncbv_file: str | None = None,
+    brain_mask: str | None = None,
+    validation_result: dict[str, object] | None = None,
+    subject_id: str = "",
+    session_id: str = "",
+    pk_qc: dict[str, object] | str | None = None,
+    model_selection_file: str | None = None,
+) -> str | None:
     """Generate the DSC-DCE cross-validation plot.
 
     Parameters
     ----------
     vp_file : str or None
         Path to the DCE vp (plasma volume) map.
-    dsc_cbv_file : str or None
-        Path to resampled DSC CBV map in DCE space.
     dsc_ncbv_file : str or None
         NAWM-normalized CBV. The plot is drawn on the dimensionless
         nCBV scale with expected ratio =
@@ -971,9 +989,7 @@ def _dsc_dce_xval_plot_node(vp_file=None, dsc_cbv_file=None, dsc_ncbv_file=None,
     session_id : str, optional
         Session identifier.
     pk_qc : dict or str or None
-        Full ``pk_modeling.qc_metrics`` dict (or a bare mode string
-        for backwards compatibility); the function extracts
-        ``dsc_cbv_constraint.mode``.
+        Full ``pk_modeling.qc_metrics`` dict or a constraint-mode string.
     model_selection_file : str or None
         Path to the model selection map NIfTI (auto mode), for coloring.
 
@@ -992,14 +1008,17 @@ def _dsc_dce_xval_plot_node(vp_file=None, dsc_cbv_file=None, dsc_ncbv_file=None,
         return None
 
     have_ncbv = bool(dsc_ncbv_file) and os.path.isfile(str(dsc_ncbv_file))
-    # Plot mirrors _dsc_dce_validation_node — requires nCBV; the rel-AUC-CBV
-    # fallback is miscalibrated, so skip plot when no NAWM.
+    # Cross-validation requires NAWM-normalized CBV.
     if not have_ncbv or dsc_ncbv_file is None:
         return None
 
-    resolved_mode = None
+    resolved_mode: str | None = None
     if isinstance(pk_qc, dict):
-        resolved_mode = pk_qc.get("dsc_cbv_constraint", {}).get("mode")
+        constraint_value = pk_qc.get("dsc_cbv_constraint")
+        if isinstance(constraint_value, dict):
+            mode_value = constraint_value.get("mode")
+            if isinstance(mode_value, str):
+                resolved_mode = mode_value
     elif isinstance(pk_qc, str):
         resolved_mode = pk_qc
 

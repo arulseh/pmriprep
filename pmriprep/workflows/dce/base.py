@@ -1869,7 +1869,6 @@ def init_dce_preproc_wf(
         niu.Function(
             input_names=[
                 "vp_file",
-                "dsc_cbv_file",
                 "dsc_ncbv_file",
                 "brain_mask",
                 "no_dsc_validation",
@@ -1936,9 +1935,6 @@ def init_dce_preproc_wf(
         (pk_wf, dsc_dce_xval_plot, [
             ("outputnode.out_vp", "vp_file"),
             ("outputnode.qc_metrics", "pk_qc"),
-        ]),
-        (resample_dsc_cbv, dsc_dce_xval_plot, [
-            ("cbv_in_dce", "dsc_cbv_file"),
         ]),
         (resample_dsc_ncbv, dsc_dce_xval_plot, [
             ("cbv_in_dce", "dsc_ncbv_file"),
