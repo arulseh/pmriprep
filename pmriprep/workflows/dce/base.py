@@ -102,8 +102,8 @@ def init_dce_pk_modeling_wf(
         DCE brain mask, raw signal (for tSNR), baseline/bolus timing, and motion.
     tr, volume_tr, dsc_dose, dsc_agent_standard_dose
         Acquisition timing and DSC dose scaling (defaults apply on DCE-only runs).
-    dsc_cbv_file, dsc_ncbv_file
-        DSC CBV / NAWM-normalized CBV resampled to DCE space (vp constraint / prior).
+    dsc_ncbv_file
+        NAWM-normalized DSC CBV resampled to DCE space for the vp prior.
     tumor_mask_file
         Enhancing-tumor mask (DCE grid) — tissue-arrival reference for AIF BAT
         pre-alignment; empty when tumor segmentation is unavailable.
@@ -132,7 +132,6 @@ def init_dce_pk_modeling_wf(
                 "baseline_frames",
                 "fd_values",
                 "bolus_arrival_frame",
-                "dsc_cbv_file",
                 "dsc_ncbv_file",
                 "tumor_mask_file",
             ]
@@ -207,7 +206,6 @@ def init_dce_pk_modeling_wf(
             ("baseline_frames", "baseline_frames"),
             ("fd_values", "fd_values"),
             ("bolus_arrival_frame", "bolus_arrival_frame"),
-            ("dsc_cbv_file", "dsc_cbv_file"),
             ("dsc_ncbv_file", "dsc_ncbv_file"),
             ("tumor_mask_file", "tumor_mask_file"),
         ]),
@@ -1728,11 +1726,6 @@ def init_dce_preproc_wf(
         ]),
         (dce_preprocess, resample_dsc_cbv, [
             ("mean_img", "dce_reference"),
-        ]),
-        # Feed resampled CBV (absolute/relative) to PK modeling and
-        # cross-validation — NOT used for vp prior (see resample_dsc_ncbv).
-        (resample_dsc_cbv, pk_wf, [
-            ("cbv_in_dce", "inputnode.dsc_cbv_file"),
         ]),
     ])
     # Note: resample_dsc_cbv → dsc_dce_validation connected after Node 9 creation

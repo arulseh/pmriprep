@@ -1477,12 +1477,6 @@
       "dsc_cbv_file"
     ],
     [
-      "resample_dsc_cbv",
-      "cbv_in_dce",
-      "pk_modeling",
-      "dsc_cbv_file"
-    ],
-    [
       "resample_dsc_ncbv",
       "cbv_in_dce",
       "dsc_dce_validation",

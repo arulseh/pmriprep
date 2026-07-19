@@ -376,6 +376,7 @@ class TestComputeDCEMapsDoseTraits:
         # Interface has the traits with documented defaults.
         spec = ComputeDCEMapsInputSpec()
         assert "hematocrit" not in spec.traits()
+        assert "dsc_cbv_file" not in spec.traits()
         assert spec.dsc_dose == 1.0
         assert spec.dsc_agent_standard_dose == 0.1
 

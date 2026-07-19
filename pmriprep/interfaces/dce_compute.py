@@ -1094,13 +1094,6 @@ class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
     )
 
     # DSC CBV constraint options
-    # Use traits.Str instead of File: when DSC is unavailable, the upstream
-    # resample node returns "" which nipype File trait cannot validate.
-    dsc_cbv_file = traits.Str(
-        desc="DSC-derived CBV map (relative or absolute units) used for "
-             "cross-validation and QC resampling. NOT used for the vp "
-             "prior — see dsc_ncbv_file for that.",
-    )
     dsc_ncbv_file = traits.Str(
         desc="DSC NAWM-normalized CBV (nCBV, dimensionless ratio) used for "
              "the vp prior via vp = NAWM_VP_REFERENCE × nCBV. Empty string "
