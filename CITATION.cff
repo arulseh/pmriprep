@@ -1,0 +1,25 @@
+cff-version: 1.2.0
+message: "If you use PMRIPrep, please cite this software using this metadata."
+title: "PMRIPrep: automated preprocessing and quantification of DSC and DCE MRI"
+type: software
+authors:
+  - family-names: Rulseh
+    given-names: Aaron M.
+  - family-names: Rajan
+    given-names: Archith
+  - family-names: Curl
+    given-names: Brandon
+  - family-names: Mohan
+    given-names: Suyash
+  - family-names: Vymazal
+    given-names: Josef
+  - family-names: Chawla
+    given-names: Sanjeev
+repository-code: "https://github.com/arulseh/pmriprep"
+license: Apache-2.0
+keywords:
+  - perfusion MRI
+  - dynamic susceptibility contrast
+  - dynamic contrast-enhanced MRI
+  - BIDS
+  - NiPreps

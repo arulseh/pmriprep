@@ -637,12 +637,13 @@ PMRIPrep software is licensed under the Apache License, Version 2.0. Bundled mas
 
 ## Citation
 
-If you use PMRIPrep in your research, please cite:
+If you use PMRIPrep in your research, use the repository's
+[`CITATION.cff`](CITATION.cff) metadata or cite:
 
 ```
-@software{pmriprep,
-  title = {PMRIPrep: Perfusion MRI Preprocessing Pipeline},
-  author = {PMRIPrep Developers},
+@software{rulseh2026pmriprep,
+  title = {PMRIPrep: automated preprocessing and quantification of DSC and DCE MRI},
+  author = {Rulseh, Aaron M. and Rajan, Archith and Curl, Brandon and Mohan, Suyash and Vymazal, Josef and Chawla, Sanjeev},
   year = {2026},
   url = {https://github.com/arulseh/pmriprep}
 }
