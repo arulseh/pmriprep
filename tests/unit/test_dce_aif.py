@@ -100,6 +100,48 @@ class TestDCEClusterScoring:
 
         assert selected == candidates[:3]
 
+    def test_ineligible_cluster_cannot_discard_distal_arterial_keepers(self) -> None:
+        """Zero-score morphology cannot outrank a disconnected valid artery."""
+        arterial = {
+            "fwhm_seconds": 20.5,
+            "washout": 0.79,
+            "upstroke_slope": 0.46,
+        }
+        ineligible = {
+            "fwhm_seconds": AIF_IDEAL_FWHM_SECONDS,
+            "washout": AIF_WASHOUT_PHYSIOLOGIC_CENTER,
+            "upstroke_slope": 1.0,
+        }
+        candidates, scores, metrics = self._cluster_inputs(
+            2, 2, arterial, ineligible
+        )
+        scores[2:] = [0.0, 0.0]
+
+        selected, selected_scores, _ = AIFDetection._score_and_select_cluster(
+            candidates, scores, metrics, (20, 20, 20), tr=4.7618
+        )
+
+        assert selected == candidates[:2]
+        assert selected_scores == [0.8, 0.8]
+
+    def test_no_keeper_eligible_cluster_returns_empty(self) -> None:
+        """Candidates unusable downstream cannot survive cluster selection."""
+        metrics = {
+            "fwhm_seconds": AIF_IDEAL_FWHM_SECONDS,
+            "washout": AIF_WASHOUT_PHYSIOLOGIC_CENTER,
+            "upstroke_slope": 1.0,
+        }
+        candidates, scores, metrics_list = self._cluster_inputs(
+            2, 2, metrics, metrics
+        )
+        scores = [0.0] * len(scores)
+
+        selected = AIFDetection._score_and_select_cluster(
+            candidates, scores, metrics_list, (20, 20, 20), tr=4.7618
+        )
+
+        assert selected == ([], [], [])
+
 
 # =============================================================================
 # Helpers

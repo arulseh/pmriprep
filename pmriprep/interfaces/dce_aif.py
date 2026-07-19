@@ -2764,7 +2764,7 @@ class AIFDetection(BaseInterface):
         brain_shape: tuple[int, ...],
         tr: float = 2.0,
     ) -> tuple[list[tuple[int, int, int]], list[float], list[dict[str, float]]]:
-        """Score spatial clusters and select the best arterial cluster.
+        """Select the best spatial cluster among keeper-eligible candidates.
 
         Uses 26-connectivity labeling and composite scoring:
         0.3 * FWHM_score + 0.3 * washout_score + 0.15 * upstroke_score + 0.25 * size_score
@@ -2786,8 +2786,17 @@ class AIFDetection(BaseInterface):
         -------
         tuple of (list, list, list)
             (candidates, scores, metrics) for the best cluster.
-            If only 1 cluster exists or clustering fails, returns input unchanged.
+            Candidates below the downstream keeper threshold are removed before
+            clustering. If only one eligible cluster exists or clustering fails,
+            returns the eligible candidates unchanged.
         """
+        eligible_idx = [
+            i for i, score in enumerate(scores) if score >= _MIN_CANDIDATE_SCORE
+        ]
+        candidates = [candidates[i] for i in eligible_idx]
+        scores = [scores[i] for i in eligible_idx]
+        metrics_list = [metrics_list[i] for i in eligible_idx]
+
         if len(candidates) < 3:
             return candidates, scores, metrics_list
 
