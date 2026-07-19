@@ -3134,47 +3134,22 @@ class AIFDetection(BaseInterface):
         )
         return baseline_frames
 
-    # -----------------------------------------------------------------
-    # Step 10: Main pipeline  (_run_interface)
-    # -----------------------------------------------------------------
-
-    def _run_interface(self, runtime: Any) -> Any:
-        """Execute the AIF detection pipeline.
-
-        1. Build attempts list: atlas (strict/relaxed/permissive) then
-           brain (relaxed/permissive).
-        2. Each attempt: prepare mask -> find candidates -> score ->
-           post-scoring filters (distance + contralateral).
-        3. On success, finalize metrics and break.
-        4. Synthetic fallback if all attempts fail.
-        """
-        import logging
-        import nibabel as nib  # type: ignore[import-untyped]
-
-        _logger = logging.getLogger(__name__)
-
-        # ===== External AIF: bypass all detection if provided =====
-        if isdefined(self.inputs.external_aif_file) and self.inputs.external_aif_file:
-            return self._handle_external_aif(runtime)
-
-        context = self._load_detection_context(_logger)
+    def _run_candidate_cascade(
+        self,
+        context: _DSCAIFDetectionContext,
+        aif_baseline_frames: int,
+        logger: Any,
+    ) -> _CascadeDetectionResult:
+        """Run ordered candidate tiers and return the accepted cascade state."""
         conc_data = context.concentration
-        affine = context.affine
         brain_mask = context.brain_mask
         atlas_mask = context.atlas_mask
         atlas_is_mra = context.atlas_is_mra
         full_atlas_mask = context.full_atlas_mask
-        signal_data = context.signal
         aif_method = context.aif_method
         initial_criteria = context.initial_criteria
         n_candidates = context.n_candidates
-        baseline_frames = context.baseline_frames
-        gamma_fit_mode = context.gamma_fit_mode
-        disable_fallback = context.disable_fallback
         tr = context.tr
-
-        aif_baseline_frames = self._prepare_detection_baseline(context, _logger)
-
         # Initialize
         detection_level = "synthetic"
         top_candidates: list[tuple[float, tuple[int, int, int], dict[str, Any]]] = []
@@ -3333,7 +3308,7 @@ class AIFDetection(BaseInterface):
                     brain_mask,
                     tr,
                     aif_baseline_frames,
-                    _logger,
+                    logger,
                 )
                 if single_best is not None:
                     accepted_aif = (
@@ -3360,7 +3335,7 @@ class AIFDetection(BaseInterface):
                     union_state.tier_provenance.clear()
                     union_state.tier_provenance[detection_level] = 1
                     filter_meta = dict(union_state.filter_metadata)
-                    _logger.warning(
+                    logger.warning(
                         "AIF cascade: using single-best candidate "
                         "(union failed dual-ROI validation)"
                     )
@@ -3376,6 +3351,52 @@ class AIFDetection(BaseInterface):
             dict(union_state.tier_provenance),
             postfilter_diags_per_tier,
         )
+
+        return cascade
+
+    # -----------------------------------------------------------------
+    # Step 10: Main pipeline  (_run_interface)
+    # -----------------------------------------------------------------
+
+    def _run_interface(self, runtime: Any) -> Any:
+        """Execute the AIF detection pipeline.
+
+        1. Build attempts list: atlas (strict/relaxed/permissive) then
+           brain (relaxed/permissive).
+        2. Each attempt: prepare mask -> find candidates -> score ->
+           post-scoring filters (distance + contralateral).
+        3. On success, finalize metrics and break.
+        4. Synthetic fallback if all attempts fail.
+        """
+        import logging
+        import nibabel as nib  # type: ignore[import-untyped]
+
+        _logger = logging.getLogger(__name__)
+
+        # ===== External AIF: bypass all detection if provided =====
+        if isdefined(self.inputs.external_aif_file) and self.inputs.external_aif_file:
+            return self._handle_external_aif(runtime)
+
+        context = self._load_detection_context(_logger)
+        conc_data = context.concentration
+        affine = context.affine
+        brain_mask = context.brain_mask
+        signal_data = context.signal
+        baseline_frames = context.baseline_frames
+        gamma_fit_mode = context.gamma_fit_mode
+        disable_fallback = context.disable_fallback
+        tr = context.tr
+
+        aif_baseline_frames = self._prepare_detection_baseline(context, _logger)
+
+        cascade = self._run_candidate_cascade(
+            context, aif_baseline_frames, _logger,
+        )
+        accepted_aif = cascade.accepted_aif
+        top_candidates = cascade.candidates
+        detection_level = cascade.detection_level
+        tiers_attempted = cascade.tiers_attempted
+        postfilter_diags_per_tier = cascade.postfilter_diagnostics
 
         # ---- Build AIF curve ----
         aif_curve: npt.NDArray[Any]
