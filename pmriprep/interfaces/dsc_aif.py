@@ -190,6 +190,23 @@ class _FinalizedDetectedAIF(NamedTuple):
     baseline_frames: int
 
 
+class _FinalAIFState(NamedTuple):
+    """Final DSC AIF arrays and metadata ready for serialization."""
+
+    curve: npt.NDArray[Any]
+    mask: npt.NDArray[Any]
+    measured_curve: npt.NDArray[Any]
+    raw_curve: Optional[npt.NDArray[Any]]
+    gamma_curve: Optional[npt.NDArray[Any]]
+    affine: npt.NDArray[Any]
+    detection_level: str
+    quality_score: float
+    gamma_fit_applied: bool
+    baseline_frames: int
+    candidate_count: int
+    qc_metrics: dict[str, Any]
+
+
 class _DSCAIFDetectionContext(NamedTuple):
     """Validated image data, acquisition state, and detection parameters."""
 
@@ -2378,7 +2395,6 @@ class AIFDetection(BaseInterface):
             Updated Nipype runtime object.
         """
         import logging
-
         import nibabel as nib  # type: ignore[import-untyped]
 
         _logger = logging.getLogger(__name__)
@@ -3354,6 +3370,45 @@ class AIFDetection(BaseInterface):
 
         return cascade
 
+    def _serialize_detection_outputs(self, state: _FinalAIFState) -> None:
+        """Write final DSC AIF artifacts and populate Nipype results."""
+        import nibabel as nib  # type: ignore[import-untyped]
+
+        out_curve = self._gen_outfilename("_aif_curve.txt")
+        np.savetxt(out_curve, state.curve)
+        out_raw = ""
+        if state.raw_curve is not None:
+            out_raw = self._gen_outfilename("_raw_aif_curve.txt")
+            np.savetxt(out_raw, state.raw_curve)
+
+        out_mask = self._gen_outfilename("_aif_mask.nii.gz")
+        nib.save(nib.Nifti1Image(state.mask, state.affine), out_mask)  # type: ignore[attr-defined]
+        out_measured = self._gen_outfilename("_measured_aif_curve.txt")
+        np.savetxt(out_measured, state.measured_curve)
+        out_gamma = self._gen_outfilename("_gamma_aif_curve.txt")
+        np.savetxt(
+            out_gamma,
+            state.gamma_curve if state.gamma_curve is not None else state.curve,
+        )
+        if state.gamma_curve is None:
+            state.qc_metrics["gamma_aif_fallback_to_raw"] = True
+
+        self._results = {
+            "out_aif_curve": out_curve,
+            "out_aif_mask": out_mask,
+            "out_gamma_aif_curve": out_gamma,
+            "out_measured_aif_curve": out_measured,
+            "out_raw_aif_curve": out_raw,
+            "out_aif_coord": state.qc_metrics.get("aif_voxel_coord", []),
+            "aif_curve": [float(value) for value in state.curve],
+            "detection_level": state.detection_level,
+            "quality_score": state.quality_score,
+            "candidate_count": state.candidate_count,
+            "gamma_fit_applied": state.gamma_fit_applied,
+            "aif_baseline_frames": state.baseline_frames,
+            "qc_metrics": state.qc_metrics,
+        }
+
     # -----------------------------------------------------------------
     # Step 10: Main pipeline  (_run_interface)
     # -----------------------------------------------------------------
@@ -3369,7 +3424,6 @@ class AIFDetection(BaseInterface):
         4. Synthetic fallback if all attempts fail.
         """
         import logging
-        import nibabel as nib  # type: ignore[import-untyped]
 
         _logger = logging.getLogger(__name__)
 
@@ -3547,49 +3601,22 @@ class AIFDetection(BaseInterface):
                 postfilter_diags_per_tier
             )
 
-        # Save outputs
-        out_aif_curve = self._gen_outfilename("_aif_curve.txt")
-        np.savetxt(out_aif_curve, aif_curve)
-
-        out_raw_aif = ""
-        if raw_aif_curve is not None:
-            out_raw_aif = self._gen_outfilename("_raw_aif_curve.txt")
-            np.savetxt(out_raw_aif, raw_aif_curve)
-
-        out_aif_mask = self._gen_outfilename("_aif_mask.nii.gz")
-        mask_img = nib.Nifti1Image(aif_mask_arr, affine)  # type: ignore[attr-defined]
-        nib.save(mask_img, out_aif_mask)  # type: ignore[attr-defined]
-
-        # Save measured AIF (always, for AUC CBV denominator downstream).
-        # Pre-gamma-replacement; synthetic fallback overwrites this above.
-        out_measured_aif = self._gen_outfilename("_measured_aif_curve.txt")
-        np.savetxt(out_measured_aif, measured_aif)
-
-        # Save gamma-fitted AIF (always, kept for QC overlay and future use).
-        # Falls back to raw AIF when gamma fit failed or was not attempted.
-        out_gamma_aif = self._gen_outfilename("_gamma_aif_curve.txt")
-        if gamma_fitted_curve is not None:
-            np.savetxt(out_gamma_aif, gamma_fitted_curve)
-        else:
-            np.savetxt(out_gamma_aif, aif_curve)
-            qc_metrics["gamma_aif_fallback_to_raw"] = True
-
-        n_cand = len(top_candidates) if top_candidates else 0
-        self._results = {
-            "out_aif_curve": out_aif_curve,
-            "out_aif_mask": out_aif_mask,
-            "out_gamma_aif_curve": out_gamma_aif,
-            "out_measured_aif_curve": out_measured_aif,
-            "out_raw_aif_curve": out_raw_aif,
-            "out_aif_coord": qc_metrics.get("aif_voxel_coord", []),
-            "aif_curve": [float(x) for x in aif_curve],
-            "detection_level": detection_level,
-            "quality_score": quality_score,
-            "candidate_count": n_cand,
-            "gamma_fit_applied": gamma_fit_applied,
-            "aif_baseline_frames": aif_baseline_frames,
-            "qc_metrics": qc_metrics,
-        }
+        self._serialize_detection_outputs(
+            _FinalAIFState(
+                aif_curve,
+                aif_mask_arr,
+                measured_aif,
+                raw_aif_curve,
+                gamma_fitted_curve,
+                affine,
+                detection_level,
+                quality_score,
+                gamma_fit_applied,
+                aif_baseline_frames,
+                len(top_candidates),
+                qc_metrics,
+            )
+        )
 
         return runtime
 
