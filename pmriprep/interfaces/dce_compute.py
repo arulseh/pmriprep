@@ -409,6 +409,17 @@ def _summarize_dce_fit_outcomes(
     }
 
 
+def _zero_dce_background(
+    values: npt.NDArray[Any],
+    mask: npt.NDArray[np.bool_],
+) -> npt.NDArray[Any]:
+    """Zero spatial background while preserving all in-mask values."""
+    spatial_mask = mask
+    for _ in range(values.ndim - mask.ndim):
+        spatial_mask = spatial_mask[..., np.newaxis]
+    return np.where(spatial_mask, values, 0)
+
+
 def _validate_dce_time_axis(
     time_points: npt.ArrayLike,
     n_dce_frames: int,
@@ -2966,36 +2977,36 @@ class ComputeDCEMaps(BaseInterface):
         # Zero background (outside brain mask) on every float map before
         # save. Preserves in-brain NaN so auto-mode "parameter not applicable
         # for the winning model" semantics still reach downstream consumers.
-        ktrans = np.where(mask_bool, ktrans, 0.0)
-        ve = np.where(mask_bool, ve, 0.0)
-        vp = np.where(mask_bool, vp, 0.0)
-        kep = np.where(mask_bool, kep, 0.0)
-        r2_map = np.where(mask_bool, r2_map, 0.0)
-        fp_map = np.where(mask_bool, fp_map, 0.0)
-        ps_map = np.where(mask_bool, ps_map, 0.0)
-        e_map = np.where(mask_bool, e_map, 0.0)
-        delta_bic_map = np.where(mask_bool, delta_bic_map, 0.0)
-        ktrans_std = np.where(mask_bool, ktrans_std, 0.0)
-        ve_std = np.where(mask_bool, ve_std, 0.0)
-        vp_std = np.where(mask_bool, vp_std, 0.0)
-        fp_std = np.where(mask_bool, fp_std, 0.0)
-        ps_std = np.where(mask_bool, ps_std, 0.0)
-        tsnr_map = np.where(mask_bool, tsnr_map, 0.0)
-        iauc60 = np.where(mask_bool, iauc60, 0.0)
-        iauc90 = np.where(mask_bool, iauc90, 0.0)
-        iauc120 = np.where(mask_bool, iauc120, 0.0)
-        ttp = np.where(mask_bool, ttp, 0.0)
-        ser = np.where(mask_bool, ser, 0.0)
-        wash_in_slope = np.where(mask_bool, wash_in_slope, 0.0)
-        wash_out_slope = np.where(mask_bool, wash_out_slope, 0.0)
-        bat = np.where(mask_bool, bat, 0.0)
-        curve_type = np.where(mask_bool, curve_type, 0)
-        quality_flag_map = np.where(mask_bool, quality_flag_map, 0)
-        model_selection_map = np.where(mask_bool, model_selection_map, 0)
+        ktrans = _zero_dce_background(ktrans, mask_bool)
+        ve = _zero_dce_background(ve, mask_bool)
+        vp = _zero_dce_background(vp, mask_bool)
+        kep = _zero_dce_background(kep, mask_bool)
+        r2_map = _zero_dce_background(r2_map, mask_bool)
+        fp_map = _zero_dce_background(fp_map, mask_bool)
+        ps_map = _zero_dce_background(ps_map, mask_bool)
+        e_map = _zero_dce_background(e_map, mask_bool)
+        delta_bic_map = _zero_dce_background(delta_bic_map, mask_bool)
+        ktrans_std = _zero_dce_background(ktrans_std, mask_bool)
+        ve_std = _zero_dce_background(ve_std, mask_bool)
+        vp_std = _zero_dce_background(vp_std, mask_bool)
+        fp_std = _zero_dce_background(fp_std, mask_bool)
+        ps_std = _zero_dce_background(ps_std, mask_bool)
+        tsnr_map = _zero_dce_background(tsnr_map, mask_bool)
+        iauc60 = _zero_dce_background(iauc60, mask_bool)
+        iauc90 = _zero_dce_background(iauc90, mask_bool)
+        iauc120 = _zero_dce_background(iauc120, mask_bool)
+        ttp = _zero_dce_background(ttp, mask_bool)
+        ser = _zero_dce_background(ser, mask_bool)
+        wash_in_slope = _zero_dce_background(wash_in_slope, mask_bool)
+        wash_out_slope = _zero_dce_background(wash_out_slope, mask_bool)
+        bat = _zero_dce_background(bat, mask_bool)
+        curve_type = _zero_dce_background(curve_type, mask_bool)
+        quality_flag_map = _zero_dce_background(quality_flag_map, mask_bool)
+        model_selection_map = _zero_dce_background(model_selection_map, mask_bool)
         if peak_enh is not None:
-            peak_enh = np.where(mask_bool, peak_enh, 0.0)
+            peak_enh = _zero_dce_background(peak_enh, mask_bool)
         if fitted_curves is not None:
-            fitted_curves = np.where(mask_bool[..., np.newaxis], fitted_curves, 0.0)
+            fitted_curves = _zero_dce_background(fitted_curves, mask_bool)
 
         # Generate output filenames
         out_ktrans = self._gen_outfilename("_Ktrans")

@@ -7,8 +7,30 @@ import os
 import nibabel as nib
 import numpy as np
 
-from pmriprep.interfaces.dce_compute import ComputeDCEMaps
+from pmriprep.interfaces.dce_compute import ComputeDCEMaps, _zero_dce_background
 from pmriprep.models.dce.batched_models import batched_tofts_model
+
+
+def test_zero_dce_background_preserves_in_mask_nan_and_dtype() -> None:
+    """Masking retains in-brain sentinels and categorical array dtype."""
+    mask = np.array([[[True, False]]])
+    values = np.array([[[np.nan, 7.0]]], dtype=np.float32)
+    categorical = np.array([[[3, 4]]], dtype=np.int8)
+    masked_values = _zero_dce_background(values, mask)
+    masked_categorical = _zero_dce_background(categorical, mask)
+    assert np.isnan(masked_values[0, 0, 0])
+    assert masked_values[0, 0, 1] == 0.0
+    assert masked_categorical.tolist() == [[[3, 0]]]
+    assert masked_categorical.dtype == np.int8
+
+
+def test_zero_dce_background_broadcasts_over_time() -> None:
+    """The spatial mask applies to every frame of fitted 4D curves."""
+    mask = np.array([[[True, False]]])
+    curves = np.arange(6, dtype=np.float32).reshape(1, 1, 2, 3)
+    masked = _zero_dce_background(curves, mask)
+    np.testing.assert_array_equal(masked[0, 0, 0], curves[0, 0, 0])
+    np.testing.assert_array_equal(masked[0, 0, 1], 0.0)
 
 
 def test_saved_dce_categorical_maps_are_brain_masked(tmp_path) -> None:
