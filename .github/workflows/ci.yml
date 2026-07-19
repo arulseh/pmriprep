@@ -18,6 +18,17 @@ jobs:
       - run: pip install -e ".[test]"
       - run: pytest tests/unit/ -q --maxfail=20
 
+  synthetic-dro-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+      - run: pip install -e ".[test]"
+      - run: pytest tests/dro/ -m "not local_validation" -q --maxfail=20
+
   doctests:
     runs-on: ubuntu-latest
     steps:

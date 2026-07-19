@@ -34,16 +34,26 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 def pytest_collection_modifyitems(
     config: pytest.Config, items: list[pytest.Item]
 ) -> None:
-    """Skip slow and publication tests unless opted in."""
+    """Classify validation suites and skip slow tests unless requested."""
+    tests_root = Path(__file__).parent.resolve()
+    local_roots = {
+        (tests_root / "osipi").resolve(),
+        (tests_root / "qiba").resolve(),
+    }
+    synthetic_root = (tests_root / "dro").resolve()
+
+    for item in items:
+        item_path = Path(str(item.path)).resolve()
+        if any(item_path.is_relative_to(root) for root in local_roots):
+            item.add_marker(pytest.mark.local_validation)
+        elif item_path.is_relative_to(synthetic_root):
+            item.add_marker(pytest.mark.synthetic_dro)
+
     if not config.getoption("--runslow"):
         skip_slow = pytest.mark.skip(reason="need --runslow option to run")
         for item in items:
             if "slow" in item.keywords:
                 item.add_marker(skip_slow)
-
-    # Publication tests only run when explicitly selected via -m publication
-    # (strict markers + addopts handles this via pytest's default behavior)
-
 
 # =============================================================================
 # Directory Fixtures
@@ -1109,4 +1119,3 @@ def sample_dsc_config() -> Dict[str, Any]:
         "n_aif_candidates": 10,
         "pre_bolus": 5,
     }
-

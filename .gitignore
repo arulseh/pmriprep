@@ -12,6 +12,7 @@ crash-*.txt
 # Test artifacts
 .pytest_cache/
 .mypy_cache/
+.ruff_cache/
 .coverage
 htmlcov/
 
@@ -22,4 +23,3 @@ sourcedata/
 # Documentation site
 docs/_build/
 docs/api/
-

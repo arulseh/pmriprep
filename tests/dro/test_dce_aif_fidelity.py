@@ -22,8 +22,6 @@ assertions are rank-orderings, not absolute thresholds.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import numpy as np
 import pytest
 
@@ -36,9 +34,6 @@ from pmriprep.interfaces.dce_aif import (
 TR = 4.8  # OSIPI DCE synthetic temporal resolution (Shalom 2024)
 BASELINE_FRAMES = 5
 N_FRAMES = 65
-
-_OSIPI_AIF = Path(__file__).resolve().parents[2] / "sourcedata" / "osipi" / "AIF.npz"
-
 
 def _clean_arterial() -> np.ndarray:
     """Build a physiologic arterial AIF: Parker first pass + a recirculation tail.
@@ -169,52 +164,6 @@ class TestAveragedFidelityRanking:
         )
         assert m["tail_ratio"] > 0.35  # tissue-diluted tail sits high
         assert m["tail_score"] < 0.5   # ...and is penalized, not rewarded
-
-
-# ---------------------------------------------------------------------------
-# 3. OSIPI ground-truth anchor (skips when the DRO AIF is absent)
-# ---------------------------------------------------------------------------
-
-@pytest.mark.skipif(not _OSIPI_AIF.exists(), reason="OSIPI DRO AIF (AIF.npz) not present")
-class TestOsipiGroundTruthAnchor:
-    """The real MCA ground-truth AIF must score above every contamination mode.
-
-    Anchored on the actual OSIPI DRO ground-truth AIF (a hematocrit-corrected
-    middle-cerebral-artery curve scaled to 6 mM peak; Shalom 2024), not a
-    synthetic Parker curve.
-    """
-
-    def _gt(self) -> np.ndarray:
-        """Load the OSIPI DRO ground-truth MCA AIF (clipped non-negative)."""
-        return np.clip(np.load(_OSIPI_AIF)["Cp"], 0.0, None)
-
-    def test_gt_scores_high_and_above_contamination(self) -> None:
-        """The true MCA AIF is the single highest-fidelity curve."""
-        gt = self._gt()
-        f_gt, _ = score_averaged_aif_fidelity(
-            gt, TR, BASELINE_FRAMES, hematocrit=0.0
-        )
-        clean = _clean_arterial()
-        f_v1, _ = score_averaged_aif_fidelity(
-            _tail_collapse(clean), TR, BASELINE_FRAMES, hematocrit=0.0
-        )
-        f_v2, _ = score_averaged_aif_fidelity(
-            _partial_volume(clean), TR, BASELINE_FRAMES, hematocrit=0.0
-        )
-        # The true AIF is the single highest-fidelity curve.
-        assert f_gt > 0.6, f"true GT AIF scored low: {f_gt:.3f}"
-        assert f_gt > f_v1
-        assert f_gt > f_v2
-
-    def test_gt_washout_is_physiologic(self) -> None:
-        """The GT washout lands in the two-sided acceptance band (~0.78)."""
-        from pmriprep.interfaces.dce_aif import compute_dce_aif_washout
-        from pmriprep.utils.dce_constants import (
-            AIF_WASHOUT_BAND_HALFWIDTH,
-            AIF_WASHOUT_PHYSIOLOGIC_CENTER,
-        )
-        w = compute_dce_aif_washout(self._gt(), BASELINE_FRAMES)
-        assert abs(w - AIF_WASHOUT_PHYSIOLOGIC_CENTER) < AIF_WASHOUT_BAND_HALFWIDTH
 
 
 class TestPlasmaReferenceConsistency:

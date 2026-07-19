@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pmriprep"
-version = "0.82.52"
+version = "0.82.53"
 description = "Perfusion MRI Preprocessing Pipeline - A NiPreps-compatible BIDS-App"
 readme = "README.md"
 license = {text = "Apache-2.0"}
@@ -109,11 +109,13 @@ disallow_untyped_defs = true
 [tool.pytest.ini_options]
 markers = [
     "integration: marks tests as integration tests (deselect with '-m \"not integration\"')",
+    "local_validation: requires non-distributable reference data or local pipeline outputs",
+    "synthetic_dro: uses repository-generated synthetic reference data",
     "slow: marks tests as slow (multi-seed noise sweeps, run with --runslow)",
     "publication: marks tests that generate publication figures/tables",
 ]
 addopts = "--strict-markers"
-testpaths = ["tests"]
+testpaths = ["tests/unit"]
 doctest_optionflags = "ALLOW_UNICODE NORMALIZE_WHITESPACE ELLIPSIS"
 
 [tool.setuptools.packages.find]
