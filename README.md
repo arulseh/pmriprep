@@ -115,33 +115,6 @@ pmriprep /path/to/bids /path/to/output participant \
     --participant-label 01 02 03
 ```
 
-## Input Requirements
-
-PMRIPrep discovers images by BIDS entities. A normal run requires a BIDS
-`dataset_description.json` and at least one T1w image (pre-contrast preferred;
-post-contrast-only processing is supported). Perfusion pipelines run when their
-corresponding 4D image is present, conventionally under `perf/` as `*_dsc.nii.gz`
-or `*_dce.nii.gz`.
-
-Each DSC or DCE NIfTI requires a matching JSON sidecar. Missing required fields are
-fatal because no acquisition-independent numerical default exists:
-
-| Pipeline | Required sidecar fields |
-|----------|-------------------------|
-| DSC | `EchoTime`, volume `RepetitionTime`, `MagneticFieldStrength` |
-| DCE | `FlipAngle`, volume `RepetitionTime`, `MagneticFieldStrength`; 3D acquisitions with a long volume TR also require pulse `RepetitionTimeExcitation` |
-
-`ContrastBolusAgent` is strongly recommended for agent-specific dose and relaxivity
-handling. Use `--dsc-agent-standard-dose` or `--dce-r1` only when the corresponding
-sidecar information is unavailable or needs an explicit override.
-
-Optional inputs extend processing:
-
-- Multiple VFA images with `FlipAngle` and pulse TR metadata enable measured T1 mapping; otherwise a field-strength default T1 is used.
-- A 4D `TB1AFI`, precomputed `TB1TFL`/`TB1map`, or explicit B1 configuration enables B1+ correction.
-- Pre- and post-contrast T1w, T2w, and pre-contrast FLAIR together enable HD-GLIO tumor segmentation.
-- User lesion, NAWM, ROI, and AIF masks or external AIF curves can be supplied through the configuration file.
-
 ## CLI Reference
 
 ```
@@ -160,6 +133,8 @@ pmriprep bids_dir output_dir {participant} [options]
 | `--mem-gb GB` | Upper bound memory limit in GB |
 | `-w PATH`, `--work-dir PATH` | Working directory for intermediate files |
 | `--config-file PATH` | YAML or JSON configuration file for advanced options |
+| `--use-plugin PATH` | Nipype execution-plugin YAML/JSON for schedulers such as SLURM, SGE, or PBS |
+| `--version` | Print the installed PMRIPrep version |
 | `-v`, `--verbose` | Increase log verbosity (repeat for more: `-v`, `-vv`, `-vvv`) |
 
 ### Pipeline Skip Flags
@@ -329,7 +304,10 @@ dce:
 
 ## BIDS Input Requirements
 
-PMRIPrep expects input data in BIDS format:
+PMRIPrep discovers images by BIDS entities. A normal run requires
+`dataset_description.json` and at least one T1w image; pre-contrast is preferred,
+but post-contrast-only anatomical processing is supported. Perfusion pipelines run
+when their corresponding 4D image is present. A representative layout is:
 
 ```
 bids_dir/
@@ -389,7 +367,7 @@ B1+ correction accepts AFI (`*_TB1AFI`), Siemens pre-computed flip angle maps (`
   "ContrastBolusAgent": "gadobutrol"
 }
 ```
-Required: `RepetitionTime`, `EchoTime`, `FlipAngle`, `MagneticFieldStrength`. Recommended: `ContrastBolusAgent` (used for AIF peak threshold scaling).
+Required: `RepetitionTime`, `EchoTime`, `MagneticFieldStrength`. Recommended: `FlipAngle` (acquisition QC) and `ContrastBolusAgent` (used for AIF peak threshold scaling).
 
 **DCE sidecar (`*_dce.json`):**
 ```json
