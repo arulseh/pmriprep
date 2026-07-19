@@ -3409,6 +3409,167 @@ class AIFDetection(BaseInterface):
             "qc_metrics": state.qc_metrics,
         }
 
+    def _finalize_post_cascade(
+        self,
+        context: _DSCAIFDetectionContext,
+        cascade: _CascadeDetectionResult,
+        aif_baseline_frames: int,
+        logger: Any,
+    ) -> _FinalAIFState:
+        """Finalize gamma fitting, fallback, and QC after the candidate cascade."""
+        conc_data = context.concentration
+        baseline_frames = context.baseline_frames
+        detection_level = cascade.detection_level
+        top_candidates = cascade.candidates
+        aif_mask_arr = np.zeros(conc_data.shape[:3], dtype=np.uint8)
+
+        if cascade.accepted_aif is not None and top_candidates:
+            finalized = self._finalize_detected_aif(
+                cascade,
+                context,
+                baseline_frames,
+                aif_baseline_frames,
+            )
+            aif_curve = finalized.curve
+            aif_mask_arr = finalized.mask
+            quality_score = finalized.quality_score
+            qc_metrics = finalized.qc_metrics
+            baseline_frames = finalized.baseline_frames
+        elif not context.disable_fallback:
+            aif_curve, synth_metrics = self._prepare_cached_synthetic_fallback(
+                conc_data,
+                context.brain_mask,
+            )
+            detection_level = "synthetic"
+            quality_score = 0.3
+            qc_metrics = {}
+            _stamp_synthetic_fallback_common(
+                qc_metrics,
+                reason="no_candidates",
+                tiers_attempted=cascade.tiers_attempted,
+            )
+            qc_metrics.update(synth_metrics)
+            _clear_stale_real_aif_keys(qc_metrics)
+        else:
+            raise RuntimeError(
+                "AIF detection failed at all levels and "
+                "synthetic fallback is disabled"
+            )
+
+        qc_metrics["detection_method"] = detection_level
+        qc_metrics["quality_score"] = quality_score
+        if detection_level != "synthetic":
+            qc_metrics["n_aif_voxels_selected"] = len(top_candidates)
+        qc_metrics["s0_rejection_available"] = context.signal is not None
+        qc_metrics["tr_used"] = context.tr
+        qc_metrics["baseline_frames_initial"] = baseline_frames
+        qc_metrics["aif_baseline_frames"] = aif_baseline_frames
+        qc_metrics["baseline_frames_used"] = baseline_frames
+        qc_metrics["baseline_detection_method"] = "auto_p99"
+
+        if detection_level == "synthetic":
+            qc_metrics["synthetic_aif_warnings"] = [
+                "Synthetic AIF used - automatic detection failed",
+                "Relative quantification only (rCBV, rCBF normalized to contralateral)",
+                "Raw TTP remains valid (tissue-derived, AIF-independent); Tmax "
+                "is derived from the deconvolution residue and is unreliable",
+                "Manual AIF selection recommended for clinical use",
+            ]
+
+        measured_aif = aif_curve.copy()
+        if detection_level == "synthetic":
+            qc_metrics["cbv_auc_denominator_is_synthetic"] = True
+
+        gamma_fit_applied = False
+        raw_aif_curve = None
+        gamma_fitted_curve = None
+        if context.gamma_fit_mode != "off" and detection_level != "synthetic":
+            gamma_fit_applied, raw_aif_curve, aif_curve, gamma_fitted_curve = (
+                self._apply_gamma_fit_if_appropriate(
+                    aif_curve,
+                    context.gamma_fit_mode,
+                    baseline_frames,
+                    context.tr,
+                    qc_metrics,
+                )
+            )
+        elif context.gamma_fit_mode != "off" and detection_level == "synthetic":
+            qc_metrics["gamma_fit_applied"] = False
+            qc_metrics["gamma_fit_rejected_reason"] = "synthetic_aif"
+
+        if (
+            not gamma_fit_applied
+            and not context.disable_fallback
+            and detection_level != "synthetic"
+        ):
+            gamma_r2 = qc_metrics.get("gamma_fit_r_squared")
+            if gamma_r2 is not None and gamma_r2 < GAMMA_R2_SYNTHETIC_FALLBACK:
+                logger.warning(
+                    "Gamma fit R²=%.3f < %.1f; falling back to synthetic AIF",
+                    gamma_r2,
+                    GAMMA_R2_SYNTHETIC_FALLBACK,
+                )
+                aif_curve, synth_metrics = self._prepare_cached_synthetic_fallback(
+                    conc_data,
+                    context.brain_mask,
+                )
+                detection_level = "synthetic"
+                quality_score = 0.3
+                aif_mask_arr[:] = 0
+                _clear_stale_real_aif_keys(qc_metrics)
+                _stamp_synthetic_fallback_common(
+                    qc_metrics,
+                    reason="gamma_r2_floor",
+                    tiers_attempted=cascade.tiers_attempted,
+                )
+                qc_metrics["detection_method"] = detection_level
+                qc_metrics["quality_score"] = quality_score
+                qc_metrics["gamma_r2_at_fallback"] = gamma_r2
+                qc_metrics.update(synth_metrics)
+                qc_metrics["synthetic_aif_warnings"] = [
+                    "Synthetic AIF used - gamma fit R2 below threshold",
+                    "Relative quantification only (rCBV, rCBF normalized to contralateral)",
+                    "Raw TTP remains valid (tissue-derived, AIF-independent); Tmax "
+                    "is derived from the deconvolution residue and is unreliable",
+                    "Manual AIF selection recommended for clinical use",
+                ]
+                gamma_fitted_curve = None
+                measured_aif = aif_curve.copy()
+                qc_metrics["cbv_auc_denominator_is_synthetic"] = True
+
+        _flag_retained_below_floor(
+            qc_metrics,
+            disable_fallback=context.disable_fallback,
+            detection_level=detection_level,
+            gamma_fit_applied=gamma_fit_applied,
+        )
+
+        if (
+            (
+                qc_metrics.get("cascade_downgraded", False)
+                or detection_level == "synthetic"
+            )
+            and cascade.postfilter_diagnostics
+        ):
+            qc_metrics["cascade_postfilter_diags"] = dict(
+                cascade.postfilter_diagnostics
+            )
+
+        return _FinalAIFState(
+            aif_curve,
+            aif_mask_arr,
+            measured_aif,
+            raw_aif_curve,
+            gamma_fitted_curve,
+            context.affine,
+            detection_level,
+            quality_score,
+            gamma_fit_applied,
+            aif_baseline_frames,
+            len(top_candidates),
+            qc_metrics,
+        )
+
     # -----------------------------------------------------------------
     # Step 10: Main pipeline  (_run_interface)
     # -----------------------------------------------------------------
@@ -3432,189 +3593,16 @@ class AIFDetection(BaseInterface):
             return self._handle_external_aif(runtime)
 
         context = self._load_detection_context(_logger)
-        conc_data = context.concentration
-        affine = context.affine
-        brain_mask = context.brain_mask
-        signal_data = context.signal
-        baseline_frames = context.baseline_frames
-        gamma_fit_mode = context.gamma_fit_mode
-        disable_fallback = context.disable_fallback
-        tr = context.tr
-
         aif_baseline_frames = self._prepare_detection_baseline(context, _logger)
-
         cascade = self._run_candidate_cascade(
             context, aif_baseline_frames, _logger,
         )
-        accepted_aif = cascade.accepted_aif
-        top_candidates = cascade.candidates
-        detection_level = cascade.detection_level
-        tiers_attempted = cascade.tiers_attempted
-        postfilter_diags_per_tier = cascade.postfilter_diagnostics
-
-        # ---- Build AIF curve ----
-        aif_curve: npt.NDArray[Any]
-        aif_mask_arr = np.zeros(conc_data.shape[:3], dtype=np.uint8)
-        quality_score = 0.0
-        qc_metrics: dict[str, Any] = {}
-
-        if accepted_aif is not None and top_candidates:
-            finalized = self._finalize_detected_aif(
-                cascade,
-                context,
-                baseline_frames,
-                aif_baseline_frames,
-            )
-            aif_curve = finalized.curve
-            aif_mask_arr = finalized.mask
-            quality_score = finalized.quality_score
-            qc_metrics = finalized.qc_metrics
-            baseline_frames = finalized.baseline_frames
-
-        elif not disable_fallback:
-            # Synthetic fallback: reuse cached synthetic AIF from pre-compute
-            aif_curve, synth_metrics = self._prepare_cached_synthetic_fallback(
-                conc_data,
-                brain_mask,
-            )
-            detection_level = "synthetic"
-            quality_score = 0.3
-            qc_metrics = {}
-            _stamp_synthetic_fallback_common(
-                qc_metrics, reason="no_candidates",
-                tiers_attempted=tiers_attempted,
-            )
-            qc_metrics.update(synth_metrics)
-            _clear_stale_real_aif_keys(qc_metrics)
-        else:
-            raise RuntimeError(
-                "AIF detection failed at all levels and "
-                "synthetic fallback is disabled"
-            )
-
-        qc_metrics["detection_method"] = detection_level
-        qc_metrics["quality_score"] = quality_score
-        if detection_level != "synthetic":
-            qc_metrics["n_aif_voxels_selected"] = len(top_candidates)
-        qc_metrics["s0_rejection_available"] = signal_data is not None
-        qc_metrics["tr_used"] = tr
-        qc_metrics["baseline_frames_initial"] = baseline_frames  # configured S0 baseline
-        qc_metrics["aif_baseline_frames"] = aif_baseline_frames  # auto-detected for AIF
-        qc_metrics["baseline_frames_used"] = baseline_frames
-        qc_metrics["baseline_detection_method"] = "auto_p99"
-
-        if detection_level == "synthetic":
-            qc_metrics["synthetic_aif_warnings"] = [
-                "Synthetic AIF used - automatic detection failed",
-                "Relative quantification only (rCBV, rCBF normalized to contralateral)",
-                "Raw TTP remains valid (tissue-derived, AIF-independent); Tmax "
-                "is derived from the deconvolution residue and is unreliable",
-                "Manual AIF selection recommended for clinical use",
-            ]
-        # Capture measured AIF in caller scope BEFORE gamma fit (which may
-        # replace aif_curve with the fitted curve in-place). This is the
-        # always-available measured AIF consumed by AUC CBV downstream.
-        # For synthetic AIF path, this is the synthetic curve itself.
-        measured_aif = aif_curve.copy()
-        if detection_level == "synthetic":
-            qc_metrics["cbv_auc_denominator_is_synthetic"] = True
-
-        # Gamma-variate fitting
-        gamma_fit_applied = False
-        raw_aif_curve = None
-        gamma_fitted_curve = None
-        if gamma_fit_mode != "off" and detection_level != "synthetic":
-            gamma_fit_applied, raw_aif_curve, aif_curve, gamma_fitted_curve = (
-                self._apply_gamma_fit_if_appropriate(
-                    aif_curve, gamma_fit_mode, baseline_frames, tr, qc_metrics,
-                )
-            )
-        elif gamma_fit_mode != "off" and detection_level == "synthetic":
-            qc_metrics["gamma_fit_applied"] = False
-            qc_metrics["gamma_fit_rejected_reason"] = "synthetic_aif"
-
-        # Post-gamma-fit quality gate: reject AIF if gamma fit is catastrophically bad
-        # R² < 0 means the gamma model fits worse than a horizontal line — no bolus shape.
-        if (
-            not gamma_fit_applied
-            and not disable_fallback
-            and detection_level != "synthetic"
-        ):
-            gamma_r2 = qc_metrics.get("gamma_fit_r_squared")
-            if gamma_r2 is not None and gamma_r2 < GAMMA_R2_SYNTHETIC_FALLBACK:
-                _logger.warning(
-                    "Gamma fit R²=%.3f < %.1f; falling back to synthetic AIF",
-                    gamma_r2,
-                    GAMMA_R2_SYNTHETIC_FALLBACK,
-                )
-                # Synthetic fallback: reuse cached synthetic AIF
-                aif_curve, synth_metrics = self._prepare_cached_synthetic_fallback(
-                    conc_data,
-                    brain_mask,
-                )
-                detection_level = "synthetic"
-                quality_score = 0.3
-                aif_mask_arr[:] = 0  # Clear AIF mask (no voxels used)
-                _clear_stale_real_aif_keys(qc_metrics)
-                _stamp_synthetic_fallback_common(
-                    qc_metrics, reason="gamma_r2_floor",
-                    tiers_attempted=tiers_attempted,
-                )
-                qc_metrics["detection_method"] = detection_level
-                qc_metrics["quality_score"] = quality_score
-                qc_metrics["gamma_r2_at_fallback"] = gamma_r2
-                qc_metrics.update(synth_metrics)
-                qc_metrics["synthetic_aif_warnings"] = [
-                    "Synthetic AIF used - gamma fit R2 below threshold",
-                    "Relative quantification only (rCBV, rCBF normalized to contralateral)",
-                    "Raw TTP remains valid (tissue-derived, AIF-independent); Tmax "
-                    "is derived from the deconvolution residue and is unreliable",
-                    "Manual AIF selection recommended for clinical use",
-                ]
-                gamma_fitted_curve = None
-                # Overwrite measured AIF with the synthetic curve — consistent
-                # with what deconv sees, and marks AUC denominator as synthetic.
-                measured_aif = aif_curve.copy()
-                qc_metrics["cbv_auc_denominator_is_synthetic"] = True
-
-        # Fallback disabled: a sub-floor gamma fit is NOT swapped for synthetic
-        # (the AIF is retained), so flag it here rather than leaving it silent.
-        _flag_retained_below_floor(
-            qc_metrics,
-            disable_fallback=disable_fallback,
-            detection_level=detection_level,
-            gamma_fit_applied=gamma_fit_applied,
-        )
-
-        # Surface per-tier postfilter diagnostics whenever the cascade
-        # was downgraded (final tier ≠ initial) OR fell to synthetic
-        # (either via cascade exhaustion or via gamma-R² post-validation
-        # rejection). Single emission point — guarantees the per-tier
-        # breakdown is available to QC consumers regardless of which
-        # path led to the final outcome.
-        if (
-            (qc_metrics.get("cascade_downgraded", False)
-             or detection_level == "synthetic")
-            and postfilter_diags_per_tier
-        ):
-            qc_metrics["cascade_postfilter_diags"] = dict(
-                postfilter_diags_per_tier
-            )
-
         self._serialize_detection_outputs(
-            _FinalAIFState(
-                aif_curve,
-                aif_mask_arr,
-                measured_aif,
-                raw_aif_curve,
-                gamma_fitted_curve,
-                affine,
-                detection_level,
-                quality_score,
-                gamma_fit_applied,
+            self._finalize_post_cascade(
+                context,
+                cascade,
                 aif_baseline_frames,
-                len(top_candidates),
-                qc_metrics,
+                _logger,
             )
         )
 
