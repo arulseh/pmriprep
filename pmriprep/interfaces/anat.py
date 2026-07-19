@@ -580,14 +580,6 @@ class BrainExtractionInputSpec(CommandLineInputSpec):
         usedefault=True,
         desc="Brain extraction tool: hdbet (HD-BET) or ants (ANTs)",
     )
-    mni_template = File(
-        exists=True,
-        desc="MNI template for DICE QC calculation (optional)",
-    )
-    mni_mask = File(
-        exists=True,
-        desc="MNI brain mask for DICE QC calculation (optional)",
-    )
     device = traits.Enum(
         "auto",
         "cuda",
@@ -621,7 +613,6 @@ class BrainExtractionOutputSpec(TraitedSpec):
     out_file = File(exists=True, desc="Brain-extracted image")
     out_mask = File(exists=True, desc="Binary brain mask")
     brain_volume_mm3 = traits.Float(desc="Brain volume in cubic millimeters")
-    dice_vs_mni = traits.Float(desc="DICE coefficient vs MNI brain mask")
     qc_metrics = traits.Dict(desc="QC metrics dictionary")
 
 
@@ -642,10 +633,6 @@ class BrainExtraction(CommandLine):
         Brain extraction tool: "hdbet" (default) or "ants"
     device : str
         HD-BET device: "auto" (auto-detect), "cuda", "mps" (Apple Silicon), "cpu"
-    mni_template : str, optional
-        MNI T1w template for registration QC
-    mni_mask : str, optional
-        MNI brain mask for DICE QC calculation
     ants_template : str, optional
         ANTs extraction template (required if tool="ants")
     ants_probability_mask : str, optional
@@ -684,7 +671,6 @@ class BrainExtraction(CommandLine):
     QC metrics computed:
 
     - brain_volume_mm3: Total brain volume from mask
-    - dice_vs_mni: DICE overlap with MNI brain mask (after registration)
 
     See Also
     --------
@@ -823,15 +809,6 @@ class BrainExtraction(CommandLine):
         except Exception:
             pass
 
-        try:
-            # Compute DICE vs MNI if template provided
-            dice = self._compute_dice_vs_mni()
-            if dice is not None:
-                outputs["dice_vs_mni"] = dice
-                qc_metrics["dice_vs_mni"] = dice
-        except Exception:
-            pass
-
         # Store warnings and QC status
         qc_metrics["warnings"] = warnings_list
         if warnings_list:
@@ -865,23 +842,6 @@ class BrainExtraction(CommandLine):
         brain_vol_mm3 = n_voxels * voxel_vol_mm3
 
         return brain_vol_mm3
-
-    def _compute_dice_vs_mni(self) -> Optional[float]:
-        """Compute DICE coefficient vs MNI brain mask."""
-        # Only compute if MNI mask provided
-        mni_mask_file = getattr(self.inputs, "mni_mask", None)
-        if not mni_mask_file or not Path(mni_mask_file).exists():
-            return None
-
-        mask_file = self._gen_maskfilename()
-        if not Path(mask_file).exists():
-            return None
-
-        # This would require registration to MNI first
-        # For now, skip DICE vs MNI (requires transform from workflow)
-        # The actual DICE calculation should be done in the workflow
-        # after MNI registration is complete
-        return None
 
     def _gen_filename(self, name: str) -> Optional[str]:
         """Generate filename for outputs."""

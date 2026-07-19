@@ -273,3 +273,20 @@ class TestDCEBrainExtract:
         assert hasattr(spec, "hdbet_conda_env")
         assert hasattr(spec, "use_gpu")
         assert not hasattr(spec, "t1w_brain_mask")
+
+
+class TestAnatomicalBrainExtraction:
+    """Tests for the anatomical brain extraction interface contract."""
+
+    def test_contract_contains_only_computed_qc(self) -> None:
+        """The interface omits registration-dependent MNI overlap QC."""
+        from pmriprep.interfaces.anat import (
+            BrainExtractionInputSpec,
+            BrainExtractionOutputSpec,
+        )
+
+        inputs = BrainExtractionInputSpec().traits()
+        outputs = BrainExtractionOutputSpec().traits()
+        assert "mni_template" not in inputs
+        assert "mni_mask" not in inputs
+        assert "dice_vs_mni" not in outputs
