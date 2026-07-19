@@ -188,6 +188,13 @@ class _DCEModelFreeMaps(NamedTuple):
     curve_type: npt.NDArray[Any]
 
 
+class _DCEMotionWeighting(NamedTuple):
+    """Optional phase-adaptive motion weights and their QC record."""
+
+    weights: Optional[npt.NDArray[np.floating]]
+    qc: dict[str, Any]
+
+
 # Import-time pickle-safety assertion (S1 from code review round 3):
 # BatchedChunkArgs MUST be defined at module top-level for pickling across
 # ProcessPoolExecutor boundaries. A nested definition (e.g. inside a
@@ -2068,6 +2075,43 @@ class ComputeDCEMaps(BaseInterface):
             compute_curve_type(ser),
         )
 
+    def _prepare_motion_weighting(
+        self,
+        header: Any,
+        n_timepoints: int,
+    ) -> _DCEMotionWeighting:
+        """Build phase-adaptive motion weights from framewise displacement."""
+        if not (
+            isdefined(self.inputs.fd_values)
+            and self.inputs.fd_values
+            and isdefined(self.inputs.bolus_arrival_frame)
+        ):
+            return _DCEMotionWeighting(None, {"applied": False})
+
+        min_voxel_dim = float(min(header.get_zooms()[:3]))
+        bolus_frame = int(self.inputs.bolus_arrival_frame)
+        weights = _compute_motion_weights(
+            fd_values=self.inputs.fd_values,
+            bolus_frame=bolus_frame,
+            n_frames=n_timepoints,
+            min_voxel_dim=min_voxel_dim,
+        )
+        n_downweighted = int(np.sum(weights < 0.95))
+        washin_end = min(bolus_frame + 4, n_timepoints - 1)
+        qc = {
+            "applied": True,
+            "n_downweighted_frames": n_downweighted,
+            "min_weight": float(np.min(weights)),
+            "washin_weights": weights[bolus_frame:washin_end + 1].tolist(),
+        }
+        logger.info(
+            "Motion weighting: %d/%d frames downweighted (min weight=%.3f)",
+            n_downweighted,
+            n_timepoints,
+            float(np.min(weights)),
+        )
+        return _DCEMotionWeighting(weights, qc)
+
     def _run_interface(self, runtime: Any) -> Any:
         """Execute DCE map computation."""
         import nibabel as nib  # type: ignore[import-untyped]
@@ -2227,36 +2271,9 @@ class ComputeDCEMaps(BaseInterface):
         n_mcmc_voxels: int = 0
         z_departure_list: list[float] = []  # soft constraint prior departure
 
-        # Compute motion weights from framewise displacement (if available)
-        motion_weights: Optional[npt.NDArray[np.floating]] = None
-        if (
-            isdefined(self.inputs.fd_values)
-            and self.inputs.fd_values
-            and isdefined(self.inputs.bolus_arrival_frame)
-        ):
-            voxel_dims = header.get_zooms()[:3]  # type: ignore[attr-defined]
-            min_voxel_dim = float(min(voxel_dims))
-            motion_weights = _compute_motion_weights(
-                fd_values=self.inputs.fd_values,
-                bolus_frame=int(self.inputs.bolus_arrival_frame),
-                n_frames=n_timepoints,
-                min_voxel_dim=min_voxel_dim,
-            )
-            n_downweighted = int(np.sum(motion_weights < 0.95))
-            bolus_frame = int(self.inputs.bolus_arrival_frame)
-            washin_end = min(bolus_frame + 4, n_timepoints - 1)
-            qc_metrics["motion_weighting"] = {
-                "applied": True,
-                "n_downweighted_frames": n_downweighted,
-                "min_weight": float(np.min(motion_weights)),
-                "washin_weights": motion_weights[bolus_frame:washin_end + 1].tolist(),
-            }
-            logger.info(
-                "Motion weighting: %d/%d frames downweighted (min weight=%.3f)",
-                n_downweighted, n_timepoints, float(np.min(motion_weights)),
-            )
-        else:
-            qc_metrics["motion_weighting"] = {"applied": False}
+        motion = self._prepare_motion_weighting(header, n_timepoints)
+        motion_weights = motion.weights
+        qc_metrics["motion_weighting"] = motion.qc
 
         # Build voxel data list for parallel/serial processing
         voxel_data_list: list[VoxelInput] = []

@@ -1,6 +1,7 @@
 """Characterization tests for DCE fit-input and domain preparation."""
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import nibabel as nib
 import numpy as np
@@ -138,3 +139,33 @@ def test_compute_model_free_maps_assembles_all_vectorized_outputs() -> None:
     assert maps.wash_out_slope.shape == (1, 1, 1)
     assert maps.bolus_arrival_time.shape == (1, 1, 1)
     assert maps.curve_type.shape == (1, 1, 1)
+
+
+def test_prepare_motion_weighting_returns_weights_and_matching_qc() -> None:
+    """Motion-weight QC describes the exact array passed to fitting."""
+    header = SimpleNamespace(get_zooms=lambda: (2.0, 2.5, 3.0, 1.0))
+    interface = ComputeDCEMaps(
+        fd_values=[0.0, 0.2, 1.0, 0.1, 0.8, 0.0],
+        bolus_arrival_frame=2,
+    )
+
+    result = interface._prepare_motion_weighting(header, 6)
+
+    assert result.weights is not None
+    assert result.weights.shape == (6,)
+    assert result.qc["applied"] is True
+    assert result.qc["n_downweighted_frames"] == int(
+        np.sum(result.weights < 0.95)
+    )
+    assert result.qc["min_weight"] == float(np.min(result.weights))
+    assert result.qc["washin_weights"] == result.weights[2:6].tolist()
+
+
+def test_prepare_motion_weighting_noops_without_fd() -> None:
+    """Missing motion inputs produce no weights and stable disabled QC."""
+    header = SimpleNamespace(get_zooms=lambda: (2.0, 2.5, 3.0, 1.0))
+
+    result = ComputeDCEMaps()._prepare_motion_weighting(header, 6)
+
+    assert result.weights is None
+    assert result.qc == {"applied": False}
