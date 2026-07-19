@@ -483,11 +483,10 @@ def _read_bids_sidecar(
     Returns
     -------
     dict
-        Dict with keys: te, tr, volume_tr, pulse_tr, field_strength, flip_angle,
+        Dict with keys: te, volume_tr, pulse_tr, field_strength, flip_angle,
         r1_relaxivity, contrast_agent, scanning_sequence, sequence_variant,
         echo_entity.
 
-        - tr: Pulse TR for signal equation (defaults to pulse_tr)
         - volume_tr: Volume TR for temporal resolution (model selection, time vector)
         - pulse_tr: Pulse TR for SPGR signal equation
         - r1_relaxivity: r1 from contrast agent lookup, or None
@@ -505,7 +504,6 @@ def _read_bids_sidecar(
 
     result: dict[str, Any] = {
         "te": None,
-        "tr": None,
         "volume_tr": None,
         "pulse_tr": None,
         "field_strength": None,
@@ -547,9 +545,6 @@ def _read_bids_sidecar(
     elif "RepetitionTime" in meta:
         # Fallback: if no pulse TR, use volume TR (2D sequences)
         result["pulse_tr"] = float(meta["RepetitionTime"])
-
-    # For backward compatibility, "tr" defaults to pulse TR (signal equation)
-    result["tr"] = result.get("pulse_tr")
 
     if "MagneticFieldStrength" in meta:
         result["field_strength"] = float(meta["MagneticFieldStrength"])
@@ -1210,7 +1205,7 @@ def init_pmriprep_wf(
                 vfa_sc = _read_bids_sidecar(vfa_path)
                 if vfa_sc["flip_angle"] is not None:
                     preflight_vfa_flip_angles.append(vfa_sc["flip_angle"])
-                preflight_vfa_trs.append(vfa_sc.get("tr"))
+                preflight_vfa_trs.append(vfa_sc.get("pulse_tr"))
 
     preflight_report = run_preflight(
         session_data=session_data,
@@ -1631,12 +1626,14 @@ def init_pmriprep_wf(
         if session_data.modalities.dsc:
             sidecar = _read_bids_sidecar(session_data.modalities.dsc)
             missing = [
-                k for k in ("te", "tr", "field_strength") if sidecar[k] is None
+                k
+                for k in ("te", "volume_tr", "field_strength")
+                if sidecar[k] is None
             ]
             if missing:
                 bids_keys = {
                     "te": "EchoTime",
-                    "tr": "RepetitionTime/RepetitionTimeExcitation",
+                    "volume_tr": "RepetitionTime",
                     "field_strength": "MagneticFieldStrength",
                 }
                 raise ValueError(
@@ -1645,7 +1642,7 @@ def init_pmriprep_wf(
                     f"Source: {session_data.modalities.dsc}"
                 )
             dsc_wf.inputs.inputnode.te = sidecar["te"]
-            dsc_wf.inputs.inputnode.tr = sidecar["tr"]
+            dsc_wf.inputs.inputnode.tr = sidecar["volume_tr"]
             dsc_wf.inputs.inputnode.field_strength = sidecar["field_strength"]
 
         # Connect DSC file from inputnode
@@ -2306,13 +2303,18 @@ def init_pmriprep_wf(
         if session_data.modalities.dce:
             dce_sidecar = _read_bids_sidecar(session_data.modalities.dce)
             missing = [
-                k for k in ("te", "tr", "volume_tr", "flip_angle", "field_strength")
+                k
+                for k in (
+                    "te", "pulse_tr", "volume_tr", "flip_angle", "field_strength"
+                )
                 if dce_sidecar[k] is None
             ]
             if missing:
                 bids_keys = {
                     "te": "EchoTime",
-                    "tr": "RepetitionTimeExcitation (or RepetitionTime for 2D)",
+                    "pulse_tr": (
+                        "RepetitionTimeExcitation (or RepetitionTime for 2D)"
+                    ),
                     "volume_tr": "RepetitionTime",
                     "flip_angle": "FlipAngle",
                     "field_strength": "MagneticFieldStrength",
@@ -2323,7 +2325,7 @@ def init_pmriprep_wf(
                     f"Source: {session_data.modalities.dce}"
                 )
             dce_wf.inputs.inputnode.te = dce_sidecar["te"]
-            dce_wf.inputs.inputnode.tr = dce_sidecar["tr"]
+            dce_wf.inputs.inputnode.tr = dce_sidecar["pulse_tr"]
             dce_wf.inputs.inputnode.volume_tr = dce_sidecar["volume_tr"]
             dce_wf.inputs.inputnode.flip_angle = dce_sidecar["flip_angle"]
             dce_wf.inputs.inputnode.field_strength = dce_sidecar["field_strength"]
@@ -2707,8 +2709,10 @@ def init_pmriprep_wf(
                     )
                     vfa_flip_angles.append(fa)
                 # VFA TR should be identical across all flip angles; take from first
-                if vfa_tr_ms is None and vfa_sidecar["tr"] is not None:
-                    vfa_tr_ms = _ensure_tr_ms(vfa_sidecar["tr"], label="VFA TR")
+                if vfa_tr_ms is None and vfa_sidecar["pulse_tr"] is not None:
+                    vfa_tr_ms = _ensure_tr_ms(
+                        vfa_sidecar["pulse_tr"], label="VFA TR"
+                    )
 
             if vfa_flip_angles:
                 if len(vfa_flip_angles) != len(vfa_list):

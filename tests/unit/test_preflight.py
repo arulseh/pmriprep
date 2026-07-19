@@ -31,7 +31,6 @@ def _valid_dsc_sidecar() -> dict:
     """Return a valid DSC sidecar dict."""
     return {
         "te": 0.030,
-        "tr": 1.5,
         "volume_tr": 1.5,
         "pulse_tr": 1.5,
         "field_strength": 3.0,
@@ -48,7 +47,6 @@ def _valid_dce_sidecar() -> dict:
     """Return a valid DCE sidecar dict."""
     return {
         "te": 0.002,
-        "tr": 0.004,
         "volume_tr": 7.0,
         "pulse_tr": 0.004,
         "field_strength": 3.0,
@@ -217,19 +215,19 @@ class TestValidateDSCMetadata:
 
     def test_missing_tr(self):
         sc = _valid_dsc_sidecar()
-        sc["tr"] = None
+        sc["volume_tr"] = None
         msgs = validate_dsc_metadata(sc)
         assert any(m.code == "DSC_MISSING_TR" for m in msgs)
 
     def test_negative_tr(self):
         sc = _valid_dsc_sidecar()
-        sc["tr"] = -1.0
+        sc["volume_tr"] = -1.0
         msgs = validate_dsc_metadata(sc)
         assert any(m.code == "DSC_INVALID_TR" for m in msgs)
 
     def test_coarse_tr_warning(self):
         sc = _valid_dsc_sidecar()
-        sc["tr"] = 4.0
+        sc["volume_tr"] = 4.0
         msgs = validate_dsc_metadata(sc)
         assert any(m.code == "DSC_TR_COARSE" for m in msgs)
         assert all(m.level == "warning" for m in msgs if m.code == "DSC_TR_COARSE")
