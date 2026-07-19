@@ -248,6 +248,10 @@ def generate_preprocessing_qc_plot(
     all_vals = np.concatenate([baseline_vals, peak_vals])
     hist_min = float(np.percentile(all_vals, 1))
     hist_max = float(np.percentile(all_vals, 99))
+    if np.isclose(hist_min, hist_max):
+        half_width = max(abs(hist_min) * 0.01, 1.0)
+        hist_min -= half_width
+        hist_max += half_width
     bins = np.linspace(hist_min, hist_max, 80).tolist()
     ax.hist(baseline_vals, bins=bins, alpha=0.5, density=True,
             color=COLORBLIND_PALETTE.primary, label="Baseline (frame 0)")

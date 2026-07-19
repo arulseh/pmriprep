@@ -4,6 +4,8 @@ Tests for peak enhancement and baseline tSNR gating in the DCE QC
 recommendation system.
 """
 
+import warnings
+
 import pytest
 
 from pmriprep.utils.dce_constants import (
@@ -485,10 +487,13 @@ class TestBaselineSNRComputation:
 
         sig = np.ones((4, 4, 2, 2), dtype=np.float64) * 100.0
         mask = np.ones((4, 4, 2), dtype=bool)
-        _, stats = generate_preprocessing_qc_plot(
-            sig, mask, baseline_frames=1, bolus_arrival_frame=1,
-            volume_tr_s=4.0, output_path=str(tmp_path / "qc.png"),
-        )
+        with warnings.catch_warnings(record=True) as warning_records:
+            warnings.simplefilter("always")
+            _, stats = generate_preprocessing_qc_plot(
+                sig, mask, baseline_frames=1, bolus_arrival_frame=1,
+                volume_tr_s=4.0, output_path=str(tmp_path / "qc.png"),
+            )
+        assert not warning_records
         frac = stats["baseline_snr_low_fraction"]
         assert isinstance(frac, float)
         assert math.isnan(frac)
