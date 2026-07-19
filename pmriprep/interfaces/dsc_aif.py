@@ -118,6 +118,32 @@ class DualRoiResult(NamedTuple):
     brr: float
 
 
+class _DSCAIFDetectionContext(NamedTuple):
+    """Validated image data, acquisition state, and detection parameters."""
+
+    concentration: npt.NDArray[Any]
+    affine: npt.NDArray[Any]
+    brain_mask: npt.NDArray[Any]
+    atlas_mask: Optional[npt.NDArray[Any]]
+    atlas_is_mra: bool
+    full_atlas_mask: Optional[npt.NDArray[Any]]
+    lesion_mask: Optional[npt.NDArray[Any]]
+    enhancing_mask: Optional[npt.NDArray[Any]]
+    signal: Optional[npt.NDArray[Any]]
+    aif_method: str
+    initial_criteria: str
+    n_candidates: int
+    baseline_frames: int
+    gamma_fit_mode: str
+    disable_fallback: bool
+    lesion_distance: float
+    n_timepoints: int
+    field_strength: float
+    synthetic_effective_dose: float
+    voxel_sizes: tuple[float, float, float]
+    tr: float
+
+
 # ---------------------------------------------------------------------------
 # Top-level helper functions (backward-compatible with utils/dsc_aif.py)
 # ---------------------------------------------------------------------------
@@ -2459,6 +2485,158 @@ class AIFDetection(BaseInterface):
 
         return runtime
 
+    def _load_detection_context(self, logger: Any) -> _DSCAIFDetectionContext:
+        """Load and validate images, acquisition state, and detection options."""
+        import nibabel as nib  # type: ignore[import-untyped]
+
+        concentration_image = nib.load(self.inputs.concentration_file)
+        concentration = concentration_image.get_fdata()  # type: ignore[attr-defined]
+        affine = concentration_image.affine  # type: ignore[attr-defined]
+
+        brain_image = nib.load(self.inputs.brain_mask_file)
+        brain_mask = brain_image.get_fdata()  # type: ignore[attr-defined]
+        if brain_mask.shape[:3] != concentration.shape[:3]:
+            raise RuntimeError(
+                f"Brain mask shape {brain_mask.shape[:3]} does not match "
+                f"concentration data shape {concentration.shape[:3]}. "
+                "The brain mask must be in native DSC space. "
+                "Ensure transform_brain_mask node is connected upstream."
+            )
+
+        atlas_mask: Optional[npt.NDArray[Any]] = None
+        atlas_is_mra = False
+        if isdefined(self.inputs.aif_mask_file) and self.inputs.aif_mask_file:
+            atlas_image = nib.load(self.inputs.aif_mask_file)
+            atlas_mask = atlas_image.get_fdata()  # type: ignore[attr-defined]
+        elif self.inputs.atlas_mask_file:
+            atlas_is_mra = True
+            atlas_image = nib.load(self.inputs.atlas_mask_file)
+            atlas_mask = atlas_image.get_fdata()  # type: ignore[attr-defined]
+
+        full_atlas_mask: Optional[npt.NDArray[Any]] = None
+        if (
+            isdefined(self.inputs.full_atlas_mask_file)
+            and self.inputs.full_atlas_mask_file
+        ):
+            full_atlas_image = nib.load(self.inputs.full_atlas_mask_file)
+            full_atlas_mask = full_atlas_image.get_fdata()  # type: ignore[attr-defined]
+
+        lesion_mask: Optional[npt.NDArray[Any]] = None
+        if self.inputs.lesion_mask_file:
+            lesion_image = nib.load(self.inputs.lesion_mask_file)
+            lesion_data = lesion_image.get_fdata()  # type: ignore[attr-defined]
+            needs_resample = (
+                lesion_data.shape[:3] != concentration.shape[:3]
+                or not np.allclose(
+                    lesion_image.affine,  # type: ignore[attr-defined]
+                    concentration_image.affine,  # type: ignore[attr-defined]
+                    atol=1e-3,
+                )
+            )
+            if needs_resample:
+                from nilearn.image import resample_to_img  # type: ignore[import-untyped]
+
+                resampled = resample_to_img(
+                    lesion_image, concentration_image, interpolation="nearest",
+                )
+                lesion_mask = (resampled.get_fdata() > 0.5).astype(np.float64)  # type: ignore[attr-defined]
+            else:
+                lesion_mask = lesion_data
+
+        enhancing_mask: Optional[npt.NDArray[Any]] = None
+        if self.inputs.enhancing_mask_file:
+            enhancing_image = nib.load(self.inputs.enhancing_mask_file)
+            enhancing_data = enhancing_image.get_fdata()  # type: ignore[attr-defined]
+            needs_resample = (
+                enhancing_data.shape[:3] != concentration.shape[:3]
+                or not np.allclose(
+                    enhancing_image.affine,  # type: ignore[attr-defined]
+                    concentration_image.affine,  # type: ignore[attr-defined]
+                    atol=1e-3,
+                )
+            )
+            if needs_resample:
+                from nilearn.image import resample_to_img  # type: ignore[import-untyped]
+
+                resampled = resample_to_img(
+                    enhancing_image, concentration_image, interpolation="nearest",
+                )
+                enhancing_mask = (resampled.get_fdata() > 0.5).astype(np.float64)  # type: ignore[attr-defined]
+            else:
+                enhancing_mask = enhancing_data
+
+        signal: Optional[npt.NDArray[Any]] = None
+        if self.inputs.signal_file:
+            signal_image = nib.load(self.inputs.signal_file)
+            signal = signal_image.get_fdata()  # type: ignore[attr-defined]
+
+        lesion_distance = float(self.inputs.lesion_distance)
+        if lesion_distance < LESION_EXCLUSION_FLOOR_MM:
+            logger.warning(
+                "lesion_distance=%.1f mm is below hard minimum (%.1f mm); "
+                "clamping to %.1f mm.",
+                lesion_distance,
+                LESION_EXCLUSION_FLOOR_MM,
+                LESION_EXCLUSION_FLOOR_MM,
+            )
+            lesion_distance = LESION_EXCLUSION_FLOOR_MM
+        elif lesion_distance < LESION_EXCLUSION_DISTANCE_MM:
+            logger.warning(
+                "lesion_distance=%.1f mm is below recommended minimum "
+                "(%.1f mm); peritumoral vascular abnormalities may "
+                "contaminate AIF candidates.",
+                lesion_distance,
+                LESION_EXCLUSION_DISTANCE_MM,
+            )
+
+        zooms = concentration_image.header.get_zooms()  # type: ignore[attr-defined,union-attr]
+        tr = float(self.inputs.tr)
+        if tr <= 0:
+            if len(zooms) >= 4 and zooms[3] > 0:
+                tr = float(zooms[3])
+                if tr > 100.0:
+                    logger.warning(
+                        "Auto-detected TR=%.1fs from NIfTI header seems too "
+                        "large (possible millisecond units). Falling back to 1.5s.",
+                        tr,
+                    )
+                    tr = 1.5
+            else:
+                tr = 1.5
+
+        field_strength = (
+            float(self.inputs.field_strength)
+            if isdefined(self.inputs.field_strength)
+            else 3.0
+        )
+        synthetic_effective_dose = float(
+            np.clip(self._effective_dose(), 0.2, SYNTH_AIF_DOSE_CAP)
+        )
+
+        return _DSCAIFDetectionContext(
+            concentration=concentration,
+            affine=affine,
+            brain_mask=brain_mask,
+            atlas_mask=atlas_mask,
+            atlas_is_mra=atlas_is_mra,
+            full_atlas_mask=full_atlas_mask,
+            lesion_mask=lesion_mask,
+            enhancing_mask=enhancing_mask,
+            signal=signal,
+            aif_method=str(self.inputs.aif_method),
+            initial_criteria=str(self.inputs.criteria),
+            n_candidates=int(self.inputs.n_candidates),
+            baseline_frames=int(self.inputs.baseline_frames),
+            gamma_fit_mode="auto",
+            disable_fallback=bool(self.inputs.disable_fallback),
+            lesion_distance=lesion_distance,
+            n_timepoints=concentration.shape[3],
+            field_strength=field_strength,
+            synthetic_effective_dose=synthetic_effective_dose,
+            voxel_sizes=(float(zooms[0]), float(zooms[1]), float(zooms[2])),
+            tr=tr,
+        )
+
     # -----------------------------------------------------------------
     # Step 10: Main pipeline  (_run_interface)
     # -----------------------------------------------------------------
@@ -2484,135 +2662,28 @@ class AIFDetection(BaseInterface):
 
         from pmriprep.utils.dsc_signal import detect_bolus_arrival
 
-        # Load data
-        conc_img = nib.load(self.inputs.concentration_file)
-        conc_data: npt.NDArray[Any] = conc_img.get_fdata()  # type: ignore[attr-defined]
-        affine = conc_img.affine  # type: ignore[attr-defined]
-
-        brain_img = nib.load(self.inputs.brain_mask_file)
-        brain_mask: npt.NDArray[Any] = brain_img.get_fdata()  # type: ignore[attr-defined]
-
-        if brain_mask.shape[:3] != conc_data.shape[:3]:
-            raise RuntimeError(
-                f"Brain mask shape {brain_mask.shape[:3]} does not match "
-                f"concentration data shape {conc_data.shape[:3]}. "
-                "The brain mask must be in native DSC space. "
-                "Ensure transform_brain_mask node is connected upstream."
-            )
-
-        # Optional atlas mask (user-supplied aif_mask_file takes priority)
-        atlas_mask: Optional[npt.NDArray[Any]] = None
-        atlas_is_mra: bool = False
-        if isdefined(self.inputs.aif_mask_file) and self.inputs.aif_mask_file:
-            atlas_img = nib.load(self.inputs.aif_mask_file)
-            atlas_mask = atlas_img.get_fdata()  # type: ignore[attr-defined]
-        elif self.inputs.atlas_mask_file:
-            atlas_is_mra = True
-            atlas_img = nib.load(self.inputs.atlas_mask_file)
-            atlas_mask = atlas_img.get_fdata()  # type: ignore[attr-defined]
-
-        # Optional full atlas (incl. posterior circulation, undilated)
-        full_atlas_mask: Optional[npt.NDArray[Any]] = None
-        if (
-            isdefined(self.inputs.full_atlas_mask_file)
-            and self.inputs.full_atlas_mask_file
-        ):
-            full_atlas_img = nib.load(self.inputs.full_atlas_mask_file)
-            full_atlas_mask = full_atlas_img.get_fdata()  # type: ignore[attr-defined]
-
-        # Optional lesion mask
-        lesion_mask: Optional[npt.NDArray[Any]] = None
-        if self.inputs.lesion_mask_file:
-            lesion_img = nib.load(self.inputs.lesion_mask_file)
-            lesion_data = lesion_img.get_fdata()  # type: ignore[attr-defined]
-            needs_resample = (
-                lesion_data.shape[:3] != conc_data.shape[:3]
-                or not np.allclose(lesion_img.affine, conc_img.affine, atol=1e-3)  # type: ignore[attr-defined]
-            )
-            if needs_resample:
-                from nilearn.image import resample_to_img  # type: ignore[import-untyped]
-                resampled = resample_to_img(
-                    lesion_img, conc_img, interpolation="nearest"
-                )
-                lesion_mask = (resampled.get_fdata() > 0.5).astype(np.float64)  # type: ignore[attr-defined]
-            else:
-                lesion_mask = lesion_data
-
-        # Optional enhancing mask for laterality determination
-        enhancing_mask: Optional[npt.NDArray[Any]] = None
-        if self.inputs.enhancing_mask_file:
-            enh_img = nib.load(self.inputs.enhancing_mask_file)
-            enh_data = enh_img.get_fdata()  # type: ignore[attr-defined]
-            needs_resample = (
-                enh_data.shape[:3] != conc_data.shape[:3]
-                or not np.allclose(enh_img.affine, conc_img.affine, atol=1e-3)  # type: ignore[attr-defined]
-            )
-            if needs_resample:
-                from nilearn.image import resample_to_img  # type: ignore[import-untyped]
-                resampled = resample_to_img(
-                    enh_img, conc_img, interpolation="nearest"
-                )
-                enhancing_mask = (resampled.get_fdata() > 0.5).astype(np.float64)  # type: ignore[attr-defined]
-            else:
-                enhancing_mask = enh_data
-
-        # Load raw signal for S0 and signal-based metrics
-        signal_data: Optional[npt.NDArray[Any]] = None
-        if self.inputs.signal_file:
-            signal_img = nib.load(self.inputs.signal_file)
-            signal_data = signal_img.get_fdata()  # type: ignore[attr-defined]
-
-        # Parameters
-        aif_method = str(self.inputs.aif_method)
-        initial_criteria = str(self.inputs.criteria)
-        n_candidates = int(self.inputs.n_candidates)
-        baseline_frames = int(self.inputs.baseline_frames)
-        gamma_fit_mode = "auto"
-        disable_fallback = bool(self.inputs.disable_fallback)
-        lesion_distance = float(self.inputs.lesion_distance)
-        if lesion_distance < LESION_EXCLUSION_FLOOR_MM:
-            _logger.warning(
-                "lesion_distance=%.1f mm is below hard minimum (%.1f mm); "
-                "clamping to %.1f mm.",
-                lesion_distance, LESION_EXCLUSION_FLOOR_MM,
-                LESION_EXCLUSION_FLOOR_MM,
-            )
-            lesion_distance = LESION_EXCLUSION_FLOOR_MM
-        elif lesion_distance < LESION_EXCLUSION_DISTANCE_MM:
-            _logger.warning(
-                "lesion_distance=%.1f mm is below recommended minimum "
-                "(%.1f mm); peritumoral vascular abnormalities may "
-                "contaminate AIF candidates.",
-                lesion_distance, LESION_EXCLUSION_DISTANCE_MM,
-            )
-        n_timepoints = conc_data.shape[3]
-        field_strength = (
-            float(self.inputs.field_strength)
-            if isdefined(self.inputs.field_strength) else 3.0
-        )
-        synth_effective_dose = float(np.clip(
-            self._effective_dose(), 0.2, SYNTH_AIF_DOSE_CAP,
-        ))
-
-        # Voxel sizes for distance-based lesion exclusion and TR detection
-        zooms = conc_img.header.get_zooms()  # type: ignore[attr-defined,union-attr]
-        voxel_sizes = tuple(float(z) for z in zooms[:3])
-
-        # TR: from input, or auto-detect from NIfTI header, fallback 1.5 s
-        tr = float(self.inputs.tr)
-        if tr <= 0:
-            if len(zooms) >= 4 and zooms[3] > 0:
-                tr = float(zooms[3])
-                # Sanity: DSC TR is typically 1-3 s; detect ms/us units
-                if tr > 100.0:
-                    _logger.warning(
-                        "Auto-detected TR=%.1fs from NIfTI header seems too "
-                        "large (possible millisecond units). Falling back to 1.5s.",
-                        tr,
-                    )
-                    tr = 1.5
-            else:
-                tr = 1.5
+        context = self._load_detection_context(_logger)
+        conc_data = context.concentration
+        affine = context.affine
+        brain_mask = context.brain_mask
+        atlas_mask = context.atlas_mask
+        atlas_is_mra = context.atlas_is_mra
+        full_atlas_mask = context.full_atlas_mask
+        lesion_mask = context.lesion_mask
+        enhancing_mask = context.enhancing_mask
+        signal_data = context.signal
+        aif_method = context.aif_method
+        initial_criteria = context.initial_criteria
+        n_candidates = context.n_candidates
+        baseline_frames = context.baseline_frames
+        gamma_fit_mode = context.gamma_fit_mode
+        disable_fallback = context.disable_fallback
+        lesion_distance = context.lesion_distance
+        n_timepoints = context.n_timepoints
+        field_strength = context.field_strength
+        synth_effective_dose = context.synthetic_effective_dose
+        voxel_sizes = context.voxel_sizes
+        tr = context.tr
 
         # --- Auto-detect actual bolus arrival for AIF first-pass window ---
         # Use 99th percentile across brain voxels — naturally selects arterial
