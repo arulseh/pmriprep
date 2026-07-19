@@ -155,6 +155,13 @@ class _DCEFitPreparation(NamedTuple):
     save_fitted_curves: bool
 
 
+class _DCEBATAlignment(NamedTuple):
+    """AIF curve and QC state after optional tissue-arrival alignment."""
+
+    aif: npt.NDArray[Any]
+    correction: dict[str, Any]
+
+
 # Import-time pickle-safety assertion (S1 from code review round 3):
 # BatchedChunkArgs MUST be defined at module top-level for pickling across
 # ProcessPoolExecutor boundaries. A nested definition (e.g. inside a
@@ -1735,6 +1742,80 @@ class ComputeDCEMaps(BaseInterface):
             save_fitted_curves,
         )
 
+    def _align_aif_to_tissue(
+        self,
+        prepared: _DCEFitPreparation,
+    ) -> _DCEBATAlignment:
+        """Apply optional measured-AIF arrival alignment to enhancing tissue.
+
+        Parameters
+        ----------
+        prepared : _DCEFitPreparation
+            Validated pre-BAT inputs and fitting domain.
+
+        Returns
+        -------
+        _DCEBATAlignment
+            Possibly shifted AIF and the corresponding correction QC record.
+
+        Notes
+        -----
+        Population AIFs are pre-aligned at generation and external AIF timing
+        is unknown, so neither is shifted. Measured AIFs use the median
+        enhancing-tissue curve; sub-resolution or unreliable delays remain
+        no-ops in the existing delay estimator.
+        """
+        aif_detection_method = str(self.inputs.aif_detection_method)
+        bat_alignment_mode = str(self.inputs.aif_bat_alignment)
+        if bat_alignment_mode == "off":
+            return _DCEBATAlignment(
+                prepared.aif,
+                {"applied": False, "reason": "alignment_off"},
+            )
+        if aif_detection_method in ("population", "external"):
+            return _DCEBATAlignment(
+                prepared.aif,
+                {
+                    "applied": False,
+                    "reason": f"{aif_detection_method}_aif_not_aligned",
+                },
+            )
+        if not np.any(prepared.fitting_mask):
+            return _DCEBATAlignment(
+                prepared.aif,
+                {"applied": False, "reason": "bat_detection_failed"},
+            )
+
+        from pmriprep.utils.dce_bat import compute_aif_tissue_delay, shift_aif
+
+        tumor_mask_file = (
+            self.inputs.tumor_mask_file
+            if isdefined(self.inputs.tumor_mask_file)
+            else ""
+        )
+        roi_mask, ref_info = _resolve_bat_tissue_reference(
+            tumor_mask_file,
+            prepared.fitting_mask,
+            prepared.concentration,
+        )
+        if roi_mask is None:
+            return _DCEBATAlignment(prepared.aif, ref_info)
+
+        roi_curve = np.median(prepared.concentration[roi_mask], axis=0)
+        delay_s, correction = compute_aif_tissue_delay(
+            aif_curve=prepared.aif,
+            tissue_roi_curve=roi_curve,
+            time_points_min=prepared.time_points,
+            tr_seconds=prepared.selection_tr_seconds,
+            baseline_frames=prepared.baseline_frames,
+        )
+        correction["granularity"] = "enhancing_tumor"
+        correction["n_reference_voxels"] = ref_info["n_reference_voxels"]
+        aligned_aif = prepared.aif
+        if delay_s != 0.0:
+            aligned_aif = shift_aif(prepared.aif, prepared.time_points, delay_s)
+        return _DCEBATAlignment(aligned_aif, correction)
+
     def _run_interface(self, runtime: Any) -> Any:
         """Execute DCE map computation."""
         import nibabel as nib  # type: ignore[import-untyped]
@@ -1769,62 +1850,9 @@ class ComputeDCEMaps(BaseInterface):
         mcmc_samples = prepared.mcmc_samples
         save_fitted_curves = prepared.save_fitted_curves
 
-        # =====================================================================
-        # AIF->tissue BAT pre-alignment
-        # =====================================================================
-        # The PK convolution is delay-free, so a measured AIF sampled from a
-        # vessel the bolus reaches before the tissue (e.g. the contralateral
-        # default) carries an uncorrected arterial-to-tissue delay that biases
-        # absolute Ktrans/ve/vp. When enabled, shift the measured AIF in time
-        # to align its arrival with the enhancing tissue (a pre-correction
-        # shift, not a fit parameter; mirrors the OSIPI approach). Population
-        # AIFs are already pre-aligned at generation (baseline_frames*TR; see
-        # dce_aif.py) and external/user AIFs have unknown alignment, so both
-        # are left untouched. compute_aif_tissue_delay returns a zero shift
-        # (no-op) when the delay is below temporal resolution or unreliable,
-        # which avoids the documented coarse-TR repeatability hazard.
-        aif_detection_method = str(self.inputs.aif_detection_method)
-        bat_alignment_mode = str(self.inputs.aif_bat_alignment)
-        bat_correction: dict[str, Any]
-        if bat_alignment_mode == "off":
-            bat_correction = {"applied": False, "reason": "alignment_off"}
-        elif aif_detection_method in ("population", "external"):
-            bat_correction = {
-                "applied": False,
-                "reason": f"{aif_detection_method}_aif_not_aligned",
-            }
-        elif not np.any(fitting_mask):
-            bat_correction = {"applied": False, "reason": "bat_detection_failed"}
-        else:
-            from pmriprep.utils.dce_bat import (
-                compute_aif_tissue_delay,
-                shift_aif,
-            )
-            tumor_mask_file = (
-                self.inputs.tumor_mask_file
-                if isdefined(self.inputs.tumor_mask_file)
-                else ""
-            )
-            roi_mask, ref_info = _resolve_bat_tissue_reference(
-                tumor_mask_file, fitting_mask, conc_data,
-            )
-            if roi_mask is None:
-                bat_correction = ref_info
-            else:
-                # Median enhancing-tumor concentration curve is the tissue-
-                # arrival proxy; median is robust to high-leakage spikes.
-                roi_curve = np.median(conc_data[roi_mask], axis=0)
-                delay_s, bat_correction = compute_aif_tissue_delay(
-                    aif_curve=aif,
-                    tissue_roi_curve=roi_curve,
-                    time_points_min=time_points,
-                    tr_seconds=selection_tr_seconds,
-                    baseline_frames=baseline_frames,
-                )
-                bat_correction["granularity"] = "enhancing_tumor"
-                bat_correction["n_reference_voxels"] = ref_info["n_reference_voxels"]
-                if delay_s != 0.0:
-                    aif = shift_aif(aif, time_points, delay_s)
+        bat_alignment = self._align_aif_to_tissue(prepared)
+        aif = bat_alignment.aif
+        bat_correction = bat_alignment.correction
 
         spatial_shape = conc_data.shape[:3]
 

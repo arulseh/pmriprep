@@ -5,7 +5,7 @@ from pathlib import Path
 import nibabel as nib
 import numpy as np
 
-from pmriprep.interfaces.dce_compute import ComputeDCEMaps
+from pmriprep.interfaces.dce_compute import ComputeDCEMaps, _DCEFitPreparation
 
 
 def test_prepare_fit_inputs_preserves_model_time_and_domain_gates(
@@ -64,3 +64,53 @@ def test_prepare_fit_inputs_preserves_model_time_and_domain_gates(
     assert prepared.tsnr_map[0, 0, 0] > 10.0
     assert prepared.peak_enhancement is not None
     assert prepared.peak_enhancement[0, 0, 0] > 0.0
+
+
+def _empty_preparation() -> _DCEFitPreparation:
+    """Build a minimal prepared domain for BAT gating tests."""
+    concentration = np.zeros((1, 1, 1, 3), dtype=float)
+    return _DCEFitPreparation(
+        concentration=concentration,
+        affine=np.eye(4),
+        header=None,
+        mask=np.ones((1, 1, 1), dtype=float),
+        aif=np.array([0.0, 1.0, 0.5]),
+        time_points=np.array([0.0, 0.1, 0.2]),
+        n_timepoints=3,
+        selection_tr_seconds=6.0,
+        model_name="extended_tofts",
+        is_auto=False,
+        candidate_names=[],
+        baseline_frames=1,
+        tsnr_threshold=0.0,
+        tsnr_map=np.ones((1, 1, 1), dtype=float),
+        peak_enhancement=None,
+        fitting_mask=np.zeros((1, 1, 1), dtype=bool),
+        inference="nlls",
+        mcmc_samples=500,
+        save_fitted_curves=False,
+    )
+
+
+def test_align_aif_to_tissue_preserves_non_alignment_reasons() -> None:
+    """Configuration, AIF provenance, and empty domains retain distinct QC."""
+    prepared = _empty_preparation()
+    interface = ComputeDCEMaps(aif_bat_alignment="off", aif_detection_method="atlas")
+    result = interface._align_aif_to_tissue(prepared)
+    assert result.correction == {"applied": False, "reason": "alignment_off"}
+    assert result.aif is prepared.aif
+
+    interface.inputs.aif_bat_alignment = "auto"
+    interface.inputs.aif_detection_method = "population"
+    result = interface._align_aif_to_tissue(prepared)
+    assert result.correction == {
+        "applied": False,
+        "reason": "population_aif_not_aligned",
+    }
+
+    interface.inputs.aif_detection_method = "atlas"
+    result = interface._align_aif_to_tissue(prepared)
+    assert result.correction == {
+        "applied": False,
+        "reason": "bat_detection_failed",
+    }
