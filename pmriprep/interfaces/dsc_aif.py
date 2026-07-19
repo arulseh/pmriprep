@@ -119,6 +119,7 @@ class DualRoiResult(NamedTuple):
 
 
 _AIFCandidate = tuple[float, tuple[int, int, int], dict[str, Any]]
+_AcceptedAIF = tuple[npt.NDArray[Any], npt.NDArray[Any], int]
 
 
 class _TrimmedDualRoiResult(NamedTuple):
@@ -144,6 +145,25 @@ class _TierCandidateResult(NamedTuple):
     n_available: int
     filter_metadata: dict[str, Any]
     postfilter_diagnostics: Optional[dict[str, Any]]
+
+
+class _CascadeUnionState(NamedTuple):
+    """Mutable collections used to accumulate candidates across tiers."""
+
+    candidates: list[_AIFCandidate]
+    coordinates: set[tuple[int, int, int]]
+    tier_provenance: dict[str, int]
+    coordinate_origins: dict[tuple[int, int, int], str]
+    filter_metadata: dict[str, Any]
+
+
+class _UnionAcceptanceResult(NamedTuple):
+    """Accepted union pool with its ordered provenance."""
+
+    accepted_aif: _AcceptedAIF
+    candidates: list[_AIFCandidate]
+    detection_level: str
+    tier_provenance: dict[str, int]
 
 
 class _DSCAIFDetectionContext(NamedTuple):
@@ -2879,6 +2899,75 @@ class AIFDetection(BaseInterface):
             )
         return curve, metrics
 
+    @staticmethod
+    def _add_candidates_to_union(
+        state: _CascadeUnionState,
+        candidates: Sequence[_AIFCandidate],
+        level_name: str,
+        limit: int,
+        filter_metadata: dict[str, Any],
+    ) -> None:
+        """Add unique tier candidates to the capped post-cascade union pool."""
+        added = 0
+        for candidate in candidates:
+            coordinate = candidate[1]
+            if coordinate in state.coordinates:
+                continue
+            if len(state.candidates) >= limit:
+                break
+            state.candidates.append(candidate)
+            state.coordinates.add(coordinate)
+            state.coordinate_origins[coordinate] = level_name
+            added += 1
+
+        state.tier_provenance[level_name] = added
+        if added > 0 and not state.filter_metadata:
+            state.filter_metadata.update(filter_metadata)
+
+    def _try_union_fallback(
+        self,
+        state: _CascadeUnionState,
+        attempts: Sequence[_CascadeAttempt],
+        context: _DSCAIFDetectionContext,
+        baseline_frames: int,
+    ) -> Optional[_UnionAcceptanceResult]:
+        """Try the accumulated union and rebuild provenance after trimming."""
+        if len(state.candidates) < MIN_AIF_CANDIDATES_ACCEPT:
+            return None
+
+        acceptance = self._try_trimmed_dual_roi(
+            state.candidates,
+            context.concentration,
+            context.brain_mask,
+            context.tr,
+            baseline_frames,
+        )
+        if acceptance is None:
+            return None
+
+        candidates = acceptance.candidates
+        tier_provenance: dict[str, int] = {}
+        for _, coordinate, _ in candidates:
+            level_name = state.coordinate_origins.get(coordinate)
+            if level_name is not None:
+                tier_provenance[level_name] = tier_provenance.get(level_name, 0) + 1
+
+        contributing_levels = [
+            level_name
+            for _, _, level_name, _ in attempts
+            if tier_provenance.get(level_name, 0) > 0
+        ]
+        detection_level = (
+            "+".join(contributing_levels) if contributing_levels else "synthetic"
+        )
+        result = acceptance.result
+        return _UnionAcceptanceResult(
+            (result.curve, result.mask, result.roi_size),
+            candidates,
+            detection_level,
+            tier_provenance,
+        )
+
     # -----------------------------------------------------------------
     # Step 10: Main pipeline  (_run_interface)
     # -----------------------------------------------------------------
@@ -2980,24 +3069,12 @@ class AIFDetection(BaseInterface):
         # survivors are appended (capped at n_candidates total). The
         # union does NOT gate the cascade — it is only consulted as a
         # fallback if every tier's per-tier dual-ROI gate fails.
-        union: list[tuple[float, tuple[int, int, int], dict[str, Any]]] = []
-        union_coords: set[tuple[int, int, int]] = set()
-        union_tier_provenance: dict[str, int] = {}
-        # Per-voxel source tier (used to map single-best fallback voxel
-        # back to its tier of origin and to construct the
-        # detection_level union string).
-        union_coord_origin: dict[tuple[int, int, int], str] = {}
+        union_state = _CascadeUnionState([], set(), {}, {}, {})
         # Per-tier post-filter diagnostics (n_filtered_* counts, pool
         # spread, max tail). Recorded even on tiers the union does not
         # accept from, so the synthetic-fallback branch can surface why
         # each tier failed.
         postfilter_diags_per_tier: dict[str, dict[str, Any]] = {}
-        # Filter_meta from the strictest contributing tier (geometric
-        # / lesion-distance metadata). Captured at the moment a tier
-        # first contributes a voxel to the union; overwritten when a
-        # tier wins via the per-tier dual-ROI gate.
-        accepted_filter_meta: dict[str, Any] = {}
-
         if aif_method == "synthetic":
             pass  # Go directly to synthetic
         else:
@@ -3060,19 +3137,13 @@ class AIFDetection(BaseInterface):
                 # AIF is the LAST RESORT — reachable only after every
                 # tier's per-tier gate AND the union/single-best
                 # fallbacks have failed.
-                taken_this_tier = 0
-                for cost, coord, metrics in scored:
-                    if coord in union_coords:
-                        continue
-                    if len(union) >= n_candidates:
-                        break
-                    union.append((cost, coord, metrics))
-                    union_coords.add(coord)
-                    union_coord_origin[coord] = level_name
-                    taken_this_tier += 1
-                union_tier_provenance[level_name] = taken_this_tier
-                if taken_this_tier > 0 and not accepted_filter_meta:
-                    accepted_filter_meta = dict(f_meta)
+                self._add_candidates_to_union(
+                    union_state,
+                    scored,
+                    level_name,
+                    n_candidates,
+                    f_meta,
+                )
 
                 # Per-tier dual-ROI gate with progressive worst-BRR
                 # trim.  Asks "do this tier's voxels behave as a
@@ -3101,8 +3172,10 @@ class AIFDetection(BaseInterface):
                     n_available = len(tier_pool)
                     detection_level = level_name
                     filter_meta = dict(f_meta)
-                    accepted_filter_meta = dict(f_meta)
-                    union_tier_provenance = {level_name: len(tier_pool)}
+                    union_state.filter_metadata.clear()
+                    union_state.filter_metadata.update(f_meta)
+                    union_state.tier_provenance.clear()
+                    union_state.tier_provenance[level_name] = len(tier_pool)
 
                 if accepted_aif is not None:
                     break  # cascade complete — tier accepted
@@ -3113,55 +3186,31 @@ class AIFDetection(BaseInterface):
             # mirrors the per-tier trim semantics: drop the most-
             # negative-BRR voxel one at a time until dual_roi passes or
             # the pool reaches MIN_AIF_CANDIDATES_ACCEPT.
-            if accepted_aif is None and len(union) >= MIN_AIF_CANDIDATES_ACCEPT:
-                union_acceptance = self._try_trimmed_dual_roi(
-                    union,
-                    conc_data,
-                    brain_mask,
-                    tr,
+            if accepted_aif is None:
+                union_acceptance = self._try_union_fallback(
+                    union_state,
+                    attempts,
+                    context,
                     aif_baseline_frames,
                 )
                 if union_acceptance is not None:
-                    result = union_acceptance.result
-                    union_pool = union_acceptance.candidates
-                    accepted_aif = (
-                        result.curve, result.mask, result.roi_size,
+                    accepted_aif = union_acceptance.accepted_aif
+                    top_candidates = list(union_acceptance.candidates)
+                    n_available = len(union_acceptance.candidates)
+                    detection_level = union_acceptance.detection_level
+                    union_state.tier_provenance.clear()
+                    union_state.tier_provenance.update(
+                        union_acceptance.tier_provenance
                     )
-                    top_candidates = list(union_pool)
-                    n_available = len(union_pool)
-                    # Recompute provenance from the trimmed pool's
-                    # coords — tiers whose voxels were dropped must
-                    # NOT appear in detection_level OR in the
-                    # downstream ``aif_tier_provenance`` QC field.
-                    trimmed_provenance: dict[str, int] = {}
-                    for _, coord, _ in union_pool:
-                        lvl = union_coord_origin.get(coord)
-                        if lvl is not None:
-                            trimmed_provenance[lvl] = (
-                                trimmed_provenance.get(lvl, 0) + 1
-                            )
-                    union_tier_provenance = trimmed_provenance
-                    # detection_level: cascade-ordered ``+``-joined
-                    # list of tiers that contributed voxels to the
-                    # accepted (post-trim) union pool. Single-tier
-                    # acceptances stay as plain tier names for
-                    # back-compat with downstream consumers.
-                    contributing = [
-                        lvl for _, _, lvl, _ in attempts
-                        if union_tier_provenance.get(lvl, 0) > 0
-                    ]
-                    detection_level = (
-                        "+".join(contributing) if contributing else "synthetic"
-                    )
-                    filter_meta = dict(accepted_filter_meta)
+                    filter_meta = dict(union_state.filter_metadata)
 
             # Single-best fallback: union has voxels but per-tier and
             # union dual-ROI all rejected. Try the lowest-cost union
             # voxel; relaxed gate matches legacy semantics (global_max_in_fp +
             # AIF_AVG_BRR_MIN).
-            if accepted_aif is None and len(union) > 0:
+            if accepted_aif is None and len(union_state.candidates) > 0:
                 single_best = self._try_single_best_fallback(
-                    union,
+                    union_state.candidates,
                     conc_data,
                     brain_mask,
                     tr,
@@ -3176,22 +3225,23 @@ class AIFDetection(BaseInterface):
                     )
                     best_only = [single_best.candidate]
                     top_candidates = best_only
-                    n_available = len(union)
+                    n_available = len(union_state.candidates)
                     # Use the chosen voxel's source tier (looked up
                     # via the per-coord origin map) rather than the
                     # last attempted tier, because the single-best
                     # voxel typically came from a stricter tier than
                     # the last one we tried.
                     best_coord = best_only[0][1]
-                    detection_level = union_coord_origin.get(
+                    detection_level = union_state.coordinate_origins.get(
                         best_coord,
                         tiers_attempted[-1] if tiers_attempted else "single_best",
                     )
                     # Provenance must describe the single emitted voxel, not the
                     # full pre-fallback union pool the trim loop left in
                     # union_tier_provenance.
-                    union_tier_provenance = {detection_level: 1}
-                    filter_meta = dict(accepted_filter_meta)
+                    union_state.tier_provenance.clear()
+                    union_state.tier_provenance[detection_level] = 1
+                    filter_meta = dict(union_state.filter_metadata)
                     _logger.warning(
                         "AIF cascade: using single-best candidate "
                         "(union failed dual-ROI validation)"
@@ -3242,14 +3292,16 @@ class AIFDetection(BaseInterface):
             qc_metrics["cascade_tiers_attempted"] = tiers_attempted
             qc_metrics["cascade_accepted_roi_size"] = accepted_roi_size
             qc_metrics["aif_quality"] = "detected"
-            qc_metrics["aif_tier_provenance"] = dict(union_tier_provenance)
+            qc_metrics["aif_tier_provenance"] = dict(
+                union_state.tier_provenance
+            )
             # Aggregate per-tier postfilter diagnostics across all tiers
             # that contributed to the union (sum of n_filtered_* counts;
             # max-of-max for spread/tail).
             agg_after = sum(
                 d.get("aif_n_after_filters", 0)
                 for tier, d in postfilter_diags_per_tier.items()
-                if union_tier_provenance.get(tier, 0) > 0
+                if union_state.tier_provenance.get(tier, 0) > 0
             )
             agg_filt_spread = sum(
                 d.get("aif_n_filtered_peakspread", 0)
