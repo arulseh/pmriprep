@@ -3241,56 +3241,6 @@ class DCEPreprocess(SimpleInterface):
         )
         return bolus_frame, diag
 
-    def _detect_bolus_arrival_from_signal(self, signal: np.ndarray) -> int:
-        """Detect bolus arrival from global signal time course.
-
-        Uses derivative-based onset detection: computes smoothed first
-        derivative and finds where rate-of-change first exceeds threshold.
-        Detects bolus ONSET (when contrast first arrives), not accumulated
-        effect.
-        """
-        from scipy.ndimage import gaussian_filter1d
-        from pmriprep.utils.dce_constants import DEFAULT_BASELINE_FRAMES
-
-        n_volumes = len(signal)
-        if n_volumes < 6:
-            return DEFAULT_BASELINE_FRAMES
-
-        min_baseline = DEFAULT_BASELINE_FRAMES
-        n_baseline_noise = 5  # Frames for noise estimation
-
-        # TR-adaptive sigma: at volume_tr=7.4s, sigma=2.0 smoothes over
-        # ~14.8s — wider than the bolus FWHM — causing Gaussian bleed-back
-        # that triggers false early detection. Target ~4s smoothing window
-        # in temporal units, converted to sample space.
-        volume_tr = self.inputs.volume_tr if self.inputs.volume_tr > 0 else 0.0
-        if volume_tr > 0:
-            sigma = max(0.5, 4.0 / volume_tr)
-        else:
-            sigma = 2.0  # legacy default
-
-        # Compute first derivative and smooth
-        signal_deriv = np.diff(signal)
-        signal_deriv_smooth = gaussian_filter1d(signal_deriv, sigma=sigma)
-
-        # Threshold: 2x std of baseline derivative, with absolute floor
-        # to prevent false triggers when baseline is very quiet
-        baseline_end = min(n_baseline_noise, len(signal_deriv_smooth))
-        baseline_deriv = signal_deriv_smooth[:baseline_end]
-        noise_threshold = 2.0 * np.std(baseline_deriv)
-        abs_floor = 0.01 * np.mean(signal[:baseline_end + 1])
-        deriv_threshold = max(noise_threshold, abs_floor)
-
-        # Find first pair of consecutive above-threshold frames
-        # (single spikes are likely motion, not bolus onset)
-        above = signal_deriv_smooth > deriv_threshold
-        for i in range(len(above) - 1):
-            if above[i] and above[i + 1]:
-                # deriv[i] = signal[i+1] - signal[i], so bolus onset is frame i+1
-                return max(i + 1, min_baseline)
-
-        return DEFAULT_BASELINE_FRAMES
-
     def _calculate_fd(
         self,
         motion_params: npt.NDArray[Any],
@@ -3585,18 +3535,6 @@ class DCEBrainExtract(SimpleInterface):
                 shutil.copy2(mask_path, out_mask)
         return succeeded
 
-    def _detect_hdbet_device(self) -> str:
-        """Auto-detect best device for HD-BET.
-
-        Returns
-        -------
-        str
-            Device name: 'cuda', 'mps', or 'cpu'.
-        """
-        from pmriprep.utils.device import detect_torch_device
-
-        return detect_torch_device()
-
     def _run_bet(self, dce_mean: Path, out_brain: str, out_mask: str) -> bool:
         """Run FSL BET brain extraction."""
         import subprocess
@@ -3674,20 +3612,6 @@ class DCEBrainExtract(SimpleInterface):
         # Save filled mask
         filled_img = nib.Nifti1Image(filled.astype(np.float32), img.affine)  # type: ignore[attr-defined]
         nib.save(filled_img, mask_path)
-
-    def _apply_mask(self, in_file: str, mask_file: str, out_file: str) -> None:
-        """Apply brain mask to image."""
-        import nibabel as nib  # type: ignore[import-untyped]
-
-        img = nib.load(in_file)
-        mask_img = nib.load(mask_file)
-
-        data = img.get_fdata()  # type: ignore[attr-defined]
-        mask = mask_img.get_fdata() > 0  # type: ignore[attr-defined]
-
-        brain_data = data * mask
-        brain_img = nib.Nifti1Image(brain_data.astype(np.float32), img.affine)  # type: ignore[attr-defined]
-        nib.save(brain_img, out_file)
 
     def _compute_qc_metrics(self, mask_path: str, dce_mean: Path) -> dict[str, Any]:
         """Compute QC metrics for brain extraction."""
