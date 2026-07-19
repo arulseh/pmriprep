@@ -163,6 +163,34 @@ class TestRejectsBadModality:
             )
 
 
+def test_writer_emits_base_sidecar_without_qc(bids_root, tmp_path) -> None:
+    """An emitted AIF TSV always has columns, units, sources, and provenance."""
+    from pmriprep.interfaces.qc_writers import DSCFiguresWriter
+
+    source = bids_root / "sub-X" / "ses-Y" / "perf" / "sub-X_ses-Y_dsc.nii.gz"
+    curve = tmp_path / "aif.txt"
+    np.savetxt(curve, np.array([1.0, 2.0, 3.0]))
+    writer = DSCFiguresWriter(
+        output_dir=str(tmp_path / "out"),
+        subject_id="X",
+        session_id="Y",
+        bids_dir=str(bids_root),
+        source_dsc=str(source),
+        aif_curve=str(curve),
+    )
+
+    result = writer.run()
+    sidecar_path = Path(result.outputs.aif_curve_txt).with_suffix(".json")
+    sidecar = json.loads(sidecar_path.read_text())
+
+    assert sidecar["Columns"] == ["delta_r2_star"]
+    assert sidecar["Units"] == "1/s"
+    assert sidecar["Sources"] == [
+        "bids:raw:sub-X/ses-Y/perf/sub-X_ses-Y_dsc.nii.gz"
+    ]
+    assert all(not key.startswith("AIF") for key in sidecar)
+
+
 class TestColumnHeaderSingleSource:
     """The TSV column header and the sidecar ``Columns`` share one source.
 

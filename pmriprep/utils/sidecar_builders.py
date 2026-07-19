@@ -1114,11 +1114,6 @@ def build_aif_timeseries_sidecar(
     detection metadata as flat ``AIF*``-prefixed top-level keys, matching
     fmriprep/aslprep convention for pipeline-derived sidecar fields.
 
-    Note: the ``.txt`` extension is non-canonical (BIDS uses
-    ``_timeseries.tsv``); this is a separate, pre-existing issue. The
-    sidecar attaches metadata regardless and the validator treats it as
-    a free sidecar.
-
     Parameters
     ----------
     modality : str

@@ -41,18 +41,7 @@ class PMRIPrepDataSink(_NiworkflowsDDS):
 
 
 def _optional_figure_file(desc: str = "") -> traits.Either:
-    """File-trait that also accepts ``None`` from upstream Function nodes.
-
-    Figure-producing Function nodes (e.g. ``_dsc_dce_xval_plot_node``)
-    legitimately return Python ``None`` when their figure is not
-    applicable. Nipype's ``File`` validator calls ``Path(value)``
-    unconditionally, which raises ``TraitError`` on ``None`` and stalls
-    the DAG via a downstream ``FileNotFoundError`` on the missing
-    ``result_*.pklz``. Wrapping ``File(exists=True)`` in
-    ``traits.Either(..., traits.Enum(None))`` lets the value through;
-    each writer's ``_run_interface`` already skips falsy/undefined inputs
-    via ``if not isdefined(src) or not src: continue``.
-    """
+    """Optional figure trait accepting either an existing file or ``None``."""
     return traits.Either(
         File(exists=True), traits.Enum(None), desc=desc,
     )
@@ -90,8 +79,8 @@ class AnatFiguresWriter(SimpleInterface):
     """Copies the anat figure filmstrips into ``figures/``.
 
     QC summary fields (recommendation / warnings) live on the canonical
-    ``desc-preproc_T1w.json`` anchor sidecar as flat ``QC*`` keys; this
-    writer no longer emits a session-root ``desc-anatQC_quality.json``.
+    ``desc-preproc_T1w.json`` anchor sidecar as flat ``QC*`` keys. No separate
+    session-root QC summary is emitted.
     """
 
     input_spec = AnatFiguresWriterInputSpec
@@ -131,12 +120,7 @@ class AnatFiguresWriter(SimpleInterface):
 
 
 # ---------------------------------------------------------------------------
-# Dataset description barrier
-# ---------------------------------------------------------------------------
-
-
-# ---------------------------------------------------------------------------
-# AIF timeseries sidecar writer (Phase 2a)
+# AIF timeseries sidecar writer
 # ---------------------------------------------------------------------------
 
 
@@ -165,19 +149,21 @@ def _write_aif_timeseries_sidecar(
     subject: str,
     session: str,
 ) -> None:
-    """Write the JSON sidecar next to a copied AIF curve TXT.
+    """Write the JSON sidecar next to an AIF curve TSV.
 
     Reads ``qc_metrics["aif_detection"]`` (the producer-shape ``aif_qc``
     dict) and emits flat ``AIF*``-prefixed top-level keys via
     :func:`pmriprep.utils.sidecar_builders.build_aif_timeseries_sidecar`.
-    Silently skips when ``qc_metrics`` is missing or empty — the TXT
-    still exists; the sidecar is opt-in metadata.
+    The sidecar is always written. Detection-specific fields are omitted when
+    AIF QC is unavailable, while columns, units, provenance, and sources remain.
     """
-    if not qc_metrics:
-        return
-    aif_qc = qc_metrics.get("aif_detection") if isinstance(qc_metrics, dict) else None
-    if not aif_qc:
-        return
+    aif_qc = (
+        qc_metrics.get("aif_detection")
+        if isinstance(qc_metrics, dict)
+        else None
+    )
+    if not isinstance(aif_qc, dict):
+        aif_qc = None
 
     from pmriprep.utils.sidecar_builders import (
         build_aif_timeseries_sidecar,
@@ -322,9 +308,8 @@ class DSCFiguresWriter(SimpleInterface):
     QC summary fields (recommendation / warnings) live on
     ``desc-dscPreproc_dsc.json`` as flat ``QC*`` keys; per-map lesion
     stats live on the per-PK-map sidecars as ``LesionStats`` fragments.
-    This writer no longer emits a session-root
-    ``desc-dscQC_quality.json`` or copies the per-map lesion/ROI stats
-    JSONs.
+    No separate session-root QC summary or duplicate lesion/ROI statistics
+    JSON is emitted.
     """
 
     input_spec = DSCFiguresWriterInputSpec
@@ -466,10 +451,9 @@ class DCEFiguresWriter(SimpleInterface):
     QC summary fields (recommendation / warnings) live on
     ``desc-dcePreproc_dce.json`` as flat ``QC*`` keys; per-PK-map lesion
     stats live on the per-map sidecars as ``LesionStats`` fragments.
-    This writer no longer emits a session-root
-    ``desc-dceQC_quality.json`` or copies the per-map lesion/ROI stats
-    JSONs. It still cleans up stale ``aif_location`` figures on rerun
-    when AIF detection falls back to population/external.
+    No separate session-root QC summary or duplicate lesion/ROI statistics
+    JSON is emitted. AIF location figures are absent for population and
+    external AIFs.
     """
 
     input_spec = DCEFiguresWriterInputSpec
@@ -536,9 +520,11 @@ class DCEFiguresWriter(SimpleInterface):
         # Stale AIF location figure cleanup (population/external AIF)
         qc_metrics = self.inputs.qc_metrics
         if isdefined(qc_metrics) and qc_metrics:
+            aif_detection = qc_metrics.get("aif_detection")
             method = (
-                qc_metrics.get("aif_detection", {})
-                .get("detection_method", "unknown")
+                aif_detection.get("detection_method", "unknown")
+                if isinstance(aif_detection, dict)
+                else "unknown"
             )
             if method in ("population", "external"):
                 stale = figures_dir / figure_filename(

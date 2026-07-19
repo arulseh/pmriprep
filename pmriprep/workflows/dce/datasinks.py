@@ -992,11 +992,9 @@ def init_dce_datasinks_wf(
 ) -> pe.Workflow:
     """Build the DCE-pipeline DerivativesDataSink chain.
 
-    ``pk_model`` is the resolved (non-"auto") model name; the
-    ``model-{pk_model}`` entity is added to PK / uncertainty / CV / CI95 /
-    R²/qualityFlag/modelSelection/deltaBIC/normalized
-    sinks. Model-free maps (IAUC, peakEnhancement, ttp, SER, washIn/Out,
-    BAT, curveType, tsnr, qcMask, nIAUC60) drop the model entity.
+    ``pk_model`` is the resolved model name recorded in PK-map sidecars.
+    Model names are not encoded as filename entities because ``model-`` is
+    not registered by BIDS.
     """
     if present_inputs is None:
         present_inputs = set()
