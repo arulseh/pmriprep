@@ -1,4 +1,4 @@
-"""Tests for shared HD-BET utility and DSC brain extraction interface."""
+"""Tests for shared HD-BET utility and perfusion brain extraction interfaces."""
 
 import subprocess
 from pathlib import Path
@@ -258,3 +258,18 @@ class TestDSCBrainExtract:
         assert hasattr(spec, "hdbet_device")
         assert hasattr(spec, "hdbet_conda_env")
         assert hasattr(spec, "use_gpu")
+
+
+class TestDCEBrainExtract:
+    """Tests for the DCE brain extraction interface contract."""
+
+    def test_input_trait_names(self) -> None:
+        """Inputs describe the native DCE extraction chain."""
+        from pmriprep.interfaces.dce import DCEBrainExtractInputSpec
+
+        spec = DCEBrainExtractInputSpec()
+        assert hasattr(spec, "dce_mean")
+        assert hasattr(spec, "hdbet_device")
+        assert hasattr(spec, "hdbet_conda_env")
+        assert hasattr(spec, "use_gpu")
+        assert not hasattr(spec, "t1w_brain_mask")

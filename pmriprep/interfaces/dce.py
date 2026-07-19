@@ -3390,10 +3390,6 @@ class DCEBrainExtractInputSpec(BaseInterfaceInputSpec):
         mandatory=True,
         desc="Mean DCE image (typically from DCEPreprocess)",
     )
-    t1w_brain_mask = File(
-        exists=True,
-        desc="T1w-derived brain mask (fallback if native extraction fails)",
-    )
     out_brain = File(
         genfile=True,
         desc="Output brain-extracted DCE image",
@@ -3472,8 +3468,6 @@ class DCEBrainExtract(SimpleInterface):
     ----------
     dce_mean : str
         Mean DCE image (from DCEPreprocess.mean_img)
-    t1w_brain_mask : str, optional
-        T1w brain mask as fallback reference
     method : str
         Preferred method: 'hdbet' (default), 'bet', or 'threshold'
     bet_frac : float
