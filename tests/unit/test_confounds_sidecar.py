@@ -33,7 +33,7 @@ class TestWriteConfoundsSidecar:
         assert len(data["GeneratedBy"]) == 1
         assert data["GeneratedBy"][0]["Name"] == "pmriprep"
         assert len(data["Sources"]) == 1
-        assert data["Sources"][0].startswith("bids::")
+        assert data["Sources"][0].startswith("bids:raw:")
         assert "trans_x" in data
         assert "rot_z" in data
 

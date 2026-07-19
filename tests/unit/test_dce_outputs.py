@@ -68,7 +68,7 @@ def test_sidecar_carries_m3_fields(tmp_path: Path) -> None:
         bids_dir=str(tmp_path),
         subject="01", session="01",
     )
-    assert sidecar["SpatialReference"].startswith("bids::pmriprep/")
+    assert sidecar["SpatialReference"].startswith("bids::sub-")
     assert sidecar["Resolution"] == "native"
     assert isinstance(sidecar["VoxelSize"], list) and len(sidecar["VoxelSize"]) == 3
     assert isinstance(sidecar["Sources"], list)

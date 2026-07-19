@@ -16,8 +16,8 @@ def base_sidecar() -> dict[str, Any]:
     return {
         "Description": "Motion-corrected 4D DCE time series",
         "SkullStripped": False,
-        "SpatialReference": "bids::pmriprep/sub-X/perf/sub-X_desc-dceMean_stat.nii.gz",
-        "Sources": ["bids::sub-X/perf/sub-X_dce.nii.gz"],
+        "SpatialReference": "bids::sub-X/perf/sub-X_desc-dceMean_stat.nii.gz",
+        "Sources": ["bids:raw:sub-X/perf/sub-X_dce.nii.gz"],
         "Resolution": "native",
         "VoxelSize": [1.0, 1.0, 3.0],
         "KtransConvention": "plasma_Tofts1999",
@@ -222,7 +222,7 @@ class TestPreprocMetaNoNaN:
 
         from pmriprep.workflows.dce.datasinks import _build_dce_preproc_meta
 
-        base = {"Description": "x", "Sources": ["bids::sub-X/perf/sub-X_dce.nii.gz"]}
+        base = {"Description": "x", "Sources": ["bids:raw:sub-X/perf/sub-X_dce.nii.gz"]}
         qc = {
             "preprocessing": {
                 "baseline_tsnr": float("nan"),

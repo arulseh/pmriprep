@@ -14,6 +14,7 @@ from pmriprep.utils.outputs import (
     PMRIPREP_CODE_URL,
     write_bidsignore,
     write_dataset_description,
+    write_derivative_readme,
 )
 
 
@@ -35,8 +36,8 @@ def test_first_run_writes_pmriprep_entry(tmp_path: Path) -> None:
     pmri = desc["GeneratedBy"][0]
     assert pmri["CodeURL"] == PMRIPREP_CODE_URL
     assert "DOI" not in pmri  # not provided
-    # SourceDatasets uses canonical bids:: prefix, not the bids:raw: typo
-    assert desc["SourceDatasets"][0]["URL"].startswith("bids::")
+    assert desc["DatasetLinks"]["raw"] == "../raw_bids"
+    assert desc["SourceDatasets"] == [{"URL": "../raw_bids"}]
     # .bidsignore written alongside dataset_description.json
     bidsignore = pipeline_dir / ".bidsignore"
     assert bidsignore.exists()
@@ -46,6 +47,9 @@ def test_first_run_writes_pmriprep_entry(tmp_path: Path) -> None:
     assert "**/figures/" in content
     assert "**/log/" in content
     assert "**/logs/" in content
+    readme = pipeline_dir / "README"
+    assert readme.exists()
+    assert "PMRIPrep derivative dataset" in readme.read_text()
 
 
 def test_write_bidsignore_idempotent(tmp_path: Path) -> None:
@@ -55,6 +59,15 @@ def test_write_bidsignore_idempotent(tmp_path: Path) -> None:
     first = (pipeline_dir / ".bidsignore").read_text()
     write_bidsignore(pipeline_dir)
     assert (pipeline_dir / ".bidsignore").read_text() == first
+
+
+def test_write_derivative_readme_idempotent(tmp_path: Path) -> None:
+    pipeline_dir = tmp_path / "pmriprep"
+    pipeline_dir.mkdir(parents=True)
+    write_derivative_readme(pipeline_dir)
+    first = (pipeline_dir / "README").read_text()
+    write_derivative_readme(pipeline_dir)
+    assert (pipeline_dir / "README").read_text() == first
 
 
 def test_preserves_prior_tool_generated_by(tmp_path: Path) -> None:
@@ -75,6 +88,26 @@ def test_preserves_prior_tool_generated_by(tmp_path: Path) -> None:
     assert "pmriprep" in names
     fmri = next(e for e in desc["GeneratedBy"] if e["Name"] == "fmriprep")
     assert fmri["Version"] == "23.0.0"
+
+
+def test_preserves_foreign_dataset_links(tmp_path: Path) -> None:
+    pipeline_dir = tmp_path / "pmriprep"
+    pipeline_dir.mkdir(parents=True)
+    (pipeline_dir / "dataset_description.json").write_text(json.dumps({
+        "Name": "existing",
+        "BIDSVersion": "1.11.1",
+        "DatasetType": "derivative",
+        "GeneratedBy": [{"Name": "other"}],
+        "DatasetLinks": {"atlas": "../atlas", "raw": "stale"},
+    }))
+
+    write_dataset_description(pipeline_dir, str(tmp_path / "raw_bids"))
+    desc = _read(pipeline_dir / "dataset_description.json")
+
+    assert desc["DatasetLinks"] == {
+        "atlas": "../atlas",
+        "raw": "../raw_bids",
+    }
 
 
 def test_re_run_replaces_stale_pmriprep_entry(tmp_path: Path) -> None:
@@ -109,5 +142,3 @@ def test_handles_malformed_existing_json(tmp_path: Path) -> None:
     names = [e["Name"] for e in desc["GeneratedBy"]]
     assert names[0] == "pmriprep"
     assert {"FSL", "ANTs", "Nipype", "HD-BET", "HD-GLIO"} <= set(names)
-
-

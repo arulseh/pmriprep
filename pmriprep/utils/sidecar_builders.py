@@ -7,7 +7,7 @@ workflows can call them from inside ``pe.Node(Function(...))`` nodes.
 
 Sidecar field strategy (M3):
 
-- **Sources**: per-output list of BIDS URIs (``bids::sub-X/ses-Y/...``) to
+- **Sources**: per-output list of BIDS URIs (``bids:raw:sub-X/ses-Y/...``) to
   the immediate raw inputs that produced the derivative.
 - **SpatialReference**: BIDS URI to the on-disk reference image whose
   grid the derivative occupies (e.g., the preproc T1w for ``space-T1w``,
@@ -163,21 +163,21 @@ def build_provenance_block(config_dict: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def make_bids_source_uri(source_path: PathLike, bids_dir: PathLike) -> str:
-    """Return a ``bids::`` URI for ``source_path`` relative to ``bids_dir``."""
+    """Return a BIDS URI for a raw-dataset or external source path."""
     source_path = Path(source_path).resolve()
     bids_dir = Path(bids_dir).resolve()
     try:
         rel = source_path.relative_to(bids_dir)
-        return f"bids::{rel}"
+        return f"bids:raw:{rel}"
     except ValueError:
-        return f"bids::{source_path.name}"
+        return source_path.as_uri()
 
 
 def build_sources_list(
     source_paths: Sequence[PathLike],
     bids_dir: PathLike,
 ) -> List[str]:
-    """Return ``[bids::...]`` URIs for each input path (skip empty/None)."""
+    """Return source URIs for each input path, skipping absent values."""
     out: List[str] = []
     for p in source_paths:
         if p is None or p == "":
@@ -191,7 +191,6 @@ def build_spatial_reference_uri(
     subject: str,
     session: Optional[str],
     datatype: str = "anat",
-    pipeline: str = "pmriprep",
 ) -> str:
     """Return a derivative-relative ``bids::`` URI to a reference image.
 
@@ -203,7 +202,7 @@ def build_spatial_reference_uri(
     if session:
         prefix += f"_ses-{session}"
     full_name = f"{prefix}_{reference_filename}"
-    parts = [pipeline, f"sub-{subject}"]
+    parts = [f"sub-{subject}"]
     if session:
         parts.append(f"ses-{session}")
     parts.extend([datatype, full_name])
