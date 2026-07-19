@@ -90,10 +90,10 @@ EPSILON_SHAPE: Final[float] = 1e-10
 # Leakage Correction (K2)
 # =============================================================================
 
-#: Upper bound for K2 leakage rate (s⁻¹). Literature maximum is ~0.04 s⁻¹;
-#: values above 0.5 are numerically degenerate OLS fits. Existing QC already
-#: treats K2 > 0.5 as "severe leakage."
-K2_UPPER_BOUND: Final[float] = 0.5
+#: Numerical safety bound for K2 leakage fits (s⁻¹). This is not a claimed
+#: physiological maximum. Local round-trip validation covers K2 through
+#: 0.2 s⁻¹; larger unconstrained OLS estimates are treated as degenerate.
+K2_UPPER_BOUND: Final[float] = 0.2
 
 # Bidirectional K2
 # kep = EES efflux rate in s^-1 (NOT min^-1 like DCE literature).
@@ -314,9 +314,6 @@ class ParameterBounds(NamedTuple):
 #: Field strength, TE, dose, and contrast agent all cancel in the
 #: deconvolution (r2* scales both tissue and AIF equally).
 CBF_BOUNDS: Final[ParameterBounds] = ParameterBounds(0.0, 2.0)
-
-#: CBV bounds in mL/100g
-CBV_BOUNDS: Final[ParameterBounds] = ParameterBounds(0.0, 20.0)
 
 #: MTT bounds in seconds
 MTT_BOUNDS: Final[ParameterBounds] = ParameterBounds(0.0, 30.0)

@@ -452,10 +452,9 @@ class TestUtilityFunctions:
 
     def test_perfusion_bounds_ordered(self) -> None:
         """Verify perfusion parameter bounds are correctly ordered."""
-        from pmriprep.utils.dsc_constants import CBF_BOUNDS, CBV_BOUNDS, MTT_BOUNDS
+        from pmriprep.utils.dsc_constants import CBF_BOUNDS, MTT_BOUNDS
 
         assert CBF_BOUNDS.min < CBF_BOUNDS.max
-        assert CBV_BOUNDS.min < CBV_BOUNDS.max
         assert MTT_BOUNDS.min < MTT_BOUNDS.max
 
     def test_pk_parameter_bounds_ordered(self) -> None:

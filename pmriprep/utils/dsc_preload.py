@@ -1294,7 +1294,7 @@ def apply_k2_correction(
 # K2 QC thresholds (s⁻¹)
 _K2_CLINICAL_THRESHOLD: Final[float] = 0.04  # clinically meaningful BBB disruption
 _K2_LEAKY_THRESHOLD: Final[float] = 0.1  # used by dsc_cbv_constraint.py
-_K2_SEVERE_THRESHOLD: Final[float] = 0.10  # physiological maximum
+_K2_SEVERE_THRESHOLD: Final[float] = 0.10  # numerically suspect fit threshold
 
 
 def _compute_k2_qc_metrics(
