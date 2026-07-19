@@ -85,7 +85,6 @@ def test_dce_copy_perf_map_lacks_space_entity(tmp_path) -> None:
         suffix="Ktrans",
         meta_dict={"Description": "test"},
         datatype="perf",
-        model_entity="model-tofts",
     )
     assert _SPACE_ENTITY.search(out_path) is None, (
         f"_copy_perf_map (DCE) wrote path with space-: {out_path}"

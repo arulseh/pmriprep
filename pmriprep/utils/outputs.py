@@ -32,45 +32,6 @@ PMRIPREP_CODE_URL: Final[str] = "https://github.com/arulseh/pmriprep"
 # Shared utilities for BIDS-Derivatives output writers
 # -----------------------------------------------------------------------
 
-# Model name → BIDS-safe entity value mapping
-_MODEL_ENTITY_MAP: Dict[str, str] = {
-    "tofts": "tofts",
-    "extended_tofts": "extendedTofts",
-    "patlak": "patlak",
-    "two_compartment_exchange": "2cxm",
-    "2cxm": "2cxm",
-    "auto": "auto",
-}
-
-
-def sanitize_model_entity(model_name: str) -> str:
-    """Convert a pharmacokinetic model name to a BIDS-safe entity value.
-
-    BIDS entity values must be alphanumeric (no underscores or hyphens).
-    This function maps known model names to their BIDS-safe equivalents
-    and applies camelCase conversion for unknown names.
-
-    Parameters
-    ----------
-    model_name : str
-        Raw model name (e.g., "extended_tofts", "2cxm").
-
-    Returns
-    -------
-    str
-        BIDS-safe entity value (e.g., "extendedTofts", "2cxm").
-    """
-    lowered = model_name.lower().strip()
-    if lowered in _MODEL_ENTITY_MAP:
-        return _MODEL_ENTITY_MAP[lowered]
-
-    # Fallback: convert underscores to camelCase
-    parts = model_name.split("_")
-    if len(parts) > 1:
-        return parts[0] + "".join(p.capitalize() for p in parts[1:])
-    return model_name
-
-
 def write_dataset_description(
     pipeline_dir: Path,
     bids_dir: str,

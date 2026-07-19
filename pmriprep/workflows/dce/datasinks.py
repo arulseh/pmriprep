@@ -392,7 +392,6 @@ def _copy_perf_map(
     suffix: str,
     meta_dict: dict,
     datatype: str = "perf",
-    model_entity: str = "",
     bids_suffix: str = "stat",
     space: str = "",
 ) -> str:
@@ -432,8 +431,6 @@ def _copy_perf_map(
     parts = [prefix]
     if space:
         parts.append(f"space-{space}")
-    if model_entity:
-        parts.append(model_entity)
     if desc:
         folded = suffix[:1].upper() + suffix[1:] if suffix else ""
         parts.append(f"desc-{desc}{folded}")
@@ -545,7 +542,7 @@ def _split_dce_smoothed(
     mf_units: dict[str, str] | None = None,
 ) -> tuple[
     list[str], list[str], list[str], list[str],
-    list[str], list[str], list[bool], list[str],
+    list[str], list[str], list[str],
 ]:
     """Flatten the three smoothed-map dicts into per-output tuples."""
     import re as _re
@@ -581,7 +578,6 @@ def _split_dce_smoothed(
     units_list: list[str] = []
     desc_values: list[str] = []
     suffixes: list[str] = []
-    use_model: list[bool] = []
     map_keys: list[str] = []
 
     if isinstance(smooth_pk, dict):
@@ -595,7 +591,6 @@ def _split_dce_smoothed(
             units_list.append(pk_units.get(name, ""))
             desc_values.append(f"dce{fwhm_str}")
             suffixes.append(pk_suffix_bids.get(name, name))
-            use_model.append(True)
             map_keys.append(f"{name}_sm")
 
     if isinstance(smooth_mf, dict):
@@ -609,7 +604,6 @@ def _split_dce_smoothed(
             units_list.append(mf_units.get(name, ""))
             desc_values.append(f"dce{fwhm_str}")
             suffixes.append(mf_suffix_bids.get(name, name))
-            use_model.append(False)
             map_keys.append(name)
 
     uncertainty_map_key = {
@@ -631,17 +625,9 @@ def _split_dce_smoothed(
             units_list.append(pk_units.get(param, ""))
             desc_values.append(f"dceUncertainty{fwhm_str}")
             suffixes.append(param)
-            use_model.append(True)
             map_keys.append(uncertainty_map_key.get(name, ""))
 
-    return in_files, descs, fwhms, units_list, desc_values, suffixes, use_model, map_keys
-
-
-def _model_entity_per_item(
-    use_model_flags: list[bool],
-    model_entity: str,
-) -> list[str]:
-    return [model_entity if flag else "" for flag in use_model_flags]
+    return in_files, descs, fwhms, units_list, desc_values, suffixes, map_keys
 
 
 # ---------------------------------------------------------------------------
@@ -661,7 +647,6 @@ def _add_perf_map_sink(
     description: str,
     units: Optional[str],
     extra: Optional[dict],
-    model_entity: str = "",
     minimal_base: bool = False,
     map_key: str = "",
     bids_suffix: str = "stat",
@@ -701,8 +686,7 @@ def _add_perf_map_sink(
         niu.Function(
             input_names=[
                 "in_file", "output_dir", "subject", "session",
-                "desc", "suffix", "meta_dict", "datatype", "model_entity",
-                "bids_suffix",
+                "desc", "suffix", "meta_dict", "datatype", "bids_suffix",
             ],
             output_names=["out_file"],
             function=_copy_perf_map,
@@ -712,7 +696,6 @@ def _add_perf_map_sink(
     sink.inputs.desc = desc_value
     sink.inputs.suffix = suffix
     sink.inputs.datatype = "perf"
-    sink.inputs.model_entity = model_entity
     sink.inputs.bids_suffix = bids_suffix
     workflow.connect([
         (inputnode, sink, [
@@ -782,7 +765,6 @@ def _add_dce_pk_map_sink(
     description: str,
     units: Optional[str],
     map_key: str,
-    model_entity: str = "",
     bids_suffix: str = "stat",
 ) -> pe.Node:
     """Wire a DCE PK-map sink with flat-key cosmetic enrichment.
@@ -821,8 +803,7 @@ def _add_dce_pk_map_sink(
         niu.Function(
             input_names=[
                 "in_file", "output_dir", "subject", "session",
-                "desc", "suffix", "meta_dict", "datatype", "model_entity",
-                "bids_suffix",
+                "desc", "suffix", "meta_dict", "datatype", "bids_suffix",
             ],
             output_names=["out_file"],
             function=_copy_perf_map,
@@ -832,7 +813,6 @@ def _add_dce_pk_map_sink(
     sink.inputs.desc = desc_value
     sink.inputs.suffix = suffix
     sink.inputs.datatype = "perf"
-    sink.inputs.model_entity = model_entity
     sink.inputs.bids_suffix = bids_suffix
     workflow.connect([
         (inputnode, sink, [
@@ -948,8 +928,8 @@ def _add_anat_mask_sink(
         niu.Function(
             input_names=[
                 "in_file", "output_dir", "subject", "session",
-                "desc", "suffix", "meta_dict", "datatype", "model_entity",
-                "bids_suffix", "space",
+                "desc", "suffix", "meta_dict", "datatype", "bids_suffix",
+                "space",
             ],
             output_names=["out_file"],
             function=_copy_perf_map,
@@ -959,7 +939,6 @@ def _add_anat_mask_sink(
     sink.inputs.desc = desc_value
     sink.inputs.suffix = ""
     sink.inputs.datatype = "anat"
-    sink.inputs.model_entity = ""
     sink.inputs.bids_suffix = "mask"
     sink.inputs.space = space
     workflow.connect([
@@ -1000,10 +979,6 @@ def init_dce_datasinks_wf(
     if present_inputs is None:
         present_inputs = set()
     present = set(_ALWAYS_PRESENT_INPUTS) | set(present_inputs)
-    # `model-` is not a BIDS entity; model name lives in the JSON sidecar
-    # (PKModeling.model). Empty string here propagates through all callers.
-    model_entity = ""
-
     workflow = pe.Workflow(name=name)
 
     inputnode = pe.Node(
@@ -1145,7 +1120,7 @@ def init_dce_datasinks_wf(
 
     sink_outputs: list[tuple[pe.Node, str]] = []
 
-    # --- PK maps (carry model entity + flat-key cosmetic enrichment) ---
+    # --- PK maps (flat-key cosmetic enrichment) ---
     for in_attr, suffix, description, units in _PK_MAPS:
         if in_attr not in present:
             continue
@@ -1155,11 +1130,10 @@ def init_dce_datasinks_wf(
             desc_value="dce", suffix=suffix,
             description=description, units=units,
             map_key=_PK_MAP_KEY.get(in_attr, ""),
-            model_entity=model_entity,
         )
         sink_outputs.append((sink, "out_file"))
 
-    # --- Bayesian uncertainty / CV / CI95 (model entity) ---
+    # --- Bayesian uncertainty / CV / CI95 ---
     for in_attr, suffix, description in _UNCERTAINTY_MAPS:
         if in_attr not in present:
             continue
@@ -1168,7 +1142,6 @@ def init_dce_datasinks_wf(
             name=in_attr, in_attr=in_attr,
             desc_value="dceUncertainty", suffix=suffix,
             description=description, units=None, extra=None,
-            model_entity=model_entity,
             map_key=in_attr,
         )
         sink_outputs.append((sink, "out_file"))
@@ -1181,7 +1154,6 @@ def init_dce_datasinks_wf(
             name=in_attr, in_attr=in_attr,
             desc_value="dceCV", suffix=suffix,
             description=description, units=None, extra=None,
-            model_entity=model_entity,
             map_key=in_attr,
         )
         sink_outputs.append((sink, "out_file"))
@@ -1194,12 +1166,11 @@ def init_dce_datasinks_wf(
             name=in_attr, in_attr=in_attr,
             desc_value=f"dceCI95{bound}", suffix=suffix,
             description=description, units=None, extra=None,
-            model_entity=model_entity,
             map_key=in_attr,
         )
         sink_outputs.append((sink, "out_file"))
 
-    # --- Model-free maps (no model entity, no KtransConvention) ---
+    # --- Model-free maps (no KtransConvention) ---
     for in_attr, suffix, description, units, extra in _MODEL_FREE_MAPS:
         if in_attr not in present:
             continue
@@ -1208,7 +1179,6 @@ def init_dce_datasinks_wf(
             name=in_attr, in_attr=in_attr,
             desc_value="dce", suffix=suffix,
             description=description, units=units, extra=extra,
-            model_entity="",
             map_key=_MF_AIF_MAP_KEY.get(in_attr, ""),
             bids_suffix=_BIDS_SUFFIX_OVERRIDE.get(suffix, "stat"),
         )
@@ -1221,7 +1191,7 @@ def init_dce_datasinks_wf(
             name="tsnr_map", in_attr="tsnr_map",
             desc_value="dce", suffix="tsnr",
             description="Temporal signal-to-noise ratio", units="arbitrary",
-            extra=None, model_entity="",
+            extra=None,
         )
         sink_outputs.append((sink, "out_file"))
     if "qc_mask" in present:
@@ -1230,7 +1200,7 @@ def init_dce_datasinks_wf(
             name="qc_mask", in_attr="qc_mask",
             desc_value="dceQc", suffix="",
             description="QC mask (1=good fit, 0=unfitted/poor)",
-            units=None, extra=None, model_entity="",
+            units=None, extra=None,
             bids_suffix="mask",
         )
         sink_outputs.append((sink, "out_file"))
@@ -1243,7 +1213,6 @@ def init_dce_datasinks_wf(
                 "Coefficient of determination for the per-voxel PK fit"
             ),
             units=None, extra=None,
-            model_entity=model_entity,
         )
         sink_outputs.append((sink, "out_file"))
     if "quality_flag_map" in present:
@@ -1255,7 +1224,7 @@ def init_dce_datasinks_wf(
                 "Quality flag map (0=unfitted, 1=good, 2=poor_convergence, "
                 "3=high_uncertainty, 4=unreliable_high_kep)"
             ),
-            units=None, extra=None, model_entity=model_entity,
+            units=None, extra=None,
             bids_suffix="mask",
         )
         sink_outputs.append((sink, "out_file"))
@@ -1278,8 +1247,7 @@ def init_dce_datasinks_wf(
             niu.Function(
                 input_names=[
                     "in_file", "output_dir", "subject", "session",
-                    "desc", "suffix", "meta_dict", "datatype", "model_entity",
-                    "bids_suffix",
+                    "desc", "suffix", "meta_dict", "datatype", "bids_suffix",
                 ],
                 output_names=["out_file"],
                 function=_copy_perf_map,
@@ -1289,7 +1257,6 @@ def init_dce_datasinks_wf(
         ms_sink.inputs.desc = "dceModelSelection"
         ms_sink.inputs.suffix = ""
         ms_sink.inputs.datatype = "perf"
-        ms_sink.inputs.model_entity = model_entity
         ms_sink.inputs.bids_suffix = "dseg"
         workflow.connect([
             (inputnode, ms_sink, [
@@ -1319,8 +1286,7 @@ def init_dce_datasinks_wf(
             niu.Function(
                 input_names=[
                     "in_file", "output_dir", "subject", "session",
-                    "desc", "suffix", "meta_dict", "datatype", "model_entity",
-                    "bids_suffix",
+                    "desc", "suffix", "meta_dict", "datatype", "bids_suffix",
                 ],
                 output_names=["out_file"],
                 function=_copy_perf_map,
@@ -1330,7 +1296,6 @@ def init_dce_datasinks_wf(
         dbic_sink.inputs.desc = "dceDeltaBIC"
         dbic_sink.inputs.suffix = ""
         dbic_sink.inputs.datatype = "perf"
-        dbic_sink.inputs.model_entity = model_entity
         dbic_sink.inputs.bids_suffix = "stat"
         workflow.connect([
             (inputnode, dbic_sink, [
@@ -1350,7 +1315,7 @@ def init_dce_datasinks_wf(
             name="nktrans_map", in_attr="nktrans_map",
             desc_value="dceNawmNorm", suffix="Ktrans",
             description="Ktrans normalized by NAWM (normal-appearing white matter) mean",
-            units="1", extra=None, model_entity=model_entity,
+            units="1", extra=None,
             map_key="nktrans",
         )
         sink_outputs.append((sink, "out_file"))
@@ -1360,7 +1325,7 @@ def init_dce_datasinks_wf(
             name="niauc60_map", in_attr="niauc60_map",
             desc_value="dceNawmNorm", suffix="IAUC60",
             description="IAUC at 60s normalized by NAWM (normal-appearing white matter) mean",
-            units="1", extra=None, model_entity="",
+            units="1", extra=None,
             map_key="niauc60",
         )
         sink_outputs.append((sink, "out_file"))
@@ -1416,8 +1381,7 @@ def init_dce_datasinks_wf(
             niu.Function(
                 input_names=[
                     "in_file", "output_dir", "subject", "session",
-                    "desc", "suffix", "meta_dict", "datatype", "model_entity",
-                    "bids_suffix",
+                    "desc", "suffix", "meta_dict", "datatype", "bids_suffix",
                 ],
                 output_names=["out_file"],
                 function=_copy_perf_map,
@@ -1427,7 +1391,6 @@ def init_dce_datasinks_wf(
         moco_sink.inputs.desc = "dcePreproc"
         moco_sink.inputs.suffix = ""
         moco_sink.inputs.datatype = "perf"
-        moco_sink.inputs.model_entity = ""
         moco_sink.inputs.bids_suffix = "dce"
         workflow.connect([
             (inputnode, moco_sink, [
@@ -1446,7 +1409,7 @@ def init_dce_datasinks_wf(
             name="dce_mean", in_attr="dce_mean",
             desc_value="dceMean", suffix="",
             description="Mean DCE reference image",
-            units=None, extra=None, model_entity="",
+            units=None, extra=None,
             bids_suffix="stat",
         )
         sink_outputs.append((sink, "out_file"))
@@ -1456,7 +1419,7 @@ def init_dce_datasinks_wf(
             name="aif_mask", in_attr="aif_mask",
             desc_value="dceAif", suffix="",
             description="AIF detection mask in DCE space",
-            units=None, extra=None, model_entity="",
+            units=None, extra=None,
             bids_suffix="mask",
         )
         sink_outputs.append((sink, "out_file"))
@@ -1627,7 +1590,7 @@ def init_dce_datasinks_wf(
                 ],
                 output_names=[
                     "in_files", "descs", "fwhms", "units_list",
-                    "desc_values", "suffixes", "use_model", "map_keys",
+                    "desc_values", "suffixes", "map_keys",
                 ],
                 function=_split_dce_smoothed,
             ),
@@ -1663,29 +1626,16 @@ def init_dce_datasinks_wf(
             ]),
         ])
 
-        # Per-item model_entity (PK + uncertainty use it; MF doesn't)
-        model_picker = pe.Node(
-            niu.Function(
-                input_names=["use_model_flags", "model_entity"],
-                output_names=["model_entities"],
-                function=_model_entity_per_item,
-            ),
-            name="smoothed_model_picker",
-        )
-        model_picker.inputs.model_entity = model_entity
-        workflow.connect(splitter, "use_model", model_picker, "use_model_flags")
-
         sm_sink = pe.MapNode(
             niu.Function(
                 input_names=[
                     "in_file", "output_dir", "subject", "session",
-                    "desc", "suffix", "meta_dict", "datatype", "model_entity",
-                    "bids_suffix",
+                    "desc", "suffix", "meta_dict", "datatype", "bids_suffix",
                 ],
                 output_names=["out_file"],
                 function=_copy_perf_map,
             ),
-            iterfield=["in_file", "desc", "suffix", "meta_dict", "model_entity"],
+            iterfield=["in_file", "desc", "suffix", "meta_dict"],
             name="smoothed_sink",
         )
         sm_sink.inputs.datatype = "perf"
@@ -1702,7 +1652,6 @@ def init_dce_datasinks_wf(
                 ("suffixes", "suffix"),
             ]),
             (sm_meta, sm_sink, [("meta_dict", "meta_dict")]),
-            (model_picker, sm_sink, [("model_entities", "model_entity")]),
         ])
         sink_outputs.append((sm_sink, "out_file"))
 
