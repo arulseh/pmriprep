@@ -9,15 +9,15 @@ from pathlib import Path
 DATA_DIR = Path(__file__).parent
 
 
-def get_arterial_atlas(resolution: str = "1mm", variant: str = "dil3") -> Path:
+def get_arterial_atlas(resolution: str = "2mm", variant: str = "dil") -> Path:
     """Get path to MNI arterial atlas for AIF detection.
 
     Parameters
     ----------
     resolution : str
-        Atlas resolution: '1mm' or '2mm' (default: '1mm')
+        Atlas resolution (default: '2mm').
     variant : str
-        Atlas variant suffix, e.g. 'dil3' for 3x dilated (default: 'dil3').
+        Atlas variant suffix, e.g. 'dil' for the dilated mask (default: 'dil').
         Use empty string for the non-dilated atlas.
 
     Returns
