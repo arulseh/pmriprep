@@ -136,7 +136,7 @@ def _build_dce_base(
     reference_voxel_source: str,
     bids_dir: str,
     subject: str,
-    session: str | None,
+    session: str,
     provenance_dict: dict | None = None,
     qc_metrics: dict | None = None,
     minimal: bool = False,
@@ -383,10 +383,10 @@ def _build_delta_bic_meta(
 
 
 def _copy_perf_map(
-    in_file: str | None,
+    in_file: str,
     output_dir: str,
     subject: str,
-    session: str | None,
+    session: str,
     desc: str,
     suffix: str,
     meta_dict: dict,
@@ -411,7 +411,7 @@ def _copy_perf_map(
 
     # Conditional producers may represent a missing output as Nipype
     # Undefined, None, or an empty string.
-    if not isdefined(in_file) or in_file is None or in_file == "":
+    if not isdefined(in_file) or in_file == "":
         logging.getLogger("nipype.workflow").warning(
             "Skipping _copy_perf_map sink (desc=%s, suffix=%s): upstream "
             "produced no output (in_file=%r)",
@@ -449,10 +449,10 @@ def _copy_perf_map(
 
 
 def _copy_b1plusmap(
-    in_file: str | None,
+    in_file: str,
     output_dir: str,
     subject: str,
-    session: str | None,
+    session: str,
     meta_dict: dict,
 ) -> str:
     """Copy a B1plusmap NIfTI + sidecar to anat/.
@@ -471,7 +471,7 @@ def _copy_b1plusmap(
     # Defensive no-op when upstream produced no B1+ map (e.g., subject
     # configured b1_method != "none" but the actual mapping failed).
     # See _copy_perf_map for the sentinel-handling rationale.
-    if not isdefined(in_file) or in_file is None or in_file == "":
+    if not isdefined(in_file) or in_file == "":
         logging.getLogger("nipype.workflow").warning(
             "Skipping _copy_b1plusmap sink: upstream produced no output "
             "(in_file=%r)", in_file,
@@ -499,10 +499,10 @@ def _copy_b1plusmap(
 
 
 def _copy_dce_xfm(
-    in_file: str | None,
+    in_file: str,
     output_dir: str,
     subject: str,
-    session: str | None,
+    session: str,
 ) -> str:
     """Copy DCE-to-T1w transform .h5 into the derivatives anat/."""
     import logging
@@ -514,7 +514,7 @@ def _copy_dce_xfm(
     # Defensive no-op when upstream registration produced no transform
     # (rare, but possible when a subject has DCE imaging but registration
     # to T1w failed). See _copy_perf_map for sentinel-handling rationale.
-    if not isdefined(in_file) or in_file is None or in_file == "":
+    if not isdefined(in_file) or in_file == "":
         logging.getLogger("nipype.workflow").warning(
             "Skipping _copy_dce_xfm sink: upstream produced no output "
             "(in_file=%r)", in_file,

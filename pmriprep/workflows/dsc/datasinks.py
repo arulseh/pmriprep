@@ -180,7 +180,7 @@ def _build_base(
     reference_voxel_source: str,
     bids_dir: str,
     subject: str,
-    session: str | None,
+    session: str,
     provenance_dict: dict | None = None,
     qc_metrics: dict | None = None,
     minimal: bool = False,
@@ -320,19 +320,19 @@ def _build_dsc_preproc_meta(
 def _write_dsc_resume_checkpoint(
     work_dir: str,
     subject_id: str,
-    session_id: str | None,
+    session_id: str,
     aif_qc: dict | None = None,
     preload_qc: dict | None = None,
     preprocessing_stats: dict | None = None,
     motion_qc: dict | None = None,
     aif_metrics: dict | None = None,
-) -> str | None:
+) -> str:
     """Write the DSC→DCE handoff checkpoint to the work directory."""
     import json as _json
     from pathlib import Path
 
     if not isinstance(work_dir, str):
-        return None
+        return ""
 
     pp = dict(preprocessing_stats) if isinstance(preprocessing_stats, dict) else {}
     if isinstance(motion_qc, dict):
@@ -373,10 +373,10 @@ def _write_dsc_resume_checkpoint(
 
 
 def _copy_xfm(
-    in_file: str | None,
+    in_file: str,
     output_dir: str,
     subject: str,
-    session: str | None,
+    session: str,
     from_space: str,
     to_space: str,
     datatype: str = "anat",
@@ -391,7 +391,7 @@ def _copy_xfm(
     # Defensive no-op when upstream registration produced no transform.
     # See pmriprep.workflows.dce.datasinks._copy_perf_map for the
     # sentinel-handling rationale.
-    if not isdefined(in_file) or in_file is None or in_file == "":
+    if not isdefined(in_file) or in_file == "":
         logging.getLogger("nipype.workflow").warning(
             "Skipping DSC _copy_xfm sink (from=%s, to=%s): upstream "
             "produced no output (in_file=%r)",
@@ -415,10 +415,10 @@ def _copy_xfm(
 
 
 def _copy_perf_map(
-    in_file: str | None,
+    in_file: str,
     output_dir: str,
     subject: str,
-    session: str | None,
+    session: str,
     desc: str,
     suffix: str,
     meta_dict: dict,
@@ -444,7 +444,7 @@ def _copy_perf_map(
     # the sentinel-handling rationale (Undefined/None/"" all need
     # explicit handling because isdefined(None) == True is a Nipype
     # gotcha).
-    if not isdefined(in_file) or in_file is None or in_file == "":
+    if not isdefined(in_file) or in_file == "":
         logging.getLogger("nipype.workflow").warning(
             "Skipping DSC _copy_perf_map sink (desc=%s, suffix=%s): upstream "
             "produced no output (in_file=%r)",

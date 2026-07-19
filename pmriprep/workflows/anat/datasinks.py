@@ -25,7 +25,7 @@ def _build_preproc_meta(
     reference_voxel_source: str,
     bids_dir: str,
     subject: str,
-    session: str | None,
+    session: str,
     skull_stripped: bool = True,
     contrast_agent: str | None = None,
     is_postcon_ref: bool = False,
@@ -86,7 +86,7 @@ def _build_mask_meta(
     reference_voxel_source: str,
     bids_dir: str,
     subject: str,
-    session: str | None,
+    session: str,
     is_postcon_ref: bool = False,
     qc_metrics: dict | None = None,
 ) -> dict:
@@ -122,7 +122,7 @@ def _build_probseg_meta(
     reference_voxel_source: str,
     bids_dir: str,
     subject: str,
-    session: str | None,
+    session: str,
     is_postcon_ref: bool = False,
     qc_metrics: dict | None = None,
 ) -> dict:
@@ -153,7 +153,7 @@ def _build_probseg_meta(
     return sidecar
 
 
-def _extract_contrast_agent_node(source_path: str | None) -> str | None:
+def _extract_contrast_agent_node(source_path: str) -> str | None:
     """Nipype-Function wrapper for ``extract_contrast_agent``."""
     if not source_path:
         return None
@@ -317,10 +317,10 @@ def _add_one_anat_sink(
 
 
 def _copy_xfm(
-    in_file: str | None,
+    in_file: str,
     output_dir: str,
     subject: str,
-    session: str | None,
+    session: str,
     from_space: str,
     to_space: str,
 ) -> str:
@@ -333,7 +333,7 @@ def _copy_xfm(
 
     # Conditional registration may represent a missing transform as Nipype
     # Undefined, None, or an empty string.
-    if not isdefined(in_file) or in_file is None or in_file == "":
+    if not isdefined(in_file) or in_file == "":
         logging.getLogger("nipype.workflow").warning(
             "Skipping anat _copy_xfm sink (from=%s, to=%s): upstream "
             "produced no output (in_file=%r)",
