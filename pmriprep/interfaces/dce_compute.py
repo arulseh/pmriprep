@@ -552,6 +552,46 @@ def _write_dce_model_free_maps(
     return outputs
 
 
+def _write_dce_parameter_maps(
+    maps: "_DCEParameterMaps",
+    mask: npt.NDArray[np.bool_],
+    save_ve: bool,
+    save_vp: bool,
+    generate_path: Callable[[str], str],
+    write_map: Callable[..., None],
+) -> dict[str, str]:
+    """Write fitted DCE parameter maps and return applicable result paths."""
+    outputs = {
+        "out_ktrans": generate_path("_Ktrans"),
+        "out_r2": generate_path("_R2"),
+        "out_quality_flag": generate_path("_quality_flag"),
+        "out_vp_at_bound_map": generate_path("_vpAtBound"),
+    }
+    write_map(maps.ktrans, outputs["out_ktrans"])
+    write_map(maps.r_squared, outputs["out_r2"])
+    write_map(maps.quality_flag, outputs["out_quality_flag"], dtype=np.uint8)
+    write_map(
+        _zero_dce_background(maps.vp_at_bound, mask),
+        outputs["out_vp_at_bound_map"],
+    )
+    if save_ve:
+        outputs["out_ve"] = generate_path("_ve")
+        outputs["out_kep"] = generate_path("_kep")
+        write_map(maps.ve, outputs["out_ve"])
+        write_map(maps.kep, outputs["out_kep"])
+    if save_vp:
+        outputs["out_vp"] = generate_path("_vp")
+        write_map(maps.vp, outputs["out_vp"])
+    if maps.save_2cxm:
+        outputs["out_fp"] = generate_path("_Fp")
+        outputs["out_ps"] = generate_path("_PS")
+        outputs["out_e"] = generate_path("_E")
+        write_map(maps.fp, outputs["out_fp"])
+        write_map(maps.ps, outputs["out_ps"])
+        write_map(maps.extraction_fraction, outputs["out_e"])
+    return outputs
+
+
 def _validate_dce_time_axis(
     time_points: npt.ArrayLike,
     n_dce_frames: int,
@@ -3137,36 +3177,26 @@ class ComputeDCEMaps(BaseInterface):
         if fitted_curves is not None:
             fitted_curves = _zero_dce_background(fitted_curves, mask_bool)
 
-        # Generate output filenames
-        out_ktrans = self._gen_outfilename("_Ktrans")
-        out_r2 = self._gen_outfilename("_R2")
-
         _save_dce_map = partial(_write_dce_map, affine=affine, header=header)
-
-        # Save main outputs
-        _save_dce_map(ktrans, out_ktrans)
-
-        # ve and kep are model-dependent: produced by Tofts, ExtTofts, 2CXM
-        # but NOT by Patlak (which only estimates Ktrans and vp).
-        # In auto mode, always save (NaN where not applicable).
-        if save_ve:
-            out_ve = self._gen_outfilename("_ve")
-            _save_dce_map(ve, out_ve)
-
-            out_kep = self._gen_outfilename("_kep")
-            _save_dce_map(kep, out_kep)
-
-        _save_dce_map(r2_map, out_r2)
-
-        # Save quality flag map (uint8 categorical)
-        out_quality_flag = self._gen_outfilename("_quality_flag")
-        _save_dce_map(quality_flag_map, out_quality_flag, dtype=np.uint8)
-
-        # Save vp_at_bound spatial map. Zero outside brain mask so
-        # downstream ROI aggregations are well-defined on brain voxels only.
-        vp_at_bound_map = np.where(mask_bool, vp_at_bound_map, 0.0)
-        out_vp_at_bound_map = self._gen_outfilename("_vpAtBound")
-        _save_dce_map(vp_at_bound_map, out_vp_at_bound_map)
+        parameter_outputs = _write_dce_parameter_maps(
+            parameter_maps._replace(
+                ktrans=ktrans,
+                ve=ve,
+                vp=vp,
+                kep=kep,
+                r_squared=r2_map,
+                fp=fp_map,
+                ps=ps_map,
+                extraction_fraction=e_map,
+                quality_flag=quality_flag_map,
+                vp_at_bound=vp_at_bound_map,
+            ),
+            mask_bool,
+            save_ve,
+            save_vp,
+            self._gen_outfilename,
+            _save_dce_map,
+        )
 
         model_free_outputs = _write_dce_model_free_maps(
             _DCEModelFreeMaps(
@@ -3187,38 +3217,11 @@ class ComputeDCEMaps(BaseInterface):
 
         # Initialize results
         self._results: dict[str, Any] = {
-            "out_ktrans": out_ktrans,
-            "out_r2": out_r2,
-            "out_quality_flag": out_quality_flag,
-            "out_vp_at_bound_map": out_vp_at_bound_map,
             "qc_metrics": qc_metrics,
             "constraint_qc": constraint_qc,
         }
+        self._results.update(parameter_outputs)
         self._results.update(model_free_outputs)
-
-        if save_ve:
-            self._results["out_ve"] = out_ve
-            self._results["out_kep"] = out_kep
-
-        # Save vp if applicable
-        if save_vp:
-            out_vp = self._gen_outfilename("_vp")
-            _save_dce_map(vp, out_vp)
-            self._results["out_vp"] = out_vp
-
-        # Save 2CXM-specific outputs
-        if save_2cxm:
-            out_fp = self._gen_outfilename("_Fp")
-            out_ps = self._gen_outfilename("_PS")
-            out_e = self._gen_outfilename("_E")
-
-            _save_dce_map(fp_map, out_fp)
-            _save_dce_map(ps_map, out_ps)
-            _save_dce_map(e_map, out_e)
-
-            self._results["out_fp"] = out_fp
-            self._results["out_ps"] = out_ps
-            self._results["out_e"] = out_e
 
         # Save uncertainty maps
         if inference != "nlls":

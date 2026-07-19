@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from types import SimpleNamespace
 
 import nibabel as nib
 import numpy as np
@@ -17,6 +18,7 @@ from pmriprep.interfaces.dce_compute import (
     _write_dce_map,
     _write_dce_fitted_curves,
     _write_dce_model_free_maps,
+    _write_dce_parameter_maps,
     _zero_dce_background,
 )
 from pmriprep.utils.dce_constants import EPSILON_VE
@@ -189,6 +191,47 @@ def test_write_dce_model_free_maps_preserves_output_contract(has_peak: bool) -> 
     assert writes[-1] == ("output_curve_type.nii.gz", np.int8)
     peak_writes = [path for path, _ in writes if "peak_enhancement" in path]
     assert bool(peak_writes) is has_peak
+
+
+@pytest.mark.parametrize(
+    ("save_ve", "save_vp", "save_2cxm", "optional_keys"),
+    [
+        (False, True, False, {"out_vp"}),
+        (True, True, True, {"out_ve", "out_kep", "out_vp", "out_fp", "out_ps", "out_e"}),
+    ],
+)
+def test_write_dce_parameter_maps_preserves_applicability(
+    save_ve: bool,
+    save_vp: bool,
+    save_2cxm: bool,
+    optional_keys: set[str],
+) -> None:
+    """PK output assembly retains parameter and model applicability."""
+    array = np.ones((1, 1, 2))
+    maps = SimpleNamespace(
+        ktrans=array, r_squared=array, quality_flag=array.astype(np.int8),
+        vp_at_bound=array, ve=array, kep=array, vp=array, fp=array, ps=array,
+        extraction_fraction=array, save_2cxm=save_2cxm,
+    )
+    writes: list[tuple[str, object, np.ndarray]] = []
+
+    def write_map(data: np.ndarray, path: str, dtype: object = np.float32) -> None:
+        writes.append((path, dtype, data))
+
+    outputs = _write_dce_parameter_maps(
+        maps,
+        np.array([[[True, False]]]),
+        save_ve,
+        save_vp,
+        lambda suffix: f"output{suffix}.nii.gz",
+        write_map,
+    )
+    always = {"out_ktrans", "out_r2", "out_quality_flag", "out_vp_at_bound_map"}
+    assert set(outputs) == always | optional_keys
+    quality_write = next(write for write in writes if "quality_flag" in write[0])
+    assert quality_write[1] is np.uint8
+    bound_write = next(write for write in writes if "vpAtBound" in write[0])
+    assert bound_write[2].tolist() == [[[1.0, 0.0]]]
 
 
 def test_saved_dce_categorical_maps_are_brain_masked(tmp_path) -> None:
