@@ -825,7 +825,7 @@ def init_dce_preproc_wf(
                 "b1_nominal_prep_fa",
                 "b1_map_encoding",
                 # DSC integration inputs
-                "dsc_cbv_file",       # Relative/absolute CBV — cross-validation + QC
+                "dsc_cbv_file",       # Relative CBV for QC
                 "dsc_ncbv_file",      # NAWM-normalized CBV (nCBV) — vp prior input
                 "dsc_to_t1w_xfm",
                 "dsc_aif_qc_file",
@@ -1741,7 +1741,7 @@ def init_dce_preproc_wf(
     # Note: resample_dsc_cbv → dsc_dce_validation connected after Node 9 creation
 
     # Parallel resample for nCBV (NAWM-normalized). Same transform chain
-    # as the absolute-CBV resample, but the wrapper clips trilinear-ringing
+    # as the relative-CBV resample, but the wrapper clips trilinear-ringing
     # negatives before handing off to the vp prior path.
     resample_dsc_ncbv = pe.Node(
         niu.Function(

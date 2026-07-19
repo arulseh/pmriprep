@@ -2785,7 +2785,7 @@ def init_pmriprep_wf(
             if dce_config.model in ("extended_tofts", "2cxm", "auto"):
                 workflow.connect([
                     (dsc_wf, dce_wf, [
-                        # Relative/absolute CBV → cross-validation + QC
+                        # Relative CBV; nCBV is used for cross-validation.
                         # resampling path (DSC 128x128 → DCE 256x256).
                         ("outputnode.rel_cbv_auc_map", "inputnode.dsc_cbv_file"),
                         # NAWM-normalized CBV → vp prior path. None propagates

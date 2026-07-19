@@ -1,19 +1,9 @@
 """DSC-DCE cross-validation utilities.
 
-Post-hoc comparison of DCE-derived vp (plasma volume fraction) with a DSC-derived
-volume measure to validate quantification and detect preload effects.
-
-Two calibration paths are supported:
-
-- **nCBV path (default when the workflow supplies a NAWM-normalized CBV):**
-  expected ratio = ``NAWM_VP_REFERENCE`` (dimensionless); the comparison is
-  ``vp / nCBV`` voxelwise. NAWM normalization cancels AIF partial-volume,
-  recirculation, and first-pass truncation biases, which is why this is
-  the scientifically defensible path for clinical DSC.
-
-- **Legacy absolute-CBV path:** expected ratio = ``(1 - Hct_cap) × ρ ≈ 0.669``
-  assuming CBV in mL/100g and vp × 100 in mL/100mL. Retained for backward
-  compatibility and for any caller that explicitly passes raw CBV.
+Post-hoc comparison of DCE-derived vp (plasma volume fraction) with DSC-derived
+NAWM-normalized relative CBV (nCBV). The expected ``vp / nCBV`` ratio is
+``NAWM_VP_REFERENCE`` by construction. PMRIPrep does not calculate absolute
+CBV, so unnormalized relative-CBV maps are not valid inputs here.
 
 Ratio deviations indicate:
 - Ratio << expected: preload effect (reduced DSC signal from prior contrast).
@@ -28,11 +18,6 @@ from typing import Any, Optional, Union
 import numpy as np
 import numpy.typing as npt
 
-from pmriprep.utils.dce_constants import (
-    HEMATOCRIT_ARTERIAL,
-    TISSUE_DENSITY,
-    capillary_hematocrit,
-)
 from pmriprep.utils.qc_standards import QCStatus
 
 
@@ -58,14 +43,8 @@ RATIO_TOLERANCE_WARN: float = 0.50
 #: Minimum vp value to include in validation (avoid numerical instability)
 MIN_VP_FOR_VALIDATION: float = 0.001
 
-#: Minimum CBV value to include in validation (avoid division by zero)
-MIN_CBV_FOR_VALIDATION: float = 0.1
-
 #: Maximum vp for validation (above = likely large vessel partial volume effect)
 MAX_VP_FOR_VALIDATION: float = 0.15
-
-#: Maximum CBV for validation (above = likely large vessel partial volume effect)
-MAX_CBV_FOR_VALIDATION: float = 8.0
 
 #: Spearman rank correlation thresholds for unconstrained vp-CBV validation.
 #: ρ=0.40 → ~16% shared variance, a conventional "moderate" cutoff. DSC and
@@ -145,9 +124,9 @@ class ValidationMetrics:
     mean_vp : float
         Mean vp value in valid voxels (fraction).
     mean_cbv : float
-        Mean CBV value in valid voxels (mL/100g).
+        Mean dimensionless nCBV value in valid voxels.
     expected_ratio : float
-        Expected ratio based on hematocrit and tissue density.
+        Expected NAWM-anchored vp/nCBV ratio.
     """
 
     mean_ratio: float = 0.0
@@ -247,57 +226,6 @@ class ValidationResult:
 # =============================================================================
 
 
-def calculate_vp_cbv_ratio(
-    vp: npt.NDArray[np.floating[npt.NBitBase]],
-    cbv: npt.NDArray[np.floating[npt.NBitBase]],
-) -> npt.NDArray[np.floating[npt.NBitBase]]:
-    """Calculate (vp * 100) / CBV ratio.
-
-    Parameters
-    ----------
-    vp : numpy.ndarray
-        Plasma volume fraction array (0-1 scale).
-    cbv : numpy.ndarray
-        Cerebral blood volume array (mL/100g scale).
-
-    Returns
-    -------
-    numpy.ndarray
-        Ratio array with same shape as inputs.
-    """
-    # Avoid division by zero
-    cbv_safe = np.maximum(cbv, MIN_CBV_FOR_VALIDATION)
-    ratio = (vp * 100.0) / cbv_safe
-    return np.asarray(ratio)
-
-
-def get_expected_ratio(
-    hematocrit: float = HEMATOCRIT_ARTERIAL,
-    tissue_density: float = TISSUE_DENSITY,
-) -> float:
-    """Calculate expected vp/CBV ratio from physiological parameters.
-
-    The expected ratio relates plasma volume (vp) to whole blood volume (CBV):
-        expected_ratio = (1 - Hct_capillary) * tissue_density
-
-    Capillary hematocrit is derived from arterial via Fåhræus ratio (0.85).
-
-    Parameters
-    ----------
-    hematocrit : float, optional
-        Arterial hematocrit (default: 0.42).
-    tissue_density : float, optional
-        Tissue density in g/mL (default: 1.04).
-
-    Returns
-    -------
-    float
-        Expected (vp * 100) / CBV ratio.
-    """
-    hct_cap = capillary_hematocrit(hematocrit)
-    return (1.0 - hct_cap) * tissue_density
-
-
 def calculate_correction_factor(
     observed_ratio: float,
     expected_ratio: float,
@@ -313,7 +241,7 @@ def calculate_correction_factor(
     observed_ratio : float
         Observed mean or median vp/CBV ratio.
     expected_ratio : float
-        Expected ratio from get_expected_ratio().
+        Expected NAWM-anchored vp/nCBV ratio.
 
     Returns
     -------
@@ -335,68 +263,31 @@ def validate_vp_cbv(
     vp_data: npt.NDArray[np.floating[npt.NBitBase]],
     cbv_data: npt.NDArray[np.floating[npt.NBitBase]],
     mask: npt.NDArray[np.bool_],
-    hematocrit: float = HEMATOCRIT_ARTERIAL,
-    tissue_density: float = TISSUE_DENSITY,
     constraint_mode: Optional[str] = None,
     dsc_preload_configured: Optional[bool] = None,
-    use_ncbv_scale: bool = False,
     *,
     aif_tissue_overshoot_fraction: Optional[float] = None,
 ) -> ValidationResult:
-    """Validate DCE vp against DSC CBV.
+    """Validate DCE vp against DSC NAWM-normalized relative CBV.
 
     Compares vp (plasma volume fraction from DCE) with CBV (cerebral blood
     volume from DSC) to detect quantification issues or preload effects.
 
-    Two calibration modes:
-
-    - **Absolute CBV (``use_ncbv_scale=False``):** CBV in mL/100g.
-      Expected ratio = ``(1-Hct_cap)·ρ ≈ 0.669`` (Tofts 1999 conversion
-      of blood-voxel CBV to plasma volume fraction). Circular threshold
-      applies to ``std(vp/CBV) < 0.01``.
-
-      .. warning::
-         pmriprep itself does NOT produce absolute mL/100g CBV — the
-         only DSC CBV outputs are dimensionless ``rel_cbv_auc_map``
-         (AIF-normalized) and ``ncbv_map`` (NAWM-normalized). Against
-         dimensionless rel-AUC-CBV the literature expected ratio 0.669
-         is miscalibrated and this path will emit false POOR labels.
-         The pmriprep workflow skips xval (returns ``status="SKIPPED"``)
-         on subjects without NAWM rather than routing through this
-         path. This code path is retained for external callers that
-         legitimately have absolute CBV (e.g., pipelines with a κ
-         calibration or steady-state reference); no universal
-         ``vp / rel_AUC_CBV`` expected ratio exists without NAWM
-         anchoring.
-
-    - **nCBV (``use_ncbv_scale=True``):** CBV is NAWM-normalized
-      (dimensionless, NAWM=1). Expected ratio = ``NAWM_VP_REFERENCE`` by
-      construction — vp prior is ``NAWM_VP_REFERENCE × nCBV``. Circular
-      threshold scales to ``std(vp/nCBV) < 0.002`` (~10–20% of the ratio
-      center); the non-nCBV path's 0.01 would misflag genuine 50%
-      posterior spread as circular at this scale.
+    CBV must be dimensionless nCBV (NAWM=1). Expected ratio is
+    ``NAWM_VP_REFERENCE`` by construction.
 
     Parameters
     ----------
     vp_data : numpy.ndarray
         3D vp map array (fraction, 0-1 scale).
     cbv_data : numpy.ndarray
-        3D CBV map array — absolute/relative in mL/100g if
-        ``use_ncbv_scale=False``, dimensionless nCBV if True.
+        3D dimensionless nCBV map array.
     mask : numpy.ndarray
         3D boolean mask for analysis region.
-    hematocrit : float, optional
-        Hematocrit value (only used when ``use_ncbv_scale=False``).
-    tissue_density : float, optional
-        Tissue density (only used when ``use_ncbv_scale=False``).
     constraint_mode : str, optional
         CBV constraint mode ("soft", "skip", or None).
     dsc_preload_configured : bool, optional
         Whether DSC preload was configured.
-    use_ncbv_scale : bool, optional
-        When True, interpret ``cbv_data`` as NAWM-normalized
-        nCBV and use the NAWM-anchored expected ratio + scaled circular
-        threshold. Default False (legacy behavior).
     aif_tissue_overshoot_fraction : float, optional
         Upstream constraint-block diagnostic
         (fraction of voxels where ``vp_prior × Cp(peak) > observed
@@ -417,7 +308,6 @@ def validate_vp_cbv(
         ACQUISITION_LIMITED_OVERSHOOT_THRESHOLD,
         NAWM_VP_REFERENCE,
         CIRCULAR_STD_THRESHOLD_NCBV,
-        CIRCULAR_STD_THRESHOLD_ABS_CBV,
         MIN_NCBV_FOR_VALIDATION,
         MAX_NCBV_FOR_VALIDATION,
         VP_NCBV_RATIO_MIN_LIMITED,
@@ -430,17 +320,10 @@ def validate_vp_cbv(
     )
     metrics = ValidationMetrics()
 
-    # Expected ratio depends on calibration mode
-    if use_ncbv_scale:
-        expected_ratio = NAWM_VP_REFERENCE
-        circular_std_threshold = CIRCULAR_STD_THRESHOLD_NCBV
-        cbv_min = MIN_NCBV_FOR_VALIDATION
-        cbv_max = MAX_NCBV_FOR_VALIDATION
-    else:
-        expected_ratio = get_expected_ratio(hematocrit, tissue_density)
-        circular_std_threshold = CIRCULAR_STD_THRESHOLD_ABS_CBV
-        cbv_min = MIN_CBV_FOR_VALIDATION
-        cbv_max = MAX_CBV_FOR_VALIDATION
+    expected_ratio = NAWM_VP_REFERENCE
+    circular_std_threshold = CIRCULAR_STD_THRESHOLD_NCBV
+    cbv_min = MIN_NCBV_FOR_VALIDATION
+    cbv_max = MAX_NCBV_FOR_VALIDATION
     metrics.expected_ratio = expected_ratio
 
     # Compute two-tier ratio thresholds from expected ratio
@@ -490,13 +373,9 @@ def validate_vp_cbv(
         result.metrics = metrics
         return result
 
-    # Calculate ratio statistics. On the nCBV path both vp and nCBV are
-    # dimensionless, so the ratio is just vp/nCBV (no ×100 unit conversion).
-    if use_ncbv_scale:
-        cbv_safe = np.maximum(cbv_valid, cbv_min)
-        ratios = vp_valid / cbv_safe
-    else:
-        ratios = calculate_vp_cbv_ratio(vp_valid, cbv_valid)
+    # Both vp and nCBV are dimensionless.
+    cbv_safe = np.maximum(cbv_valid, cbv_min)
+    ratios = vp_valid / cbv_safe
 
     metrics.mean_ratio = float(np.mean(ratios))
     metrics.median_ratio = float(np.median(ratios))
@@ -531,11 +410,8 @@ def validate_vp_cbv(
         metrics.median_ratio, expected_ratio
     )
 
-    # Detect near-circularity: soft constraint effectively locking vp to CBV.
-    # Threshold scales with the ratio magnitude: for nCBV-anchored vp (ratio
-    # centered at NAWM_VP_REFERENCE), std ≈ 0.002 is ~10–20% of the ratio
-    # center; for absolute CBV (ratio centered at ~0.006 mL/100g), the
-    # legacy 0.01 still flags tight-soft constraints.
+    # Detect near-circularity: soft constraint effectively locking vp to nCBV.
+    # A standard deviation near 0.002 is ~10–20% of the expected ratio.
     if metrics.std_ratio < circular_std_threshold:
         result.circular = True
         result.status = QCStatus.CIRCULAR
@@ -560,8 +436,7 @@ def validate_vp_cbv(
     # the physiological envelope instead of flagging WARN on what is a
     # physics ceiling, not a data-quality failure.
     acquisition_limited = (
-        use_ncbv_scale
-        and aif_tissue_overshoot_fraction is not None
+        aif_tissue_overshoot_fraction is not None
         and aif_tissue_overshoot_fraction > ACQUISITION_LIMITED_OVERSHOOT_THRESHOLD
     )
     result.acquisition_limited = acquisition_limited
@@ -719,13 +594,10 @@ def validate_vp_cbv(
 
 def validate_vp_cbv_from_files(
     vp_path: Union[str, Path],
-    cbv_path: Optional[Union[str, Path]],
+    ncbv_path: Union[str, Path],
     mask_path: Union[str, Path],
-    hematocrit: float = HEMATOCRIT_ARTERIAL,
-    tissue_density: float = TISSUE_DENSITY,
     constraint_mode: Optional[str] = None,
     dsc_preload_configured: Optional[bool] = None,
-    ncbv_path: Optional[Union[str, Path]] = None,
     *,
     aif_tissue_overshoot_fraction: Optional[float] = None,
 ) -> ValidationResult:
@@ -737,25 +609,14 @@ def validate_vp_cbv_from_files(
     ----------
     vp_path : str or pathlib.Path
         Path to DCE vp NIfTI file.
-    cbv_path : str or pathlib.Path, optional
-        Path to DSC CBV NIfTI file (absolute/relative mL/100g).
-        Only used when ``ncbv_path`` is None; may be None if ``ncbv_path``
-        is provided.
+    ncbv_path : str or pathlib.Path
+        Path to dimensionless NAWM-normalized DSC CBV.
     mask_path : str or pathlib.Path
         Path to mask NIfTI file (brain or tissue mask).
-    hematocrit : float, optional
-        Hematocrit value for expected ratio calculation.
-    tissue_density : float, optional
-        Tissue density for expected ratio calculation.
     constraint_mode : str, optional
         CBV constraint mode ("soft", "skip", or None).
     dsc_preload_configured : bool, optional
         Whether DSC preload was configured.
-    ncbv_path : str or pathlib.Path, optional
-        Optional path to NAWM-normalized CBV (dimensionless nCBV).
-        When provided, validation uses the nCBV path: expected ratio is
-        NAWM_VP_REFERENCE and the circular-std threshold is scaled to
-        match (CIRCULAR_STD_THRESHOLD_NCBV ≈ 0.002).
 
     Returns
     -------
@@ -766,22 +627,12 @@ def validate_vp_cbv_from_files(
     ------
     FileNotFoundError
         If any required input file does not exist.
-    ValueError
-        If both ``cbv_path`` and ``ncbv_path`` are None.
     """
     import nibabel as nib  # type: ignore[import-untyped]
 
     vp_path = Path(vp_path)
+    data_path = Path(ncbv_path)
     mask_path = Path(mask_path)
-    use_ncbv_scale = ncbv_path is not None
-    if use_ncbv_scale:
-        data_path = Path(ncbv_path)  # type: ignore[arg-type]
-    elif cbv_path is not None:
-        data_path = Path(cbv_path)
-    else:
-        raise ValueError(
-            "validate_vp_cbv_from_files requires either cbv_path or ncbv_path"
-        )
 
     for path, name in [(vp_path, "vp"), (data_path, "CBV/nCBV"), (mask_path, "mask")]:
         if not path.exists():
@@ -799,10 +650,7 @@ def validate_vp_cbv_from_files(
         vp_data=vp_data,  # type: ignore[arg-type]
         cbv_data=cbv_data,  # type: ignore[arg-type]
         mask=mask,
-        hematocrit=hematocrit,
-        tissue_density=tissue_density,
         constraint_mode=constraint_mode,
         dsc_preload_configured=dsc_preload_configured,
-        use_ncbv_scale=use_ncbv_scale,
         aif_tissue_overshoot_fraction=aif_tissue_overshoot_fraction,
     )

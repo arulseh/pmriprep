@@ -23,64 +23,10 @@ from pmriprep.utils.dsc_cbv_constraint import (
     _sigma_from_k2,
     _normalize_aif_qc_keys,
     assess_dsc_cbv_quality,
-    cbv_to_vp,
     determine_constraint_mode,
     ncbv_to_vp_prior,
     prepare_vp_constraint_from_data,
 )
-
-
-# =============================================================================
-# CBV to vp Conversion
-# =============================================================================
-
-
-class TestCBVtoVP:
-    """Tests for cbv_to_vp conversion."""
-
-    def test_wm_cbv_to_vp(self) -> None:
-        """White matter CBV=2.5 mL/100g converts to vp ~0.0155."""
-        cbv = np.array([2.5], dtype=np.float64)
-        vp = cbv_to_vp(cbv)
-        # Capillary Hct = 0.42 * 0.85 = 0.357
-        # vp = 2.5 * (1 - 0.357) / (100 * 1.04) = 2.5 * 0.643 / 104
-        expected = 2.5 * 0.643 / 104.0
-        assert vp[0] == pytest.approx(expected, rel=1e-3)
-
-    def test_gm_cbv_to_vp(self) -> None:
-        """Gray matter CBV=4.5 mL/100g converts to vp ~0.028."""
-        cbv = np.array([4.5], dtype=np.float64)
-        vp = cbv_to_vp(cbv)
-        expected = 4.5 * 0.643 / 104.0
-        assert vp[0] == pytest.approx(expected, rel=1e-3)
-
-    def test_tumor_cbv_to_vp(self) -> None:
-        """Tumor CBV=10.0 mL/100g converts to vp ~0.062."""
-        cbv = np.array([10.0], dtype=np.float64)
-        vp = cbv_to_vp(cbv)
-        expected = 10.0 * 0.643 / 104.0
-        assert vp[0] == pytest.approx(expected, rel=1e-3)
-
-    def test_negative_cbv_nan(self) -> None:
-        """Negative CBV values should become NaN; zero stays zero."""
-        cbv = np.array([-1.0, 0.0, 5.0], dtype=np.float64)
-        vp = cbv_to_vp(cbv)
-        assert np.isnan(vp[0]), "Negative CBV should produce NaN"
-        assert vp[1] == pytest.approx(0.0, abs=1e-12)
-        assert np.isfinite(vp[2])
-
-    def test_array_shape_preserved(self) -> None:
-        """Output shape matches input shape for 3D arrays."""
-        cbv = np.ones((3, 4, 5), dtype=np.float64) * 3.0
-        vp = cbv_to_vp(cbv)
-        assert vp.shape == (3, 4, 5)
-
-    def test_out_of_range_vp_nan(self) -> None:
-        """CBV=500 produces vp >> VP_MAX_PHYSIOLOGICAL (0.2), so result is NaN."""
-        cbv = np.array([500.0], dtype=np.float64)
-        vp = cbv_to_vp(cbv)
-        # vp = 500 * 0.6 / 104 = 2.88, which exceeds 0.2
-        assert np.isnan(vp[0]), "Out-of-range vp should be NaN"
 
 
 # =============================================================================

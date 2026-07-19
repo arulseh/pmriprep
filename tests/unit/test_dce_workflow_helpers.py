@@ -3,7 +3,7 @@ and the skip-DSC glob helper in ``pmriprep/workflows/base.py``.
 
 These tests target path-dispatch invariants that are not covered by the
 validation/constraint unit tests: specifically, that the Function-node
-wrappers correctly route nCBV vs absolute CBV to the right downstream
+wrappers correctly route nCBV to downstream validation
 consumer, and that the skip-DSC glob handles older output layouts
 without silently feeding biased data to the cross-validation pathway.
 """
@@ -53,13 +53,11 @@ class TestDscDceValidationNodeDispatch:
     def test_missing_cbv_file_does_not_reach_validator(
         self, tmp_path: Any,
     ) -> None:
-        """When only nCBV exists on disk, the node passes ``cbv_path=None``
-        (never the phantom) and validation uses the nCBV path.
+        """When only nCBV exists, validation uses that nCBV path.
 
         This is the dispatch contract guard: the `os.path.isfile` check at
         call-time prevents a non-existent `dsc_cbv_file` string from ever
-        reaching `validate_vp_cbv_from_files`, which would otherwise raise
-        FileNotFoundError when resolving the abs-CBV path.
+        reaching `validate_vp_cbv_from_files`.
         """
         from pmriprep.workflows.dce.base import _dsc_dce_validation_node
 
@@ -91,12 +89,11 @@ class TestDscDceValidationNodeDispatch:
 
         assert out == {"status": "PASS"}
         assert captured["ncbv_path"] == ncbv_file
-        # The key dispatch invariant: no phantom path leaks through.
-        assert captured["cbv_path"] is None
+        assert "cbv_path" not in captured
 
     def test_both_files_present_uses_ncbv_only(self, tmp_path: Any) -> None:
-        """When both exist, the node routes only the nCBV path
-        (cbv_path=None) because the rel-AUC-CBV fallback is
+        """When both exist, the node routes only the nCBV path because
+        the rel-AUC-CBV fallback is
         miscalibrated against dimensionless rel-AUC-CBV.
         """
         from pmriprep.workflows.dce.base import _dsc_dce_validation_node
@@ -130,8 +127,7 @@ class TestDscDceValidationNodeDispatch:
                 brain_mask=mask_file,
             )
 
-        # Only ncbv_path is forwarded; cbv_path is explicitly None.
-        assert captured["cbv_path"] is None
+        assert "cbv_path" not in captured
         assert captured["ncbv_path"] == ncbv_file
 
     def test_workflow_skips_xval_on_no_nawm(self, tmp_path: Any) -> None:
@@ -293,7 +289,7 @@ class TestDscDceValidationNodeDispatch:
         assert captured["aif_tissue_overshoot_fraction"] == 0.94
         # Guard the dict-vs-string dispatch: ncbv_path must still route through.
         assert captured["ncbv_path"] == ncbv_file
-        assert captured["cbv_path"] is None
+        assert "cbv_path" not in captured
 
 
 # =============================================================================

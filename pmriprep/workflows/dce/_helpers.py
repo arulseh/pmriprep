@@ -856,9 +856,8 @@ def _dsc_dce_validation_node(vp_file=None, dsc_cbv_file=None, dsc_ncbv_file=None
             "skip_reason": SKIP_REASON_NO_DSC_RUN,
         }
 
-    # xval requires nCBV (NAWM-normalized). get_expected_ratio ≈ 0.669
-    # is derived for absolute mL/100g CBV; pmriprep only produces
-    # dimensionless rel-AUC-CBV. No universal expected ratio exists for
+    # xval requires nCBV (NAWM-normalized). PMRIPrep only produces
+    # dimensionless relative CBV. No universal expected ratio exists for
     # vp / rel_AUC_CBV without NAWM anchoring. Skip cleanly rather than
     # emit false POOR on subjects with no NAWM mask.
     if not have_ncbv:
@@ -883,14 +882,13 @@ def _dsc_dce_validation_node(vp_file=None, dsc_cbv_file=None, dsc_ncbv_file=None
         }
 
     try:
-        # nCBV is the only valid comparator; cbv_path is unused here.
+        # nCBV is the only valid comparator.
         result = validate_vp_cbv_from_files(
             vp_path=vp_file,
-            cbv_path=None,
+            ncbv_path=dsc_ncbv_file,
             mask_path=brain_mask,
             constraint_mode=resolved_mode,
             dsc_preload_configured=dsc_preload_configured,
-            ncbv_path=dsc_ncbv_file,
             aif_tissue_overshoot_fraction=overshoot,
         )
         return result.to_dict()
@@ -958,9 +956,8 @@ def _dsc_dce_xval_plot_node(vp_file=None, dsc_cbv_file=None, dsc_ncbv_file=None,
     dsc_cbv_file : str or None
         Path to resampled DSC CBV map in DCE space.
     dsc_ncbv_file : str or None
-        Optional NAWM-normalized CBV. When provided (and the
-        validation ran under use_ncbv_scale=True), the plot is drawn on
-        the dimensionless nCBV scale with expected ratio =
+        NAWM-normalized CBV. The plot is drawn on the dimensionless
+        nCBV scale with expected ratio =
         ``NAWM_VP_REFERENCE``, matching the validation metrics.
     brain_mask : str or None
         Path to brain mask in DCE space.
@@ -1009,7 +1006,6 @@ def _dsc_dce_xval_plot_node(vp_file=None, dsc_cbv_file=None, dsc_ncbv_file=None,
 
         from pmriprep.utils.dsc_dce_xval_plots import generate_xval_plot
 
-        use_ncbv_scale = True
         cbv_source = dsc_ncbv_file
 
         vp_data = np.asarray(
@@ -1037,7 +1033,6 @@ def _dsc_dce_xval_plot_node(vp_file=None, dsc_cbv_file=None, dsc_ncbv_file=None,
             subject_id=subject_id,
             session_id=session_id,
             model_selection=model_sel,
-            use_ncbv_scale=use_ncbv_scale,
         )
     except Exception:
         import logging

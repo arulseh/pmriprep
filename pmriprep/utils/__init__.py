@@ -29,8 +29,6 @@ from pmriprep.utils.dce_dsc_validation import (
     ValidationMetrics,
     ValidationResult,
     calculate_correction_factor,
-    calculate_vp_cbv_ratio,
-    get_expected_ratio,
     validate_vp_cbv,
     validate_vp_cbv_from_files,
 )
@@ -85,8 +83,6 @@ __all__ = [
     "ValidationMetrics",
     "ValidationResult",
     "calculate_correction_factor",
-    "calculate_vp_cbv_ratio",
-    "get_expected_ratio",
     "validate_vp_cbv",
     "validate_vp_cbv_from_files",
     # tumor_seg

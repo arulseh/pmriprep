@@ -7,7 +7,7 @@ number of free parameters and improving stability.
 
 The constraint pipeline:
     1. Assess DSC CBV quality (CNR coverage, AIF metrics, CBV ranges)
-    2. Convert CBV to vp: vp = CBV * (1 - Hct) / (100 * rho)
+    2. Scale NAWM-normalized CBV to a vp prior
     3. Determine constraint mode: hard (fix vp), soft (Bayesian prior), skip
 
 """
@@ -25,8 +25,6 @@ logger = logging.getLogger(__name__)
 
 from pmriprep.utils.dce_constants import (
     HEMATOCRIT_ARTERIAL,
-    TISSUE_DENSITY,
-    capillary_hematocrit,
     NAWM_VP_REFERENCE,
     VP_MAX_PHYSIOLOGICAL,
     VP_MEDIAN_MIN,
@@ -672,64 +670,8 @@ def assess_dsc_cbv_quality(
 
 
 # =============================================================================
-# CBV to vp Conversion
+# nCBV to vp Prior
 # =============================================================================
-
-
-def cbv_to_vp(
-    cbv_data: npt.NDArray[np.floating],
-    hematocrit: float = HEMATOCRIT_ARTERIAL,
-    tissue_density: float = TISSUE_DENSITY,
-) -> npt.NDArray[np.floating]:
-    """Convert DSC-derived CBV map to plasma volume fraction (vp).
-
-    Formula: vp = CBV * (1 - Hct_capillary) / (100 * rho)
-
-    Capillary hematocrit is derived from arterial via Fåhræus ratio (0.85).
-
-    Unit analysis:
-        (mL/100g) * (1) / (100 * g/mL) = mL/mL = dimensionless
-
-    Typical brain values (arterial Hct=0.42, capillary=0.357, rho=1.04):
-        WM CBV 2.5 mL/100g -> vp ~0.015
-        GM CBV 4.5 mL/100g -> vp ~0.028
-        Tumor 5-15 mL/100g -> vp ~0.031-0.093
-
-    Parameters
-    ----------
-    cbv_data : npt.NDArray[np.floating]
-        3D CBV map in mL/100g.
-    hematocrit : float, optional
-        Arterial hematocrit (default 0.42). Capillary Hct
-        derived internally via Fåhræus ratio.
-    tissue_density : float, optional
-        Tissue density in g/mL (default 1.04).
-
-    Returns
-    -------
-    npt.NDArray[np.floating]
-        3D vp map (dimensionless, 0-0.2). Invalid values set to NaN.
-    """
-    hct_cap = capillary_hematocrit(hematocrit)
-
-    # Guard invalid input values
-    cbv_safe = np.where(
-        np.isfinite(cbv_data) & (cbv_data >= 0),
-        cbv_data,
-        np.nan,
-    )
-
-    # Apply conversion
-    vp = cbv_safe * (1.0 - hct_cap) / (100.0 * tissue_density)
-
-    # Clip to physiological range; out-of-range -> NaN
-    vp = np.where(
-        (vp >= 0) & (vp <= VP_MAX_PHYSIOLOGICAL),
-        vp,
-        np.nan,
-    )
-
-    return vp.astype(np.float64)
 
 
 def ncbv_to_vp_prior(
@@ -744,8 +686,7 @@ def ncbv_to_vp_prior(
     and first-pass-truncation biases (all affect numerator and denominator
     equally), this is the scientifically defensible conversion from a
     DSC-derived relative volume measure to a DCE vp prior, avoiding the
-    unit ambiguities that plague direct absolute-CBV → vp conversion with
-    ``cbv_to_vp``.
+    unit ambiguities that preclude direct relative-CBV → vp conversion.
 
     Hct closure constraint: this anchor uses the same large-vessel Hct =
     0.42 convention as the AIF-path ``/(1-Hct)`` blood→plasma conversion
@@ -1130,7 +1071,7 @@ def prepare_vp_constraint_from_data(
 
     # Step 3: Convert nCBV to vp prior (even for skip mode, for QC reporting).
     # NAWM-anchored: vp = NAWM_VP_REFERENCE × nCBV. Avoids the absolute-CBV
-    # calibration ambiguity that `cbv_to_vp` has with relative AUC CBV.
+    # calibration ambiguity of relative AUC CBV.
     vp_map = ncbv_to_vp_prior(ncbv_data)
 
     # Build QC report

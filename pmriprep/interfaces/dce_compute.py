@@ -1806,7 +1806,7 @@ class ComputeDCEMaps(BaseInterface):
         }
 
         # vp prior is NAWM-anchored: vp = NAWM_VP_REFERENCE · nCBV. Only
-        # nCBV feeds the prior — absolute-CBV is consumed elsewhere
+        # nCBV feeds the prior; unnormalized relative CBV is not valid here.
         # (cross-validation, QC plots) but does not drive the prior because
         # the scalar calibration from ΔR2*-derived CBV to DCE vp cannot be
         # closed robustly (AIF partial-volume, recirculation, first-pass

@@ -19,17 +19,13 @@ import numpy as np
 import numpy.typing as npt
 
 from pmriprep.utils.dce_constants import (
-    HEMATOCRIT_ARTERIAL,
     MAX_NCBV_FOR_VALIDATION,
     MIN_NCBV_FOR_VALIDATION,
     NAWM_VP_REFERENCE,
 )
 from pmriprep.utils.dce_dsc_validation import (
-    MAX_CBV_FOR_VALIDATION,
     MAX_VP_FOR_VALIDATION,
-    MIN_CBV_FOR_VALIDATION,
     MIN_VP_FOR_VALIDATION,
-    get_expected_ratio,
 )
 
 logger = logging.getLogger(__name__)
@@ -43,9 +39,7 @@ def generate_xval_plot(
     subject_id: str = "",
     session_id: str = "",
     output_path: Optional[str] = None,
-    hematocrit: float = HEMATOCRIT_ARTERIAL,
     model_selection: Optional[npt.NDArray[Any]] = None,
-    use_ncbv_scale: bool = False,
 ) -> str:
     """Generate a 3-panel cross-validation QC figure.
 
@@ -54,10 +48,7 @@ def generate_xval_plot(
     vp_data : npt.NDArray[Any]
         3D vp map (fraction, 0-1).
     cbv_data : npt.NDArray[Any]
-        3D CBV map. If ``use_ncbv_scale=False`` (default), treated
-        as absolute/relative CBV in mL/100g. If True, treated as
-        dimensionless NAWM-normalized CBV (nCBV) and the axes, filtering
-        bounds, identity line and ratio map are switched accordingly.
+        3D dimensionless NAWM-normalized CBV (nCBV) map.
     mask : npt.NDArray[Any]
         3D brain mask.
     validation_result : dict[str, Any]
@@ -68,16 +59,10 @@ def generate_xval_plot(
         BIDS session ID.
     output_path : str, optional
         Output PNG path. If None, uses cwd.
-    hematocrit : float, optional
-        Hematocrit for unit conversion (absolute-CBV path only).
     model_selection : npt.NDArray[Any], optional
         Optional 3D model selection map (int8).
         When provided, scatter points are colored by model
         (0=unfitted, 1=Patlak, 2=Tofts, 3=ExtTofts, 4=2CXM).
-    use_ncbv_scale : bool, optional
-        When True, plot with the nCBV-anchored expected
-        ratio (NAWM_VP_REFERENCE ≈ 0.02) and dimensionless axes to match
-        the validation metrics computed under ``use_ncbv_scale=True``.
 
     Returns
     -------
@@ -95,24 +80,14 @@ def generate_xval_plot(
     if output_path is None:
         output_path = str(Path.cwd() / "dsc_dce_xval.png")
 
-    if use_ncbv_scale:
-        expected_ratio = NAWM_VP_REFERENCE
-        cbv_min = MIN_NCBV_FOR_VALIDATION
-        cbv_max = MAX_NCBV_FOR_VALIDATION
-        cbv_axis_label = "DSC nCBV (NAWM-normalized)"
-        cbv_from_vp_label = "DCE vp-derived nCBV"
-        mean_axis_label = "Mean nCBV"
-        ratio_label = "vp/nCBV ratio"
-        cbv_unit_factor = 1.0  # vp and nCBV both dimensionless
-    else:
-        expected_ratio = get_expected_ratio(hematocrit)
-        cbv_min = MIN_CBV_FOR_VALIDATION
-        cbv_max = MAX_CBV_FOR_VALIDATION
-        cbv_axis_label = "DSC CBV (mL/100g)"
-        cbv_from_vp_label = "DCE vp-derived CBV (mL/100g)"
-        mean_axis_label = "Mean CBV (mL/100g)"
-        ratio_label = "(vp*100)/CBV ratio"
-        cbv_unit_factor = 100.0  # vp fraction → vp*100 → mL/100mL
+    expected_ratio = NAWM_VP_REFERENCE
+    cbv_min = MIN_NCBV_FOR_VALIDATION
+    cbv_max = MAX_NCBV_FOR_VALIDATION
+    cbv_axis_label = "DSC nCBV (NAWM-normalized)"
+    cbv_from_vp_label = "DCE vp-derived nCBV"
+    mean_axis_label = "Mean nCBV"
+    ratio_label = "vp/nCBV ratio"
+    cbv_unit_factor = 1.0
 
     # Extract valid voxels — two masks:
     #   valid_plot: all finite nonzero brain voxels (gray background layer)
@@ -147,9 +122,7 @@ def generate_xval_plot(
     if model_selection is not None:
         model_sel_valid = model_selection[mask_bool][valid_metrics]
 
-    # Project vp onto the CBV scale for scatter/BA comparison.
-    # Absolute path: cbv_equiv = vp * 100 / expected_ratio (mL/100g).
-    # nCBV path:     cbv_equiv = vp / expected_ratio (dimensionless).
+    # Project vp onto the dimensionless nCBV scale for comparison.
     if expected_ratio > 0:
         cbv_from_vp = vp_valid * cbv_unit_factor / expected_ratio
         cbv_from_vp_oob = vp_oob * cbv_unit_factor / expected_ratio

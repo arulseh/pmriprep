@@ -23,14 +23,13 @@ from pmriprep.utils.qc_standards import QCStatus
 def _make_data(
     n: int = 5000,
     correlation: float = 0.5,
-    vp_mean: float = 0.020,
-    cbv_mean: float = 3.0,
+    vp_mean: float = 0.010,
+    cbv_mean: float = 1.0,
     seed: int = 42,
 ):
-    """Generate correlated vp and CBV arrays with a 3D mask.
+    """Generate correlated vp and nCBV arrays with a 3D mask.
 
-    Default vp_mean=0.020 and cbv_mean=3.0 give a median ratio near the
-    expected 0.669 = (1 - 0.357) * 1.04 (capillary Hct = 0.42 * 0.85).
+    Default vp_mean=0.010 and cbv_mean=1.0 give the NAWM-anchored ratio.
 
     Returns (vp_data, cbv_data, mask) where vp_data and cbv_data are 3D
     arrays of shape (n, 1, 1) and mask is a boolean array.
@@ -40,8 +39,8 @@ def _make_data(
     z2 = rng.standard_normal(n)
     # Create correlated noise
     z_corr = correlation * z1 + np.sqrt(1 - correlation**2) * z2
-    vp_flat = np.clip(vp_mean + 0.008 * z1, 0.002, 0.14)
-    cbv_flat = np.clip(cbv_mean + 1.5 * z_corr, 0.2, 7.5)
+    vp_flat = np.clip(vp_mean + 0.004 * z1, 0.002, 0.14)
+    cbv_flat = np.clip(cbv_mean + 0.4 * z_corr, 0.31, 4.9)
     # Reshape to 3D
     vp_data = vp_flat.reshape(n, 1, 1)
     cbv_data = cbv_flat.reshape(n, 1, 1)
@@ -114,7 +113,7 @@ class TestCoverageStatus:
         rng = np.random.default_rng(42)
         # Make most vp values below threshold (will be filtered)
         vp_flat = np.full(n, 0.0005)  # below MIN_VP_FOR_VALIDATION
-        cbv_flat = np.full(n, 2.0)
+        cbv_flat = np.full(n, 1.0)
         # A few valid voxels (above MIN_VALID_VOXELS)
         n_valid = 600
         vp_flat[:n_valid] = np.clip(
@@ -140,7 +139,7 @@ class TestSoftConstraintCoverage:
         rng = np.random.default_rng(42)
         # 94% below MIN_VP threshold
         vp_flat = np.full(n, 0.0005)
-        cbv_flat = np.full(n, 2.0)
+        cbv_flat = np.full(n, 1.0)
         n_valid = 600  # 6% coverage
         z1 = rng.standard_normal(n_valid)
         vp_flat[:n_valid] = np.clip(0.019 + 0.008 * z1, 0.002, 0.14)
@@ -159,17 +158,20 @@ class TestSoftConstraintCoverage:
         n = 10000
         rng = np.random.default_rng(42)
         vp_flat = np.full(n, 0.0005)
-        cbv_flat = np.full(n, 2.0)
+        cbv_flat = np.full(n, 1.0)
         n_valid = 150  # 1.5% < 2% soft warn threshold
         # But 150 < MIN_VALID_VOXELS (500) → early return WARN
         # So use n_valid > 500 but fraction < 2%
         n = 50000
         n_valid = 600  # 1.2% < 2% soft warn threshold
         vp_flat = np.full(n, 0.0005)
-        cbv_flat = np.full(n, 2.0)
+        cbv_flat = np.full(n, 1.0)
         z1 = rng.standard_normal(n_valid)
+        z2 = rng.standard_normal(n_valid)
         vp_flat[:n_valid] = np.clip(0.019 + 0.008 * z1, 0.002, 0.14)
-        cbv_flat[:n_valid] = np.clip(3.0 + 1.5 * z1, 0.2, 7.5)
+        cbv_flat[:n_valid] = np.clip(
+            1.0 + 0.25 * z1 + 0.25 * z2, 0.31, 4.9
+        )
         vp = vp_flat.reshape(n, 1, 1)
         cbv = cbv_flat.reshape(n, 1, 1)
         mask = np.ones((n, 1, 1), dtype=bool)
@@ -184,7 +186,7 @@ class TestRatioStillWorks:
     def test_low_ratio_preload_detected(self):
         """Low vp/CBV ratio should still flag preload."""
         vp, cbv, mask = _make_data(
-            correlation=0.5, vp_mean=0.01, cbv_mean=4.0
+            correlation=0.5, vp_mean=0.003, cbv_mean=1.0
         )
         result = validate_vp_cbv(vp, cbv, mask)
         assert result.preload_effect_detected is True
@@ -211,7 +213,7 @@ class TestWorstOfLogic:
     def test_bad_ratio_good_correlation_is_warn(self):
         """Low ratio (preload) with good correlation → WARN from ratio."""
         vp, cbv, mask = _make_data(
-            correlation=0.5, vp_mean=0.01, cbv_mean=4.0,
+            correlation=0.5, vp_mean=0.003, cbv_mean=1.0,
         )
         result = validate_vp_cbv(vp, cbv, mask)
         assert result.status == QCStatus.WARN
@@ -223,11 +225,14 @@ class TestWorstOfLogic:
         rng = np.random.default_rng(42)
         # 95% of voxels below MIN_VP threshold
         vp_flat = np.full(n, 0.0005)
-        cbv_flat = np.full(n, 2.0)
+        cbv_flat = np.full(n, 1.0)
         n_valid = 600  # 6% coverage < 10% unconstrained warn → POOR
         z1 = rng.standard_normal(n_valid)
+        z2 = rng.standard_normal(n_valid)
         vp_flat[:n_valid] = np.clip(0.019 + 0.008 * z1, 0.002, 0.14)
-        cbv_flat[:n_valid] = np.clip(3.0 + 1.5 * z1, 0.2, 7.5)
+        cbv_flat[:n_valid] = np.clip(
+            1.0 + 0.25 * z1 + 0.25 * z2, 0.31, 4.9
+        )
         vp = vp_flat.reshape(n, 1, 1)
         cbv = cbv_flat.reshape(n, 1, 1)
         mask = np.ones((n, 1, 1), dtype=bool)
@@ -251,7 +256,7 @@ class TestEarlyReturns:
         rng = np.random.default_rng(42)
         # Only 200 valid, rest below MIN_VP — 200 < 500 MIN_VALID_VOXELS
         vp_flat = np.full(n, 0.0005)
-        cbv_flat = np.full(n, 2.0)
+        cbv_flat = np.full(n, 1.0)
         vp_flat[:200] = np.clip(0.019 + 0.005 * rng.standard_normal(200), 0.002, 0.14)
         cbv_flat[:200] = np.clip(3.0 + 1.0 * rng.standard_normal(200), 0.2, 7.5)
         vp = vp_flat.reshape(n, 1, 1)
@@ -272,10 +277,10 @@ class TestCoverageWarn:
         # 85% below MIN_VP, 15% valid
         n_valid = 750
         vp_flat = np.full(n, 0.0005)
-        cbv_flat = np.full(n, 2.0)
+        cbv_flat = np.full(n, 1.0)
         z1 = rng.standard_normal(n_valid)
         vp_flat[:n_valid] = np.clip(0.019 + 0.008 * z1, 0.002, 0.14)
-        cbv_flat[:n_valid] = np.clip(3.0 + 1.5 * z1, 0.2, 7.5)
+        cbv_flat[:n_valid] = np.clip(1.0 + 0.4 * z1, 0.31, 4.9)
         vp = vp_flat.reshape(n, 1, 1)
         cbv = cbv_flat.reshape(n, 1, 1)
         mask = np.ones((n, 1, 1), dtype=bool)
@@ -300,9 +305,8 @@ class TestTightenedThresholds:
 
     def test_ratio_marginal_warn(self) -> None:
         """Ratio outside ±30% but within ±50% → WARN with 'marginally' text."""
-        # expected = 0.669, ±30% = [0.468, 0.870]
-        # vp_mean=0.012 → ratio below expected range
-        vp, cbv, mask = _make_data(vp_mean=0.012, cbv_mean=3.0)
+        # expected = 0.010; vp_mean=0.003 is below the expected range.
+        vp, cbv, mask = _make_data(vp_mean=0.003, cbv_mean=1.0)
         result = validate_vp_cbv(vp, cbv, mask, constraint_mode="skip")
         if result.metrics.median_ratio < 0.468 or result.metrics.median_ratio > 0.870:
             # Outside PASS band but possibly within WARN band
@@ -311,7 +315,7 @@ class TestTightenedThresholds:
 
     def test_ratio_within_pass_band(self) -> None:
         """Ratio within ±30% of expected → PASS on ratio component."""
-        # Default vp_mean=0.020, cbv_mean=3.0 gives ratio ≈ 0.669
+        # Default vp_mean=0.010, cbv_mean=1.0 gives ratio ≈ 0.010.
         vp, cbv, mask = _make_data()
         result = validate_vp_cbv(vp, cbv, mask, constraint_mode="skip")
         assert "within expected range" in result.interpretation
@@ -323,7 +327,7 @@ class TestNcbvPathValidation:
     def test_validation_with_ncbv_uses_nawm_anchored_expected_ratio(
         self,
     ) -> None:
-        """use_ncbv_scale=True anchors expected ratio to NAWM_VP_REFERENCE."""
+        """Validation anchors the expected ratio to NAWM_VP_REFERENCE."""
         from pmriprep.utils.dce_constants import NAWM_VP_REFERENCE
 
         # Generate nCBV centered at 1.0 (NAWM reference), vp centered at
@@ -343,7 +347,7 @@ class TestNcbvPathValidation:
         mask = np.ones((n, 1, 1), dtype=bool)
 
         result = validate_vp_cbv(
-            vp, ncbv, mask, constraint_mode="skip", use_ncbv_scale=True,
+            vp, ncbv, mask, constraint_mode="skip",
         )
         # Median vp/nCBV should be near NAWM_VP_REFERENCE and inside the
         # factor-of-2 tolerance band.
@@ -367,7 +371,7 @@ class TestNcbvPathValidation:
         mask = np.ones((n, 1, 1), dtype=bool)
 
         result = validate_vp_cbv(
-            vp, ncbv, mask, constraint_mode="soft", use_ncbv_scale=True,
+            vp, ncbv, mask, constraint_mode="soft",
         )
         assert result.metrics.std_ratio > CIRCULAR_STD_THRESHOLD_NCBV
         assert result.circular is False
@@ -403,7 +407,6 @@ class TestAcquisitionLimited:
         result = validate_vp_cbv(
             vp, ncbv, mask,
             constraint_mode="soft",
-            use_ncbv_scale=True,
             aif_tissue_overshoot_fraction=0.94,
         )
         assert result.acquisition_limited is True
@@ -416,7 +419,6 @@ class TestAcquisitionLimited:
         result = validate_vp_cbv(
             vp, ncbv, mask,
             constraint_mode="soft",
-            use_ncbv_scale=True,
             aif_tissue_overshoot_fraction=0.3,
         )
         assert result.acquisition_limited is False
@@ -428,7 +430,6 @@ class TestAcquisitionLimited:
         result = validate_vp_cbv(
             vp, ncbv, mask,
             constraint_mode="soft",
-            use_ncbv_scale=True,
             aif_tissue_overshoot_fraction=0.7,
         )
         assert result.acquisition_limited is False
@@ -439,7 +440,6 @@ class TestAcquisitionLimited:
         result = validate_vp_cbv(
             vp, ncbv, mask,
             constraint_mode="soft",
-            use_ncbv_scale=True,
             aif_tissue_overshoot_fraction=None,
         )
         assert result.acquisition_limited is False
@@ -453,23 +453,10 @@ class TestAcquisitionLimited:
         result = validate_vp_cbv(
             vp, ncbv, mask,
             constraint_mode="soft",
-            use_ncbv_scale=True,
             aif_tissue_overshoot_fraction=0.94,
         )
         assert result.acquisition_limited is True
         assert result.status == QCStatus.WARN
-
-    def test_absolute_cbv_path_unaffected(self) -> None:
-        """Flag only applies to NAWM-anchored path (use_ncbv_scale=True)."""
-        vp, cbv, mask = _make_data(correlation=0.6)  # default cbv_mean=3.0 (abs)
-        result = validate_vp_cbv(
-            vp, cbv, mask,
-            constraint_mode="soft",
-            use_ncbv_scale=False,
-            aif_tissue_overshoot_fraction=0.94,
-        )
-        assert result.acquisition_limited is False
-
 
 class TestDscDceValidationNodeSkipReasons:
     """_dsc_dce_validation_node distinguishes 'no DSC run' from 'no NAWM'."""
