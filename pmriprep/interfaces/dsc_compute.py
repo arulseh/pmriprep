@@ -279,29 +279,17 @@ def _dsc_fit_single_voxel(voxel_data: _DSCVoxelInput) -> dict[str, Any]:
                 out["mtt"] = 0.0
                 out["tmax"] = 0.0
 
-        # Extract Bayesian uncertainties for CBF/CBV std maps
+        # Extract uncertainty only for directly fitted CBF. Derived CBV depends
+        # on correlated fitted parameters, but DSCFitResult does not retain
+        # their joint covariance or derived posterior samples.
         if result.uncertainties:
             out["cbf_std"] = result.uncertainties.get("cbf", 0.0)
-            # CBV = CBF * MTT; sigma_CBV = sqrt((MTT*sigma_CBF)^2 + (CBF*sigma_MTT)^2)
-            if method == "vascular":
-                sigma_cbf = result.uncertainties.get("cbf", 0.0)
-                sigma_mtt = result.uncertainties.get("mtt", 0.0)
-                mtt_val = out["mtt"]
-                out["cbv_std"] = float(np.sqrt(
-                    (mtt_val * sigma_cbf) ** 2
-                    + (cbf_val * sigma_mtt) ** 2
-                ))
 
-        # Extract credible intervals (available for all Bayesian methods)
+        # Extract credible intervals only for directly fitted CBF.
         if result.credible_intervals:
             cbf_ci = result.credible_intervals.get("cbf", (0.0, 0.0))
             out["cbf_ci95_lower"] = cbf_ci[0]
             out["cbf_ci95_upper"] = cbf_ci[1]
-            # CBV = CBF * MTT; propagate CI from fitting-space CBF and MTT CIs
-            if method == "vascular":
-                mtt_ci = result.credible_intervals.get("mtt", (0.0, 0.0))
-                out["cbv_ci95_lower"] = max(cbf_ci[0] * mtt_ci[0], 0.0)
-                out["cbv_ci95_upper"] = cbf_ci[1] * mtt_ci[1]
 
         out["r_squared"] = result.r_squared
         out["converged"] = result.passes_convergence()
@@ -1130,11 +1118,10 @@ class ComputeDSCMaps(BaseInterface):
         beta_map = np.zeros(spatial_shape, dtype=np.float64) if method == "vascular" else None
         cth_map = np.zeros(spatial_shape, dtype=np.float64) if method == "vascular" else None
         cbf_std_map = np.zeros(spatial_shape, dtype=np.float64) if method in ("cpi", "vascular") else None
-        # CPI CBV depends jointly on CBF and every residue control point.
-        # Marginal parameter standard deviations are insufficient to propagate
-        # that uncertainty without their posterior covariance, so do not emit
-        # misleading zero-valued CPI CBV uncertainty maps.
-        cbv_std_map = np.zeros(spatial_shape, dtype=np.float64) if method == "vascular" else None
+        # CBV is derived from correlated fitted parameters. Neither scalar nor
+        # batched fit results retain the joint covariance needed to propagate
+        # its uncertainty, so no CBV uncertainty map is emitted.
+        cbv_std_map = None
         # Parametric-fit R² map and oSVD-fallback mask (parametric only).
         # R² inits to NaN so plotting tools render outside-brain voxels
         # transparent; raw parametric R² is preserved on fallback voxels
@@ -1151,14 +1138,8 @@ class ComputeDSCMaps(BaseInterface):
         has_ci = inference in ("vi", "svb", "mcmc", "map", "nlls")
         cbf_ci_lower_map = np.zeros(spatial_shape, dtype=np.float64) if has_ci else None
         cbf_ci_upper_map = np.zeros(spatial_shape, dtype=np.float64) if has_ci else None
-        cbv_ci_lower_map = (
-            np.zeros(spatial_shape, dtype=np.float64)
-            if has_ci and method == "vascular" else None
-        )
-        cbv_ci_upper_map = (
-            np.zeros(spatial_shape, dtype=np.float64)
-            if has_ci and method == "vascular" else None
-        )
+        cbv_ci_lower_map = None
+        cbv_ci_upper_map = None
 
         qc_metrics: dict[str, Any] = {
             "method": method,
@@ -1719,27 +1700,8 @@ class ComputeDSCMaps(BaseInterface):
                     "cbf", np.zeros(n_voxels))[i])
                 out["cbf_std"] = cbf_std_val
 
-                if method == "vascular":
-                    sig_cbf = cbf_std_val
-                    sig_mtt = float(batched_result.uncertainties.get(
-                        "mtt", np.zeros(n_voxels))[i])
-                    out["cbv_std"] = float(np.sqrt(
-                        (mtt_val * sig_cbf) ** 2 + (cbf_val * sig_mtt) ** 2
-                    ))
-
             out["cbf_ci95_lower"] = max(cbf_val - 1.96 * cbf_std_val, 0.0)
             out["cbf_ci95_upper"] = cbf_val + 1.96 * cbf_std_val
-
-            if method == "vascular":
-                sig_cbf_ci = cbf_std_val
-                sig_mtt_ci = float(batched_result.uncertainties.get(
-                    "mtt", np.zeros(n_voxels))[i]) if batched_result.uncertainties else 0.0
-                cbv_lo = (max(cbf_val - 1.96 * sig_cbf_ci, 0.0)
-                          * max(mtt_val - 1.96 * sig_mtt_ci, 0.0))
-                cbv_hi = ((cbf_val + 1.96 * sig_cbf_ci)
-                          * (mtt_val + 1.96 * sig_mtt_ci))
-                out["cbv_ci95_lower"] = cbv_lo
-                out["cbv_ci95_upper"] = cbv_hi
 
             out["r_squared"] = float(batched_result.r_squared[i])
             out["converged"] = bool(batched_result.converged[i])

@@ -547,10 +547,10 @@ output_dir/pmriprep/
 | `*_desc-dscAlpha_stat` | Vascular model alpha (vascular method only) | — |
 | `*_desc-dscBeta_stat` | Vascular model beta (vascular method only) | — |
 | `*_desc-dscCth_stat` | Capillary transit heterogeneity (vascular method only) | seconds |
-| `*_desc-dscUncertainty{Param}_stat` | Posterior std (CBF for CPI/Vascular; CBV for Vascular) | varies |
-| `*_desc-dscCV{Param}_stat` | Coefficient of variation (CBF for CPI/Vascular; CBV for Vascular) | fraction |
-| `*_desc-dscCI95lower{Param}_stat` | 95% credible interval lower bound (CBF for CPI/Vascular; CBV for Vascular) | varies |
-| `*_desc-dscCI95upper{Param}_stat` | 95% credible interval upper bound (CBF for CPI/Vascular; CBV for Vascular) | varies |
+| `*_desc-dscUncertaintyCbf_stat` | CBF posterior standard deviation (CPI/Vascular) | 1/min |
+| `*_desc-dscCVCbf_stat` | CBF coefficient of variation (CPI/Vascular) | fraction |
+| `*_desc-dscCI95lowerCbf_stat` | CBF 95% credible interval lower bound (CPI/Vascular) | 1/min |
+| `*_desc-dscCI95upperCbf_stat` | CBF 95% credible interval upper bound (CPI/Vascular) | 1/min |
 
 **DCE preprocessing:**
 

@@ -1365,6 +1365,51 @@ class TestCPIPCHIPConsistency:
         assert "cbv_ci95_lower" not in out
         assert "cbv_ci95_upper" not in out
 
+    def test_vascular_readout_does_not_assume_cbf_mtt_independence(
+        self, dsc_aif_and_time
+    ):
+        """Marginal CBF/MTT errors cannot define vascular CBV uncertainty."""
+        import types
+
+        from pmriprep.interfaces.dsc_compute import ComputeDSCMaps
+
+        _aif, tp = dsc_aif_and_time
+        result = types.SimpleNamespace(
+            params={
+                "cbf": np.array([0.1]),
+                "mtt": np.array([6.0]),
+                "alpha": np.array([3.0]),
+                "delay": np.array([0.0]),
+            },
+            uncertainties={
+                "cbf": np.array([0.01]),
+                "mtt": np.array([0.5]),
+            },
+            r_squared=np.ones(1),
+            converged=np.ones(1, dtype=bool),
+        )
+        mask_coords = (
+            np.zeros(1, dtype=int),
+            np.zeros(1, dtype=int),
+            np.zeros(1, dtype=int),
+        )
+
+        out = ComputeDSCMaps._batched_result_to_voxel_dicts(
+            None,
+            result,
+            mask_coords,
+            "vascular",
+            1,
+            float(tp[1] - tp[0]),
+            None,
+            tp,
+        )[0]
+
+        assert out["cbf_std"] == pytest.approx(0.01)
+        assert "cbv_std" not in out
+        assert "cbv_ci95_lower" not in out
+        assert "cbv_ci95_upper" not in out
+
     @pytest.mark.parametrize("infer_cpt", [False, True])
     def test_scalar_vs_batched_residue_within_gap(self, dsc_aif_and_time, infer_cpt):
         aif, tp = dsc_aif_and_time
