@@ -19,10 +19,6 @@ PreloadInput = Union[Literal["auto"], float]
 
 logger = logging.getLogger(__name__)
 
-# Alias for backwards compatibility within this module
-_DOSE_PRESETS = DOSE_PRESETS
-
-
 @dataclass
 class DSCConfig:
     """Configuration for DSC perfusion processing.
@@ -213,15 +209,15 @@ class DSCConfig:
 
         # Coerce dose: string preset → float, numeric → float
         if isinstance(self.dose, str):
-            if self.dose in _DOSE_PRESETS:
-                self.dose = _DOSE_PRESETS[self.dose]
+            if self.dose in DOSE_PRESETS:
+                self.dose = DOSE_PRESETS[self.dose]
             else:
                 try:
                     self.dose = float(self.dose)
                 except (ValueError, TypeError) as e:
                     raise ValueError(
                         f"Invalid dose={self.dose!r}. Use a named preset "
-                        f"({', '.join(sorted(_DOSE_PRESETS))}) or a positive number."
+                        f"({', '.join(sorted(DOSE_PRESETS))}) or a positive number."
                     ) from e
         else:
             self.dose = float(self.dose)
@@ -322,4 +318,3 @@ class DSCConfig:
                     "kep=%.4f s^-1 outside typical range [%.3f, %.3f] s^-1 (Leu 2016)",
                     self.kep, KEP_DSC_LOWER, KEP_DSC_UPPER,
                 )
-

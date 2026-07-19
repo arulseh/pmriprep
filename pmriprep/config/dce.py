@@ -9,10 +9,6 @@ from .constants import DOSE_PRESETS
 
 logger = logging.getLogger(__name__)
 
-# Alias for backwards compatibility within this module
-_DOSE_PRESETS = DOSE_PRESETS
-
-
 @dataclass
 class DCEConfig:
     """Configuration for DCE perfusion processing.
@@ -202,15 +198,15 @@ class DCEConfig:
 
         # Coerce dose: string preset → float, numeric → float
         if isinstance(self.dose, str):
-            if self.dose in _DOSE_PRESETS:
-                self.dose = _DOSE_PRESETS[self.dose]
+            if self.dose in DOSE_PRESETS:
+                self.dose = DOSE_PRESETS[self.dose]
             else:
                 try:
                     self.dose = float(self.dose)
                 except (ValueError, TypeError) as e:
                     raise ValueError(
                         f"Invalid dose={self.dose!r}. Use a named preset "
-                        f"({', '.join(sorted(_DOSE_PRESETS))}) or a positive number."
+                        f"({', '.join(sorted(DOSE_PRESETS))}) or a positive number."
                     ) from e
         else:
             self.dose = float(self.dose)

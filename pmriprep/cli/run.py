@@ -23,10 +23,6 @@ if TYPE_CHECKING:
 # messages that should be IMPORTANT-level by default.
 logger = plogger.cli
 
-# Alias for backwards compatibility within this module
-_DOSE_PRESETS = DOSE_PRESETS
-
-
 def _dose_type(value: str) -> float:
     """Parse a dose argument as a named preset or positive float.
 
@@ -47,14 +43,14 @@ def _dose_type(value: str) -> float:
     """
     import math
 
-    if value in _DOSE_PRESETS:
-        return _DOSE_PRESETS[value]
+    if value in DOSE_PRESETS:
+        return DOSE_PRESETS[value]
     try:
         fval = float(value)
     except ValueError:
         raise argparse.ArgumentTypeError(
             f"invalid dose value: {value!r}. "
-            f"Use a named preset ({', '.join(sorted(_DOSE_PRESETS))}) "
+            f"Use a named preset ({', '.join(sorted(DOSE_PRESETS))}) "
             f"or a positive number (e.g. 0.75)."
         )
     if not math.isfinite(fval) or fval <= 0:
