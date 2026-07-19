@@ -9,6 +9,10 @@ import numpy as np
 import pytest
 
 from pmriprep.utils.sidecar_builders import build_dce_base_sidecar
+from pmriprep.workflows.dce.datasinks import (
+    _build_delta_bic_meta,
+    _build_model_selection_meta,
+)
 
 
 def _ref_nifti(tmp_path: Path) -> Path:
@@ -68,3 +72,16 @@ def test_sidecar_carries_m3_fields(tmp_path: Path) -> None:
     assert sidecar["Resolution"] == "native"
     assert isinstance(sidecar["VoxelSize"], list) and len(sidecar["VoxelSize"]) == 3
     assert isinstance(sidecar["Sources"], list)
+
+
+@pytest.mark.parametrize("pk_modeling", [None, "invalid", 3.0, []])
+def test_dce_diagnostic_sidecars_ignore_nonmapping_pk_qc(pk_modeling: object) -> None:
+    """Malformed optional PK QC does not prevent derivative sidecar creation."""
+    qc_metrics = {"pk_modeling": pk_modeling}
+
+    model_meta = _build_model_selection_meta({}, qc_metrics)
+    bic_meta = _build_delta_bic_meta({}, qc_metrics)
+
+    assert "ModelDistribution" not in model_meta
+    assert "R2Median" not in bic_meta
+    assert "ConvergenceRate" not in bic_meta

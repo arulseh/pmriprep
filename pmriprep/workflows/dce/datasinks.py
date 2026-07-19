@@ -122,8 +122,7 @@ _BIDS_SUFFIX_OVERRIDE: dict[str, str] = {"curveType": "dseg"}
 # ``_MODEL_FREE_MAPS`` above; the inline tables mirror those.
 
 
-# Inputs always treated as present (the four PK maps have ktrans_map mandatory
-# in the legacy writer; everything else is gated by present_inputs).
+# Ktrans is mandatory; every other map is gated by ``present_inputs``.
 _ALWAYS_PRESENT_INPUTS = frozenset({"ktrans_map"})
 
 
@@ -132,17 +131,17 @@ _ALWAYS_PRESENT_INPUTS = frozenset({"ktrans_map"})
 # ---------------------------------------------------------------------------
 
 
-def _build_dce_base(  # type: ignore[no-untyped-def]
-    source_paths,
-    reference_voxel_source,
-    bids_dir,
-    subject,
-    session,
-    provenance_dict=None,
-    qc_metrics=None,
-    minimal=False,
-    ktrans_convention=True,
-):
+def _build_dce_base(
+    source_paths: list[str],
+    reference_voxel_source: str,
+    bids_dir: str,
+    subject: str,
+    session: str | None,
+    provenance_dict: dict | None = None,
+    qc_metrics: dict | None = None,
+    minimal: bool = False,
+    ktrans_convention: bool = True,
+) -> dict:
     from pmriprep.utils.sidecar_builders import build_dce_base_sidecar
 
     return build_dce_base_sidecar(
@@ -158,11 +157,16 @@ def _build_dce_base(  # type: ignore[no-untyped-def]
     )
 
 
-def _build_dce_meta(  # type: ignore[no-untyped-def]
-    base, description, units=None, extra=None,
-    map_key="", lesion_stats_json=None, user_lesion_stats_json=None,
-    roi_stats_json=None,
-):
+def _build_dce_meta(
+    base: dict,
+    description: str,
+    units: str | None = None,
+    extra: dict | None = None,
+    map_key: str = "",
+    lesion_stats_json: str | None = None,
+    user_lesion_stats_json: str | None = None,
+    roi_stats_json: str | None = None,
+) -> dict:
     """Compose a generic DCE sidecar; optionally inject stats fragments.
 
     When ``map_key`` is non-empty the per-map fragment from each
@@ -197,13 +201,15 @@ def _build_dce_meta(  # type: ignore[no-untyped-def]
     return out
 
 
-def _build_dce_preproc_meta(  # type: ignore[no-untyped-def]
-    base, description, qc_metrics=None,
-    provenance_dict=None,
-    preflight_warnings=None,
-    presence_warnings=None,
-    config_dict=None,
-):
+def _build_dce_preproc_meta(
+    base: dict,
+    description: str,
+    qc_metrics: dict | None = None,
+    provenance_dict: dict | None = None,
+    preflight_warnings: list | None = None,
+    presence_warnings: list | None = None,
+    config_dict: dict | None = None,
+) -> dict:
     """Compose the ``desc-dcePreproc_dce.json`` sidecar with flat-key QC.
 
     Mirrors the DSC ``_build_dsc_preproc_meta`` pattern: starts from the
@@ -251,15 +257,20 @@ def _build_dce_preproc_meta(  # type: ignore[no-untyped-def]
         out["PipelineQC"] = filter_pipeline_qc(qc_metrics)
     if isinstance(config_dict, dict):
         out["PipelineConfiguration"] = build_provenance_block(config_dict)
-    return sanitize_for_json(out)
+    return dict(sanitize_for_json(out))
 
 
 
-def _build_dce_pk_map_meta(  # type: ignore[no-untyped-def]
-    base, description, units=None, qc_metrics=None, map_key="",
-    lesion_stats_json=None, user_lesion_stats_json=None,
-    roi_stats_json=None,
-):
+def _build_dce_pk_map_meta(
+    base: dict,
+    description: str,
+    units: str | None = None,
+    qc_metrics: dict | None = None,
+    map_key: str = "",
+    lesion_stats_json: str | None = None,
+    user_lesion_stats_json: str | None = None,
+    roi_stats_json: str | None = None,
+) -> dict:
     """Compose a DCE per-PK-map sidecar with cosmetic enrichment + stats fragments.
 
     Extracts the per-map fragment for ``map_key`` (e.g. ``"ktrans"``)
@@ -296,9 +307,13 @@ def _build_dce_pk_map_meta(  # type: ignore[no-untyped-def]
     return out
 
 
-def _build_dce_smoothed_meta(  # type: ignore[no-untyped-def]
-    base, description, fwhm_mm, units=None, map_key="",
-):
+def _build_dce_smoothed_meta(
+    base: dict,
+    description: str,
+    fwhm_mm: str | float,
+    units: str | None = None,
+    map_key: str = "",
+) -> dict:
     from pmriprep.utils.aif_provenance import stamp_aif_dependency
 
     out = dict(base)
@@ -317,9 +332,10 @@ def _build_dce_smoothed_meta(  # type: ignore[no-untyped-def]
     return out
 
 
-def _build_model_selection_meta(  # type: ignore[no-untyped-def]
-    base, qc_metrics=None,
-):
+def _build_model_selection_meta(
+    base: dict,
+    qc_metrics: dict | None = None,
+) -> dict:
     from pmriprep.utils.aif_provenance import stamp_aif_dependency
 
     out = dict(base)
@@ -335,17 +351,18 @@ def _build_model_selection_meta(  # type: ignore[no-untyped-def]
     }
     stamp_aif_dependency(out, "model_selection", modality="DCE")
     if isinstance(qc_metrics, dict):
-        regions = (qc_metrics.get("pk_modeling") or {}).get(
-            "model_selection_regions",
-        )
-        if regions:
-            out["ModelDistribution"] = regions
+        pk_modeling = qc_metrics.get("pk_modeling")
+        if isinstance(pk_modeling, dict):
+            regions = pk_modeling.get("model_selection_regions")
+            if regions:
+                out["ModelDistribution"] = regions
     return out
 
 
-def _build_delta_bic_meta(  # type: ignore[no-untyped-def]
-    base, qc_metrics=None,
-):
+def _build_delta_bic_meta(
+    base: dict,
+    qc_metrics: dict | None = None,
+) -> dict:
     from pmriprep.utils.aif_provenance import stamp_aif_dependency
 
     out = dict(base)
@@ -356,18 +373,28 @@ def _build_delta_bic_meta(  # type: ignore[no-untyped-def]
     )
     stamp_aif_dependency(out, "delta_bic", modality="DCE")
     if isinstance(qc_metrics, dict):
-        pk = qc_metrics.get("pk_modeling") or {}
-        if pk.get("r2_median") is not None:
-            out["R2Median"] = pk["r2_median"]
-        if pk.get("convergence_rate") is not None:
-            out["ConvergenceRate"] = pk["convergence_rate"]
+        pk = qc_metrics.get("pk_modeling")
+        if isinstance(pk, dict):
+            if pk.get("r2_median") is not None:
+                out["R2Median"] = pk["r2_median"]
+            if pk.get("convergence_rate") is not None:
+                out["ConvergenceRate"] = pk["convergence_rate"]
     return out
 
 
-def _copy_perf_map(  # type: ignore[no-untyped-def]
-    in_file, output_dir, subject, session, desc, suffix, meta_dict,
-    datatype="perf", model_entity="", bids_suffix="stat", space="",
-):
+def _copy_perf_map(
+    in_file: str | None,
+    output_dir: str,
+    subject: str,
+    session: str | None,
+    desc: str,
+    suffix: str,
+    meta_dict: dict,
+    datatype: str = "perf",
+    model_entity: str = "",
+    bids_suffix: str = "stat",
+    space: str = "",
+) -> str:
     """Copy a DCE NIfTI + sidecar with BIDS-compliant naming.
 
     ``suffix`` is the parameter name (e.g. ``"Ktrans"``, ``"mtt"``)
@@ -382,13 +409,8 @@ def _copy_perf_map(  # type: ignore[no-untyped-def]
 
     from nipype.interfaces.base import isdefined  # type: ignore[import-untyped]
 
-    # Defensive no-op when upstream conditional producer returned no output
-    # (e.g., NAWM normalization had < 10 NAWM voxels, optional transform
-    # absent). The producer's None-return is the canonical "I had nothing
-    # to write" signal — see _normalize_by_nawm.
-    # Sentinels: isdefined(Undefined) == False, BUT isdefined(None) == True
-    # (Nipype gotcha) and "" is the documented Function-node-returns-empty
-    # convention — all three need explicit handling.
+    # Conditional producers may represent a missing output as Nipype
+    # Undefined, None, or an empty string.
     if not isdefined(in_file) or in_file is None or in_file == "":
         logging.getLogger("nipype.workflow").warning(
             "Skipping _copy_perf_map sink (desc=%s, suffix=%s): upstream "
@@ -426,9 +448,13 @@ def _copy_perf_map(  # type: ignore[no-untyped-def]
     return str(nii_out)
 
 
-def _copy_b1plusmap(  # type: ignore[no-untyped-def]
-    in_file, output_dir, subject, session, meta_dict,
-):
+def _copy_b1plusmap(
+    in_file: str | None,
+    output_dir: str,
+    subject: str,
+    session: str | None,
+    meta_dict: dict,
+) -> str:
     """Copy a B1plusmap NIfTI + sidecar to anat/.
 
     Bypasses ``PMRIPrepDataSink`` because ``B1plusmap`` is not in the
@@ -472,9 +498,12 @@ def _copy_b1plusmap(  # type: ignore[no-untyped-def]
     return str(nii_out)
 
 
-def _copy_dce_xfm(  # type: ignore[no-untyped-def]
-    in_file, output_dir, subject, session,
-):
+def _copy_dce_xfm(
+    in_file: str | None,
+    output_dir: str,
+    subject: str,
+    session: str | None,
+) -> str:
     """Copy DCE-to-T1w transform .h5 into the derivatives anat/."""
     import logging
     import shutil
@@ -507,10 +536,16 @@ def _copy_dce_xfm(  # type: ignore[no-untyped-def]
     return str(out_path)
 
 
-def _split_dce_smoothed(  # type: ignore[no-untyped-def]
-    smooth_pk=None, smooth_mf=None, smooth_uncertainty=None,
-    pk_units=None, mf_units=None,
-):
+def _split_dce_smoothed(
+    smooth_pk: dict[str, str] | None = None,
+    smooth_mf: dict[str, str] | None = None,
+    smooth_uncertainty: dict[str, str] | None = None,
+    pk_units: dict[str, str] | None = None,
+    mf_units: dict[str, str] | None = None,
+) -> tuple[
+    list[str], list[str], list[str], list[str],
+    list[str], list[str], list[bool], list[str],
+]:
     """Flatten the three smoothed-map dicts into per-output tuples."""
     import re as _re
     from pathlib import Path
@@ -533,20 +568,20 @@ def _split_dce_smoothed(  # type: ignore[no-untyped-def]
         "wash_in_slope": "washInSlope", "wash_out_slope": "washOutSlope",
     }
 
-    def _extract_fwhm(src_path):  # type: ignore[no-untyped-def]
+    def _extract_fwhm(src_path: str) -> tuple[str, str]:
         m = _re.search(r"_fwhm(\d+(?:\.\d+)?)", str(src_path))
         if m:
             return f"Sm{m.group(1)}", m.group(1)
         return "SmN", "N"
 
-    in_files = []
-    descs = []
-    fwhms = []
-    units_list = []
-    desc_values = []
-    suffixes = []
-    use_model = []
-    map_keys = []
+    in_files: list[str] = []
+    descs: list[str] = []
+    fwhms: list[str] = []
+    units_list: list[str] = []
+    desc_values: list[str] = []
+    suffixes: list[str] = []
+    use_model: list[bool] = []
+    map_keys: list[str] = []
 
     if isinstance(smooth_pk, dict):
         for name, src in smooth_pk.items():
@@ -601,7 +636,10 @@ def _split_dce_smoothed(  # type: ignore[no-untyped-def]
     return in_files, descs, fwhms, units_list, desc_values, suffixes, use_model, map_keys
 
 
-def _model_entity_per_item(use_model_flags, model_entity):  # type: ignore[no-untyped-def]
+def _model_entity_per_item(
+    use_model_flags: list[bool],
+    model_entity: str,
+) -> list[str]:
     return [model_entity if flag else "" for flag in use_model_flags]
 
 
