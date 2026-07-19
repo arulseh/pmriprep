@@ -1437,8 +1437,10 @@ def _dce_preprocessing_cosmetic_keys(
         out["PeakEnhancementPercent"] = float(preproc["peak_enh_pct"])
     if "n_volumes" in preproc:
         out["NumberOfVolumes"] = int(preproc["n_volumes"])
-    if "tr_ms" in preproc:
-        out["RepetitionTime"] = float(preproc["tr_ms"]) / 1000.0
+    if "volume_tr_s" in preproc:
+        out["RepetitionTime"] = float(preproc["volume_tr_s"])
+        if "tr_ms" in preproc:
+            out["RepetitionTimeExcitation"] = float(preproc["tr_ms"]) / 1000.0
     return out
 
 

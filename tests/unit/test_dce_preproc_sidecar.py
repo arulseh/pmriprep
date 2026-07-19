@@ -41,7 +41,7 @@ def dce_qc_metrics() -> dict[str, Any]:
             "motion_status": "PASS",
             "baseline_tsnr": 32.4, "peak_enh_pct": 65.0,
             "baseline_snr_low_fraction": 0.04,
-            "n_volumes": 75, "tr_ms": 4060.0,
+            "n_volumes": 75, "tr_ms": 3.8, "volume_tr_s": 4.06,
         },
         "nawm_normalization": True,
     }
@@ -76,8 +76,9 @@ class TestMotionAndSignalKeys:
         assert out["BaselineSNRLowFraction"] == pytest.approx(0.04)
         assert out["PeakEnhancementPercent"] == pytest.approx(65.0)
         assert out["NumberOfVolumes"] == 75
-        # tr_ms (4060ms) → RepetitionTime in seconds
+        # Volume and excitation TR retain their distinct BIDS meanings.
         assert out["RepetitionTime"] == pytest.approx(4.06)
+        assert out["RepetitionTimeExcitation"] == pytest.approx(0.0038)
 
     def test_baseline_snr_key_absent_when_missing(self, base_sidecar, dce_qc_metrics):
         """No BaselineSNRLowFraction key when the metric is absent (membership guard)."""
