@@ -563,7 +563,11 @@ class DCEFiguresWriter(SimpleInterface):
 # ---------------------------------------------------------------------------
 
 
-def write_dataset_description_node(output_dir, bids_dir, _trigger=None):
+def write_dataset_description_node(
+    output_dir: str,
+    bids_dir: str,
+    _trigger: object | None = None,
+) -> str:
     """Nipype-Function: write ``dataset_description.json`` to the pipeline root.
 
     Joined on every per-pipeline DataSink's ``out_file`` so it runs exactly

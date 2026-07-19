@@ -16,7 +16,9 @@ from nipype.interfaces.base import (
 )
 
 
-def reorient_list_to_ras(in_files=None):
+def reorient_list_to_ras(
+    in_files: list[str | None] | None = None,
+) -> list[str | None] | None:
     """Reorient a list of NIfTI files to RAS orientation with nibabel.
 
     IMPORTANT: This function must be self-contained for nipype Function nodes.
@@ -40,7 +42,7 @@ def reorient_list_to_ras(in_files=None):
 
     from pathlib import Path as _Path
 
-    def _reorient_single(in_file):
+    def _reorient_single(in_file: str | None) -> str | None:
         """Reorient a single file (inlined for nipype compatibility)."""
         if in_file is None:
             return None

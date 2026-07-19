@@ -2243,7 +2243,7 @@
     "transform_t1_to_dce": "bb2491240efd3d949d993ef7bc54f9e7a7fa0949c455b6a9b7d6c1de1b77944f",
     "validate_roi_mask": "60777a76a8f5106aff8e2330d86fca1680c0e4cd7ad24f14f71ae82aaf328496",
     "validate_user_lesion_mask": "60777a76a8f5106aff8e2330d86fca1680c0e4cd7ad24f14f71ae82aaf328496",
-    "vfa_reorient": "33a4a81d0faa8e1607c9ca63314eea87424350eff493147d6ee82ccce04ded2e"
+    "vfa_reorient": "03f0bda97a55e26d25a885880beab082b354e306166c6b3ffac5a0e9aa378c4f"
   },
   "nipype_version": "1.10.0",
   "node_attrs": {

@@ -2578,7 +2578,7 @@
     "transform_wm_probseg": "9d1d12631c11ba2537bb2490431b4c485e788baac8a7d3f329240c70fe1c2874",
     "validate_roi_mask": "60777a76a8f5106aff8e2330d86fca1680c0e4cd7ad24f14f71ae82aaf328496",
     "validate_user_lesion_mask": "60777a76a8f5106aff8e2330d86fca1680c0e4cd7ad24f14f71ae82aaf328496",
-    "vfa_reorient": "33a4a81d0faa8e1607c9ca63314eea87424350eff493147d6ee82ccce04ded2e"
+    "vfa_reorient": "03f0bda97a55e26d25a885880beab082b354e306166c6b3ffac5a0e9aa378c4f"
   },
   "nipype_version": "1.10.0",
   "node_attrs": {
