@@ -131,6 +131,30 @@ class BatchedChunkArgs(NamedTuple):
     compute_uncertainties: bool
 
 
+class _DCEFitPreparation(NamedTuple):
+    """Validated DCE inputs and pre-BAT fitting-domain state."""
+
+    concentration: npt.NDArray[Any]
+    affine: npt.NDArray[Any]
+    header: Any
+    mask: npt.NDArray[Any]
+    aif: npt.NDArray[Any]
+    time_points: npt.NDArray[np.float64]
+    n_timepoints: int
+    selection_tr_seconds: float
+    model_name: str
+    is_auto: bool
+    candidate_names: list[str]
+    baseline_frames: int
+    tsnr_threshold: float
+    tsnr_map: npt.NDArray[Any]
+    peak_enhancement: Optional[npt.NDArray[Any]]
+    fitting_mask: npt.NDArray[np.bool_]
+    inference: str
+    mcmc_samples: int
+    save_fitted_curves: bool
+
+
 # Import-time pickle-safety assertion (S1 from code review round 3):
 # BatchedChunkArgs MUST be defined at module top-level for pickling across
 # ProcessPoolExecutor boundaries. A nested definition (e.g. inside a
@@ -1587,19 +1611,17 @@ class ComputeDCEMaps(BaseInterface):
             candidates.append("2cxm")
         return candidates
 
-    def _run_interface(self, runtime: Any) -> Any:
-        """Execute DCE map computation."""
+    def _prepare_fit_inputs(self) -> _DCEFitPreparation:
+        """Load and validate DCE inputs and construct the pre-BAT fit domain.
+
+        Returns
+        -------
+        _DCEFitPreparation
+            Image geometry, validated time axis, model-selection state, signal
+            QC maps, and the voxel mask admitted to pharmacokinetic fitting.
+        """
         import nibabel as nib  # type: ignore[import-untyped]
 
-        from pmriprep.utils.dsc_cbv_constraint import (
-            NO_DSC_RUN_REASON_STRING,
-            SKIP_REASON_NO_DSC_RUN,
-            SKIP_REASON_SYNTHETIC_AIF,
-            ConstraintMode,
-            prepare_vp_constraint_from_data,
-        )
-
-        # Load data
         conc_img = nib.load(self.inputs.concentration_file)
         conc_data: npt.NDArray[Any] = conc_img.get_fdata().astype(np.float64)  # type: ignore[attr-defined]
         affine = conc_img.affine  # type: ignore[attr-defined]
@@ -1607,17 +1629,12 @@ class ComputeDCEMaps(BaseInterface):
 
         mask_img = nib.load(self.inputs.brain_mask_file)
         mask: npt.NDArray[Any] = mask_img.get_fdata()  # type: ignore[attr-defined]
-
-        # Load AIF
         aif = np.loadtxt(self.inputs.aif_file)
-
-        # Determine time points
         n_timepoints = conc_data.shape[3]
 
         if self.inputs.time_points_file:
             time_points = np.loadtxt(self.inputs.time_points_file)
         elif isdefined(self.inputs.volume_tr) and self.inputs.volume_tr is not None:
-            # Volume TR defines the temporal spacing between concentration samples.
             vol_tr_minutes = float(self.inputs.volume_tr) / 60.0
             time_points = np.arange(n_timepoints, dtype=np.float64) * vol_tr_minutes
         else:
@@ -1632,44 +1649,37 @@ class ComputeDCEMaps(BaseInterface):
             n_dce_frames=n_timepoints,
             n_aif_samples=int(np.size(aif)),
         )
-
-        # TR for auto-model selection: must be the volume TR (temporal
-        # sampling), not the pulse TR — model eligibility depends on
-        # whether the AIF is sampled finely enough to resolve early kinetics.
+        # Model eligibility depends on the volume sampling interval, never the
+        # pulse TR. Recover it from an explicit time axis when necessary.
         if isdefined(self.inputs.volume_tr) and self.inputs.volume_tr is not None:
             selection_tr_seconds = float(self.inputs.volume_tr)
         else:
-            # Recover from time_points (minutes → seconds) when volume_tr
-            # was not threaded but a time_points_file was provided.
             selection_tr_seconds = float(time_points[1] - time_points[0]) * 60.0
 
-        # Select model
         model_name = str(self.inputs.model)
         is_auto = model_name == "auto"
         candidate_names: list[str] = []
         if is_auto:
             candidate_names = self._build_candidate_set(selection_tr_seconds)
-            model_name = candidate_names[-1]  # ceiling = most complex eligible
+            model_name = candidate_names[-1]
 
-        # Baseline frames for tSNR
         baseline_frames = int(self.inputs.baseline_frames)
         if baseline_frames == 0:
             baseline_frames = self._detect_baseline_frames(conc_data, mask)
 
-        # Always compute tSNR for QC (even if threshold is 0)
-        # Use raw DCE signal for tSNR when available
+        # Raw signal is the valid domain for tSNR and peak-enhancement QC;
+        # concentration baseline is approximately zero by construction.
         tsnr_threshold = float(self.inputs.tsnr_threshold)
         signal_std_map: Optional[npt.NDArray[Any]] = None
+        peak_enhancement: Optional[npt.NDArray[Any]]
         if isdefined(self.inputs.dce_signal_file):
             signal_img = nib.load(self.inputs.dce_signal_file)
             signal_data = signal_img.get_fdata().astype(np.float64)  # type: ignore[attr-defined]
             tsnr_map = self._compute_tsnr(signal_data, mask, baseline_frames)
-            # Raw signal variation map
             signal_std_map = np.std(signal_data, axis=-1)
-            # Peak enhancement must use raw signal (concentration baseline ~0
-            # by definition → division by near-zero → overflow)
             from pmriprep.utils.dce_model_free import compute_peak_enhancement
-            peak_enh = compute_peak_enhancement(signal_data, baseline_frames)
+
+            peak_enhancement = compute_peak_enhancement(signal_data, baseline_frames)
             del signal_data
         else:
             logger.warning(
@@ -1677,34 +1687,24 @@ class ComputeDCEMaps(BaseInterface):
                 "data (values will be low — consider wiring dce_preprocess.out_file)"
             )
             tsnr_map = self._compute_tsnr(conc_data, mask, baseline_frames)
-            peak_enh = None  # Cannot compute without raw signal
+            peak_enhancement = None
 
-        # Create fitting mask (brain mask + tSNR threshold if specified)
+        # Admit only brain voxels meeting configured signal quality, raw-signal
+        # variation, and a minimal measurable concentration enhancement.
         mask_bool = mask > 0
         if tsnr_threshold > 0:
             fitting_mask = mask_bool & (tsnr_map >= tsnr_threshold)
         else:
             fitting_mask = mask_bool
-
-        # Raw signal variation filter: std(S_voxel) >= 1.0
         if signal_std_map is not None:
             fitting_mask = fitting_mask & (signal_std_map >= 1.0)
-
-        # Pre-fit: exclude only voxels with no measurable enhancement (CSF, skull, air).
-        # Concentration-domain CNR is degraded by Ernst equation noise amplification
-        # (~1/(E1*TR)), making CNR > 3 reject 50-66% of brain tissue with adequate
-        # signal-domain tSNR. Quality gating deferred to post-fit QC mask (R² >= 0.5,
-        # tSNR >= 10, physiological bounds).
-        # CNR guideline is informational, not a hard cutoff.
         enhancement_mask = np.max(conc_data, axis=-1) > MIN_ENHANCEMENT_MM
         fitting_mask = fitting_mask & enhancement_mask
 
-        # Parameters
         inference = str(self.inputs.inference)
         mcmc_samples = int(self.inputs.mcmc_samples)
         save_fitted_curves = bool(self.inputs.save_fitted_curves)
-
-        # 2CXM parameter identifiability warning (all fitting methods)
+        # Preserve the identifiability warning for every 2CXM fitting method.
         if model_name == "2cxm":
             logger.warning(
                 "2CXM individual parameter estimates (especially PS) may be "
@@ -1712,6 +1712,62 @@ class ComputeDCEMaps(BaseInterface):
                 "Buckley, MRM 2011). Consider Extended Tofts if Ktrans is "
                 "the primary parameter of interest."
             )
+
+        return _DCEFitPreparation(
+            conc_data,
+            affine,
+            header,
+            mask,
+            aif,
+            time_points,
+            n_timepoints,
+            selection_tr_seconds,
+            model_name,
+            is_auto,
+            candidate_names,
+            baseline_frames,
+            tsnr_threshold,
+            tsnr_map,
+            peak_enhancement,
+            fitting_mask,
+            inference,
+            mcmc_samples,
+            save_fitted_curves,
+        )
+
+    def _run_interface(self, runtime: Any) -> Any:
+        """Execute DCE map computation."""
+        import nibabel as nib  # type: ignore[import-untyped]
+
+        from pmriprep.utils.dsc_cbv_constraint import (
+            NO_DSC_RUN_REASON_STRING,
+            SKIP_REASON_NO_DSC_RUN,
+            SKIP_REASON_SYNTHETIC_AIF,
+            ConstraintMode,
+            prepare_vp_constraint_from_data,
+        )
+
+        prepared = self._prepare_fit_inputs()
+        conc_data = prepared.concentration
+        affine = prepared.affine
+        header = prepared.header
+        mask = prepared.mask
+        aif = prepared.aif
+        time_points = prepared.time_points
+        n_timepoints = prepared.n_timepoints
+        selection_tr_seconds = prepared.selection_tr_seconds
+        model_name = prepared.model_name
+        is_auto = prepared.is_auto
+        candidate_names = prepared.candidate_names
+        baseline_frames = prepared.baseline_frames
+        tsnr_threshold = prepared.tsnr_threshold
+        tsnr_map = prepared.tsnr_map
+        peak_enh = prepared.peak_enhancement
+        fitting_mask = prepared.fitting_mask
+        mask_bool = mask > 0
+        inference = prepared.inference
+        mcmc_samples = prepared.mcmc_samples
+        save_fitted_curves = prepared.save_fitted_curves
 
         # =====================================================================
         # AIF->tissue BAT pre-alignment
