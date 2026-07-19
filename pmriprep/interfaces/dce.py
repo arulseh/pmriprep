@@ -2417,14 +2417,6 @@ class VFAPreprocessInputSpec(BaseInterfaceInputSpec):
         usedefault=True,
         desc="Skip inter-volume coregistration (if affines are identical)",
     )
-    field_strength = traits.Float(
-        3.0,
-        usedefault=True,
-        desc="Magnetic field strength in Tesla for flip angle validation",
-    )
-    tr = traits.Float(
-        desc="Repetition time in milliseconds",
-    )
 
 
 class VFAPreprocessOutputSpec(TraitedSpec):
@@ -2453,7 +2445,6 @@ class VFAPreprocess(SimpleInterface):
     2. Selection of best-quality VFA as registration reference
     3. Affine check: skip FLIRT if affines are identical
     4. FLIRT 6DOF rigid coregistration for non-reference volumes
-    5. Optional flip angle validation from signal ratio
 
     Parameters
     ----------
@@ -2463,11 +2454,6 @@ class VFAPreprocess(SimpleInterface):
         Nominal flip angles in degrees.
     skip_coregistration : bool
         If True, skip FLIRT coregistration.
-    field_strength : float
-        Field strength in Tesla.
-    tr : float, optional
-        Repetition time in ms.
-
     Returns
     -------
     out_files : list of str

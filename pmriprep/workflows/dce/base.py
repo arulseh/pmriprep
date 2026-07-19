@@ -1073,8 +1073,6 @@ def init_dce_preproc_wf(
             (vfa_reorient, vfa_preprocess, [("out_file", "vfa_files")]),
             (inputnode, vfa_preprocess, [
                 ("vfa_flip_angles", "flip_angles"),
-                ("vfa_tr", "tr"),
-                ("field_strength", "field_strength"),
             ]),
         ])
 

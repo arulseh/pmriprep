@@ -830,12 +830,6 @@
     ],
     [
       "inputnode",
-      "field_strength",
-      "vfa_preprocess",
-      "field_strength"
-    ],
-    [
-      "inputnode",
       "flair_in_t1w",
       "transform_flair_underlay",
       "structural_file"
@@ -994,12 +988,6 @@
       "inputnode",
       "vfa_tr",
       "t1_mapping",
-      "tr"
-    ],
-    [
-      "inputnode",
-      "vfa_tr",
-      "vfa_preprocess",
       "tr"
     ],
     [
@@ -3002,7 +2990,6 @@
       "mask_label": "dce.lesion_mask"
     },
     "vfa_preprocess": {
-      "field_strength": 3.0,
       "skip_coregistration": false
     }
   },

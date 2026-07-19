@@ -794,12 +794,6 @@
     ],
     [
       "inputnode",
-      "field_strength",
-      "vfa_preprocess",
-      "field_strength"
-    ],
-    [
-      "inputnode",
       "flip_angle",
       "signal_to_concentration",
       "flip_angle"
@@ -922,12 +916,6 @@
       "inputnode",
       "vfa_tr",
       "t1_mapping",
-      "tr"
-    ],
-    [
-      "inputnode",
-      "vfa_tr",
-      "vfa_preprocess",
       "tr"
     ],
     [
@@ -3010,7 +2998,6 @@
       "mask_label": "dce.lesion_mask"
     },
     "vfa_preprocess": {
-      "field_strength": 3.0,
       "skip_coregistration": false
     }
   },
