@@ -19,21 +19,21 @@ from pmriprep.interfaces.qc_writers import (
 )
 
 
-def _build_preproc_meta(  # type: ignore[no-untyped-def]
-    description,
-    source_paths,
-    reference_voxel_source,
-    bids_dir,
-    subject,
-    session,
-    skull_stripped=True,
-    contrast_agent=None,
-    is_postcon_ref=False,
-    qc_metrics=None,
-    coreg_modality=None,
-    is_anchor_sidecar=False,
-    presence_warnings=None,
-):
+def _build_preproc_meta(
+    description: str,
+    source_paths: list[str],
+    reference_voxel_source: str,
+    bids_dir: str,
+    subject: str,
+    session: str | None,
+    skull_stripped: bool = True,
+    contrast_agent: str | None = None,
+    is_postcon_ref: bool = False,
+    qc_metrics: dict | None = None,
+    coreg_modality: str | None = None,
+    is_anchor_sidecar: bool = False,
+    presence_warnings: list | None = None,
+) -> dict:
     """Nipype-Function wrapper for ``build_anat_preproc_sidecar``.
 
     Chains ``enrich_preproc_anat_sidecar`` after the base build so the
@@ -80,16 +80,16 @@ def _build_preproc_meta(  # type: ignore[no-untyped-def]
     return sidecar
 
 
-def _build_mask_meta(  # type: ignore[no-untyped-def]
-    description,
-    source_paths,
-    reference_voxel_source,
-    bids_dir,
-    subject,
-    session,
-    is_postcon_ref=False,
-    qc_metrics=None,
-):
+def _build_mask_meta(
+    description: str,
+    source_paths: list[str],
+    reference_voxel_source: str,
+    bids_dir: str,
+    subject: str,
+    session: str | None,
+    is_postcon_ref: bool = False,
+    qc_metrics: dict | None = None,
+) -> dict:
     """Nipype-Function wrapper for ``build_anat_mask_sidecar``.
 
     Chains ``enrich_brain_mask_sidecar`` after the base build so the
@@ -116,16 +116,16 @@ def _build_mask_meta(  # type: ignore[no-untyped-def]
     return sidecar
 
 
-def _build_probseg_meta(  # type: ignore[no-untyped-def]
-    tissue_type,
-    source_paths,
-    reference_voxel_source,
-    bids_dir,
-    subject,
-    session,
-    is_postcon_ref=False,
-    qc_metrics=None,
-):
+def _build_probseg_meta(
+    tissue_type: str,
+    source_paths: list[str],
+    reference_voxel_source: str,
+    bids_dir: str,
+    subject: str,
+    session: str | None,
+    is_postcon_ref: bool = False,
+    qc_metrics: dict | None = None,
+) -> dict:
     """Nipype-Function wrapper for ``build_anat_probseg_sidecar``.
 
     Chains ``enrich_probseg_sidecar`` after the base build so the sidecar
@@ -153,7 +153,7 @@ def _build_probseg_meta(  # type: ignore[no-untyped-def]
     return sidecar
 
 
-def _extract_contrast_agent_node(source_path):  # type: ignore[no-untyped-def]
+def _extract_contrast_agent_node(source_path: str | None) -> str | None:
     """Nipype-Function wrapper for ``extract_contrast_agent``."""
     if not source_path:
         return None
@@ -316,14 +316,14 @@ def _add_one_anat_sink(
     return sink
 
 
-def _copy_xfm(  # type: ignore[no-untyped-def]
-    in_file,
-    output_dir,
-    subject,
-    session,
-    from_space,
-    to_space,
-):
+def _copy_xfm(
+    in_file: str | None,
+    output_dir: str,
+    subject: str,
+    session: str | None,
+    from_space: str,
+    to_space: str,
+) -> str:
     """Copy a transform .h5 into the derivatives anat/ directory."""
     import logging
     import shutil
@@ -331,9 +331,8 @@ def _copy_xfm(  # type: ignore[no-untyped-def]
 
     from nipype.interfaces.base import isdefined  # type: ignore[import-untyped]
 
-    # Defensive no-op when upstream registration produced no transform.
-    # See pmriprep.workflows.dce.datasinks._copy_perf_map for the
-    # sentinel-handling rationale.
+    # Conditional registration may represent a missing transform as Nipype
+    # Undefined, None, or an empty string.
     if not isdefined(in_file) or in_file is None or in_file == "":
         logging.getLogger("nipype.workflow").warning(
             "Skipping anat _copy_xfm sink (from=%s, to=%s): upstream "
