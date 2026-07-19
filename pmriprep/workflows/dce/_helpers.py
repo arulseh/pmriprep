@@ -2192,25 +2192,30 @@ def _normalize_by_nawm(
     return out_file
 
 
-def _generate_dce_pk_maps_qc(  # type: ignore[no-untyped-def]
-    ktrans_file,
-    ve_file=None,
-    vp_file=None,
-    fp_file=None,
-    ps_file=None,
-    brain_mask_file=None,
-    model_selection_file=None,
-    delta_bic_file=None,
-    enhancing_mask_file=None,
-    non_enhancing_mask_file=None,
-    nawm_mask_file=None,
-    user_lesion_mask_file=None,
-    roi_mask_file=None,
-    vp_at_bound_map_file=None,
-    model_name="tofts",
-    subject_id="",
-    session_id="",
-):
+def _generate_dce_pk_maps_qc(
+    ktrans_file: str,
+    ve_file: str | None = None,
+    vp_file: str | None = None,
+    fp_file: str | None = None,
+    ps_file: str | None = None,
+    brain_mask_file: str | None = None,
+    model_selection_file: str | None = None,
+    delta_bic_file: str | None = None,
+    enhancing_mask_file: str | None = None,
+    non_enhancing_mask_file: str | None = None,
+    nawm_mask_file: str | None = None,
+    user_lesion_mask_file: str | None = None,
+    roi_mask_file: str | None = None,
+    vp_at_bound_map_file: str | None = None,
+    model_name: str = "tofts",
+    subject_id: str = "",
+    session_id: str = "",
+) -> tuple[
+    str,
+    str,
+    dict[str, dict[str, float]] | None,
+    dict[str, float] | None,
+]:
     """Generate DCE PK parameter maps QC and model selection QC plots.
 
     Lightweight wrapper that loads saved NIfTIs and calls plot functions.
@@ -2272,15 +2277,15 @@ def _generate_dce_pk_maps_qc(  # type: ignore[no-untyped-def]
 
     logger = logging.getLogger("pmriprep.workflows.dce")
 
-    def _safe_load(filepath):  # type: ignore[no-untyped-def]
+    def _safe_load(filepath: str | None) -> "np.ndarray | None":
         if not filepath or not _P(str(filepath)).is_file():
             return None
-        return nib.load(filepath).get_fdata()  # type: ignore[attr-defined]
+        return nib.load(filepath).get_fdata()  # type: ignore[attr-defined,no-any-return]
 
     pk_param_maps_qc_plot = ""
     model_selection_qc_plot = ""
-    model_selection_regions = None
-    vp_at_bound_fractions = {}
+    model_selection_regions: dict[str, dict[str, float]] | None = None
+    vp_at_bound_fractions: dict[str, float] = {}
 
     try:
         from pmriprep.utils.dce_pk_qc_plots import (
@@ -2348,7 +2353,7 @@ def _generate_dce_pk_maps_qc(  # type: ignore[no-untyped-def]
             if roi_data is not None:
                 roi_data = (roi_data > 0.5).astype(np.float64)
 
-            regional_stats: dict = {}
+            regional_stats: dict[str, dict[str, float]] = {}
             model_selection_qc_plot = generate_model_selection_qc_plot(
                 model_selection_map=model_sel_data.astype(np.int8),
                 delta_bic_map=delta_bic_data.astype(np.float32),
@@ -2384,7 +2389,7 @@ def _generate_dce_pk_maps_qc(  # type: ignore[no-untyped-def]
             else:
                 vp_at_bound_fractions["whole_brain"] = 0.0
 
-            def _frac_in_roi(roi_bool):  # type: ignore[no-untyped-def]
+            def _frac_in_roi(roi_bool: "np.ndarray") -> float | None:
                 sel = roi_bool & finite
                 return float(np.mean(vpab_bool[sel])) if sel.any() else None
 
@@ -2424,7 +2429,28 @@ def _generate_dce_pk_maps_qc(  # type: ignore[no-untyped-def]
     )
 
 
-def _generate_dce_pk_fit_qc(concentration_file, dce_signal_file=None, aif_file=None, brain_mask_file=None, ktrans_file=None, ve_file=None, vp_file=None, fp_file=None, ps_file=None, r2_file=None, qc_mask_file=None, fitted_curves_file=None, model_selection_file=None, enhancing_mask_file=None, non_enhancing_mask_file=None, volume_tr=1.0, baseline_frames=10, model_name='tofts', subject_id='', session_id=''):  # type: ignore[no-untyped-def]
+def _generate_dce_pk_fit_qc(
+    concentration_file: str,
+    dce_signal_file: str | None = None,
+    aif_file: str | None = None,
+    brain_mask_file: str | None = None,
+    ktrans_file: str | None = None,
+    ve_file: str | None = None,
+    vp_file: str | None = None,
+    fp_file: str | None = None,
+    ps_file: str | None = None,
+    r2_file: str | None = None,
+    qc_mask_file: str | None = None,
+    fitted_curves_file: str | None = None,
+    model_selection_file: str | None = None,
+    enhancing_mask_file: str | None = None,
+    non_enhancing_mask_file: str | None = None,
+    volume_tr: float = 1.0,
+    baseline_frames: int = 10,
+    model_name: str = "tofts",
+    subject_id: str = "",
+    session_id: str = "",
+) -> tuple[str | None, dict[str, object]]:
     """Generate DCE PK modeling fit QC plot.
 
     Lightweight wrapper that loads saved NIfTIs, recomputes the single-voxel
@@ -2488,10 +2514,10 @@ def _generate_dce_pk_fit_qc(concentration_file, dce_signal_file=None, aif_file=N
 
     logger = logging.getLogger("pmriprep.workflows.dce")
 
-    def _safe_load(filepath):  # type: ignore[no-untyped-def]
+    def _safe_load(filepath: str | None) -> "np.ndarray | None":
         if not filepath or not _P(str(filepath)).is_file():
             return None
-        return nib.load(filepath).get_fdata()  # type: ignore[attr-defined]
+        return nib.load(filepath).get_fdata()  # type: ignore[attr-defined,no-any-return]
 
     if not brain_mask_file or not aif_file:
         return None, {}
@@ -2572,8 +2598,6 @@ def _generate_dce_pk_fit_qc(concentration_file, dce_signal_file=None, aif_file=N
                 enhancing_mask=enhancing_mask_data,
             )
 
-            # Concrete subclasses of PKModel; mypy infers the dict value as the
-            # abstract base, so the call site below needs an explicit type tag.
             model_cls_map = {
                 "tofts": ToftsModel,
                 "extended_tofts": ExtendedToftsModel,
@@ -2591,7 +2615,7 @@ def _generate_dce_pk_fit_qc(concentration_file, dce_signal_file=None, aif_file=N
                 qc_model_name = model_name
 
             if qc_model_name in model_cls_map:
-                qc_model = model_cls_map[qc_model_name]()
+                qc_model = model_cls_map[qc_model_name]()  # type: ignore[abstract]
                 param_map = {"Ktrans": ktrans, "ve": ve, "vp": vp, "Fp": fp, "PS": ps}
                 qc_params = []
                 for n in qc_model.get_parameter_names():
@@ -2633,10 +2657,7 @@ def _generate_dce_pk_fit_qc(concentration_file, dce_signal_file=None, aif_file=N
             session_id=session_id,
         )
 
-        # FXL-suspect tumor-stratified flag and ROI-stratified Patlak fractions.
-        # conc_data is already baseline-subtracted; np.nanmax gives peak tissue Ct.
-        # Report-only diagnostic — shutter-speed
-        # model not viable at clinical TR_vol.
+        # Calculate the enhancing-tumor peak-concentration risk metrics.
         peak_ct = np.nanmax(conc_data, axis=-1)
 
         if enhancing_mask_data is not None:
@@ -2669,17 +2690,13 @@ def _generate_dce_pk_fit_qc(concentration_file, dce_signal_file=None, aif_file=N
             pk_voxel_metrics["p95_tumor_peak_Ct"] = None
             pk_voxel_metrics["fxl_status"] = "PASS"
 
-        # ROI-stratified Patlak fraction: intersect model-selection map with
-        # each tissue class. Whole-brain patlak_fraction emitted by
-        # ComputeDCEMaps is only meaningful stratified by tissue class (BBB-DCE
-        # methodology; tissue fractions are
-        # pipeline-empirical: enhancing tumor 20-40%, NAWM/GM 70-90%).
+        # Calculate Patlak fractions separately within each tissue class.
         _PATLAK_CODE = 1  # from _MODEL_SELECTION_CODES in dce_compute.py
         if is_auto and model_sel_data is not None:
             ne_data = _safe_load(non_enhancing_mask_file)
             ne_bool = (ne_data > 0.5) if ne_data is not None else None
 
-            def _patlak_frac(region_mask):  # type: ignore[no-untyped-def]
+            def _patlak_frac(region_mask: "np.ndarray") -> float | None:
                 region_fitted = region_mask & (model_sel_data > 0)
                 n_region = int(region_fitted.sum())
                 if n_region == 0:
