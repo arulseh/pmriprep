@@ -6,12 +6,15 @@ import os
 
 import nibabel as nib
 import numpy as np
+import pytest
 
 from pmriprep.interfaces.dce_compute import (
     ComputeDCEMaps,
     _build_dce_qc_mask,
+    _compute_dce_coefficient_of_variation,
     _zero_dce_background,
 )
+from pmriprep.utils.dce_constants import EPSILON_VE
 from pmriprep.models.dce.batched_models import batched_tofts_model
 
 
@@ -76,6 +79,35 @@ def test_build_dce_qc_mask_auto_patlak_allows_nan_parameters() -> None:
         "auto",
     )
     assert mask.tolist() == [[[1, 0]]]
+
+
+def test_compute_dce_coefficient_of_variation_preserves_auto_sentinels() -> None:
+    """CV maps retain the strict epsilon gate, auto NaN, and zero background."""
+    values = np.array([[[0.2, EPSILON_VE, 0.4, 0.8]]])
+    standard_deviation = np.array([[[0.1, 0.1, 0.2, 0.4]]])
+    mask = np.array([[[True, True, True, False]]])
+    result = _compute_dce_coefficient_of_variation(
+        values,
+        standard_deviation,
+        mask,
+        True,
+    )
+    assert result.dtype == np.float32
+    assert result[0, 0, 0] == pytest.approx(0.5)
+    assert np.isnan(result[0, 0, 1])
+    assert result[0, 0, 2] == pytest.approx(0.5)
+    assert result[0, 0, 3] == 0.0
+
+
+def test_compute_dce_coefficient_of_variation_fixed_fill_is_zero() -> None:
+    """Fixed-model CV uses zero for parameters below the division gate."""
+    result = _compute_dce_coefficient_of_variation(
+        np.zeros((1, 1, 1)),
+        np.ones((1, 1, 1)),
+        np.ones((1, 1, 1), dtype=bool),
+        False,
+    )
+    assert result.tolist() == [[[0.0]]]
 
 
 def test_saved_dce_categorical_maps_are_brain_masked(tmp_path) -> None:

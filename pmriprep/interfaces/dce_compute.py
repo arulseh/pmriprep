@@ -455,6 +455,24 @@ def _build_dce_qc_mask(
     return result
 
 
+def _compute_dce_coefficient_of_variation(
+    values: npt.NDArray[Any],
+    standard_deviation: npt.NDArray[Any],
+    mask: npt.NDArray[np.bool_],
+    is_auto: bool,
+) -> npt.NDArray[np.float32]:
+    """Compute a masked DCE coefficient-of-variation map."""
+    fill_value = np.nan if is_auto else 0.0
+    with np.errstate(divide="ignore", invalid="ignore"):
+        coefficient = np.where(
+            values > EPSILON_VE,
+            standard_deviation / values,
+            fill_value,
+        ).astype(np.float32)
+    result: npt.NDArray[np.float32] = _zero_dce_background(coefficient, mask)
+    return result
+
+
 def _validate_dce_time_axis(
     time_points: npt.ArrayLike,
     n_dce_frames: int,
@@ -3192,33 +3210,35 @@ class ComputeDCEMaps(BaseInterface):
 
             # Compute and save Coefficient of Variation (CV = std / mean)
             # Use safe division to avoid divide-by-zero
-            cv_fill = np.nan if is_auto else 0.0
-            with np.errstate(divide="ignore", invalid="ignore"):
-                ktrans_cv = np.where(
-                    ktrans > EPSILON_VE, ktrans_std / ktrans, cv_fill
-                ).astype(np.float32)
-            ktrans_cv = np.where(mask_bool, ktrans_cv, 0.0)
+            ktrans_cv = _compute_dce_coefficient_of_variation(
+                ktrans,
+                ktrans_std,
+                mask_bool,
+                is_auto,
+            )
 
             out_ktrans_cv = self._gen_outfilename("_Ktrans_cv")
             _save_dce_map(ktrans_cv, out_ktrans_cv)
             self._results["out_ktrans_cv"] = out_ktrans_cv
 
             if save_ve:
-                with np.errstate(divide="ignore", invalid="ignore"):
-                    ve_cv = np.where(
-                        ve > EPSILON_VE, ve_std / ve, cv_fill
-                    ).astype(np.float32)
-                ve_cv = np.where(mask_bool, ve_cv, 0.0)
+                ve_cv = _compute_dce_coefficient_of_variation(
+                    ve,
+                    ve_std,
+                    mask_bool,
+                    is_auto,
+                )
                 out_ve_cv = self._gen_outfilename("_ve_cv")
                 _save_dce_map(ve_cv, out_ve_cv)
                 self._results["out_ve_cv"] = out_ve_cv
 
             if save_vp:
-                with np.errstate(divide="ignore", invalid="ignore"):
-                    vp_cv = np.where(
-                        vp > EPSILON_VE, vp_std / vp, cv_fill
-                    ).astype(np.float32)
-                vp_cv = np.where(mask_bool, vp_cv, 0.0)
+                vp_cv = _compute_dce_coefficient_of_variation(
+                    vp,
+                    vp_std,
+                    mask_bool,
+                    is_auto,
+                )
                 out_vp_cv = self._gen_outfilename("_vp_cv")
                 _save_dce_map(vp_cv, out_vp_cv)
                 self._results["out_vp_cv"] = out_vp_cv
