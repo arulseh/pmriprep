@@ -3092,6 +3092,48 @@ class AIFDetection(BaseInterface):
             baseline_frames,
         )
 
+    def _prepare_detection_baseline(
+        self,
+        context: _DSCAIFDetectionContext,
+        logger: Any,
+    ) -> int:
+        """Detect arterial baseline timing and initialize synthetic fallback."""
+        brain_concentration = context.concentration[context.brain_mask > 0.5]
+        if brain_concentration.ndim > 1 and brain_concentration.shape[0] > 100:
+            from pmriprep.utils.baseline_detection import detect_baseline_ensemble
+
+            p90_curve, p99_curve = np.percentile(
+                brain_concentration,
+                [90, 99],
+                axis=0,
+            )
+            mean_curve = np.mean(brain_concentration, axis=0)
+            baseline_frames, diagnostics = detect_baseline_ensemble(
+                p99_curve,
+                tr=context.tr,
+                min_baseline=max(5, int(10.0 / max(context.tr, 0.1))),
+                additional_signals=[p90_curve, mean_curve],
+            )
+            logger.debug(
+                "Ensemble baseline detection: arrival=%d, conf=%s, method=%s",
+                baseline_frames,
+                diagnostics.get("confidence", "unknown"),
+                diagnostics.get("method", "unknown"),
+            )
+        else:
+            baseline_frames = context.baseline_frames
+
+        self._cached_synth_aif, self._cached_synth_metrics = (
+            self._generate_synthetic_aif(
+                context.n_timepoints,
+                context.tr,
+                baseline_frames,
+                field_strength=context.field_strength,
+                effective_dose=context.synthetic_effective_dose,
+            )
+        )
+        return baseline_frames
+
     # -----------------------------------------------------------------
     # Step 10: Main pipeline  (_run_interface)
     # -----------------------------------------------------------------
@@ -3129,55 +3171,9 @@ class AIFDetection(BaseInterface):
         baseline_frames = context.baseline_frames
         gamma_fit_mode = context.gamma_fit_mode
         disable_fallback = context.disable_fallback
-        n_timepoints = context.n_timepoints
-        field_strength = context.field_strength
-        synth_effective_dose = context.synthetic_effective_dose
         tr = context.tr
 
-        # --- Auto-detect actual bolus arrival for AIF first-pass window ---
-        # Use 99th percentile across brain voxels — naturally selects arterial
-        # timing without transit delay (avoids GAP 6 problem where mean brain
-        # concentration detects tissue arrival 4-12 s later than arteries).
-        # Derivative-anchored detection operates on tissue signals and needs
-        # no AIF voxels — runs even for synthetic AIF.  Skipping it would
-        # default to pre_bolus (often 5), catastrophic for long baselines
-        # and misaligning synthetic AIF bolus timing with the actual data.
-        brain_conc_all = conc_data[brain_mask > 0.5]
-        if (
-            brain_conc_all.ndim > 1
-            and brain_conc_all.shape[0] > 100
-        ):
-            from pmriprep.utils.baseline_detection import detect_baseline_ensemble
-
-            # Compute multiple percentiles for multi-signal consensus
-            p90_curve, p99_curve = np.percentile(
-                brain_conc_all, [90, 99], axis=0,
-            )
-            mean_curve = np.mean(brain_conc_all, axis=0)
-
-            detected_arrival, bl_diag = detect_baseline_ensemble(
-                p99_curve, tr=tr,
-                min_baseline=max(5, int(10.0 / max(tr, 0.1))),
-                additional_signals=[p90_curve, mean_curve],
-            )
-            aif_baseline_frames = detected_arrival
-            _logger.debug(
-                "Ensemble baseline detection: arrival=%d, conf=%s, method=%s",
-                detected_arrival,
-                bl_diag.get("confidence", "unknown"),
-                bl_diag.get("method", "unknown"),
-            )
-        else:
-            aif_baseline_frames = baseline_frames  # fallback to configured
-
-        # Cached for reuse as cascade fallback.
-        self._cached_synth_aif, self._cached_synth_metrics = (
-            self._generate_synthetic_aif(
-                n_timepoints, tr, aif_baseline_frames,
-                field_strength=field_strength,
-                effective_dose=synth_effective_dose,
-            )
-        )
+        aif_baseline_frames = self._prepare_detection_baseline(context, _logger)
 
         # Initialize
         detection_level = "synthetic"
