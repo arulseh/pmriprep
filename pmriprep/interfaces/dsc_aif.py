@@ -166,6 +166,30 @@ class _UnionAcceptanceResult(NamedTuple):
     tier_provenance: dict[str, int]
 
 
+class _CascadeDetectionResult(NamedTuple):
+    """Candidate cascade outcome consumed by final AIF construction."""
+
+    accepted_aif: Optional[_AcceptedAIF]
+    candidates: list[_AIFCandidate]
+    n_available: int
+    detection_level: str
+    filter_metadata: dict[str, Any]
+    initial_level: Optional[str]
+    tiers_attempted: list[str]
+    tier_provenance: dict[str, int]
+    postfilter_diagnostics: dict[str, dict[str, Any]]
+
+
+class _FinalizedDetectedAIF(NamedTuple):
+    """Detected AIF arrays, QC state, and updated baseline."""
+
+    curve: npt.NDArray[Any]
+    mask: npt.NDArray[Any]
+    quality_score: float
+    qc_metrics: dict[str, Any]
+    baseline_frames: int
+
+
 class _DSCAIFDetectionContext(NamedTuple):
     """Validated image data, acquisition state, and detection parameters."""
 
@@ -2968,6 +2992,106 @@ class AIFDetection(BaseInterface):
             tier_provenance,
         )
 
+    def _finalize_detected_aif(
+        self,
+        cascade: _CascadeDetectionResult,
+        context: _DSCAIFDetectionContext,
+        baseline_frames: int,
+        aif_baseline_frames: int,
+    ) -> _FinalizedDetectedAIF:
+        """Construct the detected AIF mask and its cascade-aware QC metrics."""
+        from pmriprep.utils.dsc_signal import detect_bolus_arrival
+
+        if cascade.accepted_aif is None or not cascade.candidates:
+            raise RuntimeError("Cannot finalize an empty DSC AIF cascade result")
+
+        curve, accepted_mask, accepted_roi_size = cascade.accepted_aif
+        mask = np.zeros(context.concentration.shape[:3], dtype=np.uint8)
+        mask[accepted_mask] = 1
+        for _, coordinate, _ in cascade.candidates:
+            mask[coordinate[0], coordinate[1], coordinate[2]] = 1
+
+        stage2_window = min(aif_baseline_frames, max(2, len(curve) // 3))
+        _, detected_baseline = detect_bolus_arrival(
+            curve,
+            baseline_frames=stage2_window,
+            n_consecutive=3,
+        )
+        baseline_frames = max(baseline_frames, detected_baseline)
+
+        mean_cost = float(np.mean([cost for cost, _, _ in cascade.candidates]))
+        quality_score = min(1.0, 1.0 / (1.0 + mean_cost))
+        curve, qc_metrics = self._finalize_aif_metrics(
+            curve,
+            cascade.candidates,
+            context.concentration,
+            context.brain_mask,
+            context.affine,
+            context.tr,
+            context.n_candidates,
+            cascade.n_available,
+            baseline_frames=baseline_frames,
+        )
+        qc_metrics.update(cascade.filter_metadata)
+        if cascade.initial_level is not None:
+            qc_metrics["cascade_downgraded"] = (
+                cascade.initial_level != cascade.detection_level
+            )
+            qc_metrics["cascade_initial_level"] = cascade.initial_level
+            qc_metrics["cascade_final_level"] = cascade.detection_level
+        qc_metrics["cascade_tiers_attempted"] = cascade.tiers_attempted
+        qc_metrics["cascade_accepted_roi_size"] = accepted_roi_size
+        qc_metrics["aif_quality"] = "detected"
+        qc_metrics["aif_tier_provenance"] = dict(cascade.tier_provenance)
+        qc_metrics["aif_n_after_filters"] = sum(
+            diagnostics.get("aif_n_after_filters", 0)
+            for tier, diagnostics in cascade.postfilter_diagnostics.items()
+            if cascade.tier_provenance.get(tier, 0) > 0
+        )
+        qc_metrics["aif_n_filtered_peakspread"] = sum(
+            diagnostics.get("aif_n_filtered_peakspread", 0)
+            for diagnostics in cascade.postfilter_diagnostics.values()
+        )
+        qc_metrics["aif_n_filtered_tail"] = sum(
+            diagnostics.get("aif_n_filtered_tail", 0)
+            for diagnostics in cascade.postfilter_diagnostics.values()
+        )
+
+        peak_frames = [
+            float(metrics.get("peak_time_frame", float("nan")))
+            for _, _, metrics in cascade.candidates
+        ]
+        peak_frames = [value for value in peak_frames if np.isfinite(value)]
+        tail_fractions = [
+            float(metrics.get("tail_fraction_late", float("nan")))
+            for _, _, metrics in cascade.candidates
+        ]
+        tail_fractions = [
+            value for value in tail_fractions if np.isfinite(value)
+        ]
+        if peak_frames:
+            qc_metrics["aif_peak_time_spread_frames"] = (
+                max(peak_frames) - min(peak_frames)
+            )
+        if tail_fractions:
+            qc_metrics["aif_tail_max_fraction"] = max(tail_fractions)
+
+        spr, first_pass_frame, _ = self._compute_aif_spr(
+            curve,
+            aif_baseline_frames,
+            context.tr,
+        )
+        qc_metrics["averaged_aif_spr"] = round(spr, 1)
+        qc_metrics["averaged_aif_fp_peak_frame"] = first_pass_frame
+        qc_metrics["averaged_aif_final_roi_size"] = accepted_roi_size
+        return _FinalizedDetectedAIF(
+            curve,
+            mask,
+            quality_score,
+            qc_metrics,
+            baseline_frames,
+        )
+
     # -----------------------------------------------------------------
     # Step 10: Main pipeline  (_run_interface)
     # -----------------------------------------------------------------
@@ -2990,8 +3114,6 @@ class AIFDetection(BaseInterface):
         # ===== External AIF: bypass all detection if provided =====
         if isdefined(self.inputs.external_aif_file) and self.inputs.external_aif_file:
             return self._handle_external_aif(runtime)
-
-        from pmriprep.utils.dsc_signal import detect_bolus_arrival
 
         context = self._load_detection_context(_logger)
         conc_data = context.concentration
@@ -3247,6 +3369,18 @@ class AIFDetection(BaseInterface):
                         "(union failed dual-ROI validation)"
                     )
 
+        cascade = _CascadeDetectionResult(
+            accepted_aif,
+            top_candidates,
+            n_available,
+            detection_level,
+            filter_meta,
+            cascade_initial_level,
+            tiers_attempted,
+            dict(union_state.tier_provenance),
+            postfilter_diags_per_tier,
+        )
+
         # ---- Build AIF curve ----
         aif_curve: npt.NDArray[Any]
         aif_mask_arr = np.zeros(conc_data.shape[:3], dtype=np.uint8)
@@ -3254,90 +3388,17 @@ class AIFDetection(BaseInterface):
         qc_metrics: dict[str, Any] = {}
 
         if accepted_aif is not None and top_candidates:
-            aif_curve, aif_bool_mask, accepted_roi_size = accepted_aif
-            aif_mask_arr[aif_bool_mask] = 1
-            for _, coord, _ in top_candidates:
-                aif_mask_arr[coord[0], coord[1], coord[2]] = 1
-
-            # Stage 2: re-detect baseline on final smoothed AIF curve
-            stage2_window = min(
-                aif_baseline_frames, max(2, len(aif_curve) // 3)
+            finalized = self._finalize_detected_aif(
+                cascade,
+                context,
+                baseline_frames,
+                aif_baseline_frames,
             )
-            _, aif_detected_baseline = detect_bolus_arrival(
-                aif_curve,
-                baseline_frames=stage2_window,
-                n_consecutive=3,
-            )
-            if aif_detected_baseline > baseline_frames:
-                baseline_frames = aif_detected_baseline
-
-            # Quality: inverse of mean cost, clamped to [0, 1]
-            mean_cost = float(np.mean([c for c, _, _ in top_candidates]))
-            quality_score = min(1.0, 1.0 / (1.0 + mean_cost))
-
-            # --- GAP 8: Finalize AIF metrics ---
-            aif_curve, finalized_qc = self._finalize_aif_metrics(
-                aif_curve, top_candidates, conc_data, brain_mask,
-                affine, tr, n_candidates, n_available,
-                baseline_frames=baseline_frames,
-            )
-            qc_metrics.update(finalized_qc)
-            qc_metrics.update(filter_meta)
-            if cascade_initial_level is not None:
-                qc_metrics["cascade_downgraded"] = (
-                    cascade_initial_level != detection_level
-                )
-                qc_metrics["cascade_initial_level"] = cascade_initial_level
-                qc_metrics["cascade_final_level"] = detection_level
-            qc_metrics["cascade_tiers_attempted"] = tiers_attempted
-            qc_metrics["cascade_accepted_roi_size"] = accepted_roi_size
-            qc_metrics["aif_quality"] = "detected"
-            qc_metrics["aif_tier_provenance"] = dict(
-                union_state.tier_provenance
-            )
-            # Aggregate per-tier postfilter diagnostics across all tiers
-            # that contributed to the union (sum of n_filtered_* counts;
-            # max-of-max for spread/tail).
-            agg_after = sum(
-                d.get("aif_n_after_filters", 0)
-                for tier, d in postfilter_diags_per_tier.items()
-                if union_state.tier_provenance.get(tier, 0) > 0
-            )
-            agg_filt_spread = sum(
-                d.get("aif_n_filtered_peakspread", 0)
-                for d in postfilter_diags_per_tier.values()
-            )
-            agg_filt_tail = sum(
-                d.get("aif_n_filtered_tail", 0)
-                for d in postfilter_diags_per_tier.values()
-            )
-            qc_metrics["aif_n_after_filters"] = agg_after
-            qc_metrics["aif_n_filtered_peakspread"] = agg_filt_spread
-            qc_metrics["aif_n_filtered_tail"] = agg_filt_tail
-            # Pool spread/tail-max computed from the accepted union
-            if top_candidates:
-                pks = [
-                    float(m.get("peak_time_frame", float("nan")))
-                    for _, _, m in top_candidates
-                ]
-                pks = [p for p in pks if np.isfinite(p)]
-                tls = [
-                    float(m.get("tail_fraction_late", float("nan")))
-                    for _, _, m in top_candidates
-                ]
-                tls = [t for t in tls if np.isfinite(t)]
-                if pks:
-                    qc_metrics["aif_peak_time_spread_frames"] = (
-                        max(pks) - min(pks)
-                    )
-                if tls:
-                    qc_metrics["aif_tail_max_fraction"] = max(tls)
-            spr, fp_frame, _ = self._compute_aif_spr(
-                aif_curve, aif_baseline_frames, tr,
-            )
-            qc_metrics["averaged_aif_spr"] = round(spr, 1)
-            qc_metrics["averaged_aif_fp_peak_frame"] = fp_frame
-            qc_metrics["averaged_aif_final_roi_size"] = accepted_roi_size
+            aif_curve = finalized.curve
+            aif_mask_arr = finalized.mask
+            quality_score = finalized.quality_score
+            qc_metrics = finalized.qc_metrics
+            baseline_frames = finalized.baseline_frames
 
         elif not disable_fallback:
             # Synthetic fallback: reuse cached synthetic AIF from pre-compute
