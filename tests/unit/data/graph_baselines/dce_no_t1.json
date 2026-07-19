@@ -2302,7 +2302,6 @@
     "dce_preprocess": {
       "apply_motion_correction": true,
       "baseline_frames": 0,
-      "contrast_threshold": 1.5,
       "cost": "normcorr",
       "head_radius": 50.0,
       "interpolation": "trilinear",

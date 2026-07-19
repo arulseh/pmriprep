@@ -2702,11 +2702,6 @@ class DCEPreprocessInputSpec(BaseInterfaceInputSpec):
         exists=True,
         desc="Brain mask for baseline detection and QC (optional)",
     )
-    contrast_threshold = traits.Float(
-        1.5,
-        usedefault=True,
-        desc="Signal increase threshold (%) for bolus arrival detection (default: 1.5%)",
-    )
     volume_tr = traits.Float(
         0.0,
         usedefault=True,
@@ -2770,8 +2765,6 @@ class DCEPreprocess(SimpleInterface):
         Interpolation: trilinear, sinc, or spline (default: trilinear)
     brain_mask : str, optional
         Brain mask for baseline detection (improves accuracy)
-    contrast_threshold : float
-        Signal increase threshold (%) for bolus arrival detection (default: 1.5%)
 
     Returns
     -------
@@ -2804,13 +2797,9 @@ class DCEPreprocess(SimpleInterface):
     -----
     **Baseline Detection Algorithm:**
 
-    When baseline_frames=0 (auto-detect), the algorithm:
-
-    1. Computes the global mean signal for each time point (within brain mask if provided)
-    2. Computes the mean and std of signal in a sliding window
-    3. Detects bolus arrival as the first frame where signal increases by more than
-       contrast_threshold × std above the baseline mean
-    4. Sets baseline_frames to the frame before bolus arrival
+    When ``baseline_frames=0``, bolus arrival is estimated from an ensemble of
+    change-point and derivative detectors applied to the brain signal time
+    course. The detected arrival frame defines the pre-contrast baseline.
 
     For DCE with gadolinium contrast, the signal typically INCREASES (T1-shortening)
     at bolus arrival, unlike DSC where signal DECREASES (T2* effect).
