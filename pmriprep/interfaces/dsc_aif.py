@@ -2768,6 +2768,33 @@ class AIFDetection(BaseInterface):
 
         return None
 
+    def _prepare_cached_synthetic_fallback(
+        self,
+        concentration: npt.NDArray[Any],
+        brain_mask: npt.NDArray[Any],
+    ) -> tuple[npt.NDArray[Any], dict[str, Any]]:
+        """Copy the cached synthetic AIF and add tissue-relative QC metrics."""
+        curve = self._cached_synth_aif.copy()
+        metrics = dict(self._cached_synth_metrics)
+        tissue_max = self._compute_tissue_max_for_synthetic(
+            concentration,
+            brain_mask,
+        )
+        if tissue_max is None:
+            return curve, metrics
+
+        metrics["synthetic_aif_tissue_p95_delta_r2star"] = round(
+            float(tissue_max),
+            2,
+        )
+        peak = metrics.get("synthetic_aif_target_peak", 0.0)
+        if tissue_max > 0 and peak > 0:
+            metrics["synthetic_aif_peak_to_tissue_ratio"] = round(
+                peak / tissue_max,
+                2,
+            )
+        return curve, metrics
+
     # -----------------------------------------------------------------
     # Step 10: Main pipeline  (_run_interface)
     # -----------------------------------------------------------------
@@ -3205,22 +3232,10 @@ class AIFDetection(BaseInterface):
 
         elif not disable_fallback:
             # Synthetic fallback: reuse cached synthetic AIF from pre-compute
-            tissue_max = self._compute_tissue_max_for_synthetic(conc_data, brain_mask)
-            aif_curve = self._cached_synth_aif.copy()
-            synth_metrics = dict(self._cached_synth_metrics)
-            if tissue_max is not None and tissue_max > 0:
-                synth_metrics["synthetic_aif_tissue_p95_delta_r2star"] = round(
-                    float(tissue_max), 2,
-                )
-                peak = synth_metrics.get("synthetic_aif_target_peak", 0.0)
-                if peak > 0:
-                    synth_metrics["synthetic_aif_peak_to_tissue_ratio"] = round(
-                        peak / tissue_max, 2,
-                    )
-            elif tissue_max is not None:
-                synth_metrics["synthetic_aif_tissue_p95_delta_r2star"] = round(
-                    float(tissue_max), 2,
-                )
+            aif_curve, synth_metrics = self._prepare_cached_synthetic_fallback(
+                conc_data,
+                brain_mask,
+            )
             detection_level = "synthetic"
             quality_score = 0.3
             qc_metrics = {}
@@ -3292,22 +3307,10 @@ class AIFDetection(BaseInterface):
                     GAMMA_R2_SYNTHETIC_FALLBACK,
                 )
                 # Synthetic fallback: reuse cached synthetic AIF
-                tissue_max = self._compute_tissue_max_for_synthetic(conc_data, brain_mask)
-                aif_curve = self._cached_synth_aif.copy()
-                synth_metrics = dict(self._cached_synth_metrics)
-                if tissue_max is not None and tissue_max > 0:
-                    synth_metrics["synthetic_aif_tissue_p95_delta_r2star"] = round(
-                        float(tissue_max), 2,
-                    )
-                    peak = synth_metrics.get("synthetic_aif_target_peak", 0.0)
-                    if peak > 0:
-                        synth_metrics["synthetic_aif_peak_to_tissue_ratio"] = round(
-                            peak / tissue_max, 2,
-                        )
-                elif tissue_max is not None:
-                    synth_metrics["synthetic_aif_tissue_p95_delta_r2star"] = round(
-                        float(tissue_max), 2,
-                    )
+                aif_curve, synth_metrics = self._prepare_cached_synthetic_fallback(
+                    conc_data,
+                    brain_mask,
+                )
                 detection_level = "synthetic"
                 quality_score = 0.3
                 aif_mask_arr[:] = 0  # Clear AIF mask (no voxels used)
