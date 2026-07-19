@@ -43,33 +43,35 @@ _PK_MAPS: tuple[tuple[str, str, str, str], ...] = (
 
 
 # Bayesian uncertainty (posterior std) — per-PK-map
-# (input_attr, suffix-name, description)
-_UNCERTAINTY_MAPS: tuple[tuple[str, str, str], ...] = (
-    ("ktrans_uncertainty", "Ktrans", "Ktrans uncertainty (posterior std)"),
-    ("ve_uncertainty", "ve", "ve uncertainty (posterior std)"),
-    ("vp_uncertainty", "vp", "vp uncertainty (posterior std)"),
-    ("fp_uncertainty", "Fp", "Fp uncertainty (posterior std, 2CXM only)"),
-    ("ps_uncertainty", "PS", "PS uncertainty (posterior std, 2CXM only)"),
+# (input_attr, suffix-name, description, units)
+_UNCERTAINTY_MAPS: tuple[tuple[str, str, str, str], ...] = (
+    ("ktrans_uncertainty", "Ktrans", "Ktrans uncertainty (posterior std)", "1/min"),
+    ("ve_uncertainty", "ve", "ve uncertainty (posterior std)", "1"),
+    ("vp_uncertainty", "vp", "vp uncertainty (posterior std)", "1"),
+    ("fp_uncertainty", "Fp", "Fp uncertainty (posterior std, 2CXM only)",
+     "mL/min/100mL"),
+    ("ps_uncertainty", "PS", "PS uncertainty (posterior std, 2CXM only)",
+     "mL/min/100mL"),
 )
 
 
-_CV_MAPS: tuple[tuple[str, str, str], ...] = (
-    ("ktrans_cv", "Ktrans", "Ktrans coefficient of variation (std/mean)"),
-    ("ve_cv", "ve", "ve coefficient of variation (std/mean)"),
-    ("vp_cv", "vp", "vp coefficient of variation (std/mean)"),
+_CV_MAPS: tuple[tuple[str, str, str, str], ...] = (
+    ("ktrans_cv", "Ktrans", "Ktrans coefficient of variation (std/mean)", "1"),
+    ("ve_cv", "ve", "ve coefficient of variation (std/mean)", "1"),
+    ("vp_cv", "vp", "vp coefficient of variation (std/mean)", "1"),
 )
 
 
 # 95% CI maps — pairs of (lower, upper)
-_CI95_MAPS: tuple[tuple[str, str, str, str], ...] = (
+_CI95_MAPS: tuple[tuple[str, str, str, str, str], ...] = (
     ("ktrans_ci95_lower", "Ktrans", "lower",
-     "Ktrans 95% credible interval lower bound"),
+     "Ktrans 95% credible interval lower bound", "1/min"),
     ("ktrans_ci95_upper", "Ktrans", "upper",
-     "Ktrans 95% credible interval upper bound"),
-    ("ve_ci95_lower", "ve", "lower", "ve 95% credible interval lower bound"),
-    ("ve_ci95_upper", "ve", "upper", "ve 95% credible interval upper bound"),
-    ("vp_ci95_lower", "vp", "lower", "vp 95% credible interval lower bound"),
-    ("vp_ci95_upper", "vp", "upper", "vp 95% credible interval upper bound"),
+     "Ktrans 95% credible interval upper bound", "1/min"),
+    ("ve_ci95_lower", "ve", "lower", "ve 95% credible interval lower bound", "1"),
+    ("ve_ci95_upper", "ve", "upper", "ve 95% credible interval upper bound", "1"),
+    ("vp_ci95_lower", "vp", "lower", "vp 95% credible interval lower bound", "1"),
+    ("vp_ci95_upper", "vp", "upper", "vp 95% credible interval upper bound", "1"),
 )
 
 
@@ -1134,38 +1136,38 @@ def init_dce_datasinks_wf(
         sink_outputs.append((sink, "out_file"))
 
     # --- Bayesian uncertainty / CV / CI95 ---
-    for in_attr, suffix, description in _UNCERTAINTY_MAPS:
+    for in_attr, suffix, description, units in _UNCERTAINTY_MAPS:
         if in_attr not in present:
             continue
         sink = _add_perf_map_sink(
             workflow, inputnode, base_perf,
             name=in_attr, in_attr=in_attr,
             desc_value="dceUncertainty", suffix=suffix,
-            description=description, units=None, extra=None,
+            description=description, units=units, extra=None,
             map_key=in_attr,
         )
         sink_outputs.append((sink, "out_file"))
 
-    for in_attr, suffix, description in _CV_MAPS:
+    for in_attr, suffix, description, units in _CV_MAPS:
         if in_attr not in present:
             continue
         sink = _add_perf_map_sink(
             workflow, inputnode, base_perf,
             name=in_attr, in_attr=in_attr,
             desc_value="dceCV", suffix=suffix,
-            description=description, units=None, extra=None,
+            description=description, units=units, extra=None,
             map_key=in_attr,
         )
         sink_outputs.append((sink, "out_file"))
 
-    for in_attr, suffix, bound, description in _CI95_MAPS:
+    for in_attr, suffix, bound, description, units in _CI95_MAPS:
         if in_attr not in present:
             continue
         sink = _add_perf_map_sink(
             workflow, inputnode, base_perf,
             name=in_attr, in_attr=in_attr,
             desc_value=f"dceCI95{bound}", suffix=suffix,
-            description=description, units=None, extra=None,
+            description=description, units=units, extra=None,
             map_key=in_attr,
         )
         sink_outputs.append((sink, "out_file"))
@@ -1212,7 +1214,7 @@ def init_dce_datasinks_wf(
             description=(
                 "Coefficient of determination for the per-voxel PK fit"
             ),
-            units=None, extra=None,
+            units="1", extra=None,
         )
         sink_outputs.append((sink, "out_file"))
     if "quality_flag_map" in present:

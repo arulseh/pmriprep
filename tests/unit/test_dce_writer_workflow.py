@@ -75,6 +75,7 @@ def test_dce_factory_with_bayesian_uncertainty(
         "ktrans_uncertainty", "ve_uncertainty", "vp_uncertainty",
         "ktrans_cv", "ve_cv", "vp_cv",
         "ktrans_ci95_lower", "ktrans_ci95_upper",
+        "r2_map",
     }
     wf = init_dce_datasinks_wf(
         output_dir=str(out), bids_dir=str(bids),
@@ -103,6 +104,19 @@ def test_dce_factory_with_bayesian_uncertainty(
     ]
     for fname in expected:
         assert (perf_out / fname).exists(), f"Missing: {fname}"
+
+    expected_units = {
+        "desc-dceUncertaintyKtrans_stat.json": "1/min",
+        "desc-dceUncertaintyVe_stat.json": "1",
+        "desc-dceUncertaintyVp_stat.json": "1",
+        "desc-dceCVKtrans_stat.json": "1",
+        "desc-dceCI95lowerKtrans_stat.json": "1/min",
+        "desc-dceCI95upperKtrans_stat.json": "1/min",
+        "desc-dceRsquared_stat.json": "1",
+    }
+    for ending, units in expected_units.items():
+        sidecar = next(perf_out.glob(f"*{ending}"))
+        assert json.loads(sidecar.read_text())["Units"] == units
 
 
 def test_dce_factory_model_free_no_model_entity(
@@ -201,6 +215,9 @@ def test_2cxm_bayesian_fp_ps_uncertainty(
     perf_out = out / "pmriprep" / "sub-01" / "ses-0001" / "perf"
     assert (perf_out / "sub-01_ses-0001_desc-dceUncertaintyFp_stat.nii.gz").exists()
     assert (perf_out / "sub-01_ses-0001_desc-dceUncertaintyPS_stat.nii.gz").exists()
+    for parameter in ("Fp", "PS"):
+        sidecar = perf_out / f"sub-01_ses-0001_desc-dceUncertainty{parameter}_stat.json"
+        assert json.loads(sidecar.read_text())["Units"] == "mL/min/100mL"
 
 
 def test_init_pmriprep_wf_dce_patlak_doesnt_crash(tmp_path: Path) -> None:
