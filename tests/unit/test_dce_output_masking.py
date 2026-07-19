@@ -19,6 +19,7 @@ from pmriprep.interfaces.dce_compute import (
     _write_dce_fitted_curves,
     _write_dce_model_free_maps,
     _write_dce_parameter_maps,
+    _write_dce_uncertainty_maps,
     _zero_dce_background,
 )
 from pmriprep.utils.dce_constants import EPSILON_VE
@@ -232,6 +233,42 @@ def test_write_dce_parameter_maps_preserves_applicability(
     assert quality_write[1] is np.uint8
     bound_write = next(write for write in writes if "vpAtBound" in write[0])
     assert bound_write[2].tolist() == [[[1.0, 0.0]]]
+
+
+@pytest.mark.parametrize(
+    ("save_ve", "save_vp", "save_2cxm", "expected_count"),
+    [(False, False, False, 4), (True, True, True, 14)],
+)
+def test_write_dce_uncertainty_maps_preserves_applicability(
+    save_ve: bool,
+    save_vp: bool,
+    save_2cxm: bool,
+    expected_count: int,
+) -> None:
+    """Uncertainty output groups retain model-specific applicability."""
+    values = np.full((1, 1, 1), 0.2)
+    sigma = np.full((1, 1, 1), 0.1)
+    maps = SimpleNamespace(
+        ktrans=values, ve=values, vp=values,
+        ktrans_std=sigma, ve_std=sigma, vp_std=sigma,
+        fp_std=sigma, ps_std=sigma, save_2cxm=save_2cxm,
+    )
+    writes: list[str] = []
+    outputs = _write_dce_uncertainty_maps(
+        maps,
+        np.ones((1, 1, 1), dtype=bool),
+        False,
+        save_ve,
+        save_vp,
+        lambda suffix: f"output{suffix}.nii.gz",
+        lambda data, path: writes.append(path),
+    )
+    assert len(outputs) == expected_count
+    assert writes == list(outputs.values())
+    assert "out_ktrans_std" in outputs
+    assert "out_ktrans_cv" in outputs
+    assert "out_ktrans_ci95_lower" in outputs
+    assert ("out_fp_std" in outputs) is save_2cxm
 
 
 def test_saved_dce_categorical_maps_are_brain_masked(tmp_path) -> None:

@@ -592,6 +592,69 @@ def _write_dce_parameter_maps(
     return outputs
 
 
+def _write_dce_uncertainty_maps(
+    maps: "_DCEParameterMaps",
+    mask: npt.NDArray[np.bool_],
+    is_auto: bool,
+    save_ve: bool,
+    save_vp: bool,
+    generate_path: Callable[[str], str],
+    write_map: Callable[..., None],
+) -> dict[str, str]:
+    """Write applicable Bayesian DCE uncertainty derivatives."""
+    outputs: dict[str, str] = {}
+
+    def write(name: str, suffix: str, values: npt.NDArray[Any]) -> None:
+        outputs[name] = generate_path(suffix)
+        write_map(values, outputs[name])
+
+    write("out_ktrans_std", "_Ktrans_std", maps.ktrans_std)
+    if save_ve:
+        write("out_ve_std", "_ve_std", maps.ve_std)
+    if save_vp:
+        write("out_vp_std", "_vp_std", maps.vp_std)
+    if maps.save_2cxm:
+        write("out_fp_std", "_Fp_std", maps.fp_std)
+        write("out_ps_std", "_PS_std", maps.ps_std)
+
+    write(
+        "out_ktrans_cv",
+        "_Ktrans_cv",
+        _compute_dce_coefficient_of_variation(
+            maps.ktrans, maps.ktrans_std, mask, is_auto
+        ),
+    )
+    if save_ve:
+        write(
+            "out_ve_cv",
+            "_ve_cv",
+            _compute_dce_coefficient_of_variation(maps.ve, maps.ve_std, mask, is_auto),
+        )
+    if save_vp:
+        write(
+            "out_vp_cv",
+            "_vp_cv",
+            _compute_dce_coefficient_of_variation(maps.vp, maps.vp_std, mask, is_auto),
+        )
+
+    lower, upper = _compute_dce_credible_interval(maps.ktrans, maps.ktrans_std)
+    write("out_ktrans_ci95_lower", "_Ktrans_ci95lower", lower)
+    write("out_ktrans_ci95_upper", "_Ktrans_ci95upper", upper)
+    if save_ve:
+        lower, upper = _compute_dce_credible_interval(
+            maps.ve, maps.ve_std, upper_bound=1.0
+        )
+        write("out_ve_ci95_lower", "_ve_ci95lower", lower)
+        write("out_ve_ci95_upper", "_ve_ci95upper", upper)
+    if save_vp:
+        lower, upper = _compute_dce_credible_interval(
+            maps.vp, maps.vp_std, upper_bound=1.0
+        )
+        write("out_vp_ci95_lower", "_vp_ci95lower", lower)
+        write("out_vp_ci95_upper", "_vp_ci95upper", upper)
+    return outputs
+
+
 def _validate_dce_time_axis(
     time_points: npt.ArrayLike,
     n_dce_frames: int,
@@ -3225,112 +3288,26 @@ class ComputeDCEMaps(BaseInterface):
 
         # Save uncertainty maps
         if inference != "nlls":
-            out_ktrans_std = self._gen_outfilename("_Ktrans_std")
-            _save_dce_map(ktrans_std, out_ktrans_std)
-            self._results["out_ktrans_std"] = out_ktrans_std
-
-            if save_ve:
-                out_ve_std = self._gen_outfilename("_ve_std")
-                _save_dce_map(ve_std, out_ve_std)
-                self._results["out_ve_std"] = out_ve_std
-
-            if save_vp:
-                out_vp_std = self._gen_outfilename("_vp_std")
-                _save_dce_map(vp_std, out_vp_std)
-                self._results["out_vp_std"] = out_vp_std
-
-            # 2CXM-specific: save Fp and PS uncertainty maps
-            if save_2cxm:
-                out_fp_std_file = self._gen_outfilename("_Fp_std")
-                _save_dce_map(fp_std, out_fp_std_file)
-                self._results["out_fp_std"] = out_fp_std_file
-
-                out_ps_std_file = self._gen_outfilename("_PS_std")
-                _save_dce_map(ps_std, out_ps_std_file)
-                self._results["out_ps_std"] = out_ps_std_file
-
-            # Compute and save Coefficient of Variation (CV = std / mean)
-            # Use safe division to avoid divide-by-zero
-            ktrans_cv = _compute_dce_coefficient_of_variation(
-                ktrans,
-                ktrans_std,
-                mask_bool,
-                is_auto,
-            )
-
-            out_ktrans_cv = self._gen_outfilename("_Ktrans_cv")
-            _save_dce_map(ktrans_cv, out_ktrans_cv)
-            self._results["out_ktrans_cv"] = out_ktrans_cv
-
-            if save_ve:
-                ve_cv = _compute_dce_coefficient_of_variation(
-                    ve,
-                    ve_std,
+            self._results.update(
+                _write_dce_uncertainty_maps(
+                    parameter_maps._replace(
+                        ktrans=ktrans,
+                        ve=ve,
+                        vp=vp,
+                        ktrans_std=ktrans_std,
+                        ve_std=ve_std,
+                        vp_std=vp_std,
+                        fp_std=fp_std,
+                        ps_std=ps_std,
+                    ),
                     mask_bool,
                     is_auto,
+                    save_ve,
+                    save_vp,
+                    self._gen_outfilename,
+                    _save_dce_map,
                 )
-                out_ve_cv = self._gen_outfilename("_ve_cv")
-                _save_dce_map(ve_cv, out_ve_cv)
-                self._results["out_ve_cv"] = out_ve_cv
-
-            if save_vp:
-                vp_cv = _compute_dce_coefficient_of_variation(
-                    vp,
-                    vp_std,
-                    mask_bool,
-                    is_auto,
-                )
-                out_vp_cv = self._gen_outfilename("_vp_cv")
-                _save_dce_map(vp_cv, out_vp_cv)
-                self._results["out_vp_cv"] = out_vp_cv
-
-            # Compute and save 95% Credible Intervals (mean ± 1.96 * std)
-            # Assuming approximately normal posterior (valid for MAP/MLE)
-            ktrans_ci95_lower, ktrans_ci95_upper = _compute_dce_credible_interval(
-                ktrans,
-                ktrans_std,
             )
-
-            out_ktrans_ci95_lower = self._gen_outfilename("_Ktrans_ci95lower")
-            out_ktrans_ci95_upper = self._gen_outfilename("_Ktrans_ci95upper")
-
-            _save_dce_map(ktrans_ci95_lower, out_ktrans_ci95_lower)
-            _save_dce_map(ktrans_ci95_upper, out_ktrans_ci95_upper)
-
-            self._results["out_ktrans_ci95_lower"] = out_ktrans_ci95_lower
-            self._results["out_ktrans_ci95_upper"] = out_ktrans_ci95_upper
-
-            if save_ve:
-                ve_ci95_lower, ve_ci95_upper = _compute_dce_credible_interval(
-                    ve,
-                    ve_std,
-                    upper_bound=1.0,
-                )
-
-                out_ve_ci95_lower = self._gen_outfilename("_ve_ci95lower")
-                out_ve_ci95_upper = self._gen_outfilename("_ve_ci95upper")
-
-                _save_dce_map(ve_ci95_lower, out_ve_ci95_lower)
-                _save_dce_map(ve_ci95_upper, out_ve_ci95_upper)
-
-                self._results["out_ve_ci95_lower"] = out_ve_ci95_lower
-                self._results["out_ve_ci95_upper"] = out_ve_ci95_upper
-
-            if save_vp:
-                vp_ci95_lower, vp_ci95_upper = _compute_dce_credible_interval(
-                    vp,
-                    vp_std,
-                    upper_bound=1.0,
-                )
-
-                out_vp_ci95_lower = self._gen_outfilename("_vp_ci95lower")
-                out_vp_ci95_upper = self._gen_outfilename("_vp_ci95upper")
-
-                _save_dce_map(vp_ci95_lower, out_vp_ci95_lower)
-                _save_dce_map(vp_ci95_upper, out_vp_ci95_upper)
-
-                self._results["out_vp_ci95_lower"] = out_vp_ci95_lower
-                self._results["out_vp_ci95_upper"] = out_vp_ci95_upper
 
         # Save tSNR map (always computed)
         out_tsnr = self._gen_outfilename("_tSNR")
