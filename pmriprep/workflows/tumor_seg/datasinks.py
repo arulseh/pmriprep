@@ -20,15 +20,15 @@ from pmriprep.interfaces.qc_writers import (
 )
 
 
-def _build_dseg_meta(  # type: ignore[no-untyped-def]
-    source_paths,
-    reference_voxel_source,
-    bids_dir,
-    subject,
-    session,
-    is_postcon_ref=False,
-    qc_metrics=None,
-):
+def _build_dseg_meta(
+    source_paths: list[str],
+    reference_voxel_source: str,
+    bids_dir: str,
+    subject: str,
+    session: str,
+    is_postcon_ref: bool = False,
+    qc_metrics: dict | None = None,
+) -> dict:
     """Nipype-Function wrapper for ``build_tumor_seg_dseg_sidecar``."""
     from pmriprep.utils.sidecar_builders import build_tumor_seg_dseg_sidecar
 
@@ -43,16 +43,16 @@ def _build_dseg_meta(  # type: ignore[no-untyped-def]
     )
 
 
-def _build_mask_meta(  # type: ignore[no-untyped-def]
-    description,
-    method,
-    source_paths,
-    reference_voxel_source,
-    bids_dir,
-    subject,
-    session,
-    is_postcon_ref=False,
-):
+def _build_mask_meta(
+    description: str,
+    method: str,
+    source_paths: list[str],
+    reference_voxel_source: str,
+    bids_dir: str,
+    subject: str,
+    session: str,
+    is_postcon_ref: bool = False,
+) -> dict:
     """Nipype-Function wrapper for ``build_tumor_seg_mask_sidecar``."""
     from pmriprep.utils.sidecar_builders import build_tumor_seg_mask_sidecar
 
@@ -68,14 +68,14 @@ def _build_mask_meta(  # type: ignore[no-untyped-def]
     )
 
 
-def _build_nawm_meta(  # type: ignore[no-untyped-def]
-    source_paths,
-    reference_voxel_source,
-    bids_dir,
-    subject,
-    session,
-    is_postcon_ref=False,
-):
+def _build_nawm_meta(
+    source_paths: list[str],
+    reference_voxel_source: str,
+    bids_dir: str,
+    subject: str,
+    session: str,
+    is_postcon_ref: bool = False,
+) -> dict:
     """Nipype-Function wrapper for ``build_tumor_seg_nawm_sidecar``."""
     from pmriprep.utils.sidecar_builders import build_tumor_seg_nawm_sidecar
 
@@ -101,9 +101,12 @@ _HD_GLIO_SOURCE_ATTRS = (
 )
 
 
-def _write_tumor_dseg_tsv_node(  # type: ignore[no-untyped-def]
-    segmentation, output_dir, subject, session,
-):
+def _write_tumor_dseg_tsv_node(
+    segmentation: str,
+    output_dir: str,
+    subject: str,
+    session: str,
+) -> str:
     """Function-node wrapper for ``write_tumor_dseg_tsv``.
 
     Lands the TSV next to the existing ``desc-tumorseg_dseg.nii.gz`` so
@@ -214,7 +217,7 @@ def _add_mask_sink(
     desc_value: str,
     description: str,
     method: str,
-    source_attrs: tuple,
+    source_attrs: tuple[str, ...],
     is_postcon_ref: bool,
 ) -> pe.Node:
     src_collector = pe.Node(
