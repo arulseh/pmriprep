@@ -22,3 +22,13 @@ def test_dce_preprocess_exposes_ensemble_detection_inputs() -> None:
     assert "brain_mask" in traits
     assert "volume_tr" in traits
     assert "contrast_threshold" not in traits
+
+
+def test_dce_aif_inputs_match_cascade_controls() -> None:
+    """DCE AIF inputs omit an unsupported global criteria selector."""
+    from pmriprep.interfaces.dce_aif import DCEAIFDetectionInputSpec
+
+    traits = DCEAIFDetectionInputSpec().traits()
+    assert "aif_method" in traits
+    assert "n_candidates" in traits
+    assert "criteria" not in traits

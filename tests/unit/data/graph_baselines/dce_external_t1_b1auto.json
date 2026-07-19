@@ -2399,7 +2399,6 @@
       "agent_standard_dose": 0.1,
       "aif_method": "auto",
       "baseline_frames": 0,
-      "criteria": "strict",
       "dose": 1.0,
       "field_strength": 3.0,
       "hematocrit": 0.42,

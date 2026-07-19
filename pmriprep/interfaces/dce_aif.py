@@ -1408,12 +1408,6 @@ class DCEAIFDetectionInputSpec(BaseInterfaceInputSpec):
         usedefault=True,
         desc="AIF detection method: 'auto' (multi-level) or 'population' (Parker)",
     )
-    criteria = traits.Enum(
-        "strict",
-        "relaxed",
-        usedefault=True,
-        desc="AIF quality criteria: 'strict' or 'relaxed'",
-    )
     n_candidates = traits.Int(
         10,
         usedefault=True,
@@ -1557,8 +1551,6 @@ class AIFDetection(BaseInterface):
         3D lesion mask for excluding potentially abnormal regions.
     aif_method : str
         'auto' for multi-level detection, 'population' for Parker AIF.
-    criteria : str
-        Initial criteria level: 'strict' or 'relaxed'.
     n_candidates : int
         Number of top candidate voxels to average for final AIF.
     target_peak : float
