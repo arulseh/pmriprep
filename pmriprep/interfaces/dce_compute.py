@@ -304,7 +304,6 @@ def _fit_single_voxel(
     baseline_frames = _worker_ctx["baseline_frames"]
     constraint_mode = ConstraintMode(_worker_ctx["constraint_mode_str"])
     constraint_vp_uncertainty = _worker_ctx["constraint_vp_uncertainty"]
-    model_name = _worker_ctx["model_name"]
     motion_weights = _worker_ctx["motion_weights"]
     sloppy = _worker_ctx.get("sloppy", False)
     is_auto = _worker_ctx.get("is_auto", False)
@@ -1912,11 +1911,6 @@ class ComputeDCEMaps(BaseInterface):
                             )
                             overshoot_frac = float(
                                 np.mean(vp_cp_peak > ct_peak_arr)
-                            )
-                            median_vp = float(
-                                np.nanmedian(
-                                    vp_constraint_map[valid_constrained]
-                                )
                             )
                             # Overshoot is TR-modulated, not TR-invariant:
                             # at long volume

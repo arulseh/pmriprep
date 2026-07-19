@@ -281,9 +281,6 @@ def _estimate_initial_params(
     Tuple[float, float, float, float]
         Initial estimates for (amplitude, t0, alpha, beta).
     """
-    n_frames = len(aif_curve)
-    t = np.arange(n_frames, dtype=np.float64)
-
     # Find peak
     baseline = np.mean(aif_curve[:baseline_frames])
     curve_shifted = aif_curve - baseline
@@ -1027,7 +1024,6 @@ def should_apply_gamma_fit(
             spr = secondary_peak_val / peak_val if peak_val > EPSILON_CONCENTRATION else 0.0
 
             # Check if it's a true local maximum (derivative sign change)
-            abs_idx = recirc_start + secondary_peak_idx_local
             if 0 < secondary_peak_idx_local < len(tail) - 1:
                 left_slope = tail[secondary_peak_idx_local] - tail[secondary_peak_idx_local - 1]
                 right_slope = tail[secondary_peak_idx_local + 1] - tail[secondary_peak_idx_local]

@@ -311,7 +311,6 @@ class B1Mapping(SimpleInterface):
                 )
 
             # Try to read TR values from JSON sidecar
-            afi_path = Path(str(afi_4d))
             json_path = Path(
                 str(afi_4d).replace(".nii.gz", ".json").replace(".nii", ".json")
             )
@@ -775,7 +774,6 @@ class B1Mapping(SimpleInterface):
 
                 # Use s1 (reference) and s2_original (before coregistration)
                 s1_ref = coreg_info.get("s1_original", s1)
-                s2_orig = coreg_info.get("s2_original", s2)
                 s2_coreg = coreg_info.get("s2_coregistered", s2)
                 tr1_val = coreg_info.get("tr1_ms", tr1_ms)
                 tr2_val = coreg_info.get("tr2_ms", tr2_ms)
@@ -2848,9 +2846,6 @@ class DCEPreprocess(SimpleInterface):
 
         # Generate output filenames
         out_file = self._gen_outfilename()
-        out_params = self._gen_params_filename()
-        mean_file = self._gen_mean_filename()
-
         # Load input DCE data
         dce_img = nib.load(self.inputs.in_file)
         dce_data = dce_img.get_fdata().astype(np.float64)  # type: ignore[attr-defined]

@@ -879,11 +879,6 @@ class TissueSegmentationInputSpec(CommandLineInputSpec):
         usedefault=True,
         desc="Output binary segmentation images (default: True)",
     )
-    probability_maps = traits.Bool(
-        True,
-        usedefault=True,
-        desc="Output probability maps for each class (default: True)",
-    )
 
 
 class TissueSegmentationOutputSpec(TraitedSpec):
@@ -918,8 +913,6 @@ class TissueSegmentation(CommandLine):
         Number of bias field estimation iterations (default: 4)
     segments : bool
         If True, output binary segmentation images
-    probability_maps : bool
-        If True, output probability maps for each class
 
     Returns
     -------
@@ -990,8 +983,6 @@ class TissueSegmentation(CommandLine):
         num_classes = self.inputs.num_classes
         bias_iters = self.inputs.bias_iters
         segments = self.inputs.segments
-        probability_maps = self.inputs.probability_maps
-
         # Build FAST command
         cmd_parts = ["fast"]
 

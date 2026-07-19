@@ -12,8 +12,6 @@ from typing import Optional, Tuple, Union
 import numpy as np
 import numpy.typing as npt
 
-logger = logging.getLogger(__name__)
-
 from pmriprep.utils.dce_constants import (
     DEFAULT_BASELINE_FRAMES,
     EPSILON_E1_LOWER,
@@ -24,6 +22,8 @@ from pmriprep.utils.dce_constants import (
     get_b1_thresholds,
     get_r1_relaxivity,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass

@@ -884,7 +884,6 @@ def _dsc_dce_xval_plot_node(
     validation_result: dict[str, object] | None = None,
     subject_id: str = "",
     session_id: str = "",
-    pk_qc: dict[str, object] | str | None = None,
     model_selection_file: str | None = None,
 ) -> str | None:
     """Generate the DSC-DCE cross-validation plot.
@@ -905,8 +904,6 @@ def _dsc_dce_xval_plot_node(
         Subject identifier.
     session_id : str, optional
         Session identifier.
-    pk_qc : dict or str or None
-        Full ``pk_modeling.qc_metrics`` dict or a constraint-mode string.
     model_selection_file : str or None
         Path to the model selection map NIfTI (auto mode), for coloring.
 
@@ -928,16 +925,6 @@ def _dsc_dce_xval_plot_node(
     # Cross-validation requires NAWM-normalized CBV.
     if not have_ncbv or dsc_ncbv_file is None:
         return None
-
-    resolved_mode: str | None = None
-    if isinstance(pk_qc, dict):
-        constraint_value = pk_qc.get("dsc_cbv_constraint")
-        if isinstance(constraint_value, dict):
-            mode_value = constraint_value.get("mode")
-            if isinstance(mode_value, str):
-                resolved_mode = mode_value
-    elif isinstance(pk_qc, str):
-        resolved_mode = pk_qc
 
     try:
         import nibabel as nib  # type: ignore[import-untyped]

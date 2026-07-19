@@ -2984,9 +2984,6 @@ class AIFDetection(BaseInterface):
         quality_score = 0.0
         qc_metrics: dict[str, Any] = {}
 
-        # Track initial baseline for QC reporting
-        baseline_frames_initial = baseline_frames
-
         if accepted_aif is not None and top_candidates:
             aif_curve, aif_bool_mask, accepted_roi_size = accepted_aif
             aif_mask_arr[aif_bool_mask] = 1

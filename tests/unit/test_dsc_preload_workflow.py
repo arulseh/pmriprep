@@ -92,7 +92,7 @@ class TestPreloadPrecedence:
 
     def test_user_override_wins_over_k2(self, tmp_path: Path) -> None:
         """preload='0.3' (user half-dose) overrides K2 classification."""
-        conc, mask, aif = _write_fixtures(tmp_path)
+        conc, mask, _ = _write_fixtures(tmp_path)
         with mock.patch(
             "pmriprep.utils.dsc_preload.apply_k2_correction",
             return_value=_fake_k2_result((4, 4, 4)),
@@ -108,7 +108,6 @@ class TestPreloadPrecedence:
         ):
             _, _, qc = _detect_and_correct_preload(
                 concentration_file=conc,
-                aif_file=aif,
                 brain_mask_file=mask,
                 te=0.03,
                 field_strength=3.0,
@@ -125,7 +124,7 @@ class TestPreloadPrecedence:
 
     def test_k2_primary_when_user_auto(self, tmp_path: Path) -> None:
         """preload='auto' + concrete K2 adequacy → effective = adequacy."""
-        conc, mask, aif = _write_fixtures(tmp_path)
+        conc, mask, _ = _write_fixtures(tmp_path)
         with mock.patch(
             "pmriprep.utils.dsc_preload.apply_k2_correction",
             return_value=_fake_k2_result((4, 4, 4)),
@@ -138,7 +137,6 @@ class TestPreloadPrecedence:
         ):
             _, _, qc = _detect_and_correct_preload(
                 concentration_file=conc,
-                aif_file=aif,
                 brain_mask_file=mask,
                 te=0.03,
                 field_strength=3.0,
@@ -153,7 +151,7 @@ class TestPreloadPrecedence:
 
     def test_k2_adequacy_drives_auto_classification(self, tmp_path: Path) -> None:
         """Auto path: K2 adequacy drives the effective classification; advisory is separate."""
-        conc, mask, aif = _write_fixtures(tmp_path)
+        conc, mask, _ = _write_fixtures(tmp_path)
         with mock.patch(
             "pmriprep.utils.dsc_preload.apply_k2_correction",
             return_value=_fake_k2_result((4, 4, 4)),
@@ -166,7 +164,6 @@ class TestPreloadPrecedence:
         ):
             _, _, qc = _detect_and_correct_preload(
                 concentration_file=conc,
-                aif_file=aif,
                 brain_mask_file=mask,
                 te=0.03,
                 field_strength=3.0,
@@ -183,7 +180,7 @@ class TestPreloadPrecedence:
 
     def test_k2_unavailable_skips_constraint(self, tmp_path: Path) -> None:
         """preload='auto' + K2 returns UNKNOWN → source='k2_unavailable'."""
-        conc, mask, aif = _write_fixtures(tmp_path)
+        conc, mask, _ = _write_fixtures(tmp_path)
         with mock.patch(
             "pmriprep.utils.dsc_preload.apply_k2_correction",
             return_value=_fake_k2_result((4, 4, 4)),
@@ -196,7 +193,6 @@ class TestPreloadPrecedence:
         ):
             _, _, qc = _detect_and_correct_preload(
                 concentration_file=conc,
-                aif_file=aif,
                 brain_mask_file=mask,
                 te=0.03,
                 field_strength=3.0,

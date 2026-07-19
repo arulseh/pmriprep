@@ -459,10 +459,10 @@ def init_dsc_preload_wf(
 
     Inputs
     ------
-    concentration_file, signal_file, aif_file, brain_mask_file, te,
+    concentration_file, signal_file, brain_mask_file, te,
     field_strength, tr
-        ΔR2* concentration + raw signal, AIF curve, DSC brain mask, and
-        acquisition parameters.
+        ΔR2* concentration, raw signal, DSC brain mask, and acquisition
+        parameters.
 
     Outputs
     -------
@@ -481,7 +481,6 @@ def init_dsc_preload_wf(
             fields=[
                 "concentration_file",
                 "signal_file",
-                "aif_file",
                 "brain_mask_file",
                 "te",
                 "field_strength",
@@ -503,12 +502,11 @@ def init_dsc_preload_wf(
         name="outputnode",
     )
 
-    # Node 4: Preload Detection and K2 Correction (needs the AIF)
+    # Node 4: Preload Detection and K2 Correction
     preload_correct = pe.Node(
         niu.Function(
             input_names=[
                 "concentration_file",
-                "aif_file",
                 "brain_mask_file",
                 "te",
                 "field_strength",
@@ -564,7 +562,6 @@ def init_dsc_preload_wf(
         (inputnode, preload_correct, [
             ("concentration_file", "concentration_file"),
             ("signal_file", "signal_file"),
-            ("aif_file", "aif_file"),
             ("brain_mask_file", "brain_mask_file"),
             ("te", "te"),
             ("field_strength", "field_strength"),
@@ -2360,13 +2357,12 @@ def init_dsc_preproc_wf(
         ]),
     ])
 
-    # AIF Detection and Signal Conversion to Preload Correction
+    # Signal Conversion to Preload Correction
     # Use DSC-space brain mask for proper geometry match
     workflow.connect([
         (conc_aif_wf, preload_wf, [
             ("outputnode.concentration_file", "inputnode.concentration_file"),
             ("outputnode.signal_file", "inputnode.signal_file"),
-            ("outputnode.out_aif_curve", "inputnode.aif_file"),
         ]),
         (hdbet_dsc, preload_wf, [
             ("dsc_brain_mask_file", "inputnode.brain_mask_file"),

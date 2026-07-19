@@ -333,7 +333,6 @@ def compute_wash_out_slope(
         3D wash-out slope map (mM/min, signed: negative=washout).
         NaN where insufficient data points.
     """
-    spatial_shape = concentration.shape[:3]
     n_time = concentration.shape[-1]
 
     ttp_idx = np.argmax(concentration, axis=-1)  # (x, y, z)

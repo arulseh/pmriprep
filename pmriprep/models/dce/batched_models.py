@@ -20,8 +20,6 @@ from typing import Optional
 import numpy as np
 import numpy.typing as npt
 
-logger = logging.getLogger("nipype.interface")
-
 from pmriprep.models.dce._convolution import analytic_exp_convolution
 from pmriprep.utils.dce_constants import (
     EPSILON_EIGENVALUE,
@@ -31,6 +29,8 @@ from pmriprep.utils.dce_constants import (
     EPSILON_VP,
     MAX_EIGENVALUE_SLOW,
 )
+
+logger = logging.getLogger("nipype.interface")
 
 _BATCH_SIZE = 50000
 

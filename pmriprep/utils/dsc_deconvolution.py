@@ -277,8 +277,6 @@ def svd_deconvolve_standard(
     if not 0 < threshold < 1:
         raise ValueError(f"threshold must be in (0, 1), got {threshold}")
 
-    n = len(tissue_curve)
-
     # Build Volterra (product-integration) convolution matrix
     matrix = build_volterra_matrix(aif, dt)
 
@@ -1006,8 +1004,6 @@ def _deconvolve_with_threshold(
         Tuple of (residue, oscillation_index, n_retained,
         condition_number, peak_position).
     """
-    m = len(tissue_padded)
-
     # Truncate singular values below threshold
     s_max = s[0] if len(s) > 0 else 1.0
     truncation_threshold = threshold * s_max

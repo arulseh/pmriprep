@@ -444,8 +444,7 @@ def _batched_pchip(
     npt.NDArray[np.floating]
         Interpolated values, shape (N, T).
     """
-    n_voxels, n_knots = y.shape
-    n_eval = len(xi)
+    _, n_knots = y.shape
 
     # Compute intervals and slopes
     h = np.diff(x)  # (K-1,)

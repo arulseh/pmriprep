@@ -411,7 +411,6 @@ def _signal_to_concentration(
 
 def _detect_and_correct_preload(
     concentration_file: str,
-    aif_file: str,
     brain_mask_file: str,
     te: float,
     field_strength: float,
@@ -431,8 +430,6 @@ def _detect_and_correct_preload(
     ----------
     concentration_file : str
         Path to 4D concentration NIfTI.
-    aif_file : str
-        Path to AIF curve text file.
     brain_mask_file : str
         Path to brain mask NIfTI.
     te : float
@@ -493,9 +490,6 @@ def _detect_and_correct_preload(
             "The brain mask must be in native DSC space. "
             "Ensure transform_brain_mask node is connected upstream."
         )
-
-    # Load AIF
-    aif = np.loadtxt(aif_file)
 
     qc_metrics: dict[str, object] = {}
     k2_map_file: str = ""

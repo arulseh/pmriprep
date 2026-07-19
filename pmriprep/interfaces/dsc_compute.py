@@ -8,9 +8,7 @@ concentration curves and AIF using various deconvolution methods.
 import json
 import logging
 from pathlib import Path
-from typing import Any, Optional, cast
-
-logger = logging.getLogger(__name__)
+from typing import Any, NamedTuple, Optional, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -33,13 +31,11 @@ from pmriprep.utils.dsc_constants import (
 )
 from pmriprep.utils.dsc_signal import compute_psr_legacy, compute_peak_height_legacy, compute_ttp_legacy
 
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Module-level worker for parallel parametric deconvolution
 # ---------------------------------------------------------------------------
-from typing import NamedTuple
-
-
 class _DSCVoxelInput(NamedTuple):
     """Lightweight struct for a single voxel's data."""
 
@@ -994,7 +990,6 @@ class ComputeDSCMaps(BaseInterface):
             tikhonov_deconvolve_batch,
         )
 
-        spatial_shape = concentration_data.shape[:3]
         qc_metrics: dict[str, Any] = {"method": method}
 
         # Initialize output arrays

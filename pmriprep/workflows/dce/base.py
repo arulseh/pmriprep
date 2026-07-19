@@ -1911,13 +1911,11 @@ def init_dce_preproc_wf(
         niu.Function(
             input_names=[
                 "vp_file",
-                "dsc_cbv_file",
                 "dsc_ncbv_file",
                 "brain_mask",
                 "validation_result",
                 "subject_id",
                 "session_id",
-                "pk_qc",
                 "model_selection_file",
             ],
             output_names=["plot_file"],
@@ -1932,7 +1930,6 @@ def init_dce_preproc_wf(
     workflow.connect([
         (pk_wf, dsc_dce_xval_plot, [
             ("outputnode.out_vp", "vp_file"),
-            ("outputnode.qc_metrics", "pk_qc"),
         ]),
         (resample_dsc_ncbv, dsc_dce_xval_plot, [
             ("cbv_in_dce", "dsc_ncbv_file"),

@@ -17,7 +17,7 @@ jobs:
           cache: pip
       - run: pip install ".[dev]"
       - run: mypy pmriprep/ --ignore-missing-imports
-      - run: ruff check pmriprep/ --select D
+      - run: ruff check pmriprep/
       - name: Build release archives
         run: |
           mkdir -p dist

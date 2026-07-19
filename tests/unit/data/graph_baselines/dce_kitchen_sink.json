@@ -1621,12 +1621,6 @@
       "pk_qc"
     ],
     [
-      "pk_modeling",
-      "qc_metrics",
-      "dsc_dce_xval_plot",
-      "pk_qc"
-    ],
-    [
       "preprocessing_qc",
       "plot_file",
       "outputnode",
@@ -2085,10 +2079,8 @@
     "dsc_dce_xval_plot": {
       "input_names": [
         "brain_mask",
-        "dsc_cbv_file",
         "dsc_ncbv_file",
         "model_selection_file",
-        "pk_qc",
         "session_id",
         "subject_id",
         "validation_result",
@@ -2414,7 +2406,7 @@
     "dce_pk_fit_qc": "cd52e2aa20a7277276e2b566d13c0e16f5f6304f92445060a6ad7949cb10b65c",
     "dce_pk_maps_qc": "ae61f370545c65d8aaecaf86b1c3f7ca47b84fe05dba7dea8fa310128afaa480",
     "dsc_dce_validation": "f89b6ace91d480d7960947bea6f327e6e55d8eff5cca7cde3eb0ad7b762cdda1",
-    "dsc_dce_xval_plot": "6524d03d86ab9676c0a13b9536a4bdd7f9cd3cbd8049d74ef5d16034f1670fae",
+    "dsc_dce_xval_plot": "5c7cd63d87cc931e5d8a26b939b407d2318a1b6fb76ef3f19ad2f35ead4026d7",
     "external_t1_to_dce": "040b96cd6e1f8b623dd8dda541e6e73e481eae4dffcc406ba1db772eb46b233a",
     "motion_qc_plot": "36616aba56123999797c0b5e14d6ec9903e15bea44b1958923c89616b1fb1b2f",
     "normalize_iauc60": "ea6ff078eaf357c450297207c75c6d4057f311c7c4a441f94bb4afa2f1c2dcba",
@@ -2731,7 +2723,7 @@
       "no_dsc_validation": false
     },
     "dsc_dce_xval_plot": {
-      "function_str": "def _dsc_dce_xval_plot_node(\n    vp_file: str | None = None,\n    dsc_ncbv_file: str | None = None,\n    brain_mask: str | None = None,\n    validation_result: dict[str, object] | None = None,\n    subject_id: str = \"\",\n    session_id: str = \"\",\n    pk_qc: dict[str, object] | str | None = None,\n    model_selection_file: str | None = None,\n) -> str | None:\n    \"\"\"Generate the DSC-DCE cross-validation plot.\n\n    Parameters\n    ----------\n    vp_file : str or None\n        Path to the DCE vp (plasma volume) map.\n    dsc_ncbv_file : str or None\n        NAWM-normalized CBV. The plot is drawn on the dimensionless\n        nCBV scale with expected ratio =\n        ``NAWM_VP_REFERENCE``, matching the validation metrics.\n    brain_mask : str or None\n        Path to brain mask in DCE space.\n    validation_result : dict or None\n        Result dict from the DSC-DCE validation node.\n    subject_id : str, optional\n        Subject identifier.\n    session_id : str, optional\n        Session identifier.\n    pk_qc : dict or str or None\n        Full ``pk_modeling.qc_metrics`` dict or a constraint-mode string.\n    model_selection_file : str or None\n        Path to the model selection map NIfTI (auto mode), for coloring.\n\n    Returns\n    -------\n    str or None\n        Path to plot PNG, or None if skipped.\n    \"\"\"\n    import os\n\n    if not vp_file or not brain_mask:\n        return None\n    if validation_result and validation_result.get(\"skipped\"):\n        return None\n    if validation_result and validation_result.get(\"circular\"):\n        return None\n\n    have_ncbv = bool(dsc_ncbv_file) and os.path.isfile(str(dsc_ncbv_file))\n    # Cross-validation requires NAWM-normalized CBV.\n    if not have_ncbv or dsc_ncbv_file is None:\n        return None\n\n    resolved_mode: str | None = None\n    if isinstance(pk_qc, dict):\n        constraint_value = pk_qc.get(\"dsc_cbv_constraint\")\n        if isinstance(constraint_value, dict):\n            mode_value = constraint_value.get(\"mode\")\n            if isinstance(mode_value, str):\n                resolved_mode = mode_value\n    elif isinstance(pk_qc, str):\n        resolved_mode = pk_qc\n\n    try:\n        import nibabel as nib  # type: ignore[import-untyped]\n        import numpy as np\n\n        from pmriprep.utils.dsc_dce_xval_plots import generate_xval_plot\n\n        cbv_source = dsc_ncbv_file\n\n        vp_data = np.asarray(\n            nib.load(vp_file).get_fdata(), dtype=np.float64  # type: ignore[attr-defined]\n        )\n        cbv_data = np.asarray(\n            nib.load(cbv_source).get_fdata(), dtype=np.float64  # type: ignore[attr-defined]\n        )\n        mask = np.asarray(\n            nib.load(brain_mask).get_fdata(), dtype=np.bool_  # type: ignore[attr-defined]\n        )\n\n        model_sel = None\n        if model_selection_file:\n            model_sel = np.asarray(\n                nib.load(model_selection_file).get_fdata(),  # type: ignore[attr-defined]\n                dtype=np.int8,\n            )\n\n        return generate_xval_plot(\n            vp_data=vp_data,\n            cbv_data=cbv_data,\n            mask=mask,\n            validation_result=validation_result or {},\n            subject_id=subject_id,\n            session_id=session_id,\n            model_selection=model_sel,\n        )\n    except Exception:\n        import logging\n        logging.getLogger(__name__).warning(\n            \"DSC-DCE xval plot failed\", exc_info=True\n        )\n        return None\n",
+      "function_str": "def _dsc_dce_xval_plot_node(\n    vp_file: str | None = None,\n    dsc_ncbv_file: str | None = None,\n    brain_mask: str | None = None,\n    validation_result: dict[str, object] | None = None,\n    subject_id: str = \"\",\n    session_id: str = \"\",\n    model_selection_file: str | None = None,\n) -> str | None:\n    \"\"\"Generate the DSC-DCE cross-validation plot.\n\n    Parameters\n    ----------\n    vp_file : str or None\n        Path to the DCE vp (plasma volume) map.\n    dsc_ncbv_file : str or None\n        NAWM-normalized CBV. The plot is drawn on the dimensionless\n        nCBV scale with expected ratio =\n        ``NAWM_VP_REFERENCE``, matching the validation metrics.\n    brain_mask : str or None\n        Path to brain mask in DCE space.\n    validation_result : dict or None\n        Result dict from the DSC-DCE validation node.\n    subject_id : str, optional\n        Subject identifier.\n    session_id : str, optional\n        Session identifier.\n    model_selection_file : str or None\n        Path to the model selection map NIfTI (auto mode), for coloring.\n\n    Returns\n    -------\n    str or None\n        Path to plot PNG, or None if skipped.\n    \"\"\"\n    import os\n\n    if not vp_file or not brain_mask:\n        return None\n    if validation_result and validation_result.get(\"skipped\"):\n        return None\n    if validation_result and validation_result.get(\"circular\"):\n        return None\n\n    have_ncbv = bool(dsc_ncbv_file) and os.path.isfile(str(dsc_ncbv_file))\n    # Cross-validation requires NAWM-normalized CBV.\n    if not have_ncbv or dsc_ncbv_file is None:\n        return None\n\n    try:\n        import nibabel as nib  # type: ignore[import-untyped]\n        import numpy as np\n\n        from pmriprep.utils.dsc_dce_xval_plots import generate_xval_plot\n\n        cbv_source = dsc_ncbv_file\n\n        vp_data = np.asarray(\n            nib.load(vp_file).get_fdata(), dtype=np.float64  # type: ignore[attr-defined]\n        )\n        cbv_data = np.asarray(\n            nib.load(cbv_source).get_fdata(), dtype=np.float64  # type: ignore[attr-defined]\n        )\n        mask = np.asarray(\n            nib.load(brain_mask).get_fdata(), dtype=np.bool_  # type: ignore[attr-defined]\n        )\n\n        model_sel = None\n        if model_selection_file:\n            model_sel = np.asarray(\n                nib.load(model_selection_file).get_fdata(),  # type: ignore[attr-defined]\n                dtype=np.int8,\n            )\n\n        return generate_xval_plot(\n            vp_data=vp_data,\n            cbv_data=cbv_data,\n            mask=mask,\n            validation_result=validation_result or {},\n            subject_id=subject_id,\n            session_id=session_id,\n            model_selection=model_sel,\n        )\n    except Exception:\n        import logging\n        logging.getLogger(__name__).warning(\n            \"DSC-DCE xval plot failed\", exc_info=True\n        )\n        return None\n",
       "model_selection_file": null,
       "session_id": "0001",
       "subject_id": "0001"

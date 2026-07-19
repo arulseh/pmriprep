@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pmriprep"
-version = "0.82.71"
+version = "0.82.72"
 description = "Perfusion MRI Preprocessing Pipeline - A NiPreps-compatible BIDS-App"
 readme = "README.md"
 license = "Apache-2.0 AND CC0-1.0"
@@ -78,11 +78,10 @@ all = [
 pmriprep = "pmriprep.cli.run:main"
 
 [tool.ruff.lint]
-# Enforce NumPy-style docstrings (the NiPreps standard) repo-wide. Only the pydocstyle
-# (`D`) rules are selected — ruff's default E/F rules are intentionally left off to keep
-# this guard scoped to docstring convention. The `convention = "numpy"` setting below
-# disables the Google/rST-incompatible D rules; D417 is re-ignored deliberately (see note).
-select = ["D"]
+# Enforce core pycodestyle/Pyflakes correctness checks and NumPy-style production
+# docstrings. The `convention = "numpy"` setting below disables incompatible
+# pydocstyle rules; D417 is re-ignored deliberately (see note).
+select = ["D", "E4", "E7", "E9", "F"]
 ignore = [
     "D105",  # magic-method docstrings (__repr__, etc.)
     "D107",  # __init__ docstring (documented on the class)
@@ -97,10 +96,9 @@ ignore = [
 convention = "numpy"
 
 [tool.ruff.lint.per-file-ignores]
-# The NumPy-docstring guard is a production standard; test modules use a
-# terse no-docstring style (test names are self-documenting), so the `D`
-# rules do not apply to them.
-"tests/**" = ["D"]
+# Tests retain their terse no-docstring style and remain outside the production
+# lint gate while their pre-existing core-lint debt is handled separately.
+"tests/**" = ["D", "E4", "E7", "E9", "F"]
 
 [tool.mypy]
 python_version = "3.10"

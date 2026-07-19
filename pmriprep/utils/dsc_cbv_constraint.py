@@ -21,8 +21,6 @@ from typing import Any, Optional, Union
 import numpy as np
 import numpy.typing as npt
 
-logger = logging.getLogger(__name__)
-
 from pmriprep.utils.dce_constants import (
     NAWM_VP_REFERENCE,
     VP_MAX_PHYSIOLOGICAL,
@@ -46,6 +44,8 @@ from pmriprep.utils.dsc_constants import (
     POSITIVE_TAIL_SEVERE_FRAC,
     QC_MEAN_CNR_MINIMUM,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # =============================================================================
