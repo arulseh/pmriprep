@@ -123,24 +123,24 @@ def get_mni_brain_template() -> Path:
     )
 
 
-def get_lobar_atlas_dir() -> Path:
-    """Get path to MNI lobar atlas directory for NAWM region restriction.
+def get_mni_region_masks_dir() -> Path:
+    """Get the directory containing bundled MNI anatomical region masks.
 
     Returns
     -------
     Path
-        Path to the lobar atlas directory containing region masks
+        Path to the directory containing supratentorial and cerebellar masks
         (e.g., Supra_L.nii.gz, Cerebellum_R.nii.gz).
 
     Raises
     ------
     FileNotFoundError
-        If the lobar atlas directory doesn't exist.
+        If the region-mask directory doesn't exist.
     """
-    atlas_dir = DATA_DIR / "atlases" / "mni_lobar"
-    if not atlas_dir.is_dir():
-        raise FileNotFoundError(f"Lobar atlas directory not found: {atlas_dir}")
-    return atlas_dir
+    masks_dir = DATA_DIR / "atlases" / "mni_regions"
+    if not masks_dir.is_dir():
+        raise FileNotFoundError(f"MNI region-mask directory not found: {masks_dir}")
+    return masks_dir
 
 
 def get_boilerplate_bib() -> Path:

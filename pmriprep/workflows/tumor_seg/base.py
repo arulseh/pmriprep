@@ -11,7 +11,7 @@ from nipype.interfaces import utility as niu  # type: ignore[import-untyped]
 from nipype.pipeline import engine as pe  # type: ignore[import-untyped]
 
 from pmriprep.config.tumor_seg import TumorSegConfig
-from pmriprep.data import get_lobar_atlas_dir
+from pmriprep.data import get_mni_region_masks_dir
 from pmriprep.interfaces.hdglio import HDGLIOPrep, HDGLIOSegment
 
 
@@ -91,7 +91,7 @@ def _create_nawm_node(
     nawm_min_voxels: int,
     t1w_to_mni_xfm: str = "",
     reference_image: str = "",
-    atlases_dir: str = "",
+    region_masks_dir: str = "",
     brain_mask_file: str = "",
 ) -> dict[str, object]:
     """Node function to create NAWM ROI.
@@ -110,8 +110,8 @@ def _create_nawm_node(
         Path to T1w-to-MNI transform for atlas-based restriction
     reference_image : str
         Path to T1w reference image for atlas transformation
-    atlases_dir : str
-        Path to MNI lobar atlas directory
+    region_masks_dir : str
+        Path to MNI anatomical region-mask directory
     brain_mask_file : str
         Path to brain mask for base constraint
 
@@ -130,7 +130,7 @@ def _create_nawm_node(
         nawm_min_voxels=nawm_min_voxels,
         t1w_to_mni_xfm=t1w_to_mni_xfm or None,
         reference_image=reference_image or None,
-        atlases_dir=atlases_dir or None,
+        region_masks_dir=region_masks_dir or None,
         brain_mask_file=brain_mask_file or None,
     )
 
@@ -552,7 +552,7 @@ def init_tumor_seg_wf(
                 "nawm_min_voxels",
                 "t1w_to_mni_xfm",
                 "reference_image",
-                "atlases_dir",
+                "region_masks_dir",
                 "brain_mask_file",
             ],
             output_names=["nawm_result"],
@@ -562,7 +562,7 @@ def init_tumor_seg_wf(
     )
     create_nawm.inputs.nawm_erosion = config.nawm_erosion
     create_nawm.inputs.nawm_min_voxels = config.nawm_min_voxels
-    create_nawm.inputs.atlases_dir = str(get_lobar_atlas_dir())
+    create_nawm.inputs.region_masks_dir = str(get_mni_region_masks_dir())
 
     # Connect whole tumor mask and WM probseg to NAWM creation
     # Also connect MNI transform and T1w reference for atlas-based restriction
