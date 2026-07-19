@@ -819,12 +819,6 @@
     [
       "inputnode",
       "tr",
-      "pk_modeling",
-      "tr"
-    ],
-    [
-      "inputnode",
-      "tr",
       "preprocessing_qc",
       "tr_ms"
     ],

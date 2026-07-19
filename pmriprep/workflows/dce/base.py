@@ -124,7 +124,6 @@ def init_dce_pk_modeling_wf(
                 "aif_detection_method",
                 "aif_uncertainty_inflation_factor",
                 "brain_mask_file",
-                "tr",
                 "volume_tr",
                 "dsc_dose",
                 "dsc_agent_standard_dose",
@@ -198,7 +197,6 @@ def init_dce_pk_modeling_wf(
             ("aif_detection_method", "aif_detection_method"),
             ("aif_uncertainty_inflation_factor", "aif_uncertainty_inflation_factor"),
             ("brain_mask_file", "brain_mask_file"),
-            ("tr", "tr"),
             ("volume_tr", "volume_tr"),
             ("dsc_dose", "dsc_dose"),
             ("dsc_agent_standard_dose", "dsc_agent_standard_dose"),
@@ -1677,7 +1675,6 @@ def init_dce_preproc_wf(
             ("out_mask", "inputnode.brain_mask_file"),
         ]),
         (inputnode, pk_wf, [
-            ("tr", "inputnode.tr"),
             ("volume_tr", "inputnode.volume_tr"),  # For model auto-selection
             # DSC dose parameters scale CNR coverage thresholds in the
             # vp constraint quality gate. Defaults (1.0, 0.1) apply on

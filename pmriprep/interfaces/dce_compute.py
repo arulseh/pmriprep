@@ -1051,9 +1051,6 @@ class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
     )
 
     # Time parameters
-    tr = traits.Float(
-        desc="Pulse TR in seconds for time vector (RepetitionTimeExcitation)",
-    )
     volume_tr = traits.Float(
         desc="Volume TR in seconds for model auto-selection (RepetitionTime, temporal resolution)",
     )
@@ -1339,10 +1336,10 @@ class ComputeDCEMaps(BaseInterface):
         3D brain mask NIfTI.
     model : str
         PK model: auto, tofts, extended_tofts, patlak, or 2cxm. Default: 'auto'.
-    tr : float, optional
-        Repetition time in seconds (required for model='auto').
+    volume_tr : float, optional
+        Temporal spacing between DCE volumes in seconds.
     time_points_file : str, optional
-        Text file with time points in minutes; if not provided, uses TR.
+        Text file with time points in minutes; if not provided, uses volume TR.
     inference : str
         Inference engine: nlls (default, scipy least_squares),
         vi (variational Bayes), map (Laplace MAP), or mcmc (emcee).
@@ -1621,11 +1618,7 @@ class ComputeDCEMaps(BaseInterface):
         if self.inputs.time_points_file:
             time_points = np.loadtxt(self.inputs.time_points_file)
         elif isdefined(self.inputs.volume_tr) and self.inputs.volume_tr is not None:
-            # Volume TR (temporal resolution between 3D volumes) drives the
-            # time vector. self.inputs.tr is the pulse TR (RF excitation
-            # interval), which is ~1000× shorter for 3D sequences (VIBE,
-            # TWIST). Falling back to pulse TR here would compress the
-            # time axis 1000× and miscompute Ktrans by orders of magnitude.
+            # Volume TR defines the temporal spacing between concentration samples.
             vol_tr_minutes = float(self.inputs.volume_tr) / 60.0
             time_points = np.arange(n_timepoints, dtype=np.float64) * vol_tr_minutes
         else:
@@ -1935,14 +1928,8 @@ class ComputeDCEMaps(BaseInterface):
                                 overshoot_frac
                             )
 
-                            # Peak-alignment lag: median tissue-peak frame
-                            # minus AIF-peak frame, in seconds. Requires
-                            # volume TR (seconds between DCE volumes).
-                            # self.inputs.tr is the pulse TR (~ms) — wrong
-                            # semantics for volume-level lag — so we emit
-                            # null + a reason code when volume_tr is
-                            # undefined, rather than silently omit
-                            # (keeps downstream QC parsers stable).
+                            # Peak-alignment lag is a frame difference converted
+                            # with the temporal spacing between DCE volumes.
                             if (
                                 isdefined(self.inputs.volume_tr)
                                 and self.inputs.volume_tr is not None
