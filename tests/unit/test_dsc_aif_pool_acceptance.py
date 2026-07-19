@@ -1,5 +1,6 @@
 """Characterization tests for progressive DSC AIF pool acceptance."""
 
+import logging
 from typing import Any
 
 import numpy as np
@@ -92,3 +93,81 @@ def test_pool_below_minimum_is_not_evaluated(
     )
 
     assert result is None
+
+
+def test_single_best_uses_lowest_cost_and_retries_larger_roi(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The fallback selects by cost and tries the 3-voxel ROI after ROI 1."""
+    detector = AIFDetection()
+    best_coord = (0, 0, 1)
+    candidates = [
+        (2.0, (0, 0, 0), {}),
+        (0.5, best_coord, {}),
+        (1.0, (0, 1, 0), {}),
+    ]
+    attempted_sizes: list[int] = []
+    attempted_coords: list[tuple[int, int, int]] = []
+
+    def compute(
+        pool: list[tuple],
+        concentration: np.ndarray,
+        brain_mask: np.ndarray,
+        tr: float,
+        *,
+        roi_size: int,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        attempted_sizes.append(roi_size)
+        attempted_coords.append(pool[0][1])
+        return np.full(8, roi_size, dtype=float), np.ones((2, 2, 2), dtype=bool)
+
+    monkeypatch.setattr(detector, "_compute_roi_averaged_aif", compute)
+    monkeypatch.setattr(
+        detector,
+        "_aif_global_max_in_fp",
+        lambda curve, baseline, tr: bool(curve[0] == 3),
+    )
+    monkeypatch.setattr(detector, "_compute_aif_brr", lambda *args: 5.0)
+
+    result = detector._try_single_best_fallback(
+        candidates,
+        np.zeros((2, 2, 2, 8)),
+        np.ones((2, 2, 2)),
+        1.5,
+        3,
+        logging.getLogger(__name__),
+    )
+
+    assert result is not None
+    assert result.candidate[1] == best_coord
+    assert result.roi_size == 3
+    assert attempted_sizes == [1, 3]
+    assert attempted_coords == [best_coord, best_coord]
+
+
+def test_single_best_rejects_all_rois_below_brr_floor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No single-candidate fallback is accepted below the BRR floor."""
+    detector = AIFDetection()
+    attempted_sizes: list[int] = []
+
+    def compute(*args: Any, roi_size: int) -> tuple[np.ndarray, np.ndarray]:
+        attempted_sizes.append(roi_size)
+        return np.ones(8), np.ones((2, 2, 2), dtype=bool)
+
+    monkeypatch.setattr(detector, "_compute_roi_averaged_aif", compute)
+    monkeypatch.setattr(detector, "_aif_global_max_in_fp", lambda *args: True)
+    monkeypatch.setattr(detector, "_compute_aif_brr", lambda *args: -4.0)
+
+    result = detector._try_single_best_fallback(
+        [(0.5, (0, 0, 0), {})],
+        np.zeros((2, 2, 2, 8)),
+        np.ones((2, 2, 2)),
+        1.5,
+        3,
+        logging.getLogger(__name__),
+    )
+
+    assert result is None
+    assert attempted_sizes == [1, 3]

@@ -128,6 +128,15 @@ class _TrimmedDualRoiResult(NamedTuple):
     candidates: list[_AIFCandidate]
 
 
+class _SingleBestAIFResult(NamedTuple):
+    """Accepted single-candidate fallback curve, mask, and ROI size."""
+
+    curve: npt.NDArray[Any]
+    mask: npt.NDArray[Any]
+    roi_size: int
+    candidate: _AIFCandidate
+
+
 class _DSCAIFDetectionContext(NamedTuple):
     """Validated image data, acquisition state, and detection parameters."""
 
@@ -2720,6 +2729,45 @@ class AIFDetection(BaseInterface):
 
         return None
 
+    def _try_single_best_fallback(
+        self,
+        candidates: Sequence[_AIFCandidate],
+        concentration: npt.NDArray[Any],
+        brain_mask: npt.NDArray[Any],
+        tr: float,
+        baseline_frames: int,
+        logger: Any,
+    ) -> Optional[_SingleBestAIFResult]:
+        """Try the lowest-cost candidate when multi-candidate pools fail."""
+        if not candidates:
+            return None
+
+        best_candidate = min(candidates, key=lambda candidate: candidate[0])
+        for roi_size in (1, 3):
+            curve, mask = self._compute_roi_averaged_aif(
+                [best_candidate],
+                concentration,
+                brain_mask,
+                tr,
+                roi_size=roi_size,
+            )
+            if not self._aif_global_max_in_fp(curve, baseline_frames, tr):
+                continue
+
+            brr = self._compute_aif_brr(curve, baseline_frames, tr)
+            if not np.isnan(brr) and brr < AIF_AVG_BRR_MIN:
+                logger.warning(
+                    "AIF cascade: single-best candidate rejected "
+                    "(BRR=%.1f%% < %.1f%%); falling through to synthetic AIF",
+                    brr,
+                    AIF_AVG_BRR_MIN,
+                )
+                continue
+
+            return _SingleBestAIFResult(curve, mask, roi_size, best_candidate)
+
+        return None
+
     # -----------------------------------------------------------------
     # Step 10: Main pipeline  (_run_interface)
     # -----------------------------------------------------------------
@@ -3028,33 +3076,21 @@ class AIFDetection(BaseInterface):
             # voxel; relaxed gate matches legacy semantics (global_max_in_fp +
             # AIF_AVG_BRR_MIN).
             if accepted_aif is None and len(union) > 0:
-                union_sorted = sorted(union, key=lambda x: x[0])
-                best_only = [union_sorted[0]]
-                for roi_size in (1, 3):
-                    curve, mask = self._compute_roi_averaged_aif(
-                        best_only, conc_data, brain_mask,
-                        tr,
-                        roi_size=roi_size,
+                single_best = self._try_single_best_fallback(
+                    union,
+                    conc_data,
+                    brain_mask,
+                    tr,
+                    aif_baseline_frames,
+                    _logger,
+                )
+                if single_best is not None:
+                    accepted_aif = (
+                        single_best.curve,
+                        single_best.mask,
+                        single_best.roi_size,
                     )
-                    if not self._aif_global_max_in_fp(
-                        curve, aif_baseline_frames, tr
-                    ):
-                        continue
-                    single_best_brr = self._compute_aif_brr(
-                        curve, aif_baseline_frames, tr
-                    )
-                    if (
-                        not np.isnan(single_best_brr)
-                        and single_best_brr < AIF_AVG_BRR_MIN
-                    ):
-                        _logger.warning(
-                            "AIF cascade: single-best candidate rejected "
-                            "(BRR=%.1f%% < %.1f%%); falling through to "
-                            "synthetic AIF",
-                            single_best_brr, AIF_AVG_BRR_MIN,
-                        )
-                        continue
-                    accepted_aif = (curve, mask, roi_size)
+                    best_only = [single_best.candidate]
                     top_candidates = best_only
                     n_available = len(union)
                     # Use the chosen voxel's source tier (looked up
@@ -3076,7 +3112,6 @@ class AIFDetection(BaseInterface):
                         "AIF cascade: using single-best candidate "
                         "(union failed dual-ROI validation)"
                     )
-                    break
 
         # ---- Build AIF curve ----
         aif_curve: npt.NDArray[Any]
