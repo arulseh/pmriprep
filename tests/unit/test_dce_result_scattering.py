@@ -13,6 +13,7 @@ from pmriprep.interfaces.dce_compute import (
     _fraction_fxl_risk,
     _fraction_vp_at_bound,
     _is_degenerate_dce_fit,
+    _initialize_dce_qc_metrics,
     _scatter_degenerate_dce_fit,
     _scatter_dce_fit_artifacts,
     _scatter_dce_fit_results,
@@ -526,3 +527,33 @@ def test_scatter_dce_fit_results_counts_failures_before_map_access() -> None:
     assert summary.failure_reasons == {"optimizer_failed": 2, "unknown": 1}
     assert summary.n_converged == 0
     assert summary.r2_values == []
+
+
+def test_initialize_dce_qc_metrics_preserves_pre_fit_state() -> None:
+    """Initial QC state retains counts, settings, and alignment provenance."""
+    prepared = SimpleNamespace(
+        mask=np.array([[[1, 1, 0]]]),
+        fitting_mask=np.array([[[True, False, False]]]),
+        is_auto=True,
+        inference="map",
+        tsnr_threshold=12.0,
+        baseline_frames=6,
+        selection_tr_seconds=2.5,
+    )
+    constraint_qc = {"mode": "soft"}
+    bat_correction = {"applied": True}
+    summary = _initialize_dce_qc_metrics(
+        prepared, "extended_tofts", constraint_qc, bat_correction
+    )
+    assert summary == {
+        "model": "auto",
+        "inference": "map",
+        "n_voxels_brain": 2,
+        "n_voxels_fitted": 1,
+        "n_voxels_signal_filtered": 1,
+        "tsnr_threshold": 12.0,
+        "baseline_frames": 6,
+        "selection_tr_seconds": 2.5,
+        "dsc_cbv_constraint": constraint_qc,
+        "bat_correction": bat_correction,
+    }

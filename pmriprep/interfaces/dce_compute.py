@@ -785,6 +785,29 @@ def _write_dce_terminal_outputs(
     return outputs
 
 
+def _initialize_dce_qc_metrics(
+    prepared: "_DCEFitPreparation",
+    model_name: str,
+    constraint_qc: dict[str, Any],
+    bat_correction: dict[str, Any],
+) -> dict[str, Any]:
+    """Assemble DCE QC state before fitting and result reduction."""
+    n_brain = int(np.sum(prepared.mask > 0))
+    n_fitted = int(np.sum(prepared.fitting_mask))
+    return {
+        "model": "auto" if prepared.is_auto else model_name,
+        "inference": prepared.inference,
+        "n_voxels_brain": n_brain,
+        "n_voxels_fitted": n_fitted,
+        "n_voxels_signal_filtered": n_brain - n_fitted,
+        "tsnr_threshold": prepared.tsnr_threshold,
+        "baseline_frames": prepared.baseline_frames,
+        "selection_tr_seconds": prepared.selection_tr_seconds,
+        "dsc_cbv_constraint": constraint_qc,
+        "bat_correction": bat_correction,
+    }
+
+
 def _validate_dce_time_axis(
     time_points: npt.ArrayLike,
     n_dce_frames: int,
@@ -3049,12 +3072,10 @@ class ComputeDCEMaps(BaseInterface):
         aif = prepared.aif
         time_points = prepared.time_points
         n_timepoints = prepared.n_timepoints
-        selection_tr_seconds = prepared.selection_tr_seconds
         model_name = prepared.model_name
         is_auto = prepared.is_auto
         candidate_names = prepared.candidate_names
         baseline_frames = prepared.baseline_frames
-        tsnr_threshold = prepared.tsnr_threshold
         tsnr_map = prepared.tsnr_map
         peak_enh = prepared.peak_enhancement
         fitting_mask = prepared.fitting_mask
@@ -3113,20 +3134,12 @@ class ComputeDCEMaps(BaseInterface):
         mask_coords = np.where(fitting_mask)
         n_voxels = len(mask_coords[0])
 
-        # QC tracking
-        n_brain = int(np.sum(mask_bool))
-        qc_metrics: dict[str, Any] = {
-            "model": "auto" if is_auto else model_name,
-            "inference": inference,
-            "n_voxels_brain": n_brain,
-            "n_voxels_fitted": n_voxels,
-            "n_voxels_signal_filtered": n_brain - n_voxels,
-            "tsnr_threshold": tsnr_threshold,
-            "baseline_frames": baseline_frames,
-            "selection_tr_seconds": selection_tr_seconds,  # TR used for model selection
-            "dsc_cbv_constraint": constraint_qc,
-            "bat_correction": bat_correction,
-        }
+        qc_metrics = _initialize_dce_qc_metrics(
+            prepared,
+            model_name,
+            constraint_qc,
+            bat_correction,
+        )
 
         motion = self._prepare_motion_weighting(header, n_timepoints)
         motion_weights = motion.weights
