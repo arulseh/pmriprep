@@ -84,6 +84,34 @@ def _is_degenerate_dce_fit(
     )
 
 
+def _scatter_dce_uncertainties(
+    maps: "_DCEParameterMaps",
+    coords: tuple[int, int, int],
+    model_name: str,
+    uncertainties: dict[str, float],
+) -> None:
+    """Scatter model-applicable posterior uncertainties with AIF inflation."""
+    x, y, z = coords
+    maps.ktrans_std[x, y, z] = uncertainties.get("Ktrans", 0.0) * (
+        maps.sigma_factor.get("Ktrans", 1.0)
+    )
+    if model_name in ("tofts", "extended_tofts", "2cxm"):
+        maps.ve_std[x, y, z] = uncertainties.get("ve", 0.0) * (
+            maps.sigma_factor.get("ve", 1.0)
+        )
+    if model_name in ("extended_tofts", "patlak", "2cxm"):
+        maps.vp_std[x, y, z] = uncertainties.get("vp", 0.0) * (
+            maps.sigma_factor.get("vp", 1.0)
+        )
+    if model_name == "2cxm":
+        maps.fp_std[x, y, z] = uncertainties.get("Fp", 0.0) * (
+            maps.sigma_factor.get("Fp", 1.0)
+        )
+        maps.ps_std[x, y, z] = uncertainties.get("PS", 0.0) * (
+            maps.sigma_factor.get("PS", 1.0)
+        )
+
+
 def _validate_dce_time_axis(
     time_points: npt.ArrayLike,
     n_dce_frames: int,
@@ -2384,7 +2412,6 @@ class ComputeDCEMaps(BaseInterface):
         vp_std = parameter_maps.vp_std
         fp_std = parameter_maps.fp_std
         ps_std = parameter_maps.ps_std
-        _sigma_factor = parameter_maps.sigma_factor
         vp_at_bound_map = parameter_maps.vp_at_bound
         fitted_curves = parameter_maps.fitted_curves
         save_2cxm = parameter_maps.save_2cxm
@@ -2538,30 +2565,12 @@ class ComputeDCEMaps(BaseInterface):
             # propagates AIF reduced-confidence to PK posterior sigma;
             # ve uninflated.
             if inference != "nlls" and res["uncertainties"]:
-                ktrans_std[x, y, z] = (
-                    res["uncertainties"].get("Ktrans", 0.0)
-                    * _sigma_factor.get("Ktrans", 1.0)
+                _scatter_dce_uncertainties(
+                    parameter_maps,
+                    (x, y, z),
+                    effective_model_name,
+                    res["uncertainties"],
                 )
-                if self._has_ve(effective_model_name):
-                    ve_std[x, y, z] = (
-                        res["uncertainties"].get("ve", 0.0)
-                        * _sigma_factor.get("ve", 1.0)
-                    )
-                if self._has_vp(effective_model_name):
-                    vp_std[x, y, z] = (
-                        res["uncertainties"].get("vp", 0.0)
-                        * _sigma_factor.get("vp", 1.0)
-                    )
-                # 2CXM-specific: Fp and PS uncertainties
-                if effective_model_name == "2cxm":
-                    fp_std[x, y, z] = (
-                        res["uncertainties"].get("Fp", 0.0)
-                        * _sigma_factor.get("Fp", 1.0)
-                    )
-                    ps_std[x, y, z] = (
-                        res["uncertainties"].get("PS", 0.0)
-                        * _sigma_factor.get("PS", 1.0)
-                    )
 
             # Fitted curve
             if save_fitted_curves and fitted_curves is not None:
