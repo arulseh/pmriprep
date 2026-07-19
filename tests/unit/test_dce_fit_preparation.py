@@ -114,3 +114,27 @@ def test_align_aif_to_tissue_preserves_non_alignment_reasons() -> None:
         "applied": False,
         "reason": "bat_detection_failed",
     }
+
+
+def test_compute_model_free_maps_assembles_all_vectorized_outputs() -> None:
+    """The model-free bundle preserves raw peak QC and semi-quantitative maps."""
+    prepared = _empty_preparation()._replace(
+        concentration=np.array([[[[0.0, 0.2, 0.5]]]]),
+        mask=np.ones((1, 1, 1), dtype=float),
+        fitting_mask=np.ones((1, 1, 1), dtype=bool),
+        peak_enhancement=np.array([[[25.0]]]),
+    )
+    interface = ComputeDCEMaps(volume_tr=6.0)
+
+    maps = interface._compute_model_free_maps(prepared)
+
+    assert maps.peak_enhancement is prepared.peak_enhancement
+    assert maps.iauc60.shape == (1, 1, 1)
+    assert maps.iauc90.shape == (1, 1, 1)
+    assert maps.iauc120.shape == (1, 1, 1)
+    assert maps.time_to_peak[0, 0, 0] == 12.0
+    assert maps.signal_enhancement_ratio.shape == (1, 1, 1)
+    assert maps.wash_in_slope.shape == (1, 1, 1)
+    assert maps.wash_out_slope.shape == (1, 1, 1)
+    assert maps.bolus_arrival_time.shape == (1, 1, 1)
+    assert maps.curve_type.shape == (1, 1, 1)

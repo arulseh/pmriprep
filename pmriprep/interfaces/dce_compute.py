@@ -173,6 +173,21 @@ class _DCEVPConstraint(NamedTuple):
     candidate_names: list[str]
 
 
+class _DCEModelFreeMaps(NamedTuple):
+    """Vectorized DCE semi-quantitative maps computed before PK fitting."""
+
+    iauc60: npt.NDArray[Any]
+    iauc90: npt.NDArray[Any]
+    iauc120: npt.NDArray[Any]
+    peak_enhancement: Optional[npt.NDArray[Any]]
+    time_to_peak: npt.NDArray[Any]
+    signal_enhancement_ratio: npt.NDArray[Any]
+    wash_in_slope: npt.NDArray[Any]
+    wash_out_slope: npt.NDArray[Any]
+    bolus_arrival_time: npt.NDArray[Any]
+    curve_type: npt.NDArray[Any]
+
+
 # Import-time pickle-safety assertion (S1 from code review round 3):
 # BatchedChunkArgs MUST be defined at module top-level for pickling across
 # ProcessPoolExecutor boundaries. A nested definition (e.g. inside a
@@ -1999,6 +2014,60 @@ class ComputeDCEMaps(BaseInterface):
             candidate_names,
         )
 
+    def _compute_model_free_maps(
+        self,
+        prepared: _DCEFitPreparation,
+    ) -> _DCEModelFreeMaps:
+        """Compute vectorized semi-quantitative maps before PK fitting."""
+        from pmriprep.utils.dce_model_free import (
+            compute_bolus_arrival_time,
+            compute_curve_type,
+            compute_iauc,
+            compute_signal_enhancement_ratio,
+            compute_time_to_peak,
+            compute_wash_in_slope,
+            compute_wash_out_slope,
+        )
+
+        concentration = prepared.concentration
+        time_points = prepared.time_points
+        volume_tr_s: Optional[float] = (
+            float(self.inputs.volume_tr)
+            if isdefined(self.inputs.volume_tr) and self.inputs.volume_tr is not None
+            else None
+        )
+        ser = compute_signal_enhancement_ratio(
+            concentration,
+            time_points,
+            bolus_arrival_frame=prepared.baseline_frames,
+        )
+        return _DCEModelFreeMaps(
+            compute_iauc(concentration, time_points, cutoff_s=60.0),
+            compute_iauc(concentration, time_points, cutoff_s=90.0),
+            compute_iauc(concentration, time_points, cutoff_s=120.0),
+            prepared.peak_enhancement,
+            compute_time_to_peak(concentration, time_points),
+            ser,
+            compute_wash_in_slope(
+                concentration,
+                time_points,
+                bolus_arrival_frame=prepared.baseline_frames,
+                volume_tr_s=volume_tr_s,
+            ),
+            compute_wash_out_slope(
+                concentration,
+                time_points,
+                volume_tr_s=volume_tr_s,
+            ),
+            compute_bolus_arrival_time(
+                concentration,
+                time_points,
+                baseline_frames=prepared.baseline_frames,
+                brain_mask=prepared.mask,
+            ),
+            compute_curve_type(ser),
+        )
+
     def _run_interface(self, runtime: Any) -> Any:
         """Execute DCE map computation."""
         import nibabel as nib  # type: ignore[import-untyped]
@@ -2039,45 +2108,17 @@ class ComputeDCEMaps(BaseInterface):
         constraint_qc = vp_constraint.qc
         model_name = vp_constraint.model_name
         candidate_names = vp_constraint.candidate_names
-        # Compute model-free maps (vectorized, fast, before PK fitting loop)
-        # =====================================================================
-        from pmriprep.utils.dce_model_free import (
-            compute_bolus_arrival_time,
-            compute_curve_type,
-            compute_iauc,
-            compute_signal_enhancement_ratio,
-            compute_time_to_peak,
-            compute_wash_in_slope,
-            compute_wash_out_slope,
-        )
-
-        iauc60 = compute_iauc(conc_data, time_points, cutoff_s=60.0)
-        iauc90 = compute_iauc(conc_data, time_points, cutoff_s=90.0)
-        iauc120 = compute_iauc(conc_data, time_points, cutoff_s=120.0)
-        # peak_enh already computed from raw signal above (not concentration)
-        ttp = compute_time_to_peak(conc_data, time_points)
-        ser = compute_signal_enhancement_ratio(
-            conc_data, time_points, bolus_arrival_frame=baseline_frames,
-        )
-
-        # New semi-quantitative maps: wash-in slope, wash-out slope, BAT, curve type
-        semiquant_vol_tr_s: Optional[float] = (
-            float(self.inputs.volume_tr)
-            if isdefined(self.inputs.volume_tr) and self.inputs.volume_tr is not None
-            else None
-        )
-        wash_in_slope = compute_wash_in_slope(
-            conc_data, time_points, bolus_arrival_frame=baseline_frames,
-            volume_tr_s=semiquant_vol_tr_s,
-        )
-        wash_out_slope = compute_wash_out_slope(
-            conc_data, time_points, volume_tr_s=semiquant_vol_tr_s,
-        )
-        bat = compute_bolus_arrival_time(
-            conc_data, time_points, baseline_frames=baseline_frames,
-            brain_mask=mask,
-        )
-        curve_type = compute_curve_type(ser)
+        model_free = self._compute_model_free_maps(prepared)
+        iauc60 = model_free.iauc60
+        iauc90 = model_free.iauc90
+        iauc120 = model_free.iauc120
+        peak_enh = model_free.peak_enhancement
+        ttp = model_free.time_to_peak
+        ser = model_free.signal_enhancement_ratio
+        wash_in_slope = model_free.wash_in_slope
+        wash_out_slope = model_free.wash_out_slope
+        bat = model_free.bolus_arrival_time
+        curve_type = model_free.curve_type
 
         # =====================================================================
         # Initialize output arrays
