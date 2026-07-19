@@ -231,6 +231,30 @@ def _account_retained_dce_fit(
     )
 
 
+def _summarize_mcmc_diagnostics(
+    n_mcmc_voxels: int,
+    rhat_lists: dict[str, list[float]],
+    ess_lists: dict[str, list[float]],
+) -> Optional[dict[str, Any]]:
+    """Summarize accumulated MCMC convergence diagnostics."""
+    if n_mcmc_voxels <= 0:
+        return None
+    from pmriprep.models.dce.bayesian import QC_ESS_MIN, QC_RHAT_MAX
+
+    summary: dict[str, Any] = {"n_mcmc_voxels": n_mcmc_voxels}
+    for parameter, values in rhat_lists.items():
+        array = np.array(values)
+        summary[f"rhat_median_{parameter}"] = float(np.median(array))
+        summary[f"rhat_frac_poor_{parameter}"] = float(
+            np.mean(array >= QC_RHAT_MAX)
+        )
+    for parameter, values in ess_lists.items():
+        array = np.array(values)
+        summary[f"ess_median_{parameter}"] = float(np.median(array))
+        summary[f"ess_frac_low_{parameter}"] = float(np.mean(array < QC_ESS_MIN))
+    return summary
+
+
 def _validate_dce_time_axis(
     time_points: npt.ArrayLike,
     n_dce_frames: int,
@@ -2766,23 +2790,12 @@ class ComputeDCEMaps(BaseInterface):
             qc_metrics["r2_std"] = float(np.std(r2_list))
             qc_metrics["r2_median"] = float(np.median(r2_list))
 
-        # MCMC convergence diagnostics summary
-        if n_mcmc_voxels > 0:
-            from pmriprep.models.dce.bayesian import QC_RHAT_MAX, QC_ESS_MIN
-
-            mcmc_diag: dict[str, Any] = {"n_mcmc_voxels": n_mcmc_voxels}
-            for param, vals in mcmc_rhat_lists.items():
-                arr = np.array(vals)
-                mcmc_diag[f"rhat_median_{param}"] = float(np.median(arr))
-                mcmc_diag[f"rhat_frac_poor_{param}"] = float(
-                    np.mean(arr >= QC_RHAT_MAX)
-                )
-            for param, vals in mcmc_ess_lists.items():
-                arr = np.array(vals)
-                mcmc_diag[f"ess_median_{param}"] = float(np.median(arr))
-                mcmc_diag[f"ess_frac_low_{param}"] = float(
-                    np.mean(arr < QC_ESS_MIN)
-                )
+        mcmc_diag = _summarize_mcmc_diagnostics(
+            n_mcmc_voxels,
+            mcmc_rhat_lists,
+            mcmc_ess_lists,
+        )
+        if mcmc_diag is not None:
             qc_metrics["mcmc_diagnostics"] = mcmc_diag
 
         # z_departure stats: soft constraint prior departure

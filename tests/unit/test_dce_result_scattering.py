@@ -15,7 +15,9 @@ from pmriprep.interfaces.dce_compute import (
     _scatter_dce_fit_artifacts,
     _scatter_dce_parameters,
     _scatter_dce_uncertainties,
+    _summarize_mcmc_diagnostics,
 )
+from pmriprep.models.dce.bayesian import QC_ESS_MIN, QC_RHAT_MAX
 from pmriprep.utils.dsc_cbv_constraint import ConstraintMode
 from pmriprep.utils.dce_constants import (
     FP_BOUNDS,
@@ -315,3 +317,23 @@ def test_retained_fit_accounting_skip_mode_never_marks_fallback() -> None:
         ConstraintMode.SKIP,
     )
     assert update.n_unconstrained_fallback == 0
+
+
+def test_summarize_mcmc_diagnostics_preserves_threshold_fractions() -> None:
+    """MCMC summary uses inclusive R-hat and strict ESS failure thresholds."""
+    summary = _summarize_mcmc_diagnostics(
+        2,
+        {"Ktrans": [QC_RHAT_MAX - 0.1, QC_RHAT_MAX]},
+        {"Ktrans": [QC_ESS_MIN - 1.0, QC_ESS_MIN]},
+    )
+    assert summary is not None
+    assert summary["n_mcmc_voxels"] == 2
+    assert summary["rhat_median_Ktrans"] == pytest.approx(QC_RHAT_MAX - 0.05)
+    assert summary["rhat_frac_poor_Ktrans"] == 0.5
+    assert summary["ess_median_Ktrans"] == pytest.approx(QC_ESS_MIN - 0.5)
+    assert summary["ess_frac_low_Ktrans"] == 0.5
+
+
+def test_summarize_mcmc_diagnostics_returns_none_without_voxels() -> None:
+    """No MCMC voxels omit the diagnostics block entirely."""
+    assert _summarize_mcmc_diagnostics(0, {}, {}) is None
