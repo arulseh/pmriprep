@@ -420,6 +420,41 @@ def _zero_dce_background(
     return np.where(spatial_mask, values, 0)
 
 
+def _build_dce_qc_mask(
+    fitting_mask: npt.NDArray[np.bool_],
+    tsnr: npt.NDArray[Any],
+    peak_enhancement: Optional[npt.NDArray[Any]],
+    ktrans: npt.NDArray[Any],
+    r_squared: npt.NDArray[Any],
+    ve: npt.NDArray[Any],
+    vp: npt.NDArray[Any],
+    kep: npt.NDArray[Any],
+    model_selection: npt.NDArray[Any],
+    model_selection_codes: dict[str, int],
+    is_auto: bool,
+    model_name: str,
+) -> npt.NDArray[np.uint8]:
+    """Build the physiological and fit-quality acceptance mask."""
+    qc_mask = fitting_mask.copy()
+    qc_mask &= tsnr >= 10
+    if peak_enhancement is not None:
+        qc_mask &= peak_enhancement >= 10
+    qc_mask &= (ktrans > 0) & (ktrans < 5.0)
+    qc_mask &= r_squared >= 0.5
+
+    is_patlak_voxel = model_selection == model_selection_codes.get("patlak", -1)
+    if is_auto or model_name in ["extended_tofts", "2cxm"]:
+        ve_safe = np.where(np.isfinite(ve), ve, 0.0)
+        vp_safe = np.where(np.isfinite(vp), vp, 0.0)
+        volume_ok = (ve_safe + vp_safe) < 0.95
+        qc_mask &= volume_ok | is_patlak_voxel
+    if is_auto or model_name != "patlak":
+        kep_ok = np.where(np.isfinite(kep), kep > 0.001, True)
+        qc_mask &= kep_ok
+    result: npt.NDArray[np.uint8] = qc_mask.astype(np.uint8)
+    return result
+
+
 def _validate_dce_time_axis(
     time_points: npt.ArrayLike,
     n_dce_frames: int,
@@ -2688,7 +2723,6 @@ class ComputeDCEMaps(BaseInterface):
         aif = bat_alignment.aif
         bat_correction = bat_alignment.correction
 
-        spatial_shape = conc_data.shape[:3]
         vp_constraint = self._prepare_vp_constraint(prepared, aif)
         vp_constraint_map = vp_constraint.vp_map
         constraint_mode = vp_constraint.mode
@@ -3236,29 +3270,20 @@ class ComputeDCEMaps(BaseInterface):
 
         # Create QC mask using physiological bounds
         # Include voxels with: good R², physiological parameter values, adequate SNR
-        qc_mask = np.ones(spatial_shape, dtype=bool)
-        qc_mask &= fitting_mask  # Within brain mask
-        qc_mask &= (tsnr_map >= 10)  # Adequate tSNR
-        if peak_enh is not None:
-            qc_mask &= (peak_enh >= 10)  # Visible enhancement
-        qc_mask &= (ktrans > 0) & (ktrans < 5.0)  # Physiological Ktrans
-        qc_mask &= (r2_map >= 0.5)  # Reasonable model fit
-
-        # Model-specific constraints (per-voxel model-aware for BIC selection)
-        is_patlak_voxel = model_selection_map == _MODEL_SELECTION_CODES.get("patlak", -1)
-        if is_auto or model_name in ["extended_tofts", "2cxm"]:
-            # Volume fraction constraint: ve+vp < 0.95
-            # NaN-safe: treat NaN as 0 so Patlak voxels pass
-            ve_safe = np.where(np.isfinite(ve), ve, 0.0)
-            vp_safe = np.where(np.isfinite(vp), vp, 0.0)
-            etofts_volume_ok = (ve_safe + vp_safe) < 0.95
-            qc_mask &= (etofts_volume_ok | is_patlak_voxel)
-        if is_auto or model_name != "patlak":
-            # kep check: NaN kep is fine for Patlak voxels (kep undefined)
-            kep_ok = np.where(np.isfinite(kep), kep > 0.001, True)
-            qc_mask &= kep_ok
-
-        qc_mask = qc_mask.astype(np.uint8)
+        qc_mask = _build_dce_qc_mask(
+            fitting_mask,
+            tsnr_map,
+            peak_enh,
+            ktrans,
+            r2_map,
+            ve,
+            vp,
+            kep,
+            model_selection_map,
+            _MODEL_SELECTION_CODES,
+            is_auto,
+            model_name,
+        )
         out_qc_mask = self._gen_outfilename("_qc_mask")
         _save_dce_map(qc_mask, out_qc_mask, dtype=np.uint8)
         self._results["out_qc_mask"] = out_qc_mask

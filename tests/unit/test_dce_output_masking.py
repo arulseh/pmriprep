@@ -7,7 +7,11 @@ import os
 import nibabel as nib
 import numpy as np
 
-from pmriprep.interfaces.dce_compute import ComputeDCEMaps, _zero_dce_background
+from pmriprep.interfaces.dce_compute import (
+    ComputeDCEMaps,
+    _build_dce_qc_mask,
+    _zero_dce_background,
+)
 from pmriprep.models.dce.batched_models import batched_tofts_model
 
 
@@ -31,6 +35,47 @@ def test_zero_dce_background_broadcasts_over_time() -> None:
     masked = _zero_dce_background(curves, mask)
     np.testing.assert_array_equal(masked[0, 0, 0], curves[0, 0, 0])
     np.testing.assert_array_equal(masked[0, 0, 1], 0.0)
+
+
+def test_build_dce_qc_mask_preserves_strict_thresholds() -> None:
+    """QC acceptance retains inclusive signal gates and strict PK gates."""
+    shape = (1, 1, 4)
+    mask = _build_dce_qc_mask(
+        np.ones(shape, dtype=bool),
+        np.array([[[10.0, 10.0, 10.0, 10.0]]]),
+        np.array([[[10.0, 10.0, 10.0, 10.0]]]),
+        np.array([[[0.1, 0.0, 5.0, 0.1]]]),
+        np.array([[[0.5, 0.9, 0.9, 0.49]]]),
+        np.full(shape, 0.2),
+        np.full(shape, 0.1),
+        np.full(shape, 0.01),
+        np.zeros(shape, dtype=np.int8),
+        {"patlak": 1},
+        False,
+        "tofts",
+    )
+    assert mask.tolist() == [[[1, 0, 0, 0]]]
+    assert mask.dtype == np.uint8
+
+
+def test_build_dce_qc_mask_auto_patlak_allows_nan_parameters() -> None:
+    """Auto-selected Patlak voxels retain undefined ve and kep semantics."""
+    shape = (1, 1, 2)
+    mask = _build_dce_qc_mask(
+        np.ones(shape, dtype=bool),
+        np.full(shape, 20.0),
+        None,
+        np.full(shape, 0.1),
+        np.full(shape, 0.8),
+        np.array([[[np.nan, 0.8]]]),
+        np.array([[[0.1, 0.2]]]),
+        np.array([[[np.nan, 0.001]]]),
+        np.array([[[1, 3]]], dtype=np.int8),
+        {"patlak": 1},
+        True,
+        "auto",
+    )
+    assert mask.tolist() == [[[1, 0]]]
 
 
 def test_saved_dce_categorical_maps_are_brain_masked(tmp_path) -> None:
