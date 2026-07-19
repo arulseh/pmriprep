@@ -6,7 +6,6 @@ recovers each consumer key verbatim.
 """
 from __future__ import annotations
 
-from pathlib import Path
 
 import pytest
 

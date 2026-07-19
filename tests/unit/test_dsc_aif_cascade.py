@@ -769,7 +769,6 @@ class TestUnionPoolTrim:
             peak_height=30.0, tail_offset=-8.0,
         )
         # 5 coords; (4,4,2) is the contaminator
-        coords = [(4, 4, 2), (4, 5, 2), (5, 4, 2), (5, 5, 2), (4, 6, 2)]
         union: list[tuple[float, tuple[int, int, int], dict]] = []
         union_coord_origin: dict[tuple[int, int, int], str] = {}
         # Contaminator first (tier matches the parameter)

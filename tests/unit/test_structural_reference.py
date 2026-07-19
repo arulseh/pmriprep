@@ -1,6 +1,5 @@
 """Unit tests for confidence-based structural reference selection."""
 
-import tempfile
 from pathlib import Path
 from typing import Tuple
 
@@ -10,9 +9,7 @@ import pytest
 
 from pmriprep.utils.structural_reference import (
     ImageType,
-    ResolutionTier,
     StructuralCandidate,
-    StructuralReferenceSelection,
     _apply_application_overrides,
     _apply_isotropy_adjustment,
     _compute_base_confidence,

@@ -122,7 +122,6 @@ class TestBatchedCPIForward:
         aif, tp = dsc_aif_and_time
         dt = tp[1] - tp[0]
         n_cp = 7
-        t_span = 30.0  # production config: covers ~3x max physiological MTT
         model = CPIModel(
             n_control_points=n_cp,
             n_acquisition_frames=int(len(tp)),
@@ -266,7 +265,6 @@ class TestBatchedCPIVIFit:
 
         dt = tp[1] - tp[0]
         n_cp = 7
-        t_span = 30.0  # production config: covers ~3x max physiological MTT
         model = CPIModel(
             n_control_points=n_cp,
             n_acquisition_frames=int(len(tp)),
@@ -1014,7 +1012,6 @@ class TestBatchedFitParallel:
         """When n_voxels < parallel_chunk_min, no ProcessPoolExecutor is created
         even if nprocs > 1 — short-circuit avoids worker-spawn overhead.
         """
-        import pmriprep.models.dsc.batched_fitting as bf_mod
 
         sentinel = {"called": False}
 

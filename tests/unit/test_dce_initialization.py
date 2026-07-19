@@ -5,7 +5,6 @@ and peak-ratio vp estimation, including fallback behavior.
 """
 
 import numpy as np
-import pytest
 
 from pmriprep.models.dce.initialization import (
     estimate_ktrans_uptake,

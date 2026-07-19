@@ -12,17 +12,14 @@ Tests cover:
 import numpy as np
 import pytest
 
-from pmriprep.models.bayesian_utils import BayesianPrior
 from pmriprep.models.dce.bayesian import (
-    EPSILON_SIGMA_CONCENTRATION,
-    QC_RHAT_MAX,
-    QC_ESS_MIN,
     BayesianPKFitter,
     create_vp_prior_from_dsc,
     fit_pk_model,
 )
 from pmriprep.models.dce.extended_tofts import ExtendedToftsModel
 from pmriprep.models.dce.tofts import ToftsModel
+from pmriprep.utils.dce_constants import DCE_AIF_G6_SIGMA_INFLATION
 
 
 # ---------------------------------------------------------------------------
@@ -159,7 +156,7 @@ class TestHessianComputation:
 
         # The ve diagonal entry (index 1) should fall back to prior curvature
         # because upward perturbation violates bounds
-        prior_curvature_ve = 1.0 / (fitter.priors[1].std ** 2)
+        1.0 / (fitter.priors[1].std ** 2)
 
         # Hessian should have non-zero diagonal for ve (from prior fallback)
         assert hessian[1, 1] > 0, (
@@ -546,9 +543,6 @@ class TestMCMCQualityFlag:
 # =============================================================================
 # Per-parameter sigma inflation from upstream AIF confidence
 # =============================================================================
-
-from pmriprep.utils.dce_constants import DCE_AIF_G6_SIGMA_INFLATION
-
 
 def test_g6_sigma_inflation_dict_shape():
     """Per-parameter inflation map covers the directly-fitted PK params

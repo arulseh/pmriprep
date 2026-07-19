@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 from typing import Optional
 
-import pytest
 
 from pmriprep.workflows.discovery import _select_best_flair
 

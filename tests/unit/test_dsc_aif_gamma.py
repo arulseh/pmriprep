@@ -5,11 +5,9 @@ import pytest
 
 from pmriprep.config.dsc import DSCConfig
 from pmriprep.utils.dsc_aif import (
-    GAMMA_NEG_TAIL_FRACTION,
     GAMMA_NEG_TAIL_MIN_FRAMES,
     GAMMA_NOISE_RATIO_THRESHOLD,
     GAMMA_SPR_THRESHOLD,
-    GammaAutoDecision,
     GammaVariateFitResult,
     _compute_auc,
     _estimate_initial_params,

@@ -5,7 +5,7 @@ signal-domain helpers, and pytest fixtures for parametric recovery tests.
 """
 
 from dataclasses import dataclass
-from typing import Dict, List, NamedTuple, Optional, Sequence, Set, Tuple
+from typing import Dict, List, NamedTuple, Sequence, Set, Tuple
 
 import numpy as np
 import numpy.typing as npt
@@ -369,13 +369,13 @@ def concentration_to_signal(
         Signal array with baseline prepended, same dtype as float64.
     """
     if concentration.ndim == 1:
-        n_post = len(concentration)
+        len(concentration)
         baseline = np.full(baseline_frames, s0, dtype=np.float64)
         post_signal = s0 * np.exp(-te * concentration)
         return np.concatenate([baseline, post_signal])
     elif concentration.ndim == 4:
         spatial = concentration.shape[:3]
-        n_post = concentration.shape[3]
+        concentration.shape[3]
         baseline = np.full((*spatial, baseline_frames), s0, dtype=np.float64)
         post_signal = s0 * np.exp(-te * concentration)
         return np.concatenate([baseline, post_signal], axis=3)

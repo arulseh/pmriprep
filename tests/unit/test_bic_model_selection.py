@@ -17,7 +17,6 @@ from pmriprep.models.dce import (
     ExtendedToftsModel,
     PatlakModel,
     ToftsModel,
-    TwoCompartmentExchangeModel,
 )
 from pmriprep.models.dce.base import EPSILON_RSS
 

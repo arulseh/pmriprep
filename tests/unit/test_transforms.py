@@ -6,7 +6,6 @@ from pathlib import Path
 
 import nibabel as nib
 import numpy as np
-import pytest
 
 
 def _make_nifti(path: Path, shape: tuple = (10, 10, 10)) -> str:

@@ -7,7 +7,7 @@ Tier 1: Concentration-level (evaluate -> noise -> fit -> compare)
 Tier 2: Signal-level (ernst_signal -> Rician noise -> signal_to_conc -> fit)
 """
 
-from typing import Any, Dict, Tuple
+from typing import Any, Tuple
 
 import numpy as np
 import numpy.typing as npt

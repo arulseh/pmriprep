@@ -9,7 +9,6 @@ not here, so it is exercised by the cascade-level tests in
 
 from __future__ import annotations
 
-import numpy as np
 
 from pmriprep.interfaces.dsc_aif import AIFDetection
 from pmriprep.utils.dsc_constants import (

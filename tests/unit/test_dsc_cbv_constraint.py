@@ -12,13 +12,8 @@ from pmriprep.utils.dce_constants import (
 )
 from pmriprep.utils.dsc_cbv_constraint import (
     CBVQualityAssessment,
-    CNR_COVERAGE_HIGH,
     CNR_COVERAGE_MODERATE,
-    CNR_COVERAGE_SKIP,
-    CNR_MEAN_MINIMUM,
-    ConstraintConfig,
     ConstraintMode,
-    VP_MAX_PHYSIOLOGICAL,
     _classify_preload_k2,
     _sigma_from_k2,
     _normalize_aif_qc_keys,

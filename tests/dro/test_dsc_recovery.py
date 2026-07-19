@@ -32,7 +32,6 @@ from .conftest import (
     apply_recirculation,
     apply_vtf_dispersion,
     delay_aif,
-    dsc_forward_model,
     dsc_forward_model_circulant,
     dsc_forward_model_volterra,
     generate_dsc_aif_dro,
@@ -930,7 +929,6 @@ class TestCPIBayesianGammaRecovery:
         )
 
         n_cp = 10
-        t_span = 30.0
         model = CPIModel(
             n_control_points=n_cp,
             n_acquisition_frames=int(len(time_sec)),
@@ -990,7 +988,6 @@ class TestCPIVIGammaRecovery:
         )
 
         n_cp = 10
-        t_span = 30.0
         model = CPIModel(
             n_control_points=n_cp,
             n_acquisition_frames=int(len(time_sec)),
@@ -1132,7 +1129,6 @@ class TestBatchedMAPCPIRecovery:
         tissue_curves = np.stack(tissues)
 
         n_cp = 10
-        t_span = 30.0
         dt = float(time_sec[1] - time_sec[0])
         model = CPIModel(
             n_control_points=n_cp,

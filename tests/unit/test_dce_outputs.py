@@ -1,7 +1,6 @@
 """Tests for DCE outputs sidecar generation."""
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import nibabel as nib

@@ -22,12 +22,10 @@ from pmriprep.utils.dsc_deconvolution import (
 from pmriprep.utils.dsc_preload import apply_k2_correction
 from pmriprep.utils.dsc_signal import (
     normalize_cbv,
-    signal_to_concentration,
 )
 
 from .conftest import (
     DSC_TISSUE_PARAMS,
-    concentration_to_signal,
     fine_grid_forward,
     generate_dsc_3d_phantom,
     generate_dsc_aif_dro,
@@ -146,7 +144,7 @@ class TestFullChainRecovery:
         # Deconvolve per-tissue median curves
         for tissue_key in ["gm", "wm", "tumor"]:
             tissue_mask = masks[tissue_key]
-            truth = DSC_TISSUE_PARAMS[tissue_key]
+            DSC_TISSUE_PARAMS[tissue_key]
 
             # Extract all tissue voxel curves, take median
             curves = volume[tissue_mask, _BASELINE:]

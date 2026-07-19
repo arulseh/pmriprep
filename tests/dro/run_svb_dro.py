@@ -51,7 +51,7 @@ def make_multi_tissue_grid(noise_frac: float = 0.0, seed: int = 42):
     )
     vascular = VascularModel()
 
-    n_tissues = len(TISSUES)
+    len(TISSUES)
     # 4x4 patch per tissue, laid out as 2 x 2 tissue blocks => 8 x 8 grid
     nx, ny, nz = 8, 8, 1
     total_voxels = 0
@@ -239,11 +239,10 @@ def main():
 
 def run_homogeneous(noise_frac: float = 0.02):
     """Run SVB vs VI on a homogeneous grid (single tissue) to isolate variance reduction."""
-    from tests.dro.conftest import add_gaussian_noise
 
     print(f"\n{'#'*70}")
     print(f"  HOMOGENEOUS GRID TEST — noise={noise_frac}")
-    print(f"  (Isolates SVB variance reduction from boundary effects)")
+    print("  (Isolates SVB variance reduction from boundary effects)")
     print(f"{'#'*70}")
 
     for cbf_gt, alpha, beta, name in TISSUES:

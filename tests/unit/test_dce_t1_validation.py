@@ -18,8 +18,6 @@ from pmriprep.utils.dce_t1_validation import (
     T1_TISSUE_REFERENCE,
     VFA_NAN_FRACTION_GOOD,
     VFA_NAN_FRACTION_TISSUE_FALLBACK,
-    _E1_CONDITIONAL_FALLBACK,
-    _E1_UNCONDITIONAL_FALLBACK,
     apply_t1_correction,
     build_tissue_t1_map,
     fill_t1_gaps,
@@ -582,7 +580,7 @@ class TestT1GapFill:
         # Punch a few holes
         rng = np.random.default_rng(123)
         t1_map_20[brain_mask_20] = rng.normal(1050.0, 50.0, int(np.sum(brain_mask_20))).astype(np.float32)
-        original = t1_map_20.copy()
+        t1_map_20.copy()
         interior = np.zeros_like(brain_mask_20)
         interior[8:12, 8:12, 8:12] = True
         gap_coords = np.argwhere(interior)
@@ -861,7 +859,7 @@ class TestNLLSFitting:
 
         tr_s = 0.0044
         t1_true = 1.0
-        e1 = np.exp(-tr_s / t1_true)
+        np.exp(-tr_s / t1_true)
         # E1 ≈ 0.9956 at T1=1s, TR=4.4ms — just above threshold
         # For normal brain tissue at TR=4.4ms, E1 is borderline
         # Use TR=10ms where E1=0.99 (well below threshold)

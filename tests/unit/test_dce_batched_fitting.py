@@ -8,7 +8,6 @@ import numpy as np
 import pytest
 
 from pmriprep.models.dce.batched_models import (
-    ModelResult,
     batched_2cxm_model,
     batched_extended_tofts_model,
     batched_patlak_model,
@@ -17,11 +16,9 @@ from pmriprep.models.dce.batched_models import (
 )
 from pmriprep.models.dce.batched_fitting import (
     FitResult,
-    _MODEL_PARAMS,
     batched_lm_fit,
     batched_patlak_lstsq,
 )
-from pmriprep.utils.dce_constants import EPSILON_VE
 
 
 # ---------------------------------------------------------------------------
@@ -304,7 +301,7 @@ class TestAutoModeBIC:
                 )
 
         # BIC selection
-        n_total = 2 * n_per
+        2 * n_per
         T = len(time_points)
         n_params = {"tofts": 2, "patlak": 2}
         bic = {}

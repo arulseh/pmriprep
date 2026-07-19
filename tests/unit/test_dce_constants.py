@@ -6,7 +6,6 @@ from pmriprep.utils import dce_constants
 from pmriprep.utils.dce_constants import (
     EPSILON_CONCENTRATION,
     EPSILON_T1,
-    EPSILON_VE,
     FAHRAEUS_RATIO,
     HEMATOCRIT,
     HEMATOCRIT_ARTERIAL,

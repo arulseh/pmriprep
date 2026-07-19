@@ -732,7 +732,6 @@ class TestTwoPassCascade:
             )
             candidates = _cascade_res.candidates
             scores = _cascade_res.scores
-            metrics_list = _cascade_res.metrics_list
             detection_method = _cascade_res.detection_method
             atlas_tier_used = _cascade_res.atlas_tier_used
             n_attempted = _cascade_res.cascade_tiers_attempted
@@ -787,7 +786,6 @@ class TestTwoPassCascade:
             )
             candidates = _cascade_res.candidates
             scores = _cascade_res.scores
-            metrics_list = _cascade_res.metrics_list
             detection_method = _cascade_res.detection_method
             atlas_tier_used = _cascade_res.atlas_tier_used
             n_attempted = _cascade_res.cascade_tiers_attempted
@@ -835,7 +833,6 @@ class TestTwoPassCascade:
             )
             candidates = _cascade_res.candidates
             scores = _cascade_res.scores
-            metrics_list = _cascade_res.metrics_list
             detection_method = _cascade_res.detection_method
             atlas_tier_used = _cascade_res.atlas_tier_used
             n_attempted = _cascade_res.cascade_tiers_attempted
@@ -1027,7 +1024,6 @@ class TestAnchorGateInCascade:
                 tissue_ttp_frame=10.0,
             )
             candidates = _cascade_res.candidates
-            scores = _cascade_res.scores
             detection_method = _cascade_res.detection_method
             atlas_tier_used = _cascade_res.atlas_tier_used
             n_attempted = _cascade_res.cascade_tiers_attempted
@@ -1134,7 +1130,6 @@ class TestAnchorGateInCascade:
                 tissue_ttp_frame=10.0,
             )
             candidates = _cascade_res.candidates
-            scores = _cascade_res.scores
             detection_method = _cascade_res.detection_method
             atlas_tier_used = _cascade_res.atlas_tier_used
             n_attempted = _cascade_res.cascade_tiers_attempted
@@ -1175,7 +1170,6 @@ class TestAnchorGateInCascade:
                 tissue_ttp_frame=10.0,
             )
             candidates = _cascade_res.candidates
-            scores = _cascade_res.scores
             detection_method = _cascade_res.detection_method
             n_attempted = _cascade_res.cascade_tiers_attempted
 
@@ -1864,25 +1858,11 @@ from pmriprep.interfaces.dce_aif import (  # noqa: E402
     GateQC,
     PoolGateOutcome,
     TierResult,
-    _apply_aif_scale,
-    _compute_pool_qc,
-    _count_slabs_spanned,
-    _evaluate_gates,
     _select_worst_for_trim,
     compute_dce_aif_ratio_30s,
 )
 from pmriprep.utils.dce_constants import (  # noqa: E402
-    DCE_AIF_GATE_FWHM_MAX_SECONDS,
-    DCE_AIF_GATE_G6_MIN_VOXELS_BILATERAL,
-    DCE_AIF_GATE_G6_MIN_VOXELS_UNILATERAL,
-    DCE_AIF_GATE_G6_MIN_SLABS_UNILATERAL,
-    DCE_AIF_GATE_LATE_TAIL_RATIO_MAX,
-    DCE_AIF_GATE_MULTIBUMP_MAX,
-    DCE_AIF_GATE_RATIO30_HARD,
-    DCE_AIF_GATE_RATIO30_WARN,
-    DCE_AIF_GATE_SCALE_G6_CEILING,
     DCE_AIF_GATE_SCALE_HARD,
-    DCE_AIF_TAIL_PEAK_FRACTION,
     DCE_AIF_TAIL_SHOULDER_SECONDS,
 )
 

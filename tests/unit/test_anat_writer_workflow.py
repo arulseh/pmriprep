@@ -299,8 +299,10 @@ def test_multi_modality_kitchen_sink(tmp_path: Path, minimal_bids: Path) -> None
     (raw / "sub-01_ses-0001_FLAIR.json").write_text("{}")
 
     out_root = tmp_path / "out"
-    deriv = lambda name: _make_nifti(tmp_path / name)
-    fake_xfm = lambda name: (tmp_path / name).write_text("ok\n") or (tmp_path / name)
+    def deriv(name):
+        return _make_nifti(tmp_path / name)
+    def fake_xfm(name):
+        return (tmp_path / name).write_text("ok\n") or (tmp_path / name)
 
     wf = init_anat_datasinks_wf(
         output_dir=str(out_root), bids_dir=str(minimal_bids),

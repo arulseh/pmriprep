@@ -15,7 +15,6 @@ from pmriprep.utils.dsc_signal import (
     normalize_cbv,
     signal_to_concentration,
 )
-from pmriprep.utils.dsc_constants import EPSILON_SIGNAL
 
 
 class TestSignalToConcentration:

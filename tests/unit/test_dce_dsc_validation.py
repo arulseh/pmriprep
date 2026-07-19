@@ -4,17 +4,8 @@ import numpy as np
 import pytest
 
 from pmriprep.utils.dce_dsc_validation import (
-    CORRELATION_PASS_SOFT,
     CORRELATION_PASS_UNCONSTRAINED,
-    CORRELATION_WARN_SOFT,
     CORRELATION_WARN_UNCONSTRAINED,
-    FRACTION_VALID_PASS_SOFT,
-    FRACTION_VALID_PASS_UNCONSTRAINED,
-    FRACTION_VALID_WARN_SOFT,
-    FRACTION_VALID_WARN_UNCONSTRAINED,
-    MIN_VALID_VOXELS,
-    MIN_VP_FOR_VALIDATION,
-    ValidationResult,
     validate_vp_cbv,
 )
 from pmriprep.utils.qc_standards import QCStatus

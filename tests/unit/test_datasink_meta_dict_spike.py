@@ -13,7 +13,6 @@ from pathlib import Path
 
 import nibabel as nib
 import numpy as np
-import pytest
 
 
 def test_datasink_meta_dict_survives_for_nonstandard_space(tmp_path: Path) -> None:

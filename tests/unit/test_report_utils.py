@@ -3,7 +3,6 @@
 Tests for QC metric classification helpers used in HTML report generation.
 """
 
-import pytest
 
 from pmriprep.utils.report_utils import (
     _classify_b1,

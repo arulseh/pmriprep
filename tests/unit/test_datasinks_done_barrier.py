@@ -16,9 +16,6 @@ import json
 from pathlib import Path
 
 import networkx as nx
-import nibabel as nib
-import numpy as np
-import pytest
 
 
 def _write_bids(tmp_path: Path) -> Path:

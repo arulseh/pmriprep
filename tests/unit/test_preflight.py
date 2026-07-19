@@ -1,8 +1,6 @@
 """Unit tests for pmriprep.utils.preflight validation module."""
 
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional
 from unittest.mock import MagicMock
 
 import pytest

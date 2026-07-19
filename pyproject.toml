@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pmriprep"
-version = "0.82.72"
+version = "0.82.73"
 description = "Perfusion MRI Preprocessing Pipeline - A NiPreps-compatible BIDS-App"
 readme = "README.md"
 license = "Apache-2.0 AND CC0-1.0"
@@ -96,9 +96,9 @@ ignore = [
 convention = "numpy"
 
 [tool.ruff.lint.per-file-ignores]
-# Tests retain their terse no-docstring style and remain outside the production
-# lint gate while their pre-existing core-lint debt is handled separately.
-"tests/**" = ["D", "E4", "E7", "E9", "F"]
+# Tests retain their terse no-docstring style while sharing the core correctness
+# checks used for production code.
+"tests/**" = ["D"]
 
 [tool.mypy]
 python_version = "3.10"

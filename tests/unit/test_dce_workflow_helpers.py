@@ -369,7 +369,6 @@ class TestComputeDCEMapsDoseTraits:
     ) -> None:
         """`self.inputs.dsc_dose` + `.dsc_agent_standard_dose` flow through
         to `prepare_vp_constraint_from_data(dose=..., agent_standard_dose=...)`."""
-        from unittest import mock
 
         from pmriprep.interfaces.dce_compute import ComputeDCEMapsInputSpec
 
