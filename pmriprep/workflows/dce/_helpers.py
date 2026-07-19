@@ -1160,9 +1160,10 @@ def _collect_qc_metrics(b1_qc, t1_qc, preprocess_qc, registration_qc, aif_qc, pk
     return qc_metrics
 
 
-def _transform_b1_to_vfa(  # type: ignore[no-untyped-def]
-    b1_map_file=None, vfa_ref_file=None
-):
+def _transform_b1_to_vfa(
+    b1_map_file: str | None = None,
+    vfa_ref_file: str | None = None,
+) -> str | None:
     """Resample B1+ map from AFI space to VFA space.
 
     Uses nilearn continuous interpolation via NIfTI affine headers.
@@ -1223,9 +1224,10 @@ def _transform_b1_to_vfa(  # type: ignore[no-untyped-def]
     return out_file
 
 
-def _transform_b1_to_dce(  # type: ignore[no-untyped-def]
-    b1_map_file=None, reference_file=None
-):
+def _transform_b1_to_dce(
+    b1_map_file: str | None = None,
+    reference_file: str | None = None,
+) -> str | None:
     """Resample B1+ map to DCE space for signal-to-concentration.
 
     Uses nilearn continuous interpolation via NIfTI affine headers.
@@ -1285,12 +1287,12 @@ def _transform_b1_to_dce(  # type: ignore[no-untyped-def]
     return out_file
 
 
-def _resample_dsc_cbv_to_dce(  # type: ignore[no-untyped-def]
-    dsc_cbv_file=None,
-    dsc_to_t1w_xfm=None,
-    t1w_to_dce_xfm=None,
-    dce_reference=None,
-):
+def _resample_dsc_cbv_to_dce(
+    dsc_cbv_file: str | None = None,
+    dsc_to_t1w_xfm: str | None = None,
+    t1w_to_dce_xfm: str | None = None,
+    dce_reference: str | None = None,
+) -> str:
     """Resample DSC CBV map to DCE native space.
 
     Chains two existing transforms: DSC→T1w + T1w→DCE = DSC→DCE,
@@ -1375,18 +1377,16 @@ def _resample_dsc_cbv_to_dce(  # type: ignore[no-untyped-def]
     return cbv_in_dce
 
 
-def _resample_dsc_ncbv_to_dce(  # type: ignore[no-untyped-def]
-    dsc_cbv_file=None,
-    dsc_to_t1w_xfm=None,
-    t1w_to_dce_xfm=None,
-    dce_reference=None,
-):
+def _resample_dsc_ncbv_to_dce(
+    dsc_cbv_file: str | None = None,
+    dsc_to_t1w_xfm: str | None = None,
+    t1w_to_dce_xfm: str | None = None,
+    dce_reference: str | None = None,
+) -> str:
     """Resample DSC nCBV to DCE space and clip trilinear-ringing negatives.
 
-    Mirrors ``_resample_dsc_cbv_to_dce`` then clips negatives. Nipype's
-    ``Function`` node runs this in an isolated scope with no access to
-    module-level helpers, so the resample logic is inlined (cannot
-    factor-and-call here).
+    Nipype executes this helper in an isolated scope, so it contains the full
+    resampling operation before clipping negative interpolation artifacts.
 
     Trilinear interpolation introduces small negative values near
     high-contrast boundaries (tumor edges, vessels). nCBV=0 is physically
@@ -1476,9 +1476,10 @@ def _resample_dsc_ncbv_to_dce(  # type: ignore[no-untyped-def]
     return clipped_out
 
 
-def _transform_t1_to_dce(  # type: ignore[no-untyped-def]
-    t1_map_file=None, reference_file=None
-):
+def _transform_t1_to_dce(
+    t1_map_file: str | None = None,
+    reference_file: str | None = None,
+) -> str | None:
     """Resample T1 map from VFA space to DCE space.
 
     Uses nilearn continuous interpolation via NIfTI affine headers.
@@ -1534,9 +1535,10 @@ def _transform_t1_to_dce(  # type: ignore[no-untyped-def]
     return out_file
 
 
-def _transform_external_t1_to_dce(  # type: ignore[no-untyped-def]
-    t1_map_file=None, reference_file=None
-):
+def _transform_external_t1_to_dce(
+    t1_map_file: str | None = None,
+    reference_file: str | None = None,
+) -> str | None:
     """Resample external T1 map to DCE space with unit validation.
 
     Validates that T1 values are in milliseconds (expected units for the
@@ -1566,10 +1568,11 @@ def _transform_external_t1_to_dce(  # type: ignore[no-untyped-def]
 
     logger = logging.getLogger("pmriprep.workflows.dce")
 
-    def _resample(src_t1_file, ref_file):  # type: ignore[no-untyped-def]
-        # Inlined copy of _transform_t1_to_dce — nipype Function nodes
-        # exec helpers in an empty namespace, so module-level helpers are
-        # not visible. See test_function_node_helpers.py.
+    def _resample(
+        src_t1_file: str | None,
+        ref_file: str | None,
+    ) -> str | None:
+        # Nipype executes Function helpers without module-level helpers.
         if src_t1_file is None or ref_file is None:
             return src_t1_file
         from nilearn.image import resample_to_img  # type: ignore[import-untyped]
@@ -1622,12 +1625,12 @@ def _transform_external_t1_to_dce(  # type: ignore[no-untyped-def]
     return _resample(t1_map_file, reference_file)
 
 
-def _transform_structural_to_dce(  # type: ignore[no-untyped-def]
-    structural_file=None,
-    reference_file=None,
-    transform_matrix=None,
-    output_name="structural_in_dce.nii.gz",
-):
+def _transform_structural_to_dce(
+    structural_file: str | None = None,
+    reference_file: str | None = None,
+    transform_matrix: str | None = None,
+    output_name: str = "structural_in_dce.nii.gz",
+) -> str:
     """Transform structural image from T1w space to DCE space via FLIRT.
 
     Parameters

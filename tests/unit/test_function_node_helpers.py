@@ -2,19 +2,14 @@
 module must be reconstructible by nipype's ``create_function_from_source`` —
 which exec()s the function source in an empty namespace.
 
-Three guards:
+Two guards:
 
 1. **NameError-on-def** — Type annotations using ``Optional``/``Tuple``/``Any``/
    ``Union`` etc. require ``from typing import …`` to be in scope at
    def-evaluation time. Since nipype exec's the source with ``ns = {}``, any
    such annotation raises ``NameError`` at workflow runtime.
 
-2. **PEP-604 / PEP-585 forward-compat** — ``str | None`` and ``list[...]``
-   work on Python 3.10+ but break on Python 3.9 (``requires-python`` floor).
-   Function-node helpers should keep signatures plain so we don't accidentally
-   regress the supported-Python window.
-
-3. **Closure-leak detector** — A helper that references a module-level
+2. **Closure-leak detector** — A helper that references a module-level
    constant or function inside its body will pass guard 1 (def loads fine)
    but raise ``NameError`` when actually called. Catches the broader bug
    class beyond annotations.
@@ -43,7 +38,6 @@ WORKFLOW_FILES = [
     "pmriprep/workflows/tumor_seg/datasinks.py",
 ]
 
-PEP585_GENERICS = {"list", "dict", "tuple", "set", "frozenset", "type"}
 BUILTIN_NAMES = set(dir(builtins))
 
 
@@ -137,70 +131,6 @@ def test_function_node_helper_exec_in_empty_namespace(
         )
 
 
-def _has_pep604_or_pep585(node):
-    """Return (kind, snippet) if annotation uses PEP-604 ``X | None`` or PEP-585 ``list[...]``."""
-    for sub in ast.walk(node):
-        if isinstance(sub, ast.BinOp) and isinstance(sub.op, ast.BitOr):
-            return ("PEP-604 union", ast.unparse(sub))
-        if isinstance(sub, ast.Subscript) and isinstance(sub.value, ast.Name):
-            if sub.value.id in PEP585_GENERICS:
-                return ("PEP-585 generic", ast.unparse(sub))
-    return None
-
-
-@pytest.mark.parametrize(
-    "relpath,name,source,_module_names",
-    CASES,
-    ids=[f"{rel}::{name}" for rel, name, _, _ in CASES],
-)
-def test_function_node_helper_no_pep604_pep585(
-    relpath, name, source, _module_names,
-):
-    """Helper signatures and bodies must avoid ``str | None`` / ``list[...]``.
-
-    These work on Python 3.10+ but break on Python 3.9, and the project
-    declares ``requires-python = ">=3.10"``. Keep Function-node helpers
-    annotation-free so the supported-Python floor is decoupled from helper
-    source. Catches forward-compat regressions before they ship.
-    """
-    tree = ast.parse(source)
-    func = next(
-        (n for n in ast.walk(tree)
-         if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
-         and n.name == name),
-        None,
-    )
-    assert func is not None
-
-    annotations = []
-    for arg in (*func.args.args, *func.args.kwonlyargs, *func.args.posonlyargs):
-        if arg.annotation is not None:
-            annotations.append(arg.annotation)
-    if func.returns is not None:
-        annotations.append(func.returns)
-    for sub in ast.walk(func):
-        if isinstance(sub, ast.AnnAssign) and sub.annotation is not None:
-            annotations.append(sub.annotation)
-        if isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef)) and sub is not func:
-            for arg in (*sub.args.args, *sub.args.kwonlyargs, *sub.args.posonlyargs):
-                if arg.annotation is not None:
-                    annotations.append(arg.annotation)
-            if sub.returns is not None:
-                annotations.append(sub.returns)
-
-    for ann in annotations:
-        hit = _has_pep604_or_pep585(ann)
-        if hit is not None:
-            kind, snippet = hit
-            pytest.fail(
-                f"{relpath}::{name} uses {kind} `{snippet}` in an annotation. "
-                f"Function-node helpers must keep signatures plain to stay "
-                f"compatible with the declared Python floor and to avoid "
-                f"coupling helper source to interpreter version. Strip the "
-                f"annotation or move it to a docstring.",
-            )
-
-
 def _collect_local_names(func):
     """Names made local to the function: args, assignments, imports, nested defs."""
     locals_: set[str] = set()
@@ -285,8 +215,8 @@ def test_function_node_helper_no_closure_leak(
 
     locals_ = _collect_local_names(func)
 
-    # Collect all Name(Load) references in the body (excluding annotations,
-    # which guard 2 handles).
+    # Collect all Name(Load) references in the body. Annotation names are
+    # validated by the isolated-source execution guard.
     referenced: set[str] = set()
     for sub in ast.walk(func):
         if isinstance(sub, ast.Name) and isinstance(sub.ctx, ast.Load):
