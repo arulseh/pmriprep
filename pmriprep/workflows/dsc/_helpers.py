@@ -158,7 +158,7 @@ class FLIRTApplyXFM(CommandLine):
         return outputs
 
 
-def _fsl_to_x5_node(mat_path, reference, moving):  # type: ignore[no-untyped-def]
+def _fsl_to_x5_node(mat_path: str, reference: str, moving: str) -> str:
     """Nipype Function-node wrapper for FSL .mat to ITK X5 conversion."""
     from pmriprep.utils.transforms import fsl_to_x5
 
@@ -283,7 +283,12 @@ def _create_perfusion_brain_mask_filmstrip(
     return output_path
 
 
-def _transform_brain_mask_to_dsc(brain_mask_file, reference_file, transform_matrix, hdbet_mask_file=None):  # type: ignore[no-untyped-def]
+def _transform_brain_mask_to_dsc(
+    brain_mask_file: str,
+    reference_file: str,
+    transform_matrix: str,
+    hdbet_mask_file: str | None = None,
+) -> tuple[str, float]:
     """Transform T1w brain mask to DSC space using registration transform.
 
     This is the final brain mask used for all DSC-space processing.
@@ -354,7 +359,11 @@ def _transform_brain_mask_to_dsc(brain_mask_file, reference_file, transform_matr
     return dsc_brain_mask_file, dice_score
 
 
-def _signal_to_concentration(dsc_file, te, baseline_frames):  # type: ignore[no-untyped-def]
+def _signal_to_concentration(
+    dsc_file: str,
+    te: float,
+    baseline_frames: int,
+) -> tuple[str, str]:
     """Convert DSC signal to ΔR2* concentration.
 
     This is a Function node wrapper for the signal_to_concentration utility.
@@ -411,7 +420,20 @@ def _signal_to_concentration(dsc_file, te, baseline_frames):  # type: ignore[no-
     return conc_file, signal_file
 
 
-def _detect_and_correct_preload(concentration_file, aif_file, brain_mask_file, te, field_strength, tr, preload, signal_file=None, baseline_frames=5, leakage_method='bsw', kep=None, agent_standard_dose=0.1):  # type: ignore[no-untyped-def]
+def _detect_and_correct_preload(
+    concentration_file: str,
+    aif_file: str,
+    brain_mask_file: str,
+    te: float,
+    field_strength: float,
+    tr: float,
+    preload: str | float,
+    signal_file: str | None = None,
+    baseline_frames: int = 5,
+    leakage_method: str = "bsw",
+    kep: float | None = None,
+    agent_standard_dose: float = 0.1,
+) -> tuple[str, str, dict[str, object]]:
     """Detect preload and apply K2 correction if needed.
 
     This is a Function node wrapper for preload detection and K2 correction.
@@ -486,7 +508,7 @@ def _detect_and_correct_preload(concentration_file, aif_file, brain_mask_file, t
     # Load AIF
     aif = np.loadtxt(aif_file)
 
-    qc_metrics = {}
+    qc_metrics: dict[str, object] = {}
     k2_map_file: str = ""
 
     # K2-primary is the sole classifier. Run detect_preload() only for the
@@ -623,7 +645,12 @@ def _detect_and_correct_preload(concentration_file, aif_file, brain_mask_file, t
     return corrected_file, k2_map_file, qc_metrics
 
 
-def _augment_qc_positive_tail(qc_dict, concentration_file, k2_map_file, lesion_mask_dsc=None):  # type: ignore[no-untyped-def]
+def _augment_qc_positive_tail(
+    qc_dict: dict[str, object] | None,
+    concentration_file: str,
+    k2_map_file: str,
+    lesion_mask_dsc: str | None = None,
+) -> dict[str, object]:
     """Add the positive-tail (BSW-blind overestimate) fraction to the preload QC.
 
     A T2*-dominant persistent positive ΔR2* tail makes K2 pin at 0 (the
@@ -766,12 +793,12 @@ def _compute_mean_4d(in_file: str) -> str:
     return out_file
 
 
-def _transform_nawm_to_dsc(  # type: ignore[no-untyped-def]
-    nawm_mask_file=None,
-    reference_file=None,
-    transform_matrix=None,
-    needs_transform=True,
-):
+def _transform_nawm_to_dsc(
+    nawm_mask_file: str | None = None,
+    reference_file: str | None = None,
+    transform_matrix: str | None = None,
+    needs_transform: bool = True,
+) -> str:
     """Transform NAWM mask to DSC space, or pass through if already native.
 
     When ``needs_transform`` is True (tumor-seg NAWM in T1w space), applies
@@ -812,13 +839,15 @@ def _transform_nawm_to_dsc(  # type: ignore[no-untyped-def]
 
         mask_img = nib.load(str(nawm_mask_file))
         ref_img = nib.load(str(reference_file))
-        if mask_img.shape[:3] != ref_img.shape[:3]:
+        if mask_img.shape[:3] != ref_img.shape[:3]:  # type: ignore[attr-defined]
             raise ValueError(
-                f"User-supplied NAWM mask shape {mask_img.shape[:3]} does not "
-                f"match DSC volume shape {ref_img.shape[:3]}. "
+                f"User-supplied NAWM mask shape {mask_img.shape[:3]} does not "  # type: ignore[attr-defined]
+                f"match DSC volume shape {ref_img.shape[:3]}. "  # type: ignore[attr-defined]
                 f"Masks under [dsc] config must be in DSC native space."
             )
-        affine_diff = float(np.abs(mask_img.affine - ref_img.affine).max())
+        affine_diff = float(
+            np.abs(mask_img.affine - ref_img.affine).max()  # type: ignore[attr-defined]
+        )
         if affine_diff > 1.0:
             raise ValueError(
                 f"User-supplied NAWM mask affine differs from DSC volume by "
@@ -846,11 +875,11 @@ def _transform_nawm_to_dsc(  # type: ignore[no-untyped-def]
     return out_file
 
 
-def _transform_wm_probseg_to_dsc(  # type: ignore[no-untyped-def]
-    wm_probseg=None,
-    reference_file=None,
-    transform_matrix=None,
-):
+def _transform_wm_probseg_to_dsc(
+    wm_probseg: str | None = None,
+    reference_file: str | None = None,
+    transform_matrix: str | None = None,
+) -> str:
     """Threshold + erode the FAST WM probability map into DSC space.
 
     Resamples the T1w-space white-matter probability map into DSC space with
@@ -914,7 +943,7 @@ def _transform_wm_probseg_to_dsc(  # type: ignore[no-untyped-def]
     try:
         subprocess.run(cmd, check=True, capture_output=True)
         img = nib.load(resampled)
-        prob = img.get_fdata()
+        prob = img.get_fdata()  # type: ignore[attr-defined]
         mask = ndimage.binary_erosion(prob > 0.5, iterations=1)
     except Exception as exc:  # noqa: BLE001
         logging.getLogger("nipype.interface").warning(
@@ -924,17 +953,19 @@ def _transform_wm_probseg_to_dsc(  # type: ignore[no-untyped-def]
         return ""
 
     out_file = str(out_dir / "wm_mask_dsc.nii.gz")
-    out_img = nib.Nifti1Image(mask.astype(np.uint8), img.affine, img.header)
+    out_img = nib.Nifti1Image(
+        mask.astype(np.uint8), img.affine, img.header,  # type: ignore[attr-defined]
+    )
     out_img.header.set_data_dtype(np.uint8)
     nib.save(out_img, out_file)
     return out_file
 
 
-def _transform_lesion_mask_to_dsc(  # type: ignore[no-untyped-def]
-    lesion_mask_file=None,
-    reference_file=None,
-    transform_matrix=None,
-):
+def _transform_lesion_mask_to_dsc(
+    lesion_mask_file: str | None = None,
+    reference_file: str | None = None,
+    transform_matrix: str | None = None,
+) -> str:
     """Transform lesion mask from T1w space to DSC space.
 
     Uses FSL FLIRT with nearest-neighbour interpolation to resample
@@ -988,10 +1019,10 @@ def _transform_lesion_mask_to_dsc(  # type: ignore[no-untyped-def]
     return out_file
 
 
-def _select_aif_exclusion_mask(  # type: ignore[no-untyped-def]
-    user_lesion_mask=None,
-    transformed_lesion_mask=None,
-):
+def _select_aif_exclusion_mask(
+    user_lesion_mask: str | None = None,
+    transformed_lesion_mask: str | None = None,
+) -> str:
     """Pick the AIF exclusion mask: user-supplied overrides tumor seg.
 
     Parameters
@@ -1017,11 +1048,11 @@ def _select_aif_exclusion_mask(  # type: ignore[no-untyped-def]
     return ""
 
 
-def _validate_native_mask(  # type: ignore[no-untyped-def]
-    mask_file=None,
-    reference_file=None,
-    mask_label="mask",
-):
+def _validate_native_mask(
+    mask_file: str | None = None,
+    reference_file: str | None = None,
+    mask_label: str = "mask",
+) -> str:
     """Validate that a user-supplied mask matches the perfusion volume grid.
 
     Parameters
@@ -1048,13 +1079,15 @@ def _validate_native_mask(  # type: ignore[no-untyped-def]
 
     mask_img = nib.load(str(mask_file))
     ref_img = nib.load(str(reference_file))
-    if mask_img.shape[:3] != ref_img.shape[:3]:
+    if mask_img.shape[:3] != ref_img.shape[:3]:  # type: ignore[attr-defined]
         raise ValueError(
-            f"User-supplied {mask_label} shape {mask_img.shape[:3]} does not "
-            f"match perfusion volume shape {ref_img.shape[:3]}. "
+            f"User-supplied {mask_label} shape {mask_img.shape[:3]} does not "  # type: ignore[attr-defined]
+            f"match perfusion volume shape {ref_img.shape[:3]}. "  # type: ignore[attr-defined]
             f"Masks under config must be in perfusion native space."
         )
-    affine_diff = float(np.abs(mask_img.affine - ref_img.affine).max())
+    affine_diff = float(
+        np.abs(mask_img.affine - ref_img.affine).max()  # type: ignore[attr-defined]
+    )
     if affine_diff > 1.0:
         raise ValueError(
             f"User-supplied {mask_label} affine differs from perfusion volume "
@@ -1064,7 +1097,12 @@ def _validate_native_mask(  # type: ignore[no-untyped-def]
     return str(mask_file)
 
 
-def _transform_structural_to_dsc(structural_file=None, reference_file=None, transform_matrix=None, output_name='structural_in_dsc.nii.gz'):  # type: ignore[no-untyped-def]
+def _transform_structural_to_dsc(
+    structural_file: str | None = None,
+    reference_file: str | None = None,
+    transform_matrix: str | None = None,
+    output_name: str = "structural_in_dsc.nii.gz",
+) -> str:
     """Transform structural image from T1w space to DSC space via FLIRT.
 
     Handles None/undefined inputs gracefully by returning None.
