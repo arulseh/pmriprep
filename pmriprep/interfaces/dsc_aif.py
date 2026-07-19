@@ -118,6 +118,16 @@ class DualRoiResult(NamedTuple):
     brr: float
 
 
+_AIFCandidate = tuple[float, tuple[int, int, int], dict[str, Any]]
+
+
+class _TrimmedDualRoiResult(NamedTuple):
+    """Accepted dual-ROI result and the candidate pool that produced it."""
+
+    result: DualRoiResult
+    candidates: list[_AIFCandidate]
+
+
 class _DSCAIFDetectionContext(NamedTuple):
     """Validated image data, acquisition state, and detection parameters."""
 
@@ -2677,6 +2687,39 @@ class AIFDetection(BaseInterface):
             if criteria_order.index(attempt[0]) >= start_index
         ]
 
+    def _try_trimmed_dual_roi(
+        self,
+        candidates: Sequence[_AIFCandidate],
+        concentration: npt.NDArray[Any],
+        brain_mask: npt.NDArray[Any],
+        tr: float,
+        baseline_frames: int,
+    ) -> Optional[_TrimmedDualRoiResult]:
+        """Try dual-ROI acceptance while progressively removing poor tails."""
+        pool = list(candidates)
+        while len(pool) >= MIN_AIF_CANDIDATES_ACCEPT:
+            result = self._try_aif_dual_roi(
+                pool,
+                concentration,
+                brain_mask,
+                tr,
+                baseline_frames,
+            )
+            if result is not None:
+                return _TrimmedDualRoiResult(result, pool)
+
+            def trim_key(index: int) -> float:
+                candidate = pool[index]
+                brr = candidate[2].get("baseline_return_ratio", float("nan"))
+                if not np.isnan(brr):
+                    return float(brr)
+                return -float(candidate[0])
+
+            worst_index = min(range(len(pool)), key=trim_key)
+            pool.pop(worst_index)
+
+        return None
+
     # -----------------------------------------------------------------
     # Step 10: Main pipeline  (_run_interface)
     # -----------------------------------------------------------------
@@ -2907,47 +2950,27 @@ class AIFDetection(BaseInterface):
                 # MIN_AIF_CANDIDATES_ACCEPT.  If the tier can't reach
                 # an acceptable pool, the cascade falls through to the
                 # next (looser) tier.
-                tier_pool = list(scored[:level_n_candidates])
-                while len(tier_pool) >= MIN_AIF_CANDIDATES_ACCEPT:
-                    tier_result = self._try_aif_dual_roi(
-                        tier_pool, conc_data, brain_mask, tr,
-                        aif_baseline_frames,
+                tier_acceptance = self._try_trimmed_dual_roi(
+                    scored[:level_n_candidates],
+                    conc_data,
+                    brain_mask,
+                    tr,
+                    aif_baseline_frames,
+                )
+                if tier_acceptance is not None:
+                    tier_result = tier_acceptance.result
+                    tier_pool = tier_acceptance.candidates
+                    accepted_aif = (
+                        tier_result.curve,
+                        tier_result.mask,
+                        tier_result.roi_size,
                     )
-                    if tier_result is not None:
-                        accepted_aif = (
-                            tier_result.curve,
-                            tier_result.mask,
-                            tier_result.roi_size,
-                        )
-                        # Defensive copy: tier_pool is the loop's
-                        # working list; aliasing it into top_candidates
-                        # would couple downstream QC to future loop edits.
-                        top_candidates = list(tier_pool)
-                        n_available = len(tier_pool)
-                        detection_level = level_name
-                        filter_meta = dict(f_meta)
-                        accepted_filter_meta = dict(f_meta)
-                        # Tier-accept provenance: only this tier
-                        # contributed to the accepted pool.
-                        union_tier_provenance = {
-                            level_name: len(tier_pool)
-                        }
-                        break
-                    # Drop the candidate with the most-negative per-voxel
-                    # BRR (worst tail contaminator). Falls back to
-                    # ``-cost`` (highest cost = worst) when BRR is NaN
-                    # or missing — matches the test-suite contract in
-                    # ``test_dsc_aif_cascade.TestProgressiveTrimSemantics``
-                    # and avoids non-deterministic ``min`` over NaN keys.
-                    def _trim_key(i: int) -> float:
-                        brr = tier_pool[i][2].get(
-                            "baseline_return_ratio", float("nan"),
-                        )
-                        if not np.isnan(brr):
-                            return float(brr)
-                        return -float(tier_pool[i][0])
-                    worst_idx = min(range(len(tier_pool)), key=_trim_key)
-                    tier_pool.pop(worst_idx)
+                    top_candidates = list(tier_pool)
+                    n_available = len(tier_pool)
+                    detection_level = level_name
+                    filter_meta = dict(f_meta)
+                    accepted_filter_meta = dict(f_meta)
+                    union_tier_provenance = {level_name: len(tier_pool)}
 
                 if accepted_aif is not None:
                     break  # cascade complete — tier accepted
@@ -2959,54 +2982,46 @@ class AIFDetection(BaseInterface):
             # negative-BRR voxel one at a time until dual_roi passes or
             # the pool reaches MIN_AIF_CANDIDATES_ACCEPT.
             if accepted_aif is None and len(union) >= MIN_AIF_CANDIDATES_ACCEPT:
-                union_pool = list(union)
-                while len(union_pool) >= MIN_AIF_CANDIDATES_ACCEPT:
-                    result = self._try_aif_dual_roi(
-                        union_pool, conc_data, brain_mask, tr,
-                        aif_baseline_frames,
+                union_acceptance = self._try_trimmed_dual_roi(
+                    union,
+                    conc_data,
+                    brain_mask,
+                    tr,
+                    aif_baseline_frames,
+                )
+                if union_acceptance is not None:
+                    result = union_acceptance.result
+                    union_pool = union_acceptance.candidates
+                    accepted_aif = (
+                        result.curve, result.mask, result.roi_size,
                     )
-                    if result is not None:
-                        accepted_aif = (
-                            result.curve, result.mask, result.roi_size,
-                        )
-                        top_candidates = list(union_pool)
-                        n_available = len(union_pool)
-                        # Recompute provenance from the trimmed pool's
-                        # coords — tiers whose voxels were dropped must
-                        # NOT appear in detection_level OR in the
-                        # downstream ``aif_tier_provenance`` QC field.
-                        trimmed_provenance: dict[str, int] = {}
-                        for _, coord, _ in union_pool:
-                            lvl = union_coord_origin.get(coord)
-                            if lvl is not None:
-                                trimmed_provenance[lvl] = (
-                                    trimmed_provenance.get(lvl, 0) + 1
-                                )
-                        union_tier_provenance = trimmed_provenance
-                        # detection_level: cascade-ordered ``+``-joined
-                        # list of tiers that contributed voxels to the
-                        # accepted (post-trim) union pool. Single-tier
-                        # acceptances stay as plain tier names for
-                        # back-compat with downstream consumers.
-                        contributing = [
-                            lvl for _, _, lvl, _ in attempts
-                            if union_tier_provenance.get(lvl, 0) > 0
-                        ]
-                        detection_level = (
-                            "+".join(contributing) if contributing else "synthetic"
-                        )
-                        filter_meta = dict(accepted_filter_meta)
-                        break
-                    # Drop worst-BRR voxel (mirrors per-tier _trim_key).
-                    def _trim_key(i: int) -> float:
-                        brr = union_pool[i][2].get(
-                            "baseline_return_ratio", float("nan"),
-                        )
-                        if not np.isnan(brr):
-                            return float(brr)
-                        return -float(union_pool[i][0])
-                    worst_idx = min(range(len(union_pool)), key=_trim_key)
-                    union_pool.pop(worst_idx)
+                    top_candidates = list(union_pool)
+                    n_available = len(union_pool)
+                    # Recompute provenance from the trimmed pool's
+                    # coords — tiers whose voxels were dropped must
+                    # NOT appear in detection_level OR in the
+                    # downstream ``aif_tier_provenance`` QC field.
+                    trimmed_provenance: dict[str, int] = {}
+                    for _, coord, _ in union_pool:
+                        lvl = union_coord_origin.get(coord)
+                        if lvl is not None:
+                            trimmed_provenance[lvl] = (
+                                trimmed_provenance.get(lvl, 0) + 1
+                            )
+                    union_tier_provenance = trimmed_provenance
+                    # detection_level: cascade-ordered ``+``-joined
+                    # list of tiers that contributed voxels to the
+                    # accepted (post-trim) union pool. Single-tier
+                    # acceptances stay as plain tier names for
+                    # back-compat with downstream consumers.
+                    contributing = [
+                        lvl for _, _, lvl, _ in attempts
+                        if union_tier_provenance.get(lvl, 0) > 0
+                    ]
+                    detection_level = (
+                        "+".join(contributing) if contributing else "synthetic"
+                    )
+                    filter_meta = dict(accepted_filter_meta)
 
             # Single-best fallback: union has voxels but per-tier and
             # union dual-ROI all rejected. Try the lowest-cost union
