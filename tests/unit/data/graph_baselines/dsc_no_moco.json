@@ -843,18 +843,6 @@
     [
       "hdbet_dsc",
       "dsc_brain_mask_file",
-      "normalize",
-      "brain_mask_file"
-    ],
-    [
-      "hdbet_dsc",
-      "dsc_brain_mask_file",
-      "normalize_cbf",
-      "brain_mask_file"
-    ],
-    [
-      "hdbet_dsc",
-      "dsc_brain_mask_file",
       "outputnode",
       "brain_mask_dsc"
     ],
@@ -1695,7 +1683,6 @@
     },
     "normalize": {
       "input_names": [
-        "brain_mask_file",
         "cbv_file",
         "derivatives_dir",
         "nawm_mask_file",
@@ -1709,7 +1696,6 @@
     },
     "normalize_cbf": {
       "input_names": [
-        "brain_mask_file",
         "cbf_file",
         "derivatives_dir",
         "nawm_mask_file",
@@ -1859,15 +1845,15 @@
     "convert_inv_dsc_h5": "018196f529ef8533ba7ea16ac1a69979beb6937dcd2726bef0cead6b76322240",
     "dsc_brain_mask_qc": "ced2d6d4b823457166d3fb21083d6220f2b0dc0e0155de5c134e6d98210b5086",
     "dsc_fit_qc": "2a6efef79b772f795af331ee65d2729425e80784f549ac5f740d77d4d4fcfc43",
-    "dsc_leakage_qc": "124852ff33fda716417010474698147edcd1064062650ffaa75e529472bddc2c",
-    "dsc_param_maps_qc": "2013fae75a4f9b5774e6ba751d857a4d15859c722f77c3841f8a77af2c750706",
-    "dsc_preproc_qc": "69e4bd3ba56fa6500819c9d68913bd744e4997d68ab59d3f782e0a60fc3e4f9a",
-    "extract_preload": "30e76685c4720bdfc9f73f1c810487cee496bab150391eaef74cfd67f9f7e9bd",
+    "dsc_leakage_qc": "4d1a35ddb436b1a5cb5b697028df1be2737dfc14fc21260e120ac294b7e0bd44",
+    "dsc_param_maps_qc": "1b8432d6dbd7505c754aaf76d2a86e84be48127f7bb050797c7c0809e97075f4",
+    "dsc_preproc_qc": "120b1f3f6ea69c095663da8e71955876fde923b19fccc8a5691edc8867ad53cb",
+    "extract_preload": "5bec40d1755b3c09316a8866cec9c669e6296d60e7cd8a0a85192af3f83a01d9",
     "hist_match_t1w": "33d0ceadebcfcf66ed403151737f0e0d429e96320c2101825b356309caf68f0e",
-    "merge_qc": "d5ebcb85eda87d2f0d416c8c011a964d3142d88631e8204736072097ffd2d68a",
-    "motion_qc_plot": "e0befb49aac7c83e0ccecb4b16c881ba5a94803836fbbb9b16ede1c0169eb32e",
-    "normalize": "61ecadb429344a24ddcde8c925b2b63699499840efea317115803ee8f3e0a2d8",
-    "normalize_cbf": "a6759ae7b3ebaba71e2a3e65ea17ae95f5e4a7f029016c50bb8a58fff80b8e56",
+    "merge_qc": "25c61a36eb6866df282391bbe81a85f11b4f8f211ff67d04cc2f55c92f7916a9",
+    "motion_qc_plot": "c51bb7f0da9a494256c19c097824adf784a100aa3747678cd1a11a5de8ed286b",
+    "normalize": "e595886e707da794662981e407f95f2c2ca3963d8d0b601e45f1b438ff31e32c",
+    "normalize_cbf": "4091ca4826f022488ebe0c4777939e8bea972954212c8f7ee6b4bbd0d92690d7",
     "positive_tail": "051ce74bce50a4f0f05d0b81f66418e853e3e2c3f95bae0d3efc7a9edf9b2f52",
     "prebolus_mean": "94ade71cddc7afb13dce74a47091860d8d7ee30fce12cc69505ee224e72fdc8d",
     "preload_correct": "e9f3b7e8c691500532069597c45d8c2a13ba65f6189f6be7496459de90755211",
@@ -2122,12 +2108,12 @@
     },
     "dsc_preproc_qc": {
       "baseline_frames": 5,
-      "function_str": "def _generate_dsc_preprocessing_qc(dsc_signal_file, brain_mask_file, baseline_frames, tr, te=None, subject_id='', session_id=''):  # type: ignore[no-untyped-def]\n    \"\"\"Generate DSC preprocessing QC plot.\n\n    Parameters\n    ----------\n    dsc_signal_file : str\n        Path to motion-corrected 4D DSC signal NIfTI.\n    brain_mask_file : str\n        Path to brain mask NIfTI.\n    baseline_frames : int\n        Number of pre-bolus baseline frames.\n    tr : float\n        Repetition time in seconds.\n    te : float, optional\n        Echo time in seconds.\n    subject_id : str, optional\n        Subject identifier.\n    session_id : str, optional\n        Session identifier.\n\n    Returns\n    -------\n    tuple of (str, dict)\n        Tuple of (plot_file path, stats dict).\n    \"\"\"\n    import nibabel as nib\n    from pmriprep.utils.dsc_qc_plots import generate_dsc_preprocessing_qc_plot\n\n    signal_img = nib.load(dsc_signal_file)\n    signal_4d = signal_img.get_fdata()  # type: ignore[attr-defined]\n    mask_data = nib.load(brain_mask_file).get_fdata()  # type: ignore[attr-defined]\n\n    _zooms = signal_img.header.get_zooms()  # type: ignore[attr-defined]\n    voxel_size_mm = (\n        float(_zooms[0]), float(_zooms[1]), float(_zooms[2]),\n    )\n\n    plot_path, stats = generate_dsc_preprocessing_qc_plot(\n        dsc_signal_4d=signal_4d,\n        brain_mask=mask_data,\n        baseline_frames=baseline_frames,\n        volume_tr_s=tr,\n        te_s=te,\n        subject_id=subject_id,\n        session_id=session_id,\n        voxel_size_mm=voxel_size_mm,\n    )\n    return plot_path, stats\n",
+      "function_str": "def _generate_dsc_preprocessing_qc(\n    dsc_signal_file: str,\n    brain_mask_file: str,\n    baseline_frames: int,\n    tr: float,\n    te: float | None = None,\n    subject_id: str = \"\",\n    session_id: str = \"\",\n) -> tuple[str, dict[str, object]]:\n    \"\"\"Generate DSC preprocessing QC plot.\n\n    Parameters\n    ----------\n    dsc_signal_file : str\n        Path to motion-corrected 4D DSC signal NIfTI.\n    brain_mask_file : str\n        Path to brain mask NIfTI.\n    baseline_frames : int\n        Number of pre-bolus baseline frames.\n    tr : float\n        Repetition time in seconds.\n    te : float, optional\n        Echo time in seconds.\n    subject_id : str, optional\n        Subject identifier.\n    session_id : str, optional\n        Session identifier.\n\n    Returns\n    -------\n    tuple of (str, dict)\n        Tuple of (plot_file path, stats dict).\n    \"\"\"\n    import nibabel as nib\n    from pmriprep.utils.dsc_qc_plots import generate_dsc_preprocessing_qc_plot\n\n    signal_img = nib.load(dsc_signal_file)\n    signal_4d = signal_img.get_fdata()  # type: ignore[attr-defined]\n    mask_data = nib.load(brain_mask_file).get_fdata()  # type: ignore[attr-defined]\n\n    _zooms = signal_img.header.get_zooms()  # type: ignore[attr-defined]\n    voxel_size_mm = (\n        float(_zooms[0]), float(_zooms[1]), float(_zooms[2]),\n    )\n\n    plot_path, stats = generate_dsc_preprocessing_qc_plot(\n        dsc_signal_4d=signal_4d,\n        brain_mask=mask_data,\n        baseline_frames=baseline_frames,\n        volume_tr_s=tr,\n        te_s=te,\n        subject_id=subject_id,\n        session_id=session_id,\n        voxel_size_mm=voxel_size_mm,\n    )\n    return plot_path, stats\n",
       "session_id": "0001",
       "subject_id": "0001"
     },
     "extract_preload": {
-      "function_str": "def _extract_preload_class(qc_dict):  # type: ignore[no-untyped-def]\n    \"\"\"Extract preload classification from preload_correct QC dict.\n\n    Parameters\n    ----------\n    qc_dict : dict\n        QC metrics dictionary from preload correction node.\n\n    Returns\n    -------\n    str\n        Effective classification string: a K2-adequacy value on the auto\n        path (e.g. 'adequate', 'partial', 'inadequate', 'unknown') or a\n        preload-dose class on the user path (e.g. 'none', 'half_dose').\n    \"\"\"\n    if not qc_dict:\n        return \"none\"\n    return qc_dict.get(\"preload_classification\", \"none\")  # type: ignore[no-any-return]\n"
+      "function_str": "def _extract_preload_class(qc_dict: dict[str, object] | None) -> str:\n    \"\"\"Extract preload classification from preload_correct QC dict.\n\n    Parameters\n    ----------\n    qc_dict : dict\n        QC metrics dictionary from preload correction node.\n\n    Returns\n    -------\n    str\n        Effective classification string: a K2-adequacy value on the auto\n        path (e.g. 'adequate', 'partial', 'inadequate', 'unknown') or a\n        preload-dose class on the user path (e.g. 'none', 'half_dose').\n    \"\"\"\n    if not qc_dict:\n        return \"none\"\n    return str(qc_dict.get(\"preload_classification\", \"none\"))\n"
     },
     "hdbet_dsc": {
       "bet_frac": 0.3,
@@ -2155,7 +2141,7 @@
     },
     "merge_qc": {
       "aif_source": "auto",
-      "function_str": "def _merge_qc_metrics(motion_qc, preload_qc, aif_qc, deconv_qc, registration_qc, normalization_factor, motion_summary=None, aif_metrics=None, preprocessing_stats=None, aif_source='auto', registration_bbr=False):  # type: ignore[no-untyped-def]\n    \"\"\"Merge all QC metrics into a single dictionary.\n\n    Parameters\n    ----------\n    motion_qc : dict\n        Motion correction QC metrics.\n    preload_qc : dict\n        Preload detection and correction QC metrics.\n    aif_qc : dict\n        AIF detection QC metrics.\n    deconv_qc : dict\n        Deconvolution QC metrics.\n    registration_qc : dict\n        Registration QC metrics.\n    normalization_factor : float\n        CBV normalization factor.\n    motion_summary : dict, optional\n        Motion summary dict from plot_motion_qc.\n    aif_metrics : dict, optional\n        AIF metrics dict from AIFQCPlot.\n    preprocessing_stats : dict, optional\n        Preprocessing stats dict.\n    aif_source : str, optional\n        AIF source type (\"auto\", \"synthetic\", or \"external\").\n    registration_bbr : bool, optional\n        Whether BBR refinement was used for registration.\n\n    Returns\n    -------\n    dict\n        Combined QC metrics dictionary.\n    \"\"\"\n    motion_data = motion_qc if motion_qc else {}\n    if motion_summary:\n        motion_data = dict(motion_data) if motion_data else {}\n        motion_data[\"motion_summary\"] = motion_summary\n        # Surface a flat motion_applied alongside the (strippable) motion_summary\n        # so it survives filter_pipeline_qc into the sidecar PipelineQC \u2014 the\n        # report boilerplate reads it from there. Mirrors DCE's flat placement.\n        motion_data[\"motion_applied\"] = bool(\n            motion_summary.get(\"motion_applied\", True)\n        )\n\n    preprocessing = dict(preprocessing_stats) if preprocessing_stats else {}\n    if motion_data:\n        preprocessing.update(motion_data)\n\n    aif_data = aif_qc if aif_qc else {}\n    if aif_metrics:\n        aif_data = dict(aif_data) if aif_data else {}\n        aif_data[\"aif_metrics\"] = aif_metrics\n\n    merged = {\n        \"preprocessing\": preprocessing,\n        \"preload\": preload_qc if preload_qc else {},\n        \"aif_detection\": aif_data,\n        \"deconvolution\": deconv_qc if deconv_qc else {},\n        \"registration\": registration_qc if registration_qc else {},\n        \"normalization_factor\": normalization_factor,\n        \"config\": {\n            \"aif_source\": aif_source,\n            \"registration_bbr\": registration_bbr,\n        },\n    }\n    return merged\n",
+      "function_str": "def _merge_qc_metrics(\n    motion_qc: dict[str, object] | None,\n    preload_qc: dict[str, object] | None,\n    aif_qc: dict[str, object] | None,\n    deconv_qc: dict[str, object] | None,\n    registration_qc: dict[str, object] | None,\n    normalization_factor: float | None,\n    motion_summary: dict[str, object] | None = None,\n    aif_metrics: dict[str, object] | None = None,\n    preprocessing_stats: dict[str, object] | None = None,\n    aif_source: str = \"auto\",\n    registration_bbr: bool = False,\n) -> dict[str, object]:\n    \"\"\"Merge all QC metrics into a single dictionary.\n\n    Parameters\n    ----------\n    motion_qc : dict\n        Motion correction QC metrics.\n    preload_qc : dict\n        Preload detection and correction QC metrics.\n    aif_qc : dict\n        AIF detection QC metrics.\n    deconv_qc : dict\n        Deconvolution QC metrics.\n    registration_qc : dict\n        Registration QC metrics.\n    normalization_factor : float\n        CBV normalization factor.\n    motion_summary : dict, optional\n        Motion summary dict from plot_motion_qc.\n    aif_metrics : dict, optional\n        AIF metrics dict from AIFQCPlot.\n    preprocessing_stats : dict, optional\n        Preprocessing stats dict.\n    aif_source : str, optional\n        AIF source type (\"auto\", \"synthetic\", or \"external\").\n    registration_bbr : bool, optional\n        Whether BBR refinement was used for registration.\n\n    Returns\n    -------\n    dict\n        Combined QC metrics dictionary.\n    \"\"\"\n    motion_data = motion_qc if motion_qc else {}\n    if motion_summary:\n        motion_data = dict(motion_data) if motion_data else {}\n        motion_data[\"motion_summary\"] = motion_summary\n        # Surface a flat motion_applied alongside the (strippable) motion_summary\n        # so it survives filter_pipeline_qc into the sidecar PipelineQC \u2014 the\n        # report boilerplate reads it from there. Mirrors DCE's flat placement.\n        motion_data[\"motion_applied\"] = bool(\n            motion_summary.get(\"motion_applied\", True)\n        )\n\n    preprocessing = dict(preprocessing_stats) if preprocessing_stats else {}\n    if motion_data:\n        preprocessing.update(motion_data)\n\n    aif_data = aif_qc if aif_qc else {}\n    if aif_metrics:\n        aif_data = dict(aif_data) if aif_data else {}\n        aif_data[\"aif_metrics\"] = aif_metrics\n\n    merged: dict[str, object] = {\n        \"preprocessing\": preprocessing,\n        \"preload\": preload_qc if preload_qc else {},\n        \"aif_detection\": aif_data,\n        \"deconvolution\": deconv_qc if deconv_qc else {},\n        \"registration\": registration_qc if registration_qc else {},\n        \"normalization_factor\": normalization_factor,\n        \"config\": {\n            \"aif_source\": aif_source,\n            \"registration_bbr\": registration_bbr,\n        },\n    }\n    return merged\n",
       "registration_bbr": false
     },
     "motion_correct": {

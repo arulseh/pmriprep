@@ -916,9 +916,9 @@ def init_dsc_normalization_wf(
 ) -> pe.Workflow:
     """Build the DSC CBV / CBF normalization sub-workflow.
 
-    Normalizes the relative CBV and CBF maps to a reference tissue (NAWM when
-    available, else a whole-brain fallback), producing nCBV / nCBF maps and the
-    shared normalization factor. CBV and CBF use the same normalization method.
+    Normalizes relative CBV and CBF to NAWM, producing nCBV / nCBF maps and the
+    shared normalization factor. Without a valid NAWM mask, normalized maps are
+    omitted. CBV and CBF use the same normalization method.
 
     Parameters
     ----------
@@ -942,10 +942,8 @@ def init_dsc_normalization_wf(
         Relative CBV map to normalize.
     cbf_file
         Relative CBF map to normalize.
-    brain_mask_file
-        DSC-space brain mask (whole-brain fallback reference).
     nawm_mask_file
-        NAWM mask (preferred normalization reference).
+        NAWM normalization mask.
 
     Outputs
     -------
@@ -959,7 +957,7 @@ def init_dsc_normalization_wf(
     workflow = pe.Workflow(name=name)
     inputnode = pe.Node(
         niu.IdentityInterface(
-            fields=["cbv_file", "cbf_file", "brain_mask_file", "nawm_mask_file"]
+            fields=["cbv_file", "cbf_file", "nawm_mask_file"]
         ),
         name="inputnode",
     )
@@ -977,7 +975,6 @@ def init_dsc_normalization_wf(
         niu.Function(
             input_names=[
                 "cbv_file",
-                "brain_mask_file",
                 "derivatives_dir",
                 "subject_id",
                 "session_id",
@@ -999,7 +996,6 @@ def init_dsc_normalization_wf(
         niu.Function(
             input_names=[
                 "cbf_file",
-                "brain_mask_file",
                 "derivatives_dir",
                 "subject_id",
                 "session_id",
@@ -1017,12 +1013,10 @@ def init_dsc_normalization_wf(
     workflow.connect([
         (inputnode, normalize, [
             ("cbv_file", "cbv_file"),
-            ("brain_mask_file", "brain_mask_file"),
             ("nawm_mask_file", "nawm_mask_file"),
         ]),
         (inputnode, normalize_cbf, [
             ("cbf_file", "cbf_file"),
-            ("brain_mask_file", "brain_mask_file"),
             ("nawm_mask_file", "nawm_mask_file"),
         ]),
         (normalize, outputnode, [
@@ -2513,9 +2507,7 @@ def init_dsc_preproc_wf(
             ]),
         ])
 
-    # Feed the normalization sub-workflow (rel-CBV / rel-CBF + masks).
-    # The NAWM (preferred) and brain (fallback) masks fan out to both the CBV
-    # and CBF normalizers inside the sub-workflow.
+    # Feed relative perfusion maps and the NAWM reference to normalization.
     workflow.connect([
         (deconvolution_wf, normalization_wf, [
             ("outputnode.out_rel_cbv_auc", "inputnode.cbv_file"),
@@ -2523,9 +2515,6 @@ def init_dsc_preproc_wf(
         ]),
         (transform_nawm, normalization_wf, [
             ("nawm_mask_dsc_file", "inputnode.nawm_mask_file"),
-        ]),
-        (hdbet_dsc, normalization_wf, [
-            ("dsc_brain_mask_file", "inputnode.brain_mask_file"),
         ]),
     ])
 

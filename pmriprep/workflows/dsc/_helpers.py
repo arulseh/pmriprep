@@ -1158,7 +1158,13 @@ def _transform_structural_to_dsc(
     return out_file
 
 
-def _normalize_cbv(cbv_file, brain_mask_file, derivatives_dir, subject_id, session_id, nawm_mask_file=None):  # type: ignore[no-untyped-def]
+def _normalize_cbv(
+    cbv_file: str,
+    derivatives_dir: str,
+    subject_id: str,
+    session_id: str,
+    nawm_mask_file: str | None = None,
+) -> tuple[str, float | None]:
     """Normalize CBV to NAWM median.
 
     This is a Function node wrapper for CBV normalization.
@@ -1169,8 +1175,6 @@ def _normalize_cbv(cbv_file, brain_mask_file, derivatives_dir, subject_id, sessi
     ----------
     cbv_file : str
         Path to CBV map NIfTI.
-    brain_mask_file : str
-        Path to brain mask (unused, kept for interface compat).
     derivatives_dir : str
         Path to derivatives directory for auto-detection.
     subject_id : str
@@ -1225,7 +1229,13 @@ def _normalize_cbv(cbv_file, brain_mask_file, derivatives_dir, subject_id, sessi
     return str(output_path), norm_factor
 
 
-def _normalize_cbf(cbf_file, brain_mask_file, derivatives_dir, subject_id, session_id, nawm_mask_file=None):  # type: ignore[no-untyped-def]
+def _normalize_cbf(
+    cbf_file: str,
+    derivatives_dir: str,
+    subject_id: str,
+    session_id: str,
+    nawm_mask_file: str | None = None,
+) -> tuple[str, float | None]:
     """Normalize CBF to NAWM median (same method as CBV normalization).
 
     Returns ("", None) when NAWM mask is not available - normalization
@@ -1235,8 +1245,6 @@ def _normalize_cbf(cbf_file, brain_mask_file, derivatives_dir, subject_id, sessi
     ----------
     cbf_file : str
         Path to CBF map NIfTI.
-    brain_mask_file : str
-        Path to brain mask (unused, kept for interface compat).
     derivatives_dir : str
         Path to derivatives directory for auto-detection.
     subject_id : str
@@ -1342,7 +1350,7 @@ def _create_registration_filmstrip(
     return output_path
 
 
-def _extract_preload_class(qc_dict):  # type: ignore[no-untyped-def]
+def _extract_preload_class(qc_dict: dict[str, object] | None) -> str:
     """Extract preload classification from preload_correct QC dict.
 
     Parameters
@@ -1359,12 +1367,16 @@ def _extract_preload_class(qc_dict):  # type: ignore[no-untyped-def]
     """
     if not qc_dict:
         return "none"
-    return qc_dict.get("preload_classification", "none")  # type: ignore[no-any-return]
+    return str(qc_dict.get("preload_classification", "none"))
 
 
-def _generate_motion_qc_plot(  # type: ignore[no-untyped-def]
-    motion_params_file, tr, subject_id="", session_id="", motion_applied=True
-):
+def _generate_motion_qc_plot(
+    motion_params_file: str,
+    tr: float,
+    subject_id: str = "",
+    session_id: str = "",
+    motion_applied: bool = True,
+) -> tuple[str, dict[str, object]]:
     """Generate motion QC plot from motion parameters.
 
     Creates a three-panel figure showing raw motion parameters and
@@ -1414,7 +1426,15 @@ def _generate_motion_qc_plot(  # type: ignore[no-untyped-def]
     return str(out_path), motion_summary
 
 
-def _generate_dsc_preprocessing_qc(dsc_signal_file, brain_mask_file, baseline_frames, tr, te=None, subject_id='', session_id=''):  # type: ignore[no-untyped-def]
+def _generate_dsc_preprocessing_qc(
+    dsc_signal_file: str,
+    brain_mask_file: str,
+    baseline_frames: int,
+    tr: float,
+    te: float | None = None,
+    subject_id: str = "",
+    session_id: str = "",
+) -> tuple[str, dict[str, object]]:
     """Generate DSC preprocessing QC plot.
 
     Parameters
@@ -1464,7 +1484,17 @@ def _generate_dsc_preprocessing_qc(dsc_signal_file, brain_mask_file, baseline_fr
     return plot_path, stats
 
 
-def _generate_dsc_param_maps_qc(rel_cbf_file, rel_cbv_file, mtt_file, tmax_file, psr_file, ttp_file, brain_mask_file, subject_id='', session_id=''):  # type: ignore[no-untyped-def]
+def _generate_dsc_param_maps_qc(
+    rel_cbf_file: str,
+    rel_cbv_file: str,
+    mtt_file: str,
+    tmax_file: str,
+    psr_file: str,
+    ttp_file: str,
+    brain_mask_file: str,
+    subject_id: str = "",
+    session_id: str = "",
+) -> str:
     """Generate DSC parameter maps QC plot.
 
     Parameters
@@ -1521,7 +1551,20 @@ def _generate_dsc_param_maps_qc(rel_cbf_file, rel_cbv_file, mtt_file, tmax_file,
     return plot_path
 
 
-def _generate_dsc_leakage_qc(k2_map_file, auc_raw_file, auc_corr_file, auc_diff_file, brain_mask_file, concentration_file=None, corrected_concentration_file=None, psr_file=None, tr=1.5, subject_id='', session_id='', preload_qc=None):  # type: ignore[no-untyped-def]
+def _generate_dsc_leakage_qc(
+    k2_map_file: str,
+    auc_raw_file: str,
+    auc_corr_file: str,
+    auc_diff_file: str,
+    brain_mask_file: str,
+    concentration_file: str | None = None,
+    corrected_concentration_file: str | None = None,
+    psr_file: str | None = None,
+    tr: float = 1.5,
+    subject_id: str = "",
+    session_id: str = "",
+    preload_qc: dict[str, object] | None = None,
+) -> str:
     """Generate DSC leakage correction QC plot.
 
     Parameters
@@ -1587,10 +1630,14 @@ def _generate_dsc_leakage_qc(k2_map_file, auc_raw_file, auc_corr_file, auc_diff_
 
     # Extract method and kep_used from preload_qc dict
     method = "bsw"
-    kep_used = None
+    kep_used: float | None = None
     if preload_qc:
-        method = preload_qc.get("k2_method", "bsw")
-        kep_used = preload_qc.get("kep_used")
+        method_value = preload_qc.get("k2_method", "bsw")
+        if isinstance(method_value, str):
+            method = method_value
+        kep_value = preload_qc.get("kep_used")
+        if isinstance(kep_value, (int, float)):
+            kep_used = float(kep_value)
 
     plot_path = generate_dsc_leakage_qc_plot(
         k2_map=k2_data,
@@ -1697,11 +1744,11 @@ def _generate_dsc_fit_qc(
     return plot_path
 
 
-def _smooth_maps(  # type: ignore[no-untyped-def]
-    map_files,
-    brain_mask_file,
-    fwhm,
-):
+def _smooth_maps(
+    map_files: dict[str, str],
+    brain_mask_file: str,
+    fwhm: float,
+) -> dict[str, str]:
     """Apply Gaussian smoothing to a dict of maps.
 
     Uses normalized convolution for maps containing NaN to prevent edge
@@ -1732,7 +1779,7 @@ def _smooth_maps(  # type: ignore[no-untyped-def]
     logger = logging.getLogger("nipype.workflow")
 
     sigma = fwhm / 2.355
-    results = {}
+    results: dict[str, str] = {}
     for name, filepath in map_files.items():
         if not filepath or filepath in ("", "None"):
             continue
@@ -1791,7 +1838,19 @@ def _smooth_maps(  # type: ignore[no-untyped-def]
     return results
 
 
-def _merge_qc_metrics(motion_qc, preload_qc, aif_qc, deconv_qc, registration_qc, normalization_factor, motion_summary=None, aif_metrics=None, preprocessing_stats=None, aif_source='auto', registration_bbr=False):  # type: ignore[no-untyped-def]
+def _merge_qc_metrics(
+    motion_qc: dict[str, object] | None,
+    preload_qc: dict[str, object] | None,
+    aif_qc: dict[str, object] | None,
+    deconv_qc: dict[str, object] | None,
+    registration_qc: dict[str, object] | None,
+    normalization_factor: float | None,
+    motion_summary: dict[str, object] | None = None,
+    aif_metrics: dict[str, object] | None = None,
+    preprocessing_stats: dict[str, object] | None = None,
+    aif_source: str = "auto",
+    registration_bbr: bool = False,
+) -> dict[str, object]:
     """Merge all QC metrics into a single dictionary.
 
     Parameters
@@ -1844,7 +1903,7 @@ def _merge_qc_metrics(motion_qc, preload_qc, aif_qc, deconv_qc, registration_qc,
         aif_data = dict(aif_data) if aif_data else {}
         aif_data["aif_metrics"] = aif_metrics
 
-    merged = {
+    merged: dict[str, object] = {
         "preprocessing": preprocessing,
         "preload": preload_qc if preload_qc else {},
         "aif_detection": aif_data,
@@ -1859,7 +1918,13 @@ def _merge_qc_metrics(motion_qc, preload_qc, aif_qc, deconv_qc, registration_qc,
     return merged
 
 
-def _build_hemodynamic_dict(mtt, rel_cbf, rel_cbv, ncbf, ncbv):  # type: ignore[no-untyped-def]
+def _build_hemodynamic_dict(
+    mtt: str,
+    rel_cbf: str,
+    rel_cbv: str,
+    ncbf: str,
+    ncbv: str,
+) -> dict[str, str]:
     from pathlib import Path as _P
     d = {"mtt": mtt, "rel_cbf": rel_cbf, "rel_cbv": rel_cbv}
     for name, val in [
@@ -1870,5 +1935,5 @@ def _build_hemodynamic_dict(mtt, rel_cbf, rel_cbv, ncbf, ncbv):  # type: ignore[
     return d
 
 
-def _build_auc_corr_dict(rel_auc_corr):  # type: ignore[no-untyped-def]
+def _build_auc_corr_dict(rel_auc_corr: str) -> dict[str, str]:
     return {"rel_auc_corr": rel_auc_corr}

@@ -660,7 +660,6 @@ class TestNormalizeHelpersReturnEmptyString:
 
         assert _normalize_cbv(
             cbv_file="/nonexistent/cbv.nii.gz",
-            brain_mask_file=None,
             derivatives_dir="/tmp",
             subject_id="0081",
             session_id="0001",
@@ -672,7 +671,6 @@ class TestNormalizeHelpersReturnEmptyString:
 
         assert _normalize_cbf(
             cbf_file="/nonexistent/cbf.nii.gz",
-            brain_mask_file=None,
             derivatives_dir="/tmp",
             subject_id="0081",
             session_id="0001",
