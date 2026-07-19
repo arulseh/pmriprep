@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from pmriprep.interfaces.dce_compute import (
+    _accumulate_mcmc_diagnostics,
     _compute_vp_prior_departure,
     _is_degenerate_dce_fit,
     _scatter_degenerate_dce_fit,
@@ -242,3 +243,32 @@ def test_vp_prior_departure_skips_inapplicable_paths(
     assert _compute_vp_prior_departure(
         mode, inference, model, prior, 0.06, 0.25,
     ) is None
+
+
+def test_accumulate_mcmc_diagnostics_groups_parameters_and_counts_voxel() -> None:
+    """One non-empty R-hat record counts once and groups R-hat/ESS by parameter."""
+    rhat: dict[str, list[float]] = {"Ktrans": [1.01]}
+    ess: dict[str, list[float]] = {}
+    increment = _accumulate_mcmc_diagnostics(
+        {
+            "rhat": {"Ktrans": 1.02, "vp": 1.03},
+            "ess": {"Ktrans": 250.0, "vp": 180.0},
+        },
+        rhat,
+        ess,
+    )
+    assert increment == 1
+    assert rhat == {"Ktrans": [1.01, 1.02], "vp": [1.03]}
+    assert ess == {"Ktrans": [250.0], "vp": [180.0]}
+
+
+def test_accumulate_mcmc_diagnostics_ignores_ess_without_rhat() -> None:
+    """An empty R-hat record remains a non-MCMC voxel even if ESS is present."""
+    rhat: dict[str, list[float]] = {}
+    ess: dict[str, list[float]] = {}
+    increment = _accumulate_mcmc_diagnostics(
+        {"rhat": {}, "ess": {"Ktrans": 250.0}}, rhat, ess,
+    )
+    assert increment == 0
+    assert rhat == {}
+    assert ess == {}

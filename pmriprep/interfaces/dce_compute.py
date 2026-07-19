@@ -191,6 +191,22 @@ def _compute_vp_prior_departure(
     return abs(fitted_vp - voxel_prior) / prior_sigma
 
 
+def _accumulate_mcmc_diagnostics(
+    result: dict[str, Any],
+    rhat_lists: dict[str, list[float]],
+    ess_lists: dict[str, list[float]],
+) -> int:
+    """Accumulate one voxel's MCMC diagnostics and return its count increment."""
+    voxel_rhat = result.get("rhat", {})
+    if not voxel_rhat:
+        return 0
+    for parameter, value in voxel_rhat.items():
+        rhat_lists.setdefault(parameter, []).append(value)
+    for parameter, value in result.get("ess", {}).items():
+        ess_lists.setdefault(parameter, []).append(value)
+    return 1
+
+
 def _validate_dce_time_axis(
     time_points: npt.ArrayLike,
     n_dce_frames: int,
@@ -2666,15 +2682,11 @@ class ComputeDCEMaps(BaseInterface):
             else:
                 n_failed += 1
 
-            # Accumulate MCMC diagnostics (rhat/ess are empty for non-MCMC)
-            voxel_rhat = res.get("rhat", {})
-            voxel_ess = res.get("ess", {})
-            if voxel_rhat:
-                n_mcmc_voxels += 1
-                for param, val in voxel_rhat.items():
-                    mcmc_rhat_lists.setdefault(param, []).append(val)
-                for param, val in voxel_ess.items():
-                    mcmc_ess_lists.setdefault(param, []).append(val)
+            n_mcmc_voxels += _accumulate_mcmc_diagnostics(
+                res,
+                mcmc_rhat_lists,
+                mcmc_ess_lists,
+            )
 
         # Compile QC metrics
         qc_metrics["n_converged"] = n_converged
