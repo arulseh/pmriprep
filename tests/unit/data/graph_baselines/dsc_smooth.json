@@ -20,12 +20,6 @@
     ],
     [
       "aif_detect",
-      "out_aif_coord",
-      "compute_maps",
-      "aif_best_coord"
-    ],
-    [
-      "aif_detect",
       "out_aif_curve",
       "aif_qc_plot",
       "aif_curve_file"
@@ -922,12 +916,6 @@
       "inputnode",
       "field_strength",
       "aif_detect",
-      "field_strength"
-    ],
-    [
-      "inputnode",
-      "field_strength",
-      "compute_maps",
       "field_strength"
     ],
     [
@@ -2215,7 +2203,6 @@
       "cpi_infer_cpt": true,
       "cpi_infer_delay": false,
       "fallback_baseline_frames": 5,
-      "field_strength": 3.0,
       "first_pass_cbv": false,
       "inference": "vi",
       "mcmc_samples": 500,

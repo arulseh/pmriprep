@@ -742,14 +742,14 @@ def init_dsc_deconvolution_wf(
     ------
     concentration_file, signal_file, raw_concentration_file
         Leakage-corrected and raw concentration / signal time series.
-    aif_file, measured_aif_file, aif_mask_file, aif_best_coord, aif_detection_level, baseline_frames
+    aif_file, measured_aif_file, aif_mask_file, aif_detection_level, baseline_frames
         Arterial input function and detection provenance.
     k2_map_input_file, preload_classification
         Preload-detection leakage inputs.
     brain_mask_file, enhancing_mask_file, nawm_mask_file
         DSC-space masks (brain, enhancing tumor, NAWM for rTTP normalization).
-    tr, te, field_strength, fd_values
-        Acquisition parameters and framewise displacement.
+    tr, te, fd_values
+        Acquisition timing and framewise displacement.
 
     Outputs
     -------
@@ -781,14 +781,12 @@ def init_dsc_deconvolution_wf(
                 "aif_file",
                 "measured_aif_file",
                 "aif_mask_file",
-                "aif_best_coord",
                 "aif_detection_level",
                 "baseline_frames",
                 "brain_mask_file",
                 "enhancing_mask_file",
                 "tr",
                 "te",
-                "field_strength",
                 "fd_values",
                 "signal_file",
                 "raw_concentration_file",
@@ -855,14 +853,12 @@ def init_dsc_deconvolution_wf(
             ("aif_file", "aif_file"),
             ("measured_aif_file", "measured_aif_file"),
             ("aif_mask_file", "aif_mask_file"),
-            ("aif_best_coord", "aif_best_coord"),
             ("aif_detection_level", "aif_detection_level"),
             ("baseline_frames", "baseline_frames"),
             ("brain_mask_file", "brain_mask_file"),
             ("enhancing_mask_file", "enhancing_mask_file"),
             ("tr", "tr"),
             ("te", "te"),
-            ("field_strength", "field_strength"),
             ("fd_values", "fd_values"),
             ("signal_file", "signal_file"),
             ("raw_concentration_file", "raw_concentration_file"),
@@ -2406,7 +2402,6 @@ def init_dsc_preproc_wf(
             ("outputnode.out_aif_curve", "inputnode.aif_file"),
             ("outputnode.out_measured_aif_curve", "inputnode.measured_aif_file"),
             ("outputnode.out_aif_mask", "inputnode.aif_mask_file"),
-            ("outputnode.out_aif_coord", "inputnode.aif_best_coord"),
             ("outputnode.detection_level", "inputnode.aif_detection_level"),
             ("outputnode.aif_baseline_frames", "inputnode.baseline_frames"),
         ]),
@@ -2419,7 +2414,6 @@ def init_dsc_preproc_wf(
         (inputnode, deconvolution_wf, [
             ("tr", "inputnode.tr"),
             ("te", "inputnode.te"),
-            ("field_strength", "inputnode.field_strength"),
         ]),
         (motion_wf, deconvolution_wf, [
             ("outputnode.fd_values", "inputnode.fd_values"),

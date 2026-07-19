@@ -363,16 +363,6 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
         mandatory=False,
         desc="3D AIF mask NIfTI (for re-extracting AIF after S0 update)",
     )
-    aif_best_coord = traits.List(
-        traits.Int,
-        mandatory=False,
-        desc="Best AIF voxel coordinate [x, y, z] for re-extraction",
-    )
-    field_strength = traits.Float(
-        3.0,
-        usedefault=True,
-        desc="Magnetic field strength in Tesla (for r2_star auto-lookup)",
-    )
     aif_detection_level = traits.Str(
         "atlas",
         usedefault=True,

@@ -133,7 +133,7 @@ class TestMeasuredAIFAlwaysProduced:
         assert "out_measured_aif_curve" in spec.traits()
 
     def test_output_spec_still_has_gamma_aif(self) -> None:
-        """Gamma AIF output kept for QC overlay and future use."""
+        """Gamma AIF output supports the QC overlay."""
         from pmriprep.interfaces.dsc_aif import AIFDetectionOutputSpec
         spec = AIFDetectionOutputSpec()
         assert "out_gamma_aif_curve" in spec.traits()
@@ -153,6 +153,8 @@ class TestMeasuredAIFAlwaysProduced:
         spec = ComputeDSCMapsInputSpec()
         assert "measured_aif_file" in spec.traits()
         assert "gamma_aif_file" not in spec.traits()
+        assert "aif_best_coord" not in spec.traits()
+        assert "field_strength" not in spec.traits()
 
     def test_compute_maps_has_auc_cbv_output(self) -> None:
         from pmriprep.interfaces.dsc_compute import ComputeDSCMapsOutputSpec
