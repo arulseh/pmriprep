@@ -137,6 +137,15 @@ class _SingleBestAIFResult(NamedTuple):
     candidate: _AIFCandidate
 
 
+class _TierCandidateResult(NamedTuple):
+    """Candidate survivors and diagnostics produced by one cascade tier."""
+
+    candidates: list[_AIFCandidate]
+    n_available: int
+    filter_metadata: dict[str, Any]
+    postfilter_diagnostics: Optional[dict[str, Any]]
+
+
 class _DSCAIFDetectionContext(NamedTuple):
     """Validated image data, acquisition state, and detection parameters."""
 
@@ -2729,6 +2738,81 @@ class AIFDetection(BaseInterface):
 
         return None
 
+    def _prepare_tier_candidates(
+        self,
+        context: _DSCAIFDetectionContext,
+        criteria: str,
+        roi: Optional[npt.NDArray[Any]],
+        is_atlas: bool,
+        n_candidates: int,
+        baseline_frames: int,
+        tissue_ttp: float,
+    ) -> _TierCandidateResult:
+        """Run candidate preparation and filtering for one cascade tier."""
+        search_mask = self._prepare_search_mask(
+            context.brain_mask,
+            roi,
+            context.lesion_mask,
+        )
+        candidate_voxels, peak_map = self._find_aif_candidate_voxels(
+            context.concentration,
+            search_mask,
+            baseline_frames,
+            skip_sss=is_atlas,
+        )
+        if candidate_voxels.shape[0] == 0:
+            return _TierCandidateResult([], 0, {}, None)
+
+        candidates, n_available = self._score_and_select_candidates(
+            candidate_voxels,
+            context.concentration,
+            context.signal,
+            peak_map,
+            context.brain_mask,
+            context.tr,
+            baseline_frames,
+            criteria,
+            tissue_ttp,
+            atlas_mask=context.atlas_mask if roi is None else None,
+        )
+        if not candidates:
+            return _TierCandidateResult([], n_available, {}, None)
+
+        candidates, filter_metadata = self._apply_post_scoring_filters(
+            candidates,
+            context.lesion_mask,
+            context.affine,
+            context.voxel_sizes,
+            lesion_min_distance_mm=context.lesion_distance,
+            enhancing_mask=context.enhancing_mask,
+        )
+        if not candidates:
+            return _TierCandidateResult([], n_available, filter_metadata, None)
+
+        candidates, postfilter_diagnostics = self._apply_postscore_aif_filters(
+            candidates,
+            tr=context.tr,
+        )
+        if not candidates:
+            return _TierCandidateResult(
+                [],
+                n_available,
+                filter_metadata,
+                postfilter_diagnostics,
+            )
+
+        candidates = self._ensure_bilateral_balance(
+            candidates,
+            context.affine,
+            n_candidates,
+        )
+        return _TierCandidateResult(
+            candidates,
+            n_available,
+            filter_metadata,
+            postfilter_diagnostics,
+        )
+
     def _try_single_best_fallback(
         self,
         candidates: Sequence[_AIFCandidate],
@@ -2827,8 +2911,6 @@ class AIFDetection(BaseInterface):
         atlas_mask = context.atlas_mask
         atlas_is_mra = context.atlas_is_mra
         full_atlas_mask = context.full_atlas_mask
-        lesion_mask = context.lesion_mask
-        enhancing_mask = context.enhancing_mask
         signal_data = context.signal
         aif_method = context.aif_method
         initial_criteria = context.initial_criteria
@@ -2836,11 +2918,9 @@ class AIFDetection(BaseInterface):
         baseline_frames = context.baseline_frames
         gamma_fit_mode = context.gamma_fit_mode
         disable_fallback = context.disable_fallback
-        lesion_distance = context.lesion_distance
         n_timepoints = context.n_timepoints
         field_strength = context.field_strength
         synth_effective_dose = context.synthetic_effective_dose
-        voxel_sizes = context.voxel_sizes
         tr = context.tr
 
         # --- Auto-detect actual bolus arrival for AIF first-pass window ---
@@ -2944,46 +3024,23 @@ class AIFDetection(BaseInterface):
                     math.ceil(frac * n_candidates),
                 )
 
-                search = self._prepare_search_mask(
-                    brain_mask, roi, lesion_mask
-                )
-                cands, peak_map = self._find_aif_candidate_voxels(
-                    conc_data, search, aif_baseline_frames,
-                    skip_sss=is_atlas,
-                )
-                if cands.shape[0] == 0:
-                    continue
-                scored, n_avail = self._score_and_select_candidates(
-                    cands, conc_data, signal_data, peak_map,
-                    brain_mask, tr, aif_baseline_frames, crit,
+                tier_candidates = self._prepare_tier_candidates(
+                    context,
+                    crit,
+                    roi,
+                    is_atlas,
+                    level_n_candidates,
+                    aif_baseline_frames,
                     tissue_ttp,
-                    atlas_mask=atlas_mask if roi is None else None,
                 )
+                scored = tier_candidates.candidates
+                f_meta = tier_candidates.filter_metadata
+                if tier_candidates.postfilter_diagnostics is not None:
+                    postfilter_diags_per_tier[level_name] = (
+                        tier_candidates.postfilter_diagnostics
+                    )
                 if not scored:
                     continue
-
-                scored, f_meta = self._apply_post_scoring_filters(
-                    scored, lesion_mask, affine, voxel_sizes,
-                    lesion_min_distance_mm=lesion_distance,
-                    enhancing_mask=enhancing_mask,
-                )
-                if not scored:
-                    continue
-
-                # Post-score kinetic-coherence filters: peak-spread
-                # (TR-scaled max from 20th-percentile peak time) and
-                # tail/peak ≤ threshold. TTP causality is enforced by
-                # the scorer above.
-                scored, postfilter_diag = self._apply_postscore_aif_filters(
-                    scored, tr=tr,
-                )
-                postfilter_diags_per_tier[level_name] = postfilter_diag
-                if not scored:
-                    continue
-
-                scored = self._ensure_bilateral_balance(
-                    scored, affine, level_n_candidates,
-                )
 
                 if cascade_initial_level is None:
                     cascade_initial_level = level_name
