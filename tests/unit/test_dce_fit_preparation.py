@@ -169,3 +169,45 @@ def test_prepare_motion_weighting_noops_without_fd() -> None:
 
     assert result.weights is None
     assert result.qc == {"applied": False}
+
+
+def test_initialize_parameter_maps_preserves_auto_and_uncertainty_state() -> None:
+    """Auto fitting uses NaN PK sentinels and allocates optional fit state."""
+    prepared = _empty_preparation()._replace(
+        is_auto=True,
+        model_name="2cxm",
+        candidate_names=["patlak", "extended_tofts", "2cxm"],
+        save_fitted_curves=True,
+    )
+    interface = ComputeDCEMaps(aif_uncertainty_inflation_factor=2.0)
+
+    maps = interface._initialize_parameter_maps(
+        prepared, prepared.model_name, prepared.candidate_names,
+    )
+
+    assert np.isnan(maps.ktrans).all()
+    assert np.isnan(maps.ve).all()
+    assert np.isnan(maps.vp).all()
+    assert np.isnan(maps.kep).all()
+    assert maps.fitted_curves is not None
+    assert maps.fitted_curves.shape == prepared.concentration.shape
+    assert maps.save_2cxm is True
+    assert maps.quality_flag.dtype == np.int8
+    assert maps.model_selection.dtype == np.int8
+    assert maps.delta_bic.dtype == np.float32
+    assert any(factor > 1.0 for factor in maps.sigma_factor.values())
+
+
+def test_initialize_parameter_maps_fixed_model_uses_zero_pk_sentinels() -> None:
+    """Explicit fixed models preserve zero-initialized unfitted PK voxels."""
+    prepared = _empty_preparation()._replace(model_name="tofts", is_auto=False)
+
+    maps = ComputeDCEMaps()._initialize_parameter_maps(prepared, "tofts", [])
+
+    assert not maps.ktrans.any()
+    assert not maps.ve.any()
+    assert not maps.vp.any()
+    assert not maps.kep.any()
+    assert maps.fitted_curves is None
+    assert maps.save_2cxm is False
+    assert set(maps.sigma_factor.values()) == {1.0}

@@ -195,6 +195,33 @@ class _DCEMotionWeighting(NamedTuple):
     qc: dict[str, Any]
 
 
+class _DCEParameterMaps(NamedTuple):
+    """Allocated mutable PK, uncertainty, categorical, and fit-curve maps."""
+
+    ktrans: npt.NDArray[Any]
+    ve: npt.NDArray[Any]
+    vp: npt.NDArray[Any]
+    kep: npt.NDArray[Any]
+    r_squared: npt.NDArray[Any]
+    fp: npt.NDArray[Any]
+    ps: npt.NDArray[Any]
+    extraction_fraction: npt.NDArray[Any]
+    quality_flag: npt.NDArray[Any]
+    quality_flag_codes: dict[str, int]
+    model_selection: npt.NDArray[Any]
+    model_selection_codes: dict[str, int]
+    delta_bic: npt.NDArray[Any]
+    ktrans_std: npt.NDArray[Any]
+    ve_std: npt.NDArray[Any]
+    vp_std: npt.NDArray[Any]
+    fp_std: npt.NDArray[Any]
+    ps_std: npt.NDArray[Any]
+    sigma_factor: dict[str, float]
+    vp_at_bound: npt.NDArray[Any]
+    fitted_curves: Optional[npt.NDArray[Any]]
+    save_2cxm: bool
+
+
 # Import-time pickle-safety assertion (S1 from code review round 3):
 # BatchedChunkArgs MUST be defined at module top-level for pickling across
 # ProcessPoolExecutor boundaries. A nested definition (e.g. inside a
@@ -2112,6 +2139,69 @@ class ComputeDCEMaps(BaseInterface):
         )
         return _DCEMotionWeighting(weights, qc)
 
+    def _initialize_parameter_maps(
+        self,
+        prepared: _DCEFitPreparation,
+        model_name: str,
+        candidate_names: list[str],
+    ) -> _DCEParameterMaps:
+        """Allocate mutable output state before pharmacokinetic fitting."""
+        from pmriprep.utils.dce_constants import DCE_AIF_G6_SIGMA_INFLATION
+
+        spatial_shape = prepared.concentration.shape[:3]
+        fill_value = np.nan if prepared.is_auto else 0.0
+        quality_flag_codes = {
+            "good": 1,
+            "poor_convergence": 2,
+            "high_uncertainty": 3,
+            "unreliable_high_kep": 4,
+        }
+        model_selection_codes = {
+            "patlak": 1,
+            "tofts": 2,
+            "extended_tofts": 3,
+            "2cxm": 4,
+        }
+        base_inflation = float(self.inputs.aif_uncertainty_inflation_factor)
+        if base_inflation <= 1.0 + 1e-9:
+            sigma_factor = {
+                parameter: 1.0 for parameter in DCE_AIF_G6_SIGMA_INFLATION
+            }
+        else:
+            sigma_factor = {
+                parameter: 1.0 + (factor - 1.0) * (base_inflation - 1.0)
+                for parameter, factor in DCE_AIF_G6_SIGMA_INFLATION.items()
+            }
+        fitted_curves = (
+            np.zeros(prepared.concentration.shape, dtype=np.float32)
+            if prepared.save_fitted_curves
+            else None
+        )
+        return _DCEParameterMaps(
+            np.full(spatial_shape, fill_value, dtype=np.float64),
+            np.full(spatial_shape, fill_value, dtype=np.float64),
+            np.full(spatial_shape, fill_value, dtype=np.float64),
+            np.full(spatial_shape, fill_value, dtype=np.float64),
+            np.zeros(spatial_shape, dtype=np.float64),
+            np.zeros(spatial_shape, dtype=np.float64),
+            np.zeros(spatial_shape, dtype=np.float64),
+            np.zeros(spatial_shape, dtype=np.float64),
+            np.zeros(spatial_shape, dtype=np.int8),
+            quality_flag_codes,
+            np.zeros(spatial_shape, dtype=np.int8),
+            model_selection_codes,
+            np.full(spatial_shape, np.nan, dtype=np.float32),
+            np.zeros(spatial_shape, dtype=np.float64),
+            np.zeros(spatial_shape, dtype=np.float64),
+            np.zeros(spatial_shape, dtype=np.float64),
+            np.zeros(spatial_shape, dtype=np.float64),
+            np.zeros(spatial_shape, dtype=np.float64),
+            sigma_factor,
+            np.zeros(spatial_shape, dtype=np.float32),
+            fitted_curves,
+            (prepared.is_auto and "2cxm" in candidate_names) or model_name == "2cxm",
+        )
+
     def _run_interface(self, runtime: Any) -> Any:
         """Execute DCE map computation."""
         import nibabel as nib  # type: ignore[import-untyped]
@@ -2163,82 +2253,31 @@ class ComputeDCEMaps(BaseInterface):
         wash_out_slope = model_free.wash_out_slope
         bat = model_free.bolus_arrival_time
         curve_type = model_free.curve_type
-
-        # =====================================================================
-        # Initialize output arrays
-        # =====================================================================
-        fill_val = np.nan if is_auto else 0.0
-        ktrans = np.full(spatial_shape, fill_val, dtype=np.float64)
-        ve = np.full(spatial_shape, fill_val, dtype=np.float64)
-        vp = np.full(spatial_shape, fill_val, dtype=np.float64)
-        kep = np.full(spatial_shape, fill_val, dtype=np.float64)
-        r2_map = np.zeros(spatial_shape, dtype=np.float64)
-
-        # 2CXM-specific (only if 2CXM is in candidates or explicitly selected)
-        save_2cxm = (is_auto and "2cxm" in candidate_names) or model_name == "2cxm"
-        fp_map = np.zeros(spatial_shape, dtype=np.float64)
-        ps_map = np.zeros(spatial_shape, dtype=np.float64)
-        e_map = np.zeros(spatial_shape, dtype=np.float64)
-
-        # Quality flag map: 0=unfitted, 1=good, 2=poor_convergence,
-        # 3=high_uncertainty, 4=unreliable_high_kep (non-identifiable kep corner)
-        quality_flag_map = np.zeros(spatial_shape, dtype=np.int8)
-        _QUALITY_FLAG_CODES = {
-            "good": 1,
-            "poor_convergence": 2,
-            "high_uncertainty": 3,
-            "unreliable_high_kep": 4,
-        }
-
-        # Model selection map: complexity-ordered encoding
-        _MODEL_SELECTION_CODES: dict[str, int] = {
-            "patlak": 1,          # 2 params
-            "tofts": 2,           # 2 params
-            "extended_tofts": 3,  # 3 params
-            "2cxm": 4,            # 4 params
-        }
-        model_selection_map = np.zeros(spatial_shape, dtype=np.int8)
-
-        # Delta-BIC confidence map (auto mode only)
-        delta_bic_map = np.full(spatial_shape, np.nan, dtype=np.float32)
-
-        # Uncertainty maps
-        ktrans_std = np.zeros(spatial_shape, dtype=np.float64)
-        ve_std = np.zeros(spatial_shape, dtype=np.float64)
-        vp_std = np.zeros(spatial_shape, dtype=np.float64)
-        fp_std = np.zeros(spatial_shape, dtype=np.float64)
-        ps_std = np.zeros(spatial_shape, dtype=np.float64)
-
-        # Per-parameter posterior sigma inflation when upstream AIF is
-        # G6-admitted (reduced confidence). Base inflation 1.0 (standard
-        # AIF) yields all 1.0x regardless of map; base 2.0 propagates
-        # the per-parameter Tofts/2CXM sensitivity hierarchy from
-        # DCE_AIF_G6_SIGMA_INFLATION.
-        from pmriprep.utils.dce_constants import DCE_AIF_G6_SIGMA_INFLATION
-        _base_inflation = float(self.inputs.aif_uncertainty_inflation_factor)
-        if _base_inflation <= 1.0 + 1e-9:
-            _sigma_factor: dict[str, float] = {
-                k: 1.0 for k in DCE_AIF_G6_SIGMA_INFLATION
-            }
-        else:
-            _sigma_factor = {
-                k: 1.0 + (v - 1.0) * (_base_inflation - 1.0)
-                for k, v in DCE_AIF_G6_SIGMA_INFLATION.items()
-            }
-
-        # Per-voxel indicator that vp ended at a bound in the SOFT NLLS
-        # active-set path. Populated only by batched NLLS SOFT; 0 elsewhere
-        # (SKIP / Bayesian fits). Emitted as a NIfTI + whole-brain
-        # scalar in constraint_qc; downstream dce_pk_maps_qc stratifies
-        # over ROI masks into
-        # qc_metrics.pk_modeling.vp_at_bound_fractions.{whole_brain,
-        # enhancing, tumor_core, nawm}.
-        vp_at_bound_map = np.zeros(spatial_shape, dtype=np.float32)
-
-        # Fitted curves
-        fitted_curves: Optional[npt.NDArray[Any]] = None
-        if save_fitted_curves:
-            fitted_curves = np.zeros(conc_data.shape, dtype=np.float32)
+        parameter_maps = self._initialize_parameter_maps(
+            prepared, model_name, candidate_names,
+        )
+        ktrans = parameter_maps.ktrans
+        ve = parameter_maps.ve
+        vp = parameter_maps.vp
+        kep = parameter_maps.kep
+        r2_map = parameter_maps.r_squared
+        fp_map = parameter_maps.fp
+        ps_map = parameter_maps.ps
+        e_map = parameter_maps.extraction_fraction
+        quality_flag_map = parameter_maps.quality_flag
+        _QUALITY_FLAG_CODES = parameter_maps.quality_flag_codes
+        model_selection_map = parameter_maps.model_selection
+        _MODEL_SELECTION_CODES = parameter_maps.model_selection_codes
+        delta_bic_map = parameter_maps.delta_bic
+        ktrans_std = parameter_maps.ktrans_std
+        ve_std = parameter_maps.ve_std
+        vp_std = parameter_maps.vp_std
+        fp_std = parameter_maps.fp_std
+        ps_std = parameter_maps.ps_std
+        _sigma_factor = parameter_maps.sigma_factor
+        vp_at_bound_map = parameter_maps.vp_at_bound
+        fitted_curves = parameter_maps.fitted_curves
+        save_2cxm = parameter_maps.save_2cxm
 
         # Get voxel coordinates to fit
         mask_coords = np.where(fitting_mask)
