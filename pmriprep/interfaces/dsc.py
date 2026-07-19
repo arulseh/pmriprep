@@ -44,13 +44,6 @@ class MotionCorrectionInputSpec(CommandLineInputSpec):
         genfile=True,
         desc="Output motion parameters file (.par)",
     )
-    ref_vol = traits.Either(
-        traits.Int,
-        traits.Enum("mean", "median", "first"),
-        default="mean",
-        usedefault=True,
-        desc="Reference volume: int for volume index, 'mean', 'median', or 'first'",
-    )
     motion_thresh = traits.Float(
         0.5,
         usedefault=True,
@@ -88,10 +81,11 @@ class MotionCorrectionInputSpec(CommandLineInputSpec):
         usedefault=True,
         desc="Number of search stages (default: 3, matching MCFLIRT default)",
     )
-    pre_bolus_frames = traits.Int(
-        5,
+    baseline_frames = traits.Range(
+        low=1,
+        value=5,
         usedefault=True,
-        desc="Number of pre-bolus frames for reference volume computation (default: 5)",
+        desc="Number of pre-bolus frames for the motion reference mean",
     )
 
 
@@ -122,8 +116,8 @@ class MotionCorrection(CommandLine):
     ----------
     in_file : str
         Input 4D DSC time series
-    ref_vol : int or str
-        Reference volume: integer index, 'mean', 'median', or 'first' (default: 'mean')
+    baseline_frames : int
+        Number of pre-bolus frames for the motion reference mean.
     motion_thresh : float
         FD threshold (mm) for flagging outlier volumes (default: 0.5mm)
     head_radius : float
@@ -214,15 +208,12 @@ class MotionCorrection(CommandLine):
         import tempfile
 
         in_file = str(self.inputs.in_file)
-        pre_bolus_frames = int(self.inputs.pre_bolus_frames)
+        baseline_frames = int(self.inputs.baseline_frames)
 
         img = nib.load(in_file)
         data = img.get_fdata()  # type: ignore[attr-defined]
         n_timepoints = data.shape[-1]
-        # Use first 5 volumes for reference (fixed),
-        # regardless of configured pre_bolus_frames.
-        n_frames = min(5, n_timepoints)
-        n_frames = max(1, n_frames)
+        n_frames = min(max(1, baseline_frames), n_timepoints)
 
         pre_bolus_mean = np.mean(data[..., :n_frames], axis=-1)
         fd, ref_path = tempfile.mkstemp(

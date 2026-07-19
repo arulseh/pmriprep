@@ -337,8 +337,8 @@ def init_dsc_motion_wf(
     # Node 1: Motion Correction
     motion_correct = pe.Node(
         MotionCorrection(
-            ref_vol="mean",
             motion_thresh=motion_thresh,
+            baseline_frames=baseline_frames,
         ),
         name="motion_correct",
         mem_gb=mem_gb,

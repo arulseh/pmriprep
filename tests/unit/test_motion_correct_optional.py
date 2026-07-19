@@ -1,9 +1,4 @@
-"""Tests for the optional motion-correction feature (``motion_correct`` knob).
-
-Covers the config surface, the DSC workflow build-time branch, the confounds
-provenance key, the residual-motion QC annotation, and the elevated-residual-FD
-recommendation (physics condition B). See ``docs`` / plan for rationale.
-"""
+"""Tests for configurable perfusion motion correction and its provenance."""
 from __future__ import annotations
 
 import json
@@ -121,6 +116,35 @@ class TestDSCMotionBranch:
     def test_off_adds_reorient_mean_node(self) -> None:
         names = {n.name for n in self._wf(False)._get_all_nodes()}
         assert "reorient_mean" in names
+
+    def test_baseline_frames_reaches_motion_interface(self) -> None:
+        wf = self._wf(True)
+        node = next(n for n in wf._get_all_nodes() if n.name == "motion_correct")
+        assert node.inputs.baseline_frames == 5
+        assert not hasattr(node.inputs, "ref_vol")
+
+
+class TestDSCMotionReference:
+    """Tests for the DSC motion-reference contract."""
+
+    def test_reference_mean_uses_configured_baseline(
+        self, tmp_path: Path, monkeypatch,
+    ) -> None:
+        import nibabel as nib
+
+        from pmriprep.interfaces.dsc import MotionCorrection
+
+        data = np.broadcast_to(
+            np.arange(1, 7, dtype=np.float32), (2, 2, 2, 6),
+        ).copy()
+        in_file = tmp_path / "dsc.nii.gz"
+        nib.save(nib.Nifti1Image(data, np.eye(4)), in_file)
+        monkeypatch.chdir(tmp_path)
+
+        interface = MotionCorrection(in_file=str(in_file), baseline_frames=3)
+        reference = nib.load(interface._compute_pre_bolus_mean()).get_fdata()
+
+        np.testing.assert_allclose(reference, 2.0)
 
 
 # ---------------------------------------------------------------------------

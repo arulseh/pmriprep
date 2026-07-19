@@ -2159,12 +2159,11 @@
       "registration_bbr": false
     },
     "motion_correct": {
+      "baseline_frames": 5,
       "cost": "normcorr",
       "head_radius": 50.0,
       "interpolation": "trilinear",
       "motion_thresh": 0.5,
-      "pre_bolus_frames": 5,
-      "ref_vol": "mean",
       "sinc_width": 7,
       "stages": 3
     },
