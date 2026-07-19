@@ -97,18 +97,16 @@ PMRIPrep is not yet published on PyPI. A source installation requires FSL and AN
 
 ## System Requirements
 
-The pipeline has no strict hardware minimums and will run on a single core. Recommended minimums for practical use:
+Resource use depends on image dimensions, number of time points, enabled pipelines,
+inference method, and segmentation tools. No universal RAM, disk, or runtime minimum
+has been validated. Run one representative subject first, monitor peak memory and work
+directory size, and size batch jobs from that measurement. The work directory can be
+substantially larger than the final derivatives and should use local scratch storage
+when available.
 
-| Resource | Recommended |
-|----------|-------------|
-| CPU | 4+ cores |
-| RAM | 8+ GB |
-| Disk (working directory) | 2 GB per subject |
-| GPU | Optional |
-
-- Runtime scales with `--nprocs`. A typical subject completes in ~12 minutes on 16 cores.
+- Runtime and memory concurrency scale with `--nprocs` and `--omp-nthreads`.
 - GPU is used only for brain extraction (HD-BET) and tumor segmentation (HD-GLIO). Without a GPU, HD-BET falls back to CPU and tumor segmentation is skipped.
-- Working directory (`-w`) holds intermediate files and can be removed after successful completion.
+- Keep the working directory (`-w`) until processing and report generation complete; it supports inspection and reruns. It can be removed after outputs have been verified.
 
 ## Quick Start
 
@@ -116,6 +114,33 @@ The pipeline has no strict hardware minimums and will run on a single core. Reco
 pmriprep /path/to/bids /path/to/output participant \
     --participant-label 01 02 03
 ```
+
+## Input Requirements
+
+PMRIPrep discovers images by BIDS entities. A normal run requires a BIDS
+`dataset_description.json` and at least one T1w image (pre-contrast preferred;
+post-contrast-only processing is supported). Perfusion pipelines run when their
+corresponding 4D image is present, conventionally under `perf/` as `*_dsc.nii.gz`
+or `*_dce.nii.gz`.
+
+Each DSC or DCE NIfTI requires a matching JSON sidecar. Missing required fields are
+fatal because no acquisition-independent numerical default exists:
+
+| Pipeline | Required sidecar fields |
+|----------|-------------------------|
+| DSC | `EchoTime`, volume `RepetitionTime`, `MagneticFieldStrength` |
+| DCE | `FlipAngle`, volume `RepetitionTime`, `MagneticFieldStrength`; 3D acquisitions with a long volume TR also require pulse `RepetitionTimeExcitation` |
+
+`ContrastBolusAgent` is strongly recommended for agent-specific dose and relaxivity
+handling. Use `--dsc-agent-standard-dose` or `--dce-r1` only when the corresponding
+sidecar information is unavailable or needs an explicit override.
+
+Optional inputs extend processing:
+
+- Multiple VFA images with `FlipAngle` and pulse TR metadata enable measured T1 mapping; otherwise a field-strength default T1 is used.
+- A 4D `TB1AFI`, precomputed `TB1TFL`/`TB1map`, or explicit B1 configuration enables B1+ correction.
+- Pre- and post-contrast T1w, T2w, and pre-contrast FLAIR together enable HD-GLIO tumor segmentation.
+- User lesion, NAWM, ROI, and AIF masks or external AIF curves can be supplied through the configuration file.
 
 ## CLI Reference
 

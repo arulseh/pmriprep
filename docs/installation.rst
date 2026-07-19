@@ -55,6 +55,13 @@ dependency list.
 System requirements
 -------------------
 
-The pipeline runs on a single core with no strict minimums. Recommended for practical use:
-4+ CPU cores, 8+ GB RAM, and roughly 2 GB of working-directory disk per subject. A GPU is
-optional and used only for brain extraction (HD-BET) and tumor segmentation (HD-GLIO).
+Resource use depends on image dimensions, time points, enabled pipelines, inference method,
+and segmentation tools; no universal RAM, disk, or runtime minimum has been validated. Run
+one representative subject first and size batch jobs from its measured peak memory and work
+directory use. The work directory can be substantially larger than the final derivatives,
+so local scratch storage is recommended. Keep it until processing and report generation have
+completed successfully.
+
+A GPU is optional and used only for brain extraction (HD-BET) and tumor segmentation
+(HD-GLIO). Runtime and memory concurrency scale with ``--nprocs`` and
+``--omp-nthreads``.
