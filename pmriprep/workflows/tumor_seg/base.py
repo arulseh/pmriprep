@@ -15,35 +15,42 @@ from pmriprep.data import get_lobar_atlas_dir
 from pmriprep.interfaces.hdglio import HDGLIOPrep, HDGLIOSegment
 
 
-def _select_enhancing(masks):  # type: ignore[no-untyped-def]
+def _select_enhancing(masks: dict[str, str]) -> str:
     """Select enhancing mask path from masks dict."""
     return masks["enhancing"]
 
 
-def _select_non_enhancing(masks):  # type: ignore[no-untyped-def]
+def _select_non_enhancing(masks: dict[str, str]) -> str:
     """Select non-enhancing mask path from masks dict."""
     return masks["non_enhancing"]
 
 
-def _select_whole_tumor(masks):  # type: ignore[no-untyped-def]
+def _select_whole_tumor(masks: dict[str, str]) -> str:
     """Select whole tumor mask path from masks dict."""
     return masks["whole_tumor"]
 
 
-def _extract_nawm_mask_path(nawm_result):  # type: ignore[no-untyped-def]
+def _extract_nawm_mask_path(
+    nawm_result: dict[str, str | dict[str, object]],
+) -> str:
     """Extract NAWM mask file path from result dict."""
     return str(nawm_result["output_file"])
 
 
-def _extract_nawm_analysis_dict(nawm_result):  # type: ignore[no-untyped-def]
+def _extract_nawm_analysis_dict(
+    nawm_result: dict[str, str | dict[str, object]],
+) -> dict[str, object]:
     """Extract NAWM analysis sub-dict from result dict."""
-    return dict(nawm_result["analysis"])
+    analysis = nawm_result["analysis"]
+    if not isinstance(analysis, dict):
+        raise TypeError("NAWM analysis must be a dictionary")
+    return dict(analysis)
 
 
-def _extract_masks_node(  # type: ignore[no-untyped-def]
-    segmentation_file,
-    prefix,
-):
+def _extract_masks_node(
+    segmentation_file: str,
+    prefix: str,
+) -> dict[str, str]:
     """Node function to extract tumor masks from HD-GLIO segmentation.
 
     This function wraps the extract_tumor_masks utility for use in a
@@ -77,7 +84,16 @@ def _extract_masks_node(  # type: ignore[no-untyped-def]
     )
 
 
-def _create_nawm_node(tumor_mask_file, wm_probseg_file, nawm_erosion, nawm_min_voxels, t1w_to_mni_xfm='', reference_image='', atlases_dir='', brain_mask_file=''):  # type: ignore[no-untyped-def]
+def _create_nawm_node(
+    tumor_mask_file: str,
+    wm_probseg_file: str,
+    nawm_erosion: int,
+    nawm_min_voxels: int,
+    t1w_to_mni_xfm: str = "",
+    reference_image: str = "",
+    atlases_dir: str = "",
+    brain_mask_file: str = "",
+) -> dict[str, object]:
     """Node function to create NAWM ROI.
 
     Parameters
@@ -119,14 +135,14 @@ def _create_nawm_node(tumor_mask_file, wm_probseg_file, nawm_erosion, nawm_min_v
     )
 
 
-def _create_tumor_on_postcon_filmstrip(  # type: ignore[no-untyped-def]
-    t1w_postcon_file,
-    enhancing_mask_file,
-    non_enhancing_mask_file,
-    brain_mask_file,
-    subject_id="",
-    session_id="",
-):
+def _create_tumor_on_postcon_filmstrip(
+    t1w_postcon_file: str,
+    enhancing_mask_file: str,
+    non_enhancing_mask_file: str,
+    brain_mask_file: str,
+    subject_id: str = "",
+    session_id: str = "",
+) -> str:
     """Create tumor segmentation filmstrip on T1w post-contrast background."""
     import nibabel as nib
     import numpy as np
@@ -159,14 +175,14 @@ def _create_tumor_on_postcon_filmstrip(  # type: ignore[no-untyped-def]
     return output_path
 
 
-def _create_tumor_on_flair_filmstrip(  # type: ignore[no-untyped-def]
-    flair_file,
-    enhancing_mask_file,
-    non_enhancing_mask_file,
-    brain_mask_file,
-    subject_id="",
-    session_id="",
-):
+def _create_tumor_on_flair_filmstrip(
+    flair_file: str,
+    enhancing_mask_file: str,
+    non_enhancing_mask_file: str,
+    brain_mask_file: str,
+    subject_id: str = "",
+    session_id: str = "",
+) -> str:
     """Create tumor segmentation filmstrip on FLAIR background."""
     import nibabel as nib
     import numpy as np
@@ -199,14 +215,14 @@ def _create_tumor_on_flair_filmstrip(  # type: ignore[no-untyped-def]
     return output_path
 
 
-def _create_nawm_on_flair_filmstrip(  # type: ignore[no-untyped-def]
-    flair_file,
-    nawm_mask_file,
-    whole_tumor_mask_file,
-    brain_mask_file,
-    subject_id="",
-    session_id="",
-):
+def _create_nawm_on_flair_filmstrip(
+    flair_file: str,
+    nawm_mask_file: str,
+    whole_tumor_mask_file: str,
+    brain_mask_file: str,
+    subject_id: str = "",
+    session_id: str = "",
+) -> str:
     """Create NAWM ROI filmstrip on FLAIR background."""
     import nibabel as nib
     import numpy as np
@@ -239,7 +255,11 @@ def _create_nawm_on_flair_filmstrip(  # type: ignore[no-untyped-def]
     return output_path
 
 
-def _generate_qc_metrics(prep_qc, segment_qc, nawm_analysis):  # type: ignore[no-untyped-def]
+def _generate_qc_metrics(
+    prep_qc: dict[str, object],
+    segment_qc: dict[str, object],
+    nawm_analysis: dict[str, object],
+) -> dict[str, object]:
     """Combine QC metrics from all HD-GLIO processing steps.
 
     Parameters
