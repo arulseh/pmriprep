@@ -8,6 +8,7 @@ import pytest
 from pmriprep.interfaces.dce_compute import (
     _is_degenerate_dce_fit,
     _scatter_dce_fit_artifacts,
+    _scatter_dce_parameters,
     _scatter_dce_uncertainties,
 )
 from pmriprep.utils.dce_constants import (
@@ -59,6 +60,14 @@ def _uncertainty_maps() -> SimpleNamespace:
         fp_std=np.zeros((1, 1, 1)),
         ps_std=np.zeros((1, 1, 1)),
         sigma_factor={"Ktrans": 2.0, "ve": 1.0, "vp": 3.0, "Fp": 4.0, "PS": 5.0},
+        ktrans=np.zeros((1, 1, 1)),
+        ve=np.zeros((1, 1, 1)),
+        vp=np.zeros((1, 1, 1)),
+        kep=np.zeros((1, 1, 1)),
+        r_squared=np.zeros((1, 1, 1)),
+        fp=np.zeros((1, 1, 1)),
+        ps=np.zeros((1, 1, 1)),
+        extraction_fraction=np.zeros((1, 1, 1)),
     )
 
 
@@ -130,3 +139,43 @@ def test_fit_artifact_scatter_defaults_without_optional_curve() -> None:
     _scatter_dce_fit_artifacts(maps, (0, 0, 0), {})
     assert maps.vp_at_bound[0, 0, 0] == 0.0
     assert maps.quality_flag[0, 0, 0] == 1
+
+
+def test_parameter_scatter_respects_patlak_applicability() -> None:
+    """Patlak writes Ktrans/vp/R² while leaving ve/kep and 2CXM maps untouched."""
+    maps = _uncertainty_maps()
+    _scatter_dce_parameters(
+        maps,
+        (0, 0, 0),
+        "patlak",
+        {"Ktrans": 0.1, "ve": 0.3, "vp": 0.04, "kep": 0.2},
+        0.8,
+    )
+    assert maps.ktrans[0, 0, 0] == 0.1
+    assert maps.vp[0, 0, 0] == 0.04
+    assert maps.r_squared[0, 0, 0] == 0.8
+    assert maps.ve[0, 0, 0] == 0.0
+    assert maps.kep[0, 0, 0] == 0.0
+    assert maps.fp[0, 0, 0] == 0.0
+
+
+def test_parameter_scatter_writes_all_2cxm_fields() -> None:
+    """2CXM writes every shared and model-specific parameter."""
+    maps = _uncertainty_maps()
+    params = {
+        "Ktrans": 0.1,
+        "ve": 0.3,
+        "vp": 0.04,
+        "kep": 0.2,
+        "Fp": 20.0,
+        "PS": 5.0,
+        "E": 0.2,
+    }
+    _scatter_dce_parameters(maps, (0, 0, 0), "2cxm", params, 0.9)
+    assert maps.ktrans[0, 0, 0] == 0.1
+    assert maps.ve[0, 0, 0] == 0.3
+    assert maps.vp[0, 0, 0] == 0.04
+    assert maps.kep[0, 0, 0] == 0.2
+    assert maps.fp[0, 0, 0] == 20.0
+    assert maps.ps[0, 0, 0] == 5.0
+    assert maps.extraction_fraction[0, 0, 0] == 0.2

@@ -127,6 +127,28 @@ def _scatter_dce_fit_artifacts(
     maps.quality_flag[x, y, z] = maps.quality_flag_codes.get(quality_flag, 1)
 
 
+def _scatter_dce_parameters(
+    maps: "_DCEParameterMaps",
+    coords: tuple[int, int, int],
+    model_name: str,
+    params: dict[str, float],
+    r_squared: float,
+) -> None:
+    """Scatter a non-degenerate model's applicable fitted parameters."""
+    x, y, z = coords
+    maps.ktrans[x, y, z] = params.get("Ktrans", 0.0)
+    if model_name in ("tofts", "extended_tofts", "2cxm"):
+        maps.ve[x, y, z] = params.get("ve", 0.0)
+        maps.kep[x, y, z] = params.get("kep", 0.0)
+    maps.r_squared[x, y, z] = r_squared
+    if model_name in ("extended_tofts", "patlak", "2cxm"):
+        maps.vp[x, y, z] = params.get("vp", 0.0)
+    if model_name == "2cxm":
+        maps.fp[x, y, z] = params.get("Fp", 0.0)
+        maps.ps[x, y, z] = params.get("PS", 0.0)
+        maps.extraction_fraction[x, y, z] = params.get("E", 0.0)
+
+
 def _validate_dce_time_axis(
     time_points: npt.ArrayLike,
     n_dce_frames: int,
@@ -2540,8 +2562,6 @@ class ComputeDCEMaps(BaseInterface):
             # estimates. Zeroing them biases distributions upward and
             # destroys information. R² quality gating belongs in the QC mask
             # (line 1354: r2_map >= 0.5), separate from parameter estimation.
-            ktrans_val = params.get("Ktrans", 0.0)
-            ve_val = params.get("ve", 0.0)
             is_constrained = res.get("constrained", False)
             degenerate = _is_degenerate_dce_fit(
                 effective_model_name,
@@ -2560,20 +2580,13 @@ class ComputeDCEMaps(BaseInterface):
                 n_rejected_postfit += 1
                 continue
 
-            ktrans[x, y, z] = ktrans_val
-            if self._has_ve(effective_model_name):
-                ve[x, y, z] = ve_val
-                kep[x, y, z] = params.get("kep", 0.0)
-            r2_map[x, y, z] = res["r_squared"]
-
-            if self._has_vp(effective_model_name):
-                vp[x, y, z] = params.get("vp", 0.0)
-
-            # 2CXM-specific parameters
-            if effective_model_name == "2cxm":
-                fp_map[x, y, z] = params.get("Fp", 0.0)
-                ps_map[x, y, z] = params.get("PS", 0.0)
-                e_map[x, y, z] = params.get("E", 0.0)
+            _scatter_dce_parameters(
+                parameter_maps,
+                (x, y, z),
+                effective_model_name,
+                params,
+                res["r_squared"],
+            )
 
             # Uncertainty (Bayesian only). Per-parameter inflation
             # propagates AIF reduced-confidence to PK posterior sigma;
