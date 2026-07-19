@@ -10,6 +10,7 @@ from pmriprep.interfaces.dce_compute import (
     _account_retained_dce_fit,
     _accumulate_mcmc_diagnostics,
     _compute_vp_prior_departure,
+    _fraction_vp_at_bound,
     _is_degenerate_dce_fit,
     _scatter_degenerate_dce_fit,
     _scatter_dce_fit_artifacts,
@@ -434,3 +435,20 @@ def test_summarize_dce_fitted_parameters_empty_fit_omits_metrics() -> None:
         True,
         True,
     ) == {}
+
+
+@pytest.mark.parametrize(
+    ("mask", "values", "expected"),
+    [
+        ([True, True, True], [1.0, 0.0, np.nan], 0.5),
+        ([True, False], [np.nan, 1.0], 0.0),
+        ([False, False], [1.0, 1.0], 0.0),
+    ],
+)
+def test_fraction_vp_at_bound_uses_finite_in_mask_values(
+    mask: list[bool],
+    values: list[float],
+    expected: float,
+) -> None:
+    """Whole-brain bound fractions ignore background and non-finite values."""
+    assert _fraction_vp_at_bound(np.array(mask), np.array(values)) == expected

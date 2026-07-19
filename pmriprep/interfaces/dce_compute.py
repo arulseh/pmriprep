@@ -353,6 +353,18 @@ def _summarize_dce_fitted_parameters(
     return summary
 
 
+def _fraction_vp_at_bound(
+    mask: npt.NDArray[Any],
+    vp_at_bound: npt.NDArray[Any],
+) -> float:
+    """Return the finite in-mask fraction of fits ending at the vp bound."""
+    values = vp_at_bound[mask]
+    finite = np.isfinite(values)
+    if not np.any(finite):
+        return 0.0
+    return float(np.mean(values[finite] > 0.5))
+
+
 def _validate_dce_time_axis(
     time_points: npt.ArrayLike,
     n_dce_frames: int,
@@ -2905,17 +2917,10 @@ class ComputeDCEMaps(BaseInterface):
         # at a bound (active-set Pass 2 fired). Reported in
         # constraint_qc; downstream dce_pk_maps_qc stratifies over ROI
         # masks. Zero everywhere for HARD / SKIP / Bayesian fits.
-        if np.any(mask_bool):
-            vp_at_bound_in_brain = vp_at_bound_map[mask_bool]
-            finite_bound = np.isfinite(vp_at_bound_in_brain)
-            if np.any(finite_bound):
-                constraint_qc["fraction_vp_at_bound_whole_brain"] = float(
-                    np.mean(vp_at_bound_in_brain[finite_bound] > 0.5)
-                )
-            else:
-                constraint_qc["fraction_vp_at_bound_whole_brain"] = 0.0
-        else:
-            constraint_qc["fraction_vp_at_bound_whole_brain"] = 0.0
+        constraint_qc["fraction_vp_at_bound_whole_brain"] = _fraction_vp_at_bound(
+            mask_bool,
+            vp_at_bound_map,
+        )
 
         # Zero background (outside brain mask) on every float map before
         # save. Preserves in-brain NaN so auto-mode "parameter not applicable
