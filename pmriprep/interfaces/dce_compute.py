@@ -255,6 +255,19 @@ def _summarize_mcmc_diagnostics(
     return summary
 
 
+def _summarize_vp_prior_departures(values: list[float]) -> dict[str, float]:
+    """Summarize standardized departures from SOFT DSC vp priors."""
+    if not values:
+        return {}
+    array = np.array(values)
+    return {
+        "z_departure_median": float(np.median(array)),
+        "z_departure_p90": float(np.percentile(array, 90)),
+        "frac_prior_dominated": float(np.mean(array < 0.5)),
+        "frac_strong_departure": float(np.mean(array > 2.0)),
+    }
+
+
 def _validate_dce_time_axis(
     time_points: npt.ArrayLike,
     n_dce_frames: int,
@@ -2798,13 +2811,7 @@ class ComputeDCEMaps(BaseInterface):
         if mcmc_diag is not None:
             qc_metrics["mcmc_diagnostics"] = mcmc_diag
 
-        # z_departure stats: soft constraint prior departure
-        if z_departure_list:
-            z_arr = np.array(z_departure_list)
-            qc_metrics["z_departure_median"] = float(np.median(z_arr))
-            qc_metrics["z_departure_p90"] = float(np.percentile(z_arr, 90))
-            qc_metrics["frac_prior_dominated"] = float(np.mean(z_arr < 0.5))
-            qc_metrics["frac_strong_departure"] = float(np.mean(z_arr > 2.0))
+        qc_metrics.update(_summarize_vp_prior_departures(z_departure_list))
 
         # Compute summary statistics on fitted voxels
         # For auto mode, use np.isfinite guard (NaN = non-applicable parameter)

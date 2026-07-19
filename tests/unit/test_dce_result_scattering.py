@@ -16,6 +16,7 @@ from pmriprep.interfaces.dce_compute import (
     _scatter_dce_parameters,
     _scatter_dce_uncertainties,
     _summarize_mcmc_diagnostics,
+    _summarize_vp_prior_departures,
 )
 from pmriprep.models.dce.bayesian import QC_ESS_MIN, QC_RHAT_MAX
 from pmriprep.utils.dsc_cbv_constraint import ConstraintMode
@@ -337,3 +338,17 @@ def test_summarize_mcmc_diagnostics_preserves_threshold_fractions() -> None:
 def test_summarize_mcmc_diagnostics_returns_none_without_voxels() -> None:
     """No MCMC voxels omit the diagnostics block entirely."""
     assert _summarize_mcmc_diagnostics(0, {}, {}) is None
+
+
+def test_summarize_vp_prior_departures_preserves_strict_categories() -> None:
+    """Prior-dominated and strong-departure fractions use strict inequalities."""
+    summary = _summarize_vp_prior_departures([0.4, 0.5, 2.0, 3.0])
+    assert summary["z_departure_median"] == 1.25
+    assert summary["z_departure_p90"] == pytest.approx(2.7)
+    assert summary["frac_prior_dominated"] == 0.25
+    assert summary["frac_strong_departure"] == 0.25
+
+
+def test_summarize_vp_prior_departures_empty_input_omits_metrics() -> None:
+    """No applicable SOFT-prior voxels add no departure QC keys."""
+    assert _summarize_vp_prior_departures([]) == {}
