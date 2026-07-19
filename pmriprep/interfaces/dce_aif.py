@@ -2725,46 +2725,6 @@ class AIFDetection(BaseInterface):
             return base_score * 0.3 * peak_adequacy
         return base_score * peak_adequacy
 
-    # -----------------------------------------------------------------
-    # Spatial Exclusions (unchanged from original)
-    # -----------------------------------------------------------------
-
-    @staticmethod
-    def _apply_spatial_exclusions(
-        candidate_indices: list[tuple[int, int, int]],
-        brain_shape: tuple[int, ...],
-    ) -> list[tuple[int, int, int]]:
-        """Exclude edge-slice voxels (z == 0 or z == nz-1).
-
-        Notes
-        -----
-        Midline and superior exclusions are now handled in
-        _prepare_search_mask() for earlier, more comprehensive filtering.
-        This method now only handles edge slice exclusion as a final check.
-
-        Parameters
-        ----------
-        candidate_indices : list
-            List of (x, y, z) voxel coordinates.
-        brain_shape : tuple
-            (nx, ny, nz) spatial dimensions.
-
-        Returns
-        -------
-        list
-            Filtered list of coordinates.
-        """
-        if not candidate_indices:
-            return candidate_indices
-
-        nz = brain_shape[2]
-
-        # Edge slice exclusion (z == 0 or z == nz-1)
-        non_edge = [c for c in candidate_indices if 0 < c[2] < nz - 1]
-
-        # Return filtered list, or original if filtering would remove all
-        return non_edge if non_edge else list(candidate_indices)
-
     @staticmethod
     def _validate_peak_timing(
         candidates: list[tuple[int, int, int]],

@@ -208,12 +208,6 @@ class MotionCorrection(CommandLine):
         base = nifti_gz_name(self.inputs.in_file, "_moco")[:-7]  # strip .nii.gz
         return str(Path.cwd() / f"{base}.par")
 
-    def _gen_mean_filename(self) -> str:
-        """Generate mean image filename."""
-        from pmriprep.utils.nifti import nifti_gz_name
-
-        return str(Path.cwd() / nifti_gz_name(self.inputs.in_file, "_moco_mean_reg"))
-
     def _compute_pre_bolus_mean(self) -> str:
         """Compute pre-bolus mean reference image and return its path."""
         import nibabel as nib
