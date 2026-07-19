@@ -144,6 +144,9 @@ class _DSCAIFDetectionContext(NamedTuple):
     tr: float
 
 
+_CascadeAttempt = tuple[str, Optional[npt.NDArray[Any]], str, bool]
+
+
 # ---------------------------------------------------------------------------
 # Top-level helper functions (backward-compatible with utils/dsc_aif.py)
 # ---------------------------------------------------------------------------
@@ -2637,6 +2640,43 @@ class AIFDetection(BaseInterface):
             tr=tr,
         )
 
+    @staticmethod
+    def _build_cascade_attempts(
+        initial_criteria: str,
+        atlas_mask: Optional[npt.NDArray[Any]],
+        atlas_is_mra: bool,
+        full_atlas_mask: Optional[npt.NDArray[Any]],
+        strict_roi_constraint: bool,
+    ) -> list[_CascadeAttempt]:
+        """Build the ordered DSC AIF search tiers permitted by the inputs."""
+        criteria_order = ["strict", "relaxed", "permissive"]
+        try:
+            start_index = criteria_order.index(initial_criteria)
+        except ValueError:
+            start_index = 0
+
+        attempts: list[_CascadeAttempt] = []
+        if atlas_mask is not None:
+            for criteria in criteria_order:
+                attempts.append(
+                    (criteria, atlas_mask, f"atlas_{criteria}", atlas_is_mra)
+                )
+
+        if full_atlas_mask is not None:
+            attempts.append(
+                ("permissive", full_atlas_mask, "full_atlas_permissive", True)
+            )
+
+        if atlas_mask is None or not strict_roi_constraint:
+            for criteria in ("relaxed", "permissive"):
+                attempts.append((criteria, None, f"brain_{criteria}", False))
+
+        return [
+            attempt
+            for attempt in attempts
+            if criteria_order.index(attempt[0]) >= start_index
+        ]
+
     # -----------------------------------------------------------------
     # Step 10: Main pipeline  (_run_interface)
     # -----------------------------------------------------------------
@@ -2763,39 +2803,13 @@ class AIFDetection(BaseInterface):
         if aif_method == "synthetic":
             pass  # Go directly to synthetic
         else:
-            criteria_order = ["strict", "relaxed", "permissive"]
-            try:
-                start_idx = criteria_order.index(initial_criteria)
-            except ValueError:
-                start_idx = 0
-
-            all_attempts: list[
-                tuple[str, Optional[npt.NDArray[Any]], str, bool]
-            ] = []
-            if atlas_mask is not None:
-                for crit in ["strict", "relaxed", "permissive"]:
-                    all_attempts.append(
-                        (crit, atlas_mask, f"atlas_{crit}", atlas_is_mra)
-                    )
-
-            # Full atlas tier (posterior circulation, undilated) —
-            # between atlas_permissive and brain-wide search
-            if full_atlas_mask is not None:
-                all_attempts.append(
-                    ("permissive", full_atlas_mask, "full_atlas_permissive", True)
-                )
-
-            has_roi_constraint = atlas_mask is not None
-            strict_roi = bool(self.inputs.strict_roi_constraint)
-            if not (has_roi_constraint and strict_roi):
-                for crit in ["relaxed", "permissive"]:
-                    all_attempts.append((crit, None, f"brain_{crit}", False))
-
-            attempts = [
-                (crit, roi, name, is_atlas)
-                for crit, roi, name, is_atlas in all_attempts
-                if criteria_order.index(crit) >= start_idx
-            ]
+            attempts = self._build_cascade_attempts(
+                initial_criteria,
+                atlas_mask,
+                atlas_is_mra,
+                full_atlas_mask,
+                bool(self.inputs.strict_roi_constraint),
+            )
 
             # Compute tissue-TTP reference once — independent of tier
             # because it operates on the whole brain mask. Used by the
