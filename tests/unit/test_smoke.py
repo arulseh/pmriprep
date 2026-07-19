@@ -318,6 +318,7 @@ class TestTypecheckVerification:
 
     def test_import_interfaces(self) -> None:
         """Verify interface modules import."""
+        import pmriprep.interfaces as interfaces
         from pmriprep.interfaces import anat, dsc, dce
         from pmriprep.interfaces.hdglio import HDGLIOPrep
         from pmriprep.interfaces import dsc_aif, dsc_compute
@@ -327,6 +328,9 @@ class TestTypecheckVerification:
         assert dsc.MotionCorrection is not None
         assert dce.B1Mapping is not None
         assert HDGLIOPrep is not None
+        assert interfaces.DSCAIFDetection is dsc_aif.AIFDetection
+        assert interfaces.DCEAIFDetection is dce_aif.AIFDetection
+        assert not hasattr(interfaces, "AIFDetection")
 
     def test_import_utils(self) -> None:
         """Verify utility modules import."""

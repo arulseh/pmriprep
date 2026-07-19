@@ -31,12 +31,8 @@ from pmriprep.interfaces.hdglio import (
     HDGLIOSegment,
 )
 
-# Alias for backward compatibility - DSC AIF was the original
-AIFDetection = DSCAIFDetection
-
 __all__ = [
     "ACPCAlignment",
-    "AIFDetection",
     "B1Mapping",
     "BiasCorrection",
     "BrainExtraction",
