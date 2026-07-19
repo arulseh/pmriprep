@@ -6,12 +6,14 @@ import numpy as np
 import pytest
 
 from pmriprep.interfaces.dce_compute import (
+    _compute_vp_prior_departure,
     _is_degenerate_dce_fit,
     _scatter_degenerate_dce_fit,
     _scatter_dce_fit_artifacts,
     _scatter_dce_parameters,
     _scatter_dce_uncertainties,
 )
+from pmriprep.utils.dsc_cbv_constraint import ConstraintMode
 from pmriprep.utils.dce_constants import (
     FP_BOUNDS,
     KTRANS_BOUNDS,
@@ -208,3 +210,35 @@ def test_degenerate_scatter_uses_fixed_zero_for_tofts_maps() -> None:
     assert maps.kep[0, 0, 0] == 0.0
     assert maps.vp[0, 0, 0] == 4.0
     assert maps.r_squared[0, 0, 0] == 0.1
+
+
+def test_vp_prior_departure_uses_relative_sigma_and_floor() -> None:
+    """Bayesian SOFT departure uses relative uncertainty with a 0.001 floor."""
+    assert _compute_vp_prior_departure(
+        ConstraintMode.SOFT, "map", "extended_tofts", 0.04, 0.06, 0.25,
+    ) == pytest.approx(2.0)
+    assert _compute_vp_prior_departure(
+        ConstraintMode.SOFT, "vi", "patlak", 0.001, 0.003, 0.2,
+    ) == pytest.approx(2.0)
+
+
+@pytest.mark.parametrize(
+    ("mode", "inference", "model", "prior"),
+    [
+        (ConstraintMode.SKIP, "map", "extended_tofts", 0.04),
+        (ConstraintMode.SOFT, "nlls", "extended_tofts", 0.04),
+        (ConstraintMode.SOFT, "map", "tofts", 0.04),
+        (ConstraintMode.SOFT, "map", "extended_tofts", None),
+        (ConstraintMode.SOFT, "map", "extended_tofts", 0.0),
+    ],
+)
+def test_vp_prior_departure_skips_inapplicable_paths(
+    mode: ConstraintMode,
+    inference: str,
+    model: str,
+    prior: float | None,
+) -> None:
+    """Departure QC exists only for positive SOFT priors in Bayesian vp models."""
+    assert _compute_vp_prior_departure(
+        mode, inference, model, prior, 0.06, 0.25,
+    ) is None

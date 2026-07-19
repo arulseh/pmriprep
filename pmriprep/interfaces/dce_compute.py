@@ -168,6 +168,29 @@ def _scatter_degenerate_dce_fit(
     maps.r_squared[x, y, z] = r_squared
 
 
+def _compute_vp_prior_departure(
+    constraint_mode: Any,
+    inference: str,
+    model_name: str,
+    voxel_prior: Optional[float],
+    fitted_vp: float,
+    relative_uncertainty: float,
+) -> Optional[float]:
+    """Return the standardized Bayesian departure from a SOFT DSC vp prior."""
+    from pmriprep.utils.dsc_cbv_constraint import ConstraintMode
+
+    if (
+        constraint_mode != ConstraintMode.SOFT
+        or inference == "nlls"
+        or model_name not in ("extended_tofts", "patlak", "2cxm")
+        or voxel_prior is None
+        or voxel_prior <= 0
+    ):
+        return None
+    prior_sigma = max(voxel_prior * relative_uncertainty, 0.001)
+    return abs(fitted_vp - voxel_prior) / prior_sigma
+
+
 def _validate_dce_time_axis(
     time_points: npt.ArrayLike,
     n_dce_frames: int,
@@ -2626,22 +2649,16 @@ class ComputeDCEMaps(BaseInterface):
                 # Had vp constraint but fell back to unconstrained
                 n_unconstrained_fallback += 1
 
-            # z_departure: how much DCE data pulled vp away from DSC prior
-            # Only meaningful for SOFT + Bayesian (where a soft prior was used)
-            if (
-                constraint_mode == ConstraintMode.SOFT
-                and inference != "nlls"
-                and self._has_vp(effective_model_name)
-                and vd.voxel_vp is not None
-                and vd.voxel_vp > 0
-            ):
-                vp_fitted = params.get("vp", 0.0)
-                vp_prior = vd.voxel_vp
-                prior_sigma = max(
-                    vp_prior * constraint_vp_uncertainty, 0.001
-                )
-                z = abs(vp_fitted - vp_prior) / prior_sigma
-                z_departure_list.append(z)
+            z_departure = _compute_vp_prior_departure(
+                constraint_mode,
+                inference,
+                effective_model_name,
+                vd.voxel_vp,
+                params.get("vp", 0.0),
+                constraint_vp_uncertainty,
+            )
+            if z_departure is not None:
+                z_departure_list.append(z_departure)
 
             if res["converged"]:
                 n_converged += 1
