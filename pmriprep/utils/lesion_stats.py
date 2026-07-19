@@ -701,21 +701,11 @@ def combine_tumor_masks(
     return ("", "")
 
 
-# Per-map NAWM physiological ranges by field strength. These bound
-# UNCALIBRATED DSC output: with relative ΔR2*-derived CBF/CBV (no absolute
-# k_H/r2*/AIF calibration), 3T reads ~40% higher than 1.5T because ΔR2*
-# per unit contrast and SNR are larger at 3T (true perfusion is
-# field-independent). MTT = CBV/CBF, so the ΔR2* scaling cancels and MTT
-# is field-independent (same band both tables).
-#   1.5T table — normative WM CBF~20, CBV~1.3, MTT~4.3 s.
-#   3T table   — 1.5T CBF/CBV bands scaled up for the larger 3T ΔR2* readout.
-#   ve — field-independent.
-# Outside [1.5T, 3T] we DO NOT extrapolate: ΔR2*-driven CBF/CBV scale
-# non-linearly with B0, so 7T values from a 3T table would systematically
-# over-flag.
-NAWM_RANGES_3T: Dict[str, Tuple[float, float]] = {
-    "cbf":    (15.0, 35.0),     # mL/100g/min — 1.5T Helenius scaled up for 3T ΔR2*
-    "cbv":    (1.5, 4.0),       # mL/100g — 1.5T Helenius scaled up for 3T ΔR2*
+# Per-map NAWM reference ranges for quantities with interpretable scales.
+# PMRIPrep's DSC CBF and CBV maps are relative, so absolute physiological
+# ranges in mL/100 g(/min) must not be applied to them. NAWM-normalized maps,
+# time parameters, and DCE fractions/rates retain meaningful scales.
+NAWM_RANGES: Dict[str, Tuple[float, float]] = {
     "mtt":    (3.0, 8.0),       # s (field-independent)
     "ncbv":   (0.85, 1.15),     # normalization sanity check
     "ncbf":   (0.85, 1.15),
@@ -725,52 +715,11 @@ NAWM_RANGES_3T: Dict[str, Tuple[float, float]] = {
     "Ktrans": (0.0, 0.02),
 }
 
-NAWM_RANGES_1T5: Dict[str, Tuple[float, float]] = {
-    "cbf":    (10.0, 25.0),     # mL/100g/min (1.5T)
-    "cbv":    (1.0, 3.0),       # mL/100g (1.5T)
-    "mtt":    (3.0, 8.0),       # s (field-independent)
-    "ncbv":   (0.85, 1.15),
-    "ncbf":   (0.85, 1.15),
-    "ve":     (0.05, 0.30),
-    "vp":     (0.005, 0.05),
-    "ktrans": (0.0, 0.02),
-    "Ktrans": (0.0, 0.02),
-}
-
-# Standard adult hematocrit assumed by the CBV ranges. Pediatric and
-# anemic cohorts shift CBV scaling ~20% — annotated in qc_notes when
-# value-level QC is applied.
-NAWM_ASSUMED_HEMATOCRIT: float = 0.45
-
-
-def _select_nawm_range_table(
-    field_strength_t: Optional[float],
-) -> Tuple[Optional[Dict[str, Tuple[float, float]]], Optional[str]]:
-    """Pick a NAWM range lookup table based on field strength.
-
-    Returns ``(table, status_note)``:
-        - table is None when field strength is unknown or outside the
-          validated [1.5T, 3.0T] range (no PASS/WARNING flag emitted).
-        - status_note is a string for ``qc_notes`` when value-level
-          QC is skipped, or None when a table was selected.
-    """
-    if field_strength_t is None or field_strength_t == 0:
-        return None, "Field strength unknown; NAWM ranges not applied."
-    if field_strength_t < 1.5 or field_strength_t > 3.0:
-        return None, (
-            f"Field strength {field_strength_t}T outside validated range "
-            "[1.5, 3.0]; NAWM ranges not applied."
-        )
-    if field_strength_t < 2.0:
-        return NAWM_RANGES_1T5, None
-    return NAWM_RANGES_3T, None
-
 
 def compute_nawm_reference(
     nawm_mask: np.ndarray,
     maps: Dict[str, np.ndarray],
     voxel_sizes: Tuple[float, float, float],
-    field_strength_t: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Compute NAWM reference values for normalization context.
 
@@ -778,8 +727,8 @@ def compute_nawm_reference(
         - ``mask_qc_status`` describes the NAWM mask itself (validity,
           voxel count). Same value on every map's downstream slice.
         - per-map ``value_qc_status`` reports whether THAT map's NAWM
-          median falls within the field-strength-appropriate
-          physiological range. Stored as ``<map>_value_qc_status`` keys
+          median falls within its registered reference range. Stored as
+          ``<map>_value_qc_status`` keys
           alongside the per-map sub-dict so that
           ``extract_per_map_lesion_stats`` can slice cleanly.
 
@@ -791,11 +740,6 @@ def compute_nawm_reference(
         Dictionary mapping map name to 3D array.
     voxel_sizes : tuple of float
         Voxel dimensions in mm.
-    field_strength_t : float, optional
-        B0 in tesla. When None or outside the
-        validated [1.5T, 3.0T] range, value-level QC is reported
-        as ``UNKNOWN`` (observed values still emitted).
-
     Returns
     -------
     dict
@@ -833,56 +777,41 @@ def compute_nawm_reference(
     # can apply their own size threshold using the emitted ``voxel_count`` and
     # ``volume_ml`` fields.
 
-    # Value-level QC: per-map physiological-range check.
-    range_table, range_note = _select_nawm_range_table(field_strength_t)
-    if range_table is None:
-        # Field strength unknown or outside validated range.
+    # Value-level QC: only maps with interpretable scales are registered.
+    violations: List[str] = []
+    n_maps_checked = 0
+    for map_name, sub in list(reference.items()):
+        if not isinstance(sub, dict) or "median" not in sub:
+            continue
+        rng = NAWM_RANGES.get(map_name)
+        if rng is None:
+            continue
+        lo, hi = rng
+        median = sub.get("median")
+        if median is None:
+            continue
+        n_maps_checked += 1
+        in_range = lo <= median <= hi
+        sub["value_qc_status"] = "PASS" if in_range else "WARNING"
+        if not in_range:
+            violations.append(f"{map_name}={median} outside [{lo}, {hi}]")
+    if n_maps_checked == 0:
         reference["value_qc_status"] = "UNKNOWN"
-        if range_note:
-            reference["value_qc_notes"] = range_note
+        reference["value_qc_notes"] = (
+            "No emitted maps have registered NAWM reference ranges; "
+            "range QC not applied."
+        )
+    elif violations:
+        reference["value_qc_status"] = "WARNING"
+        reference["value_qc_notes"] = (
+            "Out-of-range NAWM medians: " + "; ".join(violations)
+        )
     else:
-        violations: List[str] = []
-        n_maps_checked = 0
-        for map_name, sub in list(reference.items()):
-            if not isinstance(sub, dict) or "median" not in sub:
-                continue
-            rng = range_table.get(map_name)
-            if rng is None:
-                continue
-            lo, hi = rng
-            median = sub.get("median")
-            if median is None:
-                continue
-            n_maps_checked += 1
-            in_range = lo <= median <= hi
-            sub["value_qc_status"] = "PASS" if in_range else "WARNING"
-            if not in_range:
-                violations.append(
-                    f"{map_name}={median} outside [{lo}, {hi}]"
-                )
-        if n_maps_checked == 0:
-            # No emitted maps had entries in the range table — don't
-            # silently claim PASS. Common case: DCE-only modality where
-            # only kep/peak_enhancement/iauc* are computed and none have
-            # registered NAWM ranges.
-            reference["value_qc_status"] = "UNKNOWN"
-            reference["value_qc_notes"] = (
-                "No emitted maps have entries in the field-strength NAWM "
-                "range table; range QC not applied."
-            )
-        elif violations:
-            reference["value_qc_status"] = "WARNING"
-            reference["value_qc_notes"] = (
-                "Out-of-range NAWM medians: " + "; ".join(violations)
-                + f". Assumed hematocrit={NAWM_ASSUMED_HEMATOCRIT}."
-            )
-        else:
-            reference["value_qc_status"] = "PASS"
-            reference["value_qc_notes"] = (
-                f"All NAWM medians within field-strength-appropriate ranges "
-                f"({n_maps_checked} map(s) checked). "
-                f"Assumed hematocrit={NAWM_ASSUMED_HEMATOCRIT}."
-            )
+        reference["value_qc_status"] = "PASS"
+        reference["value_qc_notes"] = (
+            f"All NAWM medians within registered ranges "
+            f"({n_maps_checked} map(s) checked)."
+        )
 
     return reference
 
@@ -1011,8 +940,7 @@ def _slice_nawm_for_map(
     # with notes complaining about a sibling map's WARNING). Three cases:
     per_map_status = out.get("value_qc_status")
     if per_map_status == "WARNING":
-        # This map itself failed → surface the modality-level note (which
-        # contains "Out-of-range NAWM medians: ..." plus hematocrit).
+        # This map itself failed → surface the modality-level range note.
         modality_notes = nawm_reference.get("value_qc_notes")
         if modality_notes:
             out["value_qc_notes"] = modality_notes

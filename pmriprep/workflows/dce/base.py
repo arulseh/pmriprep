@@ -518,7 +518,7 @@ def init_dce_lesion_stats_wf(
     Extracts per-region statistics from the DCE PK and model-free maps within
     three (independently optional) masks: the tumor-segmentation lesion mask, a
     user-supplied ROI mask, and a user-supplied lesion mask. The maps, NAWM
-    reference, and field strength are shared across all three extractions; the
+    reference are shared across all three extractions; the
     ROI and user-lesion extractions force a binary mask.
 
     Parameters
@@ -543,8 +543,8 @@ def init_dce_lesion_stats_wf(
         Model-free maps.
     nktrans_map, niauc60_map
         NAWM-normalized maps.
-    nawm_mask, field_strength_t
-        NAWM reference mask and field strength.
+    nawm_mask
+        NAWM reference mask.
     tumor_lesion_mask, mask_origin
         Tumor-segmentation lesion mask (DCE space) and its provenance label.
     roi_mask
@@ -582,7 +582,6 @@ def init_dce_lesion_stats_wf(
                 "nktrans_map",
                 "niauc60_map",
                 "nawm_mask",
-                "field_strength_t",
                 "tumor_lesion_mask",
                 "mask_origin",
                 "roi_mask",
@@ -612,7 +611,7 @@ def init_dce_lesion_stats_wf(
     roi_stats.inputs.subject_id = subject_id
     roi_stats.inputs.session_id = session_id
 
-    # PK / model-free / normalized maps + NAWM + field strength are shared by all
+    # PK / model-free / normalized maps + NAWM are shared by all
     # three stats nodes; the lesion mask differs (tumor-seg / ROI / user), and
     # only the tumor-seg node receives the mask-origin provenance label.
     shared_inputs = [
@@ -631,7 +630,6 @@ def init_dce_lesion_stats_wf(
         ("nktrans_map", "nktrans_map"),
         ("niauc60_map", "niauc60_map"),
         ("nawm_mask", "nawm_mask"),
-        ("field_strength_t", "field_strength_t"),
     ]
     workflow.connect([
         (inputnode, lesion_stats, shared_inputs + [
@@ -2366,7 +2364,6 @@ def init_dce_preproc_wf(
             ("outputnode.niauc60", "inputnode.niauc60_map"),
         ]),
         (transform_nawm_mask, lesion_stats_wf, [("out_file", "inputnode.nawm_mask")]),
-        (inputnode, lesion_stats_wf, [("field_strength", "inputnode.field_strength_t")]),
         (transform_stats_lesion, lesion_stats_wf, [("lesion_mask_dce_file", "inputnode.tumor_lesion_mask")]),
         (combine_masks, lesion_stats_wf, [("mask_origin", "inputnode.mask_origin")]),
         (validate_user_lesion_mask, lesion_stats_wf, [("validated_mask", "inputnode.user_mask")]),

@@ -633,26 +633,8 @@
     [
       "inputnode",
       "field_strength",
-      "lesion_stats",
-      "field_strength_t"
-    ],
-    [
-      "inputnode",
-      "field_strength",
-      "roi_stats",
-      "field_strength_t"
-    ],
-    [
-      "inputnode",
-      "field_strength",
       "signal_to_concentration",
       "field_strength"
-    ],
-    [
-      "inputnode",
-      "field_strength",
-      "user_lesion_stats",
-      "field_strength_t"
     ],
     [
       "inputnode",
@@ -2368,7 +2350,6 @@
       "t2w_in_t1w": null
     },
     "lesion_stats": {
-      "field_strength_t": 0.0,
       "force_binary": false,
       "mask_origin": "",
       "session_id": "0001",
@@ -2408,7 +2389,6 @@
       "function_str": "def _resample_dsc_cbv_to_dce(  # type: ignore[no-untyped-def]\n    dsc_cbv_file=None,\n    dsc_to_t1w_xfm=None,\n    t1w_to_dce_xfm=None,\n    dce_reference=None,\n):\n    \"\"\"Resample DSC CBV map to DCE native space.\n\n    Chains two existing transforms: DSC\u2192T1w + T1w\u2192DCE = DSC\u2192DCE,\n    then applies the combined transform with trilinear interpolation\n    (not spline, to avoid negative CBV values).\n\n    Parameters\n    ----------\n    dsc_cbv_file : str or None\n        Path to DSC-derived relative CBV map (DSC native space).\n    dsc_to_t1w_xfm : str or None\n        Path to DSC\u2192T1w FLIRT transform matrix.\n    t1w_to_dce_xfm : str or None\n        Path to T1w\u2192DCE FLIRT transform matrix (from DCE registration step).\n    dce_reference : str or None\n        Path to DCE reference image for output geometry.\n\n    Returns\n    -------\n    str\n        Path to CBV map resampled to DCE space, or empty string if inputs\n        are missing (empty string avoids nipype File trait validation errors\n        when None flows through workflow connections).\n    \"\"\"\n    import logging\n    import os\n\n    _log = logging.getLogger(\"pmriprep.workflows.dce\")\n\n    if not dsc_cbv_file or not os.path.isfile(str(dsc_cbv_file)):\n        return \"\"\n    if not dsc_to_t1w_xfm or not os.path.isfile(str(dsc_to_t1w_xfm)):\n        return \"\"\n    if not t1w_to_dce_xfm or not os.path.isfile(str(t1w_to_dce_xfm)):\n        return \"\"\n    if not dce_reference or not os.path.isfile(str(dce_reference)):\n        return \"\"\n\n    import subprocess\n\n    out_dir = os.getcwd()\n    dsc_to_dce_xfm = os.path.join(out_dir, \"dsc_to_dce.mat\")\n    cbv_in_dce = os.path.join(out_dir, \"dsc_cbv_in_dce.nii.gz\")\n\n    # Chain: DSC\u2192T1w + T1w\u2192DCE = DSC\u2192DCE\n    result = subprocess.run(\n        [\n            \"convert_xfm\",\n            \"-omat\", dsc_to_dce_xfm,\n            \"-concat\", str(t1w_to_dce_xfm), str(dsc_to_t1w_xfm),\n        ],\n        capture_output=True,\n        text=True,\n    )\n    if result.returncode != 0:\n        _log.warning(\n            \"convert_xfm failed (rc=%d): %s\", result.returncode, result.stderr\n        )\n        return \"\"\n\n    # Apply combined transform with trilinear interpolation\n    result = subprocess.run(\n        [\n            \"flirt\",\n            \"-in\", str(dsc_cbv_file),\n            \"-ref\", str(dce_reference),\n            \"-out\", cbv_in_dce,\n            \"-init\", dsc_to_dce_xfm,\n            \"-applyxfm\",\n            \"-interp\", \"trilinear\",\n        ],\n        capture_output=True,\n        text=True,\n    )\n    if result.returncode != 0:\n        _log.warning(\n            \"FLIRT resampling of DSC CBV failed (rc=%d): %s\",\n            result.returncode, result.stderr,\n        )\n        return \"\"\n\n    return cbv_in_dce\n"
     },
     "roi_stats": {
-      "field_strength_t": 0.0,
       "force_binary": true,
       "mask_origin": "",
       "session_id": "0001",
@@ -2435,7 +2415,6 @@
       "function_str": "def _transform_mask_to_dce(  # type: ignore[no-untyped-def]\n    mask_file=None,\n    reference_file=None,\n    transform_matrix=None,\n):\n    \"\"\"Transform brain mask from T1w space to DCE space.\n\n    Thin Nipype Function-node wrapper around\n    ``pmriprep.utils.registration.transform_mask_to_grid``. The import is\n    intentionally inline because ``niu.Function`` serialises this body\n    via ``inspect.getsource`` and runs it in a worker that cannot see\n    module-level imports.\n\n    Parameters\n    ----------\n    mask_file : str or None\n        Path to brain mask in T1w space (or None).\n    reference_file : str or None\n        Path to DCE reference image for output geometry.\n    transform_matrix : str or None\n        Path to T1w\u2192DCE FLIRT matrix.\n\n    Returns\n    -------\n    str\n        Path to transformed brain mask in DCE space, or \"\" if no mask.\n    \"\"\"\n    from pmriprep.utils.registration import transform_mask_to_grid\n\n    return transform_mask_to_grid(mask_file, reference_file, transform_matrix)\n"
     },
     "user_lesion_stats": {
-      "field_strength_t": 0.0,
       "force_binary": true,
       "mask_origin": "",
       "session_id": "0001",

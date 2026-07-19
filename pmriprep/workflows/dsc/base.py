@@ -1204,8 +1204,6 @@ def init_dsc_lesion_stats_wf(
         Normalized CBV / CBF maps.
     nawm_mask
         NAWM reference mask.
-    field_strength_t
-        Field strength (Tesla).
     aif_qc
         AIF QC-metrics dict (surfaced into the stats sidecars).
     tumor_lesion_mask, mask_origin
@@ -1246,7 +1244,6 @@ def init_dsc_lesion_stats_wf(
                 "ncbv_map",
                 "ncbf_map",
                 "nawm_mask",
-                "field_strength_t",
                 "aif_qc",
                 "tumor_lesion_mask",
                 "mask_origin",
@@ -1277,7 +1274,7 @@ def init_dsc_lesion_stats_wf(
     user_lesion_stats.inputs.subject_id = subject_id
     user_lesion_stats.inputs.session_id = session_id
 
-    # Perfusion maps + NAWM + field strength + AIF QC are shared by all three
+    # Perfusion maps + NAWM + AIF QC are shared by all three
     # stats nodes; the lesion mask differs (tumor-seg / ROI / user), and only
     # the tumor-seg node receives the mask-origin provenance label.
     shared_inputs = [
@@ -1297,7 +1294,6 @@ def init_dsc_lesion_stats_wf(
         ("ncbv_map", "ncbv_map"),
         ("ncbf_map", "ncbf_map"),
         ("nawm_mask", "nawm_mask"),
-        ("field_strength_t", "field_strength_t"),
         ("aif_qc", "aif_qc"),
     ]
     workflow.connect([
@@ -2644,7 +2640,6 @@ def init_dsc_preproc_wf(
         ]),
         (conc_aif_wf, lesion_stats_wf, [("outputnode.qc_metrics", "inputnode.aif_qc")]),
         (transform_nawm, lesion_stats_wf, [("nawm_mask_dsc_file", "inputnode.nawm_mask")]),
-        (inputnode, lesion_stats_wf, [("field_strength", "inputnode.field_strength_t")]),
         (transform_lesion, lesion_stats_wf, [("lesion_mask_dsc_file", "inputnode.tumor_lesion_mask")]),
         (combine_masks, lesion_stats_wf, [("mask_origin", "inputnode.mask_origin")]),
         (validate_roi_mask, lesion_stats_wf, [("validated_mask", "inputnode.roi_mask")]),

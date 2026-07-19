@@ -88,14 +88,6 @@ class DSCLesionStatsInputSpec(BaseInterfaceInputSpec):
              "PerfusionProcessing.AIF provenance block",
     )
 
-    # Field strength (T) for NAWM physiological-range QC. When omitted
-    # (None / 0), value-level NAWM QC is reported as UNKNOWN; outside
-    # the validated [1.5, 3.0] range we also skip range checks.
-    field_strength_t = traits.Float(
-        0.0, usedefault=True,
-        desc="B0 field strength in tesla for NAWM range QC",
-    )
-
 
 class DSCLesionStatsOutputSpec(TraitedSpec):
     """Output specification for DSC lesion statistics extraction."""
@@ -247,10 +239,8 @@ class DSCLesionStats(BaseInterface):
                 k: v for k, v in maps.items()
                 if k in ["cbv", "cbf", "ncbv", "ncbf", "mtt"]
             }
-            fs = float(self.inputs.field_strength_t) or None
             result.nawm_reference = compute_nawm_reference(
                 nawm_data, nawm_maps, voxel_sizes,
-                field_strength_t=fs,
             )
 
         # Compute derived metrics for primary region
@@ -394,4 +384,3 @@ class DSCLesionStats(BaseInterface):
                 region.perfusion_maps[map_name] = stats
 
         return region
-

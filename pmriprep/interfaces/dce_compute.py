@@ -1870,7 +1870,6 @@ class ComputeDCEMaps(BaseInterface):
                     aif_qc_data=aif_qc_data,
                     brain_mask_file=self.inputs.brain_mask_file,
                     mode_override=str(self.inputs.constraint_mode),
-                    hematocrit=float(self.inputs.hematocrit),
                     preload_classification=preload_class,
                     k2_metrics=k2_metrics,
                     dose=float(self.inputs.dsc_dose),

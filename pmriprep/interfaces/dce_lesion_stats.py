@@ -81,14 +81,6 @@ class DCELesionStatsInputSpec(BaseInterfaceInputSpec):
     ser_map = traits.Str(desc="Signal enhancement ratio map path")
     ttp_map = traits.Str(desc="Time to peak map path")
 
-    # Field strength (T) for NAWM physiological-range QC. When omitted
-    # (None / 0), value-level NAWM QC is reported as UNKNOWN; outside
-    # the validated [1.5, 3.0] range we also skip range checks.
-    field_strength_t = traits.Float(
-        0.0, usedefault=True,
-        desc="B0 field strength in tesla for NAWM range QC",
-    )
-
 
 class DCELesionStatsOutputSpec(TraitedSpec):
     """Output specification for DCE lesion statistics extraction."""
@@ -240,10 +232,8 @@ class DCELesionStats(BaseInterface):
                 k: v for k, v in maps.items()
                 if k in ["ktrans", "nktrans", "ve", "vp", "kep"]
             }
-            fs = float(self.inputs.field_strength_t) or None
             result.nawm_reference = compute_nawm_reference(
                 nawm_data, nawm_maps, voxel_sizes,
-                field_strength_t=fs,
             )
 
         # Compute derived metrics for primary region
@@ -372,4 +362,3 @@ class DCELesionStats(BaseInterface):
                 region.perfusion_maps[map_name] = stats
 
         return region
-

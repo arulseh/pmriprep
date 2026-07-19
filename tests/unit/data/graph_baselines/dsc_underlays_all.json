@@ -885,26 +885,8 @@
     [
       "inputnode",
       "field_strength",
-      "lesion_stats",
-      "field_strength_t"
-    ],
-    [
-      "inputnode",
-      "field_strength",
       "preload_correct",
       "field_strength"
-    ],
-    [
-      "inputnode",
-      "field_strength",
-      "roi_stats",
-      "field_strength_t"
-    ],
-    [
-      "inputnode",
-      "field_strength",
-      "user_lesion_stats",
-      "field_strength_t"
     ],
     [
       "inputnode",
@@ -2400,7 +2382,6 @@
       "invert_xfm": true
     },
     "lesion_stats": {
-      "field_strength_t": 0.0,
       "force_binary": false,
       "mask_origin": "",
       "session_id": "0001",
@@ -2456,7 +2437,6 @@
       "registration": "flirt"
     },
     "roi_stats": {
-      "field_strength_t": 0.0,
       "force_binary": true,
       "mask_origin": "",
       "session_id": "0001",
@@ -2495,7 +2475,6 @@
       "output_name": "t2w_in_dsc.nii.gz"
     },
     "user_lesion_stats": {
-      "field_strength_t": 0.0,
       "force_binary": true,
       "mask_origin": "",
       "session_id": "0001",

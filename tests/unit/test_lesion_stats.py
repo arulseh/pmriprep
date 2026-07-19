@@ -290,8 +290,8 @@ class TestComputeDCEDerivedMetrics:
 class TestComputeNAWMReference:
     """Tests for compute_nawm_reference()."""
 
-    def test_nawm_stats(self) -> None:
-        """Maps + NAWM mask produces per-map stats with value-level QC by field strength."""
+    def test_relative_cbv_is_not_range_gated(self) -> None:
+        """Relative CBV statistics are emitted without absolute-value QC."""
         nawm_mask = np.zeros((10, 10, 10), dtype=bool)
         nawm_mask[1:9, 1:9, 1:9] = True  # 512 voxels
         rng = np.random.default_rng(42)
@@ -299,67 +299,39 @@ class TestComputeNAWMReference:
 
         maps = {"cbv": cbv_data}
         voxel_sizes = (1.0, 1.0, 1.0)
-        ref = compute_nawm_reference(
-            nawm_mask, maps, voxel_sizes, field_strength_t=3.0,
-        )
+        ref = compute_nawm_reference(nawm_mask, maps, voxel_sizes)
 
         assert ref["voxel_count"] == 512
         assert "cbv" in ref
         assert "median" in ref["cbv"]
         assert "std" in ref["cbv"]
-        # CBV ~3 lies in the 3T range (1.5, 4) → PASS at value level.
-        assert ref["value_qc_status"] == "PASS"
-        # Per-map verdict also surfaces:
-        assert ref["cbv"]["value_qc_status"] == "PASS"
+        assert ref["value_qc_status"] == "UNKNOWN"
+        assert "value_qc_status" not in ref["cbv"]
         # No mask-size editorial — voxel_count is informational only.
         assert "mask_qc_status" not in ref
 
-    def test_extreme_cbv_warns(self) -> None:
-        """Extreme CBV median produces value_qc_status=WARNING (3T table)."""
+    def test_normalized_and_time_maps_are_range_gated(self) -> None:
+        """nCBV and MTT retain interpretable NAWM scales."""
         nawm_mask = np.zeros((10, 10, 10), dtype=bool)
         nawm_mask[1:9, 1:9, 1:9] = True  # 512 voxels
-        # CBV far outside 3T range (1.5, 4)
-        cbv_data = np.full((10, 10, 10), 15.0)
+        maps = {
+            "ncbv": np.ones((10, 10, 10)),
+            "mtt": np.full((10, 10, 10), 5.0),
+        }
+        ref = compute_nawm_reference(nawm_mask, maps, (1.0, 1.0, 1.0))
 
-        maps = {"cbv": cbv_data}
-        voxel_sizes = (1.0, 1.0, 1.0)
-        ref = compute_nawm_reference(
-            nawm_mask, maps, voxel_sizes, field_strength_t=3.0,
-        )
+        assert ref["value_qc_status"] == "PASS"
+        assert ref["ncbv"]["value_qc_status"] == "PASS"
+        assert ref["mtt"]["value_qc_status"] == "PASS"
+
+    def test_extreme_ncbv_warns(self) -> None:
+        """Extreme nCBV median produces a value-level warning."""
+        nawm_mask = np.ones((10, 10, 10), dtype=bool)
+        maps = {"ncbv": np.full((10, 10, 10), 2.0)}
+        ref = compute_nawm_reference(nawm_mask, maps, (1.0, 1.0, 1.0))
 
         assert ref["value_qc_status"] == "WARNING"
-        assert "cbv" in ref["value_qc_notes"]
-        # Hematocrit annotation surfaces in the QC notes.
-        assert "hematocrit" in ref["value_qc_notes"].lower()
-
-    def test_unknown_field_strength_skips_value_qc(self) -> None:
-        """field_strength_t=None reports value_qc_status=UNKNOWN."""
-        nawm_mask = np.zeros((10, 10, 10), dtype=bool)
-        nawm_mask[1:9, 1:9, 1:9] = True
-        cbv_data = np.full((10, 10, 10), 15.0)  # would WARN at 3T
-
-        maps = {"cbv": cbv_data}
-        ref = compute_nawm_reference(
-            nawm_mask, maps, (1.0, 1.0, 1.0), field_strength_t=None,
-        )
-
-        assert ref["value_qc_status"] == "UNKNOWN"
-        assert "Field strength unknown" in ref["value_qc_notes"]
-
-    def test_field_strength_outside_validated_range_skips(self) -> None:
-        """7T (outside [1.5, 3.0]) reports value_qc_status=UNKNOWN, no auto-gate."""
-        nawm_mask = np.zeros((10, 10, 10), dtype=bool)
-        nawm_mask[1:9, 1:9, 1:9] = True
-        cbv_data = np.full((10, 10, 10), 5.0)
-
-        maps = {"cbv": cbv_data}
-        ref = compute_nawm_reference(
-            nawm_mask, maps, (1.0, 1.0, 1.0), field_strength_t=7.0,
-        )
-
-        assert ref["value_qc_status"] == "UNKNOWN"
-        assert "7" in ref["value_qc_notes"]
-        assert "outside validated range" in ref["value_qc_notes"]
+        assert "ncbv" in ref["value_qc_notes"]
 
     def test_small_nawm_mask_emits_size_without_editorial(self) -> None:
         """Small NAWM mask: voxel_count + volume_ml emitted; no mask_qc_status fabricated.
@@ -375,14 +347,13 @@ class TestComputeNAWMReference:
 
         ref = compute_nawm_reference(
             nawm_mask, {"cbv": cbv_data}, (1.0, 1.0, 1.0),
-            field_strength_t=3.0,
         )
         assert ref["voxel_count"] == 1
         assert "mask_qc_status" not in ref
         assert "mask_qc_notes" not in ref
 
     def test_no_maps_in_range_table_reports_unknown_not_pass(self) -> None:
-        """Field strength provided but emitted maps have no range entries → UNKNOWN.
+        """Maps without registered ranges produce UNKNOWN rather than PASS.
 
         Guards against compute_nawm_reference returning
         ``value_qc_status="PASS"`` with a misleading "All NAWM medians
@@ -391,14 +362,12 @@ class TestComputeNAWMReference:
         """
         nawm_mask = np.zeros((10, 10, 10), dtype=bool)
         nawm_mask[1:9, 1:9, 1:9] = True
-        # kep and peak_enhancement aren't in NAWM_RANGES_3T
+        # kep and peak_enhancement have no registered NAWM ranges.
         maps = {
             "kep": np.full((10, 10, 10), 0.5),
             "peak_enhancement": np.full((10, 10, 10), 50.0),
         }
-        ref = compute_nawm_reference(
-            nawm_mask, maps, (1.0, 1.0, 1.0), field_strength_t=3.0,
-        )
+        ref = compute_nawm_reference(nawm_mask, maps, (1.0, 1.0, 1.0))
         assert ref["value_qc_status"] == "UNKNOWN"
         assert "No emitted maps" in ref["value_qc_notes"]
 
