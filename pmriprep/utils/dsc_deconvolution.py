@@ -53,7 +53,7 @@ class DeconvolutionResultBase:
     Attributes
     ----------
         residue: Residue function R(t).
-        cbf: Cerebral blood flow, max(R(t)).
+        cbf: Cerebral blood flow, the maximum of R(t).
         cbv: Residue-integral CBV (integral of R(t)); feeds the deconvolution
             rel_cbv map and the parametric oSVD fallback. The primary reported
             CBV is the AUC ratio (cbv_auc / rel_cbv_auc) computed in the interface.
@@ -1897,4 +1897,3 @@ def tikhonov_deconvolve_batch(
         data_driven_map = data_driven_map.reshape(spatial_shape)  # type: ignore[assignment]
 
     return residues, cbf, cbv, mtt, lambda_optimal, data_driven_map
-

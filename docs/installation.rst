@@ -3,8 +3,8 @@ Installation
 
 .. include:: links.rst
 
-PMRIPrep is distributed as a Docker_ / Apptainer_ container image (recommended) and as a
-Python package on PyPI.
+PMRIPrep is distributed as a Docker_ / Apptainer_ container image (recommended) and can
+be installed from source for development. It is not yet published on PyPI.
 
 Docker (recommended)
 --------------------
@@ -40,12 +40,14 @@ Apptainer
 TemplateFlow templates are pre-populated at ``/opt/templateflow`` inside the image, so no
 extra bind mounts are needed.
 
-pip (development)
------------------
+Source installation (development)
+---------------------------------
 
 .. code-block:: bash
 
-   pip install pmriprep
+   git clone https://github.com/arulseh/pmriprep.git
+   cd pmriprep
+   python -m pip install .
 
 Requires FSL_ and ANTs_ on ``$PATH``; see the ``Dockerfile`` for the full system
 dependency list.

@@ -58,6 +58,9 @@ autodoc_default_options = {
     "show-inheritance": True,
     "ignore-module-all": True,
 }
+# Generated API pages index several public objects with the same short name.
+# Suppress only Python-domain ambiguity warnings; all other warnings remain fatal.
+suppress_warnings = ["ref.python"]
 
 # -- sphinxcontrib-apidoc (auto-generates API stubs into docs/api/ at build) ---
 apidoc_module_dir = "../pmriprep"

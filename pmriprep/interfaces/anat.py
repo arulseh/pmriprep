@@ -53,6 +53,7 @@ class ReorientAndCrop(SimpleInterface):
     """Reorient to canonical RAS orientation and (optionally) crop field of view.
 
     Two steps:
+
     1. Reorient the image to RAS with nibabel (no external tool).
     2. When ``crop_fov`` is set, crop the field of view with FSL ``robustfov``
        to remove neck and excess air (T1w only; disable for FLAIR/T2w).

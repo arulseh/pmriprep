@@ -85,13 +85,15 @@ apptainer run --cleanenv --nv \
 
 TemplateFlow templates are pre-populated at `/opt/templateflow` inside the image — no extra bind mounts needed.
 
-### pip (Development)
+### Source installation (development)
 
 ```bash
-pip install pmriprep
+git clone https://github.com/arulseh/pmriprep.git
+cd pmriprep
+python -m pip install .
 ```
 
-Requires FSL and ANTs on `$PATH`. See the Dockerfile for the full list of system dependencies.
+PMRIPrep is not yet published on PyPI. A source installation requires FSL and ANTs on `$PATH`; see the Dockerfile for the full list of system dependencies.
 
 ## System Requirements
 
@@ -604,7 +606,7 @@ Use `--report-only` to regenerate reports from existing outputs without re-runni
 
 ## License
 
-PMRIPrep is licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for the full text.
+PMRIPrep software is licensed under the Apache License, Version 2.0. Bundled mask resources are distributed under CC0 1.0, with provenance and terms in [`pmriprep/data/atlases`](pmriprep/data/atlases/README.md). The Dockerfile is separately MIT-licensed. See [LICENSE](LICENSE) and [NOTICE](NOTICE) for distribution details.
 
 ## Citation
 

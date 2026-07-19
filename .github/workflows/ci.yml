@@ -66,4 +66,4 @@ jobs:
           python-version: "3.11"
           cache: pip
       - run: pip install -e ".[doc]"
-      - run: python -m sphinx -b html docs docs/_build/html
+      - run: python -m sphinx -W --keep-going -b html docs docs/_build/html

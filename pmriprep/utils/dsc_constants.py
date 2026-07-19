@@ -194,7 +194,9 @@ LEAKY_PRIMARY_INADEQUATE: Final[float] = 5.0  # percent, == LEAKY_SIGMA_LOW
 #: the non-negative BSW correction cannot remove (it would need K2 < 0), so
 #: K2 pins at 0 and the full-integral CBV over-estimates. A voxel is flagged
 #: when its late-window tail persists AND its K2 is zero:
+#:
 #:   late_tail_ratio = mean(conc[final TAIL_LATE_FRAC of frames]) / peak(conc)
+#:
 #: The ratio is TE-invariant (the −1/TE factor cancels), so it is scale- and
 #: protocol-portable. Thresholds calibrated on the Semmineh GBM DSC DRO
 #: (fire on the +40% preloaded overestimate configs, silent on the T1-dip

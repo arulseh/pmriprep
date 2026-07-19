@@ -99,6 +99,7 @@ def detect_bolus_arrival_time(
     """Detect bolus arrival time using threshold then gradient fallback.
 
     Methods attempted in order:
+
     1. Threshold: the peak must clear baseline + 3*std (genuine enhancement);
        the arrival is then read at ``BAT_ARRIVAL_PEAK_FRACTION`` of the peak on
        the leading edge, interpolated to sub-frame precision.

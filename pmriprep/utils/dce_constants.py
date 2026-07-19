@@ -1213,6 +1213,7 @@ MAX_NCBV_FOR_VALIDATION: Final[float] = 5.0
 #: leakage correction leaves a residual CBV-scale bias that the prior must
 #: not lean on tightly. Values are quadrature sums of the 0.40 floor with
 #: the post-BSW residual CBV-scale error:
+#:
 #:   adequate   = 0.40                (biological floor only)
 #:   partial    ≈ √(0.40² + 0.25²) = 0.50   (modest residual)
 #:   inadequate ≈ √(0.40² + 0.40²) = 0.60   (large residual)
