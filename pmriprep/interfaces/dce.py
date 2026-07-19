@@ -2454,6 +2454,7 @@ class VFAPreprocess(SimpleInterface):
         Nominal flip angles in degrees.
     skip_coregistration : bool
         If True, skip FLIRT coregistration.
+
     Returns
     -------
     out_files : list of str

@@ -60,7 +60,7 @@ def _dose_type(value: str) -> float:
     return fval
 
 
-def _preload_type(value: str):
+def _preload_type(value: str) -> str | float:
     """Parse a --dsc-preload argument as 'auto' or a float dose multiplier.
 
     Parameters

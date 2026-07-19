@@ -41,7 +41,7 @@ class PMRIPrepDataSink(_NiworkflowsDDS):
 
 
 def _optional_figure_file(desc: str = "") -> traits.Either:
-    """Optional figure trait accepting either an existing file or ``None``."""
+    """Create an optional figure trait accepting a file or ``None``."""
     return traits.Either(
         File(exists=True), traits.Enum(None), desc=desc,
     )

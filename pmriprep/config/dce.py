@@ -141,7 +141,7 @@ class DCEConfig:
     # Testing / debug
     sloppy: bool = False  # Use fast, low-quality settings for testing
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Ensure numeric fields have correct types after initialization.
 
         This handles cases where values may be passed as strings from

@@ -644,10 +644,10 @@ def compute_dce_derived_metrics(
 
 
 def combine_tumor_masks(
-    tumor_segmentation_file=None,  # Optional[str] - type hint removed for Nipype Function
-    whole_tumor_mask_file=None,    # Optional[str] - type hint removed for Nipype Function
-    reference_file=None,           # str
-):  # -> Tuple[Optional[str], str]
+    tumor_segmentation_file: str | None = None,
+    whole_tumor_mask_file: str | None = None,
+    reference_file: str | None = None,
+) -> tuple[str, str]:
     """Select the best tumor mask for lesion statistics.
 
     Priority:
@@ -655,7 +655,7 @@ def combine_tumor_masks(
     1. If tumor segmentation present: use it (already multi-label:
        0=bg, 1=non-enhancing, 2=enhancing)
     2. If only whole_tumor present: use as binary mask
-    3. If none present: return (None, "")
+    3. If none present: return empty-string sentinels
 
     Parameters
     ----------
@@ -672,19 +672,14 @@ def combine_tumor_masks(
     tuple
         Tuple of (mask_file_path, mask_origin) where mask_origin is
         "tumor_segmentation" or "whole_tumor" or "" if no masks available.
-        Returns ("", "") (not (None, "")) when no masks present because
-        downstream traits.Str rejects None.
-
-    Notes
-    -----
-        This function is used as a Nipype Function node, so type hints are removed
-        from the signature (Optional requires import which breaks Function nodes).
+        Returns ("", "") when no masks are available because downstream
+        ``traits.Str`` fields require strings.
     """
     from pathlib import Path
 
     from nipype.interfaces.base import isdefined
 
-    def _is_valid_file(f):
+    def _is_valid_file(f: str | None) -> bool:
         """Check if file path is valid (not None, not Undefined, exists)."""
         if f is None:
             return False
@@ -693,10 +688,10 @@ def combine_tumor_masks(
         return Path(f).exists()
 
     if _is_valid_file(tumor_segmentation_file):
-        return (tumor_segmentation_file, "tumor_segmentation")
+        return (str(tumor_segmentation_file), "tumor_segmentation")
 
     if _is_valid_file(whole_tumor_mask_file):
-        return (whole_tumor_mask_file, "whole_tumor")
+        return (str(whole_tumor_mask_file), "whole_tumor")
 
     return ("", "")
 
@@ -740,6 +735,7 @@ def compute_nawm_reference(
         Dictionary mapping map name to 3D array.
     voxel_sizes : tuple of float
         Voxel dimensions in mm.
+
     Returns
     -------
     dict
