@@ -162,6 +162,17 @@ class _DCEBATAlignment(NamedTuple):
     correction: dict[str, Any]
 
 
+class _DCEVPConstraint(NamedTuple):
+    """DSC-derived vp prior, diagnostics, and resulting model-selection state."""
+
+    vp_map: Optional[npt.NDArray[Any]]
+    mode: Any
+    vp_uncertainty: float
+    qc: dict[str, Any]
+    model_name: str
+    candidate_names: list[str]
+
+
 # Import-time pickle-safety assertion (S1 from code review round 3):
 # BatchedChunkArgs MUST be defined at module top-level for pickling across
 # ProcessPoolExecutor boundaries. A nested definition (e.g. inside a
@@ -1816,10 +1827,32 @@ class ComputeDCEMaps(BaseInterface):
             aligned_aif = shift_aif(prepared.aif, prepared.time_points, delay_s)
         return _DCEBATAlignment(aligned_aif, correction)
 
-    def _run_interface(self, runtime: Any) -> Any:
-        """Execute DCE map computation."""
-        import nibabel as nib  # type: ignore[import-untyped]
+    def _prepare_vp_constraint(
+        self,
+        prepared: _DCEFitPreparation,
+        aif: npt.NDArray[Any],
+    ) -> _DCEVPConstraint:
+        """Prepare the DSC-derived vp prior and acquisition-limited QC state.
 
+        Parameters
+        ----------
+        prepared : _DCEFitPreparation
+            Validated DCE inputs, fitting domain, and initial model selection.
+        aif : numpy.ndarray
+            Post-BAT-alignment plasma AIF used by pharmacokinetic fitting.
+
+        Returns
+        -------
+        _DCEVPConstraint
+            Prior map, constraint configuration, diagnostic QC, and any
+            constraint-driven adjustment to automatic model selection.
+
+        Notes
+        -----
+        The prior remains NAWM-anchored as ``vp = NAWM_VP_REFERENCE * nCBV``.
+        The AIF-to-tissue overshoot is informational and never changes the
+        constraint mode or uncertainty.
+        """
         from pmriprep.utils.dsc_cbv_constraint import (
             NO_DSC_RUN_REASON_STRING,
             SKIP_REASON_NO_DSC_RUN,
@@ -1827,6 +1860,150 @@ class ComputeDCEMaps(BaseInterface):
             ConstraintMode,
             prepare_vp_constraint_from_data,
         )
+
+        vp_constraint_map: Optional[npt.NDArray[Any]] = None
+        constraint_mode = ConstraintMode.SKIP
+        constraint_vp_uncertainty = 0.2
+        constraint_qc: dict[str, Any] = {
+            "mode": "skip",
+            "reason": NO_DSC_RUN_REASON_STRING,
+            "skip_reason": SKIP_REASON_NO_DSC_RUN,
+        }
+        model_name = prepared.model_name
+        candidate_names = list(prepared.candidate_names)
+        ncbv_available = isdefined(self.inputs.dsc_ncbv_file) and bool(
+            self.inputs.dsc_ncbv_file
+        )
+        needs_vp_constraint = model_name in ("extended_tofts", "2cxm") or prepared.is_auto
+        dsc_inputs_present = (
+            (isdefined(self.inputs.dsc_ncbv_file) and bool(self.inputs.dsc_ncbv_file))
+            or (isdefined(self.inputs.dsc_aif_qc) and bool(self.inputs.dsc_aif_qc))
+            or (isdefined(self.inputs.dsc_preload_qc) and bool(self.inputs.dsc_preload_qc))
+        )
+
+        if needs_vp_constraint and dsc_inputs_present:
+            try:
+                aif_qc_data = (
+                    dict(self.inputs.dsc_aif_qc)
+                    if isdefined(self.inputs.dsc_aif_qc)
+                    else {}
+                )
+                if isdefined(self.inputs.dsc_preprocessing_stats):
+                    prep_stats = self.inputs.dsc_preprocessing_stats
+                    if prep_stats and "fraction_cnr_gt_4" in prep_stats:
+                        aif_qc_data["cnr_whole_brain"] = {
+                            "fraction_cnr_gt_4": prep_stats["fraction_cnr_gt_4"],
+                            "mean_cnr": prep_stats.get("mean_cnr"),
+                        }
+
+                preload_qc = (
+                    dict(self.inputs.dsc_preload_qc)
+                    if isdefined(self.inputs.dsc_preload_qc)
+                    else {}
+                )
+                k2_metrics = (
+                    {key: value for key, value in preload_qc.items() if key in _K2_QC_KEYS}
+                    or None
+                )
+                vp_result = prepare_vp_constraint_from_data(
+                    ncbv_file=self.inputs.dsc_ncbv_file if ncbv_available else None,
+                    aif_qc_data=aif_qc_data,
+                    brain_mask_file=self.inputs.brain_mask_file,
+                    mode_override=str(self.inputs.constraint_mode),
+                    preload_classification=preload_qc.get("preload_classification"),
+                    k2_metrics=k2_metrics,
+                    dose=float(self.inputs.dsc_dose),
+                    agent_standard_dose=float(self.inputs.dsc_agent_standard_dose),
+                )
+                vp_constraint_map = vp_result.vp_map
+                constraint_mode = vp_result.config.mode
+                constraint_vp_uncertainty = vp_result.config.vp_uncertainty
+                constraint_qc = vp_result.qc_report
+
+                if (
+                    constraint_mode == ConstraintMode.SOFT
+                    and str(self.inputs.constraint_mode) == "auto"
+                    and vp_constraint_map is not None
+                ):
+                    aif_peak = float(np.max(aif))
+                    if aif_peak > 0:
+                        valid_constrained = (
+                            prepared.fitting_mask
+                            & np.isfinite(vp_constraint_map)
+                            & (vp_constraint_map > 0)
+                        )
+                        if int(np.sum(valid_constrained)) > 100:
+                            vp_cp_peak = vp_constraint_map[valid_constrained] * aif_peak
+                            ct_peak_arr = np.max(
+                                prepared.concentration[valid_constrained], axis=-1
+                            )
+                            overshoot_frac = float(np.mean(vp_cp_peak > ct_peak_arr))
+                            constraint_qc["aif_tissue_overshoot_fraction"] = overshoot_frac
+                            if (
+                                isdefined(self.inputs.volume_tr)
+                                and self.inputs.volume_tr is not None
+                                and float(self.inputs.volume_tr) > 0
+                            ):
+                                volume_tr_s = float(self.inputs.volume_tr)
+                                aif_peak_frame = int(np.argmax(aif))
+                                tissue_peak_frames = np.argmax(
+                                    prepared.concentration[valid_constrained], axis=-1
+                                )
+                                median_tissue_peak_frame = float(
+                                    np.median(tissue_peak_frames)
+                                )
+                                constraint_qc["peak_alignment_lag_s"] = (
+                                    median_tissue_peak_frame - aif_peak_frame
+                                ) * volume_tr_s
+                                constraint_qc["volume_tr_s"] = volume_tr_s
+                            else:
+                                constraint_qc["peak_alignment_lag_s"] = None
+                                constraint_qc["peak_alignment_lag_reason"] = (
+                                    "volume_tr_undefined"
+                                )
+                            if overshoot_frac > ACQUISITION_LIMITED_OVERSHOOT_THRESHOLD:
+                                constraint_qc["acquisition_limited_note"] = (
+                                    "High AIF-to-tissue overshoot (>70%): "
+                                    "observed tissue peak under-samples the "
+                                    "first pass (TR ≲ 2 s recommended for "
+                                    "vp identifiability; Buckley MRM 2002). "
+                                    "Posterior vp is prior-dominated by "
+                                    "design at this acquisition; "
+                                    "informational only — no action taken."
+                                )
+
+                if (
+                    aif_qc_data.get("detection_method") == "synthetic"
+                    or aif_qc_data.get("cbv_auc_denominator_is_synthetic")
+                ):
+                    constraint_qc.setdefault("aif_tissue_overshoot_fraction", None)
+                    constraint_qc["overshoot_applicable"] = False
+                    constraint_qc["overshoot_reason"] = SKIP_REASON_SYNTHETIC_AIF
+            except Exception as exc:
+                constraint_qc = {
+                    "mode": "skip",
+                    "reason": f"Failed to load DSC CBV constraint: {exc}",
+                }
+
+            if prepared.is_auto and constraint_mode != ConstraintMode.SKIP:
+                if "extended_tofts" not in candidate_names:
+                    candidate_names.append("extended_tofts")
+                model_name = candidate_names[-1]
+
+        return _DCEVPConstraint(
+            vp_constraint_map,
+            constraint_mode,
+            constraint_vp_uncertainty,
+            constraint_qc,
+            model_name,
+            candidate_names,
+        )
+
+    def _run_interface(self, runtime: Any) -> Any:
+        """Execute DCE map computation."""
+        import nibabel as nib  # type: ignore[import-untyped]
+
+        from pmriprep.utils.dsc_cbv_constraint import ConstraintMode
 
         prepared = self._prepare_fit_inputs()
         conc_data = prepared.concentration
@@ -1855,226 +2032,13 @@ class ComputeDCEMaps(BaseInterface):
         bat_correction = bat_alignment.correction
 
         spatial_shape = conc_data.shape[:3]
-
-        # =====================================================================
-        # DSC CBV vp Constraint
-        # =====================================================================
-        vp_constraint_map: Optional[npt.NDArray[Any]] = None
-        constraint_mode = ConstraintMode.SKIP
-        constraint_vp_uncertainty: float = 0.2
-        constraint_qc: dict[str, Any] = {
-            "mode": "skip",
-            "reason": NO_DSC_RUN_REASON_STRING,
-            "skip_reason": SKIP_REASON_NO_DSC_RUN,
-        }
-
-        # vp prior is NAWM-anchored: vp = NAWM_VP_REFERENCE · nCBV. Only
-        # nCBV feeds the prior; unnormalized relative CBV is not valid here.
-        # (cross-validation, QC plots) but does not drive the prior because
-        # the scalar calibration from ΔR2*-derived CBV to DCE vp cannot be
-        # closed robustly (AIF partial-volume, recirculation, first-pass
-        # truncation). When nCBV is missing (older skip-DSC derivatives,
-        # or no NAWM reference), prepare_vp_constraint_from_data emits a
-        # clean SKIP with skip_reason="no_nawm_mask".
-        ncbv_available = (
-            isdefined(self.inputs.dsc_ncbv_file)
-            and self.inputs.dsc_ncbv_file
-        )
-        needs_vp_constraint = (
-            model_name in ("extended_tofts", "2cxm") or is_auto
-        )
-
-        dsc_inputs_present = (
-            (isdefined(self.inputs.dsc_ncbv_file) and bool(self.inputs.dsc_ncbv_file))
-            or (isdefined(self.inputs.dsc_aif_qc) and bool(self.inputs.dsc_aif_qc))
-            or (isdefined(self.inputs.dsc_preload_qc) and bool(self.inputs.dsc_preload_qc))
-        )
-
-        if needs_vp_constraint and not dsc_inputs_present:
-            constraint_qc = {
-                "mode": "skip",
-                "reason": NO_DSC_RUN_REASON_STRING,
-                "skip_reason": SKIP_REASON_NO_DSC_RUN,
-            }
-        elif needs_vp_constraint:
-            try:
-                # Get AIF QC dict if available
-                aif_qc_data = (
-                    dict(self.inputs.dsc_aif_qc)
-                    if isdefined(self.inputs.dsc_aif_qc)
-                    else {}
-                )
-
-                # Inject CNR coverage from preprocessing stats
-                # Enables assess_dsc_cbv_quality() to use actual computed CNR
-                if isdefined(self.inputs.dsc_preprocessing_stats):
-                    prep_stats = self.inputs.dsc_preprocessing_stats
-                    if prep_stats and "fraction_cnr_gt_4" in prep_stats:
-                        aif_qc_data["cnr_whole_brain"] = {
-                            "fraction_cnr_gt_4": prep_stats["fraction_cnr_gt_4"],
-                            "mean_cnr": prep_stats.get("mean_cnr"),
-                        }
-
-                preload_qc = (
-                    dict(self.inputs.dsc_preload_qc)
-                    if isdefined(self.inputs.dsc_preload_qc) else {}
-                )
-                preload_class = preload_qc.get("preload_classification")
-                k2_metrics = (
-                    {k: v for k, v in preload_qc.items() if k in _K2_QC_KEYS}
-                    or None
-                )
-
-                ncbv_for_prior = (
-                    self.inputs.dsc_ncbv_file if ncbv_available else None
-                )
-                vp_result = prepare_vp_constraint_from_data(
-                    ncbv_file=ncbv_for_prior,
-                    aif_qc_data=aif_qc_data,
-                    brain_mask_file=self.inputs.brain_mask_file,
-                    mode_override=str(self.inputs.constraint_mode),
-                    preload_classification=preload_class,
-                    k2_metrics=k2_metrics,
-                    dose=float(self.inputs.dsc_dose),
-                    agent_standard_dose=float(
-                        self.inputs.dsc_agent_standard_dose
-                    ),
-                )
-                vp_constraint_map = vp_result.vp_map
-                constraint_mode = vp_result.config.mode
-                constraint_vp_uncertainty = vp_result.config.vp_uncertainty
-                constraint_qc = vp_result.qc_report
-
-                # Acquisition-limited diagnostic.
-                #
-                # Earlier safeguard logic checked vp_prior * Cp(peak) >
-                # Ct(peak) and interpreted > 30% overshoot as a scale
-                # bug, then either downgraded HARD→SKIP or widened SOFT σ
-                # to 0.5. Under the NAWM-anchored prior (vp =
-                # NAWM_VP_REFERENCE × nCBV) and the plasma-corrected AIF
-                # convention, that test no longer measures scale. It
-                # primarily detects first-pass temporal undersampling:
-                # max(Ct_samp)
-                # is Jensen-biased by (TR/FWHM)² so vp·Cp_peak >
-                # Ct_samp_peak is expected at any realistic volume TR
-                # even at perfect scale. Widening σ at long TR is
-                # physically backward — vp is prior-dominated by design
-                # in that regime, and killing the prior makes vp
-                # identifiability worse, not better. Genuine scale
-                # breaks (e.g., 10× CBV-unit bugs) are caught by the
-                # VP_MEDIAN magnitude gate in prepare_vp_constraint_from_data.
-                #
-                # We keep the same arithmetic but emit it as informational
-                # QC only (no mutation of constraint_mode, sigma, or
-                # reason). Also emit peak_alignment_lag_s so a reader
-                # can see whether tissue peak trails AIF peak by the
-                # expected ~1 frame (normal) vs many frames (either
-                # tracer delay or TR-induced aliasing).
-                if (
-                    constraint_mode == ConstraintMode.SOFT
-                    and str(self.inputs.constraint_mode) == "auto"
-                    and vp_constraint_map is not None
-                ):
-                    # ``aif`` here is post-BAT-alignment when enabled; peak
-                    # amplitude is shift-invariant, and peak_alignment_lag_s
-                    # below then reflects the residual post-alignment lag.
-                    aif_peak = float(np.max(aif))
-                    if aif_peak > 0:
-                        valid_constrained = (
-                            fitting_mask
-                            & np.isfinite(vp_constraint_map)
-                            & (vp_constraint_map > 0)
-                        )
-                        n_valid = int(np.sum(valid_constrained))
-                        if n_valid > 100:
-                            vp_cp_peak = (
-                                vp_constraint_map[valid_constrained] * aif_peak
-                            )
-                            ct_peak_arr = np.max(
-                                conc_data[valid_constrained], axis=-1
-                            )
-                            overshoot_frac = float(
-                                np.mean(vp_cp_peak > ct_peak_arr)
-                            )
-                            # Overshoot is TR-modulated, not TR-invariant:
-                            # at long volume
-                            # TR, max(Ct) samples the tissue peak with bias
-                            # ∝ FWHM_tissue/TR, firing overshoot more often
-                            # from sampling asymmetry. Interpret thresholds
-                            # (0.7) conditionally on volume_tr_s.
-                            constraint_qc["aif_tissue_overshoot_fraction"] = (
-                                overshoot_frac
-                            )
-
-                            # Peak-alignment lag is a frame difference converted
-                            # with the temporal spacing between DCE volumes.
-                            if (
-                                isdefined(self.inputs.volume_tr)
-                                and self.inputs.volume_tr is not None
-                                and float(self.inputs.volume_tr) > 0
-                            ):
-                                _vol_tr_s = float(self.inputs.volume_tr)
-                                aif_peak_frame = int(np.argmax(aif))
-                                tissue_peak_frames = np.argmax(
-                                    conc_data[valid_constrained], axis=-1
-                                )
-                                median_tissue_peak_frame = float(
-                                    np.median(tissue_peak_frames)
-                                )
-                                constraint_qc["peak_alignment_lag_s"] = (
-                                    (median_tissue_peak_frame - aif_peak_frame)
-                                    * _vol_tr_s
-                                )
-                                constraint_qc["volume_tr_s"] = _vol_tr_s
-                            else:
-                                constraint_qc["peak_alignment_lag_s"] = None
-                                constraint_qc["peak_alignment_lag_reason"] = (
-                                    "volume_tr_undefined"
-                                )
-                            if overshoot_frac > ACQUISITION_LIMITED_OVERSHOOT_THRESHOLD:
-                                constraint_qc["acquisition_limited_note"] = (
-                                    "High AIF-to-tissue overshoot (>70%): "
-                                    "observed tissue peak under-samples the "
-                                    "first pass (TR ≲ 2 s recommended for "
-                                    "vp identifiability; Buckley MRM 2002). "
-                                    "Posterior vp is prior-dominated by "
-                                    "design at this acquisition; "
-                                    "informational only — no action taken."
-                                )
-                # Synthetic-AIF annotation. When the vp
-                # constraint SKIPs due to synthetic AIF, the overshoot
-                # diagnostic above does not run — the comparison uses
-                # absolute scales that the synthetic AIF cannot provide.
-                # Emit explicit "not applicable" keys with stable shape
-                # so downstream QC parsers don't have to differentiate
-                # "missing because didn't compute" from "missing because
-                # synthetic."
-                if (
-                    isinstance(aif_qc_data, dict)
-                    and (
-                        aif_qc_data.get("detection_method") == "synthetic"
-                        or aif_qc_data.get("cbv_auc_denominator_is_synthetic")
-                    )
-                ):
-                    constraint_qc.setdefault(
-                        "aif_tissue_overshoot_fraction", None
-                    )
-                    constraint_qc["overshoot_applicable"] = False
-                    constraint_qc["overshoot_reason"] = SKIP_REASON_SYNTHETIC_AIF
-            except Exception as exc:
-                constraint_qc = {
-                    "mode": "skip",
-                    "reason": f"Failed to load DSC CBV constraint: {exc}",
-                }
-
-            # Auto mode: when DSC-CBV passes quality, ensure extended_tofts is
-            # in the candidate set and set ceiling to most complex eligible
-            if is_auto and constraint_mode != ConstraintMode.SKIP:
-                if "extended_tofts" not in candidate_names:
-                    candidate_names.append("extended_tofts")
-                model_name = candidate_names[-1]
-
-        # =====================================================================
+        vp_constraint = self._prepare_vp_constraint(prepared, aif)
+        vp_constraint_map = vp_constraint.vp_map
+        constraint_mode = vp_constraint.mode
+        constraint_vp_uncertainty = vp_constraint.vp_uncertainty
+        constraint_qc = vp_constraint.qc
+        model_name = vp_constraint.model_name
+        candidate_names = vp_constraint.candidate_names
         # Compute model-free maps (vectorized, fast, before PK fitting loop)
         # =====================================================================
         from pmriprep.utils.dce_model_free import (
