@@ -39,6 +39,51 @@ from pmriprep.utils.dce_voxel_prep import prepare_voxel_for_fitting
 logger = logging.getLogger(__name__)
 
 
+def _is_degenerate_dce_fit(
+    model_name: str,
+    params: dict[str, float],
+    is_constrained: bool,
+) -> bool:
+    """Return whether a fitted DCE parameter set rails physiological bounds."""
+    ktrans = params.get("Ktrans", 0.0)
+    ve = params.get("ve", 0.0)
+    vp = params.get("vp", 0.0)
+    ktrans_low = ktrans < 0 if is_constrained else ktrans <= 0
+    if model_name == "2cxm":
+        fp = params.get("Fp", 0.0)
+        ps = params.get("PS", 0.0)
+        return (
+            fp <= 0
+            or fp >= FP_BOUNDS.max
+            or ps < 0
+            or ps >= PS_BOUNDS.max
+            or ve <= 0
+            or ve >= VE_BOUNDS.max
+            or vp <= 0
+            or vp >= VP_BOUNDS.max
+        )
+    if model_name == "patlak":
+        return (
+            ktrans < 0
+            or ktrans >= KTRANS_BOUNDS.max
+            or (not is_constrained and (vp <= 0 or vp >= VP_BOUNDS.max))
+        )
+    if model_name == "extended_tofts":
+        return (
+            ktrans_low
+            or ktrans >= KTRANS_BOUNDS.max
+            or ve <= 0
+            or ve >= VE_BOUNDS.max
+            or (not is_constrained and (vp <= 0 or vp >= VP_BOUNDS.max))
+        )
+    return (
+        ktrans <= 0
+        or ktrans >= KTRANS_BOUNDS.max
+        or ve <= 0
+        or ve >= VE_BOUNDS.max
+    )
+
+
 def _validate_dce_time_axis(
     time_points: npt.ArrayLike,
     n_dce_frames: int,
@@ -2456,40 +2501,12 @@ class ComputeDCEMaps(BaseInterface):
             # (line 1354: r2_map >= 0.5), separate from parameter estimation.
             ktrans_val = params.get("Ktrans", 0.0)
             ve_val = params.get("ve", 0.0)
-            vp_val = params.get("vp", 0.0)
             is_constrained = res.get("constrained", False)
-            # For constrained fits (vp fixed from DSC-CBV), Ktrans=0 is
-            # the correct physical answer for non-enhancing tissue —
-            # only reject strictly negative (numerical error). vp checks
-            # are skipped because vp was fixed and guaranteed positive.
-            ktrans_lo = ktrans_val < 0 if is_constrained else ktrans_val <= 0
-            if effective_model_name == "2cxm":
-                fp_val = params.get("Fp", 0.0)
-                ps_val = params.get("PS", 0.0)
-                degenerate = (
-                    fp_val <= 0 or fp_val >= FP_BOUNDS.max
-                    or ps_val < 0 or ps_val >= PS_BOUNDS.max
-                    or ve_val <= 0 or ve_val >= VE_BOUNDS.max
-                    or vp_val <= 0 or vp_val >= VP_BOUNDS.max
-                )
-            elif effective_model_name == "patlak":
-                # Patlak: Ktrans=0 is valid (non-enhancing tissue), only
-                # reject strictly negative. ve is not a Patlak parameter.
-                degenerate = (
-                    (ktrans_val < 0) or ktrans_val >= KTRANS_BOUNDS.max
-                    or (not is_constrained and (vp_val <= 0 or vp_val >= VP_BOUNDS.max))
-                )
-            elif effective_model_name == "extended_tofts":
-                degenerate = (
-                    ktrans_lo or ktrans_val >= KTRANS_BOUNDS.max
-                    or ve_val <= 0 or ve_val >= VE_BOUNDS.max
-                    or (not is_constrained and (vp_val <= 0 or vp_val >= VP_BOUNDS.max))
-                )
-            else:  # tofts
-                degenerate = (
-                    ktrans_val <= 0 or ktrans_val >= KTRANS_BOUNDS.max
-                    or ve_val <= 0 or ve_val >= VE_BOUNDS.max
-                )
+            degenerate = _is_degenerate_dce_fit(
+                effective_model_name,
+                params,
+                is_constrained,
+            )
             if degenerate:
                 degen_fill = np.nan if is_auto else 0.0
                 ktrans[x, y, z] = degen_fill
