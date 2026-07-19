@@ -16,6 +16,7 @@ from pmriprep.interfaces.dce_compute import (
     _scatter_dce_parameters,
     _scatter_dce_uncertainties,
     _summarize_mcmc_diagnostics,
+    _summarize_dce_categorical_qc,
     _summarize_vp_prior_departures,
 )
 from pmriprep.models.dce.bayesian import QC_ESS_MIN, QC_RHAT_MAX
@@ -352,3 +353,42 @@ def test_summarize_vp_prior_departures_preserves_strict_categories() -> None:
 def test_summarize_vp_prior_departures_empty_input_omits_metrics() -> None:
     """No applicable SOFT-prior voxels add no departure QC keys."""
     assert _summarize_vp_prior_departures([]) == {}
+
+
+def test_summarize_dce_categorical_qc_counts_models_and_quality() -> None:
+    """Auto categorical QC reports candidate fractions and in-domain labels."""
+    model_selection = np.array([[[1, 3], [3, 0]]])
+    quality = np.array([[[1, 2], [3, 4]]])
+    fitting_mask = np.array([[[True, True], [True, False]]])
+    summary = _summarize_dce_categorical_qc(
+        True,
+        ["patlak", "extended_tofts"],
+        model_selection,
+        {"patlak": 1, "extended_tofts": 3},
+        quality,
+        fitting_mask,
+    )
+    assert summary["model_selection"] == "auto"
+    assert summary["n_patlak_selected"] == 1
+    assert summary["patlak_fraction"] == pytest.approx(1 / 3)
+    assert summary["n_extended_tofts_selected"] == 2
+    assert summary["extended_tofts_fraction"] == pytest.approx(2 / 3)
+    assert summary["quality_n_good"] == 1
+    assert summary["quality_n_poor_convergence"] == 1
+    assert summary["quality_n_high_uncertainty"] == 1
+    assert summary["quality_n_unreliable_high_kep"] == 0
+
+
+def test_summarize_dce_categorical_qc_fixed_mode_omits_candidates() -> None:
+    """Fixed-model QC omits automatic candidate counts and fractions."""
+    summary = _summarize_dce_categorical_qc(
+        False,
+        [],
+        np.zeros((1, 1, 1), dtype=np.int8),
+        {},
+        np.ones((1, 1, 1), dtype=np.int8),
+        np.ones((1, 1, 1), dtype=bool),
+    )
+    assert summary["model_selection"] == "fixed"
+    assert "candidate_models" not in summary
+    assert summary["quality_n_good"] == 1

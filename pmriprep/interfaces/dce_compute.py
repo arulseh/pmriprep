@@ -268,6 +268,34 @@ def _summarize_vp_prior_departures(values: list[float]) -> dict[str, float]:
     }
 
 
+def _summarize_dce_categorical_qc(
+    is_auto: bool,
+    candidate_names: list[str],
+    model_selection: npt.NDArray[Any],
+    model_selection_codes: dict[str, int],
+    quality_flag: npt.NDArray[Any],
+    fitting_mask: npt.NDArray[Any],
+) -> dict[str, Any]:
+    """Summarize model-selection and quality-label categorical maps."""
+    summary: dict[str, Any] = {
+        "model_selection": "auto" if is_auto else "fixed",
+    }
+    if is_auto:
+        summary["candidate_models"] = candidate_names
+        n_total = int(np.sum(model_selection > 0))
+        for model_name in candidate_names:
+            count = int(np.sum(model_selection == model_selection_codes[model_name]))
+            summary[f"n_{model_name}_selected"] = count
+            summary[f"{model_name}_fraction"] = count / max(1, n_total)
+
+    quality_values = quality_flag[fitting_mask]
+    summary["quality_n_good"] = int(np.sum(quality_values == 1))
+    summary["quality_n_poor_convergence"] = int(np.sum(quality_values == 2))
+    summary["quality_n_high_uncertainty"] = int(np.sum(quality_values == 3))
+    summary["quality_n_unreliable_high_kep"] = int(np.sum(quality_values == 4))
+    return summary
+
+
 def _validate_dce_time_axis(
     time_points: npt.ArrayLike,
     n_dce_frames: int,
@@ -2776,27 +2804,16 @@ class ComputeDCEMaps(BaseInterface):
         else:
             qc_metrics["frac_fxl_risk_whole_brain"] = 0.0
 
-        qc_metrics["model_selection"] = "auto" if is_auto else "fixed"
-
-        # Per-model selection stats (auto mode)
-        if is_auto:
-            qc_metrics["candidate_models"] = candidate_names
-            n_total = int(np.sum(model_selection_map > 0))
-            for code_name in candidate_names:
-                count = int(np.sum(
-                    model_selection_map == _MODEL_SELECTION_CODES[code_name]
-                ))
-                qc_metrics[f"n_{code_name}_selected"] = count
-                qc_metrics[f"{code_name}_fraction"] = (
-                    count / max(1, n_total)
-                )
-
-        # Quality flag breakdown
-        qf_vals = quality_flag_map[fitting_mask]
-        qc_metrics["quality_n_good"] = int(np.sum(qf_vals == 1))
-        qc_metrics["quality_n_poor_convergence"] = int(np.sum(qf_vals == 2))
-        qc_metrics["quality_n_high_uncertainty"] = int(np.sum(qf_vals == 3))
-        qc_metrics["quality_n_unreliable_high_kep"] = int(np.sum(qf_vals == 4))
+        qc_metrics.update(
+            _summarize_dce_categorical_qc(
+                is_auto,
+                candidate_names,
+                model_selection_map,
+                _MODEL_SELECTION_CODES,
+                quality_flag_map,
+                fitting_mask,
+            )
+        )
 
         if r2_list:
             qc_metrics["r2_mean"] = float(np.mean(r2_list))
