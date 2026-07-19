@@ -53,7 +53,7 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
-            type=raw,value=${{ steps.meta_prep.outputs.version }}
+            type=raw,value=${{ steps.meta_prep.outputs.version }},enable={{is_default_branch}}
             type=raw,value=${{ steps.meta_prep.outputs.branch }}
             type=sha,prefix=sha-
 
