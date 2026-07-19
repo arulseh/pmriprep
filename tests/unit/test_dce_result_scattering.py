@@ -7,6 +7,7 @@ import pytest
 
 from pmriprep.interfaces.dce_compute import (
     _is_degenerate_dce_fit,
+    _scatter_dce_fit_artifacts,
     _scatter_dce_uncertainties,
 )
 from pmriprep.utils.dce_constants import (
@@ -91,3 +92,41 @@ def test_uncertainty_scatter_leaves_nonapplicable_patlak_fields_zero() -> None:
     assert maps.ve_std[0, 0, 0] == 0.0
     assert maps.fp_std[0, 0, 0] == 0.0
     assert maps.ps_std[0, 0, 0] == 0.0
+
+
+def test_fit_artifact_scatter_writes_curve_bound_and_quality() -> None:
+    """All non-parameter artifacts use the same voxel coordinate."""
+    maps = SimpleNamespace(
+        fitted_curves=np.zeros((1, 1, 1, 3), dtype=np.float32),
+        vp_at_bound=np.zeros((1, 1, 1), dtype=np.float32),
+        quality_flag=np.zeros((1, 1, 1), dtype=np.int8),
+        quality_flag_codes={"good": 1, "high_uncertainty": 3},
+    )
+    _scatter_dce_fit_artifacts(
+        maps,
+        (0, 0, 0),
+        {
+            "fitted_curve": np.array([0.0, 0.2, 0.1]),
+            "vp_at_bound": 1.0,
+            "quality_flag": "high_uncertainty",
+        },
+    )
+    np.testing.assert_array_equal(
+        maps.fitted_curves[0, 0, 0],
+        np.array([0.0, 0.2, 0.1], dtype=np.float32),
+    )
+    assert maps.vp_at_bound[0, 0, 0] == 1.0
+    assert maps.quality_flag[0, 0, 0] == 3
+
+
+def test_fit_artifact_scatter_defaults_without_optional_curve() -> None:
+    """Missing optional values retain no curve and default to a good label."""
+    maps = SimpleNamespace(
+        fitted_curves=None,
+        vp_at_bound=np.ones((1, 1, 1), dtype=np.float32),
+        quality_flag=np.zeros((1, 1, 1), dtype=np.int8),
+        quality_flag_codes={"good": 1},
+    )
+    _scatter_dce_fit_artifacts(maps, (0, 0, 0), {})
+    assert maps.vp_at_bound[0, 0, 0] == 0.0
+    assert maps.quality_flag[0, 0, 0] == 1

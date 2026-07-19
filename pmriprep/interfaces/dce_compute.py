@@ -112,6 +112,21 @@ def _scatter_dce_uncertainties(
         )
 
 
+def _scatter_dce_fit_artifacts(
+    maps: "_DCEParameterMaps",
+    coords: tuple[int, int, int],
+    result: dict[str, Any],
+) -> None:
+    """Scatter fitted-curve, bound-indicator, and quality-label artifacts."""
+    x, y, z = coords
+    fitted_curve = result.get("fitted_curve")
+    if maps.fitted_curves is not None and fitted_curve is not None:
+        maps.fitted_curves[x, y, z, :] = fitted_curve.astype(np.float32)
+    maps.vp_at_bound[x, y, z] = float(result.get("vp_at_bound", 0.0))
+    quality_flag = result.get("quality_flag", "good")
+    maps.quality_flag[x, y, z] = maps.quality_flag_codes.get(quality_flag, 1)
+
+
 def _validate_dce_time_axis(
     time_points: npt.ArrayLike,
     n_dce_frames: int,
@@ -2403,7 +2418,6 @@ class ComputeDCEMaps(BaseInterface):
         ps_map = parameter_maps.ps
         e_map = parameter_maps.extraction_fraction
         quality_flag_map = parameter_maps.quality_flag
-        _QUALITY_FLAG_CODES = parameter_maps.quality_flag_codes
         model_selection_map = parameter_maps.model_selection
         _MODEL_SELECTION_CODES = parameter_maps.model_selection_codes
         delta_bic_map = parameter_maps.delta_bic
@@ -2572,18 +2586,7 @@ class ComputeDCEMaps(BaseInterface):
                     res["uncertainties"],
                 )
 
-            # Fitted curve
-            if save_fitted_curves and fitted_curves is not None:
-                if res["fitted_curve"] is not None:
-                    fitted_curves[x, y, z, :] = res["fitted_curve"].astype(np.float32)
-
-            # vp_at_bound scatter: only populated by the SOFT NLLS path;
-            # 0 elsewhere (default value from the result dict).
-            vp_at_bound_map[x, y, z] = float(res.get("vp_at_bound", 0.0))
-
-            # Set quality flag
-            qf = res.get("quality_flag", "good")
-            quality_flag_map[x, y, z] = _QUALITY_FLAG_CODES.get(qf, 1)
+            _scatter_dce_fit_artifacts(parameter_maps, (x, y, z), res)
 
             # Track convergence and constraints
             if res.get("constrained", False):
