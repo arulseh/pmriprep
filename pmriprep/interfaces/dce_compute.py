@@ -296,6 +296,63 @@ def _summarize_dce_categorical_qc(
     return summary
 
 
+def _summarize_dce_fitted_parameters(
+    fitting_mask: npt.NDArray[Any],
+    ktrans: npt.NDArray[Any],
+    ve: npt.NDArray[Any],
+    vp: npt.NDArray[Any],
+    fp: npt.NDArray[Any],
+    ps: npt.NDArray[Any],
+    save_ve: bool,
+    save_vp: bool,
+    save_2cxm: bool,
+) -> dict[str, Any]:
+    """Summarize parameter maps over voxels with a retained DCE fit."""
+    fitted_mask = fitting_mask & np.isfinite(ktrans) & (ktrans > 0)
+    if not np.any(fitted_mask):
+        return {}
+
+    ktrans_values = ktrans[fitted_mask]
+    summary: dict[str, Any] = {
+        "ktrans_mean": float(np.nanmean(ktrans_values)),
+        "ktrans_median": float(np.nanmedian(ktrans_values)),
+    }
+    hist_counts, hist_edges = np.histogram(
+        ktrans_values[np.isfinite(ktrans_values)], bins=50
+    )
+    summary["ktrans_histogram"] = hist_counts.tolist()
+    summary["ktrans_histogram_edges"] = hist_edges.tolist()
+
+    if save_ve:
+        ve_values = ve[fitted_mask]
+        finite_ve = np.isfinite(ve_values)
+        if np.any(finite_ve):
+            summary["ve_mean"] = float(np.nanmean(ve_values[finite_ve]))
+            summary["ve_median"] = float(np.nanmedian(ve_values[finite_ve]))
+            ve_hist_counts, ve_hist_edges = np.histogram(ve_values[finite_ve], bins=50)
+            summary["ve_histogram"] = ve_hist_counts.tolist()
+            summary["ve_histogram_edges"] = ve_hist_edges.tolist()
+
+    if save_vp:
+        vp_values = vp[fitted_mask]
+        finite_vp = np.isfinite(vp_values)
+        if np.any(finite_vp):
+            summary["vp_mean"] = float(np.nanmean(vp_values[finite_vp]))
+            summary["vp_median"] = float(np.nanmedian(vp_values[finite_vp]))
+
+    if save_2cxm:
+        fp_values = fp[fitted_mask]
+        finite_fp = np.isfinite(fp_values) & (fp_values > 0)
+        if np.any(finite_fp):
+            summary["fp_median"] = float(np.nanmedian(fp_values[finite_fp]))
+        ps_values = ps[fitted_mask]
+        finite_ps = np.isfinite(ps_values) & (ps_values > 0)
+        if np.any(finite_ps):
+            summary["ps_median"] = float(np.nanmedian(ps_values[finite_ps]))
+
+    return summary
+
+
 def _validate_dce_time_axis(
     time_points: npt.ArrayLike,
     n_dce_frames: int,
@@ -2830,50 +2887,19 @@ class ComputeDCEMaps(BaseInterface):
 
         qc_metrics.update(_summarize_vp_prior_departures(z_departure_list))
 
-        # Compute summary statistics on fitted voxels
-        # For auto mode, use np.isfinite guard (NaN = non-applicable parameter)
-        fitted_mask = fitting_mask & (np.isfinite(ktrans)) & (ktrans > 0)
-        if np.any(fitted_mask):
-            qc_metrics["ktrans_mean"] = float(np.nanmean(ktrans[fitted_mask]))
-            qc_metrics["ktrans_median"] = float(np.nanmedian(ktrans[fitted_mask]))
-
-            if save_ve:
-                ve_vals = ve[fitted_mask]
-                finite_ve = np.isfinite(ve_vals)
-                if np.any(finite_ve):
-                    qc_metrics["ve_mean"] = float(np.nanmean(ve_vals[finite_ve]))
-                    qc_metrics["ve_median"] = float(np.nanmedian(ve_vals[finite_ve]))
-
-            if save_vp:
-                vp_vals = vp[fitted_mask]
-                finite_vp = np.isfinite(vp_vals)
-                if np.any(finite_vp):
-                    qc_metrics["vp_mean"] = float(np.nanmean(vp_vals[finite_vp]))
-                    qc_metrics["vp_median"] = float(np.nanmedian(vp_vals[finite_vp]))
-
-            if save_2cxm:
-                fp_vals = fp_map[fitted_mask]
-                finite_fp = np.isfinite(fp_vals) & (fp_vals > 0)
-                if np.any(finite_fp):
-                    qc_metrics["fp_median"] = float(np.nanmedian(fp_vals[finite_fp]))
-                ps_vals = ps_map[fitted_mask]
-                finite_ps = np.isfinite(ps_vals) & (ps_vals > 0)
-                if np.any(finite_ps):
-                    qc_metrics["ps_median"] = float(np.nanmedian(ps_vals[finite_ps]))
-
-            # Histogram statistics for fitted parameters
-            ktrans_vals = ktrans[fitted_mask]
-            hist_counts, hist_edges = np.histogram(ktrans_vals[np.isfinite(ktrans_vals)], bins=50)
-            qc_metrics["ktrans_histogram"] = hist_counts.tolist()
-            qc_metrics["ktrans_histogram_edges"] = hist_edges.tolist()
-
-            if save_ve:
-                ve_hist = ve[fitted_mask]
-                ve_hist = ve_hist[np.isfinite(ve_hist)]
-                if len(ve_hist) > 0:
-                    hist_counts_ve, hist_edges_ve = np.histogram(ve_hist, bins=50)
-                    qc_metrics["ve_histogram"] = hist_counts_ve.tolist()
-                    qc_metrics["ve_histogram_edges"] = hist_edges_ve.tolist()
+        qc_metrics.update(
+            _summarize_dce_fitted_parameters(
+                fitting_mask,
+                ktrans,
+                ve,
+                vp,
+                fp_map,
+                ps_map,
+                save_ve,
+                save_vp,
+                save_2cxm,
+            )
+        )
 
         # Compute whole-brain fraction of SOFT-NLLS voxels that ended
         # at a bound (active-set Pass 2 fired). Reported in

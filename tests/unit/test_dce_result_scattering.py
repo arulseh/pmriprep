@@ -15,8 +15,9 @@ from pmriprep.interfaces.dce_compute import (
     _scatter_dce_fit_artifacts,
     _scatter_dce_parameters,
     _scatter_dce_uncertainties,
-    _summarize_mcmc_diagnostics,
     _summarize_dce_categorical_qc,
+    _summarize_dce_fitted_parameters,
+    _summarize_mcmc_diagnostics,
     _summarize_vp_prior_departures,
 )
 from pmriprep.models.dce.bayesian import QC_ESS_MIN, QC_RHAT_MAX
@@ -392,3 +393,44 @@ def test_summarize_dce_categorical_qc_fixed_mode_omits_candidates() -> None:
     assert summary["model_selection"] == "fixed"
     assert "candidate_models" not in summary
     assert summary["quality_n_good"] == 1
+
+
+def test_summarize_dce_fitted_parameters_preserves_applicability() -> None:
+    """Fitted summaries retain finite and positive parameter rules."""
+    fitting_mask = np.ones((1, 2, 2), dtype=bool)
+    summary = _summarize_dce_fitted_parameters(
+        fitting_mask,
+        np.array([[[0.1, 0.3], [0.0, np.nan]]]),
+        np.array([[[0.2, np.nan], [0.8, 0.9]]]),
+        np.array([[[0.04, 0.06], [0.08, 0.1]]]),
+        np.array([[[20.0, -1.0], [30.0, 40.0]]]),
+        np.array([[[2.0, np.nan], [3.0, 4.0]]]),
+        True,
+        True,
+        True,
+    )
+    assert summary["ktrans_mean"] == pytest.approx(0.2)
+    assert summary["ktrans_median"] == pytest.approx(0.2)
+    assert sum(summary["ktrans_histogram"]) == 2
+    assert summary["ve_mean"] == pytest.approx(0.2)
+    assert sum(summary["ve_histogram"]) == 1
+    assert summary["vp_mean"] == pytest.approx(0.05)
+    assert summary["fp_median"] == pytest.approx(20.0)
+    assert summary["ps_median"] == pytest.approx(2.0)
+
+
+def test_summarize_dce_fitted_parameters_empty_fit_omits_metrics() -> None:
+    """No positive finite Ktrans values produce no fitted-map metrics."""
+    shape = (1, 1, 2)
+    empty = np.zeros(shape)
+    assert _summarize_dce_fitted_parameters(
+        np.ones(shape, dtype=bool),
+        np.array([[[0.0, np.nan]]]),
+        empty,
+        empty,
+        empty,
+        empty,
+        True,
+        True,
+        True,
+    ) == {}
