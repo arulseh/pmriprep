@@ -19,6 +19,7 @@ from pmriprep.interfaces.dce_compute import (
     _scatter_dce_uncertainties,
     _summarize_dce_categorical_qc,
     _summarize_dce_fitted_parameters,
+    _summarize_dce_fit_outcomes,
     _summarize_dce_r2,
     _summarize_mcmc_diagnostics,
     _summarize_vp_prior_departures,
@@ -480,3 +481,23 @@ def test_summarize_dce_r2_preserves_population_statistics() -> None:
         {"r2_mean": 0.5, "r2_std": np.std([0.2, 0.5, 0.8]), "r2_median": 0.5}
     )
     assert _summarize_dce_r2([]) == {}
+
+
+def test_summarize_dce_fit_outcomes_preserves_counters() -> None:
+    """Fit outcome assembly retains counters, reasons, and denominator."""
+    reasons = {"optimizer_failed": 2}
+    assert _summarize_dce_fit_outcomes(3, 2, 5, 1, 1, 4, reasons) == {
+        "n_converged": 3,
+        "n_failed": 2,
+        "convergence_rate": 0.6,
+        "n_constrained": 1,
+        "n_unconstrained_fallback": 1,
+        "n_rejected_postfit": 4,
+        "failure_reasons": reasons,
+    }
+
+
+def test_summarize_dce_fit_outcomes_zero_voxels_has_zero_rate() -> None:
+    """An empty fit domain retains the guarded zero convergence rate."""
+    summary = _summarize_dce_fit_outcomes(0, 0, 0, 0, 0, 0, {})
+    assert summary["convergence_rate"] == 0.0

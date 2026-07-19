@@ -388,6 +388,27 @@ def _summarize_dce_r2(values: list[float]) -> dict[str, float]:
     }
 
 
+def _summarize_dce_fit_outcomes(
+    n_converged: int,
+    n_failed: int,
+    n_voxels: int,
+    n_constrained: int,
+    n_unconstrained_fallback: int,
+    n_rejected_postfit: int,
+    failure_reasons: dict[str, int],
+) -> dict[str, Any]:
+    """Assemble aggregate DCE fit outcome counters."""
+    return {
+        "n_converged": n_converged,
+        "n_failed": n_failed,
+        "convergence_rate": n_converged / max(1, n_voxels),
+        "n_constrained": n_constrained,
+        "n_unconstrained_fallback": n_unconstrained_fallback,
+        "n_rejected_postfit": n_rejected_postfit,
+        "failure_reasons": failure_reasons,
+    }
+
+
 def _validate_dce_time_axis(
     time_points: npt.ArrayLike,
     n_dce_frames: int,
@@ -2873,13 +2894,17 @@ class ComputeDCEMaps(BaseInterface):
             )
 
         # Compile QC metrics
-        qc_metrics["n_converged"] = n_converged
-        qc_metrics["n_failed"] = n_failed
-        qc_metrics["convergence_rate"] = n_converged / max(1, n_voxels)
-        qc_metrics["n_constrained"] = n_constrained
-        qc_metrics["n_unconstrained_fallback"] = n_unconstrained_fallback
-        qc_metrics["n_rejected_postfit"] = n_rejected_postfit
-        qc_metrics["failure_reasons"] = failure_reason_counts
+        qc_metrics.update(
+            _summarize_dce_fit_outcomes(
+                n_converged,
+                n_failed,
+                n_voxels,
+                n_constrained,
+                n_unconstrained_fallback,
+                n_rejected_postfit,
+                failure_reason_counts,
+            )
+        )
 
         # FXL-suspect whole-brain flag. Tissue Ct peaks above ~0.8 mM
         # violate the Tofts fast-exchange-limit assumption. conc_data is
