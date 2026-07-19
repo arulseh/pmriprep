@@ -13,6 +13,7 @@ from pmriprep.interfaces.dce_compute import (
     _build_dce_qc_mask,
     _compute_dce_coefficient_of_variation,
     _compute_dce_credible_interval,
+    _write_dce_map,
     _zero_dce_background,
 )
 from pmriprep.utils.dce_constants import EPSILON_VE
@@ -130,6 +131,23 @@ def test_compute_dce_credible_interval_preserves_parameter_bounds() -> None:
     assert bounded_lower[0] == 0.0
     assert bounded_upper[1] == 1.0
     assert np.isnan(bounded_lower[2]) and np.isnan(bounded_upper[2])
+
+
+def test_write_dce_map_overrides_inherited_header_dtype(tmp_path) -> None:
+    """DCE serialization writes the requested dtype without inherited scaling."""
+    header = nib.Nifti1Header()
+    header.set_data_dtype(np.int16)
+    output = tmp_path / "map.nii.gz"
+    _write_dce_map(
+        np.array([[[0.25, 1.5]]], dtype=np.float64),
+        str(output),
+        affine=np.eye(4),
+        header=header,
+    )
+    image = nib.load(output)
+    assert image.get_data_dtype() == np.dtype(np.float32)
+    np.testing.assert_allclose(image.get_fdata(), [[[0.25, 1.5]]])
+    assert header.get_data_dtype() == np.dtype(np.int16)
 
 
 def test_saved_dce_categorical_maps_are_brain_masked(tmp_path) -> None:

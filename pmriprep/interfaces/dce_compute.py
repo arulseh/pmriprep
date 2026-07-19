@@ -6,6 +6,7 @@ curves and AIF using various PK models.
 """
 
 import logging
+from functools import partial
 from pathlib import Path
 from typing import Any, NamedTuple, Optional
 
@@ -487,6 +488,24 @@ def _compute_dce_credible_interval(
     lower_result: npt.NDArray[np.float32] = lower.astype(np.float32)
     upper_result: npt.NDArray[np.float32] = upper.astype(np.float32)
     return lower_result, upper_result
+
+
+def _write_dce_map(
+    data: npt.NDArray[Any],
+    path: str,
+    *,
+    affine: npt.NDArray[Any],
+    header: Any,
+    dtype: Any = np.float32,
+) -> None:
+    """Write a DCE-derived NIfTI map with an explicit data dtype."""
+    import nibabel as nib  # type: ignore[import-untyped]
+
+    cast_data = data.astype(dtype)
+    local_header = header.copy()
+    local_header.set_data_dtype(dtype)
+    image = nib.Nifti1Image(cast_data, affine, local_header)
+    nib.save(image, path)
 
 
 def _validate_dce_time_axis(
@@ -3080,23 +3099,7 @@ class ComputeDCEMaps(BaseInterface):
         out_ktrans = self._gen_outfilename("_Ktrans")
         out_r2 = self._gen_outfilename("_R2")
 
-        def _save_dce_map(
-            data: npt.NDArray[Any],
-            path: str,
-            dtype: Any = np.float32,
-        ) -> None:
-            """Save a DCE-derived map with an explicit data dtype.
-
-            Mirrors DSC's _save_map: re-derives the header so its
-            inherited datatype field doesn't trigger silent scl_slope
-            rescaling on save (e.g. when the upstream concentration
-            NIfTI is int16/int32).
-            """
-            cast_data = data.astype(dtype)
-            local_header = header.copy()  # type: ignore[attr-defined]
-            local_header.set_data_dtype(dtype)  # type: ignore[attr-defined]
-            img = nib.Nifti1Image(cast_data, affine, local_header)  # type: ignore[attr-defined]
-            nib.save(img, path)  # type: ignore[attr-defined]
+        _save_dce_map = partial(_write_dce_map, affine=affine, header=header)
 
         # Save main outputs
         _save_dce_map(ktrans, out_ktrans)
