@@ -20,11 +20,12 @@ from pmriprep.interfaces.dsc_aif import AIFDetection
 from pmriprep.interfaces.dsc_aif_qc import AIFQCPlot
 from pmriprep.interfaces.dsc_compute import ComputeDSCMaps
 from pmriprep.utils.dsc_constants import DEFAULT_OI_THRESHOLD, DEFAULT_SVD_THRESHOLD
+from pmriprep.workflows._perfusion import (
+    select_aif_exclusion_mask as _select_aif_exclusion_mask,
+    validate_native_mask as _validate_native_mask,
+)
 
-# FSL CommandLine wrappers, Function-node helpers, and the (formerly embedded)
-# smoothing dict-builders now live in ``_helpers.py``; re-exported here so
-# ``init_dsc_preproc_wf`` and external importers keep resolving them from
-# ``...dsc.base``.
+# FSL CommandLine wrappers and Function-node helpers used by the DSC graph.
 from pmriprep.workflows.dsc._helpers import (  # noqa: F401
     ConvertXFM,
     FLIRTApplyXFM,
@@ -47,7 +48,6 @@ from pmriprep.workflows.dsc._helpers import (  # noqa: F401
     _merge_qc_metrics,
     _normalize_cbf,
     _normalize_cbv,
-    _select_aif_exclusion_mask,
     _signal_to_concentration,
     _smooth_maps,
     _transform_brain_mask_to_dsc,
@@ -55,7 +55,6 @@ from pmriprep.workflows.dsc._helpers import (  # noqa: F401
     _transform_nawm_to_dsc,
     _transform_structural_to_dsc,
     _transform_wm_probseg_to_dsc,
-    _validate_native_mask,
 )
 
 

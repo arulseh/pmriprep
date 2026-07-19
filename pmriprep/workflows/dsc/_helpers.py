@@ -1,12 +1,4 @@
-"""FSL CommandLine wrappers and Function-node/construction helpers for the DSC preproc workflow.
-
-Extracted verbatim from ``base.py`` (the two smoothing dict-builders were
-dedented out of ``init_dsc_preproc_wf``) to keep that function navigable.
-Re-exported from ``pmriprep.workflows.dsc.base`` for backward compatibility.
-
-Function-node helpers are self-contained (imports inside their bodies); the
-module-level imports below serve the CommandLine wrapper classes.
-"""
+"""FSL wrappers and serializable helpers for the DSC preprocessing workflow."""
 from typing import Any, Optional
 
 from nipype.interfaces.base import (  # type: ignore[import-untyped]
@@ -17,7 +9,6 @@ from nipype.interfaces.base import (  # type: ignore[import-untyped]
     traits,
     isdefined,
 )
-
 __all__ = [
     "ConvertXFM",
     "FLIRTApplyXFM",
@@ -43,14 +34,12 @@ __all__ = [
     "_merge_qc_metrics",
     "_normalize_cbf",
     "_normalize_cbv",
-    "_select_aif_exclusion_mask",
     "_signal_to_concentration",
     "_smooth_maps",
     "_transform_brain_mask_to_dsc",
     "_transform_lesion_mask_to_dsc",
     "_transform_nawm_to_dsc",
     "_transform_structural_to_dsc",
-    "_validate_native_mask",
 ]
 
 
@@ -1017,84 +1006,6 @@ def _transform_lesion_mask_to_dsc(
     subprocess.run(cmd, check=True, capture_output=True)
 
     return out_file
-
-
-def _select_aif_exclusion_mask(
-    user_lesion_mask: str | None = None,
-    transformed_lesion_mask: str | None = None,
-) -> str:
-    """Pick the AIF exclusion mask: user-supplied overrides tumor seg.
-
-    Parameters
-    ----------
-    user_lesion_mask : str or None
-        User-supplied lesion mask in DSC native space.
-    transformed_lesion_mask : str or None
-        Combined tumor mask FLIRT-transformed to DSC native space.
-
-    Returns
-    -------
-    str
-        Selected mask path, or ``""`` if neither is available.
-    """
-    from nipype.interfaces.base import isdefined
-
-    if isdefined(user_lesion_mask) and user_lesion_mask is not None:
-        if user_lesion_mask != "":
-            return user_lesion_mask
-    if isdefined(transformed_lesion_mask) and transformed_lesion_mask is not None:
-        if transformed_lesion_mask != "":
-            return transformed_lesion_mask
-    return ""
-
-
-def _validate_native_mask(
-    mask_file: str | None = None,
-    reference_file: str | None = None,
-    mask_label: str = "mask",
-) -> str:
-    """Validate that a user-supplied mask matches the perfusion volume grid.
-
-    Parameters
-    ----------
-    mask_file : str or None
-        Path to the mask NIfTI.
-    reference_file : str or None
-        Path to the perfusion reference volume.
-    mask_label : str
-        Human-readable label for error messages (e.g. "dsc.roi_mask").
-
-    Returns
-    -------
-    str
-        The validated mask path, or "" if no mask.
-    """
-    from nipype.interfaces.base import isdefined
-
-    if not isdefined(mask_file) or mask_file is None or mask_file == "":
-        return ""
-
-    import nibabel as nib
-    import numpy as np
-
-    mask_img = nib.load(str(mask_file))
-    ref_img = nib.load(str(reference_file))
-    if mask_img.shape[:3] != ref_img.shape[:3]:  # type: ignore[attr-defined]
-        raise ValueError(
-            f"User-supplied {mask_label} shape {mask_img.shape[:3]} does not "  # type: ignore[attr-defined]
-            f"match perfusion volume shape {ref_img.shape[:3]}. "  # type: ignore[attr-defined]
-            f"Masks under config must be in perfusion native space."
-        )
-    affine_diff = float(
-        np.abs(mask_img.affine - ref_img.affine).max()  # type: ignore[attr-defined]
-    )
-    if affine_diff > 1.0:
-        raise ValueError(
-            f"User-supplied {mask_label} affine differs from perfusion volume "
-            f"by {affine_diff:.2f} (max element). "
-            f"Masks under config must be in perfusion native space."
-        )
-    return str(mask_file)
 
 
 def _transform_structural_to_dsc(

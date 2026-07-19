@@ -21,7 +21,6 @@ __all__ = [
     "_normalize_by_nawm",
     "_resample_dsc_cbv_to_dce",
     "_resample_dsc_ncbv_to_dce",
-    "_select_aif_exclusion_mask",
     "_signal_to_concentration_node",
     "_smooth_dce_maps",
     "_transform_atlas_cascade_to_dce",
@@ -35,89 +34,7 @@ __all__ = [
     "_transform_probseg_to_dce",
     "_transform_structural_to_dce",
     "_transform_t1_to_dce",
-    "_validate_native_mask",
 ]
-
-
-def _validate_native_mask(
-    mask_file: str | None = None,
-    reference_file: str | None = None,
-    mask_label: str = "mask",
-) -> str:
-    """Validate that a user-supplied mask matches the perfusion volume grid.
-
-    Parameters
-    ----------
-    mask_file : str or None
-        Path to the mask NIfTI.
-    reference_file : str or None
-        Path to the perfusion reference volume.
-    mask_label : str
-        Human-readable label for error messages (e.g. "dce.roi_mask").
-
-    Returns
-    -------
-    str
-        The validated mask path, or "" if no mask.
-    """
-    from nipype.interfaces.base import isdefined
-
-    if not isdefined(mask_file) or mask_file is None or mask_file == "":
-        return ""
-
-    import nibabel as nib
-    import numpy as np
-
-    mask_img = nib.load(str(mask_file))
-    ref_img = nib.load(str(reference_file))
-    if mask_img.shape[:3] != ref_img.shape[:3]:  # type: ignore[attr-defined]
-        raise ValueError(
-            f"User-supplied {mask_label} shape {mask_img.shape[:3]} does not "  # type: ignore[attr-defined]
-            f"match perfusion volume shape {ref_img.shape[:3]}. "  # type: ignore[attr-defined]
-            f"Masks under config must be in perfusion native space."
-        )
-    affine_diff = float(
-        np.abs(mask_img.affine - ref_img.affine).max()  # type: ignore[attr-defined]
-    )
-    if affine_diff > 1.0:
-        raise ValueError(
-            f"User-supplied {mask_label} affine differs from perfusion volume "
-            f"by {affine_diff:.2f} (max element). "
-            f"Masks under config must be in perfusion native space."
-        )
-    return str(mask_file)
-
-
-def _select_aif_exclusion_mask(
-    user_lesion_mask: str | None = None,
-    transformed_lesion_mask: str | None = None,
-) -> str:
-    """Pick the AIF exclusion mask: user-supplied overrides tumor seg.
-
-    Parameters
-    ----------
-    user_lesion_mask : str or None
-        User-supplied lesion mask in DCE native space.
-    transformed_lesion_mask : str or None
-        FLIRT-transformed tumor seg lesion mask in DCE space.
-
-    Returns
-    -------
-    str
-        Selected mask path, or "" if neither is available (the empty-string
-        convention required by the downstream lesion_mask_file trait).
-    """
-    from nipype.interfaces.base import isdefined
-
-    if isdefined(user_lesion_mask) and user_lesion_mask is not None:
-        if user_lesion_mask != "":
-            return user_lesion_mask
-    if isdefined(transformed_lesion_mask) and transformed_lesion_mask is not None:
-        if transformed_lesion_mask != "":
-            return transformed_lesion_mask
-    return ""
-
-
 def _transform_mask_to_dce(
     mask_file: str | None = None,
     reference_file: str | None = None,

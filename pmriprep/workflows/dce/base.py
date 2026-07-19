@@ -24,6 +24,10 @@ from pmriprep.interfaces.dce_aif import AIFDetection
 from pmriprep.interfaces.dce_aif_qc import DCEAIFQCPlot
 from pmriprep.interfaces.dce_compute import ComputeDCEMaps
 from pmriprep.data import get_arterial_atlas_cascade
+from pmriprep.workflows._perfusion import (
+    select_aif_exclusion_mask as _select_aif_exclusion_mask,
+    validate_native_mask as _validate_native_mask,
+)
 
 # Function-node and construction helpers used by the DCE workflow graph.
 from pmriprep.workflows.dce._helpers import (  # noqa: F401
@@ -43,7 +47,6 @@ from pmriprep.workflows.dce._helpers import (  # noqa: F401
     _normalize_by_nawm,
     _resample_dsc_cbv_to_dce,
     _resample_dsc_ncbv_to_dce,
-    _select_aif_exclusion_mask,
     _signal_to_concentration_node,
     _smooth_dce_maps,
     _transform_atlas_cascade_to_dce,
@@ -57,7 +60,6 @@ from pmriprep.workflows.dce._helpers import (  # noqa: F401
     _transform_probseg_to_dce,
     _transform_structural_to_dce,
     _transform_t1_to_dce,
-    _validate_native_mask,
 )
 
 
