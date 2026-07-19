@@ -6,6 +6,8 @@ import numpy as np
 import pytest
 
 from pmriprep.interfaces.dce_compute import (
+    VoxelInput,
+    _account_retained_dce_fit,
     _accumulate_mcmc_diagnostics,
     _compute_vp_prior_departure,
     _is_degenerate_dce_fit,
@@ -272,3 +274,44 @@ def test_accumulate_mcmc_diagnostics_ignores_ess_without_rhat() -> None:
     assert increment == 0
     assert rhat == {}
     assert ess == {}
+
+
+def test_retained_fit_accounting_tracks_constrained_convergence() -> None:
+    """A converged constrained fit contributes constrained count and R²."""
+    voxel = VoxelInput(0, 0, 0, np.zeros(3), 0.04)
+    update = _account_retained_dce_fit(
+        voxel,
+        {"constrained": True, "converged": True, "r_squared": 0.8},
+        ConstraintMode.SOFT,
+    )
+    assert update.n_converged == 1
+    assert update.n_failed == 0
+    assert update.n_constrained == 1
+    assert update.n_unconstrained_fallback == 0
+    assert update.r_squared == 0.8
+
+
+def test_retained_fit_accounting_tracks_unconstrained_failure_fallback() -> None:
+    """A failed retained fit with an available prior records fallback and no R²."""
+    voxel = VoxelInput(0, 0, 0, np.zeros(3), 0.04)
+    update = _account_retained_dce_fit(
+        voxel,
+        {"constrained": False, "converged": False, "r_squared": -0.2},
+        ConstraintMode.SOFT,
+    )
+    assert update.n_converged == 0
+    assert update.n_failed == 1
+    assert update.n_constrained == 0
+    assert update.n_unconstrained_fallback == 1
+    assert update.r_squared is None
+
+
+def test_retained_fit_accounting_skip_mode_never_marks_fallback() -> None:
+    """A voxel prior is not a fallback source when the constraint mode is SKIP."""
+    voxel = VoxelInput(0, 0, 0, np.zeros(3), 0.04)
+    update = _account_retained_dce_fit(
+        voxel,
+        {"constrained": False, "converged": True, "r_squared": 0.5},
+        ConstraintMode.SKIP,
+    )
+    assert update.n_unconstrained_fallback == 0

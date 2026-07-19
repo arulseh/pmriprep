@@ -207,6 +207,30 @@ def _accumulate_mcmc_diagnostics(
     return 1
 
 
+def _account_retained_dce_fit(
+    voxel: "VoxelInput",
+    result: dict[str, Any],
+    constraint_mode: Any,
+) -> "_DCEFitAccountingUpdate":
+    """Return convergence and constraint counter increments for one retained fit."""
+    from pmriprep.utils.dsc_cbv_constraint import ConstraintMode
+
+    constrained = bool(result.get("constrained", False))
+    unconstrained_fallback = bool(
+        not constrained
+        and voxel.voxel_vp is not None
+        and constraint_mode != ConstraintMode.SKIP
+    )
+    converged = bool(result["converged"])
+    return _DCEFitAccountingUpdate(
+        int(converged),
+        int(not converged),
+        int(constrained),
+        int(unconstrained_fallback),
+        float(result["r_squared"]) if converged else None,
+    )
+
+
 def _validate_dce_time_axis(
     time_points: npt.ArrayLike,
     n_dce_frames: int,
@@ -399,6 +423,16 @@ class _DCEFitDispatch(NamedTuple):
     n_procs: int
     sloppy: bool
     random_seed: Optional[int]
+
+
+class _DCEFitAccountingUpdate(NamedTuple):
+    """Counter increments contributed by one retained DCE fit result."""
+
+    n_converged: int
+    n_failed: int
+    n_constrained: int
+    n_unconstrained_fallback: int
+    r_squared: Optional[float]
 
 
 # Import-time pickle-safety assertion (S1 from code review round 3):
@@ -2439,8 +2473,6 @@ class ComputeDCEMaps(BaseInterface):
         """Execute DCE map computation."""
         import nibabel as nib  # type: ignore[import-untyped]
 
-        from pmriprep.utils.dsc_cbv_constraint import ConstraintMode
-
         prepared = self._prepare_fit_inputs()
         conc_data = prepared.concentration
         affine = prepared.affine
@@ -2658,13 +2690,6 @@ class ComputeDCEMaps(BaseInterface):
 
             _scatter_dce_fit_artifacts(parameter_maps, (x, y, z), res)
 
-            # Track convergence and constraints
-            if res.get("constrained", False):
-                n_constrained += 1
-            elif vd.voxel_vp is not None and constraint_mode != ConstraintMode.SKIP:
-                # Had vp constraint but fell back to unconstrained
-                n_unconstrained_fallback += 1
-
             z_departure = _compute_vp_prior_departure(
                 constraint_mode,
                 inference,
@@ -2676,11 +2701,13 @@ class ComputeDCEMaps(BaseInterface):
             if z_departure is not None:
                 z_departure_list.append(z_departure)
 
-            if res["converged"]:
-                n_converged += 1
-                r2_list.append(res["r_squared"])
-            else:
-                n_failed += 1
+            accounting = _account_retained_dce_fit(vd, res, constraint_mode)
+            n_converged += accounting.n_converged
+            n_failed += accounting.n_failed
+            n_constrained += accounting.n_constrained
+            n_unconstrained_fallback += accounting.n_unconstrained_fallback
+            if accounting.r_squared is not None:
+                r2_list.append(accounting.r_squared)
 
             n_mcmc_voxels += _accumulate_mcmc_diagnostics(
                 res,
