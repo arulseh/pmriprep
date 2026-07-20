@@ -1950,6 +1950,90 @@ class ComputeDSCMaps(BaseInterface):
             outputs["out_residues"] = residue_path
         return outputs
 
+    def _assemble_outputs(
+        self,
+        *,
+        inputs: _DSCComputeInputs,
+        baseline: _DSCBaselinePreparation,
+        deconvolution: _DSCDeconvolutionMaps,
+        postprocessing: _DSCPostprocessing,
+    ) -> dict[str, Any]:
+        """Serialize all required and optional DSC interface outputs."""
+        maps = postprocessing.maps
+        qc = postprocessing.qc
+        spatial_shape = baseline.concentration.shape[:3]
+        results = self._save_base_maps(maps, inputs.affine, inputs.header, qc)
+        self._results = results
+
+        if self.inputs.first_pass_cbv:
+            first_pass_path = self._compute_first_pass_cbv(
+                raw_conc_data=postprocessing.raw_concentration,
+                mask_bool=inputs.mask_bool,
+                spatial_shape=spatial_shape,
+                dt=inputs.dt,
+                n_bl=baseline.n_baseline,
+                affine=inputs.affine,
+                header=inputs.header,
+                qc_metrics=qc,
+            )
+            if first_pass_path:
+                results["out_rel_cbv_firstpass"] = first_pass_path
+
+        results.update(
+            self._save_ancillary_maps(
+                relative_ttp=maps.relative_ttp,
+                k2_map_path=baseline.k2_map_path,
+                delay=maps.delay,
+                alpha=deconvolution.alpha,
+                beta=deconvolution.beta,
+                cth=deconvolution.cth,
+                residues=maps.residues,
+                save_residue=bool(self.inputs.save_residue),
+                mask_bool=inputs.mask_bool,
+                spatial_shape=spatial_shape,
+                affine=inputs.affine,
+                header=inputs.header,
+            )
+        )
+        self._save_fit_qc_data(
+            rel_cbf=maps.rel_cbf,
+            concentration=baseline.concentration,
+            aif=baseline.aif,
+            mask_bool=inputs.mask_bool,
+            dt=inputs.dt,
+            method=inputs.method,
+            inference=inputs.inference,
+            mcmc_samples=inputs.mcmc_samples,
+            cpi_control_points=inputs.cpi_control_points,
+            cpi_infer_cpt=inputs.cpi_infer_cpt,
+            cpi_infer_delay=inputs.cpi_infer_delay,
+            threshold=inputs.svd_threshold,
+            oi_threshold=inputs.oi_threshold,
+            signal=inputs.signal,
+        )
+        self._add_fit_qc_metrics(maps.rel_cbv, qc)
+
+        if inputs.method in ("cpi", "vascular"):
+            results.update(
+                self._save_parametric_maps(
+                    rel_cbf=maps.rel_cbf,
+                    rel_cbv=maps.rel_cbv,
+                    cbf_std=maps.cbf_std,
+                    cbv_std=deconvolution.cbv_std,
+                    cbf_ci_lower=maps.cbf_ci_lower,
+                    cbf_ci_upper=maps.cbf_ci_upper,
+                    cbv_ci_lower=deconvolution.cbv_ci_lower,
+                    cbv_ci_upper=deconvolution.cbv_ci_upper,
+                    parametric_r2=deconvolution.parametric_r2,
+                    fallback_mask=deconvolution.fallback_mask,
+                    mask_bool=inputs.mask_bool,
+                    inference=inputs.inference,
+                    affine=inputs.affine,
+                    header=inputs.header,
+                )
+            )
+        return results
+
     def _first_pass_reference(
         self,
         fp_area: npt.NDArray[Any],
@@ -3372,7 +3456,6 @@ class ComputeDSCMaps(BaseInterface):
         """Execute DSC map computation."""
         inputs = self._load_compute_inputs()
         conc_data = inputs.concentration
-        affine = inputs.affine
         header = inputs.header
         mask = inputs.mask
         mask_bool = inputs.mask_bool
@@ -3408,7 +3491,6 @@ class ComputeDSCMaps(BaseInterface):
         detected_baseline = baseline.detected_frames
         n_bl = baseline.n_baseline
         baseline_detection_info = baseline.detection_info
-        k2_map_out_path = baseline.k2_map_path
         spatial_shape = conc_data.shape[:3]
 
         motion_weighting = self._prepare_motion_weighting(
@@ -3429,13 +3511,6 @@ class ComputeDSCMaps(BaseInterface):
             cpi_infer_delay=cpi_infer_delay,
             motion_weighting=motion_weighting,
         )
-        (
-            cbf, cbv, mtt, tmax, qc_metrics, delay, residues, alpha_map,
-            beta_map, cth_map, cbf_std_map, cbv_std_map, cbf_ci_lower_map,
-            cbf_ci_upper_map, cbv_ci_lower_map, cbv_ci_upper_map,
-            parametric_r2_map, fallback_mask,
-        ) = deconvolution
-
         aif_level = str(self.inputs.aif_detection_level)
         preload_class = str(self.inputs.preload_classification)
         postprocessing = self._prepare_final_outputs(
@@ -3454,101 +3529,12 @@ class ComputeDSCMaps(BaseInterface):
             aif_level=aif_level,
             preload_class=preload_class,
         )
-        raw_conc_data = postprocessing.raw_concentration
-        final_maps = postprocessing.maps
-        qc_metrics = postprocessing.qc
-        (
-            rel_cbf, rel_cbv, rel_cbv_auc, mtt, tmax, ttp, ttp_corrected,
-            rttp, auc_raw, auc_corr, auc_diff, rel_auc_raw, rel_auc_corr,
-            cnr, snr, tsnr, psr, ph, delay, residues, cbf_std_map,
-            cbf_ci_lower_map, cbf_ci_upper_map,
-        ) = final_maps
-
-        self._results = self._save_base_maps(final_maps, affine, header, qc_metrics)
-
-        # -----------------------------------------------------------
-        # Optional: gamma-variate first-pass relative CBV map.
-        # Purely additive stroke / non-tumor output. INERT: nothing
-        # internal (vp constraint, MTT, NAWM normalization) consumes it.
-        # Per-voxel gamma fit to the first pass of RAW (intact-BBB)
-        # concentration (recirculation removed), analytic area normalized
-        # tissue-to-tissue by the eroded whole-WM median. Requires a WM
-        # segmentation; with none the map has no valid anchor and is skipped.
-        # -----------------------------------------------------------
-        # Left unset when off (like out_delay/out_alpha) OR when no WM
-        # reference is available: the output trait has no exists=True, so
-        # nipype reports it Undefined and the datasink's isdefined guard skips
-        # it.
-        if self.inputs.first_pass_cbv:
-            fp_path = self._compute_first_pass_cbv(
-                raw_conc_data=raw_conc_data,
-                mask_bool=mask_bool,
-                spatial_shape=spatial_shape,
-                dt=dt,
-                n_bl=n_bl,
-                affine=affine,
-                header=header,
-                qc_metrics=qc_metrics,
-            )
-            if fp_path:
-                self._results["out_rel_cbv_firstpass"] = fp_path
-
-        self._results.update(
-            self._save_ancillary_maps(
-                relative_ttp=rttp,
-                k2_map_path=k2_map_out_path,
-                delay=delay,
-                alpha=alpha_map,
-                beta=beta_map,
-                cth=cth_map,
-                residues=residues,
-                save_residue=bool(self.inputs.save_residue),
-                mask_bool=mask_bool,
-                spatial_shape=spatial_shape,
-                affine=affine,
-                header=header,
-            )
+        self._results = self._assemble_outputs(
+            inputs=inputs,
+            baseline=baseline,
+            deconvolution=deconvolution,
+            postprocessing=postprocessing,
         )
-
-        self._save_fit_qc_data(
-            rel_cbf=rel_cbf,
-            concentration=conc_data,
-            aif=aif,
-            mask_bool=mask_bool,
-            dt=dt,
-            method=method,
-            inference=inference,
-            mcmc_samples=mcmc_samples,
-            cpi_control_points=cpi_control_points,
-            cpi_infer_cpt=cpi_infer_cpt,
-            cpi_infer_delay=cpi_infer_delay,
-            threshold=threshold,
-            oi_threshold=oi_threshold,
-            signal=signal_data,
-        )
-
-        self._add_fit_qc_metrics(rel_cbv, qc_metrics)
-
-        # Save Bayesian uncertainty maps (parametric methods only)
-        if method in ("cpi", "vascular"):
-            self._results.update(
-                self._save_parametric_maps(
-                    rel_cbf=rel_cbf,
-                    rel_cbv=rel_cbv,
-                    cbf_std=cbf_std_map,
-                    cbv_std=cbv_std_map,
-                    cbf_ci_lower=cbf_ci_lower_map,
-                    cbf_ci_upper=cbf_ci_upper_map,
-                    cbv_ci_lower=cbv_ci_lower_map,
-                    cbv_ci_upper=cbv_ci_upper_map,
-                    parametric_r2=parametric_r2_map,
-                    fallback_mask=fallback_mask,
-                    mask_bool=mask_bool,
-                    inference=inference,
-                    affine=affine,
-                    header=header,
-                )
-            )
 
         return runtime
 

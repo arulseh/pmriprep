@@ -1164,3 +1164,103 @@ def test_prepare_final_outputs_preserves_composition_and_qc_order(
     assert result.maps is final_maps
     assert result.qc is qc
     assert qc == {"solver": True, "signal": True, "auc": True, "summary": True}
+
+
+def test_assemble_outputs_preserves_serialization_order_and_optional_branches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Final output assembly retains first-pass, fit-QC, and parametric ordering."""
+    interface = ComputeDSCMaps(first_pass_cbv=True, save_residue=True)
+    data = np.ones((1, 1, 1))
+    maps = SimpleNamespace(
+        rel_cbf=data,
+        rel_cbv=data * 2.0,
+        relative_ttp=data * 3.0,
+        delay=data * 4.0,
+        residues=np.ones((1, 1, 1, 2)),
+        cbf_std=data * 0.1,
+        cbf_ci_lower=data * 0.8,
+        cbf_ci_upper=data * 1.2,
+    )
+    qc: dict[str, object] = {"existing": True}
+    postprocessing = SimpleNamespace(raw_concentration=data, maps=maps, qc=qc)
+    inputs = SimpleNamespace(
+        affine=np.eye(4),
+        header=object(),
+        mask_bool=data.astype(bool),
+        dt=1.5,
+        method="vascular",
+        inference="vi",
+        mcmc_samples=500,
+        cpi_control_points=6,
+        cpi_infer_cpt=True,
+        cpi_infer_delay=False,
+        svd_threshold=0.2,
+        oi_threshold=0.1,
+        signal=None,
+    )
+    baseline = SimpleNamespace(
+        concentration=np.ones((1, 1, 1, 2)),
+        aif=np.ones((2,)),
+        n_baseline=2,
+        k2_map_path="k2.nii.gz",
+    )
+    deconvolution = _DSCDeconvolutionMaps(
+        cbf=data,
+        cbv=data,
+        mtt=data,
+        tmax=data,
+        qc=qc,
+        alpha=data * 5.0,
+        cbv_std=data * 0.2,
+        cbv_ci_lower=data * 0.7,
+        cbv_ci_upper=data * 1.3,
+        parametric_r2=data * 0.9,
+        fallback_mask=data,
+    )
+    calls: list[str] = []
+    base_results: dict[str, object] = {"out_base": "base.nii.gz"}
+    monkeypatch.setattr(
+        interface,
+        "_save_base_maps",
+        lambda *args: calls.append("base") or base_results,
+    )
+    monkeypatch.setattr(
+        interface,
+        "_compute_first_pass_cbv",
+        lambda **kwargs: calls.append("first_pass") or "first_pass.nii.gz",
+    )
+    monkeypatch.setattr(
+        interface,
+        "_save_ancillary_maps",
+        lambda **kwargs: calls.append("ancillary") or {"out_k2": "k2.nii.gz"},
+    )
+    monkeypatch.setattr(
+        interface,
+        "_save_fit_qc_data",
+        lambda **kwargs: calls.append("fit"),
+    )
+    monkeypatch.setattr(
+        interface,
+        "_add_fit_qc_metrics",
+        lambda *args: calls.append("fit_summary"),
+    )
+    monkeypatch.setattr(
+        interface,
+        "_save_parametric_maps",
+        lambda **kwargs: calls.append("parametric") or {"out_cbf_std": "std.nii.gz"},
+    )
+
+    results = interface._assemble_outputs(
+        inputs=inputs,
+        baseline=baseline,
+        deconvolution=deconvolution,
+        postprocessing=postprocessing,
+    )
+
+    assert calls == ["base", "first_pass", "ancillary", "fit", "fit_summary", "parametric"]
+    assert results is base_results
+    assert interface._results is results
+    assert results["out_rel_cbv_firstpass"] == "first_pass.nii.gz"
+    assert results["out_k2"] == "k2.nii.gz"
+    assert results["out_cbf_std"] == "std.nii.gz"
