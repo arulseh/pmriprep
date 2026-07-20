@@ -18,6 +18,7 @@ from pmriprep.interfaces.dce_compute import (
     _scatter_dce_fit_artifacts,
     _scatter_dce_fit_results,
     _scatter_dce_parameters,
+    _scatter_dce_credible_intervals,
     _scatter_dce_uncertainties,
     _summarize_dce_categorical_qc,
     _summarize_dce_fitted_parameters,
@@ -77,6 +78,12 @@ def _uncertainty_maps() -> SimpleNamespace:
         vp_std=np.zeros((1, 1, 1)),
         fp_std=np.zeros((1, 1, 1)),
         ps_std=np.zeros((1, 1, 1)),
+        ktrans_ci95_lower=np.zeros((1, 1, 1)),
+        ktrans_ci95_upper=np.zeros((1, 1, 1)),
+        ve_ci95_lower=np.zeros((1, 1, 1)),
+        ve_ci95_upper=np.zeros((1, 1, 1)),
+        vp_ci95_lower=np.zeros((1, 1, 1)),
+        vp_ci95_upper=np.zeros((1, 1, 1)),
         sigma_factor={"Ktrans": 2.0, "ve": 1.0, "vp": 3.0, "Fp": 4.0, "PS": 5.0},
         ktrans=np.zeros((1, 1, 1)),
         ve=np.zeros((1, 1, 1)),
@@ -86,6 +93,13 @@ def _uncertainty_maps() -> SimpleNamespace:
         fp=np.zeros((1, 1, 1)),
         ps=np.zeros((1, 1, 1)),
         extraction_fraction=np.zeros((1, 1, 1)),
+        model_selection=np.zeros((1, 1, 1), dtype=np.int8),
+        model_selection_codes={"tofts": 2},
+        delta_bic=np.full((1, 1, 1), np.nan),
+        fitted_curves=None,
+        vp_at_bound=np.zeros((1, 1, 1)),
+        quality_flag=np.zeros((1, 1, 1), dtype=np.int8),
+        quality_flag_codes={"good": 1},
     )
 
 
@@ -119,6 +133,45 @@ def test_uncertainty_scatter_leaves_nonapplicable_patlak_fields_zero() -> None:
     assert maps.ve_std[0, 0, 0] == 0.0
     assert maps.fp_std[0, 0, 0] == 0.0
     assert maps.ps_std[0, 0, 0] == 0.0
+
+
+def test_credible_interval_scatter_preserves_asymmetry_and_model_bounds() -> None:
+    """Intervals retain posterior asymmetry under AIF inflation and clipping."""
+    maps = _uncertainty_maps()
+    _scatter_dce_credible_intervals(
+        maps,
+        (0, 0, 0),
+        "extended_tofts",
+        {"Ktrans": 1.0, "ve": 0.8, "vp": 0.2},
+        {"Ktrans": (0.8, 1.5), "ve": (0.7, 0.95), "vp": (0.1, 0.4)},
+    )
+
+    assert maps.ktrans_ci95_lower[0, 0, 0] == pytest.approx(0.6)
+    assert maps.ktrans_ci95_upper[0, 0, 0] == pytest.approx(2.0)
+    assert maps.ve_ci95_lower[0, 0, 0] == pytest.approx(0.7)
+    assert maps.ve_ci95_upper[0, 0, 0] == pytest.approx(VE_BOUNDS.max)
+    assert maps.vp_ci95_lower[0, 0, 0] == pytest.approx(VP_BOUNDS.min)
+    assert maps.vp_ci95_upper[0, 0, 0] == pytest.approx(VP_BOUNDS.max)
+
+
+def test_credible_interval_scatter_keeps_map_fallback_at_full_bounds() -> None:
+    """Inflation cannot narrow a MAP prior-fallback interval."""
+    maps = _uncertainty_maps()
+    _scatter_dce_credible_intervals(
+        maps,
+        (0, 0, 0),
+        "tofts",
+        {"Ktrans": 0.2, "ve": 0.4},
+        {
+            "Ktrans": (KTRANS_BOUNDS.min, KTRANS_BOUNDS.max),
+            "ve": (VE_BOUNDS.min, VE_BOUNDS.max),
+        },
+    )
+
+    assert maps.ktrans_ci95_lower[0, 0, 0] == KTRANS_BOUNDS.min
+    assert maps.ktrans_ci95_upper[0, 0, 0] == KTRANS_BOUNDS.max
+    assert maps.ve_ci95_lower[0, 0, 0] == VE_BOUNDS.min
+    assert maps.ve_ci95_upper[0, 0, 0] == VE_BOUNDS.max
 
 
 def test_fit_artifact_scatter_writes_curve_bound_and_quality() -> None:
@@ -544,6 +597,53 @@ def test_scatter_dce_fit_results_counts_failures_before_map_access() -> None:
     assert summary.failure_reasons == {"optimizer_failed": 2, "unknown": 1}
     assert summary.n_converged == 0
     assert summary.r2_values == []
+
+
+def test_map_uncertainty_accounting_excludes_postfit_rejection() -> None:
+    """MAP retained-voxel accounting excludes a degenerate rejected fit."""
+    voxels = [
+        VoxelInput(0, 0, 0, np.zeros(3), None),
+        VoxelInput(0, 0, 0, np.zeros(3), None),
+    ]
+    base_result = {
+        "failed": False,
+        "coords": (0, 0, 0),
+        "selected_model_name": "tofts",
+        "delta_bic": np.nan,
+        "constrained": False,
+        "r_squared": 0.9,
+        "converged": True,
+        "uncertainties": {},
+        "credible_intervals": {},
+        "fitted_curve": None,
+        "quality_flag": "good",
+        "rhat": {},
+        "ess": {},
+    }
+    rejected = {
+        **base_result,
+        "params": {"Ktrans": KTRANS_BOUNDS.max, "ve": 0.3},
+        "uncertainty_source": "prior_fallback",
+    }
+    retained = {
+        **base_result,
+        "params": {"Ktrans": 0.1, "ve": 0.3},
+        "uncertainty_source": "laplace_hessian",
+    }
+
+    summary = _scatter_dce_fit_results(
+        voxels,
+        [rejected, retained],
+        _uncertainty_maps(),
+        "tofts",
+        False,
+        "map",
+        ConstraintMode.SKIP,
+        0.0,
+    )
+
+    assert summary.n_rejected_postfit == 1
+    assert summary.map_uncertainty_sources == ["laplace_hessian"]
 
 
 def test_initialize_dce_qc_metrics_preserves_pre_fit_state() -> None:

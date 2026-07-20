@@ -14,7 +14,6 @@ from pmriprep.interfaces.dce_compute import (
     _DCEModelFreeMaps,
     _build_dce_qc_mask,
     _compute_dce_coefficient_of_variation,
-    _compute_dce_credible_interval,
     _write_dce_map,
     _write_dce_fitted_curves,
     _write_dce_model_free_maps,
@@ -117,27 +116,6 @@ def test_compute_dce_coefficient_of_variation_fixed_fill_is_zero() -> None:
         False,
     )
     assert result.tolist() == [[[0.0]]]
-
-
-def test_compute_dce_credible_interval_preserves_parameter_bounds() -> None:
-    """Credible intervals retain nonnegative and volume-fraction clipping."""
-    values = np.array([0.1, 0.9, np.nan])
-    standard_deviation = np.array([0.1, 0.1, 0.2])
-    lower, upper = _compute_dce_credible_interval(values, standard_deviation)
-    assert lower.dtype == np.float32
-    assert upper.dtype == np.float32
-    assert lower[0] == 0.0
-    assert upper[1] == pytest.approx(1.096)
-    assert np.isnan(lower[2]) and np.isnan(upper[2])
-
-    bounded_lower, bounded_upper = _compute_dce_credible_interval(
-        values,
-        standard_deviation,
-        upper_bound=1.0,
-    )
-    assert bounded_lower[0] == 0.0
-    assert bounded_upper[1] == 1.0
-    assert np.isnan(bounded_lower[2]) and np.isnan(bounded_upper[2])
 
 
 def test_write_dce_map_overrides_inherited_header_dtype(tmp_path) -> None:
@@ -253,6 +231,12 @@ def test_write_dce_uncertainty_maps_preserves_applicability(
         ktrans=values, ve=values, vp=values,
         ktrans_std=sigma, ve_std=sigma, vp_std=sigma,
         fp_std=sigma, ps_std=sigma, save_2cxm=save_2cxm,
+        ktrans_ci95_lower=values - sigma,
+        ktrans_ci95_upper=values + sigma,
+        ve_ci95_lower=values - sigma,
+        ve_ci95_upper=values + sigma,
+        vp_ci95_lower=values - sigma,
+        vp_ci95_upper=values + sigma,
     )
     writes: list[str] = []
     outputs = _write_dce_uncertainty_maps(

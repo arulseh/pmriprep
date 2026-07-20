@@ -9,6 +9,8 @@ Tests cover:
 - Synthetic MAP fitting: parameter recovery
 """
 
+from dataclasses import fields
+
 import numpy as np
 import pytest
 
@@ -18,6 +20,7 @@ from pmriprep.models.dce.bayesian import (
     fit_pk_model,
 )
 from pmriprep.models.dce.extended_tofts import ExtendedToftsModel
+from pmriprep.models.dce.base import FitResult
 from pmriprep.models.dce.tofts import ToftsModel
 from pmriprep.utils.dce_constants import DCE_AIF_G6_SIGMA_INFLATION
 
@@ -25,6 +28,13 @@ from pmriprep.utils.dce_constants import DCE_AIF_G6_SIGMA_INFLATION
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def test_uncertainty_source_appends_to_fit_result_layout() -> None:
+    """Uncertainty provenance does not shift existing positional fields."""
+    names = [field.name for field in fields(FitResult)]
+
+    assert names[-3:] == ["fitted_curve", "quality_flag", "uncertainty_source"]
 
 def _make_synthetic_tofts_data(
     ktrans: float = 0.1,

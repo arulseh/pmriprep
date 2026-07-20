@@ -89,8 +89,13 @@ def build_uncertainty_provenance(
 
     if statistic == "credible_interval_bound":
         metadata["CredibleIntervalProbability"] = 0.95
-        if normalized_inference == "mcmc" and modality.upper() == "DSC":
+        if normalized_inference == "mcmc":
             construction = "posterior_sample_quantiles"
+        elif normalized_inference == "map":
+            construction = (
+                "laplace_mean_plus_or_minus_1.96_posterior_standard_deviations_"
+                "or_full_parameter_bounds_fallback"
+            )
         else:
             construction = "mean_plus_or_minus_1.96_posterior_standard_deviations"
         metadata["CredibleIntervalConstruction"] = construction

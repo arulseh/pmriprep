@@ -54,6 +54,13 @@ def test_map_fallback_is_disclosed() -> None:
     assert result["UncertaintyStatistic"] == "posterior_standard_deviation"
     assert "prior standard deviations" in result["UncertaintyFallbackBehavior"]
 
+    interval = build_uncertainty_provenance(
+        "map", "ktrans_ci95_lower", modality="DCE"
+    )
+    assert interval["CredibleIntervalConstruction"].endswith(
+        "or_full_parameter_bounds_fallback"
+    )
+
 
 def test_dce_interval_is_normal_approximation_bounded_to_parameters() -> None:
     """DCE writer provenance matches its bounded normal approximation."""
@@ -76,3 +83,13 @@ def test_dsc_mcmc_interval_uses_sample_quantiles() -> None:
 
     assert result["CredibleIntervalConstruction"] == "posterior_sample_quantiles"
     assert result["CredibleIntervalBounding"] == "nonnegative_lower_bound"
+
+
+def test_dce_mcmc_interval_uses_sample_quantiles() -> None:
+    """DCE MCMC provenance follows the retained posterior quantiles."""
+    result = build_uncertainty_provenance(
+        "mcmc", "ktrans_ci95_upper", modality="DCE"
+    )
+
+    assert result["CredibleIntervalConstruction"] == "posterior_sample_quantiles"
+    assert result["CredibleIntervalBounding"] == "parameter_bounds"
