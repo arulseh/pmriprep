@@ -315,6 +315,30 @@ _FIRSTPASS_MIN_REFERENCE_VOXELS: int = 50
 _FIRSTPASS_PREFIT_FWHM_MM: float = 5.0
 
 
+class _DSCComputeInputs(NamedTuple):
+    """Validated image arrays and acquisition settings for DSC fitting."""
+
+    concentration: npt.NDArray[Any]
+    affine: npt.NDArray[Any]
+    header: Any
+    mask: npt.NDArray[Any]
+    mask_bool: npt.NDArray[np.bool_]
+    aif: npt.NDArray[Any]
+    signal: Optional[npt.NDArray[Any]]
+    method: str
+    dt: float
+    svd_threshold: float
+    oi_threshold: float
+    cpi_control_points: int
+    cpi_infer_cpt: bool
+    cpi_infer_delay: bool
+    inference: str
+    mcmc_samples: int
+    baseline_frames: int
+    tail_frames: int
+    te: float
+
+
 class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
     """Input specification for ComputeDSCMaps interface."""
 
@@ -697,6 +721,64 @@ class ComputeDSCMaps(BaseInterface):
 
     input_spec = ComputeDSCMapsInputSpec
     output_spec = ComputeDSCMapsOutputSpec
+
+    def _load_compute_inputs(self) -> _DSCComputeInputs:
+        """Load and validate the DSC arrays and acquisition settings.
+
+        Returns
+        -------
+        _DSCComputeInputs
+            Immutable input state consumed by baseline preparation and fitting.
+
+        Raises
+        ------
+        RuntimeError
+            If the brain mask is not on the native DSC spatial grid.
+
+        """
+        import nibabel as nib  # type: ignore[import-untyped]
+
+        conc_img = nib.load(self.inputs.concentration_file)
+        concentration: npt.NDArray[Any] = conc_img.get_fdata()  # type: ignore[attr-defined]
+        affine = conc_img.affine  # type: ignore[attr-defined]
+        header = conc_img.header  # type: ignore[attr-defined]
+
+        mask_img = nib.load(self.inputs.brain_mask_file)
+        mask: npt.NDArray[Any] = mask_img.get_fdata()  # type: ignore[attr-defined]
+        if mask.shape[:3] != concentration.shape[:3]:
+            raise RuntimeError(
+                f"Brain mask shape {mask.shape[:3]} does not match "
+                f"concentration data shape {concentration.shape[:3]}. "
+                "The brain mask must be in native DSC space. "
+                "Ensure transform_brain_mask node is connected upstream."
+            )
+
+        signal: Optional[npt.NDArray[Any]] = None
+        if self.inputs.signal_file:
+            signal_img = nib.load(self.inputs.signal_file)
+            signal = signal_img.get_fdata()  # type: ignore[attr-defined]
+
+        return _DSCComputeInputs(
+            concentration=concentration,
+            affine=affine,
+            header=header,
+            mask=mask,
+            mask_bool=mask > 0,
+            aif=np.loadtxt(self.inputs.aif_file),
+            signal=signal,
+            method=str(self.inputs.method),
+            dt=float(self.inputs.tr),
+            svd_threshold=float(self.inputs.svd_threshold),
+            oi_threshold=float(self.inputs.oi_threshold),
+            cpi_control_points=int(self.inputs.cpi_control_points),
+            cpi_infer_cpt=bool(self.inputs.cpi_infer_cpt),
+            cpi_infer_delay=bool(self.inputs.cpi_infer_delay),
+            inference=str(self.inputs.inference),
+            mcmc_samples=int(self.inputs.mcmc_samples),
+            baseline_frames=int(self.inputs.baseline_frames),
+            tail_frames=int(self.inputs.tail_frames),
+            te=float(self.inputs.te),
+        )
 
     def _gen_outfilename(self, suffix: str) -> str:
         """Generate output filename based on input."""
@@ -2131,45 +2213,23 @@ class ComputeDSCMaps(BaseInterface):
         """Execute DSC map computation."""
         import nibabel as nib  # type: ignore[import-untyped]
 
-        # Load data
-        conc_img = nib.load(self.inputs.concentration_file)
-        conc_data: npt.NDArray[Any] = conc_img.get_fdata()  # type: ignore[attr-defined]
-        affine = conc_img.affine  # type: ignore[attr-defined]
-        header = conc_img.header  # type: ignore[attr-defined]
-
-        mask_img = nib.load(self.inputs.brain_mask_file)
-        mask: npt.NDArray[Any] = mask_img.get_fdata()  # type: ignore[attr-defined]
-
-        mask_bool = mask > 0
-
-        # Verify brain mask is in DSC space (guaranteed by transform_brain_mask node)
-        if mask.shape[:3] != conc_data.shape[:3]:
-            raise RuntimeError(
-                f"Brain mask shape {mask.shape[:3]} does not match "
-                f"concentration data shape {conc_data.shape[:3]}. "
-                "The brain mask must be in native DSC space. "
-                "Ensure transform_brain_mask node is connected upstream."
-            )
-
-        # Load AIF
-        aif = np.loadtxt(self.inputs.aif_file)
-
-        # Load signal for PSR/PH if provided
-        signal_data: Optional[npt.NDArray[Any]] = None
-        if self.inputs.signal_file:
-            signal_img = nib.load(self.inputs.signal_file)
-            signal_data = signal_img.get_fdata()  # type: ignore[attr-defined]
-
-        # Parameters
-        method = str(self.inputs.method)
-        dt = float(self.inputs.tr)
-        threshold = float(self.inputs.svd_threshold)
-        oi_threshold = float(self.inputs.oi_threshold)
-        cpi_control_points = int(self.inputs.cpi_control_points)
-        cpi_infer_cpt = bool(self.inputs.cpi_infer_cpt)
-        cpi_infer_delay = bool(self.inputs.cpi_infer_delay)
-        inference = str(self.inputs.inference)
-        mcmc_samples = int(self.inputs.mcmc_samples)
+        inputs = self._load_compute_inputs()
+        conc_data = inputs.concentration
+        affine = inputs.affine
+        header = inputs.header
+        mask = inputs.mask
+        mask_bool = inputs.mask_bool
+        aif = inputs.aif
+        signal_data = inputs.signal
+        method = inputs.method
+        dt = inputs.dt
+        threshold = inputs.svd_threshold
+        oi_threshold = inputs.oi_threshold
+        cpi_control_points = inputs.cpi_control_points
+        cpi_infer_cpt = inputs.cpi_infer_cpt
+        cpi_infer_delay = inputs.cpi_infer_delay
+        inference = inputs.inference
+        mcmc_samples = inputs.mcmc_samples
 
         # SVD methods are direct matrix decompositions — Bayesian/NLLS
         # inference only applies to parametric fitting (cpi, vascular).
@@ -2183,15 +2243,15 @@ class ComputeDSCMaps(BaseInterface):
         # (DRO matrix data — see tests/benchmarks/run_cpi_infer_cpt_map_vs_vb.py)
         _warn_invalid_cpi_combo(method, inference, cpi_infer_cpt)
 
-        baseline_frames = int(self.inputs.baseline_frames)
-        tail_frames = int(self.inputs.tail_frames)
+        baseline_frames = inputs.baseline_frames
+        tail_frames = inputs.tail_frames
 
         # Auto-detect baseline frames from AIF
         detected_baseline, baseline_detection_info = self._detect_baseline_frames(
             aif, baseline_frames, concentration_data=conc_data, mask=mask
         )
 
-        te = float(self.inputs.te)
+        te = inputs.te
 
         # Re-compute S0/concentration with detected baseline when it differs
         # from the signal_to_conc baseline (which used config.pre_bolus).
