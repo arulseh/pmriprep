@@ -8,7 +8,7 @@ import nibabel as nib
 import numpy as np
 import pytest
 
-from pmriprep.interfaces.dsc_compute import ComputeDSCMaps
+from pmriprep.interfaces.dsc_compute import ComputeDSCMaps, _DSCDeconvolutionMaps
 from pmriprep.utils.dsc_constants import EPSILON_CONCENTRATION, EPSILON_SIGNAL
 from pmriprep.utils.dsc_signal import (
     compute_peak_height_legacy,
@@ -1055,3 +1055,112 @@ def test_run_deconvolution_normalizes_parametric_state(
     assert result.delay is None
     assert result.residues is None
     assert result.qc["motion_weighting"] is motion_qc
+
+
+def test_prepare_final_outputs_preserves_composition_and_qc_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Postprocessing composes characterized map helpers without changing state."""
+    interface = ComputeDSCMaps()
+    data = np.ones((1, 1, 1))
+    raw = np.full((1, 1, 1, 4), 2.0)
+    concentration = np.full((1, 1, 1, 4), 3.0)
+    qc: dict[str, object] = {"solver": True}
+    deconvolution = _DSCDeconvolutionMaps(
+        cbf=data,
+        cbv=data * 2.0,
+        mtt=data * 3.0,
+        tmax=data * 4.0,
+        qc=qc,
+        delay=data * 5.0,
+        residues=np.ones((1, 1, 1, 4)),
+        cbf_std=data * 0.1,
+        cbf_ci_lower=data * 0.8,
+        cbf_ci_upper=data * 1.2,
+    )
+    final_maps = SimpleNamespace(
+        rel_cbf=data,
+        rel_cbv=data,
+        rel_cbv_auc=data,
+        mtt=data,
+        tmax=data,
+    )
+    calls: list[str] = []
+    monkeypatch.setattr(
+        interface,
+        "_compute_signal_metrics",
+        lambda *args: calls.append("signal") or SimpleNamespace(
+            psr=data * 6.0, peak_height=data * 7.0, qc={"signal": True}
+        ),
+    )
+    monkeypatch.setattr(
+        interface,
+        "_select_raw_concentration",
+        lambda *args: calls.append("raw") or raw,
+    )
+    monkeypatch.setattr(
+        interface,
+        "_compute_timing_maps",
+        lambda *args: calls.append("timing") or SimpleNamespace(
+            ttp=data * 8.0,
+            ttp_corrected=data * 9.0,
+            relative_ttp=data * 10.0,
+            aif_bat_seconds=4.5,
+        ),
+    )
+    monkeypatch.setattr(
+        interface,
+        "_compute_auc_maps",
+        lambda *args: calls.append("auc") or SimpleNamespace(
+            raw=data * 11.0,
+            corrected=data * 12.0,
+            difference=data,
+            cbv=data * 13.0,
+            qc={"auc": True},
+        ),
+    )
+    monkeypatch.setattr(
+        interface,
+        "_compute_quality_maps",
+        lambda *args: calls.append("quality") or SimpleNamespace(
+            cnr=data * 14.0, snr=data * 15.0, tsnr=data * 16.0
+        ),
+    )
+    monkeypatch.setattr(
+        interface,
+        "_finalize_mtt",
+        lambda *args: calls.append("mtt") or data * 17.0,
+    )
+    monkeypatch.setattr(
+        interface,
+        "_finalize_dsc_maps",
+        lambda **kwargs: calls.append("finalize") or final_maps,
+    )
+    monkeypatch.setattr(
+        interface,
+        "_summarize_dsc_maps",
+        lambda *args: calls.append("summary") or {"summary": True},
+    )
+
+    result = interface._prepare_final_outputs(
+        deconvolution=deconvolution,
+        concentration=concentration,
+        recomputed_raw_concentration=raw,
+        signal=None,
+        spatial_shape=(1, 1, 1),
+        mask_bool=data.astype(bool),
+        detected_baseline=2,
+        n_baseline=3,
+        baseline_info={"arrival_index": 2},
+        dt=1.5,
+        tail_frames=4,
+        method="oSVD",
+        aif_level="atlas",
+        preload_class="adequate",
+    )
+
+    assert calls == ["signal", "raw", "timing", "auc", "quality", "mtt", "finalize", "summary"]
+    assert result.raw_concentration is raw
+    assert result.maps is final_maps
+    assert result.qc is qc
+    assert qc == {"solver": True, "signal": True, "auc": True, "summary": True}

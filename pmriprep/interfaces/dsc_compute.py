@@ -444,6 +444,14 @@ class _DSCDeconvolutionMaps(NamedTuple):
     fallback_mask: Optional[npt.NDArray[Any]] = None
 
 
+class _DSCPostprocessing(NamedTuple):
+    """Final DSC maps, source concentration, and accumulated QC state."""
+
+    raw_concentration: npt.NDArray[Any]
+    maps: _DSCFinalMaps
+    qc: dict[str, Any]
+
+
 class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
     """Input specification for ComputeDSCMaps interface."""
 
@@ -1558,6 +1566,99 @@ class ComputeDSCMaps(BaseInterface):
         img = nib.Nifti1Image(cast_data, affine, local_header)  # type: ignore[attr-defined]
         nib.save(img, path)  # type: ignore[attr-defined]
         return path
+
+    def _prepare_final_outputs(
+        self,
+        *,
+        deconvolution: _DSCDeconvolutionMaps,
+        concentration: npt.NDArray[Any],
+        recomputed_raw_concentration: Optional[npt.NDArray[Any]],
+        signal: Optional[npt.NDArray[Any]],
+        spatial_shape: tuple[int, ...],
+        mask_bool: npt.NDArray[Any],
+        detected_baseline: int,
+        n_baseline: int,
+        baseline_info: dict[str, Any],
+        dt: float,
+        tail_frames: int,
+        method: str,
+        aif_level: str,
+        preload_class: str,
+    ) -> _DSCPostprocessing:
+        """Compose model-free maps, final masking, and DSC QC reduction."""
+        qc = deconvolution.qc
+        signal_metrics = self._compute_signal_metrics(
+            signal, spatial_shape, detected_baseline, tail_frames
+        )
+        qc.update(signal_metrics.qc)
+
+        raw_concentration = self._select_raw_concentration(
+            concentration, recomputed_raw_concentration
+        )
+        timing = self._compute_timing_maps(
+            raw_concentration,
+            mask_bool,
+            detected_baseline,
+            baseline_info,
+            dt,
+        )
+        auc = self._compute_auc_maps(
+            raw_concentration,
+            concentration,
+            n_baseline,
+            detected_baseline,
+            baseline_info,
+            dt,
+        )
+        qc.update(auc.qc)
+        quality = self._compute_quality_maps(
+            raw_concentration, signal, detected_baseline
+        )
+        mtt = self._finalize_mtt(
+            method,
+            deconvolution.mtt,
+            deconvolution.cbf,
+            auc.cbv,
+        )
+        maps = self._finalize_dsc_maps(
+            cbf=deconvolution.cbf,
+            cbv=deconvolution.cbv,
+            cbv_auc=auc.cbv,
+            mtt=mtt,
+            tmax=deconvolution.tmax,
+            ttp=timing.ttp,
+            ttp_corrected=timing.ttp_corrected,
+            relative_ttp=timing.relative_ttp,
+            auc_raw=auc.raw,
+            auc_corrected=auc.corrected,
+            auc_difference=auc.difference,
+            cnr=quality.cnr,
+            snr=quality.snr,
+            tsnr=quality.tsnr,
+            psr=signal_metrics.psr,
+            peak_height=signal_metrics.peak_height,
+            delay=deconvolution.delay,
+            residues=deconvolution.residues,
+            cbf_std=deconvolution.cbf_std,
+            cbf_ci_lower=deconvolution.cbf_ci_lower,
+            cbf_ci_upper=deconvolution.cbf_ci_upper,
+            mask_bool=mask_bool,
+        )
+        qc.update(
+            self._summarize_dsc_maps(
+                maps.rel_cbf,
+                maps.rel_cbv,
+                maps.rel_cbv_auc,
+                maps.mtt,
+                maps.tmax,
+                mask_bool,
+                aif_level,
+                preload_class,
+                baseline_info,
+                timing.aif_bat_seconds,
+            )
+        )
+        return _DSCPostprocessing(raw_concentration, maps, qc)
 
     def _save_base_maps(
         self,
@@ -3335,98 +3436,33 @@ class ComputeDSCMaps(BaseInterface):
             parametric_r2_map, fallback_mask,
         ) = deconvolution
 
-        signal_metrics = self._compute_signal_metrics(
-            signal_data, spatial_shape, detected_baseline, tail_frames
-        )
-        psr = signal_metrics.psr
-        ph = signal_metrics.peak_height
-        qc_metrics.update(signal_metrics.qc)
-
-        raw_conc_data = self._select_raw_concentration(
-            conc_data, recomputed_raw_conc
-        )
-        timing_maps = self._compute_timing_maps(
-            raw_conc_data,
-            mask_bool,
-            detected_baseline,
-            baseline_detection_info,
-            dt,
-        )
-        ttp = timing_maps.ttp
-        ttp_corrected = timing_maps.ttp_corrected
-        rttp = timing_maps.relative_ttp
-        aif_bat_seconds = timing_maps.aif_bat_seconds
-
-        auc_maps = self._compute_auc_maps(
-            raw_conc_data,
-            conc_data,
-            n_bl,
-            detected_baseline,
-            baseline_detection_info,
-            dt,
-        )
-        auc_raw = auc_maps.raw
-        auc_corr = auc_maps.corrected
-        auc_diff = auc_maps.difference
-        cbv_auc = auc_maps.cbv
-        qc_metrics.update(auc_maps.qc)
-
-        quality_maps = self._compute_quality_maps(
-            raw_conc_data, signal_data, detected_baseline
-        )
-        cnr = quality_maps.cnr
-        snr = quality_maps.snr
-        tsnr = quality_maps.tsnr
-
-        mtt = self._finalize_mtt(method, mtt, cbf, cbv_auc)
-
         aif_level = str(self.inputs.aif_detection_level)
         preload_class = str(self.inputs.preload_classification)
-        final_maps = self._finalize_dsc_maps(
-            cbf=cbf,
-            cbv=cbv,
-            cbv_auc=cbv_auc,
-            mtt=mtt,
-            tmax=tmax,
-            ttp=ttp,
-            ttp_corrected=ttp_corrected,
-            relative_ttp=rttp,
-            auc_raw=auc_raw,
-            auc_corrected=auc_corr,
-            auc_difference=auc_diff,
-            cnr=cnr,
-            snr=snr,
-            tsnr=tsnr,
-            psr=psr,
-            peak_height=ph,
-            delay=delay,
-            residues=residues,
-            cbf_std=cbf_std_map,
-            cbf_ci_lower=cbf_ci_lower_map,
-            cbf_ci_upper=cbf_ci_upper_map,
+        postprocessing = self._prepare_final_outputs(
+            deconvolution=deconvolution,
+            concentration=conc_data,
+            recomputed_raw_concentration=recomputed_raw_conc,
+            signal=signal_data,
+            spatial_shape=spatial_shape,
             mask_bool=mask_bool,
+            detected_baseline=detected_baseline,
+            n_baseline=n_bl,
+            baseline_info=baseline_detection_info,
+            dt=dt,
+            tail_frames=tail_frames,
+            method=method,
+            aif_level=aif_level,
+            preload_class=preload_class,
         )
+        raw_conc_data = postprocessing.raw_concentration
+        final_maps = postprocessing.maps
+        qc_metrics = postprocessing.qc
         (
             rel_cbf, rel_cbv, rel_cbv_auc, mtt, tmax, ttp, ttp_corrected,
             rttp, auc_raw, auc_corr, auc_diff, rel_auc_raw, rel_auc_corr,
             cnr, snr, tsnr, psr, ph, delay, residues, cbf_std_map,
             cbf_ci_lower_map, cbf_ci_upper_map,
         ) = final_maps
-
-        qc_metrics.update(
-            self._summarize_dsc_maps(
-                rel_cbf,
-                rel_cbv,
-                rel_cbv_auc,
-                mtt,
-                tmax,
-                mask_bool,
-                aif_level,
-                preload_class,
-                baseline_detection_info,
-                aif_bat_seconds,
-            )
-        )
 
         self._results = self._save_base_maps(final_maps, affine, header, qc_metrics)
 
