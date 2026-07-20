@@ -531,6 +531,35 @@ class TestFitMCMCWeights:
         assert "Ktrans" in result.parameters
         assert result.fitting_method == "mcmc"
 
+    def test_mcmc_samples_transformed_prior_coordinates(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """MCMC state uses the same transformed coordinates as MAP and VI."""
+        tissue_curve, aif, time_points, _ = _make_synthetic_tofts_data()
+        fitter = BayesianPKFitter(ToftsModel())
+        captured: dict[str, object] = {}
+
+        def _capture_sampler(
+            log_prob: object,
+            init_positions: np.ndarray,
+            n_iterations: int,
+            bounds: list[tuple[float, float]],
+        ) -> np.ndarray:
+            assert callable(log_prob)
+            captured["positions"] = init_positions.copy()
+            captured["bounds"] = bounds
+            return np.repeat(init_positions[None, :, :], n_iterations, axis=0)
+
+        monkeypatch.setattr(
+            "pmriprep.models.dce.bayesian.run_ensemble_sampler", _capture_sampler
+        )
+        fitter.fit_mcmc(tissue_curve, aif, time_points, sloppy=True)
+
+        positions = captured["positions"]
+        assert isinstance(positions, np.ndarray)
+        assert np.all(positions[:, 0] < 0.0)  # log(Ktrans), not natural Ktrans
+        assert captured["bounds"][0] == (-50.0, 50.0)  # type: ignore[index]
+
 
 class TestMCMCQualityFlag:
     """Test that fit_mcmc sets quality_flag based on convergence diagnostics."""

@@ -1150,6 +1150,8 @@ class BayesianDSCFitter:
         n_dims = n_fitting_params + 1
         bounds = [(p.bounds[0], p.bounds[1]) for p in fitting_defs]
         fitting_param_names = [p.name for p in fitting_defs]
+        transforms = [prior.transform for prior in self.priors]
+        upper_bounds_t = [prior.upper_bound for prior in self.priors]
 
         # Set defaults
         if n_walkers is None:
@@ -1160,11 +1162,17 @@ class BayesianDSCFitter:
         n_total = n_samples + n_burnin
 
         # Log posterior including sampled sigma
-        # State vector: [fitting_params..., log_sigma]
+        # State vector: [transformed fitting params..., log_sigma]
         def log_prob_with_sigma(
             state: npt.NDArray[np.floating],
         ) -> float:
-            fitting_params = state[:n_fitting_params]
+            fitting_params_t = state[:n_fitting_params]
+            fitting_params = np.asarray([
+                from_transformed(
+                    fitting_params_t[i], transforms[i], upper_bounds_t[i]
+                )
+                for i in range(n_fitting_params)
+            ], dtype=np.float64)
             log_sigma = state[n_fitting_params]
             sigma = np.exp(log_sigma)
 
@@ -1180,7 +1188,9 @@ class BayesianDSCFitter:
                 return float("-inf")
 
             # Prior on fitting-space parameters
-            log_p = self._log_prior(fitting_params)
+            log_p = compute_log_prior(
+                fitting_params_t, self.priors, transformed=True
+            )
             if not np.isfinite(log_p):
                 return float("-inf")
 
@@ -1208,18 +1218,28 @@ class BayesianDSCFitter:
             self.model.dict_to_params(map_result.parameters), dtype=np.float64
         )
         map_fitting_params = self.model.model_to_fitting_params(map_model_params)
+        map_fitting_params_t = np.asarray([
+            to_transformed(
+                map_fitting_params[i], transforms[i], upper_bounds_t[i]
+            )
+            for i in range(n_fitting_params)
+        ], dtype=np.float64)
 
-        # Bounds for sampler: fitting bounds + log_sigma bounds
-        sampler_bounds = bounds + [(-15.0, 15.0)]  # log_sigma
+        sampler_bounds = [
+            bounds[i] if transforms[i] == TransformType.IDENTITY else (-50.0, 50.0)
+            for i in range(n_fitting_params)
+        ] + [(-15.0, 15.0)]
 
         # Initialize walkers with small perturbations in fitting space
         init_positions = np.zeros((n_walkers, n_dims))
         log_sigma_init = np.log(noise_std_baseline)
         for i in range(n_walkers):
             for j in range(n_fitting_params):
-                scale = self.priors[j].std * 0.1
-                perturbed = map_fitting_params[j] + scale * np.random.randn()
-                perturbed = np.clip(perturbed, bounds[j][0], bounds[j][1])
+                scale = self.priors[j].std_transformed * 0.1
+                perturbed = map_fitting_params_t[j] + scale * np.random.randn()
+                perturbed = np.clip(
+                    perturbed, sampler_bounds[j][0], sampler_bounds[j][1]
+                )
                 init_positions[i, j] = perturbed
             # log_sigma: small perturbation around baseline estimate
             init_positions[i, n_fitting_params] = (
@@ -1238,7 +1258,13 @@ class BayesianDSCFitter:
         flat_samples = samples.reshape(-1, n_dims)
 
         # Separate fitting params and sigma
-        fitting_samples = flat_samples[:, :n_fitting_params]
+        transformed_samples = flat_samples[:, :n_fitting_params]
+        fitting_samples = np.column_stack([
+            np.asarray(from_transformed(
+                transformed_samples[:, i], transforms[i], upper_bounds_t[i]
+            ), dtype=np.float64)
+            for i in range(n_fitting_params)
+        ])
         sigma_samples = np.exp(flat_samples[:, n_fitting_params])
 
         # Convert each sample from fitting space to model space

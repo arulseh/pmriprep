@@ -198,6 +198,38 @@ class TestMAPFitting:
         assert fitted_cbf < 0.05, f"CBF should be near 0 for flat data, got {fitted_cbf}"
 
 
+class TestMCMCPriorCoordinates:
+    """Characterize the common transformed-space Bayesian prior."""
+
+    def test_mcmc_initializes_log_cbf_in_transformed_space(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        concentration, aif, t = _make_synthetic_data(noise_std=0.1)
+        fitter = BayesianDSCFitter(VascularModel())
+        captured: dict[str, object] = {}
+
+        def _capture_sampler(
+            log_prob: object,
+            init_positions: np.ndarray,
+            n_iterations: int,
+            bounds: list[tuple[float, float]],
+        ) -> np.ndarray:
+            assert callable(log_prob)
+            captured["positions"] = init_positions.copy()
+            captured["bounds"] = bounds
+            return np.repeat(init_positions[None, :, :], n_iterations, axis=0)
+
+        monkeypatch.setattr(
+            "pmriprep.models.dsc.bayesian.run_ensemble_sampler", _capture_sampler
+        )
+        fitter.fit_mcmc(concentration, aif, t, sloppy=True)
+
+        positions = captured["positions"]
+        assert isinstance(positions, np.ndarray)
+        assert np.all(positions[:, 0] < 0.0)  # log(CBF), not natural CBF
+        assert captured["bounds"][0] == (-50.0, 50.0)  # type: ignore[index]
+
+
 class TestVIFitting:
     """Tests for Variational Inference fitting."""
 
