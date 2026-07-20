@@ -1038,6 +1038,48 @@ def init_dce_anatomical_masks_wf(
     return workflow
 
 
+def init_dce_dsc_resampling_wf(
+    *, name: str = "dce_dsc_resampling_wf",
+) -> pe.Workflow:
+    """Resample relative DSC CBV and normalized DSC CBV into DCE space."""
+    workflow = pe.Workflow(name=name)
+    inputnode = pe.Node(
+        niu.IdentityInterface(fields=[
+            "dsc_cbv_file", "dsc_ncbv_file", "dsc_to_t1w_xfm",
+            "t1w_to_dce_xfm", "dce_reference",
+        ]),
+        name="inputnode",
+    )
+    outputnode = pe.Node(
+        niu.IdentityInterface(fields=["dsc_cbv_file", "dsc_ncbv_file"]),
+        name="outputnode",
+    )
+    for label, function in (
+        ("cbv", _resample_dsc_cbv_to_dce),
+        ("ncbv", _resample_dsc_ncbv_to_dce),
+    ):
+        node = pe.Node(
+            niu.Function(
+                input_names=[
+                    "dsc_cbv_file", "dsc_to_t1w_xfm", "t1w_to_dce_xfm",
+                    "dce_reference",
+                ],
+                output_names=["cbv_in_dce"], function=function,
+            ),
+            name=f"resample_dsc_{label}",
+        )
+        workflow.connect([
+            (inputnode, node, [
+                (f"dsc_{label}_file", "dsc_cbv_file"),
+                ("dsc_to_t1w_xfm", "dsc_to_t1w_xfm"),
+                ("t1w_to_dce_xfm", "t1w_to_dce_xfm"),
+                ("dce_reference", "dce_reference"),
+            ]),
+            (node, outputnode, [("cbv_in_dce", f"dsc_{label}_file")]),
+        ])
+    return workflow
+
+
 def init_dce_preproc_wf(
     bids_dir: Union[str, Path],
     output_dir: Union[str, Path],
@@ -1905,64 +1947,21 @@ def init_dce_preproc_wf(
     # DSC CBV (128x128x19, 1.88mm) is in DSC native space, but DCE processing
     # operates in DCE native space (256x256x26, 0.94mm). Resample DSC CBV
     # via: DSC → T1w (existing xfm) → DCE (existing xfm).
-    resample_dsc_cbv = pe.Node(
-        niu.Function(
-            input_names=[
-                "dsc_cbv_file",
-                "dsc_to_t1w_xfm",
-                "t1w_to_dce_xfm",
-                "dce_reference",
-            ],
-            output_names=["cbv_in_dce"],
-            function=_resample_dsc_cbv_to_dce,
-        ),
-        name="resample_dsc_cbv",
-    )
-
+    dce_dsc_resampling_wf = init_dce_dsc_resampling_wf()
     workflow.connect([
-        (inputnode, resample_dsc_cbv, [
-            ("dsc_cbv_file", "dsc_cbv_file"),
-            ("dsc_to_t1w_xfm", "dsc_to_t1w_xfm"),
+        (inputnode, dce_dsc_resampling_wf, [
+            ("dsc_cbv_file", "inputnode.dsc_cbv_file"),
+            ("dsc_ncbv_file", "inputnode.dsc_ncbv_file"),
+            ("dsc_to_t1w_xfm", "inputnode.dsc_to_t1w_xfm"),
         ]),
-        (dce_registration_wf, resample_dsc_cbv, [
-            ("outputnode.out_matrix", "t1w_to_dce_xfm"),
+        (dce_registration_wf, dce_dsc_resampling_wf, [
+            ("outputnode.out_matrix", "inputnode.t1w_to_dce_xfm"),
         ]),
-        (dce_preprocessing_wf, resample_dsc_cbv, [
-            ("outputnode.mean_img", "dce_reference"),
+        (dce_preprocessing_wf, dce_dsc_resampling_wf, [
+            ("outputnode.mean_img", "inputnode.dce_reference"),
         ]),
-    ])
-    # Note: resample_dsc_cbv → dsc_dce_validation connected after Node 9 creation
-
-    # Parallel resample for nCBV (NAWM-normalized). Same transform chain
-    # as the relative-CBV resample, but the wrapper clips trilinear-ringing
-    # negatives before handing off to the vp prior path.
-    resample_dsc_ncbv = pe.Node(
-        niu.Function(
-            input_names=[
-                "dsc_cbv_file",
-                "dsc_to_t1w_xfm",
-                "t1w_to_dce_xfm",
-                "dce_reference",
-            ],
-            output_names=["cbv_in_dce"],
-            function=_resample_dsc_ncbv_to_dce,
-        ),
-        name="resample_dsc_ncbv",
-    )
-    workflow.connect([
-        (inputnode, resample_dsc_ncbv, [
-            ("dsc_ncbv_file", "dsc_cbv_file"),
-            ("dsc_to_t1w_xfm", "dsc_to_t1w_xfm"),
-        ]),
-        (dce_registration_wf, resample_dsc_ncbv, [
-            ("outputnode.out_matrix", "t1w_to_dce_xfm"),
-        ]),
-        (dce_preprocessing_wf, resample_dsc_ncbv, [
-            ("outputnode.mean_img", "dce_reference"),
-        ]),
-        # Feed resampled nCBV to PK modeling for the vp prior path.
-        (resample_dsc_ncbv, pk_wf, [
-            ("cbv_in_dce", "inputnode.dsc_ncbv_file"),
+        (dce_dsc_resampling_wf, pk_wf, [
+            ("outputnode.dsc_ncbv_file", "inputnode.dsc_ncbv_file"),
         ]),
     ])
 
@@ -2122,11 +2121,11 @@ def init_dce_preproc_wf(
             ("outputnode.brain_mask", "brain_mask"),
         ]),
         # Feed resampled DSC CBV (deferred from Node 7c)
-        (resample_dsc_cbv, dsc_dce_validation, [
-            ("cbv_in_dce", "dsc_cbv_file"),
+        (dce_dsc_resampling_wf, dsc_dce_validation, [
+            ("outputnode.dsc_cbv_file", "dsc_cbv_file"),
         ]),
-        (resample_dsc_ncbv, dsc_dce_validation, [
-            ("cbv_in_dce", "dsc_ncbv_file"),
+        (dce_dsc_resampling_wf, dsc_dce_validation, [
+            ("outputnode.dsc_ncbv_file", "dsc_ncbv_file"),
         ]),
     ])
 
@@ -2157,8 +2156,8 @@ def init_dce_preproc_wf(
         (pk_wf, dsc_dce_xval_plot, [
             ("outputnode.out_vp", "vp_file"),
         ]),
-        (resample_dsc_ncbv, dsc_dce_xval_plot, [
-            ("cbv_in_dce", "dsc_ncbv_file"),
+        (dce_dsc_resampling_wf, dsc_dce_xval_plot, [
+            ("outputnode.dsc_ncbv_file", "dsc_ncbv_file"),
         ]),
         (dce_anatomical_masks_wf, dsc_dce_xval_plot, [
             ("outputnode.brain_mask", "brain_mask"),

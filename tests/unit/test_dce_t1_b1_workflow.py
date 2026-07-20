@@ -6,6 +6,7 @@ from pmriprep.config.dce import DCEConfig
 from pmriprep.workflows.dce.base import (
     init_dce_anatomical_masks_wf,
     init_dce_brain_extraction_wf,
+    init_dce_dsc_resampling_wf,
     init_dce_atlas_transform_wf,
     init_dce_native_input_wf,
     init_dce_preprocessing_wf,
@@ -104,4 +105,15 @@ def test_dce_anatomical_masks_workflow_contract() -> None:
     no_tissue = init_dce_anatomical_masks_wf(has_tissue_seg=False)
     assert set(no_tissue.list_node_names()) == {
         "inputnode", "outputnode", "transform_brain_mask",
+    }
+
+
+def test_dce_dsc_resampling_workflow_contract() -> None:
+    """DSC resampling preserves distinct relative-CBV and nCBV paths."""
+    workflow = init_dce_dsc_resampling_wf()
+    assert set(workflow.list_node_names()) == {
+        "inputnode", "outputnode", "resample_dsc_cbv", "resample_dsc_ncbv",
+    }
+    assert set(workflow.get_node("outputnode").interface._fields) == {
+        "dsc_cbv_file", "dsc_ncbv_file",
     }
