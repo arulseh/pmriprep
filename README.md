@@ -452,7 +452,7 @@ output_dir/pmriprep/
       sub-01_ses-01_space-T1w_label-WM_probseg.nii.gz
       sub-01_ses-01_space-T1w_label-CSF_probseg.nii.gz
       sub-01_ses-01_space-dceref_T1map.nii.gz
-      sub-01_ses-01_space-dceref_B1plusmap.nii.gz
+      sub-01_ses-01_space-dceref_TB1map.nii.gz
       sub-01_ses-01_space-T1w_desc-tumorseg_dseg.nii.gz
       sub-01_ses-01_space-T1w_desc-enhancing_mask.nii.gz
       sub-01_ses-01_space-T1w_desc-nawm_mask.nii.gz

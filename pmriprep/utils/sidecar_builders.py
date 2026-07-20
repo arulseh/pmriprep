@@ -673,7 +673,7 @@ def build_tumor_seg_mask_sidecar(
     return {
         **get_bids_derivative_provenance(),
         "Description": description,
-        "Type": "Brain",
+        "Type": "Lesion",
         "Method": method,
         "SpatialReference": _anat_spatial_reference(subject, session, is_postcon_ref),
         "Sources": build_sources_list(source_paths, bids_dir),
@@ -699,7 +699,7 @@ def build_tumor_seg_nawm_sidecar(
             "Contralateral normal-appearing white matter mask for CBV "
             "normalization"
         ),
-        "Type": "Brain",
+        "Type": "ROI",
         "Method": (
             "Contralateral WM thresholded at p>=0.9, excluding tumor margin"
         ),

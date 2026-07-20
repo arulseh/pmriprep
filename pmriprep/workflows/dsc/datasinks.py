@@ -52,6 +52,7 @@ class DSCAnatSpec:
     suffix: str
     description: str
     skull_stripped: bool = False
+    mask_type: str | None = None
     ceagent: str | None = None
     dismiss_entities: tuple[str, ...] = ("acquisition",)
 
@@ -183,19 +184,26 @@ _UNCERTAINTY_MAPS: tuple[DSCMapSpec, ...] = (
 _ANAT_MASKS: tuple[DSCAnatSpec, ...] = (
     DSCAnatSpec(
         "brain_mask_dsc", "brain", "mask", "Brain mask in DSC space",
-        skull_stripped=True, dismiss_entities=("acquisition", "ceagent"),
+        skull_stripped=True, mask_type="Brain",
+        dismiss_entities=("acquisition", "ceagent"),
     ),
     DSCAnatSpec(
         "nawm_mask_dsc", "nawm", "mask",
         "Normal-appearing white matter mask in DSC space",
-        dismiss_entities=("acquisition", "ceagent"),
+        mask_type="ROI", dismiss_entities=("acquisition", "ceagent"),
     ),
-    DSCAnatSpec("lesion_mask_dsc", "lesion", "mask", "Lesion mask registered to DSC space"),
+    DSCAnatSpec(
+        "lesion_mask_dsc", "lesion", "mask",
+        "Lesion mask registered to DSC space", mask_type="Lesion",
+    ),
     DSCAnatSpec(
         "user_lesion_mask_dsc", "userLesion", "mask",
-        "User-supplied lesion mask in DSC native space",
+        "User-supplied lesion mask in DSC native space", mask_type="Lesion",
     ),
-    DSCAnatSpec("roi_mask_dsc", "roi", "mask", "ROI mask registered to DSC space"),
+    DSCAnatSpec(
+        "roi_mask_dsc", "roi", "mask", "ROI mask registered to DSC space",
+        mask_type="ROI",
+    ),
 )
 
 
@@ -305,11 +313,14 @@ def _build_minimal_meta(
     base: dict,
     description: str,
     skull_stripped: bool = False,
+    mask_type: str | None = None,
 ) -> dict:
     out = dict(base)
     out["Description"] = description
     if skull_stripped:
         out["SkullStripped"] = True
+    if mask_type is not None:
+        out["Type"] = mask_type
     return out
 
 
@@ -344,7 +355,7 @@ def _build_dsc_preproc_meta(
 
     out = dict(base)
     out["Description"] = description
-    out["SkullStripped"] = False
+    out["SkullStripped"] = True
     if isinstance(config_dict, dict):
         out["MotionCorrectionApplied"] = bool(
             config_dict.get("motion_correct", True)
@@ -775,6 +786,7 @@ def _add_anat_sink(
     suffix: str,
     description: str,
     skull_stripped: bool = False,
+    mask_type: str | None = None,
     ce_value: Optional[str] = None,
     source_attr: str = "source_dsc",
     dismiss_entities: tuple = ("acquisition",),
@@ -795,7 +807,7 @@ def _add_anat_sink(
     """
     meta = pe.Node(
         niu.Function(
-            input_names=["base", "description", "skull_stripped"],
+            input_names=["base", "description", "skull_stripped", "mask_type"],
             output_names=["meta_dict"],
             function=_build_minimal_meta,
         ),
@@ -803,6 +815,7 @@ def _add_anat_sink(
     )
     meta.inputs.description = description
     meta.inputs.skull_stripped = skull_stripped
+    meta.inputs.mask_type = mask_type
     workflow.connect([(base_minimal_node, meta, [("meta_dict", "base")])])
 
     sink = pe.Node(
@@ -1427,6 +1440,7 @@ def init_dsc_datasinks_wf(
             desc_value=anat_spec.desc, suffix=anat_spec.suffix,
             description=anat_spec.description,
             skull_stripped=anat_spec.skull_stripped,
+            mask_type=anat_spec.mask_type,
             ce_value=anat_spec.ceagent,
             dismiss_entities=anat_spec.dismiss_entities,
         )

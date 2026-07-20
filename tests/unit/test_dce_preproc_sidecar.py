@@ -290,7 +290,7 @@ class TestPreprocMetaNoNaN:
             },
         }
         meta = _build_dce_preproc_meta(base, "desc", qc_metrics=qc)
-        assert meta["SkullStripped"] is False
+        assert meta["SkullStripped"] is True
         # Flat cosmetic keys dropped
         assert "BaselineTSNR" not in meta
         assert "BaselineSNRLowFraction" not in meta
@@ -311,7 +311,7 @@ class TestPreprocMetaNoNaN:
 
         qc = {"preprocessing": {"baseline_tsnr": float("nan"), "mean_cnr": 4.2}}
         meta = _build_dsc_preproc_meta({"Description": "x"}, "desc", qc_metrics=qc)
-        assert meta["SkullStripped"] is False
+        assert meta["SkullStripped"] is True
         assert "baseline_tsnr" not in meta["PipelineQC"]["preprocessing"]
         assert meta["PipelineQC"]["preprocessing"]["mean_cnr"] == 4.2
         json.dumps(meta, allow_nan=False)

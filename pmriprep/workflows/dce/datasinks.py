@@ -55,6 +55,7 @@ class DCEAnatMaskSpec:
     desc: str
     description: str
     skull_stripped: bool = False
+    mask_type: str = "ROI"
 
 
 @dataclass(frozen=True)
@@ -152,21 +153,25 @@ _CURVE_TYPE_MAP = DCEMapSpec(
 
 
 _ANAT_MASKS: tuple[DCEAnatMaskSpec, ...] = (
-    DCEAnatMaskSpec("brain_mask_dce", "brain_mask", "brain", "Brain mask in DCE space", True),
+    DCEAnatMaskSpec(
+        "brain_mask_dce", "brain_mask", "brain", "Brain mask in DCE space",
+        True, "Brain",
+    ),
     DCEAnatMaskSpec(
         "nawm_mask_dce", "nawm_mask", "nawm",
-        "Normal-appearing white matter mask in DCE space",
+        "Normal-appearing white matter mask in DCE space", mask_type="ROI",
     ),
     DCEAnatMaskSpec(
         "lesion_mask_dce", "lesion_mask_dce", "lesion",
-        "Lesion mask registered to DCE space",
+        "Lesion mask registered to DCE space", mask_type="Lesion",
     ),
     DCEAnatMaskSpec(
         "user_lesion_mask_dce", "user_lesion_mask_dce", "userLesion",
-        "User-supplied lesion mask in DCE native space",
+        "User-supplied lesion mask in DCE native space", mask_type="Lesion",
     ),
     DCEAnatMaskSpec(
         "roi_mask_dce", "roi_mask_dce", "roi", "ROI mask registered to DCE space",
+        mask_type="ROI",
     ),
 )
 
@@ -351,7 +356,7 @@ def _build_dce_preproc_meta(
 
     out = dict(base)
     out["Description"] = description
-    out["SkullStripped"] = False
+    out["SkullStripped"] = True
     if isinstance(config_dict, dict):
         out["MotionCorrectionApplied"] = bool(
             config_dict.get("motion_correct", True)
@@ -571,16 +576,16 @@ def _copy_perf_map(
     return str(nii_out)
 
 
-def _copy_b1plusmap(
+def _copy_tb1map(
     in_file: str,
     output_dir: str,
     subject: str,
     session: str,
     meta_dict: dict,
 ) -> str:
-    """Copy a B1plusmap NIfTI + sidecar to anat/.
+    """Copy a TB1map NIfTI + sidecar to anat/.
 
-    Bypasses ``PMRIPrepDataSink`` because ``B1plusmap`` is not in the
+    Bypasses ``PMRIPrepDataSink`` because ``TB1map`` is not in the
     niworkflows default anat-suffix allow-list (`T1w|T2w|T1map|FLAIR|...`).
     All other DCE-space anat outputs (T1w/FLAIR/T2w/T1map) go through
     ``_add_anat_image_sink`` → ``PMRIPrepDataSink``.
@@ -596,7 +601,7 @@ def _copy_b1plusmap(
     # See _copy_perf_map for the sentinel-handling rationale.
     if not isdefined(in_file) or in_file == "":
         logging.getLogger("nipype.workflow").warning(
-            "Skipping _copy_b1plusmap sink: upstream produced no output "
+            "Skipping _copy_tb1map sink: upstream produced no output "
             "(in_file=%r)", in_file,
         )
         return ""
@@ -610,7 +615,7 @@ def _copy_b1plusmap(
     prefix = f"sub-{subject}"
     if session:
         prefix += f"_ses-{session}"
-    stem = f"{prefix}_space-dceref_B1plusmap"
+    stem = f"{prefix}_space-dceref_TB1map"
     nii_out = out_root / f"{stem}.nii.gz"
     json_out = out_root / f"{stem}.json"
 
@@ -1018,6 +1023,7 @@ def _add_anat_mask_sink(
     desc_value: str,
     description: str,
     skull_stripped: bool = False,
+    mask_type: str = "ROI",
     space: str = "dceref",
 ) -> pe.Node:
     """Wire a DCE-space mask (brain/nawm/lesion/roi) into anat/."""
@@ -1031,7 +1037,10 @@ def _add_anat_mask_sink(
     )
     meta.inputs.description = description
     meta.inputs.units = None
-    meta.inputs.extra = {"SkullStripped": True} if skull_stripped else None
+    meta.inputs.extra = {
+        "Type": mask_type,
+        **({"SkullStripped": True} if skull_stripped else {}),
+    }
     workflow.connect(base_minimal_node, "meta_dict", meta, "base")
 
     sink = pe.Node(
@@ -1589,7 +1598,7 @@ def init_dce_datasinks_wf(
                     "in_file", "output_dir", "subject", "session", "meta_dict",
                 ],
                 output_names=["out_file"],
-                function=_copy_b1plusmap,
+                function=_copy_tb1map,
             ),
             name="b1_map_sink",
         )
@@ -1613,6 +1622,7 @@ def init_dce_datasinks_wf(
             name=mask_spec.name, in_attr=mask_spec.in_attr,
             desc_value=mask_spec.desc, description=mask_spec.description,
             skull_stripped=mask_spec.skull_stripped,
+            mask_type=mask_spec.mask_type,
         )
         sink_outputs.append((sink, "out_file"))
 
