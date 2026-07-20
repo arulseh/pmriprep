@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import nibabel as nib
@@ -18,6 +19,7 @@ from pmriprep.config.tumor_seg import TumorSegConfig
 from pmriprep.workflows.base import (
     PipelineSkipFlags,
     _prepare_master_workflow_context,
+    _select_master_structural_references,
     init_pmriprep_wf,
 )
 from pmriprep.workflows.discovery import (
@@ -261,3 +263,55 @@ def test_prepare_master_context_resolves_session_policy(
     assert context.decision.run_dce is True
     assert isinstance(context.anat_config, AnatConfig)
     assert isinstance(context.dsc_config, DSCConfig)
+
+
+def test_select_master_structural_references_routes_each_application(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reference planning shares candidates and preserves modality-specific intent."""
+    session_data = SessionData(
+        subject="0001",
+        session="0001",
+        modalities=ModalityAvailability(
+            t1w_pre=tmp_path / "t1w.nii.gz",
+            dsc=tmp_path / "dsc.nii.gz",
+            dce=tmp_path / "dce.nii.gz",
+        ),
+        pipelines=PipelineAvailability(tumor_seg=True, dsc=True, dce=True),
+    )
+    candidates = [object()]
+    build_calls: list[bool] = []
+    select_calls: list[tuple[object, str, str | None]] = []
+
+    monkeypatch.setattr(
+        "pmriprep.utils.structural_reference.build_candidates_from_session",
+        lambda modalities, *, has_lesion_mask: (
+            build_calls.append(has_lesion_mask) or candidates
+        ),
+    )
+
+    def _select(items: object, *, application: str, perfusion_path: str | None):
+        select_calls.append((items, application, perfusion_path))
+        return SimpleNamespace(
+            candidate=SimpleNamespace(image_type=SimpleNamespace(value=application)),
+            confidence=0.9,
+            bbr_eligible=True,
+        )
+
+    monkeypatch.setattr(
+        "pmriprep.utils.structural_reference.select_structural_reference_v2", _select
+    )
+    plan = _select_master_structural_references(
+        session_data=session_data,
+        decision=SimpleNamespace(run_dsc=True, run_dce=True),
+        dsc_config=DSCConfig(),
+        dce_config=DCEConfig(),
+    )
+
+    assert build_calls == [True]
+    assert select_calls == [
+        (candidates, "dsc_registration", str(tmp_path / "dsc.nii.gz")),
+        (candidates, "dce_registration", str(tmp_path / "dce.nii.gz")),
+    ]
+    assert plan.dsc is not None
+    assert plan.dce is not None

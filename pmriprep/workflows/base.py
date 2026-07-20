@@ -23,6 +23,7 @@ from pmriprep.workflows.discovery import discover_session_data, SessionData
 
 if TYPE_CHECKING:
     from bids.layout import BIDSLayout
+    from pmriprep.utils.structural_reference import StructuralReferenceSelection
 
 
 @dataclass
@@ -904,6 +905,93 @@ class _MasterWorkflowContext:
     dce_mem_gb: float
 
 
+@dataclass(frozen=True)
+class _MasterReferencePlan:
+    """Structural-reference selections for enabled perfusion pipelines."""
+
+    dsc: Optional["StructuralReferenceSelection"]
+    dce: Optional["StructuralReferenceSelection"]
+
+
+def _select_master_structural_references(
+    *,
+    session_data: SessionData,
+    decision: PipelineDecision,
+    dsc_config: DSCConfig,
+    dce_config: DCEConfig,
+) -> _MasterReferencePlan:
+    """Select DSC and DCE registration references from session anatomy.
+
+    Parameters
+    ----------
+    session_data : SessionData
+        Discovered session modalities.
+    decision : PipelineDecision
+        Enabled pipeline set.
+    dsc_config, dce_config : configuration
+        Perfusion configurations whose masks affect BBR eligibility.
+
+    Returns
+    -------
+    _MasterReferencePlan
+        Optional confidence-scored selection for each perfusion pipeline.
+    """
+    from pmriprep.utils.structural_reference import (
+        build_candidates_from_session,
+        select_structural_reference_v2,
+    )
+
+    has_lesion_mask = (
+        dsc_config.lesion_mask is not None
+        or dce_config.lesion_mask is not None
+        or session_data.pipelines.tumor_seg
+    )
+    candidates = build_candidates_from_session(
+        session_data.modalities, has_lesion_mask=has_lesion_mask
+    )
+    logger = logging.getLogger("pmriprep.workflows")
+
+    dsc_selection = None
+    if decision.run_dsc:
+        dsc_selection = select_structural_reference_v2(
+            candidates,
+            application="dsc_registration",
+            perfusion_path=(
+                str(session_data.modalities.dsc)
+                if session_data.modalities.dsc
+                else None
+            ),
+        )
+        if dsc_selection:
+            logger.info(
+                "DSC structural reference: %s (confidence=%.2f, bbr=%s)",
+                dsc_selection.candidate.image_type.value,
+                dsc_selection.confidence,
+                dsc_selection.bbr_eligible,
+            )
+
+    dce_selection = None
+    if decision.run_dce:
+        dce_selection = select_structural_reference_v2(
+            candidates,
+            application="dce_registration",
+            perfusion_path=(
+                str(session_data.modalities.dce)
+                if session_data.modalities.dce
+                else None
+            ),
+        )
+        if dce_selection:
+            logger.info(
+                "DCE structural reference: %s (confidence=%.2f, bbr=%s)",
+                dce_selection.candidate.image_type.value,
+                dce_selection.confidence,
+                dce_selection.bbr_eligible,
+            )
+
+    return _MasterReferencePlan(dsc=dsc_selection, dce=dce_selection)
+
+
 def _prepare_master_workflow_context(
     *,
     bids_dir: Union[str, Path],
@@ -1185,60 +1273,18 @@ def init_pmriprep_wf(
     # -------------------------------------------------------------------
     from pmriprep.utils.structural_reference import (
         ImageType,
-        build_candidates_from_session,
-        select_structural_reference_v2,
         _map_selection_to_anat_output,
     )
 
     _ref_logger = logging.getLogger("pmriprep.workflows")
-
-    # Determine if a lesion mask will be available at perfusion registration
-    has_lesion_mask = (
-        (dsc_config is not None and dsc_config.lesion_mask is not None)
-        or (dce_config is not None and dce_config.lesion_mask is not None)
-        or session_data.pipelines.tumor_seg
+    reference_plan = _select_master_structural_references(
+        session_data=session_data,
+        decision=decision,
+        dsc_config=dsc_config,
+        dce_config=dce_config,
     )
-
-    # Build candidates from discovered modalities
-    ref_candidates = build_candidates_from_session(
-        session_data.modalities, has_lesion_mask=has_lesion_mask,
-    )
-
-    # Select for DSC registration
-    dsc_ref_selection = None
-    if decision.run_dsc:
-        dsc_ref_selection = select_structural_reference_v2(
-            ref_candidates,
-            application="dsc_registration",
-            perfusion_path=(
-                str(session_data.modalities.dsc) if session_data.modalities.dsc else None
-            ),
-        )
-        if dsc_ref_selection:
-            _ref_logger.info(
-                "DSC structural reference: %s (confidence=%.2f, bbr=%s)",
-                dsc_ref_selection.candidate.image_type.value,
-                dsc_ref_selection.confidence,
-                dsc_ref_selection.bbr_eligible,
-            )
-
-    # Select for DCE registration
-    dce_ref_selection = None
-    if decision.run_dce:
-        dce_ref_selection = select_structural_reference_v2(
-            ref_candidates,
-            application="dce_registration",
-            perfusion_path=(
-                str(session_data.modalities.dce) if session_data.modalities.dce else None
-            ),
-        )
-        if dce_ref_selection:
-            _ref_logger.info(
-                "DCE structural reference: %s (confidence=%.2f, bbr=%s)",
-                dce_ref_selection.candidate.image_type.value,
-                dce_ref_selection.confidence,
-                dce_ref_selection.bbr_eligible,
-            )
+    dsc_ref_selection = reference_plan.dsc
+    dce_ref_selection = reference_plan.dce
 
     # -------------------------------------------------------------------
     # Pre-flight validation: read sidecars and validate metadata
