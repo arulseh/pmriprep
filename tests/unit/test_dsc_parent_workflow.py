@@ -1,6 +1,20 @@
 """Focused contracts for DSC parent-workflow decomposition."""
 
-from pmriprep.workflows.dsc.base import init_dsc_underlays_wf
+from pmriprep.workflows.dsc.base import init_dsc_lesion_masks_wf, init_dsc_underlays_wf
+
+
+def test_dsc_lesion_masks_workflow_contract() -> None:
+    """Lesion preparation retains validation, transform, and priority nodes."""
+    workflow = init_dsc_lesion_masks_wf()
+    assert set(workflow.list_node_names()) == {
+        "inputnode", "outputnode", "validate_roi_mask",
+        "validate_user_lesion_mask", "combine_masks", "transform_lesion",
+        "transform_enhancing_mask", "select_aif_exclusion",
+    }
+    assert set(workflow.get_node("outputnode").interface._fields) == {
+        "roi_mask", "user_lesion_mask", "tumor_lesion_mask",
+        "enhancing_mask", "aif_exclusion_mask", "mask_origin",
+    }
 
 
 def test_dsc_underlays_workflow_contract() -> None:
