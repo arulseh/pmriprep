@@ -97,20 +97,21 @@ class TestLesionFragment:
 
 
 class TestPKMapKeyDriftGuard:
-    """Regression: every entry in _PK_MAPS must have a _PK_MAP_KEY mapping.
+    """Regression: every typed PK-map entry must carry its enrichment key.
 
-    Otherwise a new PK map would silently emit ``map_key=""`` from the
-    sink wiring (see workflows/dce/datasinks.py:_add_dce_pk_map_sink).
+    Otherwise a new PK map could silently emit ``map_key=""`` from the sink
+    wiring (see workflows/dce/datasinks.py:_add_dce_pk_map_sink).
     """
 
     def test_pk_map_key_covers_all_pk_maps(self) -> None:
-        from pmriprep.workflows.dce.datasinks import _PK_MAP_KEY, _PK_MAPS
+        from pmriprep.workflows.dce.datasinks import _PK_MAPS
 
-        pk_in_attrs = {entry[0] for entry in _PK_MAPS}
-        assert set(_PK_MAP_KEY) == pk_in_attrs, (
-            f"_PK_MAP_KEY drift: missing {pk_in_attrs - set(_PK_MAP_KEY)}; "
-            f"extra {set(_PK_MAP_KEY) - pk_in_attrs}"
-        )
+        assert {spec.in_attr: spec.map_key for spec in _PK_MAPS} == {
+            "ktrans_map": "ktrans",
+            "ve_map": "ve",
+            "kep_map": "kep",
+            "vp_map": "vp",
+        }
 
 
 class TestBATCorrectionProvenance:
