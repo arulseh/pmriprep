@@ -121,15 +121,23 @@ def build_uncertainty_provenance(
             construction = "posterior_sample_quantiles"
         elif normalized_inference == "map":
             construction = (
-                "laplace_mean_plus_or_minus_1.96_posterior_standard_deviations_"
+                "laplace_transformed_mean_plus_or_minus_1.96_transformed_"
+                "posterior_standard_deviations_mapped_to_natural_space_"
                 "or_full_parameter_bounds_fallback"
             )
         else:
-            construction = "mean_plus_or_minus_1.96_posterior_standard_deviations"
+            construction = (
+                "transformed_mean_plus_or_minus_1.96_transformed_posterior_"
+                "standard_deviations_mapped_to_natural_space"
+            )
         metadata["CredibleIntervalConstruction"] = construction
         if modality.upper() == "DCE":
             metadata["CredibleIntervalBounding"] = "parameter_bounds"
         elif modality.upper() == "DSC":
-            metadata["CredibleIntervalBounding"] = "nonnegative_lower_bound"
+            metadata["CredibleIntervalBounding"] = (
+                "nonnegative_lower_bound"
+                if normalized_inference == "mcmc"
+                else "parameter_bounds"
+            )
 
     return metadata

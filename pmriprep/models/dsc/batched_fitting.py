@@ -77,6 +77,12 @@ class DSCBatchedFitResult:
     uncertainties: Mapping[str, npt.NDArray[np.floating]] = field(default_factory=dict)
     posterior_means_transformed: Optional[npt.NDArray[np.floating]] = None
     posterior_cov_diag: Optional[npt.NDArray[np.floating]] = None
+    credible_interval_lower: Mapping[str, npt.NDArray[np.floating]] = field(
+        default_factory=dict
+    )
+    credible_interval_upper: Mapping[str, npt.NDArray[np.floating]] = field(
+        default_factory=dict
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -885,6 +891,20 @@ def _concat_dsc_batched_results(
             }
             if head.uncertainties else {}
         ),
+        credible_interval_lower=(
+            {
+                k: np.concatenate([r.credible_interval_lower[k] for r in results])
+                for k in head.credible_interval_lower
+            }
+            if head.credible_interval_lower else {}
+        ),
+        credible_interval_upper=(
+            {
+                k: np.concatenate([r.credible_interval_upper[k] for r in results])
+                for k in head.credible_interval_upper
+            }
+            if head.credible_interval_upper else {}
+        ),
         posterior_means_transformed=(
             np.concatenate(
                 [r.posterior_means_transformed for r in results], axis=0,
@@ -1474,10 +1494,30 @@ def batched_dsc_vi_fit(
         fitted_nat[:, j] = np.clip(fitted_nat[:, j], bounds_lo[j], bounds_hi[j])
 
     # --- Uncertainties via delta method ---
+    out_ci_lower = {
+        name: np.zeros(n_voxels, dtype=np.float64)
+        for name in fitting_param_names
+    }
+    out_ci_upper = {
+        name: np.zeros(n_voxels, dtype=np.float64)
+        for name in fitting_param_names
+    }
     for j, name in enumerate(fitting_param_names):
         std_t = np.sqrt(np.maximum(best_cov_diag[:, j], 0.0))
         jac = np.exp(log_jacobian_det(fitted_nat[:, j], transforms[j], upper_bounds[j]))
         out_uncertainties[name][valid_idx] = std_t * jac
+        endpoint_a = from_transformed_batch(
+            best_m[:, j] - 1.96 * std_t, transforms[j], upper_bounds[j]
+        )
+        endpoint_b = from_transformed_batch(
+            best_m[:, j] + 1.96 * std_t, transforms[j], upper_bounds[j]
+        )
+        out_ci_lower[name][valid_idx] = np.clip(
+            np.minimum(endpoint_a, endpoint_b), bounds_lo[j], bounds_hi[j]
+        )
+        out_ci_upper[name][valid_idx] = np.clip(
+            np.maximum(endpoint_a, endpoint_b), bounds_lo[j], bounds_hi[j]
+        )
 
     out_uncertainties["noise_std"][valid_idx] = 1.0 / np.sqrt(
         np.maximum(best_c * best_s, 1e-300)
@@ -1510,6 +1550,8 @@ def batched_dsc_vi_fit(
         params=out_params, r_squared=out_r2, converged=out_converged,
         fitted_curves=out_fitted, n_iterations=last_iteration + 1,
         model_name=model_type, uncertainties=out_uncertainties,
+        credible_interval_lower=out_ci_lower,
+        credible_interval_upper=out_ci_upper,
         posterior_means_transformed=out_post_means,
         posterior_cov_diag=out_post_cov,
     )
@@ -2122,6 +2164,8 @@ def batched_dsc_map_fit(
         fitted_nat[:, j] = np.clip(fitted_nat[:, j], bounds_lo[j], bounds_hi[j])
 
     # --- Laplace uncertainties ---
+    out_ci_lower: dict[str, npt.NDArray[np.floating]] = {}
+    out_ci_upper: dict[str, npt.NDArray[np.floating]] = {}
     if compute_uncertainties:
         final_tau = 1.0 / np.maximum(best_sigma_sq, _EPSILON_NUMERICAL)
         g_final_unc = _evaluate(fitted_nat)
@@ -2143,6 +2187,22 @@ def batched_dsc_map_fit(
             std_t = np.sqrt(np.maximum(np.diagonal(cov, axis1=1, axis2=2)[:, j], 0.0))
             jac = np.exp(log_jacobian_det(fitted_nat[:, j], transforms[j], upper_bounds[j]))
             out_uncertainties[name][valid_idx] = std_t * jac
+            endpoint_a = from_transformed_batch(
+                best_m[:, j] - 1.96 * std_t, transforms[j], upper_bounds[j]
+            )
+            endpoint_b = from_transformed_batch(
+                best_m[:, j] + 1.96 * std_t, transforms[j], upper_bounds[j]
+            )
+            lower = np.zeros(n_voxels, dtype=np.float64)
+            upper = np.zeros(n_voxels, dtype=np.float64)
+            lower[valid_idx] = np.clip(
+                np.minimum(endpoint_a, endpoint_b), bounds_lo[j], bounds_hi[j]
+            )
+            upper[valid_idx] = np.clip(
+                np.maximum(endpoint_a, endpoint_b), bounds_lo[j], bounds_hi[j]
+            )
+            out_ci_lower[name] = lower
+            out_ci_upper[name] = upper
 
     out_uncertainties["noise_std"][valid_idx] = np.sqrt(best_sigma_sq)
 
@@ -2164,4 +2224,6 @@ def batched_dsc_map_fit(
         params=out_params, r_squared=out_r2, converged=out_converged,
         fitted_curves=out_fitted, n_iterations=total_iters + 1,
         model_name=model_type, uncertainties=out_uncertainties,
+        credible_interval_lower=out_ci_lower,
+        credible_interval_upper=out_ci_upper,
     )

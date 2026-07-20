@@ -14,6 +14,7 @@ from pmriprep.models.bayesian_utils import (
     compute_per_walker_ess,
     compute_split_rhat,
     run_ensemble_sampler,
+    transformed_gaussian_interval,
     validate_bayesian_inputs,
 )
 
@@ -37,6 +38,33 @@ class _MockParameter:
 
     def get_prior_sigma(self) -> float:
         return self._sigma
+
+
+@pytest.mark.parametrize(
+    ("transform", "mean", "std", "upper_bound", "expected"),
+    [
+        (TransformType.LOG, 0.0, 0.5, None, (np.exp(-0.98), np.exp(0.98))),
+        (TransformType.LOG_LOGIT, 0.0, 0.5, 0.9, None),
+        (TransformType.SIGMOID, 0.0, 0.5, None, None),
+    ],
+)
+def test_transformed_gaussian_interval_is_ordered_and_asymmetric(
+    transform: TransformType,
+    mean: float,
+    std: float,
+    upper_bound: float | None,
+    expected: tuple[float, float] | None,
+) -> None:
+    """Natural intervals preserve transformed-Gaussian geometry."""
+    lower, upper = transformed_gaussian_interval(
+        mean, std, transform, upper_bound
+    )
+
+    assert lower < upper
+    if expected is not None:
+        assert (lower, upper) == pytest.approx(expected)
+    if transform in (TransformType.LOG_LOGIT, TransformType.SIGMOID):
+        assert 0.0 < lower < upper <= (upper_bound or 1.0)
 
 
 # ---------------------------------------------------------------------------

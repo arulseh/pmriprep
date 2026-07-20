@@ -97,15 +97,15 @@ def test_map_fallback_is_disclosed() -> None:
     )
 
 
-def test_dce_interval_is_normal_approximation_bounded_to_parameters() -> None:
-    """DCE writer provenance matches its bounded normal approximation."""
+def test_dce_interval_maps_transformed_quantiles_to_parameter_space() -> None:
+    """DCE provenance records the transformed-Gaussian approximation."""
     result = build_uncertainty_provenance(
         "vi", "ktrans_ci95_lower", modality="DCE"
     )
 
     assert result["CredibleIntervalProbability"] == 0.95
     assert result["CredibleIntervalConstruction"].startswith(
-        "mean_plus_or_minus_1.96"
+        "transformed_mean_plus_or_minus_1.96"
     )
     assert result["CredibleIntervalBounding"] == "parameter_bounds"
 

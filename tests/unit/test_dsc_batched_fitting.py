@@ -223,6 +223,17 @@ class TestBatchedDSCVIFit:
         assert result.fitted_curves is not None
         assert result.fitted_curves.shape == (5, len(tp))
         assert "noise_std" in result.uncertainties
+        assert "cbf" in result.credible_interval_lower
+        assert "cbf" in result.credible_interval_upper
+        symmetric_lower = np.maximum(
+            result.params["cbf"] - 1.96 * result.uncertainties["cbf"], 0.0
+        )
+        assert not np.allclose(
+            result.credible_interval_lower["cbf"],
+            symmetric_lower,
+            rtol=1e-10,
+            atol=1e-12,
+        )
 
     def test_empty_input(self, dsc_aif_and_time):
         """Handles zero voxels gracefully."""
@@ -644,6 +655,8 @@ class TestBatchedDSCMAPFit:
         assert result.fitted_curves.shape == (5, len(tp))
         assert "noise_std" in result.uncertainties
         assert "cbf" in result.uncertainties
+        assert "cbf" in result.credible_interval_lower
+        assert "cbf" in result.credible_interval_upper
 
     def test_empty_input(self, dsc_aif_and_time):
         """Handles zero voxels gracefully."""

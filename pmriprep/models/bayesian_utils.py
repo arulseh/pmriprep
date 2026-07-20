@@ -121,6 +121,53 @@ def from_transformed(
     return theta_prime  # IDENTITY
 
 
+def transformed_gaussian_interval(
+    mean_transformed: float,
+    std_transformed: float,
+    transform: TransformType,
+    upper_bound: float | None = None,
+    natural_bounds: tuple[float, float] | None = None,
+    z: float = 1.96,
+) -> tuple[float, float]:
+    """Map a symmetric transformed Gaussian interval to natural space.
+
+    Parameters
+    ----------
+    mean_transformed : float
+        Posterior mean or mode in transformed coordinates.
+    std_transformed : float
+        Marginal posterior standard deviation in transformed coordinates.
+    transform : TransformType
+        Parameter transform.
+    upper_bound : float or None, optional
+        Natural-space upper bound required by ``LOG_LOGIT``.
+    natural_bounds : tuple of float or None, optional
+        Additional natural-space bounds used for identity transforms and
+        finite model constraints.
+    z : float, optional
+        Gaussian quantile multiplier; 1.96 gives a nominal 95% interval.
+
+    Returns
+    -------
+    tuple of float
+        Ordered lower and upper interval limits in natural coordinates.
+    """
+    endpoints = np.asarray(from_transformed(
+        np.asarray([
+            mean_transformed - z * std_transformed,
+            mean_transformed + z * std_transformed,
+        ]),
+        transform,
+        upper_bound,
+    ), dtype=np.float64)
+    lower = float(np.min(endpoints))
+    upper = float(np.max(endpoints))
+    if natural_bounds is not None:
+        lower = max(lower, natural_bounds[0])
+        upper = min(upper, natural_bounds[1])
+    return lower, upper
+
+
 def to_transformed_batch(
     values: npt.NDArray[np.floating],
     transform: TransformType,

@@ -3016,8 +3016,19 @@ class ComputeDSCMaps(BaseInterface):
                     "cbf", np.zeros(n_voxels))[i])
                 out["cbf_std"] = cbf_std_val
 
-            out["cbf_ci95_lower"] = max(cbf_val - 1.96 * cbf_std_val, 0.0)
-            out["cbf_ci95_upper"] = cbf_val + 1.96 * cbf_std_val
+            interval_lower = getattr(
+                batched_result, "credible_interval_lower", {}
+            )
+            interval_upper = getattr(
+                batched_result, "credible_interval_upper", {}
+            )
+            if "cbf" in interval_lower and "cbf" in interval_upper:
+                out["cbf_ci95_lower"] = float(
+                    interval_lower["cbf"][i]
+                )
+                out["cbf_ci95_upper"] = float(
+                    interval_upper["cbf"][i]
+                )
 
             out["r_squared"] = float(batched_result.r_squared[i])
             out["converged"] = bool(batched_result.converged[i])

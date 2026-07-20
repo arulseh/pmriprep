@@ -31,6 +31,7 @@ from pmriprep.models.bayesian_utils import (
     log_jacobian_det,
     run_ensemble_sampler,
     to_transformed,
+    transformed_gaussian_interval,
     validate_bayesian_inputs,
 )
 from pmriprep.models.dce.base import (
@@ -800,9 +801,13 @@ class BayesianPKFitter:
                     )))
                     std_nat = float(stds_t[i]) * jac
                     uncertainties[name] = std_nat
-                    ci_low = max(theta_nat - 1.96 * std_nat, bounds_natural[i][0])
-                    ci_high = min(theta_nat + 1.96 * std_nat, bounds_natural[i][1])
-                    credible_intervals[name] = (ci_low, ci_high)
+                    credible_intervals[name] = transformed_gaussian_interval(
+                        float(fitted_params_t[i]),
+                        float(stds_t[i]),
+                        transforms[i],
+                        upper_bounds_t[i],
+                        bounds_natural[i],
+                    )
                 uncertainty_source = "laplace_hessian"
             except np.linalg.LinAlgError:
                 # Hessian not invertible; fall back to prior std as
@@ -1133,9 +1138,13 @@ class BayesianPKFitter:
             )))
             std_nat = std_t * jac
             uncertainties[name] = std_nat
-            ci_low = max(float(theta_nat - 1.96 * std_nat), bounds[i][0])
-            ci_high = min(float(theta_nat + 1.96 * std_nat), bounds[i][1])
-            credible_intervals[name] = (ci_low, ci_high)
+            credible_intervals[name] = transformed_gaussian_interval(
+                float(best_m[i]),
+                std_t,
+                transforms[i],
+                upper_bounds_t[i],
+                bounds[i],
+            )
 
         uncertainties["noise_std"] = noise_std_posterior
 
