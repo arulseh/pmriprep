@@ -2423,6 +2423,73 @@ def _connect_master_dce_anatomy(
             dce_wf.inputs.inputnode.t2w_in_t1w = prev_anat["t2w_coreg"]
             _log.info("skip-anat (DCE): loaded t2w_in_t1w from %s", prev_anat["t2w_coreg"])
 
+@dataclass(frozen=True)
+class _MasterDCEMaskState:
+    """Availability state produced while routing DCE masks."""
+
+    has_nawm_source: bool
+    has_lesion_source: bool
+
+
+def _connect_master_dce_masks(
+    *, workflow: pe.Workflow, dce_wf: pe.Workflow,
+    tumor_seg_wf: Optional[pe.Workflow], decision: PipelineDecision,
+    dce_config: DCEConfig, work_dir: Optional[Path], subject_id: str,
+    session_id: Optional[str],
+) -> _MasterDCEMaskState:
+    """Route user, live tumor, or cached tumor masks into DCE."""
+    from pmriprep.interfaces.common import Reorient
+    from pmriprep.utils.lesion_stats import validate_mask_ndim
+
+    logger = logging.getLogger("pmriprep.workflows")
+    user_lesion, user_nawm, user_roi = (
+        dce_config.lesion_mask, dce_config.nawm_mask, dce_config.roi_mask,
+    )
+    for name, path in (("lesion_mask", user_lesion), ("nawm_mask", user_nawm), ("roi_mask", user_roi)):
+        if path:
+            validate_mask_ndim(path, f"dce.{name}")
+    if user_roi:
+        node = pe.Node(Reorient(), name="dce_roi_reorient")
+        node.inputs.in_file = str(user_roi)
+        workflow.connect([(node, dce_wf, [("out_file", "inputnode.roi_mask")])])
+        logger.info("DCE: user roi_mask=%s (reoriented to RAS)", user_roi)
+
+    use_cached = tumor_seg_wf is None and work_dir is not None and not decision.run_tumor_seg
+    previous = _find_previous_tumor_seg_outputs(work_dir, subject_id, session_id) if use_cached and work_dir is not None else {}
+    if user_nawm:
+        node = pe.Node(Reorient(), name="dce_nawm_reorient")
+        node.inputs.in_file = str(user_nawm)
+        workflow.connect([(node, dce_wf, [("out_file", "inputnode.nawm_mask")])])
+        dce_wf.inputs.inputnode.nawm_needs_transform = False
+        logger.info("DCE: user nawm_mask=%s (DCE native space)", user_nawm)
+    elif tumor_seg_wf is not None:
+        workflow.connect([(tumor_seg_wf, dce_wf, [("outputnode.nawm_mask", "inputnode.nawm_mask")])])
+    elif previous.get("nawm_mask"):
+        dce_wf.inputs.inputnode.nawm_mask = previous["nawm_mask"]
+        logger.info("DCE skip-tumor-seg: loaded nawm_mask from %s", previous["nawm_mask"])
+    if user_lesion:
+        node = pe.Node(Reorient(), name="dce_lesion_reorient")
+        node.inputs.in_file = str(user_lesion)
+        workflow.connect([(node, dce_wf, [("out_file", "inputnode.user_lesion_mask")])])
+        logger.info("DCE: user lesion_mask=%s (DCE native space)", user_lesion)
+    if tumor_seg_wf is not None:
+        workflow.connect([(tumor_seg_wf, dce_wf, [
+            ("outputnode.whole_tumor_mask", "inputnode.whole_tumor_mask"),
+            ("outputnode.enhancing_mask", "inputnode.enhancing_mask"),
+            ("outputnode.non_enhancing_mask", "inputnode.non_enhancing_mask"),
+            ("outputnode.segmentation", "inputnode.tumor_segmentation"),
+        ])])
+    elif use_cached:
+        for key, field in (("whole_tumor_mask", "whole_tumor_mask"), ("enhancing_mask", "enhancing_mask"), ("non_enhancing_mask", "non_enhancing_mask"), ("segmentation", "tumor_segmentation")):
+            if previous.get(key):
+                setattr(dce_wf.inputs.inputnode, field, previous[key])
+                logger.info("skip-tumor-seg (DCE): loaded %s from %s", field, previous[key])
+    return _MasterDCEMaskState(
+        has_nawm_source=bool(user_nawm or tumor_seg_wf is not None or previous.get("nawm_mask")),
+        has_lesion_source=bool(decision.run_tumor_seg or previous.get("whole_tumor_mask")),
+    )
+
+
 def _init_master_workflow_nodes(
     *,
     workflow: pe.Workflow,
@@ -3135,83 +3202,11 @@ def init_pmriprep_wf(
             session_id=session_id,
         )
 
-        # Connect lesion mask, tumor segmentation, and NAWM mask from tumor seg if available
-        # Also wire user-supplied masks from config (lesion_mask, nawm_mask, roi_mask)
-        _dce_log = logging.getLogger("pmriprep.workflows")
-        _dce_user_lesion = dce_config.lesion_mask
-        _dce_user_nawm = dce_config.nawm_mask
-        _dce_user_roi = dce_config.roi_mask
-
-        from pmriprep.interfaces.common import Reorient
-        from pmriprep.utils.lesion_stats import validate_mask_ndim
-        for _name, _path in [("lesion_mask", _dce_user_lesion), ("nawm_mask", _dce_user_nawm), ("roi_mask", _dce_user_roi)]:
-            if _path:
-                validate_mask_ndim(_path, f"dce.{_name}")
-
-        if _dce_user_roi:
-            dce_roi_reorient = pe.Node(Reorient(), name="dce_roi_reorient")
-            dce_roi_reorient.inputs.in_file = str(_dce_user_roi)
-            workflow.connect([(dce_roi_reorient, dce_wf, [("out_file", "inputnode.roi_mask")])])
-            _dce_log.info("DCE: user roi_mask=%s (reoriented to RAS)", _dce_user_roi)
-
-        # Pre-compute cached tumor seg outputs for skip-tumor-seg mode
-        _dce_skip_tumor = (
-            tumor_seg_wf is None
-            and work_dir is not None
-            and not decision.run_tumor_seg
+        dce_mask_state = _connect_master_dce_masks(
+            workflow=workflow, dce_wf=dce_wf, tumor_seg_wf=tumor_seg_wf,
+            decision=decision, dce_config=dce_config, work_dir=work_dir,
+            subject_id=subject_id, session_id=session_id,
         )
-        _dce_prev_seg = (
-            _find_previous_tumor_seg_outputs(Path(work_dir), subject_id, session_id)
-            if _dce_skip_tumor and work_dir is not None
-            else {}
-        )
-
-        # --- NAWM mask: user-supplied (DCE space) overrides tumor seg (T1w space) ---
-        if _dce_user_nawm:
-            _dce_nawm_reorient = pe.Node(Reorient(), name="dce_nawm_reorient")
-            _dce_nawm_reorient.inputs.in_file = str(_dce_user_nawm)
-            workflow.connect([(_dce_nawm_reorient, dce_wf, [("out_file", "inputnode.nawm_mask")])])
-            dce_wf.inputs.inputnode.nawm_needs_transform = False
-            _dce_log.info("DCE: user nawm_mask=%s (DCE native space)", _dce_user_nawm)
-        elif tumor_seg_wf is not None:
-            workflow.connect([
-                (tumor_seg_wf, dce_wf, [("outputnode.nawm_mask", "inputnode.nawm_mask")]),
-            ])
-        elif _dce_prev_seg.get("nawm_mask"):
-            dce_wf.inputs.inputnode.nawm_mask = _dce_prev_seg["nawm_mask"]
-            _dce_log.info("DCE skip-tumor-seg: loaded nawm_mask from %s", _dce_prev_seg["nawm_mask"])
-
-        # --- User lesion mask: DCE native space, additive stats + AIF override ---
-        if _dce_user_lesion:
-            _dce_lesion_reorient = pe.Node(Reorient(), name="dce_lesion_reorient")
-            _dce_lesion_reorient.inputs.in_file = str(_dce_user_lesion)
-            workflow.connect([(_dce_lesion_reorient, dce_wf, [("out_file", "inputnode.user_lesion_mask")])])
-            _dce_log.info("DCE: user lesion_mask=%s (DCE native space)", _dce_user_lesion)
-
-        # --- Tumor seg masks: T1w space, FLIRT-transformed inside DCE wf ---
-        if tumor_seg_wf is not None:
-            workflow.connect([
-                (tumor_seg_wf, dce_wf, [
-                    ("outputnode.whole_tumor_mask", "inputnode.whole_tumor_mask"),
-                    ("outputnode.enhancing_mask", "inputnode.enhancing_mask"),
-                    ("outputnode.non_enhancing_mask", "inputnode.non_enhancing_mask"),
-                    ("outputnode.segmentation", "inputnode.tumor_segmentation"),
-                ]),
-            ])
-        elif _dce_skip_tumor:
-            if _dce_prev_seg.get("whole_tumor_mask"):
-                dce_wf.inputs.inputnode.whole_tumor_mask = _dce_prev_seg["whole_tumor_mask"]
-                _dce_log.info("skip-tumor-seg (DCE): loaded whole_tumor_mask from %s", _dce_prev_seg["whole_tumor_mask"])
-            if _dce_prev_seg.get("enhancing_mask"):
-                dce_wf.inputs.inputnode.enhancing_mask = _dce_prev_seg["enhancing_mask"]
-                _dce_log.info("skip-tumor-seg (DCE): loaded enhancing_mask from %s", _dce_prev_seg["enhancing_mask"])
-            if _dce_prev_seg.get("non_enhancing_mask"):
-                dce_wf.inputs.inputnode.non_enhancing_mask = _dce_prev_seg["non_enhancing_mask"]
-                _dce_log.info("skip-tumor-seg (DCE): loaded non_enhancing_mask from %s", _dce_prev_seg["non_enhancing_mask"])
-            if _dce_prev_seg.get("segmentation"):
-                dce_wf.inputs.inputnode.tumor_segmentation = _dce_prev_seg["segmentation"]
-                _dce_log.info("skip-tumor-seg (DCE): loaded tumor_segmentation from %s", _dce_prev_seg["segmentation"])
-
         # Connect VFA and AFI inputs if available
         if session_data.modalities.vfa:
             import logging as _logging
@@ -3329,15 +3324,8 @@ def init_pmriprep_wf(
         dce_inference = (dce_config.inference or "").lower()
         dce_uses_bayes = dce_inference != "nlls"
         dce_model = dce_config.model or "auto"
-        dce_has_nawm = bool(
-            dce_config.nawm_mask
-            or tumor_seg_wf is not None
-            or _dce_prev_seg.get("nawm_mask")
-        )
-        dce_has_lesion = (
-            decision.run_tumor_seg
-            or _dce_prev_seg.get("whole_tumor_mask")
-        )
+        dce_has_nawm = dce_mask_state.has_nawm_source
+        dce_has_lesion = dce_mask_state.has_lesion_source
 
         # Inputs that dce_wf.outputnode is expected to populate. Gating
         # mirrors what compute_pk_maps and friends actually emit per config.
