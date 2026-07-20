@@ -3096,6 +3096,32 @@ class DCEPreprocess(SimpleInterface):
         except Exception:
             return _DCEMotionQC((), 0.0, 0.0, 0, (), {})
 
+    def _run_mcflirt(self, plan: _DCEMCFLIRTPlan) -> str:
+        """Execute a prepared MCFLIRT command and return its parameter file.
+
+        Parameters
+        ----------
+        plan : _DCEMCFLIRTPlan
+            Command, output base, and optional temporary reference.
+
+        Returns
+        -------
+        str
+            Expected MCFLIRT motion-parameter path.
+        """
+        import subprocess
+
+        result = subprocess.run(plan.command, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise RuntimeError(f"mcflirt failed: {result.stderr}")
+
+        if self.inputs.ref_vol == "baseline_mean" and plan.reference_file:
+            try:
+                Path(plan.reference_file).unlink()
+            except Exception:
+                pass
+        return f"{plan.out_base}.par"
+
     def _write_preprocess_outputs(
         self,
         preparation: _DCEPreprocessPreparation,
@@ -3183,26 +3209,9 @@ class DCEPreprocess(SimpleInterface):
 
     def _run_interface(self, runtime: Any) -> Any:
         """Execute DCE preprocessing."""
-        import subprocess
         preparation = self._prepare_preprocess_inputs()
-
         mcflirt_plan = self._prepare_mcflirt_plan(preparation)
-        out_base = mcflirt_plan.out_base
-
-        # Run mcflirt
-        result = subprocess.run(mcflirt_plan.command, capture_output=True, text=True)
-
-        if result.returncode != 0:
-            raise RuntimeError(f"mcflirt failed: {result.stderr}")
-
-        # Clean up temp reference file
-        if self.inputs.ref_vol == "baseline_mean" and mcflirt_plan.reference_file:
-            try:
-                Path(mcflirt_plan.reference_file).unlink()
-            except Exception:
-                pass
-
-        params_file = f"{out_base}.par"
+        params_file = self._run_mcflirt(mcflirt_plan)
         motion_qc = self._summarize_motion_qc(params_file, preparation)
         outputs = self._write_preprocess_outputs(
             preparation, mcflirt_plan, params_file

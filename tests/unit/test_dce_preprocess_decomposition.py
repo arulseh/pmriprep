@@ -241,3 +241,70 @@ def test_summarize_motion_qc_preserves_silent_empty_fallback(
     assert qc.n_outliers == 0
     assert qc.outlier_frames == ()
     assert qc.metrics == {}
+
+
+def test_run_mcflirt_preserves_command_and_success_cleanup(
+    tmp_path: Path, monkeypatch: Any,
+) -> None:
+    """Successful execution returns the parameter path and removes its reference."""
+    import subprocess
+
+    dce_file = tmp_path / "dce.nii.gz"
+    _write_dce(dce_file)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        DCEPreprocess,
+        "_detect_bolus_arrival",
+        lambda self, data, mask: (5, {"confidence": "high"}),
+    )
+    interface = DCEPreprocess(in_file=str(dce_file), baseline_frames=3)
+    plan = interface._prepare_mcflirt_plan(interface._prepare_preprocess_inputs())
+    captured: dict[str, Any] = {}
+
+    def _run(command: tuple[str, ...], **kwargs: Any):
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+        return type("Result", (), {"returncode": 0, "stderr": ""})()
+
+    monkeypatch.setattr(subprocess, "run", _run)
+
+    params_file = interface._run_mcflirt(plan)
+
+    assert captured == {
+        "command": plan.command,
+        "kwargs": {"capture_output": True, "text": True},
+    }
+    assert params_file == f"{plan.out_base}.par"
+    assert plan.reference_file is not None
+    assert not Path(plan.reference_file).exists()
+
+
+def test_run_mcflirt_preserves_failure_and_deferred_cleanup(
+    tmp_path: Path, monkeypatch: Any,
+) -> None:
+    """Failure retains the current error and leaves cleanup for the later fix."""
+    import subprocess
+
+    dce_file = tmp_path / "dce.nii.gz"
+    _write_dce(dce_file)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        DCEPreprocess,
+        "_detect_bolus_arrival",
+        lambda self, data, mask: (5, {"confidence": "high"}),
+    )
+    interface = DCEPreprocess(in_file=str(dce_file), baseline_frames=3)
+    plan = interface._prepare_mcflirt_plan(interface._prepare_preprocess_inputs())
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: type(
+            "Result", (), {"returncode": 1, "stderr": "characterized failure"}
+        )(),
+    )
+
+    with pytest.raises(RuntimeError, match="mcflirt failed: characterized failure"):
+        interface._run_mcflirt(plan)
+
+    assert plan.reference_file is not None
+    assert Path(plan.reference_file).exists()
