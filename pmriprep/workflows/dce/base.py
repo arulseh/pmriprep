@@ -861,6 +861,63 @@ def init_dce_brain_extraction_wf(
     return workflow
 
 
+def init_dce_preprocessing_wf(
+    *,
+    config: DCEConfig,
+    mem_gb: float,
+    name: str = "dce_preprocessing_wf",
+) -> pe.Workflow:
+    """Build DCE motion correction and baseline/bolus detection.
+
+    Parameters
+    ----------
+    config : DCEConfig
+        DCE configuration controlling baseline detection and motion handling.
+    mem_gb : float
+        Memory estimate in GB for the preprocessing node.
+    name : str
+        Workflow name.
+
+    Returns
+    -------
+    workflow : nipype.pipeline.engine.Workflow
+        Workflow exposing the eight preprocessing results consumed downstream.
+    """
+    workflow = pe.Workflow(name=name)
+    inputnode = pe.Node(
+        niu.IdentityInterface(fields=["dce_file", "brain_mask", "volume_tr"]),
+        name="inputnode",
+    )
+    outputnode = pe.Node(
+        niu.IdentityInterface(fields=[
+            "out_file", "out_params", "mean_img", "baseline_mean_img",
+            "baseline_frames", "bolus_arrival_frame", "fd", "qc_metrics",
+        ]),
+        name="outputnode",
+    )
+    preprocess = pe.Node(
+        DCEPreprocess(
+            baseline_frames=config.baseline_frames,
+            apply_motion_correction=config.motion_correct,
+            motion_thresh=config.motion_thresh,
+        ),
+        name="dce_preprocess",
+        mem_gb=mem_gb,
+    )
+    fields = [
+        "out_file", "out_params", "mean_img", "baseline_mean_img",
+        "baseline_frames", "bolus_arrival_frame", "fd", "qc_metrics",
+    ]
+    workflow.connect([
+        (inputnode, preprocess, [
+            ("dce_file", "in_file"), ("brain_mask", "brain_mask"),
+            ("volume_tr", "volume_tr"),
+        ]),
+        (preprocess, outputnode, [(field, field) for field in fields]),
+    ])
+    return workflow
+
+
 def init_dce_preproc_wf(
     bids_dir: Union[str, Path],
     output_dir: Union[str, Path],
@@ -1266,23 +1323,16 @@ def init_dce_preproc_wf(
     # for baseline detection (the anat brain mask is in T1w space and may not
     # match DCE dimensions for thin-slab acquisitions).
     # ==========================================================================
-    dce_preprocess = pe.Node(
-        DCEPreprocess(
-            baseline_frames=config.baseline_frames,
-            apply_motion_correction=config.motion_correct,
-            motion_thresh=config.motion_thresh,
-        ),
-        name="dce_preprocess",
+    dce_preprocessing_wf = init_dce_preprocessing_wf(
+        config=config,
         mem_gb=_heavy_mem,
     )
-
-    # Connect DCE preprocessing inputs (using reoriented DCE file)
-    # Brain mask comes from dce_brain_extract (after early mean HD-BET),
-    # not from inputnode (which is in T1w space).
     workflow.connect([
-        (dce_native_input_wf, dce_preprocess, [("outputnode.dce_file", "in_file")]),
-        (inputnode, dce_preprocess, [
-            ("volume_tr", "volume_tr"),
+        (dce_native_input_wf, dce_preprocessing_wf, [
+            ("outputnode.dce_file", "inputnode.dce_file"),
+        ]),
+        (inputnode, dce_preprocessing_wf, [
+            ("volume_tr", "inputnode.volume_tr"),
         ]),
     ])
 
@@ -1306,7 +1356,9 @@ def init_dce_preproc_wf(
     motion_qc_plot.inputs.motion_applied = config.motion_correct
     # Connect motion QC plot
     workflow.connect([
-        (dce_preprocess, motion_qc_plot, [("out_params", "motion_params_file")]),
+        (dce_preprocessing_wf, motion_qc_plot, [
+            ("outputnode.out_params", "motion_params_file"),
+        ]),
         (inputnode, motion_qc_plot, [("volume_tr", "tr")]),
     ])
 
@@ -1330,8 +1382,8 @@ def init_dce_preproc_wf(
         (dce_native_input_wf, dce_brain_extraction_wf, [
             ("outputnode.early_mean", "inputnode.early_mean"),
         ]),
-        (dce_brain_extraction_wf, dce_preprocess, [
-            ("outputnode.out_mask", "brain_mask"),
+        (dce_brain_extraction_wf, dce_preprocessing_wf, [
+            ("outputnode.out_mask", "inputnode.brain_mask"),
         ]),
     ])
 
@@ -1349,8 +1401,8 @@ def init_dce_preproc_wf(
     dce_brain_mask_qc.inputs.subject_id = subject_id
     dce_brain_mask_qc.inputs.session_id = session_id or ""
     workflow.connect([
-        (dce_preprocess, dce_brain_mask_qc, [
-            ("baseline_mean_img", "mean_file"),
+        (dce_preprocessing_wf, dce_brain_mask_qc, [
+            ("outputnode.baseline_mean_img", "mean_file"),
         ]),
         (dce_brain_extraction_wf, dce_brain_mask_qc, [
             ("outputnode.out_mask", "brain_mask_file"),
@@ -1376,10 +1428,10 @@ def init_dce_preproc_wf(
     preprocessing_qc.inputs.session_id = session_id or ""
 
     workflow.connect([
-        (dce_preprocess, preprocessing_qc, [
-            ("out_file", "dce_file"),
-            ("baseline_frames", "baseline_frames"),
-            ("bolus_arrival_frame", "bolus_arrival_frame"),
+        (dce_preprocessing_wf, preprocessing_qc, [
+            ("outputnode.out_file", "dce_file"),
+            ("outputnode.baseline_frames", "baseline_frames"),
+            ("outputnode.bolus_arrival_frame", "bolus_arrival_frame"),
         ]),
         (dce_brain_extraction_wf, preprocessing_qc, [
             ("outputnode.out_mask", "brain_mask_file"),
@@ -1433,8 +1485,8 @@ def init_dce_preproc_wf(
         (inputnode, transform_brain_mask, [
             ("brain_mask", "mask_file"),
         ]),
-        (dce_preprocess, transform_brain_mask, [
-            ("mean_img", "reference_file"),
+        (dce_preprocessing_wf, transform_brain_mask, [
+            ("outputnode.mean_img", "reference_file"),
         ]),
         (dce_registration, transform_brain_mask, [
             ("out_matrix", "transform_matrix"),
@@ -1459,7 +1511,9 @@ def init_dce_preproc_wf(
 
         workflow.connect([
             (inputnode, transform_csf_probseg, [("csf_probseg", "probseg_file")]),
-            (dce_preprocess, transform_csf_probseg, [("mean_img", "reference_file")]),
+            (dce_preprocessing_wf, transform_csf_probseg, [
+                ("outputnode.mean_img", "reference_file"),
+            ]),
             (dce_registration, transform_csf_probseg, [("out_matrix", "transform_matrix")]),
         ])
 
@@ -1484,10 +1538,14 @@ def init_dce_preproc_wf(
 
         workflow.connect([
             (inputnode, transform_wm_probseg, [("wm_probseg", "probseg_file")]),
-            (dce_preprocess, transform_wm_probseg, [("mean_img", "reference_file")]),
+            (dce_preprocessing_wf, transform_wm_probseg, [
+                ("outputnode.mean_img", "reference_file"),
+            ]),
             (dce_registration, transform_wm_probseg, [("out_matrix", "transform_matrix")]),
             (inputnode, transform_gm_probseg, [("gm_probseg", "probseg_file")]),
-            (dce_preprocess, transform_gm_probseg, [("mean_img", "reference_file")]),
+            (dce_preprocessing_wf, transform_gm_probseg, [
+                ("outputnode.mean_img", "reference_file"),
+            ]),
             (dce_registration, transform_gm_probseg, [("out_matrix", "transform_matrix")]),
         ])
 
@@ -1564,8 +1622,8 @@ def init_dce_preproc_wf(
         (dce_registration, transform_atlas_cascade, [
             ("out_matrix", "t1w_to_dce_xfm"),
         ]),
-        (dce_preprocess, transform_atlas_cascade, [
-            ("mean_img", "reference_file"),
+        (dce_preprocessing_wf, transform_atlas_cascade, [
+            ("outputnode.mean_img", "reference_file"),
         ]),
     ])
 
@@ -1586,8 +1644,8 @@ def init_dce_preproc_wf(
             (t1_b1_wf, transform_t1_to_dce, [
                 ("outputnode.t1_map", "t1_map_file"),
             ]),
-            (dce_preprocess, transform_t1_to_dce, [
-                ("mean_img", "reference_file"),
+            (dce_preprocessing_wf, transform_t1_to_dce, [
+                ("outputnode.mean_img", "reference_file"),
             ]),
         ])
 
@@ -1605,8 +1663,8 @@ def init_dce_preproc_wf(
             (t1_b1_wf, transform_b1_to_dce, [
                 ("outputnode.b1_map", "b1_map_file"),
             ]),
-            (dce_preprocess, transform_b1_to_dce, [
-                ("mean_img", "reference_file"),
+            (dce_preprocessing_wf, transform_b1_to_dce, [
+                ("outputnode.mean_img", "reference_file"),
             ]),
         ])
 
@@ -1622,7 +1680,9 @@ def init_dce_preproc_wf(
         )
         external_t1_to_dce.inputs.t1_map_file = str(config.t1_map_file)
         workflow.connect([
-            (dce_preprocess, external_t1_to_dce, [("mean_img", "reference_file")]),
+            (dce_preprocessing_wf, external_t1_to_dce, [
+                ("outputnode.mean_img", "reference_file"),
+            ]),
         ])
 
     # ==========================================================================
@@ -1655,9 +1715,9 @@ def init_dce_preproc_wf(
 
     # Use T1 and B1 maps resampled to DCE space
     workflow.connect([
-        (dce_preprocess, signal_to_conc, [
-            ("out_file", "dce_file"),
-            ("baseline_frames", "baseline_frames"),
+        (dce_preprocessing_wf, signal_to_conc, [
+            ("outputnode.out_file", "dce_file"),
+            ("outputnode.baseline_frames", "baseline_frames"),
         ]),
         (inputnode, signal_to_conc, [
             ("flip_angle", "flip_angle"),
@@ -1742,8 +1802,8 @@ def init_dce_preproc_wf(
             ("mr_acquisition_type", "mr_acquisition_type"),
         ]),
         # Wire auto-detected baseline_frames from dce_preprocess
-        (dce_preprocess, aif_detection, [
-            ("baseline_frames", "baseline_frames"),
+        (dce_preprocessing_wf, aif_detection, [
+            ("outputnode.baseline_frames", "baseline_frames"),
         ]),
     ])
 
@@ -1793,11 +1853,11 @@ def init_dce_preproc_wf(
         # Raw DCE signal for tSNR computation
         # Also wire baseline_frames so pk_modeling uses the same value
         # as signal_to_concentration (avoids re-auto-detection mismatch)
-        (dce_preprocess, pk_wf, [
-            ("out_file", "inputnode.dce_signal_file"),
-            ("baseline_frames", "inputnode.baseline_frames"),
-            ("fd", "inputnode.fd_values"),
-            ("bolus_arrival_frame", "inputnode.bolus_arrival_frame"),
+        (dce_preprocessing_wf, pk_wf, [
+            ("outputnode.out_file", "inputnode.dce_signal_file"),
+            ("outputnode.baseline_frames", "inputnode.baseline_frames"),
+            ("outputnode.fd", "inputnode.fd_values"),
+            ("outputnode.bolus_arrival_frame", "inputnode.bolus_arrival_frame"),
         ]),
     ])
 
@@ -1829,8 +1889,8 @@ def init_dce_preproc_wf(
         (dce_registration, resample_dsc_cbv, [
             ("out_matrix", "t1w_to_dce_xfm"),
         ]),
-        (dce_preprocess, resample_dsc_cbv, [
-            ("mean_img", "dce_reference"),
+        (dce_preprocessing_wf, resample_dsc_cbv, [
+            ("outputnode.mean_img", "dce_reference"),
         ]),
     ])
     # Note: resample_dsc_cbv → dsc_dce_validation connected after Node 9 creation
@@ -1859,8 +1919,8 @@ def init_dce_preproc_wf(
         (dce_registration, resample_dsc_ncbv, [
             ("out_matrix", "t1w_to_dce_xfm"),
         ]),
-        (dce_preprocess, resample_dsc_ncbv, [
-            ("mean_img", "dce_reference"),
+        (dce_preprocessing_wf, resample_dsc_ncbv, [
+            ("outputnode.mean_img", "dce_reference"),
         ]),
         # Feed resampled nCBV to PK modeling for the vp prior path.
         (resample_dsc_ncbv, pk_wf, [
@@ -1887,7 +1947,9 @@ def init_dce_preproc_wf(
             ("nawm_mask", "mask_file"),
             ("nawm_needs_transform", "needs_transform"),
         ]),
-        (dce_preprocess, transform_nawm_mask, [("mean_img", "reference_file")]),
+        (dce_preprocessing_wf, transform_nawm_mask, [
+            ("outputnode.mean_img", "reference_file"),
+        ]),
         (dce_registration, transform_nawm_mask, [("out_matrix", "transform_matrix")]),
     ])
 
@@ -1914,10 +1976,12 @@ def init_dce_preproc_wf(
 
     workflow.connect([
         (inputnode, validate_roi_mask, [("roi_mask", "mask_file")]),
-        (dce_preprocess, validate_roi_mask, [("mean_img", "reference_file")]),
+        (dce_preprocessing_wf, validate_roi_mask, [
+            ("outputnode.mean_img", "reference_file"),
+        ]),
         (inputnode, validate_user_lesion_mask, [("user_lesion_mask", "mask_file")]),
-        (dce_preprocess, validate_user_lesion_mask, [
-            ("mean_img", "reference_file"),
+        (dce_preprocessing_wf, validate_user_lesion_mask, [
+            ("outputnode.mean_img", "reference_file"),
         ]),
     ])
 
@@ -1943,10 +2007,14 @@ def init_dce_preproc_wf(
 
     workflow.connect([
         (inputnode, transform_non_enhancing_mask, [("non_enhancing_mask", "mask_file")]),
-        (dce_preprocess, transform_non_enhancing_mask, [("mean_img", "reference_file")]),
+        (dce_preprocessing_wf, transform_non_enhancing_mask, [
+            ("outputnode.mean_img", "reference_file"),
+        ]),
         (dce_registration, transform_non_enhancing_mask, [("out_matrix", "transform_matrix")]),
         (inputnode, transform_enhancing_mask, [("enhancing_mask", "mask_file")]),
-        (dce_preprocess, transform_enhancing_mask, [("mean_img", "reference_file")]),
+        (dce_preprocessing_wf, transform_enhancing_mask, [
+            ("outputnode.mean_img", "reference_file"),
+        ]),
         (dce_registration, transform_enhancing_mask, [("out_matrix", "transform_matrix")]),
         # Enhancing tumor (DCE grid) = tissue-arrival reference for AIF BAT
         # pre-alignment (no-op unless dce.aif_bat_alignment is on). Mirrors the
@@ -2144,9 +2212,9 @@ def init_dce_preproc_wf(
         (signal_to_conc, dce_pk_fit_qc, [
             ("concentration_file", "concentration_file"),
         ]),
-        (dce_preprocess, dce_pk_fit_qc, [
-            ("out_file", "dce_signal_file"),
-            ("baseline_frames", "baseline_frames"),
+        (dce_preprocessing_wf, dce_pk_fit_qc, [
+            ("outputnode.out_file", "dce_signal_file"),
+            ("outputnode.baseline_frames", "baseline_frames"),
         ]),
         (aif_detection, dce_pk_fit_qc, [
             ("out_aif_curve", "aif_file"),
@@ -2226,7 +2294,9 @@ def init_dce_preproc_wf(
     reg_filmstrip.inputs.session_id = session_id or ""
 
     workflow.connect([
-        (dce_preprocess, reg_filmstrip, [("mean_img", "dce_mean_file")]),
+        (dce_preprocessing_wf, reg_filmstrip, [
+            ("outputnode.mean_img", "dce_mean_file"),
+        ]),
         (dce_registration, reg_filmstrip, [("out_file", "registered_t1w_file")]),
         (dce_brain_extraction_wf, reg_filmstrip, [
             ("outputnode.out_mask", "brain_mask_file"),
@@ -2250,7 +2320,9 @@ def init_dce_preproc_wf(
             ("out_aif_mask", "aif_mask_file"),
             ("qc_metrics", "qc_metrics"),
         ]),
-        (dce_preprocess, aif_qc_plot, [("out_file", "dce_file")]),
+        (dce_preprocessing_wf, aif_qc_plot, [
+            ("outputnode.out_file", "dce_file"),
+        ]),
         (dce_brain_extraction_wf, aif_qc_plot, [
             ("outputnode.out_mask", "brain_mask_file"),
         ]),
@@ -2315,8 +2387,8 @@ def init_dce_preproc_wf(
         collect_qc.inputs.t1_qc = None
 
     workflow.connect([
-        (dce_preprocess, collect_qc, [
-            ("qc_metrics", "preprocess_qc"),
+        (dce_preprocessing_wf, collect_qc, [
+            ("outputnode.qc_metrics", "preprocess_qc"),
         ]),
         (dce_registration, collect_qc, [
             ("qc_metrics", "registration_qc"),
@@ -2362,7 +2434,9 @@ def init_dce_preproc_wf(
 
     workflow.connect([
         (inputnode, transform_lesion, [("whole_tumor_mask", "lesion_mask_file")]),
-        (dce_preprocess, transform_lesion, [("mean_img", "reference_file")]),
+        (dce_preprocessing_wf, transform_lesion, [
+            ("outputnode.mean_img", "reference_file"),
+        ]),
         (dce_registration, transform_lesion, [("out_matrix", "transform_matrix")]),
     ])
 
@@ -2409,7 +2483,9 @@ def init_dce_preproc_wf(
             ("tumor_segmentation", "tumor_segmentation_file"),
             ("whole_tumor_mask", "whole_tumor_mask_file"),
         ]),
-        (dce_preprocess, combine_masks, [("mean_img", "reference_file")]),
+        (dce_preprocessing_wf, combine_masks, [
+            ("outputnode.mean_img", "reference_file"),
+        ]),
     ])
 
     # Transform combined tumor mask from T1w to DCE space (for lesion stats)
@@ -2424,7 +2500,9 @@ def init_dce_preproc_wf(
 
     workflow.connect([
         (combine_masks, transform_stats_lesion, [("combined_mask_file", "lesion_mask_file")]),
-        (dce_preprocess, transform_stats_lesion, [("mean_img", "reference_file")]),
+        (dce_preprocessing_wf, transform_stats_lesion, [
+            ("outputnode.mean_img", "reference_file"),
+        ]),
         (dce_registration, transform_stats_lesion, [("out_matrix", "transform_matrix")]),
     ])
 
@@ -2551,42 +2629,54 @@ def init_dce_preproc_wf(
     if transform_t1w_underlay is not None:
         workflow.connect([
             (inputnode, transform_t1w_underlay, [("t1w_underlay", "structural_file")]),
-            (dce_preprocess, transform_t1w_underlay, [("mean_img", "reference_file")]),
+            (dce_preprocessing_wf, transform_t1w_underlay, [
+                ("outputnode.mean_img", "reference_file"),
+            ]),
             (dce_registration, transform_t1w_underlay, [("out_matrix", "transform_matrix")]),
         ])
 
     if transform_t1w_postcon_underlay is not None:
         workflow.connect([
             (inputnode, transform_t1w_postcon_underlay, [("t1w_postcon_underlay", "structural_file")]),
-            (dce_preprocess, transform_t1w_postcon_underlay, [("mean_img", "reference_file")]),
+            (dce_preprocessing_wf, transform_t1w_postcon_underlay, [
+                ("outputnode.mean_img", "reference_file"),
+            ]),
             (dce_registration, transform_t1w_postcon_underlay, [("out_matrix", "transform_matrix")]),
         ])
 
     if transform_t1w_subtraction_underlay is not None:
         workflow.connect([
             (inputnode, transform_t1w_subtraction_underlay, [("t1w_subtraction_underlay", "structural_file")]),
-            (dce_preprocess, transform_t1w_subtraction_underlay, [("mean_img", "reference_file")]),
+            (dce_preprocessing_wf, transform_t1w_subtraction_underlay, [
+                ("outputnode.mean_img", "reference_file"),
+            ]),
             (dce_registration, transform_t1w_subtraction_underlay, [("out_matrix", "transform_matrix")]),
         ])
 
     if transform_flair_underlay is not None:
         workflow.connect([
             (inputnode, transform_flair_underlay, [("flair_in_t1w", "structural_file")]),
-            (dce_preprocess, transform_flair_underlay, [("mean_img", "reference_file")]),
+            (dce_preprocessing_wf, transform_flair_underlay, [
+                ("outputnode.mean_img", "reference_file"),
+            ]),
             (dce_registration, transform_flair_underlay, [("out_matrix", "transform_matrix")]),
         ])
 
     if transform_flair_postcon_underlay is not None:
         workflow.connect([
             (inputnode, transform_flair_postcon_underlay, [("flair_postcon_in_t1w", "structural_file")]),
-            (dce_preprocess, transform_flair_postcon_underlay, [("mean_img", "reference_file")]),
+            (dce_preprocessing_wf, transform_flair_postcon_underlay, [
+                ("outputnode.mean_img", "reference_file"),
+            ]),
             (dce_registration, transform_flair_postcon_underlay, [("out_matrix", "transform_matrix")]),
         ])
 
     if transform_t2w_underlay is not None:
         workflow.connect([
             (inputnode, transform_t2w_underlay, [("t2w_in_t1w", "structural_file")]),
-            (dce_preprocess, transform_t2w_underlay, [("mean_img", "reference_file")]),
+            (dce_preprocessing_wf, transform_t2w_underlay, [
+                ("outputnode.mean_img", "reference_file"),
+            ]),
             (dce_registration, transform_t2w_underlay, [("out_matrix", "transform_matrix")]),
         ])
 
@@ -2595,10 +2685,10 @@ def init_dce_preproc_wf(
     # ==========================================================================
     workflow.connect([
         # Motion-corrected outputs
-        (dce_preprocess, outputnode, [
-            ("out_file", "dce_moco"),
-            ("mean_img", "dce_mean"),
-            ("out_params", "motion_params"),
+        (dce_preprocessing_wf, outputnode, [
+            ("outputnode.out_file", "dce_moco"),
+            ("outputnode.mean_img", "dce_mean"),
+            ("outputnode.out_params", "motion_params"),
         ]),
         # Pharmacokinetic parameter maps
         (pk_wf, outputnode, [

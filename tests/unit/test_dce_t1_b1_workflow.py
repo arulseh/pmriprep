@@ -6,6 +6,7 @@ from pmriprep.config.dce import DCEConfig
 from pmriprep.workflows.dce.base import (
     init_dce_brain_extraction_wf,
     init_dce_native_input_wf,
+    init_dce_preprocessing_wf,
     init_dce_t1_b1_wf,
 )
 
@@ -55,4 +56,16 @@ def test_dce_brain_extraction_workflow_contract() -> None:
     }
     assert set(workflow.get_node("outputnode").interface._fields) == {
         "out_brain", "out_mask", "method_used", "qc_metrics",
+    }
+
+
+def test_dce_preprocessing_workflow_contract() -> None:
+    """Preprocessing exposes every motion/baseline result consumed downstream."""
+    workflow = init_dce_preprocessing_wf(config=DCEConfig(), mem_gb=6.0)
+    assert set(workflow.list_node_names()) == {
+        "inputnode", "outputnode", "dce_preprocess",
+    }
+    assert set(workflow.get_node("outputnode").interface._fields) == {
+        "out_file", "out_params", "mean_img", "baseline_mean_img",
+        "baseline_frames", "bolus_arrival_frame", "fd", "qc_metrics",
     }
