@@ -8,6 +8,7 @@ signal processing.
 import logging
 import shutil
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
@@ -2734,6 +2735,23 @@ class DCEPreprocessOutputSpec(TraitedSpec):
     qc_metrics = traits.Dict(desc="QC metrics dictionary")
 
 
+@dataclass(frozen=True)
+class _DCEPreprocessPreparation:
+    """Loaded DCE series and resolved baseline state for preprocessing."""
+
+    in_file: str
+    out_file: str
+    data: npt.NDArray[Any]
+    affine: npt.NDArray[Any]
+    header: Any
+    n_volumes: int
+    brain_mask: Optional[npt.NDArray[np.bool_]]
+    baseline_frames: int
+    baseline_indices: tuple[int, ...]
+    bolus_frame: int
+    baseline_diagnostics: dict[str, Any]
+
+
 class DCEPreprocess(SimpleInterface):
     """DCE preprocessing with motion correction and baseline detection.
 
@@ -2839,22 +2857,24 @@ class DCEPreprocess(SimpleInterface):
     input_spec = DCEPreprocessInputSpec
     output_spec = DCEPreprocessOutputSpec
 
-    def _run_interface(self, runtime: Any) -> Any:
-        """Execute DCE preprocessing."""
-        import subprocess
-        import nibabel as nib  # type: ignore[import-untyped]
+    def _prepare_preprocess_inputs(self) -> _DCEPreprocessPreparation:
+        """Load DCE inputs and resolve the baseline window.
 
-        # Generate output filenames
+        Returns
+        -------
+        _DCEPreprocessPreparation
+            Native image state, optional same-grid mask, and the existing
+            detected or configured baseline state.
+        """
         out_file = self._gen_outfilename()
-        # Load input DCE data
-        dce_img = nib.load(self.inputs.in_file)
+        in_file = str(self.inputs.in_file)
+        dce_img = nib.load(in_file)
         dce_data = dce_img.get_fdata().astype(np.float64)  # type: ignore[attr-defined]
         affine = dce_img.affine  # type: ignore[attr-defined]
         header = dce_img.header  # type: ignore[attr-defined]
         n_volumes = dce_data.shape[3]
 
-        # Load brain mask if provided
-        brain_mask: Optional[np.ndarray] = None
+        brain_mask: Optional[npt.NDArray[np.bool_]] = None
         if self.inputs.brain_mask:
             mask_img = nib.load(self.inputs.brain_mask)
             mask_data = mask_img.get_fdata() > 0.5  # type: ignore[attr-defined]
@@ -2867,26 +2887,50 @@ class DCEPreprocess(SimpleInterface):
                     mask_data.shape, dce_data.shape[:3],
                 )
 
-        # Detect or use specified baseline frames
         if self.inputs.baseline_frames > 0:
-            # Use specified baseline
             baseline_frames = self.inputs.baseline_frames
-            # Detect bolus arrival for QC
             bolus_frame, baseline_diag = self._detect_bolus_arrival(
                 dce_data, brain_mask
             )
         else:
-            # Auto-detect baseline from global signal
             baseline_frames, bolus_frame, baseline_diag = self._auto_detect_baseline(
                 dce_data, brain_mask
             )
 
-        # Ensure baseline is at least 3 frames and doesn't exceed available volumes
         baseline_frames = max(3, min(baseline_frames, n_volumes - 1))
-        # Clamp baseline to bolus arrival so baseline never extends into bolus.
         if bolus_frame > 0 and baseline_frames > bolus_frame:
             baseline_frames = bolus_frame
-        baseline_indices = list(range(baseline_frames))
+
+        return _DCEPreprocessPreparation(
+            in_file=in_file,
+            out_file=out_file,
+            data=dce_data,
+            affine=affine,
+            header=header,
+            n_volumes=n_volumes,
+            brain_mask=brain_mask,
+            baseline_frames=baseline_frames,
+            baseline_indices=tuple(range(baseline_frames)),
+            bolus_frame=bolus_frame,
+            baseline_diagnostics=baseline_diag,
+        )
+
+    def _run_interface(self, runtime: Any) -> Any:
+        """Execute DCE preprocessing."""
+        import subprocess
+        import nibabel as nib  # type: ignore[import-untyped]
+
+        preparation = self._prepare_preprocess_inputs()
+        in_file = preparation.in_file
+        out_file = preparation.out_file
+        dce_data = preparation.data
+        affine = preparation.affine
+        header = preparation.header
+        n_volumes = preparation.n_volumes
+        baseline_frames = preparation.baseline_frames
+        baseline_indices = list(preparation.baseline_indices)
+        bolus_frame = preparation.bolus_frame
+        baseline_diag = preparation.baseline_diagnostics
 
         # Determine reference volume for motion correction
         ref_vol = self.inputs.ref_vol
@@ -2910,8 +2954,6 @@ class DCEPreprocess(SimpleInterface):
             ref_file = None
 
         # Build mcflirt command
-        in_file = str(self.inputs.in_file)
-
         # Remove extension for mcflirt output basename
         out_path = Path(out_file)
         if out_path.name.endswith(".nii.gz"):
