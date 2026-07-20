@@ -2490,6 +2490,100 @@ def _connect_master_dce_masks(
     )
 
 
+def _connect_master_dce_t1_b1_inputs(
+    *,
+    workflow: pe.Workflow,
+    inputnode: pe.Node,
+    dce_wf: pe.Workflow,
+    session_data: SessionData,
+    dce_config: DCEConfig,
+) -> None:
+    """Inject VFA and resolved B1 acquisition inputs into DCE."""
+    # Connect VFA and AFI inputs if available
+    if session_data.modalities.vfa:
+        import logging as _logging
+
+        _log = _logging.getLogger("pmriprep.workflows")
+        vfa_list = session_data.modalities.vfa
+
+        workflow.connect([
+            (inputnode, dce_wf, [("vfa_files", "inputnode.vfa_files")]),
+        ])
+
+        # Read flip angles and TR from VFA BIDS sidecar JSONs
+        vfa_flip_angles: list[float] = []
+        vfa_tr_ms: Optional[float] = None
+        for vfa_path in vfa_list:
+            vfa_sidecar = _read_bids_sidecar(vfa_path)
+            if vfa_sidecar["flip_angle"] is not None:
+                fa = _validate_flip_angle(
+                    vfa_sidecar["flip_angle"],
+                    label=str(Path(str(vfa_path)).name),
+                )
+                vfa_flip_angles.append(fa)
+            # VFA TR should be identical across all flip angles; take from first
+            if vfa_tr_ms is None and vfa_sidecar["pulse_tr"] is not None:
+                vfa_tr_ms = _ensure_tr_ms(
+                    vfa_sidecar["pulse_tr"], label="VFA TR"
+                )
+
+        if vfa_flip_angles:
+            if len(vfa_flip_angles) != len(vfa_list):
+                _log.warning(
+                    "Found FlipAngle in %d of %d VFA sidecars; "
+                    "T1 mapping may fail",
+                    len(vfa_flip_angles),
+                    len(vfa_list),
+                )
+            dce_wf.inputs.inputnode.vfa_flip_angles = vfa_flip_angles
+        else:
+            _log.warning(
+                "No FlipAngle found in VFA sidecar JSONs; "
+                "T1 mapping will fail unless flip angles are configured manually"
+            )
+
+        if vfa_tr_ms is not None:
+            dce_wf.inputs.inputnode.vfa_tr = vfa_tr_ms
+        else:
+            _log.warning(
+                "No RepetitionTime found in VFA sidecar JSONs; "
+                "T1 mapping will fail unless TR is configured manually"
+            )
+    # Wire B1+ data based on resolved method
+    b1_method = dce_config.b1_method
+    if b1_method == "precomputed" and session_data.modalities.b1_precomputed_file:
+        dce_wf.inputs.inputnode.precomputed_b1_file = str(
+            session_data.modalities.b1_precomputed_file
+        )
+        if session_data.modalities.b1_nominal_prep_fa is not None:
+            dce_wf.inputs.inputnode.b1_nominal_prep_fa = (
+                session_data.modalities.b1_nominal_prep_fa
+            )
+        # Encoding precedence: config override > discovery hint > auto.
+        dce_wf.inputs.inputnode.b1_map_encoding = (
+            dce_config.b1_map_encoding
+            if dce_config.b1_map_encoding != "auto"
+            else (session_data.modalities.b1_map_encoding or "auto")
+        )
+    elif b1_method == "afi" and session_data.modalities.afi:
+        # Only 4D AFI is supported.
+        if (
+            session_data.modalities.afi_mode == "4d"
+            and session_data.modalities.afi_4d_file
+        ):
+            dce_wf.inputs.inputnode.afi_4d_file = str(
+                session_data.modalities.afi_4d_file
+            )
+            # Pass TR overrides from discovery if available
+            if session_data.modalities.afi_tr1_ms is not None:
+                dce_wf.inputs.inputnode.afi_tr1 = session_data.modalities.afi_tr1_ms
+            if session_data.modalities.afi_tr2_ms is not None:
+                dce_wf.inputs.inputnode.afi_tr2 = session_data.modalities.afi_tr2_ms
+
+        # Wire AFI nominal flip angle from BIDS sidecar (default 60 in B1Mapping)
+        if session_data.modalities.afi_flip_angle is not None:
+            dce_wf.inputs.inputnode.afi_flip_angle = session_data.modalities.afi_flip_angle
+
 def _init_master_workflow_nodes(
     *,
     workflow: pe.Workflow,
@@ -3207,90 +3301,14 @@ def init_pmriprep_wf(
             decision=decision, dce_config=dce_config, work_dir=work_dir,
             subject_id=subject_id, session_id=session_id,
         )
-        # Connect VFA and AFI inputs if available
-        if session_data.modalities.vfa:
-            import logging as _logging
+        _connect_master_dce_t1_b1_inputs(
+            workflow=workflow,
+            inputnode=inputnode,
+            dce_wf=dce_wf,
+            session_data=session_data,
+            dce_config=dce_config,
+        )
 
-            _log = _logging.getLogger("pmriprep.workflows")
-            vfa_list = session_data.modalities.vfa
-
-            workflow.connect([
-                (inputnode, dce_wf, [("vfa_files", "inputnode.vfa_files")]),
-            ])
-
-            # Read flip angles and TR from VFA BIDS sidecar JSONs
-            vfa_flip_angles: list[float] = []
-            vfa_tr_ms: Optional[float] = None
-            for vfa_path in vfa_list:
-                vfa_sidecar = _read_bids_sidecar(vfa_path)
-                if vfa_sidecar["flip_angle"] is not None:
-                    fa = _validate_flip_angle(
-                        vfa_sidecar["flip_angle"],
-                        label=str(Path(str(vfa_path)).name),
-                    )
-                    vfa_flip_angles.append(fa)
-                # VFA TR should be identical across all flip angles; take from first
-                if vfa_tr_ms is None and vfa_sidecar["pulse_tr"] is not None:
-                    vfa_tr_ms = _ensure_tr_ms(
-                        vfa_sidecar["pulse_tr"], label="VFA TR"
-                    )
-
-            if vfa_flip_angles:
-                if len(vfa_flip_angles) != len(vfa_list):
-                    _log.warning(
-                        "Found FlipAngle in %d of %d VFA sidecars; "
-                        "T1 mapping may fail",
-                        len(vfa_flip_angles),
-                        len(vfa_list),
-                    )
-                dce_wf.inputs.inputnode.vfa_flip_angles = vfa_flip_angles
-            else:
-                _log.warning(
-                    "No FlipAngle found in VFA sidecar JSONs; "
-                    "T1 mapping will fail unless flip angles are configured manually"
-                )
-
-            if vfa_tr_ms is not None:
-                dce_wf.inputs.inputnode.vfa_tr = vfa_tr_ms
-            else:
-                _log.warning(
-                    "No RepetitionTime found in VFA sidecar JSONs; "
-                    "T1 mapping will fail unless TR is configured manually"
-                )
-        # Wire B1+ data based on resolved method
-        b1_method = dce_config.b1_method
-        if b1_method == "precomputed" and session_data.modalities.b1_precomputed_file:
-            dce_wf.inputs.inputnode.precomputed_b1_file = str(
-                session_data.modalities.b1_precomputed_file
-            )
-            if session_data.modalities.b1_nominal_prep_fa is not None:
-                dce_wf.inputs.inputnode.b1_nominal_prep_fa = (
-                    session_data.modalities.b1_nominal_prep_fa
-                )
-            # Encoding precedence: config override > discovery hint > auto.
-            dce_wf.inputs.inputnode.b1_map_encoding = (
-                dce_config.b1_map_encoding
-                if dce_config.b1_map_encoding != "auto"
-                else (session_data.modalities.b1_map_encoding or "auto")
-            )
-        elif b1_method == "afi" and session_data.modalities.afi:
-            # Only 4D AFI is supported.
-            if (
-                session_data.modalities.afi_mode == "4d"
-                and session_data.modalities.afi_4d_file
-            ):
-                dce_wf.inputs.inputnode.afi_4d_file = str(
-                    session_data.modalities.afi_4d_file
-                )
-                # Pass TR overrides from discovery if available
-                if session_data.modalities.afi_tr1_ms is not None:
-                    dce_wf.inputs.inputnode.afi_tr1 = session_data.modalities.afi_tr1_ms
-                if session_data.modalities.afi_tr2_ms is not None:
-                    dce_wf.inputs.inputnode.afi_tr2 = session_data.modalities.afi_tr2_ms
-
-            # Wire AFI nominal flip angle from BIDS sidecar (default 60 in B1Mapping)
-            if session_data.modalities.afi_flip_angle is not None:
-                dce_wf.inputs.inputnode.afi_flip_angle = session_data.modalities.afi_flip_angle
 
         _connect_master_dsc_to_dce(
             workflow=workflow,

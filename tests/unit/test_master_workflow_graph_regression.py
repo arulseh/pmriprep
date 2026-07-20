@@ -23,6 +23,7 @@ from pmriprep.workflows.base import (
     _connect_master_dsc_masks,
     _connect_master_dsc_outputs_and_build_provenance,
     _connect_master_dsc_to_dce,
+    _connect_master_dce_t1_b1_inputs,
     _init_master_workflow_nodes,
     _prepare_master_workflow_context,
     _prepare_master_preflight_state,
@@ -454,6 +455,48 @@ def test_connect_master_dsc_to_dce_preserves_live_constraint_routes() -> None:
         dce_wf.inputs.dce_dsc_validation_wf.inputnode.dsc_preload_configured
         is True
     )
+
+
+def test_connect_master_dce_t1_b1_inputs_preserves_vfa_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """VFA flip angles/TR and precomputed B1 encoding retain their precedence."""
+    vfa = [tmp_path / "vfa1.nii.gz", tmp_path / "vfa2.nii.gz"]
+    sidecars = {
+        vfa[0]: {"flip_angle": 5.0, "pulse_tr": 0.004},
+        vfa[1]: {"flip_angle": 15.0, "pulse_tr": 0.004},
+    }
+    monkeypatch.setattr(
+        "pmriprep.workflows.base._read_bids_sidecar", lambda path: sidecars[path]
+    )
+    connections: list[Any] = []
+    inputnode = SimpleNamespace()
+    dce_input = SimpleNamespace()
+    session_data = SessionData(
+        subject="0001",
+        session="0001",
+        modalities=ModalityAvailability(
+            vfa=vfa,
+            b1_precomputed_file=tmp_path / "b1.nii.gz",
+            b1_nominal_prep_fa=60.0,
+            b1_map_encoding="percent",
+        ),
+        pipelines=PipelineAvailability(),
+    )
+    _connect_master_dce_t1_b1_inputs(
+        workflow=SimpleNamespace(connect=connections.extend),
+        inputnode=inputnode,
+        dce_wf=SimpleNamespace(inputs=SimpleNamespace(inputnode=dce_input)),
+        session_data=session_data,
+        dce_config=DCEConfig(b1_method="precomputed", b1_map_encoding="auto"),
+    )
+
+    assert connections[0][2] == [("vfa_files", "inputnode.vfa_files")]
+    assert dce_input.vfa_flip_angles == [5.0, 15.0]
+    assert dce_input.vfa_tr == 4.0
+    assert dce_input.precomputed_b1_file == str(tmp_path / "b1.nii.gz")
+    assert dce_input.b1_nominal_prep_fa == 60.0
+    assert dce_input.b1_map_encoding == "percent"
 
 
 def test_prepare_master_context_resolves_session_policy(
