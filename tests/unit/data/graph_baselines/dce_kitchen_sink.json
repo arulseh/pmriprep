@@ -2699,6 +2699,7 @@
     "aif_detection": {
       "agent_standard_dose": 0.1,
       "aif_method": "auto",
+      "aif_peak_floor": true,
       "baseline_frames": 0,
       "dose": 1.0,
       "field_strength": 3.0,

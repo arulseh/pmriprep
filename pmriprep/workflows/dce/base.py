@@ -2150,6 +2150,7 @@ def init_dce_preproc_wf(
     aif_detection = pe.Node(
         AIFDetection(
             aif_method=config.aif_method,
+            aif_peak_floor=config.aif_peak_floor,
             n_candidates=config.n_aif_candidates,
             lesion_distance=config.lesion_distance,
             baseline_frames=config.baseline_frames,

@@ -13,6 +13,7 @@ from pmriprep.interfaces.dce_aif import (
     _count_slabs_spanned,
     _evaluate_gates,
     _inflow_exclusion_mm,
+    _resolve_aif_scale,
     compute_dce_aif_fwhm_seconds,
     compute_dce_aif_peak_amplitude_warning,
     compute_dce_aif_washout,
@@ -1999,6 +2000,71 @@ def test_apply_aif_scale_default_raises_peak_to_expected_floor() -> None:
     assert out.max() == pytest.approx(expected_floor)
 
 
+def test_disabled_peak_floor_preserves_curve_but_retains_required_factor() -> None:
+    """Disabling mutation does not disable amplitude-adequacy assessment."""
+    curve = np.array([0, 0, 0, 4.0, 2.0, 1.0])
+    result = _resolve_aif_scale(
+        curve,
+        hct=0.42,
+        target_peak=0.0,
+        expected_range_fn=lambda: (5.0, 7.6),
+        apply_peak_floor=False,
+    )
+
+    assert np.array_equal(result.curve, curve)
+    assert result.applied_factor == 1.0
+    assert result.required_factor == pytest.approx((5.0 / 0.58) / 4.0)
+    assert result.mode == "none"
+
+
+def test_explicit_target_overrides_disabled_peak_floor() -> None:
+    """An explicit target remains authoritative when the automatic floor is off."""
+    curve = np.array([0, 0, 0, 4.0, 2.0, 1.0])
+    result = _resolve_aif_scale(
+        curve,
+        hct=0.42,
+        target_peak=6.0,
+        expected_range_fn=lambda: (5.0, 7.6),
+        apply_peak_floor=False,
+    )
+
+    expected_factor = (6.0 / 0.58) / 4.0
+    assert result.applied_factor == pytest.approx(expected_factor)
+    assert result.required_factor == pytest.approx(expected_factor)
+    assert result.curve.max() == pytest.approx(6.0 / 0.58)
+    assert result.mode == "explicit_target"
+
+
+def test_disabled_floor_keeps_hypothetical_factor_in_gate_decision() -> None:
+    """G1/G6 amplitude QC remains active when curve mutation is disabled."""
+    detector = AIFDetection(aif_peak_floor=False)
+    concentration = np.zeros((4, 4, 4, 20), dtype=np.float64)
+    curve = np.zeros(20, dtype=np.float64)
+    curve[6:11] = np.array([1.0, 2.5, 4.0, 2.0, 0.8])
+    candidates = [(1, 1, 1), (2, 1, 1)]
+    for coord in candidates:
+        concentration[coord] = curve
+
+    outcome = detector._score_and_gate_pool(
+        candidates,
+        [1.0, 1.0],
+        concentration,
+        np.ones((4, 4, 4), dtype=np.uint8),
+        np.eye(4),
+        tr=2.0,
+        baseline_frames=5,
+        hct=0.42,
+        target_peak=0.0,
+        atlas_tier_label="MCA_ACA_dce_strict",
+    )
+
+    assert outcome.scale_factor == 1.0
+    assert outcome.required_scale_factor > 1.0
+    assert outcome.decision["scale_factor"] == pytest.approx(
+        outcome.required_scale_factor
+    )
+
+
 @pytest.mark.parametrize("peak", [5.0 / 0.58, 12.0, 16.0])
 def test_apply_aif_scale_default_preserves_in_band_and_high_peaks(peak: float) -> None:
     """Default calibration never changes a peak at or above the lower bound."""
@@ -3175,7 +3241,8 @@ class TestC2DivergenceInSitu:
         orig_tier = TierResult(
             candidates=tier_pool, scores=[0.9, 0.8, 0.7],
             metrics=[self._full_metric()] * 3,
-            curve_scaled=np.zeros(40), scale_factor=1.5, qc=_make_qc(),
+            curve_scaled=np.zeros(40), scale_factor=1.5,
+            required_scale_factor=1.5, qc=_make_qc(),
             atlas_tier="MCA_ACA_dce_strict", hemisphere="bilateral",
             n_slabs=2, status="PASS", gate_decisions=[],
         )
@@ -3190,7 +3257,8 @@ class TestC2DivergenceInSitu:
         sentinel_curve = 7.0 * np.exp(-0.5 * ((t - 8.0) / 2.0) ** 2)
         sentinel_curve[:5] = 0.0
         sentinel = PoolGateOutcome(
-            curve_scaled=sentinel_curve, scale_factor=2.5, qc=_make_qc(),
+            curve_scaled=sentinel_curve, scale_factor=2.5,
+            required_scale_factor=2.5, qc=_make_qc(),
             hemisphere="bilateral", n_slabs=2, status="FAIL_G2",
             decision=GateDecision(
                 tier="MCA_ACA_dce_strict", n_pool=2, scale_factor=2.5,

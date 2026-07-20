@@ -933,6 +933,39 @@ def _apply_aif_scale(
     return aif_curve * scaling_factor, float(scaling_factor)
 
 
+@dataclass(frozen=True)
+class AIFScaleApplication:
+    """Resolved detected-AIF amplitude calibration and QC factors."""
+
+    curve: npt.NDArray[Any]
+    applied_factor: float
+    required_factor: float
+    mode: Literal["upward_floor", "none", "explicit_target"]
+
+
+def _resolve_aif_scale(
+    aif_curve: npt.NDArray[Any],
+    hct: float,
+    target_peak: float,
+    expected_range_fn: Callable[[], tuple[float, float]],
+    *,
+    apply_peak_floor: bool,
+) -> AIFScaleApplication:
+    """Separate amplitude-adequacy assessment from amplitude mutation."""
+    calibrated, required_factor = _apply_aif_scale(
+        aif_curve, hct, target_peak, expected_range_fn
+    )
+    if target_peak > 0:
+        return AIFScaleApplication(
+            calibrated, required_factor, required_factor, "explicit_target"
+        )
+    if apply_peak_floor:
+        return AIFScaleApplication(
+            calibrated, required_factor, required_factor, "upward_floor"
+        )
+    return AIFScaleApplication(aif_curve, 1.0, required_factor, "none")
+
+
 def _compute_pool_qc(
     scaled_curve: npt.NDArray[Any],
     tr: float,
@@ -1206,6 +1239,7 @@ class TierResult:
     metrics: list[dict[str, float]]
     curve_scaled: npt.NDArray[Any]
     scale_factor: float
+    required_scale_factor: float
     qc: GateQC
     atlas_tier: str
     hemisphere: str
@@ -1221,12 +1255,14 @@ class PoolGateOutcome:
     Returned by ``_score_and_gate_pool`` (the shared "average ->
     plasma-convert -> rescale -> QC -> hemisphere/slabs -> gate" body used
     by both the progressive-trim loop and the C2 re-gate). ``curve_scaled``
-    is the exact curve the gates evaluated, so callers emit it directly to
-    preserve the "gates saw this curve" invariant.
+    is the exact curve the shape gates evaluated, so callers emit it directly.
+    ``required_scale_factor`` remains the G1/G6 amplitude-adequacy input even
+    when automatic peak-floor mutation is disabled.
     """
 
     curve_scaled: npt.NDArray[Any]
     scale_factor: float
+    required_scale_factor: float
     qc: GateQC
     hemisphere: str
     n_slabs: int
@@ -1340,6 +1376,8 @@ class EmitResult:
     aif_mask: npt.NDArray[Any]
     quality_score: float
     scaling_factor: float
+    required_scaling_factor: float
+    calibration_mode: str
     qc_metrics: dict[str, Any]
     tier_result: TierResult | None
     detection_method: Literal["atlas", "whole_brain", "population"]
@@ -1425,8 +1463,18 @@ class DCEAIFDetectionInputSpec(BaseInterfaceInputSpec):
             "Explicit target peak concentration (mM) for AIF calibration, in blood-voxel "
             "units (Parker 2006 convention, i.e. ΔR1/r1 pre-Hct-correction). "
             "The pipeline divides by (1-Hct) internally to compare against "
-            "the plasma-scale aif_curve. 0 preserves peaks at or above the "
-            "dose-scaled lower expected bound and raises sub-bound peaks to it."
+            "the plasma-scale aif_curve. Values >0 override aif_peak_floor; "
+            "0 follows the configured automatic peak-floor policy."
+        ),
+    )
+    aif_peak_floor = traits.Bool(
+        True,
+        usedefault=True,
+        desc=(
+            "Raise detected AIF peaks below the dose-adjusted expected lower "
+            "bound. False preserves measured amplitude while retaining the "
+            "hypothetical correction factor for amplitude QC. Explicit "
+            "target_peak calibration takes precedence."
         ),
     )
     baseline_frames = traits.Int(
@@ -1555,9 +1603,11 @@ class AIFDetection(BaseInterface):
         'auto' for multi-level detection, 'population' for Parker AIF.
     n_candidates : int
         Number of top candidate voxels to average for final AIF.
+    aif_peak_floor : bool
+        Apply the automatic dose-adjusted lower peak floor to detected AIFs.
+        Amplitude adequacy remains active when disabled.
     target_peak : float
-        Explicit calibration target; 0 applies the conservative dose-scaled
-        lower-bound floor.
+        Explicit calibration target; 0 follows ``aif_peak_floor``.
     baseline_frames : int
         Number of pre-contrast frames for baseline estimation.
     field_strength : float
@@ -3079,22 +3129,24 @@ class AIFDetection(BaseInterface):
             cands, scores, conc_data, brain_mask, tr=tr,
         )
         curve_plasma = curve_blood / (1.0 - hct) if hct < 1.0 else curve_blood
-        curve_scaled, scale_factor = _apply_aif_scale(
+        scale = _resolve_aif_scale(
             curve_plasma,
             hct,
             target_peak,
             self._get_expected_peak_range,
+            apply_peak_floor=bool(getattr(self.inputs, "aif_peak_floor", True)),
         )
-        qc = _compute_pool_qc(curve_scaled, tr, baseline_frames)
+        qc = _compute_pool_qc(scale.curve, tr, baseline_frames)
         hemisphere, _n_left, _n_right = _classify_hemisphere(cands, affine)
         n_slabs = _count_slabs_spanned(cands)
         status, decision = _evaluate_gates(
-            scale_factor, qc, atlas_tier_label,
+            scale.required_factor, qc, atlas_tier_label,
             len(cands), hemisphere, n_slabs,
         )
         return PoolGateOutcome(
-            curve_scaled=curve_scaled,
-            scale_factor=scale_factor,
+            curve_scaled=scale.curve,
+            scale_factor=scale.applied_factor,
+            required_scale_factor=scale.required_factor,
             qc=qc,
             hemisphere=hemisphere,
             n_slabs=n_slabs,
@@ -3153,6 +3205,7 @@ class AIFDetection(BaseInterface):
                         metrics=sub_metrics,
                         curve_scaled=outcome.curve_scaled,
                         scale_factor=outcome.scale_factor,
+                        required_scale_factor=outcome.required_scale_factor,
                         qc=outcome.qc,
                         atlas_tier=atlas_tier_label,
                         hemisphere=outcome.hemisphere,
@@ -4187,6 +4240,8 @@ class AIFDetection(BaseInterface):
             "blood_t1_seconds": blood_t1,
             "field_strength_t": field_strength,
             "scaling_factor": 1.0,
+            "required_scaling_factor": 1.0,
+            "aif_amplitude_calibration": "external",
             "detection_method": "external",
             "quality_score": quality_score,
             "baseline_frames": baseline_frames,
@@ -4604,6 +4659,13 @@ class AIFDetection(BaseInterface):
         aif_mask = np.zeros(conc_data.shape[:3], dtype=np.uint8)
         quality_score = 0.0
         scaling_factor = 1.0
+        required_scaling_factor = 1.0
+        calibration_mode = (
+            "explicit_target" if target_peak > 0
+            else "upward_floor"
+            if bool(getattr(self.inputs, "aif_peak_floor", True))
+            else "none"
+        )
         qc_metrics: dict[str, Any] = {}
 
         # Phase 5: Weighted ROI averaging + smoothing
@@ -4633,12 +4695,14 @@ class AIFDetection(BaseInterface):
                 )
                 aif_curve = outcome.curve_scaled
                 scaling_factor = outcome.scale_factor
+                required_scaling_factor = outcome.required_scale_factor
                 tier_result = TierResult(
                     candidates=list(candidates),
                     scores=list(scores),
                     metrics=list(metrics_list),
                     curve_scaled=aif_curve,
                     scale_factor=scaling_factor,
+                    required_scale_factor=required_scaling_factor,
                     qc=outcome.qc,
                     atlas_tier=tier_result.atlas_tier,
                     hemisphere=outcome.hemisphere,
@@ -4649,6 +4713,7 @@ class AIFDetection(BaseInterface):
             else:
                 aif_curve = tier_result.curve_scaled
                 scaling_factor = tier_result.scale_factor
+                required_scaling_factor = tier_result.required_scale_factor
             aif_mask = np.zeros(conc_data.shape[:3], dtype=np.uint8)
             for cx, cy, cz in candidates:
                 aif_mask[cx, cy, cz] = 1
@@ -4761,7 +4826,10 @@ class AIFDetection(BaseInterface):
 
         return EmitResult(
             aif_curve=aif_curve, aif_mask=aif_mask, quality_score=quality_score,
-            scaling_factor=scaling_factor, qc_metrics=qc_metrics,
+            scaling_factor=scaling_factor,
+            required_scaling_factor=required_scaling_factor,
+            calibration_mode=calibration_mode,
+            qc_metrics=qc_metrics,
             tier_result=tier_result, detection_method=detection_method,
         )
 
@@ -4843,7 +4911,10 @@ class AIFDetection(BaseInterface):
 
         return EmitResult(
             aif_curve=aif_curve, aif_mask=aif_mask, quality_score=quality_score,
-            scaling_factor=scaling_factor, qc_metrics=qc_metrics,
+            scaling_factor=scaling_factor,
+            required_scaling_factor=1.0,
+            calibration_mode="population",
+            qc_metrics=qc_metrics,
             tier_result=state.tier_result, detection_method=detection_method,
         )
 
@@ -4857,6 +4928,8 @@ class AIFDetection(BaseInterface):
         aif_mask = emit.aif_mask
         quality_score = emit.quality_score
         scaling_factor = emit.scaling_factor
+        required_scaling_factor = emit.required_scaling_factor
+        calibration_mode = emit.calibration_mode
         qc_metrics = emit.qc_metrics
         tier_result = emit.tier_result
         detection_method = emit.detection_method
@@ -4920,7 +4993,7 @@ class AIFDetection(BaseInterface):
             if tier_result.status == "G6_ADMIT":
                 qc_metrics["aif_confidence"] = "reduced"
                 qc_metrics["aif_g6_admitted"] = True
-                sf = tier_result.scale_factor
+                sf = tier_result.required_scale_factor
                 if sf > DCE_AIF_GATE_SCALE_G6_HIGH:
                     qc_metrics["aif_uncertainty_inflation_factor"] = 3.0
                 else:
@@ -4949,28 +5022,37 @@ class AIFDetection(BaseInterface):
         # path bypasses (already scaled inside the trim loop, scale_factor recorded).
         if detection_method not in ("population", "external") and tier_result is None:
             current_peak = float(np.max(aif_curve))
-            aif_curve, scaling_factor = _apply_aif_scale(
+            scale = _resolve_aif_scale(
                 aif_curve,
                 float(self.inputs.hematocrit),
                 target_peak,
                 self._get_expected_peak_range,
+                apply_peak_floor=bool(getattr(self.inputs, "aif_peak_floor", True)),
             )
-            # scaling_factor is a pure blood-amplitude ratio (population target /
-            # detected peak): the 1/(1-Hct) plasma conversion cancels between the
-            # two, so these WARN thresholds are fixed and Hct-invariant — a
-            # detected arterial peak far below the population target.
-            if scaling_factor > DCE_AIF_SCALE_WARN_UNRELIABLE:
+            aif_curve = scale.curve
+            scaling_factor = scale.applied_factor
+            required_scaling_factor = scale.required_factor
+            calibration_mode = scale.mode
+            # required_scaling_factor is a pure blood-amplitude ratio (population
+            # floor / detected peak): the 1/(1-Hct) plasma conversion cancels, so
+            # these WARN thresholds remain fixed and Hct-invariant even when the
+            # configured policy preserves the measured amplitude.
+            if required_scaling_factor > DCE_AIF_SCALE_WARN_UNRELIABLE:
                 logger.warning(
-                    "AIF scaling factor %.2f > %.1f — detected AIF peak "
+                    "AIF amplitude-calibration factor required %.2f > %.1f — detected AIF peak "
                     "(%.2f mM plasma) is far below expected arterial range. "
                     "Results may be unreliable.",
-                    scaling_factor, DCE_AIF_SCALE_WARN_UNRELIABLE, current_peak,
+                    required_scaling_factor,
+                    DCE_AIF_SCALE_WARN_UNRELIABLE,
+                    current_peak,
                 )
-            elif scaling_factor > DCE_AIF_SCALE_WARN_SUBSTANTIAL:
+            elif required_scaling_factor > DCE_AIF_SCALE_WARN_SUBSTANTIAL:
                 logger.warning(
-                    "AIF scaling factor %.2f > %.1f — detected AIF peak "
+                    "AIF amplitude-calibration factor required %.2f > %.1f — detected AIF peak "
                     "(%.2f mM plasma) is substantially below expected range.",
-                    scaling_factor, DCE_AIF_SCALE_WARN_SUBSTANTIAL, current_peak,
+                    required_scaling_factor,
+                    DCE_AIF_SCALE_WARN_SUBSTANTIAL,
+                    current_peak,
                 )
 
         # Compute final AIF metrics
@@ -5053,6 +5135,11 @@ class AIFDetection(BaseInterface):
                 "field_strength_t": field_strength,
                 "scaling_factor": scaling_factor,
                 "scaling_factor_warning": scaling_factor > DCE_AIF_SCALE_WARN_SUBSTANTIAL,
+                "required_scaling_factor": required_scaling_factor,
+                "required_scaling_factor_warning": (
+                    required_scaling_factor > DCE_AIF_SCALE_WARN_SUBSTANTIAL
+                ),
+                "aif_amplitude_calibration": calibration_mode,
                 "detection_method": detection_method,
                 "quality_score": quality_score,
                 "baseline_frames": baseline_frames,

@@ -6,6 +6,16 @@ from pmriprep.config.dce import DCEConfig
 from pmriprep.config.dsc import DSCConfig
 
 
+class TestAIFPeakFloorConfig:
+    """The automatic detected-AIF peak floor is explicitly configurable."""
+
+    def test_defaults_on(self) -> None:
+        assert DCEConfig().aif_peak_floor is True
+
+    def test_can_be_disabled(self) -> None:
+        assert DCEConfig(aif_peak_floor=False).aif_peak_floor is False
+
+
 class TestCbvConstraintModeValidation:
     """``cbv_constraint_mode`` accepts only ``auto``, ``skip``."""
 

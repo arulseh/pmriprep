@@ -28,11 +28,15 @@ class DCEConfig:
         Path to ROI mask in DCE native space for stats extraction only.
     aif_method : Literal["auto", "population"]
         AIF detection method: auto or population.
+    aif_peak_floor : bool
+        Raise a low detected AIF to the dose-adjusted expected lower peak.
+        When false, preserve measured amplitude while retaining amplitude QC.
     target_peak : Optional[float]
         Target AIF peak concentration (mM) for scaling, in blood-voxel units
         (pre-Hct-correction). The pipeline divides
         by (1-Hct) internally before comparing against the plasma-scale
-        aif_curve. None = use field-strength default.
+        aif_curve. When set, this explicit calibration overrides
+        ``aif_peak_floor``. None uses the optional dose-adjusted lower floor.
     aif_mask_file : Optional[Path]
         Path to custom AIF mask file.
     lesion_distance : float
@@ -92,7 +96,8 @@ class DCEConfig:
     # AIF detection settings
     aif_method: Literal["auto", "population"] = "auto"
     aif_file: Optional[Path] = None  # External AIF curve file (bypasses detection)
-    target_peak: Optional[float] = None  # None = dose-scaled lower-bound floor
+    aif_peak_floor: bool = True
+    target_peak: Optional[float] = None  # None = follow aif_peak_floor
     aif_mask_file: Optional[Path] = None
     lesion_distance: float = 15.0
     n_aif_candidates: int = 10

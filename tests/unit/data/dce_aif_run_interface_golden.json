@@ -159,6 +159,7 @@
         "__f__": "0x1.13dcb08d3dcb0p+3"
       },
       "qc_metrics": {
+        "aif_amplitude_calibration": "upward_floor",
         "aif_before_tissue_frames": {
           "__f__": "0x1.4000000000000p+2"
         },
@@ -283,6 +284,10 @@
         "quality_score": {
           "__f__": "0x1.5e8a29b217125p-3"
         },
+        "required_scaling_factor": {
+          "__f__": "0x1.09793289ad001p+0"
+        },
+        "required_scaling_factor_warning": false,
         "scaling_factor": {
           "__f__": "0x1.09793289ad001p+0"
         },
@@ -470,6 +475,7 @@
         "__f__": "0x1.8000000000000p+2"
       },
       "qc_metrics": {
+        "aif_amplitude_calibration": "upward_floor",
         "aif_before_tissue_frames": {
           "__f__": "0x1.0000000000000p+2"
         },
@@ -570,6 +576,10 @@
         "quality_score": {
           "__f__": "0x1.d9a36e88ff955p-5"
         },
+        "required_scaling_factor": {
+          "__f__": "0x1.8000000000000p+0"
+        },
+        "required_scaling_factor_warning": false,
         "scaling_factor": {
           "__f__": "0x1.8000000000000p+0"
         },
@@ -737,6 +747,7 @@
         "__f__": "0x1.8000000000000p+2"
       },
       "qc_metrics": {
+        "aif_amplitude_calibration": "external",
         "aif_confidence": "standard",
         "aif_source": "external",
         "aif_status": "PASS",
@@ -765,6 +776,9 @@
         "n_aif_voxels_selected": 0,
         "quality_score": {
           "__f__": "0x1.d9a36e88ff955p-5"
+        },
+        "required_scaling_factor": {
+          "__f__": "0x1.0000000000000p+0"
         },
         "scaling_factor": {
           "__f__": "0x1.0000000000000p+0"
@@ -938,6 +952,7 @@
         "__f__": "0x1.13dcb08d3dcb0p+3"
       },
       "qc_metrics": {
+        "aif_amplitude_calibration": "upward_floor",
         "aif_before_tissue_frames": {
           "__f__": "0x1.4000000000000p+2"
         },
@@ -1062,6 +1077,10 @@
         "quality_score": {
           "__f__": "0x1.5e8a29b217125p-3"
         },
+        "required_scaling_factor": {
+          "__f__": "0x1.09793289ad001p+0"
+        },
+        "required_scaling_factor_warning": false,
         "scaling_factor": {
           "__f__": "0x1.09793289ad001p+0"
         },
@@ -1233,6 +1252,7 @@
         "__f__": "0x1.2ccd598d6f219p+3"
       },
       "qc_metrics": {
+        "aif_amplitude_calibration": "population",
         "aif_confidence": "low",
         "aif_g6_admitted": false,
         "aif_gate_decisions": [],
@@ -1295,6 +1315,10 @@
         "quality_score": {
           "__f__": "0x1.0000000000000p-1"
         },
+        "required_scaling_factor": {
+          "__f__": "0x1.0000000000000p+0"
+        },
+        "required_scaling_factor_warning": false,
         "scaling_factor": {
           "__f__": "0x1.0000000000000p+0"
         },
@@ -1457,6 +1481,7 @@
         "__f__": "0x1.2ccd598d6f219p+3"
       },
       "qc_metrics": {
+        "aif_amplitude_calibration": "population",
         "aif_confidence": "low",
         "aif_g6_admitted": false,
         "aif_source": "population",
@@ -1536,6 +1561,10 @@
         "quality_score": {
           "__f__": "0x1.0000000000000p-1"
         },
+        "required_scaling_factor": {
+          "__f__": "0x1.0000000000000p+0"
+        },
+        "required_scaling_factor_warning": false,
         "scaling_factor": {
           "__f__": "0x1.0000000000000p+0"
         },
@@ -1698,6 +1727,7 @@
         "__f__": "0x1.2ccd598d6f219p+3"
       },
       "qc_metrics": {
+        "aif_amplitude_calibration": "population",
         "aif_confidence": "low",
         "aif_g6_admitted": false,
         "aif_source": "population",
@@ -1748,6 +1778,10 @@
         "quality_score": {
           "__f__": "0x1.0000000000000p-1"
         },
+        "required_scaling_factor": {
+          "__f__": "0x1.0000000000000p+0"
+        },
+        "required_scaling_factor_warning": false,
         "scaling_factor": {
           "__f__": "0x1.0000000000000p+0"
         },
@@ -1910,6 +1944,7 @@
         "__f__": "0x1.2ccd598d6f219p+3"
       },
       "qc_metrics": {
+        "aif_amplitude_calibration": "population",
         "aif_confidence": "low",
         "aif_g6_admitted": false,
         "aif_source": "population",
@@ -1989,6 +2024,10 @@
         "quality_score": {
           "__f__": "0x1.0000000000000p-1"
         },
+        "required_scaling_factor": {
+          "__f__": "0x1.0000000000000p+0"
+        },
+        "required_scaling_factor_warning": false,
         "scaling_factor": {
           "__f__": "0x1.0000000000000p+0"
         },

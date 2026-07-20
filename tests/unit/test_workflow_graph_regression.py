@@ -553,6 +553,18 @@ def test_dsc_method_is_parameter_not_topology(bids: Path) -> None:
     assert default["node_params"]["compute_maps"]["method"] != "cpi"
 
 
+def test_dce_peak_floor_is_routed_as_parameter(bids: Path) -> None:
+    """Disabling the peak floor changes only the AIF node parameter."""
+    enabled = graph_signature(_dce(bids))
+    disabled = graph_signature(_dce(bids, aif_peak_floor=False))
+
+    assert disabled["nodes"] == enabled["nodes"]
+    assert disabled["edges"] == enabled["edges"]
+    assert disabled["function_sha256"] == enabled["function_sha256"]
+    assert enabled["node_params"]["aif_detection"]["aif_peak_floor"] is True
+    assert disabled["node_params"]["aif_detection"]["aif_peak_floor"] is False
+
+
 # ---------------------------------------------------------------------------
 # Sensitivity tests -- prove the harness CATCHES real regressions by building
 # REAL workflows (a correct one and a deliberately-broken one) and comparing the
