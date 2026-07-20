@@ -15,7 +15,16 @@ from pmriprep.config.anat import AnatConfig
 from pmriprep.config.dce import DCEConfig
 from pmriprep.config.dsc import DSCConfig
 from pmriprep.config.tumor_seg import TumorSegConfig
-from pmriprep.workflows.base import PipelineSkipFlags, init_pmriprep_wf
+from pmriprep.workflows.base import (
+    PipelineSkipFlags,
+    _prepare_master_workflow_context,
+    init_pmriprep_wf,
+)
+from pmriprep.workflows.discovery import (
+    ModalityAvailability,
+    PipelineAvailability,
+    SessionData,
+)
 
 from .test_workflow_graph_regression import extract_public_outputnode_fields
 
@@ -195,3 +204,60 @@ def test_master_regen_flag_not_set_in_normal_run() -> None:
     assert not _REGEN, (
         "PMRIPREP_REGEN_MASTER_GRAPH=1 is set: baselines were regenerated, not verified"
     )
+
+
+def test_prepare_master_context_resolves_session_policy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Session preparation preserves defaults, memory buffers, and skip decisions."""
+    session_data = SessionData(
+        subject="0001",
+        session="0001",
+        modalities=ModalityAvailability(
+            t1w_ce_gad=tmp_path / "postcon.nii.gz",
+            dsc=tmp_path / "dsc.nii.gz",
+            dce=tmp_path / "dce.nii.gz",
+        ),
+        pipelines=PipelineAvailability(dsc=True, dce=True),
+    )
+    estimates: list[tuple[Path, int, float | None]] = []
+
+    def _estimate(path: Path, *, n_buffers: int, mem_limit_gb: float | None):
+        estimates.append((path, n_buffers, mem_limit_gb))
+        return float(n_buffers), float(n_buffers + 1)
+
+    monkeypatch.setattr(
+        "pmriprep.workflows.base.discover_session_data", lambda *args, **kwargs: session_data
+    )
+    monkeypatch.setattr("pmriprep.utils.mem.estimate_4d_mem_gb", _estimate)
+    monkeypatch.setattr("pmriprep.utils.mem._system_ram_gb", lambda: 128.0)
+
+    context = _prepare_master_workflow_context(
+        bids_dir=tmp_path / "bids" / ".." / "bids",
+        output_dir=tmp_path / "out",
+        subject_id="0001",
+        session_id="0001",
+        skip_flags=PipelineSkipFlags(skip_dsc=True),
+        anat_config=None,
+        tumor_seg_config=None,
+        dsc_config=None,
+        dce_config=None,
+        work_dir=tmp_path / "work",
+        mem_limit_gb=12.0,
+        layout=None,
+    )
+
+    assert context.bids_dir == (tmp_path / "bids").resolve()
+    assert context.work_dir == (tmp_path / "work").resolve()
+    assert context.is_postcon_ref is True
+    assert context.dsc_mem_gb == 4.0
+    assert context.dce_mem_gb == 5.0
+    assert estimates == [
+        (tmp_path / "dsc.nii.gz", 4, 12.0),
+        (tmp_path / "dce.nii.gz", 5, 12.0),
+    ]
+    assert context.decision.run_anat is True
+    assert context.decision.run_dsc is False
+    assert context.decision.run_dce is True
+    assert isinstance(context.anat_config, AnatConfig)
+    assert isinstance(context.dsc_config, DSCConfig)

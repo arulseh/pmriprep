@@ -884,6 +884,137 @@ def _find_previous_dsc_outputs(
     return outputs
 
 
+@dataclass(frozen=True)
+class _MasterWorkflowContext:
+    """Resolved session state used to assemble the master workflow graph."""
+
+    bids_dir: Path
+    output_dir: Path
+    work_dir: Optional[Path]
+    anat_config: AnatConfig
+    tumor_seg_config: TumorSegConfig
+    dsc_config: DSCConfig
+    dce_config: DCEConfig
+    session_data: SessionData
+    decision: PipelineDecision
+    has_t1w_pre: bool
+    has_t1w_postcon: bool
+    is_postcon_ref: bool
+    dsc_mem_gb: float
+    dce_mem_gb: float
+
+
+def _prepare_master_workflow_context(
+    *,
+    bids_dir: Union[str, Path],
+    output_dir: Union[str, Path],
+    subject_id: str,
+    session_id: Optional[str],
+    skip_flags: Optional[PipelineSkipFlags],
+    anat_config: Optional[AnatConfig],
+    tumor_seg_config: Optional[TumorSegConfig],
+    dsc_config: Optional[DSCConfig],
+    dce_config: Optional[DCEConfig],
+    work_dir: Optional[Union[str, Path]],
+    mem_limit_gb: Optional[float],
+    layout: Optional["BIDSLayout"],
+) -> _MasterWorkflowContext:
+    """Resolve discovery, defaults, memory policy, and pipeline decisions.
+
+    Parameters
+    ----------
+    bids_dir, output_dir : path-like
+        Input BIDS root and derivatives output directory.
+    subject_id, session_id : str, optional
+        BIDS subject and optional session identifiers.
+    skip_flags : PipelineSkipFlags, optional
+        User-selected pipeline exclusions.
+    anat_config, tumor_seg_config, dsc_config, dce_config : optional
+        Pipeline configurations. Missing configurations receive their defaults.
+    work_dir : path-like, optional
+        Nipype working directory used for precomputed-output lookup.
+    mem_limit_gb : float, optional
+        User memory ceiling applied to workflow resource estimates.
+    layout : BIDSLayout, optional
+        Reusable BIDS index for session discovery.
+
+    Returns
+    -------
+    _MasterWorkflowContext
+        Fully resolved non-graph state for master workflow construction.
+    """
+    from pmriprep.utils.mem import _system_ram_gb, cap_mem_gb, estimate_4d_mem_gb
+
+    resolved_bids_dir = Path(bids_dir).resolve()
+    resolved_output_dir = Path(output_dir).resolve()
+    resolved_work_dir = Path(work_dir).resolve() if work_dir is not None else None
+    resolved_skip_flags = skip_flags or PipelineSkipFlags()
+    resolved_anat_config = anat_config or AnatConfig()
+    resolved_tumor_seg_config = tumor_seg_config or TumorSegConfig()
+    resolved_dsc_config = dsc_config or DSCConfig()
+    resolved_dce_config = dce_config or DCEConfig()
+
+    session_data = discover_session_data(
+        resolved_bids_dir, subject_id, session_id, layout=layout
+    )
+    has_t1w_pre = bool(session_data.modalities.t1w_pre)
+    has_t1w_postcon = bool(session_data.modalities.t1w_ce_gad)
+
+    if session_data.modalities.dsc:
+        dsc_mem_gb, dsc_mem_raw = estimate_4d_mem_gb(
+            session_data.modalities.dsc, n_buffers=4, mem_limit_gb=mem_limit_gb
+        )
+    else:
+        dsc_mem_gb, dsc_mem_raw = cap_mem_gb(4.0, mem_limit_gb), 4.0
+    if session_data.modalities.dce:
+        dce_mem_gb, dce_mem_raw = estimate_4d_mem_gb(
+            session_data.modalities.dce, n_buffers=5, mem_limit_gb=mem_limit_gb
+        )
+    else:
+        dce_mem_gb, dce_mem_raw = cap_mem_gb(6.0, mem_limit_gb), 6.0
+
+    cli_log = logging.getLogger("cli")
+    if not cli_log.handlers:
+        cli_log = logging.getLogger("pmriprep.workflows")
+    system_ram = _system_ram_gb()
+    for label, raw, capped in (
+        ("DSC", dsc_mem_raw, dsc_mem_gb),
+        ("DCE", dce_mem_raw, dce_mem_gb),
+    ):
+        if mem_limit_gb is not None and capped >= mem_limit_gb * 0.9:
+            cli_log.warning(
+                "%s processing needs ~%.1f GB but --mem-gb is %.1f GB. "
+                "Consider setting --mem-gb to at least %.0f.",
+                label, raw, mem_limit_gb, raw + 1,
+            )
+        elif raw >= system_ram * 0.8:
+            cli_log.warning(
+                "%s processing needs ~%.1f GB but system has %.1f GB RAM. "
+                "This dataset may require a machine with more memory.",
+                label, raw, system_ram,
+            )
+
+    decision = decide_pipelines(
+        session_data, resolved_skip_flags, resolved_tumor_seg_config
+    )
+    return _MasterWorkflowContext(
+        bids_dir=resolved_bids_dir,
+        output_dir=resolved_output_dir,
+        work_dir=resolved_work_dir,
+        anat_config=resolved_anat_config,
+        tumor_seg_config=resolved_tumor_seg_config,
+        dsc_config=resolved_dsc_config,
+        dce_config=resolved_dce_config,
+        session_data=session_data,
+        decision=decision,
+        has_t1w_pre=has_t1w_pre,
+        has_t1w_postcon=has_t1w_postcon,
+        is_postcon_ref=has_t1w_postcon and not has_t1w_pre,
+        dsc_mem_gb=dsc_mem_gb,
+        dce_mem_gb=dce_mem_gb,
+    )
+
+
 def init_pmriprep_wf(
     bids_dir: Union[str, Path],
     output_dir: Union[str, Path],
@@ -964,79 +1095,34 @@ def init_pmriprep_wf(
     from pmriprep.workflows.dsc.base import init_dsc_preproc_wf
     from pmriprep.workflows.tumor_seg.base import init_tumor_seg_wf
 
-    # Normalize paths (resolve to absolute for DataSink and FSL commands)
-    bids_dir = Path(bids_dir).resolve()
-    output_dir = Path(output_dir).resolve()
-    if work_dir is not None:
-        work_dir = Path(work_dir).resolve()
-
-    # Use default skip flags if not provided
-    if skip_flags is None:
-        skip_flags = PipelineSkipFlags()
-
-    # Use default configs if not provided
-    if anat_config is None:
-        anat_config = AnatConfig()
-    if tumor_seg_config is None:
-        tumor_seg_config = TumorSegConfig()
-    if dsc_config is None:
-        dsc_config = DSCConfig()
-    if dce_config is None:
-        dce_config = DCEConfig()
-
-    # Discover available data
-    session_data = discover_session_data(
-        bids_dir, subject_id, session_id, layout=layout
+    context = _prepare_master_workflow_context(
+        bids_dir=bids_dir,
+        output_dir=output_dir,
+        subject_id=subject_id,
+        session_id=session_id,
+        skip_flags=skip_flags,
+        anat_config=anat_config,
+        tumor_seg_config=tumor_seg_config,
+        dsc_config=dsc_config,
+        dce_config=dce_config,
+        work_dir=work_dir,
+        mem_limit_gb=mem_limit_gb,
+        layout=layout,
     )
-
-    # Modality-presence flags used by every per-pipeline DerivativesDataSink
-    # factory (anat, tumor_seg, dsc, dce). Computed once at the top so they
-    # are in scope under --skip-anat where the anat block is skipped but
-    # tumor_seg/dsc/dce factories still run.
-    has_t1w_pre = bool(session_data.modalities.t1w_pre)
-    has_t1w_postcon = bool(session_data.modalities.t1w_ce_gad)
-    is_postcon_ref = has_t1w_postcon and not has_t1w_pre
-
-    # Estimate memory requirements from image dimensions
-    from pmriprep.utils.mem import cap_mem_gb, estimate_4d_mem_gb
-
-    if session_data.modalities.dsc:
-        dsc_mem_gb, dsc_mem_raw = estimate_4d_mem_gb(
-            session_data.modalities.dsc, n_buffers=4, mem_limit_gb=mem_limit_gb,
-        )
-    else:
-        dsc_mem_gb, dsc_mem_raw = cap_mem_gb(4.0, mem_limit_gb), 4.0
-
-    if session_data.modalities.dce:
-        dce_mem_gb, dce_mem_raw = estimate_4d_mem_gb(
-            session_data.modalities.dce, n_buffers=5, mem_limit_gb=mem_limit_gb,
-        )
-    else:
-        dce_mem_gb, dce_mem_raw = cap_mem_gb(6.0, mem_limit_gb), 6.0
-
-    # Warn on console if memory may be insufficient
-    from pmriprep.utils.mem import _system_ram_gb
-
-    _cli_log = logging.getLogger("cli")
-    if not _cli_log.handlers:
-        _cli_log = logging.getLogger("pmriprep.workflows")
-    _sys_ram = _system_ram_gb()
-    for label, raw, capped in [("DSC", dsc_mem_raw, dsc_mem_gb), ("DCE", dce_mem_raw, dce_mem_gb)]:
-        if mem_limit_gb is not None and capped >= mem_limit_gb * 0.9:
-            _cli_log.warning(
-                "%s processing needs ~%.1f GB but --mem-gb is %.1f GB. "
-                "Consider setting --mem-gb to at least %.0f.",
-                label, raw, mem_limit_gb, raw + 1,
-            )
-        elif raw >= _sys_ram * 0.8:
-            _cli_log.warning(
-                "%s processing needs ~%.1f GB but system has %.1f GB RAM. "
-                "This dataset may require a machine with more memory.",
-                label, raw, _sys_ram,
-            )
-
-    # Decide which pipelines to run
-    decision = decide_pipelines(session_data, skip_flags, tumor_seg_config)
+    bids_dir = context.bids_dir
+    output_dir = context.output_dir
+    work_dir = context.work_dir
+    anat_config = context.anat_config
+    tumor_seg_config = context.tumor_seg_config
+    dsc_config = context.dsc_config
+    dce_config = context.dce_config
+    session_data = context.session_data
+    decision = context.decision
+    has_t1w_pre = context.has_t1w_pre
+    has_t1w_postcon = context.has_t1w_postcon
+    is_postcon_ref = context.is_postcon_ref
+    dsc_mem_gb = context.dsc_mem_gb
+    dce_mem_gb = context.dce_mem_gb
 
     # Create master workflow
     workflow = pe.Workflow(name=name)
