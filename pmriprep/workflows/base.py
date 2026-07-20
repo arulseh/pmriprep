@@ -1998,6 +1998,219 @@ def _connect_master_dsc_to_dce(
                 output_dir,
             )
 
+@dataclass(frozen=True)
+class _MasterDCEInitialization:
+    """DCE workflow and provenance produced during acquisition setup."""
+
+    workflow: pe.Workflow
+    provenance: dict[str, Any]
+
+
+def _init_master_dce_workflow(
+    *,
+    workflow: pe.Workflow,
+    inputnode: pe.Node,
+    session_data: SessionData,
+    dce_config: DCEConfig,
+    bids_dir: Path,
+    output_dir: Path,
+    subject_id: str,
+    session_id: Optional[str],
+    random_seed: Optional[int],
+    mem_gb: float,
+    mem_limit_gb: Optional[float],
+    user_specified: Optional[dict[str, bool]],
+) -> _MasterDCEInitialization:
+    """Initialize DCE and inject required acquisition and contrast metadata."""
+    from pmriprep.workflows.dce.base import init_dce_preproc_wf
+
+    _log = logging.getLogger("pmriprep.workflows")
+    # Auto-skip T1 mapping when no VFA data is available
+    if not session_data.modalities.vfa and not dce_config.no_t1:
+        _log.warning(
+            "No VFA data found for sub-%s ses-%s; "
+            "disabling T1 mapping (using field-strength default T1)",
+            subject_id, session_id,
+        )
+        dce_config.no_t1 = True
+        # Without VFA, AFI-based B1+ is unnecessary (no flip angles to correct).
+        # A pre-computed B1+ map still works — it directly corrects the flip angle.
+        if not session_data.modalities.b1_precomputed_file:
+            dce_config.b1_method = "none"
+
+    # Resolve b1_method="auto" to a concrete method based on available data
+    b1_method = dce_config.b1_method
+    if b1_method == "auto":
+        detected = session_data.modalities.b1_method_detected
+        if detected in ("afi", "precomputed"):
+            b1_method = detected  # type: ignore[assignment]
+        elif (
+            session_data.modalities.afi
+            and session_data.modalities.afi_mode == "4d"
+        ):
+            b1_method = "afi"
+        elif session_data.modalities.afi:
+            _log.warning(
+                "AFI files found for sub-%s ses-%s but no 4D TB1AFI "
+                "volume; skipping B1+ correction.",
+                subject_id, session_id,
+            )
+            b1_method = "none"
+        else:
+            _log.warning(
+                "No B1+ data (AFI or pre-computed map) found for sub-%s ses-%s; "
+                "skipping B1+ correction (using nominal flip angles)",
+                subject_id, session_id,
+            )
+            b1_method = "none"
+        dce_config.b1_method = b1_method
+
+    dce_wf = init_dce_preproc_wf(
+        bids_dir=bids_dir,
+        output_dir=output_dir,
+        subject_id=subject_id,
+        session_id=session_id,
+        config=dce_config,
+        has_tissue_seg=bool(session_data.modalities.t1w_pre),
+        random_seed=random_seed,
+        mem_gb=mem_gb,
+        mem_limit_gb=mem_limit_gb,
+        name="dce_wf",
+    )
+
+    # Connect DCE file from inputnode
+    workflow.connect([
+        (inputnode, dce_wf, [("dce_file", "inputnode.dce_file")]),
+    ])
+
+    # Read acquisition parameters from DCE BIDS sidecar JSON.
+    # All five fields are required: TE/pulse TR/FA feed the SPGR
+    # signal equation, volume TR sets the time vector for PK fitting,
+    # B0 selects field-dependent r1 and T1 references. Silent defaults
+    # would mis-quantify Ktrans/ve by orders of magnitude (volume_tr
+    # → pulse_tr fallback compresses the time axis ~1000×) or by
+    # 5-30% (B0 mismatch on relaxivity).
+    dce_provenance: dict[str, Any] = {}
+    if session_data.modalities.dce:
+        dce_sidecar = _read_bids_sidecar(session_data.modalities.dce)
+        missing = [
+            k
+            for k in (
+                "te", "pulse_tr", "volume_tr", "flip_angle", "field_strength"
+            )
+            if dce_sidecar[k] is None
+        ]
+        if missing:
+            bids_keys = {
+                "te": "EchoTime",
+                "pulse_tr": (
+                    "RepetitionTimeExcitation (or RepetitionTime for 2D)"
+                ),
+                "volume_tr": "RepetitionTime",
+                "flip_angle": "FlipAngle",
+                "field_strength": "MagneticFieldStrength",
+            }
+            raise ValueError(
+                f"DCE BIDS sidecar missing required fields: "
+                f"{[bids_keys[k] for k in missing]}. "
+                f"Source: {session_data.modalities.dce}"
+            )
+        dce_wf.inputs.inputnode.te = dce_sidecar["te"]
+        dce_wf.inputs.inputnode.tr = dce_sidecar["pulse_tr"]
+        dce_wf.inputs.inputnode.volume_tr = dce_sidecar["volume_tr"]
+        dce_wf.inputs.inputnode.flip_angle = dce_sidecar["flip_angle"]
+        dce_wf.inputs.inputnode.field_strength = dce_sidecar["field_strength"]
+        dce_wf.inputs.inputnode.mr_acquisition_type = (
+            dce_sidecar.get("mr_acquisition_type", "")
+        )
+
+        # Set r1 relaxivity — priority chain:
+        # 1. User-supplied override (dce_config.r1_relaxivity)
+        # 2. Agent-specific lookup from BIDS sidecar
+        # 3. Generic Gd-DTPA for known field strength
+        # 4. Hardcoded Gd-DTPA at 3T fallback (3.8 s^-1/mM)
+        from pmriprep.utils.contrast_agent import (
+            ParameterSource,
+            build_dce_provenance,
+        )
+
+        logger = logging.getLogger("pmriprep.workflows")
+        _resolved_r1: float = 3.8
+        _resolved_fs: float = (
+            dce_sidecar["field_strength"]
+            if dce_sidecar["field_strength"] is not None
+            else 3.0
+        )
+        _agent_source = ParameterSource.DEFAULT_FALLBACK
+        _agent_name: Optional[str] = None
+        _bids_agent_string: Optional[str] = None
+
+        if dce_config.r1_relaxivity is not None:
+            _resolved_r1 = dce_config.r1_relaxivity
+            _agent_source = ParameterSource.USER_OVERRIDE
+            dce_wf.inputs.inputnode.r1_relaxivity = dce_config.r1_relaxivity
+            logger.info(
+                f"Using user-supplied r1={dce_config.r1_relaxivity:.1f} "
+                f"s^-1/mM (overrides sidecar lookup)"
+            )
+        elif dce_sidecar["r1_relaxivity"] is not None:
+            _resolved_r1 = dce_sidecar["r1_relaxivity"]
+            _agent_source = ParameterSource.BIDS_SIDECAR
+            _agent_name = dce_sidecar.get("contrast_agent")
+            _bids_agent_string = dce_sidecar.get("bids_agent_string")
+            dce_wf.inputs.inputnode.r1_relaxivity = dce_sidecar["r1_relaxivity"]
+            logger.info(
+                f"Using r1={dce_sidecar['r1_relaxivity']:.1f} s^-1/mM "
+                f"for contrast agent: {dce_sidecar['contrast_agent']}"
+            )
+        elif dce_sidecar["field_strength"] is not None:
+            # Fallback to generic Gd-DTPA r1 for field strength
+            from pmriprep.utils.dce_constants import get_r1_relaxivity
+            fallback_r1 = get_r1_relaxivity(dce_sidecar["field_strength"])
+            _resolved_r1 = fallback_r1
+            dce_wf.inputs.inputnode.r1_relaxivity = fallback_r1
+            logger.warning(
+                "ContrastBolusAgent not found in BIDS JSON or unknown agent. "
+                f"Using default Gd-DTPA r1={fallback_r1:.1f} s^-1/mM "
+                f"at {dce_sidecar['field_strength']:.1f}T. "
+                "Provide ContrastBolusAgent in JSON sidecar for "
+                "agent-specific accuracy."
+            )
+        else:
+            # Default to 3T value
+            from pmriprep.utils.dce_constants import get_r1_relaxivity
+            _resolved_r1 = get_r1_relaxivity(3.0)
+            dce_wf.inputs.inputnode.r1_relaxivity = _resolved_r1
+            logger.warning(
+                "ContrastBolusAgent and field strength not found in BIDS JSON. "
+                "Using default Gd-DTPA r1=3.8 s^-1/mM at 3.0T. "
+                "Provide ContrastBolusAgent in JSON sidecar for "
+                "agent-specific accuracy."
+            )
+
+        # Set agent-specific standard dose (e.g. 0.05 for Vueway)
+        dce_wf.inputs.inputnode.agent_standard_dose = dce_sidecar["agent_standard_dose"]
+
+        # Build DCE provenance dict for output sidecars
+        _user_spec_dce = user_specified or {}
+        _dce_dose_source = (
+            ParameterSource.USER_SPECIFIED
+            if _user_spec_dce.get("dce_dose")
+            else ParameterSource.DEFAULT_FALLBACK
+        )
+        dce_provenance = build_dce_provenance(
+            contrast_agent=_agent_name,
+            agent_source=_agent_source,
+            r1_relaxivity=_resolved_r1,
+            field_strength=_resolved_fs,
+            dose_multiplier=dce_config.dose,
+            dose_source=_dce_dose_source,
+            agent_standard_dose=dce_sidecar["agent_standard_dose"],
+            bids_agent_string=_bids_agent_string,
+            scanner_metadata=dce_sidecar,
+        )
+    return _MasterDCEInitialization(workflow=dce_wf, provenance=dce_provenance)
+
 def _init_master_workflow_nodes(
     *,
     workflow: pe.Workflow,
@@ -2477,8 +2690,6 @@ def init_pmriprep_wf(
     for vp constraint (via US-063 QC check). This is handled by connecting
     DSC outputs to DCE inputs.
     """
-    from pmriprep.workflows.dce.base import init_dce_preproc_wf
-
     context = _prepare_master_workflow_context(
         bids_dir=bids_dir,
         output_dir=output_dir,
@@ -2688,190 +2899,22 @@ def init_pmriprep_wf(
 
         _log = _logging.getLogger("pmriprep.workflows")
 
-        # Auto-skip T1 mapping when no VFA data is available
-        if not session_data.modalities.vfa and not dce_config.no_t1:
-            _log.warning(
-                "No VFA data found for sub-%s ses-%s; "
-                "disabling T1 mapping (using field-strength default T1)",
-                subject_id, session_id,
-            )
-            dce_config.no_t1 = True
-            # Without VFA, AFI-based B1+ is unnecessary (no flip angles to correct).
-            # A pre-computed B1+ map still works — it directly corrects the flip angle.
-            if not session_data.modalities.b1_precomputed_file:
-                dce_config.b1_method = "none"
-
-        # Resolve b1_method="auto" to a concrete method based on available data
-        b1_method = dce_config.b1_method
-        if b1_method == "auto":
-            detected = session_data.modalities.b1_method_detected
-            if detected in ("afi", "precomputed"):
-                b1_method = detected  # type: ignore[assignment]
-            elif (
-                session_data.modalities.afi
-                and session_data.modalities.afi_mode == "4d"
-            ):
-                b1_method = "afi"
-            elif session_data.modalities.afi:
-                _log.warning(
-                    "AFI files found for sub-%s ses-%s but no 4D TB1AFI "
-                    "volume; skipping B1+ correction.",
-                    subject_id, session_id,
-                )
-                b1_method = "none"
-            else:
-                _log.warning(
-                    "No B1+ data (AFI or pre-computed map) found for sub-%s ses-%s; "
-                    "skipping B1+ correction (using nominal flip angles)",
-                    subject_id, session_id,
-                )
-                b1_method = "none"
-            dce_config.b1_method = b1_method
-
-        dce_wf = init_dce_preproc_wf(
+        dce_initialization = _init_master_dce_workflow(
+            workflow=workflow,
+            inputnode=inputnode,
+            session_data=session_data,
+            dce_config=dce_config,
             bids_dir=bids_dir,
             output_dir=output_dir,
             subject_id=subject_id,
             session_id=session_id,
-            config=dce_config,
-            has_tissue_seg=bool(session_data.modalities.t1w_pre),
             random_seed=random_seed,
             mem_gb=dce_mem_gb,
             mem_limit_gb=mem_limit_gb,
-            name="dce_wf",
+            user_specified=user_specified,
         )
-
-        # Connect DCE file from inputnode
-        workflow.connect([
-            (inputnode, dce_wf, [("dce_file", "inputnode.dce_file")]),
-        ])
-
-        # Read acquisition parameters from DCE BIDS sidecar JSON.
-        # All five fields are required: TE/pulse TR/FA feed the SPGR
-        # signal equation, volume TR sets the time vector for PK fitting,
-        # B0 selects field-dependent r1 and T1 references. Silent defaults
-        # would mis-quantify Ktrans/ve by orders of magnitude (volume_tr
-        # → pulse_tr fallback compresses the time axis ~1000×) or by
-        # 5-30% (B0 mismatch on relaxivity).
-        dce_provenance: dict[str, Any] = {}
-        if session_data.modalities.dce:
-            dce_sidecar = _read_bids_sidecar(session_data.modalities.dce)
-            missing = [
-                k
-                for k in (
-                    "te", "pulse_tr", "volume_tr", "flip_angle", "field_strength"
-                )
-                if dce_sidecar[k] is None
-            ]
-            if missing:
-                bids_keys = {
-                    "te": "EchoTime",
-                    "pulse_tr": (
-                        "RepetitionTimeExcitation (or RepetitionTime for 2D)"
-                    ),
-                    "volume_tr": "RepetitionTime",
-                    "flip_angle": "FlipAngle",
-                    "field_strength": "MagneticFieldStrength",
-                }
-                raise ValueError(
-                    f"DCE BIDS sidecar missing required fields: "
-                    f"{[bids_keys[k] for k in missing]}. "
-                    f"Source: {session_data.modalities.dce}"
-                )
-            dce_wf.inputs.inputnode.te = dce_sidecar["te"]
-            dce_wf.inputs.inputnode.tr = dce_sidecar["pulse_tr"]
-            dce_wf.inputs.inputnode.volume_tr = dce_sidecar["volume_tr"]
-            dce_wf.inputs.inputnode.flip_angle = dce_sidecar["flip_angle"]
-            dce_wf.inputs.inputnode.field_strength = dce_sidecar["field_strength"]
-            dce_wf.inputs.inputnode.mr_acquisition_type = (
-                dce_sidecar.get("mr_acquisition_type", "")
-            )
-
-            # Set r1 relaxivity — priority chain:
-            # 1. User-supplied override (dce_config.r1_relaxivity)
-            # 2. Agent-specific lookup from BIDS sidecar
-            # 3. Generic Gd-DTPA for known field strength
-            # 4. Hardcoded Gd-DTPA at 3T fallback (3.8 s^-1/mM)
-            from pmriprep.utils.contrast_agent import (
-                ParameterSource,
-                build_dce_provenance,
-            )
-
-            logger = logging.getLogger("pmriprep.workflows")
-            _resolved_r1: float = 3.8
-            _resolved_fs: float = (
-                dce_sidecar["field_strength"]
-                if dce_sidecar["field_strength"] is not None
-                else 3.0
-            )
-            _agent_source = ParameterSource.DEFAULT_FALLBACK
-            _agent_name: Optional[str] = None
-            _bids_agent_string: Optional[str] = None
-
-            if dce_config.r1_relaxivity is not None:
-                _resolved_r1 = dce_config.r1_relaxivity
-                _agent_source = ParameterSource.USER_OVERRIDE
-                dce_wf.inputs.inputnode.r1_relaxivity = dce_config.r1_relaxivity
-                logger.info(
-                    f"Using user-supplied r1={dce_config.r1_relaxivity:.1f} "
-                    f"s^-1/mM (overrides sidecar lookup)"
-                )
-            elif dce_sidecar["r1_relaxivity"] is not None:
-                _resolved_r1 = dce_sidecar["r1_relaxivity"]
-                _agent_source = ParameterSource.BIDS_SIDECAR
-                _agent_name = dce_sidecar.get("contrast_agent")
-                _bids_agent_string = dce_sidecar.get("bids_agent_string")
-                dce_wf.inputs.inputnode.r1_relaxivity = dce_sidecar["r1_relaxivity"]
-                logger.info(
-                    f"Using r1={dce_sidecar['r1_relaxivity']:.1f} s^-1/mM "
-                    f"for contrast agent: {dce_sidecar['contrast_agent']}"
-                )
-            elif dce_sidecar["field_strength"] is not None:
-                # Fallback to generic Gd-DTPA r1 for field strength
-                from pmriprep.utils.dce_constants import get_r1_relaxivity
-                fallback_r1 = get_r1_relaxivity(dce_sidecar["field_strength"])
-                _resolved_r1 = fallback_r1
-                dce_wf.inputs.inputnode.r1_relaxivity = fallback_r1
-                logger.warning(
-                    "ContrastBolusAgent not found in BIDS JSON or unknown agent. "
-                    f"Using default Gd-DTPA r1={fallback_r1:.1f} s^-1/mM "
-                    f"at {dce_sidecar['field_strength']:.1f}T. "
-                    "Provide ContrastBolusAgent in JSON sidecar for "
-                    "agent-specific accuracy."
-                )
-            else:
-                # Default to 3T value
-                from pmriprep.utils.dce_constants import get_r1_relaxivity
-                _resolved_r1 = get_r1_relaxivity(3.0)
-                dce_wf.inputs.inputnode.r1_relaxivity = _resolved_r1
-                logger.warning(
-                    "ContrastBolusAgent and field strength not found in BIDS JSON. "
-                    "Using default Gd-DTPA r1=3.8 s^-1/mM at 3.0T. "
-                    "Provide ContrastBolusAgent in JSON sidecar for "
-                    "agent-specific accuracy."
-                )
-
-            # Set agent-specific standard dose (e.g. 0.05 for Vueway)
-            dce_wf.inputs.inputnode.agent_standard_dose = dce_sidecar["agent_standard_dose"]
-
-            # Build DCE provenance dict for output sidecars
-            _user_spec_dce = user_specified or {}
-            _dce_dose_source = (
-                ParameterSource.USER_SPECIFIED
-                if _user_spec_dce.get("dce_dose")
-                else ParameterSource.DEFAULT_FALLBACK
-            )
-            dce_provenance = build_dce_provenance(
-                contrast_agent=_agent_name,
-                agent_source=_agent_source,
-                r1_relaxivity=_resolved_r1,
-                field_strength=_resolved_fs,
-                dose_multiplier=dce_config.dose,
-                dose_source=_dce_dose_source,
-                agent_standard_dose=dce_sidecar["agent_standard_dose"],
-                bids_agent_string=_bids_agent_string,
-                scanner_metadata=dce_sidecar,
-            )
+        dce_wf = dce_initialization.workflow
+        dce_provenance = dce_initialization.provenance
 
         # Determine DCE structural reference from confidence-scored selection
         dce_ref_output = "outputnode.t1w_preproc"  # default
