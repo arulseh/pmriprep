@@ -129,9 +129,10 @@ _OPTIONAL_MAPS: tuple[DSCMapSpec, ...] = (
          ),
          "Estimator": (
              "per-voxel gamma-variate fit to the first pass (decoupled "
-             "log-linear form, y-squared weighted); CBV is the analytic gamma "
-             "area, so recirculation and washout are excluded. A light fixed-FWHM "
-             "spatial pre-smoothing raises the per-voxel fit CNR"
+             "log-linear form, y-squared weighted, with onset profiling and "
+             "first-credible-peak selection); CBV is the analytic gamma area, "
+             "so recirculation and washout are excluded. A light mask-normalized "
+             "fixed-FWHM spatial pre-smoothing raises the per-voxel fit CNR"
          ),
          "UnfittableVoxels": (
              "voxels whose gamma fit is rejected are left NaN, not filled by a "

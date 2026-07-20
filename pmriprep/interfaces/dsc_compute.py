@@ -2045,6 +2045,7 @@ class ComputeDSCMaps(BaseInterface):
         self,
         fp_area: npt.NDArray[Any],
         mask_bool: npt.NDArray[Any],
+        affine: npt.NDArray[Any],
     ) -> "tuple[float, int] | None":
         """Median first-pass area over the eroded whole-WM (FAST) reference.
 
@@ -2073,10 +2074,13 @@ class ComputeDSCMaps(BaseInterface):
             or not Path(str(wm)).exists()
         ):
             return None
-        wm_mask = nib.load(str(wm)).get_fdata() > 0  # type: ignore[attr-defined]
+        wm_img = nib.load(str(wm))
+        wm_mask = wm_img.get_fdata() > 0  # type: ignore[attr-defined]
         # An off-grid WM mask (e.g. a partial-FOV reference) would raise on the
         # boolean AND; a mismatched reference is not usable, so reject it.
-        if wm_mask.shape != mask_bool.shape:
+        if wm_mask.shape != mask_bool.shape or not np.allclose(
+            wm_img.affine, affine, rtol=0.0, atol=1e-3  # type: ignore[attr-defined]
+        ):
             return None
         wm_vals = fp_area[wm_mask & mask_bool]
         wm_vals = wm_vals[np.isfinite(wm_vals)]
@@ -2143,9 +2147,21 @@ class ComputeDSCMaps(BaseInterface):
         # Sanitize before smoothing: gaussian_filter would otherwise spread a
         # single non-finite voxel across a ~sigma neighbourhood (a hole in the
         # map). The fit's own nan_to_num runs too late to prevent that.
-        smoothed = gaussian_filter(
-            np.nan_to_num(raw_conc_data, nan=0.0, posinf=0.0, neginf=0.0),
+        finite_concentration = np.nan_to_num(
+            raw_conc_data, nan=0.0, posinf=0.0, neginf=0.0
+        )
+        mask_float = mask_bool.astype(np.float64)
+        smooth_denominator = gaussian_filter(mask_float, sigma=sigma_vox)
+        smooth_numerator = gaussian_filter(
+            finite_concentration * mask_float[..., None],
             sigma=(sigma_vox[0], sigma_vox[1], sigma_vox[2], 0.0),
+        )
+        smoothed = np.zeros_like(smooth_numerator)
+        np.divide(
+            smooth_numerator,
+            smooth_denominator[..., None],
+            out=smoothed,
+            where=smooth_denominator[..., None] > 1e-6,
         )
 
         fp_res = batched_gamma_firstpass_auc(
@@ -2154,7 +2170,7 @@ class ComputeDSCMaps(BaseInterface):
         fp_area = np.full(spatial_shape, np.nan, dtype=np.float64)
         fp_area[mask_bool] = fp_res.auc  # NaN on unfittable voxels
 
-        reference = self._first_pass_reference(fp_area, mask_bool)
+        reference = self._first_pass_reference(fp_area, mask_bool, affine)
         if reference is None:
             qc_metrics["firstpass_reference"] = "unavailable-wm-reference-rejected"
             logger.warning(

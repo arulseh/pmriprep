@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+from scipy.special import gamma as gamma_function
 
 from pmriprep.utils.dsc_aif import batched_gamma_firstpass_auc
 
@@ -31,6 +32,57 @@ def test_clean_gamma_fits_and_is_positive():
     assert res.n_fit == 1
     assert res.unfittable_fraction == 0.0
     assert np.isfinite(res.auc[0]) and res.auc[0] > 0.0
+
+
+def test_clean_gamma_recovers_analytic_area():
+    """A noiseless accepted fit must recover truth, not merely be positive."""
+    t = np.arange(80, dtype=np.float64)
+    amplitude, t0, alpha, beta, tr = 2.0, 8.0, 3.0, 4.0, 1.5
+    curve = _gamma(t, amplitude, t0, alpha, beta)
+    truth = amplitude * beta ** (alpha + 1.0) * gamma_function(alpha + 1.0) * tr
+
+    res = batched_gamma_firstpass_auc(curve[None, :], tr=tr, baseline_frames=5)
+
+    assert res.n_fit == 1
+    assert res.auc[0] == pytest.approx(truth, rel=0.02)
+    assert res.t0[0] == pytest.approx(t0, abs=0.5)
+
+
+def test_relative_area_survives_different_bolus_shapes():
+    """Tissue/WM normalization must not acquire a shape-dependent bias."""
+    t = np.arange(100, dtype=np.float64)
+    wm = _gamma(t, 2.0, 8.0, 3.0, 2.0)
+    delayed = _gamma(t, 0.5, 11.0, 5.0, 2.5)
+    truth_wm = 2.0 * 2.0**4 * gamma_function(4.0)
+    truth_delayed = 0.5 * 2.5**6 * gamma_function(6.0)
+
+    res = batched_gamma_firstpass_auc(
+        np.stack([wm, delayed]), tr=1.0, baseline_frames=5
+    )
+
+    assert res.n_fit == 2
+    assert res.auc[1] / res.auc[0] == pytest.approx(
+        truth_delayed / truth_wm, rel=0.08
+    )
+
+
+def test_larger_recirculation_peak_does_not_replace_first_pass():
+    """A later, larger recirculation lobe must not define the fitted peak."""
+    t = np.arange(80, dtype=np.float64)
+    first = _gamma(t, 2.0, 8.0, 3.0, 2.0)
+    recirculation_unit = _gamma(t, 1.0, 35.0, 3.0, 2.0)
+    recirculation = recirculation_unit * (
+        1.5 * float(first.max()) / float(recirculation_unit.max())
+    )
+    truth = 2.0 * 2.0**4 * gamma_function(4.0)
+
+    res = batched_gamma_firstpass_auc(
+        (first + recirculation)[None, :], tr=1.0, baseline_frames=5
+    )
+
+    assert res.n_fit == 1
+    assert res.auc[0] == pytest.approx(truth, rel=0.02)
+    assert res.t0[0] == pytest.approx(8.0, abs=0.5)
 
 
 def test_area_scales_with_amplitude():
@@ -104,3 +156,19 @@ def test_nan_inf_do_not_crash_or_propagate():
     res = batched_gamma_firstpass_auc(curve[None, :], tr=1.0, baseline_frames=5)
     # No inf/garbage: the voxel either fits (finite) or is cleanly rejected (NaN).
     assert np.isfinite(res.auc[0]) or np.isnan(res.auc[0])
+
+
+def test_chunking_preserves_results(monkeypatch):
+    """Memory-bounded chunk assembly is numerically transparent."""
+    import pmriprep.utils.dsc_aif as dsc_aif
+
+    t = np.arange(80, dtype=np.float64)
+    curves = np.stack([_gamma(t, 1.0 + i, 8.0, 3.0, 2.0) for i in range(5)])
+    unchunked = batched_gamma_firstpass_auc(curves, tr=1.0, baseline_frames=5)
+    monkeypatch.setattr(dsc_aif, "FIRSTPASS_FIT_CHUNK_SIZE", 2)
+
+    chunked = batched_gamma_firstpass_auc(curves, tr=1.0, baseline_frames=5)
+
+    assert np.allclose(chunked.auc, unchunked.auc, equal_nan=True)
+    assert chunked.n_fit == unchunked.n_fit
+    assert chunked.n_unfittable == unchunked.n_unfittable
