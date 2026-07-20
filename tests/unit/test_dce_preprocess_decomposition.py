@@ -5,6 +5,7 @@ from typing import Any
 
 import nibabel as nib
 import numpy as np
+import pytest
 
 from pmriprep.interfaces.dce import DCEPreprocess
 
@@ -89,3 +90,80 @@ def test_prepare_preprocess_inputs_preserves_auto_baseline_and_mask_fallback(
         "method": "auto",
         "confidence": "medium",
     }
+
+
+@pytest.mark.parametrize(
+    "ref_vol,interpolation,reference_args,interpolation_arg",
+    [
+        ("mean", "trilinear", ["-meanvol"], None),
+        ("first", "sinc", ["-refvol", "0"], "-sinc_final"),
+        (4, "spline", ["-refvol", "4"], "-spline_final"),
+    ],
+)
+def test_prepare_mcflirt_plan_preserves_reference_and_interpolation_flags(
+    tmp_path: Path,
+    monkeypatch: Any,
+    ref_vol: str | int,
+    interpolation: str,
+    reference_args: list[str],
+    interpolation_arg: str | None,
+) -> None:
+    """Reference modes and final interpolation map to the same CLI flags."""
+    dce_file = tmp_path / "dce.nii.gz"
+    _write_dce(dce_file)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        DCEPreprocess,
+        "_detect_bolus_arrival",
+        lambda self, data, mask: (5, {"confidence": "high"}),
+    )
+    interface = DCEPreprocess(
+        in_file=str(dce_file),
+        baseline_frames=3,
+        ref_vol=ref_vol,
+        interpolation=interpolation,
+        cost="normmi",
+    )
+
+    plan = interface._prepare_mcflirt_plan(interface._prepare_preprocess_inputs())
+    command = list(plan.command)
+
+    assert command[:7] == [
+        "mcflirt", "-in", str(dce_file), "-out", plan.out_base, "-plots", "-stats"
+    ]
+    assert "-mats" in command
+    assert command[command.index("-cost") + 1] == "normmi"
+    start = command.index(reference_args[0])
+    assert command[start:start + len(reference_args)] == reference_args
+    assert command[-2:] == ["-stages", "4"]
+    if interpolation_arg is None:
+        assert "-sinc_final" not in command
+        assert "-spline_final" not in command
+    else:
+        assert interpolation_arg in command
+    assert plan.reference_file is None
+
+
+def test_prepare_mcflirt_plan_writes_baseline_mean_reference(
+    tmp_path: Path, monkeypatch: Any,
+) -> None:
+    """Baseline-mean mode writes the characterized float32 reference volume."""
+    dce_file = tmp_path / "dce.nii.gz"
+    _write_dce(dce_file)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        DCEPreprocess,
+        "_detect_bolus_arrival",
+        lambda self, data, mask: (5, {"confidence": "high"}),
+    )
+    interface = DCEPreprocess(in_file=str(dce_file), baseline_frames=3)
+    prepared = interface._prepare_preprocess_inputs()
+
+    plan = interface._prepare_mcflirt_plan(prepared)
+
+    assert plan.reference_file == str(tmp_path / "_tmp_baseline_mean.nii.gz")
+    assert list(plan.command)[-2:] == ["-stages", "4"]
+    ref_index = plan.command.index("-reffile")
+    assert plan.command[ref_index + 1] == plan.reference_file
+    reference = nib.load(plan.reference_file).get_fdata()
+    assert np.allclose(reference, prepared.data[..., :3].mean(axis=3))

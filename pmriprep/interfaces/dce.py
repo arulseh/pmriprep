@@ -2752,6 +2752,15 @@ class _DCEPreprocessPreparation:
     baseline_diagnostics: dict[str, Any]
 
 
+@dataclass(frozen=True)
+class _DCEMCFLIRTPlan:
+    """Resolved MCFLIRT reference, output base, and command."""
+
+    out_base: str
+    reference_file: Optional[str]
+    command: tuple[str, ...]
+
+
 class DCEPreprocess(SimpleInterface):
     """DCE preprocessing with motion correction and baseline detection.
 
@@ -2915,35 +2924,38 @@ class DCEPreprocess(SimpleInterface):
             baseline_diagnostics=baseline_diag,
         )
 
-    def _run_interface(self, runtime: Any) -> Any:
-        """Execute DCE preprocessing."""
-        import subprocess
-        import nibabel as nib  # type: ignore[import-untyped]
+    def _prepare_mcflirt_plan(
+        self, preparation: _DCEPreprocessPreparation
+    ) -> _DCEMCFLIRTPlan:
+        """Create the existing MCFLIRT reference and command plan.
 
-        preparation = self._prepare_preprocess_inputs()
-        in_file = preparation.in_file
-        out_file = preparation.out_file
-        dce_data = preparation.data
-        affine = preparation.affine
-        header = preparation.header
-        n_volumes = preparation.n_volumes
-        baseline_frames = preparation.baseline_frames
-        baseline_indices = list(preparation.baseline_indices)
-        bolus_frame = preparation.bolus_frame
-        baseline_diag = preparation.baseline_diagnostics
+        Parameters
+        ----------
+        preparation : _DCEPreprocessPreparation
+            Loaded DCE image and resolved baseline state.
 
-        # Determine reference volume for motion correction
+        Returns
+        -------
+        _DCEMCFLIRTPlan
+            Output base, optional temporary reference, and command arguments.
+        """
         ref_vol = self.inputs.ref_vol
         ref_vol_index: Optional[int] = None
-
         if ref_vol == "baseline_mean":
-            # Create mean of baseline frames as reference
-            baseline_data = np.mean(dce_data[..., :baseline_frames], axis=3)
-            ref_file = str(Path(out_file).parent / "_tmp_baseline_mean.nii.gz")
-            ref_img = nib.Nifti1Image(baseline_data.astype(np.float32), affine, header)
+            baseline_data = np.mean(
+                preparation.data[..., :preparation.baseline_frames], axis=3
+            )
+            ref_file = str(
+                Path(preparation.out_file).parent / "_tmp_baseline_mean.nii.gz"
+            )
+            ref_img = nib.Nifti1Image(
+                baseline_data.astype(np.float32),
+                preparation.affine,
+                preparation.header,
+            )
             nib.save(ref_img, ref_file)
         elif ref_vol == "mean":
-            ref_file = None  # mcflirt will compute mean
+            ref_file = None
         elif ref_vol == "first":
             ref_vol_index = 0
             ref_file = None
@@ -2953,9 +2965,7 @@ class DCEPreprocess(SimpleInterface):
         else:
             ref_file = None
 
-        # Build mcflirt command
-        # Remove extension for mcflirt output basename
-        out_path = Path(out_file)
+        out_path = Path(preparation.out_file)
         if out_path.name.endswith(".nii.gz"):
             out_base = str(out_path)[:-7]
         elif out_path.name.endswith(".nii"):
@@ -2963,46 +2973,56 @@ class DCEPreprocess(SimpleInterface):
         else:
             out_base = str(out_path)
 
-        cmd_parts: list[str] = [
+        command = [
             "mcflirt",
-            "-in", in_file,
+            "-in", preparation.in_file,
             "-out", out_base,
-            "-plots",  # Output motion parameters
-            "-stats",  # Output mean volume
-            "-mats",  # Output transformation matrices
+            "-plots",
+            "-stats",
+            "-mats",
         ]
-
-        # Reference volume
         if ref_vol == "baseline_mean" and ref_file:
-            cmd_parts.extend(["-reffile", ref_file])
+            command.extend(["-reffile", ref_file])
         elif ref_vol == "mean":
-            cmd_parts.append("-meanvol")
+            command.append("-meanvol")
         elif ref_vol_index is not None:
-            cmd_parts.extend(["-refvol", str(ref_vol_index)])
+            command.extend(["-refvol", str(ref_vol_index)])
 
-        # Cost function
-        cmd_parts.extend(["-cost", self.inputs.cost])
+        command.extend(["-cost", self.inputs.cost])
+        if self.inputs.interpolation == "sinc":
+            command.append("-sinc_final")
+        elif self.inputs.interpolation == "spline":
+            command.append("-spline_final")
+        command.extend(["-stages", "4"])
+        return _DCEMCFLIRTPlan(out_base, ref_file, tuple(command))
 
-        # Interpolation
-        interp = self.inputs.interpolation
-        if interp == "sinc":
-            cmd_parts.append("-sinc_final")
-        elif interp == "spline":
-            cmd_parts.append("-spline_final")
+    def _run_interface(self, runtime: Any) -> Any:
+        """Execute DCE preprocessing."""
+        import subprocess
+        import nibabel as nib  # type: ignore[import-untyped]
 
-        # Stages (default 4)
-        cmd_parts.extend(["-stages", "4"])
+        preparation = self._prepare_preprocess_inputs()
+        in_file = preparation.in_file
+        out_file = preparation.out_file
+        n_volumes = preparation.n_volumes
+        baseline_frames = preparation.baseline_frames
+        baseline_indices = list(preparation.baseline_indices)
+        bolus_frame = preparation.bolus_frame
+        baseline_diag = preparation.baseline_diagnostics
+
+        mcflirt_plan = self._prepare_mcflirt_plan(preparation)
+        out_base = mcflirt_plan.out_base
 
         # Run mcflirt
-        result = subprocess.run(cmd_parts, capture_output=True, text=True)
+        result = subprocess.run(mcflirt_plan.command, capture_output=True, text=True)
 
         if result.returncode != 0:
             raise RuntimeError(f"mcflirt failed: {result.stderr}")
 
         # Clean up temp reference file
-        if ref_vol == "baseline_mean" and ref_file:
+        if self.inputs.ref_vol == "baseline_mean" and mcflirt_plan.reference_file:
             try:
-                Path(ref_file).unlink()
+                Path(mcflirt_plan.reference_file).unlink()
             except Exception:
                 pass
 
@@ -3051,7 +3071,7 @@ class DCEPreprocess(SimpleInterface):
                 "baseline_detection_confidence": baseline_diag.get(
                     "confidence", "unknown"
                 ),
-                "reference_type": str(ref_vol),
+                "reference_type": str(self.inputs.ref_vol),
                 "motion_applied": bool(self.inputs.apply_motion_correction),
             }
             if baseline_diag.get("confidence", "high") != "high":
