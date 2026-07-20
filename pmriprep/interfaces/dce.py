@@ -2773,6 +2773,16 @@ class _DCEMotionQC:
     metrics: dict[str, Any]
 
 
+@dataclass(frozen=True)
+class _DCEPreprocessOutputs:
+    """Serialized DCE preprocessing output paths."""
+
+    out_file: str
+    params_file: str
+    mean_file: str
+    baseline_mean_file: str
+
+
 class DCEPreprocess(SimpleInterface):
     """DCE preprocessing with motion correction and baseline detection.
 
@@ -3086,17 +3096,95 @@ class DCEPreprocess(SimpleInterface):
         except Exception:
             return _DCEMotionQC((), 0.0, 0.0, 0, (), {})
 
+    def _write_preprocess_outputs(
+        self,
+        preparation: _DCEPreprocessPreparation,
+        mcflirt_plan: _DCEMCFLIRTPlan,
+        params_file: str,
+    ) -> _DCEPreprocessOutputs:
+        """Select the processed series and write whole/baseline means.
+
+        Parameters
+        ----------
+        preparation : _DCEPreprocessPreparation
+            Input path and resolved baseline state.
+        mcflirt_plan : _DCEMCFLIRTPlan
+            Output base locating the realigned MCFLIRT series.
+        params_file : str
+            Motion-parameter output returned with the serialized products.
+
+        Returns
+        -------
+        _DCEPreprocessOutputs
+            Paths for the selected series, motion parameters, and mean images.
+        """
+        moco_path = f"{mcflirt_plan.out_base}.nii.gz"
+        if not Path(moco_path).exists():
+            raise FileNotFoundError(
+                f"Motion-corrected output not found: {moco_path}"
+            )
+
+        if bool(self.inputs.apply_motion_correction):
+            series_path = moco_path
+        else:
+            shutil.copyfile(preparation.in_file, preparation.out_file)
+            series_path = preparation.in_file
+
+        series_img = nib.load(series_path)
+        series_data = series_img.get_fdata()  # type: ignore[attr-defined]
+        mean_out = self._gen_mean_filename()
+        mean_data = np.mean(series_data, axis=3).astype(np.float32)
+        mean_nii = nib.Nifti1Image(
+            mean_data,
+            series_img.affine,  # type: ignore[attr-defined]
+            series_img.header,  # type: ignore[attr-defined]
+        )
+        nib.save(mean_nii, mean_out)
+        if not Path(mean_out).exists():
+            raise FileNotFoundError(f"Failed to create mean image at: {mean_out}")
+
+        baseline_mean_out = self._gen_baseline_mean_filename()
+        baseline_data = np.mean(
+            series_data[..., :preparation.baseline_frames], axis=3
+        )
+        baseline_nii = nib.Nifti1Image(
+            baseline_data.astype(np.float32),
+            series_img.affine,  # type: ignore[attr-defined]
+            series_img.header,  # type: ignore[attr-defined]
+        )
+        nib.save(baseline_nii, baseline_mean_out)
+        return _DCEPreprocessOutputs(
+            preparation.out_file,
+            params_file,
+            mean_out,
+            baseline_mean_out,
+        )
+
+    def _assemble_preprocess_results(
+        self,
+        preparation: _DCEPreprocessPreparation,
+        motion_qc: _DCEMotionQC,
+        outputs: _DCEPreprocessOutputs,
+    ) -> None:
+        """Populate the Nipype result contract from typed preprocessing state."""
+        self._results["fd"] = list(motion_qc.fd)
+        self._results["fd_mean"] = motion_qc.fd_mean
+        self._results["fd_max"] = motion_qc.fd_max
+        self._results["n_outliers"] = motion_qc.n_outliers
+        self._results["outlier_frames"] = list(motion_qc.outlier_frames)
+        self._results["out_file"] = outputs.out_file
+        self._results["out_params"] = outputs.params_file
+        self._results["mean_img"] = outputs.mean_file
+        self._results["baseline_mean_img"] = outputs.baseline_mean_file
+        self._results["baseline_frames"] = preparation.baseline_frames
+        self._results["baseline_indices"] = list(preparation.baseline_indices)
+        self._results["bolus_arrival_frame"] = preparation.bolus_frame
+        self._results["qc_metrics"] = motion_qc.metrics
+
     def _run_interface(self, runtime: Any) -> Any:
         """Execute DCE preprocessing."""
         import subprocess
-        import nibabel as nib  # type: ignore[import-untyped]
-
         preparation = self._prepare_preprocess_inputs()
-        in_file = preparation.in_file
-        out_file = preparation.out_file
-        baseline_frames = preparation.baseline_frames
-        baseline_indices = list(preparation.baseline_indices)
-        bolus_frame = preparation.bolus_frame
 
         mcflirt_plan = self._prepare_mcflirt_plan(preparation)
         out_base = mcflirt_plan.out_base
@@ -3116,75 +3204,10 @@ class DCEPreprocess(SimpleInterface):
 
         params_file = f"{out_base}.par"
         motion_qc = self._summarize_motion_qc(params_file, preparation)
-        qc_metrics = motion_qc.metrics
-        self._results["fd"] = list(motion_qc.fd)
-        self._results["fd_mean"] = motion_qc.fd_mean
-        self._results["fd_max"] = motion_qc.fd_max
-        self._results["n_outliers"] = motion_qc.n_outliers
-        self._results["outlier_frames"] = list(motion_qc.outlier_frames)
-
-        # Select the series to process. mcflirt always ran above (so residual
-        # motion is reported for QC), and it wrote the realigned series to
-        # moco_path == out_file. When motion correction is disabled the input is
-        # assumed already corrected: overwrite out_file with the (reoriented)
-        # input and derive every mean from that same series, so downstream
-        # processing and the registration reference share one interpolation-free
-        # grid instead of a second re-resampling.
-        mean_out = self._gen_mean_filename()
-        moco_path = f"{out_base}.nii.gz"
-
-        if not Path(moco_path).exists():
-            raise FileNotFoundError(
-                f"Motion-corrected output not found: {moco_path}"
-            )
-
-        if bool(self.inputs.apply_motion_correction):
-            series_path = moco_path
-        else:
-            import shutil
-
-            shutil.copyfile(in_file, out_file)
-            series_path = in_file
-
-        # Compute means from the 4D series rather than relying on mcflirt's
-        # _meanvol.nii.gz, which is an undocumented side effect of -stats and
-        # may not be produced in all configurations.
-        series_img = nib.load(series_path)
-        series_data = series_img.get_fdata()  # type: ignore[attr-defined]
-        mean_data = np.mean(series_data, axis=3).astype(np.float32)
-        mean_nii = nib.Nifti1Image(
-            mean_data,
-            series_img.affine,  # type: ignore[attr-defined]
-            series_img.header,  # type: ignore[attr-defined]
+        outputs = self._write_preprocess_outputs(
+            preparation, mcflirt_plan, params_file
         )
-        nib.save(mean_nii, mean_out)
-
-        if not Path(mean_out).exists():
-            raise FileNotFoundError(
-                f"Failed to create mean image at: {mean_out}"
-            )
-
-        # Save baseline mean for downstream use (HD-BET input)
-        # Using pre-contrast baseline mean avoids contrast-enhanced vessels
-        # inflating the brain mask
-        baseline_mean_out = self._gen_baseline_mean_filename()
-        baseline_data = np.mean(series_data[..., :baseline_frames], axis=3)
-        baseline_nii = nib.Nifti1Image(
-            baseline_data.astype(np.float32),
-            series_img.affine,  # type: ignore[attr-defined]
-            series_img.header,  # type: ignore[attr-defined]
-        )
-        nib.save(baseline_nii, baseline_mean_out)
-
-        # Set outputs
-        self._results["out_file"] = out_file
-        self._results["out_params"] = params_file
-        self._results["mean_img"] = mean_out
-        self._results["baseline_mean_img"] = baseline_mean_out
-        self._results["baseline_frames"] = baseline_frames
-        self._results["baseline_indices"] = baseline_indices
-        self._results["bolus_arrival_frame"] = bolus_frame
-        self._results["qc_metrics"] = qc_metrics
+        self._assemble_preprocess_results(preparation, motion_qc, outputs)
 
         return runtime
 
