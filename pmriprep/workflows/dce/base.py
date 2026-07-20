@@ -945,6 +945,47 @@ def init_dce_registration_wf(
     return workflow
 
 
+def init_dce_atlas_transform_wf(
+    *, name: str = "dce_atlas_transform_wf",
+) -> pe.Workflow:
+    """Build the ordered arterial-atlas cascade transform into DCE space."""
+    workflow = pe.Workflow(name=name)
+    inputnode = pe.Node(
+        niu.IdentityInterface(fields=[
+            "t1w_to_mni_xfm", "t1w_to_dce_xfm", "reference_file",
+        ]),
+        name="inputnode",
+    )
+    outputnode = pe.Node(niu.IdentityInterface(fields=["out_files"]), name="outputnode")
+    transform = pe.Node(
+        niu.Function(
+            input_names=[
+                "atlas_files", "t1w_to_mni_xfm", "t1w_to_dce_xfm", "reference_file",
+            ],
+            output_names=["out_files"],
+            function=_transform_atlas_cascade_to_dce,
+        ),
+        name="transform_atlas_cascade",
+    )
+    atlas_cascade = get_arterial_atlas_cascade("2mm")
+    if atlas_cascade:
+        transform.inputs.atlas_files = [str(path) for path in atlas_cascade]
+    else:
+        import logging as _logging
+        _logging.getLogger("pmriprep.workflows.dce").warning(
+            "No arterial atlases found. AIF detection will use whole-brain search."
+        )
+    workflow.connect([
+        (inputnode, transform, [
+            ("t1w_to_mni_xfm", "t1w_to_mni_xfm"),
+            ("t1w_to_dce_xfm", "t1w_to_dce_xfm"),
+            ("reference_file", "reference_file"),
+        ]),
+        (transform, outputnode, [("out_files", "out_files")]),
+    ])
+    return workflow
+
+
 def init_dce_preproc_wf(
     bids_dir: Union[str, Path],
     output_dir: Union[str, Path],
@@ -1620,39 +1661,17 @@ def init_dce_preproc_wf(
     # Atlas-guided AIF search with tiered cascade (MCA_ACA → CoW → full)
     # for reduced tissue contamination compared to a single broad mask.
     # Only runs if atlas files and t1w_to_mni_xfm are provided.
-    transform_atlas_cascade = pe.Node(
-        niu.Function(
-            input_names=[
-                "atlas_files",
-                "t1w_to_mni_xfm",
-                "t1w_to_dce_xfm",
-                "reference_file",
-            ],
-            output_names=["out_files"],
-            function=_transform_atlas_cascade_to_dce,
-        ),
-        name="transform_atlas_cascade",
-    )
-
-    # Load tiered arterial atlas cascade (tightest → broadest)
-    atlas_cascade = get_arterial_atlas_cascade("2mm")
-    if atlas_cascade:
-        transform_atlas_cascade.inputs.atlas_files = [str(p) for p in atlas_cascade]
-    else:
-        import logging as _logging
-        _logging.getLogger("pmriprep.workflows.dce").warning(
-            "No arterial atlases found. AIF detection will use whole-brain search."
-        )
+    dce_atlas_transform_wf = init_dce_atlas_transform_wf()
 
     workflow.connect([
-        (inputnode, transform_atlas_cascade, [
-            ("t1w_to_mni_xfm", "t1w_to_mni_xfm"),
+        (inputnode, dce_atlas_transform_wf, [
+            ("t1w_to_mni_xfm", "inputnode.t1w_to_mni_xfm"),
         ]),
-        (dce_registration_wf, transform_atlas_cascade, [
-            ("outputnode.out_matrix", "t1w_to_dce_xfm"),
+        (dce_registration_wf, dce_atlas_transform_wf, [
+            ("outputnode.out_matrix", "inputnode.t1w_to_dce_xfm"),
         ]),
-        (dce_preprocessing_wf, transform_atlas_cascade, [
-            ("outputnode.mean_img", "reference_file"),
+        (dce_preprocessing_wf, dce_atlas_transform_wf, [
+            ("outputnode.mean_img", "inputnode.reference_file"),
         ]),
     ])
 
@@ -1821,8 +1840,8 @@ def init_dce_preproc_wf(
             ("out_file", "brain_mask_file"),
         ]),
         # Connect atlas cascade for tiered AIF search (Gap 6)
-        (transform_atlas_cascade, aif_detection, [
-            ("out_files", "atlas_mask_files"),
+        (dce_atlas_transform_wf, aif_detection, [
+            ("outputnode.out_files", "atlas_mask_files"),
         ]),
         (inputnode, aif_detection, [
             ("volume_tr", "tr"),  # Use volume TR for time array, not pulse TR

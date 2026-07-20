@@ -5,6 +5,7 @@ from pathlib import Path
 from pmriprep.config.dce import DCEConfig
 from pmriprep.workflows.dce.base import (
     init_dce_brain_extraction_wf,
+    init_dce_atlas_transform_wf,
     init_dce_native_input_wf,
     init_dce_preprocessing_wf,
     init_dce_registration_wf,
@@ -81,3 +82,12 @@ def test_dce_registration_workflow_contract() -> None:
     assert set(workflow.get_node("outputnode").interface._fields) == {
         "out_file", "out_matrix", "out_h5", "qc_metrics",
     }
+
+
+def test_dce_atlas_transform_workflow_contract() -> None:
+    """Atlas preparation preserves the ordered transformed-mask list contract."""
+    workflow = init_dce_atlas_transform_wf()
+    assert set(workflow.list_node_names()) == {
+        "inputnode", "outputnode", "transform_atlas_cascade",
+    }
+    assert workflow.get_node("outputnode").interface._fields == ["out_files"]
