@@ -877,3 +877,86 @@ def test_save_ancillary_maps_always_emits_zero_k2_fallback(
 
     assert set(results) == {"out_k2"}
     np.testing.assert_array_equal(nib.load(results["out_k2"]).get_fdata(), 0.0)
+
+
+@pytest.mark.parametrize("method", ["vascular", "cpi"])
+def test_save_fit_qc_data_dispatches_parametric_methods(
+    method: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Vascular-family methods retain all parametric QC fitting settings."""
+    interface = ComputeDSCMaps()
+    calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+    monkeypatch.setattr(
+        interface,
+        "_save_qc_fit_data",
+        lambda *args, **kwargs: calls.append((args, kwargs)),
+    )
+    monkeypatch.setattr(
+        interface,
+        "_save_qc_fit_data_svd",
+        lambda *args, **kwargs: pytest.fail("SVD QC dispatcher called"),
+    )
+    data = np.ones((1,))
+    signal = np.full((1,), 2.0)
+
+    interface._save_fit_qc_data(
+        rel_cbf=data,
+        concentration=data,
+        aif=data,
+        mask_bool=data.astype(bool),
+        dt=1.5,
+        method=method,
+        inference="vi",
+        mcmc_samples=321,
+        cpi_control_points=7,
+        cpi_infer_cpt=True,
+        cpi_infer_delay=False,
+        threshold=0.2,
+        oi_threshold=0.1,
+        signal=signal,
+    )
+
+    assert len(calls) == 1
+    assert calls[0][0][4:] == (1.5, method, "vi", 321, 7, True, False)
+    assert calls[0][1]["signal_data"] is signal
+
+
+@pytest.mark.parametrize("method", ["sSVD", "oSVD", "tikhonov"])
+def test_save_fit_qc_data_dispatches_svd_methods(
+    method: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SVD-family methods retain deconvolution threshold QC settings."""
+    interface = ComputeDSCMaps()
+    calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+    monkeypatch.setattr(
+        interface,
+        "_save_qc_fit_data_svd",
+        lambda *args, **kwargs: calls.append((args, kwargs)),
+    )
+    monkeypatch.setattr(
+        interface,
+        "_save_qc_fit_data",
+        lambda *args, **kwargs: pytest.fail("parametric QC dispatcher called"),
+    )
+    data = np.ones((1,))
+
+    interface._save_fit_qc_data(
+        rel_cbf=data,
+        concentration=data,
+        aif=data,
+        mask_bool=data.astype(bool),
+        dt=2.0,
+        method=method,
+        inference="map",
+        mcmc_samples=100,
+        cpi_control_points=5,
+        cpi_infer_cpt=False,
+        cpi_infer_delay=True,
+        threshold=0.25,
+        oi_threshold=0.15,
+        signal=None,
+    )
+
+    assert len(calls) == 1
+    assert calls[0][0][4:] == (2.0, method, 0.25, 0.15)
+    assert calls[0][1]["signal_data"] is None

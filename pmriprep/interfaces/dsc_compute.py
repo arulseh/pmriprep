@@ -1652,6 +1652,53 @@ class ComputeDSCMaps(BaseInterface):
         if tier is not None:
             qc_metrics["qc_voxel_tier"] = tier
 
+    def _save_fit_qc_data(
+        self,
+        *,
+        rel_cbf: npt.NDArray[Any],
+        concentration: npt.NDArray[Any],
+        aif: npt.NDArray[Any],
+        mask_bool: npt.NDArray[Any],
+        dt: float,
+        method: str,
+        inference: str,
+        mcmc_samples: int,
+        cpi_control_points: int,
+        cpi_infer_cpt: bool,
+        cpi_infer_delay: bool,
+        threshold: float,
+        oi_threshold: float,
+        signal: Optional[npt.NDArray[Any]],
+    ) -> None:
+        """Dispatch fit-QC serialization to the selected method family."""
+        if method in ("vascular", "cpi"):
+            self._save_qc_fit_data(
+                rel_cbf,
+                concentration,
+                aif,
+                mask_bool,
+                dt,
+                method,
+                inference,
+                mcmc_samples,
+                cpi_control_points,
+                cpi_infer_cpt,
+                cpi_infer_delay,
+                signal_data=signal,
+            )
+            return
+        self._save_qc_fit_data_svd(
+            rel_cbf,
+            concentration,
+            aif,
+            mask_bool,
+            dt,
+            method,
+            threshold,
+            oi_threshold,
+            signal_data=signal,
+        )
+
     def _save_ancillary_maps(
         self,
         *,
@@ -3349,21 +3396,22 @@ class ComputeDSCMaps(BaseInterface):
             )
         )
 
-        # Save QC fit data for all deconvolution methods
-        if method in ("vascular", "cpi"):
-            self._save_qc_fit_data(
-                rel_cbf, conc_data, aif, mask_bool, dt, method,
-                inference, mcmc_samples, cpi_control_points,
-                cpi_infer_cpt,
-                cpi_infer_delay,
-                signal_data=signal_data,
-            )
-        else:
-            self._save_qc_fit_data_svd(
-                rel_cbf, conc_data, aif, mask_bool, dt, method,
-                threshold, oi_threshold,
-                signal_data=signal_data,
-            )
+        self._save_fit_qc_data(
+            rel_cbf=rel_cbf,
+            concentration=conc_data,
+            aif=aif,
+            mask_bool=mask_bool,
+            dt=dt,
+            method=method,
+            inference=inference,
+            mcmc_samples=mcmc_samples,
+            cpi_control_points=cpi_control_points,
+            cpi_infer_cpt=cpi_infer_cpt,
+            cpi_infer_delay=cpi_infer_delay,
+            threshold=threshold,
+            oi_threshold=oi_threshold,
+            signal=signal_data,
+        )
 
         self._add_fit_qc_metrics(rel_cbv, qc_metrics)
 
