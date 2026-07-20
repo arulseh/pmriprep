@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 from pmriprep.interfaces.dsc_compute import ComputeDSCMaps
+from pmriprep.utils.dsc_signal import compute_peak_height_legacy, compute_psr_legacy
 
 
 def _write_image(path: Path, data: np.ndarray) -> str:
@@ -213,3 +214,25 @@ def test_prepare_baseline_recomputes_s0_and_k2(
     assert result.detection_info["k2_recomputed"] is True
     assert result.k2_map_path is not None
     np.testing.assert_allclose(nib.load(result.k2_map_path).get_fdata(), 0.25)
+
+
+def test_compute_signal_metrics_preserves_legacy_maps() -> None:
+    """Raw-signal PSR and peak height are forwarded without transformation."""
+    signal = np.array([[[[100.0, 100.0, 70.0, 80.0, 90.0]]]])
+
+    result = ComputeDSCMaps()._compute_signal_metrics(signal, (1, 1, 1), 2, 2)
+
+    expected_psr = compute_psr_legacy(signal, 2, 2)
+    expected_peak = compute_peak_height_legacy(signal, 2)
+    np.testing.assert_allclose(result.psr, expected_psr)
+    np.testing.assert_allclose(result.peak_height, expected_peak)
+    assert result.qc == {}
+
+
+def test_compute_signal_metrics_without_signal_returns_zero_maps() -> None:
+    """Unavailable raw signal retains zero maps and explicit QC provenance."""
+    result = ComputeDSCMaps()._compute_signal_metrics(None, (2, 3, 1), 4, 5)
+
+    np.testing.assert_array_equal(result.psr, np.zeros((2, 3, 1)))
+    np.testing.assert_array_equal(result.peak_height, np.zeros((2, 3, 1)))
+    assert result.qc == {"psr_ph_from_signal": False}

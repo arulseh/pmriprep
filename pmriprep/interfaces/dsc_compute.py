@@ -358,6 +358,14 @@ class _DSCBaselinePreparation(NamedTuple):
     k2_map_path: Optional[str]
 
 
+class _DSCSignalMetrics(NamedTuple):
+    """Signal-derived DSC maps and their QC provenance."""
+
+    psr: npt.NDArray[Any]
+    peak_height: npt.NDArray[Any]
+    qc: dict[str, Any]
+
+
 class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
     """Input specification for ComputeDSCMaps interface."""
 
@@ -973,6 +981,55 @@ class ComputeDSCMaps(BaseInterface):
             float(np.min(weights)),
         )
         return _DSCMotionWeighting(weights, qc)
+
+    def _compute_signal_metrics(
+        self,
+        signal: Optional[npt.NDArray[Any]],
+        spatial_shape: tuple[int, ...],
+        baseline_frames: int,
+        tail_frames: int,
+    ) -> _DSCSignalMetrics:
+        """Compute PSR and peak height from raw DSC signal when available.
+
+        Parameters
+        ----------
+        signal : npt.NDArray, optional
+            Raw DSC signal array. Concentration is intentionally not used as a
+            substitute because its PSR/peak-height interpretation differs.
+        spatial_shape : tuple of int
+            Output map shape.
+        baseline_frames : int
+            Detected pre-bolus frame count.
+        tail_frames : int
+            Number of recovery frames used for PSR.
+
+        Returns
+        -------
+        _DSCSignalMetrics
+            PSR and peak-height arrays plus unavailable-signal QC state.
+
+        """
+        if signal is None:
+            zeros = np.zeros(spatial_shape, dtype=np.float64)
+            return _DSCSignalMetrics(
+                psr=zeros,
+                peak_height=zeros.copy(),
+                qc={"psr_ph_from_signal": False},
+            )
+
+        psr_result = compute_psr_legacy(signal, baseline_frames, tail_frames)
+        peak_height_result = compute_peak_height_legacy(signal, baseline_frames)
+        psr = (
+            np.full(spatial_shape, psr_result, dtype=np.float64)
+            if isinstance(psr_result, float)
+            else psr_result
+        )
+        peak_height = (
+            np.full(spatial_shape, peak_height_result, dtype=np.float64)
+            if isinstance(peak_height_result, float)
+            else peak_height_result
+        )
+        return _DSCSignalMetrics(psr=psr, peak_height=peak_height, qc={})
 
     def _first_pass_reference(
         self,
@@ -2471,30 +2528,12 @@ class ComputeDSCMaps(BaseInterface):
             )
             qc_metrics["motion_weighting"] = motion_weighting.qc
 
-        # Compute PSR and PH
-        psr: npt.NDArray[Any]
-        ph: npt.NDArray[Any]
-        if signal_data is not None:
-            # Use raw signal for PSR/PH
-            psr_result = compute_psr_legacy(signal_data, detected_baseline, tail_frames)
-            ph_result = compute_peak_height_legacy(signal_data, detected_baseline)
-            # Convert to ndarray if scalar (shouldn't happen with 4D input)
-            if isinstance(psr_result, float):
-                psr = np.full(spatial_shape, psr_result, dtype=np.float64)
-            else:
-                psr = psr_result
-            if isinstance(ph_result, float):
-                ph = np.full(spatial_shape, ph_result, dtype=np.float64)
-            else:
-                ph = ph_result
-        else:
-            # Use concentration (note: interpretation differs)
-            # For concentration, PSR/PH are computed from inverted signal
-            psr = np.zeros(spatial_shape, dtype=np.float64)
-            ph = np.zeros(spatial_shape, dtype=np.float64)
-            # Note: PSR/PH from concentration requires different formula
-            # For now, output zeros - proper implementation needs raw signal
-            qc_metrics["psr_ph_from_signal"] = False
+        signal_metrics = self._compute_signal_metrics(
+            signal_data, spatial_shape, detected_baseline, tail_frames
+        )
+        psr = signal_metrics.psr
+        ph = signal_metrics.peak_height
+        qc_metrics.update(signal_metrics.qc)
 
         # -----------------------------------------------------------
         # Load raw (pre-K2) concentration if available
