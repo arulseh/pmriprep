@@ -366,6 +366,15 @@ class _DSCSignalMetrics(NamedTuple):
     qc: dict[str, Any]
 
 
+class _DSCTimingMaps(NamedTuple):
+    """Raw, AIF-corrected, and optional NAWM-relative DSC timing maps."""
+
+    ttp: npt.NDArray[Any]
+    ttp_corrected: npt.NDArray[Any]
+    relative_ttp: Optional[npt.NDArray[Any]]
+    aif_bat_seconds: float
+
+
 class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
     """Input specification for ComputeDSCMaps interface."""
 
@@ -1030,6 +1039,109 @@ class ComputeDSCMaps(BaseInterface):
             else peak_height_result
         )
         return _DSCSignalMetrics(psr=psr, peak_height=peak_height, qc={})
+
+    def _select_raw_concentration(
+        self,
+        corrected: npt.NDArray[Any],
+        recomputed: Optional[npt.NDArray[Any]],
+    ) -> npt.NDArray[Any]:
+        """Select pre-K2 concentration for model-free DSC measurements.
+
+        Parameters
+        ----------
+        corrected : npt.NDArray
+            Baseline-subtracted, potentially K2-corrected concentration.
+        recomputed : npt.NDArray, optional
+            Raw concentration recomputed after baseline refinement.
+
+        Returns
+        -------
+        npt.NDArray
+            Recomputed raw concentration, configured raw input, or corrected
+            concentration, in that precedence order.
+
+        """
+        if recomputed is not None:
+            return recomputed
+        if self.inputs.raw_concentration_file:
+            import nibabel as nib  # type: ignore[import-untyped]
+
+            raw_img = nib.load(self.inputs.raw_concentration_file)
+            return raw_img.get_fdata()  # type: ignore[attr-defined,no-any-return]
+        return corrected
+
+    def _compute_timing_maps(
+        self,
+        raw_concentration: npt.NDArray[Any],
+        mask_bool: npt.NDArray[np.bool_],
+        detected_baseline: int,
+        detection_info: dict[str, Any],
+        dt: float,
+    ) -> _DSCTimingMaps:
+        """Compute DSC timing maps while preserving unclipped derivations.
+
+        Parameters
+        ----------
+        raw_concentration : npt.NDArray
+            Pre-K2 concentration used for bolus timing.
+        mask_bool : npt.NDArray
+            Native-space brain mask.
+        detected_baseline : int
+            Detected pre-bolus frame count.
+        detection_info : dict
+            Baseline diagnostics containing the AIF arrival index when known.
+        dt : float
+            Frame interval in seconds.
+
+        Returns
+        -------
+        _DSCTimingMaps
+            Clipped raw TTP for output, AIF-corrected TTP, optional NAWM-relative
+            TTP, and the AIF arrival time in seconds.
+
+        """
+        import nibabel as nib  # type: ignore[import-untyped]
+
+        ttp_raw = compute_ttp_legacy(raw_concentration, detected_baseline, dt)
+        aif_bat_frames = detection_info.get("arrival_index", detected_baseline)
+        aif_bat_seconds = float(aif_bat_frames) * dt
+        ttp_corrected = ttp_raw - aif_bat_seconds
+
+        n_negative = int(np.sum(mask_bool & (ttp_corrected < 0)))
+        n_mask = int(np.sum(mask_bool))
+        if n_mask > 0 and n_negative / n_mask > 0.05:
+            logger.warning(
+                "%.1f%% of brain voxels have negative TTPc (ttp < aif_bat=%.1fs). "
+                "Check AIF QC.",
+                100.0 * n_negative / n_mask,
+                aif_bat_seconds,
+            )
+
+        ttp_corrected = np.clip(ttp_corrected, 0.0, 30.0)
+        ttp_corrected = np.where(np.isnan(ttp_raw), np.nan, ttp_corrected)
+
+        relative_ttp: Optional[npt.NDArray[Any]] = None
+        if (
+            isdefined(self.inputs.nawm_mask_file)
+            and str(self.inputs.nawm_mask_file) not in ("", "None")
+            and Path(self.inputs.nawm_mask_file).exists()
+        ):
+            nawm_img = nib.load(self.inputs.nawm_mask_file)
+            nawm_mask = nawm_img.get_fdata() > 0  # type: ignore[attr-defined]
+            nawm_ttp = ttp_raw[nawm_mask]
+            nawm_ttp = nawm_ttp[np.isfinite(nawm_ttp)]
+            if len(nawm_ttp) > 100:
+                relative_ttp = ttp_raw - np.median(nawm_ttp)
+                relative_ttp = np.where(
+                    np.isnan(ttp_raw), np.nan, relative_ttp
+                )
+
+        return _DSCTimingMaps(
+            ttp=np.clip(ttp_raw, 0.0, 60.0),
+            ttp_corrected=ttp_corrected,
+            relative_ttp=relative_ttp,
+            aif_bat_seconds=aif_bat_seconds,
+        )
 
     def _first_pass_reference(
         self,
@@ -2535,62 +2647,20 @@ class ComputeDSCMaps(BaseInterface):
         ph = signal_metrics.peak_height
         qc_metrics.update(signal_metrics.qc)
 
-        # -----------------------------------------------------------
-        # Load raw (pre-K2) concentration if available
-        # Used for AUC, TTP, and CNR (these reflect first-pass bolus
-        # timing, not BBB permeability from K2 correction)
-        # -----------------------------------------------------------
-        raw_conc_data: npt.NDArray[Any]
-        if recomputed_raw_conc is not None:
-            # S0 was re-computed with detected baseline — use that
-            raw_conc_data = recomputed_raw_conc
-        elif self.inputs.raw_concentration_file:
-            raw_conc_img = nib.load(self.inputs.raw_concentration_file)
-            raw_conc_data = raw_conc_img.get_fdata()  # type: ignore[attr-defined]
-        else:
-            # No K2 correction was applied — raw == corrected
-            raw_conc_data = conc_data
-
-        # Compute TTP from raw concentration (post-bolus argmax)
-        # Returns unclipped values so derived maps use true peak times
-        ttp_raw = compute_ttp_legacy(raw_conc_data, detected_baseline, dt)
-
-        # AIF-corrected TTP: subtract AIF bolus arrival time (from unclipped)
-        aif_bat_frames = baseline_detection_info.get("arrival_index", detected_baseline)
-        aif_bat_seconds = float(aif_bat_frames) * dt
-        ttp_corrected = ttp_raw - aif_bat_seconds
-
-        # Warn if many brain voxels have negative TTPc
-        n_negative = int(np.sum(mask_bool & (ttp_corrected < 0)))
-        n_mask = int(np.sum(mask_bool))
-        if n_mask > 0 and n_negative / n_mask > 0.05:
-            logger.warning(
-                "%.1f%% of brain voxels have negative TTPc (ttp < aif_bat=%.1fs). "
-                "Check AIF QC.",
-                100.0 * n_negative / n_mask,
-                aif_bat_seconds,
-            )
-
-        ttp_corrected = np.clip(ttp_corrected, 0.0, 30.0)
-        ttp_corrected = np.where(np.isnan(ttp_raw), np.nan, ttp_corrected)
-
-        # NAWM-relative TTP (from unclipped values)
-        rttp: Optional[npt.NDArray[Any]] = None
-        if (
-            isdefined(self.inputs.nawm_mask_file)
-            and str(self.inputs.nawm_mask_file) not in ("", "None")
-            and Path(self.inputs.nawm_mask_file).exists()
-        ):
-            nawm_img = nib.load(self.inputs.nawm_mask_file)
-            nawm_mask = nawm_img.get_fdata() > 0  # type: ignore[attr-defined]
-            nawm_ttp = ttp_raw[nawm_mask]
-            nawm_ttp = nawm_ttp[np.isfinite(nawm_ttp)]
-            if len(nawm_ttp) > 100:
-                rttp = ttp_raw - np.median(nawm_ttp)
-                rttp = np.where(np.isnan(ttp_raw), np.nan, rttp)  # type: ignore[arg-type]
-
-        # Clip raw TTP for output (after derived maps computed)
-        ttp = np.clip(ttp_raw, 0.0, 60.0)
+        raw_conc_data = self._select_raw_concentration(
+            conc_data, recomputed_raw_conc
+        )
+        timing_maps = self._compute_timing_maps(
+            raw_conc_data,
+            mask_bool,
+            detected_baseline,
+            baseline_detection_info,
+            dt,
+        )
+        ttp = timing_maps.ttp
+        ttp_corrected = timing_maps.ttp_corrected
+        rttp = timing_maps.relative_ttp
+        aif_bat_seconds = timing_maps.aif_bat_seconds
 
         # -----------------------------------------------------------
         # AUC decomposition: raw (pre-K2), corrected (post-K2), diff

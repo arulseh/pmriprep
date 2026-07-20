@@ -8,7 +8,11 @@ import numpy as np
 import pytest
 
 from pmriprep.interfaces.dsc_compute import ComputeDSCMaps
-from pmriprep.utils.dsc_signal import compute_peak_height_legacy, compute_psr_legacy
+from pmriprep.utils.dsc_signal import (
+    compute_peak_height_legacy,
+    compute_psr_legacy,
+    compute_ttp_legacy,
+)
 
 
 def _write_image(path: Path, data: np.ndarray) -> str:
@@ -236,3 +240,67 @@ def test_compute_signal_metrics_without_signal_returns_zero_maps() -> None:
     np.testing.assert_array_equal(result.psr, np.zeros((2, 3, 1)))
     np.testing.assert_array_equal(result.peak_height, np.zeros((2, 3, 1)))
     assert result.qc == {"psr_ph_from_signal": False}
+
+
+def test_select_raw_concentration_preserves_source_precedence(tmp_path: Path) -> None:
+    """Recomputed, configured raw, and corrected sources retain their order."""
+    corrected = np.zeros((1, 1, 1, 4), dtype=np.float64)
+    configured = np.ones_like(corrected)
+    recomputed = np.full_like(corrected, 2.0)
+    raw_file = _write_image(tmp_path / "raw.nii.gz", configured)
+    interface = ComputeDSCMaps(raw_concentration_file=raw_file)
+
+    assert interface._select_raw_concentration(corrected, recomputed) is recomputed
+    np.testing.assert_allclose(
+        interface._select_raw_concentration(corrected, None), configured
+    )
+    assert ComputeDSCMaps()._select_raw_concentration(corrected, None) is corrected
+
+
+def test_compute_timing_maps_uses_unclipped_ttp_for_nawm_reference(
+    tmp_path: Path,
+) -> None:
+    """NAWM-relative timing derives from raw TTP before output clipping."""
+    n_voxels = 102
+    concentration = np.zeros((n_voxels, 1, 1, 8), dtype=np.float64)
+    concentration[:101, 0, 0, 4] = 2.0
+    concentration[101, 0, 0, 6] = 2.0
+    mask = np.ones((n_voxels, 1, 1), dtype=bool)
+    nawm = np.zeros(mask.shape, dtype=np.uint8)
+    nawm[:101] = 1
+    nawm_file = _write_image(tmp_path / "nawm.nii.gz", nawm)
+    interface = ComputeDSCMaps(nawm_mask_file=nawm_file)
+
+    result = interface._compute_timing_maps(
+        concentration,
+        mask,
+        detected_baseline=2,
+        detection_info={"arrival_index": 3},
+        dt=2.0,
+    )
+
+    raw_ttp = compute_ttp_legacy(concentration, 2, 2.0)
+    np.testing.assert_allclose(result.ttp, np.clip(raw_ttp, 0.0, 60.0))
+    np.testing.assert_allclose(
+        result.ttp_corrected, np.clip(raw_ttp - 6.0, 0.0, 30.0)
+    )
+    assert result.relative_ttp is not None
+    np.testing.assert_allclose(result.relative_ttp, raw_ttp - np.median(raw_ttp[:101]))
+    assert result.relative_ttp[101, 0, 0] == pytest.approx(4.0)
+    assert result.aif_bat_seconds == pytest.approx(6.0)
+
+
+def test_compute_timing_maps_requires_more_than_100_nawm_voxels(
+    tmp_path: Path,
+) -> None:
+    """The existing strict NAWM sample-size gate remains unchanged."""
+    concentration = np.zeros((100, 1, 1, 6), dtype=np.float64)
+    concentration[..., 4] = 1.0
+    mask = np.ones((100, 1, 1), dtype=bool)
+    nawm_file = _write_image(tmp_path / "nawm.nii.gz", mask.astype(np.uint8))
+
+    result = ComputeDSCMaps(nawm_mask_file=nawm_file)._compute_timing_maps(
+        concentration, mask, 2, {"arrival_index": 2}, 1.5
+    )
+
+    assert result.relative_ttp is None
