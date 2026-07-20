@@ -1023,6 +1023,94 @@ def _init_master_anatomical_preprocessing(
     return anat_wf
 
 
+def _connect_master_anatomical_datasinks(
+    *,
+    workflow: pe.Workflow,
+    anat_wf: pe.Workflow,
+    inputnode: pe.Node,
+    report_barrier: pe.Node,
+    session_data: SessionData,
+    bids_dir: Path,
+    output_dir: Path,
+    subject_id: str,
+    session_id: Optional[str],
+    has_t1w_pre: bool,
+    has_t1w_postcon: bool,
+    is_postcon_ref: bool,
+) -> None:
+    """Connect anatomical derivatives and their report-completion signal."""
+    from pmriprep.workflows.anat.datasinks import init_anat_datasinks_wf
+
+    sinks = init_anat_datasinks_wf(
+        output_dir=str(output_dir), bids_dir=str(bids_dir), subject_id=subject_id,
+        session_id=session_id, has_t1w_pre=has_t1w_pre,
+        has_t1w_postcon=has_t1w_postcon,
+        has_t2w=bool(session_data.modalities.t2w),
+        has_flair=bool(session_data.modalities.flair),
+        has_flair_postcon=bool(session_data.modalities.flair_postcon),
+        has_tissue_seg=has_t1w_pre,
+        has_subtraction=has_t1w_pre and has_t1w_postcon,
+        is_postcon_ref=is_postcon_ref,
+    )
+    workflow.connect([(anat_wf, sinks, [
+        ("outputnode.t1w_preproc", "inputnode.t1w_preproc"),
+        ("outputnode.brain_mask", "inputnode.brain_mask"),
+        ("outputnode.t1w_to_mni_h5", "inputnode.acpc_xfm"),
+        ("outputnode.qc_metrics", "inputnode.qc_metrics"),
+        ("outputnode.brain_mask_filmstrip", "inputnode.brain_mask_filmstrip"),
+        ("outputnode.acpc_filmstrip", "inputnode.acpc_filmstrip"),
+    ])])
+    if has_t1w_pre:
+        workflow.connect([
+            (anat_wf, sinks, [
+                ("outputnode.wm_probseg", "inputnode.wm_probseg"),
+                ("outputnode.gm_probseg", "inputnode.gm_probseg"),
+                ("outputnode.csf_probseg", "inputnode.csf_probseg"),
+                ("outputnode.tissue_seg_filmstrip", "inputnode.tissue_seg_filmstrip"),
+            ]),
+            (inputnode, sinks, [("t1w_pre", "inputnode.source_t1w")]),
+        ])
+    if has_t1w_postcon and has_t1w_pre:
+        workflow.connect([(anat_wf, sinks, [
+            ("outputnode.t1w_postcon_coreg", "inputnode.t1w_postcon_coreg"),
+            ("outputnode.t1w_postcon_to_t1w_xfm", "inputnode.t1w_postcon_to_t1w_xfm"),
+            ("outputnode.t1w_subtraction", "inputnode.t1w_subtraction"),
+            ("outputnode.coreg_filmstrip_postcon", "inputnode.coreg_filmstrip_postcon"),
+        ])])
+    if has_t1w_postcon:
+        workflow.connect([(inputnode, sinks, [
+            ("t1w_postcon", "inputnode.source_t1w_postcon"),
+        ])])
+    if session_data.modalities.t2w:
+        workflow.connect([
+            (anat_wf, sinks, [
+                ("outputnode.t2w_coreg", "inputnode.t2w_coreg"),
+                ("outputnode.t2w_to_t1w_xfm", "inputnode.t2w_to_t1w_xfm"),
+                ("outputnode.coreg_filmstrip_t2w", "inputnode.coreg_filmstrip_t2w"),
+            ]),
+            (inputnode, sinks, [("t2w", "inputnode.source_t2w")]),
+        ])
+    if session_data.modalities.flair:
+        workflow.connect([
+            (anat_wf, sinks, [
+                ("outputnode.flair_coreg", "inputnode.flair_coreg"),
+                ("outputnode.flair_to_t1w_xfm", "inputnode.flair_to_t1w_xfm"),
+                ("outputnode.coreg_filmstrip_flair", "inputnode.coreg_filmstrip_flair"),
+            ]),
+            (inputnode, sinks, [("flair", "inputnode.source_flair")]),
+        ])
+    if session_data.modalities.flair_postcon:
+        workflow.connect([
+            (anat_wf, sinks, [
+                ("outputnode.flair_postcon_coreg", "inputnode.flair_postcon_coreg"),
+                ("outputnode.flair_postcon_to_t1w_xfm", "inputnode.flair_postcon_to_t1w_xfm"),
+                ("outputnode.coreg_filmstrip_flair_postcon", "inputnode.coreg_filmstrip_flair_postcon"),
+            ]),
+            (inputnode, sinks, [("flair_postcon", "inputnode.source_flair_postcon")]),
+        ])
+    workflow.connect([(sinks, report_barrier, [("outputnode.done", "anat_done")])])
+
+
 def _init_master_workflow_nodes(
     *,
     workflow: pe.Workflow,
@@ -1622,111 +1710,20 @@ def init_pmriprep_wf(
     # Anatomical preprocessing workflow (runs first)
     # -------------------------------------------------------------------
     if anat_wf is not None:
-        # -------------------------------------------------------------------
-        # Anat derivatives: niworkflows DerivativesDataSink chain
-        # -------------------------------------------------------------------
-        from pmriprep.workflows.anat.datasinks import init_anat_datasinks_wf
-
-        # has_t1w_pre, has_t1w_postcon, is_postcon_ref are computed at the top
-        # of init_pmriprep_wf so they're in scope under --skip-anat too.
-        anat_datasinks_wf = init_anat_datasinks_wf(
-            output_dir=str(output_dir),
-            bids_dir=str(bids_dir),
+        _connect_master_anatomical_datasinks(
+            workflow=workflow,
+            anat_wf=anat_wf,
+            inputnode=inputnode,
+            report_barrier=report_barrier,
+            session_data=session_data,
+            bids_dir=bids_dir,
+            output_dir=output_dir,
             subject_id=subject_id,
             session_id=session_id,
             has_t1w_pre=has_t1w_pre,
             has_t1w_postcon=has_t1w_postcon,
-            has_t2w=bool(session_data.modalities.t2w),
-            has_flair=bool(session_data.modalities.flair),
-            has_flair_postcon=bool(session_data.modalities.flair_postcon),
-            has_tissue_seg=has_t1w_pre,
-            has_subtraction=has_t1w_pre and has_t1w_postcon,
             is_postcon_ref=is_postcon_ref,
         )
-
-        workflow.connect([
-            (anat_wf, anat_datasinks_wf, [
-                ("outputnode.t1w_preproc", "inputnode.t1w_preproc"),
-                ("outputnode.brain_mask", "inputnode.brain_mask"),
-                ("outputnode.t1w_to_mni_h5", "inputnode.acpc_xfm"),
-                ("outputnode.qc_metrics", "inputnode.qc_metrics"),
-                ("outputnode.brain_mask_filmstrip", "inputnode.brain_mask_filmstrip"),
-                ("outputnode.acpc_filmstrip", "inputnode.acpc_filmstrip"),
-            ]),
-        ])
-
-        if has_t1w_pre:
-            workflow.connect([
-                (anat_wf, anat_datasinks_wf, [
-                    ("outputnode.wm_probseg", "inputnode.wm_probseg"),
-                    ("outputnode.gm_probseg", "inputnode.gm_probseg"),
-                    ("outputnode.csf_probseg", "inputnode.csf_probseg"),
-                    ("outputnode.tissue_seg_filmstrip", "inputnode.tissue_seg_filmstrip"),
-                ]),
-                (inputnode, anat_datasinks_wf, [
-                    ("t1w_pre", "inputnode.source_t1w"),
-                ]),
-            ])
-
-        if has_t1w_postcon and has_t1w_pre:
-            workflow.connect([
-                (anat_wf, anat_datasinks_wf, [
-                    ("outputnode.t1w_postcon_coreg", "inputnode.t1w_postcon_coreg"),
-                    ("outputnode.t1w_postcon_to_t1w_xfm",
-                     "inputnode.t1w_postcon_to_t1w_xfm"),
-                    ("outputnode.t1w_subtraction", "inputnode.t1w_subtraction"),
-                    ("outputnode.coreg_filmstrip_postcon",
-                     "inputnode.coreg_filmstrip_postcon"),
-                ]),
-            ])
-        if has_t1w_postcon:
-            workflow.connect([
-                (inputnode, anat_datasinks_wf, [
-                    ("t1w_postcon", "inputnode.source_t1w_postcon"),
-                ]),
-            ])
-        if session_data.modalities.t2w:
-            workflow.connect([
-                (anat_wf, anat_datasinks_wf, [
-                    ("outputnode.t2w_coreg", "inputnode.t2w_coreg"),
-                    ("outputnode.t2w_to_t1w_xfm", "inputnode.t2w_to_t1w_xfm"),
-                    ("outputnode.coreg_filmstrip_t2w", "inputnode.coreg_filmstrip_t2w"),
-                ]),
-                (inputnode, anat_datasinks_wf, [
-                    ("t2w", "inputnode.source_t2w"),
-                ]),
-            ])
-        if session_data.modalities.flair:
-            workflow.connect([
-                (anat_wf, anat_datasinks_wf, [
-                    ("outputnode.flair_coreg", "inputnode.flair_coreg"),
-                    ("outputnode.flair_to_t1w_xfm", "inputnode.flair_to_t1w_xfm"),
-                    ("outputnode.coreg_filmstrip_flair",
-                     "inputnode.coreg_filmstrip_flair"),
-                ]),
-                (inputnode, anat_datasinks_wf, [
-                    ("flair", "inputnode.source_flair"),
-                ]),
-            ])
-        if session_data.modalities.flair_postcon:
-            workflow.connect([
-                (anat_wf, anat_datasinks_wf, [
-                    ("outputnode.flair_postcon_coreg", "inputnode.flair_postcon_coreg"),
-                    ("outputnode.flair_postcon_to_t1w_xfm",
-                     "inputnode.flair_postcon_to_t1w_xfm"),
-                    ("outputnode.coreg_filmstrip_flair_postcon",
-                     "inputnode.coreg_filmstrip_flair_postcon"),
-                ]),
-                (inputnode, anat_datasinks_wf, [
-                    ("flair_postcon", "inputnode.source_flair_postcon"),
-                ]),
-            ])
-
-        workflow.connect([
-            (anat_datasinks_wf, report_barrier, [
-                ("outputnode.done", "anat_done"),
-            ]),
-        ])
     # -------------------------------------------------------------------
     # Tumor segmentation workflow (requires anat outputs)
     # -------------------------------------------------------------------
