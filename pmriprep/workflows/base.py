@@ -1211,6 +1211,69 @@ def _init_master_tumor_segmentation(
     return tumor_wf
 
 
+def _init_master_dsc_workflow(
+    *,
+    workflow: pe.Workflow,
+    inputnode: pe.Node,
+    session_data: SessionData,
+    decision: PipelineDecision,
+    reference_selection: Optional["StructuralReferenceSelection"],
+    bids_dir: Path,
+    output_dir: Path,
+    subject_id: str,
+    session_id: Optional[str],
+    config: DSCConfig,
+    random_seed: Optional[int],
+    mem_gb: float,
+    mem_limit_gb: Optional[float],
+    gd_multiplicity: int,
+) -> Optional[pe.Workflow]:
+    """Initialize DSC, inject required acquisition metadata, and set its reference."""
+    if not decision.run_dsc:
+        return None
+
+    from pmriprep.utils.structural_reference import ImageType
+    from pmriprep.workflows.dsc.base import init_dsc_preproc_wf
+
+    dsc_wf = init_dsc_preproc_wf(
+        bids_dir=bids_dir, output_dir=output_dir, subject_id=subject_id,
+        session_id=session_id, config=config, random_seed=random_seed,
+        mem_gb=mem_gb, mem_limit_gb=mem_limit_gb,
+        gd_multiplicity=gd_multiplicity, name="dsc_wf",
+    )
+    if session_data.modalities.dsc:
+        sidecar = _read_bids_sidecar(session_data.modalities.dsc)
+        missing = [
+            key for key in ("te", "volume_tr", "field_strength")
+            if sidecar[key] is None
+        ]
+        if missing:
+            bids_keys = {
+                "te": "EchoTime", "volume_tr": "RepetitionTime",
+                "field_strength": "MagneticFieldStrength",
+            }
+            raise ValueError(
+                f"DSC BIDS sidecar missing required fields: "
+                f"{[bids_keys[key] for key in missing]}. "
+                f"Source: {session_data.modalities.dsc}"
+            )
+        dsc_wf.inputs.inputnode.te = sidecar["te"]
+        dsc_wf.inputs.inputnode.tr = sidecar["volume_tr"]
+        dsc_wf.inputs.inputnode.field_strength = sidecar["field_strength"]
+
+    workflow.connect([(inputnode, dsc_wf, [("dsc_file", "inputnode.dsc_file")])])
+    if reference_selection:
+        reference_type = {
+            ImageType.T1W_POSTCON: "postcon",
+            ImageType.T1W_PRECON: "precon",
+        }.get(reference_selection.candidate.image_type, "any")
+        dsc_wf.inputs.dsc_registration_wf.register.reference_type = reference_type
+        logging.getLogger("pmriprep.workflows").info(
+            "DSC registration: reference_type=%s (from selection)", reference_type
+        )
+    return dsc_wf
+
+
 def _init_master_workflow_nodes(
     *,
     workflow: pe.Workflow,
@@ -1691,7 +1754,6 @@ def init_pmriprep_wf(
     DSC outputs to DCE inputs.
     """
     from pmriprep.workflows.dce.base import init_dce_preproc_wf
-    from pmriprep.workflows.dsc.base import init_dsc_preproc_wf
 
     context = _prepare_master_workflow_context(
         bids_dir=bids_dir,
@@ -1809,7 +1871,14 @@ def init_pmriprep_wf(
         session_id=session_id, config=tumor_seg_config,
         mem_limit_gb=mem_limit_gb, has_t1w_pre=has_t1w_pre,
     )
-    dsc_wf = None
+    dsc_wf = _init_master_dsc_workflow(
+        workflow=workflow, inputnode=inputnode, session_data=session_data,
+        decision=decision, reference_selection=dsc_ref_selection,
+        bids_dir=bids_dir, output_dir=output_dir, subject_id=subject_id,
+        session_id=session_id, config=dsc_config, random_seed=random_seed,
+        mem_gb=dsc_mem_gb, mem_limit_gb=mem_limit_gb,
+        gd_multiplicity=_gd_multiplicity,
+    )
     dce_wf = None
 
     # -------------------------------------------------------------------
@@ -1836,65 +1905,7 @@ def init_pmriprep_wf(
     # -------------------------------------------------------------------
     # DSC perfusion workflow (requires anat, optional tumor seg)
     # -------------------------------------------------------------------
-    if decision.run_dsc:
-        dsc_wf = init_dsc_preproc_wf(
-            bids_dir=bids_dir,
-            output_dir=output_dir,
-            subject_id=subject_id,
-            session_id=session_id,
-            config=dsc_config,
-            random_seed=random_seed,
-            mem_gb=dsc_mem_gb,
-            mem_limit_gb=mem_limit_gb,
-            gd_multiplicity=_gd_multiplicity,
-            name="dsc_wf",
-        )
-
-        # Read TE/TR/field_strength from BIDS sidecar JSON.
-        # All three are required for DSC quantification: TE feeds the
-        # signal-to-ΔR2* equation, TR sets temporal sampling, B0 selects
-        # field-dependent constants (preload thresholds, contrast r1).
-        # Silently defaulting any of these to 3T-Siemens values would
-        # mis-quantify cohorts at 1.5T/7T or with sparse sidecars.
-        if session_data.modalities.dsc:
-            sidecar = _read_bids_sidecar(session_data.modalities.dsc)
-            missing = [
-                k
-                for k in ("te", "volume_tr", "field_strength")
-                if sidecar[k] is None
-            ]
-            if missing:
-                bids_keys = {
-                    "te": "EchoTime",
-                    "volume_tr": "RepetitionTime",
-                    "field_strength": "MagneticFieldStrength",
-                }
-                raise ValueError(
-                    f"DSC BIDS sidecar missing required fields: "
-                    f"{[bids_keys[k] for k in missing]}. "
-                    f"Source: {session_data.modalities.dsc}"
-                )
-            dsc_wf.inputs.inputnode.te = sidecar["te"]
-            dsc_wf.inputs.inputnode.tr = sidecar["volume_tr"]
-            dsc_wf.inputs.inputnode.field_strength = sidecar["field_strength"]
-
-        # Connect DSC file from inputnode
-        workflow.connect([
-            (inputnode, dsc_wf, [("dsc_file", "inputnode.dsc_file")]),
-        ])
-
-        # Set DSC registration reference_type from confidence-scored selection
-        if dsc_ref_selection:
-            dsc_reg_ref_type = {
-                ImageType.T1W_POSTCON: "postcon",
-                ImageType.T1W_PRECON: "precon",
-            }.get(dsc_ref_selection.candidate.image_type, "any")
-            dsc_wf.inputs.dsc_registration_wf.register.reference_type = dsc_reg_ref_type
-            _ref_logger.info(
-                "DSC registration: reference_type=%s (from selection)",
-                dsc_reg_ref_type,
-            )
-
+    if dsc_wf is not None:
         # Connect anat outputs to DSC workflow
         if anat_wf is not None:
             # t1w_reference: always precon (for registration coordinate frame)
