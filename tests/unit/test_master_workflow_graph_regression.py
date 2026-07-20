@@ -19,6 +19,7 @@ from pmriprep.config.tumor_seg import TumorSegConfig
 from pmriprep.workflows.base import (
     PipelineDecision,
     PipelineSkipFlags,
+    _connect_master_dsc_anatomy,
     _init_master_workflow_nodes,
     _prepare_master_workflow_context,
     _prepare_master_preflight_state,
@@ -209,6 +210,117 @@ def test_master_regen_flag_not_set_in_normal_run() -> None:
     assert not _REGEN, (
         "PMRIPREP_REGEN_MASTER_GRAPH=1 is set: baselines were regenerated, not verified"
     )
+
+
+def test_connect_master_dsc_anatomy_preserves_live_underlay_routes() -> None:
+    """Live anatomy exposes each requested DSC structural input independently."""
+    connections: list[Any] = []
+    workflow = SimpleNamespace(connect=connections.extend)
+    anat_wf = SimpleNamespace()
+    dsc_wf = SimpleNamespace()
+    session_data = SessionData(
+        subject="0001",
+        session="0001",
+        modalities=ModalityAvailability(
+            t1w_pre=Path("pre.nii.gz"),
+            t1w_ce_gad=Path("post.nii.gz"),
+            t2w=Path("t2w.nii.gz"),
+            flair=Path("flair.nii.gz"),
+            flair_postcon=Path("flair_post.nii.gz"),
+        ),
+        pipelines=PipelineAvailability(),
+    )
+
+    _connect_master_dsc_anatomy(
+        workflow=workflow,
+        dsc_wf=dsc_wf,
+        anat_wf=anat_wf,
+        session_data=session_data,
+        anat_config=AnatConfig(create_subtraction=True),
+        dsc_config=DSCConfig(underlays=[
+            "t1w_precon", "t1w_postcon", "t1w_subtraction",
+            "flair_precon", "flair_postcon", "t2w",
+        ]),
+        work_dir=None,
+        subject_id="0001",
+        session_id="0001",
+    )
+
+    fields = {
+        pair
+        for source, target, pairs in connections
+        if source is anat_wf and target is dsc_wf
+        for pair in pairs
+    }
+    assert fields == {
+        ("outputnode.t1w_preproc", "inputnode.t1w_reference"),
+        ("outputnode.brain_mask", "inputnode.brain_mask"),
+        ("outputnode.t1w_to_mni_xfm", "inputnode.t1w_to_mni_xfm"),
+        ("outputnode.wm_probseg", "inputnode.wm_probseg"),
+        ("outputnode.t1w_preproc", "inputnode.t1w_underlay"),
+        ("outputnode.t1w_postcon_coreg", "inputnode.t1w_postcon_underlay"),
+        ("outputnode.t1w_subtraction", "inputnode.t1w_subtraction_underlay"),
+        ("outputnode.flair_coreg", "inputnode.flair_in_t1w"),
+        ("outputnode.flair_postcon_coreg", "inputnode.flair_postcon_in_t1w"),
+        ("outputnode.t2w_coreg", "inputnode.t2w_in_t1w"),
+    }
+
+
+def test_connect_master_dsc_anatomy_loads_cached_outputs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Skip-anat mode assigns cached references, masks, transforms, and underlays."""
+    previous = {
+        "t1w_preproc": tmp_path / "pre.nii.gz",
+        "t1w_postcon_coreg": tmp_path / "post.nii.gz",
+        "t1w_subtraction": tmp_path / "sub.nii.gz",
+        "brain_mask": tmp_path / "brain.nii.gz",
+        "wm_probseg": tmp_path / "wm.nii.gz",
+        "t1w_to_mni_xfm": tmp_path / "xfm.h5",
+        "flair_coreg": tmp_path / "flair.nii.gz",
+        "flair_postcon_coreg": tmp_path / "flair_post.nii.gz",
+        "t2w_coreg": tmp_path / "t2w.nii.gz",
+    }
+    monkeypatch.setattr(
+        "pmriprep.workflows.base._find_previous_anat_outputs",
+        lambda *args: previous,
+    )
+    inputnode = SimpleNamespace()
+    dsc_wf = SimpleNamespace(inputs=SimpleNamespace(inputnode=inputnode))
+    session_data = SessionData(
+        subject="0001",
+        session="0001",
+        modalities=ModalityAvailability(t1w_pre=tmp_path / "source.nii.gz"),
+        pipelines=PipelineAvailability(),
+    )
+
+    _connect_master_dsc_anatomy(
+        workflow=SimpleNamespace(connect=lambda connections: None),
+        dsc_wf=dsc_wf,
+        anat_wf=None,
+        session_data=session_data,
+        anat_config=AnatConfig(),
+        dsc_config=DSCConfig(underlays=[
+            "t1w_precon", "t1w_postcon", "t1w_subtraction",
+            "flair_precon", "flair_postcon", "t2w",
+        ]),
+        work_dir=tmp_path / "work",
+        subject_id="0001",
+        session_id="0001",
+    )
+
+    assert vars(inputnode) == {
+        "t1w_reference": previous["t1w_preproc"],
+        "t1w_underlay": previous["t1w_preproc"],
+        "t1w_postcon_underlay": previous["t1w_postcon_coreg"],
+        "t1w_subtraction_underlay": previous["t1w_subtraction"],
+        "brain_mask": previous["brain_mask"],
+        "wm_probseg": previous["wm_probseg"],
+        "t1w_to_mni_xfm": previous["t1w_to_mni_xfm"],
+        "flair_in_t1w": previous["flair_coreg"],
+        "flair_postcon_in_t1w": previous["flair_postcon_coreg"],
+        "t2w_in_t1w": previous["t2w_coreg"],
+    }
 
 
 def test_prepare_master_context_resolves_session_policy(
