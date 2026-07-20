@@ -1,0 +1,767 @@
+{
+  "edges": [
+    [
+      "acpc_align",
+      "out_file",
+      "acpc_filmstrip",
+      "t1w_acpc_file"
+    ],
+    [
+      "acpc_align",
+      "out_file",
+      "outputnode",
+      "t1w_acpc"
+    ],
+    [
+      "acpc_align",
+      "out_h5",
+      "outputnode",
+      "t1w_to_mni_h5"
+    ],
+    [
+      "acpc_align",
+      "out_matrix",
+      "outputnode",
+      "acpc_xfm"
+    ],
+    [
+      "acpc_align",
+      "out_matrix",
+      "outputnode",
+      "t1w_to_mni_xfm"
+    ],
+    [
+      "acpc_filmstrip",
+      "filmstrip_file",
+      "outputnode",
+      "acpc_filmstrip"
+    ],
+    [
+      "bias_correct",
+      "out_file",
+      "conform",
+      "in_file"
+    ],
+    [
+      "bias_correct_postcon",
+      "out_file",
+      "coreg_postcon",
+      "in_file"
+    ],
+    [
+      "brain_extract",
+      "out_file",
+      "acpc_align",
+      "in_file"
+    ],
+    [
+      "brain_extract",
+      "out_file",
+      "check_fast_mode",
+      "in_file"
+    ],
+    [
+      "brain_extract",
+      "out_file",
+      "coreg_qc_postcon",
+      "reference_file"
+    ],
+    [
+      "brain_extract",
+      "out_file",
+      "outputnode",
+      "t1w_preproc"
+    ],
+    [
+      "brain_extract",
+      "out_file",
+      "tissue_seg_filmstrip",
+      "t1w_file"
+    ],
+    [
+      "brain_extract",
+      "out_mask",
+      "brain_mask_filmstrip",
+      "brain_mask_file"
+    ],
+    [
+      "brain_extract",
+      "out_mask",
+      "coreg_qc_postcon",
+      "brain_mask_file"
+    ],
+    [
+      "brain_extract",
+      "out_mask",
+      "create_subtraction",
+      "brain_mask"
+    ],
+    [
+      "brain_extract",
+      "out_mask",
+      "hybrid_fast_chain",
+      "brain_mask"
+    ],
+    [
+      "brain_extract",
+      "out_mask",
+      "mask_postcon",
+      "mask_file"
+    ],
+    [
+      "brain_extract",
+      "out_mask",
+      "outputnode",
+      "brain_mask"
+    ],
+    [
+      "brain_extract",
+      "qc_metrics",
+      "merge_qc",
+      "brain_qc"
+    ],
+    [
+      "brain_mask_filmstrip",
+      "filmstrip_file",
+      "outputnode",
+      "brain_mask_filmstrip"
+    ],
+    [
+      "check_fast_mode",
+      "out_file",
+      "merge_fast",
+      "normal_input"
+    ],
+    [
+      "conform",
+      "out_file",
+      "brain_extract",
+      "in_file"
+    ],
+    [
+      "conform",
+      "out_file",
+      "brain_mask_filmstrip",
+      "t1w_file"
+    ],
+    [
+      "conform",
+      "out_file",
+      "coreg_postcon",
+      "reference"
+    ],
+    [
+      "conform",
+      "out_file",
+      "create_subtraction",
+      "precon_file"
+    ],
+    [
+      "conform",
+      "out_file",
+      "hybrid_fast_chain",
+      "reference_file"
+    ],
+    [
+      "coreg_postcon",
+      "out_file",
+      "create_subtraction",
+      "postcon_file"
+    ],
+    [
+      "coreg_postcon",
+      "out_file",
+      "mask_postcon",
+      "in_file"
+    ],
+    [
+      "coreg_postcon",
+      "out_h5",
+      "outputnode",
+      "t1w_postcon_to_t1w_xfm"
+    ],
+    [
+      "coreg_qc_postcon",
+      "filmstrip_file",
+      "outputnode",
+      "coreg_filmstrip_postcon"
+    ],
+    [
+      "create_subtraction",
+      "out_file",
+      "outputnode",
+      "t1w_subtraction"
+    ],
+    [
+      "determine_mode",
+      "is_postcon_ref",
+      "check_fast_mode",
+      "is_postcon_ref"
+    ],
+    [
+      "determine_mode",
+      "is_postcon_ref",
+      "hybrid_fast_chain",
+      "is_postcon_ref"
+    ],
+    [
+      "determine_mode",
+      "is_postcon_ref",
+      "outputnode",
+      "is_postcon_ref"
+    ],
+    [
+      "determine_mode",
+      "reference_t1w",
+      "reorient",
+      "in_file"
+    ],
+    [
+      "hybrid_fast_chain",
+      "out_file",
+      "merge_fast",
+      "hybrid_input"
+    ],
+    [
+      "inputnode",
+      "t1w_postcon",
+      "check_fast_mode",
+      "t1w_postcon"
+    ],
+    [
+      "inputnode",
+      "t1w_postcon",
+      "determine_mode",
+      "t1w_postcon"
+    ],
+    [
+      "inputnode",
+      "t1w_postcon",
+      "hybrid_fast_chain",
+      "t1w_postcon"
+    ],
+    [
+      "inputnode",
+      "t1w_postcon",
+      "reorient_postcon",
+      "in_file"
+    ],
+    [
+      "inputnode",
+      "t1w_precon",
+      "check_fast_mode",
+      "t1w_precon"
+    ],
+    [
+      "inputnode",
+      "t1w_precon",
+      "determine_mode",
+      "t1w_precon"
+    ],
+    [
+      "inputnode",
+      "t1w_precon",
+      "hybrid_fast_chain",
+      "t1w_precon"
+    ],
+    [
+      "mask_postcon",
+      "out_file",
+      "coreg_qc_postcon",
+      "coregistered_file"
+    ],
+    [
+      "mask_postcon",
+      "out_file",
+      "outputnode",
+      "t1w_postcon_coreg"
+    ],
+    [
+      "merge_fast",
+      "out_file",
+      "tissue_segment",
+      "in_file"
+    ],
+    [
+      "merge_qc",
+      "qc_metrics",
+      "outputnode",
+      "qc_metrics"
+    ],
+    [
+      "reorient",
+      "out_file",
+      "bias_correct",
+      "in_file"
+    ],
+    [
+      "reorient",
+      "out_file",
+      "conform_raw",
+      "in_file"
+    ],
+    [
+      "reorient_postcon",
+      "out_file",
+      "bias_correct_postcon",
+      "in_file"
+    ],
+    [
+      "tissue_seg_filmstrip",
+      "filmstrip_file",
+      "outputnode",
+      "tissue_seg_filmstrip"
+    ],
+    [
+      "tissue_segment",
+      "csf_probseg",
+      "outputnode",
+      "csf_probseg"
+    ],
+    [
+      "tissue_segment",
+      "csf_probseg",
+      "tissue_seg_filmstrip",
+      "csf_probseg_file"
+    ],
+    [
+      "tissue_segment",
+      "gm_probseg",
+      "outputnode",
+      "gm_probseg"
+    ],
+    [
+      "tissue_segment",
+      "gm_probseg",
+      "tissue_seg_filmstrip",
+      "gm_probseg_file"
+    ],
+    [
+      "tissue_segment",
+      "wm_probseg",
+      "outputnode",
+      "wm_probseg"
+    ],
+    [
+      "tissue_segment",
+      "wm_probseg",
+      "tissue_seg_filmstrip",
+      "wm_probseg_file"
+    ]
+  ],
+  "function_io": {
+    "acpc_filmstrip": {
+      "input_names": [
+        "session_id",
+        "subject_id",
+        "t1w_acpc_file"
+      ],
+      "output_names": [
+        "filmstrip_file"
+      ]
+    },
+    "brain_mask_filmstrip": {
+      "input_names": [
+        "brain_mask_file",
+        "session_id",
+        "subject_id",
+        "t1w_file"
+      ],
+      "output_names": [
+        "filmstrip_file"
+      ]
+    },
+    "check_fast_mode": {
+      "input_names": [
+        "in_file",
+        "is_postcon_ref",
+        "t1w_postcon",
+        "t1w_precon"
+      ],
+      "output_names": [
+        "out_file"
+      ]
+    },
+    "coreg_qc_postcon": {
+      "input_names": [
+        "brain_mask_file",
+        "coregistered_file",
+        "reference_file",
+        "session_id",
+        "subject_id",
+        "title"
+      ],
+      "output_names": [
+        "filmstrip_file"
+      ]
+    },
+    "determine_mode": {
+      "input_names": [
+        "t1w_postcon",
+        "t1w_precon"
+      ],
+      "output_names": [
+        "is_postcon_ref",
+        "reference_t1w"
+      ]
+    },
+    "hybrid_fast_chain": {
+      "input_names": [
+        "brain_mask",
+        "denoise",
+        "is_postcon_ref",
+        "reference_file",
+        "t1w_postcon",
+        "t1w_precon"
+      ],
+      "output_names": [
+        "out_file"
+      ]
+    },
+    "merge_fast": {
+      "input_names": [
+        "hybrid_input",
+        "normal_input"
+      ],
+      "output_names": [
+        "out_file"
+      ]
+    },
+    "merge_qc": {
+      "input_names": [
+        "brain_qc",
+        "denoising"
+      ],
+      "output_names": [
+        "qc_metrics"
+      ]
+    },
+    "tissue_seg_filmstrip": {
+      "input_names": [
+        "csf_probseg_file",
+        "gm_probseg_file",
+        "session_id",
+        "subject_id",
+        "t1w_file",
+        "wm_probseg_file"
+      ],
+      "output_names": [
+        "filmstrip_file"
+      ]
+    },
+    "tissue_segment": {
+      "input_names": [
+        "in_file"
+      ],
+      "output_names": [
+        "csf_probseg",
+        "gm_probseg",
+        "wm_probseg"
+      ]
+    }
+  },
+  "function_sha256": {
+    "acpc_filmstrip": "1ada52817e6ba4a305494804f61bb90e1a92d9ddb10607814047f2805f9c5cf3",
+    "brain_mask_filmstrip": "61721bc9421117fbef5683567cb4e926a59879226354dc61d00c7f61a8030cb0",
+    "check_fast_mode": "8dd6ec2c560751f726eac0c9b58c2bf385182d9bf7cfc3375ddc8965f072a5e3",
+    "coreg_qc_postcon": "392aafa0610d7219a97075f94ae8ca531dc81a97d97cd667c2a1c73738e9dc1f",
+    "determine_mode": "7fd6ec0f666dcaf6a7bb5721897296f35dd3d9cb113cabd0165a84c0c7bbc418",
+    "hybrid_fast_chain": "a07482e35ffc66d1ce693790a05be7c3e435db13ca67a60acb0a4b06e2cd4134",
+    "merge_fast": "6545fa79fc0caa474c1b763d564c08d7c7143205fa8b8261c98487737fd28c10",
+    "merge_qc": "0d4bd99820e33b36b2d99ef3c8285d685fdda16271f3efcfc4a20ce7c3ce8fac",
+    "tissue_seg_filmstrip": "25205454f432f1d2e3129a37281a5727ec0498be8ab2e51e379fa7c9b193be40",
+    "tissue_segment": "583afcddbac5088b0e81c191fb050215b82464d0a041c3e27c9f849ce88b248e"
+  },
+  "nipype_version": "1.10.0",
+  "node_attrs": {
+    "acpc_align": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "acpc_filmstrip": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "bias_correct": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "bias_correct_postcon": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "brain_extract": {
+      "mem_gb": 2.0,
+      "n_procs": 1
+    },
+    "brain_mask_filmstrip": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "check_fast_mode": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "conform": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "conform_raw": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "coreg_postcon": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "coreg_qc_postcon": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "create_subtraction": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "determine_mode": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "hybrid_fast_chain": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "inputnode": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "mask_postcon": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "merge_fast": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "merge_qc": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "outputnode": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "reorient": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "reorient_postcon": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "tissue_seg_filmstrip": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "tissue_segment": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    }
+  },
+  "node_params": {
+    "acpc_align": {
+      "cost": "normmi",
+      "dof": 6
+    },
+    "acpc_filmstrip": {
+      "session_id": "0001",
+      "subject_id": "0001"
+    },
+    "bias_correct": {
+      "bspline_fitting": "[200]",
+      "convergence": "[50x50x50x50,0.0001]",
+      "denoise": false,
+      "noise_model": "Rician",
+      "shrink_factor": 4
+    },
+    "bias_correct_postcon": {
+      "bspline_fitting": "[200]",
+      "convergence": "[50x50x50x50,0.0001]",
+      "denoise": false,
+      "noise_model": "Rician",
+      "shrink_factor": 4
+    },
+    "brain_extract": {
+      "conda_env": "",
+      "device": "auto",
+      "tool": "hdbet",
+      "use_gpu": false
+    },
+    "brain_mask_filmstrip": {
+      "session_id": "0001",
+      "subject_id": "0001"
+    },
+    "coreg_postcon": {
+      "dof": 6,
+      "modality": "T1_postcon"
+    },
+    "coreg_qc_postcon": {
+      "session_id": "0001",
+      "subject_id": "0001",
+      "title": "T1w PostCon to T1w"
+    },
+    "determine_mode": {
+      "function_str": "def _determine_processing_mode(\n    t1w_precon: str | None = None,\n    t1w_postcon: str | None = None,\n) -> tuple[str, bool]:\n    \"\"\"Determine reference T1w and processing mode using confidence scoring.\n\n    Uses confidence-based structural-reference selection and returns the\n    reference image with its contrast state.\n\n    Parameters\n    ----------\n    t1w_precon : str or None\n        Path to T1w pre-contrast image.\n    t1w_postcon : str or None\n        Path to T1w post-contrast image.\n\n    Returns\n    -------\n    reference_t1w : str\n        Path to T1w image to use as reference.\n    is_postcon_ref : bool\n        True if post-contrast T1w is the reference.\n    \"\"\"\n    from pmriprep.utils.structural_reference import _determine_processing_mode_v2\n\n    reference_t1w, is_postcon_ref, _fast_t1w = _determine_processing_mode_v2(\n        t1w_precon, t1w_postcon,\n    )\n    return reference_t1w, is_postcon_ref\n"
+    },
+    "hybrid_fast_chain": {
+      "denoise": false,
+      "function_str": "def _run_hybrid_fast_chain(\n    t1w_precon: str | None = None,\n    t1w_postcon: str | None = None,\n    is_postcon_ref: bool = False,\n    reference_file: str | None = None,\n    brain_mask: str | None = None,\n    denoise: bool = True,\n) -> str | None:\n    \"\"\"Run full hybrid FAST preprocessing chain or return None.\n\n    When postcon is reference and precon passes the quality gate,\n    run: reorient \u2192 bias correct \u2192 coregister to postcon \u2192 mask.\n    Otherwise return None immediately (no CommandLine nodes touched).\n    \"\"\"\n    if not is_postcon_ref:\n        return None\n\n    from pmriprep.utils.structural_reference import _determine_processing_mode_v2\n\n    _, _, fast_t1w = _determine_processing_mode_v2(t1w_precon, t1w_postcon)\n    if fast_t1w is None:\n        return None\n\n    from pmriprep.interfaces.anat import (\n        ApplyMask,\n        BiasCorrection,\n        Coregistration,\n        ReorientAndCrop,\n    )\n\n    reoriented = ReorientAndCrop(in_file=fast_t1w).run().outputs.out_file\n    bias_corrected = BiasCorrection(\n        in_file=reoriented, denoise=denoise,\n    ).run().outputs.out_file\n    coregistered = Coregistration(\n        in_file=bias_corrected, reference=reference_file,\n        modality=\"T1w\", dof=6,\n    ).run().outputs.out_file\n    masked: str = ApplyMask(\n        in_file=coregistered, mask_file=brain_mask,\n    ).run().outputs.out_file\n    return masked\n"
+    },
+    "merge_fast": {
+      "function_str": "def _merge_fast_inputs(\n    normal_input: str | None,\n    hybrid_input: str | None,\n) -> str | None:\n    \"\"\"Select whichever FAST input is available.\"\"\"\n    if normal_input is not None:\n        return normal_input\n    return hybrid_input\n"
+    },
+    "merge_qc": {
+      "denoising": false,
+      "function_str": "def _merge_qc_metrics(\n    brain_qc: dict[str, object] | None,\n    denoising: bool = False,\n) -> dict[str, object]:\n    \"\"\"Merge QC metrics from preprocessing steps.\n\n    Parameters\n    ----------\n    brain_qc : dict\n        QC metrics from brain extraction.\n    denoising : bool\n        Whether denoising was applied during preprocessing.\n\n    Returns\n    -------\n    dict\n        Merged QC metrics dictionary.\n    \"\"\"\n    merged: dict[str, object] = {}\n\n    # Add brain extraction QC\n    if brain_qc:\n        merged[\"brain_extraction\"] = brain_qc\n\n    # Add preprocessing settings\n    merged[\"preprocessing\"] = {\n        \"denoising\": denoising,\n    }\n\n    return merged\n"
+    },
+    "reorient": {
+      "crop_fov": true
+    },
+    "reorient_postcon": {
+      "crop_fov": true
+    },
+    "tissue_seg_filmstrip": {
+      "session_id": "0001",
+      "subject_id": "0001"
+    },
+    "tissue_segment": {
+      "function_str": "def _guarded_tissue_segment(\n    in_file: str | None,\n) -> tuple[str | None, str | None, str | None]:\n    \"\"\"Run FAST tissue segmentation, or return None triplet if skipped.\n\n    Returns ``(None, None, None)`` without a segmentation input. Otherwise\n    returns WM, GM, and CSF probability maps.\n    \"\"\"\n    if in_file is None:\n        return None, None, None\n    from pmriprep.interfaces.anat import TissueSegmentation\n\n    result = TissueSegmentation(in_file=in_file).run()\n    return (\n        result.outputs.wm_probseg,\n        result.outputs.gm_probseg,\n        result.outputs.csf_probseg,\n    )\n"
+    }
+  },
+  "nodes": [
+    [
+      "acpc_align",
+      "ACPCAlignment"
+    ],
+    [
+      "acpc_filmstrip",
+      "Function"
+    ],
+    [
+      "bias_correct",
+      "BiasCorrection"
+    ],
+    [
+      "bias_correct_postcon",
+      "BiasCorrection"
+    ],
+    [
+      "brain_extract",
+      "BrainExtraction"
+    ],
+    [
+      "brain_mask_filmstrip",
+      "Function"
+    ],
+    [
+      "check_fast_mode",
+      "Function"
+    ],
+    [
+      "conform",
+      "ConformT1w"
+    ],
+    [
+      "conform_raw",
+      "ConformT1w"
+    ],
+    [
+      "coreg_postcon",
+      "Coregistration"
+    ],
+    [
+      "coreg_qc_postcon",
+      "Function"
+    ],
+    [
+      "create_subtraction",
+      "T1wSubtraction"
+    ],
+    [
+      "determine_mode",
+      "Function"
+    ],
+    [
+      "hybrid_fast_chain",
+      "Function"
+    ],
+    [
+      "inputnode",
+      "IdentityInterface"
+    ],
+    [
+      "mask_postcon",
+      "ApplyMask"
+    ],
+    [
+      "merge_fast",
+      "Function"
+    ],
+    [
+      "merge_qc",
+      "Function"
+    ],
+    [
+      "outputnode",
+      "IdentityInterface"
+    ],
+    [
+      "reorient",
+      "ReorientAndCrop"
+    ],
+    [
+      "reorient_postcon",
+      "ReorientAndCrop"
+    ],
+    [
+      "tissue_seg_filmstrip",
+      "Function"
+    ],
+    [
+      "tissue_segment",
+      "Function"
+    ]
+  ],
+  "public_outputnode_fields": [
+    "acpc_filmstrip",
+    "acpc_xfm",
+    "brain_mask",
+    "brain_mask_filmstrip",
+    "coreg_filmstrip_flair",
+    "coreg_filmstrip_flair_postcon",
+    "coreg_filmstrip_postcon",
+    "coreg_filmstrip_t2w",
+    "csf_probseg",
+    "flair_coreg",
+    "flair_postcon_coreg",
+    "flair_postcon_to_t1w_xfm",
+    "flair_to_t1w_xfm",
+    "gm_probseg",
+    "is_postcon_ref",
+    "qc_metrics",
+    "t1w_acpc",
+    "t1w_postcon_coreg",
+    "t1w_postcon_to_t1w_xfm",
+    "t1w_preproc",
+    "t1w_subtraction",
+    "t1w_to_mni_h5",
+    "t1w_to_mni_xfm",
+    "t2w_coreg",
+    "t2w_to_t1w_xfm",
+    "tissue_seg_filmstrip",
+    "tumor_seg_flair",
+    "tumor_seg_t1w_postcon",
+    "tumor_seg_t1w_pre",
+    "tumor_seg_t2w",
+    "wm_probseg"
+  ]
+}
