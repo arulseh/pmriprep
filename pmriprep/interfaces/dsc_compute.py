@@ -1570,6 +1570,70 @@ class ComputeDSCMaps(BaseInterface):
         results["qc_metrics"] = qc_metrics
         return results
 
+    def _save_parametric_maps(
+        self,
+        *,
+        rel_cbf: npt.NDArray[Any],
+        rel_cbv: npt.NDArray[Any],
+        cbf_std: Optional[npt.NDArray[Any]],
+        cbv_std: Optional[npt.NDArray[Any]],
+        cbf_ci_lower: Optional[npt.NDArray[Any]],
+        cbf_ci_upper: Optional[npt.NDArray[Any]],
+        cbv_ci_lower: Optional[npt.NDArray[Any]],
+        cbv_ci_upper: Optional[npt.NDArray[Any]],
+        parametric_r2: Optional[npt.NDArray[Any]],
+        fallback_mask: Optional[npt.NDArray[Any]],
+        mask_bool: npt.NDArray[Any],
+        inference: str,
+        affine: npt.NDArray[Any],
+        header: Any,
+    ) -> dict[str, str]:
+        """Mask and serialize optional Bayesian and fit-diagnostic maps."""
+        outputs: dict[str, str] = {}
+
+        for name, suffix, standard_deviation, mean in (
+            ("cbf", "_cbf", cbf_std, rel_cbf),
+            ("cbv", "_cbv", cbv_std, rel_cbv),
+        ):
+            if standard_deviation is None:
+                continue
+            masked_std = np.where(mask_bool, standard_deviation, 0.0)
+            outputs[f"out_{name}_std"] = self._save_map(
+                masked_std, f"{suffix}_std", affine, header
+            )
+            cv = np.zeros_like(masked_std)
+            valid = np.abs(mean) > EPSILON_CONCENTRATION
+            np.divide(masked_std, np.abs(mean), out=cv, where=valid)
+            cv = np.where(mask_bool, cv, 0.0)
+            outputs[f"out_{name}_cv"] = self._save_map(
+                cv, f"{suffix}_cv", affine, header
+            )
+
+        if inference in ("vi", "svb", "mcmc"):
+            for name, suffix, interval in (
+                ("out_cbf_ci95_lower", "_cbf_ci95_lower", cbf_ci_lower),
+                ("out_cbf_ci95_upper", "_cbf_ci95_upper", cbf_ci_upper),
+                ("out_cbv_ci95_lower", "_cbv_ci95_lower", cbv_ci_lower),
+                ("out_cbv_ci95_upper", "_cbv_ci95_upper", cbv_ci_upper),
+            ):
+                if interval is not None:
+                    outputs[name] = self._save_map(
+                        np.where(mask_bool, interval, 0.0), suffix, affine, header
+                    )
+
+        if parametric_r2 is not None:
+            r2 = np.where(mask_bool, parametric_r2, np.nan).astype(np.float32)
+            outputs["out_parametric_r2"] = self._save_map(
+                r2, "_dscParametric_r2", affine, header
+            )
+        if fallback_mask is not None:
+            fallback = np.where(mask_bool, fallback_mask, 0).astype(np.uint8)
+            outputs["out_fallback_mask"] = self._save_map(
+                fallback, "_dscFallback_mask", affine, header, dtype=np.uint8
+            )
+
+        return outputs
+
     def _first_pass_reference(
         self,
         fp_area: npt.NDArray[Any],
@@ -3260,73 +3324,24 @@ class ComputeDSCMaps(BaseInterface):
 
         # Save Bayesian uncertainty maps (parametric methods only)
         if method in ("cpi", "vascular"):
-            if cbf_std_map is not None:  # type: ignore[possibly-undefined]
-                cbf_std_map = np.where(mask_bool, cbf_std_map, 0.0)
-                self._results["out_cbf_std"] = self._save_map(
-                    cbf_std_map, "_cbf_std", affine, header
+            self._results.update(
+                self._save_parametric_maps(
+                    rel_cbf=rel_cbf,
+                    rel_cbv=rel_cbv,
+                    cbf_std=cbf_std_map,  # type: ignore[possibly-undefined]
+                    cbv_std=cbv_std_map,  # type: ignore[possibly-undefined]
+                    cbf_ci_lower=cbf_ci_lower_map,  # type: ignore[possibly-undefined]
+                    cbf_ci_upper=cbf_ci_upper_map,  # type: ignore[possibly-undefined]
+                    cbv_ci_lower=cbv_ci_lower_map,  # type: ignore[possibly-undefined]
+                    cbv_ci_upper=cbv_ci_upper_map,  # type: ignore[possibly-undefined]
+                    parametric_r2=parametric_r2_map,  # type: ignore[possibly-undefined]
+                    fallback_mask=fallback_mask,  # type: ignore[possibly-undefined]
+                    mask_bool=mask_bool,
+                    inference=inference,
+                    affine=affine,
+                    header=header,
                 )
-            if cbv_std_map is not None:  # type: ignore[possibly-undefined]
-                cbv_std_map = np.where(mask_bool, cbv_std_map, 0.0)
-                self._results["out_cbv_std"] = self._save_map(
-                    cbv_std_map, "_cbv_std", affine, header
-                )
-
-            # Compute CV = std / |mean|, guarded for near-zero denominators.
-            # Use np.divide with where= to avoid RuntimeWarning on zero division.
-            if cbf_std_map is not None:  # type: ignore[possibly-undefined]
-                cbf_cv = np.zeros_like(cbf_std_map)
-                valid_cbf = np.abs(rel_cbf) > EPSILON_CONCENTRATION
-                np.divide(cbf_std_map, np.abs(rel_cbf), out=cbf_cv, where=valid_cbf)
-                cbf_cv = np.where(mask_bool, cbf_cv, 0.0)
-                self._results["out_cbf_cv"] = self._save_map(
-                    cbf_cv, "_cbf_cv", affine, header
-                )
-            if cbv_std_map is not None:  # type: ignore[possibly-undefined]
-                cbv_cv = np.zeros_like(cbv_std_map)
-                valid_cbv = np.abs(rel_cbv) > EPSILON_CONCENTRATION
-                np.divide(cbv_std_map, np.abs(rel_cbv), out=cbv_cv, where=valid_cbv)
-                cbv_cv = np.where(mask_bool, cbv_cv, 0.0)
-                self._results["out_cbv_cv"] = self._save_map(
-                    cbv_cv, "_cbv_cv", affine, header
-                )
-
-            # Save CI maps only for VI/MCMC (MAP Laplace CI is approximate)
-            if inference in ("vi", "svb", "mcmc"):
-                if cbf_ci_lower_map is not None:  # type: ignore[possibly-undefined]
-                    cbf_ci_lower_map = np.where(mask_bool, cbf_ci_lower_map, 0.0)
-                    self._results["out_cbf_ci95_lower"] = self._save_map(
-                        cbf_ci_lower_map, "_cbf_ci95_lower", affine, header
-                    )
-                if cbf_ci_upper_map is not None:  # type: ignore[possibly-undefined]
-                    cbf_ci_upper_map = np.where(mask_bool, cbf_ci_upper_map, 0.0)
-                    self._results["out_cbf_ci95_upper"] = self._save_map(
-                        cbf_ci_upper_map, "_cbf_ci95_upper", affine, header
-                    )
-                if cbv_ci_lower_map is not None:  # type: ignore[possibly-undefined]
-                    cbv_ci_lower_map = np.where(mask_bool, cbv_ci_lower_map, 0.0)
-                    self._results["out_cbv_ci95_lower"] = self._save_map(
-                        cbv_ci_lower_map, "_cbv_ci95_lower", affine, header
-                    )
-                if cbv_ci_upper_map is not None:  # type: ignore[possibly-undefined]
-                    cbv_ci_upper_map = np.where(mask_bool, cbv_ci_upper_map, 0.0)
-                    self._results["out_cbv_ci95_upper"] = self._save_map(
-                        cbv_ci_upper_map, "_cbv_ci95_upper", affine, header
-                    )
-
-            # Parametric-fit R² and oSVD-fallback mask (saved as
-            # diagnostic outputs; not surfaced in HTML report).
-            if parametric_r2_map is not None:  # type: ignore[possibly-undefined]
-                # Mask outside-brain to NaN so plotting tools render the
-                # background as transparent rather than zero.
-                _r2 = np.where(mask_bool, parametric_r2_map, np.nan).astype(np.float32)
-                self._results["out_parametric_r2"] = self._save_map(
-                    _r2, "_dscParametric_r2", affine, header
-                )
-            if fallback_mask is not None:  # type: ignore[possibly-undefined]
-                _fb = np.where(mask_bool, fallback_mask, 0).astype(np.uint8)
-                self._results["out_fallback_mask"] = self._save_map(
-                    _fb, "_dscFallback_mask", affine, header, dtype=np.uint8,
-                )
+            )
 
         # Save residues if requested
         if residues is not None and self.inputs.save_residue:
