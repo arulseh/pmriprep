@@ -3,7 +3,11 @@
 from pathlib import Path
 
 from pmriprep.config.dce import DCEConfig
-from pmriprep.workflows.dce.base import init_dce_native_input_wf, init_dce_t1_b1_wf
+from pmriprep.workflows.dce.base import (
+    init_dce_brain_extraction_wf,
+    init_dce_native_input_wf,
+    init_dce_t1_b1_wf,
+)
 
 
 def _names(config: DCEConfig) -> set[str]:
@@ -40,4 +44,15 @@ def test_dce_native_input_workflow_contract() -> None:
     }
     assert set(workflow.get_node("outputnode").interface._fields) == {
         "dce_file", "early_mean",
+    }
+
+
+def test_dce_brain_extraction_workflow_contract() -> None:
+    """Brain extraction exposes the complete native-space result contract."""
+    workflow = init_dce_brain_extraction_wf(config=DCEConfig(), mem_gb=2.0)
+    assert set(workflow.list_node_names()) == {
+        "inputnode", "outputnode", "dce_brain_extract",
+    }
+    assert set(workflow.get_node("outputnode").interface._fields) == {
+        "out_brain", "out_mask", "method_used", "qc_metrics",
     }

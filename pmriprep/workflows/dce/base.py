@@ -808,6 +808,59 @@ def init_dce_native_input_wf(
     return workflow
 
 
+def init_dce_brain_extraction_wf(
+    *,
+    config: DCEConfig,
+    mem_gb: float,
+    name: str = "dce_brain_extraction_wf",
+) -> pe.Workflow:
+    """Build native-space DCE brain extraction.
+
+    Parameters
+    ----------
+    config : DCEConfig
+        DCE configuration providing HD-BET device and environment settings.
+    mem_gb : float
+        Memory estimate in GB for the extraction node.
+    name : str
+        Workflow name.
+
+    Returns
+    -------
+    workflow : nipype.pipeline.engine.Workflow
+        Workflow exposing the extracted brain, native brain mask, method, and
+        QC metrics through an explicit outputnode.
+    """
+    from pmriprep.utils.device import resolve_device_uses_gpu
+
+    workflow = pe.Workflow(name=name)
+    inputnode = pe.Node(niu.IdentityInterface(fields=["early_mean"]), name="inputnode")
+    outputnode = pe.Node(
+        niu.IdentityInterface(fields=["out_brain", "out_mask", "method_used", "qc_metrics"]),
+        name="outputnode",
+    )
+    brain_extract = pe.Node(
+        DCEBrainExtract(
+            method="hdbet",
+            bet_frac=0.3,
+            fill_holes=True,
+            hdbet_device=config.hdbet_device,
+            hdbet_conda_env=config.hdbet_conda_env or "",
+            use_gpu=resolve_device_uses_gpu(config.hdbet_device),
+        ),
+        name="dce_brain_extract",
+        mem_gb=mem_gb,
+    )
+    workflow.connect([
+        (inputnode, brain_extract, [("early_mean", "dce_mean")]),
+        (brain_extract, outputnode, [
+            ("out_brain", "out_brain"), ("out_mask", "out_mask"),
+            ("method_used", "method_used"), ("qc_metrics", "qc_metrics"),
+        ]),
+    ])
+    return workflow
+
+
 def init_dce_preproc_wf(
     bids_dir: Union[str, Path],
     output_dir: Union[str, Path],
@@ -1265,19 +1318,8 @@ def init_dce_preproc_wf(
     # 1. Accurately reflects the DCE field of view
     # 2. Avoids registration-induced edge artifacts
     # 3. Works directly in DCE native space
-    # Resolve device at build time for nipype GPU scheduling
-    from pmriprep.utils.device import resolve_device_uses_gpu
-
-    dce_brain_extract = pe.Node(
-        DCEBrainExtract(
-            method="hdbet",  # Prefer HD-BET, fallback to BET
-            bet_frac=0.3,    # Lower threshold for DCE contrast
-            fill_holes=True,
-            hdbet_device=config.hdbet_device,
-            hdbet_conda_env=config.hdbet_conda_env or "",
-            use_gpu=resolve_device_uses_gpu(config.hdbet_device),
-        ),
-        name="dce_brain_extract",
+    dce_brain_extraction_wf = init_dce_brain_extraction_wf(
+        config=config,
         mem_gb=_static_mem,
     )
 
@@ -1285,8 +1327,12 @@ def init_dce_preproc_wf(
     # correction). The mask is then used by DCEPreprocess for baseline
     # detection and by all downstream nodes.
     workflow.connect([
-        (dce_native_input_wf, dce_brain_extract, [("outputnode.early_mean", "dce_mean")]),
-        (dce_brain_extract, dce_preprocess, [("out_mask", "brain_mask")]),
+        (dce_native_input_wf, dce_brain_extraction_wf, [
+            ("outputnode.early_mean", "inputnode.early_mean"),
+        ]),
+        (dce_brain_extraction_wf, dce_preprocess, [
+            ("outputnode.out_mask", "brain_mask"),
+        ]),
     ])
 
     # Brain mask filmstrip QC (after brain extraction)
@@ -1306,8 +1352,8 @@ def init_dce_preproc_wf(
         (dce_preprocess, dce_brain_mask_qc, [
             ("baseline_mean_img", "mean_file"),
         ]),
-        (dce_brain_extract, dce_brain_mask_qc, [
-            ("out_mask", "brain_mask_file"),
+        (dce_brain_extraction_wf, dce_brain_mask_qc, [
+            ("outputnode.out_mask", "brain_mask_file"),
         ]),
     ])
 
@@ -1335,8 +1381,8 @@ def init_dce_preproc_wf(
             ("baseline_frames", "baseline_frames"),
             ("bolus_arrival_frame", "bolus_arrival_frame"),
         ]),
-        (dce_brain_extract, preprocessing_qc, [
-            ("out_mask", "brain_mask_file"),
+        (dce_brain_extraction_wf, preprocessing_qc, [
+            ("outputnode.out_mask", "brain_mask_file"),
         ]),
         (inputnode, preprocessing_qc, [
             ("tr", "tr_ms"),
@@ -1360,8 +1406,8 @@ def init_dce_preproc_wf(
             ("t1w_reference", "t1w_file"),
             ("brain_mask", "brain_mask"),
         ]),
-        (dce_brain_extract, dce_registration, [
-            ("out_brain", "dce_mean"),  # Brain-extracted baseline mean
+        (dce_brain_extraction_wf, dce_registration, [
+            ("outputnode.out_brain", "dce_mean"),  # Brain-extracted baseline mean
         ]),
     ])
 
@@ -1476,8 +1522,8 @@ def init_dce_preproc_wf(
             ("out_file", "t1w_mask_in_dce"),
         ]),
         # Use native DCE brain mask from HD-BET extraction
-        (dce_brain_extract, create_aif_mask, [
-            ("out_mask", "dce_native_mask"),
+        (dce_brain_extraction_wf, create_aif_mask, [
+            ("outputnode.out_mask", "dce_native_mask"),
         ]),
     ])
 
@@ -1733,8 +1779,8 @@ def init_dce_preproc_wf(
         # Use native DCE brain mask (from HD-BET) for PK modeling
         # This avoids registration-induced edge artifacts and ensures
         # the mask accurately reflects the DCE field of view
-        (dce_brain_extract, pk_wf, [
-            ("out_mask", "inputnode.brain_mask_file"),
+        (dce_brain_extraction_wf, pk_wf, [
+            ("outputnode.out_mask", "inputnode.brain_mask_file"),
         ]),
         (inputnode, pk_wf, [
             ("volume_tr", "inputnode.volume_tr"),  # For model auto-selection
@@ -2056,8 +2102,8 @@ def init_dce_preproc_wf(
             ("outputnode.out_delta_bic", "delta_bic_file"),
             ("outputnode.out_vp_at_bound_map", "vp_at_bound_map_file"),
         ]),
-        (dce_brain_extract, dce_pk_maps_qc, [
-            ("out_mask", "brain_mask_file"),
+        (dce_brain_extraction_wf, dce_pk_maps_qc, [
+            ("outputnode.out_mask", "brain_mask_file"),
         ]),
         (transform_enhancing_mask, dce_pk_maps_qc, [
             ("out_file", "enhancing_mask_file"),
@@ -2105,8 +2151,8 @@ def init_dce_preproc_wf(
         (aif_detection, dce_pk_fit_qc, [
             ("out_aif_curve", "aif_file"),
         ]),
-        (dce_brain_extract, dce_pk_fit_qc, [
-            ("out_mask", "brain_mask_file"),
+        (dce_brain_extraction_wf, dce_pk_fit_qc, [
+            ("outputnode.out_mask", "brain_mask_file"),
         ]),
         (pk_wf, dce_pk_fit_qc, [
             ("outputnode.out_ktrans", "ktrans_file"),
@@ -2159,7 +2205,9 @@ def init_dce_preproc_wf(
                 ("outputnode.out_fp_std", "inputnode.fp_std"),
                 ("outputnode.out_ps_std", "inputnode.ps_std"),
             ]),
-            (dce_brain_extract, smoothing_wf, [("out_mask", "inputnode.brain_mask_file")]),
+            (dce_brain_extraction_wf, smoothing_wf, [
+                ("outputnode.out_mask", "inputnode.brain_mask_file"),
+            ]),
         ])
 
     # ==========================================================================
@@ -2180,7 +2228,9 @@ def init_dce_preproc_wf(
     workflow.connect([
         (dce_preprocess, reg_filmstrip, [("mean_img", "dce_mean_file")]),
         (dce_registration, reg_filmstrip, [("out_file", "registered_t1w_file")]),
-        (dce_brain_extract, reg_filmstrip, [("out_mask", "brain_mask_file")]),
+        (dce_brain_extraction_wf, reg_filmstrip, [
+            ("outputnode.out_mask", "brain_mask_file"),
+        ]),
     ])
 
     # ==========================================================================
@@ -2201,7 +2251,9 @@ def init_dce_preproc_wf(
             ("qc_metrics", "qc_metrics"),
         ]),
         (dce_preprocess, aif_qc_plot, [("out_file", "dce_file")]),
-        (dce_brain_extract, aif_qc_plot, [("out_mask", "brain_mask_file")]),
+        (dce_brain_extraction_wf, aif_qc_plot, [
+            ("outputnode.out_mask", "brain_mask_file"),
+        ]),
         (inputnode, aif_qc_plot, [
             ("volume_tr", "tr"),
             ("t1w_to_mni_xfm", "t1w_to_mni_xfm"),
@@ -2739,7 +2791,9 @@ def init_dce_preproc_wf(
     # Anatomical masks in DCE space output connections
     # Use native DCE brain mask from HD-BET extraction for output
     workflow.connect([
-        (dce_brain_extract, outputnode, [("out_mask", "brain_mask")]),
+        (dce_brain_extraction_wf, outputnode, [
+            ("outputnode.out_mask", "brain_mask"),
+        ]),
         (transform_nawm_mask, outputnode, [("out_file", "nawm_mask")]),
     ])
 
