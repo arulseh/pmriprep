@@ -647,20 +647,17 @@ def _build_bayes_extra(
     config_dict: dict | None = None,
     umap_key: str = "cbf_std",
 ) -> dict:
-    """EstimationMethod + UncertaintyMethod for Bayesian uncertainty maps."""
+    """Build inference-specific provenance for Bayesian uncertainty maps."""
+    from pmriprep.utils.uncertainty_provenance import (
+        build_uncertainty_provenance,
+    )
+
     estimation = "unknown"
     if isinstance(config_dict, dict):
         estimation = config_dict.get("inference") or "unknown"
-    if "CV" in umap_key:
-        kind = "coefficient_of_variation"
-    elif "CI95" in umap_key:
-        kind = "95pct_credible_interval"
-    else:
-        kind = "std"
-    return {
-        "EstimationMethod": str(estimation),
-        "UncertaintyMethod": kind,
-    }
+    return build_uncertainty_provenance(
+        inference=str(estimation), map_key=umap_key, modality="DSC"
+    )
 
 
 def _build_smoothed_meta(

@@ -562,12 +562,12 @@ output_dir/pmriprep/
 | `*_desc-dscCth_stat` | Capillary transit heterogeneity (vascular method only) | seconds |
 | `*_desc-dscUncertaintyCbf_stat` | CBF posterior standard deviation (CPI/Vascular) | 1/min |
 | `*_desc-dscCVCbf_stat` | CBF coefficient of variation (CPI/Vascular) | fraction |
-| `*_desc-dscCI95lowerCbf_stat` | CBF 95% credible interval lower bound (CPI/Vascular) | 1/min |
-| `*_desc-dscCI95upperCbf_stat` | CBF 95% credible interval upper bound (CPI/Vascular) | 1/min |
+| `*_desc-dscCI95lowerCbf_stat` | CBF approximate 95% credible interval lower bound (CPI/Vascular) | 1/min |
+| `*_desc-dscCI95upperCbf_stat` | CBF approximate 95% credible interval upper bound (CPI/Vascular) | 1/min |
 | `*_desc-dscUncertaintyCbv_stat` | CBV posterior standard deviation (CPI/Vascular) | arbitrary |
 | `*_desc-dscCVCbv_stat` | CBV coefficient of variation (CPI/Vascular) | fraction |
-| `*_desc-dscCI95lowerCbv_stat` | CBV 95% credible interval lower bound (CPI/Vascular) | arbitrary |
-| `*_desc-dscCI95upperCbv_stat` | CBV 95% credible interval upper bound (CPI/Vascular) | arbitrary |
+| `*_desc-dscCI95lowerCbv_stat` | CBV approximate 95% credible interval lower bound (CPI/Vascular) | arbitrary |
+| `*_desc-dscCI95upperCbv_stat` | CBV approximate 95% credible interval upper bound (CPI/Vascular) | arbitrary |
 | `*_desc-dscParametricRsquared_stat` | Parametric-fit R-squared (CPI/Vascular) | fraction |
 | `*_desc-dscFallback_mask` | Voxels replaced by oSVD after parametric-fit rejection | binary |
 
@@ -603,8 +603,8 @@ output_dir/pmriprep/
 | `*_desc-dceNawmNormIAUC60_stat` | NAWM-normalized IAUC60 | ratio |
 | `*_desc-dceUncertainty{Param}_stat` | Posterior std (Bayesian only) | varies |
 | `*_desc-dceCV{Param}_stat` | Coefficient of variation (Bayesian only) | fraction |
-| `*_desc-dceCI95lower{Param}_stat` | 95% credible interval lower bound (Bayesian only) | varies |
-| `*_desc-dceCI95upper{Param}_stat` | 95% credible interval upper bound (Bayesian only) | varies |
+| `*_desc-dceCI95lower{Param}_stat` | Approximate 95% credible interval lower bound (Bayesian only) | varies |
+| `*_desc-dceCI95upper{Param}_stat` | Approximate 95% credible interval upper bound (Bayesian only) | varies |
 | `*_desc-dceModelSelection_dseg` | Per-voxel model selection (auto mode only) | categorical |
 | `*_desc-dceDeltaBIC_stat` | Delta-BIC confidence (auto mode only) | — |
 | `*_desc-dceQualityFlag_mask` | Voxel quality flags (auto mode only) | categorical |

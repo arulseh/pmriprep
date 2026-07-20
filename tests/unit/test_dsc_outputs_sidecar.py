@@ -347,7 +347,7 @@ class TestWriterAifBlockPresentOnAllMaps:
             "cbv_cv_map": _write_dummy_nifti(tmp_path / "cbv_cv.nii.gz"),
             "auc_diff_map": _write_dummy_nifti(tmp_path / "auc_diff.nii.gz"),
             "parametric_r2_map": _write_dummy_nifti(tmp_path / "parametric_r2.nii.gz"),
-            "config_dict": {},
+            "config_dict": {"inference": "svb"},
         })
         derivatives = _run_writer(minimal_inputs, {}, tmp_path)
 
@@ -363,6 +363,14 @@ class TestWriterAifBlockPresentOnAllMaps:
         }
         for suffix, units in expected.items():
             assert _load_sidecar(derivatives, suffix)["Units"] == units
+
+        uncertainty_meta = _load_sidecar(derivatives, "dscUncertaintyCbf_stat")
+        assert uncertainty_meta["EstimationMethod"] == "svb"
+        assert uncertainty_meta["InferenceMethod"] == "spatial_variational_bayes"
+        assert uncertainty_meta["SpatialPriorApplied"] is True
+        assert uncertainty_meta["SpatialPriorModel"] == "Penny M-prior"
+        cv_meta = _load_sidecar(derivatives, "dscCVCbv_stat")
+        assert cv_meta["UncertaintyStatistic"] == "coefficient_of_variation"
 
     def test_synthetic_template_flags(self, minimal_inputs, tmp_path) -> None:
         qc = {

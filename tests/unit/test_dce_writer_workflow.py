@@ -90,6 +90,7 @@ def test_dce_factory_with_bayesian_uncertainty(
     for attr in present:
         setattr(inp, attr, _write_nii(tmp_path / f"{attr}.nii.gz"))
     inp.qc_metrics = {}
+    inp.config_dict = {"inference": "vi"}
     wf.run()
 
     perf_out = out / "pmriprep" / "sub-01" / "ses-0001" / "perf"
@@ -117,6 +118,21 @@ def test_dce_factory_with_bayesian_uncertainty(
     for ending, units in expected_units.items():
         sidecar = next(perf_out.glob(f"*{ending}"))
         assert json.loads(sidecar.read_text())["Units"] == units
+
+    uncertainty_meta = json.loads(
+        next(perf_out.glob("*desc-dceUncertaintyKtrans_stat.json")).read_text()
+    )
+    assert uncertainty_meta["EstimationMethod"] == "vi"
+    assert uncertainty_meta["InferenceMethod"] == "variational_bayes"
+    assert (
+        uncertainty_meta["UncertaintyEstimationMethod"]
+        == "variational_posterior_covariance"
+    )
+    ci_meta = json.loads(
+        next(perf_out.glob("*desc-dceCI95lowerKtrans_stat.json")).read_text()
+    )
+    assert ci_meta["CredibleIntervalProbability"] == 0.95
+    assert ci_meta["CredibleIntervalBounding"] == "parameter_bounds"
 
 
 def test_dce_factory_model_free_no_model_entity(

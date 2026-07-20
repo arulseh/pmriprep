@@ -278,6 +278,23 @@ def _build_dce_meta(
     return out
 
 
+def _build_bayes_extra(
+    config_dict: dict | None = None,
+    umap_key: str = "ktrans_uncertainty",
+) -> dict:
+    """Build inference-specific provenance for Bayesian uncertainty maps."""
+    from pmriprep.utils.uncertainty_provenance import (
+        build_uncertainty_provenance,
+    )
+
+    estimation = "unknown"
+    if isinstance(config_dict, dict):
+        estimation = config_dict.get("inference") or "unknown"
+    return build_uncertainty_provenance(
+        inference=str(estimation), map_key=umap_key, modality="DCE"
+    )
+
+
 def _build_dce_preproc_meta(
     base: dict,
     description: str,
@@ -724,6 +741,7 @@ def _add_perf_map_sink(
     description: str,
     units: Optional[str],
     extra: Optional[dict],
+    extra_node: pe.Node | None = None,
     minimal_base: bool = False,
     map_key: str = "",
     bids_suffix: str = "stat",
@@ -748,7 +766,10 @@ def _add_perf_map_sink(
     )
     meta.inputs.description = description
     meta.inputs.units = units
-    meta.inputs.extra = extra
+    if extra_node is None:
+        meta.inputs.extra = extra
+    else:
+        workflow.connect(extra_node, "extra", meta, "extra")
     meta.inputs.map_key = map_key
     workflow.connect(base_node, "meta_dict", meta, "base")
     if map_key:
@@ -1193,12 +1214,22 @@ def init_dce_datasinks_wf(
         for spec in table:
             if spec.in_attr not in present:
                 continue
+            bayes_extra = pe.Node(
+                niu.Function(
+                    input_names=["config_dict", "umap_key"],
+                    output_names=["extra"],
+                    function=_build_bayes_extra,
+                ),
+                name=f"{spec.in_attr}_extra",
+            )
+            bayes_extra.inputs.umap_key = spec.map_key
+            workflow.connect(inputnode, "config_dict", bayes_extra, "config_dict")
             sink = _add_perf_map_sink(
                 workflow, inputnode, base_perf,
                 name=spec.in_attr, in_attr=spec.in_attr,
                 desc_value=spec.desc, suffix=spec.suffix,
                 description=spec.description, units=spec.units,
-                extra=spec.extra, map_key=spec.map_key,
+                extra=spec.extra, extra_node=bayes_extra, map_key=spec.map_key,
                 bids_suffix=spec.bids_suffix,
             )
             sink_outputs.append((sink, "out_file"))
