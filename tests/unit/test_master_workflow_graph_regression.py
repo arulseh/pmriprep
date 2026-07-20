@@ -20,6 +20,7 @@ from pmriprep.workflows.base import (
     PipelineDecision,
     PipelineSkipFlags,
     _connect_master_dsc_anatomy,
+    _connect_master_dsc_masks,
     _init_master_workflow_nodes,
     _prepare_master_workflow_context,
     _prepare_master_preflight_state,
@@ -321,6 +322,42 @@ def test_connect_master_dsc_anatomy_loads_cached_outputs(
         "flair_postcon_in_t1w": previous["flair_postcon_coreg"],
         "t2w_in_t1w": previous["t2w_coreg"],
     }
+
+
+def test_connect_master_dsc_masks_loads_cached_tumor_outputs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cached tumor masks retain their DSC input roles and availability state."""
+    previous = {
+        "nawm_mask": tmp_path / "nawm.nii.gz",
+        "whole_tumor_mask": tmp_path / "whole.nii.gz",
+        "enhancing_mask": tmp_path / "enhancing.nii.gz",
+        "segmentation": tmp_path / "seg.nii.gz",
+    }
+    monkeypatch.setattr(
+        "pmriprep.workflows.base._find_previous_tumor_seg_outputs",
+        lambda *args: previous,
+    )
+    inputnode = SimpleNamespace()
+    state = _connect_master_dsc_masks(
+        workflow=SimpleNamespace(connect=lambda connections: None),
+        dsc_wf=SimpleNamespace(inputs=SimpleNamespace(inputnode=inputnode)),
+        tumor_seg_wf=None,
+        decision=PipelineDecision(run_tumor_seg=False),
+        dsc_config=DSCConfig(),
+        work_dir=tmp_path / "work",
+        subject_id="0001",
+        session_id="0001",
+    )
+
+    assert vars(inputnode) == {
+        "nawm_mask": previous["nawm_mask"],
+        "whole_tumor_mask": previous["whole_tumor_mask"],
+        "enhancing_mask": previous["enhancing_mask"],
+        "tumor_segmentation": previous["segmentation"],
+    }
+    assert state.has_nawm_source is True
+    assert state.has_whole_tumor_source is True
 
 
 def test_prepare_master_context_resolves_session_policy(
