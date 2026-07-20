@@ -202,6 +202,10 @@ pmriprep /path/to/bids /path/to/output participant \
     --config-file config.yaml
 ```
 
+Configuration parameters are grouped under the top-level keys `dsc`, `dce`,
+`anat`, and `tumor_seg`, matching the tables below. All sections are optional;
+omitted sections use their defaults.
+
 ### Example config.yaml
 
 ```yaml
@@ -221,6 +225,16 @@ dce:
   lesion_mask: /path/to/lesion_mask.nii.gz
   nawm_mask: /path/to/nawm_mask.nii.gz
   underlays: [t1w_postcon, flair_precon]
+
+anat:
+  tool: hdbet
+  denoise: false
+  create_subtraction: true
+
+tumor_seg:
+  tool: hdglio
+  nawm_erosion: 2
+  nawm_min_voxels: 500
 ```
 
 ### DSC Configuration
@@ -243,7 +257,7 @@ dce:
 | `disable_aif_fallback` | bool | `false` | Disable synthetic AIF fallback: error if no AIF found, otherwise retain a flagged low-quality AIF |
 | `leakage_method` | str | `"bsw"` | K2 leakage correction: `bsw` (standard), `bidirectional` |
 | `kep` | float | `0.005` | EES efflux rate for bidirectional correction (s⁻¹); ignored for bsw |
-| `pre_bolus` | int | `5` | Initial baseline for motion correction. Baseline is re-estimated after AIF detection |
+| `pre_bolus` | int | `5` | Initial baseline used to bootstrap motion correction and AIF detection; the final baseline is re-estimated after AIF detection |
 | `motion_correct` | bool | `true` | Apply motion correction. `false` assumes input already motion-corrected (residual motion still reported) |
 | `motion_thresh` | float | `0.5` | Framewise displacement threshold in mm |
 | `lesion_mask` | path | `null` | Lesion mask for AIF exclusion and lesion statistics (DSC space) |
@@ -293,7 +307,7 @@ dce:
 |-----------|------|---------|-------------|
 | `tool` | str | `"hdbet"` | Brain extraction tool: `hdbet`, `ants` |
 | `denoise` | bool | `false` | Apply ANTs denoising |
-| `create_subtraction` | bool | `true` | Create post-pre contrast subtraction image |
+| `create_subtraction` | bool | `true` | Create a post-contrast minus pre-contrast T1w subtraction image |
 
 ### Tumor Segmentation Configuration
 
@@ -344,7 +358,7 @@ bids_dir/
         sub-01_ses-01_run-1_TB1map.json
 ```
 
-> The `acq-<label>` entity is optional but used to rank candidates when multiple files share the same suffix: T1w prefers `acq-mprage` over other sequences and excludes `acq-se`; FLAIR prefers `acq-3d`; B1+ mapping matches `acq-famp` for Siemens tfl_b1map.
+> The `acq-<label>` entity is optional but used to rank candidates when multiple files share the same suffix: T1w prefers `acq-mprage` over other sequences and ranks `acq-se` last; FLAIR prefers `acq-3d`; B1+ mapping matches `acq-famp` for Siemens tfl_b1map.
 
 ### Required Files
 
@@ -472,8 +486,6 @@ output_dir/pmriprep/
       sub-01_ses-01_desc-dscCVCbf_stat.nii.gz
       sub-01_ses-01_desc-dscCI95lowerCbf_stat.nii.gz
       sub-01_ses-01_desc-dscCI95upperCbf_stat.nii.gz
-      sub-01_ses-01_desc-dscUncertaintyCbv_stat.nii.gz
-      sub-01_ses-01_desc-dscCVCbv_stat.nii.gz
       sub-01_ses-01_desc-dscParametricRsquared_stat.nii.gz
       sub-01_ses-01_desc-dscFallback_mask.nii.gz
       # DSC vascular model (optional)
@@ -493,9 +505,19 @@ output_dir/pmriprep/
       sub-01_ses-01_desc-dceNawmNormKtrans_stat.nii.gz
       # DCE PK uncertainty (inference)
       sub-01_ses-01_desc-dceUncertaintyKtrans_stat.nii.gz
+      sub-01_ses-01_desc-dceUncertaintyVe_stat.nii.gz
+      sub-01_ses-01_desc-dceUncertaintyVp_stat.nii.gz
       sub-01_ses-01_desc-dceCVKtrans_stat.nii.gz
+      sub-01_ses-01_desc-dceCVVe_stat.nii.gz
+      sub-01_ses-01_desc-dceCVVp_stat.nii.gz
       sub-01_ses-01_desc-dceCI95lowerKtrans_stat.nii.gz
       sub-01_ses-01_desc-dceCI95upperKtrans_stat.nii.gz
+      sub-01_ses-01_desc-dceCI95lowerVe_stat.nii.gz
+      sub-01_ses-01_desc-dceCI95upperVe_stat.nii.gz
+      sub-01_ses-01_desc-dceCI95lowerVp_stat.nii.gz
+      sub-01_ses-01_desc-dceCI95upperVp_stat.nii.gz
+      sub-01_ses-01_desc-dceUncertaintyFp_stat.nii.gz         # 2CXM only
+      sub-01_ses-01_desc-dceUncertaintyPS_stat.nii.gz         # 2CXM only
       # DCE model selection (auto mode)
       sub-01_ses-01_desc-dceModelSelection_dseg.nii.gz
       sub-01_ses-01_desc-dceDeltaBIC_stat.nii.gz
@@ -529,7 +551,7 @@ output_dir/pmriprep/
 
 | File Pattern | Description |
 |--------------|-------------|
-| `*_desc-dscPreproc_dsc` | Motion-corrected 4D DSC time series |
+| `*_desc-dscPreproc_dsc` | Processed 4D DSC time series (motion-corrected by default) |
 | `*_desc-dscMean_stat` | Mean DSC reference image |
 | `*_desc-dscConfounds_timeseries.tsv` | Framewise displacement and motion parameters |
 
@@ -560,14 +582,10 @@ output_dir/pmriprep/
 | `*_desc-dscAlpha_stat` | Vascular model alpha (vascular method only) | dimensionless |
 | `*_desc-dscBeta_stat` | Vascular model beta (vascular method only) | seconds |
 | `*_desc-dscCth_stat` | Capillary transit heterogeneity (vascular method only) | seconds |
-| `*_desc-dscUncertaintyCbf_stat` | CBF posterior standard deviation (CPI/Vascular) | 1/min |
-| `*_desc-dscCVCbf_stat` | CBF coefficient of variation (CPI/Vascular) | fraction |
-| `*_desc-dscCI95lowerCbf_stat` | CBF approximate 95% credible interval lower bound (CPI/Vascular) | 1/min |
-| `*_desc-dscCI95upperCbf_stat` | CBF approximate 95% credible interval upper bound (CPI/Vascular) | 1/min |
-| `*_desc-dscUncertaintyCbv_stat` | CBV posterior standard deviation (CPI/Vascular) | arbitrary |
-| `*_desc-dscCVCbv_stat` | CBV coefficient of variation (CPI/Vascular) | fraction |
-| `*_desc-dscCI95lowerCbv_stat` | CBV approximate 95% credible interval lower bound (CPI/Vascular) | arbitrary |
-| `*_desc-dscCI95upperCbv_stat` | CBV approximate 95% credible interval upper bound (CPI/Vascular) | arbitrary |
+| `*_desc-dscUncertaintyCbf_stat` | CBF uncertainty (estimated standard deviation; CPI/Vascular with NLLS/VI/SVB) | 1/min |
+| `*_desc-dscCVCbf_stat` | CBF coefficient of variation (CPI/Vascular with NLLS/VI/SVB) | fraction |
+| `*_desc-dscCI95lowerCbf_stat` | CBF approximate 95% credible interval lower bound (CPI/Vascular with VI/SVB) | 1/min |
+| `*_desc-dscCI95upperCbf_stat` | CBF approximate 95% credible interval upper bound (CPI/Vascular with VI/SVB) | 1/min |
 | `*_desc-dscParametricRsquared_stat` | Parametric-fit R-squared (CPI/Vascular) | fraction |
 | `*_desc-dscFallback_mask` | Voxels replaced by oSVD after parametric-fit rejection | binary |
 
@@ -575,7 +593,7 @@ output_dir/pmriprep/
 
 | File Pattern | Description |
 |--------------|-------------|
-| `*_desc-dcePreproc_dce` | Motion-corrected 4D DCE signal time series |
+| `*_desc-dcePreproc_dce` | Processed 4D DCE signal time series (motion-corrected by default) |
 | `*_desc-dceMean_stat` | Mean DCE reference image |
 | `*_desc-dceConfounds_timeseries.tsv` | Framewise displacement and motion parameters |
 
@@ -601,10 +619,10 @@ output_dir/pmriprep/
 | `*_desc-dceTsnr_stat` | Temporal signal-to-noise ratio | arbitrary |
 | `*_desc-dceNawmNormKtrans_stat` | NAWM-normalized Ktrans | ratio |
 | `*_desc-dceNawmNormIAUC60_stat` | NAWM-normalized IAUC60 | ratio |
-| `*_desc-dceUncertainty{Param}_stat` | Posterior std (Bayesian only) | varies |
-| `*_desc-dceCV{Param}_stat` | Coefficient of variation (Bayesian only) | fraction |
-| `*_desc-dceCI95lower{Param}_stat` | Approximate 95% credible interval lower bound (Bayesian only) | varies |
-| `*_desc-dceCI95upper{Param}_stat` | Approximate 95% credible interval upper bound (Bayesian only) | varies |
+| `*_desc-dceUncertainty{Param}_stat` | Posterior standard deviation (Ktrans/ve/vp, plus Fp/PS for 2CXM; Bayesian only) | varies |
+| `*_desc-dceCV{Param}_stat` | Posterior coefficient of variation (Ktrans/ve/vp; Bayesian only) | fraction |
+| `*_desc-dceCI95lower{Param}_stat` | 95% credible interval lower bound for Ktrans/ve/vp (Bayesian only) | varies |
+| `*_desc-dceCI95upper{Param}_stat` | 95% credible interval upper bound for Ktrans/ve/vp (Bayesian only) | varies |
 | `*_desc-dceModelSelection_dseg` | Per-voxel model selection (auto mode only) | categorical |
 | `*_desc-dceDeltaBIC_stat` | Delta-BIC confidence (auto mode only) | — |
 | `*_desc-dceQualityFlag_mask` | Voxel quality flags (auto mode only) | categorical |

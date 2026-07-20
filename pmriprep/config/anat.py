@@ -35,7 +35,7 @@ class AnatConfig:
     denoise: bool = False
 
     # Subtraction image settings
-    create_subtraction: bool = True  # Create post-pre subtraction image
+    create_subtraction: bool = True  # Create a post-contrast minus pre-contrast T1w subtraction image
 
     # Testing / debug
     sloppy: bool = False  # Use fast, low-quality settings for testing
