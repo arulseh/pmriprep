@@ -2441,7 +2441,7 @@ def init_pmriprep_wf(
             dce_reg_ref_type = ref_type_map.get(
                 dce_ref_selection.candidate.image_type, "any",
             )
-            dce_wf.inputs.dce_registration.reference_type = dce_reg_ref_type
+            dce_wf.inputs.dce_registration_wf.dce_registration.reference_type = dce_reg_ref_type
             _ref_logger.info(
                 "DCE registration: reference_type=%s (from selection)",
                 dce_reg_ref_type,

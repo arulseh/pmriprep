@@ -8,6 +8,7 @@ from pmriprep.workflows.dce.base import (
     init_dce_brain_extraction_wf,
     init_dce_dsc_resampling_wf,
     init_dce_dsc_validation_wf,
+    init_dce_lesion_masks_wf,
     init_dce_atlas_transform_wf,
     init_dce_native_input_wf,
     init_dce_preprocessing_wf,
@@ -160,3 +161,18 @@ def test_dce_qc_collection_workflow_contract() -> None:
         "inputnode", "outputnode", "collect_qc_metrics",
     }
     assert workflow.get_node("outputnode").interface._fields == ["qc_metrics"]
+
+
+def test_dce_lesion_masks_workflow_contract() -> None:
+    """Lesion preparation preserves validation, transform, and priority nodes."""
+    workflow = init_dce_lesion_masks_wf()
+    assert set(workflow.list_node_names()) == {
+        "inputnode", "outputnode", "transform_nawm_mask", "validate_roi_mask",
+        "validate_user_lesion_mask", "transform_non_enhancing_mask",
+        "transform_enhancing_mask", "transform_lesion", "select_aif_exclusion",
+        "combine_masks", "transform_stats_lesion",
+    }
+    assert set(workflow.get_node("outputnode").interface._fields) == {
+        "nawm_mask", "roi_mask", "user_lesion_mask", "enhancing_mask",
+        "non_enhancing_mask", "aif_exclusion_mask", "lesion_mask", "mask_origin",
+    }

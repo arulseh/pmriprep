@@ -1234,6 +1234,142 @@ def init_dce_qc_collection_wf(
     return workflow
 
 
+def init_dce_lesion_masks_wf(
+    *, name: str = "dce_lesion_masks_wf",
+) -> pe.Workflow:
+    """Prepare NAWM, ROI, lesion, and tumor masks for DCE consumers."""
+    from pmriprep.utils.lesion_stats import combine_tumor_masks
+
+    workflow = pe.Workflow(name=name)
+    inputnode = pe.Node(
+        niu.IdentityInterface(fields=[
+            "nawm_mask", "nawm_needs_transform", "roi_mask", "user_lesion_mask",
+            "enhancing_mask", "non_enhancing_mask", "whole_tumor_mask",
+            "tumor_segmentation", "reference_file", "transform_matrix",
+        ]),
+        name="inputnode",
+    )
+    outputnode = pe.Node(
+        niu.IdentityInterface(fields=[
+            "nawm_mask", "roi_mask", "user_lesion_mask", "enhancing_mask",
+            "non_enhancing_mask", "aif_exclusion_mask", "lesion_mask",
+            "mask_origin",
+        ]),
+        name="outputnode",
+    )
+    transform_nawm_mask = pe.Node(
+        niu.Function(
+            input_names=["mask_file", "reference_file", "transform_matrix", "needs_transform"],
+            output_names=["out_file"], function=_transform_mask_to_dce_conditional,
+        ),
+        name="transform_nawm_mask",
+    )
+    validate_roi_mask = pe.Node(
+        niu.Function(
+            input_names=["mask_file", "reference_file", "mask_label"],
+            output_names=["validated_mask"], function=_validate_native_mask,
+        ),
+        name="validate_roi_mask",
+    )
+    validate_roi_mask.inputs.mask_label = "dce.roi_mask"
+    validate_user_lesion_mask = pe.Node(
+        niu.Function(
+            input_names=["mask_file", "reference_file", "mask_label"],
+            output_names=["validated_mask"], function=_validate_native_mask,
+        ),
+        name="validate_user_lesion_mask",
+    )
+    validate_user_lesion_mask.inputs.mask_label = "dce.lesion_mask"
+    transforms: dict[str, pe.Node] = {}
+    for label in ("non_enhancing", "enhancing"):
+        transforms[label] = pe.Node(
+            niu.Function(
+                input_names=["mask_file", "reference_file", "transform_matrix"],
+                output_names=["out_file"], function=_transform_mask_to_dce,
+            ),
+            name=f"transform_{label}_mask",
+        )
+    transform_lesion = pe.Node(
+        niu.Function(
+            input_names=["lesion_mask_file", "reference_file", "transform_matrix"],
+            output_names=["lesion_mask_dce_file"], function=_transform_lesion_mask_to_dce,
+        ),
+        name="transform_lesion",
+    )
+    select_aif_exclusion = pe.Node(
+        niu.Function(
+            input_names=["user_lesion_mask", "transformed_lesion_mask"],
+            output_names=["out_mask"], function=_select_aif_exclusion_mask,
+        ),
+        name="select_aif_exclusion",
+    )
+    combine_masks = pe.Node(
+        niu.Function(
+            input_names=[
+                "tumor_segmentation_file", "whole_tumor_mask_file", "reference_file",
+            ],
+            output_names=["combined_mask_file", "mask_origin"],
+            function=combine_tumor_masks,
+        ),
+        name="combine_masks",
+    )
+    transform_stats_lesion = pe.Node(
+        niu.Function(
+            input_names=["lesion_mask_file", "reference_file", "transform_matrix"],
+            output_names=["lesion_mask_dce_file"], function=_transform_lesion_mask_to_dce,
+        ),
+        name="transform_stats_lesion",
+    )
+    workflow.connect([
+        (inputnode, transform_nawm_mask, [
+            ("nawm_mask", "mask_file"), ("nawm_needs_transform", "needs_transform"),
+            ("reference_file", "reference_file"), ("transform_matrix", "transform_matrix"),
+        ]),
+        (inputnode, validate_roi_mask, [
+            ("roi_mask", "mask_file"), ("reference_file", "reference_file"),
+        ]),
+        (inputnode, validate_user_lesion_mask, [
+            ("user_lesion_mask", "mask_file"), ("reference_file", "reference_file"),
+        ]),
+        (inputnode, transforms["non_enhancing"], [
+            ("non_enhancing_mask", "mask_file"), ("reference_file", "reference_file"),
+            ("transform_matrix", "transform_matrix"),
+        ]),
+        (inputnode, transforms["enhancing"], [
+            ("enhancing_mask", "mask_file"), ("reference_file", "reference_file"),
+            ("transform_matrix", "transform_matrix"),
+        ]),
+        (inputnode, transform_lesion, [
+            ("whole_tumor_mask", "lesion_mask_file"), ("reference_file", "reference_file"),
+            ("transform_matrix", "transform_matrix"),
+        ]),
+        (validate_user_lesion_mask, select_aif_exclusion, [
+            ("validated_mask", "user_lesion_mask"),
+        ]),
+        (transform_lesion, select_aif_exclusion, [
+            ("lesion_mask_dce_file", "transformed_lesion_mask"),
+        ]),
+        (inputnode, combine_masks, [
+            ("tumor_segmentation", "tumor_segmentation_file"),
+            ("whole_tumor_mask", "whole_tumor_mask_file"),
+            ("reference_file", "reference_file"),
+        ]),
+        (combine_masks, transform_stats_lesion, [("combined_mask_file", "lesion_mask_file")]),
+        (inputnode, transform_stats_lesion, [
+            ("reference_file", "reference_file"), ("transform_matrix", "transform_matrix"),
+        ]),
+        (transform_nawm_mask, outputnode, [("out_file", "nawm_mask")]),
+        (validate_roi_mask, outputnode, [("validated_mask", "roi_mask")]),
+        (validate_user_lesion_mask, outputnode, [("validated_mask", "user_lesion_mask")]),
+        (transforms["enhancing"], outputnode, [("out_file", "enhancing_mask")]),
+        (transforms["non_enhancing"], outputnode, [("out_file", "non_enhancing_mask")]),
+        (select_aif_exclusion, outputnode, [("out_mask", "aif_exclusion_mask")]),
+        (transform_stats_lesion, outputnode, [("lesion_mask_dce_file", "lesion_mask")]),
+        (combine_masks, outputnode, [("mask_origin", "mask_origin")]),
+    ])
+    return workflow
+
+
 def init_dce_preproc_wf(
     bids_dir: Union[str, Path],
     output_dir: Union[str, Path],
@@ -2123,102 +2259,26 @@ def init_dce_preproc_wf(
     # Node 8: Transform NAWM mask to DCE space (for normalization)
     # FLIRT when from tumor seg (T1w space), passthrough when user-supplied
     # ==========================================================================
-    transform_nawm_mask = pe.Node(
-        niu.Function(
-            input_names=["mask_file", "reference_file", "transform_matrix",
-                         "needs_transform"],
-            output_names=["out_file"],
-            function=_transform_mask_to_dce_conditional,
-        ),
-        name="transform_nawm_mask",
-    )
-
+    dce_lesion_masks_wf = init_dce_lesion_masks_wf()
     workflow.connect([
-        (inputnode, transform_nawm_mask, [
-            ("nawm_mask", "mask_file"),
-            ("nawm_needs_transform", "needs_transform"),
+        (inputnode, dce_lesion_masks_wf, [
+            ("nawm_mask", "inputnode.nawm_mask"),
+            ("nawm_needs_transform", "inputnode.nawm_needs_transform"),
+            ("roi_mask", "inputnode.roi_mask"),
+            ("user_lesion_mask", "inputnode.user_lesion_mask"),
+            ("enhancing_mask", "inputnode.enhancing_mask"),
+            ("non_enhancing_mask", "inputnode.non_enhancing_mask"),
+            ("whole_tumor_mask", "inputnode.whole_tumor_mask"),
+            ("tumor_segmentation", "inputnode.tumor_segmentation"),
         ]),
-        (dce_preprocessing_wf, transform_nawm_mask, [
-            ("outputnode.mean_img", "reference_file"),
+        (dce_preprocessing_wf, dce_lesion_masks_wf, [
+            ("outputnode.mean_img", "inputnode.reference_file"),
         ]),
-        (dce_registration_wf, transform_nawm_mask, [
-            ("outputnode.out_matrix", "transform_matrix"),
+        (dce_registration_wf, dce_lesion_masks_wf, [
+            ("outputnode.out_matrix", "inputnode.transform_matrix"),
         ]),
-    ])
-
-    # Validate user-supplied masks against DCE reference grid
-    validate_roi_mask = pe.Node(
-        niu.Function(
-            input_names=["mask_file", "reference_file", "mask_label"],
-            output_names=["validated_mask"],
-            function=_validate_native_mask,
-        ),
-        name="validate_roi_mask",
-    )
-    validate_roi_mask.inputs.mask_label = "dce.roi_mask"
-
-    validate_user_lesion_mask = pe.Node(
-        niu.Function(
-            input_names=["mask_file", "reference_file", "mask_label"],
-            output_names=["validated_mask"],
-            function=_validate_native_mask,
-        ),
-        name="validate_user_lesion_mask",
-    )
-    validate_user_lesion_mask.inputs.mask_label = "dce.lesion_mask"
-
-    workflow.connect([
-        (inputnode, validate_roi_mask, [("roi_mask", "mask_file")]),
-        (dce_preprocessing_wf, validate_roi_mask, [
-            ("outputnode.mean_img", "reference_file"),
-        ]),
-        (inputnode, validate_user_lesion_mask, [("user_lesion_mask", "mask_file")]),
-        (dce_preprocessing_wf, validate_user_lesion_mask, [
-            ("outputnode.mean_img", "reference_file"),
-        ]),
-    ])
-
-    # Transform non-enhancing mask to DCE space (for model selection QC)
-    transform_non_enhancing_mask = pe.Node(
-        niu.Function(
-            input_names=["mask_file", "reference_file", "transform_matrix"],
-            output_names=["out_file"],
-            function=_transform_mask_to_dce,
-        ),
-        name="transform_non_enhancing_mask",
-    )
-
-    # Transform enhancing mask to DCE space (for QC voxel selection)
-    transform_enhancing_mask = pe.Node(
-        niu.Function(
-            input_names=["mask_file", "reference_file", "transform_matrix"],
-            output_names=["out_file"],
-            function=_transform_mask_to_dce,
-        ),
-        name="transform_enhancing_mask",
-    )
-
-    workflow.connect([
-        (inputnode, transform_non_enhancing_mask, [("non_enhancing_mask", "mask_file")]),
-        (dce_preprocessing_wf, transform_non_enhancing_mask, [
-            ("outputnode.mean_img", "reference_file"),
-        ]),
-        (dce_registration_wf, transform_non_enhancing_mask, [
-            ("outputnode.out_matrix", "transform_matrix"),
-        ]),
-        (inputnode, transform_enhancing_mask, [("enhancing_mask", "mask_file")]),
-        (dce_preprocessing_wf, transform_enhancing_mask, [
-            ("outputnode.mean_img", "reference_file"),
-        ]),
-        (dce_registration_wf, transform_enhancing_mask, [
-            ("outputnode.out_matrix", "transform_matrix"),
-        ]),
-        # Enhancing tumor (DCE grid) = tissue-arrival reference for AIF BAT
-        # pre-alignment (no-op unless dce.aif_bat_alignment is on). Mirrors the
-        # resample_dsc_cbv -> pk_wf edge: pk_wf is defined earlier but nipype
-        # schedules by data dependency, so this feeds it with no cycle.
-        (transform_enhancing_mask, pk_wf, [
-            ("out_file", "inputnode.tumor_mask_file"),
+        (dce_lesion_masks_wf, pk_wf, [
+            ("outputnode.enhancing_mask", "inputnode.tumor_mask_file"),
         ]),
     ])
 
@@ -2236,7 +2296,9 @@ def init_dce_preproc_wf(
             ("outputnode.out_ktrans", "inputnode.ktrans_map"),
             ("outputnode.out_iauc60", "inputnode.iauc60_map"),
         ]),
-        (transform_nawm_mask, normalization_wf, [("out_file", "inputnode.nawm_mask")]),
+        (dce_lesion_masks_wf, normalization_wf, [
+            ("outputnode.nawm_mask", "inputnode.nawm_mask"),
+        ]),
     ])
 
     # ==========================================================================
@@ -2319,17 +2381,17 @@ def init_dce_preproc_wf(
         (dce_brain_extraction_wf, dce_pk_maps_qc, [
             ("outputnode.out_mask", "brain_mask_file"),
         ]),
-        (transform_enhancing_mask, dce_pk_maps_qc, [
-            ("out_file", "enhancing_mask_file"),
+        (dce_lesion_masks_wf, dce_pk_maps_qc, [
+            ("outputnode.enhancing_mask", "enhancing_mask_file"),
         ]),
-        (transform_non_enhancing_mask, dce_pk_maps_qc, [
-            ("out_file", "non_enhancing_mask_file"),
+        (dce_lesion_masks_wf, dce_pk_maps_qc, [
+            ("outputnode.non_enhancing_mask", "non_enhancing_mask_file"),
         ]),
-        (transform_nawm_mask, dce_pk_maps_qc, [
-            ("out_file", "nawm_mask_file"),
+        (dce_lesion_masks_wf, dce_pk_maps_qc, [
+            ("outputnode.nawm_mask", "nawm_mask_file"),
         ]),
-        (validate_user_lesion_mask, dce_pk_maps_qc, [
-            ("validated_mask", "user_lesion_mask_file"),
+        (dce_lesion_masks_wf, dce_pk_maps_qc, [
+            ("outputnode.user_lesion_mask", "user_lesion_mask_file"),
         ]),
     ])
 
@@ -2382,11 +2444,11 @@ def init_dce_preproc_wf(
         (inputnode, dce_pk_fit_qc, [
             ("volume_tr", "volume_tr"),
         ]),
-        (transform_enhancing_mask, dce_pk_fit_qc, [
-            ("out_file", "enhancing_mask_file"),
+        (dce_lesion_masks_wf, dce_pk_fit_qc, [
+            ("outputnode.enhancing_mask", "enhancing_mask_file"),
         ]),
-        (transform_non_enhancing_mask, dce_pk_fit_qc, [
-            ("out_file", "non_enhancing_mask_file"),
+        (dce_lesion_masks_wf, dce_pk_fit_qc, [
+            ("outputnode.non_enhancing_mask", "non_enhancing_mask_file"),
         ]),
     ])
 
@@ -2538,91 +2600,9 @@ def init_dce_preproc_wf(
     # ==========================================================================
     # Node 11a: Lesion Statistics (conditional on lesion mask availability)
     # ==========================================================================
-    # Transform whole tumor mask from T1w to DCE space (for AIF exclusion)
-    transform_lesion = pe.Node(
-        niu.Function(
-            input_names=["lesion_mask_file", "reference_file", "transform_matrix"],
-            output_names=["lesion_mask_dce_file"],
-            function=_transform_lesion_mask_to_dce,
-        ),
-        name="transform_lesion",
-    )
-
     workflow.connect([
-        (inputnode, transform_lesion, [("whole_tumor_mask", "lesion_mask_file")]),
-        (dce_preprocessing_wf, transform_lesion, [
-            ("outputnode.mean_img", "reference_file"),
-        ]),
-        (dce_registration_wf, transform_lesion, [
-            ("outputnode.out_matrix", "transform_matrix"),
-        ]),
-    ])
-
-    # AIF exclusion: user-supplied lesion mask overrides tumor seg
-    select_aif_exclusion = pe.Node(
-        niu.Function(
-            input_names=["user_lesion_mask", "transformed_lesion_mask"],
-            output_names=["out_mask"],
-            function=_select_aif_exclusion_mask,
-        ),
-        name="select_aif_exclusion",
-    )
-    workflow.connect([
-        (validate_user_lesion_mask, select_aif_exclusion, [
-            ("validated_mask", "user_lesion_mask"),
-        ]),
-        (transform_lesion, select_aif_exclusion, [
-            ("lesion_mask_dce_file", "transformed_lesion_mask"),
-        ]),
-        (select_aif_exclusion, aif_detection, [
-            ("out_mask", "lesion_mask_file"),
-        ]),
-    ])
-
-    # Select best available tumor mask for lesion statistics
-    # Priority: tumor_segmentation (multi-label) > whole_tumor
-    from pmriprep.utils.lesion_stats import combine_tumor_masks
-
-    combine_masks = pe.Node(
-        niu.Function(
-            input_names=[
-                "tumor_segmentation_file",
-                "whole_tumor_mask_file",
-                "reference_file",
-            ],
-            output_names=["combined_mask_file", "mask_origin"],
-            function=combine_tumor_masks,
-        ),
-        name="combine_masks",
-    )
-
-    workflow.connect([
-        (inputnode, combine_masks, [
-            ("tumor_segmentation", "tumor_segmentation_file"),
-            ("whole_tumor_mask", "whole_tumor_mask_file"),
-        ]),
-        (dce_preprocessing_wf, combine_masks, [
-            ("outputnode.mean_img", "reference_file"),
-        ]),
-    ])
-
-    # Transform combined tumor mask from T1w to DCE space (for lesion stats)
-    transform_stats_lesion = pe.Node(
-        niu.Function(
-            input_names=["lesion_mask_file", "reference_file", "transform_matrix"],
-            output_names=["lesion_mask_dce_file"],
-            function=_transform_lesion_mask_to_dce,
-        ),
-        name="transform_stats_lesion",
-    )
-
-    workflow.connect([
-        (combine_masks, transform_stats_lesion, [("combined_mask_file", "lesion_mask_file")]),
-        (dce_preprocessing_wf, transform_stats_lesion, [
-            ("outputnode.mean_img", "reference_file"),
-        ]),
-        (dce_registration_wf, transform_stats_lesion, [
-            ("outputnode.out_matrix", "transform_matrix"),
+        (dce_lesion_masks_wf, aif_detection, [
+            ("outputnode.aif_exclusion_mask", "lesion_mask_file"),
         ]),
     ])
 
@@ -2654,16 +2634,18 @@ def init_dce_preproc_wf(
             ("outputnode.nktrans", "inputnode.nktrans_map"),
             ("outputnode.niauc60", "inputnode.niauc60_map"),
         ]),
-        (transform_nawm_mask, lesion_stats_wf, [("out_file", "inputnode.nawm_mask")]),
-        (transform_stats_lesion, lesion_stats_wf, [("lesion_mask_dce_file", "inputnode.tumor_lesion_mask")]),
-        (combine_masks, lesion_stats_wf, [("mask_origin", "inputnode.mask_origin")]),
-        (validate_user_lesion_mask, lesion_stats_wf, [("validated_mask", "inputnode.user_mask")]),
-        (validate_roi_mask, lesion_stats_wf, [("validated_mask", "inputnode.roi_mask")]),
+        (dce_lesion_masks_wf, lesion_stats_wf, [
+            ("outputnode.nawm_mask", "inputnode.nawm_mask"),
+            ("outputnode.lesion_mask", "inputnode.tumor_lesion_mask"),
+            ("outputnode.mask_origin", "inputnode.mask_origin"),
+            ("outputnode.user_lesion_mask", "inputnode.user_mask"),
+            ("outputnode.roi_mask", "inputnode.roi_mask"),
+        ]),
     ])
 
     workflow.connect([
-        (validate_user_lesion_mask, outputnode, [
-            ("validated_mask", "user_lesion_mask_dce"),
+        (dce_lesion_masks_wf, outputnode, [
+            ("outputnode.user_lesion_mask", "user_lesion_mask_dce"),
         ]),
         (lesion_stats_wf, outputnode, [
             ("outputnode.user_lesion_stats_json", "user_lesion_stats_json"),
@@ -2837,7 +2819,9 @@ def init_dce_preproc_wf(
     # Lesion statistics output connections
     # Use the combined tumor mask (with multi-label support) for lesion_mask_dce output
     workflow.connect([
-        (transform_stats_lesion, outputnode, [("lesion_mask_dce_file", "lesion_mask_dce")]),
+        (dce_lesion_masks_wf, outputnode, [
+            ("outputnode.lesion_mask", "lesion_mask_dce"),
+        ]),
         (lesion_stats_wf, outputnode, [
             ("outputnode.lesion_stats_json", "lesion_stats_json"),
         ]),
@@ -2845,13 +2829,15 @@ def init_dce_preproc_wf(
 
     # Connect validated ROI mask to the PK-maps QC overlay
     workflow.connect([
-        (validate_roi_mask, dce_pk_maps_qc, [
-            ("validated_mask", "roi_mask_file"),
+        (dce_lesion_masks_wf, dce_pk_maps_qc, [
+            ("outputnode.roi_mask", "roi_mask_file"),
         ]),
     ])
     # Connect ROI stats outputs to outputnode
     workflow.connect([
-        (validate_roi_mask, outputnode, [("validated_mask", "roi_mask_dce")]),
+        (dce_lesion_masks_wf, outputnode, [
+            ("outputnode.roi_mask", "roi_mask_dce"),
+        ]),
         (lesion_stats_wf, outputnode, [
             ("outputnode.roi_stats_json", "roi_stats_json"),
         ]),
@@ -2879,7 +2865,9 @@ def init_dce_preproc_wf(
         (dce_brain_extraction_wf, outputnode, [
             ("outputnode.out_mask", "brain_mask"),
         ]),
-        (transform_nawm_mask, outputnode, [("out_file", "nawm_mask")]),
+        (dce_lesion_masks_wf, outputnode, [
+            ("outputnode.nawm_mask", "nawm_mask"),
+        ]),
     ])
 
     # -------------------------------------------------------------------
