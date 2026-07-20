@@ -986,6 +986,58 @@ def init_dce_atlas_transform_wf(
     return workflow
 
 
+def init_dce_anatomical_masks_wf(
+    *, has_tissue_seg: bool, name: str = "dce_anatomical_masks_wf",
+) -> pe.Workflow:
+    """Transform anatomical brain and tissue maps into DCE space."""
+    workflow = pe.Workflow(name=name)
+    inputnode = pe.Node(
+        niu.IdentityInterface(fields=[
+            "brain_mask", "csf_probseg", "wm_probseg", "gm_probseg",
+            "reference_file", "transform_matrix",
+        ]),
+        name="inputnode",
+    )
+    outputnode = pe.Node(
+        niu.IdentityInterface(fields=[
+            "brain_mask", "csf_probseg", "wm_probseg", "gm_probseg",
+        ]),
+        name="outputnode",
+    )
+    transform_brain_mask = pe.Node(
+        niu.Function(
+            input_names=["mask_file", "reference_file", "transform_matrix"],
+            output_names=["out_file"], function=_transform_mask_to_dce,
+        ),
+        name="transform_brain_mask",
+    )
+    workflow.connect([
+        (inputnode, transform_brain_mask, [
+            ("brain_mask", "mask_file"), ("reference_file", "reference_file"),
+            ("transform_matrix", "transform_matrix"),
+        ]),
+        (transform_brain_mask, outputnode, [("out_file", "brain_mask")]),
+    ])
+    if has_tissue_seg:
+        for tissue in ("csf", "wm", "gm"):
+            transform = pe.Node(
+                niu.Function(
+                    input_names=["probseg_file", "reference_file", "transform_matrix"],
+                    output_names=["out_file"], function=_transform_probseg_to_dce,
+                ),
+                name=f"transform_{tissue}_probseg",
+            )
+            workflow.connect([
+                (inputnode, transform, [
+                    (f"{tissue}_probseg", "probseg_file"),
+                    ("reference_file", "reference_file"),
+                    ("transform_matrix", "transform_matrix"),
+                ]),
+                (transform, outputnode, [("out_file", f"{tissue}_probseg")]),
+            ])
+    return workflow
+
+
 def init_dce_preproc_wf(
     bids_dir: Union[str, Path],
     output_dir: Union[str, Path],
@@ -1532,28 +1584,21 @@ def init_dce_preproc_wf(
     # ==========================================================================
     # The brain mask from anat is in T1w space. After registration gives us
     # the T1w→DCE transform, we resample the mask to DCE space.
-    transform_brain_mask = pe.Node(
-        niu.Function(
-            input_names=[
-                "mask_file",
-                "reference_file",
-                "transform_matrix",
-            ],
-            output_names=["out_file"],
-            function=_transform_mask_to_dce,
-        ),
-        name="transform_brain_mask",
+    dce_anatomical_masks_wf = init_dce_anatomical_masks_wf(
+        has_tissue_seg=has_tissue_seg,
     )
-
     workflow.connect([
-        (inputnode, transform_brain_mask, [
-            ("brain_mask", "mask_file"),
+        (inputnode, dce_anatomical_masks_wf, [
+            ("brain_mask", "inputnode.brain_mask"),
+            ("csf_probseg", "inputnode.csf_probseg"),
+            ("wm_probseg", "inputnode.wm_probseg"),
+            ("gm_probseg", "inputnode.gm_probseg"),
         ]),
-        (dce_preprocessing_wf, transform_brain_mask, [
-            ("outputnode.mean_img", "reference_file"),
+        (dce_preprocessing_wf, dce_anatomical_masks_wf, [
+            ("outputnode.mean_img", "inputnode.reference_file"),
         ]),
-        (dce_registration_wf, transform_brain_mask, [
-            ("outputnode.out_matrix", "transform_matrix"),
+        (dce_registration_wf, dce_anatomical_masks_wf, [
+            ("outputnode.out_matrix", "inputnode.transform_matrix"),
         ]),
     ])
 
@@ -1563,69 +1608,14 @@ def init_dce_preproc_wf(
     # CSF probability map needs trilinear interpolation (continuous values)
     # and clipping to [0, 1] instead of binarization + hole-filling.
     # Skip entirely in postcon-only mode where FAST segmentation is unavailable.
-    if has_tissue_seg:
-        transform_csf_probseg = pe.Node(
-            niu.Function(
-                input_names=["probseg_file", "reference_file", "transform_matrix"],
-                output_names=["out_file"],
-                function=_transform_probseg_to_dce,
-            ),
-            name="transform_csf_probseg",
-        )
-
+    if has_tissue_seg and use_vfa_t1:
         workflow.connect([
-            (inputnode, transform_csf_probseg, [("csf_probseg", "probseg_file")]),
-            (dce_preprocessing_wf, transform_csf_probseg, [
-                ("outputnode.mean_img", "reference_file"),
-            ]),
-            (dce_registration_wf, transform_csf_probseg, [
-                ("outputnode.out_matrix", "transform_matrix"),
+            (dce_anatomical_masks_wf, t1_b1_wf, [
+                ("outputnode.csf_probseg", "inputnode.csf_probseg"),
+                ("outputnode.wm_probseg", "inputnode.wm_probseg"),
+                ("outputnode.gm_probseg", "inputnode.gm_probseg"),
             ]),
         ])
-
-        # Transform WM and GM probsegs to DCE space for tissue-segmented T1 fallback
-        transform_wm_probseg = pe.Node(
-            niu.Function(
-                input_names=["probseg_file", "reference_file", "transform_matrix"],
-                output_names=["out_file"],
-                function=_transform_probseg_to_dce,
-            ),
-            name="transform_wm_probseg",
-        )
-
-        transform_gm_probseg = pe.Node(
-            niu.Function(
-                input_names=["probseg_file", "reference_file", "transform_matrix"],
-                output_names=["out_file"],
-                function=_transform_probseg_to_dce,
-            ),
-            name="transform_gm_probseg",
-        )
-
-        workflow.connect([
-            (inputnode, transform_wm_probseg, [("wm_probseg", "probseg_file")]),
-            (dce_preprocessing_wf, transform_wm_probseg, [
-                ("outputnode.mean_img", "reference_file"),
-            ]),
-            (dce_registration_wf, transform_wm_probseg, [
-                ("outputnode.out_matrix", "transform_matrix"),
-            ]),
-            (inputnode, transform_gm_probseg, [("gm_probseg", "probseg_file")]),
-            (dce_preprocessing_wf, transform_gm_probseg, [
-                ("outputnode.mean_img", "reference_file"),
-            ]),
-            (dce_registration_wf, transform_gm_probseg, [
-                ("outputnode.out_matrix", "transform_matrix"),
-            ]),
-        ])
-
-        # Wire transformed CSF probseg to T1 mapping only when active
-        if use_vfa_t1:
-            workflow.connect([
-                (transform_csf_probseg, t1_b1_wf, [("out_file", "inputnode.csf_probseg")]),
-                (transform_wm_probseg, t1_b1_wf, [("out_file", "inputnode.wm_probseg")]),
-                (transform_gm_probseg, t1_b1_wf, [("out_file", "inputnode.gm_probseg")]),
-            ])
 
     # ==========================================================================
     # Node 4b2: Create conservative AIF search mask (Gap 5)
@@ -1646,8 +1636,8 @@ def init_dce_preproc_wf(
     )
 
     workflow.connect([
-        (transform_brain_mask, create_aif_mask, [
-            ("out_file", "t1w_mask_in_dce"),
+        (dce_anatomical_masks_wf, create_aif_mask, [
+            ("outputnode.brain_mask", "t1w_mask_in_dce"),
         ]),
         # Use native DCE brain mask from HD-BET extraction
         (dce_brain_extraction_wf, create_aif_mask, [
@@ -2128,8 +2118,8 @@ def init_dce_preproc_wf(
             ("outputnode.out_vp", "vp_file"),
             ("outputnode.qc_metrics", "pk_qc"),
         ]),
-        (transform_brain_mask, dsc_dce_validation, [
-            ("out_file", "brain_mask"),
+        (dce_anatomical_masks_wf, dsc_dce_validation, [
+            ("outputnode.brain_mask", "brain_mask"),
         ]),
         # Feed resampled DSC CBV (deferred from Node 7c)
         (resample_dsc_cbv, dsc_dce_validation, [
@@ -2170,8 +2160,8 @@ def init_dce_preproc_wf(
         (resample_dsc_ncbv, dsc_dce_xval_plot, [
             ("cbv_in_dce", "dsc_ncbv_file"),
         ]),
-        (transform_brain_mask, dsc_dce_xval_plot, [
-            ("out_file", "brain_mask"),
+        (dce_anatomical_masks_wf, dsc_dce_xval_plot, [
+            ("outputnode.brain_mask", "brain_mask"),
         ]),
         (dsc_dce_validation, dsc_dce_xval_plot, [
             ("validation_result", "validation_result"),

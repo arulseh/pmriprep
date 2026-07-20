@@ -4,6 +4,7 @@ from pathlib import Path
 
 from pmriprep.config.dce import DCEConfig
 from pmriprep.workflows.dce.base import (
+    init_dce_anatomical_masks_wf,
     init_dce_brain_extraction_wf,
     init_dce_atlas_transform_wf,
     init_dce_native_input_wf,
@@ -91,3 +92,16 @@ def test_dce_atlas_transform_workflow_contract() -> None:
         "inputnode", "outputnode", "transform_atlas_cascade",
     }
     assert workflow.get_node("outputnode").interface._fields == ["out_files"]
+
+
+def test_dce_anatomical_masks_workflow_contract() -> None:
+    """Anatomical masks retain distinct binary and probability transforms."""
+    workflow = init_dce_anatomical_masks_wf(has_tissue_seg=True)
+    assert set(workflow.list_node_names()) == {
+        "inputnode", "outputnode", "transform_brain_mask",
+        "transform_csf_probseg", "transform_wm_probseg", "transform_gm_probseg",
+    }
+    no_tissue = init_dce_anatomical_masks_wf(has_tissue_seg=False)
+    assert set(no_tissue.list_node_names()) == {
+        "inputnode", "outputnode", "transform_brain_mask",
+    }
