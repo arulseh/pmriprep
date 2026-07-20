@@ -385,6 +385,14 @@ class _DSCAUCMaps(NamedTuple):
     qc: dict[str, Any]
 
 
+class _DSCQualityMaps(NamedTuple):
+    """Concentration CNR and raw-signal SNR/tSNR maps."""
+
+    cnr: npt.NDArray[Any]
+    snr: npt.NDArray[Any]
+    tsnr: npt.NDArray[Any]
+
+
 class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
     """Input specification for ComputeDSCMaps interface."""
 
@@ -1245,6 +1253,62 @@ class ComputeDSCMaps(BaseInterface):
             cbv=cbv,
             qc=qc,
         )
+
+    def _compute_quality_maps(
+        self,
+        raw_concentration: npt.NDArray[Any],
+        signal: Optional[npt.NDArray[Any]],
+        detected_baseline: int,
+    ) -> _DSCQualityMaps:
+        """Compute concentration CNR and raw-signal SNR/tSNR.
+
+        Parameters
+        ----------
+        raw_concentration : npt.NDArray
+            Pre-K2 concentration used for baseline noise and peak contrast.
+        signal : npt.NDArray, optional
+            Raw DSC signal used for baseline SNR and whole-series tSNR.
+        detected_baseline : int
+            Detected pre-bolus frame count.
+
+        Returns
+        -------
+        _DSCQualityMaps
+            Unclipped CNR, SNR, and tSNR maps.
+
+        """
+        baseline_std = np.std(
+            raw_concentration[..., :detected_baseline], axis=-1
+        )
+        peak_concentration = np.max(raw_concentration, axis=-1)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            cnr = np.where(
+                baseline_std > EPSILON_CONCENTRATION,
+                peak_concentration / baseline_std,
+                0.0,
+            )
+
+        spatial_shape = raw_concentration.shape[:3]
+        if signal is None:
+            zeros = np.zeros(spatial_shape, dtype=np.float64)
+            return _DSCQualityMaps(cnr=cnr, snr=zeros, tsnr=zeros.copy())
+
+        snr_baseline_frames = min(
+            detected_baseline, raw_concentration.shape[-1] - 1
+        )
+        baseline_signal = signal[..., :snr_baseline_frames]
+        baseline_mean = np.mean(baseline_signal, axis=-1)
+        baseline_signal_std = np.std(baseline_signal, axis=-1, ddof=1)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            snr = np.where(
+                baseline_signal_std > EPSILON_SIGNAL,
+                baseline_mean / baseline_signal_std,
+                0.0,
+            )
+            all_mean = np.mean(signal, axis=-1)
+            all_std = np.std(signal, axis=-1, ddof=1)
+            tsnr = np.where(all_std > EPSILON_SIGNAL, all_mean / all_std, 0.0)
+        return _DSCQualityMaps(cnr=cnr, snr=snr, tsnr=tsnr)
 
     def _first_pass_reference(
         self,
@@ -2779,38 +2843,12 @@ class ComputeDSCMaps(BaseInterface):
         cbv_auc = auc_maps.cbv
         qc_metrics.update(auc_maps.qc)
 
-        # CNR: peak concentration / baseline std per voxel (from raw conc)
-        # Uses ddof=0 (default) and full-timeseries peak
-        # Suppress RuntimeWarnings from np.where eagerly evaluating both
-        # branches (division in true branch, guard in condition).
-        baseline_std = np.std(raw_conc_data[..., :detected_baseline], axis=-1)
-        peak_conc = np.max(raw_conc_data, axis=-1)
-        with np.errstate(divide="ignore", invalid="ignore"):
-            cnr = np.where(
-                baseline_std > EPSILON_CONCENTRATION,
-                peak_conc / baseline_std,
-                0.0,
-            )
-
-        # -----------------------------------------------------------
-        # SNR / tSNR (from raw signal, not concentration)
-        # Use auto-detected baseline frames from AIF bolus arrival
-        # -----------------------------------------------------------
-        n_timepoints = conc_data.shape[-1]
-        snr_baseline_frames = min(detected_baseline, n_timepoints - 1)
-        if signal_data is not None:
-            baseline_sig = signal_data[..., :snr_baseline_frames]
-            baseline_mean = np.mean(baseline_sig, axis=-1)
-            baseline_std_sig = np.std(baseline_sig, axis=-1, ddof=1)
-            with np.errstate(divide="ignore", invalid="ignore"):
-                snr = np.where(baseline_std_sig > EPSILON_SIGNAL, baseline_mean / baseline_std_sig, 0.0)
-
-                all_mean = np.mean(signal_data, axis=-1)
-                all_std = np.std(signal_data, axis=-1, ddof=1)
-                tsnr = np.where(all_std > EPSILON_SIGNAL, all_mean / all_std, 0.0)
-        else:
-            snr = np.zeros(spatial_shape, dtype=np.float64)
-            tsnr = np.zeros(spatial_shape, dtype=np.float64)
+        quality_maps = self._compute_quality_maps(
+            raw_conc_data, signal_data, detected_baseline
+        )
+        cnr = quality_maps.cnr
+        snr = quality_maps.snr
+        tsnr = quality_maps.tsnr
 
         # -----------------------------------------------------------
         # SVD-family MTT via the central volume theorem: MTT = CBV / CBF

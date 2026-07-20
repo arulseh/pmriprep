@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 from pmriprep.interfaces.dsc_compute import ComputeDSCMaps
+from pmriprep.utils.dsc_constants import EPSILON_CONCENTRATION, EPSILON_SIGNAL
 from pmriprep.utils.dsc_signal import (
     compute_peak_height_legacy,
     compute_psr_legacy,
@@ -370,3 +371,53 @@ def test_compute_auc_maps_missing_aif_and_preload_warning() -> None:
     assert np.all(np.isnan(result.cbv))
     assert result.qc["cbv_auc_measured_aif_missing"] is True
     assert "residual leakage" in result.qc["cbv_auc_preload_warning"]
+
+
+def test_compute_quality_maps_preserves_noise_conventions() -> None:
+    """CNR uses ddof=0 while signal SNR and tSNR retain ddof=1."""
+    raw = np.array(
+        [
+            [[[0.0, 1.0, 2.0, 6.0, 3.0]]],
+            [[[1.0, 1.0, 1.0, 4.0, 2.0]]],
+        ]
+    )
+    signal = np.array(
+        [
+            [[[100.0, 102.0, 98.0, 75.0, 85.0]]],
+            [[[50.0, 50.0, 50.0, 40.0, 45.0]]],
+        ]
+    )
+
+    result = ComputeDSCMaps()._compute_quality_maps(raw, signal, 3)
+
+    raw_std = np.std(raw[..., :3], axis=-1)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        expected_cnr = np.where(
+            raw_std > EPSILON_CONCENTRATION, np.max(raw, axis=-1) / raw_std, 0.0
+        )
+    signal_baseline = signal[..., :3]
+    signal_std = np.std(signal_baseline, axis=-1, ddof=1)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        expected_snr = np.where(
+            signal_std > EPSILON_SIGNAL,
+            np.mean(signal_baseline, axis=-1) / signal_std,
+            0.0,
+        )
+    all_std = np.std(signal, axis=-1, ddof=1)
+    expected_tsnr = np.where(
+        all_std > EPSILON_SIGNAL, np.mean(signal, axis=-1) / all_std, 0.0
+    )
+    np.testing.assert_allclose(result.cnr, expected_cnr)
+    np.testing.assert_allclose(result.snr, expected_snr)
+    np.testing.assert_allclose(result.tsnr, expected_tsnr)
+
+
+def test_compute_quality_maps_without_signal_returns_zero_snr() -> None:
+    """Missing raw signal leaves concentration CNR intact and signal maps zero."""
+    raw = np.array([[[[0.0, 1.0, 2.0, 5.0]]]])
+
+    result = ComputeDSCMaps()._compute_quality_maps(raw, None, 3)
+
+    assert result.cnr[0, 0, 0] > 0.0
+    np.testing.assert_array_equal(result.snr, np.zeros((1, 1, 1)))
+    np.testing.assert_array_equal(result.tsnr, np.zeros((1, 1, 1)))
