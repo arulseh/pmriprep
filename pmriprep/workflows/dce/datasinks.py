@@ -14,6 +14,7 @@ filename — the BIDS schema does not register a ``model-`` entity.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Optional
 
 import nipype.interfaces.utility as niu  # type: ignore[import-untyped]
@@ -31,76 +32,92 @@ from pmriprep.interfaces.qc_writers import (
 # ---------------------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class DCEMapSpec:
+    """Declarative specification for one regular DCE perfusion-map sink."""
+
+    in_attr: str
+    desc: str
+    suffix: str
+    description: str
+    units: str | None
+    map_key: str
+    extra: dict[str, object] | None = None
+    bids_suffix: str = "stat"
+
+
 # PK parameter maps. Model name lives in JSON sidecar (PKModeling.model),
 # not in the filename (no `model-` entity in BIDS schema).
-# (input_attr, suffix, description, units)
-_PK_MAPS: tuple[tuple[str, str, str, str], ...] = (
-    ("ktrans_map", "Ktrans", "Volume transfer constant (1/min)", "1/min"),
-    ("ve_map", "ve", "Extravascular extracellular space volume fraction", "1"),
-    ("kep_map", "kep", "Efflux rate constant (1/min)", "1/min"),
-    ("vp_map", "vp", "Plasma volume fraction", "1"),
+_PK_MAPS: tuple[DCEMapSpec, ...] = (
+    DCEMapSpec("ktrans_map", "dce", "Ktrans", "Volume transfer constant (1/min)", "1/min", "ktrans"),
+    DCEMapSpec("ve_map", "dce", "ve", "Extravascular extracellular space volume fraction", "1", "ve"),
+    DCEMapSpec("kep_map", "dce", "kep", "Efflux rate constant (1/min)", "1/min", "kep"),
+    DCEMapSpec("vp_map", "dce", "vp", "Plasma volume fraction", "1", "vp"),
 )
 
 
 # Bayesian uncertainty (posterior std) — per-PK-map
 # (input_attr, suffix-name, description, units)
-_UNCERTAINTY_MAPS: tuple[tuple[str, str, str, str], ...] = (
-    ("ktrans_uncertainty", "Ktrans", "Ktrans uncertainty (posterior std)", "1/min"),
-    ("ve_uncertainty", "ve", "ve uncertainty (posterior std)", "1"),
-    ("vp_uncertainty", "vp", "vp uncertainty (posterior std)", "1"),
-    ("fp_uncertainty", "Fp", "Fp uncertainty (posterior std, 2CXM only)",
-     "mL/min/100mL"),
-    ("ps_uncertainty", "PS", "PS uncertainty (posterior std, 2CXM only)",
-     "mL/min/100mL"),
+_UNCERTAINTY_MAPS: tuple[DCEMapSpec, ...] = (
+    DCEMapSpec("ktrans_uncertainty", "dceUncertainty", "Ktrans", "Ktrans uncertainty (posterior std)", "1/min", "ktrans_uncertainty"),
+    DCEMapSpec("ve_uncertainty", "dceUncertainty", "ve", "ve uncertainty (posterior std)", "1", "ve_uncertainty"),
+    DCEMapSpec("vp_uncertainty", "dceUncertainty", "vp", "vp uncertainty (posterior std)", "1", "vp_uncertainty"),
+    DCEMapSpec("fp_uncertainty", "dceUncertainty", "Fp", "Fp uncertainty (posterior std, 2CXM only)", "mL/min/100mL", "fp_uncertainty"),
+    DCEMapSpec("ps_uncertainty", "dceUncertainty", "PS", "PS uncertainty (posterior std, 2CXM only)", "mL/min/100mL", "ps_uncertainty"),
 )
 
 
-_CV_MAPS: tuple[tuple[str, str, str, str], ...] = (
-    ("ktrans_cv", "Ktrans", "Ktrans coefficient of variation (std/mean)", "1"),
-    ("ve_cv", "ve", "ve coefficient of variation (std/mean)", "1"),
-    ("vp_cv", "vp", "vp coefficient of variation (std/mean)", "1"),
+_CV_MAPS: tuple[DCEMapSpec, ...] = (
+    DCEMapSpec("ktrans_cv", "dceCV", "Ktrans", "Ktrans coefficient of variation (std/mean)", "1", "ktrans_cv"),
+    DCEMapSpec("ve_cv", "dceCV", "ve", "ve coefficient of variation (std/mean)", "1", "ve_cv"),
+    DCEMapSpec("vp_cv", "dceCV", "vp", "vp coefficient of variation (std/mean)", "1", "vp_cv"),
 )
 
 
 # 95% CI maps — pairs of (lower, upper)
-_CI95_MAPS: tuple[tuple[str, str, str, str, str], ...] = (
-    ("ktrans_ci95_lower", "Ktrans", "lower",
-     "Ktrans 95% credible interval lower bound", "1/min"),
-    ("ktrans_ci95_upper", "Ktrans", "upper",
-     "Ktrans 95% credible interval upper bound", "1/min"),
-    ("ve_ci95_lower", "ve", "lower", "ve 95% credible interval lower bound", "1"),
-    ("ve_ci95_upper", "ve", "upper", "ve 95% credible interval upper bound", "1"),
-    ("vp_ci95_lower", "vp", "lower", "vp 95% credible interval lower bound", "1"),
-    ("vp_ci95_upper", "vp", "upper", "vp 95% credible interval upper bound", "1"),
+_CI95_MAPS: tuple[DCEMapSpec, ...] = (
+    DCEMapSpec("ktrans_ci95_lower", "dceCI95lower", "Ktrans", "Ktrans 95% credible interval lower bound", "1/min", "ktrans_ci95_lower"),
+    DCEMapSpec("ktrans_ci95_upper", "dceCI95upper", "Ktrans", "Ktrans 95% credible interval upper bound", "1/min", "ktrans_ci95_upper"),
+    DCEMapSpec("ve_ci95_lower", "dceCI95lower", "ve", "ve 95% credible interval lower bound", "1", "ve_ci95_lower"),
+    DCEMapSpec("ve_ci95_upper", "dceCI95upper", "ve", "ve 95% credible interval upper bound", "1", "ve_ci95_upper"),
+    DCEMapSpec("vp_ci95_lower", "dceCI95lower", "vp", "vp 95% credible interval lower bound", "1", "vp_ci95_lower"),
+    DCEMapSpec("vp_ci95_upper", "dceCI95upper", "vp", "vp 95% credible interval upper bound", "1", "vp_ci95_upper"),
 )
 
 
 # Model-free maps (no model entity). Each entry:
 # (input_attr, suffix, description, units, extra_dict_or_None)
-_MODEL_FREE_MAPS: tuple[tuple[str, str, str, str, dict | None], ...] = (
-    ("iauc60_map", "IAUC60", "Initial Area Under Curve at 60s (mM*min)", "mM*min", None),
-    ("iauc90_map", "IAUC90", "Initial Area Under Curve at 90s (mM*min)", "mM*min", None),
-    ("iauc120_map", "IAUC120", "Initial Area Under Curve at 120s (mM*min)", "mM*min", None),
-    ("peak_enhancement_map", "peakEnhancement", "Peak enhancement percentage", "%", None),
-    ("time_to_peak_map", "ttp", "Time to peak (seconds)", "s", None),
-    ("ser_map", "SER", "Signal Enhancement Ratio (washout characterization)", "1", None),
-    ("wash_in_slope_map", "washInSlope",
+_MODEL_FREE_MAPS: tuple[DCEMapSpec, ...] = (
+    DCEMapSpec("iauc60_map", "dce", "IAUC60", "Initial Area Under Curve at 60s (mM*min)", "mM*min", "iauc60"),
+    DCEMapSpec("iauc90_map", "dce", "IAUC90", "Initial Area Under Curve at 90s (mM*min)", "mM*min", "iauc90"),
+    DCEMapSpec("iauc120_map", "dce", "IAUC120", "Initial Area Under Curve at 120s (mM*min)", "mM*min", "iauc120"),
+    DCEMapSpec("peak_enhancement_map", "dce", "peakEnhancement", "Peak enhancement percentage", "%", "peak_enhancement"),
+    DCEMapSpec("time_to_peak_map", "dce", "ttp", "Time to peak (seconds)", "s", "ttp"),
+    DCEMapSpec("ser_map", "dce", "SER", "Signal Enhancement Ratio (washout characterization)", "1", "ser"),
+    DCEMapSpec("wash_in_slope_map", "dce", "washInSlope",
      "Maximum upslope of concentration during wash-in (mM/min)", "mM/min",
+     "wash_in_slope",
      {"SmoothingMethod": "Savitzky-Golay", "SmoothingWindow": 5,
       "SmoothingPolyorder": 2, "InputCurve": "concentration"}),
-    ("wash_out_slope_map", "washOutSlope",
+    DCEMapSpec("wash_out_slope_map", "dce", "washOutSlope",
      "Linear washout slope (mM/min, negative=washout)", "mM/min",
+     "wash_out_slope",
      {"PostPeakStartSeconds": 30.0, "PostPeakEndSeconds": 120.0,
       "MinPoints": 4, "RegressionMethod": "ordinary_least_squares"}),
-    ("bat_map", "BAT", "Bolus arrival time (seconds)", "s",
+    DCEMapSpec("bat_map", "dce", "BAT", "Bolus arrival time (seconds)", "s", "bat",
      {"DetectionMethod": "threshold_then_gradient_fallback",
       "ConfidenceThreshold": "high"}),
-    ("curve_type_map", "curveType",
-     "Curve type classification (1=persistent, 2=plateau, 3=washout)",
-     "categorical",
-     {"PersistentThreshold": 0.9, "WashoutThreshold": 1.1,
-      "ValueMapping": {"0": "unclassified", "1": "persistent",
-                       "2": "plateau", "3": "washout"}}),
+)
+
+
+_CURVE_TYPE_MAP = DCEMapSpec(
+    "curve_type_map", "dce", "curveType",
+    "Curve type classification (1=persistent, 2=plateau, 3=washout)",
+    "categorical", "curve_type",
+    {"PersistentThreshold": 0.9, "WashoutThreshold": 1.1,
+     "ValueMapping": {"0": "unclassified", "1": "persistent",
+                      "2": "plateau", "3": "washout"}},
+    bids_suffix="dseg",
 )
 
 
@@ -113,9 +130,6 @@ _MF_UNITS = {
     "peak_enhancement": "%", "ser": "1",
     "wash_in_slope": "mM/min", "wash_out_slope": "mM/min",
 }
-
-# curveType is a discrete segmentation (dseg), not a continuous stat.
-_BIDS_SUFFIX_OVERRIDE: dict[str, str] = {"curveType": "dseg"}
 
 # BIDS-correct suffixes for smoothed-map sinks live inline in
 # ``_split_dce_smoothed`` (nipype reconstructs Function helpers in an
@@ -711,14 +725,6 @@ def _add_perf_map_sink(
     return sink
 
 
-_PK_MAP_KEY: dict[str, str] = {
-    "ktrans_map": "ktrans",
-    "ve_map": "ve",
-    "kep_map": "kep",
-    "vp_map": "vp",
-}
-
-
 # Model-free maps that should carry per-region LesionStats. Excluded
 # (intentional): bat_map (timing offset, not
 # magnitude biomarker), curve_type_map (categorical, not amenable to
@@ -733,20 +739,6 @@ _MF_LESIONSTATS_MAP_KEY: dict[str, str] = {
     "wash_in_slope_map": "wash_in_slope",
     "wash_out_slope_map": "wash_out_slope",
 }
-
-_MF_AIF_MAP_KEY: dict[str, str] = {
-    "iauc60_map": "iauc60",
-    "iauc90_map": "iauc90",
-    "iauc120_map": "iauc120",
-    "peak_enhancement_map": "peak_enhancement",
-    "time_to_peak_map": "ttp",
-    "ser_map": "ser",
-    "wash_in_slope_map": "wash_in_slope",
-    "wash_out_slope_map": "wash_out_slope",
-    "bat_map": "bat",
-    "curve_type_map": "curve_type",
-}
-
 
 # NAWM-normalized DCE maps that carry LesionStats.
 _NAWMNORM_LESIONSTATS_MAP_KEY: dict[str, str] = {
@@ -1123,66 +1115,55 @@ def init_dce_datasinks_wf(
     sink_outputs: list[tuple[pe.Node, str]] = []
 
     # --- PK maps (flat-key cosmetic enrichment) ---
-    for in_attr, suffix, description, units in _PK_MAPS:
-        if in_attr not in present:
+    for spec in _PK_MAPS:
+        if spec.in_attr not in present:
             continue
         sink = _add_dce_pk_map_sink(
             workflow, inputnode, base_perf,
-            name=in_attr, in_attr=in_attr,
-            desc_value="dce", suffix=suffix,
-            description=description, units=units,
-            map_key=_PK_MAP_KEY.get(in_attr, ""),
+            name=spec.in_attr, in_attr=spec.in_attr,
+            desc_value=spec.desc, suffix=spec.suffix,
+            description=spec.description, units=spec.units,
+            map_key=spec.map_key,
         )
         sink_outputs.append((sink, "out_file"))
 
     # --- Bayesian uncertainty / CV / CI95 ---
-    for in_attr, suffix, description, units in _UNCERTAINTY_MAPS:
-        if in_attr not in present:
-            continue
-        sink = _add_perf_map_sink(
-            workflow, inputnode, base_perf,
-            name=in_attr, in_attr=in_attr,
-            desc_value="dceUncertainty", suffix=suffix,
-            description=description, units=units, extra=None,
-            map_key=in_attr,
-        )
-        sink_outputs.append((sink, "out_file"))
-
-    for in_attr, suffix, description, units in _CV_MAPS:
-        if in_attr not in present:
-            continue
-        sink = _add_perf_map_sink(
-            workflow, inputnode, base_perf,
-            name=in_attr, in_attr=in_attr,
-            desc_value="dceCV", suffix=suffix,
-            description=description, units=units, extra=None,
-            map_key=in_attr,
-        )
-        sink_outputs.append((sink, "out_file"))
-
-    for in_attr, suffix, bound, description, units in _CI95_MAPS:
-        if in_attr not in present:
-            continue
-        sink = _add_perf_map_sink(
-            workflow, inputnode, base_perf,
-            name=in_attr, in_attr=in_attr,
-            desc_value=f"dceCI95{bound}", suffix=suffix,
-            description=description, units=units, extra=None,
-            map_key=in_attr,
-        )
-        sink_outputs.append((sink, "out_file"))
+    for table in (_UNCERTAINTY_MAPS, _CV_MAPS, _CI95_MAPS):
+        for spec in table:
+            if spec.in_attr not in present:
+                continue
+            sink = _add_perf_map_sink(
+                workflow, inputnode, base_perf,
+                name=spec.in_attr, in_attr=spec.in_attr,
+                desc_value=spec.desc, suffix=spec.suffix,
+                description=spec.description, units=spec.units,
+                extra=spec.extra, map_key=spec.map_key,
+                bids_suffix=spec.bids_suffix,
+            )
+            sink_outputs.append((sink, "out_file"))
 
     # --- Model-free maps (no KtransConvention) ---
-    for in_attr, suffix, description, units, extra in _MODEL_FREE_MAPS:
-        if in_attr not in present:
+    for spec in _MODEL_FREE_MAPS:
+        if spec.in_attr not in present:
             continue
         sink = _add_perf_map_sink(
             workflow, inputnode, base_perf_no_ktrans,
-            name=in_attr, in_attr=in_attr,
-            desc_value="dce", suffix=suffix,
-            description=description, units=units, extra=extra,
-            map_key=_MF_AIF_MAP_KEY.get(in_attr, ""),
-            bids_suffix=_BIDS_SUFFIX_OVERRIDE.get(suffix, "stat"),
+            name=spec.in_attr, in_attr=spec.in_attr,
+            desc_value=spec.desc, suffix=spec.suffix,
+            description=spec.description, units=spec.units, extra=spec.extra,
+            map_key=spec.map_key, bids_suffix=spec.bids_suffix,
+        )
+        sink_outputs.append((sink, "out_file"))
+
+    # Categorical segmentation: explicit because its BIDS suffix is dseg.
+    spec = _CURVE_TYPE_MAP
+    if spec.in_attr in present:
+        sink = _add_perf_map_sink(
+            workflow, inputnode, base_perf_no_ktrans,
+            name=spec.in_attr, in_attr=spec.in_attr,
+            desc_value=spec.desc, suffix=spec.suffix,
+            description=spec.description, units=spec.units, extra=spec.extra,
+            map_key=spec.map_key, bids_suffix=spec.bids_suffix,
         )
         sink_outputs.append((sink, "out_file"))
 
