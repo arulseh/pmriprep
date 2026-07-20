@@ -592,3 +592,102 @@ def test_finalize_dsc_maps_preserves_optional_outputs() -> None:
     assert result.cbf_std is None
     assert result.cbf_ci_lower is None
     assert result.cbf_ci_upper is None
+
+
+def test_save_map_overrides_upstream_header_dtype(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Explicit output dtypes survive an incompatible upstream NIfTI header."""
+    monkeypatch.chdir(tmp_path)
+    source = _write_image(tmp_path / "concentration.nii.gz", np.ones((2, 1, 1), dtype=np.int16))
+    source_img = nib.load(source)
+    interface = ComputeDSCMaps(concentration_file=source)
+
+    float_path = interface._save_map(
+        np.array([[[0.25]], [[0.75]]]),
+        "_float",
+        source_img.affine,
+        source_img.header,
+    )
+    mask_path = interface._save_map(
+        np.array([[[0]], [[1]]]),
+        "_mask",
+        source_img.affine,
+        source_img.header,
+        dtype=np.uint8,
+    )
+
+    float_img = nib.load(float_path)
+    mask_img = nib.load(mask_path)
+    assert float_img.get_data_dtype() == np.dtype(np.float32)
+    assert mask_img.get_data_dtype() == np.dtype(np.uint8)
+    np.testing.assert_allclose(float_img.get_fdata().ravel(), [0.25, 0.75])
+    np.testing.assert_array_equal(mask_img.get_fdata().ravel(), [0.0, 1.0])
+    assert source_img.get_data_dtype() == np.dtype(np.int16)
+
+
+def test_save_base_maps_preserves_result_keys_and_suffixes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unconditional map serialization retains its public key/suffix registry."""
+    data = np.ones((1,))
+    maps = ComputeDSCMaps._finalize_dsc_maps(
+        cbf=data,
+        cbv=data,
+        cbv_auc=data,
+        mtt=data,
+        tmax=data,
+        ttp=data,
+        ttp_corrected=data,
+        relative_ttp=None,
+        auc_raw=data,
+        auc_corrected=data,
+        auc_difference=data,
+        cnr=data,
+        snr=data,
+        tsnr=data,
+        psr=data,
+        peak_height=data,
+        delay=None,
+        residues=None,
+        cbf_std=None,
+        cbf_ci_lower=None,
+        cbf_ci_upper=None,
+        mask_bool=np.ones((1,), dtype=bool),
+    )
+    interface = ComputeDSCMaps()
+    suffixes: list[str] = []
+
+    def _record_map(*args: object, **kwargs: object) -> str:
+        suffix = str(args[1])
+        suffixes.append(suffix)
+        return f"{suffix}.nii.gz"
+
+    monkeypatch.setattr(interface, "_save_map", _record_map)
+    qc = {"n_voxels": 1}
+    results = interface._save_base_maps(maps, np.eye(4), object(), qc)
+
+    expected = {
+        "out_mtt": "_mtt",
+        "out_tmax": "_tmax",
+        "out_psr": "_psr",
+        "out_ph": "_ph",
+        "out_ttp": "_ttp",
+        "out_ttp_corrected": "_ttp_corrected",
+        "out_cnr": "_cnr",
+        "out_auc_raw": "_auc_raw",
+        "out_auc_corr": "_auc_corr",
+        "out_auc_diff": "_auc_diff",
+        "out_rel_cbf": "_rel_cbf",
+        "out_rel_cbv": "_rel_cbv",
+        "out_rel_cbv_auc": "_rel_cbv_auc",
+        "out_rel_auc_raw": "_rel_auc_raw",
+        "out_rel_auc_corr": "_rel_auc_corr",
+        "out_snr": "_snr",
+        "out_tsnr": "_tsnr",
+    }
+    assert suffixes == list(expected.values())
+    assert {key: results[key] for key in expected} == {
+        key: f"{suffix}.nii.gz" for key, suffix in expected.items()
+    }
+    assert results["qc_metrics"] is qc

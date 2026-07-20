@@ -1517,6 +1517,59 @@ class ComputeDSCMaps(BaseInterface):
             cbf_ci_upper=cbf_ci_upper,
         )
 
+    def _save_map(
+        self,
+        data: npt.NDArray[Any],
+        suffix: str,
+        affine: npt.NDArray[Any],
+        header: Any,
+        dtype: Any = np.float32,
+    ) -> str:
+        """Save a DSC map with an explicit dtype and clean copied header."""
+        import nibabel as nib  # type: ignore[import-untyped]
+
+        path = self._gen_outfilename(suffix)
+        cast_data = data.astype(dtype)
+        local_header = cast("nib.Nifti1Header", header.copy())
+        local_header.set_data_dtype(dtype)
+        img = nib.Nifti1Image(cast_data, affine, local_header)  # type: ignore[attr-defined]
+        nib.save(img, path)  # type: ignore[attr-defined]
+        return path
+
+    def _save_base_maps(
+        self,
+        maps: _DSCFinalMaps,
+        affine: npt.NDArray[Any],
+        header: Any,
+        qc_metrics: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Serialize the unconditional DSC maps and assemble interface results."""
+        outputs = {
+            "out_mtt": (maps.mtt, "_mtt"),
+            "out_tmax": (maps.tmax, "_tmax"),
+            "out_psr": (maps.psr, "_psr"),
+            "out_ph": (maps.peak_height, "_ph"),
+            "out_ttp": (maps.ttp, "_ttp"),
+            "out_ttp_corrected": (maps.ttp_corrected, "_ttp_corrected"),
+            "out_cnr": (maps.cnr, "_cnr"),
+            "out_auc_raw": (maps.auc_raw, "_auc_raw"),
+            "out_auc_corr": (maps.auc_corrected, "_auc_corr"),
+            "out_auc_diff": (maps.auc_difference, "_auc_diff"),
+            "out_rel_cbf": (maps.rel_cbf, "_rel_cbf"),
+            "out_rel_cbv": (maps.rel_cbv, "_rel_cbv"),
+            "out_rel_cbv_auc": (maps.rel_cbv_auc, "_rel_cbv_auc"),
+            "out_rel_auc_raw": (maps.rel_auc_raw, "_rel_auc_raw"),
+            "out_rel_auc_corr": (maps.rel_auc_corrected, "_rel_auc_corr"),
+            "out_snr": (maps.snr, "_snr"),
+            "out_tsnr": (maps.tsnr, "_tsnr"),
+        }
+        results: dict[str, Any] = {
+            name: self._save_map(data, suffix, affine, header)
+            for name, (data, suffix) in outputs.items()
+        }
+        results["qc_metrics"] = qc_metrics
+        return results
+
     def _first_pass_reference(
         self,
         fp_area: npt.NDArray[Any],
@@ -3107,81 +3160,7 @@ class ComputeDSCMaps(BaseInterface):
             )
         )
 
-        # -----------------------------------------------------------
-        # Helper to save a 3D array as NIfTI
-        # -----------------------------------------------------------
-        def _save_map(
-            data: npt.NDArray[Any],
-            suffix: str,
-            dtype: Any = np.float32,
-        ) -> str:
-            path = self._gen_outfilename(suffix)
-            # Re-derive a clean header from the upstream concentration
-            # NIfTI's so its `datatype` field doesn't override the
-            # explicit `dtype` we pass in. Without this, nibabel
-            # silently casts e.g. our float32 R² map or uint8 fallback
-            # mask back to the upstream concentration's int16, losing
-            # precision for floats and wasting bits for the mask.
-            cast_data = data.astype(dtype)
-            local_header = cast("nib.Nifti1Header", header.copy())
-            local_header.set_data_dtype(dtype)
-            img = nib.Nifti1Image(cast_data, affine, local_header)  # type: ignore[attr-defined]
-            nib.save(img, path)  # type: ignore[attr-defined]
-            return path
-
-        # -----------------------------------------------------------
-        # Save all output maps
-        # -----------------------------------------------------------
-        # Quantification-independent
-        out_mtt = _save_map(mtt, "_mtt")
-        out_tmax = _save_map(tmax, "_tmax")
-        out_psr = _save_map(psr, "_psr")
-        out_ph = _save_map(ph, "_ph")
-        out_ttp = _save_map(ttp, "_ttp")
-        out_ttp_corrected = _save_map(ttp_corrected, "_ttp_corrected")
-        out_cnr = _save_map(cnr, "_cnr")
-
-        # AUC decomposition
-        out_auc_raw = _save_map(auc_raw, "_auc_raw")
-        out_auc_corr = _save_map(auc_corr, "_auc_corr")
-        out_auc_diff = _save_map(auc_diff, "_auc_diff")
-
-        # Relative maps
-        out_rel_cbf = _save_map(rel_cbf, "_rel_cbf")
-        out_rel_cbv = _save_map(rel_cbv, "_rel_cbv")
-        out_rel_cbv_auc = _save_map(rel_cbv_auc, "_rel_cbv_auc")
-        out_rel_auc_raw = _save_map(rel_auc_raw, "_rel_auc_raw")
-        out_rel_auc_corr = _save_map(rel_auc_corr, "_rel_auc_corr")
-
-        # Quality metrics
-        out_snr = _save_map(snr, "_snr")
-        out_tsnr = _save_map(tsnr, "_tsnr")
-
-        # Store results
-        self._results: dict[str, Any] = {
-            # Quantification-independent
-            "out_mtt": out_mtt,
-            "out_tmax": out_tmax,
-            "out_psr": out_psr,
-            "out_ph": out_ph,
-            "out_ttp": out_ttp,
-            "out_ttp_corrected": out_ttp_corrected,
-            "out_cnr": out_cnr,
-            # AUC decomposition
-            "out_auc_raw": out_auc_raw,
-            "out_auc_corr": out_auc_corr,
-            "out_auc_diff": out_auc_diff,
-            # Relative maps
-            "out_rel_cbf": out_rel_cbf,
-            "out_rel_cbv": out_rel_cbv,
-            "out_rel_cbv_auc": out_rel_cbv_auc,
-            "out_rel_auc_raw": out_rel_auc_raw,
-            "out_rel_auc_corr": out_rel_auc_corr,
-            # Quality metrics
-            "out_snr": out_snr,
-            "out_tsnr": out_tsnr,
-            "qc_metrics": qc_metrics,
-        }
+        self._results = self._save_base_maps(final_maps, affine, header, qc_metrics)
 
         # -----------------------------------------------------------
         # Optional: gamma-variate first-pass relative CBV map.
@@ -3212,7 +3191,7 @@ class ComputeDSCMaps(BaseInterface):
 
         # NAWM-relative TTP (conditional on NAWM mask availability)
         if rttp is not None:
-            self._results["out_rttp"] = _save_map(rttp, "_rttp")
+            self._results["out_rttp"] = self._save_map(rttp, "_rttp", affine, header)
 
         # K2 map (recomputed or pass-through) — always set
         if k2_map_out_path is not None:
@@ -3221,7 +3200,7 @@ class ComputeDSCMaps(BaseInterface):
                 dtype=np.float32,
             )
             k2_data = np.where(mask_bool, k2_data, 0.0)
-            self._results["out_k2"] = _save_map(k2_data, "_k2")
+            self._results["out_k2"] = self._save_map(k2_data, "_k2", affine, header)
         else:
             # No K2 available — save a zeros map so downstream nodes always get a file
             k2_zeros = np.zeros(spatial_shape, dtype=np.float32)
@@ -3232,19 +3211,19 @@ class ComputeDSCMaps(BaseInterface):
 
         # Save delay map if oSVD
         if delay is not None:
-            self._results["out_delay"] = _save_map(delay, "_delay")
+            self._results["out_delay"] = self._save_map(delay, "_delay", affine, header)
 
         # Save alpha/beta/cth maps for vascular method
         if method in ("vascular", "cpi"):
             if alpha_map is not None:  # type: ignore[possibly-undefined]
                 alpha_map = np.where(mask_bool, alpha_map, 0.0)
-                self._results["out_alpha"] = _save_map(alpha_map, "_alpha")
+                self._results["out_alpha"] = self._save_map(alpha_map, "_alpha", affine, header)
             if beta_map is not None:  # type: ignore[possibly-undefined]
                 beta_map = np.where(mask_bool, beta_map, 0.0)
-                self._results["out_beta"] = _save_map(beta_map, "_beta")
+                self._results["out_beta"] = self._save_map(beta_map, "_beta", affine, header)
             if cth_map is not None:  # type: ignore[possibly-undefined]
                 cth_map = np.where(mask_bool, cth_map, 0.0)
-                self._results["out_cth"] = _save_map(cth_map, "_cth")
+                self._results["out_cth"] = self._save_map(cth_map, "_cth", affine, header)
 
         # Save QC fit data for all deconvolution methods
         if method in ("vascular", "cpi"):
@@ -3283,10 +3262,14 @@ class ComputeDSCMaps(BaseInterface):
         if method in ("cpi", "vascular"):
             if cbf_std_map is not None:  # type: ignore[possibly-undefined]
                 cbf_std_map = np.where(mask_bool, cbf_std_map, 0.0)
-                self._results["out_cbf_std"] = _save_map(cbf_std_map, "_cbf_std")
+                self._results["out_cbf_std"] = self._save_map(
+                    cbf_std_map, "_cbf_std", affine, header
+                )
             if cbv_std_map is not None:  # type: ignore[possibly-undefined]
                 cbv_std_map = np.where(mask_bool, cbv_std_map, 0.0)
-                self._results["out_cbv_std"] = _save_map(cbv_std_map, "_cbv_std")
+                self._results["out_cbv_std"] = self._save_map(
+                    cbv_std_map, "_cbv_std", affine, header
+                )
 
             # Compute CV = std / |mean|, guarded for near-zero denominators.
             # Use np.divide with where= to avoid RuntimeWarning on zero division.
@@ -3295,32 +3278,40 @@ class ComputeDSCMaps(BaseInterface):
                 valid_cbf = np.abs(rel_cbf) > EPSILON_CONCENTRATION
                 np.divide(cbf_std_map, np.abs(rel_cbf), out=cbf_cv, where=valid_cbf)
                 cbf_cv = np.where(mask_bool, cbf_cv, 0.0)
-                self._results["out_cbf_cv"] = _save_map(cbf_cv, "_cbf_cv")
+                self._results["out_cbf_cv"] = self._save_map(
+                    cbf_cv, "_cbf_cv", affine, header
+                )
             if cbv_std_map is not None:  # type: ignore[possibly-undefined]
                 cbv_cv = np.zeros_like(cbv_std_map)
                 valid_cbv = np.abs(rel_cbv) > EPSILON_CONCENTRATION
                 np.divide(cbv_std_map, np.abs(rel_cbv), out=cbv_cv, where=valid_cbv)
                 cbv_cv = np.where(mask_bool, cbv_cv, 0.0)
-                self._results["out_cbv_cv"] = _save_map(cbv_cv, "_cbv_cv")
+                self._results["out_cbv_cv"] = self._save_map(
+                    cbv_cv, "_cbv_cv", affine, header
+                )
 
             # Save CI maps only for VI/MCMC (MAP Laplace CI is approximate)
             if inference in ("vi", "svb", "mcmc"):
                 if cbf_ci_lower_map is not None:  # type: ignore[possibly-undefined]
                     cbf_ci_lower_map = np.where(mask_bool, cbf_ci_lower_map, 0.0)
-                    self._results["out_cbf_ci95_lower"] = _save_map(
-                        cbf_ci_lower_map, "_cbf_ci95_lower")
+                    self._results["out_cbf_ci95_lower"] = self._save_map(
+                        cbf_ci_lower_map, "_cbf_ci95_lower", affine, header
+                    )
                 if cbf_ci_upper_map is not None:  # type: ignore[possibly-undefined]
                     cbf_ci_upper_map = np.where(mask_bool, cbf_ci_upper_map, 0.0)
-                    self._results["out_cbf_ci95_upper"] = _save_map(
-                        cbf_ci_upper_map, "_cbf_ci95_upper")
+                    self._results["out_cbf_ci95_upper"] = self._save_map(
+                        cbf_ci_upper_map, "_cbf_ci95_upper", affine, header
+                    )
                 if cbv_ci_lower_map is not None:  # type: ignore[possibly-undefined]
                     cbv_ci_lower_map = np.where(mask_bool, cbv_ci_lower_map, 0.0)
-                    self._results["out_cbv_ci95_lower"] = _save_map(
-                        cbv_ci_lower_map, "_cbv_ci95_lower")
+                    self._results["out_cbv_ci95_lower"] = self._save_map(
+                        cbv_ci_lower_map, "_cbv_ci95_lower", affine, header
+                    )
                 if cbv_ci_upper_map is not None:  # type: ignore[possibly-undefined]
                     cbv_ci_upper_map = np.where(mask_bool, cbv_ci_upper_map, 0.0)
-                    self._results["out_cbv_ci95_upper"] = _save_map(
-                        cbv_ci_upper_map, "_cbv_ci95_upper")
+                    self._results["out_cbv_ci95_upper"] = self._save_map(
+                        cbv_ci_upper_map, "_cbv_ci95_upper", affine, header
+                    )
 
             # Parametric-fit R² and oSVD-fallback mask (saved as
             # diagnostic outputs; not surfaced in HTML report).
@@ -3328,13 +3319,13 @@ class ComputeDSCMaps(BaseInterface):
                 # Mask outside-brain to NaN so plotting tools render the
                 # background as transparent rather than zero.
                 _r2 = np.where(mask_bool, parametric_r2_map, np.nan).astype(np.float32)
-                self._results["out_parametric_r2"] = _save_map(
-                    _r2, "_dscParametric_r2"
+                self._results["out_parametric_r2"] = self._save_map(
+                    _r2, "_dscParametric_r2", affine, header
                 )
             if fallback_mask is not None:  # type: ignore[possibly-undefined]
                 _fb = np.where(mask_bool, fallback_mask, 0).astype(np.uint8)
-                self._results["out_fallback_mask"] = _save_map(
-                    _fb, "_dscFallback_mask", dtype=np.uint8,
+                self._results["out_fallback_mask"] = self._save_map(
+                    _fb, "_dscFallback_mask", affine, header, dtype=np.uint8,
                 )
 
         # Save residues if requested
