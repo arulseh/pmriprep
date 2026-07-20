@@ -42,6 +42,8 @@ def dce_qc_metrics() -> dict[str, Any]:
         "preprocessing": {
             "fd_mean": 0.21, "fd_max": 0.78, "percent_outliers": 2.1,
             "motion_status": "PASS",
+            "motion_qc_available": False,
+            "motion_qc_error": "ValueError",
             "baseline_tsnr": 32.4, "peak_enh_pct": 65.0,
             "baseline_snr_low_fraction": 0.04,
             "n_volumes": 75, "tr_ms": 3.8, "volume_tr_s": 4.06,
@@ -81,6 +83,8 @@ class TestMotionAndSignalKeys:
         assert out["MotionFDMax"] == pytest.approx(0.78)
         assert out["MotionPercentOutliers"] == pytest.approx(2.1)
         assert out["MotionStatus"] == "PASS"
+        assert out["MotionQCAvailable"] is False
+        assert out["MotionQCError"] == "ValueError"
         assert out["BaselineTSNR"] == pytest.approx(32.4)
         assert out["BaselineSNRLowFraction"] == pytest.approx(0.04)
         assert out["PeakEnhancementPercent"] == pytest.approx(65.0)
@@ -138,6 +142,20 @@ def test_baseline_and_aif_processing_warnings_coexist() -> None:
     assert len(warnings) == 2
     assert "Parker population model" in warnings[0]
     assert warnings[1] == "Baseline fallback may bias PK maps."
+
+
+def test_motion_qc_warning_uses_processing_warning_channel() -> None:
+    """A motion-QC reduction failure reaches the existing HTML banner."""
+    sidecar: dict[str, Any] = {}
+    qc = {
+        "preprocessing": {
+            "motion_qc_warning": "Motion quality is unknown.",
+        },
+    }
+
+    enrich_recommendation_keys(sidecar, modality="DCE", qc_metrics=qc)
+
+    assert sidecar["QCProcessingWarnings"] == ["Motion quality is unknown."]
 
 
 class TestBaseFieldsSurvive:

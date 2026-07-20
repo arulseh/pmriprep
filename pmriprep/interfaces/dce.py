@@ -3129,8 +3129,30 @@ class DCEPreprocess(SimpleInterface):
                 outlier_frames,
                 metrics,
             )
-        except Exception:
-            return _DCEMotionQC((), 0.0, 0.0, 0, (), {})
+        except Exception as exc:
+            logger.warning("DCE motion QC calculation failed: %s", exc)
+            return _DCEMotionQC(
+                (),
+                0.0,
+                0.0,
+                0,
+                (),
+                {
+                    "motion_status": "UNKNOWN",
+                    "motion_qc_available": False,
+                    "motion_qc_error": type(exc).__name__,
+                    "motion_qc_warning": (
+                        "DCE motion parameters could not be summarized. "
+                        "Motion quality is unknown; review the motion plot and "
+                        "quantitative maps before use."
+                    ),
+                    "n_volumes": preparation.n_volumes,
+                    "baseline_frames": preparation.baseline_frames,
+                    "bolus_arrival_frame": preparation.bolus_frame,
+                    "reference_type": str(self.inputs.ref_vol),
+                    "motion_applied": bool(self.inputs.apply_motion_correction),
+                },
+            )
 
     def _run_mcflirt(self, plan: _DCEMCFLIRTPlan) -> str:
         """Execute a prepared MCFLIRT command and return its parameter file.
@@ -3147,15 +3169,16 @@ class DCEPreprocess(SimpleInterface):
         """
         import subprocess
 
-        result = subprocess.run(plan.command, capture_output=True, text=True)
-        if result.returncode != 0:
-            raise RuntimeError(f"mcflirt failed: {result.stderr}")
-
-        if self.inputs.ref_vol == "baseline_mean" and plan.reference_file:
-            try:
-                Path(plan.reference_file).unlink()
-            except Exception:
-                pass
+        try:
+            result = subprocess.run(plan.command, capture_output=True, text=True)
+            if result.returncode != 0:
+                raise RuntimeError(f"mcflirt failed: {result.stderr}")
+        finally:
+            if self.inputs.ref_vol == "baseline_mean" and plan.reference_file:
+                try:
+                    Path(plan.reference_file).unlink()
+                except Exception:
+                    pass
         return f"{plan.out_base}.par"
 
     def _write_preprocess_outputs(

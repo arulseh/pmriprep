@@ -249,10 +249,10 @@ def test_summarize_motion_qc_preserves_fd_and_outlier_reduction(
     assert qc.metrics["motion_applied"] is False
 
 
-def test_summarize_motion_qc_preserves_silent_empty_fallback(
+def test_summarize_motion_qc_surfaces_nonfatal_failure(
     tmp_path: Path, monkeypatch: Any,
 ) -> None:
-    """Missing parameters retain the legacy empty/zero QC fallback."""
+    """Missing parameters retain nonfatal outputs with visible QC provenance."""
     dce_file = tmp_path / "dce.nii.gz"
     _write_dce(dce_file)
     monkeypatch.setattr(
@@ -270,7 +270,13 @@ def test_summarize_motion_qc_preserves_silent_empty_fallback(
     assert qc.fd_max == 0.0
     assert qc.n_outliers == 0
     assert qc.outlier_frames == ()
-    assert qc.metrics == {}
+    assert qc.metrics["motion_status"] == "UNKNOWN"
+    assert qc.metrics["motion_qc_available"] is False
+    assert qc.metrics["motion_qc_error"] == "FileNotFoundError"
+    assert "Motion quality is unknown" in qc.metrics["motion_qc_warning"]
+    assert qc.metrics["baseline_frames"] == 3
+    assert qc.metrics["bolus_arrival_frame"] == 5
+    assert qc.metrics["motion_applied"] is True
 
 
 def test_run_mcflirt_preserves_command_and_success_cleanup(
@@ -309,10 +315,10 @@ def test_run_mcflirt_preserves_command_and_success_cleanup(
     assert not Path(plan.reference_file).exists()
 
 
-def test_run_mcflirt_preserves_failure_and_deferred_cleanup(
+def test_run_mcflirt_failure_cleans_temporary_reference(
     tmp_path: Path, monkeypatch: Any,
 ) -> None:
-    """Failure retains the current error and leaves cleanup for the later fix."""
+    """Failure retains the command error and removes its temporary reference."""
     import subprocess
 
     dce_file = tmp_path / "dce.nii.gz"
@@ -337,4 +343,4 @@ def test_run_mcflirt_preserves_failure_and_deferred_cleanup(
         interface._run_mcflirt(plan)
 
     assert plan.reference_file is not None
-    assert Path(plan.reference_file).exists()
+    assert not Path(plan.reference_file).exists()

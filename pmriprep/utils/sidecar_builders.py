@@ -1359,9 +1359,10 @@ def enrich_recommendation_keys(
                 processing_warnings.append(aif_warn)
             if modality == "DCE":
                 preprocessing = qc_metrics.get("preprocessing") or {}
-                baseline_warn = preprocessing.get("baseline_warning")
-                if baseline_warn:
-                    processing_warnings.append(str(baseline_warn))
+                for warning_key in ("baseline_warning", "motion_qc_warning"):
+                    warning = preprocessing.get(warning_key)
+                    if warning:
+                        processing_warnings.append(str(warning))
             if processing_warnings:
                 sidecar["QCProcessingWarnings"] = processing_warnings
 
@@ -1429,6 +1430,10 @@ def _dce_preprocessing_cosmetic_keys(
         out["MotionPercentOutliers"] = float(preproc["percent_outliers"])
     if "motion_status" in preproc:
         out["MotionStatus"] = str(preproc["motion_status"])
+    if "motion_qc_available" in preproc:
+        out["MotionQCAvailable"] = bool(preproc["motion_qc_available"])
+    if "motion_qc_error" in preproc:
+        out["MotionQCError"] = str(preproc["motion_qc_error"])
     tsnr = preproc.get("baseline_tsnr")
     if tsnr is not None and tsnr == tsnr:  # present and not NaN
         out["BaselineTSNR"] = float(tsnr)
