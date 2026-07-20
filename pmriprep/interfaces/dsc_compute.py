@@ -393,6 +393,34 @@ class _DSCQualityMaps(NamedTuple):
     tsnr: npt.NDArray[Any]
 
 
+class _DSCFinalMaps(NamedTuple):
+    """Clipped, unit-scaled, and brain-masked DSC output maps."""
+
+    rel_cbf: npt.NDArray[Any]
+    rel_cbv: npt.NDArray[Any]
+    rel_cbv_auc: npt.NDArray[Any]
+    mtt: npt.NDArray[Any]
+    tmax: npt.NDArray[Any]
+    ttp: npt.NDArray[Any]
+    ttp_corrected: npt.NDArray[Any]
+    relative_ttp: Optional[npt.NDArray[Any]]
+    auc_raw: npt.NDArray[Any]
+    auc_corrected: npt.NDArray[Any]
+    auc_difference: npt.NDArray[Any]
+    rel_auc_raw: npt.NDArray[Any]
+    rel_auc_corrected: npt.NDArray[Any]
+    cnr: npt.NDArray[Any]
+    snr: npt.NDArray[Any]
+    tsnr: npt.NDArray[Any]
+    psr: npt.NDArray[Any]
+    peak_height: npt.NDArray[Any]
+    delay: Optional[npt.NDArray[Any]]
+    residues: Optional[npt.NDArray[Any]]
+    cbf_std: Optional[npt.NDArray[Any]]
+    cbf_ci_lower: Optional[npt.NDArray[Any]]
+    cbf_ci_upper: Optional[npt.NDArray[Any]]
+
+
 class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
     """Input specification for ComputeDSCMaps interface."""
 
@@ -1406,6 +1434,88 @@ class ComputeDSCMaps(BaseInterface):
             None if value is None else value * 60.0
             for value in (standard_deviation, ci_lower, ci_upper)
         )  # type: ignore[return-value]
+
+    @classmethod
+    def _finalize_dsc_maps(
+        cls,
+        *,
+        cbf: npt.NDArray[Any],
+        cbv: npt.NDArray[Any],
+        cbv_auc: npt.NDArray[Any],
+        mtt: npt.NDArray[Any],
+        tmax: npt.NDArray[Any],
+        ttp: npt.NDArray[Any],
+        ttp_corrected: npt.NDArray[Any],
+        relative_ttp: Optional[npt.NDArray[Any]],
+        auc_raw: npt.NDArray[Any],
+        auc_corrected: npt.NDArray[Any],
+        auc_difference: npt.NDArray[Any],
+        cnr: npt.NDArray[Any],
+        snr: npt.NDArray[Any],
+        tsnr: npt.NDArray[Any],
+        psr: npt.NDArray[Any],
+        peak_height: npt.NDArray[Any],
+        delay: Optional[npt.NDArray[Any]],
+        residues: Optional[npt.NDArray[Any]],
+        cbf_std: Optional[npt.NDArray[Any]],
+        cbf_ci_lower: Optional[npt.NDArray[Any]],
+        cbf_ci_upper: Optional[npt.NDArray[Any]],
+        mask_bool: npt.NDArray[Any],
+    ) -> _DSCFinalMaps:
+        """Apply established output ranges, CBF units, and brain masking."""
+        psr = np.clip(psr, 0.0, 200.0)
+        peak_height = np.clip(peak_height, 0.0, 100.0)
+        tmax = np.clip(tmax, 0.0, 60.0)
+        mtt = np.clip(mtt, 0.0, 30.0)
+        cbf = np.clip(cbf, 0.0, 100.0)
+        cbv = np.clip(cbv, 0.0, 10.0)
+        cnr = np.clip(cnr, 0.0, 1000.0)
+
+        rel_cbf = np.clip(cbf * 60.0, 0.0, 100.0)
+        rel_cbv = np.clip(cbv, 0.0, 10.0)
+        cbf_std, cbf_ci_lower, cbf_ci_upper = cls._scale_cbf_uncertainty(
+            cbf_std, cbf_ci_lower, cbf_ci_upper
+        )
+
+        return _DSCFinalMaps(
+            rel_cbf=np.where(mask_bool, rel_cbf, 0.0),
+            rel_cbv=np.where(mask_bool, rel_cbv, 0.0),
+            rel_cbv_auc=np.where(mask_bool, cbv_auc, 0.0),
+            mtt=np.where(mask_bool, mtt, 0.0),
+            tmax=np.where(mask_bool, tmax, 0.0),
+            ttp=np.where(mask_bool, ttp, 0.0),
+            ttp_corrected=np.where(
+                mask_bool, np.where(np.isnan(ttp_corrected), 0.0, ttp_corrected), 0.0
+            ),
+            relative_ttp=(
+                None
+                if relative_ttp is None
+                else np.where(
+                    mask_bool,
+                    np.where(np.isnan(relative_ttp), 0.0, relative_ttp),
+                    0.0,
+                )
+            ),
+            auc_raw=np.where(mask_bool, auc_raw, 0.0),
+            auc_corrected=np.where(mask_bool, auc_corrected, 0.0),
+            auc_difference=np.where(mask_bool, auc_difference, 0.0),
+            rel_auc_raw=np.where(mask_bool, auc_raw, 0.0),
+            rel_auc_corrected=np.where(mask_bool, auc_corrected, 0.0),
+            cnr=np.where(mask_bool, cnr, 0.0),
+            snr=np.where(mask_bool, snr, 0.0),
+            tsnr=np.where(mask_bool, tsnr, 0.0),
+            psr=np.where(mask_bool, psr, 0.0),
+            peak_height=np.where(mask_bool, peak_height, 0.0),
+            delay=None if delay is None else np.where(mask_bool, delay, 0.0),
+            residues=(
+                None
+                if residues is None
+                else np.where(mask_bool[..., np.newaxis], residues, 0.0)
+            ),
+            cbf_std=cbf_std,
+            cbf_ci_lower=cbf_ci_lower,
+            cbf_ci_upper=cbf_ci_upper,
+        )
 
     def _first_pass_reference(
         self,
@@ -2949,60 +3059,38 @@ class ComputeDSCMaps(BaseInterface):
 
         mtt = self._finalize_mtt(method, mtt, cbf, cbv_auc)
 
-        # -----------------------------------------------------------
-        # Clip maps to physiological ranges
-        # -----------------------------------------------------------
-        psr = np.clip(psr, 0.0, 200.0)
-        ph = np.clip(ph, 0.0, 100.0)
-        tmax = np.clip(tmax, 0.0, 60.0)
-        mtt = np.clip(mtt, 0.0, 30.0)
-        cbf = np.clip(cbf, 0.0, 100.0)
-        cbv = np.clip(cbv, 0.0, 10.0)
-        cnr = np.clip(cnr, 0.0, 1000.0)
-
-        # -----------------------------------------------------------
-        # Relative maps — apply ×60 to CBF (s⁻¹ → min⁻¹)
-        # -----------------------------------------------------------
         aif_level = str(self.inputs.aif_detection_level)
         preload_class = str(self.inputs.preload_classification)
-
-        rel_cbf = np.clip(cbf * 60.0, 0.0, 100.0)     # min⁻¹
-        rel_cbv = np.clip(cbv, 0.0, 10.0)              # dimensionless
-        rel_auc_raw = auc_raw
-        rel_auc_corr = auc_corr
-
-        cbf_std_map, cbf_ci_lower_map, cbf_ci_upper_map = (
-            self._scale_cbf_uncertainty(
-                cbf_std_map, cbf_ci_lower_map, cbf_ci_upper_map
-            )
+        final_maps = self._finalize_dsc_maps(
+            cbf=cbf,
+            cbv=cbv,
+            cbv_auc=cbv_auc,
+            mtt=mtt,
+            tmax=tmax,
+            ttp=ttp,
+            ttp_corrected=ttp_corrected,
+            relative_ttp=rttp,
+            auc_raw=auc_raw,
+            auc_corrected=auc_corr,
+            auc_difference=auc_diff,
+            cnr=cnr,
+            snr=snr,
+            tsnr=tsnr,
+            psr=psr,
+            peak_height=ph,
+            delay=delay,
+            residues=residues,
+            cbf_std=cbf_std_map,
+            cbf_ci_lower=cbf_ci_lower_map,
+            cbf_ci_upper=cbf_ci_upper_map,
+            mask_bool=mask_bool,
         )
-
-        # -----------------------------------------------------------
-        # Mask all outputs
-        # -----------------------------------------------------------
-        rel_cbf = np.where(mask_bool, rel_cbf, 0.0)
-        rel_cbv = np.where(mask_bool, rel_cbv, 0.0)
-        rel_cbv_auc = np.where(mask_bool, cbv_auc, 0.0)
-        mtt = np.where(mask_bool, mtt, 0.0)
-        tmax = np.where(mask_bool, tmax, 0.0)
-        ttp = np.where(mask_bool, ttp, 0.0)
-        auc_raw = np.where(mask_bool, auc_raw, 0.0)
-        auc_corr = np.where(mask_bool, auc_corr, 0.0)
-        auc_diff = np.where(mask_bool, auc_diff, 0.0)
-        rel_auc_raw = np.where(mask_bool, rel_auc_raw, 0.0)
-        rel_auc_corr = np.where(mask_bool, rel_auc_corr, 0.0)
-        cnr = np.where(mask_bool, cnr, 0.0)
-        snr = np.where(mask_bool, snr, 0.0)
-        tsnr = np.where(mask_bool, tsnr, 0.0)
-        psr = np.where(mask_bool, psr, 0.0)
-        ph = np.where(mask_bool, ph, 0.0)
-        ttp_corrected = np.where(mask_bool, np.where(np.isnan(ttp_corrected), 0.0, ttp_corrected), 0.0)
-        if rttp is not None:
-            rttp = np.where(mask_bool, np.where(np.isnan(rttp), 0.0, rttp), 0.0)
-        if delay is not None:
-            delay = np.where(mask_bool, delay, 0.0)
-        if residues is not None:
-            residues = np.where(mask_bool[..., np.newaxis], residues, 0.0)
+        (
+            rel_cbf, rel_cbv, rel_cbv_auc, mtt, tmax, ttp, ttp_corrected,
+            rttp, auc_raw, auc_corr, auc_diff, rel_auc_raw, rel_auc_corr,
+            cnr, snr, tsnr, psr, ph, delay, residues, cbf_std_map,
+            cbf_ci_lower_map, cbf_ci_upper_map,
+        ) = final_maps
 
         qc_metrics.update(
             self._summarize_dsc_maps(

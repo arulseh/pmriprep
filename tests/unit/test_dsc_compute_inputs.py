@@ -510,3 +510,85 @@ def test_scale_cbf_uncertainty_preserves_optionality_and_units() -> None:
     assert scaled_lower is None
     np.testing.assert_allclose(scaled_upper, [18.0, 24.0])
     np.testing.assert_allclose(std, [0.1, 0.2])
+
+
+def test_finalize_dsc_maps_preserves_ranges_units_and_nan_policy() -> None:
+    """Final maps retain established clipping, CBF units, and timing NaN policy."""
+    values = np.array([-1.0, 2.0, 2000.0])
+    mask = np.array([True, True, False])
+
+    result = ComputeDSCMaps._finalize_dsc_maps(
+        cbf=np.array([-1.0, 2.0, 200.0]),
+        cbv=np.array([-1.0, 12.0, 2.0]),
+        cbv_auc=np.array([np.nan, 4.0, 8.0]),
+        mtt=np.array([-1.0, 40.0, 5.0]),
+        tmax=np.array([-1.0, 70.0, 5.0]),
+        ttp=values,
+        ttp_corrected=np.array([np.nan, 3.0, 4.0]),
+        relative_ttp=np.array([np.nan, -2.0, 4.0]),
+        auc_raw=values,
+        auc_corrected=values + 1.0,
+        auc_difference=values + 2.0,
+        cnr=values,
+        snr=values,
+        tsnr=values,
+        psr=np.array([-1.0, 250.0, 5.0]),
+        peak_height=np.array([-1.0, 120.0, 5.0]),
+        delay=np.array([1.0, 2.0, 3.0]),
+        residues=np.arange(9.0).reshape(3, 3),
+        cbf_std=np.array([0.1, 0.2, 0.3]),
+        cbf_ci_lower=None,
+        cbf_ci_upper=np.array([0.2, 0.3, 0.4]),
+        mask_bool=mask,
+    )
+
+    np.testing.assert_allclose(result.rel_cbf, [0.0, 100.0, 0.0])
+    np.testing.assert_allclose(result.rel_cbv, [0.0, 10.0, 0.0])
+    assert np.isnan(result.rel_cbv_auc[0])
+    np.testing.assert_allclose(result.mtt, [0.0, 30.0, 0.0])
+    np.testing.assert_allclose(result.tmax, [0.0, 60.0, 0.0])
+    np.testing.assert_allclose(result.psr, [0.0, 200.0, 0.0])
+    np.testing.assert_allclose(result.peak_height, [0.0, 100.0, 0.0])
+    np.testing.assert_allclose(result.ttp_corrected, [0.0, 3.0, 0.0])
+    np.testing.assert_allclose(result.relative_ttp, [0.0, -2.0, 0.0])
+    np.testing.assert_allclose(result.delay, [1.0, 2.0, 0.0])
+    np.testing.assert_allclose(result.residues[2], 0.0)
+    np.testing.assert_allclose(result.cbf_std, [6.0, 12.0, 18.0])
+    assert result.cbf_ci_lower is None
+    np.testing.assert_allclose(result.cbf_ci_upper, [12.0, 18.0, 24.0])
+
+
+def test_finalize_dsc_maps_preserves_optional_outputs() -> None:
+    """Absent timing, delay, residue, and uncertainty maps remain absent."""
+    data = np.ones((1,))
+    result = ComputeDSCMaps._finalize_dsc_maps(
+        cbf=data,
+        cbv=data,
+        cbv_auc=data,
+        mtt=data,
+        tmax=data,
+        ttp=data,
+        ttp_corrected=data,
+        relative_ttp=None,
+        auc_raw=data,
+        auc_corrected=data,
+        auc_difference=data,
+        cnr=data,
+        snr=data,
+        tsnr=data,
+        psr=data,
+        peak_height=data,
+        delay=None,
+        residues=None,
+        cbf_std=None,
+        cbf_ci_lower=None,
+        cbf_ci_upper=None,
+        mask_bool=np.ones((1,), dtype=bool),
+    )
+
+    assert result.relative_ttp is None
+    assert result.delay is None
+    assert result.residues is None
+    assert result.cbf_std is None
+    assert result.cbf_ci_lower is None
+    assert result.cbf_ci_upper is None
