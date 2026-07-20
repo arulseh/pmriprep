@@ -515,7 +515,7 @@ output_dir/pmriprep/
       # DCE model selection (auto mode)
       sub-01_ses-01_desc-dceModelSelection_dseg.nii.gz
       sub-01_ses-01_desc-dceDeltaBIC_stat.nii.gz
-      sub-01_ses-01_desc-dceQualityFlag_mask.nii.gz
+      sub-01_ses-01_desc-dceQualityFlag_dseg.nii.gz
       sub-01_ses-01_desc-dceQc_mask.nii.gz
       # DCE model-free maps
       sub-01_ses-01_desc-dceIAUC60_stat.nii.gz
@@ -627,7 +627,7 @@ output_dir/pmriprep/
 | `*_desc-dceCredibleInterval95{lower,upper}{Param}_stat` | 95% Bayesian credible limits | varies |
 | `*_desc-dceModelSelection_dseg` | Per-voxel model selection (auto mode only) | categorical |
 | `*_desc-dceDeltaBIC_stat` | Delta-BIC confidence (auto mode only) | — |
-| `*_desc-dceQualityFlag_mask` | Voxel quality flags (auto mode only) | categorical |
+| `*_desc-dceQualityFlag_dseg` | Voxel quality flags (auto mode only) | categorical |
 | `*_desc-dceQc_mask` | Successfully fitted voxels | binary |
 
 **AIF outputs:**
