@@ -495,3 +495,18 @@ def test_summarize_dsc_maps_empty_synthetic_domain() -> None:
     assert qc["cbf_mean"] == 0.0
     assert qc["cbv_auc_median"] == 0.0
     assert qc["cbv_literature_range_applicable"] is False
+
+
+def test_scale_cbf_uncertainty_preserves_optionality_and_units() -> None:
+    """Available CBF uncertainty maps convert to per-minute units independently."""
+    std = np.array([0.1, 0.2])
+    upper = np.array([0.3, 0.4])
+
+    scaled_std, scaled_lower, scaled_upper = ComputeDSCMaps._scale_cbf_uncertainty(
+        std, None, upper
+    )
+
+    np.testing.assert_allclose(scaled_std, [6.0, 12.0])
+    assert scaled_lower is None
+    np.testing.assert_allclose(scaled_upper, [18.0, 24.0])
+    np.testing.assert_allclose(std, [0.1, 0.2])

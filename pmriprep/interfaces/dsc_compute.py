@@ -1391,6 +1391,22 @@ class ComputeDSCMaps(BaseInterface):
         qc["cbv_literature_range_applicable"] = aif_level != "synthetic"
         return qc
 
+    @staticmethod
+    def _scale_cbf_uncertainty(
+        standard_deviation: Optional[npt.NDArray[Any]],
+        ci_lower: Optional[npt.NDArray[Any]],
+        ci_upper: Optional[npt.NDArray[Any]],
+    ) -> tuple[
+        Optional[npt.NDArray[Any]],
+        Optional[npt.NDArray[Any]],
+        Optional[npt.NDArray[Any]],
+    ]:
+        """Convert optional CBF uncertainty maps from inverse seconds to minutes."""
+        return tuple(
+            None if value is None else value * 60.0
+            for value in (standard_deviation, ci_lower, ci_upper)
+        )  # type: ignore[return-value]
+
     def _first_pass_reference(
         self,
         fp_area: npt.NDArray[Any],
@@ -2955,13 +2971,11 @@ class ComputeDSCMaps(BaseInterface):
         rel_auc_raw = auc_raw
         rel_auc_corr = auc_corr
 
-        # Convert CBF uncertainty maps from s⁻¹ to min⁻¹ (match rel_cbf units)
-        if cbf_std_map is not None:
-            cbf_std_map = cbf_std_map * 60.0  # s⁻¹ → min⁻¹
-        if cbf_ci_lower_map is not None:
-            cbf_ci_lower_map = cbf_ci_lower_map * 60.0  # s⁻¹ → min⁻¹
-        if cbf_ci_upper_map is not None:
-            cbf_ci_upper_map = cbf_ci_upper_map * 60.0  # s⁻¹ → min⁻¹
+        cbf_std_map, cbf_ci_lower_map, cbf_ci_upper_map = (
+            self._scale_cbf_uncertainty(
+                cbf_std_map, cbf_ci_lower_map, cbf_ci_upper_map
+            )
+        )
 
         # -----------------------------------------------------------
         # Mask all outputs
