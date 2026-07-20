@@ -12,6 +12,7 @@ from pmriprep.workflows.dce.base import (
     init_dce_native_input_wf,
     init_dce_preprocessing_wf,
     init_dce_registration_wf,
+    init_dce_underlays_wf,
     init_dce_t1_b1_wf,
 )
 
@@ -130,4 +131,22 @@ def test_dce_dsc_validation_workflow_contract() -> None:
     }
     assert set(workflow.get_node("outputnode").interface._fields) == {
         "validation_result", "plot_file",
+    }
+
+
+def test_dce_underlays_workflow_contract() -> None:
+    """Underlay construction remains independently conditional per modality."""
+    empty = init_dce_underlays_wf(config=DCEConfig())
+    assert set(empty.list_node_names()) == {"inputnode", "outputnode"}
+    full = init_dce_underlays_wf(
+        config=DCEConfig(underlays=[
+            "t1w_precon", "t1w_postcon", "t1w_subtraction",
+            "flair_precon", "flair_postcon", "t2w",
+        ])
+    )
+    assert set(full.list_node_names()) == {
+        "inputnode", "outputnode", "transform_t1w_underlay",
+        "transform_t1w_postcon_underlay", "transform_t1w_subtraction_underlay",
+        "transform_flair_underlay", "transform_flair_postcon_underlay",
+        "transform_t2w_underlay",
     }

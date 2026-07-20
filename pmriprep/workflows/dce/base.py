@@ -1146,6 +1146,52 @@ def init_dce_dsc_validation_wf(
     return workflow
 
 
+def init_dce_underlays_wf(
+    *, config: DCEConfig, name: str = "dce_underlays_wf",
+) -> pe.Workflow:
+    """Transform configured structural underlays from T1w into DCE space."""
+    specs = (
+        ("t1w_precon", "t1w_underlay", "t1w_in_dce", "t1w_in_dce.nii.gz"),
+        ("t1w_postcon", "t1w_postcon_underlay", "t1w_postcon_in_dce", "t1w_postcon_in_dce.nii.gz"),
+        ("t1w_subtraction", "t1w_subtraction_underlay", "t1w_subtraction_in_dce", "t1w_subtraction_in_dce.nii.gz"),
+        ("flair_precon", "flair_in_t1w", "flair_in_dce", "flair_in_dce.nii.gz"),
+        ("flair_postcon", "flair_postcon_in_t1w", "flair_postcon_in_dce", "flair_postcon_in_dce.nii.gz"),
+        ("t2w", "t2w_in_t1w", "t2w_in_dce", "t2w_in_dce.nii.gz"),
+    )
+    workflow = pe.Workflow(name=name)
+    inputnode = pe.Node(
+        niu.IdentityInterface(fields=[
+            *(spec[1] for spec in specs), "reference_file", "transform_matrix",
+        ]),
+        name="inputnode",
+    )
+    outputnode = pe.Node(
+        niu.IdentityInterface(fields=[spec[2] for spec in specs]), name="outputnode",
+    )
+    workflow.add_nodes([inputnode, outputnode])
+    for key, input_field, output_field, output_name in specs:
+        if key not in config.underlays:
+            continue
+        transform = pe.Node(
+            niu.Function(
+                input_names=[
+                    "structural_file", "reference_file", "transform_matrix", "output_name",
+                ],
+                output_names=["out_file"], function=_transform_structural_to_dce,
+            ),
+            name=f"transform_{output_field.removesuffix('_in_dce')}_underlay",
+        )
+        transform.inputs.output_name = output_name
+        workflow.connect([
+            (inputnode, transform, [
+                (input_field, "structural_file"), ("reference_file", "reference_file"),
+                ("transform_matrix", "transform_matrix"),
+            ]),
+            (transform, outputnode, [("out_file", output_field)]),
+        ])
+    return workflow
+
+
 def init_dce_preproc_wf(
     bids_dir: Union[str, Path],
     output_dir: Union[str, Path],
@@ -2617,142 +2663,22 @@ def init_dce_preproc_wf(
     # ==========================================================================
     # Node 12: Structural underlays (conditional on config.underlays)
     # ==========================================================================
-    transform_t1w_underlay = None
-    if "t1w_precon" in config.underlays:
-        transform_t1w_underlay = pe.Node(
-            niu.Function(
-                input_names=["structural_file", "reference_file", "transform_matrix", "output_name"],
-                output_names=["out_file"],
-                function=_transform_structural_to_dce,
-            ),
-            name="transform_t1w_underlay",
-        )
-        transform_t1w_underlay.inputs.output_name = "t1w_in_dce.nii.gz"
-
-    transform_t1w_postcon_underlay = None
-    if "t1w_postcon" in config.underlays:
-        transform_t1w_postcon_underlay = pe.Node(
-            niu.Function(
-                input_names=["structural_file", "reference_file", "transform_matrix", "output_name"],
-                output_names=["out_file"],
-                function=_transform_structural_to_dce,
-            ),
-            name="transform_t1w_postcon_underlay",
-        )
-        transform_t1w_postcon_underlay.inputs.output_name = "t1w_postcon_in_dce.nii.gz"
-
-    transform_t1w_subtraction_underlay = None
-    if "t1w_subtraction" in config.underlays:
-        transform_t1w_subtraction_underlay = pe.Node(
-            niu.Function(
-                input_names=["structural_file", "reference_file", "transform_matrix", "output_name"],
-                output_names=["out_file"],
-                function=_transform_structural_to_dce,
-            ),
-            name="transform_t1w_subtraction_underlay",
-        )
-        transform_t1w_subtraction_underlay.inputs.output_name = "t1w_subtraction_in_dce.nii.gz"
-
-    transform_flair_underlay = None
-    if "flair_precon" in config.underlays:
-        transform_flair_underlay = pe.Node(
-            niu.Function(
-                input_names=["structural_file", "reference_file", "transform_matrix", "output_name"],
-                output_names=["out_file"],
-                function=_transform_structural_to_dce,
-            ),
-            name="transform_flair_underlay",
-        )
-        transform_flair_underlay.inputs.output_name = "flair_in_dce.nii.gz"
-
-    transform_flair_postcon_underlay = None
-    if "flair_postcon" in config.underlays:
-        transform_flair_postcon_underlay = pe.Node(
-            niu.Function(
-                input_names=["structural_file", "reference_file", "transform_matrix", "output_name"],
-                output_names=["out_file"],
-                function=_transform_structural_to_dce,
-            ),
-            name="transform_flair_postcon_underlay",
-        )
-        transform_flair_postcon_underlay.inputs.output_name = "flair_postcon_in_dce.nii.gz"
-
-    transform_t2w_underlay = None
-    if "t2w" in config.underlays:
-        transform_t2w_underlay = pe.Node(
-            niu.Function(
-                input_names=["structural_file", "reference_file", "transform_matrix", "output_name"],
-                output_names=["out_file"],
-                function=_transform_structural_to_dce,
-            ),
-            name="transform_t2w_underlay",
-        )
-        transform_t2w_underlay.inputs.output_name = "t2w_in_dce.nii.gz"
-
-    # Connect structural underlay transforms
-    if transform_t1w_underlay is not None:
+    dce_underlays_wf = init_dce_underlays_wf(config=config)
+    if config.underlays:
         workflow.connect([
-            (inputnode, transform_t1w_underlay, [("t1w_underlay", "structural_file")]),
-            (dce_preprocessing_wf, transform_t1w_underlay, [
-                ("outputnode.mean_img", "reference_file"),
+            (inputnode, dce_underlays_wf, [
+                ("t1w_underlay", "inputnode.t1w_underlay"),
+                ("t1w_postcon_underlay", "inputnode.t1w_postcon_underlay"),
+                ("t1w_subtraction_underlay", "inputnode.t1w_subtraction_underlay"),
+                ("flair_in_t1w", "inputnode.flair_in_t1w"),
+                ("flair_postcon_in_t1w", "inputnode.flair_postcon_in_t1w"),
+                ("t2w_in_t1w", "inputnode.t2w_in_t1w"),
             ]),
-            (dce_registration_wf, transform_t1w_underlay, [
-                ("outputnode.out_matrix", "transform_matrix"),
+            (dce_preprocessing_wf, dce_underlays_wf, [
+                ("outputnode.mean_img", "inputnode.reference_file"),
             ]),
-        ])
-
-    if transform_t1w_postcon_underlay is not None:
-        workflow.connect([
-            (inputnode, transform_t1w_postcon_underlay, [("t1w_postcon_underlay", "structural_file")]),
-            (dce_preprocessing_wf, transform_t1w_postcon_underlay, [
-                ("outputnode.mean_img", "reference_file"),
-            ]),
-            (dce_registration_wf, transform_t1w_postcon_underlay, [
-                ("outputnode.out_matrix", "transform_matrix"),
-            ]),
-        ])
-
-    if transform_t1w_subtraction_underlay is not None:
-        workflow.connect([
-            (inputnode, transform_t1w_subtraction_underlay, [("t1w_subtraction_underlay", "structural_file")]),
-            (dce_preprocessing_wf, transform_t1w_subtraction_underlay, [
-                ("outputnode.mean_img", "reference_file"),
-            ]),
-            (dce_registration_wf, transform_t1w_subtraction_underlay, [
-                ("outputnode.out_matrix", "transform_matrix"),
-            ]),
-        ])
-
-    if transform_flair_underlay is not None:
-        workflow.connect([
-            (inputnode, transform_flair_underlay, [("flair_in_t1w", "structural_file")]),
-            (dce_preprocessing_wf, transform_flair_underlay, [
-                ("outputnode.mean_img", "reference_file"),
-            ]),
-            (dce_registration_wf, transform_flair_underlay, [
-                ("outputnode.out_matrix", "transform_matrix"),
-            ]),
-        ])
-
-    if transform_flair_postcon_underlay is not None:
-        workflow.connect([
-            (inputnode, transform_flair_postcon_underlay, [("flair_postcon_in_t1w", "structural_file")]),
-            (dce_preprocessing_wf, transform_flair_postcon_underlay, [
-                ("outputnode.mean_img", "reference_file"),
-            ]),
-            (dce_registration_wf, transform_flair_postcon_underlay, [
-                ("outputnode.out_matrix", "transform_matrix"),
-            ]),
-        ])
-
-    if transform_t2w_underlay is not None:
-        workflow.connect([
-            (inputnode, transform_t2w_underlay, [("t2w_in_t1w", "structural_file")]),
-            (dce_preprocessing_wf, transform_t2w_underlay, [
-                ("outputnode.mean_img", "reference_file"),
-            ]),
-            (dce_registration_wf, transform_t2w_underlay, [
-                ("outputnode.out_matrix", "transform_matrix"),
+            (dce_registration_wf, dce_underlays_wf, [
+                ("outputnode.out_matrix", "inputnode.transform_matrix"),
             ]),
         ])
 
@@ -2885,35 +2811,18 @@ def init_dce_preproc_wf(
         ])
 
     # Structural underlay output connections (conditional)
-    if transform_t1w_underlay is not None:
-        workflow.connect([
-            (transform_t1w_underlay, outputnode, [("out_file", "t1w_in_dce")]),
-        ])
-
-    if transform_t1w_postcon_underlay is not None:
-        workflow.connect([
-            (transform_t1w_postcon_underlay, outputnode, [("out_file", "t1w_postcon_in_dce")]),
-        ])
-
-    if transform_t1w_subtraction_underlay is not None:
-        workflow.connect([
-            (transform_t1w_subtraction_underlay, outputnode, [("out_file", "t1w_subtraction_in_dce")]),
-        ])
-
-    if transform_flair_underlay is not None:
-        workflow.connect([
-            (transform_flair_underlay, outputnode, [("out_file", "flair_in_dce")]),
-        ])
-
-    if transform_flair_postcon_underlay is not None:
-        workflow.connect([
-            (transform_flair_postcon_underlay, outputnode, [("out_file", "flair_postcon_in_dce")]),
-        ])
-
-    if transform_t2w_underlay is not None:
-        workflow.connect([
-            (transform_t2w_underlay, outputnode, [("out_file", "t2w_in_dce")]),
-        ])
+    for key, field in (
+        ("t1w_precon", "t1w_in_dce"),
+        ("t1w_postcon", "t1w_postcon_in_dce"),
+        ("t1w_subtraction", "t1w_subtraction_in_dce"),
+        ("flair_precon", "flair_in_dce"),
+        ("flair_postcon", "flair_postcon_in_dce"),
+        ("t2w", "t2w_in_dce"),
+    ):
+        if key in config.underlays:
+            workflow.connect([
+                (dce_underlays_wf, outputnode, [(f"outputnode.{field}", field)]),
+            ])
 
     # Lesion statistics output connections
     # Use the combined tumor mask (with multi-label support) for lesion_mask_dce output
