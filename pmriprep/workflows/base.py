@@ -1111,6 +1111,106 @@ def _connect_master_anatomical_datasinks(
     workflow.connect([(sinks, report_barrier, [("outputnode.done", "anat_done")])])
 
 
+def _init_master_tumor_segmentation(
+    *,
+    workflow: pe.Workflow,
+    anat_wf: Optional[pe.Workflow],
+    inputnode: pe.Node,
+    outputnode: pe.Node,
+    report_barrier: pe.Node,
+    session_data: SessionData,
+    decision: PipelineDecision,
+    bids_dir: Path,
+    output_dir: Path,
+    work_dir: Optional[Path],
+    subject_id: str,
+    session_id: Optional[str],
+    config: TumorSegConfig,
+    mem_limit_gb: Optional[float],
+    has_t1w_pre: bool,
+) -> Optional[pe.Workflow]:
+    """Initialize and connect tumor segmentation, derivatives, and resume inputs."""
+    if not decision.run_tumor_seg:
+        return None
+
+    from pmriprep.workflows.tumor_seg.base import init_tumor_seg_wf
+    from pmriprep.workflows.tumor_seg.datasinks import init_tumor_seg_datasinks_wf
+
+    tumor_wf = init_tumor_seg_wf(
+        bids_dir=bids_dir, subject_id=subject_id, session_id=session_id,
+        config=config, mem_limit_gb=mem_limit_gb, name="tumor_seg_wf",
+    )
+    if anat_wf is not None:
+        workflow.connect([(anat_wf, tumor_wf, [
+            ("outputnode.tumor_seg_t1w_pre", "inputnode.t1w_pre"),
+            ("outputnode.tumor_seg_t1w_postcon", "inputnode.t1w_postcon"),
+            ("outputnode.tumor_seg_t2w", "inputnode.t2w"),
+            ("outputnode.tumor_seg_flair", "inputnode.flair"),
+            ("outputnode.brain_mask", "inputnode.brain_mask"),
+            ("outputnode.wm_probseg", "inputnode.wm_probseg"),
+            ("outputnode.t1w_to_mni_xfm", "inputnode.t1w_to_mni_xfm"),
+            ("outputnode.t1w_preproc", "inputnode.t1w_preproc"),
+        ])])
+    elif work_dir is not None:
+        previous = _find_previous_tumor_seg_inputs(work_dir, subject_id, session_id)
+        logger = logging.getLogger("pmriprep.workflows")
+        previous_fields = {
+            "tumor_seg_t1w_pre": "t1w_pre",
+            "tumor_seg_t1w_postcon": "t1w_postcon",
+            "tumor_seg_t2w": "t2w",
+            "tumor_seg_flair": "flair",
+            "brain_mask": "brain_mask",
+            "wm_probseg": "wm_probseg",
+            "t1w_to_mni_xfm": "t1w_to_mni_xfm",
+            "t1w_preproc": "t1w_preproc",
+        }
+        for previous_key, input_field in previous_fields.items():
+            path = previous[previous_key]
+            if path:
+                setattr(tumor_wf.inputs.inputnode, input_field, path)
+                logger.info(
+                    "skip-anat (tumor segmentation): loaded %s from %s",
+                    input_field, path,
+                )
+
+    workflow.connect([(tumor_wf, outputnode, [
+        ("outputnode.whole_tumor_mask", "lesion_mask"),
+        ("outputnode.enhancing_mask", "enhancing_mask"),
+        ("outputnode.non_enhancing_mask", "non_enhancing_mask"),
+        ("outputnode.whole_tumor_mask", "whole_tumor_mask"),
+        ("outputnode.nawm_mask", "nawm_mask"),
+        ("outputnode.qc_metrics", "tumor_seg_qc"),
+    ])])
+
+    sinks = init_tumor_seg_datasinks_wf(
+        output_dir=str(output_dir), bids_dir=str(bids_dir),
+        subject_id=subject_id, session_id=session_id,
+    )
+    workflow.connect([
+        (tumor_wf, sinks, [
+            ("outputnode.segmentation", "inputnode.segmentation"),
+            ("outputnode.enhancing_mask", "inputnode.enhancing_mask"),
+            ("outputnode.non_enhancing_mask", "inputnode.non_enhancing_mask"),
+            ("outputnode.whole_tumor_mask", "inputnode.whole_tumor_mask"),
+            ("outputnode.nawm_mask", "inputnode.nawm_mask"),
+            ("outputnode.qc_metrics", "inputnode.qc_metrics"),
+            ("outputnode.seg_filmstrip_postcon", "inputnode.seg_filmstrip_postcon"),
+            ("outputnode.seg_filmstrip_flair", "inputnode.seg_filmstrip_flair"),
+            ("outputnode.nawm_filmstrip_flair", "inputnode.nawm_filmstrip_flair"),
+        ]),
+        (inputnode, sinks, [
+            ("t1w_postcon", "inputnode.source_t1w_postcon"),
+            ("flair", "inputnode.source_flair"),
+        ]),
+        (sinks, report_barrier, [("outputnode.done", "tumor_seg_done")]),
+    ])
+    if has_t1w_pre:
+        workflow.connect([(inputnode, sinks, [("t1w_pre", "inputnode.source_t1w")])])
+    if session_data.modalities.t2w:
+        workflow.connect([(inputnode, sinks, [("t2w", "inputnode.source_t2w")])])
+    return tumor_wf
+
+
 def _init_master_workflow_nodes(
     *,
     workflow: pe.Workflow,
@@ -1592,7 +1692,6 @@ def init_pmriprep_wf(
     """
     from pmriprep.workflows.dce.base import init_dce_preproc_wf
     from pmriprep.workflows.dsc.base import init_dsc_preproc_wf
-    from pmriprep.workflows.tumor_seg.base import init_tumor_seg_wf
 
     context = _prepare_master_workflow_context(
         bids_dir=bids_dir,
@@ -1702,7 +1801,14 @@ def init_pmriprep_wf(
         anat_config=anat_config,
         mem_limit_gb=mem_limit_gb,
     )
-    tumor_seg_wf = None
+    tumor_seg_wf = _init_master_tumor_segmentation(
+        workflow=workflow, anat_wf=anat_wf, inputnode=inputnode,
+        outputnode=outputnode, report_barrier=report_barrier,
+        session_data=session_data, decision=decision, bids_dir=bids_dir,
+        output_dir=output_dir, work_dir=work_dir, subject_id=subject_id,
+        session_id=session_id, config=tumor_seg_config,
+        mem_limit_gb=mem_limit_gb, has_t1w_pre=has_t1w_pre,
+    )
     dsc_wf = None
     dce_wf = None
 
@@ -1727,126 +1833,6 @@ def init_pmriprep_wf(
     # -------------------------------------------------------------------
     # Tumor segmentation workflow (requires anat outputs)
     # -------------------------------------------------------------------
-    if decision.run_tumor_seg:
-        tumor_seg_wf = init_tumor_seg_wf(
-            bids_dir=bids_dir,
-            subject_id=subject_id,
-            session_id=session_id,
-            config=tumor_seg_config,
-            mem_limit_gb=mem_limit_gb,
-            name="tumor_seg_wf",
-        )
-
-        # Connect prepared inputs from anat workflow
-        # Tumor segmentation receives coregistered, skull-stripped,
-        # non-bias-corrected images from the anat pipeline's tumor seg prep track
-        if anat_wf is not None:
-            workflow.connect([
-                (anat_wf, tumor_seg_wf, [
-                    ("outputnode.tumor_seg_t1w_pre", "inputnode.t1w_pre"),
-                    ("outputnode.tumor_seg_t1w_postcon", "inputnode.t1w_postcon"),
-                    ("outputnode.tumor_seg_t2w", "inputnode.t2w"),
-                    ("outputnode.tumor_seg_flair", "inputnode.flair"),
-                    ("outputnode.brain_mask", "inputnode.brain_mask"),
-                    ("outputnode.wm_probseg", "inputnode.wm_probseg"),
-                    ("outputnode.t1w_to_mni_xfm", "inputnode.t1w_to_mni_xfm"),
-                    ("outputnode.t1w_preproc", "inputnode.t1w_preproc"),
-                ]),
-            ])
-        elif work_dir is not None:
-            # --skip-anat: load previously-computed anat outputs for tumor segmentation
-            import logging as _logging
-            _log = _logging.getLogger("pmriprep.workflows")
-            prev_tumor_seg = _find_previous_tumor_seg_inputs(
-                Path(work_dir), subject_id, session_id,
-            )
-            # Check if required inputs are available
-            if prev_tumor_seg["tumor_seg_t1w_pre"]:
-                tumor_seg_wf.inputs.inputnode.t1w_pre = prev_tumor_seg["tumor_seg_t1w_pre"]
-                _log.info("skip-anat (tumor segmentation): loaded t1w_pre from %s", prev_tumor_seg["tumor_seg_t1w_pre"])
-            if prev_tumor_seg["tumor_seg_t1w_postcon"]:
-                tumor_seg_wf.inputs.inputnode.t1w_postcon = prev_tumor_seg["tumor_seg_t1w_postcon"]
-                _log.info("skip-anat (tumor segmentation): loaded t1w_postcon from %s", prev_tumor_seg["tumor_seg_t1w_postcon"])
-            if prev_tumor_seg["tumor_seg_t2w"]:
-                tumor_seg_wf.inputs.inputnode.t2w = prev_tumor_seg["tumor_seg_t2w"]
-                _log.info("skip-anat (tumor segmentation): loaded t2w from %s", prev_tumor_seg["tumor_seg_t2w"])
-            if prev_tumor_seg["tumor_seg_flair"]:
-                tumor_seg_wf.inputs.inputnode.flair = prev_tumor_seg["tumor_seg_flair"]
-                _log.info("skip-anat (tumor segmentation): loaded flair from %s", prev_tumor_seg["tumor_seg_flair"])
-            if prev_tumor_seg["brain_mask"]:
-                tumor_seg_wf.inputs.inputnode.brain_mask = prev_tumor_seg["brain_mask"]
-                _log.info("skip-anat (tumor segmentation): loaded brain_mask from %s", prev_tumor_seg["brain_mask"])
-            if prev_tumor_seg["wm_probseg"]:
-                tumor_seg_wf.inputs.inputnode.wm_probseg = prev_tumor_seg["wm_probseg"]
-                _log.info("skip-anat (tumor segmentation): loaded wm_probseg from %s", prev_tumor_seg["wm_probseg"])
-            if prev_tumor_seg["t1w_to_mni_xfm"]:
-                tumor_seg_wf.inputs.inputnode.t1w_to_mni_xfm = prev_tumor_seg["t1w_to_mni_xfm"]
-                _log.info("skip-anat (tumor segmentation): loaded t1w_to_mni_xfm from %s", prev_tumor_seg["t1w_to_mni_xfm"])
-            if prev_tumor_seg["t1w_preproc"]:
-                tumor_seg_wf.inputs.inputnode.t1w_preproc = prev_tumor_seg["t1w_preproc"]
-                _log.info("skip-anat (tumor segmentation): loaded t1w_preproc from %s", prev_tumor_seg["t1w_preproc"])
-
-        # Connect tumor segmentation outputs to master outputnode
-        workflow.connect([
-            (tumor_seg_wf, outputnode, [
-                ("outputnode.whole_tumor_mask", "lesion_mask"),
-                ("outputnode.enhancing_mask", "enhancing_mask"),
-                ("outputnode.non_enhancing_mask", "non_enhancing_mask"),
-                ("outputnode.whole_tumor_mask", "whole_tumor_mask"),
-                ("outputnode.nawm_mask", "nawm_mask"),
-                ("outputnode.qc_metrics", "tumor_seg_qc"),
-            ]),
-        ])
-
-        # -------------------------------------------------------------------
-        # Tumor-seg derivatives: niworkflows DerivativesDataSink chain
-        # -------------------------------------------------------------------
-        from pmriprep.workflows.tumor_seg.datasinks import init_tumor_seg_datasinks_wf
-
-        tumor_seg_datasinks_wf = init_tumor_seg_datasinks_wf(
-            output_dir=str(output_dir),
-            bids_dir=str(bids_dir),
-            subject_id=subject_id,
-            session_id=session_id,
-        )
-
-        workflow.connect([
-            (tumor_seg_wf, tumor_seg_datasinks_wf, [
-                ("outputnode.segmentation", "inputnode.segmentation"),
-                ("outputnode.enhancing_mask", "inputnode.enhancing_mask"),
-                ("outputnode.non_enhancing_mask", "inputnode.non_enhancing_mask"),
-                ("outputnode.whole_tumor_mask", "inputnode.whole_tumor_mask"),
-                ("outputnode.nawm_mask", "inputnode.nawm_mask"),
-                ("outputnode.qc_metrics", "inputnode.qc_metrics"),
-                ("outputnode.seg_filmstrip_postcon",
-                 "inputnode.seg_filmstrip_postcon"),
-                ("outputnode.seg_filmstrip_flair",
-                 "inputnode.seg_filmstrip_flair"),
-                ("outputnode.nawm_filmstrip_flair",
-                 "inputnode.nawm_filmstrip_flair"),
-            ]),
-            # HD-GLIO source paths for the per-output Sources field.
-            (inputnode, tumor_seg_datasinks_wf, [
-                ("t1w_postcon", "inputnode.source_t1w_postcon"),
-                ("flair", "inputnode.source_flair"),
-            ]),
-            (tumor_seg_datasinks_wf, report_barrier, [
-                ("outputnode.done", "tumor_seg_done"),
-            ]),
-        ])
-        if has_t1w_pre:
-            workflow.connect([
-                (inputnode, tumor_seg_datasinks_wf, [
-                    ("t1w_pre", "inputnode.source_t1w"),
-                ]),
-            ])
-        if session_data.modalities.t2w:
-            workflow.connect([
-                (inputnode, tumor_seg_datasinks_wf, [
-                    ("t2w", "inputnode.source_t2w"),
-                ]),
-            ])
-
     # -------------------------------------------------------------------
     # DSC perfusion workflow (requires anat, optional tumor seg)
     # -------------------------------------------------------------------
