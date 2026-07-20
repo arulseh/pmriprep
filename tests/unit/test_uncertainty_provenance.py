@@ -8,6 +8,12 @@ from pmriprep.utils.uncertainty_provenance import build_uncertainty_provenance
 @pytest.mark.parametrize(
     ("inference", "method", "uncertainty_method", "spatial"),
     [
+        (
+            "nlls",
+            "nonlinear_least_squares",
+            "local_jacobian_covariance",
+            False,
+        ),
         ("vi", "variational_bayes", "variational_posterior_covariance", False),
         (
             "svb",
@@ -34,6 +40,35 @@ def test_inference_metadata(
     assert result["InferenceMethod"] == method
     assert result["UncertaintyEstimationMethod"] == uncertainty_method
     assert result["SpatialPriorApplied"] is spatial
+    assert result["ConditionalOnSelectedModel"] is True
+    assert result["IncludesModelSelectionUncertainty"] is False
+
+
+def test_nlls_statistics_are_frequentist() -> None:
+    """NLLS sidecars distinguish standard errors and Wald confidence bounds."""
+    standard_error = build_uncertainty_provenance(
+        "nlls", "ktrans_uncertainty", modality="DCE"
+    )
+    assert standard_error["UncertaintyStatistic"] == "parameter_standard_error"
+
+    interval = build_uncertainty_provenance(
+        "nlls", "ktrans_ci95_lower", modality="DCE"
+    )
+    assert interval["UncertaintyStatistic"] == "confidence_interval_bound"
+    assert interval["ConfidenceIntervalProbability"] == 0.95
+    assert interval["ConfidenceIntervalApproximation"] == "Wald_local_linearization"
+    assert interval["ConfidenceIntervalBounding"] == "parameter_bounds"
+
+
+def test_cv_construction_depends_on_inference() -> None:
+    """Legacy CV maps disclose frequentist versus posterior construction."""
+    nlls = build_uncertainty_provenance("nlls", "ktrans_cv", modality="DCE")
+    vi = build_uncertainty_provenance("vi", "ktrans_cv", modality="DCE")
+
+    assert nlls["CoefficientOfVariationConstruction"].startswith("standard_error")
+    assert vi["CoefficientOfVariationConstruction"].startswith(
+        "posterior_standard_deviation"
+    )
 
 
 def test_svb_spatial_prior_is_described() -> None:

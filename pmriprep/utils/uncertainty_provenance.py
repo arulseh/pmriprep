@@ -1,9 +1,15 @@
-"""Provenance descriptions for Bayesian uncertainty derivatives."""
+"""Provenance descriptions for parameter-uncertainty derivatives."""
 
 from __future__ import annotations
 
 
 _INFERENCE_METADATA: dict[str, dict[str, object]] = {
+    "nlls": {
+        "InferenceMethod": "nonlinear_least_squares",
+        "UncertaintyEstimationMethod": "local_jacobian_covariance",
+        "UncertaintyApproximation": "local_linear_Gaussian",
+        "SpatialPriorApplied": False,
+    },
     "vi": {
         "InferenceMethod": "variational_bayes",
         "UncertaintyEstimationMethod": "variational_posterior_covariance",
@@ -42,7 +48,7 @@ def build_uncertainty_provenance(
     map_key: str,
     modality: str,
 ) -> dict[str, object]:
-    """Describe how one Bayesian uncertainty derivative was constructed.
+    """Describe how one parameter-uncertainty derivative was constructed.
 
     Parameters
     ----------
@@ -72,20 +78,42 @@ def build_uncertainty_provenance(
         )
     )
     metadata["EstimationMethod"] = normalized_inference
+    metadata["ConditionalOnSelectedModel"] = True
+    metadata["IncludesModelSelectionUncertainty"] = False
 
     key_lower = map_key.lower()
-    if "cv" in key_lower:
+    if "cv" in key_lower or "relative_standard_error" in key_lower:
         statistic = "coefficient_of_variation"
-        legacy_method = "coefficient_of_variation"
-    elif "ci95" in key_lower:
-        statistic = "credible_interval_bound"
-        legacy_method = "95pct_credible_interval"
+    elif "ci95" in key_lower or "interval95" in key_lower:
+        if normalized_inference == "nlls":
+            statistic = "confidence_interval_bound"
+        else:
+            statistic = "credible_interval_bound"
     else:
-        statistic = "posterior_standard_deviation"
-        legacy_method = "std"
+        statistic = (
+            "parameter_standard_error"
+            if normalized_inference == "nlls"
+            else "posterior_standard_deviation"
+        )
     metadata["UncertaintyStatistic"] = statistic
-    # Preserve the established field for downstream sidecar consumers.
-    metadata["UncertaintyMethod"] = legacy_method
+
+    if statistic == "coefficient_of_variation":
+        metadata["CoefficientOfVariationConstruction"] = (
+            "standard_error_divided_by_absolute_estimate"
+            if normalized_inference == "nlls"
+            else "posterior_standard_deviation_divided_by_absolute_estimate"
+        )
+
+    if statistic == "confidence_interval_bound":
+        metadata["ConfidenceIntervalProbability"] = 0.95
+        metadata["ConfidenceIntervalConstruction"] = (
+            "estimate_plus_or_minus_1.96_parameter_standard_errors"
+        )
+        metadata["ConfidenceIntervalApproximation"] = "Wald_local_linearization"
+        if modality.upper() == "DCE":
+            metadata["ConfidenceIntervalBounding"] = "parameter_bounds"
+        elif modality.upper() == "DSC":
+            metadata["ConfidenceIntervalBounding"] = "nonnegative_lower_bound"
 
     if statistic == "credible_interval_bound":
         metadata["CredibleIntervalProbability"] = 0.95

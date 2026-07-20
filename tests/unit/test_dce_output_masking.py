@@ -107,15 +107,15 @@ def test_compute_dce_coefficient_of_variation_preserves_auto_sentinels() -> None
     assert result[0, 0, 3] == 0.0
 
 
-def test_compute_dce_coefficient_of_variation_fixed_fill_is_zero() -> None:
-    """Fixed-model CV uses zero for parameters below the division gate."""
+def test_compute_dce_coefficient_of_variation_marks_undefined_values() -> None:
+    """Relative uncertainty is undefined when the estimate is zero."""
     result = _compute_dce_coefficient_of_variation(
         np.zeros((1, 1, 1)),
         np.ones((1, 1, 1)),
         np.ones((1, 1, 1), dtype=bool),
         False,
     )
-    assert result.tolist() == [[[0.0]]]
+    assert np.isnan(result[0, 0, 0])
 
 
 def test_write_dce_map_overrides_inherited_header_dtype(tmp_path) -> None:
@@ -216,7 +216,7 @@ def test_write_dce_parameter_maps_preserves_applicability(
 
 @pytest.mark.parametrize(
     ("save_ve", "save_vp", "save_2cxm", "expected_count"),
-    [(False, False, False, 4), (True, True, True, 14)],
+        [(False, False, False, 4), (True, True, True, 20)],
 )
 def test_write_dce_uncertainty_maps_preserves_applicability(
     save_ve: bool,
@@ -228,7 +228,7 @@ def test_write_dce_uncertainty_maps_preserves_applicability(
     values = np.full((1, 1, 1), 0.2)
     sigma = np.full((1, 1, 1), 0.1)
     maps = SimpleNamespace(
-        ktrans=values, ve=values, vp=values,
+        ktrans=values, ve=values, vp=values, fp=values, ps=values,
         ktrans_std=sigma, ve_std=sigma, vp_std=sigma,
         fp_std=sigma, ps_std=sigma, save_2cxm=save_2cxm,
         ktrans_ci95_lower=values - sigma,
@@ -237,6 +237,10 @@ def test_write_dce_uncertainty_maps_preserves_applicability(
         ve_ci95_upper=values + sigma,
         vp_ci95_lower=values - sigma,
         vp_ci95_upper=values + sigma,
+        fp_ci95_lower=values - sigma,
+        fp_ci95_upper=values + sigma,
+        ps_ci95_lower=values - sigma,
+        ps_ci95_upper=values + sigma,
     )
     writes: list[str] = []
     outputs = _write_dce_uncertainty_maps(
@@ -254,6 +258,8 @@ def test_write_dce_uncertainty_maps_preserves_applicability(
     assert "out_ktrans_cv" in outputs
     assert "out_ktrans_ci95_lower" in outputs
     assert ("out_fp_std" in outputs) is save_2cxm
+    assert ("out_fp_cv" in outputs) is save_2cxm
+    assert ("out_fp_ci95_lower" in outputs) is save_2cxm
 
 
 @pytest.mark.parametrize("is_auto", [False, True])

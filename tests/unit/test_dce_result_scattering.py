@@ -13,6 +13,7 @@ from pmriprep.interfaces.dce_compute import (
     _fraction_fxl_risk,
     _fraction_vp_at_bound,
     _is_degenerate_dce_fit,
+    _normal_approximation_intervals,
     _initialize_dce_qc_metrics,
     _scatter_degenerate_dce_fit,
     _scatter_dce_fit_artifacts,
@@ -84,6 +85,10 @@ def _uncertainty_maps() -> SimpleNamespace:
         ve_ci95_upper=np.zeros((1, 1, 1)),
         vp_ci95_lower=np.zeros((1, 1, 1)),
         vp_ci95_upper=np.zeros((1, 1, 1)),
+        fp_ci95_lower=np.zeros((1, 1, 1)),
+        fp_ci95_upper=np.zeros((1, 1, 1)),
+        ps_ci95_lower=np.zeros((1, 1, 1)),
+        ps_ci95_upper=np.zeros((1, 1, 1)),
         sigma_factor={"Ktrans": 2.0, "ve": 1.0, "vp": 3.0, "Fp": 4.0, "PS": 5.0},
         ktrans=np.zeros((1, 1, 1)),
         ve=np.zeros((1, 1, 1)),
@@ -101,6 +106,18 @@ def _uncertainty_maps() -> SimpleNamespace:
         quality_flag=np.zeros((1, 1, 1), dtype=np.int8),
         quality_flag_codes={"good": 1},
     )
+
+
+def test_nlls_wald_intervals_respect_model_bounds_and_applicability() -> None:
+    """NLLS intervals are bounded and exclude parameters absent from the model."""
+    intervals = _normal_approximation_intervals(
+        "patlak",
+        {"Ktrans": 0.01, "vp": 0.9, "ve": 0.2},
+        {"Ktrans": 0.1, "vp": 0.2, "ve": 0.1},
+    )
+    assert intervals["Ktrans"] == (KTRANS_BOUNDS.min, pytest.approx(0.206))
+    assert intervals["vp"] == (pytest.approx(0.508), VP_BOUNDS.max)
+    assert "ve" not in intervals
 
 
 def test_uncertainty_scatter_applies_model_fields_and_inflation() -> None:

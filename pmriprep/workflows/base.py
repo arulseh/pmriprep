@@ -749,7 +749,7 @@ _MAX_VOLUME_TR_2CXM_BUILD = 3.0
 def _emit_2cxm_uncertainty(
     model: Optional[str], volume_tr: Optional[float],
 ) -> bool:
-    """Return True iff the DCE producer will emit Fp/PS uncertainty maps.
+    """Return True iff the DCE producer will emit 2CXM Fp/PS outputs.
 
     Mirrors the runtime gate in
     :func:`pmriprep.interfaces.dce_compute.ComputeDCEMaps._build_candidate_set`
@@ -773,8 +773,8 @@ def _emit_2cxm_uncertainty(
     Returns
     -------
     bool
-        True if the build-time ``dce_present`` set should include
-        ``fp_uncertainty`` and ``ps_uncertainty``.
+        True if the build-time ``dce_present`` set should include Fp/PS
+        parameter and uncertainty maps.
     """
     if model == "2cxm":
         return True
@@ -2626,7 +2626,6 @@ def _connect_master_dce_outputs_and_datasinks(
 
     dce_underlays = list(dce_config.underlays)
     dce_inference = (dce_config.inference or "").lower()
-    dce_uses_bayes = dce_inference != "nlls"
     dce_model = dce_config.model or "auto"
     dce_has_nawm = mask_state.has_nawm_source
     dce_has_lesion = mask_state.has_lesion_source
@@ -2657,7 +2656,7 @@ def _connect_master_dce_outputs_and_datasinks(
     #   auto           → all (per-voxel BIC selection)
     _has_ve_models = {"tofts", "extended_tofts", "2cxm", "auto"}
     _has_vp_models = {"extended_tofts", "patlak", "2cxm", "auto"}
-    # 2CXM uncertainty (Fp/PS std) sinks are gated on whether the
+    # 2CXM Fp/PS sinks are gated on whether the
     # producer will actually emit the files — see
     # :func:`_emit_2cxm_uncertainty` which mirrors the runtime
     # candidate-set TR gate.
@@ -2665,34 +2664,30 @@ def _connect_master_dce_outputs_and_datasinks(
         dce_sidecar.get("volume_tr")
         if isinstance(dce_sidecar, dict) else None
     )
-    _emit_fp_ps_uncertainty = _emit_2cxm_uncertainty(
+    _emit_fp_ps_outputs = _emit_2cxm_uncertainty(
         dce_model, _dce_volume_tr,
     )
     if dce_model in _has_ve_models:
         dce_present |= {"ve_map", "kep_map"}
     if dce_model in _has_vp_models:
         dce_present.add("vp_map")
+    if _emit_fp_ps_outputs:
+        dce_present |= {"fp_map", "ps_map"}
     # Auto-BIC produces model_selection + delta_bic
     if dce_model == "auto":
         dce_present |= {"model_selection_map", "delta_bic_map"}
     # R² + quality flag are emitted by every PK fit
     dce_present |= {"r2_map", "quality_flag_map"}
-    # Bayesian uncertainty/CV — gated by model AND inference != "nlls".
-    # CI95 is written by ANY non-NLLS inference (incl. MAP); the legacy
-    # gate was just `inference != "nlls"`.
-    if dce_uses_bayes:
-        dce_present |= {"ktrans_uncertainty", "ktrans_cv"}
-        if dce_model in _has_ve_models:
-            dce_present |= {"ve_uncertainty", "ve_cv"}
-        if dce_model in _has_vp_models:
-            dce_present |= {"vp_uncertainty", "vp_cv"}
-        if _emit_fp_ps_uncertainty:
-            dce_present |= {"fp_uncertainty", "ps_uncertainty"}
-        dce_present |= {"ktrans_ci95_lower", "ktrans_ci95_upper"}
-        if dce_model in _has_ve_models:
-            dce_present |= {"ve_ci95_lower", "ve_ci95_upper"}
-        if dce_model in _has_vp_models:
-            dce_present |= {"vp_ci95_lower", "vp_ci95_upper"}
+    dce_present |= {"ktrans_uncertainty", "ktrans_cv", "ktrans_ci95_lower", "ktrans_ci95_upper"}
+    if dce_model in _has_ve_models:
+        dce_present |= {"ve_uncertainty", "ve_cv", "ve_ci95_lower", "ve_ci95_upper"}
+    if dce_model in _has_vp_models:
+        dce_present |= {"vp_uncertainty", "vp_cv", "vp_ci95_lower", "vp_ci95_upper"}
+    if _emit_fp_ps_outputs:
+        dce_present |= {
+            "fp_uncertainty", "ps_uncertainty", "fp_cv", "ps_cv",
+            "fp_ci95_lower", "fp_ci95_upper", "ps_ci95_lower", "ps_ci95_upper",
+        }
     # NAWM normalization + NAWM mask
     if dce_has_nawm:
         dce_present.add("nktrans_map")
@@ -2757,6 +2752,7 @@ def _connect_master_dce_outputs_and_datasinks(
         subject_id=subject_id,
         session_id=session_id,
         pk_model=dce_model,
+        inference=dce_inference,
         present_inputs=dce_present,
         has_smoothing=dce_config.smooth_fwhm > 0,
         motion_correct=dce_config.motion_correct,
@@ -2784,6 +2780,8 @@ def _connect_master_dce_outputs_and_datasinks(
             ("outputnode.ve_map", "inputnode.ve_map"),
             ("outputnode.kep_map", "inputnode.kep_map"),
             ("outputnode.vp_map", "inputnode.vp_map"),
+            ("outputnode.fp_map", "inputnode.fp_map"),
+            ("outputnode.ps_map", "inputnode.ps_map"),
             # Model-free maps
             ("outputnode.iauc60_map", "inputnode.iauc60_map"),
             ("outputnode.iauc90_map", "inputnode.iauc90_map"),
@@ -2820,17 +2818,23 @@ def _connect_master_dce_outputs_and_datasinks(
             ("outputnode.vp_uncertainty", "inputnode.vp_uncertainty"),
             ("outputnode.fp_uncertainty", "inputnode.fp_uncertainty"),
             ("outputnode.ps_uncertainty", "inputnode.ps_uncertainty"),
-            # Bayesian CV maps
+            # Relative uncertainty maps
             ("outputnode.ktrans_cv", "inputnode.ktrans_cv"),
             ("outputnode.ve_cv", "inputnode.ve_cv"),
             ("outputnode.vp_cv", "inputnode.vp_cv"),
-            # Bayesian CI maps
+            ("outputnode.fp_cv", "inputnode.fp_cv"),
+            ("outputnode.ps_cv", "inputnode.ps_cv"),
+            # Confidence or credible interval maps
             ("outputnode.ktrans_ci95_lower", "inputnode.ktrans_ci95_lower"),
             ("outputnode.ktrans_ci95_upper", "inputnode.ktrans_ci95_upper"),
             ("outputnode.ve_ci95_lower", "inputnode.ve_ci95_lower"),
             ("outputnode.ve_ci95_upper", "inputnode.ve_ci95_upper"),
             ("outputnode.vp_ci95_lower", "inputnode.vp_ci95_lower"),
             ("outputnode.vp_ci95_upper", "inputnode.vp_ci95_upper"),
+            ("outputnode.fp_ci95_lower", "inputnode.fp_ci95_lower"),
+            ("outputnode.fp_ci95_upper", "inputnode.fp_ci95_upper"),
+            ("outputnode.ps_ci95_lower", "inputnode.ps_ci95_lower"),
+            ("outputnode.ps_ci95_upper", "inputnode.ps_ci95_upper"),
             # Normalized maps (NAWM-normalized)
             ("outputnode.nktrans_map", "inputnode.nktrans_map"),
             ("outputnode.niauc60_map", "inputnode.niauc60_map"),

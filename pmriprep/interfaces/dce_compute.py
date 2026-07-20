@@ -91,26 +91,86 @@ def _scatter_dce_uncertainties(
     model_name: str,
     uncertainties: dict[str, float],
 ) -> None:
-    """Scatter model-applicable posterior uncertainties with AIF inflation."""
+    """Scatter model-applicable standard errors/SDs with AIF inflation."""
     x, y, z = coords
-    maps.ktrans_std[x, y, z] = uncertainties.get("Ktrans", 0.0) * (
-        maps.sigma_factor.get("Ktrans", 1.0)
-    )
-    if model_name in ("tofts", "extended_tofts", "2cxm"):
-        maps.ve_std[x, y, z] = uncertainties.get("ve", 0.0) * (
+    if "Ktrans" in uncertainties and np.isfinite(uncertainties["Ktrans"]):
+        maps.ktrans_std[x, y, z] = uncertainties["Ktrans"] * (
+            maps.sigma_factor.get("Ktrans", 1.0)
+        )
+    if (
+        model_name in ("tofts", "extended_tofts", "2cxm")
+        and "ve" in uncertainties
+        and np.isfinite(uncertainties["ve"])
+    ):
+        maps.ve_std[x, y, z] = uncertainties["ve"] * (
             maps.sigma_factor.get("ve", 1.0)
         )
-    if model_name in ("extended_tofts", "patlak", "2cxm"):
-        maps.vp_std[x, y, z] = uncertainties.get("vp", 0.0) * (
+    if (
+        model_name in ("extended_tofts", "patlak", "2cxm")
+        and "vp" in uncertainties
+        and np.isfinite(uncertainties["vp"])
+    ):
+        maps.vp_std[x, y, z] = uncertainties["vp"] * (
             maps.sigma_factor.get("vp", 1.0)
         )
     if model_name == "2cxm":
-        maps.fp_std[x, y, z] = uncertainties.get("Fp", 0.0) * (
-            maps.sigma_factor.get("Fp", 1.0)
+        if "Fp" in uncertainties and np.isfinite(uncertainties["Fp"]):
+            maps.fp_std[x, y, z] = uncertainties["Fp"] * (
+                maps.sigma_factor.get("Fp", 1.0)
+            )
+        if "PS" in uncertainties and np.isfinite(uncertainties["PS"]):
+            maps.ps_std[x, y, z] = uncertainties["PS"] * (
+                maps.sigma_factor.get("PS", 1.0)
+            )
+
+
+def _normal_approximation_intervals(
+    model_name: str,
+    params: dict[str, float],
+    uncertainties: dict[str, float],
+) -> dict[str, tuple[float, float]]:
+    """Construct bounded 95% Wald intervals from NLLS standard errors."""
+    from pmriprep.utils.dce_constants import (
+        FP_BOUNDS,
+        KTRANS_BOUNDS,
+        PS_BOUNDS,
+        VE_BOUNDS,
+        VP_BOUNDS,
+    )
+
+    applicability = {
+        "Ktrans": True,
+        "ve": model_name in ("tofts", "extended_tofts", "2cxm"),
+        "vp": model_name in ("extended_tofts", "patlak", "2cxm"),
+        "Fp": model_name == "2cxm",
+        "PS": model_name == "2cxm",
+    }
+    bounds = {
+        "Ktrans": (KTRANS_BOUNDS.min, KTRANS_BOUNDS.max),
+        "ve": (VE_BOUNDS.min, VE_BOUNDS.max),
+        "vp": (VP_BOUNDS.min, VP_BOUNDS.max),
+        "Fp": (FP_BOUNDS.min, FP_BOUNDS.max),
+        "PS": (PS_BOUNDS.min, PS_BOUNDS.max),
+    }
+    intervals: dict[str, tuple[float, float]] = {}
+    for parameter, applicable in applicability.items():
+        estimate = params.get(parameter)
+        standard_error = uncertainties.get(parameter)
+        if (
+            not applicable
+            or estimate is None
+            or standard_error is None
+            or not np.isfinite(estimate)
+            or not np.isfinite(standard_error)
+            or standard_error < 0
+        ):
+            continue
+        lower_bound, upper_bound = bounds[parameter]
+        intervals[parameter] = (
+            max(float(estimate) - 1.96 * float(standard_error), lower_bound),
+            min(float(estimate) + 1.96 * float(standard_error), upper_bound),
         )
-        maps.ps_std[x, y, z] = uncertainties.get("PS", 0.0) * (
-            maps.sigma_factor.get("PS", 1.0)
-        )
+    return intervals
 
 
 def _inflate_credible_interval(
@@ -137,7 +197,13 @@ def _scatter_dce_credible_intervals(
     intervals: dict[str, tuple[float, float]],
 ) -> None:
     """Scatter model-native intervals with AIF inflation and bound clipping."""
-    from pmriprep.utils.dce_constants import KTRANS_BOUNDS, VE_BOUNDS, VP_BOUNDS
+    from pmriprep.utils.dce_constants import (
+        FP_BOUNDS,
+        KTRANS_BOUNDS,
+        PS_BOUNDS,
+        VE_BOUNDS,
+        VP_BOUNDS,
+    )
 
     x, y, z = coords
     if "Ktrans" in intervals:
@@ -167,6 +233,24 @@ def _scatter_dce_credible_intervals(
         )
         maps.vp_ci95_lower[x, y, z] = lower
         maps.vp_ci95_upper[x, y, z] = upper
+    if model_name == "2cxm" and "Fp" in intervals:
+        lower, upper = _inflate_credible_interval(
+            params.get("Fp", 0.0),
+            intervals["Fp"],
+            maps.sigma_factor.get("Fp", 1.0),
+            (FP_BOUNDS.min, FP_BOUNDS.max),
+        )
+        maps.fp_ci95_lower[x, y, z] = lower
+        maps.fp_ci95_upper[x, y, z] = upper
+    if model_name == "2cxm" and "PS" in intervals:
+        lower, upper = _inflate_credible_interval(
+            params.get("PS", 0.0),
+            intervals["PS"],
+            maps.sigma_factor.get("PS", 1.0),
+            (PS_BOUNDS.min, PS_BOUNDS.max),
+        )
+        maps.ps_ci95_lower[x, y, z] = lower
+        maps.ps_ci95_upper[x, y, z] = upper
 
 
 def _scatter_dce_fit_artifacts(
@@ -333,17 +417,24 @@ def _scatter_dce_fit_results(
         _scatter_dce_parameters(
             maps, coords, selected_model, params, result["r_squared"]
         )
-        if inference != "nlls" and result["uncertainties"]:
+        if result["uncertainties"]:
             _scatter_dce_uncertainties(
                 maps, coords, selected_model, result["uncertainties"]
             )
-        if inference != "nlls" and result.get("credible_intervals"):
+        intervals = result.get("credible_intervals") or {}
+        if inference == "nlls" and result["uncertainties"]:
+            intervals = _normal_approximation_intervals(
+                selected_model,
+                params,
+                result["uncertainties"],
+            )
+        if intervals:
             _scatter_dce_credible_intervals(
                 maps,
                 coords,
                 selected_model,
                 params,
-                result["credible_intervals"],
+                intervals,
             )
         _scatter_dce_fit_artifacts(maps, coords, result)
         departure = _compute_vp_prior_departure(
@@ -631,12 +722,11 @@ def _compute_dce_coefficient_of_variation(
     is_auto: bool,
 ) -> npt.NDArray[np.float32]:
     """Compute a masked DCE coefficient-of-variation map."""
-    fill_value = np.nan if is_auto else 0.0
     with np.errstate(divide="ignore", invalid="ignore"):
         coefficient = np.where(
-            values > EPSILON_VE,
-            standard_deviation / values,
-            fill_value,
+            (np.abs(values) > EPSILON_VE) & np.isfinite(standard_deviation),
+            standard_deviation / np.abs(values),
+            np.nan,
         ).astype(np.float32)
     result: npt.NDArray[np.float32] = _zero_dce_background(coefficient, mask)
     return result
@@ -753,7 +843,7 @@ def _write_dce_uncertainty_maps(
     generate_path: Callable[[str], str],
     write_map: Callable[..., None],
 ) -> dict[str, str]:
-    """Write applicable Bayesian DCE uncertainty derivatives."""
+    """Write applicable DCE parameter-uncertainty derivatives."""
     outputs: dict[str, str] = {}
 
     def write(name: str, suffix: str, values: npt.NDArray[Any]) -> None:
@@ -788,6 +878,17 @@ def _write_dce_uncertainty_maps(
             "_vp_cv",
             _compute_dce_coefficient_of_variation(maps.vp, maps.vp_std, mask, is_auto),
         )
+    if maps.save_2cxm:
+        write(
+            "out_fp_cv",
+            "_Fp_cv",
+            _compute_dce_coefficient_of_variation(maps.fp, maps.fp_std, mask, is_auto),
+        )
+        write(
+            "out_ps_cv",
+            "_PS_cv",
+            _compute_dce_coefficient_of_variation(maps.ps, maps.ps_std, mask, is_auto),
+        )
 
     write(
         "out_ktrans_ci95_lower", "_Ktrans_ci95lower", maps.ktrans_ci95_lower
@@ -801,6 +902,11 @@ def _write_dce_uncertainty_maps(
     if save_vp:
         write("out_vp_ci95_lower", "_vp_ci95lower", maps.vp_ci95_lower)
         write("out_vp_ci95_upper", "_vp_ci95upper", maps.vp_ci95_upper)
+    if maps.save_2cxm:
+        write("out_fp_ci95_lower", "_Fp_ci95lower", maps.fp_ci95_lower)
+        write("out_fp_ci95_upper", "_Fp_ci95upper", maps.fp_ci95_upper)
+        write("out_ps_ci95_lower", "_PS_ci95lower", maps.ps_ci95_lower)
+        write("out_ps_ci95_upper", "_PS_ci95upper", maps.ps_ci95_upper)
     return outputs
 
 
@@ -1060,6 +1166,10 @@ class _DCEParameterMaps(NamedTuple):
     ve_ci95_upper: npt.NDArray[Any]
     vp_ci95_lower: npt.NDArray[Any]
     vp_ci95_upper: npt.NDArray[Any]
+    fp_ci95_lower: npt.NDArray[Any]
+    fp_ci95_upper: npt.NDArray[Any]
+    ps_ci95_lower: npt.NDArray[Any]
+    ps_ci95_upper: npt.NDArray[Any]
     sigma_factor: dict[str, float]
     vp_at_bound: npt.NDArray[Any]
     fitted_curves: Optional[npt.NDArray[Any]]
@@ -2220,25 +2330,31 @@ class ComputeDCEMapsOutputSpec(TraitedSpec):
     out_ps = File(desc="PS map (permeability-surface area product, mL/min/100mL, 2cxm only)")
     out_e = File(desc="E map (extraction fraction, 2cxm only)")
 
-    # Uncertainty maps (Bayesian only)
-    out_ktrans_std = File(desc="Ktrans standard deviation map (Bayesian)")
-    out_ve_std = File(desc="ve standard deviation map (Bayesian)")
-    out_vp_std = File(desc="vp standard deviation map (Bayesian)")
-    out_fp_std = File(desc="Fp standard deviation map (Bayesian, 2CXM only)")
-    out_ps_std = File(desc="PS standard deviation map (Bayesian, 2CXM only)")
+    # Parameter uncertainty maps (standard error for NLLS; posterior SD otherwise)
+    out_ktrans_std = File(desc="Ktrans parameter uncertainty map")
+    out_ve_std = File(desc="ve parameter uncertainty map")
+    out_vp_std = File(desc="vp parameter uncertainty map")
+    out_fp_std = File(desc="Fp parameter uncertainty map (2CXM only)")
+    out_ps_std = File(desc="PS parameter uncertainty map (2CXM only)")
 
-    # Coefficient of Variation maps (Bayesian only)
-    out_ktrans_cv = File(desc="Ktrans coefficient of variation (std/mean, Bayesian)")
-    out_ve_cv = File(desc="ve coefficient of variation (std/mean, Bayesian)")
-    out_vp_cv = File(desc="vp coefficient of variation (std/mean, Bayesian)")
+    # Relative uncertainty maps
+    out_ktrans_cv = File(desc="Ktrans relative parameter uncertainty")
+    out_ve_cv = File(desc="ve relative parameter uncertainty")
+    out_vp_cv = File(desc="vp relative parameter uncertainty")
+    out_fp_cv = File(desc="Fp relative parameter uncertainty (2CXM only)")
+    out_ps_cv = File(desc="PS relative parameter uncertainty (2CXM only)")
 
-    # 95% Credible Interval bounds (Bayesian only)
-    out_ktrans_ci95_lower = File(desc="Ktrans 95% CI lower bound (Bayesian)")
-    out_ktrans_ci95_upper = File(desc="Ktrans 95% CI upper bound (Bayesian)")
-    out_ve_ci95_lower = File(desc="ve 95% CI lower bound (Bayesian)")
-    out_ve_ci95_upper = File(desc="ve 95% CI upper bound (Bayesian)")
-    out_vp_ci95_lower = File(desc="vp 95% CI lower bound (Bayesian)")
-    out_vp_ci95_upper = File(desc="vp 95% CI upper bound (Bayesian)")
+    # 95% interval bounds (confidence for NLLS; credible otherwise)
+    out_ktrans_ci95_lower = File(desc="Ktrans 95% interval lower bound")
+    out_ktrans_ci95_upper = File(desc="Ktrans 95% interval upper bound")
+    out_ve_ci95_lower = File(desc="ve 95% interval lower bound")
+    out_ve_ci95_upper = File(desc="ve 95% interval upper bound")
+    out_vp_ci95_lower = File(desc="vp 95% interval lower bound")
+    out_vp_ci95_upper = File(desc="vp 95% interval upper bound")
+    out_fp_ci95_lower = File(desc="Fp 95% interval lower bound (2CXM only)")
+    out_fp_ci95_upper = File(desc="Fp 95% interval upper bound (2CXM only)")
+    out_ps_ci95_lower = File(desc="PS 95% interval lower bound (2CXM only)")
+    out_ps_ci95_upper = File(desc="PS 95% interval upper bound (2CXM only)")
 
     # Model-free maps
     out_iauc60 = File(desc="IAUC at 60s (mM·min)")
@@ -3069,34 +3185,41 @@ class ComputeDCEMaps(BaseInterface):
             else None
         )
         return _DCEParameterMaps(
-            np.full(spatial_shape, fill_value, dtype=np.float64),
-            np.full(spatial_shape, fill_value, dtype=np.float64),
-            np.full(spatial_shape, fill_value, dtype=np.float64),
-            np.full(spatial_shape, fill_value, dtype=np.float64),
-            np.zeros(spatial_shape, dtype=np.float64),
-            np.zeros(spatial_shape, dtype=np.float64),
-            np.zeros(spatial_shape, dtype=np.float64),
-            np.zeros(spatial_shape, dtype=np.float64),
-            np.zeros(spatial_shape, dtype=np.int8),
-            quality_flag_codes,
-            np.zeros(spatial_shape, dtype=np.int8),
-            model_selection_codes,
-            np.full(spatial_shape, np.nan, dtype=np.float32),
-            np.zeros(spatial_shape, dtype=np.float64),
-            np.zeros(spatial_shape, dtype=np.float64),
-            np.zeros(spatial_shape, dtype=np.float64),
-            np.zeros(spatial_shape, dtype=np.float64),
-            np.zeros(spatial_shape, dtype=np.float64),
-            np.full(spatial_shape, np.nan, dtype=np.float64),
-            np.full(spatial_shape, np.nan, dtype=np.float64),
-            np.full(spatial_shape, np.nan, dtype=np.float64),
-            np.full(spatial_shape, np.nan, dtype=np.float64),
-            np.full(spatial_shape, np.nan, dtype=np.float64),
-            np.full(spatial_shape, np.nan, dtype=np.float64),
-            sigma_factor,
-            np.zeros(spatial_shape, dtype=np.float32),
-            fitted_curves,
-            (prepared.is_auto and "2cxm" in candidate_names) or model_name == "2cxm",
+            ktrans=np.full(spatial_shape, fill_value, dtype=np.float64),
+            ve=np.full(spatial_shape, fill_value, dtype=np.float64),
+            vp=np.full(spatial_shape, fill_value, dtype=np.float64),
+            kep=np.full(spatial_shape, fill_value, dtype=np.float64),
+            r_squared=np.zeros(spatial_shape, dtype=np.float64),
+            fp=np.zeros(spatial_shape, dtype=np.float64),
+            ps=np.zeros(spatial_shape, dtype=np.float64),
+            extraction_fraction=np.zeros(spatial_shape, dtype=np.float64),
+            quality_flag=np.zeros(spatial_shape, dtype=np.int8),
+            quality_flag_codes=quality_flag_codes,
+            model_selection=np.zeros(spatial_shape, dtype=np.int8),
+            model_selection_codes=model_selection_codes,
+            delta_bic=np.full(spatial_shape, np.nan, dtype=np.float32),
+            ktrans_std=np.full(spatial_shape, np.nan, dtype=np.float64),
+            ve_std=np.full(spatial_shape, np.nan, dtype=np.float64),
+            vp_std=np.full(spatial_shape, np.nan, dtype=np.float64),
+            fp_std=np.full(spatial_shape, np.nan, dtype=np.float64),
+            ps_std=np.full(spatial_shape, np.nan, dtype=np.float64),
+            ktrans_ci95_lower=np.full(spatial_shape, np.nan, dtype=np.float64),
+            ktrans_ci95_upper=np.full(spatial_shape, np.nan, dtype=np.float64),
+            ve_ci95_lower=np.full(spatial_shape, np.nan, dtype=np.float64),
+            ve_ci95_upper=np.full(spatial_shape, np.nan, dtype=np.float64),
+            vp_ci95_lower=np.full(spatial_shape, np.nan, dtype=np.float64),
+            vp_ci95_upper=np.full(spatial_shape, np.nan, dtype=np.float64),
+            fp_ci95_lower=np.full(spatial_shape, np.nan, dtype=np.float64),
+            fp_ci95_upper=np.full(spatial_shape, np.nan, dtype=np.float64),
+            ps_ci95_lower=np.full(spatial_shape, np.nan, dtype=np.float64),
+            ps_ci95_upper=np.full(spatial_shape, np.nan, dtype=np.float64),
+            sigma_factor=sigma_factor,
+            vp_at_bound=np.zeros(spatial_shape, dtype=np.float32),
+            fitted_curves=fitted_curves,
+            save_2cxm=(
+                (prepared.is_auto and "2cxm" in candidate_names)
+                or model_name == "2cxm"
+            ),
         )
 
     def _prepare_fit_dispatch(
@@ -3223,6 +3346,10 @@ class ComputeDCEMaps(BaseInterface):
         ve_ci95_upper = parameter_maps.ve_ci95_upper
         vp_ci95_lower = parameter_maps.vp_ci95_lower
         vp_ci95_upper = parameter_maps.vp_ci95_upper
+        fp_ci95_lower = parameter_maps.fp_ci95_lower
+        fp_ci95_upper = parameter_maps.fp_ci95_upper
+        ps_ci95_lower = parameter_maps.ps_ci95_lower
+        ps_ci95_upper = parameter_maps.ps_ci95_upper
         vp_at_bound_map = parameter_maps.vp_at_bound
         fitted_curves = parameter_maps.fitted_curves
         save_2cxm = parameter_maps.save_2cxm
@@ -3329,6 +3456,13 @@ class ComputeDCEMaps(BaseInterface):
 
         qc_metrics.update(_summarize_dce_r2(fit_summary.r2_values))
 
+        qc_metrics["parameter_uncertainty"] = {
+            "aif_inflation_input_factor": float(
+                self.inputs.aif_uncertainty_inflation_factor
+            ),
+            "aif_parameter_scale_factors": dict(parameter_maps.sigma_factor),
+        }
+
         mcmc_diag = _summarize_mcmc_diagnostics(
             fit_summary.n_mcmc_voxels,
             fit_summary.mcmc_rhat,
@@ -3392,6 +3526,10 @@ class ComputeDCEMaps(BaseInterface):
         ve_ci95_upper = _zero_dce_background(ve_ci95_upper, mask_bool)
         vp_ci95_lower = _zero_dce_background(vp_ci95_lower, mask_bool)
         vp_ci95_upper = _zero_dce_background(vp_ci95_upper, mask_bool)
+        fp_ci95_lower = _zero_dce_background(fp_ci95_lower, mask_bool)
+        fp_ci95_upper = _zero_dce_background(fp_ci95_upper, mask_bool)
+        ps_ci95_lower = _zero_dce_background(ps_ci95_lower, mask_bool)
+        ps_ci95_upper = _zero_dce_background(ps_ci95_upper, mask_bool)
         tsnr_map = _zero_dce_background(tsnr_map, mask_bool)
         iauc60 = _zero_dce_background(iauc60, mask_bool)
         iauc90 = _zero_dce_background(iauc90, mask_bool)
@@ -3455,34 +3593,39 @@ class ComputeDCEMaps(BaseInterface):
         self._results.update(parameter_outputs)
         self._results.update(model_free_outputs)
 
-        # Save uncertainty maps
-        if inference != "nlls":
-            self._results.update(
-                _write_dce_uncertainty_maps(
-                    parameter_maps._replace(
-                        ktrans=ktrans,
-                        ve=ve,
-                        vp=vp,
-                        ktrans_std=ktrans_std,
-                        ve_std=ve_std,
-                        vp_std=vp_std,
-                        fp_std=fp_std,
-                        ps_std=ps_std,
-                        ktrans_ci95_lower=ktrans_ci95_lower,
-                        ktrans_ci95_upper=ktrans_ci95_upper,
-                        ve_ci95_lower=ve_ci95_lower,
-                        ve_ci95_upper=ve_ci95_upper,
-                        vp_ci95_lower=vp_ci95_lower,
-                        vp_ci95_upper=vp_ci95_upper,
-                    ),
-                    mask_bool,
-                    is_auto,
-                    save_ve,
-                    save_vp,
-                    self._gen_outfilename,
-                    _save_dce_map,
-                )
+        # Save method-specific parameter uncertainty maps.
+        self._results.update(
+            _write_dce_uncertainty_maps(
+                parameter_maps._replace(
+                    ktrans=ktrans,
+                    ve=ve,
+                    vp=vp,
+                    fp=fp_map,
+                    ps=ps_map,
+                    ktrans_std=ktrans_std,
+                    ve_std=ve_std,
+                    vp_std=vp_std,
+                    fp_std=fp_std,
+                    ps_std=ps_std,
+                    ktrans_ci95_lower=ktrans_ci95_lower,
+                    ktrans_ci95_upper=ktrans_ci95_upper,
+                    ve_ci95_lower=ve_ci95_lower,
+                    ve_ci95_upper=ve_ci95_upper,
+                    vp_ci95_lower=vp_ci95_lower,
+                    vp_ci95_upper=vp_ci95_upper,
+                    fp_ci95_lower=fp_ci95_lower,
+                    fp_ci95_upper=fp_ci95_upper,
+                    ps_ci95_lower=ps_ci95_lower,
+                    ps_ci95_upper=ps_ci95_upper,
+                ),
+                mask_bool,
+                is_auto,
+                save_ve,
+                save_vp,
+                self._gen_outfilename,
+                _save_dce_map,
             )
+        )
 
         self._results.update(
             _write_dce_terminal_outputs(

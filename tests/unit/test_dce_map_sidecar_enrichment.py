@@ -111,6 +111,8 @@ class TestPKMapKeyDriftGuard:
             "ve_map": "ve",
             "kep_map": "kep",
             "vp_map": "vp",
+            "fp_map": "fp",
+            "ps_map": "ps",
         }
 
 

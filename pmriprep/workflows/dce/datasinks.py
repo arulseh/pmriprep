@@ -75,10 +75,12 @@ _PK_MAPS: tuple[DCEMapSpec, ...] = (
     DCEMapSpec("ve_map", "dce", "ve", "Extravascular extracellular space volume fraction", "1", "ve"),
     DCEMapSpec("kep_map", "dce", "kep", "Efflux rate constant (1/min)", "1/min", "kep"),
     DCEMapSpec("vp_map", "dce", "vp", "Plasma volume fraction", "1", "vp"),
+    DCEMapSpec("fp_map", "dce", "Fp", "Plasma flow (2CXM only)", "mL/min/100mL", "fp"),
+    DCEMapSpec("ps_map", "dce", "PS", "Permeability-surface area product (2CXM only)", "mL/min/100mL", "ps"),
 )
 
 
-# Bayesian uncertainty (posterior std) — per-PK-map
+# Inference-specific absolute uncertainty — per-PK-map
 # (input_attr, suffix-name, description, units)
 _UNCERTAINTY_MAPS: tuple[DCEMapSpec, ...] = (
     DCEMapSpec("ktrans_uncertainty", "dceUncertainty", "Ktrans", "Ktrans uncertainty (posterior std)", "1/min", "ktrans_uncertainty"),
@@ -93,6 +95,8 @@ _CV_MAPS: tuple[DCEMapSpec, ...] = (
     DCEMapSpec("ktrans_cv", "dceCV", "Ktrans", "Ktrans coefficient of variation (std/mean)", "1", "ktrans_cv"),
     DCEMapSpec("ve_cv", "dceCV", "ve", "ve coefficient of variation (std/mean)", "1", "ve_cv"),
     DCEMapSpec("vp_cv", "dceCV", "vp", "vp coefficient of variation (std/mean)", "1", "vp_cv"),
+    DCEMapSpec("fp_cv", "dceCV", "Fp", "Fp relative uncertainty (2CXM only)", "1", "fp_cv"),
+    DCEMapSpec("ps_cv", "dceCV", "PS", "PS relative uncertainty (2CXM only)", "1", "ps_cv"),
 )
 
 
@@ -104,6 +108,10 @@ _CI95_MAPS: tuple[DCEMapSpec, ...] = (
     DCEMapSpec("ve_ci95_upper", "dceCI95upper", "ve", "ve 95% credible interval upper bound", "1", "ve_ci95_upper"),
     DCEMapSpec("vp_ci95_lower", "dceCI95lower", "vp", "vp 95% credible interval lower bound", "1", "vp_ci95_lower"),
     DCEMapSpec("vp_ci95_upper", "dceCI95upper", "vp", "vp 95% credible interval upper bound", "1", "vp_ci95_upper"),
+    DCEMapSpec("fp_ci95_lower", "dceCI95lower", "Fp", "Fp 95% interval lower bound", "mL/min/100mL", "fp_ci95_lower"),
+    DCEMapSpec("fp_ci95_upper", "dceCI95upper", "Fp", "Fp 95% interval upper bound", "mL/min/100mL", "fp_ci95_upper"),
+    DCEMapSpec("ps_ci95_lower", "dceCI95lower", "PS", "PS 95% interval lower bound", "mL/min/100mL", "ps_ci95_lower"),
+    DCEMapSpec("ps_ci95_upper", "dceCI95upper", "PS", "PS 95% interval upper bound", "mL/min/100mL", "ps_ci95_upper"),
 )
 
 
@@ -278,12 +286,12 @@ def _build_dce_meta(
     return out
 
 
-def _build_bayes_extra(
+def _build_uncertainty_extra(
     config_dict: dict | None = None,
     qc_metrics: dict | None = None,
     umap_key: str = "ktrans_uncertainty",
 ) -> dict:
-    """Build inference-specific provenance for Bayesian uncertainty maps."""
+    """Build inference-specific provenance for parameter-uncertainty maps."""
     from pmriprep.utils.uncertainty_provenance import (
         build_uncertainty_provenance,
     )
@@ -294,6 +302,18 @@ def _build_bayes_extra(
     extra = build_uncertainty_provenance(
         inference=str(estimation), map_key=umap_key, modality="DCE"
     )
+    if isinstance(qc_metrics, dict):
+        uncertainty_qc = qc_metrics.get("parameter_uncertainty")
+        if isinstance(uncertainty_qc, dict):
+            factors = uncertainty_qc.get("aif_parameter_scale_factors")
+            if isinstance(factors, dict):
+                extra["AIFUncertaintyInflation"] = {
+                    "Applied": any(float(value) > 1.0 for value in factors.values()),
+                    "InputFactor": uncertainty_qc.get("aif_inflation_input_factor"),
+                    "ParameterScaleFactors": dict(factors),
+                    "Method": "heuristic_parameter_specific_scaling",
+                    "AppliedTo": "spread_and_interval_half_width",
+                }
     if str(estimation).lower() == "map" and isinstance(qc_metrics, dict):
         accounting = qc_metrics.get("map_uncertainty")
         if isinstance(accounting, dict):
@@ -414,6 +434,7 @@ def _build_dce_smoothed_meta(
     fwhm_mm: str | float,
     units: str | None = None,
     map_key: str = "",
+    inference: str = "vi",
 ) -> dict:
     from pmriprep.utils.aif_provenance import stamp_aif_dependency
 
@@ -430,6 +451,10 @@ def _build_dce_smoothed_meta(
         out["Units"] = units
     if map_key:
         stamp_aif_dependency(out, map_key, modality="DCE")
+    if map_key.endswith("_uncertainty"):
+        from pmriprep.utils.uncertainty_provenance import build_uncertainty_provenance
+
+        out.update(build_uncertainty_provenance(inference, map_key, "DCE"))
     return out
 
 
@@ -640,6 +665,7 @@ def _split_dce_smoothed(
     smooth_uncertainty: dict[str, str] | None = None,
     pk_units: dict[str, str] | None = None,
     mf_units: dict[str, str] | None = None,
+    inference: str = "vi",
 ) -> tuple[
     list[str], list[str], list[str], list[str],
     list[str], list[str], list[str],
@@ -720,10 +746,12 @@ def _split_dce_smoothed(
             fwhm_str, fwhm_mm = _extract_fwhm(src)
             param = name.replace("_std", "")
             in_files.append(str(src))
-            descs.append(f"Smoothed {name} uncertainty map")
+            statistic = "standard error" if inference.lower() == "nlls" else "posterior SD"
+            descs.append(f"Smoothed {param} {statistic} map")
             fwhms.append(fwhm_mm)
             units_list.append(pk_units.get(param, ""))
-            desc_values.append(f"dceUncertainty{fwhm_str}")
+            uncertainty_desc = "StandardError" if inference.lower() == "nlls" else "PosteriorSD"
+            desc_values.append(f"dce{uncertainty_desc}{fwhm_str}")
             suffixes.append(param)
             map_keys.append(uncertainty_map_key.get(name, ""))
 
@@ -1047,6 +1075,7 @@ def init_dce_datasinks_wf(
     subject_id: str,
     session_id: Optional[str],
     pk_model: str,
+    inference: str,
     present_inputs: Optional[set[str]] = None,
     has_smoothing: bool = False,
     motion_correct: bool = True,
@@ -1069,16 +1098,18 @@ def init_dce_datasinks_wf(
                 "output_dir", "bids_dir", "subject_id", "session_id",
                 "source_dce",
                 # PK
-                "ktrans_map", "ve_map", "kep_map", "vp_map",
-                # Bayesian uncertainty
+                "ktrans_map", "ve_map", "kep_map", "vp_map", "fp_map", "ps_map",
+                # Inference-specific uncertainty
                 "ktrans_uncertainty", "ve_uncertainty", "vp_uncertainty",
                 "fp_uncertainty", "ps_uncertainty",
                 # CV
-                "ktrans_cv", "ve_cv", "vp_cv",
+                "ktrans_cv", "ve_cv", "vp_cv", "fp_cv", "ps_cv",
                 # CI95
                 "ktrans_ci95_lower", "ktrans_ci95_upper",
                 "ve_ci95_lower", "ve_ci95_upper",
                 "vp_ci95_lower", "vp_ci95_upper",
+                "fp_ci95_lower", "fp_ci95_upper",
+                "ps_ci95_lower", "ps_ci95_upper",
                 # Model-free
                 "iauc60_map", "iauc90_map", "iauc120_map",
                 "peak_enhancement_map", "time_to_peak_map", "ser_map",
@@ -1215,28 +1246,50 @@ def init_dce_datasinks_wf(
         )
         sink_outputs.append((sink, "out_file"))
 
-    # --- Bayesian uncertainty / CV / CI95 ---
+    # --- Inference-specific absolute/relative uncertainty and intervals ---
     for table in (_UNCERTAINTY_MAPS, _CV_MAPS, _CI95_MAPS):
         for spec in table:
             if spec.in_attr not in present:
                 continue
-            bayes_extra = pe.Node(
+            parameter = spec.map_key.split("_", 1)[0]
+            uncertainty_extra = pe.Node(
                 niu.Function(
                     input_names=["config_dict", "qc_metrics", "umap_key"],
                     output_names=["extra"],
-                    function=_build_bayes_extra,
+                    function=_build_uncertainty_extra,
                 ),
                 name=f"{spec.in_attr}_extra",
             )
-            bayes_extra.inputs.umap_key = spec.map_key
-            workflow.connect(inputnode, "config_dict", bayes_extra, "config_dict")
-            workflow.connect(inputnode, "qc_metrics", bayes_extra, "qc_metrics")
+            uncertainty_extra.inputs.umap_key = spec.map_key
+            workflow.connect(inputnode, "config_dict", uncertainty_extra, "config_dict")
+            workflow.connect(inputnode, "qc_metrics", uncertainty_extra, "qc_metrics")
+            is_nlls = inference.lower() == "nlls"
+            if table is _UNCERTAINTY_MAPS:
+                desc_value = "dceStandardError" if is_nlls else "dcePosteriorSD"
+                description = (
+                    f"{parameter} local-Jacobian parameter standard error"
+                    if is_nlls
+                    else f"{parameter} posterior standard deviation"
+                )
+            elif table is _CV_MAPS:
+                desc_value = "dceRelativeStandardError" if is_nlls else "dcePosteriorCV"
+                description = (
+                    f"{parameter} standard error divided by absolute estimate"
+                    if is_nlls
+                    else f"{parameter} posterior standard deviation divided by absolute estimate"
+                )
+            else:
+                bound = "lower" if spec.in_attr.endswith("lower") else "upper"
+                interval = "ConfidenceInterval95" if is_nlls else "CredibleInterval95"
+                desc_value = f"dce{interval}{bound}"
+                interval_kind = "confidence" if is_nlls else "credible"
+                description = f"{parameter} 95% {interval_kind} interval {bound} bound"
             sink = _add_perf_map_sink(
                 workflow, inputnode, base_perf,
                 name=spec.in_attr, in_attr=spec.in_attr,
-                desc_value=spec.desc, suffix=spec.suffix,
-                description=spec.description, units=spec.units,
-                extra=spec.extra, extra_node=bayes_extra, map_key=spec.map_key,
+                desc_value=desc_value, suffix=spec.suffix,
+                description=description, units=spec.units,
+                extra=spec.extra, extra_node=uncertainty_extra, map_key=spec.map_key,
                 bids_suffix=spec.bids_suffix,
             )
             sink_outputs.append((sink, "out_file"))
@@ -1601,7 +1654,7 @@ def init_dce_datasinks_wf(
                 input_names=[
                     "smooth_pk", "smooth_mf",
                     "smooth_uncertainty",
-                    "pk_units", "mf_units",
+                    "pk_units", "mf_units", "inference",
                 ],
                 output_names=[
                     "in_files", "descs", "fwhms", "units_list",
@@ -1613,6 +1666,7 @@ def init_dce_datasinks_wf(
         )
         splitter.inputs.pk_units = dict(_PK_UNITS)
         splitter.inputs.mf_units = dict(_MF_UNITS)
+        splitter.inputs.inference = inference
         workflow.connect([
             (inputnode, splitter, [
                 ("smooth_pk_maps", "smooth_pk"),
@@ -1624,13 +1678,14 @@ def init_dce_datasinks_wf(
         sm_meta = pe.MapNode(
             niu.Function(
                 input_names=["base", "description", "fwhm_mm", "units",
-                             "map_key"],
+                             "map_key", "inference"],
                 output_names=["meta_dict"],
                 function=_build_dce_smoothed_meta,
             ),
             iterfield=["description", "fwhm_mm", "units", "map_key"],
             name="smoothed_meta",
         )
+        sm_meta.inputs.inference = inference
         workflow.connect([
             (base_perf, sm_meta, [("meta_dict", "base")]),
             (splitter, sm_meta, [

@@ -501,23 +501,16 @@ output_dir/pmriprep/
       sub-01_ses-01_desc-dceVe_stat.nii.gz
       sub-01_ses-01_desc-dceVp_stat.nii.gz
       sub-01_ses-01_desc-dceKep_stat.nii.gz
+      sub-01_ses-01_desc-dceFp_stat.nii.gz                  # 2CXM only
+      sub-01_ses-01_desc-dcePS_stat.nii.gz                  # 2CXM only
       sub-01_ses-01_desc-dceRsquared_stat.nii.gz
       sub-01_ses-01_desc-dceNawmNormKtrans_stat.nii.gz
-      # DCE PK uncertainty (inference)
-      sub-01_ses-01_desc-dceUncertaintyKtrans_stat.nii.gz
-      sub-01_ses-01_desc-dceUncertaintyVe_stat.nii.gz
-      sub-01_ses-01_desc-dceUncertaintyVp_stat.nii.gz
-      sub-01_ses-01_desc-dceCVKtrans_stat.nii.gz
-      sub-01_ses-01_desc-dceCVVe_stat.nii.gz
-      sub-01_ses-01_desc-dceCVVp_stat.nii.gz
-      sub-01_ses-01_desc-dceCI95lowerKtrans_stat.nii.gz
-      sub-01_ses-01_desc-dceCI95upperKtrans_stat.nii.gz
-      sub-01_ses-01_desc-dceCI95lowerVe_stat.nii.gz
-      sub-01_ses-01_desc-dceCI95upperVe_stat.nii.gz
-      sub-01_ses-01_desc-dceCI95lowerVp_stat.nii.gz
-      sub-01_ses-01_desc-dceCI95upperVp_stat.nii.gz
-      sub-01_ses-01_desc-dceUncertaintyFp_stat.nii.gz         # 2CXM only
-      sub-01_ses-01_desc-dceUncertaintyPS_stat.nii.gz         # 2CXM only
+      # DCE PK uncertainty (Bayesian example; NLLS uses StandardError,
+      # RelativeStandardError, and ConfidenceInterval95 descriptions)
+      sub-01_ses-01_desc-dcePosteriorSDKtrans_stat.nii.gz
+      sub-01_ses-01_desc-dcePosteriorCVKtrans_stat.nii.gz
+      sub-01_ses-01_desc-dceCredibleInterval95lowerKtrans_stat.nii.gz
+      sub-01_ses-01_desc-dceCredibleInterval95upperKtrans_stat.nii.gz
       # DCE model selection (auto mode)
       sub-01_ses-01_desc-dceModelSelection_dseg.nii.gz
       sub-01_ses-01_desc-dceDeltaBIC_stat.nii.gz
@@ -605,6 +598,8 @@ output_dir/pmriprep/
 | `*_desc-dceVe_stat` | Extravascular extracellular volume | fraction |
 | `*_desc-dceVp_stat` | Plasma volume fraction | fraction |
 | `*_desc-dceKep_stat` | Efflux rate constant | 1/min |
+| `*_desc-dceFp_stat` | Plasma flow (2CXM only) | mL/min/100mL |
+| `*_desc-dcePS_stat` | Permeability-surface area product (2CXM only) | mL/min/100mL |
 | `*_desc-dceRsquared_stat` | Goodness of fit (R-squared) | fraction |
 | `*_desc-dceIAUC60_stat` | Initial area under curve at 60s | mM\*min |
 | `*_desc-dceIAUC90_stat` | Initial area under curve at 90s | mM\*min |
@@ -619,10 +614,12 @@ output_dir/pmriprep/
 | `*_desc-dceTsnr_stat` | Temporal signal-to-noise ratio | arbitrary |
 | `*_desc-dceNawmNormKtrans_stat` | NAWM-normalized Ktrans | ratio |
 | `*_desc-dceNawmNormIAUC60_stat` | NAWM-normalized IAUC60 | ratio |
-| `*_desc-dceUncertainty{Param}_stat` | Posterior standard deviation (Ktrans/ve/vp, plus Fp/PS for 2CXM; Bayesian only) | varies |
-| `*_desc-dceCV{Param}_stat` | Posterior coefficient of variation (Ktrans/ve/vp; Bayesian only) | fraction |
-| `*_desc-dceCI95lower{Param}_stat` | 95% credible interval lower bound for Ktrans/ve/vp (Bayesian only) | varies |
-| `*_desc-dceCI95upper{Param}_stat` | 95% credible interval upper bound for Ktrans/ve/vp (Bayesian only) | varies |
+| `*_desc-dceStandardError{Param}_stat` | NLLS local-Jacobian parameter standard error | varies |
+| `*_desc-dceRelativeStandardError{Param}_stat` | NLLS standard error divided by the absolute estimate | fraction |
+| `*_desc-dceConfidenceInterval95{lower,upper}{Param}_stat` | Bounded 95% NLLS Wald confidence limits | varies |
+| `*_desc-dcePosteriorSD{Param}_stat` | Bayesian posterior standard deviation | varies |
+| `*_desc-dcePosteriorCV{Param}_stat` | Posterior standard deviation divided by the absolute estimate | fraction |
+| `*_desc-dceCredibleInterval95{lower,upper}{Param}_stat` | 95% Bayesian credible limits | varies |
 | `*_desc-dceModelSelection_dseg` | Per-voxel model selection (auto mode only) | categorical |
 | `*_desc-dceDeltaBIC_stat` | Delta-BIC confidence (auto mode only) | — |
 | `*_desc-dceQualityFlag_mask` | Voxel quality flags (auto mode only) | categorical |

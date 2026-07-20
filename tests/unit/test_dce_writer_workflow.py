@@ -37,7 +37,7 @@ def test_dce_factory_smoke(tmp_path: Path, minimal_bids: tuple[Path, str]) -> No
     wf = init_dce_datasinks_wf(
         output_dir=str(out), bids_dir=str(bids),
         subject_id="01", session_id="0001",
-        pk_model="auto",
+        pk_model="auto", inference="vi",
         present_inputs=set(),  # only mandatory ktrans_map
     )
     wf.base_dir = str(tmp_path / "work")
@@ -80,7 +80,7 @@ def test_dce_factory_with_bayesian_uncertainty(
     wf = init_dce_datasinks_wf(
         output_dir=str(out), bids_dir=str(bids),
         subject_id="01", session_id="0001",
-        pk_model="extended_tofts",
+        pk_model="extended_tofts", inference="vi",
         present_inputs=present,
     )
     wf.base_dir = str(tmp_path / "work")
@@ -98,21 +98,21 @@ def test_dce_factory_with_bayesian_uncertainty(
         "sub-01_ses-0001_desc-dceKtrans_stat.nii.gz",
         "sub-01_ses-0001_desc-dceVe_stat.nii.gz",
         "sub-01_ses-0001_desc-dceVp_stat.nii.gz",
-        "sub-01_ses-0001_desc-dceUncertaintyKtrans_stat.nii.gz",
-        "sub-01_ses-0001_desc-dceCVKtrans_stat.nii.gz",
-        "sub-01_ses-0001_desc-dceCI95lowerKtrans_stat.nii.gz",
-        "sub-01_ses-0001_desc-dceCI95upperKtrans_stat.nii.gz",
+        "sub-01_ses-0001_desc-dcePosteriorSDKtrans_stat.nii.gz",
+        "sub-01_ses-0001_desc-dcePosteriorCVKtrans_stat.nii.gz",
+        "sub-01_ses-0001_desc-dceCredibleInterval95lowerKtrans_stat.nii.gz",
+        "sub-01_ses-0001_desc-dceCredibleInterval95upperKtrans_stat.nii.gz",
     ]
     for fname in expected:
         assert (perf_out / fname).exists(), f"Missing: {fname}"
 
     expected_units = {
-        "desc-dceUncertaintyKtrans_stat.json": "1/min",
-        "desc-dceUncertaintyVe_stat.json": "1",
-        "desc-dceUncertaintyVp_stat.json": "1",
-        "desc-dceCVKtrans_stat.json": "1",
-        "desc-dceCI95lowerKtrans_stat.json": "1/min",
-        "desc-dceCI95upperKtrans_stat.json": "1/min",
+        "desc-dcePosteriorSDKtrans_stat.json": "1/min",
+        "desc-dcePosteriorSDVe_stat.json": "1",
+        "desc-dcePosteriorSDVp_stat.json": "1",
+        "desc-dcePosteriorCVKtrans_stat.json": "1",
+        "desc-dceCredibleInterval95lowerKtrans_stat.json": "1/min",
+        "desc-dceCredibleInterval95upperKtrans_stat.json": "1/min",
         "desc-dceRsquared_stat.json": "1",
     }
     for ending, units in expected_units.items():
@@ -120,7 +120,7 @@ def test_dce_factory_with_bayesian_uncertainty(
         assert json.loads(sidecar.read_text())["Units"] == units
 
     uncertainty_meta = json.loads(
-        next(perf_out.glob("*desc-dceUncertaintyKtrans_stat.json")).read_text()
+        next(perf_out.glob("*desc-dcePosteriorSDKtrans_stat.json")).read_text()
     )
     assert uncertainty_meta["EstimationMethod"] == "vi"
     assert uncertainty_meta["InferenceMethod"] == "variational_bayes"
@@ -129,7 +129,7 @@ def test_dce_factory_with_bayesian_uncertainty(
         == "variational_posterior_covariance"
     )
     ci_meta = json.loads(
-        next(perf_out.glob("*desc-dceCI95lowerKtrans_stat.json")).read_text()
+        next(perf_out.glob("*desc-dceCredibleInterval95lowerKtrans_stat.json")).read_text()
     )
     assert ci_meta["CredibleIntervalProbability"] == 0.95
     assert ci_meta["CredibleIntervalBounding"] == "parameter_bounds"
@@ -148,7 +148,7 @@ def test_map_uncertainty_sidecar_records_run_accounting(
         bids_dir=str(bids),
         subject_id="01",
         session_id="0001",
-        pk_model="tofts",
+        pk_model="tofts", inference="map",
         present_inputs={"ktrans_uncertainty"},
     )
     wf.base_dir = str(tmp_path / "work")
@@ -158,6 +158,10 @@ def test_map_uncertainty_sidecar_records_run_accounting(
     inp.ktrans_uncertainty = _write_nii(tmp_path / "k_std.nii.gz")
     inp.config_dict = {"inference": "map"}
     inp.qc_metrics = {
+        "parameter_uncertainty": {
+            "aif_inflation_input_factor": 2.0,
+            "aif_parameter_scale_factors": {"Ktrans": 1.5, "ve": 1.0},
+        },
         "map_uncertainty": {
             "n_retained_voxels": 10,
             "n_evaluated": 9,
@@ -171,7 +175,7 @@ def test_map_uncertainty_sidecar_records_run_accounting(
 
     sidecar = next(
         (out / "pmriprep" / "sub-01" / "ses-0001" / "perf").glob(
-            "*desc-dceUncertaintyKtrans_stat.json"
+            "*desc-dcePosteriorSDKtrans_stat.json"
         )
     )
     metadata = json.loads(sidecar.read_text())
@@ -179,6 +183,37 @@ def test_map_uncertainty_sidecar_records_run_accounting(
     assert accounting["n_laplace_hessian"] == 7
     assert accounting["n_prior_fallback"] == 2
     assert accounting["n_not_computed"] == 1
+    inflation = metadata["AIFUncertaintyInflation"]
+    assert inflation["Applied"] is True
+    assert inflation["ParameterScaleFactors"]["Ktrans"] == 1.5
+
+
+def test_nlls_uncertainty_uses_frequentist_derivative_names(
+    tmp_path: Path, minimal_bids: tuple[Path, str]
+) -> None:
+    """NLLS uncertainty sinks use standard-error and confidence-interval names."""
+    from pmriprep.workflows.dce.datasinks import init_dce_datasinks_wf
+
+    bids, _ = minimal_bids
+    workflow = init_dce_datasinks_wf(
+        output_dir=str(tmp_path / "out"),
+        bids_dir=str(bids),
+        subject_id="01",
+        session_id="0001",
+        pk_model="tofts",
+        inference="nlls",
+        present_inputs={
+            "ktrans_uncertainty",
+            "ktrans_cv",
+            "ktrans_ci95_lower",
+        },
+    )
+    assert workflow.get_node("ktrans_uncertainty_sink").inputs.desc == "dceStandardError"
+    assert workflow.get_node("ktrans_cv_sink").inputs.desc == "dceRelativeStandardError"
+    assert (
+        workflow.get_node("ktrans_ci95_lower_sink").inputs.desc
+        == "dceConfidenceInterval95lower"
+    )
 
 
 def test_dce_factory_model_free_no_model_entity(
@@ -194,7 +229,7 @@ def test_dce_factory_model_free_no_model_entity(
     wf = init_dce_datasinks_wf(
         output_dir=str(out), bids_dir=str(bids),
         subject_id="01", session_id="0001",
-        pk_model="auto",
+        pk_model="auto", inference="vi",
         present_inputs=present,
     )
     wf.base_dir = str(tmp_path / "work")
@@ -228,7 +263,7 @@ def test_patlak_only_no_ve_kep(tmp_path: Path, minimal_bids: tuple[Path, str]) -
     wf = init_dce_datasinks_wf(
         output_dir=str(out), bids_dir=str(bids),
         subject_id="01", session_id="0001",
-        pk_model="patlak",
+        pk_model="patlak", inference="vi",
         present_inputs=present,
     )
     wf.base_dir = str(tmp_path / "work")
@@ -262,7 +297,7 @@ def test_2cxm_bayesian_fp_ps_uncertainty(
     wf = init_dce_datasinks_wf(
         output_dir=str(out), bids_dir=str(bids),
         subject_id="01", session_id="0001",
-        pk_model="2cxm",
+        pk_model="2cxm", inference="vi",
         present_inputs=present,
     )
     wf.base_dir = str(tmp_path / "work")
@@ -275,10 +310,10 @@ def test_2cxm_bayesian_fp_ps_uncertainty(
     wf.run()
 
     perf_out = out / "pmriprep" / "sub-01" / "ses-0001" / "perf"
-    assert (perf_out / "sub-01_ses-0001_desc-dceUncertaintyFp_stat.nii.gz").exists()
-    assert (perf_out / "sub-01_ses-0001_desc-dceUncertaintyPS_stat.nii.gz").exists()
+    assert (perf_out / "sub-01_ses-0001_desc-dcePosteriorSDFp_stat.nii.gz").exists()
+    assert (perf_out / "sub-01_ses-0001_desc-dcePosteriorSDPS_stat.nii.gz").exists()
     for parameter in ("Fp", "PS"):
-        sidecar = perf_out / f"sub-01_ses-0001_desc-dceUncertainty{parameter}_stat.json"
+        sidecar = perf_out / f"sub-01_ses-0001_desc-dcePosteriorSD{parameter}_stat.json"
         assert json.loads(sidecar.read_text())["Units"] == "mL/min/100mL"
 
 
@@ -356,7 +391,7 @@ def test_dce_factory_warnings_in_anchor_sidecar(
     wf = init_dce_datasinks_wf(
         output_dir=str(out), bids_dir=str(bids),
         subject_id="01", session_id="0001",
-        pk_model="tofts",
+        pk_model="tofts", inference="vi",
         present_inputs={"dce_moco"},
     )
     wf.base_dir = str(tmp_path / "work")
@@ -409,7 +444,7 @@ def _build_dce_underlay_wf(
     wf = init_dce_datasinks_wf(
         output_dir=str(out), bids_dir=str(bids),
         subject_id="01", session_id="0001",
-        pk_model="tofts",
+        pk_model="tofts", inference="vi",
         present_inputs=present_inputs,
     )
     wf.base_dir = str(tmp_path / work_subdir)

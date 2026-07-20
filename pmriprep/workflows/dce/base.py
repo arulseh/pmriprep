@@ -173,12 +173,18 @@ def init_dce_pk_modeling_wf(
                 "out_ktrans_cv",
                 "out_ve_cv",
                 "out_vp_cv",
+                "out_fp_cv",
+                "out_ps_cv",
                 "out_ktrans_ci95_lower",
                 "out_ktrans_ci95_upper",
                 "out_ve_ci95_lower",
                 "out_ve_ci95_upper",
                 "out_vp_ci95_lower",
                 "out_vp_ci95_upper",
+                "out_fp_ci95_lower",
+                "out_fp_ci95_upper",
+                "out_ps_ci95_lower",
+                "out_ps_ci95_upper",
             ]
         ),
         name="outputnode",
@@ -241,12 +247,18 @@ def init_dce_pk_modeling_wf(
             ("out_ktrans_cv", "out_ktrans_cv"),
             ("out_ve_cv", "out_ve_cv"),
             ("out_vp_cv", "out_vp_cv"),
+            ("out_fp_cv", "out_fp_cv"),
+            ("out_ps_cv", "out_ps_cv"),
             ("out_ktrans_ci95_lower", "out_ktrans_ci95_lower"),
             ("out_ktrans_ci95_upper", "out_ktrans_ci95_upper"),
             ("out_ve_ci95_lower", "out_ve_ci95_lower"),
             ("out_ve_ci95_upper", "out_ve_ci95_upper"),
             ("out_vp_ci95_lower", "out_vp_ci95_lower"),
             ("out_vp_ci95_upper", "out_vp_ci95_upper"),
+            ("out_fp_ci95_lower", "out_fp_ci95_lower"),
+            ("out_fp_ci95_upper", "out_fp_ci95_upper"),
+            ("out_ps_ci95_lower", "out_ps_ci95_lower"),
+            ("out_ps_ci95_upper", "out_ps_ci95_upper"),
         ]),
     ])
     return workflow
@@ -339,8 +351,8 @@ def init_dce_smoothing_wf(
     """Build the DCE perfusion-map smoothing sub-workflow.
 
     Spatially smooths the PK maps (Ktrans, ve, vp, kep), the model-free maps
-    (IAUC60/90/120, peak, SER, wash-in/out), and the Bayesian uncertainty
-    std maps within the brain mask. The orchestrator instantiates this
+    (IAUC60/90/120, peak, SER, wash-in/out), and absolute parameter-uncertainty
+    maps within the brain mask. The orchestrator instantiates this
     sub-workflow only when ``config.smooth_fwhm > 0``.
 
     Parameters
@@ -362,7 +374,7 @@ def init_dce_smoothing_wf(
     iauc60, iauc90, iauc120, peak, ser, wash_in_slope, wash_out_slope
         Model-free maps.
     ktrans_std, ve_std, vp_std, fp_std, ps_std
-        Bayesian uncertainty (std) maps.
+        Parameter standard-error or posterior-standard-deviation maps.
     brain_mask_file
         DCE-space brain mask (smoothing restricted to brain voxels).
 
@@ -443,7 +455,7 @@ def init_dce_smoothing_wf(
     )
     smooth_model_free.inputs.fwhm = fwhm
 
-    # Only the Bayesian std maps are smoothed; CV and CI95 maps are excluded.
+    # Only absolute uncertainty maps are smoothed; relative and interval maps are excluded.
     build_uncertainty_dict = pe.Node(
         niu.Function(
             input_names=[
@@ -1619,6 +1631,8 @@ def init_dce_preproc_wf(
                 "ve_map",
                 "vp_map",
                 "kep_map",
+                "fp_map",
+                "ps_map",
                 # Model-free maps
                 "iauc60_map",
                 "iauc90_map",
@@ -1642,22 +1656,28 @@ def init_dce_preproc_wf(
                 "aif_mask",
                 # Registration outputs
                 "dce_to_t1w_xfm",
-                # Uncertainty outputs (Bayesian)
+                # Inference-specific uncertainty outputs
                 "ktrans_uncertainty",
                 "ve_uncertainty",
                 "vp_uncertainty",
                 "fp_uncertainty",
                 "ps_uncertainty",
-                # Bayesian CV and CI outputs
+                # Relative uncertainty and interval outputs
                 "ktrans_cv",
                 "ve_cv",
                 "vp_cv",
+                "fp_cv",
+                "ps_cv",
                 "ktrans_ci95_lower",
                 "ktrans_ci95_upper",
                 "ve_ci95_lower",
                 "ve_ci95_upper",
                 "vp_ci95_lower",
                 "vp_ci95_upper",
+                "fp_ci95_lower",
+                "fp_ci95_upper",
+                "ps_ci95_lower",
+                "ps_ci95_upper",
                 # Smoothed maps (populated only if config.smooth_fwhm > 0)
                 "smooth_pk_maps",
                 "smooth_model_free_maps",
@@ -2690,6 +2710,8 @@ def init_dce_preproc_wf(
             ("outputnode.out_ve", "ve_map"),
             ("outputnode.out_vp", "vp_map"),
             ("outputnode.out_kep", "kep_map"),
+            ("outputnode.out_fp", "fp_map"),
+            ("outputnode.out_ps", "ps_map"),
         ]),
         # Model-free maps
         (pk_wf, outputnode, [
@@ -2713,7 +2735,7 @@ def init_dce_preproc_wf(
             ("outputnode.out_model_selection", "model_selection_map"),
             ("outputnode.out_delta_bic", "delta_bic_map"),
         ]),
-        # Uncertainty maps (if Bayesian)
+        # Inference-specific uncertainty maps
         (pk_wf, outputnode, [
             ("outputnode.out_ktrans_std", "ktrans_uncertainty"),
             ("outputnode.out_ve_std", "ve_uncertainty"),
@@ -2721,17 +2743,23 @@ def init_dce_preproc_wf(
             ("outputnode.out_fp_std", "fp_uncertainty"),
             ("outputnode.out_ps_std", "ps_uncertainty"),
         ]),
-        # Bayesian CV and CI maps (if Bayesian)
+        # Relative uncertainty and interval maps
         (pk_wf, outputnode, [
             ("outputnode.out_ktrans_cv", "ktrans_cv"),
             ("outputnode.out_ve_cv", "ve_cv"),
             ("outputnode.out_vp_cv", "vp_cv"),
+            ("outputnode.out_fp_cv", "fp_cv"),
+            ("outputnode.out_ps_cv", "ps_cv"),
             ("outputnode.out_ktrans_ci95_lower", "ktrans_ci95_lower"),
             ("outputnode.out_ktrans_ci95_upper", "ktrans_ci95_upper"),
             ("outputnode.out_ve_ci95_lower", "ve_ci95_lower"),
             ("outputnode.out_ve_ci95_upper", "ve_ci95_upper"),
             ("outputnode.out_vp_ci95_lower", "vp_ci95_lower"),
             ("outputnode.out_vp_ci95_upper", "vp_ci95_upper"),
+            ("outputnode.out_fp_ci95_lower", "fp_ci95_lower"),
+            ("outputnode.out_fp_ci95_upper", "fp_ci95_upper"),
+            ("outputnode.out_ps_ci95_lower", "ps_ci95_lower"),
+            ("outputnode.out_ps_ci95_upper", "ps_ci95_upper"),
         ]),
         # AIF outputs
         (aif_detection, outputnode, [
