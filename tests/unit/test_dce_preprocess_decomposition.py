@@ -92,6 +92,36 @@ def test_prepare_preprocess_inputs_preserves_auto_baseline_and_mask_fallback(
     }
 
 
+def test_prepare_preprocess_inputs_surfaces_invalid_early_auto_baseline(
+    tmp_path: Path, monkeypatch: Any,
+) -> None:
+    """An impossible early auto result falls back nonfatally with provenance."""
+    dce_file = tmp_path / "dce.nii.gz"
+    _write_dce(dce_file)
+    monkeypatch.setattr(
+        DCEPreprocess,
+        "_auto_detect_baseline",
+        lambda self, data, mask: (
+            2,
+            2,
+            {"method": "characterized", "confidence": "low"},
+        ),
+    )
+    interface = DCEPreprocess(in_file=str(dce_file), baseline_frames=0)
+
+    prepared = interface._prepare_preprocess_inputs()
+
+    assert prepared.baseline_frames == 5
+    assert prepared.baseline_indices == tuple(range(5))
+    assert prepared.bolus_frame == 5
+    assert prepared.baseline_diagnostics["detected_bolus_frame"] == 2
+    assert prepared.baseline_diagnostics["baseline_frames_used"] == 5
+    assert prepared.baseline_diagnostics["baseline_minimum_frames"] == 5
+    assert prepared.baseline_diagnostics["baseline_status"] == "POOR"
+    assert prepared.baseline_diagnostics["baseline_fallback_applied"] is True
+    assert "PK maps may be biased" in prepared.baseline_diagnostics["baseline_warning"]
+
+
 @pytest.mark.parametrize(
     "ref_vol,interpolation,reference_args,interpolation_arg",
     [

@@ -8,7 +8,10 @@ from typing import Any
 
 import pytest
 
-from pmriprep.utils.sidecar_builders import enrich_dce_preproc_sidecar
+from pmriprep.utils.sidecar_builders import (
+    enrich_dce_preproc_sidecar,
+    enrich_recommendation_keys,
+)
 
 
 @pytest.fixture
@@ -42,6 +45,12 @@ def dce_qc_metrics() -> dict[str, Any]:
             "baseline_tsnr": 32.4, "peak_enh_pct": 65.0,
             "baseline_snr_low_fraction": 0.04,
             "n_volumes": 75, "tr_ms": 3.8, "volume_tr_s": 4.06,
+            "baseline_frames_used": 5,
+            "baseline_minimum_frames": 5,
+            "detected_bolus_frame": 2,
+            "baseline_fallback_applied": True,
+            "baseline_fallback_reason": "detected_bolus_before_minimum_baseline",
+            "baseline_status": "POOR",
         },
         "nawm_normalization": True,
     }
@@ -76,6 +85,14 @@ class TestMotionAndSignalKeys:
         assert out["BaselineSNRLowFraction"] == pytest.approx(0.04)
         assert out["PeakEnhancementPercent"] == pytest.approx(65.0)
         assert out["NumberOfVolumes"] == 75
+        assert out["BaselineFramesUsed"] == 5
+        assert out["BaselineMinimumFrames"] == 5
+        assert out["BolusArrivalFrameDetected"] == 2
+        assert out["BaselineFallbackApplied"] is True
+        assert out["BaselineFallbackReason"] == (
+            "detected_bolus_before_minimum_baseline"
+        )
+        assert out["BaselineQCStatus"] == "POOR"
         # Volume and excitation TR retain their distinct BIDS meanings.
         assert out["RepetitionTime"] == pytest.approx(4.06)
         assert out["RepetitionTimeExcitation"] == pytest.approx(0.0038)
@@ -103,6 +120,24 @@ class TestTopLevelFlags:
     def test_nawm_normalization(self, base_sidecar, dce_qc_metrics):
         out = enrich_dce_preproc_sidecar(dict(base_sidecar), qc_metrics=dce_qc_metrics)
         assert out["NAWMNormalizationApplied"] is True
+
+
+def test_baseline_and_aif_processing_warnings_coexist() -> None:
+    """DCE baseline fallback uses the existing processing-warning channel."""
+    sidecar: dict[str, Any] = {}
+    qc = {
+        "preprocessing": {
+            "baseline_warning": "Baseline fallback may bias PK maps.",
+        },
+        "aif_detection": {"aif_source": "population"},
+    }
+
+    enrich_recommendation_keys(sidecar, modality="DCE", qc_metrics=qc)
+
+    warnings = sidecar["QCProcessingWarnings"]
+    assert len(warnings) == 2
+    assert "Parker population model" in warnings[0]
+    assert warnings[1] == "Baseline fallback may bias PK maps."
 
 
 class TestBaseFieldsSurvive:

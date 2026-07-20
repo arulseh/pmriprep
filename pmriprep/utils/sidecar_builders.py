@@ -1353,9 +1353,17 @@ def enrich_recommendation_keys(
             sidecar["QCAcquisitionWarnings"] = acq
 
         if qc_metrics:
+            processing_warnings: List[str] = []
             aif_warn = collect_aif_fallback_warning(qc_metrics, modality)
             if aif_warn:
-                sidecar["QCProcessingWarnings"] = [aif_warn]
+                processing_warnings.append(aif_warn)
+            if modality == "DCE":
+                preprocessing = qc_metrics.get("preprocessing") or {}
+                baseline_warn = preprocessing.get("baseline_warning")
+                if baseline_warn:
+                    processing_warnings.append(str(baseline_warn))
+            if processing_warnings:
+                sidecar["QCProcessingWarnings"] = processing_warnings
 
     return sidecar
 
@@ -1431,6 +1439,18 @@ def _dce_preprocessing_cosmetic_keys(
         out["PeakEnhancementPercent"] = float(preproc["peak_enh_pct"])
     if "n_volumes" in preproc:
         out["NumberOfVolumes"] = int(preproc["n_volumes"])
+    if "baseline_frames_used" in preproc:
+        out["BaselineFramesUsed"] = int(preproc["baseline_frames_used"])
+    if "baseline_minimum_frames" in preproc:
+        out["BaselineMinimumFrames"] = int(preproc["baseline_minimum_frames"])
+    if "detected_bolus_frame" in preproc:
+        out["BolusArrivalFrameDetected"] = int(preproc["detected_bolus_frame"])
+    if "baseline_fallback_applied" in preproc:
+        out["BaselineFallbackApplied"] = bool(preproc["baseline_fallback_applied"])
+    if "baseline_fallback_reason" in preproc:
+        out["BaselineFallbackReason"] = str(preproc["baseline_fallback_reason"])
+    if "baseline_status" in preproc:
+        out["BaselineQCStatus"] = str(preproc["baseline_status"])
     if "volume_tr_s" in preproc:
         out["RepetitionTime"] = float(preproc["volume_tr_s"])
         if "tr_ms" in preproc:

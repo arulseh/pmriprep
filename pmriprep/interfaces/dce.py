@@ -2928,6 +2928,31 @@ class DCEPreprocess(SimpleInterface):
                 dce_data, brain_mask
             )
 
+            from pmriprep.utils.dce_constants import DEFAULT_BASELINE_FRAMES
+
+            detected_bolus_frame = int(bolus_frame)
+            minimum_frames = min(DEFAULT_BASELINE_FRAMES, n_volumes - 1)
+            if baseline_frames < minimum_frames or bolus_frame < minimum_frames:
+                baseline_frames = minimum_frames
+                bolus_frame = minimum_frames
+                baseline_diag = dict(baseline_diag)
+                baseline_diag.update({
+                    "baseline_status": "POOR",
+                    "baseline_minimum_frames": DEFAULT_BASELINE_FRAMES,
+                    "baseline_frames_used": baseline_frames,
+                    "detected_bolus_frame": detected_bolus_frame,
+                    "baseline_fallback_applied": True,
+                    "baseline_fallback_reason": (
+                        "detected_bolus_before_minimum_baseline"
+                    ),
+                    "baseline_warning": (
+                        "DCE bolus detection occurred before the minimum "
+                        f"{DEFAULT_BASELINE_FRAMES}-frame baseline; "
+                        f"{baseline_frames} frames were used as a fallback. "
+                        "The S0 estimate and quantitative PK maps may be biased."
+                    ),
+                })
+
         baseline_frames = max(3, min(baseline_frames, n_volumes - 1))
         if bolus_frame > 0 and baseline_frames > bolus_frame:
             baseline_frames = bolus_frame
@@ -3076,6 +3101,17 @@ class DCEPreprocess(SimpleInterface):
                 "reference_type": str(self.inputs.ref_vol),
                 "motion_applied": bool(self.inputs.apply_motion_correction),
             }
+            for key in (
+                "baseline_status",
+                "baseline_minimum_frames",
+                "baseline_frames_used",
+                "detected_bolus_frame",
+                "baseline_fallback_applied",
+                "baseline_fallback_reason",
+                "baseline_warning",
+            ):
+                if key in preparation.baseline_diagnostics:
+                    metrics[key] = preparation.baseline_diagnostics[key]
             if preparation.baseline_diagnostics.get("confidence", "high") != "high":
                 logger.warning(
                     "DCE baseline detection low confidence: method=%s, "
