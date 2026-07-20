@@ -339,6 +339,13 @@ class _DSCComputeInputs(NamedTuple):
     te: float
 
 
+class _DSCMotionWeighting(NamedTuple):
+    """Frame weights and matching QC state for parametric DSC fitting."""
+
+    weights: Optional[npt.NDArray[np.floating]]
+    qc: dict[str, Any]
+
+
 class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
     """Input specification for ComputeDSCMaps interface."""
 
@@ -790,6 +797,66 @@ class ComputeDSCMaps(BaseInterface):
         else:
             base = in_file.stem
         return str(Path.cwd() / f"{base}{suffix}.nii.gz")
+
+    def _prepare_motion_weighting(
+        self,
+        method: str,
+        header: Any,
+        n_frames: int,
+        dt: float,
+    ) -> _DSCMotionWeighting:
+        """Prepare phase-aware motion weights for parametric DSC fitting.
+
+        Parameters
+        ----------
+        method : str
+            Selected DSC deconvolution method.
+        header : object
+            NIfTI header providing native spatial voxel dimensions.
+        n_frames : int
+            Number of acquired DSC frames.
+        dt : float
+            Frame interval in seconds.
+
+        Returns
+        -------
+        _DSCMotionWeighting
+            Optional fitting weights and QC values describing that exact array.
+
+        """
+        if (
+            method not in ("vascular", "cpi")
+            or not isdefined(self.inputs.fd_values)
+            or not self.inputs.fd_values
+        ):
+            return _DSCMotionWeighting(None, {"applied": False})
+
+        voxel_dims = header.get_zooms()[:3]
+        min_voxel_dim = float(min(voxel_dims))
+        bolus_frame = int(self.inputs.baseline_frames)
+        weights = _compute_dsc_motion_weights(
+            fd_values=self.inputs.fd_values,
+            bolus_frame=bolus_frame,
+            n_frames=n_frames,
+            min_voxel_dim=min_voxel_dim,
+            tr=dt,
+        )
+        first_pass_frames = int(np.ceil(15.0 / max(dt, 0.5)))
+        first_pass_end = min(bolus_frame + first_pass_frames, n_frames - 1)
+        n_downweighted = int(np.sum(weights < 0.95))
+        qc = {
+            "applied": True,
+            "n_downweighted_frames": n_downweighted,
+            "min_weight": float(np.min(weights)),
+            "first_pass_weights": weights[bolus_frame:first_pass_end + 1].tolist(),
+        }
+        logger.info(
+            "DSC motion weighting: %d/%d frames downweighted (min weight=%.3f)",
+            n_downweighted,
+            n_frames,
+            float(np.min(weights)),
+        )
+        return _DSCMotionWeighting(weights, qc)
 
     def _first_pass_reference(
         self,
@@ -2364,36 +2431,10 @@ class ComputeDSCMaps(BaseInterface):
         cbv_ci_upper_map: Optional[npt.NDArray[Any]] = None
         qc_metrics: dict[str, Any] = {}
 
-        # Compute motion weights for parametric fitting (vascular/CPI only)
-        motion_weights: Optional[npt.NDArray[np.floating]] = None
-        if (
-            method in ("vascular", "cpi")
-            and isdefined(self.inputs.fd_values)
-            and self.inputs.fd_values
-        ):
-            voxel_dims = header.get_zooms()[:3]  # type: ignore[attr-defined]
-            min_voxel_dim = float(min(voxel_dims))
-            bolus_frame = int(self.inputs.baseline_frames)
-            motion_weights = _compute_dsc_motion_weights(
-                fd_values=self.inputs.fd_values,
-                bolus_frame=bolus_frame,
-                n_frames=conc_data.shape[3],
-                min_voxel_dim=min_voxel_dim,
-                tr=dt,
-            )
-            first_pass_frames = int(np.ceil(15.0 / max(dt, 0.5)))
-            first_pass_end = min(bolus_frame + first_pass_frames, conc_data.shape[3] - 1)
-            n_downweighted = int(np.sum(motion_weights < 0.95))
-            motion_weighting_qc = {
-                "applied": True,
-                "n_downweighted_frames": n_downweighted,
-                "min_weight": float(np.min(motion_weights)),
-                "first_pass_weights": motion_weights[bolus_frame:first_pass_end + 1].tolist(),
-            }
-            logger.info(
-                "DSC motion weighting: %d/%d frames downweighted (min weight=%.3f)",
-                n_downweighted, conc_data.shape[3], float(np.min(motion_weights)),
-            )
+        motion_weighting = self._prepare_motion_weighting(
+            method, header, conc_data.shape[3], dt
+        )
+        motion_weights = motion_weighting.weights
 
         if method in ("sSVD", "oSVD", "tikhonov"):
             cbf, cbv, mtt, tmax, delay, residues, qc_metrics = self._deconvolve_svd(
@@ -2411,11 +2452,7 @@ class ComputeDSCMaps(BaseInterface):
                 cpi_infer_delay,
                 motion_weights=motion_weights,
             )
-            # Merge motion weighting QC into parametric QC dict
-            if motion_weights is not None:
-                qc_metrics["motion_weighting"] = motion_weighting_qc
-            else:
-                qc_metrics["motion_weighting"] = {"applied": False}
+            qc_metrics["motion_weighting"] = motion_weighting.qc
 
         # Compute PSR and PH
         psr: npt.NDArray[Any]
