@@ -1607,6 +1607,285 @@ def _connect_master_dsc_outputs_and_build_provenance(
     return provenance
 
 
+def _connect_master_dsc_datasinks(
+    *,
+    workflow: pe.Workflow,
+    dsc_wf: pe.Workflow,
+    inputnode: pe.Node,
+    report_barrier: pe.Node,
+    session_data: SessionData,
+    anat_config: AnatConfig,
+    dsc_config: DSCConfig,
+    mask_state: _MasterDSCMaskState,
+    provenance: dict[str, Any],
+    preflight_warnings: list[str],
+    bids_dir: Path,
+    output_dir: Path,
+    work_dir: Optional[Path],
+    subject_id: str,
+    session_id: Optional[str],
+) -> None:
+    """Construct and connect DSC derivative sinks and completion barrier."""
+    # DSC derivatives: niworkflows DerivativesDataSink chain
+    # -------------------------------------------------------------------
+    from pmriprep.workflows.dsc.datasinks import init_dsc_datasinks_wf
+
+    dsc_underlays = list(dsc_config.underlays)
+    # Build the set of inputnode fields that this session will wire,
+    # gated to match what dsc_wf.outputnode actually populates. Including
+    # an unpopulated key here triggers nipype mandatory-input crashes
+    # because the sink's `in_file` becomes Undefined.
+    dsc_method = (dsc_config.method or "").lower()
+    dsc_inference = (dsc_config.inference or "").lower()
+    # Gate on actual NAWM source, not t1w_pre presence. t1w_pre alone
+    # doesn't produce NAWM — that needs tumor_seg or a user mask.
+    # Without a real source, _transform_nawm_to_dsc returns "" and
+    # niworkflows File(exists=True) rejects it at runtime.
+    dsc_has_nawm = mask_state.has_nawm_source
+
+    dsc_present: set[str] = {
+        # Always-present (mandatory in dsc_wf.outputnode)
+        "ttp_map", "cnr_map", "auc_diff_map", "snr_map", "tsnr_map",
+        "rel_cbf_map", "rel_cbv_map", "rel_cbv_auc_map",
+        "rel_auc_raw_map", "rel_auc_corr_map",
+        "ncbv_map", "ncbf_map",
+        "k2_map",
+        "dsc_moco", "dsc_mean", "motion_params",
+        "aif_mask",
+        "brain_mask_dsc",
+        "dsc_to_t1w_xfm",
+    }
+    # AIF-detection-derived TTP variants
+    dsc_present.add("ttp_corrected_map")
+    if dsc_has_nawm:
+        dsc_present.add("rttp_map")
+    # First-pass CBV — opt-in additive stroke/non-tumor map
+    if dsc_config.first_pass_cbv:
+        dsc_present.add("rel_cbv_firstpass_map")
+    # Parametric methods only (oSVD/sSVD/tikhonov produce no
+    # vascular params, no Bayesian uncertainty, no parametric R²)
+    if dsc_method in ("cpi", "vascular"):
+        dsc_present |= {"parametric_r2_map", "fallback_mask"}
+        dsc_present |= {
+            "cbf_std_map", "cbv_std_map", "cbf_cv_map", "cbv_cv_map",
+        }
+        # CI95 maps only for posterior-sample inference (VI/MCMC/SVB)
+        if dsc_inference in ("vi", "svb", "mcmc"):
+            dsc_present |= {
+                "cbf_ci95_lower_map", "cbf_ci95_upper_map",
+                "cbv_ci95_lower_map", "cbv_ci95_upper_map",
+            }
+    # Vascular method only (alpha/beta/cth params)
+    if dsc_method == "vascular":
+        dsc_present |= {"alpha_map", "beta_map", "cth_map"}
+
+    if dsc_has_nawm:
+        dsc_present.add("nawm_mask_dsc")
+    if mask_state.has_whole_tumor_source:
+        dsc_present.add("lesion_mask_dsc")
+    if dsc_config.lesion_mask is not None:
+        dsc_present.add("user_lesion_mask_dsc")
+    if dsc_config.roi_mask is not None:
+        dsc_present.add("roi_mask_dsc")
+    # Underlays: only add to present if the modality is actually
+    # available in the session. dsc_config.underlays is user intent;
+    # session_data.modalities is what's actually wired. Mismatch makes
+    # the upstream _transform_structural_to_dsc emit "" and the sink
+    # crash on niworkflows File(exists=True).
+    _has_t1w_precon_underlay = (
+        "t1w_precon" in dsc_underlays
+        and session_data.modalities.t1w_pre is not None
+    )
+    _has_t1w_postcon_underlay = (
+        "t1w_postcon" in dsc_underlays
+        and session_data.modalities.t1w_ce_gad is not None
+    )
+    # Subtraction requires both pre- and post-contrast T1w AND that anat
+    # actually computed it (create_subtraction gates the outputnode field);
+    # without the create_subtraction term the sink builds but the transform
+    # gets Undefined → "" → File(exists=True) crash.
+    _has_t1w_subtraction_underlay = (
+        "t1w_subtraction" in dsc_underlays
+        and session_data.modalities.t1w_pre is not None
+        and session_data.modalities.t1w_ce_gad is not None
+        and anat_config.create_subtraction
+    )
+    _has_flair_precon_underlay = (
+        "flair_precon" in dsc_underlays
+        and session_data.modalities.flair is not None
+    )
+    _has_flair_postcon_underlay = (
+        "flair_postcon" in dsc_underlays
+        and session_data.modalities.flair_postcon is not None
+    )
+    _has_t2w_underlay = (
+        "t2w" in dsc_underlays
+        and session_data.modalities.t2w is not None
+    )
+    if _has_t1w_precon_underlay:
+        dsc_present.add("t1w_in_dsc")
+    if _has_t1w_postcon_underlay:
+        dsc_present.add("t1w_postcon_in_dsc")
+    if _has_t1w_subtraction_underlay:
+        dsc_present.add("t1w_subtraction_in_dsc")
+    if _has_flair_precon_underlay:
+        dsc_present.add("flair_in_dsc")
+    if _has_flair_postcon_underlay:
+        dsc_present.add("flair_postcon_in_dsc")
+    if _has_t2w_underlay:
+        dsc_present.add("t2w_in_dsc")
+    if (
+        _has_t1w_precon_underlay or _has_t1w_postcon_underlay
+        or _has_t1w_subtraction_underlay
+        or _has_flair_precon_underlay or _has_flair_postcon_underlay
+        or _has_t2w_underlay
+    ):
+        dsc_present.add("t1w_to_dsc_xfm")
+
+    dsc_datasinks_wf = init_dsc_datasinks_wf(
+        output_dir=str(output_dir),
+        bids_dir=str(bids_dir),
+        subject_id=subject_id,
+        session_id=session_id,
+        present_inputs=dsc_present,
+        has_smoothing=dsc_config.smooth_fwhm > 0,
+        motion_correct=dsc_config.motion_correct,
+    )
+    _dsc_cfg = dataclasses.asdict(dsc_config)
+    for _k, _v in _dsc_cfg.items():
+        if isinstance(_v, Path):
+            _dsc_cfg[_k] = str(_v)
+    dsc_datasinks_wf.inputs.inputnode.config_dict = _dsc_cfg
+    dsc_datasinks_wf.inputs.inputnode.work_dir = str(work_dir)
+    if provenance:
+        dsc_datasinks_wf.inputs.inputnode.provenance_dict = provenance
+    if preflight_warnings:
+        dsc_datasinks_wf.inputs.inputnode.preflight_warnings = list(
+            preflight_warnings
+        )
+
+    workflow.connect([
+        (dsc_wf, dsc_datasinks_wf, [
+            # Quantification-independent maps
+            ("outputnode.mtt_map", "inputnode.mtt_map"),
+            ("outputnode.tmax_map", "inputnode.tmax_map"),
+            ("outputnode.psr_map", "inputnode.psr_map"),
+            ("outputnode.ph_map", "inputnode.ph_map"),
+            ("outputnode.ttp_map", "inputnode.ttp_map"),
+            ("outputnode.ttp_corrected_map", "inputnode.ttp_corrected_map"),
+            ("outputnode.rttp_map", "inputnode.rttp_map"),
+            ("outputnode.cnr_map", "inputnode.cnr_map"),
+            ("outputnode.auc_diff_map", "inputnode.auc_diff_map"),
+            ("outputnode.snr_map", "inputnode.snr_map"),
+            ("outputnode.tsnr_map", "inputnode.tsnr_map"),
+            # Relative maps
+            ("outputnode.rel_cbf_map", "inputnode.rel_cbf_map"),
+            ("outputnode.rel_cbv_map", "inputnode.rel_cbv_map"),
+            ("outputnode.rel_cbv_auc_map", "inputnode.rel_cbv_auc_map"),
+            ("outputnode.rel_cbv_firstpass_map",
+             "inputnode.rel_cbv_firstpass_map"),
+            ("outputnode.rel_auc_raw_map", "inputnode.rel_auc_raw_map"),
+            ("outputnode.rel_auc_corr_map", "inputnode.rel_auc_corr_map"),
+            # Normalized maps
+            ("outputnode.ncbv_map", "inputnode.ncbv_map"),
+            ("outputnode.ncbf_map", "inputnode.ncbf_map"),
+            # Vascular model parameters
+            ("outputnode.alpha_map", "inputnode.alpha_map"),
+            ("outputnode.beta_map", "inputnode.beta_map"),
+            ("outputnode.cth_map", "inputnode.cth_map"),
+            # Bayesian uncertainty maps
+            ("outputnode.cbf_std_map", "inputnode.cbf_std_map"),
+            ("outputnode.cbv_std_map", "inputnode.cbv_std_map"),
+            ("outputnode.cbf_cv_map", "inputnode.cbf_cv_map"),
+            ("outputnode.cbv_cv_map", "inputnode.cbv_cv_map"),
+            ("outputnode.cbf_ci95_lower_map", "inputnode.cbf_ci95_lower_map"),
+            ("outputnode.cbf_ci95_upper_map", "inputnode.cbf_ci95_upper_map"),
+            ("outputnode.cbv_ci95_lower_map", "inputnode.cbv_ci95_lower_map"),
+            ("outputnode.cbv_ci95_upper_map", "inputnode.cbv_ci95_upper_map"),
+            # Parametric-fit diagnostics (CPI/Vascular only)
+            ("outputnode.parametric_r2_map", "inputnode.parametric_r2_map"),
+            ("outputnode.fallback_mask", "inputnode.fallback_mask"),
+            # Leakage correction
+            ("outputnode.k2_map", "inputnode.k2_map"),
+            ("outputnode.preload_qc", "inputnode.preload_qc"),
+            # Phase 2/3 BIDS cleanup: in-memory dicts feeding the
+            # preproc-4D cosmetic enrichment + verbatim resume sidecar.
+            ("outputnode.aif_qc", "inputnode.aif_qc"),
+            ("outputnode.preprocessing_stats", "inputnode.preprocessing_stats"),
+            ("outputnode.motion_qc", "inputnode.motion_qc"),
+            ("outputnode.aif_metrics", "inputnode.aif_metrics"),
+            # Motion-corrected data
+            ("outputnode.dsc_moco", "inputnode.dsc_moco"),
+            ("outputnode.dsc_mean", "inputnode.dsc_mean"),
+            ("outputnode.motion_params", "inputnode.motion_params"),
+            # AIF outputs
+            ("outputnode.aif_curve", "inputnode.aif_curve"),
+            ("outputnode.aif_mask", "inputnode.aif_mask"),
+            # Registration (.h5 for derivatives)
+            ("outputnode.dsc_to_t1w_h5", "inputnode.dsc_to_t1w_xfm"),
+            ("outputnode.registration_filmstrip",
+             "inputnode.registration_filmstrip"),
+            # Structural underlays
+            ("outputnode.t1w_in_dsc", "inputnode.t1w_in_dsc"),
+            ("outputnode.t1w_postcon_in_dsc", "inputnode.t1w_postcon_in_dsc"),
+            ("outputnode.t1w_subtraction_in_dsc", "inputnode.t1w_subtraction_in_dsc"),
+            ("outputnode.flair_in_dsc", "inputnode.flair_in_dsc"),
+            ("outputnode.flair_postcon_in_dsc", "inputnode.flair_postcon_in_dsc"),
+            ("outputnode.t2w_in_dsc", "inputnode.t2w_in_dsc"),
+            ("outputnode.t1w_to_dsc_h5", "inputnode.t1w_to_dsc_xfm"),
+            # AIF QC plots
+            ("outputnode.aif_curve_plot", "inputnode.aif_curve_plot"),
+            ("outputnode.aif_location_plot", "inputnode.aif_location_plot"),
+            ("outputnode.aif_candidates_plot",
+             "inputnode.aif_candidates_plot"),
+            # Motion QC plot
+            ("outputnode.motion_qc_plot", "inputnode.motion_qc_plot"),
+            # QC metrics
+            ("outputnode.qc_metrics", "inputnode.qc_metrics"),
+            # DSC-space masks
+            ("outputnode.brain_mask_dsc", "inputnode.brain_mask_dsc"),
+            ("outputnode.nawm_mask_dsc", "inputnode.nawm_mask_dsc"),
+            # Lesion statistics
+            ("outputnode.lesion_stats_json", "inputnode.lesion_stats_json"),
+            ("outputnode.lesion_mask_dsc", "inputnode.lesion_mask_dsc"),
+            # User lesion statistics
+            ("outputnode.user_lesion_stats_json",
+             "inputnode.user_lesion_stats_json"),
+            ("outputnode.user_lesion_mask_dsc",
+             "inputnode.user_lesion_mask_dsc"),
+            # ROI statistics
+            ("outputnode.roi_stats_json", "inputnode.roi_stats_json"),
+            ("outputnode.roi_mask_dsc", "inputnode.roi_mask_dsc"),
+            # Brain-mask + DSC QC filmstrips
+            ("outputnode.brain_mask_filmstrip",
+             "inputnode.brain_mask_filmstrip"),
+            ("outputnode.dsc_preprocessing_qc_plot",
+             "inputnode.dsc_preprocessing_qc_plot"),
+            ("outputnode.dsc_param_maps_qc_plot",
+             "inputnode.dsc_param_maps_qc_plot"),
+            ("outputnode.dsc_fit_qc_plot", "inputnode.dsc_fit_qc_plot"),
+            ("outputnode.dsc_leakage_qc_plot",
+             "inputnode.dsc_leakage_qc_plot"),
+        ]),
+        (inputnode, dsc_datasinks_wf, [("dsc_file", "inputnode.source_dsc")]),
+    ])
+
+    if dsc_config.smooth_fwhm > 0:
+        workflow.connect([
+            (dsc_wf, dsc_datasinks_wf, [
+                ("outputnode.smooth_hemodynamic",
+                 "inputnode.smooth_hemodynamic"),
+                ("outputnode.smooth_auc", "inputnode.smooth_auc"),
+            ]),
+        ])
+        dsc_datasinks_wf.inputs.inputnode.smooth_fwhm = dsc_config.smooth_fwhm
+
+    workflow.connect([
+        (dsc_datasinks_wf, report_barrier, [
+            ("outputnode.done", "dsc_done"),
+        ]),
+    ])
+
 def _init_master_workflow_nodes(
     *,
     workflow: pe.Workflow,
@@ -2271,265 +2550,23 @@ def init_pmriprep_wf(
             gd_multiplicity=_gd_multiplicity,
             user_specified=_user_spec_dsc,
         )
-        # DSC derivatives: niworkflows DerivativesDataSink chain
-        # -------------------------------------------------------------------
-        from pmriprep.workflows.dsc.datasinks import init_dsc_datasinks_wf
-
-        dsc_underlays = list(dsc_config.underlays)
-        # Build the set of inputnode fields that this session will wire,
-        # gated to match what dsc_wf.outputnode actually populates. Including
-        # an unpopulated key here triggers nipype mandatory-input crashes
-        # because the sink's `in_file` becomes Undefined.
-        dsc_method = (dsc_config.method or "").lower()
-        dsc_inference = (dsc_config.inference or "").lower()
-        # Gate on actual NAWM source, not t1w_pre presence. t1w_pre alone
-        # doesn't produce NAWM — that needs tumor_seg or a user mask.
-        # Without a real source, _transform_nawm_to_dsc returns "" and
-        # niworkflows File(exists=True) rejects it at runtime.
-        dsc_has_nawm = dsc_mask_state.has_nawm_source
-
-        dsc_present: set = {
-            # Always-present (mandatory in dsc_wf.outputnode)
-            "ttp_map", "cnr_map", "auc_diff_map", "snr_map", "tsnr_map",
-            "rel_cbf_map", "rel_cbv_map", "rel_cbv_auc_map",
-            "rel_auc_raw_map", "rel_auc_corr_map",
-            "ncbv_map", "ncbf_map",
-            "k2_map",
-            "dsc_moco", "dsc_mean", "motion_params",
-            "aif_mask",
-            "brain_mask_dsc",
-            "dsc_to_t1w_xfm",
-        }
-        # AIF-detection-derived TTP variants
-        dsc_present.add("ttp_corrected_map")
-        if dsc_has_nawm:
-            dsc_present.add("rttp_map")
-        # First-pass CBV — opt-in additive stroke/non-tumor map
-        if dsc_config.first_pass_cbv:
-            dsc_present.add("rel_cbv_firstpass_map")
-        # Parametric methods only (oSVD/sSVD/tikhonov produce no
-        # vascular params, no Bayesian uncertainty, no parametric R²)
-        if dsc_method in ("cpi", "vascular"):
-            dsc_present |= {"parametric_r2_map", "fallback_mask"}
-            dsc_present |= {
-                "cbf_std_map", "cbv_std_map", "cbf_cv_map", "cbv_cv_map",
-            }
-            # CI95 maps only for posterior-sample inference (VI/MCMC/SVB)
-            if dsc_inference in ("vi", "svb", "mcmc"):
-                dsc_present |= {
-                    "cbf_ci95_lower_map", "cbf_ci95_upper_map",
-                    "cbv_ci95_lower_map", "cbv_ci95_upper_map",
-                }
-        # Vascular method only (alpha/beta/cth params)
-        if dsc_method == "vascular":
-            dsc_present |= {"alpha_map", "beta_map", "cth_map"}
-
-        if dsc_has_nawm:
-            dsc_present.add("nawm_mask_dsc")
-        if dsc_mask_state.has_whole_tumor_source:
-            dsc_present.add("lesion_mask_dsc")
-        if dsc_config.lesion_mask is not None:
-            dsc_present.add("user_lesion_mask_dsc")
-        if dsc_config.roi_mask is not None:
-            dsc_present.add("roi_mask_dsc")
-        # Underlays: only add to present if the modality is actually
-        # available in the session. dsc_config.underlays is user intent;
-        # session_data.modalities is what's actually wired. Mismatch makes
-        # the upstream _transform_structural_to_dsc emit "" and the sink
-        # crash on niworkflows File(exists=True).
-        _has_t1w_precon_underlay = (
-            "t1w_precon" in dsc_underlays
-            and session_data.modalities.t1w_pre is not None
-        )
-        _has_t1w_postcon_underlay = (
-            "t1w_postcon" in dsc_underlays
-            and session_data.modalities.t1w_ce_gad is not None
-        )
-        # Subtraction requires both pre- and post-contrast T1w AND that anat
-        # actually computed it (create_subtraction gates the outputnode field);
-        # without the create_subtraction term the sink builds but the transform
-        # gets Undefined → "" → File(exists=True) crash.
-        _has_t1w_subtraction_underlay = (
-            "t1w_subtraction" in dsc_underlays
-            and session_data.modalities.t1w_pre is not None
-            and session_data.modalities.t1w_ce_gad is not None
-            and anat_config.create_subtraction
-        )
-        _has_flair_precon_underlay = (
-            "flair_precon" in dsc_underlays
-            and session_data.modalities.flair is not None
-        )
-        _has_flair_postcon_underlay = (
-            "flair_postcon" in dsc_underlays
-            and session_data.modalities.flair_postcon is not None
-        )
-        _has_t2w_underlay = (
-            "t2w" in dsc_underlays
-            and session_data.modalities.t2w is not None
-        )
-        if _has_t1w_precon_underlay:
-            dsc_present.add("t1w_in_dsc")
-        if _has_t1w_postcon_underlay:
-            dsc_present.add("t1w_postcon_in_dsc")
-        if _has_t1w_subtraction_underlay:
-            dsc_present.add("t1w_subtraction_in_dsc")
-        if _has_flair_precon_underlay:
-            dsc_present.add("flair_in_dsc")
-        if _has_flair_postcon_underlay:
-            dsc_present.add("flair_postcon_in_dsc")
-        if _has_t2w_underlay:
-            dsc_present.add("t2w_in_dsc")
-        if (
-            _has_t1w_precon_underlay or _has_t1w_postcon_underlay
-            or _has_t1w_subtraction_underlay
-            or _has_flair_precon_underlay or _has_flair_postcon_underlay
-            or _has_t2w_underlay
-        ):
-            dsc_present.add("t1w_to_dsc_xfm")
-
-        dsc_datasinks_wf = init_dsc_datasinks_wf(
-            output_dir=str(output_dir),
-            bids_dir=str(bids_dir),
+        _connect_master_dsc_datasinks(
+            workflow=workflow,
+            dsc_wf=dsc_wf,
+            inputnode=inputnode,
+            report_barrier=report_barrier,
+            session_data=session_data,
+            anat_config=anat_config,
+            dsc_config=dsc_config,
+            mask_state=dsc_mask_state,
+            provenance=dsc_provenance,
+            preflight_warnings=dsc_preflight_warnings,
+            bids_dir=bids_dir,
+            output_dir=output_dir,
+            work_dir=work_dir,
             subject_id=subject_id,
             session_id=session_id,
-            present_inputs=dsc_present,
-            has_smoothing=dsc_config.smooth_fwhm > 0,
-            motion_correct=dsc_config.motion_correct,
         )
-        _dsc_cfg = dataclasses.asdict(dsc_config)
-        for _k, _v in _dsc_cfg.items():
-            if isinstance(_v, Path):
-                _dsc_cfg[_k] = str(_v)
-        dsc_datasinks_wf.inputs.inputnode.config_dict = _dsc_cfg
-        dsc_datasinks_wf.inputs.inputnode.work_dir = str(work_dir)
-        if dsc_provenance:
-            dsc_datasinks_wf.inputs.inputnode.provenance_dict = dsc_provenance
-        if dsc_preflight_warnings:
-            dsc_datasinks_wf.inputs.inputnode.preflight_warnings = list(
-                dsc_preflight_warnings
-            )
-
-        workflow.connect([
-            (dsc_wf, dsc_datasinks_wf, [
-                # Quantification-independent maps
-                ("outputnode.mtt_map", "inputnode.mtt_map"),
-                ("outputnode.tmax_map", "inputnode.tmax_map"),
-                ("outputnode.psr_map", "inputnode.psr_map"),
-                ("outputnode.ph_map", "inputnode.ph_map"),
-                ("outputnode.ttp_map", "inputnode.ttp_map"),
-                ("outputnode.ttp_corrected_map", "inputnode.ttp_corrected_map"),
-                ("outputnode.rttp_map", "inputnode.rttp_map"),
-                ("outputnode.cnr_map", "inputnode.cnr_map"),
-                ("outputnode.auc_diff_map", "inputnode.auc_diff_map"),
-                ("outputnode.snr_map", "inputnode.snr_map"),
-                ("outputnode.tsnr_map", "inputnode.tsnr_map"),
-                # Relative maps
-                ("outputnode.rel_cbf_map", "inputnode.rel_cbf_map"),
-                ("outputnode.rel_cbv_map", "inputnode.rel_cbv_map"),
-                ("outputnode.rel_cbv_auc_map", "inputnode.rel_cbv_auc_map"),
-                ("outputnode.rel_cbv_firstpass_map",
-                 "inputnode.rel_cbv_firstpass_map"),
-                ("outputnode.rel_auc_raw_map", "inputnode.rel_auc_raw_map"),
-                ("outputnode.rel_auc_corr_map", "inputnode.rel_auc_corr_map"),
-                # Normalized maps
-                ("outputnode.ncbv_map", "inputnode.ncbv_map"),
-                ("outputnode.ncbf_map", "inputnode.ncbf_map"),
-                # Vascular model parameters
-                ("outputnode.alpha_map", "inputnode.alpha_map"),
-                ("outputnode.beta_map", "inputnode.beta_map"),
-                ("outputnode.cth_map", "inputnode.cth_map"),
-                # Bayesian uncertainty maps
-                ("outputnode.cbf_std_map", "inputnode.cbf_std_map"),
-                ("outputnode.cbv_std_map", "inputnode.cbv_std_map"),
-                ("outputnode.cbf_cv_map", "inputnode.cbf_cv_map"),
-                ("outputnode.cbv_cv_map", "inputnode.cbv_cv_map"),
-                ("outputnode.cbf_ci95_lower_map", "inputnode.cbf_ci95_lower_map"),
-                ("outputnode.cbf_ci95_upper_map", "inputnode.cbf_ci95_upper_map"),
-                ("outputnode.cbv_ci95_lower_map", "inputnode.cbv_ci95_lower_map"),
-                ("outputnode.cbv_ci95_upper_map", "inputnode.cbv_ci95_upper_map"),
-                # Parametric-fit diagnostics (CPI/Vascular only)
-                ("outputnode.parametric_r2_map", "inputnode.parametric_r2_map"),
-                ("outputnode.fallback_mask", "inputnode.fallback_mask"),
-                # Leakage correction
-                ("outputnode.k2_map", "inputnode.k2_map"),
-                ("outputnode.preload_qc", "inputnode.preload_qc"),
-                # Phase 2/3 BIDS cleanup: in-memory dicts feeding the
-                # preproc-4D cosmetic enrichment + verbatim resume sidecar.
-                ("outputnode.aif_qc", "inputnode.aif_qc"),
-                ("outputnode.preprocessing_stats", "inputnode.preprocessing_stats"),
-                ("outputnode.motion_qc", "inputnode.motion_qc"),
-                ("outputnode.aif_metrics", "inputnode.aif_metrics"),
-                # Motion-corrected data
-                ("outputnode.dsc_moco", "inputnode.dsc_moco"),
-                ("outputnode.dsc_mean", "inputnode.dsc_mean"),
-                ("outputnode.motion_params", "inputnode.motion_params"),
-                # AIF outputs
-                ("outputnode.aif_curve", "inputnode.aif_curve"),
-                ("outputnode.aif_mask", "inputnode.aif_mask"),
-                # Registration (.h5 for derivatives)
-                ("outputnode.dsc_to_t1w_h5", "inputnode.dsc_to_t1w_xfm"),
-                ("outputnode.registration_filmstrip",
-                 "inputnode.registration_filmstrip"),
-                # Structural underlays
-                ("outputnode.t1w_in_dsc", "inputnode.t1w_in_dsc"),
-                ("outputnode.t1w_postcon_in_dsc", "inputnode.t1w_postcon_in_dsc"),
-                ("outputnode.t1w_subtraction_in_dsc", "inputnode.t1w_subtraction_in_dsc"),
-                ("outputnode.flair_in_dsc", "inputnode.flair_in_dsc"),
-                ("outputnode.flair_postcon_in_dsc", "inputnode.flair_postcon_in_dsc"),
-                ("outputnode.t2w_in_dsc", "inputnode.t2w_in_dsc"),
-                ("outputnode.t1w_to_dsc_h5", "inputnode.t1w_to_dsc_xfm"),
-                # AIF QC plots
-                ("outputnode.aif_curve_plot", "inputnode.aif_curve_plot"),
-                ("outputnode.aif_location_plot", "inputnode.aif_location_plot"),
-                ("outputnode.aif_candidates_plot",
-                 "inputnode.aif_candidates_plot"),
-                # Motion QC plot
-                ("outputnode.motion_qc_plot", "inputnode.motion_qc_plot"),
-                # QC metrics
-                ("outputnode.qc_metrics", "inputnode.qc_metrics"),
-                # DSC-space masks
-                ("outputnode.brain_mask_dsc", "inputnode.brain_mask_dsc"),
-                ("outputnode.nawm_mask_dsc", "inputnode.nawm_mask_dsc"),
-                # Lesion statistics
-                ("outputnode.lesion_stats_json", "inputnode.lesion_stats_json"),
-                ("outputnode.lesion_mask_dsc", "inputnode.lesion_mask_dsc"),
-                # User lesion statistics
-                ("outputnode.user_lesion_stats_json",
-                 "inputnode.user_lesion_stats_json"),
-                ("outputnode.user_lesion_mask_dsc",
-                 "inputnode.user_lesion_mask_dsc"),
-                # ROI statistics
-                ("outputnode.roi_stats_json", "inputnode.roi_stats_json"),
-                ("outputnode.roi_mask_dsc", "inputnode.roi_mask_dsc"),
-                # Brain-mask + DSC QC filmstrips
-                ("outputnode.brain_mask_filmstrip",
-                 "inputnode.brain_mask_filmstrip"),
-                ("outputnode.dsc_preprocessing_qc_plot",
-                 "inputnode.dsc_preprocessing_qc_plot"),
-                ("outputnode.dsc_param_maps_qc_plot",
-                 "inputnode.dsc_param_maps_qc_plot"),
-                ("outputnode.dsc_fit_qc_plot", "inputnode.dsc_fit_qc_plot"),
-                ("outputnode.dsc_leakage_qc_plot",
-                 "inputnode.dsc_leakage_qc_plot"),
-            ]),
-            (inputnode, dsc_datasinks_wf, [("dsc_file", "inputnode.source_dsc")]),
-        ])
-
-        if dsc_config.smooth_fwhm > 0:
-            workflow.connect([
-                (dsc_wf, dsc_datasinks_wf, [
-                    ("outputnode.smooth_hemodynamic",
-                     "inputnode.smooth_hemodynamic"),
-                    ("outputnode.smooth_auc", "inputnode.smooth_auc"),
-                ]),
-            ])
-            dsc_datasinks_wf.inputs.inputnode.smooth_fwhm = dsc_config.smooth_fwhm
-
-        workflow.connect([
-            (dsc_datasinks_wf, report_barrier, [
-                ("outputnode.done", "dsc_done"),
-            ]),
-        ])
 
     # -------------------------------------------------------------------
     # DCE perfusion workflow (requires anat, uses DSC CBV if available)
