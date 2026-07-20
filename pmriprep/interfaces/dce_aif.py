@@ -888,7 +888,7 @@ def _apply_aif_scale(
     target_peak: float,
     expected_range_fn: Callable[[], tuple[float, float]],
 ) -> tuple[npt.NDArray[Any], float]:
-    """Pure-function AIF amplitude rescale to a dose-corrected target.
+    """Apply conservative upward AIF amplitude calibration.
 
     Mirrors the production scaling block but is callable per trim
     iteration. Preserves the peak-amplitude guard: when the detected peak is
@@ -903,9 +903,10 @@ def _apply_aif_scale(
         Arterial hematocrit (used to convert Parker blood-voxel target
         amplitudes to plasma units).
     target_peak : float
-        User-supplied target peak (mM blood). When ``> 0``, overrides
-        the field-strength default; when ``<= 0``, falls back to the
-        midpoint of ``expected_range_fn()``.
+        User-supplied target peak (mM blood). When ``> 0``, explicitly
+        calibrate to that target. When ``<= 0``, preserve measured peaks at
+        or above the dose-adjusted expected lower bound and raise only
+        sub-bound peaks to that lower bound.
     expected_range_fn : Callable
         Zero-arg callable returning ``(peak_min, peak_max)`` in blood
         units for the current dose / field strength.
@@ -924,8 +925,10 @@ def _apply_aif_scale(
     if target_peak > 0:
         target = target_peak * plasma_conv
     else:
-        peak_min, peak_max = expected_range_fn()
-        target = (peak_min + peak_max) / 2.0 * plasma_conv
+        peak_min, _peak_max = expected_range_fn()
+        target = peak_min * plasma_conv
+        if current_peak >= target:
+            return aif_curve, 1.0
     scaling_factor = target / current_peak
     return aif_curve * scaling_factor, float(scaling_factor)
 
@@ -1419,10 +1422,11 @@ class DCEAIFDetectionInputSpec(BaseInterfaceInputSpec):
         0.0,
         usedefault=True,
         desc=(
-            "Target peak concentration (mM) for AIF scaling, in blood-voxel "
+            "Explicit target peak concentration (mM) for AIF calibration, in blood-voxel "
             "units (Parker 2006 convention, i.e. ΔR1/r1 pre-Hct-correction). "
             "The pipeline divides by (1-Hct) internally to compare against "
-            "the plasma-scale aif_curve. 0 = use field-strength default."
+            "the plasma-scale aif_curve. 0 preserves peaks at or above the "
+            "dose-scaled lower expected bound and raises sub-bound peaks to it."
         ),
     )
     baseline_frames = traits.Int(
@@ -1552,7 +1556,8 @@ class AIFDetection(BaseInterface):
     n_candidates : int
         Number of top candidate voxels to average for final AIF.
     target_peak : float
-        Target peak for scaling (0 = use default for field strength).
+        Explicit calibration target; 0 applies the conservative dose-scaled
+        lower-bound floor.
     baseline_frames : int
         Number of pre-contrast frames for baseline estimation.
     field_strength : float

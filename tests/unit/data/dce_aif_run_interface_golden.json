@@ -33,34 +33,31 @@
           "__f__": "0x0.0p+0"
         },
         {
-          "__f__": "0x1.a112676e30c83p-1"
+          "__f__": "0x1.4b026a77f5f43p-1"
         },
         {
-          "__f__": "0x1.1812f531dc4e5p+2"
+          "__f__": "0x1.bc8fde98495fcp+1"
         },
         {
-          "__f__": "0x1.21d6b3183a446p+3"
+          "__f__": "0x1.cc0fb6b09d80dp+2"
         },
         {
-          "__f__": "0x1.5b9611a7b9611p+3"
+          "__f__": "0x1.13dcb08d3dcb0p+3"
         },
         {
-          "__f__": "0x1.1da84b993acbfp+3"
+          "__f__": "0x1.c56ca8c275b56p+2"
         },
         {
-          "__f__": "0x1.37c253bd987c1p+2"
+          "__f__": "0x1.eedb0f149083ep+1"
         },
         {
-          "__f__": "0x1.a95f6c05d75b9p+0"
+          "__f__": "0x1.5198f02524d2cp+0"
         },
         {
-          "__f__": "0x1.2fbe8135949e8p-2"
+          "__f__": "0x1.e22232ae71ff9p-3"
         },
         {
-          "__f__": "0x1.10f020101b242p-9"
-        },
-        {
-          "__f__": "0x0.0p+0"
+          "__f__": "0x1.b13c22a3b94dap-10"
         },
         {
           "__f__": "0x0.0p+0"
@@ -138,14 +135,17 @@
           "__f__": "0x0.0p+0"
         },
         {
-          "__f__": "0x1.83f74e5793676p-252"
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x1.33e8d896c641cp-252"
         }
       ],
       "aif_uncertainty_inflation_factor": {
         "__f__": "0x1.0000000000000p+0"
       },
       "auc": {
-        "__f__": "0x1.46f2f2f50d1d5p+7"
+        "__f__": "0x1.037bbcc27c2fap+7"
       },
       "blood_t1": {
         "__f__": "0x1.a666666666666p+0"
@@ -153,10 +153,10 @@
       "candidate_count": 2,
       "detection_method": "atlas",
       "fwhm_seconds": {
-        "__f__": "0x1.ccb0b0d9963bcp+3"
+        "__f__": "0x1.ccb0b0d9963b8p+3"
       },
       "peak_concentration": {
-        "__f__": "0x1.5b9611a7b9611p+3"
+        "__f__": "0x1.13dcb08d3dcb0p+3"
       },
       "qc_metrics": {
         "aif_before_tissue_frames": {
@@ -170,17 +170,17 @@
             "n_pool": 2,
             "qc": {
               "auc_mm_s": {
-                "__f__": "0x1.46f2f2f50d1d5p+7"
+                "__f__": "0x1.037bbcc27c2fap+7"
               },
               "fwhm_seconds": {
-                "__f__": "0x1.ccb0b0d9963bcp+3"
+                "__f__": "0x1.ccb0b0d9963b8p+3"
               },
               "late_tail_per_peak": {
-                "__f__": "0x1.7cfc9c09109dep-257"
+                "__f__": "0x1.7cfc9c09109ddp-257"
               },
               "multi_bump_count": 0,
               "peak_mm": {
-                "__f__": "0x1.5b9611a7b9611p+3"
+                "__f__": "0x1.13dcb08d3dcb0p+3"
               },
               "ratio_30": {
                 "__f__": "0x0.0p+0"
@@ -190,7 +190,7 @@
               }
             },
             "scale_factor": {
-              "__f__": "0x1.4e7f1bd66e75ep+0"
+              "__f__": "0x1.09793289ad001p+0"
             },
             "status": "PASS",
             "tier": "MCA_ACA_dce_strict",
@@ -243,13 +243,13 @@
           "__f__": "0x1.8000000000000p+1"
         },
         "final_auc": {
-          "__f__": "0x1.46f2f2f50d1d5p+7"
+          "__f__": "0x1.037bbcc27c2fap+7"
         },
         "final_fwhm_seconds": {
-          "__f__": "0x1.ccb0b0d9963bcp+3"
+          "__f__": "0x1.ccb0b0d9963b8p+3"
         },
         "final_peak_mm": {
-          "__f__": "0x1.5b9611a7b9611p+3"
+          "__f__": "0x1.13dcb08d3dcb0p+3"
         },
         "final_washout": {
           "__f__": "0x1.0000000000000p+0"
@@ -274,17 +274,17 @@
         "n_left_candidates": 0,
         "n_right_candidates": 2,
         "peak_amplitude_ratio": {
-          "__f__": "0x1.a86bca1af286cp-1"
+          "__f__": "0x1.50d79435e50d8p-1"
         },
         "peak_amplitude_warning": false,
         "peak_mm_mean": {
           "__f__": "0x1.0000000000000p+2"
         },
         "quality_score": {
-          "__f__": "0x1.107853b22952cp-2"
+          "__f__": "0x1.5e8a29b217125p-3"
         },
         "scaling_factor": {
-          "__f__": "0x1.4e7f1bd66e75ep+0"
+          "__f__": "0x1.09793289ad001p+0"
         },
         "scaling_factor_warning": false,
         "tissue_ttp_frame": {
@@ -298,10 +298,10 @@
         }
       },
       "quality_score": {
-        "__f__": "0x1.107853b22952cp-2"
+        "__f__": "0x1.5e8a29b217125p-3"
       },
       "scaling_factor": {
-        "__f__": "0x1.4e7f1bd66e75ep+0"
+        "__f__": "0x1.09793289ad001p+0"
       }
     }
   },
@@ -812,34 +812,31 @@
           "__f__": "0x0.0p+0"
         },
         {
-          "__f__": "0x1.a112676e30c83p-1"
+          "__f__": "0x1.4b026a77f5f43p-1"
         },
         {
-          "__f__": "0x1.1812f531dc4e5p+2"
+          "__f__": "0x1.bc8fde98495fcp+1"
         },
         {
-          "__f__": "0x1.21d6b3183a446p+3"
+          "__f__": "0x1.cc0fb6b09d80dp+2"
         },
         {
-          "__f__": "0x1.5b9611a7b9611p+3"
+          "__f__": "0x1.13dcb08d3dcb0p+3"
         },
         {
-          "__f__": "0x1.1da84b993acbfp+3"
+          "__f__": "0x1.c56ca8c275b56p+2"
         },
         {
-          "__f__": "0x1.37c253bd987c1p+2"
+          "__f__": "0x1.eedb0f149083ep+1"
         },
         {
-          "__f__": "0x1.a95f6c05d75b9p+0"
+          "__f__": "0x1.5198f02524d2cp+0"
         },
         {
-          "__f__": "0x1.2fbe8135949e8p-2"
+          "__f__": "0x1.e22232ae71ff9p-3"
         },
         {
-          "__f__": "0x1.10f020101b242p-9"
-        },
-        {
-          "__f__": "0x0.0p+0"
+          "__f__": "0x1.b13c22a3b94dap-10"
         },
         {
           "__f__": "0x0.0p+0"
@@ -917,14 +914,17 @@
           "__f__": "0x0.0p+0"
         },
         {
-          "__f__": "0x1.83f74e5793676p-252"
+          "__f__": "0x0.0p+0"
+        },
+        {
+          "__f__": "0x1.33e8d896c641cp-252"
         }
       ],
       "aif_uncertainty_inflation_factor": {
         "__f__": "0x1.0000000000000p+0"
       },
       "auc": {
-        "__f__": "0x1.46f2f2f50d1d5p+7"
+        "__f__": "0x1.037bbcc27c2fap+7"
       },
       "blood_t1": {
         "__f__": "0x1.a666666666666p+0"
@@ -932,10 +932,10 @@
       "candidate_count": 2,
       "detection_method": "atlas",
       "fwhm_seconds": {
-        "__f__": "0x1.ccb0b0d9963bcp+3"
+        "__f__": "0x1.ccb0b0d9963b8p+3"
       },
       "peak_concentration": {
-        "__f__": "0x1.5b9611a7b9611p+3"
+        "__f__": "0x1.13dcb08d3dcb0p+3"
       },
       "qc_metrics": {
         "aif_before_tissue_frames": {
@@ -949,17 +949,17 @@
             "n_pool": 2,
             "qc": {
               "auc_mm_s": {
-                "__f__": "0x1.46f2f2f50d1d5p+7"
+                "__f__": "0x1.037bbcc27c2fap+7"
               },
               "fwhm_seconds": {
-                "__f__": "0x1.ccb0b0d9963bcp+3"
+                "__f__": "0x1.ccb0b0d9963b8p+3"
               },
               "late_tail_per_peak": {
-                "__f__": "0x1.7cfc9c09109dep-257"
+                "__f__": "0x1.7cfc9c09109ddp-257"
               },
               "multi_bump_count": 0,
               "peak_mm": {
-                "__f__": "0x1.5b9611a7b9611p+3"
+                "__f__": "0x1.13dcb08d3dcb0p+3"
               },
               "ratio_30": {
                 "__f__": "0x0.0p+0"
@@ -969,7 +969,7 @@
               }
             },
             "scale_factor": {
-              "__f__": "0x1.4e7f1bd66e75ep+0"
+              "__f__": "0x1.09793289ad001p+0"
             },
             "status": "PASS",
             "tier": "MCA_ACA_dce_strict",
@@ -1022,13 +1022,13 @@
           "__f__": "0x1.8000000000000p+1"
         },
         "final_auc": {
-          "__f__": "0x1.46f2f2f50d1d5p+7"
+          "__f__": "0x1.037bbcc27c2fap+7"
         },
         "final_fwhm_seconds": {
-          "__f__": "0x1.ccb0b0d9963bcp+3"
+          "__f__": "0x1.ccb0b0d9963b8p+3"
         },
         "final_peak_mm": {
-          "__f__": "0x1.5b9611a7b9611p+3"
+          "__f__": "0x1.13dcb08d3dcb0p+3"
         },
         "final_washout": {
           "__f__": "0x1.0000000000000p+0"
@@ -1053,17 +1053,17 @@
         "n_left_candidates": 0,
         "n_right_candidates": 2,
         "peak_amplitude_ratio": {
-          "__f__": "0x1.a86bca1af286cp-1"
+          "__f__": "0x1.50d79435e50d8p-1"
         },
         "peak_amplitude_warning": false,
         "peak_mm_mean": {
           "__f__": "0x1.0000000000000p+2"
         },
         "quality_score": {
-          "__f__": "0x1.107853b22952cp-2"
+          "__f__": "0x1.5e8a29b217125p-3"
         },
         "scaling_factor": {
-          "__f__": "0x1.4e7f1bd66e75ep+0"
+          "__f__": "0x1.09793289ad001p+0"
         },
         "scaling_factor_warning": false,
         "tissue_ttp_frame": {
@@ -1077,10 +1077,10 @@
         }
       },
       "quality_score": {
-        "__f__": "0x1.107853b22952cp-2"
+        "__f__": "0x1.5e8a29b217125p-3"
       },
       "scaling_factor": {
-        "__f__": "0x1.4e7f1bd66e75ep+0"
+        "__f__": "0x1.09793289ad001p+0"
       }
     }
   },

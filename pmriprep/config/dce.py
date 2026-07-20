@@ -91,7 +91,7 @@ class DCEConfig:
     # AIF detection settings
     aif_method: Literal["auto", "population"] = "auto"
     aif_file: Optional[Path] = None  # External AIF curve file (bypasses detection)
-    target_peak: Optional[float] = None  # None = use field-strength default
+    target_peak: Optional[float] = None  # None = dose-scaled lower-bound floor
     aif_mask_file: Optional[Path] = None
     lesion_distance: float = 15.0
     n_aif_candidates: int = 10

@@ -621,21 +621,21 @@ class TestAIFScalingUnitFix:
         assert iface._get_dose_factor() == pytest.approx(0.25)
 
     def test_effective_target_half_dose_vueway_plasma(self) -> None:
-        """Half-dose Vueway: plasma target = (5.0+7.6)/2 × 0.25 / (1-0.42) ≈ 2.716 mM."""
+        """Half-dose Vueway floor = 5.0 × 0.25 / (1-0.42) ≈ 2.155 mM."""
         iface = self._make_interface(
             dose=0.5, agent_standard_dose=0.05, hematocrit=0.42,
         )
-        peak_min, peak_max = iface._get_expected_peak_range()
-        blood_target = (peak_min + peak_max) / 2.0  # 6.3 × 0.25 = 1.575 mM (blood)
+        peak_min, _peak_max = iface._get_expected_peak_range()
+        blood_target = peak_min
         plasma_target = blood_target / (1.0 - 0.42)
-        assert blood_target == pytest.approx(1.575)
-        assert plasma_target == pytest.approx(2.716, rel=1e-3)
+        assert blood_target == pytest.approx(1.25)
+        assert plasma_target == pytest.approx(2.155, rel=1e-3)
 
     def test_hct_zero_is_no_op_on_conversion(self) -> None:
         """Hct=0 → (1-Hct)=1 → plasma conversion is no-op; target equals Parker fallback."""
         hct = 0.0
-        peak_min, peak_max = 5.0, 7.6
-        blood_target = (peak_min + peak_max) / 2.0
+        peak_min = 5.0
+        blood_target = peak_min
         plasma_target = blood_target / (1.0 - hct)
         assert plasma_target == pytest.approx(blood_target)
 
@@ -692,21 +692,15 @@ class TestAIFScalingUnitFix:
         curve = np.zeros(n, dtype=np.float64)
         curve[10:20] = 6.29  # peak in plasma units
 
-        # Replay scaling arithmetic matching the landed code.
-        current_peak = float(np.max(curve))
         hct = float(iface.inputs.hematocrit)
-        plasma_conv = 1.0 / (1.0 - hct)
-        peak_min, peak_max = iface._get_expected_peak_range()
-        target = (peak_min + peak_max) / 2.0 * plasma_conv
-        scaling_factor = target / current_peak
-        scaled = curve * scaling_factor
+        scaled, scaling_factor = _apply_aif_scale(
+            curve, hct, 0.0, iface._get_expected_peak_range,
+        )
 
-        # Expected plasma target: Parker mid (6.3) / (1-0.42) ≈ 10.862 mM.
-        expected_plasma_target = (5.0 + 7.6) / 2.0 / (1.0 - 0.42)
-        assert target == pytest.approx(expected_plasma_target, rel=1e-4)
-        assert float(np.max(scaled)) == pytest.approx(target, rel=1e-4)
-        # scaling_factor ≈ 10.862 / 6.29 ≈ 1.727 — below warning thresholds.
-        assert scaling_factor == pytest.approx(1.727, rel=1e-3)
+        # Expected plasma floor: Parker minimum (5.0) / (1-0.42) ≈ 8.621 mM.
+        expected_plasma_target = 5.0 / (1.0 - 0.42)
+        assert float(np.max(scaled)) == pytest.approx(expected_plasma_target, rel=1e-4)
+        assert scaling_factor == pytest.approx(1.371, rel=1e-3)
         assert scaling_factor <= 3.4  # no low-confidence warning
         assert scaling_factor <= 5.2  # no unreliable warning
 
@@ -1981,6 +1975,42 @@ def test_apply_aif_scale_target_peak_explicit():
     assert out.max() == pytest.approx(expected_target, rel=1e-6)
 
 
+def test_apply_aif_scale_explicit_target_can_scale_downward() -> None:
+    """An explicit user target retains two-sided calibration semantics."""
+    curve = np.array([0, 0, 0, 12.0, 6.0, 3.0])
+    out, sf = _apply_aif_scale(
+        curve, hct=0.42, target_peak=6.0,
+        expected_range_fn=lambda: (5.0, 7.6),
+    )
+    expected_target = 6.0 / (1.0 - 0.42)
+    assert sf == pytest.approx(expected_target / 12.0)
+    assert out.max() == pytest.approx(expected_target)
+
+
+def test_apply_aif_scale_default_raises_peak_to_expected_floor() -> None:
+    """Default calibration raises a sub-bound peak only to the lower bound."""
+    curve = np.array([0, 0, 0, 4.0, 2.0, 1.0])
+    out, sf = _apply_aif_scale(
+        curve, hct=0.42, target_peak=0.0,
+        expected_range_fn=lambda: (5.0, 7.6),
+    )
+    expected_floor = 5.0 / (1.0 - 0.42)
+    assert sf == pytest.approx(expected_floor / 4.0)
+    assert out.max() == pytest.approx(expected_floor)
+
+
+@pytest.mark.parametrize("peak", [5.0 / 0.58, 12.0, 16.0])
+def test_apply_aif_scale_default_preserves_in_band_and_high_peaks(peak: float) -> None:
+    """Default calibration never changes a peak at or above the lower bound."""
+    curve = np.array([0, 0, 0, peak, peak / 2.0, peak / 4.0])
+    out, sf = _apply_aif_scale(
+        curve, hct=0.42, target_peak=0.0,
+        expected_range_fn=lambda: (5.0, 7.6),
+    )
+    assert sf == 1.0
+    assert np.array_equal(out, curve)
+
+
 # ----- Per-gate basic tests -----------------------------------------------
 
 def test_g1_pass():
@@ -2331,18 +2361,18 @@ def test_bump_detector_short_shoulder_excludes_recirculation():
 # ----- Dose / B0 independence -------------------------------------------
 
 def test_g1_dimensionless_against_dose_corrected_target():
-    """Half-dose AIF with proportionally-halved target gives scale ~1.
+    """Half-dose AIF above the proportionally scaled floor is preserved.
 
     Half-dose plasma peak ~5 mM; expected_range halved to (2.5, 3.8)
-    so midpoint = 3.15 mM blood, target = 3.15 / (1 - 0.42) = 5.43 mM
-    plasma. scaling_factor = 5.43 / 5.0 = 1.087 — passes G1 <= 3.
+    so the lower floor is 2.5 / (1 - 0.42) = 4.31 mM plasma. The
+    measured 5 mM peak is preserved and passes G1.
     """
     curve = np.array([0, 0, 0, 5.0, 2.5, 1.25])
     _out, sf = _apply_aif_scale(
         curve, hct=0.42, target_peak=0.0,
         expected_range_fn=lambda: (2.5, 3.8),
     )
-    assert sf == pytest.approx(1.087, abs=0.05)
+    assert sf == 1.0
     assert sf <= DCE_AIF_GATE_SCALE_HARD
 
 
@@ -3037,10 +3067,10 @@ class TestScoreAndGatePool:
         assert outcome.status == status
         assert outcome.decision == decision
 
-    def test_emitted_curve_is_anchored_to_plasma_target(self) -> None:
-        """Emitted curve is amplitude-anchored (the C2 emit invariant).
+    def test_emitted_curve_is_raised_to_plasma_floor(self) -> None:
+        """Emitted sub-bound curve is raised to the plasma floor.
 
-        Its peak lands at the plasma-unit target, not the raw detected peak.
+        Its peak lands at the lower expected plasma bound.
         """
         tr, baseline_frames, hct = 4.0, 5, 0.42
         cands = [(3, 10, 1), (7, 10, 2)]
@@ -3055,8 +3085,8 @@ class TestScoreAndGatePool:
             tr, baseline_frames, hct, 0.0, "MCA_ACA_dce_strict",
         )
 
-        peak_min, peak_max = det._get_expected_peak_range()
-        target = (peak_min + peak_max) / 2.0 / (1.0 - hct)
+        peak_min, _peak_max = det._get_expected_peak_range()
+        target = peak_min / (1.0 - hct)
         assert float(np.max(outcome.curve_scaled)) == pytest.approx(
             target, rel=1e-4,
         )
@@ -3085,8 +3115,8 @@ class TestScoreAndGatePool:
         assert outcome.decision["n_pool"] == 2
         assert outcome.n_slabs == _count_slabs_spanned(subset)
         assert np.all(np.isfinite(outcome.curve_scaled))
-        peak_min, peak_max = det._get_expected_peak_range()
-        target = (peak_min + peak_max) / 2.0 / (1.0 - hct)
+        peak_min, _peak_max = det._get_expected_peak_range()
+        target = peak_min / (1.0 - hct)
         assert float(np.max(outcome.curve_scaled)) == pytest.approx(
             target, rel=1e-4,
         )
