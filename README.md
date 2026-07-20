@@ -238,7 +238,7 @@ dce:
 | `aif_method` | str | `"auto"` | AIF method: `auto`, `synthetic` |
 | `aif_file` | path | `null` | External AIF curve (ΔR2* in s⁻¹). Bypasses AIF detection |
 | `aif_mask_file` | path | `null` | Custom AIF mask file (search constraint; DSC space) |
-| `n_aif_candidates` | int | `10` | Number of AIF candidate voxels to average |
+| `n_aif_candidates` | int | `10` | Maximum number of AIF candidate voxels to retain and average; fewer may survive selection |
 | `lesion_distance` | float | `15.0` | Minimum distance (mm) from lesion for AIF candidates |
 | `disable_aif_fallback` | bool | `false` | Disable synthetic AIF fallback: error if no AIF found, otherwise retain a flagged low-quality AIF |
 | `leakage_method` | str | `"bsw"` | K2 leakage correction: `bsw` (standard), `bidirectional` |
@@ -266,7 +266,7 @@ dce:
 | `target_peak` | float | `null` | Explicit AIF calibration target in blood-voxel units (mM), before hematocrit correction; null = preserve peaks within/above the dose-adjusted expected range and raise lower peaks only to its lower bound |
 | `aif_file` | path | `null` | External AIF file (plasma [Gd] in mM, Hct-corrected). Bypasses AIF detection |
 | `aif_mask_file` | path | `null` | Custom AIF mask file (search constraint; DCE space) |
-| `n_aif_candidates` | int | `10` | Number of AIF candidate voxels to average |
+| `n_aif_candidates` | int | `10` | Maximum number of AIF candidate voxels to retain and average; fewer may survive selection |
 | `lesion_distance` | float | `15.0` | Minimum distance (mm) from lesion for AIF candidates |
 | `aif_bat_alignment` | str | `"auto"` | AIF→tumor bolus-arrival alignment: `auto`, `off` |
 | `no_t1` | bool | `false` | Skip T1 mapping |

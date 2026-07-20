@@ -38,7 +38,8 @@ class DCEConfig:
     lesion_distance : float
         Minimum distance (mm) from lesion for AIF candidates.
     n_aif_candidates : int
-        Number of AIF candidate voxels to average.
+        Maximum number of AIF candidate voxels to retain and average; fewer
+        may survive selection.
     underlays : List[str]
         List of underlay images for QC visualizations.
     b1_method : Literal["auto", "afi", "precomputed", "none"]

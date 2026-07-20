@@ -64,7 +64,8 @@ class DSCConfig:
     lesion_distance : float
         Minimum distance (mm) from lesion for AIF candidates.
     n_aif_candidates : int
-        Number of AIF candidate voxels to average.
+        Maximum number of AIF candidate voxels to retain and average; fewer
+        may survive selection.
     disable_aif_fallback : bool
         Disable the synthetic AIF fallback. Default False (on a detection
         failure the pipeline substitutes a synthetic gamma-variate AIF and flags
