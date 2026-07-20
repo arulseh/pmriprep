@@ -735,7 +735,13 @@ def recommend_dce_qc(qc_metrics: dict[str, Any]) -> dict[str, Any]:
     # Motion via composite status
     preprocessing_qc = qc_metrics.get("preprocessing", {})
     motion_status = preprocessing_qc.get("motion_status")
-    if motion_status is not None:
+    if preprocessing_qc.get("motion_qc_available") is False:
+        recommendations.append(QCRecommendation(
+            QCAction.REVIEW,
+            "Motion QC unavailable; motion-related bias cannot be assessed",
+            2,
+        ))
+    elif motion_status is not None:
         fd_mean = preprocessing_qc.get("fd_mean")
         fd_max = preprocessing_qc.get("fd_max")
         pct_outliers = preprocessing_qc.get("percent_outliers")
@@ -753,10 +759,9 @@ def recommend_dce_qc(qc_metrics: dict[str, Any]) -> dict[str, Any]:
         if motion_rec is not None:
             recommendations.append(motion_rec)
 
-    # An auto-detected bolus before the minimum baseline window means the
-    # acquisition has no statistically adequate pre-contrast reference. The
-    # pipeline still emits derivatives for inspection, but S0-dependent PK
-    # estimates are not quantitatively valid.
+    # A baseline fallback means the acquisition has no statistically adequate
+    # pre-contrast reference. The pipeline still emits derivatives for
+    # inspection, but S0-dependent PK estimates are not quantitatively valid.
     if preprocessing_qc.get("baseline_fallback_applied"):
         detected_frame = preprocessing_qc.get("detected_bolus_frame")
         minimum_frames = preprocessing_qc.get("baseline_minimum_frames")

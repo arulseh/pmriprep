@@ -2918,7 +2918,10 @@ class DCEPreprocess(SimpleInterface):
                     mask_data.shape, dce_data.shape[:3],
                 )
 
-        if self.inputs.baseline_frames > 0:
+        from pmriprep.utils.dce_constants import DEFAULT_BASELINE_FRAMES
+
+        configured_baseline = self.inputs.baseline_frames > 0
+        if configured_baseline:
             baseline_frames = self.inputs.baseline_frames
             bolus_frame, baseline_diag = self._detect_bolus_arrival(
                 dce_data, brain_mask
@@ -2928,32 +2931,46 @@ class DCEPreprocess(SimpleInterface):
                 dce_data, brain_mask
             )
 
-            from pmriprep.utils.dce_constants import DEFAULT_BASELINE_FRAMES
+        detected_bolus_frame = int(bolus_frame)
+        usable_fallback = max(1, min(DEFAULT_BASELINE_FRAMES, n_volumes - 1))
+        if n_volumes - 1 < DEFAULT_BASELINE_FRAMES:
+            fallback_reason = "insufficient_volumes_for_minimum_baseline"
+        elif configured_baseline and baseline_frames < DEFAULT_BASELINE_FRAMES:
+            fallback_reason = "configured_baseline_below_minimum"
+        elif (
+            not configured_baseline
+            and (
+                baseline_frames < DEFAULT_BASELINE_FRAMES
+                or bolus_frame < DEFAULT_BASELINE_FRAMES
+            )
+        ):
+            fallback_reason = "detected_bolus_before_minimum_baseline"
+        else:
+            fallback_reason = None
 
-            detected_bolus_frame = int(bolus_frame)
-            minimum_frames = min(DEFAULT_BASELINE_FRAMES, n_volumes - 1)
-            if baseline_frames < minimum_frames or bolus_frame < minimum_frames:
-                baseline_frames = minimum_frames
-                bolus_frame = minimum_frames
-                baseline_diag = dict(baseline_diag)
-                baseline_diag.update({
-                    "baseline_status": "POOR",
-                    "baseline_minimum_frames": DEFAULT_BASELINE_FRAMES,
-                    "baseline_frames_used": baseline_frames,
-                    "detected_bolus_frame": detected_bolus_frame,
-                    "baseline_fallback_applied": True,
-                    "baseline_fallback_reason": (
-                        "detected_bolus_before_minimum_baseline"
-                    ),
-                    "baseline_warning": (
-                        "DCE bolus detection occurred before the minimum "
-                        f"{DEFAULT_BASELINE_FRAMES}-frame baseline; "
-                        f"{baseline_frames} frames were used as a fallback. "
-                        "The S0 estimate and quantitative PK maps may be biased."
-                    ),
-                })
+        if fallback_reason is not None:
+            baseline_frames = usable_fallback
+            if fallback_reason != "configured_baseline_below_minimum":
+                bolus_frame = usable_fallback
+            baseline_diag = dict(baseline_diag)
+            baseline_diag.update({
+                "baseline_status": "POOR",
+                "baseline_minimum_frames": DEFAULT_BASELINE_FRAMES,
+                "baseline_frames_used": baseline_frames,
+                "detected_bolus_frame": detected_bolus_frame,
+                "baseline_fallback_applied": True,
+                "baseline_fallback_reason": fallback_reason,
+                "baseline_warning": (
+                    "DCE acquisition or baseline configuration does not provide "
+                    "the required "
+                    f"{DEFAULT_BASELINE_FRAMES}-frame pre-contrast baseline; "
+                    f"{baseline_frames} frames were used as a computational "
+                    "fallback. The S0 estimate and quantitative PK maps are "
+                    "unreliable."
+                ),
+            })
 
-        baseline_frames = max(3, min(baseline_frames, n_volumes - 1))
+        baseline_frames = max(1, min(baseline_frames, n_volumes - 1))
         if bolus_frame > 0 and baseline_frames > bolus_frame:
             baseline_frames = bolus_frame
 
@@ -3080,38 +3097,18 @@ class DCEPreprocess(SimpleInterface):
             motion_status = get_composite_motion_status(
                 fd_mean, fd_max, pct_outliers,
             )
-            metrics = {
+            metrics = self._preprocess_qc_context(preparation)
+            metrics.update({
                 "fd_mean": fd_mean,
                 "fd_max": fd_max,
                 "motion_status": motion_status,
+                "motion_qc_available": True,
                 "fd_list": list(fd_list),
                 "n_outliers": n_outliers,
                 "outlier_frames": list(outlier_frames),
                 "motion_thresh": motion_thresh,
-                "n_volumes": preparation.n_volumes,
                 "percent_outliers": pct_outliers,
-                "baseline_frames": preparation.baseline_frames,
-                "bolus_arrival_frame": preparation.bolus_frame,
-                "baseline_detection_method": preparation.baseline_diagnostics.get(
-                    "method", "unknown"
-                ),
-                "baseline_detection_confidence": (
-                    preparation.baseline_diagnostics.get("confidence", "unknown")
-                ),
-                "reference_type": str(self.inputs.ref_vol),
-                "motion_applied": bool(self.inputs.apply_motion_correction),
-            }
-            for key in (
-                "baseline_status",
-                "baseline_minimum_frames",
-                "baseline_frames_used",
-                "detected_bolus_frame",
-                "baseline_fallback_applied",
-                "baseline_fallback_reason",
-                "baseline_warning",
-            ):
-                if key in preparation.baseline_diagnostics:
-                    metrics[key] = preparation.baseline_diagnostics[key]
+            })
             if preparation.baseline_diagnostics.get("confidence", "high") != "high":
                 logger.warning(
                     "DCE baseline detection low confidence: method=%s, "
@@ -3131,28 +3128,66 @@ class DCEPreprocess(SimpleInterface):
             )
         except Exception as exc:
             logger.warning("DCE motion QC calculation failed: %s", exc)
+            metrics = self._preprocess_qc_context(preparation)
+            metrics.update({
+                "motion_status": "UNKNOWN",
+                "motion_qc_available": False,
+                "motion_qc_error": type(exc).__name__,
+                "motion_qc_warning": (
+                    "DCE motion parameters could not be summarized. "
+                    "Motion quality is unknown; review the motion plot and "
+                    "quantitative maps before use."
+                ),
+            })
             return _DCEMotionQC(
                 (),
                 0.0,
                 0.0,
                 0,
                 (),
-                {
-                    "motion_status": "UNKNOWN",
-                    "motion_qc_available": False,
-                    "motion_qc_error": type(exc).__name__,
-                    "motion_qc_warning": (
-                        "DCE motion parameters could not be summarized. "
-                        "Motion quality is unknown; review the motion plot and "
-                        "quantitative maps before use."
-                    ),
-                    "n_volumes": preparation.n_volumes,
-                    "baseline_frames": preparation.baseline_frames,
-                    "bolus_arrival_frame": preparation.bolus_frame,
-                    "reference_type": str(self.inputs.ref_vol),
-                    "motion_applied": bool(self.inputs.apply_motion_correction),
-                },
+                metrics,
             )
+
+    def _preprocess_qc_context(
+        self, preparation: _DCEPreprocessPreparation,
+    ) -> dict[str, Any]:
+        """Build baseline and execution provenance shared by both motion paths.
+
+        Parameters
+        ----------
+        preparation : _DCEPreprocessPreparation
+            Resolved acquisition and baseline state.
+
+        Returns
+        -------
+        dict
+            Common preprocessing QC metrics, including any baseline fallback.
+        """
+        metrics = {
+            "n_volumes": preparation.n_volumes,
+            "baseline_frames": preparation.baseline_frames,
+            "bolus_arrival_frame": preparation.bolus_frame,
+            "baseline_detection_method": preparation.baseline_diagnostics.get(
+                "method", "unknown"
+            ),
+            "baseline_detection_confidence": preparation.baseline_diagnostics.get(
+                "confidence", "unknown"
+            ),
+            "reference_type": str(self.inputs.ref_vol),
+            "motion_applied": bool(self.inputs.apply_motion_correction),
+        }
+        for key in (
+            "baseline_status",
+            "baseline_minimum_frames",
+            "baseline_frames_used",
+            "detected_bolus_frame",
+            "baseline_fallback_applied",
+            "baseline_fallback_reason",
+            "baseline_warning",
+        ):
+            if key in preparation.baseline_diagnostics:
+                metrics[key] = preparation.baseline_diagnostics[key]
+        return metrics
 
     def _run_mcflirt(self, plan: _DCEMCFLIRTPlan) -> str:
         """Execute a prepared MCFLIRT command and return its parameter file.

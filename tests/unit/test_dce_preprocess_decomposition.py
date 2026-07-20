@@ -16,10 +16,10 @@ def _write_dce(path: Path, shape: tuple[int, int, int, int] = (4, 5, 6, 12)) -> 
     nib.save(nib.Nifti1Image(data, np.diag([2.0, 2.0, 3.0, 1.0])), path)
 
 
-def test_prepare_preprocess_inputs_preserves_fixed_baseline_and_mask(
+def test_prepare_preprocess_inputs_flags_fixed_baseline_below_minimum(
     tmp_path: Path, monkeypatch: Any,
 ) -> None:
-    """Configured baseline keeps its clamp and still detects arrival for QC."""
+    """An inadequate configured baseline is replaced and marked invalid."""
     dce_file = tmp_path / "dce.nii.gz"
     mask_file = tmp_path / "mask.nii.gz"
     _write_dce(dce_file)
@@ -32,7 +32,7 @@ def test_prepare_preprocess_inputs_preserves_fixed_baseline_and_mask(
     def _detect(self: DCEPreprocess, data: np.ndarray, mask: np.ndarray):
         captured["shape"] = data.shape
         captured["mask"] = mask
-        return 5, {"method": "characterized", "confidence": "high"}
+        return 7, {"method": "characterized", "confidence": "high"}
 
     monkeypatch.setattr(DCEPreprocess, "_detect_bolus_arrival", _detect)
     interface = DCEPreprocess(
@@ -48,13 +48,16 @@ def test_prepare_preprocess_inputs_preserves_fixed_baseline_and_mask(
     assert prepared.brain_mask.dtype == np.bool_
     assert captured["shape"] == prepared.data.shape
     assert captured["mask"] is prepared.brain_mask
-    assert prepared.baseline_frames == 3
-    assert prepared.baseline_indices == (0, 1, 2)
-    assert prepared.bolus_frame == 5
-    assert prepared.baseline_diagnostics == {
-        "method": "characterized",
-        "confidence": "high",
-    }
+    assert prepared.baseline_frames == 5
+    assert prepared.baseline_indices == tuple(range(5))
+    assert prepared.bolus_frame == 7
+    assert prepared.baseline_diagnostics["method"] == "characterized"
+    assert prepared.baseline_diagnostics["confidence"] == "high"
+    assert prepared.baseline_diagnostics["baseline_status"] == "POOR"
+    assert prepared.baseline_diagnostics["baseline_fallback_applied"] is True
+    assert prepared.baseline_diagnostics["baseline_fallback_reason"] == (
+        "configured_baseline_below_minimum"
+    )
 
 
 def test_prepare_preprocess_inputs_preserves_auto_baseline_and_mask_fallback(
@@ -119,7 +122,35 @@ def test_prepare_preprocess_inputs_surfaces_invalid_early_auto_baseline(
     assert prepared.baseline_diagnostics["baseline_minimum_frames"] == 5
     assert prepared.baseline_diagnostics["baseline_status"] == "POOR"
     assert prepared.baseline_diagnostics["baseline_fallback_applied"] is True
-    assert "PK maps may be biased" in prepared.baseline_diagnostics["baseline_warning"]
+    assert "PK maps are unreliable" in prepared.baseline_diagnostics["baseline_warning"]
+
+
+def test_prepare_preprocess_inputs_flags_series_without_five_baseline_frames(
+    tmp_path: Path, monkeypatch: Any,
+) -> None:
+    """A short acquisition uses available frames but remains quantitatively invalid."""
+    dce_file = tmp_path / "short_dce.nii.gz"
+    _write_dce(dce_file, shape=(4, 5, 6, 4))
+    monkeypatch.setattr(
+        DCEPreprocess,
+        "_auto_detect_baseline",
+        lambda self, data, mask: (
+            3,
+            3,
+            {"method": "characterized", "confidence": "low"},
+        ),
+    )
+    interface = DCEPreprocess(in_file=str(dce_file), baseline_frames=0)
+
+    prepared = interface._prepare_preprocess_inputs()
+
+    assert prepared.baseline_frames == 3
+    assert prepared.baseline_indices == (0, 1, 2)
+    assert prepared.bolus_frame == 3
+    assert prepared.baseline_diagnostics["baseline_minimum_frames"] == 5
+    assert prepared.baseline_diagnostics["baseline_fallback_reason"] == (
+        "insufficient_volumes_for_minimum_baseline"
+    )
 
 
 @pytest.mark.parametrize(
@@ -149,7 +180,7 @@ def test_prepare_mcflirt_plan_preserves_reference_and_interpolation_flags(
     )
     interface = DCEPreprocess(
         in_file=str(dce_file),
-        baseline_frames=3,
+        baseline_frames=5,
         ref_vol=ref_vol,
         interpolation=interpolation,
         cost="normmi",
@@ -186,7 +217,7 @@ def test_prepare_mcflirt_plan_writes_baseline_mean_reference(
         "_detect_bolus_arrival",
         lambda self, data, mask: (5, {"confidence": "high"}),
     )
-    interface = DCEPreprocess(in_file=str(dce_file), baseline_frames=3)
+    interface = DCEPreprocess(in_file=str(dce_file), baseline_frames=5)
     prepared = interface._prepare_preprocess_inputs()
 
     plan = interface._prepare_mcflirt_plan(prepared)
@@ -196,7 +227,7 @@ def test_prepare_mcflirt_plan_writes_baseline_mean_reference(
     ref_index = plan.command.index("-reffile")
     assert plan.command[ref_index + 1] == plan.reference_file
     reference = nib.load(plan.reference_file).get_fdata()
-    assert np.allclose(reference, prepared.data[..., :3].mean(axis=3))
+    assert np.allclose(reference, prepared.data[..., :5].mean(axis=3))
 
 
 def test_summarize_motion_qc_preserves_fd_and_outlier_reduction(
@@ -224,7 +255,7 @@ def test_summarize_motion_qc_preserves_fd_and_outlier_reduction(
     )
     interface = DCEPreprocess(
         in_file=str(dce_file),
-        baseline_frames=3,
+        baseline_frames=5,
         motion_thresh=0.55,
         head_radius=50.0,
         apply_motion_correction=False,
@@ -241,7 +272,7 @@ def test_summarize_motion_qc_preserves_fd_and_outlier_reduction(
     assert qc.outlier_frames == (1,)
     assert qc.metrics["fd_list"] == pytest.approx([0.0, 0.6, 0.5])
     assert qc.metrics["percent_outliers"] == pytest.approx(100.0 / 12.0)
-    assert qc.metrics["baseline_frames"] == 3
+    assert qc.metrics["baseline_frames"] == 5
     assert qc.metrics["bolus_arrival_frame"] == 5
     assert qc.metrics["baseline_detection_method"] == "characterized"
     assert qc.metrics["baseline_detection_confidence"] == "medium"
@@ -260,7 +291,7 @@ def test_summarize_motion_qc_surfaces_nonfatal_failure(
         "_detect_bolus_arrival",
         lambda self, data, mask: (5, {"confidence": "high"}),
     )
-    interface = DCEPreprocess(in_file=str(dce_file), baseline_frames=3)
+    interface = DCEPreprocess(in_file=str(dce_file), baseline_frames=5)
     prepared = interface._prepare_preprocess_inputs()
 
     qc = interface._summarize_motion_qc(str(tmp_path / "missing.par"), prepared)
@@ -274,9 +305,36 @@ def test_summarize_motion_qc_surfaces_nonfatal_failure(
     assert qc.metrics["motion_qc_available"] is False
     assert qc.metrics["motion_qc_error"] == "FileNotFoundError"
     assert "Motion quality is unknown" in qc.metrics["motion_qc_warning"]
-    assert qc.metrics["baseline_frames"] == 3
+    assert qc.metrics["baseline_frames"] == 5
     assert qc.metrics["bolus_arrival_frame"] == 5
     assert qc.metrics["motion_applied"] is True
+
+
+def test_motion_qc_failure_retains_baseline_exclusion_state(
+    tmp_path: Path, monkeypatch: Any,
+) -> None:
+    """Motion reduction failure cannot erase an inadequate baseline."""
+    dce_file = tmp_path / "dce.nii.gz"
+    _write_dce(dce_file)
+    monkeypatch.setattr(
+        DCEPreprocess,
+        "_auto_detect_baseline",
+        lambda self, data, mask: (
+            2,
+            2,
+            {"method": "characterized", "confidence": "low"},
+        ),
+    )
+    interface = DCEPreprocess(in_file=str(dce_file), baseline_frames=0)
+    prepared = interface._prepare_preprocess_inputs()
+
+    qc = interface._summarize_motion_qc(str(tmp_path / "missing.par"), prepared)
+
+    assert qc.metrics["motion_qc_available"] is False
+    assert qc.metrics["baseline_fallback_applied"] is True
+    assert qc.metrics["baseline_status"] == "POOR"
+    assert qc.metrics["detected_bolus_frame"] == 2
+    assert "PK maps are unreliable" in qc.metrics["baseline_warning"]
 
 
 def test_run_mcflirt_preserves_command_and_success_cleanup(
@@ -293,7 +351,7 @@ def test_run_mcflirt_preserves_command_and_success_cleanup(
         "_detect_bolus_arrival",
         lambda self, data, mask: (5, {"confidence": "high"}),
     )
-    interface = DCEPreprocess(in_file=str(dce_file), baseline_frames=3)
+    interface = DCEPreprocess(in_file=str(dce_file), baseline_frames=5)
     plan = interface._prepare_mcflirt_plan(interface._prepare_preprocess_inputs())
     captured: dict[str, Any] = {}
 
@@ -329,7 +387,7 @@ def test_run_mcflirt_failure_cleans_temporary_reference(
         "_detect_bolus_arrival",
         lambda self, data, mask: (5, {"confidence": "high"}),
     )
-    interface = DCEPreprocess(in_file=str(dce_file), baseline_frames=3)
+    interface = DCEPreprocess(in_file=str(dce_file), baseline_frames=5)
     plan = interface._prepare_mcflirt_plan(interface._prepare_preprocess_inputs())
     monkeypatch.setattr(
         subprocess,

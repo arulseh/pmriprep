@@ -149,6 +149,25 @@ class TestBaselineSampleCountGating:
         assert result["recommendation"]["action"] == QCAction.INCLUDE
 
 
+class TestMotionAvailabilityGating:
+    """Tests for unavailable motion summary QC."""
+
+    def test_unavailable_motion_qc_requires_review(self) -> None:
+        """Unknown motion is REVIEW, not a default INCLUDE."""
+        from pmriprep.utils.qc_standards import recommend_dce_qc
+
+        result = recommend_dce_qc({
+            "preprocessing": {
+                "motion_status": "UNKNOWN",
+                "motion_qc_available": False,
+            },
+        })
+
+        rec = result["recommendation"]
+        assert rec["action"] == QCAction.REVIEW
+        assert "Motion QC unavailable" in rec["reason"]
+
+
 class TestBaselineTSNRGating:
     """Tests for baseline tSNR QC gating."""
 

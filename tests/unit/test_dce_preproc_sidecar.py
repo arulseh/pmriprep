@@ -42,8 +42,7 @@ def dce_qc_metrics() -> dict[str, Any]:
         "preprocessing": {
             "fd_mean": 0.21, "fd_max": 0.78, "percent_outliers": 2.1,
             "motion_status": "PASS",
-            "motion_qc_available": False,
-            "motion_qc_error": "ValueError",
+            "motion_qc_available": True,
             "baseline_tsnr": 32.4, "peak_enh_pct": 65.0,
             "baseline_snr_low_fraction": 0.04,
             "n_volumes": 75, "tr_ms": 3.8, "volume_tr_s": 4.06,
@@ -83,8 +82,7 @@ class TestMotionAndSignalKeys:
         assert out["MotionFDMax"] == pytest.approx(0.78)
         assert out["MotionPercentOutliers"] == pytest.approx(2.1)
         assert out["MotionStatus"] == "PASS"
-        assert out["MotionQCAvailable"] is False
-        assert out["MotionQCError"] == "ValueError"
+        assert out["MotionQCAvailable"] is True
         assert out["BaselineTSNR"] == pytest.approx(32.4)
         assert out["BaselineSNRLowFraction"] == pytest.approx(0.04)
         assert out["PeakEnhancementPercent"] == pytest.approx(65.0)

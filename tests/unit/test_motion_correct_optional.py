@@ -300,7 +300,7 @@ class TestDCEInterfacePassthrough:
         monkeypatch.chdir(tmp_path)
 
         iface = DCEPreprocess(
-            in_file=in_file, baseline_frames=3,
+            in_file=in_file, baseline_frames=5,
             apply_motion_correction=apply_moco,
         )
         res = iface.run()
@@ -318,7 +318,7 @@ class TestDCEInterfacePassthrough:
         mean_img = nib.load(res.outputs.mean_img).get_fdata()
         assert np.allclose(mean_img, in_data.mean(axis=3), atol=1e-3)
         base_img = nib.load(res.outputs.baseline_mean_img).get_fdata()
-        assert np.allclose(base_img, in_data[..., :3].mean(axis=3), atol=1e-3)
+        assert np.allclose(base_img, in_data[..., :5].mean(axis=3), atol=1e-3)
         # mcflirt still ran, so residual motion params are produced.
         assert Path(res.outputs.out_params).exists()
         assert res.outputs.qc_metrics["motion_applied"] is False
