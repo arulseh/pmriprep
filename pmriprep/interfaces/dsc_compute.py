@@ -346,6 +346,18 @@ class _DSCMotionWeighting(NamedTuple):
     qc: dict[str, Any]
 
 
+class _DSCBaselinePreparation(NamedTuple):
+    """Baseline-adjusted DSC state and leakage-correction provenance."""
+
+    concentration: npt.NDArray[Any]
+    aif: npt.NDArray[Any]
+    recomputed_raw_concentration: Optional[npt.NDArray[Any]]
+    detected_frames: int
+    n_baseline: int
+    detection_info: dict[str, Any]
+    k2_map_path: Optional[str]
+
+
 class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
     """Input specification for ComputeDSCMaps interface."""
 
@@ -797,6 +809,110 @@ class ComputeDSCMaps(BaseInterface):
         else:
             base = in_file.stem
         return str(Path.cwd() / f"{base}{suffix}.nii.gz")
+
+    def _prepare_baseline_and_leakage(
+        self, inputs: _DSCComputeInputs
+    ) -> _DSCBaselinePreparation:
+        """Detect the baseline and reconcile S0, AIF, concentration, and K2.
+
+        Parameters
+        ----------
+        inputs : _DSCComputeInputs
+            Validated DSC image arrays and acquisition settings.
+
+        Returns
+        -------
+        _DSCBaselinePreparation
+            Baseline-subtracted fitting arrays, any recomputed raw
+            concentration, detection diagnostics, and K2 output provenance.
+
+        """
+        import nibabel as nib  # type: ignore[import-untyped]
+
+        concentration = inputs.concentration
+        aif = inputs.aif
+        detected_frames, detection_info = self._detect_baseline_frames(
+            aif,
+            inputs.baseline_frames,
+            concentration_data=concentration,
+            mask=inputs.mask,
+        )
+
+        recomputed_raw: Optional[npt.NDArray[Any]] = None
+        k2_result: Any = None
+        if detected_frames != inputs.baseline_frames and inputs.signal is not None:
+            new_s0 = np.mean(
+                inputs.signal[..., :detected_frames], axis=-1, keepdims=True
+            )
+            new_s0 = np.maximum(new_s0, EPSILON_SIGNAL)
+            signal_ratio = np.maximum(inputs.signal / new_s0, EPSILON_SIGNAL)
+            recomputed_raw = -np.log(signal_ratio) / inputs.te
+
+            if isdefined(self.inputs.aif_mask_file) and self.inputs.aif_mask_file:
+                aif_mask_img = nib.load(self.inputs.aif_mask_file)
+                aif_mask_data = np.asarray(aif_mask_img.dataobj) > 0.5  # type: ignore[attr-defined]
+                if aif_mask_data.shape[:3] == recomputed_raw.shape[:3]:
+                    roi_voxels = recomputed_raw[aif_mask_data]
+                    if roi_voxels.ndim == 2 and roi_voxels.shape[0] > 0:
+                        aif = np.mean(roi_voxels, axis=0)
+                        if len(aif) >= 5:
+                            from scipy.signal import savgol_filter  # type: ignore[import-untyped]
+
+                            from pmriprep.utils.dsc_aif import get_aif_smoothing_window
+
+                            window_length = get_aif_smoothing_window(len(aif), inputs.dt)
+                            aif = savgol_filter(
+                                aif, window_length=window_length, polyorder=2
+                            )
+
+            from pmriprep.utils.dsc_preload import apply_k2_correction
+
+            k2_result = apply_k2_correction(
+                concentration=recomputed_raw,
+                brain_mask=inputs.mask.astype(bool),
+                tr=inputs.dt,
+                baseline_frames=detected_frames,
+            )
+            concentration = k2_result.concentration_corrected
+            detection_info["s0_recomputed"] = True
+            detection_info["s0_recomputed_frames"] = detected_frames
+            detection_info["k2_recomputed"] = True
+
+        k2_map_path: Optional[str] = None
+        if detected_frames < inputs.baseline_frames and recomputed_raw is not None:
+            k2_map_path = self._gen_outfilename("_k2")
+            k2_img = nib.Nifti1Image(  # type: ignore[attr-defined]
+                k2_result.k2_map.astype(np.float32), inputs.affine, inputs.header
+            )
+            nib.save(k2_img, k2_map_path)  # type: ignore[attr-defined]
+        elif (
+            isdefined(self.inputs.k2_map_input_file)
+            and self.inputs.k2_map_input_file
+            and Path(str(self.inputs.k2_map_input_file)).is_file()
+        ):
+            k2_map_path = str(self.inputs.k2_map_input_file)
+
+        n_baseline = max(detected_frames, 4)
+        aif_baseline_offset = float(np.mean(aif[:n_baseline]))
+        aif = aif - aif_baseline_offset
+        concentration_offset = np.mean(
+            concentration[..., :n_baseline], axis=-1, keepdims=True
+        )
+        concentration = concentration - concentration_offset
+        detection_info["aif_baseline_offset"] = round(aif_baseline_offset, 4)
+        detection_info["conc_median_baseline_offset"] = round(
+            float(np.median(concentration_offset[inputs.mask_bool])), 4
+        )
+
+        return _DSCBaselinePreparation(
+            concentration=concentration,
+            aif=aif,
+            recomputed_raw_concentration=recomputed_raw,
+            detected_frames=detected_frames,
+            n_baseline=n_baseline,
+            detection_info=detection_info,
+            k2_map_path=k2_map_path,
+        )
 
     def _prepare_motion_weighting(
         self,
@@ -2310,115 +2426,16 @@ class ComputeDSCMaps(BaseInterface):
         # (DRO matrix data — see tests/benchmarks/run_cpi_infer_cpt_map_vs_vb.py)
         _warn_invalid_cpi_combo(method, inference, cpi_infer_cpt)
 
-        baseline_frames = inputs.baseline_frames
         tail_frames = inputs.tail_frames
-
-        # Auto-detect baseline frames from AIF
-        detected_baseline, baseline_detection_info = self._detect_baseline_frames(
-            aif, baseline_frames, concentration_data=conc_data, mask=mask
-        )
-
-        te = inputs.te
-
-        # Re-compute S0/concentration with detected baseline when it differs
-        # from the signal_to_conc baseline (which used config.pre_bolus).
-        # This handles both shorter (earlier arrival) and longer (preloaded)
-        # baselines.
-        recomputed_raw_conc: Optional[npt.NDArray[Any]] = None
-        if detected_baseline != baseline_frames and signal_data is not None:
-            new_s0 = np.mean(
-                signal_data[..., :detected_baseline], axis=-1, keepdims=True
-            )
-            new_s0 = np.maximum(new_s0, EPSILON_SIGNAL)
-            signal_ratio = signal_data / new_s0
-            signal_ratio = np.maximum(signal_ratio, EPSILON_SIGNAL)
-            recomputed_raw_conc = -np.log(signal_ratio) / te
-
-            # Re-extract AIF from updated concentration to maintain S0
-            # consistency. Unlike single-voxel extraction, we re-extract
-            # from the full AIF ROI and re-smooth — matching the initial
-            # AIF quality while using the updated S0 baseline.
-            if (
-                isdefined(self.inputs.aif_mask_file)
-                and self.inputs.aif_mask_file
-            ):
-                aif_mask_img = nib.load(self.inputs.aif_mask_file)
-                aif_mask_data = np.asarray(aif_mask_img.dataobj) > 0.5  # type: ignore[attr-defined]
-                assert recomputed_raw_conc is not None  # guaranteed by outer if
-                if aif_mask_data.shape[:3] == recomputed_raw_conc.shape[:3]:
-                    roi_voxels = recomputed_raw_conc[aif_mask_data]
-                    if roi_voxels.ndim == 2 and roi_voxels.shape[0] > 0:
-                        aif = np.mean(roi_voxels, axis=0)
-                        if len(aif) >= 5:
-                            from scipy.signal import savgol_filter  # type: ignore[import-untyped]
-                            from pmriprep.utils.dsc_aif import (
-                                get_aif_smoothing_window,
-                            )
-
-                            # Window length scales with TR so smoothing
-                            # tracks bolus FWHM regardless of acquisition
-                            # rate. Hardcoded window=5 was correct only
-                            # for TR≈1.5 s; under-smoothed at TR=0.5 s,
-                            # peak-distorting at TR=3 s.
-                            window_length = get_aif_smoothing_window(len(aif), dt)
-                            aif = savgol_filter(
-                                aif, window_length=window_length, polyorder=2
-                            )
-                        # No non-negative clip: AIF can have negative noise
-                        # in post-bolus frames. Baseline subtraction (below)
-                        # zeros the baseline; symmetric noise is correct.
-
-            # Re-apply K2 correction to updated concentration
-            from pmriprep.utils.dsc_preload import apply_k2_correction
-
-            assert recomputed_raw_conc is not None  # guaranteed by outer if
-            k2_result = apply_k2_correction(
-                concentration=recomputed_raw_conc,
-                brain_mask=mask.astype(bool),
-                tr=dt,
-                baseline_frames=detected_baseline,
-            )
-            conc_data = k2_result.concentration_corrected
-
-            baseline_detection_info["s0_recomputed"] = True
-            baseline_detection_info["s0_recomputed_frames"] = detected_baseline
-            baseline_detection_info["k2_recomputed"] = True
-
+        baseline = self._prepare_baseline_and_leakage(inputs)
+        conc_data = baseline.concentration
+        aif = baseline.aif
+        recomputed_raw_conc = baseline.recomputed_raw_concentration
+        detected_baseline = baseline.detected_frames
+        n_bl = baseline.n_baseline
+        baseline_detection_info = baseline.detection_info
+        k2_map_out_path = baseline.k2_map_path
         spatial_shape = conc_data.shape[:3]
-
-        # Save K2 map: use recomputed K2 when baseline changed, else pass through
-        k2_map_out_path: Optional[str] = None
-        if detected_baseline < baseline_frames and recomputed_raw_conc is not None:
-            # K2 was recomputed with detected baseline — save it
-            k2_map_data = k2_result.k2_map  # type: ignore[possibly-undefined]
-            k2_map_out_path = self._gen_outfilename("_k2")
-            k2_img = nib.Nifti1Image(  # type: ignore[attr-defined]
-                k2_map_data.astype(np.float32), affine, header
-            )
-            nib.save(k2_img, k2_map_out_path)  # type: ignore[attr-defined]
-        elif (
-            isdefined(self.inputs.k2_map_input_file)
-            and self.inputs.k2_map_input_file
-            and Path(str(self.inputs.k2_map_input_file)).is_file()
-        ):
-            # No recomputation — pass through the preload_correct K2 map
-            k2_map_out_path = str(self.inputs.k2_map_input_file)
-
-        # Baseline-subtract AIF and concentration for deconvolution.
-        # Change 1 (in apply_k2_correction) zeroed conc baseline before K2,
-        # so conc subtraction is a no-op when K2 ran. AIF from file still
-        # has its offset; this removes it. Also catches edge cases where
-        # K2 was skipped. Unconditional: for non-preloaded data, baseline
-        # is approximately zero (no-op).
-        n_bl = max(detected_baseline, 4)
-        aif_bl_offset = float(np.mean(aif[:n_bl]))
-        aif = aif - aif_bl_offset
-        conc_bl_offset = np.mean(conc_data[..., :n_bl], axis=-1, keepdims=True)
-        conc_data = conc_data - conc_bl_offset
-        baseline_detection_info["aif_baseline_offset"] = round(aif_bl_offset, 4)
-        baseline_detection_info["conc_median_baseline_offset"] = round(
-            float(np.median(conc_bl_offset[mask > 0])), 4
-        )
 
         # Run deconvolution based on method
         delay: Optional[npt.NDArray[Any]] = None
