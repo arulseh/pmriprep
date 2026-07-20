@@ -46,6 +46,28 @@ class DCEMapSpec:
     bids_suffix: str = "stat"
 
 
+@dataclass(frozen=True)
+class DCEAnatMaskSpec:
+    """Declarative specification for one anatomical DCE-space mask sink."""
+
+    name: str
+    in_attr: str
+    desc: str
+    description: str
+    skull_stripped: bool = False
+
+
+@dataclass(frozen=True)
+class DCEAnatImageSpec:
+    """Declarative specification for one structural DCE-space underlay sink."""
+
+    in_attr: str
+    label: str
+    description: str
+    desc: str = ""
+    ceagent: str = ""
+
+
 # PK parameter maps. Model name lives in JSON sidecar (PKModeling.model),
 # not in the filename (no `model-` entity in BIDS schema).
 _PK_MAPS: tuple[DCEMapSpec, ...] = (
@@ -118,6 +140,45 @@ _CURVE_TYPE_MAP = DCEMapSpec(
      "ValueMapping": {"0": "unclassified", "1": "persistent",
                       "2": "plateau", "3": "washout"}},
     bids_suffix="dseg",
+)
+
+
+_ANAT_MASKS: tuple[DCEAnatMaskSpec, ...] = (
+    DCEAnatMaskSpec("brain_mask_dce", "brain_mask", "brain", "Brain mask in DCE space", True),
+    DCEAnatMaskSpec(
+        "nawm_mask_dce", "nawm_mask", "nawm",
+        "Normal-appearing white matter mask in DCE space",
+    ),
+    DCEAnatMaskSpec(
+        "lesion_mask_dce", "lesion_mask_dce", "lesion",
+        "Lesion mask registered to DCE space",
+    ),
+    DCEAnatMaskSpec(
+        "user_lesion_mask_dce", "user_lesion_mask_dce", "userLesion",
+        "User-supplied lesion mask in DCE native space",
+    ),
+    DCEAnatMaskSpec(
+        "roi_mask_dce", "roi_mask_dce", "roi", "ROI mask registered to DCE space",
+    ),
+)
+
+
+_STRUCTURAL_UNDERLAYS: tuple[DCEAnatImageSpec, ...] = (
+    DCEAnatImageSpec("t1w_in_dce", "T1w", "Pre-contrast T1w registered to DCE space"),
+    DCEAnatImageSpec(
+        "t1w_postcon_in_dce", "T1w", "Post-contrast T1w registered to DCE space",
+        ceagent="GAD",
+    ),
+    DCEAnatImageSpec(
+        "t1w_subtraction_in_dce", "T1w",
+        "Post-pre T1w subtraction registered to DCE space", desc="subtraction",
+    ),
+    DCEAnatImageSpec("flair_in_dce", "FLAIR", "FLAIR registered to DCE space"),
+    DCEAnatImageSpec(
+        "flair_postcon_in_dce", "FLAIR", "Post-contrast FLAIR registered to DCE space",
+        ceagent="GAD",
+    ),
+    DCEAnatImageSpec("t2w_in_dce", "T2w", "T2w registered to DCE space"),
 )
 
 
@@ -1453,93 +1514,26 @@ def init_dce_datasinks_wf(
         sink_outputs.append((sink, "out_file"))
 
     # --- Anat-side masks ---
-    if "brain_mask" in present:
+    for mask_spec in _ANAT_MASKS:
+        if mask_spec.in_attr not in present:
+            continue
         sink = _add_anat_mask_sink(
             workflow, inputnode, base_minimal,
-            name="brain_mask_dce", in_attr="brain_mask",
-            desc_value="brain", description="Brain mask in DCE space",
-            skull_stripped=True,
-        )
-        sink_outputs.append((sink, "out_file"))
-    if "nawm_mask" in present:
-        sink = _add_anat_mask_sink(
-            workflow, inputnode, base_minimal,
-            name="nawm_mask_dce", in_attr="nawm_mask",
-            desc_value="nawm",
-            description="Normal-appearing white matter mask in DCE space",
-        )
-        sink_outputs.append((sink, "out_file"))
-    if "lesion_mask_dce" in present:
-        sink = _add_anat_mask_sink(
-            workflow, inputnode, base_minimal,
-            name="lesion_mask_dce", in_attr="lesion_mask_dce",
-            desc_value="lesion",
-            description="Lesion mask registered to DCE space",
-        )
-        sink_outputs.append((sink, "out_file"))
-    if "user_lesion_mask_dce" in present:
-        sink = _add_anat_mask_sink(
-            workflow, inputnode, base_minimal,
-            name="user_lesion_mask_dce", in_attr="user_lesion_mask_dce",
-            desc_value="userLesion",
-            description="User-supplied lesion mask in DCE native space",
-        )
-        sink_outputs.append((sink, "out_file"))
-    if "roi_mask_dce" in present:
-        sink = _add_anat_mask_sink(
-            workflow, inputnode, base_minimal,
-            name="roi_mask_dce", in_attr="roi_mask_dce",
-            desc_value="roi",
-            description="ROI mask registered to DCE space",
+            name=mask_spec.name, in_attr=mask_spec.in_attr,
+            desc_value=mask_spec.desc, description=mask_spec.description,
+            skull_stripped=mask_spec.skull_stripped,
         )
         sink_outputs.append((sink, "out_file"))
 
     # --- Structural underlays (T1w/FLAIR/T2w in DCE) ---
-    if "t1w_in_dce" in present:
+    for anat_spec in _STRUCTURAL_UNDERLAYS:
+        if anat_spec.in_attr not in present:
+            continue
         sink = _add_anat_image_sink(
             workflow, inputnode, base_minimal,
-            name="t1w_in_dce", in_attr="t1w_in_dce", label="T1w",
-            description="Pre-contrast T1w registered to DCE space",
-            ce_label="",
-        )
-        sink_outputs.append((sink, "out_file"))
-    if "t1w_postcon_in_dce" in present:
-        sink = _add_anat_image_sink(
-            workflow, inputnode, base_minimal,
-            name="t1w_postcon_in_dce", in_attr="t1w_postcon_in_dce",
-            label="T1w",
-            description="Post-contrast T1w registered to DCE space",
-            ce_label="GAD",
-        )
-        sink_outputs.append((sink, "out_file"))
-    if "t1w_subtraction_in_dce" in present:
-        sink = _add_anat_image_sink(
-            workflow, inputnode, base_minimal,
-            name="t1w_subtraction_in_dce", in_attr="t1w_subtraction_in_dce",
-            label="T1w", desc="subtraction",
-            description="Post-pre T1w subtraction registered to DCE space",
-        )
-        sink_outputs.append((sink, "out_file"))
-    if "flair_in_dce" in present:
-        sink = _add_anat_image_sink(
-            workflow, inputnode, base_minimal,
-            name="flair_in_dce", in_attr="flair_in_dce", label="FLAIR",
-            description="FLAIR registered to DCE space",
-        )
-        sink_outputs.append((sink, "out_file"))
-    if "flair_postcon_in_dce" in present:
-        sink = _add_anat_image_sink(
-            workflow, inputnode, base_minimal,
-            name="flair_postcon_in_dce", in_attr="flair_postcon_in_dce", label="FLAIR",
-            description="Post-contrast FLAIR registered to DCE space",
-            ce_label="GAD",
-        )
-        sink_outputs.append((sink, "out_file"))
-    if "t2w_in_dce" in present:
-        sink = _add_anat_image_sink(
-            workflow, inputnode, base_minimal,
-            name="t2w_in_dce", in_attr="t2w_in_dce", label="T2w",
-            description="T2w registered to DCE space",
+            name=anat_spec.in_attr, in_attr=anat_spec.in_attr,
+            label=anat_spec.label, description=anat_spec.description,
+            desc=anat_spec.desc, ce_label=anat_spec.ceagent,
         )
         sink_outputs.append((sink, "out_file"))
 
