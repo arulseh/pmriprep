@@ -918,6 +918,33 @@ def init_dce_preprocessing_wf(
     return workflow
 
 
+def init_dce_registration_wf(
+    *, mem_gb: float, name: str = "dce_registration_wf",
+) -> pe.Workflow:
+    """Build DCE-to-T1w registration with its consumed output contract."""
+    workflow = pe.Workflow(name=name)
+    inputnode = pe.Node(
+        niu.IdentityInterface(fields=["dce_mean", "t1w_file", "brain_mask"]),
+        name="inputnode",
+    )
+    outputnode = pe.Node(
+        niu.IdentityInterface(fields=["out_file", "out_matrix", "out_h5", "qc_metrics"]),
+        name="outputnode",
+    )
+    registration = pe.Node(DCERegistration(), name="dce_registration", mem_gb=mem_gb)
+    workflow.connect([
+        (inputnode, registration, [
+            ("dce_mean", "dce_mean"), ("t1w_file", "t1w_file"),
+            ("brain_mask", "brain_mask"),
+        ]),
+        (registration, outputnode, [
+            ("out_file", "out_file"), ("out_matrix", "out_matrix"),
+            ("out_h5", "out_h5"), ("qc_metrics", "qc_metrics"),
+        ]),
+    ])
+    return workflow
+
+
 def init_dce_preproc_wf(
     bids_dir: Union[str, Path],
     output_dir: Union[str, Path],
@@ -1446,20 +1473,16 @@ def init_dce_preproc_wf(
     # ==========================================================================
     # Node 4: DCE to T1w Registration
     # ==========================================================================
-    dce_registration = pe.Node(
-        DCERegistration(),
-        name="dce_registration",
-        mem_gb=_static_mem,
-    )
+    dce_registration_wf = init_dce_registration_wf(mem_gb=_static_mem)
 
     # Connect registration inputs
     workflow.connect([
-        (inputnode, dce_registration, [
-            ("t1w_reference", "t1w_file"),
-            ("brain_mask", "brain_mask"),
+        (inputnode, dce_registration_wf, [
+            ("t1w_reference", "inputnode.t1w_file"),
+            ("brain_mask", "inputnode.brain_mask"),
         ]),
-        (dce_brain_extraction_wf, dce_registration, [
-            ("outputnode.out_brain", "dce_mean"),  # Brain-extracted baseline mean
+        (dce_brain_extraction_wf, dce_registration_wf, [
+            ("outputnode.out_brain", "inputnode.dce_mean"),
         ]),
     ])
 
@@ -1488,8 +1511,8 @@ def init_dce_preproc_wf(
         (dce_preprocessing_wf, transform_brain_mask, [
             ("outputnode.mean_img", "reference_file"),
         ]),
-        (dce_registration, transform_brain_mask, [
-            ("out_matrix", "transform_matrix"),
+        (dce_registration_wf, transform_brain_mask, [
+            ("outputnode.out_matrix", "transform_matrix"),
         ]),
     ])
 
@@ -1514,7 +1537,9 @@ def init_dce_preproc_wf(
             (dce_preprocessing_wf, transform_csf_probseg, [
                 ("outputnode.mean_img", "reference_file"),
             ]),
-            (dce_registration, transform_csf_probseg, [("out_matrix", "transform_matrix")]),
+            (dce_registration_wf, transform_csf_probseg, [
+                ("outputnode.out_matrix", "transform_matrix"),
+            ]),
         ])
 
         # Transform WM and GM probsegs to DCE space for tissue-segmented T1 fallback
@@ -1541,12 +1566,16 @@ def init_dce_preproc_wf(
             (dce_preprocessing_wf, transform_wm_probseg, [
                 ("outputnode.mean_img", "reference_file"),
             ]),
-            (dce_registration, transform_wm_probseg, [("out_matrix", "transform_matrix")]),
+            (dce_registration_wf, transform_wm_probseg, [
+                ("outputnode.out_matrix", "transform_matrix"),
+            ]),
             (inputnode, transform_gm_probseg, [("gm_probseg", "probseg_file")]),
             (dce_preprocessing_wf, transform_gm_probseg, [
                 ("outputnode.mean_img", "reference_file"),
             ]),
-            (dce_registration, transform_gm_probseg, [("out_matrix", "transform_matrix")]),
+            (dce_registration_wf, transform_gm_probseg, [
+                ("outputnode.out_matrix", "transform_matrix"),
+            ]),
         ])
 
         # Wire transformed CSF probseg to T1 mapping only when active
@@ -1619,8 +1648,8 @@ def init_dce_preproc_wf(
         (inputnode, transform_atlas_cascade, [
             ("t1w_to_mni_xfm", "t1w_to_mni_xfm"),
         ]),
-        (dce_registration, transform_atlas_cascade, [
-            ("out_matrix", "t1w_to_dce_xfm"),
+        (dce_registration_wf, transform_atlas_cascade, [
+            ("outputnode.out_matrix", "t1w_to_dce_xfm"),
         ]),
         (dce_preprocessing_wf, transform_atlas_cascade, [
             ("outputnode.mean_img", "reference_file"),
@@ -1886,8 +1915,8 @@ def init_dce_preproc_wf(
             ("dsc_cbv_file", "dsc_cbv_file"),
             ("dsc_to_t1w_xfm", "dsc_to_t1w_xfm"),
         ]),
-        (dce_registration, resample_dsc_cbv, [
-            ("out_matrix", "t1w_to_dce_xfm"),
+        (dce_registration_wf, resample_dsc_cbv, [
+            ("outputnode.out_matrix", "t1w_to_dce_xfm"),
         ]),
         (dce_preprocessing_wf, resample_dsc_cbv, [
             ("outputnode.mean_img", "dce_reference"),
@@ -1916,8 +1945,8 @@ def init_dce_preproc_wf(
             ("dsc_ncbv_file", "dsc_cbv_file"),
             ("dsc_to_t1w_xfm", "dsc_to_t1w_xfm"),
         ]),
-        (dce_registration, resample_dsc_ncbv, [
-            ("out_matrix", "t1w_to_dce_xfm"),
+        (dce_registration_wf, resample_dsc_ncbv, [
+            ("outputnode.out_matrix", "t1w_to_dce_xfm"),
         ]),
         (dce_preprocessing_wf, resample_dsc_ncbv, [
             ("outputnode.mean_img", "dce_reference"),
@@ -1950,7 +1979,9 @@ def init_dce_preproc_wf(
         (dce_preprocessing_wf, transform_nawm_mask, [
             ("outputnode.mean_img", "reference_file"),
         ]),
-        (dce_registration, transform_nawm_mask, [("out_matrix", "transform_matrix")]),
+        (dce_registration_wf, transform_nawm_mask, [
+            ("outputnode.out_matrix", "transform_matrix"),
+        ]),
     ])
 
     # Validate user-supplied masks against DCE reference grid
@@ -2010,12 +2041,16 @@ def init_dce_preproc_wf(
         (dce_preprocessing_wf, transform_non_enhancing_mask, [
             ("outputnode.mean_img", "reference_file"),
         ]),
-        (dce_registration, transform_non_enhancing_mask, [("out_matrix", "transform_matrix")]),
+        (dce_registration_wf, transform_non_enhancing_mask, [
+            ("outputnode.out_matrix", "transform_matrix"),
+        ]),
         (inputnode, transform_enhancing_mask, [("enhancing_mask", "mask_file")]),
         (dce_preprocessing_wf, transform_enhancing_mask, [
             ("outputnode.mean_img", "reference_file"),
         ]),
-        (dce_registration, transform_enhancing_mask, [("out_matrix", "transform_matrix")]),
+        (dce_registration_wf, transform_enhancing_mask, [
+            ("outputnode.out_matrix", "transform_matrix"),
+        ]),
         # Enhancing tumor (DCE grid) = tissue-arrival reference for AIF BAT
         # pre-alignment (no-op unless dce.aif_bat_alignment is on). Mirrors the
         # resample_dsc_cbv -> pk_wf edge: pk_wf is defined earlier but nipype
@@ -2297,7 +2332,9 @@ def init_dce_preproc_wf(
         (dce_preprocessing_wf, reg_filmstrip, [
             ("outputnode.mean_img", "dce_mean_file"),
         ]),
-        (dce_registration, reg_filmstrip, [("out_file", "registered_t1w_file")]),
+        (dce_registration_wf, reg_filmstrip, [
+            ("outputnode.out_file", "registered_t1w_file"),
+        ]),
         (dce_brain_extraction_wf, reg_filmstrip, [
             ("outputnode.out_mask", "brain_mask_file"),
         ]),
@@ -2330,8 +2367,8 @@ def init_dce_preproc_wf(
             ("volume_tr", "tr"),
             ("t1w_to_mni_xfm", "t1w_to_mni_xfm"),
         ]),
-        (dce_registration, aif_qc_plot, [
-            ("out_matrix", "t1w_to_dce_xfm"),
+        (dce_registration_wf, aif_qc_plot, [
+            ("outputnode.out_matrix", "t1w_to_dce_xfm"),
         ]),
     ])
 
@@ -2390,8 +2427,8 @@ def init_dce_preproc_wf(
         (dce_preprocessing_wf, collect_qc, [
             ("outputnode.qc_metrics", "preprocess_qc"),
         ]),
-        (dce_registration, collect_qc, [
-            ("qc_metrics", "registration_qc"),
+        (dce_registration_wf, collect_qc, [
+            ("outputnode.qc_metrics", "registration_qc"),
         ]),
         (aif_detection, collect_qc, [
             ("qc_metrics", "aif_qc"),
@@ -2437,7 +2474,9 @@ def init_dce_preproc_wf(
         (dce_preprocessing_wf, transform_lesion, [
             ("outputnode.mean_img", "reference_file"),
         ]),
-        (dce_registration, transform_lesion, [("out_matrix", "transform_matrix")]),
+        (dce_registration_wf, transform_lesion, [
+            ("outputnode.out_matrix", "transform_matrix"),
+        ]),
     ])
 
     # AIF exclusion: user-supplied lesion mask overrides tumor seg
@@ -2503,7 +2542,9 @@ def init_dce_preproc_wf(
         (dce_preprocessing_wf, transform_stats_lesion, [
             ("outputnode.mean_img", "reference_file"),
         ]),
-        (dce_registration, transform_stats_lesion, [("out_matrix", "transform_matrix")]),
+        (dce_registration_wf, transform_stats_lesion, [
+            ("outputnode.out_matrix", "transform_matrix"),
+        ]),
     ])
 
     # Lesion / ROI / user-mask statistics extraction
@@ -2632,7 +2673,9 @@ def init_dce_preproc_wf(
             (dce_preprocessing_wf, transform_t1w_underlay, [
                 ("outputnode.mean_img", "reference_file"),
             ]),
-            (dce_registration, transform_t1w_underlay, [("out_matrix", "transform_matrix")]),
+            (dce_registration_wf, transform_t1w_underlay, [
+                ("outputnode.out_matrix", "transform_matrix"),
+            ]),
         ])
 
     if transform_t1w_postcon_underlay is not None:
@@ -2641,7 +2684,9 @@ def init_dce_preproc_wf(
             (dce_preprocessing_wf, transform_t1w_postcon_underlay, [
                 ("outputnode.mean_img", "reference_file"),
             ]),
-            (dce_registration, transform_t1w_postcon_underlay, [("out_matrix", "transform_matrix")]),
+            (dce_registration_wf, transform_t1w_postcon_underlay, [
+                ("outputnode.out_matrix", "transform_matrix"),
+            ]),
         ])
 
     if transform_t1w_subtraction_underlay is not None:
@@ -2650,7 +2695,9 @@ def init_dce_preproc_wf(
             (dce_preprocessing_wf, transform_t1w_subtraction_underlay, [
                 ("outputnode.mean_img", "reference_file"),
             ]),
-            (dce_registration, transform_t1w_subtraction_underlay, [("out_matrix", "transform_matrix")]),
+            (dce_registration_wf, transform_t1w_subtraction_underlay, [
+                ("outputnode.out_matrix", "transform_matrix"),
+            ]),
         ])
 
     if transform_flair_underlay is not None:
@@ -2659,7 +2706,9 @@ def init_dce_preproc_wf(
             (dce_preprocessing_wf, transform_flair_underlay, [
                 ("outputnode.mean_img", "reference_file"),
             ]),
-            (dce_registration, transform_flair_underlay, [("out_matrix", "transform_matrix")]),
+            (dce_registration_wf, transform_flair_underlay, [
+                ("outputnode.out_matrix", "transform_matrix"),
+            ]),
         ])
 
     if transform_flair_postcon_underlay is not None:
@@ -2668,7 +2717,9 @@ def init_dce_preproc_wf(
             (dce_preprocessing_wf, transform_flair_postcon_underlay, [
                 ("outputnode.mean_img", "reference_file"),
             ]),
-            (dce_registration, transform_flair_postcon_underlay, [("out_matrix", "transform_matrix")]),
+            (dce_registration_wf, transform_flair_postcon_underlay, [
+                ("outputnode.out_matrix", "transform_matrix"),
+            ]),
         ])
 
     if transform_t2w_underlay is not None:
@@ -2677,7 +2728,9 @@ def init_dce_preproc_wf(
             (dce_preprocessing_wf, transform_t2w_underlay, [
                 ("outputnode.mean_img", "reference_file"),
             ]),
-            (dce_registration, transform_t2w_underlay, [("out_matrix", "transform_matrix")]),
+            (dce_registration_wf, transform_t2w_underlay, [
+                ("outputnode.out_matrix", "transform_matrix"),
+            ]),
         ])
 
     # ==========================================================================
@@ -2745,8 +2798,8 @@ def init_dce_preproc_wf(
             ("out_aif_mask", "aif_mask"),
         ]),
         # Registration outputs (.h5 for derivatives)
-        (dce_registration, outputnode, [
-            ("out_h5", "dce_to_t1w_xfm"),
+        (dce_registration_wf, outputnode, [
+            ("outputnode.out_h5", "dce_to_t1w_xfm"),
         ]),
         # QC metrics
         (collect_qc, outputnode, [

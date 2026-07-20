@@ -7,6 +7,7 @@ from pmriprep.workflows.dce.base import (
     init_dce_brain_extraction_wf,
     init_dce_native_input_wf,
     init_dce_preprocessing_wf,
+    init_dce_registration_wf,
     init_dce_t1_b1_wf,
 )
 
@@ -68,4 +69,15 @@ def test_dce_preprocessing_workflow_contract() -> None:
     assert set(workflow.get_node("outputnode").interface._fields) == {
         "out_file", "out_params", "mean_img", "baseline_mean_img",
         "baseline_frames", "bolus_arrival_frame", "fd", "qc_metrics",
+    }
+
+
+def test_dce_registration_workflow_contract() -> None:
+    """Registration exposes transforms, registered image, and QC provenance."""
+    workflow = init_dce_registration_wf(mem_gb=2.0)
+    assert set(workflow.list_node_names()) == {
+        "inputnode", "outputnode", "dce_registration",
+    }
+    assert set(workflow.get_node("outputnode").interface._fields) == {
+        "out_file", "out_matrix", "out_h5", "qc_metrics",
     }
