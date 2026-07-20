@@ -782,6 +782,9 @@ class BayesianDSCFitter:
         bounds = [(p.bounds[0], p.bounds[1]) for p in fitting_defs]
         param_names = [p.name for p in fitting_defs]
         y = np.asarray(concentration, dtype=np.float64)
+        n_eff = (
+            float(np.sum(weights)) if weights is not None else float(n_obs)
+        )
 
         # Build transform info from priors
         transforms = [p.transform for p in self.priors]
@@ -950,8 +953,8 @@ class BayesianDSCFitter:
                     m_new[i] = np.clip(m_new[i], bounds[i][0], bounds[i][1])
 
             # 6. Update noise precision posterior: Gamma(c, s)
-            # c = c₀ + N/2
-            c = c0 + n_obs / 2.0
+            # Fractional motion weights contribute their effective frame count.
+            c = c0 + n_eff / 2.0
             # Residual at new mean (inverse-transform, then convert to model space)
             m_new_nat = np.array([
                 float(from_transformed(m_new[k], transforms[k], upper_bounds[k]))
@@ -982,7 +985,7 @@ class BayesianDSCFitter:
             sign_prior = sign_prior_prec
 
             free_energy = (
-                0.5 * n_obs * (np.log(tau_exp) - np.log(2 * np.pi))
+                0.5 * n_eff * (np.log(tau_exp) - np.log(2 * np.pi))
                 - 0.5 * tau_exp * (weighted_kk + trace_term)
                 - 0.5 * float(dm @ prior_prec @ dm)
                 - 0.5 * float(np.trace(prior_prec @ post_cov))

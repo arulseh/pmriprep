@@ -496,6 +496,22 @@ class TestWeightedLogLikelihoodWithSigma:
         )
 
 
+def test_vi_fractional_weights_reduce_effective_information() -> None:
+    """Uniform half-weights widen DCE VI posterior uncertainty."""
+    tissue_curve, aif, time_points, _ = _make_synthetic_tofts_data()
+    fitter = BayesianPKFitter(ToftsModel())
+
+    full = fitter.fit_vi(
+        tissue_curve, aif, time_points, weights=np.ones(len(time_points))
+    )
+    half = fitter.fit_vi(
+        tissue_curve, aif, time_points, weights=np.full(len(time_points), 0.5)
+    )
+
+    assert half.uncertainties["noise_std"] > full.uncertainties["noise_std"]
+    assert half.uncertainties["Ktrans"] > full.uncertainties["Ktrans"]
+
+
 class TestFitMCMCWeights:
     """Test that fit_mcmc accepts and uses weights."""
 

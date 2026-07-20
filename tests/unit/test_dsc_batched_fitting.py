@@ -263,6 +263,32 @@ class TestBatchedDSCVIFit:
         )
         assert result.n_iterations <= 8
 
+    def test_fractional_weights_reduce_effective_information(
+        self, dsc_aif_and_time
+    ):
+        """Uniform half-weights widen batched DSC VI CBF uncertainty."""
+        aif, tp = dsc_aif_and_time
+        means, stds, transforms, ubs, names, bounds = self._get_vascular_prior_info()
+        tissue = batched_vascular_forward(
+            np.full(5, 0.06), np.full(5, 3.0), np.full(5, 2.0),
+            np.full(5, 1.0), aif, tp,
+        )
+
+        full = batched_dsc_vi_fit(
+            "vascular", tissue, aif, tp,
+            means, stds, transforms, ubs, names, bounds,
+            weights=np.ones(len(tp)),
+        )
+        half = batched_dsc_vi_fit(
+            "vascular", tissue, aif, tp,
+            means, stds, transforms, ubs, names, bounds,
+            weights=np.full(len(tp), 0.5),
+        )
+
+        assert np.median(half.uncertainties["cbf"]) > np.median(
+            full.uncertainties["cbf"]
+        )
+
 
 class TestBatchedCPIVIFit:
     """Tests for CPI batched VI fitting."""

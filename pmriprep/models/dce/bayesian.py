@@ -898,8 +898,8 @@ class BayesianPKFitter:
             informative prior centered on that value.
         weights : numpy.ndarray or None, optional
             Optional per-frame motion weights (1.0 = full weight).
-            Weights modify data fidelity terms (J^T W J, k^T W k) but
-            NOT the observation count in Gamma shape/ELBO.
+            Weights modify data fidelity terms and contribute
+            ``sum(weights)`` effective observations to the noise posterior.
         sloppy : bool, optional
             Use fast, low-quality settings for testing.
 
@@ -926,6 +926,7 @@ class BayesianPKFitter:
             w = np.asarray(weights, dtype=np.float64)
         else:
             w = None
+        n_eff = float(np.sum(w)) if w is not None else float(n_obs)
 
         # Build transform info from priors
         transforms = [p.transform for p in self.priors]
@@ -1037,7 +1038,7 @@ class BayesianPKFitter:
             # NO CLIPPING — transformed space is unconstrained
 
             # 6. Update noise precision posterior
-            c = c0 + n_obs / 2.0
+            c = c0 + n_eff / 2.0
             m_new_nat = np.array([
                 float(from_transformed(m_new[k], transforms[k], upper_bounds_t[k]))
                 for k in range(n_params)
@@ -1063,7 +1064,7 @@ class BayesianPKFitter:
             sign_prior = sign_prior_prec
 
             free_energy = (
-                0.5 * n_obs * (np.log(tau_exp) - np.log(2 * np.pi))
+                0.5 * n_eff * (np.log(tau_exp) - np.log(2 * np.pi))
                 - 0.5 * tau_exp * (weighted_kk + trace_term)
                 - 0.5 * float(dm @ prior_prec @ dm)
                 - 0.5 * float(np.trace(prior_prec @ post_cov))

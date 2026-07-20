@@ -1258,6 +1258,7 @@ def batched_dsc_vi_fit(
     fe_plateau_count = np.zeros(n_valid, dtype=np.int32)
 
     w = np.ones(n_obs, dtype=np.float64) if weights is None else np.asarray(weights, dtype=np.float64)
+    n_eff = float(np.sum(w))
 
     # CBF index for analytic Jacobian (constant across iterations)
     cbf_idx = fitting_param_names.index("cbf")
@@ -1355,7 +1356,7 @@ def batched_dsc_vi_fit(
         g_new = _evaluate(m_new_nat)
         k_new = y_a - g_new
 
-        c_new = c0 + n_obs / 2.0
+        c_new = c0 + n_eff / 2.0
         trace_term = np.sum(
             post_cov * np.transpose(JtWJ, (0, 2, 1)), axis=(1, 2),
         )
@@ -1374,7 +1375,7 @@ def batched_dsc_vi_fit(
         )
 
         free_energy = (
-            0.5 * n_obs * (np.log(tau_new) - np.log(2 * np.pi))
+            0.5 * n_eff * (np.log(tau_new) - np.log(2 * np.pi))
             - 0.5 * tau_new * (weighted_kk + trace_term)
             - 0.5 * dm_prec_dm
             - 0.5 * trace_prior_cov
