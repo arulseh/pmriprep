@@ -21,6 +21,7 @@ from pmriprep.workflows.base import (
     PipelineSkipFlags,
     _connect_master_dsc_anatomy,
     _connect_master_dsc_masks,
+    _connect_master_dsc_outputs_and_build_provenance,
     _init_master_workflow_nodes,
     _prepare_master_workflow_context,
     _prepare_master_preflight_state,
@@ -358,6 +359,57 @@ def test_connect_master_dsc_masks_loads_cached_tumor_outputs(
     }
     assert state.has_nawm_source is True
     assert state.has_whole_tumor_source is True
+
+
+def test_connect_master_dsc_outputs_preserves_provenance_sources(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Public DSC fields and user/default provenance sources remain stable."""
+    from pmriprep.utils.contrast_agent import ParameterSource
+
+    captured: dict[str, Any] = {}
+
+    def _build(**kwargs: Any) -> dict[str, Any]:
+        captured.update(kwargs)
+        return {"source": "characterized"}
+
+    monkeypatch.setattr(
+        "pmriprep.utils.contrast_agent.build_dsc_provenance", _build
+    )
+    connections: list[Any] = []
+    workflow = SimpleNamespace(connect=connections.extend)
+    dsc_wf = SimpleNamespace()
+    outputnode = SimpleNamespace()
+    config = DSCConfig(dose=0.5, agent_standard_dose=0.1)
+
+    provenance = _connect_master_dsc_outputs_and_build_provenance(
+        workflow=workflow,
+        dsc_wf=dsc_wf,
+        outputnode=outputnode,
+        dsc_config=config,
+        dsc_sidecar={"contrast_agent": "gadobutrol", "bids_agent_string": "Gadavist"},
+        agent_source=ParameterSource.BIDS_SIDECAR,
+        agent_dose_source=ParameterSource.DEFAULT_FALLBACK,
+        gd_multiplicity=1,
+        user_specified={"dsc_dose": True, "dsc_preload": False},
+    )
+
+    assert provenance == {"source": "characterized"}
+    assert connections == [
+        (dsc_wf, outputnode, [
+            ("outputnode.rel_cbf_map", "dsc_cbf"),
+            ("outputnode.rel_cbv_auc_map", "dsc_cbv"),
+            ("outputnode.mtt_map", "dsc_mtt"),
+            ("outputnode.tmax_map", "dsc_tmax"),
+            ("outputnode.aif_qc", "dsc_aif_qc"),
+            ("outputnode.qc_metrics", "dsc_qc"),
+        ])
+    ]
+    assert captured["dose_source"] == ParameterSource.USER_SPECIFIED
+    assert captured["preload_source"] == ParameterSource.AUTO_DETECTED
+    assert captured["agent_source"] == ParameterSource.BIDS_SIDECAR
+    assert captured["agent_standard_dose_source"] == ParameterSource.DEFAULT_FALLBACK
+    assert captured["gd_multiplicity"] == 1
 
 
 def test_prepare_master_context_resolves_session_policy(

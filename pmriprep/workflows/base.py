@@ -1525,6 +1525,88 @@ def _connect_master_dsc_masks(
     )
 
 
+def _connect_master_dsc_outputs_and_build_provenance(
+    *,
+    workflow: pe.Workflow,
+    dsc_wf: pe.Workflow,
+    outputnode: pe.Node,
+    dsc_config: DSCConfig,
+    dsc_sidecar: Optional[dict[str, Any]],
+    agent_source: Optional[str],
+    agent_dose_source: Optional[str],
+    gd_multiplicity: int,
+    user_specified: dict[str, bool],
+) -> dict[str, Any]:
+    """Connect public DSC outputs and assemble derivative provenance."""
+    from pmriprep.utils.contrast_agent import (
+        ParameterSource,
+        build_dsc_provenance,
+    )
+
+    workflow.connect([
+        (dsc_wf, outputnode, [
+            ("outputnode.rel_cbf_map", "dsc_cbf"),
+            ("outputnode.rel_cbv_auc_map", "dsc_cbv"),
+            ("outputnode.mtt_map", "dsc_mtt"),
+            ("outputnode.tmax_map", "dsc_tmax"),
+            ("outputnode.aif_qc", "dsc_aif_qc"),
+            ("outputnode.qc_metrics", "dsc_qc"),
+        ]),
+    ])
+    provenance = build_dsc_provenance(
+        contrast_agent=dsc_sidecar.get("contrast_agent") if dsc_sidecar else None,
+        agent_source=str(agent_source or ParameterSource.DEFAULT_FALLBACK),
+        bids_agent_string=dsc_sidecar.get("bids_agent_string") if dsc_sidecar else None,
+        dose_multiplier=dsc_config.dose,
+        dose_source=(
+            ParameterSource.USER_SPECIFIED
+            if user_specified.get("dsc_dose")
+            else ParameterSource.DEFAULT_FALLBACK
+        ),
+        agent_standard_dose=dsc_config.agent_standard_dose,
+        agent_standard_dose_source=str(
+            agent_dose_source or ParameterSource.DEFAULT_FALLBACK
+        ),
+        gd_multiplicity=gd_multiplicity,
+        preload_source=(
+            ParameterSource.USER_SPECIFIED
+            if user_specified.get("dsc_preload")
+            else ParameterSource.AUTO_DETECTED
+        ),
+        deconv_method=dsc_config.method,
+        inference=dsc_config.inference,
+        leakage_method=dsc_config.leakage_method,
+        scanner_metadata=dsc_sidecar,
+    )
+
+    logger = logging.getLogger("pmriprep.workflows")
+    if not user_specified.get("dsc_dose"):
+        logger.warning(
+            "DSC contrast dose not specified. Using default=%.1f. "
+            "Use --dsc-dose to specify.",
+            dsc_config.dose,
+        )
+    if agent_dose_source == ParameterSource.DEFAULT_FALLBACK:
+        logger.info(
+            "DSC agent standard dose not specified. Using default=%.3f mmol/kg. "
+            "Use --dsc-agent-standard-dose for non-standard agents "
+            "(e.g., 0.05 for Vueway).",
+            dsc_config.agent_standard_dose,
+        )
+    elif agent_dose_source == ParameterSource.BIDS_SIDECAR:
+        logger.info(
+            "DSC agent standard dose resolved from BIDS sidecar: %s -> %.3f mmol/kg.",
+            dsc_sidecar.get("contrast_agent", "unknown") if dsc_sidecar else "unknown",
+            dsc_config.agent_standard_dose,
+        )
+    if agent_source == ParameterSource.BIDS_SIDECAR:
+        logger.info(
+            "DSC contrast agent identified from BIDS sidecar: %s.",
+            dsc_sidecar.get("contrast_agent", "unknown") if dsc_sidecar else "unknown",
+        )
+    return provenance
+
+
 def _init_master_workflow_nodes(
     *,
     workflow: pe.Workflow,
@@ -2178,75 +2260,17 @@ def init_pmriprep_wf(
             subject_id=subject_id,
             session_id=session_id,
         )
-        # Connect DSC outputs to master outputnode
-        workflow.connect([
-            (dsc_wf, outputnode, [
-                ("outputnode.rel_cbf_map", "dsc_cbf"),
-                ("outputnode.rel_cbv_auc_map", "dsc_cbv"),
-                ("outputnode.mtt_map", "dsc_mtt"),
-                ("outputnode.tmax_map", "dsc_tmax"),
-                ("outputnode.aif_qc", "dsc_aif_qc"),
-                ("outputnode.qc_metrics", "dsc_qc"),
-            ]),
-        ])
-
-        # -------------------------------------------------------------------
-        # Build DSC provenance dict for output sidecars
-        from pmriprep.utils.contrast_agent import (
-            ParameterSource,
-            build_dsc_provenance,
-        )
-        dsc_provenance = build_dsc_provenance(
-            contrast_agent=dsc_sidecar.get("contrast_agent") if dsc_sidecar else None,
-            agent_source=_dsc_agent_source or ParameterSource.DEFAULT_FALLBACK,
-            bids_agent_string=dsc_sidecar.get("bids_agent_string") if dsc_sidecar else None,
-            dose_multiplier=dsc_config.dose,
-            dose_source=(
-                ParameterSource.USER_SPECIFIED
-                if _user_spec_dsc.get("dsc_dose")
-                else ParameterSource.DEFAULT_FALLBACK
-            ),
-            agent_standard_dose=dsc_config.agent_standard_dose,
-            agent_standard_dose_source=_dsc_agent_dose_source or ParameterSource.DEFAULT_FALLBACK,
+        dsc_provenance = _connect_master_dsc_outputs_and_build_provenance(
+            workflow=workflow,
+            dsc_wf=dsc_wf,
+            outputnode=outputnode,
+            dsc_config=dsc_config,
+            dsc_sidecar=dsc_sidecar,
+            agent_source=_dsc_agent_source,
+            agent_dose_source=_dsc_agent_dose_source,
             gd_multiplicity=_gd_multiplicity,
-            preload_source=(
-                ParameterSource.USER_SPECIFIED
-                if _user_spec_dsc.get("dsc_preload")
-                else ParameterSource.AUTO_DETECTED
-            ),
-            deconv_method=dsc_config.method,
-            inference=dsc_config.inference,
-            leakage_method=dsc_config.leakage_method,
-            scanner_metadata=dsc_sidecar,
+            user_specified=_user_spec_dsc,
         )
-
-        # DSC fallback logging warnings (parity with DCE warnings)
-        _dsc_logger = logging.getLogger("pmriprep.workflows")
-        if not _user_spec_dsc.get("dsc_dose"):
-            _dsc_logger.warning(
-                "DSC contrast dose not specified. Using default=%.1f. "
-                "Use --dsc-dose to specify.",
-                dsc_config.dose,
-            )
-        if _dsc_agent_dose_source == ParameterSource.DEFAULT_FALLBACK:
-            _dsc_logger.info(
-                "DSC agent standard dose not specified. Using default=%.3f mmol/kg. "
-                "Use --dsc-agent-standard-dose for non-standard agents "
-                "(e.g., 0.05 for Vueway).",
-                dsc_config.agent_standard_dose,
-            )
-        elif _dsc_agent_dose_source == ParameterSource.BIDS_SIDECAR:
-            _dsc_logger.info(
-                "DSC agent standard dose resolved from BIDS sidecar: %s -> %.3f mmol/kg.",
-                dsc_sidecar.get("contrast_agent", "unknown") if dsc_sidecar else "unknown",
-                dsc_config.agent_standard_dose,
-            )
-        if _dsc_agent_source == ParameterSource.BIDS_SIDECAR:
-            _dsc_logger.info(
-                "DSC contrast agent identified from BIDS sidecar: %s.",
-                dsc_sidecar.get("contrast_agent", "unknown") if dsc_sidecar else "unknown",
-            )
-
         # DSC derivatives: niworkflows DerivativesDataSink chain
         # -------------------------------------------------------------------
         from pmriprep.workflows.dsc.datasinks import init_dsc_datasinks_wf
