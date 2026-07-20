@@ -25,6 +25,9 @@ from pmriprep.utils.dsc_constants import (
 from pmriprep.utils.dsc_deconvolution import build_volterra_matrix
 
 
+_CBF_TRANSFORMED_PRIOR_SIGMA: float = 5.0
+
+
 class VascularModel(DSCModel):
     """Gamma-variate vascular model for transit time heterogeneity.
 
@@ -105,7 +108,7 @@ class VascularModel(DSCModel):
                 bounds=(CBF_BOUNDS.min, CBF_BOUNDS.max),
                 typical_range=(0.01, 0.15),  # Relative s⁻¹; 3T typical 0.04-0.08
                 transform=TransformType.LOG,
-                transformed_prior_sigma=1.0,  # FABBER convention: wide log-space prior
+                transformed_prior_sigma=_CBF_TRANSFORMED_PRIOR_SIGMA,
                 description="Cerebral blood flow",
                 units="s⁻¹",
             ),
@@ -166,7 +169,7 @@ class VascularModel(DSCModel):
                 bounds=(CBF_BOUNDS.min, CBF_BOUNDS.max),
                 typical_range=(0.01, 0.15),  # Relative s⁻¹; 3T typical 0.04-0.08
                 transform=TransformType.LOG,
-                transformed_prior_sigma=1.0,
+                transformed_prior_sigma=_CBF_TRANSFORMED_PRIOR_SIGMA,
                 description="Cerebral blood flow",
                 units="s⁻¹",
             ),

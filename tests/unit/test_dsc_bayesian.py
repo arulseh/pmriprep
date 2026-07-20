@@ -63,6 +63,25 @@ class TestBayesianConstruction:
             assert fitter.priors[i].mean == pytest.approx(defn.get_prior_mean())
             assert fitter.priors[i].std == pytest.approx(defn.get_prior_sigma())
 
+    def test_vascular_cbf_prior_is_weak_without_widening_other_priors(self) -> None:
+        """Only log-CBF uses the weak regularizing transformed prior."""
+        model = VascularModel()
+        priors = BayesianDSCFitter(model).priors
+        names = [
+            definition.name
+            for definition in model.get_fitting_parameter_definitions()
+        ]
+        transformed_stds = {
+            name: prior.std_transformed
+            for name, prior in zip(names, priors)
+        }
+
+        assert transformed_stds["cbf"] == 5.0
+        assert transformed_stds["mtt"] == 1.0
+        assert transformed_stds["alpha"] == 1.0
+        assert transformed_stds["delay"] == 1.5
+        assert model.get_parameter_definitions()[0].transformed_prior_sigma == 5.0
+
 
 class TestLogPosteriorComponents:
     """Tests for log prior, likelihood, and posterior computation."""
