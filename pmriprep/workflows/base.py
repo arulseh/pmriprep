@@ -2584,6 +2584,310 @@ def _connect_master_dce_t1_b1_inputs(
         if session_data.modalities.afi_flip_angle is not None:
             dce_wf.inputs.inputnode.afi_flip_angle = session_data.modalities.afi_flip_angle
 
+def _connect_master_dce_outputs_and_datasinks(
+    *,
+    workflow: pe.Workflow,
+    dce_wf: pe.Workflow,
+    inputnode: pe.Node,
+    outputnode: pe.Node,
+    report_barrier: pe.Node,
+    session_data: SessionData,
+    anat_config: AnatConfig,
+    dce_config: DCEConfig,
+    mask_state: _MasterDCEMaskState,
+    provenance: dict[str, Any],
+    preflight_warnings: list[str],
+    dce_sidecar: Optional[dict[str, Any]],
+    bids_dir: Path,
+    output_dir: Path,
+    subject_id: str,
+    session_id: Optional[str],
+) -> None:
+    """Expose DCE results and connect configured derivative sinks.
+
+    This helper preserves the producer-aligned model, inference, anatomy,
+    and mask gates used to declare available derivative inputs.
+    """
+    # Connect DCE outputs to master outputnode
+    workflow.connect([
+        (dce_wf, outputnode, [
+            ("outputnode.ktrans_map", "dce_ktrans"),
+            ("outputnode.ve_map", "dce_ve"),
+            ("outputnode.vp_map", "dce_vp"),
+            ("outputnode.kep_map", "dce_kep"),
+            ("outputnode.qc_metrics", "dce_qc"),
+        ]),
+    ])
+
+    # -------------------------------------------------------------------
+    # DCE derivatives: niworkflows DerivativesDataSink chain
+    # -------------------------------------------------------------------
+    from pmriprep.workflows.dce.datasinks import init_dce_datasinks_wf
+
+    dce_underlays = list(dce_config.underlays)
+    dce_inference = (dce_config.inference or "").lower()
+    dce_uses_bayes = dce_inference != "nlls"
+    dce_model = dce_config.model or "auto"
+    dce_has_nawm = mask_state.has_nawm_source
+    dce_has_lesion = mask_state.has_lesion_source
+
+    # Inputs that dce_wf.outputnode is expected to populate. Gating
+    # mirrors what compute_pk_maps and friends actually emit per config.
+    dce_present: set = {
+        # Mandatory always
+        "ktrans_map",
+        # Always-present model-free maps + QC
+        "iauc60_map", "iauc90_map", "iauc120_map",
+        "peak_enhancement_map", "time_to_peak_map", "ser_map",
+        "wash_in_slope_map", "wash_out_slope_map",
+        "bat_map", "curve_type_map",
+        "tsnr_map", "qc_mask",
+        # Always-present registration + AIF
+        "dce_moco", "dce_mean", "motion_params",
+        "aif_curve", "aif_mask",
+        "dce_to_t1w_xfm",
+        # Brain mask in DCE always when DCE runs
+        "brain_mask",
+    }
+    # Per-model PK parameter gating (mirrors dce_compute._has_ve / _has_vp):
+    #   tofts          → ve, kep
+    #   extended_tofts → ve, kep, vp
+    #   patlak         → vp     (no ve/kep — would crash _copy_perf_map)
+    #   2cxm           → ve, kep, vp + Fp/PS
+    #   auto           → all (per-voxel BIC selection)
+    _has_ve_models = {"tofts", "extended_tofts", "2cxm", "auto"}
+    _has_vp_models = {"extended_tofts", "patlak", "2cxm", "auto"}
+    # 2CXM uncertainty (Fp/PS std) sinks are gated on whether the
+    # producer will actually emit the files — see
+    # :func:`_emit_2cxm_uncertainty` which mirrors the runtime
+    # candidate-set TR gate.
+    _dce_volume_tr = (
+        dce_sidecar.get("volume_tr")
+        if isinstance(dce_sidecar, dict) else None
+    )
+    _emit_fp_ps_uncertainty = _emit_2cxm_uncertainty(
+        dce_model, _dce_volume_tr,
+    )
+    if dce_model in _has_ve_models:
+        dce_present |= {"ve_map", "kep_map"}
+    if dce_model in _has_vp_models:
+        dce_present.add("vp_map")
+    # Auto-BIC produces model_selection + delta_bic
+    if dce_model == "auto":
+        dce_present |= {"model_selection_map", "delta_bic_map"}
+    # R² + quality flag are emitted by every PK fit
+    dce_present |= {"r2_map", "quality_flag_map"}
+    # Bayesian uncertainty/CV — gated by model AND inference != "nlls".
+    # CI95 is written by ANY non-NLLS inference (incl. MAP); the legacy
+    # gate was just `inference != "nlls"`.
+    if dce_uses_bayes:
+        dce_present |= {"ktrans_uncertainty", "ktrans_cv"}
+        if dce_model in _has_ve_models:
+            dce_present |= {"ve_uncertainty", "ve_cv"}
+        if dce_model in _has_vp_models:
+            dce_present |= {"vp_uncertainty", "vp_cv"}
+        if _emit_fp_ps_uncertainty:
+            dce_present |= {"fp_uncertainty", "ps_uncertainty"}
+        dce_present |= {"ktrans_ci95_lower", "ktrans_ci95_upper"}
+        if dce_model in _has_ve_models:
+            dce_present |= {"ve_ci95_lower", "ve_ci95_upper"}
+        if dce_model in _has_vp_models:
+            dce_present |= {"vp_ci95_lower", "vp_ci95_upper"}
+    # NAWM normalization + NAWM mask
+    if dce_has_nawm:
+        dce_present.add("nktrans_map")
+        dce_present.add("niauc60_map")
+        dce_present.add("nawm_mask")
+    # T1map + B1+map (anat/)
+    if not dce_config.no_t1:
+        dce_present.add("t1_map")
+    if dce_config.b1_method != "none":
+        dce_present.add("b1_map")
+    # Lesion / ROI
+    if dce_has_lesion:
+        dce_present.add("lesion_mask_dce")
+    if dce_config.lesion_mask is not None:
+        dce_present.add("user_lesion_mask_dce")
+    if dce_config.roi_mask is not None:
+        dce_present.add("roi_mask_dce")
+    # Structural underlays — gate on session_data, not just config.
+    # See dsc_present underlay block for rationale.
+    _dce_has_t1w_precon_underlay = (
+        "t1w_precon" in dce_underlays
+        and session_data.modalities.t1w_pre is not None
+    )
+    _dce_has_t1w_postcon_underlay = (
+        "t1w_postcon" in dce_underlays
+        and session_data.modalities.t1w_ce_gad is not None
+    )
+    _dce_has_t1w_subtraction_underlay = (
+        "t1w_subtraction" in dce_underlays
+        and session_data.modalities.t1w_pre is not None
+        and session_data.modalities.t1w_ce_gad is not None
+        and anat_config.create_subtraction
+    )
+    _dce_has_flair_precon_underlay = (
+        "flair_precon" in dce_underlays
+        and session_data.modalities.flair is not None
+    )
+    _dce_has_flair_postcon_underlay = (
+        "flair_postcon" in dce_underlays
+        and session_data.modalities.flair_postcon is not None
+    )
+    _dce_has_t2w_underlay = (
+        "t2w" in dce_underlays
+        and session_data.modalities.t2w is not None
+    )
+    if _dce_has_t1w_precon_underlay:
+        dce_present.add("t1w_in_dce")
+    if _dce_has_t1w_postcon_underlay:
+        dce_present.add("t1w_postcon_in_dce")
+    if _dce_has_t1w_subtraction_underlay:
+        dce_present.add("t1w_subtraction_in_dce")
+    if _dce_has_flair_precon_underlay:
+        dce_present.add("flair_in_dce")
+    if _dce_has_flair_postcon_underlay:
+        dce_present.add("flair_postcon_in_dce")
+    if _dce_has_t2w_underlay:
+        dce_present.add("t2w_in_dce")
+
+    dce_datasinks_wf = init_dce_datasinks_wf(
+        output_dir=str(output_dir),
+        bids_dir=str(bids_dir),
+        subject_id=subject_id,
+        session_id=session_id,
+        pk_model=dce_model,
+        present_inputs=dce_present,
+        has_smoothing=dce_config.smooth_fwhm > 0,
+        motion_correct=dce_config.motion_correct,
+    )
+    _dce_cfg = dataclasses.asdict(dce_config)
+    for _k, _v in _dce_cfg.items():
+        if isinstance(_v, Path):
+            _dce_cfg[_k] = str(_v)
+    dce_datasinks_wf.inputs.inputnode.config_dict = _dce_cfg
+    if provenance:
+        dce_datasinks_wf.inputs.inputnode.provenance_dict = provenance
+    if preflight_warnings:
+        dce_datasinks_wf.inputs.inputnode.preflight_warnings = list(
+            preflight_warnings
+        )
+
+    # Connect DCE outputs to factory
+    workflow.connect([
+        (inputnode, dce_datasinks_wf, [
+            ("dce_file", "inputnode.source_dce"),
+        ]),
+        (dce_wf, dce_datasinks_wf, [
+            # Core PK parameter maps
+            ("outputnode.ktrans_map", "inputnode.ktrans_map"),
+            ("outputnode.ve_map", "inputnode.ve_map"),
+            ("outputnode.kep_map", "inputnode.kep_map"),
+            ("outputnode.vp_map", "inputnode.vp_map"),
+            # Model-free maps
+            ("outputnode.iauc60_map", "inputnode.iauc60_map"),
+            ("outputnode.iauc90_map", "inputnode.iauc90_map"),
+            ("outputnode.iauc120_map", "inputnode.iauc120_map"),
+            ("outputnode.peak_enhancement_map", "inputnode.peak_enhancement_map"),
+            ("outputnode.time_to_peak_map", "inputnode.time_to_peak_map"),
+            ("outputnode.ser_map", "inputnode.ser_map"),
+            ("outputnode.wash_in_slope_map", "inputnode.wash_in_slope_map"),
+            ("outputnode.wash_out_slope_map", "inputnode.wash_out_slope_map"),
+            ("outputnode.bat_map", "inputnode.bat_map"),
+            ("outputnode.curve_type_map", "inputnode.curve_type_map"),
+            # QC maps
+            ("outputnode.tsnr_map", "inputnode.tsnr_map"),
+            ("outputnode.qc_mask", "inputnode.qc_mask"),
+            ("outputnode.r2_map", "inputnode.r2_map"),
+            ("outputnode.quality_flag_map", "inputnode.quality_flag_map"),
+            ("outputnode.model_selection_map", "inputnode.model_selection_map"),
+            ("outputnode.delta_bic_map", "inputnode.delta_bic_map"),
+            # T1/B1 mapping
+            ("outputnode.t1_map", "inputnode.t1_map"),
+            ("outputnode.b1_map", "inputnode.b1_map"),
+            # Motion-corrected data
+            ("outputnode.dce_moco", "inputnode.dce_moco"),
+            ("outputnode.dce_mean", "inputnode.dce_mean"),
+            ("outputnode.motion_params", "inputnode.motion_params"),
+            # AIF outputs
+            ("outputnode.aif_curve", "inputnode.aif_curve"),
+            ("outputnode.aif_mask", "inputnode.aif_mask"),
+            # Registration
+            ("outputnode.dce_to_t1w_xfm", "inputnode.dce_to_t1w_xfm"),
+            # Uncertainty maps (Bayesian)
+            ("outputnode.ktrans_uncertainty", "inputnode.ktrans_uncertainty"),
+            ("outputnode.ve_uncertainty", "inputnode.ve_uncertainty"),
+            ("outputnode.vp_uncertainty", "inputnode.vp_uncertainty"),
+            ("outputnode.fp_uncertainty", "inputnode.fp_uncertainty"),
+            ("outputnode.ps_uncertainty", "inputnode.ps_uncertainty"),
+            # Bayesian CV maps
+            ("outputnode.ktrans_cv", "inputnode.ktrans_cv"),
+            ("outputnode.ve_cv", "inputnode.ve_cv"),
+            ("outputnode.vp_cv", "inputnode.vp_cv"),
+            # Bayesian CI maps
+            ("outputnode.ktrans_ci95_lower", "inputnode.ktrans_ci95_lower"),
+            ("outputnode.ktrans_ci95_upper", "inputnode.ktrans_ci95_upper"),
+            ("outputnode.ve_ci95_lower", "inputnode.ve_ci95_lower"),
+            ("outputnode.ve_ci95_upper", "inputnode.ve_ci95_upper"),
+            ("outputnode.vp_ci95_lower", "inputnode.vp_ci95_lower"),
+            ("outputnode.vp_ci95_upper", "inputnode.vp_ci95_upper"),
+            # Normalized maps (NAWM-normalized)
+            ("outputnode.nktrans_map", "inputnode.nktrans_map"),
+            ("outputnode.niauc60_map", "inputnode.niauc60_map"),
+            # Smoothed maps
+            ("outputnode.smooth_pk_maps", "inputnode.smooth_pk_maps"),
+            ("outputnode.smooth_model_free_maps", "inputnode.smooth_model_free_maps"),
+            ("outputnode.smooth_uncertainty_maps", "inputnode.smooth_uncertainty_maps"),
+            # QC metrics
+            ("outputnode.qc_metrics", "inputnode.qc_metrics"),
+            # QC plots
+            ("outputnode.aif_curve_qc_plot", "inputnode.aif_curve_plot"),
+            ("outputnode.aif_location_qc_plot", "inputnode.aif_location_plot"),
+            ("outputnode.aif_candidates_qc_plot", "inputnode.aif_candidates_plot"),
+            ("outputnode.registration_qc_filmstrip", "inputnode.registration_filmstrip"),
+            ("outputnode.motion_qc_plot", "inputnode.motion_qc_plot"),
+            # Brain mask filmstrip
+            ("outputnode.brain_mask_filmstrip", "inputnode.brain_mask_filmstrip"),
+            # DCE QC plots
+            ("outputnode.preprocessing_qc_plot", "inputnode.preprocessing_qc_plot"),
+            ("outputnode.pk_modeling_qc_plot", "inputnode.pk_modeling_qc_plot"),
+            ("outputnode.pk_param_maps_qc_plot", "inputnode.pk_param_maps_qc_plot"),
+            ("outputnode.model_selection_qc_plot", "inputnode.model_selection_qc_plot"),
+            # B1/T1 QC plots
+            ("outputnode.b1_qc_plot", "inputnode.b1_qc_plot"),
+            ("outputnode.t1_qc_plot", "inputnode.t1_qc_plot"),
+            # DSC-DCE cross-validation plot
+            ("outputnode.dsc_dce_xval_plot", "inputnode.dsc_dce_xval_plot"),
+            # Structural underlays
+            ("outputnode.t1w_in_dce", "inputnode.t1w_in_dce"),
+            ("outputnode.t1w_postcon_in_dce", "inputnode.t1w_postcon_in_dce"),
+            ("outputnode.t1w_subtraction_in_dce", "inputnode.t1w_subtraction_in_dce"),
+            ("outputnode.flair_in_dce", "inputnode.flair_in_dce"),
+            ("outputnode.flair_postcon_in_dce", "inputnode.flair_postcon_in_dce"),
+            ("outputnode.t2w_in_dce", "inputnode.t2w_in_dce"),
+            # Lesion statistics
+            ("outputnode.lesion_stats_json", "inputnode.lesion_stats_json"),
+            ("outputnode.lesion_mask_dce", "inputnode.lesion_mask_dce"),
+            # User lesion statistics
+            ("outputnode.user_lesion_stats_json",
+             "inputnode.user_lesion_stats_json"),
+            ("outputnode.user_lesion_mask_dce",
+             "inputnode.user_lesion_mask_dce"),
+            # ROI statistics
+            ("outputnode.roi_stats_json", "inputnode.roi_stats_json"),
+            ("outputnode.roi_mask_dce", "inputnode.roi_mask_dce"),
+            # Anatomical masks in DCE space
+            ("outputnode.brain_mask", "inputnode.brain_mask"),
+            ("outputnode.nawm_mask", "inputnode.nawm_mask"),
+        ]),
+    ])
+
+    workflow.connect([
+        (dce_datasinks_wf, report_barrier, [
+            ("outputnode.done", "dce_done"),
+        ]),
+    ])
+
 def _init_master_workflow_nodes(
     *,
     workflow: pe.Workflow,
@@ -3322,285 +3626,24 @@ def init_pmriprep_wf(
             session_id=session_id,
         )
 
-        # Connect DCE outputs to master outputnode
-        workflow.connect([
-            (dce_wf, outputnode, [
-                ("outputnode.ktrans_map", "dce_ktrans"),
-                ("outputnode.ve_map", "dce_ve"),
-                ("outputnode.vp_map", "dce_vp"),
-                ("outputnode.kep_map", "dce_kep"),
-                ("outputnode.qc_metrics", "dce_qc"),
-            ]),
-        ])
-
-        # -------------------------------------------------------------------
-        # DCE derivatives: niworkflows DerivativesDataSink chain
-        # -------------------------------------------------------------------
-        from pmriprep.workflows.dce.datasinks import init_dce_datasinks_wf
-
-        dce_underlays = list(dce_config.underlays)
-        dce_inference = (dce_config.inference or "").lower()
-        dce_uses_bayes = dce_inference != "nlls"
-        dce_model = dce_config.model or "auto"
-        dce_has_nawm = dce_mask_state.has_nawm_source
-        dce_has_lesion = dce_mask_state.has_lesion_source
-
-        # Inputs that dce_wf.outputnode is expected to populate. Gating
-        # mirrors what compute_pk_maps and friends actually emit per config.
-        dce_present: set = {
-            # Mandatory always
-            "ktrans_map",
-            # Always-present model-free maps + QC
-            "iauc60_map", "iauc90_map", "iauc120_map",
-            "peak_enhancement_map", "time_to_peak_map", "ser_map",
-            "wash_in_slope_map", "wash_out_slope_map",
-            "bat_map", "curve_type_map",
-            "tsnr_map", "qc_mask",
-            # Always-present registration + AIF
-            "dce_moco", "dce_mean", "motion_params",
-            "aif_curve", "aif_mask",
-            "dce_to_t1w_xfm",
-            # Brain mask in DCE always when DCE runs
-            "brain_mask",
-        }
-        # Per-model PK parameter gating (mirrors dce_compute._has_ve / _has_vp):
-        #   tofts          → ve, kep
-        #   extended_tofts → ve, kep, vp
-        #   patlak         → vp     (no ve/kep — would crash _copy_perf_map)
-        #   2cxm           → ve, kep, vp + Fp/PS
-        #   auto           → all (per-voxel BIC selection)
-        _has_ve_models = {"tofts", "extended_tofts", "2cxm", "auto"}
-        _has_vp_models = {"extended_tofts", "patlak", "2cxm", "auto"}
-        # 2CXM uncertainty (Fp/PS std) sinks are gated on whether the
-        # producer will actually emit the files — see
-        # :func:`_emit_2cxm_uncertainty` which mirrors the runtime
-        # candidate-set TR gate.
-        _dce_volume_tr = (
-            dce_sidecar.get("volume_tr")
-            if isinstance(dce_sidecar, dict) else None
-        )
-        _emit_fp_ps_uncertainty = _emit_2cxm_uncertainty(
-            dce_model, _dce_volume_tr,
-        )
-        if dce_model in _has_ve_models:
-            dce_present |= {"ve_map", "kep_map"}
-        if dce_model in _has_vp_models:
-            dce_present.add("vp_map")
-        # Auto-BIC produces model_selection + delta_bic
-        if dce_model == "auto":
-            dce_present |= {"model_selection_map", "delta_bic_map"}
-        # R² + quality flag are emitted by every PK fit
-        dce_present |= {"r2_map", "quality_flag_map"}
-        # Bayesian uncertainty/CV — gated by model AND inference != "nlls".
-        # CI95 is written by ANY non-NLLS inference (incl. MAP); the legacy
-        # gate was just `inference != "nlls"`.
-        if dce_uses_bayes:
-            dce_present |= {"ktrans_uncertainty", "ktrans_cv"}
-            if dce_model in _has_ve_models:
-                dce_present |= {"ve_uncertainty", "ve_cv"}
-            if dce_model in _has_vp_models:
-                dce_present |= {"vp_uncertainty", "vp_cv"}
-            if _emit_fp_ps_uncertainty:
-                dce_present |= {"fp_uncertainty", "ps_uncertainty"}
-            dce_present |= {"ktrans_ci95_lower", "ktrans_ci95_upper"}
-            if dce_model in _has_ve_models:
-                dce_present |= {"ve_ci95_lower", "ve_ci95_upper"}
-            if dce_model in _has_vp_models:
-                dce_present |= {"vp_ci95_lower", "vp_ci95_upper"}
-        # NAWM normalization + NAWM mask
-        if dce_has_nawm:
-            dce_present.add("nktrans_map")
-            dce_present.add("niauc60_map")
-            dce_present.add("nawm_mask")
-        # T1map + B1+map (anat/)
-        if not dce_config.no_t1:
-            dce_present.add("t1_map")
-        if dce_config.b1_method != "none":
-            dce_present.add("b1_map")
-        # Lesion / ROI
-        if dce_has_lesion:
-            dce_present.add("lesion_mask_dce")
-        if dce_config.lesion_mask is not None:
-            dce_present.add("user_lesion_mask_dce")
-        if dce_config.roi_mask is not None:
-            dce_present.add("roi_mask_dce")
-        # Structural underlays — gate on session_data, not just config.
-        # See dsc_present underlay block for rationale.
-        _dce_has_t1w_precon_underlay = (
-            "t1w_precon" in dce_underlays
-            and session_data.modalities.t1w_pre is not None
-        )
-        _dce_has_t1w_postcon_underlay = (
-            "t1w_postcon" in dce_underlays
-            and session_data.modalities.t1w_ce_gad is not None
-        )
-        _dce_has_t1w_subtraction_underlay = (
-            "t1w_subtraction" in dce_underlays
-            and session_data.modalities.t1w_pre is not None
-            and session_data.modalities.t1w_ce_gad is not None
-            and anat_config.create_subtraction
-        )
-        _dce_has_flair_precon_underlay = (
-            "flair_precon" in dce_underlays
-            and session_data.modalities.flair is not None
-        )
-        _dce_has_flair_postcon_underlay = (
-            "flair_postcon" in dce_underlays
-            and session_data.modalities.flair_postcon is not None
-        )
-        _dce_has_t2w_underlay = (
-            "t2w" in dce_underlays
-            and session_data.modalities.t2w is not None
-        )
-        if _dce_has_t1w_precon_underlay:
-            dce_present.add("t1w_in_dce")
-        if _dce_has_t1w_postcon_underlay:
-            dce_present.add("t1w_postcon_in_dce")
-        if _dce_has_t1w_subtraction_underlay:
-            dce_present.add("t1w_subtraction_in_dce")
-        if _dce_has_flair_precon_underlay:
-            dce_present.add("flair_in_dce")
-        if _dce_has_flair_postcon_underlay:
-            dce_present.add("flair_postcon_in_dce")
-        if _dce_has_t2w_underlay:
-            dce_present.add("t2w_in_dce")
-
-        dce_datasinks_wf = init_dce_datasinks_wf(
-            output_dir=str(output_dir),
-            bids_dir=str(bids_dir),
+        _connect_master_dce_outputs_and_datasinks(
+            workflow=workflow,
+            dce_wf=dce_wf,
+            inputnode=inputnode,
+            outputnode=outputnode,
+            report_barrier=report_barrier,
+            session_data=session_data,
+            anat_config=anat_config,
+            dce_config=dce_config,
+            mask_state=dce_mask_state,
+            provenance=dce_provenance,
+            preflight_warnings=dce_preflight_warnings,
+            dce_sidecar=dce_sidecar,
+            bids_dir=bids_dir,
+            output_dir=output_dir,
             subject_id=subject_id,
             session_id=session_id,
-            pk_model=dce_model,
-            present_inputs=dce_present,
-            has_smoothing=dce_config.smooth_fwhm > 0,
-            motion_correct=dce_config.motion_correct,
         )
-        _dce_cfg = dataclasses.asdict(dce_config)
-        for _k, _v in _dce_cfg.items():
-            if isinstance(_v, Path):
-                _dce_cfg[_k] = str(_v)
-        dce_datasinks_wf.inputs.inputnode.config_dict = _dce_cfg
-        if dce_provenance:
-            dce_datasinks_wf.inputs.inputnode.provenance_dict = dce_provenance
-        if dce_preflight_warnings:
-            dce_datasinks_wf.inputs.inputnode.preflight_warnings = list(
-                dce_preflight_warnings
-            )
-
-        # Connect DCE outputs to factory
-        workflow.connect([
-            (inputnode, dce_datasinks_wf, [
-                ("dce_file", "inputnode.source_dce"),
-            ]),
-            (dce_wf, dce_datasinks_wf, [
-                # Core PK parameter maps
-                ("outputnode.ktrans_map", "inputnode.ktrans_map"),
-                ("outputnode.ve_map", "inputnode.ve_map"),
-                ("outputnode.kep_map", "inputnode.kep_map"),
-                ("outputnode.vp_map", "inputnode.vp_map"),
-                # Model-free maps
-                ("outputnode.iauc60_map", "inputnode.iauc60_map"),
-                ("outputnode.iauc90_map", "inputnode.iauc90_map"),
-                ("outputnode.iauc120_map", "inputnode.iauc120_map"),
-                ("outputnode.peak_enhancement_map", "inputnode.peak_enhancement_map"),
-                ("outputnode.time_to_peak_map", "inputnode.time_to_peak_map"),
-                ("outputnode.ser_map", "inputnode.ser_map"),
-                ("outputnode.wash_in_slope_map", "inputnode.wash_in_slope_map"),
-                ("outputnode.wash_out_slope_map", "inputnode.wash_out_slope_map"),
-                ("outputnode.bat_map", "inputnode.bat_map"),
-                ("outputnode.curve_type_map", "inputnode.curve_type_map"),
-                # QC maps
-                ("outputnode.tsnr_map", "inputnode.tsnr_map"),
-                ("outputnode.qc_mask", "inputnode.qc_mask"),
-                ("outputnode.r2_map", "inputnode.r2_map"),
-                ("outputnode.quality_flag_map", "inputnode.quality_flag_map"),
-                ("outputnode.model_selection_map", "inputnode.model_selection_map"),
-                ("outputnode.delta_bic_map", "inputnode.delta_bic_map"),
-                # T1/B1 mapping
-                ("outputnode.t1_map", "inputnode.t1_map"),
-                ("outputnode.b1_map", "inputnode.b1_map"),
-                # Motion-corrected data
-                ("outputnode.dce_moco", "inputnode.dce_moco"),
-                ("outputnode.dce_mean", "inputnode.dce_mean"),
-                ("outputnode.motion_params", "inputnode.motion_params"),
-                # AIF outputs
-                ("outputnode.aif_curve", "inputnode.aif_curve"),
-                ("outputnode.aif_mask", "inputnode.aif_mask"),
-                # Registration
-                ("outputnode.dce_to_t1w_xfm", "inputnode.dce_to_t1w_xfm"),
-                # Uncertainty maps (Bayesian)
-                ("outputnode.ktrans_uncertainty", "inputnode.ktrans_uncertainty"),
-                ("outputnode.ve_uncertainty", "inputnode.ve_uncertainty"),
-                ("outputnode.vp_uncertainty", "inputnode.vp_uncertainty"),
-                ("outputnode.fp_uncertainty", "inputnode.fp_uncertainty"),
-                ("outputnode.ps_uncertainty", "inputnode.ps_uncertainty"),
-                # Bayesian CV maps
-                ("outputnode.ktrans_cv", "inputnode.ktrans_cv"),
-                ("outputnode.ve_cv", "inputnode.ve_cv"),
-                ("outputnode.vp_cv", "inputnode.vp_cv"),
-                # Bayesian CI maps
-                ("outputnode.ktrans_ci95_lower", "inputnode.ktrans_ci95_lower"),
-                ("outputnode.ktrans_ci95_upper", "inputnode.ktrans_ci95_upper"),
-                ("outputnode.ve_ci95_lower", "inputnode.ve_ci95_lower"),
-                ("outputnode.ve_ci95_upper", "inputnode.ve_ci95_upper"),
-                ("outputnode.vp_ci95_lower", "inputnode.vp_ci95_lower"),
-                ("outputnode.vp_ci95_upper", "inputnode.vp_ci95_upper"),
-                # Normalized maps (NAWM-normalized)
-                ("outputnode.nktrans_map", "inputnode.nktrans_map"),
-                ("outputnode.niauc60_map", "inputnode.niauc60_map"),
-                # Smoothed maps
-                ("outputnode.smooth_pk_maps", "inputnode.smooth_pk_maps"),
-                ("outputnode.smooth_model_free_maps", "inputnode.smooth_model_free_maps"),
-                ("outputnode.smooth_uncertainty_maps", "inputnode.smooth_uncertainty_maps"),
-                # QC metrics
-                ("outputnode.qc_metrics", "inputnode.qc_metrics"),
-                # QC plots
-                ("outputnode.aif_curve_qc_plot", "inputnode.aif_curve_plot"),
-                ("outputnode.aif_location_qc_plot", "inputnode.aif_location_plot"),
-                ("outputnode.aif_candidates_qc_plot", "inputnode.aif_candidates_plot"),
-                ("outputnode.registration_qc_filmstrip", "inputnode.registration_filmstrip"),
-                ("outputnode.motion_qc_plot", "inputnode.motion_qc_plot"),
-                # Brain mask filmstrip
-                ("outputnode.brain_mask_filmstrip", "inputnode.brain_mask_filmstrip"),
-                # DCE QC plots
-                ("outputnode.preprocessing_qc_plot", "inputnode.preprocessing_qc_plot"),
-                ("outputnode.pk_modeling_qc_plot", "inputnode.pk_modeling_qc_plot"),
-                ("outputnode.pk_param_maps_qc_plot", "inputnode.pk_param_maps_qc_plot"),
-                ("outputnode.model_selection_qc_plot", "inputnode.model_selection_qc_plot"),
-                # B1/T1 QC plots
-                ("outputnode.b1_qc_plot", "inputnode.b1_qc_plot"),
-                ("outputnode.t1_qc_plot", "inputnode.t1_qc_plot"),
-                # DSC-DCE cross-validation plot
-                ("outputnode.dsc_dce_xval_plot", "inputnode.dsc_dce_xval_plot"),
-                # Structural underlays
-                ("outputnode.t1w_in_dce", "inputnode.t1w_in_dce"),
-                ("outputnode.t1w_postcon_in_dce", "inputnode.t1w_postcon_in_dce"),
-                ("outputnode.t1w_subtraction_in_dce", "inputnode.t1w_subtraction_in_dce"),
-                ("outputnode.flair_in_dce", "inputnode.flair_in_dce"),
-                ("outputnode.flair_postcon_in_dce", "inputnode.flair_postcon_in_dce"),
-                ("outputnode.t2w_in_dce", "inputnode.t2w_in_dce"),
-                # Lesion statistics
-                ("outputnode.lesion_stats_json", "inputnode.lesion_stats_json"),
-                ("outputnode.lesion_mask_dce", "inputnode.lesion_mask_dce"),
-                # User lesion statistics
-                ("outputnode.user_lesion_stats_json",
-                 "inputnode.user_lesion_stats_json"),
-                ("outputnode.user_lesion_mask_dce",
-                 "inputnode.user_lesion_mask_dce"),
-                # ROI statistics
-                ("outputnode.roi_stats_json", "inputnode.roi_stats_json"),
-                ("outputnode.roi_mask_dce", "inputnode.roi_mask_dce"),
-                # Anatomical masks in DCE space
-                ("outputnode.brain_mask", "inputnode.brain_mask"),
-                ("outputnode.nawm_mask", "inputnode.nawm_mask"),
-            ]),
-        ])
-
-        workflow.connect([
-            (dce_datasinks_wf, report_barrier, [
-                ("outputnode.done", "dce_done"),
-            ]),
-        ])
 
     return workflow
 
