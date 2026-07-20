@@ -960,3 +960,98 @@ def test_save_fit_qc_data_dispatches_svd_methods(
     assert len(calls) == 1
     assert calls[0][0][4:] == (2.0, method, 0.25, 0.15)
     assert calls[0][1]["signal_data"] is None
+
+
+@pytest.mark.parametrize("method", ["sSVD", "oSVD", "tikhonov"])
+def test_run_deconvolution_normalizes_svd_state(
+    method: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SVD dispatch retains solver arguments and leaves parametric fields absent."""
+    interface = ComputeDSCMaps()
+    arrays = [np.full((1,), value) for value in range(1, 7)]
+    qc = {"method": method}
+    calls: list[tuple[object, ...]] = []
+
+    def _svd(*args: object) -> tuple[object, ...]:
+        calls.append(args)
+        return (*arrays, qc)
+
+    monkeypatch.setattr(interface, "_deconvolve_svd", _svd)
+    monkeypatch.setattr(
+        interface,
+        "_deconvolve_parametric",
+        lambda *args, **kwargs: pytest.fail("parametric solver called"),
+    )
+    data = np.ones((1,))
+    result = interface._run_deconvolution(
+        concentration=data,
+        aif=data,
+        mask=data,
+        method=method,
+        dt=1.5,
+        threshold=0.2,
+        oi_threshold=0.1,
+        inference="vi",
+        mcmc_samples=100,
+        cpi_control_points=5,
+        cpi_infer_cpt=False,
+        cpi_infer_delay=False,
+        motion_weighting=SimpleNamespace(weights=None, qc={}),
+    )
+
+    assert calls[0][3:] == (method, 1.5, 0.2, 0.1)
+    assert result.cbf is arrays[0]
+    assert result.delay is arrays[4]
+    assert result.residues is arrays[5]
+    assert result.qc is qc
+    assert result.alpha is None
+    assert result.cbf_std is None
+
+
+@pytest.mark.parametrize("method", ["vascular", "cpi"])
+def test_run_deconvolution_normalizes_parametric_state(
+    method: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Parametric dispatch preserves all returned maps and motion provenance."""
+    interface = ComputeDSCMaps()
+    arrays = [np.full((1,), value) for value in range(1, 16)]
+    qc: dict[str, object] = {"method": method}
+    calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    def _parametric(*args: object, **kwargs: object) -> tuple[object, ...]:
+        calls.append((args, kwargs))
+        return (*arrays[:4], qc, *arrays[4:])
+
+    monkeypatch.setattr(interface, "_deconvolve_parametric", _parametric)
+    monkeypatch.setattr(
+        interface,
+        "_deconvolve_svd",
+        lambda *args, **kwargs: pytest.fail("SVD solver called"),
+    )
+    data = np.ones((1,))
+    weights = np.array([0.5])
+    motion_qc = {"enabled": True}
+    result = interface._run_deconvolution(
+        concentration=data,
+        aif=data,
+        mask=data,
+        method=method,
+        dt=2.0,
+        threshold=0.2,
+        oi_threshold=0.1,
+        inference="map",
+        mcmc_samples=321,
+        cpi_control_points=7,
+        cpi_infer_cpt=True,
+        cpi_infer_delay=True,
+        motion_weighting=SimpleNamespace(weights=weights, qc=motion_qc),
+    )
+
+    assert calls[0][0][3:] == (method, 2.0, "map", 321, 7, True, True)
+    assert calls[0][1]["motion_weights"] is weights
+    assert result.cbf is arrays[0]
+    assert result.alpha is arrays[4]
+    assert result.fallback_mask is arrays[14]
+    assert result.delay is None
+    assert result.residues is None
+    assert result.qc["motion_weighting"] is motion_qc

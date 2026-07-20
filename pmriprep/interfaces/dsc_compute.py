@@ -421,6 +421,29 @@ class _DSCFinalMaps(NamedTuple):
     cbf_ci_upper: Optional[npt.NDArray[Any]]
 
 
+class _DSCDeconvolutionMaps(NamedTuple):
+    """Common map state returned by either DSC deconvolution family."""
+
+    cbf: npt.NDArray[Any]
+    cbv: npt.NDArray[Any]
+    mtt: npt.NDArray[Any]
+    tmax: npt.NDArray[Any]
+    qc: dict[str, Any]
+    delay: Optional[npt.NDArray[Any]] = None
+    residues: Optional[npt.NDArray[Any]] = None
+    alpha: Optional[npt.NDArray[Any]] = None
+    beta: Optional[npt.NDArray[Any]] = None
+    cth: Optional[npt.NDArray[Any]] = None
+    cbf_std: Optional[npt.NDArray[Any]] = None
+    cbv_std: Optional[npt.NDArray[Any]] = None
+    cbf_ci_lower: Optional[npt.NDArray[Any]] = None
+    cbf_ci_upper: Optional[npt.NDArray[Any]] = None
+    cbv_ci_lower: Optional[npt.NDArray[Any]] = None
+    cbv_ci_upper: Optional[npt.NDArray[Any]] = None
+    parametric_r2: Optional[npt.NDArray[Any]] = None
+    fallback_mask: Optional[npt.NDArray[Any]] = None
+
+
 class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
     """Input specification for ComputeDSCMaps interface."""
 
@@ -1651,6 +1674,75 @@ class ComputeDSCMaps(BaseInterface):
         tier = getattr(self, "_qc_voxel_tier", None)
         if tier is not None:
             qc_metrics["qc_voxel_tier"] = tier
+
+    def _run_deconvolution(
+        self,
+        *,
+        concentration: npt.NDArray[Any],
+        aif: npt.NDArray[Any],
+        mask: npt.NDArray[Any],
+        method: str,
+        dt: float,
+        threshold: float,
+        oi_threshold: float,
+        inference: str,
+        mcmc_samples: int,
+        cpi_control_points: int,
+        cpi_infer_cpt: bool,
+        cpi_infer_delay: bool,
+        motion_weighting: _DSCMotionWeighting,
+    ) -> _DSCDeconvolutionMaps:
+        """Dispatch DSC deconvolution and normalize its typed return state."""
+        if method in ("sSVD", "oSVD", "tikhonov"):
+            cbf, cbv, mtt, tmax, delay, residues, qc = self._deconvolve_svd(
+                concentration, aif, mask, method, dt, threshold, oi_threshold
+            )
+            return _DSCDeconvolutionMaps(
+                cbf=cbf,
+                cbv=cbv,
+                mtt=mtt,
+                tmax=tmax,
+                qc=qc,
+                delay=delay,
+                residues=residues,
+            )
+
+        (
+            cbf, cbv, mtt, tmax, qc, alpha, beta, cth, cbf_std, cbv_std,
+            cbf_ci_lower, cbf_ci_upper, cbv_ci_lower, cbv_ci_upper,
+            parametric_r2, fallback_mask,
+        ) = self._deconvolve_parametric(
+            concentration,
+            aif,
+            mask,
+            method,
+            dt,
+            inference,
+            mcmc_samples,
+            cpi_control_points,
+            cpi_infer_cpt,
+            cpi_infer_delay,
+            motion_weights=motion_weighting.weights,
+        )
+        qc["motion_weighting"] = motion_weighting.qc
+        return _DSCDeconvolutionMaps(
+            cbf=cbf,
+            cbv=cbv,
+            mtt=mtt,
+            tmax=tmax,
+            qc=qc,
+            alpha=alpha,
+            beta=beta,
+            cth=cth,
+            cbf_std=cbf_std,
+            cbv_std=cbv_std,
+            cbf_ci_lower=cbf_ci_lower,
+            cbf_ci_upper=cbf_ci_upper,
+            cbv_ci_lower=cbv_ci_lower,
+            cbv_ci_upper=cbv_ci_upper,
+            parametric_r2=parametric_r2,
+            fallback_mask=fallback_mask,
+        )
 
     def _save_fit_qc_data(
         self,
@@ -3218,44 +3310,30 @@ class ComputeDSCMaps(BaseInterface):
         k2_map_out_path = baseline.k2_map_path
         spatial_shape = conc_data.shape[:3]
 
-        # Run deconvolution based on method
-        delay: Optional[npt.NDArray[Any]] = None
-        residues: Optional[npt.NDArray[Any]] = None
-        cbf_std_map: Optional[npt.NDArray[Any]] = None
-        cbv_std_map: Optional[npt.NDArray[Any]] = None
-        cbf_ci_lower_map: Optional[npt.NDArray[Any]] = None
-        cbf_ci_upper_map: Optional[npt.NDArray[Any]] = None
-        cbv_ci_lower_map: Optional[npt.NDArray[Any]] = None
-        cbv_ci_upper_map: Optional[npt.NDArray[Any]] = None
-        alpha_map: Optional[npt.NDArray[Any]] = None
-        beta_map: Optional[npt.NDArray[Any]] = None
-        cth_map: Optional[npt.NDArray[Any]] = None
-        parametric_r2_map: Optional[npt.NDArray[Any]] = None
-        fallback_mask: Optional[npt.NDArray[Any]] = None
-        qc_metrics: dict[str, Any] = {}
-
         motion_weighting = self._prepare_motion_weighting(
             method, header, conc_data.shape[3], dt
         )
-        motion_weights = motion_weighting.weights
-
-        if method in ("sSVD", "oSVD", "tikhonov"):
-            cbf, cbv, mtt, tmax, delay, residues, qc_metrics = self._deconvolve_svd(
-                conc_data, aif, mask, method, dt, threshold, oi_threshold
-            )
-        else:  # vascular or cpi
-            (cbf, cbv, mtt, tmax, qc_metrics, alpha_map, beta_map,
-             cth_map, cbf_std_map, cbv_std_map,
-             cbf_ci_lower_map, cbf_ci_upper_map,
-             cbv_ci_lower_map, cbv_ci_upper_map,
-             parametric_r2_map,
-             fallback_mask) = self._deconvolve_parametric(
-                conc_data, aif, mask, method, dt, inference, mcmc_samples, cpi_control_points,
-                cpi_infer_cpt,
-                cpi_infer_delay,
-                motion_weights=motion_weights,
-            )
-            qc_metrics["motion_weighting"] = motion_weighting.qc
+        deconvolution = self._run_deconvolution(
+            concentration=conc_data,
+            aif=aif,
+            mask=mask,
+            method=method,
+            dt=dt,
+            threshold=threshold,
+            oi_threshold=oi_threshold,
+            inference=inference,
+            mcmc_samples=mcmc_samples,
+            cpi_control_points=cpi_control_points,
+            cpi_infer_cpt=cpi_infer_cpt,
+            cpi_infer_delay=cpi_infer_delay,
+            motion_weighting=motion_weighting,
+        )
+        (
+            cbf, cbv, mtt, tmax, qc_metrics, delay, residues, alpha_map,
+            beta_map, cth_map, cbf_std_map, cbv_std_map, cbf_ci_lower_map,
+            cbf_ci_upper_map, cbv_ci_lower_map, cbv_ci_upper_map,
+            parametric_r2_map, fallback_mask,
+        ) = deconvolution
 
         signal_metrics = self._compute_signal_metrics(
             signal_data, spatial_shape, detected_baseline, tail_frames
