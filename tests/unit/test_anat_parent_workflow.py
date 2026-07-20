@@ -4,11 +4,13 @@ from pathlib import Path
 
 import pytest
 
+from pmriprep.config.anat import AnatConfig
 from pmriprep.workflows.anat.base import (
     _guarded_tissue_segment,
     _merge_fast_inputs,
     _route_fast_input,
     _run_hybrid_fast_chain,
+    init_anat_secondary_modalities_wf,
     init_anat_tissue_segmentation_wf,
 )
 
@@ -26,6 +28,40 @@ def test_tissue_segmentation_workflow_contract() -> None:
         "outputnode",
     }
     assert workflow.get_node("hybrid_fast_chain").inputs.denoise is False
+
+
+def test_secondary_modalities_workflow_all_branches() -> None:
+    """All optional modality chains retain their established node names."""
+    workflow = init_anat_secondary_modalities_wf(
+        config=AnatConfig(),
+        has_t1w_postcon=True,
+        has_t2w=True,
+        has_flair=True,
+        has_flair_postcon=True,
+    )
+
+    assert {node.name for node in workflow._graph.nodes()} == {
+        "inputnode",
+        "outputnode",
+        *{
+            f"{stage}_{suffix}"
+            for stage in ("reorient", "bias_correct", "coreg", "mask")
+            for suffix in ("postcon", "t2w", "flair", "flair_postcon")
+        },
+    }
+
+
+def test_secondary_modalities_workflow_empty_contract() -> None:
+    """The public boundary remains connectable when no modality is present."""
+    workflow = init_anat_secondary_modalities_wf(
+        config=AnatConfig(),
+        has_t1w_postcon=False,
+        has_t2w=False,
+        has_flair=False,
+        has_flair_postcon=False,
+    )
+
+    assert {node.name for node in workflow._graph.nodes()} == {"inputnode", "outputnode"}
 
 
 def test_fast_normal_and_empty_paths_do_not_run_commands() -> None:

@@ -570,6 +570,95 @@ def init_anat_tissue_segmentation_wf(
     return workflow
 
 
+def init_anat_secondary_modalities_wf(
+    *,
+    config: AnatConfig,
+    has_t1w_postcon: bool,
+    has_t2w: bool,
+    has_flair: bool,
+    has_flair_postcon: bool,
+    name: str = "anat_secondary_modalities_wf",
+) -> pe.Workflow:
+    """Initialize preprocessing for optional anatomical modalities.
+
+    Parameters
+    ----------
+    config : AnatConfig
+        Anatomical preprocessing configuration.
+    has_t1w_postcon, has_t2w, has_flair, has_flair_postcon : bool
+        Construction-time availability flags for each secondary modality.
+    name : str
+        Workflow name.
+
+    Returns
+    -------
+    pe.Workflow
+        Workflow exposing reoriented, coregistered, masked, and transform outputs.
+    """
+    workflow = pe.Workflow(name=name)
+    inputnode = pe.Node(
+        niu.IdentityInterface(fields=[
+            "reference", "brain_mask", "t1w_postcon", "t2w", "flair",
+            "flair_postcon",
+        ]),
+        name="inputnode",
+    )
+    outputnode = pe.Node(
+        niu.IdentityInterface(fields=[
+            "t1w_postcon_reoriented", "t1w_postcon_coreg", "t1w_postcon_xfm",
+            "t1w_postcon_h5", "t1w_postcon_masked", "t2w_reoriented",
+            "t2w_coreg", "t2w_xfm", "t2w_h5", "t2w_masked",
+            "flair_reoriented", "flair_coreg", "flair_xfm", "flair_h5",
+            "flair_masked", "flair_postcon_reoriented", "flair_postcon_coreg",
+            "flair_postcon_xfm", "flair_postcon_h5", "flair_postcon_masked",
+        ]),
+        name="outputnode",
+    )
+    workflow.add_nodes([inputnode, outputnode])
+    bias_kwargs: dict[str, Any] = {"denoise": config.denoise}
+    if config.sloppy:
+        bias_kwargs.update(
+            shrink_factor=8, convergence="[20x20,0.001]", denoise=False,
+        )
+
+    modalities = [
+        ("postcon", "t1w_postcon", has_t1w_postcon, "T1_postcon", True),
+        ("t2w", "t2w", has_t2w, "T2w", False),
+        ("flair", "flair", has_flair, "FLAIR", False),
+        ("flair_postcon", "flair_postcon", has_flair_postcon, "FLAIR", False),
+    ]
+    for suffix, field, enabled, modality, crop_fov in modalities:
+        if not enabled:
+            continue
+        reorient_kwargs = {} if crop_fov else {"crop_fov": False}
+        reorient = pe.Node(
+            ReorientAndCrop(**reorient_kwargs), name=f"reorient_{suffix}"
+        )
+        bias_correct = pe.Node(
+            BiasCorrection(**bias_kwargs), name=f"bias_correct_{suffix}"
+        )
+        coreg = pe.Node(
+            Coregistration(modality=modality, dof=6), name=f"coreg_{suffix}"
+        )
+        mask = pe.Node(ApplyMask(), name=f"mask_{suffix}")
+        workflow.connect([
+            (inputnode, reorient, [(field, "in_file")]),
+            (reorient, bias_correct, [("out_file", "in_file")]),
+            (bias_correct, coreg, [("out_file", "in_file")]),
+            (inputnode, coreg, [("reference", "reference")]),
+            (coreg, mask, [("out_file", "in_file")]),
+            (inputnode, mask, [("brain_mask", "mask_file")]),
+            (reorient, outputnode, [("out_file", f"{field}_reoriented")]),
+            (coreg, outputnode, [
+                ("out_file", f"{field}_coreg"),
+                ("out_matrix", f"{field}_xfm"),
+                ("out_h5", f"{field}_h5"),
+            ]),
+            (mask, outputnode, [("out_file", f"{field}_masked")]),
+        ])
+    return workflow
+
+
 def init_anat_preproc_wf(
     bids_dir: Union[str, Path],
     subject_id: str,
@@ -831,79 +920,24 @@ def init_anat_preproc_wf(
     # Only create nodes for modalities that are available
     # -------------------------------------------------------------------
 
-    # T1w post-contrast preprocessing and coregistration
-    if has_t1w_postcon:
-        reorient_postcon = pe.Node(ReorientAndCrop(), name="reorient_postcon")
-        bias_correct_postcon = pe.Node(
-            BiasCorrection(**bias_kwargs), name="bias_correct_postcon"
-        )
-        coreg_postcon = pe.Node(
-            Coregistration(modality="T1_postcon", dof=6), name="coreg_postcon"
-        )
-        coreg_postcon_conns = [
-            (inputnode, reorient_postcon, [("t1w_postcon", "in_file")]),
-            (reorient_postcon, bias_correct_postcon, [("out_file", "in_file")]),
-            (bias_correct_postcon, coreg_postcon, [("out_file", "in_file")]),
-            (conform, coreg_postcon, [("out_file", "reference")]),
-        ]
-        workflow.connect(coreg_postcon_conns)
-
-    # T2w preprocessing and coregistration
-    if has_t2w:
-        reorient_t2w = pe.Node(
-            ReorientAndCrop(crop_fov=False), name="reorient_t2w"
-        )
-        bias_correct_t2w = pe.Node(
-            BiasCorrection(**bias_kwargs), name="bias_correct_t2w"
-        )
-        coreg_t2w = pe.Node(
-            Coregistration(modality="T2w", dof=6), name="coreg_t2w"
-        )
-        coreg_t2w_conns = [
-            (inputnode, reorient_t2w, [("t2w", "in_file")]),
-            (reorient_t2w, bias_correct_t2w, [("out_file", "in_file")]),
-            (bias_correct_t2w, coreg_t2w, [("out_file", "in_file")]),
-            (conform, coreg_t2w, [("out_file", "reference")]),
-        ]
-        workflow.connect(coreg_t2w_conns)
-
-    # FLAIR preprocessing and coregistration
-    if has_flair:
-        reorient_flair = pe.Node(
-            ReorientAndCrop(crop_fov=False), name="reorient_flair"
-        )
-        bias_correct_flair = pe.Node(
-            BiasCorrection(**bias_kwargs), name="bias_correct_flair"
-        )
-        coreg_flair = pe.Node(
-            Coregistration(modality="FLAIR", dof=6), name="coreg_flair"
-        )
-        coreg_flair_conns = [
-            (inputnode, reorient_flair, [("flair", "in_file")]),
-            (reorient_flair, bias_correct_flair, [("out_file", "in_file")]),
-            (bias_correct_flair, coreg_flair, [("out_file", "in_file")]),
-            (conform, coreg_flair, [("out_file", "reference")]),
-        ]
-        workflow.connect(coreg_flair_conns)
-
-    # FLAIR post-contrast preprocessing and coregistration
-    if has_flair_postcon:
-        reorient_flair_postcon = pe.Node(
-            ReorientAndCrop(crop_fov=False), name="reorient_flair_postcon"
-        )
-        bias_correct_flair_postcon = pe.Node(
-            BiasCorrection(**bias_kwargs), name="bias_correct_flair_postcon"
-        )
-        coreg_flair_postcon = pe.Node(
-            Coregistration(modality="FLAIR", dof=6), name="coreg_flair_postcon"
-        )
-        coreg_flair_postcon_conns = [
-            (inputnode, reorient_flair_postcon, [("flair_postcon", "in_file")]),
-            (reorient_flair_postcon, bias_correct_flair_postcon, [("out_file", "in_file")]),
-            (bias_correct_flair_postcon, coreg_flair_postcon, [("out_file", "in_file")]),
-            (conform, coreg_flair_postcon, [("out_file", "reference")]),
-        ]
-        workflow.connect(coreg_flair_postcon_conns)
+    secondary_modalities_wf = init_anat_secondary_modalities_wf(
+        config=config,
+        has_t1w_postcon=has_t1w_postcon,
+        has_t2w=has_t2w,
+        has_flair=has_flair,
+        has_flair_postcon=has_flair_postcon,
+    )
+    workflow.connect([
+        (inputnode, secondary_modalities_wf, [
+            ("t1w_postcon", "inputnode.t1w_postcon"),
+            ("t2w", "inputnode.t2w"),
+            ("flair", "inputnode.flair"),
+            ("flair_postcon", "inputnode.flair_postcon"),
+        ]),
+        (conform, secondary_modalities_wf, [
+            ("out_file", "inputnode.reference"),
+        ]),
+    ])
 
     # -------------------------------------------------------------------
     # Step 5: Brain Extraction
@@ -933,33 +967,11 @@ def init_anat_preproc_wf(
     # Only create mask nodes for modalities that exist
     # -------------------------------------------------------------------
 
-    if has_t1w_postcon:
-        mask_postcon = pe.Node(ApplyMask(), name="mask_postcon")
-        workflow.connect([
-            (coreg_postcon, mask_postcon, [("out_file", "in_file")]),
-            (brain_extract, mask_postcon, [("out_mask", "mask_file")]),
-        ])
-
-    if has_t2w:
-        mask_t2w = pe.Node(ApplyMask(), name="mask_t2w")
-        workflow.connect([
-            (coreg_t2w, mask_t2w, [("out_file", "in_file")]),
-            (brain_extract, mask_t2w, [("out_mask", "mask_file")]),
-        ])
-
-    if has_flair:
-        mask_flair = pe.Node(ApplyMask(), name="mask_flair")
-        workflow.connect([
-            (coreg_flair, mask_flair, [("out_file", "in_file")]),
-            (brain_extract, mask_flair, [("out_mask", "mask_file")]),
-        ])
-
-    if has_flair_postcon:
-        mask_flair_postcon = pe.Node(ApplyMask(), name="mask_flair_postcon")
-        workflow.connect([
-            (coreg_flair_postcon, mask_flair_postcon, [("out_file", "in_file")]),
-            (brain_extract, mask_flair_postcon, [("out_mask", "mask_file")]),
-        ])
+    workflow.connect([
+        (brain_extract, secondary_modalities_wf, [
+            ("out_mask", "inputnode.brain_mask"),
+        ]),
+    ])
 
     # -------------------------------------------------------------------
     # Step 6b: HD-GLIO input preparation (no bias correction track)
@@ -983,9 +995,13 @@ def init_anat_preproc_wf(
         )
         tumor_seg_mask_postcon = pe.Node(ApplyMask(), name="tumor_seg_mask_postcon")
         workflow.connect([
-            (reorient_postcon, tumor_seg_xfm_postcon, [("out_file", "in_file")]),
+            (secondary_modalities_wf, tumor_seg_xfm_postcon, [
+                ("outputnode.t1w_postcon_reoriented", "in_file"),
+            ]),
             (conform_raw, tumor_seg_xfm_postcon, [("out_file", "reference")]),
-            (coreg_postcon, tumor_seg_xfm_postcon, [("out_matrix", "in_matrix")]),
+            (secondary_modalities_wf, tumor_seg_xfm_postcon, [
+                ("outputnode.t1w_postcon_xfm", "in_matrix"),
+            ]),
             (tumor_seg_xfm_postcon, tumor_seg_mask_postcon, [("out_file", "in_file")]),
             (brain_extract, tumor_seg_mask_postcon, [("out_mask", "mask_file")]),
             (tumor_seg_mask_postcon, outputnode, [
@@ -997,9 +1013,13 @@ def init_anat_preproc_wf(
         tumor_seg_xfm_t2w = pe.Node(ApplyTransform(), name="tumor_seg_xfm_t2w")
         tumor_seg_mask_t2w = pe.Node(ApplyMask(), name="tumor_seg_mask_t2w")
         workflow.connect([
-            (reorient_t2w, tumor_seg_xfm_t2w, [("out_file", "in_file")]),
+            (secondary_modalities_wf, tumor_seg_xfm_t2w, [
+                ("outputnode.t2w_reoriented", "in_file"),
+            ]),
             (conform_raw, tumor_seg_xfm_t2w, [("out_file", "reference")]),
-            (coreg_t2w, tumor_seg_xfm_t2w, [("out_matrix", "in_matrix")]),
+            (secondary_modalities_wf, tumor_seg_xfm_t2w, [
+                ("outputnode.t2w_xfm", "in_matrix"),
+            ]),
             (tumor_seg_xfm_t2w, tumor_seg_mask_t2w, [("out_file", "in_file")]),
             (brain_extract, tumor_seg_mask_t2w, [("out_mask", "mask_file")]),
             (tumor_seg_mask_t2w, outputnode, [("out_file", "tumor_seg_t2w")]),
@@ -1009,9 +1029,13 @@ def init_anat_preproc_wf(
         tumor_seg_xfm_flair = pe.Node(ApplyTransform(), name="tumor_seg_xfm_flair")
         tumor_seg_mask_flair = pe.Node(ApplyMask(), name="tumor_seg_mask_flair")
         workflow.connect([
-            (reorient_flair, tumor_seg_xfm_flair, [("out_file", "in_file")]),
+            (secondary_modalities_wf, tumor_seg_xfm_flair, [
+                ("outputnode.flair_reoriented", "in_file"),
+            ]),
             (conform_raw, tumor_seg_xfm_flair, [("out_file", "reference")]),
-            (coreg_flair, tumor_seg_xfm_flair, [("out_matrix", "in_matrix")]),
+            (secondary_modalities_wf, tumor_seg_xfm_flair, [
+                ("outputnode.flair_xfm", "in_matrix"),
+            ]),
             (tumor_seg_xfm_flair, tumor_seg_mask_flair, [("out_file", "in_file")]),
             (brain_extract, tumor_seg_mask_flair, [("out_mask", "mask_file")]),
             (tumor_seg_mask_flair, outputnode, [("out_file", "tumor_seg_flair")]),
@@ -1055,7 +1079,9 @@ def init_anat_preproc_wf(
 
         # Use FLIRT-coregistered postcon image
         workflow.connect([
-            (coreg_postcon, create_subtraction, [("out_file", "postcon_file")]),
+            (secondary_modalities_wf, create_subtraction, [
+                ("outputnode.t1w_postcon_coreg", "postcon_file"),
+            ]),
             (conform, create_subtraction, [("out_file", "precon_file")]),
             (brain_extract, create_subtraction, [("out_mask", "brain_mask")]),
         ])
@@ -1169,7 +1195,9 @@ def init_anat_preproc_wf(
         coreg_qc_postcon.inputs.subject_id = subject_id
         coreg_qc_postcon.inputs.session_id = session_id or ""
         workflow.connect([
-            (mask_postcon, coreg_qc_postcon, [("out_file", "coregistered_file")]),
+            (secondary_modalities_wf, coreg_qc_postcon, [
+                ("outputnode.t1w_postcon_masked", "coregistered_file"),
+            ]),
             (brain_extract, coreg_qc_postcon, [
                 ("out_file", "reference_file"),
                 ("out_mask", "brain_mask_file"),
@@ -1191,7 +1219,9 @@ def init_anat_preproc_wf(
         coreg_qc_t2w.inputs.subject_id = subject_id
         coreg_qc_t2w.inputs.session_id = session_id or ""
         workflow.connect([
-            (mask_t2w, coreg_qc_t2w, [("out_file", "coregistered_file")]),
+            (secondary_modalities_wf, coreg_qc_t2w, [
+                ("outputnode.t2w_masked", "coregistered_file"),
+            ]),
             (brain_extract, coreg_qc_t2w, [
                 ("out_file", "reference_file"),
                 ("out_mask", "brain_mask_file"),
@@ -1213,7 +1243,9 @@ def init_anat_preproc_wf(
         coreg_qc_flair.inputs.subject_id = subject_id
         coreg_qc_flair.inputs.session_id = session_id or ""
         workflow.connect([
-            (mask_flair, coreg_qc_flair, [("out_file", "coregistered_file")]),
+            (secondary_modalities_wf, coreg_qc_flair, [
+                ("outputnode.flair_masked", "coregistered_file"),
+            ]),
             (brain_extract, coreg_qc_flair, [
                 ("out_file", "reference_file"),
                 ("out_mask", "brain_mask_file"),
@@ -1235,7 +1267,9 @@ def init_anat_preproc_wf(
         coreg_qc_flair_postcon.inputs.subject_id = subject_id
         coreg_qc_flair_postcon.inputs.session_id = session_id or ""
         workflow.connect([
-            (mask_flair_postcon, coreg_qc_flair_postcon, [("out_file", "coregistered_file")]),
+            (secondary_modalities_wf, coreg_qc_flair_postcon, [
+                ("outputnode.flair_postcon_masked", "coregistered_file"),
+            ]),
             (brain_extract, coreg_qc_flair_postcon, [
                 ("out_file", "reference_file"),
                 ("out_mask", "brain_mask_file"),
@@ -1317,23 +1351,31 @@ def init_anat_preproc_wf(
     # Coregistered modalities and transforms (only for available modalities)
     if has_t1w_postcon:
         workflow.connect([
-            (mask_postcon, outputnode, [("out_file", "t1w_postcon_coreg")]),
-            (coreg_postcon, outputnode, [("out_h5", "t1w_postcon_to_t1w_xfm")]),
+            (secondary_modalities_wf, outputnode, [
+                ("outputnode.t1w_postcon_masked", "t1w_postcon_coreg"),
+                ("outputnode.t1w_postcon_h5", "t1w_postcon_to_t1w_xfm"),
+            ]),
         ])
     if has_t2w:
         workflow.connect([
-            (mask_t2w, outputnode, [("out_file", "t2w_coreg")]),
-            (coreg_t2w, outputnode, [("out_h5", "t2w_to_t1w_xfm")]),
+            (secondary_modalities_wf, outputnode, [
+                ("outputnode.t2w_masked", "t2w_coreg"),
+                ("outputnode.t2w_h5", "t2w_to_t1w_xfm"),
+            ]),
         ])
     if has_flair:
         workflow.connect([
-            (mask_flair, outputnode, [("out_file", "flair_coreg")]),
-            (coreg_flair, outputnode, [("out_h5", "flair_to_t1w_xfm")]),
+            (secondary_modalities_wf, outputnode, [
+                ("outputnode.flair_masked", "flair_coreg"),
+                ("outputnode.flair_h5", "flair_to_t1w_xfm"),
+            ]),
         ])
     if has_flair_postcon:
         workflow.connect([
-            (mask_flair_postcon, outputnode, [("out_file", "flair_postcon_coreg")]),
-            (coreg_flair_postcon, outputnode, [("out_h5", "flair_postcon_to_t1w_xfm")]),
+            (secondary_modalities_wf, outputnode, [
+                ("outputnode.flair_postcon_masked", "flair_postcon_coreg"),
+                ("outputnode.flair_postcon_h5", "flair_postcon_to_t1w_xfm"),
+            ]),
         ])
     # Subtraction image
     if config.create_subtraction and has_t1w_postcon:
