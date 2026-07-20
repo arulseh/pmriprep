@@ -111,6 +111,44 @@ class TestPeakEnhancementGating:
         assert "population" in rec["reason"].lower() or "injection" in rec["reason"].lower()
 
 
+class TestBaselineSampleCountGating:
+    """Tests for an inadequate pre-contrast sample count."""
+
+    def test_early_bolus_fallback_excludes_quantitative_exam(self) -> None:
+        """A fallback keeps derivatives but forces an EXCLUDE recommendation."""
+        from pmriprep.utils.qc_standards import recommend_dce_qc
+
+        qc = {
+            "preprocessing": {
+                "baseline_status": "POOR",
+                "baseline_fallback_applied": True,
+                "detected_bolus_frame": 2,
+                "baseline_minimum_frames": 5,
+            },
+            "aif_detection": {"aif_confidence": "standard"},
+            "pk_modeling": {"median_residual": 0.01},
+        }
+
+        result = recommend_dce_qc(qc)
+
+        rec = result["recommendation"]
+        assert rec["action"] == QCAction.EXCLUDE
+        assert "Inadequate pre-contrast DCE baseline" in rec["reason"]
+        assert "detected frame 2" in rec["reason"]
+        assert "minimum 5" in rec["reason"]
+        assert "PK maps are unreliable" in rec["reason"]
+
+    def test_normal_baseline_does_not_trigger_exclusion(self) -> None:
+        """A normal detector result leaves the recommendation unchanged."""
+        from pmriprep.utils.qc_standards import recommend_dce_qc
+
+        result = recommend_dce_qc({
+            "preprocessing": {"baseline_fallback_applied": False},
+        })
+
+        assert result["recommendation"]["action"] == QCAction.INCLUDE
+
+
 class TestBaselineTSNRGating:
     """Tests for baseline tSNR QC gating."""
 

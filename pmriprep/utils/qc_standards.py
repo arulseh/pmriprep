@@ -753,6 +753,26 @@ def recommend_dce_qc(qc_metrics: dict[str, Any]) -> dict[str, Any]:
         if motion_rec is not None:
             recommendations.append(motion_rec)
 
+    # An auto-detected bolus before the minimum baseline window means the
+    # acquisition has no statistically adequate pre-contrast reference. The
+    # pipeline still emits derivatives for inspection, but S0-dependent PK
+    # estimates are not quantitatively valid.
+    if preprocessing_qc.get("baseline_fallback_applied"):
+        detected_frame = preprocessing_qc.get("detected_bolus_frame")
+        minimum_frames = preprocessing_qc.get("baseline_minimum_frames")
+        timing = ""
+        if detected_frame is not None and minimum_frames is not None:
+            timing = (
+                f" (detected frame {detected_frame}; minimum "
+                f"{minimum_frames} baseline frames required)"
+            )
+        recommendations.append(QCRecommendation(
+            QCAction.EXCLUDE,
+            "Inadequate pre-contrast DCE baseline" + timing
+            + "; S0 and quantitative PK maps are unreliable",
+            3,
+        ))
+
     # Peak enhancement + baseline tSNR
     peak_enh = preprocessing_qc.get("peak_enh_pct")
     baseline_tsnr = preprocessing_qc.get("baseline_tsnr")

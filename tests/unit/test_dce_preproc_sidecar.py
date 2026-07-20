@@ -132,6 +132,9 @@ def test_baseline_and_aif_processing_warnings_coexist() -> None:
     qc = {
         "preprocessing": {
             "baseline_warning": "Baseline fallback may bias PK maps.",
+            "baseline_fallback_applied": True,
+            "detected_bolus_frame": 2,
+            "baseline_minimum_frames": 5,
         },
         "aif_detection": {"aif_source": "population"},
     }
@@ -139,6 +142,10 @@ def test_baseline_and_aif_processing_warnings_coexist() -> None:
     enrich_recommendation_keys(sidecar, modality="DCE", qc_metrics=qc)
 
     warnings = sidecar["QCProcessingWarnings"]
+    assert sidecar["QCRecommendationAction"] == "exclude"
+    assert "Inadequate pre-contrast DCE baseline" in (
+        sidecar["QCRecommendationReason"]
+    )
     assert len(warnings) == 2
     assert "Parker population model" in warnings[0]
     assert warnings[1] == "Baseline fallback may bias PK maps."
