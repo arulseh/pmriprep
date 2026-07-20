@@ -445,3 +445,53 @@ def test_finalize_mtt_preserves_parametric_result(method: str) -> None:
     )
 
     assert result is fitted
+
+
+def test_summarize_dsc_maps_preserves_population_statistics_and_provenance() -> None:
+    """Final map QC uses the brain domain and carries baseline provenance."""
+    mask = np.array([True, True, False])
+    qc = ComputeDSCMaps._summarize_dsc_maps(
+        rel_cbf=np.array([10.0, 30.0, 999.0]),
+        rel_cbv=np.array([1.0, 3.0, 999.0]),
+        rel_cbv_auc=np.array([2.0, 4.0, 999.0]),
+        mtt=np.array([5.0, 9.0, 999.0]),
+        tmax=np.array([3.0, 7.0, 999.0]),
+        mask_bool=mask,
+        aif_level="atlas",
+        preload_class="adequate",
+        baseline_info={"baseline_frames_detected": 4},
+        aif_bat_seconds=6.0,
+    )
+
+    assert qc["cbf_mean"] == pytest.approx(20.0)
+    assert qc["cbf_std"] == pytest.approx(10.0)
+    assert qc["cbv_mean"] == pytest.approx(2.0)
+    assert qc["cbv_auc_median"] == pytest.approx(3.0)
+    assert qc["mtt_mean"] == pytest.approx(7.0)
+    assert qc["tmax_median"] == pytest.approx(5.0)
+    assert qc["n_voxels"] == 2
+    assert qc["baseline_frames_detected"] == 4
+    assert qc["aif_bat_seconds"] == pytest.approx(6.0)
+    assert qc["cbv_literature_range_applicable"] is True
+
+
+def test_summarize_dsc_maps_empty_synthetic_domain() -> None:
+    """Empty masks retain zero summaries and synthetic-CBV applicability flag."""
+    empty = np.zeros(2)
+    qc = ComputeDSCMaps._summarize_dsc_maps(
+        empty,
+        empty,
+        empty,
+        empty,
+        empty,
+        np.zeros(2, dtype=bool),
+        "synthetic",
+        "unknown",
+        {},
+        0.0,
+    )
+
+    assert qc["n_voxels"] == 0
+    assert qc["cbf_mean"] == 0.0
+    assert qc["cbv_auc_median"] == 0.0
+    assert qc["cbv_literature_range_applicable"] is False

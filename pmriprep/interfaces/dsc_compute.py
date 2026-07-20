@@ -1345,6 +1345,52 @@ class ComputeDSCMaps(BaseInterface):
                 0.0,
             )
 
+    @staticmethod
+    def _summarize_dsc_maps(
+        rel_cbf: npt.NDArray[Any],
+        rel_cbv: npt.NDArray[Any],
+        rel_cbv_auc: npt.NDArray[Any],
+        mtt: npt.NDArray[Any],
+        tmax: npt.NDArray[Any],
+        mask_bool: npt.NDArray[np.bool_],
+        aif_level: str,
+        preload_class: str,
+        baseline_info: dict[str, Any],
+        aif_bat_seconds: float,
+    ) -> dict[str, Any]:
+        """Reduce finalized DSC maps and acquisition provenance to QC values."""
+        has_voxels = bool(np.any(mask_bool))
+        qc = {
+            "cbf_mean": float(np.mean(rel_cbf[mask_bool])) if has_voxels else 0.0,
+            "cbf_std": float(np.std(rel_cbf[mask_bool])) if has_voxels else 0.0,
+            "cbv_mean": float(np.mean(rel_cbv[mask_bool])) if has_voxels else 0.0,
+            "cbv_auc_mean": (
+                float(np.nanmean(rel_cbv_auc[mask_bool])) if has_voxels else 0.0
+            ),
+            "mtt_mean": float(np.mean(mtt[mask_bool])) if has_voxels else 0.0,
+            "tmax_mean": float(np.mean(tmax[mask_bool])) if has_voxels else 0.0,
+            "cbf_median": (
+                float(np.median(rel_cbf[mask_bool])) if has_voxels else 0.0
+            ),
+            "cbv_median": (
+                float(np.median(rel_cbv[mask_bool])) if has_voxels else 0.0
+            ),
+            "cbv_auc_median": (
+                float(np.nanmedian(rel_cbv_auc[mask_bool])) if has_voxels else 0.0
+            ),
+            "mtt_median": float(np.median(mtt[mask_bool])) if has_voxels else 0.0,
+            "tmax_median": (
+                float(np.median(tmax[mask_bool])) if has_voxels else 0.0
+            ),
+            "n_voxels": int(np.sum(mask_bool)),
+            "aif_detection_level": aif_level,
+            "preload_classification": preload_class,
+        }
+        qc.update(baseline_info)
+        qc["aif_bat_seconds"] = aif_bat_seconds
+        qc["cbv_literature_range_applicable"] = aif_level != "synthetic"
+        return qc
+
     def _first_pass_reference(
         self,
         fp_area: npt.NDArray[Any],
@@ -2944,36 +2990,19 @@ class ComputeDSCMaps(BaseInterface):
         if residues is not None:
             residues = np.where(mask_bool[..., np.newaxis], residues, 0.0)
 
-        # Add general QC metrics
-        qc_metrics.update({
-            "cbf_mean": float(np.mean(rel_cbf[mask_bool])) if np.any(mask_bool) else 0.0,
-            "cbf_std": float(np.std(rel_cbf[mask_bool])) if np.any(mask_bool) else 0.0,
-            "cbv_mean": float(np.mean(rel_cbv[mask_bool])) if np.any(mask_bool) else 0.0,
-            "cbv_auc_mean": float(np.nanmean(rel_cbv_auc[mask_bool])) if np.any(mask_bool) else 0.0,
-            "mtt_mean": float(np.mean(mtt[mask_bool])) if np.any(mask_bool) else 0.0,
-            "tmax_mean": float(np.mean(tmax[mask_bool])) if np.any(mask_bool) else 0.0,
-            "cbf_median": float(np.median(rel_cbf[mask_bool])) if np.any(mask_bool) else 0.0,
-            "cbv_median": float(np.median(rel_cbv[mask_bool])) if np.any(mask_bool) else 0.0,
-            "cbv_auc_median": float(np.nanmedian(rel_cbv_auc[mask_bool])) if np.any(mask_bool) else 0.0,
-            "mtt_median": float(np.median(mtt[mask_bool])) if np.any(mask_bool) else 0.0,
-            "tmax_median": float(np.median(tmax[mask_bool])) if np.any(mask_bool) else 0.0,
-            "n_voxels": int(np.sum(mask_bool)),
-            "aif_detection_level": aif_level,
-            "preload_classification": preload_class,
-        })
-        qc_metrics.update(baseline_detection_info)
-        qc_metrics["aif_bat_seconds"] = aif_bat_seconds
-
-        # When the AIF is synthetic (template), CBV magnitudes (cbv_mean,
-        # cbv_median, cbv_auc_mean, cbv_auc_median) are not comparable
-        # against literature reference ranges — the synthetic AIF's
-        # amplitude is not calibrated to this subject's true arterial
-        # input. Emit an explicit `cbv_literature_range_applicable` flag
-        # so any downstream QC consumer that checks literature ranges
-        # can branch cleanly. Keys remain present with values intact;
-        # only the interpretability annotation changes.
-        qc_metrics["cbv_literature_range_applicable"] = (
-            aif_level != "synthetic"
+        qc_metrics.update(
+            self._summarize_dsc_maps(
+                rel_cbf,
+                rel_cbv,
+                rel_cbv_auc,
+                mtt,
+                tmax,
+                mask_bool,
+                aif_level,
+                preload_class,
+                baseline_detection_info,
+                aif_bat_seconds,
+            )
         )
 
         # -----------------------------------------------------------
