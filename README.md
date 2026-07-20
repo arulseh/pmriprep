@@ -482,8 +482,8 @@ output_dir/pmriprep/
       sub-01_ses-01_desc-dscNawmNormCbv_stat.nii.gz
       sub-01_ses-01_desc-dscNawmRelTtp_stat.nii.gz
       # DSC parametric uncertainty (inference)
-      sub-01_ses-01_desc-dscUncertaintyCbf_stat.nii.gz
-      sub-01_ses-01_desc-dscCVCbf_stat.nii.gz
+      sub-01_ses-01_desc-dscStandardErrorCbf_stat.nii.gz       # NLLS
+      sub-01_ses-01_desc-dscPosteriorSDCbf_stat.nii.gz         # VI/SVB
       sub-01_ses-01_desc-dscCI95lowerCbf_stat.nii.gz
       sub-01_ses-01_desc-dscCI95upperCbf_stat.nii.gz
       sub-01_ses-01_desc-dscParametricRsquared_stat.nii.gz
@@ -575,8 +575,12 @@ output_dir/pmriprep/
 | `*_desc-dscAlpha_stat` | Vascular model alpha (vascular method only) | dimensionless |
 | `*_desc-dscBeta_stat` | Vascular model beta (vascular method only) | seconds |
 | `*_desc-dscCth_stat` | Capillary transit heterogeneity (vascular method only) | seconds |
-| `*_desc-dscUncertaintyCbf_stat` | CBF uncertainty (estimated standard deviation; CPI/Vascular with NLLS/VI/SVB) | 1/min |
-| `*_desc-dscCVCbf_stat` | CBF coefficient of variation (CPI/Vascular with NLLS/VI/SVB) | fraction |
+| `*_desc-dscStandardErrorCbf_stat` | NLLS CBF parameter standard error (CPI/Vascular) | 1/min |
+| `*_desc-dscRelativeStandardErrorCbf_stat` | NLLS CBF standard error divided by absolute CBF | fraction |
+| `*_desc-dscConfidenceInterval95{lower,upper}Cbf_stat` | NLLS CBF 95% Wald confidence limits | 1/min |
+| `*_desc-dscPosteriorSDCbf_stat` | VI/SVB CBF posterior standard deviation | 1/min |
+| `*_desc-dscPosteriorCVCbf_stat` | VI/SVB CBF posterior coefficient of variation | fraction |
+| `*_desc-dscCredibleInterval95{lower,upper}Cbf_stat` | VI/SVB CBF 95% credible limits | 1/min |
 | `*_desc-dscCI95lowerCbf_stat` | CBF approximate 95% credible interval lower bound (CPI/Vascular with VI/SVB) | 1/min |
 | `*_desc-dscCI95upperCbf_stat` | CBF approximate 95% credible interval upper bound (CPI/Vascular with VI/SVB) | 1/min |
 | `*_desc-dscParametricRsquared_stat` | Parametric-fit R-squared (CPI/Vascular) | fraction |

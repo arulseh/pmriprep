@@ -168,20 +168,14 @@ _VASCULAR_MAPS: tuple[DSCMapSpec, ...] = (
 )
 
 
-# Bayesian uncertainty maps. Same shape as above.
-_BAYESIAN_MAPS: tuple[DSCMapSpec, ...] = (
-    DSCMapSpec("cbf_std_map", "dscUncertainty", "cbf", "CBF uncertainty (posterior std)", "1/min", "cbf_std"),
-    DSCMapSpec("cbv_std_map", "dscUncertainty", "cbv", "CBV uncertainty (posterior std)", "arbitrary", "cbv_std"),
-    DSCMapSpec("cbf_cv_map", "dscCV", "cbf", "CBF coefficient of variation", "1", "cbfCV"),
-    DSCMapSpec("cbv_cv_map", "dscCV", "cbv", "CBV coefficient of variation", "1", "cbvCV"),
+# CBF uncertainty maps. CBV is derived and lacks retained joint covariance.
+_UNCERTAINTY_MAPS: tuple[DSCMapSpec, ...] = (
+    DSCMapSpec("cbf_std_map", "dscUncertainty", "cbf", "CBF absolute parameter uncertainty", "1/min", "cbf_std"),
+    DSCMapSpec("cbf_cv_map", "dscCV", "cbf", "CBF relative parameter uncertainty", "1", "cbfCV"),
     DSCMapSpec("cbf_ci95_lower_map", "dscCI95lower", "cbf",
      "CBF 95% credible interval lower bound", "1/min", "cbfCI95lower"),
     DSCMapSpec("cbf_ci95_upper_map", "dscCI95upper", "cbf",
      "CBF 95% credible interval upper bound", "1/min", "cbfCI95upper"),
-    DSCMapSpec("cbv_ci95_lower_map", "dscCI95lower", "cbv",
-     "CBV 95% credible interval lower bound", "arbitrary", "cbvCI95lower"),
-    DSCMapSpec("cbv_ci95_upper_map", "dscCI95upper", "cbv",
-     "CBV 95% credible interval upper bound", "arbitrary", "cbvCI95upper"),
 )
 
 
@@ -228,7 +222,7 @@ _STRUCTURAL_UNDERLAYS: tuple[DSCAnatSpec, ...] = (
 #: every emitted key is registered in :data:`TEMPLATE_AIF_USAGE`.
 _DSC_OUTPUT_KEYS: frozenset[str] = frozenset(
     [m.map_key for m in _CORE_MAPS + _REL_MAPS + _OPTIONAL_MAPS
-     + _NORMALIZED_MAPS + _VASCULAR_MAPS + _BAYESIAN_MAPS]
+     + _NORMALIZED_MAPS + _VASCULAR_MAPS + _UNCERTAINTY_MAPS]
     + ["k2", "parametric_r2", "fallback",
        "rel_cbf", "rel_cbv", "rel_auc_corr", "ncbf", "ncbv", "mtt"]  # smoothed names
 )
@@ -643,11 +637,11 @@ def _build_parametric_extra(qc_metrics: dict | None = None) -> dict:
     return extra
 
 
-def _build_bayes_extra(
+def _build_uncertainty_extra(
     config_dict: dict | None = None,
     umap_key: str = "cbf_std",
 ) -> dict:
-    """Build inference-specific provenance for Bayesian uncertainty maps."""
+    """Build inference-specific provenance for CBF uncertainty maps."""
     from pmriprep.utils.uncertainty_provenance import (
         build_uncertainty_provenance,
     )
@@ -887,6 +881,7 @@ def init_dsc_datasinks_wf(
     bids_dir: str,
     subject_id: str,
     session_id: Optional[str],
+    inference: str,
     present_inputs: Optional[set[str]] = None,
     has_smoothing: bool = False,
     motion_correct: bool = True,
@@ -927,10 +922,9 @@ def init_dsc_datasinks_wf(
                 "ncbv_map", "ncbf_map",
                 # Vascular
                 "alpha_map", "beta_map", "cth_map",
-                # Bayesian uncertainty
-                "cbf_std_map", "cbv_std_map", "cbf_cv_map", "cbv_cv_map",
+                # Inference-specific CBF uncertainty
+                "cbf_std_map", "cbf_cv_map",
                 "cbf_ci95_lower_map", "cbf_ci95_upper_map",
-                "cbv_ci95_lower_map", "cbv_ci95_upper_map",
                 # Parametric diagnostics + leakage
                 "k2_map", "parametric_r2_map", "fallback_mask",
                 "preload_qc", "preprocessing_stats", "aif_qc",
@@ -1042,15 +1036,15 @@ def init_dsc_datasinks_wf(
             )
             sink_outputs.append((sink, "out_file"))
 
-    # --- Bayesian uncertainty maps (extras built per-map from config_dict) ---
-    for spec in _BAYESIAN_MAPS:
+    # --- Inference-specific CBF uncertainty maps ---
+    for spec in _UNCERTAINTY_MAPS:
         if spec.in_attr not in present:
             continue
         bayes_extra = pe.Node(
             niu.Function(
                 input_names=["config_dict", "umap_key"],
                 output_names=["extra"],
-                function=_build_bayes_extra,
+                function=_build_uncertainty_extra,
             ),
             name=f"{spec.in_attr}_extra",
         )
@@ -1066,7 +1060,19 @@ def init_dsc_datasinks_wf(
             ),
             name=f"{spec.in_attr}_meta",
         )
-        bayes_meta.inputs.description = spec.description
+        is_nlls = inference.lower() == "nlls"
+        if spec.in_attr == "cbf_std_map":
+            desc_value = "dscStandardError" if is_nlls else "dscPosteriorSD"
+            description = "CBF parameter standard error" if is_nlls else "CBF posterior standard deviation"
+        elif spec.in_attr == "cbf_cv_map":
+            desc_value = "dscRelativeStandardError" if is_nlls else "dscPosteriorCV"
+            description = "CBF relative standard error" if is_nlls else "CBF posterior coefficient of variation"
+        else:
+            bound = "lower" if "lower" in spec.in_attr else "upper"
+            interval = "ConfidenceInterval95" if is_nlls else "CredibleInterval95"
+            desc_value = f"dsc{interval}{bound}"
+            description = f"CBF 95% {'confidence' if is_nlls else 'credible'} interval {bound} bound"
+        bayes_meta.inputs.description = description
         bayes_meta.inputs.map_key = spec.map_key
         bayes_meta.inputs.units = spec.units
         workflow.connect([
@@ -1086,7 +1092,7 @@ def init_dsc_datasinks_wf(
             ),
             name=f"{spec.in_attr}_sink",
         )
-        b_sink.inputs.desc = spec.desc
+        b_sink.inputs.desc = desc_value
         b_sink.inputs.suffix = spec.suffix
         b_sink.inputs.datatype = "perf"
         b_sink.inputs.bids_suffix = "stat"
@@ -1171,7 +1177,7 @@ def init_dsc_datasinks_wf(
     # Verbatim long descriptions from the legacy writer — they explain that
     # R2 is preserved on fallback voxels, that those voxels' CBF/CBV/MTT/Tmax
     # come from oSVD (NOT from the parametric fit with this R2), and that
-    # uncertainty maps are zero-filled in fallback voxels.
+    # uncertainty maps are undefined in fallback voxels.
     _PARAMETRIC_R2_DESC = (
         "Per-voxel R2 (coefficient of determination) of the parametric DSC "
         "fit (CPI / Vascular) against the K2-corrected tissue concentration. "
@@ -1183,7 +1189,8 @@ def init_dsc_datasinks_wf(
         "Binary oSVD-fallback mask. 1 = the parametric R2<0.5 gate rejected "
         "this voxel and the saved CBF/CBV/MTT/Tmax come from "
         "svd_deconvolve_oscillation; the parametric uncertainty maps "
-        "(cbf_std, cbv_std, CV, CI95) are zero-filled in these voxels. "
+        "(standard error/posterior SD, relative uncertainty, and intervals) "
+        "are NaN in these voxels. "
         "0 = the parametric fit was retained."
     )
     for in_attr, desc_value, suffix, description, key, bids_sfx in (

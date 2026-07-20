@@ -1667,14 +1667,9 @@ def _connect_master_dsc_datasinks(
     if dsc_method in ("cpi", "vascular"):
         dsc_present |= {"parametric_r2_map", "fallback_mask"}
         dsc_present |= {
-            "cbf_std_map", "cbv_std_map", "cbf_cv_map", "cbv_cv_map",
+            "cbf_std_map", "cbf_cv_map",
+            "cbf_ci95_lower_map", "cbf_ci95_upper_map",
         }
-        # CI95 maps only for posterior-sample inference (VI/MCMC/SVB)
-        if dsc_inference in ("vi", "svb", "mcmc"):
-            dsc_present |= {
-                "cbf_ci95_lower_map", "cbf_ci95_upper_map",
-                "cbv_ci95_lower_map", "cbv_ci95_upper_map",
-            }
     # Vascular method only (alpha/beta/cth params)
     if dsc_method == "vascular":
         dsc_present |= {"alpha_map", "beta_map", "cth_map"}
@@ -1747,6 +1742,7 @@ def _connect_master_dsc_datasinks(
         bids_dir=str(bids_dir),
         subject_id=subject_id,
         session_id=session_id,
+        inference=dsc_inference,
         present_inputs=dsc_present,
         has_smoothing=dsc_config.smooth_fwhm > 0,
         motion_correct=dsc_config.motion_correct,
@@ -1793,15 +1789,11 @@ def _connect_master_dsc_datasinks(
             ("outputnode.alpha_map", "inputnode.alpha_map"),
             ("outputnode.beta_map", "inputnode.beta_map"),
             ("outputnode.cth_map", "inputnode.cth_map"),
-            # Bayesian uncertainty maps
+            # Inference-specific CBF uncertainty maps
             ("outputnode.cbf_std_map", "inputnode.cbf_std_map"),
-            ("outputnode.cbv_std_map", "inputnode.cbv_std_map"),
             ("outputnode.cbf_cv_map", "inputnode.cbf_cv_map"),
-            ("outputnode.cbv_cv_map", "inputnode.cbv_cv_map"),
             ("outputnode.cbf_ci95_lower_map", "inputnode.cbf_ci95_lower_map"),
             ("outputnode.cbf_ci95_upper_map", "inputnode.cbf_ci95_upper_map"),
-            ("outputnode.cbv_ci95_lower_map", "inputnode.cbv_ci95_lower_map"),
-            ("outputnode.cbv_ci95_upper_map", "inputnode.cbv_ci95_upper_map"),
             # Parametric-fit diagnostics (CPI/Vascular only)
             ("outputnode.parametric_r2_map", "inputnode.parametric_r2_map"),
             ("outputnode.fallback_mask", "inputnode.fallback_mask"),

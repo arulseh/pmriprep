@@ -100,6 +100,7 @@ def _run_writer(inputs: dict, qc_metrics: dict | None, tmp_path: Path | None = N
         bids_dir=inputs["bids_dir"],
         subject_id=inputs["subject_id"],
         session_id=inputs["session_id"],
+        inference="vi",
         present_inputs=present,
         has_smoothing=has_smoothing,
     )
@@ -114,6 +115,26 @@ def _run_writer(inputs: dict, qc_metrics: dict | None, tmp_path: Path | None = N
         inp.qc_metrics = qc_metrics
     wf.run()
     return Path(inputs["output_dir"])
+
+
+def test_nlls_uncertainty_uses_frequentist_derivative_names(tmp_path: Path) -> None:
+    """DSC NLLS sinks distinguish standard errors from posterior uncertainty."""
+    from pmriprep.workflows.dsc.datasinks import init_dsc_datasinks_wf
+
+    workflow = init_dsc_datasinks_wf(
+        output_dir=str(tmp_path / "out"),
+        bids_dir=str(tmp_path / "bids"),
+        subject_id="01",
+        session_id=None,
+        inference="nlls",
+        present_inputs={"cbf_std_map", "cbf_cv_map", "cbf_ci95_lower_map"},
+    )
+    assert workflow.get_node("cbf_std_map_sink").inputs.desc == "dscStandardError"
+    assert workflow.get_node("cbf_cv_map_sink").inputs.desc == "dscRelativeStandardError"
+    assert (
+        workflow.get_node("cbf_ci95_lower_map_sink").inputs.desc
+        == "dscConfidenceInterval95lower"
+    )
 
 
 # =============================================================================
@@ -344,7 +365,7 @@ class TestWriterAifBlockPresentOnAllMaps:
             "beta_map": _write_dummy_nifti(tmp_path / "beta.nii.gz"),
             "cth_map": _write_dummy_nifti(tmp_path / "cth.nii.gz"),
             "cbf_std_map": _write_dummy_nifti(tmp_path / "cbf_std.nii.gz"),
-            "cbv_cv_map": _write_dummy_nifti(tmp_path / "cbv_cv.nii.gz"),
+            "cbf_cv_map": _write_dummy_nifti(tmp_path / "cbf_cv.nii.gz"),
             "auc_diff_map": _write_dummy_nifti(tmp_path / "auc_diff.nii.gz"),
             "parametric_r2_map": _write_dummy_nifti(tmp_path / "parametric_r2.nii.gz"),
             "config_dict": {"inference": "svb"},
@@ -356,20 +377,20 @@ class TestWriterAifBlockPresentOnAllMaps:
             "dscAlpha_stat": "1",
             "dscBeta_stat": "s",
             "dscCth_stat": "s",
-            "dscUncertaintyCbf_stat": "1/min",
-            "dscCVCbv_stat": "1",
+            "dscPosteriorSDCbf_stat": "1/min",
+            "dscPosteriorCVCbf_stat": "1",
             "dscLeakageAuc_stat": "arbitrary",
             "dscParametricRsquared_stat": "1",
         }
         for suffix, units in expected.items():
             assert _load_sidecar(derivatives, suffix)["Units"] == units
 
-        uncertainty_meta = _load_sidecar(derivatives, "dscUncertaintyCbf_stat")
+        uncertainty_meta = _load_sidecar(derivatives, "dscPosteriorSDCbf_stat")
         assert uncertainty_meta["EstimationMethod"] == "svb"
         assert uncertainty_meta["InferenceMethod"] == "spatial_variational_bayes"
         assert uncertainty_meta["SpatialPriorApplied"] is True
         assert uncertainty_meta["SpatialPriorModel"] == "Penny M-prior"
-        cv_meta = _load_sidecar(derivatives, "dscCVCbv_stat")
+        cv_meta = _load_sidecar(derivatives, "dscPosteriorCVCbf_stat")
         assert cv_meta["UncertaintyStatistic"] == "coefficient_of_variation"
 
     def test_synthetic_template_flags(self, minimal_inputs, tmp_path) -> None:
@@ -454,6 +475,7 @@ class TestStructuralUnderlayDatatype:
             bids_dir=minimal_inputs["bids_dir"],
             subject_id=minimal_inputs["subject_id"],
             session_id=minimal_inputs["session_id"],
+            inference="vi",
             present_inputs=present,
         )
         wf.base_dir = str(tmp_path / work_subdir)

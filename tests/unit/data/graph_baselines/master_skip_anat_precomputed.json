@@ -122,6 +122,30 @@
     ],
     [
       "dce_wf",
+      "outputnode.fp_ci95_lower",
+      "dce_datasinks_wf",
+      "inputnode.fp_ci95_lower"
+    ],
+    [
+      "dce_wf",
+      "outputnode.fp_ci95_upper",
+      "dce_datasinks_wf",
+      "inputnode.fp_ci95_upper"
+    ],
+    [
+      "dce_wf",
+      "outputnode.fp_cv",
+      "dce_datasinks_wf",
+      "inputnode.fp_cv"
+    ],
+    [
+      "dce_wf",
+      "outputnode.fp_map",
+      "dce_datasinks_wf",
+      "inputnode.fp_map"
+    ],
+    [
+      "dce_wf",
       "outputnode.fp_uncertainty",
       "dce_datasinks_wf",
       "inputnode.fp_uncertainty"
@@ -269,6 +293,30 @@
       "outputnode.preprocessing_qc_plot",
       "dce_datasinks_wf",
       "inputnode.preprocessing_qc_plot"
+    ],
+    [
+      "dce_wf",
+      "outputnode.ps_ci95_lower",
+      "dce_datasinks_wf",
+      "inputnode.ps_ci95_lower"
+    ],
+    [
+      "dce_wf",
+      "outputnode.ps_ci95_upper",
+      "dce_datasinks_wf",
+      "inputnode.ps_ci95_upper"
+    ],
+    [
+      "dce_wf",
+      "outputnode.ps_cv",
+      "dce_datasinks_wf",
+      "inputnode.ps_cv"
+    ],
+    [
+      "dce_wf",
+      "outputnode.ps_map",
+      "dce_datasinks_wf",
+      "inputnode.ps_map"
     ],
     [
       "dce_wf",
@@ -605,30 +653,6 @@
       "outputnode.cbf_std_map",
       "dsc_datasinks_wf",
       "inputnode.cbf_std_map"
-    ],
-    [
-      "dsc_wf",
-      "outputnode.cbv_ci95_lower_map",
-      "dsc_datasinks_wf",
-      "inputnode.cbv_ci95_lower_map"
-    ],
-    [
-      "dsc_wf",
-      "outputnode.cbv_ci95_upper_map",
-      "dsc_datasinks_wf",
-      "inputnode.cbv_ci95_upper_map"
-    ],
-    [
-      "dsc_wf",
-      "outputnode.cbv_cv_map",
-      "dsc_datasinks_wf",
-      "inputnode.cbv_cv_map"
-    ],
-    [
-      "dsc_wf",
-      "outputnode.cbv_std_map",
-      "dsc_datasinks_wf",
-      "inputnode.cbv_std_map"
     ],
     [
       "dsc_wf",

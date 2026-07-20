@@ -255,7 +255,7 @@ def test_first_pass_sidecar_disclosures(tmp_path):
     }
     wf = init_dsc_datasinks_wf(
         output_dir=out_dir, bids_dir=str(bids),
-        subject_id="t01", session_id=None, present_inputs=present,
+        subject_id="t01", session_id=None, inference="vi", present_inputs=present,
     )
     wf.base_dir = str(tmp_path / "work")
     inp = wf.inputs.inputnode
@@ -321,7 +321,7 @@ def test_first_pass_nii_written(tmp_path):
     present = {"mtt_map", "tmax_map", "psr_map", "ph_map", "rel_cbv_firstpass_map"}
     wf = init_dsc_datasinks_wf(
         output_dir=out_dir, bids_dir=str(bids),
-        subject_id="t01", session_id=None, present_inputs=present,
+        subject_id="t01", session_id=None, inference="vi", present_inputs=present,
     )
     wf.base_dir = str(tmp_path / "work")
     inp = wf.inputs.inputnode

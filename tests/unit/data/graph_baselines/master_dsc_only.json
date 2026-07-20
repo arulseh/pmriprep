@@ -242,30 +242,6 @@
     ],
     [
       "dsc_wf",
-      "outputnode.cbv_ci95_lower_map",
-      "dsc_datasinks_wf",
-      "inputnode.cbv_ci95_lower_map"
-    ],
-    [
-      "dsc_wf",
-      "outputnode.cbv_ci95_upper_map",
-      "dsc_datasinks_wf",
-      "inputnode.cbv_ci95_upper_map"
-    ],
-    [
-      "dsc_wf",
-      "outputnode.cbv_cv_map",
-      "dsc_datasinks_wf",
-      "inputnode.cbv_cv_map"
-    ],
-    [
-      "dsc_wf",
-      "outputnode.cbv_std_map",
-      "dsc_datasinks_wf",
-      "inputnode.cbv_std_map"
-    ],
-    [
-      "dsc_wf",
       "outputnode.cnr_map",
       "dsc_datasinks_wf",
       "inputnode.cnr_map"

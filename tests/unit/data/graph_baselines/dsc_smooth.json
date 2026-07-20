@@ -254,30 +254,6 @@
     ],
     [
       "compute_maps",
-      "out_cbv_ci95_lower",
-      "outputnode",
-      "cbv_ci95_lower_map"
-    ],
-    [
-      "compute_maps",
-      "out_cbv_ci95_upper",
-      "outputnode",
-      "cbv_ci95_upper_map"
-    ],
-    [
-      "compute_maps",
-      "out_cbv_cv",
-      "outputnode",
-      "cbv_cv_map"
-    ],
-    [
-      "compute_maps",
-      "out_cbv_std",
-      "outputnode",
-      "cbv_std_map"
-    ],
-    [
-      "compute_maps",
       "out_cnr",
       "outputnode",
       "cnr_map"
@@ -2539,10 +2515,6 @@
     "cbf_ci95_upper_map",
     "cbf_cv_map",
     "cbf_std_map",
-    "cbv_ci95_lower_map",
-    "cbv_ci95_upper_map",
-    "cbv_cv_map",
-    "cbv_std_map",
     "cnr_map",
     "cth_map",
     "dsc_fit_qc_plot",

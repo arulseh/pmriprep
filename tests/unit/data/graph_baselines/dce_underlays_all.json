@@ -1160,6 +1160,30 @@
     ],
     [
       "pk_modeling",
+      "out_fp",
+      "outputnode",
+      "fp_map"
+    ],
+    [
+      "pk_modeling",
+      "out_fp_ci95_lower",
+      "outputnode",
+      "fp_ci95_lower"
+    ],
+    [
+      "pk_modeling",
+      "out_fp_ci95_upper",
+      "outputnode",
+      "fp_ci95_upper"
+    ],
+    [
+      "pk_modeling",
+      "out_fp_cv",
+      "outputnode",
+      "fp_cv"
+    ],
+    [
+      "pk_modeling",
       "out_fp_std",
       "outputnode",
       "fp_uncertainty"
@@ -1391,6 +1415,30 @@
       "out_ps",
       "dce_pk_maps_qc",
       "ps_file"
+    ],
+    [
+      "pk_modeling",
+      "out_ps",
+      "outputnode",
+      "ps_map"
+    ],
+    [
+      "pk_modeling",
+      "out_ps_ci95_lower",
+      "outputnode",
+      "ps_ci95_lower"
+    ],
+    [
+      "pk_modeling",
+      "out_ps_ci95_upper",
+      "outputnode",
+      "ps_ci95_upper"
+    ],
+    [
+      "pk_modeling",
+      "out_ps_cv",
+      "outputnode",
+      "ps_cv"
     ],
     [
       "pk_modeling",
@@ -3218,6 +3266,10 @@
     "dsc_dce_xval_plot",
     "flair_in_dce",
     "flair_postcon_in_dce",
+    "fp_ci95_lower",
+    "fp_ci95_upper",
+    "fp_cv",
+    "fp_map",
     "fp_uncertainty",
     "iauc120_map",
     "iauc60_map",
@@ -3241,6 +3293,10 @@
     "pk_modeling_qc_plot",
     "pk_param_maps_qc_plot",
     "preprocessing_qc_plot",
+    "ps_ci95_lower",
+    "ps_ci95_upper",
+    "ps_cv",
+    "ps_map",
     "ps_uncertainty",
     "qc_mask",
     "qc_metrics",

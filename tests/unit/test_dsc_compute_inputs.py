@@ -735,20 +735,22 @@ def test_save_parametric_maps_preserves_masking_cv_and_diagnostics(
         "out_cbv_ci95_lower", "out_cbv_ci95_upper",
         "out_parametric_r2", "out_fallback_mask",
     }
-    np.testing.assert_allclose(saved["_cbf_std"][0], [2.0, 3.0, 0.0])
-    np.testing.assert_allclose(saved["_cbf_cv"][0], [0.2, 0.0, 0.0])
-    np.testing.assert_allclose(saved["_cbv_cv"][0], [0.5, 0.5, 0.0])
-    np.testing.assert_allclose(saved["_cbf_ci95_lower"][0], [8.0, -1.0, 0.0])
+    np.testing.assert_allclose(saved["_cbf_std"][0], [2.0, np.nan, 0.0], equal_nan=True)
+    np.testing.assert_allclose(saved["_cbf_cv"][0], [0.2, np.nan, 0.0], equal_nan=True)
+    np.testing.assert_allclose(saved["_cbv_cv"][0], [0.5, np.nan, 0.0], equal_nan=True)
+    np.testing.assert_allclose(
+        saved["_cbf_ci95_lower"][0], [8.0, np.nan, 0.0], equal_nan=True
+    )
     np.testing.assert_allclose(saved["_dscParametric_r2"][0][:2], [0.9, 0.5])
     assert np.isnan(saved["_dscParametric_r2"][0][2])
     np.testing.assert_array_equal(saved["_dscFallback_mask"][0], [0, 1, 0])
     assert saved["_dscFallback_mask"][1] is np.uint8
 
 
-def test_save_parametric_maps_omits_unavailable_and_map_intervals(
+def test_save_parametric_maps_preserves_map_intervals(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """MAP inference omits intervals while independently absent maps stay absent."""
+    """MAP intervals are serialized while independently absent maps stay absent."""
     interface = ComputeDSCMaps()
     monkeypatch.setattr(
         interface,
@@ -774,7 +776,11 @@ def test_save_parametric_maps_omits_unavailable_and_map_intervals(
         header=object(),
     )
 
-    assert set(results) == {"out_cbv_std", "out_cbv_cv"}
+    assert set(results) == {
+        "out_cbv_std", "out_cbv_cv",
+        "out_cbf_ci95_lower", "out_cbf_ci95_upper",
+        "out_cbv_ci95_lower", "out_cbv_ci95_upper",
+    }
 
 
 def test_add_fit_qc_metrics_preserves_voxel_fit_and_tier(
