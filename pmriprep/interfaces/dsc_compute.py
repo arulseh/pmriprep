@@ -1652,6 +1652,64 @@ class ComputeDSCMaps(BaseInterface):
         if tier is not None:
             qc_metrics["qc_voxel_tier"] = tier
 
+    def _save_ancillary_maps(
+        self,
+        *,
+        relative_ttp: Optional[npt.NDArray[Any]],
+        k2_map_path: Optional[str],
+        delay: Optional[npt.NDArray[Any]],
+        alpha: Optional[npt.NDArray[Any]],
+        beta: Optional[npt.NDArray[Any]],
+        cth: Optional[npt.NDArray[Any]],
+        residues: Optional[npt.NDArray[Any]],
+        save_residue: bool,
+        mask_bool: npt.NDArray[Any],
+        spatial_shape: tuple[int, ...],
+        affine: npt.NDArray[Any],
+        header: Any,
+    ) -> dict[str, str]:
+        """Serialize optional timing/model maps and the required K2 output."""
+        import nibabel as nib  # type: ignore[import-untyped]
+
+        outputs: dict[str, str] = {}
+        if relative_ttp is not None:
+            outputs["out_rttp"] = self._save_map(
+                relative_ttp, "_rttp", affine, header
+            )
+
+        if k2_map_path is not None:
+            k2_data = np.asarray(
+                nib.load(k2_map_path).get_fdata(),  # type: ignore[attr-defined]
+                dtype=np.float32,
+            )
+            k2_data = np.where(mask_bool, k2_data, 0.0)
+            outputs["out_k2"] = self._save_map(k2_data, "_k2", affine, header)
+        else:
+            k2_zeros = np.zeros(spatial_shape, dtype=np.float32)
+            k2_fallback_path = self._gen_outfilename("_k2")
+            k2_fallback_img = nib.Nifti1Image(k2_zeros, affine, header)  # type: ignore[attr-defined]
+            nib.save(k2_fallback_img, k2_fallback_path)  # type: ignore[attr-defined]
+            outputs["out_k2"] = k2_fallback_path
+
+        if delay is not None:
+            outputs["out_delay"] = self._save_map(delay, "_delay", affine, header)
+        for name, suffix, data in (
+            ("out_alpha", "_alpha", alpha),
+            ("out_beta", "_beta", beta),
+            ("out_cth", "_cth", cth),
+        ):
+            if data is not None:
+                outputs[name] = self._save_map(
+                    np.where(mask_bool, data, 0.0), suffix, affine, header
+                )
+
+        if residues is not None and save_residue:
+            residue_path = self._gen_outfilename("_residues")
+            residue_img = nib.Nifti1Image(residues.astype(np.float32), affine)  # type: ignore[attr-defined]
+            nib.save(residue_img, residue_path)  # type: ignore[attr-defined]
+            outputs["out_residues"] = residue_path
+        return outputs
+
     def _first_pass_reference(
         self,
         fp_area: npt.NDArray[Any],
@@ -3072,8 +3130,6 @@ class ComputeDSCMaps(BaseInterface):
 
     def _run_interface(self, runtime: Any) -> Any:
         """Execute DSC map computation."""
-        import nibabel as nib  # type: ignore[import-untyped]
-
         inputs = self._load_compute_inputs()
         conc_data = inputs.concentration
         affine = inputs.affine
@@ -3124,6 +3180,11 @@ class ComputeDSCMaps(BaseInterface):
         cbf_ci_upper_map: Optional[npt.NDArray[Any]] = None
         cbv_ci_lower_map: Optional[npt.NDArray[Any]] = None
         cbv_ci_upper_map: Optional[npt.NDArray[Any]] = None
+        alpha_map: Optional[npt.NDArray[Any]] = None
+        beta_map: Optional[npt.NDArray[Any]] = None
+        cth_map: Optional[npt.NDArray[Any]] = None
+        parametric_r2_map: Optional[npt.NDArray[Any]] = None
+        fallback_mask: Optional[npt.NDArray[Any]] = None
         qc_metrics: dict[str, Any] = {}
 
         motion_weighting = self._prepare_motion_weighting(
@@ -3271,41 +3332,22 @@ class ComputeDSCMaps(BaseInterface):
             if fp_path:
                 self._results["out_rel_cbv_firstpass"] = fp_path
 
-        # NAWM-relative TTP (conditional on NAWM mask availability)
-        if rttp is not None:
-            self._results["out_rttp"] = self._save_map(rttp, "_rttp", affine, header)
-
-        # K2 map (recomputed or pass-through) — always set
-        if k2_map_out_path is not None:
-            k2_data = np.asarray(
-                nib.load(k2_map_out_path).get_fdata(),  # type: ignore[attr-defined]
-                dtype=np.float32,
+        self._results.update(
+            self._save_ancillary_maps(
+                relative_ttp=rttp,
+                k2_map_path=k2_map_out_path,
+                delay=delay,
+                alpha=alpha_map,
+                beta=beta_map,
+                cth=cth_map,
+                residues=residues,
+                save_residue=bool(self.inputs.save_residue),
+                mask_bool=mask_bool,
+                spatial_shape=spatial_shape,
+                affine=affine,
+                header=header,
             )
-            k2_data = np.where(mask_bool, k2_data, 0.0)
-            self._results["out_k2"] = self._save_map(k2_data, "_k2", affine, header)
-        else:
-            # No K2 available — save a zeros map so downstream nodes always get a file
-            k2_zeros = np.zeros(spatial_shape, dtype=np.float32)
-            k2_fallback_path = self._gen_outfilename("_k2")
-            k2_fallback_img = nib.Nifti1Image(k2_zeros, affine, header)  # type: ignore[attr-defined]
-            nib.save(k2_fallback_img, k2_fallback_path)  # type: ignore[attr-defined]
-            self._results["out_k2"] = k2_fallback_path
-
-        # Save delay map if oSVD
-        if delay is not None:
-            self._results["out_delay"] = self._save_map(delay, "_delay", affine, header)
-
-        # Save alpha/beta/cth maps for vascular method
-        if method in ("vascular", "cpi"):
-            if alpha_map is not None:  # type: ignore[possibly-undefined]
-                alpha_map = np.where(mask_bool, alpha_map, 0.0)
-                self._results["out_alpha"] = self._save_map(alpha_map, "_alpha", affine, header)
-            if beta_map is not None:  # type: ignore[possibly-undefined]
-                beta_map = np.where(mask_bool, beta_map, 0.0)
-                self._results["out_beta"] = self._save_map(beta_map, "_beta", affine, header)
-            if cth_map is not None:  # type: ignore[possibly-undefined]
-                cth_map = np.where(mask_bool, cth_map, 0.0)
-                self._results["out_cth"] = self._save_map(cth_map, "_cth", affine, header)
+        )
 
         # Save QC fit data for all deconvolution methods
         if method in ("vascular", "cpi"):
@@ -3331,27 +3373,20 @@ class ComputeDSCMaps(BaseInterface):
                 self._save_parametric_maps(
                     rel_cbf=rel_cbf,
                     rel_cbv=rel_cbv,
-                    cbf_std=cbf_std_map,  # type: ignore[possibly-undefined]
-                    cbv_std=cbv_std_map,  # type: ignore[possibly-undefined]
-                    cbf_ci_lower=cbf_ci_lower_map,  # type: ignore[possibly-undefined]
-                    cbf_ci_upper=cbf_ci_upper_map,  # type: ignore[possibly-undefined]
-                    cbv_ci_lower=cbv_ci_lower_map,  # type: ignore[possibly-undefined]
-                    cbv_ci_upper=cbv_ci_upper_map,  # type: ignore[possibly-undefined]
-                    parametric_r2=parametric_r2_map,  # type: ignore[possibly-undefined]
-                    fallback_mask=fallback_mask,  # type: ignore[possibly-undefined]
+                    cbf_std=cbf_std_map,
+                    cbv_std=cbv_std_map,
+                    cbf_ci_lower=cbf_ci_lower_map,
+                    cbf_ci_upper=cbf_ci_upper_map,
+                    cbv_ci_lower=cbv_ci_lower_map,
+                    cbv_ci_upper=cbv_ci_upper_map,
+                    parametric_r2=parametric_r2_map,
+                    fallback_mask=fallback_mask,
                     mask_bool=mask_bool,
                     inference=inference,
                     affine=affine,
                     header=header,
                 )
             )
-
-        # Save residues if requested
-        if residues is not None and self.inputs.save_residue:
-            out_residues = self._gen_outfilename("_residues")
-            residues_img = nib.Nifti1Image(residues.astype(np.float32), affine)  # type: ignore[attr-defined]
-            nib.save(residues_img, out_residues)  # type: ignore[attr-defined]
-            self._results["out_residues"] = out_residues
 
         return runtime
 

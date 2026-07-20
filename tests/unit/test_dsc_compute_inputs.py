@@ -813,3 +813,67 @@ def test_add_fit_qc_metrics_preserves_absent_and_default_r2(tmp_path: Path) -> N
     interface._add_fit_qc_metrics(np.full((1, 1, 1), 2.0), qc)
     assert qc["qc_voxel_rsquared"] == 0.0
     assert "qc_voxel_tier" not in qc
+
+
+def test_save_ancillary_maps_preserves_optional_maps_and_masking(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ancillary outputs retain optionality, model masking, and residue layout."""
+    monkeypatch.chdir(tmp_path)
+    source = _write_image(tmp_path / "concentration.nii.gz", np.ones((2, 1, 1), dtype=np.int16))
+    k2_path = _write_image(tmp_path / "upstream_k2.nii.gz", np.array([[[2.0]], [[9.0]]]))
+    source_img = nib.load(source)
+    interface = ComputeDSCMaps(concentration_file=source)
+    mask = np.array([[[True]], [[False]]])
+    residues = np.array([[[[1.0, 2.0]]], [[[0.0, 0.0]]]])
+
+    results = interface._save_ancillary_maps(
+        relative_ttp=np.array([[[3.0]], [[0.0]]]),
+        k2_map_path=k2_path,
+        delay=np.array([[[4.0]], [[0.0]]]),
+        alpha=np.array([[[5.0]], [[8.0]]]),
+        beta=None,
+        cth=np.array([[[6.0]], [[9.0]]]),
+        residues=residues,
+        save_residue=True,
+        mask_bool=mask,
+        spatial_shape=mask.shape,
+        affine=source_img.affine,
+        header=source_img.header,
+    )
+
+    assert set(results) == {
+        "out_rttp", "out_k2", "out_delay", "out_alpha", "out_cth", "out_residues"
+    }
+    np.testing.assert_allclose(nib.load(results["out_k2"]).get_fdata().ravel(), [2.0, 0.0])
+    np.testing.assert_allclose(nib.load(results["out_alpha"]).get_fdata().ravel(), [5.0, 0.0])
+    np.testing.assert_allclose(nib.load(results["out_cth"]).get_fdata().ravel(), [6.0, 0.0])
+    np.testing.assert_allclose(nib.load(results["out_residues"]).get_fdata(), residues)
+
+
+def test_save_ancillary_maps_always_emits_zero_k2_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Absent optional maps still emit the established all-zero K2 output."""
+    monkeypatch.chdir(tmp_path)
+    source = _write_image(tmp_path / "concentration.nii.gz", np.ones((2, 1, 1), dtype=np.int16))
+    source_img = nib.load(source)
+    interface = ComputeDSCMaps(concentration_file=source)
+
+    results = interface._save_ancillary_maps(
+        relative_ttp=None,
+        k2_map_path=None,
+        delay=None,
+        alpha=None,
+        beta=None,
+        cth=None,
+        residues=np.ones((2, 1, 1, 2)),
+        save_residue=False,
+        mask_bool=np.ones((2, 1, 1), dtype=bool),
+        spatial_shape=(2, 1, 1),
+        affine=source_img.affine,
+        header=source_img.header,
+    )
+
+    assert set(results) == {"out_k2"}
+    np.testing.assert_array_equal(nib.load(results["out_k2"]).get_fdata(), 0.0)
