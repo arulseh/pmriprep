@@ -22,6 +22,7 @@ from pmriprep.workflows.base import (
     _connect_master_dsc_anatomy,
     _connect_master_dsc_masks,
     _connect_master_dsc_outputs_and_build_provenance,
+    _connect_master_dsc_to_dce,
     _init_master_workflow_nodes,
     _prepare_master_workflow_context,
     _prepare_master_preflight_state,
@@ -410,6 +411,49 @@ def test_connect_master_dsc_outputs_preserves_provenance_sources(
     assert captured["agent_source"] == ParameterSource.BIDS_SIDECAR
     assert captured["agent_standard_dose_source"] == ParameterSource.DEFAULT_FALLBACK
     assert captured["gd_multiplicity"] == 1
+
+
+def test_connect_master_dsc_to_dce_preserves_live_constraint_routes() -> None:
+    """Live DSC supplies CBV, normalized CBV, transforms, and QC to DCE."""
+    connections: list[Any] = []
+    dsc_wf = SimpleNamespace()
+    dce_wf = SimpleNamespace(
+        inputs=SimpleNamespace(
+            inputnode=SimpleNamespace(),
+            dce_dsc_validation_wf=SimpleNamespace(inputnode=SimpleNamespace()),
+        )
+    )
+    _connect_master_dsc_to_dce(
+        workflow=SimpleNamespace(connect=connections.extend),
+        dsc_wf=dsc_wf,
+        dce_wf=dce_wf,
+        dsc_config=DSCConfig(dose=0.5, agent_standard_dose=0.1, preload=0.0),
+        dce_config=DCEConfig(model="extended_tofts"),
+        output_dir=Path("out"),
+        work_dir=Path("work"),
+        subject_id="0001",
+        session_id="0001",
+    )
+
+    assert connections == [
+        (dsc_wf, dce_wf, [
+            ("outputnode.rel_cbv_auc_map", "inputnode.dsc_cbv_file"),
+            ("outputnode.ncbv_map", "inputnode.dsc_ncbv_file"),
+            ("outputnode.dsc_to_t1w_xfm", "inputnode.dsc_to_t1w_xfm"),
+            ("outputnode.aif_qc", "dce_pk_modeling_wf.pk_modeling.dsc_aif_qc"),
+            ("outputnode.preload_qc", "dce_pk_modeling_wf.pk_modeling.dsc_preload_qc"),
+            (
+                "outputnode.preprocessing_stats",
+                "dce_pk_modeling_wf.pk_modeling.dsc_preprocessing_stats",
+            ),
+        ])
+    ]
+    assert dce_wf.inputs.inputnode.dsc_dose == 0.5
+    assert dce_wf.inputs.inputnode.dsc_agent_standard_dose == 0.1
+    assert (
+        dce_wf.inputs.dce_dsc_validation_wf.inputnode.dsc_preload_configured
+        is True
+    )
 
 
 def test_prepare_master_context_resolves_session_policy(

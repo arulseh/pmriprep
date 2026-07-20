@@ -1886,6 +1886,118 @@ def _connect_master_dsc_datasinks(
         ]),
     ])
 
+def _connect_master_dsc_to_dce(
+    *,
+    workflow: pe.Workflow,
+    dsc_wf: Optional[pe.Workflow],
+    dce_wf: pe.Workflow,
+    dsc_config: DSCConfig,
+    dce_config: DCEConfig,
+    output_dir: Path,
+    work_dir: Optional[Path],
+    subject_id: str,
+    session_id: Optional[str],
+) -> None:
+    """Route live or cached DSC CBV and QC state into DCE modeling."""
+    _log = logging.getLogger("pmriprep.workflows")
+    # DSC dose (bolus multiplier + agent standard dose) flows into the
+    # DCE constraint quality gate so CNR coverage thresholds scale with
+    # administered Gd fraction. Read from dsc_config; defaults
+    # (1.0, 0.1) apply when DSC is absent.
+    if dsc_config is not None:
+        dce_wf.inputs.inputnode.dsc_dose = float(dsc_config.dose)
+        dce_wf.inputs.inputnode.dsc_agent_standard_dose = float(
+            dsc_config.agent_standard_dose
+        )
+
+    # Connect DSC CBV for vp constraint in DCE PK modeling.
+    # Models with vp (extended_tofts, 2cxm) use DSC CBV as a fitting constraint.
+    # Other models with vp (patlak) fit freely, cross-validate post-hoc.
+    if dsc_wf is not None:
+        # Fitting constraint: models with vp parameter (or auto, which may resolve to one)
+        if dce_config.model in ("extended_tofts", "2cxm", "auto"):
+            workflow.connect([
+                (dsc_wf, dce_wf, [
+                    # Relative CBV; nCBV is used for cross-validation.
+                    # resampling path (DSC 128x128 → DCE 256x256).
+                    ("outputnode.rel_cbv_auc_map", "inputnode.dsc_cbv_file"),
+                    # NAWM-normalized CBV → vp prior path. None propagates
+                    # cleanly when no NAWM mask exists (missing-NAWM
+                    # handling lives in prepare_vp_constraint_from_data).
+                    ("outputnode.ncbv_map", "inputnode.dsc_ncbv_file"),
+                    ("outputnode.dsc_to_t1w_xfm", "inputnode.dsc_to_t1w_xfm"),
+                    # AIF QC is a JSON file, no spatial resampling needed
+                    ("outputnode.aif_qc", "dce_pk_modeling_wf.pk_modeling.dsc_aif_qc"),
+                    ("outputnode.preload_qc", "dce_pk_modeling_wf.pk_modeling.dsc_preload_qc"),
+                    # CNR coverage for CBV quality assessment
+                    ("outputnode.preprocessing_stats", "dce_pk_modeling_wf.pk_modeling.dsc_preprocessing_stats"),
+                ]),
+            ])
+
+        # Cross-validation: Patlak fits vp freely and cross-validates post-hoc.
+        # CBV is resampled inside DCE workflow via resample_dsc_cbv node.
+        # Only need to connect if not already connected by the constraint block above.
+        if dce_config.model == "patlak":
+            workflow.connect([
+                (dsc_wf, dce_wf, [
+                    ("outputnode.rel_cbv_auc_map", "inputnode.dsc_cbv_file"),
+                    ("outputnode.ncbv_map", "inputnode.dsc_ncbv_file"),
+                    ("outputnode.dsc_to_t1w_xfm", "inputnode.dsc_to_t1w_xfm"),
+                ]),
+            ])
+
+        # Pass DSC preload config to validation node.
+        # True when user explicitly overrode auto-detection with a
+        # numeric preload dose (any float fraction including 0.0).
+        # `dsc_config.preload` is "auto" or a float; `!= "auto"` matches
+        # every float value, so this comparison is the correct
+        # "user-specified?" check under the new type.
+        dce_wf.inputs.dce_dsc_validation_wf.inputnode.dsc_preload_configured = (
+            dsc_config.preload != "auto"
+        )
+
+    elif dce_config.model in ("extended_tofts", "2cxm", "auto", "patlak"):
+        # DSC skipped but DCE needs CBV: look for previous DSC outputs
+        prev_dsc = _find_previous_dsc_outputs(
+            Path(output_dir), subject_id, session_id,
+            work_dir=Path(work_dir) if work_dir else None,
+        )
+        if prev_dsc["rel_cbv_map"] and prev_dsc["dsc_to_t1w_xfm"]:
+            dce_wf.inputs.inputnode.dsc_cbv_file = prev_dsc["rel_cbv_map"]
+            dce_wf.inputs.inputnode.dsc_to_t1w_xfm = prev_dsc["dsc_to_t1w_xfm"]
+            if prev_dsc.get("ncbv_map"):
+                dce_wf.inputs.inputnode.dsc_ncbv_file = prev_dsc["ncbv_map"]
+                _log.info(
+                    "skip-dsc: loaded DSC nCBV from %s", prev_dsc["ncbv_map"]
+                )
+            else:
+                _log.warning(
+                    "skip-dsc: nCBV not found in previous DSC outputs "
+                    "(older run or no NAWM mask); vp constraint will "
+                    "cleanly SKIP. Use --no-dsc-validation to avoid "
+                    "cross-validation noise if this is unexpected."
+                )
+            _log.info(
+                "skip-dsc: loaded DSC CBV from %s", prev_dsc["rel_cbv_map"]
+            )
+            if prev_dsc["aif_qc"]:
+                dce_wf.inputs.dce_pk_modeling_wf.pk_modeling.dsc_aif_qc = prev_dsc["aif_qc"]
+            if prev_dsc.get("preload_qc"):
+                dce_wf.inputs.dce_pk_modeling_wf.pk_modeling.dsc_preload_qc = prev_dsc["preload_qc"]
+            if prev_dsc.get("preprocessing_stats"):
+                dce_wf.inputs.dce_pk_modeling_wf.pk_modeling.dsc_preprocessing_stats = prev_dsc["preprocessing_stats"]
+            if not prev_dsc["aif_qc"]:
+                _log.warning(
+                    "skip-dsc: AIF QC not found in previous DSC outputs; "
+                    "constraint quality assessment will use defaults"
+                )
+        else:
+            _log.warning(
+                "skip-dsc: no previous DSC CBV/transform found in %s; "
+                "DCE vp constraint will be skipped",
+                output_dir,
+            )
+
 def _init_master_workflow_nodes(
     *,
     workflow: pe.Workflow,
@@ -3114,103 +3226,17 @@ def init_pmriprep_wf(
             if session_data.modalities.afi_flip_angle is not None:
                 dce_wf.inputs.inputnode.afi_flip_angle = session_data.modalities.afi_flip_angle
 
-        # DSC dose (bolus multiplier + agent standard dose) flows into the
-        # DCE constraint quality gate so CNR coverage thresholds scale with
-        # administered Gd fraction. Read from dsc_config; defaults
-        # (1.0, 0.1) apply when DSC is absent.
-        if dsc_config is not None:
-            dce_wf.inputs.inputnode.dsc_dose = float(dsc_config.dose)
-            dce_wf.inputs.inputnode.dsc_agent_standard_dose = float(
-                dsc_config.agent_standard_dose
-            )
-
-        # Connect DSC CBV for vp constraint in DCE PK modeling.
-        # Models with vp (extended_tofts, 2cxm) use DSC CBV as a fitting constraint.
-        # Other models with vp (patlak) fit freely, cross-validate post-hoc.
-        if dsc_wf is not None:
-            # Fitting constraint: models with vp parameter (or auto, which may resolve to one)
-            if dce_config.model in ("extended_tofts", "2cxm", "auto"):
-                workflow.connect([
-                    (dsc_wf, dce_wf, [
-                        # Relative CBV; nCBV is used for cross-validation.
-                        # resampling path (DSC 128x128 → DCE 256x256).
-                        ("outputnode.rel_cbv_auc_map", "inputnode.dsc_cbv_file"),
-                        # NAWM-normalized CBV → vp prior path. None propagates
-                        # cleanly when no NAWM mask exists (missing-NAWM
-                        # handling lives in prepare_vp_constraint_from_data).
-                        ("outputnode.ncbv_map", "inputnode.dsc_ncbv_file"),
-                        ("outputnode.dsc_to_t1w_xfm", "inputnode.dsc_to_t1w_xfm"),
-                        # AIF QC is a JSON file, no spatial resampling needed
-                        ("outputnode.aif_qc", "dce_pk_modeling_wf.pk_modeling.dsc_aif_qc"),
-                        ("outputnode.preload_qc", "dce_pk_modeling_wf.pk_modeling.dsc_preload_qc"),
-                        # CNR coverage for CBV quality assessment
-                        ("outputnode.preprocessing_stats", "dce_pk_modeling_wf.pk_modeling.dsc_preprocessing_stats"),
-                    ]),
-                ])
-
-            # Cross-validation: Patlak fits vp freely and cross-validates post-hoc.
-            # CBV is resampled inside DCE workflow via resample_dsc_cbv node.
-            # Only need to connect if not already connected by the constraint block above.
-            if dce_config.model == "patlak":
-                workflow.connect([
-                    (dsc_wf, dce_wf, [
-                        ("outputnode.rel_cbv_auc_map", "inputnode.dsc_cbv_file"),
-                        ("outputnode.ncbv_map", "inputnode.dsc_ncbv_file"),
-                        ("outputnode.dsc_to_t1w_xfm", "inputnode.dsc_to_t1w_xfm"),
-                    ]),
-                ])
-
-            # Pass DSC preload config to validation node.
-            # True when user explicitly overrode auto-detection with a
-            # numeric preload dose (any float fraction including 0.0).
-            # `dsc_config.preload` is "auto" or a float; `!= "auto"` matches
-            # every float value, so this comparison is the correct
-            # "user-specified?" check under the new type.
-            dce_wf.inputs.dce_dsc_validation_wf.inputnode.dsc_preload_configured = (
-                dsc_config.preload != "auto"
-            )
-
-        elif dce_config.model in ("extended_tofts", "2cxm", "auto", "patlak"):
-            # DSC skipped but DCE needs CBV: look for previous DSC outputs
-            prev_dsc = _find_previous_dsc_outputs(
-                Path(output_dir), subject_id, session_id,
-                work_dir=Path(work_dir) if work_dir else None,
-            )
-            if prev_dsc["rel_cbv_map"] and prev_dsc["dsc_to_t1w_xfm"]:
-                dce_wf.inputs.inputnode.dsc_cbv_file = prev_dsc["rel_cbv_map"]
-                dce_wf.inputs.inputnode.dsc_to_t1w_xfm = prev_dsc["dsc_to_t1w_xfm"]
-                if prev_dsc.get("ncbv_map"):
-                    dce_wf.inputs.inputnode.dsc_ncbv_file = prev_dsc["ncbv_map"]
-                    _log.info(
-                        "skip-dsc: loaded DSC nCBV from %s", prev_dsc["ncbv_map"]
-                    )
-                else:
-                    _log.warning(
-                        "skip-dsc: nCBV not found in previous DSC outputs "
-                        "(older run or no NAWM mask); vp constraint will "
-                        "cleanly SKIP. Use --no-dsc-validation to avoid "
-                        "cross-validation noise if this is unexpected."
-                    )
-                _log.info(
-                    "skip-dsc: loaded DSC CBV from %s", prev_dsc["rel_cbv_map"]
-                )
-                if prev_dsc["aif_qc"]:
-                    dce_wf.inputs.dce_pk_modeling_wf.pk_modeling.dsc_aif_qc = prev_dsc["aif_qc"]
-                if prev_dsc.get("preload_qc"):
-                    dce_wf.inputs.dce_pk_modeling_wf.pk_modeling.dsc_preload_qc = prev_dsc["preload_qc"]
-                if prev_dsc.get("preprocessing_stats"):
-                    dce_wf.inputs.dce_pk_modeling_wf.pk_modeling.dsc_preprocessing_stats = prev_dsc["preprocessing_stats"]
-                if not prev_dsc["aif_qc"]:
-                    _log.warning(
-                        "skip-dsc: AIF QC not found in previous DSC outputs; "
-                        "constraint quality assessment will use defaults"
-                    )
-            else:
-                _log.warning(
-                    "skip-dsc: no previous DSC CBV/transform found in %s; "
-                    "DCE vp constraint will be skipped",
-                    output_dir,
-                )
+        _connect_master_dsc_to_dce(
+            workflow=workflow,
+            dsc_wf=dsc_wf,
+            dce_wf=dce_wf,
+            dsc_config=dsc_config,
+            dce_config=dce_config,
+            output_dir=output_dir,
+            work_dir=work_dir,
+            subject_id=subject_id,
+            session_id=session_id,
+        )
 
         # Connect DCE outputs to master outputnode
         workflow.connect([
