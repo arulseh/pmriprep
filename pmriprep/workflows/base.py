@@ -913,6 +913,121 @@ class _MasterReferencePlan:
     dce: Optional["StructuralReferenceSelection"]
 
 
+@dataclass(frozen=True)
+class _MasterPreflightState:
+    """Validated acquisition metadata and provenance used by graph assembly."""
+
+    dsc_sidecar: Optional[dict[str, Any]]
+    dce_sidecar: Optional[dict[str, Any]]
+    dsc_agent_dose_source: Optional[str]
+    dsc_agent_source: Optional[str]
+    gd_multiplicity: int
+    dsc_warnings: list[str]
+    dce_warnings: list[str]
+
+
+def _prepare_master_preflight_state(
+    *,
+    session_data: SessionData,
+    decision: PipelineDecision,
+    dsc_config: DSCConfig,
+    dce_config: DCEConfig,
+    user_specified: Optional[dict[str, bool]],
+) -> _MasterPreflightState:
+    """Read acquisition metadata and run preflight before graph construction.
+
+    Parameters
+    ----------
+    session_data : SessionData
+        Discovered session modalities and volume counts.
+    decision : PipelineDecision
+        Enabled pipeline set.
+    dsc_config, dce_config : configuration
+        Resolved perfusion configurations. A sidecar-derived DSC standard dose
+        is applied to ``dsc_config`` exactly as in the public constructor.
+    user_specified : dict, optional
+        Flags distinguishing explicit user values from defaults.
+
+    Returns
+    -------
+    _MasterPreflightState
+        Sidecars, DSC agent provenance, gadolinium multiplicity, and warnings.
+    """
+    from pmriprep.utils.contrast_agent import (
+        ParameterSource,
+        lookup_gd_multiplicity,
+    )
+    from pmriprep.utils.preflight import run_preflight
+
+    dsc_sidecar = None
+    dce_sidecar = None
+    vfa_flip_angles: Optional[list[float]] = None
+    vfa_trs: Optional[list[Optional[float]]] = None
+    dsc_agent_dose_source: Optional[str] = None
+    dsc_agent_source: Optional[str] = None
+    gd_multiplicity = 1
+
+    if decision.run_dsc and session_data.modalities.dsc:
+        dsc_sidecar = _read_bids_sidecar(session_data.modalities.dsc)
+        user_flags = user_specified or {}
+        if user_flags.get("dsc_agent_standard_dose"):
+            dsc_agent_dose_source = ParameterSource.USER_SPECIFIED
+        elif dsc_sidecar.get("contrast_agent") is not None:
+            dsc_config.agent_standard_dose = dsc_sidecar["agent_standard_dose"]
+            dsc_agent_dose_source = ParameterSource.BIDS_SIDECAR
+        else:
+            dsc_agent_dose_source = ParameterSource.DEFAULT_FALLBACK
+
+        dsc_agent_source = (
+            ParameterSource.BIDS_SIDECAR
+            if dsc_sidecar.get("contrast_agent") is not None
+            else ParameterSource.DEFAULT_FALLBACK
+        )
+        gd_multiplicity = (
+            lookup_gd_multiplicity(dsc_sidecar["contrast_agent"])
+            if dsc_sidecar.get("contrast_agent") is not None
+            else 1
+        )
+
+    if decision.run_dce and session_data.modalities.dce:
+        dce_sidecar = _read_bids_sidecar(session_data.modalities.dce)
+        if session_data.modalities.vfa:
+            vfa_flip_angles = []
+            vfa_trs = []
+            for vfa_path in session_data.modalities.vfa:
+                vfa_sidecar = _read_bids_sidecar(vfa_path)
+                if vfa_sidecar["flip_angle"] is not None:
+                    vfa_flip_angles.append(vfa_sidecar["flip_angle"])
+                vfa_trs.append(vfa_sidecar.get("pulse_tr"))
+
+    report = run_preflight(
+        session_data=session_data,
+        decision=decision,
+        dsc_sidecar=dsc_sidecar,
+        dce_sidecar=dce_sidecar,
+        dce_config=dce_config,
+        vfa_flip_angles=vfa_flip_angles,
+        vfa_trs=vfa_trs,
+        dsc_config=dsc_config,
+    )
+    report.log_all()
+    report.raise_if_errors()
+
+    dsc_warnings = report.warning_strings(prefix="DSC_")
+    dce_warnings = report.warning_strings(prefix="DCE_")
+    dce_warnings.extend(report.warning_strings(prefix="VFA_"))
+    dce_warnings.extend(report.warning_strings(prefix="AFI_"))
+    return _MasterPreflightState(
+        dsc_sidecar=dsc_sidecar,
+        dce_sidecar=dce_sidecar,
+        dsc_agent_dose_source=dsc_agent_dose_source,
+        dsc_agent_source=dsc_agent_source,
+        gd_multiplicity=gd_multiplicity,
+        dsc_warnings=dsc_warnings,
+        dce_warnings=dce_warnings,
+    )
+
+
 def _select_master_structural_references(
     *,
     session_data: SessionData,
@@ -1290,72 +1405,21 @@ def init_pmriprep_wf(
     # Pre-flight validation: read sidecars and validate metadata
     # before any workflow initialization to catch errors early.
     # -------------------------------------------------------------------
-    from pmriprep.utils.preflight import run_preflight
-
-    dsc_sidecar = None
-    dce_sidecar = None
-    preflight_vfa_flip_angles: Optional[list[float]] = None
-    preflight_vfa_trs: Optional[list[Optional[float]]] = None
-
-    _dsc_agent_dose_source: Optional[str] = None
-    _dsc_agent_source: Optional[str] = None
-    _gd_multiplicity: int = 1
-
-    if decision.run_dsc and session_data.modalities.dsc:
-        dsc_sidecar = _read_bids_sidecar(session_data.modalities.dsc)
-
-        from pmriprep.utils.contrast_agent import ParameterSource
-        _user_spec_dsc = user_specified or {}
-        if _user_spec_dsc.get("dsc_agent_standard_dose"):
-            _dsc_agent_dose_source = ParameterSource.USER_SPECIFIED
-        elif dsc_sidecar.get("contrast_agent") is not None:
-            dsc_config.agent_standard_dose = dsc_sidecar["agent_standard_dose"]
-            _dsc_agent_dose_source = ParameterSource.BIDS_SIDECAR
-        else:
-            _dsc_agent_dose_source = ParameterSource.DEFAULT_FALLBACK
-
-        if dsc_sidecar.get("contrast_agent") is not None:
-            _dsc_agent_source = ParameterSource.BIDS_SIDECAR
-        else:
-            _dsc_agent_source = ParameterSource.DEFAULT_FALLBACK
-
-        from pmriprep.utils.contrast_agent import lookup_gd_multiplicity
-        _gd_multiplicity = (
-            lookup_gd_multiplicity(dsc_sidecar["contrast_agent"])
-            if dsc_sidecar.get("contrast_agent") is not None
-            else 1
-        )
-
-    if decision.run_dce and session_data.modalities.dce:
-        dce_sidecar = _read_bids_sidecar(session_data.modalities.dce)
-
-        # Read VFA metadata for preflight (if VFA data present)
-        if session_data.modalities.vfa:
-            preflight_vfa_flip_angles = []
-            preflight_vfa_trs = []
-            for vfa_path in session_data.modalities.vfa:
-                vfa_sc = _read_bids_sidecar(vfa_path)
-                if vfa_sc["flip_angle"] is not None:
-                    preflight_vfa_flip_angles.append(vfa_sc["flip_angle"])
-                preflight_vfa_trs.append(vfa_sc.get("pulse_tr"))
-
-    preflight_report = run_preflight(
+    preflight_state = _prepare_master_preflight_state(
         session_data=session_data,
         decision=decision,
-        dsc_sidecar=dsc_sidecar,
-        dce_sidecar=dce_sidecar,
-        dce_config=dce_config,
-        vfa_flip_angles=preflight_vfa_flip_angles,
-        vfa_trs=preflight_vfa_trs,
         dsc_config=dsc_config,
+        dce_config=dce_config,
+        user_specified=user_specified,
     )
-    preflight_report.log_all()
-    preflight_report.raise_if_errors()
-
-    dsc_preflight_warnings = preflight_report.warning_strings(prefix="DSC_")
-    dce_preflight_warnings = preflight_report.warning_strings(prefix="DCE_")
-    dce_preflight_warnings.extend(preflight_report.warning_strings(prefix="VFA_"))
-    dce_preflight_warnings.extend(preflight_report.warning_strings(prefix="AFI_"))
+    dsc_sidecar = preflight_state.dsc_sidecar
+    dce_sidecar = preflight_state.dce_sidecar
+    _dsc_agent_dose_source = preflight_state.dsc_agent_dose_source
+    _dsc_agent_source = preflight_state.dsc_agent_source
+    _gd_multiplicity = preflight_state.gd_multiplicity
+    dsc_preflight_warnings = preflight_state.dsc_warnings
+    dce_preflight_warnings = preflight_state.dce_warnings
+    _user_spec_dsc = user_specified or {}
 
     # Define master output node
     outputnode = pe.Node(

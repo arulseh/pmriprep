@@ -17,8 +17,10 @@ from pmriprep.config.dce import DCEConfig
 from pmriprep.config.dsc import DSCConfig
 from pmriprep.config.tumor_seg import TumorSegConfig
 from pmriprep.workflows.base import (
+    PipelineDecision,
     PipelineSkipFlags,
     _prepare_master_workflow_context,
+    _prepare_master_preflight_state,
     _select_master_structural_references,
     init_pmriprep_wf,
 )
@@ -315,3 +317,71 @@ def test_select_master_structural_references_routes_each_application(
     ]
     assert plan.dsc is not None
     assert plan.dce is not None
+
+
+def test_prepare_master_preflight_state_preserves_metadata_policy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Preflight state retains DSC provenance and ordered modality warnings."""
+    dsc_path = tmp_path / "dsc.nii.gz"
+    dce_path = tmp_path / "dce.nii.gz"
+    vfa_paths = [tmp_path / "vfa1.nii.gz", tmp_path / "vfa2.nii.gz"]
+    session_data = SessionData(
+        subject="0001",
+        session="0001",
+        modalities=ModalityAvailability(
+            dsc=dsc_path,
+            dce=dce_path,
+            vfa=vfa_paths,
+        ),
+        pipelines=PipelineAvailability(dsc=True, dce=True),
+    )
+    sidecars = {
+        dsc_path: {"contrast_agent": "gadoquatrane", "agent_standard_dose": 0.04},
+        dce_path: {"flip_angle": 12.0, "pulse_tr": 0.004},
+        vfa_paths[0]: {"flip_angle": 2.0, "pulse_tr": 0.004},
+        vfa_paths[1]: {"flip_angle": None, "pulse_tr": 0.005},
+    }
+    captured: dict[str, Any] = {}
+
+    class _Report:
+        def log_all(self) -> None:
+            captured["logged"] = True
+
+        def raise_if_errors(self) -> None:
+            captured["raised"] = True
+
+        def warning_strings(self, prefix: str = "") -> list[str]:
+            return [prefix + "warning"]
+
+    monkeypatch.setattr(
+        "pmriprep.workflows.base._read_bids_sidecar", lambda path: sidecars[path]
+    )
+    monkeypatch.setattr(
+        "pmriprep.utils.contrast_agent.lookup_gd_multiplicity", lambda agent: 4
+    )
+
+    def _preflight(**kwargs: Any) -> _Report:
+        captured.update(kwargs)
+        return _Report()
+
+    monkeypatch.setattr("pmriprep.utils.preflight.run_preflight", _preflight)
+    dsc_config = DSCConfig()
+    state = _prepare_master_preflight_state(
+        session_data=session_data,
+        decision=PipelineDecision(run_dsc=True, run_dce=True),
+        dsc_config=dsc_config,
+        dce_config=DCEConfig(),
+        user_specified=None,
+    )
+
+    assert dsc_config.agent_standard_dose == 0.04
+    assert state.gd_multiplicity == 4
+    assert state.dsc_agent_dose_source == "bids_sidecar"
+    assert state.dsc_agent_source == "bids_sidecar"
+    assert captured["vfa_flip_angles"] == [2.0]
+    assert captured["vfa_trs"] == [0.004, 0.005]
+    assert captured["logged"] is True
+    assert captured["raised"] is True
+    assert state.dsc_warnings == ["DSC_warning"]
+    assert state.dce_warnings == ["DCE_warning", "VFA_warning", "AFI_warning"]
