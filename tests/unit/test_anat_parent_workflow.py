@@ -10,6 +10,7 @@ from pmriprep.workflows.anat.base import (
     _merge_fast_inputs,
     _route_fast_input,
     _run_hybrid_fast_chain,
+    init_anat_qc_filmstrips_wf,
     init_anat_secondary_modalities_wf,
     init_anat_tissue_segmentation_wf,
 )
@@ -62,6 +63,32 @@ def test_secondary_modalities_workflow_empty_contract() -> None:
     )
 
     assert {node.name for node in workflow._graph.nodes()} == {"inputnode", "outputnode"}
+
+
+def test_qc_filmstrips_workflow_all_branches() -> None:
+    """QC extraction retains every conditional filmstrip node and title."""
+    workflow = init_anat_qc_filmstrips_wf(
+        subject_id="0001",
+        session_id="0002",
+        has_t1w_postcon=True,
+        has_t2w=True,
+        has_flair=True,
+        has_flair_postcon=True,
+    )
+
+    assert {node.name for node in workflow._graph.nodes()} == {
+        "inputnode",
+        "outputnode",
+        "brain_mask_filmstrip",
+        "tissue_seg_filmstrip",
+        "acpc_filmstrip",
+        "coreg_qc_postcon",
+        "coreg_qc_t2w",
+        "coreg_qc_flair",
+        "coreg_qc_flair_postcon",
+    }
+    assert workflow.get_node("coreg_qc_postcon").inputs.title == "T1w PostCon to T1w"
+    assert workflow.get_node("coreg_qc_flair_postcon").inputs.session_id == "0002"
 
 
 def test_fast_normal_and_empty_paths_do_not_run_commands() -> None:

@@ -659,6 +659,143 @@ def init_anat_secondary_modalities_wf(
     return workflow
 
 
+def init_anat_qc_filmstrips_wf(
+    *,
+    subject_id: str,
+    session_id: str | None,
+    has_t1w_postcon: bool,
+    has_t2w: bool,
+    has_flair: bool,
+    has_flair_postcon: bool,
+    name: str = "anat_qc_filmstrips_wf",
+) -> pe.Workflow:
+    """Initialize anatomical QC filmstrip generation.
+
+    Parameters
+    ----------
+    subject_id : str
+        BIDS subject identifier.
+    session_id : str or None
+        BIDS session identifier.
+    has_t1w_postcon, has_t2w, has_flair, has_flair_postcon : bool
+        Construction-time availability flags for optional coregistration QC.
+    name : str
+        Workflow name.
+
+    Returns
+    -------
+    pe.Workflow
+        Workflow exposing anatomical segmentation and registration filmstrips.
+    """
+    workflow = pe.Workflow(name=name)
+    inputnode = pe.Node(
+        niu.IdentityInterface(fields=[
+            "t1w_file", "brain_file", "brain_mask", "wm_probseg", "gm_probseg",
+            "csf_probseg", "t1w_acpc", "t1w_postcon_masked", "t2w_masked",
+            "flair_masked", "flair_postcon_masked",
+        ]),
+        name="inputnode",
+    )
+    outputnode = pe.Node(
+        niu.IdentityInterface(fields=[
+            "brain_mask_filmstrip", "tissue_seg_filmstrip", "acpc_filmstrip",
+            "coreg_filmstrip_postcon", "coreg_filmstrip_t2w",
+            "coreg_filmstrip_flair", "coreg_filmstrip_flair_postcon",
+        ]),
+        name="outputnode",
+    )
+    workflow.add_nodes([inputnode, outputnode])
+
+    brain_mask_filmstrip = pe.Node(
+        niu.Function(
+            input_names=["t1w_file", "brain_mask_file", "subject_id", "session_id"],
+            output_names=["filmstrip_file"],
+            function=_create_brain_mask_filmstrip,
+        ),
+        name="brain_mask_filmstrip",
+    )
+    brain_mask_filmstrip.inputs.subject_id = subject_id
+    brain_mask_filmstrip.inputs.session_id = session_id or ""
+    tissue_seg_filmstrip = pe.Node(
+        niu.Function(
+            input_names=["t1w_file", "wm_probseg_file", "gm_probseg_file",
+                         "csf_probseg_file", "subject_id", "session_id"],
+            output_names=["filmstrip_file"],
+            function=_create_tissue_seg_filmstrip,
+        ),
+        name="tissue_seg_filmstrip",
+    )
+    tissue_seg_filmstrip.inputs.subject_id = subject_id
+    tissue_seg_filmstrip.inputs.session_id = session_id or ""
+    acpc_filmstrip = pe.Node(
+        niu.Function(
+            input_names=["t1w_acpc_file", "subject_id", "session_id"],
+            output_names=["filmstrip_file"],
+            function=_create_acpc_registration_filmstrip,
+        ),
+        name="acpc_filmstrip",
+    )
+    acpc_filmstrip.inputs.subject_id = subject_id
+    acpc_filmstrip.inputs.session_id = session_id or ""
+    workflow.connect([
+        (inputnode, brain_mask_filmstrip, [
+            ("t1w_file", "t1w_file"),
+            ("brain_mask", "brain_mask_file"),
+        ]),
+        (inputnode, tissue_seg_filmstrip, [
+            ("brain_file", "t1w_file"),
+            ("wm_probseg", "wm_probseg_file"),
+            ("gm_probseg", "gm_probseg_file"),
+            ("csf_probseg", "csf_probseg_file"),
+        ]),
+        (inputnode, acpc_filmstrip, [("t1w_acpc", "t1w_acpc_file")]),
+        (brain_mask_filmstrip, outputnode, [
+            ("filmstrip_file", "brain_mask_filmstrip"),
+        ]),
+        (tissue_seg_filmstrip, outputnode, [
+            ("filmstrip_file", "tissue_seg_filmstrip"),
+        ]),
+        (acpc_filmstrip, outputnode, [("filmstrip_file", "acpc_filmstrip")]),
+    ])
+
+    coreg_specs = [
+        ("postcon", "t1w_postcon_masked", has_t1w_postcon, "T1w PostCon to T1w"),
+        ("t2w", "t2w_masked", has_t2w, "T2w to T1w"),
+        ("flair", "flair_masked", has_flair, "FLAIR to T1w"),
+        (
+            "flair_postcon", "flair_postcon_masked", has_flair_postcon,
+            "FLAIR PostCon to T1w",
+        ),
+    ]
+    for suffix, field, enabled, title in coreg_specs:
+        if not enabled:
+            continue
+        node = pe.Node(
+            niu.Function(
+                input_names=["coregistered_file", "reference_file",
+                             "brain_mask_file", "title", "subject_id",
+                             "session_id"],
+                output_names=["filmstrip_file"],
+                function=_create_coreg_qc_filmstrip,
+            ),
+            name=f"coreg_qc_{suffix}",
+        )
+        node.inputs.title = title
+        node.inputs.subject_id = subject_id
+        node.inputs.session_id = session_id or ""
+        workflow.connect([
+            (inputnode, node, [
+                (field, "coregistered_file"),
+                ("brain_file", "reference_file"),
+                ("brain_mask", "brain_mask_file"),
+            ]),
+            (node, outputnode, [
+                ("filmstrip_file", f"coreg_filmstrip_{suffix}"),
+            ]),
+        ])
+    return workflow
+
+
 def init_anat_preproc_wf(
     bids_dir: Union[str, Path],
     subject_id: str,
@@ -1123,158 +1260,35 @@ def init_anat_preproc_wf(
     # and cross-modal coregistrations
     # -------------------------------------------------------------------
 
-    # Brain mask filmstrip (always)
-    brain_mask_filmstrip = pe.Node(
-        niu.Function(
-            input_names=["t1w_file", "brain_mask_file", "subject_id", "session_id"],
-            output_names=["filmstrip_file"],
-            function=_create_brain_mask_filmstrip,
-        ),
-        name="brain_mask_filmstrip",
+    qc_filmstrips_wf = init_anat_qc_filmstrips_wf(
+        subject_id=subject_id,
+        session_id=session_id,
+        has_t1w_postcon=has_t1w_postcon,
+        has_t2w=has_t2w,
+        has_flair=has_flair,
+        has_flair_postcon=has_flair_postcon,
     )
-    brain_mask_filmstrip.inputs.subject_id = subject_id
-    brain_mask_filmstrip.inputs.session_id = session_id or ""
     workflow.connect([
-        (conform, brain_mask_filmstrip, [("out_file", "t1w_file")]),
-        (brain_extract, brain_mask_filmstrip, [("out_mask", "brain_mask_file")]),
-    ])
-
-    # Tissue segmentation filmstrip (only when FAST runs, i.e. not postcon-only)
-    tissue_seg_filmstrip_node = pe.Node(
-        niu.Function(
-            input_names=["t1w_file", "wm_probseg_file", "gm_probseg_file",
-                         "csf_probseg_file", "subject_id", "session_id"],
-            output_names=["filmstrip_file"],
-            function=_create_tissue_seg_filmstrip,
-        ),
-        name="tissue_seg_filmstrip",
-    )
-    tissue_seg_filmstrip_node.inputs.subject_id = subject_id
-    tissue_seg_filmstrip_node.inputs.session_id = session_id or ""
-    workflow.connect([
-        (brain_extract, tissue_seg_filmstrip_node, [("out_file", "t1w_file")]),
-        (tissue_segmentation_wf, tissue_seg_filmstrip_node, [
-            ("outputnode.wm_probseg", "wm_probseg_file"),
-            ("outputnode.gm_probseg", "gm_probseg_file"),
-            ("outputnode.csf_probseg", "csf_probseg_file"),
+        (conform, qc_filmstrips_wf, [("out_file", "inputnode.t1w_file")]),
+        (brain_extract, qc_filmstrips_wf, [
+            ("out_file", "inputnode.brain_file"),
+            ("out_mask", "inputnode.brain_mask"),
+        ]),
+        (tissue_segmentation_wf, qc_filmstrips_wf, [
+            ("outputnode.wm_probseg", "inputnode.wm_probseg"),
+            ("outputnode.gm_probseg", "inputnode.gm_probseg"),
+            ("outputnode.csf_probseg", "inputnode.csf_probseg"),
+        ]),
+        (acpc_align, qc_filmstrips_wf, [
+            ("out_file", "inputnode.t1w_acpc"),
+        ]),
+        (secondary_modalities_wf, qc_filmstrips_wf, [
+            ("outputnode.t1w_postcon_masked", "inputnode.t1w_postcon_masked"),
+            ("outputnode.t2w_masked", "inputnode.t2w_masked"),
+            ("outputnode.flair_masked", "inputnode.flair_masked"),
+            ("outputnode.flair_postcon_masked", "inputnode.flair_postcon_masked"),
         ]),
     ])
-
-    # ACPC alignment filmstrip
-    acpc_filmstrip_node = pe.Node(
-        niu.Function(
-            input_names=["t1w_acpc_file", "subject_id", "session_id"],
-            output_names=["filmstrip_file"],
-            function=_create_acpc_registration_filmstrip,
-        ),
-        name="acpc_filmstrip",
-    )
-    acpc_filmstrip_node.inputs.subject_id = subject_id
-    acpc_filmstrip_node.inputs.session_id = session_id or ""
-    workflow.connect([
-        (acpc_align, acpc_filmstrip_node, [("out_file", "t1w_acpc_file")]),
-    ])
-
-    # Cross-modal coregistration filmstrips (one per available modality)
-    coreg_qc_postcon = None
-    coreg_qc_t2w = None
-    coreg_qc_flair = None
-    coreg_qc_flair_postcon = None
-    if has_t1w_postcon:
-        coreg_qc_postcon = pe.Node(
-            niu.Function(
-                input_names=["coregistered_file", "reference_file",
-                             "brain_mask_file", "title", "subject_id",
-                             "session_id"],
-                output_names=["filmstrip_file"],
-                function=_create_coreg_qc_filmstrip,
-            ),
-            name="coreg_qc_postcon",
-        )
-        coreg_qc_postcon.inputs.title = "T1w PostCon to T1w"
-        coreg_qc_postcon.inputs.subject_id = subject_id
-        coreg_qc_postcon.inputs.session_id = session_id or ""
-        workflow.connect([
-            (secondary_modalities_wf, coreg_qc_postcon, [
-                ("outputnode.t1w_postcon_masked", "coregistered_file"),
-            ]),
-            (brain_extract, coreg_qc_postcon, [
-                ("out_file", "reference_file"),
-                ("out_mask", "brain_mask_file"),
-            ]),
-        ])
-
-    if has_t2w:
-        coreg_qc_t2w = pe.Node(
-            niu.Function(
-                input_names=["coregistered_file", "reference_file",
-                             "brain_mask_file", "title", "subject_id",
-                             "session_id"],
-                output_names=["filmstrip_file"],
-                function=_create_coreg_qc_filmstrip,
-            ),
-            name="coreg_qc_t2w",
-        )
-        coreg_qc_t2w.inputs.title = "T2w to T1w"
-        coreg_qc_t2w.inputs.subject_id = subject_id
-        coreg_qc_t2w.inputs.session_id = session_id or ""
-        workflow.connect([
-            (secondary_modalities_wf, coreg_qc_t2w, [
-                ("outputnode.t2w_masked", "coregistered_file"),
-            ]),
-            (brain_extract, coreg_qc_t2w, [
-                ("out_file", "reference_file"),
-                ("out_mask", "brain_mask_file"),
-            ]),
-        ])
-
-    if has_flair:
-        coreg_qc_flair = pe.Node(
-            niu.Function(
-                input_names=["coregistered_file", "reference_file",
-                             "brain_mask_file", "title", "subject_id",
-                             "session_id"],
-                output_names=["filmstrip_file"],
-                function=_create_coreg_qc_filmstrip,
-            ),
-            name="coreg_qc_flair",
-        )
-        coreg_qc_flair.inputs.title = "FLAIR to T1w"
-        coreg_qc_flair.inputs.subject_id = subject_id
-        coreg_qc_flair.inputs.session_id = session_id or ""
-        workflow.connect([
-            (secondary_modalities_wf, coreg_qc_flair, [
-                ("outputnode.flair_masked", "coregistered_file"),
-            ]),
-            (brain_extract, coreg_qc_flair, [
-                ("out_file", "reference_file"),
-                ("out_mask", "brain_mask_file"),
-            ]),
-        ])
-
-    if has_flair_postcon:
-        coreg_qc_flair_postcon = pe.Node(
-            niu.Function(
-                input_names=["coregistered_file", "reference_file",
-                             "brain_mask_file", "title", "subject_id",
-                             "session_id"],
-                output_names=["filmstrip_file"],
-                function=_create_coreg_qc_filmstrip,
-            ),
-            name="coreg_qc_flair_postcon",
-        )
-        coreg_qc_flair_postcon.inputs.title = "FLAIR PostCon to T1w"
-        coreg_qc_flair_postcon.inputs.subject_id = subject_id
-        coreg_qc_flair_postcon.inputs.session_id = session_id or ""
-        workflow.connect([
-            (secondary_modalities_wf, coreg_qc_flair_postcon, [
-                ("outputnode.flair_postcon_masked", "coregistered_file"),
-            ]),
-            (brain_extract, coreg_qc_flair_postcon, [
-                ("out_file", "reference_file"),
-                ("out_mask", "brain_mask_file"),
-            ]),
-        ])
 
     # -------------------------------------------------------------------
     # Connect outputs to output node
@@ -1305,47 +1319,39 @@ def init_anat_preproc_wf(
         (determine_mode, outputnode, [("is_postcon_ref", "is_postcon_ref")]),
         # QC metrics
         (merge_qc, outputnode, [("qc_metrics", "qc_metrics")]),
-        # Brain mask filmstrip (always present)
-        (brain_mask_filmstrip, outputnode, [
-            ("filmstrip_file", "brain_mask_filmstrip"),
-        ]),
-        # Tissue segmentation filmstrip (skipped in postcon-only mode via None inputs)
-        (tissue_seg_filmstrip_node, outputnode, [
-            ("filmstrip_file", "tissue_seg_filmstrip"),
+        (qc_filmstrips_wf, outputnode, [
+            ("outputnode.brain_mask_filmstrip", "brain_mask_filmstrip"),
+            ("outputnode.tissue_seg_filmstrip", "tissue_seg_filmstrip"),
+            ("outputnode.acpc_filmstrip", "acpc_filmstrip"),
         ]),
     ])
 
-    # ACPC filmstrip
-    if acpc_filmstrip_node is not None:
-        workflow.connect([
-            (acpc_filmstrip_node, outputnode, [
-                ("filmstrip_file", "acpc_filmstrip"),
-            ]),
-        ])
-
     # Cross-modal coregistration filmstrips
-    if coreg_qc_postcon is not None:
+    if has_t1w_postcon:
         workflow.connect([
-            (coreg_qc_postcon, outputnode, [
-                ("filmstrip_file", "coreg_filmstrip_postcon"),
+            (qc_filmstrips_wf, outputnode, [
+                ("outputnode.coreg_filmstrip_postcon", "coreg_filmstrip_postcon"),
             ]),
         ])
-    if coreg_qc_t2w is not None:
+    if has_t2w:
         workflow.connect([
-            (coreg_qc_t2w, outputnode, [
-                ("filmstrip_file", "coreg_filmstrip_t2w"),
+            (qc_filmstrips_wf, outputnode, [
+                ("outputnode.coreg_filmstrip_t2w", "coreg_filmstrip_t2w"),
             ]),
         ])
-    if coreg_qc_flair is not None:
+    if has_flair:
         workflow.connect([
-            (coreg_qc_flair, outputnode, [
-                ("filmstrip_file", "coreg_filmstrip_flair"),
+            (qc_filmstrips_wf, outputnode, [
+                ("outputnode.coreg_filmstrip_flair", "coreg_filmstrip_flair"),
             ]),
         ])
-    if coreg_qc_flair_postcon is not None:
+    if has_flair_postcon:
         workflow.connect([
-            (coreg_qc_flair_postcon, outputnode, [
-                ("filmstrip_file", "coreg_filmstrip_flair_postcon"),
+            (qc_filmstrips_wf, outputnode, [
+                (
+                    "outputnode.coreg_filmstrip_flair_postcon",
+                    "coreg_filmstrip_flair_postcon",
+                ),
             ]),
         ])
     # Coregistered modalities and transforms (only for available modalities)
