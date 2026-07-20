@@ -765,17 +765,6 @@ class TestVascularRecovery:
         mtt_tol: float,
     ) -> None:
         """Test vascular model recovery of CBF and MTT."""
-        # CBF=0.02 is near the edge of the log-space prior, so at 10%
-        # noise the prior overwhelms the data.
-        if cbf < 0.03 and noise_frac >= 0.10:
-            pytest.xfail("Prior bias overwhelms low-SNR signal at 10% noise")
-
-        # At 10% noise the low CNR widens the MAP CBF posterior past tolerance
-        # on some noise realizations (a variance effect, not a prior-mean pull;
-        # 2%/5% noise recover within tol).
-        if cbf <= 0.04 and noise_frac >= 0.10:
-            pytest.xfail("low CNR (10% noise) widens MAP CBF variance past tolerance")
-
         tissue, aif, time_sec = _make_vascular_test_data(
             cbf, alpha, beta, delay, noise_frac
         )
@@ -919,11 +908,6 @@ class TestCPIBayesianGammaRecovery:
         """Test CPI MAP recovery of CBF and MTT."""
         true_mtt = alpha * beta
 
-        if cbf <= 0.02:
-            pytest.xfail(
-                f"CBF prior overwhelms low-flow signal (CBF={cbf})"
-            )
-
         tissue, aif, time_sec, true_mtt = _make_cpi_gamma_test_data(
             cbf, alpha, beta, noise_frac
         )
@@ -977,11 +961,6 @@ class TestCPIVIGammaRecovery:
     ) -> None:
         """Test CPI VI recovery of CBF and MTT."""
         true_mtt = alpha * beta
-
-        if cbf <= 0.02:
-            pytest.xfail(
-                f"CBF prior overwhelms low-flow signal (CBF={cbf})"
-            )
 
         tissue, aif, time_sec, true_mtt = _make_cpi_gamma_test_data(
             cbf, alpha, beta, noise_frac
@@ -1051,12 +1030,6 @@ class TestBatchedMAPVascularRecovery:
         cbf_tol: float,
         mtt_tol: float,
     ) -> None:
-        if cbf < 0.03 and noise_frac >= 0.10:
-            pytest.xfail("Prior bias overwhelms low-SNR signal at 10% noise")
-        # 10%-noise CBF variance (see test_vascular); 2%/5% recover within tol.
-        if cbf <= 0.04 and noise_frac >= 0.10:
-            pytest.xfail("low CNR (10% noise) widens MAP CBF variance past tolerance")
-
         n_seeds = 5
         tissues = []
         for seed in range(n_seeds):

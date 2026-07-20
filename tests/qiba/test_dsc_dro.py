@@ -40,7 +40,6 @@ from .conftest import (
     TCIA_CONSENSUS_3T,
     TCIA_DRO_ROOT,
     TCIA_PRELOAD_CONFIGS_15T,
-    TCIA_PRELOAD_CONFIGS_3T,
     TCIA_TR_CONFIGS_15T,
     TCIA_TR_CONFIGS_3T,
     add_gaussian_noise,
@@ -53,7 +52,6 @@ from .conftest import (
     make_exponential_residue,
     skip_no_tcia_dro,
     skip_no_tcia_preload,
-    skip_no_tcia_tr,
 )
 
 # =============================================================================
@@ -198,14 +196,6 @@ SVD_TISSUES = [
     pytest.param("low_perfusion", id="low_perfusion"),
 ]
 
-# 4 tissues for CPI (drop low_perfusion and tumor_high)
-CPI_TISSUES = [
-    pytest.param("normal_gm", id="normal_gm"),
-    pytest.param("normal_wm", id="normal_wm"),
-    pytest.param("tumor", id="tumor"),
-    pytest.param("peritumoral", id="peritumoral"),
-]
-
 # 4 tissues for Vascular (drop low_perfusion and tumor_high)
 VASCULAR_TISSUES = [
     pytest.param("normal_gm", id="normal_gm"),
@@ -221,14 +211,6 @@ CTH_COMBOS = [
     pytest.param("normal_gm", "high_cth", id="normal_gm-high_cth"),
     pytest.param("tumor", "low_cth", id="tumor-low_cth"),
     pytest.param("tumor", "moderate_cth", id="tumor-moderate_cth"),
-    pytest.param("tumor", "high_cth", id="tumor-high_cth"),
-]
-
-# CTH combos for CPI (4 combos, no low_perfusion/tumor_high)
-CPI_CTH_COMBOS = [
-    pytest.param("normal_gm", "low_cth", id="normal_gm-low_cth"),
-    pytest.param("normal_gm", "high_cth", id="normal_gm-high_cth"),
-    pytest.param("tumor", "low_cth", id="tumor-low_cth"),
     pytest.param("tumor", "high_cth", id="tumor-high_cth"),
 ]
 
@@ -427,31 +409,48 @@ class TestQIBATikhonovExponential:
 # CPI with exponential residue
 # =============================================================================
 
-CPI_QIBA_NOISE = [
-    pytest.param("zero", 0.45, 0.40, id="zero"),
-    pytest.param("low", 0.68, 0.55, id="low"),
-    pytest.param("medium", 0.75, 0.65, id="medium"),
+_CPI_EXP_XFAIL = pytest.mark.xfail(
+    reason="CPI basis resolution limit with recirculation AIF",
+    strict=True,
+)
+_CPI_QIBA_NOISE = (
+    ("zero", 0.45, 0.40),
+    ("low", 0.68, 0.55),
+    ("medium", 0.75, 0.65),
+)
+_CPI_EXP_FAILING = {
+    ("normal_gm", "zero"),
+    ("normal_gm", "low"),
+    ("normal_wm", "zero"),
+    ("normal_wm", "low"),
+    ("normal_wm", "medium"),
+    ("peritumoral", "zero"),
+}
+CPI_QIBA_CASES = [
+    pytest.param(
+        tissue_key,
+        noise_key,
+        cbf_tol,
+        mtt_tol,
+        id=f"{tissue_key}-{noise_key}",
+        marks=_CPI_EXP_XFAIL if (tissue_key, noise_key) in _CPI_EXP_FAILING else (),
+    )
+    for tissue_key in ("normal_gm", "normal_wm", "tumor", "peritumoral")
+    for noise_key, cbf_tol, mtt_tol in _CPI_QIBA_NOISE
 ]
 
 
-@pytest.mark.xfail(
-    reason="CPI basis resolution limit with recirculation AIF: 6 control "
-    "points on 30s range cannot resolve fast first-pass residue (MTT=4-6s) "
-    "convolved with recirculation tail. Recovered MTT ~11-12s reflects CPI "
-    "blurring first-pass and recirculation into a single broad curve. "
-    "Does not affect Tier 1 DRO (no recirculation) or clinical results.",
-    strict=False,
-)
 class TestQIBACPIExponential:
     """CPI recovery with QIBA AIF and exponential residue.
 
-    CPI uses PCHIP spline through control points; ~15-20% inherent
-    approximation error even at zero noise. With recirculation AIF,
-    the basis resolution limitation becomes severe — all combos fail.
+    CPI uses PCHIP spline through control points. Expected failures are
+    restricted to the tissue/noise cells that exceed the recovery bounds.
     """
 
-    @pytest.mark.parametrize("noise_key,cbf_tol,mtt_tol", CPI_QIBA_NOISE)
-    @pytest.mark.parametrize("tissue_key", CPI_TISSUES)
+    @pytest.mark.parametrize(
+        "tissue_key,noise_key,cbf_tol,mtt_tol",
+        CPI_QIBA_CASES,
+    )
     def test_cpi_exponential(
         self,
         tissue_key: str,
@@ -694,30 +693,44 @@ class TestQIBATikhonovCTH:
 # CPI with CTH residue
 # =============================================================================
 
-CPI_CTH_NOISE = [
-    pytest.param("zero", 0.50, 0.40, id="zero"),
-    pytest.param("low", 0.70, 0.60, id="low"),
+_CPI_CTH_XFAIL = pytest.mark.xfail(
+    reason="CPI basis resolution limit with recirculation AIF",
+    strict=True,
+)
+CPI_CTH_CASES = [
+    pytest.param(
+        tissue_key,
+        cth_key,
+        noise_key,
+        cbf_tol,
+        mtt_tol,
+        id=f"{tissue_key}-{cth_key}-{noise_key}",
+        marks=_CPI_CTH_XFAIL if tissue_key == "normal_gm" else (),
+    )
+    for tissue_key, cth_key in (
+        ("normal_gm", "low_cth"),
+        ("normal_gm", "high_cth"),
+        ("tumor", "low_cth"),
+        ("tumor", "high_cth"),
+    )
+    for noise_key, cbf_tol, mtt_tol in (
+        ("zero", 0.50, 0.40),
+        ("low", 0.70, 0.60),
+    )
 ]
 
 
-@pytest.mark.xfail(
-    reason="CPI basis resolution limit with recirculation AIF: 6 control "
-    "points on 30s range cannot resolve residue convolved with recirculation "
-    "tail, even for CTH (gamma-variate) residues that CPI is designed for. "
-    "The recirculation component extends the effective curve duration beyond "
-    "the 30s control point range. Does not affect Tier 1 DRO or clinical results.",
-    strict=False,
-)
 class TestQIBACPICTH:
     """CPI recovery with CTH residue.
 
-    CPI's PCHIP spline is designed for non-exponential residues,
-    but the recirculation AIF extends the effective curve beyond the
-    30s control point range, causing systematic failures.
+    CPI's PCHIP spline is designed for non-exponential residues. Expected
+    failures are restricted to normal-GM cells affected by the basis limit.
     """
 
-    @pytest.mark.parametrize("noise_key,cbf_tol,mtt_tol", CPI_CTH_NOISE)
-    @pytest.mark.parametrize("tissue_key,cth_key", CPI_CTH_COMBOS)
+    @pytest.mark.parametrize(
+        "tissue_key,cth_key,noise_key,cbf_tol,mtt_tol",
+        CPI_CTH_CASES,
+    )
     def test_cpi_cth(
         self,
         tissue_key: str,
