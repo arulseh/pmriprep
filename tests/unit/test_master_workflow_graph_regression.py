@@ -1,0 +1,197 @@
+"""Graph characterization for the cross-modality PMRIPrep workflow."""
+
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+from typing import Any
+
+import nibabel as nib
+import numpy as np
+import pytest
+
+from pmriprep.config.anat import AnatConfig
+from pmriprep.config.dce import DCEConfig
+from pmriprep.config.dsc import DSCConfig
+from pmriprep.config.tumor_seg import TumorSegConfig
+from pmriprep.workflows.base import PipelineSkipFlags, init_pmriprep_wf
+
+from .test_workflow_graph_regression import extract_public_outputnode_fields
+
+
+BASELINE_DIR = Path(__file__).parent / "data" / "graph_baselines"
+_REGEN = os.environ.get("PMRIPREP_REGEN_MASTER_GRAPH") == "1"
+
+
+def _write_image(path: Path, *, n_volumes: int | None = None) -> None:
+    """Write a tiny valid NIfTI used only during workflow construction."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    shape = (3, 3, 3) if n_volumes is None else (3, 3, 3, n_volumes)
+    nib.save(nib.Nifti1Image(np.zeros(shape, dtype=np.float32), np.eye(4)), path)
+
+
+def _write_case(root: Path, modalities: set[str]) -> Path:
+    """Create a minimal BIDS session containing the selected modalities."""
+    bids = root / ("case_" + "_".join(sorted(modalities)))
+    raw = bids / "sub-0001" / "ses-0001"
+    bids.mkdir(parents=True, exist_ok=True)
+    (bids / "dataset_description.json").write_text(
+        json.dumps({"Name": "T", "BIDSVersion": "1.9.0", "DatasetType": "raw"})
+    )
+
+    anatomical = {
+        "t1w_pre": "sub-0001_ses-0001_T1w.nii.gz",
+        "t1w_postcon": "sub-0001_ses-0001_ce-GAD_T1w.nii.gz",
+        "t2w": "sub-0001_ses-0001_T2w.nii.gz",
+        "flair": "sub-0001_ses-0001_FLAIR.nii.gz",
+    }
+    for key, filename in anatomical.items():
+        if key in modalities:
+            _write_image(raw / "anat" / filename)
+
+    perfusion = {
+        "dsc": ("sub-0001_ses-0001_dsc.nii.gz", 60),
+        "dce": ("sub-0001_ses-0001_dce.nii.gz", 40),
+    }
+    sidecars = {
+        "dsc": {
+            "EchoTime": 0.03,
+            "RepetitionTime": 1.5,
+            "MagneticFieldStrength": 3.0,
+        },
+        "dce": {
+            "EchoTime": 0.0014,
+            "RepetitionTime": 4.0,
+            "RepetitionTimeExcitation": 0.004,
+            "FlipAngle": 12.0,
+            "MagneticFieldStrength": 3.0,
+            "MRAcquisitionType": "3D",
+        },
+    }
+    for key, (filename, n_volumes) in perfusion.items():
+        if key not in modalities:
+            continue
+        path = raw / "perf" / filename
+        _write_image(path, n_volumes=n_volumes)
+        path.with_name(path.name.replace(".nii.gz", ".json")).write_text(
+            json.dumps(sidecars[key])
+        )
+    return bids
+
+
+def _top_level_signature(workflow: Any) -> dict[str, Any]:
+    """Capture master orchestration while standalone tests pin sub-workflow internals."""
+    graph = workflow._graph
+    nodes = sorted(
+        (node.name, type(node).__qualname__)
+        for node in graph.nodes()
+    )
+    edges: list[tuple[str, str, str, str]] = []
+    for source, target, data in graph.edges(data=True):
+        for source_field, target_field in data.get("connect", []) or []:
+            edges.append(
+                (source.name, str(source_field), target.name, str(target_field))
+            )
+    edges.sort()
+    decision = workflow.pipeline_decision
+    return {
+        "nodes": nodes,
+        "edges": edges,
+        "decision": {
+            "run_anat": decision.run_anat,
+            "run_tumor_seg": decision.run_tumor_seg,
+            "run_dsc": decision.run_dsc,
+            "run_dce": decision.run_dce,
+        },
+        "public_outputnode_fields": extract_public_outputnode_fields(graph),
+    }
+
+
+def _build_master(
+    root: Path,
+    *,
+    modalities: set[str],
+    skip_anat: bool = False,
+    tumor_seg: bool = False,
+) -> Any:
+    bids = _write_case(root, modalities)
+    dce_config = DCEConfig(no_t1=True, b1_method="none")
+    return init_pmriprep_wf(
+        bids_dir=bids,
+        output_dir=root / "out",
+        subject_id="0001",
+        session_id="0001",
+        skip_flags=PipelineSkipFlags(
+            skip_anat=skip_anat,
+            skip_tumor_seg=not tumor_seg,
+            skip_dsc="dsc" not in modalities,
+            skip_dce="dce" not in modalities,
+        ),
+        anat_config=AnatConfig(),
+        tumor_seg_config=TumorSegConfig(conda_env="hdglio-test"),
+        dsc_config=DSCConfig(),
+        dce_config=dce_config,
+        work_dir=root / "work",
+    )
+
+
+MASTER_MATRIX = [
+    ("master_anat_only", {"t1w_pre"}, False, False),
+    ("master_dsc_only", {"t1w_pre", "dsc"}, False, False),
+    ("master_dce_only", {"t1w_pre", "dce"}, False, False),
+    ("master_combined", {"t1w_pre", "dsc", "dce"}, False, False),
+    ("master_postcon_reference", {"t1w_postcon", "dsc", "dce"}, False, False),
+    (
+        "master_tumor_segmentation",
+        {"t1w_pre", "t1w_postcon", "t2w", "flair"},
+        False,
+        True,
+    ),
+    ("master_skip_anat_precomputed", {"t1w_pre", "dsc", "dce"}, True, False),
+]
+
+
+@pytest.mark.parametrize(
+    "name,modalities,skip_anat,tumor_seg",
+    MASTER_MATRIX,
+    ids=[row[0] for row in MASTER_MATRIX],
+)
+def test_master_graph_matches_baseline(
+    name: str,
+    modalities: set[str],
+    skip_anat: bool,
+    tumor_seg: bool,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Master topology and public wiring remain stable across session modes."""
+    monkeypatch.setattr("pmriprep.utils.device.detect_torch_device", lambda: "cpu")
+    signature = _top_level_signature(
+        _build_master(
+            tmp_path,
+            modalities=modalities,
+            skip_anat=skip_anat,
+            tumor_seg=tumor_seg,
+        )
+    )
+    path = BASELINE_DIR / f"{name}.json"
+    if _REGEN:
+        path.write_text(json.dumps(signature, indent=2, sort_keys=True) + "\n")
+        pytest.skip(f"regenerated baseline: {name}")
+
+    assert path.exists(), (
+        f"missing baseline {path}; regenerate with PMRIPREP_REGEN_MASTER_GRAPH=1"
+    )
+    expected = json.loads(path.read_text())
+    assert [tuple(node) for node in expected["nodes"]] == signature["nodes"]
+    assert [tuple(edge) for edge in expected["edges"]] == signature["edges"]
+    assert expected["decision"] == signature["decision"]
+    assert expected["public_outputnode_fields"] == signature["public_outputnode_fields"]
+
+
+def test_master_regen_flag_not_set_in_normal_run() -> None:
+    """Prevent regeneration mode from silently replacing assertions."""
+    assert not _REGEN, (
+        "PMRIPREP_REGEN_MASTER_GRAPH=1 is set: baselines were regenerated, not verified"
+    )
