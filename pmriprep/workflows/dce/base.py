@@ -1192,6 +1192,48 @@ def init_dce_underlays_wf(
     return workflow
 
 
+def init_dce_qc_collection_wf(
+    *, config: DCEConfig, name: str = "dce_qc_collection_wf",
+) -> pe.Workflow:
+    """Aggregate DCE processing, modeling, validation, and display QC."""
+    fields = [
+        "b1_qc", "t1_qc", "preprocess_qc", "registration_qc", "aif_qc",
+        "pk_qc", "validation_result", "preproc_display", "pk_fit_qc_metrics",
+        "pk_maps_qc_metrics", "vp_at_bound_fractions", "nawm_available",
+    ]
+    workflow = pe.Workflow(name=name)
+    inputnode = pe.Node(niu.IdentityInterface(fields=fields), name="inputnode")
+    outputnode = pe.Node(niu.IdentityInterface(fields=["qc_metrics"]), name="outputnode")
+    collect = pe.Node(
+        niu.Function(
+            input_names=[
+                *fields, "use_external_t1", "no_t1", "b1_method",
+            ],
+            output_names=["qc_metrics"], function=_collect_qc_metrics,
+        ),
+        name="collect_qc_metrics",
+    )
+    use_external_t1 = config.t1_map_file is not None
+    collect.inputs.use_external_t1 = use_external_t1
+    collect.inputs.no_t1 = config.no_t1
+    collect.inputs.b1_method = config.b1_method
+    use_vfa_t1 = not config.no_t1 and not use_external_t1
+    need_b1 = use_vfa_t1 or (use_external_t1 and config.b1_method != "none")
+    if not use_vfa_t1:
+        collect.inputs.t1_qc = None
+    if not need_b1:
+        collect.inputs.b1_qc = None
+    connected = [field for field in fields if not (
+        (field == "t1_qc" and not use_vfa_t1)
+        or (field == "b1_qc" and not need_b1)
+    )]
+    workflow.connect([
+        (inputnode, collect, [(field, field) for field in connected]),
+        (collect, outputnode, [("qc_metrics", "qc_metrics")]),
+    ])
+    return workflow
+
+
 def init_dce_preproc_wf(
     bids_dir: Union[str, Path],
     output_dir: Union[str, Path],
@@ -2444,84 +2486,52 @@ def init_dce_preproc_wf(
     # ==========================================================================
     # Node 11: Collect QC Metrics
     # ==========================================================================
-    collect_qc = pe.Node(
-        niu.Function(
-            input_names=[
-                "b1_qc",
-                "t1_qc",
-                "preprocess_qc",
-                "registration_qc",
-                "aif_qc",
-                "pk_qc",
-                "validation_result",
-                "preproc_display",
-                "pk_fit_qc_metrics",
-                "pk_maps_qc_metrics",
-                "vp_at_bound_fractions",
-                "use_external_t1",
-                "no_t1",
-                "b1_method",
-                "nawm_available",
-            ],
-            output_names=["qc_metrics"],
-            function=_collect_qc_metrics,
-        ),
-        name="collect_qc_metrics",
-    )
-    # Set config flags for boilerplate text generation
-    collect_qc.inputs.use_external_t1 = use_external_t1
-    collect_qc.inputs.no_t1 = config.no_t1
-    collect_qc.inputs.b1_method = config.b1_method
-    # nawm_available is wired from the NAWM mask transform node
+    dce_qc_collection_wf = init_dce_qc_collection_wf(config=config)
 
     if use_vfa_t1:
         workflow.connect([
-            (t1_b1_wf, collect_qc, [
-                ("outputnode.b1_qc", "b1_qc"),
-                ("outputnode.t1_qc", "t1_qc"),
+            (t1_b1_wf, dce_qc_collection_wf, [
+                ("outputnode.b1_qc", "inputnode.b1_qc"),
+                ("outputnode.t1_qc", "inputnode.t1_qc"),
             ]),
         ])
     elif use_external_t1 and need_b1:
         workflow.connect([
-            (t1_b1_wf, collect_qc, [
-                ("outputnode.b1_qc", "b1_qc"),
+            (t1_b1_wf, dce_qc_collection_wf, [
+                ("outputnode.b1_qc", "inputnode.b1_qc"),
             ]),
         ])
-        collect_qc.inputs.t1_qc = None
-    else:
-        collect_qc.inputs.b1_qc = None
-        collect_qc.inputs.t1_qc = None
 
     workflow.connect([
-        (dce_preprocessing_wf, collect_qc, [
-            ("outputnode.qc_metrics", "preprocess_qc"),
+        (dce_preprocessing_wf, dce_qc_collection_wf, [
+            ("outputnode.qc_metrics", "inputnode.preprocess_qc"),
         ]),
-        (dce_registration_wf, collect_qc, [
-            ("outputnode.qc_metrics", "registration_qc"),
+        (dce_registration_wf, dce_qc_collection_wf, [
+            ("outputnode.qc_metrics", "inputnode.registration_qc"),
         ]),
-        (aif_detection, collect_qc, [
-            ("qc_metrics", "aif_qc"),
+        (aif_detection, dce_qc_collection_wf, [
+            ("qc_metrics", "inputnode.aif_qc"),
         ]),
-        (pk_wf, collect_qc, [
-            ("outputnode.qc_metrics", "pk_qc"),
+        (pk_wf, dce_qc_collection_wf, [
+            ("outputnode.qc_metrics", "inputnode.pk_qc"),
         ]),
-        (dce_dsc_validation_wf, collect_qc, [
-            ("outputnode.validation_result", "validation_result"),
+        (dce_dsc_validation_wf, dce_qc_collection_wf, [
+            ("outputnode.validation_result", "inputnode.validation_result"),
         ]),
-        (preprocessing_qc, collect_qc, [
-            ("preproc_display_stats", "preproc_display"),
+        (preprocessing_qc, dce_qc_collection_wf, [
+            ("preproc_display_stats", "inputnode.preproc_display"),
         ]),
         # Wire QC metrics from the DCE PK plot nodes
-        (dce_pk_fit_qc, collect_qc, [
-            ("pk_voxel_metrics", "pk_fit_qc_metrics"),
+        (dce_pk_fit_qc, dce_qc_collection_wf, [
+            ("pk_voxel_metrics", "inputnode.pk_fit_qc_metrics"),
         ]),
-        (dce_pk_maps_qc, collect_qc, [
-            ("model_selection_regions", "pk_maps_qc_metrics"),
-            ("vp_at_bound_fractions", "vp_at_bound_fractions"),
+        (dce_pk_maps_qc, dce_qc_collection_wf, [
+            ("model_selection_regions", "inputnode.pk_maps_qc_metrics"),
+            ("vp_at_bound_fractions", "inputnode.vp_at_bound_fractions"),
         ]),
         # out_file is a path (truthy) when normalization ran, "" otherwise
-        (normalization_wf, collect_qc, [
-            ("outputnode.nktrans", "nawm_available"),
+        (normalization_wf, dce_qc_collection_wf, [
+            ("outputnode.nktrans", "inputnode.nawm_available"),
         ]),
     ])
 
@@ -2751,8 +2761,8 @@ def init_dce_preproc_wf(
             ("outputnode.out_h5", "dce_to_t1w_xfm"),
         ]),
         # QC metrics
-        (collect_qc, outputnode, [
-            ("qc_metrics", "qc_metrics"),
+        (dce_qc_collection_wf, outputnode, [
+            ("outputnode.qc_metrics", "qc_metrics"),
         ]),
         # QC plots - registration filmstrip
         (reg_filmstrip, outputnode, [

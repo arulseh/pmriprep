@@ -11,6 +11,7 @@ from pmriprep.workflows.dce.base import (
     init_dce_atlas_transform_wf,
     init_dce_native_input_wf,
     init_dce_preprocessing_wf,
+    init_dce_qc_collection_wf,
     init_dce_registration_wf,
     init_dce_underlays_wf,
     init_dce_t1_b1_wf,
@@ -150,3 +151,12 @@ def test_dce_underlays_workflow_contract() -> None:
         "transform_flair_underlay", "transform_flair_postcon_underlay",
         "transform_t2w_underlay",
     }
+
+
+def test_dce_qc_collection_workflow_contract() -> None:
+    """QC aggregation exposes one collected metrics dictionary."""
+    workflow = init_dce_qc_collection_wf(config=DCEConfig())
+    assert set(workflow.list_node_names()) == {
+        "inputnode", "outputnode", "collect_qc_metrics",
+    }
+    assert workflow.get_node("outputnode").interface._fields == ["qc_metrics"]
