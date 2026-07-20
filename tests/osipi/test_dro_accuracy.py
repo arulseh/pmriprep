@@ -11,12 +11,11 @@ Tier 1 — Summary statistics (per-session, no registration needed):
     Median direction, order of magnitude, MAE sanity checks.
 
 Tier 2 — Voxel-wise (within GT tumor mask):
-    Pearson/Spearman correlation, CCC, Bayesian CI coverage.
+    Pearson/Spearman correlation and CCC.
 
 Tier 3 — Visualization (always passes, generates QC artifacts).
 """
 
-from pathlib import Path
 from typing import Optional, Tuple
 
 import numpy as np
@@ -28,7 +27,6 @@ from .conftest import (
     DRO_SESSIONS,
     OUTPUT_ROOT,
     get_map_path,
-    load_ci_map,
     load_ground_truth_ktrans,
     load_map,
     load_tumor_mask,
@@ -326,67 +324,6 @@ class TestDROVoxelwise:
         rho, _ = stats.spearmanr(gt_vals, calc_vals)
         assert rho > 0.0, f"Spearman rho = {rho:.4f} (expected > 0.0)"
 
-    @pytest.mark.parametrize("subject,session", DRO_SESSIONS, ids=_SESSION_IDS)
-    def test_bayesian_ci_coverage(
-        self, subject: str, session: str
-    ) -> None:
-        """Document 95% CI coverage of GT (no hard gate).
-
-        Bayesian MAP on these DROs currently produces degenerate CI maps
-        (lower == upper == point estimate), yielding 0% coverage. This
-        is a known limitation: MAP estimation without MCMC or Laplace
-        approximation does not produce meaningful uncertainty intervals.
-
-        This test documents actual coverage for regression tracking.
-        """
-        _skip_if_missing(subject, session)
-
-        gt = load_ground_truth_ktrans(subject, session)
-        mask = load_tumor_mask(subject, session)
-        ci_lower = load_ci_map(subject, session, "lower", "Ktrans")
-        ci_upper = load_ci_map(subject, session, "upper", "Ktrans")
-
-        if any(x is None for x in (gt, mask, ci_lower, ci_upper)):
-            pytest.skip(
-                f"Missing CI maps or GT for {subject} {session}"
-            )
-
-        assert gt is not None and mask is not None
-        assert ci_lower is not None and ci_upper is not None
-
-        gt_vals = gt[mask]
-        lower_vals = ci_lower[mask]
-        upper_vals = ci_upper[mask]
-
-        valid = (
-            np.isfinite(gt_vals)
-            & np.isfinite(lower_vals)
-            & np.isfinite(upper_vals)
-            & (gt_vals > 0)
-        )
-
-        if int(np.sum(valid)) < 10:
-            pytest.skip(f"Too few valid voxels for CI check: {int(np.sum(valid))}")
-
-        gt_v = gt_vals[valid]
-        lo_v = lower_vals[valid]
-        hi_v = upper_vals[valid]
-
-        # Check if CI bounds are degenerate (lower == upper)
-        ci_width = hi_v - lo_v
-        degenerate = float(np.mean(np.abs(ci_width) < 1e-10)) * 100.0
-
-        covered = (gt_v >= lo_v) & (gt_v <= hi_v)
-        coverage_pct = float(np.mean(covered)) * 100.0
-
-        # Document, don't gate — MAP CI is known to be degenerate
-        # When CI maps are fixed, tighten to > 50%
-        assert True, (
-            f"CI 95% coverage = {coverage_pct:.1f}%, "
-            f"degenerate CIs = {degenerate:.0f}%, n={len(gt_v)}"
-        )
-
-
 # =============================================================================
 # Tier 3: Visualization (always passes, generates QC artifacts)
 # =============================================================================
@@ -547,7 +484,7 @@ class TestDROVisualization:
             err_slice.T, origin="lower", cmap="RdBu_r",
             vmin=-vmax_err, vmax=vmax_err,
         )
-        axes[2].set_title(f"Error (calc - GT)")
+        axes[2].set_title("Error (calc - GT)")
         plt.colorbar(im2, ax=axes[2], shrink=0.8)
 
         fig.suptitle(f"{subject} {session} Spatial Error Map", fontsize=14)
