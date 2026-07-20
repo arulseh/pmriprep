@@ -2211,6 +2211,218 @@ def _init_master_dce_workflow(
         )
     return _MasterDCEInitialization(workflow=dce_wf, provenance=dce_provenance)
 
+def _connect_master_dce_anatomy(
+    *,
+    workflow: pe.Workflow,
+    dce_wf: pe.Workflow,
+    anat_wf: Optional[pe.Workflow],
+    session_data: SessionData,
+    reference_selection: Optional["StructuralReferenceSelection"],
+    anat_config: AnatConfig,
+    dce_config: DCEConfig,
+    work_dir: Optional[Path],
+    subject_id: str,
+    session_id: Optional[str],
+) -> None:
+    """Route the selected live or cached anatomical inputs into DCE."""
+    from pmriprep.utils.structural_reference import (
+        ImageType,
+        _map_selection_to_anat_output,
+    )
+
+    dce_ref_selection = reference_selection
+    _ref_logger = logging.getLogger("pmriprep.workflows")
+    # Determine DCE structural reference from confidence-scored selection
+    dce_ref_output = "outputnode.t1w_preproc"  # default
+    dce_ref_is_postcon = False
+    if dce_ref_selection:
+        dce_ref_output = _map_selection_to_anat_output(
+            dce_ref_selection.candidate.image_type,
+        )
+        dce_ref_is_postcon = (
+            dce_ref_selection.candidate.image_type == ImageType.T1W_POSTCON
+        )
+        # Postcon-only override: t1w_postcon_coreg requires both pre and postcon
+        if dce_ref_is_postcon and not session_data.modalities.t1w_pre:
+            dce_ref_output = "outputnode.t1w_preproc"
+
+        # Override DCE registration reference type from selection
+        ref_type_map = {
+            ImageType.T1W_POSTCON: "postcon",
+            ImageType.T1W_PRECON: "precon",
+        }
+        dce_reg_ref_type = ref_type_map.get(
+            dce_ref_selection.candidate.image_type, "any",
+        )
+        dce_wf.inputs.dce_registration_wf.dce_registration.reference_type = dce_reg_ref_type
+        _ref_logger.info(
+            "DCE registration: reference_type=%s (from selection)",
+            dce_reg_ref_type,
+        )
+
+    # Connect anat outputs to DCE workflow
+    if anat_wf is not None:
+        # Use confidence-scored reference for DCE registration
+        # IMPORTANT: Always use anat pipeline's preprocessed outputs (RAS-reoriented,
+        # bias-corrected) rather than raw BIDS inputs for proper orientation alignment
+        workflow.connect([
+            (anat_wf, dce_wf, [(dce_ref_output, "inputnode.t1w_reference")]),
+        ])
+        workflow.connect([
+            (anat_wf, dce_wf, [
+                ("outputnode.brain_mask", "inputnode.brain_mask"),
+                # Pass T1w→MNI transform for atlas-guided AIF (Gap 6)
+                ("outputnode.t1w_to_mni_xfm", "inputnode.t1w_to_mni_xfm"),
+            ]),
+        ])
+        # Tissue probseg maps (unavailable in postcon-only mode)
+        if session_data.modalities.t1w_pre:
+            workflow.connect([
+                (anat_wf, dce_wf, [
+                    ("outputnode.wm_probseg", "inputnode.wm_probseg"),
+                    ("outputnode.gm_probseg", "inputnode.gm_probseg"),
+                    ("outputnode.csf_probseg", "inputnode.csf_probseg"),
+                ]),
+            ])
+        # T1w underlays — independent precon and postcon paths so users
+        # who configure both get both outputs (precon → t1w_underlay,
+        # postcon → t1w_postcon_underlay).
+        if "t1w_precon" in dce_config.underlays:
+            if session_data.modalities.t1w_pre:
+                workflow.connect([
+                    (anat_wf, dce_wf, [("outputnode.t1w_preproc", "inputnode.t1w_underlay")]),
+                ])
+            else:
+                logging.getLogger("pmriprep.workflows").warning(
+                    "DCE: 't1w_precon' underlay requested but no pre-contrast T1w available. Skipping."
+                )
+        if "t1w_postcon" in dce_config.underlays:
+            if session_data.modalities.t1w_ce_gad and session_data.modalities.t1w_pre:
+                workflow.connect([
+                    (anat_wf, dce_wf, [("outputnode.t1w_postcon_coreg", "inputnode.t1w_postcon_underlay")]),
+                ])
+            elif session_data.modalities.t1w_ce_gad:
+                # Postcon-only mode: t1w_preproc IS the postcon
+                workflow.connect([
+                    (anat_wf, dce_wf, [("outputnode.t1w_preproc", "inputnode.t1w_postcon_underlay")]),
+                ])
+            else:
+                logging.getLogger("pmriprep.workflows").warning(
+                    "DCE: 't1w_postcon' underlay requested but no post-contrast T1w available. Skipping."
+                )
+        # Subtraction underlay — post-pre difference; available only when
+        # both pre- and post-contrast T1w exist AND anat computed it.
+        if "t1w_subtraction" in dce_config.underlays:
+            if (
+                session_data.modalities.t1w_pre
+                and session_data.modalities.t1w_ce_gad
+                and anat_config.create_subtraction
+            ):
+                workflow.connect([
+                    (anat_wf, dce_wf, [("outputnode.t1w_subtraction", "inputnode.t1w_subtraction_underlay")]),
+                ])
+            else:
+                logging.getLogger("pmriprep.workflows").warning(
+                    "DCE: 't1w_subtraction' underlay requested but unavailable "
+                    "(requires pre- and post-contrast T1w and create_subtraction). Skipping."
+                )
+        # FLAIR underlays — independent precon and postcon paths
+        # (precon → flair_in_t1w, postcon → flair_postcon_in_t1w).
+        if "flair_precon" in dce_config.underlays:
+            if session_data.modalities.flair:
+                workflow.connect([
+                    (anat_wf, dce_wf, [("outputnode.flair_coreg", "inputnode.flair_in_t1w")]),
+                ])
+            else:
+                logging.getLogger("pmriprep.workflows").warning(
+                    "DCE: 'flair_precon' underlay requested but no pre-contrast FLAIR available. Skipping."
+                )
+        if "flair_postcon" in dce_config.underlays:
+            if session_data.modalities.flair_postcon:
+                workflow.connect([
+                    (anat_wf, dce_wf, [("outputnode.flair_postcon_coreg", "inputnode.flair_postcon_in_t1w")]),
+                ])
+            else:
+                logging.getLogger("pmriprep.workflows").warning(
+                    "DCE: 'flair_postcon' underlay requested but no post-contrast FLAIR available. Skipping."
+                )
+        # T2w underlay
+        if "t2w" in dce_config.underlays:
+            if session_data.modalities.t2w:
+                workflow.connect([
+                    (anat_wf, dce_wf, [("outputnode.t2w_coreg", "inputnode.t2w_in_t1w")]),
+                ])
+            else:
+                logging.getLogger("pmriprep.workflows").warning(
+                    "DCE: 't2w' underlay requested but no T2w available. Skipping."
+                )
+    elif work_dir is not None:
+        # --skip-anat: load previously-computed anat outputs from work dir
+        import logging as _logging
+        _log = _logging.getLogger("pmriprep.workflows")
+        prev_anat = _find_previous_anat_outputs(
+            Path(work_dir), subject_id, session_id,
+        )
+        # Use confidence-scored selection when skip-anat
+        if dce_ref_selection and dce_ref_is_postcon and prev_anat["t1w_postcon_coreg"]:
+            dce_wf.inputs.inputnode.t1w_reference = prev_anat["t1w_postcon_coreg"]
+            _log.info("skip-anat (DCE): loaded t1w_reference from %s", prev_anat["t1w_postcon_coreg"])
+        elif session_data.modalities.t1w_ce_gad and prev_anat["t1w_postcon_coreg"]:
+            # Fallback: use postcon if available
+            dce_wf.inputs.inputnode.t1w_reference = prev_anat["t1w_postcon_coreg"]
+            _log.info("skip-anat (DCE): loaded t1w_reference from %s", prev_anat["t1w_postcon_coreg"])
+        elif prev_anat["t1w_preproc"]:
+            dce_wf.inputs.inputnode.t1w_reference = prev_anat["t1w_preproc"]
+            _log.info("skip-anat (DCE): loaded t1w_reference from %s", prev_anat["t1w_preproc"])
+        if prev_anat["brain_mask"]:
+            dce_wf.inputs.inputnode.brain_mask = prev_anat["brain_mask"]
+        if prev_anat["wm_probseg"]:
+            dce_wf.inputs.inputnode.wm_probseg = prev_anat["wm_probseg"]
+        if prev_anat["gm_probseg"]:
+            dce_wf.inputs.inputnode.gm_probseg = prev_anat["gm_probseg"]
+        if prev_anat["csf_probseg"]:
+            dce_wf.inputs.inputnode.csf_probseg = prev_anat["csf_probseg"]
+        if prev_anat["t1w_to_mni_xfm"]:
+            dce_wf.inputs.inputnode.t1w_to_mni_xfm = prev_anat["t1w_to_mni_xfm"]
+            _log.info("skip-anat (DCE): loaded t1w_to_mni_xfm from %s", prev_anat["t1w_to_mni_xfm"])
+        # T1w underlays — independent precon and postcon paths.
+        if "t1w_precon" in dce_config.underlays:
+            if prev_anat["t1w_preproc"] and session_data.modalities.t1w_pre:
+                dce_wf.inputs.inputnode.t1w_underlay = prev_anat["t1w_preproc"]
+                _log.info("skip-anat (DCE): loaded t1w_underlay (precon) from %s", prev_anat["t1w_preproc"])
+            else:
+                _log.warning("DCE: 't1w_precon' underlay requested but unavailable in skip-anat. Skipping.")
+        if "t1w_postcon" in dce_config.underlays:
+            if prev_anat["t1w_postcon_coreg"]:
+                dce_wf.inputs.inputnode.t1w_postcon_underlay = prev_anat["t1w_postcon_coreg"]
+                _log.info("skip-anat (DCE): loaded t1w_postcon_underlay (postcon) from %s", prev_anat["t1w_postcon_coreg"])
+            elif prev_anat["t1w_preproc"] and not session_data.modalities.t1w_pre:
+                dce_wf.inputs.inputnode.t1w_postcon_underlay = prev_anat["t1w_preproc"]
+                _log.info("skip-anat (DCE): loaded t1w_postcon_underlay (postcon-only) from %s", prev_anat["t1w_preproc"])
+            else:
+                _log.warning("DCE: 't1w_postcon' underlay requested but unavailable in skip-anat. Skipping.")
+        if "t1w_subtraction" in dce_config.underlays:
+            if prev_anat["t1w_subtraction"]:
+                dce_wf.inputs.inputnode.t1w_subtraction_underlay = prev_anat["t1w_subtraction"]
+                _log.info("skip-anat (DCE): loaded t1w_subtraction_underlay from %s", prev_anat["t1w_subtraction"])
+            else:
+                _log.warning("DCE: 't1w_subtraction' underlay requested but unavailable in skip-anat. Skipping.")
+        if "flair_precon" in dce_config.underlays:
+            if prev_anat["flair_coreg"]:
+                dce_wf.inputs.inputnode.flair_in_t1w = prev_anat["flair_coreg"]
+                _log.info("skip-anat (DCE): loaded flair_in_t1w (precon) from %s", prev_anat["flair_coreg"])
+            else:
+                _log.warning("DCE: 'flair_precon' underlay requested but unavailable in skip-anat. Skipping.")
+        if "flair_postcon" in dce_config.underlays:
+            if prev_anat.get("flair_postcon_coreg"):
+                dce_wf.inputs.inputnode.flair_postcon_in_t1w = prev_anat["flair_postcon_coreg"]
+                _log.info("skip-anat (DCE): loaded flair_postcon_in_t1w from %s", prev_anat["flair_postcon_coreg"])
+            else:
+                _log.warning("DCE: 'flair_postcon' underlay requested but unavailable in skip-anat. Skipping.")
+        if "t2w" in dce_config.underlays and prev_anat["t2w_coreg"]:
+            dce_wf.inputs.inputnode.t2w_in_t1w = prev_anat["t2w_coreg"]
+            _log.info("skip-anat (DCE): loaded t2w_in_t1w from %s", prev_anat["t2w_coreg"])
+
 def _init_master_workflow_nodes(
     *,
     workflow: pe.Workflow,
@@ -2747,12 +2959,6 @@ def init_pmriprep_wf(
     # Determine which anat output to use for DSC and DCE registration,
     # plus BBR eligibility and provenance metadata.
     # -------------------------------------------------------------------
-    from pmriprep.utils.structural_reference import (
-        ImageType,
-        _map_selection_to_anat_output,
-    )
-
-    _ref_logger = logging.getLogger("pmriprep.workflows")
     reference_plan = _select_master_structural_references(
         session_data=session_data,
         decision=decision,
@@ -2916,196 +3122,18 @@ def init_pmriprep_wf(
         dce_wf = dce_initialization.workflow
         dce_provenance = dce_initialization.provenance
 
-        # Determine DCE structural reference from confidence-scored selection
-        dce_ref_output = "outputnode.t1w_preproc"  # default
-        dce_ref_is_postcon = False
-        if dce_ref_selection:
-            dce_ref_output = _map_selection_to_anat_output(
-                dce_ref_selection.candidate.image_type,
-            )
-            dce_ref_is_postcon = (
-                dce_ref_selection.candidate.image_type == ImageType.T1W_POSTCON
-            )
-            # Postcon-only override: t1w_postcon_coreg requires both pre and postcon
-            if dce_ref_is_postcon and not session_data.modalities.t1w_pre:
-                dce_ref_output = "outputnode.t1w_preproc"
-
-            # Override DCE registration reference type from selection
-            ref_type_map = {
-                ImageType.T1W_POSTCON: "postcon",
-                ImageType.T1W_PRECON: "precon",
-            }
-            dce_reg_ref_type = ref_type_map.get(
-                dce_ref_selection.candidate.image_type, "any",
-            )
-            dce_wf.inputs.dce_registration_wf.dce_registration.reference_type = dce_reg_ref_type
-            _ref_logger.info(
-                "DCE registration: reference_type=%s (from selection)",
-                dce_reg_ref_type,
-            )
-
-        # Connect anat outputs to DCE workflow
-        if anat_wf is not None:
-            # Use confidence-scored reference for DCE registration
-            # IMPORTANT: Always use anat pipeline's preprocessed outputs (RAS-reoriented,
-            # bias-corrected) rather than raw BIDS inputs for proper orientation alignment
-            workflow.connect([
-                (anat_wf, dce_wf, [(dce_ref_output, "inputnode.t1w_reference")]),
-            ])
-            workflow.connect([
-                (anat_wf, dce_wf, [
-                    ("outputnode.brain_mask", "inputnode.brain_mask"),
-                    # Pass T1w→MNI transform for atlas-guided AIF (Gap 6)
-                    ("outputnode.t1w_to_mni_xfm", "inputnode.t1w_to_mni_xfm"),
-                ]),
-            ])
-            # Tissue probseg maps (unavailable in postcon-only mode)
-            if session_data.modalities.t1w_pre:
-                workflow.connect([
-                    (anat_wf, dce_wf, [
-                        ("outputnode.wm_probseg", "inputnode.wm_probseg"),
-                        ("outputnode.gm_probseg", "inputnode.gm_probseg"),
-                        ("outputnode.csf_probseg", "inputnode.csf_probseg"),
-                    ]),
-                ])
-            # T1w underlays — independent precon and postcon paths so users
-            # who configure both get both outputs (precon → t1w_underlay,
-            # postcon → t1w_postcon_underlay).
-            if "t1w_precon" in dce_config.underlays:
-                if session_data.modalities.t1w_pre:
-                    workflow.connect([
-                        (anat_wf, dce_wf, [("outputnode.t1w_preproc", "inputnode.t1w_underlay")]),
-                    ])
-                else:
-                    logging.getLogger("pmriprep.workflows").warning(
-                        "DCE: 't1w_precon' underlay requested but no pre-contrast T1w available. Skipping."
-                    )
-            if "t1w_postcon" in dce_config.underlays:
-                if session_data.modalities.t1w_ce_gad and session_data.modalities.t1w_pre:
-                    workflow.connect([
-                        (anat_wf, dce_wf, [("outputnode.t1w_postcon_coreg", "inputnode.t1w_postcon_underlay")]),
-                    ])
-                elif session_data.modalities.t1w_ce_gad:
-                    # Postcon-only mode: t1w_preproc IS the postcon
-                    workflow.connect([
-                        (anat_wf, dce_wf, [("outputnode.t1w_preproc", "inputnode.t1w_postcon_underlay")]),
-                    ])
-                else:
-                    logging.getLogger("pmriprep.workflows").warning(
-                        "DCE: 't1w_postcon' underlay requested but no post-contrast T1w available. Skipping."
-                    )
-            # Subtraction underlay — post-pre difference; available only when
-            # both pre- and post-contrast T1w exist AND anat computed it.
-            if "t1w_subtraction" in dce_config.underlays:
-                if (
-                    session_data.modalities.t1w_pre
-                    and session_data.modalities.t1w_ce_gad
-                    and anat_config.create_subtraction
-                ):
-                    workflow.connect([
-                        (anat_wf, dce_wf, [("outputnode.t1w_subtraction", "inputnode.t1w_subtraction_underlay")]),
-                    ])
-                else:
-                    logging.getLogger("pmriprep.workflows").warning(
-                        "DCE: 't1w_subtraction' underlay requested but unavailable "
-                        "(requires pre- and post-contrast T1w and create_subtraction). Skipping."
-                    )
-            # FLAIR underlays — independent precon and postcon paths
-            # (precon → flair_in_t1w, postcon → flair_postcon_in_t1w).
-            if "flair_precon" in dce_config.underlays:
-                if session_data.modalities.flair:
-                    workflow.connect([
-                        (anat_wf, dce_wf, [("outputnode.flair_coreg", "inputnode.flair_in_t1w")]),
-                    ])
-                else:
-                    logging.getLogger("pmriprep.workflows").warning(
-                        "DCE: 'flair_precon' underlay requested but no pre-contrast FLAIR available. Skipping."
-                    )
-            if "flair_postcon" in dce_config.underlays:
-                if session_data.modalities.flair_postcon:
-                    workflow.connect([
-                        (anat_wf, dce_wf, [("outputnode.flair_postcon_coreg", "inputnode.flair_postcon_in_t1w")]),
-                    ])
-                else:
-                    logging.getLogger("pmriprep.workflows").warning(
-                        "DCE: 'flair_postcon' underlay requested but no post-contrast FLAIR available. Skipping."
-                    )
-            # T2w underlay
-            if "t2w" in dce_config.underlays:
-                if session_data.modalities.t2w:
-                    workflow.connect([
-                        (anat_wf, dce_wf, [("outputnode.t2w_coreg", "inputnode.t2w_in_t1w")]),
-                    ])
-                else:
-                    logging.getLogger("pmriprep.workflows").warning(
-                        "DCE: 't2w' underlay requested but no T2w available. Skipping."
-                    )
-        elif work_dir is not None:
-            # --skip-anat: load previously-computed anat outputs from work dir
-            import logging as _logging
-            _log = _logging.getLogger("pmriprep.workflows")
-            prev_anat = _find_previous_anat_outputs(
-                Path(work_dir), subject_id, session_id,
-            )
-            # Use confidence-scored selection when skip-anat
-            if dce_ref_selection and dce_ref_is_postcon and prev_anat["t1w_postcon_coreg"]:
-                dce_wf.inputs.inputnode.t1w_reference = prev_anat["t1w_postcon_coreg"]
-                _log.info("skip-anat (DCE): loaded t1w_reference from %s", prev_anat["t1w_postcon_coreg"])
-            elif session_data.modalities.t1w_ce_gad and prev_anat["t1w_postcon_coreg"]:
-                # Fallback: use postcon if available
-                dce_wf.inputs.inputnode.t1w_reference = prev_anat["t1w_postcon_coreg"]
-                _log.info("skip-anat (DCE): loaded t1w_reference from %s", prev_anat["t1w_postcon_coreg"])
-            elif prev_anat["t1w_preproc"]:
-                dce_wf.inputs.inputnode.t1w_reference = prev_anat["t1w_preproc"]
-                _log.info("skip-anat (DCE): loaded t1w_reference from %s", prev_anat["t1w_preproc"])
-            if prev_anat["brain_mask"]:
-                dce_wf.inputs.inputnode.brain_mask = prev_anat["brain_mask"]
-            if prev_anat["wm_probseg"]:
-                dce_wf.inputs.inputnode.wm_probseg = prev_anat["wm_probseg"]
-            if prev_anat["gm_probseg"]:
-                dce_wf.inputs.inputnode.gm_probseg = prev_anat["gm_probseg"]
-            if prev_anat["csf_probseg"]:
-                dce_wf.inputs.inputnode.csf_probseg = prev_anat["csf_probseg"]
-            if prev_anat["t1w_to_mni_xfm"]:
-                dce_wf.inputs.inputnode.t1w_to_mni_xfm = prev_anat["t1w_to_mni_xfm"]
-                _log.info("skip-anat (DCE): loaded t1w_to_mni_xfm from %s", prev_anat["t1w_to_mni_xfm"])
-            # T1w underlays — independent precon and postcon paths.
-            if "t1w_precon" in dce_config.underlays:
-                if prev_anat["t1w_preproc"] and session_data.modalities.t1w_pre:
-                    dce_wf.inputs.inputnode.t1w_underlay = prev_anat["t1w_preproc"]
-                    _log.info("skip-anat (DCE): loaded t1w_underlay (precon) from %s", prev_anat["t1w_preproc"])
-                else:
-                    _log.warning("DCE: 't1w_precon' underlay requested but unavailable in skip-anat. Skipping.")
-            if "t1w_postcon" in dce_config.underlays:
-                if prev_anat["t1w_postcon_coreg"]:
-                    dce_wf.inputs.inputnode.t1w_postcon_underlay = prev_anat["t1w_postcon_coreg"]
-                    _log.info("skip-anat (DCE): loaded t1w_postcon_underlay (postcon) from %s", prev_anat["t1w_postcon_coreg"])
-                elif prev_anat["t1w_preproc"] and not session_data.modalities.t1w_pre:
-                    dce_wf.inputs.inputnode.t1w_postcon_underlay = prev_anat["t1w_preproc"]
-                    _log.info("skip-anat (DCE): loaded t1w_postcon_underlay (postcon-only) from %s", prev_anat["t1w_preproc"])
-                else:
-                    _log.warning("DCE: 't1w_postcon' underlay requested but unavailable in skip-anat. Skipping.")
-            if "t1w_subtraction" in dce_config.underlays:
-                if prev_anat["t1w_subtraction"]:
-                    dce_wf.inputs.inputnode.t1w_subtraction_underlay = prev_anat["t1w_subtraction"]
-                    _log.info("skip-anat (DCE): loaded t1w_subtraction_underlay from %s", prev_anat["t1w_subtraction"])
-                else:
-                    _log.warning("DCE: 't1w_subtraction' underlay requested but unavailable in skip-anat. Skipping.")
-            if "flair_precon" in dce_config.underlays:
-                if prev_anat["flair_coreg"]:
-                    dce_wf.inputs.inputnode.flair_in_t1w = prev_anat["flair_coreg"]
-                    _log.info("skip-anat (DCE): loaded flair_in_t1w (precon) from %s", prev_anat["flair_coreg"])
-                else:
-                    _log.warning("DCE: 'flair_precon' underlay requested but unavailable in skip-anat. Skipping.")
-            if "flair_postcon" in dce_config.underlays:
-                if prev_anat.get("flair_postcon_coreg"):
-                    dce_wf.inputs.inputnode.flair_postcon_in_t1w = prev_anat["flair_postcon_coreg"]
-                    _log.info("skip-anat (DCE): loaded flair_postcon_in_t1w from %s", prev_anat["flair_postcon_coreg"])
-                else:
-                    _log.warning("DCE: 'flair_postcon' underlay requested but unavailable in skip-anat. Skipping.")
-            if "t2w" in dce_config.underlays and prev_anat["t2w_coreg"]:
-                dce_wf.inputs.inputnode.t2w_in_t1w = prev_anat["t2w_coreg"]
-                _log.info("skip-anat (DCE): loaded t2w_in_t1w from %s", prev_anat["t2w_coreg"])
+        _connect_master_dce_anatomy(
+            workflow=workflow,
+            dce_wf=dce_wf,
+            anat_wf=anat_wf,
+            session_data=session_data,
+            reference_selection=dce_ref_selection,
+            anat_config=anat_config,
+            dce_config=dce_config,
+            work_dir=work_dir,
+            subject_id=subject_id,
+            session_id=session_id,
+        )
 
         # Connect lesion mask, tumor segmentation, and NAWM mask from tumor seg if available
         # Also wire user-supplied masks from config (lesion_mask, nawm_mask, roi_mask)
