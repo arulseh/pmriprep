@@ -22,14 +22,14 @@ from pmriprep.interfaces.dsc_compute import ComputeDSCMaps
 
 def _extract_preload_indicators() -> set[str]:
     """Return the ``_PRELOAD_INDICATORS`` set literal from ``_run_interface``."""
-    src = textwrap.dedent(inspect.getsource(ComputeDSCMaps._run_interface))
+    src = textwrap.dedent(inspect.getsource(ComputeDSCMaps._compute_auc_maps))
     tree = ast.parse(src)
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign):
             for target in node.targets:
                 if isinstance(target, ast.Name) and target.id == "_PRELOAD_INDICATORS":
                     return {ast.literal_eval(elt) for elt in node.value.elts}  # type: ignore[attr-defined]
-    raise AssertionError("_PRELOAD_INDICATORS not found in ComputeDSCMaps._run_interface")
+    raise AssertionError("_PRELOAD_INDICATORS not found in ComputeDSCMaps._compute_auc_maps")
 
 
 class TestCBVAUCPreloadWarning:

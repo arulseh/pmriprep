@@ -375,6 +375,16 @@ class _DSCTimingMaps(NamedTuple):
     aif_bat_seconds: float
 
 
+class _DSCAUCMaps(NamedTuple):
+    """DSC AUC decomposition and measured-AIF CBV state."""
+
+    raw: npt.NDArray[Any]
+    corrected: npt.NDArray[Any]
+    difference: npt.NDArray[Any]
+    cbv: npt.NDArray[Any]
+    qc: dict[str, Any]
+
+
 class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
     """Input specification for ComputeDSCMaps interface."""
 
@@ -1141,6 +1151,99 @@ class ComputeDSCMaps(BaseInterface):
             ttp_corrected=ttp_corrected,
             relative_ttp=relative_ttp,
             aif_bat_seconds=aif_bat_seconds,
+        )
+
+    def _compute_auc_maps(
+        self,
+        raw_concentration: npt.NDArray[Any],
+        corrected_concentration: npt.NDArray[Any],
+        n_baseline: int,
+        detected_baseline: int,
+        detection_info: dict[str, Any],
+        dt: float,
+    ) -> _DSCAUCMaps:
+        """Compute AUC decomposition and measured-AIF full-bolus CBV.
+
+        Parameters
+        ----------
+        raw_concentration : npt.NDArray
+            Pre-K2 concentration, potentially carrying a residual baseline.
+        corrected_concentration : npt.NDArray
+            Baseline-subtracted, K2-corrected tissue concentration.
+        n_baseline : int
+            Baseline window used for raw tissue and measured-AIF subtraction.
+        detected_baseline : int
+            Detected baseline used when no explicit arrival index is available.
+        detection_info : dict
+            Baseline diagnostics containing the AIF arrival index when known.
+        dt : float
+            Frame interval in seconds.
+
+        Returns
+        -------
+        _DSCAUCMaps
+            Raw/corrected/leakage AUC, full-bolus CBV, and matching QC state.
+
+        """
+        raw_for_auc = raw_concentration - np.mean(
+            raw_concentration[..., :n_baseline], axis=-1, keepdims=True
+        )
+        auc_corrected = np.minimum(
+            np.trapezoid(corrected_concentration, dx=dt, axis=-1), 10000.0
+        )
+        auc_raw = np.minimum(np.trapezoid(raw_for_auc, dx=dt, axis=-1), 10000.0)
+        auc_difference = auc_raw - auc_corrected
+
+        spatial_shape = corrected_concentration.shape[:3]
+        n_timepoints = corrected_concentration.shape[-1]
+        bat = int(detection_info.get("arrival_index", detected_baseline))
+        bolus_slice = slice(bat, n_timepoints)
+        qc: dict[str, Any] = {}
+
+        if (
+            isdefined(self.inputs.measured_aif_file)
+            and self.inputs.measured_aif_file
+            and Path(str(self.inputs.measured_aif_file)).is_file()
+        ):
+            measured_aif = np.loadtxt(self.inputs.measured_aif_file)
+            aif_for_auc = measured_aif - float(np.mean(measured_aif[:n_baseline]))
+            aif_auc = float(np.trapezoid(aif_for_auc[bolus_slice], dx=dt))
+            tissue_auc_bolus = np.trapezoid(
+                corrected_concentration[..., bolus_slice], dx=dt, axis=-1
+            )
+            if aif_auc < EPSILON_SIGNAL:
+                logger.warning(
+                    "AIF AUC near-zero (%.6f); AUC CBV unavailable", aif_auc
+                )
+                cbv = np.full(spatial_shape, np.nan, dtype=np.float64)
+            else:
+                cbv = np.minimum(tissue_auc_bolus / aif_auc, 10.0)
+            qc.update(
+                cbv_auc_bat_frame=bat,
+                cbv_auc_end_frame=n_timepoints,
+                cbv_auc_aif_integral=round(aif_auc, 6),
+            )
+        else:
+            logger.warning("Measured AIF not available; AUC CBV set to NaN")
+            cbv = np.full(spatial_shape, np.nan, dtype=np.float64)
+            qc["cbv_auc_measured_aif_missing"] = True
+
+        _PRELOAD_INDICATORS = {"half_dose", "significant", "severe"}
+        preload_class = str(self.inputs.preload_classification)
+        if preload_class in _PRELOAD_INDICATORS:
+            qc["cbv_auc_preload_warning"] = (
+                f"Preload classification '{preload_class}': residual "
+                "leakage may bias full-bolus AUC CBV low (T1-dip, BSW "
+                "under-recovers) or high (positive T2* tail, BSW-uncorrectable). "
+                "Interpret with caution."
+            )
+
+        return _DSCAUCMaps(
+            raw=auc_raw,
+            corrected=auc_corrected,
+            difference=auc_difference,
+            cbv=cbv,
+            qc=qc,
         )
 
     def _first_pass_reference(
@@ -2662,85 +2765,19 @@ class ComputeDSCMaps(BaseInterface):
         rttp = timing_maps.relative_ttp
         aif_bat_seconds = timing_maps.aif_bat_seconds
 
-        # -----------------------------------------------------------
-        # AUC decomposition: raw (pre-K2), corrected (post-K2), diff
-        # -----------------------------------------------------------
-        # Trapezoidal integration (O(dt^2)) of the bolus passage, per the
-        # QIBA DSC Profile.
-        #
-        # raw_conc_data is pre-K2 and pre-baseline-subtraction (preloaded
-        # subjects carry residual ΔR2* baseline). Subtract per-voxel
-        # baseline before integrating so auc_diff = auc_raw - auc_corr
-        # reflects integrated K2 leakage correction, not residual baseline.
-        raw_conc_for_auc = raw_conc_data - np.mean(
-            raw_conc_data[..., :n_bl], axis=-1, keepdims=True
+        auc_maps = self._compute_auc_maps(
+            raw_conc_data,
+            conc_data,
+            n_bl,
+            detected_baseline,
+            baseline_detection_info,
+            dt,
         )
-        # Upper bound 10000 rejects sentinel/overflow voxels. No lower
-        # bound: half-rectifying symmetric noise biases NAWM voxels (the
-        # nCBV denominator) upward, depressing tumor nCBV near the 1.75
-        # progression cutoff.
-        auc_corr = np.minimum(np.trapezoid(conc_data, dx=dt, axis=-1), 10000.0)
-        auc_raw = np.minimum(np.trapezoid(raw_conc_for_auc, dx=dt, axis=-1), 10000.0)
-        auc_diff = auc_raw - auc_corr
-
-        # -----------------------------------------------------------
-        # AUC-based CBV: full bolus passage per ASFNR/NCI/ABTC consensus.
-        # Window: BAT → end of acquisition on K2-corrected tissue ΔR2*;
-        # denominator is measured AIF over the same window. Recirculation
-        # contributes to both integrals and cancels in the ratio.
-        # BAT = first frame of bolus rise (from AIF detection); numerator
-        # and denominator share bolus_slice so any BAT off-by-one shifts
-        # both identically — ratio is robust.
-        # conc_data is already ΔR2* with zero baseline by construction
-        # (upstream baseline subtraction above); only the measured AIF
-        # needs explicit baseline subtraction here.
-        # -----------------------------------------------------------
-        cbv_auc: npt.NDArray[Any]
-        n_timepoints = conc_data.shape[-1]
-        bat = int(baseline_detection_info.get("arrival_index", detected_baseline))
-        bolus_slice = slice(bat, n_timepoints)
-        _preload_class_auc = str(self.inputs.preload_classification)
-
-        if (
-            isdefined(self.inputs.measured_aif_file)
-            and self.inputs.measured_aif_file
-            and Path(str(self.inputs.measured_aif_file)).is_file()
-        ):
-            measured_aif = np.loadtxt(self.inputs.measured_aif_file)
-            aif_for_auc = measured_aif - float(np.mean(measured_aif[:n_bl]))
-            aif_auc = float(np.trapezoid(aif_for_auc[bolus_slice], dx=dt))
-            tissue_auc_bolus = np.trapezoid(conc_data[..., bolus_slice], dx=dt, axis=-1)
-
-            if aif_auc < EPSILON_SIGNAL:
-                logger.warning("AIF AUC near-zero (%.6f); AUC CBV unavailable", aif_auc)
-                cbv_auc = np.full(spatial_shape, np.nan, dtype=np.float64)
-            else:
-                # Upper bound rejects sentinel voxels. No lower bound:
-                # NAWM-normalization (downstream) requires unbiased
-                # negatives; half-rectifying here inflates the denominator.
-                cbv_auc = np.minimum(tissue_auc_bolus / aif_auc, 10.0)
-
-            qc_metrics["cbv_auc_bat_frame"] = bat  # first frame of bolus rise
-            qc_metrics["cbv_auc_end_frame"] = n_timepoints
-            qc_metrics["cbv_auc_aif_integral"] = round(aif_auc, 6)
-        else:
-            logger.warning("Measured AIF not available; AUC CBV set to NaN")
-            cbv_auc = np.full(spatial_shape, np.nan, dtype=np.float64)
-            qc_metrics["cbv_auc_measured_aif_missing"] = True
-
-        # Preload QC warning: residual extravasation biases full-bolus AUC CBV
-        # in EITHER direction, and BSW is blind to one of them. No/low preload
-        # → T1-dominant negative ΔR2* dip → BSW under-recovers → CBV biased LOW.
-        # Over/atypical preload → persistent positive T2* tail → K2 pins at 0
-        # (non-negative gate) → CBV biased HIGH and BSW cannot correct it.
-        _PRELOAD_INDICATORS = {"half_dose", "significant", "severe"}
-        if _preload_class_auc in _PRELOAD_INDICATORS:
-            qc_metrics["cbv_auc_preload_warning"] = (
-                f"Preload classification '{_preload_class_auc}': residual "
-                "leakage may bias full-bolus AUC CBV low (T1-dip, BSW "
-                "under-recovers) or high (positive T2* tail, BSW-uncorrectable). "
-                "Interpret with caution."
-            )
+        auc_raw = auc_maps.raw
+        auc_corr = auc_maps.corrected
+        auc_diff = auc_maps.difference
+        cbv_auc = auc_maps.cbv
+        qc_metrics.update(auc_maps.qc)
 
         # CNR: peak concentration / baseline std per voxel (from raw conc)
         # Uses ddof=0 (default) and full-timeseries peak

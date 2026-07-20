@@ -304,3 +304,69 @@ def test_compute_timing_maps_requires_more_than_100_nawm_voxels(
     )
 
     assert result.relative_ttp is None
+
+
+def test_compute_auc_maps_preserves_symmetric_measured_aif_ratio(
+    tmp_path: Path,
+) -> None:
+    """Tissue and measured AIF share BAT window, baseline subtraction, and dt."""
+    corrected = np.array([[[[0.0, 0.0, 1.0, 2.0, 1.0, 0.0]]]])
+    raw = corrected + 5.0
+    measured_aif = np.array([1.0, 1.0, 3.0, 5.0, 3.0, 1.0])
+    measured_file = tmp_path / "measured_aif.txt"
+    np.savetxt(measured_file, measured_aif)
+    interface = ComputeDSCMaps(
+        measured_aif_file=str(measured_file), preload_classification="none"
+    )
+
+    result = interface._compute_auc_maps(
+        raw,
+        corrected,
+        n_baseline=2,
+        detected_baseline=2,
+        detection_info={"arrival_index": 2},
+        dt=1.0,
+    )
+
+    expected_raw = np.trapezoid(raw - raw[..., :2].mean(axis=-1, keepdims=True), axis=-1)
+    expected_corrected = np.trapezoid(corrected, axis=-1)
+    expected_aif_auc = np.trapezoid((measured_aif - 1.0)[2:])
+    expected_tissue_auc = np.trapezoid(corrected[..., 2:], axis=-1)
+    np.testing.assert_allclose(result.raw, expected_raw)
+    np.testing.assert_allclose(result.corrected, expected_corrected)
+    np.testing.assert_allclose(result.difference, expected_raw - expected_corrected)
+    np.testing.assert_allclose(result.cbv, expected_tissue_auc / expected_aif_auc)
+    assert result.qc == {
+        "cbv_auc_bat_frame": 2,
+        "cbv_auc_end_frame": 6,
+        "cbv_auc_aif_integral": round(float(expected_aif_auc), 6),
+    }
+
+
+def test_compute_auc_maps_near_zero_measured_aif_returns_nan(
+    tmp_path: Path,
+) -> None:
+    """A nonpositive measured-AIF integral retains unavailable CBV semantics."""
+    measured_file = tmp_path / "measured_aif.txt"
+    np.savetxt(measured_file, np.ones(6))
+    concentration = np.ones((2, 1, 1, 6), dtype=np.float64)
+
+    result = ComputeDSCMaps(measured_aif_file=str(measured_file))._compute_auc_maps(
+        concentration, concentration, 2, 2, {"arrival_index": 2}, 1.0
+    )
+
+    assert np.all(np.isnan(result.cbv))
+    assert result.qc["cbv_auc_aif_integral"] == 0.0
+
+
+def test_compute_auc_maps_missing_aif_and_preload_warning() -> None:
+    """Missing denominator and administered preload retain separate QC flags."""
+    concentration = np.ones((1, 1, 1, 6), dtype=np.float64)
+
+    result = ComputeDSCMaps(preload_classification="half_dose")._compute_auc_maps(
+        concentration, concentration, 2, 2, {"arrival_index": 2}, 1.0
+    )
+
+    assert np.all(np.isnan(result.cbv))
+    assert result.qc["cbv_auc_measured_aif_missing"] is True
+    assert "residual leakage" in result.qc["cbv_auc_preload_warning"]
