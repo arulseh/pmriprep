@@ -43,6 +43,19 @@ class DSCMapSpec:
     extra: dict[str, object] | None = None
 
 
+@dataclass(frozen=True)
+class DSCAnatSpec:
+    """Declarative specification for one anatomical DSC-space sink."""
+
+    in_attr: str
+    desc: str | None
+    suffix: str
+    description: str
+    skull_stripped: bool = False
+    ceagent: str | None = None
+    dismiss_entities: tuple[str, ...] = ("acquisition",)
+
+
 # Always-present DSC perfusion maps.
 _CORE_MAPS: tuple[DSCMapSpec, ...] = (
     DSCMapSpec("mtt_map", "dsc", "mtt", "Mean transit time", "s", "mtt",
@@ -169,6 +182,44 @@ _BAYESIAN_MAPS: tuple[DSCMapSpec, ...] = (
      "CBV 95% credible interval lower bound", "arbitrary", "cbvCI95lower"),
     DSCMapSpec("cbv_ci95_upper_map", "dscCI95upper", "cbv",
      "CBV 95% credible interval upper bound", "arbitrary", "cbvCI95upper"),
+)
+
+
+_ANAT_MASKS: tuple[DSCAnatSpec, ...] = (
+    DSCAnatSpec(
+        "brain_mask_dsc", "brain", "mask", "Brain mask in DSC space",
+        skull_stripped=True, dismiss_entities=("acquisition", "ceagent"),
+    ),
+    DSCAnatSpec(
+        "nawm_mask_dsc", "nawm", "mask",
+        "Normal-appearing white matter mask in DSC space",
+        dismiss_entities=("acquisition", "ceagent"),
+    ),
+    DSCAnatSpec("lesion_mask_dsc", "lesion", "mask", "Lesion mask registered to DSC space"),
+    DSCAnatSpec(
+        "user_lesion_mask_dsc", "userLesion", "mask",
+        "User-supplied lesion mask in DSC native space",
+    ),
+    DSCAnatSpec("roi_mask_dsc", "roi", "mask", "ROI mask registered to DSC space"),
+)
+
+
+_STRUCTURAL_UNDERLAYS: tuple[DSCAnatSpec, ...] = (
+    DSCAnatSpec("t1w_in_dsc", None, "T1w", "Pre-contrast T1w registered to DSC space"),
+    DSCAnatSpec(
+        "t1w_postcon_in_dsc", None, "T1w",
+        "Post-contrast T1w registered to DSC space", ceagent="GAD",
+    ),
+    DSCAnatSpec(
+        "t1w_subtraction_in_dsc", "subtraction", "T1w",
+        "Post-pre T1w subtraction registered to DSC space",
+    ),
+    DSCAnatSpec("flair_in_dsc", None, "FLAIR", "FLAIR registered to DSC space"),
+    DSCAnatSpec(
+        "flair_postcon_in_dsc", None, "FLAIR",
+        "Post-contrast FLAIR registered to DSC space", ceagent="GAD",
+    ),
+    DSCAnatSpec("t2w_in_dsc", None, "T2w", "T2w registered to DSC space"),
 )
 
 
@@ -1360,116 +1411,19 @@ def init_dsc_datasinks_wf(
             "AIF detection mask in DSC space", "mask",
         ), "out_file"))
 
-    # --- Anat-side: brain mask, NAWM mask in DSC space ---
-    if "brain_mask_dsc" in present:
-        # Brain mask was computed from pre-contrast T1w (HD-BET on MPRAGE pre);
-        # drop ce-GAD which would falsely imply post-contrast derivation.
+    # Precontrast-derived masks explicitly dismiss ceagent to avoid false
+    # postcontrast provenance; the distinction is encoded per specification.
+    for anat_spec in _ANAT_MASKS + _STRUCTURAL_UNDERLAYS:
+        if anat_spec.in_attr not in present:
+            continue
         sink = _add_anat_sink(
             workflow, inputnode, base_minimal,
-            name="brain_mask_dsc",
-            in_attr="brain_mask_dsc",
-            desc_value="brain", suffix="mask",
-            description="Brain mask in DSC space",
-            skull_stripped=True,
-            dismiss_entities=("acquisition", "ceagent"),
-        )
-        sink_outputs.append((sink, "out_file"))
-    if "nawm_mask_dsc" in present:
-        # NAWM mask is FAST-derived from pre-contrast tissue probabilities;
-        # drop ce-GAD for the same reason as brain_mask.
-        sink = _add_anat_sink(
-            workflow, inputnode, base_minimal,
-            name="nawm_mask_dsc",
-            in_attr="nawm_mask_dsc",
-            desc_value="nawm", suffix="mask",
-            description="Normal-appearing white matter mask in DSC space",
-            dismiss_entities=("acquisition", "ceagent"),
-        )
-        sink_outputs.append((sink, "out_file"))
-    if "lesion_mask_dsc" in present:
-        sink = _add_anat_sink(
-            workflow, inputnode, base_minimal,
-            name="lesion_mask_dsc",
-            in_attr="lesion_mask_dsc",
-            desc_value="lesion", suffix="mask",
-            description="Lesion mask registered to DSC space",
-        )
-        sink_outputs.append((sink, "out_file"))
-    if "user_lesion_mask_dsc" in present:
-        sink = _add_anat_sink(
-            workflow, inputnode, base_minimal,
-            name="user_lesion_mask_dsc",
-            in_attr="user_lesion_mask_dsc",
-            desc_value="userLesion", suffix="mask",
-            description="User-supplied lesion mask in DSC native space",
-        )
-        sink_outputs.append((sink, "out_file"))
-    if "roi_mask_dsc" in present:
-        sink = _add_anat_sink(
-            workflow, inputnode, base_minimal,
-            name="roi_mask_dsc",
-            in_attr="roi_mask_dsc",
-            desc_value="roi", suffix="mask",
-            description="ROI mask registered to DSC space",
-        )
-        sink_outputs.append((sink, "out_file"))
-
-    # --- Structural underlays in DSC space ---
-    if "t1w_in_dsc" in present:
-        sink = _add_anat_sink(
-            workflow, inputnode, base_minimal,
-            name="t1w_in_dsc",
-            in_attr="t1w_in_dsc",
-            desc_value=None, suffix="T1w",
-            description="Pre-contrast T1w registered to DSC space",
-            ce_value=None,
-        )
-        sink_outputs.append((sink, "out_file"))
-    if "t1w_postcon_in_dsc" in present:
-        sink = _add_anat_sink(
-            workflow, inputnode, base_minimal,
-            name="t1w_postcon_in_dsc",
-            in_attr="t1w_postcon_in_dsc",
-            desc_value=None, suffix="T1w",
-            description="Post-contrast T1w registered to DSC space",
-            ce_value="GAD",
-        )
-        sink_outputs.append((sink, "out_file"))
-    if "t1w_subtraction_in_dsc" in present:
-        sink = _add_anat_sink(
-            workflow, inputnode, base_minimal,
-            name="t1w_subtraction_in_dsc",
-            in_attr="t1w_subtraction_in_dsc",
-            desc_value="subtraction", suffix="T1w",
-            description="Post-pre T1w subtraction registered to DSC space",
-        )
-        sink_outputs.append((sink, "out_file"))
-    if "flair_in_dsc" in present:
-        sink = _add_anat_sink(
-            workflow, inputnode, base_minimal,
-            name="flair_in_dsc",
-            in_attr="flair_in_dsc",
-            desc_value=None, suffix="FLAIR",
-            description="FLAIR registered to DSC space",
-        )
-        sink_outputs.append((sink, "out_file"))
-    if "flair_postcon_in_dsc" in present:
-        sink = _add_anat_sink(
-            workflow, inputnode, base_minimal,
-            name="flair_postcon_in_dsc",
-            in_attr="flair_postcon_in_dsc",
-            desc_value=None, suffix="FLAIR",
-            description="Post-contrast FLAIR registered to DSC space",
-            ce_value="GAD",
-        )
-        sink_outputs.append((sink, "out_file"))
-    if "t2w_in_dsc" in present:
-        sink = _add_anat_sink(
-            workflow, inputnode, base_minimal,
-            name="t2w_in_dsc",
-            in_attr="t2w_in_dsc",
-            desc_value=None, suffix="T2w",
-            description="T2w registered to DSC space",
+            name=anat_spec.in_attr, in_attr=anat_spec.in_attr,
+            desc_value=anat_spec.desc, suffix=anat_spec.suffix,
+            description=anat_spec.description,
+            skull_stripped=anat_spec.skull_stripped,
+            ce_value=anat_spec.ceagent,
+            dismiss_entities=anat_spec.dismiss_entities,
         )
         sink_outputs.append((sink, "out_file"))
 
