@@ -283,11 +283,11 @@ Examples:
     dsc_group.add_argument(
         "--dsc-inference",
         choices=["nlls", "map", "vi", "svb"],
+        metavar="{nlls,vi,svb}",
         default=None,
         help="Inference engine for parametric DSC methods (cpi, vascular): "
         "vi (default, FABBER variational Bayes), "
         "svb (spatial VB with FABBER M-prior), "
-        "map (maximum a posteriori), "
         "nlls (FABBER-style Levenberg-Marquardt). "
         "SVD methods ignore this option.",
     )
@@ -358,9 +358,10 @@ Examples:
     dce_group.add_argument(
         "--dce-inference",
         choices=["nlls", "vi", "map"],
+        metavar="{nlls,vi}",
         default=None,
         help="Inference engine for DCE: nlls (default, scipy "
-        "least_squares), vi (variational Bayes), map (Laplace MAP).",
+        "least_squares), vi (variational Bayes).",
     )
     dce_group.add_argument(
         "--dce-aif-method",

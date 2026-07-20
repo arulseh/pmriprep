@@ -8,7 +8,7 @@ PMRIPrep is a BIDS-App for processing Dynamic Susceptibility Contrast (DSC) and 
 
 - **DSC Processing**: Five deconvolution methods (sSVD, oSVD, Tikhonov, CPI, Vascular) and K2 leakage correction
 - **DCE Processing**: Four pharmacokinetic models (Tofts, Extended Tofts, Patlak, 2CXM) plus model-free maps
-- **Bayesian Inference**: Variational inference (VI), spatial variational Bayes (SVB), and maximum a posteriori (MAP) estimation with uncertainty quantification
+- **Bayesian Inference**: Variational inference (VI) and spatial variational Bayes (SVB) with uncertainty quantification
 - **Automatic AIF Detection**: Multi-level arterial input function detection with population fallback, or user-supplied external AIF
 - **T1 Mapping**: Variable flip angle T1 mapping with optional B1+ correction
 - **Tumor Segmentation**: HD-GLIO integration for glioma segmentation
@@ -152,7 +152,7 @@ pmriprep bids_dir output_dir {participant} [options]
 | Flag | Description |
 |------|-------------|
 | `--dsc-deconv-method {sSVD,oSVD,tikhonov,vascular,cpi}` | Deconvolution method (default: oSVD) |
-| `--dsc-inference {nlls,map,vi,svb}` | Inference engine for parametric methods (cpi, vascular). Default: `vi` (FABBER variational Bayes). SVD/Tikhonov ignore. |
+| `--dsc-inference {nlls,vi,svb}` | Inference engine for parametric methods (cpi, vascular). Default: `vi` (FABBER variational Bayes). SVD/Tikhonov ignore. |
 | `--dsc-preload {auto\|FLOAT}` | Preload: `auto` (classify adequacy from K2 leakage residuals) or float administered-dose multiplier (0.0–2.0, e.g. `0.5` for half-dose preload) |
 | `--dsc-dose DOSE` | Dose multiplier (default: 1.0). Accepts a float or presets: `half`, `full`, `double` |
 | `--dsc-agent-standard-dose DOSE` | Override agent standard dose in mmol Gd/kg (auto-detected from `ContrastBolusAgent` sidecar field when available). Default: `0.1` |
@@ -164,7 +164,7 @@ pmriprep bids_dir output_dir {participant} [options]
 | Flag | Description |
 |------|-------------|
 | `--dce-model {auto,tofts,extended_tofts,patlak,2cxm}` | Pharmacokinetic model. `auto` performs per-voxel BIC model selection from Patlak, Extended Tofts, and 2CXM (default: auto) |
-| `--dce-inference {nlls,vi,map}` | Inference engine for DCE: `nlls` (default, scipy least_squares), `vi`, `map` |
+| `--dce-inference {nlls,vi}` | Inference engine for DCE: `nlls` (default, scipy least_squares) or `vi` (variational Bayes) |
 | `--dce-aif-method {auto,population}` | AIF detection method (default: auto) |
 | `--dce-aif-file FILE` | External AIF curve file (true plasma [Gd] in mM, already Hct-corrected); bypasses detection — the pipeline does not re-scale |
 | `--dce-dose DOSE` | Dose multiplier (default: 1.0). Accepts a float or presets: `half`, `full`, `double` |
@@ -228,7 +228,7 @@ dce:
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `method` | str | `"oSVD"` | Deconvolution method: `sSVD`, `oSVD`, `tikhonov`, `vascular`, `cpi` |
-| `inference` | str | `"vi"` | Inference engine: `nlls`, `map`, `vi`, `svb` (CPI and Vascular only; SVD and Tikhonov ignore) |
+| `inference` | str | `"vi"` | Inference engine: `nlls`, `vi`, `svb` (CPI and Vascular only; SVD and Tikhonov ignore) |
 | `cpi_control_points` | int | `0` | Control points for CPI (0 = auto) |
 | `cpi_infer_cpt` | bool | `true` | Infer CPI control-point times (deviates from FABBER default; cuts long-MTT/low-CBF bias) |
 | `cpi_infer_delay` | bool | `false` | Infer per-voxel bolus delay for CPI (FABBER inferdelay; off by default) |
@@ -258,7 +258,7 @@ dce:
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `model` | str | `"auto"` | PK model. `auto` = per-voxel BIC selection (Patlak, Extended Tofts, 2CXM). Fixed: `tofts`, `extended_tofts`, `patlak`, `2cxm` |
-| `inference` | str | `"nlls"` | Inference engine: `nlls`, `vi`, `map` |
+| `inference` | str | `"nlls"` | Inference engine: `nlls`, `vi` |
 | `dose` | float | `1.0` | Dose multiplier (default: 1.0). Accepts a float or presets: `half`, `full`, `double` |
 | `r1_relaxivity` | float | `null` | Override r1 relaxivity (s⁻¹/mM); null = lookup from BIDS sidecar |
 | `hematocrit` | float | `0.42` | Arterial hematocrit for AIF plasma correction |
