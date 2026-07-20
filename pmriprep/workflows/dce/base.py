@@ -770,6 +770,44 @@ def init_dce_t1_b1_wf(
     return workflow
 
 
+def init_dce_native_input_wf(
+    *, name: str = "dce_native_input_wf",
+) -> pe.Workflow:
+    """Build DCE-native input reorientation and early-reference preparation.
+
+    Parameters
+    ----------
+    name : str
+        Workflow name.
+
+    Returns
+    -------
+    workflow : nipype.pipeline.engine.Workflow
+        Workflow exposing the RAS-oriented 4D DCE series and its early
+        pre-contrast mean image through an explicit outputnode.
+    """
+    workflow = pe.Workflow(name=name)
+    inputnode = pe.Node(niu.IdentityInterface(fields=["dce_file"]), name="inputnode")
+    outputnode = pe.Node(
+        niu.IdentityInterface(fields=["dce_file", "early_mean"]), name="outputnode",
+    )
+    dce_reorient = pe.Node(Reorient(), name="dce_reorient")
+    dce_early_mean = pe.Node(
+        niu.Function(
+            input_names=["dce_file"], output_names=["out_file"],
+            function=_compute_early_mean,
+        ),
+        name="dce_early_mean",
+    )
+    workflow.connect([
+        (inputnode, dce_reorient, [("dce_file", "in_file")]),
+        (dce_reorient, dce_early_mean, [("out_file", "dce_file")]),
+        (dce_reorient, outputnode, [("out_file", "dce_file")]),
+        (dce_early_mean, outputnode, [("out_file", "early_mean")]),
+    ])
+    return workflow
+
+
 def init_dce_preproc_wf(
     bids_dir: Union[str, Path],
     output_dir: Union[str, Path],
@@ -1121,13 +1159,9 @@ def init_dce_preproc_wf(
 
     # ==========================================================================
     # DCE timeseries (4D) - required input
-    dce_reorient = pe.Node(
-        Reorient(),
-        name="dce_reorient",
-    )
-
+    dce_native_input_wf = init_dce_native_input_wf()
     workflow.connect([
-        (inputnode, dce_reorient, [("dce_file", "in_file")]),
+        (inputnode, dce_native_input_wf, [("dce_file", "inputnode.dce_file")]),
     ])
 
     # NOTE: AFI reorientation is handled inside B1Mapping to avoid
@@ -1179,20 +1213,6 @@ def init_dce_preproc_wf(
     # for baseline detection (the anat brain mask is in T1w space and may not
     # match DCE dimensions for thin-slab acquisitions).
     # ==========================================================================
-    dce_early_mean = pe.Node(
-        niu.Function(
-            input_names=["dce_file"],
-            output_names=["out_file"],
-            function=_compute_early_mean,
-        ),
-        name="dce_early_mean",
-    )
-
-    workflow.connect([
-        (dce_reorient, dce_early_mean, [("out_file", "dce_file")]),
-    ])
-
-    # ==========================================================================
     dce_preprocess = pe.Node(
         DCEPreprocess(
             baseline_frames=config.baseline_frames,
@@ -1207,7 +1227,7 @@ def init_dce_preproc_wf(
     # Brain mask comes from dce_brain_extract (after early mean HD-BET),
     # not from inputnode (which is in T1w space).
     workflow.connect([
-        (dce_reorient, dce_preprocess, [("out_file", "in_file")]),
+        (dce_native_input_wf, dce_preprocess, [("outputnode.dce_file", "in_file")]),
         (inputnode, dce_preprocess, [
             ("volume_tr", "volume_tr"),
         ]),
@@ -1265,7 +1285,7 @@ def init_dce_preproc_wf(
     # correction). The mask is then used by DCEPreprocess for baseline
     # detection and by all downstream nodes.
     workflow.connect([
-        (dce_early_mean, dce_brain_extract, [("out_file", "dce_mean")]),
+        (dce_native_input_wf, dce_brain_extract, [("outputnode.early_mean", "dce_mean")]),
         (dce_brain_extract, dce_preprocess, [("out_mask", "brain_mask")]),
     ])
 

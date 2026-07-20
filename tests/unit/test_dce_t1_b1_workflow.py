@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from pmriprep.config.dce import DCEConfig
-from pmriprep.workflows.dce.base import init_dce_t1_b1_wf
+from pmriprep.workflows.dce.base import init_dce_native_input_wf, init_dce_t1_b1_wf
 
 
 def _names(config: DCEConfig) -> set[str]:
@@ -30,3 +30,14 @@ def test_t1_b1_workflow_external_t1_mode() -> None:
 def test_t1_b1_workflow_no_t1_mode() -> None:
     """No-T1 mode preserves an explicit empty NiPreps-style contract."""
     assert _names(DCEConfig(no_t1=True)) == {"inputnode", "outputnode"}
+
+
+def test_dce_native_input_workflow_contract() -> None:
+    """Native input preparation retains reorientation and early-reference nodes."""
+    workflow = init_dce_native_input_wf()
+    assert set(workflow.list_node_names()) == {
+        "inputnode", "outputnode", "dce_reorient", "dce_early_mean",
+    }
+    assert set(workflow.get_node("outputnode").interface._fields) == {
+        "dce_file", "early_mean",
+    }
