@@ -291,6 +291,25 @@ def _build_dce_meta(
     return out
 
 
+def _build_tb1_meta(
+    base: dict,
+    b1_source_paths: list[str] | None,
+    bids_dir: str,
+) -> dict:
+    """Build TB1map metadata from its DCE grid and selected B1 inputs."""
+    from pmriprep.utils.sidecar_builders import build_sources_list
+
+    out = dict(base)
+    out["Description"] = (
+        "B1+ transmit field map (dimensionless ratio, 1.0 = nominal flip angle)"
+    )
+    out["Units"] = "1"
+    sources = list(out.get("Sources", []))
+    sources.extend(build_sources_list(b1_source_paths or [], bids_dir))
+    out["Sources"] = list(dict.fromkeys(sources))
+    return out
+
+
 def _build_uncertainty_extra(
     config_dict: dict | None = None,
     qc_metrics: dict | None = None,
@@ -1091,6 +1110,7 @@ def init_dce_datasinks_wf(
     present_inputs: Optional[set[str]] = None,
     has_smoothing: bool = False,
     motion_correct: bool = True,
+    b1_source_files: Optional[list[str]] = None,
     name: str = "dce_datasinks_wf",
 ) -> pe.Workflow:
     """Build the DCE-pipeline DerivativesDataSink chain.
@@ -1589,17 +1609,14 @@ def init_dce_datasinks_wf(
     if "b1_map" in present:
         meta = pe.Node(
             niu.Function(
-                input_names=["base", "description", "units", "extra"],
+                input_names=["base", "b1_source_paths", "bids_dir"],
                 output_names=["meta_dict"],
-                function=_build_dce_meta,
+                function=_build_tb1_meta,
             ),
             name="b1_map_meta",
         )
-        meta.inputs.description = (
-            "B1+ transmit field map (dimensionless ratio, 1.0 = nominal flip angle)"
-        )
-        meta.inputs.units = "1"
-        meta.inputs.extra = None
+        meta.inputs.b1_source_paths = list(b1_source_files or [])
+        meta.inputs.bids_dir = bids_dir
         workflow.connect(base_minimal, "meta_dict", meta, "base")
         sink = pe.Node(
             niu.Function(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 from traits.trait_base import Undefined
 
@@ -37,6 +38,50 @@ def test_tb1map_uses_standard_suffix_and_dce_source_entities(tmp_path) -> None:
     assert out.endswith(
         "sub-X_ses-Y_acq-fast_run-2_space-dceref_TB1map.nii.gz"
     )
+
+
+def test_tb1map_provenance_includes_grid_and_selected_b1_sources() -> None:
+    from pmriprep.workflows.dce.datasinks import _build_tb1_meta
+
+    base = {
+        "Sources": ["bids:raw:sub-X/ses-Y/perf/sub-X_ses-Y_run-2_dce.nii.gz"],
+        "SpatialReference": "bids::sub-X/ses-Y/perf/ref.nii.gz",
+    }
+    out = _build_tb1_meta(
+        base,
+        [
+            "/raw/sub-X/ses-Y/fmap/sub-X_ses-Y_run-1_TB1map.nii.gz",
+            "/raw/sub-X/ses-Y/fmap/sub-X_ses-Y_run-1_TB1map.nii.gz",
+        ],
+        "/raw",
+    )
+    assert out["Sources"] == [
+        "bids:raw:sub-X/ses-Y/perf/sub-X_ses-Y_run-2_dce.nii.gz",
+        "bids:raw:sub-X/ses-Y/fmap/sub-X_ses-Y_run-1_TB1map.nii.gz",
+    ]
+    assert out["Units"] == "1"
+
+
+def test_master_b1_source_selection_matches_configured_method() -> None:
+    from pmriprep.config.dce import DCEConfig
+    from pmriprep.workflows.base import _selected_dce_b1_sources
+
+    session = SimpleNamespace(modalities=SimpleNamespace(
+        b1_precomputed_file=Path("/raw/sub-X_TB1map.nii.gz"),
+        afi_mode="4d",
+        afi_4d_file=Path("/raw/sub-X_TB1AFI.nii.gz"),
+    ))
+    config = DCEConfig()
+    config.b1_method = "precomputed"
+    assert _selected_dce_b1_sources(session, config) == [
+        "/raw/sub-X_TB1map.nii.gz"
+    ]
+    config.b1_method = "afi"
+    assert _selected_dce_b1_sources(session, config) == [
+        "/raw/sub-X_TB1AFI.nii.gz"
+    ]
+    config.b1_method = "none"
+    assert _selected_dce_b1_sources(session, config) == []
 
 
 def test_perfusion_spatial_reference_preserves_source_entities() -> None:

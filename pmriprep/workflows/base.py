@@ -2576,6 +2576,23 @@ def _connect_master_dce_t1_b1_inputs(
         if session_data.modalities.afi_flip_angle is not None:
             dce_wf.inputs.inputnode.afi_flip_angle = session_data.modalities.afi_flip_angle
 
+
+def _selected_dce_b1_sources(
+    session_data: SessionData,
+    dce_config: DCEConfig,
+) -> list[str]:
+    """Return the raw B1 inputs selected by the configured DCE B1 method."""
+    modalities = session_data.modalities
+    if dce_config.b1_method == "precomputed" and modalities.b1_precomputed_file:
+        return [str(modalities.b1_precomputed_file)]
+    if (
+        dce_config.b1_method == "afi"
+        and modalities.afi_mode == "4d"
+        and modalities.afi_4d_file
+    ):
+        return [str(modalities.afi_4d_file)]
+    return []
+
 def _connect_master_dce_outputs_and_datasinks(
     *,
     workflow: pe.Workflow,
@@ -2748,6 +2765,7 @@ def _connect_master_dce_outputs_and_datasinks(
         present_inputs=dce_present,
         has_smoothing=dce_config.smooth_fwhm > 0,
         motion_correct=dce_config.motion_correct,
+        b1_source_files=_selected_dce_b1_sources(session_data, dce_config),
     )
     _dce_cfg = dataclasses.asdict(dce_config)
     for _k, _v in _dce_cfg.items():
