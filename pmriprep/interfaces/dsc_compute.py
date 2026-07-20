@@ -1310,6 +1310,41 @@ class ComputeDSCMaps(BaseInterface):
             tsnr = np.where(all_std > EPSILON_SIGNAL, all_mean / all_std, 0.0)
         return _DSCQualityMaps(cnr=cnr, snr=snr, tsnr=tsnr)
 
+    @staticmethod
+    def _finalize_mtt(
+        method: str,
+        fitted_mtt: npt.NDArray[Any],
+        cbf: npt.NDArray[Any],
+        auc_cbv: npt.NDArray[Any],
+    ) -> npt.NDArray[Any]:
+        """Apply measured-AIF central-volume MTT to SVD-family methods.
+
+        Parameters
+        ----------
+        method : str
+            Selected DSC deconvolution method.
+        fitted_mtt : npt.NDArray
+            MTT returned by the deconvolution implementation.
+        cbf : npt.NDArray
+            Unscaled CBF in inverse seconds.
+        auc_cbv : npt.NDArray
+            Measured-AIF full-bolus CBV.
+
+        Returns
+        -------
+        npt.NDArray
+            AUC-CBV/CBF MTT for SVD methods, otherwise the fitted map unchanged.
+
+        """
+        if method not in ("sSVD", "oSVD", "tikhonov"):
+            return fitted_mtt
+        with np.errstate(divide="ignore", invalid="ignore"):
+            return np.where(
+                (cbf > EPSILON_CONCENTRATION) & np.isfinite(auc_cbv),
+                auc_cbv / cbf,
+                0.0,
+            )
+
     def _first_pass_reference(
         self,
         fp_area: npt.NDArray[Any],
@@ -2850,24 +2885,7 @@ class ComputeDSCMaps(BaseInterface):
         snr = quality_maps.snr
         tsnr = quality_maps.tsnr
 
-        # -----------------------------------------------------------
-        # SVD-family MTT via the central volume theorem: MTT = CBV / CBF
-        # with the AUC-based CBV. cbv_auc = int(tissue) / int(AIF) = CBF * MTT,
-        # so dividing by the un-scaled s^-1 CBF gives MTT in seconds (the x60
-        # to min^-1 is applied later, to rel_cbf only). The AUC numerator is
-        # robust to the residue broadening the OI gate applies at clinical
-        # noise, so it degrades more gracefully than the residue ratio
-        # int R / max R. Where the measured AIF is absent cbv_auc is NaN
-        # (warned above) and MTT falls to 0. Parametric models keep their
-        # native CBV / CBF MTT and are not re-routed here.
-        # -----------------------------------------------------------
-        if method in ("sSVD", "oSVD", "tikhonov"):
-            with np.errstate(divide="ignore", invalid="ignore"):
-                mtt = np.where(
-                    (cbf > EPSILON_CONCENTRATION) & np.isfinite(cbv_auc),
-                    cbv_auc / cbf,
-                    0.0,
-                )
+        mtt = self._finalize_mtt(method, mtt, cbf, cbv_auc)
 
         # -----------------------------------------------------------
         # Clip maps to physiological ranges

@@ -421,3 +421,27 @@ def test_compute_quality_maps_without_signal_returns_zero_snr() -> None:
     assert result.cnr[0, 0, 0] > 0.0
     np.testing.assert_array_equal(result.snr, np.zeros((1, 1, 1)))
     np.testing.assert_array_equal(result.tsnr, np.zeros((1, 1, 1)))
+
+
+@pytest.mark.parametrize("method", ["sSVD", "oSVD", "tikhonov"])
+def test_finalize_mtt_uses_auc_cbv_for_svd_family(method: str) -> None:
+    """SVD-family MTT uses measured-AIF CBV divided by unscaled CBF."""
+    fitted = np.full((4,), 99.0)
+    cbf = np.array([0.5, 0.0, 0.25, 0.1])
+    auc_cbv = np.array([2.0, 3.0, np.nan, 1.5])
+
+    result = ComputeDSCMaps._finalize_mtt(method, fitted, cbf, auc_cbv)
+
+    np.testing.assert_allclose(result, [4.0, 0.0, 0.0, 15.0])
+
+
+@pytest.mark.parametrize("method", ["vascular", "cpi"])
+def test_finalize_mtt_preserves_parametric_result(method: str) -> None:
+    """Parametric methods retain the MTT returned by their fitted model."""
+    fitted = np.array([2.0, 4.0])
+
+    result = ComputeDSCMaps._finalize_mtt(
+        method, fitted, np.array([0.5, 0.5]), np.array([1.0, 1.0])
+    )
+
+    assert result is fitted
