@@ -339,11 +339,12 @@ def _accumulate_mcmc_diagnostics(
 ) -> int:
     """Accumulate one voxel's MCMC diagnostics and return its count increment."""
     voxel_rhat = result.get("rhat", {})
-    if not voxel_rhat:
+    voxel_ess = result.get("ess", {})
+    if not voxel_rhat and not voxel_ess:
         return 0
     for parameter, value in voxel_rhat.items():
         rhat_lists.setdefault(parameter, []).append(value)
-    for parameter, value in result.get("ess", {}).items():
+    for parameter, value in voxel_ess.items():
         ess_lists.setdefault(parameter, []).append(value)
     return 1
 

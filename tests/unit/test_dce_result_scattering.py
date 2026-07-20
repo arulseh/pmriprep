@@ -346,16 +346,16 @@ def test_accumulate_mcmc_diagnostics_groups_parameters_and_counts_voxel() -> Non
     assert ess == {"Ktrans": [250.0], "vp": [180.0]}
 
 
-def test_accumulate_mcmc_diagnostics_ignores_ess_without_rhat() -> None:
-    """An empty R-hat record remains a non-MCMC voxel even if ESS is present."""
+def test_accumulate_mcmc_diagnostics_retains_ess_without_rhat() -> None:
+    """Ensemble ESS identifies MCMC output when R-hat is unavailable."""
     rhat: dict[str, list[float]] = {}
     ess: dict[str, list[float]] = {}
     increment = _accumulate_mcmc_diagnostics(
         {"rhat": {}, "ess": {"Ktrans": 250.0}}, rhat, ess,
     )
-    assert increment == 0
+    assert increment == 1
     assert rhat == {}
-    assert ess == {}
+    assert ess == {"Ktrans": [250.0]}
 
 
 def test_summarize_map_uncertainty_sources_counts_actual_outcomes() -> None:

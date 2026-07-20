@@ -11,8 +11,7 @@ from pmriprep.models.bayesian_utils import (
     build_priors_from_params,
     compute_goodness_of_fit,
     compute_log_prior,
-    compute_per_walker_ess,
-    compute_split_rhat,
+    compute_ensemble_ess,
     run_ensemble_sampler,
     transformed_gaussian_interval,
     validate_bayesian_inputs,
@@ -192,50 +191,19 @@ class TestComputeGoodnessOfFit:
         assert np.isfinite(gof["bic"])
 
 
-# ---------------------------------------------------------------------------
-# compute_split_rhat
-# ---------------------------------------------------------------------------
-
-class TestComputeSplitRhat:
-    """Tests for split R-hat convergence diagnostic."""
-
-    def test_converged_chains(self) -> None:
-        """Well-mixed samples from one distribution give rhat close to 1."""
-        rng = np.random.default_rng(42)
-        n_iter, n_walkers, n_params = 2000, 10, 2
-        samples = rng.normal(size=(n_iter, n_walkers, n_params))
-        rhat = compute_split_rhat(samples)
-        assert rhat.shape == (n_params,)
-        for val in rhat:
-            assert val == pytest.approx(1.0, abs=0.05)
-
-    def test_non_converged_chains(self) -> None:
-        """First half near 0, second half near 100 gives rhat >> 1."""
-        rng = np.random.default_rng(42)
-        n_iter, n_walkers, n_params = 200, 4, 1
-        # Add small noise so within-chain variance is nonzero
-        samples = rng.normal(0, 0.1, size=(n_iter, n_walkers, n_params))
-        samples[n_iter // 2 :, :, :] += 100.0
-        rhat = compute_split_rhat(samples)
-        assert rhat[0] > 2.0
-
-
-# ---------------------------------------------------------------------------
-# compute_per_walker_ess
-# ---------------------------------------------------------------------------
-
-class TestComputePerWalkerESS:
-    """Tests for effective sample size estimation."""
+class TestComputeEnsembleESS:
+    """Tests for ensemble time-axis autocorrelation diagnostics."""
 
     def test_uncorrelated_chain_high_ess(self) -> None:
         """IID samples yield ESS near the total number of samples."""
         rng = np.random.default_rng(99)
         n_iter, n_walkers, n_params = 500, 4, 1
         samples = rng.normal(size=(n_iter, n_walkers, n_params))
-        ess = compute_per_walker_ess(samples)
+        ess, tau, reliable = compute_ensemble_ess(samples)
         total_samples = n_iter * n_walkers
-        # ESS should be at least 40% of total for iid data
         assert ess[0] > total_samples * 0.4
+        assert tau[0] < 2.0
+        assert reliable[0]
 
     def test_correlated_chain_low_ess(self) -> None:
         """Highly autocorrelated chain yields ESS much less than n_samples."""
@@ -246,9 +214,11 @@ class TestComputePerWalkerESS:
         for w in range(n_walkers):
             for t in range(1, n_iter):
                 samples[t, w, 0] = samples[t - 1, w, 0] + rng.normal(0, 0.01)
-        ess = compute_per_walker_ess(samples)
+        ess, tau, reliable = compute_ensemble_ess(samples)
         total_samples = n_iter * n_walkers
         assert ess[0] < total_samples * 0.3
+        assert tau[0] > 3.0
+        assert not reliable[0]
 
 
 # ---------------------------------------------------------------------------

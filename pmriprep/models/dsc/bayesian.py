@@ -21,8 +21,7 @@ from pmriprep.models.bayesian_utils import (
     build_priors_from_params,
     compute_goodness_of_fit,
     compute_log_prior,
-    compute_per_walker_ess,
-    compute_split_rhat,
+    compute_ensemble_ess,
     from_transformed,
     log_jacobian_det,
     run_ensemble_sampler,
@@ -38,7 +37,6 @@ from pmriprep.utils.dsc_constants import (
     MAP_MAX_ITER,
     MCMC_SAMPLES,
     QC_ESS_MIN,
-    QC_RHAT_MAX,
 )
 
 # Re-export BayesianPrior for backward compatibility
@@ -1144,7 +1142,8 @@ class BayesianDSCFitter:
         -------
         DSCFitResult
             DSCFitResult with parameters, uncertainties, credible intervals,
-            and MCMC diagnostics (R-hat, ESS).
+            and autocorrelation-based ensemble ESS diagnostics. R-hat is
+            unavailable because walkers within one ensemble are coupled.
         """
         if sloppy:
             n_samples = 50
@@ -1318,20 +1317,16 @@ class BayesianDSCFitter:
             float(np.percentile(sigma_samples, 97.5)),
         )
 
-        # Convergence diagnostics (shared utilities)
-        rhat = compute_split_rhat(samples)
-        ess = compute_per_walker_ess(samples)
-
+        # R-hat requires independent chains; coupled walkers do not qualify.
+        ess, _tau, reliable = compute_ensemble_ess(samples)
         rhat_dict: dict[str, float] = {}
         ess_dict: dict[str, int] = {}
         all_names = fitting_param_names + ["log_sigma"]
         for i, name in enumerate(all_names):
-            rhat_dict[name] = float(rhat[i])
             ess_dict[name] = int(ess[i])
 
-        all_rhat_ok = all(r < QC_RHAT_MAX for r in rhat)
         all_ess_ok = all(e > QC_ESS_MIN for e in ess)
-        converged = all_rhat_ok and all_ess_ok
+        converged = bool(np.all(reliable)) and all_ess_ok
 
         # Fitted curves using posterior mean of model params
         fitted_residue = self.model.compute_fitted_residue(

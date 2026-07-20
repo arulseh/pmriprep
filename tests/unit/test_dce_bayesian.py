@@ -610,8 +610,8 @@ class TestMCMCQualityFlag:
         # quality_flag must be explicitly set (not the dataclass default)
         assert result.quality_flag in ("good", "poor_convergence")
 
-    def test_rhat_ess_populated(self) -> None:
-        """fit_mcmc should populate rhat and ess dicts."""
+    def test_ensemble_ess_populated_without_invalid_rhat(self) -> None:
+        """MCMC reports ensemble ESS but no coupled-walker R-hat."""
         tissue_curve, aif, time_points, _ = _make_synthetic_tofts_data()
         model = ToftsModel()
         fitter = BayesianPKFitter(model)
@@ -622,10 +622,10 @@ class TestMCMCQualityFlag:
 
         assert isinstance(result.rhat, dict)
         assert isinstance(result.ess, dict)
-        assert len(result.rhat) > 0, "rhat should be populated for MCMC"
+        assert result.rhat == {}
         assert len(result.ess) > 0, "ess should be populated for MCMC"
-        assert "Ktrans" in result.rhat
-        assert "ve" in result.rhat
+        assert "Ktrans" in result.ess
+        assert "ve" in result.ess
 
 
 # =============================================================================

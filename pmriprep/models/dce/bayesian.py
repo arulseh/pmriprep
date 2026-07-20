@@ -25,8 +25,7 @@ from pmriprep.models.bayesian_utils import (
     build_priors_from_params,
     compute_goodness_of_fit,
     compute_log_prior,
-    compute_per_walker_ess,
-    compute_split_rhat,
+    compute_ensemble_ess,
     from_transformed,
     log_jacobian_det,
     run_ensemble_sampler,
@@ -59,7 +58,7 @@ DEFAULT_MCMC_SAMPLES: int = 500
 #: Default maximum iterations for MAP optimization
 DEFAULT_MAP_MAX_ITER: int = 1000
 
-#: Maximum acceptable R-hat for MCMC convergence
+#: Legacy threshold for independently generated R-hat diagnostics.
 QC_RHAT_MAX: float = 1.1
 
 #: Minimum acceptable effective sample size
@@ -1222,7 +1221,8 @@ class BayesianPKFitter:
         -------
         FitResult
             FitResult with parameters, uncertainties, credible intervals,
-            and MCMC diagnostics (R-hat, ESS).
+            and autocorrelation-based ensemble ESS diagnostics. R-hat is
+            unavailable because walkers within one ensemble are coupled.
         """
         if sloppy:
             n_samples = 50
@@ -1396,20 +1396,17 @@ class BayesianPKFitter:
             float(np.percentile(sigma_samples, 97.5)),
         )
 
-        # Convergence diagnostics (shared utilities: split R-hat, per-walker ESS)
-        rhat = compute_split_rhat(samples)
-        ess = compute_per_walker_ess(samples)
-
+        # Coupled ensemble walkers are not independent chains, so R-hat is
+        # intentionally unavailable. Use time-axis autocorrelation instead.
+        ess, _tau, reliable = compute_ensemble_ess(samples)
         rhat_dict: dict[str, float] = {}
         ess_dict: dict[str, int] = {}
         all_names = param_names + ["log_sigma"]
         for i, name in enumerate(all_names):
-            rhat_dict[name] = float(rhat[i])
             ess_dict[name] = int(ess[i])
 
-        all_rhat_ok = all(r < QC_RHAT_MAX for r in rhat)
         all_ess_ok = all(e > QC_ESS_MIN for e in ess)
-        converged = all_rhat_ok and all_ess_ok
+        converged = bool(np.all(reliable)) and all_ess_ok
         quality_flag = "good" if converged else "poor_convergence"
 
         # Compute fitted curve using posterior mean
