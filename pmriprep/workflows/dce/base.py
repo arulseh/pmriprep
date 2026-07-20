@@ -1080,6 +1080,72 @@ def init_dce_dsc_resampling_wf(
     return workflow
 
 
+def init_dce_dsc_validation_wf(
+    *,
+    config: DCEConfig,
+    subject_id: str,
+    session_id: Optional[str],
+    name: str = "dce_dsc_validation_wf",
+) -> pe.Workflow:
+    """Build DSC-DCE quantitative cross-validation and its QC plot."""
+    workflow = pe.Workflow(name=name)
+    inputnode = pe.Node(
+        niu.IdentityInterface(fields=[
+            "vp_file", "dsc_cbv_file", "dsc_ncbv_file", "brain_mask",
+            "pk_qc", "dsc_preload_configured", "model_selection_file",
+        ]),
+        name="inputnode",
+    )
+    outputnode = pe.Node(
+        niu.IdentityInterface(fields=["validation_result", "plot_file"]),
+        name="outputnode",
+    )
+    validation = pe.Node(
+        niu.Function(
+            input_names=[
+                "vp_file", "dsc_ncbv_file", "brain_mask", "no_dsc_validation",
+                "pk_qc", "dsc_preload_configured",
+            ],
+            output_names=["validation_result"], function=_dsc_dce_validation_node,
+        ),
+        name="dsc_dce_validation",
+    )
+    validation.inputs.no_dsc_validation = config.no_dsc_validation
+    plot = pe.Node(
+        niu.Function(
+            input_names=[
+                "vp_file", "dsc_ncbv_file", "brain_mask", "validation_result",
+                "subject_id", "session_id", "model_selection_file",
+            ],
+            output_names=["plot_file"], function=_dsc_dce_xval_plot_node,
+        ),
+        name="dsc_dce_xval_plot",
+    )
+    plot.inputs.subject_id = subject_id
+    plot.inputs.session_id = session_id or ""
+    plot.inputs.model_selection_file = None
+    workflow.connect([
+        (inputnode, validation, [
+            ("vp_file", "vp_file"), ("dsc_cbv_file", "dsc_cbv_file"),
+            ("dsc_ncbv_file", "dsc_ncbv_file"), ("brain_mask", "brain_mask"),
+            ("pk_qc", "pk_qc"),
+            ("dsc_preload_configured", "dsc_preload_configured"),
+        ]),
+        (inputnode, plot, [
+            ("vp_file", "vp_file"), ("dsc_ncbv_file", "dsc_ncbv_file"),
+            ("brain_mask", "brain_mask"),
+        ]),
+        (validation, plot, [("validation_result", "validation_result")]),
+        (validation, outputnode, [("validation_result", "validation_result")]),
+        (plot, outputnode, [("plot_file", "plot_file")]),
+    ])
+    if config.model == "auto":
+        workflow.connect([
+            (inputnode, plot, [("model_selection_file", "model_selection_file")]),
+        ])
+    return workflow
+
+
 def init_dce_preproc_wf(
     bids_dir: Union[str, Path],
     output_dir: Union[str, Path],
@@ -2088,23 +2154,9 @@ def init_dce_preproc_wf(
     # ==========================================================================
     # Node 9: DSC-DCE Cross-Validation (optional - skip if config.no_dsc_validation=True)
     # ==========================================================================
-    dsc_dce_validation = pe.Node(
-        niu.Function(
-            input_names=[
-                "vp_file",
-                "dsc_ncbv_file",
-                "brain_mask",
-                "no_dsc_validation",
-                "pk_qc",
-                "dsc_preload_configured",
-            ],
-            output_names=["validation_result"],
-            function=_dsc_dce_validation_node,
-        ),
-        name="dsc_dce_validation",
+    dce_dsc_validation_wf = init_dce_dsc_validation_wf(
+        config=config, subject_id=subject_id, session_id=session_id,
     )
-
-    dsc_dce_validation.inputs.no_dsc_validation = config.no_dsc_validation
     # dsc_preload_configured is set from base.py (None when DSC not configured)
     # pk_qc is the full pk_modeling.qc_metrics dict; the function extracts
     # dsc_cbv_constraint.mode and dsc_cbv_constraint.aif_tissue_overshoot_fraction.
@@ -2113,64 +2165,27 @@ def init_dce_preproc_wf(
     # when present, validation uses the nCBV-anchored expected ratio.
 
     workflow.connect([
-        (pk_wf, dsc_dce_validation, [
-            ("outputnode.out_vp", "vp_file"),
-            ("outputnode.qc_metrics", "pk_qc"),
+        (pk_wf, dce_dsc_validation_wf, [
+            ("outputnode.out_vp", "inputnode.vp_file"),
+            ("outputnode.qc_metrics", "inputnode.pk_qc"),
         ]),
-        (dce_anatomical_masks_wf, dsc_dce_validation, [
-            ("outputnode.brain_mask", "brain_mask"),
+        (dce_anatomical_masks_wf, dce_dsc_validation_wf, [
+            ("outputnode.brain_mask", "inputnode.brain_mask"),
         ]),
         # Feed resampled DSC CBV (deferred from Node 7c)
-        (dce_dsc_resampling_wf, dsc_dce_validation, [
-            ("outputnode.dsc_cbv_file", "dsc_cbv_file"),
-        ]),
-        (dce_dsc_resampling_wf, dsc_dce_validation, [
-            ("outputnode.dsc_ncbv_file", "dsc_ncbv_file"),
+        (dce_dsc_resampling_wf, dce_dsc_validation_wf, [
+            ("outputnode.dsc_cbv_file", "inputnode.dsc_cbv_file"),
+            ("outputnode.dsc_ncbv_file", "inputnode.dsc_ncbv_file"),
         ]),
     ])
 
     # ==========================================================================
     # Node 9a: DSC-DCE Cross-Validation Plot
     # ==========================================================================
-    dsc_dce_xval_plot = pe.Node(
-        niu.Function(
-            input_names=[
-                "vp_file",
-                "dsc_ncbv_file",
-                "brain_mask",
-                "validation_result",
-                "subject_id",
-                "session_id",
-                "model_selection_file",
-            ],
-            output_names=["plot_file"],
-            function=_dsc_dce_xval_plot_node,
-        ),
-        name="dsc_dce_xval_plot",
-    )
-    dsc_dce_xval_plot.inputs.subject_id = subject_id
-    dsc_dce_xval_plot.inputs.session_id = session_id or ""
-    dsc_dce_xval_plot.inputs.model_selection_file = None
-
-    workflow.connect([
-        (pk_wf, dsc_dce_xval_plot, [
-            ("outputnode.out_vp", "vp_file"),
-        ]),
-        (dce_dsc_resampling_wf, dsc_dce_xval_plot, [
-            ("outputnode.dsc_ncbv_file", "dsc_ncbv_file"),
-        ]),
-        (dce_anatomical_masks_wf, dsc_dce_xval_plot, [
-            ("outputnode.brain_mask", "brain_mask"),
-        ]),
-        (dsc_dce_validation, dsc_dce_xval_plot, [
-            ("validation_result", "validation_result"),
-        ]),
-    ])
-
     # Color scatter by model when model selection is auto
     if config.model == "auto":
-        workflow.connect([(pk_wf, dsc_dce_xval_plot, [
-            ("outputnode.out_model_selection", "model_selection_file"),
+        workflow.connect([(pk_wf, dce_dsc_validation_wf, [
+            ("outputnode.out_model_selection", "inputnode.model_selection_file"),
         ])])
 
     # ==========================================================================
@@ -2444,8 +2459,8 @@ def init_dce_preproc_wf(
         (pk_wf, collect_qc, [
             ("outputnode.qc_metrics", "pk_qc"),
         ]),
-        (dsc_dce_validation, collect_qc, [
-            ("validation_result", "validation_result"),
+        (dce_dsc_validation_wf, collect_qc, [
+            ("outputnode.validation_result", "validation_result"),
         ]),
         (preprocessing_qc, collect_qc, [
             ("preproc_display_stats", "preproc_display"),
@@ -2843,8 +2858,8 @@ def init_dce_preproc_wf(
             ("model_selection_qc_plot", "model_selection_qc_plot"),
         ]),
         # DSC-DCE cross-validation plot
-        (dsc_dce_xval_plot, outputnode, [
-            ("plot_file", "dsc_dce_xval_plot"),
+        (dce_dsc_validation_wf, outputnode, [
+            ("outputnode.plot_file", "dsc_dce_xval_plot"),
         ]),
     ])
 

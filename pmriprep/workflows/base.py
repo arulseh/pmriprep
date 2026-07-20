@@ -2823,7 +2823,7 @@ def init_pmriprep_wf(
             # `dsc_config.preload` is "auto" or a float; `!= "auto"` matches
             # every float value, so this comparison is the correct
             # "user-specified?" check under the new type.
-            dce_wf.inputs.dsc_dce_validation.dsc_preload_configured = (
+            dce_wf.inputs.dce_dsc_validation_wf.inputnode.dsc_preload_configured = (
                 dsc_config.preload != "auto"
             )
 

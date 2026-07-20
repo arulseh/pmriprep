@@ -7,6 +7,7 @@ from pmriprep.workflows.dce.base import (
     init_dce_anatomical_masks_wf,
     init_dce_brain_extraction_wf,
     init_dce_dsc_resampling_wf,
+    init_dce_dsc_validation_wf,
     init_dce_atlas_transform_wf,
     init_dce_native_input_wf,
     init_dce_preprocessing_wf,
@@ -116,4 +117,17 @@ def test_dce_dsc_resampling_workflow_contract() -> None:
     }
     assert set(workflow.get_node("outputnode").interface._fields) == {
         "dsc_cbv_file", "dsc_ncbv_file",
+    }
+
+
+def test_dce_dsc_validation_workflow_contract() -> None:
+    """Cross-validation exposes its quantitative result and plot."""
+    workflow = init_dce_dsc_validation_wf(
+        config=DCEConfig(), subject_id="0001", session_id="0001",
+    )
+    assert set(workflow.list_node_names()) == {
+        "inputnode", "outputnode", "dsc_dce_validation", "dsc_dce_xval_plot",
+    }
+    assert set(workflow.get_node("outputnode").interface._fields) == {
+        "validation_result", "plot_file",
     }
