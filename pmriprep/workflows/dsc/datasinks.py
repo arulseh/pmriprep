@@ -12,6 +12,7 @@ detection-method block + ``AIFDependent`` + ``TemplateAIFUsage`` tags.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Optional
 
 import nipype.interfaces.utility as niu  # type: ignore[import-untyped]
@@ -29,56 +30,68 @@ from pmriprep.interfaces.qc_writers import (
 # ---------------------------------------------------------------------------
 
 
-# Always-present DSC perfusion maps. Each entry:
-# (input_attr, desc_value, suffix, description, units, map_key, extra_fields)
-_CORE_MAPS: tuple[tuple[str, str, str, str, str, str, dict | None], ...] = (
-    ("mtt_map", "dsc", "mtt", "Mean transit time", "s", "mtt",
-     {"MTTMethod": "auc_cbv_over_cbf"}),
-    ("tmax_map", "dsc", "tmax", "Time to maximum of residue function", "s", "tmax", None),
-    ("psr_map", "dsc", "psr", "Percent signal recovery", "%", "psr", None),
-    ("ph_map", "dsc", "ph", "Peak height", "%", "ph", None),
+@dataclass(frozen=True)
+class DSCMapSpec:
+    """Declarative specification for one regular DSC perfusion-map sink."""
+
+    in_attr: str
+    desc: str
+    suffix: str
+    description: str
+    units: str | None
+    map_key: str
+    extra: dict[str, object] | None = None
+
+
+# Always-present DSC perfusion maps.
+_CORE_MAPS: tuple[DSCMapSpec, ...] = (
+    DSCMapSpec("mtt_map", "dsc", "mtt", "Mean transit time", "s", "mtt",
+               {"MTTMethod": "auc_cbv_over_cbf"}),
+    DSCMapSpec("tmax_map", "dsc", "tmax", "Time to maximum of residue function", "s", "tmax"),
+    DSCMapSpec("psr_map", "dsc", "psr", "Percent signal recovery", "%", "psr"),
+    DSCMapSpec("ph_map", "dsc", "ph", "Peak height", "%", "ph"),
 )
 
 
 # Relative maps (always produced, but inputs may be undefined). The
 # bids_suffix/desc mapping defines the public derivative naming contract.
-_REL_MAPS: tuple[tuple[str, str, str, str, str, str, dict | None], ...] = (
-    ("rel_cbf_map", "dscRel", "cbf",
-     "Cerebral blood flow (relative)", "1/min", "cbf", None),
-    ("rel_cbv_map", "dscRel", "cbv",
+_REL_MAPS: tuple[DSCMapSpec, ...] = (
+    DSCMapSpec("rel_cbf_map", "dscRel", "cbf",
+     "Cerebral blood flow (relative)", "1/min", "cbf"),
+    DSCMapSpec("rel_cbv_map", "dscRel", "cbv",
      "Cerebral blood volume (relative, deconvolution)", "arbitrary", "cbv",
      {"CBVMethod": "deconvolution_residue_integral"}),
-    ("rel_cbv_auc_map", "dscRelAUC", "cbv",
+    DSCMapSpec("rel_cbv_auc_map", "dscRelAUC", "cbv",
      "Cerebral blood volume (K2-corrected full-bolus AUC, relative)",
      "arbitrary", "cbv_auc",
      {"CBVMethod": "k2_corrected_full_bolus_auc"}),
-    ("rel_auc_raw_map", "dscRel", "auc",
-     "AUC raw concentration (relative)", "arbitrary", "auc", None),
-    ("rel_auc_corr_map", "dscRelCorrected", "auc",
-     "AUC corrected concentration (relative)", "arbitrary", "rel_auc_corr", None),
+    DSCMapSpec("rel_auc_raw_map", "dscRel", "auc",
+     "AUC raw concentration (relative)", "arbitrary", "auc"),
+    DSCMapSpec("rel_auc_corr_map", "dscRelCorrected", "auc",
+     "AUC corrected concentration (relative)", "arbitrary", "rel_auc_corr"),
 )
 
 
 # Optional maps with per-map desc + bids_suffix
-_OPTIONAL_MAPS: tuple[tuple[str, str, str, str, str | None, str, dict | None], ...] = (
-    ("ttp_map", "dsc", "ttp", "Time to peak concentration", "s", "ttp",
+_OPTIONAL_MAPS: tuple[DSCMapSpec, ...] = (
+    DSCMapSpec("ttp_map", "dsc", "ttp", "Time to peak concentration", "s", "ttp",
      {"ReferencePoint": "start of acquisition (volume 0)"}),
-    ("ttp_corrected_map", "dscAifCorrected", "ttp",
+    DSCMapSpec("ttp_corrected_map", "dscAifCorrected", "ttp",
      "Time to peak, corrected for AIF bolus arrival delay. "
      "Comparable across patients and centers.",
      "s", "ttpCorrected",
      {"ReferencePoint": "AIF bolus arrival time"}),
-    ("rttp_map", "dscNawmRel", "ttp",
+    DSCMapSpec("rttp_map", "dscNawmRel", "ttp",
      "Time to peak relative to contralateral NAWM median. "
      "Positive values indicate delayed perfusion.",
      "s", "rttp",
      {"ReferencePoint": "contralateral NAWM median TTP"}),
-    ("cnr_map", "dsc", "cnr", "Contrast-to-noise ratio", "arbitrary", "cnr", None),
-    ("auc_diff_map", "dscLeakage", "auc",
-     "Leakage contribution (AUC_raw - AUC_corr)", "arbitrary", "auc_diff", None),
-    ("snr_map", "dsc", "snr", "Signal-to-noise ratio (baseline)", "arbitrary", "snr", None),
-    ("tsnr_map", "dsc", "tsnr", "Temporal signal-to-noise ratio", "arbitrary", "tsnr", None),
-    ("rel_cbv_firstpass_map", "dscRelFirstPass", "cbv",
+    DSCMapSpec("cnr_map", "dsc", "cnr", "Contrast-to-noise ratio", "arbitrary", "cnr"),
+    DSCMapSpec("auc_diff_map", "dscLeakage", "auc",
+     "Leakage contribution (AUC_raw - AUC_corr)", "arbitrary", "auc_diff"),
+    DSCMapSpec("snr_map", "dsc", "snr", "Signal-to-noise ratio (baseline)", "arbitrary", "snr"),
+    DSCMapSpec("tsnr_map", "dsc", "tsnr", "Temporal signal-to-noise ratio", "arbitrary", "tsnr"),
+    DSCMapSpec("rel_cbv_firstpass_map", "dscRelFirstPass", "cbv",
      "First-pass cerebral blood volume, relative. "
      "Stroke / non-tumor first-pass convention.",
      "arbitrary", "cbv_firstpass",
@@ -126,36 +139,36 @@ _OPTIONAL_MAPS: tuple[tuple[str, str, str, str, str | None, str, dict | None], .
 
 
 # Normalized maps
-_NORMALIZED_MAPS: tuple[tuple[str, str, str, str, str, str, dict | None], ...] = (
-    ("ncbv_map", "dscNawmNorm", "cbv",
-     "Normalized CBV (NAWM-normalized)", "1", "ncbv", None),
-    ("ncbf_map", "dscNawmNorm", "cbf",
-     "Normalized CBF (NAWM-normalized)", "1", "ncbf", None),
+_NORMALIZED_MAPS: tuple[DSCMapSpec, ...] = (
+    DSCMapSpec("ncbv_map", "dscNawmNorm", "cbv",
+     "Normalized CBV (NAWM-normalized)", "1", "ncbv"),
+    DSCMapSpec("ncbf_map", "dscNawmNorm", "cbf",
+     "Normalized CBF (NAWM-normalized)", "1", "ncbf"),
 )
 
 
 # Vascular model parameters
-_VASCULAR_MAPS: tuple[tuple[str, str, str, str, str | None, str, dict | None], ...] = (
-    ("alpha_map", "dsc", "alpha", "Vascular model alpha parameter", "1", "alpha", None),
-    ("beta_map", "dsc", "beta", "Vascular model beta parameter", "s", "beta", None),
-    ("cth_map", "dsc", "cth", "Capillary transit time heterogeneity", "s", "cth", None),
+_VASCULAR_MAPS: tuple[DSCMapSpec, ...] = (
+    DSCMapSpec("alpha_map", "dsc", "alpha", "Vascular model alpha parameter", "1", "alpha"),
+    DSCMapSpec("beta_map", "dsc", "beta", "Vascular model beta parameter", "s", "beta"),
+    DSCMapSpec("cth_map", "dsc", "cth", "Capillary transit time heterogeneity", "s", "cth"),
 )
 
 
 # Bayesian uncertainty maps. Same shape as above.
-_BAYESIAN_MAPS: tuple[tuple[str, str, str, str, str, str, None], ...] = (
-    ("cbf_std_map", "dscUncertainty", "cbf", "CBF uncertainty (posterior std)", "1/min", "cbf_std", None),
-    ("cbv_std_map", "dscUncertainty", "cbv", "CBV uncertainty (posterior std)", "arbitrary", "cbv_std", None),
-    ("cbf_cv_map", "dscCV", "cbf", "CBF coefficient of variation", "1", "cbfCV", None),
-    ("cbv_cv_map", "dscCV", "cbv", "CBV coefficient of variation", "1", "cbvCV", None),
-    ("cbf_ci95_lower_map", "dscCI95lower", "cbf",
-     "CBF 95% credible interval lower bound", "1/min", "cbfCI95lower", None),
-    ("cbf_ci95_upper_map", "dscCI95upper", "cbf",
-     "CBF 95% credible interval upper bound", "1/min", "cbfCI95upper", None),
-    ("cbv_ci95_lower_map", "dscCI95lower", "cbv",
-     "CBV 95% credible interval lower bound", "arbitrary", "cbvCI95lower", None),
-    ("cbv_ci95_upper_map", "dscCI95upper", "cbv",
-     "CBV 95% credible interval upper bound", "arbitrary", "cbvCI95upper", None),
+_BAYESIAN_MAPS: tuple[DSCMapSpec, ...] = (
+    DSCMapSpec("cbf_std_map", "dscUncertainty", "cbf", "CBF uncertainty (posterior std)", "1/min", "cbf_std"),
+    DSCMapSpec("cbv_std_map", "dscUncertainty", "cbv", "CBV uncertainty (posterior std)", "arbitrary", "cbv_std"),
+    DSCMapSpec("cbf_cv_map", "dscCV", "cbf", "CBF coefficient of variation", "1", "cbfCV"),
+    DSCMapSpec("cbv_cv_map", "dscCV", "cbv", "CBV coefficient of variation", "1", "cbvCV"),
+    DSCMapSpec("cbf_ci95_lower_map", "dscCI95lower", "cbf",
+     "CBF 95% credible interval lower bound", "1/min", "cbfCI95lower"),
+    DSCMapSpec("cbf_ci95_upper_map", "dscCI95upper", "cbf",
+     "CBF 95% credible interval upper bound", "1/min", "cbfCI95upper"),
+    DSCMapSpec("cbv_ci95_lower_map", "dscCI95lower", "cbv",
+     "CBV 95% credible interval lower bound", "arbitrary", "cbvCI95lower"),
+    DSCMapSpec("cbv_ci95_upper_map", "dscCI95upper", "cbv",
+     "CBV 95% credible interval upper bound", "arbitrary", "cbvCI95upper"),
 )
 
 
@@ -163,7 +176,7 @@ _BAYESIAN_MAPS: tuple[tuple[str, str, str, str, str, str, None], ...] = (
 #: Used by the drift-guard test in ``test_dsc_outputs_sidecar.py`` to verify
 #: every emitted key is registered in :data:`TEMPLATE_AIF_USAGE`.
 _DSC_OUTPUT_KEYS: frozenset[str] = frozenset(
-    [m[5] for m in _CORE_MAPS + _REL_MAPS + _OPTIONAL_MAPS
+    [m.map_key for m in _CORE_MAPS + _REL_MAPS + _OPTIONAL_MAPS
      + _NORMALIZED_MAPS + _VASCULAR_MAPS + _BAYESIAN_MAPS]
     + ["k2", "parametric_r2", "fallback",
        "rel_cbf", "rel_cbv", "rel_auc_corr", "ncbf", "ncbv", "mtt"]  # smoothed names
@@ -968,24 +981,22 @@ def init_dsc_datasinks_wf(
         _CORE_MAPS, _REL_MAPS, _OPTIONAL_MAPS,
         _NORMALIZED_MAPS, _VASCULAR_MAPS,
     ):
-        for entry in table:
-            in_attr, desc_value, suffix, description, units, map_key, extra = entry
-            if in_attr not in present:
+        for spec in table:
+            if spec.in_attr not in present:
                 continue
             sink = _add_perf_map_sink(
                 workflow, inputnode, base_perf,
-                name=f"{in_attr}",
-                in_attr=in_attr,
-                desc_value=desc_value, suffix=suffix,
-                description=description, map_key=map_key,
-                units=units, extra=extra,
+                name=spec.in_attr,
+                in_attr=spec.in_attr,
+                desc_value=spec.desc, suffix=spec.suffix,
+                description=spec.description, map_key=spec.map_key,
+                units=spec.units, extra=spec.extra,
             )
             sink_outputs.append((sink, "out_file"))
 
     # --- Bayesian uncertainty maps (extras built per-map from config_dict) ---
-    for entry in _BAYESIAN_MAPS:
-        in_attr, desc_value, suffix, description, units, map_key, _extra = entry
-        if in_attr not in present:
+    for spec in _BAYESIAN_MAPS:
+        if spec.in_attr not in present:
             continue
         bayes_extra = pe.Node(
             niu.Function(
@@ -993,9 +1004,9 @@ def init_dsc_datasinks_wf(
                 output_names=["extra"],
                 function=_build_bayes_extra,
             ),
-            name=f"{in_attr}_extra",
+            name=f"{spec.in_attr}_extra",
         )
-        bayes_extra.inputs.umap_key = map_key
+        bayes_extra.inputs.umap_key = spec.map_key
         workflow.connect(inputnode, "config_dict", bayes_extra, "config_dict")
         bayes_meta = pe.Node(
             niu.Function(
@@ -1005,11 +1016,11 @@ def init_dsc_datasinks_wf(
                 output_names=["meta_dict"],
                 function=_build_map_meta,
             ),
-            name=f"{in_attr}_meta",
+            name=f"{spec.in_attr}_meta",
         )
-        bayes_meta.inputs.description = description
-        bayes_meta.inputs.map_key = map_key
-        bayes_meta.inputs.units = units
+        bayes_meta.inputs.description = spec.description
+        bayes_meta.inputs.map_key = spec.map_key
+        bayes_meta.inputs.units = spec.units
         workflow.connect([
             (base_perf, bayes_meta, [("meta_dict", "base")]),
             (inputnode, bayes_meta, [("qc_metrics", "qc_metrics")]),
@@ -1025,10 +1036,10 @@ def init_dsc_datasinks_wf(
                 output_names=["out_file"],
                 function=_copy_perf_map,
             ),
-            name=f"{in_attr}_sink",
+            name=f"{spec.in_attr}_sink",
         )
-        b_sink.inputs.desc = desc_value
-        b_sink.inputs.suffix = suffix
+        b_sink.inputs.desc = spec.desc
+        b_sink.inputs.suffix = spec.suffix
         b_sink.inputs.datatype = "perf"
         b_sink.inputs.bids_suffix = "stat"
         workflow.connect([
@@ -1036,7 +1047,7 @@ def init_dsc_datasinks_wf(
                 ("output_dir", "output_dir"),
                 ("subject_id", "subject"),
                 ("session_id", "session"),
-                (in_attr, "in_file"),
+                (spec.in_attr, "in_file"),
             ]),
             (bayes_meta, b_sink, [("meta_dict", "meta_dict")]),
         ])
