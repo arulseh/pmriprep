@@ -19,6 +19,7 @@ from pmriprep.config.tumor_seg import TumorSegConfig
 from pmriprep.workflows.base import (
     PipelineDecision,
     PipelineSkipFlags,
+    _init_master_workflow_nodes,
     _prepare_master_workflow_context,
     _prepare_master_preflight_state,
     _select_master_structural_references,
@@ -385,3 +386,40 @@ def test_prepare_master_preflight_state_preserves_metadata_policy(
     assert captured["raised"] is True
     assert state.dsc_warnings == ["DSC_warning"]
     assert state.dce_warnings == ["DCE_warning", "VFA_warning", "AFI_warning"]
+
+
+def test_init_master_workflow_nodes_sets_public_contract(tmp_path: Path) -> None:
+    """Master node factory initializes discovered inputs and report defaults."""
+    import nipype.pipeline.engine as pe
+
+    session_data = SessionData(
+        subject="0001",
+        session="0001",
+        modalities=ModalityAvailability(
+            t1w_pre=tmp_path / "t1w.nii.gz",
+            dsc=tmp_path / "dsc.nii.gz",
+            vfa=[tmp_path / "vfa1.nii.gz", tmp_path / "vfa2.nii.gz"],
+        ),
+        pipelines=PipelineAvailability(dsc=True),
+    )
+    workflow = pe.Workflow(name="master")
+    nodes = _init_master_workflow_nodes(
+        workflow=workflow,
+        session_data=session_data,
+        decision=PipelineDecision(run_anat=True, run_dsc=True),
+        subject_id="0001",
+        session_id="0001",
+        output_dir=tmp_path / "out",
+        command_string="pmriprep ...",
+    )
+
+    assert nodes.inputnode.inputs.t1w_pre == str(tmp_path / "t1w.nii.gz")
+    assert nodes.inputnode.inputs.vfa_files == [
+        str(tmp_path / "vfa1.nii.gz"),
+        str(tmp_path / "vfa2.nii.gz"),
+    ]
+    assert nodes.report_barrier.inputs.anat_done == ""
+    assert nodes.report_barrier.inputs.dce_done == ""
+    assert nodes.unified_report.inputs.ran_dsc is True
+    assert nodes.unified_report.inputs.ran_dce is False
+    assert "dce_ktrans" in nodes.outputnode.inputs.copyable_trait_names()

@@ -926,6 +926,128 @@ class _MasterPreflightState:
     dce_warnings: list[str]
 
 
+@dataclass(frozen=True)
+class _MasterWorkflowNodes:
+    """Public I/O and report-coordination nodes for the master graph."""
+
+    inputnode: pe.Node
+    outputnode: pe.Node
+    report_barrier: pe.Node
+    unified_report: pe.Node
+
+
+def _init_master_workflow_nodes(
+    *,
+    workflow: pe.Workflow,
+    session_data: SessionData,
+    decision: PipelineDecision,
+    subject_id: str,
+    session_id: Optional[str],
+    output_dir: Path,
+    command_string: str,
+) -> _MasterWorkflowNodes:
+    """Create master public nodes and the unified-report completion barrier.
+
+    Parameters
+    ----------
+    workflow : pe.Workflow
+        Master workflow receiving the report-barrier connection.
+    session_data : SessionData
+        Discovered paths assigned to the public input node.
+    decision : PipelineDecision
+        Enabled pipeline set recorded by the unified report.
+    subject_id, session_id : str, optional
+        BIDS participant and optional session identifiers.
+    output_dir : Path
+        Derivatives output root.
+    command_string : str
+        Invocation recorded in the report.
+
+    Returns
+    -------
+    _MasterWorkflowNodes
+        Master input/output, completion barrier, and report nodes.
+    """
+    from pmriprep.interfaces.reports import GenerateUnifiedReport
+
+    inputnode = pe.Node(
+        niu.IdentityInterface(
+            fields=[
+                "t1w_pre", "t1w_postcon", "t2w", "flair", "flair_postcon",
+                "dsc_file", "dce_file", "vfa_files", "afi_files", "lesion_mask",
+            ]
+        ),
+        name="inputnode",
+    )
+    input_values = {
+        "t1w_pre": session_data.modalities.t1w_pre,
+        "t1w_postcon": session_data.modalities.t1w_ce_gad,
+        "t2w": session_data.modalities.t2w,
+        "flair": session_data.modalities.flair,
+        "flair_postcon": session_data.modalities.flair_postcon,
+        "dsc_file": session_data.modalities.dsc,
+        "dce_file": session_data.modalities.dce,
+    }
+    for field, path in input_values.items():
+        if path:
+            setattr(inputnode.inputs, field, str(path))
+    if session_data.modalities.vfa:
+        inputnode.inputs.vfa_files = [str(path) for path in session_data.modalities.vfa]
+    if session_data.modalities.afi:
+        inputnode.inputs.afi_files = [str(path) for path in session_data.modalities.afi]
+
+    outputnode = pe.Node(
+        niu.IdentityInterface(
+            fields=[
+                "t1w_preproc", "brain_mask", "wm_probseg", "gm_probseg",
+                "csf_probseg", "lesion_mask", "enhancing_mask",
+                "non_enhancing_mask", "whole_tumor_mask", "nawm_mask",
+                "dsc_cbf", "dsc_cbv", "dsc_mtt", "dsc_tmax", "dsc_aif_qc",
+                "dce_ktrans", "dce_ve", "dce_vp", "dce_kep", "anat_qc",
+                "tumor_seg_qc", "dsc_qc", "dce_qc",
+            ]
+        ),
+        name="outputnode",
+    )
+    report_barrier = pe.Node(
+        niu.IdentityInterface(
+            fields=["anat_done", "tumor_seg_done", "dsc_done", "dce_done"]
+        ),
+        name="report_barrier",
+    )
+    report_barrier.inputs.anat_done = ""
+    report_barrier.inputs.tumor_seg_done = ""
+    report_barrier.inputs.dsc_done = ""
+    report_barrier.inputs.dce_done = ""
+    unified_report = pe.Node(
+        GenerateUnifiedReport(
+            subject_id=subject_id,
+            session_id=session_id or "",
+            output_dir=str(output_dir),
+            ran_anat=decision.run_anat,
+            ran_tumor_seg=decision.run_tumor_seg,
+            ran_dsc=decision.run_dsc,
+            ran_dce=decision.run_dce,
+            command_string=command_string,
+        ),
+        name="unified_report",
+    )
+    workflow.connect([
+        (report_barrier, unified_report, [
+            ("anat_done", "anat_done"),
+            ("tumor_seg_done", "tumor_seg_done"),
+            ("dsc_done", "dsc_done"),
+            ("dce_done", "dce_done"),
+        ]),
+    ])
+    return _MasterWorkflowNodes(
+        inputnode=inputnode,
+        outputnode=outputnode,
+        report_barrier=report_barrier,
+        unified_report=unified_report,
+    )
+
+
 def _prepare_master_preflight_state(
     *,
     session_data: SessionData,
@@ -1338,49 +1460,18 @@ def init_pmriprep_wf(
     workflow.session_data = session_data  # type: ignore[attr-defined]
     workflow.pipeline_decision = decision  # type: ignore[attr-defined]
 
-    # Define master input node
-    # This node receives BIDS paths from the discovery module
-    inputnode = pe.Node(
-        niu.IdentityInterface(
-            fields=[
-                # Anatomical inputs
-                "t1w_pre",
-                "t1w_postcon",
-                "t2w",
-                "flair",
-                "flair_postcon",
-                # Perfusion inputs
-                "dsc_file",
-                "dce_file",
-                # Mapping inputs
-                "vfa_files",
-                "afi_files",
-                # Lesion mask (from external source or previous run)
-                "lesion_mask",
-            ]
-        ),
-        name="inputnode",
+    master_nodes = _init_master_workflow_nodes(
+        workflow=workflow,
+        session_data=session_data,
+        decision=decision,
+        subject_id=subject_id,
+        session_id=session_id,
+        output_dir=output_dir,
+        command_string=command_string,
     )
-
-    # Set input values from discovered paths
-    if session_data.modalities.t1w_pre:
-        inputnode.inputs.t1w_pre = str(session_data.modalities.t1w_pre)
-    if session_data.modalities.t1w_ce_gad:
-        inputnode.inputs.t1w_postcon = str(session_data.modalities.t1w_ce_gad)
-    if session_data.modalities.t2w:
-        inputnode.inputs.t2w = str(session_data.modalities.t2w)
-    if session_data.modalities.flair:
-        inputnode.inputs.flair = str(session_data.modalities.flair)
-    if session_data.modalities.flair_postcon:
-        inputnode.inputs.flair_postcon = str(session_data.modalities.flair_postcon)
-    if session_data.modalities.dsc:
-        inputnode.inputs.dsc_file = str(session_data.modalities.dsc)
-    if session_data.modalities.dce:
-        inputnode.inputs.dce_file = str(session_data.modalities.dce)
-    if session_data.modalities.vfa:
-        inputnode.inputs.vfa_files = [str(p) for p in session_data.modalities.vfa]
-    if session_data.modalities.afi:
-        inputnode.inputs.afi_files = [str(p) for p in session_data.modalities.afi]
+    inputnode = master_nodes.inputnode
+    outputnode = master_nodes.outputnode
+    report_barrier = master_nodes.report_barrier
     # -------------------------------------------------------------------
     # Structural reference selection (confidence-scored)
     # Determine which anat output to use for DSC and DCE registration,
@@ -1421,43 +1512,6 @@ def init_pmriprep_wf(
     dce_preflight_warnings = preflight_state.dce_warnings
     _user_spec_dsc = user_specified or {}
 
-    # Define master output node
-    outputnode = pe.Node(
-        niu.IdentityInterface(
-            fields=[
-                # Anatomical outputs
-                "t1w_preproc",
-                "brain_mask",
-                "wm_probseg",
-                "gm_probseg",
-                "csf_probseg",
-                # Tumor segmentation outputs
-                "lesion_mask",
-                "enhancing_mask",
-                "non_enhancing_mask",
-                "whole_tumor_mask",
-                "nawm_mask",
-                # DSC outputs
-                "dsc_cbf",
-                "dsc_cbv",
-                "dsc_mtt",
-                "dsc_tmax",
-                "dsc_aif_qc",
-                # DCE outputs
-                "dce_ktrans",
-                "dce_ve",
-                "dce_vp",
-                "dce_kep",
-                # QC outputs
-                "anat_qc",
-                "tumor_seg_qc",
-                "dsc_qc",
-                "dce_qc",
-            ]
-        ),
-        name="outputnode",
-    )
-
     # ===================================================================
     # Initialize sub-workflows based on decisions
     # ===================================================================
@@ -1466,46 +1520,6 @@ def init_pmriprep_wf(
     tumor_seg_wf = None
     dsc_wf = None
     dce_wf = None
-
-    # -------------------------------------------------------------------
-    # Unified report barrier + node (collects completion from all writers)
-    # -------------------------------------------------------------------
-    from pmriprep.interfaces.reports import GenerateUnifiedReport
-
-    report_barrier = pe.Node(
-        niu.IdentityInterface(
-            fields=["anat_done", "tumor_seg_done", "dsc_done", "dce_done"],
-        ),
-        name="report_barrier",
-    )
-    # Defaults for pipelines that don't run
-    report_barrier.inputs.anat_done = ""
-    report_barrier.inputs.tumor_seg_done = ""
-    report_barrier.inputs.dsc_done = ""
-    report_barrier.inputs.dce_done = ""
-
-    unified_report = pe.Node(
-        GenerateUnifiedReport(
-            subject_id=subject_id,
-            session_id=session_id or "",
-            output_dir=str(output_dir),
-            ran_anat=decision.run_anat,
-            ran_tumor_seg=decision.run_tumor_seg,
-            ran_dsc=decision.run_dsc,
-            ran_dce=decision.run_dce,
-            command_string=command_string,
-        ),
-        name="unified_report",
-    )
-
-    workflow.connect([
-        (report_barrier, unified_report, [
-            ("anat_done", "anat_done"),
-            ("tumor_seg_done", "tumor_seg_done"),
-            ("dsc_done", "dsc_done"),
-            ("dce_done", "dce_done"),
-        ]),
-    ])
 
     # -------------------------------------------------------------------
     # Anatomical preprocessing workflow (runs first)
