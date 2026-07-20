@@ -1634,6 +1634,24 @@ class ComputeDSCMaps(BaseInterface):
 
         return outputs
 
+    def _add_fit_qc_metrics(
+        self,
+        rel_cbv: npt.NDArray[Any],
+        qc_metrics: dict[str, Any],
+    ) -> None:
+        """Add the selected fit voxel and fit quality to DSC QC state."""
+        if "out_qc_fit_data" not in self._results:
+            return
+        with open(self._results["out_qc_fit_data"]) as fit_file:
+            fit = json.load(fit_file)
+        vx, vy, vz = fit["voxel"]
+        qc_metrics["qc_voxel"] = f"({vx}, {vy}, {vz})"
+        qc_metrics["qc_voxel_cbv"] = round(float(rel_cbv[vx, vy, vz]), 4)
+        qc_metrics["qc_voxel_rsquared"] = round(fit.get("r_squared", 0.0), 4)
+        tier = getattr(self, "_qc_voxel_tier", None)
+        if tier is not None:
+            qc_metrics["qc_voxel_tier"] = tier
+
     def _first_pass_reference(
         self,
         fp_area: npt.NDArray[Any],
@@ -3305,22 +3323,7 @@ class ComputeDSCMaps(BaseInterface):
                 signal_data=signal_data,
             )
 
-        # Add fit voxel data to QC metrics (for HTML report)
-        if "out_qc_fit_data" in self._results:
-            with open(self._results["out_qc_fit_data"]) as _f:
-                _fit = json.load(_f)
-            vx, vy, vz = _fit["voxel"]
-            qc_metrics["qc_voxel"] = f"({vx}, {vy}, {vz})"
-            qc_metrics["qc_voxel_cbv"] = round(float(rel_cbv[vx, vy, vz]), 4)
-            qc_metrics["qc_voxel_rsquared"] = round(
-                _fit.get("r_squared", 0.0), 4,
-            )
-            # Tier name from _select_dsc_qc_voxel — confirms at a glance
-            # whether the example voxel landed in the enhancing tumor
-            # mask (when one was available) or fell through to brain.
-            tier = getattr(self, "_qc_voxel_tier", None)
-            if tier is not None:
-                qc_metrics["qc_voxel_tier"] = tier
+        self._add_fit_qc_metrics(rel_cbv, qc_metrics)
 
         # Save Bayesian uncertainty maps (parametric methods only)
         if method in ("cpi", "vascular"):

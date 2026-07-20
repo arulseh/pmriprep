@@ -1,5 +1,6 @@
 """Characterization tests for DSC compute input preparation."""
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -774,3 +775,41 @@ def test_save_parametric_maps_omits_unavailable_and_map_intervals(
     )
 
     assert set(results) == {"out_cbv_std", "out_cbv_cv"}
+
+
+def test_add_fit_qc_metrics_preserves_voxel_fit_and_tier(
+    tmp_path: Path,
+) -> None:
+    """Fit QC assembly retains voxel formatting, rounding, and tier provenance."""
+    fit_path = tmp_path / "fit.json"
+    fit_path.write_text(json.dumps({"voxel": [1, 0, 1], "r_squared": 0.87654}))
+    interface = ComputeDSCMaps()
+    interface._results = {"out_qc_fit_data": str(fit_path)}
+    interface._qc_voxel_tier = "enhancing_tumor"
+    qc: dict[str, object] = {}
+    rel_cbv = np.array([[[1.0, 2.0]], [[3.45678, 4.56789]]])
+
+    interface._add_fit_qc_metrics(rel_cbv, qc)
+
+    assert qc == {
+        "qc_voxel": "(1, 0, 1)",
+        "qc_voxel_cbv": 4.5679,
+        "qc_voxel_rsquared": 0.8765,
+        "qc_voxel_tier": "enhancing_tumor",
+    }
+
+
+def test_add_fit_qc_metrics_preserves_absent_and_default_r2(tmp_path: Path) -> None:
+    """Missing fit output is inert and a missing serialized R2 defaults to zero."""
+    interface = ComputeDSCMaps()
+    qc: dict[str, object] = {"existing": True}
+    interface._results = {}
+    interface._add_fit_qc_metrics(np.ones((1, 1, 1)), qc)
+    assert qc == {"existing": True}
+
+    fit_path = tmp_path / "fit.json"
+    fit_path.write_text(json.dumps({"voxel": [0, 0, 0]}))
+    interface._results = {"out_qc_fit_data": str(fit_path)}
+    interface._add_fit_qc_metrics(np.full((1, 1, 1), 2.0), qc)
+    assert qc["qc_voxel_rsquared"] == 0.0
+    assert "qc_voxel_tier" not in qc
