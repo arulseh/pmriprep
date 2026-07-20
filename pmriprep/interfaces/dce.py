@@ -2761,6 +2761,18 @@ class _DCEMCFLIRTPlan:
     command: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class _DCEMotionQC:
+    """Reduced MCFLIRT motion parameters and QC state."""
+
+    fd: tuple[float, ...]
+    fd_mean: float
+    fd_max: float
+    n_outliers: int
+    outlier_frames: tuple[int, ...]
+    metrics: dict[str, Any]
+
+
 class DCEPreprocess(SimpleInterface):
     """DCE preprocessing with motion correction and baseline detection.
 
@@ -2996,6 +3008,84 @@ class DCEPreprocess(SimpleInterface):
         command.extend(["-stages", "4"])
         return _DCEMCFLIRTPlan(out_base, ref_file, tuple(command))
 
+    def _summarize_motion_qc(
+        self,
+        params_file: str,
+        preparation: _DCEPreprocessPreparation,
+    ) -> _DCEMotionQC:
+        """Reduce MCFLIRT parameters using the existing fallback semantics.
+
+        Parameters
+        ----------
+        params_file : str
+            MCFLIRT six-column motion-parameter file.
+        preparation : _DCEPreprocessPreparation
+            Baseline and volume state included in the QC record.
+
+        Returns
+        -------
+        _DCEMotionQC
+            Framewise displacement, outliers, and composite QC metrics. Any
+            current calculation failure retains the legacy empty/zero result.
+        """
+        try:
+            motion_params = np.loadtxt(params_file)
+            fd = self._calculate_fd(motion_params, float(self.inputs.head_radius))
+            fd_list = tuple(float(value) for value in fd)
+            fd_mean = float(np.mean(fd[1:]))
+            fd_max = float(np.max(fd))
+            motion_thresh = float(self.inputs.motion_thresh)
+            outlier_mask = fd > motion_thresh
+            n_outliers = int(np.sum(outlier_mask))
+            outlier_frames = tuple(int(i) for i in np.where(outlier_mask)[0])
+
+            from pmriprep.utils.qc_standards import get_composite_motion_status
+
+            pct_outliers = 100.0 * n_outliers / max(1, preparation.n_volumes)
+            motion_status = get_composite_motion_status(
+                fd_mean, fd_max, pct_outliers,
+            )
+            metrics = {
+                "fd_mean": fd_mean,
+                "fd_max": fd_max,
+                "motion_status": motion_status,
+                "fd_list": list(fd_list),
+                "n_outliers": n_outliers,
+                "outlier_frames": list(outlier_frames),
+                "motion_thresh": motion_thresh,
+                "n_volumes": preparation.n_volumes,
+                "percent_outliers": pct_outliers,
+                "baseline_frames": preparation.baseline_frames,
+                "bolus_arrival_frame": preparation.bolus_frame,
+                "baseline_detection_method": preparation.baseline_diagnostics.get(
+                    "method", "unknown"
+                ),
+                "baseline_detection_confidence": (
+                    preparation.baseline_diagnostics.get("confidence", "unknown")
+                ),
+                "reference_type": str(self.inputs.ref_vol),
+                "motion_applied": bool(self.inputs.apply_motion_correction),
+            }
+            if preparation.baseline_diagnostics.get("confidence", "high") != "high":
+                logger.warning(
+                    "DCE baseline detection low confidence: method=%s, "
+                    "confidence=%s, bolus_frame=%d (S0 window may include "
+                    "enhanced frames; concentration may be biased).",
+                    preparation.baseline_diagnostics.get("method"),
+                    preparation.baseline_diagnostics.get("confidence"),
+                    preparation.bolus_frame,
+                )
+            return _DCEMotionQC(
+                fd_list,
+                fd_mean,
+                fd_max,
+                n_outliers,
+                outlier_frames,
+                metrics,
+            )
+        except Exception:
+            return _DCEMotionQC((), 0.0, 0.0, 0, (), {})
+
     def _run_interface(self, runtime: Any) -> Any:
         """Execute DCE preprocessing."""
         import subprocess
@@ -3004,11 +3094,9 @@ class DCEPreprocess(SimpleInterface):
         preparation = self._prepare_preprocess_inputs()
         in_file = preparation.in_file
         out_file = preparation.out_file
-        n_volumes = preparation.n_volumes
         baseline_frames = preparation.baseline_frames
         baseline_indices = list(preparation.baseline_indices)
         bolus_frame = preparation.bolus_frame
-        baseline_diag = preparation.baseline_diagnostics
 
         mcflirt_plan = self._prepare_mcflirt_plan(preparation)
         out_base = mcflirt_plan.out_base
@@ -3026,77 +3114,14 @@ class DCEPreprocess(SimpleInterface):
             except Exception:
                 pass
 
-        # Load motion parameters and compute QC metrics
         params_file = f"{out_base}.par"
-        qc_metrics: dict[str, Any] = {}
-
-        try:
-            motion_params = np.loadtxt(params_file)
-
-            # Calculate FD
-            head_radius = float(self.inputs.head_radius)
-            fd = self._calculate_fd(motion_params, head_radius)
-
-            fd_list = [float(x) for x in fd]
-            fd_mean = float(np.mean(fd[1:]))  # Exclude first frame
-            fd_max = float(np.max(fd))
-
-            # Outlier detection
-            motion_thresh = float(self.inputs.motion_thresh)
-            outlier_mask = fd > motion_thresh
-            n_outliers = int(np.sum(outlier_mask))
-            outlier_frames = [int(i) for i in np.where(outlier_mask)[0]]
-
-            from pmriprep.utils.qc_standards import (
-                get_composite_motion_status,
-            )
-            pct_outliers = 100.0 * n_outliers / max(1, n_volumes)
-            motion_status = get_composite_motion_status(
-                fd_mean, fd_max, pct_outliers,
-            )
-
-            qc_metrics = {
-                "fd_mean": fd_mean,
-                "fd_max": fd_max,
-                "motion_status": motion_status,
-                "fd_list": fd_list,
-                "n_outliers": n_outliers,
-                "outlier_frames": outlier_frames,
-                "motion_thresh": motion_thresh,
-                "n_volumes": n_volumes,
-                "percent_outliers": 100.0 * n_outliers / max(1, n_volumes),
-                "baseline_frames": baseline_frames,
-                "bolus_arrival_frame": bolus_frame,
-                "baseline_detection_method": baseline_diag.get("method", "unknown"),
-                "baseline_detection_confidence": baseline_diag.get(
-                    "confidence", "unknown"
-                ),
-                "reference_type": str(self.inputs.ref_vol),
-                "motion_applied": bool(self.inputs.apply_motion_correction),
-            }
-            if baseline_diag.get("confidence", "high") != "high":
-                logger.warning(
-                    "DCE baseline detection low confidence: method=%s, "
-                    "confidence=%s, bolus_frame=%d (S0 window may include "
-                    "enhanced frames; concentration may be biased).",
-                    baseline_diag.get("method"),
-                    baseline_diag.get("confidence"),
-                    bolus_frame,
-                )
-
-            self._results["fd"] = fd_list
-            self._results["fd_mean"] = fd_mean
-            self._results["fd_max"] = fd_max
-            self._results["n_outliers"] = n_outliers
-            self._results["outlier_frames"] = outlier_frames
-
-        except Exception:
-            # If metrics computation fails, provide empty defaults
-            self._results["fd"] = []
-            self._results["fd_mean"] = 0.0
-            self._results["fd_max"] = 0.0
-            self._results["n_outliers"] = 0
-            self._results["outlier_frames"] = []
+        motion_qc = self._summarize_motion_qc(params_file, preparation)
+        qc_metrics = motion_qc.metrics
+        self._results["fd"] = list(motion_qc.fd)
+        self._results["fd_mean"] = motion_qc.fd_mean
+        self._results["fd_max"] = motion_qc.fd_max
+        self._results["n_outliers"] = motion_qc.n_outliers
+        self._results["outlier_frames"] = list(motion_qc.outlier_frames)
 
         # Select the series to process. mcflirt always ran above (so residual
         # motion is reported for QC), and it wrote the realigned series to

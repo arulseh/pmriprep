@@ -167,3 +167,77 @@ def test_prepare_mcflirt_plan_writes_baseline_mean_reference(
     assert plan.command[ref_index + 1] == plan.reference_file
     reference = nib.load(plan.reference_file).get_fdata()
     assert np.allclose(reference, prepared.data[..., :3].mean(axis=3))
+
+
+def test_summarize_motion_qc_preserves_fd_and_outlier_reduction(
+    tmp_path: Path, monkeypatch: Any,
+) -> None:
+    """Motion reduction retains FD arithmetic, thresholds, and baseline QC."""
+    dce_file = tmp_path / "dce.nii.gz"
+    params_file = tmp_path / "motion.par"
+    _write_dce(dce_file)
+    np.savetxt(
+        params_file,
+        np.array([
+            [0.00, 0, 0, 0.0, 0, 0],
+            [0.00, 0, 0, 0.6, 0, 0],
+            [0.01, 0, 0, 0.6, 0, 0],
+        ]),
+    )
+    monkeypatch.setattr(
+        DCEPreprocess,
+        "_detect_bolus_arrival",
+        lambda self, data, mask: (
+            5,
+            {"method": "characterized", "confidence": "medium"},
+        ),
+    )
+    interface = DCEPreprocess(
+        in_file=str(dce_file),
+        baseline_frames=3,
+        motion_thresh=0.55,
+        head_radius=50.0,
+        apply_motion_correction=False,
+        ref_vol="first",
+    )
+    prepared = interface._prepare_preprocess_inputs()
+
+    qc = interface._summarize_motion_qc(str(params_file), prepared)
+
+    assert qc.fd == pytest.approx((0.0, 0.6, 0.5))
+    assert qc.fd_mean == pytest.approx(0.55)
+    assert qc.fd_max == pytest.approx(0.6)
+    assert qc.n_outliers == 1
+    assert qc.outlier_frames == (1,)
+    assert qc.metrics["fd_list"] == pytest.approx([0.0, 0.6, 0.5])
+    assert qc.metrics["percent_outliers"] == pytest.approx(100.0 / 12.0)
+    assert qc.metrics["baseline_frames"] == 3
+    assert qc.metrics["bolus_arrival_frame"] == 5
+    assert qc.metrics["baseline_detection_method"] == "characterized"
+    assert qc.metrics["baseline_detection_confidence"] == "medium"
+    assert qc.metrics["reference_type"] == "first"
+    assert qc.metrics["motion_applied"] is False
+
+
+def test_summarize_motion_qc_preserves_silent_empty_fallback(
+    tmp_path: Path, monkeypatch: Any,
+) -> None:
+    """Missing parameters retain the legacy empty/zero QC fallback."""
+    dce_file = tmp_path / "dce.nii.gz"
+    _write_dce(dce_file)
+    monkeypatch.setattr(
+        DCEPreprocess,
+        "_detect_bolus_arrival",
+        lambda self, data, mask: (5, {"confidence": "high"}),
+    )
+    interface = DCEPreprocess(in_file=str(dce_file), baseline_frames=3)
+    prepared = interface._prepare_preprocess_inputs()
+
+    qc = interface._summarize_motion_qc(str(tmp_path / "missing.par"), prepared)
+
+    assert qc.fd == ()
+    assert qc.fd_mean == 0.0
+    assert qc.fd_max == 0.0
+    assert qc.n_outliers == 0
+    assert qc.outlier_frames == ()
+    assert qc.metrics == {}
