@@ -135,6 +135,52 @@ def test_dce_factory_with_bayesian_uncertainty(
     assert ci_meta["CredibleIntervalBounding"] == "parameter_bounds"
 
 
+def test_map_uncertainty_sidecar_records_run_accounting(
+    tmp_path: Path, minimal_bids: tuple[Path, str]
+) -> None:
+    """MAP uncertainty sidecars include actual Hessian/fallback counts."""
+    from pmriprep.workflows.dce.datasinks import init_dce_datasinks_wf
+
+    bids, src = minimal_bids
+    out = tmp_path / "out"
+    wf = init_dce_datasinks_wf(
+        output_dir=str(out),
+        bids_dir=str(bids),
+        subject_id="01",
+        session_id="0001",
+        pk_model="tofts",
+        present_inputs={"ktrans_uncertainty"},
+    )
+    wf.base_dir = str(tmp_path / "work")
+    inp = wf.inputs.inputnode
+    inp.source_dce = src
+    inp.ktrans_map = _write_nii(tmp_path / "k.nii.gz")
+    inp.ktrans_uncertainty = _write_nii(tmp_path / "k_std.nii.gz")
+    inp.config_dict = {"inference": "map"}
+    inp.qc_metrics = {
+        "map_uncertainty": {
+            "n_retained_voxels": 10,
+            "n_evaluated": 9,
+            "n_laplace_hessian": 7,
+            "n_prior_fallback": 2,
+            "n_not_computed": 1,
+            "prior_fallback_fraction": 2 / 9,
+        }
+    }
+    wf.run()
+
+    sidecar = next(
+        (out / "pmriprep" / "sub-01" / "ses-0001" / "perf").glob(
+            "*desc-dceUncertaintyKtrans_stat.json"
+        )
+    )
+    metadata = json.loads(sidecar.read_text())
+    accounting = metadata["MAPUncertaintyAccounting"]
+    assert accounting["n_laplace_hessian"] == 7
+    assert accounting["n_prior_fallback"] == 2
+    assert accounting["n_not_computed"] == 1
+
+
 def test_dce_factory_model_free_no_model_entity(
     tmp_path: Path, minimal_bids: tuple[Path, str]
 ) -> None:

@@ -251,6 +251,7 @@ def _scatter_dce_fit_results(
     mcmc_ess: dict[str, list[float]] = {}
     n_mcmc_voxels = 0
     vp_prior_departures: list[float] = []
+    map_uncertainty_sources: list[str] = []
     for voxel, result in zip(voxel_data, results):
         if result["failed"]:
             n_failed += 1
@@ -260,6 +261,10 @@ def _scatter_dce_fit_results(
         coords = tuple(result["coords"])
         params = result["params"]
         selected_model = result.get("selected_model_name", model_name)
+        if inference == "map":
+            map_uncertainty_sources.append(
+                str(result.get("uncertainty_source", "not_computed"))
+            )
         maps.model_selection[coords] = maps.model_selection_codes.get(selected_model, 0)
         maps.delta_bic[coords] = float(result.get("delta_bic", np.nan))
         is_constrained = result.get("constrained", False)
@@ -309,6 +314,7 @@ def _scatter_dce_fit_results(
         mcmc_ess,
         n_mcmc_voxels,
         vp_prior_departures,
+        map_uncertainty_sources,
     )
 
 
@@ -346,6 +352,24 @@ def _summarize_vp_prior_departures(values: list[float]) -> dict[str, float]:
         "z_departure_p90": float(np.percentile(array, 90)),
         "frac_prior_dominated": float(np.mean(array < 0.5)),
         "frac_strong_departure": float(np.mean(array > 2.0)),
+    }
+
+
+def _summarize_map_uncertainty_sources(
+    sources: list[str],
+) -> dict[str, int | float]:
+    """Summarize run-time MAP Hessian and uncertainty-fallback outcomes."""
+    n_laplace = sources.count("laplace_hessian")
+    n_prior_fallback = sources.count("prior_fallback")
+    n_not_computed = sources.count("not_computed")
+    n_evaluated = n_laplace + n_prior_fallback
+    return {
+        "n_retained_voxels": len(sources),
+        "n_evaluated": n_evaluated,
+        "n_laplace_hessian": n_laplace,
+        "n_prior_fallback": n_prior_fallback,
+        "n_not_computed": n_not_computed,
+        "prior_fallback_fraction": n_prior_fallback / max(1, n_evaluated),
     }
 
 
@@ -1026,6 +1050,7 @@ class _DCEFitSummary(NamedTuple):
     mcmc_ess: dict[str, list[float]]
     n_mcmc_voxels: int
     vp_prior_departures: list[float]
+    map_uncertainty_sources: list[str]
 
 
 # Import-time pickle-safety assertion (S1 from code review round 3):
@@ -1507,6 +1532,7 @@ def _fit_single_voxel(
             "r_squared": result.r_squared,
             "converged": result.converged,
             "uncertainties": uncertainties,
+            "uncertainty_source": result.uncertainty_source,
             "fitted_curve": fitted_curve,
             "quality_flag": quality_flag,
             "rhat": getattr(result, "rhat", {}),
@@ -3240,6 +3266,11 @@ class ComputeDCEMaps(BaseInterface):
         if mcmc_diag is not None:
             qc_metrics["mcmc_diagnostics"] = mcmc_diag
 
+        if inference == "map":
+            qc_metrics["map_uncertainty"] = _summarize_map_uncertainty_sources(
+                fit_summary.map_uncertainty_sources
+            )
+
         qc_metrics.update(
             _summarize_vp_prior_departures(fit_summary.vp_prior_departures)
         )
@@ -3799,6 +3830,7 @@ class ComputeDCEMaps(BaseInterface):
                 "r_squared": float(winner_result.r_squared[i]),
                 "converged": bool(winner_result.converged[i]),
                 "uncertainties": uncertainties,
+                "uncertainty_source": "not_computed",
                 "fitted_curve": fitted_curve,
                 "quality_flag": (
                     "poor_convergence" if not winner_result.converged[i]
@@ -3891,6 +3923,7 @@ class ComputeDCEMaps(BaseInterface):
                 "r_squared": float(fit_result.r_squared[i]),
                 "converged": bool(fit_result.converged[i]),
                 "uncertainties": uncertainties,
+                "uncertainty_source": "not_computed",
                 "fitted_curve": fitted_curve,
                 "quality_flag": (
                     "poor_convergence" if not fit_result.converged[i]

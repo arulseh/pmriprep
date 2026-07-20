@@ -23,6 +23,7 @@ from pmriprep.interfaces.dce_compute import (
     _summarize_dce_fitted_parameters,
     _summarize_dce_fit_outcomes,
     _summarize_dce_r2,
+    _summarize_map_uncertainty_sources,
     _summarize_mcmc_diagnostics,
     _summarize_vp_prior_departures,
 )
@@ -285,6 +286,22 @@ def test_accumulate_mcmc_diagnostics_ignores_ess_without_rhat() -> None:
     assert increment == 0
     assert rhat == {}
     assert ess == {}
+
+
+def test_summarize_map_uncertainty_sources_counts_actual_outcomes() -> None:
+    """MAP QC separates Hessian covariance, prior fallback, and no estimate."""
+    summary = _summarize_map_uncertainty_sources(
+        ["laplace_hessian", "prior_fallback", "prior_fallback", "not_computed"]
+    )
+
+    assert summary == {
+        "n_retained_voxels": 4,
+        "n_evaluated": 3,
+        "n_laplace_hessian": 1,
+        "n_prior_fallback": 2,
+        "n_not_computed": 1,
+        "prior_fallback_fraction": pytest.approx(2 / 3),
+    }
 
 
 def test_retained_fit_accounting_tracks_constrained_convergence() -> None:

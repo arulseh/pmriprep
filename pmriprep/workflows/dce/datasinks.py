@@ -280,6 +280,7 @@ def _build_dce_meta(
 
 def _build_bayes_extra(
     config_dict: dict | None = None,
+    qc_metrics: dict | None = None,
     umap_key: str = "ktrans_uncertainty",
 ) -> dict:
     """Build inference-specific provenance for Bayesian uncertainty maps."""
@@ -290,9 +291,14 @@ def _build_bayes_extra(
     estimation = "unknown"
     if isinstance(config_dict, dict):
         estimation = config_dict.get("inference") or "unknown"
-    return build_uncertainty_provenance(
+    extra = build_uncertainty_provenance(
         inference=str(estimation), map_key=umap_key, modality="DCE"
     )
+    if str(estimation).lower() == "map" and isinstance(qc_metrics, dict):
+        accounting = qc_metrics.get("map_uncertainty")
+        if isinstance(accounting, dict):
+            extra["MAPUncertaintyAccounting"] = dict(accounting)
+    return extra
 
 
 def _build_dce_preproc_meta(
@@ -1216,7 +1222,7 @@ def init_dce_datasinks_wf(
                 continue
             bayes_extra = pe.Node(
                 niu.Function(
-                    input_names=["config_dict", "umap_key"],
+                    input_names=["config_dict", "qc_metrics", "umap_key"],
                     output_names=["extra"],
                     function=_build_bayes_extra,
                 ),
@@ -1224,6 +1230,7 @@ def init_dce_datasinks_wf(
             )
             bayes_extra.inputs.umap_key = spec.map_key
             workflow.connect(inputnode, "config_dict", bayes_extra, "config_dict")
+            workflow.connect(inputnode, "qc_metrics", bayes_extra, "qc_metrics")
             sink = _add_perf_map_sink(
                 workflow, inputnode, base_perf,
                 name=spec.in_attr, in_attr=spec.in_attr,

@@ -787,6 +787,7 @@ class BayesianPKFitter:
                     ci_low = max(theta_nat - 1.96 * std_nat, bounds_natural[i][0])
                     ci_high = min(theta_nat + 1.96 * std_nat, bounds_natural[i][1])
                     credible_intervals[name] = (ci_low, ci_high)
+                uncertainty_source = "laplace_hessian"
             except np.linalg.LinAlgError:
                 # Hessian not invertible; fall back to prior std as
                 # uncertainty estimate (matches _compute_laplace_uncertainties).
@@ -800,9 +801,11 @@ class BayesianPKFitter:
                     name: (bounds_natural[i][0], bounds_natural[i][1])
                     for i, name in enumerate(names)
                 }
+                uncertainty_source = "prior_fallback"
         else:
             uncertainties = {}
             credible_intervals = {}
+            uncertainty_source = "not_computed"
 
         # Compute fitted curve
         fitted_curve = self.model.evaluate(list(fitted_params), aif, time_points)
@@ -836,6 +839,7 @@ class BayesianPKFitter:
             n_observations=n,
             converged=converged,
             fitting_method="map",
+            uncertainty_source=uncertainty_source,
             fitted_curve=fitted_curve,
         )
 

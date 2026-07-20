@@ -383,6 +383,7 @@ class TestBayesianMAPFitSynthetic:
         )
 
         # Should have uncertainties from Laplace approximation
+        assert result.uncertainty_source == "laplace_hessian"
         assert "Ktrans" in result.uncertainties
         assert "ve" in result.uncertainties
         assert result.uncertainties["Ktrans"] > 0
@@ -396,6 +397,24 @@ class TestBayesianMAPFitSynthetic:
         assert result.r_squared > 0.95, (
             f"Expected R^2 > 0.95 for clean data, got {result.r_squared}"
         )
+
+    def test_map_records_prior_fallback_when_hessian_is_unavailable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A singular MAP Hessian records the actual prior fallback."""
+        tissue_curve, aif, time_points, _ = _make_synthetic_tofts_data()
+        fitter = BayesianPKFitter(ToftsModel())
+
+        def _unavailable_hessian(*args: object, **kwargs: object) -> np.ndarray:
+            del args, kwargs
+            return np.full((2, 2), np.nan, dtype=np.float64)
+
+        monkeypatch.setattr(fitter, "_compute_hessian", _unavailable_hessian)
+        result = fitter.fit_map(tissue_curve, aif, time_points)
+
+        assert result.uncertainty_source == "prior_fallback"
+        assert result.uncertainties["Ktrans"] == fitter.priors[0].std
+        assert result.credible_intervals["Ktrans"] == ToftsModel().get_bounds()[0]
 
 
 # ---------------------------------------------------------------------------

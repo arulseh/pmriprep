@@ -82,6 +82,10 @@ class FitResult:
         Whether the fitting algorithm converged.
     fitting_method : str
         Method used ('nlls', 'map', 'mcmc').
+    uncertainty_source : str
+        Run-time source of uncertainty estimates, such as
+        ``"laplace_hessian"``, ``"prior_fallback"``, or
+        ``"not_computed"``.
     fitted_curve : np.ndarray
         Fitted tissue concentration curve C_t(t).
     """
@@ -111,6 +115,7 @@ class FitResult:
     n_observations: int = 0
     converged: bool = False
     fitting_method: str = ""
+    uncertainty_source: str = "not_computed"
 
     # Fitted curve
     fitted_curve: Optional[npt.NDArray[np.floating]] = None
