@@ -417,6 +417,7 @@ class BayesianPKFitter:
         params: npt.NDArray[np.floating],
         objective: Callable[[npt.NDArray[np.floating]], float],
         relative_epsilon: float = 1e-5,
+        prior_stds: npt.NDArray[np.floating] | None = None,
     ) -> npt.NDArray[np.floating]:
         """Compute Hessian matrix using finite differences.
 
@@ -436,6 +437,9 @@ class BayesianPKFitter:
             Relative step size for finite differences.
             Actual step for parameter i is max(relative_epsilon,
             relative_epsilon * |params[i]|).
+        prior_stds : numpy.ndarray or None, optional
+            Prior standard deviations expressed in the same coordinates as
+            ``params``. Natural-space prior deviations are used by default.
 
         Returns
         -------
@@ -444,6 +448,13 @@ class BayesianPKFitter:
         """
         n = len(params)
         hessian = np.zeros((n, n), dtype=np.float64)
+        fallback_stds = (
+            np.asarray(prior_stds, dtype=np.float64)
+            if prior_stds is not None
+            else np.asarray([prior.std for prior in self.priors], dtype=np.float64)
+        )
+        if fallback_stds.shape != (n,):
+            raise ValueError("prior_stds must have one value per parameter")
 
         # Compute per-parameter step sizes
         eps = np.array([
@@ -494,7 +505,7 @@ class BayesianPKFitter:
                     if abs(h_ij) < 1e8:
                         hessian[i, j] = h_ij
                     elif i == j:
-                        prior_std = self.priors[i].std
+                        prior_std = float(fallback_stds[i])
                         if prior_std > 0:
                             hessian[i, j] = 1.0 / (prior_std**2)
                         else:
@@ -504,7 +515,7 @@ class BayesianPKFitter:
                     # Fall back to prior curvature when perturbations hit invalid region
                     # Use 1/prior_variance as diagonal Hessian approximation
                     if i == j:
-                        prior_std = self.priors[i].std
+                        prior_std = float(fallback_stds[i])
                         if prior_std > 0:
                             hessian[i, j] = 1.0 / (prior_std**2)
                         else:
@@ -756,7 +767,12 @@ class BayesianPKFitter:
         if compute_uncertainties:
             try:
                 hessian_t = self._compute_hessian(
-                    fitted_params_t, neg_log_posterior_t
+                    fitted_params_t,
+                    neg_log_posterior_t,
+                    prior_stds=np.asarray(
+                        [prior.std_transformed for prior in self.priors],
+                        dtype=np.float64,
+                    ),
                 )
                 # _compute_hessian uses finite differences and can return
                 # non-finite entries when perturbations land on the

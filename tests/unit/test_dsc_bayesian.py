@@ -148,6 +148,40 @@ class TestMAPFitting:
         for name, val in result.uncertainties.items():
             assert val >= 0.0, f"Uncertainty for {name} is negative: {val}"
 
+    def test_fit_map_hessian_uses_transformed_prior_units(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Scalar MAP differentiates its optimized transformed objective."""
+        model = VascularModel()
+        concentration, aif, t = _make_synthetic_data(noise_std=0.1)
+        fitter = BayesianDSCFitter(model)
+        original = fitter._compute_hessian
+        observed_stds: list[np.ndarray] = []
+
+        def _record_hessian(
+            params: np.ndarray,
+            objective: object,
+            relative_epsilon: float = 1e-5,
+            prior_stds: np.ndarray | None = None,
+        ) -> np.ndarray:
+            assert callable(objective)
+            assert prior_stds is not None
+            observed_stds.append(prior_stds.copy())
+            return original(
+                params,
+                objective,  # type: ignore[arg-type]
+                relative_epsilon,
+                prior_stds,
+            )
+
+        monkeypatch.setattr(fitter, "_compute_hessian", _record_hessian)
+        fitter.fit_map(concentration, aif, t, compute_uncertainties=True)
+
+        assert len(observed_stds) == 1
+        assert observed_stds[0] == pytest.approx(
+            [prior.std_transformed for prior in fitter.priors]
+        )
+
     def test_fit_map_flat_concentration(self) -> None:
         """All-zero concentration yields CBF near zero."""
         model = VascularModel()

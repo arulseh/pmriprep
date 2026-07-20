@@ -292,6 +292,7 @@ class BayesianDSCFitter:
         params: npt.NDArray[np.floating],
         objective: Callable[[npt.NDArray[np.floating]], float],
         relative_epsilon: float = 1e-5,
+        prior_stds: npt.NDArray[np.floating] | None = None,
     ) -> npt.NDArray[np.floating]:
         """Compute Hessian matrix using finite differences.
 
@@ -311,6 +312,9 @@ class BayesianDSCFitter:
             Relative step size for finite differences.
             Actual step for parameter i is max(relative_epsilon,
             relative_epsilon * |params[i]|).
+        prior_stds : npt.NDArray[np.floating] or None, optional
+            Prior standard deviations expressed in the same coordinates as
+            ``params``. Natural fitting-space deviations are used by default.
 
         Returns
         -------
@@ -319,6 +323,13 @@ class BayesianDSCFitter:
         """
         n = len(params)
         hessian = np.zeros((n, n), dtype=np.float64)
+        fallback_stds = (
+            np.asarray(prior_stds, dtype=np.float64)
+            if prior_stds is not None
+            else np.asarray([prior.std for prior in self.priors], dtype=np.float64)
+        )
+        if fallback_stds.shape != (n,):
+            raise ValueError("prior_stds must have one value per parameter")
 
         # Compute per-parameter step sizes
         eps = np.array([
@@ -354,7 +365,7 @@ class BayesianDSCFitter:
                     if abs(h_ij) < 1e8:
                         hessian[i, j] = h_ij
                     elif i == j:
-                        prior_std = self.priors[i].std
+                        prior_std = float(fallback_stds[i])
                         if prior_std > 0:
                             hessian[i, j] = 1.0 / (prior_std**2)
                         else:
@@ -362,7 +373,7 @@ class BayesianDSCFitter:
                 else:
                     # Fall back to prior curvature for invalid regions
                     if i == j:
-                        prior_std = self.priors[i].std
+                        prior_std = float(fallback_stds[i])
                         if prior_std > 0:
                             hessian[i, j] = 1.0 / (prior_std**2)
                         else:
@@ -571,18 +582,18 @@ class BayesianDSCFitter:
                     float(from_transformed(params_t[i], transforms[i], upper_bounds_t[i]))
                     for i in range(n_params)
                 ], dtype=np.float64)
-                # Natural-space log posterior
-                val = -self._log_posterior(
+                log_prior_t = compute_log_prior(
+                    params_t, self.priors, transformed=True
+                )
+                if not np.isfinite(log_prior_t):
+                    return 1e20
+                log_lik = self._log_likelihood(
                     params_nat, concentration, aif, time_points, _noise_std,
                     weights=weights,
                 )
-                # Subtract log-Jacobian: MAP in transformed space needs
-                # neg_log_post_t = neg_log_post_nat - log|dtheta/dtheta'|
-                for i in range(n_params):
-                    val -= float(log_jacobian_det(
-                        params_nat[i], transforms[i], upper_bounds_t[i]
-                    ))
-                return min(val, 1e20)
+                if not np.isfinite(log_lik):
+                    return 1e20
+                return min(-(log_prior_t + log_lik), 1e20)
 
             # Multi-start trials. LOG/LOG_LOGIT params are unconstrained
             # in transformed space; IDENTITY params need explicit bounds.
@@ -642,21 +653,49 @@ class BayesianDSCFitter:
         # Convert fitting-space params to model-space for output
         fitted_model_params = self.model.fitting_to_model_params(fitted_fitting_params)
 
-        # Compute Laplace approximation uncertainties (in fitting space)
+        # Compute Laplace approximation uncertainties from the exact
+        # transformed-space objective optimized above, then propagate its
+        # marginal standard deviations into natural fitting space.
         if compute_uncertainties:
-            # Build fitting-space objective for Hessian computation
-            _final_noise = noise_std
-
-            def _neg_log_post_fitting(params: npt.NDArray[np.floating]) -> float:
-                val = -self._log_posterior(
-                    params, concentration, aif, time_points, _final_noise,
-                    weights=weights,
+            try:
+                hessian_t = self._compute_hessian(
+                    fitted_params_t,
+                    neg_log_posterior_t,
+                    prior_stds=np.asarray(
+                        [prior.std_transformed for prior in self.priors],
+                        dtype=np.float64,
+                    ),
                 )
-                return min(val, 1e20)
-
-            uncertainties, credible_intervals = self._compute_laplace_uncertainties(
-                fitted_fitting_params, _neg_log_post_fitting
-            )
+                if not np.all(np.isfinite(hessian_t)):
+                    raise np.linalg.LinAlgError("non-finite Hessian")
+                covariance_t = np.linalg.inv(
+                    hessian_t + 1e-6 * np.eye(n_params)
+                )
+                if not np.all(np.isfinite(covariance_t)):
+                    raise np.linalg.LinAlgError("non-finite covariance")
+                stds_t = np.sqrt(np.maximum(np.diag(covariance_t), 0.0))
+                uncertainties = {}
+                credible_intervals = {}
+                for i, name in enumerate(fitting_param_names):
+                    theta_nat = float(fitted_fitting_params[i])
+                    jac = float(np.exp(log_jacobian_det(
+                        theta_nat, transforms[i], upper_bounds_t[i]
+                    )))
+                    std_nat = float(stds_t[i]) * jac
+                    uncertainties[name] = std_nat
+                    credible_intervals[name] = (
+                        max(theta_nat - 1.96 * std_nat, bounds[i][0]),
+                        min(theta_nat + 1.96 * std_nat, bounds[i][1]),
+                    )
+            except np.linalg.LinAlgError:
+                uncertainties = {
+                    name: self.priors[i].std
+                    for i, name in enumerate(fitting_param_names)
+                }
+                credible_intervals = {
+                    name: bounds[i]
+                    for i, name in enumerate(fitting_param_names)
+                }
         else:
             uncertainties = {}
             credible_intervals = {}

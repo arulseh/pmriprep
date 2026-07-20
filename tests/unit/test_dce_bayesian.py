@@ -207,6 +207,20 @@ class TestHessianComputation:
             f"Expected H[1,1] < 1e8, got {hessian[1, 1]}"
         )
 
+    def test_hessian_fallback_uses_coordinate_space_prior(self) -> None:
+        """Fallback curvature uses prior deviations in Hessian coordinates."""
+        fitter = BayesianPKFitter(ToftsModel())
+        params = np.array([0.0, 0.0])
+        transformed_stds = np.array([0.4, 0.8])
+
+        hessian = fitter._compute_hessian(
+            params,
+            lambda _: float("inf"),
+            prior_stds=transformed_stds,
+        )
+
+        assert np.diag(hessian) == pytest.approx(1.0 / transformed_stds**2)
+
 
 # ---------------------------------------------------------------------------
 # Tests 4-6: Volume constraint
