@@ -936,6 +936,93 @@ class _MasterWorkflowNodes:
     unified_report: pe.Node
 
 
+def _init_master_anatomical_preprocessing(
+    *,
+    workflow: pe.Workflow,
+    inputnode: pe.Node,
+    outputnode: pe.Node,
+    session_data: SessionData,
+    decision: PipelineDecision,
+    bids_dir: Path,
+    subject_id: str,
+    session_id: Optional[str],
+    anat_config: AnatConfig,
+    mem_limit_gb: Optional[float],
+) -> Optional[pe.Workflow]:
+    """Initialize and connect the master anatomical preprocessing workflow.
+
+    Parameters
+    ----------
+    workflow : pe.Workflow
+        Master workflow receiving anatomical connections.
+    inputnode, outputnode : pe.Node
+        Master public boundary nodes.
+    session_data : SessionData
+        Discovered anatomical modalities.
+    decision : PipelineDecision
+        Pipeline selection controlling anatomical construction.
+    bids_dir : Path
+        Input BIDS root.
+    subject_id, session_id : str, optional
+        BIDS participant and optional session identifiers.
+    anat_config : AnatConfig
+        Anatomical preprocessing configuration.
+    mem_limit_gb : float, optional
+        User memory ceiling.
+
+    Returns
+    -------
+    pe.Workflow or None
+        Connected anatomical workflow, or None when anatomical processing is skipped.
+    """
+    if not decision.run_anat:
+        return None
+
+    from pmriprep.workflows.anat.base import init_anat_preproc_wf
+
+    anat_wf = init_anat_preproc_wf(
+        bids_dir=bids_dir,
+        subject_id=subject_id,
+        session_id=session_id,
+        config=anat_config,
+        has_t1w_postcon=(
+            session_data.modalities.t1w_pre is not None
+            and session_data.modalities.t1w_ce_gad is not None
+        ),
+        has_t2w=session_data.modalities.t2w is not None,
+        has_flair=session_data.modalities.flair is not None,
+        has_flair_postcon=session_data.modalities.flair_postcon is not None,
+        mem_limit_gb=mem_limit_gb,
+        name="anat_wf",
+    )
+    input_edges = (
+        ("t1w_pre", session_data.modalities.t1w_pre, "inputnode.t1w_precon"),
+        ("t1w_postcon", session_data.modalities.t1w_ce_gad, "inputnode.t1w_postcon"),
+        ("t2w", session_data.modalities.t2w, "inputnode.t2w"),
+        ("flair", session_data.modalities.flair, "inputnode.flair"),
+        ("flair_postcon", session_data.modalities.flair_postcon, "inputnode.flair_postcon"),
+    )
+    for source, path, target in input_edges:
+        if path:
+            workflow.connect([(inputnode, anat_wf, [(source, target)])])
+    workflow.connect([
+        (anat_wf, outputnode, [
+            ("outputnode.t1w_preproc", "t1w_preproc"),
+            ("outputnode.brain_mask", "brain_mask"),
+            ("outputnode.qc_metrics", "anat_qc"),
+        ]),
+    ])
+    if session_data.modalities.t1w_pre:
+        workflow.connect([
+            (anat_wf, outputnode, [
+                ("outputnode.wm_probseg", "wm_probseg"),
+                ("outputnode.gm_probseg", "gm_probseg"),
+                ("outputnode.csf_probseg", "csf_probseg"),
+            ]),
+        ])
+    return anat_wf
+
+
 def _init_master_workflow_nodes(
     *,
     workflow: pe.Workflow,
@@ -1415,7 +1502,6 @@ def init_pmriprep_wf(
     for vp constraint (via US-063 QC check). This is handled by connecting
     DSC outputs to DCE inputs.
     """
-    from pmriprep.workflows.anat.base import init_anat_preproc_wf
     from pmriprep.workflows.dce.base import init_dce_preproc_wf
     from pmriprep.workflows.dsc.base import init_dsc_preproc_wf
     from pmriprep.workflows.tumor_seg.base import init_tumor_seg_wf
@@ -1516,7 +1602,18 @@ def init_pmriprep_wf(
     # Initialize sub-workflows based on decisions
     # ===================================================================
 
-    anat_wf = None
+    anat_wf = _init_master_anatomical_preprocessing(
+        workflow=workflow,
+        inputnode=inputnode,
+        outputnode=outputnode,
+        session_data=session_data,
+        decision=decision,
+        bids_dir=bids_dir,
+        subject_id=subject_id,
+        session_id=session_id,
+        anat_config=anat_config,
+        mem_limit_gb=mem_limit_gb,
+    )
     tumor_seg_wf = None
     dsc_wf = None
     dce_wf = None
@@ -1524,64 +1621,7 @@ def init_pmriprep_wf(
     # -------------------------------------------------------------------
     # Anatomical preprocessing workflow (runs first)
     # -------------------------------------------------------------------
-    if decision.run_anat:
-        anat_wf = init_anat_preproc_wf(
-            bids_dir=bids_dir,
-            subject_id=subject_id,
-            session_id=session_id,
-            config=anat_config,
-            has_t1w_postcon=(
-                session_data.modalities.t1w_pre is not None
-                and session_data.modalities.t1w_ce_gad is not None
-            ),
-            has_t2w=session_data.modalities.t2w is not None,
-            has_flair=session_data.modalities.flair is not None,
-            has_flair_postcon=session_data.modalities.flair_postcon is not None,
-            mem_limit_gb=mem_limit_gb,
-            name="anat_wf",
-        )
-
-        # Connect inputs to anat workflow
-        # Route each image to its semantic field; determine_mode picks the reference.
-        if session_data.modalities.t1w_pre:
-            workflow.connect([
-                (inputnode, anat_wf, [("t1w_pre", "inputnode.t1w_precon")]),
-            ])
-        if session_data.modalities.t1w_ce_gad:
-            workflow.connect([
-                (inputnode, anat_wf, [("t1w_postcon", "inputnode.t1w_postcon")]),
-            ])
-
-        # Connect additional modalities if available
-        if session_data.modalities.t2w:
-            workflow.connect([
-                (inputnode, anat_wf, [("t2w", "inputnode.t2w")]),
-            ])
-        if session_data.modalities.flair:
-            workflow.connect([
-                (inputnode, anat_wf, [("flair", "inputnode.flair")]),
-            ])
-        if session_data.modalities.flair_postcon:
-            workflow.connect([
-                (inputnode, anat_wf, [("flair_postcon", "inputnode.flair_postcon")]),
-            ])
-        # Connect anat outputs to master outputnode
-        workflow.connect([
-            (anat_wf, outputnode, [
-                ("outputnode.t1w_preproc", "t1w_preproc"),
-                ("outputnode.brain_mask", "brain_mask"),
-                ("outputnode.qc_metrics", "anat_qc"),
-            ]),
-        ])
-        if session_data.modalities.t1w_pre:
-            workflow.connect([
-                (anat_wf, outputnode, [
-                    ("outputnode.wm_probseg", "wm_probseg"),
-                    ("outputnode.gm_probseg", "gm_probseg"),
-                    ("outputnode.csf_probseg", "csf_probseg"),
-                ]),
-            ])
-
+    if anat_wf is not None:
         # -------------------------------------------------------------------
         # Anat derivatives: niworkflows DerivativesDataSink chain
         # -------------------------------------------------------------------
