@@ -277,7 +277,7 @@ dce:
 | `b1_map_encoding` | str | `"auto"` | Pre-computed B1+ map encoding: `auto` (from suffix/Units), `actual_flip_deci_deg`, `actual_flip_deg`, `percent`, `ratio` |
 | `cbv_constraint_mode` | str | `"auto"` | DSC→DCE vp constraint. `auto`: `soft` prior when DSC CBV is reliable, `skip` otherwise. Options: `auto`, `skip` |
 | `no_dsc_validation` | bool | `false` | Skip DSC-DCE cross-validation. Requires a NAWM mask; automatically skipped when unavailable |
-| `baseline_frames` | int | `0` | Baseline frames (0 = auto-detect; fewer than 5 is inadequate and triggers a bounded fallback plus QC exclusion) |
+| `baseline_frames` | int | `0` | Baseline frames (0 = auto-detect; minimum 5) |
 | `motion_correct` | bool | `true` | Apply motion correction. `false` assumes input already motion-corrected (residual motion still reported) |
 | `motion_thresh` | float | `0.5` | Framewise displacement threshold in mm |
 | `tsnr_threshold` | float | `0.0` | tSNR threshold for voxel inclusion (0 = none) |
