@@ -555,9 +555,10 @@ def _copy_perf_map(
     out_root = out_root / datatype
     out_root.mkdir(parents=True, exist_ok=True)
 
-    prefix = f"sub-{subject}"
-    if session:
-        prefix += f"_ses-{session}"
+    from pmriprep.utils.sidecar_builders import source_entity_prefix
+
+    sources = meta_dict.get("Sources", []) if isinstance(meta_dict, dict) else []
+    prefix = source_entity_prefix(sources[0] if sources else None, subject, session)
     parts = [prefix]
     if space:
         parts.append(f"space-{space}")
@@ -612,9 +613,10 @@ def _copy_tb1map(
     out_root = out_root / "anat"
     out_root.mkdir(parents=True, exist_ok=True)
 
-    prefix = f"sub-{subject}"
-    if session:
-        prefix += f"_ses-{session}"
+    from pmriprep.utils.sidecar_builders import source_entity_prefix
+
+    sources = meta_dict.get("Sources", []) if isinstance(meta_dict, dict) else []
+    prefix = source_entity_prefix(sources[0] if sources else None, subject, session)
     stem = f"{prefix}_space-dceref_TB1map"
     nii_out = out_root / f"{stem}.nii.gz"
     json_out = out_root / f"{stem}.json"
@@ -631,6 +633,7 @@ def _copy_dce_xfm(
     output_dir: str,
     subject: str,
     session: str,
+    source_file: str | None = None,
 ) -> str:
     """Copy DCE-to-T1w transform .h5 into the derivatives anat/."""
     import logging
@@ -655,9 +658,9 @@ def _copy_dce_xfm(
     out_root = out_root / "anat"
     out_root.mkdir(parents=True, exist_ok=True)
 
-    prefix = f"sub-{subject}"
-    if session:
-        prefix += f"_ses-{session}"
+    from pmriprep.utils.sidecar_builders import source_entity_prefix
+
+    prefix = source_entity_prefix(source_file, subject, session)
     fname = f"{prefix}_from-dceref_to-T1w_mode-image_xfm.h5"
     out_path = out_root / fname
     shutil.copy2(in_file, out_path)
@@ -1344,7 +1347,7 @@ def init_dce_datasinks_wf(
             name="qc_mask", in_attr="qc_mask",
             desc_value="dceQc", suffix="",
             description="QC mask (1=good fit, 0=unfitted/poor)",
-            units=None, extra=None,
+            units=None, extra={"Type": "ROI"},
             bids_suffix="mask",
         )
         sink_outputs.append((sink, "out_file"))
@@ -1368,8 +1371,14 @@ def init_dce_datasinks_wf(
                 "Quality flag map (0=unfitted, 1=good, 2=poor_convergence, "
                 "3=high_uncertainty, 4=unreliable_high_kep)"
             ),
-            units=None, extra=None,
-            bids_suffix="mask",
+            units=None,
+            extra={
+                "LabelEncoding": {
+                    "0": "unfitted", "1": "good", "2": "poor_convergence",
+                    "3": "high_uncertainty", "4": "unreliable_high_kep",
+                },
+            },
+            bids_suffix="dseg",
         )
         sink_outputs.append((sink, "out_file"))
 
@@ -1563,7 +1572,7 @@ def init_dce_datasinks_wf(
             name="aif_mask", in_attr="aif_mask",
             desc_value="dceAif", suffix="",
             description="AIF detection mask in DCE space",
-            units=None, extra=None,
+            units=None, extra={"Type": "ROI"},
             bids_suffix="mask",
         )
         sink_outputs.append((sink, "out_file"))
@@ -1641,7 +1650,9 @@ def init_dce_datasinks_wf(
     if "dce_to_t1w_xfm" in present:
         xfm_sink = pe.Node(
             niu.Function(
-                input_names=["in_file", "output_dir", "subject", "session"],
+                input_names=[
+                    "in_file", "output_dir", "subject", "session", "source_file",
+                ],
                 output_names=["out_file"],
                 function=_copy_dce_xfm,
             ),
@@ -1653,6 +1664,7 @@ def init_dce_datasinks_wf(
                 ("subject_id", "subject"),
                 ("session_id", "session"),
                 ("dce_to_t1w_xfm", "in_file"),
+                ("source_dce", "source_file"),
             ]),
         ])
         sink_outputs.append((xfm_sink, "out_file"))

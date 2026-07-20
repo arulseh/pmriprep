@@ -292,6 +292,8 @@ def _build_map_meta(
     user_fragment = load_lesion_stats_fragment(user_lesion_stats_json, map_key)
 
     merged_extra = dict(extra) if extra else {}
+    if map_key == "fallback":
+        merged_extra["Type"] = "ROI"
     if fragment:
         merged_extra["LesionStats"] = fragment
     if user_fragment:
@@ -450,6 +452,7 @@ def _copy_xfm(
     session: str,
     from_space: str,
     to_space: str,
+    source_file: str | None = None,
     datatype: str = "anat",
 ) -> str:
     """Copy a transform .h5 into the derivatives ``anat/`` directory."""
@@ -476,9 +479,9 @@ def _copy_xfm(
     out_root = out_root / datatype
     out_root.mkdir(parents=True, exist_ok=True)
 
-    prefix = f"sub-{subject}"
-    if session:
-        prefix += f"_ses-{session}"
+    from pmriprep.utils.sidecar_builders import source_entity_prefix
+
+    prefix = source_entity_prefix(source_file, subject, session)
     fname = f"{prefix}_from-{from_space}_to-{to_space}_mode-image_xfm.h5"
     out_path = out_root / fname
     shutil.copy2(in_file, out_path)
@@ -529,9 +532,10 @@ def _copy_perf_map(
     out_root = out_root / datatype
     out_root.mkdir(parents=True, exist_ok=True)
 
-    prefix = f"sub-{subject}"
-    if session:
-        prefix += f"_ses-{session}"
+    from pmriprep.utils.sidecar_builders import source_entity_prefix
+
+    sources = meta_dict.get("Sources", []) if isinstance(meta_dict, dict) else []
+    prefix = source_entity_prefix(sources[0] if sources else None, subject, session)
     folded = suffix[:1].upper() + suffix[1:] if suffix else ""
     stem = f"{prefix}_desc-{desc}{folded}_{bids_suffix}"
     nii_out = out_root / f"{stem}.nii.gz"
@@ -855,7 +859,7 @@ def _add_xfm_sink(
     sink = pe.Node(
         niu.Function(
             input_names=["in_file", "output_dir", "subject", "session",
-                         "from_space", "to_space", "datatype"],
+                         "from_space", "to_space", "source_file", "datatype"],
             output_names=["out_file"],
             function=_copy_xfm,
         ),
@@ -870,6 +874,7 @@ def _add_xfm_sink(
             ("subject_id", "subject"),
             ("session_id", "session"),
             (in_attr, "in_file"),
+            (source_attr, "source_file"),
         ]),
     ])
     return sink
@@ -1283,11 +1288,11 @@ def init_dsc_datasinks_wf(
     # Function-based copy bypassing pybids path validation).
     def _add_minimal_perf_sink(
         nm: str, in_attr: str, desc_value: str, suffix: str, description: str,
-        bids_sfx: str = "stat",
+        bids_sfx: str = "stat", mask_type: str | None = None,
     ) -> pe.Node:
         meta = pe.Node(
             niu.Function(
-                input_names=["base", "description", "skull_stripped"],
+                input_names=["base", "description", "skull_stripped", "mask_type"],
                 output_names=["meta_dict"],
                 function=_build_minimal_meta,
             ),
@@ -1295,6 +1300,7 @@ def init_dsc_datasinks_wf(
         )
         meta.inputs.description = description
         meta.inputs.skull_stripped = False
+        meta.inputs.mask_type = mask_type
         workflow.connect([(base_minimal, meta, [("meta_dict", "base")])])
         sink = pe.Node(
             niu.Function(
@@ -1426,7 +1432,7 @@ def init_dsc_datasinks_wf(
     if "aif_mask" in present:
         sink_outputs.append((_add_minimal_perf_sink(
             "aif_mask", "aif_mask", "dscAif", "",
-            "AIF detection mask in DSC space", "mask",
+            "AIF detection mask in DSC space", "mask", "ROI",
         ), "out_file"))
 
     # Precontrast-derived masks explicitly dismiss ceagent to avoid false

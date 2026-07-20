@@ -332,9 +332,9 @@ class DSCFiguresWriter(SimpleInterface):
             else None
         )
 
-        prefix = f"sub-{subject}"
-        if session:
-            prefix += f"_ses-{session}"
+        from pmriprep.utils.sidecar_builders import source_entity_prefix
+
+        prefix = source_entity_prefix(source_path, subject, session)
 
         ses_dir = output_dir / "pmriprep" / f"sub-{subject}"
         if session:
@@ -379,6 +379,8 @@ class DSCFiguresWriter(SimpleInterface):
                 continue
             figures_dir.mkdir(parents=True, exist_ok=True)
             fname = figure_filename(subject, session, fig_key, "dsc")
+            base_prefix = source_entity_prefix(None, subject, session)
+            fname = prefix + fname[len(base_prefix):]
             shutil.copy2(src, figures_dir / fname)
 
         return runtime
@@ -476,9 +478,9 @@ class DCEFiguresWriter(SimpleInterface):
             else None
         )
 
-        prefix = f"sub-{subject}"
-        if session:
-            prefix += f"_ses-{session}"
+        from pmriprep.utils.sidecar_builders import source_entity_prefix
+
+        prefix = source_entity_prefix(source_path, subject, session)
 
         ses_dir = output_dir / "pmriprep" / f"sub-{subject}"
         if session:
@@ -527,9 +529,11 @@ class DCEFiguresWriter(SimpleInterface):
                 else "unknown"
             )
             if method in ("population", "external"):
-                stale = figures_dir / figure_filename(
+                stale_name = figure_filename(
                     subject, session, "aif_location", "dce",
                 )
+                base_prefix = source_entity_prefix(None, subject, session)
+                stale = figures_dir / (prefix + stale_name[len(base_prefix):])
                 if stale.exists():
                     stale.unlink()
 
@@ -539,6 +543,8 @@ class DCEFiguresWriter(SimpleInterface):
                 continue
             figures_dir.mkdir(parents=True, exist_ok=True)
             fname = figure_filename(subject, session, fig_key, "dce")
+            base_prefix = source_entity_prefix(None, subject, session)
+            fname = prefix + fname[len(base_prefix):]
             shutil.copy2(src, figures_dir / fname)
 
         return runtime

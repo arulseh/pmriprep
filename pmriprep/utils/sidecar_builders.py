@@ -186,6 +186,56 @@ def build_sources_list(
     return out
 
 
+def source_entity_prefix(
+    source: PathLike | None,
+    subject: str,
+    session: Optional[str],
+) -> str:
+    """Build a derivative prefix while preserving source filename entities.
+
+    Parameters
+    ----------
+    source : path-like or None
+        Raw source path or BIDS URI. Only recognized filename entities are
+        propagated; the source suffix and extension are discarded.
+    subject, session : str
+        Output hierarchy identifiers. These remain authoritative so a malformed
+        source URI cannot redirect an output into another subject/session.
+
+    Returns
+    -------
+    str
+        Canonically ordered ``sub-``/``ses-`` plus relevant source entities.
+    """
+    prefix = [f"sub-{subject}"]
+    if session:
+        prefix.append(f"ses-{session}")
+    if not source:
+        return "_".join(prefix)
+
+    # Values use BIDS labels/indices and therefore cannot contain underscores.
+    # Parsing the basename also works for ``bids:raw:sub-...`` URIs.
+    name = Path(str(source)).name
+    if name.endswith(".nii.gz"):
+        name = name[:-7]
+    else:
+        name = Path(name).stem
+    found: dict[str, str] = {}
+    aliases = {
+        "task": "task", "acq": "acq", "ce": "ce", "rec": "rec",
+        "dir": "dir", "run": "run", "echo": "echo", "part": "part",
+        "chunk": "chunk",
+    }
+    for token in name.split("_"):
+        key, separator, value = token.partition("-")
+        if separator and key in aliases and value:
+            found[aliases[key]] = value
+    for key in ("task", "acq", "ce", "rec", "dir", "run", "echo", "part", "chunk"):
+        if key in found:
+            prefix.append(f"{key}-{found[key]}")
+    return "_".join(prefix)
+
+
 def build_spatial_reference_uri(
     reference_filename: str,
     subject: str,
@@ -714,9 +764,28 @@ def dce_reference_basename() -> str:
     return "desc-dceMean_stat.nii.gz"
 
 
-def _dce_spatial_reference(subject: str, session: Optional[str]) -> str:
-    return build_spatial_reference_uri(
-        dce_reference_basename(), subject, session, datatype="perf",
+def _perfusion_spatial_reference(
+    reference_basename: str,
+    subject: str,
+    session: Optional[str],
+    source: PathLike | None,
+) -> str:
+    """Return a derivative-local perfusion reference URI with source entities."""
+    prefix = source_entity_prefix(source, subject, session)
+    parts = [f"sub-{subject}"]
+    if session:
+        parts.append(f"ses-{session}")
+    parts.extend(["perf", f"{prefix}_{reference_basename}"])
+    return "bids::" + "/".join(parts)
+
+
+def _dce_spatial_reference(
+    subject: str,
+    session: Optional[str],
+    source: PathLike | None = None,
+) -> str:
+    return _perfusion_spatial_reference(
+        dce_reference_basename(), subject, session, source,
     )
 
 
@@ -749,7 +818,9 @@ def build_dce_base_sidecar(
 
     sidecar: Dict[str, Any] = {
         **get_bids_derivative_provenance(),
-        "SpatialReference": _dce_spatial_reference(subject, session),
+        "SpatialReference": _dce_spatial_reference(
+            subject, session, source_paths[0] if source_paths else None,
+        ),
         "Sources": build_sources_list(source_paths, bids_dir),
         **resolution_native_block(reference_voxel_source),
     }
@@ -775,9 +846,13 @@ def dsc_reference_basename() -> str:
     return "desc-dscMean_stat.nii.gz"
 
 
-def _dsc_spatial_reference(subject: str, session: Optional[str]) -> str:
-    return build_spatial_reference_uri(
-        dsc_reference_basename(), subject, session, datatype="perf",
+def _dsc_spatial_reference(
+    subject: str,
+    session: Optional[str],
+    source: PathLike | None = None,
+) -> str:
+    return _perfusion_spatial_reference(
+        dsc_reference_basename(), subject, session, source,
     )
 
 
@@ -801,7 +876,9 @@ def build_dsc_base_sidecar(
 
     sidecar: Dict[str, Any] = {
         **get_bids_derivative_provenance(),
-        "SpatialReference": _dsc_spatial_reference(subject, session),
+        "SpatialReference": _dsc_spatial_reference(
+            subject, session, source_paths[0] if source_paths else None,
+        ),
         "Sources": build_sources_list(source_paths, bids_dir),
         **resolution_native_block(reference_voxel_source),
     }
