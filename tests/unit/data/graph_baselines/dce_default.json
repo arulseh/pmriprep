@@ -3027,7 +3027,6 @@
     "ser_map",
     "smooth_model_free_maps",
     "smooth_pk_maps",
-    "smooth_uncertainty_maps",
     "t1_map",
     "t1_qc_plot",
     "t1w_in_dce",

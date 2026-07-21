@@ -7,7 +7,6 @@ source captured by ``niu.Function`` in an isolated worker.
 __all__ = [
     "_build_model_free_map_dict",
     "_build_pk_map_dict",
-    "_build_uncertainty_map_dict",
     "_collect_qc_metrics",
     "_compute_early_mean",
     "_create_aif_search_mask",
@@ -22,6 +21,7 @@ __all__ = [
     "_resample_dsc_cbv_to_dce",
     "_resample_dsc_ncbv_to_dce",
     "_signal_to_concentration_node",
+    "_derive_smoothed_kep",
     "_smooth_dce_maps",
     "_transform_atlas_cascade_to_dce",
     "_transform_atlas_to_dce",
@@ -1942,9 +1942,8 @@ def _build_pk_map_dict(
     ktrans: str | None = None,
     ve: str | None = None,
     vp: str | None = None,
-    kep: str | None = None,
 ) -> dict[str, str]:
-    """Build dictionary of PK maps for smoothing."""
+    """Build dictionary of independently estimated PK maps for smoothing."""
     from nipype.interfaces.base import isdefined
 
     d: dict[str, str] = {}
@@ -1952,11 +1951,87 @@ def _build_pk_map_dict(
         d["ktrans"] = ktrans
     if ve and isdefined(ve):
         d["ve"] = ve
-    if kep and isdefined(kep):
-        d["kep"] = kep
     if vp and isdefined(vp):
         d["vp"] = vp
     return d
+
+
+def _derive_smoothed_kep(
+    smoothed_pk: dict[str, str] | None,
+    native_kep_file: str | None,
+    brain_mask_file: str | None,
+    epsilon_ve: float,
+    max_kep: float,
+) -> dict[str, str]:
+    """Add Kep derived from the spatially smoothed Ktrans and ve maps.
+
+    Parameters
+    ----------
+    smoothed_pk : dict or None
+        Smoothed PK-map paths containing ``ktrans`` and ``ve``.
+    native_kep_file : str or None
+        Native Kep map used only to preserve the voxelwise domain where Kep
+        is defined, notably excluding Patlak voxels in automatic model mode.
+    brain_mask_file : str or None
+        DCE-space brain mask used to restrict the derived map.
+    epsilon_ve : float
+        Minimum valid ve denominator.
+    max_kep : float
+        Maximum reported Kep in inverse minutes.
+
+    Returns
+    -------
+    dict
+        Copy of ``smoothed_pk`` with a derived ``kep`` path when its inputs
+        are available and geometrically compatible.
+    """
+    from pathlib import Path
+    from typing import cast
+
+    import nibabel as nib
+    import numpy as np
+    from nipype.interfaces.base import isdefined
+
+    result = dict(smoothed_pk or {})
+    ktrans_file = result.get("ktrans")
+    ve_file = result.get("ve")
+    if not ktrans_file or not ve_file:
+        return result
+    if not Path(ktrans_file).is_file() or not Path(ve_file).is_file():
+        return result
+
+    ktrans_img = cast("nib.Nifti1Image", nib.load(ktrans_file))
+    ve_img = cast("nib.Nifti1Image", nib.load(ve_file))
+    ktrans = ktrans_img.get_fdata()  # type: ignore[attr-defined]
+    ve = ve_img.get_fdata()  # type: ignore[attr-defined]
+    if ktrans.shape != ve.shape or not np.allclose(ktrans_img.affine, ve_img.affine):
+        raise ValueError("Smoothed Ktrans and ve maps must have matching geometry")
+
+    valid = np.isfinite(ktrans) & np.isfinite(ve) & (ve >= epsilon_ve)
+    if native_kep_file and isdefined(native_kep_file) and Path(native_kep_file).is_file():
+        native_kep_img = cast("nib.Nifti1Image", nib.load(native_kep_file))
+        native_kep = native_kep_img.get_fdata()  # type: ignore[attr-defined]
+        if native_kep.shape != ktrans.shape or not np.allclose(
+            native_kep_img.affine, ktrans_img.affine
+        ):
+            raise ValueError("Native Kep and smoothed PK maps must have matching geometry")
+        valid &= np.isfinite(native_kep)
+    if brain_mask_file and isdefined(brain_mask_file) and Path(brain_mask_file).is_file():
+        mask_img = cast("nib.Nifti1Image", nib.load(brain_mask_file))
+        mask = mask_img.get_fdata() > 0  # type: ignore[attr-defined]
+        if mask.shape != ktrans.shape or not np.allclose(mask_img.affine, ktrans_img.affine):
+            raise ValueError("Brain mask and smoothed PK maps must have matching geometry")
+        valid &= mask
+
+    kep = np.zeros(ktrans.shape, dtype=np.float32)
+    np.divide(ktrans, ve, out=kep, where=valid)
+    np.clip(kep, 0.0, max_kep, out=kep)
+    out_path = Path.cwd() / f"{Path(ktrans_file).stem}_derived_kep.nii.gz"
+    header = ktrans_img.header.copy()
+    header.set_data_dtype(np.float32)
+    nib.save(nib.Nifti1Image(kep, ktrans_img.affine, header), out_path)  # type: ignore[attr-defined]
+    result["kep"] = str(out_path)
+    return result
 
 
 def _build_model_free_map_dict(
@@ -1991,36 +2066,6 @@ def _build_model_free_map_dict(
         d["wash_in_slope"] = wash_in_slope
     if wash_out_slope and isdefined(wash_out_slope):
         d["wash_out_slope"] = wash_out_slope
-    return d
-
-
-def _build_uncertainty_map_dict(
-    ktrans_std: str | None = None,
-    ve_std: str | None = None,
-    vp_std: str | None = None,
-    fp_std: str | None = None,
-    ps_std: str | None = None,
-) -> dict[str, str]:
-    """Build dictionary of uncertainty std maps for smoothing.
-
-    Only posterior std maps are smoothed. CV (std/mean ratio) and CI95 bounds
-    are excluded because smoothing a ratio or derived statistic is physically
-    incorrect -- it conflates spatial averaging with statistical inference.
-    """
-    from nipype.interfaces.base import isdefined
-
-    d: dict[str, str] = {}
-    if ktrans_std and isdefined(ktrans_std):
-        d["Ktrans_std"] = ktrans_std
-    if ve_std and isdefined(ve_std):
-        d["ve_std"] = ve_std
-    if vp_std and isdefined(vp_std):
-        d["vp_std"] = vp_std
-    # 2CXM-specific uncertainty maps
-    if fp_std and isdefined(fp_std):
-        d["Fp_std"] = fp_std
-    if ps_std and isdefined(ps_std):
-        d["PS_std"] = ps_std
     return d
 
 

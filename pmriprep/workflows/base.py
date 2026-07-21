@@ -2851,7 +2851,6 @@ def _connect_master_dce_outputs_and_datasinks(
             # Smoothed maps
             ("outputnode.smooth_pk_maps", "inputnode.smooth_pk_maps"),
             ("outputnode.smooth_model_free_maps", "inputnode.smooth_model_free_maps"),
-            ("outputnode.smooth_uncertainty_maps", "inputnode.smooth_uncertainty_maps"),
             # QC metrics
             ("outputnode.qc_metrics", "inputnode.qc_metrics"),
             # QC plots

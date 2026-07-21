@@ -468,7 +468,7 @@ def _build_dce_smoothed_meta(
         float(fwhm_mm) if str(fwhm_mm).replace(".", "").isdigit() else fwhm_mm
     )
     out["SmoothingType"] = "Gaussian"
-    out["SmoothingMasked"] = True
+    out["OutputMaskApplied"] = True
     out["IntendedFor"] = "visualization"
     out["Note"] = "Use non-smoothed maps for quantitative ROI analysis"
     if units is not None:
@@ -689,15 +689,13 @@ def _copy_dce_xfm(
 def _split_dce_smoothed(
     smooth_pk: dict[str, str] | None = None,
     smooth_mf: dict[str, str] | None = None,
-    smooth_uncertainty: dict[str, str] | None = None,
     pk_units: dict[str, str] | None = None,
     mf_units: dict[str, str] | None = None,
-    inference: str = "vi",
 ) -> tuple[
     list[str], list[str], list[str], list[str],
     list[str], list[str], list[str],
 ]:
-    """Flatten the three smoothed-map dicts into per-output tuples."""
+    """Flatten the PK and model-free smoothed-map dicts into output tuples."""
     import re as _re
     from pathlib import Path
 
@@ -758,29 +756,6 @@ def _split_dce_smoothed(
             desc_values.append(f"dce{fwhm_str}")
             suffixes.append(mf_suffix_bids.get(name, name))
             map_keys.append(name)
-
-    uncertainty_map_key = {
-        "Ktrans_std": "ktrans_uncertainty",
-        "ve_std": "ve_uncertainty",
-        "vp_std": "vp_uncertainty",
-        "Fp_std": "fp_uncertainty",
-        "PS_std": "ps_uncertainty",
-    }
-    if isinstance(smooth_uncertainty, dict):
-        for name, src in smooth_uncertainty.items():
-            if not (src and Path(src).exists()):
-                continue
-            fwhm_str, fwhm_mm = _extract_fwhm(src)
-            param = name.replace("_std", "")
-            in_files.append(str(src))
-            statistic = "standard error" if inference.lower() == "nlls" else "posterior SD"
-            descs.append(f"Smoothed {param} {statistic} map")
-            fwhms.append(fwhm_mm)
-            units_list.append(pk_units.get(param, ""))
-            uncertainty_desc = "StandardError" if inference.lower() == "nlls" else "PosteriorSD"
-            desc_values.append(f"dce{uncertainty_desc}{fwhm_str}")
-            suffixes.append(param)
-            map_keys.append(uncertainty_map_key.get(name, ""))
 
     return in_files, descs, fwhms, units_list, desc_values, suffixes, map_keys
 
@@ -1154,7 +1129,6 @@ def init_dce_datasinks_wf(
                 "nktrans_map", "niauc60_map",
                 # Smoothed dicts (variable cardinality)
                 "smooth_pk_maps", "smooth_model_free_maps",
-                "smooth_uncertainty_maps",
                 # T1/B1 + masks (anat/)
                 "t1_map", "b1_map", "brain_mask", "nawm_mask",
                 # Motion + AIF
@@ -1691,9 +1665,7 @@ def init_dce_datasinks_wf(
         splitter = pe.Node(
             niu.Function(
                 input_names=[
-                    "smooth_pk", "smooth_mf",
-                    "smooth_uncertainty",
-                    "pk_units", "mf_units", "inference",
+                    "smooth_pk", "smooth_mf", "pk_units", "mf_units",
                 ],
                 output_names=[
                     "in_files", "descs", "fwhms", "units_list",
@@ -1705,12 +1677,10 @@ def init_dce_datasinks_wf(
         )
         splitter.inputs.pk_units = dict(_PK_UNITS)
         splitter.inputs.mf_units = dict(_MF_UNITS)
-        splitter.inputs.inference = inference
         workflow.connect([
             (inputnode, splitter, [
                 ("smooth_pk_maps", "smooth_pk"),
                 ("smooth_model_free_maps", "smooth_mf"),
-                ("smooth_uncertainty_maps", "smooth_uncertainty"),
             ]),
         ])
 

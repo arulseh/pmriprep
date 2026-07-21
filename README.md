@@ -537,7 +537,7 @@ output_dir/pmriprep/
     sub-01_ses-01.html
 ```
 
-> When `smooth_fwhm` is set (DSC or DCE config), smoothed variants of perfusion maps are also written with a `Sm{fwhm}` suffix in the `desc-` entity (e.g., `desc-dscRelSm3Cbf_stat` for 3 mm FWHM). All NIfTI outputs have paired `.json` sidecars with descriptions, units, and provenance.
+> When `smooth_fwhm` is set (DSC or DCE config), smoothed variants of continuous perfusion maps are also written with a `Sm{fwhm}` suffix in the `desc-` entity (e.g., `desc-dscRelSm3Cbf_stat` for 3 mm FWHM). DCE Kep is derived from the smoothed Ktrans and ve maps; uncertainty, timing, categorical, and fit-quality maps remain at native resolution. Smoothed maps are intended for visualization; use native maps for quantitative ROI analysis. All NIfTI outputs have paired `.json` sidecars with descriptions, units, and provenance.
 
 ### Output File Descriptions
 

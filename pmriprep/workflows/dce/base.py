@@ -33,7 +33,6 @@ from pmriprep.workflows._perfusion import (
 from pmriprep.workflows.dce._helpers import (  # noqa: F401
     _build_model_free_map_dict,
     _build_pk_map_dict,
-    _build_uncertainty_map_dict,
     _collect_qc_metrics,
     _compute_early_mean,
     _create_aif_search_mask,
@@ -48,6 +47,7 @@ from pmriprep.workflows.dce._helpers import (  # noqa: F401
     _resample_dsc_cbv_to_dce,
     _resample_dsc_ncbv_to_dce,
     _signal_to_concentration_node,
+    _derive_smoothed_kep,
     _smooth_dce_maps,
     _transform_atlas_cascade_to_dce,
     _transform_atlas_to_dce,
@@ -350,10 +350,12 @@ def init_dce_smoothing_wf(
 ) -> pe.Workflow:
     """Build the DCE perfusion-map smoothing sub-workflow.
 
-    Spatially smooths the PK maps (Ktrans, ve, vp, kep), the model-free maps
-    (IAUC60/90/120, peak, SER, wash-in/out), and absolute parameter-uncertainty
-    maps within the brain mask. The orchestrator instantiates this
-    sub-workflow only when ``config.smooth_fwhm > 0``.
+    Spatially smooths the independently estimated PK maps (Ktrans, ve, vp) and
+    model-free maps (IAUC60/90/120, peak, SER, wash-in/out) within the brain
+    mask. Smoothed Kep is then derived as smoothed Ktrans divided by smoothed
+    ve. Parameter-uncertainty maps are deliberately not smoothed. The
+    orchestrator instantiates this sub-workflow only when
+    ``config.smooth_fwhm > 0``.
 
     Parameters
     ----------
@@ -369,12 +371,12 @@ def init_dce_smoothing_wf(
 
     Inputs
     ------
-    ktrans, ve, vp, kep
-        PK parameter maps.
+    ktrans, ve, vp
+        Independently estimated PK parameter maps.
+    kep_validity
+        Native Kep map used only to preserve its defined voxel domain.
     iauc60, iauc90, iauc120, peak, ser, wash_in_slope, wash_out_slope
         Model-free maps.
-    ktrans_std, ve_std, vp_std, fp_std, ps_std
-        Parameter standard-error or posterior-standard-deviation maps.
     brain_mask_file
         DCE-space brain mask (smoothing restricted to brain voxels).
 
@@ -384,8 +386,6 @@ def init_dce_smoothing_wf(
         Smoothed PK map files.
     smoothed_model_free
         Smoothed model-free map files.
-    smoothed_uncertainty
-        Smoothed uncertainty map files.
     """
     workflow = pe.Workflow(name=name)
     inputnode = pe.Node(
@@ -394,7 +394,7 @@ def init_dce_smoothing_wf(
                 "ktrans",
                 "ve",
                 "vp",
-                "kep",
+                "kep_validity",
                 "iauc60",
                 "iauc90",
                 "iauc120",
@@ -402,11 +402,6 @@ def init_dce_smoothing_wf(
                 "ser",
                 "wash_in_slope",
                 "wash_out_slope",
-                "ktrans_std",
-                "ve_std",
-                "vp_std",
-                "fp_std",
-                "ps_std",
                 "brain_mask_file",
             ]
         ),
@@ -414,14 +409,14 @@ def init_dce_smoothing_wf(
     )
     outputnode = pe.Node(
         niu.IdentityInterface(
-            fields=["smoothed_pk", "smoothed_model_free", "smoothed_uncertainty"]
+            fields=["smoothed_pk", "smoothed_model_free"]
         ),
         name="outputnode",
     )
 
     build_pk_dict = pe.Node(
         niu.Function(
-            input_names=["ktrans", "ve", "vp", "kep"],
+            input_names=["ktrans", "ve", "vp"],
             output_names=["map_dict"],
             function=_build_pk_map_dict,
         ),
@@ -455,34 +450,27 @@ def init_dce_smoothing_wf(
     )
     smooth_model_free.inputs.fwhm = fwhm
 
-    # Only absolute uncertainty maps are smoothed; relative and interval maps are excluded.
-    build_uncertainty_dict = pe.Node(
+    derive_kep = pe.Node(
         niu.Function(
             input_names=[
-                "ktrans_std", "ve_std", "vp_std",
-                "fp_std", "ps_std",
+                "smoothed_pk", "native_kep_file", "brain_mask_file",
+                "epsilon_ve", "max_kep",
             ],
-            output_names=["map_dict"],
-            function=_build_uncertainty_map_dict,
+            output_names=["smoothed_pk_with_kep"],
+            function=_derive_smoothed_kep,
         ),
-        name="build_uncertainty_dict",
+        name="derive_smoothed_kep",
     )
-    smooth_uncertainty = pe.Node(
-        niu.Function(
-            input_names=["map_files", "brain_mask_file", "fwhm"],
-            output_names=["smoothed_files"],
-            function=_smooth_dce_maps,
-        ),
-        name="smooth_uncertainty_maps",
-    )
-    smooth_uncertainty.inputs.fwhm = fwhm
+    from pmriprep.utils.dce_constants import EPSILON_VE, KEP_BOUNDS
+
+    derive_kep.inputs.epsilon_ve = EPSILON_VE
+    derive_kep.inputs.max_kep = KEP_BOUNDS.max
 
     workflow.connect([
         (inputnode, build_pk_dict, [
             ("ktrans", "ktrans"),
             ("ve", "ve"),
             ("vp", "vp"),
-            ("kep", "kep"),
         ]),
         (build_pk_dict, smooth_pk, [("map_dict", "map_files")]),
         (inputnode, smooth_pk, [("brain_mask_file", "brain_mask_file")]),
@@ -497,18 +485,11 @@ def init_dce_smoothing_wf(
         ]),
         (build_mf_dict, smooth_model_free, [("map_dict", "map_files")]),
         (inputnode, smooth_model_free, [("brain_mask_file", "brain_mask_file")]),
-        (inputnode, build_uncertainty_dict, [
-            ("ktrans_std", "ktrans_std"),
-            ("ve_std", "ve_std"),
-            ("vp_std", "vp_std"),
-            ("fp_std", "fp_std"),
-            ("ps_std", "ps_std"),
-        ]),
-        (build_uncertainty_dict, smooth_uncertainty, [("map_dict", "map_files")]),
-        (inputnode, smooth_uncertainty, [("brain_mask_file", "brain_mask_file")]),
-        (smooth_pk, outputnode, [("smoothed_files", "smoothed_pk")]),
+        (smooth_pk, derive_kep, [("smoothed_files", "smoothed_pk")]),
+        (inputnode, derive_kep, [("kep_validity", "native_kep_file")]),
+        (inputnode, derive_kep, [("brain_mask_file", "brain_mask_file")]),
+        (derive_kep, outputnode, [("smoothed_pk_with_kep", "smoothed_pk")]),
         (smooth_model_free, outputnode, [("smoothed_files", "smoothed_model_free")]),
-        (smooth_uncertainty, outputnode, [("smoothed_files", "smoothed_uncertainty")]),
     ])
     return workflow
 
@@ -1681,7 +1662,6 @@ def init_dce_preproc_wf(
                 # Smoothed maps (populated only if config.smooth_fwhm > 0)
                 "smooth_pk_maps",
                 "smooth_model_free_maps",
-                "smooth_uncertainty_maps",
                 # Normalized maps (requires NAWM mask)
                 "nktrans_map",
                 "niauc60_map",
@@ -2481,14 +2461,14 @@ def init_dce_preproc_wf(
         smoothing_wf = init_dce_smoothing_wf(fwhm=config.smooth_fwhm)
 
     if smoothing_wf is not None:
-        # PK / model-free / uncertainty-std maps from PK modeling; the DCE brain
-        # mask fans out to all three smoothers inside the sub-workflow.
+        # PK and model-free maps from PK modeling; the DCE brain mask fans out
+        # to both smoothers inside the sub-workflow.
         workflow.connect([
             (pk_wf, smoothing_wf, [
                 ("outputnode.out_ktrans", "inputnode.ktrans"),
                 ("outputnode.out_ve", "inputnode.ve"),
                 ("outputnode.out_vp", "inputnode.vp"),
-                ("outputnode.out_kep", "inputnode.kep"),
+                ("outputnode.out_kep", "inputnode.kep_validity"),
                 ("outputnode.out_iauc60", "inputnode.iauc60"),
                 ("outputnode.out_iauc90", "inputnode.iauc90"),
                 ("outputnode.out_iauc120", "inputnode.iauc120"),
@@ -2496,11 +2476,6 @@ def init_dce_preproc_wf(
                 ("outputnode.out_ser", "inputnode.ser"),
                 ("outputnode.out_wash_in_slope", "inputnode.wash_in_slope"),
                 ("outputnode.out_wash_out_slope", "inputnode.wash_out_slope"),
-                ("outputnode.out_ktrans_std", "inputnode.ktrans_std"),
-                ("outputnode.out_ve_std", "inputnode.ve_std"),
-                ("outputnode.out_vp_std", "inputnode.vp_std"),
-                ("outputnode.out_fp_std", "inputnode.fp_std"),
-                ("outputnode.out_ps_std", "inputnode.ps_std"),
             ]),
             (dce_brain_extraction_wf, smoothing_wf, [
                 ("outputnode.out_mask", "inputnode.brain_mask_file"),
@@ -2878,7 +2853,6 @@ def init_dce_preproc_wf(
             (smoothing_wf, outputnode, [
                 ("outputnode.smoothed_pk", "smooth_pk_maps"),
                 ("outputnode.smoothed_model_free", "smooth_model_free_maps"),
-                ("outputnode.smoothed_uncertainty", "smooth_uncertainty_maps"),
             ]),
         ])
 

@@ -91,12 +91,6 @@
       "map_files"
     ],
     [
-      "build_uncertainty_dict",
-      "map_dict",
-      "smooth_uncertainty_maps",
-      "map_files"
-    ],
-    [
       "collect_qc_metrics",
       "qc_metrics",
       "outputnode",
@@ -165,6 +159,12 @@
     [
       "dce_brain_extract",
       "out_mask",
+      "derive_smoothed_kep",
+      "brain_mask_file"
+    ],
+    [
+      "dce_brain_extract",
+      "out_mask",
       "outputnode",
       "brain_mask"
     ],
@@ -196,12 +196,6 @@
       "dce_brain_extract",
       "out_mask",
       "smooth_pk_maps",
-      "brain_mask_file"
-    ],
-    [
-      "dce_brain_extract",
-      "out_mask",
-      "smooth_uncertainty_maps",
       "brain_mask_file"
     ],
     [
@@ -611,6 +605,12 @@
       "out_file",
       "dce_preprocess",
       "in_file"
+    ],
+    [
+      "derive_smoothed_kep",
+      "smoothed_pk_with_kep",
+      "outputnode",
+      "smooth_pk_maps"
     ],
     [
       "dsc_dce_validation",
@@ -1029,12 +1029,6 @@
     [
       "pk_modeling",
       "out_fp_std",
-      "build_uncertainty_dict",
-      "fp_std"
-    ],
-    [
-      "pk_modeling",
-      "out_fp_std",
       "outputnode",
       "fp_uncertainty"
     ],
@@ -1137,8 +1131,8 @@
     [
       "pk_modeling",
       "out_kep",
-      "build_pk_dict",
-      "kep"
+      "derive_smoothed_kep",
+      "native_kep_file"
     ],
     [
       "pk_modeling",
@@ -1229,12 +1223,6 @@
       "out_ktrans_cv",
       "outputnode",
       "ktrans_cv"
-    ],
-    [
-      "pk_modeling",
-      "out_ktrans_std",
-      "build_uncertainty_dict",
-      "ktrans_std"
     ],
     [
       "pk_modeling",
@@ -1331,12 +1319,6 @@
       "out_ps_cv",
       "outputnode",
       "ps_cv"
-    ],
-    [
-      "pk_modeling",
-      "out_ps_std",
-      "build_uncertainty_dict",
-      "ps_std"
     ],
     [
       "pk_modeling",
@@ -1497,12 +1479,6 @@
     [
       "pk_modeling",
       "out_ve_std",
-      "build_uncertainty_dict",
-      "ve_std"
-    ],
-    [
-      "pk_modeling",
-      "out_ve_std",
       "outputnode",
       "ve_uncertainty"
     ],
@@ -1583,12 +1559,6 @@
       "out_vp_cv",
       "outputnode",
       "vp_cv"
-    ],
-    [
-      "pk_modeling",
-      "out_vp_std",
-      "build_uncertainty_dict",
-      "vp_std"
     ],
     [
       "pk_modeling",
@@ -1749,14 +1719,8 @@
     [
       "smooth_pk_maps",
       "smoothed_files",
-      "outputnode",
-      "smooth_pk_maps"
-    ],
-    [
-      "smooth_uncertainty_maps",
-      "smoothed_files",
-      "outputnode",
-      "smooth_uncertainty_maps"
+      "derive_smoothed_kep",
+      "smoothed_pk"
     ],
     [
       "transform_atlas_cascade",
@@ -1974,22 +1938,9 @@
     },
     "build_pk_dict": {
       "input_names": [
-        "kep",
         "ktrans",
         "ve",
         "vp"
-      ],
-      "output_names": [
-        "map_dict"
-      ]
-    },
-    "build_uncertainty_dict": {
-      "input_names": [
-        "fp_std",
-        "ktrans_std",
-        "ps_std",
-        "ve_std",
-        "vp_std"
       ],
       "output_names": [
         "map_dict"
@@ -2109,6 +2060,18 @@
         "model_selection_regions",
         "pk_param_maps_qc_plot",
         "vp_at_bound_fractions"
+      ]
+    },
+    "derive_smoothed_kep": {
+      "input_names": [
+        "brain_mask_file",
+        "epsilon_ve",
+        "max_kep",
+        "native_kep_file",
+        "smoothed_pk"
+      ],
+      "output_names": [
+        "smoothed_pk_with_kep"
       ]
     },
     "dsc_dce_validation": {
@@ -2264,16 +2227,6 @@
       ]
     },
     "smooth_pk_maps": {
-      "input_names": [
-        "brain_mask_file",
-        "fwhm",
-        "map_files"
-      ],
-      "output_names": [
-        "smoothed_files"
-      ]
-    },
-    "smooth_uncertainty_maps": {
       "input_names": [
         "brain_mask_file",
         "fwhm",
@@ -2444,8 +2397,7 @@
   },
   "function_sha256": {
     "build_model_free_dict": "3074057e4a4048b45ac6a2dea7137001b9549eeb0284627b390a1238cc07dba2",
-    "build_pk_dict": "81df70fdc375f903350664dbec0f2f1862bc30835621ca1e49de2c326c455bed",
-    "build_uncertainty_dict": "6b803ecfe4016461a72dbfd290c575b5695ddf412597ec954b0e94a092e746ed",
+    "build_pk_dict": "d150bcea85a6d48fbb72799763f123404d45a96104157d4d34475d9e25eb5af3",
     "collect_qc_metrics": "9d2d654a0efaf754199db0b59fcf372e98f41e9ba2ec5f5d9a2961c0b4bf565c",
     "combine_masks": "f2748155dafc15b2d74a066b3da5db0ed2a4b5486b46ee8ea1f4c7a181de8fcf",
     "create_aif_mask": "b7f950098e31edf1f4ae33feeceb4f24287680351c18994377a6129477eb1b0d",
@@ -2453,6 +2405,7 @@
     "dce_early_mean": "fd75a021c6ef482c605e9a7596c6c17381cd8996e63adafc61cb7f30031b6cb0",
     "dce_pk_fit_qc": "cd52e2aa20a7277276e2b566d13c0e16f5f6304f92445060a6ad7949cb10b65c",
     "dce_pk_maps_qc": "ae61f370545c65d8aaecaf86b1c3f7ca47b84fe05dba7dea8fa310128afaa480",
+    "derive_smoothed_kep": "9d982da06a3954d5de3ee25ef7532d55af957f32a8850966c15f64d6e2e4f8d4",
     "dsc_dce_validation": "f89b6ace91d480d7960947bea6f327e6e55d8eff5cca7cde3eb0ad7b762cdda1",
     "dsc_dce_xval_plot": "5c7cd63d87cc931e5d8a26b939b407d2318a1b6fb76ef3f19ad2f35ead4026d7",
     "external_t1_to_dce": "040b96cd6e1f8b623dd8dda541e6e73e481eae4dffcc406ba1db772eb46b233a",
@@ -2467,7 +2420,6 @@
     "signal_to_concentration": "3eb790eec588e9b239e5931dc2c59c8ad3ffa2449c56d4a3e64854a65626fcc1",
     "smooth_model_free_maps": "9337a944ec7a462423d0207ea201423080e5fe385f482e7d3fe94d577411c6dc",
     "smooth_pk_maps": "9337a944ec7a462423d0207ea201423080e5fe385f482e7d3fe94d577411c6dc",
-    "smooth_uncertainty_maps": "9337a944ec7a462423d0207ea201423080e5fe385f482e7d3fe94d577411c6dc",
     "transform_atlas_cascade": "92097e5d6df046e1997dbee6d10208373b12e5535619d7397855d263159a752a",
     "transform_brain_mask": "d79c70197847c13c4a4fd38f056ae9911584e27b3d0d1a55b81ebbbc0dc8c3e4",
     "transform_enhancing_mask": "d79c70197847c13c4a4fd38f056ae9911584e27b3d0d1a55b81ebbbc0dc8c3e4",
@@ -2499,10 +2451,6 @@
       "n_procs": 1
     },
     "build_pk_dict": {
-      "mem_gb": 0.2,
-      "n_procs": 1
-    },
-    "build_uncertainty_dict": {
       "mem_gb": 0.2,
       "n_procs": 1
     },
@@ -2547,6 +2495,10 @@
       "n_procs": 1
     },
     "dce_reorient": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "derive_smoothed_kep": {
       "mem_gb": 0.2,
       "n_procs": 1
     },
@@ -2623,10 +2575,6 @@
       "n_procs": 1
     },
     "smooth_pk_maps": {
-      "mem_gb": 0.2,
-      "n_procs": 1
-    },
-    "smooth_uncertainty_maps": {
       "mem_gb": 0.2,
       "n_procs": 1
     },
@@ -2718,7 +2666,7 @@
       "function_str": "def _build_model_free_map_dict(\n    iauc60: str | None = None,\n    iauc90: str | None = None,\n    iauc120: str | None = None,\n    peak: str | None = None,\n    ser: str | None = None,\n    wash_in_slope: str | None = None,\n    wash_out_slope: str | None = None,\n) -> dict[str, str]:\n    \"\"\"Build dictionary of model-free maps for smoothing.\n\n    TTP and BAT are discrete timing maps, and curve type is categorical; none\n    are included because smoothing would create non-physical intermediate\n    values.\n    \"\"\"\n    from nipype.interfaces.base import isdefined\n\n    d: dict[str, str] = {}\n    if iauc60 and isdefined(iauc60):\n        d[\"iauc60\"] = iauc60\n    if iauc90 and isdefined(iauc90):\n        d[\"iauc90\"] = iauc90\n    if iauc120 and isdefined(iauc120):\n        d[\"iauc120\"] = iauc120\n    if peak and isdefined(peak):\n        d[\"peak_enhancement\"] = peak\n    if ser and isdefined(ser):\n        d[\"ser\"] = ser\n    if wash_in_slope and isdefined(wash_in_slope):\n        d[\"wash_in_slope\"] = wash_in_slope\n    if wash_out_slope and isdefined(wash_out_slope):\n        d[\"wash_out_slope\"] = wash_out_slope\n    return d\n"
     },
     "build_pk_dict": {
-      "function_str": "def _build_pk_map_dict(\n    ktrans: str | None = None,\n    ve: str | None = None,\n    vp: str | None = None,\n    kep: str | None = None,\n) -> dict[str, str]:\n    \"\"\"Build dictionary of PK maps for smoothing.\"\"\"\n    from nipype.interfaces.base import isdefined\n\n    d: dict[str, str] = {}\n    if ktrans and isdefined(ktrans):\n        d[\"ktrans\"] = ktrans\n    if ve and isdefined(ve):\n        d[\"ve\"] = ve\n    if kep and isdefined(kep):\n        d[\"kep\"] = kep\n    if vp and isdefined(vp):\n        d[\"vp\"] = vp\n    return d\n"
+      "function_str": "def _build_pk_map_dict(\n    ktrans: str | None = None,\n    ve: str | None = None,\n    vp: str | None = None,\n) -> dict[str, str]:\n    \"\"\"Build dictionary of independently estimated PK maps for smoothing.\"\"\"\n    from nipype.interfaces.base import isdefined\n\n    d: dict[str, str] = {}\n    if ktrans and isdefined(ktrans):\n        d[\"ktrans\"] = ktrans\n    if ve and isdefined(ve):\n        d[\"ve\"] = ve\n    if vp and isdefined(vp):\n        d[\"vp\"] = vp\n    return d\n"
     },
     "collect_qc_metrics": {
       "b1_method": "none",
@@ -2767,6 +2715,10 @@
       "dof": 6,
       "reference_type": "postcon",
       "search_range": 30
+    },
+    "derive_smoothed_kep": {
+      "epsilon_ve": 0.001,
+      "max_kep": 10.0
     },
     "dsc_dce_validation": {
       "no_dsc_validation": false
@@ -2846,9 +2798,6 @@
     "smooth_pk_maps": {
       "fwhm": 4.0
     },
-    "smooth_uncertainty_maps": {
-      "fwhm": 4.0
-    },
     "transform_brain_mask": {
       "function_str": "def _transform_mask_to_dce(\n    mask_file: str | None = None,\n    reference_file: str | None = None,\n    transform_matrix: str | None = None,\n) -> str:\n    \"\"\"Transform brain mask from T1w space to DCE space.\n\n    Thin Nipype Function-node wrapper around\n    ``pmriprep.utils.registration.transform_mask_to_grid``. The import is\n    intentionally inline because ``niu.Function`` serialises this body\n    via ``inspect.getsource`` and runs it in a worker that cannot see\n    module-level imports.\n\n    Parameters\n    ----------\n    mask_file : str or None\n        Path to brain mask in T1w space (or None).\n    reference_file : str or None\n        Path to DCE reference image for output geometry.\n    transform_matrix : str or None\n        Path to T1w\u2192DCE FLIRT matrix.\n\n    Returns\n    -------\n    str\n        Path to transformed brain mask in DCE space, or \"\" if no mask.\n    \"\"\"\n    from pmriprep.utils.registration import transform_mask_to_grid\n\n    return transform_mask_to_grid(mask_file, reference_file, transform_matrix)\n"
     },
@@ -2912,10 +2861,6 @@
       "Function"
     ],
     [
-      "build_uncertainty_dict",
-      "Function"
-    ],
-    [
       "collect_qc_metrics",
       "Function"
     ],
@@ -2958,6 +2903,10 @@
     [
       "dce_reorient",
       "Reorient"
+    ],
+    [
+      "derive_smoothed_kep",
+      "Function"
     ],
     [
       "dsc_dce_validation",
@@ -3033,10 +2982,6 @@
     ],
     [
       "smooth_pk_maps",
-      "Function"
-    ],
-    [
-      "smooth_uncertainty_maps",
       "Function"
     ],
     [
@@ -3166,7 +3111,6 @@
     "ser_map",
     "smooth_model_free_maps",
     "smooth_pk_maps",
-    "smooth_uncertainty_maps",
     "t1_map",
     "t1_qc_plot",
     "t1w_in_dce",

@@ -683,7 +683,7 @@ def _build_smoothed_meta(
     extra = {
         "SmoothingFWHM": float(fwhm),
         "SmoothingType": "Gaussian",
-        "SmoothingMasked": True,
+        "OutputMaskApplied": True,
         "IntendedFor": "visualization",
         "Note": "Use non-smoothed maps for quantitative ROI analysis",
     }
