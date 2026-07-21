@@ -121,6 +121,34 @@ class TestPreloadPrecedence:
         assert qc["preload_k2_classification"] == K2Adequacy.PARTIAL.value
         assert "preload_k2_confidence" in qc
 
+    def test_refined_baseline_reaches_k2_and_provenance(
+        self, tmp_path: Path,
+    ) -> None:
+        """K2 correction and QC use the baseline supplied by AIF refinement."""
+        conc, mask, _ = _write_fixtures(tmp_path)
+        with mock.patch(
+            "pmriprep.utils.dsc_preload.apply_k2_correction",
+            return_value=_fake_k2_result((4, 4, 4)),
+        ) as apply_k2, mock.patch(
+            "pmriprep.utils.dsc_preload.detect_preload",
+            return_value=_advisory(PreloadClass.MINIMAL),
+        ), mock.patch(
+            "pmriprep.utils.dsc_preload.classify_preload_adequacy_from_k2",
+            return_value=(K2Adequacy.ADEQUATE, "moderate", "stub"),
+        ):
+            _, _, qc = _detect_and_correct_preload(
+                concentration_file=conc,
+                brain_mask_file=mask,
+                te=0.03,
+                field_strength=3.0,
+                tr=1.5,
+                preload="auto",
+                baseline_frames=17,
+            )
+
+        assert apply_k2.call_args.kwargs["baseline_frames"] == 17
+        assert qc["baseline_frames_used"] == 17
+
     def test_k2_primary_when_user_auto(self, tmp_path: Path) -> None:
         """preload='auto' + concrete K2 adequacy → effective = adequacy."""
         conc, mask, _ = _write_fixtures(tmp_path)

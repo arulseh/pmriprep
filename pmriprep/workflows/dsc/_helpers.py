@@ -492,6 +492,7 @@ def _detect_and_correct_preload(
         )
 
     qc_metrics: dict[str, object] = {}
+    qc_metrics["baseline_frames_used"] = int(baseline_frames)
     k2_map_file: str = ""
 
     # K2-primary is the sole classifier. Run detect_preload() only for the

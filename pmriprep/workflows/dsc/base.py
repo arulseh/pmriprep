@@ -485,6 +485,7 @@ def init_dsc_preload_wf(
                 "te",
                 "field_strength",
                 "tr",
+                "baseline_frames",
                 "lesion_mask_dsc",
             ]
         ),
@@ -566,6 +567,7 @@ def init_dsc_preload_wf(
             ("te", "te"),
             ("field_strength", "field_strength"),
             ("tr", "tr"),
+            ("baseline_frames", "baseline_frames"),
         ]),
         # Positive-tail QC: augment the preload QC dict downstream, off the
         # deconvolution critical path. Consumes the raw concentration + K2 map
@@ -2378,6 +2380,7 @@ def init_dsc_preproc_wf(
         (conc_aif_wf, preload_wf, [
             ("outputnode.concentration_file", "inputnode.concentration_file"),
             ("outputnode.signal_file", "inputnode.signal_file"),
+            ("outputnode.aif_baseline_frames", "inputnode.baseline_frames"),
         ]),
         (hdbet_dsc, preload_wf, [
             ("dsc_brain_mask_file", "inputnode.brain_mask_file"),
