@@ -8,7 +8,6 @@ import json
 import os
 import shutil
 import subprocess
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional, Tuple
@@ -114,6 +113,31 @@ MAP_SUFFIXES = {
 }
 
 
+def _resolve_derivative(
+    subject: str,
+    session: str,
+    datatype: str,
+    suffix: str,
+) -> Path:
+    """Resolve one derivative while allowing preserved source entities.
+
+    The exact suffix is anchored at the end of the filename so parameter
+    maps cannot be confused with uncertainty products containing the same
+    parameter name. A missing derivative returns its canonical bare-prefix
+    path, preserving the existing ``Path.exists()`` caller contract.
+    """
+    directory = get_subject_output_root(subject) / subject / session / datatype
+    bare = directory / f"{subject}_{session}_{suffix}.nii.gz"
+    if bare.exists():
+        return bare
+    matches = sorted(directory.glob(f"{subject}_{session}_*_{suffix}.nii.gz"))
+    if len(matches) > 1:
+        raise RuntimeError(
+            f"Ambiguous {suffix} derivative for {subject} {session}: {matches}"
+        )
+    return matches[0] if matches else bare
+
+
 # ---------------------------------------------------------------------------
 # NIfTI loading
 # ---------------------------------------------------------------------------
@@ -143,8 +167,9 @@ def load_map(
     import nibabel as nib
 
     map_suffix = MAP_SUFFIXES.get(suffix, suffix)
-    fname = f"{subject}_{session}_{PERF_SPACE_PREFIX}{map_suffix}.nii.gz"
-    fpath = get_subject_output_root(subject) / subject / session / "perf" / fname
+    fpath = _resolve_derivative(
+        subject, session, "perf", f"{PERF_SPACE_PREFIX}{map_suffix}",
+    )
 
     if not fpath.exists():
         return None
@@ -177,14 +202,17 @@ def load_mask(
     import nibabel as nib
 
     if mask_type == "brain":
-        fname = f"{subject}_{session}_{ANAT_SPACE_PREFIX}desc-brain_mask.nii.gz"
-        fpath = get_subject_output_root(subject) / subject / session / "anat" / fname
+        fpath = _resolve_derivative(
+            subject, session, "anat", f"{ANAT_SPACE_PREFIX}desc-brain_mask",
+        )
     elif mask_type == "qc":
-        fname = f"{subject}_{session}_{PERF_SPACE_PREFIX}desc-dceQc_mask.nii.gz"
-        fpath = get_subject_output_root(subject) / subject / session / "perf" / fname
+        fpath = _resolve_derivative(
+            subject, session, "perf", f"{PERF_SPACE_PREFIX}desc-dceQc_mask",
+        )
     elif mask_type == "aif":
-        fname = f"{subject}_{session}_{PERF_SPACE_PREFIX}desc-dceAif_mask.nii.gz"
-        fpath = get_subject_output_root(subject) / subject / session / "perf" / fname
+        fpath = _resolve_derivative(
+            subject, session, "perf", f"{PERF_SPACE_PREFIX}desc-dceAif_mask",
+        )
     else:
         raise ValueError(f"Unknown mask type: {mask_type}")
 
@@ -272,8 +300,7 @@ def load_ref_dce(
     """
     import nibabel as nib
 
-    fname = f"{subject}_{session}_{PERF_SPACE_PREFIX}desc-dceMean_stat.nii.gz"
-    fpath = get_subject_output_root(subject) / subject / session / "perf" / fname
+    fpath = get_ref_dce_path(subject, session)
 
     if not fpath.exists():
         return None
@@ -284,25 +311,29 @@ def load_ref_dce(
 
 def get_ref_dce_path(subject: str, session: str) -> Path:
     """Get path to DCE reference image."""
-    fname = f"{subject}_{session}_{PERF_SPACE_PREFIX}desc-dceMean_stat.nii.gz"
-    return get_subject_output_root(subject) / subject / session / "perf" / fname
+    return _resolve_derivative(
+        subject, session, "perf", f"{PERF_SPACE_PREFIX}desc-dceMean_stat",
+    )
 
 
 def get_map_path(subject: str, session: str, suffix: str) -> Path:
     """Get path to a parameter map file."""
     map_suffix = MAP_SUFFIXES.get(suffix, suffix)
-    fname = f"{subject}_{session}_{PERF_SPACE_PREFIX}{map_suffix}.nii.gz"
-    return get_subject_output_root(subject) / subject / session / "perf" / fname
+    return _resolve_derivative(
+        subject, session, "perf", f"{PERF_SPACE_PREFIX}{map_suffix}",
+    )
 
 
 def get_mask_path(subject: str, session: str, mask_type: str) -> Path:
     """Get path to a mask file."""
     if mask_type == "brain":
-        fname = f"{subject}_{session}_{ANAT_SPACE_PREFIX}desc-brain_mask.nii.gz"
-        return get_subject_output_root(subject) / subject / session / "anat" / fname
+        return _resolve_derivative(
+            subject, session, "anat", f"{ANAT_SPACE_PREFIX}desc-brain_mask",
+        )
     elif mask_type == "qc":
-        fname = f"{subject}_{session}_{PERF_SPACE_PREFIX}desc-dceQc_mask.nii.gz"
-        return get_subject_output_root(subject) / subject / session / "perf" / fname
+        return _resolve_derivative(
+            subject, session, "perf", f"{PERF_SPACE_PREFIX}desc-dceQc_mask",
+        )
     else:
         raise ValueError(f"Unknown mask type: {mask_type}")
 
@@ -405,10 +436,22 @@ def _get_anat_path(subject: str, session: str) -> Path:
 def _get_dce_to_anat_xfm(subject: str, session: str) -> Path:
     """Get path to the pipeline's DCE-to-T1w transform (.h5, with .mat fallback)."""
     base = get_subject_output_root(subject) / subject / session / "anat"
-    h5 = base / f"{subject}_{session}_from-dceref_to-T1w_mode-image_xfm.h5"
-    if h5.exists():
-        return h5
-    return base / f"{subject}_{session}_from-dceref_to-T1w_mode-image_xfm.mat"
+    stem = "from-dceref_to-T1w_mode-image_xfm"
+    for extension in ("h5", "mat"):
+        bare = base / f"{subject}_{session}_{stem}.{extension}"
+        if bare.exists():
+            return bare
+        matches = sorted(base.glob(
+            f"{subject}_{session}_*_{stem}.{extension}"
+        ))
+        if len(matches) > 1:
+            raise RuntimeError(
+                f"Ambiguous DCE-to-T1w transform for {subject} {session}: "
+                f"{matches}"
+            )
+        if matches:
+            return matches[0]
+    return base / f"{subject}_{session}_{stem}.mat"
 
 
 def _ensure_fsl_mat(
@@ -965,9 +1008,13 @@ def load_ci_map(
     """
     import nibabel as nib
 
-    suffix = f"desc-dceCI95{bound}{parameter[:1].upper()}{parameter[1:]}_stat"
-    fname = f"{subject}_{session}_{PERF_SPACE_PREFIX}{suffix}.nii.gz"
-    fpath = get_subject_output_root(subject) / subject / session / "perf" / fname
+    suffix = (
+        f"desc-dceConfidenceInterval95{bound}{parameter[:1].upper()}"
+        f"{parameter[1:]}_stat"
+    )
+    fpath = _resolve_derivative(
+        subject, session, "perf", f"{PERF_SPACE_PREFIX}{suffix}",
+    )
 
     if not fpath.exists():
         return None

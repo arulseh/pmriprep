@@ -17,18 +17,12 @@ Tier 2 — Registration QC (requires FLIRT, skips gracefully):
 """
 
 from pathlib import Path
-from typing import Optional
-
 import numpy as np
 import pytest
 from numpy.typing import NDArray
 
-from pmriprep.utils.registration import calculate_correlation, calculate_dice
-from pmriprep.utils.reproducibility import (
-    BlandAltmanResult,
-    ReproducibilityResult,
-    compute_bland_altman,
-)
+from pmriprep.utils.registration import calculate_dice
+from pmriprep.utils.reproducibility import compute_bland_altman
 
 from .conftest import (
     SES1,
@@ -40,7 +34,6 @@ from .conftest import (
     get_map_path,
     get_mask_path,
     get_ref_dce_path,
-    has_fsl,
     load_clinical_tumor_mask,
     load_map,
     load_mask,
@@ -115,9 +108,9 @@ class TestSummaryStatistics:
     @pytest.mark.parametrize(
         "parameter,expected_score,expected_pct_rc",
         [
-            ("Ktrans", 0.8803703804, 0.4622329816),
-            ("ve", 0.8782049972, 0.4642157400),
-            ("vp", 0.8273458804, 0.6017271163),
+            ("Ktrans", 0.8739285709, 0.4707653751),
+            ("ve", 0.8707801033, 0.4704096486),
+            ("vp", 0.8236859179, 0.6171839375),
         ],
     )
     def test_osipi_repeatability(
@@ -126,7 +119,7 @@ class TestSummaryStatistics:
         expected_score: float,
         expected_pct_rc: float,
     ) -> None:
-        """Cohort metrics should match the validated publication run."""
+        """Cohort metrics should match the validated OSIPI15 release run."""
         score_repeat, pct_rc = _osipi_repeatability(parameter)
         assert score_repeat == pytest.approx(expected_score, abs=1e-8)
         assert pct_rc == pytest.approx(expected_pct_rc, abs=1e-8)
@@ -463,7 +456,7 @@ class TestVisualization:
             ax.axhline(ba.upper_limit, color="gray", linestyle="--", label="95% LoA")
             ax.axhline(ba.lower_limit, color="gray", linestyle="--")
             ax.set_xlabel(f"Mean {param}")
-            ax.set_ylabel(f"Difference (ses1 - ses2)")
+            ax.set_ylabel("Difference (ses1 - ses2)")
             ax.set_title(f"{param} Bland-Altman")
             ax.legend(fontsize=8)
 
