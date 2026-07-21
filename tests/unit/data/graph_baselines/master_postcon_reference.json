@@ -488,12 +488,6 @@
     ],
     [
       "dce_wf",
-      "outputnode.smooth_uncertainty_maps",
-      "dce_datasinks_wf",
-      "inputnode.smooth_uncertainty_maps"
-    ],
-    [
-      "dce_wf",
       "outputnode.t1_map",
       "dce_datasinks_wf",
       "inputnode.t1_map"
