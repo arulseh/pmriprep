@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
-from jinja2 import Environment, PackageLoader
+from jinja2 import ChainableUndefined, Environment, PackageLoader
 
 from pmriprep.utils.dce_constants import (
     QC_B1_MEAN_HIGH,
@@ -691,9 +691,10 @@ _PIPELINE_FIGURE_KEYS: dict[str, list[str]] = {
 _PIPELINE_PRESENCE_PROBES: dict[str, str] = {
     "anat": "anat/{prefix}*_space-T1w_desc-preproc_T1w.json",
     "tumor_seg": "anat/{prefix}*_space-T1w_desc-tumorseg_dseg.json",
-    # DSC/DCE preproc sidecars use the bare prefix (no run in name).
-    "dsc": "perf/{prefix}_desc-dscPreproc_dsc.json",
-    "dce": "perf/{prefix}_desc-dcePreproc_dce.json",
+    # DSC/DCE retain recognized source entities (for example ``run`` and
+    # ``acq``), so absorb them between the session prefix and descriptor.
+    "dsc": "perf/{prefix}*_desc-dscPreproc_dsc.json",
+    "dce": "perf/{prefix}*_desc-dcePreproc_dce.json",
 }
 
 
@@ -1481,7 +1482,10 @@ def generate_unified_report(
     }
 
     # Render template
-    env = Environment(loader=PackageLoader("pmriprep", "templates"))
+    env = Environment(
+        loader=PackageLoader("pmriprep", "templates"),
+        undefined=ChainableUndefined,
+    )
     template = env.get_template("report_unified.html")
     html = template.render(**context)
 

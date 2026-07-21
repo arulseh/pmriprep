@@ -79,6 +79,16 @@ def test_parent_render_shows_dsc_blocks_when_dsc_present(env):
     assert "<h3>DSC-DCE Cross-Validation</h3>" in rendered
 
 
+def test_parent_render_tolerates_missing_dsc_qc_sections(env):
+    """A missing or unreadable optional QC sidecar must not abort reporting."""
+    template = env.get_template("report_unified.html")
+    dsc_ctx = {"qc_metrics": {}, "images": {}, "display_status": {}}
+
+    rendered = template.render(**_minimal_parent_ctx(dsc=dsc_ctx, dce=None))
+
+    assert "<h2>DSC Perfusion</h2>" in rendered
+
+
 # =============================================================================
 # Template AIF caveat
 # =============================================================================
