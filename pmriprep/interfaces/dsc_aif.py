@@ -3418,7 +3418,9 @@ class AIFDetection(BaseInterface):
     ) -> _FinalAIFState:
         """Finalize gamma fitting, fallback, and QC after the candidate cascade."""
         conc_data = context.concentration
+        bootstrap_baseline_frames = context.baseline_frames
         baseline_frames = context.baseline_frames
+        candidate_baseline_frames: Optional[int] = None
         detection_level = cascade.detection_level
         top_candidates = cascade.candidates
         aif_mask_arr = np.zeros(conc_data.shape[:3], dtype=np.uint8)
@@ -3435,6 +3437,7 @@ class AIFDetection(BaseInterface):
             quality_score = finalized.quality_score
             qc_metrics = finalized.qc_metrics
             baseline_frames = finalized.baseline_frames
+            candidate_baseline_frames = finalized.baseline_frames
         elif not context.disable_fallback:
             aif_curve, synth_metrics = self._prepare_cached_synthetic_fallback(
                 conc_data,
@@ -3509,6 +3512,17 @@ class AIFDetection(BaseInterface):
                     gamma_r2,
                     GAMMA_R2_SYNTHETIC_FALLBACK,
                 )
+                rejected_measured_aif = {
+                    "detection_level": detection_level,
+                    "baseline_frames": candidate_baseline_frames,
+                    "arrival_time_seconds": qc_metrics.get("arrival_time_seconds"),
+                    "peak_frame": qc_metrics.get("averaged_aif_fp_peak_frame"),
+                    "gamma_fit_r_squared": gamma_r2,
+                    "gamma_fit_auc_ratio": qc_metrics.get("gamma_fit_auc_ratio"),
+                    "gamma_fit_rejected_reason": qc_metrics.get(
+                        "gamma_fit_rejected_reason"
+                    ),
+                }
                 aif_curve, synth_metrics = self._prepare_cached_synthetic_fallback(
                     conc_data,
                     context.brain_mask,
@@ -3526,6 +3540,11 @@ class AIFDetection(BaseInterface):
                 qc_metrics["quality_score"] = quality_score
                 qc_metrics["gamma_r2_at_fallback"] = gamma_r2
                 qc_metrics.update(synth_metrics)
+                qc_metrics["rejected_measured_aif"] = {
+                    key: value
+                    for key, value in rejected_measured_aif.items()
+                    if value is not None
+                }
                 qc_metrics["synthetic_aif_warnings"] = [
                     "Synthetic AIF used - gamma fit R2 below threshold",
                     "Relative quantification only (rCBV, rCBF normalized to contralateral)",
@@ -3534,6 +3553,7 @@ class AIFDetection(BaseInterface):
                     "Manual AIF selection recommended for clinical use",
                 ]
                 gamma_fitted_curve = None
+                raw_aif_curve = None
                 measured_aif = aif_curve.copy()
                 qc_metrics["cbv_auc_denominator_is_synthetic"] = True
 
@@ -3554,6 +3574,25 @@ class AIFDetection(BaseInterface):
             qc_metrics["cascade_postfilter_diags"] = dict(
                 cascade.postfilter_diagnostics
             )
+
+        # Final analysis provenance must describe the curve that leaves this
+        # interface, not a measured candidate discarded during fallback.
+        qc_metrics["bootstrap_baseline_frames"] = bootstrap_baseline_frames
+        qc_metrics["baseline_frames_initial"] = bootstrap_baseline_frames
+        qc_metrics["aif_baseline_frames"] = aif_baseline_frames
+        qc_metrics["baseline_frames_used"] = aif_baseline_frames
+        qc_metrics["n_baseline_frames"] = aif_baseline_frames
+        qc_metrics["baseline_detection_method"] = "ensemble_refined"
+        if candidate_baseline_frames is not None:
+            qc_metrics["candidate_baseline_frames"] = candidate_baseline_frames
+        if detection_level == "synthetic":
+            synthetic_arrival = qc_metrics.get("synthetic_aif_arrival_frame")
+            if synthetic_arrival is not None:
+                arrival_seconds = float(synthetic_arrival) * context.tr
+                qc_metrics["arrival_time_seconds"] = arrival_seconds
+                aif_metrics = dict(qc_metrics.get("aif_metrics") or {})
+                aif_metrics["arrival"] = arrival_seconds
+                qc_metrics["aif_metrics"] = aif_metrics
 
         return _FinalAIFState(
             aif_curve,

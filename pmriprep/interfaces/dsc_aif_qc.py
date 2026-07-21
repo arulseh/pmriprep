@@ -127,9 +127,17 @@ class AIFQCPlot(BaseInterface):
         # Load raw AIF for gamma fit overlay
         raw_aif_curve = None
         raw_aif_file = self.inputs.raw_aif_curve_file
-        if raw_aif_file and Path(raw_aif_file).exists():
+        if (
+            detection_level not in ("synthetic", "external")
+            and raw_aif_file
+            and Path(raw_aif_file).exists()
+        ):
             raw_aif_curve = np.loadtxt(raw_aif_file)
-        gamma_applied = self.inputs.gamma_fit_applied
+        gamma_applied = (
+            self.inputs.gamma_fit_applied
+            if detection_level not in ("synthetic", "external")
+            else False
+        )
 
         # Generate plots
         out_dir = Path.cwd()

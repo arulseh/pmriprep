@@ -96,9 +96,10 @@
       "qc_metrics": {
         "aif_baseline_frames": 3,
         "aif_quality": "degraded",
-        "baseline_detection_method": "auto_p99",
+        "baseline_detection_method": "ensemble_refined",
         "baseline_frames_initial": 2,
-        "baseline_frames_used": 2,
+        "baseline_frames_used": 3,
+        "bootstrap_baseline_frames": 2,
         "cascade_postfilter_diags": {
           "atlas_strict": {
             "aif_n_after_filters": 1
@@ -114,6 +115,7 @@
         "gamma_fit_rejected_reason": "synthetic_aif",
         "n_aif_voxels_available": 0,
         "n_aif_voxels_selected": 0,
+        "n_baseline_frames": 3,
         "quality_score": {
           "__f__": "0x1.3333333333333p-2"
         },
@@ -269,9 +271,11 @@
           0,
           0
         ],
-        "baseline_detection_method": "auto_p99",
+        "baseline_detection_method": "ensemble_refined",
         "baseline_frames_initial": 2,
-        "baseline_frames_used": 2,
+        "baseline_frames_used": 3,
+        "bootstrap_baseline_frames": 2,
+        "candidate_baseline_frames": 2,
         "cascade_downgraded": false,
         "detection_method": "atlas_strict",
         "gamma_fit_applied": true,
@@ -279,6 +283,7 @@
           "__f__": "0x1.e666666666666p-1"
         },
         "n_aif_voxels_selected": 1,
+        "n_baseline_frames": 3,
         "quality_score": {
           "__f__": "0x1.999999999999ap-1"
         },
@@ -389,9 +394,11 @@
       "qc_metrics": {
         "aif_baseline_frames": 3,
         "aif_quality": "degraded",
-        "baseline_detection_method": "auto_p99",
+        "baseline_detection_method": "ensemble_refined",
         "baseline_frames_initial": 2,
-        "baseline_frames_used": 2,
+        "baseline_frames_used": 3,
+        "bootstrap_baseline_frames": 2,
+        "candidate_baseline_frames": 2,
         "cascade_downgraded": false,
         "cascade_postfilter_diags": {
           "atlas_strict": {
@@ -414,8 +421,17 @@
         },
         "n_aif_voxels_available": 0,
         "n_aif_voxels_selected": 0,
+        "n_baseline_frames": 3,
         "quality_score": {
           "__f__": "0x1.3333333333333p-2"
+        },
+        "rejected_measured_aif": {
+          "baseline_frames": 2,
+          "detection_level": "atlas_strict",
+          "gamma_fit_r_squared": {
+            "__f__": "-0x1.0000000000000p-2"
+          },
+          "gamma_fit_rejected_reason": "low_r_squared"
         },
         "s0_rejection_available": false,
         "synthetic": true,
@@ -551,9 +567,11 @@
           0,
           0
         ],
-        "baseline_detection_method": "auto_p99",
+        "baseline_detection_method": "ensemble_refined",
         "baseline_frames_initial": 2,
-        "baseline_frames_used": 2,
+        "baseline_frames_used": 3,
+        "bootstrap_baseline_frames": 2,
+        "candidate_baseline_frames": 2,
         "cascade_downgraded": false,
         "detection_method": "atlas_strict",
         "gamma_fit_applied": false,
@@ -565,6 +583,7 @@
           "__f__": "-0x1.0000000000000p-2"
         },
         "n_aif_voxels_selected": 1,
+        "n_baseline_frames": 3,
         "quality_score": {
           "__f__": "0x1.999999999999ap-1"
         },

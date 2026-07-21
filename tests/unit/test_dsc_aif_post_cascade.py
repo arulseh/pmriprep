@@ -53,7 +53,7 @@ def _cascade(*, accepted: bool = True) -> dsc_aif._CascadeDetectionResult:
     )
 
 
-def _detected_result() -> dsc_aif._FinalizedDetectedAIF:
+def _detected_result(*, baseline_frames: int = 2) -> dsc_aif._FinalizedDetectedAIF:
     curve = np.array([0.0, 0.0, 1.0, 4.0, 2.0, 0.5])
     mask = np.zeros((2, 2, 2), dtype=np.uint8)
     mask[0, 0, 0] = 1
@@ -66,7 +66,7 @@ def _detected_result() -> dsc_aif._FinalizedDetectedAIF:
             "aif_voxel_coord": [0, 0, 0],
             "cascade_downgraded": False,
         },
-        baseline_frames=2,
+        baseline_frames=baseline_frames,
     )
 
 
@@ -79,21 +79,26 @@ def test_gamma_r2_floor_replaces_detected_state_with_synthetic(
     monkeypatch.setattr(
         detector,
         "_finalize_detected_aif",
-        lambda *args: _detected_result(),
+        lambda *args: _detected_result(baseline_frames=4),
     )
 
-    def reject_gamma(*args: object) -> tuple[bool, None, np.ndarray, np.ndarray]:
+    def reject_gamma(
+        *args: object,
+    ) -> tuple[bool, np.ndarray, np.ndarray, np.ndarray]:
         curve = np.asarray(args[0])
         qc_metrics = args[-1]
         assert isinstance(qc_metrics, dict)
         qc_metrics["gamma_fit_r_squared"] = -0.25
-        return False, None, curve, curve * 0.9
+        return False, curve * 0.9, curve, curve * 0.9
 
     monkeypatch.setattr(detector, "_apply_gamma_fit_if_appropriate", reject_gamma)
     monkeypatch.setattr(
         detector,
         "_prepare_cached_synthetic_fallback",
-        lambda *args: (synthetic, {"synthetic_peak": 8.0}),
+        lambda *args: (
+            synthetic,
+            {"synthetic_peak": 8.0, "synthetic_aif_arrival_frame": 3},
+        ),
     )
 
     state = detector._finalize_post_cascade(
@@ -104,10 +109,18 @@ def test_gamma_r2_floor_replaces_detected_state_with_synthetic(
     np.testing.assert_array_equal(state.measured_curve, synthetic)
     assert not state.mask.any()
     assert state.gamma_curve is None
+    assert state.raw_curve is None
     assert state.detection_level == "synthetic"
     assert state.quality_score == 0.3
     assert state.qc_metrics["synthetic_fallback_reason"] == "gamma_r2_floor"
     assert state.qc_metrics["gamma_r2_at_fallback"] == -0.25
+    assert state.qc_metrics["bootstrap_baseline_frames"] == 2
+    assert state.qc_metrics["baseline_frames_used"] == 2
+    assert state.qc_metrics["n_baseline_frames"] == 2
+    assert state.qc_metrics["candidate_baseline_frames"] == 4
+    assert state.qc_metrics["arrival_time_seconds"] == 4.5
+    assert state.qc_metrics["aif_metrics"]["arrival"] == 4.5
+    assert state.qc_metrics["rejected_measured_aif"]["baseline_frames"] == 4
     assert state.qc_metrics["cbv_auc_denominator_is_synthetic"] is True
     assert "aif_voxel_coord" not in state.qc_metrics
     assert "cascade_postfilter_diags" in state.qc_metrics
@@ -170,7 +183,8 @@ def test_cascade_exhaustion_builds_complete_synthetic_qc(
     assert state.qc_metrics["synthetic_fallback_reason"] == "no_candidates"
     assert state.qc_metrics["gamma_fit_rejected_reason"] == "synthetic_aif"
     assert state.qc_metrics["aif_baseline_frames"] == 3
-    assert state.qc_metrics["baseline_frames_used"] == 2
+    assert state.qc_metrics["bootstrap_baseline_frames"] == 2
+    assert state.qc_metrics["baseline_frames_used"] == 3
     assert state.qc_metrics["cascade_postfilter_diags"] == (
         _cascade(accepted=False).postfilter_diagnostics
     )
