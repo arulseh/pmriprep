@@ -809,12 +809,34 @@ def _collect_pipeline_images(
         Dict mapping image key to relative path string
         (e.g. ``figures/sub-01_ses-01_desc-brainmask_dsc.png``).
     """
+    prefix_parts = [f"sub-{subject_id}"]
+    if session_id:
+        prefix_parts.append(f"ses-{session_id}")
+    prefix = "_".join(prefix_parts)
+
     images: dict[str, str] = {}
     for key in _PIPELINE_FIGURE_KEYS.get(pipeline, []):
         fname = figure_filename(subject_id, session_id, key, pipeline)
         fpath = figures_dir / fname
         if fpath.exists():
             images[key] = f"figures/{fname}"
+            continue
+
+        # Perfusion figures retain source entities (for example acq, ce,
+        # rec, and run) between the subject/session prefix and desc. Keep
+        # accepting the historical entity-free name above, then discover
+        # the entity-rich form by its exact desc/suffix tail.
+        tail = fname[len(prefix):]
+        matches = sorted(figures_dir.glob(f"{prefix}*{tail}"))
+        if matches:
+            if len(matches) > 1:
+                logger.warning(
+                    "Multiple %s QC figures match %s; using %s",
+                    pipeline,
+                    key,
+                    matches[0].name,
+                )
+            images[key] = f"figures/{matches[0].name}"
     return images
 
 
