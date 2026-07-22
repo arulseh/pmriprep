@@ -1643,6 +1643,15 @@ def init_dsc_datasinks_wf(
         ),
         name="dataset_description",
     )
+
+    # These nodes write outside their Nipype working directories. Function
+    # outputs are untyped strings, so Nipype cannot detect that a derivative
+    # was deleted while the node cache remained intact. Always execute only
+    # the external writer boundary; all scientific producers stay cacheable.
+    for sink, _ in sink_outputs:
+        sink._interface._always_run = True
+    figures_writer._interface._always_run = True
+    dd_node._interface._always_run = True
     workflow.connect([
         (inputnode, dd_node, [
             ("output_dir", "output_dir"),

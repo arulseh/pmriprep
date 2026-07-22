@@ -129,6 +129,43 @@ def _run_writer(inputs: dict, qc_metrics: dict | None, tmp_path: Path | None = N
     return Path(inputs["output_dir"])
 
 
+def test_dsc_writer_recreates_deleted_cached_derivative(
+    minimal_inputs: dict, tmp_path: Path,
+) -> None:
+    """External derivatives are rewritten even when the node cache survives."""
+    from pmriprep.workflows.dsc.datasinks import init_dsc_datasinks_wf
+
+    wf = init_dsc_datasinks_wf(
+        output_dir=minimal_inputs["output_dir"],
+        bids_dir=minimal_inputs["bids_dir"],
+        subject_id=minimal_inputs["subject_id"],
+        session_id=minimal_inputs["session_id"],
+        inference="vi",
+        present_inputs={"mtt_map"},
+    )
+    wf.base_dir = str(tmp_path / "work-recreate")
+    inp = wf.inputs.inputnode
+    inp.source_dsc = minimal_inputs["source_dsc"]
+    for name in ("mtt_map", "tmax_map", "psr_map", "ph_map"):
+        setattr(inp, name, minimal_inputs[name])
+    inp.qc_metrics = {}
+
+    wf.run()
+    perf = (
+        Path(minimal_inputs["output_dir"]) / "pmriprep"
+        / "sub-test01" / "ses-01" / "perf"
+    )
+    nii = perf / "sub-test01_ses-01_desc-dscMtt_stat.nii.gz"
+    sidecar = nii.with_suffix("").with_suffix(".json")
+    assert nii.exists() and sidecar.exists()
+
+    nii.unlink()
+    sidecar.unlink()
+    wf.run()
+
+    assert nii.exists() and sidecar.exists()
+
+
 def test_nlls_uncertainty_uses_frequentist_derivative_names(tmp_path: Path) -> None:
     """DSC NLLS sinks distinguish standard errors from posterior uncertainty."""
     from pmriprep.workflows.dsc.datasinks import init_dsc_datasinks_wf

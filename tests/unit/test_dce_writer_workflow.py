@@ -61,6 +61,37 @@ def test_dce_factory_smoke(tmp_path: Path, minimal_bids: tuple[Path, str]) -> No
     assert sidecar["KtransConvention"] == "plasma_Tofts1999"
 
 
+def test_dce_writer_recreates_deleted_cached_derivative(
+    tmp_path: Path, minimal_bids: tuple[Path, str]
+) -> None:
+    """External derivatives are rewritten even when the node cache survives."""
+    from pmriprep.workflows.dce.datasinks import init_dce_datasinks_wf
+
+    bids, src = minimal_bids
+    out = tmp_path / "out"
+    wf = init_dce_datasinks_wf(
+        output_dir=str(out), bids_dir=str(bids),
+        subject_id="01", session_id="0001",
+        pk_model="tofts", inference="nlls",
+    )
+    wf.base_dir = str(tmp_path / "work")
+    wf.inputs.inputnode.source_dce = src
+    wf.inputs.inputnode.ktrans_map = _write_nii(tmp_path / "ktrans.nii.gz")
+    wf.inputs.inputnode.qc_metrics = {}
+
+    wf.run()
+    perf = out / "pmriprep" / "sub-01" / "ses-0001" / "perf"
+    nii = perf / "sub-01_ses-0001_desc-dceKtrans_stat.nii.gz"
+    sidecar = nii.with_suffix("").with_suffix(".json")
+    assert nii.exists() and sidecar.exists()
+
+    nii.unlink()
+    sidecar.unlink()
+    wf.run()
+
+    assert nii.exists() and sidecar.exists()
+
+
 def test_dce_factory_with_bayesian_uncertainty(
     tmp_path: Path, minimal_bids: tuple[Path, str]
 ) -> None:
