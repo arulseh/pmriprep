@@ -115,6 +115,28 @@ class TestPKMapKeyDriftGuard:
             "ps_map": "ps",
         }
 
+    def test_all_pk_output_keys_are_registered_for_aif_provenance(self) -> None:
+        """Every PK-family sink key must survive strict AIF stamping."""
+        from pmriprep.utils.aif_provenance import DCE_POPULATION_AIF_USAGE
+        from pmriprep.workflows.dce.datasinks import (
+            _CI95_MAPS,
+            _CV_MAPS,
+            _PK_MAPS,
+            _UNCERTAINTY_MAPS,
+        )
+
+        emitted = {
+            spec.map_key
+            for table in (_PK_MAPS, _UNCERTAINTY_MAPS, _CV_MAPS, _CI95_MAPS)
+            for spec in table
+        }
+        assert emitted <= DCE_POPULATION_AIF_USAGE.keys()
+
+        for key in ("fp", "ps", "fp_uncertainty", "ps_uncertainty"):
+            assert DCE_POPULATION_AIF_USAGE[key] == "ratio_defensible"
+        for key in ("fp_cv", "ps_cv"):
+            assert DCE_POPULATION_AIF_USAGE[key] == "safe"
+
 
 class TestBATCorrectionProvenance:
     """Regression: BATCorrection must surface from the MERGED qc dict.

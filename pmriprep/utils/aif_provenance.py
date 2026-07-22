@@ -100,6 +100,8 @@ DCE_POPULATION_AIF_USAGE: Final[dict[str, TemplateAIFUsageCategory]] = {
     "ve": "ratio_defensible",
     "kep": "ratio_defensible",
     "vp": "ratio_defensible",
+    "fp": "ratio_defensible",
+    "ps": "ratio_defensible",
     # Uncertainty
     "ktrans_uncertainty": "ratio_defensible",
     "ve_uncertainty": "ratio_defensible",
@@ -110,6 +112,8 @@ DCE_POPULATION_AIF_USAGE: Final[dict[str, TemplateAIFUsageCategory]] = {
     "ktrans_cv": "safe",
     "ve_cv": "safe",
     "vp_cv": "safe",
+    "fp_cv": "safe",
+    "ps_cv": "safe",
     # CI95
     "ktrans_ci95_lower": "ratio_defensible",
     "ktrans_ci95_upper": "ratio_defensible",
@@ -117,6 +121,10 @@ DCE_POPULATION_AIF_USAGE: Final[dict[str, TemplateAIFUsageCategory]] = {
     "ve_ci95_upper": "ratio_defensible",
     "vp_ci95_lower": "ratio_defensible",
     "vp_ci95_upper": "ratio_defensible",
+    "fp_ci95_lower": "ratio_defensible",
+    "fp_ci95_upper": "ratio_defensible",
+    "ps_ci95_lower": "ratio_defensible",
+    "ps_ci95_upper": "ratio_defensible",
     # IAUC (tissue concentration integral, AIF-independent)
     "iauc60": "safe",
     "iauc90": "safe",
@@ -137,6 +145,8 @@ DCE_POPULATION_AIF_USAGE: Final[dict[str, TemplateAIFUsageCategory]] = {
     "ve_sm": "ratio_defensible",
     "kep_sm": "ratio_defensible",
     "vp_sm": "ratio_defensible",
+    "fp_sm": "ratio_defensible",
+    "ps_sm": "ratio_defensible",
     # Model selection diagnostics (AIF shapes forward-model residuals)
     "model_selection": "qualitative_only",
     "delta_bic": "qualitative_only",
