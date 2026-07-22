@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from pmriprep.interfaces.hdglio import _terminate_process_group
+from pmriprep.utils.processes import run_isolated_command, terminate_process_group
 
 
 class _FakeProcess:
@@ -37,7 +37,7 @@ def test_process_group_cleanup_terminates_and_reaps(
     monkeypatch.setattr("os.killpg", lambda pid, sig: sent.append((pid, sig)))
     process = _FakeProcess()
 
-    _terminate_process_group(process, timeout=2.0)
+    terminate_process_group(process, timeout=2.0)  # type: ignore[arg-type]
 
     assert sent == [(1234, signal.SIGTERM)]
     assert process.wait_calls == [2.0]
@@ -51,7 +51,7 @@ def test_process_group_cleanup_escalates_and_reaps(
     monkeypatch.setattr("os.killpg", lambda pid, sig: sent.append((pid, sig)))
     process = _FakeProcess(time_out_once=True)
 
-    _terminate_process_group(process, timeout=2.0)
+    terminate_process_group(process, timeout=2.0)  # type: ignore[arg-type]
 
     assert sent == [(1234, signal.SIGTERM), (1234, signal.SIGKILL)]
     assert process.wait_calls == [2.0, None]
@@ -67,7 +67,7 @@ def test_process_group_cleanup_reaps_already_exited_child(
     monkeypatch.setattr("os.killpg", _missing_process)
     process = _FakeProcess()
 
-    _terminate_process_group(process)
+    terminate_process_group(process)  # type: ignore[arg-type]
 
     assert process.wait_calls == [None]
 
@@ -91,18 +91,15 @@ def test_fitting_executors_join_workers(
     assert source.count("shutdown(wait=True, cancel_futures=True)") == expected_count
 
 
-def test_hdglio_interrupt_cleans_isolated_process_group(
+def test_isolated_command_interrupt_cleans_process_group(
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
 ) -> None:
-    """HD-GLIO interruption cleans its isolated group and remains an interrupt."""
-    from pmriprep.interfaces.hdglio import HDGLIOSegment
-
+    """An interruption cleans the isolated group and remains an interrupt."""
     popen_kwargs: dict[str, Any] = {}
     cleaned: list[Any] = []
     process = _FakeProcess()
 
-    def _communicate() -> tuple[str, str]:
+    def _communicate(timeout: float | None = None) -> tuple[str, str]:
         raise KeyboardInterrupt
 
     process.communicate = _communicate  # type: ignore[attr-defined]
@@ -113,42 +110,35 @@ def test_hdglio_interrupt_cleans_isolated_process_group(
 
     monkeypatch.setattr(subprocess, "Popen", _popen)
     monkeypatch.setattr(
-        "pmriprep.interfaces.hdglio._terminate_process_group",
-        lambda child: cleaned.append(child),
+        "pmriprep.utils.processes.terminate_process_group",
+        lambda child, timeout: cleaned.append(child),
     )
-    monkeypatch.setattr(HDGLIOSegment, "_get_output_dir", lambda self: tmp_path)
-    monkeypatch.setattr(HDGLIOSegment, "_build_command", lambda self: "hd_glio_predict")
 
     with pytest.raises(KeyboardInterrupt):
-        HDGLIOSegment()._run_interface(object())
+        run_isolated_command(["hd_glio_predict"])
 
     assert popen_kwargs["start_new_session"] is True
     assert cleaned == [process]
 
 
-def test_hdglio_cleanup_failure_preserves_interrupt(
+def test_isolated_command_cleanup_failure_preserves_interrupt(
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
 ) -> None:
     """Cleanup errors do not replace the interruption that initiated cleanup."""
-    from pmriprep.interfaces.hdglio import HDGLIOSegment
-
     process = _FakeProcess()
 
-    def _communicate() -> tuple[str, str]:
+    def _communicate(timeout: float | None = None) -> tuple[str, str]:
         raise KeyboardInterrupt
 
-    def _cleanup_failure(child: Any) -> None:
+    def _cleanup_failure(child: Any, timeout: float) -> None:
         raise RuntimeError("cleanup failed")
 
     process.communicate = _communicate  # type: ignore[attr-defined]
     monkeypatch.setattr(subprocess, "Popen", lambda *args, **kwargs: process)
     monkeypatch.setattr(
-        "pmriprep.interfaces.hdglio._terminate_process_group",
+        "pmriprep.utils.processes.terminate_process_group",
         _cleanup_failure,
     )
-    monkeypatch.setattr(HDGLIOSegment, "_get_output_dir", lambda self: tmp_path)
-    monkeypatch.setattr(HDGLIOSegment, "_build_command", lambda self: "hd_glio_predict")
 
     with pytest.raises(KeyboardInterrupt):
-        HDGLIOSegment()._run_interface(object())
+        run_isolated_command(["hd_glio_predict"])

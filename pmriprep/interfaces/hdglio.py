@@ -27,37 +27,6 @@ from nipype.interfaces.base import (  # type: ignore[import-untyped]
 )
 
 
-def _terminate_process_group(process: Any, *, timeout: float = 5.0) -> None:
-    """Terminate a subprocess group and synchronously reap its leader.
-
-    Parameters
-    ----------
-    process : subprocess.Popen
-        Leader of a subprocess group created with ``start_new_session=True``.
-    timeout : float
-        Seconds to allow graceful termination before forcing termination.
-    """
-    import os
-    import signal
-    import subprocess
-
-    try:
-        os.killpg(process.pid, signal.SIGTERM)
-    except ProcessLookupError:
-        # The child exited between communicate() raising and cleanup.
-        process.wait()
-        return
-
-    try:
-        process.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        process.wait()
-
-
 class HDGLIOPrepInputSpec(BaseInterfaceInputSpec):
     """Input specification for HDGLIOPrep interface."""
 
@@ -758,7 +727,8 @@ class HDGLIOSegment(BaseInterface):
     def _run_interface(self, runtime: Any) -> Any:
         """Execute the interface."""
         import shlex
-        import subprocess
+
+        from pmriprep.utils.processes import run_isolated_command
 
         # Ensure output directory exists
         out_dir = self._get_output_dir()
@@ -770,31 +740,12 @@ class HDGLIOSegment(BaseInterface):
         # Isolate the launcher and its descendants so cleanup can target the
         # complete HD-GLIO process tree without signalling the Nipype worker.
         # Use shlex.split for safe command parsing without shell=True
-        process = subprocess.Popen(
-            shlex.split(cmd),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            start_new_session=True,
-        )
-        try:
-            stdout, stderr = process.communicate()
-        except BaseException:
-            try:
-                _terminate_process_group(process)
-            except Exception as cleanup_error:
-                # Cleanup must not replace the signal or failure that caused it.
-                import logging
+        result = run_isolated_command(shlex.split(cmd))
+        stdout, stderr = result.stdout, result.stderr
 
-                logging.getLogger("nipype.interface").warning(
-                    "Failed to fully reap HD-GLIO process group: %s",
-                    cleanup_error,
-                )
-            raise
-
-        if process.returncode != 0:
+        if result.returncode != 0:
             raise RuntimeError(
-                f"hd_glio_predict failed with return code {process.returncode}.\n"
+                f"hd_glio_predict failed with return code {result.returncode}.\n"
                 f"Command: {cmd}\n"
                 f"Stdout: {stdout}\n"
                 f"Stderr: {stderr}"

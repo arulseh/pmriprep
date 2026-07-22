@@ -40,8 +40,9 @@ class TestRunHdbet:
         def fake_run(cmd, **kwargs):
             brain_data = np.random.rand(10, 10, 10).astype(np.float32)
             _make_nifti(out_brain, brain_data)
+            return subprocess.CompletedProcess(cmd, 0, "", "")
 
-        with patch("subprocess.run", side_effect=fake_run):
+        with patch("pmriprep.utils.hdbet.run_isolated_command", side_effect=fake_run):
             succeeded, mask_path = run_hdbet(
                 in_file=in_file, out_brain=out_brain, device="cpu",
             )
@@ -65,10 +66,10 @@ class TestRunHdbet:
         out_brain = str(tmp_path / "brain.nii.gz")
         _make_nifti(in_file, np.random.rand(10, 10, 10))
 
-        error = subprocess.CalledProcessError(
-            1, "hd-bet", stderr="CUDA out of memory",
+        result = subprocess.CompletedProcess(
+            ["hd-bet"], 1, "", "CUDA out of memory",
         )
-        with patch("subprocess.run", side_effect=error):
+        with patch("pmriprep.utils.hdbet.run_isolated_command", return_value=result):
             succeeded, mask_path = run_hdbet(
                 in_file=in_file, out_brain=out_brain, device="cpu",
             )
@@ -88,7 +89,7 @@ class TestRunHdbet:
         _make_nifti(in_file, np.random.rand(10, 10, 10))
 
         with patch(
-            "subprocess.run",
+            "pmriprep.utils.hdbet.run_isolated_command",
             side_effect=subprocess.TimeoutExpired("hd-bet", 300),
         ):
             succeeded, mask_path = run_hdbet(
@@ -108,7 +109,10 @@ class TestRunHdbet:
         out_brain = str(tmp_path / "brain.nii.gz")
         _make_nifti(in_file, np.random.rand(10, 10, 10))
 
-        with patch("subprocess.run", side_effect=FileNotFoundError("hd-bet")):
+        with patch(
+            "pmriprep.utils.hdbet.run_isolated_command",
+            side_effect=FileNotFoundError("hd-bet"),
+        ):
             succeeded, mask_path = run_hdbet(
                 in_file=in_file, out_brain=out_brain, device="cpu",
             )
@@ -126,7 +130,7 @@ class TestRunHdbet:
         _make_nifti(in_file, np.random.rand(10, 10, 10))
 
         with patch(
-            "subprocess.run",
+            "pmriprep.utils.hdbet.run_isolated_command",
             side_effect=OSError("[Errno 11] Resource temporarily unavailable"),
         ):
             succeeded, _ = run_hdbet(
@@ -146,8 +150,9 @@ class TestRunHdbet:
         # Mock subprocess to write an all-zero brain
         def fake_run(cmd, **kwargs):
             _make_nifti(out_brain, np.zeros((10, 10, 10)))
+            return subprocess.CompletedProcess(cmd, 0, "", "")
 
-        with patch("subprocess.run", side_effect=fake_run):
+        with patch("pmriprep.utils.hdbet.run_isolated_command", side_effect=fake_run):
             succeeded, mask_path = run_hdbet(
                 in_file=in_file, out_brain=out_brain, device="cpu",
             )
