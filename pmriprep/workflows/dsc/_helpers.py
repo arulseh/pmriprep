@@ -1470,7 +1470,7 @@ def _generate_dsc_leakage_qc(
     subject_id: str = "",
     session_id: str = "",
     preload_qc: dict[str, object] | None = None,
-) -> str:
+) -> str | None:
     """Generate DSC leakage correction QC plot.
 
     Parameters
@@ -1503,19 +1503,19 @@ def _generate_dsc_leakage_qc(
     Returns
     -------
     str
-        Path to the generated QC plot PNG, or empty string if K2 unavailable.
+        Path to the generated QC plot PNG, or ``None`` if K2 is unavailable.
     """
     from pathlib import Path as _P
 
     # Skip if no K2 map (guard against "." or directory paths from unset outputs)
     if not k2_map_file or not _P(k2_map_file).is_file():
-        return ""
+        return None
 
     import nibabel as nib
     from pmriprep.utils.dsc_qc_plots import generate_dsc_leakage_qc_plot
 
     if not auc_raw_file or not auc_corr_file or not auc_diff_file:
-        return ""
+        return None
     k2_data = nib.load(k2_map_file).get_fdata()  # type: ignore[attr-defined]
     auc_raw_data = nib.load(auc_raw_file).get_fdata()  # type: ignore[attr-defined]
     auc_corr_data = nib.load(auc_corr_file).get_fdata()  # type: ignore[attr-defined]
@@ -1569,7 +1569,7 @@ def _generate_dsc_fit_qc(
     cbf_file: str,
     subject_id: str,
     session_id: str,
-) -> str:
+) -> str | None:
     """Generate DSC fit QC plot from saved QC fit data JSON.
 
     Parameters
@@ -1588,7 +1588,7 @@ def _generate_dsc_fit_qc(
     Returns
     -------
     str
-        Path to the generated QC plot PNG, or "" if unavailable.
+        Path to the generated QC plot PNG, or ``None`` if unavailable.
     """
     import json
     from pathlib import Path
@@ -1597,7 +1597,7 @@ def _generate_dsc_fit_qc(
     import numpy as np
 
     if not qc_fit_data_file or not Path(qc_fit_data_file).is_file():
-        return ""
+        return None
 
     with open(qc_fit_data_file) as f:
         fit_data = json.load(f)

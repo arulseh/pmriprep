@@ -281,6 +281,72 @@ def test_patlak_only_no_ve_kep(tmp_path: Path, minimal_bids: tuple[Path, str]) -
     assert not list(perf_out.glob("*Kep_stat.nii.gz"))
 
 
+def test_patlak_absent_model_selection_plot_reaches_figures_writer(
+    tmp_path: Path,
+) -> None:
+    """Fixed Patlak propagates ``None``, not an invalid empty file path."""
+    import nipype.pipeline.engine as pe
+    from nipype.interfaces import utility as niu
+
+    from pmriprep.interfaces.qc_writers import DCEFiguresWriter
+    from pmriprep.workflows.dce._helpers import _generate_dce_pk_maps_qc
+
+    ktrans = tmp_path / "ktrans.nii.gz"
+    vp = tmp_path / "vp.nii.gz"
+    mask = tmp_path / "mask.nii.gz"
+    affine = np.eye(4)
+    nib.save(nib.Nifti1Image(np.full((4, 4, 4), 0.1), affine), ktrans)
+    nib.save(nib.Nifti1Image(np.full((4, 4, 4), 0.05), affine), vp)
+    nib.save(nib.Nifti1Image(np.ones((4, 4, 4)), affine), mask)
+    aif = tmp_path / "aif.txt"
+    motion = tmp_path / "motion.par"
+    np.savetxt(aif, np.linspace(0.0, 1.0, 8))
+    np.savetxt(motion, np.zeros((8, 6)))
+
+    producer = pe.Node(
+        niu.Function(
+            input_names=[
+                "ktrans_file", "vp_file", "brain_mask_file", "model_name",
+                "subject_id", "session_id",
+            ],
+            output_names=[
+                "pk_param_maps_qc_plot", "model_selection_qc_plot",
+                "model_selection_regions", "vp_at_bound_fractions",
+            ],
+            function=_generate_dce_pk_maps_qc,
+        ),
+        name="patlak_qc",
+    )
+    producer.inputs.ktrans_file = str(ktrans)
+    producer.inputs.vp_file = str(vp)
+    producer.inputs.brain_mask_file = str(mask)
+    producer.inputs.model_name = "patlak"
+    producer.inputs.subject_id = "01"
+    producer.inputs.session_id = "0001"
+
+    writer = pe.Node(DCEFiguresWriter(), name="figures_writer")
+    writer.inputs.output_dir = str(tmp_path / "out")
+    writer.inputs.subject_id = "01"
+    writer.inputs.session_id = "0001"
+    writer.inputs.aif_curve = str(aif)
+    writer.inputs.motion_params = str(motion)
+    writer.inputs.qc_metrics = {}
+
+    workflow = pe.Workflow(name="patlak_writer", base_dir=str(tmp_path / "work"))
+    workflow.connect([
+        (producer, writer, [
+            ("pk_param_maps_qc_plot", "pk_param_maps_qc_plot"),
+            ("model_selection_qc_plot", "model_selection_qc_plot"),
+        ]),
+    ])
+    workflow.run(plugin="Linear")
+
+    session = tmp_path / "out" / "pmriprep" / "sub-01" / "ses-0001"
+    assert (session / "perf" / "sub-01_ses-0001_desc-dceAif_timeseries.tsv").exists()
+    assert (session / "figures" / "sub-01_ses-0001_desc-pkparammaps_dce.png").exists()
+    assert not list((session / "figures").glob("*modelselection*"))
+
+
 def test_2cxm_bayesian_fp_ps_uncertainty(
     tmp_path: Path, minimal_bids: tuple[Path, str]
 ) -> None:
@@ -925,6 +991,24 @@ def test_dce_figures_writer_accepts_none_for_optional_figures(
     writer.inputs.subject_id = "test"
     for field in _DCE_OPTIONAL_FIGURES:
         setattr(writer.inputs, field, None)
+
+
+def test_dsc_absent_qc_plot_producers_use_none() -> None:
+    """Absent DSC QC figures satisfy the optional writer-file contract."""
+    from pmriprep.interfaces.qc_writers import DSCFiguresWriter
+    from pmriprep.workflows.dsc._helpers import (
+        _generate_dsc_fit_qc,
+        _generate_dsc_leakage_qc,
+    )
+
+    leakage = _generate_dsc_leakage_qc("", "", "", "", "")
+    fit = _generate_dsc_fit_qc("", "", "", "01", "0001")
+    assert leakage is None
+    assert fit is None
+
+    writer = DSCFiguresWriter()
+    writer.inputs.dsc_leakage_qc_plot = leakage
+    writer.inputs.dsc_fit_qc_plot = fit
 
 
 def _figures_dir(tmp_path: Path, subject: str = "test") -> Path:

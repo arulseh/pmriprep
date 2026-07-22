@@ -2160,8 +2160,8 @@ def _generate_dce_pk_maps_qc(
     subject_id: str = "",
     session_id: str = "",
 ) -> tuple[
-    str,
-    str,
+    str | None,
+    str | None,
     dict[str, dict[str, float]] | None,
     dict[str, float] | None,
 ]:
@@ -2231,8 +2231,8 @@ def _generate_dce_pk_maps_qc(
             return None
         return nib.load(filepath).get_fdata()  # type: ignore[attr-defined,no-any-return]
 
-    pk_param_maps_qc_plot = ""
-    model_selection_qc_plot = ""
+    pk_param_maps_qc_plot: str | None = None
+    model_selection_qc_plot: str | None = None
     model_selection_regions: dict[str, dict[str, float]] | None = None
     vp_at_bound_fractions: dict[str, float] = {}
 
@@ -2504,7 +2504,7 @@ def _generate_dce_pk_fit_qc(
         # Load parameter maps
         ktrans = _safe_load(ktrans_file)
         if ktrans is None:
-            return "", {}
+            return None, {}
 
         is_auto = model_name == "auto"
         ve = _safe_load(ve_file)
@@ -2677,4 +2677,4 @@ def _generate_dce_pk_fit_qc(
 
     except Exception as e:
         logger.warning("Failed to generate PK fit QC plot: %s", e, exc_info=True)
-        return "", {}
+        return None, {}
