@@ -27,6 +27,37 @@ from nipype.interfaces.base import (  # type: ignore[import-untyped]
 )
 
 
+def _terminate_process_group(process: Any, *, timeout: float = 5.0) -> None:
+    """Terminate a subprocess group and synchronously reap its leader.
+
+    Parameters
+    ----------
+    process : subprocess.Popen
+        Leader of a subprocess group created with ``start_new_session=True``.
+    timeout : float
+        Seconds to allow graceful termination before forcing termination.
+    """
+    import os
+    import signal
+    import subprocess
+
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        # The child exited between communicate() raising and cleanup.
+        process.wait()
+        return
+
+    try:
+        process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.wait()
+
+
 class HDGLIOPrepInputSpec(BaseInterfaceInputSpec):
     """Input specification for HDGLIOPrep interface."""
 
@@ -736,21 +767,29 @@ class HDGLIOSegment(BaseInterface):
         # Build and run the command
         cmd = self._build_command()
 
-        # Execute HD-GLIO with proper signal handling
-        # Use Popen to allow Ctrl+C to propagate to child process
+        # Isolate the launcher and its descendants so cleanup can target the
+        # complete HD-GLIO process tree without signalling the Nipype worker.
         # Use shlex.split for safe command parsing without shell=True
         process = subprocess.Popen(
             shlex.split(cmd),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            start_new_session=False,  # Keep in same process group for signal forwarding
+            start_new_session=True,
         )
         try:
             stdout, stderr = process.communicate()
-        except KeyboardInterrupt:
-            process.terminate()
-            process.wait(timeout=5)
+        except BaseException:
+            try:
+                _terminate_process_group(process)
+            except Exception as cleanup_error:
+                # Cleanup must not replace the signal or failure that caused it.
+                import logging
+
+                logging.getLogger("nipype.interface").warning(
+                    "Failed to fully reap HD-GLIO process group: %s",
+                    cleanup_error,
+                )
             raise
 
         if process.returncode != 0:

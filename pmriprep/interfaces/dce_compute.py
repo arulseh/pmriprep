@@ -3740,7 +3740,7 @@ class ComputeDCEMaps(BaseInterface):
             )
             raise
         finally:
-            executor.shutdown(wait=False, cancel_futures=True)
+            executor.shutdown(wait=True, cancel_futures=True)
 
         return concat_fit_results(chunk_results, n_voxels)
 
@@ -3846,7 +3846,7 @@ class ComputeDCEMaps(BaseInterface):
                     logger.warning("Interrupted during parallel DCE fitting, cancelling workers")
                     raise
                 finally:
-                    executor.shutdown(wait=False, cancel_futures=True)
+                    executor.shutdown(wait=True, cancel_futures=True)
             return [_fit_single_voxel(vd) for vd in voxel_data_list]
 
         # Build batched arrays
@@ -4218,7 +4218,7 @@ class ComputeDCEMaps(BaseInterface):
                 logger.warning("Interrupted during hybrid DCE refinement, cancelling workers")
                 raise
             finally:
-                executor.shutdown(wait=False, cancel_futures=True)
+                executor.shutdown(wait=True, cancel_futures=True)
         else:
             cpu_results = [_fit_single_voxel(vd) for vd in voxel_data_list]
 

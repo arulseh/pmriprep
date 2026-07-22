@@ -2579,7 +2579,7 @@ class ComputeDSCMaps(BaseInterface):
                 logger.warning("Interrupted during parallel DSC fitting, cancelling workers")
                 raise
             finally:
-                executor.shutdown(wait=False, cancel_futures=True)
+                executor.shutdown(wait=True, cancel_futures=True)
         else:
             # Serial path: avoid multiprocessing overhead
             _dsc_init_worker(*init_args)
