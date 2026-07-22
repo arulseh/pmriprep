@@ -516,6 +516,19 @@ def _build_dce_underlay_wf(
     wf.base_dir = str(tmp_path / work_subdir)
     inp = wf.inputs.inputnode
     inp.source_dce = src
+    anat = bids / "sub-01" / "ses-0001" / "anat"
+    anat.mkdir(parents=True, exist_ok=True)
+    for attr, name in (
+        ("source_t1w", "sub-01_ses-0001_acq-mprage_run-1_T1w.nii.gz"),
+        ("source_t1w_postcon", "sub-01_ses-0001_acq-mprage_ce-GAD_run-2_T1w.nii.gz"),
+        ("source_flair", "sub-01_ses-0001_acq-3d_run-1_FLAIR.nii.gz"),
+        ("source_flair_postcon", "sub-01_ses-0001_acq-3d_ce-GAD_run-2_FLAIR.nii.gz"),
+        ("source_t2w", "sub-01_ses-0001_acq-tse_run-1_T2w.nii.gz"),
+    ):
+        source = anat / name
+        if not source.exists():
+            _write_nii(source)
+        setattr(inp, attr, str(source))
     inp.ktrans_map = _write_nii(tmp_path / f"{work_subdir}-k.nii.gz")
     inp.qc_metrics = {}
     if t1w_in_dce is not None:
@@ -547,14 +560,19 @@ def test_dce_t1w_precon_underlay_lands_in_anat(
     )
 
     anat_dir = out / "pmriprep" / "sub-01" / "ses-0001" / "anat"
-    expected = anat_dir / "sub-01_ses-0001_space-dceref_T1w.nii.gz"
+    expected = anat_dir / "sub-01_ses-0001_acq-mprage_run-1_space-dceref_T1w.nii.gz"
     assert expected.exists(), (
         f"precon underlay missing at {expected}; "
         f"anat/ contains: {sorted(p.name for p in anat_dir.iterdir())}"
     )
-    assert not (anat_dir / "sub-01_ses-0001_ce-GAD_space-dceref_T1w.nii.gz").exists()
+    assert "ce-GAD" not in expected.name
     sidecar = json.loads(expected.with_suffix("").with_suffix(".json").read_text())
     assert "Pre-contrast" in sidecar["Description"]
+    assert sidecar["Sources"] == [
+        "bids:raw:sub-01/ses-0001/anat/"
+        "sub-01_ses-0001_acq-mprage_run-1_T1w.nii.gz",
+        "bids:raw:sub-01/ses-0001/perf/sub-01_ses-0001_dce.nii.gz",
+    ]
 
 
 def test_dce_t1w_postcon_underlay_lands_in_anat(
@@ -573,7 +591,7 @@ def test_dce_t1w_postcon_underlay_lands_in_anat(
     )
 
     anat_dir = out / "pmriprep" / "sub-01" / "ses-0001" / "anat"
-    expected = anat_dir / "sub-01_ses-0001_ce-GAD_space-dceref_T1w.nii.gz"
+    expected = anat_dir / "sub-01_ses-0001_acq-mprage_ce-GAD_run-2_space-dceref_T1w.nii.gz"
     assert expected.exists(), (
         f"postcon underlay missing at {expected}; "
         f"anat/ contains: {sorted(p.name for p in anat_dir.iterdir())}"
@@ -599,7 +617,7 @@ def test_dce_t1w_subtraction_underlay_lands_in_anat(
     )
 
     anat_dir = out / "pmriprep" / "sub-01" / "ses-0001" / "anat"
-    expected = anat_dir / "sub-01_ses-0001_space-dceref_desc-subtraction_T1w.nii.gz"
+    expected = anat_dir / "sub-01_ses-0001_acq-mprage_run-1_space-dceref_desc-subtraction_T1w.nii.gz"
     assert expected.exists(), (
         f"subtraction underlay missing at {expected}; "
         f"anat/ contains: {sorted(p.name for p in anat_dir.iterdir())}"
@@ -647,8 +665,8 @@ def test_dce_both_t1w_underlays(
     )
 
     anat_dir = out / "pmriprep" / "sub-01" / "ses-0001" / "anat"
-    precon = anat_dir / "sub-01_ses-0001_space-dceref_T1w.nii.gz"
-    postcon = anat_dir / "sub-01_ses-0001_ce-GAD_space-dceref_T1w.nii.gz"
+    precon = anat_dir / "sub-01_ses-0001_acq-mprage_run-1_space-dceref_T1w.nii.gz"
+    postcon = anat_dir / "sub-01_ses-0001_acq-mprage_ce-GAD_run-2_space-dceref_T1w.nii.gz"
     assert precon.exists() and postcon.exists(), (
         f"both underlays expected; anat/ contains: "
         f"{sorted(p.name for p in anat_dir.iterdir())}"
@@ -675,7 +693,7 @@ def test_dce_flair_precon_underlay_lands_in_anat(
     )
 
     anat_dir = out / "pmriprep" / "sub-01" / "ses-0001" / "anat"
-    expected = anat_dir / "sub-01_ses-0001_space-dceref_FLAIR.nii.gz"
+    expected = anat_dir / "sub-01_ses-0001_acq-3d_run-1_space-dceref_FLAIR.nii.gz"
     assert expected.exists(), (
         f"precon FLAIR underlay missing at {expected}; "
         f"anat/ contains: {sorted(p.name for p in anat_dir.iterdir())}"
@@ -699,7 +717,7 @@ def test_dce_flair_postcon_underlay_lands_in_anat(
     )
 
     anat_dir = out / "pmriprep" / "sub-01" / "ses-0001" / "anat"
-    expected = anat_dir / "sub-01_ses-0001_ce-GAD_space-dceref_FLAIR.nii.gz"
+    expected = anat_dir / "sub-01_ses-0001_acq-3d_ce-GAD_run-2_space-dceref_FLAIR.nii.gz"
     assert expected.exists(), (
         f"postcon FLAIR underlay missing at {expected}; "
         f"anat/ contains: {sorted(p.name for p in anat_dir.iterdir())}"
@@ -727,8 +745,8 @@ def test_dce_both_flair_underlays(
     )
 
     anat_dir = out / "pmriprep" / "sub-01" / "ses-0001" / "anat"
-    precon = anat_dir / "sub-01_ses-0001_space-dceref_FLAIR.nii.gz"
-    postcon = anat_dir / "sub-01_ses-0001_ce-GAD_space-dceref_FLAIR.nii.gz"
+    precon = anat_dir / "sub-01_ses-0001_acq-3d_run-1_space-dceref_FLAIR.nii.gz"
+    postcon = anat_dir / "sub-01_ses-0001_acq-3d_ce-GAD_run-2_space-dceref_FLAIR.nii.gz"
     assert precon.exists() and postcon.exists(), (
         f"both FLAIR underlays expected; anat/ contains: "
         f"{sorted(p.name for p in anat_dir.iterdir())}"

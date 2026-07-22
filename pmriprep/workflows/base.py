@@ -1753,6 +1753,21 @@ def _connect_master_dsc_datasinks(
             _dsc_cfg[_k] = str(_v)
     dsc_datasinks_wf.inputs.inputnode.config_dict = _dsc_cfg
     dsc_datasinks_wf.inputs.inputnode.work_dir = str(work_dir)
+    dsc_datasinks_wf.inputs.inputnode.source_t1w = str(
+        session_data.modalities.t1w_pre or ""
+    )
+    dsc_datasinks_wf.inputs.inputnode.source_t1w_postcon = str(
+        session_data.modalities.t1w_ce_gad or ""
+    )
+    dsc_datasinks_wf.inputs.inputnode.source_flair = str(
+        session_data.modalities.flair or ""
+    )
+    dsc_datasinks_wf.inputs.inputnode.source_flair_postcon = str(
+        session_data.modalities.flair_postcon or ""
+    )
+    dsc_datasinks_wf.inputs.inputnode.source_t2w = str(
+        session_data.modalities.t2w or ""
+    )
     if provenance:
         dsc_datasinks_wf.inputs.inputnode.provenance_dict = provenance
     if preflight_warnings:
@@ -2772,6 +2787,21 @@ def _connect_master_dce_outputs_and_datasinks(
         if isinstance(_v, Path):
             _dce_cfg[_k] = str(_v)
     dce_datasinks_wf.inputs.inputnode.config_dict = _dce_cfg
+    dce_datasinks_wf.inputs.inputnode.source_t1w = str(
+        session_data.modalities.t1w_pre or ""
+    )
+    dce_datasinks_wf.inputs.inputnode.source_t1w_postcon = str(
+        session_data.modalities.t1w_ce_gad or ""
+    )
+    dce_datasinks_wf.inputs.inputnode.source_flair = str(
+        session_data.modalities.flair or ""
+    )
+    dce_datasinks_wf.inputs.inputnode.source_flair_postcon = str(
+        session_data.modalities.flair_postcon or ""
+    )
+    dce_datasinks_wf.inputs.inputnode.source_t2w = str(
+        session_data.modalities.t2w or ""
+    )
     if provenance:
         dce_datasinks_wf.inputs.inputnode.provenance_dict = provenance
     if preflight_warnings:

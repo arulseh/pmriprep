@@ -67,6 +67,7 @@ class DCEAnatImageSpec:
     description: str
     desc: str = ""
     ceagent: str = ""
+    source_attr: str = "source_t1w"
 
 
 # PK parameter maps. Model name lives in JSON sidecar (PKModeling.model),
@@ -180,18 +181,24 @@ _STRUCTURAL_UNDERLAYS: tuple[DCEAnatImageSpec, ...] = (
     DCEAnatImageSpec("t1w_in_dce", "T1w", "Pre-contrast T1w registered to DCE space"),
     DCEAnatImageSpec(
         "t1w_postcon_in_dce", "T1w", "Post-contrast T1w registered to DCE space",
-        ceagent="GAD",
+        ceagent="GAD", source_attr="source_t1w_postcon",
     ),
     DCEAnatImageSpec(
         "t1w_subtraction_in_dce", "T1w",
         "Post-pre T1w subtraction registered to DCE space", desc="subtraction",
     ),
-    DCEAnatImageSpec("flair_in_dce", "FLAIR", "FLAIR registered to DCE space"),
+    DCEAnatImageSpec(
+        "flair_in_dce", "FLAIR", "FLAIR registered to DCE space",
+        source_attr="source_flair",
+    ),
     DCEAnatImageSpec(
         "flair_postcon_in_dce", "FLAIR", "Post-contrast FLAIR registered to DCE space",
-        ceagent="GAD",
+        ceagent="GAD", source_attr="source_flair_postcon",
     ),
-    DCEAnatImageSpec("t2w_in_dce", "T2w", "T2w registered to DCE space"),
+    DCEAnatImageSpec(
+        "t2w_in_dce", "T2w", "T2w registered to DCE space",
+        source_attr="source_t2w",
+    ),
 )
 
 
@@ -479,6 +486,30 @@ def _build_dce_smoothed_meta(
         from pmriprep.utils.uncertainty_provenance import build_uncertainty_provenance
 
         out.update(build_uncertainty_provenance(inference, map_key, "DCE"))
+    return out
+
+
+def _build_dce_underlay_meta(
+    base: dict,
+    description: str,
+    units: str | None,
+    extra: dict | None,
+    structural_source: str,
+    perfusion_source: str,
+    bids_dir: str,
+) -> dict:
+    """Build metadata for a structural image resampled to DCE space."""
+    from pmriprep.utils.sidecar_builders import build_sources_list
+
+    out = dict(base)
+    out["Description"] = description
+    if units is not None:
+        out["Units"] = units
+    if extra:
+        out.update(extra)
+    out["Sources"] = build_sources_list(
+        [structural_source, perfusion_source], bids_dir,
+    )
     return out
 
 
@@ -961,23 +992,20 @@ def _add_anat_image_sink(
     space-dceref entity correctly indicates cross-modality registration to DCE
     acquisition geometry.
 
-    ``dismiss_entities`` strips entities the niworkflows ``DerivativesDataSink``
-    would otherwise inherit from the source DCE file. Default drops
-    ``acquisition`` because the DCE source's acquisition (e.g. VIBE) describes
-    the spatial-reference grid, not the T1w/FLAIR/T2w content being resampled.
-
-    No current caller overrides this default — the kwarg is plumbed defensively
-    for symmetry with DSC's ``_add_anat_sink`` (which DOES have call sites
-    needing ``("acquisition", "ceagent")`` for pre-con-derived masks). DCE
-    masks go through ``_add_anat_mask_sink`` → ``_copy_perf_map`` (manual
-    filename construction; no entity inheritance), so the DCE side has no
-    pre-con-mask sinks routed through this helper today.
+    Filename entities are inherited from the structural source, not from the
+    DCE series that supplies only the target grid.
     """
+    is_underlay = source_attr != "source_dce"
     meta = pe.Node(
         niu.Function(
-            input_names=["base", "description", "units", "extra"],
+            input_names=(
+                ["base", "description", "units", "extra",
+                 "structural_source", "perfusion_source", "bids_dir"]
+                if is_underlay
+                else ["base", "description", "units", "extra"]
+            ),
             output_names=["meta_dict"],
-            function=_build_dce_meta,
+            function=_build_dce_underlay_meta if is_underlay else _build_dce_meta,
         ),
         name=f"{name}_meta",
     )
@@ -985,6 +1013,14 @@ def _add_anat_image_sink(
     meta.inputs.units = units
     meta.inputs.extra = {"SkullStripped": True} if skull_stripped else None
     workflow.connect(base_minimal_node, "meta_dict", meta, "base")
+    if is_underlay:
+        workflow.connect([
+            (inputnode, meta, [
+                (source_attr, "structural_source"),
+                ("source_dce", "perfusion_source"),
+                ("bids_dir", "bids_dir"),
+            ]),
+        ])
 
     sink = pe.Node(
         PMRIPrepDataSink(
@@ -1104,6 +1140,8 @@ def init_dce_datasinks_wf(
             fields=[
                 "output_dir", "bids_dir", "subject_id", "session_id",
                 "source_dce",
+                "source_t1w", "source_t1w_postcon",
+                "source_flair", "source_flair_postcon", "source_t2w",
                 # PK
                 "ktrans_map", "ve_map", "kep_map", "vp_map", "fp_map", "ps_map",
                 # Inference-specific uncertainty
@@ -1635,6 +1673,8 @@ def init_dce_datasinks_wf(
             name=anat_spec.in_attr, in_attr=anat_spec.in_attr,
             label=anat_spec.label, description=anat_spec.description,
             desc=anat_spec.desc, ce_label=anat_spec.ceagent,
+            source_attr=anat_spec.source_attr,
+            dismiss_entities=(),
         )
         sink_outputs.append((sink, "out_file"))
 

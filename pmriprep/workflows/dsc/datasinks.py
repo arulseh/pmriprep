@@ -55,6 +55,7 @@ class DSCAnatSpec:
     mask_type: str | None = None
     ceagent: str | None = None
     dismiss_entities: tuple[str, ...] = ("acquisition",)
+    source_attr: str = "source_dsc"
 
 
 # Always-present DSC perfusion maps.
@@ -208,21 +209,33 @@ _ANAT_MASKS: tuple[DSCAnatSpec, ...] = (
 
 
 _STRUCTURAL_UNDERLAYS: tuple[DSCAnatSpec, ...] = (
-    DSCAnatSpec("t1w_in_dsc", None, "T1w", "Pre-contrast T1w registered to DSC space"),
+    DSCAnatSpec(
+        "t1w_in_dsc", None, "T1w", "Pre-contrast T1w registered to DSC space",
+        dismiss_entities=(), source_attr="source_t1w",
+    ),
     DSCAnatSpec(
         "t1w_postcon_in_dsc", None, "T1w",
         "Post-contrast T1w registered to DSC space", ceagent="GAD",
+        dismiss_entities=(), source_attr="source_t1w_postcon",
     ),
     DSCAnatSpec(
         "t1w_subtraction_in_dsc", "subtraction", "T1w",
         "Post-pre T1w subtraction registered to DSC space",
+        dismiss_entities=(), source_attr="source_t1w",
     ),
-    DSCAnatSpec("flair_in_dsc", None, "FLAIR", "FLAIR registered to DSC space"),
+    DSCAnatSpec(
+        "flair_in_dsc", None, "FLAIR", "FLAIR registered to DSC space",
+        dismiss_entities=(), source_attr="source_flair",
+    ),
     DSCAnatSpec(
         "flair_postcon_in_dsc", None, "FLAIR",
         "Post-contrast FLAIR registered to DSC space", ceagent="GAD",
+        dismiss_entities=(), source_attr="source_flair_postcon",
     ),
-    DSCAnatSpec("t2w_in_dsc", None, "T2w", "T2w registered to DSC space"),
+    DSCAnatSpec(
+        "t2w_in_dsc", None, "T2w", "T2w registered to DSC space",
+        dismiss_entities=(), source_attr="source_t2w",
+    ),
 )
 
 
@@ -323,6 +336,30 @@ def _build_minimal_meta(
         out["SkullStripped"] = True
     if mask_type is not None:
         out["Type"] = mask_type
+    return out
+
+
+def _build_underlay_meta(
+    base: dict,
+    description: str,
+    skull_stripped: bool,
+    mask_type: str | None,
+    structural_source: str,
+    perfusion_source: str,
+    bids_dir: str,
+) -> dict:
+    """Build metadata for a structural image resampled to DSC space."""
+    from pmriprep.utils.sidecar_builders import build_sources_list
+
+    out = dict(base)
+    out["Description"] = description
+    if skull_stripped:
+        out["SkullStripped"] = True
+    if mask_type is not None:
+        out["Type"] = mask_type
+    out["Sources"] = build_sources_list(
+        [structural_source, perfusion_source], bids_dir,
+    )
     return out
 
 
@@ -809,11 +846,17 @@ def _add_anat_sink(
     ``("acquisition", "ceagent")`` to drop ``ce-GAD`` since they were computed
     from pre-con T1w.
     """
+    is_underlay = source_attr != "source_dsc"
     meta = pe.Node(
         niu.Function(
-            input_names=["base", "description", "skull_stripped", "mask_type"],
+            input_names=(
+                ["base", "description", "skull_stripped", "mask_type",
+                 "structural_source", "perfusion_source", "bids_dir"]
+                if is_underlay
+                else ["base", "description", "skull_stripped", "mask_type"]
+            ),
             output_names=["meta_dict"],
-            function=_build_minimal_meta,
+            function=_build_underlay_meta if is_underlay else _build_minimal_meta,
         ),
         name=f"{name}_meta",
     )
@@ -821,6 +864,14 @@ def _add_anat_sink(
     meta.inputs.skull_stripped = skull_stripped
     meta.inputs.mask_type = mask_type
     workflow.connect([(base_minimal_node, meta, [("meta_dict", "base")])])
+    if is_underlay:
+        workflow.connect([
+            (inputnode, meta, [
+                (source_attr, "structural_source"),
+                ("source_dsc", "perfusion_source"),
+                ("bids_dir", "bids_dir"),
+            ]),
+        ])
 
     sink = pe.Node(
         PMRIPrepDataSink(
@@ -960,6 +1011,8 @@ def init_dsc_datasinks_wf(
                 "roi_mask_dsc", "roi_stats_json",
                 "t1w_in_dsc", "t1w_postcon_in_dsc", "t1w_subtraction_in_dsc",
                 "flair_in_dsc", "flair_postcon_in_dsc", "t2w_in_dsc",
+                "source_t1w", "source_t1w_postcon",
+                "source_flair", "source_flair_postcon", "source_t2w",
                 "dsc_to_t1w_xfm", "t1w_to_dsc_xfm",
                 # Sidecar drivers
                 "qc_metrics", "provenance_dict", "preflight_warnings",
@@ -1448,6 +1501,7 @@ def init_dsc_datasinks_wf(
             skull_stripped=anat_spec.skull_stripped,
             mask_type=anat_spec.mask_type,
             ce_value=anat_spec.ceagent,
+            source_attr=anat_spec.source_attr,
             dismiss_entities=anat_spec.dismiss_entities,
         )
         sink_outputs.append((sink, "out_file"))

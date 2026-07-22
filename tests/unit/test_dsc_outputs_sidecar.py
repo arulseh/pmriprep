@@ -51,12 +51,24 @@ def minimal_bids_dir(tmp_path):
 def minimal_inputs(tmp_path, minimal_bids_dir):
     """Dict of trait values that satisfies the DSC factory inputnode."""
     src_dsc = minimal_bids_dir / "sub-test01" / "ses-01" / "perf" / "sub-test01_ses-01_dsc.nii.gz"
+    anat = minimal_bids_dir / "sub-test01" / "ses-01" / "anat"
+    anat.mkdir(parents=True, exist_ok=True)
+    sources = {}
+    for attr, name in (
+        ("source_t1w", "sub-test01_ses-01_acq-mprage_run-1_T1w.nii.gz"),
+        ("source_t1w_postcon", "sub-test01_ses-01_acq-mprage_ce-GAD_run-2_T1w.nii.gz"),
+        ("source_flair", "sub-test01_ses-01_acq-3d_run-1_FLAIR.nii.gz"),
+        ("source_flair_postcon", "sub-test01_ses-01_acq-3d_ce-GAD_run-2_FLAIR.nii.gz"),
+        ("source_t2w", "sub-test01_ses-01_acq-tse_run-1_T2w.nii.gz"),
+    ):
+        sources[attr] = _write_dummy_nifti(anat / name)
     return {
         "output_dir": str(tmp_path / "derivatives"),
         "subject_id": "test01",
         "session_id": "01",
         "bids_dir": str(minimal_bids_dir),
         "source_dsc": str(src_dsc),
+        **sources,
         "mtt_map": _write_dummy_nifti(tmp_path / "mtt.nii.gz"),
         "tmax_map": _write_dummy_nifti(tmp_path / "tmax.nii.gz"),
         "psr_map": _write_dummy_nifti(tmp_path / "psr.nii.gz"),
@@ -494,12 +506,18 @@ class TestStructuralUnderlayDatatype:
 
         anat_dir = ses / "anat"
         perf_dir = ses / "perf"
-        expected = anat_dir / "sub-test01_ses-01_space-dscref_T1w.nii.gz"
+        expected = anat_dir / "sub-test01_ses-01_acq-mprage_run-1_space-dscref_T1w.nii.gz"
         assert expected.exists(), (
             f"precon underlay missing at {expected}; "
             f"anat/ contains: {sorted(p.name for p in anat_dir.iterdir())}"
         )
         assert not (anat_dir / "sub-test01_ses-01_ce-GAD_space-dscref_T1w.nii.gz").exists()
+        sidecar = json.loads(expected.with_suffix("").with_suffix(".json").read_text())
+        assert sidecar["Sources"] == [
+            "bids:raw:sub-test01/ses-01/anat/"
+            "sub-test01_ses-01_acq-mprage_run-1_T1w.nii.gz",
+            "bids:raw:sub-test01/ses-01/perf/sub-test01_ses-01_dsc.nii.gz",
+        ]
         perf_t1w = list(perf_dir.glob("*T1w.nii.gz")) if perf_dir.exists() else []
         assert not perf_t1w, f"T1w must not land in perf/; got {perf_t1w}"
 
@@ -511,7 +529,7 @@ class TestStructuralUnderlayDatatype:
         ses = self._build_and_run(minimal_inputs, tmp_path, "work-postcon")
 
         anat_dir = ses / "anat"
-        expected = anat_dir / "sub-test01_ses-01_ce-GAD_space-dscref_T1w.nii.gz"
+        expected = anat_dir / "sub-test01_ses-01_acq-mprage_ce-GAD_run-2_space-dscref_T1w.nii.gz"
         assert expected.exists(), (
             f"postcon underlay missing at {expected}; "
             f"anat/ contains: {sorted(p.name for p in anat_dir.iterdir())}"
@@ -528,8 +546,8 @@ class TestStructuralUnderlayDatatype:
         ses = self._build_and_run(minimal_inputs, tmp_path, "work-both")
 
         anat_dir = ses / "anat"
-        precon = anat_dir / "sub-test01_ses-01_space-dscref_T1w.nii.gz"
-        postcon = anat_dir / "sub-test01_ses-01_ce-GAD_space-dscref_T1w.nii.gz"
+        precon = anat_dir / "sub-test01_ses-01_acq-mprage_run-1_space-dscref_T1w.nii.gz"
+        postcon = anat_dir / "sub-test01_ses-01_acq-mprage_ce-GAD_run-2_space-dscref_T1w.nii.gz"
         assert precon.exists() and postcon.exists(), (
             f"both underlays expected; anat/ contains: "
             f"{sorted(p.name for p in anat_dir.iterdir())}"
@@ -548,7 +566,7 @@ class TestStructuralUnderlayDatatype:
         ses = self._build_and_run(minimal_inputs, tmp_path, "work-subtraction")
 
         anat_dir = ses / "anat"
-        expected = anat_dir / "sub-test01_ses-01_space-dscref_desc-subtraction_T1w.nii.gz"
+        expected = anat_dir / "sub-test01_ses-01_acq-mprage_run-1_space-dscref_desc-subtraction_T1w.nii.gz"
         assert expected.exists(), (
             f"subtraction underlay missing at {expected}; "
             f"anat/ contains: {sorted(p.name for p in anat_dir.iterdir())}"
@@ -577,7 +595,7 @@ class TestStructuralUnderlayDatatype:
         ses = self._build_and_run(minimal_inputs, tmp_path, "work-flair-precon")
 
         anat_dir = ses / "anat"
-        expected = anat_dir / "sub-test01_ses-01_space-dscref_FLAIR.nii.gz"
+        expected = anat_dir / "sub-test01_ses-01_acq-3d_run-1_space-dscref_FLAIR.nii.gz"
         assert expected.exists(), (
             f"precon FLAIR underlay missing at {expected}; "
             f"anat/ contains: {sorted(p.name for p in anat_dir.iterdir())}"
@@ -592,7 +610,7 @@ class TestStructuralUnderlayDatatype:
         ses = self._build_and_run(minimal_inputs, tmp_path, "work-flair-postcon")
 
         anat_dir = ses / "anat"
-        expected = anat_dir / "sub-test01_ses-01_ce-GAD_space-dscref_FLAIR.nii.gz"
+        expected = anat_dir / "sub-test01_ses-01_acq-3d_ce-GAD_run-2_space-dscref_FLAIR.nii.gz"
         assert expected.exists(), (
             f"postcon FLAIR underlay missing at {expected}; "
             f"anat/ contains: {sorted(p.name for p in anat_dir.iterdir())}"
@@ -610,8 +628,8 @@ class TestStructuralUnderlayDatatype:
         ses = self._build_and_run(minimal_inputs, tmp_path, "work-flair-both")
 
         anat_dir = ses / "anat"
-        precon = anat_dir / "sub-test01_ses-01_space-dscref_FLAIR.nii.gz"
-        postcon = anat_dir / "sub-test01_ses-01_ce-GAD_space-dscref_FLAIR.nii.gz"
+        precon = anat_dir / "sub-test01_ses-01_acq-3d_run-1_space-dscref_FLAIR.nii.gz"
+        postcon = anat_dir / "sub-test01_ses-01_acq-3d_ce-GAD_run-2_space-dscref_FLAIR.nii.gz"
         assert precon.exists() and postcon.exists(), (
             f"both FLAIR underlays expected; anat/ contains: "
             f"{sorted(p.name for p in anat_dir.iterdir())}"
