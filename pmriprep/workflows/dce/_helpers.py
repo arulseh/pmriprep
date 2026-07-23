@@ -2016,16 +2016,20 @@ def _derive_smoothed_kep(
         ):
             raise ValueError("Native Kep and smoothed PK maps must have matching geometry")
         valid &= np.isfinite(native_kep)
+    brain_mask = np.ones(ktrans.shape, dtype=bool)
     if brain_mask_file and isdefined(brain_mask_file) and Path(brain_mask_file).is_file():
         mask_img = cast("nib.Nifti1Image", nib.load(brain_mask_file))
-        mask = mask_img.get_fdata() > 0  # type: ignore[attr-defined]
-        if mask.shape != ktrans.shape or not np.allclose(mask_img.affine, ktrans_img.affine):
+        brain_mask = mask_img.get_fdata() > 0  # type: ignore[attr-defined]
+        if brain_mask.shape != ktrans.shape or not np.allclose(
+            mask_img.affine, ktrans_img.affine
+        ):
             raise ValueError("Brain mask and smoothed PK maps must have matching geometry")
-        valid &= mask
+        valid &= brain_mask
 
-    kep = np.zeros(ktrans.shape, dtype=np.float32)
+    kep = np.full(ktrans.shape, np.nan, dtype=np.float32)
     np.divide(ktrans, ve, out=kep, where=valid)
     np.clip(kep, 0.0, max_kep, out=kep)
+    kep[~brain_mask] = 0.0
     out_path = Path.cwd() / f"{Path(ktrans_file).stem}_derived_kep.nii.gz"
     header = ktrans_img.header.copy()
     header.set_data_dtype(np.float32)

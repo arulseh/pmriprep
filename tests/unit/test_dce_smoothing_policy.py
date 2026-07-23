@@ -41,7 +41,11 @@ def test_derive_smoothed_kep_uses_smoothed_components(
 
     assert set(result) == {"ktrans", "ve", "kep"}
     kep = nib.load(result["kep"]).get_fdata()
-    np.testing.assert_allclose(kep, np.array([[[2.0, 0.0, 0.0, 0.0]]]))
+    np.testing.assert_allclose(
+        kep,
+        np.array([[[2.0, np.nan, np.nan, 0.0]]]),
+        equal_nan=True,
+    )
 
 
 def test_dce_smoothing_workflow_excludes_uncertainty_and_native_kep() -> None:
