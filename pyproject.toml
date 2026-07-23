@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pmriprep"
-version = "0.82.241"
+version = "0.82.242"
 description = "Perfusion MRI Preprocessing Pipeline - A NiPreps-compatible BIDS-App"
 readme = "README.md"
 license = "Apache-2.0 AND CC0-1.0"

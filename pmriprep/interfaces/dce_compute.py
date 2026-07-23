@@ -3354,9 +3354,11 @@ class ComputeDCEMaps(BaseInterface):
             vp=np.full(spatial_shape, fill_value, dtype=np.float64),
             kep=np.full(spatial_shape, fill_value, dtype=np.float64),
             r_squared=np.zeros(spatial_shape, dtype=np.float64),
-            fp=np.zeros(spatial_shape, dtype=np.float64),
-            ps=np.zeros(spatial_shape, dtype=np.float64),
-            extraction_fraction=np.zeros(spatial_shape, dtype=np.float64),
+            fp=np.full(spatial_shape, fill_value, dtype=np.float64),
+            ps=np.full(spatial_shape, fill_value, dtype=np.float64),
+            extraction_fraction=np.full(
+                spatial_shape, fill_value, dtype=np.float64
+            ),
             quality_flag=np.zeros(spatial_shape, dtype=np.int8),
             quality_flag_codes=quality_flag_codes,
             model_selection=np.zeros(spatial_shape, dtype=np.int8),

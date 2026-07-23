@@ -504,6 +504,7 @@ output_dir/pmriprep/
       sub-01_ses-01_desc-dceKep_stat.nii.gz
       sub-01_ses-01_desc-dceFp_stat.nii.gz                  # 2CXM only
       sub-01_ses-01_desc-dcePS_stat.nii.gz                  # 2CXM only
+      sub-01_ses-01_desc-dceE_stat.nii.gz                   # 2CXM only
       sub-01_ses-01_desc-dceRsquared_stat.nii.gz
       sub-01_ses-01_desc-dceNawmNormKtrans_stat.nii.gz
       # DCE relative PK uncertainty (Bayesian example; NLLS uses
@@ -602,6 +603,7 @@ output_dir/pmriprep/
 | `*_desc-dceKep_stat` | Efflux rate constant | 1/min |
 | `*_desc-dceFp_stat` | Plasma flow (2CXM only) | mL/min/100mL |
 | `*_desc-dcePS_stat` | Permeability-surface area product (2CXM only) | mL/min/100mL |
+| `*_desc-dceE_stat` | Extraction fraction (2CXM only) | dimensionless |
 | `*_desc-dceRsquared_stat` | Goodness of fit (R-squared) | fraction |
 | `*_desc-dceIAUC60_stat` | Initial area under curve at 60s | mM\*min |
 | `*_desc-dceIAUC90_stat` | Initial area under curve at 90s | mM\*min |

@@ -1070,6 +1070,12 @@
     ],
     [
       "pk_modeling",
+      "out_e",
+      "outputnode",
+      "e_map"
+    ],
+    [
+      "pk_modeling",
       "out_fitted_curves",
       "dce_pk_fit_qc",
       "fitted_curves_file"
@@ -2527,7 +2533,7 @@
     "dce_early_mean": "fd75a021c6ef482c605e9a7596c6c17381cd8996e63adafc61cb7f30031b6cb0",
     "dce_pk_fit_qc": "0f9fddbf4442f5fbf761e772b5012d5d688b9cb9eda964eb14a1a997d5cc8675",
     "dce_pk_maps_qc": "c25cca9c5e492712dfb87f2fe715865d1d65b83c4ef3371a63430020879fcff5",
-    "derive_smoothed_kep": "9d982da06a3954d5de3ee25ef7532d55af957f32a8850966c15f64d6e2e4f8d4",
+    "derive_smoothed_kep": "95fd6d19f0ceacb8c389617f1e56610409d54544bc28db151719fd5d555c5d6b",
     "dsc_dce_validation": "f89b6ace91d480d7960947bea6f327e6e55d8eff5cca7cde3eb0ad7b762cdda1",
     "dsc_dce_xval_plot": "5c7cd63d87cc931e5d8a26b939b407d2318a1b6fb76ef3f19ad2f35ead4026d7",
     "motion_qc_plot": "36616aba56123999797c0b5e14d6ec9903e15bea44b1958923c89616b1fb1b2f",
@@ -3214,6 +3220,7 @@
     "dce_to_t1w_xfm",
     "delta_bic_map",
     "dsc_dce_xval_plot",
+    "e_map",
     "flair_in_dce",
     "flair_postcon_in_dce",
     "fp_ci95_lower",

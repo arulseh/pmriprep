@@ -148,6 +148,7 @@ def init_dce_pk_modeling_wf(
                 "out_ve",
                 "out_fp",
                 "out_ps",
+                "out_e",
                 "out_delta_bic",
                 "out_vp_at_bound_map",
                 "out_r2",
@@ -222,6 +223,7 @@ def init_dce_pk_modeling_wf(
             ("out_ve", "out_ve"),
             ("out_fp", "out_fp"),
             ("out_ps", "out_ps"),
+            ("out_e", "out_e"),
             ("out_delta_bic", "out_delta_bic"),
             ("out_vp_at_bound_map", "out_vp_at_bound_map"),
             ("out_r2", "out_r2"),
@@ -1614,6 +1616,7 @@ def init_dce_preproc_wf(
                 "kep_map",
                 "fp_map",
                 "ps_map",
+                "e_map",
                 # Model-free maps
                 "iauc60_map",
                 "iauc90_map",
@@ -2688,6 +2691,7 @@ def init_dce_preproc_wf(
             ("outputnode.out_kep", "kep_map"),
             ("outputnode.out_fp", "fp_map"),
             ("outputnode.out_ps", "ps_map"),
+            ("outputnode.out_e", "e_map"),
         ]),
         # Model-free maps
         (pk_wf, outputnode, [

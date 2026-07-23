@@ -79,6 +79,7 @@ _PK_MAPS: tuple[DCEMapSpec, ...] = (
     DCEMapSpec("vp_map", "dce", "vp", "Plasma volume fraction", "1", "vp"),
     DCEMapSpec("fp_map", "dce", "Fp", "Plasma flow (2CXM only)", "mL/min/100mL", "fp"),
     DCEMapSpec("ps_map", "dce", "PS", "Permeability-surface area product (2CXM only)", "mL/min/100mL", "ps"),
+    DCEMapSpec("e_map", "dce", "E", "Extraction fraction (2CXM only)", "1", "e"),
 )
 
 
@@ -178,7 +179,7 @@ _STRUCTURAL_UNDERLAYS: tuple[DCEAnatImageSpec, ...] = (
 
 _PK_UNITS = {
     "ktrans": "1/min", "ve": "1", "kep": "1/min", "vp": "1",
-    "fp": "mL/min/100mL", "ps": "mL/min/100mL",
+    "fp": "mL/min/100mL", "ps": "mL/min/100mL", "e": "1",
 }
 _MF_UNITS = {
     "iauc60": "mM*min", "iauc90": "mM*min", "iauc120": "mM*min",
@@ -1118,6 +1119,7 @@ def init_dce_datasinks_wf(
                 "source_flair", "source_flair_postcon", "source_t2w",
                 # PK
                 "ktrans_map", "ve_map", "kep_map", "vp_map", "fp_map", "ps_map",
+                "e_map",
                 # Inference-specific uncertainty
                 "ktrans_uncertainty", "ve_uncertainty", "vp_uncertainty",
                 "fp_uncertainty", "ps_uncertainty",

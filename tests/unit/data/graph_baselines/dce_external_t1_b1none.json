@@ -896,6 +896,12 @@
     ],
     [
       "pk_modeling",
+      "out_e",
+      "outputnode",
+      "e_map"
+    ],
+    [
+      "pk_modeling",
       "out_fitted_curves",
       "dce_pk_fit_qc",
       "fitted_curves_file"
@@ -2665,6 +2671,7 @@
     "dce_to_t1w_xfm",
     "delta_bic_map",
     "dsc_dce_xval_plot",
+    "e_map",
     "flair_in_dce",
     "flair_postcon_in_dce",
     "fp_ci95_lower",

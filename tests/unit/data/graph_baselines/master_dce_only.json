@@ -248,6 +248,12 @@
     ],
     [
       "dce_wf",
+      "outputnode.e_map",
+      "dce_datasinks_wf",
+      "inputnode.e_map"
+    ],
+    [
+      "dce_wf",
       "outputnode.flair_in_dce",
       "dce_datasinks_wf",
       "inputnode.flair_in_dce"

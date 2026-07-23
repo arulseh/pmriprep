@@ -395,6 +395,38 @@ def test_2cxm_bayesian_fp_ps_relative_uncertainty(
         assert json.loads(sidecar.read_text())["Units"] == "1"
 
 
+def test_2cxm_extraction_fraction_derivative(
+    tmp_path: Path, minimal_bids: tuple[Path, str]
+) -> None:
+    """The existing 2CXM extraction-fraction result reaches derivatives."""
+    from pmriprep.workflows.dce.datasinks import init_dce_datasinks_wf
+
+    bids, src = minimal_bids
+    out = tmp_path / "out"
+    wf = init_dce_datasinks_wf(
+        output_dir=str(out),
+        bids_dir=str(bids),
+        subject_id="01",
+        session_id="0001",
+        pk_model="2cxm",
+        inference="nlls",
+        present_inputs={"e_map"},
+    )
+    wf.base_dir = str(tmp_path / "work")
+    wf.inputs.inputnode.source_dce = src
+    wf.inputs.inputnode.ktrans_map = _write_nii(tmp_path / "k.nii.gz")
+    wf.inputs.inputnode.e_map = _write_nii(tmp_path / "e.nii.gz")
+    wf.inputs.inputnode.qc_metrics = {}
+    wf.run()
+
+    perf = out / "pmriprep" / "sub-01" / "ses-0001" / "perf"
+    derivative = perf / "sub-01_ses-0001_desc-dceE_stat.nii.gz"
+    sidecar = json.loads(derivative.with_suffix("").with_suffix(".json").read_text())
+    assert derivative.exists()
+    assert sidecar["Units"] == "1"
+    assert "Extraction fraction" in sidecar["Description"]
+
+
 def test_init_pmriprep_wf_dce_patlak_doesnt_crash(tmp_path: Path) -> None:
     """Build init_pmriprep_wf with --dce-model patlak and verify no NameError /
     crash on factory construction.

@@ -2696,7 +2696,7 @@ def _connect_master_dce_outputs_and_datasinks(
     if dce_model in _has_vp_models:
         dce_present.add("vp_map")
     if _emit_fp_ps_outputs:
-        dce_present |= {"fp_map", "ps_map"}
+        dce_present |= {"fp_map", "ps_map", "e_map"}
     # Auto-BIC produces model_selection + delta_bic
     if dce_model == "auto":
         dce_present |= {"model_selection_map", "delta_bic_map"}
@@ -2822,6 +2822,7 @@ def _connect_master_dce_outputs_and_datasinks(
             ("outputnode.vp_map", "inputnode.vp_map"),
             ("outputnode.fp_map", "inputnode.fp_map"),
             ("outputnode.ps_map", "inputnode.ps_map"),
+            ("outputnode.e_map", "inputnode.e_map"),
             # Model-free maps
             ("outputnode.iauc60_map", "inputnode.iauc60_map"),
             ("outputnode.iauc90_map", "inputnode.iauc90_map"),

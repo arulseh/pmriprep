@@ -269,6 +269,9 @@ def test_initialize_parameter_maps_preserves_auto_and_uncertainty_state() -> Non
     assert np.isnan(maps.ve).all()
     assert np.isnan(maps.vp).all()
     assert np.isnan(maps.kep).all()
+    assert np.isnan(maps.fp).all()
+    assert np.isnan(maps.ps).all()
+    assert np.isnan(maps.extraction_fraction).all()
     assert maps.fitted_curves is not None
     assert maps.fitted_curves.shape == prepared.concentration.shape
     assert maps.save_2cxm is True
