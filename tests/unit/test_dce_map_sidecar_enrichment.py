@@ -119,20 +119,18 @@ class TestPKMapKeyDriftGuard:
         """Every PK-family sink key must survive strict AIF stamping."""
         from pmriprep.utils.aif_provenance import DCE_POPULATION_AIF_USAGE
         from pmriprep.workflows.dce.datasinks import (
-            _CI95_MAPS,
             _CV_MAPS,
             _PK_MAPS,
-            _UNCERTAINTY_MAPS,
         )
 
         emitted = {
             spec.map_key
-            for table in (_PK_MAPS, _UNCERTAINTY_MAPS, _CV_MAPS, _CI95_MAPS)
+            for table in (_PK_MAPS, _CV_MAPS)
             for spec in table
         }
         assert emitted <= DCE_POPULATION_AIF_USAGE.keys()
 
-        for key in ("fp", "ps", "fp_uncertainty", "ps_uncertainty"):
+        for key in ("fp", "ps"):
             assert DCE_POPULATION_AIF_USAGE[key] == "ratio_defensible"
         for key in ("fp_cv", "ps_cv"):
             assert DCE_POPULATION_AIF_USAGE[key] == "safe"

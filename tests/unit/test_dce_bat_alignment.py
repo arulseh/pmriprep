@@ -86,6 +86,36 @@ class TestComputeAifTissueDelay:
         assert prov["reason"] == "delay_below_resolution"
         assert prov["raw_delay_frames"] == 0.0   # frames breadcrumb present even on no-op
 
+    def test_positive_delay_below_one_frame_is_unresolved(
+        self, monkeypatch
+    ) -> None:
+        """A fractional-frame tissue lag must not round into a false shift."""
+        from pmriprep.utils import dce_bat
+        from pmriprep.utils.dce_bat import BATResult
+
+        detections = iter(
+            [
+                BATResult(10.0, 20.0, "high", "threshold"),
+                BATResult(11.6, 22.0, "high", "threshold"),
+            ]
+        )
+        monkeypatch.setattr(
+            dce_bat,
+            "detect_bolus_arrival_time",
+            lambda *_args, **_kwargs: next(detections),
+        )
+        n, tr = 30, 2.0
+        delay, provenance = compute_aif_tissue_delay(
+            _step(n, 6),
+            _step(n, 7),
+            _minutes(n, tr),
+            tr,
+            baseline_frames=3,
+        )
+        assert delay == 0.0
+        assert provenance["raw_delay_frames"] == 0.8
+        assert provenance["reason"] == "delay_below_resolution"
+
     def test_ceiling_clamp(self):
         n, tr = 40, 2.0                 # (25-6)*2 = 38 s > 12 s ceiling
         d, prov = compute_aif_tissue_delay(
