@@ -23,6 +23,45 @@ if TYPE_CHECKING:
 # messages that should be IMPORTANT-level by default.
 logger = plogger.cli
 
+
+def _clean_active_work_dir(
+    work_root: Path,
+    pipeline_version: str,
+) -> Optional[Path]:
+    """Remove only the active release's cache namespace.
+
+    Parameters
+    ----------
+    work_root : pathlib.Path
+        User-selected working-directory root.
+    pipeline_version : str
+        Active PMRIPrep version.
+
+    Returns
+    -------
+    pathlib.Path or None
+        Removed namespace, or ``None`` when it did not exist.
+
+    Notes
+    -----
+    Other release namespaces and legacy unversioned caches are preserved. The
+    root itself is removed only when empty.
+    """
+    import shutil
+
+    from pmriprep.workflows.base import versioned_work_dir
+
+    active_dir = versioned_work_dir(work_root, pipeline_version)
+    if not active_dir.exists():
+        return None
+    shutil.rmtree(active_dir)
+    try:
+        work_root.rmdir()
+    except OSError:
+        pass
+    return active_dir
+
+
 def _dose_type(value: str) -> float:
     """Parse a dose argument as a named preset or positive float.
 
@@ -504,7 +543,7 @@ Examples:
         "--clean-workdir",
         action="store_true",
         default=False,
-        help="Delete working directory after processing.",
+        help="Delete the active PMRIPrep version's working directory after processing.",
     )
     g_other.add_argument(
         "--sloppy",
@@ -1032,14 +1071,19 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
                         logger.error("    (could not read crash file)")
 
     # Clean working directory after all subjects are processed
-    if args.clean_workdir and work_dir.exists():
-        import shutil
+    if args.clean_workdir:
+        from pmriprep.workflows.base import versioned_work_dir
 
-        logger.log(IMPORTANT, "Clearing working directory: %s", work_dir)
+        active_work_dir = versioned_work_dir(work_dir, __version__)
+        logger.log(IMPORTANT, "Clearing working directory: %s", active_work_dir)
         try:
-            shutil.rmtree(work_dir)
+            _clean_active_work_dir(work_dir, __version__)
         except OSError as e:
-            logger.warning("Failed to clean work directory: %s", e)
+            logger.warning(
+                "Failed to clean work directory %s: %s",
+                active_work_dir,
+                e,
+            )
 
     logger.log(IMPORTANT, "PMRIPrep processing complete")
 
