@@ -73,22 +73,24 @@ def test_process_group_cleanup_reaps_already_exited_child(
 
 
 @pytest.mark.parametrize(
-    "relative_path,expected_count",
+    "relative_path",
     [
-        ("pmriprep/interfaces/dsc_compute.py", 1),
-        ("pmriprep/interfaces/dce_compute.py", 3),
+        "pmriprep/interfaces/dsc_compute.py",
+        "pmriprep/interfaces/dce_compute.py",
     ],
 )
 def test_fitting_executors_join_workers(
     relative_path: str,
-    expected_count: int,
 ) -> None:
     """Fitting pools synchronously join workers on every exit path."""
     root = Path(__file__).parents[2]
     source = (root / relative_path).read_text()
 
     assert "shutdown(wait=False" not in source
-    assert source.count("shutdown(wait=True, cancel_futures=True)") == expected_count
+    executor_count = source.count("ProcessPoolExecutor(")
+    joined_count = source.count("shutdown(wait=True, cancel_futures=True)")
+    assert executor_count > 0
+    assert joined_count == executor_count
 
 
 def test_isolated_command_interrupt_cleans_process_group(
