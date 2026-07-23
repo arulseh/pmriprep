@@ -273,6 +273,21 @@ def _build_dce_meta(
     return out
 
 
+def _build_aif_mask_meta(
+    base: dict,
+    description: str,
+    qc_metrics: dict | None,
+) -> dict:
+    """Build an AIF ROI sidecar with the canonical DCE AIF block."""
+    from pmriprep.utils.aif_provenance import apply_aif_provenance_block
+
+    out = dict(base)
+    out["Description"] = description
+    out["Type"] = "ROI"
+    apply_aif_provenance_block(out, qc_metrics, modality="DCE")
+    return out
+
+
 def _build_tb1_meta(
     base: dict,
     b1_source_paths: list[str] | None,
@@ -1556,14 +1571,43 @@ def init_dce_datasinks_wf(
         )
         sink_outputs.append((sink, "out_file"))
     if "aif_mask" in present:
-        sink = _add_perf_map_sink(
-            workflow, inputnode, base_perf_no_ktrans,
-            name="aif_mask", in_attr="aif_mask",
-            desc_value="dceAif", suffix="",
-            description="AIF detection mask in DCE space",
-            units=None, extra={"Type": "ROI"},
-            bids_suffix="mask",
+        meta = pe.Node(
+            niu.Function(
+                input_names=["base", "description", "qc_metrics"],
+                output_names=["meta_dict"],
+                function=_build_aif_mask_meta,
+            ),
+            name="aif_mask_meta",
         )
+        meta.inputs.description = "AIF detection mask in DCE space"
+        workflow.connect([
+            (base_minimal, meta, [("meta_dict", "base")]),
+            (inputnode, meta, [("qc_metrics", "qc_metrics")]),
+        ])
+        sink = pe.Node(
+            niu.Function(
+                input_names=[
+                    "in_file", "output_dir", "subject", "session",
+                    "desc", "suffix", "meta_dict", "datatype", "bids_suffix",
+                ],
+                output_names=["out_file"],
+                function=_copy_perf_map,
+            ),
+            name="aif_mask_sink",
+        )
+        sink.inputs.desc = "dceAif"
+        sink.inputs.suffix = ""
+        sink.inputs.datatype = "perf"
+        sink.inputs.bids_suffix = "mask"
+        workflow.connect([
+            (inputnode, sink, [
+                ("output_dir", "output_dir"),
+                ("subject_id", "subject"),
+                ("session_id", "session"),
+                ("aif_mask", "in_file"),
+            ]),
+            (meta, sink, [("meta_dict", "meta_dict")]),
+        ])
         sink_outputs.append((sink, "out_file"))
 
     # --- T1map + B1+map (anat/) ---

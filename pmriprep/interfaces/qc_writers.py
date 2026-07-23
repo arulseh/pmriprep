@@ -153,7 +153,7 @@ def _write_aif_timeseries_sidecar(
     """Write the JSON sidecar next to an AIF curve TSV.
 
     Reads ``qc_metrics["aif_detection"]`` (the producer-shape ``aif_qc``
-    dict) and emits flat ``AIF*``-prefixed top-level keys via
+    dict) and emits the canonical ``PerfusionProcessing.AIF`` block via
     :func:`pmriprep.utils.sidecar_builders.build_aif_timeseries_sidecar`.
     The sidecar is always written. Detection-specific fields are omitted when
     AIF QC is unavailable, while columns, units, provenance, and sources remain.

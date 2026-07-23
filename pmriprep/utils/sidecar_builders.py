@@ -29,7 +29,7 @@ import math
 import os
 import subprocess
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Union
+from typing import Any, Dict, List, Literal, Optional, Sequence, Union, cast
 
 import numpy as np
 
@@ -1090,68 +1090,6 @@ def enrich_probseg_sidecar(
 # ---------------------------------------------------------------------------
 
 
-def _aif_cosmetic_keys(aif_qc: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    """Flat AIF*-prefixed top-level keys for AIF curve sidecar enrichment.
-
-    Reads from the producer-shape ``aif_qc`` dict (the same dict that
-    flows through the DSC outputnode). Conditional fields are omitted
-    when not applicable (per fmriprep convention for optional sidecar
-    fields).
-    """
-    if not aif_qc or not isinstance(aif_qc, dict):
-        return {}
-
-    out: Dict[str, Any] = {}
-    raw_metrics = aif_qc.get("aif_metrics")
-    metrics: Dict[str, Any] = raw_metrics if isinstance(raw_metrics, dict) else {}
-
-    if "detection_method" in aif_qc:
-        out["AIFMethod"] = str(aif_qc["detection_method"])
-    if "n_aif_voxels_selected" in aif_qc:
-        out["AIFNumberOfVoxelsSelected"] = int(aif_qc["n_aif_voxels_selected"])
-    if "peak_conc" in metrics:
-        out["AIFPeakAmplitude"] = float(metrics["peak_conc"])
-    if "fwhm" in metrics:
-        out["AIFFWHM"] = float(metrics["fwhm"])
-    if "ttp" in metrics:
-        out["AIFTimeToPeak"] = float(metrics["ttp"])
-    if "quality_score" in aif_qc:
-        out["AIFQualityScore"] = float(aif_qc["quality_score"])
-    if "cascade_final_level" in aif_qc:
-        out["AIFArterialCascadeTier"] = str(aif_qc["cascade_final_level"])
-    if "hemisphere_coverage" in aif_qc:
-        out["AIFHemisphereCoverage"] = str(aif_qc["hemisphere_coverage"])
-    if "gamma_fit_applied" in aif_qc:
-        out["AIFGammaFitApplied"] = bool(aif_qc["gamma_fit_applied"])
-    if "gamma_fit_r_squared" in aif_qc:
-        out["AIFGammaFitRSquared"] = float(aif_qc["gamma_fit_r_squared"])
-    if "gamma_fit_auc_ratio" in aif_qc:
-        out["AIFGammaFitAUCRatio"] = float(aif_qc["gamma_fit_auc_ratio"])
-    if aif_qc.get("synthetic") or aif_qc.get("population_aif"):
-        out["AIFFallback"] = True
-    if "cbv_auc_denominator_is_synthetic" in aif_qc:
-        out["AIFUsedAsCBVDenominator"] = bool(aif_qc["cbv_auc_denominator_is_synthetic"])
-    if "hematocrit" in aif_qc:
-        out["AIFHematocrit"] = float(aif_qc["hematocrit"])
-    peak_scaling_keys = {
-        "AIFPeakScalingEnabled": ("peak_scaling_enabled", bool),
-        "AIFPeakScalingApplied": ("peak_scaling_applied", bool),
-        "AIFRawPeakAmplitude": ("raw_peak_mm", float),
-        "AIFEmittedPeakAmplitude": ("emitted_peak_mm", float),
-        "AIFPeakScalingFactor": ("peak_scaling_factor", float),
-        "AIFPeakScalingRequiredFactor": (
-            "peak_scaling_required_factor", float,
-        ),
-        "AIFPeakScalingPolicy": ("peak_scaling_policy", str),
-        "AIFPeakScalingTrigger": ("peak_scaling_trigger", str),
-    }
-    for output_key, (qc_key, converter) in peak_scaling_keys.items():
-        value = aif_qc.get(qc_key)
-        if value is not None:
-            out[output_key] = converter(value)
-    return out
-
-
 def aif_timeseries_columns(modality: str) -> tuple[str, str, str]:
     """Column name, units, and description for an AIF timeseries TSV.
 
@@ -1205,8 +1143,8 @@ def build_aif_timeseries_sidecar(
 
     Per BIDS-Common-Derivatives, every data file should carry its own
     sidecar describing how it was derived. This builder emits AIF
-    detection metadata as flat ``AIF*``-prefixed top-level keys, matching
-    fmriprep/aslprep convention for pipeline-derived sidecar fields.
+    detection metadata in the canonical ``PerfusionProcessing.AIF`` block
+    shared by AIF masks and quantitative-map sidecars.
 
     Parameters
     ----------
@@ -1251,7 +1189,13 @@ def build_aif_timeseries_sidecar(
         sidecar["SamplingFrequency"] = 1.0 / float(volume_tr_s)
         sidecar["StartTime"] = 0.0
 
-    sidecar.update(_aif_cosmetic_keys(aif_qc))
+    from pmriprep.utils.aif_provenance import apply_aif_provenance_block
+
+    apply_aif_provenance_block(
+        sidecar,
+        aif_qc,
+        modality=cast(Literal["DSC", "DCE"], modality),
+    )
     return sidecar
 
 

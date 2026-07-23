@@ -1,9 +1,8 @@
-"""AIF curve sidecar uses flat ``AIF*``-prefixed top-level keys.
+"""AIF curve sidecars use the shared nested provenance schema.
 
 Asserts that ``build_aif_timeseries_sidecar`` (and the qc_writers AIF
-sidecar emitter) produce a JSON sidecar with flat top-level keys at the
-sidecar surface, with detection-time metrics sourced from the
-producer-shape ``aif_qc.aif_metrics`` nested block.
+sidecar emitter) produce ``PerfusionProcessing.AIF`` consistently with
+quantitative-map and AIF-mask sidecars.
 """
 from __future__ import annotations
 
@@ -63,8 +62,8 @@ def bids_root(tmp_path) -> Path:
     return bids
 
 
-class TestFlatKeyShape:
-    def test_dsc_flat_keys_present(self, aif_qc, bids_root):
+class TestCanonicalAIFBlock:
+    def test_dsc_fields_present(self, aif_qc, bids_root):
         sidecar = build_aif_timeseries_sidecar(
             modality="DSC",
             source_paths=[bids_root / "sub-X" / "ses-Y" / "perf" / "sub-X_ses-Y_dsc.nii.gz"],
@@ -73,27 +72,27 @@ class TestFlatKeyShape:
             session="Y",
             aif_qc=aif_qc,
         )
-        # Flat top-level keys, NOT nested
-        assert sidecar["AIFMethod"] == "atlas_strict"
-        assert sidecar["AIFNumberOfVoxelsSelected"] == 6
-        assert sidecar["AIFPeakAmplitude"] == pytest.approx(12.5)
-        assert sidecar["AIFFWHM"] == pytest.approx(6.2)
-        assert sidecar["AIFTimeToPeak"] == pytest.approx(18.0)
-        assert "AIFArrival" not in sidecar
-        assert "AIFBaselineReturnRatio" not in sidecar
-        assert "AIFPeakSignalRatio" not in sidecar
-        assert sidecar["AIFQualityScore"] == pytest.approx(0.81)
-        assert sidecar["AIFArterialCascadeTier"] == "atlas_strict"
-        assert sidecar["AIFHemisphereCoverage"] == "bilateral"
-        assert sidecar["AIFGammaFitApplied"] is True
-        assert sidecar["AIFGammaFitRSquared"] == pytest.approx(0.94)
-        assert sidecar["AIFGammaFitAUCRatio"] == pytest.approx(0.97)
-        assert "AIFFallback" not in sidecar
-        assert sidecar["AIFUsedAsCBVDenominator"] is False
-        assert sidecar["AIFHematocrit"] == pytest.approx(0.42)
+        block = sidecar["PerfusionProcessing"]["AIF"]
+        assert block["Source"] == "gamma_fit_measured"
+        assert block["DetectionLevel"] == "atlas_strict"
+        assert block["NumberOfVoxelsSelected"] == 6
+        assert block["PeakAmplitude"] == pytest.approx(12.5)
+        assert block["PeakAmplitudeUnits"] == "1/s"
+        assert block["FWHM"] == pytest.approx(6.2)
+        assert block["FWHMUnits"] == "s"
+        assert block["TimeToPeak"] == pytest.approx(18.0)
+        assert block["TimeToPeakUnits"] == "s"
+        assert block["QualityScore"] == pytest.approx(0.81)
+        assert block["ArterialCascadeTier"] == "atlas_strict"
+        assert block["HemisphereCoverage"] == "bilateral"
+        assert block["GammaFitApplied"] is True
+        assert block["GammaFitRSquared"] == pytest.approx(0.94)
+        assert block["GammaFitAUCRatio"] == pytest.approx(0.97)
+        assert block["UsedAsCBVDenominator"] is False
+        assert block["Hematocrit"] == pytest.approx(0.42)
 
-    def test_no_legacy_nested_block(self, aif_qc, bids_root):
-        """Regression: must not emit a nested AIFDetection block."""
+    def test_no_legacy_flat_keys(self, aif_qc, bids_root):
+        """The retired flat AIF vocabulary is not duplicated."""
         sidecar = build_aif_timeseries_sidecar(
             modality="DSC",
             source_paths=[],
@@ -102,23 +101,23 @@ class TestFlatKeyShape:
             session=None,
             aif_qc=aif_qc,
         )
-        assert "AIFDetection" not in sidecar
-        # Old PascalCase-with-units keys must not appear
-        assert "PeakConcentration_mM" not in sidecar
-        assert "FWHM_seconds" not in sidecar
+        assert all(not key.startswith("AIF") for key in sidecar)
 
     def test_dce_modality_units(self, aif_qc, bids_root):
+        dce_qc = dict(aif_qc)
+        dce_qc["detection_method"] = "atlas"
         sidecar = build_aif_timeseries_sidecar(
             modality="DCE",
             source_paths=[],
             bids_dir=bids_root,
             subject="X",
             session=None,
-            aif_qc=aif_qc,
+            aif_qc=dce_qc,
         )
         assert sidecar["Units"] == "mM"
-        # Same flat AIF* keys regardless of modality
-        assert sidecar["AIFPeakAmplitude"] == pytest.approx(12.5)
+        block = sidecar["PerfusionProcessing"]["AIF"]
+        assert block["PeakAmplitude"] == pytest.approx(12.5)
+        assert block["PeakAmplitudeUnits"] == "mM"
 
 
 class TestOptionalKeysOmitted:
@@ -131,8 +130,7 @@ class TestOptionalKeysOmitted:
             session=None,
             aif_qc=None,
         )
-        # No AIF* keys at all
-        assert all(not k.startswith("AIF") for k in sidecar)
+        assert "PerfusionProcessing" not in sidecar
         # But base sidecar still has Description / Columns / Units
         assert sidecar["Description"].startswith("Arterial input function")
         assert sidecar["Units"] == "1/s"
@@ -146,11 +144,11 @@ class TestOptionalKeysOmitted:
             session=None,
             aif_qc={"detection_method": "synthetic", "synthetic": True},
         )
-        assert sidecar["AIFMethod"] == "synthetic"
-        assert sidecar["AIFFallback"] is True
-        # Keys not in source dict are omitted, not null
-        assert "AIFFWHM" not in sidecar
-        assert "AIFGammaFitApplied" not in sidecar
+        block = sidecar["PerfusionProcessing"]["AIF"]
+        assert block["Source"] == "synthetic"
+        assert block["DetectionLevel"] == "synthetic"
+        assert block["SyntheticFallbackReason"] == "cascade_exhausted"
+        assert "FWHM" not in block
 
 
 class TestRejectsBadModality:

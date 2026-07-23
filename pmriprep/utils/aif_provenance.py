@@ -1,7 +1,8 @@
 """AIF provenance stamping for derivative sidecars.
 
-Every perfusion map sidecar carries a ``PerfusionProcessing.AIF`` block
-plus per-map ``AIFDependent`` and ``TemplateAIFUsage`` tags so downstream
+The AIF timeseries, AIF mask, preprocessing, and quantitative-map sidecars
+share one ``PerfusionProcessing.AIF`` block. Quantitative maps additionally
+carry per-map ``AIFDependent`` and ``TemplateAIFUsage`` tags so downstream
 consumers can filter correctly when a non-subject-specific AIF was used.
 
 Supports both DSC and DCE modalities via a ``modality`` parameter.
@@ -284,15 +285,71 @@ def build_aif_provenance_block(
     qs = aif_qc.get("quality_score")
     if qs is not None:
         block["QualityScore"] = float(qs)
+    n_voxels = aif_qc.get("n_aif_voxels_selected")
+    if n_voxels is not None:
+        block["NumberOfVoxelsSelected"] = int(n_voxels)
+    raw_metrics = aif_qc.get("aif_metrics")
+    metrics = raw_metrics if isinstance(raw_metrics, dict) else {}
+    peak = metrics.get("peak_conc")
+    if peak is None:
+        peak = aif_qc.get("peak_mm_mean")
+    if peak is None:
+        peak = aif_qc.get("final_peak_mm")
+    if peak is not None:
+        block["PeakAmplitude"] = float(peak)
+        block["PeakAmplitudeUnits"] = "1/s" if modality == "DSC" else "mM"
+    fwhm = metrics.get("fwhm")
+    if fwhm is None:
+        fwhm = aif_qc.get("fwhm_seconds_mean")
+    if fwhm is None:
+        fwhm = aif_qc.get("final_fwhm_seconds")
+    if fwhm is not None:
+        block["FWHM"] = float(fwhm)
+        block["FWHMUnits"] = (
+            "frames"
+            if modality == "DSC" and detection_level == "external"
+            else "s"
+        )
+    ttp = metrics.get("ttp")
+    if ttp is not None:
+        block["TimeToPeak"] = float(ttp)
+        block["TimeToPeakUnits"] = "s"
+    arrival = aif_qc.get("arrival_time_seconds")
+    if arrival is not None:
+        block["ArrivalTime"] = float(arrival)
+        block["ArrivalTimeUnits"] = "s"
+    cascade_tier = aif_qc.get("cascade_final_level")
+    if cascade_tier is None:
+        cascade_tier = aif_qc.get("arterial_cascade_tier")
+    if cascade_tier is not None:
+        block["ArterialCascadeTier"] = cascade_tier
+    atlas_tier = aif_qc.get("atlas_tier_used")
+    if atlas_tier is not None:
+        block["AtlasTierUsed"] = str(atlas_tier)
+    hemisphere_coverage = aif_qc.get("hemisphere_coverage")
+    if hemisphere_coverage is not None:
+        block["HemisphereCoverage"] = str(hemisphere_coverage)
     hct = aif_qc.get("hematocrit") or aif_qc.get("hematocrit_used")
     if hct is not None:
         block["Hematocrit"] = float(hct)
+    dose_factor = aif_qc.get("dose_factor")
+    if dose_factor is not None:
+        block["DoseFactor"] = float(dose_factor)
 
     # DSC-specific fields
     if modality == "DSC":
         block["GammaFitApplied"] = bool(
             aif_qc.get("gamma_fit_applied", False),
         )
+        gamma_r2 = aif_qc.get("gamma_fit_r_squared")
+        if gamma_r2 is not None:
+            block["GammaFitRSquared"] = float(gamma_r2)
+        gamma_auc_ratio = aif_qc.get("gamma_fit_auc_ratio")
+        if gamma_auc_ratio is not None:
+            block["GammaFitAUCRatio"] = float(gamma_auc_ratio)
+        cbv_denominator = aif_qc.get("cbv_auc_denominator_is_synthetic")
+        if cbv_denominator is not None:
+            block["UsedAsCBVDenominator"] = bool(cbv_denominator)
         if source == "synthetic":
             reason = (
                 qc_metrics.get("synthetic_fallback_reason")
@@ -326,6 +383,18 @@ def build_aif_provenance_block(
     return block
 
 
+def apply_aif_provenance_block(
+    sidecar: dict[str, Any],
+    qc_metrics: dict[str, Any] | None,
+    modality: Modality,
+) -> None:
+    """Attach the canonical AIF provenance block without map dependency tags."""
+    block = build_aif_provenance_block(qc_metrics, modality)
+    if block:
+        perf = sidecar.setdefault("PerfusionProcessing", {})
+        perf["AIF"] = block
+
+
 def apply_aif_sidecar(
     sidecar: dict[str, Any],
     map_key: str,
@@ -357,10 +426,7 @@ def apply_aif_sidecar(
         )
     sidecar["AIFDependent"] = map_key not in independent_maps
     sidecar["TemplateAIFUsage"] = usage_registry[map_key]
-    block = build_aif_provenance_block(qc_metrics, modality)
-    if block:
-        perf = sidecar.setdefault("PerfusionProcessing", {})
-        perf["AIF"] = block
+    apply_aif_provenance_block(sidecar, qc_metrics, modality)
 
 
 def stamp_aif_dependency(

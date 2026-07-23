@@ -291,41 +291,22 @@ def _enrich_dce(
     # AIF detection
     aif = qc.get("aif_detection")
     if aif and isinstance(aif, dict):
-        aif_block: Dict[str, Any] = {}
-        if "aif_source" in aif:
-            aif_block["method"] = str(aif["aif_source"])
-        if "n_aif_voxels_selected" in aif:
-            aif_block["n_voxels"] = int(aif["n_aif_voxels_selected"])
-        peak = aif.get("peak_mm_mean")
-        if peak is None:
-            peak = aif.get("final_peak_mm")
-        if peak is not None:
-            aif_block["peak_mM"] = _safe_float(peak)
-        fwhm = aif.get("fwhm_seconds_mean")
-        if fwhm is None:
-            fwhm = aif.get("final_fwhm_seconds")
-        if fwhm is not None:
-            aif_block["fwhm_s"] = _safe_float(fwhm)
-        if "quality_score" in aif:
-            aif_block["quality_score"] = _safe_float(aif["quality_score"])
-        if "arterial_cascade_tier" in aif:
-            aif_block["arterial_cascade_tier"] = int(aif["arterial_cascade_tier"])
-        if "atlas_tier_used" in aif:
-            aif_block["atlas_tier_used"] = str(aif["atlas_tier_used"])
-        if "hemisphere_coverage" in aif:
-            aif_block["hemisphere_coverage"] = str(aif["hemisphere_coverage"])
-        if aif.get("population_aif"):
-            aif_block["population_model"] = "parker"
-            if "dose_factor" in aif:
-                aif_block["dose_factor"] = _safe_float(aif["dose_factor"])
-        if aif_block:
-            from pmriprep.utils.aif_provenance import (
-                build_peak_scaling_provenance,
-            )
+        from pmriprep.utils.aif_provenance import build_aif_provenance_block
 
-            peak_scaling = build_peak_scaling_provenance(aif)
-            if peak_scaling:
-                aif_block["PeakScaling"] = peak_scaling
+        canonical_aif = dict(aif)
+        if "detection_method" not in canonical_aif:
+            source = str(canonical_aif.get("aif_source", ""))
+            if canonical_aif.get("population_aif") or source == "population":
+                canonical_aif["detection_method"] = "population"
+            elif source == "external":
+                canonical_aif["detection_method"] = "external"
+            elif source:
+                canonical_aif["detection_method"] = "atlas"
+        aif_block = build_aif_provenance_block(
+            canonical_aif,
+            modality="DCE",
+        )
+        if aif_block:
             perf["AIF"] = aif_block
 
         # Explicit unit traceability. The AIF curve consumed by PK
@@ -462,19 +443,9 @@ def _enrich_dsc(
     # AIF and baseline frames (both from qc["aif_detection"])
     aif = qc.get("aif_detection")
     if aif and isinstance(aif, dict):
-        aif_block: Dict[str, Any] = {}
-        if "detection_method" in aif:
-            aif_block["method"] = str(aif["detection_method"])
-            aif_block["synthetic"] = aif["detection_method"] == "synthetic"
-        if "n_aif_voxels_selected" in aif:
-            aif_block["n_voxels"] = int(aif["n_aif_voxels_selected"])
-        if "quality_score" in aif:
-            aif_block["quality_score"] = _safe_float(aif["quality_score"])
-        aif_metrics = aif.get("aif_metrics") or {}
-        if "fwhm" in aif_metrics:
-            aif_block["fwhm_frames"] = _safe_float(aif_metrics["fwhm"])
-        if "arrival_time_seconds" in aif:
-            aif_block["arrival_time_s"] = _safe_float(aif["arrival_time_seconds"])
+        from pmriprep.utils.aif_provenance import build_aif_provenance_block
+
+        aif_block = build_aif_provenance_block(aif, modality="DSC")
         if aif_block:
             perf["AIF"] = aif_block
 

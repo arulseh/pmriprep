@@ -339,6 +339,21 @@ def _build_minimal_meta(
     return out
 
 
+def _build_aif_mask_meta(
+    base: dict,
+    description: str,
+    qc_metrics: dict | None,
+) -> dict:
+    """Build an AIF ROI sidecar with the canonical DSC AIF block."""
+    from pmriprep.utils.aif_provenance import apply_aif_provenance_block
+
+    out = dict(base)
+    out["Description"] = description
+    out["Type"] = "ROI"
+    apply_aif_provenance_block(out, qc_metrics, modality="DSC")
+    return out
+
+
 def _build_underlay_meta(
     base: dict,
     description: str,
@@ -1483,10 +1498,45 @@ def init_dsc_datasinks_wf(
             "Mean DSC reference image", "stat",
         ), "out_file"))
     if "aif_mask" in present:
-        sink_outputs.append((_add_minimal_perf_sink(
-            "aif_mask", "aif_mask", "dscAif", "",
-            "AIF detection mask in DSC space", "mask", "ROI",
-        ), "out_file"))
+        meta = pe.Node(
+            niu.Function(
+                input_names=["base", "description", "qc_metrics"],
+                output_names=["meta_dict"],
+                function=_build_aif_mask_meta,
+            ),
+            name="aif_mask_meta",
+        )
+        meta.inputs.description = "AIF detection mask in DSC space"
+        workflow.connect([
+            (base_minimal, meta, [("meta_dict", "base")]),
+            (inputnode, meta, [("qc_metrics", "qc_metrics")]),
+        ])
+        sink = pe.Node(
+            niu.Function(
+                input_names=[
+                    "in_file", "output_dir", "subject", "session",
+                    "desc", "suffix", "meta_dict", "datatype",
+                    "bids_suffix",
+                ],
+                output_names=["out_file"],
+                function=_copy_perf_map,
+            ),
+            name="aif_mask_sink",
+        )
+        sink.inputs.desc = "dscAif"
+        sink.inputs.suffix = ""
+        sink.inputs.datatype = "perf"
+        sink.inputs.bids_suffix = "mask"
+        workflow.connect([
+            (inputnode, sink, [
+                ("output_dir", "output_dir"),
+                ("subject_id", "subject"),
+                ("session_id", "session"),
+                ("aif_mask", "in_file"),
+            ]),
+            (meta, sink, [("meta_dict", "meta_dict")]),
+        ])
+        sink_outputs.append((sink, "out_file"))
 
     # Precontrast-derived masks explicitly dismiss ceagent to avoid false
     # postcontrast provenance; the distinction is encoded per specification.

@@ -404,3 +404,80 @@ class TestDSCRegression:
         apply_aif_sidecar(sidecar, "k2", qc, modality="DSC")
         assert sidecar["AIFDependent"] is False
         assert sidecar["TemplateAIFUsage"] == "safe"
+
+
+class TestPublicArtifactSchema:
+    def test_external_dsc_fwhm_retains_frame_units(self) -> None:
+        from pmriprep.utils.aif_provenance import build_aif_provenance_block
+
+        block = build_aif_provenance_block(
+            {
+                "detection_method": "external",
+                "aif_metrics": {"fwhm": 5.0},
+            },
+            modality="DSC",
+        )
+        assert block["FWHM"] == pytest.approx(5.0)
+        assert block["FWHMUnits"] == "frames"
+
+    def test_curve_and_mask_use_identical_dce_block(self, tmp_path) -> None:
+        from pmriprep.utils.sidecar_builders import build_aif_timeseries_sidecar
+        from pmriprep.workflows.dce.datasinks import _build_aif_mask_meta
+
+        qc = {
+            "detection_method": "atlas",
+            "quality_score": 0.65,
+            "n_aif_voxels_selected": 7,
+            "aif_metrics": {"peak_conc": 4.2, "fwhm": 8.0},
+            "hematocrit": 0.42,
+            "peak_scaling_enabled": True,
+            "peak_scaling_applied": False,
+        }
+        curve = build_aif_timeseries_sidecar(
+            modality="DCE",
+            source_paths=[],
+            bids_dir=tmp_path,
+            subject="01",
+            session=None,
+            aif_qc=qc,
+        )
+        mask = _build_aif_mask_meta({}, "AIF mask", {"aif_detection": qc})
+
+        assert (
+            curve["PerfusionProcessing"]["AIF"]
+            == mask["PerfusionProcessing"]["AIF"]
+        )
+        assert mask["Type"] == "ROI"
+
+    def test_curve_mask_and_map_use_identical_dsc_block(self, tmp_path) -> None:
+        from pmriprep.utils.aif_provenance import apply_aif_sidecar
+        from pmriprep.utils.sidecar_builders import build_aif_timeseries_sidecar
+        from pmriprep.workflows.dsc.datasinks import _build_aif_mask_meta
+
+        qc = {
+            "detection_method": "atlas_strict",
+            "quality_score": 0.8,
+            "n_aif_voxels_selected": 6,
+            "gamma_fit_applied": True,
+            "gamma_fit_r_squared": 0.95,
+        }
+        curve = build_aif_timeseries_sidecar(
+            modality="DSC",
+            source_paths=[],
+            bids_dir=tmp_path,
+            subject="01",
+            session=None,
+            aif_qc=qc,
+        )
+        mask = _build_aif_mask_meta({}, "AIF mask", {"aif_detection": qc})
+        quantitative_map: dict = {}
+        apply_aif_sidecar(
+            quantitative_map,
+            "cbf",
+            {"aif_detection": qc},
+            modality="DSC",
+        )
+
+        expected = curve["PerfusionProcessing"]["AIF"]
+        assert mask["PerfusionProcessing"]["AIF"] == expected
+        assert quantitative_map["PerfusionProcessing"]["AIF"] == expected

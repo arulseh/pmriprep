@@ -90,9 +90,9 @@ class TestEnrichDCE:
         assert perf["T1Mapping"]["B1_correction"] == "AFI"
 
         assert "AIF" in perf
-        assert perf["AIF"]["method"] == "auto"
-        assert perf["AIF"]["n_voxels"] == 8
-        assert perf["AIF"]["arterial_cascade_tier"] == 1
+        assert perf["AIF"]["DetectionLevel"] == "atlas"
+        assert perf["AIF"]["NumberOfVoxelsSelected"] == 8
+        assert perf["AIF"]["ArterialCascadeTier"] == 1
         assert perf["AIF"]["PeakScaling"]["RawPeak"] == pytest.approx(4.0)
         assert perf["AIF"]["PeakScaling"]["EmittedPeak"] == pytest.approx(8.0)
         assert (
@@ -144,8 +144,8 @@ class TestEnrichDCE:
         }
         result = enrich_provenance_from_qc(sidecar, qc, "DCE")
         aif = result["PerfusionProcessing"]["AIF"]
-        assert aif["population_model"] == "parker"
-        assert aif["dose_factor"] == pytest.approx(0.5)
+        assert aif["PopulationModel"] == "parker"
+        assert aif["DoseFactor"] == pytest.approx(0.5)
 
     def test_assumed_t1_segmented(self) -> None:
         """Assumed T1 with tissue segmentation records WM/GM values."""
@@ -262,9 +262,10 @@ class TestEnrichDSC:
         assert perf["PreloadDetection"]["classification_source"] == "k2_primary"
         assert perf["PreloadDetection"]["k2_classification"] == "inadequate"
 
-        assert perf["AIF"]["method"] == "atlas_strict"
-        assert perf["AIF"]["fwhm_frames"] == pytest.approx(4.0)
-        assert perf["AIF"]["synthetic"] is False
+        assert perf["AIF"]["DetectionLevel"] == "atlas_strict"
+        assert perf["AIF"]["FWHM"] == pytest.approx(4.0)
+        assert perf["AIF"]["FWHMUnits"] == "s"
+        assert perf["AIF"]["Source"] == "measured"
 
         assert perf["QuantificationMode"] == "relative"
         assert perf["NormalizationReference"]["tissue"] == "NAWM"
@@ -280,7 +281,7 @@ class TestEnrichDSC:
             "aif_detection": {"detection_method": "synthetic", "n_aif_voxels_selected": 0},
         }
         result = enrich_provenance_from_qc(sidecar, qc, "DSC")
-        assert result["PerfusionProcessing"]["AIF"]["synthetic"] is True
+        assert result["PerfusionProcessing"]["AIF"]["Source"] == "synthetic"
 
     def test_tikhonov_lambda(self) -> None:
         """Tikhonov deconvolution includes lambda_mean."""
