@@ -102,6 +102,7 @@ DCE_POPULATION_AIF_USAGE: Final[dict[str, TemplateAIFUsageCategory]] = {
     "vp": "ratio_defensible",
     "fp": "ratio_defensible",
     "ps": "ratio_defensible",
+    "e": "ratio_defensible",
     # Uncertainty
     "ktrans_uncertainty": "ratio_defensible",
     "ve_uncertainty": "ratio_defensible",

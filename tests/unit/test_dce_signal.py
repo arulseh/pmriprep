@@ -224,6 +224,26 @@ def test_signal_conversion_reports_bounded_spgr_inversion() -> None:
     assert result.conversion_qc["e1_bounded_fraction"] > 0
 
 
+def test_signal_conversion_qc_excludes_zero_background() -> None:
+    """Fallback and inversion diagnostics use acquired signal support."""
+    signal = np.zeros((2, 1, 1, 10))
+    signal[0, ..., :] = 100.0
+    signal[0, ..., 5:] = 120.0
+    b1_map = np.array([[[1.0]], [[0.0]]])
+    result = signal_to_concentration(
+        signal,
+        flip_angle_deg=15.0,
+        tr=0.005,
+        b1_map=b1_map,
+        baseline_frames=5,
+        convert_to_plasma=False,
+    )
+    assert result.conversion_qc["n_spatial_voxels"] == 2
+    assert result.conversion_qc["n_signal_supported_voxels"] == 1
+    assert result.conversion_qc["b1_missing_voxels"] == 0
+    assert result.conversion_qc["e1_bounded_high_samples"] == 0
+
+
 class TestFieldStrengthDefaultT1:
     """Tests for field-strength-aware default T1 when no T1 map provided."""
 

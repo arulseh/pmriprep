@@ -113,6 +113,7 @@ class TestPKMapKeyDriftGuard:
             "vp_map": "vp",
             "fp_map": "fp",
             "ps_map": "ps",
+            "e_map": "e",
         }
 
     def test_all_pk_output_keys_are_registered_for_aif_provenance(self) -> None:
@@ -130,7 +131,7 @@ class TestPKMapKeyDriftGuard:
         }
         assert emitted <= DCE_POPULATION_AIF_USAGE.keys()
 
-        for key in ("fp", "ps"):
+        for key in ("fp", "ps", "e"):
             assert DCE_POPULATION_AIF_USAGE[key] == "ratio_defensible"
         for key in ("fp_cv", "ps_cv"):
             assert DCE_POPULATION_AIF_USAGE[key] == "safe"

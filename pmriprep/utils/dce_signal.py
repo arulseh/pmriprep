@@ -461,6 +461,15 @@ def signal_to_concentration(
     else:
         baseline_signal = np.mean(signal[..., :baseline_frames], axis=-1)
 
+    # Conversion diagnostics should describe acquired signal support rather
+    # than zero-valued image background. Otherwise brain extraction and
+    # resampled T1/B1 maps make fallback and bounded-inversion counts depend
+    # mainly on field of view.
+    signal_support = (
+        np.isfinite(baseline_signal)
+        & (np.abs(baseline_signal) > EPSILON_SIGNAL)
+    )
+
     # Prevent division by zero in baseline signal. Negative baselines are
     # unphysical (phase artifact, registration overshoot, denoising) — track
     # them so we can zero out their concentration rather than propagating a
@@ -519,9 +528,15 @@ def signal_to_concentration(
                 flip_t,
                 e1_baseline,
             )
-            e1_bounded_low += int(np.count_nonzero(e1_t == EPSILON_E1_LOWER))
+            e1_bounded_low += int(
+                np.count_nonzero(
+                    (e1_t == EPSILON_E1_LOWER) & signal_support
+                )
+            )
             e1_bounded_high += int(
-                np.count_nonzero(e1_t == 1.0 - EPSILON_E1_UPPER)
+                np.count_nonzero(
+                    (e1_t == 1.0 - EPSILON_E1_UPPER) & signal_support
+                )
             )
 
             # Convert to R1
@@ -547,9 +562,15 @@ def signal_to_concentration(
                 flip_t_4d,
                 e1_baseline,
             )
-            e1_bounded_low += int(np.count_nonzero(e1_t == EPSILON_E1_LOWER))
+            e1_bounded_low += int(
+                np.count_nonzero(
+                    (e1_t == EPSILON_E1_LOWER) & signal_support
+                )
+            )
             e1_bounded_high += int(
-                np.count_nonzero(e1_t == 1.0 - EPSILON_E1_UPPER)
+                np.count_nonzero(
+                    (e1_t == 1.0 - EPSILON_E1_UPPER) & signal_support
+                )
             )
 
             # Convert to R1
@@ -592,8 +613,14 @@ def signal_to_concentration(
     if convert_to_plasma:
         concentration = concentration / (1.0 - hematocrit)
 
-    n_samples = int(signal.size)
     n_spatial = int(np.prod(spatial_shape)) if spatial_shape else 1
+    n_supported = int(np.count_nonzero(signal_support))
+    n_supported_samples = n_supported * n_timepoints
+    sample_support = (
+        signal_support
+        if signal.ndim == 1
+        else signal_support[..., np.newaxis]
+    )
     return DCEConversionResult(
         concentration=concentration,
         r1_dynamic=r1_dynamic,
@@ -603,16 +630,29 @@ def signal_to_concentration(
         baseline_signal=baseline_signal,
         conversion_qc={
             "n_spatial_voxels": n_spatial,
+            "n_signal_supported_voxels": n_supported,
             "n_timepoints": n_timepoints,
-            "b1_missing_voxels": int(np.count_nonzero(b1_missing)),
-            "b1_clipped_low_voxels": int(np.count_nonzero(b1_clipped_low)),
-            "b1_clipped_high_voxels": int(np.count_nonzero(b1_clipped_high)),
+            "b1_missing_voxels": int(
+                np.count_nonzero(b1_missing & signal_support)
+            ),
+            "b1_clipped_low_voxels": int(
+                np.count_nonzero(b1_clipped_low & signal_support)
+            ),
+            "b1_clipped_high_voxels": int(
+                np.count_nonzero(b1_clipped_high & signal_support)
+            ),
             "e1_bounded_low_samples": e1_bounded_low,
             "e1_bounded_high_samples": e1_bounded_high,
             "e1_bounded_fraction": (
-                (e1_bounded_low + e1_bounded_high) / max(1, n_samples)
+                (e1_bounded_low + e1_bounded_high)
+                / max(1, n_supported_samples)
             ),
             "nonfinite_concentration_samples": int(
+                np.count_nonzero(
+                    (~np.isfinite(concentration)) & sample_support
+                )
+            ),
+            "total_grid_nonfinite_concentration_samples": int(
                 np.count_nonzero(~np.isfinite(concentration))
             ),
         },

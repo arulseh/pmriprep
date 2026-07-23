@@ -628,6 +628,7 @@ def _signal_to_concentration_node(
     import nibabel as nib  # type: ignore[import-untyped]
     import numpy as np
 
+    from pmriprep.utils.dce_constants import EPSILON_SIGNAL
     from pmriprep.utils.dce_signal import signal_to_concentration
 
     # Load DCE data
@@ -681,15 +682,31 @@ def _signal_to_concentration_node(
     # invalid_t1 is 3D (spatial); fancy-indexing into the 4D concentration
     # array broadcasts the assignment across the trailing time axis.
     conversion_qc = dict(result.conversion_qc)
+    baseline_signal = np.asarray(result.baseline_signal)
+    signal_support = (
+        np.isfinite(baseline_signal)
+        & (np.abs(baseline_signal) > EPSILON_SIGNAL)
+    )
     if t1_map is not None:
         invalid_t1 = ~np.isfinite(t1_map) | (t1_map < 100.0)  # T1 in ms
         result.concentration[invalid_t1] = 0.0
-        conversion_qc["t1_invalid_voxels"] = int(np.count_nonzero(invalid_t1))
-        conversion_qc["t1_invalid_fraction"] = float(np.mean(invalid_t1))
+        conversion_qc["t1_invalid_voxels"] = int(
+            np.count_nonzero(invalid_t1 & signal_support)
+        )
+        conversion_qc["t1_invalid_fraction"] = (
+            conversion_qc["t1_invalid_voxels"]
+            / max(1, int(np.count_nonzero(signal_support)))
+        )
     else:
         conversion_qc["t1_invalid_voxels"] = 0
         conversion_qc["t1_invalid_fraction"] = 0.0
     conversion_qc["nonfinite_output_samples"] = int(
+        np.count_nonzero(
+            (~np.isfinite(result.concentration))
+            & signal_support[..., np.newaxis]
+        )
+    )
+    conversion_qc["total_grid_nonfinite_output_samples"] = int(
         np.count_nonzero(~np.isfinite(result.concentration))
     )
 
