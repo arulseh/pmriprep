@@ -400,7 +400,7 @@ def signal_to_concentration(
         b1_thresh = get_b1_thresholds(field_strength)
         # Mark voxels with no B1 data BEFORE clipping so they aren't
         # silently mapped to the clip minimum (which halves flip angles).
-        b1_missing = b1_map <= 0
+        b1_missing = ~np.isfinite(b1_map) | (b1_map <= 0)
         b1_safe = np.clip(b1_map, b1_thresh.dce_clip_low, b1_thresh.dce_clip_high)
         b1_safe[b1_missing] = 1.0  # No B1 data → nominal flip angles
         if signal.ndim == 4:

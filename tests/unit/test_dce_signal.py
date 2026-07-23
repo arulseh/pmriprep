@@ -184,6 +184,30 @@ class TestConcentrationConversions:
             )
 
 
+@pytest.mark.parametrize("missing_b1", [0.0, -1.0, np.nan, np.inf])
+def test_missing_b1_uses_nominal_flip_angle(missing_b1: float) -> None:
+    """Nonfinite and nonpositive B1 sentinels share the nominal-angle fallback."""
+    signal = np.full((1, 1, 1, 10), 100.0)
+    signal[..., 5:] = 120.0
+    nominal = signal_to_concentration(
+        signal,
+        flip_angle_deg=15.0,
+        tr=0.005,
+        b1_map=np.ones((1, 1, 1)),
+        baseline_frames=5,
+        convert_to_plasma=False,
+    )
+    missing = signal_to_concentration(
+        signal,
+        flip_angle_deg=15.0,
+        tr=0.005,
+        b1_map=np.full((1, 1, 1), missing_b1),
+        baseline_frames=5,
+        convert_to_plasma=False,
+    )
+    np.testing.assert_allclose(missing.concentration, nominal.concentration)
+
+
 class TestFieldStrengthDefaultT1:
     """Tests for field-strength-aware default T1 when no T1 map provided."""
 
