@@ -13,6 +13,7 @@ from pmriprep.interfaces.dce_compute import (
     ComputeDCEMaps,
     _DCEModelFreeMaps,
     _build_dce_qc_mask,
+    _evaluate_dce_qc_mask,
     _compute_dce_coefficient_of_variation,
     _write_dce_map,
     _write_dce_fitted_curves,
@@ -140,6 +141,35 @@ def test_build_dce_qc_mask_requires_finite_kep_for_reversible_model() -> None:
     )
     assert not reversible[0, 0, 0]
     assert patlak[0, 0, 0]
+
+
+def test_evaluate_dce_qc_mask_reports_overlapping_component_failures() -> None:
+    """QC provenance counts each failed criterion within the fitting domain."""
+    shape = (1, 1, 3)
+    evaluation = _evaluate_dce_qc_mask(
+        np.ones(shape, dtype=bool),
+        np.array([[[9.0, 20.0, 20.0]]]),
+        np.array([[[20.0, 9.0, 20.0]]]),
+        np.array([[[0.1, 0.1, 0.0]]]),
+        np.array([[[0.8, 0.8, 0.4]]]),
+        np.full(shape, 0.2),
+        np.full(shape, 0.1),
+        np.full(shape, 0.5),
+        np.array([[[1, 1, 2]]], dtype=np.int8),
+        np.zeros(shape, dtype=np.int8),
+        {"patlak": 1},
+        False,
+        "extended_tofts",
+    )
+    assert evaluation.mask.tolist() == [[[0, 0, 0]]]
+    assert evaluation.component_failures == {
+        "tsnr": 1,
+        "peak_enhancement": 1,
+        "ktrans_range": 1,
+        "r_squared": 1,
+        "quality_flag": 1,
+        "model_parameters": 0,
+    }
 
 
 def test_compute_dce_coefficient_of_variation_preserves_auto_sentinels() -> None:
@@ -366,6 +396,7 @@ def test_write_dce_terminal_outputs_preserves_auto_applicability(is_auto: bool) 
     def write_map(data: np.ndarray, path: str, dtype: object = np.float32) -> None:
         writes.append((path, dtype))
 
+    qc_metrics: dict[str, object] = {}
     outputs = _write_dce_terminal_outputs(
         maps,
         np.ones(shape, dtype=bool),
@@ -377,11 +408,23 @@ def test_write_dce_terminal_outputs_preserves_auto_applicability(is_auto: bool) 
         np.eye(4),
         lambda suffix: f"output{suffix}.nii.gz",
         write_map,
+        qc_metrics,
     )
     assert {"out_tsnr", "out_qc_mask"}.issubset(outputs)
     assert ("out_model_selection" in outputs) is is_auto
     assert ("out_delta_bic" in outputs) is is_auto
     assert next(dtype for path, dtype in writes if "qc_mask" in path) is np.uint8
+    assert qc_metrics["n_voxels_qc_accepted"] == 1
+    assert qc_metrics["qc_component_failures"] == {
+        "scope": "fitted_voxels",
+        "counts_are_overlapping": True,
+        "tsnr": 0,
+        "peak_enhancement": 0,
+        "ktrans_range": 0,
+        "r_squared": 0,
+        "quality_flag": 0,
+        "model_parameters": 0,
+    }
     if is_auto:
         assert next(dtype for path, dtype in writes if "modelSelection" in path) is np.int8
 

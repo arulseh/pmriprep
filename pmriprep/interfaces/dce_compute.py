@@ -792,13 +792,55 @@ def _build_dce_qc_mask(
     model_name: str,
 ) -> npt.NDArray[np.uint8]:
     """Build the physiological and fit-quality acceptance mask."""
-    qc_mask = fitting_mask.copy()
-    qc_mask &= tsnr >= 10
-    if peak_enhancement is not None:
-        qc_mask &= peak_enhancement >= 10
-    qc_mask &= (ktrans > 0) & (ktrans < 5.0)
-    qc_mask &= r_squared >= 0.5
-    qc_mask &= quality_flag == 1
+    return _evaluate_dce_qc_mask(
+        fitting_mask,
+        tsnr,
+        peak_enhancement,
+        ktrans,
+        r_squared,
+        ve,
+        vp,
+        kep,
+        quality_flag,
+        model_selection,
+        model_selection_codes,
+        is_auto,
+        model_name,
+    ).mask
+
+
+class _DCEQCMaskEvaluation(NamedTuple):
+    """DCE quantitative-mask result and overlapping component failures."""
+
+    mask: npt.NDArray[np.uint8]
+    component_failures: dict[str, int]
+
+
+def _evaluate_dce_qc_mask(
+    fitting_mask: npt.NDArray[np.bool_],
+    tsnr: npt.NDArray[Any],
+    peak_enhancement: Optional[npt.NDArray[Any]],
+    ktrans: npt.NDArray[Any],
+    r_squared: npt.NDArray[Any],
+    ve: npt.NDArray[Any],
+    vp: npt.NDArray[Any],
+    kep: npt.NDArray[Any],
+    quality_flag: npt.NDArray[Any],
+    model_selection: npt.NDArray[Any],
+    model_selection_codes: dict[str, int],
+    is_auto: bool,
+    model_name: str,
+) -> _DCEQCMaskEvaluation:
+    """Evaluate DCE quantitative acceptance and report each failed component."""
+    tsnr_ok = tsnr >= 10
+    enhancement_ok = (
+        np.ones(fitting_mask.shape, dtype=bool)
+        if peak_enhancement is None
+        else peak_enhancement >= 10
+    )
+    ktrans_ok = (ktrans > 0) & (ktrans < 5.0)
+    r_squared_ok = r_squared >= 0.5
+    quality_ok = quality_flag == 1
 
     is_patlak_voxel = model_selection == model_selection_codes.get("patlak", -1)
     patlak_ok = np.isfinite(vp)
@@ -811,15 +853,33 @@ def _build_dce_qc_mask(
         & (kep > 0.001)
     )
     if is_auto:
-        qc_mask &= np.where(is_patlak_voxel, patlak_ok, extended_ok)
+        parameters_ok = np.where(is_patlak_voxel, patlak_ok, extended_ok)
     elif model_name == "patlak":
-        qc_mask &= patlak_ok
+        parameters_ok = patlak_ok
     elif model_name == "tofts":
-        qc_mask &= tofts_ok
+        parameters_ok = tofts_ok
     elif model_name in ("extended_tofts", "2cxm"):
-        qc_mask &= extended_ok
+        parameters_ok = extended_ok
+    else:
+        parameters_ok = np.ones(fitting_mask.shape, dtype=bool)
+
+    components = {
+        "tsnr": tsnr_ok,
+        "peak_enhancement": enhancement_ok,
+        "ktrans_range": ktrans_ok,
+        "r_squared": r_squared_ok,
+        "quality_flag": quality_ok,
+        "model_parameters": parameters_ok,
+    }
+    qc_mask = fitting_mask.copy()
+    for component in components.values():
+        qc_mask &= component
+    failures = {
+        name: int(np.count_nonzero(fitting_mask & ~component))
+        for name, component in components.items()
+    }
     result: npt.NDArray[np.uint8] = qc_mask.astype(np.uint8)
-    return result
+    return _DCEQCMaskEvaluation(result, failures)
 
 
 def _compute_dce_coefficient_of_variation(
@@ -1003,11 +1063,12 @@ def _write_dce_terminal_outputs(
     affine: npt.NDArray[Any],
     generate_path: Callable[[str], str],
     write_map: Callable[..., None],
+    qc_metrics: Optional[dict[str, Any]] = None,
 ) -> dict[str, str]:
     """Write terminal QC, model-selection, and fitted-curve outputs."""
     outputs = {"out_tsnr": generate_path("_tSNR")}
     write_map(tsnr, outputs["out_tsnr"])
-    qc_mask = _build_dce_qc_mask(
+    qc_evaluation = _evaluate_dce_qc_mask(
         fitting_mask,
         tsnr,
         peak_enhancement,
@@ -1022,6 +1083,14 @@ def _write_dce_terminal_outputs(
         is_auto,
         model_name,
     )
+    qc_mask = qc_evaluation.mask
+    if qc_metrics is not None:
+        qc_metrics["n_voxels_qc_accepted"] = int(np.count_nonzero(qc_mask))
+        qc_metrics["qc_component_failures"] = {
+            "scope": "fitted_voxels",
+            "counts_are_overlapping": True,
+            **qc_evaluation.component_failures,
+        }
     outputs["out_qc_mask"] = generate_path("_qc_mask")
     write_map(qc_mask, outputs["out_qc_mask"], dtype=np.uint8)
     if is_auto:
@@ -3739,6 +3808,7 @@ class ComputeDCEMaps(BaseInterface):
                 affine,
                 self._gen_outfilename,
                 _save_dce_map,
+                qc_metrics,
             )
         )
 
