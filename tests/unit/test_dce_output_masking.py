@@ -60,6 +60,7 @@ def test_build_dce_qc_mask_preserves_strict_thresholds() -> None:
         np.full(shape, 0.2),
         np.full(shape, 0.1),
         np.full(shape, 0.01),
+        np.ones(shape, dtype=np.int8),
         np.zeros(shape, dtype=np.int8),
         {"patlak": 1},
         False,
@@ -81,12 +82,64 @@ def test_build_dce_qc_mask_auto_patlak_allows_nan_parameters() -> None:
         np.array([[[np.nan, 0.8]]]),
         np.array([[[0.1, 0.2]]]),
         np.array([[[np.nan, 0.001]]]),
+        np.ones(shape, dtype=np.int8),
         np.array([[[1, 3]]], dtype=np.int8),
         {"patlak": 1},
         True,
         "auto",
     )
     assert mask.tolist() == [[[1, 0]]]
+
+
+def test_build_dce_qc_mask_rejects_quality_and_required_parameter_failures() -> None:
+    """Only good fits with all model-required parameters are accepted."""
+    shape = (1, 1, 4)
+    common = {
+        "fitting_mask": np.ones(shape, dtype=bool),
+        "tsnr": np.full(shape, 20.0),
+        "peak_enhancement": np.full(shape, 20.0),
+        "ktrans": np.full(shape, 0.1),
+        "r_squared": np.full(shape, 0.8),
+        "ve": np.array([[[0.2, 0.2, np.nan, 0.2]]]),
+        "vp": np.array([[[0.1, 0.1, 0.1, np.nan]]]),
+        "kep": np.full(shape, 0.5),
+        "quality_flag": np.array([[[1, 2, 1, 1]]], dtype=np.int8),
+        "model_selection": np.zeros(shape, dtype=np.int8),
+        "model_selection_codes": {"patlak": 1},
+        "is_auto": False,
+        "model_name": "extended_tofts",
+    }
+    mask = _build_dce_qc_mask(**common)
+    assert mask.tolist() == [[[1, 0, 0, 0]]]
+
+
+def test_build_dce_qc_mask_requires_finite_kep_for_reversible_model() -> None:
+    """Undefined kep is acceptable for Patlak only, not Tofts-family fits."""
+    shape = (1, 1, 1)
+    arguments = {
+        "fitting_mask": np.ones(shape, dtype=bool),
+        "tsnr": np.full(shape, 20.0),
+        "peak_enhancement": np.full(shape, 20.0),
+        "ktrans": np.full(shape, 0.1),
+        "r_squared": np.full(shape, 0.8),
+        "ve": np.full(shape, 0.2),
+        "vp": np.full(shape, 0.1),
+        "kep": np.full(shape, np.nan),
+        "quality_flag": np.ones(shape, dtype=np.int8),
+        "model_selection": np.zeros(shape, dtype=np.int8),
+        "model_selection_codes": {"patlak": 1},
+        "is_auto": False,
+    }
+    reversible = _build_dce_qc_mask(
+        **arguments,
+        model_name="extended_tofts",
+    )
+    patlak = _build_dce_qc_mask(
+        **arguments,
+        model_name="patlak",
+    )
+    assert not reversible[0, 0, 0]
+    assert patlak[0, 0, 0]
 
 
 def test_compute_dce_coefficient_of_variation_preserves_auto_sentinels() -> None:
@@ -302,6 +355,7 @@ def test_write_dce_terminal_outputs_preserves_auto_applicability(is_auto: bool) 
         ve=values,
         vp=values,
         kep=np.full(shape, 0.01),
+        quality_flag=np.ones(shape, dtype=np.int8),
         model_selection=np.ones(shape, dtype=np.int8),
         model_selection_codes={"patlak": 1},
         delta_bic=values,

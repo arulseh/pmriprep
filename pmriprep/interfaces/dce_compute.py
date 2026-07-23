@@ -785,6 +785,7 @@ def _build_dce_qc_mask(
     ve: npt.NDArray[Any],
     vp: npt.NDArray[Any],
     kep: npt.NDArray[Any],
+    quality_flag: npt.NDArray[Any],
     model_selection: npt.NDArray[Any],
     model_selection_codes: dict[str, int],
     is_auto: bool,
@@ -797,16 +798,26 @@ def _build_dce_qc_mask(
         qc_mask &= peak_enhancement >= 10
     qc_mask &= (ktrans > 0) & (ktrans < 5.0)
     qc_mask &= r_squared >= 0.5
+    qc_mask &= quality_flag == 1
 
     is_patlak_voxel = model_selection == model_selection_codes.get("patlak", -1)
-    if is_auto or model_name in ["extended_tofts", "2cxm"]:
-        ve_safe = np.where(np.isfinite(ve), ve, 0.0)
-        vp_safe = np.where(np.isfinite(vp), vp, 0.0)
-        volume_ok = (ve_safe + vp_safe) < 0.95
-        qc_mask &= volume_ok | is_patlak_voxel
-    if is_auto or model_name != "patlak":
-        kep_ok = np.where(np.isfinite(kep), kep > 0.001, True)
-        qc_mask &= kep_ok
+    patlak_ok = np.isfinite(vp)
+    tofts_ok = np.isfinite(ve) & (ve < 0.95) & np.isfinite(kep) & (kep > 0.001)
+    extended_ok = (
+        np.isfinite(ve)
+        & np.isfinite(vp)
+        & ((ve + vp) < 0.95)
+        & np.isfinite(kep)
+        & (kep > 0.001)
+    )
+    if is_auto:
+        qc_mask &= np.where(is_patlak_voxel, patlak_ok, extended_ok)
+    elif model_name == "patlak":
+        qc_mask &= patlak_ok
+    elif model_name == "tofts":
+        qc_mask &= tofts_ok
+    elif model_name in ("extended_tofts", "2cxm"):
+        qc_mask &= extended_ok
     result: npt.NDArray[np.uint8] = qc_mask.astype(np.uint8)
     return result
 
@@ -1005,6 +1016,7 @@ def _write_dce_terminal_outputs(
         maps.ve,
         maps.vp,
         maps.kep,
+        maps.quality_flag,
         maps.model_selection,
         maps.model_selection_codes,
         is_auto,
