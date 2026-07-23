@@ -107,7 +107,7 @@ when available.
 
 - Runtime and memory concurrency scale with `--nprocs` and `--omp-nthreads`.
 - GPU is used only for brain extraction (HD-BET) and tumor segmentation (HD-GLIO). Without a GPU, HD-BET falls back to CPU and tumor segmentation is skipped.
-- Keep the working directory (`-w`) until processing and report generation complete; it supports inspection and reruns. It can be removed after outputs have been verified.
+- Keep the working directory (`-w`) until processing and report generation complete; it supports inspection and reruns. PMRIPrep stores each release in a version-specific subdirectory so scientific caches are reused only by the same version. The work directory can be removed after outputs have been verified.
 
 ## Quick Start
 
@@ -132,7 +132,7 @@ pmriprep bids_dir output_dir {participant} [options]
 | `--nprocs N` | Maximum number of parallel processes (default: 1) |
 | `--omp-nthreads N` | Per-process thread limit (OMP/MKL/ITK) |
 | `--mem-gb GB` | Upper bound memory limit in GB |
-| `-w PATH`, `--work-dir PATH` | Working directory for intermediate files |
+| `-w PATH`, `--work-dir PATH` | Working-directory root; intermediate files are namespaced by PMRIPrep version |
 | `--config-file PATH` | YAML or JSON configuration file for advanced options |
 | `--use-plugin PATH` | Nipype execution-plugin YAML/JSON for schedulers such as SLURM, SGE, or PBS |
 | `--version` | Print the installed PMRIPrep version |

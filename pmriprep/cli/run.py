@@ -219,7 +219,10 @@ Examples:
         "--work-dir",
         type=Path,
         metavar="PATH",
-        help="Path to the working directory for intermediate files.",
+        help=(
+            "Working-directory root. Intermediate files are isolated in a "
+            "PMRIPrep-version-specific subdirectory."
+        ),
     )
 
     # Configuration file
@@ -978,10 +981,8 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
                 for line in summary.split("\n"):
                     logger.info(line)
 
-                # Set working directory
-                workflow.base_dir = str(work_dir)
-
-                # Write workflow graph if requested (after base_dir is set)
+                # Write workflow graph after the constructor has selected its
+                # version-specific working directory.
                 if args.write_graph:
                     try:
                         workflow.write_graph(

@@ -51,6 +51,42 @@ class PipelineSkipFlags:
     skip_dce: bool = False
 
 
+def versioned_work_dir(
+    work_dir: Union[str, Path],
+    pipeline_version: Optional[str] = None,
+) -> Path:
+    """Return the cache namespace for one PMRIPrep release.
+
+    Parameters
+    ----------
+    work_dir : path-like
+        User-selected working-directory root.
+    pipeline_version : str, optional
+        Version used to form the namespace. Defaults to the installed
+        PMRIPrep version.
+
+    Returns
+    -------
+    pathlib.Path
+        Resolved version-specific Nipype working directory.
+
+    Notes
+    -----
+    Nipype hashes node inputs and serialized function bodies, but imported
+    helpers and constants are not guaranteed to alter those hashes. A release
+    namespace prevents scientific outputs produced by different PMRIPrep
+    installations from sharing a cache while preserving same-version reruns.
+    """
+    if pipeline_version is None:
+        from pmriprep import __version__
+
+        pipeline_version = __version__
+    safe_version = re.sub(r"[^A-Za-z0-9._-]+", "_", pipeline_version)
+    namespace = f"pmriprep-{safe_version}"
+    root = Path(work_dir).resolve()
+    return root if root.name == namespace else root / namespace
+
+
 @dataclass
 class PipelineDecision:
     """Decision about which pipelines to run.
@@ -3268,7 +3304,7 @@ def _prepare_master_workflow_context(
 
     resolved_bids_dir = Path(bids_dir).resolve()
     resolved_output_dir = Path(output_dir).resolve()
-    resolved_work_dir = Path(work_dir).resolve() if work_dir is not None else None
+    resolved_work_dir = versioned_work_dir(work_dir) if work_dir is not None else None
     resolved_skip_flags = skip_flags or PipelineSkipFlags()
     resolved_anat_config = anat_config or AnatConfig()
     resolved_tumor_seg_config = tumor_seg_config or TumorSegConfig()
@@ -3441,7 +3477,10 @@ def init_pmriprep_wf(
     dce_mem_gb = context.dce_mem_gb
 
     # Create master workflow
-    workflow = pe.Workflow(name=name)
+    workflow = pe.Workflow(
+        name=name,
+        base_dir=str(work_dir) if work_dir is not None else None,
+    )
 
     # Store metadata on workflow object
     workflow.bids_dir = bids_dir  # type: ignore[attr-defined]
