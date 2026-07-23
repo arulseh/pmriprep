@@ -13,6 +13,10 @@ Tests the `model=auto` behavior:
 import numpy as np
 import pytest
 
+from pmriprep.interfaces.dce_compute import (
+    _compute_auto_bic,
+    _select_auto_bic_winners,
+)
 from pmriprep.models.dce import (
     ExtendedToftsModel,
     PatlakModel,
@@ -24,6 +28,12 @@ from pmriprep.models.dce.base import EPSILON_RSS
 _MODEL_SELECTION_CODES: dict[str, int] = {
     "patlak": 1,
     "tofts": 2,
+    "extended_tofts": 3,
+    "2cxm": 4,
+}
+
+_N_PARAMETERS = {
+    "patlak": 2,
     "extended_tofts": 3,
     "2cxm": 4,
 }
@@ -446,6 +456,95 @@ class TestDeltaBIC:
         assert 2.5 > 2, "Positive evidence"
         assert 7.0 > 6, "Strong evidence"
         assert 12.0 > 10, "Very strong evidence"
+
+
+class TestAutoBICDecisionSeam:
+    """The production auto-mode ranking contract is independently testable."""
+
+    def test_upgrade_evidence_is_measured_against_simplest(self) -> None:
+        """Close complex models do not force a fallback to a poor Patlak fit."""
+        names = ["patlak", "extended_tofts", "2cxm"]
+        bics = {
+            "patlak": np.array([0.0]),
+            "extended_tofts": np.array([-20.0]),
+            "2cxm": np.array([-22.0]),
+        }
+
+        winner, delta, valid = _select_auto_bic_winners(
+            names, bics, _N_PARAMETERS
+        )
+
+        assert valid[0]
+        assert names[winner[0]] == "2cxm"
+        assert delta[0] == pytest.approx(2.0)
+
+    def test_weak_improvement_downgrades_to_simplest(self) -> None:
+        names = ["patlak", "extended_tofts"]
+        bics = {
+            "patlak": np.array([0.0]),
+            "extended_tofts": np.array([-4.0]),
+        }
+
+        winner, delta, valid = _select_auto_bic_winners(
+            names, bics, _N_PARAMETERS
+        )
+
+        assert valid[0]
+        assert names[winner[0]] == "patlak"
+        assert np.isnan(delta[0])
+
+    def test_failed_simplest_does_not_block_complex_selection(self) -> None:
+        names = ["patlak", "extended_tofts", "2cxm"]
+        bics = {
+            "patlak": np.array([np.inf]),
+            "extended_tofts": np.array([-10.0]),
+            "2cxm": np.array([-12.0]),
+        }
+
+        winner, delta, valid = _select_auto_bic_winners(
+            names, bics, _N_PARAMETERS
+        )
+
+        assert valid[0]
+        assert names[winner[0]] == "2cxm"
+        assert delta[0] == pytest.approx(2.0)
+
+    def test_all_failed_candidates_are_invalid(self) -> None:
+        names = ["patlak", "extended_tofts", "2cxm"]
+        bics = {name: np.array([np.inf]) for name in names}
+
+        _, delta, valid = _select_auto_bic_winners(
+            names, bics, _N_PARAMETERS
+        )
+
+        assert not valid[0]
+        assert np.isnan(delta[0])
+
+    def test_motion_weighted_bic_uses_fitted_likelihood(self) -> None:
+        """A downweighted outlier cannot re-enter through unweighted BIC."""
+        tissue = np.zeros((1, 20), dtype=np.float64)
+        patlak_fit = np.zeros_like(tissue)
+        patlak_fit[0, 5] = 10.0
+        et_fit = np.full_like(tissue, 0.2)
+        converged = np.ones(1, dtype=bool)
+        weights = np.ones(20, dtype=np.float64)
+        weights[5] = 1e-4
+
+        weighted_patlak = _compute_auto_bic(
+            tissue, patlak_fit, converged, 2, weights
+        )
+        weighted_et = _compute_auto_bic(
+            tissue, et_fit, converged, 3, weights
+        )
+        unweighted_patlak = _compute_auto_bic(
+            tissue, patlak_fit, converged, 2
+        )
+        unweighted_et = _compute_auto_bic(
+            tissue, et_fit, converged, 3
+        )
+
+        assert weighted_patlak[0] < weighted_et[0]
+        assert unweighted_et[0] < unweighted_patlak[0]
 
 
 # ---------------------------------------------------------------------------

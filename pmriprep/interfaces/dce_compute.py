@@ -177,6 +177,97 @@ def _normal_approximation_intervals(
     return intervals
 
 
+def _compute_auto_bic(
+    tissue_curves: npt.NDArray[np.floating],
+    fitted_curves: npt.NDArray[np.floating],
+    converged: npt.NDArray[np.bool_],
+    n_parameters: int,
+    weights: Optional[npt.NDArray[np.floating]] = None,
+) -> npt.NDArray[np.floating]:
+    """Compute per-voxel BIC using the likelihood fitted by NLLS.
+
+    Motion weights are inverse-variance reliability weights in the fitting
+    objective. When present, the same weighted RSS must determine model
+    selection so deliberately downweighted frames cannot dominate BIC. The
+    observation count remains the acquired frame count; weights do not
+    represent replicated observations.
+    """
+    from pmriprep.models.dce.base import EPSILON_RSS
+
+    n_timepoints = tissue_curves.shape[1]
+    if weights is None:
+        frame_weights = np.ones(n_timepoints, dtype=np.float64)
+    else:
+        frame_weights = np.maximum(np.asarray(weights, dtype=np.float64), 0.0)
+    n_observations = max(n_timepoints, 1)
+    residuals = tissue_curves - fitted_curves
+    rss = np.sum(frame_weights[None, :] * residuals**2, axis=1)
+    rss_safe = np.maximum(rss, EPSILON_RSS)
+    bic: npt.NDArray[np.float64] = np.asarray(
+        n_observations * np.log(rss_safe / n_observations)
+        + float(n_parameters) * np.log(n_observations),
+        dtype=np.float64,
+    )
+    bic[~converged] = np.inf
+    return bic
+
+
+def _select_auto_bic_winners(
+    candidate_names: list[str],
+    bic_arrays: dict[str, npt.NDArray[np.floating]],
+    n_parameters: dict[str, int],
+    min_upgrade_bic: float = 6.0,
+) -> tuple[npt.NDArray[np.intp], npt.NDArray[np.floating], npt.NDArray[np.bool_]]:
+    """Select auto-mode models with evidence measured against the simplest.
+
+    ``delta_bic`` retains the exported winner-versus-runner-up convention.
+    The conservative upgrade guard is a separate comparison: a more complex
+    raw winner is retained when its BIC improves on the simplest converged
+    candidate by at least ``min_upgrade_bic``.
+    """
+    bic_stack = np.stack([bic_arrays[name] for name in candidate_names])
+    finite = np.isfinite(bic_stack)
+    valid = np.any(finite, axis=0)
+    winner_idx = np.argmin(bic_stack, axis=0).astype(np.intp, copy=False)
+
+    sorted_bics = np.sort(bic_stack, axis=0)
+    if len(candidate_names) > 1:
+        both_finite = np.isfinite(sorted_bics[0]) & np.isfinite(sorted_bics[1])
+        delta_bic = np.full(bic_stack.shape[1], np.nan)
+        np.subtract(
+            sorted_bics[1],
+            sorted_bics[0],
+            out=delta_bic,
+            where=both_finite,
+        )
+    else:
+        delta_bic = np.full(bic_stack.shape[1], np.nan)
+
+    parameter_counts = np.array(
+        [n_parameters[name] for name in candidate_names]
+    )
+    simplest_idx = int(np.argmin(parameter_counts))
+    simplest_bic = bic_stack[simplest_idx]
+    best_bic = bic_stack[winner_idx, np.arange(bic_stack.shape[1])]
+    finite_evidence = np.isfinite(simplest_bic) & np.isfinite(best_bic)
+    evidence_over_simplest = np.full(bic_stack.shape[1], np.nan)
+    np.subtract(
+        simplest_bic,
+        best_bic,
+        out=evidence_over_simplest,
+        where=finite_evidence,
+    )
+    downgrade = (
+        valid
+        & (winner_idx != simplest_idx)
+        & np.isfinite(simplest_bic)
+        & (evidence_over_simplest < min_upgrade_bic)
+    )
+    winner_idx[downgrade] = simplest_idx
+    delta_bic[downgrade] = np.nan
+    return winner_idx, delta_bic, valid
+
+
 def _inflate_credible_interval(
     center: float,
     interval: tuple[float, float],
@@ -3804,7 +3895,6 @@ class ComputeDCEMaps(BaseInterface):
         from pmriprep.utils.dsc_cbv_constraint import ConstraintMode
 
         n_voxels = len(mask_coords[0])
-        n_timepoints = len(aif)
 
         # VI/MCMC: fall through to CPU multiprocessing (unchanged)
         if inference in ("vi", "mcmc"):
@@ -3891,8 +3981,6 @@ class ComputeDCEMaps(BaseInterface):
             return results
 
         # Auto mode: fit ALL candidate models using batched fitting, select via BIC
-        from pmriprep.models.dce.base import EPSILON_RSS
-
         fit_results: dict[str, FitResult] = {}
         for cname in candidate_names:
             try:
@@ -3918,7 +4006,6 @@ class ComputeDCEMaps(BaseInterface):
             return [_fit_single_voxel(vd) for vd in voxel_data_list]
 
         # BIC per model per voxel
-        T = n_timepoints
         _N_PARAMS: dict[str, int] = {
             "tofts": 2, "extended_tofts": 3, "patlak": 2, "2cxm": 4,
         }
@@ -3928,76 +4015,32 @@ class ComputeDCEMaps(BaseInterface):
             if result.fitted_curves is None:
                 bic_arrays[cname] = np.full(n_voxels, np.inf)
                 continue
-            rss = np.sum((tissue_curves - result.fitted_curves) ** 2, axis=1)
-            rss_safe = np.maximum(rss, EPSILON_RSS)
-            # Per-voxel effective param count:
-            # SOFT box constraint: k = k_base constant. Self-Liang (JASA
-            # 1987) shows boundary-parameter effective d.o.f. lies between
-            # k_base-1 and k_base; k_base with the full data likelihood is
-            # the standard pragmatic choice and the only one that keeps
-            # Patlak / Extended Tofts BIC comparison stable. Unconstrained
-            # path also uses k_base.
-            k_base = _N_PARAMS[cname]
-            k_arr = np.full(n_voxels, k_base, dtype=float)
-            bic_arrays[cname] = T * np.log(rss_safe / T) + k_arr * np.log(T)
-
-        # Filter non-converged → BIC = inf
-        for cname, result in fit_results.items():
-            if cname in bic_arrays:
-                bic_arrays[cname][~result.converged] = np.inf
+            # SOFT box constraints retain the full model parameter count.
+            # Exact fixed-vp selection stages reduce every candidate by the
+            # same one parameter, leaving all pairwise BIC differences
+            # unchanged.
+            bic_arrays[cname] = _compute_auto_bic(
+                tissue_curves,
+                result.fitted_curves,
+                result.converged,
+                _N_PARAMS[cname],
+                motion_weights,
+            )
 
         # Select min-BIC model per voxel
         cand_list = [c for c in candidate_names if c in fit_results]
-        bic_stack = np.stack([bic_arrays[c] for c in cand_list], axis=0)
-        winner_idx = np.argmin(bic_stack, axis=0)
-
-        # Compute delta-BIC (margin over runner-up)
-        # Non-converged fits have BIC=inf. When computing delta-BIC,
-        # inf - finite = inf, which breaks percentile calculations.
-        # Convert to nan for cleaner downstream handling.
-        sorted_bics = np.sort(bic_stack, axis=0)
-        if sorted_bics.shape[0] > 1:
-            # Both winner and runner-up must be finite for meaningful delta
-            both_finite = np.isfinite(sorted_bics[0]) & np.isfinite(sorted_bics[1])
-            delta_bic = np.where(
-                both_finite,
-                sorted_bics[1] - sorted_bics[0],
-                np.nan,
-            )
-        else:
-            delta_bic = np.full(n_voxels, np.nan)
-
-        # Kass & Raftery guard: require strong BIC evidence to upgrade
-        # from simplest model. ΔBIC >= 6 = "strong evidence".
-        _MIN_DELTA_BIC_UPGRADE = 6.0
-
-        # Find simplest model (minimum parameters) using existing _N_PARAMS dict
-        n_params_arr = np.array([_N_PARAMS[c] for c in cand_list])
-        simplest_idx = int(np.argmin(n_params_arr))
-
-        # Apply guard: downgrade to simplest if evidence is weak
-        # Only downgrade if simplest model actually converged
-        weak_evidence = (delta_bic < _MIN_DELTA_BIC_UPGRADE) | ~np.isfinite(delta_bic)
-        not_simplest = winner_idx != simplest_idx
-        simplest_converged = fit_results[cand_list[simplest_idx]].converged
-        downgrade_mask = weak_evidence & not_simplest & simplest_converged
-
-        n_downgraded = int(downgrade_mask.sum())
-        if n_downgraded > 0:
-            logger.debug(
-                "Kass-Raftery guard: downgraded %d voxels to %s (delta-BIC < %.1f)",
-                n_downgraded, cand_list[simplest_idx], _MIN_DELTA_BIC_UPGRADE,
-            )
-            winner_idx[downgrade_mask] = simplest_idx
-
-        # Downgraded voxels have no meaningful delta-BIC
-        delta_bic[downgrade_mask] = np.nan
+        winner_idx, delta_bic, valid_selection = _select_auto_bic_winners(
+            cand_list,
+            bic_arrays,
+            _N_PARAMS,
+        )
 
         # Assemble per-voxel results from winners
         results = []
         for i in range(n_voxels):
             winner_name = cand_list[winner_idx[i]]
             winner_result = fit_results[winner_name]
+            selection_failed = not bool(valid_selection[i])
 
             x, y, z = int(coords[i, 0]), int(coords[i, 1]), int(coords[i, 2])
 
@@ -4047,8 +4090,10 @@ class ComputeDCEMaps(BaseInterface):
                 ),
                 "rhat": {},
                 "ess": {},
-                "failed": not bool(winner_result.converged[i]) and float(winner_result.r_squared[i]) < -0.5,
-                "failure_reason": None,
+                "failed": selection_failed,
+                "failure_reason": (
+                    "all_candidate_models_failed" if selection_failed else None
+                ),
                 "constrained": is_constrained,
                 "selected_model_name": winner_name,
                 "delta_bic": float(delta_bic[i]),
