@@ -4158,7 +4158,7 @@ class ComputeDCEMaps(BaseInterface):
                     vp_uncertainty=vp_uncertainty_batched,
                     weights=motion_weights,
                     save_fitted_curves=True,
-                    compute_uncertainties=False,
+                    compute_uncertainties=inference == "nlls",
                     n_procs=n_procs,
                     n_voxels=n_voxels,
                 )

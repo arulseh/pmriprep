@@ -4,6 +4,8 @@ Tests verify parameter recovery, convergence, constraint handling,
 auto-mode BIC selection, and result format for all four DCE PK models.
 """
 
+from typing import Any
+
 import numpy as np
 import pytest
 from scipy.optimize import lsq_linear, minimize
@@ -1223,3 +1225,63 @@ class TestChunkedMultiproc:
         np.testing.assert_array_equal(
             bic_winner(results_1), bic_winner(results_4),
         )
+
+    def test_auto_nlls_requests_candidate_uncertainties(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Auto NLLS retains conditional uncertainty from its winning model."""
+        from pmriprep.interfaces.dce_compute import ComputeDCEMaps
+        from pmriprep.utils.dsc_cbv_constraint import ConstraintMode
+
+        calls: list[bool] = []
+
+        def fake_dispatch(**kwargs: Any) -> FitResult:
+            calls.append(kwargs["compute_uncertainties"])
+            return FitResult(
+                params={
+                    "ktrans": np.array([0.1]),
+                    "vp": np.array([0.02]),
+                },
+                r_squared=np.array([1.0]),
+                converged=np.array([True]),
+                fitted_curves=np.zeros((1, 4)),
+                n_iterations=1,
+                model_name="patlak",
+                uncertainties={
+                    "ktrans": np.array([0.01]),
+                    "vp": np.array([0.002]),
+                },
+            )
+
+        interface = ComputeDCEMaps()
+        monkeypatch.setattr(interface, "_dispatch_batched_chunks", fake_dispatch)
+        coords = (np.array([0]), np.array([0]), np.array([0]))
+        results = interface._fit_batched(
+            conc_data=np.zeros((1, 1, 1, 4)),
+            mask_coords=coords,
+            aif=np.zeros(4),
+            time_points=np.arange(4, dtype=float),
+            model_name="auto",
+            inference="nlls",
+            is_auto=True,
+            candidate_names=["patlak"],
+            vp_constraint_map=None,
+            constraint_mode=ConstraintMode.SKIP,
+            constraint_vp_uncertainty=0.0,
+            motion_weights=None,
+            save_fitted_curves=False,
+            sloppy=False,
+            mcmc_samples=0,
+            baseline_frames=1,
+            n_procs=1,
+            random_seed=42,
+            init_args=(),
+            voxel_data_list=[],
+        )
+
+        assert calls == [True]
+        assert results[0]["selected_model_name"] == "patlak"
+        assert results[0]["uncertainties"] == {
+            "Ktrans": 0.01,
+            "vp": 0.002,
+        }
