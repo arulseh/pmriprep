@@ -93,7 +93,11 @@ def _scatter_dce_uncertainties(
 ) -> None:
     """Scatter model-applicable standard errors/SDs with AIF inflation."""
     x, y, z = coords
-    if "Ktrans" in uncertainties and np.isfinite(uncertainties["Ktrans"]):
+    if (
+        model_name != "2cxm"
+        and "Ktrans" in uncertainties
+        and np.isfinite(uncertainties["Ktrans"])
+    ):
         maps.ktrans_std[x, y, z] = uncertainties["Ktrans"] * (
             maps.sigma_factor.get("Ktrans", 1.0)
         )
@@ -206,7 +210,7 @@ def _scatter_dce_credible_intervals(
     )
 
     x, y, z = coords
-    if "Ktrans" in intervals:
+    if model_name != "2cxm" and "Ktrans" in intervals:
         lower, upper = _inflate_credible_interval(
             params.get("Ktrans", 0.0),
             intervals["Ktrans"],
@@ -851,13 +855,14 @@ def _write_dce_uncertainty_maps(
         outputs[name] = generate_path(suffix)
         write_map(values, outputs[name])
 
-    write(
-        "out_ktrans_cv",
-        "_Ktrans_cv",
-        _compute_dce_coefficient_of_variation(
-            maps.ktrans, maps.ktrans_std, mask, is_auto
-        ),
-    )
+    if is_auto or not maps.save_2cxm:
+        write(
+            "out_ktrans_cv",
+            "_Ktrans_cv",
+            _compute_dce_coefficient_of_variation(
+                maps.ktrans, maps.ktrans_std, mask, is_auto
+            ),
+        )
     if save_ve:
         write(
             "out_ve_cv",
@@ -1637,7 +1642,8 @@ def _fit_single_voxel(
         has_vp = effective_model in ("extended_tofts", "patlak", "2cxm")
         uncertainties = {}
         if result.has_uncertainty():
-            uncertainties["Ktrans"] = result.get_uncertainty("Ktrans", 0.0)
+            if effective_model != "2cxm":
+                uncertainties["Ktrans"] = result.get_uncertainty("Ktrans", 0.0)
             if effective_model not in ("patlak",):
                 uncertainties["ve"] = result.get_uncertainty("ve", 0.0)
             if has_vp:

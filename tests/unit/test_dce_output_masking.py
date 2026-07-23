@@ -216,7 +216,7 @@ def test_write_dce_parameter_maps_preserves_applicability(
 
 @pytest.mark.parametrize(
     ("save_ve", "save_vp", "save_2cxm", "expected_count"),
-    [(False, False, False, 1), (True, True, True, 5)],
+    [(False, False, False, 1), (True, True, True, 4)],
 )
 def test_write_dce_uncertainty_maps_preserves_applicability(
     save_ve: bool,
@@ -254,10 +254,41 @@ def test_write_dce_uncertainty_maps_preserves_applicability(
     )
     assert len(outputs) == expected_count
     assert writes == list(outputs.values())
-    assert "out_ktrans_cv" in outputs
+    assert ("out_ktrans_cv" in outputs) is not save_2cxm
     assert ("out_fp_cv" in outputs) is save_2cxm
     assert "out_ktrans_std" not in outputs
     assert "out_ktrans_ci95_lower" not in outputs
+
+
+def test_auto_uncertainty_retains_ktrans_cv_outside_2cxm_voxels() -> None:
+    """Auto mode retains its mixed-model Ktrans diagnostic derivative."""
+    values = np.full((1, 1, 1), 0.2)
+    sigma = np.full((1, 1, 1), 0.1)
+    maps = SimpleNamespace(
+        ktrans=values,
+        ve=values,
+        vp=values,
+        fp=values,
+        ps=values,
+        ktrans_std=sigma,
+        ve_std=sigma,
+        vp_std=sigma,
+        fp_std=sigma,
+        ps_std=sigma,
+        save_2cxm=True,
+    )
+
+    outputs = _write_dce_uncertainty_maps(
+        maps,
+        np.ones((1, 1, 1), dtype=bool),
+        True,
+        True,
+        True,
+        lambda suffix: f"output{suffix}.nii.gz",
+        lambda data, path: None,
+    )
+
+    assert "out_ktrans_cv" in outputs
 
 
 @pytest.mark.parametrize("is_auto", [False, True])

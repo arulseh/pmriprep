@@ -1268,6 +1268,8 @@ def init_dce_datasinks_wf(
     for spec in _CV_MAPS:
         if spec.in_attr not in present:
             continue
+        if pk_model.lower() == "2cxm" and spec.in_attr == "ktrans_cv":
+            continue
         parameter = spec.map_key.split("_", 1)[0]
         uncertainty_extra = pe.Node(
             niu.Function(

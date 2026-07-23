@@ -367,7 +367,7 @@ def test_2cxm_bayesian_fp_ps_relative_uncertainty(
 
     present = {
         "ve_map", "kep_map", "vp_map",
-        "fp_cv", "ps_cv",
+        "ktrans_cv", "fp_cv", "ps_cv",
     }
     wf = init_dce_datasinks_wf(
         output_dir=str(out), bids_dir=str(bids),
@@ -387,6 +387,9 @@ def test_2cxm_bayesian_fp_ps_relative_uncertainty(
     perf_out = out / "pmriprep" / "sub-01" / "ses-0001" / "perf"
     assert (perf_out / "sub-01_ses-0001_desc-dcePosteriorCVFp_stat.nii.gz").exists()
     assert (perf_out / "sub-01_ses-0001_desc-dcePosteriorCVPS_stat.nii.gz").exists()
+    assert not (
+        perf_out / "sub-01_ses-0001_desc-dcePosteriorCVKtrans_stat.nii.gz"
+    ).exists()
     for parameter in ("Fp", "PS"):
         sidecar = perf_out / f"sub-01_ses-0001_desc-dcePosteriorCV{parameter}_stat.json"
         assert json.loads(sidecar.read_text())["Units"] == "1"

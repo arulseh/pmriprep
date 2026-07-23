@@ -628,6 +628,10 @@ PK model, converted concentration curve, supplied AIF, and preprocessing inputs.
 They describe local fit identifiability and are not calibrated subject-level
 biological confidence intervals.
 
+For 2CXM, relative-uncertainty maps are available for the directly fitted Fp,
+PS, ve, and vp parameters. Ktrans is derived from Fp and PS, so its relative
+uncertainty is omitted because their joint covariance is not retained.
+
 **AIF outputs:**
 
 | File Pattern | Description |

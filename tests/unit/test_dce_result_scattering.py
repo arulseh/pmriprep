@@ -121,7 +121,7 @@ def test_nlls_wald_intervals_respect_model_bounds_and_applicability() -> None:
 
 
 def test_uncertainty_scatter_applies_model_fields_and_inflation() -> None:
-    """2CXM writes every uncertainty using its parameter-specific factor."""
+    """2CXM omits derived Ktrans but writes direct-parameter uncertainty."""
     maps = _uncertainty_maps()
     _scatter_dce_uncertainties(
         maps,
@@ -129,7 +129,7 @@ def test_uncertainty_scatter_applies_model_fields_and_inflation() -> None:
         "2cxm",
         {"Ktrans": 1.0, "ve": 2.0, "vp": 3.0, "Fp": 4.0, "PS": 5.0},
     )
-    assert maps.ktrans_std[0, 0, 0] == 2.0
+    assert maps.ktrans_std[0, 0, 0] == 0.0
     assert maps.ve_std[0, 0, 0] == 2.0
     assert maps.vp_std[0, 0, 0] == 9.0
     assert maps.fp_std[0, 0, 0] == 16.0
