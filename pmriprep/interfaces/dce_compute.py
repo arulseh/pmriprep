@@ -3196,9 +3196,13 @@ class ComputeDCEMaps(BaseInterface):
                     constraint_qc["overshoot_applicable"] = False
                     constraint_qc["overshoot_reason"] = SKIP_REASON_SYNTHETIC_AIF
             except Exception as exc:
+                vp_constraint_map = None
+                constraint_mode = ConstraintMode.SKIP
+                constraint_vp_uncertainty = 0.0
                 constraint_qc = {
                     "mode": "skip",
                     "reason": f"Failed to load DSC CBV constraint: {exc}",
+                    "skip_reason": "constraint_preparation_failed",
                 }
 
             if prepared.is_auto and constraint_mode != ConstraintMode.SKIP:

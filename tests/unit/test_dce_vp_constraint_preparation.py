@@ -156,6 +156,42 @@ def test_prepare_vp_constraint_marks_synthetic_aif_diagnostics_inapplicable(
     assert result.candidate_names == ["patlak"]
 
 
+def test_prepare_vp_constraint_clears_soft_state_after_diagnostic_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A post-preparation failure cannot retain a prior reported as skipped."""
+    prepared = _prepared(populated=True)
+
+    def fake_prepare(**kwargs: Any) -> SimpleNamespace:
+        return SimpleNamespace(
+            vp_map=np.full((4, 4, 4), 0.1, dtype=float),
+            config=SimpleNamespace(mode=ConstraintMode.SOFT, vp_uncertainty=0.25),
+            qc_report={"mode": "soft", "reason": "quality_passed"},
+        )
+
+    monkeypatch.setattr(
+        "pmriprep.utils.dsc_cbv_constraint.prepare_vp_constraint_from_data",
+        fake_prepare,
+    )
+    interface = ComputeDCEMaps(
+        brain_mask_file=_write_mask(tmp_path / "mask.nii.gz"),
+        dsc_ncbv_file="ncbv.nii.gz",
+        dsc_aif_qc={"detection_method": "atlas"},
+        constraint_mode="auto",
+    )
+
+    result = interface._prepare_vp_constraint(prepared, prepared.aif)
+
+    assert result.vp_map is None
+    assert result.mode == ConstraintMode.SKIP
+    assert result.vp_uncertainty == 0.0
+    assert result.qc["mode"] == "skip"
+    assert result.qc["skip_reason"] == "constraint_preparation_failed"
+    assert result.model_name == "patlak"
+    assert result.candidate_names == ["patlak"]
+
+
 def test_prepare_fit_dispatch_preserves_voxel_order_and_prior_admission() -> None:
     """Dispatch state keeps NumPy mask order and admits only finite positive vp."""
     prepared = _prepared(populated=True)
