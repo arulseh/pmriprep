@@ -57,7 +57,12 @@ class TestEnrichDCE:
             "pk_modeling": {
                 "model": "extended_tofts",
                 "inference": "vi",
-                "convergence_rate": 0.98,
+                "voxel_accounting": {
+                    "optimizer_converged": {
+                        "count": 98,
+                        "fraction_of_attempted": 0.98,
+                    }
+                },
                 "r2_median": 0.87,
                 "qc_voxel_rsquared": 0.95,
             },
@@ -90,7 +95,12 @@ class TestEnrichDCE:
         assert "PKModeling" in perf
         assert perf["PKModeling"]["model"] == "extended_tofts"
         assert perf["PKModeling"]["inference"] == "vi"
-        assert perf["PKModeling"]["convergence_rate"] == pytest.approx(0.98, abs=0.001)
+        assert (
+            perf["PKModeling"]["VoxelAccounting"]["optimizer_converged"][
+                "fraction_of_attempted"
+            ]
+            == pytest.approx(0.98)
+        )
         assert perf["PKModeling"]["voxel_rsquared"] == pytest.approx(0.95, abs=0.001)
 
     def test_signal_conversion_qc(self) -> None:

@@ -1092,7 +1092,15 @@ def _collect_qc_metrics(
     pk_modeling = dict(pk_qc) if pk_qc is not None else {}
     have_pk_modeling = pk_qc is not None
     if pk_fit_qc_metrics is not None:
-        pk_modeling.update(pk_fit_qc_metrics)
+        fit_metrics = dict(pk_fit_qc_metrics)
+        regional_accounting = fit_metrics.pop(
+            "voxel_accounting_regions", None
+        )
+        pk_modeling.update(fit_metrics)
+        if regional_accounting:
+            accounting = pk_modeling.get("voxel_accounting")
+            if isinstance(accounting, dict):
+                accounting["regions"] = regional_accounting
         have_pk_modeling = True
     if pk_maps_qc_metrics is not None:
         pk_modeling["model_selection_regions"] = pk_maps_qc_metrics
@@ -2422,11 +2430,15 @@ def _generate_dce_pk_fit_qc(
     fp_file: str | None = None,
     ps_file: str | None = None,
     r2_file: str | None = None,
+    fitting_mask_file: str | None = None,
+    optimizer_converged_mask_file: str | None = None,
+    quality_flag_file: str | None = None,
     qc_mask_file: str | None = None,
     fitted_curves_file: str | None = None,
     model_selection_file: str | None = None,
     enhancing_mask_file: str | None = None,
     non_enhancing_mask_file: str | None = None,
+    nawm_mask_file: str | None = None,
     volume_tr: float = 1.0,
     baseline_frames: int = 10,
     model_name: str = "tofts",
@@ -2461,6 +2473,12 @@ def _generate_dce_pk_fit_qc(
         Path to PS map NIfTI (may be undefined).
     r2_file : str, optional
         Path to R² map NIfTI.
+    fitting_mask_file : str, optional
+        Path to the PK fitting-eligibility mask.
+    optimizer_converged_mask_file : str, optional
+        Path to the optimizer-convergence mask.
+    quality_flag_file : str, optional
+        Path to the retained-fit categorical quality map.
     qc_mask_file : str, optional
         Path to QC mask NIfTI.
     fitted_curves_file : str, optional
@@ -2471,6 +2489,8 @@ def _generate_dce_pk_fit_qc(
         Path to enhancing tumor mask NIfTI (optional).
     non_enhancing_mask_file : str, optional
         Path to non-enhancing tumor mask NIfTI (optional).
+    nawm_mask_file : str, optional
+        Path to the NAWM mask NIfTI (optional).
     volume_tr : float, optional
         Volume TR in seconds.
     baseline_frames : int, optional
@@ -2550,6 +2570,11 @@ def _generate_dce_pk_fit_qc(
         qc_mask = _safe_load(qc_mask_file)
         if qc_mask is not None:
             qc_mask = qc_mask.astype(np.uint8)
+        fitting_mask_data = _safe_load(fitting_mask_file)
+        optimizer_converged_data = _safe_load(
+            optimizer_converged_mask_file
+        )
+        quality_flag_data = _safe_load(quality_flag_file)
 
         signal_data = _safe_load(dce_signal_file)
         fitted_curves = _safe_load(fitted_curves_file)
@@ -2559,6 +2584,14 @@ def _generate_dce_pk_fit_qc(
         enh_raw = _safe_load(enhancing_mask_file)
         if enh_raw is not None:
             enhancing_mask_data = (enh_raw > 0.5).astype(np.float64)
+        non_enhancing_mask_data = None
+        ne_raw = _safe_load(non_enhancing_mask_file)
+        if ne_raw is not None:
+            non_enhancing_mask_data = (ne_raw > 0.5).astype(np.float64)
+        nawm_mask_data = None
+        nawm_raw = _safe_load(nawm_mask_file)
+        if nawm_raw is not None:
+            nawm_mask_data = (nawm_raw > 0.5).astype(np.float64)
 
         # Recompute single-voxel fitted curve
         qc_fitted_curve_1d = None
@@ -2639,6 +2672,49 @@ def _generate_dce_pk_fit_qc(
             session_id=session_id,
         )
 
+        if (
+            fitting_mask_data is not None
+            and optimizer_converged_data is not None
+            and quality_flag_data is not None
+            and qc_mask is not None
+        ):
+            from pmriprep.utils.dce_voxel_prep import (
+                summarize_regional_voxel_accounting,
+            )
+
+            stage_masks = {
+                "fitting_eligible": fitting_mask_data > 0.5,
+                "optimizer_converged": optimizer_converged_data > 0.5,
+                "retained_nondegenerate": quality_flag_data > 0,
+                "quantitative_qc_accepted": qc_mask > 0,
+            }
+            regions = {
+                "enhancing_tumor": (
+                    enhancing_mask_data > 0.5
+                    if enhancing_mask_data is not None
+                    else None
+                ),
+                "non_enhancing_tumor": (
+                    non_enhancing_mask_data > 0.5
+                    if non_enhancing_mask_data is not None
+                    else None
+                ),
+                "nawm": (
+                    nawm_mask_data > 0.5
+                    if nawm_mask_data is not None
+                    else None
+                ),
+            }
+            regional_accounting = summarize_regional_voxel_accounting(
+                mask_bool,
+                stage_masks,
+                regions,
+            )
+            if regional_accounting:
+                pk_voxel_metrics["voxel_accounting_regions"] = (
+                    regional_accounting
+                )
+
         # Calculate the enhancing-tumor peak-concentration risk metrics.
         peak_ct = np.nanmax(conc_data, axis=-1)
 
@@ -2675,8 +2751,11 @@ def _generate_dce_pk_fit_qc(
         # Calculate Patlak fractions separately within each tissue class.
         _PATLAK_CODE = 1  # from _MODEL_SELECTION_CODES in dce_compute.py
         if is_auto and model_sel_data is not None:
-            ne_data = _safe_load(non_enhancing_mask_file)
-            ne_bool = (ne_data > 0.5) if ne_data is not None else None
+            ne_bool = (
+                non_enhancing_mask_data > 0.5
+                if non_enhancing_mask_data is not None
+                else None
+            )
 
             def _patlak_frac(region_mask: "np.ndarray") -> float | None:
                 region_fitted = region_mask & (model_sel_data > 0)

@@ -153,6 +153,8 @@ def init_dce_pk_modeling_wf(
                 "out_vp_at_bound_map",
                 "out_r2",
                 "out_qc_mask",
+                "out_fitting_mask",
+                "out_optimizer_converged_mask",
                 "out_fitted_curves",
                 "out_kep",
                 "out_iauc90",
@@ -228,6 +230,11 @@ def init_dce_pk_modeling_wf(
             ("out_vp_at_bound_map", "out_vp_at_bound_map"),
             ("out_r2", "out_r2"),
             ("out_qc_mask", "out_qc_mask"),
+            ("out_fitting_mask", "out_fitting_mask"),
+            (
+                "out_optimizer_converged_mask",
+                "out_optimizer_converged_mask",
+            ),
             ("out_fitted_curves", "out_fitted_curves"),
             ("out_kep", "out_kep"),
             ("out_iauc90", "out_iauc90"),
@@ -2406,9 +2413,11 @@ def init_dce_preproc_wf(
                 "concentration_file", "dce_signal_file", "aif_file",
                 "brain_mask_file",
                 "ktrans_file", "ve_file", "vp_file", "fp_file", "ps_file",
-                "r2_file", "qc_mask_file", "fitted_curves_file",
+                "r2_file", "fitting_mask_file",
+                "optimizer_converged_mask_file", "quality_flag_file",
+                "qc_mask_file", "fitted_curves_file",
                 "model_selection_file", "enhancing_mask_file",
-                "non_enhancing_mask_file",
+                "non_enhancing_mask_file", "nawm_mask_file",
                 "volume_tr", "baseline_frames",
                 "model_name", "subject_id", "session_id",
             ],
@@ -2442,6 +2451,12 @@ def init_dce_preproc_wf(
             ("outputnode.out_fp", "fp_file"),
             ("outputnode.out_ps", "ps_file"),
             ("outputnode.out_r2", "r2_file"),
+            ("outputnode.out_fitting_mask", "fitting_mask_file"),
+            (
+                "outputnode.out_optimizer_converged_mask",
+                "optimizer_converged_mask_file",
+            ),
+            ("outputnode.out_quality_flag", "quality_flag_file"),
             ("outputnode.out_qc_mask", "qc_mask_file"),
             ("outputnode.out_fitted_curves", "fitted_curves_file"),
             ("outputnode.out_model_selection", "model_selection_file"),
@@ -2454,6 +2469,9 @@ def init_dce_preproc_wf(
         ]),
         (dce_lesion_masks_wf, dce_pk_fit_qc, [
             ("outputnode.non_enhancing_mask", "non_enhancing_mask_file"),
+        ]),
+        (dce_lesion_masks_wf, dce_pk_fit_qc, [
+            ("outputnode.nawm_mask", "nawm_mask_file"),
         ]),
     ])
 

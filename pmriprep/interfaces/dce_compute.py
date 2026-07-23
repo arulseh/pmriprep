@@ -460,8 +460,6 @@ def _account_retained_dce_fit(
     )
     converged = bool(result["converged"])
     return _DCEFitAccountingUpdate(
-        int(converged),
-        int(not converged),
         int(constrained),
         int(unconstrained_fallback),
         float(result["r_squared"]) if converged else None,
@@ -479,7 +477,8 @@ def _scatter_dce_fit_results(
     constraint_vp_uncertainty: float,
 ) -> "_DCEFitSummary":
     """Scatter fitted voxels and accumulate their QC diagnostics."""
-    n_converged = n_failed = n_constrained = 0
+    n_constrained = 0
+    n_optimizer_converged = n_execution_failed = n_retained = 0
     n_unconstrained_fallback = n_rejected_postfit = 0
     r2_values: list[float] = []
     failure_reasons: dict[str, int] = {}
@@ -490,11 +489,13 @@ def _scatter_dce_fit_results(
     map_uncertainty_sources: list[str] = []
     for voxel, result in zip(voxel_data, results):
         if result["failed"]:
-            n_failed += 1
+            n_execution_failed += 1
             reason = result.get("failure_reason", "unknown")
             failure_reasons[reason] = failure_reasons.get(reason, 0) + 1
             continue
+        n_optimizer_converged += int(bool(result.get("converged", False)))
         coords = tuple(result["coords"])
+        maps.optimizer_converged[coords] = bool(result.get("converged", False))
         params = result["params"]
         selected_model = result.get("selected_model_name", model_name)
         maps.model_selection[coords] = maps.model_selection_codes.get(selected_model, 0)
@@ -506,6 +507,7 @@ def _scatter_dce_fit_results(
             )
             n_rejected_postfit += 1
             continue
+        n_retained += 1
         if inference == "map":
             map_uncertainty_sources.append(
                 str(result.get("uncertainty_source", "not_computed"))
@@ -544,8 +546,6 @@ def _scatter_dce_fit_results(
         if departure is not None:
             vp_prior_departures.append(departure)
         accounting = _account_retained_dce_fit(voxel, result, constraint_mode)
-        n_converged += accounting.n_converged
-        n_failed += accounting.n_failed
         n_constrained += accounting.n_constrained
         n_unconstrained_fallback += accounting.n_unconstrained_fallback
         if accounting.r_squared is not None:
@@ -554,8 +554,9 @@ def _scatter_dce_fit_results(
             result, mcmc_rhat, mcmc_ess
         )
     return _DCEFitSummary(
-        n_converged,
-        n_failed,
+        n_optimizer_converged,
+        n_execution_failed,
+        n_retained,
         n_constrained,
         n_unconstrained_fallback,
         n_rejected_postfit,
@@ -745,23 +746,54 @@ def _summarize_dce_r2(values: list[float]) -> dict[str, float]:
 
 
 def _summarize_dce_fit_outcomes(
-    n_converged: int,
-    n_failed: int,
     n_voxels: int,
+    n_brain_voxels: int,
+    n_optimizer_converged: int,
+    n_execution_failed: int,
+    n_retained: int,
     n_constrained: int,
     n_unconstrained_fallback: int,
     n_rejected_postfit: int,
     failure_reasons: dict[str, int],
 ) -> dict[str, Any]:
     """Assemble aggregate DCE fit outcome counters."""
+    accounting = {
+        "denominators": {
+            "brain": int(n_brain_voxels),
+            "attempted": int(n_voxels),
+            "retained": int(n_retained),
+        },
+        "brain_mask": {"count": int(n_brain_voxels)},
+        "fitting_eligible": {
+            "count": int(n_voxels),
+            "fraction_of_brain": n_voxels / max(1, n_brain_voxels),
+        },
+        "attempted": {
+            "count": int(n_voxels),
+            "fraction_of_fitting_eligible": 1.0 if n_voxels else 0.0,
+        },
+        "optimizer_converged": {
+            "count": int(n_optimizer_converged),
+            "fraction_of_attempted": n_optimizer_converged / max(1, n_voxels),
+        },
+        "execution_failed": {
+            "count": int(n_execution_failed),
+            "fraction_of_attempted": n_execution_failed / max(1, n_voxels),
+        },
+        "postfit_degenerate": {
+            "count": int(n_rejected_postfit),
+            "fraction_of_attempted": n_rejected_postfit / max(1, n_voxels),
+        },
+        "retained_nondegenerate": {
+            "count": int(n_retained),
+            "fraction_of_attempted": n_retained / max(1, n_voxels),
+        },
+    }
     return {
-        "n_converged": n_converged,
-        "n_failed": n_failed,
-        "convergence_rate": n_converged / max(1, n_voxels),
         "n_constrained": n_constrained,
         "n_unconstrained_fallback": n_unconstrained_fallback,
-        "n_rejected_postfit": n_rejected_postfit,
         "failure_reasons": failure_reasons,
+        "voxel_accounting": accounting,
     }
 
 
@@ -1066,8 +1098,24 @@ def _write_dce_terminal_outputs(
     qc_metrics: Optional[dict[str, Any]] = None,
 ) -> dict[str, str]:
     """Write terminal QC, model-selection, and fitted-curve outputs."""
-    outputs = {"out_tsnr": generate_path("_tSNR")}
+    outputs = {
+        "out_tsnr": generate_path("_tSNR"),
+        "out_fitting_mask": generate_path("_fitting_mask"),
+        "out_optimizer_converged_mask": generate_path(
+            "_optimizer_converged_mask"
+        ),
+    }
     write_map(tsnr, outputs["out_tsnr"])
+    write_map(
+        fitting_mask,
+        outputs["out_fitting_mask"],
+        dtype=np.uint8,
+    )
+    write_map(
+        maps.optimizer_converged,
+        outputs["out_optimizer_converged_mask"],
+        dtype=np.uint8,
+    )
     qc_evaluation = _evaluate_dce_qc_mask(
         fitting_mask,
         tsnr,
@@ -1085,7 +1133,19 @@ def _write_dce_terminal_outputs(
     )
     qc_mask = qc_evaluation.mask
     if qc_metrics is not None:
-        qc_metrics["n_voxels_qc_accepted"] = int(np.count_nonzero(qc_mask))
+        n_accepted = int(np.count_nonzero(qc_mask))
+        accounting = qc_metrics.get("voxel_accounting")
+        if isinstance(accounting, dict):
+            denominators = accounting.get("denominators", {})
+            attempted = int(denominators.get("attempted", 0))
+            retained = int(denominators.get("retained", 0))
+            brain = int(denominators.get("brain", 0))
+            accounting["quantitative_qc_accepted"] = {
+                "count": n_accepted,
+                "fraction_of_retained": n_accepted / max(1, retained),
+                "fraction_of_attempted": n_accepted / max(1, attempted),
+                "fraction_of_brain": n_accepted / max(1, brain),
+            }
         qc_metrics["qc_component_failures"] = {
             "scope": "fitted_voxels",
             "counts_are_overlapping": True,
@@ -1119,14 +1179,9 @@ def _initialize_dce_qc_metrics(
     bat_correction: dict[str, Any],
 ) -> dict[str, Any]:
     """Assemble DCE QC state before fitting and result reduction."""
-    n_brain = int(np.sum(prepared.mask > 0))
-    n_fitted = int(np.sum(prepared.fitting_mask))
     return {
         "model": "auto" if prepared.is_auto else model_name,
         "inference": prepared.inference,
-        "n_voxels_brain": n_brain,
-        "n_voxels_fitted": n_fitted,
-        "n_voxels_signal_filtered": n_brain - n_fitted,
         "tsnr_threshold": prepared.tsnr_threshold,
         "baseline_frames": prepared.baseline_frames,
         "selection_tr_seconds": prepared.selection_tr_seconds,
@@ -1302,6 +1357,7 @@ class _DCEParameterMaps(NamedTuple):
     fp: npt.NDArray[Any]
     ps: npt.NDArray[Any]
     extraction_fraction: npt.NDArray[Any]
+    optimizer_converged: npt.NDArray[Any]
     quality_flag: npt.NDArray[Any]
     quality_flag_codes: dict[str, int]
     model_selection: npt.NDArray[Any]
@@ -1340,10 +1396,8 @@ class _DCEFitDispatch(NamedTuple):
 
 
 class _DCEFitAccountingUpdate(NamedTuple):
-    """Counter increments contributed by one retained DCE fit result."""
+    """Constraint diagnostics contributed by one retained DCE fit result."""
 
-    n_converged: int
-    n_failed: int
     n_constrained: int
     n_unconstrained_fallback: int
     r_squared: Optional[float]
@@ -1352,8 +1406,9 @@ class _DCEFitAccountingUpdate(NamedTuple):
 class _DCEFitSummary(NamedTuple):
     """Aggregate counters and diagnostics produced while scattering fits."""
 
-    n_converged: int
-    n_failed: int
+    n_optimizer_converged: int
+    n_execution_failed: int
+    n_retained: int
     n_constrained: int
     n_unconstrained_fallback: int
     n_rejected_postfit: int
@@ -2533,6 +2588,10 @@ class ComputeDCEMapsOutputSpec(TraitedSpec):
     out_r2 = File(desc="R² (goodness of fit) map")
     out_tsnr = File(desc="tSNR map (always computed)")
     out_qc_mask = File(desc="QC mask (1=good fit, 0=unfitted/poor)")
+    out_fitting_mask = File(desc="Internal fitting-eligibility mask")
+    out_optimizer_converged_mask = File(
+        desc="Internal optimizer-convergence mask"
+    )
     out_fitted_curves = File(desc="Fitted concentration curves (if save_fitted_curves=True)")
     out_vp_at_bound_map = File(
         desc=(
@@ -3359,6 +3418,7 @@ class ComputeDCEMaps(BaseInterface):
             extraction_fraction=np.full(
                 spatial_shape, fill_value, dtype=np.float64
             ),
+            optimizer_converged=np.zeros(spatial_shape, dtype=bool),
             quality_flag=np.zeros(spatial_shape, dtype=np.int8),
             quality_flag_codes=quality_flag_codes,
             model_selection=np.zeros(spatial_shape, dtype=np.int8),
@@ -3588,9 +3648,11 @@ class ComputeDCEMaps(BaseInterface):
         # Compile QC metrics
         qc_metrics.update(
             _summarize_dce_fit_outcomes(
-                fit_summary.n_converged,
-                fit_summary.n_failed,
                 n_voxels,
+                int(np.count_nonzero(mask_bool)),
+                fit_summary.n_optimizer_converged,
+                fit_summary.n_execution_failed,
+                fit_summary.n_retained,
                 fit_summary.n_constrained,
                 fit_summary.n_unconstrained_fallback,
                 fit_summary.n_rejected_postfit,

@@ -623,12 +623,18 @@ output_dir/pmriprep/
 | `*_desc-dceModelSelection_dseg` | Per-voxel model selection (auto mode only) | categorical |
 | `*_desc-dceDeltaBIC_stat` | Delta-BIC confidence (auto mode only) | — |
 | `*_desc-dceQualityFlag_dseg` | Voxel quality flags (auto mode only) | categorical |
-| `*_desc-dceQc_mask` | Successfully fitted voxels | binary |
+| `*_desc-dceQc_mask` | Quantitatively accepted fitted voxels | binary |
 
 DCE relative-uncertainty maps are method diagnostics conditional on the selected
 PK model, converted concentration curve, supplied AIF, and preprocessing inputs.
 They describe local fit identifiability and are not calibrated subject-level
 biological confidence intervals.
+
+DCE QC and map provenance report an explicit voxel-accounting sequence:
+brain mask, fitting eligibility, attempted fits, optimizer convergence,
+retained nondegenerate fits, and quantitative-QC acceptance. Each fraction
+names its denominator; enhancing-tumor, non-enhancing-tumor, and NAWM coverage
+is included when the corresponding masks are available.
 
 For 2CXM, relative-uncertainty maps are available for the directly fitted Fp,
 PS, ve, and vp parameters. Ktrans is derived from Fp and PS, so its relative

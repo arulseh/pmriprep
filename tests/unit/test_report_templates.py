@@ -120,6 +120,47 @@ def test_dce_aif_peak_scaling_qc_renders(env):
     assert "below_expected_minimum" in rendered
 
 
+def test_dce_voxel_accounting_renders(env):
+    """Named fitting stages and denominators reach the DCE HTML report."""
+    template = env.get_template("sections/section_dce.html")
+    dce = {
+        "qc_metrics": {
+            "pk_modeling": {
+                "model": "extended_tofts",
+                "voxel_accounting": {
+                    "brain_mask": {"count": 100},
+                    "fitting_eligible": {
+                        "count": 80,
+                        "fraction_of_brain": 0.8,
+                    },
+                    "attempted": {"count": 80},
+                    "optimizer_converged": {
+                        "count": 70,
+                        "fraction_of_attempted": 0.875,
+                    },
+                    "retained_nondegenerate": {
+                        "count": 65,
+                        "fraction_of_attempted": 0.8125,
+                    },
+                    "quantitative_qc_accepted": {
+                        "count": 50,
+                        "fraction_of_attempted": 0.625,
+                    },
+                },
+            }
+        },
+        "images": {},
+        "display_status": {},
+    }
+    rendered = template.render(dce=dce)
+    assert "Brain Mask Voxels" in rendered
+    assert "Fitting Eligible" in rendered
+    assert "Optimizer Converged" in rendered
+    assert "Retained Nondegenerate" in rendered
+    assert "Quantitative QC Accepted" in rendered
+    assert "87.5% attempted" in rendered
+
+
 def test_parent_render_shows_dsc_blocks_when_dsc_present(env):
     """On DCE+DSC runs, both DCE-side DSC blocks must render."""
     template = env.get_template("report_unified.html")

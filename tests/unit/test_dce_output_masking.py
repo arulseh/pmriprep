@@ -385,6 +385,7 @@ def test_write_dce_terminal_outputs_preserves_auto_applicability(is_auto: bool) 
         ve=values,
         vp=values,
         kep=np.full(shape, 0.01),
+        optimizer_converged=np.ones(shape, dtype=bool),
         quality_flag=np.ones(shape, dtype=np.int8),
         model_selection=np.ones(shape, dtype=np.int8),
         model_selection_codes={"patlak": 1},
@@ -396,7 +397,11 @@ def test_write_dce_terminal_outputs_preserves_auto_applicability(is_auto: bool) 
     def write_map(data: np.ndarray, path: str, dtype: object = np.float32) -> None:
         writes.append((path, dtype))
 
-    qc_metrics: dict[str, object] = {}
+    qc_metrics: dict[str, object] = {
+        "voxel_accounting": {
+            "denominators": {"brain": 1, "attempted": 1, "retained": 1},
+        }
+    }
     outputs = _write_dce_terminal_outputs(
         maps,
         np.ones(shape, dtype=bool),
@@ -410,11 +415,16 @@ def test_write_dce_terminal_outputs_preserves_auto_applicability(is_auto: bool) 
         write_map,
         qc_metrics,
     )
-    assert {"out_tsnr", "out_qc_mask"}.issubset(outputs)
+    assert {
+        "out_tsnr", "out_fitting_mask", "out_optimizer_converged_mask",
+        "out_qc_mask",
+    }.issubset(outputs)
     assert ("out_model_selection" in outputs) is is_auto
     assert ("out_delta_bic" in outputs) is is_auto
     assert next(dtype for path, dtype in writes if "qc_mask" in path) is np.uint8
-    assert qc_metrics["n_voxels_qc_accepted"] == 1
+    accepted = qc_metrics["voxel_accounting"]["quantitative_qc_accepted"]
+    assert accepted["count"] == 1
+    assert accepted["fraction_of_retained"] == 1.0
     assert qc_metrics["qc_component_failures"] == {
         "scope": "fitted_voxels",
         "counts_are_overlapping": True,

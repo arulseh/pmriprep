@@ -533,8 +533,13 @@ def _build_delta_bic_meta(
         if isinstance(pk, dict):
             if pk.get("r2_median") is not None:
                 out["R2Median"] = pk["r2_median"]
-            if pk.get("convergence_rate") is not None:
-                out["ConvergenceRate"] = pk["convergence_rate"]
+            accounting = pk.get("voxel_accounting")
+            if isinstance(accounting, dict):
+                converged = accounting.get("optimizer_converged")
+                if isinstance(converged, dict):
+                    fraction = converged.get("fraction_of_attempted")
+                    if fraction is not None:
+                        out["OptimizerConvergenceFraction"] = fraction
     return out
 
 

@@ -12,6 +12,49 @@ import numpy.typing as npt
 from pmriprep.utils.dce_constants import MIN_ENHANCEMENT_MM, MIN_SIGNAL_STD
 
 
+def summarize_regional_voxel_accounting(
+    brain_mask: npt.NDArray[np.bool_],
+    stage_masks: dict[str, npt.NDArray[np.bool_]],
+    region_masks: dict[str, npt.NDArray[np.bool_] | None],
+) -> dict[str, dict[str, object]]:
+    """Summarize DCE fitting stages within available tissue regions.
+
+    Parameters
+    ----------
+    brain_mask : numpy.ndarray
+        Boolean brain mask defining the valid accounting domain.
+    stage_masks : dict
+        Named boolean masks for successive fitting and QC stages.
+    region_masks : dict
+        Named boolean tissue masks. Missing regions may be represented by
+        ``None`` and are omitted.
+
+    Returns
+    -------
+    dict
+        Per-region voxel counts and stage fractions. Every regional denominator
+        is the tissue mask intersected with the brain mask.
+    """
+    regional_accounting: dict[str, dict[str, object]] = {}
+    for region_name, region_mask in region_masks.items():
+        if region_mask is None:
+            continue
+        region = np.asarray(region_mask, dtype=bool) & brain_mask
+        region_count = int(np.count_nonzero(region))
+        stages: dict[str, object] = {}
+        for stage_name, stage_mask in stage_masks.items():
+            count = int(np.count_nonzero(region & stage_mask))
+            stages[stage_name] = {
+                "count": count,
+                "fraction_of_region": count / region_count if region_count else 0.0,
+            }
+        regional_accounting[region_name] = {
+            "region_voxel_count": region_count,
+            "stages": stages,
+        }
+    return regional_accounting
+
+
 @dataclass
 class VoxelPrepResult:
     """Result of voxel preparation for PK fitting.

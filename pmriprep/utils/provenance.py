@@ -392,8 +392,8 @@ def _enrich_dce(
                 if dist:
                     selection["ModelDistribution"] = dist
             pk_block["model_selection"] = selection
-        if "convergence_rate" in pk:
-            pk_block["convergence_rate"] = _safe_float(pk["convergence_rate"])
+        if isinstance(pk.get("voxel_accounting"), dict):
+            pk_block["VoxelAccounting"] = dict(pk["voxel_accounting"])
         if "r2_median" in pk:
             pk_block["r2_median"] = _safe_float(pk["r2_median"])
         if "qc_voxel_rsquared" in pk:

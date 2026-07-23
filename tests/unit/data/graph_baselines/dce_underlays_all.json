@@ -1154,6 +1154,12 @@
     ],
     [
       "pk_modeling",
+      "out_fitting_mask",
+      "dce_pk_fit_qc",
+      "fitting_mask_file"
+    ],
+    [
+      "pk_modeling",
       "out_fp",
       "dce_pk_fit_qc",
       "fp_file"
@@ -1388,6 +1394,12 @@
     ],
     [
       "pk_modeling",
+      "out_optimizer_converged_mask",
+      "dce_pk_fit_qc",
+      "optimizer_converged_mask_file"
+    ],
+    [
+      "pk_modeling",
       "out_peak_enhancement",
       "lesion_stats",
       "peak_enhancement_map"
@@ -1463,6 +1475,12 @@
       "out_qc_mask",
       "outputnode",
       "qc_mask"
+    ],
+    [
+      "pk_modeling",
+      "out_quality_flag",
+      "dce_pk_fit_qc",
+      "quality_flag_file"
     ],
     [
       "pk_modeling",
@@ -1923,6 +1941,12 @@
     [
       "transform_nawm_mask",
       "out_file",
+      "dce_pk_fit_qc",
+      "nawm_mask_file"
+    ],
+    [
+      "transform_nawm_mask",
+      "out_file",
       "dce_pk_maps_qc",
       "nawm_mask_file"
     ],
@@ -2167,13 +2191,17 @@
         "dce_signal_file",
         "enhancing_mask_file",
         "fitted_curves_file",
+        "fitting_mask_file",
         "fp_file",
         "ktrans_file",
         "model_name",
         "model_selection_file",
+        "nawm_mask_file",
         "non_enhancing_mask_file",
+        "optimizer_converged_mask_file",
         "ps_file",
         "qc_mask_file",
+        "quality_flag_file",
         "r2_file",
         "session_id",
         "subject_id",
@@ -2572,12 +2600,12 @@
     }
   },
   "function_sha256": {
-    "collect_qc_metrics": "5dd24198f031eeab6635c29a218ce22077a3df97278bccb5e81a2712bcfa59de",
+    "collect_qc_metrics": "d3fbfd79f94af8d515912589e203a7555a39447f1de2f3386595d4a876bc626c",
     "combine_masks": "f2748155dafc15b2d74a066b3da5db0ed2a4b5486b46ee8ea1f4c7a181de8fcf",
     "create_aif_mask": "b7f950098e31edf1f4ae33feeceb4f24287680351c18994377a6129477eb1b0d",
     "dce_brain_mask_qc": "ced2d6d4b823457166d3fb21083d6220f2b0dc0e0155de5c134e6d98210b5086",
     "dce_early_mean": "fd75a021c6ef482c605e9a7596c6c17381cd8996e63adafc61cb7f30031b6cb0",
-    "dce_pk_fit_qc": "0f9fddbf4442f5fbf761e772b5012d5d688b9cb9eda964eb14a1a997d5cc8675",
+    "dce_pk_fit_qc": "3206990b014d072947d06ee8c4dcef234d286f8524a901040e186022ced60581",
     "dce_pk_maps_qc": "c25cca9c5e492712dfb87f2fe715865d1d65b83c4ef3371a63430020879fcff5",
     "dsc_dce_validation": "f89b6ace91d480d7960947bea6f327e6e55d8eff5cca7cde3eb0ad7b762cdda1",
     "dsc_dce_xval_plot": "5c7cd63d87cc931e5d8a26b939b407d2318a1b6fb76ef3f19ad2f35ead4026d7",

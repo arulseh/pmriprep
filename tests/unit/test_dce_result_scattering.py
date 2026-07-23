@@ -98,6 +98,7 @@ def _uncertainty_maps() -> SimpleNamespace:
         fp=np.zeros((1, 1, 1)),
         ps=np.zeros((1, 1, 1)),
         extraction_fraction=np.zeros((1, 1, 1)),
+        optimizer_converged=np.zeros((1, 1, 1), dtype=bool),
         model_selection=np.zeros((1, 1, 1), dtype=np.int8),
         model_selection_codes={"tofts": 2},
         delta_bic=np.full((1, 1, 1), np.nan),
@@ -382,8 +383,6 @@ def test_retained_fit_accounting_tracks_constrained_convergence() -> None:
         {"constrained": True, "converged": True, "r_squared": 0.8},
         ConstraintMode.SOFT,
     )
-    assert update.n_converged == 1
-    assert update.n_failed == 0
     assert update.n_constrained == 1
     assert update.n_unconstrained_fallback == 0
     assert update.r_squared == 0.8
@@ -397,8 +396,6 @@ def test_retained_fit_accounting_tracks_unconstrained_failure_fallback() -> None
         {"constrained": False, "converged": False, "r_squared": -0.2},
         ConstraintMode.SOFT,
     )
-    assert update.n_converged == 0
-    assert update.n_failed == 1
     assert update.n_constrained == 0
     assert update.n_unconstrained_fallback == 1
     assert update.r_squared is None
@@ -573,23 +570,34 @@ def test_summarize_dce_r2_preserves_population_statistics() -> None:
 
 
 def test_summarize_dce_fit_outcomes_preserves_counters() -> None:
-    """Fit outcome assembly retains counters, reasons, and denominator."""
+    """Fit outcome assembly exposes named stages and explicit denominators."""
     reasons = {"optimizer_failed": 2}
-    assert _summarize_dce_fit_outcomes(3, 2, 5, 1, 1, 4, reasons) == {
-        "n_converged": 3,
-        "n_failed": 2,
-        "convergence_rate": 0.6,
-        "n_constrained": 1,
-        "n_unconstrained_fallback": 1,
-        "n_rejected_postfit": 4,
-        "failure_reasons": reasons,
+    summary = _summarize_dce_fit_outcomes(
+        10, 20, 7, 1, 8, 3, 1, 1, reasons,
+    )
+    accounting = summary["voxel_accounting"]
+    assert accounting["fitting_eligible"] == {
+        "count": 10,
+        "fraction_of_brain": 0.5,
     }
+    assert accounting["optimizer_converged"]["count"] == 7
+    assert accounting["execution_failed"]["count"] == 1
+    assert accounting["postfit_degenerate"]["count"] == 1
+    assert accounting["retained_nondegenerate"]["count"] == 8
+    assert (
+        accounting["execution_failed"]["count"]
+        + accounting["postfit_degenerate"]["count"]
+        + accounting["retained_nondegenerate"]["count"]
+        == accounting["attempted"]["count"]
+    )
+    assert summary["failure_reasons"] is reasons
 
 
 def test_summarize_dce_fit_outcomes_zero_voxels_has_zero_rate() -> None:
-    """An empty fit domain retains the guarded zero convergence rate."""
-    summary = _summarize_dce_fit_outcomes(0, 0, 0, 0, 0, 0, {})
-    assert summary["convergence_rate"] == 0.0
+    """An empty fit domain retains guarded zero stage fractions."""
+    summary = _summarize_dce_fit_outcomes(0, 0, 0, 0, 0, 0, 0, 0, {})
+    accounting = summary["voxel_accounting"]
+    assert accounting["optimizer_converged"]["fraction_of_attempted"] == 0.0
 
 
 def test_scatter_dce_fit_results_counts_failures_before_map_access() -> None:
@@ -610,9 +618,9 @@ def test_scatter_dce_fit_results_counts_failures_before_map_access() -> None:
         ConstraintMode.SKIP,
         0.0,
     )
-    assert summary.n_failed == 3
+    assert summary.n_execution_failed == 3
     assert summary.failure_reasons == {"optimizer_failed": 2, "unknown": 1}
-    assert summary.n_converged == 0
+    assert summary.n_optimizer_converged == 0
     assert summary.r2_values == []
 
 
@@ -682,9 +690,6 @@ def test_initialize_dce_qc_metrics_preserves_pre_fit_state() -> None:
     assert summary == {
         "model": "auto",
         "inference": "map",
-        "n_voxels_brain": 2,
-        "n_voxels_fitted": 1,
-        "n_voxels_signal_filtered": 1,
         "tsnr_threshold": 12.0,
         "baseline_frames": 6,
         "selection_tr_seconds": 2.5,
