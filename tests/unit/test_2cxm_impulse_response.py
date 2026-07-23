@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from scipy.integrate import odeint
+from scipy.integrate import odeint, solve_ivp
 
 from pmriprep.models.dce.two_compartment_exchange import (
     TwoCompartmentExchangeModel,
@@ -56,3 +56,56 @@ def test_2cxm_irf_matches_ode(fp: float, ps: float, ve: float, vp: float) -> Non
         f"2CXM IRF deviates from ODE integration by {max_err:.4e} "
         f"(relative {max_err / scale:.2e}); check A1/A2 coefficients"
     )
+
+
+@pytest.mark.parametrize(
+    "fp,ps,ve,vp",
+    [
+        (60.0, 15.0, 0.30, 0.04),
+        (20.0, 40.0, 0.30, 0.04),
+        (100.0, 5.0, 0.20, 0.02),
+    ],
+)
+def test_2cxm_concentration_curve_matches_driven_ode(
+    fp: float,
+    ps: float,
+    ve: float,
+    vp: float,
+) -> None:
+    """Full analytic AIF convolution matches independently driven ODEs."""
+    model = TwoCompartmentExchangeModel()
+    time_points = np.linspace(0.0, 5.0, 2501)
+    shifted = time_points - 0.75
+    aif = np.where(
+        shifted > 0.0,
+        6.0 * shifted * np.exp(-shifted / 0.18)
+        + 0.7 * np.exp(-shifted / 1.8),
+        0.0,
+    )
+    fpr = fp / 100.0
+    psr = ps / 100.0
+
+    def system(time: float, state: np.ndarray) -> np.ndarray:
+        plasma, ees = state
+        arterial = float(np.interp(time, time_points, aif))
+        return np.array(
+            [
+                fpr / vp * (arterial - plasma)
+                - psr / vp * (plasma - ees),
+                psr / ve * (plasma - ees),
+            ]
+        )
+
+    solution = solve_ivp(
+        system,
+        (float(time_points[0]), float(time_points[-1])),
+        np.zeros(2),
+        t_eval=time_points,
+        rtol=1e-10,
+        atol=1e-12,
+    )
+    assert solution.success
+    ode_curve = vp * solution.y[0] + ve * solution.y[1]
+    analytic_curve = model.evaluate([fp, ps, ve, vp], aif, time_points)
+    peak = float(np.max(np.abs(ode_curve)))
+    assert np.max(np.abs(analytic_curve - ode_curve)) / peak < 2e-4

@@ -25,7 +25,10 @@ import numpy as np
 import numpy.typing as npt
 
 from pmriprep.models.dce.batched_models import evaluate_model
-from pmriprep.models.dce.two_compartment_exchange import TWO_CXM_VE_BOUNDS
+from pmriprep.models.dce.two_compartment_exchange import (
+    TWO_CXM_VE_BOUNDS,
+    TwoCompartmentExchangeModel,
+)
 from pmriprep.utils.dce_constants import (
     FP_BOUNDS,
     KTRANS_BOUNDS,
@@ -1189,10 +1192,66 @@ def batched_lm_fit(
     )
 
     # Final evaluation for all voxels
+    full_names = _MODEL_PARAMS[model_name]
     all_param_dict = _build_full_params_idx(params, np.arange(n_voxels))
     all_predicted = evaluate_model(
         model_name, all_param_dict, aif, time_points,
     ).tissue_curves
+
+    boundary_uncertainties: dict[str, npt.NDArray[np.float64]] = {}
+    if model_name == "2cxm" and fixed_vp is None:
+        volume = all_param_dict["ve"] + all_param_dict["vp"]
+        at_box_bound = np.any(
+            np.isclose(params, bounds_lo[None, :], rtol=0.0, atol=1e-10)
+            | np.isclose(params, bounds_hi[None, :], rtol=0.0, atol=1e-10),
+            axis=1,
+        )
+        boundary_indices = np.where(
+            at_box_bound
+            | np.isclose(volume, VP_VE_TOTAL_MAX, rtol=0.0, atol=1e-10)
+        )[0]
+        if boundary_indices.size:
+            scalar_model = TwoCompartmentExchangeModel()
+            boundary_uncertainties = {
+                name: np.full(n_voxels, np.nan, dtype=np.float64)
+                for name in full_names
+            }
+            for index in boundary_indices:
+                initial = [float(all_param_dict[name][index]) for name in full_names]
+                result = scalar_model.fit(
+                    tissue_curves[index],
+                    aif,
+                    time_points,
+                    initial_guess=initial,
+                    weights=weights,
+                )
+                if not result.converged:
+                    continue
+                candidate = np.array(
+                    [result.parameters[name] for name in ("Fp", "PS", "ve", "vp")],
+                    dtype=np.float64,
+                )
+                candidate_curve = scalar_model.evaluate(
+                    candidate.tolist(),
+                    aif,
+                    time_points,
+                )
+                old_rss = float(
+                    np.sum(w * (tissue_curves[index] - all_predicted[index]) ** 2)
+                )
+                new_rss = float(
+                    np.sum(w * (tissue_curves[index] - candidate_curve) ** 2)
+                )
+                if new_rss > old_rss * (1.0 + 1e-12):
+                    continue
+                params[index] = candidate
+                all_predicted[index] = candidate_curve
+                for name in full_names:
+                    uncertainty = result.uncertainties.get(
+                        {"fp": "Fp", "ps": "PS"}.get(name, name),
+                        np.nan,
+                    )
+                    boundary_uncertainties[name][index] = uncertainty
 
     if vp_subtracted and fixed_vp is not None:
         original_tissue = target + fixed_vp[:, None] * aif[None, :]
@@ -1204,7 +1263,6 @@ def batched_lm_fit(
 
     # Build output params dict
     output_params: dict[str, npt.NDArray[np.floating]] = {}
-    full_names = _MODEL_PARAMS[model_name]
     free_idx = 0
     for name in full_names:
         if name in free_param_names:
@@ -1283,6 +1341,10 @@ def batched_lm_fit(
 
             if fixed_vp is not None and "vp" in uncertainties:
                 uncertainties["vp"][:] = 0.0
+
+        for name, values in boundary_uncertainties.items():
+            finite = np.isfinite(values)
+            uncertainties[name][finite] = values[finite]
 
     return FitResult(
         params=output_params,

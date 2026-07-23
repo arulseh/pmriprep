@@ -6,6 +6,7 @@ auto-mode BIC selection, and result format for all four DCE PK models.
 
 import numpy as np
 import pytest
+from scipy.optimize import minimize
 
 from pmriprep.models.dce.batched_models import (
     batched_2cxm_model,
@@ -22,6 +23,7 @@ from pmriprep.models.dce.batched_fitting import (
 from pmriprep.models.dce.two_compartment_exchange import (
     TwoCompartmentExchangeModel,
 )
+from pmriprep.utils.dce_constants import VP_VE_TOTAL_MAX
 
 
 # ---------------------------------------------------------------------------
@@ -217,6 +219,105 @@ class TestTwoCXMRecovery:
         assert result.r_squared[0] > 0.9999
         for name, expected in truth.items():
             assert result.params[name][0] == pytest.approx(expected, rel=0.01)
+
+    def test_2cxm_active_volume_boundary_matches_independent_optimizer(
+        self,
+        aif_and_time: tuple[np.ndarray, np.ndarray],
+    ) -> None:
+        """Scalar and batched fits solve, rather than project onto, the boundary."""
+        aif, time_points = aif_and_time
+        model = TwoCompartmentExchangeModel()
+        target = model.evaluate([60.0, 15.0, 0.8, 0.25], aif, time_points)
+        bounds = model.get_bounds()
+
+        def objective(parameters: np.ndarray) -> float:
+            residuals = target - model.evaluate(parameters.tolist(), aif, time_points)
+            return float(np.sum(residuals**2))
+
+        reference = minimize(
+            objective,
+            x0=np.array([60.0, 15.0, 0.75, 0.249]),
+            method="SLSQP",
+            bounds=bounds,
+            constraints={
+                "type": "ineq",
+                "fun": lambda parameters: (
+                    VP_VE_TOTAL_MAX - parameters[2] - parameters[3]
+                ),
+            },
+            options={"maxiter": 4000, "ftol": 1e-14},
+        )
+        assert reference.success
+
+        scalar = model.fit(target, aif, time_points)
+        batched = batched_lm_fit(
+            "2cxm",
+            target[np.newaxis, :],
+            aif,
+            time_points,
+            max_iter=150,
+            compute_uncertainties=True,
+        )
+
+        assert scalar.converged
+        assert batched.converged[0]
+        assert scalar.parameters["ve"] + scalar.parameters["vp"] == pytest.approx(
+            VP_VE_TOTAL_MAX
+        )
+        assert batched.params["ve"][0] + batched.params["vp"][0] == pytest.approx(
+            VP_VE_TOTAL_MAX
+        )
+        assert scalar.residual_sum_squares == pytest.approx(reference.fun, rel=1e-3)
+        batched_parameters = [
+            batched.params[name][0] for name in ("fp", "ps", "ve", "vp")
+        ]
+        assert objective(np.asarray(batched_parameters)) == pytest.approx(
+            reference.fun,
+            rel=1e-3,
+        )
+        for name in ("fp", "ps", "ve", "vp"):
+            assert np.isfinite(batched.uncertainties[name][0])
+        assert batched.uncertainties["ve"][0] == pytest.approx(
+            batched.uncertainties["vp"][0]
+        )
+
+    def test_2cxm_fixed_vp_scalar_and_batched_recover_permeability_limit(
+        self,
+        aif_and_time: tuple[np.ndarray, np.ndarray],
+    ) -> None:
+        """Fixed-vp paths recover a noiseless permeability-limited curve."""
+        aif, time_points = aif_and_time
+        model = TwoCompartmentExchangeModel()
+        truth = {"Fp": 100.0, "PS": 5.0, "ve": 0.2, "vp": 0.02}
+        tissue = model.evaluate(
+            [truth[name] for name in ("Fp", "PS", "ve", "vp")],
+            aif,
+            time_points,
+        )
+
+        scalar = model.fit_constrained(
+            tissue,
+            aif,
+            time_points,
+            fixed_vp=truth["vp"],
+        )
+        batched = batched_lm_fit(
+            "2cxm",
+            tissue[np.newaxis, :],
+            aif,
+            time_points,
+            fixed_vp=np.array([truth["vp"]]),
+            max_iter=150,
+        )
+
+        assert scalar.converged
+        assert batched.converged[0]
+        for name in ("Fp", "PS", "ve"):
+            assert scalar.parameters[name] == pytest.approx(truth[name], rel=0.01)
+            assert batched.params[name.lower()][0] == pytest.approx(
+                truth[name],
+                rel=0.01,
+            )
 
     def test_2cxm_recovery(self, aif_and_time):
         """1000 voxels, 1% noise, 4 params → params within 10% for 80%."""

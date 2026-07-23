@@ -517,6 +517,66 @@ class TwoCompartmentExchangeModel(PKModel):
             converged = False
             fitted_params = [0.0] * self.n_parameters
 
+        # If the box-constrained optimum violates the joint tissue-volume
+        # constraint, solve the actual three-dimensional active-boundary
+        # problem. Projection alone changes the fitted curve without finding
+        # the constrained least-squares optimum.
+        if converged and fitted_params[2] + fitted_params[3] > VP_VE_TOTAL_MAX:
+            ve_lower = max(bounds[2][0], VP_VE_TOTAL_MAX - bounds[3][1])
+            ve_upper = min(bounds[2][1], VP_VE_TOTAL_MAX - bounds[3][0])
+
+            def _boundary_curve_func(
+                t: npt.NDArray[np.floating],
+                fp: float,
+                ps: float,
+                ve: float,
+            ) -> npt.NDArray[np.floating]:
+                return self.evaluate(
+                    [fp, ps, ve, VP_VE_TOTAL_MAX - ve],
+                    aif,
+                    t,
+                )
+
+            boundary_x0 = [
+                float(np.clip(fitted_params[0], bounds[0][0], bounds[0][1])),
+                float(np.clip(fitted_params[1], bounds[1][0], bounds[1][1])),
+                float(np.clip(fitted_params[2], ve_lower, ve_upper)),
+            ]
+            try:
+                boundary_popt, boundary_pcov = curve_fit(
+                    _boundary_curve_func,
+                    time_points,
+                    tissue_curve,
+                    p0=boundary_x0,
+                    bounds=(
+                        [bounds[0][0], bounds[1][0], ve_lower],
+                        [bounds[0][1], bounds[1][1], ve_upper],
+                    ),
+                    method="trf",
+                    maxfev=2000,
+                    sigma=sigma_arr,
+                    absolute_sigma=False,
+                )
+                fp_boundary = float(boundary_popt[0])
+                ps_boundary = float(boundary_popt[1])
+                ve_boundary = float(boundary_popt[2])
+                fitted_params = [
+                    fp_boundary,
+                    ps_boundary,
+                    ve_boundary,
+                    VP_VE_TOTAL_MAX - ve_boundary,
+                ]
+                boundary_perr = np.sqrt(np.diag(boundary_pcov))
+                uncertainties = {
+                    "Fp": float(boundary_perr[0]),
+                    "PS": float(boundary_perr[1]),
+                    "ve": float(boundary_perr[2]),
+                    "vp": float(boundary_perr[2]),
+                }
+            except (RuntimeError, ValueError):
+                converged = False
+                uncertainties = {}
+
         # Clip parameters to bounds and apply constraint
         fitted_params = self.clip_params(fitted_params)
         fp, ps, ve, vp = self._apply_volume_constraint(fitted_params)
@@ -605,9 +665,11 @@ class TwoCompartmentExchangeModel(PKModel):
 
         # Set initial guess for [Fp, PS, ve]
         if initial_guess is None:
-            defs = self.get_parameter_definitions()
-            x0 = [defs[0].get_prior_mean(), defs[1].get_prior_mean(),
-                   defs[2].get_prior_mean()]
+            x0 = self.estimate_initial_guess(
+                tissue_curve,
+                aif,
+                time_points,
+            )[:3]
         else:
             x0 = list(initial_guess[:3])
 
