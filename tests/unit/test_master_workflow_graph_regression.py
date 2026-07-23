@@ -29,7 +29,6 @@ from pmriprep.workflows.base import (
     _prepare_master_preflight_state,
     _select_master_structural_references,
     init_pmriprep_wf,
-    versioned_work_dir,
 )
 from pmriprep.workflows.discovery import (
     ModalityAvailability,
@@ -542,7 +541,7 @@ def test_prepare_master_context_resolves_session_policy(
     )
 
     assert context.bids_dir == (tmp_path / "bids").resolve()
-    assert context.work_dir == versioned_work_dir(tmp_path / "work")
+    assert context.work_dir == (tmp_path / "work").resolve()
     assert context.is_postcon_ref is True
     assert context.dsc_mem_gb == 4.0
     assert context.dce_mem_gb == 5.0
@@ -555,21 +554,6 @@ def test_prepare_master_context_resolves_session_policy(
     assert context.decision.run_dce is True
     assert isinstance(context.anat_config, AnatConfig)
     assert isinstance(context.dsc_config, DSCConfig)
-
-
-def test_versioned_work_dir_is_release_specific_and_idempotent(
-    tmp_path: Path,
-) -> None:
-    """Different releases cannot resolve to the same scientific cache."""
-    first = versioned_work_dir(tmp_path / "work", "0.82.248")
-    second = versioned_work_dir(tmp_path / "work", "0.82.249+local")
-
-    assert first == (tmp_path / "work" / "pmriprep-0.82.248").resolve()
-    assert second == (
-        tmp_path / "work" / "pmriprep-0.82.249_local"
-    ).resolve()
-    assert first != second
-    assert versioned_work_dir(first, "0.82.248") == first
 
 
 def test_select_master_structural_references_routes_each_application(

@@ -24,42 +24,25 @@ if TYPE_CHECKING:
 logger = plogger.cli
 
 
-def _clean_active_work_dir(
-    work_root: Path,
-    pipeline_version: str,
-) -> Optional[Path]:
-    """Remove only the active release's cache namespace.
+def _clean_work_dir(work_dir: Path) -> Optional[Path]:
+    """Remove the working directory after processing.
 
     Parameters
     ----------
-    work_root : pathlib.Path
-        User-selected working-directory root.
-    pipeline_version : str
-        Active PMRIPrep version.
+    work_dir : pathlib.Path
+        User-selected working directory.
 
     Returns
     -------
     pathlib.Path or None
-        Removed namespace, or ``None`` when it did not exist.
-
-    Notes
-    -----
-    Other release namespaces and legacy unversioned caches are preserved. The
-    root itself is removed only when empty.
+        Removed directory, or ``None`` when it did not exist.
     """
     import shutil
 
-    from pmriprep.workflows.base import versioned_work_dir
-
-    active_dir = versioned_work_dir(work_root, pipeline_version)
-    if not active_dir.exists():
+    if not work_dir.exists():
         return None
-    shutil.rmtree(active_dir)
-    try:
-        work_root.rmdir()
-    except OSError:
-        pass
-    return active_dir
+    shutil.rmtree(work_dir)
+    return work_dir
 
 
 def _dose_type(value: str) -> float:
@@ -258,10 +241,7 @@ Examples:
         "--work-dir",
         type=Path,
         metavar="PATH",
-        help=(
-            "Working-directory root. Intermediate files are isolated in a "
-            "PMRIPrep-version-specific subdirectory."
-        ),
+        help="Path where intermediate results should be stored.",
     )
 
     # Configuration file
@@ -543,7 +523,7 @@ Examples:
         "--clean-workdir",
         action="store_true",
         default=False,
-        help="Delete the active PMRIPrep version's working directory after processing.",
+        help="Delete the working directory after processing.",
     )
     g_other.add_argument(
         "--sloppy",
@@ -1020,8 +1000,7 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
                 for line in summary.split("\n"):
                     logger.info(line)
 
-                # Write workflow graph after the constructor has selected its
-                # version-specific working directory.
+                # Write the workflow graph after construction.
                 if args.write_graph:
                     try:
                         workflow.write_graph(
@@ -1072,16 +1051,13 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
 
     # Clean working directory after all subjects are processed
     if args.clean_workdir:
-        from pmriprep.workflows.base import versioned_work_dir
-
-        active_work_dir = versioned_work_dir(work_dir, __version__)
-        logger.log(IMPORTANT, "Clearing working directory: %s", active_work_dir)
+        logger.log(IMPORTANT, "Clearing working directory: %s", work_dir)
         try:
-            _clean_active_work_dir(work_dir, __version__)
+            _clean_work_dir(work_dir)
         except OSError as e:
             logger.warning(
                 "Failed to clean work directory %s: %s",
-                active_work_dir,
+                work_dir,
                 e,
             )
 
