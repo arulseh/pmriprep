@@ -488,6 +488,57 @@ class TestSmoothedSidecars:
         assert ncbv_sm["TemplateAIFUsage"] == "safe"
 
 
+class TestSignedAucCbvProvenance:
+    def test_auc_cbv_and_ncbv_explain_signed_values(
+        self, minimal_inputs, tmp_path
+    ) -> None:
+        qc = {
+            "deconvolution": {
+                "cbv_auc_finite_voxels": 100,
+                "cbv_auc_negative_voxels": 7,
+                "cbv_auc_negative_fraction": 0.07,
+            }
+        }
+        derivatives = _run_writer(minimal_inputs, qc, tmp_path)
+
+        auc_signed = _load_sidecar(
+            derivatives, "dscRelAUCCbv_stat"
+        )["SignedEstimator"]
+        ncbv_signed = _load_sidecar(
+            derivatives, "dscNawmNormCbv_stat"
+        )["SignedEstimator"]
+        assert "NormalizationReferenceDomain" not in auc_signed
+        assert ncbv_signed["NormalizationReferenceDomain"] == "finite_positive_NAWM"
+
+        for signed in (auc_signed, ncbv_signed):
+            assert signed["ValueDomain"] == "signed"
+            assert signed["NegativeValuesRetained"] is True
+            assert signed["FiniteInBrainVoxelCount"] == 100
+            assert signed["NegativeInBrainVoxelCount"] == 7
+            assert signed["NegativeInBrainVoxelFraction"] == pytest.approx(0.07)
+            assert (
+                signed["NegativeFractionDenominator"] == "finite_in_brain_voxels"
+            )
+
+    def test_smoothed_auc_cbv_and_ncbv_retain_policy(
+        self, minimal_inputs, tmp_path
+    ) -> None:
+        minimal_inputs["smooth_fwhm"] = 3.0
+        minimal_inputs["smooth_hemodynamic"] = {
+            "rel_cbv": _write_dummy_nifti(tmp_path / "rcbv_sm.nii.gz"),
+            "ncbv": _write_dummy_nifti(tmp_path / "ncbv_sm.nii.gz"),
+        }
+        derivatives = _run_writer(minimal_inputs, {}, tmp_path)
+
+        for suffix in ("dscRelAUCSm3Cbv_stat", "dscNawmNormSm3Cbv_stat"):
+            signed = _load_sidecar(derivatives, suffix)["SignedEstimator"]
+            assert signed["ValueDomain"] == "signed"
+            assert signed["NegativeValuesRetained"] is True
+            # The available count describes the unsmoothed source map and must
+            # not be mislabeled as a measurement of the smoothed derivative.
+            assert "NegativeInBrainVoxelFraction" not in signed
+
+
 class TestMissingAifQc:
     def test_missing_qc_stamps_tags_but_no_block(self, minimal_inputs, tmp_path) -> None:
         """Without qc_metrics the AIF block cannot be assembled, but

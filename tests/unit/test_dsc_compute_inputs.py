@@ -454,7 +454,7 @@ def test_summarize_dsc_maps_preserves_population_statistics_and_provenance() -> 
     qc = ComputeDSCMaps._summarize_dsc_maps(
         rel_cbf=np.array([10.0, 30.0, 999.0]),
         rel_cbv=np.array([1.0, 3.0, 999.0]),
-        rel_cbv_auc=np.array([2.0, 4.0, 999.0]),
+        rel_cbv_auc=np.array([-2.0, 4.0, 999.0]),
         mtt=np.array([5.0, 9.0, 999.0]),
         tmax=np.array([3.0, 7.0, 999.0]),
         mask_bool=mask,
@@ -467,7 +467,10 @@ def test_summarize_dsc_maps_preserves_population_statistics_and_provenance() -> 
     assert qc["cbf_mean"] == pytest.approx(20.0)
     assert qc["cbf_std"] == pytest.approx(10.0)
     assert qc["cbv_mean"] == pytest.approx(2.0)
-    assert qc["cbv_auc_median"] == pytest.approx(3.0)
+    assert qc["cbv_auc_median"] == pytest.approx(1.0)
+    assert qc["cbv_auc_finite_voxels"] == 2
+    assert qc["cbv_auc_negative_voxels"] == 1
+    assert qc["cbv_auc_negative_fraction"] == pytest.approx(0.5)
     assert qc["mtt_mean"] == pytest.approx(7.0)
     assert qc["tmax_median"] == pytest.approx(5.0)
     assert qc["n_voxels"] == 2
@@ -495,6 +498,9 @@ def test_summarize_dsc_maps_empty_synthetic_domain() -> None:
     assert qc["n_voxels"] == 0
     assert qc["cbf_mean"] == 0.0
     assert qc["cbv_auc_median"] == 0.0
+    assert qc["cbv_auc_finite_voxels"] == 0
+    assert qc["cbv_auc_negative_voxels"] == 0
+    assert qc["cbv_auc_negative_fraction"] == 0.0
     assert qc["cbv_literature_range_applicable"] is False
 
 

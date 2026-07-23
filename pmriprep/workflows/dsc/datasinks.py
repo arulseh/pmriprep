@@ -305,6 +305,15 @@ def _build_map_meta(
     user_fragment = load_lesion_stats_fragment(user_lesion_stats_json, map_key)
 
     merged_extra = dict(extra) if extra else {}
+    if map_key in {"cbv_auc", "ncbv"}:
+        from pmriprep.workflows.dsc.datasinks import (
+            _build_signed_auc_cbv_provenance,
+        )
+
+        merged_extra["SignedEstimator"] = _build_signed_auc_cbv_provenance(
+            qc_metrics,
+            normalized=map_key == "ncbv",
+        )
     if map_key == "fallback":
         merged_extra["Type"] = "ROI"
     if fragment:
@@ -731,6 +740,9 @@ def _build_smoothed_meta(
     fwhm: float,
 ) -> dict:
     from pmriprep.utils.sidecar_builders import build_dsc_map_sidecar
+    from pmriprep.workflows.dsc.datasinks import (
+        _build_signed_auc_cbv_provenance,
+    )
 
     extra = {
         "SmoothingFWHM": float(fwhm),
@@ -739,6 +751,12 @@ def _build_smoothed_meta(
         "IntendedFor": "visualization",
         "Note": "Use non-smoothed maps for quantitative ROI analysis",
     }
+    if map_key in {"rel_cbv", "ncbv"}:
+        extra["SignedEstimator"] = _build_signed_auc_cbv_provenance(
+            qc_metrics,
+            normalized=map_key == "ncbv",
+            include_summary=False,
+        )
     return build_dsc_map_sidecar(
         base=base,
         description=description,
@@ -747,6 +765,42 @@ def _build_smoothed_meta(
         units=units or None,
         extra=extra,
     )
+
+
+def _build_signed_auc_cbv_provenance(
+    qc_metrics: dict | None,
+    normalized: bool = False,
+    include_summary: bool = True,
+) -> dict[str, object]:
+    """Describe signed AUC-CBV values and expose their in-brain frequency."""
+    provenance: dict[str, object] = {
+        "ValueDomain": "signed",
+        "NegativeValuesRetained": True,
+        "NegativeValueInterpretation": (
+            "Non-physiological estimator residuals from noise, baseline error, "
+            "motion, or leakage correction; values are not clipped to avoid "
+            "positive bias."
+        ),
+    }
+    if normalized:
+        provenance["NormalizationReferenceDomain"] = "finite_positive_NAWM"
+    if not include_summary or not isinstance(qc_metrics, dict):
+        return provenance
+    deconvolution = qc_metrics.get("deconvolution")
+    if not isinstance(deconvolution, dict):
+        return provenance
+    keys = {
+        "cbv_auc_finite_voxels": "FiniteInBrainVoxelCount",
+        "cbv_auc_negative_voxels": "NegativeInBrainVoxelCount",
+        "cbv_auc_negative_fraction": "NegativeInBrainVoxelFraction",
+    }
+    for source, target in keys.items():
+        value = deconvolution.get(source)
+        if value is not None:
+            provenance[target] = value
+    if "NegativeInBrainVoxelFraction" in provenance:
+        provenance["NegativeFractionDenominator"] = "finite_in_brain_voxels"
+    return provenance
 
 
 # ---------------------------------------------------------------------------

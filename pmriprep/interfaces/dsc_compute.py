@@ -1415,6 +1415,9 @@ class ComputeDSCMaps(BaseInterface):
     ) -> dict[str, Any]:
         """Reduce finalized DSC maps and acquisition provenance to QC values."""
         has_voxels = bool(np.any(mask_bool))
+        finite_cbv_auc = mask_bool & np.isfinite(rel_cbv_auc)
+        n_finite_cbv_auc = int(np.sum(finite_cbv_auc))
+        n_negative_cbv_auc = int(np.sum(finite_cbv_auc & (rel_cbv_auc < 0.0)))
         qc = {
             "cbf_mean": float(np.mean(rel_cbf[mask_bool])) if has_voxels else 0.0,
             "cbf_std": float(np.std(rel_cbf[mask_bool])) if has_voxels else 0.0,
@@ -1432,6 +1435,13 @@ class ComputeDSCMaps(BaseInterface):
             ),
             "cbv_auc_median": (
                 float(np.nanmedian(rel_cbv_auc[mask_bool])) if has_voxels else 0.0
+            ),
+            "cbv_auc_finite_voxels": n_finite_cbv_auc,
+            "cbv_auc_negative_voxels": n_negative_cbv_auc,
+            "cbv_auc_negative_fraction": (
+                n_negative_cbv_auc / n_finite_cbv_auc
+                if n_finite_cbv_auc > 0
+                else 0.0
             ),
             "mtt_median": float(np.median(mtt[mask_bool])) if has_voxels else 0.0,
             "tmax_median": (
