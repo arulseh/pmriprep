@@ -81,6 +81,72 @@ def test_prepare_fit_inputs_preserves_model_time_and_domain_gates(
     assert prepared.peak_enhancement[0, 0, 0] > 0.0
 
 
+def test_fitting_domain_is_invariant_to_raw_signal_scale(tmp_path: Path) -> None:
+    """Arbitrary scanner intensity scaling must not change voxel admission."""
+    shape = (2, 1, 1)
+    concentration = np.zeros((*shape, 5), dtype=np.float32)
+    concentration[0, 0, 0] = [0.0, 0.0, 0.02, 0.08, 0.04]
+    concentration[1, 0, 0] = [0.0, 0.0, 0.0, 0.0, 0.0]
+    mask = np.ones(shape, dtype=np.uint8)
+    signal = np.zeros((*shape, 5), dtype=np.float32)
+    signal[0, 0, 0] = [100.0, 101.0, 108.0, 125.0, 112.0]
+    signal[1, 0, 0] = [100.0, 101.0, 102.0, 103.0, 102.0]
+
+    concentration_file = tmp_path / "concentration.nii.gz"
+    mask_file = tmp_path / "mask.nii.gz"
+    aif_file = tmp_path / "aif.txt"
+    nib.save(nib.Nifti1Image(concentration, np.eye(4)), concentration_file)
+    nib.save(nib.Nifti1Image(mask, np.eye(4)), mask_file)
+    np.savetxt(aif_file, [0.0, 0.0, 1.0, 0.5, 0.2])
+
+    domains = []
+    for label, scale in (("native", 1.0), ("scaled", 0.001)):
+        signal_file = tmp_path / f"{label}_signal.nii.gz"
+        nib.save(
+            nib.Nifti1Image(signal * scale, np.eye(4)),
+            signal_file,
+        )
+        interface = ComputeDCEMaps(
+            concentration_file=str(concentration_file),
+            brain_mask_file=str(mask_file),
+            dce_signal_file=str(signal_file),
+            aif_file=str(aif_file),
+            volume_tr=2.0,
+            model="auto",
+            baseline_frames=2,
+            tsnr_threshold=0.0,
+        )
+        domains.append(interface._prepare_fit_inputs().fitting_mask)
+
+    np.testing.assert_array_equal(domains[0], domains[1])
+    assert domains[0][0, 0, 0]
+    assert not domains[0][1, 0, 0]
+
+
+def test_fitting_domain_rejects_nonfinite_concentration(tmp_path: Path) -> None:
+    """A positive peak cannot admit a curve containing nonfinite samples."""
+    concentration = np.array([[[[0.0, 0.0, np.nan, 0.2, 0.1]]]])
+    mask = np.ones((1, 1, 1), dtype=np.uint8)
+    concentration_file = tmp_path / "concentration.nii.gz"
+    mask_file = tmp_path / "mask.nii.gz"
+    aif_file = tmp_path / "aif.txt"
+    nib.save(nib.Nifti1Image(concentration, np.eye(4)), concentration_file)
+    nib.save(nib.Nifti1Image(mask, np.eye(4)), mask_file)
+    np.savetxt(aif_file, [0.0, 0.0, 1.0, 0.5, 0.2])
+
+    interface = ComputeDCEMaps(
+        concentration_file=str(concentration_file),
+        brain_mask_file=str(mask_file),
+        aif_file=str(aif_file),
+        volume_tr=2.0,
+        model="auto",
+        baseline_frames=2,
+        tsnr_threshold=0.0,
+    )
+
+    assert not interface._prepare_fit_inputs().fitting_mask[0, 0, 0]
+
+
 def _empty_preparation() -> _DCEFitPreparation:
     """Build a minimal prepared domain for BAT gating tests."""
     concentration = np.zeros((1, 1, 1, 3), dtype=float)

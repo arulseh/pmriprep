@@ -56,8 +56,8 @@ def prepare_voxel_for_fitting(
         Number of baseline frames for quality checks.
     skip_variation_check : bool, optional
         If True, skip concentration-based variation check.
-        Set True when raw signal variation filtering is done upstream
-        (raw signal std >= 1.0).
+        Used when the shared interface fitting domain deliberately admits
+        low-information curves and leaves quantitative acceptance to QC.
 
     Returns
     -------
@@ -66,8 +66,9 @@ def prepare_voxel_for_fitting(
     """
     baseline_mean = float(np.mean(tissue_curve[:baseline_frames]))
 
-    # Check 1: Signal variation (on raw concentration)
-    # Skipped when raw signal variation is checked upstream in ComputeDCEMaps.
+    # Check 1: Signal variation (on concentration)
+    # Optional because the interface-level fitting domain deliberately remains
+    # broader than the quantitative QC-acceptance domain.
     if not skip_variation_check:
         curve_std = float(np.std(tissue_curve))
         if curve_std < MIN_SIGNAL_STD:

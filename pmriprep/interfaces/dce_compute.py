@@ -1462,8 +1462,9 @@ def _fit_single_voxel(
     sloppy = _worker_ctx.get("sloppy", False)
     is_auto = _worker_ctx.get("is_auto", False)
 
-    # Validate voxel (skip concentration-based variation check — raw signal
-    # variation is filtered upstream in ComputeDCEMaps)
+    # Validate voxel without adding a concentration-variation gate: the shared
+    # upstream domain is deliberately permissive, and quantitative acceptance
+    # is represented separately by the QC mask for every inference path.
     prep = prepare_voxel_for_fitting(
         tissue_curve, baseline_frames, skip_variation_check=True
     )
@@ -2816,13 +2817,13 @@ class ComputeDCEMaps(BaseInterface):
         # Raw signal is the valid domain for tSNR and peak-enhancement QC;
         # concentration baseline is approximately zero by construction.
         tsnr_threshold = float(self.inputs.tsnr_threshold)
-        signal_std_map: Optional[npt.NDArray[Any]] = None
+        finite_signal_mask: Optional[npt.NDArray[np.bool_]] = None
         peak_enhancement: Optional[npt.NDArray[Any]]
         if isdefined(self.inputs.dce_signal_file):
             signal_img = nib.load(self.inputs.dce_signal_file)
             signal_data = signal_img.get_fdata().astype(np.float64)  # type: ignore[attr-defined]
             tsnr_map = self._compute_tsnr(signal_data, mask, baseline_frames)
-            signal_std_map = np.std(signal_data, axis=-1)
+            finite_signal_mask = np.all(np.isfinite(signal_data), axis=-1)
             from pmriprep.utils.dce_model_free import compute_peak_enhancement
 
             peak_enhancement = compute_peak_enhancement(signal_data, baseline_frames)
@@ -2835,17 +2836,23 @@ class ComputeDCEMaps(BaseInterface):
             tsnr_map = self._compute_tsnr(conc_data, mask, baseline_frames)
             peak_enhancement = None
 
-        # Admit only brain voxels meeting configured signal quality, raw-signal
-        # variation, and a minimal measurable concentration enhancement.
+        # Admit only brain voxels with finite inputs, configured signal quality,
+        # and a positive concentration enhancement.
+        # Raw MR signal has arbitrary scanner units, so an absolute raw-signal
+        # standard-deviation threshold is not a valid cross-site criterion.
         mask_bool = mask > 0
         if tsnr_threshold > 0:
             fitting_mask = mask_bool & (tsnr_map >= tsnr_threshold)
         else:
             fitting_mask = mask_bool
-        if signal_std_map is not None:
-            fitting_mask = fitting_mask & (signal_std_map >= 1.0)
+        finite_concentration = np.all(np.isfinite(conc_data), axis=-1)
         enhancement_mask = np.max(conc_data, axis=-1) > MIN_ENHANCEMENT_MM
-        fitting_mask = fitting_mask & enhancement_mask
+        fitting_mask &= (
+            finite_concentration
+            & enhancement_mask
+        )
+        if finite_signal_mask is not None:
+            fitting_mask &= finite_signal_mask
 
         inference = str(self.inputs.inference)
         mcmc_samples = int(self.inputs.mcmc_samples)
