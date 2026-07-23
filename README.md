@@ -506,12 +506,9 @@ output_dir/pmriprep/
       sub-01_ses-01_desc-dcePS_stat.nii.gz                  # 2CXM only
       sub-01_ses-01_desc-dceRsquared_stat.nii.gz
       sub-01_ses-01_desc-dceNawmNormKtrans_stat.nii.gz
-      # DCE PK uncertainty (Bayesian example; NLLS uses StandardError,
-      # RelativeStandardError, and ConfidenceInterval95 descriptions)
-      sub-01_ses-01_desc-dcePosteriorSDKtrans_stat.nii.gz
+      # DCE relative PK uncertainty (Bayesian example; NLLS uses
+      # RelativeStandardError)
       sub-01_ses-01_desc-dcePosteriorCVKtrans_stat.nii.gz
-      sub-01_ses-01_desc-dceCredibleInterval95lowerKtrans_stat.nii.gz
-      sub-01_ses-01_desc-dceCredibleInterval95upperKtrans_stat.nii.gz
       # DCE model selection (auto mode)
       sub-01_ses-01_desc-dceModelSelection_dseg.nii.gz
       sub-01_ses-01_desc-dceDeltaBIC_stat.nii.gz
@@ -619,16 +616,17 @@ output_dir/pmriprep/
 | `*_desc-dceTsnr_stat` | Temporal signal-to-noise ratio | arbitrary |
 | `*_desc-dceNawmNormKtrans_stat` | NAWM-normalized Ktrans | ratio |
 | `*_desc-dceNawmNormIAUC60_stat` | NAWM-normalized IAUC60 | ratio |
-| `*_desc-dceStandardError{Param}_stat` | NLLS local-Jacobian parameter standard error | varies |
 | `*_desc-dceRelativeStandardError{Param}_stat` | NLLS standard error divided by the absolute estimate | fraction |
-| `*_desc-dceConfidenceInterval95{lower,upper}{Param}_stat` | Bounded 95% NLLS Wald confidence limits | varies |
-| `*_desc-dcePosteriorSD{Param}_stat` | Bayesian posterior standard deviation | varies |
 | `*_desc-dcePosteriorCV{Param}_stat` | Posterior standard deviation divided by the absolute estimate | fraction |
-| `*_desc-dceCredibleInterval95{lower,upper}{Param}_stat` | 95% Bayesian credible limits | varies |
 | `*_desc-dceModelSelection_dseg` | Per-voxel model selection (auto mode only) | categorical |
 | `*_desc-dceDeltaBIC_stat` | Delta-BIC confidence (auto mode only) | — |
 | `*_desc-dceQualityFlag_dseg` | Voxel quality flags (auto mode only) | categorical |
 | `*_desc-dceQc_mask` | Successfully fitted voxels | binary |
+
+DCE relative-uncertainty maps are method diagnostics conditional on the selected
+PK model, converted concentration curve, supplied AIF, and preprocessing inputs.
+They describe local fit identifiability and are not calibrated subject-level
+biological confidence intervals.
 
 **AIF outputs:**
 

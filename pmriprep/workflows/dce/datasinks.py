@@ -82,38 +82,12 @@ _PK_MAPS: tuple[DCEMapSpec, ...] = (
 )
 
 
-# Inference-specific absolute uncertainty — per-PK-map
-# (input_attr, suffix-name, description, units)
-_UNCERTAINTY_MAPS: tuple[DCEMapSpec, ...] = (
-    DCEMapSpec("ktrans_uncertainty", "dceUncertainty", "Ktrans", "Ktrans uncertainty (posterior std)", "1/min", "ktrans_uncertainty"),
-    DCEMapSpec("ve_uncertainty", "dceUncertainty", "ve", "ve uncertainty (posterior std)", "1", "ve_uncertainty"),
-    DCEMapSpec("vp_uncertainty", "dceUncertainty", "vp", "vp uncertainty (posterior std)", "1", "vp_uncertainty"),
-    DCEMapSpec("fp_uncertainty", "dceUncertainty", "Fp", "Fp uncertainty (posterior std, 2CXM only)", "mL/min/100mL", "fp_uncertainty"),
-    DCEMapSpec("ps_uncertainty", "dceUncertainty", "PS", "PS uncertainty (posterior std, 2CXM only)", "mL/min/100mL", "ps_uncertainty"),
-)
-
-
 _CV_MAPS: tuple[DCEMapSpec, ...] = (
     DCEMapSpec("ktrans_cv", "dceCV", "Ktrans", "Ktrans coefficient of variation (std/mean)", "1", "ktrans_cv"),
     DCEMapSpec("ve_cv", "dceCV", "ve", "ve coefficient of variation (std/mean)", "1", "ve_cv"),
     DCEMapSpec("vp_cv", "dceCV", "vp", "vp coefficient of variation (std/mean)", "1", "vp_cv"),
     DCEMapSpec("fp_cv", "dceCV", "Fp", "Fp relative uncertainty (2CXM only)", "1", "fp_cv"),
     DCEMapSpec("ps_cv", "dceCV", "PS", "PS relative uncertainty (2CXM only)", "1", "ps_cv"),
-)
-
-
-# 95% CI maps — pairs of (lower, upper)
-_CI95_MAPS: tuple[DCEMapSpec, ...] = (
-    DCEMapSpec("ktrans_ci95_lower", "dceCI95lower", "Ktrans", "Ktrans 95% credible interval lower bound", "1/min", "ktrans_ci95_lower"),
-    DCEMapSpec("ktrans_ci95_upper", "dceCI95upper", "Ktrans", "Ktrans 95% credible interval upper bound", "1/min", "ktrans_ci95_upper"),
-    DCEMapSpec("ve_ci95_lower", "dceCI95lower", "ve", "ve 95% credible interval lower bound", "1", "ve_ci95_lower"),
-    DCEMapSpec("ve_ci95_upper", "dceCI95upper", "ve", "ve 95% credible interval upper bound", "1", "ve_ci95_upper"),
-    DCEMapSpec("vp_ci95_lower", "dceCI95lower", "vp", "vp 95% credible interval lower bound", "1", "vp_ci95_lower"),
-    DCEMapSpec("vp_ci95_upper", "dceCI95upper", "vp", "vp 95% credible interval upper bound", "1", "vp_ci95_upper"),
-    DCEMapSpec("fp_ci95_lower", "dceCI95lower", "Fp", "Fp 95% interval lower bound", "mL/min/100mL", "fp_ci95_lower"),
-    DCEMapSpec("fp_ci95_upper", "dceCI95upper", "Fp", "Fp 95% interval upper bound", "mL/min/100mL", "fp_ci95_upper"),
-    DCEMapSpec("ps_ci95_lower", "dceCI95lower", "PS", "PS 95% interval lower bound", "mL/min/100mL", "ps_ci95_lower"),
-    DCEMapSpec("ps_ci95_upper", "dceCI95upper", "PS", "PS 95% interval upper bound", "mL/min/100mL", "ps_ci95_upper"),
 )
 
 
@@ -1290,53 +1264,38 @@ def init_dce_datasinks_wf(
         )
         sink_outputs.append((sink, "out_file"))
 
-    # --- Inference-specific absolute/relative uncertainty and intervals ---
-    for table in (_UNCERTAINTY_MAPS, _CV_MAPS, _CI95_MAPS):
-        for spec in table:
-            if spec.in_attr not in present:
-                continue
-            parameter = spec.map_key.split("_", 1)[0]
-            uncertainty_extra = pe.Node(
-                niu.Function(
-                    input_names=["config_dict", "qc_metrics", "umap_key"],
-                    output_names=["extra"],
-                    function=_build_uncertainty_extra,
-                ),
-                name=f"{spec.in_attr}_extra",
-            )
-            uncertainty_extra.inputs.umap_key = spec.map_key
-            workflow.connect(inputnode, "config_dict", uncertainty_extra, "config_dict")
-            workflow.connect(inputnode, "qc_metrics", uncertainty_extra, "qc_metrics")
-            is_nlls = inference.lower() == "nlls"
-            if table is _UNCERTAINTY_MAPS:
-                desc_value = "dceStandardError" if is_nlls else "dcePosteriorSD"
-                description = (
-                    f"{parameter} local-Jacobian parameter standard error"
-                    if is_nlls
-                    else f"{parameter} posterior standard deviation"
-                )
-            elif table is _CV_MAPS:
-                desc_value = "dceRelativeStandardError" if is_nlls else "dcePosteriorCV"
-                description = (
-                    f"{parameter} standard error divided by absolute estimate"
-                    if is_nlls
-                    else f"{parameter} posterior standard deviation divided by absolute estimate"
-                )
-            else:
-                bound = "lower" if spec.in_attr.endswith("lower") else "upper"
-                interval = "ConfidenceInterval95" if is_nlls else "CredibleInterval95"
-                desc_value = f"dce{interval}{bound}"
-                interval_kind = "confidence" if is_nlls else "credible"
-                description = f"{parameter} 95% {interval_kind} interval {bound} bound"
-            sink = _add_perf_map_sink(
-                workflow, inputnode, base_perf,
-                name=spec.in_attr, in_attr=spec.in_attr,
-                desc_value=desc_value, suffix=spec.suffix,
-                description=description, units=spec.units,
-                extra=spec.extra, extra_node=uncertainty_extra, map_key=spec.map_key,
-                bids_suffix=spec.bids_suffix,
-            )
-            sink_outputs.append((sink, "out_file"))
+    # --- Inference-specific relative uncertainty ---
+    for spec in _CV_MAPS:
+        if spec.in_attr not in present:
+            continue
+        parameter = spec.map_key.split("_", 1)[0]
+        uncertainty_extra = pe.Node(
+            niu.Function(
+                input_names=["config_dict", "qc_metrics", "umap_key"],
+                output_names=["extra"],
+                function=_build_uncertainty_extra,
+            ),
+            name=f"{spec.in_attr}_extra",
+        )
+        uncertainty_extra.inputs.umap_key = spec.map_key
+        workflow.connect(inputnode, "config_dict", uncertainty_extra, "config_dict")
+        workflow.connect(inputnode, "qc_metrics", uncertainty_extra, "qc_metrics")
+        is_nlls = inference.lower() == "nlls"
+        desc_value = "dceRelativeStandardError" if is_nlls else "dcePosteriorCV"
+        description = (
+            f"{parameter} standard error divided by absolute estimate"
+            if is_nlls
+            else f"{parameter} posterior standard deviation divided by absolute estimate"
+        )
+        sink = _add_perf_map_sink(
+            workflow, inputnode, base_perf,
+            name=spec.in_attr, in_attr=spec.in_attr,
+            desc_value=desc_value, suffix=spec.suffix,
+            description=description, units=spec.units,
+            extra=spec.extra, extra_node=uncertainty_extra, map_key=spec.map_key,
+            bids_suffix=spec.bids_suffix,
+        )
+        sink_outputs.append((sink, "out_file"))
 
     # --- Model-free maps (no KtransConvention) ---
     for spec in _MODEL_FREE_MAPS:

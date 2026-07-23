@@ -103,9 +103,7 @@ def test_dce_factory_with_bayesian_uncertainty(
 
     present = {
         "ve_map", "vp_map",
-        "ktrans_uncertainty", "ve_uncertainty", "vp_uncertainty",
         "ktrans_cv", "ve_cv", "vp_cv",
-        "ktrans_ci95_lower", "ktrans_ci95_upper",
         "r2_map",
     }
     wf = init_dce_datasinks_wf(
@@ -129,21 +127,13 @@ def test_dce_factory_with_bayesian_uncertainty(
         "sub-01_ses-0001_desc-dceKtrans_stat.nii.gz",
         "sub-01_ses-0001_desc-dceVe_stat.nii.gz",
         "sub-01_ses-0001_desc-dceVp_stat.nii.gz",
-        "sub-01_ses-0001_desc-dcePosteriorSDKtrans_stat.nii.gz",
         "sub-01_ses-0001_desc-dcePosteriorCVKtrans_stat.nii.gz",
-        "sub-01_ses-0001_desc-dceCredibleInterval95lowerKtrans_stat.nii.gz",
-        "sub-01_ses-0001_desc-dceCredibleInterval95upperKtrans_stat.nii.gz",
     ]
     for fname in expected:
         assert (perf_out / fname).exists(), f"Missing: {fname}"
 
     expected_units = {
-        "desc-dcePosteriorSDKtrans_stat.json": "1/min",
-        "desc-dcePosteriorSDVe_stat.json": "1",
-        "desc-dcePosteriorSDVp_stat.json": "1",
         "desc-dcePosteriorCVKtrans_stat.json": "1",
-        "desc-dceCredibleInterval95lowerKtrans_stat.json": "1/min",
-        "desc-dceCredibleInterval95upperKtrans_stat.json": "1/min",
         "desc-dceRsquared_stat.json": "1",
     }
     for ending, units in expected_units.items():
@@ -151,7 +141,7 @@ def test_dce_factory_with_bayesian_uncertainty(
         assert json.loads(sidecar.read_text())["Units"] == units
 
     uncertainty_meta = json.loads(
-        next(perf_out.glob("*desc-dcePosteriorSDKtrans_stat.json")).read_text()
+        next(perf_out.glob("*desc-dcePosteriorCVKtrans_stat.json")).read_text()
     )
     assert uncertainty_meta["EstimationMethod"] == "vi"
     assert uncertainty_meta["InferenceMethod"] == "variational_bayes"
@@ -159,11 +149,8 @@ def test_dce_factory_with_bayesian_uncertainty(
         uncertainty_meta["UncertaintyEstimationMethod"]
         == "variational_posterior_covariance"
     )
-    ci_meta = json.loads(
-        next(perf_out.glob("*desc-dceCredibleInterval95lowerKtrans_stat.json")).read_text()
-    )
-    assert ci_meta["CredibleIntervalProbability"] == 0.95
-    assert ci_meta["CredibleIntervalBounding"] == "parameter_bounds"
+    assert uncertainty_meta["ConditionalOnConvertedConcentration"] is True
+    assert uncertainty_meta["ConditionalOnSuppliedAIF"] is True
 
 
 def test_map_uncertainty_sidecar_records_run_accounting(
@@ -180,13 +167,13 @@ def test_map_uncertainty_sidecar_records_run_accounting(
         subject_id="01",
         session_id="0001",
         pk_model="tofts", inference="map",
-        present_inputs={"ktrans_uncertainty"},
+        present_inputs={"ktrans_cv"},
     )
     wf.base_dir = str(tmp_path / "work")
     inp = wf.inputs.inputnode
     inp.source_dce = src
     inp.ktrans_map = _write_nii(tmp_path / "k.nii.gz")
-    inp.ktrans_uncertainty = _write_nii(tmp_path / "k_std.nii.gz")
+    inp.ktrans_cv = _write_nii(tmp_path / "k_cv.nii.gz")
     inp.config_dict = {"inference": "map"}
     inp.qc_metrics = {
         "parameter_uncertainty": {
@@ -206,7 +193,7 @@ def test_map_uncertainty_sidecar_records_run_accounting(
 
     sidecar = next(
         (out / "pmriprep" / "sub-01" / "ses-0001" / "perf").glob(
-            "*desc-dcePosteriorSDKtrans_stat.json"
+            "*desc-dcePosteriorCVKtrans_stat.json"
         )
     )
     metadata = json.loads(sidecar.read_text())
@@ -219,10 +206,10 @@ def test_map_uncertainty_sidecar_records_run_accounting(
     assert inflation["ParameterScaleFactors"]["Ktrans"] == 1.5
 
 
-def test_nlls_uncertainty_uses_frequentist_derivative_names(
+def test_nlls_relative_uncertainty_uses_frequentist_derivative_name(
     tmp_path: Path, minimal_bids: tuple[Path, str]
 ) -> None:
-    """NLLS uncertainty sinks use standard-error and confidence-interval names."""
+    """NLLS relative uncertainty uses the relative-standard-error name."""
     from pmriprep.workflows.dce.datasinks import init_dce_datasinks_wf
 
     bids, _ = minimal_bids
@@ -233,18 +220,9 @@ def test_nlls_uncertainty_uses_frequentist_derivative_names(
         session_id="0001",
         pk_model="tofts",
         inference="nlls",
-        present_inputs={
-            "ktrans_uncertainty",
-            "ktrans_cv",
-            "ktrans_ci95_lower",
-        },
+        present_inputs={"ktrans_cv"},
     )
-    assert workflow.get_node("ktrans_uncertainty_sink").inputs.desc == "dceStandardError"
     assert workflow.get_node("ktrans_cv_sink").inputs.desc == "dceRelativeStandardError"
-    assert (
-        workflow.get_node("ktrans_ci95_lower_sink").inputs.desc
-        == "dceConfidenceInterval95lower"
-    )
 
 
 def test_dce_factory_model_free_no_model_entity(
@@ -378,10 +356,10 @@ def test_patlak_absent_model_selection_plot_reaches_figures_writer(
     assert not list((session / "figures").glob("*modelselection*"))
 
 
-def test_2cxm_bayesian_fp_ps_uncertainty(
+def test_2cxm_bayesian_fp_ps_relative_uncertainty(
     tmp_path: Path, minimal_bids: tuple[Path, str]
 ) -> None:
-    """2CXM Bayesian inference emits Fp/PS uncertainty maps."""
+    """2CXM Bayesian inference emits Fp/PS relative-uncertainty maps."""
     from pmriprep.workflows.dce.datasinks import init_dce_datasinks_wf
 
     bids, src = minimal_bids
@@ -389,7 +367,7 @@ def test_2cxm_bayesian_fp_ps_uncertainty(
 
     present = {
         "ve_map", "kep_map", "vp_map",
-        "fp_uncertainty", "ps_uncertainty",
+        "fp_cv", "ps_cv",
     }
     wf = init_dce_datasinks_wf(
         output_dir=str(out), bids_dir=str(bids),
@@ -407,11 +385,11 @@ def test_2cxm_bayesian_fp_ps_uncertainty(
     wf.run()
 
     perf_out = out / "pmriprep" / "sub-01" / "ses-0001" / "perf"
-    assert (perf_out / "sub-01_ses-0001_desc-dcePosteriorSDFp_stat.nii.gz").exists()
-    assert (perf_out / "sub-01_ses-0001_desc-dcePosteriorSDPS_stat.nii.gz").exists()
+    assert (perf_out / "sub-01_ses-0001_desc-dcePosteriorCVFp_stat.nii.gz").exists()
+    assert (perf_out / "sub-01_ses-0001_desc-dcePosteriorCVPS_stat.nii.gz").exists()
     for parameter in ("Fp", "PS"):
-        sidecar = perf_out / f"sub-01_ses-0001_desc-dcePosteriorSD{parameter}_stat.json"
-        assert json.loads(sidecar.read_text())["Units"] == "mL/min/100mL"
+        sidecar = perf_out / f"sub-01_ses-0001_desc-dcePosteriorCV{parameter}_stat.json"
+        assert json.loads(sidecar.read_text())["Units"] == "1"
 
 
 def test_init_pmriprep_wf_dce_patlak_doesnt_crash(tmp_path: Path) -> None:
@@ -905,11 +883,9 @@ def _build_dce_wf_for_tr_gate(
     )
 
 
-def _has_fp_uncertainty_sink(wf) -> bool:
-    """True if any datasinks node ends with ``fp_uncertainty_sink``."""
-    return any(
-        name.endswith("fp_uncertainty_sink") for name in wf.list_node_names()
-    )
+def _has_fp_cv_sink(wf) -> bool:
+    """True if any datasinks node ends with ``fp_cv_sink``."""
+    return any(name.endswith("fp_cv_sink") for name in wf.list_node_names())
 
 
 def test_init_pmriprep_wf_auto_long_tr_no_fp_sink(tmp_path: Path) -> None:
@@ -922,20 +898,20 @@ def test_init_pmriprep_wf_auto_long_tr_no_fp_sink(tmp_path: Path) -> None:
     wf = _build_dce_wf_for_tr_gate(
         tmp_path, volume_tr=4.06, model="auto", inference="vi",
     )
-    assert not _has_fp_uncertainty_sink(wf), (
-        "auto + Bayesian + TR>3.0 must NOT build fp_uncertainty_sink "
+    assert not _has_fp_cv_sink(wf), (
+        "auto + Bayesian + TR>3.0 must NOT build fp_cv_sink "
         "(producer doesn't include 2CXM in candidate set at this TR; "
         "sink without feed → runtime crash)"
     )
 
 
 def test_init_pmriprep_wf_auto_short_tr_builds_fp_sink(tmp_path: Path) -> None:
-    """auto + Bayesian + TR≤3.0 → 2CXM in candidates → fp_uncertainty_sink built."""
+    """auto + Bayesian + TR≤3.0 → 2CXM in candidates → fp_cv_sink built."""
     wf = _build_dce_wf_for_tr_gate(
         tmp_path, volume_tr=2.5, model="auto", inference="vi",
     )
-    assert _has_fp_uncertainty_sink(wf), (
-        "auto + Bayesian + TR≤3.0 must build fp_uncertainty_sink "
+    assert _has_fp_cv_sink(wf), (
+        "auto + Bayesian + TR≤3.0 must build fp_cv_sink "
         "(producer includes 2CXM in candidate set; sink should consume it)"
     )
 

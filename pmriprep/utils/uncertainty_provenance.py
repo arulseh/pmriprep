@@ -80,6 +80,16 @@ def build_uncertainty_provenance(
     metadata["EstimationMethod"] = normalized_inference
     metadata["ConditionalOnSelectedModel"] = True
     metadata["IncludesModelSelectionUncertainty"] = False
+    if modality.upper() == "DCE":
+        metadata["ConditionalOnConvertedConcentration"] = True
+        metadata["ConditionalOnSuppliedAIF"] = True
+        metadata["ExcludedUncertaintySources"] = [
+            "model_selection",
+            "baseline_estimation",
+            "T1_mapping",
+            "B1_mapping",
+            "signal_to_concentration_conversion",
+        ]
 
     key_lower = map_key.lower()
     if "cv" in key_lower or "relative_standard_error" in key_lower:

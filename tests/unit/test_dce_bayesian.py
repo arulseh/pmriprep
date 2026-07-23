@@ -316,6 +316,52 @@ class TestVolumeConstraint:
         assert result.parameters["ve"] + result.parameters["vp"] <= 0.999 + 1e-12
 
 
+class TestVIConvergenceAndInitialization:
+    """VI reports honest termination and recovers informative low uptake."""
+
+    def test_single_iteration_is_not_converged(self) -> None:
+        """One update cannot satisfy the production VI convergence contract."""
+        tissue_curve, aif, time_points, _ = _make_synthetic_tofts_data(
+            ktrans=0.3,
+            ve=0.4,
+        )
+
+        result = BayesianPKFitter(ToftsModel()).fit_vi(
+            tissue_curve,
+            aif,
+            time_points,
+            n_iterations=1,
+        )
+
+        assert not result.converged
+
+    def test_low_permeability_warm_start_recovers_noiseless_curve(self) -> None:
+        """VI must not replace informative low uptake with a poor prior fit."""
+        tr_minutes = 7.0 / 60.0
+        time_points = np.arange(0.0, 5.0 + tr_minutes / 2.0, tr_minutes)
+        shifted = time_points - 0.75
+        aif = np.where(
+            shifted > 0.0,
+            6.0 * shifted * np.exp(-shifted / 0.18)
+            + 0.7 * np.exp(-shifted / 1.8),
+            0.0,
+        )
+        model = ToftsModel()
+        tissue_curve = model.evaluate([0.01, 0.10], aif, time_points)
+
+        result = BayesianPKFitter(model).fit_vi(
+            tissue_curve,
+            aif,
+            time_points,
+            n_iterations=30,
+        )
+
+        assert result.converged
+        assert result.r_squared > 0.99
+        assert result.parameters["Ktrans"] == pytest.approx(0.01, rel=0.10)
+        assert result.parameters["ve"] == pytest.approx(0.10, rel=0.10)
+
+
 # ---------------------------------------------------------------------------
 # Tests 7-8: create_vp_prior_from_dsc
 # ---------------------------------------------------------------------------

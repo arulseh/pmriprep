@@ -889,12 +889,12 @@ class BayesianPKFitter:
         time_points : numpy.ndarray
             Time points (minutes).
         n_iterations : int, optional
-            Maximum VB iterations (default 20).
+            Maximum VB iterations (default 30).
         noise_prior : tuple of float or None, optional
             Optional (c0, s0) Gamma prior on noise precision
-            tau = 1/sigma^2. If None, uses non-informative prior.
-            If noise_std was provided to the constructor, uses an
-            informative prior centered on that value.
+            tau = 1/sigma^2. If None, uses an informative prior centered
+            on the measured pre-bolus noise (or ``noise_std`` when supplied
+            to the constructor).
         weights : numpy.ndarray or None, optional
             Optional per-frame motion weights (1.0 = full weight).
             Weights modify data fidelity terms and contribute
@@ -949,12 +949,38 @@ class BayesianPKFitter:
             c0 = 10.0
             s0 = tau_prior / c0  # so E[tau] = c0 * s0 = tau_prior
         else:
-            c0 = 1e-3
-            s0 = 1e3
+            baseline_noise_std = self._estimate_noise_std(tissue_curve)
+            tau_prior = 1.0 / (baseline_noise_std**2)
+            c0 = 10.0
+            s0 = tau_prior / c0
 
-        # Initialize posterior mean at prior mean (natural), clipped to bounds,
-        # then transform to fitting space
+        # Warm-start the variational linearization from the data likelihood.
+        # Priors remain unchanged; this only avoids linearizing a nonlinear PK
+        # model around a distant prior mean, which can trap low-uptake curves
+        # at a poor local approximation.
         m_nat = np.array([p.mean for p in self.priors], dtype=np.float64)
+        try:
+            warm_result = self.model.fit(
+                tissue_curve,
+                aif,
+                time_points,
+                weights=weights,
+            )
+            if warm_result.converged:
+                m_nat = np.array(
+                    [
+                        warm_result.parameters.get(name, m_nat[index])
+                        for index, name in enumerate(param_names)
+                    ],
+                    dtype=np.float64,
+                )
+        except (ValueError, RuntimeError, np.linalg.LinAlgError):
+            data_guess = self.model.estimate_initial_guess(
+                tissue_curve,
+                aif,
+                time_points,
+            )
+            m_nat = np.asarray(data_guess, dtype=np.float64)
         for i in range(n_params):
             m_nat[i] = np.clip(m_nat[i], bounds[i][0], bounds[i][1])
         m_nat = np.asarray(self._apply_volume_constraint(m_nat), dtype=np.float64)
@@ -978,8 +1004,6 @@ class BayesianPKFitter:
         step_scale = 1.0
 
         converged = False
-        fe_plateau_count = 0
-
         for iteration in range(n_iterations):
             # Inverse-transform m to natural space for forward model
             m_nat = np.array([
@@ -1113,19 +1137,6 @@ class BayesianPKFitter:
                     converged = True
                     m = m_new
                     break
-                # Free energy convergence: 2 consecutive negligible improvements
-                if (iteration > 2
-                        and best_free_energy > float("-inf")
-                        and abs(free_energy - best_free_energy)
-                        < 1e-4 * abs(best_free_energy)):
-                    fe_plateau_count += 1
-                    if fe_plateau_count >= 2:
-                        converged = True
-                        m = m_new
-                        break
-                else:
-                    fe_plateau_count = 0
-
             m = m_new
 
         # Inverse-transform best parameters to natural space
@@ -1189,7 +1200,7 @@ class BayesianPKFitter:
             model_name=self.model.name,
             n_parameters=self.model.n_parameters,
             n_observations=n_obs,
-            converged=converged or step_scale >= 1e-4,
+            converged=converged,
             fitting_method="vi",
             fitted_curve=fitted_curve,
         )

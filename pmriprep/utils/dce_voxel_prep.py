@@ -79,11 +79,11 @@ def prepare_voxel_for_fitting(
                 enhancement_max=0.0,
             )
 
-    # Subtract baseline concentration and clip to non-negative.
-    # signal_to_concentration() performs baseline subtraction before
-    # clipping, so baseline_mean here is ~0. This step is kept for safety.
-    prepared = tissue_curve - baseline_mean
-    prepared = np.maximum(prepared, 0.0)
+    # Concentration conversion owns baseline subtraction. Repeating it here
+    # would subtract the positive mean of an already-rectified baseline from
+    # Bayesian/MCMC paths while batched NLLS fits the converted curve directly.
+    # Retain only idempotent nonnegative sanitation at the fitting boundary.
+    prepared = np.maximum(tissue_curve, 0.0)
 
     enhancement_max = float(np.max(prepared))
 

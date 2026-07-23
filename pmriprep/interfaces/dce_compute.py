@@ -851,15 +851,6 @@ def _write_dce_uncertainty_maps(
         outputs[name] = generate_path(suffix)
         write_map(values, outputs[name])
 
-    write("out_ktrans_std", "_Ktrans_std", maps.ktrans_std)
-    if save_ve:
-        write("out_ve_std", "_ve_std", maps.ve_std)
-    if save_vp:
-        write("out_vp_std", "_vp_std", maps.vp_std)
-    if maps.save_2cxm:
-        write("out_fp_std", "_Fp_std", maps.fp_std)
-        write("out_ps_std", "_PS_std", maps.ps_std)
-
     write(
         "out_ktrans_cv",
         "_Ktrans_cv",
@@ -891,23 +882,6 @@ def _write_dce_uncertainty_maps(
             _compute_dce_coefficient_of_variation(maps.ps, maps.ps_std, mask, is_auto),
         )
 
-    write(
-        "out_ktrans_ci95_lower", "_Ktrans_ci95lower", maps.ktrans_ci95_lower
-    )
-    write(
-        "out_ktrans_ci95_upper", "_Ktrans_ci95upper", maps.ktrans_ci95_upper
-    )
-    if save_ve:
-        write("out_ve_ci95_lower", "_ve_ci95lower", maps.ve_ci95_lower)
-        write("out_ve_ci95_upper", "_ve_ci95upper", maps.ve_ci95_upper)
-    if save_vp:
-        write("out_vp_ci95_lower", "_vp_ci95lower", maps.vp_ci95_lower)
-        write("out_vp_ci95_upper", "_vp_ci95upper", maps.vp_ci95_upper)
-    if maps.save_2cxm:
-        write("out_fp_ci95_lower", "_Fp_ci95lower", maps.fp_ci95_lower)
-        write("out_fp_ci95_upper", "_Fp_ci95upper", maps.fp_ci95_upper)
-        write("out_ps_ci95_lower", "_PS_ci95lower", maps.ps_ci95_lower)
-        write("out_ps_ci95_upper", "_PS_ci95upper", maps.ps_ci95_upper)
     return outputs
 
 
