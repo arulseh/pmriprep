@@ -1285,3 +1285,157 @@ class TestChunkedMultiproc:
             "Ktrans": 0.01,
             "vp": 0.002,
         }
+
+    def test_auto_vi_uses_batched_selection_before_refinement(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Auto VI must refine, rather than repeat, batched-NLLS selection."""
+        from pmriprep.interfaces.dce_compute import ComputeDCEMaps
+        from pmriprep.utils.dsc_cbv_constraint import ConstraintMode
+
+        calls: list[bool] = []
+        vp_uncertainties: list[float | None] = []
+        selected_before_refinement: list[str] = []
+
+        def fake_dispatch(**kwargs: Any) -> FitResult:
+            calls.append(kwargs["compute_uncertainties"])
+            vp_uncertainties.append(kwargs["vp_uncertainty"])
+            return FitResult(
+                params={
+                    "ktrans": np.array([0.1]),
+                    "vp": np.array([0.02]),
+                },
+                r_squared=np.array([1.0]),
+                converged=np.array([True]),
+                fitted_curves=np.zeros((1, 4)),
+                n_iterations=1,
+                model_name="patlak",
+                uncertainties={},
+            )
+
+        def fake_refine(
+            results: list[dict[str, Any]],
+            voxel_data_list: list[Any],
+            init_args: tuple[Any, ...],
+            n_procs: int,
+        ) -> list[dict[str, Any]]:
+            del voxel_data_list, init_args, n_procs
+            selected_before_refinement.extend(
+                str(result["selected_model_name"]) for result in results
+            )
+            return results
+
+        interface = ComputeDCEMaps()
+        monkeypatch.setattr(interface, "_dispatch_batched_chunks", fake_dispatch)
+        monkeypatch.setattr(
+            interface, "_refine_auto_bayesian_from_batched", fake_refine
+        )
+        coords = (np.array([0]), np.array([0]), np.array([0]))
+        results = interface._fit_batched(
+            conc_data=np.zeros((1, 1, 1, 4)),
+            mask_coords=coords,
+            aif=np.zeros(4),
+            time_points=np.arange(4, dtype=float),
+            model_name="auto",
+            inference="vi",
+            is_auto=True,
+            candidate_names=["patlak"],
+            vp_constraint_map=np.full((1, 1, 1), 0.02),
+            constraint_mode=ConstraintMode.SOFT,
+            constraint_vp_uncertainty=0.4,
+            motion_weights=None,
+            save_fitted_curves=False,
+            sloppy=False,
+            mcmc_samples=0,
+            baseline_frames=1,
+            n_procs=1,
+            random_seed=42,
+            init_args=(),
+            voxel_data_list=[],
+        )
+
+        assert calls == [False]
+        assert vp_uncertainties == [0.4]
+        assert selected_before_refinement == ["patlak"]
+        assert results[0]["selected_model_name"] == "patlak"
+
+    def test_auto_bayesian_refinement_preserves_selection_and_delta_bic(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Grouped refinement cannot change canonical BIC state."""
+        import pmriprep.interfaces.dce_compute as dce_compute
+        from pmriprep.interfaces.dce_compute import ComputeDCEMaps, VoxelInput
+
+        batched_results = [
+            {
+                "coords": (0, 0, 0),
+                "selected_model_name": "patlak",
+                "delta_bic": 8.0,
+                "failed": False,
+            },
+            {
+                "coords": (1, 0, 0),
+                "selected_model_name": "extended_tofts",
+                "delta_bic": 12.0,
+                "failed": False,
+            },
+            {
+                "coords": (2, 0, 0),
+                "selected_model_name": "patlak",
+                "delta_bic": 20.0,
+                "failed": False,
+            },
+        ]
+        voxels = [
+            VoxelInput(index, 0, 0, np.zeros(4), None)
+            for index in range(3)
+        ]
+        seen: list[tuple[int, str, bool, list[str]]] = []
+
+        def fake_fit(voxel: VoxelInput) -> dict[str, Any]:
+            selected_model = str(dce_compute._worker_ctx["model_name"])
+            is_auto = bool(dce_compute._worker_ctx["is_auto"])
+            candidate_models = sorted(dce_compute._worker_ctx["bic_candidates"])
+            seen.append((voxel.x, selected_model, is_auto, candidate_models))
+            return {
+                "coords": (voxel.x, voxel.y, voxel.z),
+                "selected_model_name": selected_model,
+                "delta_bic": np.nan,
+                "failed": False,
+                "converged": voxel.x != 2,
+            }
+
+        monkeypatch.setattr(dce_compute, "_fit_single_voxel", fake_fit)
+        init_args = (
+            np.zeros(4),
+            np.arange(4, dtype=float),
+            "extended_tofts",
+            "vi",
+            0,
+            1,
+            "skip",
+            0.0,
+            False,
+            None,
+            False,
+            42,
+            ["patlak", "extended_tofts"],
+        )
+
+        results = ComputeDCEMaps()._refine_auto_bayesian_from_batched(
+            batched_results,
+            voxels,
+            init_args,
+            n_procs=1,
+        )
+
+        assert seen == [
+            (0, "patlak", False, []),
+            (2, "patlak", False, []),
+            (1, "extended_tofts", False, []),
+        ]
+        assert results[0]["selected_model_name"] == "patlak"
+        assert results[0]["delta_bic"] == 8.0
+        assert results[1]["selected_model_name"] == "extended_tofts"
+        assert results[1]["delta_bic"] == 12.0
+        assert results[2] is batched_results[2]

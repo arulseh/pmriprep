@@ -4061,8 +4061,10 @@ class ComputeDCEMaps(BaseInterface):
 
         n_voxels = len(mask_coords[0])
 
-        # VI/MCMC: fall through to CPU multiprocessing (unchanged)
-        if inference in ("vi", "mcmc"):
+        # Fixed-model VI/MCMC fit directly on CPU. Auto mode first performs
+        # one canonical batched-NLLS BIC selection below, then refines only
+        # the selected model so inference choice cannot change model labels.
+        if inference in ("vi", "mcmc") and not is_auto:
             logger.info("Batched mode with %s: falling through to CPU multiprocessing", inference)
             _init_worker(*init_args)
             if n_procs > 1:
@@ -4098,15 +4100,16 @@ class ComputeDCEMaps(BaseInterface):
             # Zero out invalid entries so they're treated as unconstrained
             fixed_vp[~valid_vp] = 0.0
 
-        # vp_uncertainty is honored on the batched path only when the
-        # user explicitly selected inference=nlls + SOFT. For inference=map + SOFT,
-        # the batched Pass acts as HARD warm-start and the CPU MAP refinement
-        # downstream applies the Gaussian prior via create_vp_prior_from_dsc.
+        # vp_uncertainty is honored for NLLS and for every auto-mode selection,
+        # whose canonical BIC stage is NLLS regardless of the later inference
+        # engine. For fixed-model MAP + SOFT, the batched pass acts as a HARD
+        # warm-start and CPU MAP refinement applies the Gaussian prior via
+        # create_vp_prior_from_dsc.
         # For HARD/SKIP, vp_uncertainty is moot (None).
         vp_uncertainty_batched: Optional[float] = None
         if (
             constraint_mode == ConstraintMode.SOFT
-            and inference == "nlls"
+            and (inference == "nlls" or is_auto)
             and fixed_vp is not None
         ):
             vp_uncertainty_batched = float(constraint_vp_uncertainty)
@@ -4265,9 +4268,9 @@ class ComputeDCEMaps(BaseInterface):
                 "vp_at_bound": vp_at_bound_val,
             })
 
-        # MAP refinement of BIC winners
-        if inference == "map":
-            results = self._refine_map_from_batched(
+        # Bayesian refinement of the canonical batched-NLLS BIC winners.
+        if inference in ("vi", "map", "mcmc"):
+            results = self._refine_auto_bayesian_from_batched(
                 results, voxel_data_list, init_args, n_procs,
             )
 
@@ -4419,6 +4422,124 @@ class ComputeDCEMaps(BaseInterface):
                 final_results.append(cpu_res)
             else:
                 final_results.append(fit_res)
+
+        return final_results
+
+    def _refine_auto_bayesian_from_batched(
+        self,
+        batched_results: list[dict[str, Any]],
+        voxel_data_list: list[VoxelInput],
+        init_args: tuple[Any, ...],
+        n_procs: int,
+    ) -> list[dict[str, Any]]:
+        """Refine canonical auto-mode BIC winners with one Bayesian model.
+
+        Parameters
+        ----------
+        batched_results : list of dict
+            Per-voxel batched-NLLS results carrying the selected model and
+            delta-BIC margin.
+        voxel_data_list : list of VoxelInput
+            Voxel inputs in the same order as ``batched_results``.
+        init_args : tuple
+            Worker initialization arguments for the original auto run.
+        n_procs : int
+            Number of CPU processes.
+
+        Returns
+        -------
+        list of dict
+            Bayesian results where refinement succeeds, with the canonical
+            selected-model and delta-BIC state preserved; otherwise the
+            original batched-NLLS fallback.
+
+        Notes
+        -----
+        Candidate models are disabled in each refinement worker. Grouping by
+        the already-selected model prevents scalar Bayesian workers from
+        repeating BIC with a different NLLS implementation.
+        """
+        from concurrent.futures import ProcessPoolExecutor
+
+        final_results = list(batched_results)
+        selected_groups: dict[str, list[int]] = {}
+        for index, result in enumerate(batched_results):
+            if result.get("failed", False):
+                continue
+            selected_model = str(result.get("selected_model_name", ""))
+            if selected_model:
+                selected_groups.setdefault(selected_model, []).append(index)
+
+        for selected_model, indices in selected_groups.items():
+            (
+                aif,
+                time_points,
+                _auto_model_name,
+                inference,
+                mcmc_samples,
+                baseline_frames,
+                constraint_mode_str,
+                constraint_vp_uncertainty,
+                save_fitted_curves,
+                motion_weights,
+                sloppy,
+                random_seed,
+                _candidate_names,
+            ) = init_args
+            fixed_init_args = (
+                aif,
+                time_points,
+                selected_model,
+                inference,
+                mcmc_samples,
+                baseline_frames,
+                constraint_mode_str,
+                constraint_vp_uncertainty,
+                save_fitted_curves,
+                motion_weights,
+                sloppy,
+                random_seed,
+                None,
+            )
+            group_voxels = [voxel_data_list[index] for index in indices]
+            _init_worker(*fixed_init_args)
+
+            if n_procs > 1:
+                chunk_size = max(1, len(group_voxels) // (n_procs * 10))
+                executor = ProcessPoolExecutor(
+                    max_workers=n_procs,
+                    initializer=_init_worker,  # type: ignore[arg-type]
+                    initargs=fixed_init_args,
+                )
+                try:
+                    refined_results = list(
+                        executor.map(
+                            _fit_single_voxel,
+                            group_voxels,
+                            chunksize=chunk_size,
+                        )
+                    )
+                except (KeyboardInterrupt, SystemExit):
+                    logger.warning(
+                        "Interrupted during auto DCE Bayesian refinement, "
+                        "cancelling workers"
+                    )
+                    raise
+                finally:
+                    executor.shutdown(wait=True, cancel_futures=True)
+            else:
+                refined_results = [
+                    _fit_single_voxel(voxel) for voxel in group_voxels
+                ]
+
+            for index, refined in zip(indices, refined_results):
+                if refined.get("failed", True) or not refined.get(
+                    "converged", False
+                ):
+                    continue
+                refined["selected_model_name"] = selected_model
+                refined["delta_bic"] = batched_results[index]["delta_bic"]
+                final_results[index] = refined
 
         return final_results
 
