@@ -9,8 +9,8 @@ The BayesianPKFitter class works with any model implementing the PKModel
 interface, including ToftsModel, ExtendedToftsModel, PatlakModel, and
 TwoCompartmentExchangeModel.
 
-The constraint ve + vp <= 1.0 is enforced during sampling for models
-that have both ve and vp parameters.
+The shared constraint ve + vp <= VP_VE_TOTAL_MAX is enforced during sampling
+for models that have both ve and vp parameters.
 """
 
 from typing import Callable
@@ -83,7 +83,7 @@ class BayesianPKFitter:
     using the typical_range to determine prior mean and standard deviation.
 
     For models with both ve and vp parameters (Extended Tofts, 2CXM), the
-    constraint ve + vp <= 1.0 is enforced during sampling.
+    shared joint-volume constraint is enforced during sampling.
 
     Attributes
     ----------
@@ -220,7 +220,7 @@ class BayesianPKFitter:
     def _check_volume_constraint(
         self, params: npt.NDArray[np.floating]
     ) -> bool:
-        """Check if ve + vp <= 1.0 constraint is satisfied.
+        """Check whether the shared joint-volume constraint is satisfied.
 
         Parameters
         ----------
@@ -238,7 +238,7 @@ class BayesianPKFitter:
         ve = params[self._ve_index]
         vp = params[self._vp_index]
 
-        return bool((ve + vp) <= 1.0)
+        return bool((ve + vp) <= VP_VE_TOTAL_MAX + 1e-12)
 
     def _apply_volume_constraint(
         self, params: npt.NDArray[np.floating]
@@ -1222,7 +1222,7 @@ class BayesianPKFitter:
         Noise sigma is sampled as a free parameter (log_sigma) with a
         HalfNormal prior, following Gelman et al. (BDA3, Ch. 3).
 
-        The constraint ve + vp <= 1.0 is enforced during sampling for
+        The shared joint-volume constraint is enforced during sampling for
         models with both ve and vp parameters.
 
         Parameters

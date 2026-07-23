@@ -20,6 +20,7 @@ from pmriprep.models.dce.batched_fitting import (
     batched_lm_fit,
     batched_patlak_lstsq,
 )
+from pmriprep.models.dce.extended_tofts import ExtendedToftsModel
 from pmriprep.models.dce.two_compartment_exchange import (
     TwoCompartmentExchangeModel,
 )
@@ -153,6 +154,60 @@ class TestExtendedToftsRecovery:
         kt_err = np.abs(result.params["ktrans"][converged] - ktrans_true[converged])
         kt_rel = kt_err / np.maximum(ktrans_true[converged], 1e-6)
         assert np.median(kt_rel) < 0.15
+
+    def test_active_volume_boundary_matches_independent_optimizer(
+        self,
+        aif_and_time: tuple[np.ndarray, np.ndarray],
+    ) -> None:
+        """Batched ET solves, rather than merely projects onto, the boundary."""
+        aif, time_points = aif_and_time
+        model = ExtendedToftsModel()
+        target = model.evaluate([0.12, 0.85, 0.25], aif, time_points)
+        bounds = model.get_bounds()
+
+        def objective(parameters: np.ndarray) -> float:
+            residuals = target - model.evaluate(
+                parameters.tolist(), aif, time_points
+            )
+            return float(np.sum(residuals**2))
+
+        reference = minimize(
+            objective,
+            x0=np.array([0.12, 0.75, 0.249]),
+            method="SLSQP",
+            bounds=bounds,
+            constraints={
+                "type": "ineq",
+                "fun": lambda parameters: (
+                    VP_VE_TOTAL_MAX - parameters[1] - parameters[2]
+                ),
+            },
+            options={"maxiter": 4000, "ftol": 1e-14},
+        )
+        assert reference.success
+
+        result = batched_lm_fit(
+            "extended_tofts",
+            target[np.newaxis, :],
+            aif,
+            time_points,
+            max_iter=150,
+            compute_uncertainties=True,
+        )
+
+        assert result.converged[0]
+        assert result.params["ve"][0] + result.params["vp"][0] == pytest.approx(
+            VP_VE_TOTAL_MAX
+        )
+        parameters = np.array(
+            [result.params[name][0] for name in ("ktrans", "ve", "vp")]
+        )
+        assert objective(parameters) == pytest.approx(reference.fun, rel=1e-3)
+        for name in ("ktrans", "ve", "vp"):
+            assert np.isfinite(result.uncertainties[name][0])
+        assert result.uncertainties["ve"][0] == pytest.approx(
+            result.uncertainties["vp"][0]
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -524,8 +579,9 @@ class TestResultDictFormat:
 
 class TestConstrainedAutoMode:
     def test_fixed_vp_respects_joint_volume_constraint(self, aif_and_time):
-        """A fixed vp imposes the matching per-voxel upper bound on ve."""
+        """A fixed vp solves on the matching per-voxel upper bound on ve."""
         aif, time_points = aif_and_time
+        model = ExtendedToftsModel()
         ktrans = np.array([0.12])
         ve = np.array([0.85])
         fixed_vp = np.array([0.25])
@@ -542,8 +598,34 @@ class TestConstrainedAutoMode:
             max_iter=100,
         )
 
+        def objective(parameters: np.ndarray) -> float:
+            predicted = model.evaluate(
+                [parameters[0], parameters[1], fixed_vp[0]],
+                aif,
+                time_points,
+            )
+            return float(np.sum((tissue[0] - predicted) ** 2))
+
+        reference = minimize(
+            objective,
+            x0=np.array([0.12, 0.70]),
+            method="SLSQP",
+            bounds=[
+                model.get_bounds()[0],
+                (
+                    model.get_bounds()[1][0],
+                    VP_VE_TOTAL_MAX - fixed_vp[0],
+                ),
+            ],
+            options={"maxiter": 4000, "ftol": 1e-14},
+        )
+        assert reference.success
         assert result.converged[0]
         assert result.params["ve"][0] + result.params["vp"][0] <= 0.999 + 1e-12
+        parameters = np.array(
+            [result.params["ktrans"][0], result.params["ve"][0]]
+        )
+        assert objective(parameters) == pytest.approx(reference.fun, rel=1e-3)
 
     def test_constrained_vp_preserved(self, aif_and_time):
         """100 constrained + 100 unconstrained: mixed vp handling."""

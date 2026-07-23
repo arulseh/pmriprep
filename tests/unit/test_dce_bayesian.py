@@ -23,7 +23,10 @@ from pmriprep.models.dce.extended_tofts import ExtendedToftsModel
 from pmriprep.models.dce.base import FitResult
 from pmriprep.models.dce.tofts import ToftsModel
 from pmriprep.models.bayesian_utils import to_transformed
-from pmriprep.utils.dce_constants import DCE_AIF_G6_SIGMA_INFLATION
+from pmriprep.utils.dce_constants import (
+    DCE_AIF_G6_SIGMA_INFLATION,
+    VP_VE_TOTAL_MAX,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -296,6 +299,16 @@ class TestVolumeConstraint:
         result = fitter._apply_volume_constraint(params)
 
         np.testing.assert_array_equal(result, params)
+
+    def test_volume_support_check_uses_shared_limit(self) -> None:
+        """Bayesian sampling rejects the numerical safety margin above 0.999."""
+        fitter = BayesianPKFitter(ExtendedToftsModel())
+        on_boundary = np.array([0.1, 0.799, 0.2])
+        above_boundary = np.array([0.1, 0.7995, 0.2])
+
+        assert np.sum(on_boundary[1:]) == pytest.approx(VP_VE_TOTAL_MAX)
+        assert fitter._check_volume_constraint(on_boundary)
+        assert not fitter._check_volume_constraint(above_boundary)
 
     def test_vi_mean_respects_joint_volume_support(self) -> None:
         """VI cannot report a posterior mean outside joint volume support."""

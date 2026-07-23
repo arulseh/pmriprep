@@ -25,6 +25,7 @@ import numpy as np
 import numpy.typing as npt
 
 from pmriprep.models.dce.batched_models import evaluate_model
+from pmriprep.models.dce.extended_tofts import ExtendedToftsModel
 from pmriprep.models.dce.two_compartment_exchange import (
     TWO_CXM_VE_BOUNDS,
     TwoCompartmentExchangeModel,
@@ -1199,56 +1200,101 @@ def batched_lm_fit(
     ).tissue_curves
 
     boundary_uncertainties: dict[str, npt.NDArray[np.float64]] = {}
-    if model_name == "2cxm" and fixed_vp is None:
+    needs_boundary_refit = (
+        model_name == "extended_tofts"
+        or (model_name == "2cxm" and fixed_vp is None)
+    )
+    if needs_boundary_refit:
         volume = all_param_dict["ve"] + all_param_dict["vp"]
         at_box_bound = np.any(
             np.isclose(params, bounds_lo[None, :], rtol=0.0, atol=1e-10)
             | np.isclose(params, bounds_hi[None, :], rtol=0.0, atol=1e-10),
             axis=1,
         )
+        at_volume_bound = np.isclose(
+            volume, VP_VE_TOTAL_MAX, rtol=0.0, atol=1e-10
+        )
         boundary_indices = np.where(
-            at_box_bound
-            | np.isclose(volume, VP_VE_TOTAL_MAX, rtol=0.0, atol=1e-10)
+            at_volume_bound
+            if model_name == "extended_tofts"
+            else at_box_bound | at_volume_bound
         )[0]
         if boundary_indices.size:
-            scalar_model = TwoCompartmentExchangeModel()
+            scalar_model = (
+                ExtendedToftsModel()
+                if model_name == "extended_tofts"
+                else TwoCompartmentExchangeModel()
+            )
             boundary_uncertainties = {
                 name: np.full(n_voxels, np.nan, dtype=np.float64)
                 for name in full_names
             }
             for index in boundary_indices:
                 initial = [float(all_param_dict[name][index]) for name in full_names]
-                result = scalar_model.fit(
-                    tissue_curves[index],
-                    aif,
-                    time_points,
-                    initial_guess=initial,
-                    weights=weights,
-                )
+                if model_name == "extended_tofts" and fixed_vp is not None:
+                    original_curve = (
+                        tissue_curves[index] + fixed_vp[index] * aif
+                        if vp_subtracted
+                        else tissue_curves[index]
+                    )
+                    result = scalar_model.fit_constrained(
+                        original_curve,
+                        aif,
+                        time_points,
+                        fixed_vp=float(fixed_vp[index]),
+                        initial_guess=initial[:2],
+                        weights=weights,
+                    )
+                else:
+                    result = scalar_model.fit(
+                        tissue_curves[index],
+                        aif,
+                        time_points,
+                        initial_guess=initial,
+                        weights=weights,
+                    )
                 if not result.converged:
                     continue
+                result_names = (
+                    ("Ktrans", "ve", "vp")
+                    if model_name == "extended_tofts"
+                    else ("Fp", "PS", "ve", "vp")
+                )
                 candidate = np.array(
-                    [result.parameters[name] for name in ("Fp", "PS", "ve", "vp")],
+                    [result.parameters[name] for name in result_names],
                     dtype=np.float64,
+                )
+                candidate_free = (
+                    candidate[:2]
+                    if model_name == "extended_tofts" and fixed_vp is not None
+                    else candidate
                 )
                 candidate_curve = scalar_model.evaluate(
                     candidate.tolist(),
                     aif,
                     time_points,
                 )
+                comparison_curve = (
+                    original_curve
+                    if model_name == "extended_tofts" and fixed_vp is not None
+                    else tissue_curves[index]
+                )
                 old_rss = float(
-                    np.sum(w * (tissue_curves[index] - all_predicted[index]) ** 2)
+                    np.sum(w * (comparison_curve - all_predicted[index]) ** 2)
                 )
                 new_rss = float(
-                    np.sum(w * (tissue_curves[index] - candidate_curve) ** 2)
+                    np.sum(w * (comparison_curve - candidate_curve) ** 2)
                 )
                 if new_rss > old_rss * (1.0 + 1e-12):
                     continue
-                params[index] = candidate
+                params[index] = candidate_free
                 all_predicted[index] = candidate_curve
+                converged_flags[index] = True
                 for name in full_names:
                     uncertainty = result.uncertainties.get(
-                        {"fp": "Fp", "ps": "PS"}.get(name, name),
+                        {"ktrans": "Ktrans", "fp": "Fp", "ps": "PS"}.get(
+                            name, name
+                        ),
                         np.nan,
                     )
                     boundary_uncertainties[name][index] = uncertainty
