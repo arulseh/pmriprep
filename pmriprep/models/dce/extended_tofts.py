@@ -346,7 +346,62 @@ class ExtendedToftsModel(PKModel):
             converged = False
             fitted_params = [0.0] * self.n_parameters
 
-        # Clip parameters to bounds and apply constraint
+        # If the box-constrained optimum violates the joint tissue-volume
+        # constraint, refit on its active boundary. Merely projecting the
+        # optimum afterward changes the fitted curve and leaves covariance
+        # describing a parameter set that is not reported.
+        if converged and fitted_params[1] + fitted_params[2] > VP_VE_TOTAL_MAX:
+            ve_lower = max(bounds[1][0], VP_VE_TOTAL_MAX - bounds[2][1])
+            ve_upper = min(bounds[1][1], VP_VE_TOTAL_MAX - bounds[2][0])
+
+            def _boundary_curve_func(
+                t: npt.NDArray[np.floating],
+                ktrans: float,
+                ve: float,
+            ) -> npt.NDArray[np.floating]:
+                return self.evaluate(
+                    [ktrans, ve, VP_VE_TOTAL_MAX - ve],
+                    aif,
+                    t,
+                )
+
+            boundary_x0 = [
+                float(np.clip(fitted_params[0], bounds[0][0], bounds[0][1])),
+                float(np.clip(fitted_params[1], ve_lower, ve_upper)),
+            ]
+            try:
+                boundary_popt, boundary_pcov = curve_fit(
+                    _boundary_curve_func,
+                    time_points,
+                    tissue_curve,
+                    p0=boundary_x0,
+                    bounds=(
+                        [bounds[0][0], ve_lower],
+                        [bounds[0][1], ve_upper],
+                    ),
+                    method="trf",
+                    maxfev=2000,
+                    sigma=sigma_arr,
+                    absolute_sigma=False,
+                )
+                ktrans_boundary = float(boundary_popt[0])
+                ve_boundary = float(boundary_popt[1])
+                fitted_params = [
+                    ktrans_boundary,
+                    ve_boundary,
+                    VP_VE_TOTAL_MAX - ve_boundary,
+                ]
+                boundary_perr = np.sqrt(np.diag(boundary_pcov))
+                uncertainties = {
+                    "Ktrans": float(boundary_perr[0]),
+                    "ve": float(boundary_perr[1]),
+                    "vp": float(boundary_perr[1]),
+                }
+            except (RuntimeError, ValueError):
+                converged = False
+                uncertainties = {}
+
+        # Clip parameters and guard against numerical boundary overshoot.
         fitted_params = self.clip_params(fitted_params)
         ktrans, ve, vp = self._apply_volume_constraint(fitted_params)
         fitted_params = [ktrans, ve, vp]
@@ -440,7 +495,7 @@ class ExtendedToftsModel(PKModel):
             x0 = list(initial_guess[:2])
 
         # Bounds: ve upper bound clamped so ve + vp <= 1.0
-        ve_upper = min(VE_BOUNDS.max, 1.0 - fixed_vp)
+        ve_upper = min(VE_BOUNDS.max, VP_VE_TOTAL_MAX - fixed_vp)
         ve_upper = max(ve_upper, EPSILON_VE)
         bounds_lo = [KTRANS_BOUNDS.min, VE_BOUNDS.min]
         bounds_hi = [KTRANS_BOUNDS.max, ve_upper]

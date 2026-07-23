@@ -392,6 +392,28 @@ class TestResultDictFormat:
 # ---------------------------------------------------------------------------
 
 class TestConstrainedAutoMode:
+    def test_fixed_vp_respects_joint_volume_constraint(self, aif_and_time):
+        """A fixed vp imposes the matching per-voxel upper bound on ve."""
+        aif, time_points = aif_and_time
+        ktrans = np.array([0.12])
+        ve = np.array([0.85])
+        fixed_vp = np.array([0.25])
+        tissue = batched_extended_tofts_model(
+            ktrans, ve, fixed_vp, aif, time_points,
+        ).tissue_curves
+
+        result = batched_lm_fit(
+            "extended_tofts",
+            tissue,
+            aif,
+            time_points,
+            fixed_vp=fixed_vp,
+            max_iter=100,
+        )
+
+        assert result.converged[0]
+        assert result.params["ve"][0] + result.params["vp"][0] <= 0.999 + 1e-12
+
     def test_constrained_vp_preserved(self, aif_and_time):
         """100 constrained + 100 unconstrained: mixed vp handling."""
         aif, time_points = aif_and_time

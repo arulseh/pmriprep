@@ -22,6 +22,7 @@ from pmriprep.models.dce.bayesian import (
 from pmriprep.models.dce.extended_tofts import ExtendedToftsModel
 from pmriprep.models.dce.base import FitResult
 from pmriprep.models.dce.tofts import ToftsModel
+from pmriprep.models.bayesian_utils import to_transformed
 from pmriprep.utils.dce_constants import DCE_AIF_G6_SIGMA_INFLATION
 
 
@@ -295,6 +296,24 @@ class TestVolumeConstraint:
         result = fitter._apply_volume_constraint(params)
 
         np.testing.assert_array_equal(result, params)
+
+    def test_vi_mean_respects_joint_volume_support(self) -> None:
+        """VI cannot report a posterior mean outside joint volume support."""
+        tissue_curve, aif, time_points, _ = _make_synthetic_tofts_data()
+        model = ExtendedToftsModel()
+        fitter = BayesianPKFitter(model)
+
+        for index, mean in ((1, 0.85), (2, 0.25)):
+            prior = fitter.priors[index]
+            prior.mean = mean
+            prior.mean_transformed = float(
+                to_transformed(mean, prior.transform, prior.upper_bound)
+            )
+            prior.std_transformed = 0.01
+
+        result = fitter.fit_vi(tissue_curve, aif, time_points)
+
+        assert result.parameters["ve"] + result.parameters["vp"] <= 0.999 + 1e-12
 
 
 # ---------------------------------------------------------------------------

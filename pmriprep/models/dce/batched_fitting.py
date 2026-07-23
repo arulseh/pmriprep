@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Final, Optional
+from typing import Any, Final, Optional
 
 import numpy as np
 import numpy.typing as npt
@@ -255,12 +255,15 @@ def _build_param_dict(
 
 
 def _apply_volume_constraint_batched(
-    params: npt.NDArray[np.float64],
+    params: npt.NDArray[Any],
     param_names: list[str],
+    fixed_vp: Optional[npt.NDArray[np.floating]] = None,
 ) -> npt.NDArray[np.float64]:
-    """Apply ve + vp <= 1.0 constraint by proportional scaling.
+    """Apply the joint tissue-volume constraint.
 
-    Only applies to models that have both ve and vp.
+    Free ``ve`` and ``vp`` are proportionally projected. When ``vp`` is fixed
+    and therefore absent from ``param_names``, ``ve`` receives its matching
+    per-voxel upper bound.
 
     Parameters
     ----------
@@ -268,16 +271,30 @@ def _apply_volume_constraint_batched(
         Parameter matrix, shape (N, P).
     param_names : list of str
         Parameter names.
+    fixed_vp : numpy.ndarray or None, optional
+        Fixed per-voxel vp values matching the rows of ``params``.
 
     Returns
     -------
     numpy.ndarray
         Params with volume constraint applied.
     """
-    if "ve" not in param_names or "vp" not in param_names:
+    params = np.asarray(params, dtype=np.float64)
+    if "ve" not in param_names:
         return params
 
     ve_idx = param_names.index("ve")
+    if "vp" not in param_names:
+        if fixed_vp is None:
+            return params
+        params = params.copy()
+        ve_upper = np.maximum(
+            VP_VE_TOTAL_MAX - np.asarray(fixed_vp),
+            _PARAM_BOUNDS["ve"][0],
+        )
+        params[:, ve_idx] = np.minimum(params[:, ve_idx], ve_upper)
+        return params
+
     vp_idx = param_names.index("vp")
 
     total = params[:, ve_idx] + params[:, vp_idx]
@@ -885,6 +902,11 @@ def batched_lm_fit(
 
     for j in range(n_free):
         params[:, j] = np.clip(params[:, j], bounds_lo[j], bounds_hi[j])
+    params = _apply_volume_constraint_batched(
+        params,
+        free_param_names,
+        fixed_vp,
+    )
 
     # Weight array: raw weights (not sqrt). LM objective minimizes sum(w_i * r_i^2).
     # Patlak takes sqrt(w) before lstsq, which after squaring gives the same WLS cost.
@@ -967,6 +989,19 @@ def batched_lm_fit(
             p_minus = p_active.copy()
             p_minus[:, j] -= delta_j
             p_minus[:, j] = np.clip(p_minus[:, j], bounds_lo[j], bounds_hi[j])
+            active_fixed_vp = (
+                fixed_vp[active_idx] if fixed_vp is not None else None
+            )
+            p_plus = _apply_volume_constraint_batched(
+                p_plus,
+                free_param_names,
+                active_fixed_vp,
+            )
+            p_minus = _apply_volume_constraint_batched(
+                p_minus,
+                free_param_names,
+                active_fixed_vp,
+            )
 
             actual_delta = p_plus[:, j] - p_minus[:, j]
             actual_delta = np.maximum(actual_delta, fd_floors[j])
@@ -1018,7 +1053,11 @@ def batched_lm_fit(
         for j in range(n_free):
             p_trial[:, j] = np.clip(p_trial[:, j], bounds_lo[j], bounds_hi[j])
 
-        p_trial = _apply_volume_constraint_batched(p_trial, free_param_names)
+        p_trial = _apply_volume_constraint_batched(
+            p_trial,
+            free_param_names,
+            fixed_vp[active_idx] if fixed_vp is not None else None,
+        )
 
         # Evaluate trial
         pred_trial = _evaluate_idx(p_trial, active_idx)
@@ -1117,6 +1156,19 @@ def batched_lm_fit(
                 pm = p_conv.copy()
                 pm[:, j] -= delta_j
                 pm[:, j] = np.clip(pm[:, j], bounds_lo[j], bounds_hi[j])
+                conv_fixed_vp = (
+                    fixed_vp[conv_idx] if fixed_vp is not None else None
+                )
+                pp = _apply_volume_constraint_batched(
+                    pp,
+                    free_param_names,
+                    conv_fixed_vp,
+                )
+                pm = _apply_volume_constraint_batched(
+                    pm,
+                    free_param_names,
+                    conv_fixed_vp,
+                )
 
                 actual_d = np.maximum(pp[:, j] - pm[:, j], fd_floors[j])
 

@@ -957,6 +957,7 @@ class BayesianPKFitter:
         m_nat = np.array([p.mean for p in self.priors], dtype=np.float64)
         for i in range(n_params):
             m_nat[i] = np.clip(m_nat[i], bounds[i][0], bounds[i][1])
+        m_nat = np.asarray(self._apply_volume_constraint(m_nat), dtype=np.float64)
 
         m = np.array([
             float(to_transformed(m_nat[i], transforms[i], upper_bounds_t[i]))
@@ -1042,6 +1043,18 @@ class BayesianPKFitter:
                 float(from_transformed(m_new[k], transforms[k], upper_bounds_t[k]))
                 for k in range(n_params)
             ], dtype=np.float64)
+            m_new_nat = np.asarray(
+                self._apply_volume_constraint(m_new_nat),
+                dtype=np.float64,
+            )
+            m_new = np.array([
+                float(to_transformed(
+                    m_new_nat[k],
+                    transforms[k],
+                    upper_bounds_t[k],
+                ))
+                for k in range(n_params)
+            ], dtype=np.float64)
             try:
                 g_new = self.model.evaluate(list(m_new_nat), aif, time_points)
             except (ValueError, RuntimeError):
@@ -1120,6 +1133,10 @@ class BayesianPKFitter:
             float(from_transformed(best_m[k], transforms[k], upper_bounds_t[k]))
             for k in range(n_params)
         ], dtype=np.float64)
+        fitted_params = np.asarray(
+            self._apply_volume_constraint(fitted_params),
+            dtype=np.float64,
+        )
 
         fitted_stds_t = np.sqrt(np.maximum(np.diag(best_cov), 0.0))
         noise_std_posterior = 1.0 / np.sqrt(max(best_c * best_s, 1e-300))
