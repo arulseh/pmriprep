@@ -589,6 +589,27 @@
         </div>
         {% endif %}
 
+        {% set suitability = dce.qc_metrics.model_suitability['2cxm'] if dce.qc_metrics.model_suitability is defined and dce.qc_metrics.model_suitability['2cxm'] is defined else none %}
+        {% if suitability and suitability.status != 'NOT_APPLICABLE' %}
+        <div class="metrics" style="grid-template-columns: 1fr; margin-top: 8px;">
+            <div class="metric">
+                <div class="metric-label">2CXM Suitability Screening</div>
+                <div class="metric-value {{ suitability.status | lower }}" style="font-size: 1.0em; font-weight: normal;">
+                    {{ suitability.status }}
+                    {% if suitability.reasons %}
+                    — {% for reason in suitability.reasons %}{{ reason | replace('_', ' ') }}{% if not loop.last %}; {% endif %}{% endfor %}
+                    {% else %}
+                    — no established warning condition identified
+                    {% endif %}
+                    {% if suitability.metrics.volume_tr_seconds is not none %}
+                    (volume TR {{ "%.2f"|format(suitability.metrics.volume_tr_seconds) }} s{% if suitability.metrics.acquisition_duration_seconds is not none %}, duration {{ "%.0f"|format(suitability.metrics.acquisition_duration_seconds) }} s{% endif %})
+                    {% endif %}
+                    <br><small>Screening only; this does not establish biological parameter validity. Coverage, fit, bound-saturation, AIF, T1/B1, and vp-prior metrics remain available in QC/provenance.</small>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
         {% if dce.images.pk_param_maps_qc %}
         <h4>Parameter Maps</h4>
         <div class="figure-container" style="margin-top: 10px;">

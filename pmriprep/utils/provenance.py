@@ -400,6 +400,11 @@ def _enrich_dce(
             pk_block["voxel_rsquared"] = _safe_float(pk["qc_voxel_rsquared"])
         if pk_block:
             perf["PKModeling"] = pk_block
+    suitability = qc.get("model_suitability")
+    if isinstance(suitability, dict):
+        two_cxm = suitability.get("2cxm")
+        if isinstance(two_cxm, dict):
+            perf["ModelSuitability"] = {"2CXM": dict(two_cxm)}
 
 
 def _enrich_dsc(

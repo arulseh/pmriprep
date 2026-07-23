@@ -48,6 +48,28 @@ class TestDCESignalQualityConstants:
         assert QC_B1_MEAN_HIGH == 1.3
 
 
+def test_two_cxm_suitability_warning_requests_review_not_exclusion() -> None:
+    """Model suitability warnings feed the overall non-fatal recommendation."""
+    from pmriprep.utils.qc_standards import recommend_dce_qc
+
+    result = recommend_dce_qc(
+        {
+            "pk_modeling": {},
+            "model_suitability": {
+                "2cxm": {
+                    "status": "WARN",
+                    "reasons": [
+                        "temporal_sampling_outside_auto_2cxm_eligibility"
+                    ],
+                }
+            },
+        }
+    )
+
+    assert result["recommendation"]["action"] == QCAction.REVIEW
+    assert "2CXM suitability warning" in result["recommendation"]["reason"]
+
+
 class TestPeakEnhancementGating:
     """Tests for peak enhancement QC gating."""
 

@@ -2390,7 +2390,7 @@
     }
   },
   "function_sha256": {
-    "collect_qc_metrics": "d3fbfd79f94af8d515912589e203a7555a39447f1de2f3386595d4a876bc626c",
+    "collect_qc_metrics": "999da29880f9f80436cc88daf2d28b7cdb48072577605f2fb6d6a1f07b8d2063",
     "combine_masks": "f2748155dafc15b2d74a066b3da5db0ed2a4b5486b46ee8ea1f4c7a181de8fcf",
     "create_aif_mask": "b7f950098e31edf1f4ae33feeceb4f24287680351c18994377a6129477eb1b0d",
     "dce_brain_mask_qc": "ced2d6d4b823457166d3fb21083d6220f2b0dc0e0155de5c134e6d98210b5086",

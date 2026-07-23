@@ -1177,6 +1177,7 @@ def _initialize_dce_qc_metrics(
     model_name: str,
     constraint_qc: dict[str, Any],
     bat_correction: dict[str, Any],
+    two_cxm_max_tr_seconds: float,
 ) -> dict[str, Any]:
     """Assemble DCE QC state before fitting and result reduction."""
     return {
@@ -1185,6 +1186,12 @@ def _initialize_dce_qc_metrics(
         "tsnr_threshold": prepared.tsnr_threshold,
         "baseline_frames": prepared.baseline_frames,
         "selection_tr_seconds": prepared.selection_tr_seconds,
+        "acquisition_duration_seconds": (
+            (prepared.n_timepoints - 1) * prepared.selection_tr_seconds
+        ),
+        "two_cxm_auto_sampling_eligible": (
+            prepared.selection_tr_seconds <= two_cxm_max_tr_seconds
+        ),
         "dsc_cbv_constraint": constraint_qc,
         "bat_correction": bat_correction,
     }
@@ -3589,6 +3596,7 @@ class ComputeDCEMaps(BaseInterface):
             model_name,
             constraint_qc,
             bat_correction,
+            self._MAX_VOLUME_TR_2CXM,
         )
 
         motion = self._prepare_motion_weighting(header, n_timepoints)

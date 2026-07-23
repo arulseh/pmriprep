@@ -1121,6 +1121,14 @@ def _collect_qc_metrics(
 
     qc_metrics["nawm_normalization"] = bool(nawm_available)
 
+    from pmriprep.utils.dce_model_suitability import (
+        assess_two_cxm_suitability,
+    )
+
+    qc_metrics["model_suitability"] = {
+        "2cxm": assess_two_cxm_suitability(qc_metrics)
+    }
+
     return qc_metrics
 
 

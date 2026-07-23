@@ -732,6 +732,22 @@ def recommend_dce_qc(qc_metrics: dict[str, Any]) -> dict[str, Any]:
             kt_rec = QCRecommendation(QCAction.REVIEW, f"Ktrans outside typical range (mean={ktrans_mean:.4f})", 1)
         recommendations.append(kt_rec)
 
+    # Model-specific suitability screening is non-fatal. A warning requests
+    # review but never excludes an otherwise usable DCE run.
+    suitability = qc_metrics.get("model_suitability", {})
+    if isinstance(suitability, dict):
+        two_cxm = suitability.get("2cxm")
+        if isinstance(two_cxm, dict) and two_cxm.get("status") == "WARN":
+            reasons = two_cxm.get("reasons", [])
+            detail = ", ".join(str(reason).replace("_", " ") for reason in reasons)
+            recommendations.append(
+                QCRecommendation(
+                    QCAction.REVIEW,
+                    f"2CXM suitability warning: {detail or 'review supporting metrics'}",
+                    1,
+                )
+            )
+
     # Motion via composite status
     preprocessing_qc = qc_metrics.get("preprocessing", {})
     motion_status = preprocessing_qc.get("motion_status")

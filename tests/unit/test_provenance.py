@@ -66,6 +66,14 @@ class TestEnrichDCE:
                 "r2_median": 0.87,
                 "qc_voxel_rsquared": 0.95,
             },
+            "model_suitability": {
+                "2cxm": {
+                    "status": "WARN",
+                    "reasons": [
+                        "temporal_sampling_outside_auto_2cxm_eligibility"
+                    ],
+                }
+            },
         }
         result = enrich_provenance_from_qc(sidecar, qc, "DCE")
         perf = result["PerfusionProcessing"]
@@ -102,6 +110,7 @@ class TestEnrichDCE:
             == pytest.approx(0.98)
         )
         assert perf["PKModeling"]["voxel_rsquared"] == pytest.approx(0.95, abs=0.001)
+        assert perf["ModelSuitability"]["2CXM"]["status"] == "WARN"
 
     def test_signal_conversion_qc(self) -> None:
         """Signal-conversion diagnostics are retained in map provenance."""

@@ -681,11 +681,12 @@ def test_initialize_dce_qc_metrics_preserves_pre_fit_state() -> None:
         tsnr_threshold=12.0,
         baseline_frames=6,
         selection_tr_seconds=2.5,
+        n_timepoints=80,
     )
     constraint_qc = {"mode": "soft"}
     bat_correction = {"applied": True}
     summary = _initialize_dce_qc_metrics(
-        prepared, "extended_tofts", constraint_qc, bat_correction
+        prepared, "extended_tofts", constraint_qc, bat_correction, 3.0
     )
     assert summary == {
         "model": "auto",
@@ -693,6 +694,8 @@ def test_initialize_dce_qc_metrics_preserves_pre_fit_state() -> None:
         "tsnr_threshold": 12.0,
         "baseline_frames": 6,
         "selection_tr_seconds": 2.5,
+        "acquisition_duration_seconds": 197.5,
+        "two_cxm_auto_sampling_eligible": True,
         "dsc_cbv_constraint": constraint_qc,
         "bat_correction": bat_correction,
     }

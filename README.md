@@ -636,6 +636,15 @@ retained nondegenerate fits, and quantitative-QC acceptance. Each fraction
 names its denominator; enhancing-tumor, non-enhancing-tumor, and NAWM coverage
 is included when the corresponding masks are available.
 
+When 2CXM is explicitly requested or eligible during automatic model
+selection, QC also reports a non-fatal, reason-coded suitability screen.
+Explicit 2CXM sampling outside the automatic-selection temporal-resolution
+policy, reduced AIF confidence, or the absence of any quantitatively accepted
+voxels produces a review warning. Acquisition duration, coverage, fit,
+bound-saturation, T1/B1, and vp-prior metrics are reported without unvalidated
+subject-level thresholds. A passing screen does not establish biological
+parameter validity.
+
 For 2CXM, relative-uncertainty maps are available for the directly fitted Fp,
 PS, ve, and vp parameters. Ktrans is derived from Fp and PS, so its relative
 uncertainty is omitted because their joint covariance is not retained.

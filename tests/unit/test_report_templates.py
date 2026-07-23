@@ -161,6 +161,35 @@ def test_dce_voxel_accounting_renders(env):
     assert "87.5% attempted" in rendered
 
 
+def test_dce_two_cxm_suitability_warning_renders(env):
+    """Reason-coded 2CXM screening reaches the DCE HTML without implying failure."""
+    template = env.get_template("sections/section_dce.html")
+    dce = {
+        "qc_metrics": {
+            "pk_modeling": {"model": "2cxm"},
+            "model_suitability": {
+                "2cxm": {
+                    "status": "WARN",
+                    "reasons": [
+                        "temporal_sampling_outside_auto_2cxm_eligibility"
+                    ],
+                    "metrics": {
+                        "volume_tr_seconds": 7.38,
+                        "acquisition_duration_seconds": 354.0,
+                    },
+                }
+            },
+        },
+        "images": {},
+        "display_status": {},
+    }
+    rendered = template.render(dce=dce)
+    assert "2CXM Suitability Screening" in rendered
+    assert "temporal sampling outside auto 2cxm eligibility" in rendered
+    assert "volume TR 7.38 s" in rendered
+    assert "does not establish biological parameter validity" in rendered
+
+
 def test_parent_render_shows_dsc_blocks_when_dsc_present(env):
     """On DCE+DSC runs, both DCE-side DSC blocks must render."""
     template = env.get_template("report_unified.html")
