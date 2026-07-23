@@ -335,8 +335,8 @@ def batched_patlak_lstsq(
     Three modes determined by ``fixed_vp`` and ``vp_uncertainty``:
 
     - ``fixed_vp is None`` → unconstrained 2-param solve (Ktrans, vp).
-    - ``fixed_vp`` provided, ``vp_uncertainty is None`` → HARD: vp fixed at
-      ``fixed_vp``, 1-param Ktrans-only solve.
+    - ``fixed_vp`` provided, ``vp_uncertainty is None`` → exact fixed-vp
+      internal solve with one free Ktrans parameter.
     - ``fixed_vp`` provided, ``vp_uncertainty > 0`` → SOFT box constraint:
       vp constrained to ``[fixed_vp·(1−σ), fixed_vp·(1+σ)]`` per voxel via
       active-set two-pass::
@@ -348,7 +348,8 @@ def batched_patlak_lstsq(
 
       Voxels with ``fixed_vp == 0`` are treated as unconstrained (active-mask).
 
-    ``vp_uncertainty == 0.0`` raises ``ValueError`` — pass ``None`` for HARD.
+    ``vp_uncertainty == 0.0`` raises ``ValueError`` — pass ``None`` for the
+    exact fixed-vp internal solve.
 
     Parameters
     ----------
@@ -395,6 +396,84 @@ def batched_patlak_lstsq(
 
     vp_at_bound: Optional[npt.NDArray[np.floating]] = None
 
+    def _solve_bounded(
+        vp_lower: npt.NDArray[np.floating],
+        vp_upper: npt.NDArray[np.floating],
+    ) -> tuple[npt.NDArray[np.floating], npt.NDArray[np.floating]]:
+        """Solve the two-parameter weighted box-constrained linear problem."""
+        weighted_integral = w * aif_integral
+        weighted_aif = w * aif
+        weighted_tissue = tissue_curves * w[None, :]
+        design = np.column_stack([weighted_integral, weighted_aif])
+        unconstrained, _, _, _ = np.linalg.lstsq(
+            design, weighted_tissue.T, rcond=1e-10
+        )
+
+        k_lo, k_hi = _PARAM_BOUNDS["ktrans"]
+        candidates_k = [
+            np.clip(unconstrained[0], k_lo, k_hi),
+        ]
+        candidates_vp = [
+            np.clip(unconstrained[1], vp_lower, vp_upper),
+        ]
+
+        aif_denom = max(
+            float(np.dot(weighted_aif, weighted_aif)),
+            _EPSILON_NUMERICAL,
+        )
+        for k_boundary in (k_lo, k_hi):
+            vp_candidate = np.sum(
+                (
+                    weighted_tissue
+                    - k_boundary * weighted_integral[None, :]
+                )
+                * weighted_aif[None, :],
+                axis=1,
+            ) / aif_denom
+            candidates_k.append(np.full(n_voxels, k_boundary))
+            candidates_vp.append(
+                np.clip(vp_candidate, vp_lower, vp_upper)
+            )
+
+        integral_denom = max(
+            float(np.dot(weighted_integral, weighted_integral)),
+            _EPSILON_NUMERICAL,
+        )
+        for vp_boundary in (vp_lower, vp_upper):
+            k_candidate = np.sum(
+                (
+                    weighted_tissue
+                    - vp_boundary[:, None] * weighted_aif[None, :]
+                )
+                * weighted_integral[None, :],
+                axis=1,
+            ) / integral_denom
+            candidates_k.append(np.clip(k_candidate, k_lo, k_hi))
+            candidates_vp.append(vp_boundary)
+
+        k_stack = np.stack(candidates_k)
+        vp_stack = np.stack(candidates_vp)
+        tissue_integral = weighted_tissue @ weighted_integral
+        tissue_aif = weighted_tissue @ weighted_aif
+        tissue_squared = np.sum(weighted_tissue**2, axis=1)
+        integral_squared = float(np.dot(weighted_integral, weighted_integral))
+        aif_squared = float(np.dot(weighted_aif, weighted_aif))
+        integral_aif = float(np.dot(weighted_integral, weighted_aif))
+        costs = (
+            tissue_squared[None, :]
+            - 2.0 * k_stack * tissue_integral[None, :]
+            - 2.0 * vp_stack * tissue_aif[None, :]
+            + k_stack**2 * integral_squared
+            + 2.0 * k_stack * vp_stack * integral_aif
+            + vp_stack**2 * aif_squared
+        )
+        best = np.argmin(costs, axis=0)
+        voxel_indices = np.arange(n_voxels)
+        return (
+            k_stack[best, voxel_indices],
+            vp_stack[best, voxel_indices],
+        )
+
     soft_box = (
         fixed_vp is not None
         and vp_uncertainty is not None
@@ -406,77 +485,48 @@ def batched_patlak_lstsq(
         assert fixed_vp is not None  # for type narrowing
         assert vp_uncertainty is not None
 
-        # Pass 1: unconstrained 2-param solve on all voxels.
-        A = np.stack([w * aif_integral, w * aif], axis=1)  # (T, 2)
-        Y = (tissue_curves * w[None, :]).T  # (T, N)
-        params_2xN, _, _, _ = np.linalg.lstsq(A, Y, rcond=1e-10)
-        ktrans_unc = params_2xN[0]
-        vp_unc = params_2xN[1]
-
         # Per-voxel bounds. fixed_vp == 0 → inactive (acts unconstrained).
         active = fixed_vp > 0
+        bounded_centers = np.clip(fixed_vp, *_PARAM_BOUNDS["vp"])
         vp_lo = np.where(
             active,
-            fixed_vp * (1.0 - vp_uncertainty),
+            np.maximum(
+                bounded_centers * (1.0 - vp_uncertainty),
+                _PARAM_BOUNDS["vp"][0],
+            ),
             _PARAM_BOUNDS["vp"][0],
         )
         vp_hi = np.where(
             active,
-            fixed_vp * (1.0 + vp_uncertainty),
+            np.minimum(
+                bounded_centers * (1.0 + vp_uncertainty),
+                _PARAM_BOUNDS["vp"][1],
+            ),
             _PARAM_BOUNDS["vp"][1],
         )
-
-        # Strict-inequality violation detection (grazing the bound = interior).
-        violates_lo = active & (vp_unc < vp_lo)
-        violates_hi = active & (vp_unc > vp_hi)
-        violates = violates_lo | violates_hi
-
-        # Pass 2: for violators, clamp vp at violated bound and 1-param
-        # Ktrans-only solve. Computed for all voxels then merged by np.where
-        # (closed-form, cheap enough to do unconditionally).
-        clamped_vp = np.where(
-            violates_lo,
-            vp_lo,
-            np.where(violates_hi, vp_hi, vp_unc),
-        )
-        residual_clamped = tissue_curves - clamped_vp[:, None] * aif[None, :]
-        denom = max(np.sum((w * aif_integral) ** 2), _EPSILON_NUMERICAL)
-        ktrans_clamped = np.sum(
-            residual_clamped * (w ** 2)[None, :] * aif_integral[None, :], axis=1
-        )
-        ktrans_clamped /= denom
-        ktrans_clamped = np.clip(ktrans_clamped, *_PARAM_BOUNDS["ktrans"])
-
-        ktrans = np.where(
-            violates,
-            ktrans_clamped,
-            np.clip(ktrans_unc, *_PARAM_BOUNDS["ktrans"]),
-        )
-        vp_out = np.where(
-            violates,
-            clamped_vp,
-            np.clip(vp_unc, *_PARAM_BOUNDS["vp"]),
-        )
-        vp_at_bound = violates.astype(np.float32)
-        n_free = 2  # Pass-1 effective dof for interior voxels; pragmatic.
+        ktrans, vp_out = _solve_bounded(vp_lo, vp_hi)
+        vp_at_bound = (
+            active
+            & (
+                np.isclose(vp_out, vp_lo, rtol=0.0, atol=1e-12)
+                | np.isclose(vp_out, vp_hi, rtol=0.0, atol=1e-12)
+            )
+        ).astype(np.float32)
     elif fixed_vp is not None:
-        # HARD: 1-parameter solve: subtract vp*Cp, solve for Ktrans.
-        residual = tissue_curves - fixed_vp[:, None] * aif[None, :]
+        # Exact fixed-vp internal solve: subtract vp*Cp, solve for Ktrans.
+        bounded_fixed_vp = np.clip(fixed_vp, *_PARAM_BOUNDS["vp"])
+        residual = tissue_curves - bounded_fixed_vp[:, None] * aif[None, :]
         w_aif_int = w * aif_integral
         denom = np.sum(w_aif_int ** 2)
         ktrans = np.sum(residual * (w ** 2)[None, :] * aif_integral[None, :], axis=1)
         ktrans /= max(denom, _EPSILON_NUMERICAL)
         ktrans = np.clip(ktrans, *_PARAM_BOUNDS["ktrans"])
-        vp_out = fixed_vp.copy()
-        n_free = 1
+        vp_out = bounded_fixed_vp
     else:
-        # Unconstrained: 2-parameter solve [aif_integral, aif] → [Ktrans, vp].
-        A = np.stack([w * aif_integral, w * aif], axis=1)  # (T, 2)
-        Y = (tissue_curves * w[None, :]).T  # (T, N)
-        params_2xN, _, _, _ = np.linalg.lstsq(A, Y, rcond=1e-10)  # (2, N)
-        ktrans = np.clip(params_2xN[0], *_PARAM_BOUNDS["ktrans"])
-        vp_out = np.clip(params_2xN[1], *_PARAM_BOUNDS["vp"])
-        n_free = 2
+        # Unconstrained by DSC, but still solve within physiological bounds.
+        vp_lo = np.full(n_voxels, _PARAM_BOUNDS["vp"][0])
+        vp_hi = np.full(n_voxels, _PARAM_BOUNDS["vp"][1])
+        ktrans, vp_out = _solve_bounded(vp_lo, vp_hi)
 
     # Compute fitted curves and R²
     fitted = vp_out[:, None] * aif[None, :] + ktrans[:, None] * aif_integral[None, :]
@@ -487,25 +537,79 @@ def batched_patlak_lstsq(
     uncertainties: dict[str, npt.NDArray[np.floating]] = {}
     if compute_uncertainties:
         residuals = tissue_curves - fitted
-        sigma2 = np.sum((w[None, :] * residuals) ** 2, axis=1) / max(n_timepoints - n_free, 1)
-        # For SOFT box and HARD (vp fixed or clamped at a bound), uncertainty
-        # in vp is 0 for voxels at a bound and data-driven elsewhere; a tight
-        # closed-form formula across the mixed population is not meaningful,
-        # so report the Ktrans-only σ and zero vp uncertainty for HARD and
-        # at-bound voxels. Interior SOFT voxels get the 2-param uncertainty.
+        ktrans_at_bound = (
+            np.isclose(
+                ktrans, _PARAM_BOUNDS["ktrans"][0], rtol=0.0, atol=1e-12
+            )
+            | np.isclose(
+                ktrans, _PARAM_BOUNDS["ktrans"][1], rtol=0.0, atol=1e-12
+            )
+        )
         if soft_box and vp_at_bound is not None:
+            vp_is_at_bound = vp_at_bound > 0
+        elif fixed_vp is not None:
+            vp_is_at_bound = np.ones(n_voxels, dtype=bool)
+        else:
+            vp_is_at_bound = (
+                np.isclose(
+                    vp_out, _PARAM_BOUNDS["vp"][0], rtol=0.0, atol=1e-12
+                )
+                | np.isclose(
+                    vp_out, _PARAM_BOUNDS["vp"][1], rtol=0.0, atol=1e-12
+                )
+            )
+        free_counts = (
+            (~ktrans_at_bound).astype(np.int8)
+            + (~vp_is_at_bound).astype(np.int8)
+        )
+        sigma_denominator = np.maximum(n_timepoints - free_counts, 1)
+        sigma2 = (
+            np.sum((w[None, :] * residuals) ** 2, axis=1)
+            / sigma_denominator
+        )
+        # Active-bound parameters have zero conditional local uncertainty;
+        # re-estimated free coefficients use their reduced one-parameter
+        # covariance, while interior voxels use the full two-parameter form.
+        if fixed_vp is None or soft_box:
             A_full = np.stack([w * aif_integral, w * aif], axis=1)
             ATA = A_full.T @ A_full
             try:
                 ATA_inv = np.linalg.inv(ATA)
-                uncertainties["ktrans"] = np.sqrt(
+                ktrans_full = np.sqrt(
                     np.maximum(sigma2 * ATA_inv[0, 0], 0.0)
                 )
-                unc_vp_interior = np.sqrt(
+                vp_full = np.sqrt(
                     np.maximum(sigma2 * ATA_inv[1, 1], 0.0)
                 )
+                ktrans_reduced = np.sqrt(
+                    np.maximum(
+                        sigma2
+                        / max(
+                            float(np.dot(w * aif_integral, w * aif_integral)),
+                            _EPSILON_NUMERICAL,
+                        ),
+                        0.0,
+                    )
+                )
+                vp_reduced = np.sqrt(
+                    np.maximum(
+                        sigma2
+                        / max(
+                            float(np.dot(w * aif, w * aif)),
+                            _EPSILON_NUMERICAL,
+                        ),
+                        0.0,
+                    )
+                )
+                uncertainties["ktrans"] = np.where(
+                    ktrans_at_bound,
+                    0.0,
+                    np.where(vp_is_at_bound, ktrans_reduced, ktrans_full),
+                )
                 uncertainties["vp"] = np.where(
-                    vp_at_bound > 0, 0.0, unc_vp_interior
+                    vp_is_at_bound,
+                    0.0,
+                    np.where(ktrans_at_bound, vp_reduced, vp_full),
                 )
             except np.linalg.LinAlgError:
                 uncertainties["ktrans"] = np.full(n_voxels, np.nan)
@@ -513,18 +617,12 @@ def batched_patlak_lstsq(
         elif fixed_vp is not None:
             denom_val = max(np.sum((w * aif_integral) ** 2), _EPSILON_NUMERICAL)
             ktrans_var = sigma2 / denom_val
-            uncertainties["ktrans"] = np.sqrt(np.maximum(ktrans_var, 0.0))
+            uncertainties["ktrans"] = np.where(
+                ktrans_at_bound,
+                0.0,
+                np.sqrt(np.maximum(ktrans_var, 0.0)),
+            )
             uncertainties["vp"] = np.zeros(n_voxels)
-        else:
-            A_full = np.stack([w * aif_integral, w * aif], axis=1)
-            ATA = A_full.T @ A_full
-            try:
-                ATA_inv = np.linalg.inv(ATA)
-                uncertainties["ktrans"] = np.sqrt(np.maximum(sigma2 * ATA_inv[0, 0], 0.0))
-                uncertainties["vp"] = np.sqrt(np.maximum(sigma2 * ATA_inv[1, 1], 0.0))
-            except np.linalg.LinAlgError:
-                uncertainties["ktrans"] = np.full(n_voxels, np.nan)
-                uncertainties["vp"] = np.full(n_voxels, np.nan)
 
     return FitResult(
         params={"ktrans": ktrans, "vp": vp_out},

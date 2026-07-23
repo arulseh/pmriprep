@@ -21,6 +21,7 @@ from pmriprep.models.dce.batched_fitting import (
     batched_patlak_lstsq,
 )
 from pmriprep.models.dce.extended_tofts import ExtendedToftsModel
+from pmriprep.models.dce.patlak import PatlakModel
 from pmriprep.models.dce.two_compartment_exchange import (
     TwoCompartmentExchangeModel,
 )
@@ -241,6 +242,123 @@ class TestPatlakExact:
 
         result = batched_patlak_lstsq(tissue, aif, time_points)
         assert np.all(result.r_squared > 0.999)
+
+    @pytest.mark.parametrize(
+        "latent_parameters",
+        [
+            (0.08, -0.06),
+            (-0.05, 0.08),
+            (0.08, 0.50),
+            (6.0, 0.08),
+        ],
+    )
+    def test_patlak_active_box_bound_matches_independent_optimizer(
+        self,
+        aif_and_time: tuple[np.ndarray, np.ndarray],
+        latent_parameters: tuple[float, float],
+    ) -> None:
+        """Batched Patlak re-optimizes the free coefficient at a box bound."""
+        aif, time_points = aif_and_time
+        model = PatlakModel()
+        tissue = model.evaluate(latent_parameters, aif, time_points)
+
+        def objective(parameters: np.ndarray) -> float:
+            residuals = tissue - model.evaluate(
+                parameters.tolist(), aif, time_points
+            )
+            return float(np.sum(residuals**2))
+
+        reference = minimize(
+            objective,
+            x0=np.array([0.1, 0.02]),
+            method="SLSQP",
+            bounds=model.get_bounds(),
+            options={"maxiter": 4000, "ftol": 1e-14},
+        )
+        assert reference.success
+
+        result = batched_patlak_lstsq(
+            tissue[np.newaxis, :],
+            aif,
+            time_points,
+            compute_uncertainties=True,
+        )
+        parameters = np.array(
+            [result.params["ktrans"][0], result.params["vp"][0]]
+        )
+
+        assert objective(parameters) == pytest.approx(reference.fun, rel=1e-9)
+        at_ktrans_bound = parameters[0] == pytest.approx(
+            model.get_bounds()[0][0]
+        ) or parameters[0] == pytest.approx(model.get_bounds()[0][1])
+        at_vp_bound = parameters[1] == pytest.approx(
+            model.get_bounds()[1][0]
+        ) or parameters[1] == pytest.approx(model.get_bounds()[1][1])
+        assert at_ktrans_bound or at_vp_bound
+        if at_ktrans_bound:
+            assert result.uncertainties["ktrans"][0] == 0.0
+        else:
+            assert np.isfinite(result.uncertainties["ktrans"][0])
+        if at_vp_bound:
+            assert result.uncertainties["vp"][0] == 0.0
+        else:
+            assert np.isfinite(result.uncertainties["vp"][0])
+
+    def test_graphical_active_bound_reoptimizes_other_coefficient(
+        self,
+        aif_and_time: tuple[np.ndarray, np.ndarray],
+    ) -> None:
+        """Bounded graphical regression solves rather than clips."""
+        aif, time_points = aif_and_time
+        model = PatlakModel()
+        tissue = model.evaluate([0.08, -0.06], aif, time_points)
+        x_values, y_values, valid = model.compute_patlak_plot_variables(
+            tissue, aif, time_points
+        )
+        start = min(int(np.argmax(aif)) + 1, len(time_points) - 2)
+        valid[:start] = False
+        design = np.column_stack([x_values[valid], np.ones(np.sum(valid))])
+
+        def objective(parameters: np.ndarray) -> float:
+            residuals = y_values[valid] - design @ parameters
+            return float(np.sum(residuals**2))
+
+        reference = minimize(
+            objective,
+            x0=np.array([0.1, 0.02]),
+            method="SLSQP",
+            bounds=model.get_bounds(),
+            options={"maxiter": 4000, "ftol": 1e-14},
+        )
+        assert reference.success
+
+        result = model.fit_graphical(tissue, aif, time_points)
+        parameters = np.array(
+            [result.parameters["Ktrans"], result.parameters["vp"]]
+        )
+        assert objective(parameters) == pytest.approx(reference.fun, rel=1e-9)
+
+    @pytest.mark.parametrize("vp_uncertainty", [None, 0.4])
+    def test_patlak_constraint_center_is_clipped_to_model_support(
+        self,
+        aif_and_time: tuple[np.ndarray, np.ndarray],
+        vp_uncertainty: float | None,
+    ) -> None:
+        """Hard and soft external vp constraints cannot exceed model support."""
+        aif, time_points = aif_and_time
+        model = PatlakModel()
+        tissue = model.evaluate([0.08, 0.30], aif, time_points)
+
+        result = batched_patlak_lstsq(
+            tissue[np.newaxis, :],
+            aif,
+            time_points,
+            fixed_vp=np.array([0.50]),
+            vp_uncertainty=vp_uncertainty,
+        )
+
+        assert result.params["vp"][0] <= model.get_bounds()[1][1]
+        assert result.params["vp"][0] == pytest.approx(0.30)
 
 
 # ---------------------------------------------------------------------------
