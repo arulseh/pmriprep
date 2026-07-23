@@ -290,19 +290,25 @@ def build_aif_provenance_block(
         block["NumberOfVoxelsSelected"] = int(n_voxels)
     raw_metrics = aif_qc.get("aif_metrics")
     metrics = raw_metrics if isinstance(raw_metrics, dict) else {}
-    peak = metrics.get("peak_conc")
-    if peak is None:
-        peak = aif_qc.get("peak_mm_mean")
-    if peak is None:
+    if modality == "DCE":
         peak = aif_qc.get("final_peak_mm")
+        if peak is None:
+            peak = aif_qc.get("peak_mm_mean")
+        if peak is None:
+            peak = metrics.get("peak_conc")
+    else:
+        peak = metrics.get("peak_conc")
     if peak is not None:
         block["PeakAmplitude"] = float(peak)
         block["PeakAmplitudeUnits"] = "1/s" if modality == "DSC" else "mM"
-    fwhm = metrics.get("fwhm")
-    if fwhm is None:
-        fwhm = aif_qc.get("fwhm_seconds_mean")
-    if fwhm is None:
+    if modality == "DCE":
         fwhm = aif_qc.get("final_fwhm_seconds")
+        if fwhm is None:
+            fwhm = aif_qc.get("fwhm_seconds_mean")
+        if fwhm is None:
+            fwhm = metrics.get("fwhm")
+    else:
+        fwhm = metrics.get("fwhm")
     if fwhm is not None:
         block["FWHM"] = float(fwhm)
         block["FWHMUnits"] = (

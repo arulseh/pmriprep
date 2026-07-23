@@ -407,6 +407,24 @@ class TestDSCRegression:
 
 
 class TestPublicArtifactSchema:
+    def test_dce_prefers_final_emitted_curve_metrics(self) -> None:
+        from pmriprep.utils.aif_provenance import build_aif_provenance_block
+
+        block = build_aif_provenance_block(
+            {
+                "detection_method": "atlas",
+                "peak_mm_mean": 3.0,
+                "final_peak_mm": 6.0,
+                "fwhm_seconds_mean": 8.0,
+                "final_fwhm_seconds": 11.0,
+            },
+            modality="DCE",
+        )
+        assert block["PeakAmplitude"] == pytest.approx(6.0)
+        assert block["PeakAmplitudeUnits"] == "mM"
+        assert block["FWHM"] == pytest.approx(11.0)
+        assert block["FWHMUnits"] == "s"
+
     def test_external_dsc_fwhm_retains_frame_units(self) -> None:
         from pmriprep.utils.aif_provenance import build_aif_provenance_block
 
