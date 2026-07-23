@@ -12,7 +12,7 @@ from pmriprep.utils.dce_voxel_prep import prepare_voxel_for_fitting
 
 def test_voxel_preparation_preserves_already_converted_concentration() -> None:
     """Fitting preparation must not baseline-subtract converted data twice."""
-    converted = np.array([0.0, 0.02, 0.0, 0.20, 0.50], dtype=np.float64)
+    converted = np.array([-0.02, 0.02, 0.0, 0.20, 0.50], dtype=np.float64)
 
     prepared = prepare_voxel_for_fitting(
         converted,

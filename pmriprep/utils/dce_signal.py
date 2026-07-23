@@ -238,8 +238,7 @@ def signal_to_concentration(
     3. Convert E1(t) to R1(t) = -ln(E1)/TR
     4. Compute concentration: C(t) = (R1(t) - R1(0)) / r1
     5. Subtract per-voxel baseline concentration (mean of pre-bolus frames)
-    6. Clip to non-negative
-    7. Optionally convert to plasma concentration
+    6. Optionally convert to plasma concentration
 
     Parameters
     ----------
@@ -523,10 +522,9 @@ def signal_to_concentration(
         else:
             concentration = (r1_dynamic - r1_baseline) / effective_r1
 
-    # Subtract per-voxel baseline concentration before clipping to avoid
-    # positive bias from rectifying pre-bolus noise.  Without this, the
-    # half-normal bias (~0.8 × σ_C) inflates Ktrans for low-permeability
-    # tissue (NAWM) by 15-50% of true enhancement.
+    # Subtract per-voxel baseline concentration and retain signed noise.
+    # Rectifying the result would reintroduce a half-normal positive bias
+    # (~0.8 × σ_C), inflating Ktrans in low-permeability tissue.
     # This effectively replaces the single-timepoint R1(0) from the T1 map
     # with the temporal mean of pre-bolus R1, which is more accurate and
     # corrects any systematic offset between VFA and dynamic acquisitions.
@@ -535,7 +533,6 @@ def signal_to_concentration(
         concentration[..., :baseline_frames], axis=-1, keepdims=True,
     )
     concentration = concentration - baseline_conc
-    concentration = np.maximum(concentration, 0.0)
 
     # Zero voxels with negative-baseline phase artifacts.
     if isinstance(negative_baseline_mask, np.ndarray):

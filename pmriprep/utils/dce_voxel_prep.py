@@ -80,11 +80,10 @@ def prepare_voxel_for_fitting(
                 enhancement_max=0.0,
             )
 
-    # Concentration conversion owns baseline subtraction. Repeating it here
-    # would subtract the positive mean of an already-rectified baseline from
-    # Bayesian/MCMC paths while batched NLLS fits the converted curve directly.
-    # Retain only idempotent nonnegative sanitation at the fitting boundary.
-    prepared = np.maximum(tissue_curve, 0.0)
+    # Concentration conversion owns baseline subtraction. Preserve signed
+    # baseline noise so CPU Bayesian paths and batched NLLS consume the same
+    # unbiased curve.
+    prepared = tissue_curve
 
     enhancement_max = float(np.max(prepared))
 

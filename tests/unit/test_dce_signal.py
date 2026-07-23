@@ -232,11 +232,10 @@ class TestBaselineSubtraction:
             t1_default_ms=1000.0, baseline_frames=baseline_frames,
             convert_to_plasma=False,
         )
-        # Pre-bolus frames (after baseline subtraction + clip) should be ~0
+        # Signed pre-bolus noise remains centered exactly at zero.
         pre_bolus = result.concentration[:baseline_frames]
-        assert np.mean(pre_bolus) < 0.005, (
-            f"Pre-bolus mean {np.mean(pre_bolus):.4f} is biased positive"
-        )
+        assert np.mean(pre_bolus) == pytest.approx(0.0, abs=1e-12)
+        assert np.any(pre_bolus < 0)
 
     def test_enhancement_preserved_after_baseline_subtraction(self) -> None:
         """Post-bolus enhancement should still be positive and non-trivial."""
