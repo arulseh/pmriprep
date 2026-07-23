@@ -36,6 +36,20 @@ class TestCbvConstraintModeValidation:
         assert cfg.cbv_constraint_mode == "auto"
 
 
+class TestConcentrationParameterValidation:
+    """Signal-conversion scaling parameters reject invalid domains."""
+
+    @pytest.mark.parametrize("value", [0.0, -1.0, float("nan")])
+    def test_relaxivity_must_be_finite_positive(self, value: float) -> None:
+        with pytest.raises(ValueError, match="r1_relaxivity"):
+            DCEConfig(r1_relaxivity=value)
+
+    @pytest.mark.parametrize("value", [-0.1, 1.0, float("nan")])
+    def test_hematocrit_must_be_fraction(self, value: float) -> None:
+        with pytest.raises(ValueError, match="hematocrit"):
+            DCEConfig(hematocrit=value)
+
+
 @pytest.mark.parametrize("config_cls", [DCEConfig, DSCConfig])
 class TestUnderlayValidation:
     """``underlays`` takes the split FLAIR tokens; legacy ``flair`` is rejected."""

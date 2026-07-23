@@ -248,6 +248,17 @@ class DCEConfig:
                 self.r1_relaxivity = float(self.r1_relaxivity)
             except (ValueError, TypeError) as e:
                 raise TypeError(f"DCEConfig.r1_relaxivity has invalid type: {e}") from e
+            if not math.isfinite(self.r1_relaxivity) or self.r1_relaxivity <= 0:
+                raise ValueError(
+                    "r1_relaxivity must be a finite positive value in s^-1/mM, "
+                    f"got {self.r1_relaxivity}"
+                )
+
+        if not math.isfinite(self.hematocrit) or not 0 <= self.hematocrit < 1:
+            raise ValueError(
+                "hematocrit must be finite and in [0, 1), "
+                f"got {self.hematocrit}"
+            )
 
         # Validate t1_map_file / no_t1 mutual exclusivity
         if self.t1_map_file and self.no_t1:

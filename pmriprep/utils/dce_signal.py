@@ -26,6 +26,14 @@ from pmriprep.utils.dce_constants import (
 logger = logging.getLogger(__name__)
 
 
+def _validate_hematocrit(hematocrit: float) -> None:
+    """Validate a blood hematocrit volume fraction."""
+    if not np.isfinite(hematocrit) or not 0 <= hematocrit < 1:
+        raise ValueError(
+            f"hematocrit must be finite and in [0, 1), got {hematocrit}"
+        )
+
+
 @dataclass
 class DCEConversionResult:
     """Result of DCE signal to concentration conversion.
@@ -350,6 +358,17 @@ def signal_to_concentration(
     if baseline_frames < 1:
         raise ValueError(f"baseline_frames must be at least 1, got {baseline_frames}")
 
+    if r1_relaxivity is not None and (
+        not np.isfinite(r1_relaxivity) or r1_relaxivity <= 0
+    ):
+        raise ValueError(
+            "r1_relaxivity must be a finite positive value in s^-1/mM, "
+            f"got {r1_relaxivity}"
+        )
+
+    if convert_to_plasma:
+        _validate_hematocrit(hematocrit)
+
     # Validate T1 map dimensions if provided
     if t1_map is not None and signal.ndim == 4:
         if t1_map.shape != spatial_shape:
@@ -643,6 +662,7 @@ def concentration_to_plasma(
     - This conversion is important for AIF measurements, as
       pharmacokinetic models assume plasma concentration.
     """
+    _validate_hematocrit(hematocrit)
     return concentration_blood / (1.0 - hematocrit)
 
 
@@ -668,6 +688,7 @@ def plasma_to_blood_concentration(
     numpy.ndarray
         Whole blood concentration in mM.
     """
+    _validate_hematocrit(hematocrit)
     return concentration_plasma * (1.0 - hematocrit)
 
 

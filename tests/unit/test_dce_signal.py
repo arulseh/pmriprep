@@ -145,6 +145,44 @@ class TestConcentrationConversions:
         expected = 1.0 / (1.0 - hct)
         np.testing.assert_allclose(c_plasma[0], expected, rtol=1e-10)
 
+    @pytest.mark.parametrize("hematocrit", [-0.1, 1.0, np.nan])
+    def test_blood_plasma_helpers_reject_invalid_hematocrit(
+        self, hematocrit: float
+    ) -> None:
+        """Standalone conversion helpers share the physical domain guard."""
+        with pytest.raises(ValueError, match="hematocrit"):
+            concentration_to_plasma(np.ones(1), hematocrit)
+        with pytest.raises(ValueError, match="hematocrit"):
+            plasma_to_blood_concentration(np.ones(1), hematocrit)
+
+    @pytest.mark.parametrize("hematocrit", [-0.1, 1.0, np.nan])
+    def test_signal_conversion_rejects_invalid_hematocrit(
+        self, hematocrit: float
+    ) -> None:
+        """Plasma conversion rejects non-physical hematocrit values."""
+        with pytest.raises(ValueError, match="hematocrit"):
+            signal_to_concentration(
+                np.ones(10),
+                flip_angle_deg=15.0,
+                tr=0.005,
+                baseline_frames=5,
+                hematocrit=hematocrit,
+            )
+
+    @pytest.mark.parametrize("relaxivity", [0.0, -1.0, np.nan])
+    def test_signal_conversion_rejects_invalid_relaxivity(
+        self, relaxivity: float
+    ) -> None:
+        """Concentration scaling requires finite positive relaxivity."""
+        with pytest.raises(ValueError, match="r1_relaxivity"):
+            signal_to_concentration(
+                np.ones(10),
+                flip_angle_deg=15.0,
+                tr=0.005,
+                baseline_frames=5,
+                r1_relaxivity=relaxivity,
+            )
+
 
 class TestFieldStrengthDefaultT1:
     """Tests for field-strength-aware default T1 when no T1 map provided."""
