@@ -15,6 +15,7 @@ DataSink model:
 """
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 from typing import Any, Optional
@@ -171,6 +172,29 @@ def _write_aif_timeseries_sidecar(
     )
 
     sources = [source_path] if source_path else []
+    volume_tr_s: Optional[float] = None
+    if source_path:
+        source = Path(source_path)
+        sidecar_path = source.with_name(
+            source.name.replace(".nii.gz", ".json").replace(".nii", ".json")
+        )
+        if sidecar_path.exists():
+            try:
+                metadata = json.loads(sidecar_path.read_text())
+                repetition_time = (
+                    metadata.get("RepetitionTime")
+                    if isinstance(metadata, dict)
+                    else None
+                )
+                if (
+                    isinstance(repetition_time, (int, float))
+                    and not isinstance(repetition_time, bool)
+                    and repetition_time > 0
+                ):
+                    volume_tr_s = float(repetition_time)
+            except (json.JSONDecodeError, OSError):
+                pass
+
     sidecar = build_aif_timeseries_sidecar(
         modality=modality,
         source_paths=sources,
@@ -178,6 +202,7 @@ def _write_aif_timeseries_sidecar(
         subject=subject,
         session=session or None,
         aif_qc=aif_qc,
+        volume_tr_s=volume_tr_s,
     )
     json_path = aif_txt.with_suffix(".json")
     json_path.write_text(dump_sidecar_json(sidecar))

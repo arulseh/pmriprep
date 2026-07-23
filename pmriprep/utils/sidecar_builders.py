@@ -1183,6 +1183,7 @@ def build_aif_timeseries_sidecar(
     subject: str,
     session: Optional[str],
     aif_qc: Optional[Dict[str, Any]] = None,
+    volume_tr_s: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Build the JSON sidecar for the AIF curve text file.
 
@@ -1206,6 +1207,9 @@ def build_aif_timeseries_sidecar(
     aif_qc : dict, optional
         Producer-shape AIF QC dict (the ``aif_qc`` dict from the
         DSC outputnode for DSC, or the equivalent for DCE).
+    volume_tr_s : float, optional
+        Time between successive AIF samples in seconds. When positive, the
+        sidecar records ``SamplingFrequency`` and ``StartTime``.
 
     Returns
     -------
@@ -1227,6 +1231,9 @@ def build_aif_timeseries_sidecar(
     sidecar["Subject"] = f"sub-{subject}"
     if session:
         sidecar["Session"] = f"ses-{session}"
+    if volume_tr_s is not None and volume_tr_s > 0:
+        sidecar["SamplingFrequency"] = 1.0 / float(volume_tr_s)
+        sidecar["StartTime"] = 0.0
 
     sidecar.update(_aif_cosmetic_keys(aif_qc))
     return sidecar

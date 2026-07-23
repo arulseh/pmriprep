@@ -250,7 +250,7 @@ tumor_seg:
 | `dose` | float | `1.0` | Dose multiplier (default: 1.0). Accepts a float or presets: `half`, `full`, `double` |
 | `agent_standard_dose` | float | `0.1` | Override agent standard dose in mmol Gd/kg (auto-detected from `ContrastBolusAgent` sidecar field when available) |
 | `aif_method` | str | `"auto"` | AIF method: `auto`, `synthetic` |
-| `aif_file` | path | `null` | External AIF curve (ΔR2* in s⁻¹). Bypasses AIF detection |
+| `aif_file` | path | `null` | External AIF curve (ΔR2* in s⁻¹; headerless text or PMRIPrep single-column TSV). Bypasses AIF detection |
 | `aif_mask_file` | path | `null` | Custom AIF mask file (search constraint; DSC space) |
 | `n_aif_candidates` | int | `10` | Maximum number of AIF candidate voxels to retain and average; fewer may survive selection |
 | `lesion_distance` | float | `15.0` | Minimum distance (mm) from lesion for AIF candidates |
@@ -279,7 +279,7 @@ tumor_seg:
 | `aif_method` | str | `"auto"` | AIF method: `auto`, `population` |
 | `aif_peak_floor` | bool | `true` | Raise detected AIF peaks below the dose-adjusted expected range to its lower bound; false preserves measured amplitude while retaining amplitude QC |
 | `target_peak` | float | `null` | Explicit AIF calibration target in blood-voxel units (mM), before hematocrit correction; overrides `aif_peak_floor`; null follows the peak-floor policy |
-| `aif_file` | path | `null` | External AIF file (plasma [Gd] in mM, Hct-corrected). Bypasses AIF detection |
+| `aif_file` | path | `null` | External AIF file (plasma [Gd] in mM, Hct-corrected; headerless text or PMRIPrep single-column TSV). Bypasses AIF detection |
 | `aif_mask_file` | path | `null` | Custom AIF mask file (search constraint; DCE space) |
 | `n_aif_candidates` | int | `10` | Maximum number of AIF candidate voxels to retain and average; fewer may survive selection |
 | `lesion_distance` | float | `15.0` | Minimum distance (mm) from lesion for AIF candidates |

@@ -57,6 +57,9 @@ def bids_root(tmp_path) -> Path:
     )
     src = perf / "sub-X_ses-Y_dsc.nii.gz"
     nib.save(nib.Nifti1Image(np.zeros((4, 4, 4), dtype=np.float32), np.eye(4)), src)
+    src.with_name("sub-X_ses-Y_dsc.json").write_text(
+        json.dumps({"RepetitionTime": 1.5})
+    )
     return bids
 
 
@@ -188,7 +191,23 @@ def test_writer_emits_base_sidecar_without_qc(bids_root, tmp_path) -> None:
     assert sidecar["Sources"] == [
         "bids:raw:sub-X/ses-Y/perf/sub-X_ses-Y_dsc.nii.gz"
     ]
+    assert sidecar["SamplingFrequency"] == pytest.approx(1.0 / 1.5)
+    assert sidecar["StartTime"] == 0.0
     assert all(not key.startswith("AIF") for key in sidecar)
+
+
+def test_aif_sidecar_sampling_metadata() -> None:
+    """Sampling metadata describes rows without adding a redundant time column."""
+    sidecar = build_aif_timeseries_sidecar(
+        modality="DCE",
+        source_paths=[],
+        bids_dir=".",
+        subject="X",
+        session=None,
+        volume_tr_s=4.0,
+    )
+    assert sidecar["SamplingFrequency"] == pytest.approx(0.25)
+    assert sidecar["StartTime"] == 0.0
 
 
 class TestColumnHeaderSingleSource:

@@ -231,6 +231,26 @@ def _cell_external(tmp_path: Path) -> dict[str, Any]:
     return _snapshot(iface)
 
 
+def test_external_aif_accepts_emitted_dce_tsv(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The named DCE derivative TSV can be supplied as an external AIF."""
+    from pmriprep.interfaces.qc_writers import _write_aif_timeseries_tsv
+
+    monkeypatch.chdir(tmp_path)
+    conc, mask = _make_conc()
+    conc_f, mask_f = _write_niftis(tmp_path, conc, mask)
+    ext = tmp_path / "sub-01_desc-dceAif_timeseries.tsv"
+    t = np.arange(40.0)
+    curve = 6.0 * np.exp(-0.5 * ((t - 8.0) / 2.0) ** 2)
+    curve[:5] = 0.0
+    _write_aif_timeseries_tsv(ext, curve, "DCE")
+
+    iface = _base_iface(conc_f, mask_f, external_aif_file=str(ext))
+    result = iface.run()
+    np.testing.assert_allclose(result.outputs.aif_curve, curve)
+
+
 def _cell_c2_divergence(tmp_path: Path) -> dict[str, Any]:
     """Cell 2: mocked cascade, C2 divergence — detected emit C2 branch."""
     a, b, c = (10, 10, 10), (10, 11, 10), (11, 10, 10)

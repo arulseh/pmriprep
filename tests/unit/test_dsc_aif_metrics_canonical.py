@@ -149,11 +149,13 @@ class TestExternalAifSubsetShape:
         conc_path = tmp_path / "dsc.nii.gz"
         nib.save(nib.Nifti1Image(conc, np.eye(4)), str(conc_path))
 
-        # External AIF text file (s⁻¹), matching n_t timepoints.
+        # PMRIPrep-style external AIF TSV (s⁻¹), matching n_t timepoints.
+        from pmriprep.interfaces.qc_writers import _write_aif_timeseries_tsv
+
         aif = np.zeros(n_t, dtype=np.float64)
         aif[8:14] = np.array([5.0, 12.0, 28.0, 22.0, 14.0, 8.0])
-        aif_path = tmp_path / "ext_aif.txt"
-        np.savetxt(str(aif_path), aif)
+        aif_path = tmp_path / "ext_aif.tsv"
+        _write_aif_timeseries_tsv(aif_path, aif, "DSC")
 
         interface = AIFDetection()
         interface.inputs.concentration_file = str(conc_path)
