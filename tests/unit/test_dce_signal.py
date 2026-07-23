@@ -206,6 +206,22 @@ def test_missing_b1_uses_nominal_flip_angle(missing_b1: float) -> None:
         convert_to_plasma=False,
     )
     np.testing.assert_allclose(missing.concentration, nominal.concentration)
+    assert missing.conversion_qc["b1_missing_voxels"] == 1
+
+
+def test_signal_conversion_reports_bounded_spgr_inversion() -> None:
+    """Physically unsolvable enhancement is bounded and counted, not hidden."""
+    signal = np.full(10, 100.0)
+    signal[5] = 1e6
+    result = signal_to_concentration(
+        signal,
+        flip_angle_deg=15.0,
+        tr=0.005,
+        baseline_frames=5,
+        convert_to_plasma=False,
+    )
+    assert result.conversion_qc["e1_bounded_high_samples"] >= 1
+    assert result.conversion_qc["e1_bounded_fraction"] > 0
 
 
 class TestFieldStrengthDefaultT1:

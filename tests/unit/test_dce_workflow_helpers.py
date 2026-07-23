@@ -26,6 +26,34 @@ def _write_nifti(path: Any, data: np.ndarray) -> str:
     return str(path)
 
 
+def test_signal_conversion_node_reports_invalid_t1(tmp_path: Any) -> None:
+    """Workflow wrapper zeroes invalid T1 and returns conversion diagnostics."""
+    from pmriprep.workflows.dce._helpers import _signal_to_concentration_node
+
+    signal = np.full((2, 1, 1, 10), 100.0)
+    signal[..., 5:] = 120.0
+    t1 = np.array([[[1200.0]], [[np.nan]]])
+    dce_file = _write_nifti(tmp_path / "dce.nii.gz", signal)
+    t1_file = _write_nifti(tmp_path / "t1.nii.gz", t1)
+    with mock.patch("pathlib.Path.cwd", return_value=tmp_path):
+        output, qc = _signal_to_concentration_node(
+            dce_file,
+            t1_file,
+            None,
+            15.0,
+            0.005,
+            3.0,
+            3.8,
+            5,
+            False,
+        )
+
+    assert output.endswith("dce_concentration.nii.gz")
+    assert qc["t1_invalid_voxels"] == 1
+    assert qc["t1_invalid_fraction"] == pytest.approx(0.5)
+    assert qc["nonfinite_output_samples"] == 0
+
+
 # =============================================================================
 # _dsc_dce_validation_node dispatch
 # =============================================================================

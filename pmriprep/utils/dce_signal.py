@@ -7,7 +7,7 @@ equation and related T1-based calculations for pharmacokinetic analysis.
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Tuple, Union
+from typing import Any, Optional, Tuple, Union
 
 import numpy as np
 import numpy.typing as npt
@@ -60,6 +60,7 @@ class DCEConversionResult:
     is_plasma: bool
     effective_r1: float
     baseline_signal: Union[float, npt.NDArray[np.floating]]
+    conversion_qc: dict[str, Any]
 
 
 def ernst_signal_model(
@@ -401,6 +402,13 @@ def signal_to_concentration(
         # Mark voxels with no B1 data BEFORE clipping so they aren't
         # silently mapped to the clip minimum (which halves flip angles).
         b1_missing = ~np.isfinite(b1_map) | (b1_map <= 0)
+        b1_finite_positive = np.isfinite(b1_map) & (b1_map > 0)
+        b1_clipped_low = b1_finite_positive & (
+            b1_map < b1_thresh.dce_clip_low
+        )
+        b1_clipped_high = b1_finite_positive & (
+            b1_map > b1_thresh.dce_clip_high
+        )
         b1_safe = np.clip(b1_map, b1_thresh.dce_clip_low, b1_thresh.dce_clip_high)
         b1_safe[b1_missing] = 1.0  # No B1 data → nominal flip angles
         if signal.ndim == 4:
@@ -411,6 +419,9 @@ def signal_to_concentration(
             effective_flip_rad = flip_angle_rad * float(np.mean(b1_safe))
     else:
         effective_flip_rad = flip_angle_rad
+        b1_missing = np.zeros(spatial_shape or (1,), dtype=bool)
+        b1_clipped_low = np.zeros_like(b1_missing)
+        b1_clipped_high = np.zeros_like(b1_missing)
 
     # Get T1 values (convert from ms to seconds)
     if t1_map is not None:
@@ -491,6 +502,8 @@ def signal_to_concentration(
         concentration = np.zeros_like(signal)
 
     # Process each timepoint
+    e1_bounded_low = 0
+    e1_bounded_high = 0
     if signal.ndim == 1:
         # 1D: process as vector
         for t in range(n_timepoints):
@@ -505,6 +518,10 @@ def signal_to_concentration(
                 signal_ratio[t],
                 flip_t,
                 e1_baseline,
+            )
+            e1_bounded_low += int(np.count_nonzero(e1_t == EPSILON_E1_LOWER))
+            e1_bounded_high += int(
+                np.count_nonzero(e1_t == 1.0 - EPSILON_E1_UPPER)
             )
 
             # Convert to R1
@@ -530,6 +547,10 @@ def signal_to_concentration(
                 flip_t_4d,
                 e1_baseline,
             )
+            e1_bounded_low += int(np.count_nonzero(e1_t == EPSILON_E1_LOWER))
+            e1_bounded_high += int(
+                np.count_nonzero(e1_t == 1.0 - EPSILON_E1_UPPER)
+            )
 
             # Convert to R1
             r1_dynamic[..., t] = e1_to_r1(e1_t, tr)
@@ -548,8 +569,14 @@ def signal_to_concentration(
     # with the temporal mean of pre-bolus R1, which is more accurate and
     # corrects any systematic offset between VFA and dynamic acquisitions.
     # Works for both 4D (x,y,z,t) and 1D (t,) arrays via axis=-1.
-    baseline_conc = np.nanmean(
-        concentration[..., :baseline_frames], axis=-1, keepdims=True,
+    baseline_window = concentration[..., :baseline_frames]
+    baseline_valid = np.isfinite(baseline_window)
+    baseline_count = np.sum(baseline_valid, axis=-1, keepdims=True)
+    baseline_conc = np.divide(
+        np.nansum(baseline_window, axis=-1, keepdims=True),
+        baseline_count,
+        out=np.zeros_like(baseline_count, dtype=float),
+        where=baseline_count > 0,
     )
     concentration = concentration - baseline_conc
 
@@ -565,6 +592,8 @@ def signal_to_concentration(
     if convert_to_plasma:
         concentration = concentration / (1.0 - hematocrit)
 
+    n_samples = int(signal.size)
+    n_spatial = int(np.prod(spatial_shape)) if spatial_shape else 1
     return DCEConversionResult(
         concentration=concentration,
         r1_dynamic=r1_dynamic,
@@ -572,6 +601,21 @@ def signal_to_concentration(
         is_plasma=convert_to_plasma,
         effective_r1=effective_r1,
         baseline_signal=baseline_signal,
+        conversion_qc={
+            "n_spatial_voxels": n_spatial,
+            "n_timepoints": n_timepoints,
+            "b1_missing_voxels": int(np.count_nonzero(b1_missing)),
+            "b1_clipped_low_voxels": int(np.count_nonzero(b1_clipped_low)),
+            "b1_clipped_high_voxels": int(np.count_nonzero(b1_clipped_high)),
+            "e1_bounded_low_samples": e1_bounded_low,
+            "e1_bounded_high_samples": e1_bounded_high,
+            "e1_bounded_fraction": (
+                (e1_bounded_low + e1_bounded_high) / max(1, n_samples)
+            ),
+            "nonfinite_concentration_samples": int(
+                np.count_nonzero(~np.isfinite(concentration))
+            ),
+        },
     )
 
 

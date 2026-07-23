@@ -1657,6 +1657,12 @@
       "concentration_file"
     ],
     [
+      "signal_to_concentration",
+      "conversion_qc",
+      "collect_qc_metrics",
+      "signal_conversion_qc"
+    ],
+    [
       "transform_atlas_cascade",
       "out_files",
       "aif_detection",
@@ -1839,6 +1845,7 @@
         "preproc_display",
         "preprocess_qc",
         "registration_qc",
+        "signal_conversion_qc",
         "t1_qc",
         "use_external_t1",
         "validation_result",
@@ -2081,7 +2088,8 @@
         "tr"
       ],
       "output_names": [
-        "concentration_file"
+        "concentration_file",
+        "conversion_qc"
       ]
     },
     "transform_atlas_cascade": {
@@ -2217,7 +2225,7 @@
     }
   },
   "function_sha256": {
-    "collect_qc_metrics": "9d2d654a0efaf754199db0b59fcf372e98f41e9ba2ec5f5d9a2961c0b4bf565c",
+    "collect_qc_metrics": "5dd24198f031eeab6635c29a218ce22077a3df97278bccb5e81a2712bcfa59de",
     "combine_masks": "f2748155dafc15b2d74a066b3da5db0ed2a4b5486b46ee8ea1f4c7a181de8fcf",
     "create_aif_mask": "b7f950098e31edf1f4ae33feeceb4f24287680351c18994377a6129477eb1b0d",
     "dce_brain_mask_qc": "ced2d6d4b823457166d3fb21083d6220f2b0dc0e0155de5c134e6d98210b5086",
@@ -2235,7 +2243,7 @@
     "resample_dsc_cbv": "8637643d62fc961aafa3946ba1321ebcf4744121cb1b91e9b01bde70a4024ba3",
     "resample_dsc_ncbv": "9016b6e864f3d6e0149ee556592202a4fb42cec4b3e2a90946ff48dbfa6caf72",
     "select_aif_exclusion": "3ac6f0a171a3c915c7c043706044fb8dd45d2a9c05f1d1fad613919135724b21",
-    "signal_to_concentration": "3eb790eec588e9b239e5931dc2c59c8ad3ffa2449c56d4a3e64854a65626fcc1",
+    "signal_to_concentration": "7d3d6f07a89c6568f21e38afc35c817082d5592cb8edf58a086bedff1f58f100",
     "transform_atlas_cascade": "92097e5d6df046e1997dbee6d10208373b12e5535619d7397855d263159a752a",
     "transform_b1_to_dce": "9aa1395aee7d127f071c5cfce13ad16cd0a171847d34873e88945e12e81f3604",
     "transform_brain_mask": "d79c70197847c13c4a4fd38f056ae9911584e27b3d0d1a55b81ebbbc0dc8c3e4",

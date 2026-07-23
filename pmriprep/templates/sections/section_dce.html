@@ -255,7 +255,7 @@
     <div class="section">
         <h3>DCE Preprocessing QC</h3>
         <p>Signal quality, enhancement, tSNR, and temporal variability.</p>
-        {% if dce.qc_metrics.preprocessing %}
+        {% if dce.qc_metrics.preprocessing or dce.qc_metrics.signal_conversion %}
         <div class="metrics">
             {% if dce.qc_metrics.preprocessing.tr_ms is defined %}
             <div class="metric">
@@ -324,6 +324,20 @@
             <div class="metric">
                 <div class="metric-label">Mean CNR</div>
                 <div class="metric-value">{{ "%.2f"|format(dce.qc_metrics.preprocessing.mean_cnr) }}</div>
+            </div>
+            {% endif %}
+            {% if dce.qc_metrics.signal_conversion is defined %}
+            <div class="metric">
+                <div class="metric-label">Invalid T1 Voxels</div>
+                <div class="metric-value">{{ "{:,}".format(dce.qc_metrics.signal_conversion.t1_invalid_voxels | default(0)) }}</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Missing B1 Voxels</div>
+                <div class="metric-value">{{ "{:,}".format(dce.qc_metrics.signal_conversion.b1_missing_voxels | default(0)) }}</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Bounded SPGR Samples</div>
+                <div class="metric-value">{{ "%.3f"|format((dce.qc_metrics.signal_conversion.e1_bounded_fraction | default(0)) * 100) }}%</div>
             </div>
             {% endif %}
         </div>

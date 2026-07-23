@@ -69,6 +69,30 @@ def test_parent_render_hides_dsc_blocks_when_no_dsc(env):
     assert "<h3>DSC-DCE Cross-Validation</h3>" not in rendered
 
 
+def test_dce_signal_conversion_qc_renders(env):
+    """Conversion fallback and bounded-inversion accounting reaches HTML."""
+    template = env.get_template("sections/section_dce.html")
+    dce = {
+        "qc_metrics": {
+            "preprocessing": {},
+            "signal_conversion": {
+                "t1_invalid_voxels": 12,
+                "b1_missing_voxels": 34,
+                "e1_bounded_fraction": 0.00125,
+            },
+        },
+        "images": {"preprocessing_qc": "preproc.png"},
+        "display_status": {},
+    }
+    rendered = template.render(dce=dce)
+    assert "Invalid T1 Voxels" in rendered
+    assert ">12<" in rendered
+    assert "Missing B1 Voxels" in rendered
+    assert ">34<" in rendered
+    assert "Bounded SPGR Samples" in rendered
+    assert "0.125%" in rendered
+
+
 def test_parent_render_shows_dsc_blocks_when_dsc_present(env):
     """On DCE+DSC runs, both DCE-side DSC blocks must render."""
     template = env.get_template("report_unified.html")

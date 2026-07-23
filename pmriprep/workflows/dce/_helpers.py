@@ -591,7 +591,7 @@ def _signal_to_concentration_node(
     r1_relaxivity: float | None,
     baseline_frames: int,
     no_t1: bool,
-) -> str:
+) -> tuple[str, dict[str, object]]:
     """Convert DCE signal to contrast-agent concentration.
 
     This function wraps the signal_to_concentration utility for use in
@@ -620,8 +620,8 @@ def _signal_to_concentration_node(
 
     Returns
     -------
-    str
-        Path to the 4D concentration NIfTI file.
+    tuple
+        Path to the 4D concentration NIfTI file and conversion QC metrics.
     """
     from pathlib import Path
 
@@ -680,16 +680,25 @@ def _signal_to_concentration_node(
     # extreme concentration values that corrupt AIF detection thresholds.
     # invalid_t1 is 3D (spatial); fancy-indexing into the 4D concentration
     # array broadcasts the assignment across the trailing time axis.
+    conversion_qc = dict(result.conversion_qc)
     if t1_map is not None:
         invalid_t1 = ~np.isfinite(t1_map) | (t1_map < 100.0)  # T1 in ms
         result.concentration[invalid_t1] = 0.0
+        conversion_qc["t1_invalid_voxels"] = int(np.count_nonzero(invalid_t1))
+        conversion_qc["t1_invalid_fraction"] = float(np.mean(invalid_t1))
+    else:
+        conversion_qc["t1_invalid_voxels"] = 0
+        conversion_qc["t1_invalid_fraction"] = 0.0
+    conversion_qc["nonfinite_output_samples"] = int(
+        np.count_nonzero(~np.isfinite(result.concentration))
+    )
 
     # Save concentration file
     out_file = str(Path.cwd() / "dce_concentration.nii.gz")
     conc_img = nib.Nifti1Image(result.concentration.astype(np.float32), affine, header)
     nib.save(conc_img, out_file)
 
-    return out_file
+    return out_file, conversion_qc
 
 
 def _dsc_dce_validation_node(
@@ -971,6 +980,7 @@ def _dsc_dce_xval_plot_node(
 def _collect_qc_metrics(
     b1_qc: dict[str, object] | None,
     t1_qc: dict[str, object] | None,
+    signal_conversion_qc: dict[str, object] | None,
     preprocess_qc: dict[str, object] | None,
     registration_qc: dict[str, object] | None,
     aif_qc: dict[str, object] | None,
@@ -1029,6 +1039,8 @@ def _collect_qc_metrics(
 
     if b1_qc is not None:
         qc_metrics["b1_mapping"] = b1_qc
+    if signal_conversion_qc is not None:
+        qc_metrics["signal_conversion"] = signal_conversion_qc
 
     # T1 mapping section - handle VFA, external, and assumed cases
     if t1_qc is not None:

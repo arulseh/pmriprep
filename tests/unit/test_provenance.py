@@ -79,6 +79,24 @@ class TestEnrichDCE:
         assert perf["PKModeling"]["convergence_rate"] == pytest.approx(0.98, abs=0.001)
         assert perf["PKModeling"]["voxel_rsquared"] == pytest.approx(0.95, abs=0.001)
 
+    def test_signal_conversion_qc(self) -> None:
+        """Signal-conversion diagnostics are retained in map provenance."""
+        sidecar = _make_dce_sidecar()
+        conversion_qc = {
+            "t1_invalid_voxels": 12,
+            "b1_missing_voxels": 34,
+            "e1_bounded_fraction": 0.00125,
+        }
+        result = enrich_provenance_from_qc(
+            sidecar,
+            {"signal_conversion": conversion_qc},
+            "DCE",
+        )
+        assert (
+            result["PerfusionProcessing"]["SignalConversionQC"]
+            == conversion_qc
+        )
+
     def test_population_aif(self) -> None:
         """Population AIF includes model name and dose factor."""
         sidecar = _make_dce_sidecar()

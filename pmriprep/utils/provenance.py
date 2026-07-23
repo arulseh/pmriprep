@@ -284,6 +284,10 @@ def _enrich_dce(
         if t1_block:
             perf["T1Mapping"] = t1_block
 
+    conversion = qc.get("signal_conversion")
+    if conversion and isinstance(conversion, dict):
+        perf["SignalConversionQC"] = dict(conversion)
+
     # AIF detection
     aif = qc.get("aif_detection")
     if aif and isinstance(aif, dict):

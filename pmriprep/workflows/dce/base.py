@@ -1192,7 +1192,8 @@ def init_dce_qc_collection_wf(
 ) -> pe.Workflow:
     """Aggregate DCE processing, modeling, validation, and display QC."""
     fields = [
-        "b1_qc", "t1_qc", "preprocess_qc", "registration_qc", "aif_qc",
+        "b1_qc", "t1_qc", "signal_conversion_qc", "preprocess_qc",
+        "registration_qc", "aif_qc",
         "pk_qc", "validation_result", "preproc_display", "pk_fit_qc_metrics",
         "pk_maps_qc_metrics", "vp_at_bound_fractions", "nawm_available",
     ]
@@ -2076,7 +2077,7 @@ def init_dce_preproc_wf(
                 "baseline_frames",
                 "no_t1",
             ],
-            output_names=["concentration_file"],
+            output_names=["concentration_file", "conversion_qc"],
             function=_signal_to_concentration_node,
         ),
         name="signal_to_concentration",
@@ -2564,6 +2565,9 @@ def init_dce_preproc_wf(
         ])
 
     workflow.connect([
+        (signal_to_conc, dce_qc_collection_wf, [
+            ("conversion_qc", "inputnode.signal_conversion_qc"),
+        ]),
         (dce_preprocessing_wf, dce_qc_collection_wf, [
             ("outputnode.qc_metrics", "inputnode.preprocess_qc"),
         ]),
