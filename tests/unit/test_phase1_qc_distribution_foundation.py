@@ -242,6 +242,36 @@ def test_aif_sidecar_dce_units_are_plasma_concentration(tmp_path: Path) -> None:
     assert sc["Columns"] == ["plasma_concentration_mM"]
 
 
+def test_aif_sidecar_dce_peak_scaling_provenance(tmp_path: Path) -> None:
+    """DCE AIF TSV sidecars expose the canonical peak-scaling state."""
+    sc = build_aif_timeseries_sidecar(
+        modality="DCE",
+        source_paths=[tmp_path / "src.nii.gz"],
+        bids_dir=tmp_path,
+        subject="01",
+        session="01",
+        aif_qc={
+            "detection_method": "atlas",
+            "peak_scaling_enabled": True,
+            "peak_scaling_applied": True,
+            "raw_peak_mm": 4.0,
+            "emitted_peak_mm": 8.0,
+            "peak_scaling_factor": 2.0,
+            "peak_scaling_required_factor": 2.0,
+            "peak_scaling_policy": "one_sided_lower_bound",
+            "peak_scaling_trigger": "below_expected_minimum",
+        },
+    )
+    assert sc["AIFPeakScalingEnabled"] is True
+    assert sc["AIFPeakScalingApplied"] is True
+    assert sc["AIFRawPeakAmplitude"] == pytest.approx(4.0)
+    assert sc["AIFEmittedPeakAmplitude"] == pytest.approx(8.0)
+    assert sc["AIFPeakScalingFactor"] == pytest.approx(2.0)
+    assert sc["AIFPeakScalingRequiredFactor"] == pytest.approx(2.0)
+    assert sc["AIFPeakScalingPolicy"] == "one_sided_lower_bound"
+    assert sc["AIFPeakScalingTrigger"] == "below_expected_minimum"
+
+
 def test_aif_sidecar_invalid_modality_raises(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="modality must be"):
         build_aif_timeseries_sidecar(

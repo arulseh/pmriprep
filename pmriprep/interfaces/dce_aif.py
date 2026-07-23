@@ -966,6 +966,91 @@ def _resolve_aif_scale(
     return AIFScaleApplication(aif_curve, 1.0, required_factor, "none")
 
 
+def _build_peak_scaling_qc(
+    *,
+    detection_method: str,
+    emitted_peak_mm: float,
+    applied_factor: float,
+    required_factor: float,
+    calibration_mode: str,
+    raw_peak_mm: float | None = None,
+) -> dict[str, Any]:
+    """Build canonical DCE AIF peak-calibration provenance.
+
+    Parameters
+    ----------
+    detection_method : str
+        Final AIF source (detected, population, or external).
+    emitted_peak_mm : float
+        Peak of the AIF written to disk, in plasma mM.
+    applied_factor : float
+        Multiplicative factor actually applied to the detected curve.
+    required_factor : float
+        Factor required to reach an explicit target or automatic lower bound.
+    calibration_mode : str
+        Resolved calibration mode from :func:`_resolve_aif_scale`.
+    raw_peak_mm : float, optional
+        Peak before amplitude calibration, in plasma mM. For detected curves,
+        it is reconstructed exactly from the emitted peak and applied factor
+        when not supplied.
+
+    Returns
+    -------
+    dict
+        Stable QC/provenance fields shared by HTML and derivative sidecars.
+    """
+    if detection_method == "population":
+        enabled = False
+        policy = "not_applicable"
+        trigger = "population_aif"
+        raw_peak_mm = None
+    elif detection_method == "external":
+        enabled = False
+        policy = "not_applicable"
+        trigger = "external_aif"
+        raw_peak_mm = emitted_peak_mm if raw_peak_mm is None else raw_peak_mm
+    else:
+        enabled = calibration_mode in {"upward_floor", "explicit_target"}
+        policy = (
+            "explicit_target"
+            if calibration_mode == "explicit_target"
+            else "one_sided_lower_bound"
+            if calibration_mode == "upward_floor"
+            else "disabled"
+        )
+        if raw_peak_mm is None:
+            raw_peak_mm = (
+                emitted_peak_mm / applied_factor
+                if np.isfinite(applied_factor) and applied_factor > 0
+                else emitted_peak_mm
+            )
+        if calibration_mode == "explicit_target":
+            trigger = "explicit_target"
+        elif calibration_mode == "none":
+            trigger = "disabled"
+        elif applied_factor > 1.0 and not np.isclose(applied_factor, 1.0):
+            trigger = "below_expected_minimum"
+        elif raw_peak_mm <= MIN_MEANINGFUL_ENHANCEMENT_MM:
+            trigger = "below_meaningful_enhancement"
+        else:
+            trigger = "not_required"
+
+    return {
+        "peak_scaling_enabled": bool(enabled),
+        "peak_scaling_applied": bool(
+            enabled and not np.isclose(applied_factor, 1.0)
+        ),
+        "raw_peak_mm": (
+            None if raw_peak_mm is None else float(raw_peak_mm)
+        ),
+        "emitted_peak_mm": float(emitted_peak_mm),
+        "peak_scaling_factor": float(applied_factor),
+        "peak_scaling_required_factor": float(required_factor),
+        "peak_scaling_policy": policy,
+        "peak_scaling_trigger": trigger,
+    }
+
+
 def _compute_pool_qc(
     scaled_curve: npt.NDArray[Any],
     tr: float,
@@ -4252,6 +4337,16 @@ class AIFDetection(BaseInterface):
             # rather than falling through to the report-only quality_score.
             "aif_confidence": "standard",
         }
+        qc_metrics.update(
+            _build_peak_scaling_qc(
+                detection_method="external",
+                emitted_peak_mm=final_peak,
+                applied_factor=1.0,
+                required_factor=1.0,
+                calibration_mode="external",
+                raw_peak_mm=final_peak,
+            )
+        )
 
         # Write AIF curve
         out_aif_curve = self._gen_outfilename("_dce_aif_curve.txt")
@@ -5155,6 +5250,15 @@ class AIFDetection(BaseInterface):
                 "multi_bump_tail_heights_mm": multi_bump_heights,
                 "multi_bump_tail_warning": bool(multi_bump_warning),
             }
+        )
+        qc_metrics.update(
+            _build_peak_scaling_qc(
+                detection_method=detection_method,
+                emitted_peak_mm=final_peak,
+                applied_factor=scaling_factor,
+                required_factor=required_scaling_factor,
+                calibration_mode=calibration_mode,
+            )
         )
 
         # Save outputs

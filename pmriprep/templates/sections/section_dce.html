@@ -361,10 +361,21 @@
                 <div class="metric-value {{ dce.qc_metrics.aif_detection.aif_status | lower }}">{{ dce.qc_metrics.aif_detection.aif_status }}</div>
             </div>
             {% endif %}
-            {% if dce.qc_metrics.aif_detection.final_peak_mm is defined %}
+            {% if dce.qc_metrics.aif_detection.emitted_peak_mm is defined %}
+            <div class="metric">
+                <div class="metric-label">Emitted Peak</div>
+                <div class="metric-value">{{ "%.2f"|format(dce.qc_metrics.aif_detection.emitted_peak_mm) }} mM</div>
+            </div>
+            {% elif dce.qc_metrics.aif_detection.final_peak_mm is defined %}
             <div class="metric">
                 <div class="metric-label">Peak Concentration</div>
                 <div class="metric-value">{{ "%.2f"|format(dce.qc_metrics.aif_detection.final_peak_mm) }} mM</div>
+            </div>
+            {% endif %}
+            {% if dce.qc_metrics.aif_detection.raw_peak_mm is defined and dce.qc_metrics.aif_detection.raw_peak_mm is not none %}
+            <div class="metric">
+                <div class="metric-label">Raw Peak</div>
+                <div class="metric-value">{{ "%.2f"|format(dce.qc_metrics.aif_detection.raw_peak_mm) }} mM</div>
             </div>
             {% endif %}
             {% if dce.qc_metrics.aif_detection.final_fwhm_seconds is defined %}
@@ -403,10 +414,22 @@
                 <div class="metric-value">{{ "%.1f"|format(dce.qc_metrics.aif_detection.final_auc) }} mM&middot;s</div>
             </div>
             {% endif %}
-            {% if dce.qc_metrics.aif_detection.scaling_factor is defined and dce.qc_metrics.aif_detection.scaling_factor != 1.0 %}
+            {% if dce.qc_metrics.aif_detection.peak_scaling_policy is defined %}
             <div class="metric">
-                <div class="metric-label">Scale Factor</div>
-                <div class="metric-value">{{ "%.2f"|format(dce.qc_metrics.aif_detection.scaling_factor) }}x</div>
+                <div class="metric-label">Peak Scaling</div>
+                <div class="metric-value">{{ dce.qc_metrics.aif_detection.peak_scaling_policy }}{% if dce.qc_metrics.aif_detection.peak_scaling_applied %} (applied){% endif %}</div>
+            </div>
+            {% endif %}
+            {% if dce.qc_metrics.aif_detection.peak_scaling_factor is defined %}
+            <div class="metric">
+                <div class="metric-label">Peak Scale Factor</div>
+                <div class="metric-value">{{ "%.2f"|format(dce.qc_metrics.aif_detection.peak_scaling_factor) }}x</div>
+            </div>
+            {% endif %}
+            {% if dce.qc_metrics.aif_detection.peak_scaling_trigger is defined %}
+            <div class="metric">
+                <div class="metric-label">Peak Scaling Trigger</div>
+                <div class="metric-value">{{ dce.qc_metrics.aif_detection.peak_scaling_trigger }}</div>
             </div>
             {% endif %}
             {% set used = dce.qc_metrics.aif_detection.n_aif_voxels_selected

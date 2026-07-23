@@ -45,6 +45,14 @@ class TestEnrichDCE:
                 "blood_t1_seconds": 1.664,
                 "arterial_cascade_tier": 1,
                 "hemisphere_coverage": "bilateral",
+                "peak_scaling_enabled": True,
+                "peak_scaling_applied": True,
+                "raw_peak_mm": 4.0,
+                "emitted_peak_mm": 8.0,
+                "peak_scaling_factor": 2.0,
+                "peak_scaling_required_factor": 2.0,
+                "peak_scaling_policy": "one_sided_lower_bound",
+                "peak_scaling_trigger": "below_expected_minimum",
             },
             "pk_modeling": {
                 "model": "extended_tofts",
@@ -72,6 +80,12 @@ class TestEnrichDCE:
         assert perf["AIF"]["method"] == "auto"
         assert perf["AIF"]["n_voxels"] == 8
         assert perf["AIF"]["arterial_cascade_tier"] == 1
+        assert perf["AIF"]["PeakScaling"]["RawPeak"] == pytest.approx(4.0)
+        assert perf["AIF"]["PeakScaling"]["EmittedPeak"] == pytest.approx(8.0)
+        assert (
+            perf["AIF"]["PeakScaling"]["Policy"]
+            == "one_sided_lower_bound"
+        )
 
         assert "PKModeling" in perf
         assert perf["PKModeling"]["model"] == "extended_tofts"

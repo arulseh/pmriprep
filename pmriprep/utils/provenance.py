@@ -319,6 +319,13 @@ def _enrich_dce(
             if "dose_factor" in aif:
                 aif_block["dose_factor"] = _safe_float(aif["dose_factor"])
         if aif_block:
+            from pmriprep.utils.aif_provenance import (
+                build_peak_scaling_provenance,
+            )
+
+            peak_scaling = build_peak_scaling_provenance(aif)
+            if peak_scaling:
+                aif_block["PeakScaling"] = peak_scaling
             perf["AIF"] = aif_block
 
         # Explicit unit traceability. The AIF curve consumed by PK

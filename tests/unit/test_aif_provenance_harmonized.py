@@ -141,6 +141,14 @@ class TestBuildProvenanceBlockDCE:
                 "aif_confidence": "standard",
                 "aif_uncertainty_inflation_factor": 1.0,
                 "hematocrit": 0.42,
+                "peak_scaling_enabled": True,
+                "peak_scaling_applied": True,
+                "raw_peak_mm": 4.0,
+                "emitted_peak_mm": 8.0,
+                "peak_scaling_factor": 2.0,
+                "peak_scaling_required_factor": 2.0,
+                "peak_scaling_policy": "one_sided_lower_bound",
+                "peak_scaling_trigger": "below_expected_minimum",
             }},
             modality="DCE",
         )
@@ -150,6 +158,17 @@ class TestBuildProvenanceBlockDCE:
         assert block["Confidence"] == "standard"
         assert block["UncertaintyInflationFactor"] == pytest.approx(1.0)
         assert block["Hematocrit"] == pytest.approx(0.42)
+        assert block["PeakScaling"] == {
+            "Enabled": True,
+            "Applied": True,
+            "RawPeak": 4.0,
+            "EmittedPeak": 8.0,
+            "Factor": 2.0,
+            "RequiredFactor": 2.0,
+            "Policy": "one_sided_lower_bound",
+            "Trigger": "below_expected_minimum",
+            "PeakUnits": "mM",
+        }
         assert "GammaFitApplied" not in block
 
     def test_population(self) -> None:
@@ -199,6 +218,30 @@ class TestApplyAifSidecarDCE:
         assert sidecar["AIFDependent"] is True
         assert sidecar["TemplateAIFUsage"] == "ratio_defensible"
         assert "PerfusionProcessing" in sidecar
+
+    def test_pk_map_carries_peak_scaling(self) -> None:
+        """Quantitative-map sidecars retain the canonical scaling fragment."""
+        from pmriprep.utils.aif_provenance import apply_aif_sidecar
+
+        sidecar: dict = {}
+        qc = {
+            "aif_detection": {
+                "detection_method": "atlas",
+                "peak_scaling_enabled": True,
+                "peak_scaling_applied": True,
+                "raw_peak_mm": 4.0,
+                "emitted_peak_mm": 8.0,
+                "peak_scaling_factor": 2.0,
+                "peak_scaling_required_factor": 2.0,
+                "peak_scaling_policy": "one_sided_lower_bound",
+                "peak_scaling_trigger": "below_expected_minimum",
+            }
+        }
+        apply_aif_sidecar(sidecar, "ktrans", qc, modality="DCE")
+        scaling = sidecar["PerfusionProcessing"]["AIF"]["PeakScaling"]
+        assert scaling["RawPeak"] == pytest.approx(4.0)
+        assert scaling["EmittedPeak"] == pytest.approx(8.0)
+        assert scaling["Policy"] == "one_sided_lower_bound"
 
     def test_iauc_independent(self) -> None:
         from pmriprep.utils.aif_provenance import apply_aif_sidecar

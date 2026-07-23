@@ -643,6 +643,11 @@ uncertainty is omitted because their joint covariance is not retained.
 | `*_desc-dceAif_timeseries.tsv` | DCE plasma arterial input function (mM) |
 | `*_desc-dceAif_mask` | DCE-space voxels used to estimate the AIF |
 
+DCE AIF JSON sidecars and quantitative-map provenance record whether peak
+scaling was enabled and applied, the raw and emitted plasma peaks, scale
+factor, policy, and trigger. The default policy is a one-sided lower bound:
+peaks already within or above the expected dose-adjusted range are preserved.
+
 
 ## QC Reports
 

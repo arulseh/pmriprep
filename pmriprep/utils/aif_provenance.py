@@ -220,6 +220,28 @@ def _derive_quality_flag(
     return "poor"
 
 
+def build_peak_scaling_provenance(aif_qc: dict[str, Any]) -> dict[str, Any]:
+    """Build the shared DCE AIF ``PeakScaling`` provenance fragment."""
+    peak_scaling_keys = {
+        "Enabled": "peak_scaling_enabled",
+        "Applied": "peak_scaling_applied",
+        "RawPeak": "raw_peak_mm",
+        "EmittedPeak": "emitted_peak_mm",
+        "Factor": "peak_scaling_factor",
+        "RequiredFactor": "peak_scaling_required_factor",
+        "Policy": "peak_scaling_policy",
+        "Trigger": "peak_scaling_trigger",
+    }
+    peak_scaling: dict[str, Any] = {}
+    for output_key, qc_key in peak_scaling_keys.items():
+        value = aif_qc.get(qc_key)
+        if value is not None:
+            peak_scaling[output_key] = value
+    if peak_scaling:
+        peak_scaling["PeakUnits"] = "mM"
+    return peak_scaling
+
+
 def build_aif_provenance_block(
     qc_metrics: dict[str, Any] | None,
     modality: Modality = "DSC",
@@ -295,6 +317,9 @@ def build_aif_provenance_block(
                 or "cascade_exhausted"
             )
             block["PopulationFallbackReason"] = str(reason)
+        peak_scaling = build_peak_scaling_provenance(aif_qc)
+        if peak_scaling:
+            block["PeakScaling"] = peak_scaling
 
     if source == "external":
         block["ExternalAIFVerified"] = False

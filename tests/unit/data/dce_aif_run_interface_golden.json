@@ -237,6 +237,9 @@
           "__f__": "0x1.4000000000000p+4"
         },
         "detection_method": "atlas",
+        "emitted_peak_mm": {
+          "__f__": "0x1.13dcb08d3dcb0p+3"
+        },
         "expected_peak_max_mm": {
           "__f__": "0x1.a34f72c234f72p+3"
         },
@@ -281,8 +284,21 @@
         "peak_mm_mean": {
           "__f__": "0x1.0000000000000p+2"
         },
+        "peak_scaling_applied": true,
+        "peak_scaling_enabled": true,
+        "peak_scaling_factor": {
+          "__f__": "0x1.09793289ad001p+0"
+        },
+        "peak_scaling_policy": "one_sided_lower_bound",
+        "peak_scaling_required_factor": {
+          "__f__": "0x1.09793289ad001p+0"
+        },
+        "peak_scaling_trigger": "below_expected_minimum",
         "quality_score": {
           "__f__": "0x1.5e8a29b217125p-3"
+        },
+        "raw_peak_mm": {
+          "__f__": "0x1.0a049692f2306p+3"
         },
         "required_scaling_factor": {
           "__f__": "0x1.09793289ad001p+0"
@@ -529,6 +545,9 @@
           "__f__": "0x1.4000000000000p+4"
         },
         "detection_method": "atlas",
+        "emitted_peak_mm": {
+          "__f__": "0x1.8000000000000p+2"
+        },
         "expected_peak_max_mm": {
           "__f__": "0x1.a34f72c234f72p+3"
         },
@@ -573,8 +592,21 @@
         "peak_mm_mean": {
           "__f__": "0x1.0000000000000p+2"
         },
+        "peak_scaling_applied": true,
+        "peak_scaling_enabled": true,
+        "peak_scaling_factor": {
+          "__f__": "0x1.8000000000000p+0"
+        },
+        "peak_scaling_policy": "one_sided_lower_bound",
+        "peak_scaling_required_factor": {
+          "__f__": "0x1.8000000000000p+0"
+        },
+        "peak_scaling_trigger": "below_expected_minimum",
         "quality_score": {
           "__f__": "0x1.d9a36e88ff955p-5"
+        },
+        "raw_peak_mm": {
+          "__f__": "0x1.0000000000000p+2"
         },
         "required_scaling_factor": {
           "__f__": "0x1.8000000000000p+0"
@@ -756,6 +788,9 @@
           "__f__": "0x1.a666666666666p+0"
         },
         "detection_method": "external",
+        "emitted_peak_mm": {
+          "__f__": "0x1.8000000000000p+2"
+        },
         "external_aif": true,
         "external_aif_file": "external_aif.txt",
         "field_strength_t": {
@@ -774,8 +809,21 @@
           "__f__": "0x1.0000000000000p+0"
         },
         "n_aif_voxels_selected": 0,
+        "peak_scaling_applied": false,
+        "peak_scaling_enabled": false,
+        "peak_scaling_factor": {
+          "__f__": "0x1.0000000000000p+0"
+        },
+        "peak_scaling_policy": "not_applicable",
+        "peak_scaling_required_factor": {
+          "__f__": "0x1.0000000000000p+0"
+        },
+        "peak_scaling_trigger": "external_aif",
         "quality_score": {
           "__f__": "0x1.d9a36e88ff955p-5"
+        },
+        "raw_peak_mm": {
+          "__f__": "0x1.8000000000000p+2"
         },
         "required_scaling_factor": {
           "__f__": "0x1.0000000000000p+0"
@@ -1030,6 +1078,9 @@
           "__f__": "0x1.4000000000000p+4"
         },
         "detection_method": "atlas",
+        "emitted_peak_mm": {
+          "__f__": "0x1.13dcb08d3dcb0p+3"
+        },
         "expected_peak_max_mm": {
           "__f__": "0x1.a34f72c234f72p+3"
         },
@@ -1074,8 +1125,21 @@
         "peak_mm_mean": {
           "__f__": "0x1.0000000000000p+2"
         },
+        "peak_scaling_applied": true,
+        "peak_scaling_enabled": true,
+        "peak_scaling_factor": {
+          "__f__": "0x1.09793289ad001p+0"
+        },
+        "peak_scaling_policy": "one_sided_lower_bound",
+        "peak_scaling_required_factor": {
+          "__f__": "0x1.09793289ad001p+0"
+        },
+        "peak_scaling_trigger": "below_expected_minimum",
         "quality_score": {
           "__f__": "0x1.5e8a29b217125p-3"
+        },
+        "raw_peak_mm": {
+          "__f__": "0x1.0a049692f2306p+3"
         },
         "required_scaling_factor": {
           "__f__": "0x1.09793289ad001p+0"
@@ -1284,6 +1348,9 @@
         "dose_factor": {
           "__f__": "0x1.0000000000000p+0"
         },
+        "emitted_peak_mm": {
+          "__f__": "0x1.2ccd598d6f219p+3"
+        },
         "expected_peak_max_mm": {
           "__f__": "0x1.a34f72c234f72p+3"
         },
@@ -1311,10 +1378,21 @@
         "n_aif_voxels_selected": 0,
         "peak_amplitude_ratio": null,
         "peak_amplitude_warning": false,
+        "peak_scaling_applied": false,
+        "peak_scaling_enabled": false,
+        "peak_scaling_factor": {
+          "__f__": "0x1.0000000000000p+0"
+        },
+        "peak_scaling_policy": "not_applicable",
+        "peak_scaling_required_factor": {
+          "__f__": "0x1.0000000000000p+0"
+        },
+        "peak_scaling_trigger": "population_aif",
         "population_aif": true,
         "quality_score": {
           "__f__": "0x1.0000000000000p-1"
         },
+        "raw_peak_mm": null,
         "required_scaling_factor": {
           "__f__": "0x1.0000000000000p+0"
         },
@@ -1530,6 +1608,9 @@
         "dose_factor": {
           "__f__": "0x1.0000000000000p+0"
         },
+        "emitted_peak_mm": {
+          "__f__": "0x1.2ccd598d6f219p+3"
+        },
         "expected_peak_max_mm": {
           "__f__": "0x1.a34f72c234f72p+3"
         },
@@ -1557,10 +1638,21 @@
         "n_aif_voxels_selected": 0,
         "peak_amplitude_ratio": null,
         "peak_amplitude_warning": false,
+        "peak_scaling_applied": false,
+        "peak_scaling_enabled": false,
+        "peak_scaling_factor": {
+          "__f__": "0x1.0000000000000p+0"
+        },
+        "peak_scaling_policy": "not_applicable",
+        "peak_scaling_required_factor": {
+          "__f__": "0x1.0000000000000p+0"
+        },
+        "peak_scaling_trigger": "population_aif",
         "population_aif": true,
         "quality_score": {
           "__f__": "0x1.0000000000000p-1"
         },
+        "raw_peak_mm": null,
         "required_scaling_factor": {
           "__f__": "0x1.0000000000000p+0"
         },
@@ -1747,6 +1839,9 @@
         "dose_factor": {
           "__f__": "0x1.0000000000000p+0"
         },
+        "emitted_peak_mm": {
+          "__f__": "0x1.2ccd598d6f219p+3"
+        },
         "expected_peak_max_mm": {
           "__f__": "0x1.a34f72c234f72p+3"
         },
@@ -1774,10 +1869,21 @@
         "n_aif_voxels_selected": 0,
         "peak_amplitude_ratio": null,
         "peak_amplitude_warning": false,
+        "peak_scaling_applied": false,
+        "peak_scaling_enabled": false,
+        "peak_scaling_factor": {
+          "__f__": "0x1.0000000000000p+0"
+        },
+        "peak_scaling_policy": "not_applicable",
+        "peak_scaling_required_factor": {
+          "__f__": "0x1.0000000000000p+0"
+        },
+        "peak_scaling_trigger": "population_aif",
         "population_aif": true,
         "quality_score": {
           "__f__": "0x1.0000000000000p-1"
         },
+        "raw_peak_mm": null,
         "required_scaling_factor": {
           "__f__": "0x1.0000000000000p+0"
         },
@@ -1993,6 +2099,9 @@
         "dose_factor": {
           "__f__": "0x1.0000000000000p+0"
         },
+        "emitted_peak_mm": {
+          "__f__": "0x1.2ccd598d6f219p+3"
+        },
         "expected_peak_max_mm": {
           "__f__": "0x1.a34f72c234f72p+3"
         },
@@ -2020,10 +2129,21 @@
         "n_aif_voxels_selected": 0,
         "peak_amplitude_ratio": null,
         "peak_amplitude_warning": false,
+        "peak_scaling_applied": false,
+        "peak_scaling_enabled": false,
+        "peak_scaling_factor": {
+          "__f__": "0x1.0000000000000p+0"
+        },
+        "peak_scaling_policy": "not_applicable",
+        "peak_scaling_required_factor": {
+          "__f__": "0x1.0000000000000p+0"
+        },
+        "peak_scaling_trigger": "population_aif",
         "population_aif": true,
         "quality_score": {
           "__f__": "0x1.0000000000000p-1"
         },
+        "raw_peak_mm": null,
         "required_scaling_factor": {
           "__f__": "0x1.0000000000000p+0"
         },

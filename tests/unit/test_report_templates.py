@@ -93,6 +93,33 @@ def test_dce_signal_conversion_qc_renders(env):
     assert "0.125%" in rendered
 
 
+def test_dce_aif_peak_scaling_qc_renders(env):
+    """Raw/emitted peaks plus the resolved scaling policy reach HTML."""
+    template = env.get_template("sections/section_dce.html")
+    dce = {
+        "qc_metrics": {
+            "aif_detection": {
+                "emitted_peak_mm": 8.0,
+                "raw_peak_mm": 4.0,
+                "peak_scaling_policy": "one_sided_lower_bound",
+                "peak_scaling_applied": True,
+                "peak_scaling_factor": 2.0,
+                "peak_scaling_trigger": "below_expected_minimum",
+            },
+        },
+        "images": {},
+        "display_status": {},
+    }
+    rendered = template.render(dce=dce)
+    assert "Emitted Peak" in rendered
+    assert "8.00 mM" in rendered
+    assert "Raw Peak" in rendered
+    assert "4.00 mM" in rendered
+    assert "one_sided_lower_bound (applied)" in rendered
+    assert "2.00x" in rendered
+    assert "below_expected_minimum" in rendered
+
+
 def test_parent_render_shows_dsc_blocks_when_dsc_present(env):
     """On DCE+DSC runs, both DCE-side DSC blocks must render."""
     template = env.get_template("report_unified.html")

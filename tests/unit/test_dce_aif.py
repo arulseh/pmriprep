@@ -8,6 +8,7 @@ import pytest
 from pmriprep.interfaces.dce_aif import (
     AIFDetection,
     _apply_aif_scale,
+    _build_peak_scaling_qc,
     _classify_hemisphere,
     _compute_pool_qc,
     _count_slabs_spanned,
@@ -2033,6 +2034,72 @@ def test_explicit_target_overrides_disabled_peak_floor() -> None:
     assert result.required_factor == pytest.approx(expected_factor)
     assert result.curve.max() == pytest.approx(6.0 / 0.58)
     assert result.mode == "explicit_target"
+
+
+@pytest.mark.parametrize(
+    (
+        "method", "mode", "emitted", "factor", "required",
+        "enabled", "applied", "raw", "policy", "trigger",
+    ),
+    [
+        (
+            "atlas", "upward_floor", 8.0, 2.0, 2.0,
+            True, True, 4.0, "one_sided_lower_bound",
+            "below_expected_minimum",
+        ),
+        (
+            "atlas", "upward_floor", 8.0, 1.0, 1.0,
+            True, False, 8.0, "one_sided_lower_bound", "not_required",
+        ),
+        (
+            "atlas", "none", 4.0, 1.0, 2.0,
+            False, False, 4.0, "disabled", "disabled",
+        ),
+        (
+            "atlas", "explicit_target", 10.0, 0.5, 0.5,
+            True, True, 20.0, "explicit_target", "explicit_target",
+        ),
+        (
+            "population", "population", 7.0, 1.0, 1.0,
+            False, False, None, "not_applicable", "population_aif",
+        ),
+        (
+            "external", "external", 6.0, 1.0, 1.0,
+            False, False, 6.0, "not_applicable", "external_aif",
+        ),
+    ],
+)
+def test_peak_scaling_qc_states(
+    method: str,
+    mode: str,
+    emitted: float,
+    factor: float,
+    required: float,
+    enabled: bool,
+    applied: bool,
+    raw: float | None,
+    policy: str,
+    trigger: str,
+) -> None:
+    """Peak-scaling provenance distinguishes policy, mutation, and source."""
+    qc = _build_peak_scaling_qc(
+        detection_method=method,
+        emitted_peak_mm=emitted,
+        applied_factor=factor,
+        required_factor=required,
+        calibration_mode=mode,
+    )
+    assert qc["peak_scaling_enabled"] is enabled
+    assert qc["peak_scaling_applied"] is applied
+    if raw is None:
+        assert qc["raw_peak_mm"] is None
+    else:
+        assert qc["raw_peak_mm"] == pytest.approx(raw)
+    assert qc["emitted_peak_mm"] == pytest.approx(emitted)
+    assert qc["peak_scaling_factor"] == pytest.approx(factor)
+    assert qc["peak_scaling_required_factor"] == pytest.approx(required)
+    assert qc["peak_scaling_policy"] == policy
+    assert qc["peak_scaling_trigger"] == trigger
 
 
 def test_disabled_floor_keeps_hypothetical_factor_in_gate_decision() -> None:

@@ -1133,6 +1133,22 @@ def _aif_cosmetic_keys(aif_qc: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         out["AIFUsedAsCBVDenominator"] = bool(aif_qc["cbv_auc_denominator_is_synthetic"])
     if "hematocrit" in aif_qc:
         out["AIFHematocrit"] = float(aif_qc["hematocrit"])
+    peak_scaling_keys = {
+        "AIFPeakScalingEnabled": ("peak_scaling_enabled", bool),
+        "AIFPeakScalingApplied": ("peak_scaling_applied", bool),
+        "AIFRawPeakAmplitude": ("raw_peak_mm", float),
+        "AIFEmittedPeakAmplitude": ("emitted_peak_mm", float),
+        "AIFPeakScalingFactor": ("peak_scaling_factor", float),
+        "AIFPeakScalingRequiredFactor": (
+            "peak_scaling_required_factor", float,
+        ),
+        "AIFPeakScalingPolicy": ("peak_scaling_policy", str),
+        "AIFPeakScalingTrigger": ("peak_scaling_trigger", str),
+    }
+    for output_key, (qc_key, converter) in peak_scaling_keys.items():
+        value = aif_qc.get(qc_key)
+        if value is not None:
+            out[output_key] = converter(value)
     return out
 
 
