@@ -368,12 +368,6 @@
     ],
     [
       "dce_wf",
-      "outputnode.nktrans_map",
-      "dce_datasinks_wf",
-      "inputnode.nktrans_map"
-    ],
-    [
-      "dce_wf",
       "outputnode.peak_enhancement_map",
       "dce_datasinks_wf",
       "inputnode.peak_enhancement_map"

@@ -1065,56 +1065,32 @@
     [
       "normalize_iauc60",
       "out_file",
-      "lesion_stats",
-      "niauc60_map"
-    ],
-    [
-      "normalize_iauc60",
-      "out_file",
-      "outputnode",
-      "niauc60_map"
-    ],
-    [
-      "normalize_iauc60",
-      "out_file",
-      "roi_stats",
-      "niauc60_map"
-    ],
-    [
-      "normalize_iauc60",
-      "out_file",
-      "user_lesion_stats",
-      "niauc60_map"
-    ],
-    [
-      "normalize_ktrans",
-      "out_file",
       "collect_qc_metrics",
       "nawm_available"
     ],
     [
-      "normalize_ktrans",
+      "normalize_iauc60",
       "out_file",
       "lesion_stats",
-      "nktrans_map"
+      "niauc60_map"
     ],
     [
-      "normalize_ktrans",
+      "normalize_iauc60",
       "out_file",
       "outputnode",
-      "nktrans_map"
+      "niauc60_map"
     ],
     [
-      "normalize_ktrans",
+      "normalize_iauc60",
       "out_file",
       "roi_stats",
-      "nktrans_map"
+      "niauc60_map"
     ],
     [
-      "normalize_ktrans",
+      "normalize_iauc60",
       "out_file",
       "user_lesion_stats",
-      "nktrans_map"
+      "niauc60_map"
     ],
     [
       "pk_modeling",
@@ -1319,12 +1295,6 @@
       "out_ktrans",
       "lesion_stats",
       "ktrans_map"
-    ],
-    [
-      "pk_modeling",
-      "out_ktrans",
-      "normalize_ktrans",
-      "param_map"
     ],
     [
       "pk_modeling",
@@ -1965,12 +1935,6 @@
     [
       "transform_nawm_mask",
       "out_file",
-      "normalize_ktrans",
-      "nawm_mask"
-    ],
-    [
-      "transform_nawm_mask",
-      "out_file",
       "outputnode",
       "nawm_mask"
     ],
@@ -2281,15 +2245,6 @@
       ]
     },
     "normalize_iauc60": {
-      "input_names": [
-        "nawm_mask",
-        "param_map"
-      ],
-      "output_names": [
-        "out_file"
-      ]
-    },
-    "normalize_ktrans": {
       "input_names": [
         "nawm_mask",
         "param_map"
@@ -2611,7 +2566,6 @@
     "dsc_dce_xval_plot": "5c7cd63d87cc931e5d8a26b939b407d2318a1b6fb76ef3f19ad2f35ead4026d7",
     "motion_qc_plot": "36616aba56123999797c0b5e14d6ec9903e15bea44b1958923c89616b1fb1b2f",
     "normalize_iauc60": "ea6ff078eaf357c450297207c75c6d4057f311c7c4a441f94bb4afa2f1c2dcba",
-    "normalize_ktrans": "ea6ff078eaf357c450297207c75c6d4057f311c7c4a441f94bb4afa2f1c2dcba",
     "preprocessing_qc": "f8f38c2ec15fc59432d72e59996e80c8d1cb4ede4505bf0ba33af3caa07b09a6",
     "reg_filmstrip": "8215f2ddd5c31a4c2c521c6fe07b885f2175d2ecae61cff7c3e8f1b6e2a143c1",
     "resample_dsc_cbv": "8637643d62fc961aafa3946ba1321ebcf4744121cb1b91e9b01bde70a4024ba3",
@@ -2720,10 +2674,6 @@
       "n_procs": 1
     },
     "normalize_iauc60": {
-      "mem_gb": 0.2,
-      "n_procs": 1
-    },
-    "normalize_ktrans": {
       "mem_gb": 0.2,
       "n_procs": 1
     },
@@ -3149,10 +3099,6 @@
       "Function"
     ],
     [
-      "normalize_ktrans",
-      "Function"
-    ],
-    [
       "outputnode",
       "IdentityInterface"
     ],
@@ -3332,7 +3278,6 @@
     "motion_qc_plot",
     "nawm_mask",
     "niauc60_map",
-    "nktrans_map",
     "peak_enhancement_map",
     "pk_modeling_qc_plot",
     "pk_param_maps_qc_plot",

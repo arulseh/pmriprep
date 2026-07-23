@@ -131,7 +131,6 @@ DCE_POPULATION_AIF_USAGE: Final[dict[str, TemplateAIFUsageCategory]] = {
     "iauc90": "safe",
     "iauc120": "safe",
     # Normalized (ratio cancels)
-    "nktrans": "safe",
     "niauc60": "safe",
     # Model-free (AIF-independent)
     "peak_enhancement": "safe",

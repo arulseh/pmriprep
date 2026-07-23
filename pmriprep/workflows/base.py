@@ -2750,7 +2750,6 @@ def _connect_master_dce_outputs_and_datasinks(
         }
     # NAWM normalization + NAWM mask
     if dce_has_nawm:
-        dce_present.add("nktrans_map")
         dce_present.add("niauc60_map")
         dce_present.add("nawm_mask")
     # T1map + B1+map (anat/)
@@ -2913,7 +2912,6 @@ def _connect_master_dce_outputs_and_datasinks(
             ("outputnode.ps_ci95_lower", "inputnode.ps_ci95_lower"),
             ("outputnode.ps_ci95_upper", "inputnode.ps_ci95_upper"),
             # Normalized maps (NAWM-normalized)
-            ("outputnode.nktrans_map", "inputnode.nktrans_map"),
             ("outputnode.niauc60_map", "inputnode.niauc60_map"),
             # Smoothed maps
             ("outputnode.smooth_pk_maps", "inputnode.smooth_pk_maps"),

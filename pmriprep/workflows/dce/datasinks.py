@@ -871,7 +871,6 @@ _MF_LESIONSTATS_MAP_KEY: dict[str, str] = {
 
 # NAWM-normalized DCE maps that carry LesionStats.
 _NAWMNORM_LESIONSTATS_MAP_KEY: dict[str, str] = {
-    "nktrans_map": "nktrans",
     "niauc60_map": "niauc60",
 }
 
@@ -1145,7 +1144,7 @@ def init_dce_datasinks_wf(
                 "tsnr_map", "qc_mask", "r2_map", "quality_flag_map",
                 "model_selection_map", "delta_bic_map",
                 # NAWM-norm
-                "nktrans_map", "niauc60_map",
+                "niauc60_map",
                 # Smoothed dicts (variable cardinality)
                 "smooth_pk_maps", "smooth_model_free_maps",
                 # T1/B1 + masks (anat/)
@@ -1462,22 +1461,12 @@ def init_dce_datasinks_wf(
         sink_outputs.append((dbic_sink, "out_file"))
 
     # --- NAWM-normalized maps ---
-    if "nktrans_map" in present:
-        sink = _add_perf_map_sink(
-            workflow, inputnode, base_perf,
-            name="nktrans_map", in_attr="nktrans_map",
-            desc_value="dceNawmNorm", suffix="Ktrans",
-            description="Ktrans normalized by NAWM (normal-appearing white matter) mean",
-            units="1", extra=None,
-            map_key="nktrans",
-        )
-        sink_outputs.append((sink, "out_file"))
     if "niauc60_map" in present:
         sink = _add_perf_map_sink(
             workflow, inputnode, base_perf_no_ktrans,
             name="niauc60_map", in_attr="niauc60_map",
             desc_value="dceNawmNorm", suffix="IAUC60",
-            description="IAUC at 60s normalized by NAWM (normal-appearing white matter) mean",
+            description="IAUC at 60s normalized by the NAWM median",
             units="1", extra=None,
             map_key="niauc60",
         )

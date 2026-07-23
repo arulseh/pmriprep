@@ -231,7 +231,6 @@ class TestComputeDCEDerivedMetrics:
 
         derived = compute_dce_derived_metrics(
             ktrans_data=ktrans,
-            nktrans_data=None,
             ve_data=ve,
             vp_data=None,
             mask=mask,
@@ -243,20 +242,6 @@ class TestComputeDCEDerivedMetrics:
             assert f"above_{t}" in ktrans_fv
         assert "hotspot_summary" not in derived
 
-    def test_nktrans_fractional_volumes(self) -> None:
-        """nKtrans data produces per-map fractional volumes."""
-        mask = np.ones((10, 10, 1), dtype=bool)
-        nktrans = np.zeros((10, 10, 1))
-        nktrans.flat[:100] = np.linspace(0.0, 60.0, 100)
-
-        derived = compute_dce_derived_metrics(
-            ktrans_data=None, nktrans_data=nktrans,
-            ve_data=None, vp_data=None, mask=mask,
-        )
-        assert "nktrans" in derived["fractional_volumes"]
-        for t in (2.0, 5.0, 10.0, 15.0, 20.0, 30.0, 50.0):
-            assert f"above_{t}" in derived["fractional_volumes"]["nktrans"]
-
     def test_niauc60_fractional_volumes(self) -> None:
         """nIAUC60 data produces per-map fractional volumes."""
         mask = np.ones((10, 10, 1), dtype=bool)
@@ -264,7 +249,7 @@ class TestComputeDCEDerivedMetrics:
         niauc60.flat[:100] = np.linspace(0.0, 8.0, 100)
 
         derived = compute_dce_derived_metrics(
-            ktrans_data=None, nktrans_data=None,
+            ktrans_data=None,
             ve_data=None, vp_data=None, mask=mask,
             niauc60_data=niauc60,
         )
@@ -279,7 +264,7 @@ class TestComputeDCEDerivedMetrics:
         vp.flat[:100] = np.linspace(0.0, 0.12, 100)
 
         derived = compute_dce_derived_metrics(
-            ktrans_data=None, nktrans_data=None,
+            ktrans_data=None,
             ve_data=None, vp_data=vp, mask=mask,
         )
         assert "vp" in derived["fractional_volumes"]
@@ -636,7 +621,7 @@ class TestNormalizeHelpersReturnEmptyString:
     """Contract: NAWM normalization Function nodes return ``""`` (not ``None``).
 
     These helpers feed ``traits.Str`` consumers in DCE/DSC lesion-stats
-    (``nktrans_map``, ``niauc60_map``, ``ncbv_map``, ``ncbf_map``). Returning
+    (``niauc60_map``, ``ncbv_map``, ``ncbf_map``). Returning
     ``None`` triggers a TraitError that under the MultiProc plugin manifests
     as a silent dispatch hang (no work-dir created, no log line) — the same
     failure mode :class:`TestCombineTumorMasksReturnsEmptyString` documents.
@@ -698,9 +683,7 @@ class TestLesionStatsAcceptsEmptyMapTrait:
         iface.inputs.session_id = "0001"
         # Should not raise TraitError — these are the values produced by
         # _normalize_by_nawm on the no-NAWM path.
-        iface.inputs.nktrans_map = ""
         iface.inputs.niauc60_map = ""
-        assert iface.inputs.nktrans_map == ""
         assert iface.inputs.niauc60_map == ""
 
     def test_dsc_lesion_stats_accepts_empty_string_for_normalized_maps(self) -> None:
@@ -997,7 +980,6 @@ class TestDCELesionStatsMapKeyCoverage:
         )
 
         assert _NAWMNORM_LESIONSTATS_MAP_KEY == {
-            "nktrans_map": "nktrans",
             "niauc60_map": "niauc60",
         }
 

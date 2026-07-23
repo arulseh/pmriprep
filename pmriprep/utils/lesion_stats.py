@@ -556,7 +556,6 @@ DSC_FRACTIONAL_THRESHOLDS: Dict[str, Tuple[float, ...]] = {
 }
 DCE_FRACTIONAL_THRESHOLDS: Dict[str, Tuple[float, ...]] = {
     "ktrans": (0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5),
-    "nktrans": (2.0, 5.0, 10.0, 15.0, 20.0, 30.0, 50.0),
     "niauc60": (1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0),
     "vp": (0.02, 0.03, 0.04, 0.05, 0.06, 0.08, 0.10),
 }
@@ -620,7 +619,6 @@ def compute_dsc_derived_metrics(
 
 def compute_dce_derived_metrics(
     ktrans_data: Optional[np.ndarray],
-    nktrans_data: Optional[np.ndarray],
     ve_data: Optional[np.ndarray],
     vp_data: Optional[np.ndarray],
     mask: np.ndarray,
@@ -633,8 +631,8 @@ def compute_dce_derived_metrics(
     """
     derived: Dict[str, Any] = {}
     fractions = _per_map_fractional_volumes(
-        {"ktrans": ktrans_data, "nktrans": nktrans_data,
-         "ve": ve_data, "vp": vp_data, "niauc60": niauc60_data},
+        {"ktrans": ktrans_data, "ve": ve_data, "vp": vp_data,
+         "niauc60": niauc60_data},
         DCE_FRACTIONAL_THRESHOLDS,
         mask,
     )

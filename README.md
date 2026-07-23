@@ -506,7 +506,7 @@ output_dir/pmriprep/
       sub-01_ses-01_desc-dcePS_stat.nii.gz                  # 2CXM only
       sub-01_ses-01_desc-dceE_stat.nii.gz                   # 2CXM only
       sub-01_ses-01_desc-dceRsquared_stat.nii.gz
-      sub-01_ses-01_desc-dceNawmNormKtrans_stat.nii.gz
+      sub-01_ses-01_desc-dceNawmNormIAUC60_stat.nii.gz
       # DCE relative PK uncertainty (Bayesian example; NLLS uses
       # RelativeStandardError)
       sub-01_ses-01_desc-dcePosteriorCVKtrans_stat.nii.gz
@@ -616,7 +616,6 @@ output_dir/pmriprep/
 | `*_desc-dceBAT_stat` | Bolus arrival time | seconds |
 | `*_desc-dceCurveType_dseg` | Curve type (1=persistent, 2=plateau, 3=washout) | categorical |
 | `*_desc-dceTsnr_stat` | Temporal signal-to-noise ratio | arbitrary |
-| `*_desc-dceNawmNormKtrans_stat` | NAWM-normalized Ktrans | ratio |
 | `*_desc-dceNawmNormIAUC60_stat` | NAWM-normalized IAUC60 | ratio |
 | `*_desc-dceRelativeStandardError{Param}_stat` | NLLS standard error divided by the absolute estimate | fraction |
 | `*_desc-dcePosteriorCV{Param}_stat` | Posterior standard deviation divided by the absolute estimate | fraction |

@@ -53,9 +53,6 @@ class DCELesionStatsInputSpec(BaseInterfaceInputSpec):
     vp_map = traits.Str(desc="vp (plasma volume fraction) map path")
     kep_map = traits.Str(desc="kep (rate constant) map path")
 
-    # Normalized maps (optional - only available when NAWM mask present)
-    nktrans_map = traits.Str(desc="Normalized Ktrans map path")
-
     # IAUC maps (all optional)
     iauc60_map = traits.Str(desc="IAUC at 60 seconds map path")
     iauc90_map = traits.Str(desc="IAUC at 90 seconds map path")
@@ -230,7 +227,7 @@ class DCELesionStats(BaseInterface):
             nawm_data = np.asarray(nawm_img.dataobj) > 0  # type: ignore[attr-defined]
             nawm_maps = {
                 k: v for k, v in maps.items()
-                if k in ["ktrans", "nktrans", "ve", "vp", "kep"]
+                if k in ["ktrans", "ve", "vp", "kep"]
             }
             result.nawm_reference = compute_nawm_reference(
                 nawm_data, nawm_maps, voxel_sizes,
@@ -240,7 +237,6 @@ class DCELesionStats(BaseInterface):
         primary_mask = lesion_data > 0
         result.derived_metrics = compute_dce_derived_metrics(
             ktrans_data=maps.get("ktrans"),
-            nktrans_data=maps.get("nktrans"),
             ve_data=maps.get("ve"),
             vp_data=maps.get("vp"),
             mask=primary_mask,
@@ -289,7 +285,6 @@ class DCELesionStats(BaseInterface):
             ("ve_map", "ve"),
             ("vp_map", "vp"),
             ("kep_map", "kep"),
-            ("nktrans_map", "nktrans"),
             ("iauc60_map", "iauc60"),
             ("iauc90_map", "iauc90"),
             ("iauc120_map", "iauc120"),
