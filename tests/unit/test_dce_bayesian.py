@@ -347,6 +347,7 @@ class TestVIConvergenceAndInitialization:
         )
 
         assert not result.converged
+        assert result.quality_flag == "poor_convergence"
 
     def test_low_permeability_warm_start_recovers_noiseless_curve(self) -> None:
         """VI must not replace informative low uptake with a poor prior fit."""

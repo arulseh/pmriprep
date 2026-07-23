@@ -1925,10 +1925,10 @@ def _fit_single_voxel(
         params = dict(result.parameters)
         kep_railed = _compute_derived_params(params, effective_model)
         base_quality = getattr(result, "quality_flag", "good")
-        quality_flag = (
-            "unreliable_high_kep"
-            if kep_railed and base_quality == "good"
-            else base_quality
+        quality_flag = _resolve_dce_fit_quality(
+            bool(result.converged),
+            base_quality,
+            kep_railed,
         )
 
         return {
@@ -2101,6 +2101,19 @@ def _compute_derived_params(
         kep_railed = raw_kep > KEP_BOUNDS.max
         params_out["kep"] = min(raw_kep, KEP_BOUNDS.max)
     return kep_railed
+
+
+def _resolve_dce_fit_quality(
+    converged: bool,
+    base_quality: str,
+    kep_railed: bool,
+) -> str:
+    """Enforce convergence before applying secondary DCE quality labels."""
+    if not converged:
+        return "poor_convergence"
+    if kep_railed and base_quality == "good":
+        return "unreliable_high_kep"
+    return base_quality
 
 
 def _merge_fit_results(

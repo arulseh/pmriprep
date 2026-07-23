@@ -14,6 +14,7 @@ from pmriprep.interfaces.dce_compute import (
     _fraction_vp_at_bound,
     _is_degenerate_dce_fit,
     _normal_approximation_intervals,
+    _resolve_dce_fit_quality,
     _initialize_dce_qc_metrics,
     _scatter_degenerate_dce_fit,
     _scatter_dce_fit_artifacts,
@@ -39,6 +40,29 @@ from pmriprep.utils.dce_constants import (
     VE_BOUNDS,
     VP_BOUNDS,
 )
+
+
+@pytest.mark.parametrize(
+    ("converged", "base_quality", "kep_railed", "expected"),
+    [
+        (False, "good", False, "poor_convergence"),
+        (False, "high_uncertainty", True, "poor_convergence"),
+        (True, "good", True, "unreliable_high_kep"),
+        (True, "high_uncertainty", True, "high_uncertainty"),
+        (True, "good", False, "good"),
+    ],
+)
+def test_resolve_dce_fit_quality_prioritizes_convergence(
+    converged: bool,
+    base_quality: str,
+    kep_railed: bool,
+    expected: str,
+) -> None:
+    """Nonconvergence cannot remain good or be hidden by a secondary flag."""
+    assert (
+        _resolve_dce_fit_quality(converged, base_quality, kep_railed)
+        == expected
+    )
 
 
 @pytest.mark.parametrize(

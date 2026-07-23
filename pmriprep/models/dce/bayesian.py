@@ -1203,6 +1203,7 @@ class BayesianPKFitter:
             converged=converged,
             fitting_method="vi",
             fitted_curve=fitted_curve,
+            quality_flag="good" if converged else "poor_convergence",
         )
 
     def fit_mcmc(
