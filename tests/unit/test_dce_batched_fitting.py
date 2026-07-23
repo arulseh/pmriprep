@@ -6,7 +6,7 @@ auto-mode BIC selection, and result format for all four DCE PK models.
 
 import numpy as np
 import pytest
-from scipy.optimize import minimize
+from scipy.optimize import lsq_linear, minimize
 
 from pmriprep.models.dce.batched_models import (
     batched_2cxm_model,
@@ -262,18 +262,17 @@ class TestPatlakExact:
         model = PatlakModel()
         tissue = model.evaluate(latent_parameters, aif, time_points)
 
-        def objective(parameters: np.ndarray) -> float:
-            residuals = tissue - model.evaluate(
-                parameters.tolist(), aif, time_points
-            )
-            return float(np.sum(residuals**2))
-
-        reference = minimize(
-            objective,
-            x0=np.array([0.1, 0.02]),
-            method="SLSQP",
-            bounds=model.get_bounds(),
-            options={"maxiter": 4000, "ftol": 1e-14},
+        design = np.column_stack([
+            model.evaluate([1.0, 0.0], aif, time_points),
+            model.evaluate([0.0, 1.0], aif, time_points),
+        ])
+        bounds = np.asarray(model.get_bounds(), dtype=np.float64)
+        reference = lsq_linear(
+            design,
+            tissue,
+            bounds=(bounds[:, 0], bounds[:, 1]),
+            tol=1e-14,
+            max_iter=4000,
         )
         assert reference.success
 
@@ -287,7 +286,11 @@ class TestPatlakExact:
             [result.params["ktrans"][0], result.params["vp"][0]]
         )
 
-        assert objective(parameters) == pytest.approx(reference.fun, rel=1e-9)
+        reference_residuals = tissue - design @ reference.x
+        result_residuals = tissue - design @ parameters
+        assert np.sum(result_residuals**2) == pytest.approx(
+            np.sum(reference_residuals**2), rel=1e-9
+        )
         at_ktrans_bound = parameters[0] == pytest.approx(
             model.get_bounds()[0][0]
         ) or parameters[0] == pytest.approx(model.get_bounds()[0][1])
