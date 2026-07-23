@@ -172,6 +172,28 @@ class TestBATCorrectionProvenance:
         assert "BATCorrection" not in out.get("PerfusionProcessing", {})
 
 
+class TestInferenceFallbackProvenance:
+    """Bayesian-to-NLLS fallback accounting reaches every PK-map sidecar."""
+
+    def test_surfaces_from_merged_pipeline_qc(
+        self, base_sidecar, pk_qc_metrics,
+    ) -> None:
+        fallback = {
+            "requested_inference": "vi",
+            "fallback_inference": "nlls",
+            "n_retained_voxels": 100,
+            "n_nlls_fallback": 4,
+            "fallback_fraction_of_retained": 0.04,
+        }
+        pk_qc_metrics["pk_modeling"]["inference_fallback"] = fallback
+
+        out = enrich_dce_pk_map_sidecar(
+            dict(base_sidecar), qc_metrics=pk_qc_metrics, map_key="ve",
+        )
+
+        assert out["PerfusionProcessing"]["InferenceFallback"] == fallback
+
+
 class TestEmptyInputs:
     def test_no_qc_metrics(self, base_sidecar):
         out = enrich_dce_pk_map_sidecar(

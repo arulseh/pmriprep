@@ -1436,6 +1436,52 @@ class TestChunkedMultiproc:
         ]
         assert results[0]["selected_model_name"] == "patlak"
         assert results[0]["delta_bic"] == 8.0
+        assert results[0]["inference_fallback"] is False
         assert results[1]["selected_model_name"] == "extended_tofts"
         assert results[1]["delta_bic"] == 12.0
-        assert results[2] is batched_results[2]
+        assert results[1]["inference_fallback"] is False
+        assert results[2]["selected_model_name"] == "patlak"
+        assert results[2]["delta_bic"] == 20.0
+        assert results[2]["inference_fallback"] is True
+        assert "inference_fallback" not in batched_results[2]
+
+    def test_fixed_map_refinement_marks_nlls_fallback(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A failed fixed-model MAP refinement discloses retained NLLS output."""
+        import pmriprep.interfaces.dce_compute as dce_compute
+        from pmriprep.interfaces.dce_compute import ComputeDCEMaps, VoxelInput
+
+        batched = [{"failed": False, "converged": True, "params": {"Ktrans": 0.1}}]
+        voxel = VoxelInput(0, 0, 0, np.zeros(4), None)
+        monkeypatch.setattr(
+            dce_compute,
+            "_fit_single_voxel",
+            lambda _: {"failed": True, "converged": False},
+        )
+        init_args = (
+            np.zeros(4),
+            np.arange(4, dtype=float),
+            "tofts",
+            "map",
+            0,
+            1,
+            "skip",
+            0.0,
+            False,
+            None,
+            False,
+            42,
+            None,
+        )
+
+        results = ComputeDCEMaps()._refine_map_from_batched(
+            batched,
+            [voxel],
+            init_args,
+            n_procs=1,
+        )
+
+        assert results[0]["params"] == {"Ktrans": 0.1}
+        assert results[0]["inference_fallback"] is True
+        assert "inference_fallback" not in batched[0]

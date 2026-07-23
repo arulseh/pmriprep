@@ -26,6 +26,7 @@ from pmriprep.interfaces.dce_compute import (
     _summarize_dce_fit_outcomes,
     _summarize_dce_r2,
     _summarize_map_uncertainty_sources,
+    _summarize_inference_fallback,
     _summarize_mcmc_diagnostics,
     _summarize_vp_prior_departures,
 )
@@ -375,6 +376,18 @@ def test_summarize_map_uncertainty_sources_counts_actual_outcomes() -> None:
     }
 
 
+def test_summarize_inference_fallback_names_denominator() -> None:
+    """Bayesian fallback QC reports its engines, count, and retained fraction."""
+    assert _summarize_inference_fallback("nlls", 8, 0) is None
+    assert _summarize_inference_fallback("vi", 8, 2) == {
+        "requested_inference": "vi",
+        "fallback_inference": "nlls",
+        "n_retained_voxels": 8,
+        "n_nlls_fallback": 2,
+        "fallback_fraction_of_retained": 0.25,
+    }
+
+
 def test_retained_fit_accounting_tracks_constrained_convergence() -> None:
     """A converged constrained fit contributes constrained count and R²."""
     voxel = VoxelInput(0, 0, 0, np.zeros(3), 0.04)
@@ -654,6 +667,7 @@ def test_map_uncertainty_accounting_excludes_postfit_rejection() -> None:
         **base_result,
         "params": {"Ktrans": 0.1, "ve": 0.3},
         "uncertainty_source": "laplace_hessian",
+        "inference_fallback": True,
     }
 
     summary = _scatter_dce_fit_results(
@@ -669,6 +683,7 @@ def test_map_uncertainty_accounting_excludes_postfit_rejection() -> None:
 
     assert summary.n_rejected_postfit == 1
     assert summary.map_uncertainty_sources == ["laplace_hessian"]
+    assert summary.n_inference_fallback == 1
 
 
 def test_initialize_dce_qc_metrics_preserves_pre_fit_state() -> None:

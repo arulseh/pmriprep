@@ -1558,6 +1558,14 @@ def enrich_dce_pk_map_sidecar(
     bat = qc_metrics.get("bat_correction") or qc_metrics.get("pk_modeling", {}).get("bat_correction")
     if isinstance(bat, dict):
         sidecar.setdefault("PerfusionProcessing", {})["BATCorrection"] = dict(bat)
+    pk_modeling = qc_metrics.get("pk_modeling")
+    fallback = qc_metrics.get("inference_fallback")
+    if fallback is None and isinstance(pk_modeling, dict):
+        fallback = pk_modeling.get("inference_fallback")
+    if isinstance(fallback, dict):
+        sidecar.setdefault("PerfusionProcessing", {})["InferenceFallback"] = dict(
+            fallback
+        )
     if map_key == "ktrans":
         xval = qc_metrics.get("dsc_dce_validation")
         if isinstance(xval, dict):

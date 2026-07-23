@@ -487,6 +487,7 @@ def _scatter_dce_fit_results(
     n_mcmc_voxels = 0
     vp_prior_departures: list[float] = []
     map_uncertainty_sources: list[str] = []
+    n_inference_fallback = 0
     for voxel, result in zip(voxel_data, results):
         if result["failed"]:
             n_execution_failed += 1
@@ -508,6 +509,7 @@ def _scatter_dce_fit_results(
             n_rejected_postfit += 1
             continue
         n_retained += 1
+        n_inference_fallback += int(bool(result.get("inference_fallback", False)))
         if inference == "map":
             map_uncertainty_sources.append(
                 str(result.get("uncertainty_source", "not_computed"))
@@ -567,6 +569,7 @@ def _scatter_dce_fit_results(
         n_mcmc_voxels,
         vp_prior_departures,
         map_uncertainty_sources,
+        n_inference_fallback,
     )
 
 
@@ -622,6 +625,23 @@ def _summarize_map_uncertainty_sources(
         "n_prior_fallback": n_prior_fallback,
         "n_not_computed": n_not_computed,
         "prior_fallback_fraction": n_prior_fallback / max(1, n_evaluated),
+    }
+
+
+def _summarize_inference_fallback(
+    inference: str,
+    n_retained: int,
+    n_nlls_fallback: int,
+) -> Optional[dict[str, str | int | float]]:
+    """Summarize retained Bayesian requests supplied by NLLS fallback fits."""
+    if inference == "nlls":
+        return None
+    return {
+        "requested_inference": inference,
+        "fallback_inference": "nlls",
+        "n_retained_voxels": n_retained,
+        "n_nlls_fallback": n_nlls_fallback,
+        "fallback_fraction_of_retained": n_nlls_fallback / max(1, n_retained),
     }
 
 
@@ -1426,6 +1446,7 @@ class _DCEFitSummary(NamedTuple):
     n_mcmc_voxels: int
     vp_prior_departures: list[float]
     map_uncertainty_sources: list[str]
+    n_inference_fallback: int
 
 
 # Import-time pickle-safety assertion (S1 from code review round 3):
@@ -3712,6 +3733,14 @@ class ComputeDCEMaps(BaseInterface):
                 fit_summary.map_uncertainty_sources
             )
 
+        inference_fallback = _summarize_inference_fallback(
+            inference,
+            fit_summary.n_retained,
+            fit_summary.n_inference_fallback,
+        )
+        if inference_fallback is not None:
+            qc_metrics["inference_fallback"] = inference_fallback
+
         qc_metrics.update(
             _summarize_vp_prior_departures(fit_summary.vp_prior_departures)
         )
@@ -4419,9 +4448,12 @@ class ComputeDCEMaps(BaseInterface):
         final_results = []
         for fit_res, cpu_res in zip(batched_results, cpu_results):
             if cpu_res.get("converged", False) and not cpu_res.get("failed", True):
+                cpu_res["inference_fallback"] = False
                 final_results.append(cpu_res)
             else:
-                final_results.append(fit_res)
+                fallback_result = dict(fit_res)
+                fallback_result["inference_fallback"] = True
+                final_results.append(fallback_result)
 
         return final_results
 
@@ -4536,9 +4568,13 @@ class ComputeDCEMaps(BaseInterface):
                 if refined.get("failed", True) or not refined.get(
                     "converged", False
                 ):
+                    fallback_result = dict(batched_results[index])
+                    fallback_result["inference_fallback"] = True
+                    final_results[index] = fallback_result
                     continue
                 refined["selected_model_name"] = selected_model
                 refined["delta_bic"] = batched_results[index]["delta_bic"]
+                refined["inference_fallback"] = False
                 final_results[index] = refined
 
         return final_results
