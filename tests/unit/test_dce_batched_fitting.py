@@ -19,6 +19,9 @@ from pmriprep.models.dce.batched_fitting import (
     batched_lm_fit,
     batched_patlak_lstsq,
 )
+from pmriprep.models.dce.two_compartment_exchange import (
+    TwoCompartmentExchangeModel,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -188,6 +191,33 @@ class TestPatlakExact:
 # ---------------------------------------------------------------------------
 
 class TestTwoCXMRecovery:
+    def test_2cxm_noiseless_balanced_regime_matches_scalar(
+        self,
+        aif_and_time: tuple[np.ndarray, np.ndarray],
+    ) -> None:
+        """Batched 2CXM must recover a noiseless identifiable scalar solution."""
+        aif, time_points = aif_and_time
+        model = TwoCompartmentExchangeModel()
+        truth = {"fp": 50.0, "ps": 10.0, "ve": 0.2, "vp": 0.02}
+        tissue = model.evaluate(
+            [truth[name] for name in ("fp", "ps", "ve", "vp")],
+            aif,
+            time_points,
+        )
+
+        result = batched_lm_fit(
+            "2cxm",
+            tissue[np.newaxis, :],
+            aif,
+            time_points,
+            max_iter=100,
+        )
+
+        assert result.converged[0]
+        assert result.r_squared[0] > 0.9999
+        for name, expected in truth.items():
+            assert result.params[name][0] == pytest.approx(expected, rel=0.01)
+
     def test_2cxm_recovery(self, aif_and_time):
         """1000 voxels, 1% noise, 4 params → params within 10% for 80%."""
         aif, time_points = aif_and_time

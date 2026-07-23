@@ -14,7 +14,7 @@ The tissue concentration is computed using an analytical solution based on
 eigenvalue decomposition of the two-compartment system.
 """
 
-from typing import Optional, Sequence
+from typing import Final, Optional, Sequence
 
 import numpy as np
 import numpy.typing as npt
@@ -38,6 +38,8 @@ from pmriprep.utils.dce_constants import (
     VP_BOUNDS,
     VP_VE_TOTAL_MAX,
 )
+
+TWO_CXM_VE_BOUNDS: Final[tuple[float, float]] = (0.01, 0.8)
 
 
 class TwoCompartmentExchangeModel(PKModel):
@@ -149,7 +151,7 @@ class TwoCompartmentExchangeModel(PKModel):
             ),
             ModelParameter(
                 name="ve",
-                bounds=(0.01, 0.8),  # Restricted to 0.8 for 2CXM
+                bounds=TWO_CXM_VE_BOUNDS,
                 typical_range=(0.1, 0.5),
                 transform=TransformType.LOG_LOGIT,
                 description="Extravascular extracellular volume fraction",

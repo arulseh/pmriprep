@@ -25,6 +25,7 @@ import numpy as np
 import numpy.typing as npt
 
 from pmriprep.models.dce.batched_models import evaluate_model
+from pmriprep.models.dce.two_compartment_exchange import TWO_CXM_VE_BOUNDS
 from pmriprep.utils.dce_constants import (
     FP_BOUNDS,
     KTRANS_BOUNDS,
@@ -56,6 +57,10 @@ _PARAM_BOUNDS: dict[str, tuple[float, float]] = {
     "vp": (VP_BOUNDS.min, VP_BOUNDS.max),
     "fp": (FP_BOUNDS.min, FP_BOUNDS.max),
     "ps": (PS_BOUNDS.min, PS_BOUNDS.max),
+}
+
+_MODEL_SPECIFIC_BOUNDS: dict[str, dict[str, tuple[float, float]]] = {
+    "2cxm": {"ve": TWO_CXM_VE_BOUNDS},
 }
 
 # Parameter-specific finite difference floors (scale-aware)
@@ -570,6 +575,76 @@ def _batched_initial_guess(
     aif_peak = np.max(aif)
     aif_peak_idx = np.argmax(aif)
 
+    # Match the scalar 2CXM data-driven initializer. A distant starting point
+    # can lead the ill-conditioned four-parameter objective to a good-looking
+    # but incorrect boundary solution.
+    if model_name == "2cxm":
+        tissue_peak_indices = np.argmax(tissue_curves, axis=1)
+        start = int(aif_peak_idx) + 1
+        ends = np.minimum(
+            np.maximum(tissue_peak_indices, start + 3),
+            n_timepoints - 1,
+        )
+        ktrans_init = np.full(n_voxels, 0.1, dtype=np.float64)
+        for end in np.unique(ends):
+            if int(end) - start < 3:
+                continue
+            idx = np.arange(start, int(end) + 1)
+            if float(np.max(np.abs(aif_integral[idx]))) < 1e-9:
+                continue
+            design = np.column_stack([aif_integral[idx], aif[idx]])
+            rows = np.where(ends == end)[0]
+            try:
+                solution = np.linalg.lstsq(
+                    design,
+                    tissue_curves[rows][:, idx].T,
+                    rcond=None,
+                )[0]
+            except np.linalg.LinAlgError:
+                continue
+            slopes = solution[0]
+            finite = np.isfinite(slopes)
+            ktrans_init[rows[finite]] = np.maximum(slopes[finite], 0.001)
+
+        if aif_peak > 1e-6:
+            vp_init = np.clip(
+                np.max(tissue_curves, axis=1) / aif_peak,
+                _PARAM_BOUNDS["vp"][0],
+                _PARAM_BOUNDS["vp"][1],
+            )
+        else:
+            vp_init = np.full(n_voxels, 0.02)
+
+        late_start = min(int(aif_peak_idx) + 12, n_timepoints - 5)
+        if late_start < n_timepoints - 3:
+            mean_aif = float(np.mean(aif[late_start:]))
+            if mean_aif > 0.05 * aif_peak:
+                ve_init = np.clip(
+                    np.mean(tissue_curves[:, late_start:], axis=1) / mean_aif,
+                    0.01,
+                    0.8,
+                )
+            else:
+                ve_init = np.full(n_voxels, 0.2)
+        else:
+            ve_init = np.full(n_voxels, 0.2)
+
+        initial = {
+            "fp": np.clip(
+                ktrans_init * 120.0,
+                _PARAM_BOUNDS["fp"][0] + 1e-3,
+                _PARAM_BOUNDS["fp"][1],
+            ),
+            "ps": np.clip(
+                ktrans_init * 60.0,
+                _PARAM_BOUNDS["ps"][0] + 1e-3,
+                _PARAM_BOUNDS["ps"][1],
+            ),
+            "ve": ve_init,
+            "vp": vp_init,
+        }
+        return np.column_stack([initial[name] for name in param_names])
+
     # Patlak regression for Ktrans estimate
     aif_int_sq = np.sum(aif_integral ** 2)
     if aif_int_sq > _EPSILON_NUMERICAL:
@@ -889,8 +964,13 @@ def batched_lm_fit(
     n_free = len(free_param_names)
 
     # Get bounds for free parameters
-    bounds_lo = np.array([_PARAM_BOUNDS[p][0] for p in free_param_names])
-    bounds_hi = np.array([_PARAM_BOUNDS[p][1] for p in free_param_names])
+    model_bounds = _MODEL_SPECIFIC_BOUNDS.get(model_name, {})
+    bounds_lo = np.array(
+        [model_bounds.get(name, _PARAM_BOUNDS[name])[0] for name in free_param_names]
+    )
+    bounds_hi = np.array(
+        [model_bounds.get(name, _PARAM_BOUNDS[name])[1] for name in free_param_names]
+    )
 
     # Initialize parameters from original (un-subtracted) tissue curves
     init_curves = tissue_curves
