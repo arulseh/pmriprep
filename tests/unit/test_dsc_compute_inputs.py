@@ -8,7 +8,13 @@ import nibabel as nib
 import numpy as np
 import pytest
 
-from pmriprep.interfaces.dsc_compute import ComputeDSCMaps, _DSCDeconvolutionMaps
+from pmriprep.interfaces.dsc_compute import (
+    ComputeDSCMaps,
+    _DSCDeconvolutionMaps,
+    _dsc_fit_single_voxel,
+    _dsc_init_worker,
+)
+from pmriprep.models.dsc import VascularModel
 from pmriprep.utils.dsc_constants import EPSILON_CONCENTRATION, EPSILON_SIGNAL
 from pmriprep.utils.dsc_signal import (
     compute_peak_height_legacy,
@@ -125,6 +131,37 @@ def test_prepare_motion_weighting_disabled_paths(method: str) -> None:
 
     assert result.weights is None
     assert result.qc == {"applied": False}
+
+
+def test_vascular_nlls_worker_returns_parametric_fit() -> None:
+    """Advertised vascular NLLS reaches the vascular solver, not fallback."""
+    time_points = np.arange(50, dtype=np.float64) * 1.5
+    aif = np.exp(-0.5 * ((time_points - 15.0) / 3.0) ** 2)
+    tissue = VascularModel().tissue_curve(
+        [0.06, 3.0, 2.0, 1.5], aif, time_points
+    )
+    _dsc_init_worker(
+        aif=aif,
+        time_points=time_points,
+        method="vascular",
+        inference="nlls",
+        mcmc_samples=500,
+        cpi_control_points=0,
+        bolus_duration_frames=10,
+        dt=1.5,
+    )
+
+    result = _dsc_fit_single_voxel((0, 0, 0, tissue))
+
+    assert result["failed"] is False
+    assert result.get("needs_fallback") is not True
+    assert result["converged"] is True
+    assert result["cbf"] == pytest.approx(0.06, rel=0.02)
+    assert result["mtt"] == pytest.approx(6.0, rel=0.03)
+    assert result["alpha"] == pytest.approx(3.0, rel=0.05)
+    assert result["beta"] == pytest.approx(2.0, rel=0.05)
+    assert result["tmax"] == pytest.approx(1.5, abs=0.1)
+    assert result["r_squared"] > 0.999
 
 
 def test_parametric_fit_health_uses_admissible_denominator(

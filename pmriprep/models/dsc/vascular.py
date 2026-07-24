@@ -12,6 +12,7 @@ import numpy.typing as npt
 from scipy import special  # type: ignore[import-untyped]
 
 from pmriprep.models.dsc.base import (
+    DSCFitResult,
     DSCModel,
     DSCModelParameter,
     ParamsLike,
@@ -481,3 +482,207 @@ class VascularModel(DSCModel):
         """
         alpha_safe = max(float(alpha), 1e-10)
         return float(1.0 / np.sqrt(alpha_safe))
+
+
+def _fit_vascular_nlls(
+    model: VascularModel,
+    concentration: npt.NDArray[np.floating],
+    aif: npt.NDArray[np.floating],
+    time_points: npt.NDArray[np.floating],
+    weights: npt.NDArray[np.floating] | None = None,
+    sloppy: bool = False,
+) -> DSCFitResult | None:
+    """Fit the vascular model with bounded nonlinear least squares.
+
+    Optimization uses the model's identifiable fitting space
+    ``(CBF, MTT, alpha, delay)`` and returns model-space parameters
+    ``(CBF, alpha, beta, delay)``. Log-transformed positive parameters and
+    explicit transformed bounds constrain every fitted coordinate.
+
+    Parameters
+    ----------
+    model : VascularModel
+        Vascular model instance.
+    concentration : npt.NDArray[np.floating]
+        Measured tissue concentration curve.
+    aif : npt.NDArray[np.floating]
+        Arterial input function.
+    time_points : npt.NDArray[np.floating]
+        Acquisition times in seconds.
+    weights : npt.NDArray[np.floating] or None, optional
+        Per-frame motion weights.
+    sloppy : bool, optional
+        Use a smaller evaluation budget for tests.
+
+    Returns
+    -------
+    DSCFitResult or None
+        Fitted model result, or ``None`` if optimization cannot be run.
+    """
+    from scipy import optimize  # type: ignore[import-untyped]
+
+    from pmriprep.models.bayesian_utils import (
+        TransformType,
+        from_transformed,
+        to_transformed,
+    )
+
+    fitting_defs = list(model.get_fitting_parameter_definitions())
+    n_params = len(fitting_defs)
+    n_obs = len(concentration)
+    if n_obs <= n_params:
+        return None
+
+    transforms = [definition.transform for definition in fitting_defs]
+    upper_bounds: list[float | None] = [
+        definition.bounds[1]
+        if definition.transform == TransformType.LOG_LOGIT
+        else None
+        for definition in fitting_defs
+    ]
+
+    def _transform_bound(value: float, index: int) -> float:
+        if transforms[index] == TransformType.LOG:
+            value = max(value, np.finfo(np.float64).tiny)
+        return float(
+            to_transformed(value, transforms[index], upper_bounds[index])
+        )
+
+    fit_lower = np.array(
+        [_transform_bound(definition.bounds[0], j)
+         for j, definition in enumerate(fitting_defs)],
+        dtype=np.float64,
+    )
+    fit_upper = np.array(
+        [_transform_bound(definition.bounds[1], j)
+         for j, definition in enumerate(fitting_defs)],
+        dtype=np.float64,
+    )
+
+    initial_model = np.asarray(model.get_initial_guess(), dtype=np.float64)
+    initial_fitting = model.model_to_fitting_params(initial_model)
+    x0_fit = np.array(
+        [
+            float(
+                to_transformed(
+                    initial_fitting[j], transforms[j], upper_bounds[j]
+                )
+            )
+            for j in range(n_params)
+        ],
+        dtype=np.float64,
+    )
+    x0_fit = np.clip(x0_fit, fit_lower, fit_upper)
+
+    sqrt_w = (
+        np.sqrt(np.asarray(weights, dtype=np.float64))
+        if weights is not None
+        else np.ones(n_obs, dtype=np.float64)
+    )
+
+    def _to_natural(
+        fitting_transformed: npt.NDArray[np.floating],
+    ) -> npt.NDArray[np.float64]:
+        return np.array(
+            [
+                float(
+                    from_transformed(
+                        fitting_transformed[j],
+                        transforms[j],
+                        upper_bounds[j],
+                    )
+                )
+                for j in range(n_params)
+            ],
+            dtype=np.float64,
+        )
+
+    def _residual(
+        fitting_transformed: npt.NDArray[np.floating],
+    ) -> npt.NDArray[np.float64]:
+        fitting_natural = _to_natural(fitting_transformed)
+        model_params = model.fitting_to_model_params(fitting_natural)
+        predicted = model.tissue_curve(model_params, aif, time_points)
+        return sqrt_w * (concentration - predicted)
+
+    max_nfev = 50 if sloppy else 100
+    try:
+        ls_result = optimize.least_squares(
+            _residual,
+            x0_fit,
+            method="trf",
+            bounds=(fit_lower, fit_upper),
+            max_nfev=max_nfev,
+            ftol=1e-8,
+            xtol=1e-8,
+        )
+    except (ValueError, RuntimeError):
+        return None
+
+    optimum_fitting = _to_natural(
+        np.asarray(ls_result.x, dtype=np.float64)
+    )
+    optimum_model = model.fitting_to_model_params(optimum_fitting)
+    fitted_tissue = model.tissue_curve(optimum_model, aif, time_points)
+    fitted_residue = model.compute_fitted_residue(
+        optimum_model, time_points
+    )
+
+    residuals = np.asarray(concentration, dtype=np.float64) - fitted_tissue
+    ss_res = float(np.sum((sqrt_w * residuals) ** 2))
+    centered = np.asarray(concentration, dtype=np.float64) - float(
+        np.mean(concentration)
+    )
+    ss_tot = float(np.sum((sqrt_w * centered) ** 2))
+    r_squared = 1.0 - ss_res / max(ss_tot, np.finfo(np.float64).eps)
+
+    uncertainties: dict[str, float] = {}
+    confidence_intervals: dict[str, tuple[float, float]] = {}
+    try:
+        jacobian = np.asarray(ls_result.jac, dtype=np.float64)
+        information = jacobian.T @ jacobian + 1e-6 * np.eye(n_params)
+        covariance = np.linalg.inv(information) * (
+            ss_res / max(n_obs - n_params, 1)
+        )
+        cbf_std_transformed = float(np.sqrt(max(covariance[0, 0], 0.0)))
+        uncertainties["cbf"] = float(optimum_fitting[0]) * cbf_std_transformed
+        cbf_lower = float(
+            from_transformed(
+                ls_result.x[0] - 1.96 * cbf_std_transformed,
+                transforms[0],
+                upper_bounds[0],
+            )
+        )
+        cbf_upper = float(
+            from_transformed(
+                ls_result.x[0] + 1.96 * cbf_std_transformed,
+                transforms[0],
+                upper_bounds[0],
+            )
+        )
+        confidence_intervals["cbf"] = (
+            max(cbf_lower, fitting_defs[0].bounds[0]),
+            min(cbf_upper, fitting_defs[0].bounds[1]),
+        )
+    except np.linalg.LinAlgError:
+        pass
+
+    return DSCFitResult(
+        parameters=model.params_to_dict(optimum_model),
+        uncertainties=uncertainties,
+        credible_intervals=confidence_intervals,
+        r_squared=float(r_squared),
+        residual_sum_squares=ss_res,
+        model_name=model.name,
+        n_parameters=n_params,
+        n_observations=n_obs,
+        converged=bool(ls_result.success),
+        fitting_method="nlls",
+        optimizer_status=int(ls_result.status),
+        n_function_evaluations=int(ls_result.nfev),
+        evaluation_budget_exhausted=bool(
+            ls_result.status == 0 and ls_result.nfev >= max_nfev
+        ),
+        fitted_residue=fitted_residue,
+        fitted_tissue_curve=fitted_tissue,
+    )

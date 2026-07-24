@@ -1419,17 +1419,29 @@ def fit_dsc_model(
         method_lower = "vi"
 
     if method_lower == "nlls":
-        # FABBER-parity NLLS lives only on the CPI path
         from pmriprep.models.dsc.cpi import CPIModel, _fit_cpi_simple
-        if not isinstance(model, CPIModel):
-            raise ValueError(
-                "method='nlls' is only supported for CPIModel; got "
-                f"{type(model).__name__}. Use 'map' or 'vi' for other models."
+        from pmriprep.models.dsc.vascular import (
+            VascularModel,
+            _fit_vascular_nlls,
+        )
+
+        if isinstance(model, CPIModel):
+            result = _fit_cpi_simple(
+                model, concentration, aif, time_points,
+                weights=weights, sloppy=sloppy,
             )
-        result = _fit_cpi_simple(model, concentration, aif, time_points,
-                                 weights=weights, sloppy=sloppy)
+        elif isinstance(model, VascularModel):
+            result = _fit_vascular_nlls(
+                model, concentration, aif, time_points,
+                weights=weights, sloppy=sloppy,
+            )
+        else:
+            raise ValueError(
+                "method='nlls' is only supported for CPIModel and "
+                f"VascularModel; got {type(model).__name__}."
+            )
         if result is None:
-            raise RuntimeError("CPI NLLS fit failed to converge")
+            raise RuntimeError(f"{model.name} NLLS fit failed to converge")
         return result
     elif method_lower == "map":
         return fitter.fit_map(

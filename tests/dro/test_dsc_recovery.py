@@ -802,6 +802,109 @@ class TestVascularRecovery:
             )
 
 
+class TestVascularNLLSRecovery:
+    """Verify priors-off vascular recovery in the identifiable fit space."""
+
+    @pytest.mark.parametrize(
+        "cbf,alpha,beta,delay",
+        [
+            (0.03, 2.0, 2.5, -1.0),
+            (0.06, 3.0, 2.0, 0.0),
+            (0.10, 5.0, 1.6, 1.5),
+        ],
+    )
+    @pytest.mark.parametrize("noise_frac", [0.0, 0.02])
+    def test_vascular_nlls(
+        self,
+        cbf: float,
+        alpha: float,
+        beta: float,
+        delay: float,
+        noise_frac: float,
+    ) -> None:
+        """NLLS recovers CBF and MTT without replacing beta by MTT."""
+        tissue, aif, time_sec = _make_vascular_test_data(
+            cbf, alpha, beta, delay, noise_frac
+        )
+
+        result = fit_dsc_model(
+            VascularModel(), tissue, aif, time_sec, method="nlls"
+        )
+
+        assert result.fitting_method == "nlls"
+        assert result.converged
+        assert result.parameters.keys() == {"cbf", "alpha", "beta", "delay"}
+        assert result.r_squared > (0.98 if noise_frac else 0.999999)
+        assert result.parameters["cbf"] == pytest.approx(cbf, rel=0.10)
+        recovered_mtt = result.parameters["alpha"] * result.parameters["beta"]
+        assert recovered_mtt == pytest.approx(alpha * beta, rel=0.12)
+        assert 0.5 <= result.parameters["alpha"] <= 10.0
+        assert 0.1 <= result.parameters["beta"] <= 10.0
+        assert -3.0 <= result.parameters["delay"] <= 10.0
+        assert np.all(np.isfinite(result.fitted_tissue_curve))
+        assert np.all(np.isfinite(result.fitted_residue))
+        assert result.uncertainties["cbf"] >= 0.0
+        cbf_interval = result.credible_intervals["cbf"]
+        assert 0.0 <= cbf_interval[0] <= result.parameters["cbf"]
+        assert result.parameters["cbf"] <= cbf_interval[1] <= 2.0
+
+    def test_motion_weight_excludes_corrupted_peak_frame(self) -> None:
+        """Zero motion weight removes a corrupted frame from the objective."""
+        tissue, aif, time_sec = _make_vascular_test_data(
+            0.06, 3.0, 2.0, 0.0
+        )
+        peak_index = int(np.argmax(tissue))
+        corrupted = tissue.copy()
+        corrupted[peak_index] += 3.0 * float(np.max(tissue))
+        weights = np.ones(len(tissue), dtype=np.float64)
+        weights[peak_index] = 0.0
+
+        result = fit_dsc_model(
+            VascularModel(),
+            corrupted,
+            aif,
+            time_sec,
+            method="nlls",
+            weights=weights,
+        )
+
+        assert result.parameters["cbf"] == pytest.approx(0.06, rel=0.02)
+        recovered_mtt = result.parameters["alpha"] * result.parameters["beta"]
+        assert recovered_mtt == pytest.approx(6.0, rel=0.03)
+        assert result.r_squared > 0.999
+
+    @pytest.mark.parametrize(
+        "cbf,alpha,beta,delay",
+        [
+            (0.001, 0.55, 9.0, 9.0),
+            (1.5, 9.0, 3.0, -2.5),
+        ],
+    )
+    def test_near_bound_round_trip(
+        self,
+        cbf: float,
+        alpha: float,
+        beta: float,
+        delay: float,
+    ) -> None:
+        """Near-bound fits stay finite and recover the generating curve."""
+        tissue, aif, time_sec = _make_vascular_test_data(
+            cbf, alpha, beta, delay
+        )
+
+        result = fit_dsc_model(
+            VascularModel(), tissue, aif, time_sec, method="nlls"
+        )
+
+        assert result.converged
+        assert result.evaluation_budget_exhausted is False
+        assert result.r_squared > 0.999999
+        assert result.parameters["cbf"] == pytest.approx(cbf, rel=0.01)
+        assert result.parameters["alpha"] == pytest.approx(alpha, rel=0.01)
+        assert result.parameters["beta"] == pytest.approx(beta, rel=0.01)
+        assert result.parameters["delay"] == pytest.approx(delay, abs=0.02)
+
+
 # =============================================================================
 # CPI MAP Recovery on Gamma-Variate Residues
 # =============================================================================

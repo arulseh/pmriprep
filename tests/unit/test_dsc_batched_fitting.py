@@ -467,6 +467,32 @@ class TestBatchedDSCVICPUConsistency:
             err_msg=f"CBF: batched={batched_cbf:.6f} CPU={cpu_cbf:.6f}",
         )
 
+    def test_vascular_nlls_and_vi_share_model_parameterization(
+        self,
+        dsc_aif_and_time: tuple[np.ndarray, np.ndarray],
+    ) -> None:
+        """Vascular NLLS and VI return the same model-space parameter names."""
+        from pmriprep.models.dsc import VascularModel, fit_dsc_model
+
+        aif, tp = dsc_aif_and_time
+        tissue = batched_vascular_forward(
+            np.array([0.06]), np.array([3.0]), np.array([2.0]),
+            np.array([1.5]), aif, tp,
+        )[0]
+
+        nlls = fit_dsc_model(
+            VascularModel(), tissue, aif, tp, method="nlls"
+        )
+        vi = fit_dsc_model(
+            VascularModel(), tissue, aif, tp, method="vi", sloppy=True
+        )
+
+        assert nlls.parameters.keys() == vi.parameters.keys()
+        assert nlls.parameters["cbf"] == pytest.approx(0.06, rel=0.02)
+        assert nlls.parameters["alpha"] * nlls.parameters["beta"] == (
+            pytest.approx(6.0, rel=0.03)
+        )
+
 
 class TestAnalyticCBFJacobian:
     """Verify analytic dC/d(log_cbf) = C(t) matches central FD."""
