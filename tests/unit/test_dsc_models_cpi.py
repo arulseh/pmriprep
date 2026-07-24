@@ -6,6 +6,7 @@ import pytest
 from pmriprep.models.bayesian_utils import TransformType
 from pmriprep.models.dsc.cpi import (
     CPIModel,
+    _fit_cpi_simple,
     estimate_bolus_duration,
     select_n_by_bic,
     select_n_control_points,
@@ -298,3 +299,39 @@ class TestCPIDelay:
         assert md.get_mtt([0.1] + fr + [0.0], tp) == pytest.approx(
             md.get_mtt([0.1] + fr + [3.0], tp), abs=1e-9
         )
+
+
+def test_nlls_honors_identity_parameter_bounds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CPI NLLS bounds inferred spacings before exponentiation."""
+    from scipy import optimize
+
+    captured: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+    original = optimize.least_squares
+
+    def capture_bounds(*args, **kwargs):
+        captured["bounds"] = kwargs["bounds"]
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(optimize, "least_squares", capture_bounds)
+    model = CPIModel(
+        n_control_points=4,
+        n_acquisition_frames=30,
+        dt=1.5,
+        infer_cpt=True,
+        infer_delay=True,
+    )
+    time_points = np.arange(30, dtype=np.float64) * 1.5
+    aif = np.exp(-0.5 * ((time_points - 9.0) / 2.0) ** 2)
+    tissue = model.tissue_curve(model.get_initial_guess(), aif, time_points)
+
+    result = _fit_cpi_simple(model, tissue, aif, time_points, sloppy=True)
+
+    assert result is not None
+    lower, upper = captured["bounds"]
+    assert lower[0] == 0.0
+    assert np.isposinf(upper[0])
+    np.testing.assert_array_equal(lower[5:9], -5.0)
+    np.testing.assert_array_equal(upper[5:9], 5.0)
+    assert (lower[-1], upper[-1]) == model.get_parameter_definitions()[-1].bounds

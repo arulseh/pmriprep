@@ -932,9 +932,10 @@ def _fit_cpi_simple(
 
     Mirrors FABBER's ``inference_nlls.cc`` for ``--model=dsc_cpi``:
     Levenberg-Marquardt-style trust-region reflective optimisation in
-    *fitting space* (sigmoid-transformed fractions, identity CBF). The
-    sigmoid transform implicitly bounds fractions to (0, 1), so no box
-    constraints are imposed beyond the identity-CBF ≥ 0 floor.
+    *fitting space* (sigmoid-transformed fractions, identity parameters).
+    The sigmoid transform implicitly bounds fractions to (0, 1). Inferred
+    time parameters retain their declared finite bounds, while CBF keeps
+    FABBER's nonnegative, otherwise-flat NLLS convention.
 
     Parameter covariance is reported via ``(JᵀJ + 1e-6·I)⁻¹ · MSE``
     using the Jacobian returned by ``scipy.optimize.least_squares``.
@@ -977,6 +978,20 @@ def _fit_cpi_simple(
         d.bounds[1] if d.transform == TransformType.LOG_LOGIT else None
         for d in fitting_defs
     ]
+    fit_lower = np.array([
+        d.bounds[0]
+        if d.transform == TransformType.IDENTITY
+        and (d.name == "cbf" or d.name == "delay" or d.name.startswith("s"))
+        else -np.inf
+        for d in fitting_defs
+    ], dtype=np.float64)
+    fit_upper = np.array([
+        d.bounds[1]
+        if d.transform == TransformType.IDENTITY
+        and (d.name == "delay" or d.name.startswith("s"))
+        else np.inf
+        for d in fitting_defs
+    ], dtype=np.float64)
     n_obs = len(concentration)
 
     if n_obs <= n_params:
@@ -1014,6 +1029,7 @@ def _fit_cpi_simple(
             _residual,
             x0_fit,
             method="trf",
+            bounds=(fit_lower, fit_upper),
             max_nfev=max_nfev,
             ftol=1e-8,
             xtol=1e-8,
