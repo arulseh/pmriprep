@@ -186,6 +186,37 @@ def test_nlls_uncertainty_uses_frequentist_derivative_names(tmp_path: Path) -> N
     )
 
 
+def test_parametric_provenance_carries_fit_health_denominators() -> None:
+    """Fallback sidecars distinguish requests, successes, and denominators."""
+    from pmriprep.workflows.dsc.datasinks import _build_parametric_extra
+
+    extra = _build_parametric_extra(
+        {
+            "deconvolution": {
+                "method": "vascular",
+                "inference": "map",
+                "n_mask_voxels": 100,
+                "n_fit_admissible": 80,
+                "n_fit_inadmissible": 20,
+                "n_fallback_requested": 12,
+                "n_fallback_attempted": 12,
+                "n_fallback_osvd": 10,
+                "n_fallback_failed": 2,
+                "fallback_requested_rate": 0.15,
+                "fallback_rate": 0.125,
+            }
+        }
+    )
+
+    assert extra["FitAdmissibleVoxelCount"] == 80
+    assert extra["FitInadmissibleVoxelCount"] == 20
+    assert extra["FallbackRequestedVoxelCount"] == 12
+    assert extra["FallbackSucceededVoxelCount"] == 10
+    assert extra["FallbackFailedVoxelCount"] == 2
+    assert extra["FallbackRequestedFraction"] == pytest.approx(0.15)
+    assert extra["FallbackSucceededFraction"] == pytest.approx(0.125)
+
+
 # =============================================================================
 # AIF block derivation (pure function tests)
 # =============================================================================

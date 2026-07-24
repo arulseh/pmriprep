@@ -702,7 +702,7 @@ def _build_k2_extra(preload_qc: dict | None = None) -> dict:
 
 
 def _build_parametric_extra(qc_metrics: dict | None = None) -> dict:
-    """FitMethod + InferenceEngine + FallbackThreshold from qc_metrics.deconvolution."""
+    """Build parametric-fit method, fallback, and denominator provenance."""
     extra: dict[str, object] = {"FallbackThreshold": 0.5}
     if isinstance(qc_metrics, dict):
         deconv = qc_metrics.get("deconvolution") or {}
@@ -711,6 +711,19 @@ def _build_parametric_extra(qc_metrics: dict | None = None) -> dict:
                 extra["FitMethod"] = str(deconv["method"])
             if deconv.get("inference"):
                 extra["InferenceEngine"] = str(deconv["inference"])
+            for source, target in (
+                ("n_mask_voxels", "MaskVoxelCount"),
+                ("n_fit_admissible", "FitAdmissibleVoxelCount"),
+                ("n_fit_inadmissible", "FitInadmissibleVoxelCount"),
+                ("n_fallback_requested", "FallbackRequestedVoxelCount"),
+                ("n_fallback_attempted", "FallbackAttemptedVoxelCount"),
+                ("n_fallback_osvd", "FallbackSucceededVoxelCount"),
+                ("n_fallback_failed", "FallbackFailedVoxelCount"),
+                ("fallback_requested_rate", "FallbackRequestedFraction"),
+                ("fallback_rate", "FallbackSucceededFraction"),
+            ):
+                if source in deconv:
+                    extra[target] = deconv[source]
     return extra
 
 
@@ -1327,8 +1340,9 @@ def init_dsc_datasinks_wf(
         "in fallback voxels comes from oSVD, NOT from a fit with this R2."
     )
     _FALLBACK_DESC = (
-        "Binary oSVD-fallback mask. 1 = the parametric R2<0.5 gate rejected "
-        "this voxel and the saved CBF/CBV/MTT/Tmax come from "
+        "Binary oSVD-fallback mask. 1 = the parametric fit was rejected "
+        "(R2<0.5, solver nonconvergence, or fitting failure), oSVD fallback "
+        "succeeded, and the saved CBF/CBV/MTT/Tmax come from "
         "svd_deconvolve_oscillation; the parametric uncertainty maps "
         "(standard error/posterior SD, relative uncertainty, and intervals) "
         "are NaN in these voxels. "
