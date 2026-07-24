@@ -228,10 +228,15 @@ class BayesianDSCFitter:
         # Gaussian log likelihood (weighted if motion weights provided)
         n = len(concentration)
         log_lik = -0.5 * n * np.log(2 * np.pi * noise_std**2)
-        if weights is not None:
-            log_lik -= 0.5 * np.sum(weights * residuals**2) / (noise_std**2)
-        else:
-            log_lik -= 0.5 * np.sum(residuals**2) / (noise_std**2)
+        with np.errstate(over="ignore", invalid="ignore"):
+            squared_error = (
+                np.sum(weights * residuals**2)
+                if weights is not None
+                else np.sum(residuals**2)
+            )
+        if not np.isfinite(squared_error):
+            return float("-inf")
+        log_lik -= 0.5 * squared_error / (noise_std**2)
 
         return float(log_lik)
 

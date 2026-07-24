@@ -120,6 +120,23 @@ class TestLogPosteriorComponents:
 
         assert ll_good > ll_bad
 
+    def test_log_likelihood_extreme_residual_returns_negative_infinity(
+        self,
+    ) -> None:
+        """Overflow-sized residuals are rejected without a runtime warning."""
+        model = VascularModel()
+        fitter = BayesianDSCFitter(model)
+        concentration, aif, t = _make_synthetic_data(noise_std=0.01)
+        concentration[:] = np.finfo(np.float64).max
+        params = np.array([0.08, 3.0, 2.0, 0.0], dtype=np.float64)
+
+        with np.errstate(over="raise", invalid="raise"):
+            likelihood = fitter._log_likelihood(
+                params, concentration, aif, t, noise_std=0.5
+            )
+
+        assert likelihood == float("-inf")
+
     def test_log_posterior_sum(self) -> None:
         """Log posterior equals log prior + log likelihood."""
         model = VascularModel()
