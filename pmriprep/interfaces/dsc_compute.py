@@ -23,11 +23,12 @@ from nipype.interfaces.base import (  # type: ignore[import-untyped]
 )
 
 from pmriprep.utils.dsc_constants import (
+    DEFAULT_OI_THRESHOLD,
+    DEFAULT_SVD_THRESHOLD,
     EPSILON_CONCENTRATION,
     EPSILON_SHAPE,
     EPSILON_SIGNAL,
-    DEFAULT_SVD_THRESHOLD,
-    DEFAULT_OI_THRESHOLD,
+    KEP_DSC_DEFAULT,
 )
 from pmriprep.utils.dsc_signal import compute_psr_legacy, compute_peak_height_legacy, compute_ttp_legacy
 
@@ -508,6 +509,17 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
         "'inadequate', 'unknown') on the auto path, or preload-dose class "
         "('none', 'minimal', 'half_dose', 'significant', 'severe') on the user path",
     )
+    leakage_method = traits.Enum(
+        "bsw",
+        "bidirectional",
+        usedefault=True,
+        desc="K2 leakage-correction method used by the upstream correction",
+    )
+    leakage_kep = traits.Float(
+        KEP_DSC_DEFAULT,
+        usedefault=True,
+        desc="EES efflux rate in s^-1 for bidirectional K2 correction",
+    )
 
     # Deconvolution method
     method = traits.Enum(
@@ -955,18 +967,34 @@ class ComputeDSCMaps(BaseInterface):
                                 aif, window_length=window_length, polyorder=2
                             )
 
-            from pmriprep.utils.dsc_preload import apply_k2_correction
+            if self.inputs.leakage_method == "bidirectional":
+                from pmriprep.utils.dsc_preload import (
+                    apply_k2_correction_bidirectional,
+                )
 
-            k2_result = apply_k2_correction(
-                concentration=recomputed_raw,
-                brain_mask=inputs.mask.astype(bool),
-                tr=inputs.dt,
-                baseline_frames=detected_frames,
-            )
+                k2_result = apply_k2_correction_bidirectional(
+                    concentration=recomputed_raw,
+                    brain_mask=inputs.mask.astype(bool),
+                    tr=inputs.dt,
+                    kep=float(self.inputs.leakage_kep),
+                    baseline_frames=detected_frames,
+                )
+            else:
+                from pmriprep.utils.dsc_preload import apply_k2_correction
+
+                k2_result = apply_k2_correction(
+                    concentration=recomputed_raw,
+                    brain_mask=inputs.mask.astype(bool),
+                    tr=inputs.dt,
+                    baseline_frames=detected_frames,
+                )
             concentration = k2_result.concentration_corrected
             detection_info["s0_recomputed"] = True
             detection_info["s0_recomputed_frames"] = detected_frames
             detection_info["k2_recomputed"] = True
+            detection_info["k2_recomputed_method"] = k2_result.method
+            if k2_result.qc_metrics:
+                detection_info["k2_recomputed_qc"] = k2_result.qc_metrics
 
         k2_map_path: Optional[str] = None
         if recomputed_raw is not None:

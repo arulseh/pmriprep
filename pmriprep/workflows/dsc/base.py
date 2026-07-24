@@ -19,7 +19,11 @@ from pmriprep.interfaces.dsc import MotionCorrection, DSCRegistration
 from pmriprep.interfaces.dsc_aif import AIFDetection
 from pmriprep.interfaces.dsc_aif_qc import AIFQCPlot
 from pmriprep.interfaces.dsc_compute import ComputeDSCMaps
-from pmriprep.utils.dsc_constants import DEFAULT_OI_THRESHOLD, DEFAULT_SVD_THRESHOLD
+from pmriprep.utils.dsc_constants import (
+    DEFAULT_OI_THRESHOLD,
+    DEFAULT_SVD_THRESHOLD,
+    KEP_DSC_DEFAULT,
+)
 from pmriprep.workflows._perfusion import (
     select_aif_exclusion_mask as _select_aif_exclusion_mask,
     validate_native_mask as _validate_native_mask,
@@ -2168,6 +2172,12 @@ def init_dsc_preproc_wf(
         fallback_baseline_frames=config.pre_bolus,
         tail_frames=5,  # Post-bolus frames for PSR
         first_pass_cbv=config.first_pass_cbv,
+        leakage_method=config.leakage_method,
+        leakage_kep=(
+            config.kep
+            if config.kep is not None
+            else KEP_DSC_DEFAULT
+        ),
         sloppy=config.sloppy,
     )
     if random_seed is not None:

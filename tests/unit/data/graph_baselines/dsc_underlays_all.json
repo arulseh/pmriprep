@@ -2268,6 +2268,8 @@
       "fallback_baseline_frames": 5,
       "first_pass_cbv": false,
       "inference": "vi",
+      "leakage_kep": 0.005,
+      "leakage_method": "bsw",
       "mcmc_samples": 500,
       "method": "oSVD",
       "n_procs": 1,
