@@ -93,6 +93,7 @@ def test_fitting_executors_join_workers(
     source = (root / relative_path).read_text()
 
     assert "shutdown(wait=False" not in source
+    assert "return list(executor.map(" not in source
     executor_count = source.count("ProcessPoolExecutor(")
     cleanup_count = source.count(cleanup_call)
     assert executor_count > 0

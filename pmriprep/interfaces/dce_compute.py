@@ -4120,7 +4120,7 @@ class ComputeDCEMaps(BaseInterface):
                     initargs=init_args,
                 )
                 try:
-                    return list(executor.map(
+                    cpu_results = list(executor.map(
                         _fit_single_voxel, voxel_data_list, chunksize=chunk_size,
                     ))
                 except BaseException:
@@ -4133,6 +4133,7 @@ class ComputeDCEMaps(BaseInterface):
                     raise
                 else:
                     executor.shutdown(wait=True, cancel_futures=True)
+                return cpu_results
             return [_fit_single_voxel(vd) for vd in voxel_data_list]
 
         # Build batched arrays

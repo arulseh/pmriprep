@@ -26,7 +26,7 @@ docker pull ghcr.io/arulseh/pmriprep:latest
 Run with Docker:
 
 ```bash
-docker run --rm \
+docker run --rm --init \
     -v /path/to/bids:/data:ro \
     -v /path/to/output:/out \
     -v /path/to/work:/work \
@@ -39,7 +39,7 @@ docker run --rm \
 For GPU support (required for tumor segmentation):
 
 ```bash
-docker run --gpus all --rm \
+docker run --gpus all --rm --init \
     -v /path/to/bids:/data:ro \
     -v /path/to/output:/out \
     -v /path/to/work:/work \
