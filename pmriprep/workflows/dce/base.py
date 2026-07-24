@@ -2054,6 +2054,7 @@ def init_dce_preproc_wf(
         niu.Function(
             input_names=[
                 "dce_file",
+                "brain_mask_file",
                 "t1_map_file",
                 "b1_map_file",
                 "flip_angle",
@@ -2078,6 +2079,9 @@ def init_dce_preproc_wf(
         (dce_preprocessing_wf, signal_to_conc, [
             ("outputnode.out_file", "dce_file"),
             ("outputnode.baseline_frames", "baseline_frames"),
+        ]),
+        (dce_brain_extraction_wf, signal_to_conc, [
+            ("outputnode.out_mask", "brain_mask_file"),
         ]),
         (inputnode, signal_to_conc, [
             ("flip_angle", "flip_angle"),

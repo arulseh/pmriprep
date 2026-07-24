@@ -169,6 +169,12 @@
       "brain_mask_file"
     ],
     [
+      "dce_brain_extract",
+      "out_mask",
+      "signal_to_concentration",
+      "brain_mask_file"
+    ],
+    [
       "dce_brain_mask_qc",
       "out_file",
       "outputnode",
@@ -1985,6 +1991,7 @@
       "input_names": [
         "b1_map_file",
         "baseline_frames",
+        "brain_mask_file",
         "dce_file",
         "field_strength",
         "flip_angle",
@@ -2139,7 +2146,7 @@
     "resample_dsc_cbv": "8637643d62fc961aafa3946ba1321ebcf4744121cb1b91e9b01bde70a4024ba3",
     "resample_dsc_ncbv": "9016b6e864f3d6e0149ee556592202a4fb42cec4b3e2a90946ff48dbfa6caf72",
     "select_aif_exclusion": "3ac6f0a171a3c915c7c043706044fb8dd45d2a9c05f1d1fad613919135724b21",
-    "signal_to_concentration": "50c4371bd9cd797e1c4e4c132dfe3fdf9cac237a55204093dab5b16ba9fee456",
+    "signal_to_concentration": "1cc66de7da8f53a6b478f66b67b59e5799460f8b654e21b2cbc1385686b2fe9f",
     "transform_atlas_cascade": "92097e5d6df046e1997dbee6d10208373b12e5535619d7397855d263159a752a",
     "transform_brain_mask": "d79c70197847c13c4a4fd38f056ae9911584e27b3d0d1a55b81ebbbc0dc8c3e4",
     "transform_csf_probseg": "d42319ef4b96c5e514991c04481db2429bcaa31287a9a3076f12e2751c92ab80",

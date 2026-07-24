@@ -637,7 +637,8 @@ names its denominator; enhancing-tumor, non-enhancing-tumor, and NAWM coverage
 is included when the corresponding masks are available. Bayesian runs also
 report retained voxels that used the NLLS fallback. DCE PK lesion and ROI
 statistics use only quantitatively accepted voxels and report coverage against
-the full anatomical region.
+the full anatomical region. T1/B1 fallback and bounded-SPGR conversion
+diagnostics are scoped to the native DCE brain mask.
 
 When 2CXM is explicitly requested or eligible during automatic model
 selection, QC also reports a non-fatal, reason-coded suitability screen.

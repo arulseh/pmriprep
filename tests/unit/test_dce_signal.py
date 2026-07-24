@@ -241,7 +241,43 @@ def test_signal_conversion_qc_excludes_zero_background() -> None:
     assert result.conversion_qc["n_spatial_voxels"] == 2
     assert result.conversion_qc["n_signal_supported_voxels"] == 1
     assert result.conversion_qc["b1_missing_voxels"] == 0
+    assert result.conversion_qc["b1_missing_fraction"] == 0.0
     assert result.conversion_qc["e1_bounded_high_samples"] == 0
+
+
+def test_signal_conversion_qc_uses_explicit_mask_domain() -> None:
+    """Conversion diagnostics ignore nonzero signal outside the QC mask."""
+    signal = np.full((2, 1, 1, 10), 100.0)
+    signal[..., 5:] = 120.0
+    b1_map = np.array([[[1.0]], [[0.0]]])
+    qc_mask = np.array([[[True]], [[False]]])
+
+    result = signal_to_concentration(
+        signal,
+        flip_angle_deg=15.0,
+        tr=0.005,
+        b1_map=b1_map,
+        baseline_frames=5,
+        convert_to_plasma=False,
+        qc_mask=qc_mask,
+    )
+
+    assert result.conversion_qc["n_spatial_voxels"] == 2
+    assert result.conversion_qc["n_qc_domain_voxels"] == 1
+    assert result.conversion_qc["n_signal_supported_voxels"] == 1
+    assert result.conversion_qc["b1_missing_voxels"] == 0
+
+
+def test_signal_conversion_qc_mask_shape_must_match_signal() -> None:
+    """A mismatched QC mask fails rather than reporting a false denominator."""
+    with pytest.raises(ValueError, match="QC mask shape"):
+        signal_to_concentration(
+            np.ones((2, 1, 1, 10)),
+            flip_angle_deg=15.0,
+            tr=0.005,
+            baseline_frames=5,
+            qc_mask=np.ones((3, 1, 1), dtype=bool),
+        )
 
 
 class TestFieldStrengthDefaultT1:

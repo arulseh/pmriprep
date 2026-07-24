@@ -10,9 +10,10 @@
         .section { background: #f8f9fa; border-radius: 8px; padding: 20px; margin: 20px 0; }
         .section h3 { color: #333; margin-top: 0; }
         .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; }
-        .metric { background: white; padding: 15px; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .metric { min-width: 0; background: white; padding: 15px; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
         .metric-label { font-size: 0.85em; color: #666; }
-        .metric-value { font-size: 1.4em; font-weight: bold; }
+        .metric-value { font-size: 1.4em; font-weight: bold; overflow-wrap: anywhere; }
+        .metric-detail { display: block; margin-top: 2px; font-size: 0.65em; font-weight: 600; color: #555; }
         .pass { color: #228833; }
         .warn { color: #CCBB44; }
         .poor { color: #EE6677; }

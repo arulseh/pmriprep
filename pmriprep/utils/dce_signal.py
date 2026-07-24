@@ -236,6 +236,7 @@ def signal_to_concentration(
     baseline_frames: int = DEFAULT_BASELINE_FRAMES,
     convert_to_plasma: bool = True,
     hematocrit: float = HEMATOCRIT,
+    qc_mask: Optional[npt.NDArray[np.bool_]] = None,
 ) -> DCEConversionResult:
     """Convert DCE signal to concentration using the Ernst equation.
 
@@ -283,6 +284,9 @@ def signal_to_concentration(
         Default is True.
     hematocrit : float, optional
         Hematocrit value for plasma conversion. Default is 0.42.
+    qc_mask : numpy.ndarray, optional
+        Boolean 3D mask restricting conversion diagnostics. Conversion itself
+        remains defined over the full input array.
 
     Returns
     -------
@@ -386,6 +390,14 @@ def signal_to_concentration(
                 f"spatial shape {spatial_shape}"
             )
 
+    if qc_mask is not None:
+        if signal.ndim != 4 or qc_mask.shape != spatial_shape:
+            raise ValueError(
+                f"QC mask shape {qc_mask.shape} doesn't match signal "
+                f"spatial shape {spatial_shape}"
+            )
+        qc_mask = np.asarray(qc_mask, dtype=bool)
+
     # Get r1 relaxivity
     if r1_relaxivity is not None:
         effective_r1 = r1_relaxivity
@@ -469,6 +481,8 @@ def signal_to_concentration(
         np.isfinite(baseline_signal)
         & (np.abs(baseline_signal) > EPSILON_SIGNAL)
     )
+    if qc_mask is not None:
+        signal_support &= qc_mask
 
     # Prevent division by zero in baseline signal. Negative baselines are
     # unphysical (phase artifact, registration overshoot, denoising) — track
@@ -630,10 +644,17 @@ def signal_to_concentration(
         baseline_signal=baseline_signal,
         conversion_qc={
             "n_spatial_voxels": n_spatial,
+            "n_qc_domain_voxels": int(
+                np.count_nonzero(qc_mask) if qc_mask is not None else n_spatial
+            ),
             "n_signal_supported_voxels": n_supported,
             "n_timepoints": n_timepoints,
             "b1_missing_voxels": int(
                 np.count_nonzero(b1_missing & signal_support)
+            ),
+            "b1_missing_fraction": (
+                np.count_nonzero(b1_missing & signal_support)
+                / max(1, n_supported)
             ),
             "b1_clipped_low_voxels": int(
                 np.count_nonzero(b1_clipped_low & signal_support)

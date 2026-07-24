@@ -1,6 +1,12 @@
 <!-- DCE Permeability Section -->
 <section id="dce">
     <h2>DCE Permeability</h2>
+    {% set b1_method_labels = {'auto': 'Automatic', 'afi': 'AFI', 'precomputed': 'Precomputed', 'none': 'None'} %}
+    {% set t1_method_labels = {'hybrid': 'Hybrid', 'wlls': 'WLLS', 'nlls': 'NLLS'} %}
+    {% set pk_model_labels = {'tofts': 'Tofts', 'extended_tofts': 'Extended Tofts', 'patlak': 'Patlak', '2cxm': '2CXM', 'auto': 'Automatic'} %}
+    {% set aif_method_labels = {'atlas': 'Atlas', 'whole_brain': 'Whole Brain', 'external': 'External', 'population': 'Population'} %}
+    {% set peak_policy_labels = {'one_sided_lower_bound': 'One-Sided Lower Bound', 'disabled': 'Disabled'} %}
+    {% set peak_trigger_labels = {'below_expected_minimum': 'Below Expected Minimum', 'not_required': 'Not Required', 'disabled': 'Disabled'} %}
 
     <!-- Per-pipeline recommendation -->
     {% if dce.qc_metrics.recommendation %}
@@ -38,12 +44,12 @@
     {% if dce.qc_metrics.b1_mapping or dce.images.b1 %}
     <div class="section">
         <h3>B1+ Mapping Quality</h3>
-        {% if dce.qc_metrics.b1_mapping %}
+        {% if dce.qc_metrics.b1_mapping or (dce.qc_metrics.signal_conversion is defined and dce.qc_metrics.signal_conversion.b1_missing_voxels is defined) %}
         <div class="metrics">
             {% if dce.qc_metrics.b1_mapping.method is defined %}
             <div class="metric">
                 <div class="metric-label">B1 Method</div>
-                <div class="metric-value">{{ dce.qc_metrics.b1_mapping.method }}</div>
+                <div class="metric-value">{{ b1_method_labels.get(dce.qc_metrics.b1_mapping.method, dce.qc_metrics.b1_mapping.method | replace('_', ' ') | title) }}</div>
             </div>
             {% endif %}
             {% if dce.qc_metrics.b1_mapping.b1_status is defined %}
@@ -94,6 +100,12 @@
                 <div class="metric-value">[{{ dce.qc_metrics.b1_mapping.clip_low }}, {{ dce.qc_metrics.b1_mapping.clip_high }}]</div>
             </div>
             {% endif %}
+            {% if dce.qc_metrics.signal_conversion is defined and dce.qc_metrics.signal_conversion.b1_missing_voxels is defined %}
+            <div class="metric">
+                <div class="metric-label">Missing B1 in DCE Space</div>
+                <div class="metric-value">{{ "{:,}".format(dce.qc_metrics.signal_conversion.b1_missing_voxels | default(0)) }}{% if dce.qc_metrics.signal_conversion.b1_missing_fraction is defined %} ({{ "%.2f"|format(dce.qc_metrics.signal_conversion.b1_missing_fraction * 100) }}% brain support){% endif %}</div>
+            </div>
+            {% endif %}
         </div>
         {% endif %}
         {% if dce.images.b1 %}
@@ -109,7 +121,7 @@
     {% if dce.qc_metrics.t1_mapping or dce.images.t1 %}
     <div class="section">
         <h3>T1 Mapping Quality</h3>
-        {% if dce.qc_metrics.t1_mapping %}
+        {% if dce.qc_metrics.t1_mapping or (dce.qc_metrics.signal_conversion is defined and dce.qc_metrics.signal_conversion.t1_invalid_voxels is defined) %}
         <div class="metrics">
             {% if dce.qc_metrics.t1_mapping.t1_status is defined %}
             <div class="metric">
@@ -120,7 +132,7 @@
             {% if dce.qc_metrics.t1_mapping.t1_method is defined %}
             <div class="metric">
                 <div class="metric-label">T1 Method</div>
-                <div class="metric-value">{{ dce.qc_metrics.t1_mapping.t1_method }}</div>
+                <div class="metric-value">{{ t1_method_labels.get(dce.qc_metrics.t1_mapping.t1_method, dce.qc_metrics.t1_mapping.t1_method | replace('_', ' ') | title) }}</div>
             </div>
             {% endif %}
             {% if dce.qc_metrics.t1_mapping.n_flip_angles is defined %}
@@ -190,6 +202,12 @@
                         Uniform ({{ dce.qc_metrics.t1_mapping.mean_t1_wm_ms | int }} ms)
                     {% endif %}
                 </div>
+            </div>
+            {% endif %}
+            {% if dce.qc_metrics.signal_conversion is defined and dce.qc_metrics.signal_conversion.t1_invalid_voxels is defined %}
+            <div class="metric">
+                <div class="metric-label">Invalid T1 in DCE Space</div>
+                <div class="metric-value">{{ "{:,}".format(dce.qc_metrics.signal_conversion.t1_invalid_voxels | default(0)) }}{% if dce.qc_metrics.signal_conversion.t1_invalid_fraction is defined %} ({{ "%.2f"|format(dce.qc_metrics.signal_conversion.t1_invalid_fraction * 100) }}% brain support){% endif %}</div>
             </div>
             {% endif %}
         </div>
@@ -328,16 +346,8 @@
             {% endif %}
             {% if dce.qc_metrics.signal_conversion is defined %}
             <div class="metric">
-                <div class="metric-label">Invalid T1 Voxels</div>
-                <div class="metric-value">{{ "{:,}".format(dce.qc_metrics.signal_conversion.t1_invalid_voxels | default(0)) }}</div>
-            </div>
-            <div class="metric">
-                <div class="metric-label">Missing B1 Voxels</div>
-                <div class="metric-value">{{ "{:,}".format(dce.qc_metrics.signal_conversion.b1_missing_voxels | default(0)) }}</div>
-            </div>
-            <div class="metric">
                 <div class="metric-label">Bounded SPGR Samples</div>
-                <div class="metric-value">{{ "%.3f"|format((dce.qc_metrics.signal_conversion.e1_bounded_fraction | default(0)) * 100) }}%</div>
+                <div class="metric-value">{{ "%.2f"|format((dce.qc_metrics.signal_conversion.e1_bounded_fraction | default(0)) * 100) }}% brain-supported samples</div>
             </div>
             {% endif %}
         </div>
@@ -393,7 +403,7 @@
             {% if dce.qc_metrics.aif_detection.detection_method is defined %}
             <div class="metric">
                 <div class="metric-label">Method</div>
-                <div class="metric-value">{{ dce.qc_metrics.aif_detection.detection_method }}</div>
+                <div class="metric-value">{{ aif_method_labels.get(dce.qc_metrics.aif_detection.detection_method, dce.qc_metrics.aif_detection.detection_method | replace('_', ' ') | title) }}</div>
             </div>
             {% endif %}
             {% if dce.qc_metrics.aif_detection.washout_mean is defined %}
@@ -417,7 +427,7 @@
             {% if dce.qc_metrics.aif_detection.peak_scaling_policy is defined %}
             <div class="metric">
                 <div class="metric-label">Peak Scaling</div>
-                <div class="metric-value">{{ dce.qc_metrics.aif_detection.peak_scaling_policy }}{% if dce.qc_metrics.aif_detection.peak_scaling_applied %} (applied){% endif %}</div>
+                <div class="metric-value">{{ peak_policy_labels.get(dce.qc_metrics.aif_detection.peak_scaling_policy, dce.qc_metrics.aif_detection.peak_scaling_policy | replace('_', ' ') | title) }}{% if dce.qc_metrics.aif_detection.peak_scaling_applied %} (Applied){% endif %}</div>
             </div>
             {% endif %}
             {% if dce.qc_metrics.aif_detection.peak_scaling_factor is defined %}
@@ -429,7 +439,7 @@
             {% if dce.qc_metrics.aif_detection.peak_scaling_trigger is defined %}
             <div class="metric">
                 <div class="metric-label">Peak Scaling Trigger</div>
-                <div class="metric-value">{{ dce.qc_metrics.aif_detection.peak_scaling_trigger }}</div>
+                <div class="metric-value">{{ peak_trigger_labels.get(dce.qc_metrics.aif_detection.peak_scaling_trigger, dce.qc_metrics.aif_detection.peak_scaling_trigger | replace('_', ' ') | title) }}</div>
             </div>
             {% endif %}
             {% set used = dce.qc_metrics.aif_detection.n_aif_voxels_selected
@@ -535,7 +545,7 @@
             {% if dce.qc_metrics.pk_modeling.model is defined %}
             <div class="metric">
                 <div class="metric-label">Model</div>
-                <div class="metric-value">{{ dce.qc_metrics.pk_modeling.model }}</div>
+                <div class="metric-value">{{ pk_model_labels.get(dce.qc_metrics.pk_modeling.model, dce.qc_metrics.pk_modeling.model | replace('_', ' ') | title) }}</div>
             </div>
             {% endif %}
             {% set va = dce.qc_metrics.pk_modeling.voxel_accounting %}
@@ -554,7 +564,7 @@
             {% if va[stage_key] is defined %}
             <div class="metric">
                 <div class="metric-label">{{ stage_label }}</div>
-                <div class="metric-value">{{ "{:,}".format(va[stage_key].count) }}{% if va[stage_key].fraction_of_attempted is defined %} ({{ "%.1f"|format(va[stage_key].fraction_of_attempted * 100) }}% attempted){% elif va[stage_key].fraction_of_brain is defined %} ({{ "%.1f"|format(va[stage_key].fraction_of_brain * 100) }}% brain){% endif %}</div>
+                <div class="metric-value">{{ "{:,}".format(va[stage_key].count) }}{% if va[stage_key].fraction_of_attempted is defined %}<span class="metric-detail">{{ "%.1f"|format(va[stage_key].fraction_of_attempted * 100) }}% of attempted</span>{% elif va[stage_key].fraction_of_brain is defined %}<span class="metric-detail">{{ "%.1f"|format(va[stage_key].fraction_of_brain * 100) }}% of brain</span>{% endif %}</div>
             </div>
             {% endif %}
             {% endfor %}
@@ -869,7 +879,7 @@
             {% if xval.constraint_mode is defined and xval.constraint_mode %}
             <div class="metric">
                 <div class="metric-label">Constraint</div>
-                <div class="metric-value">{{ xval.constraint_mode }}</div>
+                <div class="metric-value">{{ xval.constraint_mode | replace('_', ' ') | title }}</div>
             </div>
             {% endif %}
             {% if xval.dsc_preload_configured is defined and xval.dsc_preload_configured is not none %}

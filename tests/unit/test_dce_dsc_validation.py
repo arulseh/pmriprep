@@ -6,6 +6,7 @@ import pytest
 from pmriprep.utils.dce_dsc_validation import (
     CORRELATION_PASS_UNCONSTRAINED,
     CORRELATION_WARN_UNCONSTRAINED,
+    build_vp_cbv_validation_mask,
     validate_vp_cbv,
 )
 from pmriprep.utils.qc_standards import QCStatus
@@ -37,6 +38,26 @@ def _make_data(
     cbv_data = cbv_flat.reshape(n, 1, 1)
     mask = np.ones((n, 1, 1), dtype=bool)
     return vp_data, cbv_data, mask
+
+
+def test_validation_mask_applies_both_physiological_bounds() -> None:
+    """QC figures and numerical validation share both lower and upper bounds."""
+    vp = np.array([0.01, 0.0005, 0.20, 0.01, 0.01, np.nan]).reshape(6, 1, 1)
+    ncbv = np.array([1.0, 1.0, 1.0, 0.2, 6.0, 1.0]).reshape(6, 1, 1)
+    mask = np.ones((6, 1, 1), dtype=bool)
+
+    valid = build_vp_cbv_validation_mask(vp, ncbv, mask)
+
+    assert valid[:, 0, 0].tolist() == [True, False, False, False, False, False]
+
+
+def test_validation_mask_rejects_shape_mismatch() -> None:
+    """Misregistered inputs fail instead of broadcasting a misleading domain."""
+    vp = np.ones((2, 2, 2))
+    ncbv = np.ones((2, 2, 2))
+
+    with pytest.raises(ValueError, match="shapes must match"):
+        build_vp_cbv_validation_mask(vp, ncbv, np.ones((2, 2, 1), dtype=bool))
 
 
 class TestCorrelationStatus:

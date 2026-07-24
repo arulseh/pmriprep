@@ -19,13 +19,11 @@ import numpy as np
 import numpy.typing as npt
 
 from pmriprep.utils.dce_constants import (
-    MAX_NCBV_FOR_VALIDATION,
     MIN_NCBV_FOR_VALIDATION,
     NAWM_VP_REFERENCE,
 )
 from pmriprep.utils.dce_dsc_validation import (
-    MAX_VP_FOR_VALIDATION,
-    MIN_VP_FOR_VALIDATION,
+    build_vp_cbv_validation_mask,
 )
 
 logger = logging.getLogger(__name__)
@@ -82,7 +80,6 @@ def generate_xval_plot(
 
     expected_ratio = NAWM_VP_REFERENCE
     cbv_min = MIN_NCBV_FOR_VALIDATION
-    cbv_max = MAX_NCBV_FOR_VALIDATION
     cbv_axis_label = "DSC nCBV (NAWM-normalized)"
     cbv_from_vp_label = "DCE vp-derived nCBV"
     mean_axis_label = "Mean nCBV"
@@ -102,13 +99,10 @@ def generate_xval_plot(
         & (vp_masked > 0)
         & (cbv_masked > 0)
     )
-    valid_metrics = (
-        valid_plot
-        & (vp_masked > MIN_VP_FOR_VALIDATION)
-        & (cbv_masked > cbv_min)
-        & (vp_masked < MAX_VP_FOR_VALIDATION)
-        & (cbv_masked < cbv_max)
+    metric_mask_3d = build_vp_cbv_validation_mask(
+        vp_data, cbv_data, mask_bool
     )
+    valid_metrics = metric_mask_3d[mask_bool]
     vp_valid = vp_masked[valid_metrics]
     cbv_valid = cbv_masked[valid_metrics]
 
@@ -156,7 +150,7 @@ def generate_xval_plot(
         # Subsample for performance
         rng = np.random.default_rng(42)
 
-        # Gray background: out-of-bounds voxels
+        # Gray context: finite positive voxels excluded from the metrics.
         if len(cbv_oob) > 0:
             n_oob = min(5000, len(cbv_oob))
             idx_oob = rng.choice(len(cbv_oob), size=n_oob, replace=False)
@@ -165,7 +159,7 @@ def generate_xval_plot(
                 s=1, alpha=0.12, color="0.6", rasterized=True, zorder=1,
             )
 
-        # Colored foreground: in-bounds voxels
+        # Colored foreground: the exact voxel domain used by the metrics.
         if has_metrics:
             n_pts = min(5000, len(cbv_valid))
             idx = rng.choice(len(cbv_valid), size=n_pts, replace=False)
@@ -241,7 +235,7 @@ def generate_xval_plot(
     else:
         rng = np.random.default_rng(42)
 
-        # Gray background: out-of-bounds BA points
+        # Gray context: finite positive voxels excluded from the metrics.
         if len(cbv_oob) > 0:
             n_oob = min(5000, len(cbv_oob))
             idx_oob = rng.choice(len(cbv_oob), size=n_oob, replace=False)
@@ -252,7 +246,7 @@ def generate_xval_plot(
                 s=1, alpha=0.12, color="0.6", rasterized=True, zorder=1,
             )
 
-        # Colored foreground: in-bounds BA points
+        # Colored foreground: the exact voxel domain used by the metrics.
         if has_metrics:
             n_pts = min(5000, len(cbv_valid))
             idx = rng.choice(len(cbv_valid), size=n_pts, replace=False)
@@ -326,20 +320,13 @@ def generate_xval_plot(
         ax.axis("off")
     else:
         ratio_3d = np.full(vp_data.shape, np.nan)
-        valid_3d = (
-            mask_bool
-            & (vp_data > MIN_VP_FOR_VALIDATION)
-            & (cbv_data > cbv_min)
-            & np.isfinite(vp_data)
-            & np.isfinite(cbv_data)
-        )
         cbv_safe = np.maximum(cbv_data, cbv_min)
-        ratio_3d[valid_3d] = (
-            vp_data[valid_3d] * cbv_unit_factor
-        ) / cbv_safe[valid_3d]
+        ratio_3d[metric_mask_3d] = (
+            vp_data[metric_mask_3d] * cbv_unit_factor
+        ) / cbv_safe[metric_mask_3d]
 
         # Get axial slice with most valid voxels
-        n_valid_per_slice = np.sum(valid_3d, axis=(0, 1))
+        n_valid_per_slice = np.sum(metric_mask_3d, axis=(0, 1))
         if np.any(n_valid_per_slice > 0):
             best_slice = int(np.argmax(n_valid_per_slice))
         else:

@@ -259,6 +259,50 @@ def calculate_correction_factor(
 # =============================================================================
 
 
+def build_vp_cbv_validation_mask(
+    vp_data: npt.NDArray[np.floating[npt.NBitBase]],
+    cbv_data: npt.NDArray[np.floating[npt.NBitBase]],
+    mask: npt.NDArray[np.bool_],
+) -> npt.NDArray[np.bool_]:
+    """Return the voxel domain used for DSC-DCE cross-validation.
+
+    Parameters
+    ----------
+    vp_data : numpy.ndarray
+        DCE plasma-volume fraction map.
+    cbv_data : numpy.ndarray
+        DSC NAWM-normalized CBV map.
+    mask : numpy.ndarray
+        Boolean analysis mask.
+
+    Returns
+    -------
+    numpy.ndarray
+        Boolean mask restricted to finite values within the physiological
+        validation bounds.
+    """
+    from pmriprep.utils.dce_constants import (
+        MAX_NCBV_FOR_VALIDATION,
+        MIN_NCBV_FOR_VALIDATION,
+    )
+
+    if vp_data.shape != cbv_data.shape or vp_data.shape != mask.shape:
+        raise ValueError(
+            "vp, nCBV, and validation mask shapes must match: "
+            f"{vp_data.shape}, {cbv_data.shape}, {mask.shape}"
+        )
+
+    return (
+        mask.astype(bool)
+        & np.isfinite(vp_data)
+        & np.isfinite(cbv_data)
+        & (vp_data > MIN_VP_FOR_VALIDATION)
+        & (vp_data < MAX_VP_FOR_VALIDATION)
+        & (cbv_data > MIN_NCBV_FOR_VALIDATION)
+        & (cbv_data < MAX_NCBV_FOR_VALIDATION)
+    )
+
+
 def validate_vp_cbv(
     vp_data: npt.NDArray[np.floating[npt.NBitBase]],
     cbv_data: npt.NDArray[np.floating[npt.NBitBase]],
@@ -309,7 +353,6 @@ def validate_vp_cbv(
         NAWM_VP_REFERENCE,
         CIRCULAR_STD_THRESHOLD_NCBV,
         MIN_NCBV_FOR_VALIDATION,
-        MAX_NCBV_FOR_VALIDATION,
         VP_NCBV_RATIO_MIN_LIMITED,
         VP_NCBV_RATIO_MAX_LIMITED,
     )
@@ -323,7 +366,6 @@ def validate_vp_cbv(
     expected_ratio = NAWM_VP_REFERENCE
     circular_std_threshold = CIRCULAR_STD_THRESHOLD_NCBV
     cbv_min = MIN_NCBV_FOR_VALIDATION
-    cbv_max = MAX_NCBV_FOR_VALIDATION
     metrics.expected_ratio = expected_ratio
 
     # Compute two-tier ratio thresholds from expected ratio
@@ -333,8 +375,9 @@ def validate_vp_cbv(
     ratio_warn_high = expected_ratio * (1.0 + RATIO_TOLERANCE_WARN)
 
     # Extract values within mask
-    vp_masked = vp_data[mask]
-    cbv_masked = cbv_data[mask]
+    mask_bool = mask.astype(bool)
+    vp_masked = vp_data[mask_bool]
+    cbv_masked = cbv_data[mask_bool]
     metrics.n_total_voxels = int(np.sum(mask))
 
     if metrics.n_total_voxels == 0:
@@ -344,16 +387,10 @@ def validate_vp_cbv(
         result.metrics = metrics
         return result
 
-    # Filter to valid voxels (positive values above thresholds, below upper bounds).
-    # Range for CBV/nCBV depends on calibration mode (see cbv_min/cbv_max above).
-    valid_mask = (
-        (vp_masked > MIN_VP_FOR_VALIDATION)
-        & (cbv_masked > cbv_min)
-        & (vp_masked < MAX_VP_FOR_VALIDATION)
-        & (cbv_masked < cbv_max)
-        & np.isfinite(vp_masked)
-        & np.isfinite(cbv_masked)
-    )
+    # Use the shared bounded domain so numerical metrics and QC plots agree.
+    valid_mask = build_vp_cbv_validation_mask(
+        vp_data, cbv_data, mask_bool
+    )[mask_bool]
 
     vp_valid = vp_masked[valid_mask]
     cbv_valid = cbv_masked[valid_mask]

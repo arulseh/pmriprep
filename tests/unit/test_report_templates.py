@@ -75,9 +75,13 @@ def test_dce_signal_conversion_qc_renders(env):
     dce = {
         "qc_metrics": {
             "preprocessing": {},
+            "b1_mapping": {"method": "afi"},
+            "t1_mapping": {"t1_method": "vfa"},
             "signal_conversion": {
                 "t1_invalid_voxels": 12,
+                "t1_invalid_fraction": 0.006,
                 "b1_missing_voxels": 34,
+                "b1_missing_fraction": 0.017,
                 "e1_bounded_fraction": 0.00125,
             },
         },
@@ -85,12 +89,18 @@ def test_dce_signal_conversion_qc_renders(env):
         "display_status": {},
     }
     rendered = template.render(dce=dce)
-    assert "Invalid T1 Voxels" in rendered
-    assert ">12<" in rendered
-    assert "Missing B1 Voxels" in rendered
-    assert ">34<" in rendered
+    assert "Invalid T1 in DCE Space" in rendered
+    assert ">12 (0.60% brain support)<" in rendered
+    assert "Missing B1 in DCE Space" in rendered
+    assert ">34 (1.70% brain support)<" in rendered
     assert "Bounded SPGR Samples" in rendered
-    assert "0.125%" in rendered
+    assert "0.12% brain-supported samples" in rendered
+    assert rendered.index("Missing B1 in DCE Space") < rendered.index(
+        "T1 Mapping Quality"
+    )
+    assert rendered.index("Invalid T1 in DCE Space") < rendered.index(
+        "DCE Preprocessing QC"
+    )
 
 
 def test_dce_aif_peak_scaling_qc_renders(env):
@@ -115,9 +125,11 @@ def test_dce_aif_peak_scaling_qc_renders(env):
     assert "8.00 mM" in rendered
     assert "Raw Peak" in rendered
     assert "4.00 mM" in rendered
-    assert "one_sided_lower_bound (applied)" in rendered
+    assert "One-Sided Lower Bound (Applied)" in rendered
     assert "2.00x" in rendered
-    assert "below_expected_minimum" in rendered
+    assert "Below Expected Minimum" in rendered
+    assert "one_sided_lower_bound" not in rendered
+    assert "below_expected_minimum" not in rendered
 
 
 def test_dce_voxel_accounting_renders(env):
@@ -173,7 +185,17 @@ def test_dce_voxel_accounting_renders(env):
     assert "Unsuccessful Fits" in rendered
     assert "Retained Nondegenerate" in rendered
     assert "Quantitative QC Accepted" in rendered
-    assert "87.5% attempted" in rendered
+    assert "87.5% of attempted" in rendered
+    assert 'class="metric-detail"' in rendered
+
+
+def test_report_metric_cards_wrap_long_values(env):
+    """Shared metric cards wrap identifiers and support secondary details."""
+    template = env.get_template("report_unified.html")
+    rendered = template.render(**_minimal_parent_ctx())
+
+    assert "overflow-wrap: anywhere" in rendered
+    assert ".metric-detail" in rendered
 
 
 def test_dce_two_cxm_suitability_warning_renders(env):

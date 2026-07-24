@@ -34,10 +34,14 @@ def test_signal_conversion_node_reports_invalid_t1(tmp_path: Any) -> None:
     signal[..., 5:] = 120.0
     t1 = np.array([[[1200.0]], [[np.nan]]])
     dce_file = _write_nifti(tmp_path / "dce.nii.gz", signal)
+    brain_mask_file = _write_nifti(
+        tmp_path / "brain_mask.nii.gz", np.ones((2, 1, 1))
+    )
     t1_file = _write_nifti(tmp_path / "t1.nii.gz", t1)
     with mock.patch("pathlib.Path.cwd", return_value=tmp_path):
         output, qc = _signal_to_concentration_node(
             dce_file,
+            brain_mask_file,
             t1_file,
             None,
             15.0,
@@ -52,23 +56,28 @@ def test_signal_conversion_node_reports_invalid_t1(tmp_path: Any) -> None:
     assert qc["t1_invalid_voxels"] == 1
     assert qc["t1_invalid_fraction"] == pytest.approx(0.5)
     assert qc["nonfinite_output_samples"] == 0
+    assert qc["qc_domain"] == "dce_brain_mask"
+    assert qc["n_qc_domain_voxels"] == 2
 
 
-def test_signal_conversion_node_excludes_background_t1_from_qc(
+def test_signal_conversion_node_scopes_t1_qc_to_brain_mask(
     tmp_path: Any,
 ) -> None:
-    """Zero-valued image background does not inflate invalid-T1 counts."""
+    """Nonzero extracranial signal does not inflate invalid-T1 counts."""
     from pmriprep.workflows.dce._helpers import _signal_to_concentration_node
 
-    signal = np.zeros((2, 1, 1, 10))
-    signal[0, ..., :] = 100.0
-    signal[0, ..., 5:] = 120.0
+    signal = np.full((2, 1, 1, 10), 100.0)
+    signal[..., 5:] = 120.0
     t1 = np.array([[[1200.0]], [[0.0]]])
     dce_file = _write_nifti(tmp_path / "dce.nii.gz", signal)
+    brain_mask_file = _write_nifti(
+        tmp_path / "brain_mask.nii.gz", np.array([[[1.0]], [[0.0]]])
+    )
     t1_file = _write_nifti(tmp_path / "t1.nii.gz", t1)
     with mock.patch("pathlib.Path.cwd", return_value=tmp_path):
         _, qc = _signal_to_concentration_node(
             dce_file,
+            brain_mask_file,
             t1_file,
             None,
             15.0,
@@ -80,9 +89,38 @@ def test_signal_conversion_node_excludes_background_t1_from_qc(
         )
 
     assert qc["n_spatial_voxels"] == 2
+    assert qc["n_qc_domain_voxels"] == 1
     assert qc["n_signal_supported_voxels"] == 1
     assert qc["t1_invalid_voxels"] == 0
     assert qc["t1_invalid_fraction"] == 0.0
+
+
+def test_signal_conversion_node_rejects_brain_mask_shape_mismatch(
+    tmp_path: Any,
+) -> None:
+    """Conversion QC cannot silently use a misregistered mask domain."""
+    from pmriprep.workflows.dce._helpers import _signal_to_concentration_node
+
+    dce_file = _write_nifti(
+        tmp_path / "dce.nii.gz", np.ones((2, 1, 1, 10))
+    )
+    brain_mask_file = _write_nifti(
+        tmp_path / "brain_mask.nii.gz", np.ones((3, 1, 1))
+    )
+
+    with pytest.raises(ValueError, match="brain mask shape"):
+        _signal_to_concentration_node(
+            dce_file,
+            brain_mask_file,
+            None,
+            None,
+            15.0,
+            0.005,
+            3.0,
+            3.8,
+            5,
+            True,
+        )
 
 
 # =============================================================================

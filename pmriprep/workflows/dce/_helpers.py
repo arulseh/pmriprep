@@ -583,6 +583,7 @@ def _transform_atlas_cascade_to_dce(
 
 def _signal_to_concentration_node(
     dce_file: str,
+    brain_mask_file: str,
     t1_map_file: str | None,
     b1_map_file: str | None,
     flip_angle: float,
@@ -601,6 +602,8 @@ def _signal_to_concentration_node(
     ----------
     dce_file : str
         Path to 4D DCE NIfTI file.
+    brain_mask_file : str
+        Path to the DCE-space brain mask defining the QC denominator.
     t1_map_file : str or None
         Path to T1 map in DCE space (None when no_t1 is True).
     b1_map_file : str or None
@@ -636,6 +639,14 @@ def _signal_to_concentration_node(
     dce_data = dce_img.get_fdata()  # type: ignore[attr-defined]
     affine = dce_img.affine  # type: ignore[attr-defined]
     header = dce_img.header  # type: ignore[attr-defined]
+    brain_mask = np.asarray(
+        nib.load(brain_mask_file).dataobj  # type: ignore[attr-defined]
+    ) > 0
+    if brain_mask.shape != dce_data.shape[:3]:
+        raise ValueError(
+            f"DCE brain mask shape {brain_mask.shape} does not match "
+            f"signal spatial shape {dce_data.shape[:3]}"
+        )
 
     # Load T1 map if not skipping T1
     t1_map = None
@@ -674,6 +685,7 @@ def _signal_to_concentration_node(
         field_strength=field_strength,
         baseline_frames=baseline_frames if baseline_frames > 0 else 5,
         convert_to_plasma=False,
+        qc_mask=brain_mask,
     )
 
     # Zero out concentration for voxels with invalid T1 (NaN, sub-physiological).
@@ -682,10 +694,12 @@ def _signal_to_concentration_node(
     # invalid_t1 is 3D (spatial); fancy-indexing into the 4D concentration
     # array broadcasts the assignment across the trailing time axis.
     conversion_qc = dict(result.conversion_qc)
+    conversion_qc["qc_domain"] = "dce_brain_mask"
     baseline_signal = np.asarray(result.baseline_signal)
     signal_support = (
         np.isfinite(baseline_signal)
         & (np.abs(baseline_signal) > EPSILON_SIGNAL)
+        & brain_mask
     )
     if t1_map is not None:
         invalid_t1 = ~np.isfinite(t1_map) | (t1_map < 100.0)  # T1 in ms
