@@ -13,11 +13,9 @@ from scipy import sparse
 
 from pmriprep.models.bayesian_utils import TransformType
 from pmriprep.models.dsc.batched_fitting import DSCBatchedFitResult, batched_dsc_vi_fit
+from pmriprep.utils.dsc_constants import EPSILON_CONCENTRATION
 
 logger = logging.getLogger(__name__)
-
-_INNER_ITERATIONS = 4
-
 
 def _build_neighborhood_graph(
     mask_coords: tuple[npt.NDArray, npt.NDArray, npt.NDArray],
@@ -118,6 +116,31 @@ def _compute_spatial_contributions(
     return prec_diag, eta
 
 
+def _exclude_inadmissible_neighbors(
+    adj: sparse.csr_matrix,
+    fit_admissible: npt.NDArray[np.bool_],
+) -> tuple[sparse.csr_matrix, npt.NDArray[np.int64]]:
+    """Remove fit-inadmissible voxels from every spatial neighbor list.
+
+    Parameters
+    ----------
+    adj : sparse.csr_matrix
+        Full masked-voxel adjacency.
+    fit_admissible : npt.NDArray[np.bool_]
+        Boolean fit-admissibility vector, shape (N,).
+
+    Returns
+    -------
+    tuple[sparse.csr_matrix, npt.NDArray[np.int64]]
+        Pruned adjacency and its updated degree vector.
+    """
+    keep = sparse.diags(np.asarray(fit_admissible, dtype=np.float64))
+    pruned = (keep @ adj @ keep).tocsr()
+    pruned.eliminate_zeros()
+    degree = np.asarray(pruned.sum(axis=1)).ravel().astype(np.int64)
+    return pruned, degree
+
+
 def _update_aK_penny(
     posteriors: npt.NDArray[np.floating],
     cov_diag: npt.NDArray[np.floating],
@@ -197,15 +220,18 @@ def batched_dsc_spatial_vi_fit(
     weights: Optional[npt.NDArray[np.floating]] = None,
     sloppy: bool = False,
     save_fitted_curves: bool = False,
-    n_spatial_sweeps: int = 20,
-    spatial_tol: float = 0.01,
-    aK_init: float = 10.0,
+    n_spatial_sweeps: int = 10,
+    spatial_tol: Optional[float] = None,
+    aK_init: float = 1e-8,
 ) -> DSCBatchedFitResult:
     """Spatial VB wrapper around batched VI.
 
-    Iterates spatial sweeps, updating MRF neighbor priors between calls
-    to the standard VB function. Convergence is monitored via relative
-    lambda change at the outer level.
+    Warm-starts the vectorized solver with ordinary VI, then iterates stateful
+    CBF sweeps using FABBER's boundary-corrected M-prior equations. Each
+    spatial sweep performs one synchronous batched parameter/noise update and
+    retains the posterior state. FABBER's original implementation updates
+    voxels sequentially within a sweep; the batched implementation uses the
+    corresponding Jacobi update.
 
     Parameters
     ----------
@@ -256,9 +282,11 @@ def batched_dsc_spatial_vi_fit(
     n_spatial_sweeps : int, optional
         Maximum number of spatial sweeps.
     spatial_tol : float, optional
-        Relative lambda convergence tolerance.
+        Optional relative ``aK`` convergence tolerance. ``None`` (default)
+        runs ten spatial sweeps after the ordinary-VI warm start.
     aK_init : float, optional
-        Initial spatial-precision (aK) value for all parameters.
+        Initial spatial precision for CBF. FABBER initializes
+        boundary-corrected M-priors at ``1e-8``.
 
     Returns
     -------
@@ -266,11 +294,24 @@ def batched_dsc_spatial_vi_fit(
         DSCBatchedFitResult with fitted parameters from spatial VB.
     """
     n_params = len(fitting_param_names)
+    spatial_parameter_mask = np.asarray(
+        [name == "cbf" for name in fitting_param_names], dtype=bool,
+    )
+    if not np.any(spatial_parameter_mask):
+        raise ValueError("SVB requires a fitted 'cbf' parameter")
+
+    if n_spatial_sweeps < 1:
+        raise ValueError("n_spatial_sweeps must be at least 1")
 
     if sloppy:
         n_spatial_sweeps = min(n_spatial_sweeps, 6)
 
     adj, degree = _build_neighborhood_graph(mask_coords, spatial_shape)
+    finite_curves = np.nan_to_num(
+        tissue_curves, nan=0.0, posinf=0.0, neginf=0.0,
+    )
+    fit_admissible = np.max(np.abs(finite_curves), axis=1) > EPSILON_CONCENTRATION
+    adj, degree = _exclude_inadmissible_neighbors(adj, fit_admissible)
     has_any_neighbors = (degree > 0).any()
 
     if not has_any_neighbors:
@@ -300,11 +341,9 @@ def batched_dsc_spatial_vi_fit(
             save_fitted_curves=save_fitted_curves,
         )
 
-    aK = np.full(n_params, aK_init, dtype=np.float64)
-    inner_iters = _INNER_ITERATIONS if not sloppy else 2
-
-    # Initial standard VI run to get starting posteriors
-    logger.info("SVB: initial VI sweep (no spatial prior)")
+    aK = np.zeros(n_params, dtype=np.float64)
+    aK[spatial_parameter_mask] = aK_init
+    logger.info("SVB: ordinary-VI warm start")
     result = batched_dsc_vi_fit(
         model_type=model_type,
         tissue_curves=tissue_curves,
@@ -330,13 +369,23 @@ def batched_dsc_spatial_vi_fit(
         save_fitted_curves=False,
         return_posteriors=True,
     )
-    posteriors = result.posterior_means_transformed
-    cov_diag = result.posterior_cov_diag
-    assert posteriors is not None and cov_diag is not None
+    warm_means = result.posterior_means_transformed
+    warm_cov_diag = result.posterior_cov_diag
+    assert warm_means is not None and warm_cov_diag is not None
+    posteriors = np.asarray(warm_means, dtype=np.float64)
+    cov_diag = np.asarray(warm_cov_diag, dtype=np.float64)
+    noise_std = result.uncertainties.get("noise_std")
+    noise_precision: Optional[npt.NDArray[np.float64]] = None
+    if noise_std is not None:
+        noise_precision = np.zeros_like(noise_std, dtype=np.float64)
+        valid_noise = np.isfinite(noise_std) & (noise_std > 0)
+        noise_precision[valid_noise] = 1.0 / noise_std[valid_noise] ** 2
 
     for sweep in range(n_spatial_sweeps):
         aK_old = aK.copy()
-        aK = _update_aK_penny(posteriors, cov_diag, adj, degree)
+        if sweep > 0:
+            updated_aK = _update_aK_penny(posteriors, cov_diag, adj, degree)
+            aK[spatial_parameter_mask] = updated_aK[spatial_parameter_mask]
         sp_prec, sp_eta = _compute_spatial_contributions(posteriors, adj, degree, aK)
 
         logger.debug(
@@ -345,7 +394,6 @@ def batched_dsc_spatial_vi_fit(
             np.array2string(aK, precision=3, separator=", "),
         )
 
-        save_curves = save_fitted_curves and (sweep == n_spatial_sweeps - 1)
         result = batched_dsc_vi_fit(
             model_type=model_type,
             tissue_curves=tissue_curves,
@@ -367,18 +415,29 @@ def batched_dsc_spatial_vi_fit(
             prior_means_transformed=prior_means_transformed,
             prior_stds_transformed=prior_stds_transformed,
             weights=weights,
-            save_fitted_curves=save_curves,
+            save_fitted_curves=save_fitted_curves,
             spatial_prec_diag=sp_prec,
             spatial_eta=sp_eta,
+            spatial_replaces_parameter_prior=True,
+            spatial_parameter_mask=spatial_parameter_mask,
+            initial_means_transformed=posteriors,
+            initial_noise_precision=noise_precision,
             return_posteriors=True,
-            n_iterations_override=inner_iters,
+            n_iterations_override=1,
         )
-        posteriors = result.posterior_means_transformed
-        cov_diag = result.posterior_cov_diag
-        assert posteriors is not None and cov_diag is not None
+        result_means = result.posterior_means_transformed
+        result_cov_diag = result.posterior_cov_diag
+        assert result_means is not None and result_cov_diag is not None
+        posteriors = np.asarray(result_means, dtype=np.float64)
+        cov_diag = np.asarray(result_cov_diag, dtype=np.float64)
+        noise_std = result.uncertainties.get("noise_std")
+        if noise_std is not None:
+            noise_precision = np.zeros_like(noise_std, dtype=np.float64)
+            valid_noise = np.isfinite(noise_std) & (noise_std > 0)
+            noise_precision[valid_noise] = 1.0 / noise_std[valid_noise] ** 2
 
         rel_change = np.max(np.abs(aK - aK_old) / np.maximum(aK, 1e-10))
-        if rel_change < spatial_tol:
+        if spatial_tol is not None and sweep > 0 and rel_change < spatial_tol:
             logger.info("SVB converged at sweep %d (rel_change=%.4f)", sweep + 1, rel_change)
             break
     else:
@@ -387,33 +446,5 @@ def batched_dsc_spatial_vi_fit(
             n_spatial_sweeps, rel_change,
         )
 
-    if save_fitted_curves and result.fitted_curves is None:
-        final = batched_dsc_vi_fit(
-            model_type=model_type,
-            tissue_curves=tissue_curves,
-            aif=aif,
-            time_points=time_points,
-            prior_means_nat=prior_means_nat,
-            prior_stds_nat=prior_stds_nat,
-            transforms=transforms,
-            upper_bounds=upper_bounds,
-            fitting_param_names=fitting_param_names,
-            fitting_bounds=fitting_bounds,
-            mono_prec=mono_prec,
-            mono_eta=mono_eta,
-            control_point_times=control_point_times,
-            toeplitz_matrix=toeplitz_matrix,
-            cpi_t_terminal=cpi_t_terminal,
-            cpi_infer_delay=cpi_infer_delay,
-            nlls_seeds=None,
-            prior_means_transformed=prior_means_transformed,
-            prior_stds_transformed=prior_stds_transformed,
-            weights=weights,
-            save_fitted_curves=True,
-            spatial_prec_diag=sp_prec,
-            spatial_eta=sp_eta,
-            n_iterations_override=inner_iters,
-        )
-        result = final
-
+    result.n_iterations = sweep + 1
     return result

@@ -78,6 +78,8 @@ def test_svb_spatial_prior_is_described() -> None:
     assert result["UncertaintyStatistic"] == "coefficient_of_variation"
     assert result["SpatialPriorModel"] == "Penny M-prior"
     assert result["SpatialNeighborhood"] == "3D face-connected"
+    assert result["SpatialUpdateScheme"] == "synchronous_batched"
+    assert result["SpatiallyRegularizedParameters"] == ["cbf"]
 
 
 def test_map_fallback_is_disclosed() -> None:

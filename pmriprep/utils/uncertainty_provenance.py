@@ -23,6 +23,8 @@ _INFERENCE_METADATA: dict[str, dict[str, object]] = {
         "SpatialPriorApplied": True,
         "SpatialPriorModel": "Penny M-prior",
         "SpatialNeighborhood": "3D face-connected",
+        "SpatialUpdateScheme": "synchronous_batched",
+        "SpatiallyRegularizedParameters": ["cbf"],
     },
     "map": {
         "InferenceMethod": "maximum_a_posteriori",

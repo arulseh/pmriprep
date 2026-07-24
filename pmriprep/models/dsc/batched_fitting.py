@@ -44,6 +44,69 @@ logger = logging.getLogger("nipype.interface")
 _EPSILON_NUMERICAL: Final[float] = 1e-30
 
 
+def _build_vi_update_prior_terms(
+    prior_prec: npt.NDArray[np.floating],
+    prior_means_t: npt.NDArray[np.floating],
+    mono_prec: Optional[npt.NDArray[np.floating]],
+    mono_eta: Optional[npt.NDArray[np.floating]],
+    *,
+    spatial_replaces_parameter_prior: bool,
+    spatial_parameter_mask: Optional[npt.NDArray[np.bool_]] = None,
+) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
+    """Build parameter-update prior terms for ordinary VI or FABBER M-prior.
+
+    Parameters
+    ----------
+    prior_prec : npt.NDArray[np.floating]
+        Complete independent-prior precision, including any structural
+        monotonicity precision.
+    prior_means_t : npt.NDArray[np.floating]
+        Independent-prior means in transformed space.
+    mono_prec : npt.NDArray[np.floating], optional
+        Structural CPI monotonicity precision.
+    mono_eta : npt.NDArray[np.floating], optional
+        Structural CPI monotonicity information-vector contribution.
+    spatial_replaces_parameter_prior : bool
+        Whether a boundary-corrected FABBER M-prior replaces the independent
+        parameter prior.
+    spatial_parameter_mask : npt.NDArray[np.bool_], optional
+        Parameters receiving the M-prior. ``None`` selects every parameter.
+
+    Returns
+    -------
+    tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]
+        Base precision and information vector to which per-voxel spatial
+        contributions are added.
+    """
+    n_params = len(prior_means_t)
+    if spatial_replaces_parameter_prior:
+        selected = (
+            np.ones(n_params, dtype=bool)
+            if spatial_parameter_mask is None
+            else np.asarray(spatial_parameter_mask, dtype=bool)
+        )
+        structural_prec = (
+            np.asarray(mono_prec, dtype=np.float64)
+            if mono_prec is not None
+            else np.zeros((n_params, n_params), dtype=np.float64)
+        )
+        independent_prec = np.asarray(prior_prec, dtype=np.float64) - structural_prec
+        independent_prec = independent_prec.copy()
+        selected_idx = np.flatnonzero(selected)
+        independent_prec[selected_idx, selected_idx] = 0.0
+        update_prec = independent_prec + structural_prec
+        update_eta = update_prec @ np.asarray(prior_means_t, dtype=np.float64)
+        if mono_eta is not None:
+            update_eta = update_eta + mono_eta
+        return update_prec, update_eta
+
+    update_prec = np.asarray(prior_prec, dtype=np.float64)
+    update_eta = update_prec @ np.asarray(prior_means_t, dtype=np.float64)
+    if mono_eta is not None:
+        update_eta = update_eta + mono_eta
+    return update_prec, update_eta
+
+
 # ---------------------------------------------------------------------------
 # Result dataclass
 # ---------------------------------------------------------------------------
@@ -975,6 +1038,10 @@ def batched_dsc_vi_fit(
     save_fitted_curves: bool = False,
     spatial_prec_diag: Optional[npt.NDArray[np.floating]] = None,
     spatial_eta: Optional[npt.NDArray[np.floating]] = None,
+    spatial_replaces_parameter_prior: bool = False,
+    spatial_parameter_mask: Optional[npt.NDArray[np.bool_]] = None,
+    initial_means_transformed: Optional[npt.NDArray[np.floating]] = None,
+    initial_noise_precision: Optional[npt.NDArray[np.floating]] = None,
     return_posteriors: bool = False,
     n_iterations_override: Optional[int] = None,
     nprocs: int = 1,
@@ -1036,6 +1103,18 @@ def batched_dsc_vi_fit(
         N must match tissue_curves.shape[0].
     spatial_eta : npt.NDArray[np.floating], optional
         Per-voxel spatial mean contribution, shape (N, P).
+    spatial_replaces_parameter_prior : bool, optional
+        Replace the independent parameter prior with ``spatial_prec_diag`` and
+        ``spatial_eta``, matching FABBER's boundary-corrected M-prior. Structural
+        CPI monotonicity terms remain active. Requires both spatial arrays.
+    spatial_parameter_mask : npt.NDArray[np.bool_], optional
+        Boolean parameter selector for M-prior replacement, shape (P,).
+    initial_means_transformed : npt.NDArray[np.floating], optional
+        Initial posterior means in transformed space, shape (N, P). Used by
+        stateful spatial-VB sweeps.
+    initial_noise_precision : npt.NDArray[np.floating], optional
+        Initial expected noise precision, shape (N,). Used by stateful
+        spatial-VB sweeps.
     return_posteriors : bool, optional
         If True, populate posterior_means_transformed and
         posterior_cov_diag on the result.
@@ -1104,6 +1183,10 @@ def batched_dsc_vi_fit(
                 save_fitted_curves=save_fitted_curves,
                 spatial_prec_diag=spatial_prec_diag,
                 spatial_eta=spatial_eta,
+                spatial_replaces_parameter_prior=spatial_replaces_parameter_prior,
+                spatial_parameter_mask=spatial_parameter_mask,
+                initial_means_transformed=initial_means_transformed,
+                initial_noise_precision=initial_noise_precision,
                 return_posteriors=return_posteriors,
                 n_iterations_override=n_iterations_override,
             )
@@ -1114,6 +1197,38 @@ def batched_dsc_vi_fit(
     tissue_curves = np.nan_to_num(tissue_curves, nan=0.0, posinf=0.0, neginf=0.0)
     n_voxels, n_obs = tissue_curves.shape
     n_params = len(fitting_param_names)
+
+    if spatial_replaces_parameter_prior and (
+        spatial_prec_diag is None or spatial_eta is None
+    ):
+        raise ValueError(
+            "FABBER M-prior replacement requires both spatial_prec_diag "
+            "and spatial_eta"
+        )
+    if spatial_replaces_parameter_prior and n_iterations_override is None:
+        raise ValueError(
+            "FABBER M-prior replacement requires spatial one-update mode "
+            "(n_iterations_override must be set)"
+        )
+    if spatial_parameter_mask is not None and (
+        np.shape(spatial_parameter_mask) != (n_params,)
+    ):
+        raise ValueError(
+            f"spatial_parameter_mask must have shape ({n_params},)"
+        )
+    if initial_means_transformed is not None and (
+        np.shape(initial_means_transformed) != (n_voxels, n_params)
+    ):
+        raise ValueError(
+            "initial_means_transformed must have shape "
+            f"({n_voxels}, {n_params})"
+        )
+    if initial_noise_precision is not None and (
+        np.shape(initial_noise_precision) != (n_voxels,)
+    ):
+        raise ValueError(
+            f"initial_noise_precision must have shape ({n_voxels},)"
+        )
 
     if n_iterations_override is not None:
         n_iterations = n_iterations_override
@@ -1164,6 +1279,17 @@ def batched_dsc_vi_fit(
     if mono_prec is not None:
         prior_prec = prior_prec + mono_prec
 
+    # FABBER's boundary-corrected M-prior replaces the independent parameter
+    # prior rather than adding to it. Structural CPI monotonicity terms remain.
+    update_prior_prec, update_prior_eta = _build_vi_update_prior_terms(
+        prior_prec,
+        prior_means_t,
+        mono_prec,
+        mono_eta,
+        spatial_replaces_parameter_prior=spatial_replaces_parameter_prior,
+        spatial_parameter_mask=spatial_parameter_mask,
+    )
+
     # Noise precision prior — FABBER non-informative defaults
     # (fabber_core/noisemodel_white.cc: c=1e-6, b=1e6).
     c0 = 1e-6
@@ -1180,6 +1306,14 @@ def batched_dsc_vi_fit(
     m_nat = np.tile(prior_means_nat, (n_valid, 1)).astype(np.float64)
     for j in range(n_params):
         m_nat[:, j] = np.clip(m_nat[:, j], bounds_lo[j], bounds_hi[j])
+
+    if initial_means_transformed is not None:
+        initial_t = np.asarray(initial_means_transformed, dtype=np.float64)[valid_idx]
+        for j in range(n_params):
+            m_nat[:, j] = from_transformed_batch(
+                initial_t[:, j], transforms[j], upper_bounds[j],
+            )
+            m_nat[:, j] = np.clip(m_nat[:, j], bounds_lo[j], bounds_hi[j])
 
     # Override with NLLS seeds where available
     if nlls_seeds is not None:
@@ -1241,6 +1375,11 @@ def batched_dsc_vi_fit(
         tau_exp[good_var] = 1.0 / init_var[good_var]
     except (ValueError, RuntimeError):
         tau_exp = np.full(n_valid, c_post_init * s_post_init)
+
+    if initial_noise_precision is not None:
+        initial_tau = np.asarray(initial_noise_precision, dtype=np.float64)[valid_idx]
+        good_tau = np.isfinite(initial_tau) & (initial_tau > 0)
+        tau_exp[good_tau] = initial_tau[good_tau]
 
     c = np.full(n_valid, c_post_init, dtype=np.float64)
     s = np.full(n_valid, s_post_init, dtype=np.float64)
@@ -1309,7 +1448,7 @@ def batched_dsc_vi_fit(
         JtWJ, JtWk = _assemble_JtWJ(J_columns, k_res, w)
 
         # 5. Posterior precision and covariance
-        post_prec = prior_prec[None, :, :] + tau_a[:, None, None] * JtWJ
+        post_prec = update_prior_prec[None, :, :] + tau_a[:, None, None] * JtWJ
         if spatial_prec_diag is not None:
             # (N_total, P) -> valid subset -> active subset
             sp_a = spatial_prec_diag[valid_idx][a_idx]
@@ -1326,9 +1465,7 @@ def batched_dsc_vi_fit(
         for j in range(n_params):
             Jm += J_columns[j] * m_a[:, j:j + 1]
 
-        lam0_mu0 = prior_prec @ prior_means_t
-        if mono_eta is not None:
-            lam0_mu0 = lam0_mu0 + mono_eta
+        lam0_mu0 = update_prior_eta
         data_term = np.zeros((n_active, n_params))
         for j in range(n_params):
             data_term[:, j] = np.sum(
