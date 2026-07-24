@@ -470,7 +470,10 @@ class TestWriterAifBlockPresentOnAllMaps:
         assert uncertainty_meta["InferenceMethod"] == "spatial_variational_bayes"
         assert uncertainty_meta["SpatialPriorApplied"] is True
         assert uncertainty_meta["SpatialPriorModel"] == "Penny M-prior"
-        assert uncertainty_meta["SpatialUpdateScheme"] == "synchronous_batched"
+        assert (
+            uncertainty_meta["SpatialUpdateScheme"]
+            == "synchronous_batched_backtracking"
+        )
         assert uncertainty_meta["SpatiallyRegularizedParameters"] == ["cbf"]
         cv_meta = _load_sidecar(derivatives, "dscPosteriorCVCbf_stat")
         assert cv_meta["UncertaintyStatistic"] == "coefficient_of_variation"

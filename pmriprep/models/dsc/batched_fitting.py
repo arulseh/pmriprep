@@ -1041,6 +1041,7 @@ def batched_dsc_vi_fit(
     spatial_replaces_parameter_prior: bool = False,
     spatial_parameter_mask: Optional[npt.NDArray[np.bool_]] = None,
     initial_means_transformed: Optional[npt.NDArray[np.floating]] = None,
+    initial_cov_diag: Optional[npt.NDArray[np.floating]] = None,
     initial_noise_precision: Optional[npt.NDArray[np.floating]] = None,
     return_posteriors: bool = False,
     n_iterations_override: Optional[int] = None,
@@ -1112,6 +1113,10 @@ def batched_dsc_vi_fit(
     initial_means_transformed : npt.NDArray[np.floating], optional
         Initial posterior means in transformed space, shape (N, P). Used by
         stateful spatial-VB sweeps.
+    initial_cov_diag : npt.NDArray[np.floating], optional
+        Initial posterior covariance diagonal in transformed space, shape
+        (N, P). Retained when a spatial proposal fails conditional-objective
+        backtracking.
     initial_noise_precision : npt.NDArray[np.floating], optional
         Initial expected noise precision, shape (N,). Used by stateful
         spatial-VB sweeps.
@@ -1186,6 +1191,7 @@ def batched_dsc_vi_fit(
                 spatial_replaces_parameter_prior=spatial_replaces_parameter_prior,
                 spatial_parameter_mask=spatial_parameter_mask,
                 initial_means_transformed=initial_means_transformed,
+                initial_cov_diag=initial_cov_diag,
                 initial_noise_precision=initial_noise_precision,
                 return_posteriors=return_posteriors,
                 n_iterations_override=n_iterations_override,
@@ -1222,6 +1228,12 @@ def batched_dsc_vi_fit(
         raise ValueError(
             "initial_means_transformed must have shape "
             f"({n_voxels}, {n_params})"
+        )
+    if initial_cov_diag is not None and (
+        np.shape(initial_cov_diag) != (n_voxels, n_params)
+    ):
+        raise ValueError(
+            f"initial_cov_diag must have shape ({n_voxels}, {n_params})"
         )
     if initial_noise_precision is not None and (
         np.shape(initial_noise_precision) != (n_voxels,)
@@ -1383,11 +1395,15 @@ def batched_dsc_vi_fit(
 
     c = np.full(n_valid, c_post_init, dtype=np.float64)
     s = np.full(n_valid, s_post_init, dtype=np.float64)
+    if initial_noise_precision is not None:
+        s = tau_exp / c
 
     # --- State tracking ---
     best_fe = np.full(n_valid, -np.inf)
     best_m = m.copy()
     best_cov_diag = np.tile(prior_stds_t ** 2, (n_valid, 1))
+    if initial_cov_diag is not None:
+        best_cov_diag = np.asarray(initial_cov_diag, dtype=np.float64)[valid_idx].copy()
     best_c = c.copy()
     best_s = s.copy()
     step_scale = np.ones(n_valid)
@@ -1483,14 +1499,85 @@ def batched_dsc_vi_fit(
             if transforms[j] == TransformType.IDENTITY:
                 m_new[:, j] = np.clip(m_new[:, j], bounds_lo[j], bounds_hi[j])
 
-        # 7. Noise posterior update
-        m_new_nat = np.zeros_like(m_new)
-        for j in range(n_params):
-            m_new_nat[:, j] = from_transformed_batch(
-                m_new[:, j], transforms[j], upper_bounds[j],
-            )
+        # Spatial linearization can propose a poor full step for nonlinear CPI
+        # residue parameters. Accept only steps that improve the conditional
+        # likelihood-plus-M-prior objective for the current neighbor state.
+        spatial_accepted = np.ones(n_active, dtype=bool)
+        if _spatial_mode:
+            effective_prec = np.broadcast_to(
+                update_prior_prec, (n_active, n_params, n_params)
+            ).copy()
+            effective_eta = np.broadcast_to(
+                update_prior_eta, (n_active, n_params)
+            ).copy()
+            if spatial_prec_diag is not None:
+                effective_prec[:, range(n_params), range(n_params)] += sp_a
+            if spatial_eta is not None:
+                effective_eta += sp_eta_a
 
-        g_new = _evaluate(m_new_nat)
+            def _conditional_objective(
+                values_t: npt.NDArray[np.floating],
+                prediction: npt.NDArray[np.floating],
+            ) -> npt.NDArray[np.float64]:
+                residual = y_a - prediction
+                data_term = -0.5 * tau_a * np.sum(
+                    w[None, :] * residual**2, axis=1
+                )
+                quadratic = np.einsum(
+                    "ni,nij,nj->n", values_t, effective_prec, values_t
+                )
+                information = np.sum(effective_eta * values_t, axis=1)
+                return np.asarray(
+                    data_term - 0.5 * quadratic + information,
+                    dtype=np.float64,
+                )
+
+            old_objective = _conditional_objective(m_a, g_m)
+            raw_m_new = m_new.copy()
+            step = np.ones(n_active, dtype=np.float64)
+            accepted = np.zeros(n_active, dtype=bool)
+            g_new = g_m.copy()
+            for _ in range(14):
+                trial_m = m_a + step[:, None] * (raw_m_new - m_a)
+                for j in range(n_params):
+                    if transforms[j] == TransformType.IDENTITY:
+                        trial_m[:, j] = np.clip(
+                            trial_m[:, j], bounds_lo[j], bounds_hi[j]
+                        )
+                trial_nat = np.zeros_like(trial_m)
+                for j in range(n_params):
+                    trial_nat[:, j] = from_transformed_batch(
+                        trial_m[:, j], transforms[j], upper_bounds[j]
+                    )
+                trial_prediction = _evaluate(trial_nat)
+                trial_objective = _conditional_objective(
+                    trial_m, trial_prediction
+                )
+                newly_accepted = (
+                    ~accepted
+                    & np.isfinite(trial_objective)
+                    & (trial_objective >= old_objective)
+                )
+                if np.any(newly_accepted):
+                    m_new[newly_accepted] = trial_m[newly_accepted]
+                    g_new[newly_accepted] = trial_prediction[newly_accepted]
+                    accepted[newly_accepted] = True
+                if np.all(accepted):
+                    break
+                step[~accepted] *= 0.5
+            spatial_accepted = accepted
+            if np.any(~accepted):
+                m_new[~accepted] = m_a[~accepted]
+                g_new[~accepted] = g_m[~accepted]
+        else:
+            m_new_nat = np.zeros_like(m_new)
+            for j in range(n_params):
+                m_new_nat[:, j] = from_transformed_batch(
+                    m_new[:, j], transforms[j], upper_bounds[j],
+                )
+            g_new = _evaluate(m_new_nat)
+
+        # 7. Noise posterior update
         k_new = y_a - g_new
 
         c_new = c0 + n_eff / 2.0
@@ -1531,12 +1618,15 @@ def batched_dsc_vi_fit(
 
         # 9. Step-size reduction
         if _spatial_mode:
-            # Spatial mode: ELBO is invalid (spatial terms not in KL).
-            # Always accept the update; convergence monitored at outer level.
-            best_m[a_idx] = m_new
-            best_cov_diag[a_idx] = np.diagonal(post_cov, axis1=1, axis2=2)
-            best_c[a_idx] = c_new
-            best_s[a_idx] = s_new
+            accepted_global = a_idx[spatial_accepted]
+            if len(accepted_global) > 0:
+                accepted_local = np.where(spatial_accepted)[0]
+                best_m[accepted_global] = m_new[accepted_local]
+                best_cov_diag[accepted_global] = np.diagonal(
+                    post_cov[accepted_local], axis1=1, axis2=2
+                )
+                best_c[accepted_global] = c_new
+                best_s[accepted_global] = s_new[accepted_local]
         else:
             prev_best_fe = best_fe[a_idx].copy()
             improved = free_energy > prev_best_fe

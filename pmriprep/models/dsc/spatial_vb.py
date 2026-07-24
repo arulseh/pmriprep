@@ -222,16 +222,14 @@ def batched_dsc_spatial_vi_fit(
     save_fitted_curves: bool = False,
     n_spatial_sweeps: int = 10,
     spatial_tol: Optional[float] = None,
-    aK_init: float = 1e-8,
 ) -> DSCBatchedFitResult:
     """Spatial VB wrapper around batched VI.
 
     Warm-starts the vectorized solver with ordinary VI, then iterates stateful
     CBF sweeps using FABBER's boundary-corrected M-prior equations. Each
     spatial sweep performs one synchronous batched parameter/noise update and
-    retains the posterior state. FABBER's original implementation updates
-    voxels sequentially within a sweep; the batched implementation uses the
-    corresponding Jacobi update.
+    retains the posterior state. Nonlinear proposals are backtracked against
+    the likelihood-plus-M-prior conditional objective before acceptance.
 
     Parameters
     ----------
@@ -284,9 +282,6 @@ def batched_dsc_spatial_vi_fit(
     spatial_tol : float, optional
         Optional relative ``aK`` convergence tolerance. ``None`` (default)
         runs ten spatial sweeps after the ordinary-VI warm start.
-    aK_init : float, optional
-        Initial spatial precision for CBF. FABBER initializes
-        boundary-corrected M-priors at ``1e-8``.
 
     Returns
     -------
@@ -342,7 +337,6 @@ def batched_dsc_spatial_vi_fit(
         )
 
     aK = np.zeros(n_params, dtype=np.float64)
-    aK[spatial_parameter_mask] = aK_init
     logger.info("SVB: ordinary-VI warm start")
     result = batched_dsc_vi_fit(
         model_type=model_type,
@@ -383,10 +377,11 @@ def batched_dsc_spatial_vi_fit(
 
     for sweep in range(n_spatial_sweeps):
         aK_old = aK.copy()
-        if sweep > 0:
-            updated_aK = _update_aK_penny(posteriors, cov_diag, adj, degree)
-            aK[spatial_parameter_mask] = updated_aK[spatial_parameter_mask]
-        sp_prec, sp_eta = _compute_spatial_contributions(posteriors, adj, degree, aK)
+        updated_aK = _update_aK_penny(posteriors, cov_diag, adj, degree)
+        aK[spatial_parameter_mask] = updated_aK[spatial_parameter_mask]
+        sp_prec, sp_eta = _compute_spatial_contributions(
+            posteriors, adj, degree, aK
+        )
 
         logger.debug(
             "SVB sweep %d/%d: aK = %s",
@@ -421,6 +416,7 @@ def batched_dsc_spatial_vi_fit(
             spatial_replaces_parameter_prior=True,
             spatial_parameter_mask=spatial_parameter_mask,
             initial_means_transformed=posteriors,
+            initial_cov_diag=cov_diag,
             initial_noise_precision=noise_precision,
             return_posteriors=True,
             n_iterations_override=1,

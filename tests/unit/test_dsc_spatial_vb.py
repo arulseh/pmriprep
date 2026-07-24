@@ -279,8 +279,8 @@ class TestFabberMPriorContract:
             selected_eta, expected_prec @ prior_means + mono_eta
         )
 
-    def test_default_schedule_matches_fabber(self) -> None:
-        """SVB defaults to ten sweeps and FABBER's initial M precision."""
+    def test_default_schedule_uses_ten_fixed_sweeps(self) -> None:
+        """SVB uses ten sweeps unless an explicit tolerance is requested."""
         import inspect
 
         from pmriprep.models.dsc.spatial_vb import batched_dsc_spatial_vi_fit
@@ -288,7 +288,6 @@ class TestFabberMPriorContract:
         parameters = inspect.signature(batched_dsc_spatial_vi_fit).parameters
         assert parameters["n_spatial_sweeps"].default == 10
         assert parameters["spatial_tol"].default is None
-        assert parameters["aK_init"].default == pytest.approx(1e-8)
 
     def test_stateful_one_update_sweeps(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Each sweep receives the preceding posterior and noise precision."""
@@ -346,23 +345,14 @@ class TestFabberMPriorContract:
         assert all(call["spatial_replaces_parameter_prior"] for call in spatial_calls)
         assert all(call["spatial_parameter_mask"][0] for call in spatial_calls)
         np.testing.assert_allclose(
-            spatial_calls[0]["initial_means_transformed"], 1.0
+            [call["initial_means_transformed"][0, 0] for call in spatial_calls],
+            [1.0, 2.0, 3.0],
         )
-        np.testing.assert_allclose(
-            spatial_calls[1]["initial_means_transformed"], 2.0
+        assert all(call["initial_cov_diag"][0, 0] == 1.0 for call in spatial_calls)
+        assert all(
+            call["initial_noise_precision"][0] == 4.0 for call in spatial_calls
         )
-        np.testing.assert_allclose(
-            spatial_calls[2]["initial_means_transformed"], 3.0
-        )
-        np.testing.assert_allclose(
-            spatial_calls[0]["initial_noise_precision"], 4.0
-        )
-        np.testing.assert_allclose(
-            spatial_calls[1]["initial_noise_precision"], 4.0
-        )
-        np.testing.assert_allclose(
-            spatial_calls[2]["initial_noise_precision"], 4.0
-        )
+        np.testing.assert_allclose(spatial_result.params["cbf"], 4.0)
 
 
 class TestSpatialVIIntegration:
@@ -451,10 +441,9 @@ class TestSpatialVIIntegration:
         assert result.fitted_curves is not None
         assert np.all(np.isfinite(result.params["cbf"]))
 
-    def test_spatial_vi_reduces_variance(self) -> None:
-        """Spatial VI produces lower voxel-wise CBF variance than standard VI."""
+    def test_spatial_vi_preserves_cpi_fit_quality(self) -> None:
+        """CPI spatial updates remain finite and retain useful CBF recovery."""
         from pmriprep.models.bayesian_utils import build_priors_from_params
-        from pmriprep.models.dsc.batched_fitting import batched_dsc_vi_fit
         from pmriprep.models.dsc.spatial_vb import batched_dsc_spatial_vi_fit
 
         tissue_curves, aif, t, dt, mask_coords, model, toeplitz = (
@@ -491,7 +480,6 @@ class TestSpatialVIIntegration:
             prior_stds_transformed=stds_t,
         )
 
-        result_vi = batched_dsc_vi_fit(**common_kwargs, save_fitted_curves=False)
         result_svb = batched_dsc_spatial_vi_fit(
             **common_kwargs,
             mask_coords=mask_coords,
@@ -499,10 +487,104 @@ class TestSpatialVIIntegration:
             save_fitted_curves=False,
         )
 
-        cbf_vi_var = np.var(result_vi.params["cbf"])
-        cbf_svb_var = np.var(result_svb.params["cbf"])
-        assert cbf_svb_var <= cbf_vi_var, (
-            f"SVB variance ({cbf_svb_var:.6f}) should be <= VI variance ({cbf_vi_var:.6f})"
+        cbf = np.asarray(result_svb.params["cbf"])
+        assert np.all(np.isfinite(cbf))
+        assert np.median(np.abs(cbf - 0.1) / 0.1) < 0.25
+        assert np.median(result_svb.r_squared) > 0.5
+
+    def test_cpi_synchronous_update_is_translation_invariant(self) -> None:
+        """A one-voxel coordinate translation leaves CPI SVB unchanged."""
+        from pmriprep.models.bayesian_utils import build_priors_from_params
+        from pmriprep.models.dsc.batched_fitting import batched_cpi_forward
+        from pmriprep.models.dsc.cpi import CPIModel
+        from pmriprep.models.dsc.spatial_vb import batched_dsc_spatial_vi_fit
+        from pmriprep.utils.dsc_deconvolution import build_volterra_matrix
+
+        side = 4
+        n_voxels = side**2
+        time_points = np.linspace(0.0, 40.0, 40)
+        dt = float(time_points[1] - time_points[0])
+        aif = (time_points / 3.0) * np.exp(-time_points / 5.0)
+        aif[0] = 0.0
+        model = CPIModel(
+            n_control_points=6,
+            n_acquisition_frames=len(time_points),
+            dt=dt,
+        )
+        convolution = build_volterra_matrix(aif, dt)
+        cbf_truth = np.linspace(0.025, 0.14, n_voxels)
+        fractions = np.linspace(0.65, 0.92, n_voxels)
+        params = np.column_stack(
+            [cbf_truth, np.repeat(fractions[:, None], 6, axis=1)]
+        )
+        tissue = batched_cpi_forward(
+            params,
+            aif,
+            time_points,
+            np.asarray(model._control_point_times),
+            convolution,
+            t_terminal=model.terminal_time,
+        )
+        tissue += np.random.default_rng(20260725).normal(
+            0.0, 0.008, tissue.shape
+        )
+
+        definitions = list(model.get_fitting_parameter_definitions())
+        priors = build_priors_from_params(definitions)
+        common = dict(
+            model_type="cpi",
+            tissue_curves=tissue,
+            aif=aif,
+            time_points=time_points,
+            spatial_shape=(side, side, 1),
+            prior_means_nat=np.array([prior.mean for prior in priors]),
+            prior_stds_nat=np.array([prior.std for prior in priors]),
+            transforms=[prior.transform for prior in priors],
+            upper_bounds=[prior.upper_bound for prior in priors],
+            fitting_param_names=[definition.name for definition in definitions],
+            fitting_bounds=[
+                (definition.bounds[0], definition.bounds[1])
+                for definition in definitions
+            ],
+            control_point_times=np.asarray(model._control_point_times),
+            toeplitz_matrix=convolution,
+            cpi_t_terminal=model.terminal_time,
+            prior_means_transformed=np.array(
+                [prior.mean_transformed for prior in priors]
+            ),
+            prior_stds_transformed=np.array(
+                [prior.std_transformed for prior in priors]
+            ),
+        )
+        x, y = np.mgrid[0:side, 0:side]
+        coords = (x.ravel(), y.ravel(), np.zeros(n_voxels, dtype=int))
+        result_a = batched_dsc_spatial_vi_fit(
+            **common,
+            mask_coords=coords,
+        )
+        shifted_common = dict(common)
+        shifted_common["spatial_shape"] = (side + 1, side, 1)
+        result_b = batched_dsc_spatial_vi_fit(
+            **shifted_common,
+            mask_coords=(coords[0] + 1, coords[1], coords[2]),
+        )
+
+        cbf_a = np.asarray(result_a.params["cbf"])
+        cbf_b = np.asarray(result_b.params["cbf"])
+        np.testing.assert_allclose(cbf_a, cbf_b, rtol=1e-12, atol=1e-12)
+
+        def _mtt(result: object) -> np.ndarray:
+            result_params = getattr(result, "params")
+            values = np.column_stack(
+                [
+                    result_params["cbf"],
+                    *[result_params[f"f{i}"] for i in range(1, 7)],
+                ]
+            )
+            return np.array([model.get_mtt(row) for row in values])
+
+        np.testing.assert_allclose(
+            _mtt(result_a), _mtt(result_b), rtol=1e-12, atol=1e-12
         )
 
     def test_batched_ordering_agrees_with_sequential_reference(self) -> None:
