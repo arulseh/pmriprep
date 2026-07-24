@@ -105,14 +105,14 @@ def test_prepare_motion_weighting_matches_fitting_array_and_qc() -> None:
         baseline_frames=2,
     )
 
-    result = interface._prepare_motion_weighting("cpi", header, 6, 1.5)
+    result = interface._prepare_motion_weighting("cpi", header, 6, 1.5, 3)
 
     assert result.weights is not None
     assert result.weights.shape == (6,)
     assert result.qc["applied"] is True
     assert result.qc["n_downweighted_frames"] == int(np.sum(result.weights < 0.95))
     assert result.qc["min_weight"] == float(np.min(result.weights))
-    assert result.qc["first_pass_weights"] == result.weights[2:6].tolist()
+    assert result.qc["first_pass_weights"] == result.weights[3:6].tolist()
 
 
 @pytest.mark.parametrize("method", ["sSVD", "oSVD", "tikhonov", "cpi"])
@@ -123,7 +123,7 @@ def test_prepare_motion_weighting_disabled_paths(method: str) -> None:
     if method != "cpi":
         interface.inputs.fd_values = [0.0, 0.5, 0.0]
 
-    result = interface._prepare_motion_weighting(method, header, 3, 1.5)
+    result = interface._prepare_motion_weighting(method, header, 3, 1.5, 2)
 
     assert result.weights is None
     assert result.qc == {"applied": False}
@@ -220,6 +220,60 @@ def test_prepare_baseline_recomputes_s0_and_k2(
     assert result.detection_info["k2_recomputed"] is True
     assert result.k2_map_path is not None
     np.testing.assert_allclose(nib.load(result.k2_map_path).get_fdata(), 0.25)
+
+
+def test_prepare_baseline_replaces_stale_k2_after_later_refinement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A later detected baseline saves the K2 map fitted to that baseline."""
+    monkeypatch.chdir(tmp_path)
+    concentration_file = _write_image(
+        tmp_path / "concentration.nii.gz", np.zeros((2, 2, 1, 7), dtype=np.float32)
+    )
+    mask_file = _write_image(tmp_path / "mask.nii.gz", np.ones((2, 2, 1), dtype=np.uint8))
+    signal = np.broadcast_to(
+        np.array([100.0, 100.0, 100.0, 100.0, 100.0, 70.0, 60.0]),
+        (2, 2, 1, 7),
+    ).copy()
+    signal_file = _write_image(tmp_path / "signal.nii.gz", signal)
+    stale_k2_file = _write_image(
+        tmp_path / "upstream_k2.nii.gz", np.full((2, 2, 1), 9.0)
+    )
+    aif_file = tmp_path / "aif.txt"
+    np.savetxt(aif_file, [0.0, 0.0, 0.0, 0.0, 0.0, 2.0, 1.0])
+    interface = ComputeDSCMaps(
+        concentration_file=concentration_file,
+        brain_mask_file=mask_file,
+        aif_file=str(aif_file),
+        signal_file=signal_file,
+        baseline_frames=2,
+        k2_map_input_file=stale_k2_file,
+        tr=1.5,
+        te=0.05,
+    )
+    monkeypatch.setattr(
+        ComputeDSCMaps,
+        "_detect_baseline_frames",
+        lambda self, *args, **kwargs: (5, {"arrival_index": 5}),
+    )
+
+    expected_raw = -np.log(signal / 100.0) / 0.05
+
+    class _K2Result:
+        concentration_corrected = expected_raw + 3.0
+        k2_map = np.full((2, 2, 1), 0.5)
+
+    monkeypatch.setattr(
+        "pmriprep.utils.dsc_preload.apply_k2_correction",
+        lambda **kwargs: _K2Result(),
+    )
+
+    result = interface._prepare_baseline_and_leakage(interface._load_compute_inputs())
+
+    assert result.detected_frames == 5
+    assert result.k2_map_path is not None
+    assert result.k2_map_path != stale_k2_file
+    np.testing.assert_allclose(nib.load(result.k2_map_path).get_fdata(), 0.5)
 
 
 def test_compute_signal_metrics_preserves_legacy_maps() -> None:

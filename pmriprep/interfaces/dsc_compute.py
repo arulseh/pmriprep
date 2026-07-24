@@ -969,7 +969,7 @@ class ComputeDSCMaps(BaseInterface):
             detection_info["k2_recomputed"] = True
 
         k2_map_path: Optional[str] = None
-        if detected_frames < inputs.baseline_frames and recomputed_raw is not None:
+        if recomputed_raw is not None:
             k2_map_path = self._gen_outfilename("_k2")
             k2_img = nib.Nifti1Image(  # type: ignore[attr-defined]
                 k2_result.k2_map.astype(np.float32), inputs.affine, inputs.header
@@ -1010,6 +1010,7 @@ class ComputeDSCMaps(BaseInterface):
         header: Any,
         n_frames: int,
         dt: float,
+        bolus_frame: int,
     ) -> _DSCMotionWeighting:
         """Prepare phase-aware motion weights for parametric DSC fitting.
 
@@ -1023,6 +1024,8 @@ class ComputeDSCMaps(BaseInterface):
             Number of acquired DSC frames.
         dt : float
             Frame interval in seconds.
+        bolus_frame : int
+            Final detected pre-bolus frame count used by DSC fitting.
 
         Returns
         -------
@@ -1039,7 +1042,6 @@ class ComputeDSCMaps(BaseInterface):
 
         voxel_dims = header.get_zooms()[:3]
         min_voxel_dim = float(min(voxel_dims))
-        bolus_frame = int(self.inputs.baseline_frames)
         weights = _compute_dsc_motion_weights(
             fd_values=self.inputs.fd_values,
             bolus_frame=bolus_frame,
@@ -3537,7 +3539,7 @@ class ComputeDSCMaps(BaseInterface):
         spatial_shape = conc_data.shape[:3]
 
         motion_weighting = self._prepare_motion_weighting(
-            method, header, conc_data.shape[3], dt
+            method, header, conc_data.shape[3], dt, detected_baseline
         )
         deconvolution = self._run_deconvolution(
             concentration=conc_data,
