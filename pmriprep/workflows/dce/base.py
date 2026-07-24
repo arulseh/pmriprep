@@ -2332,7 +2332,7 @@ def init_dce_preproc_wf(
         niu.Function(
             input_names=[
                 "ktrans_file", "ve_file", "vp_file", "fp_file", "ps_file",
-                "brain_mask_file",
+                "brain_mask_file", "qc_mask_file",
                 "model_selection_file", "delta_bic_file",
                 "enhancing_mask_file", "non_enhancing_mask_file",
                 "nawm_mask_file",
@@ -2361,6 +2361,7 @@ def init_dce_preproc_wf(
             ("outputnode.out_vp", "vp_file"),
             ("outputnode.out_fp", "fp_file"),
             ("outputnode.out_ps", "ps_file"),
+            ("outputnode.out_qc_mask", "qc_mask_file"),
             ("outputnode.out_model_selection", "model_selection_file"),
             ("outputnode.out_delta_bic", "delta_bic_file"),
             ("outputnode.out_vp_at_bound_map", "vp_at_bound_map_file"),

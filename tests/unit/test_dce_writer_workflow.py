@@ -356,6 +356,54 @@ def test_patlak_absent_model_selection_plot_reaches_figures_writer(
     assert not list((session / "figures").glob("*modelselection*"))
 
 
+def test_pk_parameter_montage_receives_qc_mask_and_preserves_nan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Parameter QC uses accepted voxels without making NaN look like zero."""
+    from pmriprep.utils import dce_pk_qc_plots
+    from pmriprep.workflows.dce._helpers import _generate_dce_pk_maps_qc
+
+    affine = np.eye(4)
+    ktrans = np.full((4, 4, 4), 0.1, dtype=np.float32)
+    ve = np.full((4, 4, 4), 0.2, dtype=np.float32)
+    ve[1, 1, 1] = np.nan
+    brain = np.ones((4, 4, 4), dtype=np.uint8)
+    qc_mask = np.zeros((4, 4, 4), dtype=np.uint8)
+    qc_mask[1:3, 1:3, 1:3] = 1
+
+    def _save(name: str, data: np.ndarray) -> str:
+        path = tmp_path / name
+        nib.save(nib.Nifti1Image(data, affine), path)
+        return str(path)
+
+    captured: dict[str, object] = {}
+
+    def _capture_plot(**kwargs: object) -> str:
+        captured.update(kwargs)
+        return str(tmp_path / "pk_parameter_maps_qc.png")
+
+    monkeypatch.setattr(
+        dce_pk_qc_plots,
+        "generate_pk_parameter_maps_qc_plot",
+        _capture_plot,
+    )
+
+    result = _generate_dce_pk_maps_qc(
+        ktrans_file=_save("ktrans.nii.gz", ktrans),
+        ve_file=_save("ve.nii.gz", ve),
+        brain_mask_file=_save("brain.nii.gz", brain),
+        qc_mask_file=_save("qc.nii.gz", qc_mask),
+        model_name="auto",
+    )
+
+    assert result[0] == str(tmp_path / "pk_parameter_maps_qc.png")
+    np.testing.assert_array_equal(captured["qc_mask"], qc_mask)
+    param_maps = captured["param_maps"]
+    assert isinstance(param_maps, dict)
+    assert np.isnan(param_maps["ve"][1, 1, 1])
+
+
 def test_2cxm_bayesian_fp_ps_relative_uncertainty(
     tmp_path: Path, minimal_bids: tuple[Path, str]
 ) -> None:

@@ -666,7 +666,7 @@ PMRIPrep generates a per-session HTML report (`sub-XX_ses-XX.html`) in the outpu
 - **Anatomical**: Brain mask overlay, tissue segmentation, MNI alignment, cross-modal coregistration (T1w post-contrast, T2w, FLAIR)
 - **Tumor segmentation**: Segmentation overlays on T1w post-contrast and FLAIR, NAWM ROI visualization, volume statistics
 - **DSC**: Brain extraction, registration overlay, motion parameters, preprocessing QC (tSNR, CNR), AIF curve and quality metrics, leakage correction, example voxel fit, parameter map montages (CBF, CBV, MTT, Tmax)
-- **DCE**: Brain extraction, registration overlay, B1+ mapping QC, T1 map quality, motion parameters, preprocessing QC (tSNR, enhancement), AIF curve and quality metrics, example voxel fit, parameter map montages (Ktrans, ve, vp), model selection visualization, DSC-DCE cross-validation
+- **DCE**: Brain extraction, registration overlay, B1+ mapping QC, T1 map quality, motion parameters, preprocessing QC (tSNR, enhancement), AIF curve and quality metrics, example voxel fit, QC-accepted parameter map montages (Ktrans, ve, vp), model selection visualization, DSC-DCE cross-validation
 
 Use `--report-only` to regenerate reports from existing outputs without re-running the pipeline.
 

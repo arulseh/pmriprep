@@ -2197,6 +2197,7 @@ def _generate_dce_pk_maps_qc(
     fp_file: str | None = None,
     ps_file: str | None = None,
     brain_mask_file: str | None = None,
+    qc_mask_file: str | None = None,
     model_selection_file: str | None = None,
     delta_bic_file: str | None = None,
     enhancing_mask_file: str | None = None,
@@ -2233,6 +2234,9 @@ def _generate_dce_pk_maps_qc(
         Path to PS map NIfTI (may be undefined for non-2cxm).
     brain_mask_file : str, optional
         Path to brain mask NIfTI.
+    qc_mask_file : str, optional
+        Path to quantitative QC mask NIfTI. Rejected voxels are shown as
+        unavailable in the parameter montage.
     model_selection_file : str, optional
         Path to model selection map NIfTI (auto mode).
     delta_bic_file : str, optional
@@ -2294,21 +2298,26 @@ def _generate_dce_pk_maps_qc(
         if not brain_mask_file:
             raise ValueError("brain_mask_file is required for DCE PK maps QC")
         mask_data = nib.load(brain_mask_file).get_fdata()  # type: ignore[attr-defined]
-        is_auto = model_name == "auto"
+        qc_mask_data = _safe_load(qc_mask_file)
+        if qc_mask_data is not None and qc_mask_data.shape != mask_data.shape:
+            raise ValueError(
+                "DCE QC mask shape does not match the brain mask: "
+                f"{qc_mask_data.shape} != {mask_data.shape}"
+            )
 
         # Build param_maps dict from available files
         param_maps = {}
         ktrans_data = _safe_load(ktrans_file)
         if ktrans_data is not None:
-            param_maps["Ktrans"] = np.nan_to_num(ktrans_data, nan=0.0) if is_auto else ktrans_data
+            param_maps["Ktrans"] = ktrans_data
 
         ve_data = _safe_load(ve_file)
         if ve_data is not None:
-            param_maps["ve"] = np.nan_to_num(ve_data, nan=0.0) if is_auto else ve_data
+            param_maps["ve"] = ve_data
 
         vp_data = _safe_load(vp_file)
         if vp_data is not None:
-            param_maps["vp"] = np.nan_to_num(vp_data, nan=0.0) if is_auto else vp_data
+            param_maps["vp"] = vp_data
 
         fp_data = _safe_load(fp_file)
         if fp_data is not None:
@@ -2322,6 +2331,7 @@ def _generate_dce_pk_maps_qc(
         pk_param_maps_qc_plot = generate_pk_parameter_maps_qc_plot(
             param_maps=param_maps,
             brain_mask=mask_data,
+            qc_mask=qc_mask_data,
             subject_id=subject_id,
             session_id=session_id,
         )

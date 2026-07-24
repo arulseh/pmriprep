@@ -588,6 +588,7 @@ def generate_pk_modeling_qc_plot(
 def generate_pk_parameter_maps_qc_plot(
     param_maps: dict[str, npt.NDArray[Any]],
     brain_mask: npt.NDArray[Any],
+    qc_mask: npt.NDArray[Any] | None = None,
     subject_id: str = "",
     session_id: str = "",
     output_path: str | None = None,
@@ -604,6 +605,9 @@ def generate_pk_parameter_maps_qc_plot(
         Expected keys: "Ktrans", "ve", optionally "vp".
     brain_mask : numpy.ndarray
         3D boolean brain mask.
+    qc_mask : numpy.ndarray or None, optional
+        Quantitative QC mask. When provided, parameter statistics and display
+        scaling use accepted voxels only; rejected brain voxels are gray.
     subject_id : str, optional
         Subject identifier for title.
     session_id : str, optional
@@ -621,6 +625,18 @@ def generate_pk_parameter_maps_qc_plot(
     from pmriprep.utils.qc_utils import get_radiological_slice
 
     mask_bool = brain_mask > 0.5
+    if qc_mask is None:
+        accepted_mask = mask_bool
+    else:
+        if qc_mask.shape != brain_mask.shape:
+            raise ValueError(
+                "QC mask shape does not match brain mask: "
+                f"{qc_mask.shape} != {brain_mask.shape}"
+            )
+        accepted_mask = mask_bool & (qc_mask > 0.5)
+    n_brain = int(np.count_nonzero(mask_bool))
+    n_accepted = int(np.count_nonzero(accepted_mask))
+    accepted_fraction = n_accepted / n_brain if n_brain else 0.0
 
     # Parameter display config: (colormap, vmin, vmax_mode, unit_label)
     # vmax_mode: "pct95" = 95th percentile of nonzero, "fixed" = use vmax directly
@@ -659,17 +675,32 @@ def generate_pk_parameter_maps_qc_plot(
 
     from pmriprep.utils.qc_utils import qc_figure_title
     fig.suptitle(
-        qc_figure_title(subject_id, session_id, "PK Parameter Maps"),
+        qc_figure_title(
+            subject_id,
+            session_id,
+            f"PK Parameter Maps | QC accepted {accepted_fraction:.1%} of brain",
+        ),
         fontsize=13, fontweight="bold", y=0.99,
+    )
+    fig.text(
+        0.5,
+        0.005,
+        "Gray = QC-rejected or model-non-applicable",
+        ha="center",
+        va="bottom",
+        fontsize=8,
+        color="dimgray",
     )
 
     for row_idx, (name, data) in enumerate(params_to_plot):
         cmap, vmin, vmax_mode, vmax_fixed, unit_label = param_config[name]
 
         # Determine vmax
-        data_masked = data[mask_bool & np.isfinite(data) & (data > 0)]
-        if vmax_mode == "pct95" and len(data_masked) > 0:
-            vmax = float(np.percentile(data_masked, 95))
+        finite_accepted = accepted_mask & np.isfinite(data)
+        data_masked = data[finite_accepted]
+        scale_values = data[finite_accepted & (data > 0)]
+        if vmax_mode == "pct95" and len(scale_values) > 0:
+            vmax = float(np.percentile(scale_values, 95))
         elif vmax_fixed is not None:
             vmax = vmax_fixed
         else:
@@ -681,16 +712,23 @@ def generate_pk_parameter_maps_qc_plot(
             sigma = float(np.std(data_masked))
         else:
             mu, sigma = 0.0, 0.0
+        valid_fraction = len(data_masked) / n_brain if n_brain else 0.0
 
-        # Prepare display data (mask non-brain as NaN)
+        # Prepare display data. Rejected brain voxels remain visible as a
+        # neutral gray field rather than appearing to be quantitative zeros.
         display = data.copy().astype(float)
-        display[~mask_bool] = np.nan
+        display[~accepted_mask] = np.nan
 
         # Row label axis (col 0)
         label_ax = fig.add_subplot(gs[row_idx, 0])
         label_ax.axis("off")
         label_ax.text(
-            0.5, 0.5, f"{name}\n(\u03bc={mu:.4f}, \u03c3={sigma:.4f})",
+            0.5,
+            0.5,
+            (
+                f"{name}\n(\u03bc={mu:.4f}, \u03c3={sigma:.4f}, "
+                f"valid={valid_fraction:.1%})"
+            ),
             transform=label_ax.transAxes,
             fontsize=9, fontweight="bold", rotation=90,
             ha="center", va="center",
@@ -703,6 +741,17 @@ def generate_pk_parameter_maps_qc_plot(
             zip(z_positions, slice_spans)
         ):
             ax = fig.add_subplot(gs[row_idx, c_start:c_end])
+            brain_slice = get_radiological_slice(
+                mask_bool.astype(float), axis=2, slice_idx=int(z_idx)
+            )
+            rejected_background = np.where(brain_slice > 0, 0.7, np.nan)
+            ax.imshow(
+                rejected_background,
+                cmap="gray",
+                vmin=0.0,
+                vmax=1.0,
+                aspect="equal",
+            )
             slc = get_radiological_slice(display, axis=2, slice_idx=int(z_idx))
             im = ax.imshow(slc, cmap=cmap, vmin=vmin, vmax=vmax, aspect="equal")
             ax.axis("off")
