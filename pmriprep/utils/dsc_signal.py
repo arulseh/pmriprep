@@ -957,8 +957,10 @@ def normalize_cbv(
             # Get CBV values within NAWM
             cbv_nawm = cbv_map[mask_bool]
 
-            # Filter out non-positive values for median calculation
-            cbv_nawm_valid = cbv_nawm[cbv_nawm > EPSILON_CONCENTRATION]
+            # Use only finite positive estimator values for the reference.
+            cbv_nawm_valid = cbv_nawm[
+                np.isfinite(cbv_nawm) & (cbv_nawm > EPSILON_CONCENTRATION)
+            ]
 
             if len(cbv_nawm_valid) > 0:
                 # Compute median CBV in NAWM
@@ -976,7 +978,10 @@ def normalize_cbv(
 
             if n_brain_voxels > 0:
                 cbv_brain = cbv_map[brain_bool]
-                cbv_brain_valid = cbv_brain[cbv_brain > EPSILON_CONCENTRATION]
+                cbv_brain_valid = cbv_brain[
+                    np.isfinite(cbv_brain)
+                    & (cbv_brain > EPSILON_CONCENTRATION)
+                ]
 
                 if len(cbv_brain_valid) > 0:
                     # Use median of whole brain as fallback

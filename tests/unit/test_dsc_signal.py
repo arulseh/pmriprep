@@ -295,6 +295,38 @@ class TestNormalizeCBV:
         np.testing.assert_array_equal(ncbv[cbv == 0], 0.0)
         np.testing.assert_array_equal(ncbv[cbv > 0], 1.0)
 
+    def test_nawm_reference_uses_only_finite_positive_values(self) -> None:
+        """Signed residuals and nonfinite sentinels cannot bias the median."""
+        cbv = np.array(
+            [-2.0, 0.0, np.nan, np.inf, 2.0, 4.0],
+            dtype=np.float64,
+        ).reshape((2, 3, 1))
+        nawm_mask = np.ones_like(cbv, dtype=bool)
+
+        _, factor = normalize_cbv(
+            cbv,
+            nawm_mask=nawm_mask,
+            return_normalization_factor=True,
+        )
+
+        assert factor == pytest.approx(3.0)
+
+    def test_brain_fallback_uses_only_finite_positive_values(self) -> None:
+        """Whole-brain fallback applies the same reference admission rule."""
+        cbv = np.array(
+            [-1.0, np.nan, np.inf, 2.0, 6.0],
+            dtype=np.float64,
+        ).reshape((5, 1, 1))
+        brain_mask = np.ones_like(cbv, dtype=bool)
+
+        _, factor = normalize_cbv(
+            cbv,
+            brain_mask=brain_mask,
+            return_normalization_factor=True,
+        )
+
+        assert factor == pytest.approx(4.0)
+
 
 class TestGetBaselineSignal:
     """Tests for get_baseline_signal."""
