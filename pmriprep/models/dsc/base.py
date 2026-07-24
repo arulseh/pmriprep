@@ -73,6 +73,10 @@ class DSCFitResult:
         n_observations: Number of time points used in fitting.
         converged: Whether the fitting algorithm converged.
         fitting_method: Method used ('nlls', 'map', 'vi', 'mcmc').
+        optimizer_status: Backend-specific optimizer termination status.
+        n_function_evaluations: Number of forward-objective evaluations.
+        evaluation_budget_exhausted: Whether optimization stopped at its
+            configured evaluation limit.
 
         # Fitted curves
         fitted_residue: Fitted residue function R(t).
@@ -104,6 +108,9 @@ class DSCFitResult:
     n_observations: int = 0
     converged: bool = False
     fitting_method: str = ""
+    optimizer_status: int | None = None
+    n_function_evaluations: int | None = None
+    evaluation_budget_exhausted: bool = False
 
     # Fitted curves
     fitted_residue: npt.NDArray[np.floating] | None = None

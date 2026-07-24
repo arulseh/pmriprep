@@ -1024,7 +1024,7 @@ def _fit_cpi_simple(
         return sqrt_w * (concentration - predicted)
 
     try:
-        max_nfev = 200 if sloppy else 2000
+        max_nfev = 50 if sloppy else 100
         ls_result = optimize.least_squares(
             _residual,
             x0_fit,
@@ -1087,6 +1087,11 @@ def _fit_cpi_simple(
         n_observations=n_obs,
         converged=bool(ls_result.success),
         fitting_method="nlls",
+        optimizer_status=int(ls_result.status),
+        n_function_evaluations=int(ls_result.nfev),
+        evaluation_budget_exhausted=bool(
+            ls_result.status == 0 and ls_result.nfev >= max_nfev
+        ),
         fitted_residue=fitted_residue,
         fitted_tissue_curve=fitted_tissue,
     )

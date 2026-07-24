@@ -22,6 +22,7 @@ from nipype.interfaces.base import (  # type: ignore[import-untyped]
     traits,
 )
 
+from pmriprep.models.dsc.base import DSCFitResult
 from pmriprep.utils.dsc_constants import (
     DEFAULT_OI_THRESHOLD,
     DEFAULT_SVD_THRESHOLD,
@@ -139,6 +140,29 @@ def _warn_invalid_cpi_combo(
             "basin; CBF variance ~7x higher than VI at 5% noise). "
             "Recommend inference='vi' for cpi_infer_cpt=True cases."
         )
+
+
+def _parametric_fit_needs_fallback(
+    result: DSCFitResult,
+    inference: str,
+) -> bool:
+    """Return whether a parametric fit requires oSVD fallback.
+
+    Budget-limited CPI NLLS fits retain their finite endpoint and are judged
+    by the same R² gate as fixed-schedule VI. Other NLLS/MAP termination
+    failures still require fallback.
+    """
+    bad_r2 = float(result.r_squared) < 0.5
+    budget_limited_nlls = (
+        inference == "nlls"
+        and bool(result.evaluation_budget_exhausted)
+    )
+    bad_solver_convergence = (
+        inference in ("nlls", "map")
+        and not bool(result.converged)
+        and not budget_limited_nlls
+    )
+    return bad_r2 or bad_solver_convergence
 
 
 def _dsc_init_worker(
@@ -289,16 +313,16 @@ def _dsc_fit_single_voxel(voxel_data: _DSCVoxelInput) -> dict[str, Any]:
 
         out["r_squared"] = result.r_squared
         out["converged"] = result.passes_convergence()
+        out["evaluation_budget_exhausted"] = (
+            result.evaluation_budget_exhausted
+        )
+        out["n_function_evaluations"] = result.n_function_evaluations
 
         # Flag poor fits for oSVD fallback. R² gate applies to every
         # inference method; the `converged` flag only gates NLLS/MAP
         # because for VI/SVB the FABBER 10-iter schedule rarely satisfies
         # the strict FE-plateau convergence test even on usable fits.
-        bad_r2 = result.r_squared < 0.5
-        bad_solver_conv = (
-            inference in ("nlls", "map") and not result.converged
-        )
-        if bad_r2 or bad_solver_conv:
+        if _parametric_fit_needs_fallback(result, inference):
             out["needs_fallback"] = True
 
         return out
@@ -2431,6 +2455,7 @@ class ComputeDSCMaps(BaseInterface):
 
         # Scatter results into output arrays
         n_converged = 0
+        n_evaluation_budget_exhausted = 0
         r_squared_list: list[float] = []
 
         for res in results:
@@ -2470,6 +2495,8 @@ class ComputeDSCMaps(BaseInterface):
                     parametric_r2_map[x, y, z] = float(res["r_squared"])
             if res.get("converged"):
                 n_converged += 1
+            if res.get("evaluation_budget_exhausted"):
+                n_evaluation_budget_exhausted += 1
 
         # Fallback: run oSVD for voxels where parametric fit failed or R² < 0.5
         # Fall back to oSVD for poor vascular fits; ground truth maps
@@ -2540,6 +2567,13 @@ class ComputeDSCMaps(BaseInterface):
             # spec rarely satisfies the strict plateau in 10 iters by
             # design); fit quality is gated by R² in the fallback path.
             qc_metrics["fe_plateau_rate"] = n_converged / max(1, n_admissible)
+            if inference == "nlls":
+                qc_metrics["n_evaluation_budget_exhausted"] = (
+                    n_evaluation_budget_exhausted
+                )
+                qc_metrics["evaluation_budget_exhausted_rate"] = (
+                    n_evaluation_budget_exhausted / max(1, n_admissible)
+                )
 
         qc_metrics["n_fallback_requested"] = n_fallback_requested
         qc_metrics["n_fallback_attempted"] = n_fallback_attempted

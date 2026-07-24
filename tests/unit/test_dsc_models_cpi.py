@@ -307,11 +307,12 @@ def test_nlls_honors_identity_parameter_bounds(
     """CPI NLLS bounds inferred spacings before exponentiation."""
     from scipy import optimize
 
-    captured: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+    captured: dict[str, object] = {}
     original = optimize.least_squares
 
     def capture_bounds(*args, **kwargs):
         captured["bounds"] = kwargs["bounds"]
+        captured["max_nfev"] = kwargs["max_nfev"]
         return original(*args, **kwargs)
 
     monkeypatch.setattr(optimize, "least_squares", capture_bounds)
@@ -329,9 +330,53 @@ def test_nlls_honors_identity_parameter_bounds(
     result = _fit_cpi_simple(model, tissue, aif, time_points, sloppy=True)
 
     assert result is not None
-    lower, upper = captured["bounds"]
+    lower, upper = captured["bounds"]  # type: ignore[misc]
+    assert captured["max_nfev"] == 50
     assert lower[0] == 0.0
     assert np.isposinf(upper[0])
     np.testing.assert_array_equal(lower[5:9], -5.0)
     np.testing.assert_array_equal(upper[5:9], 5.0)
     assert (lower[-1], upper[-1]) == model.get_parameter_definitions()[-1].bounds
+
+    full_result = _fit_cpi_simple(
+        model, tissue, aif, time_points, sloppy=False,
+    )
+    assert full_result is not None
+    assert captured["max_nfev"] == 100
+
+
+def test_nlls_reports_evaluation_budget_exhaustion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A finite, budget-limited solution remains distinguishable in QC."""
+    from scipy import optimize
+
+    original = optimize.least_squares
+
+    def force_budget_status(*args, **kwargs):
+        configured_budget = int(kwargs["max_nfev"])
+        kwargs["max_nfev"] = 1
+        result = original(*args, **kwargs)
+        result.status = 0
+        result.success = False
+        result.nfev = configured_budget
+        return result
+
+    monkeypatch.setattr(optimize, "least_squares", force_budget_status)
+    model = CPIModel(
+        n_control_points=4,
+        n_acquisition_frames=30,
+        dt=1.5,
+    )
+    time_points = np.arange(30, dtype=np.float64) * 1.5
+    aif = np.exp(-0.5 * ((time_points - 9.0) / 2.0) ** 2)
+    tissue = model.tissue_curve(
+        model.get_initial_guess(), aif, time_points,
+    )
+
+    result = _fit_cpi_simple(model, tissue, aif, time_points)
+
+    assert result is not None
+    assert not result.converged
+    assert result.evaluation_budget_exhausted
+    assert result.n_function_evaluations == 100
