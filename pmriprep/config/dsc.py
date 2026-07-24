@@ -49,8 +49,8 @@ class DSCConfig:
         Deconvolution method: sSVD, oSVD, tikhonov, vascular, or cpi.
     inference : str
         Inference method for parametric deconvolution:
-        ``vi`` (default — Variational Inference, FABBER VB), ``svb`` (spatial
-        VB), ``map``, or ``nlls`` (FABBER-style Levenberg-Marquardt).
+        ``vi`` (default — linearized variational inference), ``svb`` (spatial
+        variational Bayes), ``map``, or ``nlls`` (nonlinear least squares).
     mcmc_samples : int
         Number of MCMC samples for Bayesian inference.
     cpi_control_points : int

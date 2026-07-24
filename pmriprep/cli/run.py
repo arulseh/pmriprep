@@ -308,9 +308,9 @@ Examples:
         metavar="{nlls,vi,svb}",
         default=None,
         help="Inference engine for parametric DSC methods (cpi, vascular): "
-        "vi (default, FABBER variational Bayes), "
-        "svb (spatial VB with FABBER M-prior), "
-        "nlls (FABBER-style Levenberg-Marquardt). "
+        "vi (default, linearized variational inference), "
+        "svb (spatial variational Bayes with a boundary-corrected M-prior), "
+        "nlls (nonlinear least squares). "
         "SVD methods ignore this option.",
     )
     dsc_group.add_argument(

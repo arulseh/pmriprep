@@ -1208,12 +1208,12 @@ def batched_dsc_vi_fit(
         spatial_prec_diag is None or spatial_eta is None
     ):
         raise ValueError(
-            "FABBER M-prior replacement requires both spatial_prec_diag "
+            "Spatial M-prior replacement requires both spatial_prec_diag "
             "and spatial_eta"
         )
     if spatial_replaces_parameter_prior and n_iterations_override is None:
         raise ValueError(
-            "FABBER M-prior replacement requires spatial one-update mode "
+            "Spatial M-prior replacement requires spatial one-update mode "
             "(n_iterations_override must be set)"
         )
     if spatial_parameter_mask is not None and (
@@ -1701,12 +1701,10 @@ def batched_dsc_vi_fit(
                 iteration, int(np.sum(active)), n_valid, int(np.sum(converged)),
             )
 
-    # FABBER protocol is a fixed 10-iter schedule; the FE-plateau count is
-    # informational only (strict 1e-4 relative tolerance over 2 iters
-    # rarely fires in 10 iters by design). Final fit quality is gated
-    # downstream by R² in dsc_compute.py.
+    # The fixed 10-iteration VI schedule makes the FE-plateau count
+    # informational only. Final fit quality is gated downstream by R².
     logger.info(
-        "DSC batched VI finished FABBER %d-iter schedule (n=%d): %d at FE plateau",
+        "DSC batched VI finished %d-iteration schedule (n=%d): %d at FE plateau",
         last_iteration + 1, n_voxels, int(np.sum(converged)),
     )
 

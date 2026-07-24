@@ -152,7 +152,7 @@ pmriprep bids_dir output_dir {participant} [options]
 | Flag | Description |
 |------|-------------|
 | `--dsc-deconv-method {sSVD,oSVD,tikhonov,vascular,cpi}` | Deconvolution method (default: oSVD) |
-| `--dsc-inference {nlls,vi,svb}` | Inference engine for parametric methods (cpi, vascular). Default: `vi` (FABBER variational Bayes). SVD/Tikhonov ignore. |
+| `--dsc-inference {nlls,vi,svb}` | Inference engine for parametric methods (cpi, vascular). Default: `vi` (linearized variational inference); `svb` adds a spatial M-prior. SVD/Tikhonov ignore. |
 | `--dsc-preload {auto\|FLOAT}` | Preload: `auto` (classify adequacy from K2 leakage residuals) or float administered-dose multiplier (0.0–2.0, e.g. `0.5` for half-dose preload) |
 | `--dsc-dose DOSE` | Dose multiplier (default: 1.0). Accepts a float or presets: `half`, `full`, `double` |
 | `--dsc-agent-standard-dose DOSE` | Override agent standard dose in mmol Gd/kg (auto-detected from `ContrastBolusAgent` sidecar field when available). Default: `0.1` |

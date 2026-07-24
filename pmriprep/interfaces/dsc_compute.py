@@ -565,8 +565,8 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
         "nlls",
         usedefault=True,
         desc="Inference engine for parametric deconvolution (cpi, vascular): "
-             "vi (FABBER VB, default), svb (spatial VB), map, or nlls "
-             "(Levenberg-Marquardt). SVD methods ignore this option.",
+             "vi (linearized VI, default), svb (spatial VB), map, or nlls. "
+             "SVD methods ignore this option.",
     )
     mcmc_samples = traits.Int(
         500,

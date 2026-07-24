@@ -465,13 +465,14 @@ class TestBuildDscProvenance:
         assert "gd_ions_per_molecule" not in dose
 
     def test_inference_cpi_included(self) -> None:
-        """Inference engine + FABBER prior profile recorded for CPI."""
+        """Executing engine and published CPI lineage are distinguished."""
         prov = build_dsc_provenance(deconv_method="cpi", inference="vi")
         deconv = prov["PerfusionProcessing"]["Deconvolution"]
         assert deconv["method"] == "cpi"
         assert deconv["inference"] == "vi"
-        assert deconv["inference_engine"] == "fabber"
-        assert deconv["cpi_prior_profile"] == "fabber"
+        assert deconv["inference_engine"] == "pmriprep"
+        assert deconv["cpi_parameterization"] == "fabber_derived"
+        assert deconv["cpi_prior_profile"] == "fabber_derived"
 
     def test_inference_ignored_for_osvd(self) -> None:
         """Inference engine not recorded for non-parametric methods."""

@@ -2,7 +2,7 @@
 """Run SVB on CPI DRO to compare with MAP/VI results.
 
 Creates a 2D spatial grid of homogeneous tissue patches, then fits with
-SVB (FABBER's default) and reports CBF/MTT recovery per tissue type.
+SVB and reports CBF/MTT recovery per tissue type.
 Also runs standard VI for comparison.
 """
 
@@ -213,7 +213,7 @@ def main():
     )
     elapsed_svb = time.time() - t0
     svb_results = extract_cbf_mtt(result_svb, model, fitting_defs, tissue_labels)
-    print_results("SVB (spatial VB, FABBER default)", svb_results, elapsed_svb)
+    print_results("SVB (spatial variational Bayes)", svb_results, elapsed_svb)
 
     # --- Summary comparison ---
     print(f"\n{'='*70}")
