@@ -25,6 +25,7 @@ def generate_vfa_t1_qc_plot(
     vfa_data: List[npt.NDArray[np.floating]],
     flip_angles: List[float],
     t1_map: npt.NDArray[np.floating],
+    measured_t1_map: Optional[npt.NDArray[np.floating]] = None,
     brain_mask: Optional[npt.NDArray[np.bool_]] = None,
     field_strength: float = 3.0,
     output_path: Optional[str] = None,
@@ -41,7 +42,10 @@ def generate_vfa_t1_qc_plot(
     flip_angles : list of float
         Flip angles in degrees corresponding to vfa_data.
     t1_map : ndarray
-        T1 map in milliseconds.
+        Final T1 map used for concentration conversion, in milliseconds.
+    measured_t1_map : ndarray, optional
+        Measured VFA T1 map before correction or fallback. Used for diagnostic
+        panels when the measured map was rejected.
     brain_mask : ndarray, optional
         Brain mask for windowing and histogram analysis.
     field_strength : float
@@ -69,6 +73,17 @@ def generate_vfa_t1_qc_plot(
 
     n_fa = len(vfa_data)
 
+    correction_applied = (
+        correction_info.get("correction_applied", "none")
+        if correction_info is not None else "none"
+    )
+    fallback_applied = correction_applied in ("fallback", "tissue_segmented")
+    diagnostic_t1 = (
+        measured_t1_map
+        if fallback_applied and measured_t1_map is not None
+        else t1_map
+    )
+
     # Select middle axial slice
     mid_slice = t1_map.shape[2] // 2
 
@@ -78,11 +93,11 @@ def generate_vfa_t1_qc_plot(
     field_key = get_field_strength_key(field_strength)
     t1_ref = T1_TISSUE_REFERENCE[field_key]
 
-    # Determine display window for T1 map (exclude CSF)
+    # Determine display window for the diagnostic T1 map (exclude CSF)
     if brain_mask is not None:
-        valid_t1 = t1_map[brain_mask > 0.5]
+        valid_t1 = diagnostic_t1[brain_mask > 0.5]
     else:
-        valid_t1 = t1_map[~np.isnan(t1_map)]
+        valid_t1 = diagnostic_t1[~np.isnan(diagnostic_t1)]
     valid_t1 = valid_t1[(valid_t1 > t1_ref["reject_min"]) & (valid_t1 < 2500)]
 
     if len(valid_t1) > 0:
@@ -136,10 +151,13 @@ def generate_vfa_t1_qc_plot(
     # ---- Row 2: T1 map, low-angle signal proxy, valid support ----
     # T1 map
     ax = axes[1, 0]
-    t1_sl = get_radiological_slice(t1_map, axis=2, slice_idx=mid_slice)
+    t1_sl = get_radiological_slice(diagnostic_t1, axis=2, slice_idx=mid_slice)
     im = ax.imshow(t1_sl, cmap="plasma", vmin=t1_vmin, vmax=t1_vmax, origin="upper")
     plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="ms")
-    ax.set_title("T1 Map", fontsize=11)
+    ax.set_title(
+        "Rejected Measured VFA T1" if fallback_applied else "T1 Map",
+        fontsize=11,
+    )
     ax.axis("off")
 
     # Low-angle signal proxy. This is not fitted equilibrium magnetization:
@@ -159,25 +177,54 @@ def generate_vfa_t1_qc_plot(
         ax.set_title("Low-FA Signal Proxy (S/sin(\u03b1))", fontsize=11)
     ax.axis("off")
 
-    # Valid T1 support
+    # Valid measured support, or the final map when VFA was rejected.
     ax = axes[1, 2]
-    valid_support = np.isfinite(t1_map)
-    if brain_mask is not None:
-        valid_support &= brain_mask > 0.5
-    support_sl = get_radiological_slice(
-        valid_support.astype(float), axis=2, slice_idx=mid_slice,
-    )
-    ax.imshow(support_sl, cmap="gray", vmin=0, vmax=1, origin="upper")
-    ax.set_title("Valid T1 Support", fontsize=11)
+    if fallback_applied:
+        final_sl = get_radiological_slice(t1_map, axis=2, slice_idx=mid_slice)
+        final_valid = t1_map[np.isfinite(t1_map)]
+        final_vmin = float(np.percentile(final_valid, 1)) if len(final_valid) else 0.0
+        final_vmax = float(np.percentile(final_valid, 99)) if len(final_valid) else 3000.0
+        if final_vmax <= final_vmin:
+            final_vmin -= 1.0
+            final_vmax += 1.0
+        final_im = ax.imshow(
+            final_sl,
+            cmap="plasma",
+            vmin=final_vmin,
+            vmax=final_vmax,
+            origin="upper",
+        )
+        plt.colorbar(final_im, ax=ax, fraction=0.046, pad=0.04, label="ms")
+        fallback_label = (
+            "Tissue-Segmented T1"
+            if correction_applied == "tissue_segmented"
+            else "Uniform Fallback T1"
+        )
+        ax.set_title(f"Final {fallback_label}", fontsize=11)
+    else:
+        valid_support = np.isfinite(t1_map)
+        if brain_mask is not None:
+            valid_support &= brain_mask > 0.5
+        support_sl = get_radiological_slice(
+            valid_support.astype(float), axis=2, slice_idx=mid_slice,
+        )
+        ax.imshow(support_sl, cmap="gray", vmin=0, vmax=1, origin="upper")
+        ax.set_title("Valid T1 Support", fontsize=11)
     ax.axis("off")
 
     # ---- Row 3: Histograms and scatter ----
     # T1 histogram
     ax = axes[2, 0]
     if brain_mask is not None:
-        hist_t1 = t1_map[(brain_mask > 0.5) & (t1_map > t1_ref["reject_min"]) & (t1_map < 3000)]
+        hist_t1 = diagnostic_t1[
+            (brain_mask > 0.5)
+            & (diagnostic_t1 > t1_ref["reject_min"])
+            & (diagnostic_t1 < 3000)
+        ]
     else:
-        hist_t1 = t1_map[(t1_map > t1_ref["reject_min"]) & (t1_map < 3000)]
+        hist_t1 = diagnostic_t1[
+            (diagnostic_t1 > t1_ref["reject_min"]) & (diagnostic_t1 < 3000)
+        ]
 
     if len(hist_t1) > 0:
         # Percentile trimming for display (matches spatial T1 map windowing)
@@ -213,7 +260,11 @@ def generate_vfa_t1_qc_plot(
     ax = axes[2, 1]
     if n_fa >= 1:
         if brain_mask is not None:
-            valid_voxels = (brain_mask > 0.5) & np.isfinite(t1_map) & (t1_map > t1_ref["reject_min"])
+            valid_voxels = (
+                (brain_mask > 0.5)
+                & np.isfinite(diagnostic_t1)
+                & (diagnostic_t1 > t1_ref["reject_min"])
+            )
             hist_proxy = signal_proxy[valid_voxels & (signal_proxy > 0)]
         else:
             hist_proxy = signal_proxy[signal_proxy > 0]
@@ -248,14 +299,14 @@ def generate_vfa_t1_qc_plot(
     if n_fa >= 2 and brain_mask is not None:
         scatter_mask = (
             (brain_mask > 0.5)
-            & np.isfinite(t1_map)
-            & (t1_map > t1_ref["reject_min"])
-            & (t1_map < 3000)
+            & np.isfinite(diagnostic_t1)
+            & (diagnostic_t1 > t1_ref["reject_min"])
+            & (diagnostic_t1 < 3000)
             & np.isfinite(ratio)
             & (ratio > 0)
             & (ratio < 10)
         )
-        t1_sc = t1_map[scatter_mask]
+        t1_sc = diagnostic_t1[scatter_mask]
         ratio_sc = ratio[scatter_mask]
         if len(t1_sc) > 1000:
             # Subsample for performance
