@@ -3,8 +3,8 @@
 Generates a 3x3 diagnostic plot for VFA T1 mapping quality assessment:
 
 Row 1: VFA images and signal ratio
-Row 2: T1 map, M0 map, synthetic T1w contrast
-Row 3: T1 histogram, M0 histogram, T1 vs M0 scatter
+Row 2: T1 map, low-angle signal proxy, valid T1 support
+Row 3: T1 histogram, signal-proxy histogram, T1 versus VFA signal ratio
 
 Uses the colorblind-safe palette from qc_standards.py.
 
@@ -133,7 +133,7 @@ def generate_vfa_t1_qc_plot(
                 transform=ax.transAxes)
     ax.axis("off")
 
-    # ---- Row 2: T1 map, M0 estimate, synthetic T1w ----
+    # ---- Row 2: T1 map, low-angle signal proxy, valid support ----
     # T1 map
     ax = axes[1, 0]
     t1_sl = get_radiological_slice(t1_map, axis=2, slice_idx=mid_slice)
@@ -142,36 +142,33 @@ def generate_vfa_t1_qc_plot(
     ax.set_title("T1 Map", fontsize=11)
     ax.axis("off")
 
-    # M0 estimate (from first VFA image / sin(alpha))
+    # Low-angle signal proxy. This is not fitted equilibrium magnetization:
+    # longitudinal saturation and receive sensitivity remain in the image.
     ax = axes[1, 1]
     if n_fa >= 1:
         fa_rad = np.radians(flip_angles[0])
         sin_fa = np.sin(fa_rad)
-        m0_est = vfa_data[0] / max(sin_fa, 1e-6)
-        m0_sl = get_radiological_slice(m0_est, axis=2, slice_idx=mid_slice)
-        m0_valid = m0_sl[m0_sl > 0]
-        if len(m0_valid) > 0:
-            m0_vmax = float(np.percentile(m0_valid, 99))
+        signal_proxy = vfa_data[0] / max(sin_fa, 1e-6)
+        proxy_sl = get_radiological_slice(signal_proxy, axis=2, slice_idx=mid_slice)
+        proxy_valid = proxy_sl[proxy_sl > 0]
+        if len(proxy_valid) > 0:
+            proxy_vmax = float(np.percentile(proxy_valid, 99))
         else:
-            m0_vmax = 1.0
-        ax.imshow(m0_sl, cmap="gray", vmin=0, vmax=m0_vmax, origin="upper")
-        ax.set_title("M0 Estimate (S/sin(\u03b1))", fontsize=11)
+            proxy_vmax = 1.0
+        ax.imshow(proxy_sl, cmap="gray", vmin=0, vmax=proxy_vmax, origin="upper")
+        ax.set_title("Low-FA Signal Proxy (S/sin(\u03b1))", fontsize=11)
     ax.axis("off")
 
-    # Synthetic T1w contrast
+    # Valid T1 support
     ax = axes[1, 2]
-    if n_fa >= 1:
-        tr_assumed = 0.010  # 10ms TR typical for VFA
-        t1_s = np.clip(t1_map, 100, 5000) / 1000.0
-        synth = m0_est * (1.0 - np.exp(-tr_assumed / t1_s))
-        synth_sl = get_radiological_slice(synth, axis=2, slice_idx=mid_slice)
-        synth_valid = synth_sl[synth_sl > 0]
-        if len(synth_valid) > 0:
-            s_vmax = float(np.percentile(synth_valid, 99))
-        else:
-            s_vmax = 1.0
-        ax.imshow(synth_sl, cmap="gray", vmin=0, vmax=s_vmax, origin="upper")
-        ax.set_title("Synthetic T1w", fontsize=11)
+    valid_support = np.isfinite(t1_map)
+    if brain_mask is not None:
+        valid_support &= brain_mask > 0.5
+    support_sl = get_radiological_slice(
+        valid_support.astype(float), axis=2, slice_idx=mid_slice,
+    )
+    ax.imshow(support_sl, cmap="gray", vmin=0, vmax=1, origin="upper")
+    ax.set_title("Valid T1 Support", fontsize=11)
     ax.axis("off")
 
     # ---- Row 3: Histograms and scatter ----
@@ -212,45 +209,71 @@ def generate_vfa_t1_qc_plot(
     ax.set_ylabel("Density")
     ax.set_title("T1 Distribution (Brain)", fontsize=11)
 
-    # M0 histogram
+    # Low-angle signal-proxy histogram
     ax = axes[2, 1]
     if n_fa >= 1:
         if brain_mask is not None:
             valid_voxels = (brain_mask > 0.5) & np.isfinite(t1_map) & (t1_map > t1_ref["reject_min"])
-            hist_m0 = m0_est[valid_voxels & (m0_est > 0)]
+            hist_proxy = signal_proxy[valid_voxels & (signal_proxy > 0)]
         else:
-            hist_m0 = m0_est[m0_est > 0]
+            hist_proxy = signal_proxy[signal_proxy > 0]
         # IQR-based outlier rejection for display
-        if len(hist_m0) > 0:
-            q1, q3 = np.percentile(hist_m0, [25, 75])
+        if len(hist_proxy) > 0:
+            q1, q3 = np.percentile(hist_proxy, [25, 75])
             iqr = q3 - q1
-            m0_display = hist_m0[(hist_m0 >= q1 - 1.5 * iqr) & (hist_m0 <= q3 + 1.5 * iqr)]
-            if len(m0_display) > 0:
-                n_m0, _, _ = ax.hist(m0_display, bins=80, color=COLORBLIND_PALETTE.secondary,
-                                     alpha=0.7, edgecolor="none", density=True)
-                nonzero_m0 = n_m0[n_m0 > 1e-10]
-                if len(nonzero_m0) > 5:
-                    ax.set_ylim(0, float(np.percentile(nonzero_m0, 95)) * 1.5)
-    ax.set_xlabel("M0 (a.u.)")
+            proxy_display = hist_proxy[
+                (hist_proxy >= q1 - 1.5 * iqr)
+                & (hist_proxy <= q3 + 1.5 * iqr)
+            ]
+            if len(proxy_display) > 0:
+                n_proxy, _, _ = ax.hist(
+                    proxy_display,
+                    bins=80,
+                    color=COLORBLIND_PALETTE.secondary,
+                    alpha=0.7,
+                    edgecolor="none",
+                    density=True,
+                )
+                nonzero_proxy = n_proxy[n_proxy > 1e-10]
+                if len(nonzero_proxy) > 5:
+                    ax.set_ylim(
+                        0, float(np.percentile(nonzero_proxy, 95)) * 1.5,
+                    )
+    ax.set_xlabel("S/sin(\u03b1) (a.u.)")
     ax.set_ylabel("Density")
-    ax.set_title("M0 Distribution (Brain)", fontsize=11)
+    ax.set_title("Low-FA Signal Proxy (Brain)", fontsize=11)
 
-    # T1 vs M0 scatter
+    # T1 versus observed signal ratio
     ax = axes[2, 2]
-    if n_fa >= 1 and brain_mask is not None:
-        scatter_mask = (brain_mask > 0.5) & np.isfinite(t1_map) & (t1_map > t1_ref["reject_min"]) & (t1_map < 3000) & (m0_est > 0)
+    if n_fa >= 2 and brain_mask is not None:
+        scatter_mask = (
+            (brain_mask > 0.5)
+            & np.isfinite(t1_map)
+            & (t1_map > t1_ref["reject_min"])
+            & (t1_map < 3000)
+            & np.isfinite(ratio)
+            & (ratio > 0)
+            & (ratio < 10)
+        )
         t1_sc = t1_map[scatter_mask]
-        m0_sc = m0_est[scatter_mask]
+        ratio_sc = ratio[scatter_mask]
         if len(t1_sc) > 1000:
             # Subsample for performance
             idx = np.random.default_rng(42).choice(len(t1_sc), 1000, replace=False)
             t1_sc = t1_sc[idx]
-            m0_sc = m0_sc[idx]
+            ratio_sc = ratio_sc[idx]
         if len(t1_sc) > 0:
-            ax.scatter(t1_sc, m0_sc, s=1, alpha=0.3, c=COLORBLIND_PALETTE.primary, rasterized=True)
+            ax.scatter(
+                t1_sc,
+                ratio_sc,
+                s=1,
+                alpha=0.3,
+                c=COLORBLIND_PALETTE.primary,
+                rasterized=True,
+            )
     ax.set_xlabel("T1 (ms)")
-    ax.set_ylabel("M0 (a.u.)")
-    ax.set_title("T1 vs M0", fontsize=11)
+    ax.set_ylabel("Signal ratio")
+    ax.set_title("T1 vs VFA Signal Ratio", fontsize=11)
 
     # Add correction annotation if provided
     if correction_info is not None:

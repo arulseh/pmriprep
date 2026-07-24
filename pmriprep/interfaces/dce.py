@@ -95,6 +95,59 @@ def _b1_interior_mask(valid: np.ndarray, iterations: int = 2) -> np.ndarray:
     return binary_erosion(binary_fill_holes(valid), iterations=iterations) & valid  # type: ignore[no-any-return]
 
 
+def _nanmedian_filter(values: np.ndarray, *, size: int = 3) -> np.ndarray:
+    """Median-filter finite neighborhoods without inventing boundary values.
+
+    Parameters
+    ----------
+    values : numpy.ndarray
+        Quantitative map with invalid voxels represented by NaN.
+    size : int
+        Cubic filter width.
+
+    Returns
+    -------
+    numpy.ndarray
+        Filtered map. Voxels invalid in ``values`` remain invalid.
+    """
+    invalid = ~np.isfinite(values)
+    try:
+        import warnings
+
+        from scipy.ndimage import vectorized_filter  # type: ignore[attr-defined,import-untyped]
+
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message="All-NaN slice encountered",
+                category=RuntimeWarning,
+            )
+            filtered = vectorized_filter(
+                values,
+                np.nanmedian,
+                size=size,
+                mode="constant",
+                cval=np.nan,
+                batch_memory=256 * 1024**2,
+            )
+    except ImportError:
+        from scipy.ndimage import generic_filter  # type: ignore[import-untyped]
+
+        def _finite_median(window: np.ndarray) -> float:
+            finite = window[np.isfinite(window)]
+            return float(np.median(finite)) if finite.size else np.nan
+
+        filtered = generic_filter(
+            values,
+            _finite_median,
+            size=size,
+            mode="constant",
+            cval=np.nan,
+        )
+    filtered[invalid] = np.nan
+    return np.asarray(filtered, dtype=values.dtype)
+
+
 class B1MappingInputSpec(BaseInterfaceInputSpec):
     """Input specification for B1Mapping interface."""
 
@@ -1395,11 +1448,12 @@ class T1Mapping(SimpleInterface):
             b1_map = b1_img.get_fdata().astype(np.float64)  # type: ignore[attr-defined]
             # Mark voxels with no B1 data BEFORE clipping so they aren't
             # silently mapped to the clip minimum (which halves flip angles).
-            b1_missing = b1_map <= 0
+            b1_missing = ~np.isfinite(b1_map) | (b1_map <= 0)
             b1_map = np.clip(b1_map, b1_thresh.vfa_clip_low, b1_thresh.vfa_clip_high)
             b1_map[b1_missing] = 1.0  # No B1 data → nominal flip angles
         else:
             b1_map = np.ones(shape, dtype=np.float64)
+            b1_missing = np.ones(shape, dtype=bool)
 
         # Apply B1+ correction to flip angles
         # α_actual = α_nominal × B1+
@@ -1474,8 +1528,13 @@ class T1Mapping(SimpleInterface):
         # Load brain mask for QC if provided
         if isdefined(self.inputs.brain_mask) and self.inputs.brain_mask:
             mask_img = nib.load(self.inputs.brain_mask)
-            # Resample mask to VFA space if dimensions differ (e.g. T1w MPRAGE vs VFA VIBE)
-            if mask_img.shape[:3] != shape:  # type: ignore[attr-defined]
+            # Resample if either dimensions or world-space geometry differ.
+            if (
+                mask_img.shape[:3] != shape  # type: ignore[attr-defined]
+                or not np.allclose(
+                    mask_img.affine, affine, rtol=0.0, atol=1e-4,  # type: ignore[attr-defined]
+                )
+            ):
                 from nilearn.image import resample_to_img  # type: ignore[import-untyped]
 
                 mask_img = resample_to_img(
@@ -1536,30 +1595,25 @@ class T1Mapping(SimpleInterface):
         # brain-boundary voxels through the 3x3x3 kernel.
         t1_map[~brain_mask] = np.nan
 
-        # Apply 3x3x3 median filter to reduce noise spikes.
-        # Background NaN voxels are replaced with the brain-median sentinel
-        # so they cast "neutral" votes in the kernel — boundary voxels with
-        # a majority of real brain neighbors are preserved (unlike a -1.0
-        # sentinel which poisons ~15-20K boundary voxels via median pull-down).
-        # After filtering, original NaN positions are restored.
+        # Apply a NaN-aware 3x3x3 median filter to reduce noise spikes without
+        # injecting a repeated whole-brain median at boundaries or fit holes.
+        # Original invalid positions remain invalid.
         # Applied BEFORE CSF exclusion to avoid introducing artificial zeros
         # that would contaminate periventricular tissue during filtering.
         # Order: median filter → CSF exclusion → range clipping.
-        from scipy.ndimage import median_filter  # type: ignore[import-untyped]
-
-        nan_mask = np.isnan(t1_map)
-        valid_vals = t1_map[~nan_mask]
-        sentinel = float(np.median(valid_vals)) if len(valid_vals) > 0 else 1000.0
-        t1_for_filter = np.where(nan_mask, sentinel, t1_map)
-        t1_map = median_filter(t1_for_filter, size=3)
-        t1_map[nan_mask] = np.nan
+        t1_map = _nanmedian_filter(t1_map, size=3)
 
         # CSF exclusion: mask out voxels with high CSF probability
         csf_excluded = False
         if isdefined(self.inputs.csf_probseg) and self.inputs.csf_probseg:
             csf_img = nib.load(self.inputs.csf_probseg)
             # Resample CSF probseg to VFA space if needed
-            if csf_img.shape[:3] != shape:  # type: ignore[attr-defined]
+            if (
+                csf_img.shape[:3] != shape  # type: ignore[attr-defined]
+                or not np.allclose(
+                    csf_img.affine, affine, rtol=0.0, atol=1e-4,  # type: ignore[attr-defined]
+                )
+            ):
                 from nilearn.image import resample_to_img  # type: ignore[import-untyped]
 
                 csf_img = resample_to_img(
@@ -1711,7 +1765,15 @@ class T1Mapping(SimpleInterface):
         ):
             wm_ps_img = nib.load(self.inputs.wm_probseg)
             gm_ps_img = nib.load(self.inputs.gm_probseg)
-            if wm_ps_img.shape[:3] != shape:  # type: ignore[attr-defined]
+            if (
+                wm_ps_img.shape[:3] != shape  # type: ignore[attr-defined]
+                or not np.allclose(
+                    wm_ps_img.affine, affine, rtol=0.0, atol=1e-4,  # type: ignore[attr-defined]
+                )
+                or not np.allclose(
+                    gm_ps_img.affine, affine, rtol=0.0, atol=1e-4,  # type: ignore[attr-defined]
+                )
+            ):
                 from nilearn.image import resample_to_img  # type: ignore[import-untyped]
                 wm_ps_img = resample_to_img(wm_ps_img, first_img, interpolation="continuous")
                 gm_ps_img = resample_to_img(gm_ps_img, first_img, interpolation="continuous")
@@ -1816,7 +1878,9 @@ class T1Mapping(SimpleInterface):
         wm_range = (qc_ranges.white_matter.min, qc_ranges.white_matter.max)
         gm_range = (qc_ranges.gray_matter.min, qc_ranges.gray_matter.max)
 
-        # Estimate WM and GM mean T1 from T1 distribution in brain
+        # Estimate WM and GM T1 from actual high-confidence tissue masks when
+        # available. Without segmentations, retain distribution summaries but
+        # label them honestly rather than presenting quartiles as tissues.
         t1_in_brain = t1_map[brain_mask]
 
         # WM: lower T1 values (shorter relaxation time)
@@ -1824,8 +1888,26 @@ class T1Mapping(SimpleInterface):
         # Simple approach: use histogram percentiles
         # Use nanpercentile since T1 map may contain NaN (CSF, out-of-range)
         valid_t1 = t1_in_brain[np.isfinite(t1_in_brain) & (t1_in_brain > 0)]
+        tissue_stats_source = "brain_distribution_quartiles"
         wm_t1_estimate = float(np.percentile(valid_t1, 25))
         gm_t1_estimate = float(np.percentile(valid_t1, 75))
+        if wm_probseg_arr is not None and gm_probseg_arr is not None:
+            wm_support = (
+                brain_mask
+                & np.isfinite(t1_map)
+                & (wm_probseg_arr >= 0.8)
+                & (gm_probseg_arr < 0.2)
+            )
+            gm_support = (
+                brain_mask
+                & np.isfinite(t1_map)
+                & (gm_probseg_arr >= 0.8)
+                & (wm_probseg_arr < 0.2)
+            )
+            if int(np.sum(wm_support)) >= 100 and int(np.sum(gm_support)) >= 100:
+                wm_t1_estimate = float(np.mean(t1_map[wm_support]))
+                gm_t1_estimate = float(np.mean(t1_map[gm_support]))
+                tissue_stats_source = "high_confidence_probseg"
 
         # QC pass/fail criteria
         wm_pass = wm_range[0] <= wm_t1_estimate <= wm_range[1]
@@ -1848,6 +1930,11 @@ class T1Mapping(SimpleInterface):
             "gm_pass": gm_pass,
             "skipped": False,
             "b1_corrected": has_b1,
+            "b1_valid_fraction": round(
+                float(np.sum(brain_mask & ~b1_missing))
+                / max(1, int(np.sum(brain_mask))),
+                4,
+            ),
             "n_flip_angles": n_fa,
             "flip_angles_deg": flip_angles_deg.tolist(),
             "tr_ms": tr_ms,
@@ -1857,6 +1944,7 @@ class T1Mapping(SimpleInterface):
             "csf_excluded": csf_excluded,
             "median_filtered": True,
             "t1_method": t1_method,
+            "tissue_statistics_source": tissue_stats_source,
         }
         # Hybrid-specific QC: fraction of voxels refined by NLLS
         if t1_method == "hybrid" and needs_refinement is not None and np.any(needs_refinement):

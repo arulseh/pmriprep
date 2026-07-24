@@ -1429,8 +1429,9 @@ def _dce_t1_cosmetic_keys(t1_qc: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     if not t1_qc or not isinstance(t1_qc, dict):
         return {}
     out: Dict[str, Any] = {}
-    if "method" in t1_qc:
-        out["T1MappingMethod"] = str(t1_qc["method"])
+    method = t1_qc.get("method", t1_qc.get("t1_method"))
+    if method is not None:
+        out["T1MappingMethod"] = str(method)
     if "b1_correction" in t1_qc:
         out["T1B1Correction"] = str(t1_qc["b1_correction"])
     raw_corr = t1_qc.get("t1_correction")

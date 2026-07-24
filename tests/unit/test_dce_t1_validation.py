@@ -1564,11 +1564,10 @@ class TestVFAConditioningGate:
             f"{n_nan_in_brain} brain voxels still NaN after hard reject fallback"
         )
 
-    def test_conditional_zone_no_b1_falls_through_to_offset(
+    def test_conditional_zone_no_b1_retains_plausible_measurement(
         self, brain_mask: np.ndarray,
     ) -> None:
-        """Conditional zone without B1 falls through to offset correction."""
-        # T1=1200ms at 3T: above warn_high (1290 at 3T? no, 1290), triggers offset
+        """Conditional zone without B1 warns but does not force calibration."""
         t1_map = np.full((10, 10, 10), 1200.0)
         t1_map[~brain_mask] = np.nan
 
@@ -1578,8 +1577,8 @@ class TestVFAConditioningGate:
             e1_median=0.996, b1_corrected=False, b1_qc_pass=False,
             nan_fraction=0.15,  # manageable
         )
-        # Should NOT fall back — should get offset correction
-        assert result.correction_applied == "offset"
+        assert result.correction_applied == "none"
+        assert result.median_t1_corrected == pytest.approx(1200.0)
 
     def test_conditional_zone_high_nan_forces_fallback(
         self, brain_mask: np.ndarray,
@@ -1615,6 +1614,50 @@ class TestVFAConditioningGate:
         assert result.correction_applied == "tissue_segmented"
         assert result.tissue_t1_used is True
 
+    def test_failed_b1_and_high_plausible_median_uses_tissue_fallback(
+        self, brain_mask: np.ndarray,
+    ) -> None:
+        """A marginal measured map is not calibrated when B1 QC also failed."""
+        t1_map = np.full((10, 10, 10), 1600.0)
+        t1_map[~brain_mask] = np.nan
+        wm = np.where(brain_mask, 0.6, 0.0).astype(np.float32)
+        gm = np.where(brain_mask, 0.4, 0.0).astype(np.float32)
+
+        _, result = apply_t1_correction(
+            t1_map,
+            field_strength=3.0,
+            correction_mode="auto",
+            brain_mask=brain_mask,
+            b1_corrected=True,
+            b1_qc_pass=False,
+            nan_fraction=0.1,
+            wm_probseg=wm,
+            gm_probseg=gm,
+        )
+
+        assert result.correction_applied == "tissue_segmented"
+        assert "B1 QC failed" in result.reason
+
+    def test_failed_b1_and_high_plausible_median_uses_uniform_without_seg(
+        self, brain_mask: np.ndarray,
+    ) -> None:
+        """Without segmentations, a joint T1/B1 failure is explicit."""
+        t1_map = np.full((10, 10, 10), 1600.0)
+        t1_map[~brain_mask] = np.nan
+
+        _, result = apply_t1_correction(
+            t1_map,
+            field_strength=3.0,
+            correction_mode="auto",
+            brain_mask=brain_mask,
+            b1_corrected=True,
+            b1_qc_pass=False,
+            nan_fraction=0.1,
+        )
+
+        assert result.correction_applied == "fallback"
+        assert result.fallback_value_ms == pytest.approx(1200.0)
+
     def test_unconditional_zone_always_falls_back(
         self, brain_mask: np.ndarray,
     ) -> None:
@@ -1630,12 +1673,10 @@ class TestVFAConditioningGate:
         )
         assert result.correction_applied == "fallback"
 
-    def test_conditional_zone_warn_range_bias_triggers_offset(
+    def test_conditional_zone_warn_range_bias_is_not_auto_corrected(
         self, brain_mask: np.ndarray,
     ) -> None:
-        """Conditional zone with T1 in warn range but biased → offset via Case 2."""
-        # At 3T: warn_low=850, warn_high=1290, expected=1090
-        # T1=950ms is within warn range but biased 140ms from expected (>100ms B1 threshold)
+        """A plausible population deviation is retained at subject level."""
         t1_map = np.full((10, 10, 10), 950.0)
         t1_map[~brain_mask] = np.nan
 
@@ -1645,7 +1686,8 @@ class TestVFAConditioningGate:
             e1_median=0.996, b1_corrected=False, b1_qc_pass=False,
             nan_fraction=0.15,
         )
-        assert result.correction_applied == "offset"
+        assert result.correction_applied == "none"
+        assert result.median_t1_corrected == pytest.approx(950.0)
 
     def test_nrmse_gate_bypassed_not_in_dict(
         self, brain_mask: np.ndarray,

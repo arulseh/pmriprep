@@ -271,11 +271,25 @@ def _enrich_dce(
     t1 = qc.get("t1_mapping")
     if t1 and isinstance(t1, dict):
         t1_block: Dict[str, Any] = {}
-        if "method" in t1:
-            t1_block["method"] = str(t1["method"])
+        method = t1.get("method", t1.get("t1_method"))
+        if method is not None:
+            t1_block["method"] = str(method)
         if "b1_correction" in t1:
             t1_block["B1_correction"] = str(t1["b1_correction"])
-        if t1.get("method") == "assumed":
+        elif "b1_corrected" in t1:
+            t1_block["B1_correction"] = bool(t1["b1_corrected"])
+        if "b1_valid_fraction" in t1:
+            t1_block["B1_valid_fraction"] = _safe_float(
+                t1["b1_valid_fraction"],
+            )
+        if "tissue_statistics_source" in t1:
+            t1_block["tissue_statistics_source"] = str(
+                t1["tissue_statistics_source"],
+            )
+        correction = t1.get("t1_correction")
+        if isinstance(correction, dict):
+            t1_block["correction"] = dict(correction)
+        if method == "assumed":
             t1_block["tissue_segmented"] = bool(t1.get("tissue_t1_used", False))
             if "mean_t1_wm_ms" in t1:
                 t1_block["T1_WM_ms"] = _safe_float(t1["mean_t1_wm_ms"])

@@ -155,13 +155,13 @@
             {% endif %}
             {% if dce.qc_metrics.t1_mapping.mean_t1_wm_ms is defined %}
             <div class="metric">
-                <div class="metric-label">WM T1</div>
+                <div class="metric-label">{% if dce.qc_metrics.t1_mapping.tissue_statistics_source == "high_confidence_probseg" %}WM T1{% else %}Lower-quartile T1{% endif %}</div>
                 <div class="metric-value">{{ "%.0f"|format(dce.qc_metrics.t1_mapping.mean_t1_wm_ms) }} ms</div>
             </div>
             {% endif %}
             {% if dce.qc_metrics.t1_mapping.mean_t1_gm_ms is defined %}
             <div class="metric">
-                <div class="metric-label">GM T1</div>
+                <div class="metric-label">{% if dce.qc_metrics.t1_mapping.tissue_statistics_source == "high_confidence_probseg" %}GM T1{% else %}Upper-quartile T1{% endif %}</div>
                 <div class="metric-value">{{ "%.0f"|format(dce.qc_metrics.t1_mapping.mean_t1_gm_ms) }} ms</div>
             </div>
             {% endif %}

@@ -287,7 +287,7 @@ tumor_seg:
 | `no_t1` | bool | `false` | Skip T1 mapping |
 | `t1_method` | str | `"hybrid"` | VFA T1 fitting: `hybrid`, `wlls`, `nlls` |
 | `t1_map_file` | path | `null` | External T1 map (NIfTI, ms). Bypasses VFA fitting |
-| `t1_correction_mode` | str | `"auto"` | T1 correction mode: `auto`, `none`, `offset`, `fallback` |
+| `t1_correction_mode` | str | `"auto"` | T1 policy: `auto` retains plausible measured maps and uses a tissue-based or uniform literature fallback for rejected maps; `none`, `offset`, and `fallback` explicitly select those behaviors |
 | `b1_method` | str | `"auto"` | B1+ correction: `auto`, `afi`, `precomputed`, `none` |
 | `b1_map_encoding` | str | `"auto"` | Pre-computed B1+ map encoding: `auto` (from suffix/Units), `actual_flip_deci_deg`, `actual_flip_deg`, `percent`, `ratio` |
 | `cbv_constraint_mode` | str | `"auto"` | DSC→DCE vp constraint. `auto`: `soft` prior when DSC CBV is reliable, `skip` otherwise. Options: `auto`, `skip` |
