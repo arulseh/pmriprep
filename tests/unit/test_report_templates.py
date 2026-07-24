@@ -138,6 +138,18 @@ def test_dce_voxel_accounting_renders(env):
                         "count": 70,
                         "fraction_of_attempted": 0.875,
                     },
+                    "prefit_rejected": {
+                        "count": 2,
+                        "fraction_of_attempted": 0.025,
+                    },
+                    "execution_exception": {
+                        "count": 1,
+                        "fraction_of_attempted": 0.0125,
+                    },
+                    "fit_unsuccessful": {
+                        "count": 3,
+                        "fraction_of_attempted": 0.0375,
+                    },
                     "retained_nondegenerate": {
                         "count": 65,
                         "fraction_of_attempted": 0.8125,
@@ -156,6 +168,9 @@ def test_dce_voxel_accounting_renders(env):
     assert "Brain Mask Voxels" in rendered
     assert "Fitting Eligible" in rendered
     assert "Optimizer Converged" in rendered
+    assert "Pre-fit Rejected" in rendered
+    assert "Execution Exceptions" in rendered
+    assert "Unsuccessful Fits" in rendered
     assert "Retained Nondegenerate" in rendered
     assert "Quantitative QC Accepted" in rendered
     assert "87.5% attempted" in rendered

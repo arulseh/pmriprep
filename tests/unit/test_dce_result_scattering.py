@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from pmriprep.interfaces.dce_compute import (
+    ComputeDCEMaps,
     VoxelInput,
     _account_retained_dce_fit,
     _accumulate_mcmc_diagnostics,
@@ -610,7 +611,7 @@ def test_summarize_dce_fit_outcomes_preserves_counters() -> None:
     """Fit outcome assembly exposes named stages and explicit denominators."""
     reasons = {"optimizer_failed": 2}
     summary = _summarize_dce_fit_outcomes(
-        10, 20, 7, 1, 8, 3, 1, 1, reasons,
+        10, 20, 7, 1, 1, 1, 6, 3, 1, 1, reasons,
     )
     accounting = summary["voxel_accounting"]
     assert accounting["fitting_eligible"] == {
@@ -618,11 +619,16 @@ def test_summarize_dce_fit_outcomes_preserves_counters() -> None:
         "fraction_of_brain": 0.5,
     }
     assert accounting["optimizer_converged"]["count"] == 7
-    assert accounting["execution_failed"]["count"] == 1
+    assert accounting["prefit_rejected"]["count"] == 1
+    assert accounting["execution_exception"]["count"] == 1
+    assert accounting["fit_unsuccessful"]["count"] == 1
+    assert "execution_failed" not in accounting
     assert accounting["postfit_degenerate"]["count"] == 1
-    assert accounting["retained_nondegenerate"]["count"] == 8
+    assert accounting["retained_nondegenerate"]["count"] == 6
     assert (
-        accounting["execution_failed"]["count"]
+        accounting["prefit_rejected"]["count"]
+        + accounting["execution_exception"]["count"]
+        + accounting["fit_unsuccessful"]["count"]
         + accounting["postfit_degenerate"]["count"]
         + accounting["retained_nondegenerate"]["count"]
         == accounting["attempted"]["count"]
@@ -632,7 +638,9 @@ def test_summarize_dce_fit_outcomes_preserves_counters() -> None:
 
 def test_summarize_dce_fit_outcomes_zero_voxels_has_zero_rate() -> None:
     """An empty fit domain retains guarded zero stage fractions."""
-    summary = _summarize_dce_fit_outcomes(0, 0, 0, 0, 0, 0, 0, 0, {})
+    summary = _summarize_dce_fit_outcomes(
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, {}
+    )
     accounting = summary["voxel_accounting"]
     assert accounting["optimizer_converged"]["fraction_of_attempted"] == 0.0
 
@@ -641,8 +649,16 @@ def test_scatter_dce_fit_results_counts_failures_before_map_access() -> None:
     """Failed fits preserve reason counts without mutating output maps."""
     voxels = [VoxelInput(0, 0, 0, np.zeros(3), None) for _ in range(3)]
     results = [
-        {"failed": True, "failure_reason": "optimizer_failed"},
-        {"failed": True, "failure_reason": "optimizer_failed"},
+        {
+            "failed": True,
+            "failure_reason": "failed_no_enhancement",
+            "failure_stage": "prefit",
+        },
+        {
+            "failed": True,
+            "failure_reason": "exception",
+            "failure_stage": "execution",
+        },
         {"failed": True},
     ]
     summary = _scatter_dce_fit_results(
@@ -655,10 +671,38 @@ def test_scatter_dce_fit_results_counts_failures_before_map_access() -> None:
         ConstraintMode.SKIP,
         0.0,
     )
-    assert summary.n_execution_failed == 3
-    assert summary.failure_reasons == {"optimizer_failed": 2, "unknown": 1}
+    assert summary.n_prefit_rejected == 1
+    assert summary.n_execution_exceptions == 1
+    assert summary.n_fit_unsuccessful == 1
+    assert summary.failure_reasons == {
+        "failed_no_enhancement": 1,
+        "exception": 1,
+        "unknown": 1,
+    }
     assert summary.n_optimizer_converged == 0
     assert summary.r2_values == []
+
+
+def test_nonconverged_very_poor_r2_is_unsuccessful_not_execution_error() -> None:
+    """A completed fixed-model fit with very poor R² has fit-stage provenance."""
+    fit_result = SimpleNamespace(
+        params={"Ktrans": np.array([0.1]), "ve": np.array([0.3])},
+        r_squared=np.array([-0.75]),
+        converged=np.array([False]),
+        uncertainties={},
+        fitted_curves=None,
+        vp_at_bound=None,
+    )
+
+    result = ComputeDCEMaps()._fit_result_to_dicts(
+        fit_result,
+        np.array([[0, 0, 0]]),
+        "tofts",
+    )[0]
+
+    assert result["failed"] is True
+    assert result["failure_stage"] == "fit"
+    assert result["failure_reason"] == "nonconverged_very_poor_r2"
 
 
 def test_map_uncertainty_accounting_excludes_postfit_rejection() -> None:

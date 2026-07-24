@@ -478,7 +478,8 @@ def _scatter_dce_fit_results(
 ) -> "_DCEFitSummary":
     """Scatter fitted voxels and accumulate their QC diagnostics."""
     n_constrained = 0
-    n_optimizer_converged = n_execution_failed = n_retained = 0
+    n_optimizer_converged = n_retained = 0
+    n_prefit_rejected = n_execution_exceptions = n_fit_unsuccessful = 0
     n_unconstrained_fallback = n_rejected_postfit = 0
     r2_values: list[float] = []
     failure_reasons: dict[str, int] = {}
@@ -490,8 +491,14 @@ def _scatter_dce_fit_results(
     n_inference_fallback = 0
     for voxel, result in zip(voxel_data, results):
         if result["failed"]:
-            n_execution_failed += 1
-            reason = result.get("failure_reason", "unknown")
+            failure_stage = result.get("failure_stage", "fit")
+            if failure_stage == "prefit":
+                n_prefit_rejected += 1
+            elif failure_stage == "execution":
+                n_execution_exceptions += 1
+            else:
+                n_fit_unsuccessful += 1
+            reason = result.get("failure_reason") or "unknown"
             failure_reasons[reason] = failure_reasons.get(reason, 0) + 1
             continue
         n_optimizer_converged += int(bool(result.get("converged", False)))
@@ -557,7 +564,9 @@ def _scatter_dce_fit_results(
         )
     return _DCEFitSummary(
         n_optimizer_converged,
-        n_execution_failed,
+        n_prefit_rejected,
+        n_execution_exceptions,
+        n_fit_unsuccessful,
         n_retained,
         n_constrained,
         n_unconstrained_fallback,
@@ -769,7 +778,9 @@ def _summarize_dce_fit_outcomes(
     n_voxels: int,
     n_brain_voxels: int,
     n_optimizer_converged: int,
-    n_execution_failed: int,
+    n_prefit_rejected: int,
+    n_execution_exceptions: int,
+    n_fit_unsuccessful: int,
     n_retained: int,
     n_constrained: int,
     n_unconstrained_fallback: int,
@@ -796,9 +807,17 @@ def _summarize_dce_fit_outcomes(
             "count": int(n_optimizer_converged),
             "fraction_of_attempted": n_optimizer_converged / max(1, n_voxels),
         },
-        "execution_failed": {
-            "count": int(n_execution_failed),
-            "fraction_of_attempted": n_execution_failed / max(1, n_voxels),
+        "prefit_rejected": {
+            "count": int(n_prefit_rejected),
+            "fraction_of_attempted": n_prefit_rejected / max(1, n_voxels),
+        },
+        "execution_exception": {
+            "count": int(n_execution_exceptions),
+            "fraction_of_attempted": n_execution_exceptions / max(1, n_voxels),
+        },
+        "fit_unsuccessful": {
+            "count": int(n_fit_unsuccessful),
+            "fraction_of_attempted": n_fit_unsuccessful / max(1, n_voxels),
         },
         "postfit_degenerate": {
             "count": int(n_rejected_postfit),
@@ -1434,7 +1453,9 @@ class _DCEFitSummary(NamedTuple):
     """Aggregate counters and diagnostics produced while scattering fits."""
 
     n_optimizer_converged: int
-    n_execution_failed: int
+    n_prefit_rejected: int
+    n_execution_exceptions: int
+    n_fit_unsuccessful: int
     n_retained: int
     n_constrained: int
     n_unconstrained_fallback: int
@@ -1605,7 +1626,8 @@ def _fit_single_voxel(
     -------
     dict
         Dict with keys: coords, params, r_squared, converged, uncertainties,
-        fitted_curve, quality_flag, failed, failure_reason, constrained.
+        fitted_curve, quality_flag, failed, failure_reason, failure_stage,
+        constrained.
     """
     BayesianPKFitter = _worker_ctx["BayesianPKFitter"]
     create_vp_prior_from_dsc = _worker_ctx["create_vp_prior_from_dsc"]
@@ -1637,6 +1659,7 @@ def _fit_single_voxel(
             "coords": (x, y, z),
             "failed": True,
             "failure_reason": prep.failure_reason,
+            "failure_stage": "prefit",
         }
 
     # Use baseline-subtracted, clipped concentration for fitting
@@ -1955,6 +1978,7 @@ def _fit_single_voxel(
             "coords": (x, y, z),
             "failed": True,
             "failure_reason": "exception",
+            "failure_stage": "execution",
         }
 
 
@@ -3693,7 +3717,9 @@ class ComputeDCEMaps(BaseInterface):
                 n_voxels,
                 int(np.count_nonzero(mask_bool)),
                 fit_summary.n_optimizer_converged,
-                fit_summary.n_execution_failed,
+                fit_summary.n_prefit_rejected,
+                fit_summary.n_execution_exceptions,
+                fit_summary.n_fit_unsuccessful,
                 fit_summary.n_retained,
                 fit_summary.n_constrained,
                 fit_summary.n_unconstrained_fallback,
@@ -4312,6 +4338,7 @@ class ComputeDCEMaps(BaseInterface):
                 "failure_reason": (
                     "all_candidate_models_failed" if selection_failed else None
                 ),
+                "failure_stage": "fit" if selection_failed else None,
                 "constrained": is_constrained,
                 "selected_model_name": winner_name,
                 "delta_bic": float(delta_bic[i]),
@@ -4388,6 +4415,10 @@ class ComputeDCEMaps(BaseInterface):
             if fit_result.vp_at_bound is not None:
                 vp_at_bound_val = float(fit_result.vp_at_bound[i])
 
+            fit_unsuccessful = (
+                not bool(fit_result.converged[i])
+                and float(fit_result.r_squared[i]) < -0.5
+            )
             results.append({
                 "coords": (x, y, z),
                 "params": params_out,
@@ -4404,8 +4435,11 @@ class ComputeDCEMaps(BaseInterface):
                 ),
                 "rhat": {},
                 "ess": {},
-                "failed": not bool(fit_result.converged[i]) and float(fit_result.r_squared[i]) < -0.5,
-                "failure_reason": None,
+                "failed": fit_unsuccessful,
+                "failure_reason": (
+                    "nonconverged_very_poor_r2" if fit_unsuccessful else None
+                ),
+                "failure_stage": "fit" if fit_unsuccessful else None,
                 "constrained": is_constrained,
                 "selected_model_name": model_name,
                 "delta_bic": np.nan,

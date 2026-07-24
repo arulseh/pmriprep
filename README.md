@@ -631,6 +631,7 @@ biological confidence intervals.
 
 DCE QC and map provenance report an explicit voxel-accounting sequence:
 brain mask, fitting eligibility, attempted fits, optimizer convergence,
+pre-fit rejection, execution exceptions, unsuccessful completed fits,
 retained nondegenerate fits, and quantitative-QC acceptance. Each fraction
 names its denominator; enhancing-tumor, non-enhancing-tumor, and NAWM coverage
 is included when the corresponding masks are available. Bayesian runs also
