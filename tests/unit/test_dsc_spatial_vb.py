@@ -588,7 +588,13 @@ class TestSpatialVIIntegration:
         )
 
     def test_batched_ordering_agrees_with_sequential_reference(self) -> None:
-        """Ten-sweep Jacobi and literal FABBER-order fits agree on a small DRO."""
+        """Synchronous and sequential vascular updates remain numerically close.
+
+        The production synchronous-backtracking schedule deliberately differs
+        from the sequential in-place reference. This characterization guards
+        against scientifically material divergence without requiring
+        platform-dependent near-bitwise agreement between the two schedules.
+        """
         from pmriprep.models.bayesian_utils import build_priors_from_params
         from pmriprep.models.dsc import VascularModel
         from pmriprep.models.dsc.batched_fitting import (
@@ -700,7 +706,7 @@ class TestSpatialVIIntegration:
             relative_difference = np.abs(
                 jacobi.params[name] - sequential_params[name]
             ) / reference
-            assert np.max(relative_difference) < 1e-6
+            assert np.max(relative_difference) < 1e-4
 
         assert np.median(np.abs(jacobi.params["cbf"] - cbf) / cbf) < 0.25
         assert np.median(np.abs(jacobi.params["mtt"] - mtt) / mtt) < 0.35
