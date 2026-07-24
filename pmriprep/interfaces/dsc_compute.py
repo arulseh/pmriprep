@@ -2308,6 +2308,18 @@ class ComputeDSCMaps(BaseInterface):
         # Get mask indices
         mask_coords = np.where(mask > 0)
         n_voxels = len(mask_coords[0])
+        masked_curves = concentration_data[
+            mask_coords[0], mask_coords[1], mask_coords[2], :
+        ]
+        admissible_mask = (
+            np.max(np.abs(masked_curves), axis=1) >= EPSILON_CONCENTRATION
+        )
+        n_admissible = int(np.sum(admissible_mask))
+        qc_metrics.update(
+            n_mask_voxels=n_voxels,
+            n_fit_admissible=n_admissible,
+            n_fit_inadmissible=n_voxels - n_admissible,
+        )
 
         # Estimate bolus duration once from AIF for CPI
         bolus_duration_frames = estimate_bolus_duration(aif)
@@ -2464,12 +2476,20 @@ class ComputeDSCMaps(BaseInterface):
             for res in results
             if res.get("needs_fallback") or res.get("failed")
         ]
+        n_fallback_requested = sum(
+            bool(res.get("needs_fallback") or res.get("failed"))
+            and bool(admissible_mask[index])
+            for index, res in enumerate(results)
+        )
         n_fallback = 0
+        n_fallback_attempted = 0
+        n_fallback_failed = 0
         for coords in fallback_coords:
             x, y, z = coords
             tissue = concentration_data[x, y, z, :]
             if np.max(np.abs(tissue)) < EPSILON_CONCENTRATION:
                 continue
+            n_fallback_attempted += 1
             try:
                 svd_result = svd_deconvolve_oscillation(
                     tissue, aif, dt,
@@ -2502,7 +2522,7 @@ class ComputeDSCMaps(BaseInterface):
                     fallback_mask[x, y, z] = 1
                 n_fallback += 1
             except Exception:
-                pass  # leave as parametric result or zeros
+                n_fallback_failed += 1  # leave as parametric result or zeros
 
         # Compile QC metrics
         if r_squared_list:
@@ -2514,13 +2534,19 @@ class ComputeDSCMaps(BaseInterface):
             # FE/NLP plateau rate is informational only (FABBER 10-iter
             # spec rarely satisfies the strict plateau in 10 iters by
             # design); fit quality is gated by R² in the fallback path.
-            qc_metrics["fe_plateau_rate"] = n_converged / max(1, n_voxels)
+            qc_metrics["fe_plateau_rate"] = n_converged / max(1, n_admissible)
 
+        qc_metrics["n_fallback_requested"] = n_fallback_requested
+        qc_metrics["n_fallback_attempted"] = n_fallback_attempted
         qc_metrics["n_fallback_osvd"] = n_fallback
+        qc_metrics["n_fallback_failed"] = n_fallback_failed
         # Fallback rate is the actual fit-health signal for parametric
         # methods: voxels rejected by the R² < 0.5 gate fall through to
         # oSVD. Always populated (zero for non-parametric methods).
-        qc_metrics["fallback_rate"] = n_fallback / max(1, n_voxels)
+        qc_metrics["fallback_rate"] = n_fallback / max(1, n_admissible)
+        qc_metrics["fallback_requested_rate"] = (
+            n_fallback_requested / max(1, n_admissible)
+        )
 
         return (cbf, cbv, mtt, tmax, qc_metrics, alpha_map, beta_map, cth_map,
                 cbf_std_map, cbv_std_map,

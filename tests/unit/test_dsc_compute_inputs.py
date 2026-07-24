@@ -127,6 +127,82 @@ def test_prepare_motion_weighting_disabled_paths(method: str) -> None:
     assert result.qc == {"applied": False}
 
 
+def test_parametric_fit_health_uses_admissible_denominator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Zero curves do not dilute fallback or convergence fractions."""
+    concentration = np.zeros((3, 1, 1, 6), dtype=np.float64)
+    concentration[0, 0, 0, 2:4] = [1.0, 0.5]
+    concentration[1, 0, 0, 2:4] = [0.8, 0.4]
+    mask = np.ones((3, 1, 1), dtype=np.uint8)
+    interface = ComputeDSCMaps(inference="map")
+    monkeypatch.setattr(
+        interface,
+        "_dsc_fit_batched_map",
+        lambda **kwargs: [
+            {
+                "coords": (0, 0, 0),
+                "failed": False,
+                "needs_fallback": False,
+                "converged": True,
+                "r_squared": 0.9,
+                "cbf": 0.1,
+                "cbv": 0.2,
+                "mtt": 2.0,
+                "tmax": 0.0,
+            },
+            {
+                "coords": (1, 0, 0),
+                "failed": False,
+                "needs_fallback": True,
+                "converged": False,
+                "r_squared": 0.2,
+                "cbf": 0.1,
+                "cbv": 0.2,
+                "mtt": 2.0,
+                "tmax": 0.0,
+            },
+            {
+                "coords": (2, 0, 0),
+                "failed": True,
+                "needs_fallback": True,
+                "converged": False,
+            },
+        ],
+    )
+    monkeypatch.setattr(
+        "pmriprep.utils.dsc_deconvolution.svd_deconvolve_oscillation",
+        lambda *args, **kwargs: SimpleNamespace(
+            cbf=0.2, cbv=0.3, mtt=1.5, delay=0.0
+        ),
+    )
+
+    result = interface._deconvolve_parametric(
+        concentration,
+        np.array([0.0, 0.0, 1.0, 0.5, 0.0, 0.0]),
+        mask,
+        "vascular",
+        1.5,
+        "map",
+        100,
+        0,
+        True,
+        False,
+    )
+    qc = result[4]
+
+    assert qc["n_mask_voxels"] == 3
+    assert qc["n_fit_admissible"] == 2
+    assert qc["n_fit_inadmissible"] == 1
+    assert qc["n_fallback_requested"] == 1
+    assert qc["n_fallback_attempted"] == 1
+    assert qc["n_fallback_osvd"] == 1
+    assert qc["n_fallback_failed"] == 0
+    assert qc["fallback_rate"] == pytest.approx(0.5)
+    assert qc["fallback_requested_rate"] == pytest.approx(0.5)
+    assert qc["fe_plateau_rate"] == pytest.approx(0.5)
+
+
 def test_prepare_baseline_preserves_pass_through_k2(
     tmp_path: Path,
 ) -> None:
