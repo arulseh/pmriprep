@@ -8,6 +8,38 @@ from types import SimpleNamespace
 from traits.trait_base import Undefined
 
 
+def test_tb1map_sink_accepts_undefined_optional_input(tmp_path: Path) -> None:
+    """Nipype may omit an unavailable B1 map when T1 mapping is disabled."""
+    import nipype.interfaces.utility as niu
+    import nipype.pipeline.engine as pe
+
+    from pmriprep.workflows.dce.datasinks import _copy_tb1map
+
+    node = pe.Node(
+        niu.Function(
+            input_names=[
+                "in_file",
+                "output_dir",
+                "subject",
+                "session",
+                "meta_dict",
+            ],
+            output_names=["out_file"],
+            function=_copy_tb1map,
+        ),
+        name="b1_map_sink",
+        base_dir=str(tmp_path),
+    )
+    node.inputs.output_dir = str(tmp_path / "out")
+    node.inputs.subject = "X"
+    node.inputs.session = "Y"
+    node.inputs.meta_dict = {}
+
+    result = node.run()
+
+    assert result.outputs.out_file == ""
+
+
 def test_source_entity_prefix_preserves_canonical_distinguishers() -> None:
     from pmriprep.utils.sidecar_builders import source_entity_prefix
 

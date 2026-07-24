@@ -623,11 +623,11 @@ def _copy_perf_map(
 
 
 def _copy_tb1map(
-    in_file: str,
     output_dir: str,
     subject: str,
     session: str,
     meta_dict: dict,
+    in_file: str | None = None,
 ) -> str:
     """Copy a TB1map NIfTI + sidecar to anat/.
 
@@ -645,7 +645,7 @@ def _copy_tb1map(
     # Defensive no-op when upstream produced no B1+ map (e.g., subject
     # configured b1_method != "none" but the actual mapping failed).
     # See _copy_perf_map for the sentinel-handling rationale.
-    if not isdefined(in_file) or in_file == "":
+    if in_file is None or not isdefined(in_file) or in_file == "":
         logging.getLogger("nipype.workflow").warning(
             "Skipping _copy_tb1map sink: upstream produced no output "
             "(in_file=%r)", in_file,
