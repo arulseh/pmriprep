@@ -51,12 +51,6 @@
     [
       "aif_detect",
       "out_aif_mask",
-      "compute_maps",
-      "aif_mask_file"
-    ],
-    [
-      "aif_detect",
-      "out_aif_mask",
       "outputnode",
       "aif_mask"
     ],
@@ -917,12 +911,6 @@
       "t2w_in_t1w",
       "transform_t2w_to_dsc",
       "structural_file"
-    ],
-    [
-      "inputnode",
-      "te",
-      "compute_maps",
-      "te"
     ],
     [
       "inputnode",
@@ -2265,11 +2253,8 @@
       "cpi_control_points": 0,
       "cpi_infer_cpt": true,
       "cpi_infer_delay": false,
-      "fallback_baseline_frames": 5,
       "first_pass_cbv": false,
       "inference": "vi",
-      "leakage_kep": 0.005,
-      "leakage_method": "bsw",
       "mcmc_samples": 500,
       "method": "oSVD",
       "n_procs": 1,
@@ -2279,7 +2264,6 @@
       "sloppy": false,
       "svd_threshold": 0.2,
       "tail_frames": 5,
-      "te": 0.035,
       "tr": 1.5
     },
     "concat_mni_to_dsc": {

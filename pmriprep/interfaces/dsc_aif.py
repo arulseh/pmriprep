@@ -2486,8 +2486,23 @@ class AIFDetection(BaseInterface):
 
         from pmriprep.utils.dsc_aif import compute_aif_fwhm_frames
 
-        # Compute QC metrics
-        baseline_frames = int(self.inputs.baseline_frames)
+        # Refine the bootstrap baseline from the supplied arterial curve so
+        # external and detected AIFs expose the same single downstream state.
+        bootstrap_baseline = int(self.inputs.baseline_frames)
+        tr = float(self.inputs.tr)
+        if tr <= 0:
+            zooms = conc_img.header.get_zooms()  # type: ignore[attr-defined,union-attr]
+            tr = float(zooms[3]) if len(zooms) >= 4 and zooms[3] > 0 else 1.5
+            if tr > 100.0:
+                tr = 1.5
+        baseline_frames, baseline_diagnostics = (
+            self._refine_selected_aif_baseline(
+                aif_curve,
+                preliminary_baseline=bootstrap_baseline,
+                bootstrap_baseline=bootstrap_baseline,
+                tr=tr,
+            )
+        )
         cnr = compute_aif_cnr(aif_curve, baseline_frames)
         fwhm_frames = compute_aif_fwhm_frames(aif_curve, baseline_frames)
         washout = compute_aif_washout_fraction(aif_curve, baseline_frames)
@@ -2523,6 +2538,11 @@ class AIFDetection(BaseInterface):
             "baseline_cv": baseline_cv,
             "n_candidates": 0,
             "baseline_frames": baseline_frames,
+            "bootstrap_baseline_frames": bootstrap_baseline,
+            "aif_baseline_frames": baseline_frames,
+            "baseline_frames_used": baseline_frames,
+            "n_baseline_frames": baseline_frames,
+            "baseline_detection_method": "selected_aif_refined",
             # Detection-time AIF metrics under the canonical nested
             # key. The external path computes a subset of fields —
             # ttp / ph / psr / arrival are not derivable here, so they
@@ -2533,6 +2553,7 @@ class AIFDetection(BaseInterface):
                 "brr": float(washout),
             },
         }
+        qc_metrics.update(baseline_diagnostics)
 
         # Write AIF curve
         out_aif_curve = self._gen_outfilename("_aif_curve.txt")
@@ -2570,7 +2591,7 @@ class AIFDetection(BaseInterface):
             "quality_score": quality_score,
             "candidate_count": 0,
             "gamma_fit_applied": False,
-            "aif_baseline_frames": int(self.inputs.baseline_frames),
+            "aif_baseline_frames": baseline_frames,
             "qc_metrics": qc_metrics,
         }
 
@@ -3012,12 +3033,9 @@ class AIFDetection(BaseInterface):
         self,
         cascade: _CascadeDetectionResult,
         context: _DSCAIFDetectionContext,
-        baseline_frames: int,
         aif_baseline_frames: int,
     ) -> _FinalizedDetectedAIF:
         """Construct the detected AIF mask and its cascade-aware QC metrics."""
-        from pmriprep.utils.dsc_signal import detect_bolus_arrival
-
         if cascade.accepted_aif is None or not cascade.candidates:
             raise RuntimeError("Cannot finalize an empty DSC AIF cascade result")
 
@@ -3027,13 +3045,12 @@ class AIFDetection(BaseInterface):
         for _, coordinate, _ in cascade.candidates:
             mask[coordinate[0], coordinate[1], coordinate[2]] = 1
 
-        stage2_window = min(aif_baseline_frames, max(2, len(curve) // 3))
-        _, detected_baseline = detect_bolus_arrival(
+        baseline_frames, baseline_diagnostics = self._refine_selected_aif_baseline(
             curve,
-            baseline_frames=stage2_window,
-            n_consecutive=3,
+            preliminary_baseline=aif_baseline_frames,
+            bootstrap_baseline=context.baseline_frames,
+            tr=context.tr,
         )
-        baseline_frames = max(baseline_frames, detected_baseline)
 
         mean_cost = float(np.mean([cost for cost, _, _ in cascade.candidates]))
         quality_score = min(1.0, 1.0 / (1.0 + mean_cost))
@@ -3048,6 +3065,7 @@ class AIFDetection(BaseInterface):
             cascade.n_available,
             baseline_frames=baseline_frames,
         )
+        qc_metrics.update(baseline_diagnostics)
         qc_metrics.update(cascade.filter_metadata)
         if cascade.initial_level is not None:
             qc_metrics["cascade_downgraded"] = (
@@ -3107,6 +3125,100 @@ class AIFDetection(BaseInterface):
             qc_metrics,
             baseline_frames,
         )
+
+    @staticmethod
+    def _refine_selected_aif_baseline(
+        curve: npt.NDArray[Any],
+        *,
+        preliminary_baseline: int,
+        bootstrap_baseline: int,
+        tr: float,
+    ) -> tuple[int, dict[str, Any]]:
+        """Refine the preliminary arrival estimate from the selected AIF.
+
+        The whole-brain percentile estimate is available before AIF selection
+        and therefore remains the preliminary authority. Once an arterial
+        curve has been selected, its cleaner bolus signature may replace that
+        estimate when the preliminary detector only returned the bootstrap
+        floor or when the arterial ensemble has high-confidence disagreement.
+
+        Parameters
+        ----------
+        curve : numpy.ndarray
+            Selected measured or externally supplied AIF curve.
+        preliminary_baseline : int
+            Whole-brain percentile arrival estimate.
+        bootstrap_baseline : int
+            Configured baseline used to bootstrap motion correction and signal
+            conversion.
+        tr : float
+            Repetition time in seconds.
+
+        Returns
+        -------
+        tuple of (int, dict)
+            Final baseline frame count and refinement diagnostics.
+        """
+        import logging
+
+        from pmriprep.utils.baseline_detection import detect_baseline_ensemble
+
+        logger = logging.getLogger(__name__)
+        diagnostics: dict[str, Any] = {
+            "baseline_preliminary_frames": int(preliminary_baseline),
+            "baseline_refinement_source": "whole_brain_percentile",
+        }
+        if len(curve) < 3:
+            diagnostics["baseline_refinement_method"] = "short_aif"
+            return preliminary_baseline, diagnostics
+
+        try:
+            refined, ensemble = detect_baseline_ensemble(
+                np.maximum(curve, 0.0),
+                tr=tr,
+                min_baseline=2,
+            )
+        except Exception:
+            diagnostics["baseline_refinement_method"] = "ensemble_unavailable"
+            diagnostics["baseline_frames_used"] = int(preliminary_baseline)
+            return preliminary_baseline, diagnostics
+
+        confidence = str(ensemble.get("confidence", "low"))
+        diagnostics.update(
+            baseline_refined_candidate_frames=int(refined),
+            baseline_refinement_confidence=confidence,
+            baseline_refinement_method=ensemble.get("method", "ensemble"),
+        )
+        if refined < 2 or refined > len(curve) // 2:
+            diagnostics["baseline_refinement_method"] = "ensemble_out_of_range"
+            diagnostics["baseline_frames_used"] = int(preliminary_baseline)
+            return preliminary_baseline, diagnostics
+
+        final = preliminary_baseline
+        if preliminary_baseline <= bootstrap_baseline and refined > bootstrap_baseline:
+            final = refined
+            diagnostics["baseline_refinement_source"] = "selected_aif_fallback_recovery"
+        elif confidence == "high" and abs(refined - preliminary_baseline) > 5:
+            final = refined
+            diagnostics["baseline_refinement_source"] = "selected_aif_high_confidence"
+            logger.info(
+                "Selected AIF refines DSC baseline: AIF=%d (confidence=%s), "
+                "whole-brain percentile=%d",
+                refined,
+                confidence,
+                preliminary_baseline,
+            )
+        elif refined > preliminary_baseline + 3:
+            diagnostics["baseline_refinement_disagrees"] = True
+            logger.warning(
+                "Selected-AIF baseline estimate differs: AIF=%d, "
+                "whole-brain percentile=%d; retaining the preliminary estimate.",
+                refined,
+                preliminary_baseline,
+            )
+
+        diagnostics["baseline_frames_used"] = int(final)
+        return int(final), diagnostics
 
     def _prepare_detection_baseline(
         self,
@@ -3429,7 +3541,6 @@ class AIFDetection(BaseInterface):
             finalized = self._finalize_detected_aif(
                 cascade,
                 context,
-                baseline_frames,
                 aif_baseline_frames,
             )
             aif_curve = finalized.curve
@@ -3453,6 +3564,7 @@ class AIFDetection(BaseInterface):
             )
             qc_metrics.update(synth_metrics)
             _clear_stale_real_aif_keys(qc_metrics)
+            baseline_frames = aif_baseline_frames
         else:
             raise RuntimeError(
                 "AIF detection failed at all levels and "
@@ -3527,6 +3639,7 @@ class AIFDetection(BaseInterface):
                     conc_data,
                     context.brain_mask,
                 )
+                baseline_frames = aif_baseline_frames
                 detection_level = "synthetic"
                 quality_score = 0.3
                 aif_mask_arr[:] = 0
@@ -3579,10 +3692,14 @@ class AIFDetection(BaseInterface):
         # interface, not a measured candidate discarded during fallback.
         qc_metrics["bootstrap_baseline_frames"] = bootstrap_baseline_frames
         qc_metrics["baseline_frames_initial"] = bootstrap_baseline_frames
-        qc_metrics["aif_baseline_frames"] = aif_baseline_frames
-        qc_metrics["baseline_frames_used"] = aif_baseline_frames
-        qc_metrics["n_baseline_frames"] = aif_baseline_frames
-        qc_metrics["baseline_detection_method"] = "ensemble_refined"
+        qc_metrics["aif_baseline_frames"] = baseline_frames
+        qc_metrics["baseline_frames_used"] = baseline_frames
+        qc_metrics["n_baseline_frames"] = baseline_frames
+        qc_metrics["baseline_detection_method"] = (
+            "selected_aif_refined"
+            if detection_level != "synthetic"
+            else "whole_brain_ensemble"
+        )
         if candidate_baseline_frames is not None:
             qc_metrics["candidate_baseline_frames"] = candidate_baseline_frames
         if detection_level == "synthetic":
@@ -3604,7 +3721,7 @@ class AIFDetection(BaseInterface):
             detection_level,
             quality_score,
             gamma_fit_applied,
-            aif_baseline_frames,
+            baseline_frames,
             len(top_candidates),
             qc_metrics,
         )

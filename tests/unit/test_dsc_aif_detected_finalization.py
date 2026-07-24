@@ -8,6 +8,44 @@ import pytest
 from pmriprep.interfaces import dsc_aif
 
 
+@pytest.mark.parametrize(
+    ("preliminary", "bootstrap", "refined", "confidence", "expected", "source"),
+    [
+        (5, 5, 12, "medium", 12, "selected_aif_fallback_recovery"),
+        (14, 5, 7, "high", 7, "selected_aif_high_confidence"),
+        (14, 5, 19, "medium", 14, "whole_brain_percentile"),
+    ],
+)
+def test_selected_aif_refinement_preserves_confidence_policy(
+    monkeypatch: pytest.MonkeyPatch,
+    preliminary: int,
+    bootstrap: int,
+    refined: int,
+    confidence: str,
+    expected: int,
+    source: str,
+) -> None:
+    """Selected arterial timing refines only under the established safeguards."""
+    monkeypatch.setattr(
+        "pmriprep.utils.baseline_detection.detect_baseline_ensemble",
+        lambda *args, **kwargs: (
+            refined,
+            {"confidence": confidence, "method": "change_point"},
+        ),
+    )
+
+    result, diagnostics = dsc_aif.AIFDetection._refine_selected_aif_baseline(
+        np.r_[np.zeros(10), np.ones(20)],
+        preliminary_baseline=preliminary,
+        bootstrap_baseline=bootstrap,
+        tr=1.5,
+    )
+
+    assert result == expected
+    assert diagnostics["baseline_refinement_source"] == source
+    assert diagnostics["baseline_frames_used"] == expected
+
+
 def test_detected_aif_finalization_builds_mask_and_cascade_qc(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -48,6 +86,7 @@ def test_detected_aif_finalization_builds_mask_and_cascade_qc(
         affine=np.eye(4),
         tr=1.5,
         n_candidates=10,
+        baseline_frames=3,
     )
     monkeypatch.setattr(
         detector,
@@ -56,7 +95,12 @@ def test_detected_aif_finalization_builds_mask_and_cascade_qc(
     )
     monkeypatch.setattr(detector, "_compute_aif_spr", lambda *args: (3.0, 4, 10.0))
 
-    result = detector._finalize_detected_aif(cascade, context, 3, 3)
+    monkeypatch.setattr(
+        detector,
+        "_refine_selected_aif_baseline",
+        lambda *args, **kwargs: (3, {"baseline_refinement_source": "test"}),
+    )
+    result = detector._finalize_detected_aif(cascade, context, 3)
 
     assert result.mask[1, 1, 1] == 1
     assert result.mask[1, 1, 2] == 1

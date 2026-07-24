@@ -28,7 +28,6 @@ from pmriprep.utils.dsc_constants import (
     EPSILON_CONCENTRATION,
     EPSILON_SHAPE,
     EPSILON_SIGNAL,
-    KEP_DSC_DEFAULT,
 )
 from pmriprep.utils.dsc_signal import compute_psr_legacy, compute_peak_height_legacy, compute_ttp_legacy
 
@@ -337,7 +336,6 @@ class _DSCComputeInputs(NamedTuple):
     mcmc_samples: int
     baseline_frames: int
     tail_frames: int
-    te: float
 
 
 class _DSCMotionWeighting(NamedTuple):
@@ -348,11 +346,10 @@ class _DSCMotionWeighting(NamedTuple):
 
 
 class _DSCBaselinePreparation(NamedTuple):
-    """Baseline-adjusted DSC state and leakage-correction provenance."""
+    """Finalized baseline-adjusted DSC state."""
 
     concentration: npt.NDArray[Any]
     aif: npt.NDArray[Any]
-    recomputed_raw_concentration: Optional[npt.NDArray[Any]]
     detected_frames: int
     n_baseline: int
     detection_info: dict[str, Any]
@@ -487,16 +484,6 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
         mandatory=False,
         desc="Pre-K2 concentration (for auc_raw when K2 correction was applied)",
     )
-    te = traits.Float(
-        0.035,
-        usedefault=True,
-        desc="Echo time in seconds (for S0 re-computation)",
-    )
-    aif_mask_file = File(
-        exists=True,
-        mandatory=False,
-        desc="3D AIF mask NIfTI (for re-extracting AIF after S0 update)",
-    )
     aif_detection_level = traits.Str(
         "atlas",
         usedefault=True,
@@ -508,17 +495,6 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
         desc="Effective classification: K2 adequacy ('adequate', 'partial', "
         "'inadequate', 'unknown') on the auto path, or preload-dose class "
         "('none', 'minimal', 'half_dose', 'significant', 'severe') on the user path",
-    )
-    leakage_method = traits.Enum(
-        "bsw",
-        "bidirectional",
-        usedefault=True,
-        desc="K2 leakage-correction method used by the upstream correction",
-    )
-    leakage_kep = traits.Float(
-        KEP_DSC_DEFAULT,
-        usedefault=True,
-        desc="EES efflux rate in s^-1 for bidirectional K2 correction",
     )
 
     # Deconvolution method
@@ -574,11 +550,6 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
         5,
         usedefault=True,
         desc="Pre-bolus baseline frames (wired from AIF detection)",
-    )
-    fallback_baseline_frames = traits.Int(
-        5,
-        usedefault=True,
-        desc="Fallback baseline when AIF-detected value is unavailable",
     )
     tail_frames = traits.Int(
         5,
@@ -898,7 +869,6 @@ class ComputeDSCMaps(BaseInterface):
             mcmc_samples=int(self.inputs.mcmc_samples),
             baseline_frames=int(self.inputs.baseline_frames),
             tail_frames=int(self.inputs.tail_frames),
-            te=float(self.inputs.te),
         )
 
     def _gen_outfilename(self, suffix: str) -> str:
@@ -915,7 +885,7 @@ class ComputeDSCMaps(BaseInterface):
     def _prepare_baseline_and_leakage(
         self, inputs: _DSCComputeInputs
     ) -> _DSCBaselinePreparation:
-        """Detect the baseline and reconcile S0, AIF, concentration, and K2.
+        """Center arrays using the baseline finalized by AIF detection.
 
         Parameters
         ----------
@@ -925,85 +895,19 @@ class ComputeDSCMaps(BaseInterface):
         Returns
         -------
         _DSCBaselinePreparation
-            Baseline-subtracted fitting arrays, any recomputed raw
-            concentration, detection diagnostics, and K2 output provenance.
+            Baseline-subtracted fitting arrays and upstream K2 provenance.
 
         """
-        import nibabel as nib  # type: ignore[import-untyped]
-
         concentration = inputs.concentration
         aif = inputs.aif
-        detected_frames, detection_info = self._detect_baseline_frames(
-            aif,
-            inputs.baseline_frames,
-            concentration_data=concentration,
-            mask=inputs.mask,
-        )
-
-        recomputed_raw: Optional[npt.NDArray[Any]] = None
-        k2_result: Any = None
-        if detected_frames != inputs.baseline_frames and inputs.signal is not None:
-            new_s0 = np.mean(
-                inputs.signal[..., :detected_frames], axis=-1, keepdims=True
-            )
-            new_s0 = np.maximum(new_s0, EPSILON_SIGNAL)
-            signal_ratio = np.maximum(inputs.signal / new_s0, EPSILON_SIGNAL)
-            recomputed_raw = -np.log(signal_ratio) / inputs.te
-
-            if isdefined(self.inputs.aif_mask_file) and self.inputs.aif_mask_file:
-                aif_mask_img = nib.load(self.inputs.aif_mask_file)
-                aif_mask_data = np.asarray(aif_mask_img.dataobj) > 0.5  # type: ignore[attr-defined]
-                if aif_mask_data.shape[:3] == recomputed_raw.shape[:3]:
-                    roi_voxels = recomputed_raw[aif_mask_data]
-                    if roi_voxels.ndim == 2 and roi_voxels.shape[0] > 0:
-                        aif = np.mean(roi_voxels, axis=0)
-                        if len(aif) >= 5:
-                            from scipy.signal import savgol_filter  # type: ignore[import-untyped]
-
-                            from pmriprep.utils.dsc_aif import get_aif_smoothing_window
-
-                            window_length = get_aif_smoothing_window(len(aif), inputs.dt)
-                            aif = savgol_filter(
-                                aif, window_length=window_length, polyorder=2
-                            )
-
-            if self.inputs.leakage_method == "bidirectional":
-                from pmriprep.utils.dsc_preload import (
-                    apply_k2_correction_bidirectional,
-                )
-
-                k2_result = apply_k2_correction_bidirectional(
-                    concentration=recomputed_raw,
-                    brain_mask=inputs.mask.astype(bool),
-                    tr=inputs.dt,
-                    kep=float(self.inputs.leakage_kep),
-                    baseline_frames=detected_frames,
-                )
-            else:
-                from pmriprep.utils.dsc_preload import apply_k2_correction
-
-                k2_result = apply_k2_correction(
-                    concentration=recomputed_raw,
-                    brain_mask=inputs.mask.astype(bool),
-                    tr=inputs.dt,
-                    baseline_frames=detected_frames,
-                )
-            concentration = k2_result.concentration_corrected
-            detection_info["s0_recomputed"] = True
-            detection_info["s0_recomputed_frames"] = detected_frames
-            detection_info["k2_recomputed"] = True
-            detection_info["k2_recomputed_method"] = k2_result.method
-            if k2_result.qc_metrics:
-                detection_info["k2_recomputed_qc"] = k2_result.qc_metrics
-
+        detected_frames = inputs.baseline_frames
+        detection_info: dict[str, Any] = {
+            "baseline_detection_method": "aif_detection_finalized",
+            "baseline_frames_detected": detected_frames,
+            "arrival_index": detected_frames,
+        }
         k2_map_path: Optional[str] = None
-        if recomputed_raw is not None:
-            k2_map_path = self._gen_outfilename("_k2")
-            k2_img = nib.Nifti1Image(  # type: ignore[attr-defined]
-                k2_result.k2_map.astype(np.float32), inputs.affine, inputs.header
-            )
-            nib.save(k2_img, k2_map_path)  # type: ignore[attr-defined]
-        elif (
+        if (
             isdefined(self.inputs.k2_map_input_file)
             and self.inputs.k2_map_input_file
             and Path(str(self.inputs.k2_map_input_file)).is_file()
@@ -1025,7 +929,6 @@ class ComputeDSCMaps(BaseInterface):
         return _DSCBaselinePreparation(
             concentration=concentration,
             aif=aif,
-            recomputed_raw_concentration=recomputed_raw,
             detected_frames=detected_frames,
             n_baseline=n_baseline,
             detection_info=detection_info,
@@ -1146,7 +1049,6 @@ class ComputeDSCMaps(BaseInterface):
     def _select_raw_concentration(
         self,
         corrected: npt.NDArray[Any],
-        recomputed: Optional[npt.NDArray[Any]],
     ) -> npt.NDArray[Any]:
         """Select pre-K2 concentration for model-free DSC measurements.
 
@@ -1154,18 +1056,13 @@ class ComputeDSCMaps(BaseInterface):
         ----------
         corrected : npt.NDArray
             Baseline-subtracted, potentially K2-corrected concentration.
-        recomputed : npt.NDArray, optional
-            Raw concentration recomputed after baseline refinement.
 
         Returns
         -------
         npt.NDArray
-            Recomputed raw concentration, configured raw input, or corrected
-            concentration, in that precedence order.
+            Configured raw input or corrected concentration.
 
         """
-        if recomputed is not None:
-            return recomputed
         if self.inputs.raw_concentration_file:
             import nibabel as nib  # type: ignore[import-untyped]
 
@@ -1608,7 +1505,6 @@ class ComputeDSCMaps(BaseInterface):
         *,
         deconvolution: _DSCDeconvolutionMaps,
         concentration: npt.NDArray[Any],
-        recomputed_raw_concentration: Optional[npt.NDArray[Any]],
         signal: Optional[npt.NDArray[Any]],
         spatial_shape: tuple[int, ...],
         mask_bool: npt.NDArray[Any],
@@ -1628,9 +1524,7 @@ class ComputeDSCMaps(BaseInterface):
         )
         qc.update(signal_metrics.qc)
 
-        raw_concentration = self._select_raw_concentration(
-            concentration, recomputed_raw_concentration
-        )
+        raw_concentration = self._select_raw_concentration(concentration)
         timing = self._compute_timing_maps(
             raw_concentration,
             mask_bool,
@@ -2244,114 +2138,6 @@ class ComputeDSCMaps(BaseInterface):
         # lands in the map's own sidecar provenance, not only the docstring.
         qc_metrics["firstpass_prefit_fwhm_mm"] = float(_FIRSTPASS_PREFIT_FWHM_MM)
         return path
-
-    def _detect_baseline_frames(
-        self,
-        aif: npt.NDArray[Any],
-        configured_baseline: int,
-        concentration_data: Optional[npt.NDArray[Any]] = None,
-        mask: Optional[npt.NDArray[Any]] = None,
-    ) -> tuple[int, dict[str, Any]]:
-        """Validate and refine baseline using the AIF-detected value.
-
-        The primary baseline comes from AIF detection (ensemble on p99
-        brain concentration, wired via ``baseline_frames`` input).  This
-        function cross-validates by running the ensemble on the AIF curve
-        itself.  Falls back to the configured ``pre_bolus`` value when the
-        primary is unavailable (e.g., synthetic AIF).
-
-        Parameters
-        ----------
-        aif : npt.NDArray[Any]
-            1D AIF concentration curve.
-        configured_baseline : int
-            AIF-detected baseline (or pre_bolus fallback).
-        concentration_data : npt.NDArray[Any], optional
-            Optional 4D concentration array for fallback.
-        mask : npt.NDArray[Any], optional
-            Optional 3D brain mask for fallback.
-
-        Returns
-        -------
-        tuple of (int, dict)
-            Tuple of (n_baseline, detection_info dict).
-        """
-        import logging as _logging
-
-        from pmriprep.utils.baseline_detection import detect_baseline_ensemble
-
-        logger = _logging.getLogger(__name__)
-        fallback = int(self.inputs.fallback_baseline_frames)
-        info: dict[str, Any] = {"baseline_frames_configured": configured_baseline}
-
-        if len(aif) < 3:
-            info.update(
-                baseline_detection_method="fallback_short_aif",
-                baseline_frames_detected=fallback,
-            )
-            return fallback, info
-
-        # Primary: use AIF-detected value (from p99 ensemble upstream)
-        primary = configured_baseline
-
-        # Cross-validate: run ensemble on the AIF curve itself
-        try:
-            tr = float(self.inputs.tr) if hasattr(self.inputs, "tr") else 1.5
-            validation, val_diag = detect_baseline_ensemble(
-                np.maximum(aif, 0.0), tr=tr, min_baseline=2,
-            )
-
-            aif_confidence = val_diag.get("confidence", "low")
-            info["validation_arrival"] = validation
-            info["validation_confidence"] = aif_confidence
-            info["validation_method"] = val_diag.get("method", "unknown")
-
-            # Confidence-based override: AIF curve has cleaner bolus
-            # signature than p99 brain concentration for preloaded data.
-            if primary <= fallback and validation > fallback:
-                # Primary was at default (no real detection) — use AIF
-                primary = validation
-                info["baseline_detection_method"] = "auto_aif_ensemble"
-            elif (
-                aif_confidence == "high"
-                and abs(validation - primary) > 5
-            ):
-                # AIF strongly disagrees with high confidence — override.
-                # The AIF curve is a clean arterial signal; p99 can be
-                # fooled by preload washout fluctuations.
-                logger.info(
-                    "AIF ensemble overrides p99: AIF=%d (conf=%s), "
-                    "p99=%d",
-                    validation, aif_confidence, primary,
-                )
-                primary = validation
-                info["baseline_detection_method"] = "auto_aif_override"
-            elif validation > primary + 3:
-                # Moderate disagreement — log but keep primary
-                logger.warning(
-                    "Baseline validation disagrees: AIF=%d, p99=%d "
-                    "— keeping primary",
-                    validation, primary,
-                )
-                info["baseline_detection_method"] = "primary_aif_detected"
-            else:
-                info["baseline_detection_method"] = "primary_aif_detected"
-
-        except Exception:
-            info["baseline_detection_method"] = "primary_no_validation"
-
-        # Sanity: at least 2, at most half the acquisition
-        if primary < 2 or primary > len(aif) // 2:
-            info.update(
-                baseline_detection_method="fallback_range",
-                baseline_frames_detected=fallback,
-                arrival_index=primary,
-            )
-            return fallback, info
-
-        info["baseline_frames_detected"] = primary
-        info["arrival_index"] = primary
-        return primary, info
 
     def _deconvolve_svd(
         self,
@@ -3560,7 +3346,6 @@ class ComputeDSCMaps(BaseInterface):
         baseline = self._prepare_baseline_and_leakage(inputs)
         conc_data = baseline.concentration
         aif = baseline.aif
-        recomputed_raw_conc = baseline.recomputed_raw_concentration
         detected_baseline = baseline.detected_frames
         n_bl = baseline.n_baseline
         baseline_detection_info = baseline.detection_info
@@ -3589,7 +3374,6 @@ class ComputeDSCMaps(BaseInterface):
         postprocessing = self._prepare_final_outputs(
             deconvolution=deconvolution,
             concentration=conc_data,
-            recomputed_raw_concentration=recomputed_raw_conc,
             signal=signal_data,
             spatial_shape=spatial_shape,
             mask_bool=mask_bool,

@@ -96,7 +96,7 @@
       "qc_metrics": {
         "aif_baseline_frames": 3,
         "aif_quality": "degraded",
-        "baseline_detection_method": "ensemble_refined",
+        "baseline_detection_method": "whole_brain_ensemble",
         "baseline_frames_initial": 2,
         "baseline_frames_used": 3,
         "bootstrap_baseline_frames": 2,
@@ -234,7 +234,7 @@
       ]
     },
     "results": {
-      "aif_baseline_frames": 3,
+      "aif_baseline_frames": 2,
       "aif_curve": [
         {
           "__f__": "0x0.0p+0"
@@ -264,16 +264,16 @@
         0
       ],
       "qc_metrics": {
-        "aif_baseline_frames": 3,
+        "aif_baseline_frames": 2,
         "aif_quality": "detected",
         "aif_voxel_coord": [
           0,
           0,
           0
         ],
-        "baseline_detection_method": "ensemble_refined",
+        "baseline_detection_method": "selected_aif_refined",
         "baseline_frames_initial": 2,
-        "baseline_frames_used": 3,
+        "baseline_frames_used": 2,
         "bootstrap_baseline_frames": 2,
         "candidate_baseline_frames": 2,
         "cascade_downgraded": false,
@@ -283,7 +283,7 @@
           "__f__": "0x1.e666666666666p-1"
         },
         "n_aif_voxels_selected": 1,
-        "n_baseline_frames": 3,
+        "n_baseline_frames": 2,
         "quality_score": {
           "__f__": "0x1.999999999999ap-1"
         },
@@ -394,7 +394,7 @@
       "qc_metrics": {
         "aif_baseline_frames": 3,
         "aif_quality": "degraded",
-        "baseline_detection_method": "ensemble_refined",
+        "baseline_detection_method": "whole_brain_ensemble",
         "baseline_frames_initial": 2,
         "baseline_frames_used": 3,
         "bootstrap_baseline_frames": 2,
@@ -529,7 +529,7 @@
       "out_raw_aif_curve": null
     },
     "results": {
-      "aif_baseline_frames": 3,
+      "aif_baseline_frames": 2,
       "aif_curve": [
         {
           "__f__": "0x0.0p+0"
@@ -559,7 +559,7 @@
         0
       ],
       "qc_metrics": {
-        "aif_baseline_frames": 3,
+        "aif_baseline_frames": 2,
         "aif_gamma_fit_below_floor_retained": true,
         "aif_quality": "detected",
         "aif_voxel_coord": [
@@ -567,9 +567,9 @@
           0,
           0
         ],
-        "baseline_detection_method": "ensemble_refined",
+        "baseline_detection_method": "selected_aif_refined",
         "baseline_frames_initial": 2,
-        "baseline_frames_used": 3,
+        "baseline_frames_used": 2,
         "bootstrap_baseline_frames": 2,
         "candidate_baseline_frames": 2,
         "cascade_downgraded": false,
@@ -583,7 +583,7 @@
           "__f__": "-0x1.0000000000000p-2"
         },
         "n_aif_voxels_selected": 1,
-        "n_baseline_frames": 3,
+        "n_baseline_frames": 2,
         "quality_score": {
           "__f__": "0x1.999999999999ap-1"
         },

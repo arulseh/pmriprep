@@ -53,7 +53,6 @@ def test_load_compute_inputs_preserves_arrays_and_settings(tmp_path: Path) -> No
         mcmc_samples=321,
         baseline_frames=7,
         tail_frames=8,
-        te=0.03,
     )
 
     result = interface._load_compute_inputs()
@@ -76,7 +75,6 @@ def test_load_compute_inputs_preserves_arrays_and_settings(tmp_path: Path) -> No
     assert result.mcmc_samples == 321
     assert result.baseline_frames == 7
     assert result.tail_frames == 8
-    assert result.te == pytest.approx(0.03)
 
 
 def test_load_compute_inputs_rejects_off_grid_mask(tmp_path: Path) -> None:
@@ -130,9 +128,9 @@ def test_prepare_motion_weighting_disabled_paths(method: str) -> None:
 
 
 def test_prepare_baseline_preserves_pass_through_k2(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> None:
-    """Unchanged baseline subtracts offsets and retains upstream K2 provenance."""
+    """Final AIF baseline centers arrays and retains upstream K2 provenance."""
     concentration = np.broadcast_to(
         np.array([2.0, 2.0, 2.0, 2.0, 4.0, 6.0]), (2, 2, 1, 6)
     ).copy()
@@ -148,198 +146,15 @@ def test_prepare_baseline_preserves_pass_through_k2(
         baseline_frames=4,
         k2_map_input_file=k2_file,
     )
-    monkeypatch.setattr(
-        ComputeDSCMaps,
-        "_detect_baseline_frames",
-        lambda self, *args, **kwargs: (4, {"arrival_index": 4}),
-    )
-
     result = interface._prepare_baseline_and_leakage(interface._load_compute_inputs())
 
     assert result.detected_frames == 4
     assert result.n_baseline == 4
-    assert result.recomputed_raw_concentration is None
     assert result.k2_map_path == k2_file
     np.testing.assert_allclose(result.aif[:4], 0.0)
     np.testing.assert_allclose(result.concentration[..., :4], 0.0)
     assert result.detection_info["aif_baseline_offset"] == 1.0
     assert result.detection_info["conc_median_baseline_offset"] == 2.0
-
-
-def test_prepare_baseline_recomputes_s0_and_k2(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """An earlier detected baseline keeps S0, K2, and saved-map state coherent."""
-    monkeypatch.chdir(tmp_path)
-    concentration_file = _write_image(
-        tmp_path / "concentration.nii.gz", np.zeros((2, 2, 1, 6), dtype=np.float32)
-    )
-    mask_file = _write_image(tmp_path / "mask.nii.gz", np.ones((2, 2, 1), dtype=np.uint8))
-    signal = np.broadcast_to(
-        np.array([100.0, 100.0, 80.0, 60.0, 50.0, 50.0]), (2, 2, 1, 6)
-    ).copy()
-    signal_file = _write_image(tmp_path / "signal.nii.gz", signal)
-    aif_file = tmp_path / "aif.txt"
-    np.savetxt(aif_file, [0.2, 0.2, 1.0, 2.0, 1.0, 0.5])
-    interface = ComputeDSCMaps(
-        concentration_file=concentration_file,
-        brain_mask_file=mask_file,
-        aif_file=str(aif_file),
-        signal_file=signal_file,
-        baseline_frames=4,
-        tr=1.5,
-        te=0.05,
-    )
-    monkeypatch.setattr(
-        ComputeDSCMaps,
-        "_detect_baseline_frames",
-        lambda self, *args, **kwargs: (2, {"arrival_index": 2}),
-    )
-
-    expected_raw = -np.log(signal / 100.0) / 0.05
-
-    class _K2Result:
-        concentration_corrected = expected_raw + 3.0
-        k2_map = np.full((2, 2, 1), 0.25)
-        method = "bsw"
-        qc_metrics = {"k2_method": "bsw"}
-
-    def _fake_k2(**kwargs: object) -> _K2Result:
-        np.testing.assert_allclose(kwargs["concentration"], expected_raw)
-        assert kwargs["baseline_frames"] == 2
-        return _K2Result()
-
-    monkeypatch.setattr("pmriprep.utils.dsc_preload.apply_k2_correction", _fake_k2)
-
-    result = interface._prepare_baseline_and_leakage(interface._load_compute_inputs())
-
-    np.testing.assert_allclose(result.recomputed_raw_concentration, expected_raw)
-    np.testing.assert_allclose(result.concentration[..., :4].mean(axis=-1), 0.0)
-    assert result.detected_frames == 2
-    assert result.n_baseline == 4
-    assert result.detection_info["s0_recomputed"] is True
-    assert result.detection_info["s0_recomputed_frames"] == 2
-    assert result.detection_info["k2_recomputed"] is True
-    assert result.k2_map_path is not None
-    np.testing.assert_allclose(nib.load(result.k2_map_path).get_fdata(), 0.25)
-
-
-def test_prepare_baseline_replaces_stale_k2_after_later_refinement(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A later detected baseline saves the K2 map fitted to that baseline."""
-    monkeypatch.chdir(tmp_path)
-    concentration_file = _write_image(
-        tmp_path / "concentration.nii.gz", np.zeros((2, 2, 1, 7), dtype=np.float32)
-    )
-    mask_file = _write_image(tmp_path / "mask.nii.gz", np.ones((2, 2, 1), dtype=np.uint8))
-    signal = np.broadcast_to(
-        np.array([100.0, 100.0, 100.0, 100.0, 100.0, 70.0, 60.0]),
-        (2, 2, 1, 7),
-    ).copy()
-    signal_file = _write_image(tmp_path / "signal.nii.gz", signal)
-    stale_k2_file = _write_image(
-        tmp_path / "upstream_k2.nii.gz", np.full((2, 2, 1), 9.0)
-    )
-    aif_file = tmp_path / "aif.txt"
-    np.savetxt(aif_file, [0.0, 0.0, 0.0, 0.0, 0.0, 2.0, 1.0])
-    interface = ComputeDSCMaps(
-        concentration_file=concentration_file,
-        brain_mask_file=mask_file,
-        aif_file=str(aif_file),
-        signal_file=signal_file,
-        baseline_frames=2,
-        k2_map_input_file=stale_k2_file,
-        tr=1.5,
-        te=0.05,
-    )
-    monkeypatch.setattr(
-        ComputeDSCMaps,
-        "_detect_baseline_frames",
-        lambda self, *args, **kwargs: (5, {"arrival_index": 5}),
-    )
-
-    expected_raw = -np.log(signal / 100.0) / 0.05
-
-    class _K2Result:
-        concentration_corrected = expected_raw + 3.0
-        k2_map = np.full((2, 2, 1), 0.5)
-        method = "bsw"
-        qc_metrics = {"k2_method": "bsw"}
-
-    monkeypatch.setattr(
-        "pmriprep.utils.dsc_preload.apply_k2_correction",
-        lambda **kwargs: _K2Result(),
-    )
-
-    result = interface._prepare_baseline_and_leakage(interface._load_compute_inputs())
-
-    assert result.detected_frames == 5
-    assert result.k2_map_path is not None
-    assert result.k2_map_path != stale_k2_file
-    np.testing.assert_allclose(nib.load(result.k2_map_path).get_fdata(), 0.5)
-
-
-def test_prepare_baseline_preserves_bidirectional_k2_method(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Baseline refinement retains the configured leakage model and kep."""
-    monkeypatch.chdir(tmp_path)
-    concentration_file = _write_image(
-        tmp_path / "concentration.nii.gz", np.zeros((2, 2, 1, 7), dtype=np.float32)
-    )
-    mask_file = _write_image(tmp_path / "mask.nii.gz", np.ones((2, 2, 1), dtype=np.uint8))
-    signal = np.broadcast_to(
-        np.array([100.0, 100.0, 100.0, 100.0, 80.0, 70.0, 60.0]),
-        (2, 2, 1, 7),
-    ).copy()
-    signal_file = _write_image(tmp_path / "signal.nii.gz", signal)
-    aif_file = tmp_path / "aif.txt"
-    np.savetxt(aif_file, [0.0, 0.0, 0.0, 0.0, 2.0, 1.0, 0.5])
-    interface = ComputeDSCMaps(
-        concentration_file=concentration_file,
-        brain_mask_file=mask_file,
-        aif_file=str(aif_file),
-        signal_file=signal_file,
-        baseline_frames=2,
-        leakage_method="bidirectional",
-        leakage_kep=0.007,
-        tr=1.5,
-        te=0.05,
-    )
-    monkeypatch.setattr(
-        ComputeDSCMaps,
-        "_detect_baseline_frames",
-        lambda self, *args, **kwargs: (4, {"arrival_index": 4}),
-    )
-
-    class _K2Result:
-        concentration_corrected = np.zeros((2, 2, 1, 7))
-        k2_map = np.full((2, 2, 1), 0.25)
-        method = "bidirectional"
-        qc_metrics = {"k2_method": "bidirectional", "kep_used": 0.007}
-
-    def _fake_bidirectional(**kwargs: object) -> _K2Result:
-        assert kwargs["baseline_frames"] == 4
-        assert kwargs["kep"] == pytest.approx(0.007)
-        return _K2Result()
-
-    monkeypatch.setattr(
-        "pmriprep.utils.dsc_preload.apply_k2_correction_bidirectional",
-        _fake_bidirectional,
-    )
-    monkeypatch.setattr(
-        "pmriprep.utils.dsc_preload.apply_k2_correction",
-        lambda **kwargs: pytest.fail("BSW must not replace bidirectional correction"),
-    )
-
-    result = interface._prepare_baseline_and_leakage(interface._load_compute_inputs())
-
-    assert result.detection_info["k2_recomputed_method"] == "bidirectional"
-    assert result.detection_info["k2_recomputed_qc"] == {
-        "k2_method": "bidirectional",
-        "kep_used": 0.007,
-    }
 
 
 def test_compute_signal_metrics_preserves_legacy_maps() -> None:
@@ -365,18 +180,14 @@ def test_compute_signal_metrics_without_signal_returns_zero_maps() -> None:
 
 
 def test_select_raw_concentration_preserves_source_precedence(tmp_path: Path) -> None:
-    """Recomputed, configured raw, and corrected sources retain their order."""
+    """Configured raw and corrected sources retain their order."""
     corrected = np.zeros((1, 1, 1, 4), dtype=np.float64)
     configured = np.ones_like(corrected)
-    recomputed = np.full_like(corrected, 2.0)
     raw_file = _write_image(tmp_path / "raw.nii.gz", configured)
     interface = ComputeDSCMaps(raw_concentration_file=raw_file)
 
-    assert interface._select_raw_concentration(corrected, recomputed) is recomputed
-    np.testing.assert_allclose(
-        interface._select_raw_concentration(corrected, None), configured
-    )
-    assert ComputeDSCMaps()._select_raw_concentration(corrected, None) is corrected
+    np.testing.assert_allclose(interface._select_raw_concentration(corrected), configured)
+    assert ComputeDSCMaps()._select_raw_concentration(corrected) is corrected
 
 
 def test_compute_timing_maps_uses_unclipped_ttp_for_nawm_reference(
@@ -1277,7 +1088,6 @@ def test_prepare_final_outputs_preserves_composition_and_qc_order(
     result = interface._prepare_final_outputs(
         deconvolution=deconvolution,
         concentration=concentration,
-        recomputed_raw_concentration=raw,
         signal=None,
         spatial_shape=(1, 1, 1),
         mask_bool=data.astype(bool),

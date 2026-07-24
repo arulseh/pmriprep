@@ -22,7 +22,6 @@ from pmriprep.interfaces.dsc_compute import ComputeDSCMaps
 from pmriprep.utils.dsc_constants import (
     DEFAULT_OI_THRESHOLD,
     DEFAULT_SVD_THRESHOLD,
-    KEP_DSC_DEFAULT,
 )
 from pmriprep.workflows._perfusion import (
     select_aif_exclusion_mask as _select_aif_exclusion_mask,
@@ -744,13 +743,13 @@ def init_dsc_deconvolution_wf(
     ------
     concentration_file, signal_file, raw_concentration_file
         Leakage-corrected and raw concentration / signal time series.
-    aif_file, measured_aif_file, aif_mask_file, aif_detection_level, baseline_frames
+    aif_file, measured_aif_file, aif_detection_level, baseline_frames
         Arterial input function and detection provenance.
     k2_map_input_file, preload_classification
         Preload-detection leakage inputs.
     brain_mask_file, enhancing_mask_file, nawm_mask_file
         DSC-space masks (brain, enhancing tumor, NAWM for rTTP normalization).
-    tr, te, fd_values
+    tr, fd_values
         Acquisition timing and framewise displacement.
 
     Outputs
@@ -782,13 +781,11 @@ def init_dsc_deconvolution_wf(
                 "k2_map_input_file",
                 "aif_file",
                 "measured_aif_file",
-                "aif_mask_file",
                 "aif_detection_level",
                 "baseline_frames",
                 "brain_mask_file",
                 "enhancing_mask_file",
                 "tr",
-                "te",
                 "fd_values",
                 "signal_file",
                 "raw_concentration_file",
@@ -850,13 +847,11 @@ def init_dsc_deconvolution_wf(
             ("k2_map_input_file", "k2_map_input_file"),
             ("aif_file", "aif_file"),
             ("measured_aif_file", "measured_aif_file"),
-            ("aif_mask_file", "aif_mask_file"),
             ("aif_detection_level", "aif_detection_level"),
             ("baseline_frames", "baseline_frames"),
             ("brain_mask_file", "brain_mask_file"),
             ("enhancing_mask_file", "enhancing_mask_file"),
             ("tr", "tr"),
-            ("te", "te"),
             ("fd_values", "fd_values"),
             ("signal_file", "signal_file"),
             ("raw_concentration_file", "raw_concentration_file"),
@@ -2169,15 +2164,8 @@ def init_dsc_preproc_wf(
         mcmc_samples=config.mcmc_samples,
         n_procs=config.num_processes if config.num_processes > 0 else 1,
         # baseline_frames wired dynamically from conc_aif_wf.outputnode.aif_baseline_frames
-        fallback_baseline_frames=config.pre_bolus,
         tail_frames=5,  # Post-bolus frames for PSR
         first_pass_cbv=config.first_pass_cbv,
-        leakage_method=config.leakage_method,
-        leakage_kep=(
-            config.kep
-            if config.kep is not None
-            else KEP_DSC_DEFAULT
-        ),
         sloppy=config.sloppy,
     )
     if random_seed is not None:
@@ -2418,7 +2406,6 @@ def init_dsc_preproc_wf(
         (conc_aif_wf, deconvolution_wf, [
             ("outputnode.out_aif_curve", "inputnode.aif_file"),
             ("outputnode.out_measured_aif_curve", "inputnode.measured_aif_file"),
-            ("outputnode.out_aif_mask", "inputnode.aif_mask_file"),
             ("outputnode.detection_level", "inputnode.aif_detection_level"),
             ("outputnode.aif_baseline_frames", "inputnode.baseline_frames"),
         ]),
@@ -2430,7 +2417,6 @@ def init_dsc_preproc_wf(
         ]),
         (inputnode, deconvolution_wf, [
             ("tr", "inputnode.tr"),
-            ("te", "inputnode.te"),
         ]),
         (motion_wf, deconvolution_wf, [
             ("outputnode.fd_values", "inputnode.fd_values"),
