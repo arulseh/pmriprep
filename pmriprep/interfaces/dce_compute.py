@@ -4011,13 +4011,15 @@ class ComputeDCEMaps(BaseInterface):
         )
         try:
             chunk_results = list(executor.map(_fit_chunk_nlls, chunk_args))
-        except (KeyboardInterrupt, SystemExit):
+        except BaseException:
+            from pmriprep.utils.processes import terminate_process_pool
+
             logger.warning(
-                "Interrupted during parallel DCE batched fitting, "
-                "cancelling workers"
+                "Parallel DCE batched fitting aborted; terminating workers"
             )
+            terminate_process_pool(executor)
             raise
-        finally:
+        else:
             executor.shutdown(wait=True, cancel_futures=True)
 
         return concat_fit_results(chunk_results, n_voxels)
@@ -4121,10 +4123,15 @@ class ComputeDCEMaps(BaseInterface):
                     return list(executor.map(
                         _fit_single_voxel, voxel_data_list, chunksize=chunk_size,
                     ))
-                except (KeyboardInterrupt, SystemExit):
-                    logger.warning("Interrupted during parallel DCE fitting, cancelling workers")
+                except BaseException:
+                    from pmriprep.utils.processes import terminate_process_pool
+
+                    logger.warning(
+                        "Parallel DCE fitting aborted; terminating workers"
+                    )
+                    terminate_process_pool(executor)
                     raise
-                finally:
+                else:
                     executor.shutdown(wait=True, cancel_futures=True)
             return [_fit_single_voxel(vd) for vd in voxel_data_list]
 
@@ -4449,10 +4456,15 @@ class ComputeDCEMaps(BaseInterface):
                 cpu_results = list(executor.map(
                     _fit_single_voxel, voxel_data_list, chunksize=chunk_size,
                 ))
-            except (KeyboardInterrupt, SystemExit):
-                logger.warning("Interrupted during hybrid DCE refinement, cancelling workers")
+            except BaseException:
+                from pmriprep.utils.processes import terminate_process_pool
+
+                logger.warning(
+                    "Hybrid DCE refinement aborted; terminating workers"
+                )
+                terminate_process_pool(executor)
                 raise
-            finally:
+            else:
                 executor.shutdown(wait=True, cancel_futures=True)
         else:
             cpu_results = [_fit_single_voxel(vd) for vd in voxel_data_list]
@@ -4564,13 +4576,16 @@ class ComputeDCEMaps(BaseInterface):
                             chunksize=chunk_size,
                         )
                     )
-                except (KeyboardInterrupt, SystemExit):
+                except BaseException:
+                    from pmriprep.utils.processes import terminate_process_pool
+
                     logger.warning(
-                        "Interrupted during auto DCE Bayesian refinement, "
-                        "cancelling workers"
+                        "Auto DCE Bayesian refinement aborted; "
+                        "terminating workers"
                     )
+                    terminate_process_pool(executor)
                     raise
-                finally:
+                else:
                     executor.shutdown(wait=True, cancel_futures=True)
             else:
                 refined_results = [

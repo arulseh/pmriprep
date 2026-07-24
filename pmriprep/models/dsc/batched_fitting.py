@@ -1004,11 +1004,19 @@ def _run_chunked_in_pool(
     chunk_kwargs_list = [_chunk_kwargs(full_kwargs, s, e) for (s, e) in chunks]
     if len(chunk_kwargs_list) == 1:
         return worker(chunk_kwargs_list[0])
-    with ProcessPoolExecutor(
+    pool = ProcessPoolExecutor(
         max_workers=len(chunk_kwargs_list),
         initializer=_init_blas_single_threaded,
-    ) as pool:
+    )
+    try:
         results = list(pool.map(worker, chunk_kwargs_list))
+    except BaseException:
+        from pmriprep.utils.processes import terminate_process_pool
+
+        terminate_process_pool(pool)
+        raise
+    else:
+        pool.shutdown(wait=True, cancel_futures=True)
     return _concat_dsc_batched_results(results)
 
 

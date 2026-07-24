@@ -9,7 +9,11 @@ from typing import Any
 
 import pytest
 
-from pmriprep.utils.processes import run_isolated_command, terminate_process_group
+from pmriprep.utils.processes import (
+    run_isolated_command,
+    terminate_process_group,
+    terminate_process_pool,
+)
 
 
 class _FakeProcess:
@@ -73,24 +77,79 @@ def test_process_group_cleanup_reaps_already_exited_child(
 
 
 @pytest.mark.parametrize(
-    "relative_path",
+    ("relative_path", "cleanup_call"),
     [
-        "pmriprep/interfaces/dsc_compute.py",
-        "pmriprep/interfaces/dce_compute.py",
+        ("pmriprep/interfaces/dsc_compute.py", "terminate_process_pool(executor)"),
+        ("pmriprep/interfaces/dce_compute.py", "terminate_process_pool(executor)"),
+        ("pmriprep/models/dsc/batched_fitting.py", "terminate_process_pool(pool)"),
     ],
 )
 def test_fitting_executors_join_workers(
     relative_path: str,
+    cleanup_call: str,
 ) -> None:
-    """Fitting pools synchronously join workers on every exit path."""
+    """Fitting pools force active workers down on abnormal exits."""
     root = Path(__file__).parents[2]
     source = (root / relative_path).read_text()
 
     assert "shutdown(wait=False" not in source
     executor_count = source.count("ProcessPoolExecutor(")
-    joined_count = source.count("shutdown(wait=True, cancel_futures=True)")
+    cleanup_count = source.count(cleanup_call)
     assert executor_count > 0
-    assert joined_count == executor_count
+    assert cleanup_count == executor_count
+
+
+class _FakePoolProcess:
+    """Process-pool worker stand-in with controllable TERM behavior."""
+
+    def __init__(self, *, exits_on_terminate: bool) -> None:
+        self.alive = True
+        self.exits_on_terminate = exits_on_terminate
+        self.terminated = 0
+        self.killed = 0
+        self.join_calls: list[float | None] = []
+
+    def is_alive(self) -> bool:
+        return self.alive
+
+    def terminate(self) -> None:
+        self.terminated += 1
+        if self.exits_on_terminate:
+            self.alive = False
+
+    def kill(self) -> None:
+        self.killed += 1
+        self.alive = False
+
+    def join(self, timeout: float | None = None) -> None:
+        self.join_calls.append(timeout)
+
+
+class _FakeExecutor:
+    """ProcessPoolExecutor stand-in exposing its owned worker processes."""
+
+    def __init__(self, processes: list[_FakePoolProcess]) -> None:
+        self._processes = {index: process for index, process in enumerate(processes)}
+        self.shutdown_calls: list[tuple[bool, bool]] = []
+
+    def shutdown(self, wait: bool, cancel_futures: bool) -> None:
+        self.shutdown_calls.append((wait, cancel_futures))
+
+
+def test_process_pool_cleanup_terminates_joins_and_escalates() -> None:
+    """Aborted fitting pools reap workers, killing only TERM-resistant ones."""
+    graceful = _FakePoolProcess(exits_on_terminate=True)
+    resistant = _FakePoolProcess(exits_on_terminate=False)
+    executor = _FakeExecutor([graceful, resistant])
+
+    terminate_process_pool(executor, timeout=0.0)  # type: ignore[arg-type]
+
+    assert graceful.terminated == resistant.terminated == 1
+    assert graceful.killed == 0
+    assert resistant.killed == 1
+    assert graceful.join_calls == [0.0, None]
+    assert resistant.join_calls == [0.0, None]
+    assert executor.shutdown_calls == [(True, True)]
 
 
 def test_isolated_command_interrupt_cleans_process_group(

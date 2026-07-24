@@ -2413,10 +2413,15 @@ class ComputeDSCMaps(BaseInterface):
                     _dsc_fit_single_voxel, voxel_data_list,
                     chunksize=chunk_size,
                 ))
-            except (KeyboardInterrupt, SystemExit):
-                logger.warning("Interrupted during parallel DSC fitting, cancelling workers")
+            except BaseException:
+                from pmriprep.utils.processes import terminate_process_pool
+
+                logger.warning(
+                    "Parallel DSC fitting aborted; terminating workers"
+                )
+                terminate_process_pool(executor)
                 raise
-            finally:
+            else:
                 executor.shutdown(wait=True, cancel_futures=True)
         else:
             # Serial path: avoid multiprocessing overhead
