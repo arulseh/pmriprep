@@ -1329,7 +1329,25 @@
     [
       "pk_modeling",
       "out_qc_mask",
+      "lesion_stats",
+      "qc_mask"
+    ],
+    [
+      "pk_modeling",
+      "out_qc_mask",
       "outputnode",
+      "qc_mask"
+    ],
+    [
+      "pk_modeling",
+      "out_qc_mask",
+      "roi_stats",
+      "qc_mask"
+    ],
+    [
+      "pk_modeling",
+      "out_qc_mask",
+      "user_lesion_stats",
       "qc_mask"
     ],
     [

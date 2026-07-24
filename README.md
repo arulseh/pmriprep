@@ -634,7 +634,9 @@ brain mask, fitting eligibility, attempted fits, optimizer convergence,
 retained nondegenerate fits, and quantitative-QC acceptance. Each fraction
 names its denominator; enhancing-tumor, non-enhancing-tumor, and NAWM coverage
 is included when the corresponding masks are available. Bayesian runs also
-report retained voxels that used the NLLS fallback.
+report retained voxels that used the NLLS fallback. DCE PK lesion and ROI
+statistics use only quantitatively accepted voxels and report coverage against
+the full anatomical region.
 
 When 2CXM is explicitly requested or eligible during automatic model
 selection, QC also reports a non-fatal, reason-coded suitability screen.

@@ -557,6 +557,7 @@ def init_dce_lesion_stats_wf(
                 "wash_out_map",
                 "niauc60_map",
                 "nawm_mask",
+                "qc_mask",
                 "tumor_lesion_mask",
                 "mask_origin",
                 "roi_mask",
@@ -604,6 +605,7 @@ def init_dce_lesion_stats_wf(
         ("wash_out_map", "wash_out_map"),
         ("niauc60_map", "niauc60_map"),
         ("nawm_mask", "nawm_mask"),
+        ("qc_mask", "qc_mask"),
     ]
     workflow.connect([
         (inputnode, lesion_stats, shared_inputs + [
@@ -2626,6 +2628,7 @@ def init_dce_preproc_wf(
             ("outputnode.out_ser", "inputnode.ser_map"),
             ("outputnode.out_wash_in_slope", "inputnode.wash_in_map"),
             ("outputnode.out_wash_out_slope", "inputnode.wash_out_map"),
+            ("outputnode.out_qc_mask", "inputnode.qc_mask"),
         ]),
         (normalization_wf, lesion_stats_wf, [
             ("outputnode.niauc60", "inputnode.niauc60_map"),

@@ -984,6 +984,69 @@ class TestDCELesionStatsMapKeyCoverage:
         }
 
 
+class TestDCEStatisticsQCMasking:
+    """DCE PK statistics use quantitative QC without masking model-free maps."""
+
+    @staticmethod
+    def _save(tmp_path, name, data):
+        import nibabel as nib
+
+        path = tmp_path / name
+        nib.save(
+            nib.Nifti1Image(np.asarray(data, dtype=np.float32), np.eye(4)),
+            path,
+        )
+        return str(path)
+
+    def test_qc_mask_applies_only_to_pk_maps(self, tmp_path) -> None:
+        from pmriprep.interfaces.dce_lesion_stats import DCELesionStats
+
+        qc = np.array([1, 0, 1, 0], dtype=np.uint8).reshape((2, 2, 1))
+        values = np.arange(1, 5, dtype=np.float32).reshape((2, 2, 1))
+        iface = DCELesionStats()
+        iface.inputs.qc_mask = self._save(tmp_path, "qc.nii.gz", qc)
+        iface.inputs.ktrans_map = self._save(
+            tmp_path, "ktrans.nii.gz", values
+        )
+        iface.inputs.iauc60_map = self._save(
+            tmp_path, "iauc60.nii.gz", values
+        )
+
+        maps = iface._load_maps()
+
+        np.testing.assert_array_equal(
+            np.isfinite(maps["ktrans"]), qc.astype(bool)
+        )
+        np.testing.assert_array_equal(maps["ktrans"][qc > 0], values[qc > 0])
+        np.testing.assert_array_equal(maps["iauc60"], values)
+        pk_stats = compute_map_statistics(
+            maps["ktrans"], np.ones_like(qc, dtype=bool)
+        )
+        model_free_stats = compute_map_statistics(
+            maps["iauc60"], np.ones_like(qc, dtype=bool)
+        )
+        assert pk_stats is not None
+        assert pk_stats.n_valid == 2
+        assert pk_stats.n_total == 4
+        assert pk_stats.median == pytest.approx(2.0)
+        assert model_free_stats is not None
+        assert model_free_stats.n_valid == model_free_stats.n_total == 4
+
+    def test_qc_mask_shape_mismatch_fails(self, tmp_path) -> None:
+        from pmriprep.interfaces.dce_lesion_stats import DCELesionStats
+
+        iface = DCELesionStats()
+        iface.inputs.qc_mask = self._save(
+            tmp_path, "qc.nii.gz", np.ones((2, 2, 1))
+        )
+        iface.inputs.ktrans_map = self._save(
+            tmp_path, "ktrans.nii.gz", np.ones((3, 2, 1))
+        )
+
+        with pytest.raises(ValueError, match="QC mask shape"):
+            iface._load_maps()
+
+
 class TestValidateMaskNdim:
     """Tests for validate_mask_ndim()."""
 
