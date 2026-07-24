@@ -1564,21 +1564,21 @@ def _generate_dsc_leakage_qc(
 
 
 def _generate_dsc_fit_qc(
-    qc_fit_data_file: str,
-    brain_mask_file: str,
-    cbf_file: str,
-    subject_id: str,
-    session_id: str,
+    qc_fit_data_file: str | None = None,
+    brain_mask_file: str | None = None,
+    cbf_file: str | None = None,
+    subject_id: str = "",
+    session_id: str = "",
 ) -> str | None:
     """Generate DSC fit QC plot from saved QC fit data JSON.
 
     Parameters
     ----------
-    qc_fit_data_file : str
+    qc_fit_data_file : str or None
         Path to QC fit data JSON from ComputeDSCMaps.
-    brain_mask_file : str
+    brain_mask_file : str or None
         Path to brain mask NIfTI.
-    cbf_file : str
+    cbf_file : str or None
         Path to relative CBF map NIfTI.
     subject_id : str
         Subject identifier.
@@ -1596,9 +1596,13 @@ def _generate_dsc_fit_qc(
     import nibabel as nib
     import numpy as np
 
-    if not qc_fit_data_file or not Path(qc_fit_data_file).is_file():
+    required_files = (qc_fit_data_file, brain_mask_file, cbf_file)
+    if any(not path or not Path(path).is_file() for path in required_files):
         return None
 
+    assert qc_fit_data_file is not None
+    assert brain_mask_file is not None
+    assert cbf_file is not None
     with open(qc_fit_data_file) as f:
         fit_data = json.load(f)
 

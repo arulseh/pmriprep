@@ -1119,6 +1119,36 @@ def test_dsc_absent_qc_plot_producers_use_none() -> None:
     writer.inputs.dsc_fit_qc_plot = fit
 
 
+def test_dsc_fit_qc_node_accepts_undefined_optional_inputs(tmp_path: Path) -> None:
+    """Nipype may omit unavailable fit-QC inputs without failing the workflow."""
+    import nipype.interfaces.utility as niu
+    import nipype.pipeline.engine as pe
+
+    from pmriprep.workflows.dsc._helpers import _generate_dsc_fit_qc
+
+    node = pe.Node(
+        niu.Function(
+            input_names=[
+                "qc_fit_data_file",
+                "brain_mask_file",
+                "cbf_file",
+                "subject_id",
+                "session_id",
+            ],
+            output_names=["plot_file"],
+            function=_generate_dsc_fit_qc,
+        ),
+        name="dsc_fit_qc",
+        base_dir=str(tmp_path),
+    )
+    node.inputs.subject_id = "01"
+    node.inputs.session_id = "0001"
+
+    result = node.run()
+
+    assert not result.outputs.trait_get()["plot_file"]
+
+
 def _figures_dir(tmp_path: Path, subject: str = "test") -> Path:
     return tmp_path / "pmriprep" / f"sub-{subject}" / "figures"
 
