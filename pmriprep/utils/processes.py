@@ -6,11 +6,101 @@ import logging
 import os
 import signal
 import subprocess
+import sys
 import time
 from collections.abc import Sequence
 from concurrent.futures import ProcessPoolExecutor
 
+import psutil
+
 logger = logging.getLogger(__name__)
+
+
+def enable_child_subreaper() -> bool:
+    """Adopt orphaned descendants so PMRIPrep can reap them on Linux.
+
+    This is primarily needed in containers whose PID 1 does not reap zombies.
+    Failure is non-fatal because descendant termination still works without
+    adoption, although reaping orphaned grandchildren then remains PID 1's
+    responsibility.
+
+    Returns
+    -------
+    bool
+        ``True`` when Linux accepted the subreaper request.
+    """
+    if not sys.platform.startswith("linux"):
+        return False
+
+    try:
+        import ctypes
+
+        libc = ctypes.CDLL(None, use_errno=True)
+        result = libc.prctl(36, 1, 0, 0, 0)  # PR_SET_CHILD_SUBREAPER
+        if result != 0:
+            error_number = ctypes.get_errno()
+            raise OSError(error_number, os.strerror(error_number))
+    except (AttributeError, OSError) as error:
+        logger.debug("Could not enable child subreaping: %s", error)
+        return False
+    return True
+
+
+def _reap_exited_children() -> None:
+    """Collect all immediately available child exit statuses."""
+    while True:
+        try:
+            pid, _ = os.waitpid(-1, os.WNOHANG)
+        except ChildProcessError:
+            return
+        if pid == 0:
+            return
+
+
+def terminate_descendant_processes(
+    *,
+    interrupted: bool = False,
+    timeout: float = 5.0,
+) -> None:
+    """Stop and reap the current PMRIPrep process's descendants.
+
+    Parameters
+    ----------
+    interrupted : bool
+        Forward ``SIGINT`` first so Python workers can run their own cleanup
+        handlers. Other abnormal exits begin with ``SIGTERM``.
+    timeout : float
+        Total grace period before escalation to ``SIGKILL``.
+    """
+    try:
+        descendants = psutil.Process().children(recursive=True)
+    except (psutil.Error, OSError) as error:
+        logger.warning("Could not enumerate PMRIPrep child processes: %s", error)
+        return
+    if not descendants:
+        _reap_exited_children()
+        return
+
+    first_signal = signal.SIGINT if interrupted else signal.SIGTERM
+    for process in reversed(descendants):
+        try:
+            process.send_signal(first_signal)
+        except psutil.NoSuchProcess:
+            pass
+        except psutil.Error as error:
+            logger.warning("Could not signal child process %d: %s", process.pid, error)
+
+    _, alive = psutil.wait_procs(descendants, timeout=timeout)
+    for process in alive:
+        try:
+            process.kill()
+        except psutil.NoSuchProcess:
+            pass
+        except psutil.Error as error:
+            logger.warning("Could not kill child process %d: %s", process.pid, error)
+    if alive:
+        psutil.wait_procs(alive, timeout=timeout)
+    _reap_exited_children()
 
 
 def terminate_process_pool(

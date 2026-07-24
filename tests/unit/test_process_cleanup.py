@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import signal
 import subprocess
+from argparse import Namespace
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from pmriprep.utils.processes import (
+    enable_child_subreaper,
     run_isolated_command,
+    terminate_descendant_processes,
     terminate_process_group,
     terminate_process_pool,
 )
@@ -31,6 +34,125 @@ class _FakeProcess:
             self.time_out_once = False
             raise subprocess.TimeoutExpired("hd_glio_predict", timeout)
         return 0
+
+
+class _FakeDescendant:
+    """Minimal psutil process stand-in recording delivered signals."""
+
+    def __init__(self, pid: int) -> None:
+        self.pid = pid
+        self.signals: list[signal.Signals] = []
+        self.killed = 0
+
+    def send_signal(self, sig: signal.Signals) -> None:
+        self.signals.append(sig)
+
+    def kill(self) -> None:
+        self.killed += 1
+
+
+def test_descendant_cleanup_forwards_interrupt_then_escalates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Workflow interruption reaches nested workers and kills survivors."""
+    parent = _FakeDescendant(10)
+    worker = _FakeDescendant(11)
+    wait_calls: list[tuple[list[_FakeDescendant], float]] = []
+    reaped: list[bool] = []
+
+    class _CurrentProcess:
+        def children(self, recursive: bool) -> list[_FakeDescendant]:
+            assert recursive is True
+            return [parent, worker]
+
+    def _wait_procs(
+        processes: list[_FakeDescendant],
+        timeout: float,
+    ) -> tuple[list[_FakeDescendant], list[_FakeDescendant]]:
+        wait_calls.append((processes, timeout))
+        return ([], [worker]) if len(wait_calls) == 1 else ([worker], [])
+
+    monkeypatch.setattr("pmriprep.utils.processes.psutil.Process", _CurrentProcess)
+    monkeypatch.setattr("pmriprep.utils.processes.psutil.wait_procs", _wait_procs)
+    monkeypatch.setattr(
+        "pmriprep.utils.processes._reap_exited_children",
+        lambda: reaped.append(True),
+    )
+
+    terminate_descendant_processes(interrupted=True, timeout=2.0)
+
+    assert parent.signals == worker.signals == [signal.SIGINT]
+    assert parent.killed == 0
+    assert worker.killed == 1
+    assert wait_calls == [([parent, worker], 2.0), ([worker], 2.0)]
+    assert reaped == [True]
+
+
+def test_enable_child_subreaper_is_platform_guarded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Non-Linux platforms do not attempt the Linux-specific prctl call."""
+    monkeypatch.setattr("pmriprep.utils.processes.sys.platform", "darwin")
+
+    assert enable_child_subreaper() is False
+
+
+def test_workflow_interrupt_cleans_descendants(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The CLI forwards an interrupted Nipype run to descendant cleanup."""
+    from pmriprep.cli.run import _run_workflow
+
+    calls: list[tuple[str, Any]] = []
+    subreaper_calls: list[bool] = []
+    cleanup_calls: list[bool] = []
+
+    class _Workflow:
+        def run(self, *, plugin: str, plugin_args: Any = None) -> None:
+            calls.append((plugin, plugin_args))
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(
+        "pmriprep.utils.processes.enable_child_subreaper",
+        lambda: subreaper_calls.append(True),
+    )
+    monkeypatch.setattr(
+        "pmriprep.utils.processes.terminate_descendant_processes",
+        lambda *, interrupted: cleanup_calls.append(interrupted),
+    )
+
+    with pytest.raises(KeyboardInterrupt):
+        _run_workflow(_Workflow(), Namespace(nprocs=1, use_plugin=None))
+
+    assert calls == [("Linear", None)]
+    assert subreaper_calls == [True]
+    assert cleanup_calls == [True]
+
+
+def test_workflow_cleanup_failure_preserves_interrupt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cleanup error never replaces the initiating KeyboardInterrupt."""
+    from pmriprep.cli.run import _run_workflow
+
+    class _Workflow:
+        def run(self, *, plugin: str, plugin_args: Any = None) -> None:
+            raise KeyboardInterrupt
+
+    def _cleanup_failure(*, interrupted: bool) -> None:
+        raise RuntimeError("cleanup failed")
+
+    monkeypatch.setattr(
+        "pmriprep.utils.processes.enable_child_subreaper",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "pmriprep.utils.processes.terminate_descendant_processes",
+        _cleanup_failure,
+    )
+
+    with pytest.raises(KeyboardInterrupt):
+        _run_workflow(_Workflow(), Namespace(nprocs=1, use_plugin=None))
 
 
 def test_process_group_cleanup_terminates_and_reaps(

@@ -1210,6 +1210,28 @@ def _run_workflow(
     args : argparse.Namespace
         Parsed command line arguments.
     """
+    from pmriprep.utils.processes import (
+        enable_child_subreaper,
+        terminate_descendant_processes,
+    )
+
+    enable_child_subreaper()
+
+    def _run_with_cleanup(plugin: str, plugin_args: dict[str, Any] | None = None) -> None:
+        try:
+            workflow.run(plugin=plugin, plugin_args=plugin_args)
+        except BaseException as error:
+            try:
+                terminate_descendant_processes(
+                    interrupted=isinstance(error, KeyboardInterrupt),
+                )
+            except Exception as cleanup_error:
+                logger.warning(
+                    "Failed to fully reap workflow child processes: %s",
+                    cleanup_error,
+                )
+            raise
+
     # User-supplied plugin config takes precedence over the auto
     # MultiProc/Linear selection. Useful for cluster schedulers
     # (SLURM/SGE/PBS/LSF) that need scheduler-specific args.
@@ -1220,7 +1242,7 @@ def _run_workflow(
             "Running workflow with user-supplied plugin %s (from %s)",
             plugin, user_plugin,
         )
-        workflow.run(plugin=plugin, plugin_args=plugin_args)
+        _run_with_cleanup(plugin, plugin_args)
         return
 
     # Determine execution plugin based on nprocs
@@ -1269,11 +1291,11 @@ def _run_workflow(
                 )
 
         logger.info(f"Running workflow with {args.nprocs} processors")
-        workflow.run(plugin=plugin, plugin_args=plugin_args)
+        _run_with_cleanup(plugin, plugin_args)
     else:
         # Single processor - use linear execution
         logger.info("Running workflow in single-processor mode")
-        workflow.run(plugin="Linear")
+        _run_with_cleanup("Linear")
 
 
 if __name__ == "__main__":

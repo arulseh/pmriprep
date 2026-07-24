@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pmriprep"
-version = "0.83.1"
+version = "0.83.2"
 description = "Perfusion MRI Preprocessing Pipeline - A NiPreps-compatible BIDS-App"
 readme = "README.md"
 license = "Apache-2.0 AND CC0-1.0"
@@ -25,6 +25,7 @@ classifiers = [
 dependencies = [
     # Core dependencies
     "nipype>=1.8.0",
+    "psutil>=5.9.0",
     "nibabel>=5.0.0",
     "numpy>=1.22.0",
     "scipy>=1.9.0",
