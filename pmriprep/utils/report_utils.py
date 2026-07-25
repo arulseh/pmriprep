@@ -937,6 +937,29 @@ def _read_json_safe(path: Path) -> dict[str, Any]:
         return {}
 
 
+def _drop_report_nulls(value: Any) -> Any:
+    """Treat null mapping values as unavailable report fields.
+
+    Report templates use ``is defined`` to decide whether optional metrics
+    should be formatted. JSON ``null`` represents the same unavailable state
+    but remains defined to Jinja, causing numeric filters and arithmetic to
+    fail. Remove null mapping entries recursively while preserving false,
+    zero, empty containers, and list positions.
+    """
+    if isinstance(value, dict):
+        return {
+            key: _drop_report_nulls(item)
+            for key, item in value.items()
+            if item is not None
+        }
+    if isinstance(value, list):
+        return [
+            None if item is None else _drop_report_nulls(item)
+            for item in value
+        ]
+    return value
+
+
 def _qc_keys_from_anchor(anchor: dict[str, Any]) -> dict[str, Any]:
     """Translate flat ``QC*`` recommendation/warnings keys to legacy nested.
 
@@ -1375,7 +1398,9 @@ def generate_unified_report(
             pipeline_data[pipeline_name] = None
             continue
 
-        qc_metrics = _load_pipeline_sidecars(ses_path, prefix, pipeline_name)
+        qc_metrics = _drop_report_nulls(
+            _load_pipeline_sidecars(ses_path, prefix, pipeline_name),
+        )
         images = _collect_pipeline_images(
             subject_id, session_id, pipeline_name, fig_path,
         )

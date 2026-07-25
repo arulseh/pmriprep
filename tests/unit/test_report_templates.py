@@ -5,6 +5,8 @@ from pathlib import Path
 import pytest
 from jinja2 import ChainableUndefined, Environment, FileSystemLoader
 
+from pmriprep.utils.report_utils import _drop_report_nulls
+
 TEMPLATE_DIR = Path(__file__).resolve().parents[2] / "pmriprep" / "templates"
 
 
@@ -150,6 +152,25 @@ def test_dce_skipped_t1_with_incomplete_qc_renders_safely(env):
     assert "Uniform" in rendered
 
 
+def test_dce_fallback_t1_with_incomplete_qc_renders_safely(env):
+    """An incomplete fallback-T1 QC dictionary cannot abort report rendering."""
+    template = env.get_template("sections/section_dce.html")
+    dce = {
+        "qc_metrics": {
+            "t1_mapping": {
+                "t1_correction": {"correction_applied": "fallback"},
+            },
+        },
+        "images": {},
+        "display_status": {},
+    }
+
+    rendered = template.render(dce=dce)
+
+    assert "T1 Method" in rendered
+    assert "Uniform" in rendered
+
+
 def test_dce_aif_peak_scaling_qc_renders(env):
     """Raw/emitted peaks plus the resolved scaling policy reach HTML."""
     template = env.get_template("sections/section_dce.html")
@@ -236,6 +257,25 @@ def test_dce_voxel_accounting_renders(env):
     assert 'class="metric-detail"' in rendered
 
 
+def test_dce_incomplete_voxel_accounting_stage_is_skipped(env):
+    """A present but incomplete accounting stage cannot abort rendering."""
+    template = env.get_template("sections/section_dce.html")
+    dce = {
+        "qc_metrics": {
+            "pk_modeling": {
+                "model": "tofts",
+                "voxel_accounting": {"attempted": {}},
+            },
+        },
+        "images": {},
+        "display_status": {},
+    }
+
+    rendered = template.render(dce=dce)
+
+    assert "Fits Attempted" not in rendered
+
+
 def test_report_metric_cards_wrap_long_values(env):
     """Shared metric cards wrap identifiers and support secondary details."""
     template = env.get_template("report_unified.html")
@@ -272,6 +312,58 @@ def test_dce_two_cxm_suitability_warning_renders(env):
     assert "temporal sampling outside auto 2cxm eligibility" in rendered
     assert "volume TR 7.38 s" in rendered
     assert "does not establish biological parameter validity" in rendered
+
+
+@pytest.mark.parametrize(
+    "suitability",
+    [
+        {"status": None, "metrics": {"volume_tr_seconds": 7.0}},
+        {"status": "WARN", "metrics": {"volume_tr_seconds": None}},
+        {"status": "WARN"},
+    ],
+)
+def test_dce_incomplete_two_cxm_suitability_renders_safely(env, suitability):
+    """Null or missing optional suitability fields cannot abort reporting."""
+    template = env.get_template("sections/section_dce.html")
+    dce = _drop_report_nulls(
+        {
+            "qc_metrics": {
+                "pk_modeling": {"model": "2cxm"},
+                "model_suitability": {"2cxm": suitability},
+            },
+            "images": {},
+            "display_status": {},
+        }
+    )
+
+    rendered = template.render(dce=dce)
+
+    if suitability.get("status") is None:
+        assert "2CXM Suitability Screening" not in rendered
+    else:
+        assert "2CXM Suitability Screening" in rendered
+
+
+def test_drop_report_nulls_preserves_valid_falsey_values():
+    """Only null mapping entries represent unavailable report fields."""
+    value = {
+        "missing": None,
+        "zero": 0,
+        "false": False,
+        "empty_mapping": {},
+        "empty_list": [],
+        "nested": {"missing": None, "value": 1},
+        "items": [None, {"missing": None, "value": 2}],
+    }
+
+    assert _drop_report_nulls(value) == {
+        "zero": 0,
+        "false": False,
+        "empty_mapping": {},
+        "empty_list": [],
+        "nested": {"value": 1},
+        "items": [None, {"value": 2}],
+    }
 
 
 def test_parent_render_shows_dsc_blocks_when_dsc_present(env):

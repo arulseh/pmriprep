@@ -188,7 +188,13 @@
                     {% if dce.qc_metrics.t1_mapping.t1_correction.correction_applied == "tissue_segmented" %}
                         Tissue-segmented
                     {% elif dce.qc_metrics.t1_mapping.t1_correction.correction_applied == "fallback" %}
-                        Uniform ({{ dce.qc_metrics.t1_mapping.t1_correction.fallback_value_ms | default(dce.qc_metrics.t1_mapping.median_t1_ms, true) | int }} ms)
+                        {% if dce.qc_metrics.t1_mapping.t1_correction.fallback_value_ms is defined %}
+                            Uniform ({{ dce.qc_metrics.t1_mapping.t1_correction.fallback_value_ms | int }} ms)
+                        {% elif dce.qc_metrics.t1_mapping.median_t1_ms is defined %}
+                            Uniform ({{ dce.qc_metrics.t1_mapping.median_t1_ms | int }} ms)
+                        {% else %}
+                            Uniform
+                        {% endif %}
                     {% elif dce.qc_metrics.t1_mapping.t1_correction.correction_applied == "offset" %}
                         VFA
                     {% else %}
@@ -575,7 +581,7 @@
                 ('retained_nondegenerate', 'Retained Nondegenerate'),
                 ('quantitative_qc_accepted', 'Quantitative QC Accepted')
             ] %}
-            {% if va[stage_key] is defined %}
+            {% if va[stage_key] is defined and va[stage_key].count is defined %}
             <div class="metric">
                 <div class="metric-label">{{ stage_label }}</div>
                 <div class="metric-value">{{ "{:,}".format(va[stage_key].count) }}{% if va[stage_key].fraction_of_attempted is defined %}<span class="metric-detail">{{ "%.1f"|format(va[stage_key].fraction_of_attempted * 100) }}% of attempted</span>{% elif va[stage_key].fraction_of_brain is defined %}<span class="metric-detail">{{ "%.1f"|format(va[stage_key].fraction_of_brain * 100) }}% of brain</span>{% endif %}</div>
@@ -617,7 +623,7 @@
         {% endif %}
 
         {% set suitability = dce.qc_metrics.model_suitability['2cxm'] if dce.qc_metrics.model_suitability is defined and dce.qc_metrics.model_suitability['2cxm'] is defined else none %}
-        {% if suitability and suitability.status != 'NOT_APPLICABLE' %}
+        {% if suitability and suitability.status is defined and suitability.status != 'NOT_APPLICABLE' %}
         <div class="metrics" style="grid-template-columns: 1fr; margin-top: 8px;">
             <div class="metric">
                 <div class="metric-label">2CXM Suitability Screening</div>
@@ -628,8 +634,8 @@
                     {% else %}
                     — no established warning condition identified
                     {% endif %}
-                    {% if suitability.metrics.volume_tr_seconds is not none %}
-                    (volume TR {{ "%.2f"|format(suitability.metrics.volume_tr_seconds) }} s{% if suitability.metrics.acquisition_duration_seconds is not none %}, duration {{ "%.0f"|format(suitability.metrics.acquisition_duration_seconds) }} s{% endif %})
+                    {% if suitability.metrics is defined and suitability.metrics.volume_tr_seconds is defined %}
+                    (volume TR {{ "%.2f"|format(suitability.metrics.volume_tr_seconds) }} s{% if suitability.metrics.acquisition_duration_seconds is defined %}, duration {{ "%.0f"|format(suitability.metrics.acquisition_duration_seconds) }} s{% endif %})
                     {% endif %}
                     <br><small>Screening only; this does not establish biological parameter validity. Coverage, fit, bound-saturation, AIF, T1/B1, and vp-prior metrics remain available in QC/provenance.</small>
                 </div>
