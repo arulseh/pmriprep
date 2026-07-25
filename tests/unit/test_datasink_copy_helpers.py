@@ -33,11 +33,28 @@ def test_tb1map_sink_accepts_undefined_optional_input(tmp_path: Path) -> None:
     node.inputs.output_dir = str(tmp_path / "out")
     node.inputs.subject = "X"
     node.inputs.session = "Y"
-    node.inputs.meta_dict = {}
 
     result = node.run()
 
     assert result.outputs.out_file == ""
+
+
+def test_tb1map_sink_requires_metadata_for_real_map(tmp_path: Path) -> None:
+    """A produced B1 map cannot be written without provenance metadata."""
+    import pytest
+
+    from pmriprep.workflows.dce.datasinks import _copy_tb1map
+
+    src = tmp_path / "b1.nii.gz"
+    src.write_bytes(b"fake nifti")
+
+    with pytest.raises(ValueError, match="metadata is required"):
+        _copy_tb1map(
+            output_dir=str(tmp_path / "out"),
+            subject="X",
+            session="Y",
+            in_file=str(src),
+        )
 
 
 def test_source_entity_prefix_preserves_canonical_distinguishers() -> None:

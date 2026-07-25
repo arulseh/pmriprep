@@ -626,7 +626,7 @@ def _copy_tb1map(
     output_dir: str,
     subject: str,
     session: str,
-    meta_dict: dict,
+    meta_dict: dict | None = None,
     in_file: str | None = None,
 ) -> str:
     """Copy a TB1map NIfTI + sidecar to anat/.
@@ -651,6 +651,9 @@ def _copy_tb1map(
             "(in_file=%r)", in_file,
         )
         return ""
+
+    if meta_dict is None:
+        raise ValueError("TB1map metadata is required when a B1 map is present")
 
     out_root = Path(output_dir) / "pmriprep" / f"sub-{subject}"
     if session:
