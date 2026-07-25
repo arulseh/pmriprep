@@ -318,9 +318,7 @@ class TestApplyT1CorrectionAuto:
         t1_map[~brain_mask] = np.nan
         wm, gm = probsegs
 
-        # E1=0.996 is in conditioning gate range (0.993-0.997).
-        # Pass b1_corrected=True + b1_qc_pass=True so the conditioning gate
-        # does NOT fire, allowing this test to exercise Case 1 NaN-fraction logic.
+        # E1=0.996 lowers the continuous failed-fit tolerance.
         _, result = apply_t1_correction(
             t1_map, field_strength=3.0, correction_mode="auto",
             brain_mask=brain_mask,
@@ -1306,17 +1304,16 @@ class TestPostOffsetRecovery:
 
 
 # ============================================================================
-# VFA conditioning-gated T1 fallback
+# E1-sensitive VFA fit-loss fallback
 # ============================================================================
 
 
-class TestVFAConditioningGate:
-    """Tests for VFA conditioning-gated T1 fallback.
+class TestVFAFitLossGate:
+    """Tests for E1-sensitive VFA fit-loss fallback.
 
     When VFA E1 is close to 1 (short TR relative to T1), the VFA T1 map
-    is unreliable because small B1 errors propagate to large T1 errors.
-    The conditioning gate triggers tissue-segmented fallback based on
-    E1 thresholds and B1 correction status.
+    is more sensitive to noise. E1 lowers the tolerated failed-fit
+    fraction but does not trigger fallback by itself.
     """
 
     @pytest.fixture
@@ -1334,29 +1331,27 @@ class TestVFAConditioningGate:
         gm = np.full(shape, 0.4)
         return wm, gm
 
-    def test_unconditional_fallback_e1_above_0997(
+    def test_high_e1_low_fit_loss_retains_measurement(
         self, brain_mask: np.ndarray, probsegs: tuple[np.ndarray, np.ndarray],
     ) -> None:
-        """E1 > 0.997 always triggers uniform fallback."""
+        """High E1 alone does not reject a plausible, complete measurement."""
         t1_map = np.full((10, 10, 10), 1090.0)  # within normal range
         t1_map[~brain_mask] = np.nan
         wm, gm = probsegs
 
-        # Even with b1_corrected=True and b1_qc_pass=True, should fall back
         _, result = apply_t1_correction(
             t1_map, field_strength=3.0, correction_mode="auto",
             brain_mask=brain_mask,
             e1_median=0.998, b1_corrected=True, b1_qc_pass=True,
             wm_probseg=wm, gm_probseg=gm,
         )
-        assert result.correction_applied == "fallback"
+        assert result.correction_applied == "none"
         assert result.tissue_t1_used is False
-        assert "unconditional" in result.reason
 
-    def test_conditional_zone_no_b1_low_nan_falls_through(
+    def test_high_e1_no_b1_low_nan_falls_through(
         self, brain_mask: np.ndarray, probsegs: tuple[np.ndarray, np.ndarray],
     ) -> None:
-        """E1 in 0.993-0.997 without B1 but manageable NaN falls through."""
+        """High E1 without B1 but manageable fit loss falls through."""
         t1_map = np.full((10, 10, 10), 1090.0)
         t1_map[~brain_mask] = np.nan
         wm, gm = probsegs
@@ -1371,10 +1366,10 @@ class TestVFAConditioningGate:
         # Falls through to Case 2: median 1090 is within 3T warn range → none
         assert result.correction_applied == "none"
 
-    def test_conditional_zone_b1_fail_low_nan_falls_through(
+    def test_high_e1_b1_fail_low_nan_falls_through(
         self, brain_mask: np.ndarray, probsegs: tuple[np.ndarray, np.ndarray],
     ) -> None:
-        """E1 in 0.993-0.997 with B1 QC failure but manageable NaN falls through."""
+        """High E1 with B1 QC failure but manageable fit loss falls through."""
         t1_map = np.full((10, 10, 10), 1090.0)
         t1_map[~brain_mask] = np.nan
         wm, gm = probsegs
@@ -1389,14 +1384,13 @@ class TestVFAConditioningGate:
         # Falls through to Case 2: median 1090 is within 3T warn range → none
         assert result.correction_applied == "none"
 
-    def test_conditional_no_fallback_good_b1(
+    def test_high_e1_no_fallback_good_b1(
         self, brain_mask: np.ndarray,
     ) -> None:
-        """E1 in 0.993-0.997 with good B1 passes through to normal logic."""
+        """High E1 with good B1 passes through to physiological validation."""
         t1_map = np.full((10, 10, 10), 1090.0)  # within acceptable range
         t1_map[~brain_mask] = np.nan
 
-        # b1_corrected=True + b1_qc_pass=True → gate does NOT fire
         _, result = apply_t1_correction(
             t1_map, field_strength=3.0, correction_mode="auto",
             brain_mask=brain_mask,
@@ -1404,23 +1398,22 @@ class TestVFAConditioningGate:
         )
         # Normal Case 2 logic: median 1090 is within acceptable range → no correction
         assert result.correction_applied == "none"
-        assert "conditioning gate" not in result.reason
+        assert "fit loss" not in result.reason
 
-    def test_good_conditioning_no_gate(
+    def test_lower_e1_no_fit_loss_fallback(
         self, brain_mask: np.ndarray,
     ) -> None:
-        """E1 < 0.993 never triggers conditioning gate."""
+        """Lower E1 without fit loss retains a plausible measurement."""
         t1_map = np.full((10, 10, 10), 1090.0)
         t1_map[~brain_mask] = np.nan
 
-        # Even without B1 correction, good conditioning → no gate
         _, result = apply_t1_correction(
             t1_map, field_strength=3.0, correction_mode="auto",
             brain_mask=brain_mask,
             e1_median=0.990, b1_corrected=False, b1_qc_pass=False,
         )
         assert result.correction_applied == "none"
-        assert "conditioning gate" not in result.reason
+        assert "fit loss" not in result.reason
 
     def test_uniform_fallback_ignores_tissue_maps(
         self, brain_mask: np.ndarray, probsegs: tuple[np.ndarray, np.ndarray],
@@ -1434,6 +1427,7 @@ class TestVFAConditioningGate:
             t1_map, field_strength=3.0, correction_mode="auto",
             brain_mask=brain_mask,
             e1_median=0.998, b1_corrected=False,
+            nan_fraction=0.50,
             wm_probseg=wm, gm_probseg=gm,
         )
         assert result.correction_applied == "fallback"
@@ -1451,15 +1445,16 @@ class TestVFAConditioningGate:
             t1_map, field_strength=3.0, correction_mode="auto",
             brain_mask=brain_mask,
             e1_median=0.998, b1_corrected=False,
+            nan_fraction=0.50,
         )
         assert result.correction_applied == "fallback"
         assert result.fallback_value_ms == T1_TISSUE_REFERENCE[3.0]["default"]
-        assert "unconditional threshold" in result.reason
+        assert "fit loss" in result.reason
 
-    def test_conditioning_gate_fills_entire_brain(
+    def test_fit_loss_fallback_fills_entire_brain(
         self, brain_mask: np.ndarray, probsegs: tuple[np.ndarray, np.ndarray],
     ) -> None:
-        """Gate fallback must fill ALL brain voxels, not just valid VFA ones.
+        """Fit-loss fallback must fill all brain voxels, not just valid ones.
 
         Regression test: before fix, fallback only filled valid_mask (37% of
         brain) leaving 63% as NaN → no PK fit for those voxels.
@@ -1481,6 +1476,7 @@ class TestVFAConditioningGate:
             t1_map, field_strength=3.0, correction_mode="auto",
             brain_mask=brain_mask,
             e1_median=0.998, b1_corrected=False,
+            nan_fraction=0.63,
             wm_probseg=wm, gm_probseg=gm,
         )
         assert result.correction_applied == "fallback"
@@ -1507,6 +1503,7 @@ class TestVFAConditioningGate:
             t1_map, field_strength=3.0, correction_mode="auto",
             brain_mask=brain_mask,
             e1_median=0.998, b1_corrected=False,
+            nan_fraction=0.67,
             # No tissue maps → uniform fallback
         )
         assert result.correction_applied == "fallback"
@@ -1559,10 +1556,10 @@ class TestVFAConditioningGate:
             f"{n_nan_in_brain} brain voxels still NaN after hard reject fallback"
         )
 
-    def test_conditional_zone_no_b1_retains_plausible_measurement(
+    def test_high_e1_no_b1_retains_plausible_measurement(
         self, brain_mask: np.ndarray,
     ) -> None:
-        """Conditional zone without B1 warns but does not force calibration."""
+        """High E1 without B1 does not force calibration."""
         t1_map = np.full((10, 10, 10), 1200.0)
         t1_map[~brain_mask] = np.nan
 
@@ -1575,10 +1572,10 @@ class TestVFAConditioningGate:
         assert result.correction_applied == "none"
         assert result.median_t1_corrected == pytest.approx(1200.0)
 
-    def test_conditional_zone_high_nan_forces_fallback(
+    def test_high_e1_high_fit_loss_forces_fallback(
         self, brain_mask: np.ndarray,
     ) -> None:
-        """Conditional zone with high NaN fraction forces fallback (safety net)."""
+        """High E1 with high failed-fit coverage forces fallback."""
         t1_map = np.full((10, 10, 10), 1200.0)
         t1_map[~brain_mask] = np.nan
 
@@ -1590,10 +1587,10 @@ class TestVFAConditioningGate:
         )
         assert result.correction_applied == "fallback"
 
-    def test_conditional_zone_high_nan_with_tissue_maps(
+    def test_high_e1_high_fit_loss_with_tissue_maps(
         self, brain_mask: np.ndarray,
     ) -> None:
-        """Conditional-zone failure uses uniform fallback despite tissue maps."""
+        """Fit-loss failure uses uniform fallback despite tissue maps."""
         t1_map = np.full((10, 10, 10), 1200.0)
         t1_map[~brain_mask] = np.nan
         wm = np.where(brain_mask, 0.6, 0.0).astype(np.float32)
@@ -1653,10 +1650,10 @@ class TestVFAConditioningGate:
         assert result.correction_applied == "fallback"
         assert result.fallback_value_ms == pytest.approx(1200.0)
 
-    def test_unconditional_zone_always_falls_back(
+    def test_high_e1_with_low_fit_loss_is_retained(
         self, brain_mask: np.ndarray,
     ) -> None:
-        """Unconditional zone (E1>0.997) always falls back, even with low NaN."""
+        """High E1 with low failed-fit coverage retains plausible measured T1."""
         t1_map = np.full((10, 10, 10), 1090.0)
         t1_map[~brain_mask] = np.nan
 
@@ -1664,11 +1661,11 @@ class TestVFAConditioningGate:
             t1_map, field_strength=3.0, correction_mode="auto",
             brain_mask=brain_mask,
             e1_median=0.998, b1_corrected=False, b1_qc_pass=False,
-            nan_fraction=0.05,  # very low NaN, but unconditional ignores it
+            nan_fraction=0.05,
         )
-        assert result.correction_applied == "fallback"
+        assert result.correction_applied == "none"
 
-    def test_conditional_zone_warn_range_bias_is_not_auto_corrected(
+    def test_high_e1_warn_range_bias_is_not_auto_corrected(
         self, brain_mask: np.ndarray,
     ) -> None:
         """A plausible population deviation is retained at subject level."""

@@ -27,7 +27,7 @@ improved segmentation and T1-mapping at high field." NeuroImage.
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict, Final, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 import numpy.typing as npt
@@ -39,15 +39,6 @@ logger = logging.getLogger("pmriprep.utils.dce_t1_validation")
 VFA_NAN_FRACTION_GOOD: float = 0.20
 # Above this (for well-conditioned VFA): abandon VFA entirely.
 VFA_NAN_FRACTION_TISSUE_FALLBACK: float = 0.40
-
-# VFA conditioning thresholds.
-# VFA condition number = E1/(1-E1); higher means 1% B1 error
-# propagates to larger T1 error.
-# E1 > 0.997 → cond > 332 → fallback unconditionally
-_E1_UNCONDITIONAL_FALLBACK: Final[float] = 0.997
-# E1 > 0.993 → cond > 141 → fallback unless B1-corrected & B1 QC passed
-_E1_CONDITIONAL_FALLBACK: Final[float] = 0.993
-
 
 # ============================================================================
 # T1 Tissue Reference Values by Field Strength
@@ -484,10 +475,9 @@ def apply_t1_correction(
         Median E1 = exp(-TR/T1) from VFA data. Used by auto-mode to
         adjust the NaN abandon threshold for ill-conditioned VFA.
     b1_corrected : bool
-        Whether B1 field mapping was applied. At severe VFA conditioning
-        (unconditional zone, E1>0.997), absence of B1 correction triggers
-        fallback. In the conditional zone (E1 0.993-0.997), VFA T1 is
-        preserved for offset correction if NaN fraction is manageable.
+        Whether B1 field mapping was applied. Retained in the internal API
+        so callers can provide the complete acquisition state; B1 map quality
+        is assessed separately through ``b1_qc_pass``.
 
     Returns
     -------
@@ -594,13 +584,10 @@ def _auto_correct_t1(
        When median T1 < reject_min or > reject_max, VFA T1 is definitively
        wrong regardless of NaN fraction. Uniform fallback is applied.
 
-    2. **Conditioning gate** (VFA E1 approaching 1):
-       - *Unconditional zone* (E1 > 0.997, cond > 332): VFA signal surface
-         is flat in the T1 direction; VFA T1 is abandoned for uniform fallback
-         regardless of B1 status.
-       - *Conditional zone* (E1 0.993-0.997, cond 141-332): VFA T1 may retain
-         spatial information. When B1 evidence is insufficient, excessive
-         failed-voxel coverage triggers uniform fallback.
+    2. **Fit-loss gate**: E1 continuously lowers the tolerated fraction of
+       failed VFA fits because long-T1 estimates are more noise-sensitive.
+       E1 alone never forces fallback: it does not encode flip-angle sampling,
+       B1 accuracy, or signal-to-noise ratio.
 
     3. **Plausible measured map**: Preserved without automatic global
        calibration. A population reference range is a validity check, not
@@ -616,64 +603,6 @@ def _auto_correct_t1(
 
     # Compute E1-dependent NaN abandon threshold
     nan_abandon = get_nan_abandon_threshold(e1_median) if e1_median is not None else VFA_NAN_FRACTION_TISSUE_FALLBACK
-
-    # Conditioning gate: VFA T1 is unreliable when E1 approaches 1
-    if e1_median is not None and e1_median > _E1_CONDITIONAL_FALLBACK:
-        unconditional = e1_median > _E1_UNCONDITIONAL_FALLBACK
-        b1_insufficient = not b1_corrected or not b1_qc_pass
-        cond_number = e1_median / (1.0 - e1_median) if e1_median < 1.0 else float("inf")
-
-        if unconditional:
-            # Unconditional zone (E1>0.997, cond>332): signal surface is
-            # flat in T1 direction, VFA T1 is genuinely useless.
-            logger.warning(
-                "VFA conditioning gate (unconditional): E1=%.4f (cond=%.0f) "
-                "— using uniform field-strength T1 fallback",
-                e1_median, cond_number,
-            )
-            t1_corrected = np.where(fill_mask, t1_ref["default"], np.nan)
-            result.correction_applied = "fallback"
-            result.reason = (
-                f"VFA conditioning gate: E1={e1_median:.4f} "
-                "above unconditional threshold"
-            )
-            result.fallback_value_ms = t1_ref["default"]
-            result.median_t1_corrected = t1_ref["default"]
-            return t1_corrected, result
-
-        elif b1_insufficient:
-            # Conditional zone (E1 0.993-0.997, cond 141-332): VFA T1 is
-            # biased but retains spatial information. Offset correction
-            # preserves spatial variation while fixing median bias.
-            # Safety net: if NaN fraction exceeds E1-adaptive threshold,
-            # too many voxels failed for offset to be meaningful.
-            if nan_fraction is not None and nan_fraction > nan_abandon:
-                logger.warning(
-                    "VFA conditioning gate: E1=%.4f (cond=%.0f), "
-                    "NaN fraction %.1f%% > abandon threshold %.1f%% "
-                    "— using uniform field-strength T1 fallback",
-                    e1_median, cond_number,
-                    nan_fraction * 100, nan_abandon * 100,
-                )
-                t1_corrected = np.where(fill_mask, t1_ref["default"], np.nan)
-                result.correction_applied = "fallback"
-                result.reason = (
-                    f"VFA conditioning gate: B1 insufficient, "
-                    f"NaN {nan_fraction:.1%} > {nan_abandon:.1%} threshold"
-                )
-                result.fallback_value_ms = t1_ref["default"]
-                result.median_t1_corrected = t1_ref["default"]
-                return t1_corrected, result
-
-            # Manageable NaN fraction: retain the measured map if its median
-            # remains physiologically plausible.
-            logger.info(
-                "VFA conditioning gate: E1=%.4f (cond=%.0f), B1 absent "
-                "but NaN fraction %.1f%% manageable — retaining measured "
-                "T1 subject to physiological validation",
-                e1_median, cond_number,
-                (nan_fraction or 0) * 100,
-            )
 
     # Excessive fit loss makes the surviving spatial map unrepresentative even
     # when its median happens to remain plausible.

@@ -1518,7 +1518,7 @@ class T1Mapping(SimpleInterface):
             brain_mask = signal_data[0] > threshold
         fallback_brain_mask = brain_mask.copy()
 
-        # --- VFA Fit Residual (NRMSE) for conditioning gate ---
+        # --- VFA Fit Residual (NRMSE) for fit-quality QC ---
         # For n_fa >= 3, compute per-voxel NRMSE to assess VFA fit quality.
         # Low NRMSE means the SPGR model with nominal flip angles fits the
         # multi-FA data well, implying B1 is close to nominal.
@@ -1726,7 +1726,7 @@ class T1Mapping(SimpleInterface):
             e1_median, vfa_conditioning, nan_fraction * 100,
         )
 
-        # Load WM/GM probsegs for tissue-segmented fallback
+        # Load WM/GM probsegs for measured-map tissue QC summaries.
         wm_probseg_arr: Optional[np.ndarray] = None
         gm_probseg_arr: Optional[np.ndarray] = None
         if (
