@@ -1,19 +1,17 @@
 """Unit tests for DCE masking operations.
 
-Tests fill-then-erode T1 edge erosion, enhancement gating,
-NaN-aware median filtering, slab-aware erosion, hemispheric asymmetry,
-and B1 fill-then-erode interior mask construction.
+Tests fill-then-erode T1 edge erosion, enhancement gating, slab-aware
+erosion, hemispheric asymmetry, and B1 fill-then-erode interior masking.
 """
 
 import numpy as np
-import pytest
 from scipy.ndimage import (
     binary_erosion,
     binary_fill_holes,
     generate_binary_structure,
 )
 
-from pmriprep.interfaces.dce import _b1_interior_mask, _nanmedian_filter
+from pmriprep.interfaces.dce import _b1_interior_mask
 from pmriprep.utils.dce_constants import MIN_ENHANCEMENT_MM, SLAB_EROSION_MAX_SLICES
 
 
@@ -224,56 +222,6 @@ class TestB1FillThenErode:
 
 
 # ============================================================================
-# NaN-aware median filter
-# ============================================================================
-
-
-class TestNanMedianFilter:
-    """Tests for finite-neighborhood T1 median filtering."""
-
-    def test_boundary_uses_only_observed_neighbors(self) -> None:
-        """NaN background must not vote as a repeated population median."""
-        t1_map = np.full((7, 7, 7), np.nan)
-        t1_map[2:5, 2:5, 2:5] = 900.0
-        t1_map[3, 3, 3] = 1500.0
-
-        result = _nanmedian_filter(t1_map)
-
-        assert result[2, 2, 2] == pytest.approx(900.0)
-        assert np.isnan(result[1, 2, 2])
-
-    def test_does_not_create_global_median_rail(self) -> None:
-        """Sparse holes must not create exact whole-map median plateaus."""
-        values = np.arange(343, dtype=float).reshape(7, 7, 7) + 700.0
-        values[[0, 1, 5, 6], :, :] = np.nan
-        global_median = float(np.nanmedian(values))
-
-        result = _nanmedian_filter(values)
-
-        assert np.count_nonzero(result == global_median) < 4
-
-    def test_interior_voxels_unchanged(self) -> None:
-        """A constant interior remains unchanged."""
-        t1_map = np.full((11, 11, 11), 1000.0)
-        # NaN border only on faces
-        t1_map[0, :, :] = np.nan
-        t1_map[-1, :, :] = np.nan
-        t1_map[:, 0, :] = np.nan
-        t1_map[:, -1, :] = np.nan
-        t1_map[:, :, 0] = np.nan
-        t1_map[:, :, -1] = np.nan
-
-        result = _nanmedian_filter(t1_map)
-        np.testing.assert_array_equal(result[3:-3, 3:-3, 3:-3], 1000.0)
-
-    def test_all_nan_returns_nan(self) -> None:
-        """All-NaN input should remain all-NaN."""
-        t1_map = np.full((5, 5, 5), np.nan)
-        result = _nanmedian_filter(t1_map)
-        assert np.all(np.isnan(result))
-
-
-# ============================================================================
 # Slab-aware erosion
 # ============================================================================
 
@@ -434,46 +382,6 @@ class TestHemisphericAsymmetry:
 # ============================================================================
 # Additional edge-case tests
 # ============================================================================
-
-
-class TestNanMedianFilterEdgeCases:
-    """Edge-case tests for finite-neighborhood median filtering."""
-
-    def test_wide_t1_range_no_bias(self) -> None:
-        """Filtering should not bias boundaries toward another tissue type."""
-        rng = np.random.default_rng(123)
-        t1_map = np.full((12, 12, 12), np.nan)
-        center = np.array([6, 6, 6])
-        for ix in range(12):
-            for iy in range(12):
-                for iz in range(12):
-                    dist = np.linalg.norm(np.array([ix, iy, iz]) - center)
-                    if dist <= 4:
-                        # Assign tissue-like T1: WM=800, GM=1400, CSF=4000
-                        if dist <= 2:
-                            t1_map[ix, iy, iz] = 4000.0 + rng.normal(0, 100)
-                        elif dist <= 3:
-                            t1_map[ix, iy, iz] = 1400.0 + rng.normal(0, 50)
-                        else:
-                            t1_map[ix, iy, iz] = 800.0 + rng.normal(0, 30)
-
-        result = _nanmedian_filter(t1_map.copy())
-
-        # Boundary WM voxels (dist ~4) should remain in WM range, not be
-        # pulled toward the median (~1400ms GM)
-        brain = np.isfinite(t1_map)
-        boundary_wm = brain & (result > 0) & (result < 1000)
-        assert int(np.sum(boundary_wm)) > 0, "Should have boundary WM voxels"
-        # No voxel should become negative
-        assert not np.any(result[brain] < 0)
-
-    def test_single_valid_voxel_preserved(self) -> None:
-        """A single valid voxel surrounded by NaN remains unchanged."""
-        t1_map = np.full((5, 5, 5), np.nan)
-        t1_map[2, 2, 2] = 1500.0
-
-        result = _nanmedian_filter(t1_map.copy())
-        assert result[2, 2, 2] == pytest.approx(1500.0)
 
 
 class TestSlabAwareErosionEdgeCases:

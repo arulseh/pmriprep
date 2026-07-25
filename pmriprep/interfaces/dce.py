@@ -95,59 +95,6 @@ def _b1_interior_mask(valid: np.ndarray, iterations: int = 2) -> np.ndarray:
     return binary_erosion(binary_fill_holes(valid), iterations=iterations) & valid  # type: ignore[no-any-return]
 
 
-def _nanmedian_filter(values: np.ndarray, *, size: int = 3) -> np.ndarray:
-    """Median-filter finite neighborhoods without inventing boundary values.
-
-    Parameters
-    ----------
-    values : numpy.ndarray
-        Quantitative map with invalid voxels represented by NaN.
-    size : int
-        Cubic filter width.
-
-    Returns
-    -------
-    numpy.ndarray
-        Filtered map. Voxels invalid in ``values`` remain invalid.
-    """
-    invalid = ~np.isfinite(values)
-    try:
-        import warnings
-
-        from scipy.ndimage import vectorized_filter  # type: ignore[attr-defined,import-untyped]
-
-        with warnings.catch_warnings():
-            warnings.filterwarnings(
-                "ignore",
-                message="All-NaN slice encountered",
-                category=RuntimeWarning,
-            )
-            filtered = vectorized_filter(
-                values,
-                np.nanmedian,
-                size=size,
-                mode="constant",
-                cval=np.nan,
-                batch_memory=256 * 1024**2,
-            )
-    except ImportError:
-        from scipy.ndimage import generic_filter  # type: ignore[import-untyped]
-
-        def _finite_median(window: np.ndarray) -> float:
-            finite = window[np.isfinite(window)]
-            return float(np.median(finite)) if finite.size else np.nan
-
-        filtered = generic_filter(
-            values,
-            _finite_median,
-            size=size,
-            mode="constant",
-            cval=np.nan,
-        )
-    filtered[invalid] = np.nan
-    return np.asarray(filtered, dtype=values.dtype)
-
-
 class B1MappingInputSpec(BaseInterfaceInputSpec):
     """Input specification for B1Mapping interface."""
 
@@ -1562,18 +1509,8 @@ class T1Mapping(SimpleInterface):
                     n_fa, len(nrmse_valid),
                 )
 
-        # Set background voxels to NaN BEFORE median filter to prevent
-        # finite T1 values from E1-clipped background from contaminating
-        # brain-boundary voxels through the 3x3x3 kernel.
+        # Exclude background before quantitative validity checks.
         t1_map[~brain_mask] = np.nan
-
-        # Apply a NaN-aware 3x3x3 median filter to reduce noise spikes without
-        # injecting a repeated whole-brain median at boundaries or fit holes.
-        # Original invalid positions remain invalid.
-        # Applied BEFORE CSF exclusion to avoid introducing artificial zeros
-        # that would contaminate periventricular tissue during filtering.
-        # Order: median filter → CSF exclusion → range clipping.
-        t1_map = _nanmedian_filter(t1_map, size=3)
 
         # CSF exclusion: mask out voxels with high CSF probability
         csf_excluded = False
@@ -1874,7 +1811,7 @@ class T1Mapping(SimpleInterface):
             "wm_range_ms": wm_range,
             "gm_range_ms": gm_range,
             "csf_excluded": csf_excluded,
-            "median_filtered": True,
+            "median_filtered": False,
             "t1_method": t1_method,
             "tissue_statistics_source": tissue_stats_source,
         }

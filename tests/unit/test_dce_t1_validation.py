@@ -767,6 +767,59 @@ def _make_ernst_signal(
     return s0 * np.sin(fa_rad) * (1 - e1) / (1 - np.cos(fa_rad) * e1)
 
 
+def test_t1_mapping_preserves_compact_measured_structure(tmp_path: Path) -> None:
+    """Quantitative T1 output must not spatially vote away a compact lesion."""
+    import nibabel as nib
+
+    from pmriprep.interfaces.dce import T1Mapping
+
+    shape = (9, 9, 9)
+    affine = np.diag([1.0, 1.0, 5.0, 1.0])
+    truth_ms = np.full(shape, 1000.0)
+    center = np.array([4, 4, 4])
+    lesion = np.zeros(shape, dtype=bool)
+    lesion[tuple(center)] = True
+    for axis in range(3):
+        for direction in (-1, 1):
+            neighbor = center.copy()
+            neighbor[axis] += direction
+            lesion[tuple(neighbor)] = True
+    truth_ms[lesion] = 1600.0
+
+    flip_angles = np.array([5.0, 15.0, 25.0])
+    tr_ms = 7.0
+    vfa_files = []
+    for index, signal in enumerate(
+        _make_ernst_signal(
+            5000.0,
+            truth_ms / 1000.0,
+            tr_ms / 1000.0,
+            flip_angles[:, None, None, None],
+        ),
+    ):
+        path = tmp_path / f"vfa_{index}.nii.gz"
+        nib.save(nib.Nifti1Image(signal.astype(np.float32), affine), path)
+        vfa_files.append(str(path))
+
+    mask_file = tmp_path / "brain_mask.nii.gz"
+    nib.save(nib.Nifti1Image(np.ones(shape, dtype=np.uint8), affine), mask_file)
+    interface = T1Mapping(
+        vfa_files=vfa_files,
+        flip_angles=flip_angles.tolist(),
+        tr=tr_ms,
+        brain_mask=str(mask_file),
+        t1_method="nlls",
+        t1_correction_mode="none",
+        out_file=str(tmp_path / "t1_map.nii.gz"),
+    )
+    result = interface.run(cwd=str(tmp_path))
+
+    measured = nib.load(result.outputs.out_file).get_fdata()
+    assert np.all(measured[lesion] > 1500.0)
+    assert np.all(measured[~lesion & np.isfinite(measured)] < 1100.0)
+    assert result.outputs.qc_metrics["median_filtered"] is False
+
+
 class TestNLLSFitting:
     """Tests for nonlinear least squares T1 fitting."""
 
