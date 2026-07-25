@@ -157,6 +157,18 @@
                 <div class="metric-value">{{ "%.1f"|format(dce.qc_metrics.t1_mapping.tr_ms) }} ms</div>
             </div>
             {% endif %}
+            {% if dce.qc_metrics.t1_mapping.vfa_preprocessing is defined and dce.qc_metrics.t1_mapping.vfa_preprocessing.motion_assessment is defined %}
+                {% set vfa_motion = dce.qc_metrics.t1_mapping.vfa_preprocessing.motion_assessment %}
+                <div class="metric">
+                    <div class="metric-label">Inter-VFA Alignment</div>
+                    <div class="metric-value {{ vfa_motion.qc_status | lower }}">{{ vfa_motion.qc_status | replace('_', ' ') }}</div>
+                </div>
+                {% if vfa_motion.warning is defined %}
+                <div class="metric" style="grid-column: 1 / -1;">
+                    <div class="metric-value warn" style="font-size: 1.0em; font-weight: normal;">{{ vfa_motion.warning }}</div>
+                </div>
+                {% endif %}
+            {% endif %}
             {% if dce.qc_metrics.t1_mapping.median_t1_ms is defined %}
             <div class="metric">
                 <div class="metric-label">Median T1</div>

@@ -2066,6 +2066,12 @@
     ],
     [
       "vfa_preprocess",
+      "qc_metrics",
+      "collect_qc_metrics",
+      "vfa_qc"
+    ],
+    [
+      "vfa_preprocess",
       "reference_file",
       "transform_b1_to_vfa",
       "vfa_ref_file"
@@ -2125,6 +2131,7 @@
         "t1_qc",
         "use_external_t1",
         "validation_result",
+        "vfa_qc",
         "vp_at_bound_fractions"
       ],
       "output_names": [
@@ -2549,7 +2556,7 @@
   "function_sha256": {
     "build_model_free_dict": "3074057e4a4048b45ac6a2dea7137001b9549eeb0284627b390a1238cc07dba2",
     "build_pk_dict": "d150bcea85a6d48fbb72799763f123404d45a96104157d4d34475d9e25eb5af3",
-    "collect_qc_metrics": "74abf0733085058d24e633f1ce5b3f25ad226d544a3356fa31467065a1f522f7",
+    "collect_qc_metrics": "24a868a87279d029f3c90a06915c8ef21c5b9f1df71e1285bd512528a429bd10",
     "combine_masks": "f2748155dafc15b2d74a066b3da5db0ed2a4b5486b46ee8ea1f4c7a181de8fcf",
     "create_aif_mask": "b7f950098e31edf1f4ae33feeceb4f24287680351c18994377a6129477eb1b0d",
     "dce_brain_mask_qc": "ced2d6d4b823457166d3fb21083d6220f2b0dc0e0155de5c134e6d98210b5086",

@@ -662,7 +662,7 @@ def init_dce_t1_b1_wf(
     outputnode = pe.Node(
         niu.IdentityInterface(fields=[
             "b1_map", "b1_qc", "afi_registration_qc_plot", "b1_qc_plot",
-            "t1_map", "t1_qc", "vfa_registration_qc_plot", "t1_qc_plot",
+            "t1_map", "t1_qc", "vfa_qc", "vfa_registration_qc_plot", "t1_qc_plot",
         ]),
         name="outputnode",
     )
@@ -746,6 +746,7 @@ def init_dce_t1_b1_wf(
                 ("qc_plot", "t1_qc_plot"),
             ]),
             (vfa_preprocess, outputnode, [
+                ("qc_metrics", "vfa_qc"),
                 ("registration_qc_plot", "vfa_registration_qc_plot"),
             ]),
         ])
@@ -1180,7 +1181,7 @@ def init_dce_qc_collection_wf(
 ) -> pe.Workflow:
     """Aggregate DCE processing, modeling, validation, and display QC."""
     fields = [
-        "b1_qc", "t1_qc", "signal_conversion_qc", "preprocess_qc",
+        "b1_qc", "t1_qc", "vfa_qc", "signal_conversion_qc", "preprocess_qc",
         "registration_qc", "aif_qc",
         "pk_qc", "validation_result", "preproc_display", "pk_fit_qc_metrics",
         "pk_maps_qc_metrics", "vp_at_bound_fractions", "nawm_available",
@@ -1205,10 +1206,12 @@ def init_dce_qc_collection_wf(
     need_b1 = use_vfa_t1 or config.b1_method != "none"
     if not use_vfa_t1:
         collect.inputs.t1_qc = None
+        collect.inputs.vfa_qc = None
     if not need_b1:
         collect.inputs.b1_qc = None
     connected = [field for field in fields if not (
         (field == "t1_qc" and not use_vfa_t1)
+        or (field == "vfa_qc" and not use_vfa_t1)
         or (field == "b1_qc" and not need_b1)
     )]
     workflow.connect([
@@ -2562,6 +2565,7 @@ def init_dce_preproc_wf(
             (t1_b1_wf, dce_qc_collection_wf, [
                 ("outputnode.b1_qc", "inputnode.b1_qc"),
                 ("outputnode.t1_qc", "inputnode.t1_qc"),
+                ("outputnode.vfa_qc", "inputnode.vfa_qc"),
             ]),
         ])
     elif need_b1:

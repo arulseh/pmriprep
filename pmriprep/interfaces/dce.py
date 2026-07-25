@@ -2423,6 +2423,341 @@ class VFAPreprocess(SimpleInterface):
     input_spec = VFAPreprocessInputSpec
     output_spec = VFAPreprocessOutputSpec
 
+    @staticmethod
+    def _motion_warning_state(
+        *,
+        translation_mm: float,
+        rotation_deg: float,
+        min_voxel_size_mm: float,
+        gradient_ncc_delta: float,
+        foreground_dice_delta: float,
+        spgr_nrmse_fractional_change: float,
+    ) -> str:
+        """Classify concordant evidence of inter-VFA misalignment.
+
+        Parameters
+        ----------
+        translation_mm : float
+            Norm of the candidate rigid translation in millimetres.
+        rotation_deg : float
+            Norm of the candidate rigid rotation in degrees.
+        min_voxel_size_mm : float
+            Smallest spatial voxel dimension in millimetres.
+        gradient_ncc_delta : float
+            Candidate-minus-identity gradient correlation.
+        foreground_dice_delta : float
+            Candidate-minus-identity foreground overlap.
+        spgr_nrmse_fractional_change : float
+            Fractional reduction in median multi-flip SPGR residual.
+
+        Returns
+        -------
+        str
+            ``"WARN"`` only when transform, anatomy, and SPGR evidence agree;
+            otherwise ``"PASS"``.
+        """
+        nontrivial_transform = (
+            translation_mm >= 0.25 * min_voxel_size_mm
+            or rotation_deg >= 0.3
+        )
+        anatomy_improved = (
+            gradient_ncc_delta >= 0.01
+            and foreground_dice_delta >= -0.01
+        )
+        signal_model_improved = spgr_nrmse_fractional_change >= 0.05
+        return (
+            "WARN"
+            if nontrivial_transform and anatomy_improved and signal_model_improved
+            else "PASS"
+        )
+
+    def _assess_same_grid_motion(
+        self,
+        *,
+        vfa_files: list[str],
+        vfa_imgs: list[Any],
+        vfa_data: list[npt.NDArray[np.float64]],
+        flip_angles: list[float],
+        ref_idx: int,
+    ) -> dict[str, Any]:
+        """Estimate, but do not apply, rigid inter-VFA motion.
+
+        The candidate registration uses robust gradient-magnitude images so
+        flip-angle-dependent tissue contrast does not directly drive FLIRT.
+        A warning requires agreement between anatomical edge alignment and the
+        multi-flip SPGR signal model.
+        """
+        import subprocess
+
+        import nibabel as nib  # type: ignore[import-untyped]
+        from scipy.ndimage import (  # type: ignore[import-untyped]
+            binary_closing,
+            binary_fill_holes,
+            binary_opening,
+            gaussian_filter,
+            label,
+        )
+        from scipy.spatial.transform import Rotation  # type: ignore[import-untyped]
+
+        def _foreground(data: npt.NDArray[np.float64]) -> npt.NDArray[np.bool_]:
+            positive = data[np.isfinite(data) & (data > 0)]
+            if positive.size < 100:
+                return np.zeros(data.shape, dtype=bool)
+            low, high = np.percentile(positive, [2, 98])
+            mask = np.isfinite(data) & (data > low + 0.08 * (high - low))
+            mask = binary_opening(mask, iterations=1)
+            mask = binary_closing(mask, iterations=2)
+            mask = binary_fill_holes(mask)
+            components, count = label(mask)
+            if count:
+                sizes = np.bincount(components.ravel())
+                sizes[0] = 0
+                mask = components == int(np.argmax(sizes))
+            return np.asarray(mask, dtype=bool)
+
+        def _gradient(
+            data: npt.NDArray[np.float64],
+            zooms: tuple[float, ...],
+        ) -> npt.NDArray[np.float32]:
+            finite = data[np.isfinite(data)]
+            if finite.size == 0:
+                return np.zeros(data.shape, dtype=np.float32)
+            low, high = np.percentile(finite, [1, 99])
+            scaled = np.clip((data - low) / max(high - low, 1e-8), 0.0, 1.0)
+            sigma = tuple(max(0.25, 1.0 / float(zoom)) for zoom in zooms[:3])
+            smooth = gaussian_filter(scaled, sigma=sigma)
+            derivatives = np.gradient(smooth, *zooms[:3])
+            magnitude = np.sqrt(sum(item * item for item in derivatives))
+            scale = max(float(np.percentile(magnitude, 99)), 1e-8)
+            return np.asarray(np.clip(magnitude / scale, 0.0, 1.0), dtype=np.float32)
+
+        def _ncc(
+            fixed: npt.NDArray[Any],
+            moving: npt.NDArray[Any],
+            mask: npt.NDArray[np.bool_],
+        ) -> float:
+            valid = mask & np.isfinite(fixed) & np.isfinite(moving)
+            if np.count_nonzero(valid) < 100:
+                return float("nan")
+            fixed_values = fixed[valid]
+            moving_values = moving[valid]
+            if np.std(fixed_values) == 0 or np.std(moving_values) == 0:
+                return float("nan")
+            return float(np.corrcoef(fixed_values, moving_values)[0, 1])
+
+        def _dice(
+            fixed: npt.NDArray[np.bool_],
+            moving: npt.NDArray[np.bool_],
+        ) -> float:
+            denominator = int(np.sum(fixed) + np.sum(moving))
+            if denominator == 0:
+                return float("nan")
+            return 2.0 * float(np.count_nonzero(fixed & moving)) / denominator
+
+        def _median_spgr_nrmse(
+            signals: npt.NDArray[np.float64],
+            mask: npt.NDArray[np.bool_],
+        ) -> float:
+            angles = np.radians(np.asarray(flip_angles, dtype=np.float64))
+            angle_shape = (len(angles),) + (1,) * (signals.ndim - 1)
+            angles = angles.reshape(angle_shape)
+            x_values = signals / np.tan(angles)
+            y_values = signals / np.sin(angles)
+            x_mean = np.mean(x_values, axis=0)
+            y_mean = np.mean(y_values, axis=0)
+            denominator = np.sum((x_values - x_mean) ** 2, axis=0)
+            e1 = np.sum(
+                (x_values - x_mean) * (y_values - y_mean),
+                axis=0,
+            ) / np.maximum(denominator, 1e-12)
+            valid = mask & np.isfinite(e1) & (e1 > 0) & (e1 < 0.999999)
+            basis = np.sin(angles) * (1.0 - e1) / np.maximum(
+                1.0 - np.cos(angles) * e1,
+                1e-12,
+            )
+            amplitude = np.sum(signals * basis, axis=0) / np.maximum(
+                np.sum(basis * basis, axis=0),
+                1e-12,
+            )
+            predicted = amplitude * basis
+            nrmse = np.sqrt(np.mean((signals - predicted) ** 2, axis=0))
+            nrmse /= np.maximum(np.mean(signals, axis=0), 1e-8)
+            values = nrmse[valid & np.isfinite(nrmse)]
+            return float(np.median(values)) if values.size >= 100 else float("nan")
+
+        ref_img = vfa_imgs[ref_idx]
+        ref_data = vfa_data[ref_idx]
+        ref_mask = _foreground(ref_data)
+        ref_gradient = _gradient(
+            ref_data,
+            tuple(float(value) for value in ref_img.header.get_zooms()[:3]),
+        )
+        out_dir = Path.cwd()
+        ref_gradient_file = out_dir / "vfa_motion_reference_gradient.nii.gz"
+        nib.save(
+            nib.Nifti1Image(
+                np.where(ref_mask, ref_gradient, 0.0).astype(np.float32),
+                ref_img.affine,
+            ),
+            ref_gradient_file,
+        )
+        identity_signals = np.stack(vfa_data)
+        identity_nrmse = _median_spgr_nrmse(identity_signals, ref_mask)
+        min_voxel_size = min(float(value) for value in ref_img.header.get_zooms()[:3])
+        comparisons: list[dict[str, Any]] = []
+
+        for index, (path, img, data) in enumerate(
+            zip(vfa_files, vfa_imgs, vfa_data, strict=True)
+        ):
+            if index == ref_idx:
+                continue
+            moving_mask = _foreground(data)
+            moving_gradient = _gradient(
+                data,
+                tuple(float(value) for value in img.header.get_zooms()[:3]),
+            )
+            moving_gradient_file = out_dir / f"vfa_motion_{index:02d}_gradient.nii.gz"
+            matrix_file = out_dir / f"vfa_motion_{index:02d}.mat"
+            candidate_file = out_dir / f"vfa_motion_{index:02d}_candidate.nii.gz"
+            candidate_mask_file = out_dir / f"vfa_motion_{index:02d}_mask.nii.gz"
+            moving_mask_file = out_dir / f"vfa_motion_{index:02d}_native_mask.nii.gz"
+            nib.save(
+                nib.Nifti1Image(
+                    np.where(moving_mask, moving_gradient, 0.0).astype(np.float32),
+                    img.affine,
+                ),
+                moving_gradient_file,
+            )
+            nib.save(
+                nib.Nifti1Image(moving_mask.astype(np.uint8), img.affine),
+                moving_mask_file,
+            )
+            estimate = subprocess.run(
+                [
+                    "flirt", "-in", str(moving_gradient_file),
+                    "-ref", str(ref_gradient_file),
+                    "-omat", str(matrix_file), "-dof", "6",
+                    "-cost", "normcorr", "-searchrx", "-5", "5",
+                    "-searchry", "-5", "5", "-searchrz", "-5", "5",
+                ],
+                capture_output=True,
+                text=True,
+            )
+            if estimate.returncode != 0 or not matrix_file.exists():
+                raise RuntimeError(
+                    f"FLIRT candidate estimation failed for VFA index {index}: "
+                    f"{estimate.stderr.strip()}"
+                )
+            for source, destination, interpolation in (
+                (path, candidate_file, "spline"),
+                (moving_mask_file, candidate_mask_file, "nearestneighbour"),
+            ):
+                apply = subprocess.run(
+                    [
+                        "flirt", "-in", str(source), "-ref", str(vfa_files[ref_idx]),
+                        "-out", str(destination), "-init", str(matrix_file),
+                        "-applyxfm", "-interp", interpolation,
+                    ],
+                    capture_output=True,
+                    text=True,
+                )
+                if apply.returncode != 0:
+                    raise RuntimeError(
+                        f"FLIRT candidate application failed for VFA index {index}: "
+                        f"{apply.stderr.strip()}"
+                    )
+
+            candidate = np.asarray(
+                nib.load(candidate_file).get_fdata(),  # type: ignore[attr-defined]
+                dtype=np.float64,
+            )
+            candidate_mask = (
+                nib.load(candidate_mask_file).get_fdata() > 0.5  # type: ignore[attr-defined]
+            )
+            common_identity = ref_mask & moving_mask
+            common_candidate = ref_mask & candidate_mask
+            identity_edge_ncc = _ncc(ref_gradient, moving_gradient, common_identity)
+            candidate_gradient = _gradient(
+                candidate,
+                tuple(float(value) for value in ref_img.header.get_zooms()[:3]),
+            )
+            candidate_edge_ncc = _ncc(
+                ref_gradient,
+                candidate_gradient,
+                common_candidate,
+            )
+            identity_dice = _dice(ref_mask, moving_mask)
+            candidate_dice = _dice(ref_mask, candidate_mask)
+            candidate_signals = identity_signals.copy()
+            candidate_signals[index] = candidate
+            candidate_nrmse = _median_spgr_nrmse(candidate_signals, ref_mask)
+            nrmse_change = (
+                (identity_nrmse - candidate_nrmse) / identity_nrmse
+                if np.isfinite(identity_nrmse)
+                and identity_nrmse > 0
+                and np.isfinite(candidate_nrmse)
+                else float("nan")
+            )
+            matrix = np.loadtxt(matrix_file)
+            linear = np.asarray(matrix[:3, :3], dtype=np.float64)
+            left, _, right = np.linalg.svd(linear)
+            rotation = left @ right
+            rotation_deg = float(
+                np.linalg.norm(Rotation.from_matrix(rotation).as_rotvec())
+                * 180.0 / np.pi
+            )
+            translation_mm = float(np.linalg.norm(matrix[:3, 3]))
+            state = self._motion_warning_state(
+                translation_mm=translation_mm,
+                rotation_deg=rotation_deg,
+                min_voxel_size_mm=min_voxel_size,
+                gradient_ncc_delta=candidate_edge_ncc - identity_edge_ncc,
+                foreground_dice_delta=candidate_dice - identity_dice,
+                spgr_nrmse_fractional_change=nrmse_change,
+            )
+            comparisons.append(
+                {
+                    "moving_index": index,
+                    "flip_angle_deg": float(flip_angles[index]),
+                    "candidate_translation_mm": translation_mm,
+                    "candidate_rotation_deg": rotation_deg,
+                    "candidate_rigid_matrix": [
+                        [float(value) for value in row]
+                        for row in np.asarray(matrix, dtype=np.float64)
+                    ],
+                    "identity_gradient_ncc": identity_edge_ncc,
+                    "candidate_gradient_ncc": candidate_edge_ncc,
+                    "gradient_ncc_delta": candidate_edge_ncc - identity_edge_ncc,
+                    "identity_foreground_dice": identity_dice,
+                    "candidate_foreground_dice": candidate_dice,
+                    "foreground_dice_delta": candidate_dice - identity_dice,
+                    "identity_spgr_median_nrmse": identity_nrmse,
+                    "candidate_spgr_median_nrmse": candidate_nrmse,
+                    "spgr_nrmse_fractional_reduction": nrmse_change,
+                    "qc_status": state,
+                }
+            )
+
+        overall = (
+            "WARN"
+            if any(item["qc_status"] == "WARN" for item in comparisons)
+            else "PASS"
+        )
+        result: dict[str, Any] = {
+            "qc_status": overall,
+            "reference_index": ref_idx,
+            "reference_flip_angle_deg": float(flip_angles[ref_idx]),
+            "correction_applied": False,
+            "estimator": "gradient_magnitude_rigid_candidate",
+            "comparisons": comparisons,
+        }
+        if overall == "WARN":
+            result["warning"] = (
+                "Potential inter-VFA misalignment detected; VFA images were not "
+                "resampled. Review source images and T1-map QC."
+            )
+        return result
+
     def _run_interface(self, runtime: Any) -> Any:
         """Execute VFA preprocessing."""
         import shutil
@@ -2474,6 +2809,32 @@ class VFAPreprocess(SimpleInterface):
                 break
 
         qc_metrics["affines_identical"] = affines_identical
+        if affines_identical and n_fa >= 2:
+            try:
+                qc_metrics["motion_assessment"] = self._assess_same_grid_motion(
+                    vfa_files=vfa_files,
+                    vfa_imgs=vfa_imgs,
+                    vfa_data=vfa_data,
+                    flip_angles=flip_angles,
+                    ref_idx=ref_idx,
+                )
+            except Exception as exc:
+                logger.warning("VFA motion diagnostic was not evaluated: %s", exc)
+                qc_metrics["motion_assessment"] = {
+                    "qc_status": "NOT_EVALUATED",
+                    "reference_index": ref_idx,
+                    "reference_flip_angle_deg": float(flip_angles[ref_idx]),
+                    "correction_applied": False,
+                    "reason": str(exc),
+                }
+        else:
+            qc_metrics["motion_assessment"] = {
+                "qc_status": "NOT_EVALUATED",
+                "reference_index": ref_idx,
+                "reference_flip_angle_deg": float(flip_angles[ref_idx]),
+                    "correction_applied": False,
+                    "reason": "VFA grids differ; required grid harmonization used",
+                }
 
         # Determine whether to coregister
         do_coreg = (

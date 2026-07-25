@@ -105,6 +105,35 @@ def test_dce_signal_conversion_qc_renders(env):
     )
 
 
+def test_dce_vfa_motion_warning_renders(env):
+    """Potential inter-VFA motion is visible without implying correction."""
+    template = env.get_template("sections/section_dce.html")
+    warning = (
+        "Potential inter-VFA misalignment detected; VFA images were not "
+        "resampled. Review source images and T1-map QC."
+    )
+    dce = {
+        "qc_metrics": {
+            "t1_mapping": {
+                "t1_method": "hybrid",
+                "vfa_preprocessing": {
+                    "motion_assessment": {
+                        "qc_status": "WARN",
+                        "correction_applied": False,
+                        "warning": warning,
+                    },
+                },
+            },
+        },
+        "images": {},
+        "display_status": {},
+    }
+
+    rendered = template.render(dce=dce)
+    assert "Inter-VFA Alignment" in rendered
+    assert warning in rendered
+
+
 def test_dce_no_t1_assumption_renders_without_wm_statistics(env):
     """Configured no-T1 runs use assumed-T1 fields without requiring WM QC."""
     template = env.get_template("sections/section_dce.html")

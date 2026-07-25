@@ -1855,6 +1855,7 @@
         "t1_qc",
         "use_external_t1",
         "validation_result",
+        "vfa_qc",
         "vp_at_bound_fractions"
       ],
       "output_names": [
@@ -2219,7 +2220,7 @@
     }
   },
   "function_sha256": {
-    "collect_qc_metrics": "74abf0733085058d24e633f1ce5b3f25ad226d544a3356fa31467065a1f522f7",
+    "collect_qc_metrics": "24a868a87279d029f3c90a06915c8ef21c5b9f1df71e1285bd512528a429bd10",
     "combine_masks": "f2748155dafc15b2d74a066b3da5db0ed2a4b5486b46ee8ea1f4c7a181de8fcf",
     "create_aif_mask": "b7f950098e31edf1f4ae33feeceb4f24287680351c18994377a6129477eb1b0d",
     "dce_brain_mask_qc": "ced2d6d4b823457166d3fb21083d6220f2b0dc0e0155de5c134e6d98210b5086",
@@ -2457,7 +2458,8 @@
       "b1_method": "auto",
       "no_t1": true,
       "t1_qc": null,
-      "use_external_t1": false
+      "use_external_t1": false,
+      "vfa_qc": null
     },
     "combine_masks": {
       "function_str": "def combine_tumor_masks(\n    tumor_segmentation_file: str | None = None,\n    whole_tumor_mask_file: str | None = None,\n    reference_file: str | None = None,\n) -> tuple[str, str]:\n    \"\"\"Select the best tumor mask for lesion statistics.\n\n    Priority:\n\n    1. If tumor segmentation present: use it (already multi-label:\n       0=bg, 1=non-enhancing, 2=enhancing)\n    2. If only whole_tumor present: use as binary mask\n    3. If none present: return empty-string sentinels\n\n    Parameters\n    ----------\n    tumor_segmentation_file : str, optional\n        Path to multi-label tumor segmentation (or None).\n    whole_tumor_mask_file : str, optional\n        Path to whole tumor binary mask (or None).\n    reference_file : str, optional\n        Path to reference image for output geometry (unused but\n        kept for interface compatibility).\n\n    Returns\n    -------\n    tuple\n        Tuple of (mask_file_path, mask_origin) where mask_origin is\n        \"tumor_segmentation\" or \"whole_tumor\" or \"\" if no masks available.\n        Returns (\"\", \"\") when no masks are available because downstream\n        ``traits.Str`` fields require strings.\n    \"\"\"\n    from pathlib import Path\n\n    from nipype.interfaces.base import isdefined\n\n    def _is_valid_file(f: str | None) -> bool:\n        \"\"\"Check if file path is valid (not None, not Undefined, exists).\"\"\"\n        if f is None:\n            return False\n        if not isdefined(f):\n            return False\n        return Path(f).exists()\n\n    if _is_valid_file(tumor_segmentation_file):\n        return (str(tumor_segmentation_file), \"tumor_segmentation\")\n\n    if _is_valid_file(whole_tumor_mask_file):\n        return (str(whole_tumor_mask_file), \"whole_tumor\")\n\n    return (\"\", \"\")\n"

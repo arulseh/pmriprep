@@ -32,6 +32,13 @@ def test_t1_b1_workflow_vfa_mode() -> None:
         "inputnode", "outputnode", "b1_mapping", "vfa_reorient",
         "vfa_preprocess", "transform_b1_to_vfa", "t1_mapping",
     }
+    assert "vfa_qc" in (
+        init_dce_t1_b1_wf(
+            config=DCEConfig(), subject_id="0001", session_id="0001",
+        )
+        .get_node("outputnode")
+        .interface._fields
+    )
 
 
 def test_t1_b1_workflow_external_t1_mode() -> None:

@@ -165,3 +165,23 @@ def test_qc_collection_discloses_assumed_t1_and_independent_b1() -> None:
         "assumed_t1_policy": "uniform_field_strength_reference",
         "b1_correction": "precomputed",
     }
+
+
+def test_qc_collection_nests_vfa_motion_provenance_with_t1() -> None:
+    """Inter-VFA assessment reaches the quantitative T1 provenance block."""
+    from pmriprep.workflows.dce._helpers import _collect_qc_metrics
+
+    motion = {"motion_assessment": {"qc_status": "PASS", "correction_applied": False}}
+    collected = _collect_qc_metrics(
+        b1_qc=None,
+        t1_qc={"t1_method": "hybrid"},
+        vfa_qc=motion,
+        signal_conversion_qc=None,
+        preprocess_qc=None,
+        registration_qc=None,
+        aif_qc=None,
+        pk_qc=None,
+        validation_result=None,
+    )
+
+    assert collected["t1_mapping"]["vfa_preprocessing"] == motion

@@ -1030,6 +1030,7 @@ def _collect_qc_metrics(
     aif_qc: dict[str, object] | None,
     pk_qc: dict[str, object] | None,
     validation_result: dict[str, object] | None,
+    vfa_qc: dict[str, object] | None = None,
     preproc_display: dict[str, object] | None = None,
     pk_fit_qc_metrics: dict[str, object] | None = None,
     pk_maps_qc_metrics: dict[str, object] | None = None,
@@ -1057,6 +1058,8 @@ def _collect_qc_metrics(
         Pharmacokinetic modeling QC metrics.
     validation_result : dict or None
         DSC-DCE validation result.
+    vfa_qc : dict or None
+        VFA inter-volume preprocessing and motion-assessment metrics.
     preproc_display : dict, optional
         Preprocessing display stats.
     pk_fit_qc_metrics : dict, optional
@@ -1096,6 +1099,8 @@ def _collect_qc_metrics(
         else:
             b1_correction = "none"
         t1_mapping["b1_correction"] = b1_correction
+        if vfa_qc is not None:
+            t1_mapping["vfa_preprocessing"] = dict(vfa_qc)
         qc_metrics["t1_mapping"] = t1_mapping
     elif use_external_t1:
         # External T1 map was provided
