@@ -20,7 +20,7 @@ def base_sidecar() -> dict[str, Any]:
         "Description": "Volume transfer constant (1/min)",
         "Units": "1/min",
         "SpatialReference": "bids::sub-X/perf/sub-X_desc-dceMean_stat.nii.gz",
-        "KtransConvention": "plasma_Tofts1999",
+        "InputFunctionCompartment": "plasma",
     }
 
 
@@ -199,8 +199,7 @@ class TestEmptyInputs:
         out = enrich_dce_pk_map_sidecar(
             dict(base_sidecar), qc_metrics=None, map_key="ktrans",
         )
-        assert all(not k.startswith("PK") for k in out
-                   if k not in {"KtransConvention",})
+        assert all(not k.startswith("PK") for k in out)
 
     def test_no_qc_with_lesion(self, base_sidecar):
         fragment = {"Regions": {"X": {"voxel_count": 1, "stats": {}}}}

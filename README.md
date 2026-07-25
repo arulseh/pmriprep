@@ -640,6 +640,14 @@ statistics use only quantitatively accepted voxels and report coverage against
 the full anatomical region. T1/B1 fallback and bounded-SPGR conversion
 diagnostics are scoped to the native DCE brain mask.
 
+The quantitative-QC mask separates acquisition checks from model-aware fit
+checks. Acquisition acceptance requires adequate baseline tSNR and, for
+signal-series inputs, visible contrast enhancement. Fit acceptance requires
+convergence, physiological parameter bounds, and R² ≥ 0.5 for reversible
+models; Patlak uses R² ≥ 0 because whole-curve R² is unstable in the
+subtle-leakage regime for which that model is intended. The applied policy and
+overlapping failure counts are recorded in derivative provenance.
+
 When 2CXM is explicitly requested or eligible during automatic model
 selection, QC also reports a non-fatal, reason-coded suitability screen.
 Explicit 2CXM sampling outside the automatic-selection temporal-resolution

@@ -212,7 +212,7 @@ def _build_dce_base(
     provenance_dict: dict | None = None,
     qc_metrics: dict | None = None,
     minimal: bool = False,
-    ktrans_convention: bool = True,
+    pk_dependent: bool = True,
 ) -> dict:
     from pmriprep.utils.sidecar_builders import build_dce_base_sidecar
 
@@ -225,7 +225,7 @@ def _build_dce_base(
         provenance_dict=provenance_dict,
         qc_metrics=qc_metrics,
         minimal=minimal,
-        ktrans_convention=ktrans_convention,
+        pk_dependent=pk_dependent,
     )
 
 
@@ -470,6 +470,21 @@ def _build_dce_smoothed_meta(
     out["Note"] = "Use non-smoothed maps for quantitative ROI analysis"
     if units is not None:
         out["Units"] = units
+    if map_key not in {
+        "ktrans",
+        "ve",
+        "kep",
+        "vp",
+        "fp",
+        "ps",
+        "e",
+        "ktrans_uncertainty",
+        "ve_uncertainty",
+        "vp_uncertainty",
+        "fp_uncertainty",
+        "ps_uncertainty",
+    }:
+        out.pop("InputFunctionCompartment", None)
     if map_key:
         stamp_aif_dependency(out, map_key, modality="DCE")
     if map_key.endswith("_uncertainty"):
@@ -1206,7 +1221,7 @@ def init_dce_datasinks_wf(
         "source_paths", "reference_voxel_source", "bids_dir",
         "subject", "session",
         "provenance_dict", "qc_metrics", "minimal",
-        "ktrans_convention",
+        "pk_dependent",
     ]
 
     base_perf = pe.Node(
@@ -1218,7 +1233,7 @@ def init_dce_datasinks_wf(
         name="base_perf_meta",
     )
     base_perf.inputs.minimal = False
-    base_perf.inputs.ktrans_convention = True
+    base_perf.inputs.pk_dependent = True
     workflow.connect([
         (perf_src_merge, base_perf, [("out", "source_paths")]),
         (inputnode, base_perf, [
@@ -1240,7 +1255,7 @@ def init_dce_datasinks_wf(
         name="base_perf_no_ktrans_meta",
     )
     base_perf_no_ktrans.inputs.minimal = False
-    base_perf_no_ktrans.inputs.ktrans_convention = False
+    base_perf_no_ktrans.inputs.pk_dependent = False
     workflow.connect([
         (perf_src_merge, base_perf_no_ktrans, [("out", "source_paths")]),
         (inputnode, base_perf_no_ktrans, [
@@ -1262,7 +1277,7 @@ def init_dce_datasinks_wf(
         name="base_minimal_meta",
     )
     base_minimal.inputs.minimal = True
-    base_minimal.inputs.ktrans_convention = False
+    base_minimal.inputs.pk_dependent = False
     base_minimal.inputs.qc_metrics = None
     workflow.connect([
         (perf_src_merge, base_minimal, [("out", "source_paths")]),
@@ -1325,7 +1340,7 @@ def init_dce_datasinks_wf(
         )
         sink_outputs.append((sink, "out_file"))
 
-    # --- Model-free maps (no KtransConvention) ---
+    # --- Model-free maps (no PK-input compartment metadata) ---
     for spec in _MODEL_FREE_MAPS:
         if spec.in_attr not in present:
             continue
@@ -1350,7 +1365,7 @@ def init_dce_datasinks_wf(
         )
         sink_outputs.append((sink, "out_file"))
 
-    # --- QC maps (no KtransConvention) ---
+    # --- QC maps (no PK-input compartment metadata) ---
     if "tsnr_map" in present:
         sink = _add_perf_map_sink(
             workflow, inputnode, base_perf_no_ktrans,
@@ -1531,7 +1546,7 @@ def init_dce_datasinks_wf(
         moco_meta.inputs.description = "Motion-corrected 4D DCE time series"
         moco_meta.inputs.presence_warnings = presence_warnings_dce
         workflow.connect([
-            (base_perf, moco_meta, [("meta_dict", "base")]),
+            (base_perf_no_ktrans, moco_meta, [("meta_dict", "base")]),
             (inputnode, moco_meta, [
                 ("qc_metrics", "qc_metrics"),
                 ("provenance_dict", "provenance_dict"),

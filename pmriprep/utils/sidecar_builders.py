@@ -799,7 +799,7 @@ def build_dce_base_sidecar(
     provenance_dict: Optional[Dict[str, Any]] = None,
     qc_metrics: Optional[Dict[str, Any]] = None,
     minimal: bool = False,
-    ktrans_convention: bool = True,
+    pk_dependent: bool = True,
 ) -> Dict[str, Any]:
     """Build common base sidecar for DCE derivatives.
 
@@ -807,12 +807,12 @@ def build_dce_base_sidecar(
     ----------
     minimal
         Suppress perfusion-specific provenance enrichment and
-        KtransConvention (used for masks, structural underlays,
+        PK-input metadata (used for masks, structural underlays,
         motion-corrected 4D, T1map, B1+map, etc.).
-    ktrans_convention
-        Stamp ``KtransConvention`` / ``KtransConventionHct``.
-        Only relevant when ``minimal=False``; set to ``False`` for
-        model-free and QC maps whose values are convention-independent.
+    pk_dependent
+        Record that the derivative uses a plasma input function. Only
+        relevant when ``minimal=False``; set to ``False`` for model-free
+        and QC maps.
     """
     from pmriprep.utils.provenance import get_bids_derivative_provenance
 
@@ -832,12 +832,8 @@ def build_dce_base_sidecar(
 
             enriched = enrich_provenance_from_qc(sidecar, qc_metrics, "DCE")
             sidecar.update(enriched)
-        if ktrans_convention:
-            sidecar["KtransConvention"] = "plasma_Tofts1999"
-            if isinstance(qc_metrics, dict):
-                hct = qc_metrics.get("aif_detection", {}).get("hematocrit")
-                if hct is not None:
-                    sidecar["KtransConventionHct"] = float(hct)
+        if pk_dependent:
+            sidecar["InputFunctionCompartment"] = "plasma"
     return sidecar
 
 
@@ -1531,7 +1527,7 @@ def enrich_dce_preproc_sidecar(
     and top-level ``NAWMNormalizationApplied``
     flags from the producer-shape ``qc_metrics`` envelope. Existing
     sidecar fields (``SkullStripped``, ``SpatialReference``, ``Sources``,
-    ``Resolution``, ``KtransConvention``) are preserved.
+    ``Resolution``) are preserved.
     """
     if not qc_metrics or not isinstance(qc_metrics, dict):
         return sidecar

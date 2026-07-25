@@ -92,6 +92,100 @@ def test_build_dce_qc_mask_auto_patlak_allows_nan_parameters() -> None:
     assert mask.tolist() == [[[1, 0]]]
 
 
+def test_build_dce_qc_mask_skips_signal_qc_without_raw_signal() -> None:
+    """Concentration-only inputs do not apply invalid signal-domain gates."""
+    shape = (1, 1, 1)
+    evaluation = _evaluate_dce_qc_mask(
+        np.ones(shape, dtype=bool),
+        np.zeros(shape),
+        None,
+        np.full(shape, 0.1),
+        np.full(shape, 0.8),
+        np.full(shape, 0.2),
+        np.full(shape, 0.1),
+        np.full(shape, 0.5),
+        np.ones(shape, dtype=np.int8),
+        np.zeros(shape, dtype=np.int8),
+        {"patlak": 1},
+        False,
+        "extended_tofts",
+    )
+
+    assert evaluation.mask.tolist() == [[[1]]]
+    assert evaluation.acceptance_policy["acquisition"] == {
+        "minimum_tsnr": None,
+        "minimum_peak_enhancement_percent": None,
+    }
+
+
+def test_build_dce_qc_mask_uses_model_aware_r_squared_thresholds() -> None:
+    """Patlak retains non-negative R² while reversible fits require 0.5."""
+    shape = (1, 1, 4)
+    mask = _build_dce_qc_mask(
+        np.ones(shape, dtype=bool),
+        np.full(shape, 20.0),
+        np.full(shape, 20.0),
+        np.full(shape, 0.1),
+        np.array([[[0.0, -0.01, 0.49, 0.5]]]),
+        np.full(shape, 0.2),
+        np.full(shape, 0.1),
+        np.full(shape, 0.5),
+        np.ones(shape, dtype=np.int8),
+        np.array([[[1, 1, 3, 3]]], dtype=np.int8),
+        {"patlak": 1},
+        True,
+        "auto",
+    )
+    assert mask.tolist() == [[[1, 0, 0, 1]]]
+
+
+def test_build_dce_qc_mask_applies_patlak_threshold_in_fixed_mode() -> None:
+    """Fixed Patlak uses the same non-negative R² acceptance as auto mode."""
+    shape = (1, 1, 2)
+    common = {
+        "fitting_mask": np.ones(shape, dtype=bool),
+        "tsnr": np.full(shape, 20.0),
+        "peak_enhancement": np.full(shape, 20.0),
+        "ktrans": np.full(shape, 0.1),
+        "r_squared": np.array([[[0.0, -0.01]]]),
+        "ve": np.full(shape, np.nan),
+        "vp": np.full(shape, 0.1),
+        "kep": np.full(shape, np.nan),
+        "quality_flag": np.ones(shape, dtype=np.int8),
+        "model_selection": np.zeros(shape, dtype=np.int8),
+        "model_selection_codes": {"patlak": 1},
+        "is_auto": False,
+        "model_name": "patlak",
+    }
+
+    assert _build_dce_qc_mask(**common).tolist() == [[[1, 0]]]
+
+
+def test_evaluate_dce_qc_mask_reports_acceptance_policy() -> None:
+    """QC provenance distinguishes acquisition and model-fit acceptance."""
+    shape = (1, 1, 1)
+    evaluation = _evaluate_dce_qc_mask(
+        np.ones(shape, dtype=bool),
+        np.full(shape, 20.0),
+        np.full(shape, 20.0),
+        np.full(shape, 0.1),
+        np.full(shape, 0.1),
+        np.full(shape, np.nan),
+        np.full(shape, 0.1),
+        np.full(shape, np.nan),
+        np.ones(shape, dtype=np.int8),
+        np.ones(shape, dtype=np.int8),
+        {"patlak": 1},
+        True,
+        "auto",
+    )
+    assert evaluation.acceptance_policy["acquisition"]["minimum_tsnr"] == 10.0
+    assert evaluation.acceptance_policy["fit"]["minimum_r_squared"] == {
+        "patlak": 0.0,
+        "reversible_models": 0.5,
+    }
+
+
 def test_build_dce_qc_mask_rejects_quality_and_required_parameter_failures() -> None:
     """Only good fits with all model-required parameters are accepted."""
     shape = (1, 1, 4)

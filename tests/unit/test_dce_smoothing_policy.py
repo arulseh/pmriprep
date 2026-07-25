@@ -72,3 +72,17 @@ def test_smoothed_metadata_separates_smoothing_from_output_masking() -> None:
         assert metadata["SmoothingFWHM"] == 3.0
         assert metadata["OutputMaskApplied"] is True
         assert "SmoothingMasked" not in metadata
+
+
+def test_smoothed_metadata_limits_input_compartment_to_pk_maps() -> None:
+    """Model-free smoothed maps do not inherit PK-input metadata."""
+    base = {"InputFunctionCompartment": "plasma"}
+    pk_meta = _build_dce_smoothed_meta(
+        base, "Smoothed Ktrans", 3.0, map_key="ktrans",
+    )
+    model_free_meta = _build_dce_smoothed_meta(
+        base, "Smoothed IAUC60", 3.0, map_key="iauc60",
+    )
+
+    assert pk_meta["InputFunctionCompartment"] == "plasma"
+    assert "InputFunctionCompartment" not in model_free_meta

@@ -23,7 +23,7 @@ def base_sidecar() -> dict[str, Any]:
         "Sources": ["bids:raw:sub-X/perf/sub-X_dce.nii.gz"],
         "Resolution": "native",
         "VoxelSize": [1.0, 1.0, 3.0],
-        "KtransConvention": "plasma_Tofts1999",
+        "InputFunctionCompartment": "plasma",
     }
 
 
@@ -187,7 +187,7 @@ class TestBaseFieldsSurvive:
         assert out["SkullStripped"] is False
         assert out["SpatialReference"] == base_sidecar["SpatialReference"]
         assert out["Sources"] == base_sidecar["Sources"]
-        assert out["KtransConvention"] == "plasma_Tofts1999"
+        assert out["InputFunctionCompartment"] == "plasma"
 
 
 class TestEmptyInputs:

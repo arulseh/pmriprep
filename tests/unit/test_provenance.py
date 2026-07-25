@@ -63,6 +63,20 @@ class TestEnrichDCE:
                         "fraction_of_attempted": 0.98,
                     }
                 },
+                "qc_acceptance_policy": {
+                    "acquisition": {"minimum_tsnr": 10.0},
+                    "fit": {
+                        "minimum_r_squared": {
+                            "patlak": 0.0,
+                            "reversible_models": 0.5,
+                        }
+                    },
+                },
+                "qc_component_failures": {
+                    "scope": "fitted_voxels",
+                    "counts_are_overlapping": True,
+                    "r_squared": 12,
+                },
                 "r2_median": 0.87,
                 "qc_voxel_rsquared": 0.95,
             },
@@ -108,6 +122,15 @@ class TestEnrichDCE:
                 "fraction_of_attempted"
             ]
             == pytest.approx(0.98)
+        )
+        assert (
+            perf["PKModeling"]["QCAcceptancePolicy"]["fit"][
+                "minimum_r_squared"
+            ]["patlak"]
+            == 0.0
+        )
+        assert (
+            perf["PKModeling"]["QCComponentFailures"]["r_squared"] == 12
         )
         assert perf["PKModeling"]["voxel_rsquared"] == pytest.approx(0.95, abs=0.001)
         assert perf["ModelSuitability"]["2CXM"]["status"] == "WARN"

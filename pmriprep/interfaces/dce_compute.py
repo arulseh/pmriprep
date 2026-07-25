@@ -885,6 +885,7 @@ class _DCEQCMaskEvaluation(NamedTuple):
 
     mask: npt.NDArray[np.uint8]
     component_failures: dict[str, int]
+    acceptance_policy: dict[str, Any]
 
 
 def _evaluate_dce_qc_mask(
@@ -902,18 +903,38 @@ def _evaluate_dce_qc_mask(
     is_auto: bool,
     model_name: str,
 ) -> _DCEQCMaskEvaluation:
-    """Evaluate DCE quantitative acceptance and report each failed component."""
-    tsnr_ok = tsnr >= 10
+    """Evaluate acquisition and model-aware fit acceptance."""
+    signal_qc_available = peak_enhancement is not None
+    tsnr_ok = (
+        tsnr >= 10
+        if signal_qc_available
+        else np.ones(fitting_mask.shape, dtype=bool)
+    )
     enhancement_ok = (
         np.ones(fitting_mask.shape, dtype=bool)
         if peak_enhancement is None
         else peak_enhancement >= 10
     )
     ktrans_ok = (ktrans > 0) & (ktrans < 5.0)
-    r_squared_ok = r_squared >= 0.5
     quality_ok = quality_flag == 1
 
     is_patlak_voxel = model_selection == model_selection_codes.get("patlak", -1)
+    if not is_auto:
+        is_patlak_voxel = np.full(
+            fitting_mask.shape,
+            model_name == "patlak",
+            dtype=bool,
+        )
+    # Whole-curve R² is ill-conditioned when Patlak is selected for subtle
+    # leakage because the tissue-curve variance approaches the noise floor.
+    # Retain a minimal R² >= 0 requirement (better than a constant predictor)
+    # for Patlak, while reversible models retain the established R² >= 0.5
+    # fit-quality threshold.
+    r_squared_ok = np.where(
+        is_patlak_voxel,
+        r_squared >= 0.0,
+        r_squared >= 0.5,
+    )
     patlak_ok = np.isfinite(vp)
     tofts_ok = np.isfinite(ve) & (ve < 0.95) & np.isfinite(kep) & (kep > 0.001)
     extended_ok = (
@@ -949,8 +970,26 @@ def _evaluate_dce_qc_mask(
         name: int(np.count_nonzero(fitting_mask & ~component))
         for name, component in components.items()
     }
+    policy = {
+        "acquisition": {
+            "minimum_tsnr": 10.0 if signal_qc_available else None,
+            "minimum_peak_enhancement_percent": (
+                None if peak_enhancement is None else 10.0
+            ),
+        },
+        "fit": {
+            "minimum_r_squared": {
+                "patlak": 0.0,
+                "reversible_models": 0.5,
+            },
+            "required_quality_flag": "good",
+            "ktrans_minimum_per_min_exclusive": 0.0,
+            "ktrans_maximum_per_min_exclusive": 5.0,
+            "model_specific_parameter_checks": True,
+        },
+    }
     result: npt.NDArray[np.uint8] = qc_mask.astype(np.uint8)
-    return _DCEQCMaskEvaluation(result, failures)
+    return _DCEQCMaskEvaluation(result, failures, policy)
 
 
 def _compute_dce_coefficient_of_variation(
@@ -1190,6 +1229,7 @@ def _write_dce_terminal_outputs(
             "counts_are_overlapping": True,
             **qc_evaluation.component_failures,
         }
+        qc_metrics["qc_acceptance_policy"] = qc_evaluation.acceptance_policy
     outputs["out_qc_mask"] = generate_path("_qc_mask")
     write_map(qc_mask, outputs["out_qc_mask"], dtype=np.uint8)
     if is_auto:

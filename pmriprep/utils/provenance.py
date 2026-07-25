@@ -400,6 +400,10 @@ def _enrich_dce(
             pk_block["model_selection"] = selection
         if isinstance(pk.get("voxel_accounting"), dict):
             pk_block["VoxelAccounting"] = dict(pk["voxel_accounting"])
+        if isinstance(pk.get("qc_acceptance_policy"), dict):
+            pk_block["QCAcceptancePolicy"] = dict(pk["qc_acceptance_policy"])
+        if isinstance(pk.get("qc_component_failures"), dict):
+            pk_block["QCComponentFailures"] = dict(pk["qc_component_failures"])
         if "r2_median" in pk:
             pk_block["r2_median"] = _safe_float(pk["r2_median"])
         if "qc_voxel_rsquared" in pk:

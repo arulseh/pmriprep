@@ -20,7 +20,7 @@ def _ref_nifti(tmp_path: Path) -> Path:
     return p
 
 
-def test_sidecar_ktrans_convention_key_default_hct(tmp_path: Path) -> None:
+def test_pk_sidecar_records_plasma_input_compartment(tmp_path: Path) -> None:
     sidecar = build_dce_base_sidecar(
         source_paths=[],
         reference_voxel_source=_ref_nifti(tmp_path),
@@ -29,11 +29,12 @@ def test_sidecar_ktrans_convention_key_default_hct(tmp_path: Path) -> None:
         provenance_dict={"PerfusionProcessing": {"modality": "DCE"}},
         qc_metrics={"aif_detection": {"hematocrit": 0.42}},
     )
-    assert sidecar["KtransConvention"] == "plasma_Tofts1999"
-    assert sidecar["KtransConventionHct"] == pytest.approx(0.42)
+    assert sidecar["InputFunctionCompartment"] == "plasma"
+    assert "KtransConvention" not in sidecar
+    assert "KtransConventionHct" not in sidecar
 
 
-def test_sidecar_ktrans_convention_key_honours_hct_override(tmp_path: Path) -> None:
+def test_non_pk_sidecar_omits_input_compartment(tmp_path: Path) -> None:
     sidecar = build_dce_base_sidecar(
         source_paths=[],
         reference_voxel_source=_ref_nifti(tmp_path),
@@ -41,12 +42,12 @@ def test_sidecar_ktrans_convention_key_honours_hct_override(tmp_path: Path) -> N
         subject="01", session="01",
         provenance_dict={"PerfusionProcessing": {"modality": "DCE"}},
         qc_metrics={"aif_detection": {"hematocrit": 0.38}},
+        pk_dependent=False,
     )
-    assert sidecar["KtransConvention"] == "plasma_Tofts1999"
-    assert sidecar["KtransConventionHct"] == pytest.approx(0.38)
+    assert "InputFunctionCompartment" not in sidecar
 
 
-def test_minimal_sidecar_omits_convention_keys(tmp_path: Path) -> None:
+def test_minimal_sidecar_omits_input_compartment(tmp_path: Path) -> None:
     sidecar = build_dce_base_sidecar(
         source_paths=[],
         reference_voxel_source=_ref_nifti(tmp_path),
@@ -56,8 +57,7 @@ def test_minimal_sidecar_omits_convention_keys(tmp_path: Path) -> None:
         qc_metrics={"aif_detection": {"hematocrit": 0.42}},
         minimal=True,
     )
-    assert "KtransConvention" not in sidecar
-    assert "KtransConventionHct" not in sidecar
+    assert "InputFunctionCompartment" not in sidecar
 
 
 def test_sidecar_carries_m3_fields(tmp_path: Path) -> None:

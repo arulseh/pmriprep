@@ -58,7 +58,8 @@ def test_dce_factory_smoke(tmp_path: Path, minimal_bids: tuple[Path, str]) -> No
     assert sidecar["SpatialReference"].startswith("bids::sub-")
     assert sidecar["Resolution"] == "native"
     assert isinstance(sidecar["VoxelSize"], list)
-    assert sidecar["KtransConvention"] == "plasma_Tofts1999"
+    assert sidecar["InputFunctionCompartment"] == "plasma"
+    assert "KtransConvention" not in sidecar
 
 
 def test_dce_writer_recreates_deleted_cached_derivative(
@@ -571,6 +572,7 @@ def test_dce_factory_warnings_in_anchor_sidecar(
     assert any("T1 relaxation" in w for w in warnings)
     assert any("Brain mask" in w for w in warnings)
     assert any("registration transform" in w for w in warnings)
+    assert "InputFunctionCompartment" not in sidecar
 
     # Session-root QC JSON orphan must not exist
     legacy = (
