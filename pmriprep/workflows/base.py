@@ -1907,11 +1907,9 @@ def _connect_master_dsc_to_dce(
 ) -> None:
     """Route live or cached DSC CBV and QC state into DCE modeling."""
     _log = logging.getLogger("pmriprep.workflows")
-    # DSC dose (bolus multiplier + agent standard dose) flows into the
-    # DCE constraint quality gate so CNR coverage thresholds scale with
-    # administered Gd fraction. Read from dsc_config; defaults
-    # (1.0, 0.1) apply when DSC is absent.
-    if dsc_config is not None:
+
+    def _assign_dsc_dose() -> None:
+        """Route DSC dose metadata only when DSC data are available."""
         dce_wf.inputs.inputnode.dsc_dose = float(dsc_config.dose)
         dce_wf.inputs.inputnode.dsc_agent_standard_dose = float(
             dsc_config.agent_standard_dose
@@ -1921,6 +1919,7 @@ def _connect_master_dsc_to_dce(
     # Models with vp (extended_tofts, 2cxm) use DSC CBV as a fitting constraint.
     # Other models with vp (patlak) fit freely, cross-validate post-hoc.
     if dsc_wf is not None:
+        _assign_dsc_dose()
         # Fitting constraint: models with vp parameter (or auto, which may resolve to one)
         if dce_config.model in ("extended_tofts", "2cxm", "auto"):
             workflow.connect([
@@ -1970,6 +1969,7 @@ def _connect_master_dsc_to_dce(
             work_dir=Path(work_dir) if work_dir else None,
         )
         if prev_dsc["rel_cbv_map"] and prev_dsc["dsc_to_t1w_xfm"]:
+            _assign_dsc_dose()
             dce_wf.inputs.inputnode.dsc_cbv_file = prev_dsc["rel_cbv_map"]
             dce_wf.inputs.inputnode.dsc_to_t1w_xfm = prev_dsc["dsc_to_t1w_xfm"]
             if prev_dsc.get("ncbv_map"):
@@ -3175,8 +3175,8 @@ def _select_master_structural_references(
     )
 
     has_lesion_mask = (
-        dsc_config.lesion_mask is not None
-        or dce_config.lesion_mask is not None
+        (decision.run_dsc and dsc_config.lesion_mask is not None)
+        or (decision.run_dce and dce_config.lesion_mask is not None)
         or session_data.pipelines.tumor_seg
     )
     candidates = build_candidates_from_session(

@@ -457,6 +457,91 @@ def test_connect_master_dsc_to_dce_preserves_live_constraint_routes() -> None:
     )
 
 
+def test_connect_master_dsc_to_dce_ignores_dose_without_dsc_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DSC-only dose settings do not alter a DCE-only workflow."""
+    dce_input = SimpleNamespace(
+        dsc_dose=1.0,
+        dsc_agent_standard_dose=0.1,
+    )
+    dce_wf = SimpleNamespace(
+        inputs=SimpleNamespace(
+            inputnode=dce_input,
+            dce_dsc_validation_wf=SimpleNamespace(inputnode=SimpleNamespace()),
+        )
+    )
+    monkeypatch.setattr(
+        "pmriprep.workflows.base._find_previous_dsc_outputs",
+        lambda *args, **kwargs: {
+            "rel_cbv_map": None,
+            "ncbv_map": None,
+            "dsc_to_t1w_xfm": None,
+            "aif_qc": None,
+            "preload_qc": None,
+            "preprocessing_stats": None,
+        },
+    )
+
+    _connect_master_dsc_to_dce(
+        workflow=SimpleNamespace(connect=lambda _: None),
+        dsc_wf=None,
+        dce_wf=dce_wf,
+        dsc_config=DSCConfig(dose=0.5, agent_standard_dose=0.05),
+        dce_config=DCEConfig(model="extended_tofts"),
+        output_dir=tmp_path / "out",
+        work_dir=tmp_path / "work",
+        subject_id="0001",
+        session_id="0001",
+    )
+
+    assert dce_input.dsc_dose == 1.0
+    assert dce_input.dsc_agent_standard_dose == 0.1
+
+
+def test_connect_master_dsc_to_dce_routes_dose_with_cached_dsc(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reusable DSC maps carry their configured dose metadata into DCE."""
+    dce_input = SimpleNamespace(
+        dsc_dose=1.0,
+        dsc_agent_standard_dose=0.1,
+    )
+    dce_wf = SimpleNamespace(
+        inputs=SimpleNamespace(
+            inputnode=dce_input,
+            dce_dsc_validation_wf=SimpleNamespace(inputnode=SimpleNamespace()),
+        )
+    )
+    monkeypatch.setattr(
+        "pmriprep.workflows.base._find_previous_dsc_outputs",
+        lambda *args, **kwargs: {
+            "rel_cbv_map": "cached_cbv.nii.gz",
+            "ncbv_map": None,
+            "dsc_to_t1w_xfm": "cached_xfm.mat",
+            "aif_qc": None,
+            "preload_qc": None,
+            "preprocessing_stats": None,
+        },
+    )
+
+    _connect_master_dsc_to_dce(
+        workflow=SimpleNamespace(connect=lambda _: None),
+        dsc_wf=None,
+        dce_wf=dce_wf,
+        dsc_config=DSCConfig(dose=0.5, agent_standard_dose=0.05),
+        dce_config=DCEConfig(model="extended_tofts"),
+        output_dir=tmp_path / "out",
+        work_dir=tmp_path / "work",
+        subject_id="0001",
+        session_id="0001",
+    )
+
+    assert dce_input.dsc_dose == 0.5
+    assert dce_input.dsc_agent_standard_dose == 0.05
+    assert dce_input.dsc_cbv_file == "cached_cbv.nii.gz"
+
+
 def test_connect_master_dce_t1_b1_inputs_preserves_vfa_metadata(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -606,6 +691,57 @@ def test_select_master_structural_references_routes_each_application(
     ]
     assert plan.dsc is not None
     assert plan.dce is not None
+
+
+def test_select_master_structural_references_ignores_inactive_dsc_mask(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A DSC-only lesion mask does not alter DCE-only reference selection."""
+    lesion_mask = tmp_path / "dsc_lesion.nii.gz"
+    lesion_mask.touch()
+    session_data = SessionData(
+        subject="0001",
+        session="0001",
+        modalities=ModalityAvailability(
+            t1w_pre=tmp_path / "t1w.nii.gz",
+            dce=tmp_path / "dce.nii.gz",
+        ),
+        pipelines=PipelineAvailability(tumor_seg=False, dsc=False, dce=True),
+    )
+    build_calls: list[bool] = []
+    monkeypatch.setattr(
+        "pmriprep.utils.structural_reference.build_candidates_from_session",
+        lambda modalities, *, has_lesion_mask: (
+            build_calls.append(has_lesion_mask) or []
+        ),
+    )
+
+    _select_master_structural_references(
+        session_data=session_data,
+        decision=SimpleNamespace(run_dsc=False, run_dce=True),
+        dsc_config=DSCConfig(lesion_mask=lesion_mask),
+        dce_config=DCEConfig(),
+    )
+
+    assert build_calls == [False]
+
+    build_calls.clear()
+    _select_master_structural_references(
+        session_data=SessionData(
+            subject="0001",
+            session="0001",
+            modalities=ModalityAvailability(
+                t1w_pre=tmp_path / "t1w.nii.gz",
+                dsc=tmp_path / "dsc.nii.gz",
+            ),
+            pipelines=PipelineAvailability(tumor_seg=False, dsc=True, dce=False),
+        ),
+        decision=SimpleNamespace(run_dsc=True, run_dce=False),
+        dsc_config=DSCConfig(),
+        dce_config=DCEConfig(lesion_mask=lesion_mask),
+    )
+
+    assert build_calls == [False]
 
 
 def test_prepare_master_preflight_state_preserves_metadata_policy(
