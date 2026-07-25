@@ -103,6 +103,53 @@ def test_dce_signal_conversion_qc_renders(env):
     )
 
 
+def test_dce_no_t1_assumption_renders_without_wm_statistics(env):
+    """Configured no-T1 runs use assumed-T1 fields without requiring WM QC."""
+    template = env.get_template("sections/section_dce.html")
+    dce = {
+        "qc_metrics": {
+            "t1_mapping": {
+                "method": "assumed",
+                "t1_status": "Skipped by configuration",
+                "skipped": True,
+                "assumed_t1_ms": 1200.0,
+                "assumed_t1_field_strength_t": 3.0,
+                "assumed_t1_policy": "uniform_field_strength_reference",
+                "b1_correction": "precomputed",
+            },
+        },
+        "images": {},
+        "display_status": {},
+    }
+
+    rendered = template.render(dce=dce)
+
+    assert "Skipped by configuration" in rendered
+    assert "T1 Value Used" in rendered
+    assert "1200 ms" in rendered
+    assert "Uniform (1200 ms)" in rendered
+
+
+def test_dce_skipped_t1_with_incomplete_qc_renders_safely(env):
+    """An incomplete skipped-T1 QC dictionary cannot abort report rendering."""
+    template = env.get_template("sections/section_dce.html")
+    dce = {
+        "qc_metrics": {
+            "t1_mapping": {
+                "t1_status": "Skipped",
+                "skipped": True,
+            },
+        },
+        "images": {},
+        "display_status": {},
+    }
+
+    rendered = template.render(dce=dce)
+
+    assert "T1 Method" in rendered
+    assert "Uniform" in rendered
+
+
 def test_dce_aif_peak_scaling_qc_renders(env):
     """Raw/emitted peaks plus the resolved scaling policy reach HTML."""
     template = env.get_template("sections/section_dce.html")

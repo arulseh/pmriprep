@@ -208,8 +208,12 @@
                 <div class="metric-value">
                     {% if dce.qc_metrics.t1_mapping.tissue_t1_used | default(false) %}
                         Tissue-segmented
-                    {% else %}
+                    {% elif dce.qc_metrics.t1_mapping.assumed_t1_ms is defined and dce.qc_metrics.t1_mapping.assumed_t1_ms is not none %}
+                        Uniform ({{ dce.qc_metrics.t1_mapping.assumed_t1_ms | int }} ms)
+                    {% elif dce.qc_metrics.t1_mapping.mean_t1_wm_ms is defined and dce.qc_metrics.t1_mapping.mean_t1_wm_ms is not none %}
                         Uniform ({{ dce.qc_metrics.t1_mapping.mean_t1_wm_ms | int }} ms)
+                    {% else %}
+                        Uniform
                     {% endif %}
                 </div>
             </div>
