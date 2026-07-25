@@ -1434,6 +1434,18 @@ def _dce_t1_cosmetic_keys(t1_qc: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         out["T1MappingMethod"] = str(method)
     if "b1_correction" in t1_qc:
         out["T1B1Correction"] = str(t1_qc["b1_correction"])
+    if "assumed_t1_ms" in t1_qc and t1_qc["assumed_t1_ms"] is not None:
+        out["T1AssumedValue"] = float(t1_qc["assumed_t1_ms"])
+        out["T1AssumedValueUnits"] = "ms"
+    if (
+        "assumed_t1_field_strength_t" in t1_qc
+        and t1_qc["assumed_t1_field_strength_t"] is not None
+    ):
+        out["T1AssumptionFieldStrength"] = float(
+            t1_qc["assumed_t1_field_strength_t"]
+        )
+    if "assumed_t1_policy" in t1_qc and t1_qc["assumed_t1_policy"] is not None:
+        out["T1AssumptionPolicy"] = str(t1_qc["assumed_t1_policy"])
     raw_corr = t1_qc.get("t1_correction")
     corr: Dict[str, Any] = raw_corr if isinstance(raw_corr, dict) else {}
     if "correction_applied" in corr:

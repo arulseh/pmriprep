@@ -1119,6 +1119,8 @@ def init_dce_datasinks_wf(
     has_smoothing: bool = False,
     motion_correct: bool = True,
     b1_source_files: Optional[list[str]] = None,
+    t1_map_expected: bool = True,
+    b1_map_expected: bool = True,
     name: str = "dce_datasinks_wf",
 ) -> pe.Workflow:
     """Build the DCE-pipeline DerivativesDataSink chain.
@@ -1500,9 +1502,9 @@ def init_dce_datasinks_wf(
         # full nested-dict shape.
         presence_warnings_dce = [
             warn for cond, warn in (
-                ("b1_map" not in present,
+                (b1_map_expected and "b1_map" not in present,
                  "B1+ transmit field map not available"),
-                ("t1_map" not in present,
+                (t1_map_expected and "t1_map" not in present,
                  "T1 relaxation time map not available"),
                 ("brain_mask" not in present,
                  "Brain mask in DCE space not available"),

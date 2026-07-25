@@ -41,8 +41,17 @@ def test_t1_b1_workflow_external_t1_mode() -> None:
 
 
 def test_t1_b1_workflow_no_t1_mode() -> None:
-    """No-T1 mode preserves an explicit empty NiPreps-style contract."""
-    assert _names(DCEConfig(no_t1=True)) == {"inputnode", "outputnode"}
+    """No-T1 mode retains B1 correction for DCE signal conversion."""
+    assert _names(DCEConfig(no_t1=True)) == {
+        "inputnode", "outputnode", "b1_mapping",
+    }
+
+
+def test_t1_b1_workflow_no_t1_no_b1_mode() -> None:
+    """Explicit B1 opt-out leaves the no-T1 preparation contract empty."""
+    assert _names(DCEConfig(no_t1=True, b1_method="none")) == {
+        "inputnode", "outputnode",
+    }
 
 
 def test_dce_native_input_workflow_contract() -> None:

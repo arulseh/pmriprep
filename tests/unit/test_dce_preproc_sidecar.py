@@ -65,6 +65,23 @@ class TestT1Keys:
         assert out["T1CorrectionApplied"] == "offset"
         assert out["T1UseTissueLiterature"] is False
 
+    def test_assumed_t1_keys(self, base_sidecar):
+        qc = {
+            "t1_mapping": {
+                "method": "assumed",
+                "b1_correction": "precomputed",
+                "assumed_t1_ms": 1200.0,
+                "assumed_t1_field_strength_t": 3.0,
+                "assumed_t1_policy": "uniform_field_strength_reference",
+            }
+        }
+        out = enrich_dce_preproc_sidecar(dict(base_sidecar), qc_metrics=qc)
+        assert out["T1AssumedValue"] == pytest.approx(1200.0)
+        assert out["T1AssumedValueUnits"] == "ms"
+        assert out["T1AssumptionFieldStrength"] == pytest.approx(3.0)
+        assert out["T1AssumptionPolicy"] == "uniform_field_strength_reference"
+        assert out["T1B1Correction"] == "precomputed"
+
 
 class TestB1Keys:
     def test_b1_mapping_keys(self, base_sidecar, dce_qc_metrics):

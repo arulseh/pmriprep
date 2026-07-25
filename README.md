@@ -171,7 +171,7 @@ pmriprep bids_dir output_dir {participant} [options]
 | `--dce-r1 R1` | Override r1 relaxivity (s⁻¹/mM) for concentration conversion |
 | `--dce-b1-method {auto,afi,precomputed,none}` | B1+ correction method (default: auto) |
 | `--dce-b1-map-encoding {auto,actual_flip_deci_deg,actual_flip_deg,percent,ratio}` | Pre-computed B1+ map pixel encoding (default: auto, from BIDS suffix/Units) |
-| `--dce-no-t1` | Skip T1 mapping (use default T1 for field strength) |
+| `--dce-no-t1` | Skip T1 mapping (use default T1 for field strength; B1+ correction remains independent) |
 | `--dce-t1-map FILE` | External T1 map (NIfTI, units: milliseconds). Bypasses VFA T1 fitting. Useful for MP2RAGE, MOLLI, or ground-truth T1 maps. |
 
 ### Anatomical Options
@@ -284,7 +284,7 @@ tumor_seg:
 | `n_aif_candidates` | int | `10` | Maximum number of AIF candidate voxels to retain and average; fewer may survive selection |
 | `lesion_distance` | float | `15.0` | Minimum distance (mm) from lesion for AIF candidates |
 | `aif_bat_alignment` | str | `"auto"` | AIF→tumor bolus-arrival alignment: `auto`, `off` |
-| `no_t1` | bool | `false` | Skip T1 mapping |
+| `no_t1` | bool | `false` | Skip T1 mapping; B1+ correction remains controlled by `b1_method` |
 | `t1_method` | str | `"hybrid"` | VFA T1 fitting: `hybrid`, `wlls`, `nlls` |
 | `t1_map_file` | path | `null` | External T1 map (NIfTI, ms). Bypasses VFA fitting |
 | `t1_correction_mode` | str | `"auto"` | T1 policy: `auto` retains plausible measured maps and uses a tissue-based or uniform literature fallback for rejected maps; `none`, `offset`, and `fallback` explicitly select those behaviors |

@@ -2033,17 +2033,17 @@ def _init_master_dce_workflow(
 
     _log = logging.getLogger("pmriprep.workflows")
     # Auto-skip T1 mapping when no VFA data is available
-    if not session_data.modalities.vfa and not dce_config.no_t1:
+    if (
+        not session_data.modalities.vfa
+        and not dce_config.no_t1
+        and dce_config.t1_map_file is None
+    ):
         _log.warning(
             "No VFA data found for sub-%s ses-%s; "
             "disabling T1 mapping (using field-strength default T1)",
             subject_id, session_id,
         )
         dce_config.no_t1 = True
-        # Without VFA, AFI-based B1+ is unnecessary (no flip angles to correct).
-        # A pre-computed B1+ map still works — it directly corrects the flip angle.
-        if not session_data.modalities.b1_precomputed_file:
-            dce_config.b1_method = "none"
 
     # Resolve b1_method="auto" to a concrete method based on available data
     b1_method = dce_config.b1_method
@@ -2780,6 +2780,8 @@ def _connect_master_dce_outputs_and_datasinks(
         has_smoothing=dce_config.smooth_fwhm > 0,
         motion_correct=dce_config.motion_correct,
         b1_source_files=_selected_dce_b1_sources(session_data, dce_config),
+        t1_map_expected=not dce_config.no_t1,
+        b1_map_expected=dce_config.b1_method != "none",
     )
     _dce_cfg = dataclasses.asdict(dce_config)
     for _k, _v in _dce_cfg.items():

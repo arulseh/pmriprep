@@ -670,9 +670,10 @@ def init_dce_t1_b1_wf(
 
     use_external_t1 = config.t1_map_file is not None
     use_vfa_t1 = not config.no_t1 and not use_external_t1
-    need_b1 = use_vfa_t1 or (use_external_t1 and config.b1_method != "none")
+    apply_b1 = config.b1_method != "none"
+    prepare_b1 = use_vfa_t1 or apply_b1
 
-    if need_b1:
+    if prepare_b1:
         b1_mapping = pe.Node(
             B1Mapping(skip_b1=(config.b1_method == "none")),
             name="b1_mapping",
@@ -1201,7 +1202,7 @@ def init_dce_qc_collection_wf(
     collect.inputs.no_t1 = config.no_t1
     collect.inputs.b1_method = config.b1_method
     use_vfa_t1 = not config.no_t1 and not use_external_t1
-    need_b1 = use_vfa_t1 or (use_external_t1 and config.b1_method != "none")
+    need_b1 = use_vfa_t1 or config.b1_method != "none"
     if not use_vfa_t1:
         collect.inputs.t1_qc = None
     if not need_b1:
@@ -1725,19 +1726,18 @@ def init_dce_preproc_wf(
     # Three T1 source modes:
     #   1. VFA T1 fitting (default): full VFA→B1→T1 chain
     #   2. External T1 map: skip VFA fitting, keep B1 for concentration conversion
-    #   3. no_t1: skip everything, use field-strength default T1
+    #   3. no_t1: skip T1 mapping, use field-strength default T1
     use_external_t1 = config.t1_map_file is not None
     use_vfa_t1 = not config.no_t1 and not use_external_t1
-    # B1 needed for VFA fitting AND concentration conversion with external T1.
-    # Skip if b1_method="none" and using external T1 (no AFI data expected).
-    need_b1 = use_vfa_t1 or (use_external_t1 and config.b1_method != "none")
+    # B1 corrects the DCE excitation flip angle independently of the T1 source.
+    need_b1 = use_vfa_t1 or config.b1_method != "none"
 
     t1_b1_wf = init_dce_t1_b1_wf(
         config=config,
         subject_id=subject_id,
         session_id=session_id,
     )
-    if need_b1:
+    if need_b1 or use_vfa_t1:
         workflow.connect([
             (inputnode, t1_b1_wf, [
                 ("vfa_files", "inputnode.vfa_files"),
@@ -2116,7 +2116,14 @@ def init_dce_preproc_wf(
             signal_to_conc.inputs.b1_map_file = None
     else:  # no_t1
         signal_to_conc.inputs.t1_map_file = None
-        signal_to_conc.inputs.b1_map_file = None
+        if need_b1:
+            workflow.connect([
+                (transform_b1_to_dce, signal_to_conc, [
+                    ("out_file", "b1_map_file"),
+                ]),
+            ])
+        else:
+            signal_to_conc.inputs.b1_map_file = None
 
     # ==========================================================================
     # Node 6: AIF Detection
@@ -2557,7 +2564,7 @@ def init_dce_preproc_wf(
                 ("outputnode.t1_qc", "inputnode.t1_qc"),
             ]),
         ])
-    elif use_external_t1 and need_b1:
+    elif need_b1:
         workflow.connect([
             (t1_b1_wf, dce_qc_collection_wf, [
                 ("outputnode.b1_qc", "inputnode.b1_qc"),
@@ -2805,7 +2812,7 @@ def init_dce_preproc_wf(
                 ("outputnode.t1_qc_plot", "t1_qc_plot"),
             ]),
         ])
-    elif use_external_t1 and need_b1:
+    elif need_b1:
         workflow.connect([
             (t1_b1_wf, outputnode, [
                 ("outputnode.b1_map", "b1_map"),

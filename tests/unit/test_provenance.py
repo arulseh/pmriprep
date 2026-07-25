@@ -182,6 +182,25 @@ class TestEnrichDCE:
         assert t1["tissue_segmented"] is False
         assert t1["T1_WM_ms"] == pytest.approx(1200.0)
 
+    def test_assumed_t1_numeric_policy(self) -> None:
+        """Uniform assumed T1 records its value, field strength, and policy."""
+        sidecar = _make_dce_sidecar()
+        qc = {
+            "t1_mapping": {
+                "method": "assumed",
+                "b1_correction": "precomputed",
+                "assumed_t1_ms": 1200.0,
+                "assumed_t1_field_strength_t": 3.0,
+                "assumed_t1_policy": "uniform_field_strength_reference",
+            },
+        }
+        result = enrich_provenance_from_qc(sidecar, qc, "DCE")
+        t1 = result["PerfusionProcessing"]["T1Mapping"]
+        assert t1["AssumedT1_ms"] == pytest.approx(1200.0)
+        assert t1["FieldStrength_T"] == pytest.approx(3.0)
+        assert t1["assumption_policy"] == "uniform_field_strength_reference"
+        assert t1["B1_correction"] == "precomputed"
+
     def test_missing_t1_mapping(self) -> None:
         """Missing t1_mapping in QC is silently skipped."""
         sidecar = _make_dce_sidecar()

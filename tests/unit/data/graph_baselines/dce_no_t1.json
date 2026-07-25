@@ -79,6 +79,36 @@
       "aif_curve_qc_plot"
     ],
     [
+      "b1_mapping",
+      "out_file",
+      "outputnode",
+      "b1_map"
+    ],
+    [
+      "b1_mapping",
+      "out_file",
+      "transform_b1_to_dce",
+      "b1_map_file"
+    ],
+    [
+      "b1_mapping",
+      "qc_metrics",
+      "collect_qc_metrics",
+      "b1_qc"
+    ],
+    [
+      "b1_mapping",
+      "qc_plot",
+      "outputnode",
+      "b1_qc_plot"
+    ],
+    [
+      "b1_mapping",
+      "registration_qc_plot",
+      "outputnode",
+      "afi_registration_qc_plot"
+    ],
+    [
       "collect_qc_metrics",
       "qc_metrics",
       "outputnode",
@@ -310,6 +340,12 @@
       "dce_preprocess",
       "mean_img",
       "transform_atlas_cascade",
+      "reference_file"
+    ],
+    [
+      "dce_preprocess",
+      "mean_img",
+      "transform_b1_to_dce",
       "reference_file"
     ],
     [
@@ -560,9 +596,51 @@
     ],
     [
       "inputnode",
+      "afi_4d_file",
+      "b1_mapping",
+      "afi_4d_file"
+    ],
+    [
+      "inputnode",
+      "afi_flip_angle",
+      "b1_mapping",
+      "nominal_flip_angle"
+    ],
+    [
+      "inputnode",
+      "afi_tr1",
+      "b1_mapping",
+      "tr1"
+    ],
+    [
+      "inputnode",
+      "afi_tr2",
+      "b1_mapping",
+      "tr2"
+    ],
+    [
+      "inputnode",
       "agent_standard_dose",
       "aif_detection",
       "agent_standard_dose"
+    ],
+    [
+      "inputnode",
+      "b1_map_encoding",
+      "b1_mapping",
+      "b1_map_encoding"
+    ],
+    [
+      "inputnode",
+      "b1_nominal_prep_fa",
+      "b1_mapping",
+      "b1_nominal_prep_fa"
+    ],
+    [
+      "inputnode",
+      "brain_mask",
+      "b1_mapping",
+      "brain_mask"
     ],
     [
       "inputnode",
@@ -581,6 +659,12 @@
       "csf_probseg",
       "transform_csf_probseg",
       "probseg_file"
+    ],
+    [
+      "inputnode",
+      "dce_file",
+      "b1_mapping",
+      "reference_file"
     ],
     [
       "inputnode",
@@ -639,6 +723,12 @@
     [
       "inputnode",
       "field_strength",
+      "b1_mapping",
+      "field_strength"
+    ],
+    [
+      "inputnode",
+      "field_strength",
       "signal_to_concentration",
       "field_strength"
     ],
@@ -677,6 +767,12 @@
       "non_enhancing_mask",
       "transform_non_enhancing_mask",
       "mask_file"
+    ],
+    [
+      "inputnode",
+      "precomputed_b1_file",
+      "b1_mapping",
+      "precomputed_b1_file"
     ],
     [
       "inputnode",
@@ -1579,6 +1675,12 @@
       "atlas_mask_files"
     ],
     [
+      "transform_b1_to_dce",
+      "out_file",
+      "signal_to_concentration",
+      "b1_map_file"
+    ],
+    [
       "transform_brain_mask",
       "out_file",
       "create_aif_mask",
@@ -1995,6 +2097,15 @@
         "out_files"
       ]
     },
+    "transform_b1_to_dce": {
+      "input_names": [
+        "b1_map_file",
+        "reference_file"
+      ],
+      "output_names": [
+        "out_file"
+      ]
+    },
     "transform_brain_mask": {
       "input_names": [
         "mask_file",
@@ -2108,7 +2219,7 @@
     }
   },
   "function_sha256": {
-    "collect_qc_metrics": "999da29880f9f80436cc88daf2d28b7cdb48072577605f2fb6d6a1f07b8d2063",
+    "collect_qc_metrics": "74abf0733085058d24e633f1ce5b3f25ad226d544a3356fa31467065a1f522f7",
     "combine_masks": "f2748155dafc15b2d74a066b3da5db0ed2a4b5486b46ee8ea1f4c7a181de8fcf",
     "create_aif_mask": "b7f950098e31edf1f4ae33feeceb4f24287680351c18994377a6129477eb1b0d",
     "dce_brain_mask_qc": "ced2d6d4b823457166d3fb21083d6220f2b0dc0e0155de5c134e6d98210b5086",
@@ -2124,8 +2235,9 @@
     "resample_dsc_cbv": "8637643d62fc961aafa3946ba1321ebcf4744121cb1b91e9b01bde70a4024ba3",
     "resample_dsc_ncbv": "9016b6e864f3d6e0149ee556592202a4fb42cec4b3e2a90946ff48dbfa6caf72",
     "select_aif_exclusion": "3ac6f0a171a3c915c7c043706044fb8dd45d2a9c05f1d1fad613919135724b21",
-    "signal_to_concentration": "1cc66de7da8f53a6b478f66b67b59e5799460f8b654e21b2cbc1385686b2fe9f",
+    "signal_to_concentration": "da6e49f1aad39561af159e0b9f69e02a125dc2e2b34263d12d67486a5db63dc1",
     "transform_atlas_cascade": "92097e5d6df046e1997dbee6d10208373b12e5535619d7397855d263159a752a",
+    "transform_b1_to_dce": "9aa1395aee7d127f071c5cfce13ad16cd0a171847d34873e88945e12e81f3604",
     "transform_brain_mask": "d79c70197847c13c4a4fd38f056ae9911584e27b3d0d1a55b81ebbbc0dc8c3e4",
     "transform_csf_probseg": "d42319ef4b96c5e514991c04481db2429bcaa31287a9a3076f12e2751c92ab80",
     "transform_enhancing_mask": "d79c70197847c13c4a4fd38f056ae9911584e27b3d0d1a55b81ebbbc0dc8c3e4",
@@ -2145,6 +2257,10 @@
       "n_procs": 1
     },
     "aif_qc_plot": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "b1_mapping": {
       "mem_gb": 0.2,
       "n_procs": 1
     },
@@ -2256,6 +2372,10 @@
       "mem_gb": 0.2,
       "n_procs": 1
     },
+    "transform_b1_to_dce": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
     "transform_brain_mask": {
       "mem_gb": 0.2,
       "n_procs": 1
@@ -2324,9 +2444,17 @@
       "subject_id": "0001",
       "tr": 1.5
     },
+    "b1_mapping": {
+      "b1_map_encoding": "auto",
+      "field_strength": 3.0,
+      "nominal_flip_angle": 60.0,
+      "session_id": "0001",
+      "skip_b1": false,
+      "smoothing_fwhm": 8.0,
+      "subject_id": "0001"
+    },
     "collect_qc_metrics": {
       "b1_method": "auto",
-      "b1_qc": null,
       "no_t1": true,
       "t1_qc": null,
       "use_external_t1": false
@@ -2441,7 +2569,6 @@
       "function_str": "def select_aif_exclusion_mask(\n    user_lesion_mask: str | None = None,\n    transformed_lesion_mask: str | None = None,\n) -> str:\n    \"\"\"Select the lesion mask used to exclude AIF candidates.\n\n    Parameters\n    ----------\n    user_lesion_mask : str or None\n        User-supplied lesion mask in native perfusion space.\n    transformed_lesion_mask : str or None\n        Tumor-segmentation mask transformed to native perfusion space.\n\n    Returns\n    -------\n    str\n        The user mask when present, otherwise the transformed mask or ``\"\"``.\n    \"\"\"\n    from nipype.interfaces.base import isdefined\n\n    if isdefined(user_lesion_mask) and user_lesion_mask not in (None, \"\"):\n        return str(user_lesion_mask)\n    if (\n        isdefined(transformed_lesion_mask)\n        and transformed_lesion_mask not in (None, \"\")\n    ):\n        return str(transformed_lesion_mask)\n    return \"\"\n"
     },
     "signal_to_concentration": {
-      "b1_map_file": null,
       "no_t1": true,
       "t1_map_file": null
     },
@@ -2480,6 +2607,10 @@
     [
       "aif_qc_plot",
       "DCEAIFQCPlot"
+    ],
+    [
+      "b1_mapping",
+      "B1Mapping"
     ],
     [
       "collect_qc_metrics",
@@ -2587,6 +2718,10 @@
     ],
     [
       "transform_atlas_cascade",
+      "Function"
+    ],
+    [
+      "transform_b1_to_dce",
       "Function"
     ],
     [

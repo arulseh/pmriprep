@@ -633,6 +633,10 @@ def _signal_to_concentration_node(
 
     from pmriprep.utils.dce_constants import EPSILON_SIGNAL
     from pmriprep.utils.dce_signal import signal_to_concentration
+    from pmriprep.utils.dce_t1_validation import (
+        T1_TISSUE_REFERENCE,
+        get_field_strength_key,
+    )
 
     # Load DCE data
     dce_img = nib.load(dce_file)
@@ -695,6 +699,15 @@ def _signal_to_concentration_node(
     # array broadcasts the assignment across the trailing time axis.
     conversion_qc = dict(result.conversion_qc)
     conversion_qc["qc_domain"] = "dce_brain_mask"
+    conversion_qc["t1_source"] = "assumed" if t1_map is None else "map"
+    if t1_map is None:
+        field_key = get_field_strength_key(field_strength)
+        conversion_qc["assumed_t1_ms"] = float(
+            T1_TISSUE_REFERENCE[field_key]["default"]
+        )
+        conversion_qc["assumed_t1_field_strength_t"] = float(field_strength)
+        conversion_qc["assumed_t1_policy"] = "uniform_field_strength_reference"
+    conversion_qc["b1_correction_applied"] = b1_map is not None
     baseline_signal = np.asarray(result.baseline_signal)
     signal_support = (
         np.isfinite(baseline_signal)
@@ -1092,9 +1105,25 @@ def _collect_qc_metrics(
         }
     elif no_t1:
         # No T1 mapping - using assumed literature values
+        conversion = (
+            signal_conversion_qc
+            if isinstance(signal_conversion_qc, dict)
+            else {}
+        )
+        if b1_qc is not None:
+            b1_correction = str(b1_qc.get("method", b1_method))
+        else:
+            b1_correction = "none"
         qc_metrics["t1_mapping"] = {
             "method": "assumed",
-            "b1_correction": "none",
+            "t1_status": "Skipped by configuration",
+            "skipped": True,
+            "assumed_t1_ms": conversion.get("assumed_t1_ms"),
+            "assumed_t1_field_strength_t": conversion.get(
+                "assumed_t1_field_strength_t"
+            ),
+            "assumed_t1_policy": conversion.get("assumed_t1_policy"),
+            "b1_correction": b1_correction,
         }
 
     if preprocess_qc is not None:

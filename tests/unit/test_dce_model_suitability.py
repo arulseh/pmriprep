@@ -133,3 +133,35 @@ def test_qc_collection_runs_suitability_after_merging_inputs() -> None:
         "reduced_aif_confidence",
     ]
     assert assessment["metrics"]["t1_method"] == "external"
+
+
+def test_qc_collection_discloses_assumed_t1_and_independent_b1() -> None:
+    """No-T1 QC records the quantitative assumption and applied B1 method."""
+    from pmriprep.workflows.dce._helpers import _collect_qc_metrics
+
+    collected = _collect_qc_metrics(
+        b1_qc={"method": "precomputed"},
+        t1_qc=None,
+        signal_conversion_qc={
+            "assumed_t1_ms": 1200.0,
+            "assumed_t1_field_strength_t": 3.0,
+            "assumed_t1_policy": "uniform_field_strength_reference",
+        },
+        preprocess_qc=None,
+        registration_qc=None,
+        aif_qc=None,
+        pk_qc=None,
+        validation_result=None,
+        no_t1=True,
+        b1_method="precomputed",
+    )
+
+    assert collected["t1_mapping"] == {
+        "method": "assumed",
+        "t1_status": "Skipped by configuration",
+        "skipped": True,
+        "assumed_t1_ms": 1200.0,
+        "assumed_t1_field_strength_t": 3.0,
+        "assumed_t1_policy": "uniform_field_strength_reference",
+        "b1_correction": "precomputed",
+    }

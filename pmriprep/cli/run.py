@@ -441,7 +441,8 @@ Examples:
         action="store_const",
         const=True,
         default=None,
-        help="Skip T1 mapping (use field-strength-appropriate default T1).",
+        help="Skip T1 mapping (use field-strength-appropriate default T1). "
+             "B1+ correction remains controlled by --dce-b1-method.",
     )
     dce_group.add_argument(
         "--dce-t1-map",

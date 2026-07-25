@@ -291,6 +291,17 @@ def _enrich_dce(
             t1_block["correction"] = dict(correction)
         if method == "assumed":
             t1_block["tissue_segmented"] = bool(t1.get("tissue_t1_used", False))
+            if "assumed_t1_ms" in t1 and t1["assumed_t1_ms"] is not None:
+                t1_block["AssumedT1_ms"] = _safe_float(t1["assumed_t1_ms"])
+            if (
+                "assumed_t1_field_strength_t" in t1
+                and t1["assumed_t1_field_strength_t"] is not None
+            ):
+                t1_block["FieldStrength_T"] = _safe_float(
+                    t1["assumed_t1_field_strength_t"]
+                )
+            if "assumed_t1_policy" in t1 and t1["assumed_t1_policy"] is not None:
+                t1_block["assumption_policy"] = str(t1["assumed_t1_policy"])
             if "mean_t1_wm_ms" in t1:
                 t1_block["T1_WM_ms"] = _safe_float(t1["mean_t1_wm_ms"])
             if "mean_t1_gm_ms" in t1:

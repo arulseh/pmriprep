@@ -126,7 +126,17 @@
             {% if dce.qc_metrics.t1_mapping.t1_status is defined %}
             <div class="metric">
                 <div class="metric-label">T1 Status</div>
-                <div class="metric-value {{ dce.qc_metrics.t1_mapping.t1_status | lower }}">{{ dce.qc_metrics.t1_mapping.t1_status }}</div>
+                <div class="metric-value{% if not (dce.qc_metrics.t1_mapping.skipped | default(false)) %} {{ dce.qc_metrics.t1_mapping.t1_status | lower }}{% endif %}">{{ dce.qc_metrics.t1_mapping.t1_status }}</div>
+            </div>
+            {% endif %}
+            {% if dce.qc_metrics.t1_mapping.assumed_t1_ms is defined and dce.qc_metrics.t1_mapping.assumed_t1_ms is not none %}
+            <div class="metric">
+                <div class="metric-label">T1 Value Used</div>
+                <div class="metric-value">{{ "%.0f"|format(dce.qc_metrics.t1_mapping.assumed_t1_ms) }} ms</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">T1 Policy</div>
+                <div class="metric-value">Uniform field-strength assumption</div>
             </div>
             {% endif %}
             {% if dce.qc_metrics.t1_mapping.t1_method is defined %}
@@ -204,7 +214,7 @@
                 </div>
             </div>
             {% endif %}
-            {% if dce.qc_metrics.signal_conversion is defined and dce.qc_metrics.signal_conversion.t1_invalid_voxels is defined %}
+            {% if not (dce.qc_metrics.t1_mapping.skipped | default(false)) and dce.qc_metrics.signal_conversion is defined and dce.qc_metrics.signal_conversion.t1_invalid_voxels is defined %}
             <div class="metric">
                 <div class="metric-label">Invalid T1 in DCE Space</div>
                 <div class="metric-value">{{ "{:,}".format(dce.qc_metrics.signal_conversion.t1_invalid_voxels | default(0)) }}{% if dce.qc_metrics.signal_conversion.t1_invalid_fraction is defined %} ({{ "%.2f"|format(dce.qc_metrics.signal_conversion.t1_invalid_fraction * 100) }}% brain support){% endif %}</div>

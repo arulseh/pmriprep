@@ -95,6 +95,46 @@ def test_signal_conversion_node_scopes_t1_qc_to_brain_mask(
     assert qc["t1_invalid_fraction"] == 0.0
 
 
+def test_no_t1_signal_conversion_retains_b1_correction(tmp_path: Any) -> None:
+    """Assumed-T1 conversion still applies the measured excitation field."""
+    import nibabel as nib  # type: ignore[import-untyped]
+
+    from pmriprep.workflows.dce._helpers import _signal_to_concentration_node
+
+    signal = np.full((1, 1, 1, 10), 100.0)
+    signal[..., 5:] = 130.0
+    dce_file = _write_nifti(tmp_path / "dce.nii.gz", signal)
+    brain_mask_file = _write_nifti(
+        tmp_path / "brain_mask.nii.gz", np.ones((1, 1, 1))
+    )
+    b1_file = _write_nifti(
+        tmp_path / "b1.nii.gz", np.full((1, 1, 1), 0.8)
+    )
+
+    with mock.patch("pathlib.Path.cwd", return_value=tmp_path):
+        nominal_file, nominal_qc = _signal_to_concentration_node(
+            dce_file, brain_mask_file, None, None,
+            15.0, 0.005, 3.0, 3.8, 5, True,
+        )
+        nominal = np.asarray(nib.load(nominal_file).dataobj).copy()
+        corrected_file, corrected_qc = _signal_to_concentration_node(
+            dce_file, brain_mask_file, None, b1_file,
+            15.0, 0.005, 3.0, 3.8, 5, True,
+        )
+        corrected = np.asarray(nib.load(corrected_file).dataobj).copy()
+
+    assert not np.allclose(corrected, nominal)
+    assert nominal_qc["b1_correction_applied"] is False
+    assert corrected_qc["b1_correction_applied"] is True
+    assert corrected_qc["t1_source"] == "assumed"
+    assert corrected_qc["assumed_t1_ms"] == pytest.approx(1200.0)
+    assert corrected_qc["assumed_t1_field_strength_t"] == pytest.approx(3.0)
+    assert (
+        corrected_qc["assumed_t1_policy"]
+        == "uniform_field_strength_reference"
+    )
+
+
 def test_signal_conversion_node_rejects_brain_mask_shape_mismatch(
     tmp_path: Any,
 ) -> None:
