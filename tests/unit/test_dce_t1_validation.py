@@ -203,10 +203,10 @@ class TestApplyT1CorrectionAuto:
         gm = np.full(shape, 0.4)
         return wm, gm
 
-    def test_high_nan_with_probsegs_uses_tissue(
+    def test_high_nan_with_probsegs_uses_uniform(
         self, brain_mask: np.ndarray, probsegs: tuple[np.ndarray, np.ndarray],
     ) -> None:
-        """High NaN + probsegs → tissue_segmented correction."""
+        """High NaN uses uniform fallback even when probsegs exist."""
         # Create T1 map with high median (above reject_max)
         t1_map = np.full((10, 10, 10), 2000.0)
         t1_map[~brain_mask] = np.nan
@@ -217,8 +217,9 @@ class TestApplyT1CorrectionAuto:
             brain_mask=brain_mask,
             nan_fraction=0.50, wm_probseg=wm, gm_probseg=gm,
         )
-        assert result.correction_applied == "tissue_segmented"
-        assert result.tissue_t1_used is True
+        assert result.correction_applied == "fallback"
+        assert result.tissue_t1_used is False
+        assert np.all(t1_corrected[brain_mask] == 1200.0)
         # Brain voxels should have valid T1 values
         valid_in_brain = brain_mask & np.isfinite(t1_corrected)
         assert np.sum(valid_in_brain) > 0
@@ -268,7 +269,7 @@ class TestApplyT1CorrectionAuto:
     def test_reject_below_min_with_probsegs(
         self, brain_mask: np.ndarray, probsegs: tuple[np.ndarray, np.ndarray],
     ) -> None:
-        """Below reject_min + high NaN + probsegs → tissue_segmented."""
+        """Below reject_min uses uniform fallback despite probsegs."""
         t1_map = np.full((10, 10, 10), 400.0)
         t1_map[~brain_mask] = np.nan
         wm, gm = probsegs
@@ -278,21 +279,21 @@ class TestApplyT1CorrectionAuto:
             brain_mask=brain_mask,
             nan_fraction=0.50, wm_probseg=wm, gm_probseg=gm,
         )
-        assert result.correction_applied == "tissue_segmented"
+        assert result.correction_applied == "fallback"
 
-    def test_offset_mode_unchanged(self, brain_mask: np.ndarray) -> None:
-        """Explicit offset mode should not use tissue fallback."""
+    def test_offset_mode_removed(self, brain_mask: np.ndarray) -> None:
+        """Additive T1 offset correction is no longer accepted."""
         t1_map = np.full((10, 10, 10), 1200.0)
         t1_map[~brain_mask] = np.nan
         wm = np.full((10, 10, 10), 0.6)
         gm = np.full((10, 10, 10), 0.4)
 
-        _, result = apply_t1_correction(
-            t1_map, field_strength=3.0, correction_mode="offset",
-            brain_mask=brain_mask,
-            nan_fraction=0.50, wm_probseg=wm, gm_probseg=gm,
-        )
-        assert result.correction_applied == "offset"
+        with pytest.raises(ValueError, match="Unknown correction mode: offset"):
+            apply_t1_correction(
+                t1_map, field_strength=3.0, correction_mode="offset",
+                brain_mask=brain_mask,
+                nan_fraction=0.50, wm_probseg=wm, gm_probseg=gm,
+            )
 
     def test_low_nan_with_high_median_offsets(
         self, brain_mask: np.ndarray,
@@ -327,30 +328,24 @@ class TestApplyT1CorrectionAuto:
             e1_median=0.996,
             b1_corrected=True,
         )
-        assert result.correction_applied == "tissue_segmented"
+        assert result.correction_applied == "fallback"
 
-    def test_reject_threshold_uses_tissue_regardless_of_nan(
+    def test_reject_threshold_uses_uniform_regardless_of_nan(
         self, brain_mask: np.ndarray, probsegs: tuple[np.ndarray, np.ndarray],
     ) -> None:
-        """When median T1 exceeds reject threshold, use tissue fallback if available.
-
-        NaN fraction is not a gate for tissue fallback in the reject threshold path.
-        If VFA T1 is physiologically impossible (>1800ms), tissue-segmented T1 is
-        always preferred over uniform fallback when probsegs are available.
-        """
+        """A physiologically rejected map always uses uniform fallback."""
         t1_map = np.full((10, 10, 10), 2000.0)
         t1_map[~brain_mask] = np.nan
         wm, gm = probsegs
 
-        # Low NaN fraction (30%) + probsegs available → tissue_segmented
         _, result = apply_t1_correction(
             t1_map, field_strength=3.0, correction_mode="auto",
             brain_mask=brain_mask,
             nan_fraction=0.30, wm_probseg=wm, gm_probseg=gm,
             e1_median=0.95,
         )
-        assert result.correction_applied == "tissue_segmented"
-        assert result.tissue_t1_used is True
+        assert result.correction_applied == "fallback"
+        assert result.tissue_t1_used is False
 
 
 # ============================================================================
@@ -1342,7 +1337,7 @@ class TestVFAConditioningGate:
     def test_unconditional_fallback_e1_above_0997(
         self, brain_mask: np.ndarray, probsegs: tuple[np.ndarray, np.ndarray],
     ) -> None:
-        """E1 > 0.997 always triggers tissue fallback."""
+        """E1 > 0.997 always triggers uniform fallback."""
         t1_map = np.full((10, 10, 10), 1090.0)  # within normal range
         t1_map[~brain_mask] = np.nan
         wm, gm = probsegs
@@ -1354,8 +1349,8 @@ class TestVFAConditioningGate:
             e1_median=0.998, b1_corrected=True, b1_qc_pass=True,
             wm_probseg=wm, gm_probseg=gm,
         )
-        assert result.correction_applied == "tissue_segmented"
-        assert result.tissue_t1_used is True
+        assert result.correction_applied == "fallback"
+        assert result.tissue_t1_used is False
         assert "unconditional" in result.reason
 
     def test_conditional_zone_no_b1_low_nan_falls_through(
@@ -1427,10 +1422,10 @@ class TestVFAConditioningGate:
         assert result.correction_applied == "none"
         assert "conditioning gate" not in result.reason
 
-    def test_tissue_fallback_preferred_over_uniform(
+    def test_uniform_fallback_ignores_tissue_maps(
         self, brain_mask: np.ndarray, probsegs: tuple[np.ndarray, np.ndarray],
     ) -> None:
-        """When tissue maps available, prefer tissue-segmented over uniform."""
+        """Tissue maps do not alter the uniform fallback."""
         t1_map = np.full((10, 10, 10), 1090.0)
         t1_map[~brain_mask] = np.nan
         wm, gm = probsegs
@@ -1441,9 +1436,9 @@ class TestVFAConditioningGate:
             e1_median=0.998, b1_corrected=False,
             wm_probseg=wm, gm_probseg=gm,
         )
-        assert result.correction_applied == "tissue_segmented"
-        assert result.tissue_t1_used is True
-        assert result.fallback_value_ms is None
+        assert result.correction_applied == "fallback"
+        assert result.tissue_t1_used is False
+        assert result.fallback_value_ms == T1_TISSUE_REFERENCE[3.0]["default"]
 
     def test_uniform_fallback_when_no_tissue_maps(
         self, brain_mask: np.ndarray,
@@ -1459,7 +1454,7 @@ class TestVFAConditioningGate:
         )
         assert result.correction_applied == "fallback"
         assert result.fallback_value_ms == T1_TISSUE_REFERENCE[3.0]["default"]
-        assert "no tissue maps" in result.reason
+        assert "unconditional threshold" in result.reason
 
     def test_conditioning_gate_fills_entire_brain(
         self, brain_mask: np.ndarray, probsegs: tuple[np.ndarray, np.ndarray],
@@ -1488,7 +1483,7 @@ class TestVFAConditioningGate:
             e1_median=0.998, b1_corrected=False,
             wm_probseg=wm, gm_probseg=gm,
         )
-        assert result.correction_applied == "tissue_segmented"
+        assert result.correction_applied == "fallback"
 
         # ALL brain voxels should be filled (not NaN)
         brain_t1 = t1_corr[brain_mask]
@@ -1598,7 +1593,7 @@ class TestVFAConditioningGate:
     def test_conditional_zone_high_nan_with_tissue_maps(
         self, brain_mask: np.ndarray,
     ) -> None:
-        """Conditional zone + high NaN + tissue maps → tissue-segmented."""
+        """Conditional-zone failure uses uniform fallback despite tissue maps."""
         t1_map = np.full((10, 10, 10), 1200.0)
         t1_map[~brain_mask] = np.nan
         wm = np.where(brain_mask, 0.6, 0.0).astype(np.float32)
@@ -1611,10 +1606,10 @@ class TestVFAConditioningGate:
             nan_fraction=0.60,
             wm_probseg=wm, gm_probseg=gm,
         )
-        assert result.correction_applied == "tissue_segmented"
-        assert result.tissue_t1_used is True
+        assert result.correction_applied == "fallback"
+        assert result.tissue_t1_used is False
 
-    def test_failed_b1_and_high_plausible_median_uses_tissue_fallback(
+    def test_failed_b1_and_high_plausible_median_uses_uniform_fallback(
         self, brain_mask: np.ndarray,
     ) -> None:
         """A marginal measured map is not calibrated when B1 QC also failed."""
@@ -1635,7 +1630,7 @@ class TestVFAConditioningGate:
             gm_probseg=gm,
         )
 
-        assert result.correction_applied == "tissue_segmented"
+        assert result.correction_applied == "fallback"
         assert "B1 QC failed" in result.reason
 
     def test_failed_b1_and_high_plausible_median_uses_uniform_without_seg(

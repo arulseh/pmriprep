@@ -1446,9 +1446,23 @@ def _dce_t1_cosmetic_keys(t1_qc: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     corr: Dict[str, Any] = raw_corr if isinstance(raw_corr, dict) else {}
     if "correction_applied" in corr:
         out["T1CorrectionApplied"] = str(corr["correction_applied"])
-    tissue_used = corr.get("tissue_t1_used", t1_qc.get("tissue_t1_used"))
-    if tissue_used is not None:
-        out["T1UseTissueLiterature"] = bool(tissue_used)
+    if method == "assumed":
+        out["T1Source"] = "uniform_field_strength_assumption"
+        out["T1MappingAttempted"] = False
+    elif corr.get("correction_applied") == "fallback":
+        out["T1Source"] = "uniform_field_strength_fallback"
+        out["T1MappingAttempted"] = True
+        out["T1MappingAccepted"] = False
+        if corr.get("fallback_value_ms") is not None:
+            out["T1AssumedValue"] = float(corr["fallback_value_ms"])
+            out["T1AssumedValueUnits"] = "ms"
+        if corr.get("reason"):
+            out["T1FallbackReason"] = str(corr["reason"])
+    else:
+        out["T1Source"] = "external_map" if method == "external" else "measured_vfa"
+        out["T1MappingAttempted"] = method != "external"
+        if method != "external":
+            out["T1MappingAccepted"] = True
     return out
 
 

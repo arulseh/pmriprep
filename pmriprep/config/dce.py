@@ -115,7 +115,7 @@ class DCEConfig:
         "auto", "actual_flip_deci_deg", "actual_flip_deg", "percent", "ratio"
     ] = "auto"
     no_t1: bool = False
-    t1_correction_mode: Literal["auto", "none", "offset", "fallback"] = "auto"
+    t1_correction_mode: Literal["auto", "none", "fallback"] = "auto"
     t1_method: Literal["hybrid", "wlls", "nlls"] = "hybrid"
     t1_map_file: Optional[Path] = None  # External T1 map (NIfTI, milliseconds)
     # Processing settings

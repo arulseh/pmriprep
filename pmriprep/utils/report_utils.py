@@ -496,18 +496,7 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> str:
         # T1 source stated inline in the concentration sentence (no separate
         # mapping step to order before it).
         t1_correction = t1_info.get("t1_correction", {})
-        tissue_used = (
-            t1_correction.get("tissue_t1_used", False)
-            or t1_info.get("tissue_t1_used", False)
-        )
-        if t1_method == "assumed" and tissue_used:
-            sentences.append(
-                conc + " using a tissue-segmented T1 map constructed "
-                "from WM/GM probability maps with literature T1 values "
-                "(no variable flip angle T1 mapping performed)."
-            )
-        else:
-            sentences.append(conc + f" {t1_text}.")
+        sentences.append(conc + f" {t1_text}.")
     else:
         # Full VFA T1 mapping: describe the mapping first, then the
         # concentration conversion that uses it.
@@ -520,17 +509,11 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> str:
         # T1 correction status
         t1_correction = t1_info.get("t1_correction", {})
         corr_applied = t1_correction.get("correction_applied", "none")
-        if corr_applied == "offset":
+        if corr_applied == "fallback":
             sentences.append(
-                "An offset correction was applied to the T1 map to "
-                "adjust for systematic overestimation."
-            )
-        elif t1_correction.get("tissue_t1_used", False):
-            sentences.append(
-                "Due to poor variable flip angle conditioning, a "
-                "tissue-segmented T1 map constructed from WM/GM probability "
-                "maps using literature T1 values was used for concentration "
-                "conversion."
+                "The measured variable flip angle T1 map did not satisfy "
+                "the acceptance policy; a uniform field-strength literature "
+                "T1 value was used for concentration conversion."
             )
 
         sentences.append(conc + ".")

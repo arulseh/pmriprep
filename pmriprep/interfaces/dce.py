@@ -1198,13 +1198,13 @@ class T1MappingInputSpec(BaseInterfaceInputSpec):
         File(exists=True),
         traits.Enum(""),
         mandatory=False,
-        desc="WM probability map for tissue-segmented T1 fallback (optional)",
+        desc="WM probability map for measured-T1 tissue QC (optional)",
     )
     gm_probseg = traits.Either(
         File(exists=True),
         traits.Enum(""),
         mandatory=False,
-        desc="GM probability map for tissue-segmented T1 fallback (optional)",
+        desc="GM probability map for measured-T1 tissue QC (optional)",
     )
     csf_threshold = traits.Float(
         0.5,
@@ -1222,10 +1222,9 @@ class T1MappingInputSpec(BaseInterfaceInputSpec):
     t1_correction_mode = traits.Enum(
         "auto",
         "none",
-        "offset",
         "fallback",
         usedefault=True,
-        desc="T1 correction mode: auto, none, offset, or fallback",
+        desc="T1 correction mode: auto, none, or uniform fallback",
     )
     b1_qc_pass = traits.Bool(
         True,
@@ -1366,40 +1365,16 @@ class T1Mapping(SimpleInterface):
         if self.inputs.skip_t1:
             from pmriprep.utils.dce_t1_validation import (
                 T1_TISSUE_REFERENCE,
-                build_tissue_t1_map,
                 get_field_strength_key,
             )
 
             field_key = get_field_strength_key(self.inputs.field_strength)
             default_t1 = T1_TISSUE_REFERENCE[field_key]["default"]
-            tissue_t1_used = False
-
-            # Use tissue-segmented T1 if probsegs are available
-            if (
-                isdefined(self.inputs.wm_probseg) and self.inputs.wm_probseg
-                and isdefined(self.inputs.gm_probseg) and self.inputs.gm_probseg
-            ):
-                wm_img = nib.load(self.inputs.wm_probseg)
-                gm_img = nib.load(self.inputs.gm_probseg)
-                # Resample to VFA space if needed
-                if wm_img.shape[:3] != shape:  # type: ignore[attr-defined]
-                    from nilearn.image import resample_to_img  # type: ignore[import-untyped]
-                    wm_img = resample_to_img(wm_img, first_img, interpolation="continuous")
-                    gm_img = resample_to_img(gm_img, first_img, interpolation="continuous")
-                wm_arr = wm_img.get_fdata().astype(np.float64)  # type: ignore[attr-defined]
-                gm_arr = gm_img.get_fdata().astype(np.float64)  # type: ignore[attr-defined]
-                t1_map = build_tissue_t1_map(
-                    wm_arr, gm_arr, self.inputs.field_strength,
-                )
-                tissue_t1_used = True
-                logger.info(
-                    "skip_t1: using tissue-segmented T1 map (WM=%.0fms, GM=%.0fms)",
-                    float((T1_TISSUE_REFERENCE[field_key]["wm"][0] + T1_TISSUE_REFERENCE[field_key]["wm"][1]) / 2),
-                    float((T1_TISSUE_REFERENCE[field_key]["gm"][0] + T1_TISSUE_REFERENCE[field_key]["gm"][1]) / 2),
-                )
-            else:
-                # Uniform fallback
-                t1_map = np.full(shape, default_t1, dtype=np.float32)
+            t1_map = np.full(shape, default_t1, dtype=np.float32)
+            logger.info(
+                "skip_t1: using uniform field-strength T1 (%.0fms)",
+                default_t1,
+            )
 
             # Save output
             out_img = nib.Nifti1Image(t1_map, affine)
@@ -1407,12 +1382,8 @@ class T1Mapping(SimpleInterface):
 
             # Set outputs for skipped case
             self._results["out_file"] = out_file
-            if tissue_t1_used:
-                wm_mid = float((T1_TISSUE_REFERENCE[field_key]["wm"][0] + T1_TISSUE_REFERENCE[field_key]["wm"][1]) / 2)
-                gm_mid = float((T1_TISSUE_REFERENCE[field_key]["gm"][0] + T1_TISSUE_REFERENCE[field_key]["gm"][1]) / 2)
-            else:
-                wm_mid = default_t1
-                gm_mid = default_t1
+            wm_mid = default_t1
+            gm_mid = default_t1
             self._results["mean_t1_wm"] = wm_mid
             self._results["mean_t1_gm"] = gm_mid
             self._results["qc_pass"] = True
@@ -1421,7 +1392,7 @@ class T1Mapping(SimpleInterface):
                 "mean_t1_gm_ms": gm_mid,
                 "qc_pass": True,
                 "skipped": True,
-                "tissue_t1_used": tissue_t1_used,
+                "tissue_t1_used": False,
             }
             return runtime
 
@@ -1545,6 +1516,7 @@ class T1Mapping(SimpleInterface):
             # Use simple thresholding on first VFA image as rough brain mask
             threshold = np.percentile(signal_data[0][signal_data[0] > 0], 10)
             brain_mask = signal_data[0] > threshold
+        fallback_brain_mask = brain_mask.copy()
 
         # --- VFA Fit Residual (NRMSE) for conditioning gate ---
         # For n_fa >= 3, compute per-voxel NRMSE to assess VFA fit quality.
@@ -1655,9 +1627,7 @@ class T1Mapping(SimpleInterface):
         field_key = get_field_strength_key(field_strength)
         t1_upper = T1_TISSUE_REFERENCE[field_key]["t1_parenchyma_upper"]
         t1_lower = T1_TISSUE_REFERENCE[field_key]["reject_min"]
-        # Save raw T1 before range clipping for post-offset recovery
-        t1_pre_clip = t1_map.copy()
-
+        measured_t1_map = t1_map.copy()
         t1_map = np.where(
             (t1_map >= t1_lower) & (t1_map <= t1_upper), t1_map, np.nan,
         )
@@ -1807,6 +1777,13 @@ class T1Mapping(SimpleInterface):
             b1_corrected=b1_corrected,
         )
         t1_map = t1_map_arr.astype(np.float32)
+        if correction_result.correction_applied == "fallback":
+            default_t1 = T1_TISSUE_REFERENCE[field_key]["default"]
+            t1_map = np.where(
+                fallback_brain_mask,
+                default_t1,
+                np.nan,
+            ).astype(np.float32)
         correction_info = correction_result.to_dict()
         logger.info(
             "T1 correction: %s (median %.0fms -> %.0fms)",
@@ -1814,51 +1791,6 @@ class T1Mapping(SimpleInterface):
             correction_result.median_t1_original,
             correction_result.median_t1_corrected,
         )
-
-        # Post-offset recovery: recover voxels clipped to NaN by range filter
-        # that would be valid after applying the offset correction.
-        t1_ref = T1_TISSUE_REFERENCE[field_key]
-        n_recovered = 0
-        if (
-            correction_result.correction_applied == "offset"
-            and correction_result.offset_ms is not None
-        ):
-            offset = correction_result.offset_ms
-            clamp_lo = t1_ref["reject_min"] * 0.9
-            # Gate: only recover voxels whose raw T1 is within one offset
-            # of the parenchyma upper bound — beyond that, the offset
-            # (derived from parenchyma) is not reliable for extreme T1.
-            raw_t1_max = t1_ref["t1_parenchyma_upper"] + abs(offset)
-            # Corrected values bounded by original parenchyma upper
-            recovery_upper = t1_ref["t1_parenchyma_upper"]
-
-            t1_raw_corrected = t1_pre_clip + offset  # no clip
-
-            recoverable = (
-                np.isnan(t1_map) & brain_mask       # currently NaN in final map
-                & ~edge_mask                          # NOT an edge-eroded voxel
-                & np.isfinite(t1_pre_clip)            # raw VFA fit succeeded
-                & (t1_pre_clip > 0)                   # positive T1
-                & (t1_pre_clip <= raw_t1_max)         # raw T1 gate
-                & (t1_raw_corrected >= clamp_lo)      # corrected lower bound
-                & (t1_raw_corrected <= recovery_upper) # corrected upper bound
-            )
-            n_recovered = int(np.sum(recoverable))
-            if n_recovered > 0:
-                t1_map[recoverable] = t1_raw_corrected[recoverable].astype(
-                    np.float32,
-                )
-                recovered_range = t1_raw_corrected[recoverable]
-                logger.info(
-                    "Post-offset recovery: %d voxels recovered "
-                    "(raw T1 %.0f-%.0fms, corrected %.0f-%.0fms)",
-                    n_recovered,
-                    float(t1_pre_clip[recoverable].min()),
-                    float(t1_pre_clip[recoverable].max()),
-                    float(recovered_range.min()),
-                    float(recovered_range.max()),
-                )
-        correction_info["n_recovered_post_offset"] = n_recovered
 
         # Fill interior NaN gaps (B1+ failures, range-filter, VFA noise)
         from pmriprep.utils.dce_t1_validation import fill_t1_gaps
@@ -1992,10 +1924,8 @@ class T1Mapping(SimpleInterface):
         # Derive hierarchical T1 QC status
         from pmriprep.utils.qc_standards import QCStatus
         corr_type = correction_info.get("correction_applied", "none")
-        if corr_type in ("fallback", "tissue_segmented"):
+        if corr_type == "fallback":
             t1_status = QCStatus.POOR
-        elif corr_type == "offset":
-            t1_status = QCStatus.POOR if (not wm_pass and not gm_pass) else QCStatus.WARN
         else:  # "none"
             if wm_pass and gm_pass:
                 t1_status = QCStatus.PASS
@@ -2126,7 +2056,7 @@ class T1Mapping(SimpleInterface):
                 vfa_data=vfa_data_list,
                 flip_angles=flip_angles_deg.tolist(),
                 t1_map=t1_map,
-                measured_t1_map=t1_pre_clip,
+                measured_t1_map=measured_t1_map,
                 brain_mask=brain_mask,
                 field_strength=field_strength,
                 correction_info=correction_info,

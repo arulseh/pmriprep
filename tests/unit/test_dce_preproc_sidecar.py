@@ -35,7 +35,9 @@ def dce_qc_metrics() -> dict[str, Any]:
             "method": "hybrid",
             "b1_correction": "afi",
             "t1_correction": {
-                "correction_applied": "offset", "tissue_t1_used": False,
+                "correction_applied": "fallback",
+                "fallback_value_ms": 1200.0,
+                "reason": "Measured T1 rejected",
             },
         },
         "b1_mapping": {"mean_b1": 0.96, "pct_correction_gt_20": 8.5},
@@ -62,8 +64,12 @@ class TestT1Keys:
         out = enrich_dce_preproc_sidecar(dict(base_sidecar), qc_metrics=dce_qc_metrics)
         assert out["T1MappingMethod"] == "hybrid"
         assert out["T1B1Correction"] == "afi"
-        assert out["T1CorrectionApplied"] == "offset"
-        assert out["T1UseTissueLiterature"] is False
+        assert out["T1CorrectionApplied"] == "fallback"
+        assert out["T1Source"] == "uniform_field_strength_fallback"
+        assert out["T1MappingAttempted"] is True
+        assert out["T1MappingAccepted"] is False
+        assert out["T1AssumedValue"] == pytest.approx(1200.0)
+        assert out["T1FallbackReason"] == "Measured T1 rejected"
 
     def test_assumed_t1_keys(self, base_sidecar):
         qc = {
@@ -81,6 +87,8 @@ class TestT1Keys:
         assert out["T1AssumptionFieldStrength"] == pytest.approx(3.0)
         assert out["T1AssumptionPolicy"] == "uniform_field_strength_reference"
         assert out["T1B1Correction"] == "precomputed"
+        assert out["T1Source"] == "uniform_field_strength_assumption"
+        assert out["T1MappingAttempted"] is False
 
 
 class TestB1Keys:

@@ -17,7 +17,9 @@ def test_t1_mapping_does_not_suppress_fallback_qc() -> None:
     source = inspect.getsource(T1Mapping._run_interface)
 
     assert "show_t1_qc" not in source
-    assert "measured_t1_map=t1_pre_clip" in source
+    assert "measured_t1_map=measured_t1_map" in source
+    assert "fallback_brain_mask = brain_mask.copy()" in source
+    assert "fallback_brain_mask," in source
 
 
 def test_fallback_qc_distinguishes_measured_and_final_maps(

@@ -77,7 +77,7 @@ def generate_vfa_t1_qc_plot(
         correction_info.get("correction_applied", "none")
         if correction_info is not None else "none"
     )
-    fallback_applied = correction_applied in ("fallback", "tissue_segmented")
+    fallback_applied = correction_applied == "fallback"
     diagnostic_t1 = (
         measured_t1_map
         if fallback_applied and measured_t1_map is not None
@@ -195,12 +195,7 @@ def generate_vfa_t1_qc_plot(
             origin="upper",
         )
         plt.colorbar(final_im, ax=ax, fraction=0.046, pad=0.04, label="ms")
-        fallback_label = (
-            "Tissue-Segmented T1"
-            if correction_applied == "tissue_segmented"
-            else "Uniform Fallback T1"
-        )
-        ax.set_title(f"Final {fallback_label}", fontsize=11)
+        ax.set_title("Final Uniform Fallback T1", fontsize=11)
     else:
         valid_support = np.isfinite(t1_map)
         if brain_mask is not None:
