@@ -66,6 +66,7 @@ def test_build_dce_qc_mask_preserves_strict_thresholds() -> None:
         {"patlak": 1},
         False,
         "tofts",
+        tsnr_threshold=10.0,
     )
     assert mask.tolist() == [[[1, 0, 0, 0]]]
     assert mask.dtype == np.uint8
@@ -179,11 +180,61 @@ def test_evaluate_dce_qc_mask_reports_acceptance_policy() -> None:
         True,
         "auto",
     )
-    assert evaluation.acceptance_policy["acquisition"]["minimum_tsnr"] == 10.0
+    assert evaluation.acceptance_policy["acquisition"]["minimum_tsnr"] is None
     assert evaluation.acceptance_policy["fit"]["minimum_r_squared"] == {
         "patlak": 0.0,
         "reversible_models": 0.5,
     }
+
+
+def test_dce_qc_mask_uses_configured_tsnr_threshold() -> None:
+    """A non-default configured threshold controls acceptance and provenance."""
+    shape = (1, 1, 2)
+    evaluation = _evaluate_dce_qc_mask(
+        np.ones(shape, dtype=bool),
+        np.array([[[11.9, 12.0]]]),
+        np.full(shape, 20.0),
+        np.full(shape, 0.1),
+        np.full(shape, 0.8),
+        np.full(shape, 0.2),
+        np.full(shape, 0.1),
+        np.full(shape, 0.5),
+        np.ones(shape, dtype=np.int8),
+        np.zeros(shape, dtype=np.int8),
+        {"patlak": 1},
+        False,
+        "extended_tofts",
+        tsnr_threshold=12.0,
+    )
+
+    assert evaluation.mask.tolist() == [[[0, 1]]]
+    assert evaluation.component_failures["tsnr"] == 1
+    assert evaluation.acceptance_policy["acquisition"]["minimum_tsnr"] == 12.0
+
+
+def test_default_zero_tsnr_threshold_is_diagnostic_only() -> None:
+    """The default zero threshold never excludes an otherwise accepted fit."""
+    shape = (1, 1, 1)
+    evaluation = _evaluate_dce_qc_mask(
+        np.ones(shape, dtype=bool),
+        np.zeros(shape),
+        np.full(shape, 20.0),
+        np.full(shape, 0.1),
+        np.full(shape, 0.8),
+        np.full(shape, 0.2),
+        np.full(shape, 0.1),
+        np.full(shape, 0.5),
+        np.ones(shape, dtype=np.int8),
+        np.zeros(shape, dtype=np.int8),
+        {"patlak": 1},
+        False,
+        "extended_tofts",
+        tsnr_threshold=0.0,
+    )
+
+    assert evaluation.mask.tolist() == [[[1]]]
+    assert evaluation.component_failures["tsnr"] == 0
+    assert evaluation.acceptance_policy["acquisition"]["minimum_tsnr"] is None
 
 
 def test_build_dce_qc_mask_rejects_quality_and_required_parameter_failures() -> None:
@@ -254,6 +305,7 @@ def test_evaluate_dce_qc_mask_reports_overlapping_component_failures() -> None:
         {"patlak": 1},
         False,
         "extended_tofts",
+        tsnr_threshold=10.0,
     )
     assert evaluation.mask.tolist() == [[[0, 0, 0]]]
     assert evaluation.component_failures == {

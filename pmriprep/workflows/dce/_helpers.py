@@ -2299,8 +2299,8 @@ def _generate_dce_pk_maps_qc(
     brain_mask_file : str, optional
         Path to brain mask NIfTI.
     qc_mask_file : str, optional
-        Path to quantitative QC mask NIfTI. Rejected voxels are shown as
-        unavailable in the parameter montage.
+        Path to quantitative QC mask NIfTI. Its acceptance fraction is reported
+        separately from the finite parameter support shown in the montage.
     model_selection_file : str, optional
         Path to model selection map NIfTI (auto mode).
     delta_bic_file : str, optional

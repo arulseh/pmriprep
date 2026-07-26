@@ -860,6 +860,7 @@ def _build_dce_qc_mask(
     model_selection_codes: dict[str, int],
     is_auto: bool,
     model_name: str,
+    tsnr_threshold: float = 0.0,
 ) -> npt.NDArray[np.uint8]:
     """Build the physiological and fit-quality acceptance mask."""
     return _evaluate_dce_qc_mask(
@@ -876,6 +877,7 @@ def _build_dce_qc_mask(
         model_selection_codes,
         is_auto,
         model_name,
+        tsnr_threshold,
     ).mask
 
 
@@ -901,12 +903,13 @@ def _evaluate_dce_qc_mask(
     model_selection_codes: dict[str, int],
     is_auto: bool,
     model_name: str,
+    tsnr_threshold: float = 0.0,
 ) -> _DCEQCMaskEvaluation:
     """Evaluate acquisition and model-aware fit acceptance."""
     signal_qc_available = peak_enhancement is not None
     tsnr_ok = (
-        tsnr >= 10
-        if signal_qc_available
+        tsnr >= tsnr_threshold
+        if signal_qc_available and tsnr_threshold > 0
         else np.ones(fitting_mask.shape, dtype=bool)
     )
     enhancement_ok = (
@@ -971,7 +974,11 @@ def _evaluate_dce_qc_mask(
     }
     policy = {
         "acquisition": {
-            "minimum_tsnr": 10.0 if signal_qc_available else None,
+            "minimum_tsnr": (
+                tsnr_threshold
+                if signal_qc_available and tsnr_threshold > 0
+                else None
+            ),
             "minimum_peak_enhancement_percent": (
                 None if peak_enhancement is None else 10.0
             ),
@@ -1173,6 +1180,7 @@ def _write_dce_terminal_outputs(
     generate_path: Callable[[str], str],
     write_map: Callable[..., None],
     qc_metrics: Optional[dict[str, Any]] = None,
+    tsnr_threshold: float = 0.0,
 ) -> dict[str, str]:
     """Write terminal QC, model-selection, and fitted-curve outputs."""
     outputs = {
@@ -1207,6 +1215,7 @@ def _write_dce_terminal_outputs(
         maps.model_selection_codes,
         is_auto,
         model_name,
+        tsnr_threshold,
     )
     qc_mask = qc_evaluation.mask
     if qc_metrics is not None:
@@ -3623,6 +3632,7 @@ class ComputeDCEMaps(BaseInterface):
         is_auto = prepared.is_auto
         candidate_names = prepared.candidate_names
         baseline_frames = prepared.baseline_frames
+        tsnr_threshold = prepared.tsnr_threshold
         tsnr_map = prepared.tsnr_map
         peak_enh = prepared.peak_enhancement
         fitting_mask = prepared.fitting_mask
@@ -3995,6 +4005,7 @@ class ComputeDCEMaps(BaseInterface):
                 self._gen_outfilename,
                 _save_dce_map,
                 qc_metrics,
+                tsnr_threshold=tsnr_threshold,
             )
         )
 

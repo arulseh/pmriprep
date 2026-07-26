@@ -20,6 +20,20 @@ import numpy.typing as npt
 logger = logging.getLogger("nipype.interface")
 
 
+def _finite_parameter_support(
+    data: npt.NDArray[Any],
+    brain_mask: npt.NDArray[np.bool_],
+) -> npt.NDArray[np.bool_]:
+    """Return finite retained estimates within the display brain mask."""
+    if data.shape != brain_mask.shape:
+        raise ValueError(
+            "Parameter map shape does not match brain mask: "
+            f"{data.shape} != {brain_mask.shape}"
+        )
+    result: npt.NDArray[np.bool_] = brain_mask & np.isfinite(data)
+    return result
+
+
 def _select_qc_voxel(
     ktrans: npt.NDArray[Any],
     brain_mask: npt.NDArray[np.bool_],
@@ -606,8 +620,8 @@ def generate_pk_parameter_maps_qc_plot(
     brain_mask : numpy.ndarray
         3D boolean brain mask.
     qc_mask : numpy.ndarray or None, optional
-        Quantitative QC mask. When provided, parameter statistics and display
-        scaling use accepted voxels only; rejected brain voxels are gray.
+        Quantitative QC mask. Its whole-brain acceptance fraction is reported
+        separately; finite retained estimates remain visible for map review.
     subject_id : str, optional
         Subject identifier for title.
     session_id : str, optional
@@ -626,17 +640,17 @@ def generate_pk_parameter_maps_qc_plot(
 
     mask_bool = brain_mask > 0.5
     if qc_mask is None:
-        accepted_mask = mask_bool
+        quantitative_mask = mask_bool
     else:
         if qc_mask.shape != brain_mask.shape:
             raise ValueError(
                 "QC mask shape does not match brain mask: "
                 f"{qc_mask.shape} != {brain_mask.shape}"
             )
-        accepted_mask = mask_bool & (qc_mask > 0.5)
+        quantitative_mask = mask_bool & (qc_mask > 0.5)
     n_brain = int(np.count_nonzero(mask_bool))
-    n_accepted = int(np.count_nonzero(accepted_mask))
-    accepted_fraction = n_accepted / n_brain if n_brain else 0.0
+    n_quantitative = int(np.count_nonzero(quantitative_mask))
+    quantitative_fraction = n_quantitative / n_brain if n_brain else 0.0
 
     # Parameter display config: (colormap, vmin, vmax_mode, unit_label)
     # vmax_mode: "pct95" = 95th percentile of nonzero, "fixed" = use vmax directly
@@ -666,10 +680,10 @@ def generate_pk_parameter_maps_qc_plot(
 
     from matplotlib.gridspec import GridSpec
 
-    fig = plt.figure(figsize=(10, 2.8 * n_params))
+    fig = plt.figure(figsize=(11, 2.8 * n_params))
     gs = GridSpec(
         n_params, 8, figure=fig,
-        width_ratios=[0.4, 1, 1, 1, 1, 1, 1, 0.06],
+        width_ratios=[1.2, 1, 1, 1, 1, 1, 1, 0.06],
         wspace=0.05, hspace=0.15,
     )
 
@@ -678,14 +692,14 @@ def generate_pk_parameter_maps_qc_plot(
         qc_figure_title(
             subject_id,
             session_id,
-            f"PK Parameter Maps | QC accepted {accepted_fraction:.1%} of brain",
+            f"PK Parameter Maps | quantitative QC {quantitative_fraction:.1%} of brain",
         ),
         fontsize=13, fontweight="bold", y=0.99,
     )
     fig.text(
         0.5,
         0.005,
-        "Gray = QC-rejected or model-non-applicable",
+        "Color = finite retained estimate; gray = unavailable or model-non-applicable",
         ha="center",
         va="bottom",
         fontsize=8,
@@ -696,9 +710,9 @@ def generate_pk_parameter_maps_qc_plot(
         cmap, vmin, vmax_mode, vmax_fixed, unit_label = param_config[name]
 
         # Determine vmax
-        finite_accepted = accepted_mask & np.isfinite(data)
-        data_masked = data[finite_accepted]
-        scale_values = data[finite_accepted & (data > 0)]
+        display_mask = _finite_parameter_support(data, mask_bool)
+        data_masked = data[display_mask]
+        scale_values = data[display_mask & (data > 0)]
         if vmax_mode == "pct95" and len(scale_values) > 0:
             vmax = float(np.percentile(scale_values, 95))
         elif vmax_fixed is not None:
@@ -714,24 +728,25 @@ def generate_pk_parameter_maps_qc_plot(
             mu, sigma = 0.0, 0.0
         valid_fraction = len(data_masked) / n_brain if n_brain else 0.0
 
-        # Prepare display data. Rejected brain voxels remain visible as a
-        # neutral gray field rather than appearing to be quantitative zeros.
+        # Show every retained finite estimate. Quantitative QC is intentionally
+        # reported separately rather than hiding scientifically inspectable
+        # fits behind a conservative downstream acceptance intersection.
         display = data.copy().astype(float)
-        display[~accepted_mask] = np.nan
+        display[~display_mask] = np.nan
 
         # Row label axis (col 0)
         label_ax = fig.add_subplot(gs[row_idx, 0])
         label_ax.axis("off")
         label_ax.text(
-            0.5,
+            0.95,
             0.5,
             (
-                f"{name}\n(\u03bc={mu:.4f}, \u03c3={sigma:.4f}, "
-                f"valid={valid_fraction:.1%})"
+                f"{name}\n\u03bc={mu:.4f}\n\u03c3={sigma:.4f}\n"
+                f"support={valid_fraction:.1%}"
             ),
             transform=label_ax.transAxes,
-            fontsize=9, fontweight="bold", rotation=90,
-            ha="center", va="center",
+            fontsize=8, fontweight="bold",
+            ha="right", va="center",
         )
 
         # Image axes (3 pairs of merged columns)

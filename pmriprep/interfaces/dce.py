@@ -1643,8 +1643,8 @@ class T1Mapping(SimpleInterface):
         # When CSF exclusion at threshold 0.5 is applied, the problematic
         # partial-volume voxels at the brain-CSF boundary are already removed.
         # The numerical safety filter catches rare impossible outliers, and
-        # downstream QC (R² >= 0.5, tSNR >= 10) catches bad PK fits. Blind
-        # erosion after CSF exclusion needlessly removes
+        # downstream fit QC and any explicitly configured tSNR gate catch bad
+        # PK fits. Blind erosion after CSF exclusion needlessly removes
         # ~12-17k gray matter voxels at the cortical surface.
         n_edge = 0
         edge_erosion_skipped = False
