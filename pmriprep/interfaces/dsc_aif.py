@@ -107,8 +107,8 @@ class AifQualityResult(NamedTuple):
     brr: float
 
 
-class DualRoiResult(NamedTuple):
-    """Return type for ``_try_aif_dual_roi``."""
+class AIFPoolAcceptanceResult(NamedTuple):
+    """Accepted inverse-cost-weighted AIF candidate pool."""
 
     curve: npt.NDArray[Any]
     mask: npt.NDArray[Any]
@@ -122,10 +122,10 @@ _AIFCandidate = tuple[float, tuple[int, int, int], dict[str, Any]]
 _AcceptedAIF = tuple[npt.NDArray[Any], npt.NDArray[Any], int]
 
 
-class _TrimmedDualRoiResult(NamedTuple):
-    """Accepted dual-ROI result and the candidate pool that produced it."""
+class _TrimmedPoolAcceptanceResult(NamedTuple):
+    """Accepted averaged-AIF result and the candidate pool that produced it."""
 
-    result: DualRoiResult
+    result: AIFPoolAcceptanceResult
     candidates: list[_AIFCandidate]
 
 
@@ -2048,24 +2048,23 @@ class AIFDetection(BaseInterface):
         passes = spr <= 100.0 and gmax_ok and pr_ok and brr_ok
         return AifQualityResult(passes, spr, pr, brr)
 
-    def _try_aif_dual_roi(
+    def _try_aif_pool_acceptance(
         self,
         candidates: list[tuple[float, tuple[int, int, int], dict[str, Any]]],
         conc_data: npt.NDArray[Any],
         brain_mask: npt.NDArray[Any],
         tr: float,
         baseline_frames: int,
-    ) -> Optional[DualRoiResult]:
+    ) -> Optional[AIFPoolAcceptanceResult]:
         """Compute the inverse-cost-weighted averaged AIF and gate it.
 
-        Name kept for compatibility with historical "dual ROI" phase;
-        today this tries only ``roi_size=1`` (single-voxel per candidate)
-        — tissue contamination from 3x3x3 neighbourhoods had no SNR
-        benefit over the weighted mean across multiple voxels.
+        Each candidate contributes its own voxel (``roi_size=1``). Tissue
+        contamination from 3x3x3 neighbourhoods had no SNR benefit over the
+        weighted mean across multiple candidate voxels.
 
         Returns
         -------
-        DualRoiResult or None
+        AIFPoolAcceptanceResult or None
             Named tuple with (curve, mask, roi_size, spr, peak_ratio,
             brr) when the averaged curve passes quality gates;
             ``None`` otherwise.
@@ -2075,7 +2074,7 @@ class AIFDetection(BaseInterface):
         )
         qr = self._aif_passes_quality(curve, baseline_frames, tr)
         if qr.passes:
-            return DualRoiResult(
+            return AIFPoolAcceptanceResult(
                 curve, mask, 1,
                 qr.spr, qr.peak_ratio, qr.brr,
             )
@@ -2786,18 +2785,18 @@ class AIFDetection(BaseInterface):
             if criteria_order.index(attempt[0]) >= start_index
         ]
 
-    def _try_trimmed_dual_roi(
+    def _try_trimmed_pool_acceptance(
         self,
         candidates: Sequence[_AIFCandidate],
         concentration: npt.NDArray[Any],
         brain_mask: npt.NDArray[Any],
         tr: float,
         baseline_frames: int,
-    ) -> Optional[_TrimmedDualRoiResult]:
-        """Try dual-ROI acceptance while progressively removing poor tails."""
+    ) -> Optional[_TrimmedPoolAcceptanceResult]:
+        """Gate the averaged pool while progressively removing poor tails."""
         pool = list(candidates)
         while len(pool) >= MIN_AIF_CANDIDATES_ACCEPT:
-            result = self._try_aif_dual_roi(
+            result = self._try_aif_pool_acceptance(
                 pool,
                 concentration,
                 brain_mask,
@@ -2805,7 +2804,7 @@ class AIFDetection(BaseInterface):
                 baseline_frames,
             )
             if result is not None:
-                return _TrimmedDualRoiResult(result, pool)
+                return _TrimmedPoolAcceptanceResult(result, pool)
 
             def trim_key(index: int) -> float:
                 candidate = pool[index]
@@ -2996,7 +2995,7 @@ class AIFDetection(BaseInterface):
         if len(state.candidates) < MIN_AIF_CANDIDATES_ACCEPT:
             return None
 
-        acceptance = self._try_trimmed_dual_roi(
+        acceptance = self._try_trimmed_pool_acceptance(
             state.candidates,
             context.concentration,
             context.brain_mask,
@@ -3289,7 +3288,7 @@ class AIFDetection(BaseInterface):
         # Post-cascade fallback pool. Each tier's kinetic-filter
         # survivors are appended (capped at n_candidates total). The
         # union does NOT gate the cascade — it is only consulted as a
-        # fallback if every tier's per-tier dual-ROI gate fails.
+        # fallback if every tier's averaged-pool gate fails.
         union_state = _CascadeUnionState([], set(), {}, {}, {})
         # Per-tier post-filter diagnostics (n_filtered_* counts, pool
         # spread, max tail). Recorded even on tiers the union does not
@@ -3353,7 +3352,7 @@ class AIFDetection(BaseInterface):
                 # used by the per-tier gate below). The union is the
                 # POST-CASCADE fallback pool only and does NOT gate
                 # the cascade. Looser tiers always run if the current
-                # tier's per-tier dual-ROI gate fails, so the cascade
+                # tier's averaged-pool gate fails, so the cascade
                 # is fully exhausted before any fallback.  Synthetic
                 # AIF is the LAST RESORT — reachable only after every
                 # tier's per-tier gate AND the union/single-best
@@ -3366,7 +3365,7 @@ class AIFDetection(BaseInterface):
                     f_meta,
                 )
 
-                # Per-tier dual-ROI gate with progressive worst-BRR
+                # Per-tier averaged-pool gate with progressive worst-BRR
                 # trim.  Asks "do this tier's voxels behave as a
                 # coherent arterial pool together?" — if not, drop the
                 # candidate with the most-negative BRR (worst tail
@@ -3374,7 +3373,7 @@ class AIFDetection(BaseInterface):
                 # MIN_AIF_CANDIDATES_ACCEPT.  If the tier can't reach
                 # an acceptable pool, the cascade falls through to the
                 # next (looser) tier.
-                tier_acceptance = self._try_trimmed_dual_roi(
+                tier_acceptance = self._try_trimmed_pool_acceptance(
                     scored[:level_n_candidates],
                     conc_data,
                     brain_mask,
@@ -3401,12 +3400,13 @@ class AIFDetection(BaseInterface):
                 if accepted_aif is not None:
                     break  # cascade complete — tier accepted
 
-            # --- Post-cascade fallback 1: union dual_roi with progressive worst-BRR trim ---
-            # Only runs if EVERY tier's per-tier dual-ROI gate failed
+            # Post-cascade fallback 1: union pool with progressive
+            # worst-BRR trim.
+            # Only runs if EVERY tier's averaged-pool gate failed
             # above. Pools kinetic-filter survivors across tiers, then
             # mirrors the per-tier trim semantics: drop the most-
-            # negative-BRR voxel one at a time until dual_roi passes or
-            # the pool reaches MIN_AIF_CANDIDATES_ACCEPT.
+            # negative-BRR voxel one at a time until the averaged pool
+            # passes or the pool reaches MIN_AIF_CANDIDATES_ACCEPT.
             if accepted_aif is None:
                 union_acceptance = self._try_union_fallback(
                     union_state,
@@ -3426,7 +3426,7 @@ class AIFDetection(BaseInterface):
                     filter_meta = dict(union_state.filter_metadata)
 
             # Single-best fallback: union has voxels but per-tier and
-            # union dual-ROI all rejected. Try the lowest-cost union
+            # union averaged-pool gates all rejected. Try the lowest-cost union
             # voxel; relaxed gate matches legacy semantics (global_max_in_fp +
             # AIF_AVG_BRR_MIN).
             if accepted_aif is None and len(union_state.candidates) > 0:
@@ -3465,7 +3465,7 @@ class AIFDetection(BaseInterface):
                     filter_meta = dict(union_state.filter_metadata)
                     logger.warning(
                         "AIF cascade: using single-best candidate "
-                        "(union failed dual-ROI validation)"
+                        "(union failed averaged-pool validation)"
                     )
 
         cascade = _CascadeDetectionResult(

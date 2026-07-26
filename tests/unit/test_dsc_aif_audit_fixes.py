@@ -374,7 +374,7 @@ class TestSingleBestProvenance:
         is a low, late, broad tissue bolus whose peak concentration (~4) sits
         below the arterial peak floor (5), so those voxels are rejected as AIF
         candidates while still supplying a sane tissue-TTP reference. With only
-        two survivors the per-tier and union dual-ROI gates (which need
+        two survivors the per-tier and union averaged-pool gates (which need
         ``>= MIN_AIF_CANDIDATES_ACCEPT`` = 3 voxels) cannot fire, so the cascade
         falls through to the single-best branch, which emits ONE voxel.
 

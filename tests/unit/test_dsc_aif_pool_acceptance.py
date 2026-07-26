@@ -6,12 +6,12 @@ from typing import Any
 import numpy as np
 import pytest
 
-from pmriprep.interfaces.dsc_aif import AIFDetection, DualRoiResult
+from pmriprep.interfaces.dsc_aif import AIFDetection, AIFPoolAcceptanceResult
 
 
-def _accepted_result() -> DualRoiResult:
-    """Return a minimal accepted dual-ROI result for orchestration tests."""
-    return DualRoiResult(
+def _accepted_result() -> AIFPoolAcceptanceResult:
+    """Return a minimal accepted pool result for orchestration tests."""
+    return AIFPoolAcceptanceResult(
         curve=np.zeros(8),
         mask=np.ones((2, 2, 2), dtype=bool),
         roi_size=1,
@@ -35,12 +35,12 @@ def test_progressive_acceptance_removes_worst_brr(
     ]
     attempted_coords: list[list[tuple[int, int, int]]] = []
 
-    def try_pool(pool: list[tuple], *args: Any) -> DualRoiResult | None:
+    def try_pool(pool: list[tuple], *args: Any) -> AIFPoolAcceptanceResult | None:
         attempted_coords.append([candidate[1] for candidate in pool])
         return _accepted_result() if len(pool) == 3 else None
 
-    monkeypatch.setattr(detector, "_try_aif_dual_roi", try_pool)
-    result = detector._try_trimmed_dual_roi(
+    monkeypatch.setattr(detector, "_try_aif_pool_acceptance", try_pool)
+    result = detector._try_trimmed_pool_acceptance(
         candidates, np.zeros((2, 2, 2, 8)), np.ones((2, 2, 2)), 1.5, 3,
     )
 
@@ -62,11 +62,11 @@ def test_missing_brr_removes_highest_cost(
         (3.0, rejected_coord, {}),
     ]
 
-    def try_pool(pool: list[tuple], *args: Any) -> DualRoiResult | None:
+    def try_pool(pool: list[tuple], *args: Any) -> AIFPoolAcceptanceResult | None:
         return _accepted_result() if len(pool) == 3 else None
 
-    monkeypatch.setattr(detector, "_try_aif_dual_roi", try_pool)
-    result = detector._try_trimmed_dual_roi(
+    monkeypatch.setattr(detector, "_try_aif_pool_acceptance", try_pool)
+    result = detector._try_trimmed_pool_acceptance(
         candidates, np.zeros((2, 2, 2, 8)), np.ones((2, 2, 2)), 1.5, 3,
     )
 
@@ -77,14 +77,14 @@ def test_missing_brr_removes_highest_cost(
 def test_pool_below_minimum_is_not_evaluated(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A pool below the acceptance floor cannot invoke dual-ROI evaluation."""
+    """A pool below the acceptance floor cannot invoke pool evaluation."""
     detector = AIFDetection()
 
     def fail_if_called(*args: Any) -> None:
-        pytest.fail("dual-ROI evaluation should not run below the pool minimum")
+        pytest.fail("pool evaluation should not run below the pool minimum")
 
-    monkeypatch.setattr(detector, "_try_aif_dual_roi", fail_if_called)
-    result = detector._try_trimmed_dual_roi(
+    monkeypatch.setattr(detector, "_try_aif_pool_acceptance", fail_if_called)
+    result = detector._try_trimmed_pool_acceptance(
         [(0.1, (0, 0, 0), {}), (0.2, (0, 0, 1), {})],
         np.zeros((2, 2, 2, 8)),
         np.ones((2, 2, 2)),

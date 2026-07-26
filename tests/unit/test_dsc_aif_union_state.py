@@ -68,14 +68,14 @@ def test_union_acceptance_rebuilds_trimmed_provenance_in_cascade_order(
         {"search_source": "atlas"},
     )
     accepted_candidates = [brain, atlas_one, atlas_two]
-    dual_roi = dsc_aif.DualRoiResult(
+    pool_result = dsc_aif.AIFPoolAcceptanceResult(
         np.zeros(8), np.ones((2, 2, 2), dtype=bool), 1, 2.0, None, 5.0,
     )
     monkeypatch.setattr(
         detector,
-        "_try_trimmed_dual_roi",
-        lambda *args: dsc_aif._TrimmedDualRoiResult(
-            dual_roi,
+        "_try_trimmed_pool_acceptance",
+        lambda *args: dsc_aif._TrimmedPoolAcceptanceResult(
+            pool_result,
             accepted_candidates,
         ),
     )
