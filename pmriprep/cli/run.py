@@ -1298,6 +1298,18 @@ def _effective_nprocs(
     return 1
 
 
+def _workflow_uses_gpu(workflow: Any) -> bool:
+    """Return whether Nipype will schedule any workflow node as a GPU job."""
+    all_nodes: list[Any] = list(
+        getattr(workflow, "_get_all_nodes", lambda: [])()
+    )
+    return any(
+        bool(node.is_gpu_node())
+        for node in all_nodes
+        if callable(getattr(node, "is_gpu_node", None))
+    )
+
+
 def _merge_user_plugin_resources(
     workflow: Any,
     args: argparse.Namespace,
@@ -1314,10 +1326,7 @@ def _merge_user_plugin_resources(
         merged["memory_gb"] = args.mem_gb
 
     if "n_gpu_procs" not in merged:
-        all_nodes: list[Any] = list(
-            getattr(workflow, "_get_all_nodes", lambda: [])()
-        )
-        if any(bool(getattr(node, "use_gpu", False)) for node in all_nodes):
+        if _workflow_uses_gpu(workflow):
             from pmriprep.utils.gpu import detect_gpu_count
 
             n_gpus = detect_gpu_count()
@@ -1404,12 +1413,7 @@ def _run_workflow(
         # Inspect the constructed graph rather than the raw CLI namespace.
         # YAML configuration and per-pipeline defaults may differ from absent
         # CLI values; the node attributes are the effective scheduling state.
-        all_nodes: list[Any] = list(
-            getattr(workflow, "_get_all_nodes", lambda: [])()
-        )
-        _needs_gpu = any(bool(getattr(node, "use_gpu", False)) for node in all_nodes)
-
-        if _needs_gpu:
+        if _workflow_uses_gpu(workflow):
             from pmriprep.utils.gpu import detect_gpu_count
 
             n_gpus = detect_gpu_count()

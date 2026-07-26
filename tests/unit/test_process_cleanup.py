@@ -165,10 +165,10 @@ def test_multiproc_gpu_slots_follow_constructed_workflow(
     calls: list[tuple[str, dict[str, Any] | None]] = []
 
     class _Node:
-        pass
+        def is_gpu_node(self) -> bool:
+            return use_gpu
 
     node = _Node()
-    node.use_gpu = use_gpu
 
     class _Workflow:
         def _get_all_nodes(self):
@@ -189,6 +189,25 @@ def test_multiproc_gpu_slots_follow_constructed_workflow(
     assert calls == [("MultiProc", expected)]
 
 
+def test_gpu_demand_uses_nipype_node_input_contract() -> None:
+    """GPU demand is read from interface inputs, as Nipype's scheduler does."""
+    from nipype.pipeline import engine as pe
+
+    from pmriprep.cli.run import _workflow_uses_gpu
+    from pmriprep.interfaces.dce import DCEBrainExtract
+
+    node = pe.Node(DCEBrainExtract(), name="brain_extract")
+    node.inputs.use_gpu = True
+
+    class _Workflow:
+        def _get_all_nodes(self):
+            return [node]
+
+    assert not hasattr(node, "use_gpu")
+    assert node.is_gpu_node()
+    assert _workflow_uses_gpu(_Workflow())
+
+
 def test_user_multiproc_merges_cli_resources(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -206,7 +225,8 @@ def test_user_multiproc_merges_cli_resources(
     calls: list[tuple[str, dict[str, Any] | None]] = []
 
     class _Node:
-        use_gpu = True
+        def is_gpu_node(self) -> bool:
+            return True
 
     class _Workflow:
         def _get_all_nodes(self):
