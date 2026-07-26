@@ -302,26 +302,43 @@ def test_degenerate_scatter_uses_auto_nan_for_applicable_patlak_maps() -> None:
     maps.ktrans[:] = 1.0
     maps.ve[:] = 2.0
     maps.vp[:] = 3.0
-    _scatter_degenerate_dce_fit(maps, (0, 0, 0), "patlak", True, -0.2)
+    _scatter_degenerate_dce_fit(maps, (0, 0, 0), "patlak", -0.2)
     assert np.isnan(maps.ktrans[0, 0, 0])
     assert np.isnan(maps.vp[0, 0, 0])
     assert maps.ve[0, 0, 0] == 2.0
     assert maps.r_squared[0, 0, 0] == -0.2
 
 
-def test_degenerate_scatter_uses_fixed_zero_for_tofts_maps() -> None:
-    """Fixed Tofts rejection restores zero sentinels for Ktrans/ve/kep."""
+def test_degenerate_scatter_uses_fixed_nan_for_tofts_maps() -> None:
+    """Fixed Tofts rejection marks applicable parameters as missing."""
     maps = _uncertainty_maps()
     maps.ktrans[:] = 1.0
     maps.ve[:] = 2.0
     maps.kep[:] = 3.0
     maps.vp[:] = 4.0
-    _scatter_degenerate_dce_fit(maps, (0, 0, 0), "tofts", False, 0.1)
-    assert maps.ktrans[0, 0, 0] == 0.0
-    assert maps.ve[0, 0, 0] == 0.0
-    assert maps.kep[0, 0, 0] == 0.0
+    _scatter_degenerate_dce_fit(maps, (0, 0, 0), "tofts", 0.1)
+    assert np.isnan(maps.ktrans[0, 0, 0])
+    assert np.isnan(maps.ve[0, 0, 0])
+    assert np.isnan(maps.kep[0, 0, 0])
     assert maps.vp[0, 0, 0] == 4.0
     assert maps.r_squared[0, 0, 0] == 0.1
+
+
+def test_retained_fixed_fit_preserves_genuine_zero_parameter() -> None:
+    """A retained numerical zero remains distinct from an unfitted sentinel."""
+    maps = _uncertainty_maps()
+
+    _scatter_dce_parameters(
+        maps,
+        (0, 0, 0),
+        "patlak",
+        {"Ktrans": 0.0, "vp": 0.02},
+        0.8,
+    )
+
+    assert maps.ktrans[0, 0, 0] == 0.0
+    assert np.isfinite(maps.ktrans[0, 0, 0])
+    assert maps.vp[0, 0, 0] == pytest.approx(0.02)
 
 
 def test_vp_prior_departure_uses_relative_sigma_and_floor() -> None:

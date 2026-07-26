@@ -281,16 +281,16 @@ def test_initialize_parameter_maps_preserves_auto_and_uncertainty_state() -> Non
     assert any(factor > 1.0 for factor in maps.sigma_factor.values())
 
 
-def test_initialize_parameter_maps_fixed_model_uses_zero_pk_sentinels() -> None:
-    """Explicit fixed models preserve zero-initialized unfitted PK voxels."""
+def test_initialize_parameter_maps_fixed_model_uses_nan_pk_sentinels() -> None:
+    """Explicit fixed models distinguish unfitted voxels from true zero fits."""
     prepared = _empty_preparation()._replace(model_name="tofts", is_auto=False)
 
     maps = ComputeDCEMaps()._initialize_parameter_maps(prepared, "tofts", [])
 
-    assert not maps.ktrans.any()
-    assert not maps.ve.any()
-    assert not maps.vp.any()
-    assert not maps.kep.any()
+    assert np.isnan(maps.ktrans).all()
+    assert np.isnan(maps.ve).all()
+    assert np.isnan(maps.vp).all()
+    assert np.isnan(maps.kep).all()
     assert maps.fitted_curves is None
     assert maps.save_2cxm is False
     assert set(maps.sigma_factor.values()) == {1.0}

@@ -389,12 +389,11 @@ def _scatter_degenerate_dce_fit(
     maps: "_DCEParameterMaps",
     coords: tuple[int, int, int],
     model_name: str,
-    is_auto: bool,
     r_squared: float,
 ) -> None:
     """Scatter the model-applicable sentinels for a rejected fit."""
     x, y, z = coords
-    fill_value = np.nan if is_auto else 0.0
+    fill_value = np.nan
     maps.ktrans[x, y, z] = fill_value
     if model_name in ("tofts", "extended_tofts", "2cxm"):
         maps.ve[x, y, z] = fill_value
@@ -511,7 +510,7 @@ def _scatter_dce_fit_results(
         is_constrained = result.get("constrained", False)
         if _is_degenerate_dce_fit(selected_model, params, is_constrained):
             _scatter_degenerate_dce_fit(
-                maps, coords, selected_model, is_auto, result["r_squared"]
+                maps, coords, selected_model, result["r_squared"]
             )
             n_rejected_postfit += 1
             continue
@@ -3484,7 +3483,10 @@ class ComputeDCEMaps(BaseInterface):
         from pmriprep.utils.dce_constants import DCE_AIF_G6_SIGMA_INFLATION
 
         spatial_shape = prepared.concentration.shape[:3]
-        fill_value = np.nan if prepared.is_auto else 0.0
+        # Unsupported and rejected voxels are missing estimates in every
+        # model-selection mode. A numerical zero is reserved for a retained
+        # fit whose parameter estimate is genuinely zero.
+        fill_value = np.nan
         quality_flag_codes = {
             "good": 1,
             "poor_convergence": 2,
