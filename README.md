@@ -190,7 +190,7 @@ pmriprep bids_dir output_dir {participant} [options]
 | `--stop-on-first-crash` | Stop on first crash |
 | `--write-graph` | Write workflow graph |
 | `--resource-monitor` | Enable Nipype resource monitoring |
-| `--clean-workdir` | Delete the working directory after processing |
+| `--clean-workdir` | Clear prior working-directory contents before processing (do not use with concurrent runs sharing a work directory) |
 
 ## Configuration File
 

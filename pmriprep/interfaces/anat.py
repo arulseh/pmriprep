@@ -707,6 +707,31 @@ class BrainExtraction(CommandLine):
             return detect_torch_device()
         return device  # type: ignore[no-any-return]
 
+    @staticmethod
+    def _get_ants_templates() -> tuple[str, str]:
+        """Resolve the standard ANTs extraction template and brain prior."""
+        from templateflow import api as tflow  # type: ignore[import-untyped]
+
+        template_result = tflow.get("OASIS30ANTs", resolution=1, suffix="T1w")
+        probability_mask = tflow.get(
+            "OASIS30ANTs", resolution=1, label="brain", suffix="probseg"
+        )
+        templates = (
+            list(template_result)
+            if isinstance(template_result, (list, tuple))
+            else [template_result]
+        )
+        full_head = [
+            candidate
+            for candidate in templates
+            if candidate is not None and "_desc-" not in Path(candidate).name
+        ]
+        if len(full_head) != 1 or not probability_mask:
+            raise RuntimeError(
+                "TemplateFlow OASIS30ANTs brain-extraction resources are unavailable"
+            )
+        return str(full_head[0]), str(probability_mask)
+
     @property
     def cmdline(self) -> str:
         """Build the brain extraction command."""
@@ -741,12 +766,10 @@ class BrainExtraction(CommandLine):
             ants_template = getattr(self.inputs, "ants_template", None)
             ants_prob_mask = getattr(self.inputs, "ants_probability_mask", None)
 
-            if not ants_template:
-                ants_dir = os.environ.get("ANTSPATH", "/usr/share/ants")
-                ants_template = f"{ants_dir}/OASIS_template/T_template0.nii.gz"
-            if not ants_prob_mask:
-                ants_dir = os.environ.get("ANTSPATH", "/usr/share/ants")
-                ants_prob_mask = f"{ants_dir}/OASIS_template/T_template0_BrainCerebellumProbabilityMask.nii.gz"
+            if not ants_template or not ants_prob_mask:
+                default_template, default_probability_mask = self._get_ants_templates()
+                ants_template = ants_template or default_template
+                ants_prob_mask = ants_prob_mask or default_probability_mask
 
             out_path = Path(out_file)
             ants_prefix = str(out_path.parent / "ants_brain_")

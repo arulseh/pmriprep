@@ -24,8 +24,43 @@ if TYPE_CHECKING:
 logger = plogger.cli
 
 
+def _validate_work_dir(work_dir: Path, bids_dir: Path, output_dir: Path) -> Path:
+    """Resolve a work directory and reject paths unsafe for cleanup.
+
+    Parameters
+    ----------
+    work_dir, bids_dir, output_dir : pathlib.Path
+        Candidate work directory and protected dataset/output roots.
+
+    Returns
+    -------
+    pathlib.Path
+        Resolved work-directory path.
+
+    Raises
+    ------
+    ValueError
+        If the work directory is the input/output root, contains the input
+        dataset, or is a broad filesystem/home root.
+    """
+    resolved = work_dir.expanduser().resolve()
+    bids_root = bids_dir.expanduser().resolve()
+    output_root = output_dir.expanduser().resolve()
+    protected = {Path("/").resolve(), Path.home().resolve(), bids_root, output_root}
+    if (
+        resolved in protected
+        or bids_root.is_relative_to(resolved)
+        or output_root.is_relative_to(resolved)
+    ):
+        raise ValueError(
+            f"Unsafe work directory {resolved}: choose a dedicated directory "
+            "that is not the BIDS root, output root, home directory, or their parent."
+        )
+    return resolved
+
+
 def _clean_work_dir(work_dir: Path) -> Optional[Path]:
-    """Remove the working directory after processing.
+    """Clear prior contents while preserving the working-directory root.
 
     Parameters
     ----------
@@ -35,13 +70,17 @@ def _clean_work_dir(work_dir: Path) -> Optional[Path]:
     Returns
     -------
     pathlib.Path or None
-        Removed directory, or ``None`` when it did not exist.
+        Cleared directory, or ``None`` when it did not exist.
     """
     import shutil
 
     if not work_dir.exists():
         return None
-    shutil.rmtree(work_dir)
+    for child in work_dir.iterdir():
+        if child.is_dir() and not child.is_symlink():
+            shutil.rmtree(child)
+        else:
+            child.unlink()
     return work_dir
 
 
@@ -544,7 +583,8 @@ Examples:
         "--clean-workdir",
         action="store_true",
         default=False,
-        help="Delete the working directory after processing.",
+        help="Clear prior working-directory contents before processing. Do not "
+             "use with concurrent runs sharing a work directory.",
     )
     g_other.add_argument(
         "--sloppy",
@@ -977,6 +1017,13 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
 
     # Resolve work_dir once for downstream use
     work_dir = args.work_dir if args.work_dir is not None else args.output_dir / "work"
+    work_dir = _validate_work_dir(work_dir, args.bids_dir, args.output_dir)
+    if args.clean_workdir:
+        logger.log(IMPORTANT, "Clearing previous working-directory contents: %s", work_dir)
+        try:
+            _clean_work_dir(work_dir)
+        except OSError as e:
+            logger.warning("Could not clear all contents of %s: %s", work_dir, e)
 
     # Process each subject
     for subject_id in subjects:
@@ -1099,18 +1146,6 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
                             logger.error("    %s", line)
                     except Exception:
                         logger.error("    (could not read crash file)")
-
-    # Clean working directory after all subjects are processed
-    if args.clean_workdir:
-        logger.log(IMPORTANT, "Clearing working directory: %s", work_dir)
-        try:
-            _clean_work_dir(work_dir)
-        except OSError as e:
-            logger.warning(
-                "Failed to clean work directory %s: %s",
-                work_dir,
-                e,
-            )
 
     logger.log(IMPORTANT, "PMRIPrep processing complete")
 
