@@ -150,8 +150,7 @@ DSC fields:
 | Field | Default | Meaning |
 |---|---:|---|
 | `method` | `oSVD` | `sSVD`, `oSVD`, `tikhonov`, `vascular`, or `cpi` |
-| `inference` | `vi` | `nlls`, `vi`, or `svb` for CPI/vascular |
-| `mcmc_samples` | `500` | Compatibility field; no DSC MCMC mode is currently exposed |
+| `inference` | `vi` | `vi`, `svb` or `nlls` for CPI/vascular |
 | `cpi_control_points` | `0` | CPI control points; 0 selects automatically |
 | `cpi_infer_cpt` | `true` | Infer ordered CPI control-point times |
 | `cpi_infer_delay` | `false` | Fit voxelwise CPI bolus delay |
@@ -176,9 +175,6 @@ DSC fields:
 | `smooth_fwhm` | `0.0` | Additional smoothed outputs in mm; 0 disables |
 | `underlays` | `[]` | Anatomical underlays used in QC |
 | `num_processes` | `0` | Per-pipeline process cap; 0 inherits `--nprocs` |
-| `hdbet_device` | `auto` | `auto`, `cuda`, `mps`, or `cpu` |
-| `hdbet_conda_env` | `null` | Optional HD-BET conda environment |
-| `sloppy` | `false` | Faster low-quality settings for testing |
 
 DCE fields:
 
@@ -186,7 +182,6 @@ DCE fields:
 |---|---:|---|
 | `model` | `auto` | BIC selection or a fixed PK model |
 | `inference` | `nlls` | `nlls`, `vi`, or advanced `mcmc` |
-| `mcmc_samples` | `500` | MCMC sample count |
 | `dose` | `1.0` | Contrast-dose multiplier |
 | `aif_method` | `auto` | `auto` or `population` |
 | `aif_peak_floor` | `true` | Raise only low detected AIF peaks to the dose-adjusted floor |
@@ -216,20 +211,14 @@ DCE fields:
 | `smooth_fwhm` | `0.0` | Additional smoothed outputs in mm; 0 disables |
 | `underlays` | `[]` | Anatomical underlays used in QC |
 | `num_processes` | `0` | Per-pipeline process cap; 0 inherits `--nprocs` |
-| `hdbet_device` | `auto` | `auto`, `cuda`, `mps`, or `cpu` |
-| `hdbet_conda_env` | `null` | Optional HD-BET conda environment |
-| `sloppy` | `false` | Faster low-quality settings for testing |
 
 Anatomical fields:
 
 | Field | Default | Meaning |
 |---|---:|---|
 | `tool` | `hdbet` | `hdbet` or `ants` brain extraction |
-| `hdbet_device` | `auto` | `auto`, `cuda`, `mps`, or `cpu` |
-| `hdbet_conda_env` | `null` | Optional HD-BET conda environment |
 | `denoise` | `false` | Apply ANTs denoising |
 | `create_subtraction` | `true` | Create post-minus-precontrast T1w subtraction |
-| `sloppy` | `false` | Faster low-quality settings for testing |
 
 Tumor-segmentation fields:
 
@@ -238,8 +227,6 @@ Tumor-segmentation fields:
 | `tool` | `hdglio` | Segmentation tool; currently HD-GLIO only |
 | `nawm_erosion` | `2` | NAWM-mask erosion iterations |
 | `nawm_min_voxels` | `500` | Minimum accepted NAWM voxels |
-| `device` | `cuda` | `cuda`, `mps`, or `cpu` |
-| `conda_env` | `null` | Optional tumor-segmentation conda environment |
 
 Masks (`lesion_mask`, `nawm_mask`, `roi_mask`) must already be in the native
 perfusion space. `underlays` accepts `t1w_precon`, `t1w_postcon`,
