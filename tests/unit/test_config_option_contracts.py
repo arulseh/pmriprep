@@ -259,6 +259,31 @@ def test_invalid_resource_limits_fail_at_cli_parse(flag: str, value: str) -> Non
         )
 
 
+def test_skip_anat_is_not_a_public_cli_mode() -> None:
+    """Anatomy cannot be disabled while public DSC/DCE graphs require it."""
+    with pytest.raises(SystemExit):
+        _build_parser().parse_args(
+            ["/tmp/bids", "/tmp/out", "participant", "--skip-anat"]
+        )
+
+
+def test_skipping_optional_pipelines_remains_anatomical_only() -> None:
+    """Disabling every optional pipeline still leaves useful anatomy processing."""
+    parsed = _build_parser().parse_args([
+        "/tmp/bids",
+        "/tmp/out",
+        "participant",
+        "--skip-tumor-seg",
+        "--skip-dsc",
+        "--skip-dce",
+    ])
+
+    assert parsed.skip_tumor_seg is True
+    assert parsed.skip_dsc is True
+    assert parsed.skip_dce is True
+    assert not hasattr(parsed, "skip_anat")
+
+
 @pytest.mark.parametrize(
     ("factory", "match"),
     [

@@ -285,12 +285,6 @@ Examples:
         "Flags to skip specific pipeline components.",
     )
     skip_group.add_argument(
-        "--skip-anat",
-        action="store_true",
-        default=False,
-        help="Skip anatomical preprocessing pipeline.",
-    )
-    skip_group.add_argument(
         "--skip-tumor-seg",
         action="store_true",
         default=False,
@@ -961,7 +955,9 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
 
     # Build skip flags
     skip_flags = PipelineSkipFlags(
-        skip_anat=args.skip_anat,
+        # Anatomical processing is required by the public DSC/DCE workflows.
+        # Valid reruns reuse Nipype's node cache automatically.
+        skip_anat=False,
         skip_tumor_seg=args.skip_tumor_seg,
         skip_dsc=args.skip_dsc,
         skip_dce=args.skip_dce,

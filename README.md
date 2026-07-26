@@ -142,7 +142,6 @@ pmriprep bids_dir output_dir {participant} [options]
 
 | Flag | Description |
 |------|-------------|
-| `--skip-anat` | Skip anatomical preprocessing |
 | `--skip-tumor-seg` | Skip tumor segmentation |
 | `--skip-dsc` | Skip DSC perfusion pipeline |
 | `--skip-dce` | Skip DCE perfusion pipeline |
