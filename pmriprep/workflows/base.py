@@ -3267,16 +3267,26 @@ def _prepare_master_workflow_context(
     _MasterWorkflowContext
         Fully resolved non-graph state for master workflow construction.
     """
+    import copy
+
     from pmriprep.utils.mem import _system_ram_gb, cap_mem_gb, estimate_4d_mem_gb
 
     resolved_bids_dir = Path(bids_dir).resolve()
     resolved_output_dir = Path(output_dir).resolve()
     resolved_work_dir = Path(work_dir).resolve() if work_dir is not None else None
     resolved_skip_flags = skip_flags or PipelineSkipFlags()
-    resolved_anat_config = anat_config or AnatConfig()
-    resolved_tumor_seg_config = tumor_seg_config or TumorSegConfig()
-    resolved_dsc_config = dsc_config or DSCConfig()
-    resolved_dce_config = dce_config or DCEConfig()
+    # Workflow initialization resolves session-specific auto settings (notably
+    # DCE T1/B1 availability) in place. Each subject/session must receive an
+    # isolated configuration so those effective values cannot leak into the
+    # next session of the same CLI invocation.
+    resolved_anat_config = copy.deepcopy(anat_config) if anat_config is not None else AnatConfig()
+    resolved_tumor_seg_config = (
+        copy.deepcopy(tumor_seg_config)
+        if tumor_seg_config is not None
+        else TumorSegConfig()
+    )
+    resolved_dsc_config = copy.deepcopy(dsc_config) if dsc_config is not None else DSCConfig()
+    resolved_dce_config = copy.deepcopy(dce_config) if dce_config is not None else DCEConfig()
 
     session_data = discover_session_data(
         resolved_bids_dir, subject_id, session_id, layout=layout

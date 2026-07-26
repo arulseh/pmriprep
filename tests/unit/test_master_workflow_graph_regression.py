@@ -641,6 +641,60 @@ def test_prepare_master_context_resolves_session_policy(
     assert isinstance(context.dsc_config, DSCConfig)
 
 
+def test_prepare_master_context_isolates_session_config_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Resolved T1/B1 state from one session cannot alter the next session."""
+    session_data = SessionData(
+        subject="0001",
+        session="0001",
+        modalities=ModalityAvailability(),
+        pipelines=PipelineAvailability(),
+    )
+    monkeypatch.setattr(
+        "pmriprep.workflows.base.discover_session_data", lambda *args, **kwargs: session_data
+    )
+    monkeypatch.setattr("pmriprep.utils.mem._system_ram_gb", lambda: 128.0)
+    source = DCEConfig(no_t1=False, b1_method="auto")
+
+    first = _prepare_master_workflow_context(
+        bids_dir=tmp_path / "bids",
+        output_dir=tmp_path / "out",
+        subject_id="0001",
+        session_id="0001",
+        skip_flags=None,
+        anat_config=None,
+        tumor_seg_config=None,
+        dsc_config=None,
+        dce_config=source,
+        work_dir=tmp_path / "work",
+        mem_limit_gb=None,
+        layout=None,
+    )
+    first.dce_config.no_t1 = True
+    first.dce_config.b1_method = "none"
+    second = _prepare_master_workflow_context(
+        bids_dir=tmp_path / "bids",
+        output_dir=tmp_path / "out",
+        subject_id="0001",
+        session_id="0002",
+        skip_flags=None,
+        anat_config=None,
+        tumor_seg_config=None,
+        dsc_config=None,
+        dce_config=source,
+        work_dir=tmp_path / "work",
+        mem_limit_gb=None,
+        layout=None,
+    )
+
+    assert source.no_t1 is False
+    assert source.b1_method == "auto"
+    assert second.dce_config.no_t1 is False
+    assert second.dce_config.b1_method == "auto"
+    assert first.dce_config is not second.dce_config
+
+
 def test_select_master_structural_references_routes_each_application(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -66,6 +66,10 @@ def _make_modalities(**kwargs):
         "afi": [],
         "afi_tr1_ms": None,
         "afi_tr2_ms": None,
+        "afi_mode": None,
+        "afi_4d_file": None,
+        "b1_method_detected": None,
+        "b1_precomputed_file": None,
         "dsc_n_volumes": None,
         "dce_n_volumes": None,
     }
@@ -692,6 +696,67 @@ class TestRunPreflight:
             dce_config=DCEConfig(),
         )
         assert any(m.code == "AFI_MISSING_TR" for m in report.messages)
+
+    @pytest.mark.parametrize(
+        ("method", "modalities", "code"),
+        [
+            (
+                "precomputed",
+                {"b1_precomputed_file": None},
+                "DCE_B1_PRECOMPUTED_MISSING",
+            ),
+            (
+                "afi",
+                {"afi": [], "afi_mode": None, "afi_4d_file": None},
+                "DCE_B1_AFI_MISSING",
+            ),
+            (
+                "afi",
+                {
+                    "afi": [Path("/fake/afi.nii.gz")],
+                    "afi_mode": "split",
+                    "afi_4d_file": None,
+                },
+                "DCE_B1_AFI_MISSING",
+            ),
+        ],
+    )
+    def test_forced_b1_method_requires_matching_session_input(
+        self, tmp_path, method, modalities, code,
+    ):
+        """Forced B1 modes fail preflight instead of crashing a Nipype node."""
+        dce_file = tmp_path / "sub-01_dce.nii.gz"
+        dce_file.touch()
+        (tmp_path / "sub-01_dce.json").touch()
+        mods = _make_modalities(dce=dce_file, **modalities)
+
+        report = run_preflight(
+            session_data=_make_session_data(mods),
+            decision=_make_decision(run_dce=True),
+            dsc_sidecar=None,
+            dce_sidecar=_valid_dce_sidecar(),
+            dce_config=DCEConfig(b1_method=method),
+        )
+
+        assert any(message.code == code for message in report.messages)
+        assert report.has_errors
+
+    @pytest.mark.parametrize("method", ["auto", "none"])
+    def test_optional_b1_modes_do_not_require_session_input(self, tmp_path, method):
+        """Automatic and explicitly disabled B1 modes remain optional."""
+        dce_file = tmp_path / "sub-01_dce.nii.gz"
+        dce_file.touch()
+        (tmp_path / "sub-01_dce.json").touch()
+
+        report = run_preflight(
+            session_data=_make_session_data(_make_modalities(dce=dce_file)),
+            decision=_make_decision(run_dce=True),
+            dsc_sidecar=None,
+            dce_sidecar=_valid_dce_sidecar(),
+            dce_config=DCEConfig(b1_method=method),
+        )
+
+        assert not any(message.code.startswith("DCE_B1_") for message in report.messages)
 
 
 # ===========================================================================

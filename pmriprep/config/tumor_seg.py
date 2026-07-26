@@ -39,3 +39,18 @@ class TumorSegConfig:
     # GPU settings
     device: Literal["cuda", "mps", "cpu"] = "cuda"
     conda_env: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        """Validate public tumor-segmentation configuration values."""
+        if self.tool != "hdglio":
+            raise ValueError("Invalid tool={!r}. Valid: ['hdglio']".format(self.tool))
+        if self.device not in {"cuda", "mps", "cpu"}:
+            raise ValueError(
+                f"Invalid device={self.device!r}. Valid: ['cpu', 'cuda', 'mps']"
+            )
+        for option in ("nawm_erosion", "nawm_min_voxels"):
+            value = getattr(self, option)
+            if not isinstance(value, int) or isinstance(value, bool):
+                raise TypeError(f"{option} must be an integer")
+            if value < 0:
+                raise ValueError(f"{option} must be non-negative")

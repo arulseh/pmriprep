@@ -252,7 +252,7 @@ tumor_seg:
 | `aif_method` | str | `"auto"` | AIF method: `auto`, `synthetic` |
 | `aif_file` | path | `null` | External AIF curve (ΔR2* in s⁻¹; headerless text or PMRIPrep single-column TSV). Bypasses AIF detection |
 | `aif_mask_file` | path | `null` | Custom AIF mask file (search constraint; DSC space) |
-| `n_aif_candidates` | int | `10` | Maximum number of AIF candidate voxels to retain and average; fewer may survive selection |
+| `n_aif_candidates` | int | `10` | Maximum number of AIF candidate voxels to retain and average (minimum configured value: 3); fewer may survive selection |
 | `lesion_distance` | float | `15.0` | Minimum distance (mm) from lesion for AIF candidates |
 | `disable_aif_fallback` | bool | `false` | Disable synthetic AIF fallback: error if no AIF found, otherwise retain a flagged low-quality AIF |
 | `leakage_method` | str | `"bsw"` | K2 leakage correction: `bsw` (standard), `bidirectional` |
@@ -281,13 +281,13 @@ tumor_seg:
 | `target_peak` | float | `null` | Explicit AIF calibration target in blood-voxel units (mM), before hematocrit correction; overrides `aif_peak_floor`; null follows the peak-floor policy |
 | `aif_file` | path | `null` | External AIF file (plasma [Gd] in mM, Hct-corrected; headerless text or PMRIPrep single-column TSV). Bypasses AIF detection |
 | `aif_mask_file` | path | `null` | Custom AIF mask file (search constraint; DCE space) |
-| `n_aif_candidates` | int | `10` | Maximum number of AIF candidate voxels to retain and average; fewer may survive selection |
+| `n_aif_candidates` | int | `10` | Maximum number of AIF candidate voxels to retain and average (minimum configured value: 3); fewer may survive selection |
 | `lesion_distance` | float | `15.0` | Minimum distance (mm) from lesion for AIF candidates |
 | `aif_bat_alignment` | str | `"auto"` | AIF→tumor bolus-arrival alignment: `auto`, `off` |
 | `no_t1` | bool | `false` | Skip T1 mapping; B1+ correction remains controlled by `b1_method` |
 | `t1_method` | str | `"hybrid"` | VFA T1 fitting: `hybrid`, `wlls`, `nlls` |
 | `t1_map_file` | path | `null` | External T1 map (NIfTI, ms). Bypasses VFA fitting |
-| `t1_correction_mode` | str | `"auto"` | T1 policy: `auto` retains plausible measured maps and uses a uniform field-strength literature value for rejected maps; `none` forces the measured map and `fallback` forces the uniform value |
+| `t1_correction_mode` | str | `"auto"` | T1 policy: `auto` retains numerically plausible measured support and leaves unsupported voxels missing; `none` disables automatic correction while retaining the measured map, and `fallback` explicitly forces a uniform field-strength literature value |
 | `b1_method` | str | `"auto"` | B1+ correction: `auto`, `afi`, `precomputed`, `none` |
 | `b1_map_encoding` | str | `"auto"` | Pre-computed B1+ map encoding: `auto` (from suffix/Units), `actual_flip_deci_deg`, `actual_flip_deg`, `percent`, `ratio` |
 | `cbv_constraint_mode` | str | `"auto"` | DSC→DCE vp constraint. `auto`: `soft` prior when DSC CBV is reliable, `skip` otherwise. Options: `auto`, `skip` |

@@ -153,6 +153,31 @@ class DCEConfig:
         This handles cases where values may be passed as strings from
         YAML/JSON config files or CLI arguments.
         """
+        categorical_options = {
+            "model": ({"auto", "tofts", "extended_tofts", "patlak", "2cxm"}, self.model),
+            "inference": ({"nlls", "map", "vi", "mcmc"}, self.inference),
+            "aif_method": ({"auto", "population"}, self.aif_method),
+            "aif_bat_alignment": ({"auto", "off"}, self.aif_bat_alignment),
+            "t1_method": ({"hybrid", "wlls", "nlls"}, self.t1_method),
+            "t1_correction_mode": ({"auto", "none", "fallback"}, self.t1_correction_mode),
+            "hdbet_device": ({"auto", "cuda", "mps", "cpu"}, self.hdbet_device),
+        }
+        for option, (valid, value) in categorical_options.items():
+            if value not in valid:
+                raise ValueError(
+                    f"Invalid {option}={value!r}. Valid: {sorted(valid)}"
+                )
+
+        for option in (
+            "aif_peak_floor",
+            "no_t1",
+            "no_dsc_validation",
+            "motion_correct",
+            "sloppy",
+        ):
+            if not isinstance(getattr(self, option), bool):
+                raise TypeError(f"{option} must be a boolean")
+
         # Validate underlay values
         _VALID_UNDERLAYS = {
             "t1w_precon", "t1w_postcon", "t1w_subtraction",
@@ -259,6 +284,28 @@ class DCEConfig:
                 "hematocrit must be finite and in [0, 1), "
                 f"got {self.hematocrit}"
             )
+
+        if self.baseline_frames != 0 and self.baseline_frames < 5:
+            raise ValueError("baseline_frames must be 0 (auto) or at least 5")
+        if self.mcmc_samples <= 0:
+            raise ValueError("mcmc_samples must be greater than zero")
+        if self.n_aif_candidates < 3:
+            raise ValueError("n_aif_candidates must be at least 3")
+        if self.num_processes < 0:
+            raise ValueError("num_processes must be non-negative (0 = automatic)")
+        for option in (
+            "smooth_fwhm",
+            "lesion_distance",
+            "tsnr_threshold",
+            "motion_thresh",
+        ):
+            value = getattr(self, option)
+            if not math.isfinite(value) or value < 0:
+                raise ValueError(f"{option} must be finite and non-negative")
+        if self.target_peak is not None and (
+            not math.isfinite(self.target_peak) or self.target_peak <= 0
+        ):
+            raise ValueError("target_peak must be finite and greater than zero")
 
         # Validate t1_map_file / no_t1 mutual exclusivity
         if self.t1_map_file and self.no_t1:

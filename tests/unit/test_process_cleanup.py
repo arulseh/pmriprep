@@ -155,6 +155,40 @@ def test_workflow_cleanup_failure_preserves_interrupt(
         _run_workflow(_Workflow(), Namespace(nprocs=1, use_plugin=None))
 
 
+@pytest.mark.parametrize("use_gpu", [False, True])
+def test_multiproc_gpu_slots_follow_constructed_workflow(
+    monkeypatch: pytest.MonkeyPatch, use_gpu: bool,
+) -> None:
+    """YAML-resolved node state, not absent CLI device flags, controls slots."""
+    from pmriprep.cli.run import _run_workflow
+
+    calls: list[tuple[str, dict[str, Any] | None]] = []
+
+    class _Node:
+        pass
+
+    node = _Node()
+    node.use_gpu = use_gpu
+
+    class _Workflow:
+        def _get_all_nodes(self):
+            return [node]
+
+        def run(self, *, plugin: str, plugin_args: Any = None) -> None:
+            calls.append((plugin, plugin_args))
+
+    monkeypatch.setattr("pmriprep.utils.processes.enable_child_subreaper", lambda: True)
+    monkeypatch.setattr("pmriprep.utils.gpu.detect_gpu_count", lambda: 2)
+    args = Namespace(nprocs=4, mem_gb=None, use_plugin=None)
+
+    _run_workflow(_Workflow(), args)
+
+    expected = {"n_procs": 4}
+    if use_gpu:
+        expected["n_gpu_procs"] = 2
+    assert calls == [("MultiProc", expected)]
+
+
 def test_process_group_cleanup_terminates_and_reaps(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

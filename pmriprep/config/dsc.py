@@ -182,6 +182,29 @@ class DSCConfig:
         This handles cases where values may be passed as strings from
         YAML/JSON config files or CLI arguments.
         """
+        categorical_options = {
+            "method": ({"sSVD", "oSVD", "tikhonov", "vascular", "cpi"}, self.method),
+            "inference": ({"nlls", "map", "vi", "svb"}, self.inference),
+            "aif_method": ({"auto", "synthetic"}, self.aif_method),
+            "hdbet_device": ({"auto", "cuda", "mps", "cpu"}, self.hdbet_device),
+        }
+        for option, (valid, value) in categorical_options.items():
+            if value not in valid:
+                raise ValueError(
+                    f"Invalid {option}={value!r}. Valid: {sorted(valid)}"
+                )
+
+        for option in (
+            "cpi_infer_cpt",
+            "cpi_infer_delay",
+            "disable_aif_fallback",
+            "motion_correct",
+            "first_pass_cbv",
+            "sloppy",
+        ):
+            if not isinstance(getattr(self, option), bool):
+                raise TypeError(f"{option} must be a boolean")
+
         # Validate underlay values
         _VALID_UNDERLAYS = {
             "t1w_precon", "t1w_postcon", "t1w_subtraction",
@@ -201,8 +224,6 @@ class DSCConfig:
             self.pre_bolus = int(self.pre_bolus)
             self.mcmc_samples = int(self.mcmc_samples)
             self.cpi_control_points = int(self.cpi_control_points)
-            self.cpi_infer_cpt = bool(self.cpi_infer_cpt)
-            self.cpi_infer_delay = bool(self.cpi_infer_delay)
             self.n_aif_candidates = int(self.n_aif_candidates)
             self.num_processes = int(self.num_processes)
         except (ValueError, TypeError) as e:
@@ -319,3 +340,18 @@ class DSCConfig:
                     "kep=%.4f s^-1 outside typical range [%.3f, %.3f] s^-1 (Leu 2016)",
                     self.kep, KEP_DSC_LOWER, KEP_DSC_UPPER,
                 )
+
+        if self.pre_bolus < 3:
+            raise ValueError("pre_bolus must be at least 3")
+        if self.mcmc_samples <= 0:
+            raise ValueError("mcmc_samples must be greater than zero")
+        if self.cpi_control_points < 0:
+            raise ValueError("cpi_control_points must be non-negative (0 = automatic)")
+        if self.n_aif_candidates < 3:
+            raise ValueError("n_aif_candidates must be at least 3")
+        if self.num_processes < 0:
+            raise ValueError("num_processes must be non-negative (0 = automatic)")
+        for option in ("smooth_fwhm", "lesion_distance", "motion_thresh"):
+            value = getattr(self, option)
+            if not math.isfinite(value) or value < 0:
+                raise ValueError(f"{option} must be finite and non-negative")

@@ -124,6 +124,32 @@ def _preload_type(value: str) -> str | float:
     return fval
 
 
+def _positive_int(value: str) -> int:
+    """Parse a strictly positive integer CLI resource value."""
+    try:
+        parsed = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(f"expected an integer, got {value!r}") from error
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError(f"value must be greater than zero, got {parsed}")
+    return parsed
+
+
+def _positive_float(value: str) -> float:
+    """Parse a finite, strictly positive floating-point CLI resource value."""
+    import math
+
+    try:
+        parsed = float(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(f"expected a number, got {value!r}") from error
+    if not math.isfinite(parsed) or parsed <= 0:
+        raise argparse.ArgumentTypeError(
+            f"value must be finite and greater than zero, got {parsed}"
+        )
+    return parsed
+
+
 def _sanitize_for_toml(obj: Any) -> Any:
     """Convert Path objects to strings and drop None values for TOML."""
     if isinstance(obj, dict):
@@ -218,21 +244,21 @@ Examples:
     # Resource arguments
     parser.add_argument(
         "--nprocs",
-        type=int,
+        type=_positive_int,
         default=1,
         metavar="N",
         help="Maximum number of processors to use (default: 1).",
     )
     parser.add_argument(
         "--omp-nthreads",
-        type=int,
+        type=_positive_int,
         default=None,
         metavar="N",
         help="Per-process thread limit (OMP/MKL/ITK).",
     )
     parser.add_argument(
         "--mem-gb",
-        type=float,
+        type=_positive_float,
         metavar="GB",
         help="Upper bound memory limit in gigabytes.",
     )
@@ -593,6 +619,14 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     if args.config_file is not None and not args.config_file.is_file():
         parser.error(f"config_file does not exist: {args.config_file}")
 
+    if args.use_plugin is not None:
+        if not args.use_plugin.is_file():
+            parser.error(f"--use-plugin file does not exist: {args.use_plugin}")
+        try:
+            _load_plugin_config(args.use_plugin)
+        except (OSError, ValueError) as error:
+            parser.error(str(error))
+
     # Validate dce_aif_file exists if specified
     _VALID_AIF_EXTENSIONS = {".txt", ".tsv", ".npz", ".npy"}
     if args.dce_aif_file is not None:
@@ -616,7 +650,16 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
 
     # Resolve all Path arguments to absolute paths so nipype nodes
     # can locate them regardless of their execution working directory
-    for attr in ("bids_dir", "output_dir", "work_dir", "config_file", "dce_aif_file", "dsc_aif_file"):
+    for attr in (
+        "bids_dir",
+        "output_dir",
+        "work_dir",
+        "config_file",
+        "dce_aif_file",
+        "dsc_aif_file",
+        "dce_t1_map",
+        "use_plugin",
+    ):
         val = getattr(args, attr, None)
         if val is not None:
             setattr(args, attr, val.resolve())
@@ -855,6 +898,7 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
         build_tumor_seg_config,
         load_config,
         merge_cli_config,
+        validate_config_paths,
     )
     from pmriprep.utils.naming import workflow_dirname
     from pmriprep.workflows.base import (
@@ -907,6 +951,7 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
     dce_config = build_dce_config(merged_config)
     anat_config = build_anat_config(merged_config)
     tumor_seg_config = build_tumor_seg_config(merged_config)
+    validate_config_paths(dsc_config, dce_config)
 
     # Propagate --nprocs as fallback for num_processes (intra-node parallelism)
     if dsc_config.num_processes == 0:
@@ -1264,18 +1309,13 @@ def _run_workflow(
         # inside containers (e.g., Apptainer --contain).  Without this,
         # MultiProc._prerun_check raises "Insufficient GPU resources" because
         # n_gpu_procs defaults to 0 while nodes with use_gpu=True are present.
-        # Check if any GPU nodes will be present. CLI arg defaults are None
-        # while config defaults are "auto"/"cuda", so use the CLI value when
-        # explicitly set, otherwise fall back to "auto" (the config default).
-        from pmriprep.utils.device import resolve_device_uses_gpu
-
-        _hdbet_device = getattr(args, "hdbet_device", None) or "auto"
-        _tumor_device = getattr(args, "tumor_seg_device", None) or "auto"
-
-        _needs_gpu = (
-            resolve_device_uses_gpu(_hdbet_device)  # HD-BET brain extraction
-            or resolve_device_uses_gpu(_tumor_device)  # HD-GLIO tumor seg
+        # Inspect the constructed graph rather than the raw CLI namespace.
+        # YAML configuration and per-pipeline defaults may differ from absent
+        # CLI values; the node attributes are the effective scheduling state.
+        all_nodes: list[Any] = list(
+            getattr(workflow, "_get_all_nodes", lambda: [])()
         )
+        _needs_gpu = any(bool(getattr(node, "use_gpu", False)) for node in all_nodes)
 
         if _needs_gpu:
             from pmriprep.utils.gpu import detect_gpu_count

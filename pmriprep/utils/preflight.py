@@ -1017,4 +1017,33 @@ def run_preflight(
                 )
             )
 
+        if dce_config is not None and dce_config.b1_method == "precomputed":
+            if not session_data.modalities.b1_precomputed_file:
+                report.messages.append(PreflightMessage(
+                    level="error",
+                    code="DCE_B1_PRECOMPUTED_MISSING",
+                    message=(
+                        "b1_method='precomputed' was requested, but no supported "
+                        "TB1map/TB1TFL input was discovered for this session. "
+                        "Provide a precomputed B1+ map, choose b1_method='auto', "
+                        "or explicitly disable B1+ correction with 'none'."
+                    ),
+                ))
+        if dce_config is not None and dce_config.b1_method == "afi":
+            if not (
+                session_data.modalities.afi
+                and session_data.modalities.afi_mode == "4d"
+                and session_data.modalities.afi_4d_file
+            ):
+                report.messages.append(PreflightMessage(
+                    level="error",
+                    code="DCE_B1_AFI_MISSING",
+                    message=(
+                        "b1_method='afi' was requested, but no supported 4D "
+                        "TB1AFI input was discovered for this session. Provide "
+                        "a 4D AFI acquisition, choose b1_method='auto', or "
+                        "explicitly disable B1+ correction with 'none'."
+                    ),
+                ))
+
     return report
