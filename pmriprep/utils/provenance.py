@@ -357,17 +357,21 @@ def _enrich_dce(
                 units_block["hematocrit_used"] = _safe_float(hct_used)
             perf["AIFUnits"] = units_block
 
-        # BloodT1 from AIF detection
+        # Literature blood T1 is currently an AIF amplitude/QC reference; the
+        # detected magnitude signal is converted upstream with the tissue T1
+        # policy. Name and role must not imply arterial signal conversion.
         if "blood_t1_seconds" in aif and aif["blood_t1_seconds"]:
             fs = perf.get("Relaxivity", {}).get("field_strength_T")
             if fs is None:
                 fs = _safe_float(aif.get("field_strength_t"))
-            perf["BloodT1"] = {
+            perf["BloodT1Reference"] = {
                 "value_s": _safe_float(aif["blood_t1_seconds"]),
                 "Source": "literature_lookup",
+                "Role": "aif_expected_peak_and_qc_reference",
+                "AppliedToArterialSignalConversion": False,
             }
             if fs is not None:
-                perf["BloodT1"]["field_strength_T"] = fs
+                perf["BloodT1Reference"]["field_strength_T"] = fs
 
     # Hematocrit
     from pmriprep.utils.dce_constants import HEMATOCRIT_ARTERIAL

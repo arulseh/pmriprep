@@ -1,6 +1,6 @@
 """Unit tests for dce_t1_validation module.
 
-Tests tissue-segmented T1 fallback, NaN abandon threshold,
+Tests uniform T1 fallback, valid-support classification,
 auto-correction tiers, T1CorrectionResult serialization,
 interior NaN gap-fill, and NLLS T1 fitting.
 """
@@ -13,55 +13,32 @@ import pytest
 from pmriprep.utils.dce_t1_validation import (
     GAPFILL_MIN_NEIGHBOR_FLOOR,
     GAPFILL_MIN_NEIGHBOR_FRACTION,
+    MIN_VALID_T1_MS,
     T1CorrectionResult,
     T1GapFillResult,
     T1_TISSUE_REFERENCE,
-    VFA_NAN_FRACTION_GOOD,
-    VFA_NAN_FRACTION_TISSUE_FALLBACK,
     apply_t1_correction,
     build_tissue_t1_map,
     fill_t1_gaps,
     get_field_strength_key,
-    get_nan_abandon_threshold,
+    valid_t1_support,
 )
 
 
 # ============================================================================
-# get_nan_abandon_threshold tests
+# valid_t1_support tests
 # ============================================================================
 
 
-class TestGetNanAbandonThreshold:
-    """Tests for VFA NaN abandon threshold calculation."""
+class TestValidT1Support:
+    """Tests for the shared downstream T1-validity rule."""
 
-    def test_well_conditioned_returns_base_threshold(self) -> None:
-        """E1 < 0.99 → standard 0.40 threshold."""
-        assert get_nan_abandon_threshold(0.98) == VFA_NAN_FRACTION_TISSUE_FALLBACK
-
-    def test_ill_conditioned_reduces_threshold(self) -> None:
-        """E1 = 0.995 → threshold between 0.20 and 0.40."""
-        thresh = get_nan_abandon_threshold(0.995)
-        assert VFA_NAN_FRACTION_GOOD < thresh < VFA_NAN_FRACTION_TISSUE_FALLBACK
-
-    def test_severely_ill_conditioned_returns_minimum(self) -> None:
-        """E1 >= 1.0 → threshold clamped at 0.20."""
-        # E1=0.999 gives 0.40 - 0.009*20 = 0.22, not yet at minimum
-        assert get_nan_abandon_threshold(0.999) == pytest.approx(0.22, abs=0.01)
-        # E1=1.0 → 0.40 - 0.01*20 = 0.20 (clamped)
-        assert get_nan_abandon_threshold(1.0) == VFA_NAN_FRACTION_GOOD
-        assert get_nan_abandon_threshold(1.001) == VFA_NAN_FRACTION_GOOD
-
-    def test_boundary_at_0_99(self) -> None:
-        """E1 = 0.99 exactly → returns 0.40."""
-        assert get_nan_abandon_threshold(0.99) == pytest.approx(
-            VFA_NAN_FRACTION_TISSUE_FALLBACK
-        )
-
-    def test_linear_interpolation(self) -> None:
-        """Mid-point E1=0.9945 → threshold ~0.31."""
-        thresh = get_nan_abandon_threshold(0.9945)
-        expected = 0.40 - (0.9945 - 0.99) * 20.0  # 0.31
-        assert thresh == pytest.approx(expected, abs=0.01)
+    def test_rejects_nonfinite_zero_and_subthreshold_values(self) -> None:
+        """QC support matches signal conversion rather than finiteness alone."""
+        values = np.array([np.nan, np.inf, -1.0, 0.0, 99.9, MIN_VALID_T1_MS, 900.0])
+        assert valid_t1_support(values).tolist() == [
+            False, False, False, False, False, True, True,
+        ]
 
 
 # ============================================================================
@@ -310,15 +287,14 @@ class TestApplyT1CorrectionAuto:
         # Low NaN without probsegs → uniform fallback
         assert result.correction_applied == "fallback"
 
-    def test_e1_dependent_threshold_triggers_tissue(
+    def test_e1_does_not_change_fit_loss_threshold(
         self, brain_mask: np.ndarray, probsegs: tuple[np.ndarray, np.ndarray],
     ) -> None:
-        """Ill-conditioned E1 lowers threshold, triggering tissue fallback at 25% NaN."""
-        t1_map = np.full((10, 10, 10), 2000.0)
+        """E1 remains descriptive and cannot reject adequate spatial support."""
+        t1_map = np.full((10, 10, 10), 1090.0)
         t1_map[~brain_mask] = np.nan
         wm, gm = probsegs
 
-        # E1=0.996 lowers the continuous failed-fit tolerance.
         _, result = apply_t1_correction(
             t1_map, field_strength=3.0, correction_mode="auto",
             brain_mask=brain_mask,
@@ -326,7 +302,7 @@ class TestApplyT1CorrectionAuto:
             e1_median=0.996,
             b1_corrected=True,
         )
-        assert result.correction_applied == "fallback"
+        assert result.correction_applied == "none"
 
     def test_reject_threshold_uses_uniform_regardless_of_nan(
         self, brain_mask: np.ndarray, probsegs: tuple[np.ndarray, np.ndarray],
@@ -1357,16 +1333,15 @@ class TestPostOffsetRecovery:
 
 
 # ============================================================================
-# E1-sensitive VFA fit-loss fallback
+# Fixed VFA fit-loss fallback
 # ============================================================================
 
 
 class TestVFAFitLossGate:
-    """Tests for E1-sensitive VFA fit-loss fallback.
+    """Tests for the fixed VFA fit-loss fallback.
 
-    When VFA E1 is close to 1 (short TR relative to T1), the VFA T1 map
-    is more sensitive to noise. E1 lowers the tolerated failed-fit
-    fraction but does not trigger fallback by itself.
+    E1 remains descriptive conditioning QC and does not alter the fallback
+    decision because it does not encode the full acquisition conditioning.
     """
 
     @pytest.fixture

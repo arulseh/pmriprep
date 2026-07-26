@@ -135,6 +135,38 @@ def test_no_t1_signal_conversion_retains_b1_correction(tmp_path: Any) -> None:
     )
 
 
+def test_unity_b1_sentinel_is_not_reported_as_correction(tmp_path: Any) -> None:
+    """A unity B1 file preserves signal and reports no applied correction."""
+    import nibabel as nib  # type: ignore[import-untyped]
+
+    from pmriprep.workflows.dce._helpers import _signal_to_concentration_node
+
+    signal = np.full((1, 1, 1, 10), 100.0)
+    signal[..., 5:] = 130.0
+    dce_file = _write_nifti(tmp_path / "dce.nii.gz", signal)
+    brain_mask_file = _write_nifti(
+        tmp_path / "brain_mask.nii.gz", np.ones((1, 1, 1))
+    )
+    unity_b1_file = _write_nifti(
+        tmp_path / "unity_b1.nii.gz", np.ones((1, 1, 1))
+    )
+
+    with mock.patch("pathlib.Path.cwd", return_value=tmp_path):
+        nominal_file, _ = _signal_to_concentration_node(
+            dce_file, brain_mask_file, None, None,
+            15.0, 0.005, 3.0, 3.8, 5, True,
+        )
+        nominal = np.asarray(nib.load(nominal_file).dataobj).copy()
+        unity_file, unity_qc = _signal_to_concentration_node(
+            dce_file, brain_mask_file, None, unity_b1_file,
+            15.0, 0.005, 3.0, 3.8, 5, True,
+        )
+        unity = np.asarray(nib.load(unity_file).dataobj).copy()
+
+    assert np.allclose(unity, nominal)
+    assert unity_qc["b1_correction_applied"] is False
+
+
 def test_signal_conversion_node_rejects_brain_mask_shape_mismatch(
     tmp_path: Any,
 ) -> None:

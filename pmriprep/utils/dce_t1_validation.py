@@ -34,11 +34,17 @@ import numpy.typing as npt
 
 logger = logging.getLogger("pmriprep.utils.dce_t1_validation")
 
-# VFA NaN fraction thresholds for tiered auto-fallback.
+# VFA failed-fit fraction thresholds for tiered auto-fallback.
 # Below this: VFA T1 is used as-is (no concern).
 VFA_NAN_FRACTION_GOOD: float = 0.20
-# Above this (for well-conditioned VFA): abandon VFA entirely.
+# Above this: abandon VFA entirely. E1 is descriptive QC and does not alter
+# this support threshold because it does not capture B1, SNR, flip-angle
+# sampling, motion, or RF-spoiling errors.
 VFA_NAN_FRACTION_TISSUE_FALLBACK: float = 0.40
+
+# Shared downstream support definition. Values below 100 ms are nonphysical
+# sentinels from failed/resampled fits rather than usable tissue T1 estimates.
+MIN_VALID_T1_MS: float = 100.0
 
 # ============================================================================
 # T1 Tissue Reference Values by Field Strength
@@ -252,30 +258,21 @@ def _distance_from_range(value: float, range_tuple: Tuple[float, float]) -> floa
 # ============================================================================
 
 
-def get_nan_abandon_threshold(e1_median: float) -> float:
-    """Compute NaN fraction above which VFA T1 should be abandoned.
-
-    For well-conditioned VFA (E1 < 0.99), use the standard threshold (0.40).
-    For ill-conditioned VFA (E1 >= 0.99), linearly decrease the threshold
-    down to 0.20 at E1 = 0.999+, because even surviving voxels are unreliable.
+def valid_t1_support(t1_map: npt.ArrayLike) -> npt.NDArray[np.bool_]:
+    """Return support usable for DCE signal-to-concentration conversion.
 
     Parameters
     ----------
-    e1_median : float
-        Median E1 = exp(-TR/T1) value from VFA data.
+    t1_map : array-like
+        T1 values in milliseconds.
 
     Returns
     -------
-    float
-        NaN fraction threshold above which VFA should be abandoned.
+    numpy.ndarray
+        Boolean mask of finite values at or above the minimum valid T1.
     """
-    if e1_median < 0.99:
-        return VFA_NAN_FRACTION_TISSUE_FALLBACK
-    # Linear ramp: 0.40 at E1=0.99 → 0.20 at E1=0.999
-    return max(
-        VFA_NAN_FRACTION_GOOD,
-        VFA_NAN_FRACTION_TISSUE_FALLBACK - (e1_median - 0.99) * 20.0,
-    )
+    values = np.asarray(t1_map, dtype=np.float64)
+    return np.isfinite(values) & (values >= MIN_VALID_T1_MS)
 
 
 def build_tissue_t1_map(
@@ -460,20 +457,19 @@ def apply_t1_correction(
     has_lesion : bool
         Whether a lesion mask is present (affects auto-mode thresholds).
     b1_qc_pass : bool
-        B1 QC pass status. When False, lowers tissue-bias threshold
-        for auto correction (residual B1 inhomogeneity likely).
+        B1 QC pass status retained as descriptive acquisition state.
     nan_fraction : float, optional
         Fraction of brain voxels with NaN T1 (0-1). Used by auto-mode
-        to decide between offset correction and tissue-segmented fallback.
+        to decide whether measured spatial support is adequate.
     wm_probseg : ndarray, optional
-        White matter probability map (resampled to VFA space).
-        Used for tissue-segmented T1 fallback.
+        White matter probability map retained in the internal API. Automatic
+        fallback is uniform and does not use tissue segmentations.
     gm_probseg : ndarray, optional
-        Gray matter probability map (resampled to VFA space).
-        Used for tissue-segmented T1 fallback.
+        Gray matter probability map retained in the internal API. Automatic
+        fallback is uniform and does not use tissue segmentations.
     e1_median : float, optional
-        Median E1 = exp(-TR/T1) from VFA data. Used by auto-mode to
-        adjust the NaN abandon threshold for ill-conditioned VFA.
+        Median E1 = exp(-TR/T1) from VFA data. Retained as descriptive
+        acquisition state; it does not independently determine fallback.
     b1_corrected : bool
         Whether B1 field mapping was applied. Retained in the internal API
         so callers can provide the complete acquisition state; B1 map quality
@@ -584,10 +580,9 @@ def _auto_correct_t1(
        When median T1 < reject_min or > reject_max, VFA T1 is definitively
        wrong regardless of NaN fraction. Uniform fallback is applied.
 
-    2. **Fit-loss gate**: E1 continuously lowers the tolerated fraction of
-       failed VFA fits because long-T1 estimates are more noise-sensitive.
-       E1 alone never forces fallback: it does not encode flip-angle sampling,
-       B1 accuracy, or signal-to-noise ratio.
+    2. **Fit-loss gate**: A fixed failed-fit fraction rejects maps with
+       insufficient spatial support. E1 remains descriptive QC because it
+       does not encode flip-angle sampling, B1 accuracy, motion, or SNR.
 
     3. **Plausible measured map**: Preserved without automatic global
        calibration. A population reference range is a validity check, not
@@ -601,8 +596,7 @@ def _auto_correct_t1(
     # should cover all brain tissue for downstream PK fitting.
     fill_mask = (brain_mask > 0.5) if brain_mask is not None else valid_mask
 
-    # Compute E1-dependent NaN abandon threshold
-    nan_abandon = get_nan_abandon_threshold(e1_median) if e1_median is not None else VFA_NAN_FRACTION_TISSUE_FALLBACK
+    nan_abandon = VFA_NAN_FRACTION_TISSUE_FALLBACK
 
     # Excessive fit loss makes the surviving spatial map unrepresentative even
     # when its median happens to remain plausible.

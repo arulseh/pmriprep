@@ -197,7 +197,9 @@ def generate_vfa_t1_qc_plot(
         plt.colorbar(final_im, ax=ax, fraction=0.046, pad=0.04, label="ms")
         ax.set_title("Final Uniform Fallback T1", fontsize=11)
     else:
-        valid_support = np.isfinite(t1_map)
+        from pmriprep.utils.dce_t1_validation import valid_t1_support
+
+        valid_support = valid_t1_support(t1_map)
         if brain_mask is not None:
             valid_support &= brain_mask > 0.5
         support_sl = get_radiological_slice(

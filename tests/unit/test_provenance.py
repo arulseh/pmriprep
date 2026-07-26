@@ -32,7 +32,7 @@ class TestEnrichDCE:
     """Tests for DCE provenance enrichment."""
 
     def test_full_qc_enrichment(self) -> None:
-        """Full QC metrics produce BloodT1, T1Mapping, Hematocrit, AIF, PKModeling."""
+        """Full QC metrics produce reference, mapping, AIF, and PK provenance."""
         sidecar = _make_dce_sidecar()
         qc = {
             "t1_mapping": {"method": "vfa", "b1_correction": "AFI"},
@@ -92,9 +92,13 @@ class TestEnrichDCE:
         result = enrich_provenance_from_qc(sidecar, qc, "DCE")
         perf = result["PerfusionProcessing"]
 
-        assert "BloodT1" in perf
-        assert perf["BloodT1"]["value_s"] == pytest.approx(1.664, abs=0.001)
-        assert perf["BloodT1"]["Source"] == "literature_lookup"
+        assert "BloodT1" not in perf
+        assert "BloodT1Reference" in perf
+        blood_t1 = perf["BloodT1Reference"]
+        assert blood_t1["value_s"] == pytest.approx(1.664, abs=0.001)
+        assert blood_t1["Source"] == "literature_lookup"
+        assert blood_t1["Role"] == "aif_expected_peak_and_qc_reference"
+        assert blood_t1["AppliedToArterialSignalConversion"] is False
 
         assert "Hematocrit" in perf
         assert perf["Hematocrit"]["value"] == pytest.approx(0.42)

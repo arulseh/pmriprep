@@ -636,6 +636,7 @@ def _signal_to_concentration_node(
     from pmriprep.utils.dce_t1_validation import (
         T1_TISSUE_REFERENCE,
         get_field_strength_key,
+        valid_t1_support,
     )
 
     # Load DCE data
@@ -707,7 +708,14 @@ def _signal_to_concentration_node(
         )
         conversion_qc["assumed_t1_field_strength_t"] = float(field_strength)
         conversion_qc["assumed_t1_policy"] = "uniform_field_strength_reference"
-    conversion_qc["b1_correction_applied"] = b1_map is not None
+    conversion_qc["b1_correction_applied"] = bool(
+        b1_map is not None
+        and np.any(
+            np.isfinite(b1_map)
+            & (b1_map > 0)
+            & ~np.isclose(b1_map, 1.0, rtol=0.0, atol=1e-6)
+        )
+    )
     baseline_signal = np.asarray(result.baseline_signal)
     signal_support = (
         np.isfinite(baseline_signal)
@@ -715,7 +723,7 @@ def _signal_to_concentration_node(
         & brain_mask
     )
     if t1_map is not None:
-        invalid_t1 = ~np.isfinite(t1_map) | (t1_map < 100.0)  # T1 in ms
+        invalid_t1 = ~valid_t1_support(t1_map)
         result.concentration[invalid_t1] = 0.0
         conversion_qc["t1_invalid_voxels"] = int(
             np.count_nonzero(invalid_t1 & signal_support)
