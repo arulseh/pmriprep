@@ -1759,7 +1759,6 @@ def _merge_qc_metrics(
     aif_metrics: dict[str, object] | None = None,
     preprocessing_stats: dict[str, object] | None = None,
     aif_source: str = "auto",
-    registration_bbr: bool = False,
 ) -> dict[str, object]:
     """Merge all QC metrics into a single dictionary.
 
@@ -1785,8 +1784,6 @@ def _merge_qc_metrics(
         Preprocessing stats dict.
     aif_source : str, optional
         AIF source type ("auto", "synthetic", or "external").
-    registration_bbr : bool, optional
-        Whether BBR refinement was used for registration.
 
     Returns
     -------
@@ -1822,7 +1819,6 @@ def _merge_qc_metrics(
         "normalization_factor": normalization_factor,
         "config": {
             "aif_source": aif_source,
-            "registration_bbr": registration_bbr,
         },
     }
     return merged

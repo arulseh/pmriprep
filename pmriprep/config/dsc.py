@@ -80,9 +80,6 @@ class DSCConfig:
         Path to NAWM mask in DSC native space for CBV normalization.
     roi_mask : Optional[Path]
         Path to ROI mask in DSC native space for stats extraction only.
-    registration : Literal["flirt", "flirt_bbr"]
-        Registration method: 'flirt' (FLIRT only) or 'flirt_bbr' (FLIRT + BBR
-        refinement, keeping whichever is best).
     smooth_fwhm : float
         Smoothing kernel FWHM (mm) for output maps.
     underlays : List[str]
@@ -147,9 +144,6 @@ class DSCConfig:
     lesion_mask: Optional[Path] = None
     nawm_mask: Optional[Path] = None
     roi_mask: Optional[Path] = None
-
-    # Registration settings
-    registration: Literal["flirt", "flirt_bbr"] = "flirt"
 
     # Processing settings
     smooth_fwhm: float = 0.0  # No smoothing by default
@@ -278,13 +272,6 @@ class DSCConfig:
             self.motion_thresh = float(self.motion_thresh)
         except (ValueError, TypeError) as e:
             raise TypeError(f"DSCConfig float field has invalid type: {e}") from e
-
-        _valid_registration = {"flirt", "flirt_bbr"}
-        if self.registration not in _valid_registration:
-            raise ValueError(
-                f"Invalid registration={self.registration!r}. "
-                f"Valid: {sorted(_valid_registration)}"
-            )
 
         # preload: "auto" or float dose multiplier. Reject enum strings.
         if isinstance(self.preload, str):

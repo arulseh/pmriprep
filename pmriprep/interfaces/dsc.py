@@ -420,15 +420,6 @@ class DSCRegistrationInputSpec(BaseInterfaceInputSpec):
         exists=True,
         desc="Brain mask for QC metric calculation (optional)",
     )
-    registration = traits.Enum(
-        "flirt",
-        "flirt_bbr",
-        usedefault=True,
-        desc=(
-            "Registration method: 'flirt' uses two-stage FLIRT only, "
-            "'flirt_bbr' adds BBR refinement and keeps whichever is best"
-        ),
-    )
     dof = traits.Int(
         6,
         usedefault=True,
@@ -443,21 +434,12 @@ class DSCRegistrationInputSpec(BaseInterfaceInputSpec):
         usedefault=True,
         desc="Cost function for FLIRT registration (default: normmi)",
     )
-    wm_seg = File(
-        exists=True,
-        desc="White matter segmentation (required for flirt_bbr mode)",
-    )
     reference_type = traits.Enum(
         "precon",
         "postcon",
         "any",
         usedefault=True,
         desc="Expected T1w type for provenance/QC metadata: precon (default), postcon, or any",
-    )
-    displacement_threshold = traits.Float(
-        10.0,
-        usedefault=True,
-        desc="Max displacement (mm) between FLIRT and BBR to accept BBR in flirt_bbr mode",
     )
 
 
@@ -476,17 +458,9 @@ class DSCRegistrationOutputSpec(TraitedSpec):
 class DSCRegistration(SimpleInterface):
     """DSC to T1w structural registration with dual-path selection.
 
-    Registers a T1-weighted structural image to DSC EPI space using FSL FLIRT,
-    with optional BBR refinement. Uses a dual-path Stage 1 strategy to guard
+    Registers a T1-weighted structural image to DSC EPI space using FSL FLIRT.
+    Uses a dual-path Stage 1 strategy to guard
     against FLIRT coarse-search local minima caused by HD-BET non-determinism.
-
-    Two modes are available:
-
-    1. **flirt** (default): Dual-path Stage 1 + Stage 2 refinement only.
-
-    2. **flirt_bbr**: Dual-path Stage 1, then BBR refinement.
-       BBR is accepted only if displacement < threshold AND DICE improves.
-       Falls back to FLIRT if no WM segmentation is available.
 
     Dual-path Stage 1 (coarse global search with normcorr):
       Path A (header-init): Header-aligned T1w, [-30,30] deg search
@@ -508,17 +482,10 @@ class DSCRegistration(SimpleInterface):
         Mean DSC image (target space).
     brain_mask : str, optional
         Brain mask for computing QC metrics.
-    registration : {'flirt', 'flirt_bbr'}, optional
-        Method: 'flirt' or 'flirt_bbr'.
     dof : int, optional
         Degrees of freedom (default: 6 for rigid body).
     cost : {'normmi', 'normcorr', 'corratio', 'mutualinfo', 'leastsq'}, optional
         Cost function for FLIRT (default: normmi).
-    wm_seg : str, optional
-        White matter segmentation (required for flirt_bbr).
-    displacement_threshold : float, optional
-        Max displacement (mm) for BBR acceptance in flirt_bbr mode
-        (default: 10mm).
 
     Returns
     -------
@@ -537,29 +504,14 @@ class DSCRegistration(SimpleInterface):
 
     Examples
     --------
-    Auto mode (recommended):
-
     >>> reg = DSCRegistration()
     >>> reg.inputs.t1w_file = 'T1w_brain.nii.gz'
     >>> reg.inputs.dsc_mean = 'dsc_mean.nii.gz'
-    >>> reg.inputs.wm_seg = 'T1w_wm_probseg.nii.gz'
     >>> result = reg.run()  # doctest: +SKIP
 
     Notes
     -----
-    BBR (Boundary-Based Registration) uses white matter segmentation to
-    drive registration based on WM/GM boundary contrast. For DSC (EPI),
-    this can fail due to susceptibility distortion, contrast agent effects,
-    and tumor enhancement disrupting boundaries.
-
-    In auto mode, BBR must demonstrably improve on FLIRT to be accepted:
-    transform displacement must be < threshold AND DICE must improve.
-    This provides a bias toward the more robust FLIRT result.
-
-    See Also
-    --------
-    FSL FLIRT : https://fsl.fmrib.ox.ac.uk/fsl/fslwiki/FLIRT
-    FSL BBR : https://fsl.fmrib.ox.ac.uk/fsl/fslwiki/FLIRT_BBR
+    The rigid transform does not correct DSC EPI susceptibility distortion.
     """
 
     input_spec = DSCRegistrationInputSpec
@@ -618,10 +570,8 @@ class DSCRegistration(SimpleInterface):
 
         from pmriprep.utils.registration import (
             DICE_SELECTION_MARGIN,
-            compare_transforms,
             compute_dice_for_selection,
             compute_header_init_matrix,
-            calculate_nmi_from_files,
         )
 
         logger = logging.getLogger("pmriprep.interfaces.dsc")
@@ -630,14 +580,8 @@ class DSCRegistration(SimpleInterface):
         out_matrix = self._gen_matfilename()
         t1w_file = str(self.inputs.t1w_file)
         dsc_mean = str(self.inputs.dsc_mean)
-        registration = self.inputs.registration
         dof = self.inputs.dof
         cost = self.inputs.cost
-
-        has_wm_seg = (
-            isdefined(self.inputs.wm_seg)
-            and Path(self.inputs.wm_seg).exists()
-        )
 
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
@@ -753,156 +697,14 @@ class DSCRegistration(SimpleInterface):
 
             # Selection metadata for QC
             selection_meta: dict[str, Any] = {
-                "registration_mode": registration,
-                "bbr_attempted": False,
+                "registration_method": "flirt",
+                "selection_reason": "dual_path_flirt",
                 "stage1_path_selected": stage1_path,
                 "stage1_dice_a": round(dice_a, 4),
                 "stage1_dice_b": round(dice_b, 4),
             }
-
-            # Determine effective method
-            if registration == "flirt":
-                # FLIRT only — done
-                shutil.copy(flirt_out, out_file)
-                shutil.copy(flirt_matrix, out_matrix)
-                selection_meta["registration_method"] = "flirt"
-                selection_meta["selection_reason"] = "flirt_only_requested"
-
-            elif registration == "flirt_bbr":
-                # FLIRT+BBR mode: run both, compare, select best
-                if not has_wm_seg:
-                    # No WM seg — fall back to FLIRT silently
-                    logger.info(
-                        "FLIRT+BBR registration: no WM segmentation available, "
-                        "using FLIRT only"
-                    )
-                    shutil.copy(flirt_out, out_file)
-                    shutil.copy(flirt_matrix, out_matrix)
-                    selection_meta["registration_method"] = "flirt"
-                    selection_meta["selection_reason"] = "no_wm_seg_available"
-                else:
-                    # Run BBR
-                    bbr_matrix = str(temp_path / "bbr.mat")
-                    bbr_out = str(temp_path / f"bbr_out{ext}")
-
-                    bbr_succeeded = False
-                    try:
-                        self._run_bbr(
-                            t1w_file, dsc_mean, flirt_matrix,
-                            bbr_out, bbr_matrix,
-                            dof, temp_path, ext,
-                        )
-                        bbr_succeeded = True
-                    except Exception as exc:
-                        logger.warning("BBR failed, using FLIRT: %s", exc)
-
-                    selection_meta["bbr_attempted"] = True
-
-                    if not bbr_succeeded:
-                        shutil.copy(flirt_out, out_file)
-                        shutil.copy(flirt_matrix, out_matrix)
-                        selection_meta["registration_method"] = "flirt"
-                        selection_meta["selection_reason"] = "bbr_failed"
-                    else:
-                        # Compare transforms
-                        flirt_mat = np.loadtxt(flirt_matrix)
-                        bbr_mat = np.loadtxt(bbr_matrix)
-                        displacement = compare_transforms(flirt_mat, bbr_mat)
-                        selection_meta["transform_displacement_mm"] = round(
-                            displacement, 2
-                        )
-
-                        threshold = float(self.inputs.displacement_threshold)
-
-                        if displacement >= threshold:
-                            # BBR deviated too far — reject
-                            shutil.copy(flirt_out, out_file)
-                            shutil.copy(flirt_matrix, out_matrix)
-                            selection_meta["registration_method"] = "flirt"
-                            selection_meta["selection_reason"] = (
-                                "displacement_exceeded_threshold"
-                            )
-                            logger.info(
-                                "FLIRT+BBR: BBR rejected — displacement %.1fmm "
-                                ">= %.1fmm threshold",
-                                displacement,
-                                threshold,
-                            )
-                        else:
-                            # Displacement acceptable — compare via DICE
-                            dice_flirt = compute_dice_for_selection(
-                                flirt_out, dsc_mean
-                            )
-                            dice_bbr = compute_dice_for_selection(
-                                bbr_out, dsc_mean
-                            )
-
-                            # Also compute NMI for logging/QC
-                            brain_mask = None
-                            if (
-                                isdefined(self.inputs.brain_mask)
-                                and Path(self.inputs.brain_mask).exists()
-                            ):
-                                brain_mask = str(self.inputs.brain_mask)
-
-                            try:
-                                nmi_flirt = calculate_nmi_from_files(
-                                    flirt_out, dsc_mean, mask_path=brain_mask
-                                )
-                                nmi_bbr = calculate_nmi_from_files(
-                                    bbr_out, dsc_mean, mask_path=brain_mask
-                                )
-                            except Exception:
-                                nmi_flirt = 0.0
-                                nmi_bbr = 0.0
-
-                            selection_meta["dice_flirt"] = round(dice_flirt, 4)
-                            selection_meta["dice_bbr"] = round(dice_bbr, 4)
-                            selection_meta["nmi_flirt"] = round(nmi_flirt, 4)
-                            selection_meta["nmi_bbr"] = round(nmi_bbr, 4)
-
-                            if dice_bbr > dice_flirt:
-                                # BBR improves DICE — accept
-                                shutil.copy(bbr_out, out_file)
-                                shutil.copy(bbr_matrix, out_matrix)
-                                selection_meta["registration_method"] = "bbr"
-                                selection_meta["selection_reason"] = (
-                                    "bbr_improved_dice"
-                                )
-                                logger.info(
-                                    "FLIRT+BBR: BBR selected — displacement %.1fmm, "
-                                    "DICE improved %.4f → %.4f "
-                                    "(NMI: %.4f → %.4f)",
-                                    displacement,
-                                    dice_flirt,
-                                    dice_bbr,
-                                    nmi_flirt,
-                                    nmi_bbr,
-                                )
-                            else:
-                                # BBR did not improve — keep FLIRT
-                                shutil.copy(flirt_out, out_file)
-                                shutil.copy(flirt_matrix, out_matrix)
-                                selection_meta["registration_method"] = "flirt"
-                                selection_meta["selection_reason"] = (
-                                    "bbr_no_dice_improvement"
-                                )
-                                logger.info(
-                                    "FLIRT+BBR: FLIRT kept — displacement %.1fmm, "
-                                    "DICE no improvement (%.4f vs %.4f) "
-                                    "(NMI: %.4f vs %.4f)",
-                                    displacement,
-                                    dice_flirt,
-                                    dice_bbr,
-                                    nmi_flirt,
-                                    nmi_bbr,
-                                )
-
-            else:
-                raise ValueError(
-                    f"Unknown registration method: {registration!r}. "
-                    f"Expected 'flirt' or 'flirt_bbr'."
-                )
+            shutil.copy(flirt_out, out_file)
+            shutil.copy(flirt_matrix, out_matrix)
 
         # Compute QC metrics on the final selected output
         qc_metrics = self._compute_qc_metrics(out_file, dsc_mean)
@@ -931,64 +733,6 @@ class DSCRegistration(SimpleInterface):
             self._results["nmi"] = qc_metrics["nmi"]
 
         return runtime
-
-    def _run_bbr(
-        self,
-        t1w_file: str,
-        dsc_mean: str,
-        init_matrix: str,
-        out_file: str,
-        out_matrix: str,
-        dof: int,
-        temp_path: Path,
-        ext: str,
-    ) -> None:
-        """Run BBR registration initialized from FLIRT matrix.
-
-        Parameters
-        ----------
-        t1w_file : str
-            T1w input image.
-        dsc_mean : str
-            DSC reference image.
-        init_matrix : str
-            FLIRT initialization matrix.
-        out_file : str
-            Output registered image.
-        out_matrix : str
-            Output BBR matrix.
-        dof : int
-            Degrees of freedom.
-        temp_path : Path
-            Temporary directory.
-        ext : str
-            File extension.
-
-        Raises
-        ------
-        RuntimeError
-            If WM thresholding or BBR fails.
-        """
-        import subprocess
-
-        wm_seg = str(self.inputs.wm_seg)
-        wm_thresh = str(temp_path / f"wm_thresh{ext}")
-
-        # Threshold WM segmentation
-        subprocess.run(
-            ["fslmaths", wm_seg, "-thr", "0.5", "-bin", wm_thresh],
-            check=True,
-        )
-
-        # Run BBR
-        bbr_cmd = [
-            "flirt", "-in", t1w_file, "-ref", dsc_mean,
-            "-out", out_file, "-omat", out_matrix,
-            "-dof", str(dof), "-cost", "bbr",
-            "-init", init_matrix,
-            "-wmseg", wm_thresh,
-        ]
-        subprocess.run(bbr_cmd, check=True)
 
     def _compute_qc_metrics(
         self, out_file: str, dsc_mean: str

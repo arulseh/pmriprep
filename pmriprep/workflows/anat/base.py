@@ -387,7 +387,7 @@ def _route_fast_input(
         _log.warning(
             "FAST segmentation skipped — no acceptable pre-contrast T1w. "
             "Tissue probability maps unavailable. Downstream features "
-            "requiring WM/GM/CSF segmentation (BBR registration, NAWM "
+            "requiring WM/GM/CSF segmentation (NAWM "
             "normalization, CSF exclusion) will be limited.",
         )
         return None

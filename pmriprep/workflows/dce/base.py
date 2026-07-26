@@ -1418,7 +1418,7 @@ def init_dce_preproc_wf(
     brain_mask
         Path to brain mask NIfTI file.
     wm_probseg
-        Path to white matter probability map for BBR registration.
+        Path to white matter probability map for tissue-aware processing.
     vfa_files
         Paths to VFA (Variable Flip Angle) images for T1 mapping.
     vfa_flip_angles

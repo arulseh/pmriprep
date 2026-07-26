@@ -13,7 +13,6 @@ from pmriprep.utils.structural_reference import (
     _apply_application_overrides,
     _apply_isotropy_adjustment,
     _compute_base_confidence,
-    _determine_bbr_eligibility,
     _determine_processing_mode_v2,
     _map_selection_to_anat_output,
     _score_candidate,
@@ -225,37 +224,6 @@ class TestApplicationOverrides:
         assert result == pytest.approx(0.8)
 
 
-class TestBBREligibility:
-    """Tests for _determine_bbr_eligibility."""
-
-    def test_precon_t1w_eligible(self) -> None:
-        cand = _make_candidate(ImageType.T1W_PRECON)
-        assert _determine_bbr_eligibility(cand) is True
-
-    def test_t2w_eligible(self) -> None:
-        cand = _make_candidate(ImageType.T2W)
-        assert _determine_bbr_eligibility(cand) is True
-
-    def test_flair_precon_eligible(self) -> None:
-        cand = _make_candidate(ImageType.FLAIR_PRECON)
-        assert _determine_bbr_eligibility(cand) is True
-
-    def test_postcon_t1w_not_eligible(self) -> None:
-        """Post-contrast T1w: BBR unreliable due to Gd."""
-        cand = _make_candidate(ImageType.T1W_POSTCON)
-        assert _determine_bbr_eligibility(cand) is False
-
-    def test_postcon_flair_with_mask_eligible(self) -> None:
-        """Post-contrast FLAIR with lesion mask: BBR OK."""
-        cand = _make_candidate(ImageType.FLAIR_POSTCON, has_lesion_mask=True)
-        assert _determine_bbr_eligibility(cand) is True
-
-    def test_postcon_flair_without_mask_not_eligible(self) -> None:
-        """Post-contrast FLAIR without lesion mask: BBR not OK."""
-        cand = _make_candidate(ImageType.FLAIR_POSTCON, has_lesion_mask=False)
-        assert _determine_bbr_eligibility(cand) is False
-
-
 class TestClassifyImageType:
     """Tests for classify_image_type."""
 
@@ -392,26 +360,11 @@ class TestEndToEndSelection:
         prov = result.to_provenance_dict()
         expected_keys = {
             "selected_image", "image_type", "confidence", "application",
-            "bbr_eligible", "geometric_mean_mm", "isotropy_ratio",
+            "geometric_mean_mm", "isotropy_ratio",
             "is_high_res", "has_lesion_mask", "coverage_fraction",
             "selection_reason", "n_candidates",
         }
         assert set(prov.keys()) == expected_keys
-
-    def test_bbr_eligible_for_precon(self) -> None:
-        """BBR eligible when precon T1w selected."""
-        cand = _make_candidate(ImageType.T1W_PRECON, is_high_res=True)
-        result = select_structural_reference_v2([cand], application="default")
-        assert result is not None
-        assert result.bbr_eligible is True
-
-    def test_bbr_not_eligible_for_postcon(self) -> None:
-        """BBR not eligible when postcon T1w selected."""
-        cand = _make_candidate(ImageType.T1W_POSTCON, is_high_res=True)
-        result = select_structural_reference_v2([cand], application="default")
-        assert result is not None
-        assert result.bbr_eligible is False
-
 
 class TestDetermineProcessingModeV2:
     """Tests for _determine_processing_mode_v2."""

@@ -185,7 +185,6 @@ def test_configured_aif_extension_is_validated(tmp_path: Path) -> None:
         (["--dsc-dose", "half"], "dsc", "dose", 0.5),
         (["--dsc-agent-standard-dose", "0.05"], "dsc", "agent_standard_dose", 0.05),
         (["--dsc-aif-method", "synthetic"], "dsc", "aif_method", "synthetic"),
-        (["--dsc-registration", "flirt_bbr"], "dsc", "registration", "flirt_bbr"),
         (["--dce-model", "patlak"], "dce", "model", "patlak"),
         (["--dce-inference", "vi"], "dce", "inference", "vi"),
         (["--dce-aif-method", "population"], "dce", "aif_method", "population"),
@@ -265,6 +264,21 @@ def test_skip_anat_is_not_a_public_cli_mode() -> None:
         _build_parser().parse_args(
             ["/tmp/bids", "/tmp/out", "participant", "--skip-anat"]
         )
+
+
+def test_dsc_bbr_registration_is_not_configurable() -> None:
+    """Removed, unvalidated BBR modes must not remain reachable."""
+    with pytest.raises(SystemExit):
+        _build_parser().parse_args([
+            "/tmp/bids",
+            "/tmp/out",
+            "participant",
+            "--dsc-registration",
+            "flirt_bbr",
+        ])
+
+    with pytest.raises(ValueError, match="Unknown dsc configuration option.*registration"):
+        build_dsc_config({"dsc": {"registration": "flirt_bbr"}})
 
 
 def test_skipping_optional_pipelines_remains_anatomical_only() -> None:

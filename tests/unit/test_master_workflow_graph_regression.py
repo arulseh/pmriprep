@@ -725,7 +725,6 @@ def test_select_master_structural_references_routes_each_application(
         return SimpleNamespace(
             candidate=SimpleNamespace(image_type=SimpleNamespace(value=application)),
             confidence=0.9,
-            bbr_eligible=True,
         )
 
     monkeypatch.setattr(

@@ -316,7 +316,7 @@ _BASE_CONFIDENCE_TABLE: Dict[Tuple[ImageType, bool], float] = {
 
 # Lesion mask confidence bonuses (replaces base value when mask available)
 _LESION_MASK_OVERRIDES: Dict[Tuple[ImageType, bool], float] = {
-    (ImageType.T1W_POSTCON, True): 0.9,   # BBR can exclude enhancing regions
+    (ImageType.T1W_POSTCON, True): 0.9,   # Enhancing regions can be excluded
     (ImageType.FLAIR_POSTCON, True): 0.70,  # Focal enhancement excluded
     (ImageType.T1W_POSTCON, False): 0.4,   # Low-res doesn't benefit much
     (ImageType.FLAIR_POSTCON, False): 0.25,
@@ -366,8 +366,6 @@ class StructuralReferenceSelection:
         Final confidence score (0.0-1.0).
     application : ApplicationType
         Application context used for selection.
-    bbr_eligible : bool
-        Whether BBR registration is appropriate.
     all_candidates : list
         All candidates that were considered.
     selection_reason : str
@@ -379,7 +377,6 @@ class StructuralReferenceSelection:
     candidate: StructuralCandidate
     confidence: float
     application: ApplicationType
-    bbr_eligible: bool
     all_candidates: List[StructuralCandidate]
     selection_reason: str
     coverage_fraction: float = 1.0
@@ -391,7 +388,6 @@ class StructuralReferenceSelection:
             "image_type": self.candidate.image_type.value,
             "confidence": round(self.confidence, 3),
             "application": self.application,
-            "bbr_eligible": self.bbr_eligible,
             "geometric_mean_mm": round(self.candidate.geometric_mean, 3),
             "isotropy_ratio": round(self.candidate.isotropy_ratio, 3),
             "is_high_res": self.candidate.is_high_res,
@@ -532,37 +528,6 @@ def _apply_application_overrides(
     # dsc_registration, brain_extraction, default: no overrides
 
     return float(np.clip(confidence, 0.0, 1.0))
-
-
-def _determine_bbr_eligibility(candidate: StructuralCandidate) -> bool:
-    """Determine if BBR registration is appropriate for this candidate.
-
-    BBR requires reliable WM/GM tissue boundaries. Post-contrast T1w
-    has disrupted boundaries from gadolinium, making BBR unreliable
-    unless a lesion mask is available (post-contrast FLAIR case).
-
-    Parameters
-    ----------
-    candidate : StructuralCandidate
-        The candidate to evaluate.
-
-    Returns
-    -------
-    bool
-        True if BBR registration is appropriate.
-    """
-    img_type = candidate.image_type
-
-    if img_type in (ImageType.T1W_PRECON, ImageType.T2W, ImageType.FLAIR_PRECON):
-        return True
-    elif img_type == ImageType.T1W_POSTCON:
-        # Post-contrast T1w: BBR unreliable due to Gd disrupting boundaries
-        return False
-    elif img_type == ImageType.FLAIR_POSTCON:
-        # Post-contrast FLAIR: BBR OK if lesion mask excludes enhancement
-        return candidate.has_lesion_mask
-
-    return False
 
 
 def compute_fov_coverage(
@@ -828,9 +793,6 @@ def select_structural_reference_v2(
     if perfusion_path is not None:
         coverage = compute_fov_coverage(best_cand.path, perfusion_path)
 
-    # Determine BBR eligibility
-    bbr_eligible = _determine_bbr_eligibility(best_cand)
-
     # Build selection reason
     reason_parts = [
         f"{best_cand.image_type.value}",
@@ -854,7 +816,6 @@ def select_structural_reference_v2(
         candidate=best_cand,
         confidence=best_conf,
         application=application,
-        bbr_eligible=bbr_eligible,
         all_candidates=candidates,
         selection_reason=reason,
         coverage_fraction=coverage,

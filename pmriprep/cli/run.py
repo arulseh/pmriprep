@@ -416,13 +416,6 @@ Examples:
              "with DSC volumes. Bypasses AIF detection.",
     )
 
-    dsc_group.add_argument(
-        "--dsc-registration",
-        choices=["flirt", "flirt_bbr"],
-        default=None,
-        help=argparse.SUPPRESS,
-    )
-
     # DCE options
     dce_group = parser.add_argument_group(
         "DCE options",

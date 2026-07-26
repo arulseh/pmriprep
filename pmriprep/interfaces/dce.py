@@ -4396,7 +4396,7 @@ class DCERegistration(SimpleInterface):
     Uses FSL FLIRT to register a T1-weighted structural image to DCE space.
     DCE uses SPGR/FLASH (gradient echo), which has good geometric fidelity
     and similar contrast to structural T1w, so standard FLIRT with normmi
-    cost function is appropriate. BBR is not used for DCE.
+    cost function is appropriate.
 
     Dual-path registration is used:
       Path A: Header pre-aligned T1w -> FLIRT
@@ -4594,7 +4594,7 @@ class DCERegistration(SimpleInterface):
         cost: str,
         search_range: int,
     ) -> None:
-        """Run dual-path FLIRT registration without BBR.
+        """Run dual-path FLIRT registration.
 
         Path A uses header-aligned T1w, Path B uses original T1w.
         At least one path must succeed.

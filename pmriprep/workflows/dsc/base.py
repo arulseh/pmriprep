@@ -596,7 +596,6 @@ def init_dsc_preload_wf(
 
 def init_dsc_registration_wf(
     *,
-    registration: str,
     mem_gb: float,
     name: str = "dsc_registration_wf",
 ) -> pe.Workflow:
@@ -607,8 +606,6 @@ def init_dsc_registration_wf(
 
     Parameters
     ----------
-    registration : str
-        Registration strategy ("flirt" or "flirt_bbr").
     mem_gb : float
         Memory estimate (GB) for the registration node.
     name : str
@@ -623,8 +620,8 @@ def init_dsc_registration_wf(
     ------
     matched_t1w_file
         Histogram-matched T1w (moving image's target).
-    brain_mask, wm_probseg
-        T1w-space brain mask and WM segmentation (for BBR).
+    brain_mask
+        T1w-space brain mask used for registration QC.
     dsc_brain
         Brain-extracted DSC reference.
     t1w_to_mni_xfm
@@ -651,7 +648,6 @@ def init_dsc_registration_wf(
             fields=[
                 "matched_t1w_file",
                 "brain_mask",
-                "wm_probseg",
                 "dsc_brain",
                 "t1w_to_mni_xfm",
             ]
@@ -675,7 +671,6 @@ def init_dsc_registration_wf(
     # Node 6: DSC to T1w Registration
     register = pe.Node(
         DSCRegistration(
-            registration=registration,
             dof=6,  # Rigid body
             cost="normmi",
         ),
@@ -692,7 +687,6 @@ def init_dsc_registration_wf(
         (inputnode, register, [
             ("matched_t1w_file", "t1w_file"),
             ("brain_mask", "brain_mask"),
-            ("wm_probseg", "wm_seg"),
             ("dsc_brain", "dsc_mean"),
         ]),
         (inputnode, invert_mni_xfm, [("t1w_to_mni_xfm", "in_file")]),
@@ -1294,7 +1288,6 @@ def init_dsc_qc_wf(
     subject_id: str,
     session_id: Optional[str],
     aif_source: str,
-    registration_bbr: bool,
     baseline_frames: int,
     name: str = "dsc_qc_wf",
 ) -> pe.Workflow:
@@ -1313,8 +1306,6 @@ def init_dsc_qc_wf(
         BIDS session label.
     aif_source : str
         AIF provenance label for the merged QC ("external", "synthetic", "auto").
-    registration_bbr : bool
-        Whether boundary-based registration was used (recorded in merged QC).
     baseline_frames : int
         Pre-bolus baseline frame count (S0) for the preprocessing QC plot.
     name : str
@@ -1422,7 +1413,6 @@ def init_dsc_qc_wf(
                 "aif_metrics",
                 "preprocessing_stats",
                 "aif_source",
-                "registration_bbr",
             ],
             output_names=["merged_qc"],
             function=_merge_qc_metrics,
@@ -1430,7 +1420,6 @@ def init_dsc_qc_wf(
         name="merge_qc",
     )
     merge_qc.inputs.aif_source = aif_source
-    merge_qc.inputs.registration_bbr = registration_bbr
 
     reg_filmstrip = pe.Node(
         niu.Function(
@@ -2179,7 +2168,6 @@ def init_dsc_preproc_wf(
     # Registration sub-workflow: DSC<->T1w + MNI->DSC transform chain
     # -------------------------------------------------------------------
     registration_wf = init_dsc_registration_wf(
-        registration=config.registration,
         mem_gb=_static_mem,
     )
 
@@ -2286,7 +2274,6 @@ def init_dsc_preproc_wf(
         subject_id=subject_id,
         session_id=session_id,
         aif_source=aif_source,
-        registration_bbr=config.registration == "flirt_bbr",
         baseline_frames=config.pre_bolus,
     )
 
@@ -2445,7 +2432,6 @@ def init_dsc_preproc_wf(
         (hist_match_t1w, registration_wf, [("matched_t1w_file", "inputnode.matched_t1w_file")]),
         (inputnode, registration_wf, [
             ("brain_mask", "inputnode.brain_mask"),
-            ("wm_probseg", "inputnode.wm_probseg"),
             ("t1w_to_mni_xfm", "inputnode.t1w_to_mni_xfm"),
         ]),
         (hdbet_dsc, registration_wf, [("dsc_brain_file", "inputnode.dsc_brain")]),

@@ -3165,7 +3165,7 @@ def _select_master_structural_references(
     decision : PipelineDecision
         Enabled pipeline set.
     dsc_config, dce_config : configuration
-        Perfusion configurations whose masks affect BBR eligibility.
+        Perfusion configurations whose masks affect reference selection.
 
     Returns
     -------
@@ -3200,10 +3200,9 @@ def _select_master_structural_references(
         )
         if dsc_selection:
             logger.info(
-                "DSC structural reference: %s (confidence=%.2f, bbr=%s)",
+                "DSC structural reference: %s (confidence=%.2f)",
                 dsc_selection.candidate.image_type.value,
                 dsc_selection.confidence,
-                dsc_selection.bbr_eligible,
             )
 
     dce_selection = None
@@ -3219,10 +3218,9 @@ def _select_master_structural_references(
         )
         if dce_selection:
             logger.info(
-                "DCE structural reference: %s (confidence=%.2f, bbr=%s)",
+                "DCE structural reference: %s (confidence=%.2f)",
                 dce_selection.candidate.image_type.value,
                 dce_selection.confidence,
-                dce_selection.bbr_eligible,
             )
 
     return _MasterReferencePlan(dsc=dsc_selection, dce=dce_selection)
@@ -3482,7 +3480,7 @@ def init_pmriprep_wf(
     # -------------------------------------------------------------------
     # Structural reference selection (confidence-scored)
     # Determine which anat output to use for DSC and DCE registration,
-    # plus BBR eligibility and provenance metadata.
+    # plus selection provenance metadata.
     # -------------------------------------------------------------------
     reference_plan = _select_master_structural_references(
         session_data=session_data,
