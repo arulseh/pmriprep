@@ -206,9 +206,8 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="pmriprep",
         usage="%(prog)s bids_dir output_dir {participant} [options]",
         description=(
-            "PMRIPrep: Perfusion MRI Preprocessing Pipeline\n\n"
-            "Automated preprocessing and quantification of DSC and DCE\n"
-            "data. Reads BIDS-formatted input and produces\n"
+            "PMRIPrep: automated preprocessing and quantification of DSC and DCE MRI\n\n"
+            "Reads BIDS-formatted input and produces\n"
             "BIDS-Derivatives compliant output with QC reports."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -411,9 +410,11 @@ Examples:
         type=Path,
         default=None,
         metavar="FILE",
-        help="External AIF curve file (.txt with one value per line, .npz with 'aif' key, "
-             "or .npy). Values must be \u0394R2* concentration in s\u207b\u00b9, temporally aligned "
-             "with DSC volumes. Bypasses AIF detection.",
+        help=(
+            "External AIF curve file (.txt/.tsv with one value per line, "
+            ".npz with 'aif' key, or .npy). Values must be \u0394R2* concentration "
+            "in s\u207b\u00b9, temporally aligned with DSC volumes. Bypasses AIF detection."
+        ),
     )
 
     # DCE options
@@ -448,9 +449,12 @@ Examples:
         type=Path,
         default=None,
         metavar="FILE",
-        help="External AIF curve file (.txt with one value per line, .npz with 'Cp' or 'aif' key, "
-             "or .npy). Values must be plasma concentration in mM, temporally aligned with DCE volumes. "
-             "Bypasses AIF detection. Number of values must match DCE volumes.",
+        help=(
+            "External AIF curve file (.txt/.tsv with one value per line, "
+            ".npz with 'Cp' or 'aif' key, or .npy). Values must be plasma "
+            "concentration in mM, temporally aligned with DCE volumes. "
+            "Bypasses AIF detection. Number of values must match DCE volumes."
+        ),
     )
     dce_group.add_argument(
         "--dce-dose",

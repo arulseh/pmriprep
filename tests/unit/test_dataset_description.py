@@ -27,6 +27,9 @@ def test_first_run_writes_pmriprep_entry(tmp_path: Path) -> None:
     write_dataset_description(pipeline_dir, str(tmp_path / "raw_bids"))
 
     desc = _read(pipeline_dir / "dataset_description.json")
+    assert desc["Name"] == (
+        "PMRIPrep: automated preprocessing and quantification of DSC and DCE MRI"
+    )
     assert desc["BIDSVersion"] == BIDS_DERIVATIVES_VERSION
     assert desc["DatasetType"] == "derivative"
     names = [e["Name"] for e in desc["GeneratedBy"]]
@@ -34,6 +37,9 @@ def test_first_run_writes_pmriprep_entry(tmp_path: Path) -> None:
     assert names[0] == "pmriprep"
     assert {"FSL", "ANTs", "Nipype", "HD-BET", "HD-GLIO"} <= set(names)
     pmri = desc["GeneratedBy"][0]
+    assert pmri["Description"] == (
+        "Automated preprocessing and quantification of DSC and DCE MRI"
+    )
     assert pmri["CodeURL"] == PMRIPREP_CODE_URL
     assert "DOI" not in pmri  # not provided
     assert desc["DatasetLinks"]["raw"] == "../raw_bids"

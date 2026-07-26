@@ -240,6 +240,26 @@ def test_cli_none_does_not_override_file_option() -> None:
     assert build_dsc_config(merged).method == "vascular"
 
 
+def test_cli_merge_does_not_mutate_file_config() -> None:
+    """CLI precedence preserves the loaded file values used by provenance."""
+    file_config = {
+        "dsc": {"method": "vascular"},
+        "dce": {"model": "extended_tofts"},
+    }
+
+    merged = merge_cli_config(
+        {"dsc_deconv_method": "cpi", "dce_model": "patlak"},
+        file_config,
+    )
+
+    assert merged["dsc"]["method"] == "cpi"
+    assert merged["dce"]["model"] == "patlak"
+    assert file_config == {
+        "dsc": {"method": "vascular"},
+        "dce": {"model": "extended_tofts"},
+    }
+
+
 @pytest.mark.parametrize(
     ("flag", "value"),
     [
@@ -279,6 +299,9 @@ def test_dsc_bbr_registration_is_not_configurable() -> None:
 
     with pytest.raises(ValueError, match="Unknown dsc configuration option.*registration"):
         build_dsc_config({"dsc": {"registration": "flirt_bbr"}})
+
+    merged = merge_cli_config({"dsc_registration": "flirt_bbr"}, {})
+    assert "registration" not in merged.get("dsc", {})
 
 
 def test_skipping_optional_pipelines_remains_anatomical_only() -> None:

@@ -63,7 +63,7 @@ def write_dataset_description(
         "Version": pmriprep.__version__,
         "Description": (
             "Automated preprocessing and quantification of "
-            "DSC and DCE data"
+            "DSC and DCE MRI"
         ),
         "CodeURL": PMRIPREP_CODE_URL,
     }
@@ -109,7 +109,7 @@ def write_dataset_description(
     dataset_links = {**existing_dataset_links, "raw": raw_dataset_link}
 
     description: Dict[str, Any] = {
-        "Name": "PMRIPrep - Perfusion MRI Preprocessing Pipeline",
+        "Name": "PMRIPrep: automated preprocessing and quantification of DSC and DCE MRI",
         "BIDSVersion": BIDS_DERIVATIVES_VERSION,
         "DatasetType": "derivative",
         "DatasetLinks": dataset_links,

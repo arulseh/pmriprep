@@ -1,5 +1,6 @@
 """Configuration loading utilities for PMRIPrep."""
 
+from copy import deepcopy
 import json
 from dataclasses import fields
 from pathlib import Path
@@ -164,7 +165,9 @@ def merge_cli_config(
     dict
         Merged configuration dictionary with CLI values taking precedence.
     """
-    result = file_config.copy()
+    # Copy nested sections as well as the root: CLI precedence must not mutate
+    # the loaded file configuration used for explicit-value provenance.
+    result = deepcopy(file_config)
 
     # Map CLI args to config sections and keys
     cli_to_config = {
@@ -176,7 +179,6 @@ def merge_cli_config(
         "dsc_agent_standard_dose": ("dsc", "agent_standard_dose"),
         "dsc_aif_method": ("dsc", "aif_method"),
         "dsc_aif_file": ("dsc", "aif_file"),
-        "dsc_registration": ("dsc", "registration"),
         # DCE options
         "dce_model": ("dce", "model"),
         "dce_inference": ("dce", "inference"),
