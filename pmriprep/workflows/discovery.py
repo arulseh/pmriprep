@@ -1070,4 +1070,3 @@ def discover_session_data(
         pipelines=pipelines,
     )
 
-

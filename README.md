@@ -169,7 +169,7 @@ pmriprep bids_dir output_dir {participant} [options]
 | `--dce-dose DOSE` | Dose multiplier (default: 1.0). Accepts a float or presets: `half`, `full`, `double` |
 | `--dce-r1 R1` | Override r1 relaxivity (s⁻¹/mM) for concentration conversion |
 | `--dce-b1-method {auto,afi,precomputed,none}` | B1+ correction method (default: auto) |
-| `--dce-b1-map-encoding {auto,actual_flip_deci_deg,actual_flip_deg,percent,ratio}` | Pre-computed B1+ map pixel encoding (default: auto, from BIDS suffix/Units) |
+| `--dce-b1-map-encoding {auto,actual_flip_deci_deg,actual_flip_deg,percent,ratio}` | Pre-computed B1+ map pixel encoding (default: auto, from recognized scanner/converter metadata or pixel scale) |
 | `--dce-no-t1` | Skip T1 mapping (use default T1 for field strength; B1+ correction remains independent) |
 | `--dce-t1-map FILE` | External T1 map (NIfTI, units: milliseconds). Bypasses VFA T1 fitting. Useful for MP2RAGE, MOLLI, or ground-truth T1 maps. |
 
@@ -368,7 +368,7 @@ bids_dir/
 | DCE | `*_dce.nii.gz`, T1w | VFA (T1 mapping), B1+ map (`*_TB1AFI`, `*_TB1TFL`, or `*_TB1map`) |
 | HD-GLIO | T1w pre-contrast, T1w post-contrast, T2w, FLAIR | — |
 
-B1+ correction accepts AFI (`*_TB1AFI`), Siemens pre-computed flip angle maps (`*_TB1TFL`), or vendor-neutral pre-computed maps (`*_TB1map`). Auto-detected via `--dce-b1-method auto`. A `*_TB1map` pixel encoding is read from its `Units` sidecar (`p.u.` = percent, `1` = ratio, `deg`); when absent, it is inferred from the pixel median or set with `--dce-b1-map-encoding`.
+B1+ correction accepts AFI (`*_TB1AFI`), Siemens pre-computed flip angle maps (`*_TB1TFL`), or vendor-neutral pre-computed maps (`*_TB1map`). Auto-detected via `--dce-b1-method auto`. For DICOM-derived `*_TB1map` sidecars, PMRIPrep recognizes common scanner/converter `Units` conventions (`p.u.` = percentage units, `1` = ratio, `deg` = actual flip angle); when units are absent or unrecognized, encoding is inferred conservatively from the pixel median or set with `--dce-b1-map-encoding`.
 
 ### JSON Sidecar Fields
 
@@ -434,7 +434,7 @@ Required: `RepetitionTime`, `FlipAngle`.
   "Units": "p.u."
 }
 ```
-`Units` sets the pixel encoding (`p.u.` = percent of nominal, `1` = ratio, `deg` = actual flip). Recommended; when absent the encoding is inferred from the pixel median or set with `--dce-b1-map-encoding`.
+Recognized scanner/converter `Units` values set the pixel encoding (`p.u.` = percentage units, 100 = nominal; `1` = ratio, 1 = nominal; `deg` = actual flip angle). When units are absent or unrecognized, encoding is inferred conservatively from the pixel median and fails if ambiguous; set `--dce-b1-map-encoding` to declare other source conventions explicitly.
 
 ## Output Structure
 
