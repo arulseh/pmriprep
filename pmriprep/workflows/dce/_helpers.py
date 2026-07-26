@@ -4,6 +4,8 @@ Each helper imports its runtime dependencies locally so Nipype can execute the
 source captured by ``niu.Function`` in an isolated worker.
 """
 
+from typing import Any
+
 __all__ = [
     "_build_model_free_map_dict",
     "_build_pk_map_dict",
@@ -175,6 +177,7 @@ def _transform_probseg_to_dce(
     import nibabel as nib  # type: ignore[import-untyped]
     import numpy as np
 
+
     probseg_path = Path(probseg_file)
     if not probseg_path.is_file():
         return ""
@@ -323,6 +326,7 @@ def _create_aif_search_mask(
 
     import nibabel as nib  # type: ignore[import-untyped]
     import numpy as np
+
     from scipy.ndimage import binary_fill_holes  # type: ignore[import-untyped]
 
     t1w_mask_path = Path(t1w_mask_in_dce)
@@ -1188,6 +1192,46 @@ def _collect_qc_metrics(
     return qc_metrics
 
 
+def _resample_b1_ratio_to_img(b1_img: Any, ref_img: Any) -> Any:
+    """Resample a B1+ ratio without diluting its boundary with missing zeros."""
+    import warnings
+
+    import nibabel as nib  # type: ignore[import-untyped]
+    import numpy as np
+    from nilearn.image import resample_to_img  # type: ignore[import-untyped]
+
+    data = np.asarray(b1_img.dataobj, dtype=np.float32)  # type: ignore[attr-defined]
+    support = np.isfinite(data) & (data > 0)
+    values = np.where(support, data, 0.0)
+    value_img = nib.Nifti1Image(values, b1_img.affine)  # type: ignore[attr-defined]
+    support_img = nib.Nifti1Image(support.astype(np.float32), b1_img.affine)  # type: ignore[attr-defined]
+    numerator = resample_to_img(
+        value_img, ref_img, interpolation="continuous", force_resample=True,
+        copy_header=True,
+    )
+    with warnings.catch_warnings():
+        # Continuous support weights are intentional: they normalize the
+        # interpolated numerator. The nearest-neighbour map below defines the
+        # retained binary support.
+        warnings.filterwarnings(
+            "ignore", message="Resampling binary images with continuous"
+        )
+        weights = resample_to_img(
+            support_img, ref_img, interpolation="continuous", force_resample=True,
+            copy_header=True,
+        )
+    target_support = resample_to_img(
+        support_img, ref_img, interpolation="nearest", force_resample=True,
+        copy_header=True,
+    )
+    num = np.asarray(numerator.dataobj, dtype=np.float32)  # type: ignore[attr-defined]
+    den = np.asarray(weights.dataobj, dtype=np.float32)  # type: ignore[attr-defined]
+    keep = (np.asarray(target_support.dataobj) > 0.5) & (den > 1e-6)  # type: ignore[attr-defined]
+    out = np.zeros(ref_img.shape[:3], dtype=np.float32)  # type: ignore[attr-defined]
+    np.divide(num, den, out=out, where=keep)
+    return nib.Nifti1Image(out, ref_img.affine, ref_img.header)  # type: ignore[attr-defined]
+
+
 def _transform_b1_to_vfa(
     b1_map_file: str | None = None,
     vfa_ref_file: str | None = None,
@@ -1217,26 +1261,10 @@ def _transform_b1_to_vfa(
     import nibabel as nib  # type: ignore[import-untyped]
     import numpy as np
 
+    from pmriprep.workflows.dce._helpers import _resample_b1_ratio_to_img
+
     b1_img = nib.load(b1_map_file)
     ref_img = nib.load(vfa_ref_file)
-
-    # Uniform B1+ maps (e.g., synthetic unity map when no B1+ data exists)
-    # can be created directly in target space, avoiding nilearn's
-    # "Resampling binary images" warning from out-of-FOV zeros.
-    b1_data = b1_img.get_fdata()  # type: ignore[attr-defined]
-    unique_vals = np.unique(b1_data[b1_data != 0])
-    if len(unique_vals) == 1:
-        import logging
-
-        logging.getLogger("nipype.workflow").info(
-            "Uniform B1+ map (value=%.2f) — creating directly in VFA space",
-            float(unique_vals[0]),
-        )
-        uniform_val = float(unique_vals[0])
-        target_data = np.full(ref_img.shape[:3], uniform_val, dtype=np.float32)  # type: ignore[attr-defined]
-        out_file = str(Path.cwd() / "b1_map_vfa_space.nii.gz")
-        nib.save(nib.Nifti1Image(target_data, ref_img.affine), out_file)  # type: ignore[attr-defined]
-        return out_file
 
     # Check if already in the same space (same shape + affine)
     if b1_img.shape[:3] == ref_img.shape[:3]:  # type: ignore[attr-defined]
@@ -1244,9 +1272,7 @@ def _transform_b1_to_vfa(
         if affine_diff < 1e-4:
             return b1_map_file
 
-    from nilearn.image import resample_to_img  # type: ignore[import-untyped]
-
-    resampled = resample_to_img(b1_img, ref_img, interpolation="continuous")
+    resampled = _resample_b1_ratio_to_img(b1_img, ref_img)
     out_file = str(Path.cwd() / "b1_map_vfa_space.nii.gz")
     nib.save(resampled, out_file)
     return out_file
@@ -1280,26 +1306,10 @@ def _transform_b1_to_dce(
     import nibabel as nib  # type: ignore[import-untyped]
     import numpy as np
 
+    from pmriprep.workflows.dce._helpers import _resample_b1_ratio_to_img
+
     b1_img = nib.load(b1_map_file)
     ref_img = nib.load(reference_file)
-
-    # Uniform B1+ maps (e.g., synthetic unity map when no B1+ data exists)
-    # can be created directly in target space, avoiding nilearn's
-    # "Resampling binary images" warning from out-of-FOV zeros.
-    b1_data = b1_img.get_fdata()  # type: ignore[attr-defined]
-    unique_vals = np.unique(b1_data[b1_data != 0])
-    if len(unique_vals) == 1:
-        import logging
-
-        logging.getLogger("nipype.workflow").info(
-            "Uniform B1+ map (value=%.2f) — creating directly in DCE space",
-            float(unique_vals[0]),
-        )
-        uniform_val = float(unique_vals[0])
-        target_data = np.full(ref_img.shape[:3], uniform_val, dtype=np.float32)  # type: ignore[attr-defined]
-        out_file = str(Path.cwd() / "b1_map_dce_space.nii.gz")
-        nib.save(nib.Nifti1Image(target_data, ref_img.affine), out_file)  # type: ignore[attr-defined]
-        return out_file
 
     # Check if already in the same space
     if b1_img.shape[:3] == ref_img.shape[:3]:  # type: ignore[attr-defined]
@@ -1307,9 +1317,7 @@ def _transform_b1_to_dce(
         if affine_diff < 1e-4:
             return b1_map_file
 
-    from nilearn.image import resample_to_img  # type: ignore[import-untyped]
-
-    resampled = resample_to_img(b1_img, ref_img, interpolation="continuous")
+    resampled = _resample_b1_ratio_to_img(b1_img, ref_img)
     out_file = str(Path.cwd() / "b1_map_dce_space.nii.gz")
     nib.save(resampled, out_file)
     return out_file

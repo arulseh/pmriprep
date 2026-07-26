@@ -292,6 +292,7 @@ def _build_tb1_meta(
     base: dict,
     b1_source_paths: list[str] | None,
     bids_dir: str,
+    qc_metrics: dict | None = None,
 ) -> dict:
     """Build TB1map metadata from its DCE grid and selected B1 inputs."""
     from pmriprep.utils.sidecar_builders import build_sources_list
@@ -301,6 +302,18 @@ def _build_tb1_meta(
         "B1+ transmit field map (dimensionless ratio, 1.0 = nominal flip angle)"
     )
     out["Units"] = "1"
+    out["MissingValue"] = 0
+    b1_qc = (qc_metrics or {}).get("b1_mapping", {})
+    if isinstance(b1_qc, dict) and b1_qc:
+        out["B1Mapping"] = {
+            key: b1_qc[key]
+            for key in (
+                "method", "encoding", "encoding_source", "smoothing_fwhm_mm",
+                "clip_low", "clip_high", "n_valid_voxels", "n_signal_voxels",
+                "valid_fraction_of_signal", "n_b1_outliers_rejected", "qc_pass",
+            )
+            if key in b1_qc
+        }
     sources = list(out.get("Sources", []))
     sources.extend(build_sources_list(b1_source_paths or [], bids_dir))
     out["Sources"] = list(dict.fromkeys(sources))
@@ -1666,7 +1679,7 @@ def init_dce_datasinks_wf(
     if "b1_map" in present:
         meta = pe.Node(
             niu.Function(
-                input_names=["base", "b1_source_paths", "bids_dir"],
+                input_names=["base", "b1_source_paths", "bids_dir", "qc_metrics"],
                 output_names=["meta_dict"],
                 function=_build_tb1_meta,
             ),
@@ -1675,6 +1688,7 @@ def init_dce_datasinks_wf(
         meta.inputs.b1_source_paths = list(b1_source_files or [])
         meta.inputs.bids_dir = bids_dir
         workflow.connect(base_minimal, "meta_dict", meta, "base")
+        workflow.connect(inputnode, "qc_metrics", meta, "qc_metrics")
         sink = pe.Node(
             niu.Function(
                 input_names=[

@@ -95,6 +95,45 @@ def _b1_interior_mask(valid: np.ndarray, iterations: int = 2) -> np.ndarray:
     return binary_erosion(binary_fill_holes(valid), iterations=iterations) & valid  # type: ignore[no-any-return]
 
 
+def _brain_mask_in_target_space(
+    brain_mask_file: str | None,
+    target_img: Any,
+) -> tuple[np.ndarray | None, str]:
+    """Load a brain mask on a B1 acquisition grid using header geometry.
+
+    This is affine-header resampling, not intensity registration. A mask with
+    no target-grid overlap is ignored so an unrelated/mislabelled anatomical
+    mask cannot erase all B1 support.
+    """
+    if not brain_mask_file:
+        return None, "not_provided"
+
+    import nibabel as nib  # type: ignore[import-untyped]
+    from nilearn.image import resample_to_img  # type: ignore[import-untyped]
+
+    mask_img = nib.load(brain_mask_file)
+    same_shape = mask_img.shape[:3] == target_img.shape[:3]  # type: ignore[attr-defined]
+    same_affine = bool(np.allclose(mask_img.affine, target_img.affine, atol=1e-4))  # type: ignore[attr-defined]
+    if same_shape and same_affine:
+        mask = np.asarray(mask_img.dataobj) > 0.5  # type: ignore[attr-defined]
+        status = "native_grid"
+    else:
+        mask_resampled = resample_to_img(
+            mask_img, target_img, interpolation="nearest", force_resample=True,
+            copy_header=True,
+        )
+        mask = np.asarray(mask_resampled.dataobj) > 0.5  # type: ignore[attr-defined]
+        status = "header_resampled"
+
+    if not np.any(mask):
+        logger.warning(
+            "Brain mask has no overlap with the B1+ grid after header-based "
+            "resampling — ignoring it"
+        )
+        return None, "no_overlap_ignored"
+    return mask, status
+
+
 class B1MappingInputSpec(BaseInterfaceInputSpec):
     """Input specification for B1Mapping interface."""
 
@@ -109,9 +148,7 @@ class B1MappingInputSpec(BaseInterfaceInputSpec):
         desc="4D AFI volume with 2 interleaved-TR timepoints (TB1AFI).",
     )
     nominal_flip_angle = traits.Float(
-        60.0,
-        usedefault=True,
-        desc="Nominal flip angle in degrees (default: 60)",
+        desc="Nominal AFI excitation flip angle in degrees (required)",
     )
     brain_mask = File(
         exists=True,
@@ -205,9 +242,9 @@ class B1Mapping(SimpleInterface):
     tr2 : float
         Long TR value in milliseconds
     nominal_flip_angle : float
-        Nominal flip angle in degrees (default: 60)
+        Nominal AFI excitation flip angle in degrees (required).
     brain_mask : str, optional
-        Brain mask for QC calculations
+        Brain mask constraining estimation and QC, header-resampled when needed.
     smoothing_fwhm : float
         Smoothing kernel FWHM in mm (default: 8.0)
     skip_b1 : bool
@@ -376,8 +413,15 @@ class B1Mapping(SimpleInterface):
                 )
                 tr1_ms = float(tr1_override)
                 tr2_ms = float(tr2_override)
-                s1 = afi_data[:, :, :, 0]
-                s2 = afi_data[:, :, :, 1]
+                # Discovery supplies the sorted short/long TR values. Preserve
+                # the volume association from per-volume metadata when it is
+                # available instead of assuming volume 0 is always short-TR.
+                if vol0_tr is not None and vol1_tr is not None and vol0_tr > vol1_tr:
+                    s1 = afi_data[:, :, :, 1]
+                    s2 = afi_data[:, :, :, 0]
+                else:
+                    s1 = afi_data[:, :, :, 0]
+                    s2 = afi_data[:, :, :, 1]
             elif vol0_tr is not None and vol1_tr is not None:
                 # Auto-detect volume ordering: shorter TR = TR1
                 if vol0_tr < vol1_tr:
@@ -491,6 +535,13 @@ class B1Mapping(SimpleInterface):
         shape = s1.shape[:3]
 
         # Get TR ratio
+        if not np.isfinite(tr1_ms) or not np.isfinite(tr2_ms):
+            raise ValueError(f"AFI TR values must be finite, got {tr1_ms} and {tr2_ms} ms")
+        if tr1_ms <= 0 or tr2_ms <= tr1_ms:
+            raise ValueError(
+                f"AFI requires 0 < TR1 < TR2, got TR1={tr1_ms:g} ms and "
+                f"TR2={tr2_ms:g} ms"
+            )
         n = tr2_ms / tr1_ms
         # AFI nominal flip angle must be explicit — vendor defaults (60° Siemens,
         # ~55° GE) silently bias B1+ → T1 → concentration → Ktrans.
@@ -500,14 +551,30 @@ class B1Mapping(SimpleInterface):
                 "FlipAngle or afi_flip_angle config; no vendor default applied."
             )
         nominal_fa = float(self.inputs.nominal_flip_angle)
+        if not np.isfinite(nominal_fa) or nominal_fa <= 0 or nominal_fa >= 180:
+            raise ValueError(
+                f"AFI nominal flip angle must be finite and between 0 and 180 degrees, "
+                f"got {nominal_fa!r}"
+            )
+
+        brain_mask_file = (
+            str(self.inputs.brain_mask)
+            if isdefined(self.inputs.brain_mask) and self.inputs.brain_mask
+            else None
+        )
+        mask, mask_status = _brain_mask_in_target_space(
+            brain_mask_file, nib.Nifti1Image(np.zeros(shape, dtype=np.uint8), affine, header)
+        )
 
         # -----------------------------------------------------------------
         # Signal masking: only compute B1+ where both signals are above
         # noise floor. Uses 5th-percentile threshold to preserve
         # low-signal dropout regions (Gap 4).
         # -----------------------------------------------------------------
+        threshold_domain = mask if mask is not None else np.ones(shape, dtype=bool)
         positive_signals = np.concatenate([
-            s1[s1 > 0].ravel(), s2[s2 > 0].ravel(),
+            s1[threshold_domain & (s1 > 0)].ravel(),
+            s2[threshold_domain & (s2 > 0)].ravel(),
         ])
         if len(positive_signals) > 0:
             signal_threshold = max(
@@ -515,7 +582,9 @@ class B1Mapping(SimpleInterface):
             )
         else:
             signal_threshold = 1e-6
-        signal_mask = (s1 > signal_threshold) & (s2 > signal_threshold)
+        signal_mask = (s1 >= signal_threshold) & (s2 >= signal_threshold)
+        if mask is not None:
+            signal_mask &= mask
 
         # -----------------------------------------------------------------
         # Compute signal ratio r = S2/S1 (long-TR over short-TR); this is
@@ -532,20 +601,24 @@ class B1Mapping(SimpleInterface):
             (r > B1_RATIO_VALID_RANGE[0]) & (r < B1_RATIO_VALID_RANGE[1])
         )
         denominator_stable = np.abs(n - r) > B1_DENOMINATOR_THRESHOLD
-        valid = signal_mask & ratio_valid & denominator_stable
+        candidate_valid = signal_mask & ratio_valid & denominator_stable
 
         # -----------------------------------------------------------------
         # Simplified AFI equation, accurate to first order
         # in TR1/T1:  cos(alpha) = (r*n - 1) / (n - r)
         # Compute only for valid voxels; set the rest to B1+=1.0.
         # -----------------------------------------------------------------
-        b1_map = np.ones(shape, dtype=np.float64)
+        b1_map = np.zeros(shape, dtype=np.float64)
 
-        numerator = r[valid] * n - 1.0
-        denominator = n - r[valid]
-        cos_alpha = numerator / (denominator + EPSILON_RATIO)
-        cos_alpha = np.clip(cos_alpha, -1.0, 1.0)
-        alpha_actual = np.degrees(np.arccos(cos_alpha))
+        cos_alpha_map = np.full(shape, np.nan, dtype=np.float64)
+        numerator = r[candidate_valid] * n - 1.0
+        denominator = n - r[candidate_valid]
+        cos_alpha_map[candidate_valid] = numerator / (denominator + EPSILON_RATIO)
+        cosine_valid = np.isfinite(cos_alpha_map) & (
+            (cos_alpha_map >= -1.0) & (cos_alpha_map <= 1.0)
+        )
+        valid = candidate_valid & cosine_valid
+        alpha_actual = np.degrees(np.arccos(cos_alpha_map[valid]))
         b1_map[valid] = alpha_actual / nominal_fa
 
         # -----------------------------------------------------------------
@@ -554,12 +627,13 @@ class B1Mapping(SimpleInterface):
         field_strength = self.inputs.field_strength
         b1_thresh = get_b1_thresholds(field_strength)
         b1_map = np.clip(b1_map, b1_thresh.clip_low, b1_thresh.clip_high)
-        b1_map[~signal_mask] = 1.0  # Background = nominal
+        b1_map[~valid] = 0.0  # Preserve missing B1+ support in the derivative
 
         # Flag extreme values for QC
-        n_extreme_low = int(np.sum((b1_map < b1_thresh.extreme_low) & signal_mask))
-        n_extreme_high = int(np.sum((b1_map > b1_thresh.extreme_high) & signal_mask))
-        n_signal = max(int(np.sum(signal_mask)), 1)
+        n_extreme_low = int(np.sum((b1_map < b1_thresh.extreme_low) & valid))
+        n_extreme_high = int(np.sum((b1_map > b1_thresh.extreme_high) & valid))
+        n_signal_actual = int(np.sum(signal_mask))
+        n_signal = max(n_signal_actual, 1)
         if n_extreme_low > 0:
             logger.info(
                 "%.1f%% of brain has B1+ < %.2f (expected in temporal lobes at %.1fT)",
@@ -620,14 +694,14 @@ class B1Mapping(SimpleInterface):
                     n_b1_outliers, 100.0 * n_b1_outliers / max(int(np.sum(valid)), 1),
                 )
             valid = valid & ~outlier
-            b1_map[outlier] = 1.0
+            b1_map[outlier] = 0.0
 
             # Pass 2: re-smooth with cleaned mask (standard sigma)
             mask_float = valid.astype(np.float64)
             smoothed_num = gaussian_filter(b1_map * mask_float, sigma=sigma_voxels)
             smoothed_den = gaussian_filter(mask_float, sigma=sigma_voxels)
             smoothed_den = np.maximum(smoothed_den, 1e-6)
-            b1_map = np.where(mask_float > 0, smoothed_num / smoothed_den, 1.0)
+            b1_map = np.where(mask_float > 0, smoothed_num / smoothed_den, 0.0)
             b1_map = np.clip(b1_map, b1_thresh.clip_low, b1_thresh.clip_high)
 
         # Convert to float32 for storage
@@ -641,45 +715,16 @@ class B1Mapping(SimpleInterface):
         b1_unique = np.unique(b1_map[signal_mask])
         if len(b1_unique) <= 1:
             if len(b1_unique) == 0 or np.isclose(b1_unique[0], 0.0, atol=1e-6):
-                logger.warning("B1+ map is all zeros — returning unity map")
-                b1_map = np.ones(shape, dtype=np.float32)
+                logger.warning("B1+ mapping produced no valid physical support")
+                b1_map = np.zeros(shape, dtype=np.float32)
                 uniform_detected = True
             elif np.isclose(b1_unique[0], 1.0, atol=1e-3):
                 logger.info("B1+ map is all ones (no correction needed)")
                 uniform_detected = True
 
-        # Load brain mask for QC if provided.
-        # Brain mask may be in T1w space (different resolution from AFI).
-        # Require exact shape+affine match, ignore mask
-        # entirely if mismatched (no resampling for QC).
-        mask: Optional[np.ndarray] = None
-        if self.inputs.brain_mask:
-            mask_img = nib.load(self.inputs.brain_mask)
-            mask_data = mask_img.get_fdata() > 0.5  # type: ignore[attr-defined]
-            mask_affine = mask_img.affine  # type: ignore[attr-defined]
-
-            shape_match = mask_data.shape[:3] == b1_map.shape[:3]
-            affine_diff = float(np.abs(affine - mask_affine).max())
-
-            if not shape_match:
-                logger.warning(
-                    "Brain mask shape %s != B1+ map shape %s — ignoring mask",
-                    mask_data.shape[:3], b1_map.shape[:3],
-                )
-            elif affine_diff > 1e-4:
-                logger.warning(
-                    "Brain mask affine mismatch (max diff=%.6f) — ignoring mask",
-                    affine_diff,
-                )
-            else:
-                mask = mask_data
-
-        # Calculate QC metrics within brain mask (or whole volume if no mask)
-        if mask is not None:
-            b1_in_roi = b1_map[mask]
-        else:
-            # No usable mask — use all non-zero voxels
-            b1_in_roi = b1_map[b1_map > 0]
+        # Calculate QC metrics within measured brain support.
+        qc_support = valid & mask if mask is not None else valid
+        b1_in_roi = b1_map[qc_support]
 
         # Remove outliers for robust statistics
         b1_clean = b1_in_roi[
@@ -694,7 +739,7 @@ class B1Mapping(SimpleInterface):
             std_b1 = 0.0
 
         # QC pass/fail criteria (field-strength-dependent)
-        qc_pass = (
+        qc_pass = bool(len(b1_clean) > 0) and (
             b1_thresh.mean_range[0] <= mean_b1 <= b1_thresh.mean_range[1]
             and std_b1 < b1_thresh.max_std
         )
@@ -724,14 +769,18 @@ class B1Mapping(SimpleInterface):
             "tr_ratio": n,
             "b1_range_expected": b1_thresh.mean_range,
             "b1_max_std_expected": b1_thresh.max_std,
-            "n_signal_voxels": n_signal,
+            "n_signal_voxels": n_signal_actual,
             "n_valid_voxels": int(np.sum(valid)),
             "n_ratio_invalid": int(np.sum(signal_mask & ~ratio_valid)),
             "n_denominator_unstable": int(np.sum(signal_mask & ~denominator_stable)),
+            "n_cosine_invalid": int(np.sum(candidate_valid & ~cosine_valid)),
             "n_extreme_low_b1": n_extreme_low,
             "n_extreme_high_b1": n_extreme_high,
             "n_b1_outliers_rejected": n_b1_outliers,
             "uniform_detected": uniform_detected,
+            "valid_fraction_of_signal": float(np.sum(valid)) / max(1, n_signal),
+            "qc_support_voxels": int(np.sum(qc_support)),
+            "brain_mask_application": mask_status,
             "pct_correction_gt_10": (
                 float(100.0 * np.sum(np.abs(b1_clean - 1.0) > 0.1) / len(b1_clean))
                 if len(b1_clean) > 0 else 0.0
@@ -845,6 +894,16 @@ class B1Mapping(SimpleInterface):
         header = b1_img.header  # type: ignore[attr-defined]
         shape = b1_raw.shape[:3]
 
+        brain_mask_file = (
+            str(self.inputs.brain_mask)
+            if isdefined(self.inputs.brain_mask) and self.inputs.brain_mask
+            else None
+        )
+        brain_mask, mask_status = _brain_mask_in_target_space(brain_mask_file, b1_img)
+        raw_support = np.isfinite(b1_raw) & (b1_raw > 0)
+        if brain_mask is not None:
+            raw_support &= brain_mask
+
         # Resolve the pixel→ratio scaling from the encoding (auto → inferred
         # from suffix/Units upstream, or from the pixel median as a last resort).
         nominal_prep_fa = (
@@ -857,6 +916,7 @@ class B1Mapping(SimpleInterface):
             encoding=B1Encoding(self.inputs.b1_map_encoding),
             nominal_prep_fa=nominal_prep_fa,
             b1_raw=b1_raw,
+            brain_mask=brain_mask,
         )
         scale_factor = b1_res.divisor
         logger.info(
@@ -868,7 +928,7 @@ class B1Mapping(SimpleInterface):
         # companion with signal-intensity values), but allow high B1+ at FOV
         # edges. Downstream physiological clipping handles the actual range.
         full_scale = expected_pixel_max(scale_factor)
-        p99 = float(np.percentile(b1_raw[b1_raw > 0], 99)) if np.any(b1_raw > 0) else 0.0
+        p99 = float(np.percentile(b1_raw[raw_support], 99)) if np.any(raw_support) else 0.0
         if p99 > full_scale * 5.0:
             raise ValueError(
                 f"Pre-computed B1+ map pixel p99={p99:.0f} exceeds "
@@ -885,10 +945,10 @@ class B1Mapping(SimpleInterface):
             )
 
         # Create valid mask (non-zero pixels)
-        valid_mask = b1_raw > 0
+        valid_mask = raw_support
 
         # Scale to B1+ ratio
-        b1_map = np.ones(shape, dtype=np.float64)
+        b1_map = np.zeros(shape, dtype=np.float64)
         b1_map[valid_mask] = b1_raw[valid_mask] / scale_factor
 
         # -----------------------------------------------------------------
@@ -897,7 +957,7 @@ class B1Mapping(SimpleInterface):
         field_strength = self.inputs.field_strength
         b1_thresh = get_b1_thresholds(field_strength)
         b1_map = np.clip(b1_map, b1_thresh.clip_low, b1_thresh.clip_high)
-        b1_map[~valid_mask] = 1.0  # Background = nominal
+        b1_map[~valid_mask] = 0.0  # Preserve missing B1+ support in the derivative
 
         # Flag extreme values for QC
         n_valid = max(int(np.sum(valid_mask)), 1)
@@ -951,14 +1011,14 @@ class B1Mapping(SimpleInterface):
                     n_b1_outliers, 100.0 * n_b1_outliers / n_valid,
                 )
             valid_mask = valid_mask & ~outlier
-            b1_map[outlier] = 1.0
+            b1_map[outlier] = 0.0
 
             # Pass 2: re-smooth with cleaned mask
             mask_float = valid_mask.astype(np.float64)
             smoothed_num = gaussian_filter(b1_map * mask_float, sigma=sigma_voxels)
             smoothed_den = gaussian_filter(mask_float, sigma=sigma_voxels)
             smoothed_den = np.maximum(smoothed_den, 1e-6)
-            b1_map = np.where(mask_float > 0, smoothed_num / smoothed_den, 1.0)
+            b1_map = np.where(mask_float > 0, smoothed_num / smoothed_den, 0.0)
             b1_map = np.clip(b1_map, b1_thresh.clip_low, b1_thresh.clip_high)
 
         b1_map = b1_map.astype(np.float32)
@@ -978,7 +1038,7 @@ class B1Mapping(SimpleInterface):
             std_b1 = 0.0
             median_b1 = B1_EXPECTED_MEAN
 
-        qc_pass = (
+        qc_pass = bool(len(b1_clean) > 0) and (
             b1_thresh.mean_range[0] <= mean_b1 <= b1_thresh.mean_range[1]
             and std_b1 < b1_thresh.max_std
         )
@@ -1008,6 +1068,7 @@ class B1Mapping(SimpleInterface):
             "n_extreme_low_b1": n_extreme_low,
             "n_extreme_high_b1": n_extreme_high,
             "n_b1_outliers_rejected": n_b1_outliers,
+            "brain_mask_application": mask_status,
             "pct_correction_gt_10": (
                 float(100.0 * np.sum(np.abs(b1_clean - 1.0) > 0.1) / len(b1_clean))
                 if len(b1_clean) > 0 else 0.0

@@ -173,6 +173,40 @@ class TestInterfacePrecomputed:
         assert out.qc_metrics["encoding"] == "actual_flip_deci_deg"
         assert out.qc_metrics["divisor"] == 700.0
 
+    def test_empty_precomputed_support_cannot_pass_qc(self, tmp_path):
+        """A zero-valued B1 map reports absent support rather than nominal PASS."""
+        out = self._run(tmp_path, 0.0, "ratio")
+        assert out.qc_metrics["n_valid_voxels"] == 0
+        assert out.qc_pass is False
+        assert out.qc_metrics["b1_status"] == "WARN"
+        import nibabel as nib
+        assert not np.any(nib.load(out.out_file).get_fdata())
+
+    def test_precomputed_qc_and_support_use_brain_mask(self, tmp_path):
+        """Positive vendor background pixels cannot contaminate B1 QC or output."""
+        import nibabel as nib
+
+        from pmriprep.interfaces.dce import B1Mapping
+
+        raw = np.full((12, 12, 12), 150.0, dtype=np.float32)
+        mask = np.zeros(raw.shape, dtype=np.uint8)
+        mask[3:9, 3:9, 3:9] = 1
+        raw[mask > 0] = 90.0
+        raw_file = tmp_path / "b1_background_artifact.nii.gz"
+        mask_file = tmp_path / "brain_mask.nii.gz"
+        nib.save(nib.Nifti1Image(raw, np.eye(4)), raw_file)
+        nib.save(nib.Nifti1Image(mask, np.eye(4)), mask_file)
+
+        out = B1Mapping(
+            precomputed_b1_file=str(raw_file), brain_mask=str(mask_file),
+            b1_map_encoding="percent", smoothing_fwhm=0.0,
+        ).run().outputs
+        mapped = nib.load(out.out_file).get_fdata()
+        assert out.mean_b1 == pytest.approx(0.9)
+        assert out.qc_metrics["n_valid_voxels"] == int(mask.sum())
+        assert out.qc_metrics["brain_mask_application"] == "native_grid"
+        assert np.all(mapped[mask == 0] == 0.0)
+
 
 class TestReportBoilerplate:
     """Guard against the silent B1-sentence drop after the token rename.

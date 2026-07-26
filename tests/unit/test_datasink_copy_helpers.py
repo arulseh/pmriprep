@@ -103,12 +103,21 @@ def test_tb1map_provenance_includes_grid_and_selected_b1_sources() -> None:
             "/raw/sub-X/ses-Y/fmap/sub-X_ses-Y_run-1_TB1map.nii.gz",
         ],
         "/raw",
+        {"b1_mapping": {
+            "method": "precomputed", "encoding": "percent",
+            "n_valid_voxels": 123, "qc_pass": True,
+        }},
     )
     assert out["Sources"] == [
         "bids:raw:sub-X/ses-Y/perf/sub-X_ses-Y_run-2_dce.nii.gz",
         "bids:raw:sub-X/ses-Y/fmap/sub-X_ses-Y_run-1_TB1map.nii.gz",
     ]
     assert out["Units"] == "1"
+    assert out["MissingValue"] == 0
+    assert out["B1Mapping"] == {
+        "method": "precomputed", "encoding": "percent",
+        "n_valid_voxels": 123, "qc_pass": True,
+    }
 
 
 def test_master_b1_source_selection_matches_configured_method() -> None:

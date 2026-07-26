@@ -81,12 +81,6 @@
     [
       "b1_mapping",
       "out_file",
-      "outputnode",
-      "b1_map"
-    ],
-    [
-      "b1_mapping",
-      "out_file",
       "transform_b1_to_dce",
       "b1_map_file"
     ],
@@ -1755,6 +1749,12 @@
     [
       "transform_b1_to_dce",
       "out_file",
+      "outputnode",
+      "b1_map"
+    ],
+    [
+      "transform_b1_to_dce",
+      "out_file",
       "signal_to_concentration",
       "b1_map_file"
     ],
@@ -2386,7 +2386,7 @@
   "function_sha256": {
     "collect_qc_metrics": "24a868a87279d029f3c90a06915c8ef21c5b9f1df71e1285bd512528a429bd10",
     "combine_masks": "f2748155dafc15b2d74a066b3da5db0ed2a4b5486b46ee8ea1f4c7a181de8fcf",
-    "create_aif_mask": "b7f950098e31edf1f4ae33feeceb4f24287680351c18994377a6129477eb1b0d",
+    "create_aif_mask": "13c9c99cb39a8fdf544fa35125494b14147ec5099862963ceff8f8df840b8f3b",
     "dce_brain_mask_qc": "ced2d6d4b823457166d3fb21083d6220f2b0dc0e0155de5c134e6d98210b5086",
     "dce_early_mean": "fd75a021c6ef482c605e9a7596c6c17381cd8996e63adafc61cb7f30031b6cb0",
     "dce_pk_fit_qc": "3206990b014d072947d06ee8c4dcef234d286f8524a901040e186022ced60581",
@@ -2402,18 +2402,18 @@
     "select_aif_exclusion": "3ac6f0a171a3c915c7c043706044fb8dd45d2a9c05f1d1fad613919135724b21",
     "signal_to_concentration": "c58363ef44e17de59ddb430281826f4d72d1daaf2b5705f215e4f7c2196385b2",
     "transform_atlas_cascade": "92097e5d6df046e1997dbee6d10208373b12e5535619d7397855d263159a752a",
-    "transform_b1_to_dce": "9aa1395aee7d127f071c5cfce13ad16cd0a171847d34873e88945e12e81f3604",
-    "transform_b1_to_vfa": "b89d595b2bf17ac00888f00e0bde3cdf98406afe8422b20cac701ed710703f85",
+    "transform_b1_to_dce": "3805c9b07e0320284ec492d9a2d5ea9e48db04ade1320c301880a9219eab0829",
+    "transform_b1_to_vfa": "d7085fd6e919f5095c5bb302c136f392174fa77fd5c1e7cf1a20c37dfbad13fb",
     "transform_brain_mask": "d79c70197847c13c4a4fd38f056ae9911584e27b3d0d1a55b81ebbbc0dc8c3e4",
-    "transform_csf_probseg": "d42319ef4b96c5e514991c04481db2429bcaa31287a9a3076f12e2751c92ab80",
+    "transform_csf_probseg": "832875c9ced77fe1fb5b000924e46d928ab6d69e66f8b209e0b78dad94bb9fba",
     "transform_enhancing_mask": "d79c70197847c13c4a4fd38f056ae9911584e27b3d0d1a55b81ebbbc0dc8c3e4",
-    "transform_gm_probseg": "d42319ef4b96c5e514991c04481db2429bcaa31287a9a3076f12e2751c92ab80",
+    "transform_gm_probseg": "832875c9ced77fe1fb5b000924e46d928ab6d69e66f8b209e0b78dad94bb9fba",
     "transform_lesion": "2ece3db8a3b618705a755d2ebdd6380f308b9fb550a80c57934c8544db2c98b7",
     "transform_nawm_mask": "c6ba5896ec4e8e62856bff5799b517bc43d25a91039140a9714005daf685ab6e",
     "transform_non_enhancing_mask": "d79c70197847c13c4a4fd38f056ae9911584e27b3d0d1a55b81ebbbc0dc8c3e4",
     "transform_stats_lesion": "2ece3db8a3b618705a755d2ebdd6380f308b9fb550a80c57934c8544db2c98b7",
     "transform_t1_to_dce": "ec7c3c3a7eebc8c6b9182754cf73a892c8117a837e18d4830a6449bcdc7c9c4e",
-    "transform_wm_probseg": "d42319ef4b96c5e514991c04481db2429bcaa31287a9a3076f12e2751c92ab80",
+    "transform_wm_probseg": "832875c9ced77fe1fb5b000924e46d928ab6d69e66f8b209e0b78dad94bb9fba",
     "validate_roi_mask": "a165487201a8e6d14f055c1f72f41bcec5cdb1ab589d7469e3aff501cb28f07b",
     "validate_user_lesion_mask": "a165487201a8e6d14f055c1f72f41bcec5cdb1ab589d7469e3aff501cb28f07b",
     "vfa_reorient": "03f0bda97a55e26d25a885880beab082b354e306166c6b3ffac5a0e9aa378c4f"
@@ -2635,7 +2635,6 @@
     "b1_mapping": {
       "b1_map_encoding": "auto",
       "field_strength": 3.0,
-      "nominal_flip_angle": 60.0,
       "session_id": "0001",
       "skip_b1": false,
       "smoothing_fwhm": 8.0,
