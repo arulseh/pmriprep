@@ -1855,6 +1855,12 @@
       "t1_qc_plot"
     ],
     [
+      "t1_mapping",
+      "support_file",
+      "outputnode",
+      "t1_support_map"
+    ],
+    [
       "transform_atlas_cascade",
       "out_files",
       "aif_detection",
@@ -2610,7 +2616,7 @@
     "resample_dsc_cbv": "8637643d62fc961aafa3946ba1321ebcf4744121cb1b91e9b01bde70a4024ba3",
     "resample_dsc_ncbv": "9016b6e864f3d6e0149ee556592202a4fb42cec4b3e2a90946ff48dbfa6caf72",
     "select_aif_exclusion": "3ac6f0a171a3c915c7c043706044fb8dd45d2a9c05f1d1fad613919135724b21",
-    "signal_to_concentration": "d0427aede0704d25f6c3c5d93477bf44e78f563d8042a631a78da2f7709ec745",
+    "signal_to_concentration": "c58363ef44e17de59ddb430281826f4d72d1daaf2b5705f215e4f7c2196385b2",
     "transform_atlas_cascade": "92097e5d6df046e1997dbee6d10208373b12e5535619d7397855d263159a752a",
     "transform_b1_to_dce": "9aa1395aee7d127f071c5cfce13ad16cd0a171847d34873e88945e12e81f3604",
     "transform_b1_to_vfa": "b89d595b2bf17ac00888f00e0bde3cdf98406afe8422b20cac701ed710703f85",
@@ -3338,6 +3344,7 @@
     "smooth_pk_maps",
     "t1_map",
     "t1_qc_plot",
+    "t1_support_map",
     "t1w_in_dce",
     "t1w_postcon_in_dce",
     "t1w_subtraction_in_dce",

@@ -404,6 +404,12 @@
     ],
     [
       "dce_wf",
+      "outputnode.t1_support_map",
+      "dce_datasinks_wf",
+      "inputnode.t1_support_map"
+    ],
+    [
+      "dce_wf",
       "outputnode.t1w_in_dce",
       "dce_datasinks_wf",
       "inputnode.t1w_in_dce"

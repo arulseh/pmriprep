@@ -994,6 +994,7 @@ def _add_anat_image_sink(
     desc: str = "",
     skull_stripped: bool = False,
     units: Optional[str] = None,
+    extra: Optional[dict] = None,
     source_attr: str = "source_dce",
     dismiss_entities: tuple = ("acquisition",),
 ) -> pe.Node:
@@ -1023,7 +1024,10 @@ def _add_anat_image_sink(
     )
     meta.inputs.description = description
     meta.inputs.units = units
-    meta.inputs.extra = {"SkullStripped": True} if skull_stripped else None
+    metadata_extra = dict(extra or {})
+    if skull_stripped:
+        metadata_extra["SkullStripped"] = True
+    meta.inputs.extra = metadata_extra or None
     workflow.connect(base_minimal_node, "meta_dict", meta, "base")
     if is_underlay:
         workflow.connect([
@@ -1183,7 +1187,7 @@ def init_dce_datasinks_wf(
                 # Smoothed dicts (variable cardinality)
                 "smooth_pk_maps", "smooth_model_free_maps",
                 # T1/B1 + masks (anat/)
-                "t1_map", "b1_map", "brain_mask", "nawm_mask",
+                "t1_map", "t1_support_map", "b1_map", "brain_mask", "nawm_mask",
                 # Motion + AIF
                 "dce_moco", "dce_mean", "motion_params",
                 "aif_curve", "aif_mask",
@@ -1637,6 +1641,26 @@ def init_dce_datasinks_wf(
             name="t1_map", in_attr="t1_map", label="T1map",
             description="T1 relaxation time map (ms)",
             units="ms",
+        )
+        sink_outputs.append((sink, "out_file"))
+    if "t1_support_map" in present:
+        sink = _add_anat_image_sink(
+            workflow, inputnode, base_minimal,
+            name="t1_support_map", in_attr="t1_support_map", label="dseg",
+            desc="t1Support",
+            description="T1 support provenance labels: 0 outside DCE analysis "
+            "domain, 1 directly measured, 2 locally interpolated, 3 unavailable, "
+            "4 CSF excluded, 5 uniform assumption",
+            extra={
+                "LabelMap": {
+                    "0": "Outside DCE analysis domain",
+                    "1": "Directly measured T1",
+                    "2": "Locally interpolated T1",
+                    "3": "T1 unavailable in DCE analysis domain",
+                    "4": "CSF excluded",
+                    "5": "Uniform T1 assumption",
+                },
+            },
         )
         sink_outputs.append((sink, "out_file"))
     if "b1_map" in present:

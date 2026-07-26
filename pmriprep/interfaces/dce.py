@@ -1176,8 +1176,8 @@ class T1MappingInputSpec(BaseInterfaceInputSpec):
     b1_qc_pass = traits.Bool(
         True,
         usedefault=True,
-        desc="B1 QC pass status (from B1Mapping). When False, lowers "
-             "T1 correction threshold for auto mode.",
+        desc="B1 QC pass status (from B1Mapping), retained as a report-only "
+             "T1 acquisition diagnostic.",
     )
     subject_id = traits.Str(
         "",
@@ -1195,6 +1195,7 @@ class T1MappingOutputSpec(TraitedSpec):
     """Output specification for T1Mapping interface."""
 
     out_file = File(exists=True, desc="T1 map in milliseconds")
+    support_file = File(exists=True, desc="Categorical T1 support provenance map")
     mean_t1_wm = traits.Float(desc="Mean T1 in white matter region (ms)")
     mean_t1_gm = traits.Float(desc="Mean T1 in gray matter region (ms)")
     qc_pass = traits.Bool(desc="Whether T1 map passed QC criteria")
@@ -1463,6 +1464,7 @@ class T1Mapping(SimpleInterface):
             # Use simple thresholding on first VFA image as rough brain mask
             threshold = np.percentile(signal_data[0][signal_data[0] > 0], 10)
             brain_mask = signal_data[0] > threshold
+        analysis_domain_mask = brain_mask.copy()
         fallback_brain_mask = brain_mask.copy()
 
         # --- VFA Fit Residual (NRMSE) for fit-quality QC ---
@@ -1547,36 +1549,42 @@ class T1Mapping(SimpleInterface):
             )
             csf_excluded = True
 
-        # Set out-of-range T1 to NaN using field-strength-dependent bounds.
-        # Lower bound (reject_min) depends on field strength: 450/600/800ms at 1.5/3/7T.
-        # Upper bound: always t1_parenchyma_upper (2000/2500/3500ms at 1.5/3/7T).
-        # This catches CSF partial-volume voxels that pass the 0.5 probseg
-        # threshold while preserving edema (1600-2200ms at 3T).
+        # Reject only values outside the broad numerical safety envelope.
+        # Normal-tissue reference intervals remain QC diagnostics: using them
+        # as voxel filters would censor prolonged T1 in tumor, edema, or stroke.
         field_strength = self.inputs.field_strength
         correction_mode = self.inputs.t1_correction_mode
 
         from pmriprep.utils.dce_t1_validation import (
             T1_TISSUE_REFERENCE,
+            MIN_VALID_T1_MS,
             apply_t1_correction,
             get_field_strength_key,
         )
 
         field_key = get_field_strength_key(field_strength)
-        t1_upper = T1_TISSUE_REFERENCE[field_key]["t1_parenchyma_upper"]
-        t1_lower = T1_TISSUE_REFERENCE[field_key]["reject_min"]
+        t1_upper = T1_TISSUE_REFERENCE[field_key]["t1_upper_bound"]
+        t1_lower = MIN_VALID_T1_MS
         measured_t1_map = t1_map.copy()
+        numeric_low_mask = np.isfinite(t1_map) & (t1_map < t1_lower) & brain_mask
+        numeric_high_mask = np.isfinite(t1_map) & (t1_map > t1_upper) & brain_mask
         t1_map = np.where(
             (t1_map >= t1_lower) & (t1_map <= t1_upper), t1_map, np.nan,
+        )
+        measured_support = np.isfinite(t1_map) & brain_mask
+        population_lower = T1_TISSUE_REFERENCE[field_key]["wm"][0]
+        population_upper = T1_TISSUE_REFERENCE[field_key]["gm"][1]
+        outside_reference = measured_support & (
+            (t1_map < population_lower) | (t1_map > population_upper)
         )
 
         # Edge erosion: only needed when CSF probseg is NOT available.
         # When CSF exclusion at threshold 0.5 is applied, the problematic
         # partial-volume voxels at the brain-CSF boundary are already removed.
-        # The range filter (T1 < reject_min) catches the rare remaining
-        # outliers, and downstream QC (R² >= 0.5, tSNR >= 10) catches bad
-        # PK fits. Blind erosion after CSF exclusion needlessly removes
+        # The numerical safety filter catches rare impossible outliers, and
+        # downstream QC (R² >= 0.5, tSNR >= 10) catches bad PK fits. Blind
+        # erosion after CSF exclusion needlessly removes
         # ~12-17k gray matter voxels at the cortical surface.
-        n_brain_pre_erosion = int(np.sum(brain_mask))
         n_edge = 0
         edge_erosion_skipped = False
         edge_mask = np.zeros_like(brain_mask, dtype=bool)
@@ -1638,8 +1646,8 @@ class T1Mapping(SimpleInterface):
         # NaN voxels within the original brain extent — eroded voxels are NaN
         # in t1_map but excluded from the narrowed brain_mask, so we also
         # count NaN voxels that were eroded away (n_edge).
-        nan_in_brain = np.isnan(t1_map) & brain_mask
-        nan_fraction = float(np.sum(nan_in_brain) + n_edge) / max(1, n_brain_pre_erosion)
+        nan_in_brain = np.isnan(t1_map) & analysis_domain_mask
+        nan_fraction = float(np.sum(nan_in_brain)) / max(1, int(np.sum(analysis_domain_mask)))
 
         # VFA conditioning QC metric
         # Compute median T1 from valid voxels for E1 calculation
@@ -1741,6 +1749,47 @@ class T1Mapping(SimpleInterface):
         )
         correction_info["gap_fill"] = gap_fill_result.to_dict()
 
+        # Preserve why each voxel is or is not supported. Values are:
+        # 0 outside the original DCE analysis domain, 1 directly measured,
+        # 2 locally interpolated, 3 unavailable, 4 explicitly excluded CSF,
+        # and 5 a user-requested or no-usable-data uniform assumption.
+        final_support = np.isfinite(t1_map) & brain_mask
+        interpolated_support = final_support & ~measured_support
+        support_map = np.zeros(shape, dtype=np.uint8)
+        support_map[analysis_domain_mask] = 3
+        support_map[measured_support & brain_mask] = 1
+        support_map[interpolated_support] = 2
+        if csf_excluded:
+            support_map[analysis_domain_mask & csf_mask] = 4
+        if correction_result.correction_applied == "fallback":
+            support_map[analysis_domain_mask] = 5
+
+        domain_count = int(np.sum(analysis_domain_mask))
+        support_counts = {
+            "analysis_domain_voxels": domain_count,
+            "directly_measured_voxels": int(np.sum(support_map == 1)),
+            "locally_interpolated_voxels": int(np.sum(support_map == 2)),
+            "unavailable_voxels": int(np.sum(support_map == 3)),
+            "csf_excluded_voxels": int(np.sum(support_map == 4)),
+            "uniform_assumption_voxels": int(np.sum(support_map == 5)),
+            "rejected_below_numeric_min_voxels": int(np.sum(numeric_low_mask)),
+            "rejected_above_numeric_max_voxels": int(np.sum(numeric_high_mask)),
+            "retained_outside_population_reference_voxels": int(np.sum(outside_reference)),
+            "numeric_min_ms": float(t1_lower),
+            "numeric_max_ms": float(t1_upper),
+            "population_reference_min_ms": float(population_lower),
+            "population_reference_max_ms": float(population_upper),
+        }
+        for key in (
+            "directly_measured_voxels", "locally_interpolated_voxels",
+            "unavailable_voxels", "csf_excluded_voxels",
+            "uniform_assumption_voxels",
+            "retained_outside_population_reference_voxels",
+        ):
+            support_counts[key.replace("_voxels", "_fraction")] = (
+                float(support_counts[key]) / max(1, domain_count)
+            )
+
         # Calculate QC metrics
         qc_ranges = get_tissue_t1_ranges(field_strength)
 
@@ -1814,6 +1863,7 @@ class T1Mapping(SimpleInterface):
             "median_filtered": False,
             "t1_method": t1_method,
             "tissue_statistics_source": tissue_stats_source,
+            "t1_support": support_counts,
         }
         # Hybrid-specific QC: fraction of voxels refined by NLLS
         if t1_method == "hybrid" and needs_refinement is not None and np.any(needs_refinement):
@@ -1863,15 +1913,19 @@ class T1Mapping(SimpleInterface):
         corr_type = correction_info.get("correction_applied", "none")
         if corr_type == "fallback":
             t1_status = QCStatus.POOR
-        else:  # "none"
-            if wm_pass and gm_pass:
+        else:  # "none": reference deviations warn but do not reject support
+            support_warn = (
+                support_counts["unavailable_voxels"] > 0
+                or support_counts["rejected_below_numeric_min_voxels"] > 0
+                or support_counts["rejected_above_numeric_max_voxels"] > 0
+                or not self.inputs.b1_qc_pass
+            )
+            if wm_pass and gm_pass and not support_warn:
                 t1_status = QCStatus.PASS
-            elif wm_pass or gm_pass:
-                t1_status = QCStatus.WARN
             else:
-                t1_status = QCStatus.POOR
+                t1_status = QCStatus.WARN
         qc_metrics["t1_status"] = t1_status
-        qc_metrics["t1_usable"] = (t1_status != QCStatus.POOR) or (corr_type != "none")
+        qc_metrics["t1_usable"] = bool(np.any(np.isfinite(t1_map) & brain_mask))
 
         # Flip angle validation for 2-angle VFA
         # Compare observed vs expected signal ratio using field-strength T1
@@ -1979,6 +2033,10 @@ class T1Mapping(SimpleInterface):
         # Save output T1 map
         out_img = nib.Nifti1Image(t1_map, affine, header)
         nib.save(out_img, out_file)
+        support_file = str(Path(runtime.cwd) / "t1_support_dseg.nii.gz")
+        support_img = nib.Nifti1Image(support_map, affine, header)
+        support_img.set_data_dtype(np.uint8)
+        nib.save(support_img, support_file)
 
         # Generate QC for every VFA attempt. When the measured map was rejected,
         # the plot labels it explicitly and shows the final fallback map beside
@@ -2005,6 +2063,7 @@ class T1Mapping(SimpleInterface):
 
         # Set outputs
         self._results["out_file"] = out_file
+        self._results["support_file"] = support_file
         self._results["mean_t1_wm"] = wm_t1_estimate
         self._results["mean_t1_gm"] = gm_t1_estimate
         self._results["qc_pass"] = qc_pass

@@ -1463,6 +1463,9 @@ def _dce_t1_cosmetic_keys(t1_qc: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         out["T1MappingAttempted"] = method != "external"
         if method != "external":
             out["T1MappingAccepted"] = True
+    support = t1_qc.get("t1_support")
+    if isinstance(support, dict):
+        out["T1Support"] = dict(support)
     return out
 
 

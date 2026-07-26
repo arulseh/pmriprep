@@ -2719,6 +2719,8 @@ def _connect_master_dce_outputs_and_datasinks(
     # T1map + B1+map (anat/)
     if not dce_config.no_t1:
         dce_present.add("t1_map")
+    if not dce_config.no_t1 and dce_config.t1_map_file is None:
+        dce_present.add("t1_support_map")
     if dce_config.b1_method != "none":
         dce_present.add("b1_map")
     # Lesion / ROI
@@ -2844,6 +2846,7 @@ def _connect_master_dce_outputs_and_datasinks(
             ("outputnode.delta_bic_map", "inputnode.delta_bic_map"),
             # T1/B1 mapping
             ("outputnode.t1_map", "inputnode.t1_map"),
+            ("outputnode.t1_support_map", "inputnode.t1_support_map"),
             ("outputnode.b1_map", "inputnode.b1_map"),
             # Motion-corrected data
             ("outputnode.dce_moco", "inputnode.dce_moco"),

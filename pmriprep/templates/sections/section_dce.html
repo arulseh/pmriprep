@@ -193,6 +193,27 @@
                 <div class="metric-value">{{ "%.1f"|format(dce.qc_metrics.t1_mapping.fraction_valid * 100) }}%</div>
             </div>
             {% endif %}
+            {% if dce.qc_metrics.t1_mapping.t1_support is defined %}
+                {% set t1s = dce.qc_metrics.t1_mapping.t1_support %}
+                <div class="metric">
+                    <div class="metric-label">Direct T1 Support</div>
+                    <div class="metric-value">{{ "%.2f"|format((t1s.directly_measured_fraction | default(0)) * 100) }}%</div>
+                </div>
+                <div class="metric">
+                    <div class="metric-label">Interpolated T1 Support</div>
+                    <div class="metric-value">{{ "%.2f"|format((t1s.locally_interpolated_fraction | default(0)) * 100) }}%</div>
+                </div>
+                <div class="metric">
+                    <div class="metric-label">T1 Unavailable</div>
+                    <div class="metric-value">{{ "{:,}".format(t1s.unavailable_voxels | default(0)) }} ({{ "%.2f"|format((t1s.unavailable_fraction | default(0)) * 100) }}% analysis domain)</div>
+                </div>
+                {% if (t1s.retained_outside_population_reference_voxels | default(0)) > 0 %}
+                <div class="metric">
+                    <div class="metric-label">Outside Population Reference</div>
+                    <div class="metric-value warn">{{ "{:,}".format(t1s.retained_outside_population_reference_voxels) }} retained</div>
+                </div>
+                {% endif %}
+            {% endif %}
             {% if dce.qc_metrics.t1_mapping.t1_correction is defined %}
             <div class="metric">
                 <div class="metric-label">T1 Method</div>

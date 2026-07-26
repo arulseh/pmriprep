@@ -34,14 +34,6 @@ import numpy.typing as npt
 
 logger = logging.getLogger("pmriprep.utils.dce_t1_validation")
 
-# VFA failed-fit fraction thresholds for tiered auto-fallback.
-# Below this: VFA T1 is used as-is (no concern).
-VFA_NAN_FRACTION_GOOD: float = 0.20
-# Above this: abandon VFA entirely. E1 is descriptive QC and does not alter
-# this support threshold because it does not capture B1, SNR, flip-angle
-# sampling, motion, or RF-spoiling errors.
-VFA_NAN_FRACTION_TISSUE_FALLBACK: float = 0.40
-
 # Shared downstream support definition. Values below 100 ms are nonphysical
 # sentinels from failed/resampled fits rather than usable tissue T1 estimates.
 MIN_VALID_T1_MS: float = 100.0
@@ -258,7 +250,10 @@ def _distance_from_range(value: float, range_tuple: Tuple[float, float]) -> floa
 # ============================================================================
 
 
-def valid_t1_support(t1_map: npt.ArrayLike) -> npt.NDArray[np.bool_]:
+def valid_t1_support(
+    t1_map: npt.ArrayLike,
+    field_strength: float | None = None,
+) -> npt.NDArray[np.bool_]:
     """Return support usable for DCE signal-to-concentration conversion.
 
     Parameters
@@ -269,10 +264,14 @@ def valid_t1_support(t1_map: npt.ArrayLike) -> npt.NDArray[np.bool_]:
     Returns
     -------
     numpy.ndarray
-        Boolean mask of finite values at or above the minimum valid T1.
+        Boolean mask of finite values within the numerical safety envelope.
     """
     values = np.asarray(t1_map, dtype=np.float64)
-    return np.isfinite(values) & (values >= MIN_VALID_T1_MS)
+    support = np.isfinite(values) & (values >= MIN_VALID_T1_MS)
+    if field_strength is not None:
+        field_key = get_field_strength_key(field_strength)
+        support &= values <= T1_TISSUE_REFERENCE[field_key]["t1_upper_bound"]
+    return support
 
 
 def build_tissue_t1_map(
@@ -442,7 +441,9 @@ def apply_t1_correction(
 
     - ``none``: No correction, use VFA T1 as-is.
     - ``fallback``: Replace with uniform literature T1 value.
-    - ``auto``: Automatically choose based on median T1 deviation.
+    - ``auto``: Retain numerically valid measured T1 support. Population
+      reference deviations and acquisition diagnostics are reported as QC and
+      do not silently replace the estimator.
 
     Parameters
     ----------
@@ -459,8 +460,7 @@ def apply_t1_correction(
     b1_qc_pass : bool
         B1 QC pass status retained as descriptive acquisition state.
     nan_fraction : float, optional
-        Fraction of brain voxels with NaN T1 (0-1). Used by auto-mode
-        to decide whether measured spatial support is adequate.
+        Fraction of brain voxels with NaN T1 (0-1), retained for QC.
     wm_probseg : ndarray, optional
         White matter probability map retained in the internal API. Automatic
         fallback is uniform and does not use tissue segmentations.
@@ -571,80 +571,12 @@ def _auto_correct_t1(
 ) -> Tuple[npt.NDArray[np.floating], T1CorrectionResult]:
     """Auto-mode T1 correction logic.
 
-    Decides between retaining the measured map and a complete uniform
-    fallback based on median T1 deviation and VFA conditioning.
-
-    Decision hierarchy:
-
-    1. **Reject threshold** (median T1 outside physiological range):
-       When median T1 < reject_min or > reject_max, VFA T1 is definitively
-       wrong regardless of NaN fraction. Uniform fallback is applied.
-
-    2. **Fit-loss gate**: A fixed failed-fit fraction rejects maps with
-       insufficient spatial support. E1 remains descriptive QC because it
-       does not encode flip-angle sampling, B1 accuracy, motion, or SNR.
-
-    3. **Plausible measured map**: Preserved without automatic global
-       calibration. A population reference range is a validity check, not
-       sufficient evidence for changing an individual subject's map.
+    Retain all numerically valid measured support. Population reference
+    intervals, B1 QC, fit loss, and E1 are diagnostic evidence rather than
+    grounds for an automatic whole-map estimator switch.
     """
     expected_median = t1_ref["expected_median"]
     result.nan_fraction = nan_fraction
-
-    # Fallback fill mask: entire brain, not just valid VFA voxels.
-    # valid_mask excludes NaN/non-positive VFA voxels, but fallbacks
-    # should cover all brain tissue for downstream PK fitting.
-    fill_mask = (brain_mask > 0.5) if brain_mask is not None else valid_mask
-
-    nan_abandon = VFA_NAN_FRACTION_TISSUE_FALLBACK
-
-    # Excessive fit loss makes the surviving spatial map unrepresentative even
-    # when its median happens to remain plausible.
-    if nan_fraction is not None and nan_fraction > nan_abandon:
-        t1_corrected = np.where(fill_mask, t1_ref["default"], np.nan)
-        result.correction_applied = "fallback"
-        result.reason = (
-            f"Measured T1 fit loss {nan_fraction:.1%} exceeds "
-            f"{nan_abandon:.1%} threshold"
-        )
-        result.fallback_value_ms = t1_ref["default"]
-        result.median_t1_corrected = t1_ref["default"]
-        return t1_corrected, result
-
-    # Case 1: Hard reject - impossible values
-    # When median T1 exceeds reject threshold, VFA is fundamentally wrong.
-    if median_t1 < t1_ref["reject_min"] or median_t1 > t1_ref["reject_max"]:
-        direction = "below" if median_t1 < t1_ref["reject_min"] else "above"
-        threshold = t1_ref["reject_min"] if direction == "below" else t1_ref["reject_max"]
-
-        logger.warning(
-            "Median T1 (%.0fms) %s reject threshold (%.0fms) - "
-            "using uniform literature value (%.0fms)",
-            median_t1, direction, threshold, t1_ref["default"],
-        )
-        t1_corrected = np.where(fill_mask, t1_ref["default"], np.nan)
-        result.correction_applied = "fallback"
-        result.reason = (
-            f"Median T1 {direction} reject threshold ({threshold}ms)"
-        )
-        result.fallback_value_ms = t1_ref["default"]
-        result.median_t1_corrected = t1_ref["default"]
-        return t1_corrected, result
-
-    # A marginal whole-brain distribution cannot validate a VFA map when the
-    # independent B1 correction has also failed QC. Do not infer an additive
-    # or multiplicative calibration from that combination.
-    brain_low, brain_high = t1_ref["brain_median"]
-    if not b1_qc_pass and not brain_low <= median_t1 <= brain_high:
-        t1_corrected = np.where(fill_mask, t1_ref["default"], np.nan)
-        result.correction_applied = "fallback"
-        result.reason = (
-            "Measured median T1 is outside the field-strength reference "
-            "range and B1 QC failed"
-        )
-        result.fallback_value_ms = t1_ref["default"]
-        result.median_t1_corrected = t1_ref["default"]
-        return t1_corrected, result
 
     # Plausible population-level values do not justify changing an individual
     # subject's quantitative map. Preserve the measurement and report whether
@@ -664,7 +596,7 @@ def _auto_correct_t1(
         logger.warning(
             "Median T1 %.0fms is outside the expected population interval "
             "(%.0f-%.0fms)%s; retaining measured map because it remains "
-            "within the physiological reject bounds",
+            "within the numerical safety envelope",
             median_t1,
             t1_ref["warn_low"],
             t1_ref["warn_high"],

@@ -88,7 +88,11 @@ def generate_vfa_t1_qc_plot(
     mid_slice = t1_map.shape[2] // 2
 
     # Get T1 reference ranges (needed for windowing and histograms)
-    from pmriprep.utils.dce_t1_validation import T1_TISSUE_REFERENCE, get_field_strength_key
+    from pmriprep.utils.dce_t1_validation import (
+        MIN_VALID_T1_MS,
+        T1_TISSUE_REFERENCE,
+        get_field_strength_key,
+    )
 
     field_key = get_field_strength_key(field_strength)
     t1_ref = T1_TISSUE_REFERENCE[field_key]
@@ -98,7 +102,9 @@ def generate_vfa_t1_qc_plot(
         valid_t1 = diagnostic_t1[brain_mask > 0.5]
     else:
         valid_t1 = diagnostic_t1[~np.isnan(diagnostic_t1)]
-    valid_t1 = valid_t1[(valid_t1 > t1_ref["reject_min"]) & (valid_t1 < 2500)]
+    valid_t1 = valid_t1[
+        (valid_t1 >= MIN_VALID_T1_MS) & (valid_t1 <= t1_ref["t1_upper_bound"])
+    ]
 
     if len(valid_t1) > 0:
         t1_vmin = float(np.percentile(valid_t1, 1))
@@ -199,7 +205,7 @@ def generate_vfa_t1_qc_plot(
     else:
         from pmriprep.utils.dce_t1_validation import valid_t1_support
 
-        valid_support = valid_t1_support(t1_map)
+        valid_support = valid_t1_support(t1_map, field_strength)
         if brain_mask is not None:
             valid_support &= brain_mask > 0.5
         support_sl = get_radiological_slice(
@@ -215,12 +221,13 @@ def generate_vfa_t1_qc_plot(
     if brain_mask is not None:
         hist_t1 = diagnostic_t1[
             (brain_mask > 0.5)
-            & (diagnostic_t1 > t1_ref["reject_min"])
-            & (diagnostic_t1 < 3000)
+            & (diagnostic_t1 >= MIN_VALID_T1_MS)
+            & (diagnostic_t1 <= t1_ref["t1_upper_bound"])
         ]
     else:
         hist_t1 = diagnostic_t1[
-            (diagnostic_t1 > t1_ref["reject_min"]) & (diagnostic_t1 < 3000)
+            (diagnostic_t1 >= MIN_VALID_T1_MS)
+            & (diagnostic_t1 <= t1_ref["t1_upper_bound"])
         ]
 
     if len(hist_t1) > 0:
@@ -260,7 +267,7 @@ def generate_vfa_t1_qc_plot(
             valid_voxels = (
                 (brain_mask > 0.5)
                 & np.isfinite(diagnostic_t1)
-                & (diagnostic_t1 > t1_ref["reject_min"])
+                & (diagnostic_t1 >= MIN_VALID_T1_MS)
             )
             hist_proxy = signal_proxy[valid_voxels & (signal_proxy > 0)]
         else:
@@ -297,8 +304,8 @@ def generate_vfa_t1_qc_plot(
         scatter_mask = (
             (brain_mask > 0.5)
             & np.isfinite(diagnostic_t1)
-            & (diagnostic_t1 > t1_ref["reject_min"])
-            & (diagnostic_t1 < 3000)
+            & (diagnostic_t1 >= MIN_VALID_T1_MS)
+            & (diagnostic_t1 <= t1_ref["t1_upper_bound"])
             & np.isfinite(ratio)
             & (ratio > 0)
             & (ratio < 10)

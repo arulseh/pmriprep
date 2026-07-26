@@ -40,6 +40,13 @@ class TestValidT1Support:
             False, False, False, False, False, True, True,
         ]
 
+    def test_field_strength_envelope_retains_pathology_and_rejects_extremes(self) -> None:
+        """The 3T safety envelope retains prolonged tissue T1 through 6000 ms."""
+        values = np.array([99.0, 100.0, 2500.0, 5000.0, 6000.0, 6000.1])
+        assert valid_t1_support(values, 3.0).tolist() == [
+            False, True, True, True, True, False,
+        ]
+
 
 # ============================================================================
 # build_tissue_t1_map tests
@@ -180,11 +187,10 @@ class TestApplyT1CorrectionAuto:
         gm = np.full(shape, 0.4)
         return wm, gm
 
-    def test_high_nan_with_probsegs_uses_uniform(
+    def test_high_nan_with_probsegs_retains_measurement(
         self, brain_mask: np.ndarray, probsegs: tuple[np.ndarray, np.ndarray],
     ) -> None:
-        """High NaN uses uniform fallback even when probsegs exist."""
-        # Create T1 map with high median (above reject_max)
+        """Coverage loss does not replace a measured map when probsegs exist."""
         t1_map = np.full((10, 10, 10), 2000.0)
         t1_map[~brain_mask] = np.nan
         wm, gm = probsegs
@@ -194,19 +200,19 @@ class TestApplyT1CorrectionAuto:
             brain_mask=brain_mask,
             nan_fraction=0.50, wm_probseg=wm, gm_probseg=gm,
         )
-        assert result.correction_applied == "fallback"
+        assert result.correction_applied == "none"
         assert result.tissue_t1_used is False
-        assert np.all(t1_corrected[brain_mask] == 1200.0)
+        assert np.all(t1_corrected[brain_mask] == 2000.0)
         # Brain voxels should have valid T1 values
         valid_in_brain = brain_mask & np.isfinite(t1_corrected)
         assert np.sum(valid_in_brain) > 0
         # Outside brain should be NaN (preserved for downstream masking)
         assert np.all(np.isnan(t1_corrected[~brain_mask]))
 
-    def test_high_nan_without_probsegs_uses_uniform(
+    def test_high_nan_without_probsegs_retains_measurement(
         self, brain_mask: np.ndarray,
     ) -> None:
-        """High NaN + no probsegs → uniform fallback."""
+        """Coverage loss does not replace a measured map without probsegs."""
         t1_map = np.full((10, 10, 10), 2000.0)
         t1_map[~brain_mask] = np.nan
 
@@ -215,7 +221,7 @@ class TestApplyT1CorrectionAuto:
             brain_mask=brain_mask,
             nan_fraction=0.50,
         )
-        assert result.correction_applied == "fallback"
+        assert result.correction_applied == "none"
         assert result.tissue_t1_used is False
 
     def test_low_nan_existing_behavior(self, brain_mask: np.ndarray) -> None:
@@ -243,10 +249,27 @@ class TestApplyT1CorrectionAuto:
         )
         assert result.nan_fraction == 0.15
 
-    def test_reject_below_min_with_probsegs(
+    @pytest.mark.parametrize("missing_fraction", [0.41, 0.60, 0.80])
+    def test_coverage_loss_never_switches_auto_estimator(
+        self, brain_mask: np.ndarray, missing_fraction: float,
+    ) -> None:
+        """Auto mode retains measured support across formerly gated coverage."""
+        t1_map = np.full((10, 10, 10), 1100.0)
+        t1_map[~brain_mask] = np.nan
+        corrected, result = apply_t1_correction(
+            t1_map,
+            field_strength=3.0,
+            correction_mode="auto",
+            brain_mask=brain_mask,
+            nan_fraction=missing_fraction,
+        )
+        assert result.correction_applied == "none"
+        np.testing.assert_array_equal(corrected, t1_map)
+
+    def test_low_population_t1_with_probsegs_is_diagnostic(
         self, brain_mask: np.ndarray, probsegs: tuple[np.ndarray, np.ndarray],
     ) -> None:
-        """Below reject_min uses uniform fallback despite probsegs."""
+        """A low but numerically usable T1 remains measured support."""
         t1_map = np.full((10, 10, 10), 400.0)
         t1_map[~brain_mask] = np.nan
         wm, gm = probsegs
@@ -256,7 +279,7 @@ class TestApplyT1CorrectionAuto:
             brain_mask=brain_mask,
             nan_fraction=0.50, wm_probseg=wm, gm_probseg=gm,
         )
-        assert result.correction_applied == "fallback"
+        assert result.correction_applied == "none"
 
     def test_offset_mode_removed(self, brain_mask: np.ndarray) -> None:
         """Additive T1 offset correction is no longer accepted."""
@@ -272,10 +295,10 @@ class TestApplyT1CorrectionAuto:
                 nan_fraction=0.50, wm_probseg=wm, gm_probseg=gm,
             )
 
-    def test_low_nan_with_high_median_offsets(
+    def test_low_nan_with_high_median_is_retained(
         self, brain_mask: np.ndarray,
     ) -> None:
-        """Low NaN + out-of-range median but no probsegs → fallback (not tissue)."""
+        """An unusual median remains measured support without probsegs."""
         t1_map = np.full((10, 10, 10), 2000.0)
         t1_map[~brain_mask] = np.nan
 
@@ -284,8 +307,7 @@ class TestApplyT1CorrectionAuto:
             brain_mask=brain_mask,
             nan_fraction=0.10,
         )
-        # Low NaN without probsegs → uniform fallback
-        assert result.correction_applied == "fallback"
+        assert result.correction_applied == "none"
 
     def test_e1_does_not_change_fit_loss_threshold(
         self, brain_mask: np.ndarray, probsegs: tuple[np.ndarray, np.ndarray],
@@ -304,10 +326,10 @@ class TestApplyT1CorrectionAuto:
         )
         assert result.correction_applied == "none"
 
-    def test_reject_threshold_uses_uniform_regardless_of_nan(
+    def test_population_threshold_does_not_switch_estimator(
         self, brain_mask: np.ndarray, probsegs: tuple[np.ndarray, np.ndarray],
     ) -> None:
-        """A physiologically rejected map always uses uniform fallback."""
+        """A population-reference deviation remains a QC diagnostic."""
         t1_map = np.full((10, 10, 10), 2000.0)
         t1_map[~brain_mask] = np.nan
         wm, gm = probsegs
@@ -318,7 +340,7 @@ class TestApplyT1CorrectionAuto:
             nan_fraction=0.30, wm_probseg=wm, gm_probseg=gm,
             e1_median=0.95,
         )
-        assert result.correction_applied == "fallback"
+        assert result.correction_applied == "none"
         assert result.tissue_t1_used is False
 
 
@@ -430,6 +452,22 @@ class TestSkipT1Paths:
         )
         assert result.correction_applied == "fallback"
         assert result.fallback_value_ms == T1_TISSUE_REFERENCE[3.0]["default"]
+
+    def test_auto_falls_back_only_when_no_measured_support_exists(self) -> None:
+        """An entirely unavailable measured map uses the documented fallback."""
+        shape = (5, 5, 5)
+        mask = np.ones(shape, dtype=bool)
+        corrected, result = apply_t1_correction(
+            np.full(shape, np.nan),
+            field_strength=3.0,
+            correction_mode="auto",
+            brain_mask=mask,
+        )
+        assert result.correction_applied == "fallback"
+        assert result.reason == "No valid measured T1 values"
+        np.testing.assert_allclose(
+            corrected[mask], T1_TISSUE_REFERENCE[3.0]["default"],
+        )
 
     def test_none_mode_returns_unchanged(self) -> None:
         """None mode → no changes."""
@@ -791,8 +829,19 @@ def test_t1_mapping_preserves_compact_measured_structure(tmp_path: Path) -> None
     result = interface.run(cwd=str(tmp_path))
 
     measured = nib.load(result.outputs.out_file).get_fdata()
+    support = nib.load(result.outputs.support_file).get_fdata()
     assert np.all(measured[lesion] > 1500.0)
     assert np.all(measured[~lesion & np.isfinite(measured)] < 1100.0)
+    assert set(np.unique(support)).issubset({1.0, 2.0, 3.0})
+    support_qc = result.outputs.qc_metrics["t1_support"]
+    assert sum(
+        support_qc[key]
+        for key in (
+            "directly_measured_voxels", "locally_interpolated_voxels",
+            "unavailable_voxels", "csf_excluded_voxels",
+            "uniform_assumption_voxels",
+        )
+    ) == support_qc["analysis_domain_voxels"]
     assert result.outputs.qc_metrics["median_filtered"] is False
 
 
@@ -1338,11 +1387,7 @@ class TestPostOffsetRecovery:
 
 
 class TestVFAFitLossGate:
-    """Tests for the fixed VFA fit-loss fallback.
-
-    E1 remains descriptive conditioning QC and does not alter the fallback
-    decision because it does not encode the full acquisition conditioning.
-    """
+    """Tests that acquisition diagnostics do not switch estimators."""
 
     @pytest.fixture
     def brain_mask(self) -> np.ndarray:
@@ -1443,10 +1488,10 @@ class TestVFAFitLossGate:
         assert result.correction_applied == "none"
         assert "fit loss" not in result.reason
 
-    def test_uniform_fallback_ignores_tissue_maps(
+    def test_high_fit_loss_with_tissue_maps_retains_measurement(
         self, brain_mask: np.ndarray, probsegs: tuple[np.ndarray, np.ndarray],
     ) -> None:
-        """Tissue maps do not alter the uniform fallback."""
+        """Tissue maps do not turn coverage loss into an estimator switch."""
         t1_map = np.full((10, 10, 10), 1090.0)
         t1_map[~brain_mask] = np.nan
         wm, gm = probsegs
@@ -1458,14 +1503,14 @@ class TestVFAFitLossGate:
             nan_fraction=0.50,
             wm_probseg=wm, gm_probseg=gm,
         )
-        assert result.correction_applied == "fallback"
+        assert result.correction_applied == "none"
         assert result.tissue_t1_used is False
-        assert result.fallback_value_ms == T1_TISSUE_REFERENCE[3.0]["default"]
+        assert result.fallback_value_ms is None
 
-    def test_uniform_fallback_when_no_tissue_maps(
+    def test_high_fit_loss_without_tissue_maps_retains_measurement(
         self, brain_mask: np.ndarray,
     ) -> None:
-        """Without tissue maps, use uniform literature T1."""
+        """Coverage loss remains explicit when tissue maps are absent."""
         t1_map = np.full((10, 10, 10), 1090.0)
         t1_map[~brain_mask] = np.nan
 
@@ -1475,18 +1520,13 @@ class TestVFAFitLossGate:
             e1_median=0.998, b1_corrected=False,
             nan_fraction=0.50,
         )
-        assert result.correction_applied == "fallback"
-        assert result.fallback_value_ms == T1_TISSUE_REFERENCE[3.0]["default"]
-        assert "fit loss" in result.reason
+        assert result.correction_applied == "none"
+        assert result.fallback_value_ms is None
 
-    def test_fit_loss_fallback_fills_entire_brain(
+    def test_fit_loss_preserves_missing_support_with_probsegs(
         self, brain_mask: np.ndarray, probsegs: tuple[np.ndarray, np.ndarray],
     ) -> None:
-        """Fit-loss fallback must fill all brain voxels, not just valid ones.
-
-        Regression test: before fix, fallback only filled valid_mask (37% of
-        brain) leaving 63% as NaN → no PK fit for those voxels.
-        """
+        """Auto mode preserves missing support rather than fabricating T1."""
         t1_map = np.full((10, 10, 10), np.nan)
         # Only 37% of brain voxels have valid T1 (simulating ill-conditioned VFA)
         brain_voxels = np.argwhere(brain_mask)
@@ -1507,19 +1547,17 @@ class TestVFAFitLossGate:
             nan_fraction=0.63,
             wm_probseg=wm, gm_probseg=gm,
         )
-        assert result.correction_applied == "fallback"
+        assert result.correction_applied == "none"
 
-        # ALL brain voxels should be filled (not NaN)
+        # Missing measured support remains explicit for local gap filling.
         brain_t1 = t1_corr[brain_mask]
         n_nan_in_brain = np.sum(np.isnan(brain_t1))
-        assert n_nan_in_brain == 0, (
-            f"{n_nan_in_brain}/{np.sum(brain_mask)} brain voxels still NaN after fallback"
-        )
+        assert n_nan_in_brain > 0
 
-    def test_uniform_fallback_fills_entire_brain(
+    def test_fit_loss_preserves_missing_support_without_probsegs(
         self, brain_mask: np.ndarray,
     ) -> None:
-        """Uniform fallback (no tissue maps) fills all brain voxels."""
+        """Missing support stays missing when tissue maps are absent."""
         t1_map = np.full((10, 10, 10), np.nan)
         # Only some brain voxels have valid T1
         brain_voxels = np.argwhere(brain_mask)
@@ -1532,15 +1570,12 @@ class TestVFAFitLossGate:
             brain_mask=brain_mask,
             e1_median=0.998, b1_corrected=False,
             nan_fraction=0.67,
-            # No tissue maps → uniform fallback
         )
-        assert result.correction_applied == "fallback"
+        assert result.correction_applied == "none"
 
         brain_t1 = t1_corr[brain_mask]
         n_nan_in_brain = np.sum(np.isnan(brain_t1))
-        assert n_nan_in_brain == 0, (
-            f"{n_nan_in_brain} brain voxels still NaN after uniform fallback"
-        )
+        assert n_nan_in_brain > 0
 
     def test_explicit_fallback_fills_entire_brain(self) -> None:
         """Explicit fallback mode fills all brain voxels, not just valid ones."""
@@ -1561,28 +1596,26 @@ class TestVFAFitLossGate:
             t1_corr[mask], T1_TISSUE_REFERENCE[3.0]["default"],
         )
 
-    def test_hard_reject_fills_entire_brain(
+    def test_low_population_t1_does_not_fill_missing_support(
         self, brain_mask: np.ndarray,
     ) -> None:
-        """Hard reject uniform fallback fills all brain voxels."""
+        """Low but numerical T1 does not trigger whole-brain replacement."""
         t1_map = np.full((10, 10, 10), np.nan)
         # Only some brain voxels have valid but out-of-range T1
         brain_voxels = np.argwhere(brain_mask)
         for idx in brain_voxels[:len(brain_voxels) // 3]:
             i, j, k = idx
-            t1_map[i, j, k] = 400.0  # below reject_min at 3T (600)
+            t1_map[i, j, k] = 400.0
 
         t1_corr, result = apply_t1_correction(
             t1_map, field_strength=3.0, correction_mode="auto",
             brain_mask=brain_mask,
         )
-        assert result.correction_applied == "fallback"
+        assert result.correction_applied == "none"
 
         brain_t1 = t1_corr[brain_mask]
         n_nan_in_brain = np.sum(np.isnan(brain_t1))
-        assert n_nan_in_brain == 0, (
-            f"{n_nan_in_brain} brain voxels still NaN after hard reject fallback"
-        )
+        assert n_nan_in_brain > 0
 
     def test_high_e1_no_b1_retains_plausible_measurement(
         self, brain_mask: np.ndarray,
@@ -1600,10 +1633,10 @@ class TestVFAFitLossGate:
         assert result.correction_applied == "none"
         assert result.median_t1_corrected == pytest.approx(1200.0)
 
-    def test_high_e1_high_fit_loss_forces_fallback(
+    def test_high_e1_high_fit_loss_retains_measurement(
         self, brain_mask: np.ndarray,
     ) -> None:
-        """High E1 with high failed-fit coverage forces fallback."""
+        """High E1 and fit loss remain diagnostic evidence."""
         t1_map = np.full((10, 10, 10), 1200.0)
         t1_map[~brain_mask] = np.nan
 
@@ -1611,14 +1644,14 @@ class TestVFAFitLossGate:
             t1_map, field_strength=3.0, correction_mode="auto",
             brain_mask=brain_mask,
             e1_median=0.996, b1_corrected=False, b1_qc_pass=False,
-            nan_fraction=0.60,  # exceeds nan_abandon (~0.28 at E1=0.996)
+            nan_fraction=0.60,
         )
-        assert result.correction_applied == "fallback"
+        assert result.correction_applied == "none"
 
     def test_high_e1_high_fit_loss_with_tissue_maps(
         self, brain_mask: np.ndarray,
     ) -> None:
-        """Fit-loss failure uses uniform fallback despite tissue maps."""
+        """Fit loss remains diagnostic even when tissue maps exist."""
         t1_map = np.full((10, 10, 10), 1200.0)
         t1_map[~brain_mask] = np.nan
         wm = np.where(brain_mask, 0.6, 0.0).astype(np.float32)
@@ -1631,10 +1664,10 @@ class TestVFAFitLossGate:
             nan_fraction=0.60,
             wm_probseg=wm, gm_probseg=gm,
         )
-        assert result.correction_applied == "fallback"
+        assert result.correction_applied == "none"
         assert result.tissue_t1_used is False
 
-    def test_failed_b1_and_high_plausible_median_uses_uniform_fallback(
+    def test_failed_b1_and_high_median_retains_measurement(
         self, brain_mask: np.ndarray,
     ) -> None:
         """A marginal measured map is not calibrated when B1 QC also failed."""
@@ -1655,13 +1688,13 @@ class TestVFAFitLossGate:
             gm_probseg=gm,
         )
 
-        assert result.correction_applied == "fallback"
+        assert result.correction_applied == "none"
         assert "B1 QC failed" in result.reason
 
-    def test_failed_b1_and_high_plausible_median_uses_uniform_without_seg(
+    def test_failed_b1_and_high_median_retains_measurement_without_seg(
         self, brain_mask: np.ndarray,
     ) -> None:
-        """Without segmentations, a joint T1/B1 failure is explicit."""
+        """A joint T1/B1 warning remains explicit without segmentations."""
         t1_map = np.full((10, 10, 10), 1600.0)
         t1_map[~brain_mask] = np.nan
 
@@ -1675,8 +1708,8 @@ class TestVFAFitLossGate:
             nan_fraction=0.1,
         )
 
-        assert result.correction_applied == "fallback"
-        assert result.fallback_value_ms == pytest.approx(1200.0)
+        assert result.correction_applied == "none"
+        assert result.fallback_value_ms is None
 
     def test_high_e1_with_low_fit_loss_is_retained(
         self, brain_mask: np.ndarray,

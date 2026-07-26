@@ -723,7 +723,7 @@ def _signal_to_concentration_node(
         & brain_mask
     )
     if t1_map is not None:
-        invalid_t1 = ~valid_t1_support(t1_map)
+        invalid_t1 = ~valid_t1_support(t1_map, field_strength)
         result.concentration[invalid_t1] = 0.0
         conversion_qc["t1_invalid_voxels"] = int(
             np.count_nonzero(invalid_t1 & signal_support)

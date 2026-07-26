@@ -662,7 +662,8 @@ def init_dce_t1_b1_wf(
     outputnode = pe.Node(
         niu.IdentityInterface(fields=[
             "b1_map", "b1_qc", "afi_registration_qc_plot", "b1_qc_plot",
-            "t1_map", "t1_qc", "vfa_qc", "vfa_registration_qc_plot", "t1_qc_plot",
+            "t1_map", "t1_support_map", "t1_qc", "vfa_qc",
+            "vfa_registration_qc_plot", "t1_qc_plot",
         ]),
         name="outputnode",
     )
@@ -742,7 +743,8 @@ def init_dce_t1_b1_wf(
             (transform_b1_to_vfa, t1_mapping, [("out_file", "b1_map")]),
             (b1_mapping, t1_mapping, [("qc_pass", "b1_qc_pass")]),
             (t1_mapping, outputnode, [
-                ("out_file", "t1_map"), ("qc_metrics", "t1_qc"),
+                ("out_file", "t1_map"), ("support_file", "t1_support_map"),
+                ("qc_metrics", "t1_qc"),
                 ("qc_plot", "t1_qc_plot"),
             ]),
             (vfa_preprocess, outputnode, [
@@ -1601,6 +1603,7 @@ def init_dce_preproc_wf(
                 # T1/B1 mapping outputs
                 "b1_map",
                 "t1_map",
+                "t1_support_map",
                 # Pharmacokinetic parameter maps
                 "ktrans_map",
                 "ve_map",
@@ -2810,6 +2813,7 @@ def init_dce_preproc_wf(
             (t1_b1_wf, outputnode, [
                 ("outputnode.b1_map", "b1_map"),
                 ("outputnode.t1_map", "t1_map"),
+                ("outputnode.t1_support_map", "t1_support_map"),
                 ("outputnode.vfa_registration_qc_plot", "vfa_registration_qc_plot"),
                 ("outputnode.afi_registration_qc_plot", "afi_registration_qc_plot"),
                 ("outputnode.b1_qc_plot", "b1_qc_plot"),
