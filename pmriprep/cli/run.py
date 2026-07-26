@@ -245,7 +245,7 @@ Examples:
     parser.add_argument(
         "--nprocs",
         type=_positive_int,
-        default=1,
+        default=None,
         metavar="N",
         help="Maximum number of processors to use (default: 1).",
     )
@@ -562,6 +562,7 @@ Examples:
     )
     g_other.add_argument(
         "--use-plugin",
+        "--nipype-plugin-file",
         type=Path,
         default=None,
         metavar="PATH",
@@ -587,6 +588,9 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
 
     parser = _build_parser()
     args = parser.parse_args(argv)
+
+    plugin_name: str | None = None
+    plugin_args: dict[str, Any] = {}
 
     # Reconstruct CLI command for QC report reproducibility
     cmd_parts = sys.argv.copy() if argv is None else ["pmriprep"] + list(argv)
@@ -617,9 +621,14 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         if not args.use_plugin.is_file():
             parser.error(f"--use-plugin file does not exist: {args.use_plugin}")
         try:
-            _load_plugin_config(args.use_plugin)
+            plugin_name, plugin_args = _load_plugin_config(args.use_plugin)
         except (OSError, ValueError) as error:
             parser.error(str(error))
+
+    try:
+        args.nprocs = _effective_nprocs(args.nprocs, plugin_name, plugin_args)
+    except ValueError as error:
+        parser.error(str(error))
 
     # Validate dce_aif_file exists if specified
     _VALID_AIF_EXTENSIONS = {".txt", ".tsv", ".npz", ".npy"}
@@ -1239,6 +1248,58 @@ def _load_plugin_config(path: Path) -> tuple[str, dict[str, Any]]:
     return plugin_value, dict(plugin_args_raw)
 
 
+def _effective_nprocs(
+    cli_nprocs: int | None,
+    plugin: str | None,
+    plugin_args: dict[str, Any],
+) -> int:
+    """Resolve process count with fMRIPrep-compatible precedence."""
+    if cli_nprocs is not None:
+        return cli_nprocs
+    if plugin in {"MultiProc", "LegacyMultiProc"} and "n_procs" in plugin_args:
+        value = plugin_args["n_procs"]
+        if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+            raise ValueError(
+                "--use-plugin MultiProc 'n_procs' must be a positive integer"
+            )
+        return value
+    return 1
+
+
+def _merge_user_plugin_resources(
+    workflow: Any,
+    args: argparse.Namespace,
+    plugin: str,
+    plugin_args: dict[str, Any],
+) -> dict[str, Any]:
+    """Merge CLI resources into a user plugin using the NiPreps contract."""
+    merged = dict(plugin_args)
+    if plugin not in {"MultiProc", "LegacyMultiProc"}:
+        return merged
+
+    merged["n_procs"] = args.nprocs
+    if args.mem_gb is not None:
+        merged["memory_gb"] = args.mem_gb
+
+    if "n_gpu_procs" not in merged:
+        all_nodes: list[Any] = list(
+            getattr(workflow, "_get_all_nodes", lambda: [])()
+        )
+        if any(bool(getattr(node, "use_gpu", False)) for node in all_nodes):
+            from pmriprep.utils.gpu import detect_gpu_count
+
+            n_gpus = detect_gpu_count()
+            merged["n_gpu_procs"] = max(n_gpus, 1)
+            if n_gpus > 0:
+                logger.info("Detected %d GPU(s) for scheduling", n_gpus)
+            else:
+                logger.warning(
+                    "GPU detection returned 0 but GPU nodes are present; "
+                    "defaulting to 1 GPU slot"
+                )
+    return merged
+
+
 def _run_workflow(
     workflow: Any,  # pe.Workflow but avoiding circular import
     args: argparse.Namespace,
@@ -1280,6 +1341,9 @@ def _run_workflow(
     user_plugin = getattr(args, "use_plugin", None)
     if user_plugin is not None:
         plugin, plugin_args = _load_plugin_config(user_plugin)
+        plugin_args = _merge_user_plugin_resources(
+            workflow, args, plugin, plugin_args,
+        )
         logger.info(
             "Running workflow with user-supplied plugin %s (from %s)",
             plugin, user_plugin,

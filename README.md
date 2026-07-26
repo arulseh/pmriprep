@@ -134,7 +134,7 @@ pmriprep bids_dir output_dir {participant} [options]
 | `--mem-gb GB` | Upper bound memory limit in GB |
 | `-w PATH`, `--work-dir PATH` | Path where intermediate results are stored |
 | `--config-file PATH` | YAML or JSON configuration file for advanced options |
-| `--use-plugin PATH` | Nipype execution-plugin YAML/JSON for schedulers such as SLURM, SGE, or PBS |
+| `--use-plugin PATH`, `--nipype-plugin-file PATH` | Nipype execution-plugin YAML/JSON for schedulers such as SLURM, SGE, or PBS. For MultiProc, explicit CLI `--nprocs`/`--mem-gb` override corresponding file values; otherwise file resources are retained |
 | `--version` | Print the installed PMRIPrep version |
 | `-v`, `--verbose` | Increase log verbosity (repeat for more: `-v`, `-vv`, `-vvv`) |
 

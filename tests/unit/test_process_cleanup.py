@@ -189,6 +189,81 @@ def test_multiproc_gpu_slots_follow_constructed_workflow(
     assert calls == [("MultiProc", expected)]
 
 
+def test_user_multiproc_merges_cli_resources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """User MultiProc follows fMRIPrep resource precedence and GPU discovery."""
+    from pmriprep.cli.run import _run_workflow
+
+    plugin_file = tmp_path / "plugin.yaml"
+    plugin_file.write_text(
+        "plugin: MultiProc\n"
+        "plugin_args:\n"
+        "  n_procs: 8\n"
+        "  memory_gb: 32\n"
+        "  maxtasksperchild: 1\n"
+    )
+    calls: list[tuple[str, dict[str, Any] | None]] = []
+
+    class _Node:
+        use_gpu = True
+
+    class _Workflow:
+        def _get_all_nodes(self):
+            return [_Node()]
+
+        def run(self, *, plugin: str, plugin_args: Any = None) -> None:
+            calls.append((plugin, plugin_args))
+
+    monkeypatch.setattr("pmriprep.utils.processes.enable_child_subreaper", lambda: True)
+    monkeypatch.setattr("pmriprep.utils.gpu.detect_gpu_count", lambda: 2)
+
+    _run_workflow(
+        _Workflow(),
+        Namespace(nprocs=3, mem_gb=12.0, use_plugin=plugin_file),
+    )
+
+    assert calls == [("MultiProc", {
+        "n_procs": 3,
+        "memory_gb": 12.0,
+        "maxtasksperchild": 1,
+        "n_gpu_procs": 2,
+    })]
+
+
+def test_user_multiproc_preserves_explicit_gpu_slots(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An explicit plugin GPU limit is not replaced by auto-detection."""
+    from pmriprep.cli.run import _run_workflow
+
+    plugin_file = tmp_path / "plugin.yaml"
+    plugin_file.write_text(
+        "plugin: MultiProc\nplugin_args:\n  n_procs: 4\n  n_gpu_procs: 3\n"
+    )
+    calls: list[tuple[str, dict[str, Any] | None]] = []
+
+    class _Workflow:
+        def _get_all_nodes(self):
+            return []
+
+        def run(self, *, plugin: str, plugin_args: Any = None) -> None:
+            calls.append((plugin, plugin_args))
+
+    monkeypatch.setattr("pmriprep.utils.processes.enable_child_subreaper", lambda: True)
+    monkeypatch.setattr(
+        "pmriprep.utils.gpu.detect_gpu_count",
+        lambda: pytest.fail("explicit GPU slots must bypass detection"),
+    )
+
+    _run_workflow(
+        _Workflow(),
+        Namespace(nprocs=4, mem_gb=None, use_plugin=plugin_file),
+    )
+
+    assert calls == [("MultiProc", {"n_procs": 4, "n_gpu_procs": 3})]
+
+
 def test_process_group_cleanup_terminates_and_reaps(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
