@@ -755,11 +755,14 @@ def _signal_to_concentration_node(
 
                 def _scaled_gradient(values: np.ndarray) -> np.ndarray:
                     finite = values[np.isfinite(values)]
-                    low, high = np.percentile(finite, [1, 99])
+                    low, high = (float(value) for value in np.percentile(finite, [1, 99]))
                     scaled = np.nan_to_num(
                         np.clip((values - low) / max(high - low, 1e-8), 0.0, 1.0)
                     )
-                    return gaussian_gradient_magnitude(scaled, sigma=1.0)
+                    return np.asarray(
+                        gaussian_gradient_magnitude(scaled, sigma=1.0),
+                        dtype=np.float64,
+                    )
 
                 t1_gradient = _scaled_gradient(t1_values)
                 dce_gradient = _scaled_gradient(dce_values)
@@ -1722,16 +1725,16 @@ def _external_t1_alignment_plot_node(
     import numpy as np
     from scipy.ndimage import gaussian_gradient_magnitude  # type: ignore[import-untyped]
 
-    t1 = np.asarray(nib.load(t1_map_file).dataobj, dtype=float)  # type: ignore[attr-defined]
-    dce = np.asarray(nib.load(dce_reference_file).dataobj, dtype=float)  # type: ignore[attr-defined]
-    mask = np.asarray(nib.load(brain_mask_file).dataobj) > 0  # type: ignore[attr-defined]
+    t1 = np.asarray(nib.load(t1_map_file).get_fdata(), dtype=np.float64)  # type: ignore[attr-defined]
+    dce = np.asarray(nib.load(dce_reference_file).get_fdata(), dtype=np.float64)  # type: ignore[attr-defined]
+    mask = np.asarray(nib.load(brain_mask_file).get_fdata(), dtype=np.float64) > 0  # type: ignore[attr-defined]
     support = mask & np.isfinite(t1) & (t1 > 0)
 
     def _scaled(data: np.ndarray, domain: np.ndarray) -> np.ndarray:
         values = data[domain & np.isfinite(data)]
         if values.size == 0:
             return np.zeros(data.shape, dtype=float)
-        low, high = np.percentile(values, [2, 98])
+        low, high = (float(value) for value in np.percentile(values, [2, 98]))
         return np.clip((data - low) / max(high - low, 1e-8), 0.0, 1.0)
 
     dce_scaled = _scaled(dce, mask)
@@ -1774,7 +1777,10 @@ def _external_t1_alignment_plot_node(
     if session_id:
         identity += f" | ses-{session_id}"
     fig.suptitle(f"{identity} | External T1–DCE Alignment", fontsize=16, y=0.98)
-    support_fraction = 100.0 * np.count_nonzero(support) / max(1, np.count_nonzero(mask))
+    support_fraction = (
+        100.0 * int(np.count_nonzero(support))
+        / max(1, int(np.count_nonzero(mask)))
+    )
     fig.text(0.5, 0.025, f"Brain support: {support_fraction:.2f}%", ha="center")
     fig.tight_layout(rect=(0.04, 0.05, 1, 0.95), h_pad=0.8, w_pad=0.25)
     out_file = str(Path.cwd() / "external_t1_alignment.png")
