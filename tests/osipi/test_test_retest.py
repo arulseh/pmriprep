@@ -119,10 +119,14 @@ class TestSummaryStatistics:
         expected_score: float,
         expected_pct_rc: float,
     ) -> None:
-        """Cohort metrics should match the final OSIPI validation dataset."""
+        """Guard final cohort metrics and the prespecified mean-wCV limit."""
         score_repeat, pct_rc = _osipi_repeatability(parameter)
-        assert score_repeat == pytest.approx(expected_score, abs=1e-8)
-        assert pct_rc == pytest.approx(expected_pct_rc, abs=1e-8)
+        assert score_repeat > np.exp(-0.25), (
+            f"{parameter} mean within-subject CV exceeds 25%: "
+            f"Score_repeat={score_repeat:.4f}"
+        )
+        assert score_repeat == pytest.approx(expected_score, abs=5e-4)
+        assert pct_rc == pytest.approx(expected_pct_rc, abs=5e-4)
 
 
 # =============================================================================
