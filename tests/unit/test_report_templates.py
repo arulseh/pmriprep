@@ -124,7 +124,8 @@ def test_dce_signal_conversion_qc_renders(env):
     assert "Invalid T1 in DCE Space" in rendered
     assert ">12 (0.60% brain support)<" in rendered
     assert "Missing B1 in DCE Space" in rendered
-    assert ">34 (1.70% brain support)<" in rendered
+    assert "34 (1.70%)" in rendered
+    assert "34 (1.70% brain support)" not in rendered
     assert "Bounded SPGR Samples" in rendered
     assert "0.12% brain-supported samples" in rendered
     assert rendered.index("Missing B1 in DCE Space") < rendered.index(
