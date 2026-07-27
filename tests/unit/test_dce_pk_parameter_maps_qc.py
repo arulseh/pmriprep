@@ -63,7 +63,9 @@ def test_pk_map_labels_are_horizontal_and_report_separate_support(
     )
 
     figure = captured["figure"]
-    assert "quantitative QC 0.8% of brain" in figure._suptitle.get_text()
+    assert figure._suptitle.get_text().endswith("PK Parameter Maps")
+    assert "QC" not in figure._suptitle.get_text()
+    assert all("finite retained estimate" not in text.get_text() for text in figure.texts)
     row_labels = [
         text
         for axis in figure.axes

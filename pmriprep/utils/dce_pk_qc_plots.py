@@ -620,8 +620,8 @@ def generate_pk_parameter_maps_qc_plot(
     brain_mask : numpy.ndarray
         3D boolean brain mask.
     qc_mask : numpy.ndarray or None, optional
-        Quantitative QC mask. Its whole-brain acceptance fraction is reported
-        separately; finite retained estimates remain visible for map review.
+        Quantitative QC mask. Used for geometry validation only; finite retained
+        estimates remain visible for map review regardless of QC acceptance.
     subject_id : str, optional
         Subject identifier for title.
     session_id : str, optional
@@ -639,18 +639,13 @@ def generate_pk_parameter_maps_qc_plot(
     from pmriprep.utils.qc_utils import get_radiological_slice
 
     mask_bool = brain_mask > 0.5
-    if qc_mask is None:
-        quantitative_mask = mask_bool
-    else:
+    if qc_mask is not None:
         if qc_mask.shape != brain_mask.shape:
             raise ValueError(
                 "QC mask shape does not match brain mask: "
                 f"{qc_mask.shape} != {brain_mask.shape}"
             )
-        quantitative_mask = mask_bool & (qc_mask > 0.5)
     n_brain = int(np.count_nonzero(mask_bool))
-    n_quantitative = int(np.count_nonzero(quantitative_mask))
-    quantitative_fraction = n_quantitative / n_brain if n_brain else 0.0
 
     # Parameter display config: (colormap, vmin, vmax_mode, unit_label)
     # vmax_mode: "pct95" = 95th percentile of nonzero, "fixed" = use vmax directly
@@ -692,18 +687,9 @@ def generate_pk_parameter_maps_qc_plot(
         qc_figure_title(
             subject_id,
             session_id,
-            f"PK Parameter Maps | quantitative QC {quantitative_fraction:.1%} of brain",
+            "PK Parameter Maps",
         ),
         fontsize=13, fontweight="bold", y=0.99,
-    )
-    fig.text(
-        0.5,
-        0.005,
-        "Color = finite retained estimate; gray = unavailable or model-non-applicable",
-        ha="center",
-        va="bottom",
-        fontsize=8,
-        color="dimgray",
     )
 
     for row_idx, (name, data) in enumerate(params_to_plot):
