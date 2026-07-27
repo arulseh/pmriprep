@@ -572,7 +572,12 @@ def _build_dce_transformed_mask_meta(
     """Build metadata for an anatomical mask transformed to DCE space."""
     from pmriprep.utils.sidecar_builders import build_sources_list
 
-    out = _build_dce_meta(base, description, units, extra)
+    out = dict(base)
+    out["Description"] = description
+    if units is not None:
+        out["Units"] = units
+    if extra:
+        out.update(extra)
     out["Sources"] = build_sources_list(
         [*(structural_sources or []), perfusion_source], bids_dir,
     )

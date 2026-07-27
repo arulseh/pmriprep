@@ -105,6 +105,55 @@ def test_transformed_lesion_contract_preserves_labels_and_sources() -> None:
         assert meta["LabelMap"] == HDGLIO_BIDS_LABELS
 
 
+def test_transformed_mask_metadata_builders_run_in_isolated_functions() -> None:
+    """Transformed-mask builders carry no unavailable module globals."""
+    import nipype.interfaces.utility as niu
+
+    from pmriprep.config.constants import HDGLIO_BIDS_LABELS
+    from pmriprep.workflows.dce.datasinks import _build_dce_transformed_mask_meta
+    from pmriprep.workflows.dsc.datasinks import _build_transformed_mask_meta
+
+    common = {
+        "base": {"Sources": []},
+        "description": "Tumor segmentation",
+        "structural_sources": ["/raw/sub-X/anat/sub-X_T1w.nii.gz"],
+        "perfusion_source": "/raw/sub-X/perf/sub-X_dsc.nii.gz",
+        "bids_dir": "/raw",
+    }
+    dsc = niu.Function(
+        input_names=[
+            "base", "description", "skull_stripped", "mask_type",
+            "structural_sources", "perfusion_source", "bids_dir",
+            "segmentation_labels",
+        ],
+        output_names=["meta"],
+        function=_build_transformed_mask_meta,
+    )
+    dsc.inputs.trait_set(
+        **common,
+        skull_stripped=False,
+        mask_type=None,
+        segmentation_labels=HDGLIO_BIDS_LABELS,
+    )
+    dce = niu.Function(
+        input_names=[
+            "base", "description", "units", "extra", "structural_sources",
+            "perfusion_source", "bids_dir",
+        ],
+        output_names=["meta"],
+        function=_build_dce_transformed_mask_meta,
+    )
+    dce.inputs.trait_set(
+        **common,
+        units=None,
+        extra={"LabelMap": HDGLIO_BIDS_LABELS},
+    )
+
+    for result in (dsc.run(), dce.run()):
+        assert result.outputs.meta["LabelMap"] == HDGLIO_BIDS_LABELS
+        assert len(result.outputs.meta["Sources"]) == 2
+
+
 def test_tb1map_uses_standard_suffix_and_dce_source_entities(tmp_path) -> None:
     from pmriprep.workflows.dce.datasinks import _copy_tb1map
 

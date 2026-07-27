@@ -410,9 +410,14 @@ def _build_transformed_mask_meta(
     """Build metadata for an anatomical mask transformed to DSC space."""
     from pmriprep.utils.sidecar_builders import build_sources_list
 
-    out = _build_minimal_meta(
-        base, description, skull_stripped, mask_type, segmentation_labels,
-    )
+    out = dict(base)
+    out["Description"] = description
+    if skull_stripped:
+        out["SkullStripped"] = True
+    if mask_type is not None:
+        out["Type"] = mask_type
+    if segmentation_labels:
+        out["LabelMap"] = dict(segmentation_labels)
     out["Sources"] = build_sources_list(
         [*(structural_sources or []), perfusion_source], bids_dir,
     )
