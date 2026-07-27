@@ -70,6 +70,36 @@ def test_afi_b1_recovers_known_flip(
     assert result.outputs.qc_pass is True
 
 
+def test_afi_smoothing_fills_supported_internal_gap(tmp_path: Path) -> None:
+    """Normalized convolution fills a small internal AFI support gap."""
+    t1, tr1, tr2 = 1000.0, 20.0, 100.0
+    nominal_fa, actual_fa = 60.0, 54.0
+    s1, s2 = _afi_signals(t1, tr1, tr2, actual_fa)
+    shape = (10, 10, 10)
+    afi = np.empty((*shape, 2), dtype=np.float32)
+    afi[..., 0] = s1
+    afi[..., 1] = s2
+    afi[5, 5, 5, :] = 0.0
+    mask = np.ones(shape, dtype=np.uint8)
+    afi_file = tmp_path / "sub-01_TB1AFI.nii.gz"
+    mask_file = tmp_path / "mask.nii.gz"
+    nib.save(nib.Nifti1Image(afi, np.eye(4)), afi_file)
+    nib.save(nib.Nifti1Image(mask, np.eye(4)), mask_file)
+
+    result = B1Mapping(
+        afi_4d_file=str(afi_file),
+        brain_mask=str(mask_file),
+        tr1=tr1,
+        tr2=tr2,
+        nominal_flip_angle=nominal_fa,
+        smoothing_fwhm=4.0,
+    ).run(cwd=str(tmp_path))
+    mapped = nib.load(result.outputs.out_file).get_fdata()
+    assert mapped[5, 5, 5] == pytest.approx(actual_fa / nominal_fa, abs=0.02)
+    assert result.outputs.qc_metrics["n_valid_voxels"] == np.prod(shape) - 1
+    assert result.outputs.qc_metrics["n_b1_interpolated_voxels"] == 1
+
+
 def test_afi_b1_reversed_volume_order_uses_per_volume_tr_metadata(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

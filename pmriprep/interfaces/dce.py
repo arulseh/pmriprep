@@ -656,7 +656,12 @@ class B1Mapping(SimpleInterface):
         # -----------------------------------------------------------------
         smoothing_fwhm = self.inputs.smoothing_fwhm
         n_b1_outliers = 0
+        n_b1_interpolated = 0
+        output_support = valid.copy()
         if smoothing_fwhm > 0:
+            from scipy.ndimage import binary_fill_holes  # type: ignore[import-untyped]
+
+            support_domain = mask if mask is not None else binary_fill_holes(valid)
             voxel_sizes = header.get_zooms()[:3]  # type: ignore[attr-defined]
             sigma_voxels = [
                 max(smoothing_fwhm / (2.355 * vs), B1_MIN_SIGMA_VOXELS)
@@ -700,10 +705,18 @@ class B1Mapping(SimpleInterface):
             mask_float = valid.astype(np.float64)
             smoothed_num = gaussian_filter(b1_map * mask_float, sigma=sigma_voxels)
             smoothed_den = gaussian_filter(mask_float, sigma=sigma_voxels)
+            supported_gap = (
+                support_domain
+                & ~valid
+                & ~outlier
+                & (smoothed_den > B1_MIN_COVERAGE)
+            )
+            output_support = valid | supported_gap
+            n_b1_interpolated = int(np.sum(supported_gap))
             smoothed_den = np.maximum(smoothed_den, 1e-6)
-            b1_map = np.where(mask_float > 0, smoothed_num / smoothed_den, 0.0)
+            b1_map = np.where(output_support, smoothed_num / smoothed_den, 0.0)
             b1_map = np.clip(b1_map, b1_thresh.clip_low, b1_thresh.clip_high)
-            b1_map[~valid] = 0.0
+            b1_map[~output_support] = 0.0
 
         # Convert to float32 for storage
         b1_map = b1_map.astype(np.float32)
@@ -724,7 +737,7 @@ class B1Mapping(SimpleInterface):
                 uniform_detected = True
 
         # Calculate QC metrics within measured brain support.
-        qc_support = valid & mask if mask is not None else valid
+        qc_support = output_support & mask if mask is not None else output_support
         b1_in_roi = b1_map[qc_support]
 
         # Remove outliers for robust statistics
@@ -778,6 +791,7 @@ class B1Mapping(SimpleInterface):
             "n_extreme_low_b1": n_extreme_low,
             "n_extreme_high_b1": n_extreme_high,
             "n_b1_outliers_rejected": n_b1_outliers,
+            "n_b1_interpolated_voxels": n_b1_interpolated,
             "uniform_detected": uniform_detected,
             "valid_fraction_of_signal": float(np.sum(valid)) / max(1, n_signal),
             "qc_support_voxels": int(np.sum(qc_support)),
@@ -982,7 +996,14 @@ class B1Mapping(SimpleInterface):
         # -----------------------------------------------------------------
         smoothing_fwhm = self.inputs.smoothing_fwhm
         n_b1_outliers = 0
+        n_b1_interpolated = 0
+        output_support = valid_mask.copy()
         if smoothing_fwhm > 0:
+            from scipy.ndimage import binary_fill_holes  # type: ignore[import-untyped]
+
+            support_domain = (
+                brain_mask if brain_mask is not None else binary_fill_holes(valid_mask)
+            )
             voxel_sizes = header.get_zooms()[:3]  # type: ignore[attr-defined]
             sigma_voxels = [
                 max(smoothing_fwhm / (2.355 * vs), B1_MIN_SIGMA_VOXELS)
@@ -1016,17 +1037,25 @@ class B1Mapping(SimpleInterface):
             mask_float = valid_mask.astype(np.float64)
             smoothed_num = gaussian_filter(b1_map * mask_float, sigma=sigma_voxels)
             smoothed_den = gaussian_filter(mask_float, sigma=sigma_voxels)
+            supported_gap = (
+                support_domain
+                & ~valid_mask
+                & ~outlier
+                & (smoothed_den > B1_MIN_COVERAGE)
+            )
+            output_support = valid_mask | supported_gap
+            n_b1_interpolated = int(np.sum(supported_gap))
             smoothed_den = np.maximum(smoothed_den, 1e-6)
-            b1_map = np.where(mask_float > 0, smoothed_num / smoothed_den, 0.0)
+            b1_map = np.where(output_support, smoothed_num / smoothed_den, 0.0)
             b1_map = np.clip(b1_map, b1_thresh.clip_low, b1_thresh.clip_high)
-            b1_map[~valid_mask] = 0.0
+            b1_map[~output_support] = 0.0
 
         b1_map = b1_map.astype(np.float32)
 
         # -----------------------------------------------------------------
         # QC metrics
         # -----------------------------------------------------------------
-        b1_in_roi = b1_map[valid_mask]
+        b1_in_roi = b1_map[output_support]
         b1_clean = b1_in_roi[(b1_in_roi > 0.5) & (b1_in_roi < 2.0)]
 
         if len(b1_clean) > 0:
@@ -1068,6 +1097,7 @@ class B1Mapping(SimpleInterface):
             "n_extreme_low_b1": n_extreme_low,
             "n_extreme_high_b1": n_extreme_high,
             "n_b1_outliers_rejected": n_b1_outliers,
+            "n_b1_interpolated_voxels": n_b1_interpolated,
             "brain_mask_application": mask_status,
             "pct_correction_gt_10": (
                 float(100.0 * np.sum(np.abs(b1_clean - 1.0) > 0.1) / len(b1_clean))

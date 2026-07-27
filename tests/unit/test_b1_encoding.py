@@ -207,8 +207,8 @@ class TestInterfacePrecomputed:
         assert out.qc_metrics["brain_mask_application"] == "native_grid"
         assert np.all(mapped[mask == 0] == 0.0)
 
-    def test_smoothing_preserves_missing_precomputed_support(self, tmp_path):
-        """Smoothing cannot convert missing B1+ samples into valid corrections."""
+    def test_smoothing_fills_supported_internal_precomputed_gaps(self, tmp_path):
+        """Normalized convolution fills small internal B1+ support gaps."""
         import nibabel as nib
 
         from pmriprep.interfaces.dce import B1Mapping
@@ -224,7 +224,9 @@ class TestInterfacePrecomputed:
             smoothing_fwhm=4.0,
         ).run().outputs
         mapped = nib.load(out.out_file).get_fdata()
-        assert np.all(mapped[5:7, 5:7, 5:7] == 0.0)
+        assert np.allclose(mapped[5:7, 5:7, 5:7], 1.0, atol=1e-4)
+        assert out.qc_metrics["n_valid_voxels"] == raw.size - 8
+        assert out.qc_metrics["n_b1_interpolated_voxels"] == 8
 
 
 class TestReportBoilerplate:
