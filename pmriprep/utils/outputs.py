@@ -413,7 +413,6 @@ def write_confounds_sidecar(
         },
         "framewise_displacement": {
             "Description": (
-                "Framewise displacement (Power et al., 2012). "
                 "Sum of absolute translations plus rotations "
                 "converted to mm via 50 mm head radius."
             ),

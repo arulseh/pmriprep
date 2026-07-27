@@ -150,7 +150,6 @@ class HDGLIOPrep(BaseInterface):
     See Also
     --------
     HDGLIOSegment : HD-GLIO deep learning segmentation interface
-    HD-GLIO: https://github.com/MIC-DKFZ/HD-GLIO
     """
 
     input_spec = HDGLIOPrepInputSpec
@@ -511,13 +510,6 @@ class HDGLIOSegment(BaseInterface):
     See Also
     --------
     HDGLIOPrep : Preprocessing interface to prepare images for HD-GLIO
-    HD-GLIO: https://github.com/MIC-DKFZ/HD-GLIO
-
-    References
-    ----------
-    .. [1] Isensee F, Kickingereder P, Wick W, Bendszus M, Maier-Hein KH.
-           "Brain Tumor Segmentation and Radiomics Survival Prediction:
-           Contribution to the BRATS 2017 Challenge." arXiv:1802.10508.
     """
 
     input_spec = HDGLIOSegmentInputSpec

@@ -74,9 +74,6 @@ class ReorientAndCrop(SimpleInterface):
     Reorientation is pure nibabel; FSL is required only for the ``robustfov``
     crop (``crop_fov=True``).
 
-    See Also
-    --------
-    FSL robustfov: https://fsl.fmrib.ox.ac.uk/fsl/fslwiki/robustfov
     """
 
     input_spec = ReorientAndCropInputSpec
@@ -224,12 +221,6 @@ class BiasCorrection(CommandLine):
 
     Requires ANTs to be installed and available in PATH.
 
-    See Also
-    --------
-    ANTs N4BiasFieldCorrection:
-        https://github.com/ANTsX/ANTs/wiki/N4BiasFieldCorrection
-    ANTs DenoiseImage:
-        https://github.com/ANTsX/ANTs/wiki/DenoiseImage
     """
 
     input_spec = BiasCorrectionInputSpec
@@ -476,9 +467,6 @@ class Coregistration(CommandLine):
 
     Requires FSL to be installed and available in PATH.
 
-    See Also
-    --------
-    FSL FLIRT: https://fsl.fmrib.ox.ac.uk/fsl/fslwiki/FLIRT
     """
 
     input_spec = CoregistrationInputSpec
@@ -672,10 +660,6 @@ class BrainExtraction(CommandLine):
 
     - brain_volume_mm3: Total brain volume from mask
 
-    See Also
-    --------
-    HD-BET: https://github.com/MIC-DKFZ/HD-BET
-    ANTs: https://github.com/ANTsX/ANTs
     """
 
     input_spec = BrainExtractionInputSpec
@@ -972,9 +956,6 @@ class TissueSegmentation(CommandLine):
 
     Requires FSL to be installed and available in PATH.
 
-    See Also
-    --------
-    FSL FAST: https://fsl.fmrib.ox.ac.uk/fsl/fslwiki/FAST
     """
 
     input_spec = TissueSegmentationInputSpec
@@ -1471,9 +1452,6 @@ class ACPCAlignment(CommandLine):
 
     Requires FSL FLIRT to be installed and available in PATH.
 
-    See Also
-    --------
-    FSL FLIRT: https://fsl.fmrib.ox.ac.uk/fsl/fslwiki/FLIRT
     """
 
     input_spec = ACPCAlignmentInputSpec

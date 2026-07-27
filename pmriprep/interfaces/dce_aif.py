@@ -137,9 +137,6 @@ def _inflow_exclusion_mm(
 # =============================================================================
 # Parker Population AIF Parameters
 # =============================================================================
-# Based on Parker et al. (2006) "Experimentally-derived functional form
-# for a population-averaged high-temporal-resolution arterial input
-# function for dynamic contrast-enhanced MRI"
 
 
 class ParkerAIFParams:
@@ -214,7 +211,7 @@ def parker_population_aif(
 
     # Normalized Gaussians: A1/A2 are areas (mM·min), not peak amplitudes
     # Dividing by (sigma * sqrt(2*pi)) converts area to peak amplitude in mM
-    # This produces ~6 mM peak for full dose, matching Parker et al. reported values
+    # This produces the expected ~6 mM peak for a full dose.
     norm1 = p.sigma1 * np.sqrt(2.0 * np.pi)
     g1 = (p.A1 / norm1) * np.exp(-((t_min - p.T1) ** 2) / (2 * p.sigma1**2))
 

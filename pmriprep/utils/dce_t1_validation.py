@@ -3,26 +3,6 @@
 This module provides field-strength-dependent tissue T1 reference values,
 T1 map correction strategies (auto/none/fallback), and cross-validation
 of field strength from measured T1 distributions.
-
-Adapted for NiPreps-style dataclasses and logging.
-
-References
-----------
-Wansapura JP et al. "NMR relaxation times in the human brain at 3.0
-Tesla." JMRI. 1999;9(4):531-538.
-
-Stanisz GJ et al. "T1, T2 relaxation and magnetization transfer in
-tissue at 3T." MRM. 2005;54(3):507-512.
-
-Rooney WD et al. "Magnetic field and tissue dependencies of human
-brain longitudinal 1H2O relaxation in vivo." MRM. 2007;57(2):308-318.
-
-Wright PJ et al. "Water proton T1 measurements in brain tissue at 7,
-3, and 1.5 T using IR-EPI, IR-TSE, and MPRAGE." MAGMA. 2008;21(1-2):121-130.
-
-Marques JP et al. "MP2RAGE, a self bias-field corrected sequence for
-improved segmentation and T1-mapping at high field." NeuroImage.
-2010;49(2):1271-1281.
 """
 
 import logging
@@ -43,7 +23,6 @@ MIN_VALID_T1_MS: float = 100.0
 # ============================================================================
 
 # brain_mean = 0.60 * wm_midpoint + 0.40 * gm_midpoint
-# (approximate whole-brain WM:GM volume ratio, Ge 2002 AJNR 23:1327)
 # Derived values: qc_max_strict = gm[1], qc_max_lenient = qc_max_strict + brain_sd,
 # expected_median = brain_mean, warn_high = expected_median + brain_sd
 T1_TISSUE_REFERENCE: Dict[float, Dict[str, Any]] = {

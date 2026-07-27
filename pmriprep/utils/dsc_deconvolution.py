@@ -9,17 +9,6 @@ The deconvolution problem is:
 
 where R(t) is the residue function (impulse response), which encodes
 the tissue microvascular transit time distribution.
-
-References
-----------
-    Østergaard et al. (1996) High resolution measurement of cerebral
-    blood flow using intravascular tracer bolus passages. Part I.
-    Magn Reson Med 36(5):715-725.
-
-    Wu et al. (2003) Tracer arrival timing-insensitive technique for
-    estimating flow in MR perfusion-weighted imaging using singular
-    value decomposition with a block-circulant deconvolution matrix.
-    Magn Reson Med 50(1):164-174.
 """
 
 import logging
@@ -257,12 +246,6 @@ def svd_deconvolve_standard(
         - This method is NOT delay-insensitive; delays cause CBF underestimation
         - For delay-insensitive deconvolution, use svd_deconvolve_circulant()
 
-    References
-    ----------
-        Østergaard L, Weisskoff RM, Chesler DA, Gyldensted C, Rosen BR.
-        High resolution measurement of cerebral blood flow using
-        intravascular tracer bolus passages. Part I: Mathematical approach
-        and statistical analysis. Magn Reson Med. 1996;36(5):715-725.
     """
     # Validate inputs
     if len(tissue_curve) != len(aif):
@@ -624,13 +607,6 @@ def svd_deconvolve_circulant(
         - Delay is estimated from the position of max(R(t))
         - For large delays, consider if the delay is physiologically reasonable
 
-    References
-    ----------
-        Wu O, Østergaard L, Weisskoff RM, Benner T, Rosen BR, Sorensen AG.
-        Tracer arrival timing-insensitive technique for estimating flow in
-        MR perfusion-weighted imaging using singular value decomposition
-        with a block-circulant deconvolution matrix.
-        Magn Reson Med. 2003;50(1):164-174.
     """
     # Validate inputs
     if len(tissue_curve) != len(aif):
@@ -949,10 +925,6 @@ def compute_oscillation_index(residue: npt.NDArray[np.floating]) -> float:
         Oscillation index (dimensionless). Returns 0.0 if the residue is all
         zeros or has fewer than 3 points.
 
-    References
-    ----------
-        Wu O, Østergaard L, Weisskoff RM, Benner T, Rosen BR, Sorensen AG.
-        Magn Reson Med. 2003;50(1):164-174 (Eq. 6).
     """
     # Handle edge cases (the second difference needs >= 3 points)
     if len(residue) < 3:
@@ -1102,12 +1074,6 @@ def svd_deconvolve_oscillation(
         ValueError: If arrays are empty.
         ValueError: If oi_target is not positive.
 
-    References
-    ----------
-        Wu O, Ostergaard L, Weisskoff RM, et al. Tracer arrival
-        timing-insensitive technique for estimating flow in MR
-        perfusion-weighted imaging using singular value decomposition
-        with a block-circulant deconvolution matrix. MRM 2003;50:164-174.
     """
     # Validate inputs
     if len(tissue_curve) != len(aif):

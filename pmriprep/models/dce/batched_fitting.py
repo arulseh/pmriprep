@@ -5,14 +5,8 @@ forward models to fit all voxels in parallel. It supports all four DCE PK
 models (Tofts, Extended Tofts, Patlak, 2CXM) with proper constraint handling,
 weighted least squares, and uncertainty estimation.
 
-The key insight is that while each LM iteration requires solving a small
-per-voxel normal equation (2-4 unknowns), the forward model evaluations
-(the expensive part) can be batched across all voxels.
-
-References
-----------
-Marquardt DW. An algorithm for least-squares estimation of nonlinear
-parameters. J Soc Indust Appl Math. 1963;11(2):431-441.
+Each LM iteration solves a small per-voxel normal equation (2-4 unknowns).
+Forward-model evaluations are batched across all voxels.
 """
 
 from __future__ import annotations

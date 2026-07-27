@@ -171,10 +171,6 @@ class MotionCorrection(CommandLine):
 
     Requires FSL to be installed and available in PATH.
 
-    See Also
-    --------
-    FSL mcflirt: https://fsl.fmrib.ox.ac.uk/fsl/fslwiki/MCFLIRT
-
     """
 
     input_spec = MotionCorrectionInputSpec

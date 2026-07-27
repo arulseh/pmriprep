@@ -429,10 +429,6 @@ def batched_2cxm_model(
     ValueError
         If aif and time_points have different lengths.
 
-    References
-    ----------
-        Sourbron SP, Buckley DL. On the scope and interpretation of the
-        Tofts models for DCE-MRI. Magn Reson Med. 2011;66(3):735-745.
     """
     if not (fp.shape == ps.shape == ve.shape == vp.shape):
         raise ValueError(

@@ -2,20 +2,15 @@
 
 Standardized quality control thresholds and colorblind-safe color palette
 for consistent QC assessment and visualization across the pipeline.
-
-References
-----------
-- Paul Tol's color schemes: https://personal.sron.nl/~pault/
 """
 
 from typing import Any, Final, NamedTuple, Optional
 
 
 # =============================================================================
-# Paul Tol Colorblind-Safe Palette
+# Colorblind-Safe Palette
 # =============================================================================
-# Based on Paul Tol's accessible color schemes for scientific visualization
-# These colors are distinguishable by most people with color vision deficiencies
+# These colors are distinguishable by most people with color vision deficiencies.
 
 
 class ColorPalette(NamedTuple):

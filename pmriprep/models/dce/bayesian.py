@@ -1221,7 +1221,7 @@ class BayesianPKFitter:
 
         Uses an affine-invariant ensemble sampler (similar to emcee).
         Noise sigma is sampled as a free parameter (log_sigma) with a
-        HalfNormal prior, following Gelman et al. (BDA3, Ch. 3).
+        HalfNormal prior.
 
         The shared joint-volume constraint is enforced during sampling for
         models with both ve and vp parameters.

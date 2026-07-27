@@ -664,7 +664,7 @@ def build_tumor_seg_dseg_sidecar(
         "Description": "Deep learning tumor segmentation",
         "Manual": False,
         "SegmentationLabels": dict(HDGLIO_BIDS_LABELS),
-        "Method": "HD-GLIO (Isensee et al.)",
+        "Method": "HD-GLIO",
         "SpatialReference": _anat_spatial_reference(subject, session, is_postcon_ref),
         "Sources": build_sources_list(source_paths, bids_dir),
         **resolution_native_block(reference_voxel_source),

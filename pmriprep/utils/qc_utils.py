@@ -4,11 +4,6 @@ This module provides quality control visualization functions for
 registration assessment, motion correction QC, and other pipeline
 outputs. All visualizations use the colorblind-safe palette from
 qc_standards.py.
-
-References
-----------
-- Power et al. (2012) for framewise displacement
-- Paul Tol color schemes for accessibility
 """
 
 from pathlib import Path

@@ -36,19 +36,6 @@ class AgentRelaxivity(NamedTuple):
 #: R1 relaxivity values for common gadolinium-based contrast agents in
 #: human plasma at 37°C, per Gd3+ ion unless gd_ions > 1.
 #:
-#: References:
-#:   - Rohrer M, et al. Invest Radiol 2005;40(11):715-724 (legacy 1.5T/3T,
-#:     bovine plasma — note 1.5T/3T values for the three macrocyclics
-#:     superseded by Szomolanyi 2019 with human plasma + ICP-MS).
-#:   - Szomolanyi P, Rohrer M, Frenzel T, et al. Invest Radiol 2019;
-#:     54(9):559-564 (gadobutrol, gadoteridol, gadoterate at 1.5T/3T/7T,
-#:     human plasma).
-#:   - Robic C, et al. Invest Radiol 2019;54(8):475-484 (gadopiclenol,
-#:     1.5T-7T, human serum).
-#:   - Lohrke J, et al. Invest Radiol 2022;57(10):629-638 (gadoquatrane,
-#:     low-n; treat as ±15% uncertainty).
-#:   - Noebauer-Huhmann IM, et al. Invest Radiol 2010;45(9):554-558
-#:     (gd-dtpa at 7T human plasma; older 7T hardware — caveat).
 CONTRAST_AGENTS: Final[dict[str, AgentRelaxivity]] = {
     # Linear agents (lower relaxivity, higher stability)
     "gd-dtpa": AgentRelaxivity(  # Magnevist

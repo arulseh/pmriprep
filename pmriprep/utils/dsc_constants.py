@@ -538,7 +538,7 @@ RHO_BRAIN: Final[float] = 1.04
 #: Blood density (g/mL)
 RHO_BLOOD: Final[float] = 1.05
 
-#: GRE vessel calibration factor at 3T (Boxerman et al. 2006)
+#: GRE vessel calibration factor at 3T.
 VESSEL_CALIBRATION_GRE_3T: Final[float] = 0.14
 
 

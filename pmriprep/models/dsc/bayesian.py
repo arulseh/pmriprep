@@ -1122,7 +1122,7 @@ class BayesianDSCFitter:
 
         Uses an affine-invariant ensemble sampler (similar to emcee).
         Noise sigma is sampled as a free parameter (log_sigma) with a
-        HalfNormal prior, following Gelman et al. (BDA3, Ch. 3).
+        HalfNormal prior.
 
         Parameters
         ----------

@@ -93,15 +93,13 @@ CBV_MEDIAN_RANGE: tuple[float, float] = (0.3, 3.0)
 CBV_NEGATIVE_FRACTION_MAX: float = 0.01
 
 # Composite K2 criteria for preload-aware uncertainty adjustment (sigma tier).
-# Thresholds colocated in dsc_constants — see K2_SIGMA_* and LEAKY_SIGMA_*
-# there for literature references. This tier is coarser than the primary
-# classification tier (K2_PRIMARY_*) used by classify_preload_adequacy_from_k2;
-# sigma tuning tolerates looser thresholds than discrete class assignment.
+# This tier is coarser than the primary classification tier (K2_PRIMARY_*)
+# used by classify_preload_adequacy_from_k2; sigma tuning tolerates looser
+# thresholds than discrete class assignment.
 
 # Gamma peak ratio thresholds for constraint quality gating.
 # Moderate band [0.90, 1.10] imported from dsc_aif.py (single source of truth).
 # Wider low-confidence band captures severe AIF corruption.
-# Ref: peak error >12% exceeds the ~10% CBF CoV expected in normal brain.
 GAMMA_PEAK_RATIO_LOW_MIN: float = 0.80
 GAMMA_PEAK_RATIO_LOW_MAX: float = 1.20
 

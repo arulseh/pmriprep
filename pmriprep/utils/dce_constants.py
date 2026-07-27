@@ -121,8 +121,7 @@ EPSILON_EIGENVALUE: Final[float] = 1e-10
 #
 # Single source of truth: CONTRAST_AGENTS in contrast_agent.py.
 # This module's get_r1_relaxivity(field_strength) delegates to that table
-# under the Gd-DTPA fallback agent. Per-agent values, per-field citations,
-# and 7T support live there.
+# under the Gd-DTPA fallback agent.
 
 
 def get_r1_relaxivity(field_strength: float) -> float:
@@ -145,9 +144,8 @@ def get_r1_relaxivity(field_strength: float) -> float:
     Raises
     ------
     ValueError
-        If field_strength > 5.0 T and no peer-reviewed 7T value
-        exists for the fallback agent. Gd-DTPA has a Noebauer-Huhmann
-        2010 7T value, so this should not raise in practice.
+        If field_strength > 5.0 T and the fallback agent has no measured
+        7T value.
     """
     from pmriprep.utils.contrast_agent import lookup_r1
 
@@ -158,8 +156,7 @@ def get_r1_relaxivity(field_strength: float) -> float:
 # Blood T1 Values by Field Strength
 # =============================================================================
 
-#: Blood T1 values (seconds) by field strength at 37°C
-#: Values from Lu 2004 MRM 52:679, Stanisz 2005 MRM 54:507
+#: Blood T1 values (seconds) by field strength at 37°C.
 BLOOD_T1_BY_FIELD: Final[dict[float, float]] = {
     1.5: 1.35,  # Blood T1 at 1.5T
     3.0: 1.65,  # Blood T1 at 3.0T
@@ -229,8 +226,7 @@ class TissueT1Ranges(NamedTuple):
     csf: T1Range
 
 
-#: Tissue T1 QC ranges by field strength (in milliseconds)
-#: Values from Stanisz et al. (2005), Wright et al. (2008)
+#: Tissue T1 QC ranges by field strength (in milliseconds).
 TISSUE_T1_RANGES_BY_FIELD: Final[dict[float, TissueT1Ranges]] = {
     1.5: TissueT1Ranges(
         white_matter=T1Range(550, 750),     # WM T1 at 1.5T: ~620ms
@@ -561,8 +557,7 @@ class AIFExpectedValues(NamedTuple):
     auc_max: float          # Maximum expected AUC
 
 
-#: Expected AIF values for full-dose contrast (0.1 mmol/kg)
-#: Based on Parker et al. (2006) population AIF parameters
+#: Expected AIF values for full-dose contrast (0.1 mmol/kg).
 DCE_AIF_EXPECTED_FULL_DOSE: Final[AIFExpectedValues] = AIFExpectedValues(
     peak_min_mm=5.0,        # Minimum expected peak concentration
     peak_max_mm=7.6,        # Maximum expected peak concentration
@@ -678,7 +673,6 @@ class B1Thresholds(NamedTuple):
 
 
 #: B1+ threshold lookup by field strength (Tesla).
-#: References: Yarnykh 2007 MRM 57:192, Nehrke & Börnert 2012 MRM 68:1517.
 B1_THRESHOLDS_BY_FIELD: Final[dict[float, B1Thresholds]] = {
     1.5: B1Thresholds(
         clip_low=0.4,
@@ -1165,10 +1159,7 @@ VP_MAX_PHYSIOLOGICAL: Final[float] = 0.2
 
 #: Physiological plasma volume fraction assumed for contralateral NAWM.
 #: Used as the anchor for converting nCBV → vp prior in the DSC→DCE
-#: cross-modality constraint. Source: Larsson et al. MRM 2009;62:1270
-#: (direct DCE measurement, NAWM vp = 0.0089 ± 0.0038). Corroborated by
-#: Sourbron & Buckley NMR Biomed 2013;26:1004 (WM vp 0.005–0.02 literature
-#: range).
+#: cross-modality constraint.
 #:
 #: Hct closure constraint: this anchor uses the same large-vessel Hct =
 #: 0.42 convention as the AIF-path /(1-Hct) conversion at ``dce_aif.py``.

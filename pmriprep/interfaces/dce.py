@@ -3318,7 +3318,6 @@ class DCEPreprocess(SimpleInterface):
 
     See Also
     --------
-    FSL mcflirt: https://fsl.fmrib.ox.ac.uk/fsl/fslwiki/MCFLIRT
     MotionCorrection : DSC motion correction interface
     """
 
@@ -4074,10 +4073,6 @@ class DCEBrainExtract(SimpleInterface):
     If HD-BET is not available, falls back to FSL BET with parameters
     optimized for DCE contrast (lower fractional intensity threshold).
 
-    References
-    ----------
-    Isensee F et al. "HD-BET: Robust skull stripping using deep learning."
-    Human Brain Mapping. 2019.
     """
 
     input_spec = DCEBrainExtractInputSpec
@@ -4458,9 +4453,6 @@ class DCERegistration(SimpleInterface):
 
     Requires FSL to be installed and available in PATH.
 
-    See Also
-    --------
-    FSL FLIRT : https://fsl.fmrib.ox.ac.uk/fsl/fslwiki/FLIRT
     """
 
     input_spec = DCERegistrationInputSpec
