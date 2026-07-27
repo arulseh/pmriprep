@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from types import SimpleNamespace
 
 import nibabel as nib
@@ -445,7 +446,7 @@ def test_write_dce_parameter_maps_preserves_applicability(
 
 @pytest.mark.parametrize(
     ("save_ve", "save_vp", "save_2cxm", "expected_count"),
-    [(False, False, False, 1), (True, True, True, 4)],
+    [(False, False, False, 4), (True, True, True, 16)],
 )
 def test_write_dce_uncertainty_maps_preserves_applicability(
     save_ve: bool,
@@ -485,8 +486,10 @@ def test_write_dce_uncertainty_maps_preserves_applicability(
     assert writes == list(outputs.values())
     assert ("out_ktrans_cv" in outputs) is not save_2cxm
     assert ("out_fp_cv" in outputs) is save_2cxm
-    assert "out_ktrans_std" not in outputs
-    assert "out_ktrans_ci95_lower" not in outputs
+    assert ("out_ktrans_std" in outputs) is not save_2cxm
+    assert ("out_ktrans_ci95_lower" in outputs) is not save_2cxm
+    assert ("out_fp_std" in outputs) is save_2cxm
+    assert ("out_fp_ci95_upper" in outputs) is save_2cxm
 
 
 def test_auto_uncertainty_retains_ktrans_cv_outside_2cxm_voxels() -> None:
@@ -505,6 +508,16 @@ def test_auto_uncertainty_retains_ktrans_cv_outside_2cxm_voxels() -> None:
         fp_std=sigma,
         ps_std=sigma,
         save_2cxm=True,
+        ktrans_ci95_lower=values - sigma,
+        ktrans_ci95_upper=values + sigma,
+        ve_ci95_lower=values - sigma,
+        ve_ci95_upper=values + sigma,
+        vp_ci95_lower=values - sigma,
+        vp_ci95_upper=values + sigma,
+        fp_ci95_lower=values - sigma,
+        fp_ci95_upper=values + sigma,
+        ps_ci95_lower=values - sigma,
+        ps_ci95_upper=values + sigma,
     )
 
     outputs = _write_dce_uncertainty_maps(
@@ -518,6 +531,8 @@ def test_auto_uncertainty_retains_ktrans_cv_outside_2cxm_voxels() -> None:
     )
 
     assert "out_ktrans_cv" in outputs
+    assert "out_ktrans_std" in outputs
+    assert "out_ktrans_ci95_lower" in outputs
 
 
 @pytest.mark.parametrize("is_auto", [False, True])
@@ -638,3 +653,10 @@ def test_saved_dce_categorical_maps_are_brain_masked(tmp_path) -> None:
     for output_name in ("out_curve_type", "out_quality_flag", "out_model_selection"):
         data = nib.load(getattr(result.outputs, output_name)).get_fdata()
         assert np.all(data[background] == 0), output_name
+    for output_name in (
+        "out_ktrans_std", "out_ve_std", "out_vp_std",
+        "out_ktrans_ci95_lower", "out_ktrans_ci95_upper",
+        "out_ve_ci95_lower", "out_ve_ci95_upper",
+        "out_vp_ci95_lower", "out_vp_ci95_upper",
+    ):
+        assert Path(getattr(result.outputs, output_name)).exists(), output_name

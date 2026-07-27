@@ -1132,36 +1132,48 @@ def _write_dce_uncertainty_maps(
         outputs[name] = generate_path(suffix)
         write_map(values, outputs[name])
 
-    if is_auto or not maps.save_2cxm:
+    def write_parameter_group(
+        stem: str,
+        values: npt.NDArray[Any],
+        standard_deviation: npt.NDArray[Any],
+        interval_lower: npt.NDArray[Any],
+        interval_upper: npt.NDArray[Any],
+    ) -> None:
+        key = stem.lower() if stem != "Fp" else "fp"
+        write(f"out_{key}_std", f"_{stem}_std", standard_deviation)
         write(
-            "out_ktrans_cv",
-            "_Ktrans_cv",
+            f"out_{key}_cv",
+            f"_{stem}_cv",
             _compute_dce_coefficient_of_variation(
-                maps.ktrans, maps.ktrans_std, mask, is_auto
+                values, standard_deviation, mask, is_auto
             ),
         )
+        write(f"out_{key}_ci95_lower", f"_{stem}_ci95_lower", interval_lower)
+        write(f"out_{key}_ci95_upper", f"_{stem}_ci95_upper", interval_upper)
+
+    if is_auto or not maps.save_2cxm:
+        write_parameter_group(
+            "Ktrans", maps.ktrans, maps.ktrans_std,
+            maps.ktrans_ci95_lower, maps.ktrans_ci95_upper,
+        )
     if save_ve:
-        write(
-            "out_ve_cv",
-            "_ve_cv",
-            _compute_dce_coefficient_of_variation(maps.ve, maps.ve_std, mask, is_auto),
+        write_parameter_group(
+            "ve", maps.ve, maps.ve_std,
+            maps.ve_ci95_lower, maps.ve_ci95_upper,
         )
     if save_vp:
-        write(
-            "out_vp_cv",
-            "_vp_cv",
-            _compute_dce_coefficient_of_variation(maps.vp, maps.vp_std, mask, is_auto),
+        write_parameter_group(
+            "vp", maps.vp, maps.vp_std,
+            maps.vp_ci95_lower, maps.vp_ci95_upper,
         )
     if maps.save_2cxm:
-        write(
-            "out_fp_cv",
-            "_Fp_cv",
-            _compute_dce_coefficient_of_variation(maps.fp, maps.fp_std, mask, is_auto),
+        write_parameter_group(
+            "Fp", maps.fp, maps.fp_std,
+            maps.fp_ci95_lower, maps.fp_ci95_upper,
         )
-        write(
-            "out_ps_cv",
-            "_PS_cv",
-            _compute_dce_coefficient_of_variation(maps.ps, maps.ps_std, mask, is_auto),
+        write_parameter_group(
+            "ps", maps.ps, maps.ps_std,
+            maps.ps_ci95_lower, maps.ps_ci95_upper,
         )
 
     return outputs

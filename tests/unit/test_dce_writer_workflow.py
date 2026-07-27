@@ -104,7 +104,11 @@ def test_dce_factory_with_bayesian_uncertainty(
 
     present = {
         "ve_map", "vp_map",
+        "ktrans_uncertainty", "ve_uncertainty", "vp_uncertainty",
         "ktrans_cv", "ve_cv", "vp_cv",
+        "ktrans_ci95_lower", "ktrans_ci95_upper",
+        "ve_ci95_lower", "ve_ci95_upper",
+        "vp_ci95_lower", "vp_ci95_upper",
         "r2_map",
     }
     wf = init_dce_datasinks_wf(
@@ -129,6 +133,9 @@ def test_dce_factory_with_bayesian_uncertainty(
         "sub-01_ses-0001_desc-dceVe_stat.nii.gz",
         "sub-01_ses-0001_desc-dceVp_stat.nii.gz",
         "sub-01_ses-0001_desc-dcePosteriorCVKtrans_stat.nii.gz",
+        "sub-01_ses-0001_desc-dcePosteriorSDKtrans_stat.nii.gz",
+        "sub-01_ses-0001_desc-dceCredibleIntervalLowerKtrans_stat.nii.gz",
+        "sub-01_ses-0001_desc-dceCredibleIntervalUpperKtrans_stat.nii.gz",
     ]
     for fname in expected:
         assert (perf_out / fname).exists(), f"Missing: {fname}"
@@ -152,6 +159,16 @@ def test_dce_factory_with_bayesian_uncertainty(
     )
     assert uncertainty_meta["ConditionalOnConvertedConcentration"] is True
     assert uncertainty_meta["ConditionalOnSuppliedAIF"] is True
+    posterior_sd = json.loads(
+        next(perf_out.glob("*desc-dcePosteriorSDKtrans_stat.json")).read_text()
+    )
+    assert posterior_sd["UncertaintyStatistic"] == "posterior_standard_deviation"
+    interval = json.loads(
+        next(
+            perf_out.glob("*desc-dceCredibleIntervalLowerKtrans_stat.json")
+        ).read_text()
+    )
+    assert interval["UncertaintyStatistic"] == "credible_interval_bound"
 
 
 def test_map_uncertainty_sidecar_records_run_accounting(

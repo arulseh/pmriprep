@@ -2702,7 +2702,11 @@ def _connect_master_dce_outputs_and_datasinks(
         dce_present |= {"model_selection_map", "delta_bic_map"}
     # R² + quality flag are emitted by every PK fit
     dce_present |= {"r2_map", "quality_flag_map"}
-    dce_present |= {"ktrans_uncertainty", "ktrans_cv", "ktrans_ci95_lower", "ktrans_ci95_upper"}
+    if dce_model != "2cxm":
+        dce_present |= {
+            "ktrans_uncertainty", "ktrans_cv",
+            "ktrans_ci95_lower", "ktrans_ci95_upper",
+        }
     if dce_model in _has_ve_models:
         dce_present |= {"ve_uncertainty", "ve_cv", "ve_ci95_lower", "ve_ci95_upper"}
     if dce_model in _has_vp_models:

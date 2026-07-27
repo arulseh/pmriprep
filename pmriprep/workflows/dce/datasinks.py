@@ -95,6 +95,28 @@ _CV_MAPS: tuple[DCEMapSpec, ...] = (
     DCEMapSpec("ps_cv", "dceCV", "PS", "PS relative uncertainty (2CXM only)", "1", "ps_cv"),
 )
 
+_UNCERTAINTY_MAPS: tuple[DCEMapSpec, ...] = (
+    DCEMapSpec("ktrans_uncertainty", "", "Ktrans", "Ktrans uncertainty", "1/min", "ktrans_uncertainty"),
+    DCEMapSpec("ve_uncertainty", "", "ve", "ve uncertainty", "1", "ve_uncertainty"),
+    DCEMapSpec("vp_uncertainty", "", "vp", "vp uncertainty", "1", "vp_uncertainty"),
+    DCEMapSpec("fp_uncertainty", "", "Fp", "Fp uncertainty", "mL/min/100mL", "fp_uncertainty"),
+    DCEMapSpec("ps_uncertainty", "", "PS", "PS uncertainty", "mL/min/100mL", "ps_uncertainty"),
+)
+
+_INTERVAL_MAPS: tuple[DCEMapSpec, ...] = tuple(
+    DCEMapSpec(
+        f"{key}_ci95_{bound}", "", suffix,
+        f"{suffix} 95% interval {bound} bound", units,
+        f"{key}_ci95_{bound}",
+    )
+    for key, suffix, units in (
+        ("ktrans", "Ktrans", "1/min"), ("ve", "ve", "1"),
+        ("vp", "vp", "1"), ("fp", "Fp", "mL/min/100mL"),
+        ("ps", "PS", "mL/min/100mL"),
+    )
+    for bound in ("lower", "upper")
+)
+
 
 # Model-free maps (no model entity). Each entry:
 # (input_attr, suffix, description, units, extra_dict_or_None)
@@ -1383,6 +1405,35 @@ def init_dce_datasinks_wf(
         sink_outputs.append((sink, "out_file"))
 
     # --- Inference-specific relative uncertainty ---
+    is_nlls = inference.lower() == "nlls"
+    uncertainty_desc = "dceStandardError" if is_nlls else "dcePosteriorSD"
+    for spec in _UNCERTAINTY_MAPS:
+        if spec.in_attr not in present:
+            continue
+        uncertainty_extra = pe.Node(
+            niu.Function(
+                input_names=["config_dict", "qc_metrics", "umap_key"],
+                output_names=["extra"], function=_build_uncertainty_extra,
+            ),
+            name=f"{spec.in_attr}_extra",
+        )
+        uncertainty_extra.inputs.umap_key = spec.map_key
+        workflow.connect(inputnode, "config_dict", uncertainty_extra, "config_dict")
+        workflow.connect(inputnode, "qc_metrics", uncertainty_extra, "qc_metrics")
+        sink = _add_perf_map_sink(
+            workflow, inputnode, base_perf,
+            name=spec.in_attr, in_attr=spec.in_attr,
+            desc_value=uncertainty_desc, suffix=spec.suffix,
+            description=(
+                f"{spec.suffix} parameter standard error"
+                if is_nlls else f"{spec.suffix} posterior standard deviation"
+            ),
+            units=spec.units, extra=None,
+            extra_node=uncertainty_extra, map_key=spec.map_key,
+            bids_suffix=spec.bids_suffix,
+        )
+        sink_outputs.append((sink, "out_file"))
+
     for spec in _CV_MAPS:
         if spec.in_attr not in present:
             continue
@@ -1400,7 +1451,6 @@ def init_dce_datasinks_wf(
         uncertainty_extra.inputs.umap_key = spec.map_key
         workflow.connect(inputnode, "config_dict", uncertainty_extra, "config_dict")
         workflow.connect(inputnode, "qc_metrics", uncertainty_extra, "qc_metrics")
-        is_nlls = inference.lower() == "nlls"
         desc_value = "dceRelativeStandardError" if is_nlls else "dcePosteriorCV"
         description = (
             f"{parameter} standard error divided by absolute estimate"
@@ -1413,6 +1463,31 @@ def init_dce_datasinks_wf(
             desc_value=desc_value, suffix=spec.suffix,
             description=description, units=spec.units,
             extra=spec.extra, extra_node=uncertainty_extra, map_key=spec.map_key,
+            bids_suffix=spec.bids_suffix,
+        )
+        sink_outputs.append((sink, "out_file"))
+
+    interval_kind = "ConfidenceInterval" if is_nlls else "CredibleInterval"
+    for spec in _INTERVAL_MAPS:
+        if spec.in_attr not in present:
+            continue
+        bound = "Lower" if spec.in_attr.endswith("lower") else "Upper"
+        interval_extra = pe.Node(
+            niu.Function(
+                input_names=["config_dict", "qc_metrics", "umap_key"],
+                output_names=["extra"], function=_build_uncertainty_extra,
+            ),
+            name=f"{spec.in_attr}_extra",
+        )
+        interval_extra.inputs.umap_key = spec.map_key
+        workflow.connect(inputnode, "config_dict", interval_extra, "config_dict")
+        workflow.connect(inputnode, "qc_metrics", interval_extra, "qc_metrics")
+        sink = _add_perf_map_sink(
+            workflow, inputnode, base_perf,
+            name=spec.in_attr, in_attr=spec.in_attr,
+            desc_value=f"dce{interval_kind}{bound}", suffix=spec.suffix,
+            description=spec.description, units=spec.units, extra=None,
+            extra_node=interval_extra, map_key=spec.map_key,
             bids_suffix=spec.bids_suffix,
         )
         sink_outputs.append((sink, "out_file"))
