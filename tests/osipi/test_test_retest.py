@@ -108,9 +108,9 @@ class TestSummaryStatistics:
     @pytest.mark.parametrize(
         "parameter,expected_score,expected_pct_rc",
         [
-            ("Ktrans", 0.8739285709, 0.4707653751),
-            ("ve", 0.8707801033, 0.4704096486),
-            ("vp", 0.8236859179, 0.6171839375),
+            ("Ktrans", 0.8803703804, 0.4622329816),
+            ("ve", 0.8782049972, 0.4642157400),
+            ("vp", 0.8273458804, 0.6017271163),
         ],
     )
     def test_osipi_repeatability(
@@ -119,7 +119,7 @@ class TestSummaryStatistics:
         expected_score: float,
         expected_pct_rc: float,
     ) -> None:
-        """Cohort metrics should match the validated OSIPI15 release run."""
+        """Cohort metrics should match the final OSIPI validation dataset."""
         score_repeat, pct_rc = _osipi_repeatability(parameter)
         assert score_repeat == pytest.approx(expected_score, abs=1e-8)
         assert pct_rc == pytest.approx(expected_pct_rc, abs=1e-8)

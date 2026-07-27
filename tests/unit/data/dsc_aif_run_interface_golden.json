@@ -95,6 +95,11 @@
       "out_aif_coord": [],
       "qc_metrics": {
         "aif_baseline_frames": 3,
+        "aif_metrics": {
+          "peak_conc": {
+            "__f__": "0x1.0000000000000p+3"
+          }
+        },
         "aif_quality": "degraded",
         "baseline_detection_method": "whole_brain_ensemble",
         "baseline_frames_initial": 2,
@@ -265,6 +270,11 @@
       ],
       "qc_metrics": {
         "aif_baseline_frames": 2,
+        "aif_metrics": {
+          "peak_conc": {
+            "__f__": "0x1.ccccccccccccdp+1"
+          }
+        },
         "aif_quality": "detected",
         "aif_voxel_coord": [
           0,
@@ -393,6 +403,11 @@
       "out_aif_coord": [],
       "qc_metrics": {
         "aif_baseline_frames": 3,
+        "aif_metrics": {
+          "peak_conc": {
+            "__f__": "0x1.0000000000000p+3"
+          }
+        },
         "aif_quality": "degraded",
         "baseline_detection_method": "whole_brain_ensemble",
         "baseline_frames_initial": 2,
@@ -561,6 +576,11 @@
       "qc_metrics": {
         "aif_baseline_frames": 2,
         "aif_gamma_fit_below_floor_retained": true,
+        "aif_metrics": {
+          "peak_conc": {
+            "__f__": "0x1.0000000000000p+2"
+          }
+        },
         "aif_quality": "detected",
         "aif_voxel_coord": [
           0,
