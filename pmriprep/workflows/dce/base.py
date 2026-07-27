@@ -2504,8 +2504,10 @@ def init_dce_preproc_wf(
     # ==========================================================================
     reg_filmstrip = pe.Node(
         niu.Function(
-            input_names=["dce_mean_file", "registered_t1w_file", "brain_mask_file",
-                         "subject_id", "session_id"],
+            input_names=[
+                "dce_mean_file", "registered_t1w_file", "brain_mask_file",
+                "registered_t1w_mask_file", "subject_id", "session_id",
+            ],
             output_names=["filmstrip_file"],
             function=_create_dce_registration_filmstrip,
         ),
@@ -2523,6 +2525,9 @@ def init_dce_preproc_wf(
         ]),
         (dce_brain_extraction_wf, reg_filmstrip, [
             ("outputnode.out_mask", "brain_mask_file"),
+        ]),
+        (dce_anatomical_masks_wf, reg_filmstrip, [
+            ("outputnode.brain_mask", "registered_t1w_mask_file"),
         ]),
     ])
 

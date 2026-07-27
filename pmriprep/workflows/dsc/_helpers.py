@@ -280,10 +280,10 @@ def _transform_brain_mask_to_dsc(
 ) -> tuple[str, float]:
     """Transform T1w brain mask to DSC space using registration transform.
 
-    This is the final brain mask used for all DSC-space processing.
-    The registration transform comes from a higher-quality alignment
-    (T1w brain → HD-BET DSC brain), producing a more accurate mask
-    than a quick independent FLIRT.
+    This mask is retained for registration QC only. Quantification continues
+    to use the native DSC brain mask. The registration transform maps the
+    anatomical mask onto the DSC reference grid without estimating a second
+    alignment.
 
     Optionally computes DICE overlap with the HD-BET mask for QC.
 
@@ -1205,6 +1205,7 @@ def _create_registration_filmstrip(
     dsc_mean_file: str,
     registered_t1w_file: str,
     brain_mask_file: str,
+    registered_t1w_mask_file: str,
     subject_id: str = "",
     session_id: str = "",
 ) -> str:
@@ -1221,6 +1222,8 @@ def _create_registration_filmstrip(
         Path to registered T1w in DSC space.
     brain_mask_file : str
         Path to DSC brain mask.
+    registered_t1w_mask_file : str
+        Path to the anatomical brain mask transformed into DSC space.
     subject_id : str, optional
         Subject ID for QC figure title.
     session_id : str, optional
@@ -1242,6 +1245,7 @@ def _create_registration_filmstrip(
     dsc_data = dsc_img.get_fdata()  # type: ignore[attr-defined]
     t1w_data = nib.load(registered_t1w_file).get_fdata()  # type: ignore[attr-defined]
     mask_data = nib.load(brain_mask_file).get_fdata()  # type: ignore[attr-defined]
+    moving_mask_data = nib.load(registered_t1w_mask_file).get_fdata()  # type: ignore[attr-defined]
     voxel_sizes = tuple(dsc_img.header.get_zooms()[:3])  # type: ignore[attr-defined]
 
     plot_registration_qc_filmstrip(
@@ -1249,6 +1253,7 @@ def _create_registration_filmstrip(
         moving=t1w_data,
         output_path=output_path,
         mask=mask_data,
+        moving_mask=moving_mask_data,
         title=qc_figure_title(subject_id, session_id, "DSC-T1w Registration"),
         voxel_sizes=voxel_sizes,
     )

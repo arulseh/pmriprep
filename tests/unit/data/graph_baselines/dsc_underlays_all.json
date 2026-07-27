@@ -793,6 +793,12 @@
       "brain_mask_file"
     ],
     [
+      "hdbet_dsc",
+      "dsc_brain_mask_file",
+      "transform_brain_mask_qc",
+      "hdbet_mask_file"
+    ],
+    [
       "hist_match_t1w",
       "matched_t1w_file",
       "register",
@@ -809,6 +815,12 @@
       "brain_mask",
       "register",
       "brain_mask"
+    ],
+    [
+      "inputnode",
+      "brain_mask",
+      "transform_brain_mask_qc",
+      "brain_mask_file"
     ],
     [
       "inputnode",
@@ -1209,6 +1221,12 @@
     [
       "prebolus_mean",
       "prebolus_mean_file",
+      "transform_brain_mask_qc",
+      "reference_file"
+    ],
+    [
+      "prebolus_mean",
+      "prebolus_mean_file",
       "transform_enhancing_mask",
       "reference_file"
     ],
@@ -1353,6 +1371,12 @@
     [
       "register",
       "out_matrix",
+      "transform_brain_mask_qc",
+      "transform_matrix"
+    ],
+    [
+      "register",
+      "out_matrix",
       "transform_enhancing_mask",
       "transform_matrix"
     ],
@@ -1475,6 +1499,12 @@
       "out_file",
       "aif_detect",
       "atlas_mask_file"
+    ],
+    [
+      "transform_brain_mask_qc",
+      "dsc_brain_mask_file",
+      "reg_filmstrip",
+      "registered_t1w_mask_file"
     ],
     [
       "transform_enhancing_mask",
@@ -1847,6 +1877,7 @@
         "brain_mask_file",
         "dsc_mean_file",
         "registered_t1w_file",
+        "registered_t1w_mask_file",
         "session_id",
         "subject_id"
       ],
@@ -1872,6 +1903,18 @@
       "output_names": [
         "concentration_file",
         "signal_file"
+      ]
+    },
+    "transform_brain_mask_qc": {
+      "input_names": [
+        "brain_mask_file",
+        "hdbet_mask_file",
+        "reference_file",
+        "transform_matrix"
+      ],
+      "output_names": [
+        "dice_score",
+        "dsc_brain_mask_file"
       ]
     },
     "transform_enhancing_mask": {
@@ -2009,9 +2052,10 @@
     "positive_tail": "051ce74bce50a4f0f05d0b81f66418e853e3e2c3f95bae0d3efc7a9edf9b2f52",
     "prebolus_mean": "94ade71cddc7afb13dce74a47091860d8d7ee30fce12cc69505ee224e72fdc8d",
     "preload_correct": "2c2a1c9e9c594645112f6f5df3a29c1b22348247437f63b85f37fbaf63553831",
-    "reg_filmstrip": "ad2f2b5f783947acdc2f01c196f56e391b4ce435fda927871e609a01ff5014b2",
+    "reg_filmstrip": "00497e133ecfd0f3b852ebd399555ee6e05fcffabbd174d339e925667d3709be",
     "select_aif_exclusion": "3ac6f0a171a3c915c7c043706044fb8dd45d2a9c05f1d1fad613919135724b21",
     "signal_to_conc": "aafea7db6295a9aae640c8e25aa553ef58a8356c39cf66317d554e6a5eea3749",
+    "transform_brain_mask_qc": "10635bb241954d925171ad0630581af33125d7326d550e5282f1aab5b405ca8a",
     "transform_enhancing_mask": "1455e4849ff2a1f176f8172534cb68abdf939dcc4564d2dc10bf5e61426109d1",
     "transform_flair_postcon_to_dsc": "c457ed1dee3e5d1c858a0011ea8998eb18e1b73e261700cc9ee63dbdbe6b8628",
     "transform_flair_to_dsc": "c457ed1dee3e5d1c858a0011ea8998eb18e1b73e261700cc9ee63dbdbe6b8628",
@@ -2159,6 +2203,10 @@
       "n_procs": 1
     },
     "transform_atlas": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "transform_brain_mask_qc": {
       "mem_gb": 0.2,
       "n_procs": 1
     },
@@ -2548,6 +2596,10 @@
     [
       "transform_atlas",
       "FLIRTApplyXFM"
+    ],
+    [
+      "transform_brain_mask_qc",
+      "Function"
     ],
     [
       "transform_enhancing_mask",

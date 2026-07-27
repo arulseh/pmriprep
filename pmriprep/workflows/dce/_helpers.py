@@ -1866,6 +1866,7 @@ def _create_dce_registration_filmstrip(
     dce_mean_file: str | None = None,
     registered_t1w_file: str | None = None,
     brain_mask_file: str | None = None,
+    registered_t1w_mask_file: str | None = None,
     subject_id: str = "",
     session_id: str = "",
 ) -> str | None:
@@ -1882,7 +1883,9 @@ def _create_dce_registration_filmstrip(
     registered_t1w_file : str or None
         Path to T1w image registered to DCE space.
     brain_mask_file : str or None
-        Path to brain mask in DCE space (optional).
+        Path to the native DCE brain mask (optional).
+    registered_t1w_mask_file : str or None
+        Path to the anatomical brain mask transformed into DCE space.
     subject_id : str, optional
         Subject identifier.
     session_id : str, optional
@@ -1921,6 +1924,14 @@ def _create_dce_registration_filmstrip(
         mask_img = nib.load(brain_mask_file)
         mask = mask_img.get_fdata() > 0.5  # type: ignore[attr-defined]
 
+    moving_mask = None
+    if (
+        registered_t1w_mask_file is not None
+        and Path(registered_t1w_mask_file).is_file()
+    ):
+        moving_mask_img = nib.load(registered_t1w_mask_file)
+        moving_mask = moving_mask_img.get_fdata() > 0.5  # type: ignore[attr-defined]
+
     # Generate filmstrip — DCE as background, T1w edges overlaid
     out_path = Path.cwd() / "registration_qc_filmstrip.png"
     plot_registration_qc_filmstrip(
@@ -1928,6 +1939,7 @@ def _create_dce_registration_filmstrip(
         moving=t1w_data,
         output_path=out_path,
         mask=mask,
+        moving_mask=moving_mask,
         title=qc_figure_title(subject_id, session_id, "DCE-T1w Registration"),
         voxel_sizes=voxel_sizes,
     )

@@ -1370,6 +1370,7 @@ def init_dsc_qc_wf(
                 "qc_fit_data",
                 "registration_qc_metrics",
                 "registered_t1w",
+                "registered_t1w_mask",
                 "t1w_to_dsc_matrix",
                 "normalization_factor",
                 "brain_mask_file",
@@ -1423,8 +1424,10 @@ def init_dsc_qc_wf(
 
     reg_filmstrip = pe.Node(
         niu.Function(
-            input_names=["dsc_mean_file", "registered_t1w_file", "brain_mask_file",
-                         "subject_id", "session_id"],
+            input_names=[
+                "dsc_mean_file", "registered_t1w_file", "brain_mask_file",
+                "registered_t1w_mask_file", "subject_id", "session_id",
+            ],
             output_names=["filmstrip_file"],
             function=_create_registration_filmstrip,
         ),
@@ -1527,6 +1530,7 @@ def init_dsc_qc_wf(
         (inputnode, reg_filmstrip, [
             ("prebolus_mean_file", "dsc_mean_file"),
             ("registered_t1w", "registered_t1w_file"),
+            ("registered_t1w_mask", "registered_t1w_mask_file"),
             ("brain_mask_file", "brain_mask_file"),
         ]),
         (inputnode, aif_qc_plot, [
@@ -2089,19 +2093,19 @@ def init_dsc_preproc_wf(
     )
 
     # -------------------------------------------------------------------
-    # Node 1c: Transform T1w Brain Mask to DSC Space
-    # NOTE: T1w brain mask transform kept for future use. To reinstate,
-    # uncomment and reconnect downstream consumers.
+    # Node 1c: Transform T1w Brain Mask to DSC Space for registration QC
     # -------------------------------------------------------------------
-    # transform_brain_mask = pe.Node(
-    #     niu.Function(
-    #         input_names=["brain_mask_file", "reference_file", "transform_matrix",
-    #                      "hdbet_mask_file"],
-    #         output_names=["dsc_brain_mask_file", "dice_score"],
-    #         function=_transform_brain_mask_to_dsc,
-    #     ),
-    #     name="transform_brain_mask",
-    # )
+    transform_brain_mask_qc = pe.Node(
+        niu.Function(
+            input_names=[
+                "brain_mask_file", "reference_file", "transform_matrix",
+                "hdbet_mask_file",
+            ],
+            output_names=["dsc_brain_mask_file", "dice_score"],
+            function=_transform_brain_mask_to_dsc,
+        ),
+        name="transform_brain_mask_qc",
+    )
 
     # -------------------------------------------------------------------
     # Concentration + AIF sub-workflow (signal->ΔR2* conversion + AIF detection)
@@ -2305,15 +2309,20 @@ def init_dsc_preproc_wf(
         (motion_wf, hdbet_dsc, [("outputnode.prebolus_mean_file", "dsc_mean_file")]),
     ])
 
-    # NOTE: transform_brain_mask disconnected — using HD-BET mask directly.
-    # To reinstate T1w-transformed mask, uncomment the node definition
-    # above and restore these connections:
-    # workflow.connect([
-    #     (inputnode, transform_brain_mask, [("brain_mask", "brain_mask_file")]),
-    #     (prebolus_mean, transform_brain_mask, [("prebolus_mean_file", "reference_file")]),
-    #     (register, transform_brain_mask, [("out_matrix", "transform_matrix")]),
-    #     (hdbet_dsc, transform_brain_mask, [("dsc_brain_mask_file", "hdbet_mask_file")]),
-    # ])
+    workflow.connect([
+        (inputnode, transform_brain_mask_qc, [
+            ("brain_mask", "brain_mask_file"),
+        ]),
+        (motion_wf, transform_brain_mask_qc, [
+            ("outputnode.prebolus_mean_file", "reference_file"),
+        ]),
+        (registration_wf, transform_brain_mask_qc, [
+            ("outputnode.t1w_to_dsc_matrix", "transform_matrix"),
+        ]),
+        (hdbet_dsc, transform_brain_mask_qc, [
+            ("dsc_brain_mask_file", "hdbet_mask_file"),
+        ]),
+    ])
 
     # Motion + acquisition params into the concentration/AIF sub-workflow
     workflow.connect([
@@ -2543,6 +2552,9 @@ def init_dsc_preproc_wf(
             ("outputnode.qc_metrics", "inputnode.registration_qc_metrics"),
             ("outputnode.registered_t1w", "inputnode.registered_t1w"),
             ("outputnode.t1w_to_dsc_matrix", "inputnode.t1w_to_dsc_matrix"),
+        ]),
+        (transform_brain_mask_qc, qc_wf, [
+            ("dsc_brain_mask_file", "inputnode.registered_t1w_mask"),
         ]),
         (normalization_wf, qc_wf, [("outputnode.normalization_factor", "inputnode.normalization_factor")]),
         (hdbet_dsc, qc_wf, [("dsc_brain_mask_file", "inputnode.brain_mask_file")]),

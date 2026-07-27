@@ -1609,6 +1609,12 @@
       "brain_mask"
     ],
     [
+      "transform_brain_mask",
+      "out_file",
+      "reg_filmstrip",
+      "registered_t1w_mask_file"
+    ],
+    [
       "transform_enhancing_mask",
       "out_file",
       "dce_pk_fit_qc",
@@ -1950,6 +1956,7 @@
         "brain_mask_file",
         "dce_mean_file",
         "registered_t1w_file",
+        "registered_t1w_mask_file",
         "session_id",
         "subject_id"
       ],
@@ -2143,7 +2150,7 @@
     "motion_qc_plot": "36616aba56123999797c0b5e14d6ec9903e15bea44b1958923c89616b1fb1b2f",
     "normalize_iauc60": "ea6ff078eaf357c450297207c75c6d4057f311c7c4a441f94bb4afa2f1c2dcba",
     "preprocessing_qc": "f8f38c2ec15fc59432d72e59996e80c8d1cb4ede4505bf0ba33af3caa07b09a6",
-    "reg_filmstrip": "8215f2ddd5c31a4c2c521c6fe07b885f2175d2ecae61cff7c3e8f1b6e2a143c1",
+    "reg_filmstrip": "275519aaedfc5af9379fc2e49fd0bee20c4629d63c5491d25d2e6e825fa1ca3f",
     "resample_dsc_cbv": "8637643d62fc961aafa3946ba1321ebcf4744121cb1b91e9b01bde70a4024ba3",
     "resample_dsc_ncbv": "9016b6e864f3d6e0149ee556592202a4fb42cec4b3e2a90946ff48dbfa6caf72",
     "select_aif_exclusion": "3ac6f0a171a3c915c7c043706044fb8dd45d2a9c05f1d1fad613919135724b21",
