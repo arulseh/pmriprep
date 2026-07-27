@@ -536,6 +536,17 @@ def _anat_spatial_reference(
             subject, session, datatype="anat",
         )
     prefix = source_entity_prefix(source, subject, session)
+    if is_postcon_ref and "_ce-" not in f"_{prefix}":
+        entities = prefix.split("_")
+        insert_at = next(
+            (
+                index for index, entity in enumerate(entities)
+                if entity.startswith(("rec-", "dir-", "run-", "echo-", "part-", "chunk-"))
+            ),
+            len(entities),
+        )
+        entities.insert(insert_at, "ce-GAD")
+        prefix = "_".join(entities)
     parts = [f"sub-{subject}"]
     if session:
         parts.append(f"ses-{session}")

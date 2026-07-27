@@ -205,3 +205,16 @@ def test_anat_spatial_reference_preserves_source_entities() -> None:
         "bids::sub-X/ses-Y/anat/"
         "sub-X_ses-Y_acq-mprage_run-2_space-T1w_desc-preproc_T1w.nii.gz"
     )
+
+
+def test_postcon_spatial_reference_adds_forced_contrast_entity() -> None:
+    """Metadata-classified postcon references name the forced output entity."""
+    from pmriprep.utils.sidecar_builders import _anat_spatial_reference
+
+    source = "/raw/sub-X/ses-Y/anat/sub-X_ses-Y_acq-mprage_run-2_T1w.nii.gz"
+    assert _anat_spatial_reference(
+        "X", "Y", is_postcon_ref=True, source=source,
+    ) == (
+        "bids::sub-X/ses-Y/anat/"
+        "sub-X_ses-Y_acq-mprage_ce-GAD_run-2_space-T1w_desc-preproc_T1w.nii.gz"
+    )
