@@ -207,6 +207,25 @@ class TestInterfacePrecomputed:
         assert out.qc_metrics["brain_mask_application"] == "native_grid"
         assert np.all(mapped[mask == 0] == 0.0)
 
+    def test_smoothing_preserves_missing_precomputed_support(self, tmp_path):
+        """Smoothing cannot convert missing B1+ samples into valid corrections."""
+        import nibabel as nib
+
+        from pmriprep.interfaces.dce import B1Mapping
+
+        raw = np.full((12, 12, 12), 100.0, dtype=np.float32)
+        raw[5:7, 5:7, 5:7] = 0.0
+        raw_file = tmp_path / "b1_with_hole.nii.gz"
+        nib.save(nib.Nifti1Image(raw, np.eye(4)), raw_file)
+
+        out = B1Mapping(
+            precomputed_b1_file=str(raw_file),
+            b1_map_encoding="percent",
+            smoothing_fwhm=4.0,
+        ).run().outputs
+        mapped = nib.load(out.out_file).get_fdata()
+        assert np.all(mapped[5:7, 5:7, 5:7] == 0.0)
+
 
 class TestReportBoilerplate:
     """Guard against the silent B1-sentence drop after the token rename.

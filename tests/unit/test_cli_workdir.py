@@ -52,6 +52,18 @@ def test_validate_workdir_rejects_parent_of_bids(tmp_path: Path) -> None:
         _validate_work_dir(tmp_path, bids, output)
 
 
+def test_validate_workdir_rejects_parent_of_home(tmp_path: Path) -> None:
+    """Cleanup can never target a directory containing the user home."""
+    bids = tmp_path / "bids"
+    output = tmp_path / "out"
+    bids.mkdir()
+    output.mkdir()
+    home = Path.home().resolve()
+    candidate = home.parent
+    with pytest.raises(ValueError, match="Unsafe work directory"):
+        _validate_work_dir(candidate, bids, output)
+
+
 def test_validate_workdir_accepts_dedicated_path(tmp_path: Path) -> None:
     """A dedicated work root alongside the data and outputs is valid."""
     bids = tmp_path / "bids"

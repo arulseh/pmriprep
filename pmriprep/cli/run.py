@@ -49,6 +49,7 @@ def _validate_work_dir(work_dir: Path, bids_dir: Path, output_dir: Path) -> Path
     protected = {Path("/").resolve(), Path.home().resolve(), bids_root, output_root}
     if (
         resolved in protected
+        or Path.home().resolve().is_relative_to(resolved)
         or bids_root.is_relative_to(resolved)
         or output_root.is_relative_to(resolved)
     ):

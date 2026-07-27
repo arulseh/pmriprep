@@ -703,6 +703,7 @@ class B1Mapping(SimpleInterface):
             smoothed_den = np.maximum(smoothed_den, 1e-6)
             b1_map = np.where(mask_float > 0, smoothed_num / smoothed_den, 0.0)
             b1_map = np.clip(b1_map, b1_thresh.clip_low, b1_thresh.clip_high)
+            b1_map[~valid] = 0.0
 
         # Convert to float32 for storage
         b1_map = b1_map.astype(np.float32)
@@ -1018,6 +1019,7 @@ class B1Mapping(SimpleInterface):
             smoothed_den = np.maximum(smoothed_den, 1e-6)
             b1_map = np.where(mask_float > 0, smoothed_num / smoothed_den, 0.0)
             b1_map = np.clip(b1_map, b1_thresh.clip_low, b1_thresh.clip_high)
+            b1_map[~valid_mask] = 0.0
 
         b1_map = b1_map.astype(np.float32)
 
