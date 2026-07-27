@@ -208,8 +208,8 @@ def _build_parser() -> argparse.ArgumentParser:
         usage="%(prog)s bids_dir output_dir {participant} [options]",
         description=(
             "PMRIPrep: automated preprocessing and quantification of DSC and DCE MRI\n\n"
-            "Reads BIDS-formatted input and produces\n"
-            "BIDS-Derivatives compliant output with QC reports."
+            "Reads BIDS-formatted input and produces BIDS-Derivatives "
+            "outputs with QC reports."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""\
@@ -252,7 +252,7 @@ Examples:
     parser.add_argument(
         "analysis_level",
         choices=["participant"],
-        help="Level of analysis (currently only 'participant' supported).",
+        help="Level of analysis (only 'participant' is currently supported).",
     )
 
     # Standard BIDS-App arguments
@@ -275,9 +275,8 @@ Examples:
         "--bids_validation",
         action="store_true",
         default=False,
-        help="Run the bids-validator pre-flight check on the input dataset. "
-        "Disabled by default because perfusion MRI suffixes (_dsc, _dce) are "
-        "not yet in the stable BIDS specification.",
+        help="Run the BIDS Validator preflight check. Disabled by default "
+        "because supported DSC/DCE inputs may extend the validator schema.",
     )
 
     # Resource arguments
@@ -321,7 +320,7 @@ Examples:
     # Pipeline component skip flags
     skip_group = parser.add_argument_group(
         "Pipeline components",
-        "Flags to skip specific pipeline components.",
+        "Flags to skip optional pipeline components.",
     )
     skip_group.add_argument(
         "--skip-tumor-seg",
@@ -339,7 +338,7 @@ Examples:
         "--skip-dce",
         action="store_true",
         default=False,
-        help="Skip DCE (Dynamic Contrast Enhanced) pipeline.",
+        help="Skip DCE (dynamic contrast-enhanced) pipeline.",
     )
 
     # Device options
@@ -364,7 +363,7 @@ Examples:
     dsc_group.add_argument(
         "--dsc-inference",
         choices=["nlls", "map", "vi", "svb"],
-        metavar="{nlls,vi,svb}",
+        metavar="{vi,svb,nlls}",
         default=None,
         help="Inference engine for parametric DSC methods (cpi, vascular): "
         "vi (default, linearized variational inference), "
@@ -380,8 +379,7 @@ Examples:
         help="DSC preload as 'auto' (classify preload adequacy from the K2 "
         "leakage residuals) or a float administered-dose multiplier relative "
         "to the agent's standard dose (e.g., 0.5 for half-dose preload). "
-        "Accepts 0.0 to 2.0. Internally binned to a class for K2 constraint "
-        "tuning.",
+        "Accepts 0.0 to 2.0.",
     )
     dsc_group.add_argument(
         "--dsc-dose",
@@ -396,9 +394,8 @@ Examples:
         type=float,
         default=None,
         metavar="DOSE",
-        help="Override agent standard dose in mmol Gd/kg "
-        "(auto-detected from ContrastBolusAgent sidecar field when available). "
-        "Default: 0.1.",
+        help="Override agent standard dose in mmol Gd/kg. Otherwise inferred "
+        "from ContrastBolusAgent when available; unresolved agents use 0.1.",
     )
     dsc_group.add_argument(
         "--dsc-aif-method",
@@ -413,7 +410,7 @@ Examples:
         metavar="FILE",
         help=(
             "External AIF curve file (.txt/.tsv with one value per line, "
-            ".npz with 'aif' key, or .npy). Values must be \u0394R2* concentration "
+            ".npz with 'aif' key, or .npy). Values must be \u0394R2* "
             "in s\u207b\u00b9, temporally aligned with DSC volumes. Bypasses AIF detection."
         ),
     )
@@ -421,7 +418,7 @@ Examples:
     # DCE options
     dce_group = parser.add_argument_group(
         "DCE options",
-        "Options for DCE (Dynamic Contrast Enhanced) processing.",
+        "Options for DCE (dynamic contrast-enhanced) processing.",
     )
     dce_group.add_argument(
         "--dce-model",
@@ -436,8 +433,8 @@ Examples:
         choices=["nlls", "vi", "map"],
         metavar="{nlls,vi}",
         default=None,
-        help="Inference engine for DCE: nlls (default, scipy "
-        "least_squares), vi (variational Bayes).",
+        help="Inference engine for DCE: nlls (default, nonlinear least "
+        "squares), vi (variational Bayes).",
     )
     dce_group.add_argument(
         "--dce-aif-method",
@@ -471,25 +468,24 @@ Examples:
         default=None,
         metavar="R1",
         help=(
-            "Override r1 relaxivity (s^-1/mM) for DCE concentration "
+            "Override r1 relaxivity (s⁻¹ mM⁻¹) for DCE concentration "
             "conversion. Bypasses contrast-agent lookup from BIDS sidecar. "
-            "If not specified, looked up from ContrastBolusAgent in BIDS "
-            "sidecar; falls back to Gd-DTPA (3.8 at 3T) if agent unknown. "
-            "Typical values: Gd-DTPA 3.8, Gadovist 5.0 at 3T."
+            "If omitted, PMRIPrep resolves r1 from the contrast agent and "
+            "field strength and records any generic fallback in provenance."
         ),
     )
     dce_group.add_argument(
         "--dce-b1-method",
         choices=["auto", "afi", "precomputed", "none"],
         default=None,
-        help="B1+ correction method: auto (detect from data), afi, "
-             "precomputed (pre-computed B1+ map), none (skip B1+ correction).",
+        help="B1+ correction method: auto (select an available B1+ input), "
+        "afi, precomputed (precomputed B1+ map), or none.",
     )
     dce_group.add_argument(
         "--dce-b1-map-encoding",
         choices=["auto", "actual_flip_deci_deg", "actual_flip_deg", "percent", "ratio"],
         default=None,
-        help="Pixel encoding of a pre-computed B1+ map: auto (infer from BIDS "
+        help="Pixel encoding of a precomputed B1+ map: auto (infer from BIDS "
              "suffix/Units, else pixel median), actual_flip_deci_deg (Siemens tfl), "
              "actual_flip_deg, percent (BIDS p.u.), ratio.",
     )
@@ -498,15 +494,17 @@ Examples:
         action="store_const",
         const=True,
         default=None,
-        help="Skip T1 mapping (use field-strength-appropriate default T1). "
+        help="Skip T1 mapping (use a uniform field-strength reference T1). "
              "B1+ correction remains controlled by --dce-b1-method.",
     )
     dce_group.add_argument(
         "--dce-t1-map",
         type=Path,
         default=None,
-        help="External T1 map file (NIfTI, units: milliseconds). Bypasses "
-             "VFA T1 fitting. Useful for MP2RAGE, MOLLI, or ground-truth T1 maps.",
+        metavar="FILE",
+        help="External T1 map (NIfTI, milliseconds) already aligned in world "
+        "coordinates with DCE. Bypasses VFA T1 fitting; alignment is reported but "
+        "not corrected.",
     )
     # Anatomical options
     anat_group = parser.add_argument_group(
@@ -588,7 +586,8 @@ Examples:
         "--sloppy",
         action="store_true",
         default=False,
-        help="Use low-quality, fast settings for testing. NOT FOR PRODUCTION USE.",
+        help="Use reduced-quality settings for development and testing. "
+        "Not for production use.",
     )
     g_other.add_argument(
         "--random-seed",

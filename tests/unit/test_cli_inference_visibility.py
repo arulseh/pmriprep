@@ -26,7 +26,26 @@ def test_map_inference_is_hidden_from_normal_help() -> None:
     """Normal help advertises recommended inference modes only."""
     help_text = _build_parser().format_help()
 
-    assert "--dsc-inference {nlls,vi,svb}" in help_text
+    assert "--dsc-inference {vi,svb,nlls}" in help_text
     assert "--dce-inference {nlls,vi}" in help_text
     assert "Laplace MAP" not in help_text
     assert "maximum a posteriori" not in help_text
+
+
+def test_help_states_external_t1_alignment_contract() -> None:
+    """External T1 help exposes the input-space requirement."""
+    help_text = _build_parser().format_help()
+    normalized = " ".join(help_text.split())
+
+    assert "--dce-t1-map FILE" in help_text
+    assert "aligned in world coordinates with DCE" in normalized
+    assert "alignment is reported but not corrected" in normalized
+
+
+def test_help_avoids_stale_or_overstated_method_claims() -> None:
+    """Public help remains concise and implementation-neutral."""
+    help_text = _build_parser().format_help()
+
+    assert "not yet in the stable BIDS specification" not in help_text
+    assert "Gadovist 5.0" not in help_text
+    assert "Dynamic Contrast Enhanced" not in help_text

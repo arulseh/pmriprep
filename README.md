@@ -120,8 +120,8 @@ Key DCE options:
 | `--dce-aif-file FILE` | Supply a plasma-concentration AIF in mM |
 | `--dce-dose DOSE` | Set dose multiplier (`half`, `full`, `double`, or float) |
 | `--dce-b1-method {auto,afi,precomputed,none}` | Control B1+ correction |
-| `--dce-no-t1` | Use the field-strength default tissue T1 |
-| `--dce-t1-map FILE` | Supply an external T1 map in milliseconds |
+| `--dce-no-t1` | Use a uniform field-strength reference T1 |
+| `--dce-t1-map FILE` | Supply a millisecond T1 map world-aligned to DCE |
 
 Use `pmriprep --help` for the complete execution interface. `--use-plugin`
 accepts a Nipype plugin YAML/JSON for cluster schedulers. `--clean-workdir`,
