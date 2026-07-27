@@ -605,7 +605,7 @@
             {% if va[stage_key] is defined and va[stage_key].count is defined %}
             <div class="metric">
                 <div class="metric-label">{{ stage_label }}</div>
-                <div class="metric-value">{{ "{:,}".format(va[stage_key].count) }}{% if va[stage_key].fraction_of_attempted is defined %}<span class="metric-detail">{{ "%.1f"|format(va[stage_key].fraction_of_attempted * 100) }}% of attempted</span>{% elif va[stage_key].fraction_of_brain is defined %}<span class="metric-detail">{{ "%.1f"|format(va[stage_key].fraction_of_brain * 100) }}% of brain</span>{% endif %}</div>
+                <div class="metric-value">{{ "{:,}".format(va[stage_key].count) }}{% if va[stage_key].fraction_of_attempted is defined %} ({{ "%.1f"|format(va[stage_key].fraction_of_attempted * 100) }}%){% elif va[stage_key].fraction_of_brain is defined %} ({{ "%.1f"|format(va[stage_key].fraction_of_brain * 100) }}%){% endif %}</div>
             </div>
             {% endif %}
             {% endfor %}

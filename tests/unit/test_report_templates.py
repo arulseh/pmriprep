@@ -314,8 +314,10 @@ def test_dce_voxel_accounting_renders(env):
     assert "Unsuccessful Fits" in rendered
     assert "Retained Nondegenerate" in rendered
     assert "Quantitative QC Accepted" in rendered
-    assert "87.5% of attempted" in rendered
-    assert 'class="metric-detail"' in rendered
+    assert "70 (87.5%)" in rendered
+    assert "80 (80.0%)" in rendered
+    assert "of attempted" not in rendered
+    assert "of brain" not in rendered
 
 
 def test_dce_incomplete_voxel_accounting_stage_is_skipped(env):
