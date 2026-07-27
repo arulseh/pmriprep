@@ -52,7 +52,9 @@ Source installation (development)
 Source installations are tested on Python 3.10, 3.11, and 3.12 and require FSL_
 and ANTs_ on ``$PATH``. Newer Python versions are not yet part of the release test
 matrix. The container currently uses Python 3.10; see the ``Dockerfile`` for the
-full system dependency list.
+full system dependency list. The default anatomical configuration also requires
+HD-BET; select ANTs brain extraction when HD-BET is not installed. HD-GLIO is an
+optional external dependency for source installations.
 
 System requirements
 -------------------

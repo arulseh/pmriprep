@@ -5,6 +5,7 @@ __pycache__/
 .eggs/
 dist/
 build/
+.DS_Store
 
 # Nipype
 crash-*.txt
@@ -19,6 +20,9 @@ htmlcov/
 # Raw data
 work/
 sourcedata/
+test_outputs/
+bak/
+debug/
 
 # Documentation site
 docs/_build/

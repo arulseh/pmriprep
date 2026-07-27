@@ -53,7 +53,9 @@ def _validate_sdist(path: Path) -> None:
         members = {member.name for member in archive.getmembers() if member.isfile()}
     _validate_members(path, members)
     roots = {Path(member).name for member in members}
-    assert {"CHANGES.rst", "CITATION.cff"} <= roots
+    assert {
+        "CHANGES.rst", "CITATION.cff", "CODE_OF_CONDUCT.md", "CONTRIBUTING.md",
+    } <= roots
 
 
 def main() -> None:

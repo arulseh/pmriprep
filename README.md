@@ -327,4 +327,5 @@ Use [`CITATION.cff`](CITATION.cff) or cite:
 
 ## Support
 
-Report problems at <https://github.com/arulseh/pmriprep/issues>.
+Report problems at <https://github.com/arulseh/pmriprep/issues>. Contributions
+are described in the [contribution guide](https://github.com/arulseh/pmriprep/blob/main/CONTRIBUTING.md).

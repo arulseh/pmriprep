@@ -12,12 +12,17 @@ build/
 # Test/lint artifacts
 .pytest_cache
 .mypy_cache
+.ruff_cache
 .coverage
 htmlcov/
+.DS_Store
 
 # Data directories
 work/
 sourcedata/
+test_outputs/
+bak/
+debug/
 
 # Nipype
 crash-*.txt
