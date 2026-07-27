@@ -1,10 +1,9 @@
 """Shared fixtures for OSIPI validation tests.
 
 Provides path constants, NIfTI loaders, inter-session registration,
-perf-plus reference value loading, and DRO ground truth loading.
+and DRO ground truth loading.
 """
 
-import json
 import os
 import shutil
 import subprocess
@@ -28,32 +27,8 @@ OUTPUT_ROOT = Path(
     )
 ).expanduser()
 
-PERFPLUS_REFERENCE_JSON = (
-    Path.home()
-    / "Developer"
-    / "perf-plus"
-    / "osi_stuff"
-    / "clinical_test_retest_analysis.json"
-)
-
 # DRO ground truth paths
 OSIPI_GT_ROOT = PROJECT_ROOT / "sourcedata" / "osipi"
-
-PERFPLUS_DRO_JSON = (
-    Path.home()
-    / "Developer"
-    / "perf-plus"
-    / "osi_stuff"
-    / "osipi_validation.json"
-)
-
-PERFPLUS_DRO_BAYESIAN_JSON = (
-    Path.home()
-    / "Developer"
-    / "perf-plus"
-    / "osi_stuff"
-    / "osipi_validation_bayesian.json"
-)
 
 # GT Ktrans stored in mM/min × 1000; multiply by this to get min⁻¹
 GT_SCALE = 0.001
@@ -336,75 +311,6 @@ def get_mask_path(subject: str, session: str, mask_type: str) -> Path:
         )
     else:
         raise ValueError(f"Unknown mask type: {mask_type}")
-
-
-# ---------------------------------------------------------------------------
-# Perf-plus reference loading
-# ---------------------------------------------------------------------------
-
-
-def load_perfplus_reference() -> Optional[Dict]:
-    """Load perf-plus clinical test-retest analysis JSON.
-
-    Returns
-    -------
-    Optional[Dict]
-        Parsed JSON dict, or None if file not found.
-    """
-    if not PERFPLUS_REFERENCE_JSON.exists():
-        return None
-
-    with open(PERFPLUS_REFERENCE_JSON) as f:
-        return json.load(f)
-
-
-def get_perfplus_test_retest(subject: str) -> Optional[Dict]:
-    """Get perf-plus test-retest metrics for a subject.
-
-    Parameters
-    ----------
-    subject : str
-        Subject ID (e.g., "sub-0081").
-
-    Returns
-    -------
-    Optional[Dict]
-        Dict with ses1_median, ses2_median, percent_difference,
-        coefficient_of_variation. None if unavailable.
-    """
-    ref = load_perfplus_reference()
-    if ref is None:
-        return None
-
-    return ref.get("test_retest", {}).get(subject)
-
-
-def get_perfplus_session_stats(
-    subject: str,
-    session: str,
-    parameter: str,
-) -> Optional[Dict]:
-    """Get perf-plus summary statistics for a subject/session/parameter.
-
-    Parameters
-    ----------
-    subject : str
-        Subject ID (e.g., "sub-0081").
-    session : str
-        Session ID (e.g., "ses-0001").
-    parameter : str
-        Parameter name (e.g., "Ktrans").
-
-    Returns
-    -------
-    Optional[Dict]
-        Dict with p5/p25/p50/p75/p95/mean/std/n_voxels. None if unavailable.
-    """
-    ref = load_perfplus_reference()
-    if ref is None:
-        return None
-
-    return ref.get("subjects", {}).get(subject, {}).get(session, {}).get(parameter)
 
 
 # ---------------------------------------------------------------------------
@@ -819,14 +725,6 @@ def _outputs_exist(subject: str, session: str) -> bool:
     return ktrans_path.exists()
 
 
-def has_perfplus_reference(subject: str) -> bool:
-    """Check if perf-plus test-retest reference exists for a subject."""
-    ref = load_perfplus_reference()
-    if ref is None:
-        return False
-    return subject in ref.get("test_retest", {})
-
-
 skip_no_fsl = pytest.mark.skipif(
     not has_fsl(),
     reason="FSL FLIRT not available",
@@ -922,66 +820,6 @@ def load_tumor_mask(
     return mask_data > 0.5
 
 
-def load_perfplus_dro_reference() -> Optional[Dict]:
-    """Load perf-plus DRO validation JSON (non-Bayesian).
-
-    Returns
-    -------
-    Optional[Dict]
-        Parsed JSON dict, or None if file not found.
-    """
-    if not PERFPLUS_DRO_JSON.exists():
-        return None
-
-    with open(PERFPLUS_DRO_JSON) as f:
-        return json.load(f)
-
-
-def load_perfplus_dro_bayesian() -> Optional[Dict]:
-    """Load perf-plus DRO Bayesian validation JSON.
-
-    Returns
-    -------
-    Optional[Dict]
-        Parsed JSON dict, or None if file not found.
-    """
-    if not PERFPLUS_DRO_BAYESIAN_JSON.exists():
-        return None
-
-    with open(PERFPLUS_DRO_BAYESIAN_JSON) as f:
-        return json.load(f)
-
-
-def get_perfplus_dro_session(
-    subject: str,
-    session: str,
-    bayesian: bool = False,
-) -> Optional[Dict]:
-    """Get perf-plus DRO stats for a specific session.
-
-    Parameters
-    ----------
-    subject : str
-        Subject ID (e.g., "sub-0091").
-    session : str
-        Session ID (e.g., "ses-0001").
-    bayesian : bool
-        If True, load from Bayesian JSON.
-
-    Returns
-    -------
-    Optional[Dict]
-        Dict with ground_truth, calculated, comparison dicts.
-        None if unavailable.
-    """
-    ref = load_perfplus_dro_bayesian() if bayesian else load_perfplus_dro_reference()
-    if ref is None:
-        return None
-
-    session_key = f"{subject}_{session}"
-    return ref.get("subjects", {}).get(session_key)
-
-
 def load_ci_map(
     subject: str,
     session: str,
@@ -1046,11 +884,6 @@ skip_no_dro_outputs = pytest.mark.skipif(
 skip_no_dro_gt = pytest.mark.skipif(
     not _dro_gt_exists(),
     reason="OSIPI DRO ground truth directory not found",
-)
-
-skip_no_perfplus_dro = pytest.mark.skipif(
-    not PERFPLUS_DRO_JSON.exists(),
-    reason="Perf-plus DRO validation JSON not found",
 )
 
 # OSIPI DSC DRO data path

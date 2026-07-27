@@ -152,7 +152,7 @@ class TestComputePSR:
 
 
 class TestComputePSRLegacy:
-    """Tests for compute_psr_legacy (perf-plus compatible)."""
+    """Tests for the legacy post-baseline PSR definition."""
 
     def test_1d_post_baseline_smin(self) -> None:
         """Legacy uses S_min from post-baseline only."""
@@ -192,7 +192,7 @@ class TestComputePeakHeight:
 
 
 class TestComputePeakHeightLegacy:
-    """Tests for compute_peak_height_legacy (perf-plus compatible)."""
+    """Tests for the legacy post-baseline peak-height definition."""
 
     def test_1d_post_baseline_smin(self) -> None:
         """Legacy uses S_min from post-baseline frames only."""
