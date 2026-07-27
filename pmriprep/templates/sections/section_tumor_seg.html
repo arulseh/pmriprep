@@ -13,6 +13,12 @@
                 <div class="metric-value">{{ "Yes" if tumor_seg.qc_metrics.segmentation.validation.has_tumor else "No" }}</div>
             </div>
             {% endif %}
+            {% if tumor_seg.qc_metrics.segmentation.validation.total_tumor_volume_ml is defined %}
+            <div class="metric">
+                <div class="metric-label">Total Tumor Volume</div>
+                <div class="metric-value">{{ "%.2f"|format(tumor_seg.qc_metrics.segmentation.validation.total_tumor_volume_ml) }} mL</div>
+            </div>
+            {% endif %}
             {% if tumor_seg.qc_metrics.segmentation.validation.enhancing_volume_ml is defined %}
             <div class="metric">
                 <div class="metric-label">Enhancing Volume</div>
@@ -23,12 +29,6 @@
             <div class="metric">
                 <div class="metric-label">Non-Enhancing Volume</div>
                 <div class="metric-value">{{ "%.2f"|format(tumor_seg.qc_metrics.segmentation.validation.non_enhancing_volume_ml) }} mL</div>
-            </div>
-            {% endif %}
-            {% if tumor_seg.qc_metrics.segmentation.validation.total_tumor_volume_ml is defined %}
-            <div class="metric">
-                <div class="metric-label">Total Tumor Volume</div>
-                <div class="metric-value">{{ "%.2f"|format(tumor_seg.qc_metrics.segmentation.validation.total_tumor_volume_ml) }} mL</div>
             </div>
             {% endif %}
         </div>
@@ -79,14 +79,8 @@
             {% endif %}
             {% if tumor_seg.qc_metrics.nawm.valid is defined %}
             <div class="metric">
-                <div class="metric-label">Valid</div>
+                <div class="metric-label">Minimum Size Met</div>
                 <div class="metric-value {% if tumor_seg.qc_metrics.nawm.valid %}pass{% else %}poor{% endif %}">{{ "Yes" if tumor_seg.qc_metrics.nawm.valid else "No" }}</div>
-            </div>
-            {% endif %}
-            {% if tumor_seg.qc_metrics.nawm.atlas_used is defined %}
-            <div class="metric">
-                <div class="metric-label">Atlas Used</div>
-                <div class="metric-value">{{ tumor_seg.qc_metrics.nawm.atlas_used }}</div>
             </div>
             {% endif %}
         </div>

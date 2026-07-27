@@ -99,6 +99,12 @@
                 <div class="metric-value">{{ "%.2f"|format(dsc.qc_metrics.preprocessing.te_ms) }} ms</div>
             </div>
             {% endif %}
+            {% if dsc.qc_metrics.preprocessing.n_volumes is defined %}
+            <div class="metric">
+                <div class="metric-label">Volumes</div>
+                <div class="metric-value">{{ dsc.qc_metrics.preprocessing.n_volumes }}</div>
+            </div>
+            {% endif %}
             {% if dsc.qc_metrics.preprocessing.voxel_size_mm is defined and dsc.qc_metrics.preprocessing.voxel_size_mm is not none %}
             <div class="metric">
                 <div class="metric-label">Voxel Size (mm)</div>
@@ -112,12 +118,6 @@
             <div class="metric">
                 <div class="metric-label">Brain Voxels</div>
                 <div class="metric-value">{{ "{:,}".format(dsc.qc_metrics.preprocessing.n_brain_voxels) }}</div>
-            </div>
-            {% endif %}
-            {% if dsc.qc_metrics.preprocessing.n_volumes is defined %}
-            <div class="metric">
-                <div class="metric-label">Volumes</div>
-                <div class="metric-value">{{ dsc.qc_metrics.preprocessing.n_volumes }}</div>
             </div>
             {% endif %}
             {% if dsc.qc_metrics.preprocessing.peak_drop_pct is defined %}
@@ -167,7 +167,33 @@
                                                 else 'warn'))) %}
             <div class="metric">
                 <div class="metric-label">AIF Status</div>
-                <div class="metric-value {{ aif_flag }}">{{ aif_level | replace("_", " ") | title }}</div>
+                <div class="metric-value {{ aif_flag }}">{{ aif_flag | upper }}</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Method</div>
+                <div class="metric-value">{{ aif_level | replace("_", " ") | title }}</div>
+            </div>
+            {% endif %}
+            {% set dsc_used = dsc.qc_metrics.aif_detection.n_aif_voxels_selected
+               if dsc.qc_metrics.aif_detection.n_aif_voxels_selected is defined %}
+            {% set dsc_available = dsc.qc_metrics.aif_detection.n_aif_voxels_available
+               if dsc.qc_metrics.aif_detection.n_aif_voxels_available is defined %}
+            {% if dsc_used is defined and dsc_available is defined %}
+            <div class="metric">
+                <div class="metric-label">AIF Voxels (used / available)</div>
+                <div class="metric-value">{{ dsc_used }} / {{ dsc_available }}</div>
+            </div>
+            {% endif %}
+            {% if dsc.qc_metrics.aif_detection.n_baseline_frames is defined %}
+            <div class="metric">
+                <div class="metric-label">Baseline Frames</div>
+                <div class="metric-value">{{ dsc.qc_metrics.aif_detection.n_baseline_frames }}</div>
+            </div>
+            {% endif %}
+            {% if dsc.qc_metrics.aif_detection.arrival_time_seconds is defined %}
+            <div class="metric">
+                <div class="metric-label">Arrival Time</div>
+                <div class="metric-value">{{ "%.1f"|format(dsc.qc_metrics.aif_detection.arrival_time_seconds) }} s</div>
             </div>
             {% endif %}
             {% if dsc.qc_metrics.aif_detection.aif_metrics is defined and dsc.qc_metrics.aif_detection.aif_metrics.peak_conc is defined %}
@@ -204,28 +230,6 @@
             <div class="metric">
                 <div class="metric-label">Baseline Return Ratio</div>
                 <div class="metric-value">{{ "%.1f"|format(dsc.qc_metrics.aif_detection.aif_metrics.brr) }}</div>
-            </div>
-            {% endif %}
-            {% if dsc.qc_metrics.aif_detection.arrival_time_seconds is defined %}
-            <div class="metric">
-                <div class="metric-label">Arrival Time</div>
-                <div class="metric-value">{{ "%.1f"|format(dsc.qc_metrics.aif_detection.arrival_time_seconds) }} s</div>
-            </div>
-            {% endif %}
-            {% set dsc_used = dsc.qc_metrics.aif_detection.n_aif_voxels_selected
-               if dsc.qc_metrics.aif_detection.n_aif_voxels_selected is defined %}
-            {% set dsc_available = dsc.qc_metrics.aif_detection.n_aif_voxels_available
-               if dsc.qc_metrics.aif_detection.n_aif_voxels_available is defined %}
-            {% if dsc_used is defined and dsc_available is defined %}
-            <div class="metric">
-                <div class="metric-label">AIF Voxels (used / available)</div>
-                <div class="metric-value">{{ dsc_used }} / {{ dsc_available }}</div>
-            </div>
-            {% endif %}
-            {% if dsc.qc_metrics.aif_detection.n_baseline_frames is defined %}
-            <div class="metric">
-                <div class="metric-label">Baseline Frames</div>
-                <div class="metric-value">{{ dsc.qc_metrics.aif_detection.n_baseline_frames }}</div>
             </div>
             {% endif %}
         </div>
@@ -312,30 +316,16 @@
             </div>
             {% endif %}
             {% endif %}
-            <div class="metric">
-                <div class="metric-label">User-Specified Dose</div>
-                <div class="metric-value">{% if dsc.qc_metrics.preload.preload_user_specified_dose is defined %}{{ "%.2f" | format(dsc.qc_metrics.preload.preload_user_specified_dose) }}{% else %}N/A{% endif %}</div>
-            </div>
             {% if dsc.qc_metrics.preload.preload_k2_classification is defined and dsc.qc_metrics.preload.preload_classification_source == 'user_specified' %}
             <div class="metric">
                 <div class="metric-label" title="Reliability of the K2 leakage correction / CBV trustworthiness — not a preload measurement.">K2 Adequacy</div>
                 <div class="metric-value">{{ adequacy_labels[dsc.qc_metrics.preload.preload_k2_classification] | default(dsc.qc_metrics.preload.preload_k2_classification | replace("_", " ") | title) }}</div>
             </div>
             {% endif %}
-            {% if dsc.qc_metrics.preload.preload_baseline_delta_r2_advisory is defined and dsc.qc_metrics.preload.preload_baseline_delta_r2_advisory is not none %}
             <div class="metric">
-                <div class="metric-label">ΔR2* Advisory</div>
-                <div class="metric-value" title="Tissue-heterogeneity biased; acquisition QC only, not used for classification.">{{ "%.2f"|format(dsc.qc_metrics.preload.preload_baseline_delta_r2_advisory) }} s<sup>-1</sup></div>
+                <div class="metric-label">User-Specified Dose</div>
+                <div class="metric-value">{% if dsc.qc_metrics.preload.preload_user_specified_dose is defined %}{{ "%.2f" | format(dsc.qc_metrics.preload.preload_user_specified_dose) }}{% else %}N/A{% endif %}</div>
             </div>
-            {% endif %}
-            {% if dsc.qc_metrics.preload.preload_residual_equivalent_fraction is defined
-               and dsc.qc_metrics.preload.preload_residual_equivalent_fraction is not none
-               and dsc.qc_metrics.preload.preload_classification_source != 'user_specified' %}
-            <div class="metric">
-                <div class="metric-label">Residual Equivalent Fraction</div>
-                <div class="metric-value" title="ΔR2*-based residual dose estimate. Biased by tissue-heterogeneity; sanity-check only.">{{ "%.2f"|format(dsc.qc_metrics.preload.preload_residual_equivalent_fraction) }}× standard dose</div>
-            </div>
-            {% endif %}
             {% if dsc.qc_metrics.preload.k2_method is defined %}
             <div class="metric">
                 <div class="metric-label">K2 Method</div>
@@ -370,6 +360,20 @@
             <div class="metric">
                 <div class="metric-label">Severe Leakage</div>
                 <div class="metric-value">{{ "%.1f"|format(dsc.qc_metrics.preload.percent_severe_leakage) }}%</div>
+            </div>
+            {% endif %}
+            {% if dsc.qc_metrics.preload.preload_baseline_delta_r2_advisory is defined and dsc.qc_metrics.preload.preload_baseline_delta_r2_advisory is not none %}
+            <div class="metric">
+                <div class="metric-label">ΔR2* Advisory</div>
+                <div class="metric-value" title="Tissue-heterogeneity biased; acquisition QC only, not used for classification.">{{ "%.2f"|format(dsc.qc_metrics.preload.preload_baseline_delta_r2_advisory) }} s<sup>-1</sup></div>
+            </div>
+            {% endif %}
+            {% if dsc.qc_metrics.preload.preload_residual_equivalent_fraction is defined
+               and dsc.qc_metrics.preload.preload_residual_equivalent_fraction is not none
+               and dsc.qc_metrics.preload.preload_classification_source != 'user_specified' %}
+            <div class="metric">
+                <div class="metric-label">Residual Equivalent Fraction</div>
+                <div class="metric-value" title="ΔR2*-based residual dose estimate. Biased by tissue-heterogeneity; sanity-check only.">{{ "%.2f"|format(dsc.qc_metrics.preload.preload_residual_equivalent_fraction) }}× standard dose</div>
             </div>
             {% endif %}
             {% if dsc.qc_metrics.preload.auc_mean is defined %}

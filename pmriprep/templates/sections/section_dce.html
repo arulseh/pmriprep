@@ -46,28 +46,28 @@
         <h3>B1+ Mapping Quality</h3>
         {% if dce.qc_metrics.b1_mapping or (dce.qc_metrics.signal_conversion is defined and dce.qc_metrics.signal_conversion.b1_missing_voxels is defined) %}
         <div class="metrics">
-            {% if dce.qc_metrics.b1_mapping.method is defined %}
-            <div class="metric">
-                <div class="metric-label">B1 Method</div>
-                <div class="metric-value">{{ b1_method_labels.get(dce.qc_metrics.b1_mapping.method, dce.qc_metrics.b1_mapping.method | replace('_', ' ') | title) }}</div>
-            </div>
-            {% endif %}
             {% if dce.qc_metrics.b1_mapping.b1_status is defined %}
             <div class="metric">
                 <div class="metric-label">B1 Status</div>
                 <div class="metric-value {{ dce.qc_metrics.b1_mapping.b1_status | lower }}">{{ dce.qc_metrics.b1_mapping.b1_status }}</div>
             </div>
             {% endif %}
-            {% if dce.qc_metrics.b1_mapping.mean_b1 is defined %}
+            {% if dce.qc_metrics.b1_mapping.method is defined %}
             <div class="metric">
-                <div class="metric-label">Mean B1+</div>
-                <div class="metric-value {{ dce.display_status.b1_bias }}">{{ "%.2f"|format(dce.qc_metrics.b1_mapping.mean_b1) }}</div>
+                <div class="metric-label">B1 Method</div>
+                <div class="metric-value">{{ b1_method_labels.get(dce.qc_metrics.b1_mapping.method, dce.qc_metrics.b1_mapping.method | replace('_', ' ') | title) }}</div>
             </div>
             {% endif %}
             {% if dce.qc_metrics.b1_mapping.median_b1 is defined %}
             <div class="metric">
                 <div class="metric-label">Median B1+</div>
                 <div class="metric-value">{{ "%.2f"|format(dce.qc_metrics.b1_mapping.median_b1) }}</div>
+            </div>
+            {% endif %}
+            {% if dce.qc_metrics.b1_mapping.mean_b1 is defined %}
+            <div class="metric">
+                <div class="metric-label">Mean B1+</div>
+                <div class="metric-value {{ dce.display_status.b1_bias }}">{{ "%.2f"|format(dce.qc_metrics.b1_mapping.mean_b1) }}</div>
             </div>
             {% endif %}
             {% if dce.qc_metrics.b1_mapping.std_b1 is defined %}
@@ -88,6 +88,12 @@
                 <div class="metric-value {{ dce.display_status.b1_correction }}">{{ "%.1f"|format(dce.qc_metrics.b1_mapping.pct_correction_gt_20) }}%</div>
             </div>
             {% endif %}
+            {% if dce.qc_metrics.signal_conversion is defined and dce.qc_metrics.signal_conversion.b1_missing_voxels is defined %}
+            <div class="metric">
+                <div class="metric-label">Missing B1 in DCE Space</div>
+                <div class="metric-value">{{ "{:,}".format(dce.qc_metrics.signal_conversion.b1_missing_voxels | default(0)) }}{% if dce.qc_metrics.signal_conversion.b1_missing_fraction is defined %} ({{ "%.2f"|format(dce.qc_metrics.signal_conversion.b1_missing_fraction * 100) }}%){% endif %}</div>
+            </div>
+            {% endif %}
             {% if dce.qc_metrics.b1_mapping.smoothing_fwhm_mm is defined %}
             <div class="metric">
                 <div class="metric-label">Smoothing FWHM</div>
@@ -98,12 +104,6 @@
             <div class="metric">
                 <div class="metric-label">Clip Range</div>
                 <div class="metric-value">[{{ dce.qc_metrics.b1_mapping.clip_low }}, {{ dce.qc_metrics.b1_mapping.clip_high }}]</div>
-            </div>
-            {% endif %}
-            {% if dce.qc_metrics.signal_conversion is defined and dce.qc_metrics.signal_conversion.b1_missing_voxels is defined %}
-            <div class="metric">
-                <div class="metric-label">Missing B1 in DCE Space</div>
-                <div class="metric-value">{{ "{:,}".format(dce.qc_metrics.signal_conversion.b1_missing_voxels | default(0)) }}{% if dce.qc_metrics.signal_conversion.b1_missing_fraction is defined %} ({{ "%.2f"|format(dce.qc_metrics.signal_conversion.b1_missing_fraction * 100) }}%){% endif %}</div>
             </div>
             {% endif %}
         </div>
@@ -286,12 +286,6 @@
                 <div class="metric-value {{ dce.display_status.outliers }}">{{ dce.qc_metrics.preprocessing.n_outliers }} ({{ "%.1f"|format(dce.qc_metrics.preprocessing.percent_outliers) }}%)</div>
             </div>
             {% endif %}
-            {% if dce.qc_metrics.preprocessing.baseline_frames is defined %}
-            <div class="metric">
-                <div class="metric-label">Baseline Frames</div>
-                <div class="metric-value">{{ dce.qc_metrics.preprocessing.baseline_frames }}</div>
-            </div>
-            {% endif %}
         </div>
         {% endif %}
         {% if dce.images.motion %}
@@ -361,6 +355,18 @@
                 <div class="metric-value">{{ "%.1f"|format(dce.qc_metrics.preprocessing.mean_tsnr) }}</div>
             </div>
             {% endif %}
+            {% if dce.qc_metrics.preprocessing.mean_cnr is defined %}
+            <div class="metric">
+                <div class="metric-label">Mean CNR</div>
+                <div class="metric-value">{{ "%.2f"|format(dce.qc_metrics.preprocessing.mean_cnr) }}</div>
+            </div>
+            {% endif %}
+            {% if dce.qc_metrics.preprocessing.baseline_frames is defined %}
+            <div class="metric">
+                <div class="metric-label">Baseline Frames</div>
+                <div class="metric-value">{{ dce.qc_metrics.preprocessing.baseline_frames }}</div>
+            </div>
+            {% endif %}
             {% if dce.qc_metrics.preprocessing.baseline_tsnr is defined %}
             <div class="metric">
                 <div class="metric-label">Mean Baseline tSNR</div>
@@ -371,12 +377,6 @@
             <div class="metric">
                 <div class="metric-label">Low Baseline SNR</div>
                 <div class="metric-value {{ dce.display_status.baseline_snr_low_fraction }}">{{ "%.0f"|format(dce.qc_metrics.preprocessing.baseline_snr_low_fraction * 100) }}%</div>
-            </div>
-            {% endif %}
-            {% if dce.qc_metrics.preprocessing.mean_cnr is defined %}
-            <div class="metric">
-                <div class="metric-label">Mean CNR</div>
-                <div class="metric-value">{{ "%.2f"|format(dce.qc_metrics.preprocessing.mean_cnr) }}</div>
             </div>
             {% endif %}
             {% if dce.qc_metrics.signal_conversion is defined %}
@@ -406,6 +406,32 @@
                 <div class="metric-value {{ dce.qc_metrics.aif_detection.aif_status | lower }}">{{ dce.qc_metrics.aif_detection.aif_status }}</div>
             </div>
             {% endif %}
+            {% if dce.qc_metrics.aif_detection.detection_method is defined %}
+            <div class="metric">
+                <div class="metric-label">Method</div>
+                <div class="metric-value">{{ aif_method_labels.get(dce.qc_metrics.aif_detection.detection_method, dce.qc_metrics.aif_detection.detection_method | replace('_', ' ') | title) }}</div>
+            </div>
+            {% endif %}
+            {% set used = dce.qc_metrics.aif_detection.n_aif_voxels_selected
+               if dce.qc_metrics.aif_detection.n_aif_voxels_selected is defined %}
+            {% if used is defined %}
+            <div class="metric">
+                <div class="metric-label">AIF Voxels (used / available)</div>
+                <div class="metric-value">{{ used }} / {{ used + (dce.qc_metrics.aif_detection.n_aif_voxels_filtered_out | default(0)) }}</div>
+            </div>
+            {% endif %}
+            {% if dce.qc_metrics.aif_detection.quality_score is defined %}
+            <div class="metric">
+                <div class="metric-label">Quality Score</div>
+                <div class="metric-value">{{ "%.2f"|format(dce.qc_metrics.aif_detection.quality_score) }}</div>
+            </div>
+            {% endif %}
+            {% if dce.qc_metrics.aif_detection.cnr_mean is defined %}
+            <div class="metric">
+                <div class="metric-label">CNR</div>
+                <div class="metric-value">{{ "%.1f"|format(dce.qc_metrics.aif_detection.cnr_mean) }}</div>
+            </div>
+            {% endif %}
             {% if dce.qc_metrics.aif_detection.emitted_peak_mm is defined %}
             <div class="metric">
                 <div class="metric-label">Emitted Peak</div>
@@ -421,42 +447,6 @@
             <div class="metric">
                 <div class="metric-label">Raw Peak</div>
                 <div class="metric-value">{{ "%.2f"|format(dce.qc_metrics.aif_detection.raw_peak_mm) }} mM</div>
-            </div>
-            {% endif %}
-            {% if dce.qc_metrics.aif_detection.final_fwhm_seconds is defined %}
-            <div class="metric">
-                <div class="metric-label">FWHM</div>
-                <div class="metric-value">{{ "%.1f"|format(dce.qc_metrics.aif_detection.final_fwhm_seconds) }} s</div>
-            </div>
-            {% endif %}
-            {% if dce.qc_metrics.aif_detection.quality_score is defined %}
-            <div class="metric">
-                <div class="metric-label">Quality Score</div>
-                <div class="metric-value">{{ "%.2f"|format(dce.qc_metrics.aif_detection.quality_score) }}</div>
-            </div>
-            {% endif %}
-            {% if dce.qc_metrics.aif_detection.detection_method is defined %}
-            <div class="metric">
-                <div class="metric-label">Method</div>
-                <div class="metric-value">{{ aif_method_labels.get(dce.qc_metrics.aif_detection.detection_method, dce.qc_metrics.aif_detection.detection_method | replace('_', ' ') | title) }}</div>
-            </div>
-            {% endif %}
-            {% if dce.qc_metrics.aif_detection.washout_mean is defined %}
-            <div class="metric">
-                <div class="metric-label">Washout</div>
-                <div class="metric-value">{{ "%.2f"|format(dce.qc_metrics.aif_detection.washout_mean) }}</div>
-            </div>
-            {% endif %}
-            {% if dce.qc_metrics.aif_detection.cnr_mean is defined %}
-            <div class="metric">
-                <div class="metric-label">CNR</div>
-                <div class="metric-value">{{ "%.1f"|format(dce.qc_metrics.aif_detection.cnr_mean) }}</div>
-            </div>
-            {% endif %}
-            {% if dce.qc_metrics.aif_detection.final_auc is defined %}
-            <div class="metric">
-                <div class="metric-label">AUC</div>
-                <div class="metric-value">{{ "%.1f"|format(dce.qc_metrics.aif_detection.final_auc) }} mM&middot;s</div>
             </div>
             {% endif %}
             {% if dce.qc_metrics.aif_detection.peak_scaling_policy is defined %}
@@ -477,12 +467,22 @@
                 <div class="metric-value">{{ peak_trigger_labels.get(dce.qc_metrics.aif_detection.peak_scaling_trigger, dce.qc_metrics.aif_detection.peak_scaling_trigger | replace('_', ' ') | title) }}</div>
             </div>
             {% endif %}
-            {% set used = dce.qc_metrics.aif_detection.n_aif_voxels_selected
-               if dce.qc_metrics.aif_detection.n_aif_voxels_selected is defined %}
-            {% if used is defined %}
+            {% if dce.qc_metrics.aif_detection.final_fwhm_seconds is defined %}
             <div class="metric">
-                <div class="metric-label">AIF Voxels (used / available)</div>
-                <div class="metric-value">{{ used }} / {{ used + (dce.qc_metrics.aif_detection.n_aif_voxels_filtered_out | default(0)) }}</div>
+                <div class="metric-label">FWHM</div>
+                <div class="metric-value">{{ "%.1f"|format(dce.qc_metrics.aif_detection.final_fwhm_seconds) }} s</div>
+            </div>
+            {% endif %}
+            {% if dce.qc_metrics.aif_detection.washout_mean is defined %}
+            <div class="metric">
+                <div class="metric-label">Washout</div>
+                <div class="metric-value">{{ "%.2f"|format(dce.qc_metrics.aif_detection.washout_mean) }}</div>
+            </div>
+            {% endif %}
+            {% if dce.qc_metrics.aif_detection.final_auc is defined %}
+            <div class="metric">
+                <div class="metric-label">AUC</div>
+                <div class="metric-value">{{ "%.1f"|format(dce.qc_metrics.aif_detection.final_auc) }} mM&middot;s</div>
             </div>
             {% endif %}
         </div>
@@ -758,63 +758,30 @@
                     {%- elif cbv_c.mode == 'skip' %} warn
                     {%- else %} unknown{% endif %}">{{ cbv_c.mode }}</div>
             </div>
+            {% if cbv_c.mode == 'soft' and cbv_c.vp_uncertainty is defined %}
+            <div class="metric">
+                <div class="metric-label">Relative Constraint Width</div>
+                <div class="metric-value">{{ "%.0f"|format(cbv_c.vp_uncertainty * 100) }}%</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Independence</div>
+                <div class="metric-value">No</div>
+            </div>
+            {% endif %}
         </div>
         {% if cbv_c.reason is defined %}
-        <div class="metrics" style="grid-template-columns: 1fr; margin-top: 8px;">
-            <div class="metric">
-                <div class="metric-label">Reason</div>
-                <div class="metric-value" style="font-size: 1.0em; font-weight: normal;">{{ cbv_c.reason }}</div>
-            </div>
-        </div>
-        {% endif %}
-        {% if cbv_c.mode == 'soft' and cbv_c.vp_uncertainty is defined %}
-        <div class="metrics" style="grid-template-columns: 1fr; margin-top: 8px;">
-            <div class="metric">
-                <div class="metric-label">DSC-informed vp Constraint</div>
-                <div class="metric-value" style="font-size: 1.0em; font-weight: normal;">
-                    DSC nCBV supplied a soft spatial constraint on vp. Relative constraint width: {{ "%.0f"|format(cbv_c.vp_uncertainty * 100) }}%. Because vp uses nCBV as input, subsequent DSC–DCE agreement is not independent.
-                </div>
-            </div>
-        </div>
+        <p class="preload-note">{{ cbv_c.reason }}</p>
         {% endif %}
         {% if cbv_c.user_override_warning is defined %}
-        <div class="metrics" style="grid-template-columns: 1fr; margin-top: 8px;">
-            <div class="metric">
-                <div class="metric-label warn">User Override Warning</div>
-                <div class="metric-value warn" style="font-size: 1.0em; font-weight: normal;">{{ cbv_c.user_override_warning }}</div>
-            </div>
-        </div>
+        <p class="preload-note warning">{{ cbv_c.user_override_warning }}</p>
         {% endif %}
         {% if cbv_c.skip_reason is defined and cbv_c.skip_reason == 'no_nawm_mask' %}
-        <div class="metrics" style="grid-template-columns: 1fr; margin-top: 8px;">
-            <div class="metric">
-                <div class="metric-label">No NAWM Reference</div>
-                <div class="metric-value" style="font-size: 1.0em; font-weight: normal;">
-                    vp constraint skipped because no NAWM reference mask was available (neither from tumor segmentation nor user-supplied). DCE PK estimates use default priors only; DSC CBV was not integrated into the vp posterior.
-                </div>
-            </div>
-        </div>
+        <p class="preload-note">No NAWM reference: vp constraint skipped; DCE PK estimates use default priors.</p>
         {% elif cbv_c.skip_reason is defined and cbv_c.skip_reason == 'no_dsc_run' %}
-        <div class="metrics" style="grid-template-columns: 1fr; margin-top: 8px;">
-            <div class="metric">
-                <div class="metric-label">No DSC Data</div>
-                <div class="metric-value" style="font-size: 1.0em; font-weight: normal;">
-                    DSC was not processed for this subject; no CBV available to constrain vp. DCE PK estimates use default priors only.
-                </div>
-            </div>
-        </div>
+        <p class="preload-note">No DSC data: vp constraint skipped; DCE PK estimates use default priors.</p>
         {% endif %}
         {% if cbv_c.magnitude_gate_triggered is defined and cbv_c.magnitude_gate_triggered %}
-        <div class="metrics" style="grid-template-columns: 1fr; margin-top: 8px;">
-            <div class="metric">
-                <div class="metric-label warn">vp Magnitude Gate Triggered</div>
-                <div class="metric-value warn" style="font-size: 1.0em; font-weight: normal;">
-                    Derived vp prior median
-                    {% if cbv_c.vp_median is defined %}({{ "%.4f"|format(cbv_c.vp_median) }}){% endif %}
-                    fell outside the physiological range [0.008, 0.06]. This indicates a scale or calibration failure in the DSC→DCE pathway (typically an nCBV normalization problem). The constraint was downgraded to SKIP and DCE vp was fit without the DSC-derived prior.
-                </div>
-            </div>
-        </div>
+        <p class="preload-note warning">vp magnitude gate triggered{% if cbv_c.vp_median is defined %} (median {{ "%.4f"|format(cbv_c.vp_median) }}){% endif %}; the DSC-derived constraint was skipped.</p>
         {% endif %}
     </div>
     {% endif %}
@@ -832,17 +799,12 @@
                 <div class="metric-value">Skipped (informational)</div>
             </div>
         </div>
-        <div class="metrics" style="grid-template-columns: 1fr; margin-top: 8px;">
-            <div class="metric">
-                <div class="metric-label">Reason</div>
-                <div class="metric-value" style="font-size: 1.0em; font-weight: normal;">
-                    {{ xval.reason|default('DSC-DCE cross-validation was skipped for this subject.') }}
-                    {% if 'NAWM' in xval.reason|default('') %}
-                    This is expected for bilateral disease or when tumor segmentation provides no contralateral NAWM. vp quantification proceeds without cross-modality validation.
-                    {% endif %}
-                </div>
-            </div>
-        </div>
+        <p class="preload-note">
+            {{ xval.reason|default('DSC-DCE cross-validation was skipped for this subject.') }}
+            {% if 'NAWM' in xval.reason|default('') %}
+            This is expected for bilateral disease or when tumor segmentation provides no contralateral NAWM. vp quantification proceeds without cross-modality validation.
+            {% endif %}
+        </p>
     </div>
     {% elif not xval.skipped|default(false) %}
     <div class="section">
@@ -859,6 +821,12 @@
                     {%- else %} poor{% endif %}">{{ xval.status }}</div>
             </div>
             {% endif %}
+            {% if xval.constraint_mode is defined and xval.constraint_mode %}
+            <div class="metric">
+                <div class="metric-label">Constraint</div>
+                <div class="metric-value">{{ xval.constraint_mode | replace('_', ' ') | title }}</div>
+            </div>
+            {% endif %}
             {% if xval.metrics is defined %}
             {% if xval.constraint_coupled is defined and xval.constraint_coupled %}
             <div class="metric">
@@ -870,6 +838,12 @@
                 <div class="metric-value">No — vp used DSC nCBV</div>
             </div>
             {% else %}
+            {% if xval.metrics.fraction_valid is defined %}
+            <div class="metric">
+                <div class="metric-label">Valid Voxels</div>
+                <div class="metric-value">{{ "%.0f"|format(xval.metrics.fraction_valid * 100) }}%</div>
+            </div>
+            {% endif %}
             {% if xval.metrics.median_ratio is defined and xval.metrics.median_ratio > 0 %}
             <div class="metric">
                 <div class="metric-label">vp/CBV Ratio</div>
@@ -888,19 +862,7 @@
                 <div class="metric-value {{ dce.display_status.xval_correlation }}">{{ "%.3f"|format(xval.metrics.correlation) }}</div>
             </div>
             {% endif %}
-            {% if xval.metrics.fraction_valid is defined %}
-            <div class="metric">
-                <div class="metric-label">Valid Voxels</div>
-                <div class="metric-value">{{ "%.0f"|format(xval.metrics.fraction_valid * 100) }}%</div>
-            </div>
             {% endif %}
-            {% endif %}
-            {% endif %}
-            {% if xval.constraint_mode is defined and xval.constraint_mode %}
-            <div class="metric">
-                <div class="metric-label">Constraint</div>
-                <div class="metric-value">{{ xval.constraint_mode | replace('_', ' ') | title }}</div>
-            </div>
             {% endif %}
             {% if xval.dsc_preload_configured is defined and xval.dsc_preload_configured is not none %}
             <div class="metric">
@@ -910,14 +872,7 @@
             {% endif %}
         </div>
         {% if xval.interpretation is defined and xval.interpretation %}
-        <div class="metrics" style="grid-template-columns: 1fr; margin-top: 8px;">
-            <div class="metric">
-                <div class="metric-label">Interpretation</div>
-                <div class="metric-value" style="font-size: 1.0em; font-weight: normal;">
-                    {{ xval.interpretation }}
-                </div>
-            </div>
-        </div>
+        <p class="preload-note">{{ xval.interpretation }}</p>
         {% endif %}
         {% if dce.images.dsc_dce_xval is defined and dce.images.dsc_dce_xval %}
         <div class="figure-container" style="margin-top: 10px;">

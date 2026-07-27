@@ -62,6 +62,12 @@ def _minimal_parent_ctx(dsc=None, dce=None) -> dict:
     }
 
 
+def _assert_in_order(rendered: str, *labels: str) -> None:
+    """Assert that each visible label follows the preceding label."""
+    positions = [rendered.index(label) for label in labels]
+    assert positions == sorted(positions)
+
+
 def test_parent_render_hides_dsc_blocks_when_no_dsc(env):
     """On DCE-only runs, DSC CBV Constraint and DSC-DCE Cross-Validation sections must NOT render."""
     template = env.get_template("report_unified.html")
@@ -99,6 +105,14 @@ def test_dce_constraint_coupled_diagnostic_is_not_labeled_validation(env):
     assert "Relative Constraint Width" in rendered
     assert "50%" in rendered
     assert "No — vp used DSC nCBV" in rendered
+    _assert_in_order(
+        rendered,
+        '<div class="metric-label">Status</div>',
+        '<div class="metric-label">Constraint</div>',
+        '<div class="metric-label">Relative Constraint Width</div>',
+        '<div class="metric-label">Independence</div>',
+    )
+    assert '<div class="metric-label">Interpretation</div>' not in rendered
 
 
 def test_dce_signal_conversion_qc_renders(env):
@@ -134,6 +148,134 @@ def test_dce_signal_conversion_qc_renders(env):
     )
     assert rendered.index("Invalid T1 in DCE Space") < rendered.index(
         "DCE Preprocessing QC"
+    )
+
+
+def test_dce_b1_cards_follow_qc_hierarchy(env):
+    """B1 status, summaries, support, and processing fields are ordered."""
+    template = env.get_template("sections/section_dce.html")
+    dce = {
+        "qc_metrics": {
+            "b1_mapping": {
+                "b1_status": "PASS",
+                "method": "afi",
+                "median_b1": 1.0,
+                "mean_b1": 1.01,
+                "std_b1": 0.05,
+                "pct_correction_gt_10": 12.0,
+                "pct_correction_gt_20": 3.0,
+                "smoothing_fwhm_mm": 4.0,
+                "clip_low": 0.5,
+                "clip_high": 1.5,
+            },
+            "signal_conversion": {
+                "b1_missing_voxels": 10,
+                "b1_missing_fraction": 0.01,
+            },
+        },
+        "images": {},
+        "display_status": {},
+    }
+    rendered = template.render(dce=dce)
+    _assert_in_order(
+        rendered,
+        "B1 Status",
+        "B1 Method",
+        "Median B1+",
+        "Mean B1+",
+        "Std B1+",
+        "&gt;10% Correction",
+        "&gt;20% Correction",
+        "Missing B1 in DCE Space",
+        "Smoothing FWHM",
+        "Clip Range",
+    )
+
+
+def test_dce_preprocessing_cards_align_with_dsc_order(env):
+    """DCE shared acquisition/QC fields use the common DSC/DCE order."""
+    template = env.get_template("sections/section_dce.html")
+    preprocessing = {
+        "motion_status": "PASS",
+        "baseline_frames": 5,
+        "tr_ms": 3.0,
+        "volume_tr_s": 4.0,
+        "te_ms": 1.0,
+        "n_volumes": 60,
+        "voxel_size_mm": [1.0, 1.0, 4.0],
+        "n_brain_voxels": 100,
+        "peak_enh_pct": 30.0,
+        "mean_tsnr": 20.0,
+        "mean_cnr": 8.0,
+        "baseline_tsnr": 25.0,
+        "baseline_snr_low_fraction": 0.0,
+    }
+    dce = {
+        "qc_metrics": {"preprocessing": preprocessing},
+        "images": {"preprocessing_qc": "preproc.png"},
+        "display_status": {},
+    }
+    rendered = template.render(dce=dce)
+    _assert_in_order(
+        rendered,
+        "DCE Preprocessing QC",
+        "TR (pulse)",
+        "Volume TR",
+        "TE",
+        "Volumes",
+        "Voxel Size",
+        "Brain Voxels",
+        "Peak Enhancement",
+        "Mean tSNR",
+        "Mean CNR",
+        "Baseline Frames",
+        "Mean Baseline tSNR",
+        "Low Baseline SNR",
+    )
+    assert rendered.index("Baseline Frames") > rendered.index("DCE Preprocessing QC")
+
+
+def test_dce_aif_cards_follow_qc_hierarchy(env):
+    """DCE AIF identity/support precedes peak scaling and shape metrics."""
+    template = env.get_template("sections/section_dce.html")
+    aif = {
+        "aif_status": "PASS",
+        "detection_method": "measured",
+        "n_aif_voxels_selected": 5,
+        "n_aif_voxels_filtered_out": 2,
+        "quality_score": 0.8,
+        "cnr_mean": 10.0,
+        "emitted_peak_mm": 5.0,
+        "raw_peak_mm": 4.0,
+        "peak_scaling_policy": "one_sided_lower_bound",
+        "peak_scaling_applied": True,
+        "peak_scaling_factor": 1.25,
+        "peak_scaling_trigger": "below_expected_minimum",
+        "final_fwhm_seconds": 8.0,
+        "washout_mean": 0.3,
+        "final_auc": 30.0,
+    }
+    dce = {
+        "qc_metrics": {"aif_detection": aif},
+        "images": {},
+        "display_status": {},
+    }
+    rendered = template.render(dce=dce)
+    _assert_in_order(
+        rendered,
+        "AIF Status",
+        "Method",
+        "AIF Voxels",
+        "Quality Score",
+        "CNR",
+        "Emitted Peak",
+        "Raw Peak",
+        "Peak Scaling",
+        "Peak Scale Factor",
+        "Peak Scaling Trigger",
+        "FWHM",
+        "Washout",
+        "AUC",
     )
 
 
@@ -726,6 +868,7 @@ def test_preload_user_specified_keeps_preload_status(env):
     assert "Half Dose" in rendered
     assert "K2 Adequacy" in rendered
     assert "Adequate" in rendered
+    _assert_in_order(rendered, "Preload Status", "K2 Adequacy", "User-Specified Dose")
 
 
 def test_preload_user_specified_dose_shows_na_when_absent(env):
@@ -766,6 +909,106 @@ def test_positive_tail_leakage_warning_renders(env):
     assert "72%" in rendered
     # Leakage section must not leak vp/constraint language into this warning.
     assert "vp anchor" not in rendered.split("Preload &amp; Leakage")[-1].split("</div>")[0]
+
+
+def test_dsc_preprocessing_and_aif_cards_follow_common_order(env):
+    """DSC shared preprocessing and AIF fields follow the DCE hierarchy."""
+    template = env.get_template("sections/section_dsc.html")
+    dsc = {
+        "qc_metrics": {
+            "preprocessing": {
+                "tr_ms": 1500.0,
+                "te_ms": 30.0,
+                "n_volumes": 60,
+                "voxel_size_mm": [2.0, 2.0, 4.0],
+                "n_brain_voxels": 100,
+                "peak_drop_pct": 40.0,
+                "mean_tsnr": 20.0,
+                "mean_cnr": 8.0,
+            },
+            "aif_detection": {
+                "detection_method": "atlas_strict",
+                "quality_score": 0.8,
+                "n_aif_voxels_selected": 5,
+                "n_aif_voxels_available": 8,
+                "n_baseline_frames": 6,
+                "arrival_time_seconds": 12.0,
+                "aif_metrics": {
+                    "peak_conc": 3.0,
+                    "ph": 40.0,
+                    "fwhm": 6.0,
+                    "ttp": 14.0,
+                    "psr": 0.8,
+                    "brr": 0.9,
+                },
+            },
+        },
+        "images": {},
+        "display_status": {},
+    }
+    rendered = template.render(dsc=dsc)
+    _assert_in_order(
+        rendered,
+        "DSC Preprocessing QC",
+        "TR",
+        "TE",
+        "Volumes",
+        "Voxel Size",
+        "Brain Voxels",
+        "Peak Signal Drop",
+        "Mean tSNR",
+        "Mean CNR",
+        "Arterial Input Function",
+        "AIF Status",
+        "Method",
+        "AIF Voxels",
+        "Baseline Frames",
+        "Arrival Time",
+        "Peak Concentration",
+        "Peak Height",
+        "FWHM",
+        "TTP",
+        "Peak Signal Ratio",
+        "Baseline Return Ratio",
+    )
+
+
+def test_tumor_and_nawm_cards_are_ordered_and_unambiguous(env):
+    """Tumor totals lead components and NAWM omits internal atlas provenance."""
+    template = env.get_template("sections/section_tumor_seg.html")
+    tumor_seg = {
+        "qc_metrics": {
+            "segmentation": {
+                "validation": {
+                    "has_tumor": True,
+                    "total_tumor_volume_ml": 12.0,
+                    "enhancing_volume_ml": 4.0,
+                    "non_enhancing_volume_ml": 8.0,
+                },
+            },
+            "nawm": {
+                "selected_hemisphere": "right",
+                "n_voxels": 1000,
+                "volume_ml": 2.0,
+                "valid": True,
+                "atlas_used": True,
+            },
+        },
+        "images": {},
+    }
+    rendered = template.render(tumor_seg=tumor_seg)
+    _assert_in_order(
+        rendered,
+        "Tumor Detected",
+        "Total Tumor Volume",
+        "Enhancing Volume",
+        "Non-Enhancing Volume",
+        "Selected Hemisphere",
+        "NAWM Voxels",
+        "NAWM Volume",
+        "Minimum Size Met",
+    )
+    assert "Atlas Used" not in rendered
 
 
 def test_positive_tail_warning_silent_when_low(env):
