@@ -28,7 +28,6 @@ from pmriprep.utils.outputs import (
 from pmriprep.utils.dce_dsc_validation import (
     ValidationMetrics,
     ValidationResult,
-    calculate_correction_factor,
     validate_vp_cbv,
     validate_vp_cbv_from_files,
 )
@@ -82,7 +81,6 @@ __all__ = [
     # dce_dsc_validation
     "ValidationMetrics",
     "ValidationResult",
-    "calculate_correction_factor",
     "validate_vp_cbv",
     "validate_vp_cbv_from_files",
     # tumor_seg

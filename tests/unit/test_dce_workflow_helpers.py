@@ -416,10 +416,8 @@ class TestDscDceValidationNodeDispatch:
             "simulated validation failure" in r.message for r in caplog.records
         )
 
-    def test_validation_node_extracts_overshoot(self, tmp_path: Any) -> None:
-        """pk_qc dict → overshoot extracted from ``dsc_cbv_constraint`` and
-        forwarded to ``validate_vp_cbv_from_files`` as
-        ``aif_tissue_overshoot_fraction``. Catches dict-path typos."""
+    def test_validation_node_extracts_constraint_width(self, tmp_path: Any) -> None:
+        """pk_qc forwards constraint mode and relative prior width."""
         from pmriprep.workflows.dce.base import _dsc_dce_validation_node
 
         ncbv_file = _write_nifti(
@@ -438,7 +436,7 @@ class TestDscDceValidationNodeDispatch:
         pk_qc = {
             "dsc_cbv_constraint": {
                 "mode": "soft",
-                "aif_tissue_overshoot_fraction": 0.94,
+                "vp_uncertainty": 0.5,
             },
         }
 
@@ -455,10 +453,44 @@ class TestDscDceValidationNodeDispatch:
             )
 
         assert captured["constraint_mode"] == "soft"
-        assert captured["aif_tissue_overshoot_fraction"] == 0.94
+        assert captured["constraint_relative_width"] == 0.5
         # Guard the dict-vs-string dispatch: ncbv_path must still route through.
         assert captured["ncbv_path"] == ncbv_file
         assert "cbv_path" not in captured
+
+
+def test_xval_plot_node_emits_constraint_diagnostic(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Constraint-coupled results still produce the diagnostic figure."""
+    from pathlib import Path
+
+    from pmriprep.workflows.dce.base import _dsc_dce_xval_plot_node
+
+    shape = (8, 8, 4)
+    ncbv = np.linspace(0.5, 2.5, np.prod(shape)).reshape(shape)
+    vp = 0.01 * ncbv
+    vp_file = _write_nifti(tmp_path / "vp.nii.gz", vp)
+    ncbv_file = _write_nifti(tmp_path / "ncbv.nii.gz", ncbv)
+    mask_file = _write_nifti(tmp_path / "mask.nii.gz", np.ones(shape))
+    monkeypatch.chdir(tmp_path)
+
+    out_file = _dsc_dce_xval_plot_node(
+        vp_file=vp_file,
+        dsc_ncbv_file=ncbv_file,
+        brain_mask=mask_file,
+        validation_result={
+            "status": "CONSTRAINT-COUPLED",
+            "constraint_mode": "soft",
+            "constraint_coupled": True,
+            "constraint_relative_width": 0.5,
+            "metrics": {"correlation": 1.0, "pearson_correlation": 1.0},
+        },
+    )
+
+    assert out_file is not None
+    assert Path(out_file).is_file()
 
 
 # =============================================================================

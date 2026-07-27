@@ -5,9 +5,9 @@ NAWM-normalized relative CBV (nCBV). The expected ``vp / nCBV`` ratio is
 ``NAWM_VP_REFERENCE`` by construction. PMRIPrep does not calculate absolute
 CBV, so unnormalized relative-CBV maps are not valid inputs here.
 
-Ratio deviations indicate:
-- Ratio << expected: preload effect (reduced DSC signal from prior contrast).
-- Ratio >> expected: DCE overestimation or DSC underestimation.
+For unconstrained fits, the comparison is a coarse cross-modality
+plausibility check. When DSC nCBV supplies the vp prior, the same metrics are
+descriptive constraint diagnostics and are not independent validation.
 """
 
 import logging
@@ -33,30 +33,18 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 
-#: Two-tier ratio tolerance for validation.
-#: PASS band: expected × (1 ± 0.30). WARN band: expected × (1 ± 0.50).
-#: ±50% (3:1 range) is too generous for PASS; ±30% captures clinically
-#: meaningful deviation while allowing for systematic Hct/density uncertainty.
-RATIO_TOLERANCE_PASS: float = 0.30
-RATIO_TOLERANCE_WARN: float = 0.50
-
 #: Minimum vp value to include in validation (avoid numerical instability)
 MIN_VP_FOR_VALIDATION: float = 0.001
 
 #: Maximum vp for validation (above = likely large vessel partial volume effect)
 MAX_VP_FOR_VALIDATION: float = 0.15
 
-#: Spearman rank correlation thresholds for unconstrained vp-CBV validation.
+#: Spearman rank correlation thresholds for unconstrained vp-nCBV validation.
 #: ρ=0.40 → ~16% shared variance, a conventional "moderate" cutoff. DSC and
 #: DCE measure related but distinct vascular features. ρ<0.20 is
 #: effectively noise.
 CORRELATION_PASS_UNCONSTRAINED: float = 0.40
 CORRELATION_WARN_UNCONSTRAINED: float = 0.20
-
-#: Correlation thresholds for soft-constrained validation.
-#: Higher bar because Bayesian prior from CBV should inflate correlation.
-CORRELATION_PASS_SOFT: float = 0.50
-CORRELATION_WARN_SOFT: float = 0.30
 
 #: Minimum fraction of valid voxels for reliable validation.
 #: Thresholds depend on DCE constraint mode because soft-constrained Bayesian
@@ -72,18 +60,8 @@ CORRELATION_WARN_SOFT: float = 0.30
 FRACTION_VALID_PASS_UNCONSTRAINED: float = 0.30
 FRACTION_VALID_WARN_UNCONSTRAINED: float = 0.15
 
-# Soft constraint: Bayesian prior concentrates vp, reducing valid fraction
-FRACTION_VALID_PASS_SOFT: float = 0.05
-FRACTION_VALID_WARN_SOFT: float = 0.02
-
 #: Absolute minimum valid voxels for statistical reliability.
 MIN_VALID_VOXELS: int = 500
-
-#: Standard deviation threshold for ratio-based circularity detection.
-#: When vp is soft-constrained to DSC CBV with tight bounds, the vp/CBV
-#: ratio becomes near-constant (std < 0.01). Empirically, circular soft
-#: constraints produce std_ratio < 0.001 while genuine fits produce > 0.1.
-CIRCULAR_STD_RATIO_THRESHOLD: float = 0.01
 
 
 # =============================================================================
@@ -169,89 +147,43 @@ class ValidationResult:
     Attributes
     ----------
     status : str
-        Overall validation status (PASS/WARN/POOR/CIRCULAR).
-    preload_effect_detected : bool
-        Whether preload effect is suspected from
-        vp/CBV ratio analysis. Distinct from DSC config ``preload`` which
-        records the user/scanner configuration.
+        Overall validation status (PASS/WARN/POOR/CONSTRAINT-COUPLED).
     dsc_preload_configured : bool, optional
         True when user explicitly overrode
         auto-detection with a preload class (i.e., ``preload != "auto"``).
         None if unknown.
     constraint_mode : str, optional
         CBV constraint mode used (soft/skip/None).
-    circular : bool
-        Reserved (always False — no circular constraint mode is
-        currently supported).
-    correction_factor : float
-        Suggested correction factor to align vp with CBV.
+    constraint_coupled : bool
+        True when DSC nCBV supplied the vp prior, so the comparison is
+        constraint-coupled rather than independent validation.
+    constraint_relative_width : float, optional
+        Relative standard deviation of the DSC-informed vp prior.
     metrics : ValidationMetrics
         Detailed validation metrics.
     interpretation : str
         Human-readable interpretation of results.
-    acquisition_limited : bool
-        True when the AIF-tissue overshoot fraction
-        exceeds the prior-dominance threshold and the nCBV-anchored
-        ratio tolerance was widened. Informational
-        flag; does not imply data-quality failure.
     """
 
     status: str = QCStatus.UNKNOWN
-    preload_effect_detected: bool = False
     dsc_preload_configured: Optional[bool] = None
     constraint_mode: Optional[str] = None
-    circular: bool = False
-    correction_factor: float = 1.0
+    constraint_coupled: bool = False
+    constraint_relative_width: Optional[float] = None
     metrics: ValidationMetrics = field(default_factory=ValidationMetrics)
     interpretation: str = ""
-    acquisition_limited: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         """Convert result to dictionary for JSON serialization."""
         return {
             "status": self.status,
-            "preload_effect_detected": self.preload_effect_detected,
             "dsc_preload_configured": self.dsc_preload_configured,
             "constraint_mode": self.constraint_mode,
-            "circular": self.circular,
-            "correction_factor": self.correction_factor,
+            "constraint_coupled": self.constraint_coupled,
+            "constraint_relative_width": self.constraint_relative_width,
             "metrics": self.metrics.to_dict(),
             "interpretation": self.interpretation,
-            "acquisition_limited": self.acquisition_limited,
         }
-
-
-# =============================================================================
-# Ratio Calculation Functions
-# =============================================================================
-
-
-def calculate_correction_factor(
-    observed_ratio: float,
-    expected_ratio: float,
-) -> float:
-    """Calculate correction factor to align observed ratio with expected.
-
-    The correction factor can be applied to vp or (inversely) to CBV:
-        vp_corrected = vp * correction_factor
-        cbv_corrected = cbv / correction_factor
-
-    Parameters
-    ----------
-    observed_ratio : float
-        Observed mean or median vp/CBV ratio.
-    expected_ratio : float
-        Expected NAWM-anchored vp/nCBV ratio.
-
-    Returns
-    -------
-    float
-        Correction factor (>1 if observed ratio is low, <1 if high).
-    """
-    if observed_ratio <= 0:
-        return 1.0
-
-    return expected_ratio / observed_ratio
 
 
 # =============================================================================
@@ -309,8 +241,7 @@ def validate_vp_cbv(
     mask: npt.NDArray[np.bool_],
     constraint_mode: Optional[str] = None,
     dsc_preload_configured: Optional[bool] = None,
-    *,
-    aif_tissue_overshoot_fraction: Optional[float] = None,
+    constraint_relative_width: Optional[float] = None,
 ) -> ValidationResult:
     """Validate DCE vp against DSC NAWM-normalized relative CBV.
 
@@ -332,47 +263,32 @@ def validate_vp_cbv(
         CBV constraint mode ("soft", "skip", or None).
     dsc_preload_configured : bool, optional
         Whether DSC preload was configured.
-    aif_tissue_overshoot_fraction : float, optional
-        Upstream constraint-block diagnostic
-        (fraction of voxels where ``vp_prior × Cp(peak) > observed
-        C_tissue(peak)``). When greater than
-        ``ACQUISITION_LIMITED_OVERSHOOT_THRESHOLD`` on the nCBV path,
-        vp is prior-dominated by first-pass temporal undersampling;
-        the ratio tolerance is widened to
-        [``VP_NCBV_RATIO_MIN_LIMITED``, ``VP_NCBV_RATIO_MAX_LIMITED``]
-        and ``result.acquisition_limited`` is set. Pass ``None`` to
-        skip (legacy tight-band behavior).
+    constraint_relative_width : float, optional
+        Relative standard deviation of the DSC-informed vp prior.
 
     Returns
     -------
     ValidationResult
-        ValidationResult with status, preload detection, and metrics.
+        ValidationResult with comparison status and metrics.
     """
     from pmriprep.utils.dce_constants import (
-        ACQUISITION_LIMITED_OVERSHOOT_THRESHOLD,
         NAWM_VP_REFERENCE,
-        CIRCULAR_STD_THRESHOLD_NCBV,
         MIN_NCBV_FOR_VALIDATION,
-        VP_NCBV_RATIO_MIN_LIMITED,
-        VP_NCBV_RATIO_MAX_LIMITED,
+        VP_NCBV_RATIO_MAX,
+        VP_NCBV_RATIO_MIN,
     )
 
     result = ValidationResult(
         constraint_mode=constraint_mode,
         dsc_preload_configured=dsc_preload_configured,
+        constraint_coupled=constraint_mode == "soft",
+        constraint_relative_width=constraint_relative_width,
     )
     metrics = ValidationMetrics()
 
     expected_ratio = NAWM_VP_REFERENCE
-    circular_std_threshold = CIRCULAR_STD_THRESHOLD_NCBV
     cbv_min = MIN_NCBV_FOR_VALIDATION
     metrics.expected_ratio = expected_ratio
-
-    # Compute two-tier ratio thresholds from expected ratio
-    ratio_pass_low = expected_ratio * (1.0 - RATIO_TOLERANCE_PASS)
-    ratio_pass_high = expected_ratio * (1.0 + RATIO_TOLERANCE_PASS)
-    ratio_warn_low = expected_ratio * (1.0 - RATIO_TOLERANCE_WARN)
-    ratio_warn_high = expected_ratio * (1.0 + RATIO_TOLERANCE_WARN)
 
     # Extract values within mask
     mask_bool = mask.astype(bool)
@@ -442,131 +358,50 @@ def validate_vp_cbv(
         metrics.correlation = 0.0
         metrics.pearson_correlation = 0.0
 
-    # Calculate correction factor based on median ratio
-    result.correction_factor = calculate_correction_factor(
-        metrics.median_ratio, expected_ratio
-    )
-
-    # Detect near-circularity: soft constraint effectively locking vp to nCBV.
-    # A standard deviation near 0.002 is ~10–20% of the expected ratio.
-    if metrics.std_ratio < circular_std_threshold:
-        result.circular = True
-        result.status = QCStatus.CIRCULAR
+    # A DSC-informed vp fit is coupled to nCBV regardless of how much the
+    # posterior moves away from its prior. Correlation and agreement are
+    # therefore descriptive constraint diagnostics, not validation.
+    if result.constraint_coupled:
+        result.status = QCStatus.CONSTRAINT_COUPLED
         result.metrics = metrics
         result.interpretation = (
-            f"vp/CBV ratio variance too low (std={metrics.std_ratio:.4f}); "
-            "soft constraint is functionally hard -- correlation is circular"
+            "DSC nCBV supplied the soft spatial prior for vp; DSC-DCE "
+            "agreement is constraint-coupled and is not an independent "
+            "validation result"
         )
         logger.info(
-            "Cross-validation CIRCULAR: std_ratio=%.4f < %.4f "
-            "(soft constraint effectively hard)",
-            metrics.std_ratio, circular_std_threshold,
+            "DSC-DCE constraint diagnostic: width=%s, median_ratio=%.4f",
+            constraint_relative_width,
+            metrics.median_ratio,
         )
         return result
 
     # Determine status from ratio, correlation, and coverage
     interpretations: list[str] = []
 
-    # Acquisition-limited flag: when the upstream overshoot detector fires
-    # on the nCBV-anchored path, vp is prior-dominated by first-pass
-    # temporal undersampling. Widen the ratio band to
-    # the physiological envelope instead of flagging WARN on what is a
-    # physics ceiling, not a data-quality failure.
-    acquisition_limited = (
-        aif_tissue_overshoot_fraction is not None
-        and aif_tissue_overshoot_fraction > ACQUISITION_LIMITED_OVERSHOOT_THRESHOLD
-    )
-    result.acquisition_limited = acquisition_limited
-
-    if acquisition_limited:
-        # --- Widened ratio band (vp ≥ 0.005 physiological floor → NAWM ceiling) ---
-        if (VP_NCBV_RATIO_MIN_LIMITED
-                <= metrics.median_ratio
-                <= VP_NCBV_RATIO_MAX_LIMITED):
-            ratio_status = QCStatus.PASS
-            result.preload_effect_detected = False
-            interpretations.append(
-                f"vp/nCBV ratio ({metrics.median_ratio:.3f}) within widened "
-                f"acquisition-limited band "
-                f"[{VP_NCBV_RATIO_MIN_LIMITED:.3f}, {VP_NCBV_RATIO_MAX_LIMITED:.3f}]"
-            )
-        else:
-            ratio_status = QCStatus.WARN
-            result.preload_effect_detected = (
-                metrics.median_ratio < VP_NCBV_RATIO_MIN_LIMITED
-            )
-            interpretations.append(
-                f"vp/nCBV ratio ({metrics.median_ratio:.3f}) outside widened "
-                f"acquisition-limited band "
-                f"[{VP_NCBV_RATIO_MIN_LIMITED:.3f}, {VP_NCBV_RATIO_MAX_LIMITED:.3f}]"
-            )
-        interpretations.append(
-            f"Acquisition-limited regime "
-            f"(aif_tissue_overshoot_fraction={aif_tissue_overshoot_fraction:.2f}"
-            f" > {ACQUISITION_LIMITED_OVERSHOOT_THRESHOLD:.2f}): vp is "
-            "prior-dominated by first-pass temporal undersampling of the AIF "
-            "(Buckley MRM 2002). Widened ratio band applied; magnitude "
-            "validation is informational only."
-        )
-    # --- Ratio status (two-tier: PASS within ±30%, WARN within ±50%) ---
-    elif metrics.median_ratio < ratio_warn_low:
+    if not (VP_NCBV_RATIO_MIN <= metrics.median_ratio <= VP_NCBV_RATIO_MAX):
         ratio_status = QCStatus.WARN
-        result.preload_effect_detected = True
         interpretations.append(
-            f"Low vp/CBV ratio ({metrics.median_ratio:.3f}) suggests preload effect"
-        )
-        interpretations.append(
-            f"Expected ratio: {expected_ratio:.3f}, observed: {metrics.median_ratio:.3f}"
-        )
-        interpretations.append(
-            f"Suggested correction factor: {result.correction_factor:.2f}"
-        )
-    elif metrics.median_ratio > ratio_warn_high:
-        ratio_status = QCStatus.WARN
-        result.preload_effect_detected = False
-        interpretations.append(
-            f"High vp/CBV ratio ({metrics.median_ratio:.3f}) suggests DCE vp overestimation"
-        )
-        interpretations.append(
-            f"Expected ratio: {expected_ratio:.3f}, observed: {metrics.median_ratio:.3f}"
-        )
-        interpretations.append(
-            f"Suggested correction factor: {result.correction_factor:.2f}"
-        )
-    elif (metrics.median_ratio < ratio_pass_low
-            or metrics.median_ratio > ratio_pass_high):
-        ratio_status = QCStatus.WARN
-        result.preload_effect_detected = False
-        interpretations.append(
-            f"vp/CBV ratio ({metrics.median_ratio:.3f}) marginally outside "
-            f"expected range [{ratio_pass_low:.3f}, {ratio_pass_high:.3f}]"
+            f"Median vp/nCBV ratio ({metrics.median_ratio:.3f}) is outside the "
+            f"plausibility interval [{VP_NCBV_RATIO_MIN:.3f}, "
+            f"{VP_NCBV_RATIO_MAX:.3f}]"
         )
     else:
         ratio_status = QCStatus.PASS
-        result.preload_effect_detected = False
         interpretations.append(
-            f"vp/CBV ratio ({metrics.median_ratio:.3f}) within expected range"
-        )
-        interpretations.append(
-            f"Expected: {expected_ratio:.3f}, tolerance: +/-{RATIO_TOLERANCE_PASS*100:.0f}%"
+            f"Median vp/nCBV ratio ({metrics.median_ratio:.3f}) is within the "
+            f"plausibility interval [{VP_NCBV_RATIO_MIN:.3f}, "
+            f"{VP_NCBV_RATIO_MAX:.3f}]"
         )
 
     # --- Correlation status ---
-    if constraint_mode == "soft":
-        corr_pass = CORRELATION_PASS_SOFT
-        corr_warn = CORRELATION_WARN_SOFT
-        interpretations.append(
-            "vp soft-constrained -- correlation may be inflated"
-        )
-    else:
-        corr_pass = CORRELATION_PASS_UNCONSTRAINED
-        corr_warn = CORRELATION_WARN_UNCONSTRAINED
+    corr_pass = CORRELATION_PASS_UNCONSTRAINED
+    corr_warn = CORRELATION_WARN_UNCONSTRAINED
 
     if metrics.correlation < 0:
         corr_status = QCStatus.POOR
         interpretations.append(
-            f"Negative vp-CBV correlation (rho={metrics.correlation:.3f}): "
-            "physically implausible"
+            f"Negative vp-nCBV correlation (rho={metrics.correlation:.3f})"
         )
     elif metrics.correlation < corr_warn:
         corr_status = QCStatus.POOR
@@ -590,12 +425,8 @@ def validate_vp_cbv(
         )
 
     # --- Coverage status (constraint-mode-dependent thresholds) ---
-    if constraint_mode == "soft":
-        frac_pass = FRACTION_VALID_PASS_SOFT
-        frac_warn = FRACTION_VALID_WARN_SOFT
-    else:
-        frac_pass = FRACTION_VALID_PASS_UNCONSTRAINED
-        frac_warn = FRACTION_VALID_WARN_UNCONSTRAINED
+    frac_pass = FRACTION_VALID_PASS_UNCONSTRAINED
+    frac_warn = FRACTION_VALID_WARN_UNCONSTRAINED
 
     if metrics.fraction_valid < frac_warn:
         coverage_status = QCStatus.POOR
@@ -620,7 +451,6 @@ def validate_vp_cbv(
 
     logger.info(
         f"DSC-DCE Validation: status={result.status}, "
-        f"preload_effect_detected={result.preload_effect_detected}, "
         f"median_ratio={metrics.median_ratio:.3f}, "
         f"spearman={metrics.correlation:.3f}, "
         f"pearson={metrics.pearson_correlation:.3f}"
@@ -635,8 +465,7 @@ def validate_vp_cbv_from_files(
     mask_path: Union[str, Path],
     constraint_mode: Optional[str] = None,
     dsc_preload_configured: Optional[bool] = None,
-    *,
-    aif_tissue_overshoot_fraction: Optional[float] = None,
+    constraint_relative_width: Optional[float] = None,
 ) -> ValidationResult:
     """Validate DCE vp against DSC CBV from NIfTI files.
 
@@ -658,7 +487,7 @@ def validate_vp_cbv_from_files(
     Returns
     -------
     ValidationResult
-        ValidationResult with status, preload detection, and metrics.
+        ValidationResult with comparison status and metrics.
 
     Raises
     ------
@@ -689,5 +518,5 @@ def validate_vp_cbv_from_files(
         mask=mask,
         constraint_mode=constraint_mode,
         dsc_preload_configured=dsc_preload_configured,
-        aif_tissue_overshoot_fraction=aif_tissue_overshoot_fraction,
+        constraint_relative_width=constraint_relative_width,
     )

@@ -713,8 +713,8 @@ class TestMCMCQualityFlag:
 
 def test_g6_sigma_inflation_dict_shape():
     """Per-parameter inflation map covers the directly-fitted PK params
-    with the physics-expert sensitivity hierarchy (Buckley 2002 MRM
-    47:601). kep is omitted: it is derived downstream as Ktrans/ve and
+    with the expected AIF-sensitivity hierarchy. kep is omitted: it is
+    derived downstream as Ktrans/ve and
     inherits Ktrans's inflation through that derivation."""
     expected_keys = {"Ktrans", "vp", "ve", "Fp", "PS"}
     assert set(DCE_AIF_G6_SIGMA_INFLATION.keys()) == expected_keys

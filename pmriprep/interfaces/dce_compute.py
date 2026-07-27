@@ -23,7 +23,6 @@ from nipype.interfaces.base import (  # type: ignore[import-untyped]
 )
 
 from pmriprep.utils.dce_constants import (
-    ACQUISITION_LIMITED_OVERSHOOT_THRESHOLD,
     EPSILON_RATIO,
     EPSILON_VE,
     DEFAULT_TSNR_THRESHOLD,
@@ -2599,8 +2598,8 @@ class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
              "confidence (1.0 = standard, 2.0 = G6-admitted low-scale, "
              "3.0 = G6-admitted high-scale or population AIF). Applied "
              "per-parameter via DCE_AIF_G6_SIGMA_INFLATION map; ve is "
-             "uninflated (decoupled from AIF peak amplitude per "
-             "Buckley 2002).",
+             "uninflated because ve is comparatively insensitive to AIF "
+             "peak-amplitude uncertainty.",
     )
 
     # Sloppy / reproducibility
@@ -3218,33 +3217,27 @@ class ComputeDCEMaps(BaseInterface):
     def _prepare_vp_constraint(
         self,
         prepared: _DCEFitPreparation,
-        aif: npt.NDArray[Any],
     ) -> _DCEVPConstraint:
-        """Prepare the DSC-derived vp prior and acquisition-limited QC state.
+        """Prepare the DSC-derived vp prior and its QC state.
 
         Parameters
         ----------
         prepared : _DCEFitPreparation
             Validated DCE inputs, fitting domain, and initial model selection.
-        aif : numpy.ndarray
-            Post-BAT-alignment plasma AIF used by pharmacokinetic fitting.
 
         Returns
         -------
         _DCEVPConstraint
-            Prior map, constraint configuration, diagnostic QC, and any
+            Prior map, constraint configuration, QC summary, and any
             constraint-driven adjustment to automatic model selection.
 
         Notes
         -----
         The prior remains NAWM-anchored as ``vp = NAWM_VP_REFERENCE * nCBV``.
-        The AIF-to-tissue overshoot is informational and never changes the
-        constraint mode or uncertainty.
         """
         from pmriprep.utils.dsc_cbv_constraint import (
             NO_DSC_RUN_REASON_STRING,
             SKIP_REASON_NO_DSC_RUN,
-            SKIP_REASON_SYNTHETIC_AIF,
             ConstraintMode,
             prepare_vp_constraint_from_data,
         )
@@ -3307,66 +3300,15 @@ class ComputeDCEMaps(BaseInterface):
                 constraint_mode = vp_result.config.mode
                 constraint_vp_uncertainty = vp_result.config.vp_uncertainty
                 constraint_qc = vp_result.qc_report
-
                 if (
-                    constraint_mode == ConstraintMode.SOFT
-                    and str(self.inputs.constraint_mode) == "auto"
-                    and vp_constraint_map is not None
+                    vp_constraint_map is not None
+                    and vp_constraint_map.shape != prepared.mask.shape
                 ):
-                    aif_peak = float(np.max(aif))
-                    if aif_peak > 0:
-                        valid_constrained = (
-                            prepared.fitting_mask
-                            & np.isfinite(vp_constraint_map)
-                            & (vp_constraint_map > 0)
-                        )
-                        if int(np.sum(valid_constrained)) > 100:
-                            vp_cp_peak = vp_constraint_map[valid_constrained] * aif_peak
-                            ct_peak_arr = np.max(
-                                prepared.concentration[valid_constrained], axis=-1
-                            )
-                            overshoot_frac = float(np.mean(vp_cp_peak > ct_peak_arr))
-                            constraint_qc["aif_tissue_overshoot_fraction"] = overshoot_frac
-                            if (
-                                isdefined(self.inputs.volume_tr)
-                                and self.inputs.volume_tr is not None
-                                and float(self.inputs.volume_tr) > 0
-                            ):
-                                volume_tr_s = float(self.inputs.volume_tr)
-                                aif_peak_frame = int(np.argmax(aif))
-                                tissue_peak_frames = np.argmax(
-                                    prepared.concentration[valid_constrained], axis=-1
-                                )
-                                median_tissue_peak_frame = float(
-                                    np.median(tissue_peak_frames)
-                                )
-                                constraint_qc["peak_alignment_lag_s"] = (
-                                    median_tissue_peak_frame - aif_peak_frame
-                                ) * volume_tr_s
-                                constraint_qc["volume_tr_s"] = volume_tr_s
-                            else:
-                                constraint_qc["peak_alignment_lag_s"] = None
-                                constraint_qc["peak_alignment_lag_reason"] = (
-                                    "volume_tr_undefined"
-                                )
-                            if overshoot_frac > ACQUISITION_LIMITED_OVERSHOOT_THRESHOLD:
-                                constraint_qc["acquisition_limited_note"] = (
-                                    "High AIF-to-tissue overshoot (>70%): "
-                                    "observed tissue peak under-samples the "
-                                    "first pass (TR ≲ 2 s recommended for "
-                                    "vp identifiability; Buckley MRM 2002). "
-                                    "Posterior vp is prior-dominated by "
-                                    "design at this acquisition; "
-                                    "informational only — no action taken."
-                                )
+                    raise ValueError(
+                        "DSC-informed vp prior shape does not match the DCE domain: "
+                        f"{vp_constraint_map.shape} != {prepared.mask.shape}"
+                    )
 
-                if (
-                    aif_qc_data.get("detection_method") == "synthetic"
-                    or aif_qc_data.get("cbv_auc_denominator_is_synthetic")
-                ):
-                    constraint_qc.setdefault("aif_tissue_overshoot_fraction", None)
-                    constraint_qc["overshoot_applicable"] = False
-                    constraint_qc["overshoot_reason"] = SKIP_REASON_SYNTHETIC_AIF
             except Exception as exc:
                 vp_constraint_map = None
                 constraint_mode = ConstraintMode.SKIP
@@ -3645,7 +3587,7 @@ class ComputeDCEMaps(BaseInterface):
         aif = bat_alignment.aif
         bat_correction = bat_alignment.correction
 
-        vp_constraint = self._prepare_vp_constraint(prepared, aif)
+        vp_constraint = self._prepare_vp_constraint(prepared)
         vp_constraint_map = vp_constraint.vp_map
         constraint_mode = vp_constraint.mode
         constraint_vp_uncertainty = vp_constraint.vp_uncertainty

@@ -1220,34 +1220,3 @@ MAX_NCBV_FOR_VALIDATION: Final[float] = 5.0
 SIGMA_SOFT_K2_SUPPRESSED: Final[float] = 0.40   # adequate
 SIGMA_SOFT_DEFAULT: Final[float] = 0.50         # partial
 SIGMA_SOFT_HIGH_K2: Final[float] = 0.60         # inadequate
-
-#: Circular-detector std threshold when cross-validation uses nCBV.
-#: Ratio vp/nCBV is centered at NAWM_VP_REFERENCE;
-#: threshold ≈10% of that center separates "tight-SOFT prior-dominated"
-#: from "informative DCE posterior" (wide SOFT).
-#: Legacy threshold 0.01 stays for the non-nCBV path (vp/rel_cbv ratio scale).
-CIRCULAR_STD_THRESHOLD_NCBV: Final[float] = 0.002
-CIRCULAR_STD_THRESHOLD_ABS_CBV: Final[float] = 0.01
-
-#: Overshoot fraction above which vp is prior-dominated and xval tolerance
-#: is widened. Jensen-bias signature of first-pass temporal undersampling
-#: (Buckley MRM 2002). Shared with the constraint-block detector in
-#: ``dce_compute.py`` — single source of truth.
-ACQUISITION_LIMITED_OVERSHOOT_THRESHOLD: Final[float] = 0.7
-
-#: Widened lower edge of the vp/nCBV ratio band, applied only when the
-#: ``acquisition_limited`` flag fires. Pinned at the brain-capillary
-#: physiological floor (vp ≥ 0.005) so it does not
-#: undercut the magnitude-plausibility gate. Acquisition-limited CRLB band
-#: from first-pass temporal-undersampling analysis —
-#: independent of ``NAWM_VP_REFERENCE`` position.
-#: Excursions below 0.005 remain a real data issue even in the
-#: prior-dominated regime.
-VP_NCBV_RATIO_MIN_LIMITED: Final[float] = 0.005
-
-#: Widened upper edge of the vp/nCBV ratio band. Acquisition-limited CRLB
-#: ceiling from Buckley MRM 2002 — independent of ``NAWM_VP_REFERENCE``.
-#: The widened band brackets the prior-dominated NAWM posterior envelope
-#: and intentionally spans up to the legacy magnitude-gate ceiling. Scope
-#: is NAWM ratios — tumor-vp excursions are outside the xval domain.
-VP_NCBV_RATIO_MAX_LIMITED: Final[float] = 0.06

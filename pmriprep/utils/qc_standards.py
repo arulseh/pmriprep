@@ -190,7 +190,7 @@ class QCStatus:
     WARN: Final[str] = "WARN"
     POOR: Final[str] = "POOR"
     UNKNOWN: Final[str] = "UNKNOWN"
-    CIRCULAR: Final[str] = "CIRCULAR"
+    CONSTRAINT_COUPLED: Final[str] = "CONSTRAINT-COUPLED"
 
     #: Severity ordering for worst-of comparisons.
     _SEVERITY: Final[dict[str, int]] = {
@@ -312,7 +312,7 @@ def get_status_color(status: str) -> str:
         QCStatus.WARN: COLORBLIND_PALETTE.warning,
         QCStatus.POOR: COLORBLIND_PALETTE.error,
         QCStatus.UNKNOWN: COLORBLIND_PALETTE.secondary,
-        QCStatus.CIRCULAR: COLORBLIND_PALETTE.secondary,
+        QCStatus.CONSTRAINT_COUPLED: COLORBLIND_PALETTE.secondary,
     }
     return status_colors.get(status, COLORBLIND_PALETTE.secondary)
 
@@ -858,15 +858,19 @@ def recommend_dce_qc(qc_metrics: dict[str, Any]) -> dict[str, Any]:
 
     # DSC-DCE cross-validation
     xval = qc_metrics.get("dsc_dce_validation", {})
-    if not xval.get("skipped", False) and not xval.get("circular", False):
+    if (
+        not xval.get("skipped", False)
+        and not xval.get("constraint_coupled", False)
+    ):
         xval_status = xval.get("status")
         xval_metrics = xval.get("metrics", {})
         corr = xval_metrics.get("correlation", 0.0)
         if xval_status == QCStatus.WARN:
-            preload = xval.get("preload_effect_detected", False)
-            detail = "low vp/CBV ratio" if preload else "ratio outside range"
             recommendations.append(QCRecommendation(
-                QCAction.REVIEW, f"DSC-DCE: {detail} (r={corr:.2f})", 1,
+                QCAction.REVIEW,
+                f"DSC-DCE comparison outside its plausibility range "
+                f"(ρ={corr:.2f})",
+                1,
             ))
         elif xval_status == QCStatus.PASS:
             recommendations.append(QCRecommendation(

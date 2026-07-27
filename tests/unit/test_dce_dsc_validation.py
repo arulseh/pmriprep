@@ -85,11 +85,11 @@ class TestCorrelationStatus:
         # With zero input correlation, actual r may be slightly negative
         assert (
             "No meaningful" in result.interpretation
-            or "implausible" in result.interpretation
+            or "Negative" in result.interpretation
         )
 
     def test_negative_correlation_poor(self):
-        """Negative correlation is physically implausible."""
+        """Negative correlation receives a poor descriptive status."""
         rng = np.random.default_rng(99)
         n = 3000
         vp_flat = np.clip(0.04 + 0.02 * rng.standard_normal(n), 0.002, 0.14)
@@ -100,20 +100,20 @@ class TestCorrelationStatus:
         mask = np.ones((n, 1, 1), dtype=bool)
         result = validate_vp_cbv(vp, cbv, mask)
         assert result.status == QCStatus.POOR
-        assert "implausible" in result.interpretation
+        assert "Negative" in result.interpretation
 
 
-class TestSoftConstraintHigherBar:
-    """Soft constraint mode should require higher correlation."""
+class TestSoftConstraintCoupling:
+    """Soft constraints make DSC-DCE agreement non-independent."""
 
-    def test_soft_moderate_correlation_warns(self):
-        """Moderate correlation passes unconstrained but warns under soft constraint."""
+    def test_soft_moderate_correlation_is_constraint_coupled(self):
+        """Constraint coupling is reported regardless of correlation strength."""
         vp, cbv, mask = _make_data(correlation=0.50)
         result_skip = validate_vp_cbv(vp, cbv, mask, constraint_mode="skip")
         result_soft = validate_vp_cbv(vp, cbv, mask, constraint_mode="soft")
-        # Unconstrained should pass, soft should warn (or worse)
         assert result_skip.status == QCStatus.PASS
-        assert result_soft.status in (QCStatus.WARN, QCStatus.POOR)
+        assert result_soft.status == QCStatus.CONSTRAINT_COUPLED
+        assert result_soft.constraint_coupled is True
 
 
 class TestCoverageStatus:
@@ -160,13 +160,12 @@ class TestSoftConstraintCoverage:
         cbv = cbv_flat.reshape(n, 1, 1)
         mask = np.ones((n, 1, 1), dtype=bool)
         result = validate_vp_cbv(vp, cbv, mask, constraint_mode="soft")
-        # 6% > 5% soft pass threshold → coverage PASS
-        # Overall status depends on correlation and ratio too
+        # Constraint-coupled runs retain descriptive metrics.
         assert "Insufficient overlap" not in result.interpretation
         assert "Limited overlap" not in result.interpretation
 
     def test_soft_constraint_very_low_coverage_poor(self):
-        """~1.5% coverage should be POOR even under soft constraint."""
+        """Adequate sample count remains a coupled diagnostic at low coverage."""
         n = 10000
         rng = np.random.default_rng(42)
         vp_flat = np.full(n, 0.0005)
@@ -188,20 +187,20 @@ class TestSoftConstraintCoverage:
         cbv = cbv_flat.reshape(n, 1, 1)
         mask = np.ones((n, 1, 1), dtype=bool)
         result = validate_vp_cbv(vp, cbv, mask, constraint_mode="soft")
-        assert result.status == QCStatus.POOR
-        assert "Insufficient overlap" in result.interpretation
+        assert result.status == QCStatus.CONSTRAINT_COUPLED
+        assert "not an independent" in result.interpretation
 
 
 class TestRatioStillWorks:
     """Ratio-based detection should still work."""
 
-    def test_low_ratio_preload_detected(self):
-        """Low vp/CBV ratio should still flag preload."""
+    def test_low_ratio_warns(self):
+        """Low vp/nCBV ratio should trigger the plausibility warning."""
         vp, cbv, mask = _make_data(
             correlation=0.5, vp_mean=0.003, cbv_mean=1.0
         )
         result = validate_vp_cbv(vp, cbv, mask)
-        assert result.preload_effect_detected is True
+        assert result.status in (QCStatus.WARN, QCStatus.POOR)
 
     def test_high_ratio_warns(self):
         """High vp/CBV ratio should warn."""
@@ -223,13 +222,12 @@ class TestWorstOfLogic:
         assert result.status == QCStatus.POOR
 
     def test_bad_ratio_good_correlation_is_warn(self):
-        """Low ratio (preload) with good correlation → WARN from ratio."""
+        """Low ratio with good correlation still warns on plausibility."""
         vp, cbv, mask = _make_data(
             correlation=0.5, vp_mean=0.003, cbv_mean=1.0,
         )
         result = validate_vp_cbv(vp, cbv, mask)
         assert result.status == QCStatus.WARN
-        assert result.preload_effect_detected is True
 
     def test_good_ratio_good_corr_bad_coverage_is_poor(self):
         """Good ratio and correlation but terrible coverage → POOR."""
@@ -330,7 +328,7 @@ class TestTightenedThresholds:
         # Default vp_mean=0.010, cbv_mean=1.0 gives ratio ≈ 0.010.
         vp, cbv, mask = _make_data()
         result = validate_vp_cbv(vp, cbv, mask, constraint_mode="skip")
-        assert "within expected range" in result.interpretation
+        assert "within the plausibility interval" in result.interpretation
 
 
 class TestNcbvPathValidation:
@@ -344,7 +342,7 @@ class TestNcbvPathValidation:
 
         # Generate nCBV centered at 1.0 (NAWM reference), vp centered at
         # NAWM_VP_REFERENCE with partially independent noise so std(vp/nCBV)
-        # > the circular gate.
+        # while remaining independent of the DSC constraint path.
         n = 5000
         rng = np.random.default_rng(7)
         z1 = rng.standard_normal(n)
@@ -366,14 +364,10 @@ class TestNcbvPathValidation:
         assert result.metrics.median_ratio == pytest.approx(
             NAWM_VP_REFERENCE, abs=0.003
         )
-        assert result.circular is False
+        assert result.constraint_coupled is False
 
-    def test_widened_soft_does_not_trigger_circular_ncbv_path(self) -> None:
-        """Realistic SOFT posterior spread (> CIRCULAR_STD_THRESHOLD_NCBV)
-        on the nCBV path is NOT flagged circular."""
-        from pmriprep.utils.dce_constants import CIRCULAR_STD_THRESHOLD_NCBV
-
-        # Inject enough vp spread that std(vp/nCBV) clearly exceeds 0.002.
+    def test_soft_constraint_is_always_reported_as_coupled(self) -> None:
+        """A soft DSC prior makes agreement non-independent at any spread."""
         n = 5000
         rng = np.random.default_rng(11)
         ncbv_flat = np.clip(1.0 + 0.3 * rng.standard_normal(n), 0.4, 4.5)
@@ -383,92 +377,16 @@ class TestNcbvPathValidation:
         mask = np.ones((n, 1, 1), dtype=bool)
 
         result = validate_vp_cbv(
-            vp, ncbv, mask, constraint_mode="soft",
-        )
-        assert result.metrics.std_ratio > CIRCULAR_STD_THRESHOLD_NCBV
-        assert result.circular is False
-
-
-class TestAcquisitionLimited:
-    """Acquisition-limited flag widens the nCBV ratio tolerance when the
-    upstream ``aif_tissue_overshoot_fraction`` exceeds the prior-domination
-    threshold (Buckley MRM 2002).
-
-    Fixture note: tests on the nCBV-anchored path synthesize data with
-    ``cbv_mean=1.0`` (NAWM-normalized scale, NAWM=1) so that the observed
-    vp/nCBV ratio approximates ``vp_mean`` directly, matching
-    NAWM_VP_REFERENCE=0.02.
-    """
-
-    @staticmethod
-    def _ncbv_data(vp_mean: float, n: int = 5000, seed: int = 7):
-        rng = np.random.default_rng(seed)
-        z1 = rng.standard_normal(n)
-        z2 = rng.standard_normal(n)
-        z_corr = 0.6 * z1 + np.sqrt(1 - 0.6**2) * z2
-        vp_flat = np.clip(vp_mean + 0.008 * z1, 0.002, 0.14)
-        ncbv_flat = np.clip(1.0 + 0.3 * z_corr, 0.4, 4.5)
-        vp = vp_flat.reshape(n, 1, 1)
-        ncbv = ncbv_flat.reshape(n, 1, 1)
-        mask = np.ones((n, 1, 1), dtype=bool)
-        return vp, ncbv, mask
-
-    def test_overshoot_above_threshold_widens_tolerance(self) -> None:
-        """v254 half-dose pattern: overshoot=0.94, ratio≈0.007 → PASS with flag."""
-        vp, ncbv, mask = self._ncbv_data(vp_mean=0.007)
-        result = validate_vp_cbv(
-            vp, ncbv, mask,
+            vp,
+            ncbv,
+            mask,
             constraint_mode="soft",
-            aif_tissue_overshoot_fraction=0.94,
+            constraint_relative_width=0.5,
         )
-        assert result.acquisition_limited is True
-        assert result.status == QCStatus.PASS
-        assert "Buckley" in result.interpretation
-
-    def test_overshoot_below_threshold_keeps_tight_band(self) -> None:
-        """overshoot=0.3 with low ratio still hits WARN on the tight band."""
-        vp, ncbv, mask = self._ncbv_data(vp_mean=0.007)
-        result = validate_vp_cbv(
-            vp, ncbv, mask,
-            constraint_mode="soft",
-            aif_tissue_overshoot_fraction=0.3,
-        )
-        assert result.acquisition_limited is False
-        assert result.status == QCStatus.WARN
-
-    def test_overshoot_boundary_exactly_0_7_not_flagged(self) -> None:
-        """Threshold uses strict ``>``; overshoot == 0.7 exactly → tight-band path."""
-        vp, ncbv, mask = self._ncbv_data(vp_mean=0.007)
-        result = validate_vp_cbv(
-            vp, ncbv, mask,
-            constraint_mode="soft",
-            aif_tissue_overshoot_fraction=0.7,
-        )
-        assert result.acquisition_limited is False
-
-    def test_overshoot_none_uses_tight_band(self) -> None:
-        """Missing overshoot (user-forced mode / no-NAWM path) → tight band."""
-        vp, ncbv, mask = self._ncbv_data(vp_mean=0.007)
-        result = validate_vp_cbv(
-            vp, ncbv, mask,
-            constraint_mode="soft",
-            aif_tissue_overshoot_fraction=None,
-        )
-        assert result.acquisition_limited is False
-        # Observed ratio ≈0.007 is outside the tight ±30% band around 0.02,
-        # so the tight-band path still WARNs — proving the flag was not applied.
-        assert result.status == QCStatus.WARN
-
-    def test_outside_widened_band_still_warns(self) -> None:
-        """Sub-physiological ratio (< 0.005 floor) warns even with the flag set."""
-        vp, ncbv, mask = self._ncbv_data(vp_mean=0.002)
-        result = validate_vp_cbv(
-            vp, ncbv, mask,
-            constraint_mode="soft",
-            aif_tissue_overshoot_fraction=0.94,
-        )
-        assert result.acquisition_limited is True
-        assert result.status == QCStatus.WARN
+        assert result.constraint_coupled is True
+        assert result.status == QCStatus.CONSTRAINT_COUPLED
+        assert result.constraint_relative_width == 0.5
+        assert "not an independent" in result.interpretation
 
 class TestDscDceValidationNodeSkipReasons:
     """_dsc_dce_validation_node distinguishes 'no DSC run' from 'no NAWM'."""

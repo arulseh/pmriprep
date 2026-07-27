@@ -56,7 +56,7 @@ def test_prepare_vp_constraint_distinguishes_absent_dsc_run(tmp_path: Path) -> N
     """With no DSC inputs, the typed state retains explicit no-run provenance."""
     interface = ComputeDCEMaps(brain_mask_file=_write_mask(tmp_path / "mask.nii.gz"))
 
-    result = interface._prepare_vp_constraint(_prepared(), _prepared().aif)
+    result = interface._prepare_vp_constraint(_prepared())
 
     assert result.vp_map is None
     assert result.mode == ConstraintMode.SKIP
@@ -71,7 +71,7 @@ def test_prepare_vp_constraint_preserves_soft_prior_diagnostics(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A valid SOFT prior emits overshoot/lag QC and promotes auto candidates."""
+    """A valid SOFT prior preserves its width and promotes auto candidates."""
     prepared = _prepared(populated=True)
     vp_map = np.full(prepared.mask.shape, 0.1, dtype=float)
     captured: dict[str, Any] = {}
@@ -100,17 +100,15 @@ def test_prepare_vp_constraint_preserves_soft_prior_diagnostics(
         volume_tr=2.0,
     )
 
-    result = interface._prepare_vp_constraint(prepared, prepared.aif)
+    result = interface._prepare_vp_constraint(prepared)
 
     assert result.vp_map is vp_map
     assert result.mode == ConstraintMode.SOFT
     assert result.vp_uncertainty == 0.25
     assert result.model_name == "extended_tofts"
     assert result.candidate_names == ["patlak", "extended_tofts"]
-    assert result.qc["aif_tissue_overshoot_fraction"] == 1.0
-    assert result.qc["peak_alignment_lag_s"] == 4.0
-    assert result.qc["volume_tr_s"] == 2.0
-    assert "acquisition_limited_note" in result.qc
+    assert "aif_tissue_overshoot_fraction" not in result.qc
+    assert "acquisition_limited_note" not in result.qc
     assert captured["dose"] == 0.5
     assert captured["agent_standard_dose"] == 0.1
     assert captured["preload_classification"] == "adequate"
@@ -124,7 +122,7 @@ def test_prepare_vp_constraint_marks_synthetic_aif_diagnostics_inapplicable(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Synthetic AIF provenance emits stable not-applicable overshoot fields."""
+    """Synthetic AIF provenance does not invent peak-comparison diagnostics."""
     prepared = _prepared(populated=True)
 
     def fake_prepare(**kwargs: Any) -> SimpleNamespace:
@@ -147,12 +145,10 @@ def test_prepare_vp_constraint_marks_synthetic_aif_diagnostics_inapplicable(
         constraint_mode="auto",
     )
 
-    result = interface._prepare_vp_constraint(prepared, prepared.aif)
+    result = interface._prepare_vp_constraint(prepared)
 
     assert result.mode == ConstraintMode.SKIP
-    assert result.qc["aif_tissue_overshoot_fraction"] is None
-    assert result.qc["overshoot_applicable"] is False
-    assert result.qc["overshoot_reason"] == "synthetic_aif"
+    assert "aif_tissue_overshoot_fraction" not in result.qc
     assert result.candidate_names == ["patlak"]
 
 
@@ -181,7 +177,7 @@ def test_prepare_vp_constraint_clears_soft_state_after_diagnostic_failure(
         constraint_mode="auto",
     )
 
-    result = interface._prepare_vp_constraint(prepared, prepared.aif)
+    result = interface._prepare_vp_constraint(prepared)
 
     assert result.vp_map is None
     assert result.mode == ConstraintMode.SKIP

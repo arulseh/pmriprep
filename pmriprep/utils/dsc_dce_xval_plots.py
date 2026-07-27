@@ -1,12 +1,12 @@
 """DSC-DCE cross-validation visualization.
 
-Generates a 3-panel QC figure for DSC-DCE cross-validation:
+Generates a 3-panel QC figure for DSC-DCE comparison:
   Panel 1: vp vs CBV scatter (converted to common CBV-equivalent units)
   Panel 2: Bland-Altman plot (in CBV-equivalent units)
   Panel 3: Spatial ratio map (axial slice, diverging colormap)
 
-When the cross-validation is circular (vp deterministically derived from
-CBV), all three panels display informational text instead of plots.
+When DSC nCBV supplied the vp prior, the panels instead diagnose departure
+from that soft constraint; they are not presented as independent validation.
 
 Uses the colorblind-safe palette from qc_standards.py.
 """
@@ -124,23 +124,34 @@ def generate_xval_plot(
         cbv_from_vp = vp_valid * cbv_unit_factor
         cbv_from_vp_oob = vp_oob * cbv_unit_factor
 
+    is_constrained = validation_result.get("constraint_mode") == "soft"
+    constraint_width_value = validation_result.get("constraint_relative_width")
+    constraint_width = (
+        float(constraint_width_value)
+        if isinstance(constraint_width_value, (int, float))
+        else None
+    )
+
     fig, axes = plt.subplots(1, 3, figsize=(15, 4.5))
     fig.suptitle(
-        qc_figure_title(subject_id, session_id, "DSC-DCE Cross-Validation"),
+        qc_figure_title(
+            subject_id,
+            session_id,
+            "DSC-informed vp Constraint Diagnostic"
+            if is_constrained else "DSC-DCE Cross-Validation",
+        ),
         fontsize=12,
         fontweight="bold",
     )
 
-    is_circular = validation_result.get("circular", False)
     has_metrics = len(vp_valid) >= 10
 
     # ---- Panel 1: Scatter (vp-derived CBV vs DSC CBV) ----
     ax = axes[0]
-    if is_circular or np.sum(valid_plot) < 10:
+    if np.sum(valid_plot) < 10:
         ax.text(
             0.5, 0.5,
-            "vp derived from CBV\nscatter not informative"
-            if is_circular else "Insufficient valid voxels",
+            "Insufficient valid voxels",
             transform=ax.transAxes, ha="center", va="center",
             fontsize=10, style="italic",
             bbox=dict(boxstyle="round,pad=0.5", facecolor="#f0f0f0"),
@@ -197,11 +208,27 @@ def generate_xval_plot(
                     color=COLORBLIND_PALETTE.error, linewidth=1,
                     label="identity")
 
+            if is_constrained and constraint_width is not None:
+                x_line = np.linspace(0, lim_max, 100)
+                ax.fill_between(
+                    x_line,
+                    x_line * (1.0 - constraint_width),
+                    x_line * (1.0 + constraint_width),
+                    color=COLORBLIND_PALETTE.warning,
+                    alpha=0.18,
+                    label=f"prior ±{constraint_width:.0%}",
+                )
+                ax.legend(fontsize=7, loc="lower right")
+
             metrics = validation_result.get("metrics", {})
             rho = metrics.get("correlation", 0.0)
             r_pearson = metrics.get("pearson_correlation", 0.0)
             ax.text(
-                0.05, 0.92, f"\u03c1 = {rho:.3f} (r = {r_pearson:.3f})",
+                0.05,
+                0.92,
+                "Constraint-coupled"
+                if is_constrained
+                else f"\u03c1 = {rho:.3f} (r = {r_pearson:.3f})",
                 transform=ax.transAxes, fontsize=9,
                 bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8),
             )
@@ -220,18 +247,56 @@ def generate_xval_plot(
 
     ax.grid(True, alpha=0.3)
 
-    # ---- Panel 2: Bland-Altman ----
+    # ---- Panel 2: constraint departure or Bland-Altman ----
     ax = axes[1]
-    if is_circular or np.sum(valid_plot) < 10:
+    if np.sum(valid_plot) < 10:
         ax.text(
             0.5, 0.5,
-            "vp derived from CBV\nBland-Altman not informative"
-            if is_circular else "Insufficient valid voxels",
+            "Insufficient valid voxels",
             transform=ax.transAxes, ha="center", va="center",
             fontsize=10, style="italic",
             bbox=dict(boxstyle="round,pad=0.5", facecolor="#f0f0f0"),
         )
-        ax.set_title("Bland-Altman", fontsize=10)
+        ax.set_title(
+            "Fractional Constraint Departure" if is_constrained else "Bland-Altman",
+            fontsize=10,
+        )
+    elif is_constrained:
+        if has_metrics:
+            vp_reference = expected_ratio * cbv_valid
+            departure = vp_valid / vp_reference - 1.0
+            finite_departure = departure[np.isfinite(departure)]
+            ax.hist(
+                finite_departure,
+                bins=60,
+                color=COLORBLIND_PALETTE.primary,
+                alpha=0.8,
+            )
+            ax.axvline(0.0, color="black", linewidth=1, linestyle="--")
+            if constraint_width is not None:
+                ax.axvline(
+                    -constraint_width,
+                    color=COLORBLIND_PALETTE.warning,
+                    linewidth=1,
+                )
+                ax.axvline(
+                    constraint_width,
+                    color=COLORBLIND_PALETTE.warning,
+                    linewidth=1,
+                )
+            median_departure = float(np.median(finite_departure))
+            ax.text(
+                0.95,
+                0.92,
+                f"median={median_departure:+.1%}",
+                transform=ax.transAxes,
+                fontsize=8,
+                ha="right",
+                bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8),
+            )
+        ax.set_xlabel("(vp − DSC-informed vp) / DSC-informed vp", fontsize=9)
+        ax.set_ylabel("Voxels", fontsize=9)
+        ax.set_title("Fractional Constraint Departure", fontsize=10)
     else:
         rng = np.random.default_rng(42)
 
@@ -307,11 +372,10 @@ def generate_xval_plot(
 
     # ---- Panel 3: Spatial ratio map ----
     ax = axes[2]
-    if is_circular or np.sum(valid_plot) < 10:
+    if np.sum(valid_plot) < 10:
         ax.text(
             0.5, 0.5,
-            "vp derived from CBV\nratio map uniform by construction"
-            if is_circular else "Insufficient valid voxels",
+            "Insufficient valid voxels",
             transform=ax.transAxes, ha="center", va="center",
             fontsize=10, style="italic",
             bbox=dict(boxstyle="round,pad=0.5", facecolor="#f0f0f0"),
@@ -339,12 +403,17 @@ def generate_xval_plot(
         # near-white center (RGB ~0.87), which represents the expected ratio.
         cmap = plt.get_cmap("coolwarm").copy()
         cmap.set_bad(color="black")
-        # Colorbar span is a multiplicative factor of the expected ratio so
-        # it works on both scales (0.669 absolute, 0.02 nCBV) without
-        # saturating one path or compressing the other.
-        half_span = expected_ratio * 0.75
-        vmin = max(0.0, expected_ratio - half_span)
-        vmax = expected_ratio + half_span
+        from pmriprep.utils.dce_constants import (
+            VP_NCBV_RATIO_MAX,
+            VP_NCBV_RATIO_MIN,
+        )
+
+        if is_constrained and constraint_width is not None:
+            vmin = expected_ratio * (1.0 - constraint_width)
+            vmax = expected_ratio * (1.0 + constraint_width)
+        else:
+            vmin = VP_NCBV_RATIO_MIN
+            vmax = VP_NCBV_RATIO_MAX
         norm = TwoSlopeNorm(vcenter=expected_ratio, vmin=vmin, vmax=vmax)
         im = ax.imshow(
             slice_2d,

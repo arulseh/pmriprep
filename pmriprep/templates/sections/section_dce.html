@@ -773,6 +773,16 @@
             </div>
         </div>
         {% endif %}
+        {% if cbv_c.mode == 'soft' and cbv_c.vp_uncertainty is defined %}
+        <div class="metrics" style="grid-template-columns: 1fr; margin-top: 8px;">
+            <div class="metric">
+                <div class="metric-label">DSC-informed vp Constraint</div>
+                <div class="metric-value" style="font-size: 1.0em; font-weight: normal;">
+                    DSC nCBV supplied a soft spatial constraint on vp. Relative constraint width: {{ "%.0f"|format(cbv_c.vp_uncertainty * 100) }}%. Because vp uses nCBV as input, subsequent DSC–DCE agreement is not independent.
+                </div>
+            </div>
+        </div>
+        {% endif %}
         {% if cbv_c.user_override_warning is defined %}
         <div class="metrics" style="grid-template-columns: 1fr; margin-top: 8px;">
             <div class="metric">
@@ -812,19 +822,6 @@
             </div>
         </div>
         {% endif %}
-        {% if cbv_c.acquisition_limited_note is defined %}
-        <div class="metrics" style="grid-template-columns: 1fr; margin-top: 8px;">
-            <div class="metric">
-                <div class="metric-label">Acquisition-Limited vp</div>
-                <div class="metric-value" style="font-size: 1.0em; font-weight: normal;">
-                    {{ cbv_c.acquisition_limited_note }}
-                    {% if cbv_c.aif_tissue_overshoot_fraction is defined %}
-                    (overshoot fraction: {{ "%.0f"|format(cbv_c.aif_tissue_overshoot_fraction * 100) }}%{% if cbv_c.peak_alignment_lag_s is defined %}; peak lag: {{ "%.1f"|format(cbv_c.peak_alignment_lag_s) }} s{% endif %})
-                    {% endif %}
-                </div>
-            </div>
-        </div>
-        {% endif %}
     </div>
     {% endif %}
     {% endif %}
@@ -834,7 +831,7 @@
     {% set xval = dce.qc_metrics.dsc_dce_validation %}
     {% if xval.skipped|default(false) and xval.status == 'SKIPPED' %}
     <div class="section">
-        <h3>DSC-DCE Cross-Validation</h3>
+        <h3>{{ 'DSC-informed vp Constraint Diagnostic' if xval.constraint_coupled|default(false) else 'DSC-DCE Cross-Validation' }}</h3>
         <div class="metrics">
             <div class="metric">
                 <div class="metric-label">Status</div>
@@ -855,34 +852,28 @@
     </div>
     {% elif not xval.skipped|default(false) %}
     <div class="section">
-        <h3>DSC-DCE Cross-Validation</h3>
+        <h3>{{ 'DSC-informed vp Constraint Diagnostic' if xval.constraint_coupled|default(false) else 'DSC-DCE Cross-Validation' }}</h3>
         <div class="metrics">
             {% if xval.status is defined %}
             <div class="metric">
                 <div class="metric-label">Status</div>
                 <div class="metric-value
                     {%- if xval.status == 'PASS' %} pass
-                    {%- elif xval.status == 'CIRCULAR' %}
+                    {%- elif xval.status == 'CONSTRAINT-COUPLED' %}
                     {%- elif xval.status == 'WARN' %} warn
                     {%- elif xval.status == 'SKIPPED' %}
                     {%- else %} poor{% endif %}">{{ xval.status }}</div>
             </div>
             {% endif %}
             {% if xval.metrics is defined %}
-            {% if xval.circular is defined and xval.circular %}
+            {% if xval.constraint_coupled is defined and xval.constraint_coupled %}
             <div class="metric">
-                <div class="metric-label">vp/CBV Ratio</div>
-                <div class="metric-value">N/A</div>
+                <div class="metric-label">Relative Constraint Width</div>
+                <div class="metric-value">{% if xval.constraint_relative_width is defined and xval.constraint_relative_width is not none %}{{ "%.0f"|format(xval.constraint_relative_width * 100) }}%{% else %}Not recorded{% endif %}</div>
             </div>
-            {% if xval.metrics.expected_ratio is defined and xval.metrics.expected_ratio > 0 %}
             <div class="metric">
-                <div class="metric-label">Expected vp/CBV Ratio</div>
-                <div class="metric-value">{{ "%.3f"|format(xval.metrics.expected_ratio) }}</div>
-            </div>
-            {% endif %}
-            <div class="metric">
-                <div class="metric-label">Correlation (ρ)</div>
-                <div class="metric-value">N/A</div>
+                <div class="metric-label">Independence</div>
+                <div class="metric-value">No — vp used DSC nCBV</div>
             </div>
             {% else %}
             {% if xval.metrics.median_ratio is defined and xval.metrics.median_ratio > 0 %}
@@ -909,12 +900,6 @@
                 <div class="metric-value">{{ "%.0f"|format(xval.metrics.fraction_valid * 100) }}%</div>
             </div>
             {% endif %}
-            {% if xval.correction_factor is defined and xval.status != 'PASS' %}
-            <div class="metric">
-                <div class="metric-label">Correction</div>
-                <div class="metric-value warn">{{ "%.2f"|format(xval.correction_factor) }}x</div>
-            </div>
-            {% endif %}
             {% endif %}
             {% endif %}
             {% if xval.constraint_mode is defined and xval.constraint_mode %}
@@ -930,19 +915,12 @@
             </div>
             {% endif %}
         </div>
-        {% if xval.acquisition_limited is defined and xval.acquisition_limited %}
-        {#- Numeric literals below mirror ACQUISITION_LIMITED_OVERSHOOT_THRESHOLD,
-            VP_NCBV_RATIO_MIN_LIMITED, VP_NCBV_RATIO_MAX_LIMITED in
-            pmriprep/utils/dce_constants.py. Keep in sync if retuned. -#}
+        {% if xval.interpretation is defined and xval.interpretation %}
         <div class="metrics" style="grid-template-columns: 1fr; margin-top: 8px;">
             <div class="metric">
-                <div class="metric-label">Acquisition-Limited xval</div>
+                <div class="metric-label">Interpretation</div>
                 <div class="metric-value" style="font-size: 1.0em; font-weight: normal;">
-                    vp is prior-dominated by first-pass temporal undersampling
-                    (overshoot &gt; 0.7). Ratio tolerance
-                    widened to [0.005, 0.06]; magnitude validation is
-                    informational only. See the constraint-block
-                    acquisition-limited note above.
+                    {{ xval.interpretation }}
                 </div>
             </div>
         </div>

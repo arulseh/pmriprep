@@ -2315,7 +2315,7 @@ def init_dce_preproc_wf(
     )
     # dsc_preload_configured is set from base.py (None when DSC not configured)
     # pk_qc is the full pk_modeling.qc_metrics dict; the function extracts
-    # dsc_cbv_constraint.mode and dsc_cbv_constraint.aif_tissue_overshoot_fraction.
+    # dsc_cbv_constraint mode and relative prior width.
     # dsc_cbv_file is provided by resample_dsc_cbv node (None when DSC unavailable)
     # dsc_ncbv_file is provided by resample_dsc_ncbv (None when NAWM unavailable);
     # when present, validation uses the nCBV-anchored expected ratio.

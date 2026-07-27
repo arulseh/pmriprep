@@ -776,17 +776,15 @@ def _dsc_dce_validation_node(
         Path to resampled DSC CBV map in DCE space.
     dsc_ncbv_file : str or None
         Optional NAWM-normalized CBV. When provided, validation
-        uses the nCBV-anchored expected ratio (``NAWM_VP_REFERENCE``) and
-        the scaled circular-std threshold.
+        uses the nCBV-anchored expected ratio (``NAWM_VP_REFERENCE``).
     brain_mask : str or None
         Path to brain mask in DCE space.
     no_dsc_validation : bool
         If True, skip cross-validation.
     pk_qc : dict or str or None
         Full ``pk_modeling.qc_metrics`` dict or a constraint-mode string. The
-        function extracts
-        ``dsc_cbv_constraint.mode`` and
-        ``dsc_cbv_constraint.aif_tissue_overshoot_fraction`` when present.
+        function extracts the constraint mode and relative prior width from
+        ``dsc_cbv_constraint`` when present.
     dsc_preload_configured : bool or None
         Whether DSC preload was configured.
 
@@ -806,7 +804,7 @@ def _dsc_dce_validation_node(
     )
 
     resolved_mode: str | None = None
-    overshoot: float | None = None
+    constraint_relative_width: float | None = None
     constraint_skip_reason: str | None = None
     if isinstance(pk_qc, dict):
         constraint_value = pk_qc.get("dsc_cbv_constraint")
@@ -814,11 +812,9 @@ def _dsc_dce_validation_node(
             mode_value = constraint_value.get("mode")
             if isinstance(mode_value, str):
                 resolved_mode = mode_value
-            overshoot_value = constraint_value.get(
-                "aif_tissue_overshoot_fraction"
-            )
-            if isinstance(overshoot_value, (int, float)):
-                overshoot = float(overshoot_value)
+            width_value = constraint_value.get("vp_uncertainty")
+            if isinstance(width_value, (int, float)):
+                constraint_relative_width = float(width_value)
             skip_value = constraint_value.get("skip_reason")
             if isinstance(skip_value, str):
                 constraint_skip_reason = skip_value
@@ -885,7 +881,7 @@ def _dsc_dce_validation_node(
             mask_path=brain_mask,
             constraint_mode=resolved_mode,
             dsc_preload_configured=dsc_preload_configured,
-            aif_tissue_overshoot_fraction=overshoot,
+            constraint_relative_width=constraint_relative_width,
         )
         return result.to_dict()
     except Exception as e:
@@ -983,9 +979,6 @@ def _dsc_dce_xval_plot_node(
         return None
     if validation_result and validation_result.get("skipped"):
         return None
-    if validation_result and validation_result.get("circular"):
-        return None
-
     have_ncbv = bool(dsc_ncbv_file) and os.path.isfile(str(dsc_ncbv_file))
     # Cross-validation requires NAWM-normalized CBV.
     if not have_ncbv or dsc_ncbv_file is None:

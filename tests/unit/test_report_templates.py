@@ -71,6 +71,36 @@ def test_parent_render_hides_dsc_blocks_when_no_dsc(env):
     assert "<h3>DSC-DCE Cross-Validation</h3>" not in rendered
 
 
+def test_dce_constraint_coupled_diagnostic_is_not_labeled_validation(env):
+    """A DSC-informed vp fit is explicitly reported as non-independent."""
+    template = env.get_template("sections/section_dce.html")
+    dce = {
+        "qc_metrics": {
+            "dsc_dce_validation": {
+                "status": "CONSTRAINT-COUPLED",
+                "constraint_coupled": True,
+                "constraint_mode": "soft",
+                "constraint_relative_width": 0.5,
+                "metrics": {},
+                "interpretation": (
+                    "DSC nCBV supplied the soft spatial prior for vp; "
+                    "agreement is not independent"
+                ),
+            },
+        },
+        "images": {"dsc_dce_xval": "constraint.png"},
+        "display_status": {},
+    }
+
+    rendered = template.render(dce=dce, dsc={"present": True})
+
+    assert "DSC-informed vp Constraint Diagnostic" in rendered
+    assert "CONSTRAINT-COUPLED" in rendered
+    assert "Relative Constraint Width" in rendered
+    assert "50%" in rendered
+    assert "No — vp used DSC nCBV" in rendered
+
+
 def test_dce_signal_conversion_qc_renders(env):
     """Conversion fallback and bounded-inversion accounting reaches HTML."""
     template = env.get_template("sections/section_dce.html")
