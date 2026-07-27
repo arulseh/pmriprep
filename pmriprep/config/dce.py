@@ -115,7 +115,6 @@ class DCEConfig:
         "auto", "actual_flip_deci_deg", "actual_flip_deg", "percent", "ratio"
     ] = "auto"
     no_t1: bool = False
-    t1_correction_mode: Literal["auto", "none", "fallback"] = "auto"
     t1_method: Literal["hybrid", "wlls", "nlls"] = "hybrid"
     t1_map_file: Optional[Path] = None  # External T1 map (NIfTI, milliseconds)
     # Processing settings
@@ -159,7 +158,6 @@ class DCEConfig:
             "aif_method": ({"auto", "population"}, self.aif_method),
             "aif_bat_alignment": ({"auto", "off"}, self.aif_bat_alignment),
             "t1_method": ({"hybrid", "wlls", "nlls"}, self.t1_method),
-            "t1_correction_mode": ({"auto", "none", "fallback"}, self.t1_correction_mode),
             "hdbet_device": ({"auto", "cuda", "mps", "cpu"}, self.hdbet_device),
         }
         for option, (valid, value) in categorical_options.items():

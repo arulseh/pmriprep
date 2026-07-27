@@ -110,7 +110,6 @@ def test_direct_builders_reject_unknown_options(builder, section: str, option: s
         (lambda: DCEConfig(aif_method="synthetic"), "Invalid aif_method"),
         (lambda: DCEConfig(aif_bat_alignment="on"), "Invalid aif_bat_alignment"),
         (lambda: DCEConfig(t1_method="linear"), "Invalid t1_method"),
-        (lambda: DCEConfig(t1_correction_mode="uniform"), "Invalid t1_correction_mode"),
         (lambda: DSCConfig(method="osvd"), "Invalid method"),
         (lambda: DSCConfig(inference="mcmc"), "Invalid inference"),
         (lambda: DSCConfig(aif_method="population"), "Invalid aif_method"),
@@ -122,6 +121,12 @@ def test_invalid_categorical_options_fail_before_workflow(factory, match: str) -
     """Categorical YAML values must fail during config construction."""
     with pytest.raises(ValueError, match=match):
         factory()
+
+
+def test_removed_t1_correction_mode_is_rejected() -> None:
+    """T1 estimator selection is expressed by no_t1 or t1_map_file."""
+    with pytest.raises(ValueError, match="Unknown dce configuration option.*t1_correction_mode"):
+        build_dce_config({"dce": {"t1_correction_mode": "fallback"}})
 
 
 @pytest.mark.parametrize(
