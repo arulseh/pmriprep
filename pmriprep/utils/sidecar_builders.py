@@ -1403,6 +1403,12 @@ def enrich_recommendation_keys(
                     warning = preprocessing.get(warning_key)
                     if warning:
                         processing_warnings.append(str(warning))
+                t1_mapping = qc_metrics.get("t1_mapping") or {}
+                vfa_preprocessing = t1_mapping.get("vfa_preprocessing") or {}
+                motion_assessment = vfa_preprocessing.get("motion_assessment") or {}
+                vfa_warning = motion_assessment.get("warning")
+                if vfa_warning:
+                    processing_warnings.append(str(vfa_warning))
             if processing_warnings:
                 sidecar["QCProcessingWarnings"] = processing_warnings
 

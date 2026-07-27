@@ -122,7 +122,7 @@ def test_dce_signal_conversion_qc_renders(env):
     }
     rendered = template.render(dce=dce)
     assert "Invalid T1 in DCE Space" in rendered
-    assert ">12 (0.60% brain support)<" in rendered
+    assert ">12 (0.60%)<" in rendered
     assert "Missing B1 in DCE Space" in rendered
     assert "34 (1.70%)" in rendered
     assert "34 (1.70% brain support)" not in rendered
@@ -164,6 +164,63 @@ def test_dce_vfa_motion_warning_renders(env):
     rendered = template.render(dce=dce)
     assert "Inter-VFA Alignment" in rendered
     assert warning in rendered
+    assert rendered.index('class="preload-note warning"') < rendered.index(warning)
+
+
+def test_dce_t1_cards_are_compact_and_ordered(env):
+    """T1 acquisition, summaries, and support render in a stable order."""
+    template = env.get_template("sections/section_dce.html")
+    dce = {
+        "qc_metrics": {
+            "t1_mapping": {
+                "t1_status": "WARN",
+                "t1_method": "hybrid",
+                "n_flip_angles": 3,
+                "flip_angles_deg": [5.0, 15.0, 25.0],
+                "tr_ms": 20.0,
+                "median_t1_ms": 1638.0,
+                "fraction_valid": 0.993,
+                "t1_support": {
+                    "directly_measured_fraction": 0.8937,
+                    "locally_interpolated_fraction": 0.0084,
+                    "unavailable_voxels": 1314,
+                    "unavailable_fraction": 0.0064,
+                    "retained_outside_population_reference_voxels": 113008,
+                    "retained_outside_population_reference_fraction": 0.5306,
+                },
+                "t1_correction": {"correction_applied": "none"},
+            },
+            "signal_conversion": {
+                "t1_invalid_voxels": 30194,
+                "t1_invalid_fraction": 0.1418,
+            },
+        },
+        "images": {},
+        "display_status": {},
+    }
+
+    rendered = template.render(dce=dce)
+    assert "1,314 (0.64%)" in rendered
+    assert "30,194 (14.18%)" in rendered
+    assert "53.06%" in rendered
+    assert "analysis domain" not in rendered
+    assert "brain support" not in rendered
+    assert "T1 Source" not in rendered
+    labels = (
+        "T1 Status",
+        "T1 Method",
+        "Flip Angles",
+        "TR",
+        "Median T1",
+        "Valid Voxels",
+        "Direct T1 Support",
+        "Interpolated T1 Support",
+        "T1 Unavailable",
+        "Outside Population Reference",
+        "Invalid T1 in DCE Space",
+    )
+    positions = [rendered.index(label) for label in labels]
+    assert positions == sorted(positions)
 
 
 def test_dce_no_t1_assumption_renders_without_wm_statistics(env):
@@ -209,7 +266,7 @@ def test_dce_skipped_t1_with_incomplete_qc_renders_safely(env):
 
     rendered = template.render(dce=dce)
 
-    assert "T1 Method" in rendered
+    assert "T1 Source" in rendered
     assert "Uniform" in rendered
 
 
@@ -228,7 +285,7 @@ def test_dce_fallback_t1_with_incomplete_qc_renders_safely(env):
 
     rendered = template.render(dce=dce)
 
-    assert "T1 Method" in rendered
+    assert "T1 Source" in rendered
     assert "Uniform" in rendered
 
 

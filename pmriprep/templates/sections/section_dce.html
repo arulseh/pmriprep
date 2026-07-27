@@ -145,6 +145,33 @@
                 <div class="metric-value">{{ t1_method_labels.get(dce.qc_metrics.t1_mapping.t1_method, dce.qc_metrics.t1_mapping.t1_method | replace('_', ' ') | title) }}</div>
             </div>
             {% endif %}
+            {% if dce.qc_metrics.t1_mapping.t1_correction is defined and dce.qc_metrics.t1_mapping.t1_correction.correction_applied == "fallback" %}
+            <div class="metric">
+                <div class="metric-label">T1 Source</div>
+                <div class="metric-value">
+                    {% if dce.qc_metrics.t1_mapping.t1_correction.fallback_value_ms is defined %}
+                        Uniform ({{ dce.qc_metrics.t1_mapping.t1_correction.fallback_value_ms | int }} ms)
+                    {% elif dce.qc_metrics.t1_mapping.median_t1_ms is defined %}
+                        Uniform ({{ dce.qc_metrics.t1_mapping.median_t1_ms | int }} ms)
+                    {% else %}
+                        Uniform
+                    {% endif %}
+                </div>
+            </div>
+            {% elif dce.qc_metrics.t1_mapping.skipped is defined and dce.qc_metrics.t1_mapping.skipped %}
+            <div class="metric">
+                <div class="metric-label">T1 Source</div>
+                <div class="metric-value">
+                    {% if dce.qc_metrics.t1_mapping.assumed_t1_ms is defined and dce.qc_metrics.t1_mapping.assumed_t1_ms is not none %}
+                        Uniform ({{ dce.qc_metrics.t1_mapping.assumed_t1_ms | int }} ms)
+                    {% elif dce.qc_metrics.t1_mapping.mean_t1_wm_ms is defined and dce.qc_metrics.t1_mapping.mean_t1_wm_ms is not none %}
+                        Uniform ({{ dce.qc_metrics.t1_mapping.mean_t1_wm_ms | int }} ms)
+                    {% else %}
+                        Uniform
+                    {% endif %}
+                </div>
+            </div>
+            {% endif %}
             {% if dce.qc_metrics.t1_mapping.n_flip_angles is defined %}
             <div class="metric">
                 <div class="metric-label">Flip Angles (n={{ dce.qc_metrics.t1_mapping.n_flip_angles }})</div>
@@ -163,11 +190,6 @@
                     <div class="metric-label">Inter-VFA Alignment</div>
                     <div class="metric-value {{ vfa_motion.qc_status | lower }}">{{ vfa_motion.qc_status | replace('_', ' ') }}</div>
                 </div>
-                {% if vfa_motion.warning is defined %}
-                <div class="metric" style="grid-column: 1 / -1;">
-                    <div class="metric-value warn" style="font-size: 1.0em; font-weight: normal;">{{ vfa_motion.warning }}</div>
-                </div>
-                {% endif %}
             {% endif %}
             {% if dce.qc_metrics.t1_mapping.median_t1_ms is defined %}
             <div class="metric">
@@ -205,53 +227,25 @@
                 </div>
                 <div class="metric">
                     <div class="metric-label">T1 Unavailable</div>
-                    <div class="metric-value">{{ "{:,}".format(t1s.unavailable_voxels | default(0)) }} ({{ "%.2f"|format((t1s.unavailable_fraction | default(0)) * 100) }}% analysis domain)</div>
+                    <div class="metric-value">{{ "{:,}".format(t1s.unavailable_voxels | default(0)) }} ({{ "%.2f"|format((t1s.unavailable_fraction | default(0)) * 100) }}%)</div>
                 </div>
                 {% if (t1s.retained_outside_population_reference_voxels | default(0)) > 0 %}
                 <div class="metric">
                     <div class="metric-label">Outside Population Reference</div>
-                    <div class="metric-value warn">{{ "{:,}".format(t1s.retained_outside_population_reference_voxels) }} retained</div>
+                    <div class="metric-value warn">{{ "%.2f"|format((t1s.retained_outside_population_reference_fraction | default(0)) * 100) }}%</div>
                 </div>
                 {% endif %}
-            {% endif %}
-            {% if dce.qc_metrics.t1_mapping.t1_correction is defined %}
-            <div class="metric">
-                <div class="metric-label">T1 Method</div>
-                <div class="metric-value">
-                    {% if dce.qc_metrics.t1_mapping.t1_correction.correction_applied == "fallback" %}
-                        {% if dce.qc_metrics.t1_mapping.t1_correction.fallback_value_ms is defined %}
-                            Uniform ({{ dce.qc_metrics.t1_mapping.t1_correction.fallback_value_ms | int }} ms)
-                        {% elif dce.qc_metrics.t1_mapping.median_t1_ms is defined %}
-                            Uniform ({{ dce.qc_metrics.t1_mapping.median_t1_ms | int }} ms)
-                        {% else %}
-                            Uniform
-                        {% endif %}
-                    {% else %}
-                        VFA
-                    {% endif %}
-                </div>
-            </div>
-            {% elif dce.qc_metrics.t1_mapping.skipped is defined and dce.qc_metrics.t1_mapping.skipped %}
-            <div class="metric">
-                <div class="metric-label">T1 Method</div>
-                <div class="metric-value">
-                    {% if dce.qc_metrics.t1_mapping.assumed_t1_ms is defined and dce.qc_metrics.t1_mapping.assumed_t1_ms is not none %}
-                        Uniform ({{ dce.qc_metrics.t1_mapping.assumed_t1_ms | int }} ms)
-                    {% elif dce.qc_metrics.t1_mapping.mean_t1_wm_ms is defined and dce.qc_metrics.t1_mapping.mean_t1_wm_ms is not none %}
-                        Uniform ({{ dce.qc_metrics.t1_mapping.mean_t1_wm_ms | int }} ms)
-                    {% else %}
-                        Uniform
-                    {% endif %}
-                </div>
-            </div>
             {% endif %}
             {% if not (dce.qc_metrics.t1_mapping.skipped | default(false)) and dce.qc_metrics.signal_conversion is defined and dce.qc_metrics.signal_conversion.t1_invalid_voxels is defined %}
             <div class="metric">
                 <div class="metric-label">Invalid T1 in DCE Space</div>
-                <div class="metric-value">{{ "{:,}".format(dce.qc_metrics.signal_conversion.t1_invalid_voxels | default(0)) }}{% if dce.qc_metrics.signal_conversion.t1_invalid_fraction is defined %} ({{ "%.2f"|format(dce.qc_metrics.signal_conversion.t1_invalid_fraction * 100) }}% brain support){% endif %}</div>
+                <div class="metric-value">{{ "{:,}".format(dce.qc_metrics.signal_conversion.t1_invalid_voxels | default(0)) }}{% if dce.qc_metrics.signal_conversion.t1_invalid_fraction is defined %} ({{ "%.2f"|format(dce.qc_metrics.signal_conversion.t1_invalid_fraction * 100) }}%){% endif %}</div>
             </div>
             {% endif %}
         </div>
+        {% endif %}
+        {% if dce.qc_metrics.t1_mapping.vfa_preprocessing is defined and dce.qc_metrics.t1_mapping.vfa_preprocessing.motion_assessment is defined and dce.qc_metrics.t1_mapping.vfa_preprocessing.motion_assessment.warning is defined %}
+        <p class="preload-note warning">{{ dce.qc_metrics.t1_mapping.vfa_preprocessing.motion_assessment.warning }}</p>
         {% endif %}
         {% if dce.images.t1 %}
         <div class="figure-container" style="margin-top: 20px;">

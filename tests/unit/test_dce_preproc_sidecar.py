@@ -188,6 +188,26 @@ def test_motion_qc_warning_uses_processing_warning_channel() -> None:
     assert sidecar["QCProcessingWarnings"] == ["Motion quality is unknown."]
 
 
+def test_vfa_alignment_warning_uses_processing_warning_channel() -> None:
+    """An inter-VFA alignment warning reaches the report Review section."""
+    sidecar: dict[str, Any] = {}
+    warning = "Potential inter-VFA misalignment detected."
+    qc = {
+        "t1_mapping": {
+            "vfa_preprocessing": {
+                "motion_assessment": {
+                    "qc_status": "WARN",
+                    "warning": warning,
+                },
+            },
+        },
+    }
+
+    enrich_recommendation_keys(sidecar, modality="DCE", qc_metrics=qc)
+
+    assert sidecar["QCProcessingWarnings"] == [warning]
+
+
 class TestBaseFieldsSurvive:
     def test_base_fields_preserved(self, base_sidecar, dce_qc_metrics):
         out = enrich_dce_preproc_sidecar(dict(base_sidecar), qc_metrics=dce_qc_metrics)
