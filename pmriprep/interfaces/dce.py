@@ -1527,6 +1527,7 @@ class T1Mapping(SimpleInterface):
             brain_mask = signal_data[0] > threshold
         analysis_domain_mask = brain_mask.copy()
         fallback_brain_mask = brain_mask.copy()
+        tissue_qc_mask = brain_mask.copy()
 
         # --- VFA Fit Residual (NRMSE) for fit-quality QC ---
         # For n_fa >= 3, compute per-voxel NRMSE to assess VFA fit quality.
@@ -1575,8 +1576,12 @@ class T1Mapping(SimpleInterface):
         # Exclude background before quantitative validity checks.
         t1_map[~brain_mask] = np.nan
 
-        # CSF exclusion: mask out voxels with high CSF probability
-        csf_excluded = False
+        # Restrict parenchymal summary/QC statistics with the anatomical CSF
+        # probability map. Do not turn a tissue-classification result into a
+        # quantitative T1 support mask: FAST may classify tumor, edema, stroke,
+        # or other pathology as CSF even when VFA produced a valid estimate.
+        csf_qc_restricted = False
+        n_csf_qc = 0
         if isdefined(self.inputs.csf_probseg) and self.inputs.csf_probseg:
             csf_img = nib.load(self.inputs.csf_probseg)
             # Resample CSF probseg to VFA space if needed
@@ -1593,22 +1598,17 @@ class T1Mapping(SimpleInterface):
                 )
             csf_prob = csf_img.get_fdata()  # type: ignore[attr-defined]
             csf_mask = csf_prob >= self.inputs.csf_threshold
-
-            n_brain_before = int(np.sum(brain_mask))
-            n_csf = int(np.sum(csf_mask & brain_mask))
-            # Set CSF voxels to NaN (excluded from all downstream statistics)
-            t1_map[csf_mask & brain_mask] = np.nan
-            brain_mask = brain_mask & (~csf_mask)
-            n_brain_after = int(np.sum(brain_mask))
+            n_brain = int(np.sum(brain_mask))
+            n_csf_qc = int(np.sum(csf_mask & brain_mask))
+            tissue_qc_mask = brain_mask & ~csf_mask
 
             logger.info(
-                "CSF exclusion: removed %d voxels (%.1f%% of brain), "
-                "%d tissue voxels remaining",
-                n_csf,
-                100.0 * n_csf / max(n_brain_before, 1),
-                n_brain_after,
+                "CSF QC restriction: excluded %d voxels (%.1f%% of brain) "
+                "from parenchymal summary statistics; T1 support retained",
+                n_csf_qc,
+                100.0 * n_csf_qc / max(n_brain, 1),
             )
-            csf_excluded = True
+            csf_qc_restricted = True
 
         # Reject only values outside the broad numerical safety envelope.
         # Normal-tissue reference intervals remain QC diagnostics: using them
@@ -1651,12 +1651,13 @@ class T1Mapping(SimpleInterface):
         edge_mask = np.zeros_like(brain_mask, dtype=bool)
         n_slices = shape[2]  # RAS orientation: axis 2 = slices
 
-        if csf_excluded:
-            # CSF probseg handled partial-volume voxels — skip blind erosion
+        if csf_qc_restricted:
+            # CSF probseg supports parenchymal QC — skip blind erosion. Valid
+            # quantitative T1 estimates remain available throughout the brain.
             edge_erosion_skipped = True
             logger.info(
-                "T1 edge erosion: SKIPPED (CSF exclusion at threshold %.2f "
-                "already removes partial-volume boundary voxels)",
+                "T1 edge erosion: SKIPPED (CSF probability at threshold %.2f "
+                "restricts parenchymal QC statistics)",
                 self.inputs.csf_threshold,
             )
         else:
@@ -1712,7 +1713,7 @@ class T1Mapping(SimpleInterface):
 
         # VFA conditioning QC metric
         # Compute median T1 from valid voxels for E1 calculation
-        valid_for_e1 = t1_map[brain_mask & np.isfinite(t1_map) & (t1_map > 0)]
+        valid_for_e1 = t1_map[tissue_qc_mask & np.isfinite(t1_map) & (t1_map > 0)]
         if len(valid_for_e1) > 0:
             median_t1_original = float(np.median(valid_for_e1))
             e1_median = float(np.exp(-tr_s / (median_t1_original / 1000.0)))
@@ -1760,7 +1761,7 @@ class T1Mapping(SimpleInterface):
         # no AFI data). Check for actual spatial variation — std=0 means no
         # real B1 correction was applied.
         if isdefined(self.inputs.b1_map) and bool(self.inputs.b1_map):
-            b1_std = float(np.std(b1_map[brain_mask]))
+            b1_std = float(np.std(b1_map[tissue_qc_mask]))
             b1_corrected = b1_std > 1e-6
             if not b1_corrected:
                 logger.info(
@@ -1774,7 +1775,7 @@ class T1Mapping(SimpleInterface):
             t1_map,
             field_strength=field_strength,
             correction_mode=correction_mode,
-            brain_mask=brain_mask,
+            brain_mask=tissue_qc_mask,
             b1_qc_pass=self.inputs.b1_qc_pass,
             nan_fraction=nan_fraction,
             wm_probseg=wm_probseg_arr,
@@ -1812,16 +1813,15 @@ class T1Mapping(SimpleInterface):
 
         # Preserve why each voxel is or is not supported. Values are:
         # 0 outside the original DCE analysis domain, 1 directly measured,
-        # 2 locally interpolated, 3 unavailable, 4 explicitly excluded CSF,
-        # and 5 a user-requested or no-usable-data uniform assumption.
+        # 2 locally interpolated, 3 unavailable, and 5 a user-requested or
+        # no-usable-data uniform assumption. Anatomical tissue classes do not
+        # alter quantitative support.
         final_support = np.isfinite(t1_map) & brain_mask
         interpolated_support = final_support & ~measured_support
         support_map = np.zeros(shape, dtype=np.uint8)
         support_map[analysis_domain_mask] = 3
         support_map[measured_support & brain_mask] = 1
         support_map[interpolated_support] = 2
-        if csf_excluded:
-            support_map[analysis_domain_mask & csf_mask] = 4
         if correction_result.correction_applied == "fallback":
             support_map[analysis_domain_mask] = 5
 
@@ -1831,7 +1831,7 @@ class T1Mapping(SimpleInterface):
             "directly_measured_voxels": int(np.sum(support_map == 1)),
             "locally_interpolated_voxels": int(np.sum(support_map == 2)),
             "unavailable_voxels": int(np.sum(support_map == 3)),
-            "csf_excluded_voxels": int(np.sum(support_map == 4)),
+            "csf_qc_restricted_voxels": n_csf_qc,
             "uniform_assumption_voxels": int(np.sum(support_map == 5)),
             "rejected_below_numeric_min_voxels": int(np.sum(numeric_low_mask)),
             "rejected_above_numeric_max_voxels": int(np.sum(numeric_high_mask)),
@@ -1843,7 +1843,7 @@ class T1Mapping(SimpleInterface):
         }
         for key in (
             "directly_measured_voxels", "locally_interpolated_voxels",
-            "unavailable_voxels", "csf_excluded_voxels",
+            "unavailable_voxels",
             "uniform_assumption_voxels",
             "retained_outside_population_reference_voxels",
         ):
@@ -1860,7 +1860,7 @@ class T1Mapping(SimpleInterface):
         # Estimate WM and GM T1 from actual high-confidence tissue masks when
         # available. Without segmentations, retain distribution summaries but
         # label them honestly rather than presenting quartiles as tissues.
-        t1_in_brain = t1_map[brain_mask]
+        t1_in_brain = t1_map[tissue_qc_mask]
 
         # WM: lower T1 values (shorter relaxation time)
         # GM: higher T1 values
@@ -1895,7 +1895,9 @@ class T1Mapping(SimpleInterface):
 
         # Compute additional metrics for QC report
         median_t1 = float(np.median(valid_t1))
-        fraction_valid = float(len(valid_t1)) / max(1, int(np.sum(brain_mask)))
+        fraction_valid = float(
+            np.sum(np.isfinite(t1_map) & (t1_map > 0) & brain_mask)
+        ) / max(1, int(np.sum(brain_mask)))
 
         # Build QC metrics dictionary
         has_b1 = b1_corrected
@@ -1920,7 +1922,7 @@ class T1Mapping(SimpleInterface):
             "field_strength_t": field_strength,
             "wm_range_ms": wm_range,
             "gm_range_ms": gm_range,
-            "csf_excluded": csf_excluded,
+            "csf_qc_restricted": csf_qc_restricted,
             "median_filtered": False,
             "t1_method": t1_method,
             "tissue_statistics_source": tissue_stats_source,

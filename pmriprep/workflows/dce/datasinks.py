@@ -1663,14 +1663,13 @@ def init_dce_datasinks_wf(
             desc="t1Support",
             description="T1 support provenance labels: 0 outside DCE analysis "
             "domain, 1 directly measured, 2 locally interpolated, 3 unavailable, "
-            "4 CSF excluded, 5 uniform assumption",
+            "5 uniform assumption",
             extra={
                 "LabelMap": {
                     "0": "Outside DCE analysis domain",
                     "1": "Directly measured T1",
                     "2": "Locally interpolated T1",
                     "3": "T1 unavailable in DCE analysis domain",
-                    "4": "CSF excluded",
                     "5": "Uniform T1 assumption",
                 },
             },

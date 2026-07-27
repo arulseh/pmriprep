@@ -838,11 +838,67 @@ def test_t1_mapping_preserves_compact_measured_structure(tmp_path: Path) -> None
         support_qc[key]
         for key in (
             "directly_measured_voxels", "locally_interpolated_voxels",
-            "unavailable_voxels", "csf_excluded_voxels",
+            "unavailable_voxels",
             "uniform_assumption_voxels",
         )
     ) == support_qc["analysis_domain_voxels"]
     assert result.outputs.qc_metrics["median_filtered"] is False
+
+
+def test_t1_mapping_csf_probseg_restricts_qc_not_support(tmp_path: Path) -> None:
+    """Anatomical CSF classification must not remove quantitative T1 support."""
+    import nibabel as nib
+
+    from pmriprep.interfaces.dce import T1Mapping
+
+    shape = (5, 5, 5)
+    affine = np.eye(4)
+    flip_angles = np.array([5.0, 15.0, 25.0])
+    tr_ms = 7.0
+    truth_ms = np.full(shape, 1200.0)
+    truth_ms[2, 2, 2] = 4000.0
+    truth_ms[1, 1, 1] = 4000.0
+    vfa_files = []
+    for index, signal in enumerate(
+        _make_ernst_signal(
+            5000.0,
+            truth_ms / 1000.0,
+            tr_ms / 1000.0,
+            flip_angles[:, None, None, None],
+        ),
+    ):
+        path = tmp_path / f"vfa_{index}.nii.gz"
+        nib.save(nib.Nifti1Image(signal.astype(np.float32), affine), path)
+        vfa_files.append(str(path))
+
+    brain = np.ones(shape, dtype=np.uint8)
+    csf = np.zeros(shape, dtype=np.float32)
+    csf[2, 2, 2] = 1.0
+    csf[1, 1, 1] = 1.0
+    paths = {}
+    for name, data in (("brain", brain), ("csf", csf)):
+        path = tmp_path / f"{name}.nii.gz"
+        nib.save(nib.Nifti1Image(data, affine), path)
+        paths[name] = str(path)
+
+    result = T1Mapping(
+        vfa_files=vfa_files,
+        flip_angles=flip_angles.tolist(),
+        tr=tr_ms,
+        brain_mask=paths["brain"],
+        csf_probseg=paths["csf"],
+        t1_method="nlls",
+        t1_correction_mode="none",
+        out_file=str(tmp_path / "t1_map.nii.gz"),
+    ).run(cwd=str(tmp_path))
+
+    support = nib.load(result.outputs.support_file).get_fdata()
+    assert support[2, 2, 2] == 1
+    assert support[1, 1, 1] == 1
+    support_qc = result.outputs.qc_metrics["t1_support"]
+    assert support_qc["csf_qc_restricted_voxels"] == 2
+    assert result.outputs.qc_metrics["fraction_valid"] == 1.0
+    assert result.outputs.qc_metrics["median_t1_ms"] == pytest.approx(1200.0, abs=1.0)
 
 
 class TestNLLSFitting:
