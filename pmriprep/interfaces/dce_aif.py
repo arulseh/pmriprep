@@ -5110,6 +5110,18 @@ class AIFDetection(BaseInterface):
             qc_metrics["aif_g6_admitted"] = False
             qc_metrics["aif_uncertainty_inflation_factor"] = 1.0
 
+        # The cascade gates candidate pools before the emitted curve receives
+        # its final tissue-timing cross-check. Propagate that final assessment
+        # into confidence so the report does not certify a timing-marginal AIF
+        # as standard. This is QC-only: the selected curve is retained.
+        if (
+            detection_method != "population"
+            and qc_metrics.get("is_likely_venous", False)
+            and qc_metrics["aif_confidence"] == "standard"
+        ):
+            qc_metrics["aif_confidence"] = "reduced"
+            qc_metrics["aif_uncertainty_inflation_factor"] = 2.0
+
         # Amplitude-anchor the Pass-2 fallback AIF to the dose-scaled population
         # target via the shared _apply_aif_scale helper (identical math to the
         # per-tier trim loop and the C2 re-gate). External AIFs bypass (supplied

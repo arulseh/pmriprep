@@ -6,7 +6,6 @@
     {% set pk_model_labels = {'tofts': 'Tofts', 'extended_tofts': 'Extended Tofts', 'patlak': 'Patlak', '2cxm': '2CXM', 'auto': 'Automatic'} %}
     {% set aif_method_labels = {'atlas': 'Atlas', 'whole_brain': 'Whole Brain', 'external': 'External', 'population': 'Population'} %}
     {% set peak_policy_labels = {'one_sided_lower_bound': 'One-Sided Lower Bound', 'disabled': 'Disabled'} %}
-    {% set peak_trigger_labels = {'below_expected_minimum': 'Below Expected Minimum', 'not_required': 'Not Required', 'disabled': 'Disabled'} %}
 
     <!-- Per-pipeline recommendation -->
     {% if dce.qc_metrics.recommendation %}
@@ -459,12 +458,6 @@
             <div class="metric">
                 <div class="metric-label">Peak Scale Factor</div>
                 <div class="metric-value">{{ "%.2f"|format(dce.qc_metrics.aif_detection.peak_scaling_factor) }}x</div>
-            </div>
-            {% endif %}
-            {% if dce.qc_metrics.aif_detection.peak_scaling_trigger is defined %}
-            <div class="metric">
-                <div class="metric-label">Peak Scaling Trigger</div>
-                <div class="metric-value">{{ peak_trigger_labels.get(dce.qc_metrics.aif_detection.peak_scaling_trigger, dce.qc_metrics.aif_detection.peak_scaling_trigger | replace('_', ' ') | title) }}</div>
             </div>
             {% endif %}
             {% if dce.qc_metrics.aif_detection.final_fwhm_seconds is defined %}

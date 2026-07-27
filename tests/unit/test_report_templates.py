@@ -294,11 +294,11 @@ def test_dce_aif_cards_follow_qc_hierarchy(env):
         "Raw Peak",
         "Peak Scaling",
         "Peak Scale Factor",
-        "Peak Scaling Trigger",
         "FWHM",
         "Washout",
         "AUC",
     )
+    assert "Peak Scaling Trigger" not in rendered
 
 
 def test_dce_vfa_motion_warning_renders(env):
@@ -477,7 +477,7 @@ def test_dce_aif_peak_scaling_qc_renders(env):
     assert "4.00 mM" in rendered
     assert "One-Sided Lower Bound (Applied)" in rendered
     assert "2.00x" in rendered
-    assert "Below Expected Minimum" in rendered
+    assert "Peak Scaling Trigger" not in rendered
     assert "one_sided_lower_bound" not in rendered
     assert "below_expected_minimum" not in rendered
 

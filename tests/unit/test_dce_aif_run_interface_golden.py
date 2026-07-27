@@ -277,6 +277,25 @@ def _cell_c2_nondivergent(tmp_path: Path) -> dict[str, Any]:
     return _snapshot(iface)
 
 
+def _cell_final_timing_marginal(tmp_path: Path) -> dict[str, Any]:
+    """Cell 9: final emitted-curve timing downgrades otherwise standard confidence."""
+    a, b, c = (10, 10, 10), (10, 11, 10), (11, 10, 10)
+    conc, mask = _make_conc(arterial_coords=[a, b, c])
+    # Make the brain-wide tissue peak coincide with the emitted AIF peak while
+    # retaining enough amplitude variation for the tissue-IQR estimator.
+    amplitude = np.linspace(0.5, 1.5, conc.shape[0])[:, None, None, None]
+    conc[..., :] = amplitude * _bolus()[np.newaxis, np.newaxis, np.newaxis, :]
+    conc_f, mask_f = _write_niftis(tmp_path, conc, mask)
+    casc = _cascade([a, b, c], [0.9, 0.8, 0.7], _tier_result([a, b, c]))
+    iface = _base_iface(conc_f, mask_f)
+    with patch.object(AIFDetection, "_run_two_pass_cascade", return_value=casc), \
+         patch.object(AIFDetection, "_ensure_bilateral_balance", side_effect=_IDENTITY_BALANCE):
+        iface.run()
+    snapshot = _snapshot(iface)
+    assert snapshot["results"]["aif_confidence"] == "reduced"
+    return snapshot
+
+
 def _cell_hs2_emptied(tmp_path: Path) -> dict[str, Any]:
     """Cell 4: HS-2 — quality filter empties non-empty low-score candidates.
 
@@ -347,6 +366,7 @@ _CELLS = {
     "external": _cell_external,
     "c2_divergence": _cell_c2_divergence,
     "c2_nondivergent": _cell_c2_nondivergent,
+    "final_timing_marginal": _cell_final_timing_marginal,
     "hs2_emptied": _cell_hs2_emptied,
     "filtered_nonzero": _cell_filtered_nonzero,
     "real_detection": _cell_real_detection,
