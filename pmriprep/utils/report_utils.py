@@ -391,9 +391,8 @@ def _build_dsc_boilerplate(dsc_qc: dict[str, Any]) -> str:
 
     if aif_source == "synthetic":
         sentences.append(
-            "A synthetic population-derived AIF was used, based on "
-            "gamma-variate parameters from the literature "
-            "[@parker_2006; @mouridsen_2006]."
+            "A dose- and field-strength-scaled synthetic gamma-variate AIF "
+            "was used as a fallback [@rulseh_inprep]."
         )
     elif aif_source == "external":
         sentences.append("A user-supplied arterial input function was used.")
@@ -468,7 +467,7 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> str:
     # conversion can follow the T1 mapping it depends on (strict pipeline order).
     if _motion_was_applied(dce_qc):
         sentences.append(
-            "DCE permeability images were motion-corrected using MCFLIRT "
+            "DCE images were motion-corrected using MCFLIRT "
             "[@jenkinson_2002]."
         )
     else:
@@ -538,7 +537,7 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> str:
         sentences.append(
             "The DCE arterial input function was automatically "
             "detected using MRA-atlas-guided candidate selection with "
-            "dose-aware scaling and quality-weighted averaging "
+            "dose-aware candidate assessment and quality-weighted averaging "
             "[@rulseh_inprep]."
         )
 
@@ -560,8 +559,10 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> str:
         if candidates:
             # Format candidate list nicely (citations live in the @key markers)
             model_names = [_DCE_PK_MODEL_TEXT.get(m, m) for m in candidates]
-            if len(model_names) > 1:
+            if len(model_names) > 2:
                 model_list = ", ".join(model_names[:-1]) + f", and {model_names[-1]}"
+            elif len(model_names) == 2:
+                model_list = f"{model_names[0]} and {model_names[1]}"
             else:
                 model_list = model_names[0] if model_names else "available models"
             sentences.append(
@@ -591,7 +592,7 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> str:
     # NAWM normalization
     if dce_qc.get("nawm_normalization", False):
         sentences.append(
-            "Permeability maps (Ktrans, IAUC60) were normalized to "
+            "DCE parameter maps (Ktrans, IAUC60) were normalized to "
             "automatically segmented contralateral normal-appearing "
             "white matter."
         )
