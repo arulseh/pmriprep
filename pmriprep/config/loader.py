@@ -21,7 +21,6 @@ _CONFIG_CLASSES = {
     "anat": AnatConfig,
     "tumor_seg": TumorSegConfig,
 }
-_DCE_NESTED_SECTIONS = {"processing", "registration", "aif"}
 
 
 def _validate_config_mapping(config: Any) -> Dict[str, Any]:
@@ -60,8 +59,6 @@ def _validate_config_mapping(config: Any) -> Dict[str, Any]:
         if not isinstance(section_value, dict):
             raise ValueError(f"Configuration section {section!r} must be a mapping.")
         valid_options = {item.name for item in fields(config_class)}
-        if section == "dce":
-            valid_options |= _DCE_NESTED_SECTIONS
         unknown_options = set(section_value) - valid_options
         if unknown_options:
             raise ValueError(
@@ -385,14 +382,6 @@ def build_dce_config(config_dict: Dict[str, Any]) -> DCEConfig:
         Configured DCEConfig instance.
     """
     dce_dict = config_dict.get("dce", {}).copy()
-
-    # Flatten nested sections (e.g., processing.tsnr_threshold -> tsnr_threshold)
-    for nested_key in ("processing", "registration", "aif"):
-        nested = dce_dict.pop(nested_key, None)
-        if isinstance(nested, dict):
-            for k, v in nested.items():
-                if k not in dce_dict:  # Top-level keys take priority
-                    dce_dict[k] = v
 
     # Convert path strings to Path objects
     for path_key in ("lesion_mask", "nawm_mask", "aif_mask_file", "aif_file", "roi_mask", "t1_map_file"):

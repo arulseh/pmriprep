@@ -60,16 +60,31 @@ def test_load_config_rejects_unknown_option(tmp_path: Path) -> None:
         load_config(path)
 
 
-def test_load_config_accepts_supported_dce_nested_sections(tmp_path: Path) -> None:
-    """Legacy supported DCE grouping remains a valid input structure."""
+@pytest.mark.parametrize("nested_section", ["processing", "registration", "aif"])
+def test_load_config_rejects_nested_dce_sections(
+    tmp_path: Path, nested_section: str,
+) -> None:
+    """DCE options follow the same flat section contract as other pipelines."""
     path = _write_config(
         tmp_path / "config.yaml",
-        "dce:\n  processing:\n    tsnr_threshold: 8\n  aif:\n    aif_method: population\n",
+        f"dce:\n  {nested_section}:\n    tsnr_threshold: 8\n",
     )
 
-    config = load_config(path)
+    with pytest.raises(
+        ValueError,
+        match=f"Unknown dce configuration option.*{nested_section}",
+    ):
+        load_config(path)
 
-    assert config["dce"]["processing"]["tsnr_threshold"] == 8
+
+@pytest.mark.parametrize("nested_section", ["processing", "registration", "aif"])
+def test_dce_builder_rejects_nested_sections(nested_section: str) -> None:
+    """Programmatic construction cannot bypass the flat DCE schema."""
+    with pytest.raises(
+        ValueError,
+        match=f"Unknown dce configuration option.*{nested_section}",
+    ):
+        build_dce_config({"dce": {nested_section: {"tsnr_threshold": 8}}})
 
 
 @pytest.mark.parametrize(
