@@ -258,17 +258,19 @@ class TestBuildAifProvenanceBlock:
         assert block["Source"] == "gamma_fit_measured"
         assert block["GammaFitApplied"] is True
 
-    def test_quality_warn(self) -> None:
+    def test_quality_warn_for_permissive_tier(self) -> None:
         block = build_aif_provenance_block(
-            {"aif_detection": {"detection_method": "atlas_strict", "quality_score": 0.6}}
+            {"aif_detection": {
+                "detection_method": "atlas_permissive", "quality_score": 0.6,
+            }}
         )
         assert block["QualityFlag"] == "warn"
 
-    def test_quality_poor(self) -> None:
+    def test_strict_tier_not_downgraded_by_ranking_score(self) -> None:
         block = build_aif_provenance_block(
             {"aif_detection": {"detection_method": "atlas_strict", "quality_score": 0.3}}
         )
-        assert block["QualityFlag"] == "poor"
+        assert block["QualityFlag"] == "pass"
 
     def test_missing_qc_returns_empty(self) -> None:
         assert build_aif_provenance_block(None) == {}

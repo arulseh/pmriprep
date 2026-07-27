@@ -54,25 +54,38 @@ class TestDeriveAifSource:
 
 
 class TestDeriveQualityFlag:
-    def test_pass_threshold(self) -> None:
+    def test_dsc_strict_passes_despite_ranking_score(self) -> None:
         from pmriprep.utils.aif_provenance import _derive_quality_flag
 
-        assert _derive_quality_flag({"quality_score": 0.70}, "measured") == "pass"
+        qc = {"detection_method": "atlas_strict", "quality_score": 0.14}
+        assert _derive_quality_flag(qc, "measured") == "pass"
 
-    def test_warn_threshold(self) -> None:
+    def test_dsc_relaxed_passes(self) -> None:
         from pmriprep.utils.aif_provenance import _derive_quality_flag
 
-        assert _derive_quality_flag({"quality_score": 0.50}, "measured") == "warn"
+        assert _derive_quality_flag(
+            {"detection_method": "atlas_relaxed"}, "measured"
+        ) == "pass"
 
-    def test_poor_threshold(self) -> None:
+    def test_dsc_permissive_warns(self) -> None:
         from pmriprep.utils.aif_provenance import _derive_quality_flag
 
-        assert _derive_quality_flag({"quality_score": 0.49}, "measured") == "poor"
+        assert _derive_quality_flag(
+            {"detection_method": "atlas_permissive"}, "measured"
+        ) == "warn"
 
-    def test_boundary_pass_warn(self) -> None:
+    def test_dsc_compound_tier_uses_worst_tier(self) -> None:
         from pmriprep.utils.aif_provenance import _derive_quality_flag
 
-        assert _derive_quality_flag({"quality_score": 0.69}, "measured") == "warn"
+        qc = {"detection_method": "atlas_relaxed+atlas_permissive"}
+        assert _derive_quality_flag(qc, "measured") == "warn"
+
+    def test_dce_score_fallback_thresholds(self) -> None:
+        from pmriprep.utils.aif_provenance import _derive_quality_flag
+
+        assert _derive_quality_flag({"quality_score": 0.70}, "measured", "DCE") == "pass"
+        assert _derive_quality_flag({"quality_score": 0.50}, "measured", "DCE") == "warn"
+        assert _derive_quality_flag({"quality_score": 0.49}, "measured", "DCE") == "poor"
 
     def test_synthetic_forced_poor(self) -> None:
         from pmriprep.utils.aif_provenance import _derive_quality_flag
@@ -88,6 +101,12 @@ class TestDeriveQualityFlag:
         from pmriprep.utils.aif_provenance import _derive_quality_flag
 
         assert _derive_quality_flag({}, "measured") == "warn"
+
+    def test_dsc_external_warns(self) -> None:
+        from pmriprep.utils.aif_provenance import _derive_quality_flag
+
+        qc = {"detection_method": "external", "quality_score": 0.95}
+        assert _derive_quality_flag(qc, "external") == "warn"
 
 
 class TestBuildProvenanceBlockDSC:

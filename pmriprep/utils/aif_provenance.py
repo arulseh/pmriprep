@@ -194,15 +194,29 @@ def _derive_quality_flag(
     """Derive ``QualityFlag`` from source and gate/score quality.
 
     Non-subject-specific sources (synthetic, population) are forced to
-    ``poor``. For DCE the emitted ``quality_score`` is a report-only
-    AIF-shape-fidelity metric (systematically compressed, physics-scoped
-    as not for accept/reject), so the flag is derived from the gate-based
-    ``aif_confidence`` instead — otherwise every normal detected AIF is
-    mislabelled ``poor``. DSC's ``quality_score`` is a 0-1 composite whose
-    0.7 / 0.5 thresholds (Willats & Calamante / Mouridsen heuristics) hold.
+    ``poor``. DCE uses its gate-based ``aif_confidence``. DSC uses the
+    accepted cascade tier, matching the overall QC recommendation and HTML;
+    its reported score is a transformed candidate-ranking cost rather than a
+    calibrated absolute-quality scale.
     """
     if source in {"synthetic", "population"}:
         return "poor"
+    if modality == "DSC":
+        detection_level = str(aif_qc.get("detection_method", ""))
+        parts = set(split_detection_level(detection_level))
+        if not parts or source == "external":
+            return "warn"
+        if parts <= {"atlas_strict", "atlas_relaxed"}:
+            return "pass"
+        if parts & {
+            "atlas_permissive",
+            "full_atlas_permissive",
+            "brain_relaxed",
+            "brain_permissive",
+            "single_best",
+        }:
+            return "warn"
+        return "warn"
     if modality == "DCE":
         confidence = aif_qc.get("aif_confidence")
         if confidence == "standard":
