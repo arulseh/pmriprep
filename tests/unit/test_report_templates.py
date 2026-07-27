@@ -77,6 +77,28 @@ def test_parent_render_hides_dsc_blocks_when_no_dsc(env):
     assert "<h3>DSC-DCE Cross-Validation</h3>" not in rendered
 
 
+@pytest.mark.parametrize(
+    ("template_name", "modality"),
+    [
+        ("sections/section_dsc.html", "DSC"),
+        ("sections/section_dce.html", "DCE"),
+    ],
+)
+def test_registration_description_is_concise(env, template_name, modality):
+    """Perfusion registration sections use parallel concise descriptions."""
+    template = env.get_template(template_name)
+    context = {
+        modality.lower(): {
+            "qc_metrics": {},
+            "images": {"registration": "registration.png"},
+            "display_status": {},
+        },
+    }
+    rendered = template.render(**context)
+    assert f"Multi-slice overlay showing {modality}-T1w registration." in rendered
+    assert "intensity contour" not in rendered
+
+
 def test_dce_constraint_coupled_diagnostic_is_not_labeled_validation(env):
     """A DSC-informed vp fit is explicitly reported as non-independent."""
     template = env.get_template("sections/section_dce.html")
