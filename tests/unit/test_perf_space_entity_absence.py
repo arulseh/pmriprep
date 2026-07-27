@@ -194,3 +194,14 @@ def test_anat_reference_basename_uses_T1w_space() -> None:
     )
     assert "space-anat" not in precon
     assert "space-anat" not in postcon
+
+
+def test_anat_spatial_reference_preserves_source_entities() -> None:
+    """Anatomical reference URIs identify the derivative that is written."""
+    from pmriprep.utils.sidecar_builders import _anat_spatial_reference
+
+    source = "/raw/sub-X/ses-Y/anat/sub-X_ses-Y_acq-mprage_run-2_T1w.nii.gz"
+    assert _anat_spatial_reference("X", "Y", source=source) == (
+        "bids::sub-X/ses-Y/anat/"
+        "sub-X_ses-Y_acq-mprage_run-2_space-T1w_desc-preproc_T1w.nii.gz"
+    )

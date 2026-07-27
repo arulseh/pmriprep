@@ -525,12 +525,25 @@ def anat_reference_basename(is_postcon_ref: bool = False) -> str:
 
 
 def _anat_spatial_reference(
-    subject: str, session: Optional[str], is_postcon_ref: bool = False
+    subject: str,
+    session: Optional[str],
+    is_postcon_ref: bool = False,
+    source: PathLike | None = None,
 ) -> str:
-    return build_spatial_reference_uri(
-        anat_reference_basename(is_postcon_ref),
-        subject, session, datatype="anat",
-    )
+    if source is None:
+        return build_spatial_reference_uri(
+            anat_reference_basename(is_postcon_ref),
+            subject, session, datatype="anat",
+        )
+    prefix = source_entity_prefix(source, subject, session)
+    parts = [f"sub-{subject}"]
+    if session:
+        parts.append(f"ses-{session}")
+    parts.extend([
+        "anat",
+        f"{prefix}_space-T1w_desc-preproc_T1w.nii.gz",
+    ])
+    return "bids::" + "/".join(parts)
 
 
 def build_anat_preproc_sidecar(
@@ -544,6 +557,7 @@ def build_anat_preproc_sidecar(
     skull_stripped: bool = True,
     contrast_agent: Optional[str] = None,
     is_postcon_ref: bool = False,
+    reference_source: PathLike | None = None,
 ) -> Dict[str, Any]:
     """Build sidecar for a preprocessed/coregistered anat NIfTI."""
     from pmriprep.utils.provenance import get_bids_derivative_provenance
@@ -553,7 +567,10 @@ def build_anat_preproc_sidecar(
         **get_bids_derivative_provenance(),
         "Description": description,
         "SkullStripped": skull_stripped,
-        "SpatialReference": _anat_spatial_reference(subject, session, is_postcon_ref),
+        "SpatialReference": _anat_spatial_reference(
+            subject, session, is_postcon_ref,
+            reference_source or (source_paths[0] if source_paths else None),
+        ),
         "Sources": sources,
         **resolution_native_block(reference_voxel_source),
         "OriginalResolution": compute_original_resolution(reference_voxel_source),
@@ -578,6 +595,7 @@ def build_anat_mask_sidecar(
     subject: str,
     session: Optional[str],
     is_postcon_ref: bool = False,
+    reference_source: PathLike | None = None,
 ) -> Dict[str, Any]:
     """Build sidecar for an anat-space brain mask."""
     from pmriprep.utils.provenance import get_bids_derivative_provenance
@@ -586,7 +604,10 @@ def build_anat_mask_sidecar(
         **get_bids_derivative_provenance(),
         "Description": description,
         "SkullStripped": True,
-        "SpatialReference": _anat_spatial_reference(subject, session, is_postcon_ref),
+        "SpatialReference": _anat_spatial_reference(
+            subject, session, is_postcon_ref,
+            reference_source or (source_paths[0] if source_paths else None),
+        ),
         "Sources": build_sources_list(source_paths, bids_dir),
         **resolution_native_block(reference_voxel_source),
         "OriginalResolution": compute_original_resolution(reference_voxel_source),
@@ -646,6 +667,7 @@ def build_tumor_seg_dseg_sidecar(
     session: Optional[str],
     is_postcon_ref: bool = False,
     qc_metrics: Optional[Dict[str, Any]] = None,
+    reference_source: PathLike | None = None,
 ) -> Dict[str, Any]:
     """Sidecar for the multi-class tumor ``dseg`` label map.
 
@@ -664,7 +686,10 @@ def build_tumor_seg_dseg_sidecar(
         "Manual": False,
         "SegmentationLabels": dict(HDGLIO_BIDS_LABELS),
         "Method": "HD-GLIO",
-        "SpatialReference": _anat_spatial_reference(subject, session, is_postcon_ref),
+        "SpatialReference": _anat_spatial_reference(
+            subject, session, is_postcon_ref,
+            reference_source or (source_paths[0] if source_paths else None),
+        ),
         "Sources": build_sources_list(source_paths, bids_dir),
         **resolution_native_block(reference_voxel_source),
         "TumorVolumetrics": _tumor_volumetrics(reference_voxel_source),
@@ -715,6 +740,7 @@ def build_tumor_seg_mask_sidecar(
     session: Optional[str],
     method: str = "Derived from tumor segmentation",
     is_postcon_ref: bool = False,
+    reference_source: PathLike | None = None,
 ) -> Dict[str, Any]:
     """Sidecar for a binary tumor-derived mask (enhancing/nonenhancing/whole/lesion)."""
     from pmriprep.utils.provenance import get_bids_derivative_provenance
@@ -724,7 +750,10 @@ def build_tumor_seg_mask_sidecar(
         "Description": description,
         "Type": "Lesion",
         "Method": method,
-        "SpatialReference": _anat_spatial_reference(subject, session, is_postcon_ref),
+        "SpatialReference": _anat_spatial_reference(
+            subject, session, is_postcon_ref,
+            reference_source or (source_paths[0] if source_paths else None),
+        ),
         "Sources": build_sources_list(source_paths, bids_dir),
         **resolution_native_block(reference_voxel_source),
     }
@@ -738,6 +767,7 @@ def build_tumor_seg_nawm_sidecar(
     subject: str,
     session: Optional[str],
     is_postcon_ref: bool = False,
+    reference_source: PathLike | None = None,
 ) -> Dict[str, Any]:
     """Sidecar for the contralateral NAWM mask."""
     from pmriprep.utils.provenance import get_bids_derivative_provenance
@@ -752,7 +782,10 @@ def build_tumor_seg_nawm_sidecar(
         "Method": (
             "Contralateral WM thresholded at p>=0.9, excluding tumor margin"
         ),
-        "SpatialReference": _anat_spatial_reference(subject, session, is_postcon_ref),
+        "SpatialReference": _anat_spatial_reference(
+            subject, session, is_postcon_ref,
+            reference_source or (source_paths[0] if source_paths else None),
+        ),
         "Sources": build_sources_list(source_paths, bids_dir),
         **resolution_native_block(reference_voxel_source),
     }
@@ -938,6 +971,7 @@ def build_anat_probseg_sidecar(
     subject: str,
     session: Optional[str],
     is_postcon_ref: bool = False,
+    reference_source: PathLike | None = None,
 ) -> Dict[str, Any]:
     """Build sidecar for a tissue probability map (``label-{WM,GM,CSF}``)."""
     from pmriprep.utils.provenance import get_bids_derivative_provenance
@@ -945,7 +979,10 @@ def build_anat_probseg_sidecar(
     return {
         **get_bids_derivative_provenance(),
         "Description": f"{tissue_type} probability map from FAST tissue segmentation",
-        "SpatialReference": _anat_spatial_reference(subject, session, is_postcon_ref),
+        "SpatialReference": _anat_spatial_reference(
+            subject, session, is_postcon_ref,
+            reference_source or (source_paths[0] if source_paths else None),
+        ),
         "Sources": build_sources_list(source_paths, bids_dir),
         **resolution_native_block(reference_voxel_source),
         "ReferenceContrastType": "precon",

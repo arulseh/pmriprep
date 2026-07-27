@@ -20,6 +20,7 @@ from typing import Optional
 import nipype.interfaces.utility as niu  # type: ignore[import-untyped]
 import nipype.pipeline.engine as pe  # type: ignore[import-untyped]
 
+from pmriprep.config.constants import HDGLIO_BIDS_LABELS
 from pmriprep.interfaces.qc_writers import (
     DCEFiguresWriter,
     PMRIPrepDataSink,
@@ -56,6 +57,9 @@ class DCEAnatMaskSpec:
     description: str
     skull_stripped: bool = False
     mask_type: str = "ROI"
+    bids_suffix: str = "mask"
+    source_attr: str = "source_dce"
+    extra: dict[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -136,10 +140,13 @@ _ANAT_MASKS: tuple[DCEAnatMaskSpec, ...] = (
     DCEAnatMaskSpec(
         "nawm_mask_dce", "nawm_mask", "nawm",
         "Normal-appearing white matter mask in DCE space", mask_type="ROI",
+        source_attr="source_t1w",
     ),
     DCEAnatMaskSpec(
         "lesion_mask_dce", "lesion_mask_dce", "lesion",
-        "Lesion mask registered to DCE space", mask_type="Lesion",
+        "Tumor segmentation registered to DCE space", mask_type="",
+        bids_suffix="dseg", source_attr="source_t1w",
+        extra={"LabelMap": dict(HDGLIO_BIDS_LABELS)},
     ),
     DCEAnatMaskSpec(
         "user_lesion_mask_dce", "user_lesion_mask_dce", "userLesion",
@@ -527,6 +534,25 @@ def _build_dce_underlay_meta(
         out.update(extra)
     out["Sources"] = build_sources_list(
         [structural_source, perfusion_source], bids_dir,
+    )
+    return out
+
+
+def _build_dce_transformed_mask_meta(
+    base: dict,
+    description: str,
+    units: str | None,
+    extra: dict | None,
+    structural_sources: list[str],
+    perfusion_source: str,
+    bids_dir: str,
+) -> dict:
+    """Build metadata for an anatomical mask transformed to DCE space."""
+    from pmriprep.utils.sidecar_builders import build_sources_list
+
+    out = _build_dce_meta(base, description, units, extra)
+    out["Sources"] = build_sources_list(
+        [*(structural_sources or []), perfusion_source], bids_dir,
     )
     return out
 
@@ -1096,22 +1122,47 @@ def _add_anat_mask_sink(
     skull_stripped: bool = False,
     mask_type: str = "ROI",
     space: str = "dceref",
+    bids_suffix: str = "mask",
+    source_attr: str = "source_dce",
+    extra: dict[str, object] | None = None,
+    structural_sources_node: pe.Node | None = None,
 ) -> pe.Node:
     """Wire a DCE-space mask (brain/nawm/lesion/roi) into anat/."""
+    is_structural = source_attr != "source_dce"
     meta = pe.Node(
         niu.Function(
-            input_names=["base", "description", "units", "extra"],
+            input_names=(
+                [
+                    "base", "description", "units", "extra",
+                    "structural_sources", "perfusion_source", "bids_dir",
+                ]
+                if is_structural else ["base", "description", "units", "extra"]
+            ),
             output_names=["meta_dict"],
-            function=_build_dce_meta,
+            function=(
+                _build_dce_transformed_mask_meta if is_structural else _build_dce_meta
+            ),
         ),
         name=f"{name}_meta",
     )
     meta.inputs.description = description
     meta.inputs.units = None
-    meta.inputs.extra = {
-        "Type": mask_type,
+    metadata_extra = {
+        **({"Type": mask_type} if mask_type else {}),
         **({"SkullStripped": True} if skull_stripped else {}),
     }
+    metadata_extra.update(extra or {})
+    meta.inputs.extra = metadata_extra
+    if is_structural:
+        if structural_sources_node is None:
+            raise ValueError("structural_sources_node is required for anatomical masks")
+        workflow.connect([
+            (inputnode, meta, [
+                ("source_dce", "perfusion_source"),
+                ("bids_dir", "bids_dir"),
+            ]),
+            (structural_sources_node, meta, [("out", "structural_sources")]),
+        ])
     workflow.connect(base_minimal_node, "meta_dict", meta, "base")
 
     sink = pe.Node(
@@ -1129,7 +1180,7 @@ def _add_anat_mask_sink(
     sink.inputs.desc = desc_value
     sink.inputs.suffix = ""
     sink.inputs.datatype = "anat"
-    sink.inputs.bids_suffix = "mask"
+    sink.inputs.bids_suffix = bids_suffix
     sink.inputs.space = space
     workflow.connect([
         (inputnode, sink, [
@@ -1719,6 +1770,16 @@ def init_dce_datasinks_wf(
         sink_outputs.append((sink, "out_file"))
 
     # --- Anat-side masks ---
+    anat_mask_sources = pe.Node(niu.Merge(5), name="anat_mask_sources")
+    workflow.connect([
+        (inputnode, anat_mask_sources, [
+            ("source_t1w", "in1"),
+            ("source_t1w_postcon", "in2"),
+            ("source_flair", "in3"),
+            ("source_flair_postcon", "in4"),
+            ("source_t2w", "in5"),
+        ]),
+    ])
     for mask_spec in _ANAT_MASKS:
         if mask_spec.in_attr not in present:
             continue
@@ -1728,6 +1789,10 @@ def init_dce_datasinks_wf(
             desc_value=mask_spec.desc, description=mask_spec.description,
             skull_stripped=mask_spec.skull_stripped,
             mask_type=mask_spec.mask_type,
+            bids_suffix=mask_spec.bids_suffix,
+            source_attr=mask_spec.source_attr,
+            extra=mask_spec.extra,
+            structural_sources_node=anat_mask_sources,
         )
         sink_outputs.append((sink, "out_file"))
 

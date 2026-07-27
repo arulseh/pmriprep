@@ -69,6 +69,42 @@ def test_source_entity_prefix_preserves_canonical_distinguishers() -> None:
     )
 
 
+def test_transformed_lesion_contract_preserves_labels_and_sources() -> None:
+    from pmriprep.config.constants import HDGLIO_BIDS_LABELS
+    from pmriprep.workflows.dce.datasinks import _ANAT_MASKS as dce_specs
+    from pmriprep.workflows.dce.datasinks import _build_dce_transformed_mask_meta
+    from pmriprep.workflows.dsc.datasinks import _ANAT_MASKS as dsc_specs
+    from pmriprep.workflows.dsc.datasinks import _build_transformed_mask_meta
+
+    dce = next(spec for spec in dce_specs if spec.in_attr == "lesion_mask_dce")
+    dsc = next(spec for spec in dsc_specs if spec.in_attr == "lesion_mask_dsc")
+    assert dce.bids_suffix == "dseg"
+    assert dce.extra == {"LabelMap": HDGLIO_BIDS_LABELS}
+    assert dsc.suffix == "dseg"
+    assert dsc.segmentation_labels == HDGLIO_BIDS_LABELS
+
+    base = {"Sources": ["bids:raw:sub-X/ses-Y/perf/sub-X_ses-Y_dce.nii.gz"]}
+    structural_sources = [
+        "/raw/sub-X/ses-Y/anat/sub-X_ses-Y_T1w.nii.gz",
+        "/raw/sub-X/ses-Y/anat/sub-X_ses-Y_FLAIR.nii.gz",
+    ]
+    dce_meta = _build_dce_transformed_mask_meta(
+        base, "Tumor segmentation", None,
+        {"LabelMap": HDGLIO_BIDS_LABELS},
+        structural_sources,
+        "/raw/sub-X/ses-Y/perf/sub-X_ses-Y_dce.nii.gz", "/raw",
+    )
+    dsc_meta = _build_transformed_mask_meta(
+        base, "Tumor segmentation", False, None,
+        structural_sources,
+        "/raw/sub-X/ses-Y/perf/sub-X_ses-Y_dsc.nii.gz", "/raw",
+        HDGLIO_BIDS_LABELS,
+    )
+    for meta in (dce_meta, dsc_meta):
+        assert len(meta["Sources"]) == 3
+        assert meta["LabelMap"] == HDGLIO_BIDS_LABELS
+
+
 def test_tb1map_uses_standard_suffix_and_dce_source_entities(tmp_path) -> None:
     from pmriprep.workflows.dce.datasinks import _copy_tb1map
 

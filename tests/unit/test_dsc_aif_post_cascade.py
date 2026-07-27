@@ -120,6 +120,7 @@ def test_gamma_r2_floor_replaces_detected_state_with_synthetic(
     assert state.qc_metrics["candidate_baseline_frames"] == 4
     assert state.qc_metrics["arrival_time_seconds"] == 4.5
     assert state.qc_metrics["aif_metrics"]["arrival"] == 4.5
+    assert state.qc_metrics["aif_metrics"]["peak_conc"] == 8.0
     assert state.qc_metrics["rejected_measured_aif"]["baseline_frames"] == 4
     assert state.qc_metrics["cbv_auc_denominator_is_synthetic"] is True
     assert "aif_voxel_coord" not in state.qc_metrics
@@ -159,6 +160,28 @@ def test_disabled_fallback_retains_sub_floor_detected_aif(
     assert state.qc_metrics["aif_gamma_fit_below_floor_retained"] is True
     assert state.qc_metrics["gamma_r2_retained"] == -0.25
     assert state.qc_metrics["aif_quality"] == "detected"
+
+
+def test_gamma_fit_refreshes_final_peak_provenance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Peak provenance follows the emitted fitted curve, not its candidate."""
+    detector = dsc_aif.AIFDetection()
+    monkeypatch.setattr(detector, "_finalize_detected_aif", lambda *args: _detected_result())
+
+    fitted = np.array([0.0, 0.0, 1.0, 5.5, 2.0, 0.5])
+
+    def accept_gamma(*args: object) -> tuple[bool, np.ndarray, np.ndarray, np.ndarray]:
+        raw = np.asarray(args[0])
+        return True, raw, fitted, fitted
+
+    monkeypatch.setattr(detector, "_apply_gamma_fit_if_appropriate", accept_gamma)
+    state = detector._finalize_post_cascade(
+        _context(), _cascade(), 2, logging.getLogger(__name__)
+    )
+
+    np.testing.assert_array_equal(state.curve, fitted)
+    assert state.qc_metrics["aif_metrics"]["peak_conc"] == 5.5
 
 
 def test_cascade_exhaustion_builds_complete_synthetic_qc(

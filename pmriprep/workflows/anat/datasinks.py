@@ -33,6 +33,7 @@ def _build_preproc_meta(
     coreg_modality: str | None = None,
     is_anchor_sidecar: bool = False,
     presence_warnings: list | None = None,
+    reference_source: str | None = None,
 ) -> dict:
     """Nipype-Function wrapper for ``build_anat_preproc_sidecar``.
 
@@ -62,6 +63,7 @@ def _build_preproc_meta(
         skull_stripped=skull_stripped,
         contrast_agent=contrast_agent,
         is_postcon_ref=is_postcon_ref,
+        reference_source=reference_source,
     )
     enrich_preproc_anat_sidecar(
         sidecar,
@@ -89,6 +91,7 @@ def _build_mask_meta(
     session: str,
     is_postcon_ref: bool = False,
     qc_metrics: dict | None = None,
+    reference_source: str | None = None,
 ) -> dict:
     """Nipype-Function wrapper for ``build_anat_mask_sidecar``.
 
@@ -108,6 +111,7 @@ def _build_mask_meta(
         subject=subject,
         session=session or None,
         is_postcon_ref=is_postcon_ref,
+        reference_source=reference_source,
     )
     enrich_brain_mask_sidecar(
         sidecar,
@@ -125,6 +129,7 @@ def _build_probseg_meta(
     session: str,
     is_postcon_ref: bool = False,
     qc_metrics: dict | None = None,
+    reference_source: str | None = None,
 ) -> dict:
     """Nipype-Function wrapper for ``build_anat_probseg_sidecar``.
 
@@ -144,6 +149,7 @@ def _build_probseg_meta(
         subject=subject,
         session=session or None,
         is_postcon_ref=is_postcon_ref,
+        reference_source=reference_source,
     )
     enrich_probseg_sidecar(
         sidecar,
@@ -212,6 +218,7 @@ def _add_one_anat_sink(
             "coreg_modality",
             "is_anchor_sidecar",
             "presence_warnings",
+            "reference_source",
         ]
     elif builder == "mask":
         builder_fn = _build_mask_meta
@@ -224,6 +231,7 @@ def _add_one_anat_sink(
             "session",
             "is_postcon_ref",
             "qc_metrics",
+            "reference_source",
         ]
     elif builder == "probseg":
         builder_fn = _build_probseg_meta
@@ -236,6 +244,7 @@ def _add_one_anat_sink(
             "session",
             "is_postcon_ref",
             "qc_metrics",
+            "reference_source",
         ]
     else:
         raise ValueError(f"Unknown builder: {builder}")
@@ -271,6 +280,8 @@ def _add_one_anat_sink(
             ("qc_metrics", "qc_metrics"),
         ]),
     ])
+    reference_attr = "source_t1w_postcon" if is_postcon_ref else "source_t1w"
+    workflow.connect(inputnode, reference_attr, meta_node, "reference_source")
 
     # Optional contrast-agent extraction
     if builder == "preproc" and contrast_agent_attr:

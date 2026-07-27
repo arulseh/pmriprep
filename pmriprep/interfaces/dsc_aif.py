@@ -3709,6 +3709,13 @@ class AIFDetection(BaseInterface):
                 aif_metrics["arrival"] = arrival_seconds
                 qc_metrics["aif_metrics"] = aif_metrics
 
+        # Canonical AIF metrics describe the curve emitted by this interface.
+        # Gamma fitting can alter its peak after candidate-level metrics were
+        # assembled, so refresh the final amplitude at the state boundary.
+        aif_metrics = dict(qc_metrics.get("aif_metrics") or {})
+        aif_metrics["peak_conc"] = float(np.max(aif_curve))
+        qc_metrics["aif_metrics"] = aif_metrics
+
         return _FinalAIFState(
             aif_curve,
             aif_mask_arr,

@@ -13,11 +13,12 @@ detection-method block + ``AIFDependent`` + ``TemplateAIFUsage`` tags.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Callable, Optional
 
 import nipype.interfaces.utility as niu  # type: ignore[import-untyped]
 import nipype.pipeline.engine as pe  # type: ignore[import-untyped]
 
+from pmriprep.config.constants import HDGLIO_BIDS_LABELS
 from pmriprep.interfaces.qc_writers import (
     DSCFiguresWriter,
     PMRIPrepDataSink,
@@ -56,6 +57,7 @@ class DSCAnatSpec:
     ceagent: str | None = None
     dismiss_entities: tuple[str, ...] = ("acquisition",)
     source_attr: str = "source_dsc"
+    segmentation_labels: dict[str, str] | None = None
 
 
 # Always-present DSC perfusion maps.
@@ -191,11 +193,13 @@ _ANAT_MASKS: tuple[DSCAnatSpec, ...] = (
     DSCAnatSpec(
         "nawm_mask_dsc", "nawm", "mask",
         "Normal-appearing white matter mask in DSC space",
-        mask_type="ROI", dismiss_entities=("acquisition", "ceagent"),
+        mask_type="ROI", dismiss_entities=(), source_attr="source_t1w",
     ),
     DSCAnatSpec(
-        "lesion_mask_dsc", "lesion", "mask",
-        "Lesion mask registered to DSC space", mask_type="Lesion",
+        "lesion_mask_dsc", "lesion", "dseg",
+        "Tumor segmentation registered to DSC space",
+        dismiss_entities=(), source_attr="source_t1w",
+        segmentation_labels=dict(HDGLIO_BIDS_LABELS),
     ),
     DSCAnatSpec(
         "user_lesion_mask_dsc", "userLesion", "mask",
@@ -338,6 +342,7 @@ def _build_minimal_meta(
     description: str,
     skull_stripped: bool = False,
     mask_type: str | None = None,
+    segmentation_labels: dict[str, str] | None = None,
 ) -> dict:
     out = dict(base)
     out["Description"] = description
@@ -345,6 +350,8 @@ def _build_minimal_meta(
         out["SkullStripped"] = True
     if mask_type is not None:
         out["Type"] = mask_type
+    if segmentation_labels:
+        out["LabelMap"] = dict(segmentation_labels)
     return out
 
 
@@ -371,6 +378,7 @@ def _build_underlay_meta(
     structural_source: str,
     perfusion_source: str,
     bids_dir: str,
+    segmentation_labels: dict[str, str] | None = None,
 ) -> dict:
     """Build metadata for a structural image resampled to DSC space."""
     from pmriprep.utils.sidecar_builders import build_sources_list
@@ -381,8 +389,32 @@ def _build_underlay_meta(
         out["SkullStripped"] = True
     if mask_type is not None:
         out["Type"] = mask_type
+    if segmentation_labels:
+        out["LabelMap"] = dict(segmentation_labels)
     out["Sources"] = build_sources_list(
         [structural_source, perfusion_source], bids_dir,
+    )
+    return out
+
+
+def _build_transformed_mask_meta(
+    base: dict,
+    description: str,
+    skull_stripped: bool,
+    mask_type: str | None,
+    structural_sources: list[str],
+    perfusion_source: str,
+    bids_dir: str,
+    segmentation_labels: dict[str, str] | None = None,
+) -> dict:
+    """Build metadata for an anatomical mask transformed to DSC space."""
+    from pmriprep.utils.sidecar_builders import build_sources_list
+
+    out = _build_minimal_meta(
+        base, description, skull_stripped, mask_type, segmentation_labels,
+    )
+    out["Sources"] = build_sources_list(
+        [*(structural_sources or []), perfusion_source], bids_dir,
     )
     return out
 
@@ -913,6 +945,8 @@ def _add_anat_sink(
     ce_value: Optional[str] = None,
     source_attr: str = "source_dsc",
     dismiss_entities: tuple = ("acquisition",),
+    segmentation_labels: dict[str, str] | None = None,
+    structural_sources_node: pe.Node | None = None,
 ) -> pe.Node:
     """Wire one anat/-side DSC sink (mask, structural underlay).
 
@@ -929,31 +963,52 @@ def _add_anat_sink(
     from pre-con T1w.
     """
     is_underlay = source_attr != "source_dsc"
+    is_transformed_mask = is_underlay and suffix in {"mask", "dseg"}
+    meta_function: Callable[..., dict]
+    if is_transformed_mask:
+        meta_input_names = [
+            "base", "description", "skull_stripped", "mask_type",
+            "structural_sources", "perfusion_source", "bids_dir",
+            "segmentation_labels",
+        ]
+        meta_function = _build_transformed_mask_meta
+    elif is_underlay:
+        meta_input_names = [
+            "base", "description", "skull_stripped", "mask_type",
+            "structural_source", "perfusion_source", "bids_dir",
+            "segmentation_labels",
+        ]
+        meta_function = _build_underlay_meta
+    else:
+        meta_input_names = [
+            "base", "description", "skull_stripped", "mask_type",
+            "segmentation_labels",
+        ]
+        meta_function = _build_minimal_meta
     meta = pe.Node(
         niu.Function(
-            input_names=(
-                ["base", "description", "skull_stripped", "mask_type",
-                 "structural_source", "perfusion_source", "bids_dir"]
-                if is_underlay
-                else ["base", "description", "skull_stripped", "mask_type"]
-            ),
+            input_names=meta_input_names,
             output_names=["meta_dict"],
-            function=_build_underlay_meta if is_underlay else _build_minimal_meta,
+            function=meta_function,
         ),
         name=f"{name}_meta",
     )
     meta.inputs.description = description
     meta.inputs.skull_stripped = skull_stripped
     meta.inputs.mask_type = mask_type
+    meta.inputs.segmentation_labels = segmentation_labels
     workflow.connect([(base_minimal_node, meta, [("meta_dict", "base")])])
     if is_underlay:
-        workflow.connect([
-            (inputnode, meta, [
-                (source_attr, "structural_source"),
-                ("source_dsc", "perfusion_source"),
-                ("bids_dir", "bids_dir"),
-            ]),
-        ])
+        workflow.connect(inputnode, "source_dsc", meta, "perfusion_source")
+        workflow.connect(inputnode, "bids_dir", meta, "bids_dir")
+        if is_transformed_mask:
+            if structural_sources_node is None:
+                raise ValueError(
+                    "structural_sources_node is required for anatomical masks"
+                )
+            workflow.connect(structural_sources_node, "out", meta, "structural_sources")
+        else:
+            workflow.connect(inputnode, source_attr, meta, "structural_source")
 
     sink = pe.Node(
         PMRIPrepDataSink(
@@ -1606,6 +1661,16 @@ def init_dsc_datasinks_wf(
 
     # Precontrast-derived masks explicitly dismiss ceagent to avoid false
     # postcontrast provenance; the distinction is encoded per specification.
+    anat_mask_sources = pe.Node(niu.Merge(5), name="anat_mask_sources")
+    workflow.connect([
+        (inputnode, anat_mask_sources, [
+            ("source_t1w", "in1"),
+            ("source_t1w_postcon", "in2"),
+            ("source_flair", "in3"),
+            ("source_flair_postcon", "in4"),
+            ("source_t2w", "in5"),
+        ]),
+    ])
     for anat_spec in _ANAT_MASKS + _STRUCTURAL_UNDERLAYS:
         if anat_spec.in_attr not in present:
             continue
@@ -1619,6 +1684,8 @@ def init_dsc_datasinks_wf(
             ce_value=anat_spec.ceagent,
             source_attr=anat_spec.source_attr,
             dismiss_entities=anat_spec.dismiss_entities,
+            segmentation_labels=anat_spec.segmentation_labels,
+            structural_sources_node=anat_mask_sources,
         )
         sink_outputs.append((sink, "out_file"))
 
