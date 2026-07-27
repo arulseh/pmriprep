@@ -833,6 +833,7 @@ def init_dsc_deconvolution_wf(
         ComputeDSCMaps(**dsc_map_kwargs),
         name="compute_maps",
         mem_gb=mem_gb,
+        n_procs=max(1, int(dsc_map_kwargs.get("n_procs", 1))),
     )
 
     workflow.connect([

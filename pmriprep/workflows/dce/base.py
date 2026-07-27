@@ -198,6 +198,7 @@ def init_dce_pk_modeling_wf(
         ComputeDCEMaps(**pk_kwargs),
         name="pk_modeling",
         mem_gb=mem_gb,
+        n_procs=max(1, int(pk_kwargs.get("n_procs", 1))),
     )
 
     workflow.connect([

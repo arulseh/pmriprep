@@ -2150,6 +2150,7 @@
     "dsc_dce_validation": {
       "input_names": [
         "brain_mask",
+        "dsc_cbv_file",
         "dsc_ncbv_file",
         "dsc_preload_configured",
         "no_dsc_validation",

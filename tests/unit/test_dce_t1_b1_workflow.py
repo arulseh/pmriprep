@@ -155,6 +155,14 @@ def test_dce_dsc_validation_workflow_contract() -> None:
     ).interface.inputs.traits()
 
 
+def test_dce_pk_node_reserves_internal_worker_count() -> None:
+    """Nipype reserves the processors used by the internal fitting pool."""
+    from pmriprep.workflows.dce.base import init_dce_pk_modeling_wf
+
+    workflow = init_dce_pk_modeling_wf(pk_kwargs={"n_procs": 6}, mem_gb=1.0)
+    assert workflow.get_node("pk_modeling").n_procs == 6
+
+
 def test_dce_underlays_workflow_contract() -> None:
     """Underlay construction remains independently conditional per modality."""
     empty = init_dce_underlays_wf(config=DCEConfig())

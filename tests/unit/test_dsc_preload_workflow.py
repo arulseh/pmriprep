@@ -32,7 +32,16 @@ from pmriprep.utils.dsc_preload import (
 from pmriprep.workflows.dsc.base import (
     _augment_qc_positive_tail,
     _detect_and_correct_preload,
+    init_dsc_deconvolution_wf,
 )
+
+
+def test_dsc_compute_node_reserves_internal_worker_count() -> None:
+    """Nipype reserves the processors used by the internal fitting pool."""
+    workflow = init_dsc_deconvolution_wf(
+        dsc_map_kwargs={"n_procs": 6}, mem_gb=1.0,
+    )
+    assert workflow.get_node("compute_maps").n_procs == 6
 
 
 def _write_fixtures(tmp_path: Path) -> tuple[str, str, str]:
