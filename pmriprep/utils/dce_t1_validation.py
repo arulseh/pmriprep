@@ -64,7 +64,7 @@ T1_TISSUE_REFERENCE: Dict[float, Dict[str, Any]] = {
         "warn_high": 1290,
         "expected_median": 1090,
     },
-    # 7.0T: Rooney 2007 (WM/GM T1), Wright 2008, Marques 2010
+    # 7.0T reference intervals.
     7.0: {
         "wm": (1000, 1250),
         "gm": (1800, 2100),

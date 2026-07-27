@@ -149,7 +149,7 @@ def compute_icc_2_1(
 ) -> float:
     """Compute ICC(2,1) — two-way random, single measures.
 
-    Uses Shrout & Fleiss (1979) formulation for k=2 raters/sessions:
+    Uses the two-session ICC(2,1) formulation:
         ICC(2,1) = (BMS - EMS) / (BMS + EMS + 2*(JMS - EMS)/n)
 
     where:
@@ -245,7 +245,7 @@ def compute_bland_altman(
 ) -> BlandAltmanResult:
     """Compute Bland-Altman analysis (bias and 95% limits of agreement).
 
-    Follows Bland & Altman (1986):
+    Computes Bland-Altman limits as:
         - Bias = mean(v1 - v2)
         - Limits = bias +/- 1.96 * SD(v1 - v2)
 

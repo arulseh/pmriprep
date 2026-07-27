@@ -689,7 +689,7 @@ def select_n_control_points(
 
     Two distinct paths based on ``infer_cpt``:
 
-    - **Fixed-CP layout (``infer_cpt=False``)**: legacy heuristic
+    - **Fixed-CP layout (``infer_cpt=False``)**: schedule heuristic
       ``max(n_bolus, n_spacing)`` — sufficient bolus density for
       uniformly-placed CPs.
     - **Migrating CPs (``infer_cpt=True``) with ``mean_tissue`` + ``dt``**:
@@ -698,9 +698,9 @@ def select_n_control_points(
       sampling. The empirical N-sweep shows N=4 fits short-MTT tissue
       perfectly under migration.
 
-    If ``infer_cpt=True`` but ``mean_tissue`` or ``dt`` are missing, falls
-    back to the legacy formula (callers without mean_tissue can't use the
-    adaptive path).
+    If ``infer_cpt=True`` but ``mean_tissue`` or ``dt`` are missing, the
+    fixed-control-point formula is used because the adaptive path requires
+    both inputs.
 
     Parameters
     ----------
@@ -716,8 +716,8 @@ def select_n_control_points(
         Maximum number of control points.
     infer_cpt : bool, optional
         When True and ``mean_tissue``/``dt`` are provided, use
-        the tail-decay-adaptive formula instead of the legacy
-        heuristic.
+        the tail-decay-adaptive formula instead of the fixed-control-point
+        schedule.
     mean_tissue : np.ndarray, optional
         Mean tissue concentration across in-mask voxels,
         shape (T,). Required for the adaptive path.

@@ -47,7 +47,7 @@ class DCEConfig:
     underlays : List[str]
         List of underlay images for QC visualizations.
     b1_method : Literal["auto", "afi", "precomputed", "none"]
-        B1+ correction method: auto (detect from data), afi (Yarnykh AFI),
+        B1+ correction method: auto (detect from data), afi,
         precomputed (pre-computed B1+ map), none (skip B1+ correction).
     b1_map_encoding : Literal["auto", "actual_flip_deci_deg", "actual_flip_deg", "percent", "ratio"]
         Pixel encoding of a pre-computed B1+ map: auto (infer from BIDS
@@ -137,7 +137,7 @@ class DCEConfig:
 
     # DSC CBV constraint settings
     cbv_constraint_mode: str = "auto"  # "auto", "skip"
-    hematocrit: float = 0.42  # Arterial Hct; Parker 2006 MRM used 0.42 in the original population-AIF derivation, so using Parker's fallback with 0.42 is internally self-consistent. Closer to GBM-cohort mean (~0.38) than QIBA Profile v2.0's adult-healthy-male 0.45.
+    hematocrit: float = 0.42  # Arterial Hct for blood-to-plasma conversion.
 
     # Resource settings
     num_processes: int = 0  # 0 = use system default

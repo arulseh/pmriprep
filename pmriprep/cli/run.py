@@ -481,7 +481,7 @@ Examples:
         "--dce-b1-method",
         choices=["auto", "afi", "precomputed", "none"],
         default=None,
-        help="B1+ correction method: auto (detect from data), afi (Yarnykh AFI), "
+        help="B1+ correction method: auto (detect from data), afi, "
              "precomputed (pre-computed B1+ map), none (skip B1+ correction).",
     )
     dce_group.add_argument(

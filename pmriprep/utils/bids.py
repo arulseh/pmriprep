@@ -70,11 +70,9 @@ def collect_participants_pmriprep(
 ) -> List[str]:
     """Return participant IDs (sub- prefix stripped) discoverable in the layout.
 
-    Wraps :func:`niworkflows.utils.bids.collect_participants` (which raises
-    ``BIDSError`` on empty datasets or all-missing labels) and converts the
-    error into an empty list, matching the legacy ``Path.glob`` contract.
-    The CLI's downstream ``"No subjects found"`` log + ``sys.exit(1)`` then
-    fires cleanly instead of an uncaught traceback.
+    Converts ``BIDSError`` for empty datasets or missing requested labels into
+    an empty list so the CLI can emit its standard ``"No subjects found"``
+    message.
     """
     from niworkflows.utils.bids import BIDSError, collect_participants
 

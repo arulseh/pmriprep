@@ -122,7 +122,7 @@ def concat_fit_results(
 
     - All chunks share the same ``model_name``.
     - ``fitted_curves`` is either None on every chunk or non-None on
-      every chunk (mixed → AssertionError, caller bug).
+      every chunk; mixed values are invalid input.
     - ``uncertainties`` key sets match across chunks.
     - The concatenated length equals ``n_total``.
 

@@ -274,7 +274,7 @@ def voxel_sizes_from_nifti(source_nifti: PathLike) -> List[float]:
 
 
 def compute_original_resolution(source_nifti: PathLike) -> Dict[str, Any]:
-    """Return the legacy pmriprep ``OriginalResolution`` block."""
+    """Return the PMRIPrep ``OriginalResolution`` block."""
     voxel_dims = voxel_sizes_from_nifti(source_nifti)
     geo_mean = round(float(math.prod(voxel_dims) ** (1.0 / 3.0)), 3)
     iso_ratio = round(max(voxel_dims) / max(min(voxel_dims), 1e-9), 2)
@@ -653,8 +653,7 @@ def build_tumor_seg_dseg_sidecar(
     the ``_dseg.nii.gz`` label NIfTI and the ``_dseg.tsv`` lookup table
     (when the latter is present) since they share a basename. The
     ``Columns`` block documents the TSV columns; ``TumorVolumetrics``
-    carries per-region volumes and the enhancing fraction (replaces the
-    removed standalone ``desc-tumorClinicalContext.json``).
+    carries per-region volumes and the enhancing fraction.
     ``TumorSegQC`` carries preprocessing/segmentation/nawm QC blocks.
     """
     from pmriprep.utils.provenance import get_bids_derivative_provenance
@@ -994,9 +993,7 @@ def enrich_brain_mask_sidecar(
         sidecar["BrainExtractionDevice"] = str(be["device"])
     if "voxel_count" in be:
         sidecar["BrainExtractionVoxelCount"] = int(be["voxel_count"])
-    # Producer emits brain_volume_ml / brain_volume_mm3; legacy
-    # volume_ml is also accepted for callers that pre-stripped the
-    # prefix.
+    # Accept both fully qualified and short volume keys.
     vol_ml = be.get("brain_volume_ml", be.get("volume_ml"))
     if vol_ml is not None:
         sidecar["BrainExtractionVolume"] = float(vol_ml)

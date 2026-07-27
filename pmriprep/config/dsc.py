@@ -101,9 +101,8 @@ class DSCConfig:
     aif_method : Literal["auto", "synthetic"]
         AIF detection method: auto or synthetic.
     leakage_method : Literal["bsw", "bidirectional"]
-        K2 leakage correction method. "bsw" = standard Boxerman-Schmainda-
-        Weisskoff (cumulative integral, no washout). "bidirectional" = Leu 2016
-        (accounts for EES washout, ~16% lower rCBV in HGG).
+        K2 leakage correction method. "bsw" uses a cumulative integral without
+        washout; "bidirectional" accounts for EES washout.
     kep : float, optional
         EES efflux rate constant in s⁻¹ for bidirectional correction.
         Only used when leakage_method="bidirectional". Default: 0.005 s⁻¹.
@@ -324,7 +323,7 @@ class DSCConfig:
             from pmriprep.utils.dsc_constants import KEP_DSC_LOWER, KEP_DSC_UPPER
             if not (KEP_DSC_LOWER <= self.kep <= KEP_DSC_UPPER):
                 logger.warning(
-                    "kep=%.4f s^-1 outside typical range [%.3f, %.3f] s^-1 (Leu 2016)",
+                    "kep=%.4f s^-1 outside typical range [%.3f, %.3f] s^-1",
                     self.kep, KEP_DSC_LOWER, KEP_DSC_UPPER,
                 )
 

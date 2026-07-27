@@ -540,8 +540,7 @@ def _build_motion_recommendation(
 def recommend_dsc_qc(qc_metrics: dict[str, Any]) -> dict[str, Any]:
     """Add a NiPreps-style overall ``recommendation`` block to DSC QC metrics.
 
-    Mirrors the legacy ``DSCDerivativeWriter._add_qc_recommendation`` —
-    evaluates AIF detection, motion (composite ``motion_status``), and CNR
+    Evaluates AIF detection, motion (composite ``motion_status``), and CNR
     (with a Rose-criterion floor on mean CNR), aggregates per-axis severity,
     and returns ``qc_metrics`` augmented with ``recommendation``.
     """
@@ -677,8 +676,7 @@ def recommend_dsc_qc(qc_metrics: dict[str, Any]) -> dict[str, Any]:
 def recommend_dce_qc(qc_metrics: dict[str, Any]) -> dict[str, Any]:
     """Add a NiPreps-style overall ``recommendation`` block to DCE QC metrics.
 
-    Mirrors the legacy ``DCEDerivativeWriter._add_qc_recommendation`` —
-    evaluates AIF quality_score, PK fit residual, Ktrans plausibility,
+    Evaluates AIF confidence, PK fit residual, Ktrans plausibility,
     motion (composite ``motion_status``), peak enhancement + baseline
     tSNR (with ``QC_*`` constants from ``dce_constants``), B1+ bias,
     and DSC-DCE cross-validation. Aggregates per-axis severity and

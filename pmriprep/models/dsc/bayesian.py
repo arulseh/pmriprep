@@ -747,8 +747,8 @@ class BayesianDSCFitter:
         Gaussian posterior updates. Noise precision is treated as a conjugate
         Gamma random variable.
 
-        This is ~125-500x faster than the previous black-box VI
-        (90-180 forward model calls vs ~45,000).
+        Each iteration uses one linearized forward-model evaluation followed
+        by analytic Gaussian posterior updates.
 
         Parameters
         ----------

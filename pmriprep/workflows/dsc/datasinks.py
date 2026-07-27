@@ -1328,10 +1328,8 @@ def init_dsc_datasinks_wf(
         sink_outputs.append((k2_sink, "out_file"))
 
     # --- Parametric R2 + fallback mask ---
-    # Verbatim long descriptions from the legacy writer — they explain that
-    # R2 is preserved on fallback voxels, that those voxels' CBF/CBV/MTT/Tmax
-    # come from oSVD (NOT from the parametric fit with this R2), and that
-    # uncertainty maps are undefined in fallback voxels.
+    # R2 is preserved on fallback voxels, while their CBF/CBV/MTT/Tmax values
+    # come from oSVD and their parametric uncertainty maps are undefined.
     _PARAMETRIC_R2_DESC = (
         "Per-voxel R2 (coefficient of determination) of the parametric DSC "
         "fit (CPI / Vascular) against the K2-corrected tissue concentration. "

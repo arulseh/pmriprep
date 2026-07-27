@@ -407,9 +407,9 @@ def init_anat_datasinks_wf(
 ) -> pe.Workflow:
     """Build the anat-pipeline DerivativesDataSink chain.
 
-    Inputs (on ``inputnode``) mirror the legacy ``AnatDerivativeWriter``
-    InputSpec one-for-one so ``base.py`` rewiring is mechanical. Outputs
-    expose ``done`` (the report barrier, sourced from ``dd_node.dd_path``
+    Inputs on ``inputnode`` provide anatomical derivatives, sources, QC data,
+    and figures. Outputs expose ``done`` (the report barrier, sourced from
+    ``dd_node.dd_path``
     so it fires only after every sink + figures_writer has finished) and
     ``out_dir`` (the per-session derivatives root).
 
@@ -492,14 +492,9 @@ def init_anat_datasinks_wf(
                 "(pre-contrast)"
             )
             preproc_ce = None
-        # The T1w preproc sidecar is the anat presence probe AND the
-        # carrier of QC warnings flat keys for the HTML aggregator.
-        # TODO: Legacy AnatQCWriter also emitted "Post-contrast T1w
-        # coregistration not available" when has_t1w_pre & has_t1w_postcon
-        # & coreg_filmstrip_postcon was missing at runtime — that
-        # runtime check is dropped here in favor of static modality
-        # flags. Restore via a runtime Function-node check on the
-        # coreg filmstrip output if false negatives become a problem.
+        # The T1w preproc sidecar is the anatomical-presence probe and carries
+        # flat QC warning keys for the HTML aggregator. Availability warnings
+        # are derived from the discovered modality flags.
         anat_presence_warnings = [
             warn for cond, warn in (
                 (not has_tissue_seg,

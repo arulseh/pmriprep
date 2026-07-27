@@ -309,8 +309,8 @@ class VascularModel(DSCModel):
 
         C_tissue(t) = AIF(t) ⊗ R(t)
 
-        The convolution uses the Sourbron (1, 4, 1)/6 product-integration
-        (Volterra) operator shared with the sSVD/Tikhonov/CPI methods. The
+        The convolution uses the shared (1, 4, 1)/6 product-integration
+        (Volterra) operator. The
         bolus-arrival delay is applied last, as a post-hoc shift of the curve.
 
         Parameters
@@ -339,9 +339,8 @@ class VascularModel(DSCModel):
         cbf, alpha, beta, delay = params
         dt = float(time_points[1] - time_points[0])
 
-        # Forward-model convolution C(t) = ∫ AIF(τ) R(t−τ) dτ via the Sourbron
-        # (1, 4, 1)/6 product-integration (Volterra) operator shared with the
-        # sSVD/Tikhonov/CPI methods, so every direct forward uses one quadrature.
+        # Forward-model convolution C(t) = ∫ AIF(τ) R(t−τ) dτ via the
+        # shared (1, 4, 1)/6 product-integration (Volterra) operator.
         # The delay shift below is applied AFTER, so it stays differentiable for
         # the MAP/VB Jacobian and the delay-agnostic residue is unaffected.
         R = self.residue_function(params, time_points)

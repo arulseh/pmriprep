@@ -164,7 +164,7 @@ def batched_vascular_forward(
 ) -> npt.NDArray[np.floating]:
     """Batched Vascular model forward evaluation for N voxels.
 
-    Computes tissue concentration via the shared Sourbron (1, 4, 1)/6
+    Computes tissue concentration via the shared (1, 4, 1)/6
     product-integration (Volterra) operator applied to the gamma-variate
     residue, with post-hoc delay shift.
 
@@ -207,8 +207,8 @@ def batched_vascular_forward(
     x = np.maximum(np.asarray(time_points, dtype=np.float64), 0.0)[None, :] / beta_safe[:, None]
     R = cbf[:, None] * (1.0 - gammainc(alpha_safe[:, None], x))
 
-    # Forward via the shared Sourbron (1, 4, 1)/6 product-integration (Volterra)
-    # operator: per voxel C = A @ R, batched as C = R @ Aᵀ. One quadrature across
+    # Forward via the shared (1, 4, 1)/6 product-integration operator: per voxel
+    # C = A @ R, batched as C = R @ Aᵀ. One quadrature across
     # every direct forward (sSVD/Tikhonov/CPI/vascular), matching the scalar
     # tissue_curve. The delay shift is applied AFTER, matching the scalar model.
     A = volterra_matrix if volterra_matrix is not None else build_volterra_matrix(aif, dt)

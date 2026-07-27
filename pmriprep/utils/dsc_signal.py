@@ -429,9 +429,8 @@ def compute_psr(
 
     Notes
     -----
-        - This is the physics-correct version for post-integration expert
-          review. The legacy version (compute_psr_legacy) uses the
-          formula for validation ground truth.
+        - ``compute_psr_legacy`` provides the alternate formula used by
+          validation comparisons.
         - s_min uses post-baseline frames only (signal[..., baseline_frames:])
           to avoid baseline contamination.
         - PSR can exceed 100% in cases where the signal overshoots baseline
@@ -499,9 +498,9 @@ def compute_psr_legacy(
     baseline_frames: int = 5,
     tail_frames: int = 5,
 ) -> Union[float, npt.NDArray[np.floating]]:
-    """Compute PSR using the legacy formula.
+    """Compute PSR using the alternate signal-intensity formula.
 
-    Legacy formula::
+    Formula::
 
         PSR = 100 × (S1 - Smin) / (S0 - Smin)
 
@@ -587,9 +586,8 @@ def compute_peak_height(
 
     Notes
     -----
-        - This is the physics-correct version for post-integration expert
-          review. The legacy version (compute_peak_height_legacy) is kept
-          for validation ground truth.
+        - ``compute_peak_height_legacy`` provides the alternate formula used
+          by validation comparisons.
         - s_min uses post-baseline frames only (signal[..., baseline_frames:])
           to avoid baseline contamination.
         - PH is always positive when computed from valid DSC signal
@@ -645,9 +643,9 @@ def compute_peak_height_legacy(
     signal: npt.NDArray[np.floating],
     baseline_frames: int = 5,
 ) -> Union[float, npt.NDArray[np.floating]]:
-    """Compute peak height using the legacy formula.
+    """Compute peak height using the alternate signal-drop formula.
 
-    Legacy formula (standard % signal drop)::
+    Formula (standard percentage signal drop)::
 
         PH = 100 × (S0 - Smin) / S0
 
@@ -724,7 +722,7 @@ def compute_ttp_legacy(
     pre_bolus_frames: int,
     dt: float,
 ) -> npt.NDArray[np.floating]:
-    """Compute TTP using the legacy method.
+    """Compute TTP as the index of maximum concentration.
 
     Finds time to peak concentration using unsmoothed post-bolus argmax.
     Returns unclipped TTP so callers can compute derived maps (TTPc, rTTP)

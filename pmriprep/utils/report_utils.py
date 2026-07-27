@@ -665,7 +665,7 @@ _PIPELINE_FIGURE_KEYS: dict[str, list[str]] = {
 }
 
 # Per-image canonical sidecar paths whose existence proves the pipeline
-# ran. These replace the legacy ``desc-*QC_quality.json`` summary files
+# ran. These are the report-discovery anchors
 # at session root. The aggregator uses them as
 # presence probes AND as the source of QC* recommendation/warnings flat
 # keys. Anat / tumor_seg patterns use ``{prefix}*`` between the bare
@@ -944,7 +944,7 @@ def _drop_report_nulls(value: Any) -> Any:
 
 
 def _qc_keys_from_anchor(anchor: dict[str, Any]) -> dict[str, Any]:
-    """Translate flat ``QC*`` recommendation/warnings keys to legacy nested.
+    """Translate flat ``QC*`` recommendation/warning keys to report structure.
 
     The canonical anchor sidecars carry ``recommendation``, ``warnings``,
     ``provenance_warnings``, ``acquisition_warnings``, and
@@ -979,7 +979,7 @@ def _qc_keys_from_anchor(anchor: dict[str, Any]) -> dict[str, Any]:
 def _load_pipeline_sidecars(
     ses_dir: Path, prefix: str, pipeline: str,
 ) -> dict[str, Any]:
-    """Build the legacy ``qc_metrics`` nested shape from per-image sidecars.
+    """Build the report ``qc_metrics`` structure from per-image sidecars.
 
     Composes the QC summary from the canonical per-image sidecars. The
     nested dict is assembled from:
@@ -1533,7 +1533,7 @@ def generate_unified_report(
     with open(output_path, "w") as f:
         f.write(html)
 
-    # Clean up legacy per-pipeline HTML reports at the derivatives root
+    # Remove superseded per-pipeline HTML reports at the derivatives root.
     if session_id:
         legacy_dir = ses_path.parent.parent  # sub-XX -> pmriprep/
     else:
@@ -1546,6 +1546,6 @@ def generate_unified_report(
         legacy_path = legacy_dir / legacy_name
         if legacy_path.exists():
             legacy_path.unlink()
-            logger.info("Removed legacy report: %s", legacy_path)
+            logger.info("Removed superseded report: %s", legacy_path)
 
     return output_path

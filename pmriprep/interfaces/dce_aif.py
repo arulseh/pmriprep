@@ -692,10 +692,9 @@ def score_averaged_aif_fidelity(
     is sampled deeper into renal clearance). Cosmetic here — this scalar never gates;
     the gating per-candidate scorer uses an asymmetric washout band to absorb the drift.
 
-    Anchored to physiologic arterial targets, not to pmriprep's Parker template:
-    the true DCE AIF is a real hematocrit-corrected middle-cerebral-artery curve
-    (per the OSIPI DRO ground truth) with a heavier recirculation tail than
-    idealized Parker, so a shape residual vs Parker would penalize the true AIF.
+    Anchored to physiologic arterial targets rather than a full Parker-template
+    shape residual because measured arterial curves may have heavier
+    recirculation tails than the idealized template.
 
     Terms (each in [0, 1], then weighted):
 
@@ -744,12 +743,9 @@ def score_averaged_aif_fidelity(
         return 0.0, {"fidelity_valid": 0.0}
 
     frame_times = np.arange(curve.size, dtype=float) * tr
-    # Arrival-aligned Parker template, used only as a one-sided AUC floor (a real
-    # MCA AIF — the OSIPI DRO ground truth is a hematocrit-corrected middle-
-    # cerebral-artery curve, not a Parker form — carries a heavier recirculation
-    # tail than idealized Parker, so a full post-peak *shape* residual vs Parker
-    # would penalize the true richer AIF. Discrimination therefore comes from the
-    # physiologic scalar terms below, not a shape-vs-Parker residual.)
+    # Arrival-aligned Parker template used only as a one-sided AUC floor.
+    # Timing, width, and tail are assessed with scalar terms so heavier measured
+    # recirculation tails are not penalized by a full shape residual.
     plasma_factor = 1.0 / (1.0 - hematocrit)
     native = resample_parker_template(frame_times, dose_factor) * plasma_factor
     t_shift = float(np.argmax(curve)) * tr - float(np.argmax(native)) * tr
@@ -1543,7 +1539,7 @@ class DCEAIFDetectionInputSpec(BaseInterfaceInputSpec):
         usedefault=True,
         desc=(
             "Explicit target peak concentration (mM) for AIF calibration, in blood-voxel "
-            "units (Parker 2006 convention, i.e. ΔR1/r1 pre-Hct-correction). "
+            "units (ΔR1/r1 before Hct correction). "
             "The pipeline divides by (1-Hct) internally to compare against "
             "the plasma-scale aif_curve. Values >0 override aif_peak_floor; "
             "0 follows the configured automatic peak-floor policy."
@@ -3398,10 +3394,9 @@ class AIFDetection(BaseInterface):
         tier_gate_decisions: list[dict[str, Any]] = []
         tier_result: TierResult | None = None
 
-        # Per-tier gate evaluation is enabled when the caller supplies
-        # the inputs needed to average + rescale + compute QC. Older
-        # call sites that omit them get the legacy quorum + anchor
-        # acceptance contract.
+        # Per-tier gate evaluation requires the inputs used to average,
+        # rescale, and compute QC. Callers that omit them use the quorum and
+        # anchor acceptance contract.
         gates_enabled = (
             brain_mask is not None
             and affine is not None
@@ -3860,8 +3855,7 @@ class AIFDetection(BaseInterface):
                 candidates, scores, all_metrics, brain_shape, tr=tr
             )
 
-        # ----- Filter venous candidates (Fix 1: Enforce venous exclusion) -----
-        # This is the critical fix: venous candidates were flagged but never filtered
+        # ----- Filter venous candidates -----
         if candidates:
             candidates, scores, all_metrics = self._filter_venous_candidates(
                 candidates, scores, all_metrics, min_non_venous=3
@@ -4569,9 +4563,8 @@ class AIFDetection(BaseInterface):
         # ===== Two-pass multi-level detection cascade =====
         # See ``_run_two_pass_cascade`` docstring for contract details.
         # Brain mask, affine, hct, and target_peak enable per-tier
-        # G1-G6 acceptance gates with progressive trim; without them
-        # the cascade falls back to its legacy quorum + anchor
-        # acceptance criterion.
+        # G1-G6 acceptance gates with progressive trim; without them the
+        # cascade uses its quorum and anchor acceptance criterion.
         cascade_result = self._run_two_pass_cascade(
             conc_data,
             atlas_search_mask=atlas_search_mask,
@@ -4765,10 +4758,8 @@ class AIFDetection(BaseInterface):
         # trim (gates_enabled in _run_two_pass_cascade), the accepted
         # tier's averaged + Hct-corrected + rescaled curve is already
         # in ``tier_result``; reuse it to avoid double-scaling and to
-        # propagate the per-iteration gate decisions downstream. The
-        # legacy averaging path runs only when the cascade fell back to
-        # its pre-gate accept-on-quorum-and-anchor contract (no inputs
-        # were supplied to enable gates).
+        # propagate the per-iteration gate decisions downstream. Direct
+        # averaging is used when no inputs were supplied to enable gates.
         if tier_result is not None:
             tier_cand_set = set(tuple(c) for c in tier_result.candidates)
             cur_cand_set = set(tuple(c) for c in candidates)
@@ -4970,18 +4961,8 @@ class AIFDetection(BaseInterface):
             aif_curve = parker_population_aif(t_unshifted, dose_factor)
             bat_override = True
 
-        # Scale population AIF to match pipeline's plasma-Tofts
-        # convention.
-        # Parker's published AIF parameters were derived from blood-voxel
-        # ΔR1/r1 in a cohort with Hct = 0.42, so under FXL the published
-        # "C_p" values are effectively (1-Hct) × C_p_true. Dividing by
-        # (1-Hct) brings the population AIF into the same plasma scale
-        # as the Hct-corrected detected AIF (line 2744) — required for
-        # longitudinal consistency when a subject flips between detected
-        # and population across sessions. OSIPI/QIBA DROs distribute
-        # Parker as C_p directly (test-harness convention); pmriprep's
-        # (1-Hct) ≈ 0.58× offset against OSIPI GT is a known harness-vs-
-        # clinical convention mismatch documented in the manuscript.
+        # Convert the population curve from blood-voxel to plasma scale so it
+        # matches Hct-corrected detected AIFs across sessions.
         aif_curve = aif_curve / (1.0 - float(self.inputs.hematocrit))
 
         detection_method = "population"

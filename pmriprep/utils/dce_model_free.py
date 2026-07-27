@@ -1,4 +1,4 @@
-"""Model-free DCE maps (QIBA-recommended).
+"""Model-free DCE maps.
 
 Computes model-assumption-free quantitative maps from DCE concentration data:
 IAUC, peak enhancement, time-to-peak, signal enhancement ratio, wash-in slope,

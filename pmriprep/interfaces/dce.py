@@ -877,9 +877,7 @@ class B1Mapping(SimpleInterface):
         # Load pre-computed B1+ map
         b1_img = nib.load(self.inputs.precomputed_b1_file)
 
-        # Reorient to RAS (no-op if already RAS).
-        # Uses as_reoriented() which correctly preserves the world-space
-        # affine — the previous inv_ornt_aff() approach dropped it.
+        # Reorient to RAS while preserving the world-space affine.
         from nibabel.orientations import axcodes2ornt, io_orientation, ornt_transform
 
         orig_ornt = io_orientation(b1_img.affine)  # type: ignore[attr-defined]
@@ -3501,7 +3499,7 @@ class DCEPreprocess(SimpleInterface):
         params_file: str,
         preparation: _DCEPreprocessPreparation,
     ) -> _DCEMotionQC:
-        """Reduce MCFLIRT parameters using the existing fallback semantics.
+        """Reduce MCFLIRT parameters and return zeroed QC on read failure.
 
         Parameters
         ----------
@@ -3513,8 +3511,7 @@ class DCEPreprocess(SimpleInterface):
         Returns
         -------
         _DCEMotionQC
-            Framewise displacement, outliers, and composite QC metrics. Any
-            current calculation failure retains the legacy empty/zero result.
+            Framewise displacement, outliers, and composite QC metrics.
         """
         try:
             motion_params = np.loadtxt(params_file)

@@ -641,8 +641,8 @@ def _find_dce(
 ) -> Optional[Path]:
     """Find DCE perfusion image (filename contains 'dce').
 
-    Searches both ``perf`` and ``anat`` datatypes; some sites store DCE
-    under anat for legacy reasons.
+    Searches both ``perf`` and ``anat`` datatypes because DCE series may be
+    stored under either datatype.
     """
     candidates = [
         Path(p) for p in layout.get(
@@ -1069,4 +1069,3 @@ def discover_session_data(
         modalities=modalities,
         pipelines=pipelines,
     )
-

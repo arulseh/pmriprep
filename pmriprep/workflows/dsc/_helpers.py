@@ -43,7 +43,7 @@ __all__ = [
 ]
 
 
-# Custom FSL wrappers to avoid nipype FSL module import bug (LooseVersion issue)
+# Lightweight FSL command wrappers with explicit argument ordering.
 class _ConvertXFMInputSpec(CommandLineInputSpec):
     """Input spec for convert_xfm."""
 

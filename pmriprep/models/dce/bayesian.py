@@ -58,7 +58,7 @@ DEFAULT_MCMC_SAMPLES: int = 500
 #: Default maximum iterations for MAP optimization
 DEFAULT_MAP_MAX_ITER: int = 1000
 
-#: Legacy threshold for independently generated R-hat diagnostics.
+#: Threshold for independently generated R-hat diagnostics.
 QC_RHAT_MAX: float = 1.1
 
 #: Minimum acceptable effective sample size

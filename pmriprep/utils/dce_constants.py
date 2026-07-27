@@ -286,19 +286,17 @@ def get_tissue_t1_ranges(field_strength: float) -> TissueT1Ranges:
 # =============================================================================
 
 #: Default arterial hematocrit for AIF blood-to-plasma conversion.
-#: QIBA DCE-MRI v2.0 recommendation. Configurable via config YAML.
-#: Used for: C_plasma = C_blood / (1 - hematocrit)
+#: Configurable via YAML. Used for C_plasma = C_blood / (1 - hematocrit).
 HEMATOCRIT_ARTERIAL: Final[float] = 0.42
 
-#: Backwards-compat alias
+#: Alias of the arterial hematocrit default.
 HEMATOCRIT = HEMATOCRIT_ARTERIAL
 
 #: Fåhræus ratio: capillary Hct / arterial Hct.
 #: Red blood cells travel faster than plasma in small vessels,
 #: reducing capillary hematocrit relative to arterial.
 #: MRI CBV includes arterioles + capillaries + venules.
-#: Refs: Lipowsky 2005 Microcirculation 12:5; Boxerman 1995 MRM 34:555.
-#: Literature range: 0.80-0.90.
+#: Expected range: 0.80-0.90.
 FAHRAEUS_RATIO: Final[float] = 0.85
 
 
@@ -370,31 +368,11 @@ AIF_THRESHOLDS_DEGRADED: Final[AIFThresholds] = AIFThresholds(
 
 
 #: Multiplier on dose-scaled plasma ``peak_max_mm`` above which the AIF
-#: QC warning fires. Derived from two independent bounds, not tuned to
-#: any specific dataset:
-#:
-#: 1. Encoded Parker 2006 population spread is ``peak_max / peak_min
-#:    = 7.6 / 5.0 = 1.52`` (P95/P5-equivalent across cardiac output,
-#:    injection rate, weight). Literature observed-peak ceilings
-#:    (Parker 2006 max ~8.5 mM plasma, Schabel 2008 max ~9 mM plasma)
-#:    scale to ~1.18x expected_max — both views of the same biology
-#:    place clean-AIF ceiling well below 1.5x.
-#: 2. Engineering tolerance: the largest plausible single-source
-#:    operator/equipment error (50% over-dose, mis-recorded weight,
-#:    50% injection-rate error) inflates peak by 1.5x. Threshold sits
-#:    at this boundary — peaks above 1.5x cannot be explained by
-#:    realistic dose error and require artifact diagnosis (inflow,
-#:    motion, partial volume).
-#:
-#: 2.0x would be too lax — past the literature-observed clean-AIF
-#: ceiling, so escapes from the slab-edge filter would not fire.
-#: Suppressed for population-AIF fallback by construction.
+#: QC warning fires. Suppressed for population-AIF fallback by construction.
 DCE_AIF_PEAK_RATIO_WARN_THRESHOLD: Final[float] = 1.5
 
 #: Multi-bump tail detection. Fraction of first-pass peak above which a
-#: post-peak local maximum is counted as a "bump." Parker plasma late
-#: tail (post-60 s) sits at 25-30% of peak; threshold above that level
-#: requires a true anomaly above Parker's predicted decay envelope.
+#: post-peak local maximum is counted as a "bump."
 DCE_AIF_TAIL_PEAK_FRACTION: Final[float] = 0.40
 
 #: Time (seconds) to skip immediately after the first-pass peak before
@@ -442,8 +420,7 @@ DCE_AIF_SCALE_WARN_SUBSTANTIAL: Final[float] = 3.4
 DCE_AIF_SCALE_WARN_UNRELIABLE: Final[float] = 5.2
 
 #: G2 — late-tail/peak ratio HARD reject threshold.
-#: Parker bi-exponential arterial plasma decays to <=0.20 by 2 min
-#: post-peak; venous mixing produces persistent late-tail above 0.40.
+#: Persistent late-tail signal above this level indicates non-arterial mixing.
 DCE_AIF_GATE_LATE_TAIL_RATIO_MAX: Final[float] = 0.35
 
 #: G3 — FWHM HARD reject threshold (seconds).
@@ -459,11 +436,8 @@ DCE_AIF_GATE_FWHM_MAX_SECONDS: Final[float] = 22.0
 DCE_AIF_GATE_MULTIBUMP_MAX: Final[int] = 2
 
 #: G5' — ratio_30 thresholds (post-peak frame at max(4, ceil(30/TR))).
-#: Parker bi-exponential gives ratio ~0.32 at peak+30 s; venous AIFs
-#: sit at >=0.55 (Bleeker 2011 MRM 65:448). HARD threshold leaves
-#: headroom for distal-ACA broadening, Hct correction, and
-#: recirculation pickup. WARN tier flags borderline cases for future
-#: aggregate-warn gating.
+#: The hard threshold allows distal-ACA broadening, Hct correction, and
+#: recirculation pickup. The warning tier identifies borderline cases.
 DCE_AIF_GATE_RATIO30_HARD: Final[float] = 0.50
 DCE_AIF_GATE_RATIO30_WARN: Final[float] = 0.40
 
@@ -631,7 +605,7 @@ class B1Thresholds(NamedTuple):
     AFI B1+ inhomogeneity increases with field strength due to shorter RF
     wavelength relative to head size.  At 7 T dielectric focusing can push
     B1+ to 1.8 or higher in the brain centre while temporal lobes may drop
-    to 0.3 (Teeuwisse MRM 2012).  Thresholds must widen accordingly.
+    to 0.3. Thresholds widen accordingly.
 
     Attributes
     ----------
@@ -867,12 +841,8 @@ INFLOW_EXCLUSION_MAX_SLAB_FRACTION: Final[float] = 0.35
 #: MCA_ACA territory; the depth-protective margin is reserved for the
 #: WB fallback which has no anatomical prior.
 #:
-#: Anatomical bracket motivating 10 mm: cortical superficial cerebral
-#: veins sit < 5 mm below the brain surface (Rhoton 2002 Neurosurgery 51
-#: supp); MCA M1 segment runs ≥ 25 mm below the surface in the Sylvian
-#: fissure (Tanriover 2003 Neurosurgery 53:1326). 10 mm sits in the safe
-#: gap and excludes deep medullary veins by depth alone (the existing
-#: FWHM/washout gates already reject their broad late-peak curves).
+#: The 10 mm cut removes superficial cortical veins while preserving deeper
+#: MCA segments. FWHM and washout gates reject broad late-peaking curves.
 WB_FALLBACK_DEPTH_EROSION_MM: Final[float] = 10.0
 
 #: Hard minimum distance (mm) from lesion for AIF candidates. Below this,
@@ -994,7 +964,7 @@ QC_PEAK_ENHANCEMENT_WARN: Final[float] = 20.0
 QC_DCE_BASELINE_TSNR_MIN: Final[float] = 3.0
 
 #: Baseline tSNR below this triggers REVIEW
-#: Below tSNR ~8, Ktrans wCV is expected to exceed the QIBA 20% target (QIBA DCE v2.0)
+#: Below tSNR ~8, Ktrans precision is reduced.
 QC_DCE_BASELINE_TSNR_WARN: Final[float] = 8.0
 
 #: Per-voxel baseline-SNR floor below which the Rician baseline-floor bias
@@ -1033,7 +1003,7 @@ AIF_FWHM_BAND_HALFWIDTH_SECONDS: Final[float] = 8.0
 
 #: Averaged-AIF fidelity scorer — physiologic first-pass arterial washout fraction
 #: (peak vs late-tail-mean), the two-sided band center. The true DCE AIF sits ~0.78
-#: (measured on the OSIPI DRO GT; Parker-derived range 0.75-0.9). A tail-collapsed /
+#: A tail-collapsed /
 #: partial-volume AIF over-washes (>~0.90) and is penalized; a tissue-diluted AIF
 #: under-washes (<~0.6) and is penalized. NOT the thin-tailed pure-Parker-template
 #: value (~0.90), which would reward collapse.

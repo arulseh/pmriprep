@@ -77,8 +77,7 @@ GAMMA_R2_SYNTHETIC_FALLBACK: float = 0.0
 #: BRR = mean(tail) / peak × 100. True arterial washout produces +5 to +30%;
 #: slightly negative (≥-2%) is within T1-recirculation noise.  Below -3%
 #: indicates T1-leakage dominance or motion breaking the mono-exponential
-#: ΔR2* assumption (Boxerman 2006, AJNR 27:859; Willats & Calamante 2013
-#: NMR Biomed 26:913).  Tighter than the per-candidate permissive floor
+#: ΔR2* assumption. Tighter than the per-candidate permissive floor
 #: (-10%) because averaging should reduce noise, not let bad voxels
 #: dominate.
 AIF_AVG_BRR_MIN: float = -3.0
@@ -730,8 +729,7 @@ class AIFDetection(BaseInterface):
         # cortical surface voxels. 3D erosion with 4 iterations removes
         # ~4 voxels from all faces including z, which wipes out skull-base
         # slices where the best AIF candidates (ICA, MCA M1) reside.
-        # After RAS enforcement (Fix 7), z is consistently the slice
-        # direction (third axis, index 2).
+        # Input orientation is RAS, so z is the slice direction (axis 2).
         struct_inplane = generate_binary_structure(3, 1)  # 6-connected
         struct_inplane[:, :, 0] = 0  # Remove z-minus connectivity
         struct_inplane[:, :, 2] = 0  # Remove z-plus connectivity
@@ -749,7 +747,7 @@ class AIFDetection(BaseInterface):
         else:
             search = eroded
 
-        # Safety: if erosion removed everything, fall back to uneroded
+        # Preserve a non-empty search domain when erosion removes all voxels.
         if not np.any(search):
             search = (brain_mask > 0.5).copy()
             if roi_mask is not None:
@@ -3427,8 +3425,8 @@ class AIFDetection(BaseInterface):
 
             # Single-best fallback: union has voxels but per-tier and
             # union averaged-pool gates all rejected. Try the lowest-cost union
-            # voxel; relaxed gate matches legacy semantics (global_max_in_fp +
-            # AIF_AVG_BRR_MIN).
+            # voxel; the relaxed gate uses global_max_in_fp and
+            # AIF_AVG_BRR_MIN.
             if accepted_aif is None and len(union_state.candidates) > 0:
                 single_best = self._try_single_best_fallback(
                     union_state.candidates,
@@ -3779,7 +3777,8 @@ class AIFDetection(BaseInterface):
         aif_curve : np.ndarray
             Current AIF curve (may be modified if fit is applied).
         gamma_fit_mode : str
-            "on" (legacy: apply if R²>0.5) or "auto" (rule-based).
+            ``"on"`` applies when the fit converges with R² > 0.5;
+            ``"auto"`` uses the rule-based policy.
         baseline_frames : int
             Number of pre-bolus baseline frames.
         tr : float
@@ -3812,7 +3811,7 @@ class AIFDetection(BaseInterface):
             )
 
             if gamma_fit_mode == "on":
-                # Legacy mode: accept if converged and R² > 0.5
+                # ``on`` mode uses the convergence and R² gate.
                 if fit_result.fit_converged and fit_result.r_squared > 0.5:
                     qc_metrics["gamma_fit_applied"] = True
                     qc_metrics["gamma_fit_mode"] = "on"

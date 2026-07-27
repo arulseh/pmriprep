@@ -601,10 +601,9 @@ def compute_dsc_derived_metrics(
 ) -> Dict[str, Any]:
     """Compute DSC-specific derived metrics.
 
-    Returns a dict with ``fractional_volumes`` keyed per-map (one
-    sub-dict per available map). The legacy ``hotspot_summary`` key is
-    no longer emitted — per-map ``Regions.<r>.stats.p98`` is now the
-    canonical hotspot for each map.
+    Returns a dict with ``fractional_volumes`` keyed per-map (one sub-dict per
+    available map). Per-map ``Regions.<r>.stats.p98`` contains each map's
+    hotspot statistic.
     """
     derived: Dict[str, Any] = {}
     fractions = _per_map_fractional_volumes(

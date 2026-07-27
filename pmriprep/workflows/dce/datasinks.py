@@ -567,8 +567,7 @@ def _build_delta_bic_meta(
     out = dict(base)
     out["Description"] = (
         "BIC confidence: runner-up minus winner. "
-        ">2 = positive, >6 = strong, >10 = very strong "
-        "(Kass & Raftery 1995)"
+        ">2 = positive, >6 = strong, >10 = very strong"
     )
     stamp_aif_dependency(out, "delta_bic", modality="DCE")
     if isinstance(qc_metrics, dict):

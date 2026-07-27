@@ -3113,8 +3113,8 @@ class ComputeDCEMaps(BaseInterface):
         if model_name == "2cxm":
             logger.warning(
                 "2CXM individual parameter estimates (especially PS) may be "
-                "unreliable due to PS/ve coupling degeneracy (Sourbron & "
-                "Buckley, MRM 2011). Consider Extended Tofts if Ktrans is "
+                "unreliable due to PS/ve coupling degeneracy. Consider "
+                "Extended Tofts if Ktrans is "
                 "the primary parameter of interest."
             )
 

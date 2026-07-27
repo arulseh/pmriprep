@@ -888,7 +888,7 @@ def determine_constraint_mode(
         # (orthogonal: confidence = random error, K2 adequacy = systematic
         # bias). Reuse the classification cached during quality assessment when
         # available; fall back to recomputing only if the quality object
-        # predates this field (legacy callers building it by hand).
+        # Hand-built QC dictionaries may omit this field.
         if dsc_quality.preload_k2_classification is not None:
             k2_suppressed, high_correction = (
                 dsc_quality.preload_k2_classification
