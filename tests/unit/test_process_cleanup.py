@@ -412,6 +412,16 @@ def test_isolated_command_interrupt_cleans_process_group(
     cleaned: list[Any] = []
     process = _FakeProcess()
 
+    class _CaptureStream:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    process.stdout = _CaptureStream()  # type: ignore[attr-defined]
+    process.stderr = _CaptureStream()  # type: ignore[attr-defined]
+
     def _communicate(timeout: float | None = None) -> tuple[str, str]:
         raise KeyboardInterrupt
 
@@ -432,6 +442,8 @@ def test_isolated_command_interrupt_cleans_process_group(
 
     assert popen_kwargs["start_new_session"] is True
     assert cleaned == [process]
+    assert process.stdout.closed  # type: ignore[attr-defined]
+    assert process.stderr.closed  # type: ignore[attr-defined]
 
 
 def test_isolated_command_cleanup_failure_preserves_interrupt(

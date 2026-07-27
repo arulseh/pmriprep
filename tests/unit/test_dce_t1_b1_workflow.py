@@ -150,6 +150,9 @@ def test_dce_dsc_validation_workflow_contract() -> None:
     assert set(workflow.get_node("outputnode").interface._fields) == {
         "validation_result", "plot_file",
     }
+    assert "dsc_cbv_file" in workflow.get_node(
+        "dsc_dce_validation"
+    ).interface.inputs.traits()
 
 
 def test_dce_underlays_workflow_contract() -> None:

@@ -1090,8 +1090,8 @@ def init_dce_dsc_validation_wf(
     validation = pe.Node(
         niu.Function(
             input_names=[
-                "vp_file", "dsc_ncbv_file", "brain_mask", "no_dsc_validation",
-                "pk_qc", "dsc_preload_configured",
+                "vp_file", "dsc_cbv_file", "dsc_ncbv_file", "brain_mask",
+                "no_dsc_validation", "pk_qc", "dsc_preload_configured",
             ],
             output_names=["validation_result"], function=_dsc_dce_validation_node,
         ),

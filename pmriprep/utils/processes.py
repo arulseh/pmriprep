@@ -210,5 +210,15 @@ def run_isolated_command(
                 command[0],
                 cleanup_error,
             )
+        for stream_name in ("stdout", "stderr"):
+            stream = getattr(process, stream_name, None)
+            if stream is not None:
+                try:
+                    stream.close()
+                except Exception as close_error:
+                    logger.debug(
+                        "Could not close child %s stream for %s: %s",
+                        stream_name, command[0], close_error,
+                    )
         raise
     return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
