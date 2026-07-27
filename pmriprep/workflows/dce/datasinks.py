@@ -535,7 +535,7 @@ def _build_model_selection_meta(
     base: dict,
     qc_metrics: dict | None = None,
 ) -> dict:
-    from pmriprep.utils.aif_provenance import stamp_aif_dependency
+    from pmriprep.utils.aif_provenance import apply_aif_sidecar
 
     out = dict(base)
     out["Description"] = (
@@ -548,7 +548,12 @@ def _build_model_selection_meta(
         "3": "extended_tofts",
         "4": "2cxm",
     }
-    stamp_aif_dependency(out, "model_selection", modality="DCE")
+    apply_aif_sidecar(
+        out,
+        "model_selection",
+        qc_metrics if isinstance(qc_metrics, dict) else None,
+        modality="DCE",
+    )
     if isinstance(qc_metrics, dict):
         pk_modeling = qc_metrics.get("pk_modeling")
         if isinstance(pk_modeling, dict):
@@ -562,14 +567,19 @@ def _build_delta_bic_meta(
     base: dict,
     qc_metrics: dict | None = None,
 ) -> dict:
-    from pmriprep.utils.aif_provenance import stamp_aif_dependency
+    from pmriprep.utils.aif_provenance import apply_aif_sidecar
 
     out = dict(base)
     out["Description"] = (
         "BIC confidence: runner-up minus winner. "
         ">2 = positive, >6 = strong, >10 = very strong"
     )
-    stamp_aif_dependency(out, "delta_bic", modality="DCE")
+    apply_aif_sidecar(
+        out,
+        "delta_bic",
+        qc_metrics if isinstance(qc_metrics, dict) else None,
+        modality="DCE",
+    )
     if isinstance(qc_metrics, dict):
         pk = qc_metrics.get("pk_modeling")
         if isinstance(pk, dict):

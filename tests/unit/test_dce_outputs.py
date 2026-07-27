@@ -84,3 +84,30 @@ def test_dce_diagnostic_sidecars_ignore_nonmapping_pk_qc(pk_modeling: object) ->
     assert "ModelDistribution" not in model_meta
     assert "R2Median" not in bic_meta
     assert "ConvergenceRate" not in bic_meta
+
+
+def test_dce_diagnostic_sidecars_carry_canonical_aif_provenance() -> None:
+    """AIF-dependent BIC diagnostics use the shared DCE AIF block."""
+    from pmriprep.utils.aif_provenance import build_aif_provenance_block
+
+    qc_metrics = {
+        "aif_detection": {
+            "detection_method": "atlas",
+            "aif_confidence": "reduced",
+            "peak_scaling_enabled": True,
+            "peak_scaling_applied": True,
+            "raw_peak_mm": 2.0,
+            "emitted_peak_mm": 6.0,
+            "peak_scaling_factor": 3.0,
+        },
+        "pk_modeling": {},
+    }
+    expected = build_aif_provenance_block(qc_metrics, modality="DCE")
+
+    for sidecar in (
+        _build_model_selection_meta({}, qc_metrics),
+        _build_delta_bic_meta({}, qc_metrics),
+    ):
+        assert sidecar["AIFDependent"] is True
+        assert sidecar["TemplateAIFUsage"] == "qualitative_only"
+        assert sidecar["PerfusionProcessing"]["AIF"] == expected
