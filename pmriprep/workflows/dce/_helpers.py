@@ -596,6 +596,7 @@ def _signal_to_concentration_node(
     r1_relaxivity: float | None,
     baseline_frames: int,
     no_t1: bool,
+    external_t1: bool = False,
 ) -> tuple[str, dict[str, object]]:
     """Convert DCE signal to contrast-agent concentration.
 
@@ -624,6 +625,8 @@ def _signal_to_concentration_node(
         Number of pre-contrast baseline frames.
     no_t1 : bool
         If True, skip T1 mapping and use a field-strength default T1.
+    external_t1 : bool, optional
+        Whether the T1 map is a user-supplied map requiring alignment QC.
 
     Returns
     -------
@@ -704,7 +707,9 @@ def _signal_to_concentration_node(
     # array broadcasts the assignment across the trailing time axis.
     conversion_qc = dict(result.conversion_qc)
     conversion_qc["qc_domain"] = "dce_brain_mask"
-    conversion_qc["t1_source"] = "assumed" if t1_map is None else "map"
+    conversion_qc["t1_source"] = (
+        "assumed" if t1_map is None else "external" if external_t1 else "map"
+    )
     if t1_map is None:
         field_key = get_field_strength_key(field_strength)
         conversion_qc["assumed_t1_ms"] = float(
@@ -736,6 +741,46 @@ def _signal_to_concentration_node(
             conversion_qc["t1_invalid_voxels"]
             / max(1, int(np.count_nonzero(signal_support)))
         )
+        if external_t1:
+            from scipy.ndimage import gaussian_gradient_magnitude  # type: ignore[import-untyped]
+
+            t1_support = np.isfinite(t1_map) & (t1_map > 0)
+            brain_voxels = max(1, int(np.count_nonzero(brain_mask)))
+            support_overlap = int(np.count_nonzero(t1_support & brain_mask))
+            gradient_domain = t1_support & brain_mask & signal_support
+            gradient_ncc = float("nan")
+            if np.count_nonzero(gradient_domain) >= 100:
+                t1_values = np.where(t1_support, t1_map, np.nan)
+                dce_values = np.where(signal_support, baseline_signal, np.nan)
+
+                def _scaled_gradient(values: np.ndarray) -> np.ndarray:
+                    finite = values[np.isfinite(values)]
+                    low, high = np.percentile(finite, [1, 99])
+                    scaled = np.nan_to_num(
+                        np.clip((values - low) / max(high - low, 1e-8), 0.0, 1.0)
+                    )
+                    return gaussian_gradient_magnitude(scaled, sigma=1.0)
+
+                t1_gradient = _scaled_gradient(t1_values)
+                dce_gradient = _scaled_gradient(dce_values)
+                if (
+                    np.std(t1_gradient[gradient_domain]) > 0
+                    and np.std(dce_gradient[gradient_domain]) > 0
+                ):
+                    gradient_ncc = float(
+                        np.corrcoef(
+                            t1_gradient[gradient_domain],
+                            dce_gradient[gradient_domain],
+                        )[0, 1]
+                    )
+            conversion_qc["external_t1_alignment"] = {
+                "assessment": "informational_not_gated",
+                "brain_support_fraction": support_overlap / brain_voxels,
+                "gradient_magnitude_ncc": (
+                    gradient_ncc if np.isfinite(gradient_ncc) else None
+                ),
+                "resampling": "nifti_world_affine",
+            }
     else:
         conversion_qc["t1_invalid_voxels"] = 0
         conversion_qc["t1_invalid_fraction"] = 0.0
@@ -1109,9 +1154,15 @@ def _collect_qc_metrics(
         qc_metrics["t1_mapping"] = t1_mapping
     elif use_external_t1:
         # External T1 map was provided
+        alignment = (
+            signal_conversion_qc.get("external_t1_alignment")
+            if isinstance(signal_conversion_qc, dict)
+            else None
+        )
         qc_metrics["t1_mapping"] = {
             "method": "external",
             "b1_correction": b1_method if b1_method != "none" else "none",
+            "external_alignment": alignment,
         }
     elif no_t1:
         # No T1 mapping - using assumed literature values
@@ -1652,6 +1703,84 @@ def _transform_external_t1_to_dce(
         )
 
     return _resample(t1_map_file, reference_file)
+
+
+def _external_t1_alignment_plot_node(
+    t1_map_file: str,
+    dce_reference_file: str,
+    brain_mask_file: str,
+    subject_id: str = "",
+    session_id: str = "",
+) -> str:
+    """Plot the DCE-space external T1 map and its edges on the DCE reference."""
+    from pathlib import Path
+
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import nibabel as nib  # type: ignore[import-untyped]
+    import numpy as np
+    from scipy.ndimage import gaussian_gradient_magnitude  # type: ignore[import-untyped]
+
+    t1 = np.asarray(nib.load(t1_map_file).dataobj, dtype=float)  # type: ignore[attr-defined]
+    dce = np.asarray(nib.load(dce_reference_file).dataobj, dtype=float)  # type: ignore[attr-defined]
+    mask = np.asarray(nib.load(brain_mask_file).dataobj) > 0  # type: ignore[attr-defined]
+    support = mask & np.isfinite(t1) & (t1 > 0)
+
+    def _scaled(data: np.ndarray, domain: np.ndarray) -> np.ndarray:
+        values = data[domain & np.isfinite(data)]
+        if values.size == 0:
+            return np.zeros(data.shape, dtype=float)
+        low, high = np.percentile(values, [2, 98])
+        return np.clip((data - low) / max(high - low, 1e-8), 0.0, 1.0)
+
+    dce_scaled = _scaled(dce, mask)
+    t1_scaled = _scaled(t1, support)
+    edges = gaussian_gradient_magnitude(np.nan_to_num(t1_scaled), sigma=1.0)
+    edge_values = edges[support]
+    edge_cut = float(np.percentile(edge_values, 82)) if edge_values.size else 1.0
+    occupied = np.flatnonzero(mask.sum(axis=(0, 1)) > 0)
+    if occupied.size == 0:
+        slices = [dce.shape[2] // 2] * 3
+    else:
+        slices = [
+            int(occupied[int(fraction * (occupied.size - 1))])
+            for fraction in (0.28, 0.50, 0.72)
+        ]
+
+    fig, axes = plt.subplots(3, 3, figsize=(12, 10), facecolor="white")
+    for column, index in enumerate(slices):
+        base = np.rot90(dce_scaled[:, :, index])
+        t1_slice = np.rot90(np.where(support[:, :, index], t1[:, :, index], np.nan))
+        edge_slice = np.rot90(edges[:, :, index] > edge_cut)
+        axes[0, column].imshow(base, cmap="gray", vmin=0, vmax=1)
+        axes[1, column].imshow(t1_slice, cmap="magma", vmin=600, vmax=2000)
+        axes[2, column].imshow(base, cmap="gray", vmin=0, vmax=1)
+        if np.any(edge_slice):
+            axes[2, column].contour(
+                edge_slice, levels=[0.5], colors="#25d9ff", linewidths=0.8
+            )
+        axes[0, column].set_title(f"Axial slice {index}", fontsize=11)
+        for row in range(3):
+            axes[row, column].axis("off")
+    for row, label in enumerate(
+        ("Precontrast DCE reference", "External T1 used (ms)", "T1 edges on DCE")
+    ):
+        axes[row, 0].text(
+            -0.08, 0.5, label, rotation=90, va="center", ha="right",
+            transform=axes[row, 0].transAxes, fontsize=11, fontweight="bold",
+        )
+    identity = f"sub-{subject_id}" if subject_id else "External T1"
+    if session_id:
+        identity += f" | ses-{session_id}"
+    fig.suptitle(f"{identity} | External T1–DCE Alignment", fontsize=16, y=0.98)
+    support_fraction = 100.0 * np.count_nonzero(support) / max(1, np.count_nonzero(mask))
+    fig.text(0.5, 0.025, f"Brain support: {support_fraction:.2f}%", ha="center")
+    fig.tight_layout(rect=(0.04, 0.05, 1, 0.95), h_pad=0.8, w_pad=0.25)
+    out_file = str(Path.cwd() / "external_t1_alignment.png")
+    fig.savefig(out_file, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return out_file
 
 
 def _transform_structural_to_dce(

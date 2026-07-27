@@ -171,6 +171,12 @@
     [
       "dce_brain_extract",
       "out_mask",
+      "external_t1_qc_plot",
+      "brain_mask_file"
+    ],
+    [
+      "dce_brain_extract",
+      "out_mask",
       "outputnode",
       "brain_mask"
     ],
@@ -305,6 +311,12 @@
       "mean_img",
       "combine_masks",
       "reference_file"
+    ],
+    [
+      "dce_preprocess",
+      "mean_img",
+      "external_t1_qc_plot",
+      "dce_reference_file"
     ],
     [
       "dce_preprocess",
@@ -593,6 +605,24 @@
       "plot_file",
       "outputnode",
       "dsc_dce_xval_plot"
+    ],
+    [
+      "external_t1_qc_plot",
+      "plot_file",
+      "outputnode",
+      "t1_qc_plot"
+    ],
+    [
+      "external_t1_to_dce",
+      "out_file",
+      "external_t1_qc_plot",
+      "t1_map_file"
+    ],
+    [
+      "external_t1_to_dce",
+      "out_file",
+      "outputnode",
+      "t1_map"
     ],
     [
       "external_t1_to_dce",
@@ -2006,6 +2036,18 @@
         "plot_file"
       ]
     },
+    "external_t1_qc_plot": {
+      "input_names": [
+        "brain_mask_file",
+        "dce_reference_file",
+        "session_id",
+        "subject_id",
+        "t1_map_file"
+      ],
+      "output_names": [
+        "plot_file"
+      ]
+    },
     "external_t1_to_dce": {
       "input_names": [
         "reference_file",
@@ -2103,6 +2145,7 @@
         "baseline_frames",
         "brain_mask_file",
         "dce_file",
+        "external_t1",
         "field_strength",
         "flip_angle",
         "no_t1",
@@ -2248,7 +2291,7 @@
     }
   },
   "function_sha256": {
-    "collect_qc_metrics": "24a868a87279d029f3c90a06915c8ef21c5b9f1df71e1285bd512528a429bd10",
+    "collect_qc_metrics": "1cb489a2ba7e03b472a7175598a360b9f05ca1b42f856333fc1bc51195c48cac",
     "combine_masks": "f2748155dafc15b2d74a066b3da5db0ed2a4b5486b46ee8ea1f4c7a181de8fcf",
     "create_aif_mask": "13c9c99cb39a8fdf544fa35125494b14147ec5099862963ceff8f8df840b8f3b",
     "dce_brain_mask_qc": "ced2d6d4b823457166d3fb21083d6220f2b0dc0e0155de5c134e6d98210b5086",
@@ -2257,6 +2300,7 @@
     "dce_pk_maps_qc": "8532217adf6bd6afb872d35848e1a73522a3befd04972a0a8e5424d0332627cc",
     "dsc_dce_validation": "669bf89bfcf69ba87cbe21add32fefe0d31e38706825c604a9b68ee01cbe20af",
     "dsc_dce_xval_plot": "eeb9578b0a27b124bb4657558e779e291a640fb3f2bbabe71eb3f3063e6fd51f",
+    "external_t1_qc_plot": "3f07bf22e9568a49ad65977988a7d808b91e34ee195343393d12474c26fbda02",
     "external_t1_to_dce": "040b96cd6e1f8b623dd8dda541e6e73e481eae4dffcc406ba1db772eb46b233a",
     "motion_qc_plot": "36616aba56123999797c0b5e14d6ec9903e15bea44b1958923c89616b1fb1b2f",
     "normalize_iauc60": "ea6ff078eaf357c450297207c75c6d4057f311c7c4a441f94bb4afa2f1c2dcba",
@@ -2265,7 +2309,7 @@
     "resample_dsc_cbv": "8637643d62fc961aafa3946ba1321ebcf4744121cb1b91e9b01bde70a4024ba3",
     "resample_dsc_ncbv": "9016b6e864f3d6e0149ee556592202a4fb42cec4b3e2a90946ff48dbfa6caf72",
     "select_aif_exclusion": "3ac6f0a171a3c915c7c043706044fb8dd45d2a9c05f1d1fad613919135724b21",
-    "signal_to_concentration": "c58363ef44e17de59ddb430281826f4d72d1daaf2b5705f215e4f7c2196385b2",
+    "signal_to_concentration": "eb77aa7907bce425cb449668d99b918ec4917a6ea0eb7a9bb0c251c33084869b",
     "transform_atlas_cascade": "92097e5d6df046e1997dbee6d10208373b12e5535619d7397855d263159a752a",
     "transform_b1_to_dce": "3805c9b07e0320284ec492d9a2d5ea9e48db04ade1320c301880a9219eab0829",
     "transform_brain_mask": "d79c70197847c13c4a4fd38f056ae9911584e27b3d0d1a55b81ebbbc0dc8c3e4",
@@ -2343,6 +2387,10 @@
       "n_procs": 1
     },
     "dsc_dce_xval_plot": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "external_t1_qc_plot": {
       "mem_gb": 0.2,
       "n_procs": 1
     },
@@ -2543,6 +2591,10 @@
       "session_id": "0001",
       "subject_id": "0001"
     },
+    "external_t1_qc_plot": {
+      "session_id": "0001",
+      "subject_id": "0001"
+    },
     "inputnode": {
       "dsc_agent_standard_dose": 0.1,
       "dsc_cbv_file": null,
@@ -2603,6 +2655,7 @@
       "function_str": "def select_aif_exclusion_mask(\n    user_lesion_mask: str | None = None,\n    transformed_lesion_mask: str | None = None,\n) -> str:\n    \"\"\"Select the lesion mask used to exclude AIF candidates.\n\n    Parameters\n    ----------\n    user_lesion_mask : str or None\n        User-supplied lesion mask in native perfusion space.\n    transformed_lesion_mask : str or None\n        Tumor-segmentation mask transformed to native perfusion space.\n\n    Returns\n    -------\n    str\n        The user mask when present, otherwise the transformed mask or ``\"\"``.\n    \"\"\"\n    from nipype.interfaces.base import isdefined\n\n    if isdefined(user_lesion_mask) and user_lesion_mask not in (None, \"\"):\n        return str(user_lesion_mask)\n    if (\n        isdefined(transformed_lesion_mask)\n        and transformed_lesion_mask not in (None, \"\")\n    ):\n        return str(transformed_lesion_mask)\n    return \"\"\n"
     },
     "signal_to_concentration": {
+      "external_t1": true,
       "no_t1": false
     },
     "transform_brain_mask": {
@@ -2695,6 +2748,10 @@
     ],
     [
       "dsc_dce_xval_plot",
+      "Function"
+    ],
+    [
+      "external_t1_qc_plot",
       "Function"
     ],
     [

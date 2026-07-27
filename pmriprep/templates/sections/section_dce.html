@@ -183,6 +183,17 @@
                 <div class="metric-value">{{ "%.1f"|format(dce.qc_metrics.t1_mapping.tr_ms) }} ms</div>
             </div>
             {% endif %}
+            {% if dce.qc_metrics.t1_mapping.external_alignment is defined and dce.qc_metrics.t1_mapping.external_alignment %}
+                {% set external_alignment = dce.qc_metrics.t1_mapping.external_alignment %}
+                <div class="metric">
+                    <div class="metric-label">External T1 Brain Support</div>
+                    <div class="metric-value">{{ "%.2f"|format((external_alignment.brain_support_fraction | default(0)) * 100) }}%</div>
+                </div>
+                <div class="metric">
+                    <div class="metric-label">External T1 Edge Agreement</div>
+                    <div class="metric-value">{% if external_alignment.gradient_magnitude_ncc is not none %}{{ "%.3f"|format(external_alignment.gradient_magnitude_ncc) }}{% else %}Unavailable{% endif %}</div>
+                </div>
+            {% endif %}
             {% if dce.qc_metrics.t1_mapping.vfa_preprocessing is defined and dce.qc_metrics.t1_mapping.vfa_preprocessing.motion_assessment is defined %}
                 {% set vfa_motion = dce.qc_metrics.t1_mapping.vfa_preprocessing.motion_assessment %}
                 <div class="metric">

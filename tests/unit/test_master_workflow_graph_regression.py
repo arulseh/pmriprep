@@ -133,9 +133,18 @@ def _build_master(
     modalities: set[str],
     skip_anat: bool = False,
     tumor_seg: bool = False,
+    external_t1: bool = False,
 ) -> Any:
     bids = _write_case(root, modalities)
-    dce_config = DCEConfig(no_t1=True, b1_method="none")
+    if external_t1:
+        external_t1_file = root / "external_t1map.nii.gz"
+        _write_image(external_t1_file)
+        dce_config = DCEConfig(
+            t1_map_file=external_t1_file,
+            b1_method="none",
+        )
+    else:
+        dce_config = DCEConfig(no_t1=True, b1_method="none")
     return init_pmriprep_wf(
         bids_dir=bids,
         output_dir=root / "out",
@@ -153,6 +162,21 @@ def _build_master(
         dce_config=dce_config,
         work_dir=root / "work",
     )
+
+
+def test_master_external_t1_exports_map_used_for_conversion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """External T1 drives conversion and exports the DCE-space map actually used."""
+    monkeypatch.setattr("pmriprep.utils.device.detect_torch_device", lambda: "cpu")
+    workflow = _build_master(
+        tmp_path,
+        modalities={"t1w_pre", "dce"},
+        external_t1=True,
+    )
+    node_names = {node.fullname for node in workflow._get_all_nodes()}
+    assert any(name.endswith("external_t1_to_dce") for name in node_names)
+    assert any(name.endswith("t1_map_sink") for name in node_names)
 
 
 MASTER_MATRIX = [

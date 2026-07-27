@@ -39,6 +39,7 @@ from pmriprep.workflows.dce._helpers import (  # noqa: F401
     _create_dce_registration_filmstrip,
     _dsc_dce_validation_node,
     _dsc_dce_xval_plot_node,
+    _external_t1_alignment_plot_node,
     _generate_dce_motion_qc_plot,
     _generate_dce_pk_fit_qc,
     _generate_dce_pk_maps_qc,
@@ -2051,6 +2052,29 @@ def init_dce_preproc_wf(
             ]),
         ])
 
+        external_t1_qc_plot = pe.Node(
+            niu.Function(
+                input_names=[
+                    "t1_map_file", "dce_reference_file", "brain_mask_file",
+                    "subject_id", "session_id",
+                ],
+                output_names=["plot_file"],
+                function=_external_t1_alignment_plot_node,
+            ),
+            name="external_t1_qc_plot",
+        )
+        external_t1_qc_plot.inputs.subject_id = subject_id
+        external_t1_qc_plot.inputs.session_id = session_id or ""
+        workflow.connect([
+            (external_t1_to_dce, external_t1_qc_plot, [("out_file", "t1_map_file")]),
+            (dce_preprocessing_wf, external_t1_qc_plot, [
+                ("outputnode.mean_img", "dce_reference_file"),
+            ]),
+            (dce_brain_extraction_wf, external_t1_qc_plot, [
+                ("outputnode.out_mask", "brain_mask_file"),
+            ]),
+        ])
+
     # ==========================================================================
     # Node 5: Signal to Concentration Conversion
     # ==========================================================================
@@ -2069,6 +2093,7 @@ def init_dce_preproc_wf(
                 "r1_relaxivity",
                 "baseline_frames",
                 "no_t1",
+                "external_t1",
             ],
             output_names=["concentration_file", "conversion_qc"],
             function=_signal_to_concentration_node,
@@ -2079,6 +2104,7 @@ def init_dce_preproc_wf(
 
     # Pass config.no_t1 to the node
     signal_to_conc.inputs.no_t1 = config.no_t1
+    signal_to_conc.inputs.external_t1 = use_external_t1
 
     # Use T1 and B1 maps resampled to DCE space
     workflow.connect([
@@ -2832,6 +2858,11 @@ def init_dce_preproc_wf(
                 ("outputnode.afi_registration_qc_plot", "afi_registration_qc_plot"),
                 ("outputnode.b1_qc_plot", "b1_qc_plot"),
             ]),
+        ])
+    if use_external_t1:
+        workflow.connect([
+            (external_t1_to_dce, outputnode, [("out_file", "t1_map")]),
+            (external_t1_qc_plot, outputnode, [("plot_file", "t1_qc_plot")]),
         ])
 
     # Structural underlay output connections (conditional)

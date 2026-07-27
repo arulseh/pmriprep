@@ -2370,6 +2370,7 @@
         "baseline_frames",
         "brain_mask_file",
         "dce_file",
+        "external_t1",
         "field_strength",
         "flip_angle",
         "no_t1",
@@ -2607,7 +2608,7 @@
     }
   },
   "function_sha256": {
-    "collect_qc_metrics": "24a868a87279d029f3c90a06915c8ef21c5b9f1df71e1285bd512528a429bd10",
+    "collect_qc_metrics": "1cb489a2ba7e03b472a7175598a360b9f05ca1b42f856333fc1bc51195c48cac",
     "combine_masks": "f2748155dafc15b2d74a066b3da5db0ed2a4b5486b46ee8ea1f4c7a181de8fcf",
     "create_aif_mask": "13c9c99cb39a8fdf544fa35125494b14147ec5099862963ceff8f8df840b8f3b",
     "dce_brain_mask_qc": "ced2d6d4b823457166d3fb21083d6220f2b0dc0e0155de5c134e6d98210b5086",
@@ -2623,7 +2624,7 @@
     "resample_dsc_cbv": "8637643d62fc961aafa3946ba1321ebcf4744121cb1b91e9b01bde70a4024ba3",
     "resample_dsc_ncbv": "9016b6e864f3d6e0149ee556592202a4fb42cec4b3e2a90946ff48dbfa6caf72",
     "select_aif_exclusion": "3ac6f0a171a3c915c7c043706044fb8dd45d2a9c05f1d1fad613919135724b21",
-    "signal_to_concentration": "c58363ef44e17de59ddb430281826f4d72d1daaf2b5705f215e4f7c2196385b2",
+    "signal_to_concentration": "eb77aa7907bce425cb449668d99b918ec4917a6ea0eb7a9bb0c251c33084869b",
     "transform_atlas_cascade": "92097e5d6df046e1997dbee6d10208373b12e5535619d7397855d263159a752a",
     "transform_b1_to_dce": "3805c9b07e0320284ec492d9a2d5ea9e48db04ade1320c301880a9219eab0829",
     "transform_b1_to_vfa": "d7085fd6e919f5095c5bb302c136f392174fa77fd5c1e7cf1a20c37dfbad13fb",
@@ -3008,6 +3009,7 @@
       "function_str": "def select_aif_exclusion_mask(\n    user_lesion_mask: str | None = None,\n    transformed_lesion_mask: str | None = None,\n) -> str:\n    \"\"\"Select the lesion mask used to exclude AIF candidates.\n\n    Parameters\n    ----------\n    user_lesion_mask : str or None\n        User-supplied lesion mask in native perfusion space.\n    transformed_lesion_mask : str or None\n        Tumor-segmentation mask transformed to native perfusion space.\n\n    Returns\n    -------\n    str\n        The user mask when present, otherwise the transformed mask or ``\"\"``.\n    \"\"\"\n    from nipype.interfaces.base import isdefined\n\n    if isdefined(user_lesion_mask) and user_lesion_mask not in (None, \"\"):\n        return str(user_lesion_mask)\n    if (\n        isdefined(transformed_lesion_mask)\n        and transformed_lesion_mask not in (None, \"\")\n    ):\n        return str(transformed_lesion_mask)\n    return \"\"\n"
     },
     "signal_to_concentration": {
+      "external_t1": false,
       "no_t1": false
     },
     "t1_mapping": {

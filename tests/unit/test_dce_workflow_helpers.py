@@ -60,6 +60,42 @@ def test_signal_conversion_node_reports_invalid_t1(tmp_path: Any) -> None:
     assert qc["n_qc_domain_voxels"] == 2
 
 
+def test_external_t1_reports_alignment_metrics(tmp_path: Any) -> None:
+    """External T1 conversion records support and contrast-robust edge agreement."""
+    from pmriprep.workflows.dce._helpers import _signal_to_concentration_node
+
+    grid = np.indices((6, 6, 6), dtype=float)
+    radius = np.sqrt(np.sum((grid - 2.5) ** 2, axis=0))
+    t1 = 800.0 + 120.0 * radius
+    baseline = 2000.0 - t1
+    signal = np.repeat(baseline[..., None], 10, axis=3)
+    signal[..., 5:] *= 1.1
+    dce_file = _write_nifti(tmp_path / "dce.nii.gz", signal)
+    brain_mask_file = _write_nifti(
+        tmp_path / "brain_mask.nii.gz", np.ones((6, 6, 6))
+    )
+    t1_file = _write_nifti(tmp_path / "external_t1.nii.gz", t1)
+    with mock.patch("pathlib.Path.cwd", return_value=tmp_path):
+        _, qc = _signal_to_concentration_node(
+            dce_file,
+            brain_mask_file,
+            t1_file,
+            None,
+            15.0,
+            0.005,
+            3.0,
+            3.8,
+            5,
+            False,
+            external_t1=True,
+        )
+
+    alignment = qc["external_t1_alignment"]
+    assert alignment["brain_support_fraction"] == pytest.approx(1.0)
+    assert alignment["gradient_magnitude_ncc"] is not None
+    assert alignment["resampling"] == "nifti_world_affine"
+
+
 def test_signal_conversion_node_scopes_t1_qc_to_brain_mask(
     tmp_path: Any,
 ) -> None:

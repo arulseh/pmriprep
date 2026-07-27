@@ -211,7 +211,7 @@ DCE fields:
 | `roi_mask` | `null` | Native-DCE statistics-only ROI mask |
 | `t1_method` | `hybrid` | VFA fitting with `hybrid`, `wlls`, or `nlls` |
 | `t1_correction_mode` | `auto` | Retain plausible measured T1 support; `fallback` forces uniform T1 |
-| `t1_map_file` | `null` | External T1 map in milliseconds |
+| `t1_map_file` | `null` | External T1 map in milliseconds, world-aligned to DCE |
 | `no_t1` | `false` | Skip VFA fitting and use field-strength default T1 |
 | `b1_method` | `auto` | `auto`, `afi`, `precomputed`, or `none` |
 | `b1_map_encoding` | `auto` | Infer or specify precomputed B1+ pixel encoding |
