@@ -122,7 +122,7 @@ class TestAggregateQCRecommendations:
         agg = aggregate_qc_recommendations(recs)
         assert agg.action == "include"
         assert agg.severity == 0
-        assert agg.reason == "All QC metrics passed"
+        assert agg.reason == "No evaluated QC criterion requires review"
 
     def test_mixed_severity(self) -> None:
         """Mixed severities: action from worst; reasons joined with ';'."""
@@ -141,9 +141,11 @@ class TestAggregateQCRecommendations:
         assert ";" in agg.reason
 
     def test_empty_list(self) -> None:
-        """Empty recommendation list yields action=include."""
+        """Empty recommendation list requires review because quality is unknown."""
         agg = aggregate_qc_recommendations([])
-        assert agg.action == "include"
+        assert agg.action == "review"
+        assert agg.severity == 1
+        assert "quality is unknown" in agg.reason
 
 
 class TestBuildQCSummary:

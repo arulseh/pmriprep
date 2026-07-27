@@ -592,10 +592,10 @@ def test_dce_two_cxm_suitability_warning_renders(env):
         "display_status": {},
     }
     rendered = template.render(dce=dce)
-    assert "2CXM Suitability Screening" in rendered
-    assert "temporal sampling outside auto 2cxm eligibility" in rendered
-    assert "volume TR 7.38 s" in rendered
-    assert "does not establish biological parameter validity" in rendered
+    assert "2CXM Suitability" in rendered
+    assert "Temporal sampling is outside the automatic 2CXM selection range" in rendered
+    assert "Volume TR 7.38 s" in rendered
+    assert "review fit and coverage metrics separately" in rendered
 
 
 @pytest.mark.parametrize(
@@ -623,9 +623,9 @@ def test_dce_incomplete_two_cxm_suitability_renders_safely(env, suitability):
     rendered = template.render(dce=dce)
 
     if suitability.get("status") is None:
-        assert "2CXM Suitability Screening" not in rendered
+        assert "2CXM Suitability" not in rendered
     else:
-        assert "2CXM Suitability Screening" in rendered
+        assert "2CXM Suitability" in rendered
 
 
 def test_drop_report_nulls_preserves_valid_falsey_values():
@@ -670,6 +670,27 @@ def test_parent_render_tolerates_missing_dsc_qc_sections(env):
     assert "<h2>DSC Perfusion</h2>" in rendered
 
 
+def test_dce_xval_error_hides_raw_exception(env):
+    """HTML gives stable guidance while technical failure detail stays in provenance."""
+    template = env.get_template("sections/section_dce.html")
+    dce = {
+        "qc_metrics": {
+            "dsc_dce_validation": {
+                "skipped": True,
+                "status": "error",
+                "reason": "/private/work/sub-01 missing input.nii.gz",
+            },
+        },
+        "images": {},
+        "display_status": {},
+    }
+
+    rendered = template.render(dce=dce, dsc={"qc_metrics": {}})
+
+    assert "DSC–DCE comparison could not be completed" in rendered
+    assert "/private/work" not in rendered
+
+
 # =============================================================================
 # Template AIF caveat
 # =============================================================================
@@ -692,7 +713,8 @@ def test_synthetic_aif_caveat_rendered(env):
     dsc_ctx = _dsc_ctx_with_aif_level("synthetic", synthetic_fallback_reason="no_candidates")
     rendered = template.render(dsc=dsc_ctx)
     assert "Template AIF" in rendered
-    assert "no_candidates" in rendered
+    assert "no arterial candidates survived automatic detection" in rendered
+    assert "no_candidates" not in rendered
     assert "MTT, Tmax" in rendered
     assert "BW K2" in rendered
 

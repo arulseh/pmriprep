@@ -62,6 +62,7 @@ def test_recommendation_and_warnings_propagate(tmp_path: Path) -> None:
     # DSC review beats DCE include in worst-case aggregation
     assert rec["action"] == "review"
     assert "AIF marginal" in rec["reason"]
+    assert "AIF good" not in rec["reason"]
 
     warnings = _collect_all_warnings(pipeline_data)
     assert "DSC Perfusion" in warnings

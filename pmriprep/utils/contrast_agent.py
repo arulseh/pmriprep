@@ -1178,20 +1178,26 @@ def collect_aif_fallback_warning(
                 except (TypeError, ValueError):
                     pass
             return (
-                f"DSC AIF retained despite a catastrophic gamma fit{r2_txt} "
+                f"DSC AIF retained despite a poor gamma-variate fit{r2_txt} "
                 f"— synthetic fallback is disabled. CBF, MTT, and Tmax may "
                 f"be unreliable; AUC-nCBV, raw TTP, and PSR remain interpretable."
             )
         if aif_qc.get("detection_method") != "synthetic":
             return None
-        reason = (
+        reason_code = str(
             qc_metrics.get("synthetic_fallback_reason")
             or aif_qc.get("synthetic_fallback_reason")
             or "cascade_exhausted"
         )
+        reason = {
+            "cascade_exhausted": "automatic detection found no acceptable arterial curve",
+            "no_candidates": "no arterial candidates survived automatic detection",
+            "low_snr": "arterial candidates had insufficient signal quality",
+            "gamma_r2_floor": "the measured curve had a poor gamma-variate fit",
+        }.get(reason_code, "automatic detection found no acceptable arterial curve")
         return (
             f"DSC AIF fell back to Parker population template "
-            f"\u2014 reason: {reason}. "
+            f"\u2014 {reason}. "
             f"nCBV and nCBF remain usable (NAWM normalisation "
             f"cancels AIF scaling). K2-corrected rCBV inherits "
             f"template-AIF shape bias on the first-pass integral. "
@@ -1203,10 +1209,7 @@ def collect_aif_fallback_warning(
         if aif_qc.get("aif_source") != "population":
             return None
         if aif_qc.get("auto_detection_attempted"):
-            reason = aif_qc.get(
-                "auto_fallback_reason", "cascade_exhausted"
-            )
-            detail = f" \u2014 auto-detection failed: {reason}"
+            detail = " — automatic detection found no acceptable arterial curve"
         else:
             detail = " (user-selected)"
         return (

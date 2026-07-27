@@ -639,23 +639,25 @@
 
         {% set suitability = dce.qc_metrics.model_suitability['2cxm'] if dce.qc_metrics.model_suitability is defined and dce.qc_metrics.model_suitability['2cxm'] is defined else none %}
         {% if suitability and suitability.status is defined and suitability.status != 'NOT_APPLICABLE' %}
-        <div class="metrics" style="grid-template-columns: 1fr; margin-top: 8px;">
+        <div class="metrics" style="margin-top: 8px;">
             <div class="metric">
-                <div class="metric-label">2CXM Suitability Screening</div>
-                <div class="metric-value {{ suitability.status | lower }}" style="font-size: 1.0em; font-weight: normal;">
+                <div class="metric-label">2CXM Suitability</div>
+                <div class="metric-value {{ suitability.status | lower }}">
                     {{ suitability.status }}
-                    {% if suitability.reasons %}
-                    — {% for reason in suitability.reasons %}{{ reason | replace('_', ' ') }}{% if not loop.last %}; {% endif %}{% endfor %}
-                    {% else %}
-                    — no established warning condition identified
-                    {% endif %}
-                    {% if suitability.metrics is defined and suitability.metrics.volume_tr_seconds is defined %}
-                    (volume TR {{ "%.2f"|format(suitability.metrics.volume_tr_seconds) }} s{% if suitability.metrics.acquisition_duration_seconds is defined %}, duration {{ "%.0f"|format(suitability.metrics.acquisition_duration_seconds) }} s{% endif %})
-                    {% endif %}
-                    <br><small>Screening only; this does not establish biological parameter validity. Coverage, fit, bound-saturation, AIF, T1/B1, and vp-prior metrics remain available in QC/provenance.</small>
                 </div>
             </div>
         </div>
+        <p class="preload-note{% if suitability.status == 'WARN' %} warning{% endif %}">
+            {% if suitability.reasons %}
+            {% for reason in suitability.reasons %}{% if reason == 'temporal_sampling_outside_auto_2cxm_eligibility' %}Temporal sampling is outside the automatic 2CXM selection range{% elif reason == 'no_quantitatively_accepted_voxels' %}No voxels passed quantitative QC{% elif reason == 'reduced_aif_confidence' %}AIF confidence is reduced{% elif reason == 'voxel_accounting_unavailable' %}Voxel-level QC is unavailable{% elif reason == 'pk_modeling_qc_unavailable' %}PK-model QC is unavailable{% else %}Review supporting metrics{% endif %}{% if not loop.last %}; {% endif %}{% endfor %}.
+            {% else %}
+            No established warning condition identified.
+            {% endif %}
+            {% if suitability.metrics is defined and suitability.metrics.volume_tr_seconds is defined %}
+            Volume TR {{ "%.2f"|format(suitability.metrics.volume_tr_seconds) }} s{% if suitability.metrics.acquisition_duration_seconds is defined %}; duration {{ "%.0f"|format(suitability.metrics.acquisition_duration_seconds) }} s{% endif %}.
+            {% endif %}
+            Screening only; review fit and coverage metrics separately.
+        </p>
         {% endif %}
 
         {% if dce.images.pk_param_maps_qc %}
@@ -790,7 +792,7 @@
     <!-- DSC-DCE Cross-Validation (suppressed on DCE-only runs) -->
     {% if dsc and dce.qc_metrics.dsc_dce_validation is defined and dce.qc_metrics.dsc_dce_validation %}
     {% set xval = dce.qc_metrics.dsc_dce_validation %}
-    {% if xval.skipped|default(false) and xval.status == 'SKIPPED' %}
+    {% if xval.skipped|default(false) %}
     <div class="section">
         <h3>{{ 'DSC-informed vp Constraint Diagnostic' if xval.constraint_coupled|default(false) else 'DSC-DCE Cross-Validation' }}</h3>
         <div class="metrics">
@@ -800,7 +802,11 @@
             </div>
         </div>
         <p class="preload-note">
-            {{ xval.reason|default('DSC-DCE cross-validation was skipped for this subject.') }}
+            {% if xval.status|default('')|lower == 'error' %}
+            DSC–DCE comparison could not be completed; review the processing log.
+            {% else %}
+            {{ xval.reason|default('DSC–DCE comparison was skipped for this subject.') }}
+            {% endif %}
             {% if 'NAWM' in xval.reason|default('') %}
             This is expected for bilateral disease or when tumor segmentation provides no contralateral NAWM. vp quantification proceeds without cross-modality validation.
             {% endif %}

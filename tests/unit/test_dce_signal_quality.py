@@ -70,6 +70,29 @@ def test_two_cxm_suitability_warning_requests_review_not_exclusion() -> None:
     assert "2CXM suitability warning" in result["recommendation"]["reason"]
 
 
+def test_measured_reduced_aif_is_distinct_from_population_fallback() -> None:
+    """Reader-facing recommendations distinguish confidence from AIF source."""
+    from pmriprep.utils.qc_standards import recommend_dce_qc
+
+    measured = recommend_dce_qc({
+        "aif_detection": {
+            "aif_source": "detected",
+            "aif_confidence": "reduced",
+        },
+    })["recommendation"]
+    population = recommend_dce_qc({
+        "aif_detection": {
+            "aif_source": "population",
+            "aif_confidence": "low",
+        },
+    })["recommendation"]
+
+    assert "Measured AIF accepted with reduced confidence" in measured["reason"]
+    assert "Population AIF used" not in measured["reason"]
+    assert "Population AIF used" in population["reason"]
+    assert "reduced confidence" not in population["reason"]
+
+
 class TestPeakEnhancementGating:
     """Tests for peak enhancement QC gating."""
 
@@ -391,7 +414,7 @@ class TestB1BiasGating:
         result = recommend_dce_qc(qc)
 
         assert "recommendation" in result
-        assert result["recommendation"]["action"] == QCAction.INCLUDE
+        assert result["recommendation"]["action"] == QCAction.REVIEW
 
     def test_b1_mapping_absent_no_crash(self) -> None:
         """Entirely missing b1_mapping section does not crash."""
@@ -406,7 +429,7 @@ class TestB1BiasGating:
         result = recommend_dce_qc(qc)
 
         assert "recommendation" in result
-        assert result["recommendation"]["action"] == QCAction.INCLUDE
+        assert result["recommendation"]["action"] == QCAction.REVIEW
 
 
 class TestBaselineSNRLowFractionGating:
@@ -458,22 +481,22 @@ class TestBaselineSNRLowFractionGating:
         assert result["recommendation"]["action"] == QCAction.REVIEW
 
     def test_nan_fraction_no_spurious_warn(self) -> None:
-        """NaN fraction (metric unavailable) must not raise or flag."""
+        """NaN fraction is unavailable and therefore requires review."""
         from pmriprep.utils.qc_standards import recommend_dce_qc
 
         qc = self._build_qc_metrics(low_fraction=float("nan"))
         result = recommend_dce_qc(qc)
 
-        assert result["recommendation"]["action"] == QCAction.INCLUDE
+        assert result["recommendation"]["action"] == QCAction.REVIEW
 
     def test_absent_fraction_no_crash(self) -> None:
-        """Missing key does not raise."""
+        """A missing metric does not raise and leaves quality unknown."""
         from pmriprep.utils.qc_standards import recommend_dce_qc
 
         qc = self._build_qc_metrics(low_fraction=None)
         result = recommend_dce_qc(qc)
 
-        assert result["recommendation"]["action"] == QCAction.INCLUDE
+        assert result["recommendation"]["action"] == QCAction.REVIEW
 
     def test_never_excludes(self) -> None:
         """Even a fully-low-SNR brain is REVIEW, never EXCLUDE, from this axis."""

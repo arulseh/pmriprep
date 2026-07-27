@@ -1149,8 +1149,7 @@ def _compute_overall_recommendation(
         Overall recommendation dict, or None if no recommendations exist.
     """
     severity = {"include": 0, "review": 1, "exclude": 2}
-    worst_action = "include"
-    reasons: list[str] = []
+    recommendations: list[tuple[str, str, str]] = []
 
     for name, data in pipeline_data.items():
         if data is None:
@@ -1158,13 +1157,23 @@ def _compute_overall_recommendation(
         rec = data.get("qc_metrics", {}).get("recommendation")
         if rec:
             action = rec.get("action", "review")
-            if severity.get(action, 1) > severity.get(worst_action, 0):
-                worst_action = action
-            reasons.append(f"{name.upper()}: {rec.get('reason', '')}")
+            recommendations.append((name, action, str(rec.get("reason", ""))))
 
-    if not reasons:
+    if not recommendations:
         return None
-    return {"action": worst_action, "reason": "; ".join(reasons)}
+    worst_action = max(
+        (action for _, action, _ in recommendations),
+        key=lambda action: severity.get(action, 1),
+    )
+    if worst_action == "include":
+        reason = "No evaluated pipeline QC criterion requires review"
+    else:
+        reason = "; ".join(
+            f"{name.upper()}: {text}"
+            for name, action, text in recommendations
+            if severity.get(action, 1) > 0
+        )
+    return {"action": worst_action, "reason": reason}
 
 
 def _collect_all_warnings(

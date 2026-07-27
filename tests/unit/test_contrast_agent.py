@@ -591,7 +591,7 @@ class TestCollectAifFallbackWarning:
         result = collect_aif_fallback_warning(qc, "DSC")
         assert result is not None
         assert "Parker population template" in result
-        assert "cascade_exhausted" in result
+        assert "automatic detection found no acceptable arterial curve" in result
 
     def test_dsc_uses_fallback_reason(self) -> None:
         qc: dict = {
@@ -600,7 +600,7 @@ class TestCollectAifFallbackWarning:
         }
         result = collect_aif_fallback_warning(qc, "DSC")
         assert result is not None
-        assert "no_candidates" in result
+        assert "no arterial candidates survived automatic detection" in result
 
     def test_dce_none_when_no_aif_detection(self) -> None:
         qc: dict = {"preprocessing": {}}
@@ -627,8 +627,8 @@ class TestCollectAifFallbackWarning:
         }
         result = collect_aif_fallback_warning(qc, "DCE")
         assert result is not None
-        assert "auto-detection failed" in result
-        assert "0/5 candidates" in result
+        assert "automatic detection found no acceptable arterial curve" in result
+        assert "0/5 candidates" not in result
 
     def test_unknown_modality_returns_none(self) -> None:
         qc: dict = {"aif_detection": {"detection_method": "synthetic"}}

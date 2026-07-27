@@ -421,9 +421,9 @@ def aggregate_qc_recommendations(
     """
     if not recommendations:
         return QCRecommendation(
-            action=QCAction.INCLUDE,
-            reason="No QC metrics evaluated",
-            severity=0,
+            action=QCAction.REVIEW,
+            reason="No QC metrics were available; quality is unknown",
+            severity=1,
         )
 
     # Find the most severe recommendation
@@ -440,7 +440,7 @@ def aggregate_qc_recommendations(
     # Collect reasons from all non-passing recommendations
     reasons = [r.reason for r in recommendations if r.severity > 0]
     if not reasons:
-        combined_reason = "All QC metrics passed"
+        combined_reason = "No evaluated QC criterion requires review"
     else:
         combined_reason = "; ".join(reasons)
 
@@ -575,7 +575,8 @@ def recommend_dsc_qc(qc_metrics: dict[str, Any]) -> dict[str, Any]:
         # to vouch for an AIF tier we don't recognise.
         aif_rec = QCRecommendation(
             QCAction.EXCLUDE,
-            f"AIF detection failed or synthetic ({detection_level})", 3,
+            "A subject-specific AIF was not detected; a template AIF was used",
+            3,
         )
     elif "external" in parts_set:
         aif_rec = QCRecommendation(
@@ -588,17 +589,19 @@ def recommend_dsc_qc(qc_metrics: dict[str, Any]) -> dict[str, Any]:
     }:
         aif_rec = QCRecommendation(
             QCAction.REVIEW,
-            f"AIF detection marginal ({detection_level})", 1,
+            "Measured AIF accepted with reduced confidence; review the AIF "
+            "curve and location",
+            1,
         )
     elif parts_set <= {"atlas_strict", "atlas_relaxed"}:
         aif_rec = QCRecommendation(
             QCAction.INCLUDE,
-            f"AIF detected ({detection_level})", 0,
+            "Measured AIF passed automated quality checks", 0,
         )
     else:
         aif_rec = QCRecommendation(
             QCAction.REVIEW,
-            f"AIF detection: {detection_level}", 1,
+            "Measured AIF requires review", 1,
         )
     recommendations.append(aif_rec)
 
@@ -607,7 +610,7 @@ def recommend_dsc_qc(qc_metrics: dict[str, Any]) -> dict[str, Any]:
     if aif_qc.get("aif_gamma_fit_below_floor_retained"):
         recommendations.append(QCRecommendation(
             QCAction.REVIEW,
-            "AIF retained despite a catastrophic gamma fit (R²<0) because "
+            "AIF retained despite a poor gamma-variate fit (R²<0) because "
             "synthetic fallback is disabled; CBF/MTT/Tmax may be unreliable "
             "(AUC-nCBV, raw TTP, and PSR remain interpretable)",
             2,
@@ -641,17 +644,30 @@ def recommend_dsc_qc(qc_metrics: dict[str, Any]) -> dict[str, Any]:
     if mean_cnr is not None and mean_cnr < QC_MEAN_CNR_MINIMUM:
         cnr_rec = QCRecommendation(
             QCAction.EXCLUDE,
-            f"Mean CNR critically low ({mean_cnr:.1f} < {QC_MEAN_CNR_MINIMUM}, possible failed injection)",
+            f"Mean CNR critically low ({mean_cnr:.1f} < {QC_MEAN_CNR_MINIMUM}); "
+            "verify bolus delivery and acquisition",
             3,
         )
         recommendations.append(cnr_rec)
     elif cnr_fraction is not None:
         if cnr_fraction >= 0.84:
-            cnr_rec = QCRecommendation(QCAction.INCLUDE, f"CNR excellent ({cnr_fraction:.0%} >4)", 0)
+            cnr_rec = QCRecommendation(
+                QCAction.INCLUDE,
+                f"CNR excellent ({cnr_fraction:.0%} of evaluated voxels had CNR > 4)",
+                0,
+            )
         elif cnr_fraction >= 0.65:
-            cnr_rec = QCRecommendation(QCAction.REVIEW, f"CNR marginal ({cnr_fraction:.0%} >4)", 1)
+            cnr_rec = QCRecommendation(
+                QCAction.REVIEW,
+                f"CNR marginal ({cnr_fraction:.0%} of evaluated voxels had CNR > 4)",
+                1,
+            )
         else:
-            cnr_rec = QCRecommendation(QCAction.EXCLUDE, f"CNR poor ({cnr_fraction:.0%} >4)", 3)
+            cnr_rec = QCRecommendation(
+                QCAction.EXCLUDE,
+                f"CNR poor ({cnr_fraction:.0%} of evaluated voxels had CNR > 4)",
+                3,
+            )
         recommendations.append(cnr_rec)
 
     overall = aggregate_qc_recommendations(recommendations)
@@ -693,13 +709,29 @@ def recommend_dce_qc(qc_metrics: dict[str, Any]) -> dict[str, Any]:
     aif_qc = qc_metrics.get("aif_detection", {})
     confidence = aif_qc.get("aif_confidence")
     quality_score = aif_qc.get("quality_score")
-    if confidence == "standard":
+    aif_source = aif_qc.get("aif_source", "")
+    if aif_source == "population":
+        recommendations.append(QCRecommendation(
+            QCAction.REVIEW,
+            "Population AIF used; subject-specific arterial input was not measured",
+            1,
+        ))
+    elif confidence == "standard":
         recommendations.append(
-            QCRecommendation(QCAction.INCLUDE, "AIF quality good (gates passed)", 0)
+            QCRecommendation(
+                QCAction.INCLUDE,
+                "Measured AIF passed automated quality checks",
+                0,
+            )
         )
     elif confidence in {"reduced", "low"}:
         recommendations.append(
-            QCRecommendation(QCAction.REVIEW, "AIF quality marginal (gate-admitted or population fallback)", 1)
+            QCRecommendation(
+                QCAction.REVIEW,
+                "Measured AIF accepted with reduced confidence; review the AIF "
+                "curve and location",
+                1,
+            )
         )
     elif quality_score is not None:
         # No confidence flag (e.g. external AIF): fall back to the score.
@@ -727,9 +759,17 @@ def recommend_dce_qc(qc_metrics: dict[str, Any]) -> dict[str, Any]:
     ktrans_mean = pk_qc.get("ktrans_mean")
     if ktrans_mean is not None:
         if 0.0001 < ktrans_mean < 1.0:
-            kt_rec = QCRecommendation(QCAction.INCLUDE, f"Ktrans physiologically plausible (mean={ktrans_mean:.4f})", 0)
+            kt_rec = QCRecommendation(
+                QCAction.INCLUDE,
+                f"Mean Ktrans within the configured QC range ({ktrans_mean:.4f})",
+                0,
+            )
         else:
-            kt_rec = QCRecommendation(QCAction.REVIEW, f"Ktrans outside typical range (mean={ktrans_mean:.4f})", 1)
+            kt_rec = QCRecommendation(
+                QCAction.REVIEW,
+                f"Mean Ktrans outside the configured QC range ({ktrans_mean:.4f})",
+                1,
+            )
         recommendations.append(kt_rec)
 
     # Model-specific suitability screening is non-fatal. A warning requests
@@ -739,7 +779,21 @@ def recommend_dce_qc(qc_metrics: dict[str, Any]) -> dict[str, Any]:
         two_cxm = suitability.get("2cxm")
         if isinstance(two_cxm, dict) and two_cxm.get("status") == "WARN":
             reasons = two_cxm.get("reasons", [])
-            detail = ", ".join(str(reason).replace("_", " ") for reason in reasons)
+            reason_text = {
+                "temporal_sampling_outside_auto_2cxm_eligibility": (
+                    "temporal sampling is outside the automatic 2CXM selection range"
+                ),
+                "no_quantitatively_accepted_voxels": (
+                    "no voxels passed quantitative QC"
+                ),
+                "reduced_aif_confidence": "AIF confidence is reduced",
+                "voxel_accounting_unavailable": "voxel-level QC is unavailable",
+                "pk_modeling_qc_unavailable": "PK-model QC is unavailable",
+            }
+            detail = ", ".join(
+                reason_text.get(str(reason), "review supporting metrics")
+                for reason in reasons
+            )
             recommendations.append(
                 QCRecommendation(
                     QCAction.REVIEW,
@@ -793,16 +847,22 @@ def recommend_dce_qc(qc_metrics: dict[str, Any]) -> dict[str, Any]:
             + "; S0 and quantitative PK maps are unreliable",
             3,
         ))
+    elif preprocessing_qc.get("baseline_fallback_applied") is False:
+        recommendations.append(QCRecommendation(
+            QCAction.INCLUDE,
+            "Pre-contrast baseline sample count was adequate",
+            0,
+        ))
 
     # Peak enhancement + baseline tSNR
     peak_enh = preprocessing_qc.get("peak_enh_pct")
     baseline_tsnr = preprocessing_qc.get("baseline_tsnr")
-    aif_source = aif_qc.get("aif_source", "")
     if peak_enh is not None:
         if peak_enh < QC_PEAK_ENHANCEMENT_MIN:
             recommendations.append(QCRecommendation(
                 QCAction.EXCLUDE,
-                f"Peak enhancement critically low ({peak_enh:.1f}% < {QC_PEAK_ENHANCEMENT_MIN}%, possible failed injection)",
+                f"Peak enhancement critically low ({peak_enh:.1f}% < "
+                f"{QC_PEAK_ENHANCEMENT_MIN}%); verify bolus delivery and acquisition",
                 3,
             ))
         elif peak_enh < QC_PEAK_ENHANCEMENT_WARN:
@@ -817,6 +877,12 @@ def recommend_dce_qc(qc_metrics: dict[str, Any]) -> dict[str, Any]:
                     "Injection quality cannot be verified with population AIF",
                     1,
                 ))
+        else:
+            recommendations.append(QCRecommendation(
+                QCAction.INCLUDE,
+                f"Peak enhancement acceptable ({peak_enh:.1f}%)",
+                0,
+            ))
     if baseline_tsnr is not None:
         if baseline_tsnr < QC_DCE_BASELINE_TSNR_MIN:
             recommendations.append(QCRecommendation(
@@ -830,6 +896,12 @@ def recommend_dce_qc(qc_metrics: dict[str, Any]) -> dict[str, Any]:
                 f"Baseline tSNR marginal ({baseline_tsnr:.1f})",
                 1,
             ))
+        elif baseline_tsnr == baseline_tsnr:
+            recommendations.append(QCRecommendation(
+                QCAction.INCLUDE,
+                f"Baseline tSNR acceptable ({baseline_tsnr:.1f})",
+                0,
+            ))
 
     # Baseline SNR below the Rician-bias floor (report-only spatial-extent flag)
     snr_low_frac = preprocessing_qc.get("baseline_snr_low_fraction")
@@ -841,8 +913,15 @@ def recommend_dce_qc(qc_metrics: dict[str, Any]) -> dict[str, Any]:
         recommendations.append(QCRecommendation(
             QCAction.REVIEW,
             f"Baseline SNR below the Rician-bias floor in {snr_low_frac:.0%} of brain "
-            "(global acquisition quality; Ktrans may be under-read)",
+            "(global acquisition quality; low-SNR magnitude bias may reduce "
+            "estimated enhancement and Ktrans)",
             1,
+        ))
+    elif snr_low_frac is not None and snr_low_frac == snr_low_frac:
+        recommendations.append(QCRecommendation(
+            QCAction.INCLUDE,
+            f"Low-SNR extent acceptable ({snr_low_frac:.0%} of brain)",
+            0,
         ))
 
     # B1+ bias
@@ -854,6 +933,12 @@ def recommend_dce_qc(qc_metrics: dict[str, Any]) -> dict[str, Any]:
                 QCAction.REVIEW,
                 f"B1+ bias outside expected range (mean={mean_b1:.2f}, expected {QC_B1_MEAN_LOW}-{QC_B1_MEAN_HIGH})",
                 1,
+            ))
+        else:
+            recommendations.append(QCRecommendation(
+                QCAction.INCLUDE,
+                f"Mean B1+ within the configured QC range ({mean_b1:.2f})",
+                0,
             ))
 
     # DSC-DCE cross-validation
@@ -868,13 +953,15 @@ def recommend_dce_qc(qc_metrics: dict[str, Any]) -> dict[str, Any]:
         if xval_status == QCStatus.WARN:
             recommendations.append(QCRecommendation(
                 QCAction.REVIEW,
-                f"DSC-DCE comparison outside its plausibility range "
+                f"DSC–DCE comparison outside its expected range "
                 f"(ρ={corr:.2f})",
                 1,
             ))
         elif xval_status == QCStatus.PASS:
             recommendations.append(QCRecommendation(
-                QCAction.INCLUDE, f"DSC-DCE validation passed (r={corr:.2f})", 0,
+                QCAction.INCLUDE,
+                f"DSC–DCE comparison within its expected range (r={corr:.2f})",
+                0,
             ))
 
     overall = aggregate_qc_recommendations(recommendations)

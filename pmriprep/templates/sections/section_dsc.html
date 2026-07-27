@@ -261,12 +261,11 @@
             {% endif %}
         </div>
         {% if dsc.qc_metrics.aif_detection and dsc.qc_metrics.aif_detection.detection_method == 'synthetic' %}
+        {% set fallback_reason = dsc.qc_metrics.synthetic_fallback_reason|default('cascade_exhausted') %}
         <div class="alert-warn" style="margin-top: 12px; padding: 10px 14px; border-left: 4px solid #d97706; background: #fef3c7; border-radius: 4px;">
             <strong>Template AIF — interpret maps with care.</strong>
             Reason:
-            {{ dsc.qc_metrics.synthetic_fallback_reason
-               if dsc.qc_metrics.synthetic_fallback_reason is defined
-               else 'cascade exhausted' }}.
+            {% if fallback_reason == 'no_candidates' %}no arterial candidates survived automatic detection{% elif fallback_reason == 'low_snr' %}arterial candidates had insufficient signal quality{% elif fallback_reason == 'gamma_r2_floor' %}the measured curve had a poor gamma-variate fit{% else %}automatic detection found no acceptable arterial curve{% endif %}.
             <p style="margin: 6px 0 0 0;">
                 PMRIPrep emits no absolute CBV/CBF — all outputs are
                 relative or ratio-normalised.
@@ -387,7 +386,7 @@
         <p class="preload-note warning">&#9888; K2 metrics empty &mdash; DCE vp constraint skipped.</p>
         {% endif %}
         {% if dsc.qc_metrics.preload.cbv_positive_tail_fraction is defined and dsc.qc_metrics.preload.cbv_positive_tail_fraction > 0.6 %}
-        <p class="preload-note warning">&#9888; Persistent positive &Delta;R2* tail with K2&asymp;0 in {{ "%.0f"|format(dsc.qc_metrics.preload.cbv_positive_tail_fraction * 100) }}% of tumor voxels &mdash; CBV may be <b>over-estimated</b>; the BSW correction cannot remove a positive (T2*-dominant) leakage tail.</p>
+        <p class="preload-note warning">&#9888; Persistent positive &Delta;R2* tail with K2&asymp;0 in {{ "%.0f"|format(dsc.qc_metrics.preload.cbv_positive_tail_fraction * 100) }}% of tumor voxels &mdash; CBV may be <b>over-estimated</b>; leakage correction cannot remove a positive (T2*-dominant) tail.</p>
         {% endif %}
         {% if dsc.qc_metrics.preload.preload_correction_applied and dsc.images.dsc_leakage_qc %}
         <div class="figure-container" style="margin-top: 20px;">
