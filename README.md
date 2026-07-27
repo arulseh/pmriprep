@@ -15,7 +15,7 @@ PMRIPrep provides:
 - VFA T1 mapping with optional B1+ correction;
 - Anatomical preprocessing, optional HD-GLIO tumor segmentation, and NAWM
   normalization; 
-- provenance-rich derivatives and visual QC.
+- Provenance-rich derivatives and visual QC.
 
 ## Installation
 
