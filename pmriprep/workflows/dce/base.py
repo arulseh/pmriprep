@@ -2223,6 +2223,10 @@ def init_dce_preproc_wf(
         n_procs=max(1, config.num_processes),
         sloppy=config.sloppy,
         aif_bat_alignment=config.aif_bat_alignment,
+        ser_early_start_s=config.ser_early_start_s,
+        ser_early_end_s=config.ser_early_end_s,
+        ser_late_fraction=config.ser_late_fraction,
+        ser_min_peak_enhancement=config.ser_min_peak_enhancement,
     )
     if random_seed is not None:
         pk_kwargs["random_seed"] = random_seed

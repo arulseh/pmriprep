@@ -169,19 +169,18 @@ class TestWashOutSlope:
             assert np.all(result[valid] < 0), f"Expected negative slope, got {result[valid]}"
 
     def test_persistent_positive(self) -> None:
-        """Rising curve should produce positive slope."""
+        """A rising delayed tail after an early global peak has positive slope."""
         n_time = 60
         tr_s = 5.0
         time_points = np.arange(n_time, dtype=np.float64) * tr_s / 60.0
 
         concentration = np.zeros((2, 2, 1, n_time), dtype=np.float64)
-        for t in range(n_time):
-            concentration[..., t] = 0.01 * t  # steady rise
-        # peak at end, washout window will have rising concentration
+        concentration[..., :6] = np.linspace(0.0, 2.5, 6)
+        concentration[..., 6:] = np.linspace(1.0, 2.0, n_time - 6)
         result = compute_wash_out_slope(concentration, time_points, volume_tr_s=tr_s)
         valid = np.isfinite(result)
-        if valid.any():
-            assert np.all(result[valid] > 0), f"Expected positive slope, got {result[valid]}"
+        assert valid.all()
+        assert np.all(result[valid] > 0), f"Expected positive slope, got {result[valid]}"
 
     def test_insufficient_points(self) -> None:
         """Fewer than min_points in window should give NaN."""
@@ -493,8 +492,8 @@ class TestSER:
         assert np.all(result > 1.0)
         assert np.all(result < 10.0)
 
-    def test_near_zero_early_returns_ones(self) -> None:
-        """Near-zero early concentration → SER = 1.0 (not inf)."""
+    def test_non_enhancing_signal_is_undefined(self) -> None:
+        """A non-enhancing signal must not be classified as plateau-like."""
         n_time = 60
         time_points = np.arange(n_time, dtype=np.float64) * 10.0 / 60.0
         concentration = np.zeros((2, 2, 1, n_time), dtype=np.float64)
@@ -503,7 +502,21 @@ class TestSER:
         result = compute_signal_enhancement_ratio(
             concentration, time_points, bolus_arrival_frame=3,
         )
-        assert np.all(np.isfinite(result))
+        assert np.all(np.isnan(result))
+
+    def test_uses_baseline_subtracted_signal_enhancement(self) -> None:
+        """SER is the ratio of early and late enhancement above S0."""
+        n_time = 80
+        time_points = np.arange(n_time, dtype=np.float64) * 10.0 / 60.0
+        signal = np.full((1, 1, 1, n_time), 100.0, dtype=np.float64)
+        signal[..., 5:18] = 140.0
+        signal[..., 64:] = 120.0
+
+        result = compute_signal_enhancement_ratio(
+            signal, time_points, bolus_arrival_frame=2, baseline_frames=2,
+        )
+
+        assert result[0, 0, 0] == pytest.approx(2.0)
 
     def test_extreme_ser_clamped(self) -> None:
         """Near-zero late concentration → raw SER >> 10, clamped to max_cap."""

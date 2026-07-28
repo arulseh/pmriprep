@@ -399,6 +399,10 @@ def build_dce_config(config_dict: Dict[str, Any]) -> DCEConfig:
     _coerce_float(dce_dict, "hematocrit")
     _coerce_float(dce_dict, "target_peak")
     _coerce_float(dce_dict, "r1_relaxivity")
+    _coerce_float(dce_dict, "ser_early_start_s")
+    _coerce_float(dce_dict, "ser_early_end_s")
+    _coerce_float(dce_dict, "ser_late_fraction")
+    _coerce_float(dce_dict, "ser_min_peak_enhancement")
     _coerce_dose(dce_dict)
 
     # Reject unknown keys after supported nested sections are flattened.

@@ -50,6 +50,29 @@ class TestConcentrationParameterValidation:
             DCEConfig(hematocrit=value)
 
 
+class TestSERConfigValidation:
+    """Protocol-defined SER timing must describe usable ordered windows."""
+
+    def test_custom_protocol_is_accepted(self) -> None:
+        cfg = DCEConfig(
+            ser_early_start_s=45,
+            ser_early_end_s=135,
+            ser_late_fraction=0.25,
+            ser_min_peak_enhancement=12,
+        )
+        assert cfg.ser_early_start_s == 45.0
+        assert cfg.ser_late_fraction == 0.25
+
+    def test_early_window_must_be_ordered(self) -> None:
+        with pytest.raises(ValueError, match="ser_early_end_s"):
+            DCEConfig(ser_early_start_s=150, ser_early_end_s=30)
+
+    @pytest.mark.parametrize("value", [0.0, 1.1, float("nan")])
+    def test_late_fraction_must_be_valid(self, value: float) -> None:
+        with pytest.raises(ValueError, match="ser_late_fraction"):
+            DCEConfig(ser_late_fraction=value)
+
+
 @pytest.mark.parametrize("config_cls", [DCEConfig, DSCConfig])
 class TestUnderlayValidation:
     """``underlays`` takes the split FLAIR tokens; legacy ``flair`` is rejected."""

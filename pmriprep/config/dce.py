@@ -73,6 +73,14 @@ class DCEConfig:
         Contrast agent dose multiplier (0.5 = half, 1.0 = full, 2.0 = double).
     tsnr_threshold : float
         tSNR threshold for voxel inclusion (0 = no threshold).
+    ser_early_start_s : float
+        Start of the protocol-defined early SER window after bolus arrival.
+    ser_early_end_s : float
+        End of the protocol-defined early SER window after bolus arrival.
+    ser_late_fraction : float
+        Fraction of the post-bolus acquisition used as the terminal SER window.
+    ser_min_peak_enhancement : float
+        Minimum peak relative signal enhancement for SER and curve typing.
     model : str
         Pharmacokinetic model: auto (per-voxel BIC selection),
         tofts, extended_tofts, patlak, or 2cxm.
@@ -125,6 +133,10 @@ class DCEConfig:
     baseline_frames: int = 0  # 0 = auto-detect
     dose: float = 1.0
     tsnr_threshold: float = 0.0  # 0 = no threshold
+    ser_early_start_s: float = 30.0
+    ser_early_end_s: float = 150.0
+    ser_late_fraction: float = 0.2
+    ser_min_peak_enhancement: float = 10.0
 
     # Model settings
     model: str = "auto"
@@ -256,6 +268,10 @@ class DCEConfig:
             self.tsnr_threshold = float(self.tsnr_threshold)
             self.hematocrit = float(self.hematocrit)
             self.motion_thresh = float(self.motion_thresh)
+            self.ser_early_start_s = float(self.ser_early_start_s)
+            self.ser_early_end_s = float(self.ser_early_end_s)
+            self.ser_late_fraction = float(self.ser_late_fraction)
+            self.ser_min_peak_enhancement = float(self.ser_min_peak_enhancement)
         except (ValueError, TypeError) as e:
             raise TypeError(f"DCEConfig float field has invalid type: {e}") from e
 
@@ -296,10 +312,17 @@ class DCEConfig:
             "lesion_distance",
             "tsnr_threshold",
             "motion_thresh",
+            "ser_early_start_s",
+            "ser_early_end_s",
+            "ser_min_peak_enhancement",
         ):
             value = getattr(self, option)
             if not math.isfinite(value) or value < 0:
                 raise ValueError(f"{option} must be finite and non-negative")
+        if not math.isfinite(self.ser_late_fraction) or not 0 < self.ser_late_fraction <= 1:
+            raise ValueError("ser_late_fraction must be finite and in (0, 1]")
+        if self.ser_early_end_s <= self.ser_early_start_s:
+            raise ValueError("ser_early_end_s must be greater than ser_early_start_s")
         if self.target_peak is not None and (
             not math.isfinite(self.target_peak) or self.target_peak <= 0
         ):

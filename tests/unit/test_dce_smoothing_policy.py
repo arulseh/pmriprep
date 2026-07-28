@@ -7,7 +7,10 @@ import numpy as np
 
 from pmriprep.workflows.dce._helpers import _derive_smoothed_kep
 from pmriprep.workflows.dce.base import init_dce_smoothing_wf
-from pmriprep.workflows.dce.datasinks import _build_dce_smoothed_meta
+from pmriprep.workflows.dce.datasinks import (
+    _build_dce_smoothed_meta,
+    _build_model_free_extra,
+)
 from pmriprep.workflows.dsc.datasinks import _build_smoothed_meta
 
 
@@ -86,3 +89,40 @@ def test_smoothed_metadata_limits_input_compartment_to_pk_maps() -> None:
 
     assert pk_meta["InputFunctionCompartment"] == "plasma"
     assert "InputFunctionCompartment" not in model_free_meta
+
+
+def test_smoothed_ser_metadata_records_configured_windows() -> None:
+    """Smoothed SER provenance retains the exact protocol-defined timing."""
+    metadata = _build_dce_smoothed_meta(
+        {}, "Smoothed SER", 3.0, map_key="ser",
+        config_dict={
+            "ser_early_start_s": 45.0,
+            "ser_early_end_s": 135.0,
+            "ser_late_fraction": 0.25,
+            "ser_min_peak_enhancement": 12.0,
+        },
+    )
+
+    assert metadata["InputCurve"] == "motion_corrected_signal"
+    assert metadata["EarlyWindowSecondsAfterBolus"] == [45.0, 135.0]
+    assert metadata["LateWindowFraction"] == 0.25
+    assert metadata["MinimumPeakEnhancementPercent"] == 12.0
+
+
+def test_native_ser_metadata_records_configured_windows() -> None:
+    """Native SER provenance uses configured rather than static defaults."""
+    metadata = _build_model_free_extra(
+        {"InputCurve": "motion_corrected_signal"},
+        "ser",
+        {
+            "ser_early_start_s": 45.0,
+            "ser_early_end_s": 135.0,
+            "ser_late_fraction": 0.25,
+            "ser_min_peak_enhancement": 12.0,
+        },
+    )
+
+    assert metadata is not None
+    assert metadata["EarlyWindowSecondsAfterBolus"] == [45.0, 135.0]
+    assert metadata["LateWindowFraction"] == 0.25
+    assert metadata["MinimumPeakEnhancementPercent"] == 12.0

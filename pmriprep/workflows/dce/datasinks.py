@@ -126,7 +126,10 @@ _MODEL_FREE_MAPS: tuple[DCEMapSpec, ...] = (
     DCEMapSpec("iauc120_map", "dce", "IAUC120", "Initial Area Under Curve at 120s (mM*min)", "mM*min", "iauc120"),
     DCEMapSpec("peak_enhancement_map", "dce", "peakEnhancement", "Peak enhancement percentage", "%", "peak_enhancement"),
     DCEMapSpec("time_to_peak_map", "dce", "ttp", "Time to peak (seconds)", "s", "ttp"),
-    DCEMapSpec("ser_map", "dce", "SER", "Signal Enhancement Ratio (washout characterization)", "1", "ser"),
+    DCEMapSpec("ser_map", "dce", "SER", "Protocol-defined early-to-late relative signal enhancement ratio", "1", "ser",
+     {"InputCurve": "motion_corrected_signal", "Formula": "mean(Searly-S0)/mean(Slate-S0)",
+      "EarlyWindowSecondsAfterBolus": [30.0, 150.0], "LateWindowFraction": 0.2,
+      "MinimumPeakEnhancementPercent": 10.0, "MaximumValueCap": 10.0}),
     DCEMapSpec("wash_in_slope_map", "dce", "washInSlope",
      "Maximum upslope of concentration during wash-in (mM/min)", "mM/min",
      "wash_in_slope",
@@ -145,11 +148,12 @@ _MODEL_FREE_MAPS: tuple[DCEMapSpec, ...] = (
 
 _CURVE_TYPE_MAP = DCEMapSpec(
     "curve_type_map", "dce", "curveType",
-    "Curve type classification (1=persistent, 2=plateau, 3=washout)",
+    "Descriptive signal-curve classification for meaningfully enhancing voxels",
     "categorical", "curve_type",
     {"PersistentThreshold": 0.9, "WashoutThreshold": 1.1,
-     "ValueMapping": {"0": "unclassified", "1": "persistent",
-                      "2": "plateau", "3": "washout"}},
+     "ValueMapping": {"0": "unclassified", "1": "persistent-like",
+                      "2": "plateau-like", "3": "washout-like"},
+     "Interpretation": "Descriptive only; not an organ-specific diagnostic category"},
     bids_suffix="dseg",
 )
 
@@ -299,6 +303,38 @@ def _build_dce_meta(
         roi_fragment = load_lesion_stats_fragment(roi_stats_json, map_key)
         if roi_fragment:
             out["ROIStats"] = roi_fragment
+    return out
+
+
+def _build_model_free_extra(
+    extra: dict | None,
+    map_key: str,
+    config_dict: dict | None = None,
+) -> dict | None:
+    """Apply configured model-free processing parameters to sidecar metadata."""
+    out = dict(extra or {})
+    if map_key not in {"ser", "curve_type"}:
+        return out or None
+    dce = config_dict or {}
+    if map_key == "curve_type":
+        out.update({
+            "InputMap": "SER",
+            "MinimumPeakEnhancementPercent": float(
+                dce.get("ser_min_peak_enhancement", 10.0)
+            ),
+        })
+        return out
+    out.update({
+        "EarlyWindowSecondsAfterBolus": [
+            float(dce.get("ser_early_start_s", 30.0)),
+            float(dce.get("ser_early_end_s", 150.0)),
+        ],
+        "LateWindowFraction": float(dce.get("ser_late_fraction", 0.2)),
+        "MinimumPeakEnhancementPercent": float(
+            dce.get("ser_min_peak_enhancement", 10.0)
+        ),
+        "MaximumValueCap": 10.0,
+    })
     return out
 
 
@@ -498,6 +534,7 @@ def _build_dce_smoothed_meta(
     units: str | None = None,
     map_key: str = "",
     inference: str = "vi",
+    config_dict: dict | None = None,
 ) -> dict:
     from pmriprep.utils.aif_provenance import stamp_aif_dependency
 
@@ -529,6 +566,20 @@ def _build_dce_smoothed_meta(
         out.pop("InputFunctionCompartment", None)
     if map_key:
         stamp_aif_dependency(out, map_key, modality="DCE")
+    if map_key == "ser":
+        dce = config_dict or {}
+        out.update({
+            "InputCurve": "motion_corrected_signal",
+            "Formula": "mean(Searly-S0)/mean(Slate-S0)",
+            "EarlyWindowSecondsAfterBolus": [
+                float(dce.get("ser_early_start_s", 30.0)),
+                float(dce.get("ser_early_end_s", 150.0)),
+            ],
+            "LateWindowFraction": float(dce.get("ser_late_fraction", 0.2)),
+            "MinimumPeakEnhancementPercent": float(
+                dce.get("ser_min_peak_enhancement", 10.0)
+            ),
+        })
     if map_key.endswith("_uncertainty"):
         from pmriprep.utils.uncertainty_provenance import build_uncertainty_provenance
 
@@ -1501,11 +1552,27 @@ def init_dce_datasinks_wf(
     for spec in _MODEL_FREE_MAPS:
         if spec.in_attr not in present:
             continue
+        model_free_extra = None
+        static_extra = spec.extra
+        if spec.map_key == "ser":
+            model_free_extra = pe.Node(
+                niu.Function(
+                    input_names=["extra", "map_key", "config_dict"],
+                    output_names=["extra"],
+                    function=_build_model_free_extra,
+                ),
+                name=f"{spec.in_attr}_extra",
+            )
+            model_free_extra.inputs.extra = spec.extra
+            model_free_extra.inputs.map_key = spec.map_key
+            workflow.connect(inputnode, "config_dict", model_free_extra, "config_dict")
+            static_extra = None
         sink = _add_perf_map_sink(
             workflow, inputnode, base_perf_no_ktrans,
             name=spec.in_attr, in_attr=spec.in_attr,
             desc_value=spec.desc, suffix=spec.suffix,
-            description=spec.description, units=spec.units, extra=spec.extra,
+            description=spec.description, units=spec.units, extra=static_extra,
+            extra_node=model_free_extra,
             map_key=spec.map_key, bids_suffix=spec.bids_suffix,
         )
         sink_outputs.append((sink, "out_file"))
@@ -1513,11 +1580,23 @@ def init_dce_datasinks_wf(
     # Categorical segmentation: explicit because its BIDS suffix is dseg.
     spec = _CURVE_TYPE_MAP
     if spec.in_attr in present:
+        curve_extra = pe.Node(
+            niu.Function(
+                input_names=["extra", "map_key", "config_dict"],
+                output_names=["extra"],
+                function=_build_model_free_extra,
+            ),
+            name=f"{spec.in_attr}_extra",
+        )
+        curve_extra.inputs.extra = spec.extra
+        curve_extra.inputs.map_key = spec.map_key
+        workflow.connect(inputnode, "config_dict", curve_extra, "config_dict")
         sink = _add_perf_map_sink(
             workflow, inputnode, base_perf_no_ktrans,
             name=spec.in_attr, in_attr=spec.in_attr,
             desc_value=spec.desc, suffix=spec.suffix,
-            description=spec.description, units=spec.units, extra=spec.extra,
+            description=spec.description, units=spec.units, extra=None,
+            extra_node=curve_extra,
             map_key=spec.map_key, bids_suffix=spec.bids_suffix,
         )
         sink_outputs.append((sink, "out_file"))
@@ -1939,7 +2018,7 @@ def init_dce_datasinks_wf(
         sm_meta = pe.MapNode(
             niu.Function(
                 input_names=["base", "description", "fwhm_mm", "units",
-                             "map_key", "inference"],
+                             "map_key", "inference", "config_dict"],
                 output_names=["meta_dict"],
                 function=_build_dce_smoothed_meta,
             ),
@@ -1949,6 +2028,7 @@ def init_dce_datasinks_wf(
         sm_meta.inputs.inference = inference
         workflow.connect([
             (base_perf, sm_meta, [("meta_dict", "base")]),
+            (inputnode, sm_meta, [("config_dict", "config_dict")]),
             (splitter, sm_meta, [
                 ("descs", "description"),
                 ("fwhms", "fwhm_mm"),

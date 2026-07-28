@@ -1,6 +1,6 @@
 """Model-free DCE maps.
 
-Computes model-assumption-free quantitative maps from DCE concentration data:
+Computes model-assumption-free quantitative maps from DCE signal and concentration data:
 IAUC, peak enhancement, time-to-peak, signal enhancement ratio, wash-in slope,
 wash-out slope, bolus arrival time, and curve type classification.
 """
@@ -22,11 +22,7 @@ _PEAK_ENH_SIGNAL_FLOOR = 1.0
 # numerical artifact from near-zero baseline voxels.
 _PEAK_ENH_MAX_CAP = 5000.0
 
-# Concentration-based SER above 10.0 is not physiologically plausible;
-# values above this are numerical artifacts from near-zero late-phase
-# concentration. Brain tumors rarely exceed 2.5, but hypervascular
-# extracranial tumors (liver HCC, angiosarcoma) can reach 5-6.
-# Cap at 10.0 for generalizability; users can tighten via max_cap param.
+# Guard against unstable ratios when late enhancement approaches zero.
 _SER_MAX_CAP = 10.0
 
 
@@ -130,18 +126,22 @@ def compute_time_to_peak(
 
 
 def compute_signal_enhancement_ratio(
-    concentration: npt.NDArray[np.floating],
+    signal_data: npt.NDArray[np.floating],
     time_points: npt.NDArray[np.floating],
     bolus_arrival_frame: int = 0,
-    early_offset: tuple[float, float] = (0.5, 2.5),
+    baseline_frames: int = 5,
+    early_offset_s: tuple[float, float] = (30.0, 150.0),
     late_fraction: float = 0.2,
+    min_peak_enhancement_percent: float = 10.0,
     max_cap: float = _SER_MAX_CAP,
 ) -> npt.NDArray[np.floating]:
-    """Compute Signal Enhancement Ratio (SER) for washout characterization.
+    """Compute a protocol-defined signal enhancement ratio (SER).
 
-    SER = mean(C_early) / mean(C_late)
+    ``SER = mean(S_early - S0) / mean(S_late - S0)``
 
-    High SER (>1) indicates washout; low SER (<1) indicates persistent enhancement.
+    High SER indicates washout-like behavior; low SER indicates persistent-like
+    behavior. The timing windows are explicit processing choices rather than a
+    universal DCE-MRI standard.
 
     Time windows are relative to bolus arrival and adaptive to acquisition
     length, so the metric is valid for both short (<6 min) and long (>10 min)
@@ -149,35 +149,38 @@ def compute_signal_enhancement_ratio(
 
     Parameters
     ----------
-    concentration : numpy.ndarray
-        4D concentration data (x, y, z, time) in mM.
+    signal_data : numpy.ndarray
+        4D motion-corrected DCE signal data (x, y, z, time).
     time_points : numpy.ndarray
         1D time array in minutes.
     bolus_arrival_frame : int, optional
         Frame index of bolus arrival.
-    early_offset : tuple of (float, float), optional
-        (start, end) in minutes post-bolus for early phase.
+    baseline_frames : int, optional
+        Number of pre-contrast frames used to estimate S0.
+    early_offset_s : tuple of (float, float), optional
+        Start and end of the early window in seconds post-bolus.
     late_fraction : float, optional
         Fraction of post-bolus duration for late window
         (capped at 5 min for very long acquisitions).
+    min_peak_enhancement_percent : float, optional
+        Minimum peak relative signal enhancement required for a valid result.
     max_cap : float, optional
-        Maximum SER value (default 10.0). Concentration-based SER
-        can diverge when late-phase concentration is near zero; values
-        above this cap are clamped.
+        Maximum finite ratio retained.
 
     Returns
     -------
     numpy.ndarray
-        3D SER map, clamped to [0, max_cap]. Returns ones where windows
-        have insufficient frames.
+        3D SER map, clamped to [0, max_cap]. Undefined voxels are NaN.
     """
-    ones = np.ones(concentration.shape[:3], dtype=np.float64)
+    undefined = np.full(signal_data.shape[:3], np.nan, dtype=np.float64)
+    if baseline_frames < 1 or baseline_frames > signal_data.shape[-1]:
+        return undefined
 
     bolus_time = time_points[bolus_arrival_frame]
 
     # Early window: fixed offset from bolus arrival
-    early_start = bolus_time + early_offset[0]
-    early_end = bolus_time + early_offset[1]
+    early_start = bolus_time + early_offset_s[0] / 60.0
+    early_end = bolus_time + early_offset_s[1] / 60.0
     early_mask = (time_points >= early_start) & (time_points <= early_end)
 
     # Late window: last fraction of post-bolus acquisition, capped at 5 min
@@ -186,18 +189,24 @@ def compute_signal_enhancement_ratio(
     late_start = time_points[-1] - late_duration
     late_mask = (time_points >= late_start) & (time_points <= time_points[-1])
 
-    if np.sum(early_mask) < 2 or np.sum(late_mask) < 2:
-        return ones
+    if late_start <= early_end or np.sum(early_mask) < 2 or np.sum(late_mask) < 2:
+        return undefined
 
-    early_mean = np.mean(concentration[..., early_mask], axis=-1)
-    late_mean = np.mean(concentration[..., late_mask], axis=-1)
-
-    # Scale floor to data magnitude to avoid million-fold amplification
-    early_median = float(np.nanmedian(early_mean))
-    floor = max(0.05 * max(early_median, 0.0), 1e-6)
-    late_safe = np.maximum(np.abs(late_mean), floor)
-    ser = early_mean / late_safe
-    ser = np.clip(ser, 0.0, max_cap)
+    baseline = np.mean(signal_data[..., :baseline_frames], axis=-1)
+    early_enhancement = np.mean(signal_data[..., early_mask], axis=-1) - baseline
+    late_enhancement = np.mean(signal_data[..., late_mask], axis=-1) - baseline
+    peak_enhancement = compute_peak_enhancement(signal_data, baseline_frames)
+    valid = (
+        np.isfinite(early_enhancement)
+        & np.isfinite(late_enhancement)
+        & (early_enhancement > 0)
+        & (late_enhancement > 0)
+        & (peak_enhancement >= min_peak_enhancement_percent)
+    )
+    ser = undefined
+    with np.errstate(divide="ignore", invalid="ignore"):
+        ser[valid] = early_enhancement[valid] / late_enhancement[valid]
+    np.clip(ser, 0.0, max_cap, out=ser)
 
     return ser  # type: ignore[no-any-return]
 
@@ -455,10 +464,9 @@ def compute_curve_type(
 ) -> npt.NDArray[np.integer]:
     """Classify DCE enhancement curves based on SER values.
 
-    Three-class classification following BI-RADS convention:
-    - Type I (persistent): SER < persistent_threshold
-    - Type II (plateau): persistent_threshold <= SER <= washout_threshold
-    - Type III (washout): SER > washout_threshold
+    Three descriptive classes are emitted for meaningfully enhancing voxels:
+    persistent-like, plateau-like, and washout-like. These labels do not imply
+    an organ-specific diagnostic standard.
 
     Parameters
     ----------

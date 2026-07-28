@@ -2508,6 +2508,10 @@ class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
         usedefault=True,
         desc="tSNR threshold for voxel inclusion (0 = no threshold)",
     )
+    ser_early_start_s = traits.Float(30.0, usedefault=True)
+    ser_early_end_s = traits.Float(150.0, usedefault=True)
+    ser_late_fraction = traits.Float(0.2, usedefault=True)
+    ser_min_peak_enhancement = traits.Float(10.0, usedefault=True)
     baseline_frames = traits.Int(
         0,
         usedefault=True,
@@ -2699,7 +2703,12 @@ class ComputeDCEMapsOutputSpec(TraitedSpec):
     out_wash_in_slope = File(desc="Wash-in slope (maximum upslope, mM/min)")
     out_wash_out_slope = File(desc="Wash-out slope (linear fit, mM/min, signed)")
     out_bat = File(desc="Bolus arrival time (seconds)")
-    out_curve_type = File(desc="Curve type classification (0=unclassified, 1=persistent, 2=plateau, 3=washout)")
+    out_curve_type = File(
+        desc=(
+            "Descriptive curve classification (0=unclassified, "
+            "1=persistent-like, 2=plateau-like, 3=washout-like)"
+        )
+    )
 
     # Model selection map (auto mode)
     out_model_selection = File(desc="Model selection map (int8: 0=unfitted, 1=patlak, 2=tofts, 3=extended_tofts, 4=2cxm)")
@@ -3367,11 +3376,27 @@ class ComputeDCEMaps(BaseInterface):
             if isdefined(self.inputs.volume_tr) and self.inputs.volume_tr is not None
             else None
         )
-        ser = compute_signal_enhancement_ratio(
-            concentration,
-            time_points,
-            bolus_arrival_frame=prepared.baseline_frames,
-        )
+        ser: npt.NDArray[Any]
+        if not isdefined(self.inputs.dce_signal_file):
+            ser = np.full(concentration.shape[:3], np.nan, dtype=np.float64)
+        else:
+            import nibabel as nib  # type: ignore[import-untyped]
+            signal_img = nib.load(self.inputs.dce_signal_file)
+            signal_data: npt.NDArray[Any] = signal_img.get_fdata().astype(  # type: ignore[attr-defined]
+                np.float64
+            )
+            ser = compute_signal_enhancement_ratio(
+                signal_data,
+                time_points,
+                bolus_arrival_frame=prepared.baseline_frames,
+                baseline_frames=prepared.baseline_frames,
+                early_offset_s=(
+                    float(self.inputs.ser_early_start_s),
+                    float(self.inputs.ser_early_end_s),
+                ),
+                late_fraction=float(self.inputs.ser_late_fraction),
+                min_peak_enhancement_percent=float(self.inputs.ser_min_peak_enhancement),
+            )
         return _DCEModelFreeMaps(
             compute_iauc(concentration, time_points, cutoff_s=60.0),
             compute_iauc(concentration, time_points, cutoff_s=90.0),
