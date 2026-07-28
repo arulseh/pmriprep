@@ -100,48 +100,6 @@ def _compute_dsc_motion_weights(
     return weights
 
 
-def _warn_invalid_cpi_combo(
-    method: str, inference: str, cpi_infer_cpt: bool,
-) -> None:
-    """Emit log warnings for known-bad CPI inference + cpi_infer_cpt combos.
-
-    DRO matrix data
-    (``tests/benchmarks/run_cpi_infer_cpt_map_vs_vb.py``) shows:
-
-    - inference='nlls' + cpi_infer_cpt=False produces 2-3x larger CBF bias
-      than VI/MAP because no prior shrinkage compensates for the rigid CP
-      layout.
-    - inference='map' + cpi_infer_cpt=True is unstable: MAP point estimate
-      fails to find the multimodal posterior basin and CBF variance is
-      ~7x higher than VI at 5% noise.
-
-    Parameters
-    ----------
-    method : str
-        DSC deconvolution method name.
-    inference : str
-        Parametric inference engine ('nlls', 'map', 'vi', 'svb').
-    cpi_infer_cpt : bool
-        Whether CPI control point times are inferred.
-    """
-    if method != "cpi":
-        return
-    if inference == "nlls" and not cpi_infer_cpt:
-        logger.warning(
-            "DSC CPI: inference='nlls' with cpi_infer_cpt=False produces "
-            "2-3x larger CBF bias than VI/MAP on the gamma-variate DRO "
-            "(no prior shrinkage compensates for the rigid CP layout). "
-            "Recommend cpi_infer_cpt=True or inference='vi'."
-        )
-    if inference == "map" and cpi_infer_cpt:
-        logger.warning(
-            "DSC CPI: inference='map' with cpi_infer_cpt=True is unstable "
-            "(MAP point estimate fails to find the multimodal posterior "
-            "basin; CBF variance ~7x higher than VI at 5% noise). "
-            "Recommend inference='vi' for cpi_infer_cpt=True cases."
-        )
-
-
 def _parametric_fit_needs_fallback(
     result: DSCFitResult,
     inference: str,
@@ -3402,10 +3360,6 @@ class ComputeDSCMaps(BaseInterface):
                 "inference='%s' ignored for SVD method '%s'.",
                 inference, method,
             )
-
-        # Warn on known-bad CPI inference + infer_cpt combinations
-        # (DRO matrix data — see tests/benchmarks/run_cpi_infer_cpt_map_vs_vb.py)
-        _warn_invalid_cpi_combo(method, inference, cpi_infer_cpt)
 
         tail_frames = inputs.tail_frames
         baseline = self._prepare_baseline_and_leakage(inputs)

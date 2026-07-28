@@ -654,24 +654,7 @@ class CPIModel(DSCModel):
 
 
 _INFER_CPT_DECAY_DIVISOR_SEC: float = 3.0
-"""Empirically-calibrated divisor for the tail-decay → N rule under
-``infer_cpt=True``. Calibration anchor:
-``tests/benchmarks/run_cpi_n_sweep_infer_cpt.py`` showed a sharp cliff at
-N=7→8 for Long MTT=12s tissue (CBF bias +9.5%→+0.6%); divisor=3.0 gives
-N=8 for the gamma-variate DRO mean tissue (decay≈22.5s), landing exactly
-at the cliff with no headroom.
-
-This is intentional: the cliff is sharp, so N=8 is genuinely sufficient
-(not borderline). Adding margin (e.g. divisor=2.5 → N=9 on the DRO)
-would erase the variance gain on short-MTT data without measurable
-accuracy improvement. The defense for unusual cohorts is the adaptive
-*scaling*: stroke-like data with longer tail decay scales N upward
-naturally (τ=20s → N=15), so users with pathologically long MTT are
-covered automatically.
-
-If real clinical data shows the cliff position is noise- or
-SNR-dependent, recalibrate via the N-sweep benchmark before changing
-this constant."""
+"""Seconds of estimated tail decay represented per inferred control point."""
 
 
 def select_n_control_points(

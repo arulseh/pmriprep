@@ -1,7 +1,4 @@
-"""Tests for adaptive control-point selection under cpi_infer_cpt=True.
-
-Calibration reference: tests/benchmarks/run_cpi_n_sweep_infer_cpt.py.
-"""
+"""Tests for adaptive control-point selection under cpi_infer_cpt=True."""
 
 from __future__ import annotations
 
