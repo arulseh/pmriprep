@@ -451,11 +451,42 @@ class TestPeakEnhancement:
         assert np.allclose(result, 0.0)
 
     def test_dead_voxel_guard(self) -> None:
-        """Signal below epsilon (1.0) returns 0% (dead/background voxel)."""
+        """Arbitrary scanner scaling below one does not change the result."""
         n_time = 20
         signal = np.full((2, 2, 1, n_time), 0.5, dtype=np.float64)
+        signal[..., 10] = 1.5
         result = compute_peak_enhancement(signal, baseline_frames=5)
-        assert np.allclose(result, 0.0)
+        assert np.allclose(result, 200.0)
+
+    def test_baseline_peak_is_excluded(self) -> None:
+        """A pre-contrast maximum is not reported as enhancement."""
+        signal = np.full((1, 1, 1, 10), 500.0, dtype=np.float64)
+        signal[..., 0] = 600.0
+        signal[..., 5:] = 550.0
+        result = compute_peak_enhancement(signal, baseline_frames=5)
+        assert result[0, 0, 0] == pytest.approx((550.0 - 520.0) / 520.0 * 100.0)
+
+    @pytest.mark.parametrize("invalid_baseline", [0.0, -10.0])
+    def test_nonpositive_baseline_returns_nan(self, invalid_baseline: float) -> None:
+        """Undefined baseline ratios remain visibly undefined."""
+        signal = np.full((1, 1, 1, 10), invalid_baseline, dtype=np.float64)
+        signal[..., 5:] = 100.0
+        result = compute_peak_enhancement(signal, baseline_frames=5)
+        assert np.isnan(result[0, 0, 0])
+
+    def test_nonfinite_signal_returns_nan(self) -> None:
+        """A partially non-finite signal curve is not assigned a peak."""
+        signal = np.full((1, 1, 1, 10), 100.0, dtype=np.float64)
+        signal[..., 7] = np.nan
+        result = compute_peak_enhancement(signal, baseline_frames=5)
+        assert np.isnan(result[0, 0, 0])
+
+    @pytest.mark.parametrize("baseline_frames", [0, 10])
+    def test_invalid_baseline_window_raises(self, baseline_frames: int) -> None:
+        """Invalid processing configuration raises instead of making a map."""
+        signal = np.ones((1, 1, 1, 10), dtype=np.float64)
+        with pytest.raises(ValueError, match="leave at least one"):
+            compute_peak_enhancement(signal, baseline_frames=baseline_frames)
 
     def test_max_cap(self) -> None:
         """Extreme enhancement is capped at max_cap."""
@@ -517,11 +548,11 @@ class TestSER:
         n_time = 80
         time_points = np.arange(n_time, dtype=np.float64) * 10.0 / 60.0
         bolus_frame = 2
-        concentration = np.zeros((2, 2, 1, n_time), dtype=np.float64)
+        concentration = np.full((2, 2, 1, n_time), 100.0, dtype=np.float64)
         # Early window: bolus + 0.5 to bolus + 2.5 min → ~frames 5-17
-        concentration[..., 5:18] = 2.0
+        concentration[..., 5:18] = 120.0
         # Late window: last 20% of post-bolus → ~last 16 frames
-        concentration[..., 64:] = 0.5
+        concentration[..., 64:] = 110.0
         result = compute_signal_enhancement_ratio(
             concentration, time_points, bolus_arrival_frame=bolus_frame,
         )
@@ -532,9 +563,9 @@ class TestSER:
         n_time = 80
         time_points = np.arange(n_time, dtype=np.float64) * 10.0 / 60.0
         bolus_frame = 2
-        concentration = np.zeros((2, 2, 1, n_time), dtype=np.float64)
-        concentration[..., 5:18] = 0.5
-        concentration[..., 64:] = 2.0
+        concentration = np.full((2, 2, 1, n_time), 100.0, dtype=np.float64)
+        concentration[..., 5:18] = 110.0
+        concentration[..., 64:] = 120.0
         result = compute_signal_enhancement_ratio(
             concentration, time_points, bolus_arrival_frame=bolus_frame,
         )
@@ -545,10 +576,11 @@ class TestSER:
         n_time = 60
         time_points = np.arange(n_time, dtype=np.float64) * 10.0 / 60.0
         bolus_frame = 3
-        concentration = np.zeros((2, 2, 1, n_time), dtype=np.float64)
-        concentration[..., bolus_frame:] = 1.5  # constant post-bolus
+        concentration = np.full((2, 2, 1, n_time), 100.0, dtype=np.float64)
+        concentration[..., bolus_frame:] = 115.0  # constant post-bolus
         result = compute_signal_enhancement_ratio(
             concentration, time_points, bolus_arrival_frame=bolus_frame,
+            baseline_frames=bolus_frame,
         )
         assert np.allclose(result, 1.0, atol=0.05)
 
@@ -558,11 +590,11 @@ class TestSER:
         n_time = 40
         time_points = np.arange(n_time, dtype=np.float64) * 7.6 / 60.0
         bolus_frame = 7
-        concentration = np.zeros((3, 3, 1, n_time), dtype=np.float64)
+        concentration = np.full((3, 3, 1, n_time), 100.0, dtype=np.float64)
         # Early: frames ~10-25 (0.5-2.5 min post-bolus)
-        concentration[..., 10:26] = 2.0
+        concentration[..., 10:26] = 120.0
         # Late: last 20% of post-bolus → ~last 6-7 frames
-        concentration[..., 33:] = 1.0
+        concentration[..., 33:] = 110.0
         result = compute_signal_enhancement_ratio(
             concentration, time_points, bolus_arrival_frame=bolus_frame,
         )
@@ -601,11 +633,11 @@ class TestSER:
         n_time = 80
         time_points = np.arange(n_time, dtype=np.float64) * 10.0 / 60.0
         bolus_frame = 2
-        concentration = np.zeros((2, 2, 1, n_time), dtype=np.float64)
+        concentration = np.full((2, 2, 1, n_time), 100.0, dtype=np.float64)
         # High early concentration
-        concentration[..., 5:18] = 5.0
+        concentration[..., 5:18] = 150.0
         # Near-zero late concentration (triggers large raw SER)
-        concentration[..., 64:] = 1e-4
+        concentration[..., 64:] = 100.0001
         result = compute_signal_enhancement_ratio(
             concentration, time_points, bolus_arrival_frame=bolus_frame,
         )
@@ -618,13 +650,13 @@ class TestSER:
         n_time = 120
         time_points = np.arange(n_time, dtype=np.float64) * 10.0 / 60.0
         bolus_frame = 5
-        concentration = np.zeros((2, 2, 1, n_time), dtype=np.float64)
+        concentration = np.full((2, 2, 1, n_time), 100.0, dtype=np.float64)
         # Early: strong signal
-        concentration[..., 8:20] = 3.0
+        concentration[..., 8:20] = 130.0
         # Fill late portion: high value only in last 5 min (frames 90-120)
-        concentration[..., 90:] = 1.0
+        concentration[..., 90:] = 110.0
         # Put low value in the preceding region (frames 60-90)
-        concentration[..., 60:90] = 0.1
+        concentration[..., 60:90] = 101.0
         result = compute_signal_enhancement_ratio(
             concentration, time_points, bolus_arrival_frame=bolus_frame,
         )

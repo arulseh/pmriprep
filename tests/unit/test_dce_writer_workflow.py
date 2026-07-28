@@ -299,6 +299,12 @@ def test_dce_factory_model_free_no_model_entity(
     assert iauc_sidecar["DetectedBolusArrivalFrame"] == 6
     assert iauc_sidecar["ResolvedWindow"]["complete"] is True
     assert (perf_out / "sub-01_ses-0001_desc-dcePeakEnhancement_stat.nii.gz").exists()
+    peak_sidecar = json.loads(
+        (perf_out / "sub-01_ses-0001_desc-dcePeakEnhancement_stat.json").read_text()
+    )
+    assert peak_sidecar["InputCurve"] == "motion_corrected_signal"
+    assert peak_sidecar["PeakSearchStart"] == "first post-baseline frame"
+    assert peak_sidecar["MaximumValueCap"] == 5000.0
     ttp_sidecar = json.loads(
         (perf_out / "sub-01_ses-0001_desc-dceTtp_stat.json").read_text()
     )

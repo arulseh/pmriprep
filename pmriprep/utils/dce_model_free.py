@@ -16,10 +16,6 @@ from pmriprep.utils.dce_constants import MIN_ENHANCEMENT_MM
 
 logger = logging.getLogger(__name__)
 
-# Signal below this is dead/background (air, outside FOV).
-# Real tissue signal is hundreds-thousands.
-_PEAK_ENH_SIGNAL_FLOOR = 1.0
-
 # No tissue produces >5000% signal enhancement; anything above is
 # numerical artifact from near-zero baseline voxels.
 _PEAK_ENH_MAX_CAP = 5000.0
@@ -101,7 +97,7 @@ def compute_peak_enhancement(
 ) -> npt.NDArray[np.floating]:
     """Compute peak enhancement percentage from raw signal data.
 
-    (S_max - S_baseline) / max(S_baseline, epsilon) × 100
+    (S_max,post - S_baseline) / S_baseline × 100
 
     Must be computed on **raw MRI signal**, not concentration.
     Concentration has baseline ~0 by definition, causing division by
@@ -120,17 +116,22 @@ def compute_peak_enhancement(
     Returns
     -------
     numpy.ndarray
-        3D peak enhancement percentage map.
+        3D peak enhancement percentage map. Voxels with a non-positive
+        baseline or any non-finite signal samples are NaN.
     """
-    baseline_mean = np.mean(signal_data[..., :baseline_frames], axis=-1)
-    peak = np.max(signal_data, axis=-1)
+    if baseline_frames < 1 or baseline_frames >= signal_data.shape[-1]:
+        raise ValueError("baseline_frames must leave at least one post-baseline frame")
+    if max_cap <= 0:
+        raise ValueError("max_cap must be positive")
 
-    # Signal < 1.0 is dead/background — avoid division by near-zero
-    baseline_safe = np.maximum(np.abs(baseline_mean), _PEAK_ENH_SIGNAL_FLOOR)
-    enhancement = (peak - baseline_mean) / baseline_safe * 100.0
+    baseline_mean = np.mean(signal_data[..., :baseline_frames], axis=-1)
+    peak = np.max(signal_data[..., baseline_frames:], axis=-1)
+    valid = np.all(np.isfinite(signal_data), axis=-1) & (baseline_mean > 0.0)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        enhancement = (peak - baseline_mean) / baseline_mean * 100.0
 
     enhancement = np.clip(enhancement, 0.0, max_cap)
-    return np.asarray(enhancement, dtype=np.float64)  # type: ignore[return-value]
+    return np.asarray(np.where(valid, enhancement, np.nan), dtype=np.float64)
 
 
 def compute_time_to_peak(
@@ -210,7 +211,7 @@ def compute_signal_enhancement_ratio(
         3D SER map, clamped to [0, max_cap]. Undefined voxels are NaN.
     """
     undefined = np.full(signal_data.shape[:3], np.nan, dtype=np.float64)
-    if baseline_frames < 1 or baseline_frames > signal_data.shape[-1]:
+    if baseline_frames < 1 or baseline_frames >= signal_data.shape[-1]:
         return undefined
 
     bolus_time = time_points[bolus_arrival_frame]
