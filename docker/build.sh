@@ -2,13 +2,11 @@
 #
 # PMRIPrep Docker Build Script
 #
-# Build Docker and Apptainer containers for PMRIPrep.
+# Build the PMRIPrep Docker image and print Apptainer conversion instructions.
 #
 # Usage:
-#   ./docker/build.sh                    # Build local image
-#   ./docker/build.sh --push             # Build and push to registry
-#   ./docker/build.sh --multiarch        # Build for amd64 and arm64
-#   ./docker/build.sh --multiarch --push # Build multiarch and push
+#   ./docker/build.sh        # Build the validated linux/amd64 CUDA image
+#   ./docker/build.sh --push # Build and push to registry
 #
 # Environment variables:
 #   DOCKER_REGISTRY   - Docker registry (default: docker.io)
@@ -31,10 +29,7 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 REGISTRY="${DOCKER_REGISTRY:-docker.io}"
 REPO="${DOCKER_REPO:-pmriprep/pmriprep}"
 PUSH=false
-MULTIARCH=false
-GPU=false
-PYTORCH_VARIANT="cpu"
-PLATFORMS="linux/amd64,linux/arm64"
+PLATFORM="linux/amd64"
 
 # Colors for output
 RED='\033[0;31m'
@@ -67,23 +62,6 @@ parse_args() {
             --push)
                 PUSH=true
                 shift
-                ;;
-            --multiarch)
-                MULTIARCH=true
-                shift
-                ;;
-            --gpu)
-                GPU=true
-                PYTORCH_VARIANT="cu121"
-                shift
-                ;;
-            --pytorch-variant)
-                PYTORCH_VARIANT="$2"
-                shift 2
-                ;;
-            --platforms)
-                PLATFORMS="$2"
-                shift 2
                 ;;
             --registry)
                 REGISTRY="$2"
@@ -119,27 +97,17 @@ Usage: $(basename "$0") [OPTIONS]
 
 Options:
   --push              Push image to registry after building
-  --multiarch         Build for multiple architectures (amd64, arm64)
-  --gpu               Build with CUDA 12.1 PyTorch (for NVIDIA GPU support)
-  --pytorch-variant V PyTorch variant (default: cpu, e.g. cu121, cu124)
-  --platforms PLAT    Comma-separated list of platforms (default: linux/amd64,linux/arm64)
   --registry REG      Docker registry (default: docker.io, env: DOCKER_REGISTRY)
   --repo REPO         Repository name (default: pmriprep/pmriprep, env: DOCKER_REPO)
   --version VER       Override version (default: from pyproject.toml)
   -h, --help          Show this help message
 
 Examples:
-  # Build local CPU image
+  # Build the validated linux/amd64 CUDA image locally
   ./docker/build.sh
-
-  # Build with GPU support (CUDA 12.1)
-  ./docker/build.sh --gpu
 
   # Build and push to Docker Hub
   ./docker/build.sh --push
-
-  # Build for multiple architectures and push
-  ./docker/build.sh --multiarch --push
 
   # Build for custom registry
   ./docker/build.sh --registry ghcr.io --repo myorg/pmriprep --push
@@ -193,47 +161,26 @@ check_docker() {
     fi
 }
 
-# Check buildx is available for multiarch builds
-check_buildx() {
-    if ! docker buildx version &> /dev/null; then
-        log_error "Docker buildx is not available. Install it for multi-arch builds."
-        log_info "See: https://docs.docker.com/buildx/working-with-buildx/"
-        exit 1
-    fi
-}
-
-# Setup buildx builder for multiarch
-setup_buildx() {
-    local builder_name="pmriprep-builder"
-
-    # Check if builder exists
-    if ! docker buildx inspect "$builder_name" &> /dev/null; then
-        log_info "Creating buildx builder: $builder_name"
-        docker buildx create --name "$builder_name" --use --bootstrap
-    else
-        log_info "Using existing buildx builder: $builder_name"
-        docker buildx use "$builder_name"
-    fi
-}
-
-# Build single-arch image
-build_single() {
+# Build the validated release architecture.
+build_image() {
     local version="$1"
-    local full_image="${REPO}:${version}"
-    local latest_image="${REPO}:latest"
+    local image_base="${REGISTRY}/${REPO}"
+    local full_image="${image_base}:${version}"
+    local latest_image="${image_base}:latest"
 
     log_info "Building image: $full_image"
+    log_info "Platform: $PLATFORM (CUDA 12.1 PyTorch)"
 
     docker build \
+        --platform "$PLATFORM" \
         --tag "$full_image" \
         --tag "$latest_image" \
-        --build-arg "PYTORCH_VARIANT=${PYTORCH_VARIANT}" \
         --label "org.opencontainers.image.version=${version}" \
         --label "org.opencontainers.image.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
         --file "${PROJECT_ROOT}/Dockerfile" \
         "$PROJECT_ROOT"
 
-    log_success "Built: $full_image (PyTorch variant: ${PYTORCH_VARIANT})"
+    log_success "Built: $full_image"
     log_success "Tagged as: $latest_image"
 
     if $PUSH; then
@@ -245,52 +192,11 @@ build_single() {
     fi
 }
 
-# Build multi-arch image
-build_multiarch() {
-    local version="$1"
-    local full_image="${REPO}:${version}"
-    local latest_image="${REPO}:latest"
-
-    log_info "Building multi-arch image: $full_image"
-    log_info "Platforms: $PLATFORMS"
-
-    local push_flag=""
-    if $PUSH; then
-        push_flag="--push"
-    else
-        push_flag="--load"
-        # Note: --load only works for single platform
-        log_warn "Multi-arch build without --push will only load the native platform image"
-        # Get native platform
-        local native_platform
-        native_platform=$(docker version --format '{{.Server.Os}}/{{.Server.Arch}}')
-        PLATFORMS="$native_platform"
-        log_info "Using native platform: $PLATFORMS"
-    fi
-
-    docker buildx build \
-        --platform "$PLATFORMS" \
-        --tag "$full_image" \
-        --tag "$latest_image" \
-        --build-arg "PYTORCH_VARIANT=${PYTORCH_VARIANT}" \
-        --label "org.opencontainers.image.version=${version}" \
-        --label "org.opencontainers.image.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-        --file "${PROJECT_ROOT}/Dockerfile" \
-        $push_flag \
-        "$PROJECT_ROOT"
-
-    log_success "Built multi-arch: $full_image"
-    log_success "Tagged as: $latest_image"
-
-    if $PUSH; then
-        log_success "Pushed to registry with platforms: $PLATFORMS"
-    fi
-}
-
 # Print Apptainer conversion instructions
 print_apptainer_instructions() {
     local version="$1"
-    local full_image="${REPO}:${version}"
+    local image_base="${REGISTRY}/${REPO}"
+    local full_image="${image_base}:${version}"
 
     echo ""
     echo "=============================================="
@@ -305,10 +211,10 @@ print_apptainer_instructions() {
         echo "apptainer pull pmriprep_${version}.sif docker://${full_image}"
         echo ""
         echo "# Or for latest:"
-        echo "apptainer pull pmriprep_latest.sif docker://${REPO}:latest"
+        echo "apptainer pull pmriprep_latest.sif docker://${image_base}:latest"
     else
         echo "# From local Docker daemon:"
-        echo "apptainer pull pmriprep_${version}.sif docker-daemon://${REPO}:${version}"
+        echo "apptainer pull pmriprep_${version}.sif docker-daemon://${full_image}"
         echo ""
         echo "# Note: This requires Docker images to be available locally."
         echo "# Run with --push to push to registry for easier Apptainer conversion."
@@ -354,14 +260,7 @@ main() {
     version=$(get_version)
     log_info "Version: $version"
 
-    # Build
-    if $MULTIARCH; then
-        check_buildx
-        setup_buildx
-        build_multiarch "$version"
-    else
-        build_single "$version"
-    fi
+    build_image "$version"
 
     # Print Apptainer instructions
     print_apptainer_instructions "$version"
