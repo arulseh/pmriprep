@@ -66,7 +66,7 @@ suppress_warnings = ["ref.python"]
 apidoc_module_dir = "../pmriprep"
 apidoc_output_dir = "api"
 apidoc_separate_modules = True
-apidoc_extra_args = ["--module-first", "-T"]
+apidoc_extra_args = ["--module-first", "-T", "--remove-old"]
 apidoc_excluded_paths = ["*/tests/*", "*conftest.py"]
 
 # -- sphinxcontrib-bibtex ------------------------------------------------------
