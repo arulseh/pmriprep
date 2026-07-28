@@ -20,8 +20,8 @@ test file enforces the structural invariants that a future backend
      SOFT implementations ARE different by design.
   7. fraction_vp_at_bound diagnostic: synthetic cohort with controlled
      boundary pressure produces a fraction in the expected range.
-  8. Serial byte-identity: serial NLLS outputs match the baseline hashes in
-     tests/fixtures/dce_soft_serial_hashes.json. (Slow-marked.)
+  8. Serial numerical identity: serial NLLS outputs match the portable
+     reference in tests/fixtures/dce_soft_serial_reference.json. (Slow-marked.)
   9. fixed_vp unit consistency: array values lie in the physical vp range.
 
 These contracts make cross-backend invariants structural — a future
@@ -350,25 +350,19 @@ def test_fraction_vp_at_bound_in_expected_range(aif_and_time):
 
 
 # ---------------------------------------------------------------------------
-# Assertion 8: serial byte-identity against committed baseline (slow)
+# Assertion 8: serial numerical identity against committed baseline (slow)
 # ---------------------------------------------------------------------------
 
-_FIXTURE_PATH = Path(__file__).parent.parent / "fixtures" / "dce_soft_serial_hashes.json"
+_FIXTURE_PATH = Path(__file__).parent.parent / "fixtures" / "dce_soft_serial_reference.json"
 
 
-def _compute_serial_hashes(aif, time_points):
-    """Compute SHA-256 hashes of serial Patlak + ExtTofts outputs on a
-    deterministic 200-voxel synthetic cohort. Used both for generating
-    and verifying the byte-identity fixture."""
-    import hashlib
-
+def _compute_serial_outputs(aif, time_points):
+    """Compute serial Patlak outputs on a deterministic synthetic cohort."""
     tissue, ktrans_true, vp_true = _make_patlak_cohort(
         aif, time_points, n_voxels=200, seed=12345,
     )
     fixed_vp = np.asarray(vp_true, dtype=np.float64)
     sigma = 0.4
-
-    out = {}
 
     model = PatlakModel()
     vps = []
@@ -379,31 +373,34 @@ def _compute_serial_hashes(aif, time_points):
         res = model.fit(tissue[i], aif, time_points, vp_bounds=(vp_lo, vp_hi))
         vps.append(float(res.parameters.get("vp", 0.0)))
         kts.append(float(res.parameters.get("Ktrans", 0.0)))
-    out["patlak_vp_sha256"] = hashlib.sha256(np.asarray(vps).tobytes()).hexdigest()
-    out["patlak_ktrans_sha256"] = hashlib.sha256(np.asarray(kts).tobytes()).hexdigest()
-
-    return out
+    return {
+        "patlak_vp": np.asarray(vps, dtype=np.float64),
+        "patlak_ktrans": np.asarray(kts, dtype=np.float64),
+    }
 
 
 @pytest.mark.slow
-def test_serial_byte_identity(aif_and_time):
-    """Serial path output is byte-identical to the committed
-    baseline hash. Regenerate fixture only on intentional semantics changes."""
+def test_serial_numerical_identity(aif_and_time):
+    """Serial output matches a portable committed numerical reference."""
     aif, time_points = aif_and_time
-    hashes = _compute_serial_hashes(aif, time_points)
+    outputs = _compute_serial_outputs(aif, time_points)
 
     if not _FIXTURE_PATH.exists():
         pytest.skip(
             f"Baseline fixture missing at {_FIXTURE_PATH} — run "
-            f"tests/fixtures/generate_dce_soft_hashes.py to create it."
+            f"tests/fixtures/generate_dce_soft_reference.py to create it."
         )
     baseline = json.loads(_FIXTURE_PATH.read_text())
-    for key in ("patlak_vp_sha256", "patlak_ktrans_sha256"):
-        assert hashes[key] == baseline[key], (
-            f"Serial path output changed for {key}: computed hash {hashes[key]} "
-            f"vs baseline {baseline[key]}. Intentional semantics change? "
-            f"Regenerate fixture. Accidental drift? Revert the change that "
-            f"produced it."
+    for key, observed in outputs.items():
+        np.testing.assert_allclose(
+            observed,
+            np.asarray(baseline[key], dtype=np.float64),
+            rtol=1e-7,
+            atol=1e-10,
+            err_msg=(
+                f"Serial path output changed for {key}. Regenerate the fixture only "
+                "for an intentional numerical-semantics change."
+            ),
         )
 
 
