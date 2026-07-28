@@ -2234,8 +2234,8 @@ def test_g6_admit_sub08_archetype():
     assert "G1_via_G6" in dec["warns"]
 
 
-def test_g6_reject_sub0081_v1_archetype():
-    """sub-0081 V1 case: dilated tier (G6_f), n=2 unilateral (G6_g), scale 8.83 (G6_a)."""
+def test_g6_reject_sparse_unilateral_archetype():
+    """Reject a dilated-tier, two-voxel unilateral pool with excessive scale."""
     status, _ = _evaluate_gates(scale_factor=8.83, qc=_make_qc(ratio_30=0.41),
                                  atlas_tier="MCA_ACA_dil_dce_strict",
                                  n_voxels=2, hemisphere="unilateral_left",

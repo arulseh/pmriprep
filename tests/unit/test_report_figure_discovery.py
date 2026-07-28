@@ -12,23 +12,23 @@ from pmriprep.utils.report_utils import (
 def test_collect_pipeline_images_accepts_source_entities(tmp_path: Path) -> None:
     """Entity-rich perfusion figures remain visible in the HTML report."""
     figure = tmp_path / (
-        "sub-0091_ses-0001_acq-fl3d_ce-GAD_run-1_desc-aifcurve_dce.png"
+        "sub-test01_ses-visit1_acq-fl3d_ce-GAD_run-1_desc-aifcurve_dce.png"
     )
     figure.touch()
 
-    images = _collect_pipeline_images("0091", "0001", "dce", tmp_path)
+    images = _collect_pipeline_images("test01", "visit1", "dce", tmp_path)
 
     assert images["aif_curve"] == f"figures/{figure.name}"
 
 
 def test_collect_pipeline_images_retains_legacy_name_priority(tmp_path: Path) -> None:
     """An exact historical filename wins over an additional entity-rich file."""
-    legacy = tmp_path / "sub-0091_ses-0001_desc-motion_dce.png"
-    entity_rich = tmp_path / "sub-0091_ses-0001_run-1_desc-motion_dce.png"
+    legacy = tmp_path / "sub-test01_ses-visit1_desc-motion_dce.png"
+    entity_rich = tmp_path / "sub-test01_ses-visit1_run-1_desc-motion_dce.png"
     legacy.touch()
     entity_rich.touch()
 
-    images = _collect_pipeline_images("0091", "0001", "dce", tmp_path)
+    images = _collect_pipeline_images("test01", "visit1", "dce", tmp_path)
 
     assert images["motion"] == f"figures/{legacy.name}"
 

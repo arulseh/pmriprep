@@ -646,8 +646,8 @@ class TestNormalizeHelpersReturnEmptyString:
         assert _normalize_cbv(
             cbv_file="/nonexistent/cbv.nii.gz",
             derivatives_dir="/tmp",
-            subject_id="0081",
-            session_id="0001",
+            subject_id="test01",
+            session_id="visit1",
             nawm_mask_file=None,
         ) == ("", None)
 
@@ -657,8 +657,8 @@ class TestNormalizeHelpersReturnEmptyString:
         assert _normalize_cbf(
             cbf_file="/nonexistent/cbf.nii.gz",
             derivatives_dir="/tmp",
-            subject_id="0081",
-            session_id="0001",
+            subject_id="test01",
+            session_id="visit1",
             nawm_mask_file=None,
         ) == ("", None)
 
@@ -679,8 +679,8 @@ class TestLesionStatsAcceptsEmptyMapTrait:
         from pmriprep.interfaces.dce_lesion_stats import DCELesionStats
 
         iface = DCELesionStats()
-        iface.inputs.subject_id = "0081"
-        iface.inputs.session_id = "0001"
+        iface.inputs.subject_id = "test01"
+        iface.inputs.session_id = "visit1"
         # Should not raise TraitError — these are the values produced by
         # _normalize_by_nawm on the no-NAWM path.
         iface.inputs.niauc60_map = ""
@@ -690,8 +690,8 @@ class TestLesionStatsAcceptsEmptyMapTrait:
         from pmriprep.interfaces.dsc_lesion_stats import DSCLesionStats
 
         iface = DSCLesionStats()
-        iface.inputs.subject_id = "0081"
-        iface.inputs.session_id = "0001"
+        iface.inputs.subject_id = "test01"
+        iface.inputs.session_id = "visit1"
         # Should not raise TraitError — these are the values produced by
         # _normalize_cbv / _normalize_cbf on the no-NAWM path.
         iface.inputs.ncbv_map = ""

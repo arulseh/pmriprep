@@ -340,7 +340,7 @@ class TestRegression:
 
 
 # =============================================================================
-# Short Baseline Magnitude Guard (sub-0092 regression fix)
+# Short Baseline Magnitude Guard
 # =============================================================================
 
 
@@ -352,7 +352,7 @@ class TestShortBaselineMagnitudeGuard:
     """
 
     def test_short_baseline_with_drift_no_false_early(self) -> None:
-        """OSIPI sub-0092 scenario: 8 baseline frames, 0.7% drift, bolus at frame 8.
+        """Retain an 8-frame baseline with 0.7% drift and bolus at frame 8.
 
         Should detect frame 7-8, NOT frame 5-6.
         """

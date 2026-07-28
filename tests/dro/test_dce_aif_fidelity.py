@@ -8,8 +8,8 @@ faithful one):
 
 1. The per-candidate scorer prefers a physiologic-washout arterial curve over
    an over-washed (tail-collapsed) one — the exact inversion that let the
-   diluting voxels into the pooled AIF (OSIPI sub-0091: AIF 3->10 voxels,
-   Ktrans overestimate +66% -> +111%).
+   diluting voxels into the pooled AIF in a synthetic validation case (AIF
+   3->10 voxels, Ktrans overestimate +66% -> +111%).
 2. The averaged-AIF fidelity scalar rank-orders the true AIF above both
    contamination modes: tail-collapse (V1) and genuine tissue partial-volume
    (V2), which move the tail in *opposite* directions.
