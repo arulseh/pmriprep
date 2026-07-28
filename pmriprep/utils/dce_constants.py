@@ -743,18 +743,6 @@ B1_MIN_SIGMA_VOXELS: Final[float] = 1.5
 
 
 # =============================================================================
-# NLLS T1 Fitting
-# =============================================================================
-
-#: NLLS refinement threshold for hybrid T1 fitting.
-#: Voxels with E1 > this threshold have T1 >> TR, making DESPOT1
-#: linearization unreliable. At TR=4ms, E1=0.995 corresponds to T1~800ms.
-#: Most brain tissue at clinical field strengths falls near or above this.
-#: For short-TR VFA (<10ms), this captures CSF and edematous tissue.
-NLLS_REFINEMENT_E1_THRESHOLD: Final[float] = 0.995
-
-
-# =============================================================================
 # T1 Mapping Defaults
 # =============================================================================
 

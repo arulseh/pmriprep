@@ -1251,11 +1251,10 @@ class T1MappingInputSpec(BaseInterfaceInputSpec):
              "matches ASLPrep/FreeSurfer standard)",
     )
     t1_method = traits.Enum(
-        "hybrid", "wlls", "nlls",
+        "nlls", "wlls",
         usedefault=True,
-        desc="VFA T1 fitting method: hybrid (WLLS + NLLS refinement for "
-             "ill-conditioned voxels), wlls (linearized DESPOT1), or nlls "
-             "(nonlinear least squares in signal space).",
+        desc="VFA T1 fitting method: nlls (WLLS-initialized nonlinear least "
+             "squares) or wlls (linearized DESPOT1).",
     )
     t1_correction_mode = traits.Enum(
         "auto",
@@ -1385,7 +1384,6 @@ class T1Mapping(SimpleInterface):
 
         from pmriprep.utils.dce_constants import (
             EPSILON_TRIG,
-            NLLS_REFINEMENT_E1_THRESHOLD,
             SLAB_EROSION_MAX_SLICES,
             get_b1_thresholds,
             get_tissue_t1_ranges,
@@ -1486,8 +1484,6 @@ class T1Mapping(SimpleInterface):
         # Perform T1 fitting based on selected method
         cos_fa = np.cos(corrected_fa_rad)
         t1_method = self.inputs.t1_method
-        needs_refinement: np.ndarray | None = None  # For hybrid QC metrics
-        rough_mask: np.ndarray | None = None
 
         if t1_method == "wlls":
             t1_map = self._fit_t1_wlls(
@@ -1497,38 +1493,6 @@ class T1Mapping(SimpleInterface):
             t1_map = self._fit_t1_nlls(
                 signal_data, sin_fa, cos_fa, tr_s, shape,
             )
-        elif t1_method == "hybrid":
-            # Stage 1: Fast WLLS for all voxels
-            t1_map = self._fit_t1_wlls(
-                x_data, y_data, sin_fa, cos_fa, tr_s, shape,
-            )
-
-            # Stage 2: Identify ill-conditioned voxels (E1 > threshold)
-            e1_map = np.exp(-tr_s / np.where(t1_map > 0, t1_map, 1.0))
-            # Simple brain mask: positive signal in first VFA
-            positive_signal = signal_data[0][signal_data[0] > 0]
-            if len(positive_signal) == 0:
-                rough_mask = np.zeros(shape, dtype=bool)
-            else:
-                rough_mask = signal_data[0] > np.percentile(positive_signal, 10)
-            needs_refinement = (e1_map > NLLS_REFINEMENT_E1_THRESHOLD) & rough_mask
-            assert needs_refinement is not None  # narrowed inside hybrid branch
-            assert rough_mask is not None
-
-            if np.any(needs_refinement):
-                n_refine = int(needs_refinement.sum())
-                n_brain = int(rough_mask.sum())
-                logger.info(
-                    "Hybrid T1: refining %d voxels (%.1f%%) with NLLS",
-                    n_refine,
-                    100.0 * n_refine / max(n_brain, 1),
-                )
-                refined = self._fit_t1_nlls(
-                    signal_data, sin_fa, cos_fa, tr_s, shape,
-                    e1_init=e1_map.ravel(),
-                    mask=needs_refinement,
-                )
-                t1_map[needs_refinement] = refined[needs_refinement]
         else:
             raise ValueError(f"Unknown t1_method: {t1_method!r}")
 
@@ -1958,14 +1922,6 @@ class T1Mapping(SimpleInterface):
             "tissue_statistics_source": tissue_stats_source,
             "t1_support": support_counts,
         }
-        # Hybrid-specific QC: fraction of voxels refined by NLLS
-        if t1_method == "hybrid" and needs_refinement is not None and np.any(needs_refinement):
-            qc_metrics["nlls_refined_count"] = int(needs_refinement.sum())
-            qc_metrics["nlls_refined_fraction"] = round(
-                float(needs_refinement.sum()) / max(
-                    1, int(rough_mask.sum()) if rough_mask is not None else 1,
-                ), 4,
-            )
         qc_metrics["edge_voxels_eroded"] = n_edge
         qc_metrics["edge_erosion_skipped"] = edge_erosion_skipped
         qc_metrics["edge_erosion_mode"] = (
@@ -2323,7 +2279,7 @@ class T1Mapping(SimpleInterface):
             Output volume shape (x, y, z).
         e1_init : numpy.ndarray, optional
             Optional initial E1 from WLLS, shape (n_voxels,).
-            If None, uses unweighted GLLS estimate as starting point.
+            If None, computes a WLLS estimate as the starting point.
         mask : numpy.ndarray, optional
             Boolean mask of voxels to fit. If None, fits all voxels.
 
@@ -2370,23 +2326,23 @@ class T1Mapping(SimpleInterface):
             e1_sub = np.clip(e1_sub, EPSILON_E1_LOWER, 1.0 - EPSILON_E1_UPPER)
             r1 = -np.log(e1_sub) / tr_s
         else:
-            # Unweighted GLLS: single-pass linearized regression (no IRLS)
-            # Y = S/sin(a), X = S/tan(a) → slope = E1
-            y_init = S / np.where(np.abs(sin_a) < 1e-10, 1e-10, sin_a)
-            tan_a = sin_a / np.where(np.abs(cos_a) < 1e-10, 1e-10, cos_a)
-            x_init = S / np.where(np.abs(tan_a) < 1e-10, 1e-10, tan_a)
-
-            sum_x = np.sum(x_init, axis=0)
-            sum_y = np.sum(y_init, axis=0)
-            sum_xy = np.sum(x_init * y_init, axis=0)
-            sum_x2 = np.sum(x_init * x_init, axis=0)
-            denom = n_fa * sum_x2 - sum_x * sum_x
-            denom = np.where(np.abs(denom) < 1e-12, 1e-12, denom)
-            e1_glls = np.clip(
-                (n_fa * sum_xy - sum_x * sum_y) / denom,
-                EPSILON_E1_LOWER, 1.0 - EPSILON_E1_UPPER,
+            tan_fa = sin_fa / np.where(np.abs(cos_fa) < 1e-10, 1e-10, cos_fa)
+            x_data = signal_data / np.where(
+                np.abs(tan_fa) < 1e-10, 1e-10, tan_fa,
             )
-            r1 = -np.log(e1_glls) / tr_s
+            y_data = signal_data / np.where(
+                np.abs(sin_fa) < 1e-10, 1e-10, sin_fa,
+            )
+            wlls = self._fit_t1_wlls(
+                x_data, y_data, sin_fa, cos_fa, tr_s, shape,
+            )
+            e1_wlls = np.exp(
+                -tr_s / np.where(wlls > 0, wlls, 1.0),
+            ).ravel()
+            e1_sub = np.clip(
+                e1_wlls[fit_idx], EPSILON_E1_LOWER, 1.0 - EPSILON_E1_UPPER,
+            )
+            r1 = -np.log(e1_sub) / tr_s
 
         r1 = np.clip(r1, R1_MIN, R1_MAX)
 

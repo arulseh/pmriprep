@@ -311,7 +311,7 @@ def test_dce_vfa_motion_warning_renders(env):
     dce = {
         "qc_metrics": {
             "t1_mapping": {
-                "t1_method": "hybrid",
+                "t1_method": "nlls",
                 "vfa_preprocessing": {
                     "motion_assessment": {
                         "qc_status": "WARN",
@@ -338,7 +338,7 @@ def test_dce_t1_cards_are_compact_and_ordered(env):
         "qc_metrics": {
             "t1_mapping": {
                 "t1_status": "WARN",
-                "t1_method": "hybrid",
+                "t1_method": "nlls",
                 "n_flip_angles": 3,
                 "flip_angles_deg": [5.0, 15.0, 25.0],
                 "tr_ms": 20.0,

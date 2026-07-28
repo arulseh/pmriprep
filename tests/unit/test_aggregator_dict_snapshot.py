@@ -71,7 +71,7 @@ def test_load_pipeline_sidecars_dce(tmp_path: Path) -> None:
             "QCRecommendationReason": "AIF good",
             "QCWarnings": ["NAWM mask in DCE space not available"],
             "PipelineQC": {
-                "t1_mapping": {"method": "hybrid", "b1_correction": "afi"},
+                "t1_mapping": {"method": "nlls", "b1_correction": "afi"},
                 "pk_modeling": {"model": "tofts", "qc_voxel_rsquared": 0.85},
             },
         },
@@ -79,7 +79,7 @@ def test_load_pipeline_sidecars_dce(tmp_path: Path) -> None:
 
     out = _load_pipeline_sidecars(ses, prefix, "dce")
 
-    assert out["t1_mapping"]["method"] == "hybrid"
+    assert out["t1_mapping"]["method"] == "nlls"
     assert out["pk_modeling"]["model"] == "tofts"
     assert out["recommendation"]["action"] == "include"
     assert out["warnings"] == ["NAWM mask in DCE space not available"]

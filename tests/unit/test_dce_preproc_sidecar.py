@@ -32,7 +32,7 @@ def dce_qc_metrics() -> dict[str, Any]:
     """Representative DCE merged qc_metrics (from workflows/dce/base.py:3286)."""
     return {
         "t1_mapping": {
-            "method": "hybrid",
+            "method": "nlls",
             "b1_correction": "afi",
             "t1_correction": {
                 "correction_applied": "fallback",
@@ -62,7 +62,7 @@ def dce_qc_metrics() -> dict[str, Any]:
 class TestT1Keys:
     def test_t1_mapping_keys(self, base_sidecar, dce_qc_metrics):
         out = enrich_dce_preproc_sidecar(dict(base_sidecar), qc_metrics=dce_qc_metrics)
-        assert out["T1MappingMethod"] == "hybrid"
+        assert out["T1MappingMethod"] == "nlls"
         assert out["T1B1Correction"] == "afi"
         assert out["T1CorrectionApplied"] == "fallback"
         assert out["T1Source"] == "uniform_field_strength_fallback"
@@ -227,9 +227,9 @@ class TestEmptyInputs:
         assert out["SpatialReference"] == base_sidecar["SpatialReference"]
 
     def test_partial_qc_metrics(self, base_sidecar):
-        qc = {"t1_mapping": {"method": "hybrid"}}
+        qc = {"t1_mapping": {"method": "nlls"}}
         out = enrich_dce_preproc_sidecar(dict(base_sidecar), qc_metrics=qc)
-        assert out["T1MappingMethod"] == "hybrid"
+        assert out["T1MappingMethod"] == "nlls"
         # Missing fields stay absent (no None / empty values)
         assert "T1B1Correction" not in out
         assert "B1MeanWholeBrain" not in out

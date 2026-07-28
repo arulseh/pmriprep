@@ -110,6 +110,7 @@ def test_direct_builders_reject_unknown_options(builder, section: str, option: s
         (lambda: DCEConfig(aif_method="synthetic"), "Invalid aif_method"),
         (lambda: DCEConfig(aif_bat_alignment="on"), "Invalid aif_bat_alignment"),
         (lambda: DCEConfig(t1_method="linear"), "Invalid t1_method"),
+        (lambda: DCEConfig(t1_method="hybrid"), "Invalid t1_method"),
         (lambda: DSCConfig(method="osvd"), "Invalid method"),
         (lambda: DSCConfig(inference="mcmc"), "Invalid inference"),
         (lambda: DSCConfig(aif_method="population"), "Invalid aif_method"),

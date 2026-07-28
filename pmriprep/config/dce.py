@@ -115,7 +115,7 @@ class DCEConfig:
         "auto", "actual_flip_deci_deg", "actual_flip_deg", "percent", "ratio"
     ] = "auto"
     no_t1: bool = False
-    t1_method: Literal["hybrid", "wlls", "nlls"] = "hybrid"
+    t1_method: Literal["nlls", "wlls"] = "nlls"
     t1_map_file: Optional[Path] = None  # External T1 map (NIfTI, milliseconds)
     # Processing settings
     no_dsc_validation: bool = False
@@ -157,7 +157,7 @@ class DCEConfig:
             "inference": ({"nlls", "map", "vi", "mcmc"}, self.inference),
             "aif_method": ({"auto", "population"}, self.aif_method),
             "aif_bat_alignment": ({"auto", "off"}, self.aif_bat_alignment),
-            "t1_method": ({"hybrid", "wlls", "nlls"}, self.t1_method),
+            "t1_method": ({"nlls", "wlls"}, self.t1_method),
             "hdbet_device": ({"auto", "cuda", "mps", "cpu"}, self.hdbet_device),
         }
         for option, (valid, value) in categorical_options.items():
@@ -311,7 +311,7 @@ class DCEConfig:
                 "Cannot set both t1_map_file and no_t1=True. "
                 "Use t1_map_file to supply an external T1 map, or no_t1 to skip T1 mapping."
             )
-        if (self.no_t1 or self.t1_map_file) and self.t1_method != "hybrid":
+        if (self.no_t1 or self.t1_map_file) and self.t1_method != "nlls":
             logger.warning(
                 "t1_method=%r is ignored when %s is set.",
                 self.t1_method,

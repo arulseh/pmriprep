@@ -2775,7 +2775,7 @@
       "skip_t1": false,
       "subject_id": "0001",
       "t1_correction_mode": "auto",
-      "t1_method": "hybrid"
+      "t1_method": "nlls"
     },
     "transform_brain_mask": {
       "function_str": "def _transform_mask_to_dce(\n    mask_file: str | None = None,\n    reference_file: str | None = None,\n    transform_matrix: str | None = None,\n) -> str:\n    \"\"\"Transform brain mask from T1w space to DCE space.\n\n    Thin Nipype Function-node wrapper around\n    ``pmriprep.utils.registration.transform_mask_to_grid``. The import is\n    intentionally inline because ``niu.Function`` serialises this body\n    via ``inspect.getsource`` and runs it in a worker that cannot see\n    module-level imports.\n\n    Parameters\n    ----------\n    mask_file : str or None\n        Path to brain mask in T1w space (or None).\n    reference_file : str or None\n        Path to DCE reference image for output geometry.\n    transform_matrix : str or None\n        Path to T1w\u2192DCE FLIRT matrix.\n\n    Returns\n    -------\n    str\n        Path to transformed brain mask in DCE space, or \"\" if no mask.\n    \"\"\"\n    from pmriprep.utils.registration import transform_mask_to_grid\n\n    return transform_mask_to_grid(mask_file, reference_file, transform_matrix)\n"

@@ -980,37 +980,10 @@ class TestNLLSFitting:
             f"SNR=30, got {median_wlls:.3f}s (error={relative_error:.1%})"
         )
 
-    def test_hybrid_matches_wlls_for_normal_t1(self) -> None:
-        """For T1=1.0s at TR=4.4ms, hybrid ≈ WLLS (no unnecessary refinement)."""
-        from pmriprep.utils.dce_constants import NLLS_REFINEMENT_E1_THRESHOLD
-
-        tr_s = 0.0044
-        t1_true = 1.0
-        np.exp(-tr_s / t1_true)
-        # E1 ≈ 0.9956 at T1=1s, TR=4.4ms — just above threshold
-        # For normal brain tissue at TR=4.4ms, E1 is borderline
-        # Use TR=10ms where E1=0.99 (well below threshold)
-        tr_s_long = 0.010
-        e1_long = np.exp(-tr_s_long / t1_true)
-        assert e1_long < NLLS_REFINEMENT_E1_THRESHOLD, (
-            f"E1={e1_long} should be below threshold for this test"
-        )
-
-    def test_hybrid_refines_long_t1(self) -> None:
-        """Hybrid detects E1>0.995 voxels, applies NLLS, improves estimate.
-
-        Uses noisy data where WLLS bias is significant.
-        """
-        from pmriprep.utils.dce_constants import NLLS_REFINEMENT_E1_THRESHOLD
-
+    def test_wlls_initialized_nlls_improves_long_t1(self) -> None:
+        """Default NLLS initialization improves a noisy long-T1 estimate."""
         tr_s = 0.0044
         t1_true = 5.0
-        e1 = np.exp(-tr_s / t1_true)
-        # Verify this is indeed above threshold
-        assert e1 > NLLS_REFINEMENT_E1_THRESHOLD, (
-            f"E1={e1:.6f} should be above {NLLS_REFINEMENT_E1_THRESHOLD}"
-        )
-
         t1m = self._make_t1mapping_interface()
         fa_deg = np.array([2.0, 12.0])
         s0_true = 1000.0
@@ -1033,17 +1006,17 @@ class TestNLLSFitting:
         x_data = signal_data / tan_fa
         t1_wlls = t1m._fit_t1_wlls(x_data, y_data, sin_fa, cos_fa, tr_s, shape)
 
-        # Check E1 from WLLS — should detect ill-conditioned
-        e1_map = np.exp(-tr_s / np.where(t1_wlls > 0, t1_wlls, 1.0))
-        needs_refine = e1_map > NLLS_REFINEMENT_E1_THRESHOLD
-        assert np.any(needs_refine), "Should identify voxels needing refinement"
-
-        # NLLS refinement on those voxels
+        # No explicit seed: production NLLS derives its WLLS warm start.
         refined = t1m._fit_t1_nlls(
             signal_data, sin_fa, cos_fa, tr_s, shape,
-            e1_init=e1_map.ravel(), mask=needs_refine,
         )
-        median_refined = float(np.median(refined[needs_refine]))
+        e1_wlls = np.exp(-tr_s / np.where(t1_wlls > 0, t1_wlls, 1.0))
+        explicit_warm_start = t1m._fit_t1_nlls(
+            signal_data, sin_fa, cos_fa, tr_s, shape,
+            e1_init=e1_wlls.ravel(),
+        )
+        np.testing.assert_allclose(refined, explicit_warm_start)
+        median_refined = float(np.median(refined[refined > 0]))
         median_wlls = float(np.median(t1_wlls[t1_wlls > 0]))
 
         # NLLS should be closer to ground truth than WLLS
@@ -1217,12 +1190,12 @@ class TestConfigMutualExclusivity:
         assert config.t1_map_file == Path("/tmp/t1.nii")
         assert not config.no_t1
 
-    def test_t1_method_default_is_hybrid(self) -> None:
-        """Default t1_method should be hybrid."""
+    def test_t1_method_default_is_nlls(self) -> None:
+        """Default T1 fitting uses WLLS-initialized NLLS."""
         from pmriprep.config.dce import DCEConfig
 
         config = DCEConfig()
-        assert config.t1_method == "hybrid"
+        assert config.t1_method == "nlls"
 
 
 # ============================================================================

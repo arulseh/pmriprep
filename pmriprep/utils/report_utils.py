@@ -54,18 +54,13 @@ _DCE_PK_MODEL_TEXT: dict[str, str] = {
 
 # Boilerplate text for T1 mapping methods
 _T1_METHOD_TEXT: dict[str, str] = {
-    "hybrid": (
-        "Baseline T1 was estimated from variable flip angle images using "
-        "hybrid fitting (linearized DESPOT1 with nonlinear refinement for "
-        "ill-conditioned voxels) [@deoni_2003]"
-    ),
     "wlls": (
         "Baseline T1 was estimated from variable flip angle images using "
         "linearized DESPOT1 fitting [@deoni_2003]"
     ),
     "nlls": (
         "Baseline T1 was estimated from variable flip angle images using "
-        "nonlinear least squares fitting"
+        "WLLS-initialized nonlinear least squares fitting"
     ),
     "external": "using a user-supplied T1 map",
     "assumed": "using literature-based T1 (no T1 mapping performed)",
@@ -479,8 +474,8 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> str:
 
     # T1 mapping
     t1_info = dce_qc.get("t1_mapping", {})
-    t1_method = t1_info.get("method", "hybrid")
-    t1_text = _T1_METHOD_TEXT.get(t1_method, _T1_METHOD_TEXT["hybrid"])
+    t1_method = t1_info.get("method", "nlls")
+    t1_text = _T1_METHOD_TEXT.get(t1_method, _T1_METHOD_TEXT["nlls"])
 
     # B1+ correction
     b1_method = t1_info.get("b1_correction", "none")

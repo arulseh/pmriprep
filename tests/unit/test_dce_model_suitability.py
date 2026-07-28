@@ -174,7 +174,7 @@ def test_qc_collection_nests_vfa_motion_provenance_with_t1() -> None:
     motion = {"motion_assessment": {"qc_status": "PASS", "correction_applied": False}}
     collected = _collect_qc_metrics(
         b1_qc=None,
-        t1_qc={"t1_method": "hybrid"},
+        t1_qc={"t1_method": "nlls"},
         vfa_qc=motion,
         signal_conversion_qc=None,
         preprocess_qc=None,

@@ -147,7 +147,7 @@ dce:
   model: auto
   inference: nlls
   b1_method: auto
-  t1_method: hybrid
+  t1_method: nlls
   smooth_fwhm: 3.0
 
 anat:
@@ -211,7 +211,7 @@ DCE fields:
 | `roi_mask` | `null` | Native-DCE statistics-only ROI mask |
 | `no_t1` | `false` | Skip VFA fitting and use field-strength default T1 |
 | `t1_map_file` | `null` | External T1 map in milliseconds, world-aligned to DCE |
-| `t1_method` | `hybrid` | VFA fitting with `hybrid`, `wlls`, or `nlls` |
+| `t1_method` | `nlls` | WLLS-initialized nonlinear fitting, or faster `wlls` |
 | `b1_method` | `auto` | `auto`, `afi`, `precomputed`, or `none` |
 | `b1_map_encoding` | `auto` | Infer or specify precomputed B1+ pixel encoding |
 | `baseline_frames` | `0` | Baseline frames (0 = auto-detect; minimum 5) |
