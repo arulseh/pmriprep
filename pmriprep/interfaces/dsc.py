@@ -445,8 +445,8 @@ class DSCRegistrationOutputSpec(TraitedSpec):
     out_file = File(exists=True, desc="Registered T1w in DSC space")
     out_matrix = File(exists=True, desc="Affine transformation matrix (FLIRT format)")
     out_h5 = File(exists=True, desc="Affine transform in ITK composite (.h5) format")
-    dice = traits.Float(desc="DICE coefficient (if brain mask provided)")
-    correlation = traits.Float(desc="Correlation coefficient (if brain mask provided)")
+    dice = traits.Float(desc="DICE coefficient in DSC space (if brain mask provided)")
+    correlation = traits.Float(desc="Correlation coefficient in DSC space")
     nmi = traits.Float(desc="Normalized mutual information")
     qc_metrics = traits.Dict(desc="QC metrics dictionary")
 
@@ -759,19 +759,28 @@ class DSCRegistration(SimpleInterface):
                 calculate_correlation_from_files,
                 calculate_nmi_from_files,
                 calculate_dice,
+                transform_mask_to_grid,
             )
 
-            brain_mask = None
+            brain_mask_dsc = ""
             if (
                 isdefined(self.inputs.brain_mask)
                 and Path(self.inputs.brain_mask).exists()
             ):
-                brain_mask = str(self.inputs.brain_mask)
+                try:
+                    brain_mask_dsc = transform_mask_to_grid(
+                        str(self.inputs.brain_mask),
+                        dsc_mean,
+                        self._gen_matfilename(),
+                        out_dir=Path(out_file).parent,
+                    )
+                except Exception:
+                    brain_mask_dsc = ""
 
             # NMI
             try:
                 nmi = calculate_nmi_from_files(
-                    out_file, dsc_mean, mask_path=brain_mask
+                    out_file, dsc_mean, mask_path=brain_mask_dsc or None
                 )
                 qc_metrics["nmi"] = nmi
             except Exception:
@@ -780,14 +789,14 @@ class DSCRegistration(SimpleInterface):
             # Correlation
             try:
                 corr = calculate_correlation_from_files(
-                    out_file, dsc_mean, mask_path=brain_mask
+                    out_file, dsc_mean, mask_path=brain_mask_dsc or None
                 )
                 qc_metrics["correlation"] = corr
             except Exception:
                 pass
 
             # DICE
-            if brain_mask:
+            if brain_mask_dsc:
                 try:
                     reg_img = nib.load(out_file)
                     reg_data = reg_img.get_fdata()  # type: ignore[attr-defined]
@@ -798,7 +807,7 @@ class DSCRegistration(SimpleInterface):
                     else:
                         reg_mask = (reg_data > 0).astype(np.float64)
 
-                    dsc_mask_data = nib.load(brain_mask).get_fdata()  # type: ignore[attr-defined]
+                    dsc_mask_data = nib.load(brain_mask_dsc).get_fdata()  # type: ignore[attr-defined]
                     dice = calculate_dice(reg_mask, dsc_mask_data, threshold=0.5)
                     qc_metrics["dice"] = dice
                     qc_metrics["brain_mask_used"] = True
@@ -812,6 +821,8 @@ class DSCRegistration(SimpleInterface):
                 except Exception:
                     qc_metrics["brain_mask_used"] = True
                     qc_metrics["dice_computation_failed"] = True
+            else:
+                qc_metrics["brain_mask_used"] = False
 
         except Exception:
             pass
