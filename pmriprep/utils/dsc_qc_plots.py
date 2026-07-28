@@ -355,10 +355,10 @@ def generate_dsc_parameter_maps_qc_plot(
 
     from matplotlib.gridspec import GridSpec
 
-    fig = plt.figure(figsize=(10, 2.8 * n_params))
+    fig = plt.figure(figsize=(11, 2.8 * n_params))
     gs = GridSpec(
         n_params, 8, figure=fig,
-        width_ratios=[0.4, 1, 1, 1, 1, 1, 1, 0.06],
+        width_ratios=[1.2, 1, 1, 1, 1, 1, 1, 0.06],
         wspace=0.05, hspace=0.15,
     )
 
@@ -372,7 +372,8 @@ def generate_dsc_parameter_maps_qc_plot(
         cmap, vmin, vmax_mode, vmax_fixed, unit_label = param_config[name]
 
         # Determine vmax
-        data_masked = data[mask_bool & np.isfinite(data)]
+        display_mask = mask_bool & np.isfinite(data)
+        data_masked = data[display_mask]
         if vmax_mode.startswith("pct") and len(data_masked) > 0:
             pct = int(vmax_mode[3:])
             vmax = float(np.percentile(data_masked, pct))
@@ -388,19 +389,26 @@ def generate_dsc_parameter_maps_qc_plot(
             sigma = float(np.std(data_masked))
         else:
             mu, sigma = 0.0, 0.0
+        n_brain = int(np.count_nonzero(mask_bool))
+        valid_fraction = len(data_masked) / n_brain if n_brain else 0.0
 
-        # Prepare display data (mask non-brain as NaN)
+        # Show finite estimates only and render unavailable brain voxels in gray.
         display = data.copy().astype(float)
-        display[~mask_bool] = np.nan
+        display[~display_mask] = np.nan
 
         # Row label axis (col 0)
         label_ax = fig.add_subplot(gs[row_idx, 0])
         label_ax.axis("off")
         label_ax.text(
-            0.5, 0.5, f"{name}\n(\u03bc={mu:.4f}, \u03c3={sigma:.4f})",
+            0.95,
+            0.5,
+            f"{name}\n\u03bc={mu:.4f}\n\u03c3={sigma:.4f}\n"
+            f"support={valid_fraction:.1%}",
             transform=label_ax.transAxes,
-            fontsize=9, fontweight="bold", rotation=90,
-            ha="center", va="center",
+            fontsize=8,
+            fontweight="bold",
+            ha="right",
+            va="center",
         )
 
         # Image axes (3 pairs of merged columns)
@@ -410,6 +418,17 @@ def generate_dsc_parameter_maps_qc_plot(
             zip(z_positions, slice_spans)
         ):
             ax = fig.add_subplot(gs[row_idx, c_start:c_end])
+            brain_slice = get_radiological_slice(
+                mask_bool.astype(float), axis=2, slice_idx=int(z_idx)
+            )
+            unavailable_background = np.where(brain_slice > 0, 0.7, np.nan)
+            ax.imshow(
+                unavailable_background,
+                cmap="gray",
+                vmin=0.0,
+                vmax=1.0,
+                aspect="equal",
+            )
             slc = get_radiological_slice(display, axis=2, slice_idx=int(z_idx))
             if name == "PSR":
                 norm = TwoSlopeNorm(vcenter=100.0, vmin=vmin, vmax=vmax)

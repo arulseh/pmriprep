@@ -53,6 +53,7 @@ class ReorientAndCrop(SimpleInterface):
     """Reorient to canonical RAS orientation and (optionally) crop field of view.
 
     Two steps:
+
     1. Reorient the image to RAS with nibabel (no external tool).
     2. When ``crop_fov`` is set, crop the field of view with FSL ``robustfov``
        to remove neck and excess air (T1w only; disable for FLAIR/T2w).
@@ -73,9 +74,6 @@ class ReorientAndCrop(SimpleInterface):
     Reorientation is pure nibabel; FSL is required only for the ``robustfov``
     crop (``crop_fov=True``).
 
-    See Also
-    --------
-    FSL robustfov: https://fsl.fmrib.ox.ac.uk/fsl/fslwiki/robustfov
     """
 
     input_spec = ReorientAndCropInputSpec
@@ -180,7 +178,6 @@ class BiasCorrectionOutputSpec(TraitedSpec):
     """Output specification for BiasCorrection interface."""
 
     out_file = File(exists=True, desc="Bias-corrected image")
-    bias_field = File(desc="Estimated bias field (if saved)")
 
 
 class BiasCorrection(CommandLine):
@@ -224,12 +221,6 @@ class BiasCorrection(CommandLine):
 
     Requires ANTs to be installed and available in PATH.
 
-    See Also
-    --------
-    ANTs N4BiasFieldCorrection:
-        https://github.com/ANTsX/ANTs/wiki/N4BiasFieldCorrection
-    ANTs DenoiseImage:
-        https://github.com/ANTsX/ANTs/wiki/DenoiseImage
     """
 
     input_spec = BiasCorrectionInputSpec
@@ -476,9 +467,6 @@ class Coregistration(CommandLine):
 
     Requires FSL to be installed and available in PATH.
 
-    See Also
-    --------
-    FSL FLIRT: https://fsl.fmrib.ox.ac.uk/fsl/fslwiki/FLIRT
     """
 
     input_spec = CoregistrationInputSpec
@@ -580,14 +568,6 @@ class BrainExtractionInputSpec(CommandLineInputSpec):
         usedefault=True,
         desc="Brain extraction tool: hdbet (HD-BET) or ants (ANTs)",
     )
-    mni_template = File(
-        exists=True,
-        desc="MNI template for DICE QC calculation (optional)",
-    )
-    mni_mask = File(
-        exists=True,
-        desc="MNI brain mask for DICE QC calculation (optional)",
-    )
     device = traits.Enum(
         "auto",
         "cuda",
@@ -621,7 +601,6 @@ class BrainExtractionOutputSpec(TraitedSpec):
     out_file = File(exists=True, desc="Brain-extracted image")
     out_mask = File(exists=True, desc="Binary brain mask")
     brain_volume_mm3 = traits.Float(desc="Brain volume in cubic millimeters")
-    dice_vs_mni = traits.Float(desc="DICE coefficient vs MNI brain mask")
     qc_metrics = traits.Dict(desc="QC metrics dictionary")
 
 
@@ -642,10 +621,6 @@ class BrainExtraction(CommandLine):
         Brain extraction tool: "hdbet" (default) or "ants"
     device : str
         HD-BET device: "auto" (auto-detect), "cuda", "mps" (Apple Silicon), "cpu"
-    mni_template : str, optional
-        MNI T1w template for registration QC
-    mni_mask : str, optional
-        MNI brain mask for DICE QC calculation
     ants_template : str, optional
         ANTs extraction template (required if tool="ants")
     ants_probability_mask : str, optional
@@ -684,12 +659,7 @@ class BrainExtraction(CommandLine):
     QC metrics computed:
 
     - brain_volume_mm3: Total brain volume from mask
-    - dice_vs_mni: DICE overlap with MNI brain mask (after registration)
 
-    See Also
-    --------
-    HD-BET: https://github.com/MIC-DKFZ/HD-BET
-    ANTs: https://github.com/ANTsX/ANTs
     """
 
     input_spec = BrainExtractionInputSpec
@@ -720,6 +690,31 @@ class BrainExtraction(CommandLine):
         if device == "auto":
             return detect_torch_device()
         return device  # type: ignore[no-any-return]
+
+    @staticmethod
+    def _get_ants_templates() -> tuple[str, str]:
+        """Resolve the standard ANTs extraction template and brain prior."""
+        from templateflow import api as tflow  # type: ignore[import-untyped]
+
+        template_result = tflow.get("OASIS30ANTs", resolution=1, suffix="T1w")
+        probability_mask = tflow.get(
+            "OASIS30ANTs", resolution=1, label="brain", suffix="probseg"
+        )
+        templates = (
+            list(template_result)
+            if isinstance(template_result, (list, tuple))
+            else [template_result]
+        )
+        full_head = [
+            candidate
+            for candidate in templates
+            if candidate is not None and "_desc-" not in Path(candidate).name
+        ]
+        if len(full_head) != 1 or not probability_mask:
+            raise RuntimeError(
+                "TemplateFlow OASIS30ANTs brain-extraction resources are unavailable"
+            )
+        return str(full_head[0]), str(probability_mask)
 
     @property
     def cmdline(self) -> str:
@@ -755,12 +750,10 @@ class BrainExtraction(CommandLine):
             ants_template = getattr(self.inputs, "ants_template", None)
             ants_prob_mask = getattr(self.inputs, "ants_probability_mask", None)
 
-            if not ants_template:
-                ants_dir = os.environ.get("ANTSPATH", "/usr/share/ants")
-                ants_template = f"{ants_dir}/OASIS_template/T_template0.nii.gz"
-            if not ants_prob_mask:
-                ants_dir = os.environ.get("ANTSPATH", "/usr/share/ants")
-                ants_prob_mask = f"{ants_dir}/OASIS_template/T_template0_BrainCerebellumProbabilityMask.nii.gz"
+            if not ants_template or not ants_prob_mask:
+                default_template, default_probability_mask = self._get_ants_templates()
+                ants_template = ants_template or default_template
+                ants_prob_mask = ants_prob_mask or default_probability_mask
 
             out_path = Path(out_file)
             ants_prefix = str(out_path.parent / "ants_brain_")
@@ -823,15 +816,6 @@ class BrainExtraction(CommandLine):
         except Exception:
             pass
 
-        try:
-            # Compute DICE vs MNI if template provided
-            dice = self._compute_dice_vs_mni()
-            if dice is not None:
-                outputs["dice_vs_mni"] = dice
-                qc_metrics["dice_vs_mni"] = dice
-        except Exception:
-            pass
-
         # Store warnings and QC status
         qc_metrics["warnings"] = warnings_list
         if warnings_list:
@@ -865,23 +849,6 @@ class BrainExtraction(CommandLine):
         brain_vol_mm3 = n_voxels * voxel_vol_mm3
 
         return brain_vol_mm3
-
-    def _compute_dice_vs_mni(self) -> Optional[float]:
-        """Compute DICE coefficient vs MNI brain mask."""
-        # Only compute if MNI mask provided
-        mni_mask_file = getattr(self.inputs, "mni_mask", None)
-        if not mni_mask_file or not Path(mni_mask_file).exists():
-            return None
-
-        mask_file = self._gen_maskfilename()
-        if not Path(mask_file).exists():
-            return None
-
-        # This would require registration to MNI first
-        # For now, skip DICE vs MNI (requires transform from workflow)
-        # The actual DICE calculation should be done in the workflow
-        # after MNI registration is complete
-        return None
 
     def _gen_filename(self, name: str) -> Optional[str]:
         """Generate filename for outputs."""
@@ -919,11 +886,6 @@ class TissueSegmentationInputSpec(CommandLineInputSpec):
         usedefault=True,
         desc="Output binary segmentation images (default: True)",
     )
-    probability_maps = traits.Bool(
-        True,
-        usedefault=True,
-        desc="Output probability maps for each class (default: True)",
-    )
 
 
 class TissueSegmentationOutputSpec(TraitedSpec):
@@ -958,8 +920,6 @@ class TissueSegmentation(CommandLine):
         Number of bias field estimation iterations (default: 4)
     segments : bool
         If True, output binary segmentation images
-    probability_maps : bool
-        If True, output probability maps for each class
 
     Returns
     -------
@@ -996,9 +956,6 @@ class TissueSegmentation(CommandLine):
 
     Requires FSL to be installed and available in PATH.
 
-    See Also
-    --------
-    FSL FAST: https://fsl.fmrib.ox.ac.uk/fsl/fslwiki/FAST
     """
 
     input_spec = TissueSegmentationInputSpec
@@ -1030,8 +987,6 @@ class TissueSegmentation(CommandLine):
         num_classes = self.inputs.num_classes
         bias_iters = self.inputs.bias_iters
         segments = self.inputs.segments
-        probability_maps = self.inputs.probability_maps
-
         # Build FAST command
         cmd_parts = ["fast"]
 
@@ -1093,173 +1048,6 @@ class TissueSegmentation(CommandLine):
         """Generate filename for outputs."""
         if name == "out_basename":
             return self._gen_basename()
-        return None
-
-
-class BBRRefinementInputSpec(CommandLineInputSpec):
-    """Input specification for BBRRefinement interface."""
-
-    in_file = File(
-        exists=True,
-        mandatory=True,
-        desc="Moving image to refine registration for",
-    )
-    reference = File(
-        exists=True,
-        mandatory=True,
-        desc="Reference image (target space, typically T1w pre-contrast)",
-    )
-    init_matrix = File(
-        exists=True,
-        mandatory=True,
-        desc="Initial transformation matrix from FLIRT (to be refined)",
-    )
-    wm_seg = File(
-        exists=True,
-        mandatory=True,
-        desc="White matter segmentation for BBR cost function",
-    )
-    out_file = File(
-        genfile=True,
-        desc="Output BBR-refined registered image",
-    )
-    out_matrix = File(
-        genfile=True,
-        desc="Output BBR-refined transformation matrix",
-    )
-    dof = traits.Int(
-        6,
-        usedefault=True,
-        desc="Degrees of freedom for registration (default: 6 for rigid)",
-    )
-
-
-class BBRRefinementOutputSpec(TraitedSpec):
-    """Output specification for BBRRefinement interface."""
-
-    out_file = File(exists=True, desc="BBR-refined registered image")
-    out_matrix = File(exists=True, desc="BBR-refined transformation matrix")
-
-
-class BBRRefinement(CommandLine):
-    """Boundary-based registration refinement using FSL FLIRT.
-
-    This interface wraps FSL FLIRT with the BBR cost function to refine
-    an initial rigid registration using white matter boundaries. BBR uses
-    the white matter segmentation to optimize alignment at tissue boundaries,
-    which can improve registration accuracy compared to intensity-based
-    methods alone.
-
-    The BBR cost function works by:
-    1. Taking the initial FLIRT registration as a starting point
-    2. Using the WM segmentation to identify tissue boundaries
-    3. Optimizing the alignment at these boundaries
-
-    Parameters
-    ----------
-    in_file : str
-        Moving image to be registered
-    reference : str
-        Reference/target image (typically bias-corrected T1w)
-    init_matrix : str
-        Initial transformation matrix from FLIRT
-    wm_seg : str
-        White matter segmentation (probability map or binary mask)
-    dof : int
-        Degrees of freedom (default: 6 for rigid body)
-
-    Examples
-    --------
-    >>> bbr = BBRRefinement()
-    >>> bbr.inputs.in_file = 'T2w_flirt.nii.gz'
-    >>> bbr.inputs.reference = 'T1w_biascorr.nii.gz'
-    >>> bbr.inputs.init_matrix = 'T2w_to_T1w.mat'
-    >>> bbr.inputs.wm_seg = 'wm_probseg.nii.gz'
-    >>> result = bbr.run()  # doctest: +SKIP
-
-    Notes
-    -----
-    BBR refinement is most effective when:
-    - The initial FLIRT registration is close to optimal
-    - Good quality WM segmentation is available
-    - The moving image has sufficient contrast at tissue boundaries
-
-    BBR may fail or degrade registration when:
-    - Initial registration is poor (BBR may converge to local minimum)
-    - WM segmentation is inaccurate (e.g., due to lesions, contrast agent)
-    - The modality has poor tissue contrast
-
-    For this reason, BBR results should be validated against the initial
-    FLIRT registration using a metric like NMI.
-
-    Requires FSL to be installed and available in PATH.
-
-    See Also
-    --------
-    FSL FLIRT BBR: https://fsl.fmrib.ox.ac.uk/fsl/fslwiki/FLIRT_BBR
-    """
-
-    input_spec = BBRRefinementInputSpec
-    output_spec = BBRRefinementOutputSpec
-
-    _cmd = "flirt"
-
-    def _gen_outfilename(self) -> str:
-        """Generate output filename if not specified."""
-        if self.inputs.out_file:
-            return str(self.inputs.out_file)
-
-        return str(Path.cwd() / nifti_gz_name(self.inputs.in_file, "_bbr"))
-
-    def _gen_matfilename(self) -> str:
-        """Generate output matrix filename if not specified."""
-        if self.inputs.out_matrix:
-            return str(self.inputs.out_matrix)
-
-        out_file = Path(self._gen_outfilename())
-        if out_file.name.endswith(".nii.gz"):
-            base = out_file.name[:-7]
-        elif out_file.name.endswith(".nii"):
-            base = out_file.stem
-        else:
-            base = out_file.stem
-
-        return str(out_file.parent / f"{base}.mat")
-
-    @property
-    def cmdline(self) -> str:
-        """Build the FLIRT BBR command line."""
-        in_file = str(self.inputs.in_file)
-        reference = str(self.inputs.reference)
-        init_matrix = str(self.inputs.init_matrix)
-        wm_seg = str(self.inputs.wm_seg)
-        out_file = self._gen_outfilename()
-        out_matrix = self._gen_matfilename()
-        dof = self.inputs.dof
-
-        # Build FLIRT BBR command
-        cmd = (
-            f"flirt -in {in_file} -ref {reference} "
-            f"-out {out_file} -omat {out_matrix} "
-            f"-init {init_matrix} -wmseg {wm_seg} "
-            f"-cost bbr -dof {dof}"
-        )
-
-        return cmd
-
-    def _list_outputs(self) -> dict[str, Any]:  # type: ignore[override]
-        """List expected outputs."""
-        outputs: dict[str, Any] = self.output_spec().get()  # type: ignore[misc]
-        outputs["out_file"] = self._gen_outfilename()
-        outputs["out_matrix"] = self._gen_matfilename()
-        return outputs
-
-    def _gen_filename(self, name: str) -> Optional[str]:
-        """Generate filename for outputs."""
-        if name == "out_file":
-            return self._gen_outfilename()
-        if name == "out_matrix":
-            return self._gen_matfilename()
         return None
 
 
@@ -1664,9 +1452,6 @@ class ACPCAlignment(CommandLine):
 
     Requires FSL FLIRT to be installed and available in PATH.
 
-    See Also
-    --------
-    FSL FLIRT: https://fsl.fmrib.ox.ac.uk/fsl/fslwiki/FLIRT
     """
 
     input_spec = ACPCAlignmentInputSpec

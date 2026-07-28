@@ -1,17 +1,14 @@
 """Unit tests for DCE masking operations.
 
-Tests fill-then-erode T1 edge erosion, enhancement gating,
-median filter sentinel, slab-aware erosion, hemispheric asymmetry,
-and B1 fill-then-erode interior mask construction.
+Tests fill-then-erode T1 edge erosion, enhancement gating, slab-aware
+erosion, hemispheric asymmetry, and B1 fill-then-erode interior masking.
 """
 
 import numpy as np
-import pytest
 from scipy.ndimage import (
     binary_erosion,
     binary_fill_holes,
     generate_binary_structure,
-    median_filter,
 )
 
 from pmriprep.interfaces.dce import _b1_interior_mask
@@ -21,17 +18,6 @@ from pmriprep.utils.dce_constants import MIN_ENHANCEMENT_MM, SLAB_EROSION_MAX_SL
 # ============================================================================
 # Shared test helpers
 # ============================================================================
-
-
-def _apply_median_filter_new(t1_map: np.ndarray) -> np.ndarray:
-    """Brain-median sentinel approach (production algorithm)."""
-    nan_mask = np.isnan(t1_map)
-    valid_vals = t1_map[~nan_mask]
-    sentinel = float(np.median(valid_vals)) if len(valid_vals) > 0 else 1000.0
-    t1_for_filter = np.where(nan_mask, sentinel, t1_map)
-    result = median_filter(t1_for_filter, size=3)
-    result[nan_mask] = np.nan
-    return result
 
 
 def _erode_slab_aware(valid_filled: np.ndarray) -> np.ndarray:
@@ -236,82 +222,6 @@ class TestB1FillThenErode:
 
 
 # ============================================================================
-# Median filter sentinel
-# ============================================================================
-
-
-class TestMedianFilterSentinel:
-    """Tests for the brain-median sentinel fix.
-
-    The old -1.0 sentinel poisons boundary voxels: when >=14/27 kernel voxels
-    are background (-1.0), the median becomes -1.0, destroying valid brain
-    voxels at the edge. The brain-median sentinel gives "neutral" votes.
-    """
-
-    @staticmethod
-    def _apply_filter_old(t1_map: np.ndarray) -> np.ndarray:
-        """Old sentinel=-1.0 approach (buggy)."""
-        nan_mask = np.isnan(t1_map)
-        t1_for_filter = np.where(nan_mask, -1.0, t1_map)
-        result = median_filter(t1_for_filter, size=3)
-        result[nan_mask] = np.nan
-        return result
-
-    def test_boundary_voxels_preserved_with_new_sentinel(self) -> None:
-        """Brain-median sentinel preserves boundary voxels that -1.0 destroys."""
-        # 10x10x10 brain with NaN background outside a sphere of radius 4
-        rng = np.random.default_rng(42)
-        t1_map = np.full((10, 10, 10), np.nan)
-        center = np.array([5, 5, 5])
-        for ix in range(10):
-            for iy in range(10):
-                for iz in range(10):
-                    if np.linalg.norm(np.array([ix, iy, iz]) - center) <= 4:
-                        t1_map[ix, iy, iz] = 1000.0 + rng.normal(0, 50)
-
-        brain_before = np.isfinite(t1_map)
-
-        result_old = self._apply_filter_old(t1_map.copy())
-        result_new = _apply_median_filter_new(t1_map.copy())
-
-        # Count voxels that were valid brain but became negative (out-of-range)
-        # with each approach. -1.0 sentinel pulls boundary medians negative.
-        old_damaged = brain_before & (result_old < 0)
-        new_damaged = brain_before & (result_new < 0)
-
-        # Old sentinel should damage boundary voxels
-        assert int(np.sum(old_damaged)) > 0, "Expected -1.0 sentinel to damage boundary"
-        # New sentinel should not damage any voxels
-        assert int(np.sum(new_damaged)) == 0, "Brain-median sentinel should not damage boundary"
-
-    def test_interior_voxels_unchanged(self) -> None:
-        """Interior voxels far from NaN boundary are unchanged by sentinel choice."""
-        t1_map = np.full((11, 11, 11), 1000.0)
-        # NaN border only on faces
-        t1_map[0, :, :] = np.nan
-        t1_map[-1, :, :] = np.nan
-        t1_map[:, 0, :] = np.nan
-        t1_map[:, -1, :] = np.nan
-        t1_map[:, :, 0] = np.nan
-        t1_map[:, :, -1] = np.nan
-
-        result_old = self._apply_filter_old(t1_map.copy())
-        result_new = _apply_median_filter_new(t1_map.copy())
-
-        # Deep interior (3+ voxels from border) should be identical
-        np.testing.assert_array_equal(
-            result_old[3:-3, 3:-3, 3:-3],
-            result_new[3:-3, 3:-3, 3:-3],
-        )
-
-    def test_all_nan_returns_nan(self) -> None:
-        """All-NaN input should remain all-NaN."""
-        t1_map = np.full((5, 5, 5), np.nan)
-        result = _apply_median_filter_new(t1_map)
-        assert np.all(np.isnan(result))
-
-
-# ============================================================================
 # Slab-aware erosion
 # ============================================================================
 
@@ -472,53 +382,6 @@ class TestHemisphericAsymmetry:
 # ============================================================================
 # Additional edge-case tests
 # ============================================================================
-
-
-class TestMedianFilterSentinelEdgeCases:
-    """Edge-case tests for the brain-median sentinel approach."""
-
-    def test_wide_t1_range_no_bias(self) -> None:
-        """Sentinel should not bias boundary voxels toward any tissue type.
-
-        With T1 values spanning 500-4000ms (WM through CSF), the sentinel
-        (median ~1200ms) should not pull boundary voxels toward WM or CSF.
-        """
-        rng = np.random.default_rng(123)
-        t1_map = np.full((12, 12, 12), np.nan)
-        center = np.array([6, 6, 6])
-        for ix in range(12):
-            for iy in range(12):
-                for iz in range(12):
-                    dist = np.linalg.norm(np.array([ix, iy, iz]) - center)
-                    if dist <= 4:
-                        # Assign tissue-like T1: WM=800, GM=1400, CSF=4000
-                        if dist <= 2:
-                            t1_map[ix, iy, iz] = 4000.0 + rng.normal(0, 100)
-                        elif dist <= 3:
-                            t1_map[ix, iy, iz] = 1400.0 + rng.normal(0, 50)
-                        else:
-                            t1_map[ix, iy, iz] = 800.0 + rng.normal(0, 30)
-
-        result = _apply_median_filter_new(t1_map.copy())
-
-        # Boundary WM voxels (dist ~4) should remain in WM range, not be
-        # pulled toward the median (~1400ms GM)
-        brain = np.isfinite(t1_map)
-        boundary_wm = brain & (result > 0) & (result < 1000)
-        assert int(np.sum(boundary_wm)) > 0, "Should have boundary WM voxels"
-        # No voxel should become negative
-        assert not np.any(result[brain] < 0)
-
-    def test_single_valid_voxel_preserved(self) -> None:
-        """Single valid voxel surrounded by NaN — sentinel equals that value."""
-        t1_map = np.full((5, 5, 5), np.nan)
-        t1_map[2, 2, 2] = 1500.0
-
-        result = _apply_median_filter_new(t1_map.copy())
-
-        # Sentinel = median of [1500.0] = 1500.0
-        # All kernel voxels are 1500.0, so median = 1500.0
-        assert result[2, 2, 2] == pytest.approx(1500.0)
 
 
 class TestSlabAwareErosionEdgeCases:

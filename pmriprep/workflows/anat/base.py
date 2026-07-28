@@ -23,7 +23,10 @@ from pmriprep.interfaces.anat import (
 )
 
 
-def _merge_qc_metrics(brain_qc, denoising=False):  # type: ignore[no-untyped-def]
+def _merge_qc_metrics(
+    brain_qc: dict[str, object] | None,
+    denoising: bool = False,
+) -> dict[str, object]:
     """Merge QC metrics from preprocessing steps.
 
     Parameters
@@ -38,7 +41,7 @@ def _merge_qc_metrics(brain_qc, denoising=False):  # type: ignore[no-untyped-def
     dict
         Merged QC metrics dictionary.
     """
-    merged = {}
+    merged: dict[str, object] = {}
 
     # Add brain extraction QC
     if brain_qc:
@@ -52,12 +55,14 @@ def _merge_qc_metrics(brain_qc, denoising=False):  # type: ignore[no-untyped-def
     return merged
 
 
-def _determine_processing_mode(t1w_precon=None, t1w_postcon=None):  # type: ignore[no-untyped-def]
+def _determine_processing_mode(
+    t1w_precon: str | None = None,
+    t1w_postcon: str | None = None,
+) -> tuple[str, bool]:
     """Determine reference T1w and processing mode using confidence scoring.
 
-    Uses _determine_processing_mode_v2 from structural_reference module for
-    physics-validated confidence-based selection. Returns backward-compatible
-    2-tuple (reference_t1w, is_postcon_ref) for the workflow node interface.
+    Uses confidence-based structural-reference selection and returns the
+    reference image with its contrast state.
 
     Parameters
     ----------
@@ -353,6 +358,444 @@ def _passthrough_if_undefined(in_file: Optional[str] = None) -> str:
     return in_file
 
 
+def _route_fast_input(
+    in_file: str | None,
+    t1w_precon: str | None = None,
+    t1w_postcon: str | None = None,
+    is_postcon_ref: bool = False,
+) -> str | None:
+    """Route FAST input based on processing mode and precon quality.
+
+    Normal mode: FAST on brain-extracted precon (in_file).
+    Hybrid mode: returns None here — hybrid path wired separately.
+    Skip mode: returns None (no acceptable precon for FAST).
+    """
+    import logging
+
+    _log = logging.getLogger("pmriprep.workflows.anat")
+
+    if not is_postcon_ref:
+        # Normal mode: FAST on brain-extracted precon (passed as in_file)
+        return in_file
+
+    # Postcon-only mode: check if precon is available for hybrid FAST
+    from pmriprep.utils.structural_reference import _determine_processing_mode_v2
+
+    _, _, fast_t1w = _determine_processing_mode_v2(t1w_precon, t1w_postcon)
+
+    if fast_t1w is None:
+        _log.warning(
+            "FAST segmentation skipped — no acceptable pre-contrast T1w. "
+            "Tissue probability maps unavailable. Downstream features "
+            "requiring WM/GM/CSF segmentation (NAWM "
+            "normalization, CSF exclusion) will be limited.",
+        )
+        return None
+
+    # Hybrid mode: return None here.
+    # The hybrid path (coreg precon → mask → FAST) is wired separately.
+    # This signals the tissue_segment node to expect input from the
+    # hybrid path via the merge node below.
+    _log.info(
+        "Hybrid FAST mode: postcon is reference, FAST will run on "
+        "coregistered precon."
+    )
+    return None
+
+
+def _guarded_tissue_segment(
+    in_file: str | None,
+) -> tuple[str | None, str | None, str | None]:
+    """Run FAST tissue segmentation, or return None triplet if skipped.
+
+    Returns ``(None, None, None)`` without a segmentation input. Otherwise
+    returns WM, GM, and CSF probability maps.
+    """
+    if in_file is None:
+        return None, None, None
+    from pmriprep.interfaces.anat import TissueSegmentation
+
+    result = TissueSegmentation(in_file=in_file).run()
+    return (
+        result.outputs.wm_probseg,
+        result.outputs.gm_probseg,
+        result.outputs.csf_probseg,
+    )
+
+
+def _run_hybrid_fast_chain(
+    t1w_precon: str | None = None,
+    t1w_postcon: str | None = None,
+    is_postcon_ref: bool = False,
+    reference_file: str | None = None,
+    brain_mask: str | None = None,
+    denoise: bool = True,
+) -> str | None:
+    """Run full hybrid FAST preprocessing chain or return None.
+
+    When postcon is reference and precon passes the quality gate,
+    run: reorient → bias correct → coregister to postcon → mask.
+    Otherwise return None immediately (no CommandLine nodes touched).
+    """
+    if not is_postcon_ref:
+        return None
+
+    from pmriprep.utils.structural_reference import _determine_processing_mode_v2
+
+    _, _, fast_t1w = _determine_processing_mode_v2(t1w_precon, t1w_postcon)
+    if fast_t1w is None:
+        return None
+
+    from pmriprep.interfaces.anat import (
+        ApplyMask,
+        BiasCorrection,
+        Coregistration,
+        ReorientAndCrop,
+    )
+
+    reoriented = ReorientAndCrop(in_file=fast_t1w).run().outputs.out_file
+    bias_corrected = BiasCorrection(
+        in_file=reoriented, denoise=denoise,
+    ).run().outputs.out_file
+    coregistered = Coregistration(
+        in_file=bias_corrected, reference=reference_file,
+        modality="T1w", dof=6,
+    ).run().outputs.out_file
+    masked: str = ApplyMask(
+        in_file=coregistered, mask_file=brain_mask,
+    ).run().outputs.out_file
+    return masked
+
+
+def _merge_fast_inputs(
+    normal_input: str | None,
+    hybrid_input: str | None,
+) -> str | None:
+    """Select whichever FAST input is available."""
+    if normal_input is not None:
+        return normal_input
+    return hybrid_input
+
+
+def init_anat_tissue_segmentation_wf(
+    *,
+    denoise: bool,
+    name: str = "anat_tissue_segmentation_wf",
+) -> pe.Workflow:
+    """Initialize conditional anatomical tissue segmentation.
+
+    Parameters
+    ----------
+    denoise : bool
+        Whether to denoise the precontrast image in the hybrid FAST chain.
+    name : str
+        Workflow name.
+
+    Returns
+    -------
+    pe.Workflow
+        Workflow exposing WM, GM, and CSF probability maps.
+    """
+    workflow = pe.Workflow(name=name)
+    inputnode = pe.Node(
+        niu.IdentityInterface(fields=[
+            "in_file", "t1w_precon", "t1w_postcon", "is_postcon_ref",
+            "reference_file", "brain_mask",
+        ]),
+        name="inputnode",
+    )
+    outputnode = pe.Node(
+        niu.IdentityInterface(fields=["wm_probseg", "gm_probseg", "csf_probseg"]),
+        name="outputnode",
+    )
+    check_fast_mode = pe.Node(
+        niu.Function(
+            input_names=["in_file", "t1w_precon", "t1w_postcon", "is_postcon_ref"],
+            output_names=["out_file"],
+            function=_route_fast_input,
+        ),
+        name="check_fast_mode",
+    )
+    hybrid_fast_chain = pe.Node(
+        niu.Function(
+            input_names=[
+                "t1w_precon", "t1w_postcon", "is_postcon_ref",
+                "reference_file", "brain_mask", "denoise",
+            ],
+            output_names=["out_file"],
+            function=_run_hybrid_fast_chain,
+        ),
+        name="hybrid_fast_chain",
+    )
+    hybrid_fast_chain.inputs.denoise = denoise
+    merge_fast = pe.Node(
+        niu.Function(
+            input_names=["normal_input", "hybrid_input"],
+            output_names=["out_file"],
+            function=_merge_fast_inputs,
+        ),
+        name="merge_fast",
+    )
+    tissue_segment = pe.Node(
+        niu.Function(
+            input_names=["in_file"],
+            output_names=["wm_probseg", "gm_probseg", "csf_probseg"],
+            function=_guarded_tissue_segment,
+        ),
+        name="tissue_segment",
+    )
+    workflow.connect([
+        (inputnode, check_fast_mode, [
+            ("in_file", "in_file"),
+            ("t1w_precon", "t1w_precon"),
+            ("t1w_postcon", "t1w_postcon"),
+            ("is_postcon_ref", "is_postcon_ref"),
+        ]),
+        (inputnode, hybrid_fast_chain, [
+            ("t1w_precon", "t1w_precon"),
+            ("t1w_postcon", "t1w_postcon"),
+            ("is_postcon_ref", "is_postcon_ref"),
+            ("reference_file", "reference_file"),
+            ("brain_mask", "brain_mask"),
+        ]),
+        (check_fast_mode, merge_fast, [("out_file", "normal_input")]),
+        (hybrid_fast_chain, merge_fast, [("out_file", "hybrid_input")]),
+        (merge_fast, tissue_segment, [("out_file", "in_file")]),
+        (tissue_segment, outputnode, [
+            ("wm_probseg", "wm_probseg"),
+            ("gm_probseg", "gm_probseg"),
+            ("csf_probseg", "csf_probseg"),
+        ]),
+    ])
+    return workflow
+
+
+def init_anat_secondary_modalities_wf(
+    *,
+    config: AnatConfig,
+    has_t1w_postcon: bool,
+    has_t2w: bool,
+    has_flair: bool,
+    has_flair_postcon: bool,
+    name: str = "anat_secondary_modalities_wf",
+) -> pe.Workflow:
+    """Initialize preprocessing for optional anatomical modalities.
+
+    Parameters
+    ----------
+    config : AnatConfig
+        Anatomical preprocessing configuration.
+    has_t1w_postcon, has_t2w, has_flair, has_flair_postcon : bool
+        Construction-time availability flags for each secondary modality.
+    name : str
+        Workflow name.
+
+    Returns
+    -------
+    pe.Workflow
+        Workflow exposing reoriented, coregistered, masked, and transform outputs.
+    """
+    workflow = pe.Workflow(name=name)
+    inputnode = pe.Node(
+        niu.IdentityInterface(fields=[
+            "reference", "brain_mask", "t1w_postcon", "t2w", "flair",
+            "flair_postcon",
+        ]),
+        name="inputnode",
+    )
+    outputnode = pe.Node(
+        niu.IdentityInterface(fields=[
+            "t1w_postcon_reoriented", "t1w_postcon_coreg", "t1w_postcon_xfm",
+            "t1w_postcon_h5", "t1w_postcon_masked", "t2w_reoriented",
+            "t2w_coreg", "t2w_xfm", "t2w_h5", "t2w_masked",
+            "flair_reoriented", "flair_coreg", "flair_xfm", "flair_h5",
+            "flair_masked", "flair_postcon_reoriented", "flair_postcon_coreg",
+            "flair_postcon_xfm", "flair_postcon_h5", "flair_postcon_masked",
+        ]),
+        name="outputnode",
+    )
+    workflow.add_nodes([inputnode, outputnode])
+    bias_kwargs: dict[str, Any] = {"denoise": config.denoise}
+    if config.sloppy:
+        bias_kwargs.update(
+            shrink_factor=8, convergence="[20x20,0.001]", denoise=False,
+        )
+
+    modalities = [
+        ("postcon", "t1w_postcon", has_t1w_postcon, "T1_postcon", True),
+        ("t2w", "t2w", has_t2w, "T2w", False),
+        ("flair", "flair", has_flair, "FLAIR", False),
+        ("flair_postcon", "flair_postcon", has_flair_postcon, "FLAIR", False),
+    ]
+    for suffix, field, enabled, modality, crop_fov in modalities:
+        if not enabled:
+            continue
+        reorient_kwargs = {} if crop_fov else {"crop_fov": False}
+        reorient = pe.Node(
+            ReorientAndCrop(**reorient_kwargs), name=f"reorient_{suffix}"
+        )
+        bias_correct = pe.Node(
+            BiasCorrection(**bias_kwargs), name=f"bias_correct_{suffix}"
+        )
+        coreg = pe.Node(
+            Coregistration(modality=modality, dof=6), name=f"coreg_{suffix}"
+        )
+        mask = pe.Node(ApplyMask(), name=f"mask_{suffix}")
+        workflow.connect([
+            (inputnode, reorient, [(field, "in_file")]),
+            (reorient, bias_correct, [("out_file", "in_file")]),
+            (bias_correct, coreg, [("out_file", "in_file")]),
+            (inputnode, coreg, [("reference", "reference")]),
+            (coreg, mask, [("out_file", "in_file")]),
+            (inputnode, mask, [("brain_mask", "mask_file")]),
+            (reorient, outputnode, [("out_file", f"{field}_reoriented")]),
+            (coreg, outputnode, [
+                ("out_file", f"{field}_coreg"),
+                ("out_matrix", f"{field}_xfm"),
+                ("out_h5", f"{field}_h5"),
+            ]),
+            (mask, outputnode, [("out_file", f"{field}_masked")]),
+        ])
+    return workflow
+
+
+def init_anat_qc_filmstrips_wf(
+    *,
+    subject_id: str,
+    session_id: str | None,
+    has_t1w_postcon: bool,
+    has_t2w: bool,
+    has_flair: bool,
+    has_flair_postcon: bool,
+    name: str = "anat_qc_filmstrips_wf",
+) -> pe.Workflow:
+    """Initialize anatomical QC filmstrip generation.
+
+    Parameters
+    ----------
+    subject_id : str
+        BIDS subject identifier.
+    session_id : str or None
+        BIDS session identifier.
+    has_t1w_postcon, has_t2w, has_flair, has_flair_postcon : bool
+        Construction-time availability flags for optional coregistration QC.
+    name : str
+        Workflow name.
+
+    Returns
+    -------
+    pe.Workflow
+        Workflow exposing anatomical segmentation and registration filmstrips.
+    """
+    workflow = pe.Workflow(name=name)
+    inputnode = pe.Node(
+        niu.IdentityInterface(fields=[
+            "t1w_file", "brain_file", "brain_mask", "wm_probseg", "gm_probseg",
+            "csf_probseg", "t1w_acpc", "t1w_postcon_masked", "t2w_masked",
+            "flair_masked", "flair_postcon_masked",
+        ]),
+        name="inputnode",
+    )
+    outputnode = pe.Node(
+        niu.IdentityInterface(fields=[
+            "brain_mask_filmstrip", "tissue_seg_filmstrip", "acpc_filmstrip",
+            "coreg_filmstrip_postcon", "coreg_filmstrip_t2w",
+            "coreg_filmstrip_flair", "coreg_filmstrip_flair_postcon",
+        ]),
+        name="outputnode",
+    )
+    workflow.add_nodes([inputnode, outputnode])
+
+    brain_mask_filmstrip = pe.Node(
+        niu.Function(
+            input_names=["t1w_file", "brain_mask_file", "subject_id", "session_id"],
+            output_names=["filmstrip_file"],
+            function=_create_brain_mask_filmstrip,
+        ),
+        name="brain_mask_filmstrip",
+    )
+    brain_mask_filmstrip.inputs.subject_id = subject_id
+    brain_mask_filmstrip.inputs.session_id = session_id or ""
+    tissue_seg_filmstrip = pe.Node(
+        niu.Function(
+            input_names=["t1w_file", "wm_probseg_file", "gm_probseg_file",
+                         "csf_probseg_file", "subject_id", "session_id"],
+            output_names=["filmstrip_file"],
+            function=_create_tissue_seg_filmstrip,
+        ),
+        name="tissue_seg_filmstrip",
+    )
+    tissue_seg_filmstrip.inputs.subject_id = subject_id
+    tissue_seg_filmstrip.inputs.session_id = session_id or ""
+    acpc_filmstrip = pe.Node(
+        niu.Function(
+            input_names=["t1w_acpc_file", "subject_id", "session_id"],
+            output_names=["filmstrip_file"],
+            function=_create_acpc_registration_filmstrip,
+        ),
+        name="acpc_filmstrip",
+    )
+    acpc_filmstrip.inputs.subject_id = subject_id
+    acpc_filmstrip.inputs.session_id = session_id or ""
+    workflow.connect([
+        (inputnode, brain_mask_filmstrip, [
+            ("t1w_file", "t1w_file"),
+            ("brain_mask", "brain_mask_file"),
+        ]),
+        (inputnode, tissue_seg_filmstrip, [
+            ("brain_file", "t1w_file"),
+            ("wm_probseg", "wm_probseg_file"),
+            ("gm_probseg", "gm_probseg_file"),
+            ("csf_probseg", "csf_probseg_file"),
+        ]),
+        (inputnode, acpc_filmstrip, [("t1w_acpc", "t1w_acpc_file")]),
+        (brain_mask_filmstrip, outputnode, [
+            ("filmstrip_file", "brain_mask_filmstrip"),
+        ]),
+        (tissue_seg_filmstrip, outputnode, [
+            ("filmstrip_file", "tissue_seg_filmstrip"),
+        ]),
+        (acpc_filmstrip, outputnode, [("filmstrip_file", "acpc_filmstrip")]),
+    ])
+
+    coreg_specs = [
+        ("postcon", "t1w_postcon_masked", has_t1w_postcon, "T1w PostCon to T1w"),
+        ("t2w", "t2w_masked", has_t2w, "T2w to T1w"),
+        ("flair", "flair_masked", has_flair, "FLAIR to T1w"),
+        (
+            "flair_postcon", "flair_postcon_masked", has_flair_postcon,
+            "FLAIR PostCon to T1w",
+        ),
+    ]
+    for suffix, field, enabled, title in coreg_specs:
+        if not enabled:
+            continue
+        node = pe.Node(
+            niu.Function(
+                input_names=["coregistered_file", "reference_file",
+                             "brain_mask_file", "title", "subject_id",
+                             "session_id"],
+                output_names=["filmstrip_file"],
+                function=_create_coreg_qc_filmstrip,
+            ),
+            name=f"coreg_qc_{suffix}",
+        )
+        node.inputs.title = title
+        node.inputs.subject_id = subject_id
+        node.inputs.session_id = session_id or ""
+        workflow.connect([
+            (inputnode, node, [
+                (field, "coregistered_file"),
+                ("brain_file", "reference_file"),
+                ("brain_mask", "brain_mask_file"),
+            ]),
+            (node, outputnode, [
+                ("filmstrip_file", f"coreg_filmstrip_{suffix}"),
+            ]),
+        ])
+    return workflow
+
+
 def init_anat_preproc_wf(
     bids_dir: Union[str, Path],
     subject_id: str,
@@ -614,79 +1057,24 @@ def init_anat_preproc_wf(
     # Only create nodes for modalities that are available
     # -------------------------------------------------------------------
 
-    # T1w post-contrast preprocessing and coregistration
-    if has_t1w_postcon:
-        reorient_postcon = pe.Node(ReorientAndCrop(), name="reorient_postcon")
-        bias_correct_postcon = pe.Node(
-            BiasCorrection(**bias_kwargs), name="bias_correct_postcon"
-        )
-        coreg_postcon = pe.Node(
-            Coregistration(modality="T1_postcon", dof=6), name="coreg_postcon"
-        )
-        coreg_postcon_conns = [
-            (inputnode, reorient_postcon, [("t1w_postcon", "in_file")]),
-            (reorient_postcon, bias_correct_postcon, [("out_file", "in_file")]),
-            (bias_correct_postcon, coreg_postcon, [("out_file", "in_file")]),
-            (conform, coreg_postcon, [("out_file", "reference")]),
-        ]
-        workflow.connect(coreg_postcon_conns)
-
-    # T2w preprocessing and coregistration
-    if has_t2w:
-        reorient_t2w = pe.Node(
-            ReorientAndCrop(crop_fov=False), name="reorient_t2w"
-        )
-        bias_correct_t2w = pe.Node(
-            BiasCorrection(**bias_kwargs), name="bias_correct_t2w"
-        )
-        coreg_t2w = pe.Node(
-            Coregistration(modality="T2w", dof=6), name="coreg_t2w"
-        )
-        coreg_t2w_conns = [
-            (inputnode, reorient_t2w, [("t2w", "in_file")]),
-            (reorient_t2w, bias_correct_t2w, [("out_file", "in_file")]),
-            (bias_correct_t2w, coreg_t2w, [("out_file", "in_file")]),
-            (conform, coreg_t2w, [("out_file", "reference")]),
-        ]
-        workflow.connect(coreg_t2w_conns)
-
-    # FLAIR preprocessing and coregistration
-    if has_flair:
-        reorient_flair = pe.Node(
-            ReorientAndCrop(crop_fov=False), name="reorient_flair"
-        )
-        bias_correct_flair = pe.Node(
-            BiasCorrection(**bias_kwargs), name="bias_correct_flair"
-        )
-        coreg_flair = pe.Node(
-            Coregistration(modality="FLAIR", dof=6), name="coreg_flair"
-        )
-        coreg_flair_conns = [
-            (inputnode, reorient_flair, [("flair", "in_file")]),
-            (reorient_flair, bias_correct_flair, [("out_file", "in_file")]),
-            (bias_correct_flair, coreg_flair, [("out_file", "in_file")]),
-            (conform, coreg_flair, [("out_file", "reference")]),
-        ]
-        workflow.connect(coreg_flair_conns)
-
-    # FLAIR post-contrast preprocessing and coregistration
-    if has_flair_postcon:
-        reorient_flair_postcon = pe.Node(
-            ReorientAndCrop(crop_fov=False), name="reorient_flair_postcon"
-        )
-        bias_correct_flair_postcon = pe.Node(
-            BiasCorrection(**bias_kwargs), name="bias_correct_flair_postcon"
-        )
-        coreg_flair_postcon = pe.Node(
-            Coregistration(modality="FLAIR", dof=6), name="coreg_flair_postcon"
-        )
-        coreg_flair_postcon_conns = [
-            (inputnode, reorient_flair_postcon, [("flair_postcon", "in_file")]),
-            (reorient_flair_postcon, bias_correct_flair_postcon, [("out_file", "in_file")]),
-            (bias_correct_flair_postcon, coreg_flair_postcon, [("out_file", "in_file")]),
-            (conform, coreg_flair_postcon, [("out_file", "reference")]),
-        ]
-        workflow.connect(coreg_flair_postcon_conns)
+    secondary_modalities_wf = init_anat_secondary_modalities_wf(
+        config=config,
+        has_t1w_postcon=has_t1w_postcon,
+        has_t2w=has_t2w,
+        has_flair=has_flair,
+        has_flair_postcon=has_flair_postcon,
+    )
+    workflow.connect([
+        (inputnode, secondary_modalities_wf, [
+            ("t1w_postcon", "inputnode.t1w_postcon"),
+            ("t2w", "inputnode.t2w"),
+            ("flair", "inputnode.flair"),
+            ("flair_postcon", "inputnode.flair_postcon"),
+        ]),
+        (conform, secondary_modalities_wf, [
+            ("out_file", "inputnode.reference"),
+        ]),
+    ])
 
     # -------------------------------------------------------------------
     # Step 5: Brain Extraction
@@ -716,33 +1104,11 @@ def init_anat_preproc_wf(
     # Only create mask nodes for modalities that exist
     # -------------------------------------------------------------------
 
-    if has_t1w_postcon:
-        mask_postcon = pe.Node(ApplyMask(), name="mask_postcon")
-        workflow.connect([
-            (coreg_postcon, mask_postcon, [("out_file", "in_file")]),
-            (brain_extract, mask_postcon, [("out_mask", "mask_file")]),
-        ])
-
-    if has_t2w:
-        mask_t2w = pe.Node(ApplyMask(), name="mask_t2w")
-        workflow.connect([
-            (coreg_t2w, mask_t2w, [("out_file", "in_file")]),
-            (brain_extract, mask_t2w, [("out_mask", "mask_file")]),
-        ])
-
-    if has_flair:
-        mask_flair = pe.Node(ApplyMask(), name="mask_flair")
-        workflow.connect([
-            (coreg_flair, mask_flair, [("out_file", "in_file")]),
-            (brain_extract, mask_flair, [("out_mask", "mask_file")]),
-        ])
-
-    if has_flair_postcon:
-        mask_flair_postcon = pe.Node(ApplyMask(), name="mask_flair_postcon")
-        workflow.connect([
-            (coreg_flair_postcon, mask_flair_postcon, [("out_file", "in_file")]),
-            (brain_extract, mask_flair_postcon, [("out_mask", "mask_file")]),
-        ])
+    workflow.connect([
+        (brain_extract, secondary_modalities_wf, [
+            ("out_mask", "inputnode.brain_mask"),
+        ]),
+    ])
 
     # -------------------------------------------------------------------
     # Step 6b: HD-GLIO input preparation (no bias correction track)
@@ -766,9 +1132,13 @@ def init_anat_preproc_wf(
         )
         tumor_seg_mask_postcon = pe.Node(ApplyMask(), name="tumor_seg_mask_postcon")
         workflow.connect([
-            (reorient_postcon, tumor_seg_xfm_postcon, [("out_file", "in_file")]),
+            (secondary_modalities_wf, tumor_seg_xfm_postcon, [
+                ("outputnode.t1w_postcon_reoriented", "in_file"),
+            ]),
             (conform_raw, tumor_seg_xfm_postcon, [("out_file", "reference")]),
-            (coreg_postcon, tumor_seg_xfm_postcon, [("out_matrix", "in_matrix")]),
+            (secondary_modalities_wf, tumor_seg_xfm_postcon, [
+                ("outputnode.t1w_postcon_xfm", "in_matrix"),
+            ]),
             (tumor_seg_xfm_postcon, tumor_seg_mask_postcon, [("out_file", "in_file")]),
             (brain_extract, tumor_seg_mask_postcon, [("out_mask", "mask_file")]),
             (tumor_seg_mask_postcon, outputnode, [
@@ -780,9 +1150,13 @@ def init_anat_preproc_wf(
         tumor_seg_xfm_t2w = pe.Node(ApplyTransform(), name="tumor_seg_xfm_t2w")
         tumor_seg_mask_t2w = pe.Node(ApplyMask(), name="tumor_seg_mask_t2w")
         workflow.connect([
-            (reorient_t2w, tumor_seg_xfm_t2w, [("out_file", "in_file")]),
+            (secondary_modalities_wf, tumor_seg_xfm_t2w, [
+                ("outputnode.t2w_reoriented", "in_file"),
+            ]),
             (conform_raw, tumor_seg_xfm_t2w, [("out_file", "reference")]),
-            (coreg_t2w, tumor_seg_xfm_t2w, [("out_matrix", "in_matrix")]),
+            (secondary_modalities_wf, tumor_seg_xfm_t2w, [
+                ("outputnode.t2w_xfm", "in_matrix"),
+            ]),
             (tumor_seg_xfm_t2w, tumor_seg_mask_t2w, [("out_file", "in_file")]),
             (brain_extract, tumor_seg_mask_t2w, [("out_mask", "mask_file")]),
             (tumor_seg_mask_t2w, outputnode, [("out_file", "tumor_seg_t2w")]),
@@ -792,9 +1166,13 @@ def init_anat_preproc_wf(
         tumor_seg_xfm_flair = pe.Node(ApplyTransform(), name="tumor_seg_xfm_flair")
         tumor_seg_mask_flair = pe.Node(ApplyMask(), name="tumor_seg_mask_flair")
         workflow.connect([
-            (reorient_flair, tumor_seg_xfm_flair, [("out_file", "in_file")]),
+            (secondary_modalities_wf, tumor_seg_xfm_flair, [
+                ("outputnode.flair_reoriented", "in_file"),
+            ]),
             (conform_raw, tumor_seg_xfm_flair, [("out_file", "reference")]),
-            (coreg_flair, tumor_seg_xfm_flair, [("out_matrix", "in_matrix")]),
+            (secondary_modalities_wf, tumor_seg_xfm_flair, [
+                ("outputnode.flair_xfm", "in_matrix"),
+            ]),
             (tumor_seg_xfm_flair, tumor_seg_mask_flair, [("out_file", "in_file")]),
             (brain_extract, tumor_seg_mask_flair, [("out_mask", "mask_file")]),
             (tumor_seg_mask_flair, outputnode, [("out_file", "tumor_seg_flair")]),
@@ -806,195 +1184,24 @@ def init_anat_preproc_wf(
     # SKIPPED in postcon-only mode (gadolinium disrupts tissue boundaries)
     # -------------------------------------------------------------------
 
-    # Node to route FAST input: handles normal, hybrid, and skip modes.
-    # In hybrid mode (postcon reference + acceptable precon), FAST runs
-    # on a coregistered precon image prepared by a parallel path below.
-    def _route_fast_input(  # type: ignore[no-untyped-def]
-        in_file,
-        t1w_precon=None,
-        t1w_postcon=None,
-        is_postcon_ref=False,
-    ):
-        """Route FAST input based on processing mode and precon quality.
-
-        Normal mode: FAST on brain-extracted precon (in_file).
-        Hybrid mode: returns None here — hybrid path wired separately.
-        Skip mode: returns None (no acceptable precon for FAST).
-        """
-        import logging
-
-        _log = logging.getLogger("pmriprep.workflows.anat")
-
-        if not is_postcon_ref:
-            # Normal mode: FAST on brain-extracted precon (passed as in_file)
-            return in_file
-
-        # Postcon-only mode: check if precon is available for hybrid FAST
-        from pmriprep.utils.structural_reference import _determine_processing_mode_v2
-
-        _, _, fast_t1w = _determine_processing_mode_v2(t1w_precon, t1w_postcon)
-
-        if fast_t1w is None:
-            _log.warning(
-                "FAST segmentation skipped — no acceptable pre-contrast T1w. "
-                "Tissue probability maps unavailable. Downstream features "
-                "requiring WM/GM/CSF segmentation (BBR registration, NAWM "
-                "normalization, CSF exclusion) will be limited.",
-            )
-            return None
-
-        # Hybrid mode: return None here.
-        # The hybrid path (coreg precon → mask → FAST) is wired separately.
-        # This signals the tissue_segment node to expect input from the
-        # hybrid path via the merge node below.
-        _log.info(
-            "Hybrid FAST mode: postcon is reference, FAST will run on "
-            "coregistered precon."
-        )
-        return None
-
-    check_fast_mode = pe.Node(
-        niu.Function(
-            input_names=["in_file", "t1w_precon", "t1w_postcon", "is_postcon_ref"],
-            output_names=["out_file"],
-            function=_route_fast_input,
-        ),
-        name="check_fast_mode",
+    tissue_segmentation_wf = init_anat_tissue_segmentation_wf(
+        denoise=config.denoise,
     )
-
-    def _guarded_tissue_segment(in_file):  # type: ignore[no-untyped-def]
-        """Run FAST tissue segmentation, or return None triplet if skipped.
-
-        Returns (None, None, None) when in_file is None (Case 4: postcon
-        reference and precon fails quality gate). Otherwise runs
-        TissueSegmentation and returns (wm, gm, csf) probability maps.
-        """
-        if in_file is None:
-            return None, None, None
-        from pmriprep.interfaces.anat import TissueSegmentation
-
-        result = TissueSegmentation(in_file=in_file).run()
-        return (
-            result.outputs.wm_probseg,
-            result.outputs.gm_probseg,
-            result.outputs.csf_probseg,
-        )
-
-    tissue_segment = pe.Node(
-        niu.Function(
-            input_names=["in_file"],
-            output_names=["wm_probseg", "gm_probseg", "csf_probseg"],
-            function=_guarded_tissue_segment,
-        ),
-        name="tissue_segment",
-    )
-
     workflow.connect([
-        (brain_extract, check_fast_mode, [("out_file", "in_file")]),
-        (inputnode, check_fast_mode, [
-            ("t1w_precon", "t1w_precon"),
-            ("t1w_postcon", "t1w_postcon"),
+        (brain_extract, tissue_segmentation_wf, [
+            ("out_file", "inputnode.in_file"),
+            ("out_mask", "inputnode.brain_mask"),
         ]),
-        (determine_mode, check_fast_mode, [("is_postcon_ref", "is_postcon_ref")]),
-    ])
-
-    # -------------------------------------------------------------------
-    # Step 7b: Hybrid FAST path (postcon reference + acceptable precon)
-    # When postcon wins as reference, this single Function node prepares
-    # the precon T1w for FAST: reorient → bias correct → coreg to postcon
-    # → apply postcon brain mask.  Returns None immediately when the
-    # hybrid path should not run (no postcon ref, or precon fails gate),
-    # avoiding File(exists=True) crashes on CommandLine nodes.
-    # -------------------------------------------------------------------
-
-    def _run_hybrid_fast_chain(  # type: ignore[no-untyped-def]
-        t1w_precon=None,
-        t1w_postcon=None,
-        is_postcon_ref=False,
-        reference_file=None,
-        brain_mask=None,
-        denoise=True,
-    ):
-        """Run full hybrid FAST preprocessing chain or return None.
-
-        When postcon is reference and precon passes the quality gate,
-        run: reorient → bias correct → coregister to postcon → mask.
-        Otherwise return None immediately (no CommandLine nodes touched).
-        """
-        if not is_postcon_ref:
-            return None
-
-        from pmriprep.utils.structural_reference import _determine_processing_mode_v2
-
-        _, _, fast_t1w = _determine_processing_mode_v2(t1w_precon, t1w_postcon)
-        if fast_t1w is None:
-            return None
-
-        from pmriprep.interfaces.anat import (
-            ApplyMask,
-            BiasCorrection,
-            Coregistration,
-            ReorientAndCrop,
-        )
-
-        reoriented = ReorientAndCrop(in_file=fast_t1w).run().outputs.out_file
-        bias_corrected = BiasCorrection(
-            in_file=reoriented, denoise=denoise,
-        ).run().outputs.out_file
-        coregistered = Coregistration(
-            in_file=bias_corrected, reference=reference_file,
-            modality="T1w", dof=6,
-        ).run().outputs.out_file
-        masked: str = ApplyMask(
-            in_file=coregistered, mask_file=brain_mask,
-        ).run().outputs.out_file
-        return masked
-
-    hybrid_fast_chain = pe.Node(
-        niu.Function(
-            input_names=[
-                "t1w_precon", "t1w_postcon", "is_postcon_ref",
-                "reference_file", "brain_mask", "denoise",
-            ],
-            output_names=["out_file"],
-            function=_run_hybrid_fast_chain,
-        ),
-        name="hybrid_fast_chain",
-    )
-    hybrid_fast_chain.inputs.denoise = config.denoise
-
-    workflow.connect([
-        (inputnode, hybrid_fast_chain, [
-            ("t1w_precon", "t1w_precon"),
-            ("t1w_postcon", "t1w_postcon"),
+        (inputnode, tissue_segmentation_wf, [
+            ("t1w_precon", "inputnode.t1w_precon"),
+            ("t1w_postcon", "inputnode.t1w_postcon"),
         ]),
-        (determine_mode, hybrid_fast_chain, [
-            ("is_postcon_ref", "is_postcon_ref"),
+        (determine_mode, tissue_segmentation_wf, [
+            ("is_postcon_ref", "inputnode.is_postcon_ref"),
         ]),
-        (conform, hybrid_fast_chain, [("out_file", "reference_file")]),
-        (brain_extract, hybrid_fast_chain, [("out_mask", "brain_mask")]),
-    ])
-
-    # Merge: pick normal FAST input or hybrid FAST input
-    def _merge_fast_inputs(normal_input, hybrid_input):  # type: ignore[no-untyped-def]
-        """Select whichever FAST input is available."""
-        if normal_input is not None:
-            return normal_input
-        return hybrid_input
-
-    merge_fast = pe.Node(
-        niu.Function(
-            input_names=["normal_input", "hybrid_input"],
-            output_names=["out_file"],
-            function=_merge_fast_inputs,
-        ),
-        name="merge_fast",
-    )
-
-    workflow.connect([
-        (check_fast_mode, merge_fast, [("out_file", "normal_input")]),
-        (hybrid_fast_chain, merge_fast, [("out_file", "hybrid_input")]),
-        (merge_fast, tissue_segment, [("out_file", "in_file")]),
+        (conform, tissue_segmentation_wf, [
+            ("out_file", "inputnode.reference_file"),
+        ]),
     ])
 
     # -------------------------------------------------------------------
@@ -1009,7 +1216,9 @@ def init_anat_preproc_wf(
 
         # Use FLIRT-coregistered postcon image
         workflow.connect([
-            (coreg_postcon, create_subtraction, [("out_file", "postcon_file")]),
+            (secondary_modalities_wf, create_subtraction, [
+                ("outputnode.t1w_postcon_coreg", "postcon_file"),
+            ]),
             (conform, create_subtraction, [("out_file", "precon_file")]),
             (brain_extract, create_subtraction, [("out_mask", "brain_mask")]),
         ])
@@ -1051,150 +1260,35 @@ def init_anat_preproc_wf(
     # and cross-modal coregistrations
     # -------------------------------------------------------------------
 
-    # Brain mask filmstrip (always)
-    brain_mask_filmstrip = pe.Node(
-        niu.Function(
-            input_names=["t1w_file", "brain_mask_file", "subject_id", "session_id"],
-            output_names=["filmstrip_file"],
-            function=_create_brain_mask_filmstrip,
-        ),
-        name="brain_mask_filmstrip",
+    qc_filmstrips_wf = init_anat_qc_filmstrips_wf(
+        subject_id=subject_id,
+        session_id=session_id,
+        has_t1w_postcon=has_t1w_postcon,
+        has_t2w=has_t2w,
+        has_flair=has_flair,
+        has_flair_postcon=has_flair_postcon,
     )
-    brain_mask_filmstrip.inputs.subject_id = subject_id
-    brain_mask_filmstrip.inputs.session_id = session_id or ""
     workflow.connect([
-        (conform, brain_mask_filmstrip, [("out_file", "t1w_file")]),
-        (brain_extract, brain_mask_filmstrip, [("out_mask", "brain_mask_file")]),
-    ])
-
-    # Tissue segmentation filmstrip (only when FAST runs, i.e. not postcon-only)
-    tissue_seg_filmstrip_node = pe.Node(
-        niu.Function(
-            input_names=["t1w_file", "wm_probseg_file", "gm_probseg_file",
-                         "csf_probseg_file", "subject_id", "session_id"],
-            output_names=["filmstrip_file"],
-            function=_create_tissue_seg_filmstrip,
-        ),
-        name="tissue_seg_filmstrip",
-    )
-    tissue_seg_filmstrip_node.inputs.subject_id = subject_id
-    tissue_seg_filmstrip_node.inputs.session_id = session_id or ""
-    workflow.connect([
-        (brain_extract, tissue_seg_filmstrip_node, [("out_file", "t1w_file")]),
-        (tissue_segment, tissue_seg_filmstrip_node, [
-            ("wm_probseg", "wm_probseg_file"),
-            ("gm_probseg", "gm_probseg_file"),
-            ("csf_probseg", "csf_probseg_file"),
+        (conform, qc_filmstrips_wf, [("out_file", "inputnode.t1w_file")]),
+        (brain_extract, qc_filmstrips_wf, [
+            ("out_file", "inputnode.brain_file"),
+            ("out_mask", "inputnode.brain_mask"),
+        ]),
+        (tissue_segmentation_wf, qc_filmstrips_wf, [
+            ("outputnode.wm_probseg", "inputnode.wm_probseg"),
+            ("outputnode.gm_probseg", "inputnode.gm_probseg"),
+            ("outputnode.csf_probseg", "inputnode.csf_probseg"),
+        ]),
+        (acpc_align, qc_filmstrips_wf, [
+            ("out_file", "inputnode.t1w_acpc"),
+        ]),
+        (secondary_modalities_wf, qc_filmstrips_wf, [
+            ("outputnode.t1w_postcon_masked", "inputnode.t1w_postcon_masked"),
+            ("outputnode.t2w_masked", "inputnode.t2w_masked"),
+            ("outputnode.flair_masked", "inputnode.flair_masked"),
+            ("outputnode.flair_postcon_masked", "inputnode.flair_postcon_masked"),
         ]),
     ])
-
-    # ACPC alignment filmstrip
-    acpc_filmstrip_node = pe.Node(
-        niu.Function(
-            input_names=["t1w_acpc_file", "subject_id", "session_id"],
-            output_names=["filmstrip_file"],
-            function=_create_acpc_registration_filmstrip,
-        ),
-        name="acpc_filmstrip",
-    )
-    acpc_filmstrip_node.inputs.subject_id = subject_id
-    acpc_filmstrip_node.inputs.session_id = session_id or ""
-    workflow.connect([
-        (acpc_align, acpc_filmstrip_node, [("out_file", "t1w_acpc_file")]),
-    ])
-
-    # Cross-modal coregistration filmstrips (one per available modality)
-    coreg_qc_postcon = None
-    coreg_qc_t2w = None
-    coreg_qc_flair = None
-    coreg_qc_flair_postcon = None
-    if has_t1w_postcon:
-        coreg_qc_postcon = pe.Node(
-            niu.Function(
-                input_names=["coregistered_file", "reference_file",
-                             "brain_mask_file", "title", "subject_id",
-                             "session_id"],
-                output_names=["filmstrip_file"],
-                function=_create_coreg_qc_filmstrip,
-            ),
-            name="coreg_qc_postcon",
-        )
-        coreg_qc_postcon.inputs.title = "T1w PostCon to T1w"
-        coreg_qc_postcon.inputs.subject_id = subject_id
-        coreg_qc_postcon.inputs.session_id = session_id or ""
-        workflow.connect([
-            (mask_postcon, coreg_qc_postcon, [("out_file", "coregistered_file")]),
-            (brain_extract, coreg_qc_postcon, [
-                ("out_file", "reference_file"),
-                ("out_mask", "brain_mask_file"),
-            ]),
-        ])
-
-    if has_t2w:
-        coreg_qc_t2w = pe.Node(
-            niu.Function(
-                input_names=["coregistered_file", "reference_file",
-                             "brain_mask_file", "title", "subject_id",
-                             "session_id"],
-                output_names=["filmstrip_file"],
-                function=_create_coreg_qc_filmstrip,
-            ),
-            name="coreg_qc_t2w",
-        )
-        coreg_qc_t2w.inputs.title = "T2w to T1w"
-        coreg_qc_t2w.inputs.subject_id = subject_id
-        coreg_qc_t2w.inputs.session_id = session_id or ""
-        workflow.connect([
-            (mask_t2w, coreg_qc_t2w, [("out_file", "coregistered_file")]),
-            (brain_extract, coreg_qc_t2w, [
-                ("out_file", "reference_file"),
-                ("out_mask", "brain_mask_file"),
-            ]),
-        ])
-
-    if has_flair:
-        coreg_qc_flair = pe.Node(
-            niu.Function(
-                input_names=["coregistered_file", "reference_file",
-                             "brain_mask_file", "title", "subject_id",
-                             "session_id"],
-                output_names=["filmstrip_file"],
-                function=_create_coreg_qc_filmstrip,
-            ),
-            name="coreg_qc_flair",
-        )
-        coreg_qc_flair.inputs.title = "FLAIR to T1w"
-        coreg_qc_flair.inputs.subject_id = subject_id
-        coreg_qc_flair.inputs.session_id = session_id or ""
-        workflow.connect([
-            (mask_flair, coreg_qc_flair, [("out_file", "coregistered_file")]),
-            (brain_extract, coreg_qc_flair, [
-                ("out_file", "reference_file"),
-                ("out_mask", "brain_mask_file"),
-            ]),
-        ])
-
-    if has_flair_postcon:
-        coreg_qc_flair_postcon = pe.Node(
-            niu.Function(
-                input_names=["coregistered_file", "reference_file",
-                             "brain_mask_file", "title", "subject_id",
-                             "session_id"],
-                output_names=["filmstrip_file"],
-                function=_create_coreg_qc_filmstrip,
-            ),
-            name="coreg_qc_flair_postcon",
-        )
-        coreg_qc_flair_postcon.inputs.title = "FLAIR PostCon to T1w"
-        coreg_qc_flair_postcon.inputs.subject_id = subject_id
-        coreg_qc_flair_postcon.inputs.session_id = session_id or ""
-        workflow.connect([
-            (mask_flair_postcon, coreg_qc_flair_postcon, [("out_file", "coregistered_file")]),
-            (brain_extract, coreg_qc_flair_postcon, [
-                ("out_file", "reference_file"),
-                ("out_mask", "brain_mask_file"),
-            ]),
-        ])
 
     # -------------------------------------------------------------------
     # Connect outputs to output node
@@ -1208,10 +1302,10 @@ def init_anat_preproc_wf(
             ("out_mask", "brain_mask"),
         ]),
         # Tissue probability maps from segmentation
-        (tissue_segment, outputnode, [
-            ("wm_probseg", "wm_probseg"),
-            ("gm_probseg", "gm_probseg"),
-            ("csf_probseg", "csf_probseg"),
+        (tissue_segmentation_wf, outputnode, [
+            ("outputnode.wm_probseg", "wm_probseg"),
+            ("outputnode.gm_probseg", "gm_probseg"),
+            ("outputnode.csf_probseg", "csf_probseg"),
         ]),
         # ACPC alignment outputs
         (acpc_align, outputnode, [
@@ -1225,69 +1319,69 @@ def init_anat_preproc_wf(
         (determine_mode, outputnode, [("is_postcon_ref", "is_postcon_ref")]),
         # QC metrics
         (merge_qc, outputnode, [("qc_metrics", "qc_metrics")]),
-        # Brain mask filmstrip (always present)
-        (brain_mask_filmstrip, outputnode, [
-            ("filmstrip_file", "brain_mask_filmstrip"),
-        ]),
-        # Tissue segmentation filmstrip (skipped in postcon-only mode via None inputs)
-        (tissue_seg_filmstrip_node, outputnode, [
-            ("filmstrip_file", "tissue_seg_filmstrip"),
+        (qc_filmstrips_wf, outputnode, [
+            ("outputnode.brain_mask_filmstrip", "brain_mask_filmstrip"),
+            ("outputnode.tissue_seg_filmstrip", "tissue_seg_filmstrip"),
+            ("outputnode.acpc_filmstrip", "acpc_filmstrip"),
         ]),
     ])
 
-    # ACPC filmstrip
-    if acpc_filmstrip_node is not None:
-        workflow.connect([
-            (acpc_filmstrip_node, outputnode, [
-                ("filmstrip_file", "acpc_filmstrip"),
-            ]),
-        ])
-
     # Cross-modal coregistration filmstrips
-    if coreg_qc_postcon is not None:
+    if has_t1w_postcon:
         workflow.connect([
-            (coreg_qc_postcon, outputnode, [
-                ("filmstrip_file", "coreg_filmstrip_postcon"),
+            (qc_filmstrips_wf, outputnode, [
+                ("outputnode.coreg_filmstrip_postcon", "coreg_filmstrip_postcon"),
             ]),
         ])
-    if coreg_qc_t2w is not None:
+    if has_t2w:
         workflow.connect([
-            (coreg_qc_t2w, outputnode, [
-                ("filmstrip_file", "coreg_filmstrip_t2w"),
+            (qc_filmstrips_wf, outputnode, [
+                ("outputnode.coreg_filmstrip_t2w", "coreg_filmstrip_t2w"),
             ]),
         ])
-    if coreg_qc_flair is not None:
+    if has_flair:
         workflow.connect([
-            (coreg_qc_flair, outputnode, [
-                ("filmstrip_file", "coreg_filmstrip_flair"),
+            (qc_filmstrips_wf, outputnode, [
+                ("outputnode.coreg_filmstrip_flair", "coreg_filmstrip_flair"),
             ]),
         ])
-    if coreg_qc_flair_postcon is not None:
+    if has_flair_postcon:
         workflow.connect([
-            (coreg_qc_flair_postcon, outputnode, [
-                ("filmstrip_file", "coreg_filmstrip_flair_postcon"),
+            (qc_filmstrips_wf, outputnode, [
+                (
+                    "outputnode.coreg_filmstrip_flair_postcon",
+                    "coreg_filmstrip_flair_postcon",
+                ),
             ]),
         ])
     # Coregistered modalities and transforms (only for available modalities)
     if has_t1w_postcon:
         workflow.connect([
-            (mask_postcon, outputnode, [("out_file", "t1w_postcon_coreg")]),
-            (coreg_postcon, outputnode, [("out_h5", "t1w_postcon_to_t1w_xfm")]),
+            (secondary_modalities_wf, outputnode, [
+                ("outputnode.t1w_postcon_masked", "t1w_postcon_coreg"),
+                ("outputnode.t1w_postcon_h5", "t1w_postcon_to_t1w_xfm"),
+            ]),
         ])
     if has_t2w:
         workflow.connect([
-            (mask_t2w, outputnode, [("out_file", "t2w_coreg")]),
-            (coreg_t2w, outputnode, [("out_h5", "t2w_to_t1w_xfm")]),
+            (secondary_modalities_wf, outputnode, [
+                ("outputnode.t2w_masked", "t2w_coreg"),
+                ("outputnode.t2w_h5", "t2w_to_t1w_xfm"),
+            ]),
         ])
     if has_flair:
         workflow.connect([
-            (mask_flair, outputnode, [("out_file", "flair_coreg")]),
-            (coreg_flair, outputnode, [("out_h5", "flair_to_t1w_xfm")]),
+            (secondary_modalities_wf, outputnode, [
+                ("outputnode.flair_masked", "flair_coreg"),
+                ("outputnode.flair_h5", "flair_to_t1w_xfm"),
+            ]),
         ])
     if has_flair_postcon:
         workflow.connect([
-            (mask_flair_postcon, outputnode, [("out_file", "flair_postcon_coreg")]),
-            (coreg_flair_postcon, outputnode, [("out_h5", "flair_postcon_to_t1w_xfm")]),
+            (secondary_modalities_wf, outputnode, [
+                ("outputnode.flair_postcon_masked", "flair_postcon_coreg"),
+                ("outputnode.flair_postcon_h5", "flair_postcon_to_t1w_xfm"),
+            ]),
         ])
     # Subtraction image
     if config.create_subtraction and has_t1w_postcon:

@@ -111,7 +111,7 @@ class TestBoilerplateVersionRendering:
             "dsc": {"qc_metrics": {"preprocessing": {"motion_applied": True},
                                    "deconvolution": {"method": "oSVD"}}},
             "dce": {"qc_metrics": {"preprocessing": {"motion_applied": True},
-                                   "t1_mapping": {"method": "hybrid", "b1_correction": "afi"}}},
+                                   "t1_mapping": {"method": "nlls", "b1_correction": "afi"}}},
         }
         return ran, d
 

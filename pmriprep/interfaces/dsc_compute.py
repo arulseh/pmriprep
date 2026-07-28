@@ -8,9 +8,7 @@ concentration curves and AIF using various deconvolution methods.
 import json
 import logging
 from pathlib import Path
-from typing import Any, Optional, cast
-
-logger = logging.getLogger(__name__)
+from typing import Any, NamedTuple, Optional, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -24,22 +22,21 @@ from nipype.interfaces.base import (  # type: ignore[import-untyped]
     traits,
 )
 
+from pmriprep.models.dsc.base import DSCFitResult
 from pmriprep.utils.dsc_constants import (
+    DEFAULT_OI_THRESHOLD,
+    DEFAULT_SVD_THRESHOLD,
     EPSILON_CONCENTRATION,
     EPSILON_SHAPE,
     EPSILON_SIGNAL,
-    DEFAULT_SVD_THRESHOLD,
-    DEFAULT_OI_THRESHOLD,
 )
 from pmriprep.utils.dsc_signal import compute_psr_legacy, compute_peak_height_legacy, compute_ttp_legacy
 
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Module-level worker for parallel parametric deconvolution
 # ---------------------------------------------------------------------------
-from typing import NamedTuple
-
-
 class _DSCVoxelInput(NamedTuple):
     """Lightweight struct for a single voxel's data."""
 
@@ -143,6 +140,29 @@ def _warn_invalid_cpi_combo(
             "basin; CBF variance ~7x higher than VI at 5% noise). "
             "Recommend inference='vi' for cpi_infer_cpt=True cases."
         )
+
+
+def _parametric_fit_needs_fallback(
+    result: DSCFitResult,
+    inference: str,
+) -> bool:
+    """Return whether a parametric fit requires oSVD fallback.
+
+    Budget-limited CPI NLLS fits retain their finite endpoint and are judged
+    by the same R² gate as fixed-schedule VI. Other NLLS/MAP termination
+    failures still require fallback.
+    """
+    bad_r2 = float(result.r_squared) < 0.5
+    budget_limited_nlls = (
+        inference == "nlls"
+        and bool(result.evaluation_budget_exhausted)
+    )
+    bad_solver_convergence = (
+        inference in ("nlls", "map")
+        and not bool(result.converged)
+        and not budget_limited_nlls
+    )
+    return bad_r2 or bad_solver_convergence
 
 
 def _dsc_init_worker(
@@ -279,47 +299,30 @@ def _dsc_fit_single_voxel(voxel_data: _DSCVoxelInput) -> dict[str, Any]:
                 out["mtt"] = 0.0
                 out["tmax"] = 0.0
 
-        # Extract Bayesian uncertainties for CBF/CBV std maps
+        # Extract uncertainty only for directly fitted CBF. Derived CBV depends
+        # on correlated fitted parameters, but DSCFitResult does not retain
+        # their joint covariance or derived posterior samples.
         if result.uncertainties:
             out["cbf_std"] = result.uncertainties.get("cbf", 0.0)
-            # CBV = CBF * MTT; sigma_CBV = sqrt((MTT*sigma_CBF)^2 + (CBF*sigma_MTT)^2)
-            if method == "vascular":
-                sigma_cbf = result.uncertainties.get("cbf", 0.0)
-                sigma_mtt = result.uncertainties.get("mtt", 0.0)
-                mtt_val = out["mtt"]
-                out["cbv_std"] = float(np.sqrt(
-                    (mtt_val * sigma_cbf) ** 2
-                    + (cbf_val * sigma_mtt) ** 2
-                ))
-            else:
-                out["cbv_std"] = 0.0
 
-        # Extract credible intervals (available for all Bayesian methods)
+        # Extract credible intervals only for directly fitted CBF.
         if result.credible_intervals:
             cbf_ci = result.credible_intervals.get("cbf", (0.0, 0.0))
             out["cbf_ci95_lower"] = cbf_ci[0]
             out["cbf_ci95_upper"] = cbf_ci[1]
-            # CBV = CBF * MTT; propagate CI from fitting-space CBF and MTT CIs
-            if method == "vascular":
-                mtt_ci = result.credible_intervals.get("mtt", (0.0, 0.0))
-                out["cbv_ci95_lower"] = max(cbf_ci[0] * mtt_ci[0], 0.0)
-                out["cbv_ci95_upper"] = cbf_ci[1] * mtt_ci[1]
-            else:
-                out["cbv_ci95_lower"] = 0.0
-                out["cbv_ci95_upper"] = 0.0
 
         out["r_squared"] = result.r_squared
         out["converged"] = result.passes_convergence()
+        out["evaluation_budget_exhausted"] = (
+            result.evaluation_budget_exhausted
+        )
+        out["n_function_evaluations"] = result.n_function_evaluations
 
         # Flag poor fits for oSVD fallback. R² gate applies to every
         # inference method; the `converged` flag only gates NLLS/MAP
         # because for VI/SVB the FABBER 10-iter schedule rarely satisfies
         # the strict FE-plateau convergence test even on usable fits.
-        bad_r2 = result.r_squared < 0.5
-        bad_solver_conv = (
-            inference in ("nlls", "map") and not result.converged
-        )
-        if bad_r2 or bad_solver_conv:
+        if _parametric_fit_needs_fallback(result, inference):
             out["needs_fallback"] = True
 
         return out
@@ -334,6 +337,141 @@ _FIRSTPASS_MIN_REFERENCE_VOXELS: int = 50
 #: Fixed FWHM (mm) of the light spatial pre-fit smoothing applied before the
 #: per-voxel gamma fit, to raise its effective CNR (standard DSC preprocessing).
 _FIRSTPASS_PREFIT_FWHM_MM: float = 5.0
+
+
+class _DSCComputeInputs(NamedTuple):
+    """Validated image arrays and acquisition settings for DSC fitting."""
+
+    concentration: npt.NDArray[Any]
+    affine: npt.NDArray[Any]
+    header: Any
+    mask: npt.NDArray[Any]
+    mask_bool: npt.NDArray[np.bool_]
+    aif: npt.NDArray[Any]
+    signal: Optional[npt.NDArray[Any]]
+    method: str
+    dt: float
+    svd_threshold: float
+    oi_threshold: float
+    cpi_control_points: int
+    cpi_infer_cpt: bool
+    cpi_infer_delay: bool
+    inference: str
+    mcmc_samples: int
+    baseline_frames: int
+    tail_frames: int
+
+
+class _DSCMotionWeighting(NamedTuple):
+    """Frame weights and matching QC state for parametric DSC fitting."""
+
+    weights: Optional[npt.NDArray[np.floating]]
+    qc: dict[str, Any]
+
+
+class _DSCBaselinePreparation(NamedTuple):
+    """Finalized baseline-adjusted DSC state."""
+
+    concentration: npt.NDArray[Any]
+    aif: npt.NDArray[Any]
+    detected_frames: int
+    n_baseline: int
+    detection_info: dict[str, Any]
+    k2_map_path: Optional[str]
+
+
+class _DSCSignalMetrics(NamedTuple):
+    """Signal-derived DSC maps and their QC provenance."""
+
+    psr: npt.NDArray[Any]
+    peak_height: npt.NDArray[Any]
+    qc: dict[str, Any]
+
+
+class _DSCTimingMaps(NamedTuple):
+    """Raw, AIF-corrected, and optional NAWM-relative DSC timing maps."""
+
+    ttp: npt.NDArray[Any]
+    ttp_corrected: npt.NDArray[Any]
+    relative_ttp: Optional[npt.NDArray[Any]]
+    aif_bat_seconds: float
+
+
+class _DSCAUCMaps(NamedTuple):
+    """DSC AUC decomposition and measured-AIF CBV state."""
+
+    raw: npt.NDArray[Any]
+    corrected: npt.NDArray[Any]
+    difference: npt.NDArray[Any]
+    cbv: npt.NDArray[Any]
+    qc: dict[str, Any]
+
+
+class _DSCQualityMaps(NamedTuple):
+    """Concentration CNR and raw-signal SNR/tSNR maps."""
+
+    cnr: npt.NDArray[Any]
+    snr: npt.NDArray[Any]
+    tsnr: npt.NDArray[Any]
+
+
+class _DSCFinalMaps(NamedTuple):
+    """Clipped, unit-scaled, and brain-masked DSC output maps."""
+
+    rel_cbf: npt.NDArray[Any]
+    rel_cbv: npt.NDArray[Any]
+    rel_cbv_auc: npt.NDArray[Any]
+    mtt: npt.NDArray[Any]
+    tmax: npt.NDArray[Any]
+    ttp: npt.NDArray[Any]
+    ttp_corrected: npt.NDArray[Any]
+    relative_ttp: Optional[npt.NDArray[Any]]
+    auc_raw: npt.NDArray[Any]
+    auc_corrected: npt.NDArray[Any]
+    auc_difference: npt.NDArray[Any]
+    rel_auc_raw: npt.NDArray[Any]
+    rel_auc_corrected: npt.NDArray[Any]
+    cnr: npt.NDArray[Any]
+    snr: npt.NDArray[Any]
+    tsnr: npt.NDArray[Any]
+    psr: npt.NDArray[Any]
+    peak_height: npt.NDArray[Any]
+    delay: Optional[npt.NDArray[Any]]
+    residues: Optional[npt.NDArray[Any]]
+    cbf_std: Optional[npt.NDArray[Any]]
+    cbf_ci_lower: Optional[npt.NDArray[Any]]
+    cbf_ci_upper: Optional[npt.NDArray[Any]]
+
+
+class _DSCDeconvolutionMaps(NamedTuple):
+    """Common map state returned by either DSC deconvolution family."""
+
+    cbf: npt.NDArray[Any]
+    cbv: npt.NDArray[Any]
+    mtt: npt.NDArray[Any]
+    tmax: npt.NDArray[Any]
+    qc: dict[str, Any]
+    delay: Optional[npt.NDArray[Any]] = None
+    residues: Optional[npt.NDArray[Any]] = None
+    alpha: Optional[npt.NDArray[Any]] = None
+    beta: Optional[npt.NDArray[Any]] = None
+    cth: Optional[npt.NDArray[Any]] = None
+    cbf_std: Optional[npt.NDArray[Any]] = None
+    cbv_std: Optional[npt.NDArray[Any]] = None
+    cbf_ci_lower: Optional[npt.NDArray[Any]] = None
+    cbf_ci_upper: Optional[npt.NDArray[Any]] = None
+    cbv_ci_lower: Optional[npt.NDArray[Any]] = None
+    cbv_ci_upper: Optional[npt.NDArray[Any]] = None
+    parametric_r2: Optional[npt.NDArray[Any]] = None
+    fallback_mask: Optional[npt.NDArray[Any]] = None
+
+
+class _DSCPostprocessing(NamedTuple):
+    """Final DSC maps, source concentration, and accumulated QC state."""
+
+    raw_concentration: npt.NDArray[Any]
+    maps: _DSCFinalMaps
+    qc: dict[str, Any]
 
 
 class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
@@ -369,26 +507,6 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
         exists=True,
         mandatory=False,
         desc="Pre-K2 concentration (for auc_raw when K2 correction was applied)",
-    )
-    te = traits.Float(
-        0.035,
-        usedefault=True,
-        desc="Echo time in seconds (for S0 re-computation)",
-    )
-    aif_mask_file = File(
-        exists=True,
-        mandatory=False,
-        desc="3D AIF mask NIfTI (for re-extracting AIF after S0 update)",
-    )
-    aif_best_coord = traits.List(
-        traits.Int,
-        mandatory=False,
-        desc="Best AIF voxel coordinate [x, y, z] for re-extraction",
-    )
-    field_strength = traits.Float(
-        3.0,
-        usedefault=True,
-        desc="Magnetic field strength in Tesla (for r2_star auto-lookup)",
     )
     aif_detection_level = traits.Str(
         "atlas",
@@ -457,11 +575,6 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
         usedefault=True,
         desc="Pre-bolus baseline frames (wired from AIF detection)",
     )
-    fallback_baseline_frames = traits.Int(
-        5,
-        usedefault=True,
-        desc="Fallback baseline when AIF-detected value is unavailable",
-    )
     tail_frames = traits.Int(
         5,
         usedefault=True,
@@ -476,8 +589,8 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
         "nlls",
         usedefault=True,
         desc="Inference engine for parametric deconvolution (cpi, vascular): "
-             "vi (FABBER VB, default), svb (spatial VB), map, or nlls "
-             "(Levenberg-Marquardt). SVD methods ignore this option.",
+             "vi (linearized VI, default), svb (spatial VB), map, or nlls. "
+             "SVD methods ignore this option.",
     )
     mcmc_samples = traits.Int(
         500,
@@ -614,14 +727,10 @@ class ComputeDSCMapsOutputSpec(TraitedSpec):
     out_alpha = File(desc="Alpha map (vascular method only)")
     out_beta = File(desc="Beta map (vascular method only)")
     out_cth = File(desc="CTH map — capillary transit time heterogeneity (vascular only)")
-    out_cbf_std = File(desc="CBF uncertainty (std) map (Bayesian only)")
-    out_cbv_std = File(desc="CBV uncertainty (std) map (Bayesian only)")
-    out_cbf_cv = File(desc="CBF coefficient of variation (Bayesian only)")
-    out_cbv_cv = File(desc="CBV coefficient of variation (Bayesian only)")
-    out_cbf_ci95_lower = File(desc="CBF 95% CI lower bound (VI/MCMC only)")
-    out_cbf_ci95_upper = File(desc="CBF 95% CI upper bound (VI/MCMC only)")
-    out_cbv_ci95_lower = File(desc="CBV 95% CI lower bound (VI/MCMC only)")
-    out_cbv_ci95_upper = File(desc="CBV 95% CI upper bound (VI/MCMC only)")
+    out_cbf_std = File(desc="CBF parameter standard-error or posterior-SD map")
+    out_cbf_cv = File(desc="CBF relative parameter-uncertainty map")
+    out_cbf_ci95_lower = File(desc="CBF 95% interval lower-bound map")
+    out_cbf_ci95_upper = File(desc="CBF 95% interval upper-bound map")
     out_parametric_r2 = File(
         desc="Per-voxel R² of parametric fit (CPI / Vascular only). "
         "Raw value preserved on fallback voxels; see out_fallback_mask."
@@ -729,6 +838,63 @@ class ComputeDSCMaps(BaseInterface):
     input_spec = ComputeDSCMapsInputSpec
     output_spec = ComputeDSCMapsOutputSpec
 
+    def _load_compute_inputs(self) -> _DSCComputeInputs:
+        """Load and validate the DSC arrays and acquisition settings.
+
+        Returns
+        -------
+        _DSCComputeInputs
+            Immutable input state consumed by baseline preparation and fitting.
+
+        Raises
+        ------
+        RuntimeError
+            If the brain mask is not on the native DSC spatial grid.
+
+        """
+        import nibabel as nib  # type: ignore[import-untyped]
+
+        conc_img = nib.load(self.inputs.concentration_file)
+        concentration: npt.NDArray[Any] = conc_img.get_fdata()  # type: ignore[attr-defined]
+        affine = conc_img.affine  # type: ignore[attr-defined]
+        header = conc_img.header  # type: ignore[attr-defined]
+
+        mask_img = nib.load(self.inputs.brain_mask_file)
+        mask: npt.NDArray[Any] = mask_img.get_fdata()  # type: ignore[attr-defined]
+        if mask.shape[:3] != concentration.shape[:3]:
+            raise RuntimeError(
+                f"Brain mask shape {mask.shape[:3]} does not match "
+                f"concentration data shape {concentration.shape[:3]}. "
+                "The brain mask must be in native DSC space. "
+                "Ensure transform_brain_mask node is connected upstream."
+            )
+
+        signal: Optional[npt.NDArray[Any]] = None
+        if self.inputs.signal_file:
+            signal_img = nib.load(self.inputs.signal_file)
+            signal = signal_img.get_fdata()  # type: ignore[attr-defined]
+
+        return _DSCComputeInputs(
+            concentration=concentration,
+            affine=affine,
+            header=header,
+            mask=mask,
+            mask_bool=mask > 0,
+            aif=np.loadtxt(self.inputs.aif_file),
+            signal=signal,
+            method=str(self.inputs.method),
+            dt=float(self.inputs.tr),
+            svd_threshold=float(self.inputs.svd_threshold),
+            oi_threshold=float(self.inputs.oi_threshold),
+            cpi_control_points=int(self.inputs.cpi_control_points),
+            cpi_infer_cpt=bool(self.inputs.cpi_infer_cpt),
+            cpi_infer_delay=bool(self.inputs.cpi_infer_delay),
+            inference=str(self.inputs.inference),
+            mcmc_samples=int(self.inputs.mcmc_samples),
+            baseline_frames=int(self.inputs.baseline_frames),
+            tail_frames=int(self.inputs.tail_frames),
+        )
+
     def _gen_outfilename(self, suffix: str) -> str:
         """Generate output filename based on input."""
         in_file = Path(self.inputs.concentration_file)
@@ -740,10 +906,1104 @@ class ComputeDSCMaps(BaseInterface):
             base = in_file.stem
         return str(Path.cwd() / f"{base}{suffix}.nii.gz")
 
+    def _prepare_baseline_and_leakage(
+        self, inputs: _DSCComputeInputs
+    ) -> _DSCBaselinePreparation:
+        """Center arrays using the baseline finalized by AIF detection.
+
+        Parameters
+        ----------
+        inputs : _DSCComputeInputs
+            Validated DSC image arrays and acquisition settings.
+
+        Returns
+        -------
+        _DSCBaselinePreparation
+            Baseline-subtracted fitting arrays and upstream K2 provenance.
+
+        """
+        concentration = inputs.concentration
+        aif = inputs.aif
+        detected_frames = inputs.baseline_frames
+        detection_info: dict[str, Any] = {
+            "baseline_detection_method": "aif_detection_finalized",
+            "baseline_frames_detected": detected_frames,
+            "arrival_index": detected_frames,
+        }
+        k2_map_path: Optional[str] = None
+        if (
+            isdefined(self.inputs.k2_map_input_file)
+            and self.inputs.k2_map_input_file
+            and Path(str(self.inputs.k2_map_input_file)).is_file()
+        ):
+            k2_map_path = str(self.inputs.k2_map_input_file)
+
+        n_baseline = max(detected_frames, 4)
+        aif_baseline_offset = float(np.mean(aif[:n_baseline]))
+        aif = aif - aif_baseline_offset
+        concentration_offset = np.mean(
+            concentration[..., :n_baseline], axis=-1, keepdims=True
+        )
+        concentration = concentration - concentration_offset
+        detection_info["aif_baseline_offset"] = round(aif_baseline_offset, 4)
+        detection_info["conc_median_baseline_offset"] = round(
+            float(np.median(concentration_offset[inputs.mask_bool])), 4
+        )
+
+        return _DSCBaselinePreparation(
+            concentration=concentration,
+            aif=aif,
+            detected_frames=detected_frames,
+            n_baseline=n_baseline,
+            detection_info=detection_info,
+            k2_map_path=k2_map_path,
+        )
+
+    def _prepare_motion_weighting(
+        self,
+        method: str,
+        header: Any,
+        n_frames: int,
+        dt: float,
+        bolus_frame: int,
+    ) -> _DSCMotionWeighting:
+        """Prepare phase-aware motion weights for parametric DSC fitting.
+
+        Parameters
+        ----------
+        method : str
+            Selected DSC deconvolution method.
+        header : object
+            NIfTI header providing native spatial voxel dimensions.
+        n_frames : int
+            Number of acquired DSC frames.
+        dt : float
+            Frame interval in seconds.
+        bolus_frame : int
+            Final detected pre-bolus frame count used by DSC fitting.
+
+        Returns
+        -------
+        _DSCMotionWeighting
+            Optional fitting weights and QC values describing that exact array.
+
+        """
+        if (
+            method not in ("vascular", "cpi")
+            or not isdefined(self.inputs.fd_values)
+            or not self.inputs.fd_values
+        ):
+            return _DSCMotionWeighting(None, {"applied": False})
+
+        voxel_dims = header.get_zooms()[:3]
+        min_voxel_dim = float(min(voxel_dims))
+        weights = _compute_dsc_motion_weights(
+            fd_values=self.inputs.fd_values,
+            bolus_frame=bolus_frame,
+            n_frames=n_frames,
+            min_voxel_dim=min_voxel_dim,
+            tr=dt,
+        )
+        first_pass_frames = int(np.ceil(15.0 / max(dt, 0.5)))
+        first_pass_end = min(bolus_frame + first_pass_frames, n_frames - 1)
+        n_downweighted = int(np.sum(weights < 0.95))
+        qc = {
+            "applied": True,
+            "n_downweighted_frames": n_downweighted,
+            "min_weight": float(np.min(weights)),
+            "first_pass_weights": weights[bolus_frame:first_pass_end + 1].tolist(),
+        }
+        logger.info(
+            "DSC motion weighting: %d/%d frames downweighted (min weight=%.3f)",
+            n_downweighted,
+            n_frames,
+            float(np.min(weights)),
+        )
+        return _DSCMotionWeighting(weights, qc)
+
+    def _compute_signal_metrics(
+        self,
+        signal: Optional[npt.NDArray[Any]],
+        spatial_shape: tuple[int, ...],
+        baseline_frames: int,
+        tail_frames: int,
+    ) -> _DSCSignalMetrics:
+        """Compute PSR and peak height from raw DSC signal when available.
+
+        Parameters
+        ----------
+        signal : npt.NDArray, optional
+            Raw DSC signal array. Concentration is intentionally not used as a
+            substitute because its PSR/peak-height interpretation differs.
+        spatial_shape : tuple of int
+            Output map shape.
+        baseline_frames : int
+            Detected pre-bolus frame count.
+        tail_frames : int
+            Number of recovery frames used for PSR.
+
+        Returns
+        -------
+        _DSCSignalMetrics
+            PSR and peak-height arrays plus unavailable-signal QC state.
+
+        """
+        if signal is None:
+            zeros = np.zeros(spatial_shape, dtype=np.float64)
+            return _DSCSignalMetrics(
+                psr=zeros,
+                peak_height=zeros.copy(),
+                qc={"psr_ph_from_signal": False},
+            )
+
+        psr_result = compute_psr_legacy(signal, baseline_frames, tail_frames)
+        peak_height_result = compute_peak_height_legacy(signal, baseline_frames)
+        psr = (
+            np.full(spatial_shape, psr_result, dtype=np.float64)
+            if isinstance(psr_result, float)
+            else psr_result
+        )
+        peak_height = (
+            np.full(spatial_shape, peak_height_result, dtype=np.float64)
+            if isinstance(peak_height_result, float)
+            else peak_height_result
+        )
+        return _DSCSignalMetrics(psr=psr, peak_height=peak_height, qc={})
+
+    def _select_raw_concentration(
+        self,
+        corrected: npt.NDArray[Any],
+    ) -> npt.NDArray[Any]:
+        """Select pre-K2 concentration for model-free DSC measurements.
+
+        Parameters
+        ----------
+        corrected : npt.NDArray
+            Baseline-subtracted, potentially K2-corrected concentration.
+
+        Returns
+        -------
+        npt.NDArray
+            Configured raw input or corrected concentration.
+
+        """
+        if self.inputs.raw_concentration_file:
+            import nibabel as nib  # type: ignore[import-untyped]
+
+            raw_img = nib.load(self.inputs.raw_concentration_file)
+            return raw_img.get_fdata()  # type: ignore[attr-defined,no-any-return]
+        return corrected
+
+    def _compute_timing_maps(
+        self,
+        raw_concentration: npt.NDArray[Any],
+        mask_bool: npt.NDArray[np.bool_],
+        detected_baseline: int,
+        detection_info: dict[str, Any],
+        dt: float,
+    ) -> _DSCTimingMaps:
+        """Compute DSC timing maps while preserving unclipped derivations.
+
+        Parameters
+        ----------
+        raw_concentration : npt.NDArray
+            Pre-K2 concentration used for bolus timing.
+        mask_bool : npt.NDArray
+            Native-space brain mask.
+        detected_baseline : int
+            Detected pre-bolus frame count.
+        detection_info : dict
+            Baseline diagnostics containing the AIF arrival index when known.
+        dt : float
+            Frame interval in seconds.
+
+        Returns
+        -------
+        _DSCTimingMaps
+            Clipped raw TTP for output, AIF-corrected TTP, optional NAWM-relative
+            TTP, and the AIF arrival time in seconds.
+
+        """
+        import nibabel as nib  # type: ignore[import-untyped]
+
+        ttp_raw = compute_ttp_legacy(raw_concentration, detected_baseline, dt)
+        aif_bat_frames = detection_info.get("arrival_index", detected_baseline)
+        aif_bat_seconds = float(aif_bat_frames) * dt
+        ttp_corrected = ttp_raw - aif_bat_seconds
+
+        n_negative = int(np.sum(mask_bool & (ttp_corrected < 0)))
+        n_mask = int(np.sum(mask_bool))
+        if n_mask > 0 and n_negative / n_mask > 0.05:
+            logger.warning(
+                "%.1f%% of brain voxels have negative TTPc (ttp < aif_bat=%.1fs). "
+                "Check AIF QC.",
+                100.0 * n_negative / n_mask,
+                aif_bat_seconds,
+            )
+
+        ttp_corrected = np.clip(ttp_corrected, 0.0, 30.0)
+        ttp_corrected = np.where(np.isnan(ttp_raw), np.nan, ttp_corrected)
+
+        relative_ttp: Optional[npt.NDArray[Any]] = None
+        if (
+            isdefined(self.inputs.nawm_mask_file)
+            and str(self.inputs.nawm_mask_file) not in ("", "None")
+            and Path(self.inputs.nawm_mask_file).exists()
+        ):
+            nawm_img = nib.load(self.inputs.nawm_mask_file)
+            nawm_mask = nawm_img.get_fdata() > 0  # type: ignore[attr-defined]
+            nawm_ttp = ttp_raw[nawm_mask]
+            nawm_ttp = nawm_ttp[np.isfinite(nawm_ttp)]
+            if len(nawm_ttp) > 100:
+                relative_ttp = ttp_raw - np.median(nawm_ttp)
+                relative_ttp = np.where(
+                    np.isnan(ttp_raw), np.nan, relative_ttp
+                )
+
+        return _DSCTimingMaps(
+            ttp=np.clip(ttp_raw, 0.0, 60.0),
+            ttp_corrected=ttp_corrected,
+            relative_ttp=relative_ttp,
+            aif_bat_seconds=aif_bat_seconds,
+        )
+
+    def _compute_auc_maps(
+        self,
+        raw_concentration: npt.NDArray[Any],
+        corrected_concentration: npt.NDArray[Any],
+        n_baseline: int,
+        detected_baseline: int,
+        detection_info: dict[str, Any],
+        dt: float,
+    ) -> _DSCAUCMaps:
+        """Compute AUC decomposition and measured-AIF full-bolus CBV.
+
+        Parameters
+        ----------
+        raw_concentration : npt.NDArray
+            Pre-K2 concentration, potentially carrying a residual baseline.
+        corrected_concentration : npt.NDArray
+            Baseline-subtracted, K2-corrected tissue concentration.
+        n_baseline : int
+            Baseline window used for raw tissue and measured-AIF subtraction.
+        detected_baseline : int
+            Detected baseline used when no explicit arrival index is available.
+        detection_info : dict
+            Baseline diagnostics containing the AIF arrival index when known.
+        dt : float
+            Frame interval in seconds.
+
+        Returns
+        -------
+        _DSCAUCMaps
+            Raw/corrected/leakage AUC, full-bolus CBV, and matching QC state.
+
+        """
+        raw_for_auc = raw_concentration - np.mean(
+            raw_concentration[..., :n_baseline], axis=-1, keepdims=True
+        )
+        auc_corrected = np.minimum(
+            np.trapezoid(corrected_concentration, dx=dt, axis=-1), 10000.0
+        )
+        auc_raw = np.minimum(np.trapezoid(raw_for_auc, dx=dt, axis=-1), 10000.0)
+        auc_difference = auc_raw - auc_corrected
+
+        spatial_shape = corrected_concentration.shape[:3]
+        n_timepoints = corrected_concentration.shape[-1]
+        bat = int(detection_info.get("arrival_index", detected_baseline))
+        bolus_slice = slice(bat, n_timepoints)
+        qc: dict[str, Any] = {}
+
+        if (
+            isdefined(self.inputs.measured_aif_file)
+            and self.inputs.measured_aif_file
+            and Path(str(self.inputs.measured_aif_file)).is_file()
+        ):
+            measured_aif = np.loadtxt(self.inputs.measured_aif_file)
+            aif_for_auc = measured_aif - float(np.mean(measured_aif[:n_baseline]))
+            aif_auc = float(np.trapezoid(aif_for_auc[bolus_slice], dx=dt))
+            tissue_auc_bolus = np.trapezoid(
+                corrected_concentration[..., bolus_slice], dx=dt, axis=-1
+            )
+            if aif_auc < EPSILON_SIGNAL:
+                logger.warning(
+                    "AIF AUC near-zero (%.6f); AUC CBV unavailable", aif_auc
+                )
+                cbv = np.full(spatial_shape, np.nan, dtype=np.float64)
+            else:
+                cbv = np.minimum(tissue_auc_bolus / aif_auc, 10.0)
+            qc.update(
+                cbv_auc_bat_frame=bat,
+                cbv_auc_end_frame=n_timepoints,
+                cbv_auc_aif_integral=round(aif_auc, 6),
+            )
+        else:
+            logger.warning("Measured AIF not available; AUC CBV set to NaN")
+            cbv = np.full(spatial_shape, np.nan, dtype=np.float64)
+            qc["cbv_auc_measured_aif_missing"] = True
+
+        _PRELOAD_INDICATORS = {"half_dose", "significant", "severe"}
+        preload_class = str(self.inputs.preload_classification)
+        if preload_class in _PRELOAD_INDICATORS:
+            qc["cbv_auc_preload_warning"] = (
+                f"Preload classification '{preload_class}': residual "
+                "leakage may bias full-bolus AUC CBV low (T1-dip, BSW "
+                "under-recovers) or high (positive T2* tail, BSW-uncorrectable). "
+                "Interpret with caution."
+            )
+
+        return _DSCAUCMaps(
+            raw=auc_raw,
+            corrected=auc_corrected,
+            difference=auc_difference,
+            cbv=cbv,
+            qc=qc,
+        )
+
+    def _compute_quality_maps(
+        self,
+        raw_concentration: npt.NDArray[Any],
+        signal: Optional[npt.NDArray[Any]],
+        detected_baseline: int,
+    ) -> _DSCQualityMaps:
+        """Compute concentration CNR and raw-signal SNR/tSNR.
+
+        Parameters
+        ----------
+        raw_concentration : npt.NDArray
+            Pre-K2 concentration used for baseline noise and peak contrast.
+        signal : npt.NDArray, optional
+            Raw DSC signal used for baseline SNR and whole-series tSNR.
+        detected_baseline : int
+            Detected pre-bolus frame count.
+
+        Returns
+        -------
+        _DSCQualityMaps
+            Unclipped CNR, SNR, and tSNR maps.
+
+        """
+        baseline_std = np.std(
+            raw_concentration[..., :detected_baseline], axis=-1
+        )
+        peak_concentration = np.max(raw_concentration, axis=-1)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            cnr = np.where(
+                baseline_std > EPSILON_CONCENTRATION,
+                peak_concentration / baseline_std,
+                0.0,
+            )
+
+        spatial_shape = raw_concentration.shape[:3]
+        if signal is None:
+            zeros = np.zeros(spatial_shape, dtype=np.float64)
+            return _DSCQualityMaps(cnr=cnr, snr=zeros, tsnr=zeros.copy())
+
+        snr_baseline_frames = min(
+            detected_baseline, raw_concentration.shape[-1] - 1
+        )
+        baseline_signal = signal[..., :snr_baseline_frames]
+        baseline_mean = np.mean(baseline_signal, axis=-1)
+        baseline_signal_std = np.std(baseline_signal, axis=-1, ddof=1)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            snr = np.where(
+                baseline_signal_std > EPSILON_SIGNAL,
+                baseline_mean / baseline_signal_std,
+                0.0,
+            )
+            all_mean = np.mean(signal, axis=-1)
+            all_std = np.std(signal, axis=-1, ddof=1)
+            tsnr = np.where(all_std > EPSILON_SIGNAL, all_mean / all_std, 0.0)
+        return _DSCQualityMaps(cnr=cnr, snr=snr, tsnr=tsnr)
+
+    @staticmethod
+    def _finalize_mtt(
+        method: str,
+        fitted_mtt: npt.NDArray[Any],
+        cbf: npt.NDArray[Any],
+        auc_cbv: npt.NDArray[Any],
+    ) -> npt.NDArray[Any]:
+        """Apply measured-AIF central-volume MTT to SVD-family methods.
+
+        Parameters
+        ----------
+        method : str
+            Selected DSC deconvolution method.
+        fitted_mtt : npt.NDArray
+            MTT returned by the deconvolution implementation.
+        cbf : npt.NDArray
+            Unscaled CBF in inverse seconds.
+        auc_cbv : npt.NDArray
+            Measured-AIF full-bolus CBV.
+
+        Returns
+        -------
+        npt.NDArray
+            AUC-CBV/CBF MTT for SVD methods, otherwise the fitted map unchanged.
+
+        """
+        if method not in ("sSVD", "oSVD", "tikhonov"):
+            return fitted_mtt
+        with np.errstate(divide="ignore", invalid="ignore"):
+            return np.where(
+                (cbf > EPSILON_CONCENTRATION) & np.isfinite(auc_cbv),
+                auc_cbv / cbf,
+                0.0,
+            )
+
+    @staticmethod
+    def _summarize_dsc_maps(
+        rel_cbf: npt.NDArray[Any],
+        rel_cbv: npt.NDArray[Any],
+        rel_cbv_auc: npt.NDArray[Any],
+        mtt: npt.NDArray[Any],
+        tmax: npt.NDArray[Any],
+        mask_bool: npt.NDArray[np.bool_],
+        aif_level: str,
+        preload_class: str,
+        baseline_info: dict[str, Any],
+        aif_bat_seconds: float,
+    ) -> dict[str, Any]:
+        """Reduce finalized DSC maps and acquisition provenance to QC values."""
+        has_voxels = bool(np.any(mask_bool))
+        finite_cbv_auc = mask_bool & np.isfinite(rel_cbv_auc)
+        n_finite_cbv_auc = int(np.sum(finite_cbv_auc))
+        n_negative_cbv_auc = int(np.sum(finite_cbv_auc & (rel_cbv_auc < 0.0)))
+        qc = {
+            "cbf_mean": float(np.mean(rel_cbf[mask_bool])) if has_voxels else 0.0,
+            "cbf_std": float(np.std(rel_cbf[mask_bool])) if has_voxels else 0.0,
+            "cbv_mean": float(np.mean(rel_cbv[mask_bool])) if has_voxels else 0.0,
+            "cbv_auc_mean": (
+                float(np.nanmean(rel_cbv_auc[mask_bool])) if has_voxels else 0.0
+            ),
+            "mtt_mean": float(np.mean(mtt[mask_bool])) if has_voxels else 0.0,
+            "tmax_mean": float(np.mean(tmax[mask_bool])) if has_voxels else 0.0,
+            "cbf_median": (
+                float(np.median(rel_cbf[mask_bool])) if has_voxels else 0.0
+            ),
+            "cbv_median": (
+                float(np.median(rel_cbv[mask_bool])) if has_voxels else 0.0
+            ),
+            "cbv_auc_median": (
+                float(np.nanmedian(rel_cbv_auc[mask_bool])) if has_voxels else 0.0
+            ),
+            "cbv_auc_finite_voxels": n_finite_cbv_auc,
+            "cbv_auc_negative_voxels": n_negative_cbv_auc,
+            "cbv_auc_negative_fraction": (
+                n_negative_cbv_auc / n_finite_cbv_auc
+                if n_finite_cbv_auc > 0
+                else 0.0
+            ),
+            "mtt_median": float(np.median(mtt[mask_bool])) if has_voxels else 0.0,
+            "tmax_median": (
+                float(np.median(tmax[mask_bool])) if has_voxels else 0.0
+            ),
+            "n_voxels": int(np.sum(mask_bool)),
+            "aif_detection_level": aif_level,
+            "preload_classification": preload_class,
+        }
+        qc.update(baseline_info)
+        qc["aif_bat_seconds"] = aif_bat_seconds
+        qc["cbv_literature_range_applicable"] = aif_level != "synthetic"
+        return qc
+
+    @staticmethod
+    def _scale_cbf_uncertainty(
+        standard_deviation: Optional[npt.NDArray[Any]],
+        ci_lower: Optional[npt.NDArray[Any]],
+        ci_upper: Optional[npt.NDArray[Any]],
+    ) -> tuple[
+        Optional[npt.NDArray[Any]],
+        Optional[npt.NDArray[Any]],
+        Optional[npt.NDArray[Any]],
+    ]:
+        """Convert optional CBF uncertainty maps from inverse seconds to minutes."""
+        return tuple(
+            None if value is None else value * 60.0
+            for value in (standard_deviation, ci_lower, ci_upper)
+        )  # type: ignore[return-value]
+
+    @classmethod
+    def _finalize_dsc_maps(
+        cls,
+        *,
+        cbf: npt.NDArray[Any],
+        cbv: npt.NDArray[Any],
+        cbv_auc: npt.NDArray[Any],
+        mtt: npt.NDArray[Any],
+        tmax: npt.NDArray[Any],
+        ttp: npt.NDArray[Any],
+        ttp_corrected: npt.NDArray[Any],
+        relative_ttp: Optional[npt.NDArray[Any]],
+        auc_raw: npt.NDArray[Any],
+        auc_corrected: npt.NDArray[Any],
+        auc_difference: npt.NDArray[Any],
+        cnr: npt.NDArray[Any],
+        snr: npt.NDArray[Any],
+        tsnr: npt.NDArray[Any],
+        psr: npt.NDArray[Any],
+        peak_height: npt.NDArray[Any],
+        delay: Optional[npt.NDArray[Any]],
+        residues: Optional[npt.NDArray[Any]],
+        cbf_std: Optional[npt.NDArray[Any]],
+        cbf_ci_lower: Optional[npt.NDArray[Any]],
+        cbf_ci_upper: Optional[npt.NDArray[Any]],
+        mask_bool: npt.NDArray[Any],
+    ) -> _DSCFinalMaps:
+        """Apply established output ranges, CBF units, and brain masking."""
+        psr = np.clip(psr, 0.0, 200.0)
+        peak_height = np.clip(peak_height, 0.0, 100.0)
+        tmax = np.clip(tmax, 0.0, 60.0)
+        mtt = np.clip(mtt, 0.0, 30.0)
+        cbf = np.clip(cbf, 0.0, 100.0)
+        cbv = np.clip(cbv, 0.0, 10.0)
+        cnr = np.clip(cnr, 0.0, 1000.0)
+
+        rel_cbf = np.clip(cbf * 60.0, 0.0, 100.0)
+        rel_cbv = np.clip(cbv, 0.0, 10.0)
+        cbf_std, cbf_ci_lower, cbf_ci_upper = cls._scale_cbf_uncertainty(
+            cbf_std, cbf_ci_lower, cbf_ci_upper
+        )
+
+        return _DSCFinalMaps(
+            rel_cbf=np.where(mask_bool, rel_cbf, 0.0),
+            rel_cbv=np.where(mask_bool, rel_cbv, 0.0),
+            rel_cbv_auc=np.where(mask_bool, cbv_auc, 0.0),
+            mtt=np.where(mask_bool, mtt, 0.0),
+            tmax=np.where(mask_bool, tmax, 0.0),
+            ttp=np.where(mask_bool, ttp, 0.0),
+            ttp_corrected=np.where(
+                mask_bool, np.where(np.isnan(ttp_corrected), 0.0, ttp_corrected), 0.0
+            ),
+            relative_ttp=(
+                None
+                if relative_ttp is None
+                else np.where(
+                    mask_bool,
+                    np.where(np.isnan(relative_ttp), 0.0, relative_ttp),
+                    0.0,
+                )
+            ),
+            auc_raw=np.where(mask_bool, auc_raw, 0.0),
+            auc_corrected=np.where(mask_bool, auc_corrected, 0.0),
+            auc_difference=np.where(mask_bool, auc_difference, 0.0),
+            rel_auc_raw=np.where(mask_bool, auc_raw, 0.0),
+            rel_auc_corrected=np.where(mask_bool, auc_corrected, 0.0),
+            cnr=np.where(mask_bool, cnr, 0.0),
+            snr=np.where(mask_bool, snr, 0.0),
+            tsnr=np.where(mask_bool, tsnr, 0.0),
+            psr=np.where(mask_bool, psr, 0.0),
+            peak_height=np.where(mask_bool, peak_height, 0.0),
+            delay=None if delay is None else np.where(mask_bool, delay, 0.0),
+            residues=(
+                None
+                if residues is None
+                else np.where(mask_bool[..., np.newaxis], residues, 0.0)
+            ),
+            cbf_std=cbf_std,
+            cbf_ci_lower=cbf_ci_lower,
+            cbf_ci_upper=cbf_ci_upper,
+        )
+
+    def _save_map(
+        self,
+        data: npt.NDArray[Any],
+        suffix: str,
+        affine: npt.NDArray[Any],
+        header: Any,
+        dtype: Any = np.float32,
+    ) -> str:
+        """Save a DSC map with an explicit dtype and clean copied header."""
+        import nibabel as nib  # type: ignore[import-untyped]
+
+        path = self._gen_outfilename(suffix)
+        cast_data = data.astype(dtype)
+        local_header = cast("nib.Nifti1Header", header.copy())
+        local_header.set_data_dtype(dtype)
+        img = nib.Nifti1Image(cast_data, affine, local_header)  # type: ignore[attr-defined]
+        nib.save(img, path)  # type: ignore[attr-defined]
+        return path
+
+    def _prepare_final_outputs(
+        self,
+        *,
+        deconvolution: _DSCDeconvolutionMaps,
+        concentration: npt.NDArray[Any],
+        signal: Optional[npt.NDArray[Any]],
+        spatial_shape: tuple[int, ...],
+        mask_bool: npt.NDArray[Any],
+        detected_baseline: int,
+        n_baseline: int,
+        baseline_info: dict[str, Any],
+        dt: float,
+        tail_frames: int,
+        method: str,
+        aif_level: str,
+        preload_class: str,
+    ) -> _DSCPostprocessing:
+        """Compose model-free maps, final masking, and DSC QC reduction."""
+        qc = deconvolution.qc
+        signal_metrics = self._compute_signal_metrics(
+            signal, spatial_shape, detected_baseline, tail_frames
+        )
+        qc.update(signal_metrics.qc)
+
+        raw_concentration = self._select_raw_concentration(concentration)
+        timing = self._compute_timing_maps(
+            raw_concentration,
+            mask_bool,
+            detected_baseline,
+            baseline_info,
+            dt,
+        )
+        auc = self._compute_auc_maps(
+            raw_concentration,
+            concentration,
+            n_baseline,
+            detected_baseline,
+            baseline_info,
+            dt,
+        )
+        qc.update(auc.qc)
+        quality = self._compute_quality_maps(
+            raw_concentration, signal, detected_baseline
+        )
+        mtt = self._finalize_mtt(
+            method,
+            deconvolution.mtt,
+            deconvolution.cbf,
+            auc.cbv,
+        )
+        maps = self._finalize_dsc_maps(
+            cbf=deconvolution.cbf,
+            cbv=deconvolution.cbv,
+            cbv_auc=auc.cbv,
+            mtt=mtt,
+            tmax=deconvolution.tmax,
+            ttp=timing.ttp,
+            ttp_corrected=timing.ttp_corrected,
+            relative_ttp=timing.relative_ttp,
+            auc_raw=auc.raw,
+            auc_corrected=auc.corrected,
+            auc_difference=auc.difference,
+            cnr=quality.cnr,
+            snr=quality.snr,
+            tsnr=quality.tsnr,
+            psr=signal_metrics.psr,
+            peak_height=signal_metrics.peak_height,
+            delay=deconvolution.delay,
+            residues=deconvolution.residues,
+            cbf_std=deconvolution.cbf_std,
+            cbf_ci_lower=deconvolution.cbf_ci_lower,
+            cbf_ci_upper=deconvolution.cbf_ci_upper,
+            mask_bool=mask_bool,
+        )
+        qc.update(
+            self._summarize_dsc_maps(
+                maps.rel_cbf,
+                maps.rel_cbv,
+                maps.rel_cbv_auc,
+                maps.mtt,
+                maps.tmax,
+                mask_bool,
+                aif_level,
+                preload_class,
+                baseline_info,
+                timing.aif_bat_seconds,
+            )
+        )
+        return _DSCPostprocessing(raw_concentration, maps, qc)
+
+    def _save_base_maps(
+        self,
+        maps: _DSCFinalMaps,
+        affine: npt.NDArray[Any],
+        header: Any,
+        qc_metrics: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Serialize the unconditional DSC maps and assemble interface results."""
+        outputs = {
+            "out_mtt": (maps.mtt, "_mtt"),
+            "out_tmax": (maps.tmax, "_tmax"),
+            "out_psr": (maps.psr, "_psr"),
+            "out_ph": (maps.peak_height, "_ph"),
+            "out_ttp": (maps.ttp, "_ttp"),
+            "out_ttp_corrected": (maps.ttp_corrected, "_ttp_corrected"),
+            "out_cnr": (maps.cnr, "_cnr"),
+            "out_auc_raw": (maps.auc_raw, "_auc_raw"),
+            "out_auc_corr": (maps.auc_corrected, "_auc_corr"),
+            "out_auc_diff": (maps.auc_difference, "_auc_diff"),
+            "out_rel_cbf": (maps.rel_cbf, "_rel_cbf"),
+            "out_rel_cbv": (maps.rel_cbv, "_rel_cbv"),
+            "out_rel_cbv_auc": (maps.rel_cbv_auc, "_rel_cbv_auc"),
+            "out_rel_auc_raw": (maps.rel_auc_raw, "_rel_auc_raw"),
+            "out_rel_auc_corr": (maps.rel_auc_corrected, "_rel_auc_corr"),
+            "out_snr": (maps.snr, "_snr"),
+            "out_tsnr": (maps.tsnr, "_tsnr"),
+        }
+        results: dict[str, Any] = {
+            name: self._save_map(data, suffix, affine, header)
+            for name, (data, suffix) in outputs.items()
+        }
+        results["qc_metrics"] = qc_metrics
+        return results
+
+    def _save_parametric_maps(
+        self,
+        *,
+        rel_cbf: npt.NDArray[Any],
+        rel_cbv: npt.NDArray[Any],
+        cbf_std: Optional[npt.NDArray[Any]],
+        cbv_std: Optional[npt.NDArray[Any]],
+        cbf_ci_lower: Optional[npt.NDArray[Any]],
+        cbf_ci_upper: Optional[npt.NDArray[Any]],
+        cbv_ci_lower: Optional[npt.NDArray[Any]],
+        cbv_ci_upper: Optional[npt.NDArray[Any]],
+        parametric_r2: Optional[npt.NDArray[Any]],
+        fallback_mask: Optional[npt.NDArray[Any]],
+        mask_bool: npt.NDArray[Any],
+        inference: str,
+        affine: npt.NDArray[Any],
+        header: Any,
+    ) -> dict[str, str]:
+        """Mask and serialize optional parameter-uncertainty and diagnostic maps."""
+        outputs: dict[str, str] = {}
+        valid_fit = mask_bool.copy()
+        if fallback_mask is not None:
+            valid_fit &= fallback_mask == 0
+
+        for name, suffix, standard_deviation, mean in (
+            ("cbf", "_cbf", cbf_std, rel_cbf),
+            ("cbv", "_cbv", cbv_std, rel_cbv),
+        ):
+            if standard_deviation is None:
+                continue
+            masked_std = np.where(
+                valid_fit,
+                standard_deviation,
+                np.where(mask_bool, np.nan, 0.0),
+            )
+            outputs[f"out_{name}_std"] = self._save_map(
+                masked_std, f"{suffix}_std", affine, header
+            )
+            cv = np.full_like(masked_std, np.nan)
+            valid = valid_fit & (np.abs(mean) > EPSILON_CONCENTRATION)
+            np.divide(masked_std, np.abs(mean), out=cv, where=valid)
+            cv = np.where(mask_bool, cv, 0.0)
+            outputs[f"out_{name}_cv"] = self._save_map(
+                cv, f"{suffix}_cv", affine, header
+            )
+
+        for name, suffix, interval in (
+            ("out_cbf_ci95_lower", "_cbf_ci95_lower", cbf_ci_lower),
+            ("out_cbf_ci95_upper", "_cbf_ci95_upper", cbf_ci_upper),
+            ("out_cbv_ci95_lower", "_cbv_ci95_lower", cbv_ci_lower),
+            ("out_cbv_ci95_upper", "_cbv_ci95_upper", cbv_ci_upper),
+        ):
+            if interval is not None:
+                masked_interval = np.where(
+                    valid_fit,
+                    interval,
+                    np.where(mask_bool, np.nan, 0.0),
+                )
+                outputs[name] = self._save_map(
+                    masked_interval, suffix, affine, header
+                )
+
+        if parametric_r2 is not None:
+            r2 = np.where(mask_bool, parametric_r2, np.nan).astype(np.float32)
+            outputs["out_parametric_r2"] = self._save_map(
+                r2, "_dscParametric_r2", affine, header
+            )
+        if fallback_mask is not None:
+            fallback = np.where(mask_bool, fallback_mask, 0).astype(np.uint8)
+            outputs["out_fallback_mask"] = self._save_map(
+                fallback, "_dscFallback_mask", affine, header, dtype=np.uint8
+            )
+
+        return outputs
+
+    def _add_fit_qc_metrics(
+        self,
+        rel_cbv: npt.NDArray[Any],
+        qc_metrics: dict[str, Any],
+    ) -> None:
+        """Add the selected fit voxel and fit quality to DSC QC state."""
+        if "out_qc_fit_data" not in self._results:
+            return
+        with open(self._results["out_qc_fit_data"]) as fit_file:
+            fit = json.load(fit_file)
+        vx, vy, vz = fit["voxel"]
+        qc_metrics["qc_voxel"] = f"({vx}, {vy}, {vz})"
+        qc_metrics["qc_voxel_cbv"] = round(float(rel_cbv[vx, vy, vz]), 4)
+        qc_metrics["qc_voxel_rsquared"] = round(fit.get("r_squared", 0.0), 4)
+        tier = getattr(self, "_qc_voxel_tier", None)
+        if tier is not None:
+            qc_metrics["qc_voxel_tier"] = tier
+
+    def _run_deconvolution(
+        self,
+        *,
+        concentration: npt.NDArray[Any],
+        aif: npt.NDArray[Any],
+        mask: npt.NDArray[Any],
+        method: str,
+        dt: float,
+        threshold: float,
+        oi_threshold: float,
+        inference: str,
+        mcmc_samples: int,
+        cpi_control_points: int,
+        cpi_infer_cpt: bool,
+        cpi_infer_delay: bool,
+        motion_weighting: _DSCMotionWeighting,
+    ) -> _DSCDeconvolutionMaps:
+        """Dispatch DSC deconvolution and normalize its typed return state."""
+        if method in ("sSVD", "oSVD", "tikhonov"):
+            cbf, cbv, mtt, tmax, delay, residues, qc = self._deconvolve_svd(
+                concentration, aif, mask, method, dt, threshold, oi_threshold
+            )
+            return _DSCDeconvolutionMaps(
+                cbf=cbf,
+                cbv=cbv,
+                mtt=mtt,
+                tmax=tmax,
+                qc=qc,
+                delay=delay,
+                residues=residues,
+            )
+
+        (
+            cbf, cbv, mtt, tmax, qc, alpha, beta, cth, cbf_std, cbv_std,
+            cbf_ci_lower, cbf_ci_upper, cbv_ci_lower, cbv_ci_upper,
+            parametric_r2, fallback_mask,
+        ) = self._deconvolve_parametric(
+            concentration,
+            aif,
+            mask,
+            method,
+            dt,
+            inference,
+            mcmc_samples,
+            cpi_control_points,
+            cpi_infer_cpt,
+            cpi_infer_delay,
+            motion_weights=motion_weighting.weights,
+        )
+        qc["motion_weighting"] = motion_weighting.qc
+        return _DSCDeconvolutionMaps(
+            cbf=cbf,
+            cbv=cbv,
+            mtt=mtt,
+            tmax=tmax,
+            qc=qc,
+            alpha=alpha,
+            beta=beta,
+            cth=cth,
+            cbf_std=cbf_std,
+            cbv_std=cbv_std,
+            cbf_ci_lower=cbf_ci_lower,
+            cbf_ci_upper=cbf_ci_upper,
+            cbv_ci_lower=cbv_ci_lower,
+            cbv_ci_upper=cbv_ci_upper,
+            parametric_r2=parametric_r2,
+            fallback_mask=fallback_mask,
+        )
+
+    def _save_fit_qc_data(
+        self,
+        *,
+        rel_cbf: npt.NDArray[Any],
+        concentration: npt.NDArray[Any],
+        aif: npt.NDArray[Any],
+        mask_bool: npt.NDArray[Any],
+        dt: float,
+        method: str,
+        inference: str,
+        mcmc_samples: int,
+        cpi_control_points: int,
+        cpi_infer_cpt: bool,
+        cpi_infer_delay: bool,
+        threshold: float,
+        oi_threshold: float,
+        signal: Optional[npt.NDArray[Any]],
+    ) -> None:
+        """Dispatch fit-QC serialization to the selected method family."""
+        if method in ("vascular", "cpi"):
+            self._save_qc_fit_data(
+                rel_cbf,
+                concentration,
+                aif,
+                mask_bool,
+                dt,
+                method,
+                inference,
+                mcmc_samples,
+                cpi_control_points,
+                cpi_infer_cpt,
+                cpi_infer_delay,
+                signal_data=signal,
+            )
+            return
+        self._save_qc_fit_data_svd(
+            rel_cbf,
+            concentration,
+            aif,
+            mask_bool,
+            dt,
+            method,
+            threshold,
+            oi_threshold,
+            signal_data=signal,
+        )
+
+    def _save_ancillary_maps(
+        self,
+        *,
+        relative_ttp: Optional[npt.NDArray[Any]],
+        k2_map_path: Optional[str],
+        delay: Optional[npt.NDArray[Any]],
+        alpha: Optional[npt.NDArray[Any]],
+        beta: Optional[npt.NDArray[Any]],
+        cth: Optional[npt.NDArray[Any]],
+        residues: Optional[npt.NDArray[Any]],
+        save_residue: bool,
+        mask_bool: npt.NDArray[Any],
+        spatial_shape: tuple[int, ...],
+        affine: npt.NDArray[Any],
+        header: Any,
+    ) -> dict[str, str]:
+        """Serialize optional timing/model maps and the required K2 output."""
+        import nibabel as nib  # type: ignore[import-untyped]
+
+        outputs: dict[str, str] = {}
+        if relative_ttp is not None:
+            outputs["out_rttp"] = self._save_map(
+                relative_ttp, "_rttp", affine, header
+            )
+
+        if k2_map_path is not None:
+            k2_data = np.asarray(
+                nib.load(k2_map_path).get_fdata(),  # type: ignore[attr-defined]
+                dtype=np.float32,
+            )
+            k2_data = np.where(mask_bool, k2_data, 0.0)
+            outputs["out_k2"] = self._save_map(k2_data, "_k2", affine, header)
+        else:
+            k2_zeros = np.zeros(spatial_shape, dtype=np.float32)
+            k2_fallback_path = self._gen_outfilename("_k2")
+            k2_fallback_img = nib.Nifti1Image(k2_zeros, affine, header)  # type: ignore[attr-defined]
+            nib.save(k2_fallback_img, k2_fallback_path)  # type: ignore[attr-defined]
+            outputs["out_k2"] = k2_fallback_path
+
+        if delay is not None:
+            outputs["out_delay"] = self._save_map(delay, "_delay", affine, header)
+        for name, suffix, data in (
+            ("out_alpha", "_alpha", alpha),
+            ("out_beta", "_beta", beta),
+            ("out_cth", "_cth", cth),
+        ):
+            if data is not None:
+                outputs[name] = self._save_map(
+                    np.where(mask_bool, data, 0.0), suffix, affine, header
+                )
+
+        if residues is not None and save_residue:
+            residue_path = self._gen_outfilename("_residues")
+            residue_img = nib.Nifti1Image(residues.astype(np.float32), affine)  # type: ignore[attr-defined]
+            nib.save(residue_img, residue_path)  # type: ignore[attr-defined]
+            outputs["out_residues"] = residue_path
+        return outputs
+
+    def _assemble_outputs(
+        self,
+        *,
+        inputs: _DSCComputeInputs,
+        baseline: _DSCBaselinePreparation,
+        deconvolution: _DSCDeconvolutionMaps,
+        postprocessing: _DSCPostprocessing,
+    ) -> dict[str, Any]:
+        """Serialize all required and optional DSC interface outputs."""
+        maps = postprocessing.maps
+        qc = postprocessing.qc
+        spatial_shape = baseline.concentration.shape[:3]
+        results = self._save_base_maps(maps, inputs.affine, inputs.header, qc)
+        self._results = results
+
+        if self.inputs.first_pass_cbv:
+            first_pass_path = self._compute_first_pass_cbv(
+                raw_conc_data=postprocessing.raw_concentration,
+                mask_bool=inputs.mask_bool,
+                spatial_shape=spatial_shape,
+                dt=inputs.dt,
+                n_bl=baseline.n_baseline,
+                affine=inputs.affine,
+                header=inputs.header,
+                qc_metrics=qc,
+            )
+            if first_pass_path:
+                results["out_rel_cbv_firstpass"] = first_pass_path
+
+        results.update(
+            self._save_ancillary_maps(
+                relative_ttp=maps.relative_ttp,
+                k2_map_path=baseline.k2_map_path,
+                delay=maps.delay,
+                alpha=deconvolution.alpha,
+                beta=deconvolution.beta,
+                cth=deconvolution.cth,
+                residues=maps.residues,
+                save_residue=bool(self.inputs.save_residue),
+                mask_bool=inputs.mask_bool,
+                spatial_shape=spatial_shape,
+                affine=inputs.affine,
+                header=inputs.header,
+            )
+        )
+        self._save_fit_qc_data(
+            rel_cbf=maps.rel_cbf,
+            concentration=baseline.concentration,
+            aif=baseline.aif,
+            mask_bool=inputs.mask_bool,
+            dt=inputs.dt,
+            method=inputs.method,
+            inference=inputs.inference,
+            mcmc_samples=inputs.mcmc_samples,
+            cpi_control_points=inputs.cpi_control_points,
+            cpi_infer_cpt=inputs.cpi_infer_cpt,
+            cpi_infer_delay=inputs.cpi_infer_delay,
+            threshold=inputs.svd_threshold,
+            oi_threshold=inputs.oi_threshold,
+            signal=inputs.signal,
+        )
+        self._add_fit_qc_metrics(maps.rel_cbv, qc)
+
+        if inputs.method in ("cpi", "vascular"):
+            results.update(
+                self._save_parametric_maps(
+                    rel_cbf=maps.rel_cbf,
+                    rel_cbv=maps.rel_cbv,
+                    cbf_std=maps.cbf_std,
+                    cbv_std=deconvolution.cbv_std,
+                    cbf_ci_lower=maps.cbf_ci_lower,
+                    cbf_ci_upper=maps.cbf_ci_upper,
+                    cbv_ci_lower=deconvolution.cbv_ci_lower,
+                    cbv_ci_upper=deconvolution.cbv_ci_upper,
+                    parametric_r2=deconvolution.parametric_r2,
+                    fallback_mask=deconvolution.fallback_mask,
+                    mask_bool=inputs.mask_bool,
+                    inference=inputs.inference,
+                    affine=inputs.affine,
+                    header=inputs.header,
+                )
+            )
+        return results
+
     def _first_pass_reference(
         self,
         fp_area: npt.NDArray[Any],
         mask_bool: npt.NDArray[Any],
+        affine: npt.NDArray[Any],
     ) -> "tuple[float, int] | None":
         """Median first-pass area over the eroded whole-WM (FAST) reference.
 
@@ -772,10 +2032,13 @@ class ComputeDSCMaps(BaseInterface):
             or not Path(str(wm)).exists()
         ):
             return None
-        wm_mask = nib.load(str(wm)).get_fdata() > 0  # type: ignore[attr-defined]
+        wm_img = nib.load(str(wm))
+        wm_mask = wm_img.get_fdata() > 0  # type: ignore[attr-defined]
         # An off-grid WM mask (e.g. a partial-FOV reference) would raise on the
         # boolean AND; a mismatched reference is not usable, so reject it.
-        if wm_mask.shape != mask_bool.shape:
+        if wm_mask.shape != mask_bool.shape or not np.allclose(
+            wm_img.affine, affine, rtol=0.0, atol=1e-3  # type: ignore[attr-defined]
+        ):
             return None
         wm_vals = fp_area[wm_mask & mask_bool]
         wm_vals = wm_vals[np.isfinite(wm_vals)]
@@ -842,9 +2105,21 @@ class ComputeDSCMaps(BaseInterface):
         # Sanitize before smoothing: gaussian_filter would otherwise spread a
         # single non-finite voxel across a ~sigma neighbourhood (a hole in the
         # map). The fit's own nan_to_num runs too late to prevent that.
-        smoothed = gaussian_filter(
-            np.nan_to_num(raw_conc_data, nan=0.0, posinf=0.0, neginf=0.0),
+        finite_concentration = np.nan_to_num(
+            raw_conc_data, nan=0.0, posinf=0.0, neginf=0.0
+        )
+        mask_float = mask_bool.astype(np.float64)
+        smooth_denominator = gaussian_filter(mask_float, sigma=sigma_vox)
+        smooth_numerator = gaussian_filter(
+            finite_concentration * mask_float[..., None],
             sigma=(sigma_vox[0], sigma_vox[1], sigma_vox[2], 0.0),
+        )
+        smoothed = np.zeros_like(smooth_numerator)
+        np.divide(
+            smooth_numerator,
+            smooth_denominator[..., None],
+            out=smoothed,
+            where=smooth_denominator[..., None] > 1e-6,
         )
 
         fp_res = batched_gamma_firstpass_auc(
@@ -853,7 +2128,7 @@ class ComputeDSCMaps(BaseInterface):
         fp_area = np.full(spatial_shape, np.nan, dtype=np.float64)
         fp_area[mask_bool] = fp_res.auc  # NaN on unfittable voxels
 
-        reference = self._first_pass_reference(fp_area, mask_bool)
+        reference = self._first_pass_reference(fp_area, mask_bool, affine)
         if reference is None:
             qc_metrics["firstpass_reference"] = "unavailable-wm-reference-rejected"
             logger.warning(
@@ -867,9 +2142,9 @@ class ComputeDSCMaps(BaseInterface):
         np.divide(fp_area, reference_value, out=rel_cbv_fp, where=mask_bool)
         # Upper sentinel only (mirror the primary AUC-CBV clamp at 10). No lower
         # clip; half-rectifying biases low-CBV voxels and inflates the reference
-        # median. Unfittable (NaN) and out-of-mask voxels stay NaN.
+        # median. Unfittable in-mask voxels stay NaN; the image background is 0.
         with np.errstate(invalid="ignore"):
-            rel_cbv_fp = np.where(mask_bool, np.minimum(rel_cbv_fp, 10.0), np.nan)
+            rel_cbv_fp = np.where(mask_bool, np.minimum(rel_cbv_fp, 10.0), 0.0)
 
         path = self._gen_outfilename("_rel_cbv_firstpass")
         cast_data = rel_cbv_fp.astype(np.float32)
@@ -887,114 +2162,6 @@ class ComputeDSCMaps(BaseInterface):
         # lands in the map's own sidecar provenance, not only the docstring.
         qc_metrics["firstpass_prefit_fwhm_mm"] = float(_FIRSTPASS_PREFIT_FWHM_MM)
         return path
-
-    def _detect_baseline_frames(
-        self,
-        aif: npt.NDArray[Any],
-        configured_baseline: int,
-        concentration_data: Optional[npt.NDArray[Any]] = None,
-        mask: Optional[npt.NDArray[Any]] = None,
-    ) -> tuple[int, dict[str, Any]]:
-        """Validate and refine baseline using the AIF-detected value.
-
-        The primary baseline comes from AIF detection (ensemble on p99
-        brain concentration, wired via ``baseline_frames`` input).  This
-        function cross-validates by running the ensemble on the AIF curve
-        itself.  Falls back to the configured ``pre_bolus`` value when the
-        primary is unavailable (e.g., synthetic AIF).
-
-        Parameters
-        ----------
-        aif : npt.NDArray[Any]
-            1D AIF concentration curve.
-        configured_baseline : int
-            AIF-detected baseline (or pre_bolus fallback).
-        concentration_data : npt.NDArray[Any], optional
-            Optional 4D concentration array for fallback.
-        mask : npt.NDArray[Any], optional
-            Optional 3D brain mask for fallback.
-
-        Returns
-        -------
-        tuple of (int, dict)
-            Tuple of (n_baseline, detection_info dict).
-        """
-        import logging as _logging
-
-        from pmriprep.utils.baseline_detection import detect_baseline_ensemble
-
-        logger = _logging.getLogger(__name__)
-        fallback = int(self.inputs.fallback_baseline_frames)
-        info: dict[str, Any] = {"baseline_frames_configured": configured_baseline}
-
-        if len(aif) < 3:
-            info.update(
-                baseline_detection_method="fallback_short_aif",
-                baseline_frames_detected=fallback,
-            )
-            return fallback, info
-
-        # Primary: use AIF-detected value (from p99 ensemble upstream)
-        primary = configured_baseline
-
-        # Cross-validate: run ensemble on the AIF curve itself
-        try:
-            tr = float(self.inputs.tr) if hasattr(self.inputs, "tr") else 1.5
-            validation, val_diag = detect_baseline_ensemble(
-                np.maximum(aif, 0.0), tr=tr, min_baseline=2,
-            )
-
-            aif_confidence = val_diag.get("confidence", "low")
-            info["validation_arrival"] = validation
-            info["validation_confidence"] = aif_confidence
-            info["validation_method"] = val_diag.get("method", "unknown")
-
-            # Confidence-based override: AIF curve has cleaner bolus
-            # signature than p99 brain concentration for preloaded data.
-            if primary <= fallback and validation > fallback:
-                # Primary was at default (no real detection) — use AIF
-                primary = validation
-                info["baseline_detection_method"] = "auto_aif_ensemble"
-            elif (
-                aif_confidence == "high"
-                and abs(validation - primary) > 5
-            ):
-                # AIF strongly disagrees with high confidence — override.
-                # The AIF curve is a clean arterial signal; p99 can be
-                # fooled by preload washout fluctuations.
-                logger.info(
-                    "AIF ensemble overrides p99: AIF=%d (conf=%s), "
-                    "p99=%d",
-                    validation, aif_confidence, primary,
-                )
-                primary = validation
-                info["baseline_detection_method"] = "auto_aif_override"
-            elif validation > primary + 3:
-                # Moderate disagreement — log but keep primary
-                logger.warning(
-                    "Baseline validation disagrees: AIF=%d, p99=%d "
-                    "— keeping primary",
-                    validation, primary,
-                )
-                info["baseline_detection_method"] = "primary_aif_detected"
-            else:
-                info["baseline_detection_method"] = "primary_aif_detected"
-
-        except Exception:
-            info["baseline_detection_method"] = "primary_no_validation"
-
-        # Sanity: at least 2, at most half the acquisition
-        if primary < 2 or primary > len(aif) // 2:
-            info.update(
-                baseline_detection_method="fallback_range",
-                baseline_frames_detected=fallback,
-                arrival_index=primary,
-            )
-            return fallback, info
-
-        info["baseline_frames_detected"] = primary
-        info["arrival_index"] = primary
-        return primary, info
 
     def _deconvolve_svd(
         self,
@@ -1021,7 +2188,6 @@ class ComputeDSCMaps(BaseInterface):
             tikhonov_deconvolve_batch,
         )
 
-        spatial_shape = concentration_data.shape[:3]
         qc_metrics: dict[str, Any] = {"method": method}
 
         # Initialize output arrays
@@ -1134,8 +2300,11 @@ class ComputeDSCMaps(BaseInterface):
         alpha_map = np.zeros(spatial_shape, dtype=np.float64) if method == "vascular" else None
         beta_map = np.zeros(spatial_shape, dtype=np.float64) if method == "vascular" else None
         cth_map = np.zeros(spatial_shape, dtype=np.float64) if method == "vascular" else None
-        cbf_std_map = np.zeros(spatial_shape, dtype=np.float64) if method in ("cpi", "vascular") else None
-        cbv_std_map = np.zeros(spatial_shape, dtype=np.float64) if method in ("cpi", "vascular") else None
+        cbf_std_map = np.full(spatial_shape, np.nan, dtype=np.float64) if method in ("cpi", "vascular") else None
+        # CBV is derived from correlated fitted parameters. Neither scalar nor
+        # batched fit results retain the joint covariance needed to propagate
+        # its uncertainty, so no CBV uncertainty map is emitted.
+        cbv_std_map = None
         # Parametric-fit R² map and oSVD-fallback mask (parametric only).
         # R² inits to NaN so plotting tools render outside-brain voxels
         # transparent; raw parametric R² is preserved on fallback voxels
@@ -1150,10 +2319,10 @@ class ComputeDSCMaps(BaseInterface):
             if method in ("cpi", "vascular") else None
         )
         has_ci = inference in ("vi", "svb", "mcmc", "map", "nlls")
-        cbf_ci_lower_map = np.zeros(spatial_shape, dtype=np.float64) if has_ci else None
-        cbf_ci_upper_map = np.zeros(spatial_shape, dtype=np.float64) if has_ci else None
-        cbv_ci_lower_map = np.zeros(spatial_shape, dtype=np.float64) if has_ci else None
-        cbv_ci_upper_map = np.zeros(spatial_shape, dtype=np.float64) if has_ci else None
+        cbf_ci_lower_map = np.full(spatial_shape, np.nan, dtype=np.float64) if has_ci else None
+        cbf_ci_upper_map = np.full(spatial_shape, np.nan, dtype=np.float64) if has_ci else None
+        cbv_ci_lower_map = None
+        cbv_ci_upper_map = None
 
         qc_metrics: dict[str, Any] = {
             "method": method,
@@ -1163,6 +2332,18 @@ class ComputeDSCMaps(BaseInterface):
         # Get mask indices
         mask_coords = np.where(mask > 0)
         n_voxels = len(mask_coords[0])
+        masked_curves = concentration_data[
+            mask_coords[0], mask_coords[1], mask_coords[2], :
+        ]
+        admissible_mask = (
+            np.max(np.abs(masked_curves), axis=1) >= EPSILON_CONCENTRATION
+        )
+        n_admissible = int(np.sum(admissible_mask))
+        qc_metrics.update(
+            n_mask_voxels=n_voxels,
+            n_fit_admissible=n_admissible,
+            n_fit_inadmissible=n_voxels - n_admissible,
+        )
 
         # Estimate bolus duration once from AIF for CPI
         bolus_duration_frames = estimate_bolus_duration(aif)
@@ -1256,11 +2437,16 @@ class ComputeDSCMaps(BaseInterface):
                     _dsc_fit_single_voxel, voxel_data_list,
                     chunksize=chunk_size,
                 ))
-            except (KeyboardInterrupt, SystemExit):
-                logger.warning("Interrupted during parallel DSC fitting, cancelling workers")
+            except BaseException:
+                from pmriprep.utils.processes import terminate_process_pool
+
+                logger.warning(
+                    "Parallel DSC fitting aborted; terminating workers"
+                )
+                terminate_process_pool(executor)
                 raise
-            finally:
-                executor.shutdown(wait=False, cancel_futures=True)
+            else:
+                executor.shutdown(wait=True, cancel_futures=True)
         else:
             # Serial path: avoid multiprocessing overhead
             _dsc_init_worker(*init_args)
@@ -1269,6 +2455,7 @@ class ComputeDSCMaps(BaseInterface):
 
         # Scatter results into output arrays
         n_converged = 0
+        n_evaluation_budget_exhausted = 0
         r_squared_list: list[float] = []
 
         for res in results:
@@ -1308,6 +2495,8 @@ class ComputeDSCMaps(BaseInterface):
                     parametric_r2_map[x, y, z] = float(res["r_squared"])
             if res.get("converged"):
                 n_converged += 1
+            if res.get("evaluation_budget_exhausted"):
+                n_evaluation_budget_exhausted += 1
 
         # Fallback: run oSVD for voxels where parametric fit failed or R² < 0.5
         # Fall back to oSVD for poor vascular fits; ground truth maps
@@ -1319,12 +2508,20 @@ class ComputeDSCMaps(BaseInterface):
             for res in results
             if res.get("needs_fallback") or res.get("failed")
         ]
+        n_fallback_requested = sum(
+            bool(res.get("needs_fallback") or res.get("failed"))
+            and bool(admissible_mask[index])
+            for index, res in enumerate(results)
+        )
         n_fallback = 0
+        n_fallback_attempted = 0
+        n_fallback_failed = 0
         for coords in fallback_coords:
             x, y, z = coords
             tissue = concentration_data[x, y, z, :]
             if np.max(np.abs(tissue)) < EPSILON_CONCENTRATION:
                 continue
+            n_fallback_attempted += 1
             try:
                 svd_result = svd_deconvolve_oscillation(
                     tissue, aif, dt,
@@ -1334,8 +2531,7 @@ class ComputeDSCMaps(BaseInterface):
                 cbv[x, y, z] = svd_result.cbv
                 mtt[x, y, z] = svd_result.mtt
                 tmax[x, y, z] = svd_result.delay
-                # Zero parametric/uncertainty maps for fallback voxels —
-                # these are SVD-derived, not from parametric fit
+                # Parametric uncertainty is unavailable for SVD fallback voxels.
                 if alpha_map is not None:
                     alpha_map[x, y, z] = 0.0
                 if beta_map is not None:
@@ -1343,13 +2539,13 @@ class ComputeDSCMaps(BaseInterface):
                 if cth_map is not None:
                     cth_map[x, y, z] = 0.0
                 if cbf_std_map is not None:
-                    cbf_std_map[x, y, z] = 0.0
+                    cbf_std_map[x, y, z] = np.nan
                 if cbv_std_map is not None:
                     cbv_std_map[x, y, z] = 0.0
                 if cbf_ci_lower_map is not None:
-                    cbf_ci_lower_map[x, y, z] = 0.0
+                    cbf_ci_lower_map[x, y, z] = np.nan
                 if cbf_ci_upper_map is not None:
-                    cbf_ci_upper_map[x, y, z] = 0.0
+                    cbf_ci_upper_map[x, y, z] = np.nan
                 if cbv_ci_lower_map is not None:
                     cbv_ci_lower_map[x, y, z] = 0.0
                 if cbv_ci_upper_map is not None:
@@ -1358,7 +2554,7 @@ class ComputeDSCMaps(BaseInterface):
                     fallback_mask[x, y, z] = 1
                 n_fallback += 1
             except Exception:
-                pass  # leave as parametric result or zeros
+                n_fallback_failed += 1  # leave as parametric result or zeros
 
         # Compile QC metrics
         if r_squared_list:
@@ -1370,13 +2566,26 @@ class ComputeDSCMaps(BaseInterface):
             # FE/NLP plateau rate is informational only (FABBER 10-iter
             # spec rarely satisfies the strict plateau in 10 iters by
             # design); fit quality is gated by R² in the fallback path.
-            qc_metrics["fe_plateau_rate"] = n_converged / max(1, n_voxels)
+            qc_metrics["fe_plateau_rate"] = n_converged / max(1, n_admissible)
+            if inference == "nlls":
+                qc_metrics["n_evaluation_budget_exhausted"] = (
+                    n_evaluation_budget_exhausted
+                )
+                qc_metrics["evaluation_budget_exhausted_rate"] = (
+                    n_evaluation_budget_exhausted / max(1, n_admissible)
+                )
 
+        qc_metrics["n_fallback_requested"] = n_fallback_requested
+        qc_metrics["n_fallback_attempted"] = n_fallback_attempted
         qc_metrics["n_fallback_osvd"] = n_fallback
+        qc_metrics["n_fallback_failed"] = n_fallback_failed
         # Fallback rate is the actual fit-health signal for parametric
         # methods: voxels rejected by the R² < 0.5 gate fall through to
         # oSVD. Always populated (zero for non-parametric methods).
-        qc_metrics["fallback_rate"] = n_fallback / max(1, n_voxels)
+        qc_metrics["fallback_rate"] = n_fallback / max(1, n_admissible)
+        qc_metrics["fallback_requested_rate"] = (
+            n_fallback_requested / max(1, n_admissible)
+        )
 
         return (cbf, cbv, mtt, tmax, qc_metrics, alpha_map, beta_map, cth_map,
                 cbf_std_map, cbv_std_map,
@@ -1714,32 +2923,19 @@ class ComputeDSCMaps(BaseInterface):
                     "cbf", np.zeros(n_voxels))[i])
                 out["cbf_std"] = cbf_std_val
 
-                if method == "vascular":
-                    sig_cbf = cbf_std_val
-                    sig_mtt = float(batched_result.uncertainties.get(
-                        "mtt", np.zeros(n_voxels))[i])
-                    out["cbv_std"] = float(np.sqrt(
-                        (mtt_val * sig_cbf) ** 2 + (cbf_val * sig_mtt) ** 2
-                    ))
-                else:
-                    out["cbv_std"] = 0.0
-
-            out["cbf_ci95_lower"] = max(cbf_val - 1.96 * cbf_std_val, 0.0)
-            out["cbf_ci95_upper"] = cbf_val + 1.96 * cbf_std_val
-
-            if method == "vascular":
-                sig_cbf_ci = cbf_std_val
-                sig_mtt_ci = float(batched_result.uncertainties.get(
-                    "mtt", np.zeros(n_voxels))[i]) if batched_result.uncertainties else 0.0
-                cbv_lo = (max(cbf_val - 1.96 * sig_cbf_ci, 0.0)
-                          * max(mtt_val - 1.96 * sig_mtt_ci, 0.0))
-                cbv_hi = ((cbf_val + 1.96 * sig_cbf_ci)
-                          * (mtt_val + 1.96 * sig_mtt_ci))
-                out["cbv_ci95_lower"] = cbv_lo
-                out["cbv_ci95_upper"] = cbv_hi
-            else:
-                out["cbv_ci95_lower"] = 0.0
-                out["cbv_ci95_upper"] = 0.0
+            interval_lower = getattr(
+                batched_result, "credible_interval_lower", {}
+            )
+            interval_upper = getattr(
+                batched_result, "credible_interval_upper", {}
+            )
+            if "cbf" in interval_lower and "cbf" in interval_upper:
+                out["cbf_ci95_lower"] = float(
+                    interval_lower["cbf"][i]
+                )
+                out["cbf_ci95_upper"] = float(
+                    interval_upper["cbf"][i]
+                )
 
             out["r_squared"] = float(batched_result.r_squared[i])
             out["converged"] = bool(batched_result.converged[i])
@@ -2182,47 +3378,22 @@ class ComputeDSCMaps(BaseInterface):
 
     def _run_interface(self, runtime: Any) -> Any:
         """Execute DSC map computation."""
-        import nibabel as nib  # type: ignore[import-untyped]
-
-        # Load data
-        conc_img = nib.load(self.inputs.concentration_file)
-        conc_data: npt.NDArray[Any] = conc_img.get_fdata()  # type: ignore[attr-defined]
-        affine = conc_img.affine  # type: ignore[attr-defined]
-        header = conc_img.header  # type: ignore[attr-defined]
-
-        mask_img = nib.load(self.inputs.brain_mask_file)
-        mask: npt.NDArray[Any] = mask_img.get_fdata()  # type: ignore[attr-defined]
-
-        mask_bool = mask > 0
-
-        # Verify brain mask is in DSC space (guaranteed by transform_brain_mask node)
-        if mask.shape[:3] != conc_data.shape[:3]:
-            raise RuntimeError(
-                f"Brain mask shape {mask.shape[:3]} does not match "
-                f"concentration data shape {conc_data.shape[:3]}. "
-                "The brain mask must be in native DSC space. "
-                "Ensure transform_brain_mask node is connected upstream."
-            )
-
-        # Load AIF
-        aif = np.loadtxt(self.inputs.aif_file)
-
-        # Load signal for PSR/PH if provided
-        signal_data: Optional[npt.NDArray[Any]] = None
-        if self.inputs.signal_file:
-            signal_img = nib.load(self.inputs.signal_file)
-            signal_data = signal_img.get_fdata()  # type: ignore[attr-defined]
-
-        # Parameters
-        method = str(self.inputs.method)
-        dt = float(self.inputs.tr)
-        threshold = float(self.inputs.svd_threshold)
-        oi_threshold = float(self.inputs.oi_threshold)
-        cpi_control_points = int(self.inputs.cpi_control_points)
-        cpi_infer_cpt = bool(self.inputs.cpi_infer_cpt)
-        cpi_infer_delay = bool(self.inputs.cpi_infer_delay)
-        inference = str(self.inputs.inference)
-        mcmc_samples = int(self.inputs.mcmc_samples)
+        inputs = self._load_compute_inputs()
+        conc_data = inputs.concentration
+        header = inputs.header
+        mask = inputs.mask
+        mask_bool = inputs.mask_bool
+        aif = inputs.aif
+        signal_data = inputs.signal
+        method = inputs.method
+        dt = inputs.dt
+        threshold = inputs.svd_threshold
+        oi_threshold = inputs.oi_threshold
+        cpi_control_points = inputs.cpi_control_points
+        cpi_infer_cpt = inputs.cpi_infer_cpt
+        cpi_infer_delay = inputs.cpi_infer_delay
+        inference = inputs.inference
+        mcmc_samples = inputs.mcmc_samples
 
         # SVD methods are direct matrix decompositions — Bayesian/NLLS
         # inference only applies to parametric fitting (cpi, vascular).
@@ -2236,719 +3407,56 @@ class ComputeDSCMaps(BaseInterface):
         # (DRO matrix data — see tests/benchmarks/run_cpi_infer_cpt_map_vs_vb.py)
         _warn_invalid_cpi_combo(method, inference, cpi_infer_cpt)
 
-        baseline_frames = int(self.inputs.baseline_frames)
-        tail_frames = int(self.inputs.tail_frames)
-
-        # Auto-detect baseline frames from AIF
-        detected_baseline, baseline_detection_info = self._detect_baseline_frames(
-            aif, baseline_frames, concentration_data=conc_data, mask=mask
-        )
-
-        te = float(self.inputs.te)
-
-        # Re-compute S0/concentration with detected baseline when it differs
-        # from the signal_to_conc baseline (which used config.pre_bolus).
-        # This handles both shorter (earlier arrival) and longer (preloaded)
-        # baselines.
-        recomputed_raw_conc: Optional[npt.NDArray[Any]] = None
-        if detected_baseline != baseline_frames and signal_data is not None:
-            new_s0 = np.mean(
-                signal_data[..., :detected_baseline], axis=-1, keepdims=True
-            )
-            new_s0 = np.maximum(new_s0, EPSILON_SIGNAL)
-            signal_ratio = signal_data / new_s0
-            signal_ratio = np.maximum(signal_ratio, EPSILON_SIGNAL)
-            recomputed_raw_conc = -np.log(signal_ratio) / te
-
-            # Re-extract AIF from updated concentration to maintain S0
-            # consistency. Unlike single-voxel extraction, we re-extract
-            # from the full AIF ROI and re-smooth — matching the initial
-            # AIF quality while using the updated S0 baseline.
-            if (
-                isdefined(self.inputs.aif_mask_file)
-                and self.inputs.aif_mask_file
-            ):
-                aif_mask_img = nib.load(self.inputs.aif_mask_file)
-                aif_mask_data = np.asarray(aif_mask_img.dataobj) > 0.5  # type: ignore[attr-defined]
-                assert recomputed_raw_conc is not None  # guaranteed by outer if
-                if aif_mask_data.shape[:3] == recomputed_raw_conc.shape[:3]:
-                    roi_voxels = recomputed_raw_conc[aif_mask_data]
-                    if roi_voxels.ndim == 2 and roi_voxels.shape[0] > 0:
-                        aif = np.mean(roi_voxels, axis=0)
-                        if len(aif) >= 5:
-                            from scipy.signal import savgol_filter  # type: ignore[import-untyped]
-                            from pmriprep.utils.dsc_constants import (
-                                AIF_SMOOTHING_TARGET_SECONDS,
-                            )
-
-                            # Window length scales with TR so smoothing
-                            # tracks bolus FWHM regardless of acquisition
-                            # rate. Hardcoded window=5 was correct only
-                            # for TR≈1.5 s; under-smoothed at TR=0.5 s,
-                            # peak-distorting at TR=3 s.
-                            if not np.isfinite(dt) or dt <= 0.0:
-                                window_length = 5
-                            else:
-                                target_samples = int(
-                                    round(AIF_SMOOTHING_TARGET_SECONDS / dt)
-                                )
-                                window_length = max(5, target_samples | 1)
-                            # Clamp to the largest odd value ≤ len(aif).
-                            cap = len(aif) if len(aif) % 2 else len(aif) - 1
-                            window_length = min(window_length, cap)
-                            aif = savgol_filter(
-                                aif, window_length=window_length, polyorder=2
-                            )
-                        # No non-negative clip: AIF can have negative noise
-                        # in post-bolus frames. Baseline subtraction (below)
-                        # zeros the baseline; symmetric noise is correct.
-
-            # Re-apply K2 correction to updated concentration
-            from pmriprep.utils.dsc_preload import apply_k2_correction
-
-            assert recomputed_raw_conc is not None  # guaranteed by outer if
-            k2_result = apply_k2_correction(
-                concentration=recomputed_raw_conc,
-                brain_mask=mask.astype(bool),
-                tr=dt,
-                baseline_frames=detected_baseline,
-            )
-            conc_data = k2_result.concentration_corrected
-
-            baseline_detection_info["s0_recomputed"] = True
-            baseline_detection_info["s0_recomputed_frames"] = detected_baseline
-            baseline_detection_info["k2_recomputed"] = True
-
+        tail_frames = inputs.tail_frames
+        baseline = self._prepare_baseline_and_leakage(inputs)
+        conc_data = baseline.concentration
+        aif = baseline.aif
+        detected_baseline = baseline.detected_frames
+        n_bl = baseline.n_baseline
+        baseline_detection_info = baseline.detection_info
         spatial_shape = conc_data.shape[:3]
 
-        # Save K2 map: use recomputed K2 when baseline changed, else pass through
-        k2_map_out_path: Optional[str] = None
-        if detected_baseline < baseline_frames and recomputed_raw_conc is not None:
-            # K2 was recomputed with detected baseline — save it
-            k2_map_data = k2_result.k2_map  # type: ignore[possibly-undefined]
-            k2_map_out_path = self._gen_outfilename("_k2")
-            k2_img = nib.Nifti1Image(  # type: ignore[attr-defined]
-                k2_map_data.astype(np.float32), affine, header
-            )
-            nib.save(k2_img, k2_map_out_path)  # type: ignore[attr-defined]
-        elif (
-            isdefined(self.inputs.k2_map_input_file)
-            and self.inputs.k2_map_input_file
-            and Path(str(self.inputs.k2_map_input_file)).is_file()
-        ):
-            # No recomputation — pass through the preload_correct K2 map
-            k2_map_out_path = str(self.inputs.k2_map_input_file)
-
-        # Baseline-subtract AIF and concentration for deconvolution.
-        # Change 1 (in apply_k2_correction) zeroed conc baseline before K2,
-        # so conc subtraction is a no-op when K2 ran. AIF from file still
-        # has its offset; this removes it. Also catches edge cases where
-        # K2 was skipped. Unconditional: for non-preloaded data, baseline
-        # is approximately zero (no-op).
-        n_bl = max(detected_baseline, 4)
-        aif_bl_offset = float(np.mean(aif[:n_bl]))
-        aif = aif - aif_bl_offset
-        conc_bl_offset = np.mean(conc_data[..., :n_bl], axis=-1, keepdims=True)
-        conc_data = conc_data - conc_bl_offset
-        baseline_detection_info["aif_baseline_offset"] = round(aif_bl_offset, 4)
-        baseline_detection_info["conc_median_baseline_offset"] = round(
-            float(np.median(conc_bl_offset[mask > 0])), 4
+        motion_weighting = self._prepare_motion_weighting(
+            method, header, conc_data.shape[3], dt, detected_baseline
         )
-
-        # Run deconvolution based on method
-        delay: Optional[npt.NDArray[Any]] = None
-        residues: Optional[npt.NDArray[Any]] = None
-        cbf_std_map: Optional[npt.NDArray[Any]] = None
-        cbv_std_map: Optional[npt.NDArray[Any]] = None
-        cbf_ci_lower_map: Optional[npt.NDArray[Any]] = None
-        cbf_ci_upper_map: Optional[npt.NDArray[Any]] = None
-        cbv_ci_lower_map: Optional[npt.NDArray[Any]] = None
-        cbv_ci_upper_map: Optional[npt.NDArray[Any]] = None
-        qc_metrics: dict[str, Any] = {}
-
-        # Compute motion weights for parametric fitting (vascular/CPI only)
-        motion_weights: Optional[npt.NDArray[np.floating]] = None
-        if (
-            method in ("vascular", "cpi")
-            and isdefined(self.inputs.fd_values)
-            and self.inputs.fd_values
-        ):
-            voxel_dims = header.get_zooms()[:3]  # type: ignore[attr-defined]
-            min_voxel_dim = float(min(voxel_dims))
-            bolus_frame = int(self.inputs.baseline_frames)
-            motion_weights = _compute_dsc_motion_weights(
-                fd_values=self.inputs.fd_values,
-                bolus_frame=bolus_frame,
-                n_frames=conc_data.shape[3],
-                min_voxel_dim=min_voxel_dim,
-                tr=dt,
-            )
-            first_pass_frames = int(np.ceil(15.0 / max(dt, 0.5)))
-            first_pass_end = min(bolus_frame + first_pass_frames, conc_data.shape[3] - 1)
-            n_downweighted = int(np.sum(motion_weights < 0.95))
-            motion_weighting_qc = {
-                "applied": True,
-                "n_downweighted_frames": n_downweighted,
-                "min_weight": float(np.min(motion_weights)),
-                "first_pass_weights": motion_weights[bolus_frame:first_pass_end + 1].tolist(),
-            }
-            logger.info(
-                "DSC motion weighting: %d/%d frames downweighted (min weight=%.3f)",
-                n_downweighted, conc_data.shape[3], float(np.min(motion_weights)),
-            )
-
-        if method in ("sSVD", "oSVD", "tikhonov"):
-            cbf, cbv, mtt, tmax, delay, residues, qc_metrics = self._deconvolve_svd(
-                conc_data, aif, mask, method, dt, threshold, oi_threshold
-            )
-        else:  # vascular or cpi
-            (cbf, cbv, mtt, tmax, qc_metrics, alpha_map, beta_map,
-             cth_map, cbf_std_map, cbv_std_map,
-             cbf_ci_lower_map, cbf_ci_upper_map,
-             cbv_ci_lower_map, cbv_ci_upper_map,
-             parametric_r2_map,
-             fallback_mask) = self._deconvolve_parametric(
-                conc_data, aif, mask, method, dt, inference, mcmc_samples, cpi_control_points,
-                cpi_infer_cpt,
-                cpi_infer_delay,
-                motion_weights=motion_weights,
-            )
-            # Merge motion weighting QC into parametric QC dict
-            if motion_weights is not None:
-                qc_metrics["motion_weighting"] = motion_weighting_qc
-            else:
-                qc_metrics["motion_weighting"] = {"applied": False}
-
-        # Compute PSR and PH
-        psr: npt.NDArray[Any]
-        ph: npt.NDArray[Any]
-        if signal_data is not None:
-            # Use raw signal for PSR/PH
-            psr_result = compute_psr_legacy(signal_data, detected_baseline, tail_frames)
-            ph_result = compute_peak_height_legacy(signal_data, detected_baseline)
-            # Convert to ndarray if scalar (shouldn't happen with 4D input)
-            if isinstance(psr_result, float):
-                psr = np.full(spatial_shape, psr_result, dtype=np.float64)
-            else:
-                psr = psr_result
-            if isinstance(ph_result, float):
-                ph = np.full(spatial_shape, ph_result, dtype=np.float64)
-            else:
-                ph = ph_result
-        else:
-            # Use concentration (note: interpretation differs)
-            # For concentration, PSR/PH are computed from inverted signal
-            psr = np.zeros(spatial_shape, dtype=np.float64)
-            ph = np.zeros(spatial_shape, dtype=np.float64)
-            # Note: PSR/PH from concentration requires different formula
-            # For now, output zeros - proper implementation needs raw signal
-            qc_metrics["psr_ph_from_signal"] = False
-
-        # -----------------------------------------------------------
-        # Load raw (pre-K2) concentration if available
-        # Used for AUC, TTP, and CNR (these reflect first-pass bolus
-        # timing, not BBB permeability from K2 correction)
-        # -----------------------------------------------------------
-        raw_conc_data: npt.NDArray[Any]
-        if recomputed_raw_conc is not None:
-            # S0 was re-computed with detected baseline — use that
-            raw_conc_data = recomputed_raw_conc
-        elif self.inputs.raw_concentration_file:
-            raw_conc_img = nib.load(self.inputs.raw_concentration_file)
-            raw_conc_data = raw_conc_img.get_fdata()  # type: ignore[attr-defined]
-        else:
-            # No K2 correction was applied — raw == corrected
-            raw_conc_data = conc_data
-
-        # Compute TTP from raw concentration (post-bolus argmax)
-        # Returns unclipped values so derived maps use true peak times
-        ttp_raw = compute_ttp_legacy(raw_conc_data, detected_baseline, dt)
-
-        # AIF-corrected TTP: subtract AIF bolus arrival time (from unclipped)
-        aif_bat_frames = baseline_detection_info.get("arrival_index", detected_baseline)
-        aif_bat_seconds = float(aif_bat_frames) * dt
-        ttp_corrected = ttp_raw - aif_bat_seconds
-
-        # Warn if many brain voxels have negative TTPc
-        n_negative = int(np.sum(mask_bool & (ttp_corrected < 0)))
-        n_mask = int(np.sum(mask_bool))
-        if n_mask > 0 and n_negative / n_mask > 0.05:
-            logger.warning(
-                "%.1f%% of brain voxels have negative TTPc (ttp < aif_bat=%.1fs). "
-                "Check AIF QC.",
-                100.0 * n_negative / n_mask,
-                aif_bat_seconds,
-            )
-
-        ttp_corrected = np.clip(ttp_corrected, 0.0, 30.0)
-        ttp_corrected = np.where(np.isnan(ttp_raw), np.nan, ttp_corrected)
-
-        # NAWM-relative TTP (from unclipped values)
-        rttp: Optional[npt.NDArray[Any]] = None
-        if (
-            isdefined(self.inputs.nawm_mask_file)
-            and str(self.inputs.nawm_mask_file) not in ("", "None")
-            and Path(self.inputs.nawm_mask_file).exists()
-        ):
-            nawm_img = nib.load(self.inputs.nawm_mask_file)
-            nawm_mask = nawm_img.get_fdata() > 0  # type: ignore[attr-defined]
-            nawm_ttp = ttp_raw[nawm_mask]
-            nawm_ttp = nawm_ttp[np.isfinite(nawm_ttp)]
-            if len(nawm_ttp) > 100:
-                rttp = ttp_raw - np.median(nawm_ttp)
-                rttp = np.where(np.isnan(ttp_raw), np.nan, rttp)  # type: ignore[arg-type]
-
-        # Clip raw TTP for output (after derived maps computed)
-        ttp = np.clip(ttp_raw, 0.0, 60.0)
-
-        # -----------------------------------------------------------
-        # AUC decomposition: raw (pre-K2), corrected (post-K2), diff
-        # -----------------------------------------------------------
-        # Trapezoidal integration (O(dt^2)) of the bolus passage, per the
-        # QIBA DSC Profile.
-        #
-        # raw_conc_data is pre-K2 and pre-baseline-subtraction (preloaded
-        # subjects carry residual ΔR2* baseline). Subtract per-voxel
-        # baseline before integrating so auc_diff = auc_raw - auc_corr
-        # reflects integrated K2 leakage correction, not residual baseline.
-        raw_conc_for_auc = raw_conc_data - np.mean(
-            raw_conc_data[..., :n_bl], axis=-1, keepdims=True
+        deconvolution = self._run_deconvolution(
+            concentration=conc_data,
+            aif=aif,
+            mask=mask,
+            method=method,
+            dt=dt,
+            threshold=threshold,
+            oi_threshold=oi_threshold,
+            inference=inference,
+            mcmc_samples=mcmc_samples,
+            cpi_control_points=cpi_control_points,
+            cpi_infer_cpt=cpi_infer_cpt,
+            cpi_infer_delay=cpi_infer_delay,
+            motion_weighting=motion_weighting,
         )
-        # Upper bound 10000 rejects sentinel/overflow voxels. No lower
-        # bound: half-rectifying symmetric noise biases NAWM voxels (the
-        # nCBV denominator) upward, depressing tumor nCBV near the 1.75
-        # progression cutoff.
-        auc_corr = np.minimum(np.trapezoid(conc_data, dx=dt, axis=-1), 10000.0)
-        auc_raw = np.minimum(np.trapezoid(raw_conc_for_auc, dx=dt, axis=-1), 10000.0)
-        auc_diff = auc_raw - auc_corr
-
-        # -----------------------------------------------------------
-        # AUC-based CBV: full bolus passage per ASFNR/NCI/ABTC consensus.
-        # Window: BAT → end of acquisition on K2-corrected tissue ΔR2*;
-        # denominator is measured AIF over the same window. Recirculation
-        # contributes to both integrals and cancels in the ratio.
-        # BAT = first frame of bolus rise (from AIF detection); numerator
-        # and denominator share bolus_slice so any BAT off-by-one shifts
-        # both identically — ratio is robust.
-        # conc_data is already ΔR2* with zero baseline by construction
-        # (upstream baseline subtraction above); only the measured AIF
-        # needs explicit baseline subtraction here.
-        # -----------------------------------------------------------
-        cbv_auc: npt.NDArray[Any]
-        n_timepoints = conc_data.shape[-1]
-        bat = int(baseline_detection_info.get("arrival_index", detected_baseline))
-        bolus_slice = slice(bat, n_timepoints)
-        _preload_class_auc = str(self.inputs.preload_classification)
-
-        if (
-            isdefined(self.inputs.measured_aif_file)
-            and self.inputs.measured_aif_file
-            and Path(str(self.inputs.measured_aif_file)).is_file()
-        ):
-            measured_aif = np.loadtxt(self.inputs.measured_aif_file)
-            aif_for_auc = measured_aif - float(np.mean(measured_aif[:n_bl]))
-            aif_auc = float(np.trapezoid(aif_for_auc[bolus_slice], dx=dt))
-            tissue_auc_bolus = np.trapezoid(conc_data[..., bolus_slice], dx=dt, axis=-1)
-
-            if aif_auc < EPSILON_SIGNAL:
-                logger.warning("AIF AUC near-zero (%.6f); AUC CBV unavailable", aif_auc)
-                cbv_auc = np.full(spatial_shape, np.nan, dtype=np.float64)
-            else:
-                # Upper bound rejects sentinel voxels. No lower bound:
-                # NAWM-normalization (downstream) requires unbiased
-                # negatives; half-rectifying here inflates the denominator.
-                cbv_auc = np.minimum(tissue_auc_bolus / aif_auc, 10.0)
-
-            qc_metrics["cbv_auc_bat_frame"] = bat  # first frame of bolus rise
-            qc_metrics["cbv_auc_end_frame"] = n_timepoints
-            qc_metrics["cbv_auc_aif_integral"] = round(aif_auc, 6)
-        else:
-            logger.warning("Measured AIF not available; AUC CBV set to NaN")
-            cbv_auc = np.full(spatial_shape, np.nan, dtype=np.float64)
-            qc_metrics["cbv_auc_measured_aif_missing"] = True
-
-        # Preload QC warning: residual extravasation biases full-bolus AUC CBV
-        # in EITHER direction, and BSW is blind to one of them. No/low preload
-        # → T1-dominant negative ΔR2* dip → BSW under-recovers → CBV biased LOW.
-        # Over/atypical preload → persistent positive T2* tail → K2 pins at 0
-        # (non-negative gate) → CBV biased HIGH and BSW cannot correct it.
-        _PRELOAD_INDICATORS = {"half_dose", "significant", "severe"}
-        if _preload_class_auc in _PRELOAD_INDICATORS:
-            qc_metrics["cbv_auc_preload_warning"] = (
-                f"Preload classification '{_preload_class_auc}': residual "
-                "leakage may bias full-bolus AUC CBV low (T1-dip, BSW "
-                "under-recovers) or high (positive T2* tail, BSW-uncorrectable). "
-                "Interpret with caution."
-            )
-
-        # CNR: peak concentration / baseline std per voxel (from raw conc)
-        # Uses ddof=0 (default) and full-timeseries peak
-        # Suppress RuntimeWarnings from np.where eagerly evaluating both
-        # branches (division in true branch, guard in condition).
-        baseline_std = np.std(raw_conc_data[..., :detected_baseline], axis=-1)
-        peak_conc = np.max(raw_conc_data, axis=-1)
-        with np.errstate(divide="ignore", invalid="ignore"):
-            cnr = np.where(
-                baseline_std > EPSILON_CONCENTRATION,
-                peak_conc / baseline_std,
-                0.0,
-            )
-
-        # -----------------------------------------------------------
-        # SNR / tSNR (from raw signal, not concentration)
-        # Use auto-detected baseline frames from AIF bolus arrival
-        # -----------------------------------------------------------
-        n_timepoints = conc_data.shape[-1]
-        snr_baseline_frames = min(detected_baseline, n_timepoints - 1)
-        if signal_data is not None:
-            baseline_sig = signal_data[..., :snr_baseline_frames]
-            baseline_mean = np.mean(baseline_sig, axis=-1)
-            baseline_std_sig = np.std(baseline_sig, axis=-1, ddof=1)
-            with np.errstate(divide="ignore", invalid="ignore"):
-                snr = np.where(baseline_std_sig > EPSILON_SIGNAL, baseline_mean / baseline_std_sig, 0.0)
-
-                all_mean = np.mean(signal_data, axis=-1)
-                all_std = np.std(signal_data, axis=-1, ddof=1)
-                tsnr = np.where(all_std > EPSILON_SIGNAL, all_mean / all_std, 0.0)
-        else:
-            snr = np.zeros(spatial_shape, dtype=np.float64)
-            tsnr = np.zeros(spatial_shape, dtype=np.float64)
-
-        # -----------------------------------------------------------
-        # SVD-family MTT via the central volume theorem: MTT = CBV / CBF
-        # with the AUC-based CBV. cbv_auc = int(tissue) / int(AIF) = CBF * MTT,
-        # so dividing by the un-scaled s^-1 CBF gives MTT in seconds (the x60
-        # to min^-1 is applied later, to rel_cbf only). The AUC numerator is
-        # robust to the residue broadening the OI gate applies at clinical
-        # noise, so it degrades more gracefully than the residue ratio
-        # int R / max R. Where the measured AIF is absent cbv_auc is NaN
-        # (warned above) and MTT falls to 0. Parametric models keep their
-        # native CBV / CBF MTT and are not re-routed here.
-        # -----------------------------------------------------------
-        if method in ("sSVD", "oSVD", "tikhonov"):
-            with np.errstate(divide="ignore", invalid="ignore"):
-                mtt = np.where(
-                    (cbf > EPSILON_CONCENTRATION) & np.isfinite(cbv_auc),
-                    cbv_auc / cbf,
-                    0.0,
-                )
-
-        # -----------------------------------------------------------
-        # Clip maps to physiological ranges
-        # -----------------------------------------------------------
-        psr = np.clip(psr, 0.0, 200.0)
-        ph = np.clip(ph, 0.0, 100.0)
-        tmax = np.clip(tmax, 0.0, 60.0)
-        mtt = np.clip(mtt, 0.0, 30.0)
-        cbf = np.clip(cbf, 0.0, 100.0)
-        cbv = np.clip(cbv, 0.0, 10.0)
-        cnr = np.clip(cnr, 0.0, 1000.0)
-
-        # -----------------------------------------------------------
-        # Relative maps — apply ×60 to CBF (s⁻¹ → min⁻¹)
-        # -----------------------------------------------------------
         aif_level = str(self.inputs.aif_detection_level)
         preload_class = str(self.inputs.preload_classification)
-
-        rel_cbf = np.clip(cbf * 60.0, 0.0, 100.0)     # min⁻¹
-        rel_cbv = np.clip(cbv, 0.0, 10.0)              # dimensionless
-        rel_auc_raw = auc_raw
-        rel_auc_corr = auc_corr
-
-        # Convert CBF uncertainty maps from s⁻¹ to min⁻¹ (match rel_cbf units)
-        if cbf_std_map is not None:
-            cbf_std_map = cbf_std_map * 60.0  # s⁻¹ → min⁻¹
-        if cbf_ci_lower_map is not None:
-            cbf_ci_lower_map = cbf_ci_lower_map * 60.0  # s⁻¹ → min⁻¹
-        if cbf_ci_upper_map is not None:
-            cbf_ci_upper_map = cbf_ci_upper_map * 60.0  # s⁻¹ → min⁻¹
-
-        # -----------------------------------------------------------
-        # Mask all outputs
-        # -----------------------------------------------------------
-        rel_cbf = np.where(mask_bool, rel_cbf, 0.0)
-        rel_cbv = np.where(mask_bool, rel_cbv, 0.0)
-        rel_cbv_auc = np.where(mask_bool, cbv_auc, 0.0)
-        mtt = np.where(mask_bool, mtt, 0.0)
-        tmax = np.where(mask_bool, tmax, 0.0)
-        ttp = np.where(mask_bool, ttp, 0.0)
-        auc_raw = np.where(mask_bool, auc_raw, 0.0)
-        auc_corr = np.where(mask_bool, auc_corr, 0.0)
-        auc_diff = np.where(mask_bool, auc_diff, 0.0)
-        rel_auc_raw = np.where(mask_bool, rel_auc_raw, 0.0)
-        rel_auc_corr = np.where(mask_bool, rel_auc_corr, 0.0)
-        cnr = np.where(mask_bool, cnr, 0.0)
-        snr = np.where(mask_bool, snr, 0.0)
-        tsnr = np.where(mask_bool, tsnr, 0.0)
-        psr = np.where(mask_bool, psr, 0.0)
-        ph = np.where(mask_bool, ph, 0.0)
-        ttp_corrected = np.where(mask_bool, np.where(np.isnan(ttp_corrected), 0.0, ttp_corrected), 0.0)
-        if rttp is not None:
-            rttp = np.where(mask_bool, np.where(np.isnan(rttp), 0.0, rttp), 0.0)
-
-        # Add general QC metrics
-        qc_metrics.update({
-            "cbf_mean": float(np.mean(rel_cbf[mask_bool])) if np.any(mask_bool) else 0.0,
-            "cbf_std": float(np.std(rel_cbf[mask_bool])) if np.any(mask_bool) else 0.0,
-            "cbv_mean": float(np.mean(rel_cbv[mask_bool])) if np.any(mask_bool) else 0.0,
-            "cbv_auc_mean": float(np.nanmean(rel_cbv_auc[mask_bool])) if np.any(mask_bool) else 0.0,
-            "mtt_mean": float(np.mean(mtt[mask_bool])) if np.any(mask_bool) else 0.0,
-            "tmax_mean": float(np.mean(tmax[mask_bool])) if np.any(mask_bool) else 0.0,
-            "cbf_median": float(np.median(rel_cbf[mask_bool])) if np.any(mask_bool) else 0.0,
-            "cbv_median": float(np.median(rel_cbv[mask_bool])) if np.any(mask_bool) else 0.0,
-            "cbv_auc_median": float(np.nanmedian(rel_cbv_auc[mask_bool])) if np.any(mask_bool) else 0.0,
-            "mtt_median": float(np.median(mtt[mask_bool])) if np.any(mask_bool) else 0.0,
-            "tmax_median": float(np.median(tmax[mask_bool])) if np.any(mask_bool) else 0.0,
-            "n_voxels": int(np.sum(mask_bool)),
-            "aif_detection_level": aif_level,
-            "preload_classification": preload_class,
-        })
-        qc_metrics.update(baseline_detection_info)
-        qc_metrics["aif_bat_seconds"] = aif_bat_seconds
-
-        # When the AIF is synthetic (template), CBV magnitudes (cbv_mean,
-        # cbv_median, cbv_auc_mean, cbv_auc_median) are not comparable
-        # against literature reference ranges — the synthetic AIF's
-        # amplitude is not calibrated to this subject's true arterial
-        # input. Emit an explicit `cbv_literature_range_applicable` flag
-        # so any downstream QC consumer that checks literature ranges
-        # can branch cleanly. Keys remain present with values intact;
-        # only the interpretability annotation changes.
-        qc_metrics["cbv_literature_range_applicable"] = (
-            aif_level != "synthetic"
+        postprocessing = self._prepare_final_outputs(
+            deconvolution=deconvolution,
+            concentration=conc_data,
+            signal=signal_data,
+            spatial_shape=spatial_shape,
+            mask_bool=mask_bool,
+            detected_baseline=detected_baseline,
+            n_baseline=n_bl,
+            baseline_info=baseline_detection_info,
+            dt=dt,
+            tail_frames=tail_frames,
+            method=method,
+            aif_level=aif_level,
+            preload_class=preload_class,
         )
-
-        # -----------------------------------------------------------
-        # Helper to save a 3D array as NIfTI
-        # -----------------------------------------------------------
-        def _save_map(
-            data: npt.NDArray[Any],
-            suffix: str,
-            dtype: Any = np.float32,
-        ) -> str:
-            path = self._gen_outfilename(suffix)
-            # Re-derive a clean header from the upstream concentration
-            # NIfTI's so its `datatype` field doesn't override the
-            # explicit `dtype` we pass in. Without this, nibabel
-            # silently casts e.g. our float32 R² map or uint8 fallback
-            # mask back to the upstream concentration's int16, losing
-            # precision for floats and wasting bits for the mask.
-            cast_data = data.astype(dtype)
-            local_header = cast("nib.Nifti1Header", header.copy())
-            local_header.set_data_dtype(dtype)
-            img = nib.Nifti1Image(cast_data, affine, local_header)  # type: ignore[attr-defined]
-            nib.save(img, path)  # type: ignore[attr-defined]
-            return path
-
-        # -----------------------------------------------------------
-        # Save all output maps
-        # -----------------------------------------------------------
-        # Quantification-independent
-        out_mtt = _save_map(mtt, "_mtt")
-        out_tmax = _save_map(tmax, "_tmax")
-        out_psr = _save_map(psr, "_psr")
-        out_ph = _save_map(ph, "_ph")
-        out_ttp = _save_map(ttp, "_ttp")
-        out_ttp_corrected = _save_map(ttp_corrected, "_ttp_corrected")
-        out_cnr = _save_map(cnr, "_cnr")
-
-        # AUC decomposition
-        out_auc_raw = _save_map(auc_raw, "_auc_raw")
-        out_auc_corr = _save_map(auc_corr, "_auc_corr")
-        out_auc_diff = _save_map(auc_diff, "_auc_diff")
-
-        # Relative maps
-        out_rel_cbf = _save_map(rel_cbf, "_rel_cbf")
-        out_rel_cbv = _save_map(rel_cbv, "_rel_cbv")
-        out_rel_cbv_auc = _save_map(rel_cbv_auc, "_rel_cbv_auc")
-        out_rel_auc_raw = _save_map(rel_auc_raw, "_rel_auc_raw")
-        out_rel_auc_corr = _save_map(rel_auc_corr, "_rel_auc_corr")
-
-        # Quality metrics
-        out_snr = _save_map(snr, "_snr")
-        out_tsnr = _save_map(tsnr, "_tsnr")
-
-        # Store results
-        self._results: dict[str, Any] = {
-            # Quantification-independent
-            "out_mtt": out_mtt,
-            "out_tmax": out_tmax,
-            "out_psr": out_psr,
-            "out_ph": out_ph,
-            "out_ttp": out_ttp,
-            "out_ttp_corrected": out_ttp_corrected,
-            "out_cnr": out_cnr,
-            # AUC decomposition
-            "out_auc_raw": out_auc_raw,
-            "out_auc_corr": out_auc_corr,
-            "out_auc_diff": out_auc_diff,
-            # Relative maps
-            "out_rel_cbf": out_rel_cbf,
-            "out_rel_cbv": out_rel_cbv,
-            "out_rel_cbv_auc": out_rel_cbv_auc,
-            "out_rel_auc_raw": out_rel_auc_raw,
-            "out_rel_auc_corr": out_rel_auc_corr,
-            # Quality metrics
-            "out_snr": out_snr,
-            "out_tsnr": out_tsnr,
-            "qc_metrics": qc_metrics,
-        }
-
-        # -----------------------------------------------------------
-        # Optional: gamma-variate first-pass relative CBV map.
-        # Purely additive stroke / non-tumor output. INERT: nothing
-        # internal (vp constraint, MTT, NAWM normalization) consumes it.
-        # Per-voxel gamma fit to the first pass of RAW (intact-BBB)
-        # concentration (recirculation removed), analytic area normalized
-        # tissue-to-tissue by the eroded whole-WM median. Requires a WM
-        # segmentation; with none the map has no valid anchor and is skipped.
-        # -----------------------------------------------------------
-        # Left unset when off (like out_delay/out_alpha) OR when no WM
-        # reference is available: the output trait has no exists=True, so
-        # nipype reports it Undefined and the datasink's isdefined guard skips
-        # it.
-        if self.inputs.first_pass_cbv:
-            fp_path = self._compute_first_pass_cbv(
-                raw_conc_data=raw_conc_data,
-                mask_bool=mask_bool,
-                spatial_shape=spatial_shape,
-                dt=dt,
-                n_bl=n_bl,
-                affine=affine,
-                header=header,
-                qc_metrics=qc_metrics,
-            )
-            if fp_path:
-                self._results["out_rel_cbv_firstpass"] = fp_path
-
-        # NAWM-relative TTP (conditional on NAWM mask availability)
-        if rttp is not None:
-            self._results["out_rttp"] = _save_map(rttp, "_rttp")
-
-        # K2 map (recomputed or pass-through) — always set
-        if k2_map_out_path is not None:
-            self._results["out_k2"] = k2_map_out_path
-        else:
-            # No K2 available — save a zeros map so downstream nodes always get a file
-            k2_zeros = np.zeros(spatial_shape, dtype=np.float32)
-            k2_fallback_path = self._gen_outfilename("_k2")
-            k2_fallback_img = nib.Nifti1Image(k2_zeros, affine, header)  # type: ignore[attr-defined]
-            nib.save(k2_fallback_img, k2_fallback_path)  # type: ignore[attr-defined]
-            self._results["out_k2"] = k2_fallback_path
-
-        # Save delay map if oSVD
-        if delay is not None:
-            self._results["out_delay"] = _save_map(delay, "_delay")
-
-        # Save alpha/beta/cth maps for vascular method
-        if method in ("vascular", "cpi"):
-            if alpha_map is not None:  # type: ignore[possibly-undefined]
-                alpha_map = np.where(mask_bool, alpha_map, 0.0)
-                self._results["out_alpha"] = _save_map(alpha_map, "_alpha")
-            if beta_map is not None:  # type: ignore[possibly-undefined]
-                beta_map = np.where(mask_bool, beta_map, 0.0)
-                self._results["out_beta"] = _save_map(beta_map, "_beta")
-            if cth_map is not None:  # type: ignore[possibly-undefined]
-                cth_map = np.where(mask_bool, cth_map, 0.0)
-                self._results["out_cth"] = _save_map(cth_map, "_cth")
-
-        # Save QC fit data for all deconvolution methods
-        if method in ("vascular", "cpi"):
-            self._save_qc_fit_data(
-                rel_cbf, conc_data, aif, mask_bool, dt, method,
-                inference, mcmc_samples, cpi_control_points,
-                cpi_infer_cpt,
-                cpi_infer_delay,
-                signal_data=signal_data,
-            )
-        else:
-            self._save_qc_fit_data_svd(
-                rel_cbf, conc_data, aif, mask_bool, dt, method,
-                threshold, oi_threshold,
-                signal_data=signal_data,
-            )
-
-        # Add fit voxel data to QC metrics (for HTML report)
-        if "out_qc_fit_data" in self._results:
-            with open(self._results["out_qc_fit_data"]) as _f:
-                _fit = json.load(_f)
-            vx, vy, vz = _fit["voxel"]
-            qc_metrics["qc_voxel"] = f"({vx}, {vy}, {vz})"
-            qc_metrics["qc_voxel_cbv"] = round(float(rel_cbv[vx, vy, vz]), 4)
-            qc_metrics["qc_voxel_rsquared"] = round(
-                _fit.get("r_squared", 0.0), 4,
-            )
-            # Tier name from _select_dsc_qc_voxel — confirms at a glance
-            # whether the example voxel landed in the enhancing tumor
-            # mask (when one was available) or fell through to brain.
-            tier = getattr(self, "_qc_voxel_tier", None)
-            if tier is not None:
-                qc_metrics["qc_voxel_tier"] = tier
-
-        # Save Bayesian uncertainty maps (parametric methods only)
-        if method in ("cpi", "vascular"):
-            if cbf_std_map is not None:  # type: ignore[possibly-undefined]
-                cbf_std_map = np.where(mask_bool, cbf_std_map, 0.0)
-                self._results["out_cbf_std"] = _save_map(cbf_std_map, "_cbf_std")
-            if cbv_std_map is not None:  # type: ignore[possibly-undefined]
-                cbv_std_map = np.where(mask_bool, cbv_std_map, 0.0)
-                self._results["out_cbv_std"] = _save_map(cbv_std_map, "_cbv_std")
-
-            # Compute CV = std / |mean|, guarded for near-zero denominators.
-            # Use np.divide with where= to avoid RuntimeWarning on zero division.
-            if cbf_std_map is not None:  # type: ignore[possibly-undefined]
-                cbf_cv = np.zeros_like(cbf_std_map)
-                valid_cbf = np.abs(rel_cbf) > EPSILON_CONCENTRATION
-                np.divide(cbf_std_map, np.abs(rel_cbf), out=cbf_cv, where=valid_cbf)
-                cbf_cv = np.where(mask_bool, cbf_cv, 0.0)
-                self._results["out_cbf_cv"] = _save_map(cbf_cv, "_cbf_cv")
-            if cbv_std_map is not None:  # type: ignore[possibly-undefined]
-                cbv_cv = np.zeros_like(cbv_std_map)
-                valid_cbv = np.abs(rel_cbv) > EPSILON_CONCENTRATION
-                np.divide(cbv_std_map, np.abs(rel_cbv), out=cbv_cv, where=valid_cbv)
-                cbv_cv = np.where(mask_bool, cbv_cv, 0.0)
-                self._results["out_cbv_cv"] = _save_map(cbv_cv, "_cbv_cv")
-
-            # Save CI maps only for VI/MCMC (MAP Laplace CI is approximate)
-            if inference in ("vi", "svb", "mcmc"):
-                if cbf_ci_lower_map is not None:  # type: ignore[possibly-undefined]
-                    cbf_ci_lower_map = np.where(mask_bool, cbf_ci_lower_map, 0.0)
-                    self._results["out_cbf_ci95_lower"] = _save_map(
-                        cbf_ci_lower_map, "_cbf_ci95_lower")
-                if cbf_ci_upper_map is not None:  # type: ignore[possibly-undefined]
-                    cbf_ci_upper_map = np.where(mask_bool, cbf_ci_upper_map, 0.0)
-                    self._results["out_cbf_ci95_upper"] = _save_map(
-                        cbf_ci_upper_map, "_cbf_ci95_upper")
-                if cbv_ci_lower_map is not None:  # type: ignore[possibly-undefined]
-                    cbv_ci_lower_map = np.where(mask_bool, cbv_ci_lower_map, 0.0)
-                    self._results["out_cbv_ci95_lower"] = _save_map(
-                        cbv_ci_lower_map, "_cbv_ci95_lower")
-                if cbv_ci_upper_map is not None:  # type: ignore[possibly-undefined]
-                    cbv_ci_upper_map = np.where(mask_bool, cbv_ci_upper_map, 0.0)
-                    self._results["out_cbv_ci95_upper"] = _save_map(
-                        cbv_ci_upper_map, "_cbv_ci95_upper")
-
-            # Parametric-fit R² and oSVD-fallback mask (saved as
-            # diagnostic outputs; not surfaced in HTML report).
-            if parametric_r2_map is not None:  # type: ignore[possibly-undefined]
-                # Mask outside-brain to NaN so plotting tools render the
-                # background as transparent rather than zero.
-                _r2 = np.where(mask_bool, parametric_r2_map, np.nan).astype(np.float32)
-                self._results["out_parametric_r2"] = _save_map(
-                    _r2, "_dscParametric_r2"
-                )
-            if fallback_mask is not None:  # type: ignore[possibly-undefined]
-                _fb = np.where(mask_bool, fallback_mask, 0).astype(np.uint8)
-                self._results["out_fallback_mask"] = _save_map(
-                    _fb, "_dscFallback_mask", dtype=np.uint8,
-                )
-
-        # Save residues if requested
-        if residues is not None and self.inputs.save_residue:
-            out_residues = self._gen_outfilename("_residues")
-            residues_img = nib.Nifti1Image(residues.astype(np.float32), affine)  # type: ignore[attr-defined]
-            nib.save(residues_img, out_residues)  # type: ignore[attr-defined]
-            self._results["out_residues"] = out_residues
+        self._results = self._assemble_outputs(
+            inputs=inputs,
+            baseline=baseline,
+            deconvolution=deconvolution,
+            postprocessing=postprocessing,
+        )
 
         return runtime
 

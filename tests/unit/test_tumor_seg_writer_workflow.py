@@ -171,7 +171,7 @@ def test_tumor_seg_sidecar_sources_populated(
         assert isinstance(body["Sources"], list) and body["Sources"], (
             f"{sc.name} has empty Sources"
         )
-        assert all(s.startswith("bids::") for s in body["Sources"]), sc.name
+        assert all(s.startswith("bids:raw:") for s in body["Sources"]), sc.name
         assert body.get("SpatialReference", "").startswith("bids::"), sc.name
         assert body.get("Resolution") == "native", sc.name
         assert isinstance(body.get("VoxelSize"), list), sc.name

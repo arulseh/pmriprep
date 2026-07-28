@@ -44,6 +44,69 @@ logger = logging.getLogger("nipype.interface")
 _EPSILON_NUMERICAL: Final[float] = 1e-30
 
 
+def _build_vi_update_prior_terms(
+    prior_prec: npt.NDArray[np.floating],
+    prior_means_t: npt.NDArray[np.floating],
+    mono_prec: Optional[npt.NDArray[np.floating]],
+    mono_eta: Optional[npt.NDArray[np.floating]],
+    *,
+    spatial_replaces_parameter_prior: bool,
+    spatial_parameter_mask: Optional[npt.NDArray[np.bool_]] = None,
+) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
+    """Build parameter-update prior terms for ordinary VI or FABBER M-prior.
+
+    Parameters
+    ----------
+    prior_prec : npt.NDArray[np.floating]
+        Complete independent-prior precision, including any structural
+        monotonicity precision.
+    prior_means_t : npt.NDArray[np.floating]
+        Independent-prior means in transformed space.
+    mono_prec : npt.NDArray[np.floating], optional
+        Structural CPI monotonicity precision.
+    mono_eta : npt.NDArray[np.floating], optional
+        Structural CPI monotonicity information-vector contribution.
+    spatial_replaces_parameter_prior : bool
+        Whether a boundary-corrected FABBER M-prior replaces the independent
+        parameter prior.
+    spatial_parameter_mask : npt.NDArray[np.bool_], optional
+        Parameters receiving the M-prior. ``None`` selects every parameter.
+
+    Returns
+    -------
+    tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]
+        Base precision and information vector to which per-voxel spatial
+        contributions are added.
+    """
+    n_params = len(prior_means_t)
+    if spatial_replaces_parameter_prior:
+        selected = (
+            np.ones(n_params, dtype=bool)
+            if spatial_parameter_mask is None
+            else np.asarray(spatial_parameter_mask, dtype=bool)
+        )
+        structural_prec = (
+            np.asarray(mono_prec, dtype=np.float64)
+            if mono_prec is not None
+            else np.zeros((n_params, n_params), dtype=np.float64)
+        )
+        independent_prec = np.asarray(prior_prec, dtype=np.float64) - structural_prec
+        independent_prec = independent_prec.copy()
+        selected_idx = np.flatnonzero(selected)
+        independent_prec[selected_idx, selected_idx] = 0.0
+        update_prec = independent_prec + structural_prec
+        update_eta = update_prec @ np.asarray(prior_means_t, dtype=np.float64)
+        if mono_eta is not None:
+            update_eta = update_eta + mono_eta
+        return update_prec, update_eta
+
+    update_prec = np.asarray(prior_prec, dtype=np.float64)
+    update_eta = update_prec @ np.asarray(prior_means_t, dtype=np.float64)
+    if mono_eta is not None:
+        update_eta = update_eta + mono_eta
+    return update_prec, update_eta
+
+
 # ---------------------------------------------------------------------------
 # Result dataclass
 # ---------------------------------------------------------------------------
@@ -77,6 +140,12 @@ class DSCBatchedFitResult:
     uncertainties: Mapping[str, npt.NDArray[np.floating]] = field(default_factory=dict)
     posterior_means_transformed: Optional[npt.NDArray[np.floating]] = None
     posterior_cov_diag: Optional[npt.NDArray[np.floating]] = None
+    credible_interval_lower: Mapping[str, npt.NDArray[np.floating]] = field(
+        default_factory=dict
+    )
+    credible_interval_upper: Mapping[str, npt.NDArray[np.floating]] = field(
+        default_factory=dict
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -95,7 +164,7 @@ def batched_vascular_forward(
 ) -> npt.NDArray[np.floating]:
     """Batched Vascular model forward evaluation for N voxels.
 
-    Computes tissue concentration via the shared Sourbron (1, 4, 1)/6
+    Computes tissue concentration via the shared (1, 4, 1)/6
     product-integration (Volterra) operator applied to the gamma-variate
     residue, with post-hoc delay shift.
 
@@ -138,8 +207,8 @@ def batched_vascular_forward(
     x = np.maximum(np.asarray(time_points, dtype=np.float64), 0.0)[None, :] / beta_safe[:, None]
     R = cbf[:, None] * (1.0 - gammainc(alpha_safe[:, None], x))
 
-    # Forward via the shared Sourbron (1, 4, 1)/6 product-integration (Volterra)
-    # operator: per voxel C = A @ R, batched as C = R @ Aᵀ. One quadrature across
+    # Forward via the shared (1, 4, 1)/6 product-integration operator: per voxel
+    # C = A @ R, batched as C = R @ Aᵀ. One quadrature across
     # every direct forward (sSVD/Tikhonov/CPI/vascular), matching the scalar
     # tissue_curve. The delay shift is applied AFTER, matching the scalar model.
     A = volterra_matrix if volterra_matrix is not None else build_volterra_matrix(aif, dt)
@@ -444,8 +513,7 @@ def _batched_pchip(
     npt.NDArray[np.floating]
         Interpolated values, shape (N, T).
     """
-    n_voxels, n_knots = y.shape
-    n_eval = len(xi)
+    _, n_knots = y.shape
 
     # Compute intervals and slopes
     h = np.diff(x)  # (K-1,)
@@ -886,6 +954,20 @@ def _concat_dsc_batched_results(
             }
             if head.uncertainties else {}
         ),
+        credible_interval_lower=(
+            {
+                k: np.concatenate([r.credible_interval_lower[k] for r in results])
+                for k in head.credible_interval_lower
+            }
+            if head.credible_interval_lower else {}
+        ),
+        credible_interval_upper=(
+            {
+                k: np.concatenate([r.credible_interval_upper[k] for r in results])
+                for k in head.credible_interval_upper
+            }
+            if head.credible_interval_upper else {}
+        ),
         posterior_means_transformed=(
             np.concatenate(
                 [r.posterior_means_transformed for r in results], axis=0,
@@ -922,11 +1004,19 @@ def _run_chunked_in_pool(
     chunk_kwargs_list = [_chunk_kwargs(full_kwargs, s, e) for (s, e) in chunks]
     if len(chunk_kwargs_list) == 1:
         return worker(chunk_kwargs_list[0])
-    with ProcessPoolExecutor(
+    pool = ProcessPoolExecutor(
         max_workers=len(chunk_kwargs_list),
         initializer=_init_blas_single_threaded,
-    ) as pool:
+    )
+    try:
         results = list(pool.map(worker, chunk_kwargs_list))
+    except BaseException:
+        from pmriprep.utils.processes import terminate_process_pool
+
+        terminate_process_pool(pool)
+        raise
+    else:
+        pool.shutdown(wait=True, cancel_futures=True)
     return _concat_dsc_batched_results(results)
 
 
@@ -956,6 +1046,11 @@ def batched_dsc_vi_fit(
     save_fitted_curves: bool = False,
     spatial_prec_diag: Optional[npt.NDArray[np.floating]] = None,
     spatial_eta: Optional[npt.NDArray[np.floating]] = None,
+    spatial_replaces_parameter_prior: bool = False,
+    spatial_parameter_mask: Optional[npt.NDArray[np.bool_]] = None,
+    initial_means_transformed: Optional[npt.NDArray[np.floating]] = None,
+    initial_cov_diag: Optional[npt.NDArray[np.floating]] = None,
+    initial_noise_precision: Optional[npt.NDArray[np.floating]] = None,
     return_posteriors: bool = False,
     n_iterations_override: Optional[int] = None,
     nprocs: int = 1,
@@ -1017,6 +1112,22 @@ def batched_dsc_vi_fit(
         N must match tissue_curves.shape[0].
     spatial_eta : npt.NDArray[np.floating], optional
         Per-voxel spatial mean contribution, shape (N, P).
+    spatial_replaces_parameter_prior : bool, optional
+        Replace the independent parameter prior with ``spatial_prec_diag`` and
+        ``spatial_eta``, matching FABBER's boundary-corrected M-prior. Structural
+        CPI monotonicity terms remain active. Requires both spatial arrays.
+    spatial_parameter_mask : npt.NDArray[np.bool_], optional
+        Boolean parameter selector for M-prior replacement, shape (P,).
+    initial_means_transformed : npt.NDArray[np.floating], optional
+        Initial posterior means in transformed space, shape (N, P). Used by
+        stateful spatial-VB sweeps.
+    initial_cov_diag : npt.NDArray[np.floating], optional
+        Initial posterior covariance diagonal in transformed space, shape
+        (N, P). Retained when a spatial proposal fails conditional-objective
+        backtracking.
+    initial_noise_precision : npt.NDArray[np.floating], optional
+        Initial expected noise precision, shape (N,). Used by stateful
+        spatial-VB sweeps.
     return_posteriors : bool, optional
         If True, populate posterior_means_transformed and
         posterior_cov_diag on the result.
@@ -1085,6 +1196,11 @@ def batched_dsc_vi_fit(
                 save_fitted_curves=save_fitted_curves,
                 spatial_prec_diag=spatial_prec_diag,
                 spatial_eta=spatial_eta,
+                spatial_replaces_parameter_prior=spatial_replaces_parameter_prior,
+                spatial_parameter_mask=spatial_parameter_mask,
+                initial_means_transformed=initial_means_transformed,
+                initial_cov_diag=initial_cov_diag,
+                initial_noise_precision=initial_noise_precision,
                 return_posteriors=return_posteriors,
                 n_iterations_override=n_iterations_override,
             )
@@ -1095,6 +1211,44 @@ def batched_dsc_vi_fit(
     tissue_curves = np.nan_to_num(tissue_curves, nan=0.0, posinf=0.0, neginf=0.0)
     n_voxels, n_obs = tissue_curves.shape
     n_params = len(fitting_param_names)
+
+    if spatial_replaces_parameter_prior and (
+        spatial_prec_diag is None or spatial_eta is None
+    ):
+        raise ValueError(
+            "Spatial M-prior replacement requires both spatial_prec_diag "
+            "and spatial_eta"
+        )
+    if spatial_replaces_parameter_prior and n_iterations_override is None:
+        raise ValueError(
+            "Spatial M-prior replacement requires spatial one-update mode "
+            "(n_iterations_override must be set)"
+        )
+    if spatial_parameter_mask is not None and (
+        np.shape(spatial_parameter_mask) != (n_params,)
+    ):
+        raise ValueError(
+            f"spatial_parameter_mask must have shape ({n_params},)"
+        )
+    if initial_means_transformed is not None and (
+        np.shape(initial_means_transformed) != (n_voxels, n_params)
+    ):
+        raise ValueError(
+            "initial_means_transformed must have shape "
+            f"({n_voxels}, {n_params})"
+        )
+    if initial_cov_diag is not None and (
+        np.shape(initial_cov_diag) != (n_voxels, n_params)
+    ):
+        raise ValueError(
+            f"initial_cov_diag must have shape ({n_voxels}, {n_params})"
+        )
+    if initial_noise_precision is not None and (
+        np.shape(initial_noise_precision) != (n_voxels,)
+    ):
+        raise ValueError(
+            f"initial_noise_precision must have shape ({n_voxels},)"
+        )
 
     if n_iterations_override is not None:
         n_iterations = n_iterations_override
@@ -1145,6 +1299,17 @@ def batched_dsc_vi_fit(
     if mono_prec is not None:
         prior_prec = prior_prec + mono_prec
 
+    # FABBER's boundary-corrected M-prior replaces the independent parameter
+    # prior rather than adding to it. Structural CPI monotonicity terms remain.
+    update_prior_prec, update_prior_eta = _build_vi_update_prior_terms(
+        prior_prec,
+        prior_means_t,
+        mono_prec,
+        mono_eta,
+        spatial_replaces_parameter_prior=spatial_replaces_parameter_prior,
+        spatial_parameter_mask=spatial_parameter_mask,
+    )
+
     # Noise precision prior — FABBER non-informative defaults
     # (fabber_core/noisemodel_white.cc: c=1e-6, b=1e6).
     c0 = 1e-6
@@ -1161,6 +1326,14 @@ def batched_dsc_vi_fit(
     m_nat = np.tile(prior_means_nat, (n_valid, 1)).astype(np.float64)
     for j in range(n_params):
         m_nat[:, j] = np.clip(m_nat[:, j], bounds_lo[j], bounds_hi[j])
+
+    if initial_means_transformed is not None:
+        initial_t = np.asarray(initial_means_transformed, dtype=np.float64)[valid_idx]
+        for j in range(n_params):
+            m_nat[:, j] = from_transformed_batch(
+                initial_t[:, j], transforms[j], upper_bounds[j],
+            )
+            m_nat[:, j] = np.clip(m_nat[:, j], bounds_lo[j], bounds_hi[j])
 
     # Override with NLLS seeds where available
     if nlls_seeds is not None:
@@ -1223,13 +1396,22 @@ def batched_dsc_vi_fit(
     except (ValueError, RuntimeError):
         tau_exp = np.full(n_valid, c_post_init * s_post_init)
 
+    if initial_noise_precision is not None:
+        initial_tau = np.asarray(initial_noise_precision, dtype=np.float64)[valid_idx]
+        good_tau = np.isfinite(initial_tau) & (initial_tau > 0)
+        tau_exp[good_tau] = initial_tau[good_tau]
+
     c = np.full(n_valid, c_post_init, dtype=np.float64)
     s = np.full(n_valid, s_post_init, dtype=np.float64)
+    if initial_noise_precision is not None:
+        s = tau_exp / c
 
     # --- State tracking ---
     best_fe = np.full(n_valid, -np.inf)
     best_m = m.copy()
     best_cov_diag = np.tile(prior_stds_t ** 2, (n_valid, 1))
+    if initial_cov_diag is not None:
+        best_cov_diag = np.asarray(initial_cov_diag, dtype=np.float64)[valid_idx].copy()
     best_c = c.copy()
     best_s = s.copy()
     step_scale = np.ones(n_valid)
@@ -1239,6 +1421,7 @@ def batched_dsc_vi_fit(
     fe_plateau_count = np.zeros(n_valid, dtype=np.int32)
 
     w = np.ones(n_obs, dtype=np.float64) if weights is None else np.asarray(weights, dtype=np.float64)
+    n_eff = float(np.sum(w))
 
     # CBF index for analytic Jacobian (constant across iterations)
     cbf_idx = fitting_param_names.index("cbf")
@@ -1289,7 +1472,7 @@ def batched_dsc_vi_fit(
         JtWJ, JtWk = _assemble_JtWJ(J_columns, k_res, w)
 
         # 5. Posterior precision and covariance
-        post_prec = prior_prec[None, :, :] + tau_a[:, None, None] * JtWJ
+        post_prec = update_prior_prec[None, :, :] + tau_a[:, None, None] * JtWJ
         if spatial_prec_diag is not None:
             # (N_total, P) -> valid subset -> active subset
             sp_a = spatial_prec_diag[valid_idx][a_idx]
@@ -1306,9 +1489,7 @@ def batched_dsc_vi_fit(
         for j in range(n_params):
             Jm += J_columns[j] * m_a[:, j:j + 1]
 
-        lam0_mu0 = prior_prec @ prior_means_t
-        if mono_eta is not None:
-            lam0_mu0 = lam0_mu0 + mono_eta
+        lam0_mu0 = update_prior_eta
         data_term = np.zeros((n_active, n_params))
         for j in range(n_params):
             data_term[:, j] = np.sum(
@@ -1326,17 +1507,88 @@ def batched_dsc_vi_fit(
             if transforms[j] == TransformType.IDENTITY:
                 m_new[:, j] = np.clip(m_new[:, j], bounds_lo[j], bounds_hi[j])
 
-        # 7. Noise posterior update
-        m_new_nat = np.zeros_like(m_new)
-        for j in range(n_params):
-            m_new_nat[:, j] = from_transformed_batch(
-                m_new[:, j], transforms[j], upper_bounds[j],
-            )
+        # Spatial linearization can propose a poor full step for nonlinear CPI
+        # residue parameters. Accept only steps that improve the conditional
+        # likelihood-plus-M-prior objective for the current neighbor state.
+        spatial_accepted = np.ones(n_active, dtype=bool)
+        if _spatial_mode:
+            effective_prec = np.broadcast_to(
+                update_prior_prec, (n_active, n_params, n_params)
+            ).copy()
+            effective_eta = np.broadcast_to(
+                update_prior_eta, (n_active, n_params)
+            ).copy()
+            if spatial_prec_diag is not None:
+                effective_prec[:, range(n_params), range(n_params)] += sp_a
+            if spatial_eta is not None:
+                effective_eta += sp_eta_a
 
-        g_new = _evaluate(m_new_nat)
+            def _conditional_objective(
+                values_t: npt.NDArray[np.floating],
+                prediction: npt.NDArray[np.floating],
+            ) -> npt.NDArray[np.float64]:
+                residual = y_a - prediction
+                data_term = -0.5 * tau_a * np.sum(
+                    w[None, :] * residual**2, axis=1
+                )
+                quadratic = np.einsum(
+                    "ni,nij,nj->n", values_t, effective_prec, values_t
+                )
+                information = np.sum(effective_eta * values_t, axis=1)
+                return np.asarray(
+                    data_term - 0.5 * quadratic + information,
+                    dtype=np.float64,
+                )
+
+            old_objective = _conditional_objective(m_a, g_m)
+            raw_m_new = m_new.copy()
+            step = np.ones(n_active, dtype=np.float64)
+            accepted = np.zeros(n_active, dtype=bool)
+            g_new = g_m.copy()
+            for _ in range(14):
+                trial_m = m_a + step[:, None] * (raw_m_new - m_a)
+                for j in range(n_params):
+                    if transforms[j] == TransformType.IDENTITY:
+                        trial_m[:, j] = np.clip(
+                            trial_m[:, j], bounds_lo[j], bounds_hi[j]
+                        )
+                trial_nat = np.zeros_like(trial_m)
+                for j in range(n_params):
+                    trial_nat[:, j] = from_transformed_batch(
+                        trial_m[:, j], transforms[j], upper_bounds[j]
+                    )
+                trial_prediction = _evaluate(trial_nat)
+                trial_objective = _conditional_objective(
+                    trial_m, trial_prediction
+                )
+                newly_accepted = (
+                    ~accepted
+                    & np.isfinite(trial_objective)
+                    & (trial_objective >= old_objective)
+                )
+                if np.any(newly_accepted):
+                    m_new[newly_accepted] = trial_m[newly_accepted]
+                    g_new[newly_accepted] = trial_prediction[newly_accepted]
+                    accepted[newly_accepted] = True
+                if np.all(accepted):
+                    break
+                step[~accepted] *= 0.5
+            spatial_accepted = accepted
+            if np.any(~accepted):
+                m_new[~accepted] = m_a[~accepted]
+                g_new[~accepted] = g_m[~accepted]
+        else:
+            m_new_nat = np.zeros_like(m_new)
+            for j in range(n_params):
+                m_new_nat[:, j] = from_transformed_batch(
+                    m_new[:, j], transforms[j], upper_bounds[j],
+                )
+            g_new = _evaluate(m_new_nat)
+
+        # 7. Noise posterior update
         k_new = y_a - g_new
 
-        c_new = c0 + n_obs / 2.0
+        c_new = c0 + n_eff / 2.0
         trace_term = np.sum(
             post_cov * np.transpose(JtWJ, (0, 2, 1)), axis=(1, 2),
         )
@@ -1355,7 +1607,7 @@ def batched_dsc_vi_fit(
         )
 
         free_energy = (
-            0.5 * n_obs * (np.log(tau_new) - np.log(2 * np.pi))
+            0.5 * n_eff * (np.log(tau_new) - np.log(2 * np.pi))
             - 0.5 * tau_new * (weighted_kk + trace_term)
             - 0.5 * dm_prec_dm
             - 0.5 * trace_prior_cov
@@ -1374,12 +1626,15 @@ def batched_dsc_vi_fit(
 
         # 9. Step-size reduction
         if _spatial_mode:
-            # Spatial mode: ELBO is invalid (spatial terms not in KL).
-            # Always accept the update; convergence monitored at outer level.
-            best_m[a_idx] = m_new
-            best_cov_diag[a_idx] = np.diagonal(post_cov, axis1=1, axis2=2)
-            best_c[a_idx] = c_new
-            best_s[a_idx] = s_new
+            accepted_global = a_idx[spatial_accepted]
+            if len(accepted_global) > 0:
+                accepted_local = np.where(spatial_accepted)[0]
+                best_m[accepted_global] = m_new[accepted_local]
+                best_cov_diag[accepted_global] = np.diagonal(
+                    post_cov[accepted_local], axis1=1, axis2=2
+                )
+                best_c[accepted_global] = c_new
+                best_s[accepted_global] = s_new[accepted_local]
         else:
             prev_best_fe = best_fe[a_idx].copy()
             improved = free_energy > prev_best_fe
@@ -1454,12 +1709,10 @@ def batched_dsc_vi_fit(
                 iteration, int(np.sum(active)), n_valid, int(np.sum(converged)),
             )
 
-    # FABBER protocol is a fixed 10-iter schedule; the FE-plateau count is
-    # informational only (strict 1e-4 relative tolerance over 2 iters
-    # rarely fires in 10 iters by design). Final fit quality is gated
-    # downstream by R² in dsc_compute.py.
+    # The fixed 10-iteration VI schedule makes the FE-plateau count
+    # informational only. Final fit quality is gated downstream by R².
     logger.info(
-        "DSC batched VI finished FABBER %d-iter schedule (n=%d): %d at FE plateau",
+        "DSC batched VI finished %d-iteration schedule (n=%d): %d at FE plateau",
         last_iteration + 1, n_voxels, int(np.sum(converged)),
     )
 
@@ -1475,10 +1728,30 @@ def batched_dsc_vi_fit(
         fitted_nat[:, j] = np.clip(fitted_nat[:, j], bounds_lo[j], bounds_hi[j])
 
     # --- Uncertainties via delta method ---
+    out_ci_lower = {
+        name: np.zeros(n_voxels, dtype=np.float64)
+        for name in fitting_param_names
+    }
+    out_ci_upper = {
+        name: np.zeros(n_voxels, dtype=np.float64)
+        for name in fitting_param_names
+    }
     for j, name in enumerate(fitting_param_names):
         std_t = np.sqrt(np.maximum(best_cov_diag[:, j], 0.0))
         jac = np.exp(log_jacobian_det(fitted_nat[:, j], transforms[j], upper_bounds[j]))
         out_uncertainties[name][valid_idx] = std_t * jac
+        endpoint_a = from_transformed_batch(
+            best_m[:, j] - 1.96 * std_t, transforms[j], upper_bounds[j]
+        )
+        endpoint_b = from_transformed_batch(
+            best_m[:, j] + 1.96 * std_t, transforms[j], upper_bounds[j]
+        )
+        out_ci_lower[name][valid_idx] = np.clip(
+            np.minimum(endpoint_a, endpoint_b), bounds_lo[j], bounds_hi[j]
+        )
+        out_ci_upper[name][valid_idx] = np.clip(
+            np.maximum(endpoint_a, endpoint_b), bounds_lo[j], bounds_hi[j]
+        )
 
     out_uncertainties["noise_std"][valid_idx] = 1.0 / np.sqrt(
         np.maximum(best_c * best_s, 1e-300)
@@ -1511,6 +1784,8 @@ def batched_dsc_vi_fit(
         params=out_params, r_squared=out_r2, converged=out_converged,
         fitted_curves=out_fitted, n_iterations=last_iteration + 1,
         model_name=model_type, uncertainties=out_uncertainties,
+        credible_interval_lower=out_ci_lower,
+        credible_interval_upper=out_ci_upper,
         posterior_means_transformed=out_post_means,
         posterior_cov_diag=out_post_cov,
     )
@@ -2123,6 +2398,8 @@ def batched_dsc_map_fit(
         fitted_nat[:, j] = np.clip(fitted_nat[:, j], bounds_lo[j], bounds_hi[j])
 
     # --- Laplace uncertainties ---
+    out_ci_lower: dict[str, npt.NDArray[np.floating]] = {}
+    out_ci_upper: dict[str, npt.NDArray[np.floating]] = {}
     if compute_uncertainties:
         final_tau = 1.0 / np.maximum(best_sigma_sq, _EPSILON_NUMERICAL)
         g_final_unc = _evaluate(fitted_nat)
@@ -2144,6 +2421,22 @@ def batched_dsc_map_fit(
             std_t = np.sqrt(np.maximum(np.diagonal(cov, axis1=1, axis2=2)[:, j], 0.0))
             jac = np.exp(log_jacobian_det(fitted_nat[:, j], transforms[j], upper_bounds[j]))
             out_uncertainties[name][valid_idx] = std_t * jac
+            endpoint_a = from_transformed_batch(
+                best_m[:, j] - 1.96 * std_t, transforms[j], upper_bounds[j]
+            )
+            endpoint_b = from_transformed_batch(
+                best_m[:, j] + 1.96 * std_t, transforms[j], upper_bounds[j]
+            )
+            lower = np.zeros(n_voxels, dtype=np.float64)
+            upper = np.zeros(n_voxels, dtype=np.float64)
+            lower[valid_idx] = np.clip(
+                np.minimum(endpoint_a, endpoint_b), bounds_lo[j], bounds_hi[j]
+            )
+            upper[valid_idx] = np.clip(
+                np.maximum(endpoint_a, endpoint_b), bounds_lo[j], bounds_hi[j]
+            )
+            out_ci_lower[name] = lower
+            out_ci_upper[name] = upper
 
     out_uncertainties["noise_std"][valid_idx] = np.sqrt(best_sigma_sq)
 
@@ -2165,4 +2458,6 @@ def batched_dsc_map_fit(
         params=out_params, r_squared=out_r2, converged=out_converged,
         fitted_curves=out_fitted, n_iterations=total_iters + 1,
         model_name=model_type, uncertainties=out_uncertainties,
+        credible_interval_lower=out_ci_lower,
+        credible_interval_upper=out_ci_upper,
     )

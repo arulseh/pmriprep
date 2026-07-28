@@ -1,4 +1,7 @@
-# PMRIPrep: Perfusion MRI Preprocessing Pipeline
+# SPDX-License-Identifier: Apache-2.0
+# PMRIPrep container image definition
+#
+# PMRIPrep: automated preprocessing and quantification of DSC and DCE MRI
 # BIDS-App container for DCE and DSC MRI processing
 #
 # Build:
@@ -30,10 +33,10 @@ FROM condaforge/miniforge3:24.11.3-2
 
 LABEL maintainer="PMRIPrep Developers"
 LABEL org.opencontainers.image.title="PMRIPrep"
-LABEL org.opencontainers.image.description="Perfusion MRI Preprocessing Pipeline - A NiPreps-compatible BIDS-App"
-LABEL org.opencontainers.image.version="0.82.1"
+LABEL org.opencontainers.image.description="PMRIPrep: automated preprocessing and quantification of DSC and DCE MRI"
+LABEL org.opencontainers.image.version="0.84.0"
 LABEL org.opencontainers.image.source="https://github.com/arulseh/pmriprep"
-LABEL org.opencontainers.image.licenses="Apache-2.0"
+LABEL org.opencontainers.image.licenses="Apache-2.0 AND CC0-1.0"
 
 # Prevent interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
@@ -161,14 +164,19 @@ RUN pip install --no-cache-dir ".[test,dev]" && pip cache purge
 # (not under $HOME, which Apptainer auto-binds from the host)
 ENV TEMPLATEFLOW_HOME="/opt/templateflow"
 RUN python -c "from templateflow import api as tflow; \
-    tflow.get('MNI152NLin6Asym', resolution=1, desc='brain', suffix='T1w')" && \
+    tflow.get('MNI152NLin6Asym', resolution=1, desc='brain', suffix='T1w'); \
+    tflow.get('OASIS30ANTs', resolution=1, suffix='T1w'); \
+    tflow.get('OASIS30ANTs', resolution=1, label='brain', suffix='probseg')" && \
     chmod -R a+rX ${TEMPLATEFLOW_HOME}
 
 # Build-time validation — fail the build early if something is broken
 RUN python -c "\
-import os, torch, nibabel, nipype; \
+import os, shutil, torch, nibabel, nipype; \
 print(f'PyTorch {torch.__version__}'); \
 print(f'CUDA available: {torch.cuda.is_available()}'); \
+assert shutil.which('antsBrainExtraction.sh'), 'antsBrainExtraction.sh missing'; \
+from pmriprep.interfaces.anat import BrainExtraction; \
+print(f'ANTs templates: {BrainExtraction._get_ants_templates()}'); \
 import HD_BET; print('HD-BET: OK'); \
 assert os.path.isdir('/opt/hd-bet_params'), 'HD-BET weights missing'; \
 print('HD-BET weights: OK'); \

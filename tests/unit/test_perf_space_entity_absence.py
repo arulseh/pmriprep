@@ -85,7 +85,6 @@ def test_dce_copy_perf_map_lacks_space_entity(tmp_path) -> None:
         suffix="Ktrans",
         meta_dict={"Description": "test"},
         datatype="perf",
-        model_entity="model-tofts",
     )
     assert _SPACE_ENTITY.search(out_path) is None, (
         f"_copy_perf_map (DCE) wrote path with space-: {out_path}"
@@ -195,3 +194,27 @@ def test_anat_reference_basename_uses_T1w_space() -> None:
     )
     assert "space-anat" not in precon
     assert "space-anat" not in postcon
+
+
+def test_anat_spatial_reference_preserves_source_entities() -> None:
+    """Anatomical reference URIs identify the derivative that is written."""
+    from pmriprep.utils.sidecar_builders import _anat_spatial_reference
+
+    source = "/raw/sub-X/ses-Y/anat/sub-X_ses-Y_acq-mprage_run-2_T1w.nii.gz"
+    assert _anat_spatial_reference("X", "Y", source=source) == (
+        "bids::sub-X/ses-Y/anat/"
+        "sub-X_ses-Y_acq-mprage_run-2_space-T1w_desc-preproc_T1w.nii.gz"
+    )
+
+
+def test_postcon_spatial_reference_adds_forced_contrast_entity() -> None:
+    """Metadata-classified postcon references name the forced output entity."""
+    from pmriprep.utils.sidecar_builders import _anat_spatial_reference
+
+    source = "/raw/sub-X/ses-Y/anat/sub-X_ses-Y_acq-mprage_run-2_T1w.nii.gz"
+    assert _anat_spatial_reference(
+        "X", "Y", is_postcon_ref=True, source=source,
+    ) == (
+        "bids::sub-X/ses-Y/anat/"
+        "sub-X_ses-Y_acq-mprage_ce-GAD_run-2_space-T1w_desc-preproc_T1w.nii.gz"
+    )

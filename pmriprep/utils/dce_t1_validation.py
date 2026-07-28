@@ -1,66 +1,28 @@
-"""T1 map validation and correction utilities for VFA T1 mapping.
+"""T1 map validation and uniform-fallback utilities for VFA T1 mapping.
 
 This module provides field-strength-dependent tissue T1 reference values,
-T1 map correction strategies (auto/offset/fallback), and cross-validation
+T1 map correction strategies (auto/none/fallback), and cross-validation
 of field strength from measured T1 distributions.
-
-Adapted for NiPreps-style dataclasses and logging.
-
-References
-----------
-Wansapura JP et al. "NMR relaxation times in the human brain at 3.0
-Tesla." JMRI. 1999;9(4):531-538.
-
-Stanisz GJ et al. "T1, T2 relaxation and magnetization transfer in
-tissue at 3T." MRM. 2005;54(3):507-512.
-
-Rooney WD et al. "Magnetic field and tissue dependencies of human
-brain longitudinal 1H2O relaxation in vivo." MRM. 2007;57(2):308-318.
-
-Wright PJ et al. "Water proton T1 measurements in brain tissue at 7,
-3, and 1.5 T using IR-EPI, IR-TSE, and MPRAGE." MAGMA. 2008;21(1-2):121-130.
-
-Marques JP et al. "MP2RAGE, a self bias-field corrected sequence for
-improved segmentation and T1-mapping at high field." NeuroImage.
-2010;49(2):1271-1281.
 """
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict, Final, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 import numpy.typing as npt
 
 logger = logging.getLogger("pmriprep.utils.dce_t1_validation")
 
-# Tissue-bias thresholds for auto-correction override (ms).
-# If |median - expected| exceeds this even within warn range, apply offset.
-TISSUE_BIAS_THRESHOLD_MS: float = 150.0
-# Lowered threshold when B1 QC has failed (residual B1 inhomogeneity likely).
-B1_FAIL_BIAS_THRESHOLD_MS: float = 100.0
-
-# VFA NaN fraction thresholds for tiered auto-fallback.
-# Below this: VFA T1 is used as-is (no concern).
-VFA_NAN_FRACTION_GOOD: float = 0.20
-# Above this (for well-conditioned VFA): abandon VFA entirely.
-VFA_NAN_FRACTION_TISSUE_FALLBACK: float = 0.40
-
-# VFA conditioning thresholds.
-# VFA condition number = E1/(1-E1); higher means 1% B1 error
-# propagates to larger T1 error.
-# E1 > 0.997 → cond > 332 → fallback unconditionally
-_E1_UNCONDITIONAL_FALLBACK: Final[float] = 0.997
-# E1 > 0.993 → cond > 141 → fallback unless B1-corrected & B1 QC passed
-_E1_CONDITIONAL_FALLBACK: Final[float] = 0.993
-
+# Shared downstream support definition. Values below 100 ms are nonphysical
+# sentinels from failed/resampled fits rather than usable tissue T1 estimates.
+MIN_VALID_T1_MS: float = 100.0
 
 # ============================================================================
 # T1 Tissue Reference Values by Field Strength
 # ============================================================================
 
 # brain_mean = 0.60 * wm_midpoint + 0.40 * gm_midpoint
-# (approximate whole-brain WM:GM volume ratio, Ge 2002 AJNR 23:1327)
 # Derived values: qc_max_strict = gm[1], qc_max_lenient = qc_max_strict + brain_sd,
 # expected_median = brain_mean, warn_high = expected_median + brain_sd
 T1_TISSUE_REFERENCE: Dict[float, Dict[str, Any]] = {
@@ -102,7 +64,7 @@ T1_TISSUE_REFERENCE: Dict[float, Dict[str, Any]] = {
         "warn_high": 1290,
         "expected_median": 1090,
     },
-    # 7.0T: Rooney 2007 (WM/GM T1), Wright 2008, Marques 2010
+    # 7.0T reference intervals.
     7.0: {
         "wm": (1000, 1250),
         "gm": (1800, 2100),
@@ -267,30 +229,28 @@ def _distance_from_range(value: float, range_tuple: Tuple[float, float]) -> floa
 # ============================================================================
 
 
-def get_nan_abandon_threshold(e1_median: float) -> float:
-    """Compute NaN fraction above which VFA T1 should be abandoned.
-
-    For well-conditioned VFA (E1 < 0.99), use the standard threshold (0.40).
-    For ill-conditioned VFA (E1 >= 0.99), linearly decrease the threshold
-    down to 0.20 at E1 = 0.999+, because even surviving voxels are unreliable.
+def valid_t1_support(
+    t1_map: npt.ArrayLike,
+    field_strength: float | None = None,
+) -> npt.NDArray[np.bool_]:
+    """Return support usable for DCE signal-to-concentration conversion.
 
     Parameters
     ----------
-    e1_median : float
-        Median E1 = exp(-TR/T1) value from VFA data.
+    t1_map : array-like
+        T1 values in milliseconds.
 
     Returns
     -------
-    float
-        NaN fraction threshold above which VFA should be abandoned.
+    numpy.ndarray
+        Boolean mask of finite values within the numerical safety envelope.
     """
-    if e1_median < 0.99:
-        return VFA_NAN_FRACTION_TISSUE_FALLBACK
-    # Linear ramp: 0.40 at E1=0.99 → 0.20 at E1=0.999
-    return max(
-        VFA_NAN_FRACTION_GOOD,
-        VFA_NAN_FRACTION_TISSUE_FALLBACK - (e1_median - 0.99) * 20.0,
-    )
+    values = np.asarray(t1_map, dtype=np.float64)
+    support = np.isfinite(values) & (values >= MIN_VALID_T1_MS)
+    if field_strength is not None:
+        field_key = get_field_strength_key(field_strength)
+        support &= values <= T1_TISSUE_REFERENCE[field_key]["t1_upper_bound"]
+    return support
 
 
 def build_tissue_t1_map(
@@ -459,10 +419,10 @@ def apply_t1_correction(
     Correction modes:
 
     - ``none``: No correction, use VFA T1 as-is.
-    - ``offset``: Apply uniform offset to match expected median
-      (preserves spatial variation).
     - ``fallback``: Replace with uniform literature T1 value.
-    - ``auto``: Automatically choose based on median T1 deviation.
+    - ``auto``: Retain numerically valid measured T1 support. Population
+      reference deviations and acquisition diagnostics are reported as QC and
+      do not silently replace the estimator.
 
     Parameters
     ----------
@@ -471,31 +431,28 @@ def apply_t1_correction(
     field_strength : float
         Scanner field strength in Tesla (1.5 or 3.0).
     correction_mode : str
-        Correction strategy: ``none``, ``offset``, ``fallback``, or ``auto``.
+        Correction strategy: ``none``, ``fallback``, or ``auto``.
     brain_mask : ndarray, optional
         Brain mask for calculating median T1.
     has_lesion : bool
         Whether a lesion mask is present (affects auto-mode thresholds).
     b1_qc_pass : bool
-        B1 QC pass status. When False, lowers tissue-bias threshold
-        for auto correction (residual B1 inhomogeneity likely).
+        B1 QC pass status retained as descriptive acquisition state.
     nan_fraction : float, optional
-        Fraction of brain voxels with NaN T1 (0-1). Used by auto-mode
-        to decide between offset correction and tissue-segmented fallback.
+        Fraction of brain voxels with NaN T1 (0-1), retained for QC.
     wm_probseg : ndarray, optional
-        White matter probability map (resampled to VFA space).
-        Used for tissue-segmented T1 fallback.
+        White matter probability map retained in the internal API. Automatic
+        fallback is uniform and does not use tissue segmentations.
     gm_probseg : ndarray, optional
-        Gray matter probability map (resampled to VFA space).
-        Used for tissue-segmented T1 fallback.
+        Gray matter probability map retained in the internal API. Automatic
+        fallback is uniform and does not use tissue segmentations.
     e1_median : float, optional
-        Median E1 = exp(-TR/T1) from VFA data. Used by auto-mode to
-        adjust the NaN abandon threshold for ill-conditioned VFA.
+        Median E1 = exp(-TR/T1) from VFA data. Retained as descriptive
+        acquisition state; it does not independently determine fallback.
     b1_corrected : bool
-        Whether B1 field mapping was applied. At severe VFA conditioning
-        (unconditional zone, E1>0.997), absence of B1 correction triggers
-        fallback. In the conditional zone (E1 0.993-0.997), VFA T1 is
-        preserved for offset correction if NaN fraction is manageable.
+        Whether B1 field mapping was applied. Retained in the internal API
+        so callers can provide the complete acquisition state; B1 map quality
+        is assessed separately through ``b1_qc_pass``.
 
     Returns
     -------
@@ -516,12 +473,25 @@ def apply_t1_correction(
     valid_t1 = t1_map[valid_mask]
 
     if len(valid_t1) == 0:
-        return t1_map, T1CorrectionResult(
+        result = T1CorrectionResult(
             correction_applied="none",
             reason="No valid T1 values",
             correction_mode_requested=correction_mode,
             field_strength_t=field_key,
         )
+        if correction_mode in ("auto", "fallback"):
+            fill_mask = (
+                (brain_mask > 0.5)
+                if brain_mask is not None
+                else np.ones(t1_map.shape, dtype=bool)
+            )
+            corrected = np.where(fill_mask, t1_ref["default"], np.nan)
+            result.correction_applied = "fallback"
+            result.reason = "No valid measured T1 values"
+            result.fallback_value_ms = t1_ref["default"]
+            result.median_t1_corrected = t1_ref["default"]
+            return corrected, result
+        return t1_map, result
 
     median_t1 = float(np.median(valid_t1))
     expected_median = t1_ref["expected_median"]
@@ -549,25 +519,11 @@ def apply_t1_correction(
         result.median_t1_corrected = t1_ref["default"]
         return t1_corrected, result
 
-    elif correction_mode == "offset":
-        offset = expected_median - median_t1
-        t1_corrected = t1_map + offset
-        t1_corrected = np.clip(t1_corrected, t1_ref["reject_min"], t1_ref["reject_max"])
-        t1_corrected = np.where(np.isnan(t1_map), np.nan, t1_corrected)
-        result.correction_applied = "offset"
-        result.reason = "User requested offset correction"
-        result.offset_ms = offset
-        result.median_t1_corrected = float(np.nanmedian(t1_corrected[valid_mask]))
-        return t1_corrected, result
-
     elif correction_mode == "auto":
         return _auto_correct_t1(
             t1_map, t1_ref, valid_mask, median_t1, result,
             b1_qc_pass=b1_qc_pass,
             nan_fraction=nan_fraction,
-            wm_probseg=wm_probseg,
-            gm_probseg=gm_probseg,
-            field_strength=field_strength,
             e1_median=e1_median,
             b1_corrected=b1_corrected,
             brain_mask=brain_mask,
@@ -576,7 +532,7 @@ def apply_t1_correction(
     else:
         raise ValueError(
             f"Unknown correction mode: {correction_mode}. "
-            f"Valid options: 'none', 'offset', 'fallback', 'auto'"
+            f"Valid options: 'none', 'fallback', 'auto'"
         )
 
 
@@ -588,219 +544,44 @@ def _auto_correct_t1(
     result: T1CorrectionResult,
     b1_qc_pass: bool = True,
     nan_fraction: Optional[float] = None,
-    wm_probseg: Optional[npt.NDArray[np.floating]] = None,
-    gm_probseg: Optional[npt.NDArray[np.floating]] = None,
-    field_strength: float = 3.0,
     e1_median: Optional[float] = None,
     b1_corrected: bool = False,
     brain_mask: Optional[npt.NDArray[np.bool_]] = None,
 ) -> Tuple[npt.NDArray[np.floating], T1CorrectionResult]:
     """Auto-mode T1 correction logic.
 
-    Decides between no correction, offset, tissue-segmented fallback,
-    or uniform fallback based on median T1 deviation and VFA conditioning.
-
-    Decision hierarchy:
-
-    1. **Reject threshold** (median T1 outside physiological range):
-       When median T1 < reject_min or > reject_max, VFA T1 is definitively
-       wrong regardless of NaN fraction. Tissue-segmented T1 is used if
-       WM/GM probsegs are available; otherwise uniform fallback is applied.
-
-    2. **Conditioning gate** (VFA E1 approaching 1):
-       - *Unconditional zone* (E1 > 0.997, cond > 332): VFA signal surface
-         is flat in the T1 direction; VFA T1 is abandoned for tissue-segmented
-         or uniform fallback regardless of B1 status.
-       - *Conditional zone* (E1 0.993-0.997, cond 141-332): VFA T1 is biased
-         but retains spatial information. Without B1 correction, offset
-         correction is preferred over fallback when NaN fraction is manageable,
-         as it preserves spatial variation while fixing the median bias.
-         When NaN fraction exceeds the E1-adaptive
-         abandon threshold, fallback is used instead.
-
-    3. **Offset correction**: Applied when median T1 deviates from expected
-       but is within acceptable range.
+    Retain all numerically valid measured support. Population reference
+    intervals, B1 QC, fit loss, and E1 are diagnostic evidence rather than
+    grounds for an automatic whole-map estimator switch.
     """
     expected_median = t1_ref["expected_median"]
     result.nan_fraction = nan_fraction
 
-    # Fallback fill mask: entire brain, not just valid VFA voxels.
-    # valid_mask excludes NaN/non-positive VFA voxels, but fallbacks
-    # should cover all brain tissue for downstream PK fitting.
-    fill_mask = (brain_mask > 0.5) if brain_mask is not None else valid_mask
-
-    # Compute E1-dependent NaN abandon threshold
-    nan_abandon = get_nan_abandon_threshold(e1_median) if e1_median is not None else VFA_NAN_FRACTION_TISSUE_FALLBACK
-
-    # Conditioning gate: VFA T1 is unreliable when E1 approaches 1
-    if e1_median is not None and e1_median > _E1_CONDITIONAL_FALLBACK:
-        unconditional = e1_median > _E1_UNCONDITIONAL_FALLBACK
-        b1_insufficient = not b1_corrected or not b1_qc_pass
-        cond_number = e1_median / (1.0 - e1_median) if e1_median < 1.0 else float("inf")
-
-        if unconditional:
-            # Unconditional zone (E1>0.997, cond>332): signal surface is
-            # flat in T1 direction, VFA T1 is genuinely useless.
-            logger.warning(
-                "VFA conditioning gate (unconditional): E1=%.4f (cond=%.0f) "
-                "— falling back to tissue-segmented T1",
-                e1_median, cond_number,
-            )
-            if wm_probseg is not None and gm_probseg is not None:
-                t1_corrected = build_tissue_t1_map(wm_probseg, gm_probseg, field_strength)
-                t1_corrected = np.where(fill_mask, t1_corrected, np.nan)
-                result.correction_applied = "tissue_segmented"
-                result.tissue_t1_used = True
-                result.reason = f"VFA conditioning gate: E1={e1_median:.4f} above unconditional threshold"
-                result.median_t1_corrected = expected_median
-            else:
-                t1_corrected = np.where(fill_mask, t1_ref["default"], np.nan)
-                result.correction_applied = "fallback"
-                result.reason = f"VFA conditioning gate (no tissue maps): E1={e1_median:.4f} above unconditional threshold"
-                result.fallback_value_ms = t1_ref["default"]
-                result.median_t1_corrected = t1_ref["default"]
-            return t1_corrected, result
-
-        elif b1_insufficient:
-            # Conditional zone (E1 0.993-0.997, cond 141-332): VFA T1 is
-            # biased but retains spatial information. Offset correction
-            # preserves spatial variation while fixing median bias.
-            # Safety net: if NaN fraction exceeds E1-adaptive threshold,
-            # too many voxels failed for offset to be meaningful.
-            if nan_fraction is not None and nan_fraction > nan_abandon:
-                logger.warning(
-                    "VFA conditioning gate: E1=%.4f (cond=%.0f), "
-                    "NaN fraction %.1f%% > abandon threshold %.1f%% "
-                    "— falling back to tissue-segmented T1",
-                    e1_median, cond_number,
-                    nan_fraction * 100, nan_abandon * 100,
-                )
-                if wm_probseg is not None and gm_probseg is not None:
-                    t1_corrected = build_tissue_t1_map(wm_probseg, gm_probseg, field_strength)
-                    t1_corrected = np.where(fill_mask, t1_corrected, np.nan)
-                    result.correction_applied = "tissue_segmented"
-                    result.tissue_t1_used = True
-                    result.reason = (
-                        f"VFA conditioning gate: B1 absent, "
-                        f"NaN {nan_fraction:.1%} > {nan_abandon:.1%} threshold"
-                    )
-                    result.median_t1_corrected = expected_median
-                else:
-                    t1_corrected = np.where(fill_mask, t1_ref["default"], np.nan)
-                    result.correction_applied = "fallback"
-                    result.reason = (
-                        f"VFA conditioning gate (no tissue maps): B1 absent, "
-                        f"NaN {nan_fraction:.1%} > {nan_abandon:.1%} threshold"
-                    )
-                    result.fallback_value_ms = t1_ref["default"]
-                    result.median_t1_corrected = t1_ref["default"]
-                return t1_corrected, result
-
-            # Manageable NaN fraction: fall through to Cases 1/2/3
-            # for offset correction, preserving VFA spatial variation.
-            logger.info(
-                "VFA conditioning gate: E1=%.4f (cond=%.0f), B1 absent "
-                "but NaN fraction %.1f%% manageable — falling through "
-                "to offset correction",
-                e1_median, cond_number,
-                (nan_fraction or 0) * 100,
-            )
-
-    # Case 1: Hard reject - impossible values
-    # When median T1 exceeds reject threshold, VFA is fundamentally wrong.
-    # Prefer tissue-segmented T1 (preserves WM/GM contrast) over uniform fallback.
-    if median_t1 < t1_ref["reject_min"] or median_t1 > t1_ref["reject_max"]:
-        direction = "below" if median_t1 < t1_ref["reject_min"] else "above"
-        threshold = t1_ref["reject_min"] if direction == "below" else t1_ref["reject_max"]
-
-        if wm_probseg is not None and gm_probseg is not None:
-            logger.warning(
-                "Median T1 (%.0fms) %s reject threshold (%.0fms) - "
-                "using tissue-segmented T1 map",
-                median_t1, direction, threshold,
-            )
-            t1_corrected = build_tissue_t1_map(
-                wm_probseg, gm_probseg, field_strength,
-            )
-            # Preserve NaN outside brain (downstream code uses NaN for masking)
-            t1_corrected = np.where(fill_mask, t1_corrected, np.nan)
-            result.correction_applied = "tissue_segmented"
-            result.tissue_t1_used = True
-            result.reason = (
-                f"Median T1 {direction} reject threshold ({threshold}ms) - "
-                "tissue-segmented fallback"
-            )
-            result.median_t1_corrected = expected_median
-            return t1_corrected, result
-
-        logger.warning(
-            "Median T1 (%.0fms) %s reject threshold (%.0fms) - "
-            "falling back to literature value (%.0fms) (no tissue maps)",
-            median_t1, direction, threshold, t1_ref["default"],
-        )
-        t1_corrected = np.where(fill_mask, t1_ref["default"], np.nan)
-        result.correction_applied = "fallback"
-        result.reason = (
-            f"Median T1 {direction} reject threshold ({threshold}ms), "
-            "no tissue maps available"
-        )
-        result.fallback_value_ms = t1_ref["default"]
-        result.median_t1_corrected = t1_ref["default"]
-        return t1_corrected, result
-
-    # Case 2: Within acceptable range
-    elif t1_ref["warn_low"] <= median_t1 <= t1_ref["warn_high"]:
-        # Secondary check: systematic bias despite acceptable median
-        bias_threshold = (
-            TISSUE_BIAS_THRESHOLD_MS if b1_qc_pass
-            else B1_FAIL_BIAS_THRESHOLD_MS
-        )
-        bias_from_expected = abs(median_t1 - expected_median)
-        if bias_from_expected > bias_threshold:
-            # Fall through to offset correction (Case 3)
-            logger.info(
-                "Median T1 (%.0fms) within warn range but biased "
-                "%.0fms from expected (%.0fms), threshold %.0fms%s "
-                "- applying offset correction",
-                median_t1, bias_from_expected, expected_median,
-                bias_threshold,
-                " (B1 QC failed)" if not b1_qc_pass else "",
-            )
-        else:
-            logger.info(
-                "Median T1 (%.0fms) within acceptable range (%.0f-%.0fms)",
-                median_t1, t1_ref["warn_low"], t1_ref["warn_high"],
-            )
-            result.correction_applied = "none"
-            result.reason = "Median T1 within acceptable range"
-            result.median_t1_corrected = median_t1
-            return t1_map, result
-
-    # Case 3: Soft warn - apply offset correction
-    # (also reached via tissue-bias override from Case 2)
-    if median_t1 < expected_median:
-        deviation_type = "low"
+    # Plausible population-level values do not justify changing an individual
+    # subject's quantitative map. Preserve the measurement and report whether
+    # it lies in the central reference interval or only the wider reject range.
+    within_warn = t1_ref["warn_low"] <= median_t1 <= t1_ref["warn_high"]
+    result.correction_applied = "none"
+    result.median_t1_corrected = median_t1
+    if within_warn:
+        result.reason = "Median T1 within expected population range"
     else:
-        deviation_type = "high"
-
-    offset = expected_median - median_t1
-    logger.info(
-        "Median T1 (%.0fms) %s deviation - applying offset correction: %+.0fms",
-        median_t1, deviation_type, offset,
-    )
-
-    t1_corrected = t1_map + offset
-    clamp_min = t1_ref["reject_min"] * 0.9
-    clamp_max = t1_ref["reject_max"] * 1.1
-    t1_corrected = np.clip(t1_corrected, clamp_min, clamp_max)
-    t1_corrected = np.where(np.isnan(t1_map), np.nan, t1_corrected)
-
-    result.correction_applied = "offset"
-    result.reason = f"Median T1 {deviation_type} - offset correction applied"
-    result.deviation_type = deviation_type
-    result.offset_ms = offset
-    result.median_t1_corrected = float(np.nanmedian(t1_corrected[valid_mask]))
-    return t1_corrected, result
+        result.deviation_type = "low" if median_t1 < expected_median else "high"
+        b1_note = " and B1 QC failed" if not b1_qc_pass else ""
+        result.reason = (
+            f"Measured T1 retained with {result.deviation_type} median warning"
+            f"{b1_note}"
+        )
+        logger.warning(
+            "Median T1 %.0fms is outside the expected population interval "
+            "(%.0f-%.0fms)%s; retaining measured map because it remains "
+            "within the numerical safety envelope",
+            median_t1,
+            t1_ref["warn_low"],
+            t1_ref["warn_high"],
+            b1_note,
+        )
+    return t1_map, result
 
 
 # ============================================================================

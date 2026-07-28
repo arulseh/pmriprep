@@ -261,7 +261,6 @@ def _detect_single_signal(
 
     Returns (arrival_frame, confidence, phase_diagnostics).
     """
-    n = len(signal)
     diag: dict[str, Any] = {}
 
     # --- Phase 1: Derivative Anchor ---

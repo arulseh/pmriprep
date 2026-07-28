@@ -9,7 +9,7 @@ import pytest
 
 from pmriprep.models.dce.extended_tofts import ExtendedToftsModel
 from pmriprep.models.dce.tofts import ToftsModel
-from pmriprep.utils.dce_constants import EPSILON_VE, KTRANS_BOUNDS, MAX_KEP, VE_BOUNDS, VP_BOUNDS
+from pmriprep.utils.dce_constants import EPSILON_VE, MAX_KEP
 
 
 # ---------------------------------------------------------------------------

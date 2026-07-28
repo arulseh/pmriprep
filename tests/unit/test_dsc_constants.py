@@ -4,7 +4,6 @@ import pytest
 
 from pmriprep.utils.dsc_constants import (
     CBF_BOUNDS,
-    CBV_BOUNDS,
     DEFAULT_OI_THRESHOLD,
     DEFAULT_OSVD_GRID_STEPS,
     DEFAULT_SVD_THRESHOLD,
@@ -12,10 +11,8 @@ from pmriprep.utils.dsc_constants import (
     EPSILON_CONCENTRATION,
     EPSILON_DELTA_R2,
     EPSILON_SIGNAL,
-    HEMATOCRIT_LV,
+    K2_UPPER_BOUND,
     MTT_BOUNDS,
-    RHO_BLOOD,
-    RHO_BRAIN,
     calculate_k_h,
     get_r2_star,
     get_r2_star_tissue,
@@ -79,12 +76,6 @@ class TestParameterBounds:
         assert CBF_BOUNDS.max == 2.0
         assert CBF_BOUNDS.min < CBF_BOUNDS.max
 
-    def test_cbv_bounds_valid(self) -> None:
-        """CBV bounds are (0.0, 20.0) with min < max."""
-        assert CBV_BOUNDS.min == 0.0
-        assert CBV_BOUNDS.max == 20.0
-        assert CBV_BOUNDS.min < CBV_BOUNDS.max
-
     def test_mtt_bounds_valid(self) -> None:
         """MTT bounds are (0.0, 30.0) with min < max."""
         assert MTT_BOUNDS.min == 0.0
@@ -100,6 +91,10 @@ class TestDefaultThresholds:
         assert DEFAULT_SVD_THRESHOLD == 0.2
         assert DEFAULT_OI_THRESHOLD == 0.095
         assert DEFAULT_OSVD_GRID_STEPS == 50
+
+    def test_k2_numerical_safety_bound(self) -> None:
+        """K2 clipping uses the validated numerical safety bound."""
+        assert K2_UPPER_BOUND == 0.2
 
 
 class TestEpsilonGuards:

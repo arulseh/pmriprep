@@ -231,7 +231,6 @@ class TestComputeDCEDerivedMetrics:
 
         derived = compute_dce_derived_metrics(
             ktrans_data=ktrans,
-            nktrans_data=None,
             ve_data=ve,
             vp_data=None,
             mask=mask,
@@ -243,20 +242,6 @@ class TestComputeDCEDerivedMetrics:
             assert f"above_{t}" in ktrans_fv
         assert "hotspot_summary" not in derived
 
-    def test_nktrans_fractional_volumes(self) -> None:
-        """nKtrans data produces per-map fractional volumes."""
-        mask = np.ones((10, 10, 1), dtype=bool)
-        nktrans = np.zeros((10, 10, 1))
-        nktrans.flat[:100] = np.linspace(0.0, 60.0, 100)
-
-        derived = compute_dce_derived_metrics(
-            ktrans_data=None, nktrans_data=nktrans,
-            ve_data=None, vp_data=None, mask=mask,
-        )
-        assert "nktrans" in derived["fractional_volumes"]
-        for t in (2.0, 5.0, 10.0, 15.0, 20.0, 30.0, 50.0):
-            assert f"above_{t}" in derived["fractional_volumes"]["nktrans"]
-
     def test_niauc60_fractional_volumes(self) -> None:
         """nIAUC60 data produces per-map fractional volumes."""
         mask = np.ones((10, 10, 1), dtype=bool)
@@ -264,7 +249,7 @@ class TestComputeDCEDerivedMetrics:
         niauc60.flat[:100] = np.linspace(0.0, 8.0, 100)
 
         derived = compute_dce_derived_metrics(
-            ktrans_data=None, nktrans_data=None,
+            ktrans_data=None,
             ve_data=None, vp_data=None, mask=mask,
             niauc60_data=niauc60,
         )
@@ -279,7 +264,7 @@ class TestComputeDCEDerivedMetrics:
         vp.flat[:100] = np.linspace(0.0, 0.12, 100)
 
         derived = compute_dce_derived_metrics(
-            ktrans_data=None, nktrans_data=None,
+            ktrans_data=None,
             ve_data=None, vp_data=vp, mask=mask,
         )
         assert "vp" in derived["fractional_volumes"]
@@ -290,8 +275,8 @@ class TestComputeDCEDerivedMetrics:
 class TestComputeNAWMReference:
     """Tests for compute_nawm_reference()."""
 
-    def test_nawm_stats(self) -> None:
-        """Maps + NAWM mask produces per-map stats with value-level QC by field strength."""
+    def test_relative_cbv_is_not_range_gated(self) -> None:
+        """Relative CBV statistics are emitted without absolute-value QC."""
         nawm_mask = np.zeros((10, 10, 10), dtype=bool)
         nawm_mask[1:9, 1:9, 1:9] = True  # 512 voxels
         rng = np.random.default_rng(42)
@@ -299,67 +284,39 @@ class TestComputeNAWMReference:
 
         maps = {"cbv": cbv_data}
         voxel_sizes = (1.0, 1.0, 1.0)
-        ref = compute_nawm_reference(
-            nawm_mask, maps, voxel_sizes, field_strength_t=3.0,
-        )
+        ref = compute_nawm_reference(nawm_mask, maps, voxel_sizes)
 
         assert ref["voxel_count"] == 512
         assert "cbv" in ref
         assert "median" in ref["cbv"]
         assert "std" in ref["cbv"]
-        # CBV ~3 lies in the 3T range (1.5, 4) → PASS at value level.
-        assert ref["value_qc_status"] == "PASS"
-        # Per-map verdict also surfaces:
-        assert ref["cbv"]["value_qc_status"] == "PASS"
+        assert ref["value_qc_status"] == "UNKNOWN"
+        assert "value_qc_status" not in ref["cbv"]
         # No mask-size editorial — voxel_count is informational only.
         assert "mask_qc_status" not in ref
 
-    def test_extreme_cbv_warns(self) -> None:
-        """Extreme CBV median produces value_qc_status=WARNING (3T table)."""
+    def test_normalized_and_time_maps_are_range_gated(self) -> None:
+        """nCBV and MTT retain interpretable NAWM scales."""
         nawm_mask = np.zeros((10, 10, 10), dtype=bool)
         nawm_mask[1:9, 1:9, 1:9] = True  # 512 voxels
-        # CBV far outside 3T range (1.5, 4)
-        cbv_data = np.full((10, 10, 10), 15.0)
+        maps = {
+            "ncbv": np.ones((10, 10, 10)),
+            "mtt": np.full((10, 10, 10), 5.0),
+        }
+        ref = compute_nawm_reference(nawm_mask, maps, (1.0, 1.0, 1.0))
 
-        maps = {"cbv": cbv_data}
-        voxel_sizes = (1.0, 1.0, 1.0)
-        ref = compute_nawm_reference(
-            nawm_mask, maps, voxel_sizes, field_strength_t=3.0,
-        )
+        assert ref["value_qc_status"] == "PASS"
+        assert ref["ncbv"]["value_qc_status"] == "PASS"
+        assert ref["mtt"]["value_qc_status"] == "PASS"
+
+    def test_extreme_ncbv_warns(self) -> None:
+        """Extreme nCBV median produces a value-level warning."""
+        nawm_mask = np.ones((10, 10, 10), dtype=bool)
+        maps = {"ncbv": np.full((10, 10, 10), 2.0)}
+        ref = compute_nawm_reference(nawm_mask, maps, (1.0, 1.0, 1.0))
 
         assert ref["value_qc_status"] == "WARNING"
-        assert "cbv" in ref["value_qc_notes"]
-        # Hematocrit annotation surfaces in the QC notes.
-        assert "hematocrit" in ref["value_qc_notes"].lower()
-
-    def test_unknown_field_strength_skips_value_qc(self) -> None:
-        """field_strength_t=None reports value_qc_status=UNKNOWN."""
-        nawm_mask = np.zeros((10, 10, 10), dtype=bool)
-        nawm_mask[1:9, 1:9, 1:9] = True
-        cbv_data = np.full((10, 10, 10), 15.0)  # would WARN at 3T
-
-        maps = {"cbv": cbv_data}
-        ref = compute_nawm_reference(
-            nawm_mask, maps, (1.0, 1.0, 1.0), field_strength_t=None,
-        )
-
-        assert ref["value_qc_status"] == "UNKNOWN"
-        assert "Field strength unknown" in ref["value_qc_notes"]
-
-    def test_field_strength_outside_validated_range_skips(self) -> None:
-        """7T (outside [1.5, 3.0]) reports value_qc_status=UNKNOWN, no auto-gate."""
-        nawm_mask = np.zeros((10, 10, 10), dtype=bool)
-        nawm_mask[1:9, 1:9, 1:9] = True
-        cbv_data = np.full((10, 10, 10), 5.0)
-
-        maps = {"cbv": cbv_data}
-        ref = compute_nawm_reference(
-            nawm_mask, maps, (1.0, 1.0, 1.0), field_strength_t=7.0,
-        )
-
-        assert ref["value_qc_status"] == "UNKNOWN"
-        assert "7" in ref["value_qc_notes"]
-        assert "outside validated range" in ref["value_qc_notes"]
+        assert "ncbv" in ref["value_qc_notes"]
 
     def test_small_nawm_mask_emits_size_without_editorial(self) -> None:
         """Small NAWM mask: voxel_count + volume_ml emitted; no mask_qc_status fabricated.
@@ -375,14 +332,13 @@ class TestComputeNAWMReference:
 
         ref = compute_nawm_reference(
             nawm_mask, {"cbv": cbv_data}, (1.0, 1.0, 1.0),
-            field_strength_t=3.0,
         )
         assert ref["voxel_count"] == 1
         assert "mask_qc_status" not in ref
         assert "mask_qc_notes" not in ref
 
     def test_no_maps_in_range_table_reports_unknown_not_pass(self) -> None:
-        """Field strength provided but emitted maps have no range entries → UNKNOWN.
+        """Maps without registered ranges produce UNKNOWN rather than PASS.
 
         Guards against compute_nawm_reference returning
         ``value_qc_status="PASS"`` with a misleading "All NAWM medians
@@ -391,14 +347,12 @@ class TestComputeNAWMReference:
         """
         nawm_mask = np.zeros((10, 10, 10), dtype=bool)
         nawm_mask[1:9, 1:9, 1:9] = True
-        # kep and peak_enhancement aren't in NAWM_RANGES_3T
+        # kep and peak_enhancement have no registered NAWM ranges.
         maps = {
             "kep": np.full((10, 10, 10), 0.5),
             "peak_enhancement": np.full((10, 10, 10), 50.0),
         }
-        ref = compute_nawm_reference(
-            nawm_mask, maps, (1.0, 1.0, 1.0), field_strength_t=3.0,
-        )
+        ref = compute_nawm_reference(nawm_mask, maps, (1.0, 1.0, 1.0))
         assert ref["value_qc_status"] == "UNKNOWN"
         assert "No emitted maps" in ref["value_qc_notes"]
 
@@ -667,7 +621,7 @@ class TestNormalizeHelpersReturnEmptyString:
     """Contract: NAWM normalization Function nodes return ``""`` (not ``None``).
 
     These helpers feed ``traits.Str`` consumers in DCE/DSC lesion-stats
-    (``nktrans_map``, ``niauc60_map``, ``ncbv_map``, ``ncbf_map``). Returning
+    (``niauc60_map``, ``ncbv_map``, ``ncbf_map``). Returning
     ``None`` triggers a TraitError that under the MultiProc plugin manifests
     as a silent dispatch hang (no work-dir created, no log line) — the same
     failure mode :class:`TestCombineTumorMasksReturnsEmptyString` documents.
@@ -691,10 +645,9 @@ class TestNormalizeHelpersReturnEmptyString:
 
         assert _normalize_cbv(
             cbv_file="/nonexistent/cbv.nii.gz",
-            brain_mask_file=None,
             derivatives_dir="/tmp",
-            subject_id="0081",
-            session_id="0001",
+            subject_id="test01",
+            session_id="visit1",
             nawm_mask_file=None,
         ) == ("", None)
 
@@ -703,10 +656,9 @@ class TestNormalizeHelpersReturnEmptyString:
 
         assert _normalize_cbf(
             cbf_file="/nonexistent/cbf.nii.gz",
-            brain_mask_file=None,
             derivatives_dir="/tmp",
-            subject_id="0081",
-            session_id="0001",
+            subject_id="test01",
+            session_id="visit1",
             nawm_mask_file=None,
         ) == ("", None)
 
@@ -727,21 +679,19 @@ class TestLesionStatsAcceptsEmptyMapTrait:
         from pmriprep.interfaces.dce_lesion_stats import DCELesionStats
 
         iface = DCELesionStats()
-        iface.inputs.subject_id = "0081"
-        iface.inputs.session_id = "0001"
+        iface.inputs.subject_id = "test01"
+        iface.inputs.session_id = "visit1"
         # Should not raise TraitError — these are the values produced by
         # _normalize_by_nawm on the no-NAWM path.
-        iface.inputs.nktrans_map = ""
         iface.inputs.niauc60_map = ""
-        assert iface.inputs.nktrans_map == ""
         assert iface.inputs.niauc60_map == ""
 
     def test_dsc_lesion_stats_accepts_empty_string_for_normalized_maps(self) -> None:
         from pmriprep.interfaces.dsc_lesion_stats import DSCLesionStats
 
         iface = DSCLesionStats()
-        iface.inputs.subject_id = "0081"
-        iface.inputs.session_id = "0001"
+        iface.inputs.subject_id = "test01"
+        iface.inputs.session_id = "visit1"
         # Should not raise TraitError — these are the values produced by
         # _normalize_cbv / _normalize_cbf on the no-NAWM path.
         iface.inputs.ncbv_map = ""
@@ -1030,9 +980,71 @@ class TestDCELesionStatsMapKeyCoverage:
         )
 
         assert _NAWMNORM_LESIONSTATS_MAP_KEY == {
-            "nktrans_map": "nktrans",
             "niauc60_map": "niauc60",
         }
+
+
+class TestDCEStatisticsQCMasking:
+    """DCE PK statistics use quantitative QC without masking model-free maps."""
+
+    @staticmethod
+    def _save(tmp_path, name, data):
+        import nibabel as nib
+
+        path = tmp_path / name
+        nib.save(
+            nib.Nifti1Image(np.asarray(data, dtype=np.float32), np.eye(4)),
+            path,
+        )
+        return str(path)
+
+    def test_qc_mask_applies_only_to_pk_maps(self, tmp_path) -> None:
+        from pmriprep.interfaces.dce_lesion_stats import DCELesionStats
+
+        qc = np.array([1, 0, 1, 0], dtype=np.uint8).reshape((2, 2, 1))
+        values = np.arange(1, 5, dtype=np.float32).reshape((2, 2, 1))
+        iface = DCELesionStats()
+        iface.inputs.qc_mask = self._save(tmp_path, "qc.nii.gz", qc)
+        iface.inputs.ktrans_map = self._save(
+            tmp_path, "ktrans.nii.gz", values
+        )
+        iface.inputs.iauc60_map = self._save(
+            tmp_path, "iauc60.nii.gz", values
+        )
+
+        maps = iface._load_maps()
+
+        np.testing.assert_array_equal(
+            np.isfinite(maps["ktrans"]), qc.astype(bool)
+        )
+        np.testing.assert_array_equal(maps["ktrans"][qc > 0], values[qc > 0])
+        np.testing.assert_array_equal(maps["iauc60"], values)
+        pk_stats = compute_map_statistics(
+            maps["ktrans"], np.ones_like(qc, dtype=bool)
+        )
+        model_free_stats = compute_map_statistics(
+            maps["iauc60"], np.ones_like(qc, dtype=bool)
+        )
+        assert pk_stats is not None
+        assert pk_stats.n_valid == 2
+        assert pk_stats.n_total == 4
+        assert pk_stats.median == pytest.approx(2.0)
+        assert model_free_stats is not None
+        assert model_free_stats.n_valid == model_free_stats.n_total == 4
+
+    def test_qc_mask_shape_mismatch_fails(self, tmp_path) -> None:
+        from pmriprep.interfaces.dce_lesion_stats import DCELesionStats
+
+        iface = DCELesionStats()
+        iface.inputs.qc_mask = self._save(
+            tmp_path, "qc.nii.gz", np.ones((2, 2, 1))
+        )
+        iface.inputs.ktrans_map = self._save(
+            tmp_path, "ktrans.nii.gz", np.ones((3, 2, 1))
+        )
+
+        with pytest.raises(ValueError, match="QC mask shape"):
+            iface._load_maps()
 
 
 class TestValidateMaskNdim:

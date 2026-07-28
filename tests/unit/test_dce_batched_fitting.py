@@ -4,11 +4,13 @@ Tests verify parameter recovery, convergence, constraint handling,
 auto-mode BIC selection, and result format for all four DCE PK models.
 """
 
+from typing import Any
+
 import numpy as np
 import pytest
+from scipy.optimize import lsq_linear, minimize
 
 from pmriprep.models.dce.batched_models import (
-    ModelResult,
     batched_2cxm_model,
     batched_extended_tofts_model,
     batched_patlak_model,
@@ -17,11 +19,15 @@ from pmriprep.models.dce.batched_models import (
 )
 from pmriprep.models.dce.batched_fitting import (
     FitResult,
-    _MODEL_PARAMS,
     batched_lm_fit,
     batched_patlak_lstsq,
 )
-from pmriprep.utils.dce_constants import EPSILON_VE
+from pmriprep.models.dce.extended_tofts import ExtendedToftsModel
+from pmriprep.models.dce.patlak import PatlakModel
+from pmriprep.models.dce.two_compartment_exchange import (
+    TwoCompartmentExchangeModel,
+)
+from pmriprep.utils.dce_constants import VP_VE_TOTAL_MAX
 
 
 # ---------------------------------------------------------------------------
@@ -152,6 +158,60 @@ class TestExtendedToftsRecovery:
         kt_rel = kt_err / np.maximum(ktrans_true[converged], 1e-6)
         assert np.median(kt_rel) < 0.15
 
+    def test_active_volume_boundary_matches_independent_optimizer(
+        self,
+        aif_and_time: tuple[np.ndarray, np.ndarray],
+    ) -> None:
+        """Batched ET solves, rather than merely projects onto, the boundary."""
+        aif, time_points = aif_and_time
+        model = ExtendedToftsModel()
+        target = model.evaluate([0.12, 0.85, 0.25], aif, time_points)
+        bounds = model.get_bounds()
+
+        def objective(parameters: np.ndarray) -> float:
+            residuals = target - model.evaluate(
+                parameters.tolist(), aif, time_points
+            )
+            return float(np.sum(residuals**2))
+
+        reference = minimize(
+            objective,
+            x0=np.array([0.12, 0.75, 0.249]),
+            method="SLSQP",
+            bounds=bounds,
+            constraints={
+                "type": "ineq",
+                "fun": lambda parameters: (
+                    VP_VE_TOTAL_MAX - parameters[1] - parameters[2]
+                ),
+            },
+            options={"maxiter": 4000, "ftol": 1e-14},
+        )
+        assert reference.success
+
+        result = batched_lm_fit(
+            "extended_tofts",
+            target[np.newaxis, :],
+            aif,
+            time_points,
+            max_iter=150,
+            compute_uncertainties=True,
+        )
+
+        assert result.converged[0]
+        assert result.params["ve"][0] + result.params["vp"][0] == pytest.approx(
+            VP_VE_TOTAL_MAX
+        )
+        parameters = np.array(
+            [result.params[name][0] for name in ("ktrans", "ve", "vp")]
+        )
+        assert objective(parameters) == pytest.approx(reference.fun, rel=1e-3)
+        for name in ("ktrans", "ve", "vp"):
+            assert np.isfinite(result.uncertainties[name][0])
+        assert result.uncertainties["ve"][0] == pytest.approx(
+            result.uncertainties["vp"][0]
+        )
+
 
 # ---------------------------------------------------------------------------
 # Test 3: Patlak exact recovery (no noise)
@@ -185,12 +245,258 @@ class TestPatlakExact:
         result = batched_patlak_lstsq(tissue, aif, time_points)
         assert np.all(result.r_squared > 0.999)
 
+    @pytest.mark.parametrize(
+        "latent_parameters",
+        [
+            (0.08, -0.06),
+            (-0.05, 0.08),
+            (0.08, 0.50),
+            (6.0, 0.08),
+        ],
+    )
+    def test_patlak_active_box_bound_matches_independent_optimizer(
+        self,
+        aif_and_time: tuple[np.ndarray, np.ndarray],
+        latent_parameters: tuple[float, float],
+    ) -> None:
+        """Batched Patlak re-optimizes the free coefficient at a box bound."""
+        aif, time_points = aif_and_time
+        model = PatlakModel()
+        tissue = model.evaluate(latent_parameters, aif, time_points)
+
+        design = np.column_stack([
+            model.evaluate([1.0, 0.0], aif, time_points),
+            model.evaluate([0.0, 1.0], aif, time_points),
+        ])
+        bounds = np.asarray(model.get_bounds(), dtype=np.float64)
+        reference = lsq_linear(
+            design,
+            tissue,
+            bounds=(bounds[:, 0], bounds[:, 1]),
+            tol=1e-14,
+            max_iter=4000,
+        )
+        assert reference.success
+
+        result = batched_patlak_lstsq(
+            tissue[np.newaxis, :],
+            aif,
+            time_points,
+            compute_uncertainties=True,
+        )
+        parameters = np.array(
+            [result.params["ktrans"][0], result.params["vp"][0]]
+        )
+
+        reference_residuals = tissue - design @ reference.x
+        result_residuals = tissue - design @ parameters
+        assert np.sum(result_residuals**2) == pytest.approx(
+            np.sum(reference_residuals**2), rel=1e-9
+        )
+        at_ktrans_bound = parameters[0] == pytest.approx(
+            model.get_bounds()[0][0]
+        ) or parameters[0] == pytest.approx(model.get_bounds()[0][1])
+        at_vp_bound = parameters[1] == pytest.approx(
+            model.get_bounds()[1][0]
+        ) or parameters[1] == pytest.approx(model.get_bounds()[1][1])
+        assert at_ktrans_bound or at_vp_bound
+        if at_ktrans_bound:
+            assert result.uncertainties["ktrans"][0] == 0.0
+        else:
+            assert np.isfinite(result.uncertainties["ktrans"][0])
+        if at_vp_bound:
+            assert result.uncertainties["vp"][0] == 0.0
+        else:
+            assert np.isfinite(result.uncertainties["vp"][0])
+
+    def test_graphical_active_bound_reoptimizes_other_coefficient(
+        self,
+        aif_and_time: tuple[np.ndarray, np.ndarray],
+    ) -> None:
+        """Bounded graphical regression solves rather than clips."""
+        aif, time_points = aif_and_time
+        model = PatlakModel()
+        tissue = model.evaluate([0.08, -0.06], aif, time_points)
+        x_values, y_values, valid = model.compute_patlak_plot_variables(
+            tissue, aif, time_points
+        )
+        start = min(int(np.argmax(aif)) + 1, len(time_points) - 2)
+        valid[:start] = False
+        design = np.column_stack([x_values[valid], np.ones(np.sum(valid))])
+
+        def objective(parameters: np.ndarray) -> float:
+            residuals = y_values[valid] - design @ parameters
+            return float(np.sum(residuals**2))
+
+        reference = minimize(
+            objective,
+            x0=np.array([0.1, 0.02]),
+            method="SLSQP",
+            bounds=model.get_bounds(),
+            options={"maxiter": 4000, "ftol": 1e-14},
+        )
+        assert reference.success
+
+        result = model.fit_graphical(tissue, aif, time_points)
+        parameters = np.array(
+            [result.parameters["Ktrans"], result.parameters["vp"]]
+        )
+        assert objective(parameters) == pytest.approx(reference.fun, rel=1e-9)
+
+    @pytest.mark.parametrize("vp_uncertainty", [None, 0.4])
+    def test_patlak_constraint_center_is_clipped_to_model_support(
+        self,
+        aif_and_time: tuple[np.ndarray, np.ndarray],
+        vp_uncertainty: float | None,
+    ) -> None:
+        """Hard and soft external vp constraints cannot exceed model support."""
+        aif, time_points = aif_and_time
+        model = PatlakModel()
+        tissue = model.evaluate([0.08, 0.30], aif, time_points)
+
+        result = batched_patlak_lstsq(
+            tissue[np.newaxis, :],
+            aif,
+            time_points,
+            fixed_vp=np.array([0.50]),
+            vp_uncertainty=vp_uncertainty,
+        )
+
+        assert result.params["vp"][0] <= model.get_bounds()[1][1]
+        assert result.params["vp"][0] == pytest.approx(0.30)
+
 
 # ---------------------------------------------------------------------------
 # Test 4: 2CXM recovery
 # ---------------------------------------------------------------------------
 
 class TestTwoCXMRecovery:
+    def test_2cxm_noiseless_balanced_regime_matches_scalar(
+        self,
+        aif_and_time: tuple[np.ndarray, np.ndarray],
+    ) -> None:
+        """Batched 2CXM must recover a noiseless identifiable scalar solution."""
+        aif, time_points = aif_and_time
+        model = TwoCompartmentExchangeModel()
+        truth = {"fp": 50.0, "ps": 10.0, "ve": 0.2, "vp": 0.02}
+        tissue = model.evaluate(
+            [truth[name] for name in ("fp", "ps", "ve", "vp")],
+            aif,
+            time_points,
+        )
+
+        result = batched_lm_fit(
+            "2cxm",
+            tissue[np.newaxis, :],
+            aif,
+            time_points,
+            max_iter=100,
+        )
+
+        assert result.converged[0]
+        assert result.r_squared[0] > 0.9999
+        for name, expected in truth.items():
+            assert result.params[name][0] == pytest.approx(expected, rel=0.01)
+
+    def test_2cxm_active_volume_boundary_matches_independent_optimizer(
+        self,
+        aif_and_time: tuple[np.ndarray, np.ndarray],
+    ) -> None:
+        """Scalar and batched fits solve, rather than project onto, the boundary."""
+        aif, time_points = aif_and_time
+        model = TwoCompartmentExchangeModel()
+        target = model.evaluate([60.0, 15.0, 0.8, 0.25], aif, time_points)
+        bounds = model.get_bounds()
+
+        def objective(parameters: np.ndarray) -> float:
+            residuals = target - model.evaluate(parameters.tolist(), aif, time_points)
+            return float(np.sum(residuals**2))
+
+        reference = minimize(
+            objective,
+            x0=np.array([60.0, 15.0, 0.75, 0.249]),
+            method="SLSQP",
+            bounds=bounds,
+            constraints={
+                "type": "ineq",
+                "fun": lambda parameters: (
+                    VP_VE_TOTAL_MAX - parameters[2] - parameters[3]
+                ),
+            },
+            options={"maxiter": 4000, "ftol": 1e-14},
+        )
+        assert reference.success
+
+        scalar = model.fit(target, aif, time_points)
+        batched = batched_lm_fit(
+            "2cxm",
+            target[np.newaxis, :],
+            aif,
+            time_points,
+            max_iter=150,
+            compute_uncertainties=True,
+        )
+
+        assert scalar.converged
+        assert batched.converged[0]
+        assert scalar.parameters["ve"] + scalar.parameters["vp"] == pytest.approx(
+            VP_VE_TOTAL_MAX
+        )
+        assert batched.params["ve"][0] + batched.params["vp"][0] == pytest.approx(
+            VP_VE_TOTAL_MAX
+        )
+        assert scalar.residual_sum_squares == pytest.approx(reference.fun, rel=1e-3)
+        batched_parameters = [
+            batched.params[name][0] for name in ("fp", "ps", "ve", "vp")
+        ]
+        assert objective(np.asarray(batched_parameters)) == pytest.approx(
+            reference.fun,
+            rel=1e-3,
+        )
+        for name in ("fp", "ps", "ve", "vp"):
+            assert np.isfinite(batched.uncertainties[name][0])
+        assert batched.uncertainties["ve"][0] == pytest.approx(
+            batched.uncertainties["vp"][0]
+        )
+
+    def test_2cxm_fixed_vp_scalar_and_batched_recover_permeability_limit(
+        self,
+        aif_and_time: tuple[np.ndarray, np.ndarray],
+    ) -> None:
+        """Fixed-vp paths recover a noiseless permeability-limited curve."""
+        aif, time_points = aif_and_time
+        model = TwoCompartmentExchangeModel()
+        truth = {"Fp": 100.0, "PS": 5.0, "ve": 0.2, "vp": 0.02}
+        tissue = model.evaluate(
+            [truth[name] for name in ("Fp", "PS", "ve", "vp")],
+            aif,
+            time_points,
+        )
+
+        scalar = model.fit_constrained(
+            tissue,
+            aif,
+            time_points,
+            fixed_vp=truth["vp"],
+        )
+        batched = batched_lm_fit(
+            "2cxm",
+            tissue[np.newaxis, :],
+            aif,
+            time_points,
+            fixed_vp=np.array([truth["vp"]]),
+            max_iter=150,
+        )
+
+        assert scalar.converged
+        assert batched.converged[0]
+        for name in ("Fp", "PS", "ve"):
+            assert scalar.parameters[name] == pytest.approx(truth[name], rel=0.01)
+            assert batched.params[name.lower()][0] == pytest.approx(
+                truth[name],
+                rel=0.01,
+            )
+
     def test_2cxm_recovery(self, aif_and_time):
         """1000 voxels, 1% noise, 4 params → params within 10% for 80%."""
         aif, time_points = aif_and_time
@@ -304,7 +610,7 @@ class TestAutoModeBIC:
                 )
 
         # BIC selection
-        n_total = 2 * n_per
+        2 * n_per
         T = len(time_points)
         n_params = {"tofts": 2, "patlak": 2}
         bic = {}
@@ -395,6 +701,55 @@ class TestResultDictFormat:
 # ---------------------------------------------------------------------------
 
 class TestConstrainedAutoMode:
+    def test_fixed_vp_respects_joint_volume_constraint(self, aif_and_time):
+        """A fixed vp solves on the matching per-voxel upper bound on ve."""
+        aif, time_points = aif_and_time
+        model = ExtendedToftsModel()
+        ktrans = np.array([0.12])
+        ve = np.array([0.85])
+        fixed_vp = np.array([0.25])
+        tissue = batched_extended_tofts_model(
+            ktrans, ve, fixed_vp, aif, time_points,
+        ).tissue_curves
+
+        result = batched_lm_fit(
+            "extended_tofts",
+            tissue,
+            aif,
+            time_points,
+            fixed_vp=fixed_vp,
+            max_iter=100,
+        )
+
+        def objective(parameters: np.ndarray) -> float:
+            predicted = model.evaluate(
+                [parameters[0], parameters[1], fixed_vp[0]],
+                aif,
+                time_points,
+            )
+            return float(np.sum((tissue[0] - predicted) ** 2))
+
+        reference = minimize(
+            objective,
+            x0=np.array([0.12, 0.70]),
+            method="SLSQP",
+            bounds=[
+                model.get_bounds()[0],
+                (
+                    model.get_bounds()[1][0],
+                    VP_VE_TOTAL_MAX - fixed_vp[0],
+                ),
+            ],
+            options={"maxiter": 4000, "ftol": 1e-14},
+        )
+        assert reference.success
+        assert result.converged[0]
+        assert result.params["ve"][0] + result.params["vp"][0] <= 0.999 + 1e-12
+        parameters = np.array(
+            [result.params["ktrans"][0], result.params["ve"][0]]
+        )
+        assert objective(parameters) == pytest.approx(reference.fun, rel=1e-3)
+
     def test_constrained_vp_preserved(self, aif_and_time):
         """100 constrained + 100 unconstrained: mixed vp handling."""
         aif, time_points = aif_and_time
@@ -870,3 +1225,263 @@ class TestChunkedMultiproc:
         np.testing.assert_array_equal(
             bic_winner(results_1), bic_winner(results_4),
         )
+
+    def test_auto_nlls_requests_candidate_uncertainties(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Auto NLLS retains conditional uncertainty from its winning model."""
+        from pmriprep.interfaces.dce_compute import ComputeDCEMaps
+        from pmriprep.utils.dsc_cbv_constraint import ConstraintMode
+
+        calls: list[bool] = []
+
+        def fake_dispatch(**kwargs: Any) -> FitResult:
+            calls.append(kwargs["compute_uncertainties"])
+            return FitResult(
+                params={
+                    "ktrans": np.array([0.1]),
+                    "vp": np.array([0.02]),
+                },
+                r_squared=np.array([1.0]),
+                converged=np.array([True]),
+                fitted_curves=np.zeros((1, 4)),
+                n_iterations=1,
+                model_name="patlak",
+                uncertainties={
+                    "ktrans": np.array([0.01]),
+                    "vp": np.array([0.002]),
+                },
+            )
+
+        interface = ComputeDCEMaps()
+        monkeypatch.setattr(interface, "_dispatch_batched_chunks", fake_dispatch)
+        coords = (np.array([0]), np.array([0]), np.array([0]))
+        results = interface._fit_batched(
+            conc_data=np.zeros((1, 1, 1, 4)),
+            mask_coords=coords,
+            aif=np.zeros(4),
+            time_points=np.arange(4, dtype=float),
+            model_name="auto",
+            inference="nlls",
+            is_auto=True,
+            candidate_names=["patlak"],
+            vp_constraint_map=None,
+            constraint_mode=ConstraintMode.SKIP,
+            constraint_vp_uncertainty=0.0,
+            motion_weights=None,
+            save_fitted_curves=False,
+            sloppy=False,
+            mcmc_samples=0,
+            baseline_frames=1,
+            n_procs=1,
+            random_seed=42,
+            init_args=(),
+            voxel_data_list=[],
+        )
+
+        assert calls == [True]
+        assert results[0]["selected_model_name"] == "patlak"
+        assert results[0]["uncertainties"] == {
+            "Ktrans": 0.01,
+            "vp": 0.002,
+        }
+
+    def test_auto_vi_uses_batched_selection_before_refinement(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Auto VI must refine, rather than repeat, batched-NLLS selection."""
+        from pmriprep.interfaces.dce_compute import ComputeDCEMaps
+        from pmriprep.utils.dsc_cbv_constraint import ConstraintMode
+
+        calls: list[bool] = []
+        vp_uncertainties: list[float | None] = []
+        selected_before_refinement: list[str] = []
+
+        def fake_dispatch(**kwargs: Any) -> FitResult:
+            calls.append(kwargs["compute_uncertainties"])
+            vp_uncertainties.append(kwargs["vp_uncertainty"])
+            return FitResult(
+                params={
+                    "ktrans": np.array([0.1]),
+                    "vp": np.array([0.02]),
+                },
+                r_squared=np.array([1.0]),
+                converged=np.array([True]),
+                fitted_curves=np.zeros((1, 4)),
+                n_iterations=1,
+                model_name="patlak",
+                uncertainties={},
+            )
+
+        def fake_refine(
+            results: list[dict[str, Any]],
+            voxel_data_list: list[Any],
+            init_args: tuple[Any, ...],
+            n_procs: int,
+        ) -> list[dict[str, Any]]:
+            del voxel_data_list, init_args, n_procs
+            selected_before_refinement.extend(
+                str(result["selected_model_name"]) for result in results
+            )
+            return results
+
+        interface = ComputeDCEMaps()
+        monkeypatch.setattr(interface, "_dispatch_batched_chunks", fake_dispatch)
+        monkeypatch.setattr(
+            interface, "_refine_auto_bayesian_from_batched", fake_refine
+        )
+        coords = (np.array([0]), np.array([0]), np.array([0]))
+        results = interface._fit_batched(
+            conc_data=np.zeros((1, 1, 1, 4)),
+            mask_coords=coords,
+            aif=np.zeros(4),
+            time_points=np.arange(4, dtype=float),
+            model_name="auto",
+            inference="vi",
+            is_auto=True,
+            candidate_names=["patlak"],
+            vp_constraint_map=np.full((1, 1, 1), 0.02),
+            constraint_mode=ConstraintMode.SOFT,
+            constraint_vp_uncertainty=0.4,
+            motion_weights=None,
+            save_fitted_curves=False,
+            sloppy=False,
+            mcmc_samples=0,
+            baseline_frames=1,
+            n_procs=1,
+            random_seed=42,
+            init_args=(),
+            voxel_data_list=[],
+        )
+
+        assert calls == [False]
+        assert vp_uncertainties == [0.4]
+        assert selected_before_refinement == ["patlak"]
+        assert results[0]["selected_model_name"] == "patlak"
+
+    def test_auto_bayesian_refinement_preserves_selection_and_delta_bic(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Grouped refinement cannot change canonical BIC state."""
+        import pmriprep.interfaces.dce_compute as dce_compute
+        from pmriprep.interfaces.dce_compute import ComputeDCEMaps, VoxelInput
+
+        batched_results = [
+            {
+                "coords": (0, 0, 0),
+                "selected_model_name": "patlak",
+                "delta_bic": 8.0,
+                "failed": False,
+            },
+            {
+                "coords": (1, 0, 0),
+                "selected_model_name": "extended_tofts",
+                "delta_bic": 12.0,
+                "failed": False,
+            },
+            {
+                "coords": (2, 0, 0),
+                "selected_model_name": "patlak",
+                "delta_bic": 20.0,
+                "failed": False,
+            },
+        ]
+        voxels = [
+            VoxelInput(index, 0, 0, np.zeros(4), None)
+            for index in range(3)
+        ]
+        seen: list[tuple[int, str, bool, list[str]]] = []
+
+        def fake_fit(voxel: VoxelInput) -> dict[str, Any]:
+            selected_model = str(dce_compute._worker_ctx["model_name"])
+            is_auto = bool(dce_compute._worker_ctx["is_auto"])
+            candidate_models = sorted(dce_compute._worker_ctx["bic_candidates"])
+            seen.append((voxel.x, selected_model, is_auto, candidate_models))
+            return {
+                "coords": (voxel.x, voxel.y, voxel.z),
+                "selected_model_name": selected_model,
+                "delta_bic": np.nan,
+                "failed": False,
+                "converged": voxel.x != 2,
+            }
+
+        monkeypatch.setattr(dce_compute, "_fit_single_voxel", fake_fit)
+        init_args = (
+            np.zeros(4),
+            np.arange(4, dtype=float),
+            "extended_tofts",
+            "vi",
+            0,
+            1,
+            "skip",
+            0.0,
+            False,
+            None,
+            False,
+            42,
+            ["patlak", "extended_tofts"],
+        )
+
+        results = ComputeDCEMaps()._refine_auto_bayesian_from_batched(
+            batched_results,
+            voxels,
+            init_args,
+            n_procs=1,
+        )
+
+        assert seen == [
+            (0, "patlak", False, []),
+            (2, "patlak", False, []),
+            (1, "extended_tofts", False, []),
+        ]
+        assert results[0]["selected_model_name"] == "patlak"
+        assert results[0]["delta_bic"] == 8.0
+        assert results[0]["inference_fallback"] is False
+        assert results[1]["selected_model_name"] == "extended_tofts"
+        assert results[1]["delta_bic"] == 12.0
+        assert results[1]["inference_fallback"] is False
+        assert results[2]["selected_model_name"] == "patlak"
+        assert results[2]["delta_bic"] == 20.0
+        assert results[2]["inference_fallback"] is True
+        assert "inference_fallback" not in batched_results[2]
+
+    def test_fixed_map_refinement_marks_nlls_fallback(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A failed fixed-model MAP refinement discloses retained NLLS output."""
+        import pmriprep.interfaces.dce_compute as dce_compute
+        from pmriprep.interfaces.dce_compute import ComputeDCEMaps, VoxelInput
+
+        batched = [{"failed": False, "converged": True, "params": {"Ktrans": 0.1}}]
+        voxel = VoxelInput(0, 0, 0, np.zeros(4), None)
+        monkeypatch.setattr(
+            dce_compute,
+            "_fit_single_voxel",
+            lambda _: {"failed": True, "converged": False},
+        )
+        init_args = (
+            np.zeros(4),
+            np.arange(4, dtype=float),
+            "tofts",
+            "map",
+            0,
+            1,
+            "skip",
+            0.0,
+            False,
+            None,
+            False,
+            42,
+            None,
+        )
+
+        results = ComputeDCEMaps()._refine_map_from_batched(
+            batched,
+            [voxel],
+            init_args,
+            n_procs=1,
+        )
+
+        assert results[0]["params"] == {"Ktrans": 0.1}
+        assert results[0]["inference_fallback"] is True
+        assert "inference_fallback" not in batched[0]

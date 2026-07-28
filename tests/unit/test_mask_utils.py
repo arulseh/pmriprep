@@ -9,7 +9,6 @@ from pathlib import Path
 
 import nibabel as nib
 import numpy as np
-import pytest
 
 
 def _create_test_mask(

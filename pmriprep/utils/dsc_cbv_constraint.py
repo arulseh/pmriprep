@@ -7,7 +7,7 @@ number of free parameters and improving stability.
 
 The constraint pipeline:
     1. Assess DSC CBV quality (CNR coverage, AIF metrics, CBV ranges)
-    2. Convert CBV to vp: vp = CBV * (1 - Hct) / (100 * rho)
+    2. Scale NAWM-normalized CBV to a vp prior
     3. Determine constraint mode: hard (fix vp), soft (Bayesian prior), skip
 
 """
@@ -21,12 +21,7 @@ from typing import Any, Optional, Union
 import numpy as np
 import numpy.typing as npt
 
-logger = logging.getLogger(__name__)
-
 from pmriprep.utils.dce_constants import (
-    HEMATOCRIT_ARTERIAL,
-    TISSUE_DENSITY,
-    capillary_hematocrit,
     NAWM_VP_REFERENCE,
     VP_MAX_PHYSIOLOGICAL,
     VP_MEDIAN_MIN,
@@ -49,6 +44,8 @@ from pmriprep.utils.dsc_constants import (
     POSITIVE_TAIL_SEVERE_FRAC,
     QC_MEAN_CNR_MINIMUM,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -95,19 +92,14 @@ CBV_MEDIAN_RANGE: tuple[float, float] = (0.3, 3.0)
 #: Maximum fraction of negative CBV values before quality downgrade
 CBV_NEGATIVE_FRACTION_MAX: float = 0.01
 
-#: Literature NAWM CBV for normalization (mL/100g)
-CBV_NAWM_LITERATURE: float = 2.5
-
 # Composite K2 criteria for preload-aware uncertainty adjustment (sigma tier).
-# Thresholds colocated in dsc_constants — see K2_SIGMA_* and LEAKY_SIGMA_*
-# there for literature references. This tier is coarser than the primary
-# classification tier (K2_PRIMARY_*) used by classify_preload_adequacy_from_k2;
-# sigma tuning tolerates looser thresholds than discrete class assignment.
+# This tier is coarser than the primary classification tier (K2_PRIMARY_*)
+# used by classify_preload_adequacy_from_k2; sigma tuning tolerates looser
+# thresholds than discrete class assignment.
 
 # Gamma peak ratio thresholds for constraint quality gating.
 # Moderate band [0.90, 1.10] imported from dsc_aif.py (single source of truth).
 # Wider low-confidence band captures severe AIF corruption.
-# Ref: peak error >12% exceeds the ~10% CBF CoV expected in normal brain.
 GAMMA_PEAK_RATIO_LOW_MIN: float = 0.80
 GAMMA_PEAK_RATIO_LOW_MAX: float = 1.20
 
@@ -123,7 +115,7 @@ SKIP_REASON_SYNTHETIC_AIF = "synthetic_aif"
 NO_DSC_RUN_REASON_STRING = "No DSC data provided"
 SYNTHETIC_AIF_REASON_STRING = (
     "AIF is synthetic (cascade exhausted or gamma-R2 fallback); "
-    "absolute CBV magnitudes are not calibrated"
+    "relative CBV amplitude is not subject-calibrated"
 )
 
 
@@ -148,8 +140,8 @@ class CBVQualityAssessment:
         cnr_coverage: Fraction of brain voxels with CNR > 4.
         aif_peak_height: AIF peak height fraction (0-1).
         aif_baseline_return: AIF baseline return ratio (0-1).
-        cbv_median: Median CBV in brain (mL/100g), or None if not assessed.
-        cbv_negative_fraction: Fraction of negative CBV values, or None.
+        cbv_median: Median dimensionless nCBV in brain, or None if not assessed.
+        cbv_negative_fraction: Fraction of negative nCBV values, or None.
         gamma_peak_ratio: Gamma-variate peak ratio (fitted/measured), or None.
         reasons: List of reasons for quality decisions.
     """
@@ -406,7 +398,7 @@ def assess_dsc_cbv_quality(
     - CNR coverage: fraction of brain voxels with CNR > 4
     - AIF peak height: relative height of the AIF peak
     - AIF baseline return: how well AIF returns to baseline
-    - CBV value ranges: whether median CBV is physiologically plausible
+    - nCBV value ranges: whether whole-brain median nCBV is plausible
 
     CNR coverage thresholds scale with the administered Gd dose
     (``dose × agent_standard_dose`` relative to 0.1 mmol/kg reference).
@@ -420,9 +412,9 @@ def assess_dsc_cbv_quality(
         Dictionary from DSC AIF QC JSON containing metrics
         like cnr_whole_brain, aif_peak_height, baseline_return_ratio.
     cbv_data : npt.NDArray[np.floating], optional
-        Optional 3D CBV map for value range validation.
+        Optional 3D dimensionless nCBV map for value range validation.
     brain_mask : npt.NDArray[np.floating], optional
-        Optional 3D brain mask for CBV statistics.
+        Optional 3D brain mask for nCBV statistics.
     preload_classification : str, optional
         DSC preload classification string.
     k2_metrics : dict[str, Any], optional
@@ -645,7 +637,7 @@ def assess_dsc_cbv_quality(
                 if cbv_median < CBV_MEDIAN_RANGE[0] or cbv_median > CBV_MEDIAN_RANGE[1]:
                     confidence = _downgrade_confidence(confidence, "moderate")
                     result.reasons.append(
-                        f"CBV median {cbv_median:.2f} outside "
+                        f"nCBV median {cbv_median:.2f} outside "
                         f"[{CBV_MEDIAN_RANGE[0]}, {CBV_MEDIAN_RANGE[1]}]"
                     )
 
@@ -672,64 +664,8 @@ def assess_dsc_cbv_quality(
 
 
 # =============================================================================
-# CBV to vp Conversion
+# nCBV to vp Prior
 # =============================================================================
-
-
-def cbv_to_vp(
-    cbv_data: npt.NDArray[np.floating],
-    hematocrit: float = HEMATOCRIT_ARTERIAL,
-    tissue_density: float = TISSUE_DENSITY,
-) -> npt.NDArray[np.floating]:
-    """Convert DSC-derived CBV map to plasma volume fraction (vp).
-
-    Formula: vp = CBV * (1 - Hct_capillary) / (100 * rho)
-
-    Capillary hematocrit is derived from arterial via Fåhræus ratio (0.85).
-
-    Unit analysis:
-        (mL/100g) * (1) / (100 * g/mL) = mL/mL = dimensionless
-
-    Typical brain values (arterial Hct=0.42, capillary=0.357, rho=1.04):
-        WM CBV 2.5 mL/100g -> vp ~0.015
-        GM CBV 4.5 mL/100g -> vp ~0.028
-        Tumor 5-15 mL/100g -> vp ~0.031-0.093
-
-    Parameters
-    ----------
-    cbv_data : npt.NDArray[np.floating]
-        3D CBV map in mL/100g.
-    hematocrit : float, optional
-        Arterial hematocrit (default 0.42). Capillary Hct
-        derived internally via Fåhræus ratio.
-    tissue_density : float, optional
-        Tissue density in g/mL (default 1.04).
-
-    Returns
-    -------
-    npt.NDArray[np.floating]
-        3D vp map (dimensionless, 0-0.2). Invalid values set to NaN.
-    """
-    hct_cap = capillary_hematocrit(hematocrit)
-
-    # Guard invalid input values
-    cbv_safe = np.where(
-        np.isfinite(cbv_data) & (cbv_data >= 0),
-        cbv_data,
-        np.nan,
-    )
-
-    # Apply conversion
-    vp = cbv_safe * (1.0 - hct_cap) / (100.0 * tissue_density)
-
-    # Clip to physiological range; out-of-range -> NaN
-    vp = np.where(
-        (vp >= 0) & (vp <= VP_MAX_PHYSIOLOGICAL),
-        vp,
-        np.nan,
-    )
-
-    return vp.astype(np.float64)
 
 
 def ncbv_to_vp_prior(
@@ -744,8 +680,7 @@ def ncbv_to_vp_prior(
     and first-pass-truncation biases (all affect numerator and denominator
     equally), this is the scientifically defensible conversion from a
     DSC-derived relative volume measure to a DCE vp prior, avoiding the
-    unit ambiguities that plague direct absolute-CBV → vp conversion with
-    ``cbv_to_vp``.
+    unit ambiguities that preclude direct relative-CBV → vp conversion.
 
     Hct closure constraint: this anchor uses the same large-vessel Hct =
     0.42 convention as the AIF-path ``/(1-Hct)`` blood→plasma conversion
@@ -953,7 +888,7 @@ def determine_constraint_mode(
         # (orthogonal: confidence = random error, K2 adequacy = systematic
         # bias). Reuse the classification cached during quality assessment when
         # available; fall back to recomputing only if the quality object
-        # predates this field (legacy callers building it by hand).
+        # Hand-built QC dictionaries may omit this field.
         if dsc_quality.preload_k2_classification is not None:
             k2_suppressed, high_correction = (
                 dsc_quality.preload_k2_classification
@@ -994,7 +929,6 @@ def prepare_vp_constraint_from_data(
     aif_qc_data: dict[str, Any],
     brain_mask_file: Union[str, Path],
     mode_override: Optional[str] = None,
-    hematocrit: float = HEMATOCRIT_ARTERIAL,
     preload_classification: Optional[str] = None,
     k2_metrics: Optional[dict[str, Any]] = None,
     dose: float = 1.0,
@@ -1025,8 +959,6 @@ def prepare_vp_constraint_from_data(
         Path to brain mask NIfTI.
     mode_override : str, optional
         User-specified constraint mode override.
-    hematocrit : float, optional
-        Blood hematocrit (retained for provenance).
     preload_classification : str, optional
         DSC preload classification string from QC.
     k2_metrics : dict[str, Any], optional
@@ -1058,8 +990,8 @@ def prepare_vp_constraint_from_data(
     ):
         logger.info(
             "vp constraint skipped: AIF is synthetic (cascade exhausted "
-            "or gamma-R² fallback). Absolute CBV magnitudes not "
-            "calibrated; DCE vp will be fit unconstrained."
+            "or gamma-R² fallback). Relative CBV amplitude is not "
+            "subject-calibrated; DCE vp will be fit unconstrained."
         )
         result.config = ConstraintConfig(
             mode=ConstraintMode.SKIP,
@@ -1072,7 +1004,6 @@ def prepare_vp_constraint_from_data(
             "reason": result.config.reason,
             "vp_uncertainty": result.config.vp_uncertainty,
             "skip_reason": SKIP_REASON_SYNTHETIC_AIF,
-            "hematocrit": hematocrit,
         }
         return result
 
@@ -1093,7 +1024,6 @@ def prepare_vp_constraint_from_data(
             "reason": result.config.reason,
             "vp_uncertainty": result.config.vp_uncertainty,
             "skip_reason": SKIP_REASON_NO_NAWM_MASK,
-            "hematocrit": hematocrit,
         }
         return result
 
@@ -1130,7 +1060,7 @@ def prepare_vp_constraint_from_data(
 
     # Step 3: Convert nCBV to vp prior (even for skip mode, for QC reporting).
     # NAWM-anchored: vp = NAWM_VP_REFERENCE × nCBV. Avoids the absolute-CBV
-    # calibration ambiguity that `cbv_to_vp` has with relative AUC CBV.
+    # calibration ambiguity of relative AUC CBV.
     vp_map = ncbv_to_vp_prior(ncbv_data)
 
     # Build QC report
@@ -1150,7 +1080,6 @@ def prepare_vp_constraint_from_data(
         "detection_method": quality.detection_level,
         "n_aif_voxels_selected": quality.n_aif_voxels,
         "gamma_peak_ratio": quality.gamma_peak_ratio,
-        "hematocrit": hematocrit,
         # Unit annotations so downstream consumers don't conflate scales.
         "cbv_median_units": "ncbv",
         "vp_median_units": "fraction",

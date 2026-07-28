@@ -82,6 +82,10 @@ class FitResult:
         Whether the fitting algorithm converged.
     fitting_method : str
         Method used ('nlls', 'map', 'mcmc').
+    uncertainty_source : str
+        Run-time source of uncertainty estimates, such as
+        ``"laplace_hessian"``, ``"prior_fallback"``, or
+        ``"not_computed"``.
     fitted_curve : np.ndarray
         Fitted tissue concentration curve C_t(t).
     """
@@ -111,12 +115,14 @@ class FitResult:
     n_observations: int = 0
     converged: bool = False
     fitting_method: str = ""
-
     # Fitted curve
     fitted_curve: Optional[npt.NDArray[np.floating]] = None
 
     # Fit quality flag: "good", "poor_convergence", or "high_uncertainty"
     quality_flag: str = "good"
+
+    # Uncertainty provenance
+    uncertainty_source: str = "not_computed"
 
     def has_uncertainty(self) -> bool:
         """Check if uncertainty estimates are available.
@@ -151,15 +157,13 @@ class FitResult:
         Returns
         -------
         bool
-            True if converged and all R-hat < rhat_max and all ESS > ess_min,
-            or True if not MCMC (no diagnostics to check).
+            True if converged and every available diagnostic passes, or True
+            for non-MCMC results with no diagnostics to check.
         """
-        if not self.rhat or not self.ess:
-            # Not MCMC, or no diagnostics available
+        if not self.rhat and not self.ess:
             return self.converged
-
-        all_rhat_ok = all(r < rhat_max for r in self.rhat.values())
-        all_ess_ok = all(e > ess_min for e in self.ess.values())
+        all_rhat_ok = not self.rhat or all(r < rhat_max for r in self.rhat.values())
+        all_ess_ok = not self.ess or all(e > ess_min for e in self.ess.values())
 
         return self.converged and all_rhat_ok and all_ess_ok
 

@@ -7,12 +7,10 @@ equation and related T1-based calculations for pharmacokinetic analysis.
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Tuple, Union
+from typing import Any, Optional, Tuple, Union
 
 import numpy as np
 import numpy.typing as npt
-
-logger = logging.getLogger(__name__)
 
 from pmriprep.utils.dce_constants import (
     DEFAULT_BASELINE_FRAMES,
@@ -24,6 +22,16 @@ from pmriprep.utils.dce_constants import (
     get_b1_thresholds,
     get_r1_relaxivity,
 )
+
+logger = logging.getLogger(__name__)
+
+
+def _validate_hematocrit(hematocrit: float) -> None:
+    """Validate a blood hematocrit volume fraction."""
+    if not np.isfinite(hematocrit) or not 0 <= hematocrit < 1:
+        raise ValueError(
+            f"hematocrit must be finite and in [0, 1), got {hematocrit}"
+        )
 
 
 @dataclass
@@ -52,6 +60,7 @@ class DCEConversionResult:
     is_plasma: bool
     effective_r1: float
     baseline_signal: Union[float, npt.NDArray[np.floating]]
+    conversion_qc: dict[str, Any]
 
 
 def ernst_signal_model(
@@ -227,6 +236,7 @@ def signal_to_concentration(
     baseline_frames: int = DEFAULT_BASELINE_FRAMES,
     convert_to_plasma: bool = True,
     hematocrit: float = HEMATOCRIT,
+    qc_mask: Optional[npt.NDArray[np.bool_]] = None,
 ) -> DCEConversionResult:
     """Convert DCE signal to concentration using the Ernst equation.
 
@@ -238,8 +248,7 @@ def signal_to_concentration(
     3. Convert E1(t) to R1(t) = -ln(E1)/TR
     4. Compute concentration: C(t) = (R1(t) - R1(0)) / r1
     5. Subtract per-voxel baseline concentration (mean of pre-bolus frames)
-    6. Clip to non-negative
-    7. Optionally convert to plasma concentration
+    6. Optionally convert to plasma concentration
 
     Parameters
     ----------
@@ -275,6 +284,9 @@ def signal_to_concentration(
         Default is True.
     hematocrit : float, optional
         Hematocrit value for plasma conversion. Default is 0.42.
+    qc_mask : numpy.ndarray, optional
+        Boolean 3D mask restricting conversion diagnostics. Conversion itself
+        remains defined over the full input array.
 
     Returns
     -------
@@ -351,6 +363,17 @@ def signal_to_concentration(
     if baseline_frames < 1:
         raise ValueError(f"baseline_frames must be at least 1, got {baseline_frames}")
 
+    if r1_relaxivity is not None and (
+        not np.isfinite(r1_relaxivity) or r1_relaxivity <= 0
+    ):
+        raise ValueError(
+            "r1_relaxivity must be a finite positive value in s^-1/mM, "
+            f"got {r1_relaxivity}"
+        )
+
+    if convert_to_plasma:
+        _validate_hematocrit(hematocrit)
+
     # Validate T1 map dimensions if provided
     if t1_map is not None and signal.ndim == 4:
         if t1_map.shape != spatial_shape:
@@ -367,6 +390,14 @@ def signal_to_concentration(
                 f"spatial shape {spatial_shape}"
             )
 
+    if qc_mask is not None:
+        if signal.ndim != 4 or qc_mask.shape != spatial_shape:
+            raise ValueError(
+                f"QC mask shape {qc_mask.shape} doesn't match signal "
+                f"spatial shape {spatial_shape}"
+            )
+        qc_mask = np.asarray(qc_mask, dtype=bool)
+
     # Get r1 relaxivity
     if r1_relaxivity is not None:
         effective_r1 = r1_relaxivity
@@ -382,7 +413,14 @@ def signal_to_concentration(
         b1_thresh = get_b1_thresholds(field_strength)
         # Mark voxels with no B1 data BEFORE clipping so they aren't
         # silently mapped to the clip minimum (which halves flip angles).
-        b1_missing = b1_map <= 0
+        b1_missing = ~np.isfinite(b1_map) | (b1_map <= 0)
+        b1_finite_positive = np.isfinite(b1_map) & (b1_map > 0)
+        b1_clipped_low = b1_finite_positive & (
+            b1_map < b1_thresh.dce_clip_low
+        )
+        b1_clipped_high = b1_finite_positive & (
+            b1_map > b1_thresh.dce_clip_high
+        )
         b1_safe = np.clip(b1_map, b1_thresh.dce_clip_low, b1_thresh.dce_clip_high)
         b1_safe[b1_missing] = 1.0  # No B1 data → nominal flip angles
         if signal.ndim == 4:
@@ -393,6 +431,9 @@ def signal_to_concentration(
             effective_flip_rad = flip_angle_rad * float(np.mean(b1_safe))
     else:
         effective_flip_rad = flip_angle_rad
+        b1_missing = np.zeros(spatial_shape or (1,), dtype=bool)
+        b1_clipped_low = np.zeros_like(b1_missing)
+        b1_clipped_high = np.zeros_like(b1_missing)
 
     # Get T1 values (convert from ms to seconds)
     if t1_map is not None:
@@ -431,6 +472,17 @@ def signal_to_concentration(
         )
     else:
         baseline_signal = np.mean(signal[..., :baseline_frames], axis=-1)
+
+    # Conversion diagnostics should describe acquired signal support rather
+    # than zero-valued image background. Otherwise brain extraction and
+    # resampled T1/B1 maps make fallback and bounded-inversion counts depend
+    # mainly on field of view.
+    signal_support = (
+        np.isfinite(baseline_signal)
+        & (np.abs(baseline_signal) > EPSILON_SIGNAL)
+    )
+    if qc_mask is not None:
+        signal_support &= qc_mask
 
     # Prevent division by zero in baseline signal. Negative baselines are
     # unphysical (phase artifact, registration overshoot, denoising) — track
@@ -473,6 +525,8 @@ def signal_to_concentration(
         concentration = np.zeros_like(signal)
 
     # Process each timepoint
+    e1_bounded_low = 0
+    e1_bounded_high = 0
     if signal.ndim == 1:
         # 1D: process as vector
         for t in range(n_timepoints):
@@ -487,6 +541,16 @@ def signal_to_concentration(
                 signal_ratio[t],
                 flip_t,
                 e1_baseline,
+            )
+            e1_bounded_low += int(
+                np.count_nonzero(
+                    (e1_t == EPSILON_E1_LOWER) & signal_support
+                )
+            )
+            e1_bounded_high += int(
+                np.count_nonzero(
+                    (e1_t == 1.0 - EPSILON_E1_UPPER) & signal_support
+                )
             )
 
             # Convert to R1
@@ -512,6 +576,16 @@ def signal_to_concentration(
                 flip_t_4d,
                 e1_baseline,
             )
+            e1_bounded_low += int(
+                np.count_nonzero(
+                    (e1_t == EPSILON_E1_LOWER) & signal_support
+                )
+            )
+            e1_bounded_high += int(
+                np.count_nonzero(
+                    (e1_t == 1.0 - EPSILON_E1_UPPER) & signal_support
+                )
+            )
 
             # Convert to R1
             r1_dynamic[..., t] = e1_to_r1(e1_t, tr)
@@ -523,19 +597,23 @@ def signal_to_concentration(
         else:
             concentration = (r1_dynamic - r1_baseline) / effective_r1
 
-    # Subtract per-voxel baseline concentration before clipping to avoid
-    # positive bias from rectifying pre-bolus noise.  Without this, the
-    # half-normal bias (~0.8 × σ_C) inflates Ktrans for low-permeability
-    # tissue (NAWM) by 15-50% of true enhancement.
+    # Subtract per-voxel baseline concentration and retain signed noise.
+    # Rectifying the result would reintroduce a half-normal positive bias
+    # (~0.8 × σ_C), inflating Ktrans in low-permeability tissue.
     # This effectively replaces the single-timepoint R1(0) from the T1 map
     # with the temporal mean of pre-bolus R1, which is more accurate and
     # corrects any systematic offset between VFA and dynamic acquisitions.
     # Works for both 4D (x,y,z,t) and 1D (t,) arrays via axis=-1.
-    baseline_conc = np.nanmean(
-        concentration[..., :baseline_frames], axis=-1, keepdims=True,
+    baseline_window = concentration[..., :baseline_frames]
+    baseline_valid = np.isfinite(baseline_window)
+    baseline_count = np.sum(baseline_valid, axis=-1, keepdims=True)
+    baseline_conc = np.divide(
+        np.nansum(baseline_window, axis=-1, keepdims=True),
+        baseline_count,
+        out=np.zeros_like(baseline_count, dtype=float),
+        where=baseline_count > 0,
     )
     concentration = concentration - baseline_conc
-    concentration = np.maximum(concentration, 0.0)
 
     # Zero voxels with negative-baseline phase artifacts.
     if isinstance(negative_baseline_mask, np.ndarray):
@@ -549,6 +627,14 @@ def signal_to_concentration(
     if convert_to_plasma:
         concentration = concentration / (1.0 - hematocrit)
 
+    n_spatial = int(np.prod(spatial_shape)) if spatial_shape else 1
+    n_supported = int(np.count_nonzero(signal_support))
+    n_supported_samples = n_supported * n_timepoints
+    sample_support = (
+        signal_support
+        if signal.ndim == 1
+        else signal_support[..., np.newaxis]
+    )
     return DCEConversionResult(
         concentration=concentration,
         r1_dynamic=r1_dynamic,
@@ -556,6 +642,41 @@ def signal_to_concentration(
         is_plasma=convert_to_plasma,
         effective_r1=effective_r1,
         baseline_signal=baseline_signal,
+        conversion_qc={
+            "n_spatial_voxels": n_spatial,
+            "n_qc_domain_voxels": int(
+                np.count_nonzero(qc_mask) if qc_mask is not None else n_spatial
+            ),
+            "n_signal_supported_voxels": n_supported,
+            "n_timepoints": n_timepoints,
+            "b1_missing_voxels": int(
+                np.count_nonzero(b1_missing & signal_support)
+            ),
+            "b1_missing_fraction": (
+                np.count_nonzero(b1_missing & signal_support)
+                / max(1, n_supported)
+            ),
+            "b1_clipped_low_voxels": int(
+                np.count_nonzero(b1_clipped_low & signal_support)
+            ),
+            "b1_clipped_high_voxels": int(
+                np.count_nonzero(b1_clipped_high & signal_support)
+            ),
+            "e1_bounded_low_samples": e1_bounded_low,
+            "e1_bounded_high_samples": e1_bounded_high,
+            "e1_bounded_fraction": (
+                (e1_bounded_low + e1_bounded_high)
+                / max(1, n_supported_samples)
+            ),
+            "nonfinite_concentration_samples": int(
+                np.count_nonzero(
+                    (~np.isfinite(concentration)) & sample_support
+                )
+            ),
+            "total_grid_nonfinite_concentration_samples": int(
+                np.count_nonzero(~np.isfinite(concentration))
+            ),
+        },
     )
 
 
@@ -646,6 +767,7 @@ def concentration_to_plasma(
     - This conversion is important for AIF measurements, as
       pharmacokinetic models assume plasma concentration.
     """
+    _validate_hematocrit(hematocrit)
     return concentration_blood / (1.0 - hematocrit)
 
 
@@ -671,6 +793,7 @@ def plasma_to_blood_concentration(
     numpy.ndarray
         Whole blood concentration in mM.
     """
+    _validate_hematocrit(hematocrit)
     return concentration_plasma * (1.0 - hematocrit)
 
 

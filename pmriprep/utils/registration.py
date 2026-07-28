@@ -912,7 +912,7 @@ def transform_mask_to_grid(
         mask's source frame into the reference frame.
     out_dir : Path, optional
         Directory for output and temporary files.  Defaults to
-        ``Path.cwd()``, matching the legacy Function-node behaviour.
+        ``Path.cwd()``.
 
     Returns
     -------

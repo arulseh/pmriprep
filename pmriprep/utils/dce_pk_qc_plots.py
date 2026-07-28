@@ -20,6 +20,20 @@ import numpy.typing as npt
 logger = logging.getLogger("nipype.interface")
 
 
+def _finite_parameter_support(
+    data: npt.NDArray[Any],
+    brain_mask: npt.NDArray[np.bool_],
+) -> npt.NDArray[np.bool_]:
+    """Return finite retained estimates within the display brain mask."""
+    if data.shape != brain_mask.shape:
+        raise ValueError(
+            "Parameter map shape does not match brain mask: "
+            f"{data.shape} != {brain_mask.shape}"
+        )
+    result: npt.NDArray[np.bool_] = brain_mask & np.isfinite(data)
+    return result
+
+
 def _select_qc_voxel(
     ktrans: npt.NDArray[Any],
     brain_mask: npt.NDArray[np.bool_],
@@ -248,6 +262,10 @@ def generate_preprocessing_qc_plot(
     all_vals = np.concatenate([baseline_vals, peak_vals])
     hist_min = float(np.percentile(all_vals, 1))
     hist_max = float(np.percentile(all_vals, 99))
+    if np.isclose(hist_min, hist_max):
+        half_width = max(abs(hist_min) * 0.01, 1.0)
+        hist_min -= half_width
+        hist_max += half_width
     bins = np.linspace(hist_min, hist_max, 80).tolist()
     ax.hist(baseline_vals, bins=bins, alpha=0.5, density=True,
             color=COLORBLIND_PALETTE.primary, label="Baseline (frame 0)")
@@ -584,6 +602,7 @@ def generate_pk_modeling_qc_plot(
 def generate_pk_parameter_maps_qc_plot(
     param_maps: dict[str, npt.NDArray[Any]],
     brain_mask: npt.NDArray[Any],
+    qc_mask: npt.NDArray[Any] | None = None,
     subject_id: str = "",
     session_id: str = "",
     output_path: str | None = None,
@@ -600,6 +619,9 @@ def generate_pk_parameter_maps_qc_plot(
         Expected keys: "Ktrans", "ve", optionally "vp".
     brain_mask : numpy.ndarray
         3D boolean brain mask.
+    qc_mask : numpy.ndarray or None, optional
+        Quantitative QC mask. Used for geometry validation only; finite retained
+        estimates remain visible for map review regardless of QC acceptance.
     subject_id : str, optional
         Subject identifier for title.
     session_id : str, optional
@@ -617,6 +639,13 @@ def generate_pk_parameter_maps_qc_plot(
     from pmriprep.utils.qc_utils import get_radiological_slice
 
     mask_bool = brain_mask > 0.5
+    if qc_mask is not None:
+        if qc_mask.shape != brain_mask.shape:
+            raise ValueError(
+                "QC mask shape does not match brain mask: "
+                f"{qc_mask.shape} != {brain_mask.shape}"
+            )
+    n_brain = int(np.count_nonzero(mask_bool))
 
     # Parameter display config: (colormap, vmin, vmax_mode, unit_label)
     # vmax_mode: "pct95" = 95th percentile of nonzero, "fixed" = use vmax directly
@@ -646,16 +675,20 @@ def generate_pk_parameter_maps_qc_plot(
 
     from matplotlib.gridspec import GridSpec
 
-    fig = plt.figure(figsize=(10, 2.8 * n_params))
+    fig = plt.figure(figsize=(11, 2.8 * n_params))
     gs = GridSpec(
         n_params, 8, figure=fig,
-        width_ratios=[0.4, 1, 1, 1, 1, 1, 1, 0.06],
+        width_ratios=[1.2, 1, 1, 1, 1, 1, 1, 0.06],
         wspace=0.05, hspace=0.15,
     )
 
     from pmriprep.utils.qc_utils import qc_figure_title
     fig.suptitle(
-        qc_figure_title(subject_id, session_id, "PK Parameter Maps"),
+        qc_figure_title(
+            subject_id,
+            session_id,
+            "PK Parameter Maps",
+        ),
         fontsize=13, fontweight="bold", y=0.99,
     )
 
@@ -663,9 +696,11 @@ def generate_pk_parameter_maps_qc_plot(
         cmap, vmin, vmax_mode, vmax_fixed, unit_label = param_config[name]
 
         # Determine vmax
-        data_masked = data[mask_bool & np.isfinite(data) & (data > 0)]
-        if vmax_mode == "pct95" and len(data_masked) > 0:
-            vmax = float(np.percentile(data_masked, 95))
+        display_mask = _finite_parameter_support(data, mask_bool)
+        data_masked = data[display_mask]
+        scale_values = data[display_mask & (data > 0)]
+        if vmax_mode == "pct95" and len(scale_values) > 0:
+            vmax = float(np.percentile(scale_values, 95))
         elif vmax_fixed is not None:
             vmax = vmax_fixed
         else:
@@ -677,19 +712,27 @@ def generate_pk_parameter_maps_qc_plot(
             sigma = float(np.std(data_masked))
         else:
             mu, sigma = 0.0, 0.0
+        valid_fraction = len(data_masked) / n_brain if n_brain else 0.0
 
-        # Prepare display data (mask non-brain as NaN)
+        # Show every retained finite estimate. Quantitative QC is intentionally
+        # reported separately rather than hiding scientifically inspectable
+        # fits behind a conservative downstream acceptance intersection.
         display = data.copy().astype(float)
-        display[~mask_bool] = np.nan
+        display[~display_mask] = np.nan
 
         # Row label axis (col 0)
         label_ax = fig.add_subplot(gs[row_idx, 0])
         label_ax.axis("off")
         label_ax.text(
-            0.5, 0.5, f"{name}\n(\u03bc={mu:.4f}, \u03c3={sigma:.4f})",
+            0.95,
+            0.5,
+            (
+                f"{name}\n\u03bc={mu:.4f}\n\u03c3={sigma:.4f}\n"
+                f"support={valid_fraction:.1%}"
+            ),
             transform=label_ax.transAxes,
-            fontsize=9, fontweight="bold", rotation=90,
-            ha="center", va="center",
+            fontsize=8, fontweight="bold",
+            ha="right", va="center",
         )
 
         # Image axes (3 pairs of merged columns)
@@ -699,6 +742,17 @@ def generate_pk_parameter_maps_qc_plot(
             zip(z_positions, slice_spans)
         ):
             ax = fig.add_subplot(gs[row_idx, c_start:c_end])
+            brain_slice = get_radiological_slice(
+                mask_bool.astype(float), axis=2, slice_idx=int(z_idx)
+            )
+            rejected_background = np.where(brain_slice > 0, 0.7, np.nan)
+            ax.imshow(
+                rejected_background,
+                cmap="gray",
+                vmin=0.0,
+                vmax=1.0,
+                aspect="equal",
+            )
             slc = get_radiological_slice(display, axis=2, slice_idx=int(z_idx))
             im = ax.imshow(slc, cmap=cmap, vmin=vmin, vmax=vmax, aspect="equal")
             ax.axis("off")

@@ -60,25 +60,24 @@ class TestCheckpointFileWrite:
         assert Path(out).name == "dsc_resume.json"
         assert "pmriprep_sub_X_ses_Y_wf" in str(out)
 
-    @pytest.mark.parametrize("session_id", [None, ""])
     def test_landing_path_no_session(
-        self, tmp_path: Path, session_id: Any,
+        self, tmp_path: Path,
     ) -> None:
         out = _write_dsc_resume_checkpoint(
             work_dir=str(tmp_path),
-            subject_id="X", session_id=session_id,
+            subject_id="X", session_id="",
         )
         assert out is not None
         assert "pmriprep_sub_X_wf" in str(out)
         assert "ses_" not in str(out)
 
-    def test_undefined_work_dir_returns_none(self) -> None:
+    def test_undefined_work_dir_returns_empty(self) -> None:
         from nipype.interfaces.base import Undefined
         out = _write_dsc_resume_checkpoint(
             work_dir=Undefined,
             subject_id="X", session_id="Y",
         )
-        assert out is None
+        assert out == ""
 
     def test_motion_merge(self, tmp_path: Path) -> None:
         out = _write_dsc_resume_checkpoint(

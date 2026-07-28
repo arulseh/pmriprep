@@ -91,12 +91,6 @@
       "map_files"
     ],
     [
-      "build_uncertainty_dict",
-      "map_dict",
-      "smooth_uncertainty_maps",
-      "map_files"
-    ],
-    [
       "collect_qc_metrics",
       "qc_metrics",
       "outputnode",
@@ -165,6 +159,18 @@
     [
       "dce_brain_extract",
       "out_mask",
+      "derive_smoothed_kep",
+      "brain_mask_file"
+    ],
+    [
+      "dce_brain_extract",
+      "out_mask",
+      "external_t1_qc_plot",
+      "brain_mask_file"
+    ],
+    [
+      "dce_brain_extract",
+      "out_mask",
       "outputnode",
       "brain_mask"
     ],
@@ -189,6 +195,12 @@
     [
       "dce_brain_extract",
       "out_mask",
+      "signal_to_concentration",
+      "brain_mask_file"
+    ],
+    [
+      "dce_brain_extract",
+      "out_mask",
       "smooth_model_free_maps",
       "brain_mask_file"
     ],
@@ -196,12 +208,6 @@
       "dce_brain_extract",
       "out_mask",
       "smooth_pk_maps",
-      "brain_mask_file"
-    ],
-    [
-      "dce_brain_extract",
-      "out_mask",
-      "smooth_uncertainty_maps",
       "brain_mask_file"
     ],
     [
@@ -311,6 +317,12 @@
       "mean_img",
       "combine_masks",
       "reference_file"
+    ],
+    [
+      "dce_preprocess",
+      "mean_img",
+      "external_t1_qc_plot",
+      "dce_reference_file"
     ],
     [
       "dce_preprocess",
@@ -613,6 +625,12 @@
       "in_file"
     ],
     [
+      "derive_smoothed_kep",
+      "smoothed_pk_with_kep",
+      "outputnode",
+      "smooth_pk_maps"
+    ],
+    [
       "dsc_dce_validation",
       "validation_result",
       "collect_qc_metrics",
@@ -629,6 +647,24 @@
       "plot_file",
       "outputnode",
       "dsc_dce_xval_plot"
+    ],
+    [
+      "external_t1_qc_plot",
+      "plot_file",
+      "outputnode",
+      "t1_qc_plot"
+    ],
+    [
+      "external_t1_to_dce",
+      "out_file",
+      "external_t1_qc_plot",
+      "t1_map_file"
+    ],
+    [
+      "external_t1_to_dce",
+      "out_file",
+      "outputnode",
+      "t1_map"
     ],
     [
       "external_t1_to_dce",
@@ -711,26 +747,8 @@
     [
       "inputnode",
       "field_strength",
-      "lesion_stats",
-      "field_strength_t"
-    ],
-    [
-      "inputnode",
-      "field_strength",
-      "roi_stats",
-      "field_strength_t"
-    ],
-    [
-      "inputnode",
-      "field_strength",
       "signal_to_concentration",
       "field_strength"
-    ],
-    [
-      "inputnode",
-      "field_strength",
-      "user_lesion_stats",
-      "field_strength_t"
     ],
     [
       "inputnode",
@@ -837,12 +855,6 @@
     [
       "inputnode",
       "tr",
-      "pk_modeling",
-      "tr"
-    ],
-    [
-      "inputnode",
-      "tr",
       "preprocessing_qc",
       "tr_ms"
     ],
@@ -933,56 +945,32 @@
     [
       "normalize_iauc60",
       "out_file",
-      "lesion_stats",
-      "niauc60_map"
-    ],
-    [
-      "normalize_iauc60",
-      "out_file",
-      "outputnode",
-      "niauc60_map"
-    ],
-    [
-      "normalize_iauc60",
-      "out_file",
-      "roi_stats",
-      "niauc60_map"
-    ],
-    [
-      "normalize_iauc60",
-      "out_file",
-      "user_lesion_stats",
-      "niauc60_map"
-    ],
-    [
-      "normalize_ktrans",
-      "out_file",
       "collect_qc_metrics",
       "nawm_available"
     ],
     [
-      "normalize_ktrans",
+      "normalize_iauc60",
       "out_file",
       "lesion_stats",
-      "nktrans_map"
+      "niauc60_map"
     ],
     [
-      "normalize_ktrans",
+      "normalize_iauc60",
       "out_file",
       "outputnode",
-      "nktrans_map"
+      "niauc60_map"
     ],
     [
-      "normalize_ktrans",
+      "normalize_iauc60",
       "out_file",
       "roi_stats",
-      "nktrans_map"
+      "niauc60_map"
     ],
     [
-      "normalize_ktrans",
+      "normalize_iauc60",
       "out_file",
       "user_lesion_stats",
-      "nktrans_map"
+      "niauc60_map"
     ],
     [
       "pk_modeling",
@@ -1010,9 +998,21 @@
     ],
     [
       "pk_modeling",
+      "out_e",
+      "outputnode",
+      "e_map"
+    ],
+    [
+      "pk_modeling",
       "out_fitted_curves",
       "dce_pk_fit_qc",
       "fitted_curves_file"
+    ],
+    [
+      "pk_modeling",
+      "out_fitting_mask",
+      "dce_pk_fit_qc",
+      "fitting_mask_file"
     ],
     [
       "pk_modeling",
@@ -1028,9 +1028,27 @@
     ],
     [
       "pk_modeling",
-      "out_fp_std",
-      "build_uncertainty_dict",
-      "fp_std"
+      "out_fp",
+      "outputnode",
+      "fp_map"
+    ],
+    [
+      "pk_modeling",
+      "out_fp_ci95_lower",
+      "outputnode",
+      "fp_ci95_lower"
+    ],
+    [
+      "pk_modeling",
+      "out_fp_ci95_upper",
+      "outputnode",
+      "fp_ci95_upper"
+    ],
+    [
+      "pk_modeling",
+      "out_fp_cv",
+      "outputnode",
+      "fp_cv"
     ],
     [
       "pk_modeling",
@@ -1137,8 +1155,8 @@
     [
       "pk_modeling",
       "out_kep",
-      "build_pk_dict",
-      "kep"
+      "derive_smoothed_kep",
+      "native_kep_file"
     ],
     [
       "pk_modeling",
@@ -1191,12 +1209,6 @@
     [
       "pk_modeling",
       "out_ktrans",
-      "normalize_ktrans",
-      "param_map"
-    ],
-    [
-      "pk_modeling",
-      "out_ktrans",
       "outputnode",
       "ktrans_map"
     ],
@@ -1233,12 +1245,6 @@
     [
       "pk_modeling",
       "out_ktrans_std",
-      "build_uncertainty_dict",
-      "ktrans_std"
-    ],
-    [
-      "pk_modeling",
-      "out_ktrans_std",
       "outputnode",
       "ktrans_uncertainty"
     ],
@@ -1265,6 +1271,12 @@
       "out_model_selection",
       "outputnode",
       "model_selection_map"
+    ],
+    [
+      "pk_modeling",
+      "out_optimizer_converged_mask",
+      "dce_pk_fit_qc",
+      "optimizer_converged_mask_file"
     ],
     [
       "pk_modeling",
@@ -1310,9 +1322,27 @@
     ],
     [
       "pk_modeling",
-      "out_ps_std",
-      "build_uncertainty_dict",
-      "ps_std"
+      "out_ps",
+      "outputnode",
+      "ps_map"
+    ],
+    [
+      "pk_modeling",
+      "out_ps_ci95_lower",
+      "outputnode",
+      "ps_ci95_lower"
+    ],
+    [
+      "pk_modeling",
+      "out_ps_ci95_upper",
+      "outputnode",
+      "ps_ci95_upper"
+    ],
+    [
+      "pk_modeling",
+      "out_ps_cv",
+      "outputnode",
+      "ps_cv"
     ],
     [
       "pk_modeling",
@@ -1329,8 +1359,38 @@
     [
       "pk_modeling",
       "out_qc_mask",
+      "dce_pk_maps_qc",
+      "qc_mask_file"
+    ],
+    [
+      "pk_modeling",
+      "out_qc_mask",
+      "lesion_stats",
+      "qc_mask"
+    ],
+    [
+      "pk_modeling",
+      "out_qc_mask",
       "outputnode",
       "qc_mask"
+    ],
+    [
+      "pk_modeling",
+      "out_qc_mask",
+      "roi_stats",
+      "qc_mask"
+    ],
+    [
+      "pk_modeling",
+      "out_qc_mask",
+      "user_lesion_stats",
+      "qc_mask"
+    ],
+    [
+      "pk_modeling",
+      "out_quality_flag",
+      "dce_pk_fit_qc",
+      "quality_flag_file"
     ],
     [
       "pk_modeling",
@@ -1379,12 +1439,6 @@
       "out_ser",
       "user_lesion_stats",
       "ser_map"
-    ],
-    [
-      "pk_modeling",
-      "out_time_to_peak",
-      "build_model_free_dict",
-      "ttp"
     ],
     [
       "pk_modeling",
@@ -1479,12 +1533,6 @@
     [
       "pk_modeling",
       "out_ve_std",
-      "build_uncertainty_dict",
-      "ve_std"
-    ],
-    [
-      "pk_modeling",
-      "out_ve_std",
       "outputnode",
       "ve_uncertainty"
     ],
@@ -1569,12 +1617,6 @@
     [
       "pk_modeling",
       "out_vp_std",
-      "build_uncertainty_dict",
-      "vp_std"
-    ],
-    [
-      "pk_modeling",
-      "out_vp_std",
       "outputnode",
       "vp_uncertainty"
     ],
@@ -1651,12 +1693,6 @@
       "pk_qc"
     ],
     [
-      "pk_modeling",
-      "qc_metrics",
-      "dsc_dce_xval_plot",
-      "pk_qc"
-    ],
-    [
       "preprocessing_qc",
       "plot_file",
       "outputnode",
@@ -1678,18 +1714,6 @@
       "resample_dsc_cbv",
       "cbv_in_dce",
       "dsc_dce_validation",
-      "dsc_cbv_file"
-    ],
-    [
-      "resample_dsc_cbv",
-      "cbv_in_dce",
-      "dsc_dce_xval_plot",
-      "dsc_cbv_file"
-    ],
-    [
-      "resample_dsc_cbv",
-      "cbv_in_dce",
-      "pk_modeling",
       "dsc_cbv_file"
     ],
     [
@@ -1741,6 +1765,12 @@
       "concentration_file"
     ],
     [
+      "signal_to_concentration",
+      "conversion_qc",
+      "collect_qc_metrics",
+      "signal_conversion_qc"
+    ],
+    [
       "smooth_model_free_maps",
       "smoothed_files",
       "outputnode",
@@ -1749,14 +1779,8 @@
     [
       "smooth_pk_maps",
       "smoothed_files",
-      "outputnode",
-      "smooth_pk_maps"
-    ],
-    [
-      "smooth_uncertainty_maps",
-      "smoothed_files",
-      "outputnode",
-      "smooth_uncertainty_maps"
+      "derive_smoothed_kep",
+      "smoothed_pk"
     ],
     [
       "transform_atlas_cascade",
@@ -1781,6 +1805,12 @@
       "out_file",
       "dsc_dce_xval_plot",
       "brain_mask"
+    ],
+    [
+      "transform_brain_mask",
+      "out_file",
+      "reg_filmstrip",
+      "registered_t1w_mask_file"
     ],
     [
       "transform_enhancing_mask",
@@ -1821,6 +1851,12 @@
     [
       "transform_nawm_mask",
       "out_file",
+      "dce_pk_fit_qc",
+      "nawm_mask_file"
+    ],
+    [
+      "transform_nawm_mask",
+      "out_file",
       "dce_pk_maps_qc",
       "nawm_mask_file"
     ],
@@ -1834,12 +1870,6 @@
       "transform_nawm_mask",
       "out_file",
       "normalize_iauc60",
-      "nawm_mask"
-    ],
-    [
-      "transform_nawm_mask",
-      "out_file",
-      "normalize_ktrans",
       "nawm_mask"
     ],
     [
@@ -1965,7 +1995,6 @@
         "iauc90",
         "peak",
         "ser",
-        "ttp",
         "wash_in_slope",
         "wash_out_slope"
       ],
@@ -1975,22 +2004,9 @@
     },
     "build_pk_dict": {
       "input_names": [
-        "kep",
         "ktrans",
         "ve",
         "vp"
-      ],
-      "output_names": [
-        "map_dict"
-      ]
-    },
-    "build_uncertainty_dict": {
-      "input_names": [
-        "fp_std",
-        "ktrans_std",
-        "ps_std",
-        "ve_std",
-        "vp_std"
       ],
       "output_names": [
         "map_dict"
@@ -2009,9 +2025,11 @@
         "preproc_display",
         "preprocess_qc",
         "registration_qc",
+        "signal_conversion_qc",
         "t1_qc",
         "use_external_t1",
         "validation_result",
+        "vfa_qc",
         "vp_at_bound_fractions"
       ],
       "output_names": [
@@ -2066,13 +2084,17 @@
         "dce_signal_file",
         "enhancing_mask_file",
         "fitted_curves_file",
+        "fitting_mask_file",
         "fp_file",
         "ktrans_file",
         "model_name",
         "model_selection_file",
+        "nawm_mask_file",
         "non_enhancing_mask_file",
+        "optimizer_converged_mask_file",
         "ps_file",
         "qc_mask_file",
+        "quality_flag_file",
         "r2_file",
         "session_id",
         "subject_id",
@@ -2097,6 +2119,7 @@
         "nawm_mask_file",
         "non_enhancing_mask_file",
         "ps_file",
+        "qc_mask_file",
         "roi_mask_file",
         "session_id",
         "subject_id",
@@ -2110,6 +2133,18 @@
         "model_selection_regions",
         "pk_param_maps_qc_plot",
         "vp_at_bound_fractions"
+      ]
+    },
+    "derive_smoothed_kep": {
+      "input_names": [
+        "brain_mask_file",
+        "epsilon_ve",
+        "max_kep",
+        "native_kep_file",
+        "smoothed_pk"
+      ],
+      "output_names": [
+        "smoothed_pk_with_kep"
       ]
     },
     "dsc_dce_validation": {
@@ -2129,14 +2164,24 @@
     "dsc_dce_xval_plot": {
       "input_names": [
         "brain_mask",
-        "dsc_cbv_file",
         "dsc_ncbv_file",
         "model_selection_file",
-        "pk_qc",
         "session_id",
         "subject_id",
         "validation_result",
         "vp_file"
+      ],
+      "output_names": [
+        "plot_file"
+      ]
+    },
+    "external_t1_qc_plot": {
+      "input_names": [
+        "brain_mask_file",
+        "dce_reference_file",
+        "session_id",
+        "subject_id",
+        "t1_map_file"
       ],
       "output_names": [
         "plot_file"
@@ -2172,15 +2217,6 @@
         "out_file"
       ]
     },
-    "normalize_ktrans": {
-      "input_names": [
-        "nawm_mask",
-        "param_map"
-      ],
-      "output_names": [
-        "out_file"
-      ]
-    },
     "preprocessing_qc": {
       "input_names": [
         "baseline_frames",
@@ -2203,6 +2239,7 @@
         "brain_mask_file",
         "dce_mean_file",
         "registered_t1w_file",
+        "registered_t1w_mask_file",
         "session_id",
         "subject_id"
       ],
@@ -2245,7 +2282,9 @@
       "input_names": [
         "b1_map_file",
         "baseline_frames",
+        "brain_mask_file",
         "dce_file",
+        "external_t1",
         "field_strength",
         "flip_angle",
         "no_t1",
@@ -2254,7 +2293,8 @@
         "tr"
       ],
       "output_names": [
-        "concentration_file"
+        "concentration_file",
+        "conversion_qc"
       ]
     },
     "smooth_model_free_maps": {
@@ -2268,16 +2308,6 @@
       ]
     },
     "smooth_pk_maps": {
-      "input_names": [
-        "brain_mask_file",
-        "fwhm",
-        "map_files"
-      ],
-      "output_names": [
-        "smoothed_files"
-      ]
-    },
-    "smooth_uncertainty_maps": {
       "input_names": [
         "brain_mask_file",
         "fwhm",
@@ -2447,46 +2477,45 @@
     }
   },
   "function_sha256": {
-    "build_model_free_dict": "22d484f327bb73f8d4139c9b569d3e9366825d6d17a252cd743eb0f91daa3943",
-    "build_pk_dict": "5cf7bf4df04553aa37f4557d5a380634bd1d6faf0e9f6cb8017cd287a29330b0",
-    "build_uncertainty_dict": "9f20a22aaf15ce57e47d2a499b71cc1f88990f98c2145a1732adad421f7912db",
-    "collect_qc_metrics": "3a7a9412ba9052876d4aaf932ecf918445e2caf37a926ae6547700254fb37354",
-    "combine_masks": "9d37394fcf4ff1fa6f4a69e81a414564b1722815d5e4daa9815c5273859f7bc2",
-    "create_aif_mask": "f93b91bb6ababb6be0578936e1347c7230fe9a029e6afba93f09a0bcfbbef987",
+    "build_model_free_dict": "3074057e4a4048b45ac6a2dea7137001b9549eeb0284627b390a1238cc07dba2",
+    "build_pk_dict": "d150bcea85a6d48fbb72799763f123404d45a96104157d4d34475d9e25eb5af3",
+    "collect_qc_metrics": "1cb489a2ba7e03b472a7175598a360b9f05ca1b42f856333fc1bc51195c48cac",
+    "combine_masks": "f2748155dafc15b2d74a066b3da5db0ed2a4b5486b46ee8ea1f4c7a181de8fcf",
+    "create_aif_mask": "13c9c99cb39a8fdf544fa35125494b14147ec5099862963ceff8f8df840b8f3b",
     "dce_brain_mask_qc": "ced2d6d4b823457166d3fb21083d6220f2b0dc0e0155de5c134e6d98210b5086",
     "dce_early_mean": "fd75a021c6ef482c605e9a7596c6c17381cd8996e63adafc61cb7f30031b6cb0",
-    "dce_pk_fit_qc": "0445899b238f20dad24afe10d2d03b4359e0f54eaddf8badcaad9cece1ab5e47",
-    "dce_pk_maps_qc": "e453624a9a6d0d73ac80fb14acc7d13a4c2ca7c85b13564f8745bbcb972a9b1a",
-    "dsc_dce_validation": "ff1a94c06c128e100317f14dbabece00fe52775a9abb44100f43262848eb3b93",
-    "dsc_dce_xval_plot": "bbab5abd886211ba8c1f24039ce5f006740668f11625fdcb04bb1ba8cbb5da36",
-    "external_t1_to_dce": "9830e76ce79bbc92a033ccfeacf32bba7b1ddbca9baba413c7a3a91be23c8598",
+    "dce_pk_fit_qc": "3206990b014d072947d06ee8c4dcef234d286f8524a901040e186022ced60581",
+    "dce_pk_maps_qc": "8532217adf6bd6afb872d35848e1a73522a3befd04972a0a8e5424d0332627cc",
+    "derive_smoothed_kep": "95fd6d19f0ceacb8c389617f1e56610409d54544bc28db151719fd5d555c5d6b",
+    "dsc_dce_validation": "669bf89bfcf69ba87cbe21add32fefe0d31e38706825c604a9b68ee01cbe20af",
+    "dsc_dce_xval_plot": "eeb9578b0a27b124bb4657558e779e291a640fb3f2bbabe71eb3f3063e6fd51f",
+    "external_t1_qc_plot": "000bb565867fae6b83d0aa82d732a1562fca7ab260fbc5b631523104e88cfccd",
+    "external_t1_to_dce": "040b96cd6e1f8b623dd8dda541e6e73e481eae4dffcc406ba1db772eb46b233a",
     "motion_qc_plot": "36616aba56123999797c0b5e14d6ec9903e15bea44b1958923c89616b1fb1b2f",
-    "normalize_iauc60": "f599513e90d8019df154ba66d77f3c2c8b57df345170d2359aa84ed466623f5b",
-    "normalize_ktrans": "f599513e90d8019df154ba66d77f3c2c8b57df345170d2359aa84ed466623f5b",
-    "preprocessing_qc": "b1c4d39a3ffc4ea4fdd15a5e541d924bf74a37859e0d53dc5941141a6a9f79a4",
-    "reg_filmstrip": "b1dea73279712004c87854ec57aa6bd8a9998eef5b7e902af705d4d91ea8a416",
-    "resample_dsc_cbv": "a3aa82165922828c87bc7e221a08b6881a6370ebbb5178bf2c2a9e479b71349c",
-    "resample_dsc_ncbv": "8bb2658e1da628975d5d081baa40937acfe805b7f921fa1a793f7b4de040118a",
-    "select_aif_exclusion": "f9f63a984d4af56beb67ea933bfbecb6bb8758d38fae727b4707bbb5f9b9818c",
-    "signal_to_concentration": "1a569d7fd674b51c09cead0c255680699f284eb7167ef70db32e7cc12c6bc640",
-    "smooth_model_free_maps": "0de8e9e17be61c22d071fe3238c9c6c1ef4db785d819be35097a1a3219e7f550",
-    "smooth_pk_maps": "0de8e9e17be61c22d071fe3238c9c6c1ef4db785d819be35097a1a3219e7f550",
-    "smooth_uncertainty_maps": "0de8e9e17be61c22d071fe3238c9c6c1ef4db785d819be35097a1a3219e7f550",
-    "transform_atlas_cascade": "ae90c3dfc8d620f314addadc0c1a71704309eecc9a66edf08c73946a95840d2e",
-    "transform_brain_mask": "a60e7196ef6760f26ec0cec310d8f28255efef89e4e82f36d8d6c9c24d7a9c17",
-    "transform_enhancing_mask": "a60e7196ef6760f26ec0cec310d8f28255efef89e4e82f36d8d6c9c24d7a9c17",
-    "transform_flair_postcon_underlay": "a49a3958349d57afb3bea923716b53473ffa653fec12530a0ab8ad68c94c6d59",
-    "transform_flair_underlay": "a49a3958349d57afb3bea923716b53473ffa653fec12530a0ab8ad68c94c6d59",
-    "transform_lesion": "4abf45e3f5f8a38ad2a95d087249688ef4d8e0c5dca15377e7e5a899b3090318",
-    "transform_nawm_mask": "3fe104ca23c89c19ad598cca63ada50fbd597592ee6abd27e7ef13ad23d35f18",
-    "transform_non_enhancing_mask": "a60e7196ef6760f26ec0cec310d8f28255efef89e4e82f36d8d6c9c24d7a9c17",
-    "transform_stats_lesion": "4abf45e3f5f8a38ad2a95d087249688ef4d8e0c5dca15377e7e5a899b3090318",
-    "transform_t1w_postcon_underlay": "a49a3958349d57afb3bea923716b53473ffa653fec12530a0ab8ad68c94c6d59",
-    "transform_t1w_subtraction_underlay": "a49a3958349d57afb3bea923716b53473ffa653fec12530a0ab8ad68c94c6d59",
-    "transform_t1w_underlay": "a49a3958349d57afb3bea923716b53473ffa653fec12530a0ab8ad68c94c6d59",
-    "transform_t2w_underlay": "a49a3958349d57afb3bea923716b53473ffa653fec12530a0ab8ad68c94c6d59",
-    "validate_roi_mask": "60777a76a8f5106aff8e2330d86fca1680c0e4cd7ad24f14f71ae82aaf328496",
-    "validate_user_lesion_mask": "60777a76a8f5106aff8e2330d86fca1680c0e4cd7ad24f14f71ae82aaf328496"
+    "normalize_iauc60": "ea6ff078eaf357c450297207c75c6d4057f311c7c4a441f94bb4afa2f1c2dcba",
+    "preprocessing_qc": "f8f38c2ec15fc59432d72e59996e80c8d1cb4ede4505bf0ba33af3caa07b09a6",
+    "reg_filmstrip": "275519aaedfc5af9379fc2e49fd0bee20c4629d63c5491d25d2e6e825fa1ca3f",
+    "resample_dsc_cbv": "8637643d62fc961aafa3946ba1321ebcf4744121cb1b91e9b01bde70a4024ba3",
+    "resample_dsc_ncbv": "9016b6e864f3d6e0149ee556592202a4fb42cec4b3e2a90946ff48dbfa6caf72",
+    "select_aif_exclusion": "3ac6f0a171a3c915c7c043706044fb8dd45d2a9c05f1d1fad613919135724b21",
+    "signal_to_concentration": "49bbd728c9822533d2b90a99d2e96c06fdbf423caae8443a900e0a07f5b99e7d",
+    "smooth_model_free_maps": "9337a944ec7a462423d0207ea201423080e5fe385f482e7d3fe94d577411c6dc",
+    "smooth_pk_maps": "9337a944ec7a462423d0207ea201423080e5fe385f482e7d3fe94d577411c6dc",
+    "transform_atlas_cascade": "92097e5d6df046e1997dbee6d10208373b12e5535619d7397855d263159a752a",
+    "transform_brain_mask": "d79c70197847c13c4a4fd38f056ae9911584e27b3d0d1a55b81ebbbc0dc8c3e4",
+    "transform_enhancing_mask": "d79c70197847c13c4a4fd38f056ae9911584e27b3d0d1a55b81ebbbc0dc8c3e4",
+    "transform_flair_postcon_underlay": "b018e01b60030ca04f6b1e172e211aac6cedd4d4c75451e50a7cf0bdb32d6dad",
+    "transform_flair_underlay": "b018e01b60030ca04f6b1e172e211aac6cedd4d4c75451e50a7cf0bdb32d6dad",
+    "transform_lesion": "2ece3db8a3b618705a755d2ebdd6380f308b9fb550a80c57934c8544db2c98b7",
+    "transform_nawm_mask": "c6ba5896ec4e8e62856bff5799b517bc43d25a91039140a9714005daf685ab6e",
+    "transform_non_enhancing_mask": "d79c70197847c13c4a4fd38f056ae9911584e27b3d0d1a55b81ebbbc0dc8c3e4",
+    "transform_stats_lesion": "2ece3db8a3b618705a755d2ebdd6380f308b9fb550a80c57934c8544db2c98b7",
+    "transform_t1w_postcon_underlay": "b018e01b60030ca04f6b1e172e211aac6cedd4d4c75451e50a7cf0bdb32d6dad",
+    "transform_t1w_subtraction_underlay": "b018e01b60030ca04f6b1e172e211aac6cedd4d4c75451e50a7cf0bdb32d6dad",
+    "transform_t1w_underlay": "b018e01b60030ca04f6b1e172e211aac6cedd4d4c75451e50a7cf0bdb32d6dad",
+    "transform_t2w_underlay": "b018e01b60030ca04f6b1e172e211aac6cedd4d4c75451e50a7cf0bdb32d6dad",
+    "validate_roi_mask": "a165487201a8e6d14f055c1f72f41bcec5cdb1ab589d7469e3aff501cb28f07b",
+    "validate_user_lesion_mask": "a165487201a8e6d14f055c1f72f41bcec5cdb1ab589d7469e3aff501cb28f07b"
   },
   "nipype_version": "1.10.0",
   "node_attrs": {
@@ -2503,10 +2532,6 @@
       "n_procs": 1
     },
     "build_pk_dict": {
-      "mem_gb": 0.2,
-      "n_procs": 1
-    },
-    "build_uncertainty_dict": {
       "mem_gb": 0.2,
       "n_procs": 1
     },
@@ -2554,11 +2579,19 @@
       "mem_gb": 0.2,
       "n_procs": 1
     },
+    "derive_smoothed_kep": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
     "dsc_dce_validation": {
       "mem_gb": 0.2,
       "n_procs": 1
     },
     "dsc_dce_xval_plot": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "external_t1_qc_plot": {
       "mem_gb": 0.2,
       "n_procs": 1
     },
@@ -2579,10 +2612,6 @@
       "n_procs": 1
     },
     "normalize_iauc60": {
-      "mem_gb": 0.2,
-      "n_procs": 1
-    },
-    "normalize_ktrans": {
       "mem_gb": 0.2,
       "n_procs": 1
     },
@@ -2627,10 +2656,6 @@
       "n_procs": 1
     },
     "smooth_pk_maps": {
-      "mem_gb": 0.2,
-      "n_procs": 1
-    },
-    "smooth_uncertainty_maps": {
       "mem_gb": 0.2,
       "n_procs": 1
     },
@@ -2703,8 +2728,8 @@
     "aif_detection": {
       "agent_standard_dose": 0.1,
       "aif_method": "auto",
+      "aif_peak_floor": true,
       "baseline_frames": 0,
-      "criteria": "strict",
       "dose": 1.0,
       "field_strength": 3.0,
       "hematocrit": 0.42,
@@ -2718,18 +2743,22 @@
       "subject_id": "0001",
       "tr": 1.5
     },
+    "build_model_free_dict": {
+      "function_str": "def _build_model_free_map_dict(\n    iauc60: str | None = None,\n    iauc90: str | None = None,\n    iauc120: str | None = None,\n    peak: str | None = None,\n    ser: str | None = None,\n    wash_in_slope: str | None = None,\n    wash_out_slope: str | None = None,\n) -> dict[str, str]:\n    \"\"\"Build dictionary of model-free maps for smoothing.\n\n    TTP and BAT are discrete timing maps, and curve type is categorical; none\n    are included because smoothing would create non-physical intermediate\n    values.\n    \"\"\"\n    from nipype.interfaces.base import isdefined\n\n    d: dict[str, str] = {}\n    if iauc60 and isdefined(iauc60):\n        d[\"iauc60\"] = iauc60\n    if iauc90 and isdefined(iauc90):\n        d[\"iauc90\"] = iauc90\n    if iauc120 and isdefined(iauc120):\n        d[\"iauc120\"] = iauc120\n    if peak and isdefined(peak):\n        d[\"peak_enhancement\"] = peak\n    if ser and isdefined(ser):\n        d[\"ser\"] = ser\n    if wash_in_slope and isdefined(wash_in_slope):\n        d[\"wash_in_slope\"] = wash_in_slope\n    if wash_out_slope and isdefined(wash_out_slope):\n        d[\"wash_out_slope\"] = wash_out_slope\n    return d\n"
+    },
     "build_pk_dict": {
-      "function_str": "def _build_pk_map_dict(ktrans=None, ve=None, vp=None, kep=None):  # type: ignore[no-untyped-def]\n    \"\"\"Build dictionary of PK maps for smoothing.\"\"\"\n    from nipype.interfaces.base import isdefined\n\n    d = {}\n    if ktrans and isdefined(ktrans):\n        d[\"ktrans\"] = ktrans\n    if ve and isdefined(ve):\n        d[\"ve\"] = ve\n    if kep and isdefined(kep):\n        d[\"kep\"] = kep\n    if vp and isdefined(vp):\n        d[\"vp\"] = vp\n    return d\n"
+      "function_str": "def _build_pk_map_dict(\n    ktrans: str | None = None,\n    ve: str | None = None,\n    vp: str | None = None,\n) -> dict[str, str]:\n    \"\"\"Build dictionary of independently estimated PK maps for smoothing.\"\"\"\n    from nipype.interfaces.base import isdefined\n\n    d: dict[str, str] = {}\n    if ktrans and isdefined(ktrans):\n        d[\"ktrans\"] = ktrans\n    if ve and isdefined(ve):\n        d[\"ve\"] = ve\n    if vp and isdefined(vp):\n        d[\"vp\"] = vp\n    return d\n"
     },
     "collect_qc_metrics": {
       "b1_method": "none",
       "b1_qc": null,
       "no_t1": false,
       "t1_qc": null,
-      "use_external_t1": true
+      "use_external_t1": true,
+      "vfa_qc": null
     },
     "combine_masks": {
-      "function_str": "def combine_tumor_masks(\n    tumor_segmentation_file=None,  # Optional[str] - type hint removed for Nipype Function\n    whole_tumor_mask_file=None,    # Optional[str] - type hint removed for Nipype Function\n    reference_file=None,           # str\n):  # -> Tuple[Optional[str], str]\n    \"\"\"Select the best tumor mask for lesion statistics.\n\n    Priority:\n\n    1. If tumor segmentation present: use it (already multi-label:\n       0=bg, 1=non-enhancing, 2=enhancing)\n    2. If only whole_tumor present: use as binary mask\n    3. If none present: return (None, \"\")\n\n    Parameters\n    ----------\n    tumor_segmentation_file : str, optional\n        Path to multi-label tumor segmentation (or None).\n    whole_tumor_mask_file : str, optional\n        Path to whole tumor binary mask (or None).\n    reference_file : str, optional\n        Path to reference image for output geometry (unused but\n        kept for interface compatibility).\n\n    Returns\n    -------\n    tuple\n        Tuple of (mask_file_path, mask_origin) where mask_origin is\n        \"tumor_segmentation\" or \"whole_tumor\" or \"\" if no masks available.\n        Returns (\"\", \"\") (not (None, \"\")) when no masks present because\n        downstream traits.Str rejects None.\n\n    Notes\n    -----\n        This function is used as a Nipype Function node, so type hints are removed\n        from the signature (Optional requires import which breaks Function nodes).\n    \"\"\"\n    from pathlib import Path\n\n    from nipype.interfaces.base import isdefined\n\n    def _is_valid_file(f):\n        \"\"\"Check if file path is valid (not None, not Undefined, exists).\"\"\"\n        if f is None:\n            return False\n        if not isdefined(f):\n            return False\n        return Path(f).exists()\n\n    if _is_valid_file(tumor_segmentation_file):\n        return (tumor_segmentation_file, \"tumor_segmentation\")\n\n    if _is_valid_file(whole_tumor_mask_file):\n        return (whole_tumor_mask_file, \"whole_tumor\")\n\n    return (\"\", \"\")\n"
+      "function_str": "def combine_tumor_masks(\n    tumor_segmentation_file: str | None = None,\n    whole_tumor_mask_file: str | None = None,\n    reference_file: str | None = None,\n) -> tuple[str, str]:\n    \"\"\"Select the best tumor mask for lesion statistics.\n\n    Priority:\n\n    1. If tumor segmentation present: use it (already multi-label:\n       0=bg, 1=non-enhancing, 2=enhancing)\n    2. If only whole_tumor present: use as binary mask\n    3. If none present: return empty-string sentinels\n\n    Parameters\n    ----------\n    tumor_segmentation_file : str, optional\n        Path to multi-label tumor segmentation (or None).\n    whole_tumor_mask_file : str, optional\n        Path to whole tumor binary mask (or None).\n    reference_file : str, optional\n        Path to reference image for output geometry (unused but\n        kept for interface compatibility).\n\n    Returns\n    -------\n    tuple\n        Tuple of (mask_file_path, mask_origin) where mask_origin is\n        \"tumor_segmentation\" or \"whole_tumor\" or \"\" if no masks available.\n        Returns (\"\", \"\") when no masks are available because downstream\n        ``traits.Str`` fields require strings.\n    \"\"\"\n    from pathlib import Path\n\n    from nipype.interfaces.base import isdefined\n\n    def _is_valid_file(f: str | None) -> bool:\n        \"\"\"Check if file path is valid (not None, not Undefined, exists).\"\"\"\n        if f is None:\n            return False\n        if not isdefined(f):\n            return False\n        return Path(f).exists()\n\n    if _is_valid_file(tumor_segmentation_file):\n        return (str(tumor_segmentation_file), \"tumor_segmentation\")\n\n    if _is_valid_file(whole_tumor_mask_file):\n        return (str(whole_tumor_mask_file), \"whole_tumor\")\n\n    return (\"\", \"\")\n"
     },
     "dce_brain_extract": {
       "bet_frac": 0.3,
@@ -2756,7 +2785,6 @@
     "dce_preprocess": {
       "apply_motion_correction": true,
       "baseline_frames": 0,
-      "contrast_threshold": 1.5,
       "cost": "normcorr",
       "head_radius": 50.0,
       "interpolation": "trilinear",
@@ -2770,12 +2798,20 @@
       "reference_type": "postcon",
       "search_range": 30
     },
+    "derive_smoothed_kep": {
+      "epsilon_ve": 0.001,
+      "max_kep": 10.0
+    },
     "dsc_dce_validation": {
       "no_dsc_validation": false
     },
     "dsc_dce_xval_plot": {
-      "function_str": "def _dsc_dce_xval_plot_node(vp_file=None, dsc_cbv_file=None, dsc_ncbv_file=None, brain_mask=None, validation_result=None, subject_id='', session_id='', pk_qc=None, model_selection_file=None):  # type: ignore[no-untyped-def]\n    \"\"\"Generate the DSC-DCE cross-validation plot.\n\n    Parameters\n    ----------\n    vp_file : str or None\n        Path to the DCE vp (plasma volume) map.\n    dsc_cbv_file : str or None\n        Path to resampled DSC CBV map in DCE space.\n    dsc_ncbv_file : str or None\n        Optional NAWM-normalized CBV. When provided (and the\n        validation ran under use_ncbv_scale=True), the plot is drawn on\n        the dimensionless nCBV scale with expected ratio =\n        ``NAWM_VP_REFERENCE``, matching the validation metrics.\n    brain_mask : str or None\n        Path to brain mask in DCE space.\n    validation_result : dict or None\n        Result dict from the DSC-DCE validation node.\n    subject_id : str, optional\n        Subject identifier.\n    session_id : str, optional\n        Session identifier.\n    pk_qc : dict or str or None\n        Full ``pk_modeling.qc_metrics`` dict (or a bare mode string\n        for backwards compatibility); the function extracts\n        ``dsc_cbv_constraint.mode``.\n    model_selection_file : str or None\n        Path to the model selection map NIfTI (auto mode), for coloring.\n\n    Returns\n    -------\n    str or None\n        Path to plot PNG, or None if skipped.\n    \"\"\"\n    import os\n\n    if not vp_file or not brain_mask:\n        return None\n    if validation_result and validation_result.get(\"skipped\"):\n        return None\n    if validation_result and validation_result.get(\"circular\"):\n        return None\n\n    have_ncbv = bool(dsc_ncbv_file) and os.path.isfile(str(dsc_ncbv_file))\n    # Plot mirrors _dsc_dce_validation_node \u2014 requires nCBV; the rel-AUC-CBV\n    # fallback is miscalibrated, so skip plot when no NAWM.\n    if not have_ncbv or dsc_ncbv_file is None:\n        return None\n\n    resolved_mode = None\n    if isinstance(pk_qc, dict):\n        resolved_mode = pk_qc.get(\"dsc_cbv_constraint\", {}).get(\"mode\")\n    elif isinstance(pk_qc, str):\n        resolved_mode = pk_qc\n\n    try:\n        import nibabel as nib  # type: ignore[import-untyped]\n        import numpy as np\n\n        from pmriprep.utils.dsc_dce_xval_plots import generate_xval_plot\n\n        use_ncbv_scale = True\n        cbv_source = dsc_ncbv_file\n\n        vp_data = np.asarray(\n            nib.load(vp_file).get_fdata(), dtype=np.float64  # type: ignore[attr-defined]\n        )\n        cbv_data = np.asarray(\n            nib.load(cbv_source).get_fdata(), dtype=np.float64  # type: ignore[attr-defined]\n        )\n        mask = np.asarray(\n            nib.load(brain_mask).get_fdata(), dtype=np.bool_  # type: ignore[attr-defined]\n        )\n\n        model_sel = None\n        if model_selection_file:\n            model_sel = np.asarray(\n                nib.load(model_selection_file).get_fdata(),  # type: ignore[attr-defined]\n                dtype=np.int8,\n            )\n\n        return generate_xval_plot(\n            vp_data=vp_data,\n            cbv_data=cbv_data,\n            mask=mask,\n            validation_result=validation_result or {},\n            subject_id=subject_id,\n            session_id=session_id,\n            model_selection=model_sel,\n            use_ncbv_scale=use_ncbv_scale,\n        )\n    except Exception:\n        import logging\n        logging.getLogger(__name__).warning(\n            \"DSC-DCE xval plot failed\", exc_info=True\n        )\n        return None\n",
+      "function_str": "def _dsc_dce_xval_plot_node(\n    vp_file: str | None = None,\n    dsc_ncbv_file: str | None = None,\n    brain_mask: str | None = None,\n    validation_result: dict[str, object] | None = None,\n    subject_id: str = \"\",\n    session_id: str = \"\",\n    model_selection_file: str | None = None,\n) -> str | None:\n    \"\"\"Generate the DSC-DCE cross-validation plot.\n\n    Parameters\n    ----------\n    vp_file : str or None\n        Path to the DCE vp (plasma volume) map.\n    dsc_ncbv_file : str or None\n        NAWM-normalized CBV. The plot is drawn on the dimensionless\n        nCBV scale with expected ratio =\n        ``NAWM_VP_REFERENCE``, matching the validation metrics.\n    brain_mask : str or None\n        Path to brain mask in DCE space.\n    validation_result : dict or None\n        Result dict from the DSC-DCE validation node.\n    subject_id : str, optional\n        Subject identifier.\n    session_id : str, optional\n        Session identifier.\n    model_selection_file : str or None\n        Path to the model selection map NIfTI (auto mode), for coloring.\n\n    Returns\n    -------\n    str or None\n        Path to plot PNG, or None if skipped.\n    \"\"\"\n    import os\n\n    if not vp_file or not brain_mask:\n        return None\n    if validation_result and validation_result.get(\"skipped\"):\n        return None\n    have_ncbv = bool(dsc_ncbv_file) and os.path.isfile(str(dsc_ncbv_file))\n    # Cross-validation requires NAWM-normalized CBV.\n    if not have_ncbv or dsc_ncbv_file is None:\n        return None\n\n    try:\n        import nibabel as nib  # type: ignore[import-untyped]\n        import numpy as np\n\n        from pmriprep.utils.dsc_dce_xval_plots import generate_xval_plot\n\n        cbv_source = dsc_ncbv_file\n\n        vp_data = np.asarray(\n            nib.load(vp_file).get_fdata(), dtype=np.float64  # type: ignore[attr-defined]\n        )\n        cbv_data = np.asarray(\n            nib.load(cbv_source).get_fdata(), dtype=np.float64  # type: ignore[attr-defined]\n        )\n        mask = np.asarray(\n            nib.load(brain_mask).get_fdata(), dtype=np.bool_  # type: ignore[attr-defined]\n        )\n\n        model_sel = None\n        if model_selection_file:\n            model_sel = np.asarray(\n                nib.load(model_selection_file).get_fdata(),  # type: ignore[attr-defined]\n                dtype=np.int8,\n            )\n\n        return generate_xval_plot(\n            vp_data=vp_data,\n            cbv_data=cbv_data,\n            mask=mask,\n            validation_result=validation_result or {},\n            subject_id=subject_id,\n            session_id=session_id,\n            model_selection=model_sel,\n        )\n    except Exception:\n        import logging\n        logging.getLogger(__name__).warning(\n            \"DSC-DCE xval plot failed\", exc_info=True\n        )\n        return None\n",
       "model_selection_file": null,
+      "session_id": "0001",
+      "subject_id": "0001"
+    },
+    "external_t1_qc_plot": {
       "session_id": "0001",
       "subject_id": "0001"
     },
@@ -2792,7 +2828,6 @@
       "t2w_in_t1w": null
     },
     "lesion_stats": {
-      "field_strength_t": 0.0,
       "force_binary": false,
       "mask_origin": "",
       "session_id": "0001",
@@ -2811,7 +2846,6 @@
       "constraint_mode": "auto",
       "dsc_agent_standard_dose": 0.1,
       "dsc_dose": 1.0,
-      "hematocrit": 0.42,
       "inference": "nlls",
       "mcmc_samples": 500,
       "model": "auto",
@@ -2829,20 +2863,20 @@
       "subject_id": "0001"
     },
     "resample_dsc_cbv": {
-      "function_str": "def _resample_dsc_cbv_to_dce(  # type: ignore[no-untyped-def]\n    dsc_cbv_file=None,\n    dsc_to_t1w_xfm=None,\n    t1w_to_dce_xfm=None,\n    dce_reference=None,\n):\n    \"\"\"Resample DSC CBV map to DCE native space.\n\n    Chains two existing transforms: DSC\u2192T1w + T1w\u2192DCE = DSC\u2192DCE,\n    then applies the combined transform with trilinear interpolation\n    (not spline, to avoid negative CBV values).\n\n    Parameters\n    ----------\n    dsc_cbv_file : str or None\n        Path to DSC-derived relative CBV map (DSC native space).\n    dsc_to_t1w_xfm : str or None\n        Path to DSC\u2192T1w FLIRT transform matrix.\n    t1w_to_dce_xfm : str or None\n        Path to T1w\u2192DCE FLIRT transform matrix (from DCE registration step).\n    dce_reference : str or None\n        Path to DCE reference image for output geometry.\n\n    Returns\n    -------\n    str\n        Path to CBV map resampled to DCE space, or empty string if inputs\n        are missing (empty string avoids nipype File trait validation errors\n        when None flows through workflow connections).\n    \"\"\"\n    import logging\n    import os\n\n    _log = logging.getLogger(\"pmriprep.workflows.dce\")\n\n    if not dsc_cbv_file or not os.path.isfile(str(dsc_cbv_file)):\n        return \"\"\n    if not dsc_to_t1w_xfm or not os.path.isfile(str(dsc_to_t1w_xfm)):\n        return \"\"\n    if not t1w_to_dce_xfm or not os.path.isfile(str(t1w_to_dce_xfm)):\n        return \"\"\n    if not dce_reference or not os.path.isfile(str(dce_reference)):\n        return \"\"\n\n    import subprocess\n\n    out_dir = os.getcwd()\n    dsc_to_dce_xfm = os.path.join(out_dir, \"dsc_to_dce.mat\")\n    cbv_in_dce = os.path.join(out_dir, \"dsc_cbv_in_dce.nii.gz\")\n\n    # Chain: DSC\u2192T1w + T1w\u2192DCE = DSC\u2192DCE\n    result = subprocess.run(\n        [\n            \"convert_xfm\",\n            \"-omat\", dsc_to_dce_xfm,\n            \"-concat\", str(t1w_to_dce_xfm), str(dsc_to_t1w_xfm),\n        ],\n        capture_output=True,\n        text=True,\n    )\n    if result.returncode != 0:\n        _log.warning(\n            \"convert_xfm failed (rc=%d): %s\", result.returncode, result.stderr\n        )\n        return \"\"\n\n    # Apply combined transform with trilinear interpolation\n    result = subprocess.run(\n        [\n            \"flirt\",\n            \"-in\", str(dsc_cbv_file),\n            \"-ref\", str(dce_reference),\n            \"-out\", cbv_in_dce,\n            \"-init\", dsc_to_dce_xfm,\n            \"-applyxfm\",\n            \"-interp\", \"trilinear\",\n        ],\n        capture_output=True,\n        text=True,\n    )\n    if result.returncode != 0:\n        _log.warning(\n            \"FLIRT resampling of DSC CBV failed (rc=%d): %s\",\n            result.returncode, result.stderr,\n        )\n        return \"\"\n\n    return cbv_in_dce\n"
+      "function_str": "def _resample_dsc_cbv_to_dce(\n    dsc_cbv_file: str | None = None,\n    dsc_to_t1w_xfm: str | None = None,\n    t1w_to_dce_xfm: str | None = None,\n    dce_reference: str | None = None,\n) -> str:\n    \"\"\"Resample DSC CBV map to DCE native space.\n\n    Chains two existing transforms: DSC\u2192T1w + T1w\u2192DCE = DSC\u2192DCE,\n    then applies the combined transform with trilinear interpolation\n    (not spline, to avoid negative CBV values).\n\n    Parameters\n    ----------\n    dsc_cbv_file : str or None\n        Path to DSC-derived relative CBV map (DSC native space).\n    dsc_to_t1w_xfm : str or None\n        Path to DSC\u2192T1w FLIRT transform matrix.\n    t1w_to_dce_xfm : str or None\n        Path to T1w\u2192DCE FLIRT transform matrix (from DCE registration step).\n    dce_reference : str or None\n        Path to DCE reference image for output geometry.\n\n    Returns\n    -------\n    str\n        Path to CBV map resampled to DCE space, or empty string if inputs\n        are missing (empty string avoids nipype File trait validation errors\n        when None flows through workflow connections).\n    \"\"\"\n    import logging\n    import os\n\n    _log = logging.getLogger(\"pmriprep.workflows.dce\")\n\n    if not dsc_cbv_file or not os.path.isfile(str(dsc_cbv_file)):\n        return \"\"\n    if not dsc_to_t1w_xfm or not os.path.isfile(str(dsc_to_t1w_xfm)):\n        return \"\"\n    if not t1w_to_dce_xfm or not os.path.isfile(str(t1w_to_dce_xfm)):\n        return \"\"\n    if not dce_reference or not os.path.isfile(str(dce_reference)):\n        return \"\"\n\n    import subprocess\n\n    out_dir = os.getcwd()\n    dsc_to_dce_xfm = os.path.join(out_dir, \"dsc_to_dce.mat\")\n    cbv_in_dce = os.path.join(out_dir, \"dsc_cbv_in_dce.nii.gz\")\n\n    # Chain: DSC\u2192T1w + T1w\u2192DCE = DSC\u2192DCE\n    result = subprocess.run(\n        [\n            \"convert_xfm\",\n            \"-omat\", dsc_to_dce_xfm,\n            \"-concat\", str(t1w_to_dce_xfm), str(dsc_to_t1w_xfm),\n        ],\n        capture_output=True,\n        text=True,\n    )\n    if result.returncode != 0:\n        _log.warning(\n            \"convert_xfm failed (rc=%d): %s\", result.returncode, result.stderr\n        )\n        return \"\"\n\n    # Apply combined transform with trilinear interpolation\n    result = subprocess.run(\n        [\n            \"flirt\",\n            \"-in\", str(dsc_cbv_file),\n            \"-ref\", str(dce_reference),\n            \"-out\", cbv_in_dce,\n            \"-init\", dsc_to_dce_xfm,\n            \"-applyxfm\",\n            \"-interp\", \"trilinear\",\n        ],\n        capture_output=True,\n        text=True,\n    )\n    if result.returncode != 0:\n        _log.warning(\n            \"FLIRT resampling of DSC CBV failed (rc=%d): %s\",\n            result.returncode, result.stderr,\n        )\n        return \"\"\n\n    return cbv_in_dce\n"
     },
     "roi_stats": {
-      "field_strength_t": 0.0,
       "force_binary": true,
       "mask_origin": "",
       "session_id": "0001",
       "subject_id": "0001"
     },
     "select_aif_exclusion": {
-      "function_str": "def _select_aif_exclusion_mask(  # type: ignore[no-untyped-def]\n    user_lesion_mask=None,\n    transformed_lesion_mask=None,\n):\n    \"\"\"Pick the AIF exclusion mask: user-supplied overrides tumor seg.\n\n    Parameters\n    ----------\n    user_lesion_mask : str or None\n        User-supplied lesion mask in DCE native space.\n    transformed_lesion_mask : str or None\n        FLIRT-transformed tumor seg lesion mask in DCE space.\n\n    Returns\n    -------\n    str\n        Selected mask path, or \"\" if neither is available (the empty-string\n        convention required by the downstream lesion_mask_file trait).\n    \"\"\"\n    from nipype.interfaces.base import isdefined\n\n    if isdefined(user_lesion_mask) and user_lesion_mask is not None:\n        if user_lesion_mask != \"\":\n            return user_lesion_mask\n    if isdefined(transformed_lesion_mask) and transformed_lesion_mask is not None:\n        if transformed_lesion_mask != \"\":\n            return transformed_lesion_mask\n    return \"\"\n"
+      "function_str": "def select_aif_exclusion_mask(\n    user_lesion_mask: str | None = None,\n    transformed_lesion_mask: str | None = None,\n) -> str:\n    \"\"\"Select the lesion mask used to exclude AIF candidates.\n\n    Parameters\n    ----------\n    user_lesion_mask : str or None\n        User-supplied lesion mask in native perfusion space.\n    transformed_lesion_mask : str or None\n        Tumor-segmentation mask transformed to native perfusion space.\n\n    Returns\n    -------\n    str\n        The user mask when present, otherwise the transformed mask or ``\"\"``.\n    \"\"\"\n    from nipype.interfaces.base import isdefined\n\n    if isdefined(user_lesion_mask) and user_lesion_mask not in (None, \"\"):\n        return str(user_lesion_mask)\n    if (\n        isdefined(transformed_lesion_mask)\n        and transformed_lesion_mask not in (None, \"\")\n    ):\n        return str(transformed_lesion_mask)\n    return \"\"\n"
     },
     "signal_to_concentration": {
       "b1_map_file": null,
+      "external_t1": true,
       "no_t1": false
     },
     "smooth_model_free_maps": {
@@ -2851,14 +2885,11 @@
     "smooth_pk_maps": {
       "fwhm": 4.0
     },
-    "smooth_uncertainty_maps": {
-      "fwhm": 4.0
-    },
     "transform_brain_mask": {
-      "function_str": "def _transform_mask_to_dce(  # type: ignore[no-untyped-def]\n    mask_file=None,\n    reference_file=None,\n    transform_matrix=None,\n):\n    \"\"\"Transform brain mask from T1w space to DCE space.\n\n    Thin Nipype Function-node wrapper around\n    ``pmriprep.utils.registration.transform_mask_to_grid``. The import is\n    intentionally inline because ``niu.Function`` serialises this body\n    via ``inspect.getsource`` and runs it in a worker that cannot see\n    module-level imports.\n\n    Parameters\n    ----------\n    mask_file : str or None\n        Path to brain mask in T1w space (or None).\n    reference_file : str or None\n        Path to DCE reference image for output geometry.\n    transform_matrix : str or None\n        Path to T1w\u2192DCE FLIRT matrix.\n\n    Returns\n    -------\n    str\n        Path to transformed brain mask in DCE space, or \"\" if no mask.\n    \"\"\"\n    from pmriprep.utils.registration import transform_mask_to_grid\n\n    return transform_mask_to_grid(mask_file, reference_file, transform_matrix)\n"
+      "function_str": "def _transform_mask_to_dce(\n    mask_file: str | None = None,\n    reference_file: str | None = None,\n    transform_matrix: str | None = None,\n) -> str:\n    \"\"\"Transform brain mask from T1w space to DCE space.\n\n    Thin Nipype Function-node wrapper around\n    ``pmriprep.utils.registration.transform_mask_to_grid``. The import is\n    intentionally inline because ``niu.Function`` serialises this body\n    via ``inspect.getsource`` and runs it in a worker that cannot see\n    module-level imports.\n\n    Parameters\n    ----------\n    mask_file : str or None\n        Path to brain mask in T1w space (or None).\n    reference_file : str or None\n        Path to DCE reference image for output geometry.\n    transform_matrix : str or None\n        Path to T1w\u2192DCE FLIRT matrix.\n\n    Returns\n    -------\n    str\n        Path to transformed brain mask in DCE space, or \"\" if no mask.\n    \"\"\"\n    from pmriprep.utils.registration import transform_mask_to_grid\n\n    return transform_mask_to_grid(mask_file, reference_file, transform_matrix)\n"
     },
     "transform_enhancing_mask": {
-      "function_str": "def _transform_mask_to_dce(  # type: ignore[no-untyped-def]\n    mask_file=None,\n    reference_file=None,\n    transform_matrix=None,\n):\n    \"\"\"Transform brain mask from T1w space to DCE space.\n\n    Thin Nipype Function-node wrapper around\n    ``pmriprep.utils.registration.transform_mask_to_grid``. The import is\n    intentionally inline because ``niu.Function`` serialises this body\n    via ``inspect.getsource`` and runs it in a worker that cannot see\n    module-level imports.\n\n    Parameters\n    ----------\n    mask_file : str or None\n        Path to brain mask in T1w space (or None).\n    reference_file : str or None\n        Path to DCE reference image for output geometry.\n    transform_matrix : str or None\n        Path to T1w\u2192DCE FLIRT matrix.\n\n    Returns\n    -------\n    str\n        Path to transformed brain mask in DCE space, or \"\" if no mask.\n    \"\"\"\n    from pmriprep.utils.registration import transform_mask_to_grid\n\n    return transform_mask_to_grid(mask_file, reference_file, transform_matrix)\n"
+      "function_str": "def _transform_mask_to_dce(\n    mask_file: str | None = None,\n    reference_file: str | None = None,\n    transform_matrix: str | None = None,\n) -> str:\n    \"\"\"Transform brain mask from T1w space to DCE space.\n\n    Thin Nipype Function-node wrapper around\n    ``pmriprep.utils.registration.transform_mask_to_grid``. The import is\n    intentionally inline because ``niu.Function`` serialises this body\n    via ``inspect.getsource`` and runs it in a worker that cannot see\n    module-level imports.\n\n    Parameters\n    ----------\n    mask_file : str or None\n        Path to brain mask in T1w space (or None).\n    reference_file : str or None\n        Path to DCE reference image for output geometry.\n    transform_matrix : str or None\n        Path to T1w\u2192DCE FLIRT matrix.\n\n    Returns\n    -------\n    str\n        Path to transformed brain mask in DCE space, or \"\" if no mask.\n    \"\"\"\n    from pmriprep.utils.registration import transform_mask_to_grid\n\n    return transform_mask_to_grid(mask_file, reference_file, transform_matrix)\n"
     },
     "transform_flair_postcon_underlay": {
       "output_name": "flair_postcon_in_dce.nii.gz"
@@ -2867,10 +2898,10 @@
       "output_name": "flair_in_dce.nii.gz"
     },
     "transform_nawm_mask": {
-      "function_str": "def _transform_mask_to_dce_conditional(  # type: ignore[no-untyped-def]\n    mask_file=None,\n    reference_file=None,\n    transform_matrix=None,\n    needs_transform=True,\n):\n    \"\"\"Transform mask to DCE space, or pass through if already native.\n\n    When ``needs_transform`` is True (tumor-seg mask in T1w space), delegates\n    to ``transform_mask_to_grid``.  When False (user-supplied mask already in\n    DCE native space), validates geometry and returns the input path.\n\n    Parameters\n    ----------\n    mask_file : str or None\n        Path to mask (or None).\n    reference_file : str or None\n        Path to DCE reference image for output geometry.\n    transform_matrix : str or None\n        Path to T1w\u2192DCE FLIRT matrix (only used when needs_transform=True).\n    needs_transform : bool\n        If False, skip FLIRT and return input path as-is.\n\n    Returns\n    -------\n    str\n        Path to mask in DCE space, or \"\" if no mask.\n    \"\"\"\n    from nipype.interfaces.base import isdefined\n\n    if not isdefined(mask_file) or mask_file is None:\n        return \"\"\n\n    from pathlib import Path\n\n    if not Path(mask_file).is_file():\n        return \"\"\n\n    if not needs_transform:\n        import nibabel as nib\n        import numpy as np\n\n        mask_img = nib.load(str(mask_file))\n        ref_img = nib.load(str(reference_file))\n        if mask_img.shape[:3] != ref_img.shape[:3]:\n            raise ValueError(\n                f\"User-supplied mask shape {mask_img.shape[:3]} does not \"\n                f\"match DCE volume shape {ref_img.shape[:3]}. \"\n                f\"Masks under [dce] config must be in DCE native space.\"\n            )\n        affine_diff = float(np.abs(mask_img.affine - ref_img.affine).max())\n        if affine_diff > 1.0:\n            raise ValueError(\n                f\"User-supplied mask affine differs from DCE volume by \"\n                f\"{affine_diff:.2f} (max element). \"\n                f\"Masks under [dce] config must be in DCE native space.\"\n            )\n        return str(mask_file)\n\n    from pmriprep.utils.registration import transform_mask_to_grid\n\n    return transform_mask_to_grid(mask_file, reference_file, transform_matrix)\n"
+      "function_str": "def _transform_mask_to_dce_conditional(\n    mask_file: str | None = None,\n    reference_file: str | None = None,\n    transform_matrix: str | None = None,\n    needs_transform: bool = True,\n) -> str:\n    \"\"\"Transform mask to DCE space, or pass through if already native.\n\n    When ``needs_transform`` is True (tumor-seg mask in T1w space), delegates\n    to ``transform_mask_to_grid``.  When False (user-supplied mask already in\n    DCE native space), validates geometry and returns the input path.\n\n    Parameters\n    ----------\n    mask_file : str or None\n        Path to mask (or None).\n    reference_file : str or None\n        Path to DCE reference image for output geometry.\n    transform_matrix : str or None\n        Path to T1w\u2192DCE FLIRT matrix (only used when needs_transform=True).\n    needs_transform : bool\n        If False, skip FLIRT and return input path as-is.\n\n    Returns\n    -------\n    str\n        Path to mask in DCE space, or \"\" if no mask.\n    \"\"\"\n    from nipype.interfaces.base import isdefined\n\n    if not isdefined(mask_file) or mask_file is None:\n        return \"\"\n\n    from pathlib import Path\n\n    if not Path(mask_file).is_file():\n        return \"\"\n\n    if not needs_transform:\n        import nibabel as nib\n        import numpy as np\n\n        mask_img = nib.load(str(mask_file))\n        ref_img = nib.load(str(reference_file))\n        if mask_img.shape[:3] != ref_img.shape[:3]:  # type: ignore[attr-defined]\n            raise ValueError(\n                f\"User-supplied mask shape {mask_img.shape[:3]} does not \"  # type: ignore[attr-defined]\n                f\"match DCE volume shape {ref_img.shape[:3]}. \"  # type: ignore[attr-defined]\n                f\"Masks under [dce] config must be in DCE native space.\"\n            )\n        affine_diff = float(\n            np.abs(mask_img.affine - ref_img.affine).max()  # type: ignore[attr-defined]\n        )\n        if affine_diff > 1.0:\n            raise ValueError(\n                f\"User-supplied mask affine differs from DCE volume by \"\n                f\"{affine_diff:.2f} (max element). \"\n                f\"Masks under [dce] config must be in DCE native space.\"\n            )\n        return str(mask_file)\n\n    from pmriprep.utils.registration import transform_mask_to_grid\n\n    return transform_mask_to_grid(mask_file, reference_file, transform_matrix)\n"
     },
     "transform_non_enhancing_mask": {
-      "function_str": "def _transform_mask_to_dce(  # type: ignore[no-untyped-def]\n    mask_file=None,\n    reference_file=None,\n    transform_matrix=None,\n):\n    \"\"\"Transform brain mask from T1w space to DCE space.\n\n    Thin Nipype Function-node wrapper around\n    ``pmriprep.utils.registration.transform_mask_to_grid``. The import is\n    intentionally inline because ``niu.Function`` serialises this body\n    via ``inspect.getsource`` and runs it in a worker that cannot see\n    module-level imports.\n\n    Parameters\n    ----------\n    mask_file : str or None\n        Path to brain mask in T1w space (or None).\n    reference_file : str or None\n        Path to DCE reference image for output geometry.\n    transform_matrix : str or None\n        Path to T1w\u2192DCE FLIRT matrix.\n\n    Returns\n    -------\n    str\n        Path to transformed brain mask in DCE space, or \"\" if no mask.\n    \"\"\"\n    from pmriprep.utils.registration import transform_mask_to_grid\n\n    return transform_mask_to_grid(mask_file, reference_file, transform_matrix)\n"
+      "function_str": "def _transform_mask_to_dce(\n    mask_file: str | None = None,\n    reference_file: str | None = None,\n    transform_matrix: str | None = None,\n) -> str:\n    \"\"\"Transform brain mask from T1w space to DCE space.\n\n    Thin Nipype Function-node wrapper around\n    ``pmriprep.utils.registration.transform_mask_to_grid``. The import is\n    intentionally inline because ``niu.Function`` serialises this body\n    via ``inspect.getsource`` and runs it in a worker that cannot see\n    module-level imports.\n\n    Parameters\n    ----------\n    mask_file : str or None\n        Path to brain mask in T1w space (or None).\n    reference_file : str or None\n        Path to DCE reference image for output geometry.\n    transform_matrix : str or None\n        Path to T1w\u2192DCE FLIRT matrix.\n\n    Returns\n    -------\n    str\n        Path to transformed brain mask in DCE space, or \"\" if no mask.\n    \"\"\"\n    from pmriprep.utils.registration import transform_mask_to_grid\n\n    return transform_mask_to_grid(mask_file, reference_file, transform_matrix)\n"
     },
     "transform_t1w_postcon_underlay": {
       "output_name": "t1w_postcon_in_dce.nii.gz"
@@ -2885,18 +2916,17 @@
       "output_name": "t2w_in_dce.nii.gz"
     },
     "user_lesion_stats": {
-      "field_strength_t": 0.0,
       "force_binary": true,
       "mask_origin": "",
       "session_id": "0001",
       "subject_id": "0001"
     },
     "validate_roi_mask": {
-      "function_str": "def _validate_native_mask(  # type: ignore[no-untyped-def]\n    mask_file=None,\n    reference_file=None,\n    mask_label=\"mask\",\n):\n    \"\"\"Validate that a user-supplied mask matches the perfusion volume grid.\n\n    Parameters\n    ----------\n    mask_file : str or None\n        Path to the mask NIfTI.\n    reference_file : str or None\n        Path to the perfusion reference volume.\n    mask_label : str\n        Human-readable label for error messages (e.g. \"dce.roi_mask\").\n\n    Returns\n    -------\n    str\n        The validated mask path, or \"\" if no mask.\n    \"\"\"\n    from nipype.interfaces.base import isdefined\n\n    if not isdefined(mask_file) or mask_file is None or mask_file == \"\":\n        return \"\"\n\n    import nibabel as nib\n    import numpy as np\n\n    mask_img = nib.load(str(mask_file))\n    ref_img = nib.load(str(reference_file))\n    if mask_img.shape[:3] != ref_img.shape[:3]:\n        raise ValueError(\n            f\"User-supplied {mask_label} shape {mask_img.shape[:3]} does not \"\n            f\"match perfusion volume shape {ref_img.shape[:3]}. \"\n            f\"Masks under config must be in perfusion native space.\"\n        )\n    affine_diff = float(np.abs(mask_img.affine - ref_img.affine).max())\n    if affine_diff > 1.0:\n        raise ValueError(\n            f\"User-supplied {mask_label} affine differs from perfusion volume \"\n            f\"by {affine_diff:.2f} (max element). \"\n            f\"Masks under config must be in perfusion native space.\"\n        )\n    return str(mask_file)\n",
+      "function_str": "def validate_native_mask(\n    mask_file: str | None = None,\n    reference_file: str | None = None,\n    mask_label: str = \"mask\",\n) -> str:\n    \"\"\"Validate that a mask matches its native perfusion image grid.\n\n    Parameters\n    ----------\n    mask_file : str or None\n        Path to the mask NIfTI.\n    reference_file : str or None\n        Path to the perfusion reference image.\n    mask_label : str\n        Human-readable label used in validation errors.\n\n    Returns\n    -------\n    str\n        The validated mask path, or ``\"\"`` when no mask is supplied.\n\n    Raises\n    ------\n    ValueError\n        If the mask shape or affine does not match the reference grid.\n    \"\"\"\n    from nipype.interfaces.base import isdefined\n\n    if not isdefined(mask_file) or mask_file in (None, \"\"):\n        return \"\"\n\n    import nibabel as nib\n    import numpy as np\n\n    mask_img = nib.load(str(mask_file))\n    ref_img = nib.load(str(reference_file))\n    if mask_img.shape[:3] != ref_img.shape[:3]:  # type: ignore[attr-defined]\n        raise ValueError(\n            f\"User-supplied {mask_label} shape {mask_img.shape[:3]} does not \"  # type: ignore[attr-defined]\n            f\"match perfusion volume shape {ref_img.shape[:3]}. \"  # type: ignore[attr-defined]\n            \"Masks under config must be in perfusion native space.\"\n        )\n    affine_diff = float(\n        np.abs(mask_img.affine - ref_img.affine).max()  # type: ignore[attr-defined]\n    )\n    if affine_diff > 1.0:\n        raise ValueError(\n            f\"User-supplied {mask_label} affine differs from perfusion volume \"\n            f\"by {affine_diff:.2f} (max element). \"\n            \"Masks under config must be in perfusion native space.\"\n        )\n    return str(mask_file)\n",
       "mask_label": "dce.roi_mask"
     },
     "validate_user_lesion_mask": {
-      "function_str": "def _validate_native_mask(  # type: ignore[no-untyped-def]\n    mask_file=None,\n    reference_file=None,\n    mask_label=\"mask\",\n):\n    \"\"\"Validate that a user-supplied mask matches the perfusion volume grid.\n\n    Parameters\n    ----------\n    mask_file : str or None\n        Path to the mask NIfTI.\n    reference_file : str or None\n        Path to the perfusion reference volume.\n    mask_label : str\n        Human-readable label for error messages (e.g. \"dce.roi_mask\").\n\n    Returns\n    -------\n    str\n        The validated mask path, or \"\" if no mask.\n    \"\"\"\n    from nipype.interfaces.base import isdefined\n\n    if not isdefined(mask_file) or mask_file is None or mask_file == \"\":\n        return \"\"\n\n    import nibabel as nib\n    import numpy as np\n\n    mask_img = nib.load(str(mask_file))\n    ref_img = nib.load(str(reference_file))\n    if mask_img.shape[:3] != ref_img.shape[:3]:\n        raise ValueError(\n            f\"User-supplied {mask_label} shape {mask_img.shape[:3]} does not \"\n            f\"match perfusion volume shape {ref_img.shape[:3]}. \"\n            f\"Masks under config must be in perfusion native space.\"\n        )\n    affine_diff = float(np.abs(mask_img.affine - ref_img.affine).max())\n    if affine_diff > 1.0:\n        raise ValueError(\n            f\"User-supplied {mask_label} affine differs from perfusion volume \"\n            f\"by {affine_diff:.2f} (max element). \"\n            f\"Masks under config must be in perfusion native space.\"\n        )\n    return str(mask_file)\n",
+      "function_str": "def validate_native_mask(\n    mask_file: str | None = None,\n    reference_file: str | None = None,\n    mask_label: str = \"mask\",\n) -> str:\n    \"\"\"Validate that a mask matches its native perfusion image grid.\n\n    Parameters\n    ----------\n    mask_file : str or None\n        Path to the mask NIfTI.\n    reference_file : str or None\n        Path to the perfusion reference image.\n    mask_label : str\n        Human-readable label used in validation errors.\n\n    Returns\n    -------\n    str\n        The validated mask path, or ``\"\"`` when no mask is supplied.\n\n    Raises\n    ------\n    ValueError\n        If the mask shape or affine does not match the reference grid.\n    \"\"\"\n    from nipype.interfaces.base import isdefined\n\n    if not isdefined(mask_file) or mask_file in (None, \"\"):\n        return \"\"\n\n    import nibabel as nib\n    import numpy as np\n\n    mask_img = nib.load(str(mask_file))\n    ref_img = nib.load(str(reference_file))\n    if mask_img.shape[:3] != ref_img.shape[:3]:  # type: ignore[attr-defined]\n        raise ValueError(\n            f\"User-supplied {mask_label} shape {mask_img.shape[:3]} does not \"  # type: ignore[attr-defined]\n            f\"match perfusion volume shape {ref_img.shape[:3]}. \"  # type: ignore[attr-defined]\n            \"Masks under config must be in perfusion native space.\"\n        )\n    affine_diff = float(\n        np.abs(mask_img.affine - ref_img.affine).max()  # type: ignore[attr-defined]\n    )\n    if affine_diff > 1.0:\n        raise ValueError(\n            f\"User-supplied {mask_label} affine differs from perfusion volume \"\n            f\"by {affine_diff:.2f} (max element). \"\n            \"Masks under config must be in perfusion native space.\"\n        )\n    return str(mask_file)\n",
       "mask_label": "dce.lesion_mask"
     }
   },
@@ -2915,10 +2945,6 @@
     ],
     [
       "build_pk_dict",
-      "Function"
-    ],
-    [
-      "build_uncertainty_dict",
       "Function"
     ],
     [
@@ -2966,11 +2992,19 @@
       "Reorient"
     ],
     [
+      "derive_smoothed_kep",
+      "Function"
+    ],
+    [
       "dsc_dce_validation",
       "Function"
     ],
     [
       "dsc_dce_xval_plot",
+      "Function"
+    ],
+    [
+      "external_t1_qc_plot",
       "Function"
     ],
     [
@@ -2991,10 +3025,6 @@
     ],
     [
       "normalize_iauc60",
-      "Function"
-    ],
-    [
-      "normalize_ktrans",
       "Function"
     ],
     [
@@ -3039,10 +3069,6 @@
     ],
     [
       "smooth_pk_maps",
-      "Function"
-    ],
-    [
-      "smooth_uncertainty_maps",
       "Function"
     ],
     [
@@ -3128,8 +3154,13 @@
     "dce_to_t1w_xfm",
     "delta_bic_map",
     "dsc_dce_xval_plot",
+    "e_map",
     "flair_in_dce",
     "flair_postcon_in_dce",
+    "fp_ci95_lower",
+    "fp_ci95_upper",
+    "fp_cv",
+    "fp_map",
     "fp_uncertainty",
     "iauc120_map",
     "iauc60_map",
@@ -3148,11 +3179,14 @@
     "motion_qc_plot",
     "nawm_mask",
     "niauc60_map",
-    "nktrans_map",
     "peak_enhancement_map",
     "pk_modeling_qc_plot",
     "pk_param_maps_qc_plot",
     "preprocessing_qc_plot",
+    "ps_ci95_lower",
+    "ps_ci95_upper",
+    "ps_cv",
+    "ps_map",
     "ps_uncertainty",
     "qc_mask",
     "qc_metrics",
@@ -3164,9 +3198,9 @@
     "ser_map",
     "smooth_model_free_maps",
     "smooth_pk_maps",
-    "smooth_uncertainty_maps",
     "t1_map",
     "t1_qc_plot",
+    "t1_support_map",
     "t1w_in_dce",
     "t1w_postcon_in_dce",
     "t1w_subtraction_in_dce",

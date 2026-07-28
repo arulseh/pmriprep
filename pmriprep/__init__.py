@@ -1,4 +1,4 @@
-"""PMRIPrep: Perfusion MRI Preprocessing Pipeline.
+"""PMRIPrep: automated preprocessing and quantification of DSC and DCE MRI.
 
 A NiPreps-compatible BIDS-App for perfusion MRI processing,
 supporting DSC and DCE perfusion analysis.

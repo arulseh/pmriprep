@@ -36,19 +36,6 @@ class AgentRelaxivity(NamedTuple):
 #: R1 relaxivity values for common gadolinium-based contrast agents in
 #: human plasma at 37°C, per Gd3+ ion unless gd_ions > 1.
 #:
-#: References:
-#:   - Rohrer M, et al. Invest Radiol 2005;40(11):715-724 (legacy 1.5T/3T,
-#:     bovine plasma — note 1.5T/3T values for the three macrocyclics
-#:     superseded by Szomolanyi 2019 with human plasma + ICP-MS).
-#:   - Szomolanyi P, Rohrer M, Frenzel T, et al. Invest Radiol 2019;
-#:     54(9):559-564 (gadobutrol, gadoteridol, gadoterate at 1.5T/3T/7T,
-#:     human plasma).
-#:   - Robic C, et al. Invest Radiol 2019;54(8):475-484 (gadopiclenol,
-#:     1.5T-7T, human serum).
-#:   - Lohrke J, et al. Invest Radiol 2022;57(10):629-638 (gadoquatrane,
-#:     low-n; treat as ±15% uncertainty).
-#:   - Noebauer-Huhmann IM, et al. Invest Radiol 2010;45(9):554-558
-#:     (gd-dtpa at 7T human plasma; older 7T hardware — caveat).
 CONTRAST_AGENTS: Final[dict[str, AgentRelaxivity]] = {
     # Linear agents (lower relaxivity, higher stability)
     "gd-dtpa": AgentRelaxivity(  # Magnevist
@@ -974,13 +961,12 @@ def build_dsc_provenance(
     deconv_block: dict[str, Any] = {"method": str(deconv_method)}
     if inference is not None and deconv_method in ("cpi", "vascular"):
         deconv_block["inference"] = str(inference)
-        # FABBER-parity provenance for the CPI parametric path. The
-        # pipeline version is recorded at the top of the sidecar; the
-        # prior values themselves are emitted in the adjacent prior
-        # blocks below for retrospective comparison.
+        # Identify the executing implementation separately from the published
+        # parameterization/prior lineage used by the CPI path.
         if deconv_method == "cpi":
-            deconv_block["inference_engine"] = "fabber"
-            deconv_block["cpi_prior_profile"] = "fabber"
+            deconv_block["inference_engine"] = "pmriprep"
+            deconv_block["cpi_parameterization"] = "fabber_derived"
+            deconv_block["cpi_prior_profile"] = "fabber_derived"
             deconv_block["cpi_cbf_prior"] = {
                 "transform": "identity",
                 "mean": 1.0,
@@ -1179,20 +1165,26 @@ def collect_aif_fallback_warning(
                 except (TypeError, ValueError):
                     pass
             return (
-                f"DSC AIF retained despite a catastrophic gamma fit{r2_txt} "
+                f"DSC AIF retained despite a poor gamma-variate fit{r2_txt} "
                 f"— synthetic fallback is disabled. CBF, MTT, and Tmax may "
                 f"be unreliable; AUC-nCBV, raw TTP, and PSR remain interpretable."
             )
         if aif_qc.get("detection_method") != "synthetic":
             return None
-        reason = (
+        reason_code = str(
             qc_metrics.get("synthetic_fallback_reason")
             or aif_qc.get("synthetic_fallback_reason")
             or "cascade_exhausted"
         )
+        reason = {
+            "cascade_exhausted": "automatic detection found no acceptable arterial curve",
+            "no_candidates": "no arterial candidates survived automatic detection",
+            "low_snr": "arterial candidates had insufficient signal quality",
+            "gamma_r2_floor": "the measured curve had a poor gamma-variate fit",
+        }.get(reason_code, "automatic detection found no acceptable arterial curve")
         return (
             f"DSC AIF fell back to Parker population template "
-            f"\u2014 reason: {reason}. "
+            f"\u2014 {reason}. "
             f"nCBV and nCBF remain usable (NAWM normalisation "
             f"cancels AIF scaling). K2-corrected rCBV inherits "
             f"template-AIF shape bias on the first-pass integral. "
@@ -1204,10 +1196,7 @@ def collect_aif_fallback_warning(
         if aif_qc.get("aif_source") != "population":
             return None
         if aif_qc.get("auto_detection_attempted"):
-            reason = aif_qc.get(
-                "auto_fallback_reason", "cascade_exhausted"
-            )
-            detail = f" \u2014 auto-detection failed: {reason}"
+            detail = " — automatic detection found no acceptable arterial curve"
         else:
             detail = " (user-selected)"
         return (

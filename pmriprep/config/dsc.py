@@ -19,10 +19,6 @@ PreloadInput = Union[Literal["auto"], float]
 
 logger = logging.getLogger(__name__)
 
-# Alias for backwards compatibility within this module
-_DOSE_PRESETS = DOSE_PRESETS
-
-
 @dataclass
 class DSCConfig:
     """Configuration for DSC perfusion processing.
@@ -53,8 +49,8 @@ class DSCConfig:
         Deconvolution method: sSVD, oSVD, tikhonov, vascular, or cpi.
     inference : str
         Inference method for parametric deconvolution:
-        ``vi`` (default — Variational Inference, FABBER VB), ``svb`` (spatial
-        VB), ``map``, or ``nlls`` (FABBER-style Levenberg-Marquardt).
+        ``vi`` (default — linearized variational inference), ``svb`` (spatial
+        variational Bayes), ``map``, or ``nlls`` (nonlinear least squares).
     mcmc_samples : int
         Number of MCMC samples for Bayesian inference.
     cpi_control_points : int
@@ -68,7 +64,8 @@ class DSCConfig:
     lesion_distance : float
         Minimum distance (mm) from lesion for AIF candidates.
     n_aif_candidates : int
-        Number of AIF candidate voxels to average.
+        Maximum number of AIF candidate voxels to retain and average; fewer
+        may survive selection.
     disable_aif_fallback : bool
         Disable the synthetic AIF fallback. Default False (on a detection
         failure the pipeline substitutes a synthetic gamma-variate AIF and flags
@@ -83,9 +80,6 @@ class DSCConfig:
         Path to NAWM mask in DSC native space for CBV normalization.
     roi_mask : Optional[Path]
         Path to ROI mask in DSC native space for stats extraction only.
-    registration : Literal["flirt", "flirt_bbr"]
-        Registration method: 'flirt' (FLIRT only) or 'flirt_bbr' (FLIRT + BBR
-        refinement, keeping whichever is best).
     smooth_fwhm : float
         Smoothing kernel FWHM (mm) for output maps.
     underlays : List[str]
@@ -107,9 +101,8 @@ class DSCConfig:
     aif_method : Literal["auto", "synthetic"]
         AIF detection method: auto or synthetic.
     leakage_method : Literal["bsw", "bidirectional"]
-        K2 leakage correction method. "bsw" = standard Boxerman-Schmainda-
-        Weisskoff (cumulative integral, no washout). "bidirectional" = Leu 2016
-        (accounts for EES washout, ~16% lower rCBV in HGG).
+        K2 leakage correction method. "bsw" uses a cumulative integral without
+        washout; "bidirectional" accounts for EES washout.
     kep : float, optional
         EES efflux rate constant in s⁻¹ for bidirectional correction.
         Only used when leakage_method="bidirectional". Default: 0.005 s⁻¹.
@@ -151,9 +144,6 @@ class DSCConfig:
     nawm_mask: Optional[Path] = None
     roi_mask: Optional[Path] = None
 
-    # Registration settings
-    registration: Literal["flirt", "flirt_bbr"] = "flirt"
-
     # Processing settings
     smooth_fwhm: float = 0.0  # No smoothing by default
     underlays: List[str] = field(default_factory=list)
@@ -179,12 +169,35 @@ class DSCConfig:
     # Testing / debug
     sloppy: bool = False  # Use fast, low-quality settings for testing
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Ensure numeric fields have correct types after initialization.
 
         This handles cases where values may be passed as strings from
         YAML/JSON config files or CLI arguments.
         """
+        categorical_options = {
+            "method": ({"sSVD", "oSVD", "tikhonov", "vascular", "cpi"}, self.method),
+            "inference": ({"nlls", "map", "vi", "svb"}, self.inference),
+            "aif_method": ({"auto", "synthetic"}, self.aif_method),
+            "hdbet_device": ({"auto", "cuda", "mps", "cpu"}, self.hdbet_device),
+        }
+        for option, (valid, value) in categorical_options.items():
+            if value not in valid:
+                raise ValueError(
+                    f"Invalid {option}={value!r}. Valid: {sorted(valid)}"
+                )
+
+        for option in (
+            "cpi_infer_cpt",
+            "cpi_infer_delay",
+            "disable_aif_fallback",
+            "motion_correct",
+            "first_pass_cbv",
+            "sloppy",
+        ):
+            if not isinstance(getattr(self, option), bool):
+                raise TypeError(f"{option} must be a boolean")
+
         # Validate underlay values
         _VALID_UNDERLAYS = {
             "t1w_precon", "t1w_postcon", "t1w_subtraction",
@@ -204,8 +217,6 @@ class DSCConfig:
             self.pre_bolus = int(self.pre_bolus)
             self.mcmc_samples = int(self.mcmc_samples)
             self.cpi_control_points = int(self.cpi_control_points)
-            self.cpi_infer_cpt = bool(self.cpi_infer_cpt)
-            self.cpi_infer_delay = bool(self.cpi_infer_delay)
             self.n_aif_candidates = int(self.n_aif_candidates)
             self.num_processes = int(self.num_processes)
         except (ValueError, TypeError) as e:
@@ -213,15 +224,15 @@ class DSCConfig:
 
         # Coerce dose: string preset → float, numeric → float
         if isinstance(self.dose, str):
-            if self.dose in _DOSE_PRESETS:
-                self.dose = _DOSE_PRESETS[self.dose]
+            if self.dose in DOSE_PRESETS:
+                self.dose = DOSE_PRESETS[self.dose]
             else:
                 try:
                     self.dose = float(self.dose)
                 except (ValueError, TypeError) as e:
                     raise ValueError(
                         f"Invalid dose={self.dose!r}. Use a named preset "
-                        f"({', '.join(sorted(_DOSE_PRESETS))}) or a positive number."
+                        f"({', '.join(sorted(DOSE_PRESETS))}) or a positive number."
                     ) from e
         else:
             self.dose = float(self.dose)
@@ -260,13 +271,6 @@ class DSCConfig:
             self.motion_thresh = float(self.motion_thresh)
         except (ValueError, TypeError) as e:
             raise TypeError(f"DSCConfig float field has invalid type: {e}") from e
-
-        _valid_registration = {"flirt", "flirt_bbr"}
-        if self.registration not in _valid_registration:
-            raise ValueError(
-                f"Invalid registration={self.registration!r}. "
-                f"Valid: {sorted(_valid_registration)}"
-            )
 
         # preload: "auto" or float dose multiplier. Reject enum strings.
         if isinstance(self.preload, str):
@@ -319,7 +323,21 @@ class DSCConfig:
             from pmriprep.utils.dsc_constants import KEP_DSC_LOWER, KEP_DSC_UPPER
             if not (KEP_DSC_LOWER <= self.kep <= KEP_DSC_UPPER):
                 logger.warning(
-                    "kep=%.4f s^-1 outside typical range [%.3f, %.3f] s^-1 (Leu 2016)",
+                    "kep=%.4f s^-1 outside typical range [%.3f, %.3f] s^-1",
                     self.kep, KEP_DSC_LOWER, KEP_DSC_UPPER,
                 )
 
+        if self.pre_bolus < 3:
+            raise ValueError("pre_bolus must be at least 3")
+        if self.mcmc_samples <= 0:
+            raise ValueError("mcmc_samples must be greater than zero")
+        if self.cpi_control_points < 0:
+            raise ValueError("cpi_control_points must be non-negative (0 = automatic)")
+        if self.n_aif_candidates < 3:
+            raise ValueError("n_aif_candidates must be at least 3")
+        if self.num_processes < 0:
+            raise ValueError("num_processes must be non-negative (0 = automatic)")
+        for option in ("smooth_fwhm", "lesion_distance", "motion_thresh"):
+            value = getattr(self, option)
+            if not math.isfinite(value) or value < 0:
+                raise ValueError(f"{option} must be finite and non-negative")

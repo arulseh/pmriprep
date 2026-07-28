@@ -105,6 +105,40 @@ def test_boilerplate_bib_resolves_every_cited_key() -> None:
     assert not phantom, f"@key markers with no boilerplate.bib entry: {phantom}"
 
 
+def test_boilerplate_bib_has_unique_fields_per_entry() -> None:
+    """BibTeX entries do not repeat fields that renderers may resolve ambiguously."""
+    bib_text = get_boilerplate_bib().read_text(encoding="utf-8")
+    for entry in re.findall(r"@\w+\{[^,]+,(.*?)\n\}", bib_text, re.DOTALL):
+        fields = re.findall(r"^\s*([A-Za-z][A-Za-z0-9_-]*)\s*=", entry, re.MULTILINE)
+        duplicates = sorted({field for field in fields if fields.count(field) > 1})
+        assert not duplicates, f"duplicate BibTeX fields: {duplicates}"
+
+
+def test_boilerplate_scientific_wording_matches_configurable_methods() -> None:
+    """Boilerplate avoids unsupported sources and optional-method overclaims."""
+    synthetic = ru._build_dsc_boilerplate(
+        {"config": {"aif_source": "synthetic"}, "deconvolution": {"method": "oSVD"}}
+    )
+    assert "dose- and field-strength-scaled synthetic gamma-variate AIF" in synthetic
+    assert "@parker_2006" not in synthetic
+    assert "@mouridsen_2006" not in synthetic
+
+    dce = ru._build_dce_boilerplate(
+        {
+            "aif_detection": {"aif_source": "auto"},
+            "pk_modeling": {
+                "model": "auto",
+                "candidate_models": ["patlak", "extended_tofts"],
+            },
+            "nawm_normalization": True,
+        }
+    )
+    assert "DCE images were motion-corrected" in dce
+    assert "dose-aware candidate assessment" in dce
+    assert ", and the extended Tofts model" not in dce
+    assert "DCE parameter maps (Ktrans, IAUC60)" in dce
+
+
 def test_render_citations_falls_back_to_markdown(tmp_path: Path, monkeypatch) -> None:
     """When pandoc fails, raw ``@key`` markdown is embedded so Methods is never lost.
 

@@ -121,8 +121,7 @@ EPSILON_EIGENVALUE: Final[float] = 1e-10
 #
 # Single source of truth: CONTRAST_AGENTS in contrast_agent.py.
 # This module's get_r1_relaxivity(field_strength) delegates to that table
-# under the Gd-DTPA fallback agent. Per-agent values, per-field citations,
-# and 7T support live there.
+# under the Gd-DTPA fallback agent.
 
 
 def get_r1_relaxivity(field_strength: float) -> float:
@@ -145,9 +144,8 @@ def get_r1_relaxivity(field_strength: float) -> float:
     Raises
     ------
     ValueError
-        If field_strength > 5.0 T and no peer-reviewed 7T value
-        exists for the fallback agent. Gd-DTPA has a Noebauer-Huhmann
-        2010 7T value, so this should not raise in practice.
+        If field_strength > 5.0 T and the fallback agent has no measured
+        7T value.
     """
     from pmriprep.utils.contrast_agent import lookup_r1
 
@@ -158,8 +156,7 @@ def get_r1_relaxivity(field_strength: float) -> float:
 # Blood T1 Values by Field Strength
 # =============================================================================
 
-#: Blood T1 values (seconds) by field strength at 37°C
-#: Values from Lu 2004 MRM 52:679, Stanisz 2005 MRM 54:507
+#: Blood T1 values (seconds) by field strength at 37°C.
 BLOOD_T1_BY_FIELD: Final[dict[float, float]] = {
     1.5: 1.35,  # Blood T1 at 1.5T
     3.0: 1.65,  # Blood T1 at 3.0T
@@ -229,8 +226,7 @@ class TissueT1Ranges(NamedTuple):
     csf: T1Range
 
 
-#: Tissue T1 QC ranges by field strength (in milliseconds)
-#: Values from Stanisz et al. (2005), Wright et al. (2008)
+#: Tissue T1 QC ranges by field strength (in milliseconds).
 TISSUE_T1_RANGES_BY_FIELD: Final[dict[float, TissueT1Ranges]] = {
     1.5: TissueT1Ranges(
         white_matter=T1Range(550, 750),     # WM T1 at 1.5T: ~620ms
@@ -290,19 +286,17 @@ def get_tissue_t1_ranges(field_strength: float) -> TissueT1Ranges:
 # =============================================================================
 
 #: Default arterial hematocrit for AIF blood-to-plasma conversion.
-#: QIBA DCE-MRI v2.0 recommendation. Configurable via config YAML.
-#: Used for: C_plasma = C_blood / (1 - hematocrit)
+#: Configurable via YAML. Used for C_plasma = C_blood / (1 - hematocrit).
 HEMATOCRIT_ARTERIAL: Final[float] = 0.42
 
-#: Backwards-compat alias
+#: Alias of the arterial hematocrit default.
 HEMATOCRIT = HEMATOCRIT_ARTERIAL
 
 #: Fåhræus ratio: capillary Hct / arterial Hct.
 #: Red blood cells travel faster than plasma in small vessels,
 #: reducing capillary hematocrit relative to arterial.
 #: MRI CBV includes arterioles + capillaries + venules.
-#: Refs: Lipowsky 2005 Microcirculation 12:5; Boxerman 1995 MRM 34:555.
-#: Literature range: 0.80-0.90.
+#: Expected range: 0.80-0.90.
 FAHRAEUS_RATIO: Final[float] = 0.85
 
 
@@ -374,31 +368,11 @@ AIF_THRESHOLDS_DEGRADED: Final[AIFThresholds] = AIFThresholds(
 
 
 #: Multiplier on dose-scaled plasma ``peak_max_mm`` above which the AIF
-#: QC warning fires. Derived from two independent bounds, not tuned to
-#: any specific dataset:
-#:
-#: 1. Encoded Parker 2006 population spread is ``peak_max / peak_min
-#:    = 7.6 / 5.0 = 1.52`` (P95/P5-equivalent across cardiac output,
-#:    injection rate, weight). Literature observed-peak ceilings
-#:    (Parker 2006 max ~8.5 mM plasma, Schabel 2008 max ~9 mM plasma)
-#:    scale to ~1.18x expected_max — both views of the same biology
-#:    place clean-AIF ceiling well below 1.5x.
-#: 2. Engineering tolerance: the largest plausible single-source
-#:    operator/equipment error (50% over-dose, mis-recorded weight,
-#:    50% injection-rate error) inflates peak by 1.5x. Threshold sits
-#:    at this boundary — peaks above 1.5x cannot be explained by
-#:    realistic dose error and require artifact diagnosis (inflow,
-#:    motion, partial volume).
-#:
-#: 2.0x would be too lax — past the literature-observed clean-AIF
-#: ceiling, so escapes from the slab-edge filter would not fire.
-#: Suppressed for population-AIF fallback by construction.
+#: QC warning fires. Suppressed for population-AIF fallback by construction.
 DCE_AIF_PEAK_RATIO_WARN_THRESHOLD: Final[float] = 1.5
 
 #: Multi-bump tail detection. Fraction of first-pass peak above which a
-#: post-peak local maximum is counted as a "bump." Parker plasma late
-#: tail (post-60 s) sits at 25-30% of peak; threshold above that level
-#: requires a true anomaly above Parker's predicted decay envelope.
+#: post-peak local maximum is counted as a "bump."
 DCE_AIF_TAIL_PEAK_FRACTION: Final[float] = 0.40
 
 #: Time (seconds) to skip immediately after the first-pass peak before
@@ -446,8 +420,7 @@ DCE_AIF_SCALE_WARN_SUBSTANTIAL: Final[float] = 3.4
 DCE_AIF_SCALE_WARN_UNRELIABLE: Final[float] = 5.2
 
 #: G2 — late-tail/peak ratio HARD reject threshold.
-#: Parker bi-exponential arterial plasma decays to <=0.20 by 2 min
-#: post-peak; venous mixing produces persistent late-tail above 0.40.
+#: Persistent late-tail signal above this level indicates non-arterial mixing.
 DCE_AIF_GATE_LATE_TAIL_RATIO_MAX: Final[float] = 0.35
 
 #: G3 — FWHM HARD reject threshold (seconds).
@@ -463,11 +436,8 @@ DCE_AIF_GATE_FWHM_MAX_SECONDS: Final[float] = 22.0
 DCE_AIF_GATE_MULTIBUMP_MAX: Final[int] = 2
 
 #: G5' — ratio_30 thresholds (post-peak frame at max(4, ceil(30/TR))).
-#: Parker bi-exponential gives ratio ~0.32 at peak+30 s; venous AIFs
-#: sit at >=0.55 (Bleeker 2011 MRM 65:448). HARD threshold leaves
-#: headroom for distal-ACA broadening, Hct correction, and
-#: recirculation pickup. WARN tier flags borderline cases for future
-#: aggregate-warn gating.
+#: The hard threshold allows distal-ACA broadening, Hct correction, and
+#: recirculation pickup. The warning tier identifies borderline cases.
 DCE_AIF_GATE_RATIO30_HARD: Final[float] = 0.50
 DCE_AIF_GATE_RATIO30_WARN: Final[float] = 0.40
 
@@ -561,8 +531,7 @@ class AIFExpectedValues(NamedTuple):
     auc_max: float          # Maximum expected AUC
 
 
-#: Expected AIF values for full-dose contrast (0.1 mmol/kg)
-#: Based on Parker et al. (2006) population AIF parameters
+#: Expected AIF values for full-dose contrast (0.1 mmol/kg).
 DCE_AIF_EXPECTED_FULL_DOSE: Final[AIFExpectedValues] = AIFExpectedValues(
     peak_min_mm=5.0,        # Minimum expected peak concentration
     peak_max_mm=7.6,        # Maximum expected peak concentration
@@ -636,7 +605,7 @@ class B1Thresholds(NamedTuple):
     AFI B1+ inhomogeneity increases with field strength due to shorter RF
     wavelength relative to head size.  At 7 T dielectric focusing can push
     B1+ to 1.8 or higher in the brain centre while temporal lobes may drop
-    to 0.3 (Teeuwisse MRM 2012).  Thresholds must widen accordingly.
+    to 0.3. Thresholds widen accordingly.
 
     Attributes
     ----------
@@ -678,7 +647,6 @@ class B1Thresholds(NamedTuple):
 
 
 #: B1+ threshold lookup by field strength (Tesla).
-#: References: Yarnykh 2007 MRM 57:192, Nehrke & Börnert 2012 MRM 68:1517.
 B1_THRESHOLDS_BY_FIELD: Final[dict[float, B1Thresholds]] = {
     1.5: B1Thresholds(
         clip_low=0.4,
@@ -775,18 +743,6 @@ B1_MIN_SIGMA_VOXELS: Final[float] = 1.5
 
 
 # =============================================================================
-# NLLS T1 Fitting
-# =============================================================================
-
-#: NLLS refinement threshold for hybrid T1 fitting.
-#: Voxels with E1 > this threshold have T1 >> TR, making DESPOT1
-#: linearization unreliable. At TR=4ms, E1=0.995 corresponds to T1~800ms.
-#: Most brain tissue at clinical field strengths falls near or above this.
-#: For short-TR VFA (<10ms), this captures CSF and edematous tissue.
-NLLS_REFINEMENT_E1_THRESHOLD: Final[float] = 0.995
-
-
-# =============================================================================
 # T1 Mapping Defaults
 # =============================================================================
 
@@ -873,12 +829,8 @@ INFLOW_EXCLUSION_MAX_SLAB_FRACTION: Final[float] = 0.35
 #: MCA_ACA territory; the depth-protective margin is reserved for the
 #: WB fallback which has no anatomical prior.
 #:
-#: Anatomical bracket motivating 10 mm: cortical superficial cerebral
-#: veins sit < 5 mm below the brain surface (Rhoton 2002 Neurosurgery 51
-#: supp); MCA M1 segment runs ≥ 25 mm below the surface in the Sylvian
-#: fissure (Tanriover 2003 Neurosurgery 53:1326). 10 mm sits in the safe
-#: gap and excludes deep medullary veins by depth alone (the existing
-#: FWHM/washout gates already reject their broad late-peak curves).
+#: The 10 mm cut removes superficial cortical veins while preserving deeper
+#: MCA segments. FWHM and washout gates reject broad late-peaking curves.
 WB_FALLBACK_DEPTH_EROSION_MM: Final[float] = 10.0
 
 #: Hard minimum distance (mm) from lesion for AIF candidates. Below this,
@@ -1000,7 +952,7 @@ QC_PEAK_ENHANCEMENT_WARN: Final[float] = 20.0
 QC_DCE_BASELINE_TSNR_MIN: Final[float] = 3.0
 
 #: Baseline tSNR below this triggers REVIEW
-#: Below tSNR ~8, Ktrans wCV is expected to exceed the QIBA 20% target (QIBA DCE v2.0)
+#: Below tSNR ~8, Ktrans precision is reduced.
 QC_DCE_BASELINE_TSNR_WARN: Final[float] = 8.0
 
 #: Per-voxel baseline-SNR floor below which the Rician baseline-floor bias
@@ -1039,7 +991,7 @@ AIF_FWHM_BAND_HALFWIDTH_SECONDS: Final[float] = 8.0
 
 #: Averaged-AIF fidelity scorer — physiologic first-pass arterial washout fraction
 #: (peak vs late-tail-mean), the two-sided band center. The true DCE AIF sits ~0.78
-#: (measured on the OSIPI DRO GT; Parker-derived range 0.75-0.9). A tail-collapsed /
+#: A tail-collapsed /
 #: partial-volume AIF over-washes (>~0.90) and is penalized; a tissue-diluted AIF
 #: under-washes (<~0.6) and is penalized. NOT the thin-tailed pure-Parker-template
 #: value (~0.90), which would reward collapse.
@@ -1165,10 +1117,7 @@ VP_MAX_PHYSIOLOGICAL: Final[float] = 0.2
 
 #: Physiological plasma volume fraction assumed for contralateral NAWM.
 #: Used as the anchor for converting nCBV → vp prior in the DSC→DCE
-#: cross-modality constraint. Source: Larsson et al. MRM 2009;62:1270
-#: (direct DCE measurement, NAWM vp = 0.0089 ± 0.0038). Corroborated by
-#: Sourbron & Buckley NMR Biomed 2013;26:1004 (WM vp 0.005–0.02 literature
-#: range).
+#: cross-modality constraint.
 #:
 #: Hct closure constraint: this anchor uses the same large-vessel Hct =
 #: 0.42 convention as the AIF-path /(1-Hct) conversion at ``dce_aif.py``.
@@ -1213,40 +1162,10 @@ MAX_NCBV_FOR_VALIDATION: Final[float] = 5.0
 #: leakage correction leaves a residual CBV-scale bias that the prior must
 #: not lean on tightly. Values are quadrature sums of the 0.40 floor with
 #: the post-BSW residual CBV-scale error:
+#:
 #:   adequate   = 0.40                (biological floor only)
 #:   partial    ≈ √(0.40² + 0.25²) = 0.50   (modest residual)
 #:   inadequate ≈ √(0.40² + 0.40²) = 0.60   (large residual)
 SIGMA_SOFT_K2_SUPPRESSED: Final[float] = 0.40   # adequate
 SIGMA_SOFT_DEFAULT: Final[float] = 0.50         # partial
 SIGMA_SOFT_HIGH_K2: Final[float] = 0.60         # inadequate
-
-#: Circular-detector std threshold when cross-validation uses nCBV.
-#: Ratio vp/nCBV is centered at NAWM_VP_REFERENCE;
-#: threshold ≈10% of that center separates "tight-SOFT prior-dominated"
-#: from "informative DCE posterior" (wide SOFT).
-#: Legacy threshold 0.01 stays for the non-nCBV path (vp/rel_cbv ratio scale).
-CIRCULAR_STD_THRESHOLD_NCBV: Final[float] = 0.002
-CIRCULAR_STD_THRESHOLD_ABS_CBV: Final[float] = 0.01
-
-#: Overshoot fraction above which vp is prior-dominated and xval tolerance
-#: is widened. Jensen-bias signature of first-pass temporal undersampling
-#: (Buckley MRM 2002). Shared with the constraint-block detector in
-#: ``dce_compute.py`` — single source of truth.
-ACQUISITION_LIMITED_OVERSHOOT_THRESHOLD: Final[float] = 0.7
-
-#: Widened lower edge of the vp/nCBV ratio band, applied only when the
-#: ``acquisition_limited`` flag fires. Pinned at the brain-capillary
-#: physiological floor (vp ≥ 0.005) so it does not
-#: undercut the magnitude-plausibility gate. Acquisition-limited CRLB band
-#: from first-pass temporal-undersampling analysis —
-#: independent of ``NAWM_VP_REFERENCE`` position.
-#: Excursions below 0.005 remain a real data issue even in the
-#: prior-dominated regime.
-VP_NCBV_RATIO_MIN_LIMITED: Final[float] = 0.005
-
-#: Widened upper edge of the vp/nCBV ratio band. Acquisition-limited CRLB
-#: ceiling from Buckley MRM 2002 — independent of ``NAWM_VP_REFERENCE``.
-#: The widened band brackets the prior-dominated NAWM posterior envelope
-#: and intentionally spans up to the legacy magnitude-gate ceiling. Scope
-#: is NAWM ratios — tumor-vp excursions are outside the xval domain.
-VP_NCBV_RATIO_MAX_LIMITED: Final[float] = 0.06

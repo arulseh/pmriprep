@@ -8,7 +8,10 @@ from typing import Any
 
 import pytest
 
-from pmriprep.utils.sidecar_builders import enrich_dce_preproc_sidecar
+from pmriprep.utils.sidecar_builders import (
+    enrich_dce_preproc_sidecar,
+    enrich_recommendation_keys,
+)
 
 
 @pytest.fixture
@@ -16,11 +19,11 @@ def base_sidecar() -> dict[str, Any]:
     return {
         "Description": "Motion-corrected 4D DCE time series",
         "SkullStripped": False,
-        "SpatialReference": "bids::pmriprep/sub-X/perf/sub-X_desc-dceMean_stat.nii.gz",
-        "Sources": ["bids::sub-X/perf/sub-X_dce.nii.gz"],
+        "SpatialReference": "bids::sub-X/perf/sub-X_desc-dceMean_stat.nii.gz",
+        "Sources": ["bids:raw:sub-X/perf/sub-X_dce.nii.gz"],
         "Resolution": "native",
         "VoxelSize": [1.0, 1.0, 3.0],
-        "KtransConvention": "plasma_Tofts1999",
+        "InputFunctionCompartment": "plasma",
     }
 
 
@@ -29,19 +32,28 @@ def dce_qc_metrics() -> dict[str, Any]:
     """Representative DCE merged qc_metrics (from workflows/dce/base.py:3286)."""
     return {
         "t1_mapping": {
-            "method": "hybrid",
+            "method": "nlls",
             "b1_correction": "afi",
             "t1_correction": {
-                "correction_applied": "offset", "tissue_t1_used": False,
+                "correction_applied": "fallback",
+                "fallback_value_ms": 1200.0,
+                "reason": "Measured T1 rejected",
             },
         },
         "b1_mapping": {"mean_b1": 0.96, "pct_correction_gt_20": 8.5},
         "preprocessing": {
             "fd_mean": 0.21, "fd_max": 0.78, "percent_outliers": 2.1,
             "motion_status": "PASS",
+            "motion_qc_available": True,
             "baseline_tsnr": 32.4, "peak_enh_pct": 65.0,
             "baseline_snr_low_fraction": 0.04,
-            "n_volumes": 75, "tr_ms": 4060.0,
+            "n_volumes": 75, "tr_ms": 3.8, "volume_tr_s": 4.06,
+            "baseline_frames_used": 5,
+            "baseline_minimum_frames": 5,
+            "detected_bolus_frame": 2,
+            "baseline_fallback_applied": True,
+            "baseline_fallback_reason": "detected_bolus_before_minimum_baseline",
+            "baseline_status": "POOR",
         },
         "nawm_normalization": True,
     }
@@ -50,10 +62,33 @@ def dce_qc_metrics() -> dict[str, Any]:
 class TestT1Keys:
     def test_t1_mapping_keys(self, base_sidecar, dce_qc_metrics):
         out = enrich_dce_preproc_sidecar(dict(base_sidecar), qc_metrics=dce_qc_metrics)
-        assert out["T1MappingMethod"] == "hybrid"
+        assert out["T1MappingMethod"] == "nlls"
         assert out["T1B1Correction"] == "afi"
-        assert out["T1CorrectionApplied"] == "offset"
-        assert out["T1UseTissueLiterature"] is False
+        assert out["T1CorrectionApplied"] == "fallback"
+        assert out["T1Source"] == "uniform_field_strength_fallback"
+        assert out["T1MappingAttempted"] is True
+        assert out["T1MappingAccepted"] is False
+        assert out["T1AssumedValue"] == pytest.approx(1200.0)
+        assert out["T1FallbackReason"] == "Measured T1 rejected"
+
+    def test_assumed_t1_keys(self, base_sidecar):
+        qc = {
+            "t1_mapping": {
+                "method": "assumed",
+                "b1_correction": "precomputed",
+                "assumed_t1_ms": 1200.0,
+                "assumed_t1_field_strength_t": 3.0,
+                "assumed_t1_policy": "uniform_field_strength_reference",
+            }
+        }
+        out = enrich_dce_preproc_sidecar(dict(base_sidecar), qc_metrics=qc)
+        assert out["T1AssumedValue"] == pytest.approx(1200.0)
+        assert out["T1AssumedValueUnits"] == "ms"
+        assert out["T1AssumptionFieldStrength"] == pytest.approx(3.0)
+        assert out["T1AssumptionPolicy"] == "uniform_field_strength_reference"
+        assert out["T1B1Correction"] == "precomputed"
+        assert out["T1Source"] == "uniform_field_strength_assumption"
+        assert out["T1MappingAttempted"] is False
 
 
 class TestB1Keys:
@@ -72,12 +107,22 @@ class TestMotionAndSignalKeys:
         assert out["MotionFDMax"] == pytest.approx(0.78)
         assert out["MotionPercentOutliers"] == pytest.approx(2.1)
         assert out["MotionStatus"] == "PASS"
+        assert out["MotionQCAvailable"] is True
         assert out["BaselineTSNR"] == pytest.approx(32.4)
         assert out["BaselineSNRLowFraction"] == pytest.approx(0.04)
         assert out["PeakEnhancementPercent"] == pytest.approx(65.0)
         assert out["NumberOfVolumes"] == 75
-        # tr_ms (4060ms) → RepetitionTime in seconds
+        assert out["BaselineFramesUsed"] == 5
+        assert out["BaselineMinimumFrames"] == 5
+        assert out["BolusArrivalFrameDetected"] == 2
+        assert out["BaselineFallbackApplied"] is True
+        assert out["BaselineFallbackReason"] == (
+            "detected_bolus_before_minimum_baseline"
+        )
+        assert out["BaselineQCStatus"] == "POOR"
+        # Volume and excitation TR retain their distinct BIDS meanings.
         assert out["RepetitionTime"] == pytest.approx(4.06)
+        assert out["RepetitionTimeExcitation"] == pytest.approx(0.0038)
 
     def test_baseline_snr_key_absent_when_missing(self, base_sidecar, dce_qc_metrics):
         """No BaselineSNRLowFraction key when the metric is absent (membership guard)."""
@@ -104,6 +149,65 @@ class TestTopLevelFlags:
         assert out["NAWMNormalizationApplied"] is True
 
 
+def test_baseline_and_aif_processing_warnings_coexist() -> None:
+    """DCE baseline fallback uses the existing processing-warning channel."""
+    sidecar: dict[str, Any] = {}
+    qc = {
+        "preprocessing": {
+            "baseline_warning": "Baseline fallback may bias PK maps.",
+            "baseline_fallback_applied": True,
+            "detected_bolus_frame": 2,
+            "baseline_minimum_frames": 5,
+        },
+        "aif_detection": {"aif_source": "population"},
+    }
+
+    enrich_recommendation_keys(sidecar, modality="DCE", qc_metrics=qc)
+
+    warnings = sidecar["QCProcessingWarnings"]
+    assert sidecar["QCRecommendationAction"] == "exclude"
+    assert "Inadequate pre-contrast DCE baseline" in (
+        sidecar["QCRecommendationReason"]
+    )
+    assert len(warnings) == 2
+    assert "Parker population model" in warnings[0]
+    assert warnings[1] == "Baseline fallback may bias PK maps."
+
+
+def test_motion_qc_warning_uses_processing_warning_channel() -> None:
+    """A motion-QC reduction failure reaches the existing HTML banner."""
+    sidecar: dict[str, Any] = {}
+    qc = {
+        "preprocessing": {
+            "motion_qc_warning": "Motion quality is unknown.",
+        },
+    }
+
+    enrich_recommendation_keys(sidecar, modality="DCE", qc_metrics=qc)
+
+    assert sidecar["QCProcessingWarnings"] == ["Motion quality is unknown."]
+
+
+def test_vfa_alignment_warning_uses_processing_warning_channel() -> None:
+    """An inter-VFA alignment warning reaches the report Review section."""
+    sidecar: dict[str, Any] = {}
+    warning = "Potential inter-VFA misalignment detected."
+    qc = {
+        "t1_mapping": {
+            "vfa_preprocessing": {
+                "motion_assessment": {
+                    "qc_status": "WARN",
+                    "warning": warning,
+                },
+            },
+        },
+    }
+
+    enrich_recommendation_keys(sidecar, modality="DCE", qc_metrics=qc)
+
+    assert sidecar["QCProcessingWarnings"] == [warning]
+
+
 class TestBaseFieldsSurvive:
     def test_base_fields_preserved(self, base_sidecar, dce_qc_metrics):
         out = enrich_dce_preproc_sidecar(dict(base_sidecar), qc_metrics=dce_qc_metrics)
@@ -111,7 +215,7 @@ class TestBaseFieldsSurvive:
         assert out["SkullStripped"] is False
         assert out["SpatialReference"] == base_sidecar["SpatialReference"]
         assert out["Sources"] == base_sidecar["Sources"]
-        assert out["KtransConvention"] == "plasma_Tofts1999"
+        assert out["InputFunctionCompartment"] == "plasma"
 
 
 class TestEmptyInputs:
@@ -123,9 +227,9 @@ class TestEmptyInputs:
         assert out["SpatialReference"] == base_sidecar["SpatialReference"]
 
     def test_partial_qc_metrics(self, base_sidecar):
-        qc = {"t1_mapping": {"method": "hybrid"}}
+        qc = {"t1_mapping": {"method": "nlls"}}
         out = enrich_dce_preproc_sidecar(dict(base_sidecar), qc_metrics=qc)
-        assert out["T1MappingMethod"] == "hybrid"
+        assert out["T1MappingMethod"] == "nlls"
         # Missing fields stay absent (no None / empty values)
         assert "T1B1Correction" not in out
         assert "B1MeanWholeBrain" not in out
@@ -221,7 +325,7 @@ class TestPreprocMetaNoNaN:
 
         from pmriprep.workflows.dce.datasinks import _build_dce_preproc_meta
 
-        base = {"Description": "x", "Sources": ["bids::sub-X/perf/sub-X_dce.nii.gz"]}
+        base = {"Description": "x", "Sources": ["bids:raw:sub-X/perf/sub-X_dce.nii.gz"]}
         qc = {
             "preprocessing": {
                 "baseline_tsnr": float("nan"),
@@ -231,6 +335,7 @@ class TestPreprocMetaNoNaN:
             },
         }
         meta = _build_dce_preproc_meta(base, "desc", qc_metrics=qc)
+        assert meta["SkullStripped"] is True
         # Flat cosmetic keys dropped
         assert "BaselineTSNR" not in meta
         assert "BaselineSNRLowFraction" not in meta
@@ -251,6 +356,7 @@ class TestPreprocMetaNoNaN:
 
         qc = {"preprocessing": {"baseline_tsnr": float("nan"), "mean_cnr": 4.2}}
         meta = _build_dsc_preproc_meta({"Description": "x"}, "desc", qc_metrics=qc)
+        assert meta["SkullStripped"] is True
         assert "baseline_tsnr" not in meta["PipelineQC"]["preprocessing"]
         assert meta["PipelineQC"]["preprocessing"]["mean_cnr"] == 4.2
         json.dumps(meta, allow_nan=False)

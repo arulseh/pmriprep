@@ -1,7 +1,7 @@
 """Canonical graph-regression harness for the perfusion preproc workflows.
 
-This is the safety net for the ``init_dce_preproc_wf`` / ``init_dsc_preproc_wf``
-sub-workflow decomposition. It builds each workflow across a matrix of
+This is the safety net for the anatomical, DCE, and DSC preprocessing
+sub-workflow decompositions. It builds each workflow across a matrix of
 construction-gating configurations and compares a *graph signature* against
 committed golden baselines.
 
@@ -75,6 +75,8 @@ from nipype.pipeline.engine.utils import _remove_identity_node
 
 from pmriprep.config.dce import DCEConfig
 from pmriprep.config.dsc import DSCConfig
+from pmriprep.config.anat import AnatConfig
+from pmriprep.workflows.anat.base import init_anat_preproc_wf
 from pmriprep.workflows.dce.base import init_dce_preproc_wf
 from pmriprep.workflows.dsc.base import init_dsc_preproc_wf
 
@@ -373,6 +375,27 @@ def _dsc(bids: Path, **cfg: Any) -> pe.Workflow:
     )
 
 
+def _anat(
+    bids: Path,
+    *,
+    has_t1w_postcon: bool = False,
+    has_t2w: bool = False,
+    has_flair: bool = False,
+    has_flair_postcon: bool = False,
+    **cfg: Any,
+) -> pe.Workflow:
+    return init_anat_preproc_wf(
+        bids_dir=bids,
+        subject_id="0001",
+        session_id="0001",
+        config=AnatConfig(**cfg),
+        has_t1w_postcon=has_t1w_postcon,
+        has_t2w=has_t2w,
+        has_flair=has_flair,
+        has_flair_postcon=has_flair_postcon,
+    )
+
+
 _ALL_UNDERLAYS = ["t1w_precon", "t1w_postcon", "t1w_subtraction", "flair_precon", "flair_postcon", "t2w"]
 
 # Each row exercises >= 1 verified construction-gating branch. Non-topological
@@ -426,7 +449,23 @@ DSC_MATRIX: list[tuple[str, Builder]] = [
     ("dsc_no_moco", lambda b: _dsc(b, motion_correct=False)),
 ]
 
-MATRIX: list[tuple[str, Builder]] = DCE_MATRIX + DSC_MATRIX
+ANAT_MATRIX: list[tuple[str, Builder]] = [
+    ("anat_default", lambda b: _anat(b)),
+    ("anat_postcon", lambda b: _anat(b, has_t1w_postcon=True)),
+    ("anat_all_modalities", lambda b: _anat(
+        b,
+        has_t1w_postcon=True,
+        has_t2w=True,
+        has_flair=True,
+        has_flair_postcon=True,
+    )),
+    ("anat_no_subtraction", lambda b: _anat(
+        b, has_t1w_postcon=True, create_subtraction=False,
+    )),
+    ("anat_sloppy", lambda b: _anat(b, sloppy=True)),
+]
+
+MATRIX: list[tuple[str, Builder]] = ANAT_MATRIX + DCE_MATRIX + DSC_MATRIX
 
 
 # ---------------------------------------------------------------------------
@@ -512,6 +551,18 @@ def test_dsc_method_is_parameter_not_topology(bids: Path) -> None:
     assert cpi["node_params"] != default["node_params"]
     assert cpi["node_params"]["compute_maps"]["method"] == "cpi"
     assert default["node_params"]["compute_maps"]["method"] != "cpi"
+
+
+def test_dce_peak_floor_is_routed_as_parameter(bids: Path) -> None:
+    """Disabling the peak floor changes only the AIF node parameter."""
+    enabled = graph_signature(_dce(bids))
+    disabled = graph_signature(_dce(bids, aif_peak_floor=False))
+
+    assert disabled["nodes"] == enabled["nodes"]
+    assert disabled["edges"] == enabled["edges"]
+    assert disabled["function_sha256"] == enabled["function_sha256"]
+    assert enabled["node_params"]["aif_detection"]["aif_peak_floor"] is True
+    assert disabled["node_params"]["aif_detection"]["aif_peak_floor"] is False
 
 
 # ---------------------------------------------------------------------------

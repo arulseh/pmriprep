@@ -54,25 +54,38 @@ class TestDeriveAifSource:
 
 
 class TestDeriveQualityFlag:
-    def test_pass_threshold(self) -> None:
+    def test_dsc_strict_passes_despite_ranking_score(self) -> None:
         from pmriprep.utils.aif_provenance import _derive_quality_flag
 
-        assert _derive_quality_flag({"quality_score": 0.70}, "measured") == "pass"
+        qc = {"detection_method": "atlas_strict", "quality_score": 0.14}
+        assert _derive_quality_flag(qc, "measured") == "pass"
 
-    def test_warn_threshold(self) -> None:
+    def test_dsc_relaxed_passes(self) -> None:
         from pmriprep.utils.aif_provenance import _derive_quality_flag
 
-        assert _derive_quality_flag({"quality_score": 0.50}, "measured") == "warn"
+        assert _derive_quality_flag(
+            {"detection_method": "atlas_relaxed"}, "measured"
+        ) == "pass"
 
-    def test_poor_threshold(self) -> None:
+    def test_dsc_permissive_warns(self) -> None:
         from pmriprep.utils.aif_provenance import _derive_quality_flag
 
-        assert _derive_quality_flag({"quality_score": 0.49}, "measured") == "poor"
+        assert _derive_quality_flag(
+            {"detection_method": "atlas_permissive"}, "measured"
+        ) == "warn"
 
-    def test_boundary_pass_warn(self) -> None:
+    def test_dsc_compound_tier_uses_worst_tier(self) -> None:
         from pmriprep.utils.aif_provenance import _derive_quality_flag
 
-        assert _derive_quality_flag({"quality_score": 0.69}, "measured") == "warn"
+        qc = {"detection_method": "atlas_relaxed+atlas_permissive"}
+        assert _derive_quality_flag(qc, "measured") == "warn"
+
+    def test_dce_score_fallback_thresholds(self) -> None:
+        from pmriprep.utils.aif_provenance import _derive_quality_flag
+
+        assert _derive_quality_flag({"quality_score": 0.70}, "measured", "DCE") == "pass"
+        assert _derive_quality_flag({"quality_score": 0.50}, "measured", "DCE") == "warn"
+        assert _derive_quality_flag({"quality_score": 0.49}, "measured", "DCE") == "poor"
 
     def test_synthetic_forced_poor(self) -> None:
         from pmriprep.utils.aif_provenance import _derive_quality_flag
@@ -88,6 +101,12 @@ class TestDeriveQualityFlag:
         from pmriprep.utils.aif_provenance import _derive_quality_flag
 
         assert _derive_quality_flag({}, "measured") == "warn"
+
+    def test_dsc_external_warns(self) -> None:
+        from pmriprep.utils.aif_provenance import _derive_quality_flag
+
+        qc = {"detection_method": "external", "quality_score": 0.95}
+        assert _derive_quality_flag(qc, "external") == "warn"
 
 
 class TestBuildProvenanceBlockDSC:
@@ -141,6 +160,14 @@ class TestBuildProvenanceBlockDCE:
                 "aif_confidence": "standard",
                 "aif_uncertainty_inflation_factor": 1.0,
                 "hematocrit": 0.42,
+                "peak_scaling_enabled": True,
+                "peak_scaling_applied": True,
+                "raw_peak_mm": 4.0,
+                "emitted_peak_mm": 8.0,
+                "peak_scaling_factor": 2.0,
+                "peak_scaling_required_factor": 2.0,
+                "peak_scaling_policy": "one_sided_lower_bound",
+                "peak_scaling_trigger": "below_expected_minimum",
             }},
             modality="DCE",
         )
@@ -150,6 +177,17 @@ class TestBuildProvenanceBlockDCE:
         assert block["Confidence"] == "standard"
         assert block["UncertaintyInflationFactor"] == pytest.approx(1.0)
         assert block["Hematocrit"] == pytest.approx(0.42)
+        assert block["PeakScaling"] == {
+            "Enabled": True,
+            "Applied": True,
+            "RawPeak": 4.0,
+            "EmittedPeak": 8.0,
+            "Factor": 2.0,
+            "RequiredFactor": 2.0,
+            "Policy": "one_sided_lower_bound",
+            "Trigger": "below_expected_minimum",
+            "PeakUnits": "mM",
+        }
         assert "GammaFitApplied" not in block
 
     def test_population(self) -> None:
@@ -199,6 +237,30 @@ class TestApplyAifSidecarDCE:
         assert sidecar["AIFDependent"] is True
         assert sidecar["TemplateAIFUsage"] == "ratio_defensible"
         assert "PerfusionProcessing" in sidecar
+
+    def test_pk_map_carries_peak_scaling(self) -> None:
+        """Quantitative-map sidecars retain the canonical scaling fragment."""
+        from pmriprep.utils.aif_provenance import apply_aif_sidecar
+
+        sidecar: dict = {}
+        qc = {
+            "aif_detection": {
+                "detection_method": "atlas",
+                "peak_scaling_enabled": True,
+                "peak_scaling_applied": True,
+                "raw_peak_mm": 4.0,
+                "emitted_peak_mm": 8.0,
+                "peak_scaling_factor": 2.0,
+                "peak_scaling_required_factor": 2.0,
+                "peak_scaling_policy": "one_sided_lower_bound",
+                "peak_scaling_trigger": "below_expected_minimum",
+            }
+        }
+        apply_aif_sidecar(sidecar, "ktrans", qc, modality="DCE")
+        scaling = sidecar["PerfusionProcessing"]["AIF"]["PeakScaling"]
+        assert scaling["RawPeak"] == pytest.approx(4.0)
+        assert scaling["EmittedPeak"] == pytest.approx(8.0)
+        assert scaling["Policy"] == "one_sided_lower_bound"
 
     def test_iauc_independent(self) -> None:
         from pmriprep.utils.aif_provenance import apply_aif_sidecar
@@ -361,3 +423,98 @@ class TestDSCRegression:
         apply_aif_sidecar(sidecar, "k2", qc, modality="DSC")
         assert sidecar["AIFDependent"] is False
         assert sidecar["TemplateAIFUsage"] == "safe"
+
+
+class TestPublicArtifactSchema:
+    def test_dce_prefers_final_emitted_curve_metrics(self) -> None:
+        from pmriprep.utils.aif_provenance import build_aif_provenance_block
+
+        block = build_aif_provenance_block(
+            {
+                "detection_method": "atlas",
+                "peak_mm_mean": 3.0,
+                "final_peak_mm": 6.0,
+                "fwhm_seconds_mean": 8.0,
+                "final_fwhm_seconds": 11.0,
+            },
+            modality="DCE",
+        )
+        assert block["PeakAmplitude"] == pytest.approx(6.0)
+        assert block["PeakAmplitudeUnits"] == "mM"
+        assert block["FWHM"] == pytest.approx(11.0)
+        assert block["FWHMUnits"] == "s"
+
+    def test_external_dsc_fwhm_retains_frame_units(self) -> None:
+        from pmriprep.utils.aif_provenance import build_aif_provenance_block
+
+        block = build_aif_provenance_block(
+            {
+                "detection_method": "external",
+                "aif_metrics": {"fwhm": 5.0},
+            },
+            modality="DSC",
+        )
+        assert block["FWHM"] == pytest.approx(5.0)
+        assert block["FWHMUnits"] == "frames"
+
+    def test_curve_and_mask_use_identical_dce_block(self, tmp_path) -> None:
+        from pmriprep.utils.sidecar_builders import build_aif_timeseries_sidecar
+        from pmriprep.workflows.dce.datasinks import _build_aif_mask_meta
+
+        qc = {
+            "detection_method": "atlas",
+            "quality_score": 0.65,
+            "n_aif_voxels_selected": 7,
+            "aif_metrics": {"peak_conc": 4.2, "fwhm": 8.0},
+            "hematocrit": 0.42,
+            "peak_scaling_enabled": True,
+            "peak_scaling_applied": False,
+        }
+        curve = build_aif_timeseries_sidecar(
+            modality="DCE",
+            source_paths=[],
+            bids_dir=tmp_path,
+            subject="01",
+            session=None,
+            aif_qc=qc,
+        )
+        mask = _build_aif_mask_meta({}, "AIF mask", {"aif_detection": qc})
+
+        assert (
+            curve["PerfusionProcessing"]["AIF"]
+            == mask["PerfusionProcessing"]["AIF"]
+        )
+        assert mask["Type"] == "ROI"
+
+    def test_curve_mask_and_map_use_identical_dsc_block(self, tmp_path) -> None:
+        from pmriprep.utils.aif_provenance import apply_aif_sidecar
+        from pmriprep.utils.sidecar_builders import build_aif_timeseries_sidecar
+        from pmriprep.workflows.dsc.datasinks import _build_aif_mask_meta
+
+        qc = {
+            "detection_method": "atlas_strict",
+            "quality_score": 0.8,
+            "n_aif_voxels_selected": 6,
+            "gamma_fit_applied": True,
+            "gamma_fit_r_squared": 0.95,
+        }
+        curve = build_aif_timeseries_sidecar(
+            modality="DSC",
+            source_paths=[],
+            bids_dir=tmp_path,
+            subject="01",
+            session=None,
+            aif_qc=qc,
+        )
+        mask = _build_aif_mask_meta({}, "AIF mask", {"aif_detection": qc})
+        quantitative_map: dict = {}
+        apply_aif_sidecar(
+            quantitative_map,
+            "cbf",
+            {"aif_detection": qc},
+            modality="DSC",
+        )
+
+        expected = curve["PerfusionProcessing"]["AIF"]
+        assert mask["PerfusionProcessing"]["AIF"] == expected
+        assert quantitative_map["PerfusionProcessing"]["AIF"] == expected

@@ -4,11 +4,6 @@ This module provides quality control visualization functions for
 registration assessment, motion correction QC, and other pipeline
 outputs. All visualizations use the colorblind-safe palette from
 qc_standards.py.
-
-References
-----------
-- Power et al. (2012) for framewise displacement
-- Paul Tol color schemes for accessibility
 """
 
 from pathlib import Path
@@ -227,6 +222,7 @@ def plot_registration_qc_filmstrip(
     moving: npt.NDArray[Any],
     output_path: Union[str, Path],
     mask: Optional[npt.NDArray[Any]] = None,
+    moving_mask: Optional[npt.NDArray[Any]] = None,
     title: Optional[str] = None,
     n_slices: int = 7,
     contour_color: Optional[str] = None,
@@ -236,9 +232,11 @@ def plot_registration_qc_filmstrip(
 
     Generates a multi-slice filmstrip with three rows (axial, coronal,
     sagittal) showing the fixed image as grayscale background with
-    contour lines of the moving image overlaid in color on a dark
-    background.  Follows the fmriprep ``add_contours(linewidths=0.5)``
-    convention for thin, clean structural boundary visualization.
+    contour lines of the moving image overlaid in color on a dark background.
+    When masks are available, the fixed-image brain boundary is shown as a
+    solid contour and the registered moving-image brain boundary as a dashed
+    contour. This distinguishes outer-boundary agreement from internal tissue
+    contrast.
 
     Parameters
     ----------
@@ -249,7 +247,11 @@ def plot_registration_qc_filmstrip(
     output_path : str or Path
         Path to save the output PNG image
     mask : npt.NDArray[Any], optional
-        Optional 3D brain mask to restrict display region
+        Optional fixed-image 3D brain mask used for slice selection, intensity
+        scaling, and a solid outer-boundary contour.
+    moving_mask : npt.NDArray[Any], optional
+        Optional registered moving-image 3D brain mask shown as a dashed
+        outer-boundary contour.
     title : str, optional
         Optional title for the figure
     n_slices : int, optional
@@ -290,9 +292,13 @@ def plot_registration_qc_filmstrip(
             raise ValueError(
                 f"Mask shape {mask.shape} doesn't match image shape {fixed.shape}"
             )
-        # Brain-extract the overlay so contours only appear inside the brain
-        moving = moving.copy()
-        moving[mask == 0] = 0
+    if moving_mask is not None:
+        moving_mask = np.asarray(moving_mask)
+        if moving_mask.shape != fixed.shape:
+            raise ValueError(
+                f"Moving mask shape {moving_mask.shape} "
+                f"doesn't match image shape {fixed.shape}"
+            )
 
     # Use colorblind-safe palette color for contours (cyan on dark bg)
     if contour_color is None:
@@ -364,6 +370,16 @@ def plot_registration_qc_filmstrip(
             moving_slice = get_radiological_slice(
                 moving, axis=axis, slice_idx=int(slice_idx),
             )
+            fixed_mask_slice = (
+                get_radiological_slice(mask, axis=axis, slice_idx=int(slice_idx))
+                if mask is not None else None
+            )
+            moving_mask_slice = (
+                get_radiological_slice(
+                    moving_mask, axis=axis, slice_idx=int(slice_idx),
+                )
+                if moving_mask is not None else None
+            )
 
             # Display the fixed image as background
             ax.imshow(
@@ -378,7 +394,11 @@ def plot_registration_qc_filmstrip(
             # matplotlib contour() gives consistent thin lines matching
             # fmriprep's add_contours(linewidths=0.5)
             if np.any(moving_slice > 0):
-                moving_valid = moving_slice[moving_slice > 0]
+                moving_valid = (
+                    moving_slice[(fixed_mask_slice > 0) & (moving_slice > 0)]
+                    if fixed_mask_slice is not None
+                    else moving_slice[moving_slice > 0]
+                )
                 if len(moving_valid) > 0:
                     val_range = float(np.ptp(moving_valid))
                     if val_range < 1e-6:
@@ -390,8 +410,21 @@ def plot_registration_qc_filmstrip(
                         levels = [float(np.percentile(moving_valid, 50))]
                     ax.contour(
                         moving_slice, levels=levels,
-                        colors=[contour_color], linewidths=1.5,
+                        colors=[contour_color], linewidths=0.8,
                     )
+
+            if fixed_mask_slice is not None and np.any(fixed_mask_slice > 0):
+                ax.contour(
+                    fixed_mask_slice, levels=[0.5],
+                    colors=[COLORBLIND_PALETTE.warning], linewidths=1.5,
+                )
+
+            if moving_mask_slice is not None and np.any(moving_mask_slice > 0):
+                ax.contour(
+                    moving_mask_slice, levels=[0.5],
+                    colors=[COLORBLIND_PALETTE.success], linewidths=1.2,
+                    linestyles="dashed",
+                )
 
             ax.axis("off")
             ax.set_title(
@@ -413,6 +446,35 @@ def plot_registration_qc_filmstrip(
     # Add overall title if provided
     if title:
         fig.suptitle(title, fontsize=10, y=1.02, color="white")
+
+    if mask is not None or moving_mask is not None:
+        from matplotlib.lines import Line2D  # type: ignore[import-untyped]
+
+        legend_handles = [
+            Line2D([0], [0], color=contour_color, linewidth=0.8,
+                   label="Moving-image intensity"),
+        ]
+        if mask is not None:
+            legend_handles.append(
+                Line2D(
+                    [0], [0], color=COLORBLIND_PALETTE.warning,
+                    linewidth=1.5, label="Fixed brain mask",
+                )
+            )
+        if moving_mask is not None:
+            legend_handles.append(
+                Line2D(
+                    [0], [0], color=COLORBLIND_PALETTE.success,
+                    linewidth=1.2, linestyle="dashed",
+                    label="Registered moving brain mask",
+                )
+            )
+        legend = fig.legend(
+            handles=legend_handles, loc="lower center", ncol=len(legend_handles),
+            bbox_to_anchor=(0.5, -0.015), frameon=False, fontsize=7,
+        )
+        for text in legend.get_texts():
+            text.set_color("white")
 
     # Save figure
     output_path = Path(output_path)

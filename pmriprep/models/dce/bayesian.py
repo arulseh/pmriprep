@@ -9,8 +9,8 @@ The BayesianPKFitter class works with any model implementing the PKModel
 interface, including ToftsModel, ExtendedToftsModel, PatlakModel, and
 TwoCompartmentExchangeModel.
 
-The constraint ve + vp <= 1.0 is enforced during sampling for models
-that have both ve and vp parameters.
+The shared constraint ve + vp <= VP_VE_TOTAL_MAX is enforced during sampling
+for models that have both ve and vp parameters.
 """
 
 from typing import Callable
@@ -25,12 +25,12 @@ from pmriprep.models.bayesian_utils import (
     build_priors_from_params,
     compute_goodness_of_fit,
     compute_log_prior,
-    compute_per_walker_ess,
-    compute_split_rhat,
+    compute_ensemble_ess,
     from_transformed,
     log_jacobian_det,
     run_ensemble_sampler,
     to_transformed,
+    transformed_gaussian_interval,
     validate_bayesian_inputs,
 )
 from pmriprep.models.dce.base import (
@@ -58,7 +58,7 @@ DEFAULT_MCMC_SAMPLES: int = 500
 #: Default maximum iterations for MAP optimization
 DEFAULT_MAP_MAX_ITER: int = 1000
 
-#: Maximum acceptable R-hat for MCMC convergence
+#: Threshold for independently generated R-hat diagnostics.
 QC_RHAT_MAX: float = 1.1
 
 #: Minimum acceptable effective sample size
@@ -83,7 +83,7 @@ class BayesianPKFitter:
     using the typical_range to determine prior mean and standard deviation.
 
     For models with both ve and vp parameters (Extended Tofts, 2CXM), the
-    constraint ve + vp <= 1.0 is enforced during sampling.
+    shared joint-volume constraint is enforced during sampling.
 
     Attributes
     ----------
@@ -220,7 +220,7 @@ class BayesianPKFitter:
     def _check_volume_constraint(
         self, params: npt.NDArray[np.floating]
     ) -> bool:
-        """Check if ve + vp <= 1.0 constraint is satisfied.
+        """Check whether the shared joint-volume constraint is satisfied.
 
         Parameters
         ----------
@@ -238,7 +238,7 @@ class BayesianPKFitter:
         ve = params[self._ve_index]
         vp = params[self._vp_index]
 
-        return bool((ve + vp) <= 1.0)
+        return bool((ve + vp) <= VP_VE_TOTAL_MAX + 1e-12)
 
     def _apply_volume_constraint(
         self, params: npt.NDArray[np.floating]
@@ -417,6 +417,7 @@ class BayesianPKFitter:
         params: npt.NDArray[np.floating],
         objective: Callable[[npt.NDArray[np.floating]], float],
         relative_epsilon: float = 1e-5,
+        prior_stds: npt.NDArray[np.floating] | None = None,
     ) -> npt.NDArray[np.floating]:
         """Compute Hessian matrix using finite differences.
 
@@ -436,6 +437,9 @@ class BayesianPKFitter:
             Relative step size for finite differences.
             Actual step for parameter i is max(relative_epsilon,
             relative_epsilon * |params[i]|).
+        prior_stds : numpy.ndarray or None, optional
+            Prior standard deviations expressed in the same coordinates as
+            ``params``. Natural-space prior deviations are used by default.
 
         Returns
         -------
@@ -444,6 +448,13 @@ class BayesianPKFitter:
         """
         n = len(params)
         hessian = np.zeros((n, n), dtype=np.float64)
+        fallback_stds = (
+            np.asarray(prior_stds, dtype=np.float64)
+            if prior_stds is not None
+            else np.asarray([prior.std for prior in self.priors], dtype=np.float64)
+        )
+        if fallback_stds.shape != (n,):
+            raise ValueError("prior_stds must have one value per parameter")
 
         # Compute per-parameter step sizes
         eps = np.array([
@@ -494,7 +505,7 @@ class BayesianPKFitter:
                     if abs(h_ij) < 1e8:
                         hessian[i, j] = h_ij
                     elif i == j:
-                        prior_std = self.priors[i].std
+                        prior_std = float(fallback_stds[i])
                         if prior_std > 0:
                             hessian[i, j] = 1.0 / (prior_std**2)
                         else:
@@ -504,7 +515,7 @@ class BayesianPKFitter:
                     # Fall back to prior curvature when perturbations hit invalid region
                     # Use 1/prior_variance as diagonal Hessian approximation
                     if i == j:
-                        prior_std = self.priors[i].std
+                        prior_std = float(fallback_stds[i])
                         if prior_std > 0:
                             hessian[i, j] = 1.0 / (prior_std**2)
                         else:
@@ -756,7 +767,12 @@ class BayesianPKFitter:
         if compute_uncertainties:
             try:
                 hessian_t = self._compute_hessian(
-                    fitted_params_t, neg_log_posterior_t
+                    fitted_params_t,
+                    neg_log_posterior_t,
+                    prior_stds=np.asarray(
+                        [prior.std_transformed for prior in self.priors],
+                        dtype=np.float64,
+                    ),
                 )
                 # _compute_hessian uses finite differences and can return
                 # non-finite entries when perturbations land on the
@@ -784,9 +800,14 @@ class BayesianPKFitter:
                     )))
                     std_nat = float(stds_t[i]) * jac
                     uncertainties[name] = std_nat
-                    ci_low = max(theta_nat - 1.96 * std_nat, bounds_natural[i][0])
-                    ci_high = min(theta_nat + 1.96 * std_nat, bounds_natural[i][1])
-                    credible_intervals[name] = (ci_low, ci_high)
+                    credible_intervals[name] = transformed_gaussian_interval(
+                        float(fitted_params_t[i]),
+                        float(stds_t[i]),
+                        transforms[i],
+                        upper_bounds_t[i],
+                        bounds_natural[i],
+                    )
+                uncertainty_source = "laplace_hessian"
             except np.linalg.LinAlgError:
                 # Hessian not invertible; fall back to prior std as
                 # uncertainty estimate (matches _compute_laplace_uncertainties).
@@ -800,9 +821,11 @@ class BayesianPKFitter:
                     name: (bounds_natural[i][0], bounds_natural[i][1])
                     for i, name in enumerate(names)
                 }
+                uncertainty_source = "prior_fallback"
         else:
             uncertainties = {}
             credible_intervals = {}
+            uncertainty_source = "not_computed"
 
         # Compute fitted curve
         fitted_curve = self.model.evaluate(list(fitted_params), aif, time_points)
@@ -836,6 +859,7 @@ class BayesianPKFitter:
             n_observations=n,
             converged=converged,
             fitting_method="map",
+            uncertainty_source=uncertainty_source,
             fitted_curve=fitted_curve,
         )
 
@@ -865,16 +889,16 @@ class BayesianPKFitter:
         time_points : numpy.ndarray
             Time points (minutes).
         n_iterations : int, optional
-            Maximum VB iterations (default 20).
+            Maximum VB iterations (default 30).
         noise_prior : tuple of float or None, optional
             Optional (c0, s0) Gamma prior on noise precision
-            tau = 1/sigma^2. If None, uses non-informative prior.
-            If noise_std was provided to the constructor, uses an
-            informative prior centered on that value.
+            tau = 1/sigma^2. If None, uses an informative prior centered
+            on the measured pre-bolus noise (or ``noise_std`` when supplied
+            to the constructor).
         weights : numpy.ndarray or None, optional
             Optional per-frame motion weights (1.0 = full weight).
-            Weights modify data fidelity terms (J^T W J, k^T W k) but
-            NOT the observation count in Gamma shape/ELBO.
+            Weights modify data fidelity terms and contribute
+            ``sum(weights)`` effective observations to the noise posterior.
         sloppy : bool, optional
             Use fast, low-quality settings for testing.
 
@@ -892,6 +916,8 @@ class BayesianPKFitter:
         n_obs = len(tissue_curve)
         bounds = self.model.get_bounds()
         param_names = self.model.get_parameter_names()
+        transforms = [prior.transform for prior in self.priors]
+        upper_bounds_t = [prior.upper_bound for prior in self.priors]
         y = np.asarray(tissue_curve, dtype=np.float64)
 
         # Motion weights for data fidelity terms
@@ -899,6 +925,7 @@ class BayesianPKFitter:
             w = np.asarray(weights, dtype=np.float64)
         else:
             w = None
+        n_eff = float(np.sum(w)) if w is not None else float(n_obs)
 
         # Build transform info from priors
         transforms = [p.transform for p in self.priors]
@@ -922,14 +949,41 @@ class BayesianPKFitter:
             c0 = 10.0
             s0 = tau_prior / c0  # so E[tau] = c0 * s0 = tau_prior
         else:
-            c0 = 1e-3
-            s0 = 1e3
+            baseline_noise_std = self._estimate_noise_std(tissue_curve)
+            tau_prior = 1.0 / (baseline_noise_std**2)
+            c0 = 10.0
+            s0 = tau_prior / c0
 
-        # Initialize posterior mean at prior mean (natural), clipped to bounds,
-        # then transform to fitting space
+        # Warm-start the variational linearization from the data likelihood.
+        # Priors remain unchanged; this only avoids linearizing a nonlinear PK
+        # model around a distant prior mean, which can trap low-uptake curves
+        # at a poor local approximation.
         m_nat = np.array([p.mean for p in self.priors], dtype=np.float64)
+        try:
+            warm_result = self.model.fit(
+                tissue_curve,
+                aif,
+                time_points,
+                weights=weights,
+            )
+            if warm_result.converged:
+                m_nat = np.array(
+                    [
+                        warm_result.parameters.get(name, m_nat[index])
+                        for index, name in enumerate(param_names)
+                    ],
+                    dtype=np.float64,
+                )
+        except (ValueError, RuntimeError, np.linalg.LinAlgError):
+            data_guess = self.model.estimate_initial_guess(
+                tissue_curve,
+                aif,
+                time_points,
+            )
+            m_nat = np.asarray(data_guess, dtype=np.float64)
         for i in range(n_params):
             m_nat[i] = np.clip(m_nat[i], bounds[i][0], bounds[i][1])
+        m_nat = np.asarray(self._apply_volume_constraint(m_nat), dtype=np.float64)
 
         m = np.array([
             float(to_transformed(m_nat[i], transforms[i], upper_bounds_t[i]))
@@ -950,8 +1004,6 @@ class BayesianPKFitter:
         step_scale = 1.0
 
         converged = False
-        fe_plateau_count = 0
-
         for iteration in range(n_iterations):
             # Inverse-transform m to natural space for forward model
             m_nat = np.array([
@@ -1010,9 +1062,21 @@ class BayesianPKFitter:
             # NO CLIPPING — transformed space is unconstrained
 
             # 6. Update noise precision posterior
-            c = c0 + n_obs / 2.0
+            c = c0 + n_eff / 2.0
             m_new_nat = np.array([
                 float(from_transformed(m_new[k], transforms[k], upper_bounds_t[k]))
+                for k in range(n_params)
+            ], dtype=np.float64)
+            m_new_nat = np.asarray(
+                self._apply_volume_constraint(m_new_nat),
+                dtype=np.float64,
+            )
+            m_new = np.array([
+                float(to_transformed(
+                    m_new_nat[k],
+                    transforms[k],
+                    upper_bounds_t[k],
+                ))
                 for k in range(n_params)
             ], dtype=np.float64)
             try:
@@ -1036,7 +1100,7 @@ class BayesianPKFitter:
             sign_prior = sign_prior_prec
 
             free_energy = (
-                0.5 * n_obs * (np.log(tau_exp) - np.log(2 * np.pi))
+                0.5 * n_eff * (np.log(tau_exp) - np.log(2 * np.pi))
                 - 0.5 * tau_exp * (weighted_kk + trace_term)
                 - 0.5 * float(dm @ prior_prec @ dm)
                 - 0.5 * float(np.trace(prior_prec @ post_cov))
@@ -1073,19 +1137,6 @@ class BayesianPKFitter:
                     converged = True
                     m = m_new
                     break
-                # Free energy convergence: 2 consecutive negligible improvements
-                if (iteration > 2
-                        and best_free_energy > float("-inf")
-                        and abs(free_energy - best_free_energy)
-                        < 1e-4 * abs(best_free_energy)):
-                    fe_plateau_count += 1
-                    if fe_plateau_count >= 2:
-                        converged = True
-                        m = m_new
-                        break
-                else:
-                    fe_plateau_count = 0
-
             m = m_new
 
         # Inverse-transform best parameters to natural space
@@ -1093,6 +1144,10 @@ class BayesianPKFitter:
             float(from_transformed(best_m[k], transforms[k], upper_bounds_t[k]))
             for k in range(n_params)
         ], dtype=np.float64)
+        fitted_params = np.asarray(
+            self._apply_volume_constraint(fitted_params),
+            dtype=np.float64,
+        )
 
         fitted_stds_t = np.sqrt(np.maximum(np.diag(best_cov), 0.0))
         noise_std_posterior = 1.0 / np.sqrt(max(best_c * best_s, 1e-300))
@@ -1111,9 +1166,13 @@ class BayesianPKFitter:
             )))
             std_nat = std_t * jac
             uncertainties[name] = std_nat
-            ci_low = max(float(theta_nat - 1.96 * std_nat), bounds[i][0])
-            ci_high = min(float(theta_nat + 1.96 * std_nat), bounds[i][1])
-            credible_intervals[name] = (ci_low, ci_high)
+            credible_intervals[name] = transformed_gaussian_interval(
+                float(best_m[i]),
+                std_t,
+                transforms[i],
+                upper_bounds_t[i],
+                bounds[i],
+            )
 
         uncertainties["noise_std"] = noise_std_posterior
 
@@ -1141,9 +1200,10 @@ class BayesianPKFitter:
             model_name=self.model.name,
             n_parameters=self.model.n_parameters,
             n_observations=n_obs,
-            converged=converged or step_scale >= 1e-4,
+            converged=converged,
             fitting_method="vi",
             fitted_curve=fitted_curve,
+            quality_flag="good" if converged else "poor_convergence",
         )
 
     def fit_mcmc(
@@ -1161,9 +1221,9 @@ class BayesianPKFitter:
 
         Uses an affine-invariant ensemble sampler (similar to emcee).
         Noise sigma is sampled as a free parameter (log_sigma) with a
-        HalfNormal prior, following Gelman et al. (BDA3, Ch. 3).
+        HalfNormal prior.
 
-        The constraint ve + vp <= 1.0 is enforced during sampling for
+        The shared joint-volume constraint is enforced during sampling for
         models with both ve and vp parameters.
 
         Parameters
@@ -1190,7 +1250,8 @@ class BayesianPKFitter:
         -------
         FitResult
             FitResult with parameters, uncertainties, credible intervals,
-            and MCMC diagnostics (R-hat, ESS).
+            and autocorrelation-based ensemble ESS diagnostics. R-hat is
+            unavailable because walkers within one ensemble are coupled.
         """
         if sloppy:
             n_samples = 50
@@ -1206,6 +1267,8 @@ class BayesianPKFitter:
         n_dims = n_model_params + 1
         bounds = self.model.get_bounds()
         param_names = self.model.get_parameter_names()
+        transforms = [prior.transform for prior in self.priors]
+        upper_bounds_t = [prior.upper_bound for prior in self.priors]
 
         # Set defaults
         if n_walkers is None:
@@ -1216,11 +1279,17 @@ class BayesianPKFitter:
         n_total = n_samples + n_burnin
 
         # Log posterior including sampled sigma
-        # State vector: [model_params..., log_sigma]
+        # State vector: [transformed model params..., log_sigma]
         def log_prob_with_sigma(
             state: npt.NDArray[np.floating],
         ) -> float:
-            model_params = state[:n_model_params]
+            model_params_t = state[:n_model_params]
+            model_params = np.asarray([
+                from_transformed(
+                    model_params_t[i], transforms[i], upper_bounds_t[i]
+                )
+                for i in range(n_model_params)
+            ], dtype=np.float64)
             log_sigma = state[n_model_params]
             sigma = np.exp(log_sigma)
 
@@ -1237,7 +1306,9 @@ class BayesianPKFitter:
                 return float("-inf")
 
             # Prior on model parameters
-            log_p = self._log_prior(model_params)
+            log_p = compute_log_prior(
+                model_params_t, self.priors, transformed=True
+            )
             if not np.isfinite(log_p):
                 return float("-inf")
 
@@ -1257,24 +1328,35 @@ class BayesianPKFitter:
         # Initialize walkers near MAP estimate
         map_result = self.fit_map(
             tissue_curve, aif, time_points, max_iter=100,
-            compute_uncertainties=False,
+            compute_uncertainties=False, weights=weights,
         )
         map_params_list = self.model.dict_to_params(
             {k: v for k, v in map_result.parameters.items() if k in param_names}
         )
         map_params = np.array(map_params_list, dtype=np.float64)
+        map_params_t = np.asarray([
+            to_transformed(map_params[i], transforms[i], upper_bounds_t[i])
+            for i in range(n_model_params)
+        ], dtype=np.float64)
 
-        # Bounds for sampler: model bounds + log_sigma bounds
-        sampler_bounds = bounds + [(-15.0, 15.0)]  # log_sigma
+        # Transformed parameters are unconstrained in principle. Finite guards
+        # keep proposals numerically safe; identity transforms retain their
+        # natural model bounds.
+        sampler_bounds = [
+            bounds[i] if transforms[i] == TransformType.IDENTITY else (-50.0, 50.0)
+            for i in range(n_model_params)
+        ] + [(-15.0, 15.0)]
 
         # Initialize walkers with small perturbations around MAP
         init_positions = np.zeros((n_walkers, n_dims))
         log_sigma_init = np.log(noise_std_baseline)
         for i in range(n_walkers):
             for j in range(n_model_params):
-                scale = self.priors[j].std * 0.1
-                perturbed = map_params[j] + scale * np.random.randn()
-                perturbed = np.clip(perturbed, bounds[j][0], bounds[j][1])
+                scale = self.priors[j].std_transformed * 0.1
+                perturbed = map_params_t[j] + scale * np.random.randn()
+                perturbed = np.clip(
+                    perturbed, sampler_bounds[j][0], sampler_bounds[j][1]
+                )
                 init_positions[i, j] = perturbed
             # log_sigma: small perturbation around baseline estimate
             init_positions[i, n_model_params] = (
@@ -1283,9 +1365,21 @@ class BayesianPKFitter:
 
             # Apply volume constraint to initialization
             if self._has_volume_constraint:
-                init_positions[i, :n_model_params] = self._apply_volume_constraint(
-                    init_positions[i, :n_model_params]
+                initial_nat = np.asarray([
+                    from_transformed(
+                        init_positions[i, j], transforms[j], upper_bounds_t[j]
+                    )
+                    for j in range(n_model_params)
+                ], dtype=np.float64)
+                initial_nat = np.asarray(
+                    self._apply_volume_constraint(initial_nat), dtype=np.float64
                 )
+                init_positions[i, :n_model_params] = np.asarray([
+                    to_transformed(
+                        initial_nat[j], transforms[j], upper_bounds_t[j]
+                    )
+                    for j in range(n_model_params)
+                ], dtype=np.float64)
 
         # Run ensemble sampler (shared utility)
         samples = run_ensemble_sampler(
@@ -1299,7 +1393,13 @@ class BayesianPKFitter:
         flat_samples = samples.reshape(-1, n_dims)
 
         # Separate model params and sigma
-        model_samples = flat_samples[:, :n_model_params]
+        transformed_samples = flat_samples[:, :n_model_params]
+        model_samples = np.column_stack([
+            np.asarray(from_transformed(
+                transformed_samples[:, i], transforms[i], upper_bounds_t[i]
+            ), dtype=np.float64)
+            for i in range(n_model_params)
+        ])
         sigma_samples = np.exp(flat_samples[:, n_model_params])
 
         # Posterior summaries for model parameters
@@ -1325,20 +1425,17 @@ class BayesianPKFitter:
             float(np.percentile(sigma_samples, 97.5)),
         )
 
-        # Convergence diagnostics (shared utilities: split R-hat, per-walker ESS)
-        rhat = compute_split_rhat(samples)
-        ess = compute_per_walker_ess(samples)
-
+        # Coupled ensemble walkers are not independent chains, so R-hat is
+        # intentionally unavailable. Use time-axis autocorrelation instead.
+        ess, _tau, reliable = compute_ensemble_ess(samples)
         rhat_dict: dict[str, float] = {}
         ess_dict: dict[str, int] = {}
         all_names = param_names + ["log_sigma"]
         for i, name in enumerate(all_names):
-            rhat_dict[name] = float(rhat[i])
             ess_dict[name] = int(ess[i])
 
-        all_rhat_ok = all(r < QC_RHAT_MAX for r in rhat)
         all_ess_ok = all(e > QC_ESS_MIN for e in ess)
-        converged = all_rhat_ok and all_ess_ok
+        converged = bool(np.all(reliable)) and all_ess_ok
         quality_flag = "good" if converged else "poor_convergence"
 
         # Compute fitted curve using posterior mean

@@ -24,7 +24,7 @@ from typing import Optional, Sequence
 
 import numpy as np
 import numpy.typing as npt
-from scipy.optimize import curve_fit
+from scipy.optimize import curve_fit, lsq_linear
 
 from pmriprep.models.bayesian_utils import TransformType
 from pmriprep.models.dce.base import FitResult, ModelParameter, ParamsType, PKModel
@@ -349,15 +349,26 @@ class PatlakModel(PKModel):
         x_fit = x_values[fit_mask]
         y_fit = y_values[fit_mask]
 
-        # Linear regression: Y = vp + Ktrans × X
-        # Using numpy.polyfit (degree 1)
+        # Bounded linear regression: Y = vp + Ktrans × X. Solving with
+        # bounds directly is necessary because clipping an unconstrained
+        # slope or intercept does not re-optimize the other coefficient.
         try:
-            # polyfit returns [slope, intercept] for degree 1
-            coeffs = np.polyfit(x_fit, y_fit, 1)
-            ktrans = float(coeffs[0])  # slope
-            vp = float(coeffs[1])      # intercept
-            converged = True
-        except (np.linalg.LinAlgError, np.exceptions.RankWarning, ValueError):
+            design = np.column_stack([x_fit, np.ones_like(x_fit)])
+            bounds = self.get_bounds()
+            result = lsq_linear(
+                design,
+                y_fit,
+                bounds=(
+                    [bounds[0][0], bounds[1][0]],
+                    [bounds[0][1], bounds[1][1]],
+                ),
+                method="trf",
+                lsmr_tol="auto",
+            )
+            ktrans = float(result.x[0])
+            vp = float(result.x[1])
+            converged = bool(result.success)
+        except (np.linalg.LinAlgError, ValueError):
             # Linear regression failed
             ktrans = 0.0
             vp = 0.01
@@ -420,8 +431,8 @@ class PatlakModel(PKModel):
         weights : np.ndarray, optional
             Optional per-frame weights for motion-weighted fitting.
         use_graphical : bool, optional
-            If True (default), use fast graphical analysis.
-            If False, use nonlinear least squares optimization.
+            If True, use fast graphical analysis. If False (default), use
+            nonlinear least squares optimization.
 
         Returns
         -------

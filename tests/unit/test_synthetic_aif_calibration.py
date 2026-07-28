@@ -5,15 +5,11 @@ Verifies the population-median, B0-scaled, dose-aware peak formula:
                SYNTH_AIF_MIN_PEAK)
 """
 
-from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
 
 from pmriprep.utils.dsc_constants import (
-    GD_DOTA_STANDARD_DOSE,
-    SYNTH_AIF_BASE_PEAK_3T,
-    SYNTH_AIF_DOSE_CAP,
     SYNTH_AIF_MIN_PEAK,
     SYNTH_AIF_RECIRC_ALPHA,
     SYNTH_AIF_RECIRC_DELAY_S,

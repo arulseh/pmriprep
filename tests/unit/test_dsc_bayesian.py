@@ -63,6 +63,25 @@ class TestBayesianConstruction:
             assert fitter.priors[i].mean == pytest.approx(defn.get_prior_mean())
             assert fitter.priors[i].std == pytest.approx(defn.get_prior_sigma())
 
+    def test_vascular_cbf_prior_is_weak_without_widening_other_priors(self) -> None:
+        """Only log-CBF uses the weak regularizing transformed prior."""
+        model = VascularModel()
+        priors = BayesianDSCFitter(model).priors
+        names = [
+            definition.name
+            for definition in model.get_fitting_parameter_definitions()
+        ]
+        transformed_stds = {
+            name: prior.std_transformed
+            for name, prior in zip(names, priors)
+        }
+
+        assert transformed_stds["cbf"] == 5.0
+        assert transformed_stds["mtt"] == 1.0
+        assert transformed_stds["alpha"] == 1.0
+        assert transformed_stds["delay"] == 1.5
+        assert model.get_parameter_definitions()[0].transformed_prior_sigma == 5.0
+
 
 class TestLogPosteriorComponents:
     """Tests for log prior, likelihood, and posterior computation."""
@@ -100,6 +119,23 @@ class TestLogPosteriorComponents:
         ll_bad = fitter._log_likelihood(bad_params, concentration, aif, t, noise_std)
 
         assert ll_good > ll_bad
+
+    def test_log_likelihood_extreme_residual_returns_negative_infinity(
+        self,
+    ) -> None:
+        """Overflow-sized residuals are rejected without a runtime warning."""
+        model = VascularModel()
+        fitter = BayesianDSCFitter(model)
+        concentration, aif, t = _make_synthetic_data(noise_std=0.01)
+        concentration[:] = np.finfo(np.float64).max
+        params = np.array([0.08, 3.0, 2.0, 0.0], dtype=np.float64)
+
+        with np.errstate(over="raise", invalid="raise"):
+            likelihood = fitter._log_likelihood(
+                params, concentration, aif, t, noise_std=0.5
+            )
+
+        assert likelihood == float("-inf")
 
     def test_log_posterior_sum(self) -> None:
         """Log posterior equals log prior + log likelihood."""
@@ -148,6 +184,40 @@ class TestMAPFitting:
         for name, val in result.uncertainties.items():
             assert val >= 0.0, f"Uncertainty for {name} is negative: {val}"
 
+    def test_fit_map_hessian_uses_transformed_prior_units(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Scalar MAP differentiates its optimized transformed objective."""
+        model = VascularModel()
+        concentration, aif, t = _make_synthetic_data(noise_std=0.1)
+        fitter = BayesianDSCFitter(model)
+        original = fitter._compute_hessian
+        observed_stds: list[np.ndarray] = []
+
+        def _record_hessian(
+            params: np.ndarray,
+            objective: object,
+            relative_epsilon: float = 1e-5,
+            prior_stds: np.ndarray | None = None,
+        ) -> np.ndarray:
+            assert callable(objective)
+            assert prior_stds is not None
+            observed_stds.append(prior_stds.copy())
+            return original(
+                params,
+                objective,  # type: ignore[arg-type]
+                relative_epsilon,
+                prior_stds,
+            )
+
+        monkeypatch.setattr(fitter, "_compute_hessian", _record_hessian)
+        fitter.fit_map(concentration, aif, t, compute_uncertainties=True)
+
+        assert len(observed_stds) == 1
+        assert observed_stds[0] == pytest.approx(
+            [prior.std_transformed for prior in fitter.priors]
+        )
+
     def test_fit_map_flat_concentration(self) -> None:
         """All-zero concentration yields CBF near zero."""
         model = VascularModel()
@@ -162,6 +232,38 @@ class TestMAPFitting:
 
         fitted_cbf = result.parameters["cbf"]
         assert fitted_cbf < 0.05, f"CBF should be near 0 for flat data, got {fitted_cbf}"
+
+
+class TestMCMCPriorCoordinates:
+    """Characterize the common transformed-space Bayesian prior."""
+
+    def test_mcmc_initializes_log_cbf_in_transformed_space(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        concentration, aif, t = _make_synthetic_data(noise_std=0.1)
+        fitter = BayesianDSCFitter(VascularModel())
+        captured: dict[str, object] = {}
+
+        def _capture_sampler(
+            log_prob: object,
+            init_positions: np.ndarray,
+            n_iterations: int,
+            bounds: list[tuple[float, float]],
+        ) -> np.ndarray:
+            assert callable(log_prob)
+            captured["positions"] = init_positions.copy()
+            captured["bounds"] = bounds
+            return np.repeat(init_positions[None, :, :], n_iterations, axis=0)
+
+        monkeypatch.setattr(
+            "pmriprep.models.dsc.bayesian.run_ensemble_sampler", _capture_sampler
+        )
+        fitter.fit_mcmc(concentration, aif, t, sloppy=True)
+
+        positions = captured["positions"]
+        assert isinstance(positions, np.ndarray)
+        assert np.all(positions[:, 0] < 0.0)  # log(CBF), not natural CBF
+        assert captured["bounds"][0] == (-50.0, 50.0)  # type: ignore[index]
 
 
 class TestVIFitting:

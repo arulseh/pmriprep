@@ -634,9 +634,9 @@ def _transform_point_to_mni(
 
 def _select_region_atlas(
     analysis: TumorAnalysis,
-    atlases_dir: str,
+    region_masks_dir: str,
 ) -> Optional[str]:
-    """Select MNI lobar atlas file based on tumor location and laterality.
+    """Select an MNI anatomical region mask for the tumor location.
 
     For supratentorial tumors, selects a supratentorial atlas region on the
     contralateral side. For infratentorial tumors, selects a cerebellar atlas.
@@ -645,8 +645,8 @@ def _select_region_atlas(
     ----------
     analysis : TumorAnalysis
         Results from tumor anatomy analysis
-    atlases_dir : str
-        Path to directory containing MNI lobar atlas NIfTI files
+    region_masks_dir : str
+        Directory containing supratentorial and cerebellar region masks.
 
     Returns
     -------
@@ -663,7 +663,7 @@ def _select_region_atlas(
     - Infratentorial right tumor -> Cerebellum_L.nii.gz
     - Infratentorial bilateral   -> Cerebellum.nii.gz
     """
-    atlases_path = Path(atlases_dir)
+    masks_path = Path(region_masks_dir)
 
     if analysis.is_supratentorial:
         region = "Supra"
@@ -679,14 +679,14 @@ def _select_region_atlas(
         # Bilateral: use both hemispheres of the region
         atlas_name = f"{region}.nii.gz"
 
-    atlas_path = atlases_path / atlas_name
+    atlas_path = masks_path / atlas_name
     if atlas_path.exists():
         return str(atlas_path)
 
     # Fallback: try full-region atlas (no hemisphere suffix)
     if analysis.laterality != "bilateral":
         fallback_name = ("Supra" if analysis.is_supratentorial else "Cerebellum") + ".nii.gz"
-        fallback_path = atlases_path / fallback_name
+        fallback_path = masks_path / fallback_name
         if fallback_path.exists():
             return str(fallback_path)
 
@@ -777,7 +777,7 @@ def create_nawm_roi(
     nawm_min_voxels: int = 500,
     t1w_to_mni_xfm: Optional[str] = None,
     reference_image: Optional[str] = None,
-    atlases_dir: Optional[str] = None,
+    region_masks_dir: Optional[str] = None,
     brain_mask_file: Optional[Union[str, Path]] = None,
 ) -> dict[str, Any]:
     """Create contralateral normal-appearing white matter ROI for CBV normalization.
@@ -821,8 +821,8 @@ def create_nawm_roi(
         region restriction and MNI-space tumor classification.
     reference_image : str, optional
         Path to T1w reference image for atlas transformation.
-    atlases_dir : str, optional
-        Path to directory containing MNI lobar atlas NIfTI files
+    region_masks_dir : str, optional
+        Directory containing MNI supratentorial and cerebellar region masks
         (e.g., Supra_L.nii.gz, Cerebellum_R.nii.gz).
     brain_mask_file : str or Path, optional
         Path to brain mask NIfTI file. Used as the initial base constraint
@@ -931,8 +931,8 @@ def create_nawm_roi(
     atlas_used = False
     region_mask = hemisphere_mask
 
-    if atlases_dir and t1w_to_mni_xfm and reference_image:
-        atlas_path = _select_region_atlas(analysis, atlases_dir)
+    if region_masks_dir and t1w_to_mni_xfm and reference_image:
+        atlas_path = _select_region_atlas(analysis, region_masks_dir)
         if atlas_path is not None:
             transformed_atlas = _transform_atlas_to_t1w(
                 atlas_path, reference_image, t1w_to_mni_xfm

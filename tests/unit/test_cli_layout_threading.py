@@ -7,7 +7,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-import pytest
 
 
 def _make_bids(tmp_path: Path) -> Path:

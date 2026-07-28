@@ -35,8 +35,20 @@ class AnatConfig:
     denoise: bool = False
 
     # Subtraction image settings
-    create_subtraction: bool = True  # Create post-pre subtraction image
+    create_subtraction: bool = True  # Create a post-contrast minus pre-contrast T1w subtraction image
 
     # Testing / debug
     sloppy: bool = False  # Use fast, low-quality settings for testing
 
+    def __post_init__(self) -> None:
+        """Validate public anatomical configuration values."""
+        if self.tool not in {"hdbet", "ants"}:
+            raise ValueError(f"Invalid tool={self.tool!r}. Valid: ['ants', 'hdbet']")
+        if self.hdbet_device not in {"auto", "cuda", "mps", "cpu"}:
+            raise ValueError(
+                f"Invalid hdbet_device={self.hdbet_device!r}. "
+                "Valid: ['auto', 'cpu', 'cuda', 'mps']"
+            )
+        for option in ("denoise", "create_subtraction", "sloppy"):
+            if not isinstance(getattr(self, option), bool):
+                raise TypeError(f"{option} must be a boolean")

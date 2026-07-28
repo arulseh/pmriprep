@@ -3,7 +3,6 @@
 Tests for QC metric classification helpers used in HTML report generation.
 """
 
-import pytest
 
 from pmriprep.utils.report_utils import (
     _classify_b1,
@@ -323,6 +322,32 @@ class TestDscLoader:
         assert out.get("aif_detection", {}).get("detection_method") == "atlas_relaxed"
         assert out.get("deconvolution", {}).get("method") == "oSVD"
         assert out.get("normalization_factor") == 1.234
+
+    def test_perfusion_loaders_read_entity_preserving_anchors(self, tmp_path) -> None:
+        import json as _json
+        from pmriprep.utils.report_utils import _load_pipeline_sidecars
+        ses = self._make_perf(tmp_path)
+        anchor = ses / "perf" / (
+            f"{self.PREFIX}_acq-gre_run-2_desc-dscPreproc_dsc.json"
+        )
+        anchor.write_text(_json.dumps({
+            "PipelineQC": {"preprocessing": {"motion_status": "GOOD"}},
+        }))
+
+        out = _load_pipeline_sidecars(ses, self.PREFIX, "dsc")
+
+        assert out["preprocessing"]["motion_status"] == "GOOD"
+
+        dce_anchor = ses / "perf" / (
+            f"{self.PREFIX}_acq-vfa_run-2_desc-dcePreproc_dce.json"
+        )
+        dce_anchor.write_text(_json.dumps({
+            "PipelineQC": {"preprocessing": {"motion_status": "ACCEPTABLE"}},
+        }))
+
+        dce_out = _load_pipeline_sidecars(ses, self.PREFIX, "dce")
+
+        assert dce_out["preprocessing"]["motion_status"] == "ACCEPTABLE"
 
     def test_dsc_loader_empty_pipeline_qc(self, tmp_path) -> None:
         import json as _json

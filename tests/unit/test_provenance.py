@@ -32,7 +32,7 @@ class TestEnrichDCE:
     """Tests for DCE provenance enrichment."""
 
     def test_full_qc_enrichment(self) -> None:
-        """Full QC metrics produce BloodT1, T1Mapping, Hematocrit, AIF, PKModeling."""
+        """Full QC metrics produce reference, mapping, AIF, and PK provenance."""
         sidecar = _make_dce_sidecar()
         qc = {
             "t1_mapping": {"method": "vfa", "b1_correction": "AFI"},
@@ -45,21 +45,60 @@ class TestEnrichDCE:
                 "blood_t1_seconds": 1.664,
                 "arterial_cascade_tier": 1,
                 "hemisphere_coverage": "bilateral",
+                "peak_scaling_enabled": True,
+                "peak_scaling_applied": True,
+                "raw_peak_mm": 4.0,
+                "emitted_peak_mm": 8.0,
+                "peak_scaling_factor": 2.0,
+                "peak_scaling_required_factor": 2.0,
+                "peak_scaling_policy": "one_sided_lower_bound",
+                "peak_scaling_trigger": "below_expected_minimum",
             },
             "pk_modeling": {
                 "model": "extended_tofts",
                 "inference": "vi",
-                "convergence_rate": 0.98,
+                "voxel_accounting": {
+                    "optimizer_converged": {
+                        "count": 98,
+                        "fraction_of_attempted": 0.98,
+                    }
+                },
+                "qc_acceptance_policy": {
+                    "acquisition": {"minimum_tsnr": 10.0},
+                    "fit": {
+                        "minimum_r_squared": {
+                            "patlak": 0.0,
+                            "reversible_models": 0.5,
+                        }
+                    },
+                },
+                "qc_component_failures": {
+                    "scope": "fitted_voxels",
+                    "counts_are_overlapping": True,
+                    "r_squared": 12,
+                },
                 "r2_median": 0.87,
                 "qc_voxel_rsquared": 0.95,
+            },
+            "model_suitability": {
+                "2cxm": {
+                    "status": "WARN",
+                    "reasons": [
+                        "temporal_sampling_outside_auto_2cxm_eligibility"
+                    ],
+                }
             },
         }
         result = enrich_provenance_from_qc(sidecar, qc, "DCE")
         perf = result["PerfusionProcessing"]
 
-        assert "BloodT1" in perf
-        assert perf["BloodT1"]["value_s"] == pytest.approx(1.664, abs=0.001)
-        assert perf["BloodT1"]["Source"] == "literature_lookup"
+        assert "BloodT1" not in perf
+        assert "BloodT1Reference" in perf
+        blood_t1 = perf["BloodT1Reference"]
+        assert blood_t1["value_s"] == pytest.approx(1.664, abs=0.001)
+        assert blood_t1["Source"] == "literature_lookup"
+        assert blood_t1["Role"] == "aif_expected_peak_and_qc_reference"
+        assert blood_t1["AppliedToArterialSignalConversion"] is False
 
         assert "Hematocrit" in perf
         assert perf["Hematocrit"]["value"] == pytest.approx(0.42)
@@ -69,15 +108,54 @@ class TestEnrichDCE:
         assert perf["T1Mapping"]["B1_correction"] == "AFI"
 
         assert "AIF" in perf
-        assert perf["AIF"]["method"] == "auto"
-        assert perf["AIF"]["n_voxels"] == 8
-        assert perf["AIF"]["arterial_cascade_tier"] == 1
+        assert perf["AIF"]["DetectionLevel"] == "atlas"
+        assert perf["AIF"]["NumberOfVoxelsSelected"] == 8
+        assert perf["AIF"]["ArterialCascadeTier"] == 1
+        assert perf["AIF"]["PeakScaling"]["RawPeak"] == pytest.approx(4.0)
+        assert perf["AIF"]["PeakScaling"]["EmittedPeak"] == pytest.approx(8.0)
+        assert (
+            perf["AIF"]["PeakScaling"]["Policy"]
+            == "one_sided_lower_bound"
+        )
 
         assert "PKModeling" in perf
         assert perf["PKModeling"]["model"] == "extended_tofts"
         assert perf["PKModeling"]["inference"] == "vi"
-        assert perf["PKModeling"]["convergence_rate"] == pytest.approx(0.98, abs=0.001)
+        assert (
+            perf["PKModeling"]["VoxelAccounting"]["optimizer_converged"][
+                "fraction_of_attempted"
+            ]
+            == pytest.approx(0.98)
+        )
+        assert (
+            perf["PKModeling"]["QCAcceptancePolicy"]["fit"][
+                "minimum_r_squared"
+            ]["patlak"]
+            == 0.0
+        )
+        assert (
+            perf["PKModeling"]["QCComponentFailures"]["r_squared"] == 12
+        )
         assert perf["PKModeling"]["voxel_rsquared"] == pytest.approx(0.95, abs=0.001)
+        assert perf["ModelSuitability"]["2CXM"]["status"] == "WARN"
+
+    def test_signal_conversion_qc(self) -> None:
+        """Signal-conversion diagnostics are retained in map provenance."""
+        sidecar = _make_dce_sidecar()
+        conversion_qc = {
+            "t1_invalid_voxels": 12,
+            "b1_missing_voxels": 34,
+            "e1_bounded_fraction": 0.00125,
+        }
+        result = enrich_provenance_from_qc(
+            sidecar,
+            {"signal_conversion": conversion_qc},
+            "DCE",
+        )
+        assert (
+            result["PerfusionProcessing"]["SignalConversionQC"]
+            == conversion_qc
+        )
 
     def test_population_aif(self) -> None:
         """Population AIF includes model name and dose factor."""
@@ -93,8 +171,8 @@ class TestEnrichDCE:
         }
         result = enrich_provenance_from_qc(sidecar, qc, "DCE")
         aif = result["PerfusionProcessing"]["AIF"]
-        assert aif["population_model"] == "parker"
-        assert aif["dose_factor"] == pytest.approx(0.5)
+        assert aif["PopulationModel"] == "parker"
+        assert aif["DoseFactor"] == pytest.approx(0.5)
 
     def test_assumed_t1_segmented(self) -> None:
         """Assumed T1 with tissue segmentation records WM/GM values."""
@@ -130,6 +208,25 @@ class TestEnrichDCE:
         t1 = result["PerfusionProcessing"]["T1Mapping"]
         assert t1["tissue_segmented"] is False
         assert t1["T1_WM_ms"] == pytest.approx(1200.0)
+
+    def test_assumed_t1_numeric_policy(self) -> None:
+        """Uniform assumed T1 records its value, field strength, and policy."""
+        sidecar = _make_dce_sidecar()
+        qc = {
+            "t1_mapping": {
+                "method": "assumed",
+                "b1_correction": "precomputed",
+                "assumed_t1_ms": 1200.0,
+                "assumed_t1_field_strength_t": 3.0,
+                "assumed_t1_policy": "uniform_field_strength_reference",
+            },
+        }
+        result = enrich_provenance_from_qc(sidecar, qc, "DCE")
+        t1 = result["PerfusionProcessing"]["T1Mapping"]
+        assert t1["AssumedT1_ms"] == pytest.approx(1200.0)
+        assert t1["FieldStrength_T"] == pytest.approx(3.0)
+        assert t1["assumption_policy"] == "uniform_field_strength_reference"
+        assert t1["B1_correction"] == "precomputed"
 
     def test_missing_t1_mapping(self) -> None:
         """Missing t1_mapping in QC is silently skipped."""
@@ -211,9 +308,10 @@ class TestEnrichDSC:
         assert perf["PreloadDetection"]["classification_source"] == "k2_primary"
         assert perf["PreloadDetection"]["k2_classification"] == "inadequate"
 
-        assert perf["AIF"]["method"] == "atlas_strict"
-        assert perf["AIF"]["fwhm_frames"] == pytest.approx(4.0)
-        assert perf["AIF"]["synthetic"] is False
+        assert perf["AIF"]["DetectionLevel"] == "atlas_strict"
+        assert perf["AIF"]["FWHM"] == pytest.approx(4.0)
+        assert perf["AIF"]["FWHMUnits"] == "s"
+        assert perf["AIF"]["Source"] == "measured"
 
         assert perf["QuantificationMode"] == "relative"
         assert perf["NormalizationReference"]["tissue"] == "NAWM"
@@ -229,7 +327,7 @@ class TestEnrichDSC:
             "aif_detection": {"detection_method": "synthetic", "n_aif_voxels_selected": 0},
         }
         result = enrich_provenance_from_qc(sidecar, qc, "DSC")
-        assert result["PerfusionProcessing"]["AIF"]["synthetic"] is True
+        assert result["PerfusionProcessing"]["AIF"]["Source"] == "synthetic"
 
     def test_tikhonov_lambda(self) -> None:
         """Tikhonov deconvolution includes lambda_mean."""

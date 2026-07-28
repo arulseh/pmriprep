@@ -18,7 +18,7 @@ from pmriprep.models.dsc.cpi import (
 
 def _synthetic_aif(n: int = 60, dt: float = 1.5, baseline: int = 10) -> np.ndarray:
     """Parker-like AIF: gamma-variate first pass + recirculation tail."""
-    t = np.arange(n) * dt
+    np.arange(n) * dt
     aif = np.zeros(n, dtype=np.float64)
     bolus_frames = max(0, n - baseline)
     if bolus_frames > 0:

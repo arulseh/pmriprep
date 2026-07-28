@@ -9,15 +9,15 @@ from pathlib import Path
 DATA_DIR = Path(__file__).parent
 
 
-def get_arterial_atlas(resolution: str = "1mm", variant: str = "dil3") -> Path:
+def get_arterial_atlas(resolution: str = "2mm", variant: str = "dil") -> Path:
     """Get path to MNI arterial atlas for AIF detection.
 
     Parameters
     ----------
     resolution : str
-        Atlas resolution: '1mm' or '2mm' (default: '1mm')
+        Atlas resolution (default: '2mm').
     variant : str
-        Atlas variant suffix, e.g. 'dil3' for 3x dilated (default: 'dil3').
+        Atlas variant suffix, e.g. 'dil' for the dilated mask (default: 'dil').
         Use empty string for the non-dilated atlas.
 
     Returns
@@ -123,24 +123,24 @@ def get_mni_brain_template() -> Path:
     )
 
 
-def get_lobar_atlas_dir() -> Path:
-    """Get path to MNI lobar atlas directory for NAWM region restriction.
+def get_mni_region_masks_dir() -> Path:
+    """Get the directory containing bundled MNI anatomical region masks.
 
     Returns
     -------
     Path
-        Path to the lobar atlas directory containing region masks
+        Path to the directory containing supratentorial and cerebellar masks
         (e.g., Supra_L.nii.gz, Cerebellum_R.nii.gz).
 
     Raises
     ------
     FileNotFoundError
-        If the lobar atlas directory doesn't exist.
+        If the region-mask directory doesn't exist.
     """
-    atlas_dir = DATA_DIR / "atlases" / "mni_lobar"
-    if not atlas_dir.is_dir():
-        raise FileNotFoundError(f"Lobar atlas directory not found: {atlas_dir}")
-    return atlas_dir
+    masks_dir = DATA_DIR / "atlases" / "mni_regions"
+    if not masks_dir.is_dir():
+        raise FileNotFoundError(f"MNI region-mask directory not found: {masks_dir}")
+    return masks_dir
 
 
 def get_boilerplate_bib() -> Path:

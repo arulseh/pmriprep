@@ -5,10 +5,8 @@ import health, QC standards, and utility constants. These tests require
 no external tools (FSL, ANTs, etc.) and no local test fixtures.
 """
 
-import sys
 import unittest.mock
 from pathlib import Path
-from typing import Any, Dict
 from unittest.mock import MagicMock
 
 import pytest
@@ -301,6 +299,7 @@ class TestTypecheckVerification:
         from pmriprep.workflows.tumor_seg import base as tumor_seg_base
 
         assert base.init_pmriprep_wf is not None
+        assert discovery.SessionData is not None
         assert anat_base.init_anat_preproc_wf is not None
         assert dsc_base.init_dsc_preproc_wf is not None
         assert dce_base.init_dce_preproc_wf is not None
@@ -318,6 +317,7 @@ class TestTypecheckVerification:
 
     def test_import_interfaces(self) -> None:
         """Verify interface modules import."""
+        import pmriprep.interfaces as interfaces
         from pmriprep.interfaces import anat, dsc, dce
         from pmriprep.interfaces.hdglio import HDGLIOPrep
         from pmriprep.interfaces import dsc_aif, dsc_compute
@@ -327,6 +327,11 @@ class TestTypecheckVerification:
         assert dsc.MotionCorrection is not None
         assert dce.B1Mapping is not None
         assert HDGLIOPrep is not None
+        assert interfaces.DSCAIFDetection is dsc_aif.AIFDetection
+        assert interfaces.DCEAIFDetection is dce_aif.AIFDetection
+        assert dsc_compute.ComputeDSCMaps is not None
+        assert dce_compute.ComputeDCEMaps is not None
+        assert not hasattr(interfaces, "AIFDetection")
 
     def test_import_utils(self) -> None:
         """Verify utility modules import."""
@@ -348,6 +353,11 @@ class TestTypecheckVerification:
         assert dce_constants.EPSILON_VE is not None
         assert dsc_types.DSCVoxelResult is not None
         assert qc_standards.COLORBLIND_PALETTE is not None
+        assert qc_utils is not None
+        assert registration is not None
+        assert provenance is not None
+        assert contrast_agent is not None
+        assert structural_reference is not None
 
     def test_import_models(self) -> None:
         """Verify model modules import."""
@@ -361,11 +371,13 @@ class TestTypecheckVerification:
         assert dsc_model_base.DSCModel is not None
         assert vascular.VascularModel is not None
         assert cpi.CPIModel is not None
+        assert dsc_bayesian.BayesianDSCFitter is not None
         assert dce_model_base.PKModel is not None
         assert tofts.ToftsModel is not None
         assert extended_tofts.ExtendedToftsModel is not None
         assert patlak.PatlakModel is not None
         assert two_compartment_exchange.TwoCompartmentExchangeModel is not None
+        assert dce_bayesian.BayesianPKFitter is not None
 
 
 # =============================================================================
@@ -452,10 +464,9 @@ class TestUtilityFunctions:
 
     def test_perfusion_bounds_ordered(self) -> None:
         """Verify perfusion parameter bounds are correctly ordered."""
-        from pmriprep.utils.dsc_constants import CBF_BOUNDS, CBV_BOUNDS, MTT_BOUNDS
+        from pmriprep.utils.dsc_constants import CBF_BOUNDS, MTT_BOUNDS
 
         assert CBF_BOUNDS.min < CBF_BOUNDS.max
-        assert CBV_BOUNDS.min < CBV_BOUNDS.max
         assert MTT_BOUNDS.min < MTT_BOUNDS.max
 
     def test_pk_parameter_bounds_ordered(self) -> None:

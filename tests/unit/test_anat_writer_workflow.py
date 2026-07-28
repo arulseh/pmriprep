@@ -87,8 +87,8 @@ def test_anat_datasinks_wf_minimal(tmp_path: Path, minimal_bids: Path) -> None:
     # M3 sidecar fields
     sidecar = json.loads(t1w_json.read_text())
     assert isinstance(sidecar["Sources"], list) and sidecar["Sources"]
-    assert sidecar["Sources"][0].startswith("bids::")
-    assert sidecar["SpatialReference"].startswith("bids::pmriprep/")
+    assert sidecar["Sources"][0].startswith("bids:raw:")
+    assert sidecar["SpatialReference"].startswith("bids::sub-")
     assert sidecar["Resolution"] == "native"
     assert isinstance(sidecar["VoxelSize"], list) and len(sidecar["VoxelSize"]) == 3
 
@@ -155,7 +155,7 @@ def test_anat_sidecar_correctness_guard(tmp_path: Path, minimal_bids: Path) -> N
         body = json.loads(sc.read_text())
         assert "Sources" in body, f"{sc.name} missing Sources"
         assert isinstance(body["Sources"], list)
-        assert all(s.startswith("bids::") for s in body["Sources"])
+        assert all(s.startswith("bids:raw:") for s in body["Sources"])
         assert body.get("SpatialReference", "").startswith("bids::"), sc.name
         assert body.get("Resolution") == "native", sc.name
         assert isinstance(body.get("VoxelSize"), list), sc.name
@@ -299,8 +299,10 @@ def test_multi_modality_kitchen_sink(tmp_path: Path, minimal_bids: Path) -> None
     (raw / "sub-01_ses-0001_FLAIR.json").write_text("{}")
 
     out_root = tmp_path / "out"
-    deriv = lambda name: _make_nifti(tmp_path / name)
-    fake_xfm = lambda name: (tmp_path / name).write_text("ok\n") or (tmp_path / name)
+    def deriv(name):
+        return _make_nifti(tmp_path / name)
+    def fake_xfm(name):
+        return (tmp_path / name).write_text("ok\n") or (tmp_path / name)
 
     wf = init_anat_datasinks_wf(
         output_dir=str(out_root), bids_dir=str(minimal_bids),

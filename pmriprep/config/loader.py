@@ -1,6 +1,8 @@
 """Configuration loading utilities for PMRIPrep."""
 
+from copy import deepcopy
 import json
+from dataclasses import fields
 from pathlib import Path
 from typing import Any, Dict, Optional, Union
 
@@ -11,6 +13,59 @@ from .constants import DOSE_PRESETS
 from .dce import DCEConfig
 from .dsc import DSCConfig
 from .tumor_seg import TumorSegConfig
+
+
+_CONFIG_CLASSES = {
+    "dsc": DSCConfig,
+    "dce": DCEConfig,
+    "anat": AnatConfig,
+    "tumor_seg": TumorSegConfig,
+}
+
+
+def _validate_config_mapping(config: Any) -> Dict[str, Any]:
+    """Validate the public configuration-file structure.
+
+    Parameters
+    ----------
+    config : Any
+        Parsed YAML or JSON object.
+
+    Returns
+    -------
+    dict
+        Validated configuration mapping.
+
+    Raises
+    ------
+    ValueError
+        If the root, section names, section values, or option names are invalid.
+    """
+    if config is None:
+        config = {}
+    if not isinstance(config, dict):
+        raise ValueError("Configuration root must be a mapping.")
+
+    unknown_sections = set(config) - set(_CONFIG_CLASSES)
+    if unknown_sections:
+        raise ValueError(
+            "Unknown configuration section(s): "
+            f"{sorted(unknown_sections)}. Valid sections: {sorted(_CONFIG_CLASSES)}"
+        )
+
+    result = dict(config)
+    for section, config_class in _CONFIG_CLASSES.items():
+        section_value = result.setdefault(section, {})
+        if not isinstance(section_value, dict):
+            raise ValueError(f"Configuration section {section!r} must be a mapping.")
+        valid_options = {item.name for item in fields(config_class)}
+        unknown_options = set(section_value) - valid_options
+        if unknown_options:
+            raise ValueError(
+                f"Unknown {section} configuration option(s): "
+                f"{sorted(unknown_options)}. Valid options: {sorted(valid_options)}"
+            )
+    return result
 
 
 def load_config(path: Union[str, Path]) -> Dict[str, Any]:
@@ -54,16 +109,7 @@ def load_config(path: Union[str, Path]) -> Dict[str, Any]:
             "Use .yaml, .yml, or .json."
         )
 
-    # Ensure config is a dict (handle empty files)
-    if config is None:
-        config = {}
-
-    # Ensure all sections exist
-    for section in ("dsc", "dce", "anat", "tumor_seg"):
-        if section not in config:
-            config[section] = {}
-
-    return dict(config)
+    return _validate_config_mapping(config)
 
 
 def _merge_nested_dict(
@@ -116,7 +162,9 @@ def merge_cli_config(
     dict
         Merged configuration dictionary with CLI values taking precedence.
     """
-    result = file_config.copy()
+    # Copy nested sections as well as the root: CLI precedence must not mutate
+    # the loaded file configuration used for explicit-value provenance.
+    result = deepcopy(file_config)
 
     # Map CLI args to config sections and keys
     cli_to_config = {
@@ -128,7 +176,6 @@ def merge_cli_config(
         "dsc_agent_standard_dose": ("dsc", "agent_standard_dose"),
         "dsc_aif_method": ("dsc", "aif_method"),
         "dsc_aif_file": ("dsc", "aif_file"),
-        "dsc_registration": ("dsc", "registration"),
         # DCE options
         "dce_model": ("dce", "model"),
         "dce_inference": ("dce", "inference"),
@@ -181,8 +228,66 @@ def _dict_to_path(d: Dict[str, Any], key: str) -> None:
     Relative paths are resolved against the current working directory
     so that nipype nodes can locate them regardless of execution directory.
     """
-    if key in d and d[key] is not None and isinstance(d[key], str):
-        d[key] = Path(d[key]).resolve()
+    if key in d and d[key] is not None and isinstance(d[key], (str, Path)):
+        d[key] = Path(d[key]).expanduser().resolve()
+
+
+def validate_config_paths(
+    dsc_config: DSCConfig,
+    dce_config: DCEConfig,
+) -> None:
+    """Validate configured external files before workflow construction.
+
+    Parameters
+    ----------
+    dsc_config : DSCConfig
+        Resolved DSC configuration.
+    dce_config : DCEConfig
+        Resolved DCE configuration.
+
+    Raises
+    ------
+    FileNotFoundError
+        If a configured external file does not exist.
+    ValueError
+        If an external AIF uses an unsupported file extension.
+    """
+    path_options = {
+        "dsc": (
+            dsc_config,
+            ("aif_file", "aif_mask_file", "lesion_mask", "nawm_mask", "roi_mask"),
+        ),
+        "dce": (
+            dce_config,
+            (
+                "aif_file",
+                "aif_mask_file",
+                "lesion_mask",
+                "nawm_mask",
+                "roi_mask",
+                "t1_map_file",
+            ),
+        ),
+    }
+    for section, (config, options) in path_options.items():
+        for option in options:
+            path = getattr(config, option)
+            if path is not None and not path.is_file():
+                raise FileNotFoundError(
+                    f"Configured {section}.{option} does not exist: {path}"
+                )
+
+    valid_aif_extensions = {".txt", ".tsv", ".npz", ".npy"}
+    for section, config in (("dsc", dsc_config), ("dce", dce_config)):
+        if (
+            config.aif_file is not None
+            and config.aif_file.suffix.lower() not in valid_aif_extensions
+        ):
+            raise ValueError(
+                f"Configured {section}.aif_file has unsupported extension "
+                f"{config.aif_file.suffix!r}. Supported: "
+                f"{sorted(valid_aif_extensions)}"
+            )
 
 
 def _coerce_int(d: Dict[str, Any], key: str) -> None:
@@ -237,6 +342,12 @@ def build_dsc_config(config_dict: Dict[str, Any]) -> DSCConfig:
         Configured DSCConfig instance.
     """
     dsc_dict = config_dict.get("dsc", {}).copy()
+    valid_fields = {f.name for f in DSCConfig.__dataclass_fields__.values()}
+    unknown_fields = set(dsc_dict) - valid_fields
+    if unknown_fields:
+        raise ValueError(
+            f"Unknown dsc configuration option(s): {sorted(unknown_fields)}"
+        )
 
     # Convert path strings to Path objects
     for path_key in ("aif_file", "aif_mask_file", "lesion_mask", "nawm_mask", "roi_mask"):
@@ -254,10 +365,7 @@ def build_dsc_config(config_dict: Dict[str, Any]) -> DSCConfig:
     _coerce_dose(dsc_dict)
 
     # Filter to only valid DSCConfig fields
-    valid_fields = {f.name for f in DSCConfig.__dataclass_fields__.values()}
-    filtered_dict = {k: v for k, v in dsc_dict.items() if k in valid_fields}
-
-    return DSCConfig(**filtered_dict)
+    return DSCConfig(**dsc_dict)
 
 
 def build_dce_config(config_dict: Dict[str, Any]) -> DCEConfig:
@@ -274,14 +382,6 @@ def build_dce_config(config_dict: Dict[str, Any]) -> DCEConfig:
         Configured DCEConfig instance.
     """
     dce_dict = config_dict.get("dce", {}).copy()
-
-    # Flatten nested sections (e.g., processing.tsnr_threshold -> tsnr_threshold)
-    for nested_key in ("processing", "registration", "aif"):
-        nested = dce_dict.pop(nested_key, None)
-        if isinstance(nested, dict):
-            for k, v in nested.items():
-                if k not in dce_dict:  # Top-level keys take priority
-                    dce_dict[k] = v
 
     # Convert path strings to Path objects
     for path_key in ("lesion_mask", "nawm_mask", "aif_mask_file", "aif_file", "roi_mask", "t1_map_file"):
@@ -301,11 +401,15 @@ def build_dce_config(config_dict: Dict[str, Any]) -> DCEConfig:
     _coerce_float(dce_dict, "r1_relaxivity")
     _coerce_dose(dce_dict)
 
-    # Filter to only valid DCEConfig fields
+    # Reject unknown keys after supported nested sections are flattened.
     valid_fields = {f.name for f in DCEConfig.__dataclass_fields__.values()}
-    filtered_dict = {k: v for k, v in dce_dict.items() if k in valid_fields}
+    unknown_fields = set(dce_dict) - valid_fields
+    if unknown_fields:
+        raise ValueError(
+            f"Unknown dce configuration option(s): {sorted(unknown_fields)}"
+        )
 
-    return DCEConfig(**filtered_dict)
+    return DCEConfig(**dce_dict)
 
 
 def build_anat_config(config_dict: Dict[str, Any]) -> AnatConfig:
@@ -323,11 +427,15 @@ def build_anat_config(config_dict: Dict[str, Any]) -> AnatConfig:
     """
     anat_dict = config_dict.get("anat", {}).copy()
 
-    # Filter to only valid AnatConfig fields
+    # Reject unknown options instead of silently reverting to defaults.
     valid_fields = {f.name for f in AnatConfig.__dataclass_fields__.values()}
-    filtered_dict = {k: v for k, v in anat_dict.items() if k in valid_fields}
+    unknown_fields = set(anat_dict) - valid_fields
+    if unknown_fields:
+        raise ValueError(
+            f"Unknown anat configuration option(s): {sorted(unknown_fields)}"
+        )
 
-    return AnatConfig(**filtered_dict)
+    return AnatConfig(**anat_dict)
 
 
 def build_tumor_seg_config(config_dict: Dict[str, Any]) -> TumorSegConfig:
@@ -345,11 +453,16 @@ def build_tumor_seg_config(config_dict: Dict[str, Any]) -> TumorSegConfig:
     """
     tumor_seg_dict = config_dict.get("tumor_seg", {}).copy()
 
-    # Filter to only valid TumorSegConfig fields
+    # Reject unknown options instead of silently reverting to defaults.
     valid_fields = {f.name for f in TumorSegConfig.__dataclass_fields__.values()}
-    filtered_dict = {k: v for k, v in tumor_seg_dict.items() if k in valid_fields}
+    unknown_fields = set(tumor_seg_dict) - valid_fields
+    if unknown_fields:
+        raise ValueError(
+            "Unknown tumor_seg configuration option(s): "
+            f"{sorted(unknown_fields)}"
+        )
 
-    return TumorSegConfig(**filtered_dict)
+    return TumorSegConfig(**tumor_seg_dict)
 
 
 def build_all_configs(

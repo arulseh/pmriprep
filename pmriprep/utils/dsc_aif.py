@@ -14,8 +14,42 @@ import numpy.typing as npt
 from scipy import optimize
 
 from pmriprep.utils.dsc_constants import (
+    AIF_SMOOTHING_TARGET_SECONDS,
     EPSILON_CONCENTRATION,
 )
+
+
+def get_aif_smoothing_window(n_timepoints: int, tr: float) -> int:
+    """Return an odd Savitzky-Golay window near the DSC time target.
+
+    Parameters
+    ----------
+    n_timepoints : int
+        Length of the AIF curve.
+    tr : float
+        Frame period in seconds. Invalid values retain the historical
+        five-frame fallback.
+
+    Returns
+    -------
+    int
+        Odd window length no larger than ``n_timepoints``. Curves shorter
+        than five frames return their largest odd length; callers decide
+        whether smoothing is appropriate.
+    """
+    if n_timepoints < 1:
+        raise ValueError("n_timepoints must be positive")
+
+    if not np.isfinite(tr) or tr <= 0.0:
+        window = 5
+    else:
+        target_samples = int(round(AIF_SMOOTHING_TARGET_SECONDS / tr))
+        # Quadratic Savitzky-Golay requires at least three samples. A five-frame
+        # floor would span 15 s at TR=3 s and flatten the arterial peak.
+        window = max(3, target_samples | 1)
+
+    largest_odd = n_timepoints if n_timepoints % 2 else n_timepoints - 1
+    return min(window, largest_odd)
 
 
 def compute_aif_fwhm_frames(
@@ -247,9 +281,6 @@ def _estimate_initial_params(
     Tuple[float, float, float, float]
         Initial estimates for (amplitude, t0, alpha, beta).
     """
-    n_frames = len(aif_curve)
-    t = np.arange(n_frames, dtype=np.float64)
-
     # Find peak
     baseline = np.mean(aif_curve[:baseline_frames])
     curve_shifted = aif_curve - baseline
@@ -647,6 +678,226 @@ FIRSTPASS_R2_THRESHOLD: float = 0.7
 #: Gamma shape/scale bounds (frame units); mirror ``fit_gamma_variate``.
 FIRSTPASS_ALPHA_BOUNDS: Tuple[float, float] = (0.1, 10.0)
 FIRSTPASS_BETA_BOUNDS: Tuple[float, float] = (0.1, 20.0)
+#: Fraction of the strongest observed peak required for an earlier local peak
+#: to define the first pass. This rejects baseline-noise maxima while allowing
+#: a later recirculation peak to exceed the first-pass peak.
+FIRSTPASS_PEAK_FRACTION: float = 0.2
+#: Half-frame onset grid used to profile the simplified gamma fit. The temporal
+#: sampling itself cannot support a more precise onset estimate.
+FIRSTPASS_ONSET_STEP_FRAMES: float = 0.5
+#: Bound peak/onset profiling memory for whole-brain inputs.
+FIRSTPASS_FIT_CHUNK_SIZE: int = 20_000
+
+
+def _first_credible_peak(
+    y: npt.NDArray[Any], baseline_frames: int
+) -> npt.NDArray[np.int_]:
+    """Return the first credible local maximum in each concentration curve."""
+    from scipy.ndimage import gaussian_filter1d
+
+    n_vox, n_frames = y.shape
+    if n_frames < 3:
+        return np.asarray(np.argmax(y, axis=1), dtype=np.int_)
+
+    # Smooth only for peak localization; the fitted samples remain unchanged.
+    smooth = gaussian_filter1d(y, sigma=0.75, axis=1, mode="nearest")
+    global_peak = np.max(smooth, axis=1)
+    nbl = max(1, min(int(baseline_frames), n_frames))
+    baseline_sd = np.std(y[:, :nbl], axis=1, ddof=0)
+    threshold = np.maximum(
+        FIRSTPASS_PEAK_FRACTION * global_peak,
+        5.0 * baseline_sd,
+    )
+
+    local = np.zeros((n_vox, n_frames), dtype=bool)
+    local[:, 1:-1] = (
+        (smooth[:, 1:-1] >= smooth[:, :-2])
+        & (smooth[:, 1:-1] > smooth[:, 2:])
+    )
+    local[:, :nbl] = False
+    local &= smooth >= threshold[:, None]
+    has_local = np.any(local, axis=1)
+    first_local = np.argmax(local, axis=1)
+    peak_indices: npt.NDArray[np.int_] = np.asarray(
+        np.where(has_local, first_local, np.argmax(smooth, axis=1)),
+        dtype=np.int_,
+    )
+    return peak_indices
+
+
+def _fit_gamma_firstpass_chunk(
+    curves: npt.NDArray[Any], tr: float, baseline_frames: int
+) -> BatchedGammaFirstPassResult:
+    """Fit one memory-bounded chunk of tissue first-pass curves."""
+    from scipy.special import gamma as _gamma_fn
+
+    n_vox, n_frames = curves.shape
+    curves = np.nan_to_num(curves, nan=0.0, posinf=0.0, neginf=0.0)
+    t = np.arange(n_frames, dtype=np.float64)
+    eps = float(EPSILON_CONCENTRATION)
+    nbl = int(max(1, min(baseline_frames, n_frames)))
+    y = curves - np.mean(curves[:, :nbl], axis=1, keepdims=True)
+
+    peak_idx = _first_credible_peak(y, nbl)
+    peak_val = y[np.arange(n_vox), peak_idx]
+    valid_peak = peak_val > eps
+
+    # End the observed fitting interval at the first sample at or below 70% of
+    # the selected peak. The analytic gamma area supplies the omitted tail.
+    after_peak = t[None, :] > peak_idx[:, None]
+    below_70 = (y <= 0.70 * peak_val[:, None]) & after_peak
+    cutoff = np.where(
+        np.any(below_70, axis=1), np.argmax(below_70, axis=1), n_frames - 1
+    )
+    fit_end = cutoff + 1
+    objective_window = (
+        (t[None, :] >= nbl) & (t[None, :] < fit_end[:, None])
+    )
+    objective_scale = np.sum(
+        np.where(objective_window, y * y, 0.0), axis=1
+    )
+
+    best_score = np.full(n_vox, np.inf, dtype=np.float64)
+    best_t0 = np.full(n_vox, np.nan, dtype=np.float64)
+    onset_start = max(0.0, float(nbl) - 1.0)
+    onset_stop = max(onset_start, float(np.max(peak_idx)) - 1.0)
+    onset_grid = np.arange(
+        onset_start,
+        onset_stop + 0.5 * FIRSTPASS_ONSET_STEP_FRAMES,
+        FIRSTPASS_ONSET_STEP_FRAMES,
+    )
+
+    # Profile t0 rather than equating a threshold crossing with true arrival.
+    # For each t0, the simplified gamma form remains a two-parameter weighted
+    # linear solve; selection uses residuals in the original concentration
+    # domain and a common baseline-to-downslope interval.
+    for t0_candidate in onset_grid:
+        tau = peak_idx.astype(np.float64) - t0_candidate
+        candidate_voxels = tau >= 1.0
+        tau_safe = np.maximum(tau, 1e-6)[:, None]
+        tprime = (t[None, :] - t0_candidate) / tau_safe
+        positive = (
+            (y > eps)
+            & (tprime > eps)
+            & (t[None, :] < fit_end[:, None])
+            & candidate_voxels[:, None]
+        )
+        with np.errstate(divide="ignore", invalid="ignore"):
+            g_model = 1.0 + np.log(np.where(tprime > 0.0, tprime, 1.0)) - tprime
+            lny = np.log(np.where(positive, y, 1.0))
+        g = np.where(positive, g_model, 0.0)
+        lny = np.where(positive, lny, 0.0)
+        w = np.where(positive, y * y, 0.0)
+        n_samples = np.sum(positive, axis=1)
+        s_w = np.sum(w, axis=1)
+        s_wg = np.sum(w * g, axis=1)
+        s_wgg = np.sum(w * g * g, axis=1)
+        s_wl = np.sum(w * lny, axis=1)
+        s_wgl = np.sum(w * g * lny, axis=1)
+        det = s_w * s_wgg - s_wg * s_wg
+        det_ok = np.abs(det) > eps
+        det_safe = np.where(det_ok, det, 1.0)
+        b0 = (s_wgg * s_wl - s_wg * s_wgl) / det_safe
+        alpha = (s_w * s_wgl - s_wg * s_wl) / det_safe
+        beta = tau / np.maximum(alpha, 1e-6)
+
+        with np.errstate(over="ignore", invalid="ignore"):
+            predicted = np.where(
+                tprime > 0.0,
+                np.exp(
+                    np.clip(b0[:, None] + alpha[:, None] * g_model, -50.0, 50.0)
+                ),
+                0.0,
+            )
+        residual = np.where(objective_window, y - predicted, 0.0)
+        score = np.sum(residual * residual, axis=1) / np.maximum(
+            objective_scale, eps
+        )
+        eligible = (
+            candidate_voxels
+            & det_ok
+            & (n_samples >= FIRSTPASS_MIN_SAMPLES)
+            & (alpha >= FIRSTPASS_ALPHA_BOUNDS[0])
+            & (alpha <= FIRSTPASS_ALPHA_BOUNDS[1])
+            & (beta >= FIRSTPASS_BETA_BOUNDS[0])
+            & (beta <= FIRSTPASS_BETA_BOUNDS[1])
+            & np.isfinite(score)
+        )
+        improve = eligible & (score < best_score)
+        best_score[improve] = score[improve]
+        best_t0[improve] = t0_candidate
+
+    # Refit once at the selected onset to obtain parameters and diagnostics.
+    tau = peak_idx.astype(np.float64) - best_t0
+    tau_safe = np.maximum(tau, 1e-6)[:, None]
+    tprime = (t[None, :] - best_t0[:, None]) / tau_safe
+    positive = (
+        (y > eps)
+        & (tprime > eps)
+        & (t[None, :] < fit_end[:, None])
+        & np.isfinite(best_t0)[:, None]
+    )
+    with np.errstate(divide="ignore", invalid="ignore"):
+        g = 1.0 + np.log(np.where(positive, tprime, 1.0)) - tprime
+        lny = np.log(np.where(positive, y, 1.0))
+    g = np.where(positive, g, 0.0)
+    lny = np.where(positive, lny, 0.0)
+    w = np.where(positive, y * y, 0.0)
+    n_samples = np.sum(positive, axis=1)
+    s_w = np.sum(w, axis=1)
+    s_wg = np.sum(w * g, axis=1)
+    s_wgg = np.sum(w * g * g, axis=1)
+    s_wl = np.sum(w * lny, axis=1)
+    s_wgl = np.sum(w * g * lny, axis=1)
+    det = s_w * s_wgg - s_wg * s_wg
+    det_ok = np.abs(det) > eps
+    det_safe = np.where(det_ok, det, 1.0)
+    b0 = (s_wgg * s_wl - s_wg * s_wgl) / det_safe
+    alpha = (s_w * s_wgl - s_wg * s_wl) / det_safe
+    lny_hat = b0[:, None] + alpha[:, None] * g
+    lny_bar = np.where(s_w > eps, s_wl / np.maximum(s_w, eps), 0.0)
+    ss_res = np.sum(w * (lny - lny_hat) ** 2, axis=1)
+    ss_tot = np.sum(w * (lny - lny_bar[:, None]) ** 2, axis=1)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        r_squared = np.where(ss_tot > eps, 1.0 - ss_res / ss_tot, 0.0)
+
+    y_max = np.exp(np.clip(b0, -50.0, 50.0))
+    alpha_c = np.clip(alpha, *FIRSTPASS_ALPHA_BOUNDS)
+    beta = tau / np.maximum(alpha_c, 1e-6)
+    with np.errstate(over="ignore", invalid="ignore"):
+        amplitude = y_max * np.exp(alpha_c) / np.power(tau, alpha_c)
+        gamma_auc = (
+            amplitude
+            * np.power(beta, alpha_c + 1.0)
+            * _gamma_fn(alpha_c + 1.0)
+            * tr
+        )
+    gamma_ok = (
+        valid_peak
+        & np.isfinite(best_t0)
+        & det_ok
+        & (n_samples >= FIRSTPASS_MIN_SAMPLES)
+        & (alpha >= FIRSTPASS_ALPHA_BOUNDS[0])
+        & (alpha <= FIRSTPASS_ALPHA_BOUNDS[1])
+        & (beta >= FIRSTPASS_BETA_BOUNDS[0])
+        & (beta <= FIRSTPASS_BETA_BOUNDS[1])
+        & (r_squared >= FIRSTPASS_R2_THRESHOLD)
+        & np.isfinite(gamma_auc)
+        & (gamma_auc > 0.0)
+    )
+    auc = np.where(gamma_ok, gamma_auc, np.nan)
+    n_fit = int(np.sum(gamma_ok))
+    n_unfittable = int(n_vox - n_fit)
+    return BatchedGammaFirstPassResult(
+        auc=auc,
+        alpha=np.where(gamma_ok, alpha, np.nan),
+        beta=np.where(gamma_ok, beta, np.nan),
+        t0=np.where(gamma_ok, best_t0, np.nan),
+        r_squared=np.where(gamma_ok, r_squared, np.nan),
+        unfittable_fraction=(float(n_unfittable / n_vox) if n_vox else 0.0),
+        n_fit=n_fit,
+        n_unfittable=n_unfittable,
+    )
 
 
 def batched_gamma_firstpass_auc(
@@ -656,17 +907,20 @@ def batched_gamma_firstpass_auc(
 ) -> BatchedGammaFirstPassResult:
     """Estimate per-voxel first-pass contrast area by a batched gamma fit.
 
-    Vectorized (all voxels solved at once, no per-voxel Python loop) weighted
-    log-linear gamma-variate fit to the first pass of each tissue concentration
-    curve. The first-pass area is the classic non-tumour CBV surrogate; the
-    gamma model isolates the first pass and its area is the analytic integral,
-    so recirculation and the washout tail are excluded.
+    Memory-bounded, vectorized weighted log-linear gamma-variate fit to the
+    first pass of each tissue concentration curve. The first-pass area is the
+    classic non-tumour CBV surrogate; the gamma model isolates the first pass
+    and its area is the analytic integral, so recirculation and the washout tail
+    are excluded.
 
     The fit uses the decoupled log-linear form of the gamma-variate,
     ``ln y(t') = ln y_max + alpha * (1 + ln t' - t')`` with
     ``t' = (t - t0) / (t_max - t0)`` and ``beta = (t_max - t0) / alpha``. This
-    is a two-parameter (intercept, ``alpha``) weighted linear solve per voxel.
-    Two guards are mandatory: only positive samples enter the log fit
+    is a two-parameter (intercept, ``alpha``) weighted linear solve for each
+    profiled onset. Candidate onsets are ranked by linear-domain residual, and
+    the first credible local maximum defines ``t_max`` so a larger later
+    recirculation peak cannot replace the first pass. Two guards are mandatory:
+    only positive samples enter the log fit
     (``ln y`` is undefined for ``y <= 0``), and residuals are weighted by
     ``y**2`` so the log-domain solve reproduces a linear-domain least-squares
     fit (``Var[ln y] ~ Var[y] / y**2``); an unweighted log fit over-weights the
@@ -695,131 +949,39 @@ def batched_gamma_firstpass_auc(
         Per-voxel area (NaN where unfittable), gamma parameters, and the
         unfittable fraction.
     """
-    from scipy.special import gamma as _gamma_fn
-
     curves = np.asarray(tissue_curves, dtype=np.float64)
     if curves.ndim != 2:
         raise ValueError(
             f"tissue_curves must be 2D (N, T); got shape {curves.shape}"
         )
-    n_vox, n_frames = curves.shape
-    curves = np.nan_to_num(curves, nan=0.0, posinf=0.0, neginf=0.0)
-
-    t = np.arange(n_frames, dtype=np.float64)
-    eps = float(EPSILON_CONCENTRATION)
-
-    # Per-voxel baseline subtraction.
-    nbl = int(max(1, min(baseline_frames, n_frames)))
-    base = np.mean(curves[:, :nbl], axis=1, keepdims=True)
-    y = curves - base
-
-    # Per-voxel first-pass peak (global max; for first-pass-dominant curves the
-    # recirculation bump is smaller than the first pass).
-    peak_idx = np.argmax(y, axis=1)
-    peak_val = np.max(y, axis=1)
-    valid_peak = peak_val > eps
-
-    # t0 (arrival): first frame at/above 10% of peak, before the peak.
-    thr = 0.1 * peak_val
-    before_peak = t[None, :] <= peak_idx[:, None]
-    rise = (y >= thr[:, None]) & before_peak
-    has_rise = np.any(rise, axis=1)
-    first_rise = np.argmax(rise, axis=1)
-    t0f = np.where(has_rise, first_rise.astype(np.float64) - 0.5, float(nbl))
-    t0f = np.maximum(t0f, 0.0)
-
-    # Fit window: arrival -> 70%-of-peak on the downslope. Recirculation is
-    # assumed to begin after the 70% point, so the fit sees the clean first
-    # pass and the gamma analytic integral supplies the excluded washout tail.
-    win_start = np.clip(np.ceil(t0f).astype(int), 0, n_frames - 1)
-    after_peak = t[None, :] > peak_idx[:, None]
-    below_70 = (y <= 0.70 * peak_val[:, None]) & after_peak
-    cutoff = np.where(
-        np.any(below_70, axis=1), np.argmax(below_70, axis=1), n_frames - 1
-    )
-    win_end = cutoff + 1  # include the 70%-downslope frame
-    in_window = (t[None, :] >= win_start[:, None]) & (t[None, :] < win_end[:, None])
-
-    # Normalized time t' and the single decoupled regressor g(t').
-    tau = np.maximum(peak_idx.astype(np.float64) - t0f, 1e-3)[:, None]
-    tprime = (t[None, :] - t0f[:, None]) / tau
-    positive = (y > eps) & (tprime > eps) & in_window
-    with np.errstate(divide="ignore", invalid="ignore"):
-        g = 1.0 + np.log(np.where(positive, tprime, 1.0)) - tprime
-        lny = np.log(np.where(positive, y, 1.0))
-    g = np.where(positive, g, 0.0)
-    lny = np.where(positive, lny, 0.0)
-
-    # y**2 weighting restores a linear-domain least-squares solve.
-    w = np.where(positive, y * y, 0.0)
-    n_samples = np.sum(positive, axis=1)
-
-    # Weighted 2-parameter normal equations per voxel: columns [1, g].
-    s_w = np.sum(w, axis=1)
-    s_wg = np.sum(w * g, axis=1)
-    s_wgg = np.sum(w * g * g, axis=1)
-    s_wl = np.sum(w * lny, axis=1)
-    s_wgl = np.sum(w * g * lny, axis=1)
-    det = s_w * s_wgg - s_wg * s_wg
-    det_ok = np.abs(det) > eps
-    det_safe = np.where(det_ok, det, 1.0)
-    b0 = (s_wgg * s_wl - s_wg * s_wgl) / det_safe
-    alpha = (s_w * s_wgl - s_wg * s_wl) / det_safe
-
-    # Weighted log-domain R^2.
-    lny_hat = b0[:, None] + alpha[:, None] * g
-    lny_bar = np.where(s_w > eps, s_wl / np.where(s_w > eps, s_w, 1.0), 0.0)
-    ss_res = np.sum(w * (lny - lny_hat) ** 2, axis=1)
-    ss_tot = np.sum(w * (lny - lny_bar[:, None]) ** 2, axis=1)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        r_squared = np.where(
-            ss_tot > eps, 1.0 - ss_res / np.where(ss_tot > eps, ss_tot, 1.0), 0.0
+    n_vox = curves.shape[0]
+    chunks = [
+        _fit_gamma_firstpass_chunk(
+            curves[start : start + FIRSTPASS_FIT_CHUNK_SIZE], tr, baseline_frames
         )
-
-    # Reconstruct gamma parameters and the analytic first-pass area.
-    y_max = np.exp(np.clip(b0, -50.0, 50.0))
-    tau_flat = tau[:, 0]
-    alpha_c = np.clip(alpha, *FIRSTPASS_ALPHA_BOUNDS)
-    beta = tau_flat / np.maximum(alpha_c, 1e-6)
-    with np.errstate(over="ignore", invalid="ignore"):
-        amplitude = y_max * np.exp(alpha_c) / np.power(tau_flat, alpha_c)
-        gamma_auc = (
-            amplitude
-            * np.power(beta, alpha_c + 1.0)
-            * _gamma_fn(alpha_c + 1.0)
-            * tr
+        for start in range(0, n_vox, FIRSTPASS_FIT_CHUNK_SIZE)
+    ]
+    if not chunks:
+        empty = np.empty(0, dtype=np.float64)
+        return BatchedGammaFirstPassResult(
+            auc=empty,
+            alpha=empty.copy(),
+            beta=empty.copy(),
+            t0=empty.copy(),
+            r_squared=empty.copy(),
+            unfittable_fraction=0.0,
+            n_fit=0,
+            n_unfittable=0,
         )
-
-    beta_in_bounds = (beta >= FIRSTPASS_BETA_BOUNDS[0]) & (
-        beta <= FIRSTPASS_BETA_BOUNDS[1]
-    )
-    alpha_in_bounds = (alpha >= FIRSTPASS_ALPHA_BOUNDS[0]) & (
-        alpha <= FIRSTPASS_ALPHA_BOUNDS[1]
-    )
-    gamma_ok = (
-        valid_peak
-        & det_ok
-        & (n_samples >= FIRSTPASS_MIN_SAMPLES)
-        & alpha_in_bounds
-        & beta_in_bounds
-        & (r_squared >= FIRSTPASS_R2_THRESHOLD)
-        & np.isfinite(gamma_auc)
-        & (gamma_auc > 0.0)
-    )
-
-    # No fallback: unfittable voxels are NaN (reported, not biased low).
-    auc = np.where(gamma_ok, gamma_auc, np.nan)
-    n_fit = int(np.sum(gamma_ok))
-    n_unfittable = int(n_vox - n_fit)
-    unfittable_fraction = float(n_unfittable / n_vox) if n_vox > 0 else 0.0
-
+    n_fit = sum(chunk.n_fit for chunk in chunks)
+    n_unfittable = n_vox - n_fit
     return BatchedGammaFirstPassResult(
-        auc=auc,
-        alpha=np.where(gamma_ok, alpha, np.nan),
-        beta=np.where(gamma_ok, beta, np.nan),
-        t0=np.where(gamma_ok, t0f, np.nan),
-        r_squared=np.where(gamma_ok, r_squared, np.nan),
-        unfittable_fraction=unfittable_fraction,
+        auc=np.concatenate([chunk.auc for chunk in chunks]),
+        alpha=np.concatenate([chunk.alpha for chunk in chunks]),
+        beta=np.concatenate([chunk.beta for chunk in chunks]),
+        t0=np.concatenate([chunk.t0 for chunk in chunks]),
+        r_squared=np.concatenate([chunk.r_squared for chunk in chunks]),
+        unfittable_fraction=(float(n_unfittable / n_vox) if n_vox else 0.0),
         n_fit=n_fit,
         n_unfittable=n_unfittable,
     )
@@ -993,7 +1155,6 @@ def should_apply_gamma_fit(
             spr = secondary_peak_val / peak_val if peak_val > EPSILON_CONCENTRATION else 0.0
 
             # Check if it's a true local maximum (derivative sign change)
-            abs_idx = recirc_start + secondary_peak_idx_local
             if 0 < secondary_peak_idx_local < len(tail) - 1:
                 left_slope = tail[secondary_peak_idx_local] - tail[secondary_peak_idx_local - 1]
                 right_slope = tail[secondary_peak_idx_local + 1] - tail[secondary_peak_idx_local]

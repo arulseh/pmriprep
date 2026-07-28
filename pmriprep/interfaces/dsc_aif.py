@@ -77,8 +77,7 @@ GAMMA_R2_SYNTHETIC_FALLBACK: float = 0.0
 #: BRR = mean(tail) / peak × 100. True arterial washout produces +5 to +30%;
 #: slightly negative (≥-2%) is within T1-recirculation noise.  Below -3%
 #: indicates T1-leakage dominance or motion breaking the mono-exponential
-#: ΔR2* assumption (Boxerman 2006, AJNR 27:859; Willats & Calamante 2013
-#: NMR Biomed 26:913).  Tighter than the per-candidate permissive floor
+#: ΔR2* assumption. Tighter than the per-candidate permissive floor
 #: (-10%) because averaging should reduce noise, not let bad voxels
 #: dominate.
 AIF_AVG_BRR_MIN: float = -3.0
@@ -107,8 +106,8 @@ class AifQualityResult(NamedTuple):
     brr: float
 
 
-class DualRoiResult(NamedTuple):
-    """Return type for ``_try_aif_dual_roi``."""
+class AIFPoolAcceptanceResult(NamedTuple):
+    """Accepted inverse-cost-weighted AIF candidate pool."""
 
     curve: npt.NDArray[Any]
     mask: npt.NDArray[Any]
@@ -116,6 +115,124 @@ class DualRoiResult(NamedTuple):
     spr: float
     peak_ratio: Optional[float]
     brr: float
+
+
+_AIFCandidate = tuple[float, tuple[int, int, int], dict[str, Any]]
+_AcceptedAIF = tuple[npt.NDArray[Any], npt.NDArray[Any], int]
+
+
+class _TrimmedPoolAcceptanceResult(NamedTuple):
+    """Accepted averaged-AIF result and the candidate pool that produced it."""
+
+    result: AIFPoolAcceptanceResult
+    candidates: list[_AIFCandidate]
+
+
+class _SingleBestAIFResult(NamedTuple):
+    """Accepted single-candidate fallback curve, mask, and ROI size."""
+
+    curve: npt.NDArray[Any]
+    mask: npt.NDArray[Any]
+    roi_size: int
+    candidate: _AIFCandidate
+
+
+class _TierCandidateResult(NamedTuple):
+    """Candidate survivors and diagnostics produced by one cascade tier."""
+
+    candidates: list[_AIFCandidate]
+    n_available: int
+    filter_metadata: dict[str, Any]
+    postfilter_diagnostics: Optional[dict[str, Any]]
+
+
+class _CascadeUnionState(NamedTuple):
+    """Mutable collections used to accumulate candidates across tiers."""
+
+    candidates: list[_AIFCandidate]
+    coordinates: set[tuple[int, int, int]]
+    tier_provenance: dict[str, int]
+    coordinate_origins: dict[tuple[int, int, int], str]
+    filter_metadata: dict[str, Any]
+
+
+class _UnionAcceptanceResult(NamedTuple):
+    """Accepted union pool with its ordered provenance."""
+
+    accepted_aif: _AcceptedAIF
+    candidates: list[_AIFCandidate]
+    detection_level: str
+    tier_provenance: dict[str, int]
+
+
+class _CascadeDetectionResult(NamedTuple):
+    """Candidate cascade outcome consumed by final AIF construction."""
+
+    accepted_aif: Optional[_AcceptedAIF]
+    candidates: list[_AIFCandidate]
+    n_available: int
+    detection_level: str
+    filter_metadata: dict[str, Any]
+    initial_level: Optional[str]
+    tiers_attempted: list[str]
+    tier_provenance: dict[str, int]
+    postfilter_diagnostics: dict[str, dict[str, Any]]
+
+
+class _FinalizedDetectedAIF(NamedTuple):
+    """Detected AIF arrays, QC state, and updated baseline."""
+
+    curve: npt.NDArray[Any]
+    mask: npt.NDArray[Any]
+    quality_score: float
+    qc_metrics: dict[str, Any]
+    baseline_frames: int
+
+
+class _FinalAIFState(NamedTuple):
+    """Final DSC AIF arrays and metadata ready for serialization."""
+
+    curve: npt.NDArray[Any]
+    mask: npt.NDArray[Any]
+    measured_curve: npt.NDArray[Any]
+    raw_curve: Optional[npt.NDArray[Any]]
+    gamma_curve: Optional[npt.NDArray[Any]]
+    affine: npt.NDArray[Any]
+    detection_level: str
+    quality_score: float
+    gamma_fit_applied: bool
+    baseline_frames: int
+    candidate_count: int
+    qc_metrics: dict[str, Any]
+
+
+class _DSCAIFDetectionContext(NamedTuple):
+    """Validated image data, acquisition state, and detection parameters."""
+
+    concentration: npt.NDArray[Any]
+    affine: npt.NDArray[Any]
+    brain_mask: npt.NDArray[Any]
+    atlas_mask: Optional[npt.NDArray[Any]]
+    atlas_is_mra: bool
+    full_atlas_mask: Optional[npt.NDArray[Any]]
+    lesion_mask: Optional[npt.NDArray[Any]]
+    enhancing_mask: Optional[npt.NDArray[Any]]
+    signal: Optional[npt.NDArray[Any]]
+    aif_method: str
+    initial_criteria: str
+    n_candidates: int
+    baseline_frames: int
+    gamma_fit_mode: str
+    disable_fallback: bool
+    lesion_distance: float
+    n_timepoints: int
+    field_strength: float
+    synthetic_effective_dose: float
+    voxel_sizes: tuple[float, float, float]
+    tr: float
+
+
+_CascadeAttempt = tuple[str, Optional[npt.NDArray[Any]], str, bool]
 
 
 # ---------------------------------------------------------------------------
@@ -612,8 +729,7 @@ class AIFDetection(BaseInterface):
         # cortical surface voxels. 3D erosion with 4 iterations removes
         # ~4 voxels from all faces including z, which wipes out skull-base
         # slices where the best AIF candidates (ICA, MCA M1) reside.
-        # After RAS enforcement (Fix 7), z is consistently the slice
-        # direction (third axis, index 2).
+        # Input orientation is RAS, so z is the slice direction (axis 2).
         struct_inplane = generate_binary_structure(3, 1)  # 6-connected
         struct_inplane[:, :, 0] = 0  # Remove z-minus connectivity
         struct_inplane[:, :, 2] = 0  # Remove z-plus connectivity
@@ -631,7 +747,7 @@ class AIFDetection(BaseInterface):
         else:
             search = eroded
 
-        # Safety: if erosion removed everything, fall back to uneroded
+        # Preserve a non-empty search domain when erosion removes all voxels.
         if not np.any(search):
             search = (brain_mask > 0.5).copy()
             if roi_mask is not None:
@@ -1725,6 +1841,7 @@ class AIFDetection(BaseInterface):
         top_candidates: list[tuple[float, tuple[int, int, int], dict[str, Any]]],
         conc_data: npt.NDArray[Any],
         brain_mask: npt.NDArray[Any],
+        tr: float,
         roi_size: int = 3,
     ) -> tuple[npt.NDArray[Any], npt.NDArray[Any]]:
         """Compute inverse-cost weighted AIF with 3x3x3 ROI averaging.
@@ -1737,6 +1854,9 @@ class AIFDetection(BaseInterface):
             4D concentration data.
         brain_mask : ndarray
             3D brain mask.
+        tr : float
+            Frame period in seconds, used to keep temporal smoothing
+            consistent across acquisition rates.
         roi_size : int
             Side length of cubic ROI around each candidate.
 
@@ -1793,9 +1913,15 @@ class AIFDetection(BaseInterface):
 
             aif_curve = weighted_aif
 
-        # Savitzky-Golay smoothing (window=5, polyorder=2)
+        # Smooth over a fixed duration rather than a fixed frame count so the
+        # arterial peak receives comparable filtering across acquisition TRs.
         if len(aif_curve) >= 5:
-            aif_curve = savgol_filter(aif_curve, window_length=5, polyorder=2)
+            from pmriprep.utils.dsc_aif import get_aif_smoothing_window
+
+            window_length = get_aif_smoothing_window(len(aif_curve), tr)
+            aif_curve = savgol_filter(
+                aif_curve, window_length=window_length, polyorder=2
+            )
 
         # Negative ΔR2* is physically valid (symmetric noise, T1 recirculation).
         # Do NOT clip to zero — it biases the AIF integral, corrupts the SVD
@@ -1920,192 +2046,37 @@ class AIFDetection(BaseInterface):
         passes = spr <= 100.0 and gmax_ok and pr_ok and brr_ok
         return AifQualityResult(passes, spr, pr, brr)
 
-    def _try_aif_dual_roi(
+    def _try_aif_pool_acceptance(
         self,
         candidates: list[tuple[float, tuple[int, int, int], dict[str, Any]]],
         conc_data: npt.NDArray[Any],
         brain_mask: npt.NDArray[Any],
         tr: float,
         baseline_frames: int,
-    ) -> Optional[DualRoiResult]:
+    ) -> Optional[AIFPoolAcceptanceResult]:
         """Compute the inverse-cost-weighted averaged AIF and gate it.
 
-        Name kept for compatibility with historical "dual ROI" phase;
-        today this tries only ``roi_size=1`` (single-voxel per candidate)
-        — tissue contamination from 3x3x3 neighbourhoods had no SNR
-        benefit over the weighted mean across multiple voxels.
+        Each candidate contributes its own voxel (``roi_size=1``). Tissue
+        contamination from 3x3x3 neighbourhoods had no SNR benefit over the
+        weighted mean across multiple candidate voxels.
 
         Returns
         -------
-        DualRoiResult or None
+        AIFPoolAcceptanceResult or None
             Named tuple with (curve, mask, roi_size, spr, peak_ratio,
             brr) when the averaged curve passes quality gates;
             ``None`` otherwise.
         """
         curve, mask = self._compute_roi_averaged_aif(
-            candidates, conc_data, brain_mask, roi_size=1,
+            candidates, conc_data, brain_mask, tr, roi_size=1,
         )
         qr = self._aif_passes_quality(curve, baseline_frames, tr)
         if qr.passes:
-            return DualRoiResult(
+            return AIFPoolAcceptanceResult(
                 curve, mask, 1,
                 qr.spr, qr.peak_ratio, qr.brr,
             )
         return None
-
-    # -----------------------------------------------------------------
-    # Post-averaging AIF validation (legacy — kept for compatibility)
-    # -----------------------------------------------------------------
-
-    @staticmethod
-    def _validate_averaged_aif(
-        aif_curve: npt.NDArray[Any],
-        top_candidates: list[tuple[float, tuple[int, int, int], dict[str, Any]]],
-        conc_data: npt.NDArray[Any],
-        brain_mask: npt.NDArray[Any],
-        tr: float,
-        baseline_frames: int,
-    ) -> tuple[
-        npt.NDArray[Any],
-        npt.NDArray[Any],
-        list[tuple[float, tuple[int, int, int], dict[str, Any]]],
-        dict[str, Any],
-    ]:
-        """Validate averaged AIF and retry with smaller ROI if needed.
-
-        Checks whether recirculation exceeds the first-pass peak in the
-        ROI-averaged AIF.  If so, re-averages with ``roi_size=1`` and,
-        as a last resort, uses the single best candidate voxel.
-
-        Parameters
-        ----------
-        aif_curve : ndarray
-            1D AIF time course from ``_compute_roi_averaged_aif``.
-        top_candidates : list
-            List of ``(cost, (x,y,z), metrics)`` tuples.
-        conc_data : ndarray
-            4D concentration data.
-        brain_mask : ndarray
-            3D brain mask.
-        tr : float
-            Repetition time in seconds.
-        baseline_frames : int
-            Number of pre-bolus baseline frames.
-
-        Returns
-        -------
-        aif_curve : ndarray
-            Validated (possibly re-computed) AIF time course.
-        aif_mask : ndarray
-            3D boolean mask of voxels used.
-        top_candidates : list
-            Candidates actually used (may be truncated to 1).
-        validation_qc : dict
-            Validation metadata for QC reporting.
-        """
-        n_time = len(aif_curve)
-
-        def _compute_spr(curve: npt.NDArray[Any]) -> tuple[float, int, float]:
-            """Return (SPR%, first-pass peak frame, first-pass peak value)."""
-            fp_start = baseline_frames + max(1, int(_FP_GAP_SECONDS / tr))
-            fp_end = min(baseline_frames + int(40.0 / tr), n_time)
-            if fp_start >= n_time or fp_end <= fp_start:
-                return 0.0, -1, 0.0
-
-            fp_window = curve[fp_start:fp_end]
-            fp_peak_rel = int(np.argmax(fp_window))
-            fp_peak_abs = fp_start + fp_peak_rel
-            fp_peak_val = float(fp_window[fp_peak_rel])
-
-            baseline = float(np.mean(curve[:baseline_frames]))
-            fp_height = fp_peak_val - baseline
-            if fp_height < EPSILON_SIGNAL:
-                return 0.0, fp_peak_abs, fp_peak_val
-
-            # Recirculation window: 15 s buffer after first-pass window
-            recirc_start = fp_end + max(1, int(15.0 / tr))
-            if recirc_start >= n_time:
-                return 0.0, fp_peak_abs, fp_peak_val
-
-            post_recirc = curve[recirc_start:]
-            spr = (float(np.max(post_recirc)) - baseline) / fp_height * 100.0
-            return spr, fp_peak_abs, fp_peak_val
-
-        def _global_max_in_fp(curve: npt.NDArray[Any]) -> bool:
-            """Return True if global maximum falls within the first-pass window."""
-            fp_start = baseline_frames + max(1, int(_FP_GAP_SECONDS / tr))
-            fp_end = min(baseline_frames + int(40.0 / tr), n_time)
-            global_max_frame = int(np.argmax(curve))
-            return fp_start <= global_max_frame < fp_end
-
-        validation_qc: dict[str, Any] = {}
-        spr, fp_peak_frame, fp_peak_val = _compute_spr(aif_curve)
-        validation_qc["averaged_aif_spr"] = round(spr, 1)
-        validation_qc["averaged_aif_fp_peak_frame"] = fp_peak_frame
-
-        spr_bad = spr > 100.0
-        gmax_bad = not _global_max_in_fp(aif_curve)
-        needs_retry = spr_bad or gmax_bad
-
-        if needs_retry:
-            if spr_bad and gmax_bad:
-                validation_qc["averaged_aif_retry_reason"] = "both"
-            elif spr_bad:
-                validation_qc["averaged_aif_retry_reason"] = "spr"
-            else:
-                validation_qc["averaged_aif_retry_reason"] = "global_max_outside_fp"
-
-        if not needs_retry:
-            # Original curve is acceptable
-            aif_mask = np.zeros(conc_data.shape[:3], dtype=bool)
-            # Reconstruct mask from candidates with default roi_size=3
-            for _, coord, _ in top_candidates:
-                slices = tuple(
-                    slice(
-                        max(0, coord[d] - 1),
-                        min(conc_data.shape[d], coord[d] + 2),
-                    )
-                    for d in range(3)
-                )
-                roi = np.zeros(conc_data.shape[:3], dtype=bool)
-                roi[slices] = True
-                aif_mask |= roi & (brain_mask > 0.5)
-
-            validation_qc["averaged_aif_validation_retries"] = 0
-            validation_qc["averaged_aif_final_roi_size"] = 3
-            return aif_curve, aif_mask, top_candidates, validation_qc
-
-        # Retry 1: re-average with roi_size=1 (no neighborhood)
-        retry_curve, retry_mask = AIFDetection._compute_roi_averaged_aif(
-            top_candidates, conc_data, brain_mask, roi_size=1,
-        )
-        spr_r1, _, _ = _compute_spr(retry_curve)
-        validation_qc["averaged_aif_spr_retry1"] = round(spr_r1, 1)
-
-        if spr_r1 <= 100.0 and _global_max_in_fp(retry_curve):
-            validation_qc["averaged_aif_validation_retries"] = 1
-            validation_qc["averaged_aif_final_roi_size"] = 1
-            return retry_curve, retry_mask, top_candidates, validation_qc
-
-        # Retry 2: single best candidate only, roi_size=1
-        best_only = [top_candidates[0]]
-        retry2_curve, retry2_mask = AIFDetection._compute_roi_averaged_aif(
-            best_only, conc_data, brain_mask, roi_size=1,
-        )
-        spr_r2, _, _ = _compute_spr(retry2_curve)
-        validation_qc["averaged_aif_spr_retry2"] = round(spr_r2, 1)
-
-        if spr_r2 <= 100.0 and _global_max_in_fp(retry2_curve):
-            validation_qc["averaged_aif_validation_retries"] = 2
-            validation_qc["averaged_aif_final_roi_size"] = 1
-            return retry2_curve, retry2_mask, best_only, validation_qc
-
-        # Final: accept best single-voxel result with warning
-        validation_qc["averaged_aif_validation_retries"] = 2
-        validation_qc["averaged_aif_final_roi_size"] = 1
-        validation_qc["aif_recirculation_warning"] = True
-        validation_qc["aif_confidence"] = "reduced"
-        return retry2_curve, retry2_mask, best_only, validation_qc
 
     # -----------------------------------------------------------------
     # Synthetic AIF (calibrated gamma-variate)
@@ -2421,7 +2392,6 @@ class AIFDetection(BaseInterface):
             Updated Nipype runtime object.
         """
         import logging
-
         import nibabel as nib  # type: ignore[import-untyped]
 
         _logger = logging.getLogger(__name__)
@@ -2513,8 +2483,23 @@ class AIFDetection(BaseInterface):
 
         from pmriprep.utils.dsc_aif import compute_aif_fwhm_frames
 
-        # Compute QC metrics
-        baseline_frames = int(self.inputs.baseline_frames)
+        # Refine the bootstrap baseline from the supplied arterial curve so
+        # external and detected AIFs expose the same single downstream state.
+        bootstrap_baseline = int(self.inputs.baseline_frames)
+        tr = float(self.inputs.tr)
+        if tr <= 0:
+            zooms = conc_img.header.get_zooms()  # type: ignore[attr-defined,union-attr]
+            tr = float(zooms[3]) if len(zooms) >= 4 and zooms[3] > 0 else 1.5
+            if tr > 100.0:
+                tr = 1.5
+        baseline_frames, baseline_diagnostics = (
+            self._refine_selected_aif_baseline(
+                aif_curve,
+                preliminary_baseline=bootstrap_baseline,
+                bootstrap_baseline=bootstrap_baseline,
+                tr=tr,
+            )
+        )
         cnr = compute_aif_cnr(aif_curve, baseline_frames)
         fwhm_frames = compute_aif_fwhm_frames(aif_curve, baseline_frames)
         washout = compute_aif_washout_fraction(aif_curve, baseline_frames)
@@ -2550,6 +2535,11 @@ class AIFDetection(BaseInterface):
             "baseline_cv": baseline_cv,
             "n_candidates": 0,
             "baseline_frames": baseline_frames,
+            "bootstrap_baseline_frames": bootstrap_baseline,
+            "aif_baseline_frames": baseline_frames,
+            "baseline_frames_used": baseline_frames,
+            "n_baseline_frames": baseline_frames,
+            "baseline_detection_method": "selected_aif_refined",
             # Detection-time AIF metrics under the canonical nested
             # key. The external path computes a subset of fields —
             # ttp / ph / psr / arrival are not derivable here, so they
@@ -2560,6 +2550,7 @@ class AIFDetection(BaseInterface):
                 "brr": float(washout),
             },
         }
+        qc_metrics.update(baseline_diagnostics)
 
         # Write AIF curve
         out_aif_curve = self._gen_outfilename("_aif_curve.txt")
@@ -2597,159 +2588,123 @@ class AIFDetection(BaseInterface):
             "quality_score": quality_score,
             "candidate_count": 0,
             "gamma_fit_applied": False,
-            "aif_baseline_frames": int(self.inputs.baseline_frames),
+            "aif_baseline_frames": baseline_frames,
             "qc_metrics": qc_metrics,
         }
 
         return runtime
 
-    # -----------------------------------------------------------------
-    # Step 10: Main pipeline  (_run_interface)
-    # -----------------------------------------------------------------
-
-    def _run_interface(self, runtime: Any) -> Any:
-        """Execute the AIF detection pipeline.
-
-        1. Build attempts list: atlas (strict/relaxed/permissive) then
-           brain (relaxed/permissive).
-        2. Each attempt: prepare mask -> find candidates -> score ->
-           post-scoring filters (distance + contralateral).
-        3. On success, finalize metrics and break.
-        4. Synthetic fallback if all attempts fail.
-        """
-        import logging
+    def _load_detection_context(self, logger: Any) -> _DSCAIFDetectionContext:
+        """Load and validate images, acquisition state, and detection options."""
         import nibabel as nib  # type: ignore[import-untyped]
 
-        _logger = logging.getLogger(__name__)
+        concentration_image = nib.load(self.inputs.concentration_file)
+        concentration = concentration_image.get_fdata()  # type: ignore[attr-defined]
+        affine = concentration_image.affine  # type: ignore[attr-defined]
 
-        # ===== External AIF: bypass all detection if provided =====
-        if isdefined(self.inputs.external_aif_file) and self.inputs.external_aif_file:
-            return self._handle_external_aif(runtime)
-
-        from pmriprep.utils.dsc_signal import detect_bolus_arrival
-
-        # Load data
-        conc_img = nib.load(self.inputs.concentration_file)
-        conc_data: npt.NDArray[Any] = conc_img.get_fdata()  # type: ignore[attr-defined]
-        affine = conc_img.affine  # type: ignore[attr-defined]
-
-        brain_img = nib.load(self.inputs.brain_mask_file)
-        brain_mask: npt.NDArray[Any] = brain_img.get_fdata()  # type: ignore[attr-defined]
-
-        if brain_mask.shape[:3] != conc_data.shape[:3]:
+        brain_image = nib.load(self.inputs.brain_mask_file)
+        brain_mask = brain_image.get_fdata()  # type: ignore[attr-defined]
+        if brain_mask.shape[:3] != concentration.shape[:3]:
             raise RuntimeError(
                 f"Brain mask shape {brain_mask.shape[:3]} does not match "
-                f"concentration data shape {conc_data.shape[:3]}. "
+                f"concentration data shape {concentration.shape[:3]}. "
                 "The brain mask must be in native DSC space. "
                 "Ensure transform_brain_mask node is connected upstream."
             )
 
-        # Optional atlas mask (user-supplied aif_mask_file takes priority)
         atlas_mask: Optional[npt.NDArray[Any]] = None
-        atlas_is_mra: bool = False
+        atlas_is_mra = False
         if isdefined(self.inputs.aif_mask_file) and self.inputs.aif_mask_file:
-            atlas_img = nib.load(self.inputs.aif_mask_file)
-            atlas_mask = atlas_img.get_fdata()  # type: ignore[attr-defined]
+            atlas_image = nib.load(self.inputs.aif_mask_file)
+            atlas_mask = atlas_image.get_fdata()  # type: ignore[attr-defined]
         elif self.inputs.atlas_mask_file:
             atlas_is_mra = True
-            atlas_img = nib.load(self.inputs.atlas_mask_file)
-            atlas_mask = atlas_img.get_fdata()  # type: ignore[attr-defined]
+            atlas_image = nib.load(self.inputs.atlas_mask_file)
+            atlas_mask = atlas_image.get_fdata()  # type: ignore[attr-defined]
 
-        # Optional full atlas (incl. posterior circulation, undilated)
         full_atlas_mask: Optional[npt.NDArray[Any]] = None
         if (
             isdefined(self.inputs.full_atlas_mask_file)
             and self.inputs.full_atlas_mask_file
         ):
-            full_atlas_img = nib.load(self.inputs.full_atlas_mask_file)
-            full_atlas_mask = full_atlas_img.get_fdata()  # type: ignore[attr-defined]
+            full_atlas_image = nib.load(self.inputs.full_atlas_mask_file)
+            full_atlas_mask = full_atlas_image.get_fdata()  # type: ignore[attr-defined]
 
-        # Optional lesion mask
         lesion_mask: Optional[npt.NDArray[Any]] = None
         if self.inputs.lesion_mask_file:
-            lesion_img = nib.load(self.inputs.lesion_mask_file)
-            lesion_data = lesion_img.get_fdata()  # type: ignore[attr-defined]
+            lesion_image = nib.load(self.inputs.lesion_mask_file)
+            lesion_data = lesion_image.get_fdata()  # type: ignore[attr-defined]
             needs_resample = (
-                lesion_data.shape[:3] != conc_data.shape[:3]
-                or not np.allclose(lesion_img.affine, conc_img.affine, atol=1e-3)  # type: ignore[attr-defined]
+                lesion_data.shape[:3] != concentration.shape[:3]
+                or not np.allclose(
+                    lesion_image.affine,  # type: ignore[attr-defined]
+                    concentration_image.affine,  # type: ignore[attr-defined]
+                    atol=1e-3,
+                )
             )
             if needs_resample:
                 from nilearn.image import resample_to_img  # type: ignore[import-untyped]
+
                 resampled = resample_to_img(
-                    lesion_img, conc_img, interpolation="nearest"
+                    lesion_image, concentration_image, interpolation="nearest",
                 )
                 lesion_mask = (resampled.get_fdata() > 0.5).astype(np.float64)  # type: ignore[attr-defined]
             else:
                 lesion_mask = lesion_data
 
-        # Optional enhancing mask for laterality determination
         enhancing_mask: Optional[npt.NDArray[Any]] = None
         if self.inputs.enhancing_mask_file:
-            enh_img = nib.load(self.inputs.enhancing_mask_file)
-            enh_data = enh_img.get_fdata()  # type: ignore[attr-defined]
+            enhancing_image = nib.load(self.inputs.enhancing_mask_file)
+            enhancing_data = enhancing_image.get_fdata()  # type: ignore[attr-defined]
             needs_resample = (
-                enh_data.shape[:3] != conc_data.shape[:3]
-                or not np.allclose(enh_img.affine, conc_img.affine, atol=1e-3)  # type: ignore[attr-defined]
+                enhancing_data.shape[:3] != concentration.shape[:3]
+                or not np.allclose(
+                    enhancing_image.affine,  # type: ignore[attr-defined]
+                    concentration_image.affine,  # type: ignore[attr-defined]
+                    atol=1e-3,
+                )
             )
             if needs_resample:
                 from nilearn.image import resample_to_img  # type: ignore[import-untyped]
+
                 resampled = resample_to_img(
-                    enh_img, conc_img, interpolation="nearest"
+                    enhancing_image, concentration_image, interpolation="nearest",
                 )
                 enhancing_mask = (resampled.get_fdata() > 0.5).astype(np.float64)  # type: ignore[attr-defined]
             else:
-                enhancing_mask = enh_data
+                enhancing_mask = enhancing_data
 
-        # Load raw signal for S0 and signal-based metrics
-        signal_data: Optional[npt.NDArray[Any]] = None
+        signal: Optional[npt.NDArray[Any]] = None
         if self.inputs.signal_file:
-            signal_img = nib.load(self.inputs.signal_file)
-            signal_data = signal_img.get_fdata()  # type: ignore[attr-defined]
+            signal_image = nib.load(self.inputs.signal_file)
+            signal = signal_image.get_fdata()  # type: ignore[attr-defined]
 
-        # Parameters
-        aif_method = str(self.inputs.aif_method)
-        initial_criteria = str(self.inputs.criteria)
-        n_candidates = int(self.inputs.n_candidates)
-        baseline_frames = int(self.inputs.baseline_frames)
-        gamma_fit_mode = "auto"
-        disable_fallback = bool(self.inputs.disable_fallback)
         lesion_distance = float(self.inputs.lesion_distance)
         if lesion_distance < LESION_EXCLUSION_FLOOR_MM:
-            _logger.warning(
+            logger.warning(
                 "lesion_distance=%.1f mm is below hard minimum (%.1f mm); "
                 "clamping to %.1f mm.",
-                lesion_distance, LESION_EXCLUSION_FLOOR_MM,
+                lesion_distance,
+                LESION_EXCLUSION_FLOOR_MM,
                 LESION_EXCLUSION_FLOOR_MM,
             )
             lesion_distance = LESION_EXCLUSION_FLOOR_MM
         elif lesion_distance < LESION_EXCLUSION_DISTANCE_MM:
-            _logger.warning(
+            logger.warning(
                 "lesion_distance=%.1f mm is below recommended minimum "
                 "(%.1f mm); peritumoral vascular abnormalities may "
                 "contaminate AIF candidates.",
-                lesion_distance, LESION_EXCLUSION_DISTANCE_MM,
+                lesion_distance,
+                LESION_EXCLUSION_DISTANCE_MM,
             )
-        n_timepoints = conc_data.shape[3]
-        field_strength = (
-            float(self.inputs.field_strength)
-            if isdefined(self.inputs.field_strength) else 3.0
-        )
-        synth_effective_dose = float(np.clip(
-            self._effective_dose(), 0.2, SYNTH_AIF_DOSE_CAP,
-        ))
 
-        # Voxel sizes for distance-based lesion exclusion and TR detection
-        zooms = conc_img.header.get_zooms()  # type: ignore[attr-defined,union-attr]
-        voxel_sizes = tuple(float(z) for z in zooms[:3])
-
-        # TR: from input, or auto-detect from NIfTI header, fallback 1.5 s
+        zooms = concentration_image.header.get_zooms()  # type: ignore[attr-defined,union-attr]
         tr = float(self.inputs.tr)
         if tr <= 0:
             if len(zooms) >= 4 and zooms[3] > 0:
                 tr = float(zooms[3])
-                # Sanity: DSC TR is typically 1-3 s; detect ms/us units
                 if tr > 100.0:
-                    _logger.warning(
+                    logger.warning(
                         "Auto-detected TR=%.1fs from NIfTI header seems too "
                         "large (possible millisecond units). Falling back to 1.5s.",
                         tr,
@@ -2758,51 +2713,568 @@ class AIFDetection(BaseInterface):
             else:
                 tr = 1.5
 
-        # --- Auto-detect actual bolus arrival for AIF first-pass window ---
-        # Use 99th percentile across brain voxels — naturally selects arterial
-        # timing without transit delay (avoids GAP 6 problem where mean brain
-        # concentration detects tissue arrival 4-12 s later than arteries).
-        # Derivative-anchored detection operates on tissue signals and needs
-        # no AIF voxels — runs even for synthetic AIF.  Skipping it would
-        # default to pre_bolus (often 5), catastrophic for long baselines
-        # and misaligning synthetic AIF bolus timing with the actual data.
-        brain_conc_all = conc_data[brain_mask > 0.5]
-        if (
-            brain_conc_all.ndim > 1
-            and brain_conc_all.shape[0] > 100
-        ):
-            from pmriprep.utils.baseline_detection import detect_baseline_ensemble
-
-            # Compute multiple percentiles for multi-signal consensus
-            p90_curve, p99_curve = np.percentile(
-                brain_conc_all, [90, 99], axis=0,
-            )
-            mean_curve = np.mean(brain_conc_all, axis=0)
-
-            detected_arrival, bl_diag = detect_baseline_ensemble(
-                p99_curve, tr=tr,
-                min_baseline=max(5, int(10.0 / max(tr, 0.1))),
-                additional_signals=[p90_curve, mean_curve],
-            )
-            aif_baseline_frames = detected_arrival
-            _logger.debug(
-                "Ensemble baseline detection: arrival=%d, conf=%s, method=%s",
-                detected_arrival,
-                bl_diag.get("confidence", "unknown"),
-                bl_diag.get("method", "unknown"),
-            )
-        else:
-            aif_baseline_frames = baseline_frames  # fallback to configured
-
-        # Cached for reuse as cascade fallback.
-        self._cached_synth_aif, self._cached_synth_metrics = (
-            self._generate_synthetic_aif(
-                n_timepoints, tr, aif_baseline_frames,
-                field_strength=field_strength,
-                effective_dose=synth_effective_dose,
-            )
+        field_strength = (
+            float(self.inputs.field_strength)
+            if isdefined(self.inputs.field_strength)
+            else 3.0
+        )
+        synthetic_effective_dose = float(
+            np.clip(self._effective_dose(), 0.2, SYNTH_AIF_DOSE_CAP)
         )
 
+        return _DSCAIFDetectionContext(
+            concentration=concentration,
+            affine=affine,
+            brain_mask=brain_mask,
+            atlas_mask=atlas_mask,
+            atlas_is_mra=atlas_is_mra,
+            full_atlas_mask=full_atlas_mask,
+            lesion_mask=lesion_mask,
+            enhancing_mask=enhancing_mask,
+            signal=signal,
+            aif_method=str(self.inputs.aif_method),
+            initial_criteria=str(self.inputs.criteria),
+            n_candidates=int(self.inputs.n_candidates),
+            baseline_frames=int(self.inputs.baseline_frames),
+            gamma_fit_mode="auto",
+            disable_fallback=bool(self.inputs.disable_fallback),
+            lesion_distance=lesion_distance,
+            n_timepoints=concentration.shape[3],
+            field_strength=field_strength,
+            synthetic_effective_dose=synthetic_effective_dose,
+            voxel_sizes=(float(zooms[0]), float(zooms[1]), float(zooms[2])),
+            tr=tr,
+        )
+
+    @staticmethod
+    def _build_cascade_attempts(
+        initial_criteria: str,
+        atlas_mask: Optional[npt.NDArray[Any]],
+        atlas_is_mra: bool,
+        full_atlas_mask: Optional[npt.NDArray[Any]],
+        strict_roi_constraint: bool,
+    ) -> list[_CascadeAttempt]:
+        """Build the ordered DSC AIF search tiers permitted by the inputs."""
+        criteria_order = ["strict", "relaxed", "permissive"]
+        try:
+            start_index = criteria_order.index(initial_criteria)
+        except ValueError:
+            start_index = 0
+
+        attempts: list[_CascadeAttempt] = []
+        if atlas_mask is not None:
+            for criteria in criteria_order:
+                attempts.append(
+                    (criteria, atlas_mask, f"atlas_{criteria}", atlas_is_mra)
+                )
+
+        if full_atlas_mask is not None:
+            attempts.append(
+                ("permissive", full_atlas_mask, "full_atlas_permissive", True)
+            )
+
+        if atlas_mask is None or not strict_roi_constraint:
+            for criteria in ("relaxed", "permissive"):
+                attempts.append((criteria, None, f"brain_{criteria}", False))
+
+        return [
+            attempt
+            for attempt in attempts
+            if criteria_order.index(attempt[0]) >= start_index
+        ]
+
+    def _try_trimmed_pool_acceptance(
+        self,
+        candidates: Sequence[_AIFCandidate],
+        concentration: npt.NDArray[Any],
+        brain_mask: npt.NDArray[Any],
+        tr: float,
+        baseline_frames: int,
+    ) -> Optional[_TrimmedPoolAcceptanceResult]:
+        """Gate the averaged pool while progressively removing poor tails."""
+        pool = list(candidates)
+        while len(pool) >= MIN_AIF_CANDIDATES_ACCEPT:
+            result = self._try_aif_pool_acceptance(
+                pool,
+                concentration,
+                brain_mask,
+                tr,
+                baseline_frames,
+            )
+            if result is not None:
+                return _TrimmedPoolAcceptanceResult(result, pool)
+
+            def trim_key(index: int) -> float:
+                candidate = pool[index]
+                brr = candidate[2].get("baseline_return_ratio", float("nan"))
+                if not np.isnan(brr):
+                    return float(brr)
+                return -float(candidate[0])
+
+            worst_index = min(range(len(pool)), key=trim_key)
+            pool.pop(worst_index)
+
+        return None
+
+    def _prepare_tier_candidates(
+        self,
+        context: _DSCAIFDetectionContext,
+        criteria: str,
+        roi: Optional[npt.NDArray[Any]],
+        is_atlas: bool,
+        n_candidates: int,
+        baseline_frames: int,
+        tissue_ttp: float,
+    ) -> _TierCandidateResult:
+        """Run candidate preparation and filtering for one cascade tier."""
+        search_mask = self._prepare_search_mask(
+            context.brain_mask,
+            roi,
+            context.lesion_mask,
+        )
+        candidate_voxels, peak_map = self._find_aif_candidate_voxels(
+            context.concentration,
+            search_mask,
+            baseline_frames,
+            skip_sss=is_atlas,
+        )
+        if candidate_voxels.shape[0] == 0:
+            return _TierCandidateResult([], 0, {}, None)
+
+        candidates, n_available = self._score_and_select_candidates(
+            candidate_voxels,
+            context.concentration,
+            context.signal,
+            peak_map,
+            context.brain_mask,
+            context.tr,
+            baseline_frames,
+            criteria,
+            tissue_ttp,
+            atlas_mask=context.atlas_mask if roi is None else None,
+        )
+        if not candidates:
+            return _TierCandidateResult([], n_available, {}, None)
+
+        candidates, filter_metadata = self._apply_post_scoring_filters(
+            candidates,
+            context.lesion_mask,
+            context.affine,
+            context.voxel_sizes,
+            lesion_min_distance_mm=context.lesion_distance,
+            enhancing_mask=context.enhancing_mask,
+        )
+        if not candidates:
+            return _TierCandidateResult([], n_available, filter_metadata, None)
+
+        candidates, postfilter_diagnostics = self._apply_postscore_aif_filters(
+            candidates,
+            tr=context.tr,
+        )
+        if not candidates:
+            return _TierCandidateResult(
+                [],
+                n_available,
+                filter_metadata,
+                postfilter_diagnostics,
+            )
+
+        candidates = self._ensure_bilateral_balance(
+            candidates,
+            context.affine,
+            n_candidates,
+        )
+        return _TierCandidateResult(
+            candidates,
+            n_available,
+            filter_metadata,
+            postfilter_diagnostics,
+        )
+
+    def _try_single_best_fallback(
+        self,
+        candidates: Sequence[_AIFCandidate],
+        concentration: npt.NDArray[Any],
+        brain_mask: npt.NDArray[Any],
+        tr: float,
+        baseline_frames: int,
+        logger: Any,
+    ) -> Optional[_SingleBestAIFResult]:
+        """Try the lowest-cost candidate when multi-candidate pools fail."""
+        if not candidates:
+            return None
+
+        best_candidate = min(candidates, key=lambda candidate: candidate[0])
+        for roi_size in (1, 3):
+            curve, mask = self._compute_roi_averaged_aif(
+                [best_candidate],
+                concentration,
+                brain_mask,
+                tr,
+                roi_size=roi_size,
+            )
+            if not self._aif_global_max_in_fp(curve, baseline_frames, tr):
+                continue
+
+            brr = self._compute_aif_brr(curve, baseline_frames, tr)
+            if not np.isnan(brr) and brr < AIF_AVG_BRR_MIN:
+                logger.warning(
+                    "AIF cascade: single-best candidate rejected "
+                    "(BRR=%.1f%% < %.1f%%); falling through to synthetic AIF",
+                    brr,
+                    AIF_AVG_BRR_MIN,
+                )
+                continue
+
+            return _SingleBestAIFResult(curve, mask, roi_size, best_candidate)
+
+        return None
+
+    def _prepare_cached_synthetic_fallback(
+        self,
+        concentration: npt.NDArray[Any],
+        brain_mask: npt.NDArray[Any],
+    ) -> tuple[npt.NDArray[Any], dict[str, Any]]:
+        """Copy the cached synthetic AIF and add tissue-relative QC metrics."""
+        curve = self._cached_synth_aif.copy()
+        metrics = dict(self._cached_synth_metrics)
+        tissue_max = self._compute_tissue_max_for_synthetic(
+            concentration,
+            brain_mask,
+        )
+        if tissue_max is None:
+            return curve, metrics
+
+        metrics["synthetic_aif_tissue_p95_delta_r2star"] = round(
+            float(tissue_max),
+            2,
+        )
+        peak = metrics.get("synthetic_aif_target_peak", 0.0)
+        if tissue_max > 0 and peak > 0:
+            metrics["synthetic_aif_peak_to_tissue_ratio"] = round(
+                peak / tissue_max,
+                2,
+            )
+        return curve, metrics
+
+    @staticmethod
+    def _add_candidates_to_union(
+        state: _CascadeUnionState,
+        candidates: Sequence[_AIFCandidate],
+        level_name: str,
+        limit: int,
+        filter_metadata: dict[str, Any],
+    ) -> None:
+        """Add unique tier candidates to the capped post-cascade union pool."""
+        added = 0
+        for candidate in candidates:
+            coordinate = candidate[1]
+            if coordinate in state.coordinates:
+                continue
+            if len(state.candidates) >= limit:
+                break
+            state.candidates.append(candidate)
+            state.coordinates.add(coordinate)
+            state.coordinate_origins[coordinate] = level_name
+            added += 1
+
+        state.tier_provenance[level_name] = added
+        if added > 0 and not state.filter_metadata:
+            state.filter_metadata.update(filter_metadata)
+
+    def _try_union_fallback(
+        self,
+        state: _CascadeUnionState,
+        attempts: Sequence[_CascadeAttempt],
+        context: _DSCAIFDetectionContext,
+        baseline_frames: int,
+    ) -> Optional[_UnionAcceptanceResult]:
+        """Try the accumulated union and rebuild provenance after trimming."""
+        if len(state.candidates) < MIN_AIF_CANDIDATES_ACCEPT:
+            return None
+
+        acceptance = self._try_trimmed_pool_acceptance(
+            state.candidates,
+            context.concentration,
+            context.brain_mask,
+            context.tr,
+            baseline_frames,
+        )
+        if acceptance is None:
+            return None
+
+        candidates = acceptance.candidates
+        tier_provenance: dict[str, int] = {}
+        for _, coordinate, _ in candidates:
+            level_name = state.coordinate_origins.get(coordinate)
+            if level_name is not None:
+                tier_provenance[level_name] = tier_provenance.get(level_name, 0) + 1
+
+        contributing_levels = [
+            level_name
+            for _, _, level_name, _ in attempts
+            if tier_provenance.get(level_name, 0) > 0
+        ]
+        detection_level = (
+            "+".join(contributing_levels) if contributing_levels else "synthetic"
+        )
+        result = acceptance.result
+        return _UnionAcceptanceResult(
+            (result.curve, result.mask, result.roi_size),
+            candidates,
+            detection_level,
+            tier_provenance,
+        )
+
+    def _finalize_detected_aif(
+        self,
+        cascade: _CascadeDetectionResult,
+        context: _DSCAIFDetectionContext,
+        aif_baseline_frames: int,
+    ) -> _FinalizedDetectedAIF:
+        """Construct the detected AIF mask and its cascade-aware QC metrics."""
+        if cascade.accepted_aif is None or not cascade.candidates:
+            raise RuntimeError("Cannot finalize an empty DSC AIF cascade result")
+
+        curve, accepted_mask, accepted_roi_size = cascade.accepted_aif
+        mask = np.zeros(context.concentration.shape[:3], dtype=np.uint8)
+        mask[accepted_mask] = 1
+        for _, coordinate, _ in cascade.candidates:
+            mask[coordinate[0], coordinate[1], coordinate[2]] = 1
+
+        baseline_frames, baseline_diagnostics = self._refine_selected_aif_baseline(
+            curve,
+            preliminary_baseline=aif_baseline_frames,
+            bootstrap_baseline=context.baseline_frames,
+            tr=context.tr,
+        )
+
+        mean_cost = float(np.mean([cost for cost, _, _ in cascade.candidates]))
+        quality_score = min(1.0, 1.0 / (1.0 + mean_cost))
+        curve, qc_metrics = self._finalize_aif_metrics(
+            curve,
+            cascade.candidates,
+            context.concentration,
+            context.brain_mask,
+            context.affine,
+            context.tr,
+            context.n_candidates,
+            cascade.n_available,
+            baseline_frames=baseline_frames,
+        )
+        qc_metrics.update(baseline_diagnostics)
+        qc_metrics.update(cascade.filter_metadata)
+        if cascade.initial_level is not None:
+            qc_metrics["cascade_downgraded"] = (
+                cascade.initial_level != cascade.detection_level
+            )
+            qc_metrics["cascade_initial_level"] = cascade.initial_level
+            qc_metrics["cascade_final_level"] = cascade.detection_level
+        qc_metrics["cascade_tiers_attempted"] = cascade.tiers_attempted
+        qc_metrics["cascade_accepted_roi_size"] = accepted_roi_size
+        qc_metrics["aif_quality"] = "detected"
+        qc_metrics["aif_tier_provenance"] = dict(cascade.tier_provenance)
+        qc_metrics["aif_n_after_filters"] = sum(
+            diagnostics.get("aif_n_after_filters", 0)
+            for tier, diagnostics in cascade.postfilter_diagnostics.items()
+            if cascade.tier_provenance.get(tier, 0) > 0
+        )
+        qc_metrics["aif_n_filtered_peakspread"] = sum(
+            diagnostics.get("aif_n_filtered_peakspread", 0)
+            for diagnostics in cascade.postfilter_diagnostics.values()
+        )
+        qc_metrics["aif_n_filtered_tail"] = sum(
+            diagnostics.get("aif_n_filtered_tail", 0)
+            for diagnostics in cascade.postfilter_diagnostics.values()
+        )
+
+        peak_frames = [
+            float(metrics.get("peak_time_frame", float("nan")))
+            for _, _, metrics in cascade.candidates
+        ]
+        peak_frames = [value for value in peak_frames if np.isfinite(value)]
+        tail_fractions = [
+            float(metrics.get("tail_fraction_late", float("nan")))
+            for _, _, metrics in cascade.candidates
+        ]
+        tail_fractions = [
+            value for value in tail_fractions if np.isfinite(value)
+        ]
+        if peak_frames:
+            qc_metrics["aif_peak_time_spread_frames"] = (
+                max(peak_frames) - min(peak_frames)
+            )
+        if tail_fractions:
+            qc_metrics["aif_tail_max_fraction"] = max(tail_fractions)
+
+        spr, first_pass_frame, _ = self._compute_aif_spr(
+            curve,
+            aif_baseline_frames,
+            context.tr,
+        )
+        qc_metrics["averaged_aif_spr"] = round(spr, 1)
+        qc_metrics["averaged_aif_fp_peak_frame"] = first_pass_frame
+        qc_metrics["averaged_aif_final_roi_size"] = accepted_roi_size
+        return _FinalizedDetectedAIF(
+            curve,
+            mask,
+            quality_score,
+            qc_metrics,
+            baseline_frames,
+        )
+
+    @staticmethod
+    def _refine_selected_aif_baseline(
+        curve: npt.NDArray[Any],
+        *,
+        preliminary_baseline: int,
+        bootstrap_baseline: int,
+        tr: float,
+    ) -> tuple[int, dict[str, Any]]:
+        """Refine the preliminary arrival estimate from the selected AIF.
+
+        The whole-brain percentile estimate is available before AIF selection
+        and therefore remains the preliminary authority. Once an arterial
+        curve has been selected, its cleaner bolus signature may replace that
+        estimate when the preliminary detector only returned the bootstrap
+        floor or when the arterial ensemble has high-confidence disagreement.
+
+        Parameters
+        ----------
+        curve : numpy.ndarray
+            Selected measured or externally supplied AIF curve.
+        preliminary_baseline : int
+            Whole-brain percentile arrival estimate.
+        bootstrap_baseline : int
+            Configured baseline used to bootstrap motion correction and signal
+            conversion.
+        tr : float
+            Repetition time in seconds.
+
+        Returns
+        -------
+        tuple of (int, dict)
+            Final baseline frame count and refinement diagnostics.
+        """
+        import logging
+
+        from pmriprep.utils.baseline_detection import detect_baseline_ensemble
+
+        logger = logging.getLogger(__name__)
+        diagnostics: dict[str, Any] = {
+            "baseline_preliminary_frames": int(preliminary_baseline),
+            "baseline_refinement_source": "whole_brain_percentile",
+        }
+        if len(curve) < 3:
+            diagnostics["baseline_refinement_method"] = "short_aif"
+            return preliminary_baseline, diagnostics
+
+        try:
+            refined, ensemble = detect_baseline_ensemble(
+                np.maximum(curve, 0.0),
+                tr=tr,
+                min_baseline=2,
+            )
+        except Exception:
+            diagnostics["baseline_refinement_method"] = "ensemble_unavailable"
+            diagnostics["baseline_frames_used"] = int(preliminary_baseline)
+            return preliminary_baseline, diagnostics
+
+        confidence = str(ensemble.get("confidence", "low"))
+        diagnostics.update(
+            baseline_refined_candidate_frames=int(refined),
+            baseline_refinement_confidence=confidence,
+            baseline_refinement_method=ensemble.get("method", "ensemble"),
+        )
+        if refined < 2 or refined > len(curve) // 2:
+            diagnostics["baseline_refinement_method"] = "ensemble_out_of_range"
+            diagnostics["baseline_frames_used"] = int(preliminary_baseline)
+            return preliminary_baseline, diagnostics
+
+        final = preliminary_baseline
+        if preliminary_baseline <= bootstrap_baseline and refined > bootstrap_baseline:
+            final = refined
+            diagnostics["baseline_refinement_source"] = "selected_aif_fallback_recovery"
+        elif confidence == "high" and abs(refined - preliminary_baseline) > 5:
+            final = refined
+            diagnostics["baseline_refinement_source"] = "selected_aif_high_confidence"
+            logger.info(
+                "Selected AIF refines DSC baseline: AIF=%d (confidence=%s), "
+                "whole-brain percentile=%d",
+                refined,
+                confidence,
+                preliminary_baseline,
+            )
+        elif refined > preliminary_baseline + 3:
+            diagnostics["baseline_refinement_disagrees"] = True
+            logger.warning(
+                "Selected-AIF baseline estimate differs: AIF=%d, "
+                "whole-brain percentile=%d; retaining the preliminary estimate.",
+                refined,
+                preliminary_baseline,
+            )
+
+        diagnostics["baseline_frames_used"] = int(final)
+        return int(final), diagnostics
+
+    def _prepare_detection_baseline(
+        self,
+        context: _DSCAIFDetectionContext,
+        logger: Any,
+    ) -> int:
+        """Detect arterial baseline timing and initialize synthetic fallback."""
+        brain_concentration = context.concentration[context.brain_mask > 0.5]
+        if brain_concentration.ndim > 1 and brain_concentration.shape[0] > 100:
+            from pmriprep.utils.baseline_detection import detect_baseline_ensemble
+
+            p90_curve, p99_curve = np.percentile(
+                brain_concentration,
+                [90, 99],
+                axis=0,
+            )
+            mean_curve = np.mean(brain_concentration, axis=0)
+            baseline_frames, diagnostics = detect_baseline_ensemble(
+                p99_curve,
+                tr=context.tr,
+                min_baseline=max(5, int(10.0 / max(context.tr, 0.1))),
+                additional_signals=[p90_curve, mean_curve],
+            )
+            logger.debug(
+                "Ensemble baseline detection: arrival=%d, conf=%s, method=%s",
+                baseline_frames,
+                diagnostics.get("confidence", "unknown"),
+                diagnostics.get("method", "unknown"),
+            )
+        else:
+            baseline_frames = context.baseline_frames
+
+        self._cached_synth_aif, self._cached_synth_metrics = (
+            self._generate_synthetic_aif(
+                context.n_timepoints,
+                context.tr,
+                baseline_frames,
+                field_strength=context.field_strength,
+                effective_dose=context.synthetic_effective_dose,
+            )
+        )
+        return baseline_frames
+
+    def _run_candidate_cascade(
+        self,
+        context: _DSCAIFDetectionContext,
+        aif_baseline_frames: int,
+        logger: Any,
+    ) -> _CascadeDetectionResult:
+        """Run ordered candidate tiers and return the accepted cascade state."""
+        conc_data = context.concentration
+        brain_mask = context.brain_mask
+        atlas_mask = context.atlas_mask
+        atlas_is_mra = context.atlas_is_mra
+        full_atlas_mask = context.full_atlas_mask
+        aif_method = context.aif_method
+        initial_criteria = context.initial_criteria
+        n_candidates = context.n_candidates
+        tr = context.tr
         # Initialize
         detection_level = "synthetic"
         top_candidates: list[tuple[float, tuple[int, int, int], dict[str, Any]]] = []
@@ -2814,61 +3286,23 @@ class AIFDetection(BaseInterface):
         # Post-cascade fallback pool. Each tier's kinetic-filter
         # survivors are appended (capped at n_candidates total). The
         # union does NOT gate the cascade — it is only consulted as a
-        # fallback if every tier's per-tier dual-ROI gate fails.
-        union: list[tuple[float, tuple[int, int, int], dict[str, Any]]] = []
-        union_coords: set[tuple[int, int, int]] = set()
-        union_tier_provenance: dict[str, int] = {}
-        # Per-voxel source tier (used to map single-best fallback voxel
-        # back to its tier of origin and to construct the
-        # detection_level union string).
-        union_coord_origin: dict[tuple[int, int, int], str] = {}
+        # fallback if every tier's averaged-pool gate fails.
+        union_state = _CascadeUnionState([], set(), {}, {}, {})
         # Per-tier post-filter diagnostics (n_filtered_* counts, pool
         # spread, max tail). Recorded even on tiers the union does not
         # accept from, so the synthetic-fallback branch can surface why
         # each tier failed.
         postfilter_diags_per_tier: dict[str, dict[str, Any]] = {}
-        # Filter_meta from the strictest contributing tier (geometric
-        # / lesion-distance metadata). Captured at the moment a tier
-        # first contributes a voxel to the union; overwritten when a
-        # tier wins via the per-tier dual-ROI gate.
-        accepted_filter_meta: dict[str, Any] = {}
-
         if aif_method == "synthetic":
             pass  # Go directly to synthetic
         else:
-            criteria_order = ["strict", "relaxed", "permissive"]
-            try:
-                start_idx = criteria_order.index(initial_criteria)
-            except ValueError:
-                start_idx = 0
-
-            all_attempts: list[
-                tuple[str, Optional[npt.NDArray[Any]], str, bool]
-            ] = []
-            if atlas_mask is not None:
-                for crit in ["strict", "relaxed", "permissive"]:
-                    all_attempts.append(
-                        (crit, atlas_mask, f"atlas_{crit}", atlas_is_mra)
-                    )
-
-            # Full atlas tier (posterior circulation, undilated) —
-            # between atlas_permissive and brain-wide search
-            if full_atlas_mask is not None:
-                all_attempts.append(
-                    ("permissive", full_atlas_mask, "full_atlas_permissive", True)
-                )
-
-            has_roi_constraint = atlas_mask is not None
-            strict_roi = bool(self.inputs.strict_roi_constraint)
-            if not (has_roi_constraint and strict_roi):
-                for crit in ["relaxed", "permissive"]:
-                    all_attempts.append((crit, None, f"brain_{crit}", False))
-
-            attempts = [
-                (crit, roi, name, is_atlas)
-                for crit, roi, name, is_atlas in all_attempts
-                if criteria_order.index(crit) >= start_idx
-            ]
+            attempts = self._build_cascade_attempts(
+                initial_criteria,
+                atlas_mask,
+                atlas_is_mra,
+                full_atlas_mask,
+                bool(self.inputs.strict_roi_constraint),
+            )
 
             # Compute tissue-TTP reference once — independent of tier
             # because it operates on the whole brain mask. Used by the
@@ -2885,46 +3319,23 @@ class AIFDetection(BaseInterface):
                     math.ceil(frac * n_candidates),
                 )
 
-                search = self._prepare_search_mask(
-                    brain_mask, roi, lesion_mask
-                )
-                cands, peak_map = self._find_aif_candidate_voxels(
-                    conc_data, search, aif_baseline_frames,
-                    skip_sss=is_atlas,
-                )
-                if cands.shape[0] == 0:
-                    continue
-                scored, n_avail = self._score_and_select_candidates(
-                    cands, conc_data, signal_data, peak_map,
-                    brain_mask, tr, aif_baseline_frames, crit,
+                tier_candidates = self._prepare_tier_candidates(
+                    context,
+                    crit,
+                    roi,
+                    is_atlas,
+                    level_n_candidates,
+                    aif_baseline_frames,
                     tissue_ttp,
-                    atlas_mask=atlas_mask if roi is None else None,
                 )
+                scored = tier_candidates.candidates
+                f_meta = tier_candidates.filter_metadata
+                if tier_candidates.postfilter_diagnostics is not None:
+                    postfilter_diags_per_tier[level_name] = (
+                        tier_candidates.postfilter_diagnostics
+                    )
                 if not scored:
                     continue
-
-                scored, f_meta = self._apply_post_scoring_filters(
-                    scored, lesion_mask, affine, voxel_sizes,
-                    lesion_min_distance_mm=lesion_distance,
-                    enhancing_mask=enhancing_mask,
-                )
-                if not scored:
-                    continue
-
-                # Post-score kinetic-coherence filters: peak-spread
-                # (TR-scaled max from 20th-percentile peak time) and
-                # tail/peak ≤ threshold. TTP causality is enforced by
-                # the scorer above.
-                scored, postfilter_diag = self._apply_postscore_aif_filters(
-                    scored, tr=tr,
-                )
-                postfilter_diags_per_tier[level_name] = postfilter_diag
-                if not scored:
-                    continue
-
-                scored = self._ensure_bilateral_balance(
-                    scored, affine, level_n_candidates,
-                )
 
                 if cascade_initial_level is None:
                     cascade_initial_level = level_name
@@ -2939,26 +3350,20 @@ class AIFDetection(BaseInterface):
                 # used by the per-tier gate below). The union is the
                 # POST-CASCADE fallback pool only and does NOT gate
                 # the cascade. Looser tiers always run if the current
-                # tier's per-tier dual-ROI gate fails, so the cascade
+                # tier's averaged-pool gate fails, so the cascade
                 # is fully exhausted before any fallback.  Synthetic
                 # AIF is the LAST RESORT — reachable only after every
                 # tier's per-tier gate AND the union/single-best
                 # fallbacks have failed.
-                taken_this_tier = 0
-                for cost, coord, metrics in scored:
-                    if coord in union_coords:
-                        continue
-                    if len(union) >= n_candidates:
-                        break
-                    union.append((cost, coord, metrics))
-                    union_coords.add(coord)
-                    union_coord_origin[coord] = level_name
-                    taken_this_tier += 1
-                union_tier_provenance[level_name] = taken_this_tier
-                if taken_this_tier > 0 and not accepted_filter_meta:
-                    accepted_filter_meta = dict(f_meta)
+                self._add_candidates_to_union(
+                    union_state,
+                    scored,
+                    level_name,
+                    n_candidates,
+                    f_meta,
+                )
 
-                # Per-tier dual-ROI gate with progressive worst-BRR
+                # Per-tier averaged-pool gate with progressive worst-BRR
                 # trim.  Asks "do this tier's voxels behave as a
                 # coherent arterial pool together?" — if not, drop the
                 # candidate with the most-negative BRR (worst tail
@@ -2966,281 +3371,198 @@ class AIFDetection(BaseInterface):
                 # MIN_AIF_CANDIDATES_ACCEPT.  If the tier can't reach
                 # an acceptable pool, the cascade falls through to the
                 # next (looser) tier.
-                tier_pool = list(scored[:level_n_candidates])
-                while len(tier_pool) >= MIN_AIF_CANDIDATES_ACCEPT:
-                    tier_result = self._try_aif_dual_roi(
-                        tier_pool, conc_data, brain_mask, tr,
-                        aif_baseline_frames,
+                tier_acceptance = self._try_trimmed_pool_acceptance(
+                    scored[:level_n_candidates],
+                    conc_data,
+                    brain_mask,
+                    tr,
+                    aif_baseline_frames,
+                )
+                if tier_acceptance is not None:
+                    tier_result = tier_acceptance.result
+                    tier_pool = tier_acceptance.candidates
+                    accepted_aif = (
+                        tier_result.curve,
+                        tier_result.mask,
+                        tier_result.roi_size,
                     )
-                    if tier_result is not None:
-                        accepted_aif = (
-                            tier_result.curve,
-                            tier_result.mask,
-                            tier_result.roi_size,
-                        )
-                        # Defensive copy: tier_pool is the loop's
-                        # working list; aliasing it into top_candidates
-                        # would couple downstream QC to future loop edits.
-                        top_candidates = list(tier_pool)
-                        n_available = len(tier_pool)
-                        detection_level = level_name
-                        filter_meta = dict(f_meta)
-                        accepted_filter_meta = dict(f_meta)
-                        # Tier-accept provenance: only this tier
-                        # contributed to the accepted pool.
-                        union_tier_provenance = {
-                            level_name: len(tier_pool)
-                        }
-                        break
-                    # Drop the candidate with the most-negative per-voxel
-                    # BRR (worst tail contaminator). Falls back to
-                    # ``-cost`` (highest cost = worst) when BRR is NaN
-                    # or missing — matches the test-suite contract in
-                    # ``test_dsc_aif_cascade.TestProgressiveTrimSemantics``
-                    # and avoids non-deterministic ``min`` over NaN keys.
-                    def _trim_key(i: int) -> float:
-                        brr = tier_pool[i][2].get(
-                            "baseline_return_ratio", float("nan"),
-                        )
-                        if not np.isnan(brr):
-                            return float(brr)
-                        return -float(tier_pool[i][0])
-                    worst_idx = min(range(len(tier_pool)), key=_trim_key)
-                    tier_pool.pop(worst_idx)
+                    top_candidates = list(tier_pool)
+                    n_available = len(tier_pool)
+                    detection_level = level_name
+                    filter_meta = dict(f_meta)
+                    union_state.filter_metadata.clear()
+                    union_state.filter_metadata.update(f_meta)
+                    union_state.tier_provenance.clear()
+                    union_state.tier_provenance[level_name] = len(tier_pool)
 
                 if accepted_aif is not None:
                     break  # cascade complete — tier accepted
 
-            # --- Post-cascade fallback 1: union dual_roi with progressive worst-BRR trim ---
-            # Only runs if EVERY tier's per-tier dual-ROI gate failed
+            # Post-cascade fallback 1: union pool with progressive
+            # worst-BRR trim.
+            # Only runs if EVERY tier's averaged-pool gate failed
             # above. Pools kinetic-filter survivors across tiers, then
             # mirrors the per-tier trim semantics: drop the most-
-            # negative-BRR voxel one at a time until dual_roi passes or
-            # the pool reaches MIN_AIF_CANDIDATES_ACCEPT.
-            if accepted_aif is None and len(union) >= MIN_AIF_CANDIDATES_ACCEPT:
-                union_pool = list(union)
-                while len(union_pool) >= MIN_AIF_CANDIDATES_ACCEPT:
-                    result = self._try_aif_dual_roi(
-                        union_pool, conc_data, brain_mask, tr,
-                        aif_baseline_frames,
+            # negative-BRR voxel one at a time until the averaged pool
+            # passes or the pool reaches MIN_AIF_CANDIDATES_ACCEPT.
+            if accepted_aif is None:
+                union_acceptance = self._try_union_fallback(
+                    union_state,
+                    attempts,
+                    context,
+                    aif_baseline_frames,
+                )
+                if union_acceptance is not None:
+                    accepted_aif = union_acceptance.accepted_aif
+                    top_candidates = list(union_acceptance.candidates)
+                    n_available = len(union_acceptance.candidates)
+                    detection_level = union_acceptance.detection_level
+                    union_state.tier_provenance.clear()
+                    union_state.tier_provenance.update(
+                        union_acceptance.tier_provenance
                     )
-                    if result is not None:
-                        accepted_aif = (
-                            result.curve, result.mask, result.roi_size,
-                        )
-                        top_candidates = list(union_pool)
-                        n_available = len(union_pool)
-                        # Recompute provenance from the trimmed pool's
-                        # coords — tiers whose voxels were dropped must
-                        # NOT appear in detection_level OR in the
-                        # downstream ``aif_tier_provenance`` QC field.
-                        trimmed_provenance: dict[str, int] = {}
-                        for _, coord, _ in union_pool:
-                            lvl = union_coord_origin.get(coord)
-                            if lvl is not None:
-                                trimmed_provenance[lvl] = (
-                                    trimmed_provenance.get(lvl, 0) + 1
-                                )
-                        union_tier_provenance = trimmed_provenance
-                        # detection_level: cascade-ordered ``+``-joined
-                        # list of tiers that contributed voxels to the
-                        # accepted (post-trim) union pool. Single-tier
-                        # acceptances stay as plain tier names for
-                        # back-compat with downstream consumers.
-                        contributing = [
-                            lvl for _, _, lvl, _ in attempts
-                            if union_tier_provenance.get(lvl, 0) > 0
-                        ]
-                        detection_level = (
-                            "+".join(contributing) if contributing else "synthetic"
-                        )
-                        filter_meta = dict(accepted_filter_meta)
-                        break
-                    # Drop worst-BRR voxel (mirrors per-tier _trim_key).
-                    def _trim_key(i: int) -> float:
-                        brr = union_pool[i][2].get(
-                            "baseline_return_ratio", float("nan"),
-                        )
-                        if not np.isnan(brr):
-                            return float(brr)
-                        return -float(union_pool[i][0])
-                    worst_idx = min(range(len(union_pool)), key=_trim_key)
-                    union_pool.pop(worst_idx)
+                    filter_meta = dict(union_state.filter_metadata)
 
             # Single-best fallback: union has voxels but per-tier and
-            # union dual-ROI all rejected. Try the lowest-cost union
-            # voxel; relaxed gate matches legacy semantics (global_max_in_fp +
-            # AIF_AVG_BRR_MIN).
-            if accepted_aif is None and len(union) > 0:
-                union_sorted = sorted(union, key=lambda x: x[0])
-                best_only = [union_sorted[0]]
-                for roi_size in (1, 3):
-                    curve, mask = self._compute_roi_averaged_aif(
-                        best_only, conc_data, brain_mask,
-                        roi_size=roi_size,
+            # union averaged-pool gates all rejected. Try the lowest-cost union
+            # voxel; the relaxed gate uses global_max_in_fp and
+            # AIF_AVG_BRR_MIN.
+            if accepted_aif is None and len(union_state.candidates) > 0:
+                single_best = self._try_single_best_fallback(
+                    union_state.candidates,
+                    conc_data,
+                    brain_mask,
+                    tr,
+                    aif_baseline_frames,
+                    logger,
+                )
+                if single_best is not None:
+                    accepted_aif = (
+                        single_best.curve,
+                        single_best.mask,
+                        single_best.roi_size,
                     )
-                    if not self._aif_global_max_in_fp(
-                        curve, aif_baseline_frames, tr
-                    ):
-                        continue
-                    single_best_brr = self._compute_aif_brr(
-                        curve, aif_baseline_frames, tr
-                    )
-                    if (
-                        not np.isnan(single_best_brr)
-                        and single_best_brr < AIF_AVG_BRR_MIN
-                    ):
-                        _logger.warning(
-                            "AIF cascade: single-best candidate rejected "
-                            "(BRR=%.1f%% < %.1f%%); falling through to "
-                            "synthetic AIF",
-                            single_best_brr, AIF_AVG_BRR_MIN,
-                        )
-                        continue
-                    accepted_aif = (curve, mask, roi_size)
+                    best_only = [single_best.candidate]
                     top_candidates = best_only
-                    n_available = len(union)
+                    n_available = len(union_state.candidates)
                     # Use the chosen voxel's source tier (looked up
                     # via the per-coord origin map) rather than the
                     # last attempted tier, because the single-best
                     # voxel typically came from a stricter tier than
                     # the last one we tried.
                     best_coord = best_only[0][1]
-                    detection_level = union_coord_origin.get(
+                    detection_level = union_state.coordinate_origins.get(
                         best_coord,
                         tiers_attempted[-1] if tiers_attempted else "single_best",
                     )
                     # Provenance must describe the single emitted voxel, not the
                     # full pre-fallback union pool the trim loop left in
                     # union_tier_provenance.
-                    union_tier_provenance = {detection_level: 1}
-                    filter_meta = dict(accepted_filter_meta)
-                    _logger.warning(
+                    union_state.tier_provenance.clear()
+                    union_state.tier_provenance[detection_level] = 1
+                    filter_meta = dict(union_state.filter_metadata)
+                    logger.warning(
                         "AIF cascade: using single-best candidate "
-                        "(union failed dual-ROI validation)"
+                        "(union failed averaged-pool validation)"
                     )
-                    break
 
-        # ---- Build AIF curve ----
-        aif_curve: npt.NDArray[Any]
+        cascade = _CascadeDetectionResult(
+            accepted_aif,
+            top_candidates,
+            n_available,
+            detection_level,
+            filter_meta,
+            cascade_initial_level,
+            tiers_attempted,
+            dict(union_state.tier_provenance),
+            postfilter_diags_per_tier,
+        )
+
+        return cascade
+
+    def _serialize_detection_outputs(self, state: _FinalAIFState) -> None:
+        """Write final DSC AIF artifacts and populate Nipype results."""
+        import nibabel as nib  # type: ignore[import-untyped]
+
+        out_curve = self._gen_outfilename("_aif_curve.txt")
+        np.savetxt(out_curve, state.curve)
+        out_raw = ""
+        if state.raw_curve is not None:
+            out_raw = self._gen_outfilename("_raw_aif_curve.txt")
+            np.savetxt(out_raw, state.raw_curve)
+
+        out_mask = self._gen_outfilename("_aif_mask.nii.gz")
+        nib.save(nib.Nifti1Image(state.mask, state.affine), out_mask)  # type: ignore[attr-defined]
+        out_measured = self._gen_outfilename("_measured_aif_curve.txt")
+        np.savetxt(out_measured, state.measured_curve)
+        out_gamma = self._gen_outfilename("_gamma_aif_curve.txt")
+        np.savetxt(
+            out_gamma,
+            state.gamma_curve if state.gamma_curve is not None else state.curve,
+        )
+        if state.gamma_curve is None:
+            state.qc_metrics["gamma_aif_fallback_to_raw"] = True
+
+        self._results = {
+            "out_aif_curve": out_curve,
+            "out_aif_mask": out_mask,
+            "out_gamma_aif_curve": out_gamma,
+            "out_measured_aif_curve": out_measured,
+            "out_raw_aif_curve": out_raw,
+            "out_aif_coord": state.qc_metrics.get("aif_voxel_coord", []),
+            "aif_curve": [float(value) for value in state.curve],
+            "detection_level": state.detection_level,
+            "quality_score": state.quality_score,
+            "candidate_count": state.candidate_count,
+            "gamma_fit_applied": state.gamma_fit_applied,
+            "aif_baseline_frames": state.baseline_frames,
+            "qc_metrics": state.qc_metrics,
+        }
+
+    def _finalize_post_cascade(
+        self,
+        context: _DSCAIFDetectionContext,
+        cascade: _CascadeDetectionResult,
+        aif_baseline_frames: int,
+        logger: Any,
+    ) -> _FinalAIFState:
+        """Finalize gamma fitting, fallback, and QC after the candidate cascade."""
+        conc_data = context.concentration
+        bootstrap_baseline_frames = context.baseline_frames
+        baseline_frames = context.baseline_frames
+        candidate_baseline_frames: Optional[int] = None
+        detection_level = cascade.detection_level
+        top_candidates = cascade.candidates
         aif_mask_arr = np.zeros(conc_data.shape[:3], dtype=np.uint8)
-        quality_score = 0.0
-        qc_metrics: dict[str, Any] = {}
 
-        # Track initial baseline for QC reporting
-        baseline_frames_initial = baseline_frames
-
-        if accepted_aif is not None and top_candidates:
-            aif_curve, aif_bool_mask, accepted_roi_size = accepted_aif
-            aif_mask_arr[aif_bool_mask] = 1
-            for _, coord, _ in top_candidates:
-                aif_mask_arr[coord[0], coord[1], coord[2]] = 1
-
-            # Stage 2: re-detect baseline on final smoothed AIF curve
-            stage2_window = min(
-                aif_baseline_frames, max(2, len(aif_curve) // 3)
+        if cascade.accepted_aif is not None and top_candidates:
+            finalized = self._finalize_detected_aif(
+                cascade,
+                context,
+                aif_baseline_frames,
             )
-            _, aif_detected_baseline = detect_bolus_arrival(
-                aif_curve,
-                baseline_frames=stage2_window,
-                n_consecutive=3,
+            aif_curve = finalized.curve
+            aif_mask_arr = finalized.mask
+            quality_score = finalized.quality_score
+            qc_metrics = finalized.qc_metrics
+            baseline_frames = finalized.baseline_frames
+            candidate_baseline_frames = finalized.baseline_frames
+        elif not context.disable_fallback:
+            aif_curve, synth_metrics = self._prepare_cached_synthetic_fallback(
+                conc_data,
+                context.brain_mask,
             )
-            if aif_detected_baseline > baseline_frames:
-                baseline_frames = aif_detected_baseline
-
-            # Quality: inverse of mean cost, clamped to [0, 1]
-            mean_cost = float(np.mean([c for c, _, _ in top_candidates]))
-            quality_score = min(1.0, 1.0 / (1.0 + mean_cost))
-
-            # --- GAP 8: Finalize AIF metrics ---
-            aif_curve, finalized_qc = self._finalize_aif_metrics(
-                aif_curve, top_candidates, conc_data, brain_mask,
-                affine, tr, n_candidates, n_available,
-                baseline_frames=baseline_frames,
-            )
-            qc_metrics.update(finalized_qc)
-            qc_metrics.update(filter_meta)
-            if cascade_initial_level is not None:
-                qc_metrics["cascade_downgraded"] = (
-                    cascade_initial_level != detection_level
-                )
-                qc_metrics["cascade_initial_level"] = cascade_initial_level
-                qc_metrics["cascade_final_level"] = detection_level
-            qc_metrics["cascade_tiers_attempted"] = tiers_attempted
-            qc_metrics["cascade_accepted_roi_size"] = accepted_roi_size
-            qc_metrics["aif_quality"] = "detected"
-            qc_metrics["aif_tier_provenance"] = dict(union_tier_provenance)
-            # Aggregate per-tier postfilter diagnostics across all tiers
-            # that contributed to the union (sum of n_filtered_* counts;
-            # max-of-max for spread/tail).
-            agg_after = sum(
-                d.get("aif_n_after_filters", 0)
-                for tier, d in postfilter_diags_per_tier.items()
-                if union_tier_provenance.get(tier, 0) > 0
-            )
-            agg_filt_spread = sum(
-                d.get("aif_n_filtered_peakspread", 0)
-                for d in postfilter_diags_per_tier.values()
-            )
-            agg_filt_tail = sum(
-                d.get("aif_n_filtered_tail", 0)
-                for d in postfilter_diags_per_tier.values()
-            )
-            qc_metrics["aif_n_after_filters"] = agg_after
-            qc_metrics["aif_n_filtered_peakspread"] = agg_filt_spread
-            qc_metrics["aif_n_filtered_tail"] = agg_filt_tail
-            # Pool spread/tail-max computed from the accepted union
-            if top_candidates:
-                pks = [
-                    float(m.get("peak_time_frame", float("nan")))
-                    for _, _, m in top_candidates
-                ]
-                pks = [p for p in pks if np.isfinite(p)]
-                tls = [
-                    float(m.get("tail_fraction_late", float("nan")))
-                    for _, _, m in top_candidates
-                ]
-                tls = [t for t in tls if np.isfinite(t)]
-                if pks:
-                    qc_metrics["aif_peak_time_spread_frames"] = (
-                        max(pks) - min(pks)
-                    )
-                if tls:
-                    qc_metrics["aif_tail_max_fraction"] = max(tls)
-            spr, fp_frame, _ = self._compute_aif_spr(
-                aif_curve, aif_baseline_frames, tr,
-            )
-            qc_metrics["averaged_aif_spr"] = round(spr, 1)
-            qc_metrics["averaged_aif_fp_peak_frame"] = fp_frame
-            qc_metrics["averaged_aif_final_roi_size"] = accepted_roi_size
-
-        elif not disable_fallback:
-            # Synthetic fallback: reuse cached synthetic AIF from pre-compute
-            tissue_max = self._compute_tissue_max_for_synthetic(conc_data, brain_mask)
-            aif_curve = self._cached_synth_aif.copy()
-            synth_metrics = dict(self._cached_synth_metrics)
-            if tissue_max is not None and tissue_max > 0:
-                synth_metrics["synthetic_aif_tissue_p95_delta_r2star"] = round(
-                    float(tissue_max), 2,
-                )
-                peak = synth_metrics.get("synthetic_aif_target_peak", 0.0)
-                if peak > 0:
-                    synth_metrics["synthetic_aif_peak_to_tissue_ratio"] = round(
-                        peak / tissue_max, 2,
-                    )
-            elif tissue_max is not None:
-                synth_metrics["synthetic_aif_tissue_p95_delta_r2star"] = round(
-                    float(tissue_max), 2,
-                )
             detection_level = "synthetic"
             quality_score = 0.3
             qc_metrics = {}
             _stamp_synthetic_fallback_common(
-                qc_metrics, reason="no_candidates",
-                tiers_attempted=tiers_attempted,
+                qc_metrics,
+                reason="no_candidates",
+                tiers_attempted=cascade.tiers_attempted,
             )
             qc_metrics.update(synth_metrics)
             _clear_stale_real_aif_keys(qc_metrics)
+            baseline_frames = aif_baseline_frames
         else:
             raise RuntimeError(
                 "AIF detection failed at all levels and "
@@ -3251,10 +3573,10 @@ class AIFDetection(BaseInterface):
         qc_metrics["quality_score"] = quality_score
         if detection_level != "synthetic":
             qc_metrics["n_aif_voxels_selected"] = len(top_candidates)
-        qc_metrics["s0_rejection_available"] = signal_data is not None
-        qc_metrics["tr_used"] = tr
-        qc_metrics["baseline_frames_initial"] = baseline_frames  # configured S0 baseline
-        qc_metrics["aif_baseline_frames"] = aif_baseline_frames  # auto-detected for AIF
+        qc_metrics["s0_rejection_available"] = context.signal is not None
+        qc_metrics["tr_used"] = context.tr
+        qc_metrics["baseline_frames_initial"] = baseline_frames
+        qc_metrics["aif_baseline_frames"] = aif_baseline_frames
         qc_metrics["baseline_frames_used"] = baseline_frames
         qc_metrics["baseline_detection_method"] = "auto_p99"
 
@@ -3266,71 +3588,74 @@ class AIFDetection(BaseInterface):
                 "is derived from the deconvolution residue and is unreliable",
                 "Manual AIF selection recommended for clinical use",
             ]
-        # Capture measured AIF in caller scope BEFORE gamma fit (which may
-        # replace aif_curve with the fitted curve in-place). This is the
-        # always-available measured AIF consumed by AUC CBV downstream.
-        # For synthetic AIF path, this is the synthetic curve itself.
+
         measured_aif = aif_curve.copy()
         if detection_level == "synthetic":
             qc_metrics["cbv_auc_denominator_is_synthetic"] = True
 
-        # Gamma-variate fitting
         gamma_fit_applied = False
         raw_aif_curve = None
         gamma_fitted_curve = None
-        if gamma_fit_mode != "off" and detection_level != "synthetic":
+        if context.gamma_fit_mode != "off" and detection_level != "synthetic":
             gamma_fit_applied, raw_aif_curve, aif_curve, gamma_fitted_curve = (
                 self._apply_gamma_fit_if_appropriate(
-                    aif_curve, gamma_fit_mode, baseline_frames, tr, qc_metrics,
+                    aif_curve,
+                    context.gamma_fit_mode,
+                    baseline_frames,
+                    context.tr,
+                    qc_metrics,
                 )
             )
-        elif gamma_fit_mode != "off" and detection_level == "synthetic":
+        elif context.gamma_fit_mode != "off" and detection_level == "synthetic":
             qc_metrics["gamma_fit_applied"] = False
             qc_metrics["gamma_fit_rejected_reason"] = "synthetic_aif"
 
-        # Post-gamma-fit quality gate: reject AIF if gamma fit is catastrophically bad
-        # R² < 0 means the gamma model fits worse than a horizontal line — no bolus shape.
         if (
             not gamma_fit_applied
-            and not disable_fallback
+            and not context.disable_fallback
             and detection_level != "synthetic"
         ):
             gamma_r2 = qc_metrics.get("gamma_fit_r_squared")
             if gamma_r2 is not None and gamma_r2 < GAMMA_R2_SYNTHETIC_FALLBACK:
-                _logger.warning(
+                logger.warning(
                     "Gamma fit R²=%.3f < %.1f; falling back to synthetic AIF",
                     gamma_r2,
                     GAMMA_R2_SYNTHETIC_FALLBACK,
                 )
-                # Synthetic fallback: reuse cached synthetic AIF
-                tissue_max = self._compute_tissue_max_for_synthetic(conc_data, brain_mask)
-                aif_curve = self._cached_synth_aif.copy()
-                synth_metrics = dict(self._cached_synth_metrics)
-                if tissue_max is not None and tissue_max > 0:
-                    synth_metrics["synthetic_aif_tissue_p95_delta_r2star"] = round(
-                        float(tissue_max), 2,
-                    )
-                    peak = synth_metrics.get("synthetic_aif_target_peak", 0.0)
-                    if peak > 0:
-                        synth_metrics["synthetic_aif_peak_to_tissue_ratio"] = round(
-                            peak / tissue_max, 2,
-                        )
-                elif tissue_max is not None:
-                    synth_metrics["synthetic_aif_tissue_p95_delta_r2star"] = round(
-                        float(tissue_max), 2,
-                    )
+                rejected_measured_aif = {
+                    "detection_level": detection_level,
+                    "baseline_frames": candidate_baseline_frames,
+                    "arrival_time_seconds": qc_metrics.get("arrival_time_seconds"),
+                    "peak_frame": qc_metrics.get("averaged_aif_fp_peak_frame"),
+                    "gamma_fit_r_squared": gamma_r2,
+                    "gamma_fit_auc_ratio": qc_metrics.get("gamma_fit_auc_ratio"),
+                    "gamma_fit_rejected_reason": qc_metrics.get(
+                        "gamma_fit_rejected_reason"
+                    ),
+                }
+                aif_curve, synth_metrics = self._prepare_cached_synthetic_fallback(
+                    conc_data,
+                    context.brain_mask,
+                )
+                baseline_frames = aif_baseline_frames
                 detection_level = "synthetic"
                 quality_score = 0.3
-                aif_mask_arr[:] = 0  # Clear AIF mask (no voxels used)
+                aif_mask_arr[:] = 0
                 _clear_stale_real_aif_keys(qc_metrics)
                 _stamp_synthetic_fallback_common(
-                    qc_metrics, reason="gamma_r2_floor",
-                    tiers_attempted=tiers_attempted,
+                    qc_metrics,
+                    reason="gamma_r2_floor",
+                    tiers_attempted=cascade.tiers_attempted,
                 )
                 qc_metrics["detection_method"] = detection_level
                 qc_metrics["quality_score"] = quality_score
                 qc_metrics["gamma_r2_at_fallback"] = gamma_r2
                 qc_metrics.update(synth_metrics)
+                qc_metrics["rejected_measured_aif"] = {
+                    key: value
+                    for key, value in rejected_measured_aif.items()
+                    if value is not None
+                }
                 qc_metrics["synthetic_aif_warnings"] = [
                     "Synthetic AIF used - gamma fit R2 below threshold",
                     "Relative quantification only (rCBV, rCBF normalized to contralateral)",
@@ -3339,78 +3664,108 @@ class AIFDetection(BaseInterface):
                     "Manual AIF selection recommended for clinical use",
                 ]
                 gamma_fitted_curve = None
-                # Overwrite measured AIF with the synthetic curve — consistent
-                # with what deconv sees, and marks AUC denominator as synthetic.
+                raw_aif_curve = None
                 measured_aif = aif_curve.copy()
                 qc_metrics["cbv_auc_denominator_is_synthetic"] = True
 
-        # Fallback disabled: a sub-floor gamma fit is NOT swapped for synthetic
-        # (the AIF is retained), so flag it here rather than leaving it silent.
         _flag_retained_below_floor(
             qc_metrics,
-            disable_fallback=disable_fallback,
+            disable_fallback=context.disable_fallback,
             detection_level=detection_level,
             gamma_fit_applied=gamma_fit_applied,
         )
 
-        # Surface per-tier postfilter diagnostics whenever the cascade
-        # was downgraded (final tier ≠ initial) OR fell to synthetic
-        # (either via cascade exhaustion or via gamma-R² post-validation
-        # rejection). Single emission point — guarantees the per-tier
-        # breakdown is available to QC consumers regardless of which
-        # path led to the final outcome.
         if (
-            (qc_metrics.get("cascade_downgraded", False)
-             or detection_level == "synthetic")
-            and postfilter_diags_per_tier
+            (
+                qc_metrics.get("cascade_downgraded", False)
+                or detection_level == "synthetic"
+            )
+            and cascade.postfilter_diagnostics
         ):
             qc_metrics["cascade_postfilter_diags"] = dict(
-                postfilter_diags_per_tier
+                cascade.postfilter_diagnostics
             )
 
-        # Save outputs
-        out_aif_curve = self._gen_outfilename("_aif_curve.txt")
-        np.savetxt(out_aif_curve, aif_curve)
+        # Final analysis provenance must describe the curve that leaves this
+        # interface, not a measured candidate discarded during fallback.
+        qc_metrics["bootstrap_baseline_frames"] = bootstrap_baseline_frames
+        qc_metrics["baseline_frames_initial"] = bootstrap_baseline_frames
+        qc_metrics["aif_baseline_frames"] = baseline_frames
+        qc_metrics["baseline_frames_used"] = baseline_frames
+        qc_metrics["n_baseline_frames"] = baseline_frames
+        qc_metrics["baseline_detection_method"] = (
+            "selected_aif_refined"
+            if detection_level != "synthetic"
+            else "whole_brain_ensemble"
+        )
+        if candidate_baseline_frames is not None:
+            qc_metrics["candidate_baseline_frames"] = candidate_baseline_frames
+        if detection_level == "synthetic":
+            synthetic_arrival = qc_metrics.get("synthetic_aif_arrival_frame")
+            if synthetic_arrival is not None:
+                arrival_seconds = float(synthetic_arrival) * context.tr
+                qc_metrics["arrival_time_seconds"] = arrival_seconds
+                aif_metrics = dict(qc_metrics.get("aif_metrics") or {})
+                aif_metrics["arrival"] = arrival_seconds
+                qc_metrics["aif_metrics"] = aif_metrics
 
-        out_raw_aif = ""
-        if raw_aif_curve is not None:
-            out_raw_aif = self._gen_outfilename("_raw_aif_curve.txt")
-            np.savetxt(out_raw_aif, raw_aif_curve)
+        # Canonical AIF metrics describe the curve emitted by this interface.
+        # Gamma fitting can alter its peak after candidate-level metrics were
+        # assembled, so refresh the final amplitude at the state boundary.
+        aif_metrics = dict(qc_metrics.get("aif_metrics") or {})
+        aif_metrics["peak_conc"] = float(np.max(aif_curve))
+        qc_metrics["aif_metrics"] = aif_metrics
 
-        out_aif_mask = self._gen_outfilename("_aif_mask.nii.gz")
-        mask_img = nib.Nifti1Image(aif_mask_arr, affine)  # type: ignore[attr-defined]
-        nib.save(mask_img, out_aif_mask)  # type: ignore[attr-defined]
+        return _FinalAIFState(
+            aif_curve,
+            aif_mask_arr,
+            measured_aif,
+            raw_aif_curve,
+            gamma_fitted_curve,
+            context.affine,
+            detection_level,
+            quality_score,
+            gamma_fit_applied,
+            baseline_frames,
+            len(top_candidates),
+            qc_metrics,
+        )
 
-        # Save measured AIF (always, for AUC CBV denominator downstream).
-        # Pre-gamma-replacement; synthetic fallback overwrites this above.
-        out_measured_aif = self._gen_outfilename("_measured_aif_curve.txt")
-        np.savetxt(out_measured_aif, measured_aif)
+    # -----------------------------------------------------------------
+    # Step 10: Main pipeline  (_run_interface)
+    # -----------------------------------------------------------------
 
-        # Save gamma-fitted AIF (always, kept for QC overlay and future use).
-        # Falls back to raw AIF when gamma fit failed or was not attempted.
-        out_gamma_aif = self._gen_outfilename("_gamma_aif_curve.txt")
-        if gamma_fitted_curve is not None:
-            np.savetxt(out_gamma_aif, gamma_fitted_curve)
-        else:
-            np.savetxt(out_gamma_aif, aif_curve)
-            qc_metrics["gamma_aif_fallback_to_raw"] = True
+    def _run_interface(self, runtime: Any) -> Any:
+        """Execute the AIF detection pipeline.
 
-        n_cand = len(top_candidates) if top_candidates else 0
-        self._results = {
-            "out_aif_curve": out_aif_curve,
-            "out_aif_mask": out_aif_mask,
-            "out_gamma_aif_curve": out_gamma_aif,
-            "out_measured_aif_curve": out_measured_aif,
-            "out_raw_aif_curve": out_raw_aif,
-            "out_aif_coord": qc_metrics.get("aif_voxel_coord", []),
-            "aif_curve": [float(x) for x in aif_curve],
-            "detection_level": detection_level,
-            "quality_score": quality_score,
-            "candidate_count": n_cand,
-            "gamma_fit_applied": gamma_fit_applied,
-            "aif_baseline_frames": aif_baseline_frames,
-            "qc_metrics": qc_metrics,
-        }
+        1. Build attempts list: atlas (strict/relaxed/permissive) then
+           brain (relaxed/permissive).
+        2. Each attempt: prepare mask -> find candidates -> score ->
+           post-scoring filters (distance + contralateral).
+        3. On success, finalize metrics and break.
+        4. Synthetic fallback if all attempts fail.
+        """
+        import logging
+
+        _logger = logging.getLogger(__name__)
+
+        # ===== External AIF: bypass all detection if provided =====
+        if isdefined(self.inputs.external_aif_file) and self.inputs.external_aif_file:
+            return self._handle_external_aif(runtime)
+
+        context = self._load_detection_context(_logger)
+        aif_baseline_frames = self._prepare_detection_baseline(context, _logger)
+        cascade = self._run_candidate_cascade(
+            context, aif_baseline_frames, _logger,
+        )
+        self._serialize_detection_outputs(
+            self._finalize_post_cascade(
+                context,
+                cascade,
+                aif_baseline_frames,
+                _logger,
+            )
+        )
 
         return runtime
 
@@ -3429,7 +3784,8 @@ class AIFDetection(BaseInterface):
         aif_curve : np.ndarray
             Current AIF curve (may be modified if fit is applied).
         gamma_fit_mode : str
-            "on" (legacy: apply if R²>0.5) or "auto" (rule-based).
+            ``"on"`` applies when the fit converges with R² > 0.5;
+            ``"auto"`` uses the rule-based policy.
         baseline_frames : int
             Number of pre-bolus baseline frames.
         tr : float
@@ -3462,7 +3818,7 @@ class AIFDetection(BaseInterface):
             )
 
             if gamma_fit_mode == "on":
-                # Legacy mode: accept if converged and R² > 0.5
+                # ``on`` mode uses the convergence and R² gate.
                 if fit_result.fit_converged and fit_result.r_squared > 0.5:
                     qc_metrics["gamma_fit_applied"] = True
                     qc_metrics["gamma_fit_mode"] = "on"

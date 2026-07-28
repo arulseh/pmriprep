@@ -90,10 +90,9 @@ EPSILON_SHAPE: Final[float] = 1e-10
 # Leakage Correction (K2)
 # =============================================================================
 
-#: Upper bound for K2 leakage rate (s⁻¹). Literature maximum is ~0.04 s⁻¹;
-#: values above 0.5 are numerically degenerate OLS fits. Existing QC already
-#: treats K2 > 0.5 as "severe leakage."
-K2_UPPER_BOUND: Final[float] = 0.5
+#: Numerical safety bound for K2 leakage fits (s⁻¹), not a physiological
+#: maximum. Larger unconstrained OLS estimates are treated as degenerate.
+K2_UPPER_BOUND: Final[float] = 0.2
 
 # Bidirectional K2
 # kep = EES efflux rate in s^-1 (NOT min^-1 like DCE literature).
@@ -131,15 +130,12 @@ GD_DOTA_STANDARD_DOSE: Final[float] = 0.1
 # =============================================================================
 
 #: Population-median arterial peak ΔR2* (s⁻¹) at 3T for standard single-dose
-#: monomeric Gd (0.1 mmol/kg). Arterial peak ΔR2* of 30–50 s⁻¹ at 3T is
-#: consistent with the intravascular-ΔR2* model of Kjølby 2006 MRM 56:187.
-#: 35.0 is the population median. For tetrameric agents at standard molecular
+#: monomeric Gd (0.1 mmol/kg). For tetrameric agents at standard molecular
 #: dose, linear gd_multiplicity scaling may overestimate by up to 30% due to
 #: partial saturation of the static dephasing regime above ~15 mM blood [Gd].
 SYNTH_AIF_BASE_PEAK_3T: Final[float] = 35.0
 
-#: Upper cap on effective_dose multiplier. Kjølby MRM 56:187 (2006): ΔR2*
-#: linearity holds to ~15 mM blood [Gd]; 2.5× reference dose stays within.
+#: Upper cap on the effective-dose multiplier.
 SYNTH_AIF_DOSE_CAP: Final[float] = 2.5
 
 #: Minimum synthetic AIF peak amplitude (s⁻¹). At 3T with SNR≈20, TE≈30 ms,
@@ -157,9 +153,8 @@ SYNTH_AIF_RECIRC_DELAY_S: Final[float] = 20.0
 #: Recirculation gamma-variate time-to-peak (s); broader than the first pass.
 SYNTH_AIF_RECIRC_DISPERSION_S: Final[float] = 8.0
 
-#: Peak-ΔR2* candidate rejection bounds at 3T / full dose (s⁻¹). Arterial peak
-#: ΔR2* scales ∝ B0·dose (Kjølby 2006 MRM 56:187), so both bounds are
-#: B0·dose-scaled at the use site — tracking the same law as the synthetic AIF
+#: Peak-ΔR2* candidate rejection bounds at 3T / full dose (s⁻¹). Both bounds
+#: are B0·dose-scaled at the use site, tracking the same law as the synthetic AIF
 #: peak. Floor separates artery (~35 s⁻¹ median) from tissue first-pass and is
 #: clamped to ``SYNTH_AIF_MIN_PEAK``; ceiling rejects susceptibility artifact.
 AIF_PEAK_FLOOR_3T: Final[float] = 5.0
@@ -195,7 +190,9 @@ LEAKY_PRIMARY_INADEQUATE: Final[float] = 5.0  # percent, == LEAKY_SIGMA_LOW
 #: the non-negative BSW correction cannot remove (it would need K2 < 0), so
 #: K2 pins at 0 and the full-integral CBV over-estimates. A voxel is flagged
 #: when its late-window tail persists AND its K2 is zero:
+#:
 #:   late_tail_ratio = mean(conc[final TAIL_LATE_FRAC of frames]) / peak(conc)
+#:
 #: The ratio is TE-invariant (the −1/TE factor cancels), so it is scale- and
 #: protocol-portable. Thresholds calibrated on the Semmineh GBM DSC DRO
 #: (fire on the +40% preloaded overestimate configs, silent on the T1-dip
@@ -315,9 +312,6 @@ class ParameterBounds(NamedTuple):
 #: deconvolution (r2* scales both tissue and AIF equally).
 CBF_BOUNDS: Final[ParameterBounds] = ParameterBounds(0.0, 2.0)
 
-#: CBV bounds in mL/100g
-CBV_BOUNDS: Final[ParameterBounds] = ParameterBounds(0.0, 20.0)
-
 #: MTT bounds in seconds
 MTT_BOUNDS: Final[ParameterBounds] = ParameterBounds(0.0, 30.0)
 
@@ -369,9 +363,9 @@ QC_MEAN_CNR_MINIMUM: Final[float] = 3.0
 
 #: Target temporal smoothing window for AIF re-extraction (seconds).
 #: Bolus FWHM is typically 3-6 s; ~7.5 s gives single-pole filtering of the
-#: peak without distorting it. Used by Savitzky-Golay on the re-extracted
-#: AIF; the integer window length is computed at runtime as an odd number
-#: of samples per ``max(5, int(round(target / dt)) | 1)``.
+#: peak without distorting it. Used by Savitzky-Golay on detected and
+#: re-extracted AIFs; the integer window length is computed at runtime as an
+#: odd number of samples with a three-sample floor for the quadratic filter.
 AIF_SMOOTHING_TARGET_SECONDS: Final[float] = 7.5
 
 
@@ -390,8 +384,7 @@ AIF_SMOOTHING_TARGET_SECONDS: Final[float] = 7.5
 AIF_PEAK_SPREAD_MAX_SECONDS: Final[float] = 3.0
 
 #: Tissue-TTP causality tolerance (s) for arterial-vs-venous candidate gating.
-#: A feeding artery peaks before parenchyma (artery→tissue transit ~1-4 s;
-#: Calamante 2000, Ibaraki 2007), so a candidate peaking more than
+#: A feeding artery peaks before parenchyma, so a candidate peaking more than
 #: ``AIF_TTP_REJECT_AFTER_TISSUE_S`` after tissue is venous and hard-rejected;
 #: ``AIF_TTP_NEAR_TISSUE_S`` bounds the mild near-tissue penalty band. Applied
 #: in seconds (frame difference × tr) so the gate is TR-invariant.
@@ -400,11 +393,8 @@ AIF_TTP_NEAR_TISSUE_S: Final[float] = 2.0
 
 #: Maximum tail/peak fraction for an AIF voxel (mean ΔR2* over the last
 #: ``AIF_TAIL_WINDOW_S`` divided by first-pass peak). Catches BBB-leakage
-#: and tissue-PVE-driven late plateau. Threshold of 0.15 (not the
-#: physiologically tighter 0.10) is set per Bleeker 2009 JCBFM 29:840 PVF analysis
-#: at ~1.875 mm in-plane resolution: M1 lumen (~2.5 mm) fills <30% of a
-#: voxel, so PVE-inflated tails of 10-15% are physically expected for
-#: arterial voxels at this resolution.
+#: and tissue-PVE-driven late plateau while allowing modest partial-volume
+#: tail elevation.
 AIF_TAIL_FRACTION_MAX: Final[float] = 0.15
 
 #: Late-tail measurement window (seconds, from end of acquisition). At
@@ -429,20 +419,6 @@ LESION_EXCLUSION_DISTANCE_MM: Final[float] = 15.0
 #: In-vivo tissue transverse relaxivity r2* by field strength (T) in s^-1 per mM
 #: tissue Gd, for gradient-echo DSC with Gd-DTPA in cortical tissue.
 #:
-#: Sources::
-#:
-#:   Kjølby BF, Østergaard L, Kiselev VG. "Theoretical model of intravascular
-#:     paramagnetic tracers effect on tissue relaxation." Magn Reson Med
-#:     2006;56:187-197.
-#:   Calamante 2007 MRM 58:544 (blood vs tissue r2* distinction).
-#:
-#: The earlier value 28.9 s^-1·T^-1·mM^-1 from van Osch 2003 is whole-blood
-#: Gd-DTPA r2* (used for AIF quantification), not tissue r2*. Applying it
-#: to tissue ΔR2* under-estimates inferred tissue [Gd] by ~2× because the
-#: mesoscopic field perturbation around microvasculature amplifies tissue
-#: ΔR2* per unit tissue Gd relative to per unit blood Gd. The values below
-#: are tissue-calibrated.
-#:
 #: Caveats:
 #:   - Linear B0 scaling holds 1.5T-3T (static-dephasing regime). The 7T
 #:     value is extrapolated; r2* at 7T depends non-linearly on vessel
@@ -452,22 +428,20 @@ LESION_EXCLUSION_DISTANCE_MM: Final[float] = 15.0
 #:   - Used only for residual-fraction QC (residual ΔR2* → equivalent [Gd]);
 #:     does NOT enter deconvolution math (r2* cancels in CBF/CBV ratios).
 R2_STAR_TISSUE_LINEAR_BY_FIELD: Final[dict[float, float]] = {
-    1.5: 87.0,   # Kjølby 2006, GE-EPI cortical tissue
+    1.5: 87.0,   # GE-EPI cortical tissue
     3.0: 174.0,  # Linear B0 scaling
     7.0: 400.0,  # Extrapolated; non-linearity at 7T (see caveat above)
 }
 
-#: Legacy alias for backwards compatibility
+#: Alias of the tissue-relaxivity lookup.
 R2_STAR_BY_FIELD = R2_STAR_TISSUE_LINEAR_BY_FIELD
 
 
 def get_r2_star_tissue(field_strength: float) -> float:
     """Get in-vivo tissue transverse relaxivity r2* for a given field strength.
 
-    Uses linear interpolation across :data:`R2_STAR_TISSUE_LINEAR_BY_FIELD`,
-    which holds Kjølby 2006 / Calamante 2007 tissue-calibrated values for
-    Gd-DTPA in cortical tissue. See the constant docstring for caveats
-    (Gd-DTPA assumed; cortical-GM numbers; 7T extrapolated).
+    Uses linear interpolation across :data:`R2_STAR_TISSUE_LINEAR_BY_FIELD`.
+    Values assume Gd-DTPA and cortical tissue; the 7T value is extrapolated.
 
     Parameters
     ----------
@@ -508,7 +482,7 @@ def get_r2_star_tissue(field_strength: float) -> float:
 
 
 def get_r2_star(field_strength: float) -> float:
-    """Get in-vivo tissue r2* relaxivity (legacy alias).
+    """Get in-vivo tissue r2* relaxivity.
 
     See get_r2_star_tissue() for details.
 
@@ -529,8 +503,8 @@ def get_r2_star(field_strength: float) -> float:
 # Absolute Quantification Calibration
 # =============================================================================
 
-#: Large vessel hematocrit; QIBA DCE-MRI v2.0 value, matched to
-#: dce_constants.HEMATOCRIT_ARTERIAL so the large-vessel Hct is consistent
+#: Large-vessel hematocrit, matched to dce_constants.HEMATOCRIT_ARTERIAL
+#: so the large-vessel Hct is consistent
 #: across the DSC and DCE modules.
 HEMATOCRIT_LV: Final[float] = 0.42
 
@@ -540,7 +514,7 @@ RHO_BRAIN: Final[float] = 1.04
 #: Blood density (g/mL)
 RHO_BLOOD: Final[float] = 1.05
 
-#: GRE vessel calibration factor at 3T (Boxerman et al. 2006)
+#: GRE vessel calibration factor at 3T.
 VESSEL_CALIBRATION_GRE_3T: Final[float] = 0.14
 
 

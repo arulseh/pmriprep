@@ -2,7 +2,7 @@
 """Run SVB on CPI DRO to compare with MAP/VI results.
 
 Creates a 2D spatial grid of homogeneous tissue patches, then fits with
-SVB (FABBER's default) and reports CBF/MTT recovery per tissue type.
+SVB and reports CBF/MTT recovery per tissue type.
 Also runs standard VI for comparison.
 """
 
@@ -51,7 +51,7 @@ def make_multi_tissue_grid(noise_frac: float = 0.0, seed: int = 42):
     )
     vascular = VascularModel()
 
-    n_tissues = len(TISSUES)
+    len(TISSUES)
     # 4x4 patch per tissue, laid out as 2 x 2 tissue blocks => 8 x 8 grid
     nx, ny, nz = 8, 8, 1
     total_voxels = 0
@@ -213,7 +213,7 @@ def main():
     )
     elapsed_svb = time.time() - t0
     svb_results = extract_cbf_mtt(result_svb, model, fitting_defs, tissue_labels)
-    print_results("SVB (spatial VB, FABBER default)", svb_results, elapsed_svb)
+    print_results("SVB (spatial variational Bayes)", svb_results, elapsed_svb)
 
     # --- Summary comparison ---
     print(f"\n{'='*70}")
@@ -239,11 +239,10 @@ def main():
 
 def run_homogeneous(noise_frac: float = 0.02):
     """Run SVB vs VI on a homogeneous grid (single tissue) to isolate variance reduction."""
-    from tests.dro.conftest import add_gaussian_noise
 
     print(f"\n{'#'*70}")
     print(f"  HOMOGENEOUS GRID TEST — noise={noise_frac}")
-    print(f"  (Isolates SVB variance reduction from boundary effects)")
+    print("  (Isolates SVB variance reduction from boundary effects)")
     print(f"{'#'*70}")
 
     for cbf_gt, alpha, beta, name in TISSUES:

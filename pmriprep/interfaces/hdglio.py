@@ -150,7 +150,6 @@ class HDGLIOPrep(BaseInterface):
     See Also
     --------
     HDGLIOSegment : HD-GLIO deep learning segmentation interface
-    HD-GLIO: https://github.com/MIC-DKFZ/HD-GLIO
     """
 
     input_spec = HDGLIOPrepInputSpec
@@ -511,13 +510,6 @@ class HDGLIOSegment(BaseInterface):
     See Also
     --------
     HDGLIOPrep : Preprocessing interface to prepare images for HD-GLIO
-    HD-GLIO: https://github.com/MIC-DKFZ/HD-GLIO
-
-    References
-    ----------
-    .. [1] Isensee F, Kickingereder P, Wick W, Bendszus M, Maier-Hein KH.
-           "Brain Tumor Segmentation and Radiomics Survival Prediction:
-           Contribution to the BRATS 2017 Challenge." arXiv:1802.10508.
     """
 
     input_spec = HDGLIOSegmentInputSpec
@@ -727,7 +719,8 @@ class HDGLIOSegment(BaseInterface):
     def _run_interface(self, runtime: Any) -> Any:
         """Execute the interface."""
         import shlex
-        import subprocess
+
+        from pmriprep.utils.processes import run_isolated_command
 
         # Ensure output directory exists
         out_dir = self._get_output_dir()
@@ -736,26 +729,15 @@ class HDGLIOSegment(BaseInterface):
         # Build and run the command
         cmd = self._build_command()
 
-        # Execute HD-GLIO with proper signal handling
-        # Use Popen to allow Ctrl+C to propagate to child process
+        # Isolate the launcher and its descendants so cleanup can target the
+        # complete HD-GLIO process tree without signalling the Nipype worker.
         # Use shlex.split for safe command parsing without shell=True
-        process = subprocess.Popen(
-            shlex.split(cmd),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            start_new_session=False,  # Keep in same process group for signal forwarding
-        )
-        try:
-            stdout, stderr = process.communicate()
-        except KeyboardInterrupt:
-            process.terminate()
-            process.wait(timeout=5)
-            raise
+        result = run_isolated_command(shlex.split(cmd))
+        stdout, stderr = result.stdout, result.stderr
 
-        if process.returncode != 0:
+        if result.returncode != 0:
             raise RuntimeError(
-                f"hd_glio_predict failed with return code {process.returncode}.\n"
+                f"hd_glio_predict failed with return code {result.returncode}.\n"
                 f"Command: {cmd}\n"
                 f"Stdout: {stdout}\n"
                 f"Stderr: {stderr}"

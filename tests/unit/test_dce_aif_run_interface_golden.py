@@ -163,7 +163,8 @@ def _tier_result(cands: list[tuple[int, int, int]], status: str = "PASS") -> Tie
     return TierResult(
         candidates=list(cands), scores=[0.9] * len(cands),
         metrics=[_full_metric()] * len(cands), curve_scaled=_bolus(),
-        scale_factor=1.5, qc=_gate_qc(), atlas_tier="MCA_ACA_dce_strict",
+        scale_factor=1.5, required_scale_factor=1.5,
+        qc=_gate_qc(), atlas_tier="MCA_ACA_dce_strict",
         hemisphere="bilateral", n_slabs=2, status=status, gate_decisions=[],
     )
 
@@ -230,6 +231,26 @@ def _cell_external(tmp_path: Path) -> dict[str, Any]:
     return _snapshot(iface)
 
 
+def test_external_aif_accepts_emitted_dce_tsv(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The named DCE derivative TSV can be supplied as an external AIF."""
+    from pmriprep.interfaces.qc_writers import _write_aif_timeseries_tsv
+
+    monkeypatch.chdir(tmp_path)
+    conc, mask = _make_conc()
+    conc_f, mask_f = _write_niftis(tmp_path, conc, mask)
+    ext = tmp_path / "sub-01_desc-dceAif_timeseries.tsv"
+    t = np.arange(40.0)
+    curve = 6.0 * np.exp(-0.5 * ((t - 8.0) / 2.0) ** 2)
+    curve[:5] = 0.0
+    _write_aif_timeseries_tsv(ext, curve, "DCE")
+
+    iface = _base_iface(conc_f, mask_f, external_aif_file=str(ext))
+    result = iface.run()
+    np.testing.assert_allclose(result.outputs.aif_curve, curve)
+
+
 def _cell_c2_divergence(tmp_path: Path) -> dict[str, Any]:
     """Cell 2: mocked cascade, C2 divergence — detected emit C2 branch."""
     a, b, c = (10, 10, 10), (10, 11, 10), (11, 10, 10)
@@ -254,6 +275,25 @@ def _cell_c2_nondivergent(tmp_path: Path) -> dict[str, Any]:
          patch.object(AIFDetection, "_ensure_bilateral_balance", side_effect=_IDENTITY_BALANCE):
         iface.run()
     return _snapshot(iface)
+
+
+def _cell_final_timing_marginal(tmp_path: Path) -> dict[str, Any]:
+    """Cell 9: final emitted-curve timing downgrades otherwise standard confidence."""
+    a, b, c = (10, 10, 10), (10, 11, 10), (11, 10, 10)
+    conc, mask = _make_conc(arterial_coords=[a, b, c])
+    # Make the brain-wide tissue peak coincide with the emitted AIF peak while
+    # retaining enough amplitude variation for the tissue-IQR estimator.
+    amplitude = np.linspace(0.5, 1.5, conc.shape[0])[:, None, None, None]
+    conc[..., :] = amplitude * _bolus()[np.newaxis, np.newaxis, np.newaxis, :]
+    conc_f, mask_f = _write_niftis(tmp_path, conc, mask)
+    casc = _cascade([a, b, c], [0.9, 0.8, 0.7], _tier_result([a, b, c]))
+    iface = _base_iface(conc_f, mask_f)
+    with patch.object(AIFDetection, "_run_two_pass_cascade", return_value=casc), \
+         patch.object(AIFDetection, "_ensure_bilateral_balance", side_effect=_IDENTITY_BALANCE):
+        iface.run()
+    snapshot = _snapshot(iface)
+    assert snapshot["results"]["aif_confidence"] == "reduced"
+    return snapshot
 
 
 def _cell_hs2_emptied(tmp_path: Path) -> dict[str, Any]:
@@ -326,6 +366,7 @@ _CELLS = {
     "external": _cell_external,
     "c2_divergence": _cell_c2_divergence,
     "c2_nondivergent": _cell_c2_nondivergent,
+    "final_timing_marginal": _cell_final_timing_marginal,
     "hs2_emptied": _cell_hs2_emptied,
     "filtered_nonzero": _cell_filtered_nonzero,
     "real_detection": _cell_real_detection,

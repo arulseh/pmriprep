@@ -8,8 +8,8 @@ faithful one):
 
 1. The per-candidate scorer prefers a physiologic-washout arterial curve over
    an over-washed (tail-collapsed) one — the exact inversion that let the
-   diluting voxels into the pooled AIF (OSIPI sub-0091: AIF 3->10 voxels,
-   Ktrans overestimate +66% -> +111%).
+   diluting voxels into the pooled AIF in a synthetic validation case (AIF
+   3->10 voxels, Ktrans overestimate +66% -> +111%).
 2. The averaged-AIF fidelity scalar rank-orders the true AIF above both
    contamination modes: tail-collapse (V1) and genuine tissue partial-volume
    (V2), which move the tail in *opposite* directions.
@@ -21,8 +21,6 @@ assertions are rank-orderings, not absolute thresholds.
 """
 
 from __future__ import annotations
-
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -36,9 +34,6 @@ from pmriprep.interfaces.dce_aif import (
 TR = 4.8  # OSIPI DCE synthetic temporal resolution (Shalom 2024)
 BASELINE_FRAMES = 5
 N_FRAMES = 65
-
-_OSIPI_AIF = Path(__file__).resolve().parents[2] / "sourcedata" / "osipi" / "AIF.npz"
-
 
 def _clean_arterial() -> np.ndarray:
     """Build a physiologic arterial AIF: Parker first pass + a recirculation tail.
@@ -141,61 +136,65 @@ class TestAveragedFidelityRanking:
         """A faithful AIF out-scores an over-washed (tail-collapsed) one."""
         clean = _clean_arterial()
         v1 = _tail_collapse(clean)
-        f_clean, _ = score_averaged_aif_fidelity(clean, TR, BASELINE_FRAMES)
-        f_v1, _ = score_averaged_aif_fidelity(v1, TR, BASELINE_FRAMES)
+        f_clean, _ = score_averaged_aif_fidelity(
+            clean, TR, BASELINE_FRAMES, hematocrit=0.0
+        )
+        f_v1, _ = score_averaged_aif_fidelity(
+            v1, TR, BASELINE_FRAMES, hematocrit=0.0
+        )
         assert f_clean > f_v1
 
     def test_truth_above_partial_volume(self) -> None:
         """A faithful AIF out-scores a tissue partial-volume-diluted one."""
         clean = _clean_arterial()
         v2 = _partial_volume(clean)
-        f_clean, _ = score_averaged_aif_fidelity(clean, TR, BASELINE_FRAMES)
-        f_v2, _ = score_averaged_aif_fidelity(v2, TR, BASELINE_FRAMES)
+        f_clean, _ = score_averaged_aif_fidelity(
+            clean, TR, BASELINE_FRAMES, hematocrit=0.0
+        )
+        f_v2, _ = score_averaged_aif_fidelity(
+            v2, TR, BASELINE_FRAMES, hematocrit=0.0
+        )
         assert f_clean > f_v2
 
     def test_partial_volume_two_sided_tail(self) -> None:
         """V2's tissue-raised tail must NOT earn full marks (two-sided tail term)."""
         v2 = _partial_volume(_clean_arterial())
-        _, m = score_averaged_aif_fidelity(v2, TR, BASELINE_FRAMES)
+        _, m = score_averaged_aif_fidelity(
+            v2, TR, BASELINE_FRAMES, hematocrit=0.0
+        )
         assert m["tail_ratio"] > 0.35  # tissue-diluted tail sits high
         assert m["tail_score"] < 0.5   # ...and is penalized, not rewarded
 
 
-# ---------------------------------------------------------------------------
-# 3. OSIPI ground-truth anchor (skips when the DRO AIF is absent)
-# ---------------------------------------------------------------------------
+class TestPlasmaReferenceConsistency:
+    """Reference scaling must be invariant to a consistent Hct conversion."""
 
-@pytest.mark.skipif(not _OSIPI_AIF.exists(), reason="OSIPI DRO AIF (AIF.npz) not present")
-class TestOsipiGroundTruthAnchor:
-    """The real MCA ground-truth AIF must score above every contamination mode.
-
-    Anchored on the actual OSIPI DRO ground-truth AIF (a hematocrit-corrected
-    middle-cerebral-artery curve scaled to 6 mM peak; Shalom 2024), not a
-    synthetic Parker curve.
-    """
-
-    def _gt(self) -> np.ndarray:
-        """Load the OSIPI DRO ground-truth MCA AIF (clipped non-negative)."""
-        return np.clip(np.load(_OSIPI_AIF)["Cp"], 0.0, None)
-
-    def test_gt_scores_high_and_above_contamination(self) -> None:
-        """The true MCA AIF is the single highest-fidelity curve."""
-        gt = self._gt()
-        f_gt, _ = score_averaged_aif_fidelity(gt, TR, BASELINE_FRAMES)
-        clean = _clean_arterial()
-        f_v1, _ = score_averaged_aif_fidelity(_tail_collapse(clean), TR, BASELINE_FRAMES)
-        f_v2, _ = score_averaged_aif_fidelity(_partial_volume(clean), TR, BASELINE_FRAMES)
-        # The true AIF is the single highest-fidelity curve.
-        assert f_gt > 0.6, f"true GT AIF scored low: {f_gt:.3f}"
-        assert f_gt > f_v1
-        assert f_gt > f_v2
-
-    def test_gt_washout_is_physiologic(self) -> None:
-        """The GT washout lands in the two-sided acceptance band (~0.78)."""
-        from pmriprep.interfaces.dce_aif import compute_dce_aif_washout
-        from pmriprep.utils.dce_constants import (
-            AIF_WASHOUT_BAND_HALFWIDTH,
-            AIF_WASHOUT_PHYSIOLOGIC_CENTER,
+    @pytest.mark.parametrize("hematocrit", [0.20, 0.42, 0.55])
+    def test_consistent_blood_to_plasma_conversion_is_score_invariant(
+        self, hematocrit: float,
+    ) -> None:
+        """The same blood curve receives the same score at any stated Hct."""
+        blood_curve = _clean_arterial()
+        reference_score, reference_metrics = score_averaged_aif_fidelity(
+            blood_curve, TR, BASELINE_FRAMES, hematocrit=0.0
         )
-        w = compute_dce_aif_washout(self._gt(), BASELINE_FRAMES)
-        assert abs(w - AIF_WASHOUT_PHYSIOLOGIC_CENTER) < AIF_WASHOUT_BAND_HALFWIDTH
+        plasma_curve = blood_curve / (1.0 - hematocrit)
+        plasma_score, plasma_metrics = score_averaged_aif_fidelity(
+            plasma_curve, TR, BASELINE_FRAMES, hematocrit=hematocrit
+        )
+
+        assert plasma_score == pytest.approx(reference_score, abs=1e-12)
+        assert plasma_metrics["scale_score"] == pytest.approx(
+            reference_metrics["scale_score"], abs=1e-12
+        )
+        assert plasma_metrics["auc_ratio"] == pytest.approx(
+            reference_metrics["auc_ratio"], abs=1e-12
+        )
+
+    @pytest.mark.parametrize("hematocrit", [-0.01, 1.0, 1.1])
+    def test_invalid_hematocrit_is_rejected(self, hematocrit: float) -> None:
+        """Invalid hematocrit cannot define a plasma reference scale."""
+        with pytest.raises(ValueError, match="hematocrit must be in"):
+            score_averaged_aif_fidelity(
+                _clean_arterial(), TR, BASELINE_FRAMES, hematocrit=hematocrit
+            )

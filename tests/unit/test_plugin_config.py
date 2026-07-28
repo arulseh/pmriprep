@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from pmriprep.cli.run import _load_plugin_config
+from pmriprep.cli.run import _build_parser, _effective_nprocs, _load_plugin_config
 
 
 def test_yaml_round_trip(tmp_path: Path) -> None:
@@ -72,3 +72,33 @@ def test_rejects_non_mapping_plugin_args(tmp_path: Path) -> None:
     p.write_text("plugin: SLURM\nplugin_args: not_a_mapping\n")
     with pytest.raises(ValueError, match="'plugin_args' must be a mapping"):
         _load_plugin_config(p)
+
+
+def test_nipype_plugin_file_alias() -> None:
+    """The public alias matches fMRIPrep's plugin-file CLI contract."""
+    parsed = _build_parser().parse_args([
+        "/tmp/bids",
+        "/tmp/out",
+        "participant",
+        "--nipype-plugin-file",
+        "/tmp/plugin.yaml",
+    ])
+
+    assert parsed.use_plugin == Path("/tmp/plugin.yaml")
+
+
+def test_multiproc_file_nprocs_is_effective_without_cli_override() -> None:
+    """A MultiProc file supplies the process count when CLI omits it."""
+    assert _effective_nprocs(None, "MultiProc", {"n_procs": 6}) == 6
+
+
+def test_cli_nprocs_overrides_multiproc_file() -> None:
+    """Explicit CLI process count has NiPreps precedence."""
+    assert _effective_nprocs(3, "MultiProc", {"n_procs": 6}) == 3
+
+
+@pytest.mark.parametrize("value", [0, -1, True, 1.5, "4"])
+def test_invalid_multiproc_file_nprocs_fails(value) -> None:
+    """Invalid scheduler process counts fail before workflow construction."""
+    with pytest.raises(ValueError, match="positive integer"):
+        _effective_nprocs(None, "MultiProc", {"n_procs": value})

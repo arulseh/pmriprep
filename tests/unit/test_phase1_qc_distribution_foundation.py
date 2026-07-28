@@ -242,6 +242,37 @@ def test_aif_sidecar_dce_units_are_plasma_concentration(tmp_path: Path) -> None:
     assert sc["Columns"] == ["plasma_concentration_mM"]
 
 
+def test_aif_sidecar_dce_peak_scaling_provenance(tmp_path: Path) -> None:
+    """DCE AIF TSV sidecars expose the canonical peak-scaling state."""
+    sc = build_aif_timeseries_sidecar(
+        modality="DCE",
+        source_paths=[tmp_path / "src.nii.gz"],
+        bids_dir=tmp_path,
+        subject="01",
+        session="01",
+        aif_qc={
+            "detection_method": "atlas",
+            "peak_scaling_enabled": True,
+            "peak_scaling_applied": True,
+            "raw_peak_mm": 4.0,
+            "emitted_peak_mm": 8.0,
+            "peak_scaling_factor": 2.0,
+            "peak_scaling_required_factor": 2.0,
+            "peak_scaling_policy": "one_sided_lower_bound",
+            "peak_scaling_trigger": "below_expected_minimum",
+        },
+    )
+    scaling = sc["PerfusionProcessing"]["AIF"]["PeakScaling"]
+    assert scaling["Enabled"] is True
+    assert scaling["Applied"] is True
+    assert scaling["RawPeak"] == pytest.approx(4.0)
+    assert scaling["EmittedPeak"] == pytest.approx(8.0)
+    assert scaling["Factor"] == pytest.approx(2.0)
+    assert scaling["RequiredFactor"] == pytest.approx(2.0)
+    assert scaling["Policy"] == "one_sided_lower_bound"
+    assert scaling["Trigger"] == "below_expected_minimum"
+
+
 def test_aif_sidecar_invalid_modality_raises(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="modality must be"):
         build_aif_timeseries_sidecar(
@@ -253,10 +284,10 @@ def test_aif_sidecar_invalid_modality_raises(tmp_path: Path) -> None:
         )
 
 
-def test_aif_sidecar_flat_keys_populated(tmp_path: Path) -> None:
-    """Flat ``AIF*``-prefixed top-level keys (no nested AIFDetection block)."""
+def test_aif_sidecar_canonical_block_populated(tmp_path: Path) -> None:
+    """AIF curve diagnostics use the canonical nested AIF block."""
     aif_qc = {
-        "detection_method": "manual",
+        "detection_method": "atlas",
         "n_aif_voxels_selected": 12,
         "aif_metrics": {"peak_conc": 4.2, "fwhm": 6.5},
         "hematocrit": 0.42,
@@ -269,13 +300,12 @@ def test_aif_sidecar_flat_keys_populated(tmp_path: Path) -> None:
         session="01",
         aif_qc=aif_qc,
     )
-    assert sc["AIFMethod"] == "manual"
-    assert sc["AIFNumberOfVoxelsSelected"] == 12
-    assert sc["AIFPeakAmplitude"] == pytest.approx(4.2)
-    assert sc["AIFFWHM"] == pytest.approx(6.5)
-    assert sc["AIFHematocrit"] == pytest.approx(0.42)
-    # Regression: no nested block
-    assert "AIFDetection" not in sc
+    block = sc["PerfusionProcessing"]["AIF"]
+    assert block["DetectionLevel"] == "atlas"
+    assert block["NumberOfVoxelsSelected"] == 12
+    assert block["PeakAmplitude"] == pytest.approx(4.2)
+    assert block["FWHM"] == pytest.approx(6.5)
+    assert block["Hematocrit"] == pytest.approx(0.42)
 
 
 # ---------------------------------------------------------------------------

@@ -5,6 +5,7 @@ __pycache__/
 .eggs/
 dist/
 build/
+.DS_Store
 
 # Nipype
 crash-*.txt
@@ -12,14 +13,17 @@ crash-*.txt
 # Test artifacts
 .pytest_cache/
 .mypy_cache/
+.ruff_cache/
 .coverage
 htmlcov/
 
 # Raw data
 work/
 sourcedata/
+test_outputs/
+bak/
+debug/
 
 # Documentation site
 docs/_build/
 docs/api/
-

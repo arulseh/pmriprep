@@ -19,12 +19,16 @@ from pmriprep.interfaces.dsc import MotionCorrection, DSCRegistration
 from pmriprep.interfaces.dsc_aif import AIFDetection
 from pmriprep.interfaces.dsc_aif_qc import AIFQCPlot
 from pmriprep.interfaces.dsc_compute import ComputeDSCMaps
-from pmriprep.utils.dsc_constants import DEFAULT_OI_THRESHOLD, DEFAULT_SVD_THRESHOLD
+from pmriprep.utils.dsc_constants import (
+    DEFAULT_OI_THRESHOLD,
+    DEFAULT_SVD_THRESHOLD,
+)
+from pmriprep.workflows._perfusion import (
+    select_aif_exclusion_mask as _select_aif_exclusion_mask,
+    validate_native_mask as _validate_native_mask,
+)
 
-# FSL CommandLine wrappers, Function-node helpers, and the (formerly embedded)
-# smoothing dict-builders now live in ``_helpers.py``; re-exported here so
-# ``init_dsc_preproc_wf`` and external importers keep resolving them from
-# ``...dsc.base``.
+# FSL CommandLine wrappers and Function-node helpers used by the DSC graph.
 from pmriprep.workflows.dsc._helpers import (  # noqa: F401
     ConvertXFM,
     FLIRTApplyXFM,
@@ -47,7 +51,6 @@ from pmriprep.workflows.dsc._helpers import (  # noqa: F401
     _merge_qc_metrics,
     _normalize_cbf,
     _normalize_cbv,
-    _select_aif_exclusion_mask,
     _signal_to_concentration,
     _smooth_maps,
     _transform_brain_mask_to_dsc,
@@ -55,7 +58,6 @@ from pmriprep.workflows.dsc._helpers import (  # noqa: F401
     _transform_nawm_to_dsc,
     _transform_structural_to_dsc,
     _transform_wm_probseg_to_dsc,
-    _validate_native_mask,
 )
 
 
@@ -337,8 +339,8 @@ def init_dsc_motion_wf(
     # Node 1: Motion Correction
     motion_correct = pe.Node(
         MotionCorrection(
-            ref_vol="mean",
             motion_thresh=motion_thresh,
+            baseline_frames=baseline_frames,
         ),
         name="motion_correct",
         mem_gb=mem_gb,
@@ -460,10 +462,10 @@ def init_dsc_preload_wf(
 
     Inputs
     ------
-    concentration_file, signal_file, aif_file, brain_mask_file, te,
+    concentration_file, signal_file, brain_mask_file, te,
     field_strength, tr
-        ΔR2* concentration + raw signal, AIF curve, DSC brain mask, and
-        acquisition parameters.
+        ΔR2* concentration, raw signal, DSC brain mask, and acquisition
+        parameters.
 
     Outputs
     -------
@@ -482,11 +484,11 @@ def init_dsc_preload_wf(
             fields=[
                 "concentration_file",
                 "signal_file",
-                "aif_file",
                 "brain_mask_file",
                 "te",
                 "field_strength",
                 "tr",
+                "baseline_frames",
                 "lesion_mask_dsc",
             ]
         ),
@@ -504,12 +506,11 @@ def init_dsc_preload_wf(
         name="outputnode",
     )
 
-    # Node 4: Preload Detection and K2 Correction (needs the AIF)
+    # Node 4: Preload Detection and K2 Correction
     preload_correct = pe.Node(
         niu.Function(
             input_names=[
                 "concentration_file",
-                "aif_file",
                 "brain_mask_file",
                 "te",
                 "field_strength",
@@ -565,11 +566,11 @@ def init_dsc_preload_wf(
         (inputnode, preload_correct, [
             ("concentration_file", "concentration_file"),
             ("signal_file", "signal_file"),
-            ("aif_file", "aif_file"),
             ("brain_mask_file", "brain_mask_file"),
             ("te", "te"),
             ("field_strength", "field_strength"),
             ("tr", "tr"),
+            ("baseline_frames", "baseline_frames"),
         ]),
         # Positive-tail QC: augment the preload QC dict downstream, off the
         # deconvolution critical path. Consumes the raw concentration + K2 map
@@ -595,7 +596,6 @@ def init_dsc_preload_wf(
 
 def init_dsc_registration_wf(
     *,
-    registration: str,
     mem_gb: float,
     name: str = "dsc_registration_wf",
 ) -> pe.Workflow:
@@ -606,8 +606,6 @@ def init_dsc_registration_wf(
 
     Parameters
     ----------
-    registration : str
-        Registration strategy ("flirt" or "flirt_bbr").
     mem_gb : float
         Memory estimate (GB) for the registration node.
     name : str
@@ -622,8 +620,8 @@ def init_dsc_registration_wf(
     ------
     matched_t1w_file
         Histogram-matched T1w (moving image's target).
-    brain_mask, wm_probseg
-        T1w-space brain mask and WM segmentation (for BBR).
+    brain_mask
+        T1w-space brain mask used for registration QC.
     dsc_brain
         Brain-extracted DSC reference.
     t1w_to_mni_xfm
@@ -650,7 +648,6 @@ def init_dsc_registration_wf(
             fields=[
                 "matched_t1w_file",
                 "brain_mask",
-                "wm_probseg",
                 "dsc_brain",
                 "t1w_to_mni_xfm",
             ]
@@ -674,7 +671,6 @@ def init_dsc_registration_wf(
     # Node 6: DSC to T1w Registration
     register = pe.Node(
         DSCRegistration(
-            registration=registration,
             dof=6,  # Rigid body
             cost="normmi",
         ),
@@ -691,7 +687,6 @@ def init_dsc_registration_wf(
         (inputnode, register, [
             ("matched_t1w_file", "t1w_file"),
             ("brain_mask", "brain_mask"),
-            ("wm_probseg", "wm_seg"),
             ("dsc_brain", "dsc_mean"),
         ]),
         (inputnode, invert_mni_xfm, [("t1w_to_mni_xfm", "in_file")]),
@@ -742,14 +737,14 @@ def init_dsc_deconvolution_wf(
     ------
     concentration_file, signal_file, raw_concentration_file
         Leakage-corrected and raw concentration / signal time series.
-    aif_file, measured_aif_file, aif_mask_file, aif_best_coord, aif_detection_level, baseline_frames
+    aif_file, measured_aif_file, aif_detection_level, baseline_frames
         Arterial input function and detection provenance.
     k2_map_input_file, preload_classification
         Preload-detection leakage inputs.
     brain_mask_file, enhancing_mask_file, nawm_mask_file
         DSC-space masks (brain, enhancing tumor, NAWM for rTTP normalization).
-    tr, te, field_strength, fd_values
-        Acquisition parameters and framewise displacement.
+    tr, fd_values
+        Acquisition timing and framewise displacement.
 
     Outputs
     -------
@@ -765,7 +760,7 @@ def init_dsc_deconvolution_wf(
         Quality maps.
     out_alpha, out_beta, out_cth
         Vascular-model parameters (undefined for SVD methods).
-    out_cbf_std, out_cbv_std, out_cbf_cv, out_cbv_cv, out_cbf_ci95_lower, out_cbf_ci95_upper, out_cbv_ci95_lower, out_cbv_ci95_upper
+    out_cbf_std, out_cbf_cv, out_cbf_ci95_lower, out_cbf_ci95_upper
         Bayesian uncertainty maps (parametric methods only).
     out_parametric_r2, out_fallback_mask
         Parametric-fit diagnostics (CPI / vascular only).
@@ -780,15 +775,11 @@ def init_dsc_deconvolution_wf(
                 "k2_map_input_file",
                 "aif_file",
                 "measured_aif_file",
-                "aif_mask_file",
-                "aif_best_coord",
                 "aif_detection_level",
                 "baseline_frames",
                 "brain_mask_file",
                 "enhancing_mask_file",
                 "tr",
-                "te",
-                "field_strength",
                 "fd_values",
                 "signal_file",
                 "raw_concentration_file",
@@ -826,13 +817,9 @@ def init_dsc_deconvolution_wf(
                 "out_beta",
                 "out_cth",
                 "out_cbf_std",
-                "out_cbv_std",
                 "out_cbf_cv",
-                "out_cbv_cv",
                 "out_cbf_ci95_lower",
                 "out_cbf_ci95_upper",
-                "out_cbv_ci95_lower",
-                "out_cbv_ci95_upper",
                 "out_parametric_r2",
                 "out_fallback_mask",
                 "out_qc_fit_data",
@@ -846,6 +833,7 @@ def init_dsc_deconvolution_wf(
         ComputeDSCMaps(**dsc_map_kwargs),
         name="compute_maps",
         mem_gb=mem_gb,
+        n_procs=max(1, int(dsc_map_kwargs.get("n_procs", 1))),
     )
 
     workflow.connect([
@@ -854,15 +842,11 @@ def init_dsc_deconvolution_wf(
             ("k2_map_input_file", "k2_map_input_file"),
             ("aif_file", "aif_file"),
             ("measured_aif_file", "measured_aif_file"),
-            ("aif_mask_file", "aif_mask_file"),
-            ("aif_best_coord", "aif_best_coord"),
             ("aif_detection_level", "aif_detection_level"),
             ("baseline_frames", "baseline_frames"),
             ("brain_mask_file", "brain_mask_file"),
             ("enhancing_mask_file", "enhancing_mask_file"),
             ("tr", "tr"),
-            ("te", "te"),
-            ("field_strength", "field_strength"),
             ("fd_values", "fd_values"),
             ("signal_file", "signal_file"),
             ("raw_concentration_file", "raw_concentration_file"),
@@ -895,13 +879,9 @@ def init_dsc_deconvolution_wf(
             ("out_beta", "out_beta"),
             ("out_cth", "out_cth"),
             ("out_cbf_std", "out_cbf_std"),
-            ("out_cbv_std", "out_cbv_std"),
             ("out_cbf_cv", "out_cbf_cv"),
-            ("out_cbv_cv", "out_cbv_cv"),
             ("out_cbf_ci95_lower", "out_cbf_ci95_lower"),
             ("out_cbf_ci95_upper", "out_cbf_ci95_upper"),
-            ("out_cbv_ci95_lower", "out_cbv_ci95_lower"),
-            ("out_cbv_ci95_upper", "out_cbv_ci95_upper"),
             ("out_parametric_r2", "out_parametric_r2"),
             ("out_fallback_mask", "out_fallback_mask"),
             ("out_qc_fit_data", "out_qc_fit_data"),
@@ -920,9 +900,9 @@ def init_dsc_normalization_wf(
 ) -> pe.Workflow:
     """Build the DSC CBV / CBF normalization sub-workflow.
 
-    Normalizes the relative CBV and CBF maps to a reference tissue (NAWM when
-    available, else a whole-brain fallback), producing nCBV / nCBF maps and the
-    shared normalization factor. CBV and CBF use the same normalization method.
+    Normalizes relative CBV and CBF to NAWM, producing nCBV / nCBF maps and the
+    shared normalization factor. Without a valid NAWM mask, normalized maps are
+    omitted. CBV and CBF use the same normalization method.
 
     Parameters
     ----------
@@ -946,10 +926,8 @@ def init_dsc_normalization_wf(
         Relative CBV map to normalize.
     cbf_file
         Relative CBF map to normalize.
-    brain_mask_file
-        DSC-space brain mask (whole-brain fallback reference).
     nawm_mask_file
-        NAWM mask (preferred normalization reference).
+        NAWM normalization mask.
 
     Outputs
     -------
@@ -963,7 +941,7 @@ def init_dsc_normalization_wf(
     workflow = pe.Workflow(name=name)
     inputnode = pe.Node(
         niu.IdentityInterface(
-            fields=["cbv_file", "cbf_file", "brain_mask_file", "nawm_mask_file"]
+            fields=["cbv_file", "cbf_file", "nawm_mask_file"]
         ),
         name="inputnode",
     )
@@ -981,7 +959,6 @@ def init_dsc_normalization_wf(
         niu.Function(
             input_names=[
                 "cbv_file",
-                "brain_mask_file",
                 "derivatives_dir",
                 "subject_id",
                 "session_id",
@@ -1003,7 +980,6 @@ def init_dsc_normalization_wf(
         niu.Function(
             input_names=[
                 "cbf_file",
-                "brain_mask_file",
                 "derivatives_dir",
                 "subject_id",
                 "session_id",
@@ -1021,12 +997,10 @@ def init_dsc_normalization_wf(
     workflow.connect([
         (inputnode, normalize, [
             ("cbv_file", "cbv_file"),
-            ("brain_mask_file", "brain_mask_file"),
             ("nawm_mask_file", "nawm_mask_file"),
         ]),
         (inputnode, normalize_cbf, [
             ("cbf_file", "cbf_file"),
-            ("brain_mask_file", "brain_mask_file"),
             ("nawm_mask_file", "nawm_mask_file"),
         ]),
         (normalize, outputnode, [
@@ -1204,8 +1178,6 @@ def init_dsc_lesion_stats_wf(
         Normalized CBV / CBF maps.
     nawm_mask
         NAWM reference mask.
-    field_strength_t
-        Field strength (Tesla).
     aif_qc
         AIF QC-metrics dict (surfaced into the stats sidecars).
     tumor_lesion_mask, mask_origin
@@ -1246,7 +1218,6 @@ def init_dsc_lesion_stats_wf(
                 "ncbv_map",
                 "ncbf_map",
                 "nawm_mask",
-                "field_strength_t",
                 "aif_qc",
                 "tumor_lesion_mask",
                 "mask_origin",
@@ -1277,7 +1248,7 @@ def init_dsc_lesion_stats_wf(
     user_lesion_stats.inputs.subject_id = subject_id
     user_lesion_stats.inputs.session_id = session_id
 
-    # Perfusion maps + NAWM + field strength + AIF QC are shared by all three
+    # Perfusion maps + NAWM + AIF QC are shared by all three
     # stats nodes; the lesion mask differs (tumor-seg / ROI / user), and only
     # the tumor-seg node receives the mask-origin provenance label.
     shared_inputs = [
@@ -1297,7 +1268,6 @@ def init_dsc_lesion_stats_wf(
         ("ncbv_map", "ncbv_map"),
         ("ncbf_map", "ncbf_map"),
         ("nawm_mask", "nawm_mask"),
-        ("field_strength_t", "field_strength_t"),
         ("aif_qc", "aif_qc"),
     ]
     workflow.connect([
@@ -1319,7 +1289,6 @@ def init_dsc_qc_wf(
     subject_id: str,
     session_id: Optional[str],
     aif_source: str,
-    registration_bbr: bool,
     baseline_frames: int,
     name: str = "dsc_qc_wf",
 ) -> pe.Workflow:
@@ -1338,8 +1307,6 @@ def init_dsc_qc_wf(
         BIDS session label.
     aif_source : str
         AIF provenance label for the merged QC ("external", "synthetic", "auto").
-    registration_bbr : bool
-        Whether boundary-based registration was used (recorded in merged QC).
     baseline_frames : int
         Pre-bolus baseline frame count (S0) for the preprocessing QC plot.
     name : str
@@ -1404,6 +1371,7 @@ def init_dsc_qc_wf(
                 "qc_fit_data",
                 "registration_qc_metrics",
                 "registered_t1w",
+                "registered_t1w_mask",
                 "t1w_to_dsc_matrix",
                 "normalization_factor",
                 "brain_mask_file",
@@ -1447,7 +1415,6 @@ def init_dsc_qc_wf(
                 "aif_metrics",
                 "preprocessing_stats",
                 "aif_source",
-                "registration_bbr",
             ],
             output_names=["merged_qc"],
             function=_merge_qc_metrics,
@@ -1455,12 +1422,13 @@ def init_dsc_qc_wf(
         name="merge_qc",
     )
     merge_qc.inputs.aif_source = aif_source
-    merge_qc.inputs.registration_bbr = registration_bbr
 
     reg_filmstrip = pe.Node(
         niu.Function(
-            input_names=["dsc_mean_file", "registered_t1w_file", "brain_mask_file",
-                         "subject_id", "session_id"],
+            input_names=[
+                "dsc_mean_file", "registered_t1w_file", "brain_mask_file",
+                "registered_t1w_mask_file", "subject_id", "session_id",
+            ],
             output_names=["filmstrip_file"],
             function=_create_registration_filmstrip,
         ),
@@ -1563,6 +1531,7 @@ def init_dsc_qc_wf(
         (inputnode, reg_filmstrip, [
             ("prebolus_mean_file", "dsc_mean_file"),
             ("registered_t1w", "registered_t1w_file"),
+            ("registered_t1w_mask", "registered_t1w_mask_file"),
             ("brain_mask_file", "brain_mask_file"),
         ]),
         (inputnode, aif_qc_plot, [
@@ -1632,6 +1601,168 @@ def init_dsc_qc_wf(
         (dsc_fit_qc, outputnode, [("plot_file", "dsc_fit_qc_plot")]),
         (dsc_brain_mask_qc, outputnode, [("out_file", "brain_mask_filmstrip")]),
     ])
+    return workflow
+
+
+def init_dsc_lesion_masks_wf(
+    *, name: str = "dsc_lesion_masks_wf",
+) -> pe.Workflow:
+    """Prepare native and T1w-derived lesion masks for DSC consumers."""
+    from pmriprep.utils.lesion_stats import combine_tumor_masks
+
+    workflow = pe.Workflow(name=name)
+    inputnode = pe.Node(
+        niu.IdentityInterface(fields=[
+            "roi_mask", "user_lesion_mask", "tumor_segmentation",
+            "whole_tumor_mask", "enhancing_mask", "reference_file",
+            "transform_matrix",
+        ]),
+        name="inputnode",
+    )
+    outputnode = pe.Node(
+        niu.IdentityInterface(fields=[
+            "roi_mask", "user_lesion_mask", "tumor_lesion_mask",
+            "enhancing_mask", "aif_exclusion_mask", "mask_origin",
+        ]),
+        name="outputnode",
+    )
+    validate_roi_mask = pe.Node(
+        niu.Function(
+            input_names=["mask_file", "reference_file", "mask_label"],
+            output_names=["validated_mask"], function=_validate_native_mask,
+        ),
+        name="validate_roi_mask",
+    )
+    validate_roi_mask.inputs.mask_label = "dsc.roi_mask"
+    validate_user_lesion_mask = pe.Node(
+        niu.Function(
+            input_names=["mask_file", "reference_file", "mask_label"],
+            output_names=["validated_mask"], function=_validate_native_mask,
+        ),
+        name="validate_user_lesion_mask",
+    )
+    validate_user_lesion_mask.inputs.mask_label = "dsc.lesion_mask"
+    combine_masks = pe.Node(
+        niu.Function(
+            input_names=[
+                "tumor_segmentation_file", "whole_tumor_mask_file", "reference_file",
+            ],
+            output_names=["combined_mask_file", "mask_origin"],
+            function=combine_tumor_masks,
+        ),
+        name="combine_masks",
+    )
+    transform_lesion = pe.Node(
+        niu.Function(
+            input_names=["lesion_mask_file", "reference_file", "transform_matrix"],
+            output_names=["lesion_mask_dsc_file"], function=_transform_lesion_mask_to_dsc,
+        ),
+        name="transform_lesion",
+    )
+    transform_enhancing_mask = pe.Node(
+        niu.Function(
+            input_names=["lesion_mask_file", "reference_file", "transform_matrix"],
+            output_names=["lesion_mask_dsc_file"], function=_transform_lesion_mask_to_dsc,
+        ),
+        name="transform_enhancing_mask",
+    )
+    select_aif_exclusion = pe.Node(
+        niu.Function(
+            input_names=["user_lesion_mask", "transformed_lesion_mask"],
+            output_names=["out_mask"], function=_select_aif_exclusion_mask,
+        ),
+        name="select_aif_exclusion",
+    )
+    workflow.connect([
+        (inputnode, validate_roi_mask, [
+            ("roi_mask", "mask_file"), ("reference_file", "reference_file"),
+        ]),
+        (inputnode, validate_user_lesion_mask, [
+            ("user_lesion_mask", "mask_file"), ("reference_file", "reference_file"),
+        ]),
+        (inputnode, combine_masks, [
+            ("tumor_segmentation", "tumor_segmentation_file"),
+            ("whole_tumor_mask", "whole_tumor_mask_file"),
+            ("reference_file", "reference_file"),
+        ]),
+        (combine_masks, transform_lesion, [("combined_mask_file", "lesion_mask_file")]),
+        (inputnode, transform_lesion, [
+            ("reference_file", "reference_file"), ("transform_matrix", "transform_matrix"),
+        ]),
+        (inputnode, transform_enhancing_mask, [
+            ("enhancing_mask", "lesion_mask_file"),
+            ("reference_file", "reference_file"), ("transform_matrix", "transform_matrix"),
+        ]),
+        (validate_user_lesion_mask, select_aif_exclusion, [
+            ("validated_mask", "user_lesion_mask"),
+        ]),
+        (transform_lesion, select_aif_exclusion, [
+            ("lesion_mask_dsc_file", "transformed_lesion_mask"),
+        ]),
+        (validate_roi_mask, outputnode, [("validated_mask", "roi_mask")]),
+        (validate_user_lesion_mask, outputnode, [("validated_mask", "user_lesion_mask")]),
+        (transform_lesion, outputnode, [("lesion_mask_dsc_file", "tumor_lesion_mask")]),
+        (transform_enhancing_mask, outputnode, [("lesion_mask_dsc_file", "enhancing_mask")]),
+        (select_aif_exclusion, outputnode, [("out_mask", "aif_exclusion_mask")]),
+        (combine_masks, outputnode, [("mask_origin", "mask_origin")]),
+    ])
+    return workflow
+
+
+def init_dsc_underlays_wf(
+    *, underlays: list[str], name: str = "dsc_underlays_wf",
+) -> pe.Workflow:
+    """Transform the requested structural underlays into DSC space."""
+    workflow = pe.Workflow(name=name)
+    input_fields = [
+        "t1w_underlay", "t1w_postcon_underlay", "t1w_subtraction_underlay",
+        "flair_in_t1w", "flair_postcon_in_t1w", "t2w_in_t1w",
+        "reference_file", "transform_matrix",
+    ]
+    output_fields = [
+        "t1w_in_dsc", "t1w_postcon_in_dsc", "t1w_subtraction_in_dsc",
+        "flair_in_dsc", "flair_postcon_in_dsc", "t2w_in_dsc",
+    ]
+    inputnode = pe.Node(niu.IdentityInterface(fields=input_fields), name="inputnode")
+    outputnode = pe.Node(niu.IdentityInterface(fields=output_fields), name="outputnode")
+    specifications = {
+        "t1w_precon": ("transform_t1_to_dsc", "t1w_underlay", "t1w_in_dsc.nii.gz", "t1w_in_dsc"),
+        "t1w_postcon": (
+            "transform_t1_postcon_to_dsc", "t1w_postcon_underlay",
+            "t1w_postcon_in_dsc.nii.gz", "t1w_postcon_in_dsc",
+        ),
+        "t1w_subtraction": (
+            "transform_t1_subtraction_to_dsc", "t1w_subtraction_underlay",
+            "t1w_subtraction_in_dsc.nii.gz", "t1w_subtraction_in_dsc",
+        ),
+        "flair_precon": (
+            "transform_flair_to_dsc", "flair_in_t1w",
+            "flair_in_dsc.nii.gz", "flair_in_dsc",
+        ),
+        "flair_postcon": (
+            "transform_flair_postcon_to_dsc", "flair_postcon_in_t1w",
+            "flair_postcon_in_dsc.nii.gz", "flair_postcon_in_dsc",
+        ),
+        "t2w": ("transform_t2w_to_dsc", "t2w_in_t1w", "t2w_in_dsc.nii.gz", "t2w_in_dsc"),
+    }
+    for key, (node_name, input_field, output_name, output_field) in specifications.items():
+        if key not in underlays:
+            continue
+        transform = pe.Node(
+            niu.Function(
+                input_names=["structural_file", "reference_file", "transform_matrix", "output_name"],
+                output_names=["out_file"], function=_transform_structural_to_dsc,
+            ),
+            name=node_name,
+        )
+        transform.inputs.output_name = output_name
+        workflow.connect([
+            (inputnode, transform, [
+                (input_field, "structural_file"), ("reference_file", "reference_file"),
+                ("transform_matrix", "transform_matrix"),
+            ]),
+            (transform, outputnode, [("out_file", output_field)]),
+        ])
     return workflow
 
 
@@ -1827,13 +1958,9 @@ def init_dsc_preproc_wf(
                 "cth_map",
                 # Bayesian uncertainty maps (optional)
                 "cbf_std_map",
-                "cbv_std_map",
                 "cbf_cv_map",
-                "cbv_cv_map",
                 "cbf_ci95_lower_map",
                 "cbf_ci95_upper_map",
-                "cbv_ci95_lower_map",
-                "cbv_ci95_upper_map",
                 # Parametric-fit diagnostics (CPI/Vascular only)
                 "parametric_r2_map",
                 "fallback_mask",
@@ -1967,19 +2094,19 @@ def init_dsc_preproc_wf(
     )
 
     # -------------------------------------------------------------------
-    # Node 1c: Transform T1w Brain Mask to DSC Space
-    # NOTE: T1w brain mask transform kept for future use. To reinstate,
-    # uncomment and reconnect downstream consumers.
+    # Node 1c: Transform T1w Brain Mask to DSC Space for registration QC
     # -------------------------------------------------------------------
-    # transform_brain_mask = pe.Node(
-    #     niu.Function(
-    #         input_names=["brain_mask_file", "reference_file", "transform_matrix",
-    #                      "hdbet_mask_file"],
-    #         output_names=["dsc_brain_mask_file", "dice_score"],
-    #         function=_transform_brain_mask_to_dsc,
-    #     ),
-    #     name="transform_brain_mask",
-    # )
+    transform_brain_mask_qc = pe.Node(
+        niu.Function(
+            input_names=[
+                "brain_mask_file", "reference_file", "transform_matrix",
+                "hdbet_mask_file",
+            ],
+            output_names=["dsc_brain_mask_file", "dice_score"],
+            function=_transform_brain_mask_to_dsc,
+        ),
+        name="transform_brain_mask_qc",
+    )
 
     # -------------------------------------------------------------------
     # Concentration + AIF sub-workflow (signal->ΔR2* conversion + AIF detection)
@@ -2031,7 +2158,6 @@ def init_dsc_preproc_wf(
         mcmc_samples=config.mcmc_samples,
         n_procs=config.num_processes if config.num_processes > 0 else 1,
         # baseline_frames wired dynamically from conc_aif_wf.outputnode.aif_baseline_frames
-        fallback_baseline_frames=config.pre_bolus,
         tail_frames=5,  # Post-bolus frames for PSR
         first_pass_cbv=config.first_pass_cbv,
         sloppy=config.sloppy,
@@ -2047,7 +2173,6 @@ def init_dsc_preproc_wf(
     # Registration sub-workflow: DSC<->T1w + MNI->DSC transform chain
     # -------------------------------------------------------------------
     registration_wf = init_dsc_registration_wf(
-        registration=config.registration,
         mem_gb=_static_mem,
     )
 
@@ -2116,71 +2241,7 @@ def init_dsc_preproc_wf(
             name="transform_wm",
         )
 
-    # -------------------------------------------------------------------
-    # Node 6c-ii: Validate user-supplied masks against DSC reference grid
-    # -------------------------------------------------------------------
-    validate_roi_mask = pe.Node(
-        niu.Function(
-            input_names=["mask_file", "reference_file", "mask_label"],
-            output_names=["validated_mask"],
-            function=_validate_native_mask,
-        ),
-        name="validate_roi_mask",
-    )
-    validate_roi_mask.inputs.mask_label = "dsc.roi_mask"
-
-    validate_user_lesion_mask = pe.Node(
-        niu.Function(
-            input_names=["mask_file", "reference_file", "mask_label"],
-            output_names=["validated_mask"],
-            function=_validate_native_mask,
-        ),
-        name="validate_user_lesion_mask",
-    )
-    validate_user_lesion_mask.inputs.mask_label = "dsc.lesion_mask"
-
-    # -------------------------------------------------------------------
-    # Node 6d: Select tumor mask for lesion statistics
-    # Priority: tumor_segmentation (multi-label) > whole_tumor > None
-    # -------------------------------------------------------------------
-    from pmriprep.utils.lesion_stats import combine_tumor_masks
-
-    combine_masks = pe.Node(
-        niu.Function(
-            input_names=[
-                "tumor_segmentation_file",
-                "whole_tumor_mask_file",
-                "reference_file",
-            ],
-            output_names=["combined_mask_file", "mask_origin"],
-            function=combine_tumor_masks,
-        ),
-        name="combine_masks",
-    )
-
-    # -------------------------------------------------------------------
-    # Node 6e: Transform combined lesion mask from T1w to DSC space
-    # -------------------------------------------------------------------
-    transform_lesion = pe.Node(
-        niu.Function(
-            input_names=["lesion_mask_file", "reference_file", "transform_matrix"],
-            output_names=["lesion_mask_dsc_file"],
-            function=_transform_lesion_mask_to_dsc,
-        ),
-        name="transform_lesion",
-    )
-
-    # -------------------------------------------------------------------
-    # Node 6e-b: Transform enhancing mask from T1w to DSC space
-    # -------------------------------------------------------------------
-    transform_enhancing_mask = pe.Node(
-        niu.Function(
-            input_names=["lesion_mask_file", "reference_file", "transform_matrix"],
-            output_names=["lesion_mask_dsc_file"],
-            function=_transform_lesion_mask_to_dsc,
-        ),
-        name="transform_enhancing_mask",
-    )
+    lesion_masks_wf = init_dsc_lesion_masks_wf()
 
     # -------------------------------------------------------------------
     # Node 6f: Lesion / ROI / user-mask statistics extraction
@@ -2218,7 +2279,6 @@ def init_dsc_preproc_wf(
         subject_id=subject_id,
         session_id=session_id,
         aif_source=aif_source,
-        registration_bbr=config.registration == "flirt_bbr",
         baseline_frames=config.pre_bolus,
     )
 
@@ -2228,77 +2288,7 @@ def init_dsc_preproc_wf(
     # Underlays are conditional based on config.underlays list.
     # Uses Function interface to handle undefined inputs gracefully.
     # -------------------------------------------------------------------
-    transform_t1_to_dsc = None
-    if "t1w_precon" in config.underlays:
-        transform_t1_to_dsc = pe.Node(
-            niu.Function(
-                input_names=["structural_file", "reference_file", "transform_matrix", "output_name"],
-                output_names=["out_file"],
-                function=_transform_structural_to_dsc,
-            ),
-            name="transform_t1_to_dsc",
-        )
-        transform_t1_to_dsc.inputs.output_name = "t1w_in_dsc.nii.gz"
-
-    transform_t1_postcon_to_dsc = None
-    if "t1w_postcon" in config.underlays:
-        transform_t1_postcon_to_dsc = pe.Node(
-            niu.Function(
-                input_names=["structural_file", "reference_file", "transform_matrix", "output_name"],
-                output_names=["out_file"],
-                function=_transform_structural_to_dsc,
-            ),
-            name="transform_t1_postcon_to_dsc",
-        )
-        transform_t1_postcon_to_dsc.inputs.output_name = "t1w_postcon_in_dsc.nii.gz"
-
-    transform_t1_subtraction_to_dsc = None
-    if "t1w_subtraction" in config.underlays:
-        transform_t1_subtraction_to_dsc = pe.Node(
-            niu.Function(
-                input_names=["structural_file", "reference_file", "transform_matrix", "output_name"],
-                output_names=["out_file"],
-                function=_transform_structural_to_dsc,
-            ),
-            name="transform_t1_subtraction_to_dsc",
-        )
-        transform_t1_subtraction_to_dsc.inputs.output_name = "t1w_subtraction_in_dsc.nii.gz"
-
-    transform_flair_to_dsc = None
-    if "flair_precon" in config.underlays:
-        transform_flair_to_dsc = pe.Node(
-            niu.Function(
-                input_names=["structural_file", "reference_file", "transform_matrix", "output_name"],
-                output_names=["out_file"],
-                function=_transform_structural_to_dsc,
-            ),
-            name="transform_flair_to_dsc",
-        )
-        transform_flair_to_dsc.inputs.output_name = "flair_in_dsc.nii.gz"
-
-    transform_flair_postcon_to_dsc = None
-    if "flair_postcon" in config.underlays:
-        transform_flair_postcon_to_dsc = pe.Node(
-            niu.Function(
-                input_names=["structural_file", "reference_file", "transform_matrix", "output_name"],
-                output_names=["out_file"],
-                function=_transform_structural_to_dsc,
-            ),
-            name="transform_flair_postcon_to_dsc",
-        )
-        transform_flair_postcon_to_dsc.inputs.output_name = "flair_postcon_in_dsc.nii.gz"
-
-    transform_t2w_to_dsc = None
-    if "t2w" in config.underlays:
-        transform_t2w_to_dsc = pe.Node(
-            niu.Function(
-                input_names=["structural_file", "reference_file", "transform_matrix", "output_name"],
-                output_names=["out_file"],
-                function=_transform_structural_to_dsc,
-            ),
-            name="transform_t2w_to_dsc",
-        )
-        transform_t2w_to_dsc.inputs.output_name = "t2w_in_dsc.nii.gz"
+    underlays_wf = init_dsc_underlays_wf(underlays=config.underlays)
 
     # -------------------------------------------------------------------
     # Node 10: Provenance Logging
@@ -2320,15 +2310,20 @@ def init_dsc_preproc_wf(
         (motion_wf, hdbet_dsc, [("outputnode.prebolus_mean_file", "dsc_mean_file")]),
     ])
 
-    # NOTE: transform_brain_mask disconnected — using HD-BET mask directly.
-    # To reinstate T1w-transformed mask, uncomment the node definition
-    # above and restore these connections:
-    # workflow.connect([
-    #     (inputnode, transform_brain_mask, [("brain_mask", "brain_mask_file")]),
-    #     (prebolus_mean, transform_brain_mask, [("prebolus_mean_file", "reference_file")]),
-    #     (register, transform_brain_mask, [("out_matrix", "transform_matrix")]),
-    #     (hdbet_dsc, transform_brain_mask, [("dsc_brain_mask_file", "hdbet_mask_file")]),
-    # ])
+    workflow.connect([
+        (inputnode, transform_brain_mask_qc, [
+            ("brain_mask", "brain_mask_file"),
+        ]),
+        (motion_wf, transform_brain_mask_qc, [
+            ("outputnode.prebolus_mean_file", "reference_file"),
+        ]),
+        (registration_wf, transform_brain_mask_qc, [
+            ("outputnode.t1w_to_dsc_matrix", "transform_matrix"),
+        ]),
+        (hdbet_dsc, transform_brain_mask_qc, [
+            ("dsc_brain_mask_file", "hdbet_mask_file"),
+        ]),
+    ])
 
     # Motion + acquisition params into the concentration/AIF sub-workflow
     workflow.connect([
@@ -2338,21 +2333,20 @@ def init_dsc_preproc_wf(
         ]),
     ])
 
-    # AIF exclusion mask: user-supplied lesion mask overrides tumor seg
-    select_aif_exclusion = pe.Node(
-        niu.Function(
-            input_names=["user_lesion_mask", "transformed_lesion_mask"],
-            output_names=["out_mask"],
-            function=_select_aif_exclusion_mask,
-        ),
-        name="select_aif_exclusion",
-    )
+    # Prepare lesion masks and AIF exclusion: user mask overrides tumor seg.
     workflow.connect([
-        (validate_user_lesion_mask, select_aif_exclusion, [
-            ("validated_mask", "user_lesion_mask"),
+        (inputnode, lesion_masks_wf, [
+            ("roi_mask", "inputnode.roi_mask"),
+            ("user_lesion_mask", "inputnode.user_lesion_mask"),
+            ("tumor_segmentation", "inputnode.tumor_segmentation"),
+            ("whole_tumor_mask", "inputnode.whole_tumor_mask"),
+            ("enhancing_mask", "inputnode.enhancing_mask"),
         ]),
-        (transform_lesion, select_aif_exclusion, [
-            ("lesion_mask_dsc_file", "transformed_lesion_mask"),
+        (motion_wf, lesion_masks_wf, [
+            ("outputnode.prebolus_mean_file", "inputnode.reference_file"),
+        ]),
+        (registration_wf, lesion_masks_wf, [
+            ("outputnode.t1w_to_dsc_matrix", "inputnode.transform_matrix"),
         ]),
     ])
 
@@ -2363,11 +2357,11 @@ def init_dsc_preproc_wf(
         (hdbet_dsc, conc_aif_wf, [
             ("dsc_brain_mask_file", "inputnode.brain_mask_file"),
         ]),
-        (select_aif_exclusion, conc_aif_wf, [
-            ("out_mask", "inputnode.lesion_mask_file"),
+        (lesion_masks_wf, conc_aif_wf, [
+            ("outputnode.aif_exclusion_mask", "inputnode.lesion_mask_file"),
         ]),
-        (transform_enhancing_mask, conc_aif_wf, [
-            ("lesion_mask_dsc_file", "inputnode.enhancing_mask_file"),
+        (lesion_masks_wf, conc_aif_wf, [
+            ("outputnode.enhancing_mask", "inputnode.enhancing_mask_file"),
         ]),
         (inputnode, conc_aif_wf, [
             ("tr", "inputnode.tr"),
@@ -2375,13 +2369,13 @@ def init_dsc_preproc_wf(
         ]),
     ])
 
-    # AIF Detection and Signal Conversion to Preload Correction
+    # Signal Conversion to Preload Correction
     # Use DSC-space brain mask for proper geometry match
     workflow.connect([
         (conc_aif_wf, preload_wf, [
             ("outputnode.concentration_file", "inputnode.concentration_file"),
             ("outputnode.signal_file", "inputnode.signal_file"),
-            ("outputnode.out_aif_curve", "inputnode.aif_file"),
+            ("outputnode.aif_baseline_frames", "inputnode.baseline_frames"),
         ]),
         (hdbet_dsc, preload_wf, [
             ("dsc_brain_mask_file", "inputnode.brain_mask_file"),
@@ -2392,10 +2386,10 @@ def init_dsc_preproc_wf(
             ("tr", "inputnode.tr"),
         ]),
         # Tumor mask (empty when no segmentation) → positive-tail QC metric.
-        # transform_lesion depends only on registration + tumor seg (never on
+        # Lesion preparation depends only on registration + tumor seg (never on
         # preload output), so this adds no cycle.
-        (transform_lesion, preload_wf, [
-            ("lesion_mask_dsc_file", "inputnode.lesion_mask_dsc"),
+        (lesion_masks_wf, preload_wf, [
+            ("outputnode.tumor_lesion_mask", "inputnode.lesion_mask_dsc"),
         ]),
     ])
 
@@ -2409,21 +2403,17 @@ def init_dsc_preproc_wf(
         (conc_aif_wf, deconvolution_wf, [
             ("outputnode.out_aif_curve", "inputnode.aif_file"),
             ("outputnode.out_measured_aif_curve", "inputnode.measured_aif_file"),
-            ("outputnode.out_aif_mask", "inputnode.aif_mask_file"),
-            ("outputnode.out_aif_coord", "inputnode.aif_best_coord"),
             ("outputnode.detection_level", "inputnode.aif_detection_level"),
             ("outputnode.aif_baseline_frames", "inputnode.baseline_frames"),
         ]),
         (hdbet_dsc, deconvolution_wf, [
             ("dsc_brain_mask_file", "inputnode.brain_mask_file"),
         ]),
-        (transform_enhancing_mask, deconvolution_wf, [
-            ("lesion_mask_dsc_file", "inputnode.enhancing_mask_file"),
+        (lesion_masks_wf, deconvolution_wf, [
+            ("outputnode.enhancing_mask", "inputnode.enhancing_mask_file"),
         ]),
         (inputnode, deconvolution_wf, [
             ("tr", "inputnode.tr"),
-            ("te", "inputnode.te"),
-            ("field_strength", "inputnode.field_strength"),
         ]),
         (motion_wf, deconvolution_wf, [
             ("outputnode.fd_values", "inputnode.fd_values"),
@@ -2452,7 +2442,6 @@ def init_dsc_preproc_wf(
         (hist_match_t1w, registration_wf, [("matched_t1w_file", "inputnode.matched_t1w_file")]),
         (inputnode, registration_wf, [
             ("brain_mask", "inputnode.brain_mask"),
-            ("wm_probseg", "inputnode.wm_probseg"),
             ("t1w_to_mni_xfm", "inputnode.t1w_to_mni_xfm"),
         ]),
         (hdbet_dsc, registration_wf, [("dsc_brain_file", "inputnode.dsc_brain")]),
@@ -2489,16 +2478,6 @@ def init_dsc_preproc_wf(
         (registration_wf, transform_nawm, [("outputnode.t1w_to_dsc_matrix", "transform_matrix")]),
     ])
 
-    # Validate user-supplied masks against DSC reference grid
-    workflow.connect([
-        (inputnode, validate_roi_mask, [("roi_mask", "mask_file")]),
-        (motion_wf, validate_roi_mask, [("outputnode.prebolus_mean_file", "reference_file")]),
-        (inputnode, validate_user_lesion_mask, [("user_lesion_mask", "mask_file")]),
-        (motion_wf, validate_user_lesion_mask, [
-            ("outputnode.prebolus_mean_file", "reference_file"),
-        ]),
-    ])
-
     # Wire NAWM mask to compute_maps for rTTP normalization
     workflow.connect([
         (transform_nawm, deconvolution_wf, [
@@ -2523,9 +2502,7 @@ def init_dsc_preproc_wf(
             ]),
         ])
 
-    # Feed the normalization sub-workflow (rel-CBV / rel-CBF + masks).
-    # The NAWM (preferred) and brain (fallback) masks fan out to both the CBV
-    # and CBF normalizers inside the sub-workflow.
+    # Feed relative perfusion maps and the NAWM reference to normalization.
     workflow.connect([
         (deconvolution_wf, normalization_wf, [
             ("outputnode.out_rel_cbv_auc", "inputnode.cbv_file"),
@@ -2533,9 +2510,6 @@ def init_dsc_preproc_wf(
         ]),
         (transform_nawm, normalization_wf, [
             ("nawm_mask_dsc_file", "inputnode.nawm_mask_file"),
-        ]),
-        (hdbet_dsc, normalization_wf, [
-            ("dsc_brain_mask_file", "inputnode.brain_mask_file"),
         ]),
     ])
 
@@ -2580,6 +2554,9 @@ def init_dsc_preproc_wf(
             ("outputnode.registered_t1w", "inputnode.registered_t1w"),
             ("outputnode.t1w_to_dsc_matrix", "inputnode.t1w_to_dsc_matrix"),
         ]),
+        (transform_brain_mask_qc, qc_wf, [
+            ("dsc_brain_mask_file", "inputnode.registered_t1w_mask"),
+        ]),
         (normalization_wf, qc_wf, [("outputnode.normalization_factor", "inputnode.normalization_factor")]),
         (hdbet_dsc, qc_wf, [("dsc_brain_mask_file", "inputnode.brain_mask_file")]),
         (inputnode, qc_wf, [
@@ -2587,33 +2564,6 @@ def init_dsc_preproc_wf(
             ("te", "inputnode.te"),
             ("t1w_to_mni_xfm", "inputnode.t1w_to_mni_xfm"),
         ]),
-    ])
-
-    # -------------------------------------------------------------------
-    # Lesion mask selection and transform (conditional)
-    # -------------------------------------------------------------------
-    # Select best available tumor mask for lesion stats
-    # Priority: tumor_segmentation (multi-label) > whole_tumor
-    workflow.connect([
-        (inputnode, combine_masks, [
-            ("tumor_segmentation", "tumor_segmentation_file"),
-            ("whole_tumor_mask", "whole_tumor_mask_file"),
-        ]),
-        (motion_wf, combine_masks, [("outputnode.prebolus_mean_file", "reference_file")]),
-    ])
-
-    # Transform combined lesion mask from T1w to DSC space
-    workflow.connect([
-        (combine_masks, transform_lesion, [("combined_mask_file", "lesion_mask_file")]),
-        (motion_wf, transform_lesion, [("outputnode.prebolus_mean_file", "reference_file")]),
-        (registration_wf, transform_lesion, [("outputnode.t1w_to_dsc_matrix", "transform_matrix")]),
-    ])
-
-    # Transform enhancing mask from T1w to DSC space
-    workflow.connect([
-        (inputnode, transform_enhancing_mask, [("enhancing_mask", "lesion_mask_file")]),
-        (motion_wf, transform_enhancing_mask, [("outputnode.prebolus_mean_file", "reference_file")]),
-        (registration_wf, transform_enhancing_mask, [("outputnode.t1w_to_dsc_matrix", "transform_matrix")]),
     ])
 
     # -------------------------------------------------------------------
@@ -2644,19 +2594,22 @@ def init_dsc_preproc_wf(
         ]),
         (conc_aif_wf, lesion_stats_wf, [("outputnode.qc_metrics", "inputnode.aif_qc")]),
         (transform_nawm, lesion_stats_wf, [("nawm_mask_dsc_file", "inputnode.nawm_mask")]),
-        (inputnode, lesion_stats_wf, [("field_strength", "inputnode.field_strength_t")]),
-        (transform_lesion, lesion_stats_wf, [("lesion_mask_dsc_file", "inputnode.tumor_lesion_mask")]),
-        (combine_masks, lesion_stats_wf, [("mask_origin", "inputnode.mask_origin")]),
-        (validate_roi_mask, lesion_stats_wf, [("validated_mask", "inputnode.roi_mask")]),
-        (validate_user_lesion_mask, lesion_stats_wf, [("validated_mask", "inputnode.user_mask")]),
+        (lesion_masks_wf, lesion_stats_wf, [
+            ("outputnode.tumor_lesion_mask", "inputnode.tumor_lesion_mask"),
+            ("outputnode.mask_origin", "inputnode.mask_origin"),
+            ("outputnode.roi_mask", "inputnode.roi_mask"),
+            ("outputnode.user_lesion_mask", "inputnode.user_mask"),
+        ]),
     ])
 
     # Stats sub-workflow outputs + the DSC-space masks they were computed on
     # (the masks come from transform/validate nodes that stay in the parent).
     workflow.connect([
-        (transform_lesion, outputnode, [("lesion_mask_dsc_file", "lesion_mask_dsc")]),
-        (validate_roi_mask, outputnode, [("validated_mask", "roi_mask_dsc")]),
-        (validate_user_lesion_mask, outputnode, [("validated_mask", "user_lesion_mask_dsc")]),
+        (lesion_masks_wf, outputnode, [
+            ("outputnode.tumor_lesion_mask", "lesion_mask_dsc"),
+            ("outputnode.roi_mask", "roi_mask_dsc"),
+            ("outputnode.user_lesion_mask", "user_lesion_mask_dsc"),
+        ]),
         (lesion_stats_wf, outputnode, [
             ("outputnode.lesion_stats_json", "lesion_stats_json"),
             ("outputnode.roi_stats_json", "roi_stats_json"),
@@ -2673,46 +2626,28 @@ def init_dsc_preproc_wf(
     # Transform structural underlays to DSC space (conditional)
     # register.out_matrix is T1w→DSC
     # Use prebolus_mean (full FOV) as reference for complete DSC geometry
-    if transform_t1_to_dsc is not None:
+    underlay_inputs = {
+        "t1w_precon": "t1w_underlay",
+        "t1w_postcon": "t1w_postcon_underlay",
+        "t1w_subtraction": "t1w_subtraction_underlay",
+        "flair_precon": "flair_in_t1w",
+        "flair_postcon": "flair_postcon_in_t1w",
+        "t2w": "t2w_in_t1w",
+    }
+    requested_underlay_inputs = [
+        (field, f"inputnode.{field}")
+        for key, field in underlay_inputs.items()
+        if key in config.underlays
+    ]
+    if requested_underlay_inputs:
         workflow.connect([
-            (inputnode, transform_t1_to_dsc, [("t1w_underlay", "structural_file")]),
-            (motion_wf, transform_t1_to_dsc, [("outputnode.prebolus_mean_file", "reference_file")]),
-            (registration_wf, transform_t1_to_dsc, [("outputnode.t1w_to_dsc_matrix", "transform_matrix")]),
-        ])
-
-    if transform_t1_postcon_to_dsc is not None:
-        workflow.connect([
-            (inputnode, transform_t1_postcon_to_dsc, [("t1w_postcon_underlay", "structural_file")]),
-            (motion_wf, transform_t1_postcon_to_dsc, [("outputnode.prebolus_mean_file", "reference_file")]),
-            (registration_wf, transform_t1_postcon_to_dsc, [("outputnode.t1w_to_dsc_matrix", "transform_matrix")]),
-        ])
-
-    if transform_t1_subtraction_to_dsc is not None:
-        workflow.connect([
-            (inputnode, transform_t1_subtraction_to_dsc, [("t1w_subtraction_underlay", "structural_file")]),
-            (motion_wf, transform_t1_subtraction_to_dsc, [("outputnode.prebolus_mean_file", "reference_file")]),
-            (registration_wf, transform_t1_subtraction_to_dsc, [("outputnode.t1w_to_dsc_matrix", "transform_matrix")]),
-        ])
-
-    if transform_flair_to_dsc is not None:
-        workflow.connect([
-            (inputnode, transform_flair_to_dsc, [("flair_in_t1w", "structural_file")]),
-            (motion_wf, transform_flair_to_dsc, [("outputnode.prebolus_mean_file", "reference_file")]),
-            (registration_wf, transform_flair_to_dsc, [("outputnode.t1w_to_dsc_matrix", "transform_matrix")]),
-        ])
-
-    if transform_flair_postcon_to_dsc is not None:
-        workflow.connect([
-            (inputnode, transform_flair_postcon_to_dsc, [("flair_postcon_in_t1w", "structural_file")]),
-            (motion_wf, transform_flair_postcon_to_dsc, [("outputnode.prebolus_mean_file", "reference_file")]),
-            (registration_wf, transform_flair_postcon_to_dsc, [("outputnode.t1w_to_dsc_matrix", "transform_matrix")]),
-        ])
-
-    if transform_t2w_to_dsc is not None:
-        workflow.connect([
-            (inputnode, transform_t2w_to_dsc, [("t2w_in_t1w", "structural_file")]),
-            (motion_wf, transform_t2w_to_dsc, [("outputnode.prebolus_mean_file", "reference_file")]),
-            (registration_wf, transform_t2w_to_dsc, [("outputnode.t1w_to_dsc_matrix", "transform_matrix")]),
+            (inputnode, underlays_wf, requested_underlay_inputs),
+            (motion_wf, underlays_wf, [
+                ("outputnode.prebolus_mean_file", "inputnode.reference_file"),
+            ]),
+            (registration_wf, underlays_wf, [
+                ("outputnode.t1w_to_dsc_matrix", "inputnode.transform_matrix"),
+            ]),
         ])
 
     # -------------------------------------------------------------------
@@ -2781,13 +2716,9 @@ def init_dsc_preproc_wf(
         # Bayesian uncertainty maps (only for parametric methods: cpi, vascular)
         (deconvolution_wf, outputnode, [
             ("outputnode.out_cbf_std", "cbf_std_map"),
-            ("outputnode.out_cbv_std", "cbv_std_map"),
             ("outputnode.out_cbf_cv", "cbf_cv_map"),
-            ("outputnode.out_cbv_cv", "cbv_cv_map"),
             ("outputnode.out_cbf_ci95_lower", "cbf_ci95_lower_map"),
             ("outputnode.out_cbf_ci95_upper", "cbf_ci95_upper_map"),
-            ("outputnode.out_cbv_ci95_lower", "cbv_ci95_lower_map"),
-            ("outputnode.out_cbv_ci95_upper", "cbv_ci95_upper_map"),
         ]),
         # Parametric-fit diagnostics (CPI/Vascular only;
         # undefined for SVD methods)
@@ -2830,36 +2761,22 @@ def init_dsc_preproc_wf(
         (convert_inv_h5, outputnode, [("out_h5", "dsc_to_t1w_h5")]),
     ])
 
-    # Structural underlay connections (conditional)
-    if transform_t1_to_dsc is not None:
-        workflow.connect([
-            (transform_t1_to_dsc, outputnode, [("out_file", "t1w_in_dsc")]),
-        ])
-
-    if transform_t1_postcon_to_dsc is not None:
-        workflow.connect([
-            (transform_t1_postcon_to_dsc, outputnode, [("out_file", "t1w_postcon_in_dsc")]),
-        ])
-
-    if transform_t1_subtraction_to_dsc is not None:
-        workflow.connect([
-            (transform_t1_subtraction_to_dsc, outputnode, [("out_file", "t1w_subtraction_in_dsc")]),
-        ])
-
-    if transform_flair_to_dsc is not None:
-        workflow.connect([
-            (transform_flair_to_dsc, outputnode, [("out_file", "flair_in_dsc")]),
-        ])
-
-    if transform_flair_postcon_to_dsc is not None:
-        workflow.connect([
-            (transform_flair_postcon_to_dsc, outputnode, [("out_file", "flair_postcon_in_dsc")]),
-        ])
-
-    if transform_t2w_to_dsc is not None:
-        workflow.connect([
-            (transform_t2w_to_dsc, outputnode, [("out_file", "t2w_in_dsc")]),
-        ])
+    # Structural underlay connections (conditional inside the sub-workflow)
+    underlay_outputs = {
+        "t1w_precon": "t1w_in_dsc",
+        "t1w_postcon": "t1w_postcon_in_dsc",
+        "t1w_subtraction": "t1w_subtraction_in_dsc",
+        "flair_precon": "flair_in_dsc",
+        "flair_postcon": "flair_postcon_in_dsc",
+        "t2w": "t2w_in_dsc",
+    }
+    requested_underlay_outputs = [
+        (f"outputnode.{field}", field)
+        for key, field in underlay_outputs.items()
+        if key in config.underlays
+    ]
+    if requested_underlay_outputs:
+        workflow.connect([(underlays_wf, outputnode, requested_underlay_outputs)])
 
     workflow.connect([
         # AIF QC plots

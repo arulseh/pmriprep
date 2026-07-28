@@ -7,7 +7,7 @@ workflows can call them from inside ``pe.Node(Function(...))`` nodes.
 
 Sidecar field strategy (M3):
 
-- **Sources**: per-output list of BIDS URIs (``bids::sub-X/ses-Y/...``) to
+- **Sources**: per-output list of BIDS URIs (``bids:raw:sub-X/ses-Y/...``) to
   the immediate raw inputs that produced the derivative.
 - **SpatialReference**: BIDS URI to the on-disk reference image whose
   grid the derivative occupies (e.g., the preproc T1w for ``space-T1w``,
@@ -29,7 +29,7 @@ import math
 import os
 import subprocess
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Union
+from typing import Any, Dict, List, Literal, Optional, Sequence, Union, cast
 
 import numpy as np
 
@@ -163,21 +163,21 @@ def build_provenance_block(config_dict: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def make_bids_source_uri(source_path: PathLike, bids_dir: PathLike) -> str:
-    """Return a ``bids::`` URI for ``source_path`` relative to ``bids_dir``."""
+    """Return a BIDS URI for a raw-dataset or external source path."""
     source_path = Path(source_path).resolve()
     bids_dir = Path(bids_dir).resolve()
     try:
         rel = source_path.relative_to(bids_dir)
-        return f"bids::{rel}"
+        return f"bids:raw:{rel}"
     except ValueError:
-        return f"bids::{source_path.name}"
+        return source_path.as_uri()
 
 
 def build_sources_list(
     source_paths: Sequence[PathLike],
     bids_dir: PathLike,
 ) -> List[str]:
-    """Return ``[bids::...]`` URIs for each input path (skip empty/None)."""
+    """Return source URIs for each input path, skipping absent values."""
     out: List[str] = []
     for p in source_paths:
         if p is None or p == "":
@@ -186,12 +186,61 @@ def build_sources_list(
     return out
 
 
+def source_entity_prefix(
+    source: PathLike | None,
+    subject: str,
+    session: Optional[str],
+) -> str:
+    """Build a derivative prefix while preserving source filename entities.
+
+    Parameters
+    ----------
+    source : path-like or None
+        Raw source path or BIDS URI. Only recognized filename entities are
+        propagated; the source suffix and extension are discarded.
+    subject, session : str
+        Output hierarchy identifiers. These remain authoritative so a malformed
+        source URI cannot redirect an output into another subject/session.
+
+    Returns
+    -------
+    str
+        Canonically ordered ``sub-``/``ses-`` plus relevant source entities.
+    """
+    prefix = [f"sub-{subject}"]
+    if session:
+        prefix.append(f"ses-{session}")
+    if not source:
+        return "_".join(prefix)
+
+    # Values use BIDS labels/indices and therefore cannot contain underscores.
+    # Parsing the basename also works for ``bids:raw:sub-...`` URIs.
+    name = Path(str(source)).name
+    if name.endswith(".nii.gz"):
+        name = name[:-7]
+    else:
+        name = Path(name).stem
+    found: dict[str, str] = {}
+    aliases = {
+        "task": "task", "acq": "acq", "ce": "ce", "rec": "rec",
+        "dir": "dir", "run": "run", "echo": "echo", "part": "part",
+        "chunk": "chunk",
+    }
+    for token in name.split("_"):
+        key, separator, value = token.partition("-")
+        if separator and key in aliases and value:
+            found[aliases[key]] = value
+    for key in ("task", "acq", "ce", "rec", "dir", "run", "echo", "part", "chunk"):
+        if key in found:
+            prefix.append(f"{key}-{found[key]}")
+    return "_".join(prefix)
+
+
 def build_spatial_reference_uri(
     reference_filename: str,
     subject: str,
     session: Optional[str],
     datatype: str = "anat",
-    pipeline: str = "pmriprep",
 ) -> str:
     """Return a derivative-relative ``bids::`` URI to a reference image.
 
@@ -203,7 +252,7 @@ def build_spatial_reference_uri(
     if session:
         prefix += f"_ses-{session}"
     full_name = f"{prefix}_{reference_filename}"
-    parts = [pipeline, f"sub-{subject}"]
+    parts = [f"sub-{subject}"]
     if session:
         parts.append(f"ses-{session}")
     parts.extend([datatype, full_name])
@@ -225,7 +274,7 @@ def voxel_sizes_from_nifti(source_nifti: PathLike) -> List[float]:
 
 
 def compute_original_resolution(source_nifti: PathLike) -> Dict[str, Any]:
-    """Return the legacy pmriprep ``OriginalResolution`` block."""
+    """Return the PMRIPrep ``OriginalResolution`` block."""
     voxel_dims = voxel_sizes_from_nifti(source_nifti)
     geo_mean = round(float(math.prod(voxel_dims) ** (1.0 / 3.0)), 3)
     iso_ratio = round(max(voxel_dims) / max(min(voxel_dims), 1e-9), 2)
@@ -476,12 +525,36 @@ def anat_reference_basename(is_postcon_ref: bool = False) -> str:
 
 
 def _anat_spatial_reference(
-    subject: str, session: Optional[str], is_postcon_ref: bool = False
+    subject: str,
+    session: Optional[str],
+    is_postcon_ref: bool = False,
+    source: PathLike | None = None,
 ) -> str:
-    return build_spatial_reference_uri(
-        anat_reference_basename(is_postcon_ref),
-        subject, session, datatype="anat",
-    )
+    if source is None:
+        return build_spatial_reference_uri(
+            anat_reference_basename(is_postcon_ref),
+            subject, session, datatype="anat",
+        )
+    prefix = source_entity_prefix(source, subject, session)
+    if is_postcon_ref and "_ce-" not in f"_{prefix}":
+        entities = prefix.split("_")
+        insert_at = next(
+            (
+                index for index, entity in enumerate(entities)
+                if entity.startswith(("rec-", "dir-", "run-", "echo-", "part-", "chunk-"))
+            ),
+            len(entities),
+        )
+        entities.insert(insert_at, "ce-GAD")
+        prefix = "_".join(entities)
+    parts = [f"sub-{subject}"]
+    if session:
+        parts.append(f"ses-{session}")
+    parts.extend([
+        "anat",
+        f"{prefix}_space-T1w_desc-preproc_T1w.nii.gz",
+    ])
+    return "bids::" + "/".join(parts)
 
 
 def build_anat_preproc_sidecar(
@@ -495,6 +568,7 @@ def build_anat_preproc_sidecar(
     skull_stripped: bool = True,
     contrast_agent: Optional[str] = None,
     is_postcon_ref: bool = False,
+    reference_source: PathLike | None = None,
 ) -> Dict[str, Any]:
     """Build sidecar for a preprocessed/coregistered anat NIfTI."""
     from pmriprep.utils.provenance import get_bids_derivative_provenance
@@ -504,7 +578,10 @@ def build_anat_preproc_sidecar(
         **get_bids_derivative_provenance(),
         "Description": description,
         "SkullStripped": skull_stripped,
-        "SpatialReference": _anat_spatial_reference(subject, session, is_postcon_ref),
+        "SpatialReference": _anat_spatial_reference(
+            subject, session, is_postcon_ref,
+            reference_source or (source_paths[0] if source_paths else None),
+        ),
         "Sources": sources,
         **resolution_native_block(reference_voxel_source),
         "OriginalResolution": compute_original_resolution(reference_voxel_source),
@@ -529,6 +606,7 @@ def build_anat_mask_sidecar(
     subject: str,
     session: Optional[str],
     is_postcon_ref: bool = False,
+    reference_source: PathLike | None = None,
 ) -> Dict[str, Any]:
     """Build sidecar for an anat-space brain mask."""
     from pmriprep.utils.provenance import get_bids_derivative_provenance
@@ -537,7 +615,10 @@ def build_anat_mask_sidecar(
         **get_bids_derivative_provenance(),
         "Description": description,
         "SkullStripped": True,
-        "SpatialReference": _anat_spatial_reference(subject, session, is_postcon_ref),
+        "SpatialReference": _anat_spatial_reference(
+            subject, session, is_postcon_ref,
+            reference_source or (source_paths[0] if source_paths else None),
+        ),
         "Sources": build_sources_list(source_paths, bids_dir),
         **resolution_native_block(reference_voxel_source),
         "OriginalResolution": compute_original_resolution(reference_voxel_source),
@@ -597,6 +678,7 @@ def build_tumor_seg_dseg_sidecar(
     session: Optional[str],
     is_postcon_ref: bool = False,
     qc_metrics: Optional[Dict[str, Any]] = None,
+    reference_source: PathLike | None = None,
 ) -> Dict[str, Any]:
     """Sidecar for the multi-class tumor ``dseg`` label map.
 
@@ -604,8 +686,7 @@ def build_tumor_seg_dseg_sidecar(
     the ``_dseg.nii.gz`` label NIfTI and the ``_dseg.tsv`` lookup table
     (when the latter is present) since they share a basename. The
     ``Columns`` block documents the TSV columns; ``TumorVolumetrics``
-    carries per-region volumes and the enhancing fraction (replaces the
-    removed standalone ``desc-tumorClinicalContext.json``).
+    carries per-region volumes and the enhancing fraction.
     ``TumorSegQC`` carries preprocessing/segmentation/nawm QC blocks.
     """
     from pmriprep.utils.provenance import get_bids_derivative_provenance
@@ -615,8 +696,11 @@ def build_tumor_seg_dseg_sidecar(
         "Description": "Deep learning tumor segmentation",
         "Manual": False,
         "SegmentationLabels": dict(HDGLIO_BIDS_LABELS),
-        "Method": "HD-GLIO (Isensee et al.)",
-        "SpatialReference": _anat_spatial_reference(subject, session, is_postcon_ref),
+        "Method": "HD-GLIO",
+        "SpatialReference": _anat_spatial_reference(
+            subject, session, is_postcon_ref,
+            reference_source or (source_paths[0] if source_paths else None),
+        ),
         "Sources": build_sources_list(source_paths, bids_dir),
         **resolution_native_block(reference_voxel_source),
         "TumorVolumetrics": _tumor_volumetrics(reference_voxel_source),
@@ -667,6 +751,7 @@ def build_tumor_seg_mask_sidecar(
     session: Optional[str],
     method: str = "Derived from tumor segmentation",
     is_postcon_ref: bool = False,
+    reference_source: PathLike | None = None,
 ) -> Dict[str, Any]:
     """Sidecar for a binary tumor-derived mask (enhancing/nonenhancing/whole/lesion)."""
     from pmriprep.utils.provenance import get_bids_derivative_provenance
@@ -674,9 +759,12 @@ def build_tumor_seg_mask_sidecar(
     return {
         **get_bids_derivative_provenance(),
         "Description": description,
-        "Type": "Brain",
+        "Type": "Lesion",
         "Method": method,
-        "SpatialReference": _anat_spatial_reference(subject, session, is_postcon_ref),
+        "SpatialReference": _anat_spatial_reference(
+            subject, session, is_postcon_ref,
+            reference_source or (source_paths[0] if source_paths else None),
+        ),
         "Sources": build_sources_list(source_paths, bids_dir),
         **resolution_native_block(reference_voxel_source),
     }
@@ -690,6 +778,7 @@ def build_tumor_seg_nawm_sidecar(
     subject: str,
     session: Optional[str],
     is_postcon_ref: bool = False,
+    reference_source: PathLike | None = None,
 ) -> Dict[str, Any]:
     """Sidecar for the contralateral NAWM mask."""
     from pmriprep.utils.provenance import get_bids_derivative_provenance
@@ -700,11 +789,14 @@ def build_tumor_seg_nawm_sidecar(
             "Contralateral normal-appearing white matter mask for CBV "
             "normalization"
         ),
-        "Type": "Brain",
+        "Type": "ROI",
         "Method": (
             "Contralateral WM thresholded at p>=0.9, excluding tumor margin"
         ),
-        "SpatialReference": _anat_spatial_reference(subject, session, is_postcon_ref),
+        "SpatialReference": _anat_spatial_reference(
+            subject, session, is_postcon_ref,
+            reference_source or (source_paths[0] if source_paths else None),
+        ),
         "Sources": build_sources_list(source_paths, bids_dir),
         **resolution_native_block(reference_voxel_source),
     }
@@ -715,9 +807,28 @@ def dce_reference_basename() -> str:
     return "desc-dceMean_stat.nii.gz"
 
 
-def _dce_spatial_reference(subject: str, session: Optional[str]) -> str:
-    return build_spatial_reference_uri(
-        dce_reference_basename(), subject, session, datatype="perf",
+def _perfusion_spatial_reference(
+    reference_basename: str,
+    subject: str,
+    session: Optional[str],
+    source: PathLike | None,
+) -> str:
+    """Return a derivative-local perfusion reference URI with source entities."""
+    prefix = source_entity_prefix(source, subject, session)
+    parts = [f"sub-{subject}"]
+    if session:
+        parts.append(f"ses-{session}")
+    parts.extend(["perf", f"{prefix}_{reference_basename}"])
+    return "bids::" + "/".join(parts)
+
+
+def _dce_spatial_reference(
+    subject: str,
+    session: Optional[str],
+    source: PathLike | None = None,
+) -> str:
+    return _perfusion_spatial_reference(
+        dce_reference_basename(), subject, session, source,
     )
 
 
@@ -731,7 +842,7 @@ def build_dce_base_sidecar(
     provenance_dict: Optional[Dict[str, Any]] = None,
     qc_metrics: Optional[Dict[str, Any]] = None,
     minimal: bool = False,
-    ktrans_convention: bool = True,
+    pk_dependent: bool = True,
 ) -> Dict[str, Any]:
     """Build common base sidecar for DCE derivatives.
 
@@ -739,18 +850,20 @@ def build_dce_base_sidecar(
     ----------
     minimal
         Suppress perfusion-specific provenance enrichment and
-        KtransConvention (used for masks, structural underlays,
+        PK-input metadata (used for masks, structural underlays,
         motion-corrected 4D, T1map, B1+map, etc.).
-    ktrans_convention
-        Stamp ``KtransConvention`` / ``KtransConventionHct``.
-        Only relevant when ``minimal=False``; set to ``False`` for
-        model-free and QC maps whose values are convention-independent.
+    pk_dependent
+        Record that the derivative uses a plasma input function. Only
+        relevant when ``minimal=False``; set to ``False`` for model-free
+        and QC maps.
     """
     from pmriprep.utils.provenance import get_bids_derivative_provenance
 
     sidecar: Dict[str, Any] = {
         **get_bids_derivative_provenance(),
-        "SpatialReference": _dce_spatial_reference(subject, session),
+        "SpatialReference": _dce_spatial_reference(
+            subject, session, source_paths[0] if source_paths else None,
+        ),
         "Sources": build_sources_list(source_paths, bids_dir),
         **resolution_native_block(reference_voxel_source),
     }
@@ -762,12 +875,8 @@ def build_dce_base_sidecar(
 
             enriched = enrich_provenance_from_qc(sidecar, qc_metrics, "DCE")
             sidecar.update(enriched)
-        if ktrans_convention:
-            sidecar["KtransConvention"] = "plasma_Tofts1999"
-            if isinstance(qc_metrics, dict):
-                hct = qc_metrics.get("aif_detection", {}).get("hematocrit")
-                if hct is not None:
-                    sidecar["KtransConventionHct"] = float(hct)
+        if pk_dependent:
+            sidecar["InputFunctionCompartment"] = "plasma"
     return sidecar
 
 
@@ -776,9 +885,13 @@ def dsc_reference_basename() -> str:
     return "desc-dscMean_stat.nii.gz"
 
 
-def _dsc_spatial_reference(subject: str, session: Optional[str]) -> str:
-    return build_spatial_reference_uri(
-        dsc_reference_basename(), subject, session, datatype="perf",
+def _dsc_spatial_reference(
+    subject: str,
+    session: Optional[str],
+    source: PathLike | None = None,
+) -> str:
+    return _perfusion_spatial_reference(
+        dsc_reference_basename(), subject, session, source,
     )
 
 
@@ -802,7 +915,9 @@ def build_dsc_base_sidecar(
 
     sidecar: Dict[str, Any] = {
         **get_bids_derivative_provenance(),
-        "SpatialReference": _dsc_spatial_reference(subject, session),
+        "SpatialReference": _dsc_spatial_reference(
+            subject, session, source_paths[0] if source_paths else None,
+        ),
         "Sources": build_sources_list(source_paths, bids_dir),
         **resolution_native_block(reference_voxel_source),
     }
@@ -867,6 +982,7 @@ def build_anat_probseg_sidecar(
     subject: str,
     session: Optional[str],
     is_postcon_ref: bool = False,
+    reference_source: PathLike | None = None,
 ) -> Dict[str, Any]:
     """Build sidecar for a tissue probability map (``label-{WM,GM,CSF}``)."""
     from pmriprep.utils.provenance import get_bids_derivative_provenance
@@ -874,7 +990,10 @@ def build_anat_probseg_sidecar(
     return {
         **get_bids_derivative_provenance(),
         "Description": f"{tissue_type} probability map from FAST tissue segmentation",
-        "SpatialReference": _anat_spatial_reference(subject, session, is_postcon_ref),
+        "SpatialReference": _anat_spatial_reference(
+            subject, session, is_postcon_ref,
+            reference_source or (source_paths[0] if source_paths else None),
+        ),
         "Sources": build_sources_list(source_paths, bids_dir),
         **resolution_native_block(reference_voxel_source),
         "ReferenceContrastType": "precon",
@@ -922,9 +1041,7 @@ def enrich_brain_mask_sidecar(
         sidecar["BrainExtractionDevice"] = str(be["device"])
     if "voxel_count" in be:
         sidecar["BrainExtractionVoxelCount"] = int(be["voxel_count"])
-    # Producer emits brain_volume_ml / brain_volume_mm3; legacy
-    # volume_ml is also accepted for callers that pre-stripped the
-    # prefix.
+    # Accept both fully qualified and short volume keys.
     vol_ml = be.get("brain_volume_ml", be.get("volume_ml"))
     if vol_ml is not None:
         sidecar["BrainExtractionVolume"] = float(vol_ml)
@@ -1014,52 +1131,6 @@ def enrich_probseg_sidecar(
 # ---------------------------------------------------------------------------
 
 
-def _aif_cosmetic_keys(aif_qc: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    """Flat AIF*-prefixed top-level keys for AIF curve sidecar enrichment.
-
-    Reads from the producer-shape ``aif_qc`` dict (the same dict that
-    flows through the DSC outputnode). Conditional fields are omitted
-    when not applicable (per fmriprep convention for optional sidecar
-    fields).
-    """
-    if not aif_qc or not isinstance(aif_qc, dict):
-        return {}
-
-    out: Dict[str, Any] = {}
-    raw_metrics = aif_qc.get("aif_metrics")
-    metrics: Dict[str, Any] = raw_metrics if isinstance(raw_metrics, dict) else {}
-
-    if "detection_method" in aif_qc:
-        out["AIFMethod"] = str(aif_qc["detection_method"])
-    if "n_aif_voxels_selected" in aif_qc:
-        out["AIFNumberOfVoxelsSelected"] = int(aif_qc["n_aif_voxels_selected"])
-    if "peak_conc" in metrics:
-        out["AIFPeakAmplitude"] = float(metrics["peak_conc"])
-    if "fwhm" in metrics:
-        out["AIFFWHM"] = float(metrics["fwhm"])
-    if "ttp" in metrics:
-        out["AIFTimeToPeak"] = float(metrics["ttp"])
-    if "quality_score" in aif_qc:
-        out["AIFQualityScore"] = float(aif_qc["quality_score"])
-    if "cascade_final_level" in aif_qc:
-        out["AIFArterialCascadeTier"] = str(aif_qc["cascade_final_level"])
-    if "hemisphere_coverage" in aif_qc:
-        out["AIFHemisphereCoverage"] = str(aif_qc["hemisphere_coverage"])
-    if "gamma_fit_applied" in aif_qc:
-        out["AIFGammaFitApplied"] = bool(aif_qc["gamma_fit_applied"])
-    if "gamma_fit_r_squared" in aif_qc:
-        out["AIFGammaFitRSquared"] = float(aif_qc["gamma_fit_r_squared"])
-    if "gamma_fit_auc_ratio" in aif_qc:
-        out["AIFGammaFitAUCRatio"] = float(aif_qc["gamma_fit_auc_ratio"])
-    if aif_qc.get("synthetic") or aif_qc.get("population_aif"):
-        out["AIFFallback"] = True
-    if "cbv_auc_denominator_is_synthetic" in aif_qc:
-        out["AIFUsedAsCBVDenominator"] = bool(aif_qc["cbv_auc_denominator_is_synthetic"])
-    if "hematocrit" in aif_qc:
-        out["AIFHematocrit"] = float(aif_qc["hematocrit"])
-    return out
-
-
 def aif_timeseries_columns(modality: str) -> tuple[str, str, str]:
     """Column name, units, and description for an AIF timeseries TSV.
 
@@ -1107,18 +1178,14 @@ def build_aif_timeseries_sidecar(
     subject: str,
     session: Optional[str],
     aif_qc: Optional[Dict[str, Any]] = None,
+    volume_tr_s: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Build the JSON sidecar for the AIF curve text file.
 
     Per BIDS-Common-Derivatives, every data file should carry its own
     sidecar describing how it was derived. This builder emits AIF
-    detection metadata as flat ``AIF*``-prefixed top-level keys, matching
-    fmriprep/aslprep convention for pipeline-derived sidecar fields.
-
-    Note: the ``.txt`` extension is non-canonical (BIDS uses
-    ``_timeseries.tsv``); this is a separate, pre-existing issue. The
-    sidecar attaches metadata regardless and the validator treats it as
-    a free sidecar.
+    detection metadata in the canonical ``PerfusionProcessing.AIF`` block
+    shared by AIF masks and quantitative-map sidecars.
 
     Parameters
     ----------
@@ -1135,6 +1202,9 @@ def build_aif_timeseries_sidecar(
     aif_qc : dict, optional
         Producer-shape AIF QC dict (the ``aif_qc`` dict from the
         DSC outputnode for DSC, or the equivalent for DCE).
+    volume_tr_s : float, optional
+        Time between successive AIF samples in seconds. When positive, the
+        sidecar records ``SamplingFrequency`` and ``StartTime``.
 
     Returns
     -------
@@ -1156,8 +1226,17 @@ def build_aif_timeseries_sidecar(
     sidecar["Subject"] = f"sub-{subject}"
     if session:
         sidecar["Session"] = f"ses-{session}"
+    if volume_tr_s is not None and volume_tr_s > 0:
+        sidecar["SamplingFrequency"] = 1.0 / float(volume_tr_s)
+        sidecar["StartTime"] = 0.0
 
-    sidecar.update(_aif_cosmetic_keys(aif_qc))
+    from pmriprep.utils.aif_provenance import apply_aif_provenance_block
+
+    apply_aif_provenance_block(
+        sidecar,
+        aif_qc,
+        modality=cast(Literal["DSC", "DCE"], modality),
+    )
     return sidecar
 
 
@@ -1359,9 +1438,24 @@ def enrich_recommendation_keys(
             sidecar["QCAcquisitionWarnings"] = acq
 
         if qc_metrics:
+            processing_warnings: List[str] = []
             aif_warn = collect_aif_fallback_warning(qc_metrics, modality)
             if aif_warn:
-                sidecar["QCProcessingWarnings"] = [aif_warn]
+                processing_warnings.append(aif_warn)
+            if modality == "DCE":
+                preprocessing = qc_metrics.get("preprocessing") or {}
+                for warning_key in ("baseline_warning", "motion_qc_warning"):
+                    warning = preprocessing.get(warning_key)
+                    if warning:
+                        processing_warnings.append(str(warning))
+                t1_mapping = qc_metrics.get("t1_mapping") or {}
+                vfa_preprocessing = t1_mapping.get("vfa_preprocessing") or {}
+                motion_assessment = vfa_preprocessing.get("motion_assessment") or {}
+                vfa_warning = motion_assessment.get("warning")
+                if vfa_warning:
+                    processing_warnings.append(str(vfa_warning))
+            if processing_warnings:
+                sidecar["QCProcessingWarnings"] = processing_warnings
 
     return sidecar
 
@@ -1382,17 +1476,47 @@ def _dce_t1_cosmetic_keys(t1_qc: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     if not t1_qc or not isinstance(t1_qc, dict):
         return {}
     out: Dict[str, Any] = {}
-    if "method" in t1_qc:
-        out["T1MappingMethod"] = str(t1_qc["method"])
+    method = t1_qc.get("method", t1_qc.get("t1_method"))
+    if method is not None:
+        out["T1MappingMethod"] = str(method)
     if "b1_correction" in t1_qc:
         out["T1B1Correction"] = str(t1_qc["b1_correction"])
+    if "assumed_t1_ms" in t1_qc and t1_qc["assumed_t1_ms"] is not None:
+        out["T1AssumedValue"] = float(t1_qc["assumed_t1_ms"])
+        out["T1AssumedValueUnits"] = "ms"
+    if (
+        "assumed_t1_field_strength_t" in t1_qc
+        and t1_qc["assumed_t1_field_strength_t"] is not None
+    ):
+        out["T1AssumptionFieldStrength"] = float(
+            t1_qc["assumed_t1_field_strength_t"]
+        )
+    if "assumed_t1_policy" in t1_qc and t1_qc["assumed_t1_policy"] is not None:
+        out["T1AssumptionPolicy"] = str(t1_qc["assumed_t1_policy"])
     raw_corr = t1_qc.get("t1_correction")
     corr: Dict[str, Any] = raw_corr if isinstance(raw_corr, dict) else {}
     if "correction_applied" in corr:
         out["T1CorrectionApplied"] = str(corr["correction_applied"])
-    tissue_used = corr.get("tissue_t1_used", t1_qc.get("tissue_t1_used"))
-    if tissue_used is not None:
-        out["T1UseTissueLiterature"] = bool(tissue_used)
+    if method == "assumed":
+        out["T1Source"] = "uniform_field_strength_assumption"
+        out["T1MappingAttempted"] = False
+    elif corr.get("correction_applied") == "fallback":
+        out["T1Source"] = "uniform_field_strength_fallback"
+        out["T1MappingAttempted"] = True
+        out["T1MappingAccepted"] = False
+        if corr.get("fallback_value_ms") is not None:
+            out["T1AssumedValue"] = float(corr["fallback_value_ms"])
+            out["T1AssumedValueUnits"] = "ms"
+        if corr.get("reason"):
+            out["T1FallbackReason"] = str(corr["reason"])
+    else:
+        out["T1Source"] = "external_map" if method == "external" else "measured_vfa"
+        out["T1MappingAttempted"] = method != "external"
+        if method != "external":
+            out["T1MappingAccepted"] = True
+    support = t1_qc.get("t1_support")
+    if isinstance(support, dict):
+        out["T1Support"] = dict(support)
     return out
 
 
@@ -1427,6 +1551,10 @@ def _dce_preprocessing_cosmetic_keys(
         out["MotionPercentOutliers"] = float(preproc["percent_outliers"])
     if "motion_status" in preproc:
         out["MotionStatus"] = str(preproc["motion_status"])
+    if "motion_qc_available" in preproc:
+        out["MotionQCAvailable"] = bool(preproc["motion_qc_available"])
+    if "motion_qc_error" in preproc:
+        out["MotionQCError"] = str(preproc["motion_qc_error"])
     tsnr = preproc.get("baseline_tsnr")
     if tsnr is not None and tsnr == tsnr:  # present and not NaN
         out["BaselineTSNR"] = float(tsnr)
@@ -1437,8 +1565,22 @@ def _dce_preprocessing_cosmetic_keys(
         out["PeakEnhancementPercent"] = float(preproc["peak_enh_pct"])
     if "n_volumes" in preproc:
         out["NumberOfVolumes"] = int(preproc["n_volumes"])
-    if "tr_ms" in preproc:
-        out["RepetitionTime"] = float(preproc["tr_ms"]) / 1000.0
+    if "baseline_frames_used" in preproc:
+        out["BaselineFramesUsed"] = int(preproc["baseline_frames_used"])
+    if "baseline_minimum_frames" in preproc:
+        out["BaselineMinimumFrames"] = int(preproc["baseline_minimum_frames"])
+    if "detected_bolus_frame" in preproc:
+        out["BolusArrivalFrameDetected"] = int(preproc["detected_bolus_frame"])
+    if "baseline_fallback_applied" in preproc:
+        out["BaselineFallbackApplied"] = bool(preproc["baseline_fallback_applied"])
+    if "baseline_fallback_reason" in preproc:
+        out["BaselineFallbackReason"] = str(preproc["baseline_fallback_reason"])
+    if "baseline_status" in preproc:
+        out["BaselineQCStatus"] = str(preproc["baseline_status"])
+    if "volume_tr_s" in preproc:
+        out["RepetitionTime"] = float(preproc["volume_tr_s"])
+        if "tr_ms" in preproc:
+            out["RepetitionTimeExcitation"] = float(preproc["tr_ms"]) / 1000.0
     return out
 
 
@@ -1453,7 +1595,7 @@ def enrich_dce_preproc_sidecar(
     and top-level ``NAWMNormalizationApplied``
     flags from the producer-shape ``qc_metrics`` envelope. Existing
     sidecar fields (``SkullStripped``, ``SpatialReference``, ``Sources``,
-    ``Resolution``, ``KtransConvention``) are preserved.
+    ``Resolution``) are preserved.
     """
     if not qc_metrics or not isinstance(qc_metrics, dict):
         return sidecar
@@ -1493,6 +1635,14 @@ def enrich_dce_pk_map_sidecar(
     bat = qc_metrics.get("bat_correction") or qc_metrics.get("pk_modeling", {}).get("bat_correction")
     if isinstance(bat, dict):
         sidecar.setdefault("PerfusionProcessing", {})["BATCorrection"] = dict(bat)
+    pk_modeling = qc_metrics.get("pk_modeling")
+    fallback = qc_metrics.get("inference_fallback")
+    if fallback is None and isinstance(pk_modeling, dict):
+        fallback = pk_modeling.get("inference_fallback")
+    if isinstance(fallback, dict):
+        sidecar.setdefault("PerfusionProcessing", {})["InferenceFallback"] = dict(
+            fallback
+        )
     if map_key == "ktrans":
         xval = qc_metrics.get("dsc_dce_validation")
         if isinstance(xval, dict):

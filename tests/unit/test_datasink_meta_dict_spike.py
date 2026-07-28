@@ -13,7 +13,6 @@ from pathlib import Path
 
 import nibabel as nib
 import numpy as np
-import pytest
 
 
 def test_datasink_meta_dict_survives_for_nonstandard_space(tmp_path: Path) -> None:
@@ -39,8 +38,8 @@ def test_datasink_meta_dict_survives_for_nonstandard_space(tmp_path: Path) -> No
 
     out_root = tmp_path / "out"
 
-    expected_sources = ["bids::sub-01/ses-0001/anat/sub-01_ses-0001_T1w.nii.gz"]
-    expected_spatial_ref = "bids::pmriprep/sub-01/ses-0001/anat/sub-01_ses-0001_space-T1w_desc-preproc_T1w.nii.gz"
+    expected_sources = ["bids:raw:sub-01/ses-0001/anat/sub-01_ses-0001_T1w.nii.gz"]
+    expected_spatial_ref = "bids::sub-01/ses-0001/anat/sub-01_ses-0001_space-T1w_desc-preproc_T1w.nii.gz"
     expected_resolution = "native"
     expected_voxel_size = [1.0, 1.0, 1.0]
 

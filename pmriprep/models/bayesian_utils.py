@@ -121,6 +121,53 @@ def from_transformed(
     return theta_prime  # IDENTITY
 
 
+def transformed_gaussian_interval(
+    mean_transformed: float,
+    std_transformed: float,
+    transform: TransformType,
+    upper_bound: float | None = None,
+    natural_bounds: tuple[float, float] | None = None,
+    z: float = 1.96,
+) -> tuple[float, float]:
+    """Map a symmetric transformed Gaussian interval to natural space.
+
+    Parameters
+    ----------
+    mean_transformed : float
+        Posterior mean or mode in transformed coordinates.
+    std_transformed : float
+        Marginal posterior standard deviation in transformed coordinates.
+    transform : TransformType
+        Parameter transform.
+    upper_bound : float or None, optional
+        Natural-space upper bound required by ``LOG_LOGIT``.
+    natural_bounds : tuple of float or None, optional
+        Additional natural-space bounds used for identity transforms and
+        finite model constraints.
+    z : float, optional
+        Gaussian quantile multiplier; 1.96 gives a nominal 95% interval.
+
+    Returns
+    -------
+    tuple of float
+        Ordered lower and upper interval limits in natural coordinates.
+    """
+    endpoints = np.asarray(from_transformed(
+        np.asarray([
+            mean_transformed - z * std_transformed,
+            mean_transformed + z * std_transformed,
+        ]),
+        transform,
+        upper_bound,
+    ), dtype=np.float64)
+    lower = float(np.min(endpoints))
+    upper = float(np.max(endpoints))
+    if natural_bounds is not None:
+        lower = max(lower, natural_bounds[0])
+        upper = min(upper, natural_bounds[1])
+    return lower, upper
+
+
 def to_transformed_batch(
     values: npt.NDArray[np.floating],
     transform: TransformType,
@@ -655,124 +702,59 @@ def run_ensemble_sampler(
     return samples
 
 
-# ---------------------------------------------------------------------------
-# Split R-hat
-# ---------------------------------------------------------------------------
-
-def compute_split_rhat(
-    samples: npt.NDArray[np.floating],
-) -> npt.NDArray[np.floating]:
-    """Compute split-R-hat diagnostic for ensemble samplers.
-
-    For affine-invariant ensemble samplers, walkers are coupled through
-    the complementary ensemble and are NOT independent chains.
-    Standard per-walker R-hat is inappropriate.
-
-    Instead, concatenate all walkers into a single chain and split
-    in half, then compute R-hat between the two halves (recommended
-    by emcee documentation).
-
-    Parameters
-    ----------
-    samples : numpy.ndarray
-        MCMC samples (n_samples x n_walkers x n_params).
-
-    Returns
-    -------
-    numpy.ndarray
-        Split R-hat values for each parameter.
-    """
-    _, _, n_params = samples.shape
-
-    rhat = np.zeros(n_params)
-
-    for p in range(n_params):
-        full_chain = samples[:, :, p].flatten()
-
-        mid = len(full_chain) // 2
-        chains = np.array([full_chain[:mid], full_chain[mid : 2 * mid]])
-
-        n = chains.shape[1]
-
-        chain_means = np.mean(chains, axis=1)
-
-        B = n * np.var(chain_means, ddof=1)
-        W = np.mean(np.var(chains, axis=1, ddof=1))
-
-        var_plus = ((n - 1) / n) * W + (1 / n) * B
-
-        if W > 0:
-            rhat[p] = np.sqrt(var_plus / W)
-        else:
-            rhat[p] = 1.0
-
-    return rhat
-
-
-# ---------------------------------------------------------------------------
-# Per-walker ESS
-# ---------------------------------------------------------------------------
-
-def compute_per_walker_ess(
+def compute_ensemble_ess(
     samples: npt.NDArray[np.floating],
     epsilon: float = 1e-10,
-) -> npt.NDArray[np.integer]:
-    """Compute effective sample size (ESS) per-walker then sum.
+) -> tuple[npt.NDArray[np.integer], npt.NDArray[np.floating], npt.NDArray[np.bool_]]:
+    """Estimate ensemble ESS from integrated autocorrelation time.
 
-    For ensemble samplers, computing ESS per-walker and summing
-    avoids underestimating autocorrelation that occurs when
-    correlated walkers are flattened into a single sequence.
+    Autocovariance is averaged across walkers at each time lag, preserving
+    the sampler's time axis. Walkers are not treated as independent chains.
+    Reliability requires at least 50 estimated autocorrelation times in the
+    retained time series.
 
     Parameters
     ----------
     samples : numpy.ndarray
         MCMC samples (n_samples x n_walkers x n_params).
     epsilon : float, optional
-        Minimum variance threshold below which chain is
-        treated as constant (ESS = n).
+        Minimum variance threshold below which a parameter is treated as
+        constant and its diagnostic is marked unreliable.
 
     Returns
     -------
-    numpy.ndarray
-        ESS values for each parameter.
+    ess : numpy.ndarray
+        Effective sample sizes for each parameter.
+    tau : numpy.ndarray
+        Integrated autocorrelation-time estimates in retained iterations.
+    reliable : numpy.ndarray
+        Whether the retained chain is at least 50 autocorrelation times long.
     """
-    _, n_walkers, n_params = samples.shape
-
-    ess = np.zeros(n_params, dtype=np.int64)
+    n_steps, n_walkers, n_params = samples.shape
+    ess = np.ones(n_params, dtype=np.int64)
+    tau = np.full(n_params, np.inf, dtype=np.float64)
+    reliable = np.zeros(n_params, dtype=bool)
 
     for p in range(n_params):
-        ess_total = 0
+        centered = samples[:, :, p] - np.mean(samples[:, :, p], axis=0)
+        variance = float(np.mean(centered**2))
+        if n_steps < 4 or variance < epsilon:
+            continue
+        max_lag = min(n_steps // 2, 500)
+        acf = np.empty(max_lag, dtype=np.float64)
+        acf[0] = 1.0
+        for lag in range(1, max_lag):
+            acf[lag] = float(np.mean(
+                centered[:-lag, :] * centered[lag:, :]
+            )) / variance
+        tau_p = 1.0
+        for lag in range(1, max_lag - 1, 2):
+            pair_sum = acf[lag] + acf[lag + 1]
+            if pair_sum <= 0.0:
+                break
+            tau_p += 2.0 * pair_sum
+        tau[p] = max(tau_p, 1.0)
+        ess[p] = max(1, int(n_steps * n_walkers / tau[p]))
+        reliable[p] = n_steps >= 50.0 * tau[p]
 
-        for w in range(n_walkers):
-            chain = samples[:, w, p]
-            n = len(chain)
-
-            if n < 2:
-                ess_total += n
-                continue
-
-            x = chain - np.mean(chain)
-            var = float(np.var(x))
-
-            if var < epsilon:
-                ess_total += n
-                continue
-
-            max_lag = min(n // 2, 500)
-            acf = np.zeros(max_lag)
-            for k in range(max_lag):
-                acf[k] = float(np.mean(x[: n - k] * x[k:])) / var
-
-            tau_int = 1.0
-            for k in range(1, max_lag - 1, 2):
-                pair_sum = acf[k] + acf[k + 1]
-                if pair_sum > 0:
-                    tau_int += pair_sum
-                else:
-                    break
-
-            ess_total += max(1, int(n / (2 * tau_int)))
-
-        ess[p] = max(1, ess_total)
-
-    return ess
+    return ess, tau, reliable

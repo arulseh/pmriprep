@@ -46,15 +46,15 @@ class DCELesionStatsInputSpec(BaseInterfaceInputSpec):
 
     # Optional NAWM mask for reference values
     nawm_mask = traits.Str(desc="NAWM mask in DCE space for reference values")
+    qc_mask = traits.Str(
+        desc="DCE quantitative QC mask applied only to PK-map statistics"
+    )
 
     # Core pharmacokinetic maps (all optional - stats computed for available maps)
     ktrans_map = traits.Str(desc="Ktrans map path (min^-1)")
     ve_map = traits.Str(desc="ve (EES volume fraction) map path")
     vp_map = traits.Str(desc="vp (plasma volume fraction) map path")
     kep_map = traits.Str(desc="kep (rate constant) map path")
-
-    # Normalized maps (optional - only available when NAWM mask present)
-    nktrans_map = traits.Str(desc="Normalized Ktrans map path")
 
     # IAUC maps (all optional)
     iauc60_map = traits.Str(desc="IAUC at 60 seconds map path")
@@ -80,14 +80,6 @@ class DCELesionStatsInputSpec(BaseInterfaceInputSpec):
     wash_out_map = traits.Str(desc="Wash-out rate map path")
     ser_map = traits.Str(desc="Signal enhancement ratio map path")
     ttp_map = traits.Str(desc="Time to peak map path")
-
-    # Field strength (T) for NAWM physiological-range QC. When omitted
-    # (None / 0), value-level NAWM QC is reported as UNKNOWN; outside
-    # the validated [1.5, 3.0] range we also skip range checks.
-    field_strength_t = traits.Float(
-        0.0, usedefault=True,
-        desc="B0 field strength in tesla for NAWM range QC",
-    )
 
 
 class DCELesionStatsOutputSpec(TraitedSpec):
@@ -238,19 +230,16 @@ class DCELesionStats(BaseInterface):
             nawm_data = np.asarray(nawm_img.dataobj) > 0  # type: ignore[attr-defined]
             nawm_maps = {
                 k: v for k, v in maps.items()
-                if k in ["ktrans", "nktrans", "ve", "vp", "kep"]
+                if k in ["ktrans", "ve", "vp", "kep"]
             }
-            fs = float(self.inputs.field_strength_t) or None
             result.nawm_reference = compute_nawm_reference(
                 nawm_data, nawm_maps, voxel_sizes,
-                field_strength_t=fs,
             )
 
         # Compute derived metrics for primary region
         primary_mask = lesion_data > 0
         result.derived_metrics = compute_dce_derived_metrics(
             ktrans_data=maps.get("ktrans"),
-            nktrans_data=maps.get("nktrans"),
             ve_data=maps.get("ve"),
             vp_data=maps.get("vp"),
             mask=primary_mask,
@@ -285,7 +274,7 @@ class DCELesionStats(BaseInterface):
         return self._results
 
     def _load_maps(self) -> Dict[str, np.ndarray]:
-        """Load all available perfusion maps.
+        """Load maps and mark QC-rejected PK estimates unavailable.
 
         Returns
         -------
@@ -299,7 +288,6 @@ class DCELesionStats(BaseInterface):
             ("ve_map", "ve"),
             ("vp_map", "vp"),
             ("kep_map", "kep"),
-            ("nktrans_map", "nktrans"),
             ("iauc60_map", "iauc60"),
             ("iauc90_map", "iauc90"),
             ("iauc120_map", "iauc120"),
@@ -317,6 +305,20 @@ class DCELesionStats(BaseInterface):
                 if Path(path).exists():
                     img = nib.load(path)
                     maps[name] = np.asarray(img.dataobj)  # type: ignore[attr-defined]
+
+        if self._has_input("qc_mask"):
+            qc_data = np.asarray(
+                nib.load(self.inputs.qc_mask).dataobj  # type: ignore[attr-defined]
+            ) > 0
+            for name in ("ktrans", "ve", "vp", "kep"):
+                if name not in maps:
+                    continue
+                if maps[name].shape != qc_data.shape:
+                    raise ValueError(
+                        f"DCE QC mask shape {qc_data.shape} does not match "
+                        f"{name} map shape {maps[name].shape}"
+                    )
+                maps[name] = np.where(qc_data, maps[name], np.nan)
 
         return maps
 
@@ -372,4 +374,3 @@ class DCELesionStats(BaseInterface):
                 region.perfusion_maps[map_name] = stats
 
         return region
-

@@ -9,25 +9,36 @@ Tests cover:
 - Synthetic MAP fitting: parameter recovery
 """
 
+from dataclasses import fields
+
 import numpy as np
 import pytest
 
-from pmriprep.models.bayesian_utils import BayesianPrior
 from pmriprep.models.dce.bayesian import (
-    EPSILON_SIGMA_CONCENTRATION,
-    QC_RHAT_MAX,
-    QC_ESS_MIN,
     BayesianPKFitter,
     create_vp_prior_from_dsc,
     fit_pk_model,
 )
 from pmriprep.models.dce.extended_tofts import ExtendedToftsModel
+from pmriprep.models.dce.base import FitResult
 from pmriprep.models.dce.tofts import ToftsModel
+from pmriprep.models.bayesian_utils import to_transformed
+from pmriprep.utils.dce_constants import (
+    DCE_AIF_G6_SIGMA_INFLATION,
+    VP_VE_TOTAL_MAX,
+)
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def test_uncertainty_source_appends_to_fit_result_layout() -> None:
+    """Uncertainty provenance does not shift existing positional fields."""
+    names = [field.name for field in fields(FitResult)]
+
+    assert names[-3:] == ["fitted_curve", "quality_flag", "uncertainty_source"]
 
 def _make_synthetic_tofts_data(
     ktrans: float = 0.1,
@@ -159,7 +170,7 @@ class TestHessianComputation:
 
         # The ve diagonal entry (index 1) should fall back to prior curvature
         # because upward perturbation violates bounds
-        prior_curvature_ve = 1.0 / (fitter.priors[1].std ** 2)
+        1.0 / (fitter.priors[1].std ** 2)
 
         # Hessian should have non-zero diagonal for ve (from prior fallback)
         assert hessian[1, 1] > 0, (
@@ -199,6 +210,20 @@ class TestHessianComputation:
         assert hessian[1, 1] < 1e8, (
             f"Expected H[1,1] < 1e8, got {hessian[1, 1]}"
         )
+
+    def test_hessian_fallback_uses_coordinate_space_prior(self) -> None:
+        """Fallback curvature uses prior deviations in Hessian coordinates."""
+        fitter = BayesianPKFitter(ToftsModel())
+        params = np.array([0.0, 0.0])
+        transformed_stds = np.array([0.4, 0.8])
+
+        hessian = fitter._compute_hessian(
+            params,
+            lambda _: float("inf"),
+            prior_stds=transformed_stds,
+        )
+
+        assert np.diag(hessian) == pytest.approx(1.0 / transformed_stds**2)
 
 
 # ---------------------------------------------------------------------------
@@ -274,6 +299,81 @@ class TestVolumeConstraint:
         result = fitter._apply_volume_constraint(params)
 
         np.testing.assert_array_equal(result, params)
+
+    def test_volume_support_check_uses_shared_limit(self) -> None:
+        """Bayesian sampling rejects the numerical safety margin above 0.999."""
+        fitter = BayesianPKFitter(ExtendedToftsModel())
+        on_boundary = np.array([0.1, 0.799, 0.2])
+        above_boundary = np.array([0.1, 0.7995, 0.2])
+
+        assert np.sum(on_boundary[1:]) == pytest.approx(VP_VE_TOTAL_MAX)
+        assert fitter._check_volume_constraint(on_boundary)
+        assert not fitter._check_volume_constraint(above_boundary)
+
+    def test_vi_mean_respects_joint_volume_support(self) -> None:
+        """VI cannot report a posterior mean outside joint volume support."""
+        tissue_curve, aif, time_points, _ = _make_synthetic_tofts_data()
+        model = ExtendedToftsModel()
+        fitter = BayesianPKFitter(model)
+
+        for index, mean in ((1, 0.85), (2, 0.25)):
+            prior = fitter.priors[index]
+            prior.mean = mean
+            prior.mean_transformed = float(
+                to_transformed(mean, prior.transform, prior.upper_bound)
+            )
+            prior.std_transformed = 0.01
+
+        result = fitter.fit_vi(tissue_curve, aif, time_points)
+
+        assert result.parameters["ve"] + result.parameters["vp"] <= 0.999 + 1e-12
+
+
+class TestVIConvergenceAndInitialization:
+    """VI reports honest termination and recovers informative low uptake."""
+
+    def test_single_iteration_is_not_converged(self) -> None:
+        """One update cannot satisfy the production VI convergence contract."""
+        tissue_curve, aif, time_points, _ = _make_synthetic_tofts_data(
+            ktrans=0.3,
+            ve=0.4,
+        )
+
+        result = BayesianPKFitter(ToftsModel()).fit_vi(
+            tissue_curve,
+            aif,
+            time_points,
+            n_iterations=1,
+        )
+
+        assert not result.converged
+        assert result.quality_flag == "poor_convergence"
+
+    def test_low_permeability_warm_start_recovers_noiseless_curve(self) -> None:
+        """VI must not replace informative low uptake with a poor prior fit."""
+        tr_minutes = 7.0 / 60.0
+        time_points = np.arange(0.0, 5.0 + tr_minutes / 2.0, tr_minutes)
+        shifted = time_points - 0.75
+        aif = np.where(
+            shifted > 0.0,
+            6.0 * shifted * np.exp(-shifted / 0.18)
+            + 0.7 * np.exp(-shifted / 1.8),
+            0.0,
+        )
+        model = ToftsModel()
+        tissue_curve = model.evaluate([0.01, 0.10], aif, time_points)
+
+        result = BayesianPKFitter(model).fit_vi(
+            tissue_curve,
+            aif,
+            time_points,
+            n_iterations=30,
+        )
+
+        assert result.converged
+        assert result.r_squared > 0.99
+        assert result.parameters["Ktrans"] == pytest.approx(0.01, rel=0.10)
+        assert result.parameters["ve"] == pytest.approx(0.10, rel=0.10)
 
 
 # ---------------------------------------------------------------------------
@@ -386,6 +486,7 @@ class TestBayesianMAPFitSynthetic:
         )
 
         # Should have uncertainties from Laplace approximation
+        assert result.uncertainty_source == "laplace_hessian"
         assert "Ktrans" in result.uncertainties
         assert "ve" in result.uncertainties
         assert result.uncertainties["Ktrans"] > 0
@@ -399,6 +500,24 @@ class TestBayesianMAPFitSynthetic:
         assert result.r_squared > 0.95, (
             f"Expected R^2 > 0.95 for clean data, got {result.r_squared}"
         )
+
+    def test_map_records_prior_fallback_when_hessian_is_unavailable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A singular MAP Hessian records the actual prior fallback."""
+        tissue_curve, aif, time_points, _ = _make_synthetic_tofts_data()
+        fitter = BayesianPKFitter(ToftsModel())
+
+        def _unavailable_hessian(*args: object, **kwargs: object) -> np.ndarray:
+            del args, kwargs
+            return np.full((2, 2), np.nan, dtype=np.float64)
+
+        monkeypatch.setattr(fitter, "_compute_hessian", _unavailable_hessian)
+        result = fitter.fit_map(tissue_curve, aif, time_points)
+
+        assert result.uncertainty_source == "prior_fallback"
+        assert result.uncertainties["Ktrans"] == fitter.priors[0].std
+        assert result.credible_intervals["Ktrans"] == ToftsModel().get_bounds()[0]
 
 
 # ---------------------------------------------------------------------------
@@ -456,6 +575,22 @@ class TestWeightedLogLikelihoodWithSigma:
         )
 
 
+def test_vi_fractional_weights_reduce_effective_information() -> None:
+    """Uniform half-weights widen DCE VI posterior uncertainty."""
+    tissue_curve, aif, time_points, _ = _make_synthetic_tofts_data()
+    fitter = BayesianPKFitter(ToftsModel())
+
+    full = fitter.fit_vi(
+        tissue_curve, aif, time_points, weights=np.ones(len(time_points))
+    )
+    half = fitter.fit_vi(
+        tissue_curve, aif, time_points, weights=np.full(len(time_points), 0.5)
+    )
+
+    assert half.uncertainties["noise_std"] > full.uncertainties["noise_std"]
+    assert half.uncertainties["Ktrans"] > full.uncertainties["Ktrans"]
+
+
 class TestFitMCMCWeights:
     """Test that fit_mcmc accepts and uses weights."""
 
@@ -491,6 +626,35 @@ class TestFitMCMCWeights:
         assert "Ktrans" in result.parameters
         assert result.fitting_method == "mcmc"
 
+    def test_mcmc_samples_transformed_prior_coordinates(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """MCMC state uses the same transformed coordinates as MAP and VI."""
+        tissue_curve, aif, time_points, _ = _make_synthetic_tofts_data()
+        fitter = BayesianPKFitter(ToftsModel())
+        captured: dict[str, object] = {}
+
+        def _capture_sampler(
+            log_prob: object,
+            init_positions: np.ndarray,
+            n_iterations: int,
+            bounds: list[tuple[float, float]],
+        ) -> np.ndarray:
+            assert callable(log_prob)
+            captured["positions"] = init_positions.copy()
+            captured["bounds"] = bounds
+            return np.repeat(init_positions[None, :, :], n_iterations, axis=0)
+
+        monkeypatch.setattr(
+            "pmriprep.models.dce.bayesian.run_ensemble_sampler", _capture_sampler
+        )
+        fitter.fit_mcmc(tissue_curve, aif, time_points, sloppy=True)
+
+        positions = captured["positions"]
+        assert isinstance(positions, np.ndarray)
+        assert np.all(positions[:, 0] < 0.0)  # log(Ktrans), not natural Ktrans
+        assert captured["bounds"][0] == (-50.0, 50.0)  # type: ignore[index]
+
 
 class TestMCMCQualityFlag:
     """Test that fit_mcmc sets quality_flag based on convergence diagnostics."""
@@ -525,8 +689,8 @@ class TestMCMCQualityFlag:
         # quality_flag must be explicitly set (not the dataclass default)
         assert result.quality_flag in ("good", "poor_convergence")
 
-    def test_rhat_ess_populated(self) -> None:
-        """fit_mcmc should populate rhat and ess dicts."""
+    def test_ensemble_ess_populated_without_invalid_rhat(self) -> None:
+        """MCMC reports ensemble ESS but no coupled-walker R-hat."""
         tissue_curve, aif, time_points, _ = _make_synthetic_tofts_data()
         model = ToftsModel()
         fitter = BayesianPKFitter(model)
@@ -537,23 +701,20 @@ class TestMCMCQualityFlag:
 
         assert isinstance(result.rhat, dict)
         assert isinstance(result.ess, dict)
-        assert len(result.rhat) > 0, "rhat should be populated for MCMC"
+        assert result.rhat == {}
         assert len(result.ess) > 0, "ess should be populated for MCMC"
-        assert "Ktrans" in result.rhat
-        assert "ve" in result.rhat
+        assert "Ktrans" in result.ess
+        assert "ve" in result.ess
 
 
 # =============================================================================
 # Per-parameter sigma inflation from upstream AIF confidence
 # =============================================================================
 
-from pmriprep.utils.dce_constants import DCE_AIF_G6_SIGMA_INFLATION
-
-
 def test_g6_sigma_inflation_dict_shape():
     """Per-parameter inflation map covers the directly-fitted PK params
-    with the physics-expert sensitivity hierarchy (Buckley 2002 MRM
-    47:601). kep is omitted: it is derived downstream as Ktrans/ve and
+    with the expected AIF-sensitivity hierarchy. kep is omitted: it is
+    derived downstream as Ktrans/ve and
     inherits Ktrans's inflation through that derivation."""
     expected_keys = {"Ktrans", "vp", "ve", "Fp", "PS"}
     assert set(DCE_AIF_G6_SIGMA_INFLATION.keys()) == expected_keys

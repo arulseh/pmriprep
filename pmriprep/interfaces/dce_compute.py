@@ -6,8 +6,9 @@ curves and AIF using various PK models.
 """
 
 import logging
+from functools import partial
 from pathlib import Path
-from typing import Any, NamedTuple, Optional
+from typing import Any, Callable, NamedTuple, Optional
 
 import numpy as np
 import numpy.typing as npt
@@ -22,12 +23,10 @@ from nipype.interfaces.base import (  # type: ignore[import-untyped]
 )
 
 from pmriprep.utils.dce_constants import (
-    ACQUISITION_LIMITED_OVERSHOOT_THRESHOLD,
     EPSILON_RATIO,
     EPSILON_VE,
     DEFAULT_TSNR_THRESHOLD,
     FP_BOUNDS,
-    HEMATOCRIT_ARTERIAL,
     KEP_BOUNDS,
     KTRANS_BOUNDS,
     MIN_ENHANCEMENT_MM,
@@ -38,6 +37,1323 @@ from pmriprep.utils.dce_constants import (
 from pmriprep.utils.dce_voxel_prep import prepare_voxel_for_fitting
 
 logger = logging.getLogger(__name__)
+
+
+def _is_degenerate_dce_fit(
+    model_name: str,
+    params: dict[str, float],
+    is_constrained: bool,
+) -> bool:
+    """Return whether a fitted DCE parameter set rails physiological bounds."""
+    ktrans = params.get("Ktrans", 0.0)
+    ve = params.get("ve", 0.0)
+    vp = params.get("vp", 0.0)
+    ktrans_low = ktrans < 0 if is_constrained else ktrans <= 0
+    if model_name == "2cxm":
+        fp = params.get("Fp", 0.0)
+        ps = params.get("PS", 0.0)
+        return (
+            fp <= 0
+            or fp >= FP_BOUNDS.max
+            or ps < 0
+            or ps >= PS_BOUNDS.max
+            or ve <= 0
+            or ve >= VE_BOUNDS.max
+            or vp <= 0
+            or vp >= VP_BOUNDS.max
+        )
+    if model_name == "patlak":
+        return (
+            ktrans < 0
+            or ktrans >= KTRANS_BOUNDS.max
+            or (not is_constrained and (vp <= 0 or vp >= VP_BOUNDS.max))
+        )
+    if model_name == "extended_tofts":
+        return (
+            ktrans_low
+            or ktrans >= KTRANS_BOUNDS.max
+            or ve <= 0
+            or ve >= VE_BOUNDS.max
+            or (not is_constrained and (vp <= 0 or vp >= VP_BOUNDS.max))
+        )
+    return (
+        ktrans <= 0
+        or ktrans >= KTRANS_BOUNDS.max
+        or ve <= 0
+        or ve >= VE_BOUNDS.max
+    )
+
+
+def _scatter_dce_uncertainties(
+    maps: "_DCEParameterMaps",
+    coords: tuple[int, int, int],
+    model_name: str,
+    uncertainties: dict[str, float],
+) -> None:
+    """Scatter model-applicable standard errors/SDs with AIF inflation."""
+    x, y, z = coords
+    if (
+        model_name != "2cxm"
+        and "Ktrans" in uncertainties
+        and np.isfinite(uncertainties["Ktrans"])
+    ):
+        maps.ktrans_std[x, y, z] = uncertainties["Ktrans"] * (
+            maps.sigma_factor.get("Ktrans", 1.0)
+        )
+    if (
+        model_name in ("tofts", "extended_tofts", "2cxm")
+        and "ve" in uncertainties
+        and np.isfinite(uncertainties["ve"])
+    ):
+        maps.ve_std[x, y, z] = uncertainties["ve"] * (
+            maps.sigma_factor.get("ve", 1.0)
+        )
+    if (
+        model_name in ("extended_tofts", "patlak", "2cxm")
+        and "vp" in uncertainties
+        and np.isfinite(uncertainties["vp"])
+    ):
+        maps.vp_std[x, y, z] = uncertainties["vp"] * (
+            maps.sigma_factor.get("vp", 1.0)
+        )
+    if model_name == "2cxm":
+        if "Fp" in uncertainties and np.isfinite(uncertainties["Fp"]):
+            maps.fp_std[x, y, z] = uncertainties["Fp"] * (
+                maps.sigma_factor.get("Fp", 1.0)
+            )
+        if "PS" in uncertainties and np.isfinite(uncertainties["PS"]):
+            maps.ps_std[x, y, z] = uncertainties["PS"] * (
+                maps.sigma_factor.get("PS", 1.0)
+            )
+
+
+def _normal_approximation_intervals(
+    model_name: str,
+    params: dict[str, float],
+    uncertainties: dict[str, float],
+) -> dict[str, tuple[float, float]]:
+    """Construct bounded 95% Wald intervals from NLLS standard errors."""
+    from pmriprep.utils.dce_constants import (
+        FP_BOUNDS,
+        KTRANS_BOUNDS,
+        PS_BOUNDS,
+        VE_BOUNDS,
+        VP_BOUNDS,
+    )
+
+    applicability = {
+        "Ktrans": True,
+        "ve": model_name in ("tofts", "extended_tofts", "2cxm"),
+        "vp": model_name in ("extended_tofts", "patlak", "2cxm"),
+        "Fp": model_name == "2cxm",
+        "PS": model_name == "2cxm",
+    }
+    bounds = {
+        "Ktrans": (KTRANS_BOUNDS.min, KTRANS_BOUNDS.max),
+        "ve": (VE_BOUNDS.min, VE_BOUNDS.max),
+        "vp": (VP_BOUNDS.min, VP_BOUNDS.max),
+        "Fp": (FP_BOUNDS.min, FP_BOUNDS.max),
+        "PS": (PS_BOUNDS.min, PS_BOUNDS.max),
+    }
+    intervals: dict[str, tuple[float, float]] = {}
+    for parameter, applicable in applicability.items():
+        estimate = params.get(parameter)
+        standard_error = uncertainties.get(parameter)
+        if (
+            not applicable
+            or estimate is None
+            or standard_error is None
+            or not np.isfinite(estimate)
+            or not np.isfinite(standard_error)
+            or standard_error < 0
+        ):
+            continue
+        lower_bound, upper_bound = bounds[parameter]
+        intervals[parameter] = (
+            max(float(estimate) - 1.96 * float(standard_error), lower_bound),
+            min(float(estimate) + 1.96 * float(standard_error), upper_bound),
+        )
+    return intervals
+
+
+def _compute_auto_bic(
+    tissue_curves: npt.NDArray[np.floating],
+    fitted_curves: npt.NDArray[np.floating],
+    converged: npt.NDArray[np.bool_],
+    n_parameters: int,
+    weights: Optional[npt.NDArray[np.floating]] = None,
+) -> npt.NDArray[np.floating]:
+    """Compute per-voxel BIC using the likelihood fitted by NLLS.
+
+    Motion weights are inverse-variance reliability weights in the fitting
+    objective. When present, the same weighted RSS must determine model
+    selection so deliberately downweighted frames cannot dominate BIC. The
+    observation count remains the acquired frame count; weights do not
+    represent replicated observations.
+    """
+    from pmriprep.models.dce.base import EPSILON_RSS
+
+    n_timepoints = tissue_curves.shape[1]
+    if weights is None:
+        frame_weights = np.ones(n_timepoints, dtype=np.float64)
+    else:
+        frame_weights = np.maximum(np.asarray(weights, dtype=np.float64), 0.0)
+    n_observations = max(n_timepoints, 1)
+    residuals = tissue_curves - fitted_curves
+    rss = np.sum(frame_weights[None, :] * residuals**2, axis=1)
+    rss_safe = np.maximum(rss, EPSILON_RSS)
+    bic: npt.NDArray[np.float64] = np.asarray(
+        n_observations * np.log(rss_safe / n_observations)
+        + float(n_parameters) * np.log(n_observations),
+        dtype=np.float64,
+    )
+    bic[~converged] = np.inf
+    return bic
+
+
+def _select_auto_bic_winners(
+    candidate_names: list[str],
+    bic_arrays: dict[str, npt.NDArray[np.floating]],
+    n_parameters: dict[str, int],
+    min_upgrade_bic: float = 6.0,
+) -> tuple[npt.NDArray[np.intp], npt.NDArray[np.floating], npt.NDArray[np.bool_]]:
+    """Select auto-mode models with evidence measured against the simplest.
+
+    ``delta_bic`` retains the exported winner-versus-runner-up convention.
+    The conservative upgrade guard is a separate comparison: a more complex
+    raw winner is retained when its BIC improves on the simplest converged
+    candidate by at least ``min_upgrade_bic``.
+    """
+    bic_stack = np.stack([bic_arrays[name] for name in candidate_names])
+    finite = np.isfinite(bic_stack)
+    valid = np.any(finite, axis=0)
+    winner_idx = np.argmin(bic_stack, axis=0).astype(np.intp, copy=False)
+
+    sorted_bics = np.sort(bic_stack, axis=0)
+    if len(candidate_names) > 1:
+        both_finite = np.isfinite(sorted_bics[0]) & np.isfinite(sorted_bics[1])
+        delta_bic = np.full(bic_stack.shape[1], np.nan)
+        np.subtract(
+            sorted_bics[1],
+            sorted_bics[0],
+            out=delta_bic,
+            where=both_finite,
+        )
+    else:
+        delta_bic = np.full(bic_stack.shape[1], np.nan)
+
+    parameter_counts = np.array(
+        [n_parameters[name] for name in candidate_names]
+    )
+    simplest_idx = int(np.argmin(parameter_counts))
+    simplest_bic = bic_stack[simplest_idx]
+    best_bic = bic_stack[winner_idx, np.arange(bic_stack.shape[1])]
+    finite_evidence = np.isfinite(simplest_bic) & np.isfinite(best_bic)
+    evidence_over_simplest = np.full(bic_stack.shape[1], np.nan)
+    np.subtract(
+        simplest_bic,
+        best_bic,
+        out=evidence_over_simplest,
+        where=finite_evidence,
+    )
+    downgrade = (
+        valid
+        & (winner_idx != simplest_idx)
+        & np.isfinite(simplest_bic)
+        & (evidence_over_simplest < min_upgrade_bic)
+    )
+    winner_idx[downgrade] = simplest_idx
+    delta_bic[downgrade] = np.nan
+    return winner_idx, delta_bic, valid
+
+
+def _inflate_credible_interval(
+    center: float,
+    interval: tuple[float, float],
+    inflation: float,
+    bounds: tuple[float, float],
+) -> tuple[float, float]:
+    """Inflate interval distances from the estimate and clip to model bounds."""
+    lower, upper = interval
+    lower = min(lower, center)
+    upper = max(upper, center)
+    return (
+        max(center - inflation * (center - lower), bounds[0]),
+        min(center + inflation * (upper - center), bounds[1]),
+    )
+
+
+def _scatter_dce_credible_intervals(
+    maps: "_DCEParameterMaps",
+    coords: tuple[int, int, int],
+    model_name: str,
+    params: dict[str, float],
+    intervals: dict[str, tuple[float, float]],
+) -> None:
+    """Scatter model-native intervals with AIF inflation and bound clipping."""
+    from pmriprep.utils.dce_constants import (
+        FP_BOUNDS,
+        KTRANS_BOUNDS,
+        PS_BOUNDS,
+        VE_BOUNDS,
+        VP_BOUNDS,
+    )
+
+    x, y, z = coords
+    if model_name != "2cxm" and "Ktrans" in intervals:
+        lower, upper = _inflate_credible_interval(
+            params.get("Ktrans", 0.0),
+            intervals["Ktrans"],
+            maps.sigma_factor.get("Ktrans", 1.0),
+            (KTRANS_BOUNDS.min, KTRANS_BOUNDS.max),
+        )
+        maps.ktrans_ci95_lower[x, y, z] = lower
+        maps.ktrans_ci95_upper[x, y, z] = upper
+    if model_name in ("tofts", "extended_tofts", "2cxm") and "ve" in intervals:
+        lower, upper = _inflate_credible_interval(
+            params.get("ve", 0.0),
+            intervals["ve"],
+            maps.sigma_factor.get("ve", 1.0),
+            (VE_BOUNDS.min, VE_BOUNDS.max),
+        )
+        maps.ve_ci95_lower[x, y, z] = lower
+        maps.ve_ci95_upper[x, y, z] = upper
+    if model_name in ("extended_tofts", "patlak", "2cxm") and "vp" in intervals:
+        lower, upper = _inflate_credible_interval(
+            params.get("vp", 0.0),
+            intervals["vp"],
+            maps.sigma_factor.get("vp", 1.0),
+            (VP_BOUNDS.min, VP_BOUNDS.max),
+        )
+        maps.vp_ci95_lower[x, y, z] = lower
+        maps.vp_ci95_upper[x, y, z] = upper
+    if model_name == "2cxm" and "Fp" in intervals:
+        lower, upper = _inflate_credible_interval(
+            params.get("Fp", 0.0),
+            intervals["Fp"],
+            maps.sigma_factor.get("Fp", 1.0),
+            (FP_BOUNDS.min, FP_BOUNDS.max),
+        )
+        maps.fp_ci95_lower[x, y, z] = lower
+        maps.fp_ci95_upper[x, y, z] = upper
+    if model_name == "2cxm" and "PS" in intervals:
+        lower, upper = _inflate_credible_interval(
+            params.get("PS", 0.0),
+            intervals["PS"],
+            maps.sigma_factor.get("PS", 1.0),
+            (PS_BOUNDS.min, PS_BOUNDS.max),
+        )
+        maps.ps_ci95_lower[x, y, z] = lower
+        maps.ps_ci95_upper[x, y, z] = upper
+
+
+def _scatter_dce_fit_artifacts(
+    maps: "_DCEParameterMaps",
+    coords: tuple[int, int, int],
+    result: dict[str, Any],
+) -> None:
+    """Scatter fitted-curve, bound-indicator, and quality-label artifacts."""
+    x, y, z = coords
+    fitted_curve = result.get("fitted_curve")
+    if maps.fitted_curves is not None and fitted_curve is not None:
+        maps.fitted_curves[x, y, z, :] = fitted_curve.astype(np.float32)
+    maps.vp_at_bound[x, y, z] = float(result.get("vp_at_bound", 0.0))
+    quality_flag = result.get("quality_flag", "good")
+    maps.quality_flag[x, y, z] = maps.quality_flag_codes.get(quality_flag, 1)
+
+
+def _scatter_dce_parameters(
+    maps: "_DCEParameterMaps",
+    coords: tuple[int, int, int],
+    model_name: str,
+    params: dict[str, float],
+    r_squared: float,
+) -> None:
+    """Scatter a non-degenerate model's applicable fitted parameters."""
+    x, y, z = coords
+    maps.ktrans[x, y, z] = params.get("Ktrans", 0.0)
+    if model_name in ("tofts", "extended_tofts", "2cxm"):
+        maps.ve[x, y, z] = params.get("ve", 0.0)
+        maps.kep[x, y, z] = params.get("kep", 0.0)
+    maps.r_squared[x, y, z] = r_squared
+    if model_name in ("extended_tofts", "patlak", "2cxm"):
+        maps.vp[x, y, z] = params.get("vp", 0.0)
+    if model_name == "2cxm":
+        maps.fp[x, y, z] = params.get("Fp", 0.0)
+        maps.ps[x, y, z] = params.get("PS", 0.0)
+        maps.extraction_fraction[x, y, z] = params.get("E", 0.0)
+
+
+def _scatter_degenerate_dce_fit(
+    maps: "_DCEParameterMaps",
+    coords: tuple[int, int, int],
+    model_name: str,
+    r_squared: float,
+) -> None:
+    """Scatter the model-applicable sentinels for a rejected fit."""
+    x, y, z = coords
+    fill_value = np.nan
+    maps.ktrans[x, y, z] = fill_value
+    if model_name in ("tofts", "extended_tofts", "2cxm"):
+        maps.ve[x, y, z] = fill_value
+        maps.kep[x, y, z] = fill_value
+    if model_name in ("extended_tofts", "patlak", "2cxm"):
+        maps.vp[x, y, z] = fill_value
+    maps.r_squared[x, y, z] = r_squared
+
+
+def _compute_vp_prior_departure(
+    constraint_mode: Any,
+    inference: str,
+    model_name: str,
+    voxel_prior: Optional[float],
+    fitted_vp: float,
+    relative_uncertainty: float,
+) -> Optional[float]:
+    """Return the standardized Bayesian departure from a SOFT DSC vp prior."""
+    from pmriprep.utils.dsc_cbv_constraint import ConstraintMode
+
+    if (
+        constraint_mode != ConstraintMode.SOFT
+        or inference == "nlls"
+        or model_name not in ("extended_tofts", "patlak", "2cxm")
+        or voxel_prior is None
+        or voxel_prior <= 0
+    ):
+        return None
+    prior_sigma = max(voxel_prior * relative_uncertainty, 0.001)
+    return abs(fitted_vp - voxel_prior) / prior_sigma
+
+
+def _accumulate_mcmc_diagnostics(
+    result: dict[str, Any],
+    rhat_lists: dict[str, list[float]],
+    ess_lists: dict[str, list[float]],
+) -> int:
+    """Accumulate one voxel's MCMC diagnostics and return its count increment."""
+    voxel_rhat = result.get("rhat", {})
+    voxel_ess = result.get("ess", {})
+    if not voxel_rhat and not voxel_ess:
+        return 0
+    for parameter, value in voxel_rhat.items():
+        rhat_lists.setdefault(parameter, []).append(value)
+    for parameter, value in voxel_ess.items():
+        ess_lists.setdefault(parameter, []).append(value)
+    return 1
+
+
+def _account_retained_dce_fit(
+    voxel: "VoxelInput",
+    result: dict[str, Any],
+    constraint_mode: Any,
+) -> "_DCEFitAccountingUpdate":
+    """Return convergence and constraint counter increments for one retained fit."""
+    from pmriprep.utils.dsc_cbv_constraint import ConstraintMode
+
+    constrained = bool(result.get("constrained", False))
+    unconstrained_fallback = bool(
+        not constrained
+        and voxel.voxel_vp is not None
+        and constraint_mode != ConstraintMode.SKIP
+    )
+    converged = bool(result["converged"])
+    return _DCEFitAccountingUpdate(
+        int(constrained),
+        int(unconstrained_fallback),
+        float(result["r_squared"]) if converged else None,
+    )
+
+
+def _scatter_dce_fit_results(
+    voxel_data: list["VoxelInput"],
+    results: list[dict[str, Any]],
+    maps: "_DCEParameterMaps",
+    model_name: str,
+    is_auto: bool,
+    inference: str,
+    constraint_mode: Any,
+    constraint_vp_uncertainty: float,
+) -> "_DCEFitSummary":
+    """Scatter fitted voxels and accumulate their QC diagnostics."""
+    n_constrained = 0
+    n_optimizer_converged = n_retained = 0
+    n_prefit_rejected = n_execution_exceptions = n_fit_unsuccessful = 0
+    n_unconstrained_fallback = n_rejected_postfit = 0
+    r2_values: list[float] = []
+    failure_reasons: dict[str, int] = {}
+    mcmc_rhat: dict[str, list[float]] = {}
+    mcmc_ess: dict[str, list[float]] = {}
+    n_mcmc_voxels = 0
+    vp_prior_departures: list[float] = []
+    map_uncertainty_sources: list[str] = []
+    n_inference_fallback = 0
+    for voxel, result in zip(voxel_data, results):
+        if result["failed"]:
+            failure_stage = result.get("failure_stage", "fit")
+            if failure_stage == "prefit":
+                n_prefit_rejected += 1
+            elif failure_stage == "execution":
+                n_execution_exceptions += 1
+            else:
+                n_fit_unsuccessful += 1
+            reason = result.get("failure_reason") or "unknown"
+            failure_reasons[reason] = failure_reasons.get(reason, 0) + 1
+            continue
+        n_optimizer_converged += int(bool(result.get("converged", False)))
+        coords = tuple(result["coords"])
+        maps.optimizer_converged[coords] = bool(result.get("converged", False))
+        params = result["params"]
+        selected_model = result.get("selected_model_name", model_name)
+        maps.model_selection[coords] = maps.model_selection_codes.get(selected_model, 0)
+        maps.delta_bic[coords] = float(result.get("delta_bic", np.nan))
+        is_constrained = result.get("constrained", False)
+        if _is_degenerate_dce_fit(selected_model, params, is_constrained):
+            _scatter_degenerate_dce_fit(
+                maps, coords, selected_model, result["r_squared"]
+            )
+            n_rejected_postfit += 1
+            continue
+        n_retained += 1
+        n_inference_fallback += int(bool(result.get("inference_fallback", False)))
+        if inference == "map":
+            map_uncertainty_sources.append(
+                str(result.get("uncertainty_source", "not_computed"))
+            )
+        _scatter_dce_parameters(
+            maps, coords, selected_model, params, result["r_squared"]
+        )
+        if result["uncertainties"]:
+            _scatter_dce_uncertainties(
+                maps, coords, selected_model, result["uncertainties"]
+            )
+        intervals = result.get("credible_intervals") or {}
+        if inference == "nlls" and result["uncertainties"]:
+            intervals = _normal_approximation_intervals(
+                selected_model,
+                params,
+                result["uncertainties"],
+            )
+        if intervals:
+            _scatter_dce_credible_intervals(
+                maps,
+                coords,
+                selected_model,
+                params,
+                intervals,
+            )
+        _scatter_dce_fit_artifacts(maps, coords, result)
+        departure = _compute_vp_prior_departure(
+            constraint_mode,
+            inference,
+            selected_model,
+            voxel.voxel_vp,
+            params.get("vp", 0.0),
+            constraint_vp_uncertainty,
+        )
+        if departure is not None:
+            vp_prior_departures.append(departure)
+        accounting = _account_retained_dce_fit(voxel, result, constraint_mode)
+        n_constrained += accounting.n_constrained
+        n_unconstrained_fallback += accounting.n_unconstrained_fallback
+        if accounting.r_squared is not None:
+            r2_values.append(accounting.r_squared)
+        n_mcmc_voxels += _accumulate_mcmc_diagnostics(
+            result, mcmc_rhat, mcmc_ess
+        )
+    return _DCEFitSummary(
+        n_optimizer_converged,
+        n_prefit_rejected,
+        n_execution_exceptions,
+        n_fit_unsuccessful,
+        n_retained,
+        n_constrained,
+        n_unconstrained_fallback,
+        n_rejected_postfit,
+        r2_values,
+        failure_reasons,
+        mcmc_rhat,
+        mcmc_ess,
+        n_mcmc_voxels,
+        vp_prior_departures,
+        map_uncertainty_sources,
+        n_inference_fallback,
+    )
+
+
+def _summarize_mcmc_diagnostics(
+    n_mcmc_voxels: int,
+    rhat_lists: dict[str, list[float]],
+    ess_lists: dict[str, list[float]],
+) -> Optional[dict[str, Any]]:
+    """Summarize accumulated MCMC convergence diagnostics."""
+    if n_mcmc_voxels <= 0:
+        return None
+    from pmriprep.models.dce.bayesian import QC_ESS_MIN, QC_RHAT_MAX
+
+    summary: dict[str, Any] = {"n_mcmc_voxels": n_mcmc_voxels}
+    for parameter, values in rhat_lists.items():
+        array = np.array(values)
+        summary[f"rhat_median_{parameter}"] = float(np.median(array))
+        summary[f"rhat_frac_poor_{parameter}"] = float(
+            np.mean(array >= QC_RHAT_MAX)
+        )
+    for parameter, values in ess_lists.items():
+        array = np.array(values)
+        summary[f"ess_median_{parameter}"] = float(np.median(array))
+        summary[f"ess_frac_low_{parameter}"] = float(np.mean(array < QC_ESS_MIN))
+    return summary
+
+
+def _summarize_vp_prior_departures(values: list[float]) -> dict[str, float]:
+    """Summarize standardized departures from SOFT DSC vp priors."""
+    if not values:
+        return {}
+    array = np.array(values)
+    return {
+        "z_departure_median": float(np.median(array)),
+        "z_departure_p90": float(np.percentile(array, 90)),
+        "frac_prior_dominated": float(np.mean(array < 0.5)),
+        "frac_strong_departure": float(np.mean(array > 2.0)),
+    }
+
+
+def _summarize_map_uncertainty_sources(
+    sources: list[str],
+) -> dict[str, int | float]:
+    """Summarize run-time MAP Hessian and uncertainty-fallback outcomes."""
+    n_laplace = sources.count("laplace_hessian")
+    n_prior_fallback = sources.count("prior_fallback")
+    n_not_computed = sources.count("not_computed")
+    n_evaluated = n_laplace + n_prior_fallback
+    return {
+        "n_retained_voxels": len(sources),
+        "n_evaluated": n_evaluated,
+        "n_laplace_hessian": n_laplace,
+        "n_prior_fallback": n_prior_fallback,
+        "n_not_computed": n_not_computed,
+        "prior_fallback_fraction": n_prior_fallback / max(1, n_evaluated),
+    }
+
+
+def _summarize_inference_fallback(
+    inference: str,
+    n_retained: int,
+    n_nlls_fallback: int,
+) -> Optional[dict[str, str | int | float]]:
+    """Summarize retained Bayesian requests supplied by NLLS fallback fits."""
+    if inference == "nlls":
+        return None
+    return {
+        "requested_inference": inference,
+        "fallback_inference": "nlls",
+        "n_retained_voxels": n_retained,
+        "n_nlls_fallback": n_nlls_fallback,
+        "fallback_fraction_of_retained": n_nlls_fallback / max(1, n_retained),
+    }
+
+
+def _summarize_dce_categorical_qc(
+    is_auto: bool,
+    candidate_names: list[str],
+    model_selection: npt.NDArray[Any],
+    model_selection_codes: dict[str, int],
+    quality_flag: npt.NDArray[Any],
+    fitting_mask: npt.NDArray[Any],
+) -> dict[str, Any]:
+    """Summarize model-selection and quality-label categorical maps."""
+    summary: dict[str, Any] = {
+        "model_selection": "auto" if is_auto else "fixed",
+    }
+    if is_auto:
+        summary["candidate_models"] = candidate_names
+        n_total = int(np.sum(model_selection > 0))
+        for model_name in candidate_names:
+            count = int(np.sum(model_selection == model_selection_codes[model_name]))
+            summary[f"n_{model_name}_selected"] = count
+            summary[f"{model_name}_fraction"] = count / max(1, n_total)
+
+    quality_values = quality_flag[fitting_mask]
+    summary["quality_n_good"] = int(np.sum(quality_values == 1))
+    summary["quality_n_poor_convergence"] = int(np.sum(quality_values == 2))
+    summary["quality_n_high_uncertainty"] = int(np.sum(quality_values == 3))
+    summary["quality_n_unreliable_high_kep"] = int(np.sum(quality_values == 4))
+    return summary
+
+
+def _summarize_dce_fitted_parameters(
+    fitting_mask: npt.NDArray[Any],
+    ktrans: npt.NDArray[Any],
+    ve: npt.NDArray[Any],
+    vp: npt.NDArray[Any],
+    fp: npt.NDArray[Any],
+    ps: npt.NDArray[Any],
+    save_ve: bool,
+    save_vp: bool,
+    save_2cxm: bool,
+) -> dict[str, Any]:
+    """Summarize parameter maps over voxels with a retained DCE fit."""
+    fitted_mask = fitting_mask & np.isfinite(ktrans) & (ktrans > 0)
+    if not np.any(fitted_mask):
+        return {}
+
+    ktrans_values = ktrans[fitted_mask]
+    summary: dict[str, Any] = {
+        "ktrans_mean": float(np.nanmean(ktrans_values)),
+        "ktrans_median": float(np.nanmedian(ktrans_values)),
+    }
+    hist_counts, hist_edges = np.histogram(
+        ktrans_values[np.isfinite(ktrans_values)], bins=50
+    )
+    summary["ktrans_histogram"] = hist_counts.tolist()
+    summary["ktrans_histogram_edges"] = hist_edges.tolist()
+
+    if save_ve:
+        ve_values = ve[fitted_mask]
+        finite_ve = np.isfinite(ve_values)
+        if np.any(finite_ve):
+            summary["ve_mean"] = float(np.nanmean(ve_values[finite_ve]))
+            summary["ve_median"] = float(np.nanmedian(ve_values[finite_ve]))
+            ve_hist_counts, ve_hist_edges = np.histogram(ve_values[finite_ve], bins=50)
+            summary["ve_histogram"] = ve_hist_counts.tolist()
+            summary["ve_histogram_edges"] = ve_hist_edges.tolist()
+
+    if save_vp:
+        vp_values = vp[fitted_mask]
+        finite_vp = np.isfinite(vp_values)
+        if np.any(finite_vp):
+            summary["vp_mean"] = float(np.nanmean(vp_values[finite_vp]))
+            summary["vp_median"] = float(np.nanmedian(vp_values[finite_vp]))
+
+    if save_2cxm:
+        fp_values = fp[fitted_mask]
+        finite_fp = np.isfinite(fp_values) & (fp_values > 0)
+        if np.any(finite_fp):
+            summary["fp_median"] = float(np.nanmedian(fp_values[finite_fp]))
+        ps_values = ps[fitted_mask]
+        finite_ps = np.isfinite(ps_values) & (ps_values > 0)
+        if np.any(finite_ps):
+            summary["ps_median"] = float(np.nanmedian(ps_values[finite_ps]))
+
+    return summary
+
+
+def _fraction_vp_at_bound(
+    mask: npt.NDArray[Any],
+    vp_at_bound: npt.NDArray[Any],
+) -> float:
+    """Return the finite in-mask fraction of fits ending at the vp bound."""
+    values = vp_at_bound[mask]
+    finite = np.isfinite(values)
+    if not np.any(finite):
+        return 0.0
+    return float(np.mean(values[finite] > 0.5))
+
+
+def _fraction_fxl_risk(
+    concentration: npt.NDArray[Any],
+    fitting_mask: npt.NDArray[Any],
+) -> float:
+    """Return the fitted-voxel fraction exceeding the FXL concentration limit."""
+    peak_concentration = np.nanmax(concentration, axis=-1)
+    valid = fitting_mask & np.isfinite(peak_concentration)
+    if not np.any(valid):
+        return 0.0
+    return float(np.mean(peak_concentration[valid] > 0.8))
+
+
+def _summarize_dce_r2(values: list[float]) -> dict[str, float]:
+    """Summarize retained-fit coefficients of determination."""
+    if not values:
+        return {}
+    return {
+        "r2_mean": float(np.mean(values)),
+        "r2_std": float(np.std(values)),
+        "r2_median": float(np.median(values)),
+    }
+
+
+def _summarize_dce_fit_outcomes(
+    n_voxels: int,
+    n_brain_voxels: int,
+    n_optimizer_converged: int,
+    n_prefit_rejected: int,
+    n_execution_exceptions: int,
+    n_fit_unsuccessful: int,
+    n_retained: int,
+    n_constrained: int,
+    n_unconstrained_fallback: int,
+    n_rejected_postfit: int,
+    failure_reasons: dict[str, int],
+) -> dict[str, Any]:
+    """Assemble aggregate DCE fit outcome counters."""
+    accounting = {
+        "denominators": {
+            "brain": int(n_brain_voxels),
+            "attempted": int(n_voxels),
+            "retained": int(n_retained),
+        },
+        "brain_mask": {"count": int(n_brain_voxels)},
+        "fitting_eligible": {
+            "count": int(n_voxels),
+            "fraction_of_brain": n_voxels / max(1, n_brain_voxels),
+        },
+        "attempted": {
+            "count": int(n_voxels),
+            "fraction_of_fitting_eligible": 1.0 if n_voxels else 0.0,
+        },
+        "optimizer_converged": {
+            "count": int(n_optimizer_converged),
+            "fraction_of_attempted": n_optimizer_converged / max(1, n_voxels),
+        },
+        "prefit_rejected": {
+            "count": int(n_prefit_rejected),
+            "fraction_of_attempted": n_prefit_rejected / max(1, n_voxels),
+        },
+        "execution_exception": {
+            "count": int(n_execution_exceptions),
+            "fraction_of_attempted": n_execution_exceptions / max(1, n_voxels),
+        },
+        "fit_unsuccessful": {
+            "count": int(n_fit_unsuccessful),
+            "fraction_of_attempted": n_fit_unsuccessful / max(1, n_voxels),
+        },
+        "postfit_degenerate": {
+            "count": int(n_rejected_postfit),
+            "fraction_of_attempted": n_rejected_postfit / max(1, n_voxels),
+        },
+        "retained_nondegenerate": {
+            "count": int(n_retained),
+            "fraction_of_attempted": n_retained / max(1, n_voxels),
+        },
+    }
+    return {
+        "n_constrained": n_constrained,
+        "n_unconstrained_fallback": n_unconstrained_fallback,
+        "failure_reasons": failure_reasons,
+        "voxel_accounting": accounting,
+    }
+
+
+def _zero_dce_background(
+    values: npt.NDArray[Any],
+    mask: npt.NDArray[np.bool_],
+) -> npt.NDArray[Any]:
+    """Zero spatial background while preserving all in-mask values."""
+    spatial_mask = mask
+    for _ in range(values.ndim - mask.ndim):
+        spatial_mask = spatial_mask[..., np.newaxis]
+    return np.where(spatial_mask, values, 0)
+
+
+def _build_dce_qc_mask(
+    fitting_mask: npt.NDArray[np.bool_],
+    tsnr: npt.NDArray[Any],
+    peak_enhancement: Optional[npt.NDArray[Any]],
+    ktrans: npt.NDArray[Any],
+    r_squared: npt.NDArray[Any],
+    ve: npt.NDArray[Any],
+    vp: npt.NDArray[Any],
+    kep: npt.NDArray[Any],
+    quality_flag: npt.NDArray[Any],
+    model_selection: npt.NDArray[Any],
+    model_selection_codes: dict[str, int],
+    is_auto: bool,
+    model_name: str,
+    tsnr_threshold: float = 0.0,
+) -> npt.NDArray[np.uint8]:
+    """Build the physiological and fit-quality acceptance mask."""
+    return _evaluate_dce_qc_mask(
+        fitting_mask,
+        tsnr,
+        peak_enhancement,
+        ktrans,
+        r_squared,
+        ve,
+        vp,
+        kep,
+        quality_flag,
+        model_selection,
+        model_selection_codes,
+        is_auto,
+        model_name,
+        tsnr_threshold,
+    ).mask
+
+
+class _DCEQCMaskEvaluation(NamedTuple):
+    """DCE quantitative-mask result and overlapping component failures."""
+
+    mask: npt.NDArray[np.uint8]
+    component_failures: dict[str, int]
+    acceptance_policy: dict[str, Any]
+
+
+def _evaluate_dce_qc_mask(
+    fitting_mask: npt.NDArray[np.bool_],
+    tsnr: npt.NDArray[Any],
+    peak_enhancement: Optional[npt.NDArray[Any]],
+    ktrans: npt.NDArray[Any],
+    r_squared: npt.NDArray[Any],
+    ve: npt.NDArray[Any],
+    vp: npt.NDArray[Any],
+    kep: npt.NDArray[Any],
+    quality_flag: npt.NDArray[Any],
+    model_selection: npt.NDArray[Any],
+    model_selection_codes: dict[str, int],
+    is_auto: bool,
+    model_name: str,
+    tsnr_threshold: float = 0.0,
+) -> _DCEQCMaskEvaluation:
+    """Evaluate acquisition and model-aware fit acceptance."""
+    signal_qc_available = peak_enhancement is not None
+    tsnr_ok = (
+        tsnr >= tsnr_threshold
+        if signal_qc_available and tsnr_threshold > 0
+        else np.ones(fitting_mask.shape, dtype=bool)
+    )
+    enhancement_ok = (
+        np.ones(fitting_mask.shape, dtype=bool)
+        if peak_enhancement is None
+        else peak_enhancement >= 10
+    )
+    ktrans_ok = (ktrans > 0) & (ktrans < 5.0)
+    quality_ok = quality_flag == 1
+
+    is_patlak_voxel = model_selection == model_selection_codes.get("patlak", -1)
+    if not is_auto:
+        is_patlak_voxel = np.full(
+            fitting_mask.shape,
+            model_name == "patlak",
+            dtype=bool,
+        )
+    # Whole-curve R² is ill-conditioned when Patlak is selected for subtle
+    # leakage because the tissue-curve variance approaches the noise floor.
+    # Retain a minimal R² >= 0 requirement (better than a constant predictor)
+    # for Patlak, while reversible models retain the established R² >= 0.5
+    # fit-quality threshold.
+    r_squared_ok = np.where(
+        is_patlak_voxel,
+        r_squared >= 0.0,
+        r_squared >= 0.5,
+    )
+    patlak_ok = np.isfinite(vp)
+    tofts_ok = np.isfinite(ve) & (ve < 0.95) & np.isfinite(kep) & (kep > 0.001)
+    extended_ok = (
+        np.isfinite(ve)
+        & np.isfinite(vp)
+        & ((ve + vp) < 0.95)
+        & np.isfinite(kep)
+        & (kep > 0.001)
+    )
+    if is_auto:
+        parameters_ok = np.where(is_patlak_voxel, patlak_ok, extended_ok)
+    elif model_name == "patlak":
+        parameters_ok = patlak_ok
+    elif model_name == "tofts":
+        parameters_ok = tofts_ok
+    elif model_name in ("extended_tofts", "2cxm"):
+        parameters_ok = extended_ok
+    else:
+        parameters_ok = np.ones(fitting_mask.shape, dtype=bool)
+
+    components = {
+        "tsnr": tsnr_ok,
+        "peak_enhancement": enhancement_ok,
+        "ktrans_range": ktrans_ok,
+        "r_squared": r_squared_ok,
+        "quality_flag": quality_ok,
+        "model_parameters": parameters_ok,
+    }
+    qc_mask = fitting_mask.copy()
+    for component in components.values():
+        qc_mask &= component
+    failures = {
+        name: int(np.count_nonzero(fitting_mask & ~component))
+        for name, component in components.items()
+    }
+    policy = {
+        "acquisition": {
+            "minimum_tsnr": (
+                tsnr_threshold
+                if signal_qc_available and tsnr_threshold > 0
+                else None
+            ),
+            "minimum_peak_enhancement_percent": (
+                None if peak_enhancement is None else 10.0
+            ),
+        },
+        "fit": {
+            "minimum_r_squared": {
+                "patlak": 0.0,
+                "reversible_models": 0.5,
+            },
+            "required_quality_flag": "good",
+            "ktrans_minimum_per_min_exclusive": 0.0,
+            "ktrans_maximum_per_min_exclusive": 5.0,
+            "model_specific_parameter_checks": True,
+        },
+    }
+    result: npt.NDArray[np.uint8] = qc_mask.astype(np.uint8)
+    return _DCEQCMaskEvaluation(result, failures, policy)
+
+
+def _compute_dce_coefficient_of_variation(
+    values: npt.NDArray[Any],
+    standard_deviation: npt.NDArray[Any],
+    mask: npt.NDArray[np.bool_],
+    is_auto: bool,
+) -> npt.NDArray[np.float32]:
+    """Compute a masked DCE coefficient-of-variation map."""
+    with np.errstate(divide="ignore", invalid="ignore"):
+        coefficient = np.where(
+            (np.abs(values) > EPSILON_VE) & np.isfinite(standard_deviation),
+            standard_deviation / np.abs(values),
+            np.nan,
+        ).astype(np.float32)
+    result: npt.NDArray[np.float32] = _zero_dce_background(coefficient, mask)
+    return result
+
+
+def _write_dce_map(
+    data: npt.NDArray[Any],
+    path: str,
+    *,
+    affine: npt.NDArray[Any],
+    header: Any,
+    dtype: Any = np.float32,
+) -> None:
+    """Write a DCE-derived NIfTI map with an explicit data dtype."""
+    import nibabel as nib  # type: ignore[import-untyped]
+
+    cast_data = data.astype(dtype)
+    local_header = header.copy()
+    local_header.set_data_dtype(dtype)
+    image = nib.Nifti1Image(cast_data, affine, local_header)
+    nib.save(image, path)
+
+
+def _write_dce_fitted_curves(
+    data: npt.NDArray[Any],
+    path: str,
+    affine: npt.NDArray[Any],
+) -> None:
+    """Write fitted DCE curves with their existing affine-only header."""
+    import nibabel as nib  # type: ignore[import-untyped]
+
+    image = nib.Nifti1Image(data, affine)
+    nib.save(image, path)
+
+
+def _write_dce_model_free_maps(
+    maps: "_DCEModelFreeMaps",
+    generate_path: Callable[[str], str],
+    write_map: Callable[..., None],
+) -> dict[str, str]:
+    """Write model-free DCE maps and return their interface result paths."""
+    outputs = {
+        "out_iauc60": generate_path("_IAUC60"),
+        "out_iauc90": generate_path("_IAUC90"),
+        "out_iauc120": generate_path("_IAUC120"),
+        "out_peak_enhancement": generate_path("_peak_enhancement"),
+        "out_time_to_peak": generate_path("_time_to_peak"),
+        "out_ser": generate_path("_SER"),
+        "out_wash_in_slope": generate_path("_wash_in_slope"),
+        "out_wash_out_slope": generate_path("_wash_out_slope"),
+        "out_bat": generate_path("_BAT"),
+        "out_curve_type": generate_path("_curve_type"),
+    }
+    write_map(maps.iauc60, outputs["out_iauc60"])
+    write_map(maps.iauc90, outputs["out_iauc90"])
+    write_map(maps.iauc120, outputs["out_iauc120"])
+    if maps.peak_enhancement is not None:
+        write_map(maps.peak_enhancement, outputs["out_peak_enhancement"])
+    write_map(maps.time_to_peak, outputs["out_time_to_peak"])
+    write_map(maps.signal_enhancement_ratio, outputs["out_ser"])
+    write_map(maps.wash_in_slope, outputs["out_wash_in_slope"])
+    write_map(maps.wash_out_slope, outputs["out_wash_out_slope"])
+    write_map(maps.bolus_arrival_time, outputs["out_bat"])
+    write_map(maps.curve_type, outputs["out_curve_type"], dtype=np.int8)
+    return outputs
+
+
+def _write_dce_parameter_maps(
+    maps: "_DCEParameterMaps",
+    mask: npt.NDArray[np.bool_],
+    save_ve: bool,
+    save_vp: bool,
+    generate_path: Callable[[str], str],
+    write_map: Callable[..., None],
+) -> dict[str, str]:
+    """Write fitted DCE parameter maps and return applicable result paths."""
+    outputs = {
+        "out_ktrans": generate_path("_Ktrans"),
+        "out_r2": generate_path("_R2"),
+        "out_quality_flag": generate_path("_quality_flag"),
+        "out_vp_at_bound_map": generate_path("_vpAtBound"),
+    }
+    write_map(maps.ktrans, outputs["out_ktrans"])
+    write_map(maps.r_squared, outputs["out_r2"])
+    write_map(maps.quality_flag, outputs["out_quality_flag"], dtype=np.uint8)
+    write_map(
+        _zero_dce_background(maps.vp_at_bound, mask),
+        outputs["out_vp_at_bound_map"],
+    )
+    if save_ve:
+        outputs["out_ve"] = generate_path("_ve")
+        outputs["out_kep"] = generate_path("_kep")
+        write_map(maps.ve, outputs["out_ve"])
+        write_map(maps.kep, outputs["out_kep"])
+    if save_vp:
+        outputs["out_vp"] = generate_path("_vp")
+        write_map(maps.vp, outputs["out_vp"])
+    if maps.save_2cxm:
+        outputs["out_fp"] = generate_path("_Fp")
+        outputs["out_ps"] = generate_path("_PS")
+        outputs["out_e"] = generate_path("_E")
+        write_map(maps.fp, outputs["out_fp"])
+        write_map(maps.ps, outputs["out_ps"])
+        write_map(maps.extraction_fraction, outputs["out_e"])
+    return outputs
+
+
+def _write_dce_uncertainty_maps(
+    maps: "_DCEParameterMaps",
+    mask: npt.NDArray[np.bool_],
+    is_auto: bool,
+    save_ve: bool,
+    save_vp: bool,
+    generate_path: Callable[[str], str],
+    write_map: Callable[..., None],
+) -> dict[str, str]:
+    """Write applicable DCE parameter-uncertainty derivatives."""
+    outputs: dict[str, str] = {}
+
+    def write(name: str, suffix: str, values: npt.NDArray[Any]) -> None:
+        outputs[name] = generate_path(suffix)
+        write_map(values, outputs[name])
+
+    def write_parameter_group(
+        stem: str,
+        values: npt.NDArray[Any],
+        standard_deviation: npt.NDArray[Any],
+        interval_lower: npt.NDArray[Any],
+        interval_upper: npt.NDArray[Any],
+    ) -> None:
+        key = stem.lower() if stem != "Fp" else "fp"
+        write(f"out_{key}_std", f"_{stem}_std", standard_deviation)
+        write(
+            f"out_{key}_cv",
+            f"_{stem}_cv",
+            _compute_dce_coefficient_of_variation(
+                values, standard_deviation, mask, is_auto
+            ),
+        )
+        write(f"out_{key}_ci95_lower", f"_{stem}_ci95_lower", interval_lower)
+        write(f"out_{key}_ci95_upper", f"_{stem}_ci95_upper", interval_upper)
+
+    if is_auto or not maps.save_2cxm:
+        write_parameter_group(
+            "Ktrans", maps.ktrans, maps.ktrans_std,
+            maps.ktrans_ci95_lower, maps.ktrans_ci95_upper,
+        )
+    if save_ve:
+        write_parameter_group(
+            "ve", maps.ve, maps.ve_std,
+            maps.ve_ci95_lower, maps.ve_ci95_upper,
+        )
+    if save_vp:
+        write_parameter_group(
+            "vp", maps.vp, maps.vp_std,
+            maps.vp_ci95_lower, maps.vp_ci95_upper,
+        )
+    if maps.save_2cxm:
+        write_parameter_group(
+            "Fp", maps.fp, maps.fp_std,
+            maps.fp_ci95_lower, maps.fp_ci95_upper,
+        )
+        write_parameter_group(
+            "ps", maps.ps, maps.ps_std,
+            maps.ps_ci95_lower, maps.ps_ci95_upper,
+        )
+
+    return outputs
+
+
+def _write_dce_terminal_outputs(
+    maps: "_DCEParameterMaps",
+    fitting_mask: npt.NDArray[np.bool_],
+    tsnr: npt.NDArray[Any],
+    peak_enhancement: Optional[npt.NDArray[Any]],
+    is_auto: bool,
+    model_name: str,
+    save_fitted_curves: bool,
+    affine: npt.NDArray[Any],
+    generate_path: Callable[[str], str],
+    write_map: Callable[..., None],
+    qc_metrics: Optional[dict[str, Any]] = None,
+    tsnr_threshold: float = 0.0,
+) -> dict[str, str]:
+    """Write terminal QC, model-selection, and fitted-curve outputs."""
+    outputs = {
+        "out_tsnr": generate_path("_tSNR"),
+        "out_fitting_mask": generate_path("_fitting_mask"),
+        "out_optimizer_converged_mask": generate_path(
+            "_optimizer_converged_mask"
+        ),
+    }
+    write_map(tsnr, outputs["out_tsnr"])
+    write_map(
+        fitting_mask,
+        outputs["out_fitting_mask"],
+        dtype=np.uint8,
+    )
+    write_map(
+        maps.optimizer_converged,
+        outputs["out_optimizer_converged_mask"],
+        dtype=np.uint8,
+    )
+    qc_evaluation = _evaluate_dce_qc_mask(
+        fitting_mask,
+        tsnr,
+        peak_enhancement,
+        maps.ktrans,
+        maps.r_squared,
+        maps.ve,
+        maps.vp,
+        maps.kep,
+        maps.quality_flag,
+        maps.model_selection,
+        maps.model_selection_codes,
+        is_auto,
+        model_name,
+        tsnr_threshold,
+    )
+    qc_mask = qc_evaluation.mask
+    if qc_metrics is not None:
+        n_accepted = int(np.count_nonzero(qc_mask))
+        accounting = qc_metrics.get("voxel_accounting")
+        if isinstance(accounting, dict):
+            denominators = accounting.get("denominators", {})
+            attempted = int(denominators.get("attempted", 0))
+            retained = int(denominators.get("retained", 0))
+            brain = int(denominators.get("brain", 0))
+            accounting["quantitative_qc_accepted"] = {
+                "count": n_accepted,
+                "fraction_of_retained": n_accepted / max(1, retained),
+                "fraction_of_attempted": n_accepted / max(1, attempted),
+                "fraction_of_brain": n_accepted / max(1, brain),
+            }
+        qc_metrics["qc_component_failures"] = {
+            "scope": "fitted_voxels",
+            "counts_are_overlapping": True,
+            **qc_evaluation.component_failures,
+        }
+        qc_metrics["qc_acceptance_policy"] = qc_evaluation.acceptance_policy
+    outputs["out_qc_mask"] = generate_path("_qc_mask")
+    write_map(qc_mask, outputs["out_qc_mask"], dtype=np.uint8)
+    if is_auto:
+        outputs["out_model_selection"] = generate_path("_modelSelection")
+        outputs["out_delta_bic"] = generate_path("_deltaBIC")
+        write_map(
+            maps.model_selection,
+            outputs["out_model_selection"],
+            dtype=np.int8,
+        )
+        write_map(maps.delta_bic, outputs["out_delta_bic"])
+    if save_fitted_curves and maps.fitted_curves is not None:
+        outputs["out_fitted_curves"] = generate_path("_fitted_curves")
+        _write_dce_fitted_curves(
+            maps.fitted_curves,
+            outputs["out_fitted_curves"],
+            affine,
+        )
+    return outputs
+
+
+def _initialize_dce_qc_metrics(
+    prepared: "_DCEFitPreparation",
+    model_name: str,
+    constraint_qc: dict[str, Any],
+    bat_correction: dict[str, Any],
+    two_cxm_max_tr_seconds: float,
+) -> dict[str, Any]:
+    """Assemble DCE QC state before fitting and result reduction."""
+    return {
+        "model": "auto" if prepared.is_auto else model_name,
+        "inference": prepared.inference,
+        "tsnr_threshold": prepared.tsnr_threshold,
+        "baseline_frames": prepared.baseline_frames,
+        "selection_tr_seconds": prepared.selection_tr_seconds,
+        "acquisition_duration_seconds": (
+            (prepared.n_timepoints - 1) * prepared.selection_tr_seconds
+        ),
+        "two_cxm_auto_sampling_eligible": (
+            prepared.selection_tr_seconds <= two_cxm_max_tr_seconds
+        ),
+        "dsc_cbv_constraint": constraint_qc,
+        "bat_correction": bat_correction,
+    }
+
+
+def _validate_dce_time_axis(
+    time_points: npt.ArrayLike,
+    n_dce_frames: int,
+    n_aif_samples: int,
+) -> npt.NDArray[np.float64]:
+    """Validate the uniformly sampled time axis required by DCE fitting.
+
+    Parameters
+    ----------
+    time_points : array-like
+        Acquisition times in minutes.
+    n_dce_frames : int
+        Number of frames in the DCE concentration series.
+    n_aif_samples : int
+        Number of samples in the arterial input function.
+
+    Returns
+    -------
+    numpy.ndarray
+        Validated one-dimensional time axis as ``float64``.
+
+    Raises
+    ------
+    ValueError
+        If the time axis is not one-dimensional, finite, length-matched,
+        strictly increasing, or uniformly spaced.
+
+    Notes
+    -----
+    The Tofts-family and 2CXM analytic convolution implementations use one
+    constant sample interval. Nonuniform sampling is therefore rejected rather
+    than silently evaluated using only the first interval.
+    """
+    axis = np.asarray(time_points, dtype=np.float64)
+    if axis.ndim != 1:
+        raise ValueError(
+            f"DCE time points must be one-dimensional; got shape {axis.shape}."
+        )
+    if axis.size < 2:
+        raise ValueError(
+            f"DCE time points must contain at least two samples; got {axis.size}."
+        )
+    if axis.size != n_dce_frames or axis.size != n_aif_samples:
+        raise ValueError(
+            "DCE time-point, concentration-frame, and AIF lengths must match; "
+            f"got {axis.size}, {n_dce_frames}, and {n_aif_samples}."
+        )
+    if not np.all(np.isfinite(axis)):
+        raise ValueError("DCE time points must contain only finite values.")
+
+    intervals = np.diff(axis)
+    if np.any(intervals <= 0.0):
+        raise ValueError("DCE time points must be strictly increasing.")
+    if not np.allclose(intervals, intervals[0], rtol=1e-5, atol=1e-8):
+        raise ValueError(
+            "Nonuniform DCE time points are unsupported by the current "
+            "analytic convolution models."
+        )
+    return axis
 
 
 class VoxelInput(NamedTuple):
@@ -69,6 +1385,148 @@ class BatchedChunkArgs(NamedTuple):
     weights: Optional[npt.NDArray[Any]]
     save_fitted_curves: bool
     compute_uncertainties: bool
+
+
+class _DCEFitPreparation(NamedTuple):
+    """Validated DCE inputs and pre-BAT fitting-domain state."""
+
+    concentration: npt.NDArray[Any]
+    affine: npt.NDArray[Any]
+    header: Any
+    mask: npt.NDArray[Any]
+    aif: npt.NDArray[Any]
+    time_points: npt.NDArray[np.float64]
+    n_timepoints: int
+    selection_tr_seconds: float
+    model_name: str
+    is_auto: bool
+    candidate_names: list[str]
+    baseline_frames: int
+    tsnr_threshold: float
+    tsnr_map: npt.NDArray[Any]
+    peak_enhancement: Optional[npt.NDArray[Any]]
+    fitting_mask: npt.NDArray[np.bool_]
+    inference: str
+    mcmc_samples: int
+    save_fitted_curves: bool
+
+
+class _DCEBATAlignment(NamedTuple):
+    """AIF curve and QC state after optional tissue-arrival alignment."""
+
+    aif: npt.NDArray[Any]
+    correction: dict[str, Any]
+
+
+class _DCEVPConstraint(NamedTuple):
+    """DSC-derived vp prior, diagnostics, and resulting model-selection state."""
+
+    vp_map: Optional[npt.NDArray[Any]]
+    mode: Any
+    vp_uncertainty: float
+    qc: dict[str, Any]
+    model_name: str
+    candidate_names: list[str]
+
+
+class _DCEModelFreeMaps(NamedTuple):
+    """Vectorized DCE semi-quantitative maps computed before PK fitting."""
+
+    iauc60: npt.NDArray[Any]
+    iauc90: npt.NDArray[Any]
+    iauc120: npt.NDArray[Any]
+    peak_enhancement: Optional[npt.NDArray[Any]]
+    time_to_peak: npt.NDArray[Any]
+    signal_enhancement_ratio: npt.NDArray[Any]
+    wash_in_slope: npt.NDArray[Any]
+    wash_out_slope: npt.NDArray[Any]
+    bolus_arrival_time: npt.NDArray[Any]
+    curve_type: npt.NDArray[Any]
+
+
+class _DCEMotionWeighting(NamedTuple):
+    """Optional phase-adaptive motion weights and their QC record."""
+
+    weights: Optional[npt.NDArray[np.floating]]
+    qc: dict[str, Any]
+
+
+class _DCEParameterMaps(NamedTuple):
+    """Allocated mutable PK, uncertainty, categorical, and fit-curve maps."""
+
+    ktrans: npt.NDArray[Any]
+    ve: npt.NDArray[Any]
+    vp: npt.NDArray[Any]
+    kep: npt.NDArray[Any]
+    r_squared: npt.NDArray[Any]
+    fp: npt.NDArray[Any]
+    ps: npt.NDArray[Any]
+    extraction_fraction: npt.NDArray[Any]
+    optimizer_converged: npt.NDArray[Any]
+    quality_flag: npt.NDArray[Any]
+    quality_flag_codes: dict[str, int]
+    model_selection: npt.NDArray[Any]
+    model_selection_codes: dict[str, int]
+    delta_bic: npt.NDArray[Any]
+    ktrans_std: npt.NDArray[Any]
+    ve_std: npt.NDArray[Any]
+    vp_std: npt.NDArray[Any]
+    fp_std: npt.NDArray[Any]
+    ps_std: npt.NDArray[Any]
+    ktrans_ci95_lower: npt.NDArray[Any]
+    ktrans_ci95_upper: npt.NDArray[Any]
+    ve_ci95_lower: npt.NDArray[Any]
+    ve_ci95_upper: npt.NDArray[Any]
+    vp_ci95_lower: npt.NDArray[Any]
+    vp_ci95_upper: npt.NDArray[Any]
+    fp_ci95_lower: npt.NDArray[Any]
+    fp_ci95_upper: npt.NDArray[Any]
+    ps_ci95_lower: npt.NDArray[Any]
+    ps_ci95_upper: npt.NDArray[Any]
+    sigma_factor: dict[str, float]
+    vp_at_bound: npt.NDArray[Any]
+    fitted_curves: Optional[npt.NDArray[Any]]
+    save_2cxm: bool
+
+
+class _DCEFitDispatch(NamedTuple):
+    """Voxel ordering and worker state shared by all DCE fitting paths."""
+
+    mask_coords: tuple[npt.NDArray[Any], ...]
+    voxel_data: list[VoxelInput]
+    init_args: tuple[Any, ...]
+    n_procs: int
+    sloppy: bool
+    random_seed: Optional[int]
+
+
+class _DCEFitAccountingUpdate(NamedTuple):
+    """Constraint diagnostics contributed by one retained DCE fit result."""
+
+    n_constrained: int
+    n_unconstrained_fallback: int
+    r_squared: Optional[float]
+
+
+class _DCEFitSummary(NamedTuple):
+    """Aggregate counters and diagnostics produced while scattering fits."""
+
+    n_optimizer_converged: int
+    n_prefit_rejected: int
+    n_execution_exceptions: int
+    n_fit_unsuccessful: int
+    n_retained: int
+    n_constrained: int
+    n_unconstrained_fallback: int
+    n_rejected_postfit: int
+    r2_values: list[float]
+    failure_reasons: dict[str, int]
+    mcmc_rhat: dict[str, list[float]]
+    mcmc_ess: dict[str, list[float]]
+    n_mcmc_voxels: int
+    vp_prior_departures: list[float]
+    map_uncertainty_sources: list[str]
+    n_inference_fallback: int
 
 
 # Import-time pickle-safety assertion (S1 from code review round 3):
@@ -227,7 +1685,8 @@ def _fit_single_voxel(
     -------
     dict
         Dict with keys: coords, params, r_squared, converged, uncertainties,
-        fitted_curve, quality_flag, failed, failure_reason, constrained.
+        fitted_curve, quality_flag, failed, failure_reason, failure_stage,
+        constrained.
     """
     BayesianPKFitter = _worker_ctx["BayesianPKFitter"]
     create_vp_prior_from_dsc = _worker_ctx["create_vp_prior_from_dsc"]
@@ -244,13 +1703,13 @@ def _fit_single_voxel(
     baseline_frames = _worker_ctx["baseline_frames"]
     constraint_mode = ConstraintMode(_worker_ctx["constraint_mode_str"])
     constraint_vp_uncertainty = _worker_ctx["constraint_vp_uncertainty"]
-    model_name = _worker_ctx["model_name"]
     motion_weights = _worker_ctx["motion_weights"]
     sloppy = _worker_ctx.get("sloppy", False)
     is_auto = _worker_ctx.get("is_auto", False)
 
-    # Validate voxel (skip concentration-based variation check — raw signal
-    # variation is filtered upstream in ComputeDCEMaps)
+    # Validate voxel without adding a concentration-variation gate: the shared
+    # upstream domain is deliberately permissive, and quantitative acceptance
+    # is represented separately by the QC mask for every inference path.
     prep = prepare_voxel_for_fitting(
         tissue_curve, baseline_frames, skip_variation_check=True
     )
@@ -259,6 +1718,7 @@ def _fit_single_voxel(
             "coords": (x, y, z),
             "failed": True,
             "failure_reason": prep.failure_reason,
+            "failure_stage": "prefit",
         }
 
     # Use baseline-subtracted, clipped concentration for fitting
@@ -520,7 +1980,8 @@ def _fit_single_voxel(
         has_vp = effective_model in ("extended_tofts", "patlak", "2cxm")
         uncertainties = {}
         if result.has_uncertainty():
-            uncertainties["Ktrans"] = result.get_uncertainty("Ktrans", 0.0)
+            if effective_model != "2cxm":
+                uncertainties["Ktrans"] = result.get_uncertainty("Ktrans", 0.0)
             if effective_model not in ("patlak",):
                 uncertainties["ve"] = result.get_uncertainty("ve", 0.0)
             if has_vp:
@@ -529,6 +1990,13 @@ def _fit_single_voxel(
             if effective_model == "2cxm":
                 uncertainties["Fp"] = result.get_uncertainty("Fp", 0.0)
                 uncertainties["PS"] = result.get_uncertainty("PS", 0.0)
+
+        credible_intervals: dict[str, tuple[float, float]] = {}
+        if result.has_credible_intervals():
+            for parameter in ("Ktrans", "ve", "vp"):
+                interval = result.credible_intervals.get(parameter)
+                if interval is not None:
+                    credible_intervals[parameter] = interval
 
         fitted_curve = None
         if _worker_ctx.get("save_fitted_curves") and result.fitted_curve is not None:
@@ -539,10 +2007,10 @@ def _fit_single_voxel(
         params = dict(result.parameters)
         kep_railed = _compute_derived_params(params, effective_model)
         base_quality = getattr(result, "quality_flag", "good")
-        quality_flag = (
-            "unreliable_high_kep"
-            if kep_railed and base_quality == "good"
-            else base_quality
+        quality_flag = _resolve_dce_fit_quality(
+            bool(result.converged),
+            base_quality,
+            kep_railed,
         )
 
         return {
@@ -551,6 +2019,8 @@ def _fit_single_voxel(
             "r_squared": result.r_squared,
             "converged": result.converged,
             "uncertainties": uncertainties,
+            "credible_intervals": credible_intervals,
+            "uncertainty_source": result.uncertainty_source,
             "fitted_curve": fitted_curve,
             "quality_flag": quality_flag,
             "rhat": getattr(result, "rhat", {}),
@@ -567,6 +2037,7 @@ def _fit_single_voxel(
             "coords": (x, y, z),
             "failed": True,
             "failure_reason": "exception",
+            "failure_stage": "execution",
         }
 
 
@@ -713,6 +2184,19 @@ def _compute_derived_params(
         kep_railed = raw_kep > KEP_BOUNDS.max
         params_out["kep"] = min(raw_kep, KEP_BOUNDS.max)
     return kep_railed
+
+
+def _resolve_dce_fit_quality(
+    converged: bool,
+    base_quality: str,
+    kep_railed: bool,
+) -> str:
+    """Enforce convergence before applying secondary DCE quality labels."""
+    if not converged:
+        return "poor_convergence"
+    if kep_railed and base_quality == "good":
+        return "unreliable_high_kep"
+    return base_quality
 
 
 def _merge_fit_results(
@@ -991,15 +2475,15 @@ class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
     )
 
     # Time parameters
-    tr = traits.Float(
-        desc="Pulse TR in seconds for time vector (RepetitionTimeExcitation)",
-    )
     volume_tr = traits.Float(
         desc="Volume TR in seconds for model auto-selection (RepetitionTime, temporal resolution)",
     )
     time_points_file = File(
         exists=True,
-        desc="Optional 1D text file with time points (minutes); if not provided, uses TR",
+        desc=(
+            "Optional 1D text file with uniformly spaced time points (minutes); "
+            "if not provided, uses volume TR"
+        ),
     )
 
     # Inference engine options
@@ -1031,13 +2515,6 @@ class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
     )
 
     # DSC CBV constraint options
-    # Use traits.Str instead of File: when DSC is unavailable, the upstream
-    # resample node returns "" which nipype File trait cannot validate.
-    dsc_cbv_file = traits.Str(
-        desc="DSC-derived CBV map (relative or absolute units) used for "
-             "cross-validation and QC resampling. NOT used for the vp "
-             "prior — see dsc_ncbv_file for that.",
-    )
     dsc_ncbv_file = traits.Str(
         desc="DSC NAWM-normalized CBV (nCBV, dimensionless ratio) used for "
              "the vp prior via vp = NAWM_VP_REFERENCE × nCBV. Empty string "
@@ -1065,11 +2542,6 @@ class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
         "skip",
         usedefault=True,
         desc="DSC CBV constraint mode: auto or skip",
-    )
-    hematocrit = traits.Float(
-        HEMATOCRIT_ARTERIAL,
-        usedefault=True,
-        desc="Arterial hematocrit. Capillary Hct derived via Fahraeus ratio.",
     )
     dsc_dose = traits.Float(
         1.0,
@@ -1138,8 +2610,8 @@ class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
              "confidence (1.0 = standard, 2.0 = G6-admitted low-scale, "
              "3.0 = G6-admitted high-scale or population AIF). Applied "
              "per-parameter via DCE_AIF_G6_SIGMA_INFLATION map; ve is "
-             "uninflated (decoupled from AIF peak amplitude per "
-             "Buckley 2002).",
+             "uninflated because ve is comparatively insensitive to AIF "
+             "peak-amplitude uncertainty.",
     )
 
     # Sloppy / reproducibility
@@ -1191,25 +2663,31 @@ class ComputeDCEMapsOutputSpec(TraitedSpec):
     out_ps = File(desc="PS map (permeability-surface area product, mL/min/100mL, 2cxm only)")
     out_e = File(desc="E map (extraction fraction, 2cxm only)")
 
-    # Uncertainty maps (Bayesian only)
-    out_ktrans_std = File(desc="Ktrans standard deviation map (Bayesian)")
-    out_ve_std = File(desc="ve standard deviation map (Bayesian)")
-    out_vp_std = File(desc="vp standard deviation map (Bayesian)")
-    out_fp_std = File(desc="Fp standard deviation map (Bayesian, 2CXM only)")
-    out_ps_std = File(desc="PS standard deviation map (Bayesian, 2CXM only)")
+    # Parameter uncertainty maps (standard error for NLLS; posterior SD otherwise)
+    out_ktrans_std = File(desc="Ktrans parameter uncertainty map")
+    out_ve_std = File(desc="ve parameter uncertainty map")
+    out_vp_std = File(desc="vp parameter uncertainty map")
+    out_fp_std = File(desc="Fp parameter uncertainty map (2CXM only)")
+    out_ps_std = File(desc="PS parameter uncertainty map (2CXM only)")
 
-    # Coefficient of Variation maps (Bayesian only)
-    out_ktrans_cv = File(desc="Ktrans coefficient of variation (std/mean, Bayesian)")
-    out_ve_cv = File(desc="ve coefficient of variation (std/mean, Bayesian)")
-    out_vp_cv = File(desc="vp coefficient of variation (std/mean, Bayesian)")
+    # Relative uncertainty maps
+    out_ktrans_cv = File(desc="Ktrans relative parameter uncertainty")
+    out_ve_cv = File(desc="ve relative parameter uncertainty")
+    out_vp_cv = File(desc="vp relative parameter uncertainty")
+    out_fp_cv = File(desc="Fp relative parameter uncertainty (2CXM only)")
+    out_ps_cv = File(desc="PS relative parameter uncertainty (2CXM only)")
 
-    # 95% Credible Interval bounds (Bayesian only)
-    out_ktrans_ci95_lower = File(desc="Ktrans 95% CI lower bound (Bayesian)")
-    out_ktrans_ci95_upper = File(desc="Ktrans 95% CI upper bound (Bayesian)")
-    out_ve_ci95_lower = File(desc="ve 95% CI lower bound (Bayesian)")
-    out_ve_ci95_upper = File(desc="ve 95% CI upper bound (Bayesian)")
-    out_vp_ci95_lower = File(desc="vp 95% CI lower bound (Bayesian)")
-    out_vp_ci95_upper = File(desc="vp 95% CI upper bound (Bayesian)")
+    # 95% interval bounds (confidence for NLLS; credible otherwise)
+    out_ktrans_ci95_lower = File(desc="Ktrans 95% interval lower bound")
+    out_ktrans_ci95_upper = File(desc="Ktrans 95% interval upper bound")
+    out_ve_ci95_lower = File(desc="ve 95% interval lower bound")
+    out_ve_ci95_upper = File(desc="ve 95% interval upper bound")
+    out_vp_ci95_lower = File(desc="vp 95% interval lower bound")
+    out_vp_ci95_upper = File(desc="vp 95% interval upper bound")
+    out_fp_ci95_lower = File(desc="Fp 95% interval lower bound (2CXM only)")
+    out_fp_ci95_upper = File(desc="Fp 95% interval upper bound (2CXM only)")
+    out_ps_ci95_lower = File(desc="PS 95% interval lower bound (2CXM only)")
+    out_ps_ci95_upper = File(desc="PS 95% interval upper bound (2CXM only)")
 
     # Model-free maps
     out_iauc60 = File(desc="IAUC at 60s (mM·min)")
@@ -1234,6 +2712,10 @@ class ComputeDCEMapsOutputSpec(TraitedSpec):
     out_r2 = File(desc="R² (goodness of fit) map")
     out_tsnr = File(desc="tSNR map (always computed)")
     out_qc_mask = File(desc="QC mask (1=good fit, 0=unfitted/poor)")
+    out_fitting_mask = File(desc="Internal fitting-eligibility mask")
+    out_optimizer_converged_mask = File(
+        desc="Internal optimizer-convergence mask"
+    )
     out_fitted_curves = File(desc="Fitted concentration curves (if save_fitted_curves=True)")
     out_vp_at_bound_map = File(
         desc=(
@@ -1288,10 +2770,10 @@ class ComputeDCEMaps(BaseInterface):
         3D brain mask NIfTI.
     model : str
         PK model: auto, tofts, extended_tofts, patlak, or 2cxm. Default: 'auto'.
-    tr : float, optional
-        Repetition time in seconds (required for model='auto').
+    volume_tr : float, optional
+        Temporal spacing between DCE volumes in seconds.
     time_points_file : str, optional
-        Text file with time points in minutes; if not provided, uses TR.
+        Text file with time points in minutes; if not provided, uses volume TR.
     inference : str
         Inference engine: nlls (default, scipy least_squares),
         vi (variational Bayes), map (Laplace MAP), or mcmc (emcee).
@@ -1540,19 +3022,17 @@ class ComputeDCEMaps(BaseInterface):
             candidates.append("2cxm")
         return candidates
 
-    def _run_interface(self, runtime: Any) -> Any:
-        """Execute DCE map computation."""
+    def _prepare_fit_inputs(self) -> _DCEFitPreparation:
+        """Load and validate DCE inputs and construct the pre-BAT fit domain.
+
+        Returns
+        -------
+        _DCEFitPreparation
+            Image geometry, validated time axis, model-selection state, signal
+            QC maps, and the voxel mask admitted to pharmacokinetic fitting.
+        """
         import nibabel as nib  # type: ignore[import-untyped]
 
-        from pmriprep.utils.dsc_cbv_constraint import (
-            NO_DSC_RUN_REASON_STRING,
-            SKIP_REASON_NO_DSC_RUN,
-            SKIP_REASON_SYNTHETIC_AIF,
-            ConstraintMode,
-            prepare_vp_constraint_from_data,
-        )
-
-        # Load data
         conc_img = nib.load(self.inputs.concentration_file)
         conc_data: npt.NDArray[Any] = conc_img.get_fdata().astype(np.float64)  # type: ignore[attr-defined]
         affine = conc_img.affine  # type: ignore[attr-defined]
@@ -1560,21 +3040,12 @@ class ComputeDCEMaps(BaseInterface):
 
         mask_img = nib.load(self.inputs.brain_mask_file)
         mask: npt.NDArray[Any] = mask_img.get_fdata()  # type: ignore[attr-defined]
-
-        # Load AIF
         aif = np.loadtxt(self.inputs.aif_file)
-
-        # Determine time points
         n_timepoints = conc_data.shape[3]
 
         if self.inputs.time_points_file:
             time_points = np.loadtxt(self.inputs.time_points_file)
         elif isdefined(self.inputs.volume_tr) and self.inputs.volume_tr is not None:
-            # Volume TR (temporal resolution between 3D volumes) drives the
-            # time vector. self.inputs.tr is the pulse TR (RF excitation
-            # interval), which is ~1000× shorter for 3D sequences (VIBE,
-            # TWIST). Falling back to pulse TR here would compress the
-            # time axis 1000× and miscompute Ktrans by orders of magnitude.
             vol_tr_minutes = float(self.inputs.volume_tr) / 60.0
             time_points = np.arange(n_timepoints, dtype=np.float64) * vol_tr_minutes
         else:
@@ -1584,43 +3055,42 @@ class ComputeDCEMaps(BaseInterface):
                 "must not be used as a substitute for 3D acquisitions."
             )
 
-        # TR for auto-model selection: must be the volume TR (temporal
-        # sampling), not the pulse TR — model eligibility depends on
-        # whether the AIF is sampled finely enough to resolve early kinetics.
+        time_points = _validate_dce_time_axis(
+            time_points,
+            n_dce_frames=n_timepoints,
+            n_aif_samples=int(np.size(aif)),
+        )
+        # Model eligibility depends on the volume sampling interval, never the
+        # pulse TR. Recover it from an explicit time axis when necessary.
         if isdefined(self.inputs.volume_tr) and self.inputs.volume_tr is not None:
             selection_tr_seconds = float(self.inputs.volume_tr)
         else:
-            # Recover from time_points (minutes → seconds) when volume_tr
-            # was not threaded but a time_points_file was provided.
             selection_tr_seconds = float(time_points[1] - time_points[0]) * 60.0
 
-        # Select model
         model_name = str(self.inputs.model)
         is_auto = model_name == "auto"
         candidate_names: list[str] = []
         if is_auto:
             candidate_names = self._build_candidate_set(selection_tr_seconds)
-            model_name = candidate_names[-1]  # ceiling = most complex eligible
+            model_name = candidate_names[-1]
 
-        # Baseline frames for tSNR
         baseline_frames = int(self.inputs.baseline_frames)
         if baseline_frames == 0:
             baseline_frames = self._detect_baseline_frames(conc_data, mask)
 
-        # Always compute tSNR for QC (even if threshold is 0)
-        # Use raw DCE signal for tSNR when available
+        # Raw signal is the valid domain for tSNR and peak-enhancement QC;
+        # concentration baseline is approximately zero by construction.
         tsnr_threshold = float(self.inputs.tsnr_threshold)
-        signal_std_map: Optional[npt.NDArray[Any]] = None
+        finite_signal_mask: Optional[npt.NDArray[np.bool_]] = None
+        peak_enhancement: Optional[npt.NDArray[Any]]
         if isdefined(self.inputs.dce_signal_file):
             signal_img = nib.load(self.inputs.dce_signal_file)
             signal_data = signal_img.get_fdata().astype(np.float64)  # type: ignore[attr-defined]
             tsnr_map = self._compute_tsnr(signal_data, mask, baseline_frames)
-            # Raw signal variation map
-            signal_std_map = np.std(signal_data, axis=-1)
-            # Peak enhancement must use raw signal (concentration baseline ~0
-            # by definition → division by near-zero → overflow)
+            finite_signal_mask = np.all(np.isfinite(signal_data), axis=-1)
             from pmriprep.utils.dce_model_free import compute_peak_enhancement
-            peak_enh = compute_peak_enhancement(signal_data, baseline_frames)
+
+            peak_enhancement = compute_peak_enhancement(signal_data, baseline_frames)
             del signal_data
         else:
             logger.warning(
@@ -1628,152 +3098,189 @@ class ComputeDCEMaps(BaseInterface):
                 "data (values will be low — consider wiring dce_preprocess.out_file)"
             )
             tsnr_map = self._compute_tsnr(conc_data, mask, baseline_frames)
-            peak_enh = None  # Cannot compute without raw signal
+            peak_enhancement = None
 
-        # Create fitting mask (brain mask + tSNR threshold if specified)
+        # Admit only brain voxels with finite inputs, configured signal quality,
+        # and a positive concentration enhancement.
+        # Raw MR signal has arbitrary scanner units, so an absolute raw-signal
+        # standard-deviation threshold is not a valid cross-site criterion.
         mask_bool = mask > 0
         if tsnr_threshold > 0:
             fitting_mask = mask_bool & (tsnr_map >= tsnr_threshold)
         else:
             fitting_mask = mask_bool
-
-        # Raw signal variation filter: std(S_voxel) >= 1.0
-        if signal_std_map is not None:
-            fitting_mask = fitting_mask & (signal_std_map >= 1.0)
-
-        # Pre-fit: exclude only voxels with no measurable enhancement (CSF, skull, air).
-        # Concentration-domain CNR is degraded by Ernst equation noise amplification
-        # (~1/(E1*TR)), making CNR > 3 reject 50-66% of brain tissue with adequate
-        # signal-domain tSNR. Quality gating deferred to post-fit QC mask (R² >= 0.5,
-        # tSNR >= 10, physiological bounds).
-        # CNR guideline is informational, not a hard cutoff.
+        finite_concentration = np.all(np.isfinite(conc_data), axis=-1)
         enhancement_mask = np.max(conc_data, axis=-1) > MIN_ENHANCEMENT_MM
-        fitting_mask = fitting_mask & enhancement_mask
+        fitting_mask &= (
+            finite_concentration
+            & enhancement_mask
+        )
+        if finite_signal_mask is not None:
+            fitting_mask &= finite_signal_mask
 
-        # Parameters
         inference = str(self.inputs.inference)
         mcmc_samples = int(self.inputs.mcmc_samples)
         save_fitted_curves = bool(self.inputs.save_fitted_curves)
-
-        # 2CXM parameter identifiability warning (all fitting methods)
+        # Preserve the identifiability warning for every 2CXM fitting method.
         if model_name == "2cxm":
             logger.warning(
                 "2CXM individual parameter estimates (especially PS) may be "
-                "unreliable due to PS/ve coupling degeneracy (Sourbron & "
-                "Buckley, MRM 2011). Consider Extended Tofts if Ktrans is "
+                "unreliable due to PS/ve coupling degeneracy. Consider "
+                "Extended Tofts if Ktrans is "
                 "the primary parameter of interest."
             )
 
-        # =====================================================================
-        # AIF->tissue BAT pre-alignment
-        # =====================================================================
-        # The PK convolution is delay-free, so a measured AIF sampled from a
-        # vessel the bolus reaches before the tissue (e.g. the contralateral
-        # default) carries an uncorrected arterial-to-tissue delay that biases
-        # absolute Ktrans/ve/vp. When enabled, shift the measured AIF in time
-        # to align its arrival with the enhancing tissue (a pre-correction
-        # shift, not a fit parameter; mirrors the OSIPI approach). Population
-        # AIFs are already pre-aligned at generation (baseline_frames*TR; see
-        # dce_aif.py) and external/user AIFs have unknown alignment, so both
-        # are left untouched. compute_aif_tissue_delay returns a zero shift
-        # (no-op) when the delay is below temporal resolution or unreliable,
-        # which avoids the documented coarse-TR repeatability hazard.
+        return _DCEFitPreparation(
+            conc_data,
+            affine,
+            header,
+            mask,
+            aif,
+            time_points,
+            n_timepoints,
+            selection_tr_seconds,
+            model_name,
+            is_auto,
+            candidate_names,
+            baseline_frames,
+            tsnr_threshold,
+            tsnr_map,
+            peak_enhancement,
+            fitting_mask,
+            inference,
+            mcmc_samples,
+            save_fitted_curves,
+        )
+
+    def _align_aif_to_tissue(
+        self,
+        prepared: _DCEFitPreparation,
+    ) -> _DCEBATAlignment:
+        """Apply optional measured-AIF arrival alignment to enhancing tissue.
+
+        Parameters
+        ----------
+        prepared : _DCEFitPreparation
+            Validated pre-BAT inputs and fitting domain.
+
+        Returns
+        -------
+        _DCEBATAlignment
+            Possibly shifted AIF and the corresponding correction QC record.
+
+        Notes
+        -----
+        Population AIFs are pre-aligned at generation and external AIF timing
+        is unknown, so neither is shifted. Measured AIFs use the median
+        enhancing-tissue curve; sub-resolution or unreliable delays remain
+        no-ops in the existing delay estimator.
+        """
         aif_detection_method = str(self.inputs.aif_detection_method)
         bat_alignment_mode = str(self.inputs.aif_bat_alignment)
-        bat_correction: dict[str, Any]
         if bat_alignment_mode == "off":
-            bat_correction = {"applied": False, "reason": "alignment_off"}
-        elif aif_detection_method in ("population", "external"):
-            bat_correction = {
-                "applied": False,
-                "reason": f"{aif_detection_method}_aif_not_aligned",
-            }
-        elif not np.any(fitting_mask):
-            bat_correction = {"applied": False, "reason": "bat_detection_failed"}
-        else:
-            from pmriprep.utils.dce_bat import (
-                compute_aif_tissue_delay,
-                shift_aif,
+            return _DCEBATAlignment(
+                prepared.aif,
+                {"applied": False, "reason": "alignment_off"},
             )
-            tumor_mask_file = (
-                self.inputs.tumor_mask_file
-                if isdefined(self.inputs.tumor_mask_file)
-                else ""
+        if aif_detection_method in ("population", "external"):
+            return _DCEBATAlignment(
+                prepared.aif,
+                {
+                    "applied": False,
+                    "reason": f"{aif_detection_method}_aif_not_aligned",
+                },
             )
-            roi_mask, ref_info = _resolve_bat_tissue_reference(
-                tumor_mask_file, fitting_mask, conc_data,
+        if not np.any(prepared.fitting_mask):
+            return _DCEBATAlignment(
+                prepared.aif,
+                {"applied": False, "reason": "bat_detection_failed"},
             )
-            if roi_mask is None:
-                bat_correction = ref_info
-            else:
-                # Median enhancing-tumor concentration curve is the tissue-
-                # arrival proxy; median is robust to high-leakage spikes.
-                roi_curve = np.median(conc_data[roi_mask], axis=0)
-                delay_s, bat_correction = compute_aif_tissue_delay(
-                    aif_curve=aif,
-                    tissue_roi_curve=roi_curve,
-                    time_points_min=time_points,
-                    tr_seconds=selection_tr_seconds,
-                    baseline_frames=baseline_frames,
-                )
-                bat_correction["granularity"] = "enhancing_tumor"
-                bat_correction["n_reference_voxels"] = ref_info["n_reference_voxels"]
-                if delay_s != 0.0:
-                    aif = shift_aif(aif, time_points, delay_s)
 
-        spatial_shape = conc_data.shape[:3]
+        from pmriprep.utils.dce_bat import compute_aif_tissue_delay, shift_aif
 
-        # =====================================================================
-        # DSC CBV vp Constraint
-        # =====================================================================
+        tumor_mask_file = (
+            self.inputs.tumor_mask_file
+            if isdefined(self.inputs.tumor_mask_file)
+            else ""
+        )
+        roi_mask, ref_info = _resolve_bat_tissue_reference(
+            tumor_mask_file,
+            prepared.fitting_mask,
+            prepared.concentration,
+        )
+        if roi_mask is None:
+            return _DCEBATAlignment(prepared.aif, ref_info)
+
+        roi_curve = np.median(prepared.concentration[roi_mask], axis=0)
+        delay_s, correction = compute_aif_tissue_delay(
+            aif_curve=prepared.aif,
+            tissue_roi_curve=roi_curve,
+            time_points_min=prepared.time_points,
+            tr_seconds=prepared.selection_tr_seconds,
+            baseline_frames=prepared.baseline_frames,
+        )
+        correction["granularity"] = "enhancing_tumor"
+        correction["n_reference_voxels"] = ref_info["n_reference_voxels"]
+        aligned_aif = prepared.aif
+        if delay_s != 0.0:
+            aligned_aif = shift_aif(prepared.aif, prepared.time_points, delay_s)
+        return _DCEBATAlignment(aligned_aif, correction)
+
+    def _prepare_vp_constraint(
+        self,
+        prepared: _DCEFitPreparation,
+    ) -> _DCEVPConstraint:
+        """Prepare the DSC-derived vp prior and its QC state.
+
+        Parameters
+        ----------
+        prepared : _DCEFitPreparation
+            Validated DCE inputs, fitting domain, and initial model selection.
+
+        Returns
+        -------
+        _DCEVPConstraint
+            Prior map, constraint configuration, QC summary, and any
+            constraint-driven adjustment to automatic model selection.
+
+        Notes
+        -----
+        The prior remains NAWM-anchored as ``vp = NAWM_VP_REFERENCE * nCBV``.
+        """
+        from pmriprep.utils.dsc_cbv_constraint import (
+            NO_DSC_RUN_REASON_STRING,
+            SKIP_REASON_NO_DSC_RUN,
+            ConstraintMode,
+            prepare_vp_constraint_from_data,
+        )
+
         vp_constraint_map: Optional[npt.NDArray[Any]] = None
         constraint_mode = ConstraintMode.SKIP
-        constraint_vp_uncertainty: float = 0.2
+        constraint_vp_uncertainty = 0.2
         constraint_qc: dict[str, Any] = {
             "mode": "skip",
             "reason": NO_DSC_RUN_REASON_STRING,
             "skip_reason": SKIP_REASON_NO_DSC_RUN,
         }
-
-        # vp prior is NAWM-anchored: vp = NAWM_VP_REFERENCE · nCBV. Only
-        # nCBV feeds the prior — absolute-CBV is consumed elsewhere
-        # (cross-validation, QC plots) but does not drive the prior because
-        # the scalar calibration from ΔR2*-derived CBV to DCE vp cannot be
-        # closed robustly (AIF partial-volume, recirculation, first-pass
-        # truncation). When nCBV is missing (older skip-DSC derivatives,
-        # or no NAWM reference), prepare_vp_constraint_from_data emits a
-        # clean SKIP with skip_reason="no_nawm_mask".
-        ncbv_available = (
-            isdefined(self.inputs.dsc_ncbv_file)
-            and self.inputs.dsc_ncbv_file
+        model_name = prepared.model_name
+        candidate_names = list(prepared.candidate_names)
+        ncbv_available = isdefined(self.inputs.dsc_ncbv_file) and bool(
+            self.inputs.dsc_ncbv_file
         )
-        needs_vp_constraint = (
-            model_name in ("extended_tofts", "2cxm") or is_auto
-        )
-
+        needs_vp_constraint = model_name in ("extended_tofts", "2cxm") or prepared.is_auto
         dsc_inputs_present = (
             (isdefined(self.inputs.dsc_ncbv_file) and bool(self.inputs.dsc_ncbv_file))
             or (isdefined(self.inputs.dsc_aif_qc) and bool(self.inputs.dsc_aif_qc))
             or (isdefined(self.inputs.dsc_preload_qc) and bool(self.inputs.dsc_preload_qc))
         )
 
-        if needs_vp_constraint and not dsc_inputs_present:
-            constraint_qc = {
-                "mode": "skip",
-                "reason": NO_DSC_RUN_REASON_STRING,
-                "skip_reason": SKIP_REASON_NO_DSC_RUN,
-            }
-        elif needs_vp_constraint:
+        if needs_vp_constraint and dsc_inputs_present:
             try:
-                # Get AIF QC dict if available
                 aif_qc_data = (
                     dict(self.inputs.dsc_aif_qc)
                     if isdefined(self.inputs.dsc_aif_qc)
                     else {}
                 )
-
-                # Inject CNR coverage from preprocessing stats
-                # Enables assess_dsc_cbv_quality() to use actual computed CNR
                 if isdefined(self.inputs.dsc_preprocessing_stats):
                     prep_stats = self.inputs.dsc_preprocessing_stats
                     if prep_stats and "fraction_cnr_gt_4" in prep_stats:
@@ -1784,178 +3291,65 @@ class ComputeDCEMaps(BaseInterface):
 
                 preload_qc = (
                     dict(self.inputs.dsc_preload_qc)
-                    if isdefined(self.inputs.dsc_preload_qc) else {}
+                    if isdefined(self.inputs.dsc_preload_qc)
+                    else {}
                 )
-                preload_class = preload_qc.get("preload_classification")
                 k2_metrics = (
-                    {k: v for k, v in preload_qc.items() if k in _K2_QC_KEYS}
+                    {key: value for key, value in preload_qc.items() if key in _K2_QC_KEYS}
                     or None
                 )
-
-                ncbv_for_prior = (
-                    self.inputs.dsc_ncbv_file if ncbv_available else None
-                )
                 vp_result = prepare_vp_constraint_from_data(
-                    ncbv_file=ncbv_for_prior,
+                    ncbv_file=self.inputs.dsc_ncbv_file if ncbv_available else None,
                     aif_qc_data=aif_qc_data,
                     brain_mask_file=self.inputs.brain_mask_file,
                     mode_override=str(self.inputs.constraint_mode),
-                    hematocrit=float(self.inputs.hematocrit),
-                    preload_classification=preload_class,
+                    preload_classification=preload_qc.get("preload_classification"),
                     k2_metrics=k2_metrics,
                     dose=float(self.inputs.dsc_dose),
-                    agent_standard_dose=float(
-                        self.inputs.dsc_agent_standard_dose
-                    ),
+                    agent_standard_dose=float(self.inputs.dsc_agent_standard_dose),
                 )
                 vp_constraint_map = vp_result.vp_map
                 constraint_mode = vp_result.config.mode
                 constraint_vp_uncertainty = vp_result.config.vp_uncertainty
                 constraint_qc = vp_result.qc_report
-
-                # Acquisition-limited diagnostic.
-                #
-                # Earlier safeguard logic checked vp_prior * Cp(peak) >
-                # Ct(peak) and interpreted > 30% overshoot as a scale
-                # bug, then either downgraded HARD→SKIP or widened SOFT σ
-                # to 0.5. Under the NAWM-anchored prior (vp =
-                # NAWM_VP_REFERENCE × nCBV) and the plasma-corrected AIF
-                # convention, that test no longer measures scale. It
-                # primarily detects first-pass temporal undersampling:
-                # max(Ct_samp)
-                # is Jensen-biased by (TR/FWHM)² so vp·Cp_peak >
-                # Ct_samp_peak is expected at any realistic volume TR
-                # even at perfect scale. Widening σ at long TR is
-                # physically backward — vp is prior-dominated by design
-                # in that regime, and killing the prior makes vp
-                # identifiability worse, not better. Genuine scale
-                # breaks (e.g., 10× CBV-unit bugs) are caught by the
-                # VP_MEDIAN magnitude gate in prepare_vp_constraint_from_data.
-                #
-                # We keep the same arithmetic but emit it as informational
-                # QC only (no mutation of constraint_mode, sigma, or
-                # reason). Also emit peak_alignment_lag_s so a reader
-                # can see whether tissue peak trails AIF peak by the
-                # expected ~1 frame (normal) vs many frames (either
-                # tracer delay or TR-induced aliasing).
                 if (
-                    constraint_mode == ConstraintMode.SOFT
-                    and str(self.inputs.constraint_mode) == "auto"
-                    and vp_constraint_map is not None
+                    vp_constraint_map is not None
+                    and vp_constraint_map.shape != prepared.mask.shape
                 ):
-                    # ``aif`` here is post-BAT-alignment when enabled; peak
-                    # amplitude is shift-invariant, and peak_alignment_lag_s
-                    # below then reflects the residual post-alignment lag.
-                    aif_peak = float(np.max(aif))
-                    if aif_peak > 0:
-                        valid_constrained = (
-                            fitting_mask
-                            & np.isfinite(vp_constraint_map)
-                            & (vp_constraint_map > 0)
-                        )
-                        n_valid = int(np.sum(valid_constrained))
-                        if n_valid > 100:
-                            vp_cp_peak = (
-                                vp_constraint_map[valid_constrained] * aif_peak
-                            )
-                            ct_peak_arr = np.max(
-                                conc_data[valid_constrained], axis=-1
-                            )
-                            overshoot_frac = float(
-                                np.mean(vp_cp_peak > ct_peak_arr)
-                            )
-                            median_vp = float(
-                                np.nanmedian(
-                                    vp_constraint_map[valid_constrained]
-                                )
-                            )
-                            # Overshoot is TR-modulated, not TR-invariant:
-                            # at long volume
-                            # TR, max(Ct) samples the tissue peak with bias
-                            # ∝ FWHM_tissue/TR, firing overshoot more often
-                            # from sampling asymmetry. Interpret thresholds
-                            # (0.7) conditionally on volume_tr_s.
-                            constraint_qc["aif_tissue_overshoot_fraction"] = (
-                                overshoot_frac
-                            )
+                    raise ValueError(
+                        "DSC-informed vp prior shape does not match the DCE domain: "
+                        f"{vp_constraint_map.shape} != {prepared.mask.shape}"
+                    )
 
-                            # Peak-alignment lag: median tissue-peak frame
-                            # minus AIF-peak frame, in seconds. Requires
-                            # volume TR (seconds between DCE volumes).
-                            # self.inputs.tr is the pulse TR (~ms) — wrong
-                            # semantics for volume-level lag — so we emit
-                            # null + a reason code when volume_tr is
-                            # undefined, rather than silently omit
-                            # (keeps downstream QC parsers stable).
-                            if (
-                                isdefined(self.inputs.volume_tr)
-                                and self.inputs.volume_tr is not None
-                                and float(self.inputs.volume_tr) > 0
-                            ):
-                                _vol_tr_s = float(self.inputs.volume_tr)
-                                aif_peak_frame = int(np.argmax(aif))
-                                tissue_peak_frames = np.argmax(
-                                    conc_data[valid_constrained], axis=-1
-                                )
-                                median_tissue_peak_frame = float(
-                                    np.median(tissue_peak_frames)
-                                )
-                                constraint_qc["peak_alignment_lag_s"] = (
-                                    (median_tissue_peak_frame - aif_peak_frame)
-                                    * _vol_tr_s
-                                )
-                                constraint_qc["volume_tr_s"] = _vol_tr_s
-                            else:
-                                constraint_qc["peak_alignment_lag_s"] = None
-                                constraint_qc["peak_alignment_lag_reason"] = (
-                                    "volume_tr_undefined"
-                                )
-                            if overshoot_frac > ACQUISITION_LIMITED_OVERSHOOT_THRESHOLD:
-                                constraint_qc["acquisition_limited_note"] = (
-                                    "High AIF-to-tissue overshoot (>70%): "
-                                    "observed tissue peak under-samples the "
-                                    "first pass (TR ≲ 2 s recommended for "
-                                    "vp identifiability; Buckley MRM 2002). "
-                                    "Posterior vp is prior-dominated by "
-                                    "design at this acquisition; "
-                                    "informational only — no action taken."
-                                )
-                # Synthetic-AIF annotation. When the vp
-                # constraint SKIPs due to synthetic AIF, the overshoot
-                # diagnostic above does not run — the comparison uses
-                # absolute scales that the synthetic AIF cannot provide.
-                # Emit explicit "not applicable" keys with stable shape
-                # so downstream QC parsers don't have to differentiate
-                # "missing because didn't compute" from "missing because
-                # synthetic."
-                if (
-                    isinstance(aif_qc_data, dict)
-                    and (
-                        aif_qc_data.get("detection_method") == "synthetic"
-                        or aif_qc_data.get("cbv_auc_denominator_is_synthetic")
-                    )
-                ):
-                    constraint_qc.setdefault(
-                        "aif_tissue_overshoot_fraction", None
-                    )
-                    constraint_qc["overshoot_applicable"] = False
-                    constraint_qc["overshoot_reason"] = SKIP_REASON_SYNTHETIC_AIF
             except Exception as exc:
+                vp_constraint_map = None
+                constraint_mode = ConstraintMode.SKIP
+                constraint_vp_uncertainty = 0.0
                 constraint_qc = {
                     "mode": "skip",
                     "reason": f"Failed to load DSC CBV constraint: {exc}",
+                    "skip_reason": "constraint_preparation_failed",
                 }
 
-            # Auto mode: when DSC-CBV passes quality, ensure extended_tofts is
-            # in the candidate set and set ceiling to most complex eligible
-            if is_auto and constraint_mode != ConstraintMode.SKIP:
+            if prepared.is_auto and constraint_mode != ConstraintMode.SKIP:
                 if "extended_tofts" not in candidate_names:
                     candidate_names.append("extended_tofts")
                 model_name = candidate_names[-1]
 
-        # =====================================================================
-        # Compute model-free maps (vectorized, fast, before PK fitting loop)
-        # =====================================================================
+        return _DCEVPConstraint(
+            vp_constraint_map,
+            constraint_mode,
+            constraint_vp_uncertainty,
+            constraint_qc,
+            model_name,
+            candidate_names,
+        )
+
+    def _compute_model_free_maps(
+        self,
+        prepared: _DCEFitPreparation,
+    ) -> _DCEModelFreeMaps:
+        """Compute vectorized semi-quantitative maps before PK fitting."""
         from pmriprep.utils.dce_model_free import (
             compute_bolus_arrival_time,
             compute_curve_type,
@@ -1966,201 +3360,322 @@ class ComputeDCEMaps(BaseInterface):
             compute_wash_out_slope,
         )
 
-        iauc60 = compute_iauc(conc_data, time_points, cutoff_s=60.0)
-        iauc90 = compute_iauc(conc_data, time_points, cutoff_s=90.0)
-        iauc120 = compute_iauc(conc_data, time_points, cutoff_s=120.0)
-        # peak_enh already computed from raw signal above (not concentration)
-        ttp = compute_time_to_peak(conc_data, time_points)
-        ser = compute_signal_enhancement_ratio(
-            conc_data, time_points, bolus_arrival_frame=baseline_frames,
-        )
-
-        # New semi-quantitative maps: wash-in slope, wash-out slope, BAT, curve type
-        semiquant_vol_tr_s: Optional[float] = (
+        concentration = prepared.concentration
+        time_points = prepared.time_points
+        volume_tr_s: Optional[float] = (
             float(self.inputs.volume_tr)
             if isdefined(self.inputs.volume_tr) and self.inputs.volume_tr is not None
             else None
         )
-        wash_in_slope = compute_wash_in_slope(
-            conc_data, time_points, bolus_arrival_frame=baseline_frames,
-            volume_tr_s=semiquant_vol_tr_s,
+        ser = compute_signal_enhancement_ratio(
+            concentration,
+            time_points,
+            bolus_arrival_frame=prepared.baseline_frames,
         )
-        wash_out_slope = compute_wash_out_slope(
-            conc_data, time_points, volume_tr_s=semiquant_vol_tr_s,
+        return _DCEModelFreeMaps(
+            compute_iauc(concentration, time_points, cutoff_s=60.0),
+            compute_iauc(concentration, time_points, cutoff_s=90.0),
+            compute_iauc(concentration, time_points, cutoff_s=120.0),
+            prepared.peak_enhancement,
+            compute_time_to_peak(concentration, time_points),
+            ser,
+            compute_wash_in_slope(
+                concentration,
+                time_points,
+                bolus_arrival_frame=prepared.baseline_frames,
+                volume_tr_s=volume_tr_s,
+            ),
+            compute_wash_out_slope(
+                concentration,
+                time_points,
+                volume_tr_s=volume_tr_s,
+            ),
+            compute_bolus_arrival_time(
+                concentration,
+                time_points,
+                baseline_frames=prepared.baseline_frames,
+                brain_mask=prepared.mask,
+            ),
+            compute_curve_type(ser),
         )
-        bat = compute_bolus_arrival_time(
-            conc_data, time_points, baseline_frames=baseline_frames,
-            brain_mask=mask,
+
+    def _prepare_motion_weighting(
+        self,
+        header: Any,
+        n_timepoints: int,
+    ) -> _DCEMotionWeighting:
+        """Build phase-adaptive motion weights from framewise displacement."""
+        if not (
+            isdefined(self.inputs.fd_values)
+            and self.inputs.fd_values
+            and isdefined(self.inputs.bolus_arrival_frame)
+        ):
+            return _DCEMotionWeighting(None, {"applied": False})
+
+        min_voxel_dim = float(min(header.get_zooms()[:3]))
+        bolus_frame = int(self.inputs.bolus_arrival_frame)
+        weights = _compute_motion_weights(
+            fd_values=self.inputs.fd_values,
+            bolus_frame=bolus_frame,
+            n_frames=n_timepoints,
+            min_voxel_dim=min_voxel_dim,
         )
-        curve_type = compute_curve_type(ser)
+        n_downweighted = int(np.sum(weights < 0.95))
+        washin_end = min(bolus_frame + 4, n_timepoints - 1)
+        qc = {
+            "applied": True,
+            "n_downweighted_frames": n_downweighted,
+            "min_weight": float(np.min(weights)),
+            "washin_weights": weights[bolus_frame:washin_end + 1].tolist(),
+        }
+        logger.info(
+            "Motion weighting: %d/%d frames downweighted (min weight=%.3f)",
+            n_downweighted,
+            n_timepoints,
+            float(np.min(weights)),
+        )
+        return _DCEMotionWeighting(weights, qc)
 
-        # =====================================================================
-        # Initialize output arrays
-        # =====================================================================
-        fill_val = np.nan if is_auto else 0.0
-        ktrans = np.full(spatial_shape, fill_val, dtype=np.float64)
-        ve = np.full(spatial_shape, fill_val, dtype=np.float64)
-        vp = np.full(spatial_shape, fill_val, dtype=np.float64)
-        kep = np.full(spatial_shape, fill_val, dtype=np.float64)
-        r2_map = np.zeros(spatial_shape, dtype=np.float64)
+    def _initialize_parameter_maps(
+        self,
+        prepared: _DCEFitPreparation,
+        model_name: str,
+        candidate_names: list[str],
+    ) -> _DCEParameterMaps:
+        """Allocate mutable output state before pharmacokinetic fitting."""
+        from pmriprep.utils.dce_constants import DCE_AIF_G6_SIGMA_INFLATION
 
-        # 2CXM-specific (only if 2CXM is in candidates or explicitly selected)
-        save_2cxm = (is_auto and "2cxm" in candidate_names) or model_name == "2cxm"
-        fp_map = np.zeros(spatial_shape, dtype=np.float64)
-        ps_map = np.zeros(spatial_shape, dtype=np.float64)
-        e_map = np.zeros(spatial_shape, dtype=np.float64)
-
-        # Quality flag map: 0=unfitted, 1=good, 2=poor_convergence,
-        # 3=high_uncertainty, 4=unreliable_high_kep (non-identifiable kep corner)
-        quality_flag_map = np.zeros(spatial_shape, dtype=np.int8)
-        _QUALITY_FLAG_CODES = {
+        spatial_shape = prepared.concentration.shape[:3]
+        # Unsupported and rejected voxels are missing estimates in every
+        # model-selection mode. A numerical zero is reserved for a retained
+        # fit whose parameter estimate is genuinely zero.
+        fill_value = np.nan
+        quality_flag_codes = {
             "good": 1,
             "poor_convergence": 2,
             "high_uncertainty": 3,
             "unreliable_high_kep": 4,
         }
-
-        # Model selection map: complexity-ordered encoding
-        _MODEL_SELECTION_CODES: dict[str, int] = {
-            "patlak": 1,          # 2 params
-            "tofts": 2,           # 2 params
-            "extended_tofts": 3,  # 3 params
-            "2cxm": 4,            # 4 params
+        model_selection_codes = {
+            "patlak": 1,
+            "tofts": 2,
+            "extended_tofts": 3,
+            "2cxm": 4,
         }
-        model_selection_map = np.zeros(spatial_shape, dtype=np.int8)
-
-        # Delta-BIC confidence map (auto mode only)
-        delta_bic_map = np.full(spatial_shape, np.nan, dtype=np.float32)
-
-        # Uncertainty maps
-        ktrans_std = np.zeros(spatial_shape, dtype=np.float64)
-        ve_std = np.zeros(spatial_shape, dtype=np.float64)
-        vp_std = np.zeros(spatial_shape, dtype=np.float64)
-        fp_std = np.zeros(spatial_shape, dtype=np.float64)
-        ps_std = np.zeros(spatial_shape, dtype=np.float64)
-
-        # Per-parameter posterior sigma inflation when upstream AIF is
-        # G6-admitted (reduced confidence). Base inflation 1.0 (standard
-        # AIF) yields all 1.0x regardless of map; base 2.0 propagates
-        # the per-parameter Tofts/2CXM sensitivity hierarchy from
-        # DCE_AIF_G6_SIGMA_INFLATION.
-        from pmriprep.utils.dce_constants import DCE_AIF_G6_SIGMA_INFLATION
-        _base_inflation = float(self.inputs.aif_uncertainty_inflation_factor)
-        if _base_inflation <= 1.0 + 1e-9:
-            _sigma_factor: dict[str, float] = {
-                k: 1.0 for k in DCE_AIF_G6_SIGMA_INFLATION
+        base_inflation = float(self.inputs.aif_uncertainty_inflation_factor)
+        if base_inflation <= 1.0 + 1e-9:
+            sigma_factor = {
+                parameter: 1.0 for parameter in DCE_AIF_G6_SIGMA_INFLATION
             }
         else:
-            _sigma_factor = {
-                k: 1.0 + (v - 1.0) * (_base_inflation - 1.0)
-                for k, v in DCE_AIF_G6_SIGMA_INFLATION.items()
+            sigma_factor = {
+                parameter: 1.0 + (factor - 1.0) * (base_inflation - 1.0)
+                for parameter, factor in DCE_AIF_G6_SIGMA_INFLATION.items()
             }
+        fitted_curves = (
+            np.zeros(prepared.concentration.shape, dtype=np.float32)
+            if prepared.save_fitted_curves
+            else None
+        )
+        return _DCEParameterMaps(
+            ktrans=np.full(spatial_shape, fill_value, dtype=np.float64),
+            ve=np.full(spatial_shape, fill_value, dtype=np.float64),
+            vp=np.full(spatial_shape, fill_value, dtype=np.float64),
+            kep=np.full(spatial_shape, fill_value, dtype=np.float64),
+            r_squared=np.zeros(spatial_shape, dtype=np.float64),
+            fp=np.full(spatial_shape, fill_value, dtype=np.float64),
+            ps=np.full(spatial_shape, fill_value, dtype=np.float64),
+            extraction_fraction=np.full(
+                spatial_shape, fill_value, dtype=np.float64
+            ),
+            optimizer_converged=np.zeros(spatial_shape, dtype=bool),
+            quality_flag=np.zeros(spatial_shape, dtype=np.int8),
+            quality_flag_codes=quality_flag_codes,
+            model_selection=np.zeros(spatial_shape, dtype=np.int8),
+            model_selection_codes=model_selection_codes,
+            delta_bic=np.full(spatial_shape, np.nan, dtype=np.float32),
+            ktrans_std=np.full(spatial_shape, np.nan, dtype=np.float64),
+            ve_std=np.full(spatial_shape, np.nan, dtype=np.float64),
+            vp_std=np.full(spatial_shape, np.nan, dtype=np.float64),
+            fp_std=np.full(spatial_shape, np.nan, dtype=np.float64),
+            ps_std=np.full(spatial_shape, np.nan, dtype=np.float64),
+            ktrans_ci95_lower=np.full(spatial_shape, np.nan, dtype=np.float64),
+            ktrans_ci95_upper=np.full(spatial_shape, np.nan, dtype=np.float64),
+            ve_ci95_lower=np.full(spatial_shape, np.nan, dtype=np.float64),
+            ve_ci95_upper=np.full(spatial_shape, np.nan, dtype=np.float64),
+            vp_ci95_lower=np.full(spatial_shape, np.nan, dtype=np.float64),
+            vp_ci95_upper=np.full(spatial_shape, np.nan, dtype=np.float64),
+            fp_ci95_lower=np.full(spatial_shape, np.nan, dtype=np.float64),
+            fp_ci95_upper=np.full(spatial_shape, np.nan, dtype=np.float64),
+            ps_ci95_lower=np.full(spatial_shape, np.nan, dtype=np.float64),
+            ps_ci95_upper=np.full(spatial_shape, np.nan, dtype=np.float64),
+            sigma_factor=sigma_factor,
+            vp_at_bound=np.zeros(spatial_shape, dtype=np.float32),
+            fitted_curves=fitted_curves,
+            save_2cxm=(
+                (prepared.is_auto and "2cxm" in candidate_names)
+                or model_name == "2cxm"
+            ),
+        )
 
-        # Per-voxel indicator that vp ended at a bound in the SOFT NLLS
-        # active-set path. Populated only by batched NLLS SOFT; 0 elsewhere
-        # (SKIP / Bayesian fits). Emitted as a NIfTI + whole-brain
-        # scalar in constraint_qc; downstream dce_pk_maps_qc stratifies
-        # over ROI masks into
-        # qc_metrics.pk_modeling.vp_at_bound_fractions.{whole_brain,
-        # enhancing, tumor_core, nawm}.
-        vp_at_bound_map = np.zeros(spatial_shape, dtype=np.float32)
+    def _prepare_fit_dispatch(
+        self,
+        prepared: _DCEFitPreparation,
+        aif: npt.NDArray[Any],
+        vp_constraint: _DCEVPConstraint,
+        motion_weights: Optional[npt.NDArray[np.floating]],
+    ) -> _DCEFitDispatch:
+        """Build ordered voxel inputs and shared worker initialization state."""
+        from pmriprep.utils.dsc_cbv_constraint import ConstraintMode
 
-        # Fitted curves
-        fitted_curves: Optional[npt.NDArray[Any]] = None
-        if save_fitted_curves:
-            fitted_curves = np.zeros(conc_data.shape, dtype=np.float32)
-
-        # Get voxel coordinates to fit
-        mask_coords = np.where(fitting_mask)
-        n_voxels = len(mask_coords[0])
-
-        # QC tracking
-        n_brain = int(np.sum(mask_bool))
-        qc_metrics: dict[str, Any] = {
-            "model": "auto" if is_auto else model_name,
-            "inference": inference,
-            "n_voxels_brain": n_brain,
-            "n_voxels_fitted": n_voxels,
-            "n_voxels_signal_filtered": n_brain - n_voxels,
-            "tsnr_threshold": tsnr_threshold,
-            "baseline_frames": baseline_frames,
-            "selection_tr_seconds": selection_tr_seconds,  # TR used for model selection
-            "dsc_cbv_constraint": constraint_qc,
-            "bat_correction": bat_correction,
-        }
-
-        n_converged = 0
-        n_failed = 0
-        n_constrained = 0
-        n_unconstrained_fallback = 0
-        n_rejected_postfit = 0
-        r2_list: list[float] = []
-        failure_reason_counts: dict[str, int] = {}
-        mcmc_rhat_lists: dict[str, list[float]] = {}
-        mcmc_ess_lists: dict[str, list[float]] = {}
-        n_mcmc_voxels: int = 0
-        z_departure_list: list[float] = []  # soft constraint prior departure
-
-        # Compute motion weights from framewise displacement (if available)
-        motion_weights: Optional[npt.NDArray[np.floating]] = None
-        if (
-            isdefined(self.inputs.fd_values)
-            and self.inputs.fd_values
-            and isdefined(self.inputs.bolus_arrival_frame)
-        ):
-            voxel_dims = header.get_zooms()[:3]  # type: ignore[attr-defined]
-            min_voxel_dim = float(min(voxel_dims))
-            motion_weights = _compute_motion_weights(
-                fd_values=self.inputs.fd_values,
-                bolus_frame=int(self.inputs.bolus_arrival_frame),
-                n_frames=n_timepoints,
-                min_voxel_dim=min_voxel_dim,
-            )
-            n_downweighted = int(np.sum(motion_weights < 0.95))
-            bolus_frame = int(self.inputs.bolus_arrival_frame)
-            washin_end = min(bolus_frame + 4, n_timepoints - 1)
-            qc_metrics["motion_weighting"] = {
-                "applied": True,
-                "n_downweighted_frames": n_downweighted,
-                "min_weight": float(np.min(motion_weights)),
-                "washin_weights": motion_weights[bolus_frame:washin_end + 1].tolist(),
-            }
-            logger.info(
-                "Motion weighting: %d/%d frames downweighted (min weight=%.3f)",
-                n_downweighted, n_timepoints, float(np.min(motion_weights)),
-            )
-        else:
-            qc_metrics["motion_weighting"] = {"applied": False}
-
-        # Build voxel data list for parallel/serial processing
-        voxel_data_list: list[VoxelInput] = []
-        for i in range(n_voxels):
-            x, y, z = (
-                int(mask_coords[0][i]),
-                int(mask_coords[1][i]),
-                int(mask_coords[2][i]),
-            )
-            tissue_curve = conc_data[x, y, z, :]
+        mask_coords = np.where(prepared.fitting_mask)
+        voxel_data: list[VoxelInput] = []
+        for x_raw, y_raw, z_raw in zip(*mask_coords):
+            x, y, z = int(x_raw), int(y_raw), int(z_raw)
             voxel_vp: Optional[float] = None
-            if vp_constraint_map is not None and constraint_mode != ConstraintMode.SKIP:
-                vp_val = float(vp_constraint_map[x, y, z])
-                if np.isfinite(vp_val) and vp_val > 0:
-                    voxel_vp = vp_val
-            voxel_data_list.append(VoxelInput(x, y, z, tissue_curve, voxel_vp))
+            if (
+                vp_constraint.vp_map is not None
+                and vp_constraint.mode != ConstraintMode.SKIP
+            ):
+                vp_value = float(vp_constraint.vp_map[x, y, z])
+                if np.isfinite(vp_value) and vp_value > 0:
+                    voxel_vp = vp_value
+            voxel_data.append(
+                VoxelInput(x, y, z, prepared.concentration[x, y, z, :], voxel_vp)
+            )
 
-        # Worker initializer args (shared across all paths)
         sloppy = bool(self.inputs.sloppy)
         random_seed = (
             int(self.inputs.random_seed) if isdefined(self.inputs.random_seed) else None
         )
         init_args = (
-            aif, time_points, model_name, inference, mcmc_samples,
-            baseline_frames, constraint_mode.value, constraint_vp_uncertainty,
-            save_fitted_curves, motion_weights, sloppy, random_seed,
-            candidate_names if is_auto else None,
+            aif,
+            prepared.time_points,
+            vp_constraint.model_name,
+            prepared.inference,
+            prepared.mcmc_samples,
+            prepared.baseline_frames,
+            vp_constraint.mode.value,
+            vp_constraint.vp_uncertainty,
+            prepared.save_fitted_curves,
+            motion_weights,
+            sloppy,
+            random_seed,
+            vp_constraint.candidate_names if prepared.is_auto else None,
+        )
+        return _DCEFitDispatch(
+            mask_coords,
+            voxel_data,
+            init_args,
+            max(1, int(self.inputs.n_procs)),
+            sloppy,
+            random_seed,
         )
 
-        n_procs = max(1, int(self.inputs.n_procs))
+    def _run_interface(self, runtime: Any) -> Any:
+        """Execute DCE map computation."""
+        prepared = self._prepare_fit_inputs()
+        conc_data = prepared.concentration
+        affine = prepared.affine
+        header = prepared.header
+        mask = prepared.mask
+        aif = prepared.aif
+        time_points = prepared.time_points
+        n_timepoints = prepared.n_timepoints
+        model_name = prepared.model_name
+        is_auto = prepared.is_auto
+        candidate_names = prepared.candidate_names
+        baseline_frames = prepared.baseline_frames
+        tsnr_threshold = prepared.tsnr_threshold
+        tsnr_map = prepared.tsnr_map
+        peak_enh = prepared.peak_enhancement
+        fitting_mask = prepared.fitting_mask
+        mask_bool = mask > 0
+        inference = prepared.inference
+        mcmc_samples = prepared.mcmc_samples
+        save_fitted_curves = prepared.save_fitted_curves
+
+        bat_alignment = self._align_aif_to_tissue(prepared)
+        aif = bat_alignment.aif
+        bat_correction = bat_alignment.correction
+
+        vp_constraint = self._prepare_vp_constraint(prepared)
+        vp_constraint_map = vp_constraint.vp_map
+        constraint_mode = vp_constraint.mode
+        constraint_vp_uncertainty = vp_constraint.vp_uncertainty
+        constraint_qc = vp_constraint.qc
+        model_name = vp_constraint.model_name
+        candidate_names = vp_constraint.candidate_names
+        model_free = self._compute_model_free_maps(prepared)
+        iauc60 = model_free.iauc60
+        iauc90 = model_free.iauc90
+        iauc120 = model_free.iauc120
+        peak_enh = model_free.peak_enhancement
+        ttp = model_free.time_to_peak
+        ser = model_free.signal_enhancement_ratio
+        wash_in_slope = model_free.wash_in_slope
+        wash_out_slope = model_free.wash_out_slope
+        bat = model_free.bolus_arrival_time
+        curve_type = model_free.curve_type
+        parameter_maps = self._initialize_parameter_maps(
+            prepared, model_name, candidate_names,
+        )
+        ktrans = parameter_maps.ktrans
+        ve = parameter_maps.ve
+        vp = parameter_maps.vp
+        kep = parameter_maps.kep
+        r2_map = parameter_maps.r_squared
+        fp_map = parameter_maps.fp
+        ps_map = parameter_maps.ps
+        e_map = parameter_maps.extraction_fraction
+        quality_flag_map = parameter_maps.quality_flag
+        model_selection_map = parameter_maps.model_selection
+        _MODEL_SELECTION_CODES = parameter_maps.model_selection_codes
+        delta_bic_map = parameter_maps.delta_bic
+        ktrans_std = parameter_maps.ktrans_std
+        ve_std = parameter_maps.ve_std
+        vp_std = parameter_maps.vp_std
+        fp_std = parameter_maps.fp_std
+        ps_std = parameter_maps.ps_std
+        ktrans_ci95_lower = parameter_maps.ktrans_ci95_lower
+        ktrans_ci95_upper = parameter_maps.ktrans_ci95_upper
+        ve_ci95_lower = parameter_maps.ve_ci95_lower
+        ve_ci95_upper = parameter_maps.ve_ci95_upper
+        vp_ci95_lower = parameter_maps.vp_ci95_lower
+        vp_ci95_upper = parameter_maps.vp_ci95_upper
+        fp_ci95_lower = parameter_maps.fp_ci95_lower
+        fp_ci95_upper = parameter_maps.fp_ci95_upper
+        ps_ci95_lower = parameter_maps.ps_ci95_lower
+        ps_ci95_upper = parameter_maps.ps_ci95_upper
+        vp_at_bound_map = parameter_maps.vp_at_bound
+        fitted_curves = parameter_maps.fitted_curves
+        save_2cxm = parameter_maps.save_2cxm
+
+        # Get voxel coordinates to fit
+        mask_coords = np.where(fitting_mask)
+        n_voxels = len(mask_coords[0])
+
+        qc_metrics = _initialize_dce_qc_metrics(
+            prepared,
+            model_name,
+            constraint_qc,
+            bat_correction,
+            self._MAX_VOLUME_TR_2CXM,
+        )
+
+        motion = self._prepare_motion_weighting(header, n_timepoints)
+        motion_weights = motion.weights
+        qc_metrics["motion_weighting"] = motion.qc
+
+        dispatch = self._prepare_fit_dispatch(
+            prepared, aif, vp_constraint, motion_weights,
+        )
+        mask_coords = dispatch.mask_coords
+        voxel_data_list = dispatch.voxel_data
+        init_args = dispatch.init_args
+        n_procs = dispatch.n_procs
+        sloppy = dispatch.sloppy
+        random_seed = dispatch.random_seed
 
         # Always use batched fitting (vectorized operations)
         results = self._fit_batched(
@@ -2189,197 +3704,35 @@ class ComputeDCEMaps(BaseInterface):
         # Clear worker state to avoid stale references across runs
         _worker_ctx.clear()
 
-        # Per-voxel model selection tracking
-        from collections import Counter
-        model_counts: Counter[str] = Counter()
-
-        # Scatter results into output arrays
-        # For auto mode, we always save ve/vp/2cxm maps (NaN where not applicable)
         save_ve = is_auto or self._has_ve(model_name)
         save_vp = is_auto or self._has_vp(model_name)
-        for vd, res in zip(voxel_data_list, results):
-            if res["failed"]:
-                n_failed += 1
-                reason = res.get("failure_reason", "unknown")
-                failure_reason_counts[reason] = failure_reason_counts.get(reason, 0) + 1
-                continue
-
-            x, y, z = res["coords"]
-            params = res["params"]
-
-            # Per-voxel effective model name (may differ from global model_name
-            # when BIC model selection is active)
-            effective_model_name = res.get("selected_model_name", model_name)
-
-            # Record model selection
-            model_selection_map[x, y, z] = _MODEL_SELECTION_CODES.get(
-                effective_model_name, 0
-            )
-            model_counts[effective_model_name] += 1
-
-            # Record delta-BIC
-            delta_bic_map[x, y, z] = float(res.get("delta_bic", np.nan))
-
-            # Post-fit validation: reject bound-railing fits only.
-            # Parameters at exact optimizer bounds are degenerate (optimizer
-            # wanted to exceed the bound). R² is NOT used for rejection —
-            # low-R² voxels with valid params have uncertain but informative
-            # estimates. Zeroing them biases distributions upward and
-            # destroys information. R² quality gating belongs in the QC mask
-            # (line 1354: r2_map >= 0.5), separate from parameter estimation.
-            ktrans_val = params.get("Ktrans", 0.0)
-            ve_val = params.get("ve", 0.0)
-            vp_val = params.get("vp", 0.0)
-            is_constrained = res.get("constrained", False)
-            # For constrained fits (vp fixed from DSC-CBV), Ktrans=0 is
-            # the correct physical answer for non-enhancing tissue —
-            # only reject strictly negative (numerical error). vp checks
-            # are skipped because vp was fixed and guaranteed positive.
-            ktrans_lo = ktrans_val < 0 if is_constrained else ktrans_val <= 0
-            if effective_model_name == "2cxm":
-                fp_val = params.get("Fp", 0.0)
-                ps_val = params.get("PS", 0.0)
-                degenerate = (
-                    fp_val <= 0 or fp_val >= FP_BOUNDS.max
-                    or ps_val < 0 or ps_val >= PS_BOUNDS.max
-                    or ve_val <= 0 or ve_val >= VE_BOUNDS.max
-                    or vp_val <= 0 or vp_val >= VP_BOUNDS.max
-                )
-            elif effective_model_name == "patlak":
-                # Patlak: Ktrans=0 is valid (non-enhancing tissue), only
-                # reject strictly negative. ve is not a Patlak parameter.
-                degenerate = (
-                    (ktrans_val < 0) or ktrans_val >= KTRANS_BOUNDS.max
-                    or (not is_constrained and (vp_val <= 0 or vp_val >= VP_BOUNDS.max))
-                )
-            elif effective_model_name == "extended_tofts":
-                degenerate = (
-                    ktrans_lo or ktrans_val >= KTRANS_BOUNDS.max
-                    or ve_val <= 0 or ve_val >= VE_BOUNDS.max
-                    or (not is_constrained and (vp_val <= 0 or vp_val >= VP_BOUNDS.max))
-                )
-            else:  # tofts
-                degenerate = (
-                    ktrans_val <= 0 or ktrans_val >= KTRANS_BOUNDS.max
-                    or ve_val <= 0 or ve_val >= VE_BOUNDS.max
-                )
-            if degenerate:
-                degen_fill = np.nan if is_auto else 0.0
-                ktrans[x, y, z] = degen_fill
-                if self._has_ve(effective_model_name):
-                    ve[x, y, z] = degen_fill
-                    kep[x, y, z] = degen_fill
-                if self._has_vp(effective_model_name):
-                    vp[x, y, z] = degen_fill
-                r2_map[x, y, z] = res["r_squared"]
-                n_rejected_postfit += 1
-                continue
-
-            ktrans[x, y, z] = ktrans_val
-            if self._has_ve(effective_model_name):
-                ve[x, y, z] = ve_val
-                kep[x, y, z] = params.get("kep", 0.0)
-            r2_map[x, y, z] = res["r_squared"]
-
-            if self._has_vp(effective_model_name):
-                vp[x, y, z] = params.get("vp", 0.0)
-
-            # 2CXM-specific parameters
-            if effective_model_name == "2cxm":
-                fp_map[x, y, z] = params.get("Fp", 0.0)
-                ps_map[x, y, z] = params.get("PS", 0.0)
-                e_map[x, y, z] = params.get("E", 0.0)
-
-            # Uncertainty (Bayesian only). Per-parameter inflation
-            # propagates AIF reduced-confidence to PK posterior sigma;
-            # ve uninflated.
-            if inference != "nlls" and res["uncertainties"]:
-                ktrans_std[x, y, z] = (
-                    res["uncertainties"].get("Ktrans", 0.0)
-                    * _sigma_factor.get("Ktrans", 1.0)
-                )
-                if self._has_ve(effective_model_name):
-                    ve_std[x, y, z] = (
-                        res["uncertainties"].get("ve", 0.0)
-                        * _sigma_factor.get("ve", 1.0)
-                    )
-                if self._has_vp(effective_model_name):
-                    vp_std[x, y, z] = (
-                        res["uncertainties"].get("vp", 0.0)
-                        * _sigma_factor.get("vp", 1.0)
-                    )
-                # 2CXM-specific: Fp and PS uncertainties
-                if effective_model_name == "2cxm":
-                    fp_std[x, y, z] = (
-                        res["uncertainties"].get("Fp", 0.0)
-                        * _sigma_factor.get("Fp", 1.0)
-                    )
-                    ps_std[x, y, z] = (
-                        res["uncertainties"].get("PS", 0.0)
-                        * _sigma_factor.get("PS", 1.0)
-                    )
-
-            # Fitted curve
-            if save_fitted_curves and fitted_curves is not None:
-                if res["fitted_curve"] is not None:
-                    fitted_curves[x, y, z, :] = res["fitted_curve"].astype(np.float32)
-
-            # vp_at_bound scatter: only populated by the SOFT NLLS path;
-            # 0 elsewhere (default value from the result dict).
-            vp_at_bound_map[x, y, z] = float(res.get("vp_at_bound", 0.0))
-
-            # Set quality flag
-            qf = res.get("quality_flag", "good")
-            quality_flag_map[x, y, z] = _QUALITY_FLAG_CODES.get(qf, 1)
-
-            # Track convergence and constraints
-            if res.get("constrained", False):
-                n_constrained += 1
-            elif vd.voxel_vp is not None and constraint_mode != ConstraintMode.SKIP:
-                # Had vp constraint but fell back to unconstrained
-                n_unconstrained_fallback += 1
-
-            # z_departure: how much DCE data pulled vp away from DSC prior
-            # Only meaningful for SOFT + Bayesian (where a soft prior was used)
-            if (
-                constraint_mode == ConstraintMode.SOFT
-                and inference != "nlls"
-                and self._has_vp(effective_model_name)
-                and vd.voxel_vp is not None
-                and vd.voxel_vp > 0
-            ):
-                vp_fitted = params.get("vp", 0.0)
-                vp_prior = vd.voxel_vp
-                prior_sigma = max(
-                    vp_prior * constraint_vp_uncertainty, 0.001
-                )
-                z = abs(vp_fitted - vp_prior) / prior_sigma
-                z_departure_list.append(z)
-
-            if res["converged"]:
-                n_converged += 1
-                r2_list.append(res["r_squared"])
-            else:
-                n_failed += 1
-
-            # Accumulate MCMC diagnostics (rhat/ess are empty for non-MCMC)
-            voxel_rhat = res.get("rhat", {})
-            voxel_ess = res.get("ess", {})
-            if voxel_rhat:
-                n_mcmc_voxels += 1
-                for param, val in voxel_rhat.items():
-                    mcmc_rhat_lists.setdefault(param, []).append(val)
-                for param, val in voxel_ess.items():
-                    mcmc_ess_lists.setdefault(param, []).append(val)
+        fit_summary = _scatter_dce_fit_results(
+            voxel_data_list,
+            results,
+            parameter_maps,
+            model_name,
+            is_auto,
+            inference,
+            constraint_mode,
+            constraint_vp_uncertainty,
+        )
 
         # Compile QC metrics
-        qc_metrics["n_converged"] = n_converged
-        qc_metrics["n_failed"] = n_failed
-        qc_metrics["convergence_rate"] = n_converged / max(1, n_voxels)
-        qc_metrics["n_constrained"] = n_constrained
-        qc_metrics["n_unconstrained_fallback"] = n_unconstrained_fallback
-        qc_metrics["n_rejected_postfit"] = n_rejected_postfit
-        qc_metrics["failure_reasons"] = failure_reason_counts
+        qc_metrics.update(
+            _summarize_dce_fit_outcomes(
+                n_voxels,
+                int(np.count_nonzero(mask_bool)),
+                fit_summary.n_optimizer_converged,
+                fit_summary.n_prefit_rejected,
+                fit_summary.n_execution_exceptions,
+                fit_summary.n_fit_unsuccessful,
+                fit_summary.n_retained,
+                fit_summary.n_constrained,
+                fit_summary.n_unconstrained_fallback,
+                fit_summary.n_rejected_postfit,
+                fit_summary.failure_reasons,
+            )
+        )
 
         # FXL-suspect whole-brain flag. Tissue Ct peaks above ~0.8 mM
         # violate the Tofts fast-exchange-limit assumption. conc_data is
@@ -2387,433 +3740,228 @@ class ComputeDCEMaps(BaseInterface):
         # (C_t = (R1(t) - R1(0))/r1). Tumor-mask-stratified fraction
         # emitted in _generate_dce_pk_fit_qc. Shutter-speed model is not
         # viable at this pipeline's clinical TR_vol — report only.
-        _fxl_peak_ct = np.nanmax(conc_data, axis=-1)
-        _in_brain = fitting_mask & np.isfinite(_fxl_peak_ct)
-        if np.any(_in_brain):
-            qc_metrics["frac_fxl_risk_whole_brain"] = float(
-                np.mean(_fxl_peak_ct[_in_brain] > 0.8)
+        qc_metrics["frac_fxl_risk_whole_brain"] = _fraction_fxl_risk(
+            conc_data,
+            fitting_mask,
+        )
+
+        qc_metrics.update(
+            _summarize_dce_categorical_qc(
+                is_auto,
+                candidate_names,
+                model_selection_map,
+                _MODEL_SELECTION_CODES,
+                quality_flag_map,
+                fitting_mask,
             )
-        else:
-            qc_metrics["frac_fxl_risk_whole_brain"] = 0.0
+        )
 
-        qc_metrics["model_selection"] = "auto" if is_auto else "fixed"
+        qc_metrics.update(_summarize_dce_r2(fit_summary.r2_values))
 
-        # Per-model selection stats (auto mode)
-        if is_auto:
-            qc_metrics["candidate_models"] = candidate_names
-            n_total = int(np.sum(model_selection_map > 0))
-            for code_name in candidate_names:
-                count = int(np.sum(
-                    model_selection_map == _MODEL_SELECTION_CODES[code_name]
-                ))
-                qc_metrics[f"n_{code_name}_selected"] = count
-                qc_metrics[f"{code_name}_fraction"] = (
-                    count / max(1, n_total)
-                )
+        qc_metrics["parameter_uncertainty"] = {
+            "aif_inflation_input_factor": float(
+                self.inputs.aif_uncertainty_inflation_factor
+            ),
+            "aif_parameter_scale_factors": dict(parameter_maps.sigma_factor),
+        }
 
-        # Quality flag breakdown
-        qf_vals = quality_flag_map[fitting_mask]
-        qc_metrics["quality_n_good"] = int(np.sum(qf_vals == 1))
-        qc_metrics["quality_n_poor_convergence"] = int(np.sum(qf_vals == 2))
-        qc_metrics["quality_n_high_uncertainty"] = int(np.sum(qf_vals == 3))
-        qc_metrics["quality_n_unreliable_high_kep"] = int(np.sum(qf_vals == 4))
-
-        if r2_list:
-            qc_metrics["r2_mean"] = float(np.mean(r2_list))
-            qc_metrics["r2_std"] = float(np.std(r2_list))
-            qc_metrics["r2_median"] = float(np.median(r2_list))
-
-        # MCMC convergence diagnostics summary
-        if n_mcmc_voxels > 0:
-            from pmriprep.models.dce.bayesian import QC_RHAT_MAX, QC_ESS_MIN
-
-            mcmc_diag: dict[str, Any] = {"n_mcmc_voxels": n_mcmc_voxels}
-            for param, vals in mcmc_rhat_lists.items():
-                arr = np.array(vals)
-                mcmc_diag[f"rhat_median_{param}"] = float(np.median(arr))
-                mcmc_diag[f"rhat_frac_poor_{param}"] = float(
-                    np.mean(arr >= QC_RHAT_MAX)
-                )
-            for param, vals in mcmc_ess_lists.items():
-                arr = np.array(vals)
-                mcmc_diag[f"ess_median_{param}"] = float(np.median(arr))
-                mcmc_diag[f"ess_frac_low_{param}"] = float(
-                    np.mean(arr < QC_ESS_MIN)
-                )
+        mcmc_diag = _summarize_mcmc_diagnostics(
+            fit_summary.n_mcmc_voxels,
+            fit_summary.mcmc_rhat,
+            fit_summary.mcmc_ess,
+        )
+        if mcmc_diag is not None:
             qc_metrics["mcmc_diagnostics"] = mcmc_diag
 
-        # z_departure stats: soft constraint prior departure
-        if z_departure_list:
-            z_arr = np.array(z_departure_list)
-            qc_metrics["z_departure_median"] = float(np.median(z_arr))
-            qc_metrics["z_departure_p90"] = float(np.percentile(z_arr, 90))
-            qc_metrics["frac_prior_dominated"] = float(np.mean(z_arr < 0.5))
-            qc_metrics["frac_strong_departure"] = float(np.mean(z_arr > 2.0))
+        if inference == "map":
+            qc_metrics["map_uncertainty"] = _summarize_map_uncertainty_sources(
+                fit_summary.map_uncertainty_sources
+            )
 
-        # Compute summary statistics on fitted voxels
-        # For auto mode, use np.isfinite guard (NaN = non-applicable parameter)
-        fitted_mask = fitting_mask & (np.isfinite(ktrans)) & (ktrans > 0)
-        if np.any(fitted_mask):
-            qc_metrics["ktrans_mean"] = float(np.nanmean(ktrans[fitted_mask]))
-            qc_metrics["ktrans_median"] = float(np.nanmedian(ktrans[fitted_mask]))
+        inference_fallback = _summarize_inference_fallback(
+            inference,
+            fit_summary.n_retained,
+            fit_summary.n_inference_fallback,
+        )
+        if inference_fallback is not None:
+            qc_metrics["inference_fallback"] = inference_fallback
 
-            if save_ve:
-                ve_vals = ve[fitted_mask]
-                finite_ve = np.isfinite(ve_vals)
-                if np.any(finite_ve):
-                    qc_metrics["ve_mean"] = float(np.nanmean(ve_vals[finite_ve]))
-                    qc_metrics["ve_median"] = float(np.nanmedian(ve_vals[finite_ve]))
+        qc_metrics.update(
+            _summarize_vp_prior_departures(fit_summary.vp_prior_departures)
+        )
 
-            if save_vp:
-                vp_vals = vp[fitted_mask]
-                finite_vp = np.isfinite(vp_vals)
-                if np.any(finite_vp):
-                    qc_metrics["vp_mean"] = float(np.nanmean(vp_vals[finite_vp]))
-                    qc_metrics["vp_median"] = float(np.nanmedian(vp_vals[finite_vp]))
-
-            if save_2cxm:
-                fp_vals = fp_map[fitted_mask]
-                finite_fp = np.isfinite(fp_vals) & (fp_vals > 0)
-                if np.any(finite_fp):
-                    qc_metrics["fp_median"] = float(np.nanmedian(fp_vals[finite_fp]))
-                ps_vals = ps_map[fitted_mask]
-                finite_ps = np.isfinite(ps_vals) & (ps_vals > 0)
-                if np.any(finite_ps):
-                    qc_metrics["ps_median"] = float(np.nanmedian(ps_vals[finite_ps]))
-
-            # Histogram statistics for fitted parameters
-            ktrans_vals = ktrans[fitted_mask]
-            hist_counts, hist_edges = np.histogram(ktrans_vals[np.isfinite(ktrans_vals)], bins=50)
-            qc_metrics["ktrans_histogram"] = hist_counts.tolist()
-            qc_metrics["ktrans_histogram_edges"] = hist_edges.tolist()
-
-            if save_ve:
-                ve_hist = ve[fitted_mask]
-                ve_hist = ve_hist[np.isfinite(ve_hist)]
-                if len(ve_hist) > 0:
-                    hist_counts_ve, hist_edges_ve = np.histogram(ve_hist, bins=50)
-                    qc_metrics["ve_histogram"] = hist_counts_ve.tolist()
-                    qc_metrics["ve_histogram_edges"] = hist_edges_ve.tolist()
+        qc_metrics.update(
+            _summarize_dce_fitted_parameters(
+                fitting_mask,
+                ktrans,
+                ve,
+                vp,
+                fp_map,
+                ps_map,
+                save_ve,
+                save_vp,
+                save_2cxm,
+            )
+        )
 
         # Compute whole-brain fraction of SOFT-NLLS voxels that ended
         # at a bound (active-set Pass 2 fired). Reported in
         # constraint_qc; downstream dce_pk_maps_qc stratifies over ROI
         # masks. Zero everywhere for HARD / SKIP / Bayesian fits.
-        if np.any(mask_bool):
-            vp_at_bound_in_brain = vp_at_bound_map[mask_bool]
-            finite_bound = np.isfinite(vp_at_bound_in_brain)
-            if np.any(finite_bound):
-                constraint_qc["fraction_vp_at_bound_whole_brain"] = float(
-                    np.mean(vp_at_bound_in_brain[finite_bound] > 0.5)
-                )
-            else:
-                constraint_qc["fraction_vp_at_bound_whole_brain"] = 0.0
-        else:
-            constraint_qc["fraction_vp_at_bound_whole_brain"] = 0.0
+        constraint_qc["fraction_vp_at_bound_whole_brain"] = _fraction_vp_at_bound(
+            mask_bool,
+            vp_at_bound_map,
+        )
 
         # Zero background (outside brain mask) on every float map before
         # save. Preserves in-brain NaN so auto-mode "parameter not applicable
         # for the winning model" semantics still reach downstream consumers.
-        ktrans = np.where(mask_bool, ktrans, 0.0)
-        ve = np.where(mask_bool, ve, 0.0)
-        vp = np.where(mask_bool, vp, 0.0)
-        kep = np.where(mask_bool, kep, 0.0)
-        r2_map = np.where(mask_bool, r2_map, 0.0)
-        fp_map = np.where(mask_bool, fp_map, 0.0)
-        ps_map = np.where(mask_bool, ps_map, 0.0)
-        e_map = np.where(mask_bool, e_map, 0.0)
-        delta_bic_map = np.where(mask_bool, delta_bic_map, 0.0)
-        ktrans_std = np.where(mask_bool, ktrans_std, 0.0)
-        ve_std = np.where(mask_bool, ve_std, 0.0)
-        vp_std = np.where(mask_bool, vp_std, 0.0)
-        fp_std = np.where(mask_bool, fp_std, 0.0)
-        ps_std = np.where(mask_bool, ps_std, 0.0)
-        tsnr_map = np.where(mask_bool, tsnr_map, 0.0)
-        iauc60 = np.where(mask_bool, iauc60, 0.0)
-        iauc90 = np.where(mask_bool, iauc90, 0.0)
-        iauc120 = np.where(mask_bool, iauc120, 0.0)
-        ttp = np.where(mask_bool, ttp, 0.0)
-        ser = np.where(mask_bool, ser, 0.0)
-        wash_in_slope = np.where(mask_bool, wash_in_slope, 0.0)
-        wash_out_slope = np.where(mask_bool, wash_out_slope, 0.0)
-        bat = np.where(mask_bool, bat, 0.0)
+        ktrans = _zero_dce_background(ktrans, mask_bool)
+        ve = _zero_dce_background(ve, mask_bool)
+        vp = _zero_dce_background(vp, mask_bool)
+        kep = _zero_dce_background(kep, mask_bool)
+        r2_map = _zero_dce_background(r2_map, mask_bool)
+        fp_map = _zero_dce_background(fp_map, mask_bool)
+        ps_map = _zero_dce_background(ps_map, mask_bool)
+        e_map = _zero_dce_background(e_map, mask_bool)
+        delta_bic_map = _zero_dce_background(delta_bic_map, mask_bool)
+        ktrans_std = _zero_dce_background(ktrans_std, mask_bool)
+        ve_std = _zero_dce_background(ve_std, mask_bool)
+        vp_std = _zero_dce_background(vp_std, mask_bool)
+        fp_std = _zero_dce_background(fp_std, mask_bool)
+        ps_std = _zero_dce_background(ps_std, mask_bool)
+        ktrans_ci95_lower = _zero_dce_background(ktrans_ci95_lower, mask_bool)
+        ktrans_ci95_upper = _zero_dce_background(ktrans_ci95_upper, mask_bool)
+        ve_ci95_lower = _zero_dce_background(ve_ci95_lower, mask_bool)
+        ve_ci95_upper = _zero_dce_background(ve_ci95_upper, mask_bool)
+        vp_ci95_lower = _zero_dce_background(vp_ci95_lower, mask_bool)
+        vp_ci95_upper = _zero_dce_background(vp_ci95_upper, mask_bool)
+        fp_ci95_lower = _zero_dce_background(fp_ci95_lower, mask_bool)
+        fp_ci95_upper = _zero_dce_background(fp_ci95_upper, mask_bool)
+        ps_ci95_lower = _zero_dce_background(ps_ci95_lower, mask_bool)
+        ps_ci95_upper = _zero_dce_background(ps_ci95_upper, mask_bool)
+        tsnr_map = _zero_dce_background(tsnr_map, mask_bool)
+        iauc60 = _zero_dce_background(iauc60, mask_bool)
+        iauc90 = _zero_dce_background(iauc90, mask_bool)
+        iauc120 = _zero_dce_background(iauc120, mask_bool)
+        ttp = _zero_dce_background(ttp, mask_bool)
+        ser = _zero_dce_background(ser, mask_bool)
+        wash_in_slope = _zero_dce_background(wash_in_slope, mask_bool)
+        wash_out_slope = _zero_dce_background(wash_out_slope, mask_bool)
+        bat = _zero_dce_background(bat, mask_bool)
+        curve_type = _zero_dce_background(curve_type, mask_bool)
+        quality_flag_map = _zero_dce_background(quality_flag_map, mask_bool)
+        model_selection_map = _zero_dce_background(model_selection_map, mask_bool)
         if peak_enh is not None:
-            peak_enh = np.where(mask_bool, peak_enh, 0.0)
+            peak_enh = _zero_dce_background(peak_enh, mask_bool)
         if fitted_curves is not None:
-            fitted_curves = np.where(mask_bool[..., np.newaxis], fitted_curves, 0.0)
+            fitted_curves = _zero_dce_background(fitted_curves, mask_bool)
 
-        # Generate output filenames
-        out_ktrans = self._gen_outfilename("_Ktrans")
-        out_r2 = self._gen_outfilename("_R2")
+        _save_dce_map = partial(_write_dce_map, affine=affine, header=header)
+        parameter_outputs = _write_dce_parameter_maps(
+            parameter_maps._replace(
+                ktrans=ktrans,
+                ve=ve,
+                vp=vp,
+                kep=kep,
+                r_squared=r2_map,
+                fp=fp_map,
+                ps=ps_map,
+                extraction_fraction=e_map,
+                quality_flag=quality_flag_map,
+                vp_at_bound=vp_at_bound_map,
+            ),
+            mask_bool,
+            save_ve,
+            save_vp,
+            self._gen_outfilename,
+            _save_dce_map,
+        )
 
-        def _save_dce_map(
-            data: npt.NDArray[Any],
-            path: str,
-            dtype: Any = np.float32,
-        ) -> None:
-            """Save a DCE-derived map with an explicit data dtype.
-
-            Mirrors DSC's _save_map: re-derives the header so its
-            inherited datatype field doesn't trigger silent scl_slope
-            rescaling on save (e.g. when the upstream concentration
-            NIfTI is int16/int32).
-            """
-            cast_data = data.astype(dtype)
-            local_header = header.copy()  # type: ignore[attr-defined]
-            local_header.set_data_dtype(dtype)  # type: ignore[attr-defined]
-            img = nib.Nifti1Image(cast_data, affine, local_header)  # type: ignore[attr-defined]
-            nib.save(img, path)  # type: ignore[attr-defined]
-
-        # Save main outputs
-        _save_dce_map(ktrans, out_ktrans)
-
-        # ve and kep are model-dependent: produced by Tofts, ExtTofts, 2CXM
-        # but NOT by Patlak (which only estimates Ktrans and vp).
-        # In auto mode, always save (NaN where not applicable).
-        if save_ve:
-            out_ve = self._gen_outfilename("_ve")
-            _save_dce_map(ve, out_ve)
-
-            out_kep = self._gen_outfilename("_kep")
-            _save_dce_map(kep, out_kep)
-
-        _save_dce_map(r2_map, out_r2)
-
-        # Save quality flag map (uint8 categorical)
-        out_quality_flag = self._gen_outfilename("_quality_flag")
-        _save_dce_map(quality_flag_map, out_quality_flag, dtype=np.uint8)
-
-        # Save vp_at_bound spatial map. Zero outside brain mask so
-        # downstream ROI aggregations are well-defined on brain voxels only.
-        vp_at_bound_map = np.where(mask_bool, vp_at_bound_map, 0.0)
-        out_vp_at_bound_map = self._gen_outfilename("_vpAtBound")
-        _save_dce_map(vp_at_bound_map, out_vp_at_bound_map)
-
-        # Save model-free maps
-        out_iauc60_path = self._gen_outfilename("_IAUC60")
-        out_iauc90_path = self._gen_outfilename("_IAUC90")
-        out_iauc120_path = self._gen_outfilename("_IAUC120")
-        out_peak_enh_path = self._gen_outfilename("_peak_enhancement")
-        out_ttp_path = self._gen_outfilename("_time_to_peak")
-        out_ser_path = self._gen_outfilename("_SER")
-
-        out_wash_in_path = self._gen_outfilename("_wash_in_slope")
-        out_wash_out_path = self._gen_outfilename("_wash_out_slope")
-        out_bat_path = self._gen_outfilename("_BAT")
-        out_curve_type_path = self._gen_outfilename("_curve_type")
-
-        save_list: list[tuple[Any, str]] = [
-            (iauc60, out_iauc60_path),
-            (iauc90, out_iauc90_path),
-            (iauc120, out_iauc120_path),
-            (ttp, out_ttp_path),
-            (ser, out_ser_path),
-            (wash_in_slope, out_wash_in_path),
-            (wash_out_slope, out_wash_out_path),
-            (bat, out_bat_path),
-        ]
-        if peak_enh is not None:
-            save_list.insert(3, (peak_enh, out_peak_enh_path))
-        for arr, path in save_list:
-            _save_dce_map(arr, path)
-
-        # Save curve type as int8 (categorical)
-        _save_dce_map(curve_type, out_curve_type_path, dtype=np.int8)
+        model_free_outputs = _write_dce_model_free_maps(
+            _DCEModelFreeMaps(
+                iauc60,
+                iauc90,
+                iauc120,
+                peak_enh,
+                ttp,
+                ser,
+                wash_in_slope,
+                wash_out_slope,
+                bat,
+                curve_type,
+            ),
+            self._gen_outfilename,
+            _save_dce_map,
+        )
 
         # Initialize results
         self._results: dict[str, Any] = {
-            "out_ktrans": out_ktrans,
-            "out_r2": out_r2,
-            "out_quality_flag": out_quality_flag,
-            "out_iauc60": out_iauc60_path,
-            "out_iauc90": out_iauc90_path,
-            "out_iauc120": out_iauc120_path,
-            "out_peak_enhancement": out_peak_enh_path,
-            "out_time_to_peak": out_ttp_path,
-            "out_ser": out_ser_path,
-            "out_wash_in_slope": out_wash_in_path,
-            "out_wash_out_slope": out_wash_out_path,
-            "out_bat": out_bat_path,
-            "out_curve_type": out_curve_type_path,
-            "out_vp_at_bound_map": out_vp_at_bound_map,
             "qc_metrics": qc_metrics,
             "constraint_qc": constraint_qc,
         }
+        self._results.update(parameter_outputs)
+        self._results.update(model_free_outputs)
 
-        if save_ve:
-            self._results["out_ve"] = out_ve
-            self._results["out_kep"] = out_kep
+        # Save method-specific parameter uncertainty maps.
+        self._results.update(
+            _write_dce_uncertainty_maps(
+                parameter_maps._replace(
+                    ktrans=ktrans,
+                    ve=ve,
+                    vp=vp,
+                    fp=fp_map,
+                    ps=ps_map,
+                    ktrans_std=ktrans_std,
+                    ve_std=ve_std,
+                    vp_std=vp_std,
+                    fp_std=fp_std,
+                    ps_std=ps_std,
+                    ktrans_ci95_lower=ktrans_ci95_lower,
+                    ktrans_ci95_upper=ktrans_ci95_upper,
+                    ve_ci95_lower=ve_ci95_lower,
+                    ve_ci95_upper=ve_ci95_upper,
+                    vp_ci95_lower=vp_ci95_lower,
+                    vp_ci95_upper=vp_ci95_upper,
+                    fp_ci95_lower=fp_ci95_lower,
+                    fp_ci95_upper=fp_ci95_upper,
+                    ps_ci95_lower=ps_ci95_lower,
+                    ps_ci95_upper=ps_ci95_upper,
+                ),
+                mask_bool,
+                is_auto,
+                save_ve,
+                save_vp,
+                self._gen_outfilename,
+                _save_dce_map,
+            )
+        )
 
-        # Save vp if applicable
-        if save_vp:
-            out_vp = self._gen_outfilename("_vp")
-            _save_dce_map(vp, out_vp)
-            self._results["out_vp"] = out_vp
-
-        # Save 2CXM-specific outputs
-        if save_2cxm:
-            out_fp = self._gen_outfilename("_Fp")
-            out_ps = self._gen_outfilename("_PS")
-            out_e = self._gen_outfilename("_E")
-
-            _save_dce_map(fp_map, out_fp)
-            _save_dce_map(ps_map, out_ps)
-            _save_dce_map(e_map, out_e)
-
-            self._results["out_fp"] = out_fp
-            self._results["out_ps"] = out_ps
-            self._results["out_e"] = out_e
-
-        # Save uncertainty maps
-        if inference != "nlls":
-            out_ktrans_std = self._gen_outfilename("_Ktrans_std")
-            _save_dce_map(ktrans_std, out_ktrans_std)
-            self._results["out_ktrans_std"] = out_ktrans_std
-
-            if save_ve:
-                out_ve_std = self._gen_outfilename("_ve_std")
-                _save_dce_map(ve_std, out_ve_std)
-                self._results["out_ve_std"] = out_ve_std
-
-            if save_vp:
-                out_vp_std = self._gen_outfilename("_vp_std")
-                _save_dce_map(vp_std, out_vp_std)
-                self._results["out_vp_std"] = out_vp_std
-
-            # 2CXM-specific: save Fp and PS uncertainty maps
-            if save_2cxm:
-                out_fp_std_file = self._gen_outfilename("_Fp_std")
-                _save_dce_map(fp_std, out_fp_std_file)
-                self._results["out_fp_std"] = out_fp_std_file
-
-                out_ps_std_file = self._gen_outfilename("_PS_std")
-                _save_dce_map(ps_std, out_ps_std_file)
-                self._results["out_ps_std"] = out_ps_std_file
-
-            # Compute and save Coefficient of Variation (CV = std / mean)
-            # Use safe division to avoid divide-by-zero
-            cv_fill = np.nan if is_auto else 0.0
-            with np.errstate(divide="ignore", invalid="ignore"):
-                ktrans_cv = np.where(
-                    ktrans > EPSILON_VE, ktrans_std / ktrans, cv_fill
-                ).astype(np.float32)
-            ktrans_cv = np.where(mask_bool, ktrans_cv, 0.0)
-
-            out_ktrans_cv = self._gen_outfilename("_Ktrans_cv")
-            _save_dce_map(ktrans_cv, out_ktrans_cv)
-            self._results["out_ktrans_cv"] = out_ktrans_cv
-
-            if save_ve:
-                with np.errstate(divide="ignore", invalid="ignore"):
-                    ve_cv = np.where(
-                        ve > EPSILON_VE, ve_std / ve, cv_fill
-                    ).astype(np.float32)
-                ve_cv = np.where(mask_bool, ve_cv, 0.0)
-                out_ve_cv = self._gen_outfilename("_ve_cv")
-                _save_dce_map(ve_cv, out_ve_cv)
-                self._results["out_ve_cv"] = out_ve_cv
-
-            if save_vp:
-                with np.errstate(divide="ignore", invalid="ignore"):
-                    vp_cv = np.where(
-                        vp > EPSILON_VE, vp_std / vp, cv_fill
-                    ).astype(np.float32)
-                vp_cv = np.where(mask_bool, vp_cv, 0.0)
-                out_vp_cv = self._gen_outfilename("_vp_cv")
-                _save_dce_map(vp_cv, out_vp_cv)
-                self._results["out_vp_cv"] = out_vp_cv
-
-            # Compute and save 95% Credible Intervals (mean ± 1.96 * std)
-            # Assuming approximately normal posterior (valid for MAP/MLE)
-            ktrans_ci95_lower = np.maximum(ktrans - 1.96 * ktrans_std, 0.0).astype(np.float32)
-            ktrans_ci95_upper = (ktrans + 1.96 * ktrans_std).astype(np.float32)
-
-            out_ktrans_ci95_lower = self._gen_outfilename("_Ktrans_ci95lower")
-            out_ktrans_ci95_upper = self._gen_outfilename("_Ktrans_ci95upper")
-
-            _save_dce_map(ktrans_ci95_lower, out_ktrans_ci95_lower)
-            _save_dce_map(ktrans_ci95_upper, out_ktrans_ci95_upper)
-
-            self._results["out_ktrans_ci95_lower"] = out_ktrans_ci95_lower
-            self._results["out_ktrans_ci95_upper"] = out_ktrans_ci95_upper
-
-            if save_ve:
-                ve_ci95_lower = np.clip(ve - 1.96 * ve_std, 0.0, 1.0).astype(np.float32)
-                ve_ci95_upper = np.clip(ve + 1.96 * ve_std, 0.0, 1.0).astype(np.float32)
-
-                out_ve_ci95_lower = self._gen_outfilename("_ve_ci95lower")
-                out_ve_ci95_upper = self._gen_outfilename("_ve_ci95upper")
-
-                _save_dce_map(ve_ci95_lower, out_ve_ci95_lower)
-                _save_dce_map(ve_ci95_upper, out_ve_ci95_upper)
-
-                self._results["out_ve_ci95_lower"] = out_ve_ci95_lower
-                self._results["out_ve_ci95_upper"] = out_ve_ci95_upper
-
-            if save_vp:
-                vp_ci95_lower = np.clip(vp - 1.96 * vp_std, 0.0, 1.0).astype(np.float32)
-                vp_ci95_upper = np.clip(vp + 1.96 * vp_std, 0.0, 1.0).astype(np.float32)
-
-                out_vp_ci95_lower = self._gen_outfilename("_vp_ci95lower")
-                out_vp_ci95_upper = self._gen_outfilename("_vp_ci95upper")
-
-                _save_dce_map(vp_ci95_lower, out_vp_ci95_lower)
-                _save_dce_map(vp_ci95_upper, out_vp_ci95_upper)
-
-                self._results["out_vp_ci95_lower"] = out_vp_ci95_lower
-                self._results["out_vp_ci95_upper"] = out_vp_ci95_upper
-
-        # Save tSNR map (always computed)
-        out_tsnr = self._gen_outfilename("_tSNR")
-        _save_dce_map(tsnr_map, out_tsnr)
-        self._results["out_tsnr"] = out_tsnr
-
-        # Create QC mask using physiological bounds
-        # Include voxels with: good R², physiological parameter values, adequate SNR
-        qc_mask = np.ones(spatial_shape, dtype=bool)
-        qc_mask &= fitting_mask  # Within brain mask
-        qc_mask &= (tsnr_map >= 10)  # Adequate tSNR
-        if peak_enh is not None:
-            qc_mask &= (peak_enh >= 10)  # Visible enhancement
-        qc_mask &= (ktrans > 0) & (ktrans < 5.0)  # Physiological Ktrans
-        qc_mask &= (r2_map >= 0.5)  # Reasonable model fit
-
-        # Model-specific constraints (per-voxel model-aware for BIC selection)
-        is_patlak_voxel = model_selection_map == _MODEL_SELECTION_CODES.get("patlak", -1)
-        if is_auto or model_name in ["extended_tofts", "2cxm"]:
-            # Volume fraction constraint: ve+vp < 0.95
-            # NaN-safe: treat NaN as 0 so Patlak voxels pass
-            ve_safe = np.where(np.isfinite(ve), ve, 0.0)
-            vp_safe = np.where(np.isfinite(vp), vp, 0.0)
-            etofts_volume_ok = (ve_safe + vp_safe) < 0.95
-            qc_mask &= (etofts_volume_ok | is_patlak_voxel)
-        if is_auto or model_name != "patlak":
-            # kep check: NaN kep is fine for Patlak voxels (kep undefined)
-            kep_ok = np.where(np.isfinite(kep), kep > 0.001, True)
-            qc_mask &= kep_ok
-
-        qc_mask = qc_mask.astype(np.uint8)
-        out_qc_mask = self._gen_outfilename("_qc_mask")
-        _save_dce_map(qc_mask, out_qc_mask, dtype=np.uint8)
-        self._results["out_qc_mask"] = out_qc_mask
-
-        # Save model selection map (auto/BIC mode)
-        if is_auto:
-            out_model_sel = self._gen_outfilename("_modelSelection")
-            _save_dce_map(model_selection_map, out_model_sel, dtype=np.int8)
-            self._results["out_model_selection"] = out_model_sel
-
-            # Save delta-BIC confidence map
-            out_delta_bic = self._gen_outfilename("_deltaBIC")
-            _save_dce_map(delta_bic_map, out_delta_bic)
-            self._results["out_delta_bic"] = out_delta_bic
-
-        # Save fitted curves
-        if save_fitted_curves and fitted_curves is not None:
-            out_fitted = self._gen_outfilename("_fitted_curves")
-            fitted_img = nib.Nifti1Image(fitted_curves, affine)  # type: ignore[attr-defined]
-            nib.save(fitted_img, out_fitted)  # type: ignore[attr-defined]
-            self._results["out_fitted_curves"] = out_fitted
+        self._results.update(
+            _write_dce_terminal_outputs(
+                parameter_maps._replace(
+                    ktrans=ktrans,
+                    ve=ve,
+                    vp=vp,
+                    kep=kep,
+                    r_squared=r2_map,
+                    model_selection=model_selection_map,
+                    delta_bic=delta_bic_map,
+                    fitted_curves=fitted_curves,
+                ),
+                fitting_mask,
+                tsnr_map,
+                peak_enh,
+                is_auto,
+                model_name,
+                save_fitted_curves,
+                affine,
+                self._gen_outfilename,
+                _save_dce_map,
+                qc_metrics,
+                tsnr_threshold=tsnr_threshold,
+            )
+        )
 
         return runtime
 
@@ -2896,14 +4044,16 @@ class ComputeDCEMaps(BaseInterface):
         )
         try:
             chunk_results = list(executor.map(_fit_chunk_nlls, chunk_args))
-        except (KeyboardInterrupt, SystemExit):
+        except BaseException:
+            from pmriprep.utils.processes import terminate_process_pool
+
             logger.warning(
-                "Interrupted during parallel DCE batched fitting, "
-                "cancelling workers"
+                "Parallel DCE batched fitting aborted; terminating workers"
             )
+            terminate_process_pool(executor)
             raise
-        finally:
-            executor.shutdown(wait=False, cancel_futures=True)
+        else:
+            executor.shutdown(wait=True, cancel_futures=True)
 
         return concat_fit_results(chunk_results, n_voxels)
 
@@ -2987,10 +4137,11 @@ class ComputeDCEMaps(BaseInterface):
         from pmriprep.utils.dsc_cbv_constraint import ConstraintMode
 
         n_voxels = len(mask_coords[0])
-        n_timepoints = len(aif)
 
-        # VI/MCMC: fall through to CPU multiprocessing (unchanged)
-        if inference in ("vi", "mcmc"):
+        # Fixed-model VI/MCMC fit directly on CPU. Auto mode first performs
+        # one canonical batched-NLLS BIC selection below, then refines only
+        # the selected model so inference choice cannot change model labels.
+        if inference in ("vi", "mcmc") and not is_auto:
             logger.info("Batched mode with %s: falling through to CPU multiprocessing", inference)
             _init_worker(*init_args)
             if n_procs > 1:
@@ -3002,14 +4153,20 @@ class ComputeDCEMaps(BaseInterface):
                     initargs=init_args,
                 )
                 try:
-                    return list(executor.map(
+                    cpu_results = list(executor.map(
                         _fit_single_voxel, voxel_data_list, chunksize=chunk_size,
                     ))
-                except (KeyboardInterrupt, SystemExit):
-                    logger.warning("Interrupted during parallel DCE fitting, cancelling workers")
+                except BaseException:
+                    from pmriprep.utils.processes import terminate_process_pool
+
+                    logger.warning(
+                        "Parallel DCE fitting aborted; terminating workers"
+                    )
+                    terminate_process_pool(executor)
                     raise
-                finally:
-                    executor.shutdown(wait=False, cancel_futures=True)
+                else:
+                    executor.shutdown(wait=True, cancel_futures=True)
+                return cpu_results
             return [_fit_single_voxel(vd) for vd in voxel_data_list]
 
         # Build batched arrays
@@ -3026,15 +4183,16 @@ class ComputeDCEMaps(BaseInterface):
             # Zero out invalid entries so they're treated as unconstrained
             fixed_vp[~valid_vp] = 0.0
 
-        # vp_uncertainty is honored on the batched path only when the
-        # user explicitly selected inference=nlls + SOFT. For inference=map + SOFT,
-        # the batched Pass acts as HARD warm-start and the CPU MAP refinement
-        # downstream applies the Gaussian prior via create_vp_prior_from_dsc.
+        # vp_uncertainty is honored for NLLS and for every auto-mode selection,
+        # whose canonical BIC stage is NLLS regardless of the later inference
+        # engine. For fixed-model MAP + SOFT, the batched pass acts as a HARD
+        # warm-start and CPU MAP refinement applies the Gaussian prior via
+        # create_vp_prior_from_dsc.
         # For HARD/SKIP, vp_uncertainty is moot (None).
         vp_uncertainty_batched: Optional[float] = None
         if (
             constraint_mode == ConstraintMode.SOFT
-            and inference == "nlls"
+            and (inference == "nlls" or is_auto)
             and fixed_vp is not None
         ):
             vp_uncertainty_batched = float(constraint_vp_uncertainty)
@@ -3074,8 +4232,6 @@ class ComputeDCEMaps(BaseInterface):
             return results
 
         # Auto mode: fit ALL candidate models using batched fitting, select via BIC
-        from pmriprep.models.dce.base import EPSILON_RSS
-
         fit_results: dict[str, FitResult] = {}
         for cname in candidate_names:
             try:
@@ -3088,7 +4244,7 @@ class ComputeDCEMaps(BaseInterface):
                     vp_uncertainty=vp_uncertainty_batched,
                     weights=motion_weights,
                     save_fitted_curves=True,
-                    compute_uncertainties=False,
+                    compute_uncertainties=inference == "nlls",
                     n_procs=n_procs,
                     n_voxels=n_voxels,
                 )
@@ -3101,7 +4257,6 @@ class ComputeDCEMaps(BaseInterface):
             return [_fit_single_voxel(vd) for vd in voxel_data_list]
 
         # BIC per model per voxel
-        T = n_timepoints
         _N_PARAMS: dict[str, int] = {
             "tofts": 2, "extended_tofts": 3, "patlak": 2, "2cxm": 4,
         }
@@ -3111,76 +4266,32 @@ class ComputeDCEMaps(BaseInterface):
             if result.fitted_curves is None:
                 bic_arrays[cname] = np.full(n_voxels, np.inf)
                 continue
-            rss = np.sum((tissue_curves - result.fitted_curves) ** 2, axis=1)
-            rss_safe = np.maximum(rss, EPSILON_RSS)
-            # Per-voxel effective param count:
-            # SOFT box constraint: k = k_base constant. Self-Liang (JASA
-            # 1987) shows boundary-parameter effective d.o.f. lies between
-            # k_base-1 and k_base; k_base with the full data likelihood is
-            # the standard pragmatic choice and the only one that keeps
-            # Patlak / Extended Tofts BIC comparison stable. Unconstrained
-            # path also uses k_base.
-            k_base = _N_PARAMS[cname]
-            k_arr = np.full(n_voxels, k_base, dtype=float)
-            bic_arrays[cname] = T * np.log(rss_safe / T) + k_arr * np.log(T)
-
-        # Filter non-converged → BIC = inf
-        for cname, result in fit_results.items():
-            if cname in bic_arrays:
-                bic_arrays[cname][~result.converged] = np.inf
+            # SOFT box constraints retain the full model parameter count.
+            # Exact fixed-vp selection stages reduce every candidate by the
+            # same one parameter, leaving all pairwise BIC differences
+            # unchanged.
+            bic_arrays[cname] = _compute_auto_bic(
+                tissue_curves,
+                result.fitted_curves,
+                result.converged,
+                _N_PARAMS[cname],
+                motion_weights,
+            )
 
         # Select min-BIC model per voxel
         cand_list = [c for c in candidate_names if c in fit_results]
-        bic_stack = np.stack([bic_arrays[c] for c in cand_list], axis=0)
-        winner_idx = np.argmin(bic_stack, axis=0)
-
-        # Compute delta-BIC (margin over runner-up)
-        # Non-converged fits have BIC=inf. When computing delta-BIC,
-        # inf - finite = inf, which breaks percentile calculations.
-        # Convert to nan for cleaner downstream handling.
-        sorted_bics = np.sort(bic_stack, axis=0)
-        if sorted_bics.shape[0] > 1:
-            # Both winner and runner-up must be finite for meaningful delta
-            both_finite = np.isfinite(sorted_bics[0]) & np.isfinite(sorted_bics[1])
-            delta_bic = np.where(
-                both_finite,
-                sorted_bics[1] - sorted_bics[0],
-                np.nan,
-            )
-        else:
-            delta_bic = np.full(n_voxels, np.nan)
-
-        # Kass & Raftery guard: require strong BIC evidence to upgrade
-        # from simplest model. ΔBIC >= 6 = "strong evidence".
-        _MIN_DELTA_BIC_UPGRADE = 6.0
-
-        # Find simplest model (minimum parameters) using existing _N_PARAMS dict
-        n_params_arr = np.array([_N_PARAMS[c] for c in cand_list])
-        simplest_idx = int(np.argmin(n_params_arr))
-
-        # Apply guard: downgrade to simplest if evidence is weak
-        # Only downgrade if simplest model actually converged
-        weak_evidence = (delta_bic < _MIN_DELTA_BIC_UPGRADE) | ~np.isfinite(delta_bic)
-        not_simplest = winner_idx != simplest_idx
-        simplest_converged = fit_results[cand_list[simplest_idx]].converged
-        downgrade_mask = weak_evidence & not_simplest & simplest_converged
-
-        n_downgraded = int(downgrade_mask.sum())
-        if n_downgraded > 0:
-            logger.debug(
-                "Kass-Raftery guard: downgraded %d voxels to %s (delta-BIC < %.1f)",
-                n_downgraded, cand_list[simplest_idx], _MIN_DELTA_BIC_UPGRADE,
-            )
-            winner_idx[downgrade_mask] = simplest_idx
-
-        # Downgraded voxels have no meaningful delta-BIC
-        delta_bic[downgrade_mask] = np.nan
+        winner_idx, delta_bic, valid_selection = _select_auto_bic_winners(
+            cand_list,
+            bic_arrays,
+            _N_PARAMS,
+        )
 
         # Assemble per-voxel results from winners
         results = []
         for i in range(n_voxels):
             winner_name = cand_list[winner_idx[i]]
             winner_result = fit_results[winner_name]
+            selection_failed = not bool(valid_selection[i])
 
             x, y, z = int(coords[i, 0]), int(coords[i, 1]), int(coords[i, 2])
 
@@ -3220,6 +4331,8 @@ class ComputeDCEMaps(BaseInterface):
                 "r_squared": float(winner_result.r_squared[i]),
                 "converged": bool(winner_result.converged[i]),
                 "uncertainties": uncertainties,
+                "credible_intervals": {},
+                "uncertainty_source": "not_computed",
                 "fitted_curve": fitted_curve,
                 "quality_flag": (
                     "poor_convergence" if not winner_result.converged[i]
@@ -3228,17 +4341,20 @@ class ComputeDCEMaps(BaseInterface):
                 ),
                 "rhat": {},
                 "ess": {},
-                "failed": not bool(winner_result.converged[i]) and float(winner_result.r_squared[i]) < -0.5,
-                "failure_reason": None,
+                "failed": selection_failed,
+                "failure_reason": (
+                    "all_candidate_models_failed" if selection_failed else None
+                ),
+                "failure_stage": "fit" if selection_failed else None,
                 "constrained": is_constrained,
                 "selected_model_name": winner_name,
                 "delta_bic": float(delta_bic[i]),
                 "vp_at_bound": vp_at_bound_val,
             })
 
-        # MAP refinement of BIC winners
-        if inference == "map":
-            results = self._refine_map_from_batched(
+        # Bayesian refinement of the canonical batched-NLLS BIC winners.
+        if inference in ("vi", "map", "mcmc"):
+            results = self._refine_auto_bayesian_from_batched(
                 results, voxel_data_list, init_args, n_procs,
             )
 
@@ -3306,12 +4422,18 @@ class ComputeDCEMaps(BaseInterface):
             if fit_result.vp_at_bound is not None:
                 vp_at_bound_val = float(fit_result.vp_at_bound[i])
 
+            fit_unsuccessful = (
+                not bool(fit_result.converged[i])
+                and float(fit_result.r_squared[i]) < -0.5
+            )
             results.append({
                 "coords": (x, y, z),
                 "params": params_out,
                 "r_squared": float(fit_result.r_squared[i]),
                 "converged": bool(fit_result.converged[i]),
                 "uncertainties": uncertainties,
+                "credible_intervals": {},
+                "uncertainty_source": "not_computed",
                 "fitted_curve": fitted_curve,
                 "quality_flag": (
                     "poor_convergence" if not fit_result.converged[i]
@@ -3320,8 +4442,11 @@ class ComputeDCEMaps(BaseInterface):
                 ),
                 "rhat": {},
                 "ess": {},
-                "failed": not bool(fit_result.converged[i]) and float(fit_result.r_squared[i]) < -0.5,
-                "failure_reason": None,
+                "failed": fit_unsuccessful,
+                "failure_reason": (
+                    "nonconverged_very_poor_r2" if fit_unsuccessful else None
+                ),
+                "failure_stage": "fit" if fit_unsuccessful else None,
                 "constrained": is_constrained,
                 "selected_model_name": model_name,
                 "delta_bic": np.nan,
@@ -3373,11 +4498,16 @@ class ComputeDCEMaps(BaseInterface):
                 cpu_results = list(executor.map(
                     _fit_single_voxel, voxel_data_list, chunksize=chunk_size,
                 ))
-            except (KeyboardInterrupt, SystemExit):
-                logger.warning("Interrupted during hybrid DCE refinement, cancelling workers")
+            except BaseException:
+                from pmriprep.utils.processes import terminate_process_pool
+
+                logger.warning(
+                    "Hybrid DCE refinement aborted; terminating workers"
+                )
+                terminate_process_pool(executor)
                 raise
-            finally:
-                executor.shutdown(wait=False, cancel_futures=True)
+            else:
+                executor.shutdown(wait=True, cancel_futures=True)
         else:
             cpu_results = [_fit_single_voxel(vd) for vd in voxel_data_list]
 
@@ -3385,9 +4515,137 @@ class ComputeDCEMaps(BaseInterface):
         final_results = []
         for fit_res, cpu_res in zip(batched_results, cpu_results):
             if cpu_res.get("converged", False) and not cpu_res.get("failed", True):
+                cpu_res["inference_fallback"] = False
                 final_results.append(cpu_res)
             else:
-                final_results.append(fit_res)
+                fallback_result = dict(fit_res)
+                fallback_result["inference_fallback"] = True
+                final_results.append(fallback_result)
+
+        return final_results
+
+    def _refine_auto_bayesian_from_batched(
+        self,
+        batched_results: list[dict[str, Any]],
+        voxel_data_list: list[VoxelInput],
+        init_args: tuple[Any, ...],
+        n_procs: int,
+    ) -> list[dict[str, Any]]:
+        """Refine canonical auto-mode BIC winners with one Bayesian model.
+
+        Parameters
+        ----------
+        batched_results : list of dict
+            Per-voxel batched-NLLS results carrying the selected model and
+            delta-BIC margin.
+        voxel_data_list : list of VoxelInput
+            Voxel inputs in the same order as ``batched_results``.
+        init_args : tuple
+            Worker initialization arguments for the original auto run.
+        n_procs : int
+            Number of CPU processes.
+
+        Returns
+        -------
+        list of dict
+            Bayesian results where refinement succeeds, with the canonical
+            selected-model and delta-BIC state preserved; otherwise the
+            original batched-NLLS fallback.
+
+        Notes
+        -----
+        Candidate models are disabled in each refinement worker. Grouping by
+        the already-selected model prevents scalar Bayesian workers from
+        repeating BIC with a different NLLS implementation.
+        """
+        from concurrent.futures import ProcessPoolExecutor
+
+        final_results = list(batched_results)
+        selected_groups: dict[str, list[int]] = {}
+        for index, result in enumerate(batched_results):
+            if result.get("failed", False):
+                continue
+            selected_model = str(result.get("selected_model_name", ""))
+            if selected_model:
+                selected_groups.setdefault(selected_model, []).append(index)
+
+        for selected_model, indices in selected_groups.items():
+            (
+                aif,
+                time_points,
+                _auto_model_name,
+                inference,
+                mcmc_samples,
+                baseline_frames,
+                constraint_mode_str,
+                constraint_vp_uncertainty,
+                save_fitted_curves,
+                motion_weights,
+                sloppy,
+                random_seed,
+                _candidate_names,
+            ) = init_args
+            fixed_init_args = (
+                aif,
+                time_points,
+                selected_model,
+                inference,
+                mcmc_samples,
+                baseline_frames,
+                constraint_mode_str,
+                constraint_vp_uncertainty,
+                save_fitted_curves,
+                motion_weights,
+                sloppy,
+                random_seed,
+                None,
+            )
+            group_voxels = [voxel_data_list[index] for index in indices]
+            _init_worker(*fixed_init_args)
+
+            if n_procs > 1:
+                chunk_size = max(1, len(group_voxels) // (n_procs * 10))
+                executor = ProcessPoolExecutor(
+                    max_workers=n_procs,
+                    initializer=_init_worker,  # type: ignore[arg-type]
+                    initargs=fixed_init_args,
+                )
+                try:
+                    refined_results = list(
+                        executor.map(
+                            _fit_single_voxel,
+                            group_voxels,
+                            chunksize=chunk_size,
+                        )
+                    )
+                except BaseException:
+                    from pmriprep.utils.processes import terminate_process_pool
+
+                    logger.warning(
+                        "Auto DCE Bayesian refinement aborted; "
+                        "terminating workers"
+                    )
+                    terminate_process_pool(executor)
+                    raise
+                else:
+                    executor.shutdown(wait=True, cancel_futures=True)
+            else:
+                refined_results = [
+                    _fit_single_voxel(voxel) for voxel in group_voxels
+                ]
+
+            for index, refined in zip(indices, refined_results):
+                if refined.get("failed", True) or not refined.get(
+                    "converged", False
+                ):
+                    fallback_result = dict(batched_results[index])
+                    fallback_result["inference_fallback"] = True
+                    final_results[index] = fallback_result
+                    continue
+                refined["selected_model_name"] = selected_model
+                refined["delta_bic"] = batched_results[index]["delta_bic"]
+                refined["inference_fallback"] = False
+                final_results[index] = refined
 
         return final_results
 

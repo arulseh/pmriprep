@@ -1,12 +1,12 @@
 """DSC-DCE cross-validation visualization.
 
-Generates a 3-panel QC figure for DSC-DCE cross-validation:
+Generates a 3-panel QC figure for DSC-DCE comparison:
   Panel 1: vp vs CBV scatter (converted to common CBV-equivalent units)
   Panel 2: Bland-Altman plot (in CBV-equivalent units)
   Panel 3: Spatial ratio map (axial slice, diverging colormap)
 
-When the cross-validation is circular (vp deterministically derived from
-CBV), all three panels display informational text instead of plots.
+When DSC nCBV supplied the vp prior, the panels instead diagnose departure
+from that soft constraint; they are not presented as independent validation.
 
 Uses the colorblind-safe palette from qc_standards.py.
 """
@@ -19,17 +19,11 @@ import numpy as np
 import numpy.typing as npt
 
 from pmriprep.utils.dce_constants import (
-    HEMATOCRIT_ARTERIAL,
-    MAX_NCBV_FOR_VALIDATION,
     MIN_NCBV_FOR_VALIDATION,
     NAWM_VP_REFERENCE,
 )
 from pmriprep.utils.dce_dsc_validation import (
-    MAX_CBV_FOR_VALIDATION,
-    MAX_VP_FOR_VALIDATION,
-    MIN_CBV_FOR_VALIDATION,
-    MIN_VP_FOR_VALIDATION,
-    get_expected_ratio,
+    build_vp_cbv_validation_mask,
 )
 
 logger = logging.getLogger(__name__)
@@ -43,9 +37,7 @@ def generate_xval_plot(
     subject_id: str = "",
     session_id: str = "",
     output_path: Optional[str] = None,
-    hematocrit: float = HEMATOCRIT_ARTERIAL,
     model_selection: Optional[npt.NDArray[Any]] = None,
-    use_ncbv_scale: bool = False,
 ) -> str:
     """Generate a 3-panel cross-validation QC figure.
 
@@ -54,10 +46,7 @@ def generate_xval_plot(
     vp_data : npt.NDArray[Any]
         3D vp map (fraction, 0-1).
     cbv_data : npt.NDArray[Any]
-        3D CBV map. If ``use_ncbv_scale=False`` (default), treated
-        as absolute/relative CBV in mL/100g. If True, treated as
-        dimensionless NAWM-normalized CBV (nCBV) and the axes, filtering
-        bounds, identity line and ratio map are switched accordingly.
+        3D dimensionless NAWM-normalized CBV (nCBV) map.
     mask : npt.NDArray[Any]
         3D brain mask.
     validation_result : dict[str, Any]
@@ -68,16 +57,10 @@ def generate_xval_plot(
         BIDS session ID.
     output_path : str, optional
         Output PNG path. If None, uses cwd.
-    hematocrit : float, optional
-        Hematocrit for unit conversion (absolute-CBV path only).
     model_selection : npt.NDArray[Any], optional
         Optional 3D model selection map (int8).
         When provided, scatter points are colored by model
         (0=unfitted, 1=Patlak, 2=Tofts, 3=ExtTofts, 4=2CXM).
-    use_ncbv_scale : bool, optional
-        When True, plot with the nCBV-anchored expected
-        ratio (NAWM_VP_REFERENCE ≈ 0.02) and dimensionless axes to match
-        the validation metrics computed under ``use_ncbv_scale=True``.
 
     Returns
     -------
@@ -95,24 +78,13 @@ def generate_xval_plot(
     if output_path is None:
         output_path = str(Path.cwd() / "dsc_dce_xval.png")
 
-    if use_ncbv_scale:
-        expected_ratio = NAWM_VP_REFERENCE
-        cbv_min = MIN_NCBV_FOR_VALIDATION
-        cbv_max = MAX_NCBV_FOR_VALIDATION
-        cbv_axis_label = "DSC nCBV (NAWM-normalized)"
-        cbv_from_vp_label = "DCE vp-derived nCBV"
-        mean_axis_label = "Mean nCBV"
-        ratio_label = "vp/nCBV ratio"
-        cbv_unit_factor = 1.0  # vp and nCBV both dimensionless
-    else:
-        expected_ratio = get_expected_ratio(hematocrit)
-        cbv_min = MIN_CBV_FOR_VALIDATION
-        cbv_max = MAX_CBV_FOR_VALIDATION
-        cbv_axis_label = "DSC CBV (mL/100g)"
-        cbv_from_vp_label = "DCE vp-derived CBV (mL/100g)"
-        mean_axis_label = "Mean CBV (mL/100g)"
-        ratio_label = "(vp*100)/CBV ratio"
-        cbv_unit_factor = 100.0  # vp fraction → vp*100 → mL/100mL
+    expected_ratio = NAWM_VP_REFERENCE
+    cbv_min = MIN_NCBV_FOR_VALIDATION
+    cbv_axis_label = "DSC nCBV (NAWM-normalized)"
+    cbv_from_vp_label = "DCE vp-derived nCBV"
+    mean_axis_label = "Mean nCBV"
+    ratio_label = "vp/nCBV ratio"
+    cbv_unit_factor = 1.0
 
     # Extract valid voxels — two masks:
     #   valid_plot: all finite nonzero brain voxels (gray background layer)
@@ -127,13 +99,10 @@ def generate_xval_plot(
         & (vp_masked > 0)
         & (cbv_masked > 0)
     )
-    valid_metrics = (
-        valid_plot
-        & (vp_masked > MIN_VP_FOR_VALIDATION)
-        & (cbv_masked > cbv_min)
-        & (vp_masked < MAX_VP_FOR_VALIDATION)
-        & (cbv_masked < cbv_max)
+    metric_mask_3d = build_vp_cbv_validation_mask(
+        vp_data, cbv_data, mask_bool
     )
+    valid_metrics = metric_mask_3d[mask_bool]
     vp_valid = vp_masked[valid_metrics]
     cbv_valid = cbv_masked[valid_metrics]
 
@@ -147,9 +116,7 @@ def generate_xval_plot(
     if model_selection is not None:
         model_sel_valid = model_selection[mask_bool][valid_metrics]
 
-    # Project vp onto the CBV scale for scatter/BA comparison.
-    # Absolute path: cbv_equiv = vp * 100 / expected_ratio (mL/100g).
-    # nCBV path:     cbv_equiv = vp / expected_ratio (dimensionless).
+    # Project vp onto the dimensionless nCBV scale for comparison.
     if expected_ratio > 0:
         cbv_from_vp = vp_valid * cbv_unit_factor / expected_ratio
         cbv_from_vp_oob = vp_oob * cbv_unit_factor / expected_ratio
@@ -157,23 +124,34 @@ def generate_xval_plot(
         cbv_from_vp = vp_valid * cbv_unit_factor
         cbv_from_vp_oob = vp_oob * cbv_unit_factor
 
+    is_constrained = validation_result.get("constraint_mode") == "soft"
+    constraint_width_value = validation_result.get("constraint_relative_width")
+    constraint_width = (
+        float(constraint_width_value)
+        if isinstance(constraint_width_value, (int, float))
+        else None
+    )
+
     fig, axes = plt.subplots(1, 3, figsize=(15, 4.5))
     fig.suptitle(
-        qc_figure_title(subject_id, session_id, "DSC-DCE Cross-Validation"),
+        qc_figure_title(
+            subject_id,
+            session_id,
+            "DSC-informed vp Constraint Diagnostic"
+            if is_constrained else "DSC-DCE Cross-Validation",
+        ),
         fontsize=12,
         fontweight="bold",
     )
 
-    is_circular = validation_result.get("circular", False)
     has_metrics = len(vp_valid) >= 10
 
     # ---- Panel 1: Scatter (vp-derived CBV vs DSC CBV) ----
     ax = axes[0]
-    if is_circular or np.sum(valid_plot) < 10:
+    if np.sum(valid_plot) < 10:
         ax.text(
             0.5, 0.5,
-            "vp derived from CBV\nscatter not informative"
-            if is_circular else "Insufficient valid voxels",
+            "Insufficient valid voxels",
             transform=ax.transAxes, ha="center", va="center",
             fontsize=10, style="italic",
             bbox=dict(boxstyle="round,pad=0.5", facecolor="#f0f0f0"),
@@ -183,7 +161,7 @@ def generate_xval_plot(
         # Subsample for performance
         rng = np.random.default_rng(42)
 
-        # Gray background: out-of-bounds voxels
+        # Gray context: finite positive voxels excluded from the metrics.
         if len(cbv_oob) > 0:
             n_oob = min(5000, len(cbv_oob))
             idx_oob = rng.choice(len(cbv_oob), size=n_oob, replace=False)
@@ -192,7 +170,7 @@ def generate_xval_plot(
                 s=1, alpha=0.12, color="0.6", rasterized=True, zorder=1,
             )
 
-        # Colored foreground: in-bounds voxels
+        # Colored foreground: the exact voxel domain used by the metrics.
         if has_metrics:
             n_pts = min(5000, len(cbv_valid))
             idx = rng.choice(len(cbv_valid), size=n_pts, replace=False)
@@ -230,11 +208,27 @@ def generate_xval_plot(
                     color=COLORBLIND_PALETTE.error, linewidth=1,
                     label="identity")
 
+            if is_constrained and constraint_width is not None:
+                x_line = np.linspace(0, lim_max, 100)
+                ax.fill_between(
+                    x_line,
+                    x_line * (1.0 - constraint_width),
+                    x_line * (1.0 + constraint_width),
+                    color=COLORBLIND_PALETTE.warning,
+                    alpha=0.18,
+                    label=f"prior ±{constraint_width:.0%}",
+                )
+                ax.legend(fontsize=7, loc="lower right")
+
             metrics = validation_result.get("metrics", {})
             rho = metrics.get("correlation", 0.0)
             r_pearson = metrics.get("pearson_correlation", 0.0)
             ax.text(
-                0.05, 0.92, f"\u03c1 = {rho:.3f} (r = {r_pearson:.3f})",
+                0.05,
+                0.92,
+                "Constraint-coupled"
+                if is_constrained
+                else f"\u03c1 = {rho:.3f} (r = {r_pearson:.3f})",
                 transform=ax.transAxes, fontsize=9,
                 bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8),
             )
@@ -253,22 +247,60 @@ def generate_xval_plot(
 
     ax.grid(True, alpha=0.3)
 
-    # ---- Panel 2: Bland-Altman ----
+    # ---- Panel 2: constraint departure or Bland-Altman ----
     ax = axes[1]
-    if is_circular or np.sum(valid_plot) < 10:
+    if np.sum(valid_plot) < 10:
         ax.text(
             0.5, 0.5,
-            "vp derived from CBV\nBland-Altman not informative"
-            if is_circular else "Insufficient valid voxels",
+            "Insufficient valid voxels",
             transform=ax.transAxes, ha="center", va="center",
             fontsize=10, style="italic",
             bbox=dict(boxstyle="round,pad=0.5", facecolor="#f0f0f0"),
         )
-        ax.set_title("Bland-Altman", fontsize=10)
+        ax.set_title(
+            "Fractional Constraint Departure" if is_constrained else "Bland-Altman",
+            fontsize=10,
+        )
+    elif is_constrained:
+        if has_metrics:
+            vp_reference = expected_ratio * cbv_valid
+            departure = vp_valid / vp_reference - 1.0
+            finite_departure = departure[np.isfinite(departure)]
+            ax.hist(
+                finite_departure,
+                bins=60,
+                color=COLORBLIND_PALETTE.primary,
+                alpha=0.8,
+            )
+            ax.axvline(0.0, color="black", linewidth=1, linestyle="--")
+            if constraint_width is not None:
+                ax.axvline(
+                    -constraint_width,
+                    color=COLORBLIND_PALETTE.warning,
+                    linewidth=1,
+                )
+                ax.axvline(
+                    constraint_width,
+                    color=COLORBLIND_PALETTE.warning,
+                    linewidth=1,
+                )
+            median_departure = float(np.median(finite_departure))
+            ax.text(
+                0.95,
+                0.92,
+                f"median={median_departure:+.1%}",
+                transform=ax.transAxes,
+                fontsize=8,
+                ha="right",
+                bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8),
+            )
+        ax.set_xlabel("(vp − DSC-informed vp) / DSC-informed vp", fontsize=9)
+        ax.set_ylabel("Voxels", fontsize=9)
+        ax.set_title("Fractional Constraint Departure", fontsize=10)
     else:
         rng = np.random.default_rng(42)
 
-        # Gray background: out-of-bounds BA points
+        # Gray context: finite positive voxels excluded from the metrics.
         if len(cbv_oob) > 0:
             n_oob = min(5000, len(cbv_oob))
             idx_oob = rng.choice(len(cbv_oob), size=n_oob, replace=False)
@@ -279,7 +311,7 @@ def generate_xval_plot(
                 s=1, alpha=0.12, color="0.6", rasterized=True, zorder=1,
             )
 
-        # Colored foreground: in-bounds BA points
+        # Colored foreground: the exact voxel domain used by the metrics.
         if has_metrics:
             n_pts = min(5000, len(cbv_valid))
             idx = rng.choice(len(cbv_valid), size=n_pts, replace=False)
@@ -340,11 +372,10 @@ def generate_xval_plot(
 
     # ---- Panel 3: Spatial ratio map ----
     ax = axes[2]
-    if is_circular or np.sum(valid_plot) < 10:
+    if np.sum(valid_plot) < 10:
         ax.text(
             0.5, 0.5,
-            "vp derived from CBV\nratio map uniform by construction"
-            if is_circular else "Insufficient valid voxels",
+            "Insufficient valid voxels",
             transform=ax.transAxes, ha="center", va="center",
             fontsize=10, style="italic",
             bbox=dict(boxstyle="round,pad=0.5", facecolor="#f0f0f0"),
@@ -353,20 +384,13 @@ def generate_xval_plot(
         ax.axis("off")
     else:
         ratio_3d = np.full(vp_data.shape, np.nan)
-        valid_3d = (
-            mask_bool
-            & (vp_data > MIN_VP_FOR_VALIDATION)
-            & (cbv_data > cbv_min)
-            & np.isfinite(vp_data)
-            & np.isfinite(cbv_data)
-        )
         cbv_safe = np.maximum(cbv_data, cbv_min)
-        ratio_3d[valid_3d] = (
-            vp_data[valid_3d] * cbv_unit_factor
-        ) / cbv_safe[valid_3d]
+        ratio_3d[metric_mask_3d] = (
+            vp_data[metric_mask_3d] * cbv_unit_factor
+        ) / cbv_safe[metric_mask_3d]
 
         # Get axial slice with most valid voxels
-        n_valid_per_slice = np.sum(valid_3d, axis=(0, 1))
+        n_valid_per_slice = np.sum(metric_mask_3d, axis=(0, 1))
         if np.any(n_valid_per_slice > 0):
             best_slice = int(np.argmax(n_valid_per_slice))
         else:
@@ -379,12 +403,17 @@ def generate_xval_plot(
         # near-white center (RGB ~0.87), which represents the expected ratio.
         cmap = plt.get_cmap("coolwarm").copy()
         cmap.set_bad(color="black")
-        # Colorbar span is a multiplicative factor of the expected ratio so
-        # it works on both scales (0.669 absolute, 0.02 nCBV) without
-        # saturating one path or compressing the other.
-        half_span = expected_ratio * 0.75
-        vmin = max(0.0, expected_ratio - half_span)
-        vmax = expected_ratio + half_span
+        from pmriprep.utils.dce_constants import (
+            VP_NCBV_RATIO_MAX,
+            VP_NCBV_RATIO_MIN,
+        )
+
+        if is_constrained and constraint_width is not None:
+            vmin = expected_ratio * (1.0 - constraint_width)
+            vmax = expected_ratio * (1.0 + constraint_width)
+        else:
+            vmin = VP_NCBV_RATIO_MIN
+            vmax = VP_NCBV_RATIO_MAX
         norm = TwoSlopeNorm(vcenter=expected_ratio, vmin=vmin, vmax=vmax)
         im = ax.imshow(
             slice_2d,

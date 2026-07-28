@@ -26,7 +26,6 @@ from .conftest import (
     fine_grid_forward,
     generate_dsc_aif_dro,
     generate_k2_dro_phantom,
-    generate_leaky_dsc_tissue_bidirectional,
     make_exponential_residue,
 )
 

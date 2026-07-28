@@ -12,11 +12,13 @@ detection-method block + ``AIFDependent`` + ``TemplateAIFUsage`` tags.
 """
 from __future__ import annotations
 
-from typing import Optional
+from dataclasses import dataclass
+from typing import Callable, Optional
 
 import nipype.interfaces.utility as niu  # type: ignore[import-untyped]
 import nipype.pipeline.engine as pe  # type: ignore[import-untyped]
 
+from pmriprep.config.constants import HDGLIO_BIDS_LABELS
 from pmriprep.interfaces.qc_writers import (
     DSCFiguresWriter,
     PMRIPrepDataSink,
@@ -29,56 +31,84 @@ from pmriprep.interfaces.qc_writers import (
 # ---------------------------------------------------------------------------
 
 
-# Always-present DSC perfusion maps. Each entry:
-# (input_attr, desc_value, suffix, description, units, map_key, extra_fields)
-_CORE_MAPS: tuple[tuple[str, str, str, str, str, str, dict | None], ...] = (
-    ("mtt_map", "dsc", "mtt", "Mean transit time", "s", "mtt",
-     {"MTTMethod": "auc_cbv_over_cbf"}),
-    ("tmax_map", "dsc", "tmax", "Time to maximum of residue function", "s", "tmax", None),
-    ("psr_map", "dsc", "psr", "Percent signal recovery", "%", "psr", None),
-    ("ph_map", "dsc", "ph", "Peak height", "arbitrary", "ph", None),
+@dataclass(frozen=True)
+class DSCMapSpec:
+    """Declarative specification for one regular DSC perfusion-map sink."""
+
+    in_attr: str
+    desc: str
+    suffix: str
+    description: str
+    units: str | None
+    map_key: str
+    extra: dict[str, object] | None = None
+
+
+@dataclass(frozen=True)
+class DSCAnatSpec:
+    """Declarative specification for one anatomical DSC-space sink."""
+
+    in_attr: str
+    desc: str | None
+    suffix: str
+    description: str
+    skull_stripped: bool = False
+    mask_type: str | None = None
+    ceagent: str | None = None
+    dismiss_entities: tuple[str, ...] = ("acquisition",)
+    source_attr: str = "source_dsc"
+    segmentation_labels: dict[str, str] | None = None
+
+
+# Always-present DSC perfusion maps.
+_CORE_MAPS: tuple[DSCMapSpec, ...] = (
+    DSCMapSpec("mtt_map", "dsc", "mtt", "Mean transit time", "s", "mtt",
+               {"MTTMethod": "auc_cbv_over_cbf"}),
+    DSCMapSpec("tmax_map", "dsc", "tmax", "Time to maximum of residue function", "s", "tmax"),
+    DSCMapSpec("psr_map", "dsc", "psr", "Percent signal recovery", "%", "psr"),
+    DSCMapSpec("ph_map", "dsc", "ph", "Peak height", "%", "ph"),
 )
 
 
-# Relative maps (always produced, but inputs may be undefined). Note the
-# bids_suffix/desc remap retained from the legacy writer for back-compat.
-_REL_MAPS: tuple[tuple[str, str, str, str, str, str, dict | None], ...] = (
-    ("rel_cbf_map", "dscRel", "cbf",
-     "Cerebral blood flow (relative)", "1/min", "cbf", None),
-    ("rel_cbv_map", "dscRel", "cbv",
+# Relative maps (always produced, but inputs may be undefined). The
+# bids_suffix/desc mapping defines the public derivative naming contract.
+_REL_MAPS: tuple[DSCMapSpec, ...] = (
+    DSCMapSpec("rel_cbf_map", "dscRel", "cbf",
+     "Cerebral blood flow (relative)", "1/min", "cbf"),
+    DSCMapSpec("rel_cbv_map", "dscRel", "cbv",
      "Cerebral blood volume (relative, deconvolution)", "arbitrary", "cbv",
      {"CBVMethod": "deconvolution_residue_integral"}),
-    ("rel_cbv_auc_map", "dscRelAUC", "cbv",
+    DSCMapSpec("rel_cbv_auc_map", "dscRelAUC", "cbv",
      "Cerebral blood volume (K2-corrected full-bolus AUC, relative)",
      "arbitrary", "cbv_auc",
      {"CBVMethod": "k2_corrected_full_bolus_auc"}),
-    ("rel_auc_raw_map", "dscRel", "auc",
-     "AUC raw concentration (relative)", "arbitrary", "auc", None),
-    ("rel_auc_corr_map", "dscRelCorrected", "auc",
-     "AUC corrected concentration (relative)", "arbitrary", "rel_auc_corr", None),
+    DSCMapSpec("rel_auc_raw_map", "dscRel", "auc",
+     "AUC raw concentration (relative)", "arbitrary", "auc"),
+    DSCMapSpec("rel_auc_corr_map", "dscRelCorrected", "auc",
+     "AUC corrected concentration (relative)", "arbitrary", "rel_auc_corr"),
 )
 
 
 # Optional maps with per-map desc + bids_suffix
-_OPTIONAL_MAPS: tuple[tuple[str, str, str, str, str | None, str, dict | None], ...] = (
-    ("ttp_map", "dsc", "ttp", "Time to peak concentration", "s", "ttp",
+_OPTIONAL_MAPS: tuple[DSCMapSpec, ...] = (
+    DSCMapSpec("ttp_map", "dsc", "ttp", "Time to peak concentration", "s", "ttp",
      {"ReferencePoint": "start of acquisition (volume 0)"}),
-    ("ttp_corrected_map", "dscAifCorrected", "ttp",
+    DSCMapSpec("ttp_corrected_map", "dscAifCorrected", "ttp",
      "Time to peak, corrected for AIF bolus arrival delay. "
      "Comparable across patients and centers.",
      "s", "ttpCorrected",
      {"ReferencePoint": "AIF bolus arrival time"}),
-    ("rttp_map", "dscNawmRel", "ttp",
+    DSCMapSpec("rttp_map", "dscNawmRel", "ttp",
      "Time to peak relative to contralateral NAWM median. "
      "Positive values indicate delayed perfusion.",
      "s", "rttp",
      {"ReferencePoint": "contralateral NAWM median TTP"}),
-    ("cnr_map", "dsc", "cnr", "Contrast-to-noise ratio", "arbitrary", "cnr", None),
-    ("auc_diff_map", "dscLeakage", "auc",
-     "Leakage contribution (AUC_raw - AUC_corr)", None, "auc_diff", None),
-    ("snr_map", "dsc", "snr", "Signal-to-noise ratio (baseline)", "arbitrary", "snr", None),
-    ("tsnr_map", "dsc", "tsnr", "Temporal signal-to-noise ratio", "arbitrary", "tsnr", None),
-    ("rel_cbv_firstpass_map", "dscRelFirstPass", "cbv",
+    DSCMapSpec("cnr_map", "dsc", "cnr", "Contrast-to-noise ratio", "arbitrary", "cnr"),
+    DSCMapSpec("auc_diff_map", "dscLeakage", "auc",
+     "Leakage contribution (AUC_raw - AUC_corr)", "arbitrary", "auc_diff"),
+    DSCMapSpec("snr_map", "dsc", "snr", "Signal-to-noise ratio (baseline)", "arbitrary", "snr"),
+    DSCMapSpec("tsnr_map", "dsc", "tsnr", "Temporal signal-to-noise ratio", "arbitrary", "tsnr"),
+    DSCMapSpec("rel_cbv_firstpass_map", "dscRelFirstPass", "cbv",
      "First-pass cerebral blood volume, relative. "
      "Stroke / non-tumor first-pass convention.",
      "arbitrary", "cbv_firstpass",
@@ -103,9 +133,10 @@ _OPTIONAL_MAPS: tuple[tuple[str, str, str, str, str | None, str, dict | None], .
          ),
          "Estimator": (
              "per-voxel gamma-variate fit to the first pass (decoupled "
-             "log-linear form, y-squared weighted); CBV is the analytic gamma "
-             "area, so recirculation and washout are excluded. A light fixed-FWHM "
-             "spatial pre-smoothing raises the per-voxel fit CNR"
+             "log-linear form, y-squared weighted, with onset profiling and "
+             "first-credible-peak selection); CBV is the analytic gamma area, "
+             "so recirculation and washout are excluded. A light mask-normalized "
+             "fixed-FWHM spatial pre-smoothing raises the per-voxel fit CNR"
          ),
          "UnfittableVoxels": (
              "voxels whose gamma fit is rejected are left NaN, not filled by a "
@@ -126,36 +157,89 @@ _OPTIONAL_MAPS: tuple[tuple[str, str, str, str, str | None, str, dict | None], .
 
 
 # Normalized maps
-_NORMALIZED_MAPS: tuple[tuple[str, str, str, str, str, str, dict | None], ...] = (
-    ("ncbv_map", "dscNawmNorm", "cbv",
-     "Normalized CBV (NAWM-normalized)", "1", "ncbv", None),
-    ("ncbf_map", "dscNawmNorm", "cbf",
-     "Normalized CBF (NAWM-normalized)", "1", "ncbf", None),
+_NORMALIZED_MAPS: tuple[DSCMapSpec, ...] = (
+    DSCMapSpec("ncbv_map", "dscNawmNorm", "cbv",
+     "Normalized CBV (NAWM-normalized)", "1", "ncbv"),
+    DSCMapSpec("ncbf_map", "dscNawmNorm", "cbf",
+     "Normalized CBF (NAWM-normalized)", "1", "ncbf"),
 )
 
 
 # Vascular model parameters
-_VASCULAR_MAPS: tuple[tuple[str, str, str, str, str | None, str, dict | None], ...] = (
-    ("alpha_map", "dsc", "alpha", "Vascular model alpha parameter", None, "alpha", None),
-    ("beta_map", "dsc", "beta", "Vascular model beta parameter", None, "beta", None),
-    ("cth_map", "dsc", "cth", "Capillary transit time heterogeneity", None, "cth", None),
+_VASCULAR_MAPS: tuple[DSCMapSpec, ...] = (
+    DSCMapSpec("alpha_map", "dsc", "alpha", "Vascular model alpha parameter", "1", "alpha"),
+    DSCMapSpec("beta_map", "dsc", "beta", "Vascular model beta parameter", "s", "beta"),
+    DSCMapSpec("cth_map", "dsc", "cth", "Capillary transit time heterogeneity", "s", "cth"),
 )
 
 
-# Bayesian uncertainty maps. Same shape as above.
-_BAYESIAN_MAPS: tuple[tuple[str, str, str, str, None, str, None], ...] = (
-    ("cbf_std_map", "dscUncertainty", "cbf", "CBF uncertainty (posterior std)", None, "cbf_std", None),
-    ("cbv_std_map", "dscUncertainty", "cbv", "CBV uncertainty (posterior std)", None, "cbv_std", None),
-    ("cbf_cv_map", "dscCV", "cbf", "CBF coefficient of variation", None, "cbfCV", None),
-    ("cbv_cv_map", "dscCV", "cbv", "CBV coefficient of variation", None, "cbvCV", None),
-    ("cbf_ci95_lower_map", "dscCI95lower", "cbf",
-     "CBF 95% credible interval lower bound", None, "cbfCI95lower", None),
-    ("cbf_ci95_upper_map", "dscCI95upper", "cbf",
-     "CBF 95% credible interval upper bound", None, "cbfCI95upper", None),
-    ("cbv_ci95_lower_map", "dscCI95lower", "cbv",
-     "CBV 95% credible interval lower bound", None, "cbvCI95lower", None),
-    ("cbv_ci95_upper_map", "dscCI95upper", "cbv",
-     "CBV 95% credible interval upper bound", None, "cbvCI95upper", None),
+# CBF uncertainty maps. CBV is derived and lacks retained joint covariance.
+_UNCERTAINTY_MAPS: tuple[DSCMapSpec, ...] = (
+    DSCMapSpec("cbf_std_map", "dscUncertainty", "cbf", "CBF absolute parameter uncertainty", "1/min", "cbf_std"),
+    DSCMapSpec("cbf_cv_map", "dscCV", "cbf", "CBF relative parameter uncertainty", "1", "cbfCV"),
+    DSCMapSpec("cbf_ci95_lower_map", "dscCI95lower", "cbf",
+     "CBF 95% credible interval lower bound", "1/min", "cbfCI95lower"),
+    DSCMapSpec("cbf_ci95_upper_map", "dscCI95upper", "cbf",
+     "CBF 95% credible interval upper bound", "1/min", "cbfCI95upper"),
+)
+
+
+_ANAT_MASKS: tuple[DSCAnatSpec, ...] = (
+    DSCAnatSpec(
+        "brain_mask_dsc", "brain", "mask", "Brain mask in DSC space",
+        skull_stripped=True, mask_type="Brain",
+        dismiss_entities=("acquisition", "ceagent"),
+    ),
+    DSCAnatSpec(
+        "nawm_mask_dsc", "nawm", "mask",
+        "Normal-appearing white matter mask in DSC space",
+        mask_type="ROI", dismiss_entities=(), source_attr="source_t1w",
+    ),
+    DSCAnatSpec(
+        "lesion_mask_dsc", "lesion", "dseg",
+        "Tumor segmentation registered to DSC space",
+        dismiss_entities=(), source_attr="source_t1w",
+        segmentation_labels=dict(HDGLIO_BIDS_LABELS),
+    ),
+    DSCAnatSpec(
+        "user_lesion_mask_dsc", "userLesion", "mask",
+        "User-supplied lesion mask in DSC native space", mask_type="Lesion",
+    ),
+    DSCAnatSpec(
+        "roi_mask_dsc", "roi", "mask", "ROI mask registered to DSC space",
+        mask_type="ROI",
+    ),
+)
+
+
+_STRUCTURAL_UNDERLAYS: tuple[DSCAnatSpec, ...] = (
+    DSCAnatSpec(
+        "t1w_in_dsc", None, "T1w", "Pre-contrast T1w registered to DSC space",
+        dismiss_entities=(), source_attr="source_t1w",
+    ),
+    DSCAnatSpec(
+        "t1w_postcon_in_dsc", None, "T1w",
+        "Post-contrast T1w registered to DSC space", ceagent="GAD",
+        dismiss_entities=(), source_attr="source_t1w_postcon",
+    ),
+    DSCAnatSpec(
+        "t1w_subtraction_in_dsc", "subtraction", "T1w",
+        "Post-pre T1w subtraction registered to DSC space",
+        dismiss_entities=(), source_attr="source_t1w",
+    ),
+    DSCAnatSpec(
+        "flair_in_dsc", None, "FLAIR", "FLAIR registered to DSC space",
+        dismiss_entities=(), source_attr="source_flair",
+    ),
+    DSCAnatSpec(
+        "flair_postcon_in_dsc", None, "FLAIR",
+        "Post-contrast FLAIR registered to DSC space", ceagent="GAD",
+        dismiss_entities=(), source_attr="source_flair_postcon",
+    ),
+    DSCAnatSpec(
+        "t2w_in_dsc", None, "T2w", "T2w registered to DSC space",
+        dismiss_entities=(), source_attr="source_t2w",
+    ),
 )
 
 
@@ -163,8 +247,8 @@ _BAYESIAN_MAPS: tuple[tuple[str, str, str, str, None, str, None], ...] = (
 #: Used by the drift-guard test in ``test_dsc_outputs_sidecar.py`` to verify
 #: every emitted key is registered in :data:`TEMPLATE_AIF_USAGE`.
 _DSC_OUTPUT_KEYS: frozenset[str] = frozenset(
-    [m[5] for m in _CORE_MAPS + _REL_MAPS + _OPTIONAL_MAPS
-     + _NORMALIZED_MAPS + _VASCULAR_MAPS + _BAYESIAN_MAPS]
+    [m.map_key for m in _CORE_MAPS + _REL_MAPS + _OPTIONAL_MAPS
+     + _NORMALIZED_MAPS + _VASCULAR_MAPS + _UNCERTAINTY_MAPS]
     + ["k2", "parametric_r2", "fallback",
        "rel_cbf", "rel_cbv", "rel_auc_corr", "ncbf", "ncbv", "mtt"]  # smoothed names
 )
@@ -175,16 +259,16 @@ _DSC_OUTPUT_KEYS: frozenset[str] = frozenset(
 # ---------------------------------------------------------------------------
 
 
-def _build_base(  # type: ignore[no-untyped-def]
-    source_paths,
-    reference_voxel_source,
-    bids_dir,
-    subject,
-    session,
-    provenance_dict=None,
-    qc_metrics=None,
-    minimal=False,
-):
+def _build_base(
+    source_paths: list[str],
+    reference_voxel_source: str,
+    bids_dir: str,
+    subject: str,
+    session: str,
+    provenance_dict: dict | None = None,
+    qc_metrics: dict | None = None,
+    minimal: bool = False,
+) -> dict:
     from pmriprep.utils.sidecar_builders import build_dsc_base_sidecar
 
     return build_dsc_base_sidecar(
@@ -199,17 +283,17 @@ def _build_base(  # type: ignore[no-untyped-def]
     )
 
 
-def _build_map_meta(  # type: ignore[no-untyped-def]
-    base,
-    description,
-    map_key,
-    qc_metrics=None,
-    units=None,
-    extra=None,
-    lesion_stats_json=None,
-    user_lesion_stats_json=None,
-    roi_stats_json=None,
-):
+def _build_map_meta(
+    base: dict,
+    description: str,
+    map_key: str,
+    qc_metrics: dict | None = None,
+    units: str | None = None,
+    extra: dict | None = None,
+    lesion_stats_json: str | None = None,
+    user_lesion_stats_json: str | None = None,
+    roi_stats_json: str | None = None,
+) -> dict:
     """Compose a DSC per-map sidecar; injects per-map stats fragments.
 
     Each aggregate stats JSON (lesion, user-lesion, ROI) is loaded when
@@ -225,6 +309,17 @@ def _build_map_meta(  # type: ignore[no-untyped-def]
     user_fragment = load_lesion_stats_fragment(user_lesion_stats_json, map_key)
 
     merged_extra = dict(extra) if extra else {}
+    if map_key in {"cbv_auc", "ncbv"}:
+        from pmriprep.workflows.dsc.datasinks import (
+            _build_signed_auc_cbv_provenance,
+        )
+
+        merged_extra["SignedEstimator"] = _build_signed_auc_cbv_provenance(
+            qc_metrics,
+            normalized=map_key == "ncbv",
+        )
+    if map_key == "fallback":
+        merged_extra["Type"] = "ROI"
     if fragment:
         merged_extra["LesionStats"] = fragment
     if user_fragment:
@@ -232,40 +327,114 @@ def _build_map_meta(  # type: ignore[no-untyped-def]
     roi_fragment = load_lesion_stats_fragment(roi_stats_json, map_key)
     if roi_fragment:
         merged_extra["ROIStats"] = roi_fragment
-    if not merged_extra:
-        merged_extra = extra
-
     return build_dsc_map_sidecar(
         base=base,
         description=description,
         map_key=map_key,
         qc_metrics=qc_metrics,
         units=units,
-        extra=merged_extra,
+        extra=merged_extra or extra,
     )
 
 
-def _build_minimal_meta(  # type: ignore[no-untyped-def]
-    base, description, skull_stripped=False,
-):
+def _build_minimal_meta(
+    base: dict,
+    description: str,
+    skull_stripped: bool = False,
+    mask_type: str | None = None,
+    segmentation_labels: dict[str, str] | None = None,
+) -> dict:
     out = dict(base)
     out["Description"] = description
     if skull_stripped:
         out["SkullStripped"] = True
+    if mask_type is not None:
+        out["Type"] = mask_type
+    if segmentation_labels:
+        out["LabelMap"] = dict(segmentation_labels)
     return out
 
 
-def _build_dsc_preproc_meta(  # type: ignore[no-untyped-def]
-    base,
-    description,
-    preload_qc=None,
-    preprocessing_stats=None,
-    qc_metrics=None,
-    provenance_dict=None,
-    preflight_warnings=None,
-    presence_warnings=None,
-    config_dict=None,
-):
+def _build_aif_mask_meta(
+    base: dict,
+    description: str,
+    qc_metrics: dict | None,
+) -> dict:
+    """Build an AIF ROI sidecar with the canonical DSC AIF block."""
+    from pmriprep.utils.aif_provenance import apply_aif_provenance_block
+
+    out = dict(base)
+    out["Description"] = description
+    out["Type"] = "ROI"
+    apply_aif_provenance_block(out, qc_metrics, modality="DSC")
+    return out
+
+
+def _build_underlay_meta(
+    base: dict,
+    description: str,
+    skull_stripped: bool,
+    mask_type: str | None,
+    structural_source: str,
+    perfusion_source: str,
+    bids_dir: str,
+    segmentation_labels: dict[str, str] | None = None,
+) -> dict:
+    """Build metadata for a structural image resampled to DSC space."""
+    from pmriprep.utils.sidecar_builders import build_sources_list
+
+    out = dict(base)
+    out["Description"] = description
+    if skull_stripped:
+        out["SkullStripped"] = True
+    if mask_type is not None:
+        out["Type"] = mask_type
+    if segmentation_labels:
+        out["LabelMap"] = dict(segmentation_labels)
+    out["Sources"] = build_sources_list(
+        [structural_source, perfusion_source], bids_dir,
+    )
+    return out
+
+
+def _build_transformed_mask_meta(
+    base: dict,
+    description: str,
+    skull_stripped: bool,
+    mask_type: str | None,
+    structural_sources: list[str],
+    perfusion_source: str,
+    bids_dir: str,
+    segmentation_labels: dict[str, str] | None = None,
+) -> dict:
+    """Build metadata for an anatomical mask transformed to DSC space."""
+    from pmriprep.utils.sidecar_builders import build_sources_list
+
+    out = dict(base)
+    out["Description"] = description
+    if skull_stripped:
+        out["SkullStripped"] = True
+    if mask_type is not None:
+        out["Type"] = mask_type
+    if segmentation_labels:
+        out["LabelMap"] = dict(segmentation_labels)
+    out["Sources"] = build_sources_list(
+        [*(structural_sources or []), perfusion_source], bids_dir,
+    )
+    return out
+
+
+def _build_dsc_preproc_meta(
+    base: dict,
+    description: str,
+    preload_qc: dict | None = None,
+    preprocessing_stats: dict | None = None,
+    qc_metrics: dict | None = None,
+    provenance_dict: dict | None = None,
+    preflight_warnings: list | None = None,
+    presence_warnings: list | None = None,
+    config_dict: dict | None = None,
+) -> dict:
     """Compose the ``desc-dscPreproc_dsc.json`` sidecar.
 
     Starts from the minimal-base meta, layers on flat-prefixed cosmetic
@@ -286,6 +455,7 @@ def _build_dsc_preproc_meta(  # type: ignore[no-untyped-def]
 
     out = dict(base)
     out["Description"] = description
+    out["SkullStripped"] = True
     if isinstance(config_dict, dict):
         out["MotionCorrectionApplied"] = bool(
             config_dict.get("motion_correct", True)
@@ -315,20 +485,25 @@ def _build_dsc_preproc_meta(  # type: ignore[no-untyped-def]
         out["PipelineQC"] = filter_pipeline_qc(qc_metrics)
     if isinstance(config_dict, dict):
         out["PipelineConfiguration"] = build_provenance_block(config_dict)
-    return sanitize_for_json(out)
+    return dict(sanitize_for_json(out))
 
 
-def _write_dsc_resume_checkpoint(  # type: ignore[no-untyped-def]
-    work_dir, subject_id, session_id,
-    aif_qc=None, preload_qc=None, preprocessing_stats=None,
-    motion_qc=None, aif_metrics=None,
-):
+def _write_dsc_resume_checkpoint(
+    work_dir: str,
+    subject_id: str,
+    session_id: str,
+    aif_qc: dict | None = None,
+    preload_qc: dict | None = None,
+    preprocessing_stats: dict | None = None,
+    motion_qc: dict | None = None,
+    aif_metrics: dict | None = None,
+) -> str:
     """Write the DSC→DCE handoff checkpoint to the work directory."""
     import json as _json
     from pathlib import Path
 
     if not isinstance(work_dir, str):
-        return None
+        return ""
 
     pp = dict(preprocessing_stats) if isinstance(preprocessing_stats, dict) else {}
     if isinstance(motion_qc, dict):
@@ -368,9 +543,16 @@ def _write_dsc_resume_checkpoint(  # type: ignore[no-untyped-def]
     return str(out_path)
 
 
-def _copy_xfm(  # type: ignore[no-untyped-def]
-    in_file, output_dir, subject, session, from_space, to_space, datatype="anat",
-):
+def _copy_xfm(
+    in_file: str,
+    output_dir: str,
+    subject: str,
+    session: str,
+    from_space: str,
+    to_space: str,
+    source_file: str | None = None,
+    datatype: str = "anat",
+) -> str:
     """Copy a transform .h5 into the derivatives ``anat/`` directory."""
     import logging
     import shutil
@@ -381,7 +563,7 @@ def _copy_xfm(  # type: ignore[no-untyped-def]
     # Defensive no-op when upstream registration produced no transform.
     # See pmriprep.workflows.dce.datasinks._copy_perf_map for the
     # sentinel-handling rationale.
-    if not isdefined(in_file) or in_file is None or in_file == "":
+    if not isdefined(in_file) or in_file == "":
         logging.getLogger("nipype.workflow").warning(
             "Skipping DSC _copy_xfm sink (from=%s, to=%s): upstream "
             "produced no output (in_file=%r)",
@@ -395,19 +577,26 @@ def _copy_xfm(  # type: ignore[no-untyped-def]
     out_root = out_root / datatype
     out_root.mkdir(parents=True, exist_ok=True)
 
-    prefix = f"sub-{subject}"
-    if session:
-        prefix += f"_ses-{session}"
+    from pmriprep.utils.sidecar_builders import source_entity_prefix
+
+    prefix = source_entity_prefix(source_file, subject, session)
     fname = f"{prefix}_from-{from_space}_to-{to_space}_mode-image_xfm.h5"
     out_path = out_root / fname
     shutil.copy2(in_file, out_path)
     return str(out_path)
 
 
-def _copy_perf_map(  # type: ignore[no-untyped-def]
-    in_file, output_dir, subject, session, desc, suffix, meta_dict,
-    datatype="perf", bids_suffix="stat",
-):
+def _copy_perf_map(
+    in_file: str,
+    output_dir: str,
+    subject: str,
+    session: str,
+    desc: str,
+    suffix: str,
+    meta_dict: dict,
+    datatype: str = "perf",
+    bids_suffix: str = "stat",
+) -> str:
     """Copy a DSC perfusion map + write its sidecar with BIDS-compliant naming.
 
     ``suffix`` is the parameter name (e.g. ``"mtt"``, ``"cbf"``) which
@@ -427,7 +616,7 @@ def _copy_perf_map(  # type: ignore[no-untyped-def]
     # the sentinel-handling rationale (Undefined/None/"" all need
     # explicit handling because isdefined(None) == True is a Nipype
     # gotcha).
-    if not isdefined(in_file) or in_file is None or in_file == "":
+    if not isdefined(in_file) or in_file == "":
         logging.getLogger("nipype.workflow").warning(
             "Skipping DSC _copy_perf_map sink (desc=%s, suffix=%s): upstream "
             "produced no output (in_file=%r)",
@@ -441,9 +630,10 @@ def _copy_perf_map(  # type: ignore[no-untyped-def]
     out_root = out_root / datatype
     out_root.mkdir(parents=True, exist_ok=True)
 
-    prefix = f"sub-{subject}"
-    if session:
-        prefix += f"_ses-{session}"
+    from pmriprep.utils.sidecar_builders import source_entity_prefix
+
+    sources = meta_dict.get("Sources", []) if isinstance(meta_dict, dict) else []
+    prefix = source_entity_prefix(sources[0] if sources else None, subject, session)
     folded = suffix[:1].upper() + suffix[1:] if suffix else ""
     stem = f"{prefix}_desc-{desc}{folded}_{bids_suffix}"
     nii_out = out_root / f"{stem}.nii.gz"
@@ -456,24 +646,26 @@ def _copy_perf_map(  # type: ignore[no-untyped-def]
     return str(nii_out)
 
 
-def _split_smooth_dict(  # type: ignore[no-untyped-def]
-    smooth_hemo=None, smooth_auc=None, fwhm=0.0,
-):
+def _split_smooth_dict(
+    smooth_hemo: dict[str, str] | None = None,
+    smooth_auc: dict[str, str] | None = None,
+    fwhm: float = 0.0,
+) -> tuple[list[str], list[str], list[str], list[str], list[str], list[str]]:
     """Flatten the two smoothed-map dicts into per-output ``(name, path, descs)`` tuples.
 
-    Returns three lists: ``in_files``, ``descs``, ``map_keys``,
-    ``map_suffixes``, ``desc_prefixes``, ``units_list`` matching the legacy
-    writer's templated naming (``dsc{Sm{N}}``, ``dscRel{Sm{N}}``, etc.).
+    Returns six lists: ``in_files``, ``descs``, ``map_keys``,
+    ``map_suffixes``, ``desc_prefixes``, and ``units_list`` matching the
+    derivative naming templates (``dsc{Sm{N}}``, ``dscRel{Sm{N}}``, etc.).
     """
     from pathlib import Path
     from nipype.interfaces.base import isdefined  # type: ignore[import-untyped]
 
-    out_files = []
-    out_descs = []
-    out_keys = []
-    out_map_suffixes = []
-    out_desc_prefixes = []
-    out_units = []
+    out_files: list[str] = []
+    out_descs: list[str] = []
+    out_keys: list[str] = []
+    out_map_suffixes: list[str] = []
+    out_desc_prefixes: list[str] = []
+    out_units: list[str] = []
 
     if not (isdefined(fwhm) and fwhm and float(fwhm) > 0):
         return out_files, out_descs, out_keys, out_map_suffixes, out_desc_prefixes, out_units
@@ -532,11 +724,9 @@ def _split_smooth_dict(  # type: ignore[no-untyped-def]
     return out_files, out_descs, out_keys, out_map_suffixes, out_desc_prefixes, out_units
 
 
-def _build_k2_extra(  # type: ignore[no-untyped-def]
-    preload_qc=None,
-):
+def _build_k2_extra(preload_qc: dict | None = None) -> dict:
     """Compose the K2 sidecar's ``extra`` dict from ``preload_qc``."""
-    extra = {"LeakageCorrectionMethod": "bsw"}
+    extra: dict[str, object] = {"LeakageCorrectionMethod": "bsw"}
     if isinstance(preload_qc, dict):
         method = preload_qc.get("k2_method")
         if method:
@@ -548,11 +738,9 @@ def _build_k2_extra(  # type: ignore[no-untyped-def]
     return extra
 
 
-def _build_parametric_extra(  # type: ignore[no-untyped-def]
-    qc_metrics=None,
-):
-    """FitMethod + InferenceEngine + FallbackThreshold from qc_metrics.deconvolution."""
-    extra = {"FallbackThreshold": 0.5}
+def _build_parametric_extra(qc_metrics: dict | None = None) -> dict:
+    """Build parametric-fit method, fallback, and denominator provenance."""
+    extra: dict[str, object] = {"FallbackThreshold": 0.5}
     if isinstance(qc_metrics, dict):
         deconv = qc_metrics.get("deconvolution") or {}
         if isinstance(deconv, dict):
@@ -560,45 +748,65 @@ def _build_parametric_extra(  # type: ignore[no-untyped-def]
                 extra["FitMethod"] = str(deconv["method"])
             if deconv.get("inference"):
                 extra["InferenceEngine"] = str(deconv["inference"])
+            for source, target in (
+                ("n_mask_voxels", "MaskVoxelCount"),
+                ("n_fit_admissible", "FitAdmissibleVoxelCount"),
+                ("n_fit_inadmissible", "FitInadmissibleVoxelCount"),
+                ("n_fallback_requested", "FallbackRequestedVoxelCount"),
+                ("n_fallback_attempted", "FallbackAttemptedVoxelCount"),
+                ("n_fallback_osvd", "FallbackSucceededVoxelCount"),
+                ("n_fallback_failed", "FallbackFailedVoxelCount"),
+                ("fallback_requested_rate", "FallbackRequestedFraction"),
+                ("fallback_rate", "FallbackSucceededFraction"),
+            ):
+                if source in deconv:
+                    extra[target] = deconv[source]
     return extra
 
 
-def _build_bayes_extra(  # type: ignore[no-untyped-def]
-    config_dict=None, umap_key="cbf_std",
-):
-    """EstimationMethod + UncertaintyMethod for Bayesian uncertainty maps."""
+def _build_uncertainty_extra(
+    config_dict: dict | None = None,
+    umap_key: str = "cbf_std",
+) -> dict:
+    """Build inference-specific provenance for CBF uncertainty maps."""
+    from pmriprep.utils.uncertainty_provenance import (
+        build_uncertainty_provenance,
+    )
+
     estimation = "unknown"
     if isinstance(config_dict, dict):
-        # Newer field is "inference"; legacy key was "bayesian".
-        estimation = (
-            config_dict.get("inference")
-            or config_dict.get("bayesian")
-            or "unknown"
-        )
-    if "CV" in umap_key:
-        kind = "coefficient_of_variation"
-    elif "CI95" in umap_key:
-        kind = "95pct_credible_interval"
-    else:
-        kind = "std"
-    return {
-        "EstimationMethod": str(estimation),
-        "UncertaintyMethod": kind,
-    }
+        estimation = config_dict.get("inference") or "unknown"
+    return build_uncertainty_provenance(
+        inference=str(estimation), map_key=umap_key, modality="DSC"
+    )
 
 
-def _build_smoothed_meta(  # type: ignore[no-untyped-def]
-    base, description, map_key, qc_metrics, units, fwhm,
-):
+def _build_smoothed_meta(
+    base: dict,
+    description: str,
+    map_key: str,
+    qc_metrics: dict | None,
+    units: str | None,
+    fwhm: float,
+) -> dict:
     from pmriprep.utils.sidecar_builders import build_dsc_map_sidecar
+    from pmriprep.workflows.dsc.datasinks import (
+        _build_signed_auc_cbv_provenance,
+    )
 
     extra = {
         "SmoothingFWHM": float(fwhm),
         "SmoothingType": "Gaussian",
-        "SmoothingMasked": True,
+        "OutputMaskApplied": True,
         "IntendedFor": "visualization",
         "Note": "Use non-smoothed maps for quantitative ROI analysis",
     }
+    if map_key in {"rel_cbv", "ncbv"}:
+        extra["SignedEstimator"] = _build_signed_auc_cbv_provenance(
+            qc_metrics,
+            normalized=map_key == "ncbv",
+            include_summary=False,
+        )
     return build_dsc_map_sidecar(
         base=base,
         description=description,
@@ -607,6 +815,42 @@ def _build_smoothed_meta(  # type: ignore[no-untyped-def]
         units=units or None,
         extra=extra,
     )
+
+
+def _build_signed_auc_cbv_provenance(
+    qc_metrics: dict | None,
+    normalized: bool = False,
+    include_summary: bool = True,
+) -> dict[str, object]:
+    """Describe signed AUC-CBV values and expose their in-brain frequency."""
+    provenance: dict[str, object] = {
+        "ValueDomain": "signed",
+        "NegativeValuesRetained": True,
+        "NegativeValueInterpretation": (
+            "Non-physiological estimator residuals from noise, baseline error, "
+            "motion, or leakage correction; values are not clipped to avoid "
+            "positive bias."
+        ),
+    }
+    if normalized:
+        provenance["NormalizationReferenceDomain"] = "finite_positive_NAWM"
+    if not include_summary or not isinstance(qc_metrics, dict):
+        return provenance
+    deconvolution = qc_metrics.get("deconvolution")
+    if not isinstance(deconvolution, dict):
+        return provenance
+    keys = {
+        "cbv_auc_finite_voxels": "FiniteInBrainVoxelCount",
+        "cbv_auc_negative_voxels": "NegativeInBrainVoxelCount",
+        "cbv_auc_negative_fraction": "NegativeInBrainVoxelFraction",
+    }
+    for source, target in keys.items():
+        value = deconvolution.get(source)
+        if value is not None:
+            provenance[target] = value
+    if "NegativeInBrainVoxelFraction" in provenance:
+        provenance["NegativeFractionDenominator"] = "finite_in_brain_voxels"
+    return provenance
 
 
 # ---------------------------------------------------------------------------
@@ -702,9 +946,12 @@ def _add_anat_sink(
     suffix: str,
     description: str,
     skull_stripped: bool = False,
+    mask_type: str | None = None,
     ce_value: Optional[str] = None,
     source_attr: str = "source_dsc",
     dismiss_entities: tuple = ("acquisition",),
+    segmentation_labels: dict[str, str] | None = None,
+    structural_sources_node: pe.Node | None = None,
 ) -> pe.Node:
     """Wire one anat/-side DSC sink (mask, structural underlay).
 
@@ -720,17 +967,53 @@ def _add_anat_sink(
     ``("acquisition", "ceagent")`` to drop ``ce-GAD`` since they were computed
     from pre-con T1w.
     """
+    is_underlay = source_attr != "source_dsc"
+    is_transformed_mask = is_underlay and suffix in {"mask", "dseg"}
+    meta_function: Callable[..., dict]
+    if is_transformed_mask:
+        meta_input_names = [
+            "base", "description", "skull_stripped", "mask_type",
+            "structural_sources", "perfusion_source", "bids_dir",
+            "segmentation_labels",
+        ]
+        meta_function = _build_transformed_mask_meta
+    elif is_underlay:
+        meta_input_names = [
+            "base", "description", "skull_stripped", "mask_type",
+            "structural_source", "perfusion_source", "bids_dir",
+            "segmentation_labels",
+        ]
+        meta_function = _build_underlay_meta
+    else:
+        meta_input_names = [
+            "base", "description", "skull_stripped", "mask_type",
+            "segmentation_labels",
+        ]
+        meta_function = _build_minimal_meta
     meta = pe.Node(
         niu.Function(
-            input_names=["base", "description", "skull_stripped"],
+            input_names=meta_input_names,
             output_names=["meta_dict"],
-            function=_build_minimal_meta,
+            function=meta_function,
         ),
         name=f"{name}_meta",
     )
     meta.inputs.description = description
     meta.inputs.skull_stripped = skull_stripped
+    meta.inputs.mask_type = mask_type
+    meta.inputs.segmentation_labels = segmentation_labels
     workflow.connect([(base_minimal_node, meta, [("meta_dict", "base")])])
+    if is_underlay:
+        workflow.connect(inputnode, "source_dsc", meta, "perfusion_source")
+        workflow.connect(inputnode, "bids_dir", meta, "bids_dir")
+        if is_transformed_mask:
+            if structural_sources_node is None:
+                raise ValueError(
+                    "structural_sources_node is required for anatomical masks"
+                )
+            workflow.connect(structural_sources_node, "out", meta, "structural_sources")
+        else:
+            workflow.connect(inputnode, source_attr, meta, "structural_source")
 
     sink = pe.Node(
         PMRIPrepDataSink(
@@ -769,7 +1052,7 @@ def _add_xfm_sink(
     sink = pe.Node(
         niu.Function(
             input_names=["in_file", "output_dir", "subject", "session",
-                         "from_space", "to_space", "datatype"],
+                         "from_space", "to_space", "source_file", "datatype"],
             output_names=["out_file"],
             function=_copy_xfm,
         ),
@@ -784,6 +1067,7 @@ def _add_xfm_sink(
             ("subject_id", "subject"),
             ("session_id", "session"),
             (in_attr, "in_file"),
+            (source_attr, "source_file"),
         ]),
     ])
     return sink
@@ -809,6 +1093,7 @@ def init_dsc_datasinks_wf(
     bids_dir: str,
     subject_id: str,
     session_id: Optional[str],
+    inference: str,
     present_inputs: Optional[set[str]] = None,
     has_smoothing: bool = False,
     motion_correct: bool = True,
@@ -849,10 +1134,9 @@ def init_dsc_datasinks_wf(
                 "ncbv_map", "ncbf_map",
                 # Vascular
                 "alpha_map", "beta_map", "cth_map",
-                # Bayesian uncertainty
-                "cbf_std_map", "cbv_std_map", "cbf_cv_map", "cbv_cv_map",
+                # Inference-specific CBF uncertainty
+                "cbf_std_map", "cbf_cv_map",
                 "cbf_ci95_lower_map", "cbf_ci95_upper_map",
-                "cbv_ci95_lower_map", "cbv_ci95_upper_map",
                 # Parametric diagnostics + leakage
                 "k2_map", "parametric_r2_map", "fallback_mask",
                 "preload_qc", "preprocessing_stats", "aif_qc",
@@ -869,6 +1153,8 @@ def init_dsc_datasinks_wf(
                 "roi_mask_dsc", "roi_stats_json",
                 "t1w_in_dsc", "t1w_postcon_in_dsc", "t1w_subtraction_in_dsc",
                 "flair_in_dsc", "flair_postcon_in_dsc", "t2w_in_dsc",
+                "source_t1w", "source_t1w_postcon",
+                "source_flair", "source_flair_postcon", "source_t2w",
                 "dsc_to_t1w_xfm", "t1w_to_dsc_xfm",
                 # Sidecar drivers
                 "qc_metrics", "provenance_dict", "preflight_warnings",
@@ -951,34 +1237,32 @@ def init_dsc_datasinks_wf(
         _CORE_MAPS, _REL_MAPS, _OPTIONAL_MAPS,
         _NORMALIZED_MAPS, _VASCULAR_MAPS,
     ):
-        for entry in table:
-            in_attr, desc_value, suffix, description, units, map_key, extra = entry
-            if in_attr not in present:
+        for spec in table:
+            if spec.in_attr not in present:
                 continue
             sink = _add_perf_map_sink(
                 workflow, inputnode, base_perf,
-                name=f"{in_attr}",
-                in_attr=in_attr,
-                desc_value=desc_value, suffix=suffix,
-                description=description, map_key=map_key,
-                units=units, extra=extra,
+                name=spec.in_attr,
+                in_attr=spec.in_attr,
+                desc_value=spec.desc, suffix=spec.suffix,
+                description=spec.description, map_key=spec.map_key,
+                units=spec.units, extra=spec.extra,
             )
             sink_outputs.append((sink, "out_file"))
 
-    # --- Bayesian uncertainty maps (extras built per-map from config_dict) ---
-    for entry in _BAYESIAN_MAPS:
-        in_attr, desc_value, suffix, description, units, map_key, _extra = entry
-        if in_attr not in present:
+    # --- Inference-specific CBF uncertainty maps ---
+    for spec in _UNCERTAINTY_MAPS:
+        if spec.in_attr not in present:
             continue
         bayes_extra = pe.Node(
             niu.Function(
                 input_names=["config_dict", "umap_key"],
                 output_names=["extra"],
-                function=_build_bayes_extra,
+                function=_build_uncertainty_extra,
             ),
-            name=f"{in_attr}_extra",
+            name=f"{spec.in_attr}_extra",
         )
-        bayes_extra.inputs.umap_key = map_key
+        bayes_extra.inputs.umap_key = spec.map_key
         workflow.connect(inputnode, "config_dict", bayes_extra, "config_dict")
         bayes_meta = pe.Node(
             niu.Function(
@@ -988,11 +1272,23 @@ def init_dsc_datasinks_wf(
                 output_names=["meta_dict"],
                 function=_build_map_meta,
             ),
-            name=f"{in_attr}_meta",
+            name=f"{spec.in_attr}_meta",
         )
+        is_nlls = inference.lower() == "nlls"
+        if spec.in_attr == "cbf_std_map":
+            desc_value = "dscStandardError" if is_nlls else "dscPosteriorSD"
+            description = "CBF parameter standard error" if is_nlls else "CBF posterior standard deviation"
+        elif spec.in_attr == "cbf_cv_map":
+            desc_value = "dscRelativeStandardError" if is_nlls else "dscPosteriorCV"
+            description = "CBF relative standard error" if is_nlls else "CBF posterior coefficient of variation"
+        else:
+            bound = "lower" if "lower" in spec.in_attr else "upper"
+            interval = "ConfidenceInterval95" if is_nlls else "CredibleInterval95"
+            desc_value = f"dsc{interval}{bound}"
+            description = f"CBF 95% {'confidence' if is_nlls else 'credible'} interval {bound} bound"
         bayes_meta.inputs.description = description
-        bayes_meta.inputs.map_key = map_key
-        bayes_meta.inputs.units = units
+        bayes_meta.inputs.map_key = spec.map_key
+        bayes_meta.inputs.units = spec.units
         workflow.connect([
             (base_perf, bayes_meta, [("meta_dict", "base")]),
             (inputnode, bayes_meta, [("qc_metrics", "qc_metrics")]),
@@ -1008,10 +1304,10 @@ def init_dsc_datasinks_wf(
                 output_names=["out_file"],
                 function=_copy_perf_map,
             ),
-            name=f"{in_attr}_sink",
+            name=f"{spec.in_attr}_sink",
         )
         b_sink.inputs.desc = desc_value
-        b_sink.inputs.suffix = suffix
+        b_sink.inputs.suffix = spec.suffix
         b_sink.inputs.datatype = "perf"
         b_sink.inputs.bids_suffix = "stat"
         workflow.connect([
@@ -1019,7 +1315,7 @@ def init_dsc_datasinks_wf(
                 ("output_dir", "output_dir"),
                 ("subject_id", "subject"),
                 ("session_id", "session"),
-                (in_attr, "in_file"),
+                (spec.in_attr, "in_file"),
             ]),
             (bayes_meta, b_sink, [("meta_dict", "meta_dict")]),
         ])
@@ -1092,10 +1388,8 @@ def init_dsc_datasinks_wf(
         sink_outputs.append((k2_sink, "out_file"))
 
     # --- Parametric R2 + fallback mask ---
-    # Verbatim long descriptions from the legacy writer — they explain that
-    # R2 is preserved on fallback voxels, that those voxels' CBF/CBV/MTT/Tmax
-    # come from oSVD (NOT from the parametric fit with this R2), and that
-    # uncertainty maps are zero-filled in fallback voxels.
+    # R2 is preserved on fallback voxels, while their CBF/CBV/MTT/Tmax values
+    # come from oSVD and their parametric uncertainty maps are undefined.
     _PARAMETRIC_R2_DESC = (
         "Per-voxel R2 (coefficient of determination) of the parametric DSC "
         "fit (CPI / Vascular) against the K2-corrected tissue concentration. "
@@ -1104,10 +1398,12 @@ def init_dsc_datasinks_wf(
         "in fallback voxels comes from oSVD, NOT from a fit with this R2."
     )
     _FALLBACK_DESC = (
-        "Binary oSVD-fallback mask. 1 = the parametric R2<0.5 gate rejected "
-        "this voxel and the saved CBF/CBV/MTT/Tmax come from "
+        "Binary oSVD-fallback mask. 1 = the parametric fit was rejected "
+        "(R2<0.5, solver nonconvergence, or fitting failure), oSVD fallback "
+        "succeeded, and the saved CBF/CBV/MTT/Tmax come from "
         "svd_deconvolve_oscillation; the parametric uncertainty maps "
-        "(cbf_std, cbv_std, CV, CI95) are zero-filled in these voxels. "
+        "(standard error/posterior SD, relative uncertainty, and intervals) "
+        "are NaN in these voxels. "
         "0 = the parametric fit was retained."
     )
     for in_attr, desc_value, suffix, description, key, bids_sfx in (
@@ -1143,7 +1439,7 @@ def init_dsc_datasinks_wf(
         )
         param_meta.inputs.description = description
         param_meta.inputs.map_key = key
-        param_meta.inputs.units = None
+        param_meta.inputs.units = "1" if in_attr == "parametric_r2_map" else None
         workflow.connect([
             (base_perf, param_meta, [("meta_dict", "base")]),
             (inputnode, param_meta, [
@@ -1186,11 +1482,11 @@ def init_dsc_datasinks_wf(
     # Function-based copy bypassing pybids path validation).
     def _add_minimal_perf_sink(
         nm: str, in_attr: str, desc_value: str, suffix: str, description: str,
-        bids_sfx: str = "stat",
+        bids_sfx: str = "stat", mask_type: str | None = None,
     ) -> pe.Node:
         meta = pe.Node(
             niu.Function(
-                input_names=["base", "description", "skull_stripped"],
+                input_names=["base", "description", "skull_stripped", "mask_type"],
                 output_names=["meta_dict"],
                 function=_build_minimal_meta,
             ),
@@ -1198,6 +1494,7 @@ def init_dsc_datasinks_wf(
         )
         meta.inputs.description = description
         meta.inputs.skull_stripped = False
+        meta.inputs.mask_type = mask_type
         workflow.connect([(base_minimal, meta, [("meta_dict", "base")])])
         sink = pe.Node(
             niu.Function(
@@ -1327,121 +1624,73 @@ def init_dsc_datasinks_wf(
             "Mean DSC reference image", "stat",
         ), "out_file"))
     if "aif_mask" in present:
-        sink_outputs.append((_add_minimal_perf_sink(
-            "aif_mask", "aif_mask", "dscAif", "",
-            "AIF detection mask in DSC space", "mask",
-        ), "out_file"))
-
-    # --- Anat-side: brain mask, NAWM mask in DSC space ---
-    if "brain_mask_dsc" in present:
-        # Brain mask was computed from pre-contrast T1w (HD-BET on MPRAGE pre);
-        # drop ce-GAD which would falsely imply post-contrast derivation.
-        sink = _add_anat_sink(
-            workflow, inputnode, base_minimal,
-            name="brain_mask_dsc",
-            in_attr="brain_mask_dsc",
-            desc_value="brain", suffix="mask",
-            description="Brain mask in DSC space",
-            skull_stripped=True,
-            dismiss_entities=("acquisition", "ceagent"),
+        meta = pe.Node(
+            niu.Function(
+                input_names=["base", "description", "qc_metrics"],
+                output_names=["meta_dict"],
+                function=_build_aif_mask_meta,
+            ),
+            name="aif_mask_meta",
         )
-        sink_outputs.append((sink, "out_file"))
-    if "nawm_mask_dsc" in present:
-        # NAWM mask is FAST-derived from pre-contrast tissue probabilities;
-        # drop ce-GAD for the same reason as brain_mask.
-        sink = _add_anat_sink(
-            workflow, inputnode, base_minimal,
-            name="nawm_mask_dsc",
-            in_attr="nawm_mask_dsc",
-            desc_value="nawm", suffix="mask",
-            description="Normal-appearing white matter mask in DSC space",
-            dismiss_entities=("acquisition", "ceagent"),
+        meta.inputs.description = "AIF detection mask in DSC space"
+        workflow.connect([
+            (base_minimal, meta, [("meta_dict", "base")]),
+            (inputnode, meta, [("qc_metrics", "qc_metrics")]),
+        ])
+        sink = pe.Node(
+            niu.Function(
+                input_names=[
+                    "in_file", "output_dir", "subject", "session",
+                    "desc", "suffix", "meta_dict", "datatype",
+                    "bids_suffix",
+                ],
+                output_names=["out_file"],
+                function=_copy_perf_map,
+            ),
+            name="aif_mask_sink",
         )
-        sink_outputs.append((sink, "out_file"))
-    if "lesion_mask_dsc" in present:
-        sink = _add_anat_sink(
-            workflow, inputnode, base_minimal,
-            name="lesion_mask_dsc",
-            in_attr="lesion_mask_dsc",
-            desc_value="lesion", suffix="mask",
-            description="Lesion mask registered to DSC space",
-        )
-        sink_outputs.append((sink, "out_file"))
-    if "user_lesion_mask_dsc" in present:
-        sink = _add_anat_sink(
-            workflow, inputnode, base_minimal,
-            name="user_lesion_mask_dsc",
-            in_attr="user_lesion_mask_dsc",
-            desc_value="userLesion", suffix="mask",
-            description="User-supplied lesion mask in DSC native space",
-        )
-        sink_outputs.append((sink, "out_file"))
-    if "roi_mask_dsc" in present:
-        sink = _add_anat_sink(
-            workflow, inputnode, base_minimal,
-            name="roi_mask_dsc",
-            in_attr="roi_mask_dsc",
-            desc_value="roi", suffix="mask",
-            description="ROI mask registered to DSC space",
-        )
+        sink.inputs.desc = "dscAif"
+        sink.inputs.suffix = ""
+        sink.inputs.datatype = "perf"
+        sink.inputs.bids_suffix = "mask"
+        workflow.connect([
+            (inputnode, sink, [
+                ("output_dir", "output_dir"),
+                ("subject_id", "subject"),
+                ("session_id", "session"),
+                ("aif_mask", "in_file"),
+            ]),
+            (meta, sink, [("meta_dict", "meta_dict")]),
+        ])
         sink_outputs.append((sink, "out_file"))
 
-    # --- Structural underlays in DSC space ---
-    if "t1w_in_dsc" in present:
+    # Precontrast-derived masks explicitly dismiss ceagent to avoid false
+    # postcontrast provenance; the distinction is encoded per specification.
+    anat_mask_sources = pe.Node(niu.Merge(5), name="anat_mask_sources")
+    workflow.connect([
+        (inputnode, anat_mask_sources, [
+            ("source_t1w", "in1"),
+            ("source_t1w_postcon", "in2"),
+            ("source_flair", "in3"),
+            ("source_flair_postcon", "in4"),
+            ("source_t2w", "in5"),
+        ]),
+    ])
+    for anat_spec in _ANAT_MASKS + _STRUCTURAL_UNDERLAYS:
+        if anat_spec.in_attr not in present:
+            continue
         sink = _add_anat_sink(
             workflow, inputnode, base_minimal,
-            name="t1w_in_dsc",
-            in_attr="t1w_in_dsc",
-            desc_value=None, suffix="T1w",
-            description="Pre-contrast T1w registered to DSC space",
-            ce_value=None,
-        )
-        sink_outputs.append((sink, "out_file"))
-    if "t1w_postcon_in_dsc" in present:
-        sink = _add_anat_sink(
-            workflow, inputnode, base_minimal,
-            name="t1w_postcon_in_dsc",
-            in_attr="t1w_postcon_in_dsc",
-            desc_value=None, suffix="T1w",
-            description="Post-contrast T1w registered to DSC space",
-            ce_value="GAD",
-        )
-        sink_outputs.append((sink, "out_file"))
-    if "t1w_subtraction_in_dsc" in present:
-        sink = _add_anat_sink(
-            workflow, inputnode, base_minimal,
-            name="t1w_subtraction_in_dsc",
-            in_attr="t1w_subtraction_in_dsc",
-            desc_value="subtraction", suffix="T1w",
-            description="Post-pre T1w subtraction registered to DSC space",
-        )
-        sink_outputs.append((sink, "out_file"))
-    if "flair_in_dsc" in present:
-        sink = _add_anat_sink(
-            workflow, inputnode, base_minimal,
-            name="flair_in_dsc",
-            in_attr="flair_in_dsc",
-            desc_value=None, suffix="FLAIR",
-            description="FLAIR registered to DSC space",
-        )
-        sink_outputs.append((sink, "out_file"))
-    if "flair_postcon_in_dsc" in present:
-        sink = _add_anat_sink(
-            workflow, inputnode, base_minimal,
-            name="flair_postcon_in_dsc",
-            in_attr="flair_postcon_in_dsc",
-            desc_value=None, suffix="FLAIR",
-            description="Post-contrast FLAIR registered to DSC space",
-            ce_value="GAD",
-        )
-        sink_outputs.append((sink, "out_file"))
-    if "t2w_in_dsc" in present:
-        sink = _add_anat_sink(
-            workflow, inputnode, base_minimal,
-            name="t2w_in_dsc",
-            in_attr="t2w_in_dsc",
-            desc_value=None, suffix="T2w",
-            description="T2w registered to DSC space",
+            name=anat_spec.in_attr, in_attr=anat_spec.in_attr,
+            desc_value=anat_spec.desc, suffix=anat_spec.suffix,
+            description=anat_spec.description,
+            skull_stripped=anat_spec.skull_stripped,
+            mask_type=anat_spec.mask_type,
+            ce_value=anat_spec.ceagent,
+            source_attr=anat_spec.source_attr,
+            dismiss_entities=anat_spec.dismiss_entities,
+            segmentation_labels=anat_spec.segmentation_labels,
+            structural_sources_node=anat_mask_sources,
         )
         sink_outputs.append((sink, "out_file"))
 
@@ -1582,6 +1831,15 @@ def init_dsc_datasinks_wf(
         ),
         name="dataset_description",
     )
+
+    # These nodes write outside their Nipype working directories. Function
+    # outputs are untyped strings, so Nipype cannot detect that a derivative
+    # was deleted while the node cache remained intact. Always execute only
+    # the external writer boundary; all scientific producers stay cacheable.
+    for sink, _ in sink_outputs:
+        sink._interface._always_run = True
+    figures_writer._interface._always_run = True
+    dd_node._interface._always_run = True
     workflow.connect([
         (inputnode, dd_node, [
             ("output_dir", "output_dir"),

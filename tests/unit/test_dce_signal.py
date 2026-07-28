@@ -145,6 +145,140 @@ class TestConcentrationConversions:
         expected = 1.0 / (1.0 - hct)
         np.testing.assert_allclose(c_plasma[0], expected, rtol=1e-10)
 
+    @pytest.mark.parametrize("hematocrit", [-0.1, 1.0, np.nan])
+    def test_blood_plasma_helpers_reject_invalid_hematocrit(
+        self, hematocrit: float
+    ) -> None:
+        """Standalone conversion helpers share the physical domain guard."""
+        with pytest.raises(ValueError, match="hematocrit"):
+            concentration_to_plasma(np.ones(1), hematocrit)
+        with pytest.raises(ValueError, match="hematocrit"):
+            plasma_to_blood_concentration(np.ones(1), hematocrit)
+
+    @pytest.mark.parametrize("hematocrit", [-0.1, 1.0, np.nan])
+    def test_signal_conversion_rejects_invalid_hematocrit(
+        self, hematocrit: float
+    ) -> None:
+        """Plasma conversion rejects non-physical hematocrit values."""
+        with pytest.raises(ValueError, match="hematocrit"):
+            signal_to_concentration(
+                np.ones(10),
+                flip_angle_deg=15.0,
+                tr=0.005,
+                baseline_frames=5,
+                hematocrit=hematocrit,
+            )
+
+    @pytest.mark.parametrize("relaxivity", [0.0, -1.0, np.nan])
+    def test_signal_conversion_rejects_invalid_relaxivity(
+        self, relaxivity: float
+    ) -> None:
+        """Concentration scaling requires finite positive relaxivity."""
+        with pytest.raises(ValueError, match="r1_relaxivity"):
+            signal_to_concentration(
+                np.ones(10),
+                flip_angle_deg=15.0,
+                tr=0.005,
+                baseline_frames=5,
+                r1_relaxivity=relaxivity,
+            )
+
+
+@pytest.mark.parametrize("missing_b1", [0.0, -1.0, np.nan, np.inf])
+def test_missing_b1_uses_nominal_flip_angle(missing_b1: float) -> None:
+    """Nonfinite and nonpositive B1 sentinels share the nominal-angle fallback."""
+    signal = np.full((1, 1, 1, 10), 100.0)
+    signal[..., 5:] = 120.0
+    nominal = signal_to_concentration(
+        signal,
+        flip_angle_deg=15.0,
+        tr=0.005,
+        b1_map=np.ones((1, 1, 1)),
+        baseline_frames=5,
+        convert_to_plasma=False,
+    )
+    missing = signal_to_concentration(
+        signal,
+        flip_angle_deg=15.0,
+        tr=0.005,
+        b1_map=np.full((1, 1, 1), missing_b1),
+        baseline_frames=5,
+        convert_to_plasma=False,
+    )
+    np.testing.assert_allclose(missing.concentration, nominal.concentration)
+    assert missing.conversion_qc["b1_missing_voxels"] == 1
+
+
+def test_signal_conversion_reports_bounded_spgr_inversion() -> None:
+    """Physically unsolvable enhancement is bounded and counted, not hidden."""
+    signal = np.full(10, 100.0)
+    signal[5] = 1e6
+    result = signal_to_concentration(
+        signal,
+        flip_angle_deg=15.0,
+        tr=0.005,
+        baseline_frames=5,
+        convert_to_plasma=False,
+    )
+    assert result.conversion_qc["e1_bounded_high_samples"] >= 1
+    assert result.conversion_qc["e1_bounded_fraction"] > 0
+
+
+def test_signal_conversion_qc_excludes_zero_background() -> None:
+    """Fallback and inversion diagnostics use acquired signal support."""
+    signal = np.zeros((2, 1, 1, 10))
+    signal[0, ..., :] = 100.0
+    signal[0, ..., 5:] = 120.0
+    b1_map = np.array([[[1.0]], [[0.0]]])
+    result = signal_to_concentration(
+        signal,
+        flip_angle_deg=15.0,
+        tr=0.005,
+        b1_map=b1_map,
+        baseline_frames=5,
+        convert_to_plasma=False,
+    )
+    assert result.conversion_qc["n_spatial_voxels"] == 2
+    assert result.conversion_qc["n_signal_supported_voxels"] == 1
+    assert result.conversion_qc["b1_missing_voxels"] == 0
+    assert result.conversion_qc["b1_missing_fraction"] == 0.0
+    assert result.conversion_qc["e1_bounded_high_samples"] == 0
+
+
+def test_signal_conversion_qc_uses_explicit_mask_domain() -> None:
+    """Conversion diagnostics ignore nonzero signal outside the QC mask."""
+    signal = np.full((2, 1, 1, 10), 100.0)
+    signal[..., 5:] = 120.0
+    b1_map = np.array([[[1.0]], [[0.0]]])
+    qc_mask = np.array([[[True]], [[False]]])
+
+    result = signal_to_concentration(
+        signal,
+        flip_angle_deg=15.0,
+        tr=0.005,
+        b1_map=b1_map,
+        baseline_frames=5,
+        convert_to_plasma=False,
+        qc_mask=qc_mask,
+    )
+
+    assert result.conversion_qc["n_spatial_voxels"] == 2
+    assert result.conversion_qc["n_qc_domain_voxels"] == 1
+    assert result.conversion_qc["n_signal_supported_voxels"] == 1
+    assert result.conversion_qc["b1_missing_voxels"] == 0
+
+
+def test_signal_conversion_qc_mask_shape_must_match_signal() -> None:
+    """A mismatched QC mask fails rather than reporting a false denominator."""
+    with pytest.raises(ValueError, match="QC mask shape"):
+        signal_to_concentration(
+            np.ones((2, 1, 1, 10)),
+            flip_angle_deg=15.0,
+            tr=0.005,
+            baseline_frames=5,
+            qc_mask=np.ones((3, 1, 1), dtype=bool),
+        )
+
 
 class TestFieldStrengthDefaultT1:
     """Tests for field-strength-aware default T1 when no T1 map provided."""
@@ -232,11 +366,10 @@ class TestBaselineSubtraction:
             t1_default_ms=1000.0, baseline_frames=baseline_frames,
             convert_to_plasma=False,
         )
-        # Pre-bolus frames (after baseline subtraction + clip) should be ~0
+        # Signed pre-bolus noise remains centered exactly at zero.
         pre_bolus = result.concentration[:baseline_frames]
-        assert np.mean(pre_bolus) < 0.005, (
-            f"Pre-bolus mean {np.mean(pre_bolus):.4f} is biased positive"
-        )
+        assert np.mean(pre_bolus) == pytest.approx(0.0, abs=1e-12)
+        assert np.any(pre_bolus < 0)
 
     def test_enhancement_preserved_after_baseline_subtraction(self) -> None:
         """Post-bolus enhancement should still be positive and non-trivial."""

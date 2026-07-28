@@ -1,8 +1,7 @@
 """DSC brain extraction interface with HD-BET and BET fallback.
 
-Provides a proper SimpleInterface for DSC brain extraction, replacing the
-previous Function node wrapper.  This ensures correct nipype GPU slot
-scheduling via the ``use_gpu`` trait and provides a robust fallback chain:
+Provides a SimpleInterface with Nipype GPU-slot scheduling through the
+``use_gpu`` trait and the following fallback chain:
 
 1. **HD-BET** — deep learning, most accurate for pathological brains
 2. **FSL BET -F** — functional/EPI mode, handles T2* contrast and distortion

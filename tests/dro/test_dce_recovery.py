@@ -7,7 +7,7 @@ Tier 1: Concentration-level (evaluate -> noise -> fit -> compare)
 Tier 2: Signal-level (ernst_signal -> Rician noise -> signal_to_conc -> fit)
 """
 
-from typing import Any, Dict, Tuple
+from typing import Any, Tuple
 
 import numpy as np
 import numpy.typing as npt
@@ -642,6 +642,55 @@ class TestDCEEdgeCases:
             ve = result.parameters["ve"]
             vp = result.parameters["vp"]
             assert ve + vp <= 1.0 + 1e-6
+
+    def test_active_volume_constraint_uncertainty_etofts(
+        self,
+        dce_aif_and_time: Tuple[npt.NDArray[Any], npt.NDArray[Any]],
+    ) -> None:
+        """An active ET volume boundary is fitted and quantified on-boundary."""
+        aif, time_min = dce_aif_and_time
+        model = ExtendedToftsModel()
+        curve = model.evaluate([0.12, 0.85, 0.25], aif, time_min)
+
+        result = model.fit(
+            curve,
+            aif,
+            time_min,
+            initial_guess=[0.12, 0.85, 0.25],
+        )
+
+        assert result.converged
+        assert result.parameters["ve"] + result.parameters["vp"] == pytest.approx(
+            0.999
+        )
+        assert result.uncertainties["ve"] == pytest.approx(
+            result.uncertainties["vp"]
+        )
+        projected = np.array([0.12, 0.85, 0.25], dtype=np.float64)
+        projected[1:] *= 0.999 / np.sum(projected[1:])
+        projected_curve = model.evaluate(projected, aif, time_min)
+        projected_rss = float(np.sum((curve - projected_curve) ** 2))
+        assert result.residual_sum_squares < projected_rss
+
+    def test_fixed_vp_volume_constraint_etofts(
+        self,
+        dce_aif_and_time: Tuple[npt.NDArray[Any], npt.NDArray[Any]],
+    ) -> None:
+        """A scalar fixed-vp ET fit uses the same joint-volume boundary."""
+        aif, time_min = dce_aif_and_time
+        model = ExtendedToftsModel()
+        fixed_vp = 0.25
+        curve = model.evaluate([0.12, 0.85, fixed_vp], aif, time_min)
+
+        result = model.fit_constrained(
+            curve,
+            aif,
+            time_min,
+            fixed_vp=fixed_vp,
+            initial_guess=[0.12, 0.85],
+        )
+
+        assert result.parameters["ve"] + result.parameters["vp"] <= 0.999 + 1e-12
 
     def test_patlak_reduces_to_linear(
         self,

@@ -8,6 +8,7 @@ signal processing.
 import logging
 import shutil
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
@@ -94,6 +95,45 @@ def _b1_interior_mask(valid: np.ndarray, iterations: int = 2) -> np.ndarray:
     return binary_erosion(binary_fill_holes(valid), iterations=iterations) & valid  # type: ignore[no-any-return]
 
 
+def _brain_mask_in_target_space(
+    brain_mask_file: str | None,
+    target_img: Any,
+) -> tuple[np.ndarray | None, str]:
+    """Load a brain mask on a B1 acquisition grid using header geometry.
+
+    This is affine-header resampling, not intensity registration. A mask with
+    no target-grid overlap is ignored so an unrelated/mislabelled anatomical
+    mask cannot erase all B1 support.
+    """
+    if not brain_mask_file:
+        return None, "not_provided"
+
+    import nibabel as nib  # type: ignore[import-untyped]
+    from nilearn.image import resample_to_img  # type: ignore[import-untyped]
+
+    mask_img = nib.load(brain_mask_file)
+    same_shape = mask_img.shape[:3] == target_img.shape[:3]  # type: ignore[attr-defined]
+    same_affine = bool(np.allclose(mask_img.affine, target_img.affine, atol=1e-4))  # type: ignore[attr-defined]
+    if same_shape and same_affine:
+        mask = np.asarray(mask_img.dataobj) > 0.5  # type: ignore[attr-defined]
+        status = "native_grid"
+    else:
+        mask_resampled = resample_to_img(
+            mask_img, target_img, interpolation="nearest", force_resample=True,
+            copy_header=True,
+        )
+        mask = np.asarray(mask_resampled.dataobj) > 0.5  # type: ignore[attr-defined]
+        status = "header_resampled"
+
+    if not np.any(mask):
+        logger.warning(
+            "Brain mask has no overlap with the B1+ grid after header-based "
+            "resampling — ignoring it"
+        )
+        return None, "no_overlap_ignored"
+    return mask, status
+
+
 class B1MappingInputSpec(BaseInterfaceInputSpec):
     """Input specification for B1Mapping interface."""
 
@@ -108,9 +148,7 @@ class B1MappingInputSpec(BaseInterfaceInputSpec):
         desc="4D AFI volume with 2 interleaved-TR timepoints (TB1AFI).",
     )
     nominal_flip_angle = traits.Float(
-        60.0,
-        usedefault=True,
-        desc="Nominal flip angle in degrees (default: 60)",
+        desc="Nominal AFI excitation flip angle in degrees (required)",
     )
     brain_mask = File(
         exists=True,
@@ -204,9 +242,9 @@ class B1Mapping(SimpleInterface):
     tr2 : float
         Long TR value in milliseconds
     nominal_flip_angle : float
-        Nominal flip angle in degrees (default: 60)
+        Nominal AFI excitation flip angle in degrees (required).
     brain_mask : str, optional
-        Brain mask for QC calculations
+        Brain mask constraining estimation and QC, header-resampled when needed.
     smoothing_fwhm : float
         Smoothing kernel FWHM in mm (default: 8.0)
     skip_b1 : bool
@@ -311,7 +349,6 @@ class B1Mapping(SimpleInterface):
                 )
 
             # Try to read TR values from JSON sidecar
-            afi_path = Path(str(afi_4d))
             json_path = Path(
                 str(afi_4d).replace(".nii.gz", ".json").replace(".nii", ".json")
             )
@@ -376,8 +413,15 @@ class B1Mapping(SimpleInterface):
                 )
                 tr1_ms = float(tr1_override)
                 tr2_ms = float(tr2_override)
-                s1 = afi_data[:, :, :, 0]
-                s2 = afi_data[:, :, :, 1]
+                # Discovery supplies the sorted short/long TR values. Preserve
+                # the volume association from per-volume metadata when it is
+                # available instead of assuming volume 0 is always short-TR.
+                if vol0_tr is not None and vol1_tr is not None and vol0_tr > vol1_tr:
+                    s1 = afi_data[:, :, :, 1]
+                    s2 = afi_data[:, :, :, 0]
+                else:
+                    s1 = afi_data[:, :, :, 0]
+                    s2 = afi_data[:, :, :, 1]
             elif vol0_tr is not None and vol1_tr is not None:
                 # Auto-detect volume ordering: shorter TR = TR1
                 if vol0_tr < vol1_tr:
@@ -491,6 +535,13 @@ class B1Mapping(SimpleInterface):
         shape = s1.shape[:3]
 
         # Get TR ratio
+        if not np.isfinite(tr1_ms) or not np.isfinite(tr2_ms):
+            raise ValueError(f"AFI TR values must be finite, got {tr1_ms} and {tr2_ms} ms")
+        if tr1_ms <= 0 or tr2_ms <= tr1_ms:
+            raise ValueError(
+                f"AFI requires 0 < TR1 < TR2, got TR1={tr1_ms:g} ms and "
+                f"TR2={tr2_ms:g} ms"
+            )
         n = tr2_ms / tr1_ms
         # AFI nominal flip angle must be explicit — vendor defaults (60° Siemens,
         # ~55° GE) silently bias B1+ → T1 → concentration → Ktrans.
@@ -500,14 +551,30 @@ class B1Mapping(SimpleInterface):
                 "FlipAngle or afi_flip_angle config; no vendor default applied."
             )
         nominal_fa = float(self.inputs.nominal_flip_angle)
+        if not np.isfinite(nominal_fa) or nominal_fa <= 0 or nominal_fa >= 180:
+            raise ValueError(
+                f"AFI nominal flip angle must be finite and between 0 and 180 degrees, "
+                f"got {nominal_fa!r}"
+            )
+
+        brain_mask_file = (
+            str(self.inputs.brain_mask)
+            if isdefined(self.inputs.brain_mask) and self.inputs.brain_mask
+            else None
+        )
+        mask, mask_status = _brain_mask_in_target_space(
+            brain_mask_file, nib.Nifti1Image(np.zeros(shape, dtype=np.uint8), affine, header)
+        )
 
         # -----------------------------------------------------------------
         # Signal masking: only compute B1+ where both signals are above
         # noise floor. Uses 5th-percentile threshold to preserve
         # low-signal dropout regions (Gap 4).
         # -----------------------------------------------------------------
+        threshold_domain = mask if mask is not None else np.ones(shape, dtype=bool)
         positive_signals = np.concatenate([
-            s1[s1 > 0].ravel(), s2[s2 > 0].ravel(),
+            s1[threshold_domain & (s1 > 0)].ravel(),
+            s2[threshold_domain & (s2 > 0)].ravel(),
         ])
         if len(positive_signals) > 0:
             signal_threshold = max(
@@ -515,7 +582,9 @@ class B1Mapping(SimpleInterface):
             )
         else:
             signal_threshold = 1e-6
-        signal_mask = (s1 > signal_threshold) & (s2 > signal_threshold)
+        signal_mask = (s1 >= signal_threshold) & (s2 >= signal_threshold)
+        if mask is not None:
+            signal_mask &= mask
 
         # -----------------------------------------------------------------
         # Compute signal ratio r = S2/S1 (long-TR over short-TR); this is
@@ -532,20 +601,24 @@ class B1Mapping(SimpleInterface):
             (r > B1_RATIO_VALID_RANGE[0]) & (r < B1_RATIO_VALID_RANGE[1])
         )
         denominator_stable = np.abs(n - r) > B1_DENOMINATOR_THRESHOLD
-        valid = signal_mask & ratio_valid & denominator_stable
+        candidate_valid = signal_mask & ratio_valid & denominator_stable
 
         # -----------------------------------------------------------------
         # Simplified AFI equation, accurate to first order
         # in TR1/T1:  cos(alpha) = (r*n - 1) / (n - r)
         # Compute only for valid voxels; set the rest to B1+=1.0.
         # -----------------------------------------------------------------
-        b1_map = np.ones(shape, dtype=np.float64)
+        b1_map = np.zeros(shape, dtype=np.float64)
 
-        numerator = r[valid] * n - 1.0
-        denominator = n - r[valid]
-        cos_alpha = numerator / (denominator + EPSILON_RATIO)
-        cos_alpha = np.clip(cos_alpha, -1.0, 1.0)
-        alpha_actual = np.degrees(np.arccos(cos_alpha))
+        cos_alpha_map = np.full(shape, np.nan, dtype=np.float64)
+        numerator = r[candidate_valid] * n - 1.0
+        denominator = n - r[candidate_valid]
+        cos_alpha_map[candidate_valid] = numerator / (denominator + EPSILON_RATIO)
+        cosine_valid = np.isfinite(cos_alpha_map) & (
+            (cos_alpha_map >= -1.0) & (cos_alpha_map <= 1.0)
+        )
+        valid = candidate_valid & cosine_valid
+        alpha_actual = np.degrees(np.arccos(cos_alpha_map[valid]))
         b1_map[valid] = alpha_actual / nominal_fa
 
         # -----------------------------------------------------------------
@@ -554,12 +627,13 @@ class B1Mapping(SimpleInterface):
         field_strength = self.inputs.field_strength
         b1_thresh = get_b1_thresholds(field_strength)
         b1_map = np.clip(b1_map, b1_thresh.clip_low, b1_thresh.clip_high)
-        b1_map[~signal_mask] = 1.0  # Background = nominal
+        b1_map[~valid] = 0.0  # Preserve missing B1+ support in the derivative
 
         # Flag extreme values for QC
-        n_extreme_low = int(np.sum((b1_map < b1_thresh.extreme_low) & signal_mask))
-        n_extreme_high = int(np.sum((b1_map > b1_thresh.extreme_high) & signal_mask))
-        n_signal = max(int(np.sum(signal_mask)), 1)
+        n_extreme_low = int(np.sum((b1_map < b1_thresh.extreme_low) & valid))
+        n_extreme_high = int(np.sum((b1_map > b1_thresh.extreme_high) & valid))
+        n_signal_actual = int(np.sum(signal_mask))
+        n_signal = max(n_signal_actual, 1)
         if n_extreme_low > 0:
             logger.info(
                 "%.1f%% of brain has B1+ < %.2f (expected in temporal lobes at %.1fT)",
@@ -582,7 +656,12 @@ class B1Mapping(SimpleInterface):
         # -----------------------------------------------------------------
         smoothing_fwhm = self.inputs.smoothing_fwhm
         n_b1_outliers = 0
+        n_b1_interpolated = 0
+        output_support = valid.copy()
         if smoothing_fwhm > 0:
+            from scipy.ndimage import binary_fill_holes  # type: ignore[import-untyped]
+
+            support_domain = mask if mask is not None else binary_fill_holes(valid)
             voxel_sizes = header.get_zooms()[:3]  # type: ignore[attr-defined]
             sigma_voxels = [
                 max(smoothing_fwhm / (2.355 * vs), B1_MIN_SIGMA_VOXELS)
@@ -620,15 +699,24 @@ class B1Mapping(SimpleInterface):
                     n_b1_outliers, 100.0 * n_b1_outliers / max(int(np.sum(valid)), 1),
                 )
             valid = valid & ~outlier
-            b1_map[outlier] = 1.0
+            b1_map[outlier] = 0.0
 
             # Pass 2: re-smooth with cleaned mask (standard sigma)
             mask_float = valid.astype(np.float64)
             smoothed_num = gaussian_filter(b1_map * mask_float, sigma=sigma_voxels)
             smoothed_den = gaussian_filter(mask_float, sigma=sigma_voxels)
+            supported_gap = (
+                support_domain
+                & ~valid
+                & ~outlier
+                & (smoothed_den > B1_MIN_COVERAGE)
+            )
+            output_support = valid | supported_gap
+            n_b1_interpolated = int(np.sum(supported_gap))
             smoothed_den = np.maximum(smoothed_den, 1e-6)
-            b1_map = np.where(mask_float > 0, smoothed_num / smoothed_den, 1.0)
+            b1_map = np.where(output_support, smoothed_num / smoothed_den, 0.0)
             b1_map = np.clip(b1_map, b1_thresh.clip_low, b1_thresh.clip_high)
+            b1_map[~output_support] = 0.0
 
         # Convert to float32 for storage
         b1_map = b1_map.astype(np.float32)
@@ -641,45 +729,16 @@ class B1Mapping(SimpleInterface):
         b1_unique = np.unique(b1_map[signal_mask])
         if len(b1_unique) <= 1:
             if len(b1_unique) == 0 or np.isclose(b1_unique[0], 0.0, atol=1e-6):
-                logger.warning("B1+ map is all zeros — returning unity map")
-                b1_map = np.ones(shape, dtype=np.float32)
+                logger.warning("B1+ mapping produced no valid physical support")
+                b1_map = np.zeros(shape, dtype=np.float32)
                 uniform_detected = True
             elif np.isclose(b1_unique[0], 1.0, atol=1e-3):
                 logger.info("B1+ map is all ones (no correction needed)")
                 uniform_detected = True
 
-        # Load brain mask for QC if provided.
-        # Brain mask may be in T1w space (different resolution from AFI).
-        # Require exact shape+affine match, ignore mask
-        # entirely if mismatched (no resampling for QC).
-        mask: Optional[np.ndarray] = None
-        if self.inputs.brain_mask:
-            mask_img = nib.load(self.inputs.brain_mask)
-            mask_data = mask_img.get_fdata() > 0.5  # type: ignore[attr-defined]
-            mask_affine = mask_img.affine  # type: ignore[attr-defined]
-
-            shape_match = mask_data.shape[:3] == b1_map.shape[:3]
-            affine_diff = float(np.abs(affine - mask_affine).max())
-
-            if not shape_match:
-                logger.warning(
-                    "Brain mask shape %s != B1+ map shape %s — ignoring mask",
-                    mask_data.shape[:3], b1_map.shape[:3],
-                )
-            elif affine_diff > 1e-4:
-                logger.warning(
-                    "Brain mask affine mismatch (max diff=%.6f) — ignoring mask",
-                    affine_diff,
-                )
-            else:
-                mask = mask_data
-
-        # Calculate QC metrics within brain mask (or whole volume if no mask)
-        if mask is not None:
-            b1_in_roi = b1_map[mask]
-        else:
-            # No usable mask — use all non-zero voxels
-            b1_in_roi = b1_map[b1_map > 0]
+        # Calculate QC metrics within measured brain support.
+        qc_support = output_support & mask if mask is not None else output_support
+        b1_in_roi = b1_map[qc_support]
 
         # Remove outliers for robust statistics
         b1_clean = b1_in_roi[
@@ -694,7 +753,7 @@ class B1Mapping(SimpleInterface):
             std_b1 = 0.0
 
         # QC pass/fail criteria (field-strength-dependent)
-        qc_pass = (
+        qc_pass = bool(len(b1_clean) > 0) and (
             b1_thresh.mean_range[0] <= mean_b1 <= b1_thresh.mean_range[1]
             and std_b1 < b1_thresh.max_std
         )
@@ -724,14 +783,19 @@ class B1Mapping(SimpleInterface):
             "tr_ratio": n,
             "b1_range_expected": b1_thresh.mean_range,
             "b1_max_std_expected": b1_thresh.max_std,
-            "n_signal_voxels": n_signal,
+            "n_signal_voxels": n_signal_actual,
             "n_valid_voxels": int(np.sum(valid)),
             "n_ratio_invalid": int(np.sum(signal_mask & ~ratio_valid)),
             "n_denominator_unstable": int(np.sum(signal_mask & ~denominator_stable)),
+            "n_cosine_invalid": int(np.sum(candidate_valid & ~cosine_valid)),
             "n_extreme_low_b1": n_extreme_low,
             "n_extreme_high_b1": n_extreme_high,
             "n_b1_outliers_rejected": n_b1_outliers,
+            "n_b1_interpolated_voxels": n_b1_interpolated,
             "uniform_detected": uniform_detected,
+            "valid_fraction_of_signal": float(np.sum(valid)) / max(1, n_signal),
+            "qc_support_voxels": int(np.sum(qc_support)),
+            "brain_mask_application": mask_status,
             "pct_correction_gt_10": (
                 float(100.0 * np.sum(np.abs(b1_clean - 1.0) > 0.1) / len(b1_clean))
                 if len(b1_clean) > 0 else 0.0
@@ -775,7 +839,6 @@ class B1Mapping(SimpleInterface):
 
                 # Use s1 (reference) and s2_original (before coregistration)
                 s1_ref = coreg_info.get("s1_original", s1)
-                s2_orig = coreg_info.get("s2_original", s2)
                 s2_coreg = coreg_info.get("s2_coregistered", s2)
                 tr1_val = coreg_info.get("tr1_ms", tr1_ms)
                 tr2_val = coreg_info.get("tr2_ms", tr2_ms)
@@ -829,9 +892,7 @@ class B1Mapping(SimpleInterface):
         # Load pre-computed B1+ map
         b1_img = nib.load(self.inputs.precomputed_b1_file)
 
-        # Reorient to RAS (no-op if already RAS).
-        # Uses as_reoriented() which correctly preserves the world-space
-        # affine — the previous inv_ornt_aff() approach dropped it.
+        # Reorient to RAS while preserving the world-space affine.
         from nibabel.orientations import axcodes2ornt, io_orientation, ornt_transform
 
         orig_ornt = io_orientation(b1_img.affine)  # type: ignore[attr-defined]
@@ -846,6 +907,16 @@ class B1Mapping(SimpleInterface):
         header = b1_img.header  # type: ignore[attr-defined]
         shape = b1_raw.shape[:3]
 
+        brain_mask_file = (
+            str(self.inputs.brain_mask)
+            if isdefined(self.inputs.brain_mask) and self.inputs.brain_mask
+            else None
+        )
+        brain_mask, mask_status = _brain_mask_in_target_space(brain_mask_file, b1_img)
+        raw_support = np.isfinite(b1_raw) & (b1_raw > 0)
+        if brain_mask is not None:
+            raw_support &= brain_mask
+
         # Resolve the pixel→ratio scaling from the encoding (auto → inferred
         # from suffix/Units upstream, or from the pixel median as a last resort).
         nominal_prep_fa = (
@@ -858,6 +929,7 @@ class B1Mapping(SimpleInterface):
             encoding=B1Encoding(self.inputs.b1_map_encoding),
             nominal_prep_fa=nominal_prep_fa,
             b1_raw=b1_raw,
+            brain_mask=brain_mask,
         )
         scale_factor = b1_res.divisor
         logger.info(
@@ -869,7 +941,7 @@ class B1Mapping(SimpleInterface):
         # companion with signal-intensity values), but allow high B1+ at FOV
         # edges. Downstream physiological clipping handles the actual range.
         full_scale = expected_pixel_max(scale_factor)
-        p99 = float(np.percentile(b1_raw[b1_raw > 0], 99)) if np.any(b1_raw > 0) else 0.0
+        p99 = float(np.percentile(b1_raw[raw_support], 99)) if np.any(raw_support) else 0.0
         if p99 > full_scale * 5.0:
             raise ValueError(
                 f"Pre-computed B1+ map pixel p99={p99:.0f} exceeds "
@@ -886,10 +958,10 @@ class B1Mapping(SimpleInterface):
             )
 
         # Create valid mask (non-zero pixels)
-        valid_mask = b1_raw > 0
+        valid_mask = raw_support
 
         # Scale to B1+ ratio
-        b1_map = np.ones(shape, dtype=np.float64)
+        b1_map = np.zeros(shape, dtype=np.float64)
         b1_map[valid_mask] = b1_raw[valid_mask] / scale_factor
 
         # -----------------------------------------------------------------
@@ -898,7 +970,7 @@ class B1Mapping(SimpleInterface):
         field_strength = self.inputs.field_strength
         b1_thresh = get_b1_thresholds(field_strength)
         b1_map = np.clip(b1_map, b1_thresh.clip_low, b1_thresh.clip_high)
-        b1_map[~valid_mask] = 1.0  # Background = nominal
+        b1_map[~valid_mask] = 0.0  # Preserve missing B1+ support in the derivative
 
         # Flag extreme values for QC
         n_valid = max(int(np.sum(valid_mask)), 1)
@@ -924,7 +996,14 @@ class B1Mapping(SimpleInterface):
         # -----------------------------------------------------------------
         smoothing_fwhm = self.inputs.smoothing_fwhm
         n_b1_outliers = 0
+        n_b1_interpolated = 0
+        output_support = valid_mask.copy()
         if smoothing_fwhm > 0:
+            from scipy.ndimage import binary_fill_holes  # type: ignore[import-untyped]
+
+            support_domain = (
+                brain_mask if brain_mask is not None else binary_fill_holes(valid_mask)
+            )
             voxel_sizes = header.get_zooms()[:3]  # type: ignore[attr-defined]
             sigma_voxels = [
                 max(smoothing_fwhm / (2.355 * vs), B1_MIN_SIGMA_VOXELS)
@@ -952,22 +1031,31 @@ class B1Mapping(SimpleInterface):
                     n_b1_outliers, 100.0 * n_b1_outliers / n_valid,
                 )
             valid_mask = valid_mask & ~outlier
-            b1_map[outlier] = 1.0
+            b1_map[outlier] = 0.0
 
             # Pass 2: re-smooth with cleaned mask
             mask_float = valid_mask.astype(np.float64)
             smoothed_num = gaussian_filter(b1_map * mask_float, sigma=sigma_voxels)
             smoothed_den = gaussian_filter(mask_float, sigma=sigma_voxels)
+            supported_gap = (
+                support_domain
+                & ~valid_mask
+                & ~outlier
+                & (smoothed_den > B1_MIN_COVERAGE)
+            )
+            output_support = valid_mask | supported_gap
+            n_b1_interpolated = int(np.sum(supported_gap))
             smoothed_den = np.maximum(smoothed_den, 1e-6)
-            b1_map = np.where(mask_float > 0, smoothed_num / smoothed_den, 1.0)
+            b1_map = np.where(output_support, smoothed_num / smoothed_den, 0.0)
             b1_map = np.clip(b1_map, b1_thresh.clip_low, b1_thresh.clip_high)
+            b1_map[~output_support] = 0.0
 
         b1_map = b1_map.astype(np.float32)
 
         # -----------------------------------------------------------------
         # QC metrics
         # -----------------------------------------------------------------
-        b1_in_roi = b1_map[valid_mask]
+        b1_in_roi = b1_map[output_support]
         b1_clean = b1_in_roi[(b1_in_roi > 0.5) & (b1_in_roi < 2.0)]
 
         if len(b1_clean) > 0:
@@ -979,7 +1067,7 @@ class B1Mapping(SimpleInterface):
             std_b1 = 0.0
             median_b1 = B1_EXPECTED_MEAN
 
-        qc_pass = (
+        qc_pass = bool(len(b1_clean) > 0) and (
             b1_thresh.mean_range[0] <= mean_b1 <= b1_thresh.mean_range[1]
             and std_b1 < b1_thresh.max_std
         )
@@ -1009,6 +1097,8 @@ class B1Mapping(SimpleInterface):
             "n_extreme_low_b1": n_extreme_low,
             "n_extreme_high_b1": n_extreme_high,
             "n_b1_outliers_rejected": n_b1_outliers,
+            "n_b1_interpolated_voxels": n_b1_interpolated,
+            "brain_mask_application": mask_status,
             "pct_correction_gt_10": (
                 float(100.0 * np.sum(np.abs(b1_clean - 1.0) > 0.1) / len(b1_clean))
                 if len(b1_clean) > 0 else 0.0
@@ -1146,13 +1236,13 @@ class T1MappingInputSpec(BaseInterfaceInputSpec):
         File(exists=True),
         traits.Enum(""),
         mandatory=False,
-        desc="WM probability map for tissue-segmented T1 fallback (optional)",
+        desc="WM probability map for measured-T1 tissue QC (optional)",
     )
     gm_probseg = traits.Either(
         File(exists=True),
         traits.Enum(""),
         mandatory=False,
-        desc="GM probability map for tissue-segmented T1 fallback (optional)",
+        desc="GM probability map for measured-T1 tissue QC (optional)",
     )
     csf_threshold = traits.Float(
         0.5,
@@ -1161,25 +1251,23 @@ class T1MappingInputSpec(BaseInterfaceInputSpec):
              "matches ASLPrep/FreeSurfer standard)",
     )
     t1_method = traits.Enum(
-        "hybrid", "wlls", "nlls",
+        "nlls", "wlls",
         usedefault=True,
-        desc="VFA T1 fitting method: hybrid (WLLS + NLLS refinement for "
-             "ill-conditioned voxels), wlls (linearized DESPOT1), or nlls "
-             "(nonlinear least squares in signal space).",
+        desc="VFA T1 fitting method: nlls (WLLS-initialized nonlinear least "
+             "squares) or wlls (linearized DESPOT1).",
     )
     t1_correction_mode = traits.Enum(
         "auto",
         "none",
-        "offset",
         "fallback",
         usedefault=True,
-        desc="T1 correction mode: auto, none, offset, or fallback",
+        desc="T1 correction mode: auto, none, or uniform fallback",
     )
     b1_qc_pass = traits.Bool(
         True,
         usedefault=True,
-        desc="B1 QC pass status (from B1Mapping). When False, lowers "
-             "T1 correction threshold for auto mode.",
+        desc="B1 QC pass status (from B1Mapping), retained as a report-only "
+             "T1 acquisition diagnostic.",
     )
     subject_id = traits.Str(
         "",
@@ -1197,6 +1285,7 @@ class T1MappingOutputSpec(TraitedSpec):
     """Output specification for T1Mapping interface."""
 
     out_file = File(exists=True, desc="T1 map in milliseconds")
+    support_file = File(exists=True, desc="Categorical T1 support provenance map")
     mean_t1_wm = traits.Float(desc="Mean T1 in white matter region (ms)")
     mean_t1_gm = traits.Float(desc="Mean T1 in gray matter region (ms)")
     qc_pass = traits.Bool(desc="Whether T1 map passed QC criteria")
@@ -1295,7 +1384,6 @@ class T1Mapping(SimpleInterface):
 
         from pmriprep.utils.dce_constants import (
             EPSILON_TRIG,
-            NLLS_REFINEMENT_E1_THRESHOLD,
             SLAB_EROSION_MAX_SLICES,
             get_b1_thresholds,
             get_tissue_t1_ranges,
@@ -1314,40 +1402,16 @@ class T1Mapping(SimpleInterface):
         if self.inputs.skip_t1:
             from pmriprep.utils.dce_t1_validation import (
                 T1_TISSUE_REFERENCE,
-                build_tissue_t1_map,
                 get_field_strength_key,
             )
 
             field_key = get_field_strength_key(self.inputs.field_strength)
             default_t1 = T1_TISSUE_REFERENCE[field_key]["default"]
-            tissue_t1_used = False
-
-            # Use tissue-segmented T1 if probsegs are available
-            if (
-                isdefined(self.inputs.wm_probseg) and self.inputs.wm_probseg
-                and isdefined(self.inputs.gm_probseg) and self.inputs.gm_probseg
-            ):
-                wm_img = nib.load(self.inputs.wm_probseg)
-                gm_img = nib.load(self.inputs.gm_probseg)
-                # Resample to VFA space if needed
-                if wm_img.shape[:3] != shape:  # type: ignore[attr-defined]
-                    from nilearn.image import resample_to_img  # type: ignore[import-untyped]
-                    wm_img = resample_to_img(wm_img, first_img, interpolation="continuous")
-                    gm_img = resample_to_img(gm_img, first_img, interpolation="continuous")
-                wm_arr = wm_img.get_fdata().astype(np.float64)  # type: ignore[attr-defined]
-                gm_arr = gm_img.get_fdata().astype(np.float64)  # type: ignore[attr-defined]
-                t1_map = build_tissue_t1_map(
-                    wm_arr, gm_arr, self.inputs.field_strength,
-                )
-                tissue_t1_used = True
-                logger.info(
-                    "skip_t1: using tissue-segmented T1 map (WM=%.0fms, GM=%.0fms)",
-                    float((T1_TISSUE_REFERENCE[field_key]["wm"][0] + T1_TISSUE_REFERENCE[field_key]["wm"][1]) / 2),
-                    float((T1_TISSUE_REFERENCE[field_key]["gm"][0] + T1_TISSUE_REFERENCE[field_key]["gm"][1]) / 2),
-                )
-            else:
-                # Uniform fallback
-                t1_map = np.full(shape, default_t1, dtype=np.float32)
+            t1_map = np.full(shape, default_t1, dtype=np.float32)
+            logger.info(
+                "skip_t1: using uniform field-strength T1 (%.0fms)",
+                default_t1,
+            )
 
             # Save output
             out_img = nib.Nifti1Image(t1_map, affine)
@@ -1355,12 +1419,8 @@ class T1Mapping(SimpleInterface):
 
             # Set outputs for skipped case
             self._results["out_file"] = out_file
-            if tissue_t1_used:
-                wm_mid = float((T1_TISSUE_REFERENCE[field_key]["wm"][0] + T1_TISSUE_REFERENCE[field_key]["wm"][1]) / 2)
-                gm_mid = float((T1_TISSUE_REFERENCE[field_key]["gm"][0] + T1_TISSUE_REFERENCE[field_key]["gm"][1]) / 2)
-            else:
-                wm_mid = default_t1
-                gm_mid = default_t1
+            wm_mid = default_t1
+            gm_mid = default_t1
             self._results["mean_t1_wm"] = wm_mid
             self._results["mean_t1_gm"] = gm_mid
             self._results["qc_pass"] = True
@@ -1369,7 +1429,7 @@ class T1Mapping(SimpleInterface):
                 "mean_t1_gm_ms": gm_mid,
                 "qc_pass": True,
                 "skipped": True,
-                "tissue_t1_used": tissue_t1_used,
+                "tissue_t1_used": False,
             }
             return runtime
 
@@ -1396,11 +1456,12 @@ class T1Mapping(SimpleInterface):
             b1_map = b1_img.get_fdata().astype(np.float64)  # type: ignore[attr-defined]
             # Mark voxels with no B1 data BEFORE clipping so they aren't
             # silently mapped to the clip minimum (which halves flip angles).
-            b1_missing = b1_map <= 0
+            b1_missing = ~np.isfinite(b1_map) | (b1_map <= 0)
             b1_map = np.clip(b1_map, b1_thresh.vfa_clip_low, b1_thresh.vfa_clip_high)
             b1_map[b1_missing] = 1.0  # No B1 data → nominal flip angles
         else:
             b1_map = np.ones(shape, dtype=np.float64)
+            b1_missing = np.ones(shape, dtype=bool)
 
         # Apply B1+ correction to flip angles
         # α_actual = α_nominal × B1+
@@ -1423,8 +1484,6 @@ class T1Mapping(SimpleInterface):
         # Perform T1 fitting based on selected method
         cos_fa = np.cos(corrected_fa_rad)
         t1_method = self.inputs.t1_method
-        needs_refinement: np.ndarray | None = None  # For hybrid QC metrics
-        rough_mask: np.ndarray | None = None
 
         if t1_method == "wlls":
             t1_map = self._fit_t1_wlls(
@@ -1434,38 +1493,6 @@ class T1Mapping(SimpleInterface):
             t1_map = self._fit_t1_nlls(
                 signal_data, sin_fa, cos_fa, tr_s, shape,
             )
-        elif t1_method == "hybrid":
-            # Stage 1: Fast WLLS for all voxels
-            t1_map = self._fit_t1_wlls(
-                x_data, y_data, sin_fa, cos_fa, tr_s, shape,
-            )
-
-            # Stage 2: Identify ill-conditioned voxels (E1 > threshold)
-            e1_map = np.exp(-tr_s / np.where(t1_map > 0, t1_map, 1.0))
-            # Simple brain mask: positive signal in first VFA
-            positive_signal = signal_data[0][signal_data[0] > 0]
-            if len(positive_signal) == 0:
-                rough_mask = np.zeros(shape, dtype=bool)
-            else:
-                rough_mask = signal_data[0] > np.percentile(positive_signal, 10)
-            needs_refinement = (e1_map > NLLS_REFINEMENT_E1_THRESHOLD) & rough_mask
-            assert needs_refinement is not None  # narrowed inside hybrid branch
-            assert rough_mask is not None
-
-            if np.any(needs_refinement):
-                n_refine = int(needs_refinement.sum())
-                n_brain = int(rough_mask.sum())
-                logger.info(
-                    "Hybrid T1: refining %d voxels (%.1f%%) with NLLS",
-                    n_refine,
-                    100.0 * n_refine / max(n_brain, 1),
-                )
-                refined = self._fit_t1_nlls(
-                    signal_data, sin_fa, cos_fa, tr_s, shape,
-                    e1_init=e1_map.ravel(),
-                    mask=needs_refinement,
-                )
-                t1_map[needs_refinement] = refined[needs_refinement]
         else:
             raise ValueError(f"Unknown t1_method: {t1_method!r}")
 
@@ -1475,8 +1502,13 @@ class T1Mapping(SimpleInterface):
         # Load brain mask for QC if provided
         if isdefined(self.inputs.brain_mask) and self.inputs.brain_mask:
             mask_img = nib.load(self.inputs.brain_mask)
-            # Resample mask to VFA space if dimensions differ (e.g. T1w MPRAGE vs VFA VIBE)
-            if mask_img.shape[:3] != shape:  # type: ignore[attr-defined]
+            # Resample if either dimensions or world-space geometry differ.
+            if (
+                mask_img.shape[:3] != shape  # type: ignore[attr-defined]
+                or not np.allclose(
+                    mask_img.affine, affine, rtol=0.0, atol=1e-4,  # type: ignore[attr-defined]
+                )
+            ):
                 from nilearn.image import resample_to_img  # type: ignore[import-untyped]
 
                 mask_img = resample_to_img(
@@ -1487,8 +1519,11 @@ class T1Mapping(SimpleInterface):
             # Use simple thresholding on first VFA image as rough brain mask
             threshold = np.percentile(signal_data[0][signal_data[0] > 0], 10)
             brain_mask = signal_data[0] > threshold
+        analysis_domain_mask = brain_mask.copy()
+        fallback_brain_mask = brain_mask.copy()
+        tissue_qc_mask = brain_mask.copy()
 
-        # --- VFA Fit Residual (NRMSE) for conditioning gate ---
+        # --- VFA Fit Residual (NRMSE) for fit-quality QC ---
         # For n_fa >= 3, compute per-voxel NRMSE to assess VFA fit quality.
         # Low NRMSE means the SPGR model with nominal flip angles fits the
         # multi-FA data well, implying B1 is close to nominal.
@@ -1532,35 +1567,24 @@ class T1Mapping(SimpleInterface):
                     n_fa, len(nrmse_valid),
                 )
 
-        # Set background voxels to NaN BEFORE median filter to prevent
-        # finite T1 values from E1-clipped background from contaminating
-        # brain-boundary voxels through the 3x3x3 kernel.
+        # Exclude background before quantitative validity checks.
         t1_map[~brain_mask] = np.nan
 
-        # Apply 3x3x3 median filter to reduce noise spikes.
-        # Background NaN voxels are replaced with the brain-median sentinel
-        # so they cast "neutral" votes in the kernel — boundary voxels with
-        # a majority of real brain neighbors are preserved (unlike a -1.0
-        # sentinel which poisons ~15-20K boundary voxels via median pull-down).
-        # After filtering, original NaN positions are restored.
-        # Applied BEFORE CSF exclusion to avoid introducing artificial zeros
-        # that would contaminate periventricular tissue during filtering.
-        # Order: median filter → CSF exclusion → range clipping.
-        from scipy.ndimage import median_filter  # type: ignore[import-untyped]
-
-        nan_mask = np.isnan(t1_map)
-        valid_vals = t1_map[~nan_mask]
-        sentinel = float(np.median(valid_vals)) if len(valid_vals) > 0 else 1000.0
-        t1_for_filter = np.where(nan_mask, sentinel, t1_map)
-        t1_map = median_filter(t1_for_filter, size=3)
-        t1_map[nan_mask] = np.nan
-
-        # CSF exclusion: mask out voxels with high CSF probability
-        csf_excluded = False
+        # Restrict parenchymal summary/QC statistics with the anatomical CSF
+        # probability map. Do not turn a tissue-classification result into a
+        # quantitative T1 support mask: FAST may classify tumor, edema, stroke,
+        # or other pathology as CSF even when VFA produced a valid estimate.
+        csf_qc_restricted = False
+        n_csf_qc = 0
         if isdefined(self.inputs.csf_probseg) and self.inputs.csf_probseg:
             csf_img = nib.load(self.inputs.csf_probseg)
             # Resample CSF probseg to VFA space if needed
-            if csf_img.shape[:3] != shape:  # type: ignore[attr-defined]
+            if (
+                csf_img.shape[:3] != shape  # type: ignore[attr-defined]
+                or not np.allclose(
+                    csf_img.affine, affine, rtol=0.0, atol=1e-4,  # type: ignore[attr-defined]
+                )
+            ):
                 from nilearn.image import resample_to_img  # type: ignore[import-untyped]
 
                 csf_img = resample_to_img(
@@ -1568,66 +1592,66 @@ class T1Mapping(SimpleInterface):
                 )
             csf_prob = csf_img.get_fdata()  # type: ignore[attr-defined]
             csf_mask = csf_prob >= self.inputs.csf_threshold
-
-            n_brain_before = int(np.sum(brain_mask))
-            n_csf = int(np.sum(csf_mask & brain_mask))
-            # Set CSF voxels to NaN (excluded from all downstream statistics)
-            t1_map[csf_mask & brain_mask] = np.nan
-            brain_mask = brain_mask & (~csf_mask)
-            n_brain_after = int(np.sum(brain_mask))
+            n_brain = int(np.sum(brain_mask))
+            n_csf_qc = int(np.sum(csf_mask & brain_mask))
+            tissue_qc_mask = brain_mask & ~csf_mask
 
             logger.info(
-                "CSF exclusion: removed %d voxels (%.1f%% of brain), "
-                "%d tissue voxels remaining",
-                n_csf,
-                100.0 * n_csf / max(n_brain_before, 1),
-                n_brain_after,
+                "CSF QC restriction: excluded %d voxels (%.1f%% of brain) "
+                "from parenchymal summary statistics; T1 support retained",
+                n_csf_qc,
+                100.0 * n_csf_qc / max(n_brain, 1),
             )
-            csf_excluded = True
+            csf_qc_restricted = True
 
-        # Set out-of-range T1 to NaN using field-strength-dependent bounds.
-        # Lower bound (reject_min) depends on field strength: 450/600/800ms at 1.5/3/7T.
-        # Upper bound: always t1_parenchyma_upper (2000/2500/3500ms at 1.5/3/7T).
-        # This catches CSF partial-volume voxels that pass the 0.5 probseg
-        # threshold while preserving edema (1600-2200ms at 3T).
+        # Reject only values outside the broad numerical safety envelope.
+        # Normal-tissue reference intervals remain QC diagnostics: using them
+        # as voxel filters would censor prolonged T1 in tumor, edema, or stroke.
         field_strength = self.inputs.field_strength
         correction_mode = self.inputs.t1_correction_mode
 
         from pmriprep.utils.dce_t1_validation import (
             T1_TISSUE_REFERENCE,
+            MIN_VALID_T1_MS,
             apply_t1_correction,
             get_field_strength_key,
         )
 
         field_key = get_field_strength_key(field_strength)
-        t1_upper = T1_TISSUE_REFERENCE[field_key]["t1_parenchyma_upper"]
-        t1_lower = T1_TISSUE_REFERENCE[field_key]["reject_min"]
-        # Save raw T1 before range clipping for post-offset recovery
-        t1_pre_clip = t1_map.copy()
-
+        t1_upper = T1_TISSUE_REFERENCE[field_key]["t1_upper_bound"]
+        t1_lower = MIN_VALID_T1_MS
+        measured_t1_map = t1_map.copy()
+        numeric_low_mask = np.isfinite(t1_map) & (t1_map < t1_lower) & brain_mask
+        numeric_high_mask = np.isfinite(t1_map) & (t1_map > t1_upper) & brain_mask
         t1_map = np.where(
             (t1_map >= t1_lower) & (t1_map <= t1_upper), t1_map, np.nan,
+        )
+        measured_support = np.isfinite(t1_map) & brain_mask
+        population_lower = T1_TISSUE_REFERENCE[field_key]["wm"][0]
+        population_upper = T1_TISSUE_REFERENCE[field_key]["gm"][1]
+        outside_reference = measured_support & (
+            (t1_map < population_lower) | (t1_map > population_upper)
         )
 
         # Edge erosion: only needed when CSF probseg is NOT available.
         # When CSF exclusion at threshold 0.5 is applied, the problematic
         # partial-volume voxels at the brain-CSF boundary are already removed.
-        # The range filter (T1 < reject_min) catches the rare remaining
-        # outliers, and downstream QC (R² >= 0.5, tSNR >= 10) catches bad
+        # The numerical safety filter catches rare impossible outliers, and
+        # downstream fit QC and any explicitly configured tSNR gate catch bad
         # PK fits. Blind erosion after CSF exclusion needlessly removes
         # ~12-17k gray matter voxels at the cortical surface.
-        n_brain_pre_erosion = int(np.sum(brain_mask))
         n_edge = 0
         edge_erosion_skipped = False
         edge_mask = np.zeros_like(brain_mask, dtype=bool)
         n_slices = shape[2]  # RAS orientation: axis 2 = slices
 
-        if csf_excluded:
-            # CSF probseg handled partial-volume voxels — skip blind erosion
+        if csf_qc_restricted:
+            # CSF probseg supports parenchymal QC — skip blind erosion. Valid
+            # quantitative T1 estimates remain available throughout the brain.
             edge_erosion_skipped = True
             logger.info(
-                "T1 edge erosion: SKIPPED (CSF exclusion at threshold %.2f "
-                "already removes partial-volume boundary voxels)",
+                "T1 edge erosion: SKIPPED (CSF probability at threshold %.2f "
+                "restricts parenchymal QC statistics)",
                 self.inputs.csf_threshold,
             )
         else:
@@ -1678,12 +1702,12 @@ class T1Mapping(SimpleInterface):
         # NaN voxels within the original brain extent — eroded voxels are NaN
         # in t1_map but excluded from the narrowed brain_mask, so we also
         # count NaN voxels that were eroded away (n_edge).
-        nan_in_brain = np.isnan(t1_map) & brain_mask
-        nan_fraction = float(np.sum(nan_in_brain) + n_edge) / max(1, n_brain_pre_erosion)
+        nan_in_brain = np.isnan(t1_map) & analysis_domain_mask
+        nan_fraction = float(np.sum(nan_in_brain)) / max(1, int(np.sum(analysis_domain_mask)))
 
         # VFA conditioning QC metric
         # Compute median T1 from valid voxels for E1 calculation
-        valid_for_e1 = t1_map[brain_mask & np.isfinite(t1_map) & (t1_map > 0)]
+        valid_for_e1 = t1_map[tissue_qc_mask & np.isfinite(t1_map) & (t1_map > 0)]
         if len(valid_for_e1) > 0:
             median_t1_original = float(np.median(valid_for_e1))
             e1_median = float(np.exp(-tr_s / (median_t1_original / 1000.0)))
@@ -1703,7 +1727,7 @@ class T1Mapping(SimpleInterface):
             e1_median, vfa_conditioning, nan_fraction * 100,
         )
 
-        # Load WM/GM probsegs for tissue-segmented fallback
+        # Load WM/GM probsegs for measured-map tissue QC summaries.
         wm_probseg_arr: Optional[np.ndarray] = None
         gm_probseg_arr: Optional[np.ndarray] = None
         if (
@@ -1712,7 +1736,15 @@ class T1Mapping(SimpleInterface):
         ):
             wm_ps_img = nib.load(self.inputs.wm_probseg)
             gm_ps_img = nib.load(self.inputs.gm_probseg)
-            if wm_ps_img.shape[:3] != shape:  # type: ignore[attr-defined]
+            if (
+                wm_ps_img.shape[:3] != shape  # type: ignore[attr-defined]
+                or not np.allclose(
+                    wm_ps_img.affine, affine, rtol=0.0, atol=1e-4,  # type: ignore[attr-defined]
+                )
+                or not np.allclose(
+                    gm_ps_img.affine, affine, rtol=0.0, atol=1e-4,  # type: ignore[attr-defined]
+                )
+            ):
                 from nilearn.image import resample_to_img  # type: ignore[import-untyped]
                 wm_ps_img = resample_to_img(wm_ps_img, first_img, interpolation="continuous")
                 gm_ps_img = resample_to_img(gm_ps_img, first_img, interpolation="continuous")
@@ -1723,7 +1755,7 @@ class T1Mapping(SimpleInterface):
         # no AFI data). Check for actual spatial variation — std=0 means no
         # real B1 correction was applied.
         if isdefined(self.inputs.b1_map) and bool(self.inputs.b1_map):
-            b1_std = float(np.std(b1_map[brain_mask]))
+            b1_std = float(np.std(b1_map[tissue_qc_mask]))
             b1_corrected = b1_std > 1e-6
             if not b1_corrected:
                 logger.info(
@@ -1737,7 +1769,7 @@ class T1Mapping(SimpleInterface):
             t1_map,
             field_strength=field_strength,
             correction_mode=correction_mode,
-            brain_mask=brain_mask,
+            brain_mask=tissue_qc_mask,
             b1_qc_pass=self.inputs.b1_qc_pass,
             nan_fraction=nan_fraction,
             wm_probseg=wm_probseg_arr,
@@ -1746,6 +1778,13 @@ class T1Mapping(SimpleInterface):
             b1_corrected=b1_corrected,
         )
         t1_map = t1_map_arr.astype(np.float32)
+        if correction_result.correction_applied == "fallback":
+            default_t1 = T1_TISSUE_REFERENCE[field_key]["default"]
+            t1_map = np.where(
+                fallback_brain_mask,
+                default_t1,
+                np.nan,
+            ).astype(np.float32)
         correction_info = correction_result.to_dict()
         logger.info(
             "T1 correction: %s (median %.0fms -> %.0fms)",
@@ -1753,51 +1792,6 @@ class T1Mapping(SimpleInterface):
             correction_result.median_t1_original,
             correction_result.median_t1_corrected,
         )
-
-        # Post-offset recovery: recover voxels clipped to NaN by range filter
-        # that would be valid after applying the offset correction.
-        t1_ref = T1_TISSUE_REFERENCE[field_key]
-        n_recovered = 0
-        if (
-            correction_result.correction_applied == "offset"
-            and correction_result.offset_ms is not None
-        ):
-            offset = correction_result.offset_ms
-            clamp_lo = t1_ref["reject_min"] * 0.9
-            # Gate: only recover voxels whose raw T1 is within one offset
-            # of the parenchyma upper bound — beyond that, the offset
-            # (derived from parenchyma) is not reliable for extreme T1.
-            raw_t1_max = t1_ref["t1_parenchyma_upper"] + abs(offset)
-            # Corrected values bounded by original parenchyma upper
-            recovery_upper = t1_ref["t1_parenchyma_upper"]
-
-            t1_raw_corrected = t1_pre_clip + offset  # no clip
-
-            recoverable = (
-                np.isnan(t1_map) & brain_mask       # currently NaN in final map
-                & ~edge_mask                          # NOT an edge-eroded voxel
-                & np.isfinite(t1_pre_clip)            # raw VFA fit succeeded
-                & (t1_pre_clip > 0)                   # positive T1
-                & (t1_pre_clip <= raw_t1_max)         # raw T1 gate
-                & (t1_raw_corrected >= clamp_lo)      # corrected lower bound
-                & (t1_raw_corrected <= recovery_upper) # corrected upper bound
-            )
-            n_recovered = int(np.sum(recoverable))
-            if n_recovered > 0:
-                t1_map[recoverable] = t1_raw_corrected[recoverable].astype(
-                    np.float32,
-                )
-                recovered_range = t1_raw_corrected[recoverable]
-                logger.info(
-                    "Post-offset recovery: %d voxels recovered "
-                    "(raw T1 %.0f-%.0fms, corrected %.0f-%.0fms)",
-                    n_recovered,
-                    float(t1_pre_clip[recoverable].min()),
-                    float(t1_pre_clip[recoverable].max()),
-                    float(recovered_range.min()),
-                    float(recovered_range.max()),
-                )
-        correction_info["n_recovered_post_offset"] = n_recovered
 
         # Fill interior NaN gaps (B1+ failures, range-filter, VFA noise)
         from pmriprep.utils.dce_t1_validation import fill_t1_gaps
@@ -1811,22 +1805,82 @@ class T1Mapping(SimpleInterface):
         )
         correction_info["gap_fill"] = gap_fill_result.to_dict()
 
+        # Preserve why each voxel is or is not supported. Values are:
+        # 0 outside the original DCE analysis domain, 1 directly measured,
+        # 2 locally interpolated, 3 unavailable, and 5 a user-requested or
+        # no-usable-data uniform assumption. Anatomical tissue classes do not
+        # alter quantitative support.
+        final_support = np.isfinite(t1_map) & brain_mask
+        interpolated_support = final_support & ~measured_support
+        support_map = np.zeros(shape, dtype=np.uint8)
+        support_map[analysis_domain_mask] = 3
+        support_map[measured_support & brain_mask] = 1
+        support_map[interpolated_support] = 2
+        if correction_result.correction_applied == "fallback":
+            support_map[analysis_domain_mask] = 5
+
+        domain_count = int(np.sum(analysis_domain_mask))
+        support_counts = {
+            "analysis_domain_voxels": domain_count,
+            "directly_measured_voxels": int(np.sum(support_map == 1)),
+            "locally_interpolated_voxels": int(np.sum(support_map == 2)),
+            "unavailable_voxels": int(np.sum(support_map == 3)),
+            "csf_qc_restricted_voxels": n_csf_qc,
+            "uniform_assumption_voxels": int(np.sum(support_map == 5)),
+            "rejected_below_numeric_min_voxels": int(np.sum(numeric_low_mask)),
+            "rejected_above_numeric_max_voxels": int(np.sum(numeric_high_mask)),
+            "retained_outside_population_reference_voxels": int(np.sum(outside_reference)),
+            "numeric_min_ms": float(t1_lower),
+            "numeric_max_ms": float(t1_upper),
+            "population_reference_min_ms": float(population_lower),
+            "population_reference_max_ms": float(population_upper),
+        }
+        for key in (
+            "directly_measured_voxels", "locally_interpolated_voxels",
+            "unavailable_voxels",
+            "uniform_assumption_voxels",
+            "retained_outside_population_reference_voxels",
+        ):
+            support_counts[key.replace("_voxels", "_fraction")] = (
+                float(support_counts[key]) / max(1, domain_count)
+            )
+
         # Calculate QC metrics
         qc_ranges = get_tissue_t1_ranges(field_strength)
 
         wm_range = (qc_ranges.white_matter.min, qc_ranges.white_matter.max)
         gm_range = (qc_ranges.gray_matter.min, qc_ranges.gray_matter.max)
 
-        # Estimate WM and GM mean T1 from T1 distribution in brain
-        t1_in_brain = t1_map[brain_mask]
+        # Estimate WM and GM T1 from actual high-confidence tissue masks when
+        # available. Without segmentations, retain distribution summaries but
+        # label them honestly rather than presenting quartiles as tissues.
+        t1_in_brain = t1_map[tissue_qc_mask]
 
         # WM: lower T1 values (shorter relaxation time)
         # GM: higher T1 values
         # Simple approach: use histogram percentiles
         # Use nanpercentile since T1 map may contain NaN (CSF, out-of-range)
         valid_t1 = t1_in_brain[np.isfinite(t1_in_brain) & (t1_in_brain > 0)]
+        tissue_stats_source = "brain_distribution_quartiles"
         wm_t1_estimate = float(np.percentile(valid_t1, 25))
         gm_t1_estimate = float(np.percentile(valid_t1, 75))
+        if wm_probseg_arr is not None and gm_probseg_arr is not None:
+            wm_support = (
+                brain_mask
+                & np.isfinite(t1_map)
+                & (wm_probseg_arr >= 0.8)
+                & (gm_probseg_arr < 0.2)
+            )
+            gm_support = (
+                brain_mask
+                & np.isfinite(t1_map)
+                & (gm_probseg_arr >= 0.8)
+                & (wm_probseg_arr < 0.2)
+            )
+            if int(np.sum(wm_support)) >= 100 and int(np.sum(gm_support)) >= 100:
+                wm_t1_estimate = float(np.mean(t1_map[wm_support]))
+                gm_t1_estimate = float(np.mean(t1_map[gm_support]))
+                tissue_stats_source = "high_confidence_probseg"
 
         # QC pass/fail criteria
         wm_pass = wm_range[0] <= wm_t1_estimate <= wm_range[1]
@@ -1835,7 +1889,9 @@ class T1Mapping(SimpleInterface):
 
         # Compute additional metrics for QC report
         median_t1 = float(np.median(valid_t1))
-        fraction_valid = float(len(valid_t1)) / max(1, int(np.sum(brain_mask)))
+        fraction_valid = float(
+            np.sum(np.isfinite(t1_map) & (t1_map > 0) & brain_mask)
+        ) / max(1, int(np.sum(brain_mask)))
 
         # Build QC metrics dictionary
         has_b1 = b1_corrected
@@ -1849,24 +1905,23 @@ class T1Mapping(SimpleInterface):
             "gm_pass": gm_pass,
             "skipped": False,
             "b1_corrected": has_b1,
+            "b1_valid_fraction": round(
+                float(np.sum(brain_mask & ~b1_missing))
+                / max(1, int(np.sum(brain_mask))),
+                4,
+            ),
             "n_flip_angles": n_fa,
             "flip_angles_deg": flip_angles_deg.tolist(),
             "tr_ms": tr_ms,
             "field_strength_t": field_strength,
             "wm_range_ms": wm_range,
             "gm_range_ms": gm_range,
-            "csf_excluded": csf_excluded,
-            "median_filtered": True,
+            "csf_qc_restricted": csf_qc_restricted,
+            "median_filtered": False,
             "t1_method": t1_method,
+            "tissue_statistics_source": tissue_stats_source,
+            "t1_support": support_counts,
         }
-        # Hybrid-specific QC: fraction of voxels refined by NLLS
-        if t1_method == "hybrid" and needs_refinement is not None and np.any(needs_refinement):
-            qc_metrics["nlls_refined_count"] = int(needs_refinement.sum())
-            qc_metrics["nlls_refined_fraction"] = round(
-                float(needs_refinement.sum()) / max(
-                    1, int(rough_mask.sum()) if rough_mask is not None else 1,
-                ), 4,
-            )
         qc_metrics["edge_voxels_eroded"] = n_edge
         qc_metrics["edge_erosion_skipped"] = edge_erosion_skipped
         qc_metrics["edge_erosion_mode"] = (
@@ -1905,19 +1960,21 @@ class T1Mapping(SimpleInterface):
         # Derive hierarchical T1 QC status
         from pmriprep.utils.qc_standards import QCStatus
         corr_type = correction_info.get("correction_applied", "none")
-        if corr_type in ("fallback", "tissue_segmented"):
+        if corr_type == "fallback":
             t1_status = QCStatus.POOR
-        elif corr_type == "offset":
-            t1_status = QCStatus.POOR if (not wm_pass and not gm_pass) else QCStatus.WARN
-        else:  # "none"
-            if wm_pass and gm_pass:
+        else:  # "none": reference deviations warn but do not reject support
+            support_warn = (
+                support_counts["unavailable_voxels"] > 0
+                or support_counts["rejected_below_numeric_min_voxels"] > 0
+                or support_counts["rejected_above_numeric_max_voxels"] > 0
+                or not self.inputs.b1_qc_pass
+            )
+            if wm_pass and gm_pass and not support_warn:
                 t1_status = QCStatus.PASS
-            elif wm_pass or gm_pass:
-                t1_status = QCStatus.WARN
             else:
-                t1_status = QCStatus.POOR
+                t1_status = QCStatus.WARN
         qc_metrics["t1_status"] = t1_status
-        qc_metrics["t1_usable"] = (t1_status != QCStatus.POOR) or (corr_type != "none")
+        qc_metrics["t1_usable"] = bool(np.any(np.isfinite(t1_map) & brain_mask))
 
         # Flip angle validation for 2-angle VFA
         # Compare observed vs expected signal ratio using field-strength T1
@@ -2025,33 +2082,37 @@ class T1Mapping(SimpleInterface):
         # Save output T1 map
         out_img = nib.Nifti1Image(t1_map, affine, header)
         nib.save(out_img, out_file)
+        support_file = str(Path(runtime.cwd) / "t1_support_dseg.nii.gz")
+        support_img = nib.Nifti1Image(support_map, affine, header)
+        support_img.set_data_dtype(np.uint8)
+        nib.save(support_img, support_file)
 
-        # Generate QC plot — suppress when VFA was abandoned (gate/reject fallback)
-        # because showing VFA data alongside a fallback T1 map is misleading.
+        # Generate QC for every VFA attempt. When the measured map was rejected,
+        # the plot labels it explicitly and shows the final fallback map beside
+        # it so the diagnostic evidence is retained without implying that the
+        # rejected values were used for concentration conversion.
         qc_plot_path: Optional[str] = None
-        show_t1_qc = correction_result.correction_applied not in (
-            "fallback", "tissue_segmented",
-        )
-        if show_t1_qc:
-            try:
-                from pmriprep.utils.dce_qc_plots import generate_vfa_t1_qc_plot
+        try:
+            from pmriprep.utils.dce_qc_plots import generate_vfa_t1_qc_plot
 
-                vfa_data_list = [signal_data[i] for i in range(n_fa)]
-                qc_plot_path = generate_vfa_t1_qc_plot(
-                    vfa_data=vfa_data_list,
-                    flip_angles=flip_angles_deg.tolist(),
-                    t1_map=t1_map,
-                    brain_mask=brain_mask,
-                    field_strength=field_strength,
-                    correction_info=correction_info,
-                    subject_id=self.inputs.subject_id,
-                    session_id=self.inputs.session_id,
-                )
-            except Exception as e:
-                logger.warning("Failed to generate VFA T1 QC plot: %s", e, exc_info=True)
+            vfa_data_list = [signal_data[i] for i in range(n_fa)]
+            qc_plot_path = generate_vfa_t1_qc_plot(
+                vfa_data=vfa_data_list,
+                flip_angles=flip_angles_deg.tolist(),
+                t1_map=t1_map,
+                measured_t1_map=measured_t1_map,
+                brain_mask=brain_mask,
+                field_strength=field_strength,
+                correction_info=correction_info,
+                subject_id=self.inputs.subject_id,
+                session_id=self.inputs.session_id,
+            )
+        except Exception as e:
+            logger.warning("Failed to generate VFA T1 QC plot: %s", e, exc_info=True)
 
         # Set outputs
         self._results["out_file"] = out_file
+        self._results["support_file"] = support_file
         self._results["mean_t1_wm"] = wm_t1_estimate
         self._results["mean_t1_gm"] = gm_t1_estimate
         self._results["qc_pass"] = qc_pass
@@ -2218,7 +2279,7 @@ class T1Mapping(SimpleInterface):
             Output volume shape (x, y, z).
         e1_init : numpy.ndarray, optional
             Optional initial E1 from WLLS, shape (n_voxels,).
-            If None, uses unweighted GLLS estimate as starting point.
+            If None, computes a WLLS estimate as the starting point.
         mask : numpy.ndarray, optional
             Boolean mask of voxels to fit. If None, fits all voxels.
 
@@ -2265,23 +2326,23 @@ class T1Mapping(SimpleInterface):
             e1_sub = np.clip(e1_sub, EPSILON_E1_LOWER, 1.0 - EPSILON_E1_UPPER)
             r1 = -np.log(e1_sub) / tr_s
         else:
-            # Unweighted GLLS: single-pass linearized regression (no IRLS)
-            # Y = S/sin(a), X = S/tan(a) → slope = E1
-            y_init = S / np.where(np.abs(sin_a) < 1e-10, 1e-10, sin_a)
-            tan_a = sin_a / np.where(np.abs(cos_a) < 1e-10, 1e-10, cos_a)
-            x_init = S / np.where(np.abs(tan_a) < 1e-10, 1e-10, tan_a)
-
-            sum_x = np.sum(x_init, axis=0)
-            sum_y = np.sum(y_init, axis=0)
-            sum_xy = np.sum(x_init * y_init, axis=0)
-            sum_x2 = np.sum(x_init * x_init, axis=0)
-            denom = n_fa * sum_x2 - sum_x * sum_x
-            denom = np.where(np.abs(denom) < 1e-12, 1e-12, denom)
-            e1_glls = np.clip(
-                (n_fa * sum_xy - sum_x * sum_y) / denom,
-                EPSILON_E1_LOWER, 1.0 - EPSILON_E1_UPPER,
+            tan_fa = sin_fa / np.where(np.abs(cos_fa) < 1e-10, 1e-10, cos_fa)
+            x_data = signal_data / np.where(
+                np.abs(tan_fa) < 1e-10, 1e-10, tan_fa,
             )
-            r1 = -np.log(e1_glls) / tr_s
+            y_data = signal_data / np.where(
+                np.abs(sin_fa) < 1e-10, 1e-10, sin_fa,
+            )
+            wlls = self._fit_t1_wlls(
+                x_data, y_data, sin_fa, cos_fa, tr_s, shape,
+            )
+            e1_wlls = np.exp(
+                -tr_s / np.where(wlls > 0, wlls, 1.0),
+            ).ravel()
+            e1_sub = np.clip(
+                e1_wlls[fit_idx], EPSILON_E1_LOWER, 1.0 - EPSILON_E1_UPPER,
+            )
+            r1 = -np.log(e1_sub) / tr_s
 
         r1 = np.clip(r1, R1_MIN, R1_MAX)
 
@@ -2417,14 +2478,6 @@ class VFAPreprocessInputSpec(BaseInterfaceInputSpec):
         usedefault=True,
         desc="Skip inter-volume coregistration (if affines are identical)",
     )
-    field_strength = traits.Float(
-        3.0,
-        usedefault=True,
-        desc="Magnetic field strength in Tesla for flip angle validation",
-    )
-    tr = traits.Float(
-        desc="Repetition time in milliseconds",
-    )
 
 
 class VFAPreprocessOutputSpec(TraitedSpec):
@@ -2453,7 +2506,6 @@ class VFAPreprocess(SimpleInterface):
     2. Selection of best-quality VFA as registration reference
     3. Affine check: skip FLIRT if affines are identical
     4. FLIRT 6DOF rigid coregistration for non-reference volumes
-    5. Optional flip angle validation from signal ratio
 
     Parameters
     ----------
@@ -2463,10 +2515,6 @@ class VFAPreprocess(SimpleInterface):
         Nominal flip angles in degrees.
     skip_coregistration : bool
         If True, skip FLIRT coregistration.
-    field_strength : float
-        Field strength in Tesla.
-    tr : float, optional
-        Repetition time in ms.
 
     Returns
     -------
@@ -2482,6 +2530,341 @@ class VFAPreprocess(SimpleInterface):
 
     input_spec = VFAPreprocessInputSpec
     output_spec = VFAPreprocessOutputSpec
+
+    @staticmethod
+    def _motion_warning_state(
+        *,
+        translation_mm: float,
+        rotation_deg: float,
+        min_voxel_size_mm: float,
+        gradient_ncc_delta: float,
+        foreground_dice_delta: float,
+        spgr_nrmse_fractional_change: float,
+    ) -> str:
+        """Classify concordant evidence of inter-VFA misalignment.
+
+        Parameters
+        ----------
+        translation_mm : float
+            Norm of the candidate rigid translation in millimetres.
+        rotation_deg : float
+            Norm of the candidate rigid rotation in degrees.
+        min_voxel_size_mm : float
+            Smallest spatial voxel dimension in millimetres.
+        gradient_ncc_delta : float
+            Candidate-minus-identity gradient correlation.
+        foreground_dice_delta : float
+            Candidate-minus-identity foreground overlap.
+        spgr_nrmse_fractional_change : float
+            Fractional reduction in median multi-flip SPGR residual.
+
+        Returns
+        -------
+        str
+            ``"WARN"`` only when transform, anatomy, and SPGR evidence agree;
+            otherwise ``"PASS"``.
+        """
+        nontrivial_transform = (
+            translation_mm >= 0.25 * min_voxel_size_mm
+            or rotation_deg >= 0.3
+        )
+        anatomy_improved = (
+            gradient_ncc_delta >= 0.01
+            and foreground_dice_delta >= -0.01
+        )
+        signal_model_improved = spgr_nrmse_fractional_change >= 0.05
+        return (
+            "WARN"
+            if nontrivial_transform and anatomy_improved and signal_model_improved
+            else "PASS"
+        )
+
+    def _assess_same_grid_motion(
+        self,
+        *,
+        vfa_files: list[str],
+        vfa_imgs: list[Any],
+        vfa_data: list[npt.NDArray[np.float64]],
+        flip_angles: list[float],
+        ref_idx: int,
+    ) -> dict[str, Any]:
+        """Estimate, but do not apply, rigid inter-VFA motion.
+
+        The candidate registration uses robust gradient-magnitude images so
+        flip-angle-dependent tissue contrast does not directly drive FLIRT.
+        A warning requires agreement between anatomical edge alignment and the
+        multi-flip SPGR signal model.
+        """
+        import subprocess
+
+        import nibabel as nib  # type: ignore[import-untyped]
+        from scipy.ndimage import (  # type: ignore[import-untyped]
+            binary_closing,
+            binary_fill_holes,
+            binary_opening,
+            gaussian_filter,
+            label,
+        )
+        from scipy.spatial.transform import Rotation  # type: ignore[import-untyped]
+
+        def _foreground(data: npt.NDArray[np.float64]) -> npt.NDArray[np.bool_]:
+            positive = data[np.isfinite(data) & (data > 0)]
+            if positive.size < 100:
+                return np.zeros(data.shape, dtype=bool)
+            low, high = np.percentile(positive, [2, 98])
+            mask = np.isfinite(data) & (data > low + 0.08 * (high - low))
+            mask = binary_opening(mask, iterations=1)
+            mask = binary_closing(mask, iterations=2)
+            mask = binary_fill_holes(mask)
+            components, count = label(mask)
+            if count:
+                sizes = np.bincount(components.ravel())
+                sizes[0] = 0
+                mask = components == int(np.argmax(sizes))
+            return np.asarray(mask, dtype=bool)
+
+        def _gradient(
+            data: npt.NDArray[np.float64],
+            zooms: tuple[float, ...],
+        ) -> npt.NDArray[np.float32]:
+            finite = data[np.isfinite(data)]
+            if finite.size == 0:
+                return np.zeros(data.shape, dtype=np.float32)
+            low, high = np.percentile(finite, [1, 99])
+            scaled = np.clip((data - low) / max(high - low, 1e-8), 0.0, 1.0)
+            sigma = tuple(max(0.25, 1.0 / float(zoom)) for zoom in zooms[:3])
+            smooth = gaussian_filter(scaled, sigma=sigma)
+            derivatives = np.gradient(smooth, *zooms[:3])
+            magnitude = np.sqrt(sum(item * item for item in derivatives))
+            scale = max(float(np.percentile(magnitude, 99)), 1e-8)
+            return np.asarray(np.clip(magnitude / scale, 0.0, 1.0), dtype=np.float32)
+
+        def _ncc(
+            fixed: npt.NDArray[Any],
+            moving: npt.NDArray[Any],
+            mask: npt.NDArray[np.bool_],
+        ) -> float:
+            valid = mask & np.isfinite(fixed) & np.isfinite(moving)
+            if np.count_nonzero(valid) < 100:
+                return float("nan")
+            fixed_values = fixed[valid]
+            moving_values = moving[valid]
+            if np.std(fixed_values) == 0 or np.std(moving_values) == 0:
+                return float("nan")
+            return float(np.corrcoef(fixed_values, moving_values)[0, 1])
+
+        def _dice(
+            fixed: npt.NDArray[np.bool_],
+            moving: npt.NDArray[np.bool_],
+        ) -> float:
+            denominator = int(np.sum(fixed) + np.sum(moving))
+            if denominator == 0:
+                return float("nan")
+            return 2.0 * float(np.count_nonzero(fixed & moving)) / denominator
+
+        def _median_spgr_nrmse(
+            signals: npt.NDArray[np.float64],
+            mask: npt.NDArray[np.bool_],
+        ) -> float:
+            angles = np.radians(np.asarray(flip_angles, dtype=np.float64))
+            angle_shape = (len(angles),) + (1,) * (signals.ndim - 1)
+            angles = angles.reshape(angle_shape)
+            x_values = signals / np.tan(angles)
+            y_values = signals / np.sin(angles)
+            x_mean = np.mean(x_values, axis=0)
+            y_mean = np.mean(y_values, axis=0)
+            denominator = np.sum((x_values - x_mean) ** 2, axis=0)
+            e1 = np.sum(
+                (x_values - x_mean) * (y_values - y_mean),
+                axis=0,
+            ) / np.maximum(denominator, 1e-12)
+            valid = mask & np.isfinite(e1) & (e1 > 0) & (e1 < 0.999999)
+            basis = np.sin(angles) * (1.0 - e1) / np.maximum(
+                1.0 - np.cos(angles) * e1,
+                1e-12,
+            )
+            amplitude = np.sum(signals * basis, axis=0) / np.maximum(
+                np.sum(basis * basis, axis=0),
+                1e-12,
+            )
+            predicted = amplitude * basis
+            nrmse = np.sqrt(np.mean((signals - predicted) ** 2, axis=0))
+            nrmse /= np.maximum(np.mean(signals, axis=0), 1e-8)
+            values = nrmse[valid & np.isfinite(nrmse)]
+            return float(np.median(values)) if values.size >= 100 else float("nan")
+
+        ref_img = vfa_imgs[ref_idx]
+        ref_data = vfa_data[ref_idx]
+        ref_mask = _foreground(ref_data)
+        ref_gradient = _gradient(
+            ref_data,
+            tuple(float(value) for value in ref_img.header.get_zooms()[:3]),
+        )
+        out_dir = Path.cwd()
+        ref_gradient_file = out_dir / "vfa_motion_reference_gradient.nii.gz"
+        nib.save(
+            nib.Nifti1Image(
+                np.where(ref_mask, ref_gradient, 0.0).astype(np.float32),
+                ref_img.affine,
+            ),
+            ref_gradient_file,
+        )
+        identity_signals = np.stack(vfa_data)
+        identity_nrmse = _median_spgr_nrmse(identity_signals, ref_mask)
+        min_voxel_size = min(float(value) for value in ref_img.header.get_zooms()[:3])
+        comparisons: list[dict[str, Any]] = []
+
+        for index, (path, img, data) in enumerate(
+            zip(vfa_files, vfa_imgs, vfa_data, strict=True)
+        ):
+            if index == ref_idx:
+                continue
+            moving_mask = _foreground(data)
+            moving_gradient = _gradient(
+                data,
+                tuple(float(value) for value in img.header.get_zooms()[:3]),
+            )
+            moving_gradient_file = out_dir / f"vfa_motion_{index:02d}_gradient.nii.gz"
+            matrix_file = out_dir / f"vfa_motion_{index:02d}.mat"
+            candidate_file = out_dir / f"vfa_motion_{index:02d}_candidate.nii.gz"
+            candidate_mask_file = out_dir / f"vfa_motion_{index:02d}_mask.nii.gz"
+            moving_mask_file = out_dir / f"vfa_motion_{index:02d}_native_mask.nii.gz"
+            nib.save(
+                nib.Nifti1Image(
+                    np.where(moving_mask, moving_gradient, 0.0).astype(np.float32),
+                    img.affine,
+                ),
+                moving_gradient_file,
+            )
+            nib.save(
+                nib.Nifti1Image(moving_mask.astype(np.uint8), img.affine),
+                moving_mask_file,
+            )
+            estimate = subprocess.run(
+                [
+                    "flirt", "-in", str(moving_gradient_file),
+                    "-ref", str(ref_gradient_file),
+                    "-omat", str(matrix_file), "-dof", "6",
+                    "-cost", "normcorr", "-searchrx", "-5", "5",
+                    "-searchry", "-5", "5", "-searchrz", "-5", "5",
+                ],
+                capture_output=True,
+                text=True,
+            )
+            if estimate.returncode != 0 or not matrix_file.exists():
+                raise RuntimeError(
+                    f"FLIRT candidate estimation failed for VFA index {index}: "
+                    f"{estimate.stderr.strip()}"
+                )
+            for source, destination, interpolation in (
+                (path, candidate_file, "spline"),
+                (moving_mask_file, candidate_mask_file, "nearestneighbour"),
+            ):
+                apply = subprocess.run(
+                    [
+                        "flirt", "-in", str(source), "-ref", str(vfa_files[ref_idx]),
+                        "-out", str(destination), "-init", str(matrix_file),
+                        "-applyxfm", "-interp", interpolation,
+                    ],
+                    capture_output=True,
+                    text=True,
+                )
+                if apply.returncode != 0:
+                    raise RuntimeError(
+                        f"FLIRT candidate application failed for VFA index {index}: "
+                        f"{apply.stderr.strip()}"
+                    )
+
+            candidate = np.asarray(
+                nib.load(candidate_file).get_fdata(),  # type: ignore[attr-defined]
+                dtype=np.float64,
+            )
+            candidate_mask = (
+                nib.load(candidate_mask_file).get_fdata() > 0.5  # type: ignore[attr-defined]
+            )
+            common_identity = ref_mask & moving_mask
+            common_candidate = ref_mask & candidate_mask
+            identity_edge_ncc = _ncc(ref_gradient, moving_gradient, common_identity)
+            candidate_gradient = _gradient(
+                candidate,
+                tuple(float(value) for value in ref_img.header.get_zooms()[:3]),
+            )
+            candidate_edge_ncc = _ncc(
+                ref_gradient,
+                candidate_gradient,
+                common_candidate,
+            )
+            identity_dice = _dice(ref_mask, moving_mask)
+            candidate_dice = _dice(ref_mask, candidate_mask)
+            candidate_signals = identity_signals.copy()
+            candidate_signals[index] = candidate
+            candidate_nrmse = _median_spgr_nrmse(candidate_signals, ref_mask)
+            nrmse_change = (
+                (identity_nrmse - candidate_nrmse) / identity_nrmse
+                if np.isfinite(identity_nrmse)
+                and identity_nrmse > 0
+                and np.isfinite(candidate_nrmse)
+                else float("nan")
+            )
+            matrix = np.loadtxt(matrix_file)
+            linear = np.asarray(matrix[:3, :3], dtype=np.float64)
+            left, _, right = np.linalg.svd(linear)
+            rotation = left @ right
+            rotation_deg = float(
+                np.linalg.norm(Rotation.from_matrix(rotation).as_rotvec())
+                * 180.0 / np.pi
+            )
+            translation_mm = float(np.linalg.norm(matrix[:3, 3]))
+            state = self._motion_warning_state(
+                translation_mm=translation_mm,
+                rotation_deg=rotation_deg,
+                min_voxel_size_mm=min_voxel_size,
+                gradient_ncc_delta=candidate_edge_ncc - identity_edge_ncc,
+                foreground_dice_delta=candidate_dice - identity_dice,
+                spgr_nrmse_fractional_change=nrmse_change,
+            )
+            comparisons.append(
+                {
+                    "moving_index": index,
+                    "flip_angle_deg": float(flip_angles[index]),
+                    "candidate_translation_mm": translation_mm,
+                    "candidate_rotation_deg": rotation_deg,
+                    "candidate_rigid_matrix": [
+                        [float(value) for value in row]
+                        for row in np.asarray(matrix, dtype=np.float64)
+                    ],
+                    "identity_gradient_ncc": identity_edge_ncc,
+                    "candidate_gradient_ncc": candidate_edge_ncc,
+                    "gradient_ncc_delta": candidate_edge_ncc - identity_edge_ncc,
+                    "identity_foreground_dice": identity_dice,
+                    "candidate_foreground_dice": candidate_dice,
+                    "foreground_dice_delta": candidate_dice - identity_dice,
+                    "identity_spgr_median_nrmse": identity_nrmse,
+                    "candidate_spgr_median_nrmse": candidate_nrmse,
+                    "spgr_nrmse_fractional_reduction": nrmse_change,
+                    "qc_status": state,
+                }
+            )
+
+        overall = (
+            "WARN"
+            if any(item["qc_status"] == "WARN" for item in comparisons)
+            else "PASS"
+        )
+        result: dict[str, Any] = {
+            "qc_status": overall,
+            "reference_index": ref_idx,
+            "reference_flip_angle_deg": float(flip_angles[ref_idx]),
+            "correction_applied": False,
+            "estimator": "gradient_magnitude_rigid_candidate",
+            "comparisons": comparisons,
+        }
+        if overall == "WARN":
+            result["warning"] = (
+                "Potential inter-VFA misalignment detected; VFA images were not "
+                "resampled. Review source images and T1-map QC."
+            )
+        return result
 
     def _run_interface(self, runtime: Any) -> Any:
         """Execute VFA preprocessing."""
@@ -2534,6 +2917,32 @@ class VFAPreprocess(SimpleInterface):
                 break
 
         qc_metrics["affines_identical"] = affines_identical
+        if affines_identical and n_fa >= 2:
+            try:
+                qc_metrics["motion_assessment"] = self._assess_same_grid_motion(
+                    vfa_files=vfa_files,
+                    vfa_imgs=vfa_imgs,
+                    vfa_data=vfa_data,
+                    flip_angles=flip_angles,
+                    ref_idx=ref_idx,
+                )
+            except Exception as exc:
+                logger.warning("VFA motion diagnostic was not evaluated: %s", exc)
+                qc_metrics["motion_assessment"] = {
+                    "qc_status": "NOT_EVALUATED",
+                    "reference_index": ref_idx,
+                    "reference_flip_angle_deg": float(flip_angles[ref_idx]),
+                    "correction_applied": False,
+                    "reason": str(exc),
+                }
+        else:
+            qc_metrics["motion_assessment"] = {
+                "qc_status": "NOT_EVALUATED",
+                "reference_index": ref_idx,
+                "reference_flip_angle_deg": float(flip_angles[ref_idx]),
+                    "correction_applied": False,
+                    "reason": "VFA grids differ; required grid harmonization used",
+                }
 
         # Determine whether to coregister
         do_coreg = (
@@ -2716,11 +3125,6 @@ class DCEPreprocessInputSpec(BaseInterfaceInputSpec):
         exists=True,
         desc="Brain mask for baseline detection and QC (optional)",
     )
-    contrast_threshold = traits.Float(
-        1.5,
-        usedefault=True,
-        desc="Signal increase threshold (%) for bolus arrival detection (default: 1.5%)",
-    )
     volume_tr = traits.Float(
         0.0,
         usedefault=True,
@@ -2754,6 +3158,54 @@ class DCEPreprocessOutputSpec(TraitedSpec):
     qc_metrics = traits.Dict(desc="QC metrics dictionary")
 
 
+@dataclass(frozen=True)
+class _DCEPreprocessPreparation:
+    """Loaded DCE series and resolved baseline state for preprocessing."""
+
+    in_file: str
+    out_file: str
+    data: npt.NDArray[Any]
+    affine: npt.NDArray[Any]
+    header: Any
+    n_volumes: int
+    brain_mask: Optional[npt.NDArray[np.bool_]]
+    baseline_frames: int
+    baseline_indices: tuple[int, ...]
+    bolus_frame: int
+    baseline_diagnostics: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class _DCEMCFLIRTPlan:
+    """Resolved MCFLIRT reference, output base, and command."""
+
+    out_base: str
+    reference_file: Optional[str]
+    command: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class _DCEMotionQC:
+    """Reduced MCFLIRT motion parameters and QC state."""
+
+    fd: tuple[float, ...]
+    fd_mean: float
+    fd_max: float
+    n_outliers: int
+    outlier_frames: tuple[int, ...]
+    metrics: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class _DCEPreprocessOutputs:
+    """Serialized DCE preprocessing output paths."""
+
+    out_file: str
+    params_file: str
+    mean_file: str
+    baseline_mean_file: str
+
+
 class DCEPreprocess(SimpleInterface):
     """DCE preprocessing with motion correction and baseline detection.
 
@@ -2784,8 +3236,6 @@ class DCEPreprocess(SimpleInterface):
         Interpolation: trilinear, sinc, or spline (default: trilinear)
     brain_mask : str, optional
         Brain mask for baseline detection (improves accuracy)
-    contrast_threshold : float
-        Signal increase threshold (%) for bolus arrival detection (default: 1.5%)
 
     Returns
     -------
@@ -2818,13 +3268,9 @@ class DCEPreprocess(SimpleInterface):
     -----
     **Baseline Detection Algorithm:**
 
-    When baseline_frames=0 (auto-detect), the algorithm:
-
-    1. Computes the global mean signal for each time point (within brain mask if provided)
-    2. Computes the mean and std of signal in a sliding window
-    3. Detects bolus arrival as the first frame where signal increases by more than
-       contrast_threshold × std above the baseline mean
-    4. Sets baseline_frames to the frame before bolus arrival
+    When ``baseline_frames=0``, bolus arrival is estimated from an ensemble of
+    change-point and derivative detectors applied to the brain signal time
+    course. The detected arrival frame defines the pre-contrast baseline.
 
     For DCE with gadolinium contrast, the signal typically INCREASES (T1-shortening)
     at bolus arrival, unlike DSC where signal DECREASES (T2* effect).
@@ -2858,32 +3304,30 @@ class DCEPreprocess(SimpleInterface):
 
     See Also
     --------
-    FSL mcflirt: https://fsl.fmrib.ox.ac.uk/fsl/fslwiki/MCFLIRT
     MotionCorrection : DSC motion correction interface
     """
 
     input_spec = DCEPreprocessInputSpec
     output_spec = DCEPreprocessOutputSpec
 
-    def _run_interface(self, runtime: Any) -> Any:
-        """Execute DCE preprocessing."""
-        import subprocess
-        import nibabel as nib  # type: ignore[import-untyped]
+    def _prepare_preprocess_inputs(self) -> _DCEPreprocessPreparation:
+        """Load DCE inputs and resolve the baseline window.
 
-        # Generate output filenames
+        Returns
+        -------
+        _DCEPreprocessPreparation
+            Native image state, optional same-grid mask, and the existing
+            detected or configured baseline state.
+        """
         out_file = self._gen_outfilename()
-        out_params = self._gen_params_filename()
-        mean_file = self._gen_mean_filename()
-
-        # Load input DCE data
-        dce_img = nib.load(self.inputs.in_file)
+        in_file = str(self.inputs.in_file)
+        dce_img = nib.load(in_file)
         dce_data = dce_img.get_fdata().astype(np.float64)  # type: ignore[attr-defined]
         affine = dce_img.affine  # type: ignore[attr-defined]
         header = dce_img.header  # type: ignore[attr-defined]
         n_volumes = dce_data.shape[3]
 
-        # Load brain mask if provided
-        brain_mask: Optional[np.ndarray] = None
+        brain_mask: Optional[npt.NDArray[np.bool_]] = None
         if self.inputs.brain_mask:
             mask_img = nib.load(self.inputs.brain_mask)
             mask_data = mask_img.get_fdata() > 0.5  # type: ignore[attr-defined]
@@ -2896,39 +3340,108 @@ class DCEPreprocess(SimpleInterface):
                     mask_data.shape, dce_data.shape[:3],
                 )
 
-        # Detect or use specified baseline frames
-        if self.inputs.baseline_frames > 0:
-            # Use specified baseline
+        from pmriprep.utils.dce_constants import DEFAULT_BASELINE_FRAMES
+
+        configured_baseline = self.inputs.baseline_frames > 0
+        if configured_baseline:
             baseline_frames = self.inputs.baseline_frames
-            # Detect bolus arrival for QC
             bolus_frame, baseline_diag = self._detect_bolus_arrival(
                 dce_data, brain_mask
             )
         else:
-            # Auto-detect baseline from global signal
             baseline_frames, bolus_frame, baseline_diag = self._auto_detect_baseline(
                 dce_data, brain_mask
             )
 
-        # Ensure baseline is at least 3 frames and doesn't exceed available volumes
-        baseline_frames = max(3, min(baseline_frames, n_volumes - 1))
-        # Clamp baseline to bolus arrival so baseline never extends into bolus.
+        detected_bolus_frame = int(bolus_frame)
+        usable_fallback = max(1, min(DEFAULT_BASELINE_FRAMES, n_volumes - 1))
+        if n_volumes - 1 < DEFAULT_BASELINE_FRAMES:
+            fallback_reason = "insufficient_volumes_for_minimum_baseline"
+        elif configured_baseline and baseline_frames < DEFAULT_BASELINE_FRAMES:
+            fallback_reason = "configured_baseline_below_minimum"
+        elif (
+            not configured_baseline
+            and (
+                baseline_frames < DEFAULT_BASELINE_FRAMES
+                or bolus_frame < DEFAULT_BASELINE_FRAMES
+            )
+        ):
+            fallback_reason = "detected_bolus_before_minimum_baseline"
+        else:
+            fallback_reason = None
+
+        if fallback_reason is not None:
+            baseline_frames = usable_fallback
+            if fallback_reason != "configured_baseline_below_minimum":
+                bolus_frame = usable_fallback
+            baseline_diag = dict(baseline_diag)
+            baseline_diag.update({
+                "baseline_status": "POOR",
+                "baseline_minimum_frames": DEFAULT_BASELINE_FRAMES,
+                "baseline_frames_used": baseline_frames,
+                "detected_bolus_frame": detected_bolus_frame,
+                "baseline_fallback_applied": True,
+                "baseline_fallback_reason": fallback_reason,
+                "baseline_warning": (
+                    "DCE acquisition or baseline configuration does not provide "
+                    "the required "
+                    f"{DEFAULT_BASELINE_FRAMES}-frame pre-contrast baseline; "
+                    f"{baseline_frames} frames were used as a computational "
+                    "fallback. The S0 estimate and quantitative PK maps are "
+                    "unreliable."
+                ),
+            })
+
+        baseline_frames = max(1, min(baseline_frames, n_volumes - 1))
         if bolus_frame > 0 and baseline_frames > bolus_frame:
             baseline_frames = bolus_frame
-        baseline_indices = list(range(baseline_frames))
 
-        # Determine reference volume for motion correction
+        return _DCEPreprocessPreparation(
+            in_file=in_file,
+            out_file=out_file,
+            data=dce_data,
+            affine=affine,
+            header=header,
+            n_volumes=n_volumes,
+            brain_mask=brain_mask,
+            baseline_frames=baseline_frames,
+            baseline_indices=tuple(range(baseline_frames)),
+            bolus_frame=bolus_frame,
+            baseline_diagnostics=baseline_diag,
+        )
+
+    def _prepare_mcflirt_plan(
+        self, preparation: _DCEPreprocessPreparation
+    ) -> _DCEMCFLIRTPlan:
+        """Create the existing MCFLIRT reference and command plan.
+
+        Parameters
+        ----------
+        preparation : _DCEPreprocessPreparation
+            Loaded DCE image and resolved baseline state.
+
+        Returns
+        -------
+        _DCEMCFLIRTPlan
+            Output base, optional temporary reference, and command arguments.
+        """
         ref_vol = self.inputs.ref_vol
         ref_vol_index: Optional[int] = None
-
         if ref_vol == "baseline_mean":
-            # Create mean of baseline frames as reference
-            baseline_data = np.mean(dce_data[..., :baseline_frames], axis=3)
-            ref_file = str(Path(out_file).parent / "_tmp_baseline_mean.nii.gz")
-            ref_img = nib.Nifti1Image(baseline_data.astype(np.float32), affine, header)
+            baseline_data = np.mean(
+                preparation.data[..., :preparation.baseline_frames], axis=3
+            )
+            ref_file = str(
+                Path(preparation.out_file).parent / "_tmp_baseline_mean.nii.gz"
+            )
+            ref_img = nib.Nifti1Image(
+                baseline_data.astype(np.float32),
+                preparation.affine,
+                preparation.header,
+            )
             nib.save(ref_img, ref_file)
         elif ref_vol == "mean":
-            ref_file = None  # mcflirt will compute mean
+            ref_file = None
         elif ref_vol == "first":
             ref_vol_index = 0
             ref_file = None
@@ -2938,11 +3451,7 @@ class DCEPreprocess(SimpleInterface):
         else:
             ref_file = None
 
-        # Build mcflirt command
-        in_file = str(self.inputs.in_file)
-
-        # Remove extension for mcflirt output basename
-        out_path = Path(out_file)
+        out_path = Path(preparation.out_file)
         if out_path.name.endswith(".nii.gz"):
             out_base = str(out_path)[:-7]
         elif out_path.name.endswith(".nii"):
@@ -2950,131 +3459,207 @@ class DCEPreprocess(SimpleInterface):
         else:
             out_base = str(out_path)
 
-        cmd_parts: list[str] = [
+        command = [
             "mcflirt",
-            "-in", in_file,
+            "-in", preparation.in_file,
             "-out", out_base,
-            "-plots",  # Output motion parameters
-            "-stats",  # Output mean volume
-            "-mats",  # Output transformation matrices
+            "-plots",
+            "-stats",
+            "-mats",
         ]
-
-        # Reference volume
         if ref_vol == "baseline_mean" and ref_file:
-            cmd_parts.extend(["-reffile", ref_file])
+            command.extend(["-reffile", ref_file])
         elif ref_vol == "mean":
-            cmd_parts.append("-meanvol")
+            command.append("-meanvol")
         elif ref_vol_index is not None:
-            cmd_parts.extend(["-refvol", str(ref_vol_index)])
+            command.extend(["-refvol", str(ref_vol_index)])
 
-        # Cost function
-        cmd_parts.extend(["-cost", self.inputs.cost])
+        command.extend(["-cost", self.inputs.cost])
+        if self.inputs.interpolation == "sinc":
+            command.append("-sinc_final")
+        elif self.inputs.interpolation == "spline":
+            command.append("-spline_final")
+        command.extend(["-stages", "4"])
+        return _DCEMCFLIRTPlan(out_base, ref_file, tuple(command))
 
-        # Interpolation
-        interp = self.inputs.interpolation
-        if interp == "sinc":
-            cmd_parts.append("-sinc_final")
-        elif interp == "spline":
-            cmd_parts.append("-spline_final")
+    def _summarize_motion_qc(
+        self,
+        params_file: str,
+        preparation: _DCEPreprocessPreparation,
+    ) -> _DCEMotionQC:
+        """Reduce MCFLIRT parameters and return zeroed QC on read failure.
 
-        # Stages (default 4)
-        cmd_parts.extend(["-stages", "4"])
+        Parameters
+        ----------
+        params_file : str
+            MCFLIRT six-column motion-parameter file.
+        preparation : _DCEPreprocessPreparation
+            Baseline and volume state included in the QC record.
 
-        # Run mcflirt
-        result = subprocess.run(cmd_parts, capture_output=True, text=True)
-
-        if result.returncode != 0:
-            raise RuntimeError(f"mcflirt failed: {result.stderr}")
-
-        # Clean up temp reference file
-        if ref_vol == "baseline_mean" and ref_file:
-            try:
-                Path(ref_file).unlink()
-            except Exception:
-                pass
-
-        # Load motion parameters and compute QC metrics
-        params_file = f"{out_base}.par"
-        qc_metrics: dict[str, Any] = {}
-
+        Returns
+        -------
+        _DCEMotionQC
+            Framewise displacement, outliers, and composite QC metrics.
+        """
         try:
             motion_params = np.loadtxt(params_file)
-
-            # Calculate FD
-            head_radius = float(self.inputs.head_radius)
-            fd = self._calculate_fd(motion_params, head_radius)
-
-            fd_list = [float(x) for x in fd]
-            fd_mean = float(np.mean(fd[1:]))  # Exclude first frame
+            fd = self._calculate_fd(motion_params, float(self.inputs.head_radius))
+            fd_list = tuple(float(value) for value in fd)
+            fd_mean = float(np.mean(fd[1:]))
             fd_max = float(np.max(fd))
-
-            # Outlier detection
             motion_thresh = float(self.inputs.motion_thresh)
             outlier_mask = fd > motion_thresh
             n_outliers = int(np.sum(outlier_mask))
-            outlier_frames = [int(i) for i in np.where(outlier_mask)[0]]
+            outlier_frames = tuple(int(i) for i in np.where(outlier_mask)[0])
 
-            from pmriprep.utils.qc_standards import (
-                get_composite_motion_status,
-            )
-            pct_outliers = 100.0 * n_outliers / max(1, n_volumes)
+            from pmriprep.utils.qc_standards import get_composite_motion_status
+
+            pct_outliers = 100.0 * n_outliers / max(1, preparation.n_volumes)
             motion_status = get_composite_motion_status(
                 fd_mean, fd_max, pct_outliers,
             )
-
-            qc_metrics = {
+            metrics = self._preprocess_qc_context(preparation)
+            metrics.update({
                 "fd_mean": fd_mean,
                 "fd_max": fd_max,
                 "motion_status": motion_status,
-                "fd_list": fd_list,
+                "motion_qc_available": True,
+                "fd_list": list(fd_list),
                 "n_outliers": n_outliers,
-                "outlier_frames": outlier_frames,
+                "outlier_frames": list(outlier_frames),
                 "motion_thresh": motion_thresh,
-                "n_volumes": n_volumes,
-                "percent_outliers": 100.0 * n_outliers / max(1, n_volumes),
-                "baseline_frames": baseline_frames,
-                "bolus_arrival_frame": bolus_frame,
-                "baseline_detection_method": baseline_diag.get("method", "unknown"),
-                "baseline_detection_confidence": baseline_diag.get(
-                    "confidence", "unknown"
-                ),
-                "reference_type": str(ref_vol),
-                "motion_applied": bool(self.inputs.apply_motion_correction),
-            }
-            if baseline_diag.get("confidence", "high") != "high":
+                "percent_outliers": pct_outliers,
+            })
+            if preparation.baseline_diagnostics.get("confidence", "high") != "high":
                 logger.warning(
                     "DCE baseline detection low confidence: method=%s, "
                     "confidence=%s, bolus_frame=%d (S0 window may include "
                     "enhanced frames; concentration may be biased).",
-                    baseline_diag.get("method"),
-                    baseline_diag.get("confidence"),
-                    bolus_frame,
+                    preparation.baseline_diagnostics.get("method"),
+                    preparation.baseline_diagnostics.get("confidence"),
+                    preparation.bolus_frame,
                 )
+            return _DCEMotionQC(
+                fd_list,
+                fd_mean,
+                fd_max,
+                n_outliers,
+                outlier_frames,
+                metrics,
+            )
+        except Exception as exc:
+            logger.warning("DCE motion QC calculation failed: %s", exc)
+            metrics = self._preprocess_qc_context(preparation)
+            metrics.update({
+                "motion_status": "UNKNOWN",
+                "motion_qc_available": False,
+                "motion_qc_error": type(exc).__name__,
+                "motion_qc_warning": (
+                    "DCE motion parameters could not be summarized. "
+                    "Motion quality is unknown; review the motion plot and "
+                    "quantitative maps before use."
+                ),
+            })
+            return _DCEMotionQC(
+                (),
+                0.0,
+                0.0,
+                0,
+                (),
+                metrics,
+            )
 
-            self._results["fd"] = fd_list
-            self._results["fd_mean"] = fd_mean
-            self._results["fd_max"] = fd_max
-            self._results["n_outliers"] = n_outliers
-            self._results["outlier_frames"] = outlier_frames
+    def _preprocess_qc_context(
+        self, preparation: _DCEPreprocessPreparation,
+    ) -> dict[str, Any]:
+        """Build baseline and execution provenance shared by both motion paths.
 
-        except Exception:
-            # If metrics computation fails, provide empty defaults
-            self._results["fd"] = []
-            self._results["fd_mean"] = 0.0
-            self._results["fd_max"] = 0.0
-            self._results["n_outliers"] = 0
-            self._results["outlier_frames"] = []
+        Parameters
+        ----------
+        preparation : _DCEPreprocessPreparation
+            Resolved acquisition and baseline state.
 
-        # Select the series to process. mcflirt always ran above (so residual
-        # motion is reported for QC), and it wrote the realigned series to
-        # moco_path == out_file. When motion correction is disabled the input is
-        # assumed already corrected: overwrite out_file with the (reoriented)
-        # input and derive every mean from that same series, so downstream
-        # processing and the registration reference share one interpolation-free
-        # grid instead of a second re-resampling.
-        mean_out = self._gen_mean_filename()
-        moco_path = f"{out_base}.nii.gz"
+        Returns
+        -------
+        dict
+            Common preprocessing QC metrics, including any baseline fallback.
+        """
+        metrics = {
+            "n_volumes": preparation.n_volumes,
+            "baseline_frames": preparation.baseline_frames,
+            "bolus_arrival_frame": preparation.bolus_frame,
+            "baseline_detection_method": preparation.baseline_diagnostics.get(
+                "method", "unknown"
+            ),
+            "baseline_detection_confidence": preparation.baseline_diagnostics.get(
+                "confidence", "unknown"
+            ),
+            "reference_type": str(self.inputs.ref_vol),
+            "motion_applied": bool(self.inputs.apply_motion_correction),
+        }
+        for key in (
+            "baseline_status",
+            "baseline_minimum_frames",
+            "baseline_frames_used",
+            "detected_bolus_frame",
+            "baseline_fallback_applied",
+            "baseline_fallback_reason",
+            "baseline_warning",
+        ):
+            if key in preparation.baseline_diagnostics:
+                metrics[key] = preparation.baseline_diagnostics[key]
+        return metrics
 
+    def _run_mcflirt(self, plan: _DCEMCFLIRTPlan) -> str:
+        """Execute a prepared MCFLIRT command and return its parameter file.
+
+        Parameters
+        ----------
+        plan : _DCEMCFLIRTPlan
+            Command, output base, and optional temporary reference.
+
+        Returns
+        -------
+        str
+            Expected MCFLIRT motion-parameter path.
+        """
+        import subprocess
+
+        try:
+            result = subprocess.run(plan.command, capture_output=True, text=True)
+            if result.returncode != 0:
+                raise RuntimeError(f"mcflirt failed: {result.stderr}")
+        finally:
+            if self.inputs.ref_vol == "baseline_mean" and plan.reference_file:
+                try:
+                    Path(plan.reference_file).unlink()
+                except Exception:
+                    pass
+        return f"{plan.out_base}.par"
+
+    def _write_preprocess_outputs(
+        self,
+        preparation: _DCEPreprocessPreparation,
+        mcflirt_plan: _DCEMCFLIRTPlan,
+        params_file: str,
+    ) -> _DCEPreprocessOutputs:
+        """Select the processed series and write whole/baseline means.
+
+        Parameters
+        ----------
+        preparation : _DCEPreprocessPreparation
+            Input path and resolved baseline state.
+        mcflirt_plan : _DCEMCFLIRTPlan
+            Output base locating the realigned MCFLIRT series.
+        params_file : str
+            Motion-parameter output returned with the serialized products.
+
+        Returns
+        -------
+        _DCEPreprocessOutputs
+            Paths for the selected series, motion parameters, and mean images.
+        """
+        moco_path = f"{mcflirt_plan.out_base}.nii.gz"
         if not Path(moco_path).exists():
             raise FileNotFoundError(
                 f"Motion-corrected output not found: {moco_path}"
@@ -3083,16 +3668,12 @@ class DCEPreprocess(SimpleInterface):
         if bool(self.inputs.apply_motion_correction):
             series_path = moco_path
         else:
-            import shutil
+            shutil.copyfile(preparation.in_file, preparation.out_file)
+            series_path = preparation.in_file
 
-            shutil.copyfile(in_file, out_file)
-            series_path = in_file
-
-        # Compute means from the 4D series rather than relying on mcflirt's
-        # _meanvol.nii.gz, which is an undocumented side effect of -stats and
-        # may not be produced in all configurations.
         series_img = nib.load(series_path)
         series_data = series_img.get_fdata()  # type: ignore[attr-defined]
+        mean_out = self._gen_mean_filename()
         mean_data = np.mean(series_data, axis=3).astype(np.float32)
         mean_nii = nib.Nifti1Image(
             mean_data,
@@ -3100,33 +3681,57 @@ class DCEPreprocess(SimpleInterface):
             series_img.header,  # type: ignore[attr-defined]
         )
         nib.save(mean_nii, mean_out)
-
         if not Path(mean_out).exists():
-            raise FileNotFoundError(
-                f"Failed to create mean image at: {mean_out}"
-            )
+            raise FileNotFoundError(f"Failed to create mean image at: {mean_out}")
 
-        # Save baseline mean for downstream use (HD-BET input)
-        # Using pre-contrast baseline mean avoids contrast-enhanced vessels
-        # inflating the brain mask
         baseline_mean_out = self._gen_baseline_mean_filename()
-        baseline_data = np.mean(series_data[..., :baseline_frames], axis=3)
+        baseline_data = np.mean(
+            series_data[..., :preparation.baseline_frames], axis=3
+        )
         baseline_nii = nib.Nifti1Image(
             baseline_data.astype(np.float32),
             series_img.affine,  # type: ignore[attr-defined]
             series_img.header,  # type: ignore[attr-defined]
         )
         nib.save(baseline_nii, baseline_mean_out)
+        return _DCEPreprocessOutputs(
+            preparation.out_file,
+            params_file,
+            mean_out,
+            baseline_mean_out,
+        )
 
-        # Set outputs
-        self._results["out_file"] = out_file
-        self._results["out_params"] = params_file
-        self._results["mean_img"] = mean_out
-        self._results["baseline_mean_img"] = baseline_mean_out
-        self._results["baseline_frames"] = baseline_frames
-        self._results["baseline_indices"] = baseline_indices
-        self._results["bolus_arrival_frame"] = bolus_frame
-        self._results["qc_metrics"] = qc_metrics
+    def _assemble_preprocess_results(
+        self,
+        preparation: _DCEPreprocessPreparation,
+        motion_qc: _DCEMotionQC,
+        outputs: _DCEPreprocessOutputs,
+    ) -> None:
+        """Populate the Nipype result contract from typed preprocessing state."""
+        self._results["fd"] = list(motion_qc.fd)
+        self._results["fd_mean"] = motion_qc.fd_mean
+        self._results["fd_max"] = motion_qc.fd_max
+        self._results["n_outliers"] = motion_qc.n_outliers
+        self._results["outlier_frames"] = list(motion_qc.outlier_frames)
+        self._results["out_file"] = outputs.out_file
+        self._results["out_params"] = outputs.params_file
+        self._results["mean_img"] = outputs.mean_file
+        self._results["baseline_mean_img"] = outputs.baseline_mean_file
+        self._results["baseline_frames"] = preparation.baseline_frames
+        self._results["baseline_indices"] = list(preparation.baseline_indices)
+        self._results["bolus_arrival_frame"] = preparation.bolus_frame
+        self._results["qc_metrics"] = motion_qc.metrics
+
+    def _run_interface(self, runtime: Any) -> Any:
+        """Execute DCE preprocessing."""
+        preparation = self._prepare_preprocess_inputs()
+        mcflirt_plan = self._prepare_mcflirt_plan(preparation)
+        params_file = self._run_mcflirt(mcflirt_plan)
+        motion_qc = self._summarize_motion_qc(params_file, preparation)
+        outputs = self._write_preprocess_outputs(
+            preparation, mcflirt_plan, params_file
+        )
+        self._assemble_preprocess_results(preparation, motion_qc, outputs)
 
         return runtime
 
@@ -3241,56 +3846,6 @@ class DCEPreprocess(SimpleInterface):
         )
         return bolus_frame, diag
 
-    def _detect_bolus_arrival_from_signal(self, signal: np.ndarray) -> int:
-        """Detect bolus arrival from global signal time course.
-
-        Uses derivative-based onset detection: computes smoothed first
-        derivative and finds where rate-of-change first exceeds threshold.
-        Detects bolus ONSET (when contrast first arrives), not accumulated
-        effect.
-        """
-        from scipy.ndimage import gaussian_filter1d
-        from pmriprep.utils.dce_constants import DEFAULT_BASELINE_FRAMES
-
-        n_volumes = len(signal)
-        if n_volumes < 6:
-            return DEFAULT_BASELINE_FRAMES
-
-        min_baseline = DEFAULT_BASELINE_FRAMES
-        n_baseline_noise = 5  # Frames for noise estimation
-
-        # TR-adaptive sigma: at volume_tr=7.4s, sigma=2.0 smoothes over
-        # ~14.8s — wider than the bolus FWHM — causing Gaussian bleed-back
-        # that triggers false early detection. Target ~4s smoothing window
-        # in temporal units, converted to sample space.
-        volume_tr = self.inputs.volume_tr if self.inputs.volume_tr > 0 else 0.0
-        if volume_tr > 0:
-            sigma = max(0.5, 4.0 / volume_tr)
-        else:
-            sigma = 2.0  # legacy default
-
-        # Compute first derivative and smooth
-        signal_deriv = np.diff(signal)
-        signal_deriv_smooth = gaussian_filter1d(signal_deriv, sigma=sigma)
-
-        # Threshold: 2x std of baseline derivative, with absolute floor
-        # to prevent false triggers when baseline is very quiet
-        baseline_end = min(n_baseline_noise, len(signal_deriv_smooth))
-        baseline_deriv = signal_deriv_smooth[:baseline_end]
-        noise_threshold = 2.0 * np.std(baseline_deriv)
-        abs_floor = 0.01 * np.mean(signal[:baseline_end + 1])
-        deriv_threshold = max(noise_threshold, abs_floor)
-
-        # Find first pair of consecutive above-threshold frames
-        # (single spikes are likely motion, not bolus onset)
-        above = signal_deriv_smooth > deriv_threshold
-        for i in range(len(above) - 1):
-            if above[i] and above[i + 1]:
-                # deriv[i] = signal[i+1] - signal[i], so bolus onset is frame i+1
-                return max(i + 1, min_baseline)
-
-        return DEFAULT_BASELINE_FRAMES
-
     def _calculate_fd(
         self,
         motion_params: npt.NDArray[Any],
@@ -3390,10 +3945,6 @@ class DCEBrainExtractInputSpec(BaseInterfaceInputSpec):
         mandatory=True,
         desc="Mean DCE image (typically from DCEPreprocess)",
     )
-    t1w_brain_mask = File(
-        exists=True,
-        desc="T1w-derived brain mask (fallback if native extraction fails)",
-    )
     out_brain = File(
         genfile=True,
         desc="Output brain-extracted DCE image",
@@ -3472,8 +4023,6 @@ class DCEBrainExtract(SimpleInterface):
     ----------
     dce_mean : str
         Mean DCE image (from DCEPreprocess.mean_img)
-    t1w_brain_mask : str, optional
-        T1w brain mask as fallback reference
     method : str
         Preferred method: 'hdbet' (default), 'bet', or 'threshold'
     bet_frac : float
@@ -3509,10 +4058,6 @@ class DCEBrainExtract(SimpleInterface):
     If HD-BET is not available, falls back to FSL BET with parameters
     optimized for DCE contrast (lower fractional intensity threshold).
 
-    References
-    ----------
-    Isensee F et al. "HD-BET: Robust skull stripping using deep learning."
-    Human Brain Mapping. 2019.
     """
 
     input_spec = DCEBrainExtractInputSpec
@@ -3591,18 +4136,6 @@ class DCEBrainExtract(SimpleInterface):
                 shutil.copy2(mask_path, out_mask)
         return succeeded
 
-    def _detect_hdbet_device(self) -> str:
-        """Auto-detect best device for HD-BET.
-
-        Returns
-        -------
-        str
-            Device name: 'cuda', 'mps', or 'cpu'.
-        """
-        from pmriprep.utils.device import detect_torch_device
-
-        return detect_torch_device()
-
     def _run_bet(self, dce_mean: Path, out_brain: str, out_mask: str) -> bool:
         """Run FSL BET brain extraction."""
         import subprocess
@@ -3680,20 +4213,6 @@ class DCEBrainExtract(SimpleInterface):
         # Save filled mask
         filled_img = nib.Nifti1Image(filled.astype(np.float32), img.affine)  # type: ignore[attr-defined]
         nib.save(filled_img, mask_path)
-
-    def _apply_mask(self, in_file: str, mask_file: str, out_file: str) -> None:
-        """Apply brain mask to image."""
-        import nibabel as nib  # type: ignore[import-untyped]
-
-        img = nib.load(in_file)
-        mask_img = nib.load(mask_file)
-
-        data = img.get_fdata()  # type: ignore[attr-defined]
-        mask = mask_img.get_fdata() > 0  # type: ignore[attr-defined]
-
-        brain_data = data * mask
-        brain_img = nib.Nifti1Image(brain_data.astype(np.float32), img.affine)  # type: ignore[attr-defined]
-        nib.save(brain_img, out_file)
 
     def _compute_qc_metrics(self, mask_path: str, dce_mean: Path) -> dict[str, Any]:
         """Compute QC metrics for brain extraction."""
@@ -3859,7 +4378,7 @@ class DCERegistration(SimpleInterface):
     Uses FSL FLIRT to register a T1-weighted structural image to DCE space.
     DCE uses SPGR/FLASH (gradient echo), which has good geometric fidelity
     and similar contrast to structural T1w, so standard FLIRT with normmi
-    cost function is appropriate. BBR is not used for DCE.
+    cost function is appropriate.
 
     Dual-path registration is used:
       Path A: Header pre-aligned T1w -> FLIRT
@@ -3919,9 +4438,6 @@ class DCERegistration(SimpleInterface):
 
     Requires FSL to be installed and available in PATH.
 
-    See Also
-    --------
-    FSL FLIRT : https://fsl.fmrib.ox.ac.uk/fsl/fslwiki/FLIRT
     """
 
     input_spec = DCERegistrationInputSpec
@@ -4057,7 +4573,7 @@ class DCERegistration(SimpleInterface):
         cost: str,
         search_range: int,
     ) -> None:
-        """Run dual-path FLIRT registration without BBR.
+        """Run dual-path FLIRT registration.
 
         Path A uses header-aligned T1w, Path B uses original T1w.
         At least one path must succeed.

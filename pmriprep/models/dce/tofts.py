@@ -1,6 +1,6 @@
 """Standard Tofts pharmacokinetic model.
 
-Implements the Standard Tofts model (Tofts & Kermode 1991) for DCE-MRI
+Implements the Standard Tofts model for DCE-MRI
 analysis. This model assumes negligible plasma volume (vp ≈ 0) and is
 appropriate when vascular contribution is minimal.
 

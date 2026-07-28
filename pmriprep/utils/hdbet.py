@@ -14,6 +14,8 @@ from typing import Optional
 import nibabel as nib
 import numpy as np
 
+from pmriprep.utils.processes import run_isolated_command
+
 logger = logging.getLogger(__name__)
 
 
@@ -76,26 +78,24 @@ def run_hdbet(
         cmd = hdbet_args
 
     try:
-        subprocess.run(
+        result = run_isolated_command(
             cmd,
-            check=True,
-            capture_output=True,
-            text=True,
             timeout=timeout,
         )
-    except subprocess.CalledProcessError as e:
-        logger.warning(
-            "HD-BET failed (exit %d): %s",
-            e.returncode,
-            e.stderr.strip() if e.stderr else str(e),
-        )
-        return False, None
     except subprocess.TimeoutExpired:
         logger.warning("HD-BET timed out after %d seconds", timeout)
         return False, None
     except (FileNotFoundError, OSError) as e:
         # OSError covers Apptainer/Singularity missing-executable cases
         logger.warning("HD-BET executable not found: %s", e)
+        return False, None
+
+    if result.returncode != 0:
+        logger.warning(
+            "HD-BET failed (exit %d): %s",
+            result.returncode,
+            result.stderr.strip() if result.stderr else "no stderr",
+        )
         return False, None
 
     # Verify output exists

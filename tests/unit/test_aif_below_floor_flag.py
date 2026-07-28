@@ -67,7 +67,7 @@ class TestFallbackWarning:
             "DSC",
         )
         assert w is not None
-        assert "retained despite a catastrophic gamma fit" in w
+        assert "retained despite a poor gamma-variate fit" in w
         # Physics wording: CBF/MTT/Tmax unreliable; TTP/PSR/AUC-nCBV survive.
         assert "Tmax may" in w and "raw TTP" in w
         assert "Tmax are valid" not in w

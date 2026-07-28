@@ -37,7 +37,7 @@ def test_dce_factory_smoke(tmp_path: Path, minimal_bids: tuple[Path, str]) -> No
     wf = init_dce_datasinks_wf(
         output_dir=str(out), bids_dir=str(bids),
         subject_id="01", session_id="0001",
-        pk_model="auto",
+        pk_model="auto", inference="vi",
         present_inputs=set(),  # only mandatory ktrans_map
     )
     wf.base_dir = str(tmp_path / "work")
@@ -55,10 +55,42 @@ def test_dce_factory_smoke(tmp_path: Path, minimal_bids: tuple[Path, str]) -> No
     )
     assert sidecar["Description"].startswith("Volume transfer constant")
     assert sidecar["Units"] == "1/min"
-    assert sidecar["SpatialReference"].startswith("bids::pmriprep/")
+    assert sidecar["SpatialReference"].startswith("bids::sub-")
     assert sidecar["Resolution"] == "native"
     assert isinstance(sidecar["VoxelSize"], list)
-    assert sidecar["KtransConvention"] == "plasma_Tofts1999"
+    assert sidecar["InputFunctionCompartment"] == "plasma"
+    assert "KtransConvention" not in sidecar
+
+
+def test_dce_writer_recreates_deleted_cached_derivative(
+    tmp_path: Path, minimal_bids: tuple[Path, str]
+) -> None:
+    """External derivatives are rewritten even when the node cache survives."""
+    from pmriprep.workflows.dce.datasinks import init_dce_datasinks_wf
+
+    bids, src = minimal_bids
+    out = tmp_path / "out"
+    wf = init_dce_datasinks_wf(
+        output_dir=str(out), bids_dir=str(bids),
+        subject_id="01", session_id="0001",
+        pk_model="tofts", inference="nlls",
+    )
+    wf.base_dir = str(tmp_path / "work")
+    wf.inputs.inputnode.source_dce = src
+    wf.inputs.inputnode.ktrans_map = _write_nii(tmp_path / "ktrans.nii.gz")
+    wf.inputs.inputnode.qc_metrics = {}
+
+    wf.run()
+    perf = out / "pmriprep" / "sub-01" / "ses-0001" / "perf"
+    nii = perf / "sub-01_ses-0001_desc-dceKtrans_stat.nii.gz"
+    sidecar = nii.with_suffix("").with_suffix(".json")
+    assert nii.exists() and sidecar.exists()
+
+    nii.unlink()
+    sidecar.unlink()
+    wf.run()
+
+    assert nii.exists() and sidecar.exists()
 
 
 def test_dce_factory_with_bayesian_uncertainty(
@@ -75,11 +107,14 @@ def test_dce_factory_with_bayesian_uncertainty(
         "ktrans_uncertainty", "ve_uncertainty", "vp_uncertainty",
         "ktrans_cv", "ve_cv", "vp_cv",
         "ktrans_ci95_lower", "ktrans_ci95_upper",
+        "ve_ci95_lower", "ve_ci95_upper",
+        "vp_ci95_lower", "vp_ci95_upper",
+        "r2_map",
     }
     wf = init_dce_datasinks_wf(
         output_dir=str(out), bids_dir=str(bids),
         subject_id="01", session_id="0001",
-        pk_model="extended_tofts",
+        pk_model="extended_tofts", inference="vi",
         present_inputs=present,
     )
     wf.base_dir = str(tmp_path / "work")
@@ -89,6 +124,7 @@ def test_dce_factory_with_bayesian_uncertainty(
     for attr in present:
         setattr(inp, attr, _write_nii(tmp_path / f"{attr}.nii.gz"))
     inp.qc_metrics = {}
+    inp.config_dict = {"inference": "vi"}
     wf.run()
 
     perf_out = out / "pmriprep" / "sub-01" / "ses-0001" / "perf"
@@ -96,13 +132,115 @@ def test_dce_factory_with_bayesian_uncertainty(
         "sub-01_ses-0001_desc-dceKtrans_stat.nii.gz",
         "sub-01_ses-0001_desc-dceVe_stat.nii.gz",
         "sub-01_ses-0001_desc-dceVp_stat.nii.gz",
-        "sub-01_ses-0001_desc-dceUncertaintyKtrans_stat.nii.gz",
-        "sub-01_ses-0001_desc-dceCVKtrans_stat.nii.gz",
-        "sub-01_ses-0001_desc-dceCI95lowerKtrans_stat.nii.gz",
-        "sub-01_ses-0001_desc-dceCI95upperKtrans_stat.nii.gz",
+        "sub-01_ses-0001_desc-dcePosteriorCVKtrans_stat.nii.gz",
+        "sub-01_ses-0001_desc-dcePosteriorSDKtrans_stat.nii.gz",
+        "sub-01_ses-0001_desc-dceCredibleIntervalLowerKtrans_stat.nii.gz",
+        "sub-01_ses-0001_desc-dceCredibleIntervalUpperKtrans_stat.nii.gz",
     ]
     for fname in expected:
         assert (perf_out / fname).exists(), f"Missing: {fname}"
+
+    expected_units = {
+        "desc-dcePosteriorCVKtrans_stat.json": "1",
+        "desc-dceRsquared_stat.json": "1",
+    }
+    for ending, units in expected_units.items():
+        sidecar = next(perf_out.glob(f"*{ending}"))
+        assert json.loads(sidecar.read_text())["Units"] == units
+
+    uncertainty_meta = json.loads(
+        next(perf_out.glob("*desc-dcePosteriorCVKtrans_stat.json")).read_text()
+    )
+    assert uncertainty_meta["EstimationMethod"] == "vi"
+    assert uncertainty_meta["InferenceMethod"] == "variational_bayes"
+    assert (
+        uncertainty_meta["UncertaintyEstimationMethod"]
+        == "variational_posterior_covariance"
+    )
+    assert uncertainty_meta["ConditionalOnConvertedConcentration"] is True
+    assert uncertainty_meta["ConditionalOnSuppliedAIF"] is True
+    posterior_sd = json.loads(
+        next(perf_out.glob("*desc-dcePosteriorSDKtrans_stat.json")).read_text()
+    )
+    assert posterior_sd["UncertaintyStatistic"] == "posterior_standard_deviation"
+    interval = json.loads(
+        next(
+            perf_out.glob("*desc-dceCredibleIntervalLowerKtrans_stat.json")
+        ).read_text()
+    )
+    assert interval["UncertaintyStatistic"] == "credible_interval_bound"
+
+
+def test_map_uncertainty_sidecar_records_run_accounting(
+    tmp_path: Path, minimal_bids: tuple[Path, str]
+) -> None:
+    """MAP uncertainty sidecars include actual Hessian/fallback counts."""
+    from pmriprep.workflows.dce.datasinks import init_dce_datasinks_wf
+
+    bids, src = minimal_bids
+    out = tmp_path / "out"
+    wf = init_dce_datasinks_wf(
+        output_dir=str(out),
+        bids_dir=str(bids),
+        subject_id="01",
+        session_id="0001",
+        pk_model="tofts", inference="map",
+        present_inputs={"ktrans_cv"},
+    )
+    wf.base_dir = str(tmp_path / "work")
+    inp = wf.inputs.inputnode
+    inp.source_dce = src
+    inp.ktrans_map = _write_nii(tmp_path / "k.nii.gz")
+    inp.ktrans_cv = _write_nii(tmp_path / "k_cv.nii.gz")
+    inp.config_dict = {"inference": "map"}
+    inp.qc_metrics = {
+        "parameter_uncertainty": {
+            "aif_inflation_input_factor": 2.0,
+            "aif_parameter_scale_factors": {"Ktrans": 1.5, "ve": 1.0},
+        },
+        "map_uncertainty": {
+            "n_retained_voxels": 10,
+            "n_evaluated": 9,
+            "n_laplace_hessian": 7,
+            "n_prior_fallback": 2,
+            "n_not_computed": 1,
+            "prior_fallback_fraction": 2 / 9,
+        }
+    }
+    wf.run()
+
+    sidecar = next(
+        (out / "pmriprep" / "sub-01" / "ses-0001" / "perf").glob(
+            "*desc-dcePosteriorCVKtrans_stat.json"
+        )
+    )
+    metadata = json.loads(sidecar.read_text())
+    accounting = metadata["MAPUncertaintyAccounting"]
+    assert accounting["n_laplace_hessian"] == 7
+    assert accounting["n_prior_fallback"] == 2
+    assert accounting["n_not_computed"] == 1
+    inflation = metadata["AIFUncertaintyInflation"]
+    assert inflation["Applied"] is True
+    assert inflation["ParameterScaleFactors"]["Ktrans"] == 1.5
+
+
+def test_nlls_relative_uncertainty_uses_frequentist_derivative_name(
+    tmp_path: Path, minimal_bids: tuple[Path, str]
+) -> None:
+    """NLLS relative uncertainty uses the relative-standard-error name."""
+    from pmriprep.workflows.dce.datasinks import init_dce_datasinks_wf
+
+    bids, _ = minimal_bids
+    workflow = init_dce_datasinks_wf(
+        output_dir=str(tmp_path / "out"),
+        bids_dir=str(bids),
+        subject_id="01",
+        session_id="0001",
+        pk_model="tofts",
+        inference="nlls",
+        present_inputs={"ktrans_cv"},
+    )
+    assert workflow.get_node("ktrans_cv_sink").inputs.desc == "dceRelativeStandardError"
 
 
 def test_dce_factory_model_free_no_model_entity(
@@ -118,7 +256,7 @@ def test_dce_factory_model_free_no_model_entity(
     wf = init_dce_datasinks_wf(
         output_dir=str(out), bids_dir=str(bids),
         subject_id="01", session_id="0001",
-        pk_model="auto",
+        pk_model="auto", inference="vi",
         present_inputs=present,
     )
     wf.base_dir = str(tmp_path / "work")
@@ -152,7 +290,7 @@ def test_patlak_only_no_ve_kep(tmp_path: Path, minimal_bids: tuple[Path, str]) -
     wf = init_dce_datasinks_wf(
         output_dir=str(out), bids_dir=str(bids),
         subject_id="01", session_id="0001",
-        pk_model="patlak",
+        pk_model="patlak", inference="vi",
         present_inputs=present,
     )
     wf.base_dir = str(tmp_path / "work")
@@ -170,10 +308,124 @@ def test_patlak_only_no_ve_kep(tmp_path: Path, minimal_bids: tuple[Path, str]) -
     assert not list(perf_out.glob("*Kep_stat.nii.gz"))
 
 
-def test_2cxm_bayesian_fp_ps_uncertainty(
+def test_patlak_absent_model_selection_plot_reaches_figures_writer(
+    tmp_path: Path,
+) -> None:
+    """Fixed Patlak propagates ``None``, not an invalid empty file path."""
+    import nipype.pipeline.engine as pe
+    from nipype.interfaces import utility as niu
+
+    from pmriprep.interfaces.qc_writers import DCEFiguresWriter
+    from pmriprep.workflows.dce._helpers import _generate_dce_pk_maps_qc
+
+    ktrans = tmp_path / "ktrans.nii.gz"
+    vp = tmp_path / "vp.nii.gz"
+    mask = tmp_path / "mask.nii.gz"
+    affine = np.eye(4)
+    nib.save(nib.Nifti1Image(np.full((4, 4, 4), 0.1), affine), ktrans)
+    nib.save(nib.Nifti1Image(np.full((4, 4, 4), 0.05), affine), vp)
+    nib.save(nib.Nifti1Image(np.ones((4, 4, 4)), affine), mask)
+    aif = tmp_path / "aif.txt"
+    motion = tmp_path / "motion.par"
+    np.savetxt(aif, np.linspace(0.0, 1.0, 8))
+    np.savetxt(motion, np.zeros((8, 6)))
+
+    producer = pe.Node(
+        niu.Function(
+            input_names=[
+                "ktrans_file", "vp_file", "brain_mask_file", "model_name",
+                "subject_id", "session_id",
+            ],
+            output_names=[
+                "pk_param_maps_qc_plot", "model_selection_qc_plot",
+                "model_selection_regions", "vp_at_bound_fractions",
+            ],
+            function=_generate_dce_pk_maps_qc,
+        ),
+        name="patlak_qc",
+    )
+    producer.inputs.ktrans_file = str(ktrans)
+    producer.inputs.vp_file = str(vp)
+    producer.inputs.brain_mask_file = str(mask)
+    producer.inputs.model_name = "patlak"
+    producer.inputs.subject_id = "01"
+    producer.inputs.session_id = "0001"
+
+    writer = pe.Node(DCEFiguresWriter(), name="figures_writer")
+    writer.inputs.output_dir = str(tmp_path / "out")
+    writer.inputs.subject_id = "01"
+    writer.inputs.session_id = "0001"
+    writer.inputs.aif_curve = str(aif)
+    writer.inputs.motion_params = str(motion)
+    writer.inputs.qc_metrics = {}
+
+    workflow = pe.Workflow(name="patlak_writer", base_dir=str(tmp_path / "work"))
+    workflow.connect([
+        (producer, writer, [
+            ("pk_param_maps_qc_plot", "pk_param_maps_qc_plot"),
+            ("model_selection_qc_plot", "model_selection_qc_plot"),
+        ]),
+    ])
+    workflow.run(plugin="Linear")
+
+    session = tmp_path / "out" / "pmriprep" / "sub-01" / "ses-0001"
+    assert (session / "perf" / "sub-01_ses-0001_desc-dceAif_timeseries.tsv").exists()
+    assert (session / "figures" / "sub-01_ses-0001_desc-pkparammaps_dce.png").exists()
+    assert not list((session / "figures").glob("*modelselection*"))
+
+
+def test_pk_parameter_montage_receives_qc_mask_and_preserves_nan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Parameter QC uses accepted voxels without making NaN look like zero."""
+    from pmriprep.utils import dce_pk_qc_plots
+    from pmriprep.workflows.dce._helpers import _generate_dce_pk_maps_qc
+
+    affine = np.eye(4)
+    ktrans = np.full((4, 4, 4), 0.1, dtype=np.float32)
+    ve = np.full((4, 4, 4), 0.2, dtype=np.float32)
+    ve[1, 1, 1] = np.nan
+    brain = np.ones((4, 4, 4), dtype=np.uint8)
+    qc_mask = np.zeros((4, 4, 4), dtype=np.uint8)
+    qc_mask[1:3, 1:3, 1:3] = 1
+
+    def _save(name: str, data: np.ndarray) -> str:
+        path = tmp_path / name
+        nib.save(nib.Nifti1Image(data, affine), path)
+        return str(path)
+
+    captured: dict[str, object] = {}
+
+    def _capture_plot(**kwargs: object) -> str:
+        captured.update(kwargs)
+        return str(tmp_path / "pk_parameter_maps_qc.png")
+
+    monkeypatch.setattr(
+        dce_pk_qc_plots,
+        "generate_pk_parameter_maps_qc_plot",
+        _capture_plot,
+    )
+
+    result = _generate_dce_pk_maps_qc(
+        ktrans_file=_save("ktrans.nii.gz", ktrans),
+        ve_file=_save("ve.nii.gz", ve),
+        brain_mask_file=_save("brain.nii.gz", brain),
+        qc_mask_file=_save("qc.nii.gz", qc_mask),
+        model_name="auto",
+    )
+
+    assert result[0] == str(tmp_path / "pk_parameter_maps_qc.png")
+    np.testing.assert_array_equal(captured["qc_mask"], qc_mask)
+    param_maps = captured["param_maps"]
+    assert isinstance(param_maps, dict)
+    assert np.isnan(param_maps["ve"][1, 1, 1])
+
+
+def test_2cxm_bayesian_fp_ps_relative_uncertainty(
     tmp_path: Path, minimal_bids: tuple[Path, str]
 ) -> None:
-    """2CXM Bayesian inference emits Fp/PS uncertainty maps."""
+    """2CXM Bayesian inference emits Fp/PS relative-uncertainty maps."""
     from pmriprep.workflows.dce.datasinks import init_dce_datasinks_wf
 
     bids, src = minimal_bids
@@ -181,12 +433,12 @@ def test_2cxm_bayesian_fp_ps_uncertainty(
 
     present = {
         "ve_map", "kep_map", "vp_map",
-        "fp_uncertainty", "ps_uncertainty",
+        "ktrans_cv", "fp_cv", "ps_cv",
     }
     wf = init_dce_datasinks_wf(
         output_dir=str(out), bids_dir=str(bids),
         subject_id="01", session_id="0001",
-        pk_model="2cxm",
+        pk_model="2cxm", inference="vi",
         present_inputs=present,
     )
     wf.base_dir = str(tmp_path / "work")
@@ -199,8 +451,46 @@ def test_2cxm_bayesian_fp_ps_uncertainty(
     wf.run()
 
     perf_out = out / "pmriprep" / "sub-01" / "ses-0001" / "perf"
-    assert (perf_out / "sub-01_ses-0001_desc-dceUncertaintyFp_stat.nii.gz").exists()
-    assert (perf_out / "sub-01_ses-0001_desc-dceUncertaintyPS_stat.nii.gz").exists()
+    assert (perf_out / "sub-01_ses-0001_desc-dcePosteriorCVFp_stat.nii.gz").exists()
+    assert (perf_out / "sub-01_ses-0001_desc-dcePosteriorCVPS_stat.nii.gz").exists()
+    assert not (
+        perf_out / "sub-01_ses-0001_desc-dcePosteriorCVKtrans_stat.nii.gz"
+    ).exists()
+    for parameter in ("Fp", "PS"):
+        sidecar = perf_out / f"sub-01_ses-0001_desc-dcePosteriorCV{parameter}_stat.json"
+        assert json.loads(sidecar.read_text())["Units"] == "1"
+
+
+def test_2cxm_extraction_fraction_derivative(
+    tmp_path: Path, minimal_bids: tuple[Path, str]
+) -> None:
+    """The existing 2CXM extraction-fraction result reaches derivatives."""
+    from pmriprep.workflows.dce.datasinks import init_dce_datasinks_wf
+
+    bids, src = minimal_bids
+    out = tmp_path / "out"
+    wf = init_dce_datasinks_wf(
+        output_dir=str(out),
+        bids_dir=str(bids),
+        subject_id="01",
+        session_id="0001",
+        pk_model="2cxm",
+        inference="nlls",
+        present_inputs={"e_map"},
+    )
+    wf.base_dir = str(tmp_path / "work")
+    wf.inputs.inputnode.source_dce = src
+    wf.inputs.inputnode.ktrans_map = _write_nii(tmp_path / "k.nii.gz")
+    wf.inputs.inputnode.e_map = _write_nii(tmp_path / "e.nii.gz")
+    wf.inputs.inputnode.qc_metrics = {}
+    wf.run()
+
+    perf = out / "pmriprep" / "sub-01" / "ses-0001" / "perf"
+    derivative = perf / "sub-01_ses-0001_desc-dceE_stat.nii.gz"
+    sidecar = json.loads(derivative.with_suffix("").with_suffix(".json").read_text())
+    assert derivative.exists()
+    assert sidecar["Units"] == "1"
+    assert "Extraction fraction" in sidecar["Description"]
 
 
 def test_init_pmriprep_wf_dce_patlak_doesnt_crash(tmp_path: Path) -> None:
@@ -277,7 +567,7 @@ def test_dce_factory_warnings_in_anchor_sidecar(
     wf = init_dce_datasinks_wf(
         output_dir=str(out), bids_dir=str(bids),
         subject_id="01", session_id="0001",
-        pk_model="tofts",
+        pk_model="tofts", inference="vi",
         present_inputs={"dce_moco"},
     )
     wf.base_dir = str(tmp_path / "work")
@@ -299,6 +589,7 @@ def test_dce_factory_warnings_in_anchor_sidecar(
     assert any("T1 relaxation" in w for w in warnings)
     assert any("Brain mask" in w for w in warnings)
     assert any("registration transform" in w for w in warnings)
+    assert "InputFunctionCompartment" not in sidecar
 
     # Session-root QC JSON orphan must not exist
     legacy = (
@@ -306,6 +597,30 @@ def test_dce_factory_warnings_in_anchor_sidecar(
         / "sub-01_ses-0001_desc-dceQC_quality.json"
     )
     assert not legacy.exists()
+
+
+def test_dce_intentional_t1_b1_skips_do_not_emit_missing_warnings(
+    tmp_path: Path, minimal_bids: tuple[Path, str],
+) -> None:
+    """Configured T1/B1 opt-outs are not reported as missing derivatives."""
+    from pmriprep.workflows.dce.datasinks import init_dce_datasinks_wf
+
+    bids, _ = minimal_bids
+    workflow = init_dce_datasinks_wf(
+        output_dir=str(tmp_path / "out"),
+        bids_dir=str(bids),
+        subject_id="01",
+        session_id="0001",
+        pk_model="tofts",
+        inference="nlls",
+        present_inputs={"dce_moco"},
+        t1_map_expected=False,
+        b1_map_expected=False,
+    )
+
+    warnings = workflow.get_node("dce_moco_meta").inputs.presence_warnings
+    assert not any("T1 relaxation" in warning for warning in warnings)
+    assert not any("B1+" in warning for warning in warnings)
 
 
 # ---------------------------------------------------------------------------
@@ -330,12 +645,25 @@ def _build_dce_underlay_wf(
     wf = init_dce_datasinks_wf(
         output_dir=str(out), bids_dir=str(bids),
         subject_id="01", session_id="0001",
-        pk_model="tofts",
+        pk_model="tofts", inference="vi",
         present_inputs=present_inputs,
     )
     wf.base_dir = str(tmp_path / work_subdir)
     inp = wf.inputs.inputnode
     inp.source_dce = src
+    anat = bids / "sub-01" / "ses-0001" / "anat"
+    anat.mkdir(parents=True, exist_ok=True)
+    for attr, name in (
+        ("source_t1w", "sub-01_ses-0001_acq-mprage_run-1_T1w.nii.gz"),
+        ("source_t1w_postcon", "sub-01_ses-0001_acq-mprage_ce-GAD_run-2_T1w.nii.gz"),
+        ("source_flair", "sub-01_ses-0001_acq-3d_run-1_FLAIR.nii.gz"),
+        ("source_flair_postcon", "sub-01_ses-0001_acq-3d_ce-GAD_run-2_FLAIR.nii.gz"),
+        ("source_t2w", "sub-01_ses-0001_acq-tse_run-1_T2w.nii.gz"),
+    ):
+        source = anat / name
+        if not source.exists():
+            _write_nii(source)
+        setattr(inp, attr, str(source))
     inp.ktrans_map = _write_nii(tmp_path / f"{work_subdir}-k.nii.gz")
     inp.qc_metrics = {}
     if t1w_in_dce is not None:
@@ -367,14 +695,19 @@ def test_dce_t1w_precon_underlay_lands_in_anat(
     )
 
     anat_dir = out / "pmriprep" / "sub-01" / "ses-0001" / "anat"
-    expected = anat_dir / "sub-01_ses-0001_space-dceref_T1w.nii.gz"
+    expected = anat_dir / "sub-01_ses-0001_acq-mprage_run-1_space-dceref_T1w.nii.gz"
     assert expected.exists(), (
         f"precon underlay missing at {expected}; "
         f"anat/ contains: {sorted(p.name for p in anat_dir.iterdir())}"
     )
-    assert not (anat_dir / "sub-01_ses-0001_ce-GAD_space-dceref_T1w.nii.gz").exists()
+    assert "ce-GAD" not in expected.name
     sidecar = json.loads(expected.with_suffix("").with_suffix(".json").read_text())
     assert "Pre-contrast" in sidecar["Description"]
+    assert sidecar["Sources"] == [
+        "bids:raw:sub-01/ses-0001/anat/"
+        "sub-01_ses-0001_acq-mprage_run-1_T1w.nii.gz",
+        "bids:raw:sub-01/ses-0001/perf/sub-01_ses-0001_dce.nii.gz",
+    ]
 
 
 def test_dce_t1w_postcon_underlay_lands_in_anat(
@@ -393,7 +726,7 @@ def test_dce_t1w_postcon_underlay_lands_in_anat(
     )
 
     anat_dir = out / "pmriprep" / "sub-01" / "ses-0001" / "anat"
-    expected = anat_dir / "sub-01_ses-0001_ce-GAD_space-dceref_T1w.nii.gz"
+    expected = anat_dir / "sub-01_ses-0001_acq-mprage_ce-GAD_run-2_space-dceref_T1w.nii.gz"
     assert expected.exists(), (
         f"postcon underlay missing at {expected}; "
         f"anat/ contains: {sorted(p.name for p in anat_dir.iterdir())}"
@@ -419,7 +752,7 @@ def test_dce_t1w_subtraction_underlay_lands_in_anat(
     )
 
     anat_dir = out / "pmriprep" / "sub-01" / "ses-0001" / "anat"
-    expected = anat_dir / "sub-01_ses-0001_space-dceref_desc-subtraction_T1w.nii.gz"
+    expected = anat_dir / "sub-01_ses-0001_acq-mprage_run-1_space-dceref_desc-subtraction_T1w.nii.gz"
     assert expected.exists(), (
         f"subtraction underlay missing at {expected}; "
         f"anat/ contains: {sorted(p.name for p in anat_dir.iterdir())}"
@@ -467,8 +800,8 @@ def test_dce_both_t1w_underlays(
     )
 
     anat_dir = out / "pmriprep" / "sub-01" / "ses-0001" / "anat"
-    precon = anat_dir / "sub-01_ses-0001_space-dceref_T1w.nii.gz"
-    postcon = anat_dir / "sub-01_ses-0001_ce-GAD_space-dceref_T1w.nii.gz"
+    precon = anat_dir / "sub-01_ses-0001_acq-mprage_run-1_space-dceref_T1w.nii.gz"
+    postcon = anat_dir / "sub-01_ses-0001_acq-mprage_ce-GAD_run-2_space-dceref_T1w.nii.gz"
     assert precon.exists() and postcon.exists(), (
         f"both underlays expected; anat/ contains: "
         f"{sorted(p.name for p in anat_dir.iterdir())}"
@@ -495,7 +828,7 @@ def test_dce_flair_precon_underlay_lands_in_anat(
     )
 
     anat_dir = out / "pmriprep" / "sub-01" / "ses-0001" / "anat"
-    expected = anat_dir / "sub-01_ses-0001_space-dceref_FLAIR.nii.gz"
+    expected = anat_dir / "sub-01_ses-0001_acq-3d_run-1_space-dceref_FLAIR.nii.gz"
     assert expected.exists(), (
         f"precon FLAIR underlay missing at {expected}; "
         f"anat/ contains: {sorted(p.name for p in anat_dir.iterdir())}"
@@ -519,7 +852,7 @@ def test_dce_flair_postcon_underlay_lands_in_anat(
     )
 
     anat_dir = out / "pmriprep" / "sub-01" / "ses-0001" / "anat"
-    expected = anat_dir / "sub-01_ses-0001_ce-GAD_space-dceref_FLAIR.nii.gz"
+    expected = anat_dir / "sub-01_ses-0001_acq-3d_ce-GAD_run-2_space-dceref_FLAIR.nii.gz"
     assert expected.exists(), (
         f"postcon FLAIR underlay missing at {expected}; "
         f"anat/ contains: {sorted(p.name for p in anat_dir.iterdir())}"
@@ -547,8 +880,8 @@ def test_dce_both_flair_underlays(
     )
 
     anat_dir = out / "pmriprep" / "sub-01" / "ses-0001" / "anat"
-    precon = anat_dir / "sub-01_ses-0001_space-dceref_FLAIR.nii.gz"
-    postcon = anat_dir / "sub-01_ses-0001_ce-GAD_space-dceref_FLAIR.nii.gz"
+    precon = anat_dir / "sub-01_ses-0001_acq-3d_run-1_space-dceref_FLAIR.nii.gz"
+    postcon = anat_dir / "sub-01_ses-0001_acq-3d_ce-GAD_run-2_space-dceref_FLAIR.nii.gz"
     assert precon.exists() and postcon.exists(), (
         f"both FLAIR underlays expected; anat/ contains: "
         f"{sorted(p.name for p in anat_dir.iterdir())}"
@@ -676,11 +1009,9 @@ def _build_dce_wf_for_tr_gate(
     )
 
 
-def _has_fp_uncertainty_sink(wf) -> bool:
-    """True if any datasinks node ends with ``fp_uncertainty_sink``."""
-    return any(
-        name.endswith("fp_uncertainty_sink") for name in wf.list_node_names()
-    )
+def _has_fp_cv_sink(wf) -> bool:
+    """True if any datasinks node ends with ``fp_cv_sink``."""
+    return any(name.endswith("fp_cv_sink") for name in wf.list_node_names())
 
 
 def test_init_pmriprep_wf_auto_long_tr_no_fp_sink(tmp_path: Path) -> None:
@@ -693,20 +1024,20 @@ def test_init_pmriprep_wf_auto_long_tr_no_fp_sink(tmp_path: Path) -> None:
     wf = _build_dce_wf_for_tr_gate(
         tmp_path, volume_tr=4.06, model="auto", inference="vi",
     )
-    assert not _has_fp_uncertainty_sink(wf), (
-        "auto + Bayesian + TR>3.0 must NOT build fp_uncertainty_sink "
+    assert not _has_fp_cv_sink(wf), (
+        "auto + Bayesian + TR>3.0 must NOT build fp_cv_sink "
         "(producer doesn't include 2CXM in candidate set at this TR; "
         "sink without feed → runtime crash)"
     )
 
 
 def test_init_pmriprep_wf_auto_short_tr_builds_fp_sink(tmp_path: Path) -> None:
-    """auto + Bayesian + TR≤3.0 → 2CXM in candidates → fp_uncertainty_sink built."""
+    """auto + Bayesian + TR≤3.0 → 2CXM in candidates → fp_cv_sink built."""
     wf = _build_dce_wf_for_tr_gate(
         tmp_path, volume_tr=2.5, model="auto", inference="vi",
     )
-    assert _has_fp_uncertainty_sink(wf), (
-        "auto + Bayesian + TR≤3.0 must build fp_uncertainty_sink "
+    assert _has_fp_cv_sink(wf), (
+        "auto + Bayesian + TR≤3.0 must build fp_cv_sink "
         "(producer includes 2CXM in candidate set; sink should consume it)"
     )
 
@@ -811,6 +1142,54 @@ def test_dce_figures_writer_accepts_none_for_optional_figures(
     writer.inputs.subject_id = "test"
     for field in _DCE_OPTIONAL_FIGURES:
         setattr(writer.inputs, field, None)
+
+
+def test_dsc_absent_qc_plot_producers_use_none() -> None:
+    """Absent DSC QC figures satisfy the optional writer-file contract."""
+    from pmriprep.interfaces.qc_writers import DSCFiguresWriter
+    from pmriprep.workflows.dsc._helpers import (
+        _generate_dsc_fit_qc,
+        _generate_dsc_leakage_qc,
+    )
+
+    leakage = _generate_dsc_leakage_qc("", "", "", "", "")
+    fit = _generate_dsc_fit_qc("", "", "", "01", "0001")
+    assert leakage is None
+    assert fit is None
+
+    writer = DSCFiguresWriter()
+    writer.inputs.dsc_leakage_qc_plot = leakage
+    writer.inputs.dsc_fit_qc_plot = fit
+
+
+def test_dsc_fit_qc_node_accepts_undefined_optional_inputs(tmp_path: Path) -> None:
+    """Nipype may omit unavailable fit-QC inputs without failing the workflow."""
+    import nipype.interfaces.utility as niu
+    import nipype.pipeline.engine as pe
+
+    from pmriprep.workflows.dsc._helpers import _generate_dsc_fit_qc
+
+    node = pe.Node(
+        niu.Function(
+            input_names=[
+                "qc_fit_data_file",
+                "brain_mask_file",
+                "cbf_file",
+                "subject_id",
+                "session_id",
+            ],
+            output_names=["plot_file"],
+            function=_generate_dsc_fit_qc,
+        ),
+        name="dsc_fit_qc",
+        base_dir=str(tmp_path),
+    )
+    node.inputs.subject_id = "01"
+    node.inputs.session_id = "0001"
+
+    result = node.run()
+
+    assert not result.outputs.trait_get()["plot_file"]
 
 
 def _figures_dir(tmp_path: Path, subject: str = "test") -> Path:

@@ -1,10 +1,12 @@
-0.61.0 (June 22, 2026)
-======================
-Adds a Sphinx documentation site and hardens the test suite; the DSC and DCE
-processing pipelines are unchanged from the prior series.
+1.0.0rc1 (unreleased)
+=====================
 
-* DOC: Add a Sphinx documentation site (ReadTheDocs-ready) with an auto-generated API reference, a ``sphinx-argparse`` command-line reference, and a rendered changelog
-* DOC: Fix reStructuredText formatting across package docstrings (math literals, literal blocks, escapes) for a clean documentation build
-* FIX: Make the workflow graph-regression baselines hardware-independent so the suite passes on CPU-only CI runners (``use_gpu`` is no longer captured in the graph signature)
-* TST: Drop redundant graph-regression matrix variants subsumed by the all-underlays cases (22 to 13)
-* MNT: Add the ``doc`` optional-dependency group and a documentation build job to CI
+Initial release candidate.
+
+* ENH: Add DSC preprocessing, leakage correction, AIF detection, and five
+  deconvolution models.
+* ENH: Add DCE preprocessing, T1/B1 correction, AIF detection, model-free maps,
+  and four pharmacokinetic models.
+* ENH: Add shared anatomical processing and optional tumor segmentation.
+* ENH: Write provenance-rich derivatives and per-session HTML QC reports.
+* MNT: Provide Python 3.10--3.12 packaging and Docker/Apptainer distribution.

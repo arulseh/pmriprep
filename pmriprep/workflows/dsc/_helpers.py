@@ -1,12 +1,4 @@
-"""FSL CommandLine wrappers and Function-node/construction helpers for the DSC preproc workflow.
-
-Extracted verbatim from ``base.py`` (the two smoothing dict-builders were
-dedented out of ``init_dsc_preproc_wf``) to keep that function navigable.
-Re-exported from ``pmriprep.workflows.dsc.base`` for backward compatibility.
-
-Function-node helpers are self-contained (imports inside their bodies); the
-module-level imports below serve the CommandLine wrapper classes.
-"""
+"""FSL wrappers and serializable helpers for the DSC preprocessing workflow."""
 from typing import Any, Optional
 
 from nipype.interfaces.base import (  # type: ignore[import-untyped]
@@ -17,7 +9,6 @@ from nipype.interfaces.base import (  # type: ignore[import-untyped]
     traits,
     isdefined,
 )
-
 __all__ = [
     "ConvertXFM",
     "FLIRTApplyXFM",
@@ -43,18 +34,16 @@ __all__ = [
     "_merge_qc_metrics",
     "_normalize_cbf",
     "_normalize_cbv",
-    "_select_aif_exclusion_mask",
     "_signal_to_concentration",
     "_smooth_maps",
     "_transform_brain_mask_to_dsc",
     "_transform_lesion_mask_to_dsc",
     "_transform_nawm_to_dsc",
     "_transform_structural_to_dsc",
-    "_validate_native_mask",
 ]
 
 
-# Custom FSL wrappers to avoid nipype FSL module import bug (LooseVersion issue)
+# Lightweight FSL command wrappers with explicit argument ordering.
 class _ConvertXFMInputSpec(CommandLineInputSpec):
     """Input spec for convert_xfm."""
 
@@ -158,7 +147,7 @@ class FLIRTApplyXFM(CommandLine):
         return outputs
 
 
-def _fsl_to_x5_node(mat_path, reference, moving):  # type: ignore[no-untyped-def]
+def _fsl_to_x5_node(mat_path: str, reference: str, moving: str) -> str:
     """Nipype Function-node wrapper for FSL .mat to ITK X5 conversion."""
     from pmriprep.utils.transforms import fsl_to_x5
 
@@ -283,13 +272,18 @@ def _create_perfusion_brain_mask_filmstrip(
     return output_path
 
 
-def _transform_brain_mask_to_dsc(brain_mask_file, reference_file, transform_matrix, hdbet_mask_file=None):  # type: ignore[no-untyped-def]
+def _transform_brain_mask_to_dsc(
+    brain_mask_file: str,
+    reference_file: str,
+    transform_matrix: str,
+    hdbet_mask_file: str | None = None,
+) -> tuple[str, float]:
     """Transform T1w brain mask to DSC space using registration transform.
 
-    This is the final brain mask used for all DSC-space processing.
-    The registration transform comes from a higher-quality alignment
-    (T1w brain → HD-BET DSC brain), producing a more accurate mask
-    than a quick independent FLIRT.
+    This mask is retained for registration QC only. Quantification continues
+    to use the native DSC brain mask. The registration transform maps the
+    anatomical mask onto the DSC reference grid without estimating a second
+    alignment.
 
     Optionally computes DICE overlap with the HD-BET mask for QC.
 
@@ -354,7 +348,11 @@ def _transform_brain_mask_to_dsc(brain_mask_file, reference_file, transform_matr
     return dsc_brain_mask_file, dice_score
 
 
-def _signal_to_concentration(dsc_file, te, baseline_frames):  # type: ignore[no-untyped-def]
+def _signal_to_concentration(
+    dsc_file: str,
+    te: float,
+    baseline_frames: int,
+) -> tuple[str, str]:
     """Convert DSC signal to ΔR2* concentration.
 
     This is a Function node wrapper for the signal_to_concentration utility.
@@ -411,7 +409,19 @@ def _signal_to_concentration(dsc_file, te, baseline_frames):  # type: ignore[no-
     return conc_file, signal_file
 
 
-def _detect_and_correct_preload(concentration_file, aif_file, brain_mask_file, te, field_strength, tr, preload, signal_file=None, baseline_frames=5, leakage_method='bsw', kep=None, agent_standard_dose=0.1):  # type: ignore[no-untyped-def]
+def _detect_and_correct_preload(
+    concentration_file: str,
+    brain_mask_file: str,
+    te: float,
+    field_strength: float,
+    tr: float,
+    preload: str | float,
+    signal_file: str | None = None,
+    baseline_frames: int = 5,
+    leakage_method: str = "bsw",
+    kep: float | None = None,
+    agent_standard_dose: float = 0.1,
+) -> tuple[str, str, dict[str, object]]:
     """Detect preload and apply K2 correction if needed.
 
     This is a Function node wrapper for preload detection and K2 correction.
@@ -420,8 +430,6 @@ def _detect_and_correct_preload(concentration_file, aif_file, brain_mask_file, t
     ----------
     concentration_file : str
         Path to 4D concentration NIfTI.
-    aif_file : str
-        Path to AIF curve text file.
     brain_mask_file : str
         Path to brain mask NIfTI.
     te : float
@@ -483,10 +491,8 @@ def _detect_and_correct_preload(concentration_file, aif_file, brain_mask_file, t
             "Ensure transform_brain_mask node is connected upstream."
         )
 
-    # Load AIF
-    aif = np.loadtxt(aif_file)
-
-    qc_metrics = {}
+    qc_metrics: dict[str, object] = {}
+    qc_metrics["baseline_frames_used"] = int(baseline_frames)
     k2_map_file: str = ""
 
     # K2-primary is the sole classifier. Run detect_preload() only for the
@@ -623,7 +629,12 @@ def _detect_and_correct_preload(concentration_file, aif_file, brain_mask_file, t
     return corrected_file, k2_map_file, qc_metrics
 
 
-def _augment_qc_positive_tail(qc_dict, concentration_file, k2_map_file, lesion_mask_dsc=None):  # type: ignore[no-untyped-def]
+def _augment_qc_positive_tail(
+    qc_dict: dict[str, object] | None,
+    concentration_file: str,
+    k2_map_file: str,
+    lesion_mask_dsc: str | None = None,
+) -> dict[str, object]:
     """Add the positive-tail (BSW-blind overestimate) fraction to the preload QC.
 
     A T2*-dominant persistent positive ΔR2* tail makes K2 pin at 0 (the
@@ -766,12 +777,12 @@ def _compute_mean_4d(in_file: str) -> str:
     return out_file
 
 
-def _transform_nawm_to_dsc(  # type: ignore[no-untyped-def]
-    nawm_mask_file=None,
-    reference_file=None,
-    transform_matrix=None,
-    needs_transform=True,
-):
+def _transform_nawm_to_dsc(
+    nawm_mask_file: str | None = None,
+    reference_file: str | None = None,
+    transform_matrix: str | None = None,
+    needs_transform: bool = True,
+) -> str:
     """Transform NAWM mask to DSC space, or pass through if already native.
 
     When ``needs_transform`` is True (tumor-seg NAWM in T1w space), applies
@@ -812,13 +823,15 @@ def _transform_nawm_to_dsc(  # type: ignore[no-untyped-def]
 
         mask_img = nib.load(str(nawm_mask_file))
         ref_img = nib.load(str(reference_file))
-        if mask_img.shape[:3] != ref_img.shape[:3]:
+        if mask_img.shape[:3] != ref_img.shape[:3]:  # type: ignore[attr-defined]
             raise ValueError(
-                f"User-supplied NAWM mask shape {mask_img.shape[:3]} does not "
-                f"match DSC volume shape {ref_img.shape[:3]}. "
+                f"User-supplied NAWM mask shape {mask_img.shape[:3]} does not "  # type: ignore[attr-defined]
+                f"match DSC volume shape {ref_img.shape[:3]}. "  # type: ignore[attr-defined]
                 f"Masks under [dsc] config must be in DSC native space."
             )
-        affine_diff = float(np.abs(mask_img.affine - ref_img.affine).max())
+        affine_diff = float(
+            np.abs(mask_img.affine - ref_img.affine).max()  # type: ignore[attr-defined]
+        )
         if affine_diff > 1.0:
             raise ValueError(
                 f"User-supplied NAWM mask affine differs from DSC volume by "
@@ -846,11 +859,11 @@ def _transform_nawm_to_dsc(  # type: ignore[no-untyped-def]
     return out_file
 
 
-def _transform_wm_probseg_to_dsc(  # type: ignore[no-untyped-def]
-    wm_probseg=None,
-    reference_file=None,
-    transform_matrix=None,
-):
+def _transform_wm_probseg_to_dsc(
+    wm_probseg: str | None = None,
+    reference_file: str | None = None,
+    transform_matrix: str | None = None,
+) -> str:
     """Threshold + erode the FAST WM probability map into DSC space.
 
     Resamples the T1w-space white-matter probability map into DSC space with
@@ -914,7 +927,7 @@ def _transform_wm_probseg_to_dsc(  # type: ignore[no-untyped-def]
     try:
         subprocess.run(cmd, check=True, capture_output=True)
         img = nib.load(resampled)
-        prob = img.get_fdata()
+        prob = img.get_fdata()  # type: ignore[attr-defined]
         mask = ndimage.binary_erosion(prob > 0.5, iterations=1)
     except Exception as exc:  # noqa: BLE001
         logging.getLogger("nipype.interface").warning(
@@ -924,17 +937,19 @@ def _transform_wm_probseg_to_dsc(  # type: ignore[no-untyped-def]
         return ""
 
     out_file = str(out_dir / "wm_mask_dsc.nii.gz")
-    out_img = nib.Nifti1Image(mask.astype(np.uint8), img.affine, img.header)
+    out_img = nib.Nifti1Image(
+        mask.astype(np.uint8), img.affine, img.header,  # type: ignore[attr-defined]
+    )
     out_img.header.set_data_dtype(np.uint8)
     nib.save(out_img, out_file)
     return out_file
 
 
-def _transform_lesion_mask_to_dsc(  # type: ignore[no-untyped-def]
-    lesion_mask_file=None,
-    reference_file=None,
-    transform_matrix=None,
-):
+def _transform_lesion_mask_to_dsc(
+    lesion_mask_file: str | None = None,
+    reference_file: str | None = None,
+    transform_matrix: str | None = None,
+) -> str:
     """Transform lesion mask from T1w space to DSC space.
 
     Uses FSL FLIRT with nearest-neighbour interpolation to resample
@@ -988,83 +1003,12 @@ def _transform_lesion_mask_to_dsc(  # type: ignore[no-untyped-def]
     return out_file
 
 
-def _select_aif_exclusion_mask(  # type: ignore[no-untyped-def]
-    user_lesion_mask=None,
-    transformed_lesion_mask=None,
-):
-    """Pick the AIF exclusion mask: user-supplied overrides tumor seg.
-
-    Parameters
-    ----------
-    user_lesion_mask : str or None
-        User-supplied lesion mask in DSC native space.
-    transformed_lesion_mask : str or None
-        Combined tumor mask FLIRT-transformed to DSC native space.
-
-    Returns
-    -------
-    str
-        Selected mask path, or ``""`` if neither is available.
-    """
-    from nipype.interfaces.base import isdefined
-
-    if isdefined(user_lesion_mask) and user_lesion_mask is not None:
-        if user_lesion_mask != "":
-            return user_lesion_mask
-    if isdefined(transformed_lesion_mask) and transformed_lesion_mask is not None:
-        if transformed_lesion_mask != "":
-            return transformed_lesion_mask
-    return ""
-
-
-def _validate_native_mask(  # type: ignore[no-untyped-def]
-    mask_file=None,
-    reference_file=None,
-    mask_label="mask",
-):
-    """Validate that a user-supplied mask matches the perfusion volume grid.
-
-    Parameters
-    ----------
-    mask_file : str or None
-        Path to the mask NIfTI.
-    reference_file : str or None
-        Path to the perfusion reference volume.
-    mask_label : str
-        Human-readable label for error messages (e.g. "dsc.roi_mask").
-
-    Returns
-    -------
-    str
-        The validated mask path, or "" if no mask.
-    """
-    from nipype.interfaces.base import isdefined
-
-    if not isdefined(mask_file) or mask_file is None or mask_file == "":
-        return ""
-
-    import nibabel as nib
-    import numpy as np
-
-    mask_img = nib.load(str(mask_file))
-    ref_img = nib.load(str(reference_file))
-    if mask_img.shape[:3] != ref_img.shape[:3]:
-        raise ValueError(
-            f"User-supplied {mask_label} shape {mask_img.shape[:3]} does not "
-            f"match perfusion volume shape {ref_img.shape[:3]}. "
-            f"Masks under config must be in perfusion native space."
-        )
-    affine_diff = float(np.abs(mask_img.affine - ref_img.affine).max())
-    if affine_diff > 1.0:
-        raise ValueError(
-            f"User-supplied {mask_label} affine differs from perfusion volume "
-            f"by {affine_diff:.2f} (max element). "
-            f"Masks under config must be in perfusion native space."
-        )
-    return str(mask_file)
-
-
-def _transform_structural_to_dsc(structural_file=None, reference_file=None, transform_matrix=None, output_name='structural_in_dsc.nii.gz'):  # type: ignore[no-untyped-def]
+def _transform_structural_to_dsc(
+    structural_file: str | None = None,
+    reference_file: str | None = None,
+    transform_matrix: str | None = None,
+    output_name: str = "structural_in_dsc.nii.gz",
+) -> str:
     """Transform structural image from T1w space to DSC space via FLIRT.
 
     Handles None/undefined inputs gracefully by returning None.
@@ -1120,7 +1064,13 @@ def _transform_structural_to_dsc(structural_file=None, reference_file=None, tran
     return out_file
 
 
-def _normalize_cbv(cbv_file, brain_mask_file, derivatives_dir, subject_id, session_id, nawm_mask_file=None):  # type: ignore[no-untyped-def]
+def _normalize_cbv(
+    cbv_file: str,
+    derivatives_dir: str,
+    subject_id: str,
+    session_id: str,
+    nawm_mask_file: str | None = None,
+) -> tuple[str, float | None]:
     """Normalize CBV to NAWM median.
 
     This is a Function node wrapper for CBV normalization.
@@ -1131,8 +1081,6 @@ def _normalize_cbv(cbv_file, brain_mask_file, derivatives_dir, subject_id, sessi
     ----------
     cbv_file : str
         Path to CBV map NIfTI.
-    brain_mask_file : str
-        Path to brain mask (unused, kept for interface compat).
     derivatives_dir : str
         Path to derivatives directory for auto-detection.
     subject_id : str
@@ -1181,13 +1129,19 @@ def _normalize_cbv(cbv_file, brain_mask_file, derivatives_dir, subject_id, sessi
         derivatives_dir=derivatives_dir,
         subject=subject_id,
         session=session_id,
-        brain_mask_file=None,  # Don't use fallback
+        brain_mask_file=None,
     )
 
     return str(output_path), norm_factor
 
 
-def _normalize_cbf(cbf_file, brain_mask_file, derivatives_dir, subject_id, session_id, nawm_mask_file=None):  # type: ignore[no-untyped-def]
+def _normalize_cbf(
+    cbf_file: str,
+    derivatives_dir: str,
+    subject_id: str,
+    session_id: str,
+    nawm_mask_file: str | None = None,
+) -> tuple[str, float | None]:
     """Normalize CBF to NAWM median (same method as CBV normalization).
 
     Returns ("", None) when NAWM mask is not available - normalization
@@ -1197,8 +1151,6 @@ def _normalize_cbf(cbf_file, brain_mask_file, derivatives_dir, subject_id, sessi
     ----------
     cbf_file : str
         Path to CBF map NIfTI.
-    brain_mask_file : str
-        Path to brain mask (unused, kept for interface compat).
     derivatives_dir : str
         Path to derivatives directory for auto-detection.
     subject_id : str
@@ -1243,7 +1195,7 @@ def _normalize_cbf(cbf_file, brain_mask_file, derivatives_dir, subject_id, sessi
         derivatives_dir=derivatives_dir,
         subject=subject_id,
         session=session_id,
-        brain_mask_file=None,  # Don't use fallback
+        brain_mask_file=None,
     )
 
     return str(output_path), norm_factor
@@ -1253,6 +1205,7 @@ def _create_registration_filmstrip(
     dsc_mean_file: str,
     registered_t1w_file: str,
     brain_mask_file: str,
+    registered_t1w_mask_file: str,
     subject_id: str = "",
     session_id: str = "",
 ) -> str:
@@ -1269,6 +1222,8 @@ def _create_registration_filmstrip(
         Path to registered T1w in DSC space.
     brain_mask_file : str
         Path to DSC brain mask.
+    registered_t1w_mask_file : str
+        Path to the anatomical brain mask transformed into DSC space.
     subject_id : str, optional
         Subject ID for QC figure title.
     session_id : str, optional
@@ -1290,6 +1245,7 @@ def _create_registration_filmstrip(
     dsc_data = dsc_img.get_fdata()  # type: ignore[attr-defined]
     t1w_data = nib.load(registered_t1w_file).get_fdata()  # type: ignore[attr-defined]
     mask_data = nib.load(brain_mask_file).get_fdata()  # type: ignore[attr-defined]
+    moving_mask_data = nib.load(registered_t1w_mask_file).get_fdata()  # type: ignore[attr-defined]
     voxel_sizes = tuple(dsc_img.header.get_zooms()[:3])  # type: ignore[attr-defined]
 
     plot_registration_qc_filmstrip(
@@ -1297,6 +1253,7 @@ def _create_registration_filmstrip(
         moving=t1w_data,
         output_path=output_path,
         mask=mask_data,
+        moving_mask=moving_mask_data,
         title=qc_figure_title(subject_id, session_id, "DSC-T1w Registration"),
         voxel_sizes=voxel_sizes,
     )
@@ -1304,7 +1261,7 @@ def _create_registration_filmstrip(
     return output_path
 
 
-def _extract_preload_class(qc_dict):  # type: ignore[no-untyped-def]
+def _extract_preload_class(qc_dict: dict[str, object] | None) -> str:
     """Extract preload classification from preload_correct QC dict.
 
     Parameters
@@ -1321,12 +1278,16 @@ def _extract_preload_class(qc_dict):  # type: ignore[no-untyped-def]
     """
     if not qc_dict:
         return "none"
-    return qc_dict.get("preload_classification", "none")  # type: ignore[no-any-return]
+    return str(qc_dict.get("preload_classification", "none"))
 
 
-def _generate_motion_qc_plot(  # type: ignore[no-untyped-def]
-    motion_params_file, tr, subject_id="", session_id="", motion_applied=True
-):
+def _generate_motion_qc_plot(
+    motion_params_file: str,
+    tr: float,
+    subject_id: str = "",
+    session_id: str = "",
+    motion_applied: bool = True,
+) -> tuple[str, dict[str, object]]:
     """Generate motion QC plot from motion parameters.
 
     Creates a three-panel figure showing raw motion parameters and
@@ -1376,7 +1337,15 @@ def _generate_motion_qc_plot(  # type: ignore[no-untyped-def]
     return str(out_path), motion_summary
 
 
-def _generate_dsc_preprocessing_qc(dsc_signal_file, brain_mask_file, baseline_frames, tr, te=None, subject_id='', session_id=''):  # type: ignore[no-untyped-def]
+def _generate_dsc_preprocessing_qc(
+    dsc_signal_file: str,
+    brain_mask_file: str,
+    baseline_frames: int,
+    tr: float,
+    te: float | None = None,
+    subject_id: str = "",
+    session_id: str = "",
+) -> tuple[str, dict[str, object]]:
     """Generate DSC preprocessing QC plot.
 
     Parameters
@@ -1426,7 +1395,17 @@ def _generate_dsc_preprocessing_qc(dsc_signal_file, brain_mask_file, baseline_fr
     return plot_path, stats
 
 
-def _generate_dsc_param_maps_qc(rel_cbf_file, rel_cbv_file, mtt_file, tmax_file, psr_file, ttp_file, brain_mask_file, subject_id='', session_id=''):  # type: ignore[no-untyped-def]
+def _generate_dsc_param_maps_qc(
+    rel_cbf_file: str,
+    rel_cbv_file: str,
+    mtt_file: str,
+    tmax_file: str,
+    psr_file: str,
+    ttp_file: str,
+    brain_mask_file: str,
+    subject_id: str = "",
+    session_id: str = "",
+) -> str:
     """Generate DSC parameter maps QC plot.
 
     Parameters
@@ -1483,7 +1462,20 @@ def _generate_dsc_param_maps_qc(rel_cbf_file, rel_cbv_file, mtt_file, tmax_file,
     return plot_path
 
 
-def _generate_dsc_leakage_qc(k2_map_file, auc_raw_file, auc_corr_file, auc_diff_file, brain_mask_file, concentration_file=None, corrected_concentration_file=None, psr_file=None, tr=1.5, subject_id='', session_id='', preload_qc=None):  # type: ignore[no-untyped-def]
+def _generate_dsc_leakage_qc(
+    k2_map_file: str,
+    auc_raw_file: str,
+    auc_corr_file: str,
+    auc_diff_file: str,
+    brain_mask_file: str,
+    concentration_file: str | None = None,
+    corrected_concentration_file: str | None = None,
+    psr_file: str | None = None,
+    tr: float = 1.5,
+    subject_id: str = "",
+    session_id: str = "",
+    preload_qc: dict[str, object] | None = None,
+) -> str | None:
     """Generate DSC leakage correction QC plot.
 
     Parameters
@@ -1516,19 +1508,19 @@ def _generate_dsc_leakage_qc(k2_map_file, auc_raw_file, auc_corr_file, auc_diff_
     Returns
     -------
     str
-        Path to the generated QC plot PNG, or empty string if K2 unavailable.
+        Path to the generated QC plot PNG, or ``None`` if K2 is unavailable.
     """
     from pathlib import Path as _P
 
     # Skip if no K2 map (guard against "." or directory paths from unset outputs)
     if not k2_map_file or not _P(k2_map_file).is_file():
-        return ""
+        return None
 
     import nibabel as nib
     from pmriprep.utils.dsc_qc_plots import generate_dsc_leakage_qc_plot
 
     if not auc_raw_file or not auc_corr_file or not auc_diff_file:
-        return ""
+        return None
     k2_data = nib.load(k2_map_file).get_fdata()  # type: ignore[attr-defined]
     auc_raw_data = nib.load(auc_raw_file).get_fdata()  # type: ignore[attr-defined]
     auc_corr_data = nib.load(auc_corr_file).get_fdata()  # type: ignore[attr-defined]
@@ -1549,10 +1541,14 @@ def _generate_dsc_leakage_qc(k2_map_file, auc_raw_file, auc_corr_file, auc_diff_
 
     # Extract method and kep_used from preload_qc dict
     method = "bsw"
-    kep_used = None
+    kep_used: float | None = None
     if preload_qc:
-        method = preload_qc.get("k2_method", "bsw")
-        kep_used = preload_qc.get("kep_used")
+        method_value = preload_qc.get("k2_method", "bsw")
+        if isinstance(method_value, str):
+            method = method_value
+        kep_value = preload_qc.get("kep_used")
+        if isinstance(kep_value, (int, float)):
+            kep_used = float(kep_value)
 
     plot_path = generate_dsc_leakage_qc_plot(
         k2_map=k2_data,
@@ -1573,21 +1569,21 @@ def _generate_dsc_leakage_qc(k2_map_file, auc_raw_file, auc_corr_file, auc_diff_
 
 
 def _generate_dsc_fit_qc(
-    qc_fit_data_file: str,
-    brain_mask_file: str,
-    cbf_file: str,
-    subject_id: str,
-    session_id: str,
-) -> str:
+    qc_fit_data_file: str | None = None,
+    brain_mask_file: str | None = None,
+    cbf_file: str | None = None,
+    subject_id: str = "",
+    session_id: str = "",
+) -> str | None:
     """Generate DSC fit QC plot from saved QC fit data JSON.
 
     Parameters
     ----------
-    qc_fit_data_file : str
+    qc_fit_data_file : str or None
         Path to QC fit data JSON from ComputeDSCMaps.
-    brain_mask_file : str
+    brain_mask_file : str or None
         Path to brain mask NIfTI.
-    cbf_file : str
+    cbf_file : str or None
         Path to relative CBF map NIfTI.
     subject_id : str
         Subject identifier.
@@ -1597,7 +1593,7 @@ def _generate_dsc_fit_qc(
     Returns
     -------
     str
-        Path to the generated QC plot PNG, or "" if unavailable.
+        Path to the generated QC plot PNG, or ``None`` if unavailable.
     """
     import json
     from pathlib import Path
@@ -1605,9 +1601,13 @@ def _generate_dsc_fit_qc(
     import nibabel as nib
     import numpy as np
 
-    if not qc_fit_data_file or not Path(qc_fit_data_file).is_file():
-        return ""
+    required_files = (qc_fit_data_file, brain_mask_file, cbf_file)
+    if any(not path or not Path(path).is_file() for path in required_files):
+        return None
 
+    assert qc_fit_data_file is not None
+    assert brain_mask_file is not None
+    assert cbf_file is not None
     with open(qc_fit_data_file) as f:
         fit_data = json.load(f)
 
@@ -1659,11 +1659,11 @@ def _generate_dsc_fit_qc(
     return plot_path
 
 
-def _smooth_maps(  # type: ignore[no-untyped-def]
-    map_files,
-    brain_mask_file,
-    fwhm,
-):
+def _smooth_maps(
+    map_files: dict[str, str],
+    brain_mask_file: str,
+    fwhm: float,
+) -> dict[str, str]:
     """Apply Gaussian smoothing to a dict of maps.
 
     Uses normalized convolution for maps containing NaN to prevent edge
@@ -1694,7 +1694,7 @@ def _smooth_maps(  # type: ignore[no-untyped-def]
     logger = logging.getLogger("nipype.workflow")
 
     sigma = fwhm / 2.355
-    results = {}
+    results: dict[str, str] = {}
     for name, filepath in map_files.items():
         if not filepath or filepath in ("", "None"):
             continue
@@ -1753,7 +1753,18 @@ def _smooth_maps(  # type: ignore[no-untyped-def]
     return results
 
 
-def _merge_qc_metrics(motion_qc, preload_qc, aif_qc, deconv_qc, registration_qc, normalization_factor, motion_summary=None, aif_metrics=None, preprocessing_stats=None, aif_source='auto', registration_bbr=False):  # type: ignore[no-untyped-def]
+def _merge_qc_metrics(
+    motion_qc: dict[str, object] | None,
+    preload_qc: dict[str, object] | None,
+    aif_qc: dict[str, object] | None,
+    deconv_qc: dict[str, object] | None,
+    registration_qc: dict[str, object] | None,
+    normalization_factor: float | None,
+    motion_summary: dict[str, object] | None = None,
+    aif_metrics: dict[str, object] | None = None,
+    preprocessing_stats: dict[str, object] | None = None,
+    aif_source: str = "auto",
+) -> dict[str, object]:
     """Merge all QC metrics into a single dictionary.
 
     Parameters
@@ -1778,8 +1789,6 @@ def _merge_qc_metrics(motion_qc, preload_qc, aif_qc, deconv_qc, registration_qc,
         Preprocessing stats dict.
     aif_source : str, optional
         AIF source type ("auto", "synthetic", or "external").
-    registration_bbr : bool, optional
-        Whether BBR refinement was used for registration.
 
     Returns
     -------
@@ -1806,7 +1815,7 @@ def _merge_qc_metrics(motion_qc, preload_qc, aif_qc, deconv_qc, registration_qc,
         aif_data = dict(aif_data) if aif_data else {}
         aif_data["aif_metrics"] = aif_metrics
 
-    merged = {
+    merged: dict[str, object] = {
         "preprocessing": preprocessing,
         "preload": preload_qc if preload_qc else {},
         "aif_detection": aif_data,
@@ -1815,13 +1824,18 @@ def _merge_qc_metrics(motion_qc, preload_qc, aif_qc, deconv_qc, registration_qc,
         "normalization_factor": normalization_factor,
         "config": {
             "aif_source": aif_source,
-            "registration_bbr": registration_bbr,
         },
     }
     return merged
 
 
-def _build_hemodynamic_dict(mtt, rel_cbf, rel_cbv, ncbf, ncbv):  # type: ignore[no-untyped-def]
+def _build_hemodynamic_dict(
+    mtt: str,
+    rel_cbf: str,
+    rel_cbv: str,
+    ncbf: str,
+    ncbv: str,
+) -> dict[str, str]:
     from pathlib import Path as _P
     d = {"mtt": mtt, "rel_cbf": rel_cbf, "rel_cbv": rel_cbv}
     for name, val in [
@@ -1832,5 +1846,5 @@ def _build_hemodynamic_dict(mtt, rel_cbf, rel_cbv, ncbf, ncbv):  # type: ignore[
     return d
 
 
-def _build_auc_corr_dict(rel_auc_corr):  # type: ignore[no-untyped-def]
+def _build_auc_corr_dict(rel_auc_corr: str) -> dict[str, str]:
     return {"rel_auc_corr": rel_auc_corr}

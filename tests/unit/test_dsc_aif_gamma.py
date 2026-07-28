@@ -5,11 +5,9 @@ import pytest
 
 from pmriprep.config.dsc import DSCConfig
 from pmriprep.utils.dsc_aif import (
-    GAMMA_NEG_TAIL_FRACTION,
     GAMMA_NEG_TAIL_MIN_FRAMES,
     GAMMA_NOISE_RATIO_THRESHOLD,
     GAMMA_SPR_THRESHOLD,
-    GammaAutoDecision,
     GammaVariateFitResult,
     _compute_auc,
     _estimate_initial_params,
@@ -17,8 +15,35 @@ from pmriprep.utils.dsc_aif import (
     _gamma_variate_model,
     compute_aif_fwhm_frames,
     fit_gamma_variate,
+    get_aif_smoothing_window,
     should_apply_gamma_fit,
 )
+
+
+class TestAIFSmoothingWindow:
+    """Temporal AIF smoothing should be acquisition-rate aware."""
+
+    @pytest.mark.parametrize(
+        ("tr", "expected"),
+        [(0.5, 15), (1.5, 5), (3.0, 3)],
+    )
+    def test_window_tracks_duration(self, tr: float, expected: int) -> None:
+        """The window remains near 7.5 seconds across representative TRs."""
+        assert get_aif_smoothing_window(100, tr) == expected
+
+    def test_window_is_odd_and_capped_to_curve(self) -> None:
+        """Short curves receive the largest valid odd window."""
+        assert get_aif_smoothing_window(10, 0.1) == 9
+
+    @pytest.mark.parametrize("tr", [0.0, -1.0, float("nan")])
+    def test_invalid_tr_uses_historical_fallback(self, tr: float) -> None:
+        """Invalid timing retains the five-frame defensive fallback."""
+        assert get_aif_smoothing_window(100, tr) == 5
+
+    def test_empty_curve_is_rejected(self) -> None:
+        """A smoothing window cannot be defined for an empty curve."""
+        with pytest.raises(ValueError, match="positive"):
+            get_aif_smoothing_window(0, 1.5)
 
 
 class TestGammaVariateModel:

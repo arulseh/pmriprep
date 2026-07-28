@@ -12,6 +12,49 @@ import numpy.typing as npt
 from pmriprep.utils.dce_constants import MIN_ENHANCEMENT_MM, MIN_SIGNAL_STD
 
 
+def summarize_regional_voxel_accounting(
+    brain_mask: npt.NDArray[np.bool_],
+    stage_masks: dict[str, npt.NDArray[np.bool_]],
+    region_masks: dict[str, npt.NDArray[np.bool_] | None],
+) -> dict[str, dict[str, object]]:
+    """Summarize DCE fitting stages within available tissue regions.
+
+    Parameters
+    ----------
+    brain_mask : numpy.ndarray
+        Boolean brain mask defining the valid accounting domain.
+    stage_masks : dict
+        Named boolean masks for successive fitting and QC stages.
+    region_masks : dict
+        Named boolean tissue masks. Missing regions may be represented by
+        ``None`` and are omitted.
+
+    Returns
+    -------
+    dict
+        Per-region voxel counts and stage fractions. Every regional denominator
+        is the tissue mask intersected with the brain mask.
+    """
+    regional_accounting: dict[str, dict[str, object]] = {}
+    for region_name, region_mask in region_masks.items():
+        if region_mask is None:
+            continue
+        region = np.asarray(region_mask, dtype=bool) & brain_mask
+        region_count = int(np.count_nonzero(region))
+        stages: dict[str, object] = {}
+        for stage_name, stage_mask in stage_masks.items():
+            count = int(np.count_nonzero(region & stage_mask))
+            stages[stage_name] = {
+                "count": count,
+                "fraction_of_region": count / region_count if region_count else 0.0,
+            }
+        regional_accounting[region_name] = {
+            "region_voxel_count": region_count,
+            "stages": stages,
+        }
+    return regional_accounting
+
+
 @dataclass
 class VoxelPrepResult:
     """Result of voxel preparation for PK fitting.
@@ -56,8 +99,8 @@ def prepare_voxel_for_fitting(
         Number of baseline frames for quality checks.
     skip_variation_check : bool, optional
         If True, skip concentration-based variation check.
-        Set True when raw signal variation filtering is done upstream
-        (raw signal std >= 1.0).
+        Used when the shared interface fitting domain deliberately admits
+        low-information curves and leaves quantitative acceptance to QC.
 
     Returns
     -------
@@ -66,8 +109,9 @@ def prepare_voxel_for_fitting(
     """
     baseline_mean = float(np.mean(tissue_curve[:baseline_frames]))
 
-    # Check 1: Signal variation (on raw concentration)
-    # Skipped when raw signal variation is checked upstream in ComputeDCEMaps.
+    # Check 1: Signal variation (on concentration)
+    # Optional because the interface-level fitting domain deliberately remains
+    # broader than the quantitative QC-acceptance domain.
     if not skip_variation_check:
         curve_std = float(np.std(tissue_curve))
         if curve_std < MIN_SIGNAL_STD:
@@ -79,11 +123,10 @@ def prepare_voxel_for_fitting(
                 enhancement_max=0.0,
             )
 
-    # Subtract baseline concentration and clip to non-negative.
-    # signal_to_concentration() performs baseline subtraction before
-    # clipping, so baseline_mean here is ~0. This step is kept for safety.
-    prepared = tissue_curve - baseline_mean
-    prepared = np.maximum(prepared, 0.0)
+    # Concentration conversion owns baseline subtraction. Preserve signed
+    # baseline noise so CPU Bayesian paths and batched NLLS consume the same
+    # unbiased curve.
+    prepared = tissue_curve
 
     enhancement_max = float(np.max(prepared))
 

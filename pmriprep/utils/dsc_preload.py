@@ -601,7 +601,7 @@ def detect_preload_from_signal(
         baseline_delta_r2, field_strength, agent_standard_dose,
     )
 
-    # Legacy CV retained as a separate QC detail — measures anatomical
+    # Anatomical CV is retained as a separate QC detail and measures
     # tissue heterogeneity (WM/GM/CSF T2* spread), NOT detection uncertainty.
     # Renamed ("signal_cv" → "tissue_heterogeneity_cv") so consumers don't
     # confuse it with measurement confidence.
@@ -1055,8 +1055,8 @@ def _compute_mean_brain_reference(
     )
     if n_used < _WARN_VOXELS:
         logger.warning(
-            "Mean brain reference from only %d voxels (<100 recommended "
-            "per Bjornerud 2011); consider checking brain mask quality",
+            "Mean brain reference from only %d voxels (<100 recommended); "
+            "consider checking brain mask quality",
             n_used,
         )
 
@@ -1231,7 +1231,7 @@ def apply_k2_correction(
     concentration = concentration - conc_bl
 
     # Compute AUC before any early returns (needed for QC regardless).
-    # Trapezoidal integration per the QIBA DSC Profile.
+    # Trapezoidal integration over the concentration curve.
     auc_tissue = np.trapezoid(concentration, dx=tr, axis=-1)
 
     # Estimate K2 if not provided
@@ -1294,7 +1294,7 @@ def apply_k2_correction(
 # K2 QC thresholds (s⁻¹)
 _K2_CLINICAL_THRESHOLD: Final[float] = 0.04  # clinically meaningful BBB disruption
 _K2_LEAKY_THRESHOLD: Final[float] = 0.1  # used by dsc_cbv_constraint.py
-_K2_SEVERE_THRESHOLD: Final[float] = 0.10  # physiological maximum
+_K2_SEVERE_THRESHOLD: Final[float] = 0.10  # numerically suspect fit threshold
 
 
 def _compute_k2_qc_metrics(
@@ -1566,7 +1566,7 @@ def apply_k2_correction_bidirectional(
     # Validate kep range
     if not (KEP_DSC_LOWER <= kep <= KEP_DSC_UPPER):
         logger.warning(
-            "kep=%.4f s^-1 outside typical range [%.3f, %.3f] s^-1 (Leu 2016)",
+            "kep=%.4f s^-1 outside typical range [%.3f, %.3f] s^-1",
             kep, KEP_DSC_LOWER, KEP_DSC_UPPER,
         )
 
@@ -1576,7 +1576,7 @@ def apply_k2_correction_bidirectional(
     concentration = concentration - conc_bl
 
     # Compute AUC before any early returns (needed for QC).
-    # Trapezoidal integration per the QIBA DSC Profile.
+    # Trapezoidal integration over the concentration curve.
     auc_tissue = np.trapezoid(concentration, dx=tr, axis=-1)
 
     # Estimate K2 if not provided

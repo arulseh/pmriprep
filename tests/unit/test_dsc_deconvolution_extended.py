@@ -30,7 +30,7 @@ def _make_synthetic_data(
     np.ndarray, np.ndarray, np.ndarray, np.ndarray,
 ]:
     """Create synthetic AIF + tissue curve pair with known ground truth."""
-    rng = np.random.default_rng(seed)
+    np.random.default_rng(seed)
     t = np.arange(n, dtype=np.float64) * dt
     # Gamma-variate AIF
     aif = (t / 3.0) * np.exp(-t / 5.0)

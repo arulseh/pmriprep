@@ -212,15 +212,14 @@ class TestGraduatedNCandidates:
 
 
 class TestAccumulatingCascade:
-    """Test the accumulating cascade with dual-ROI quality gate.
+    """Test the accumulating cascade with averaged-pool quality gate.
 
-    The new cascade accumulates candidates across tiers, tries both
-    roi_size=3 and roi_size=1, and uses the best passing AIF. Tests
-    exercise the helper methods that implement this logic.
+    The cascade accumulates candidates across tiers and uses the first passing
+    averaged AIF. Tests exercise the helper methods that implement this logic.
     """
 
-    def test_try_dual_roi_with_arterial_voxel(self) -> None:
-        """Dual ROI returns a result for a clear arterial voxel."""
+    def test_pool_acceptance_with_arterial_voxel(self) -> None:
+        """Pool acceptance returns a result for a clear arterial voxel."""
         aif = AIFDetection()
         shape = (10, 10, 5, 120)
         conc_data = np.zeros(shape)
@@ -240,24 +239,24 @@ class TestAccumulatingCascade:
         candidates: list[tuple[float, tuple[int, int, int], dict]] = [
             (1.0, (5, 5, 2), {}),
         ]
-        result = aif._try_aif_dual_roi(
+        result = aif._try_aif_pool_acceptance(
             candidates, conc_data, brain_mask, tr=1.5, baseline_frames=20,
         )
         # May return None if gamma fit fails on synthetic curve — that's OK.
-        # When it returns, roi_used must be valid.
+        # Pool acceptance uses each candidate's own voxel.
         if result is not None:
-            assert result.roi_size in (1, 3)
+            assert result.roi_size == 1
             assert result.spr >= 0.0
 
-    def test_try_dual_roi_returns_none_on_bad_curves(self) -> None:
-        """When neither ROI size passes, returns None."""
+    def test_pool_acceptance_returns_none_on_bad_curves(self) -> None:
+        """A pool whose averaged curve fails quality gates returns None."""
         aif = AIFDetection()
         shape = (10, 10, 5, 120)
         conc_data = np.random.randn(*shape) * 0.1  # noise only
         brain_mask = np.ones(shape[:3])
 
         candidates = [(1.0, (5, 5, 2), {})]
-        result = aif._try_aif_dual_roi(
+        result = aif._try_aif_pool_acceptance(
             candidates, conc_data, brain_mask, tr=1.5, baseline_frames=20,
         )
         assert result is None
@@ -522,8 +521,8 @@ class TestAifPassesQualityBrrGate:
         assert isinstance(result.brr, float)
 
 
-class TestTryDualRoiBrrGate:
-    """`_try_aif_dual_roi` returns None when averaged curve fails BRR."""
+class TestAIFPoolBrrGate:
+    """Pool acceptance returns None when the averaged curve fails BRR."""
 
     def test_negative_tail_average_returns_none(self) -> None:
         """Pool whose averaged curve has strongly negative tail → None.
@@ -543,14 +542,14 @@ class TestTryDualRoiBrrGate:
             conc_data[c[0], c[1], c[2], :] = bad_curve + np.random.randn(120) * 0.1
             # Assign per-candidate BRR matching the curve (negative)
             candidates.append((1.0 + i * 0.1, c, {"baseline_return_ratio": -8.0}))
-        result = aif._try_aif_dual_roi(
+        result = aif._try_aif_pool_acceptance(
             candidates, conc_data, brain_mask, tr=1.5, baseline_frames=20,
         )
         # Should fail the BRR gate — result is None
         assert result is None
 
     def test_returns_brr_in_tuple(self) -> None:
-        """Successful return is a DualRoiResult with 6 fields."""
+        """Successful return is an AIFPoolAcceptanceResult with six fields."""
         aif = AIFDetection()
         shape = (10, 10, 5, 120)
         conc_data = np.zeros(shape)
@@ -561,12 +560,12 @@ class TestTryDualRoiBrrGate:
         for i, c in enumerate(coords):
             conc_data[c[0], c[1], c[2], :] = good_curve
             candidates.append((1.0 + i * 0.1, c, {"baseline_return_ratio": 10.0}))
-        result = aif._try_aif_dual_roi(
+        result = aif._try_aif_pool_acceptance(
             candidates, conc_data, brain_mask, tr=1.5, baseline_frames=20,
         )
         if result is not None:
             assert len(result) == 6
-            assert result.roi_size in (1, 3)
+            assert result.roi_size == 1
             assert isinstance(result.brr, float)
 
 
@@ -640,16 +639,16 @@ class TestTrimLoopEdgeCases:
         for i, c in enumerate(coords):
             conc_data[c[0], c[1], c[2], :] = bad_curve
             candidates.append((1.0 + i * 0.1, c, {"baseline_return_ratio": -8.0}))
-        # At exactly MIN, _try_aif_dual_roi is called once; BRR gate
+        # At exactly MIN, pool acceptance is attempted once; BRR gate
         # rejects the averaged negative-tail curve; no trim happens
         # because pool size is already at the floor.
-        result = aif._try_aif_dual_roi(
+        result = aif._try_aif_pool_acceptance(
             candidates, conc_data, brain_mask, tr=1.5, baseline_frames=20,
         )
         assert result is None
 
     def test_below_floor_skips_loop(self) -> None:
-        """``len(scored) < MIN`` should never enter _try_aif_dual_roi
+        """``len(scored) < MIN`` should never enter pool acceptance
         (possible after _ensure_bilateral_balance filtering)."""
         # This is a semantic check on the trim loop's entry condition.
         # The real cascade skips the loop when len(pool) < MIN; we
@@ -741,9 +740,9 @@ class TestUnionPoolTrim:
     trim (production code at ``dsc_aif.py:2870-2925``).
 
     These tests reproduce the union trim loop pattern in-test and verify
-    (a) single-shot dual-ROI on a contaminated pool fails;
+    (a) single-shot acceptance of a contaminated pool fails;
     (b) one trim iteration drops the contaminator;
-    (c) the trimmed pool passes dual-ROI;
+    (c) the trimmed pool passes averaged-pool acceptance;
     (d) ``union_tier_provenance`` recomputed from the trimmed coords
         excludes tiers whose voxels were dropped (fixes the
         detection_level vs aif_tier_provenance inconsistency that would
@@ -769,7 +768,6 @@ class TestUnionPoolTrim:
             peak_height=30.0, tail_offset=-8.0,
         )
         # 5 coords; (4,4,2) is the contaminator
-        coords = [(4, 4, 2), (4, 5, 2), (5, 4, 2), (5, 5, 2), (4, 6, 2)]
         union: list[tuple[float, tuple[int, int, int], dict]] = []
         union_coord_origin: dict[tuple[int, int, int], str] = {}
         # Contaminator first (tier matches the parameter)
@@ -793,7 +791,7 @@ class TestUnionPoolTrim:
         union_pool = list(union)
         accept_pool = None
         while len(union_pool) >= MIN_AIF_CANDIDATES_ACCEPT:
-            result = aif._try_aif_dual_roi(
+            result = aif._try_aif_pool_acceptance(
                 union_pool, conc_data, brain_mask,
                 tr=1.5, baseline_frames=20,
             )
@@ -809,10 +807,10 @@ class TestUnionPoolTrim:
 
     def test_single_shot_fails_on_contaminated_union(self):
         """Without trim, a 5-voxel union with one negative-BRR voxel
-        averaged in fails the dual-ROI gate single-shot."""
+        averaged in fails the averaged-pool gate single-shot."""
         aif = AIFDetection()
         conc_data, brain_mask, union, _ = self._build_pool()
-        result = aif._try_aif_dual_roi(
+        result = aif._try_aif_pool_acceptance(
             union, conc_data, brain_mask, tr=1.5, baseline_frames=20,
         )
         assert result is None

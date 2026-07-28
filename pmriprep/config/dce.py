@@ -9,10 +9,6 @@ from .constants import DOSE_PRESETS
 
 logger = logging.getLogger(__name__)
 
-# Alias for backwards compatibility within this module
-_DOSE_PRESETS = DOSE_PRESETS
-
-
 @dataclass
 class DCEConfig:
     """Configuration for DCE perfusion processing.
@@ -32,21 +28,26 @@ class DCEConfig:
         Path to ROI mask in DCE native space for stats extraction only.
     aif_method : Literal["auto", "population"]
         AIF detection method: auto or population.
+    aif_peak_floor : bool
+        Raise a low detected AIF to the dose-adjusted expected lower peak.
+        When false, preserve measured amplitude while retaining amplitude QC.
     target_peak : Optional[float]
         Target AIF peak concentration (mM) for scaling, in blood-voxel units
         (pre-Hct-correction). The pipeline divides
         by (1-Hct) internally before comparing against the plasma-scale
-        aif_curve. None = use field-strength default.
+        aif_curve. When set, this explicit calibration overrides
+        ``aif_peak_floor``. None uses the optional dose-adjusted lower floor.
     aif_mask_file : Optional[Path]
         Path to custom AIF mask file.
     lesion_distance : float
         Minimum distance (mm) from lesion for AIF candidates.
     n_aif_candidates : int
-        Number of AIF candidate voxels to average.
+        Maximum number of AIF candidate voxels to retain and average; fewer
+        may survive selection.
     underlays : List[str]
         List of underlay images for QC visualizations.
     b1_method : Literal["auto", "afi", "precomputed", "none"]
-        B1+ correction method: auto (detect from data), afi (Yarnykh AFI),
+        B1+ correction method: auto (detect from data), afi,
         precomputed (pre-computed B1+ map), none (skip B1+ correction).
     b1_map_encoding : Literal["auto", "actual_flip_deci_deg", "actual_flip_deg", "percent", "ratio"]
         Pixel encoding of a pre-computed B1+ map: auto (infer from BIDS
@@ -95,7 +96,8 @@ class DCEConfig:
     # AIF detection settings
     aif_method: Literal["auto", "population"] = "auto"
     aif_file: Optional[Path] = None  # External AIF curve file (bypasses detection)
-    target_peak: Optional[float] = None  # None = use field-strength default
+    aif_peak_floor: bool = True
+    target_peak: Optional[float] = None  # None = follow aif_peak_floor
     aif_mask_file: Optional[Path] = None
     lesion_distance: float = 15.0
     n_aif_candidates: int = 10
@@ -113,8 +115,7 @@ class DCEConfig:
         "auto", "actual_flip_deci_deg", "actual_flip_deg", "percent", "ratio"
     ] = "auto"
     no_t1: bool = False
-    t1_correction_mode: Literal["auto", "none", "offset", "fallback"] = "auto"
-    t1_method: Literal["hybrid", "wlls", "nlls"] = "hybrid"
+    t1_method: Literal["nlls", "wlls"] = "nlls"
     t1_map_file: Optional[Path] = None  # External T1 map (NIfTI, milliseconds)
     # Processing settings
     no_dsc_validation: bool = False
@@ -135,7 +136,7 @@ class DCEConfig:
 
     # DSC CBV constraint settings
     cbv_constraint_mode: str = "auto"  # "auto", "skip"
-    hematocrit: float = 0.42  # Arterial Hct; Parker 2006 MRM used 0.42 in the original population-AIF derivation, so using Parker's fallback with 0.42 is internally self-consistent. Closer to GBM-cohort mean (~0.38) than QIBA Profile v2.0's adult-healthy-male 0.45.
+    hematocrit: float = 0.42  # Arterial Hct for blood-to-plasma conversion.
 
     # Resource settings
     num_processes: int = 0  # 0 = use system default
@@ -145,12 +146,36 @@ class DCEConfig:
     # Testing / debug
     sloppy: bool = False  # Use fast, low-quality settings for testing
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Ensure numeric fields have correct types after initialization.
 
         This handles cases where values may be passed as strings from
         YAML/JSON config files or CLI arguments.
         """
+        categorical_options = {
+            "model": ({"auto", "tofts", "extended_tofts", "patlak", "2cxm"}, self.model),
+            "inference": ({"nlls", "map", "vi", "mcmc"}, self.inference),
+            "aif_method": ({"auto", "population"}, self.aif_method),
+            "aif_bat_alignment": ({"auto", "off"}, self.aif_bat_alignment),
+            "t1_method": ({"nlls", "wlls"}, self.t1_method),
+            "hdbet_device": ({"auto", "cuda", "mps", "cpu"}, self.hdbet_device),
+        }
+        for option, (valid, value) in categorical_options.items():
+            if value not in valid:
+                raise ValueError(
+                    f"Invalid {option}={value!r}. Valid: {sorted(valid)}"
+                )
+
+        for option in (
+            "aif_peak_floor",
+            "no_t1",
+            "no_dsc_validation",
+            "motion_correct",
+            "sloppy",
+        ):
+            if not isinstance(getattr(self, option), bool):
+                raise TypeError(f"{option} must be a boolean")
+
         # Validate underlay values
         _VALID_UNDERLAYS = {
             "t1w_precon", "t1w_postcon", "t1w_subtraction",
@@ -202,15 +227,15 @@ class DCEConfig:
 
         # Coerce dose: string preset → float, numeric → float
         if isinstance(self.dose, str):
-            if self.dose in _DOSE_PRESETS:
-                self.dose = _DOSE_PRESETS[self.dose]
+            if self.dose in DOSE_PRESETS:
+                self.dose = DOSE_PRESETS[self.dose]
             else:
                 try:
                     self.dose = float(self.dose)
                 except (ValueError, TypeError) as e:
                     raise ValueError(
                         f"Invalid dose={self.dose!r}. Use a named preset "
-                        f"({', '.join(sorted(_DOSE_PRESETS))}) or a positive number."
+                        f"({', '.join(sorted(DOSE_PRESETS))}) or a positive number."
                     ) from e
         else:
             self.dose = float(self.dose)
@@ -246,6 +271,39 @@ class DCEConfig:
                 self.r1_relaxivity = float(self.r1_relaxivity)
             except (ValueError, TypeError) as e:
                 raise TypeError(f"DCEConfig.r1_relaxivity has invalid type: {e}") from e
+            if not math.isfinite(self.r1_relaxivity) or self.r1_relaxivity <= 0:
+                raise ValueError(
+                    "r1_relaxivity must be a finite positive value in s^-1/mM, "
+                    f"got {self.r1_relaxivity}"
+                )
+
+        if not math.isfinite(self.hematocrit) or not 0 <= self.hematocrit < 1:
+            raise ValueError(
+                "hematocrit must be finite and in [0, 1), "
+                f"got {self.hematocrit}"
+            )
+
+        if self.baseline_frames != 0 and self.baseline_frames < 5:
+            raise ValueError("baseline_frames must be 0 (auto) or at least 5")
+        if self.mcmc_samples <= 0:
+            raise ValueError("mcmc_samples must be greater than zero")
+        if self.n_aif_candidates < 3:
+            raise ValueError("n_aif_candidates must be at least 3")
+        if self.num_processes < 0:
+            raise ValueError("num_processes must be non-negative (0 = automatic)")
+        for option in (
+            "smooth_fwhm",
+            "lesion_distance",
+            "tsnr_threshold",
+            "motion_thresh",
+        ):
+            value = getattr(self, option)
+            if not math.isfinite(value) or value < 0:
+                raise ValueError(f"{option} must be finite and non-negative")
+        if self.target_peak is not None and (
+            not math.isfinite(self.target_peak) or self.target_peak <= 0
+        ):
+            raise ValueError("target_peak must be finite and greater than zero")
 
         # Validate t1_map_file / no_t1 mutual exclusivity
         if self.t1_map_file and self.no_t1:
@@ -253,7 +311,7 @@ class DCEConfig:
                 "Cannot set both t1_map_file and no_t1=True. "
                 "Use t1_map_file to supply an external T1 map, or no_t1 to skip T1 mapping."
             )
-        if (self.no_t1 or self.t1_map_file) and self.t1_method != "hybrid":
+        if (self.no_t1 or self.t1_map_file) and self.t1_method != "nlls":
             logger.warning(
                 "t1_method=%r is ignored when %s is set.",
                 self.t1_method,

@@ -99,6 +99,7 @@ def detect_bolus_arrival_time(
     """Detect bolus arrival time using threshold then gradient fallback.
 
     Methods attempted in order:
+
     1. Threshold: the peak must clear baseline + 3*std (genuine enhancement);
        the arrival is then read at ``BAT_ARRIVAL_PEAK_FRACTION`` of the peak on
        the leading edge, interpolated to sub-frame precision.
@@ -295,10 +296,11 @@ def compute_aif_tissue_delay(
     tuple of (float, dict)
         ``(applied_seconds, provenance)``. ``applied_seconds`` is the delay
         snapped to a whole number of acquisition frames, or ``0.0`` when no
-        shift should be applied (sub-frame, low-confidence, negative, or beyond
-        the physiological ceiling). ``provenance`` records both arrival times,
-        whether their detection methods match, the raw (unsnapped) delay in
-        seconds and frames, the applied shift, and the reason.
+        shift should be applied (less than one acquired frame, low-confidence,
+        negative, or beyond the physiological ceiling). ``provenance`` records
+        both arrival times, whether their detection methods match, the raw
+        (unsnapped) delay in seconds and frames, the applied shift, and the
+        reason.
     """
     aif_bat = detect_bolus_arrival_time(aif_curve, time_points_min, baseline_frames)
     tissue_bat = detect_bolus_arrival_time(
@@ -310,8 +312,7 @@ def compute_aif_tissue_delay(
     # Integer-frame snap: a delay can only be applied as a whole number of
     # acquisition frames, so shifting the AIF is an exact translation on the
     # uniform time grid (no sub-frame regridding, which injects a visit-dependent
-    # fractional-shift artifact). A sub-frame delay (|raw| < 0.5 frame) rounds to
-    # zero frames and is not applied.
+    # fractional-shift artifact).
     n_frames = int(round(delay / tr_s)) if tr_s > 0 else 0
 
     prov: dict[str, Any] = {
@@ -339,11 +340,17 @@ def compute_aif_tissue_delay(
     # Beyond the physiological ceiling, treat as a detection failure.
     if abs(delay) > MAX_AIF_TISSUE_DELAY_S:
         return _noop("delay_clamped")
-    # A contralateral/upstream AIF should not arrive after the tissue; a delay
-    # that snaps to a negative frame count signals a detection failure.
-    if n_frames < 0:
+    # A contralateral/upstream AIF should not arrive after the tissue; a
+    # negative delay signals a detection failure.
+    if delay < 0.0:
         return _noop("negative_delay_rejected")
-    # Sub-frame delay (rounds to zero frames): below temporal resolution.
+    # A delay shorter than one acquired frame is not temporally resolved.
+    # The tissue 10%-of-peak crossing also carries a small model-dependent lag
+    # relative to the arterial crossing, especially at high Ktrans and low vp;
+    # allowing half-frame rounding can turn that uptake lag into a false shift.
+    if delay < tr_s:
+        return _noop("delay_below_resolution")
+    # Defensive fallback for degenerate/invalid temporal sampling.
     if n_frames == 0:
         return _noop("delay_below_resolution")
 

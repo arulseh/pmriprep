@@ -23,8 +23,8 @@ def base_sidecar() -> dict[str, Any]:
     return {
         "Description": "Brain mask from HD-BET",
         "SkullStripped": True,
-        "SpatialReference": "bids::pmriprep/sub-X/anat/sub-X_space-T1w_desc-preproc_T1w.nii.gz",
-        "Sources": ["bids::sub-X/anat/sub-X_T1w.nii.gz"],
+        "SpatialReference": "bids::sub-X/anat/sub-X_space-T1w_desc-preproc_T1w.nii.gz",
+        "Sources": ["bids:raw:sub-X/anat/sub-X_T1w.nii.gz"],
         "Resolution": "native",
         "VoxelSize": [1.0, 1.0, 1.0],
     }

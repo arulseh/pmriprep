@@ -23,8 +23,66 @@ if TYPE_CHECKING:
 # messages that should be IMPORTANT-level by default.
 logger = plogger.cli
 
-# Alias for backwards compatibility within this module
-_DOSE_PRESETS = DOSE_PRESETS
+
+def _validate_work_dir(work_dir: Path, bids_dir: Path, output_dir: Path) -> Path:
+    """Resolve a work directory and reject paths unsafe for cleanup.
+
+    Parameters
+    ----------
+    work_dir, bids_dir, output_dir : pathlib.Path
+        Candidate work directory and protected dataset/output roots.
+
+    Returns
+    -------
+    pathlib.Path
+        Resolved work-directory path.
+
+    Raises
+    ------
+    ValueError
+        If the work directory is the input/output root, contains the input
+        dataset, or is a broad filesystem/home root.
+    """
+    resolved = work_dir.expanduser().resolve()
+    bids_root = bids_dir.expanduser().resolve()
+    output_root = output_dir.expanduser().resolve()
+    protected = {Path("/").resolve(), Path.home().resolve(), bids_root, output_root}
+    if (
+        resolved in protected
+        or Path.home().resolve().is_relative_to(resolved)
+        or bids_root.is_relative_to(resolved)
+        or output_root.is_relative_to(resolved)
+    ):
+        raise ValueError(
+            f"Unsafe work directory {resolved}: choose a dedicated directory "
+            "that is not the BIDS root, output root, home directory, or their parent."
+        )
+    return resolved
+
+
+def _clean_work_dir(work_dir: Path) -> Optional[Path]:
+    """Clear prior contents while preserving the working-directory root.
+
+    Parameters
+    ----------
+    work_dir : pathlib.Path
+        User-selected working directory.
+
+    Returns
+    -------
+    pathlib.Path or None
+        Cleared directory, or ``None`` when it did not exist.
+    """
+    import shutil
+
+    if not work_dir.exists():
+        return None
+    for child in work_dir.iterdir():
+        if child.is_dir() and not child.is_symlink():
+            shutil.rmtree(child)
+        else:
+            child.unlink()
+    return work_dir
 
 
 def _dose_type(value: str) -> float:
@@ -47,14 +105,14 @@ def _dose_type(value: str) -> float:
     """
     import math
 
-    if value in _DOSE_PRESETS:
-        return _DOSE_PRESETS[value]
+    if value in DOSE_PRESETS:
+        return DOSE_PRESETS[value]
     try:
         fval = float(value)
     except ValueError:
         raise argparse.ArgumentTypeError(
             f"invalid dose value: {value!r}. "
-            f"Use a named preset ({', '.join(sorted(_DOSE_PRESETS))}) "
+            f"Use a named preset ({', '.join(sorted(DOSE_PRESETS))}) "
             f"or a positive number (e.g. 0.75)."
         )
     if not math.isfinite(fval) or fval <= 0:
@@ -64,7 +122,7 @@ def _dose_type(value: str) -> float:
     return fval
 
 
-def _preload_type(value: str):
+def _preload_type(value: str) -> str | float:
     """Parse a --dsc-preload argument as 'auto' or a float dose multiplier.
 
     Parameters
@@ -106,6 +164,32 @@ def _preload_type(value: str):
     return fval
 
 
+def _positive_int(value: str) -> int:
+    """Parse a strictly positive integer CLI resource value."""
+    try:
+        parsed = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(f"expected an integer, got {value!r}") from error
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError(f"value must be greater than zero, got {parsed}")
+    return parsed
+
+
+def _positive_float(value: str) -> float:
+    """Parse a finite, strictly positive floating-point CLI resource value."""
+    import math
+
+    try:
+        parsed = float(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(f"expected a number, got {value!r}") from error
+    if not math.isfinite(parsed) or parsed <= 0:
+        raise argparse.ArgumentTypeError(
+            f"value must be finite and greater than zero, got {parsed}"
+        )
+    return parsed
+
+
 def _sanitize_for_toml(obj: Any) -> Any:
     """Convert Path objects to strings and drop None values for TOML."""
     if isinstance(obj, dict):
@@ -123,10 +207,9 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="pmriprep",
         usage="%(prog)s bids_dir output_dir {participant} [options]",
         description=(
-            "PMRIPrep: Perfusion MRI Preprocessing Pipeline\n\n"
-            "Automated preprocessing and quantification of DSC and DCE\n"
-            "data. Reads BIDS-formatted input and produces\n"
-            "BIDS-Derivatives compliant output with QC reports."
+            "PMRIPrep: automated preprocessing and quantification of DSC and DCE MRI\n\n"
+            "Reads BIDS-formatted input and produces BIDS-Derivatives "
+            "outputs with QC reports."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""\
@@ -169,7 +252,7 @@ Examples:
     parser.add_argument(
         "analysis_level",
         choices=["participant"],
-        help="Level of analysis (currently only 'participant' supported).",
+        help="Level of analysis (only 'participant' is currently supported).",
     )
 
     # Standard BIDS-App arguments
@@ -192,29 +275,28 @@ Examples:
         "--bids_validation",
         action="store_true",
         default=False,
-        help="Run the bids-validator pre-flight check on the input dataset. "
-        "Disabled by default because perfusion MRI suffixes (_dsc, _dce) are "
-        "not yet in the stable BIDS specification.",
+        help="Run the BIDS Validator preflight check. Disabled by default "
+        "because supported DSC/DCE inputs may extend the validator schema.",
     )
 
     # Resource arguments
     parser.add_argument(
         "--nprocs",
-        type=int,
-        default=1,
+        type=_positive_int,
+        default=None,
         metavar="N",
         help="Maximum number of processors to use (default: 1).",
     )
     parser.add_argument(
         "--omp-nthreads",
-        type=int,
+        type=_positive_int,
         default=None,
         metavar="N",
         help="Per-process thread limit (OMP/MKL/ITK).",
     )
     parser.add_argument(
         "--mem-gb",
-        type=float,
+        type=_positive_float,
         metavar="GB",
         help="Upper bound memory limit in gigabytes.",
     )
@@ -223,7 +305,7 @@ Examples:
         "--work-dir",
         type=Path,
         metavar="PATH",
-        help="Path to the working directory for intermediate files.",
+        help="Path where intermediate results should be stored.",
     )
 
     # Configuration file
@@ -238,13 +320,7 @@ Examples:
     # Pipeline component skip flags
     skip_group = parser.add_argument_group(
         "Pipeline components",
-        "Flags to skip specific pipeline components.",
-    )
-    skip_group.add_argument(
-        "--skip-anat",
-        action="store_true",
-        default=False,
-        help="Skip anatomical preprocessing pipeline.",
+        "Flags to skip optional pipeline components.",
     )
     skip_group.add_argument(
         "--skip-tumor-seg",
@@ -262,7 +338,7 @@ Examples:
         "--skip-dce",
         action="store_true",
         default=False,
-        help="Skip DCE (Dynamic Contrast Enhanced) pipeline.",
+        help="Skip DCE (dynamic contrast-enhanced) pipeline.",
     )
 
     # Device options
@@ -287,12 +363,12 @@ Examples:
     dsc_group.add_argument(
         "--dsc-inference",
         choices=["nlls", "map", "vi", "svb"],
+        metavar="{vi,svb,nlls}",
         default=None,
         help="Inference engine for parametric DSC methods (cpi, vascular): "
-        "vi (default, FABBER variational Bayes), "
-        "svb (spatial VB with FABBER M-prior), "
-        "map (maximum a posteriori), "
-        "nlls (FABBER-style Levenberg-Marquardt). "
+        "vi (default, linearized variational inference), "
+        "svb (spatial variational Bayes with a boundary-corrected M-prior), "
+        "nlls (nonlinear least squares). "
         "SVD methods ignore this option.",
     )
     dsc_group.add_argument(
@@ -303,8 +379,7 @@ Examples:
         help="DSC preload as 'auto' (classify preload adequacy from the K2 "
         "leakage residuals) or a float administered-dose multiplier relative "
         "to the agent's standard dose (e.g., 0.5 for half-dose preload). "
-        "Accepts 0.0 to 2.0. Internally binned to a class for K2 constraint "
-        "tuning.",
+        "Accepts 0.0 to 2.0.",
     )
     dsc_group.add_argument(
         "--dsc-dose",
@@ -319,9 +394,8 @@ Examples:
         type=float,
         default=None,
         metavar="DOSE",
-        help="Override agent standard dose in mmol Gd/kg "
-        "(auto-detected from ContrastBolusAgent sidecar field when available). "
-        "Default: 0.1.",
+        help="Override agent standard dose in mmol Gd/kg. Otherwise inferred "
+        "from ContrastBolusAgent when available; unresolved agents use 0.1.",
     )
     dsc_group.add_argument(
         "--dsc-aif-method",
@@ -334,22 +408,17 @@ Examples:
         type=Path,
         default=None,
         metavar="FILE",
-        help="External AIF curve file (.txt with one value per line, .npz with 'aif' key, "
-             "or .npy). Values must be \u0394R2* concentration in s\u207b\u00b9, temporally aligned "
-             "with DSC volumes. Bypasses AIF detection.",
-    )
-
-    dsc_group.add_argument(
-        "--dsc-registration",
-        choices=["flirt", "flirt_bbr"],
-        default=None,
-        help=argparse.SUPPRESS,
+        help=(
+            "External AIF curve file (.txt/.tsv with one value per line, "
+            ".npz with 'aif' key, or .npy). Values must be \u0394R2* "
+            "in s\u207b\u00b9, temporally aligned with DSC volumes. Bypasses AIF detection."
+        ),
     )
 
     # DCE options
     dce_group = parser.add_argument_group(
         "DCE options",
-        "Options for DCE (Dynamic Contrast Enhanced) processing.",
+        "Options for DCE (dynamic contrast-enhanced) processing.",
     )
     dce_group.add_argument(
         "--dce-model",
@@ -362,9 +431,10 @@ Examples:
     dce_group.add_argument(
         "--dce-inference",
         choices=["nlls", "vi", "map"],
+        metavar="{nlls,vi}",
         default=None,
-        help="Inference engine for DCE: nlls (default, scipy "
-        "least_squares), vi (variational Bayes), map (Laplace MAP).",
+        help="Inference engine for DCE: nlls (default, nonlinear least "
+        "squares), vi (variational Bayes).",
     )
     dce_group.add_argument(
         "--dce-aif-method",
@@ -377,9 +447,12 @@ Examples:
         type=Path,
         default=None,
         metavar="FILE",
-        help="External AIF curve file (.txt with one value per line, .npz with 'Cp' or 'aif' key, "
-             "or .npy). Values must be plasma concentration in mM, temporally aligned with DCE volumes. "
-             "Bypasses AIF detection. Number of values must match DCE volumes.",
+        help=(
+            "External AIF curve file (.txt/.tsv with one value per line, "
+            ".npz with 'Cp' or 'aif' key, or .npy). Values must be plasma "
+            "concentration in mM, temporally aligned with DCE volumes. "
+            "Bypasses AIF detection. Number of values must match DCE volumes."
+        ),
     )
     dce_group.add_argument(
         "--dce-dose",
@@ -395,25 +468,24 @@ Examples:
         default=None,
         metavar="R1",
         help=(
-            "Override r1 relaxivity (s^-1/mM) for DCE concentration "
+            "Override r1 relaxivity (s⁻¹ mM⁻¹) for DCE concentration "
             "conversion. Bypasses contrast-agent lookup from BIDS sidecar. "
-            "If not specified, looked up from ContrastBolusAgent in BIDS "
-            "sidecar; falls back to Gd-DTPA (3.8 at 3T) if agent unknown. "
-            "Typical values: Gd-DTPA 3.8, Gadovist 5.0 at 3T."
+            "If omitted, PMRIPrep resolves r1 from the contrast agent and "
+            "field strength and records any generic fallback in provenance."
         ),
     )
     dce_group.add_argument(
         "--dce-b1-method",
         choices=["auto", "afi", "precomputed", "none"],
         default=None,
-        help="B1+ correction method: auto (detect from data), afi (Yarnykh AFI), "
-             "precomputed (pre-computed B1+ map), none (skip B1+ correction).",
+        help="B1+ correction method: auto (select an available B1+ input), "
+        "afi, precomputed (precomputed B1+ map), or none.",
     )
     dce_group.add_argument(
         "--dce-b1-map-encoding",
         choices=["auto", "actual_flip_deci_deg", "actual_flip_deg", "percent", "ratio"],
         default=None,
-        help="Pixel encoding of a pre-computed B1+ map: auto (infer from BIDS "
+        help="Pixel encoding of a precomputed B1+ map: auto (infer from BIDS "
              "suffix/Units, else pixel median), actual_flip_deci_deg (Siemens tfl), "
              "actual_flip_deg, percent (BIDS p.u.), ratio.",
     )
@@ -422,14 +494,17 @@ Examples:
         action="store_const",
         const=True,
         default=None,
-        help="Skip T1 mapping (use field-strength-appropriate default T1).",
+        help="Skip T1 mapping (use a uniform field-strength reference T1). "
+             "B1+ correction remains controlled by --dce-b1-method.",
     )
     dce_group.add_argument(
         "--dce-t1-map",
         type=Path,
         default=None,
-        help="External T1 map file (NIfTI, units: milliseconds). Bypasses "
-             "VFA T1 fitting. Useful for MP2RAGE, MOLLI, or ground-truth T1 maps.",
+        metavar="FILE",
+        help="External T1 map (NIfTI, milliseconds) already aligned in world "
+        "coordinates with DCE. Bypasses VFA T1 fitting; alignment is reported but "
+        "not corrected.",
     )
     # Anatomical options
     anat_group = parser.add_argument_group(
@@ -504,13 +579,15 @@ Examples:
         "--clean-workdir",
         action="store_true",
         default=False,
-        help="Delete working directory after processing.",
+        help="Clear prior working-directory contents before processing. Do not "
+             "use with concurrent runs sharing a work directory.",
     )
     g_other.add_argument(
         "--sloppy",
         action="store_true",
         default=False,
-        help="Use low-quality, fast settings for testing. NOT FOR PRODUCTION USE.",
+        help="Use reduced-quality settings for development and testing. "
+        "Not for production use.",
     )
     g_other.add_argument(
         "--random-seed",
@@ -522,6 +599,7 @@ Examples:
     )
     g_other.add_argument(
         "--use-plugin",
+        "--nipype-plugin-file",
         type=Path,
         default=None,
         metavar="PATH",
@@ -548,6 +626,9 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     parser = _build_parser()
     args = parser.parse_args(argv)
 
+    plugin_name: str | None = None
+    plugin_args: dict[str, Any] = {}
+
     # Reconstruct CLI command for QC report reproducibility
     cmd_parts = sys.argv.copy() if argv is None else ["pmriprep"] + list(argv)
     cmd_parts[0] = "pmriprep"  # Normalize entry point (not container path)
@@ -573,6 +654,19 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     if args.config_file is not None and not args.config_file.is_file():
         parser.error(f"config_file does not exist: {args.config_file}")
 
+    if args.use_plugin is not None:
+        if not args.use_plugin.is_file():
+            parser.error(f"--use-plugin file does not exist: {args.use_plugin}")
+        try:
+            plugin_name, plugin_args = _load_plugin_config(args.use_plugin)
+        except (OSError, ValueError) as error:
+            parser.error(str(error))
+
+    try:
+        args.nprocs = _effective_nprocs(args.nprocs, plugin_name, plugin_args)
+    except ValueError as error:
+        parser.error(str(error))
+
     # Validate dce_aif_file exists if specified
     _VALID_AIF_EXTENSIONS = {".txt", ".tsv", ".npz", ".npy"}
     if args.dce_aif_file is not None:
@@ -596,7 +690,16 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
 
     # Resolve all Path arguments to absolute paths so nipype nodes
     # can locate them regardless of their execution working directory
-    for attr in ("bids_dir", "output_dir", "work_dir", "config_file", "dce_aif_file", "dsc_aif_file"):
+    for attr in (
+        "bids_dir",
+        "output_dir",
+        "work_dir",
+        "config_file",
+        "dce_aif_file",
+        "dsc_aif_file",
+        "dce_t1_map",
+        "use_plugin",
+    ):
         val = getattr(args, attr, None)
         if val is not None:
             setattr(args, attr, val.resolve())
@@ -835,6 +938,7 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
         build_tumor_seg_config,
         load_config,
         merge_cli_config,
+        validate_config_paths,
     )
     from pmriprep.utils.naming import workflow_dirname
     from pmriprep.workflows.base import (
@@ -887,6 +991,7 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
     dce_config = build_dce_config(merged_config)
     anat_config = build_anat_config(merged_config)
     tumor_seg_config = build_tumor_seg_config(merged_config)
+    validate_config_paths(dsc_config, dce_config)
 
     # Propagate --nprocs as fallback for num_processes (intra-node parallelism)
     if dsc_config.num_processes == 0:
@@ -896,7 +1001,9 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
 
     # Build skip flags
     skip_flags = PipelineSkipFlags(
-        skip_anat=args.skip_anat,
+        # Anatomical processing is required by the public DSC/DCE workflows.
+        # Valid reruns reuse Nipype's node cache automatically.
+        skip_anat=False,
         skip_tumor_seg=args.skip_tumor_seg,
         skip_dsc=args.skip_dsc,
         skip_dce=args.skip_dce,
@@ -907,6 +1014,13 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
 
     # Resolve work_dir once for downstream use
     work_dir = args.work_dir if args.work_dir is not None else args.output_dir / "work"
+    work_dir = _validate_work_dir(work_dir, args.bids_dir, args.output_dir)
+    if args.clean_workdir:
+        logger.log(IMPORTANT, "Clearing previous working-directory contents: %s", work_dir)
+        try:
+            _clean_work_dir(work_dir)
+        except OSError as e:
+            logger.warning("Could not clear all contents of %s: %s", work_dir, e)
 
     # Process each subject
     for subject_id in subjects:
@@ -981,10 +1095,7 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
                 for line in summary.split("\n"):
                     logger.info(line)
 
-                # Set working directory
-                workflow.base_dir = str(work_dir)
-
-                # Write workflow graph if requested (after base_dir is set)
+                # Write the workflow graph after construction.
                 if args.write_graph:
                     try:
                         workflow.write_graph(
@@ -1032,16 +1143,6 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
                             logger.error("    %s", line)
                     except Exception:
                         logger.error("    (could not read crash file)")
-
-    # Clean working directory after all subjects are processed
-    if args.clean_workdir and work_dir.exists():
-        import shutil
-
-        logger.log(IMPORTANT, "Clearing working directory: %s", work_dir)
-        try:
-            shutil.rmtree(work_dir)
-        except OSError as e:
-            logger.warning("Failed to clean work directory: %s", e)
 
     logger.log(IMPORTANT, "PMRIPrep processing complete")
 
@@ -1179,6 +1280,67 @@ def _load_plugin_config(path: Path) -> tuple[str, dict[str, Any]]:
     return plugin_value, dict(plugin_args_raw)
 
 
+def _effective_nprocs(
+    cli_nprocs: int | None,
+    plugin: str | None,
+    plugin_args: dict[str, Any],
+) -> int:
+    """Resolve process count with fMRIPrep-compatible precedence."""
+    if cli_nprocs is not None:
+        return cli_nprocs
+    if plugin in {"MultiProc", "LegacyMultiProc"} and "n_procs" in plugin_args:
+        value = plugin_args["n_procs"]
+        if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+            raise ValueError(
+                "--use-plugin MultiProc 'n_procs' must be a positive integer"
+            )
+        return value
+    return 1
+
+
+def _workflow_uses_gpu(workflow: Any) -> bool:
+    """Return whether Nipype will schedule any workflow node as a GPU job."""
+    all_nodes: list[Any] = list(
+        getattr(workflow, "_get_all_nodes", lambda: [])()
+    )
+    return any(
+        bool(node.is_gpu_node())
+        for node in all_nodes
+        if callable(getattr(node, "is_gpu_node", None))
+    )
+
+
+def _merge_user_plugin_resources(
+    workflow: Any,
+    args: argparse.Namespace,
+    plugin: str,
+    plugin_args: dict[str, Any],
+) -> dict[str, Any]:
+    """Merge CLI resources into a user plugin using the NiPreps contract."""
+    merged = dict(plugin_args)
+    if plugin not in {"MultiProc", "LegacyMultiProc"}:
+        return merged
+
+    merged["n_procs"] = args.nprocs
+    if args.mem_gb is not None:
+        merged["memory_gb"] = args.mem_gb
+
+    if "n_gpu_procs" not in merged:
+        if _workflow_uses_gpu(workflow):
+            from pmriprep.utils.gpu import detect_gpu_count
+
+            n_gpus = detect_gpu_count()
+            merged["n_gpu_procs"] = max(n_gpus, 1)
+            if n_gpus > 0:
+                logger.info("Detected %d GPU(s) for scheduling", n_gpus)
+            else:
+                logger.warning(
+                    "GPU detection returned 0 but GPU nodes are present; "
+                    "defaulting to 1 GPU slot"
+                )
+    return merged
+
+
 def _run_workflow(
     workflow: Any,  # pe.Workflow but avoiding circular import
     args: argparse.Namespace,
@@ -1192,17 +1354,42 @@ def _run_workflow(
     args : argparse.Namespace
         Parsed command line arguments.
     """
+    from pmriprep.utils.processes import (
+        enable_child_subreaper,
+        terminate_descendant_processes,
+    )
+
+    enable_child_subreaper()
+
+    def _run_with_cleanup(plugin: str, plugin_args: dict[str, Any] | None = None) -> None:
+        try:
+            workflow.run(plugin=plugin, plugin_args=plugin_args)
+        except BaseException as error:
+            try:
+                terminate_descendant_processes(
+                    interrupted=isinstance(error, KeyboardInterrupt),
+                )
+            except Exception as cleanup_error:
+                logger.warning(
+                    "Failed to fully reap workflow child processes: %s",
+                    cleanup_error,
+                )
+            raise
+
     # User-supplied plugin config takes precedence over the auto
     # MultiProc/Linear selection. Useful for cluster schedulers
     # (SLURM/SGE/PBS/LSF) that need scheduler-specific args.
     user_plugin = getattr(args, "use_plugin", None)
     if user_plugin is not None:
         plugin, plugin_args = _load_plugin_config(user_plugin)
+        plugin_args = _merge_user_plugin_resources(
+            workflow, args, plugin, plugin_args,
+        )
         logger.info(
             "Running workflow with user-supplied plugin %s (from %s)",
             plugin, user_plugin,
         )
-        workflow.run(plugin=plugin, plugin_args=plugin_args)
+        _run_with_cleanup(plugin, plugin_args)
         return
 
     # Determine execution plugin based on nprocs
@@ -1223,20 +1410,10 @@ def _run_workflow(
         # inside containers (e.g., Apptainer --contain).  Without this,
         # MultiProc._prerun_check raises "Insufficient GPU resources" because
         # n_gpu_procs defaults to 0 while nodes with use_gpu=True are present.
-        # Check if any GPU nodes will be present. CLI arg defaults are None
-        # while config defaults are "auto"/"cuda", so use the CLI value when
-        # explicitly set, otherwise fall back to "auto" (the config default).
-        from pmriprep.utils.device import resolve_device_uses_gpu
-
-        _hdbet_device = getattr(args, "hdbet_device", None) or "auto"
-        _tumor_device = getattr(args, "tumor_seg_device", None) or "auto"
-
-        _needs_gpu = (
-            resolve_device_uses_gpu(_hdbet_device)  # HD-BET brain extraction
-            or resolve_device_uses_gpu(_tumor_device)  # HD-GLIO tumor seg
-        )
-
-        if _needs_gpu:
+        # Inspect the constructed graph rather than the raw CLI namespace.
+        # YAML configuration and per-pipeline defaults may differ from absent
+        # CLI values; the node attributes are the effective scheduling state.
+        if _workflow_uses_gpu(workflow):
             from pmriprep.utils.gpu import detect_gpu_count
 
             n_gpus = detect_gpu_count()
@@ -1251,11 +1428,11 @@ def _run_workflow(
                 )
 
         logger.info(f"Running workflow with {args.nprocs} processors")
-        workflow.run(plugin=plugin, plugin_args=plugin_args)
+        _run_with_cleanup(plugin, plugin_args)
     else:
         # Single processor - use linear execution
         logger.info("Running workflow in single-processor mode")
-        workflow.run(plugin="Linear")
+        _run_with_cleanup("Linear")
 
 
 if __name__ == "__main__":

@@ -7,7 +7,54 @@ on:
     branches: [main]
 
 jobs:
+  static-and-package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+      - run: pip install ".[dev]"
+      - run: mypy pmriprep/ --ignore-missing-imports
+      - run: ruff check pmriprep/ tests/
+      - name: Build release archives
+        run: |
+          mkdir -p dist
+          python -c "from setuptools.build_meta import build_sdist; build_sdist('dist')"
+          pip wheel dist/*.tar.gz --no-deps --no-build-isolation --wheel-dir dist
+      - name: Verify release archive contents
+        run: python tests/check_distribution_contents.py dist/*.whl dist/*.tar.gz
+
   unit-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - run: pip install ".[test]"
+      - name: Verify installed CLI version
+        run: |
+          python - <<'PY'
+          import pathlib
+          import subprocess
+          import toml
+
+          expected = toml.load(pathlib.Path("pyproject.toml"))["project"]["version"]
+          actual = subprocess.check_output(
+              ["pmriprep", "--version"], text=True,
+          ).strip()
+          assert actual == f"pmriprep {expected}", (actual, expected)
+          PY
+      - run: pytest tests/unit/ --runslow -q --maxfail=20
+
+  synthetic-dro-tests:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -16,7 +63,7 @@ jobs:
           python-version: "3.10"
           cache: pip
       - run: pip install -e ".[test]"
-      - run: pytest tests/unit/ -q --maxfail=20
+      - run: pytest tests/dro/ --runslow -m "not local_validation" -q --maxfail=20
 
   doctests:
     runs-on: ubuntu-latest
@@ -38,4 +85,4 @@ jobs:
           python-version: "3.11"
           cache: pip
       - run: pip install -e ".[doc]"
-      - run: python -m sphinx -b html docs docs/_build/html
+      - run: python -m sphinx -W --keep-going -b html docs docs/_build/html

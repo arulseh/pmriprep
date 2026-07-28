@@ -3,7 +3,7 @@ and the skip-DSC glob helper in ``pmriprep/workflows/base.py``.
 
 These tests target path-dispatch invariants that are not covered by the
 validation/constraint unit tests: specifically, that the Function-node
-wrappers correctly route nCBV vs absolute CBV to the right downstream
+wrappers correctly route nCBV to downstream validation
 consumer, and that the skip-DSC glob handles older output layouts
 without silently feeding biased data to the cross-validation pathway.
 """
@@ -24,6 +24,211 @@ def _write_nifti(path: Any, data: np.ndarray) -> str:
     img = nib.Nifti1Image(data.astype(np.float32), affine=np.eye(4))
     nib.save(img, str(path))
     return str(path)
+
+
+def test_signal_conversion_node_reports_invalid_t1(tmp_path: Any) -> None:
+    """Workflow wrapper zeroes invalid T1 and returns conversion diagnostics."""
+    from pmriprep.workflows.dce._helpers import _signal_to_concentration_node
+
+    signal = np.full((2, 1, 1, 10), 100.0)
+    signal[..., 5:] = 120.0
+    t1 = np.array([[[1200.0]], [[np.nan]]])
+    dce_file = _write_nifti(tmp_path / "dce.nii.gz", signal)
+    brain_mask_file = _write_nifti(
+        tmp_path / "brain_mask.nii.gz", np.ones((2, 1, 1))
+    )
+    t1_file = _write_nifti(tmp_path / "t1.nii.gz", t1)
+    with mock.patch("pathlib.Path.cwd", return_value=tmp_path):
+        output, qc = _signal_to_concentration_node(
+            dce_file,
+            brain_mask_file,
+            t1_file,
+            None,
+            15.0,
+            0.005,
+            3.0,
+            3.8,
+            5,
+            False,
+        )
+
+    assert output.endswith("dce_concentration.nii.gz")
+    assert qc["t1_invalid_voxels"] == 1
+    assert qc["t1_invalid_fraction"] == pytest.approx(0.5)
+    assert qc["nonfinite_output_samples"] == 0
+    assert qc["qc_domain"] == "dce_brain_mask"
+    assert qc["n_qc_domain_voxels"] == 2
+
+
+def test_external_t1_reports_alignment_metrics(tmp_path: Any) -> None:
+    """External T1 conversion records support and contrast-robust edge agreement."""
+    from pmriprep.workflows.dce._helpers import _signal_to_concentration_node
+
+    grid = np.indices((6, 6, 6), dtype=float)
+    radius = np.sqrt(np.sum((grid - 2.5) ** 2, axis=0))
+    t1 = 800.0 + 120.0 * radius
+    baseline = 2000.0 - t1
+    signal = np.repeat(baseline[..., None], 10, axis=3)
+    signal[..., 5:] *= 1.1
+    dce_file = _write_nifti(tmp_path / "dce.nii.gz", signal)
+    brain_mask_file = _write_nifti(
+        tmp_path / "brain_mask.nii.gz", np.ones((6, 6, 6))
+    )
+    t1_file = _write_nifti(tmp_path / "external_t1.nii.gz", t1)
+    with mock.patch("pathlib.Path.cwd", return_value=tmp_path):
+        _, qc = _signal_to_concentration_node(
+            dce_file,
+            brain_mask_file,
+            t1_file,
+            None,
+            15.0,
+            0.005,
+            3.0,
+            3.8,
+            5,
+            False,
+            external_t1=True,
+        )
+
+    alignment = qc["external_t1_alignment"]
+    assert alignment["brain_support_fraction"] == pytest.approx(1.0)
+    assert alignment["gradient_magnitude_ncc"] is not None
+    assert alignment["resampling"] == "nifti_world_affine"
+
+
+def test_signal_conversion_node_scopes_t1_qc_to_brain_mask(
+    tmp_path: Any,
+) -> None:
+    """Nonzero extracranial signal does not inflate invalid-T1 counts."""
+    from pmriprep.workflows.dce._helpers import _signal_to_concentration_node
+
+    signal = np.full((2, 1, 1, 10), 100.0)
+    signal[..., 5:] = 120.0
+    t1 = np.array([[[1200.0]], [[0.0]]])
+    dce_file = _write_nifti(tmp_path / "dce.nii.gz", signal)
+    brain_mask_file = _write_nifti(
+        tmp_path / "brain_mask.nii.gz", np.array([[[1.0]], [[0.0]]])
+    )
+    t1_file = _write_nifti(tmp_path / "t1.nii.gz", t1)
+    with mock.patch("pathlib.Path.cwd", return_value=tmp_path):
+        _, qc = _signal_to_concentration_node(
+            dce_file,
+            brain_mask_file,
+            t1_file,
+            None,
+            15.0,
+            0.005,
+            3.0,
+            3.8,
+            5,
+            False,
+        )
+
+    assert qc["n_spatial_voxels"] == 2
+    assert qc["n_qc_domain_voxels"] == 1
+    assert qc["n_signal_supported_voxels"] == 1
+    assert qc["t1_invalid_voxels"] == 0
+    assert qc["t1_invalid_fraction"] == 0.0
+
+
+def test_no_t1_signal_conversion_retains_b1_correction(tmp_path: Any) -> None:
+    """Assumed-T1 conversion still applies the measured excitation field."""
+    import nibabel as nib  # type: ignore[import-untyped]
+
+    from pmriprep.workflows.dce._helpers import _signal_to_concentration_node
+
+    signal = np.full((1, 1, 1, 10), 100.0)
+    signal[..., 5:] = 130.0
+    dce_file = _write_nifti(tmp_path / "dce.nii.gz", signal)
+    brain_mask_file = _write_nifti(
+        tmp_path / "brain_mask.nii.gz", np.ones((1, 1, 1))
+    )
+    b1_file = _write_nifti(
+        tmp_path / "b1.nii.gz", np.full((1, 1, 1), 0.8)
+    )
+
+    with mock.patch("pathlib.Path.cwd", return_value=tmp_path):
+        nominal_file, nominal_qc = _signal_to_concentration_node(
+            dce_file, brain_mask_file, None, None,
+            15.0, 0.005, 3.0, 3.8, 5, True,
+        )
+        nominal = np.asarray(nib.load(nominal_file).dataobj).copy()
+        corrected_file, corrected_qc = _signal_to_concentration_node(
+            dce_file, brain_mask_file, None, b1_file,
+            15.0, 0.005, 3.0, 3.8, 5, True,
+        )
+        corrected = np.asarray(nib.load(corrected_file).dataobj).copy()
+
+    assert not np.allclose(corrected, nominal)
+    assert nominal_qc["b1_correction_applied"] is False
+    assert corrected_qc["b1_correction_applied"] is True
+    assert corrected_qc["t1_source"] == "assumed"
+    assert corrected_qc["assumed_t1_ms"] == pytest.approx(1200.0)
+    assert corrected_qc["assumed_t1_field_strength_t"] == pytest.approx(3.0)
+    assert (
+        corrected_qc["assumed_t1_policy"]
+        == "uniform_field_strength_reference"
+    )
+
+
+def test_unity_b1_sentinel_is_not_reported_as_correction(tmp_path: Any) -> None:
+    """A unity B1 file preserves signal and reports no applied correction."""
+    import nibabel as nib  # type: ignore[import-untyped]
+
+    from pmriprep.workflows.dce._helpers import _signal_to_concentration_node
+
+    signal = np.full((1, 1, 1, 10), 100.0)
+    signal[..., 5:] = 130.0
+    dce_file = _write_nifti(tmp_path / "dce.nii.gz", signal)
+    brain_mask_file = _write_nifti(
+        tmp_path / "brain_mask.nii.gz", np.ones((1, 1, 1))
+    )
+    unity_b1_file = _write_nifti(
+        tmp_path / "unity_b1.nii.gz", np.ones((1, 1, 1))
+    )
+
+    with mock.patch("pathlib.Path.cwd", return_value=tmp_path):
+        nominal_file, _ = _signal_to_concentration_node(
+            dce_file, brain_mask_file, None, None,
+            15.0, 0.005, 3.0, 3.8, 5, True,
+        )
+        nominal = np.asarray(nib.load(nominal_file).dataobj).copy()
+        unity_file, unity_qc = _signal_to_concentration_node(
+            dce_file, brain_mask_file, None, unity_b1_file,
+            15.0, 0.005, 3.0, 3.8, 5, True,
+        )
+        unity = np.asarray(nib.load(unity_file).dataobj).copy()
+
+    assert np.allclose(unity, nominal)
+    assert unity_qc["b1_correction_applied"] is False
+
+
+def test_signal_conversion_node_rejects_brain_mask_shape_mismatch(
+    tmp_path: Any,
+) -> None:
+    """Conversion QC cannot silently use a misregistered mask domain."""
+    from pmriprep.workflows.dce._helpers import _signal_to_concentration_node
+
+    dce_file = _write_nifti(
+        tmp_path / "dce.nii.gz", np.ones((2, 1, 1, 10))
+    )
+    brain_mask_file = _write_nifti(
+        tmp_path / "brain_mask.nii.gz", np.ones((3, 1, 1))
+    )
+
+    with pytest.raises(ValueError, match="brain mask shape"):
+        _signal_to_concentration_node(
+            dce_file,
+            brain_mask_file,
+            None,
+            None,
+            15.0,
+            0.005,
+            3.0,
+            3.8,
+            5,
+            True,
+        )
 
 
 # =============================================================================
@@ -53,13 +258,11 @@ class TestDscDceValidationNodeDispatch:
     def test_missing_cbv_file_does_not_reach_validator(
         self, tmp_path: Any,
     ) -> None:
-        """When only nCBV exists on disk, the node passes ``cbv_path=None``
-        (never the phantom) and validation uses the nCBV path.
+        """When only nCBV exists, validation uses that nCBV path.
 
         This is the dispatch contract guard: the `os.path.isfile` check at
         call-time prevents a non-existent `dsc_cbv_file` string from ever
-        reaching `validate_vp_cbv_from_files`, which would otherwise raise
-        FileNotFoundError when resolving the abs-CBV path.
+        reaching `validate_vp_cbv_from_files`.
         """
         from pmriprep.workflows.dce.base import _dsc_dce_validation_node
 
@@ -91,12 +294,11 @@ class TestDscDceValidationNodeDispatch:
 
         assert out == {"status": "PASS"}
         assert captured["ncbv_path"] == ncbv_file
-        # The key dispatch invariant: no phantom path leaks through.
-        assert captured["cbv_path"] is None
+        assert "cbv_path" not in captured
 
     def test_both_files_present_uses_ncbv_only(self, tmp_path: Any) -> None:
-        """When both exist, the node routes only the nCBV path
-        (cbv_path=None) because the rel-AUC-CBV fallback is
+        """When both exist, the node routes only the nCBV path because
+        the rel-AUC-CBV fallback is
         miscalibrated against dimensionless rel-AUC-CBV.
         """
         from pmriprep.workflows.dce.base import _dsc_dce_validation_node
@@ -130,8 +332,7 @@ class TestDscDceValidationNodeDispatch:
                 brain_mask=mask_file,
             )
 
-        # Only ncbv_path is forwarded; cbv_path is explicitly None.
-        assert captured["cbv_path"] is None
+        assert "cbv_path" not in captured
         assert captured["ncbv_path"] == ncbv_file
 
     def test_workflow_skips_xval_on_no_nawm(self, tmp_path: Any) -> None:
@@ -251,10 +452,8 @@ class TestDscDceValidationNodeDispatch:
             "simulated validation failure" in r.message for r in caplog.records
         )
 
-    def test_validation_node_extracts_overshoot(self, tmp_path: Any) -> None:
-        """pk_qc dict → overshoot extracted from ``dsc_cbv_constraint`` and
-        forwarded to ``validate_vp_cbv_from_files`` as
-        ``aif_tissue_overshoot_fraction``. Catches dict-path typos."""
+    def test_validation_node_extracts_constraint_width(self, tmp_path: Any) -> None:
+        """pk_qc forwards constraint mode and relative prior width."""
         from pmriprep.workflows.dce.base import _dsc_dce_validation_node
 
         ncbv_file = _write_nifti(
@@ -273,7 +472,7 @@ class TestDscDceValidationNodeDispatch:
         pk_qc = {
             "dsc_cbv_constraint": {
                 "mode": "soft",
-                "aif_tissue_overshoot_fraction": 0.94,
+                "vp_uncertainty": 0.5,
             },
         }
 
@@ -290,10 +489,44 @@ class TestDscDceValidationNodeDispatch:
             )
 
         assert captured["constraint_mode"] == "soft"
-        assert captured["aif_tissue_overshoot_fraction"] == 0.94
+        assert captured["constraint_relative_width"] == 0.5
         # Guard the dict-vs-string dispatch: ncbv_path must still route through.
         assert captured["ncbv_path"] == ncbv_file
-        assert captured["cbv_path"] is None
+        assert "cbv_path" not in captured
+
+
+def test_xval_plot_node_emits_constraint_diagnostic(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Constraint-coupled results still produce the diagnostic figure."""
+    from pathlib import Path
+
+    from pmriprep.workflows.dce.base import _dsc_dce_xval_plot_node
+
+    shape = (8, 8, 4)
+    ncbv = np.linspace(0.5, 2.5, np.prod(shape)).reshape(shape)
+    vp = 0.01 * ncbv
+    vp_file = _write_nifti(tmp_path / "vp.nii.gz", vp)
+    ncbv_file = _write_nifti(tmp_path / "ncbv.nii.gz", ncbv)
+    mask_file = _write_nifti(tmp_path / "mask.nii.gz", np.ones(shape))
+    monkeypatch.chdir(tmp_path)
+
+    out_file = _dsc_dce_xval_plot_node(
+        vp_file=vp_file,
+        dsc_ncbv_file=ncbv_file,
+        brain_mask=mask_file,
+        validation_result={
+            "status": "CONSTRAINT-COUPLED",
+            "constraint_mode": "soft",
+            "constraint_coupled": True,
+            "constraint_relative_width": 0.5,
+            "metrics": {"correlation": 1.0, "pearson_correlation": 1.0},
+        },
+    )
+
+    assert out_file is not None
+    assert Path(out_file).is_file()
 
 
 # =============================================================================
@@ -373,12 +606,14 @@ class TestComputeDCEMapsDoseTraits:
     ) -> None:
         """`self.inputs.dsc_dose` + `.dsc_agent_standard_dose` flow through
         to `prepare_vp_constraint_from_data(dose=..., agent_standard_dose=...)`."""
-        from unittest import mock
 
         from pmriprep.interfaces.dce_compute import ComputeDCEMapsInputSpec
 
         # Interface has the traits with documented defaults.
         spec = ComputeDCEMapsInputSpec()
+        assert "hematocrit" not in spec.traits()
+        assert "dsc_cbv_file" not in spec.traits()
+        assert "tr" not in spec.traits()
         assert spec.dsc_dose == 1.0
         assert spec.dsc_agent_standard_dose == 0.1
 

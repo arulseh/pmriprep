@@ -689,7 +689,7 @@ def select_n_control_points(
 
     Two distinct paths based on ``infer_cpt``:
 
-    - **Fixed-CP layout (``infer_cpt=False``)**: legacy heuristic
+    - **Fixed-CP layout (``infer_cpt=False``)**: schedule heuristic
       ``max(n_bolus, n_spacing)`` — sufficient bolus density for
       uniformly-placed CPs.
     - **Migrating CPs (``infer_cpt=True``) with ``mean_tissue`` + ``dt``**:
@@ -698,9 +698,9 @@ def select_n_control_points(
       sampling. The empirical N-sweep shows N=4 fits short-MTT tissue
       perfectly under migration.
 
-    If ``infer_cpt=True`` but ``mean_tissue`` or ``dt`` are missing, falls
-    back to the legacy formula (callers without mean_tissue can't use the
-    adaptive path).
+    If ``infer_cpt=True`` but ``mean_tissue`` or ``dt`` are missing, the
+    fixed-control-point formula is used because the adaptive path requires
+    both inputs.
 
     Parameters
     ----------
@@ -716,8 +716,8 @@ def select_n_control_points(
         Maximum number of control points.
     infer_cpt : bool, optional
         When True and ``mean_tissue``/``dt`` are provided, use
-        the tail-decay-adaptive formula instead of the legacy
-        heuristic.
+        the tail-decay-adaptive formula instead of the fixed-control-point
+        schedule.
     mean_tissue : np.ndarray, optional
         Mean tissue concentration across in-mask voxels,
         shape (T,). Required for the adaptive path.
@@ -932,9 +932,10 @@ def _fit_cpi_simple(
 
     Mirrors FABBER's ``inference_nlls.cc`` for ``--model=dsc_cpi``:
     Levenberg-Marquardt-style trust-region reflective optimisation in
-    *fitting space* (sigmoid-transformed fractions, identity CBF). The
-    sigmoid transform implicitly bounds fractions to (0, 1), so no box
-    constraints are imposed beyond the identity-CBF ≥ 0 floor.
+    *fitting space* (sigmoid-transformed fractions, identity parameters).
+    The sigmoid transform implicitly bounds fractions to (0, 1). Inferred
+    time parameters retain their declared finite bounds, while CBF keeps
+    FABBER's nonnegative, otherwise-flat NLLS convention.
 
     Parameter covariance is reported via ``(JᵀJ + 1e-6·I)⁻¹ · MSE``
     using the Jacobian returned by ``scipy.optimize.least_squares``.
@@ -977,6 +978,20 @@ def _fit_cpi_simple(
         d.bounds[1] if d.transform == TransformType.LOG_LOGIT else None
         for d in fitting_defs
     ]
+    fit_lower = np.array([
+        d.bounds[0]
+        if d.transform == TransformType.IDENTITY
+        and (d.name == "cbf" or d.name == "delay" or d.name.startswith("s"))
+        else -np.inf
+        for d in fitting_defs
+    ], dtype=np.float64)
+    fit_upper = np.array([
+        d.bounds[1]
+        if d.transform == TransformType.IDENTITY
+        and (d.name == "delay" or d.name.startswith("s"))
+        else np.inf
+        for d in fitting_defs
+    ], dtype=np.float64)
     n_obs = len(concentration)
 
     if n_obs <= n_params:
@@ -1009,11 +1024,12 @@ def _fit_cpi_simple(
         return sqrt_w * (concentration - predicted)
 
     try:
-        max_nfev = 200 if sloppy else 2000
+        max_nfev = 50 if sloppy else 100
         ls_result = optimize.least_squares(
             _residual,
             x0_fit,
             method="trf",
+            bounds=(fit_lower, fit_upper),
             max_nfev=max_nfev,
             ftol=1e-8,
             xtol=1e-8,
@@ -1071,6 +1087,11 @@ def _fit_cpi_simple(
         n_observations=n_obs,
         converged=bool(ls_result.success),
         fitting_method="nlls",
+        optimizer_status=int(ls_result.status),
+        n_function_evaluations=int(ls_result.nfev),
+        evaluation_budget_exhausted=bool(
+            ls_result.status == 0 and ls_result.nfev >= max_nfev
+        ),
         fitted_residue=fitted_residue,
         fitted_tissue_curve=fitted_tissue,
     )

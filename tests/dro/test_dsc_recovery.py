@@ -32,7 +32,6 @@ from .conftest import (
     apply_recirculation,
     apply_vtf_dispersion,
     delay_aif,
-    dsc_forward_model,
     dsc_forward_model_circulant,
     dsc_forward_model_volterra,
     generate_dsc_aif_dro,
@@ -766,17 +765,6 @@ class TestVascularRecovery:
         mtt_tol: float,
     ) -> None:
         """Test vascular model recovery of CBF and MTT."""
-        # CBF=0.02 is near the edge of the log-space prior, so at 10%
-        # noise the prior overwhelms the data.
-        if cbf < 0.03 and noise_frac >= 0.10:
-            pytest.xfail("Prior bias overwhelms low-SNR signal at 10% noise")
-
-        # At 10% noise the low CNR widens the MAP CBF posterior past tolerance
-        # on some noise realizations (a variance effect, not a prior-mean pull;
-        # 2%/5% noise recover within tol).
-        if cbf <= 0.04 and noise_frac >= 0.10:
-            pytest.xfail("low CNR (10% noise) widens MAP CBF variance past tolerance")
-
         tissue, aif, time_sec = _make_vascular_test_data(
             cbf, alpha, beta, delay, noise_frac
         )
@@ -812,6 +800,109 @@ class TestVascularRecovery:
                 f"Delay: |{recovered_delay:.3f} - {delay:.3f}| = "
                 f"{abs(recovered_delay - delay):.3f} >= {1.5 * dt:.3f}"
             )
+
+
+class TestVascularNLLSRecovery:
+    """Verify priors-off vascular recovery in the identifiable fit space."""
+
+    @pytest.mark.parametrize(
+        "cbf,alpha,beta,delay",
+        [
+            (0.03, 2.0, 2.5, -1.0),
+            (0.06, 3.0, 2.0, 0.0),
+            (0.10, 5.0, 1.6, 1.5),
+        ],
+    )
+    @pytest.mark.parametrize("noise_frac", [0.0, 0.02])
+    def test_vascular_nlls(
+        self,
+        cbf: float,
+        alpha: float,
+        beta: float,
+        delay: float,
+        noise_frac: float,
+    ) -> None:
+        """NLLS recovers CBF and MTT without replacing beta by MTT."""
+        tissue, aif, time_sec = _make_vascular_test_data(
+            cbf, alpha, beta, delay, noise_frac
+        )
+
+        result = fit_dsc_model(
+            VascularModel(), tissue, aif, time_sec, method="nlls"
+        )
+
+        assert result.fitting_method == "nlls"
+        assert result.converged
+        assert result.parameters.keys() == {"cbf", "alpha", "beta", "delay"}
+        assert result.r_squared > (0.98 if noise_frac else 0.999999)
+        assert result.parameters["cbf"] == pytest.approx(cbf, rel=0.10)
+        recovered_mtt = result.parameters["alpha"] * result.parameters["beta"]
+        assert recovered_mtt == pytest.approx(alpha * beta, rel=0.12)
+        assert 0.5 <= result.parameters["alpha"] <= 10.0
+        assert 0.1 <= result.parameters["beta"] <= 10.0
+        assert -3.0 <= result.parameters["delay"] <= 10.0
+        assert np.all(np.isfinite(result.fitted_tissue_curve))
+        assert np.all(np.isfinite(result.fitted_residue))
+        assert result.uncertainties["cbf"] >= 0.0
+        cbf_interval = result.credible_intervals["cbf"]
+        assert 0.0 <= cbf_interval[0] <= result.parameters["cbf"]
+        assert result.parameters["cbf"] <= cbf_interval[1] <= 2.0
+
+    def test_motion_weight_excludes_corrupted_peak_frame(self) -> None:
+        """Zero motion weight removes a corrupted frame from the objective."""
+        tissue, aif, time_sec = _make_vascular_test_data(
+            0.06, 3.0, 2.0, 0.0
+        )
+        peak_index = int(np.argmax(tissue))
+        corrupted = tissue.copy()
+        corrupted[peak_index] += 3.0 * float(np.max(tissue))
+        weights = np.ones(len(tissue), dtype=np.float64)
+        weights[peak_index] = 0.0
+
+        result = fit_dsc_model(
+            VascularModel(),
+            corrupted,
+            aif,
+            time_sec,
+            method="nlls",
+            weights=weights,
+        )
+
+        assert result.parameters["cbf"] == pytest.approx(0.06, rel=0.02)
+        recovered_mtt = result.parameters["alpha"] * result.parameters["beta"]
+        assert recovered_mtt == pytest.approx(6.0, rel=0.03)
+        assert result.r_squared > 0.999
+
+    @pytest.mark.parametrize(
+        "cbf,alpha,beta,delay",
+        [
+            (0.001, 0.55, 9.0, 9.0),
+            (1.5, 9.0, 3.0, -2.5),
+        ],
+    )
+    def test_near_bound_round_trip(
+        self,
+        cbf: float,
+        alpha: float,
+        beta: float,
+        delay: float,
+    ) -> None:
+        """Near-bound fits stay finite and recover the generating curve."""
+        tissue, aif, time_sec = _make_vascular_test_data(
+            cbf, alpha, beta, delay
+        )
+
+        result = fit_dsc_model(
+            VascularModel(), tissue, aif, time_sec, method="nlls"
+        )
+
+        assert result.converged
+        assert result.evaluation_budget_exhausted is False
+        assert result.r_squared > 0.999999
+        assert result.parameters["cbf"] == pytest.approx(cbf, rel=0.01)
+        assert result.parameters["alpha"] == pytest.approx(alpha, rel=0.01)
+        assert result.parameters["beta"] == pytest.approx(beta, rel=0.01)
+        assert result.parameters["delay"] == pytest.approx(delay, abs=0.02)
 
 
 # =============================================================================
@@ -920,17 +1011,11 @@ class TestCPIBayesianGammaRecovery:
         """Test CPI MAP recovery of CBF and MTT."""
         true_mtt = alpha * beta
 
-        if cbf <= 0.02:
-            pytest.xfail(
-                f"CBF prior overwhelms low-flow signal (CBF={cbf})"
-            )
-
         tissue, aif, time_sec, true_mtt = _make_cpi_gamma_test_data(
             cbf, alpha, beta, noise_frac
         )
 
         n_cp = 10
-        t_span = 30.0
         model = CPIModel(
             n_control_points=n_cp,
             n_acquisition_frames=int(len(time_sec)),
@@ -980,17 +1065,11 @@ class TestCPIVIGammaRecovery:
         """Test CPI VI recovery of CBF and MTT."""
         true_mtt = alpha * beta
 
-        if cbf <= 0.02:
-            pytest.xfail(
-                f"CBF prior overwhelms low-flow signal (CBF={cbf})"
-            )
-
         tissue, aif, time_sec, true_mtt = _make_cpi_gamma_test_data(
             cbf, alpha, beta, noise_frac
         )
 
         n_cp = 10
-        t_span = 30.0
         model = CPIModel(
             n_control_points=n_cp,
             n_acquisition_frames=int(len(time_sec)),
@@ -1054,12 +1133,6 @@ class TestBatchedMAPVascularRecovery:
         cbf_tol: float,
         mtt_tol: float,
     ) -> None:
-        if cbf < 0.03 and noise_frac >= 0.10:
-            pytest.xfail("Prior bias overwhelms low-SNR signal at 10% noise")
-        # 10%-noise CBF variance (see test_vascular); 2%/5% recover within tol.
-        if cbf <= 0.04 and noise_frac >= 0.10:
-            pytest.xfail("low CNR (10% noise) widens MAP CBF variance past tolerance")
-
         n_seeds = 5
         tissues = []
         for seed in range(n_seeds):
@@ -1132,7 +1205,6 @@ class TestBatchedMAPCPIRecovery:
         tissue_curves = np.stack(tissues)
 
         n_cp = 10
-        t_span = 30.0
         dt = float(time_sec[1] - time_sec[0])
         model = CPIModel(
             n_control_points=n_cp,

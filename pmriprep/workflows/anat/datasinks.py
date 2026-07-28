@@ -19,21 +19,22 @@ from pmriprep.interfaces.qc_writers import (
 )
 
 
-def _build_preproc_meta(  # type: ignore[no-untyped-def]
-    description,
-    source_paths,
-    reference_voxel_source,
-    bids_dir,
-    subject,
-    session,
-    skull_stripped=True,
-    contrast_agent=None,
-    is_postcon_ref=False,
-    qc_metrics=None,
-    coreg_modality=None,
-    is_anchor_sidecar=False,
-    presence_warnings=None,
-):
+def _build_preproc_meta(
+    description: str,
+    source_paths: list[str],
+    reference_voxel_source: str,
+    bids_dir: str,
+    subject: str,
+    session: str,
+    skull_stripped: bool = True,
+    contrast_agent: str | None = None,
+    is_postcon_ref: bool = False,
+    qc_metrics: dict | None = None,
+    coreg_modality: str | None = None,
+    is_anchor_sidecar: bool = False,
+    presence_warnings: list | None = None,
+    reference_source: str | None = None,
+) -> dict:
     """Nipype-Function wrapper for ``build_anat_preproc_sidecar``.
 
     Chains ``enrich_preproc_anat_sidecar`` after the base build so the
@@ -62,6 +63,7 @@ def _build_preproc_meta(  # type: ignore[no-untyped-def]
         skull_stripped=skull_stripped,
         contrast_agent=contrast_agent,
         is_postcon_ref=is_postcon_ref,
+        reference_source=reference_source,
     )
     enrich_preproc_anat_sidecar(
         sidecar,
@@ -80,16 +82,17 @@ def _build_preproc_meta(  # type: ignore[no-untyped-def]
     return sidecar
 
 
-def _build_mask_meta(  # type: ignore[no-untyped-def]
-    description,
-    source_paths,
-    reference_voxel_source,
-    bids_dir,
-    subject,
-    session,
-    is_postcon_ref=False,
-    qc_metrics=None,
-):
+def _build_mask_meta(
+    description: str,
+    source_paths: list[str],
+    reference_voxel_source: str,
+    bids_dir: str,
+    subject: str,
+    session: str,
+    is_postcon_ref: bool = False,
+    qc_metrics: dict | None = None,
+    reference_source: str | None = None,
+) -> dict:
     """Nipype-Function wrapper for ``build_anat_mask_sidecar``.
 
     Chains ``enrich_brain_mask_sidecar`` after the base build so the
@@ -108,6 +111,7 @@ def _build_mask_meta(  # type: ignore[no-untyped-def]
         subject=subject,
         session=session or None,
         is_postcon_ref=is_postcon_ref,
+        reference_source=reference_source,
     )
     enrich_brain_mask_sidecar(
         sidecar,
@@ -116,16 +120,17 @@ def _build_mask_meta(  # type: ignore[no-untyped-def]
     return sidecar
 
 
-def _build_probseg_meta(  # type: ignore[no-untyped-def]
-    tissue_type,
-    source_paths,
-    reference_voxel_source,
-    bids_dir,
-    subject,
-    session,
-    is_postcon_ref=False,
-    qc_metrics=None,
-):
+def _build_probseg_meta(
+    tissue_type: str,
+    source_paths: list[str],
+    reference_voxel_source: str,
+    bids_dir: str,
+    subject: str,
+    session: str,
+    is_postcon_ref: bool = False,
+    qc_metrics: dict | None = None,
+    reference_source: str | None = None,
+) -> dict:
     """Nipype-Function wrapper for ``build_anat_probseg_sidecar``.
 
     Chains ``enrich_probseg_sidecar`` after the base build so the sidecar
@@ -144,6 +149,7 @@ def _build_probseg_meta(  # type: ignore[no-untyped-def]
         subject=subject,
         session=session or None,
         is_postcon_ref=is_postcon_ref,
+        reference_source=reference_source,
     )
     enrich_probseg_sidecar(
         sidecar,
@@ -153,7 +159,7 @@ def _build_probseg_meta(  # type: ignore[no-untyped-def]
     return sidecar
 
 
-def _extract_contrast_agent_node(source_path):  # type: ignore[no-untyped-def]
+def _extract_contrast_agent_node(source_path: str) -> str | None:
     """Nipype-Function wrapper for ``extract_contrast_agent``."""
     if not source_path:
         return None
@@ -212,6 +218,7 @@ def _add_one_anat_sink(
             "coreg_modality",
             "is_anchor_sidecar",
             "presence_warnings",
+            "reference_source",
         ]
     elif builder == "mask":
         builder_fn = _build_mask_meta
@@ -224,6 +231,7 @@ def _add_one_anat_sink(
             "session",
             "is_postcon_ref",
             "qc_metrics",
+            "reference_source",
         ]
     elif builder == "probseg":
         builder_fn = _build_probseg_meta
@@ -236,6 +244,7 @@ def _add_one_anat_sink(
             "session",
             "is_postcon_ref",
             "qc_metrics",
+            "reference_source",
         ]
     else:
         raise ValueError(f"Unknown builder: {builder}")
@@ -271,6 +280,8 @@ def _add_one_anat_sink(
             ("qc_metrics", "qc_metrics"),
         ]),
     ])
+    reference_attr = "source_t1w_postcon" if is_postcon_ref else "source_t1w"
+    workflow.connect(inputnode, reference_attr, meta_node, "reference_source")
 
     # Optional contrast-agent extraction
     if builder == "preproc" and contrast_agent_attr:
@@ -316,14 +327,14 @@ def _add_one_anat_sink(
     return sink
 
 
-def _copy_xfm(  # type: ignore[no-untyped-def]
-    in_file,
-    output_dir,
-    subject,
-    session,
-    from_space,
-    to_space,
-):
+def _copy_xfm(
+    in_file: str,
+    output_dir: str,
+    subject: str,
+    session: str,
+    from_space: str,
+    to_space: str,
+) -> str:
     """Copy a transform .h5 into the derivatives anat/ directory."""
     import logging
     import shutil
@@ -331,10 +342,9 @@ def _copy_xfm(  # type: ignore[no-untyped-def]
 
     from nipype.interfaces.base import isdefined  # type: ignore[import-untyped]
 
-    # Defensive no-op when upstream registration produced no transform.
-    # See pmriprep.workflows.dce.datasinks._copy_perf_map for the
-    # sentinel-handling rationale.
-    if not isdefined(in_file) or in_file is None or in_file == "":
+    # Conditional registration may represent a missing transform as Nipype
+    # Undefined, None, or an empty string.
+    if not isdefined(in_file) or in_file == "":
         logging.getLogger("nipype.workflow").warning(
             "Skipping anat _copy_xfm sink (from=%s, to=%s): upstream "
             "produced no output (in_file=%r)",
@@ -408,9 +418,9 @@ def init_anat_datasinks_wf(
 ) -> pe.Workflow:
     """Build the anat-pipeline DerivativesDataSink chain.
 
-    Inputs (on ``inputnode``) mirror the legacy ``AnatDerivativeWriter``
-    InputSpec one-for-one so ``base.py`` rewiring is mechanical. Outputs
-    expose ``done`` (the report barrier, sourced from ``dd_node.dd_path``
+    Inputs on ``inputnode`` provide anatomical derivatives, sources, QC data,
+    and figures. Outputs expose ``done`` (the report barrier, sourced from
+    ``dd_node.dd_path``
     so it fires only after every sink + figures_writer has finished) and
     ``out_dir`` (the per-session derivatives root).
 
@@ -493,14 +503,9 @@ def init_anat_datasinks_wf(
                 "(pre-contrast)"
             )
             preproc_ce = None
-        # The T1w preproc sidecar is the anat presence probe AND the
-        # carrier of QC warnings flat keys for the HTML aggregator.
-        # TODO: Legacy AnatQCWriter also emitted "Post-contrast T1w
-        # coregistration not available" when has_t1w_pre & has_t1w_postcon
-        # & coreg_filmstrip_postcon was missing at runtime — that
-        # runtime check is dropped here in favor of static modality
-        # flags. Restore via a runtime Function-node check on the
-        # coreg filmstrip output if false negatives become a problem.
+        # The T1w preproc sidecar is the anatomical-presence probe and carries
+        # flat QC warning keys for the HTML aggregator. Availability warnings
+        # are derived from the discovered modality flags.
         anat_presence_warnings = [
             warn for cond, warn in (
                 (not has_tissue_seg,

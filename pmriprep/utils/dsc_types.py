@@ -19,10 +19,9 @@ class DSCVoxelResult:
     Attributes
     ----------
         # Core perfusion parameters
-        cbf: Cerebral blood flow (mL/100g/min). Relative if no r2* provided,
-            absolute if r2* is used. Extracted from max(R(t)).
-        cbv: Cerebral blood volume (mL/100g). Computed as integral of
-            residue function.
+        cbf: Relative cerebral blood flow. Extracted from max(R(t)).
+        cbv: Relative cerebral blood volume. Computed as the integral of
+            the residue function.
         mtt: Mean transit time (seconds). Central volume theorem: CBV/CBF.
         ttp: Time to peak of tissue concentration curve (seconds).
 
@@ -38,8 +37,8 @@ class DSCVoxelResult:
         auc_corr: Area under leakage-corrected ΔR2* curve (a.u.).
 
         # Leakage correction
-        k2: K2 leakage correction factor (s^-1). Values ~0 indicate intact BBB,
-            >0.5 indicate significant BBB disruption.
+        k2: K2 leakage correction factor (s^-1). Values near zero indicate
+            little fitted leakage correction.
         correction_applied: Whether leakage correction was applied.
 
         # Vascular (gamma-variate) model parameters
@@ -52,11 +51,11 @@ class DSCVoxelResult:
 
         # Bayesian uncertainty estimates (only populated for Bayesian methods)
         cbf_std: Standard deviation of CBF posterior distribution.
-        cbv_std: Standard deviation of CBV posterior distribution.
+        cbv_std: Reserved for covariance-aware CBV posterior uncertainty.
         cbf_credible_lower: Lower bound of CBF 95% credible interval.
         cbf_credible_upper: Upper bound of CBF 95% credible interval.
-        cbv_credible_lower: Lower bound of CBV 95% credible interval.
-        cbv_credible_upper: Upper bound of CBV 95% credible interval.
+        cbv_credible_lower: Reserved lower CBV credible bound.
+        cbv_credible_upper: Reserved upper CBV credible bound.
         mtt_std: Standard deviation of MTT posterior distribution.
         mtt_credible_lower: Lower bound of MTT 95% credible interval.
         mtt_credible_upper: Upper bound of MTT 95% credible interval.

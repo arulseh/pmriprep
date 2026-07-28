@@ -21,12 +21,12 @@ from pmriprep.models.bayesian_utils import (
     build_priors_from_params,
     compute_goodness_of_fit,
     compute_log_prior,
-    compute_per_walker_ess,
-    compute_split_rhat,
+    compute_ensemble_ess,
     from_transformed,
     log_jacobian_det,
     run_ensemble_sampler,
     to_transformed,
+    transformed_gaussian_interval,
     validate_bayesian_inputs,
 )
 from pmriprep.models.dsc.base import (
@@ -37,7 +37,6 @@ from pmriprep.utils.dsc_constants import (
     MAP_MAX_ITER,
     MCMC_SAMPLES,
     QC_ESS_MIN,
-    QC_RHAT_MAX,
 )
 
 # Re-export BayesianPrior for backward compatibility
@@ -229,10 +228,15 @@ class BayesianDSCFitter:
         # Gaussian log likelihood (weighted if motion weights provided)
         n = len(concentration)
         log_lik = -0.5 * n * np.log(2 * np.pi * noise_std**2)
-        if weights is not None:
-            log_lik -= 0.5 * np.sum(weights * residuals**2) / (noise_std**2)
-        else:
-            log_lik -= 0.5 * np.sum(residuals**2) / (noise_std**2)
+        with np.errstate(over="ignore", invalid="ignore"):
+            squared_error = (
+                np.sum(weights * residuals**2)
+                if weights is not None
+                else np.sum(residuals**2)
+            )
+        if not np.isfinite(squared_error):
+            return float("-inf")
+        log_lik -= 0.5 * squared_error / (noise_std**2)
 
         return float(log_lik)
 
@@ -292,6 +296,7 @@ class BayesianDSCFitter:
         params: npt.NDArray[np.floating],
         objective: Callable[[npt.NDArray[np.floating]], float],
         relative_epsilon: float = 1e-5,
+        prior_stds: npt.NDArray[np.floating] | None = None,
     ) -> npt.NDArray[np.floating]:
         """Compute Hessian matrix using finite differences.
 
@@ -311,6 +316,9 @@ class BayesianDSCFitter:
             Relative step size for finite differences.
             Actual step for parameter i is max(relative_epsilon,
             relative_epsilon * |params[i]|).
+        prior_stds : npt.NDArray[np.floating] or None, optional
+            Prior standard deviations expressed in the same coordinates as
+            ``params``. Natural fitting-space deviations are used by default.
 
         Returns
         -------
@@ -319,6 +327,13 @@ class BayesianDSCFitter:
         """
         n = len(params)
         hessian = np.zeros((n, n), dtype=np.float64)
+        fallback_stds = (
+            np.asarray(prior_stds, dtype=np.float64)
+            if prior_stds is not None
+            else np.asarray([prior.std for prior in self.priors], dtype=np.float64)
+        )
+        if fallback_stds.shape != (n,):
+            raise ValueError("prior_stds must have one value per parameter")
 
         # Compute per-parameter step sizes
         eps = np.array([
@@ -354,7 +369,7 @@ class BayesianDSCFitter:
                     if abs(h_ij) < 1e8:
                         hessian[i, j] = h_ij
                     elif i == j:
-                        prior_std = self.priors[i].std
+                        prior_std = float(fallback_stds[i])
                         if prior_std > 0:
                             hessian[i, j] = 1.0 / (prior_std**2)
                         else:
@@ -362,7 +377,7 @@ class BayesianDSCFitter:
                 else:
                     # Fall back to prior curvature for invalid regions
                     if i == j:
-                        prior_std = self.priors[i].std
+                        prior_std = float(fallback_stds[i])
                         if prior_std > 0:
                             hessian[i, j] = 1.0 / (prior_std**2)
                         else:
@@ -571,18 +586,18 @@ class BayesianDSCFitter:
                     float(from_transformed(params_t[i], transforms[i], upper_bounds_t[i]))
                     for i in range(n_params)
                 ], dtype=np.float64)
-                # Natural-space log posterior
-                val = -self._log_posterior(
+                log_prior_t = compute_log_prior(
+                    params_t, self.priors, transformed=True
+                )
+                if not np.isfinite(log_prior_t):
+                    return 1e20
+                log_lik = self._log_likelihood(
                     params_nat, concentration, aif, time_points, _noise_std,
                     weights=weights,
                 )
-                # Subtract log-Jacobian: MAP in transformed space needs
-                # neg_log_post_t = neg_log_post_nat - log|dtheta/dtheta'|
-                for i in range(n_params):
-                    val -= float(log_jacobian_det(
-                        params_nat[i], transforms[i], upper_bounds_t[i]
-                    ))
-                return min(val, 1e20)
+                if not np.isfinite(log_lik):
+                    return 1e20
+                return min(-(log_prior_t + log_lik), 1e20)
 
             # Multi-start trials. LOG/LOG_LOGIT params are unconstrained
             # in transformed space; IDENTITY params need explicit bounds.
@@ -642,21 +657,52 @@ class BayesianDSCFitter:
         # Convert fitting-space params to model-space for output
         fitted_model_params = self.model.fitting_to_model_params(fitted_fitting_params)
 
-        # Compute Laplace approximation uncertainties (in fitting space)
+        # Compute Laplace approximation uncertainties from the exact
+        # transformed-space objective optimized above, then propagate its
+        # marginal standard deviations into natural fitting space.
         if compute_uncertainties:
-            # Build fitting-space objective for Hessian computation
-            _final_noise = noise_std
-
-            def _neg_log_post_fitting(params: npt.NDArray[np.floating]) -> float:
-                val = -self._log_posterior(
-                    params, concentration, aif, time_points, _final_noise,
-                    weights=weights,
+            try:
+                hessian_t = self._compute_hessian(
+                    fitted_params_t,
+                    neg_log_posterior_t,
+                    prior_stds=np.asarray(
+                        [prior.std_transformed for prior in self.priors],
+                        dtype=np.float64,
+                    ),
                 )
-                return min(val, 1e20)
-
-            uncertainties, credible_intervals = self._compute_laplace_uncertainties(
-                fitted_fitting_params, _neg_log_post_fitting
-            )
+                if not np.all(np.isfinite(hessian_t)):
+                    raise np.linalg.LinAlgError("non-finite Hessian")
+                covariance_t = np.linalg.inv(
+                    hessian_t + 1e-6 * np.eye(n_params)
+                )
+                if not np.all(np.isfinite(covariance_t)):
+                    raise np.linalg.LinAlgError("non-finite covariance")
+                stds_t = np.sqrt(np.maximum(np.diag(covariance_t), 0.0))
+                uncertainties = {}
+                credible_intervals = {}
+                for i, name in enumerate(fitting_param_names):
+                    theta_nat = float(fitted_fitting_params[i])
+                    jac = float(np.exp(log_jacobian_det(
+                        theta_nat, transforms[i], upper_bounds_t[i]
+                    )))
+                    std_nat = float(stds_t[i]) * jac
+                    uncertainties[name] = std_nat
+                    credible_intervals[name] = transformed_gaussian_interval(
+                        float(fitted_params_t[i]),
+                        float(stds_t[i]),
+                        transforms[i],
+                        upper_bounds_t[i],
+                        bounds[i],
+                    )
+            except np.linalg.LinAlgError:
+                uncertainties = {
+                    name: self.priors[i].std
+                    for i, name in enumerate(fitting_param_names)
+                }
+                credible_intervals = {
+                    name: bounds[i]
+                    for i, name in enumerate(fitting_param_names)
+                }
         else:
             uncertainties = {}
             credible_intervals = {}
@@ -701,8 +747,8 @@ class BayesianDSCFitter:
         Gaussian posterior updates. Noise precision is treated as a conjugate
         Gamma random variable.
 
-        This is ~125-500x faster than the previous black-box VI
-        (90-180 forward model calls vs ~45,000).
+        Each iteration uses one linearized forward-model evaluation followed
+        by analytic Gaussian posterior updates.
 
         Parameters
         ----------
@@ -739,6 +785,9 @@ class BayesianDSCFitter:
         bounds = [(p.bounds[0], p.bounds[1]) for p in fitting_defs]
         param_names = [p.name for p in fitting_defs]
         y = np.asarray(concentration, dtype=np.float64)
+        n_eff = (
+            float(np.sum(weights)) if weights is not None else float(n_obs)
+        )
 
         # Build transform info from priors
         transforms = [p.transform for p in self.priors]
@@ -907,8 +956,8 @@ class BayesianDSCFitter:
                     m_new[i] = np.clip(m_new[i], bounds[i][0], bounds[i][1])
 
             # 6. Update noise precision posterior: Gamma(c, s)
-            # c = c₀ + N/2
-            c = c0 + n_obs / 2.0
+            # Fractional motion weights contribute their effective frame count.
+            c = c0 + n_eff / 2.0
             # Residual at new mean (inverse-transform, then convert to model space)
             m_new_nat = np.array([
                 float(from_transformed(m_new[k], transforms[k], upper_bounds[k]))
@@ -939,7 +988,7 @@ class BayesianDSCFitter:
             sign_prior = sign_prior_prec
 
             free_energy = (
-                0.5 * n_obs * (np.log(tau_exp) - np.log(2 * np.pi))
+                0.5 * n_eff * (np.log(tau_exp) - np.log(2 * np.pi))
                 - 0.5 * tau_exp * (weighted_kk + trace_term)
                 - 0.5 * float(dm @ prior_prec @ dm)
                 - 0.5 * float(np.trace(prior_prec @ post_cov))
@@ -1024,9 +1073,13 @@ class BayesianDSCFitter:
             )))
             std_nat = std_t * jac
             uncertainties[name] = std_nat
-            ci_low = max(float(theta_nat - 1.96 * std_nat), bounds[i][0])
-            ci_high = min(float(theta_nat + 1.96 * std_nat), bounds[i][1])
-            credible_intervals[name] = (ci_low, ci_high)
+            credible_intervals[name] = transformed_gaussian_interval(
+                float(best_m[i]),
+                std_t,
+                transforms[i],
+                upper_bounds[i],
+                bounds[i],
+            )
 
         # Add noise std to uncertainties for diagnostics
         uncertainties["noise_std"] = noise_std_posterior
@@ -1069,7 +1122,7 @@ class BayesianDSCFitter:
 
         Uses an affine-invariant ensemble sampler (similar to emcee).
         Noise sigma is sampled as a free parameter (log_sigma) with a
-        HalfNormal prior, following Gelman et al. (BDA3, Ch. 3).
+        HalfNormal prior.
 
         Parameters
         ----------
@@ -1094,7 +1147,8 @@ class BayesianDSCFitter:
         -------
         DSCFitResult
             DSCFitResult with parameters, uncertainties, credible intervals,
-            and MCMC diagnostics (R-hat, ESS).
+            and autocorrelation-based ensemble ESS diagnostics. R-hat is
+            unavailable because walkers within one ensemble are coupled.
         """
         if sloppy:
             n_samples = 50
@@ -1111,6 +1165,8 @@ class BayesianDSCFitter:
         n_dims = n_fitting_params + 1
         bounds = [(p.bounds[0], p.bounds[1]) for p in fitting_defs]
         fitting_param_names = [p.name for p in fitting_defs]
+        transforms = [prior.transform for prior in self.priors]
+        upper_bounds_t = [prior.upper_bound for prior in self.priors]
 
         # Set defaults
         if n_walkers is None:
@@ -1121,11 +1177,17 @@ class BayesianDSCFitter:
         n_total = n_samples + n_burnin
 
         # Log posterior including sampled sigma
-        # State vector: [fitting_params..., log_sigma]
+        # State vector: [transformed fitting params..., log_sigma]
         def log_prob_with_sigma(
             state: npt.NDArray[np.floating],
         ) -> float:
-            fitting_params = state[:n_fitting_params]
+            fitting_params_t = state[:n_fitting_params]
+            fitting_params = np.asarray([
+                from_transformed(
+                    fitting_params_t[i], transforms[i], upper_bounds_t[i]
+                )
+                for i in range(n_fitting_params)
+            ], dtype=np.float64)
             log_sigma = state[n_fitting_params]
             sigma = np.exp(log_sigma)
 
@@ -1141,7 +1203,9 @@ class BayesianDSCFitter:
                 return float("-inf")
 
             # Prior on fitting-space parameters
-            log_p = self._log_prior(fitting_params)
+            log_p = compute_log_prior(
+                fitting_params_t, self.priors, transformed=True
+            )
             if not np.isfinite(log_p):
                 return float("-inf")
 
@@ -1169,18 +1233,28 @@ class BayesianDSCFitter:
             self.model.dict_to_params(map_result.parameters), dtype=np.float64
         )
         map_fitting_params = self.model.model_to_fitting_params(map_model_params)
+        map_fitting_params_t = np.asarray([
+            to_transformed(
+                map_fitting_params[i], transforms[i], upper_bounds_t[i]
+            )
+            for i in range(n_fitting_params)
+        ], dtype=np.float64)
 
-        # Bounds for sampler: fitting bounds + log_sigma bounds
-        sampler_bounds = bounds + [(-15.0, 15.0)]  # log_sigma
+        sampler_bounds = [
+            bounds[i] if transforms[i] == TransformType.IDENTITY else (-50.0, 50.0)
+            for i in range(n_fitting_params)
+        ] + [(-15.0, 15.0)]
 
         # Initialize walkers with small perturbations in fitting space
         init_positions = np.zeros((n_walkers, n_dims))
         log_sigma_init = np.log(noise_std_baseline)
         for i in range(n_walkers):
             for j in range(n_fitting_params):
-                scale = self.priors[j].std * 0.1
-                perturbed = map_fitting_params[j] + scale * np.random.randn()
-                perturbed = np.clip(perturbed, bounds[j][0], bounds[j][1])
+                scale = self.priors[j].std_transformed * 0.1
+                perturbed = map_fitting_params_t[j] + scale * np.random.randn()
+                perturbed = np.clip(
+                    perturbed, sampler_bounds[j][0], sampler_bounds[j][1]
+                )
                 init_positions[i, j] = perturbed
             # log_sigma: small perturbation around baseline estimate
             init_positions[i, n_fitting_params] = (
@@ -1199,7 +1273,13 @@ class BayesianDSCFitter:
         flat_samples = samples.reshape(-1, n_dims)
 
         # Separate fitting params and sigma
-        fitting_samples = flat_samples[:, :n_fitting_params]
+        transformed_samples = flat_samples[:, :n_fitting_params]
+        fitting_samples = np.column_stack([
+            np.asarray(from_transformed(
+                transformed_samples[:, i], transforms[i], upper_bounds_t[i]
+            ), dtype=np.float64)
+            for i in range(n_fitting_params)
+        ])
         sigma_samples = np.exp(flat_samples[:, n_fitting_params])
 
         # Convert each sample from fitting space to model space
@@ -1242,20 +1322,16 @@ class BayesianDSCFitter:
             float(np.percentile(sigma_samples, 97.5)),
         )
 
-        # Convergence diagnostics (shared utilities)
-        rhat = compute_split_rhat(samples)
-        ess = compute_per_walker_ess(samples)
-
+        # R-hat requires independent chains; coupled walkers do not qualify.
+        ess, _tau, reliable = compute_ensemble_ess(samples)
         rhat_dict: dict[str, float] = {}
         ess_dict: dict[str, int] = {}
         all_names = fitting_param_names + ["log_sigma"]
         for i, name in enumerate(all_names):
-            rhat_dict[name] = float(rhat[i])
             ess_dict[name] = int(ess[i])
 
-        all_rhat_ok = all(r < QC_RHAT_MAX for r in rhat)
         all_ess_ok = all(e > QC_ESS_MIN for e in ess)
-        converged = all_rhat_ok and all_ess_ok
+        converged = bool(np.all(reliable)) and all_ess_ok
 
         # Fitted curves using posterior mean of model params
         fitted_residue = self.model.compute_fitted_residue(
@@ -1343,17 +1419,29 @@ def fit_dsc_model(
         method_lower = "vi"
 
     if method_lower == "nlls":
-        # FABBER-parity NLLS lives only on the CPI path
         from pmriprep.models.dsc.cpi import CPIModel, _fit_cpi_simple
-        if not isinstance(model, CPIModel):
-            raise ValueError(
-                "method='nlls' is only supported for CPIModel; got "
-                f"{type(model).__name__}. Use 'map' or 'vi' for other models."
+        from pmriprep.models.dsc.vascular import (
+            VascularModel,
+            _fit_vascular_nlls,
+        )
+
+        if isinstance(model, CPIModel):
+            result = _fit_cpi_simple(
+                model, concentration, aif, time_points,
+                weights=weights, sloppy=sloppy,
             )
-        result = _fit_cpi_simple(model, concentration, aif, time_points,
-                                 weights=weights, sloppy=sloppy)
+        elif isinstance(model, VascularModel):
+            result = _fit_vascular_nlls(
+                model, concentration, aif, time_points,
+                weights=weights, sloppy=sloppy,
+            )
+        else:
+            raise ValueError(
+                "method='nlls' is only supported for CPIModel and "
+                f"VascularModel; got {type(model).__name__}."
+            )
         if result is None:
-            raise RuntimeError("CPI NLLS fit failed to converge")
+            raise RuntimeError(f"{model.name} NLLS fit failed to converge")
         return result
     elif method_lower == "map":
         return fitter.fit_map(

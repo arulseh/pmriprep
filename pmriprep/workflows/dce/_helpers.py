@@ -1,19 +1,14 @@
-"""Function-node and construction helpers for the DCE preproc workflow.
+"""Serializable function-node helpers for the DCE preprocessing workflow.
 
-Extracted verbatim from ``base.py`` to keep ``init_dce_preproc_wf`` navigable.
-Re-exported from ``pmriprep.workflows.dce.base`` for backward compatibility, so
-existing ``from pmriprep.workflows.dce.base import _foo`` imports keep working.
-
-Each helper is self-contained (imports inside its body) so nipype can serialise
-it into a ``niu.Function`` node via ``getsource``; the module-level imports below
-cover only what the helper *signatures* reference at definition time.
+Each helper imports its runtime dependencies locally so Nipype can execute the
+source captured by ``niu.Function`` in an isolated worker.
 """
-from typing import Optional
+
+from typing import Any
 
 __all__ = [
     "_build_model_free_map_dict",
     "_build_pk_map_dict",
-    "_build_uncertainty_map_dict",
     "_collect_qc_metrics",
     "_compute_early_mean",
     "_create_aif_search_mask",
@@ -27,8 +22,8 @@ __all__ = [
     "_normalize_by_nawm",
     "_resample_dsc_cbv_to_dce",
     "_resample_dsc_ncbv_to_dce",
-    "_select_aif_exclusion_mask",
     "_signal_to_concentration_node",
+    "_derive_smoothed_kep",
     "_smooth_dce_maps",
     "_transform_atlas_cascade_to_dce",
     "_transform_atlas_to_dce",
@@ -41,92 +36,12 @@ __all__ = [
     "_transform_probseg_to_dce",
     "_transform_structural_to_dce",
     "_transform_t1_to_dce",
-    "_validate_native_mask",
 ]
-
-
-def _validate_native_mask(  # type: ignore[no-untyped-def]
-    mask_file=None,
-    reference_file=None,
-    mask_label="mask",
-):
-    """Validate that a user-supplied mask matches the perfusion volume grid.
-
-    Parameters
-    ----------
-    mask_file : str or None
-        Path to the mask NIfTI.
-    reference_file : str or None
-        Path to the perfusion reference volume.
-    mask_label : str
-        Human-readable label for error messages (e.g. "dce.roi_mask").
-
-    Returns
-    -------
-    str
-        The validated mask path, or "" if no mask.
-    """
-    from nipype.interfaces.base import isdefined
-
-    if not isdefined(mask_file) or mask_file is None or mask_file == "":
-        return ""
-
-    import nibabel as nib
-    import numpy as np
-
-    mask_img = nib.load(str(mask_file))
-    ref_img = nib.load(str(reference_file))
-    if mask_img.shape[:3] != ref_img.shape[:3]:
-        raise ValueError(
-            f"User-supplied {mask_label} shape {mask_img.shape[:3]} does not "
-            f"match perfusion volume shape {ref_img.shape[:3]}. "
-            f"Masks under config must be in perfusion native space."
-        )
-    affine_diff = float(np.abs(mask_img.affine - ref_img.affine).max())
-    if affine_diff > 1.0:
-        raise ValueError(
-            f"User-supplied {mask_label} affine differs from perfusion volume "
-            f"by {affine_diff:.2f} (max element). "
-            f"Masks under config must be in perfusion native space."
-        )
-    return str(mask_file)
-
-
-def _select_aif_exclusion_mask(  # type: ignore[no-untyped-def]
-    user_lesion_mask=None,
-    transformed_lesion_mask=None,
-):
-    """Pick the AIF exclusion mask: user-supplied overrides tumor seg.
-
-    Parameters
-    ----------
-    user_lesion_mask : str or None
-        User-supplied lesion mask in DCE native space.
-    transformed_lesion_mask : str or None
-        FLIRT-transformed tumor seg lesion mask in DCE space.
-
-    Returns
-    -------
-    str
-        Selected mask path, or "" if neither is available (the empty-string
-        convention required by the downstream lesion_mask_file trait).
-    """
-    from nipype.interfaces.base import isdefined
-
-    if isdefined(user_lesion_mask) and user_lesion_mask is not None:
-        if user_lesion_mask != "":
-            return user_lesion_mask
-    if isdefined(transformed_lesion_mask) and transformed_lesion_mask is not None:
-        if transformed_lesion_mask != "":
-            return transformed_lesion_mask
-    return ""
-
-
-def _transform_mask_to_dce(  # type: ignore[no-untyped-def]
-    mask_file=None,
-    reference_file=None,
-    transform_matrix=None,
-):
+def _transform_mask_to_dce(
+    mask_file: str | None = None,
+    reference_file: str | None = None,
+    transform_matrix: str | None = None,
+) -> str:
     """Transform brain mask from T1w space to DCE space.
 
     Thin Nipype Function-node wrapper around
@@ -154,12 +69,12 @@ def _transform_mask_to_dce(  # type: ignore[no-untyped-def]
     return transform_mask_to_grid(mask_file, reference_file, transform_matrix)
 
 
-def _transform_mask_to_dce_conditional(  # type: ignore[no-untyped-def]
-    mask_file=None,
-    reference_file=None,
-    transform_matrix=None,
-    needs_transform=True,
-):
+def _transform_mask_to_dce_conditional(
+    mask_file: str | None = None,
+    reference_file: str | None = None,
+    transform_matrix: str | None = None,
+    needs_transform: bool = True,
+) -> str:
     """Transform mask to DCE space, or pass through if already native.
 
     When ``needs_transform`` is True (tumor-seg mask in T1w space), delegates
@@ -198,13 +113,15 @@ def _transform_mask_to_dce_conditional(  # type: ignore[no-untyped-def]
 
         mask_img = nib.load(str(mask_file))
         ref_img = nib.load(str(reference_file))
-        if mask_img.shape[:3] != ref_img.shape[:3]:
+        if mask_img.shape[:3] != ref_img.shape[:3]:  # type: ignore[attr-defined]
             raise ValueError(
-                f"User-supplied mask shape {mask_img.shape[:3]} does not "
-                f"match DCE volume shape {ref_img.shape[:3]}. "
+                f"User-supplied mask shape {mask_img.shape[:3]} does not "  # type: ignore[attr-defined]
+                f"match DCE volume shape {ref_img.shape[:3]}. "  # type: ignore[attr-defined]
                 f"Masks under [dce] config must be in DCE native space."
             )
-        affine_diff = float(np.abs(mask_img.affine - ref_img.affine).max())
+        affine_diff = float(
+            np.abs(mask_img.affine - ref_img.affine).max()  # type: ignore[attr-defined]
+        )
         if affine_diff > 1.0:
             raise ValueError(
                 f"User-supplied mask affine differs from DCE volume by "
@@ -218,11 +135,11 @@ def _transform_mask_to_dce_conditional(  # type: ignore[no-untyped-def]
     return transform_mask_to_grid(mask_file, reference_file, transform_matrix)
 
 
-def _transform_probseg_to_dce(  # type: ignore[no-untyped-def]
-    probseg_file=None,
-    reference_file=None,
-    transform_matrix=None,
-):
+def _transform_probseg_to_dce(
+    probseg_file: str | None = None,
+    reference_file: str | None = None,
+    transform_matrix: str | None = None,
+) -> str:
     """Transform a probability segmentation map from T1w space to DCE space.
 
     Uses FSL FLIRT with trilinear interpolation (appropriate for continuous
@@ -259,6 +176,7 @@ def _transform_probseg_to_dce(  # type: ignore[no-untyped-def]
 
     import nibabel as nib  # type: ignore[import-untyped]
     import numpy as np
+
 
     probseg_path = Path(probseg_file)
     if not probseg_path.is_file():
@@ -311,11 +229,11 @@ def _transform_probseg_to_dce(  # type: ignore[no-untyped-def]
     return out_file
 
 
-def _transform_lesion_mask_to_dce(  # type: ignore[no-untyped-def]
-    lesion_mask_file=None,
-    reference_file=None,
-    transform_matrix=None,
-):
+def _transform_lesion_mask_to_dce(
+    lesion_mask_file: str | None = None,
+    reference_file: str | None = None,
+    transform_matrix: str | None = None,
+) -> str:
     """Transform lesion mask from T1w space to DCE space.
 
     Uses FSL FLIRT with nearest-neighbour interpolation to resample
@@ -369,11 +287,11 @@ def _transform_lesion_mask_to_dce(  # type: ignore[no-untyped-def]
     return out_file
 
 
-def _create_aif_search_mask(  # type: ignore[no-untyped-def]
-    t1w_mask_in_dce=None,
-    dce_native_mask=None,
-):
-    """Create conservative AIF search mask (Gap 5).
+def _create_aif_search_mask(
+    t1w_mask_in_dce: str | None = None,
+    dce_native_mask: str | None = None,
+) -> str | None:
+    """Create a conservative AIF search mask.
 
     Creates an intersection of T1w-transformed mask with the native DCE
     brain mask (from HD-BET or BET) to exclude non-brain regions that may
@@ -408,6 +326,7 @@ def _create_aif_search_mask(  # type: ignore[no-untyped-def]
 
     import nibabel as nib  # type: ignore[import-untyped]
     import numpy as np
+
     from scipy.ndimage import binary_fill_holes  # type: ignore[import-untyped]
 
     t1w_mask_path = Path(t1w_mask_in_dce)
@@ -440,12 +359,12 @@ def _create_aif_search_mask(  # type: ignore[no-untyped-def]
 
 
 def _transform_atlas_to_dce(
-    atlas_file: Optional[str] = None,
-    t1w_to_mni_xfm: Optional[str] = None,
-    t1w_to_dce_xfm: Optional[str] = None,
-    reference_file: Optional[str] = None,
-) -> Optional[str]:
-    """Transform MNI atlas mask to DCE space via T1w (Gap 6).
+    atlas_file: str | None = None,
+    t1w_to_mni_xfm: str | None = None,
+    t1w_to_dce_xfm: str | None = None,
+    reference_file: str | None = None,
+) -> str | None:
+    """Transform an MNI atlas mask to DCE space via T1w.
 
     Creates a concatenated transform MNI→T1w→DCE and applies it to the
     atlas mask. Includes morphological refinement (dilate-dilate-erode)
@@ -554,7 +473,12 @@ def _transform_atlas_to_dce(
     return out_file
 
 
-def _transform_atlas_cascade_to_dce(atlas_files=None, t1w_to_mni_xfm=None, t1w_to_dce_xfm=None, reference_file=None):  # type: ignore[no-untyped-def]
+def _transform_atlas_cascade_to_dce(
+    atlas_files: list[str] | None = None,
+    t1w_to_mni_xfm: str | None = None,
+    t1w_to_dce_xfm: str | None = None,
+    reference_file: str | None = None,
+) -> list[str]:
     """Transform a list of MNI atlas masks to DCE space via T1w.
 
     Computes the MNI→DCE composite transform once, then applies it to each
@@ -617,7 +541,7 @@ def _transform_atlas_cascade_to_dce(atlas_files=None, t1w_to_mni_xfm=None, t1w_t
         return []
 
     # Step 2: Apply the composite transform to each atlas
-    out_files = []
+    out_files: list[str] = []
     for atlas_file in atlas_files:
         atlas_path = Path(atlas_file)
         if not atlas_path.is_file():
@@ -661,7 +585,19 @@ def _transform_atlas_cascade_to_dce(atlas_files=None, t1w_to_mni_xfm=None, t1w_t
     return out_files
 
 
-def _signal_to_concentration_node(dce_file, t1_map_file, b1_map_file, flip_angle, tr, field_strength, r1_relaxivity, baseline_frames, no_t1):  # type: ignore[no-untyped-def]
+def _signal_to_concentration_node(
+    dce_file: str,
+    brain_mask_file: str,
+    t1_map_file: str | None,
+    b1_map_file: str | None,
+    flip_angle: float,
+    tr: float,
+    field_strength: float,
+    r1_relaxivity: float | None,
+    baseline_frames: int,
+    no_t1: bool,
+    external_t1: bool = False,
+) -> tuple[str, dict[str, object]]:
     """Convert DCE signal to contrast-agent concentration.
 
     This function wraps the signal_to_concentration utility for use in
@@ -671,6 +607,8 @@ def _signal_to_concentration_node(dce_file, t1_map_file, b1_map_file, flip_angle
     ----------
     dce_file : str
         Path to 4D DCE NIfTI file.
+    brain_mask_file : str
+        Path to the DCE-space brain mask defining the QC denominator.
     t1_map_file : str or None
         Path to T1 map in DCE space (None when no_t1 is True).
     b1_map_file : str or None
@@ -687,24 +625,40 @@ def _signal_to_concentration_node(dce_file, t1_map_file, b1_map_file, flip_angle
         Number of pre-contrast baseline frames.
     no_t1 : bool
         If True, skip T1 mapping and use a field-strength default T1.
+    external_t1 : bool, optional
+        Whether the T1 map is a user-supplied map requiring alignment QC.
 
     Returns
     -------
-    str
-        Path to the 4D concentration NIfTI file.
+    tuple
+        Path to the 4D concentration NIfTI file and conversion QC metrics.
     """
     from pathlib import Path
 
     import nibabel as nib  # type: ignore[import-untyped]
     import numpy as np
 
+    from pmriprep.utils.dce_constants import EPSILON_SIGNAL
     from pmriprep.utils.dce_signal import signal_to_concentration
+    from pmriprep.utils.dce_t1_validation import (
+        T1_TISSUE_REFERENCE,
+        get_field_strength_key,
+        valid_t1_support,
+    )
 
     # Load DCE data
     dce_img = nib.load(dce_file)
     dce_data = dce_img.get_fdata()  # type: ignore[attr-defined]
     affine = dce_img.affine  # type: ignore[attr-defined]
     header = dce_img.header  # type: ignore[attr-defined]
+    brain_mask = np.asarray(
+        nib.load(brain_mask_file).dataobj  # type: ignore[attr-defined]
+    ) > 0
+    if brain_mask.shape != dce_data.shape[:3]:
+        raise ValueError(
+            f"DCE brain mask shape {brain_mask.shape} does not match "
+            f"signal spatial shape {dce_data.shape[:3]}"
+        )
 
     # Load T1 map if not skipping T1
     t1_map = None
@@ -719,10 +673,7 @@ def _signal_to_concentration_node(dce_file, t1_map_file, b1_map_file, flip_angle
                 "Failed to load T1 map (%s) — using default T1", exc,
             )
 
-    # Load B1 map. Do NOT pre-clip here: signal_to_concentration captures
-    # the b1<=0 sentinel before its own clip, then resets those voxels to
-    # nominal flip angle. Pre-clipping would map the sentinel to the lower
-    # bound (e.g., 0.5 at 3T), silently halving the effective flip angle.
+    # Preserve the nonpositive B1 sentinel consumed by signal_to_concentration.
     b1_map = None
     if b1_map_file:
         try:
@@ -746,6 +697,7 @@ def _signal_to_concentration_node(dce_file, t1_map_file, b1_map_file, flip_angle
         field_strength=field_strength,
         baseline_frames=baseline_frames if baseline_frames > 0 else 5,
         convert_to_plasma=False,
+        qc_mask=brain_mask,
     )
 
     # Zero out concentration for voxels with invalid T1 (NaN, sub-physiological).
@@ -753,19 +705,115 @@ def _signal_to_concentration_node(dce_file, t1_map_file, b1_map_file, flip_angle
     # extreme concentration values that corrupt AIF detection thresholds.
     # invalid_t1 is 3D (spatial); fancy-indexing into the 4D concentration
     # array broadcasts the assignment across the trailing time axis.
+    conversion_qc = dict(result.conversion_qc)
+    conversion_qc["qc_domain"] = "dce_brain_mask"
+    conversion_qc["t1_source"] = (
+        "assumed" if t1_map is None else "external" if external_t1 else "map"
+    )
+    if t1_map is None:
+        field_key = get_field_strength_key(field_strength)
+        conversion_qc["assumed_t1_ms"] = float(
+            T1_TISSUE_REFERENCE[field_key]["default"]
+        )
+        conversion_qc["assumed_t1_field_strength_t"] = float(field_strength)
+        conversion_qc["assumed_t1_policy"] = "uniform_field_strength_reference"
+    conversion_qc["b1_correction_applied"] = bool(
+        b1_map is not None
+        and np.any(
+            np.isfinite(b1_map)
+            & (b1_map > 0)
+            & ~np.isclose(b1_map, 1.0, rtol=0.0, atol=1e-6)
+        )
+    )
+    baseline_signal = np.asarray(result.baseline_signal)
+    signal_support = (
+        np.isfinite(baseline_signal)
+        & (np.abs(baseline_signal) > EPSILON_SIGNAL)
+        & brain_mask
+    )
     if t1_map is not None:
-        invalid_t1 = ~np.isfinite(t1_map) | (t1_map < 100.0)  # T1 in ms
+        invalid_t1 = ~valid_t1_support(t1_map, field_strength)
         result.concentration[invalid_t1] = 0.0
+        conversion_qc["t1_invalid_voxels"] = int(
+            np.count_nonzero(invalid_t1 & signal_support)
+        )
+        conversion_qc["t1_invalid_fraction"] = (
+            conversion_qc["t1_invalid_voxels"]
+            / max(1, int(np.count_nonzero(signal_support)))
+        )
+        if external_t1:
+            from scipy.ndimage import gaussian_gradient_magnitude  # type: ignore[import-untyped]
+
+            t1_support = np.isfinite(t1_map) & (t1_map > 0)
+            brain_voxels = max(1, int(np.count_nonzero(brain_mask)))
+            support_overlap = int(np.count_nonzero(t1_support & brain_mask))
+            gradient_domain = t1_support & brain_mask & signal_support
+            gradient_ncc = float("nan")
+            if np.count_nonzero(gradient_domain) >= 100:
+                t1_values = np.where(t1_support, t1_map, np.nan)
+                dce_values = np.where(signal_support, baseline_signal, np.nan)
+
+                def _scaled_gradient(values: np.ndarray) -> np.ndarray:
+                    finite = values[np.isfinite(values)]
+                    low, high = (float(value) for value in np.percentile(finite, [1, 99]))
+                    scaled = np.nan_to_num(
+                        np.clip((values - low) / max(high - low, 1e-8), 0.0, 1.0)
+                    )
+                    return np.asarray(
+                        gaussian_gradient_magnitude(scaled, sigma=1.0),
+                        dtype=np.float64,
+                    )
+
+                t1_gradient = _scaled_gradient(t1_values)
+                dce_gradient = _scaled_gradient(dce_values)
+                if (
+                    np.std(t1_gradient[gradient_domain]) > 0
+                    and np.std(dce_gradient[gradient_domain]) > 0
+                ):
+                    gradient_ncc = float(
+                        np.corrcoef(
+                            t1_gradient[gradient_domain],
+                            dce_gradient[gradient_domain],
+                        )[0, 1]
+                    )
+            conversion_qc["external_t1_alignment"] = {
+                "assessment": "informational_not_gated",
+                "brain_support_fraction": support_overlap / brain_voxels,
+                "gradient_magnitude_ncc": (
+                    gradient_ncc if np.isfinite(gradient_ncc) else None
+                ),
+                "resampling": "nifti_world_affine",
+            }
+    else:
+        conversion_qc["t1_invalid_voxels"] = 0
+        conversion_qc["t1_invalid_fraction"] = 0.0
+    conversion_qc["nonfinite_output_samples"] = int(
+        np.count_nonzero(
+            (~np.isfinite(result.concentration))
+            & signal_support[..., np.newaxis]
+        )
+    )
+    conversion_qc["total_grid_nonfinite_output_samples"] = int(
+        np.count_nonzero(~np.isfinite(result.concentration))
+    )
 
     # Save concentration file
     out_file = str(Path.cwd() / "dce_concentration.nii.gz")
     conc_img = nib.Nifti1Image(result.concentration.astype(np.float32), affine, header)
     nib.save(conc_img, out_file)
 
-    return out_file
+    return out_file, conversion_qc
 
 
-def _dsc_dce_validation_node(vp_file=None, dsc_cbv_file=None, dsc_ncbv_file=None, brain_mask=None, no_dsc_validation=False, pk_qc=None, dsc_preload_configured=None):  # type: ignore[no-untyped-def]
+def _dsc_dce_validation_node(
+    vp_file: str | None = None,
+    dsc_cbv_file: str | None = None,
+    dsc_ncbv_file: str | None = None,
+    brain_mask: str | None = None,
+    no_dsc_validation: bool = False,
+    pk_qc: dict[str, object] | str | None = None,
+    dsc_preload_configured: bool | None = None,
+) -> dict[str, object]:
     """Run DSC-DCE cross-validation.
 
     Parameters
@@ -776,20 +824,15 @@ def _dsc_dce_validation_node(vp_file=None, dsc_cbv_file=None, dsc_ncbv_file=None
         Path to resampled DSC CBV map in DCE space.
     dsc_ncbv_file : str or None
         Optional NAWM-normalized CBV. When provided, validation
-        uses the nCBV-anchored expected ratio (``NAWM_VP_REFERENCE``) and
-        the scaled circular-std threshold.
+        uses the nCBV-anchored expected ratio (``NAWM_VP_REFERENCE``).
     brain_mask : str or None
         Path to brain mask in DCE space.
     no_dsc_validation : bool
         If True, skip cross-validation.
     pk_qc : dict or str or None
-        Full ``pk_modeling.qc_metrics`` dict (or a bare string for
-        backwards compatibility). The function extracts
-        ``dsc_cbv_constraint.mode`` and
-        ``dsc_cbv_constraint.aif_tissue_overshoot_fraction`` — the
-        latter is only emitted for NAWM-anchored auto-mode subjects
-        with ≥100 valid voxels; missing values fall back to legacy
-        tight-band behavior cleanly.
+        Full ``pk_modeling.qc_metrics`` dict or a constraint-mode string. The
+        function extracts the constraint mode and relative prior width from
+        ``dsc_cbv_constraint`` when present.
     dsc_preload_configured : bool or None
         Whether DSC preload was configured.
 
@@ -808,14 +851,21 @@ def _dsc_dce_validation_node(vp_file=None, dsc_cbv_file=None, dsc_ncbv_file=None
         SYNTHETIC_AIF_REASON_STRING,
     )
 
-    resolved_mode = None
-    overshoot = None
-    constraint_skip_reason = None
+    resolved_mode: str | None = None
+    constraint_relative_width: float | None = None
+    constraint_skip_reason: str | None = None
     if isinstance(pk_qc, dict):
-        cbv_constraint = pk_qc.get("dsc_cbv_constraint", {}) or {}
-        resolved_mode = cbv_constraint.get("mode")
-        overshoot = cbv_constraint.get("aif_tissue_overshoot_fraction")
-        constraint_skip_reason = cbv_constraint.get("skip_reason")
+        constraint_value = pk_qc.get("dsc_cbv_constraint")
+        if isinstance(constraint_value, dict):
+            mode_value = constraint_value.get("mode")
+            if isinstance(mode_value, str):
+                resolved_mode = mode_value
+            width_value = constraint_value.get("vp_uncertainty")
+            if isinstance(width_value, (int, float)):
+                constraint_relative_width = float(width_value)
+            skip_value = constraint_value.get("skip_reason")
+            if isinstance(skip_value, str):
+                constraint_skip_reason = skip_value
     elif isinstance(pk_qc, str):
         resolved_mode = pk_qc
 
@@ -832,14 +882,8 @@ def _dsc_dce_validation_node(vp_file=None, dsc_cbv_file=None, dsc_ncbv_file=None
             "reason": "Validation skipped or missing data",
         }
 
-    # Synthetic-AIF short-circuit: the DSC CBV constraint upstream
-    # already SKIPped with reason=synthetic_aif, so running the xval
-    # on absolute-scale-invalid CBV would emit spurious POOR/CIRCULAR.
-    # The xval ratio bands are calibrated against calibrated-scale
-    # (NAWM-anchored) CBV; with a synthetic AIF the scale is not
-    # comparable across subjects. Check BEFORE the no-DSC guard so
-    # the explicit reason surfaces even if downstream files haven't
-    # arrived yet (the constraint's QC is the authoritative signal).
+    # Synthetic-AIF CBV does not have the subject-specific scale required by
+    # the NAWM-anchored cross-validation ratio bands.
     if constraint_skip_reason == SKIP_REASON_SYNTHETIC_AIF:
         return {
             "skipped": True,
@@ -856,12 +900,9 @@ def _dsc_dce_validation_node(vp_file=None, dsc_cbv_file=None, dsc_ncbv_file=None
             "skip_reason": SKIP_REASON_NO_DSC_RUN,
         }
 
-    # xval requires nCBV (NAWM-normalized). get_expected_ratio ≈ 0.669
-    # is derived for absolute mL/100g CBV; pmriprep only produces
-    # dimensionless rel-AUC-CBV. No universal expected ratio exists for
-    # vp / rel_AUC_CBV without NAWM anchoring. Skip cleanly rather than
-    # emit false POOR on subjects with no NAWM mask.
-    if not have_ncbv:
+    # Cross-validation is defined for NAWM-normalized CBV; the expected
+    # vp-to-CBV ratio is undefined for unanchored relative CBV.
+    if dsc_ncbv_file is None or not have_ncbv:
         return {
             "skipped": True,
             "status": "SKIPPED",
@@ -873,8 +914,7 @@ def _dsc_dce_validation_node(vp_file=None, dsc_cbv_file=None, dsc_ncbv_file=None
             ),
         }
 
-    # Past the no-NAWM guard above, brain_mask is required by the validator;
-    # surface a clean skip rather than letting nib.load raise.
+    # The file-based validator requires a DCE-space brain mask.
     if not brain_mask:
         return {
             "skipped": True,
@@ -883,15 +923,13 @@ def _dsc_dce_validation_node(vp_file=None, dsc_cbv_file=None, dsc_ncbv_file=None
         }
 
     try:
-        # nCBV is the only valid comparator; cbv_path is unused here.
         result = validate_vp_cbv_from_files(
             vp_path=vp_file,
-            cbv_path=None,
+            ncbv_path=dsc_ncbv_file,
             mask_path=brain_mask,
             constraint_mode=resolved_mode,
             dsc_preload_configured=dsc_preload_configured,
-            ncbv_path=dsc_ncbv_file,
-            aif_tissue_overshoot_fraction=overshoot,
+            constraint_relative_width=constraint_relative_width,
         )
         return result.to_dict()
     except Exception as e:
@@ -948,19 +986,24 @@ def _compute_early_mean(dce_file: str, n_frames: int = 3) -> str:
     return out_file
 
 
-def _dsc_dce_xval_plot_node(vp_file=None, dsc_cbv_file=None, dsc_ncbv_file=None, brain_mask=None, validation_result=None, subject_id='', session_id='', pk_qc=None, model_selection_file=None):  # type: ignore[no-untyped-def]
+def _dsc_dce_xval_plot_node(
+    vp_file: str | None = None,
+    dsc_ncbv_file: str | None = None,
+    brain_mask: str | None = None,
+    validation_result: dict[str, object] | None = None,
+    subject_id: str = "",
+    session_id: str = "",
+    model_selection_file: str | None = None,
+) -> str | None:
     """Generate the DSC-DCE cross-validation plot.
 
     Parameters
     ----------
     vp_file : str or None
         Path to the DCE vp (plasma volume) map.
-    dsc_cbv_file : str or None
-        Path to resampled DSC CBV map in DCE space.
     dsc_ncbv_file : str or None
-        Optional NAWM-normalized CBV. When provided (and the
-        validation ran under use_ncbv_scale=True), the plot is drawn on
-        the dimensionless nCBV scale with expected ratio =
+        NAWM-normalized CBV. The plot is drawn on the dimensionless
+        nCBV scale with expected ratio =
         ``NAWM_VP_REFERENCE``, matching the validation metrics.
     brain_mask : str or None
         Path to brain mask in DCE space.
@@ -970,10 +1013,6 @@ def _dsc_dce_xval_plot_node(vp_file=None, dsc_cbv_file=None, dsc_ncbv_file=None,
         Subject identifier.
     session_id : str, optional
         Session identifier.
-    pk_qc : dict or str or None
-        Full ``pk_modeling.qc_metrics`` dict (or a bare mode string
-        for backwards compatibility); the function extracts
-        ``dsc_cbv_constraint.mode``.
     model_selection_file : str or None
         Path to the model selection map NIfTI (auto mode), for coloring.
 
@@ -988,20 +1027,10 @@ def _dsc_dce_xval_plot_node(vp_file=None, dsc_cbv_file=None, dsc_ncbv_file=None,
         return None
     if validation_result and validation_result.get("skipped"):
         return None
-    if validation_result and validation_result.get("circular"):
-        return None
-
     have_ncbv = bool(dsc_ncbv_file) and os.path.isfile(str(dsc_ncbv_file))
-    # Plot mirrors _dsc_dce_validation_node — requires nCBV; the rel-AUC-CBV
-    # fallback is miscalibrated, so skip plot when no NAWM.
+    # Cross-validation requires NAWM-normalized CBV.
     if not have_ncbv or dsc_ncbv_file is None:
         return None
-
-    resolved_mode = None
-    if isinstance(pk_qc, dict):
-        resolved_mode = pk_qc.get("dsc_cbv_constraint", {}).get("mode")
-    elif isinstance(pk_qc, str):
-        resolved_mode = pk_qc
 
     try:
         import nibabel as nib  # type: ignore[import-untyped]
@@ -1009,7 +1038,6 @@ def _dsc_dce_xval_plot_node(vp_file=None, dsc_cbv_file=None, dsc_ncbv_file=None,
 
         from pmriprep.utils.dsc_dce_xval_plots import generate_xval_plot
 
-        use_ncbv_scale = True
         cbv_source = dsc_ncbv_file
 
         vp_data = np.asarray(
@@ -1037,7 +1065,6 @@ def _dsc_dce_xval_plot_node(vp_file=None, dsc_cbv_file=None, dsc_ncbv_file=None,
             subject_id=subject_id,
             session_id=session_id,
             model_selection=model_sel,
-            use_ncbv_scale=use_ncbv_scale,
         )
     except Exception:
         import logging
@@ -1047,7 +1074,25 @@ def _dsc_dce_xval_plot_node(vp_file=None, dsc_cbv_file=None, dsc_ncbv_file=None,
         return None
 
 
-def _collect_qc_metrics(b1_qc, t1_qc, preprocess_qc, registration_qc, aif_qc, pk_qc, validation_result, preproc_display=None, pk_fit_qc_metrics=None, pk_maps_qc_metrics=None, vp_at_bound_fractions=None, use_external_t1=False, no_t1=False, b1_method='auto', nawm_available=False):  # type: ignore[no-untyped-def]
+def _collect_qc_metrics(
+    b1_qc: dict[str, object] | None,
+    t1_qc: dict[str, object] | None,
+    signal_conversion_qc: dict[str, object] | None,
+    preprocess_qc: dict[str, object] | None,
+    registration_qc: dict[str, object] | None,
+    aif_qc: dict[str, object] | None,
+    pk_qc: dict[str, object] | None,
+    validation_result: dict[str, object] | None,
+    vfa_qc: dict[str, object] | None = None,
+    preproc_display: dict[str, object] | None = None,
+    pk_fit_qc_metrics: dict[str, object] | None = None,
+    pk_maps_qc_metrics: dict[str, object] | None = None,
+    vp_at_bound_fractions: dict[str, object] | None = None,
+    use_external_t1: bool = False,
+    no_t1: bool = False,
+    b1_method: str = "auto",
+    nawm_available: bool = False,
+) -> dict[str, object]:
     """Collect all QC metrics into a single dictionary.
 
     Parameters
@@ -1066,6 +1111,8 @@ def _collect_qc_metrics(b1_qc, t1_qc, preprocess_qc, registration_qc, aif_qc, pk
         Pharmacokinetic modeling QC metrics.
     validation_result : dict or None
         DSC-DCE validation result.
+    vfa_qc : dict or None
+        VFA inter-volume preprocessing and motion-assessment metrics.
     preproc_display : dict, optional
         Preprocessing display stats.
     pk_fit_qc_metrics : dict, optional
@@ -1088,10 +1135,12 @@ def _collect_qc_metrics(b1_qc, t1_qc, preprocess_qc, registration_qc, aif_qc, pk
     dict
         Combined QC metrics dictionary.
     """
-    qc_metrics = {}
+    qc_metrics: dict[str, object] = {}
 
     if b1_qc is not None:
         qc_metrics["b1_mapping"] = b1_qc
+    if signal_conversion_qc is not None:
+        qc_metrics["signal_conversion"] = signal_conversion_qc
 
     # T1 mapping section - handle VFA, external, and assumed cases
     if t1_qc is not None:
@@ -1103,18 +1152,42 @@ def _collect_qc_metrics(b1_qc, t1_qc, preprocess_qc, registration_qc, aif_qc, pk
         else:
             b1_correction = "none"
         t1_mapping["b1_correction"] = b1_correction
+        if vfa_qc is not None:
+            t1_mapping["vfa_preprocessing"] = dict(vfa_qc)
         qc_metrics["t1_mapping"] = t1_mapping
     elif use_external_t1:
         # External T1 map was provided
+        alignment = (
+            signal_conversion_qc.get("external_t1_alignment")
+            if isinstance(signal_conversion_qc, dict)
+            else None
+        )
         qc_metrics["t1_mapping"] = {
             "method": "external",
             "b1_correction": b1_method if b1_method != "none" else "none",
+            "external_alignment": alignment,
         }
     elif no_t1:
         # No T1 mapping - using assumed literature values
+        conversion = (
+            signal_conversion_qc
+            if isinstance(signal_conversion_qc, dict)
+            else {}
+        )
+        if b1_qc is not None:
+            b1_correction = str(b1_qc.get("method", b1_method))
+        else:
+            b1_correction = "none"
         qc_metrics["t1_mapping"] = {
             "method": "assumed",
-            "b1_correction": "none",
+            "t1_status": "Skipped by configuration",
+            "skipped": True,
+            "assumed_t1_ms": conversion.get("assumed_t1_ms"),
+            "assumed_t1_field_strength_t": conversion.get(
+                "assumed_t1_field_strength_t"
+            ),
+            "assumed_t1_policy": conversion.get("assumed_t1_policy"),
+            "b1_correction": b1_correction,
         }
 
     if preprocess_qc is not None:
@@ -1123,29 +1196,93 @@ def _collect_qc_metrics(b1_qc, t1_qc, preprocess_qc, registration_qc, aif_qc, pk
         qc_metrics["registration"] = registration_qc
     if aif_qc is not None:
         qc_metrics["aif_detection"] = aif_qc
-    if pk_qc is not None:
-        qc_metrics["pk_modeling"] = pk_qc
+    pk_modeling = dict(pk_qc) if pk_qc is not None else {}
+    have_pk_modeling = pk_qc is not None
     if pk_fit_qc_metrics is not None:
-        qc_metrics.setdefault("pk_modeling", {}).update(pk_fit_qc_metrics)
+        fit_metrics = dict(pk_fit_qc_metrics)
+        regional_accounting = fit_metrics.pop(
+            "voxel_accounting_regions", None
+        )
+        pk_modeling.update(fit_metrics)
+        if regional_accounting:
+            accounting = pk_modeling.get("voxel_accounting")
+            if isinstance(accounting, dict):
+                accounting["regions"] = regional_accounting
+        have_pk_modeling = True
     if pk_maps_qc_metrics is not None:
-        qc_metrics.setdefault("pk_modeling", {})["model_selection_regions"] = pk_maps_qc_metrics
+        pk_modeling["model_selection_regions"] = pk_maps_qc_metrics
+        have_pk_modeling = True
     if vp_at_bound_fractions:
-        qc_metrics.setdefault("pk_modeling", {})["vp_at_bound_fractions"] = vp_at_bound_fractions
+        pk_modeling["vp_at_bound_fractions"] = vp_at_bound_fractions
+        have_pk_modeling = True
+    if have_pk_modeling:
+        qc_metrics["pk_modeling"] = pk_modeling
     if validation_result is not None:
         qc_metrics["dsc_dce_validation"] = validation_result
 
-    # Merge display stats (TR, tSNR, peak enh) into preprocessing metrics
+    # Merge display stats (TR, tSNR, peak enhancement) into preprocessing.
     if preproc_display is not None:
-        qc_metrics.setdefault("preprocessing", {}).update(preproc_display)
+        preprocessing = dict(preprocess_qc) if preprocess_qc is not None else {}
+        preprocessing.update(preproc_display)
+        qc_metrics["preprocessing"] = preprocessing
 
     qc_metrics["nawm_normalization"] = bool(nawm_available)
+
+    from pmriprep.utils.dce_model_suitability import (
+        assess_two_cxm_suitability,
+    )
+
+    qc_metrics["model_suitability"] = {
+        "2cxm": assess_two_cxm_suitability(qc_metrics)
+    }
 
     return qc_metrics
 
 
-def _transform_b1_to_vfa(  # type: ignore[no-untyped-def]
-    b1_map_file=None, vfa_ref_file=None
-):
+def _resample_b1_ratio_to_img(b1_img: Any, ref_img: Any) -> Any:
+    """Resample a B1+ ratio without diluting its boundary with missing zeros."""
+    import warnings
+
+    import nibabel as nib  # type: ignore[import-untyped]
+    import numpy as np
+    from nilearn.image import resample_to_img  # type: ignore[import-untyped]
+
+    data = np.asarray(b1_img.dataobj, dtype=np.float32)  # type: ignore[attr-defined]
+    support = np.isfinite(data) & (data > 0)
+    values = np.where(support, data, 0.0)
+    value_img = nib.Nifti1Image(values, b1_img.affine)  # type: ignore[attr-defined]
+    support_img = nib.Nifti1Image(support.astype(np.float32), b1_img.affine)  # type: ignore[attr-defined]
+    numerator = resample_to_img(
+        value_img, ref_img, interpolation="continuous", force_resample=True,
+        copy_header=True,
+    )
+    with warnings.catch_warnings():
+        # Continuous support weights are intentional: they normalize the
+        # interpolated numerator. The nearest-neighbour map below defines the
+        # retained binary support.
+        warnings.filterwarnings(
+            "ignore", message="Resampling binary images with continuous"
+        )
+        weights = resample_to_img(
+            support_img, ref_img, interpolation="continuous", force_resample=True,
+            copy_header=True,
+        )
+    target_support = resample_to_img(
+        support_img, ref_img, interpolation="nearest", force_resample=True,
+        copy_header=True,
+    )
+    num = np.asarray(numerator.dataobj, dtype=np.float32)  # type: ignore[attr-defined]
+    den = np.asarray(weights.dataobj, dtype=np.float32)  # type: ignore[attr-defined]
+    keep = (np.asarray(target_support.dataobj) > 0.5) & (den > 1e-6)  # type: ignore[attr-defined]
+    out = np.zeros(ref_img.shape[:3], dtype=np.float32)  # type: ignore[attr-defined]
+    np.divide(num, den, out=out, where=keep)
+    return nib.Nifti1Image(out, ref_img.affine, ref_img.header)  # type: ignore[attr-defined]
+
+
+def _transform_b1_to_vfa(
+    b1_map_file: str | None = None,
+    vfa_ref_file: str | None = None,
+) -> str | None:
     """Resample B1+ map from AFI space to VFA space.
 
     Uses nilearn continuous interpolation via NIfTI affine headers.
@@ -1171,26 +1308,10 @@ def _transform_b1_to_vfa(  # type: ignore[no-untyped-def]
     import nibabel as nib  # type: ignore[import-untyped]
     import numpy as np
 
+    from pmriprep.workflows.dce._helpers import _resample_b1_ratio_to_img
+
     b1_img = nib.load(b1_map_file)
     ref_img = nib.load(vfa_ref_file)
-
-    # Uniform B1+ maps (e.g., synthetic unity map when no B1+ data exists)
-    # can be created directly in target space, avoiding nilearn's
-    # "Resampling binary images" warning from out-of-FOV zeros.
-    b1_data = b1_img.get_fdata()  # type: ignore[attr-defined]
-    unique_vals = np.unique(b1_data[b1_data != 0])
-    if len(unique_vals) == 1:
-        import logging
-
-        logging.getLogger("nipype.workflow").info(
-            "Uniform B1+ map (value=%.2f) — creating directly in VFA space",
-            float(unique_vals[0]),
-        )
-        uniform_val = float(unique_vals[0])
-        target_data = np.full(ref_img.shape[:3], uniform_val, dtype=np.float32)  # type: ignore[attr-defined]
-        out_file = str(Path.cwd() / "b1_map_vfa_space.nii.gz")
-        nib.save(nib.Nifti1Image(target_data, ref_img.affine), out_file)  # type: ignore[attr-defined]
-        return out_file
 
     # Check if already in the same space (same shape + affine)
     if b1_img.shape[:3] == ref_img.shape[:3]:  # type: ignore[attr-defined]
@@ -1198,17 +1319,16 @@ def _transform_b1_to_vfa(  # type: ignore[no-untyped-def]
         if affine_diff < 1e-4:
             return b1_map_file
 
-    from nilearn.image import resample_to_img  # type: ignore[import-untyped]
-
-    resampled = resample_to_img(b1_img, ref_img, interpolation="continuous")
+    resampled = _resample_b1_ratio_to_img(b1_img, ref_img)
     out_file = str(Path.cwd() / "b1_map_vfa_space.nii.gz")
     nib.save(resampled, out_file)
     return out_file
 
 
-def _transform_b1_to_dce(  # type: ignore[no-untyped-def]
-    b1_map_file=None, reference_file=None
-):
+def _transform_b1_to_dce(
+    b1_map_file: str | None = None,
+    reference_file: str | None = None,
+) -> str | None:
     """Resample B1+ map to DCE space for signal-to-concentration.
 
     Uses nilearn continuous interpolation via NIfTI affine headers.
@@ -1233,26 +1353,10 @@ def _transform_b1_to_dce(  # type: ignore[no-untyped-def]
     import nibabel as nib  # type: ignore[import-untyped]
     import numpy as np
 
+    from pmriprep.workflows.dce._helpers import _resample_b1_ratio_to_img
+
     b1_img = nib.load(b1_map_file)
     ref_img = nib.load(reference_file)
-
-    # Uniform B1+ maps (e.g., synthetic unity map when no B1+ data exists)
-    # can be created directly in target space, avoiding nilearn's
-    # "Resampling binary images" warning from out-of-FOV zeros.
-    b1_data = b1_img.get_fdata()  # type: ignore[attr-defined]
-    unique_vals = np.unique(b1_data[b1_data != 0])
-    if len(unique_vals) == 1:
-        import logging
-
-        logging.getLogger("nipype.workflow").info(
-            "Uniform B1+ map (value=%.2f) — creating directly in DCE space",
-            float(unique_vals[0]),
-        )
-        uniform_val = float(unique_vals[0])
-        target_data = np.full(ref_img.shape[:3], uniform_val, dtype=np.float32)  # type: ignore[attr-defined]
-        out_file = str(Path.cwd() / "b1_map_dce_space.nii.gz")
-        nib.save(nib.Nifti1Image(target_data, ref_img.affine), out_file)  # type: ignore[attr-defined]
-        return out_file
 
     # Check if already in the same space
     if b1_img.shape[:3] == ref_img.shape[:3]:  # type: ignore[attr-defined]
@@ -1260,20 +1364,18 @@ def _transform_b1_to_dce(  # type: ignore[no-untyped-def]
         if affine_diff < 1e-4:
             return b1_map_file
 
-    from nilearn.image import resample_to_img  # type: ignore[import-untyped]
-
-    resampled = resample_to_img(b1_img, ref_img, interpolation="continuous")
+    resampled = _resample_b1_ratio_to_img(b1_img, ref_img)
     out_file = str(Path.cwd() / "b1_map_dce_space.nii.gz")
     nib.save(resampled, out_file)
     return out_file
 
 
-def _resample_dsc_cbv_to_dce(  # type: ignore[no-untyped-def]
-    dsc_cbv_file=None,
-    dsc_to_t1w_xfm=None,
-    t1w_to_dce_xfm=None,
-    dce_reference=None,
-):
+def _resample_dsc_cbv_to_dce(
+    dsc_cbv_file: str | None = None,
+    dsc_to_t1w_xfm: str | None = None,
+    t1w_to_dce_xfm: str | None = None,
+    dce_reference: str | None = None,
+) -> str:
     """Resample DSC CBV map to DCE native space.
 
     Chains two existing transforms: DSC→T1w + T1w→DCE = DSC→DCE,
@@ -1358,18 +1460,16 @@ def _resample_dsc_cbv_to_dce(  # type: ignore[no-untyped-def]
     return cbv_in_dce
 
 
-def _resample_dsc_ncbv_to_dce(  # type: ignore[no-untyped-def]
-    dsc_cbv_file=None,
-    dsc_to_t1w_xfm=None,
-    t1w_to_dce_xfm=None,
-    dce_reference=None,
-):
+def _resample_dsc_ncbv_to_dce(
+    dsc_cbv_file: str | None = None,
+    dsc_to_t1w_xfm: str | None = None,
+    t1w_to_dce_xfm: str | None = None,
+    dce_reference: str | None = None,
+) -> str:
     """Resample DSC nCBV to DCE space and clip trilinear-ringing negatives.
 
-    Mirrors ``_resample_dsc_cbv_to_dce`` then clips negatives. Nipype's
-    ``Function`` node runs this in an isolated scope with no access to
-    module-level helpers, so the resample logic is inlined (cannot
-    factor-and-call here).
+    Nipype executes this helper in an isolated scope, so it contains the full
+    resampling operation before clipping negative interpolation artifacts.
 
     Trilinear interpolation introduces small negative values near
     high-contrast boundaries (tumor edges, vessels). nCBV=0 is physically
@@ -1459,9 +1559,10 @@ def _resample_dsc_ncbv_to_dce(  # type: ignore[no-untyped-def]
     return clipped_out
 
 
-def _transform_t1_to_dce(  # type: ignore[no-untyped-def]
-    t1_map_file=None, reference_file=None
-):
+def _transform_t1_to_dce(
+    t1_map_file: str | None = None,
+    reference_file: str | None = None,
+) -> str | None:
     """Resample T1 map from VFA space to DCE space.
 
     Uses nilearn continuous interpolation via NIfTI affine headers.
@@ -1517,9 +1618,10 @@ def _transform_t1_to_dce(  # type: ignore[no-untyped-def]
     return out_file
 
 
-def _transform_external_t1_to_dce(  # type: ignore[no-untyped-def]
-    t1_map_file=None, reference_file=None
-):
+def _transform_external_t1_to_dce(
+    t1_map_file: str | None = None,
+    reference_file: str | None = None,
+) -> str | None:
     """Resample external T1 map to DCE space with unit validation.
 
     Validates that T1 values are in milliseconds (expected units for the
@@ -1549,10 +1651,11 @@ def _transform_external_t1_to_dce(  # type: ignore[no-untyped-def]
 
     logger = logging.getLogger("pmriprep.workflows.dce")
 
-    def _resample(src_t1_file, ref_file):  # type: ignore[no-untyped-def]
-        # Inlined copy of _transform_t1_to_dce — nipype Function nodes
-        # exec helpers in an empty namespace, so module-level helpers are
-        # not visible. See test_function_node_helpers.py.
+    def _resample(
+        src_t1_file: str | None,
+        ref_file: str | None,
+    ) -> str | None:
+        # Nipype executes Function helpers without module-level helpers.
         if src_t1_file is None or ref_file is None:
             return src_t1_file
         from nilearn.image import resample_to_img  # type: ignore[import-untyped]
@@ -1605,12 +1708,93 @@ def _transform_external_t1_to_dce(  # type: ignore[no-untyped-def]
     return _resample(t1_map_file, reference_file)
 
 
-def _transform_structural_to_dce(  # type: ignore[no-untyped-def]
-    structural_file=None,
-    reference_file=None,
-    transform_matrix=None,
-    output_name="structural_in_dce.nii.gz",
-):
+def _external_t1_alignment_plot_node(
+    t1_map_file: str,
+    dce_reference_file: str,
+    brain_mask_file: str,
+    subject_id: str = "",
+    session_id: str = "",
+) -> str:
+    """Plot the DCE-space external T1 map and its edges on the DCE reference."""
+    from pathlib import Path
+
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import nibabel as nib  # type: ignore[import-untyped]
+    import numpy as np
+    from scipy.ndimage import gaussian_gradient_magnitude  # type: ignore[import-untyped]
+
+    t1 = np.asarray(nib.load(t1_map_file).get_fdata(), dtype=np.float64)  # type: ignore[attr-defined]
+    dce = np.asarray(nib.load(dce_reference_file).get_fdata(), dtype=np.float64)  # type: ignore[attr-defined]
+    mask = np.asarray(nib.load(brain_mask_file).get_fdata(), dtype=np.float64) > 0  # type: ignore[attr-defined]
+    support = mask & np.isfinite(t1) & (t1 > 0)
+
+    def _scaled(data: np.ndarray, domain: np.ndarray) -> np.ndarray:
+        values = data[domain & np.isfinite(data)]
+        if values.size == 0:
+            return np.zeros(data.shape, dtype=float)
+        low, high = (float(value) for value in np.percentile(values, [2, 98]))
+        return np.clip((data - low) / max(high - low, 1e-8), 0.0, 1.0)
+
+    dce_scaled = _scaled(dce, mask)
+    t1_scaled = _scaled(t1, support)
+    edges = gaussian_gradient_magnitude(np.nan_to_num(t1_scaled), sigma=1.0)
+    edge_values = edges[support]
+    edge_cut = float(np.percentile(edge_values, 82)) if edge_values.size else 1.0
+    occupied = np.flatnonzero(mask.sum(axis=(0, 1)) > 0)
+    if occupied.size == 0:
+        slices = [dce.shape[2] // 2] * 3
+    else:
+        slices = [
+            int(occupied[int(fraction * (occupied.size - 1))])
+            for fraction in (0.28, 0.50, 0.72)
+        ]
+
+    fig, axes = plt.subplots(3, 3, figsize=(12, 10), facecolor="white")
+    for column, index in enumerate(slices):
+        base = np.rot90(dce_scaled[:, :, index])
+        t1_slice = np.rot90(np.where(support[:, :, index], t1[:, :, index], np.nan))
+        edge_slice = np.rot90(edges[:, :, index] > edge_cut)
+        axes[0, column].imshow(base, cmap="gray", vmin=0, vmax=1)
+        axes[1, column].imshow(t1_slice, cmap="magma", vmin=600, vmax=2000)
+        axes[2, column].imshow(base, cmap="gray", vmin=0, vmax=1)
+        if np.any(edge_slice):
+            axes[2, column].contour(
+                edge_slice, levels=[0.5], colors="#25d9ff", linewidths=0.8
+            )
+        axes[0, column].set_title(f"Axial slice {index}", fontsize=11)
+        for row in range(3):
+            axes[row, column].axis("off")
+    for row, label in enumerate(
+        ("Precontrast DCE reference", "External T1 used (ms)", "T1 edges on DCE")
+    ):
+        axes[row, 0].text(
+            -0.08, 0.5, label, rotation=90, va="center", ha="right",
+            transform=axes[row, 0].transAxes, fontsize=11, fontweight="bold",
+        )
+    identity = f"sub-{subject_id}" if subject_id else "External T1"
+    if session_id:
+        identity += f" | ses-{session_id}"
+    fig.suptitle(f"{identity} | External T1–DCE Alignment", fontsize=16, y=0.98)
+    support_fraction = (
+        100.0 * int(np.count_nonzero(support))
+        / max(1, int(np.count_nonzero(mask)))
+    )
+    fig.text(0.5, 0.025, f"Brain support: {support_fraction:.2f}%", ha="center")
+    fig.tight_layout(rect=(0.04, 0.05, 1, 0.95), h_pad=0.8, w_pad=0.25)
+    out_file = str(Path.cwd() / "external_t1_alignment.png")
+    fig.savefig(out_file, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return out_file
+
+
+def _transform_structural_to_dce(
+    structural_file: str | None = None,
+    reference_file: str | None = None,
+    transform_matrix: str | None = None,
+    output_name: str = "structural_in_dce.nii.gz",
+) -> str:
     """Transform structural image from T1w space to DCE space via FLIRT.
 
     Parameters
@@ -1717,7 +1901,17 @@ def _generate_dce_motion_qc_plot(
     return str(out_path)
 
 
-def _generate_preprocessing_qc(dce_file, brain_mask_file, baseline_frames, bolus_arrival_frame, tr_ms, volume_tr_s, te=None, subject_id='', session_id=''):  # type: ignore[no-untyped-def]
+def _generate_preprocessing_qc(
+    dce_file: str,
+    brain_mask_file: str,
+    baseline_frames: int,
+    bolus_arrival_frame: int,
+    tr_ms: float | None,
+    volume_tr_s: float | None,
+    te: object = None,
+    subject_id: str = "",
+    session_id: str = "",
+) -> tuple[str, dict[str, object]]:
     """Generate DCE preprocessing QC plot.
 
     Thin wrapper that loads NIfTI data and delegates to
@@ -1785,7 +1979,7 @@ def _generate_preprocessing_qc(dce_file, brain_mask_file, baseline_frames, bolus
         voxel_size_mm=voxel_size_mm,
     )
 
-    preproc_display_stats = {
+    preproc_display_stats: dict[str, object] = {
         "tr_ms": tr_ms_val,
         "volume_tr_s": volume_tr_val,
         "n_volumes": dce_data.shape[3],
@@ -1796,7 +1990,14 @@ def _generate_preprocessing_qc(dce_file, brain_mask_file, baseline_frames, bolus
     return plot_file, preproc_display_stats
 
 
-def _create_dce_registration_filmstrip(dce_mean_file=None, registered_t1w_file=None, brain_mask_file=None, subject_id='', session_id=''):  # type: ignore[no-untyped-def]
+def _create_dce_registration_filmstrip(
+    dce_mean_file: str | None = None,
+    registered_t1w_file: str | None = None,
+    brain_mask_file: str | None = None,
+    registered_t1w_mask_file: str | None = None,
+    subject_id: str = "",
+    session_id: str = "",
+) -> str | None:
     """Create registration QC filmstrip for DCE-T1w registration.
 
     Generates a multi-slice filmstrip showing the DCE mean image with
@@ -1810,7 +2011,9 @@ def _create_dce_registration_filmstrip(dce_mean_file=None, registered_t1w_file=N
     registered_t1w_file : str or None
         Path to T1w image registered to DCE space.
     brain_mask_file : str or None
-        Path to brain mask in DCE space (optional).
+        Path to the native DCE brain mask (optional).
+    registered_t1w_mask_file : str or None
+        Path to the anatomical brain mask transformed into DCE space.
     subject_id : str, optional
         Subject identifier.
     session_id : str, optional
@@ -1849,6 +2052,14 @@ def _create_dce_registration_filmstrip(dce_mean_file=None, registered_t1w_file=N
         mask_img = nib.load(brain_mask_file)
         mask = mask_img.get_fdata() > 0.5  # type: ignore[attr-defined]
 
+    moving_mask = None
+    if (
+        registered_t1w_mask_file is not None
+        and Path(registered_t1w_mask_file).is_file()
+    ):
+        moving_mask_img = nib.load(registered_t1w_mask_file)
+        moving_mask = moving_mask_img.get_fdata() > 0.5  # type: ignore[attr-defined]
+
     # Generate filmstrip — DCE as background, T1w edges overlaid
     out_path = Path.cwd() / "registration_qc_filmstrip.png"
     plot_registration_qc_filmstrip(
@@ -1856,6 +2067,7 @@ def _create_dce_registration_filmstrip(dce_mean_file=None, registered_t1w_file=N
         moving=t1w_data,
         output_path=out_path,
         mask=mask,
+        moving_mask=moving_mask,
         title=qc_figure_title(subject_id, session_id, "DCE-T1w Registration"),
         voxel_sizes=voxel_sizes,
     )
@@ -1863,11 +2075,11 @@ def _create_dce_registration_filmstrip(dce_mean_file=None, registered_t1w_file=N
     return str(out_path)
 
 
-def _smooth_dce_maps(  # type: ignore[no-untyped-def]
-    map_files,
-    brain_mask_file,
-    fwhm,
-):
+def _smooth_dce_maps(
+    map_files: dict[str, str],
+    brain_mask_file: str | None,
+    fwhm: float,
+) -> dict[str, str]:
     """Apply Gaussian smoothing to a dict of DCE maps.
 
     Uses normalized convolution for maps containing NaN (PK maps in auto
@@ -1905,7 +2117,7 @@ def _smooth_dce_maps(  # type: ignore[no-untyped-def]
         "peak_enhancement", "ser",
     }
 
-    results = {}
+    results: dict[str, str] = {}
     if not map_files:
         return results
     if not brain_mask_file or not isdefined(brain_mask_file):
@@ -1975,33 +2187,124 @@ def _smooth_dce_maps(  # type: ignore[no-untyped-def]
     return results
 
 
-def _build_pk_map_dict(ktrans=None, ve=None, vp=None, kep=None):  # type: ignore[no-untyped-def]
-    """Build dictionary of PK maps for smoothing."""
+def _build_pk_map_dict(
+    ktrans: str | None = None,
+    ve: str | None = None,
+    vp: str | None = None,
+) -> dict[str, str]:
+    """Build dictionary of independently estimated PK maps for smoothing."""
     from nipype.interfaces.base import isdefined
 
-    d = {}
+    d: dict[str, str] = {}
     if ktrans and isdefined(ktrans):
         d["ktrans"] = ktrans
     if ve and isdefined(ve):
         d["ve"] = ve
-    if kep and isdefined(kep):
-        d["kep"] = kep
     if vp and isdefined(vp):
         d["vp"] = vp
     return d
 
 
-def _build_model_free_map_dict(iauc60=None, iauc90=None, iauc120=None, peak=None, ttp=None, ser=None, wash_in_slope=None, wash_out_slope=None):  # type: ignore[no-untyped-def]
+def _derive_smoothed_kep(
+    smoothed_pk: dict[str, str] | None,
+    native_kep_file: str | None,
+    brain_mask_file: str | None,
+    epsilon_ve: float,
+    max_kep: float,
+) -> dict[str, str]:
+    """Add Kep derived from the spatially smoothed Ktrans and ve maps.
+
+    Parameters
+    ----------
+    smoothed_pk : dict or None
+        Smoothed PK-map paths containing ``ktrans`` and ``ve``.
+    native_kep_file : str or None
+        Native Kep map used only to preserve the voxelwise domain where Kep
+        is defined, notably excluding Patlak voxels in automatic model mode.
+    brain_mask_file : str or None
+        DCE-space brain mask used to restrict the derived map.
+    epsilon_ve : float
+        Minimum valid ve denominator.
+    max_kep : float
+        Maximum reported Kep in inverse minutes.
+
+    Returns
+    -------
+    dict
+        Copy of ``smoothed_pk`` with a derived ``kep`` path when its inputs
+        are available and geometrically compatible.
+    """
+    from pathlib import Path
+    from typing import cast
+
+    import nibabel as nib
+    import numpy as np
+    from nipype.interfaces.base import isdefined
+
+    result = dict(smoothed_pk or {})
+    ktrans_file = result.get("ktrans")
+    ve_file = result.get("ve")
+    if not ktrans_file or not ve_file:
+        return result
+    if not Path(ktrans_file).is_file() or not Path(ve_file).is_file():
+        return result
+
+    ktrans_img = cast("nib.Nifti1Image", nib.load(ktrans_file))
+    ve_img = cast("nib.Nifti1Image", nib.load(ve_file))
+    ktrans = ktrans_img.get_fdata()  # type: ignore[attr-defined]
+    ve = ve_img.get_fdata()  # type: ignore[attr-defined]
+    if ktrans.shape != ve.shape or not np.allclose(ktrans_img.affine, ve_img.affine):
+        raise ValueError("Smoothed Ktrans and ve maps must have matching geometry")
+
+    valid = np.isfinite(ktrans) & np.isfinite(ve) & (ve >= epsilon_ve)
+    if native_kep_file and isdefined(native_kep_file) and Path(native_kep_file).is_file():
+        native_kep_img = cast("nib.Nifti1Image", nib.load(native_kep_file))
+        native_kep = native_kep_img.get_fdata()  # type: ignore[attr-defined]
+        if native_kep.shape != ktrans.shape or not np.allclose(
+            native_kep_img.affine, ktrans_img.affine
+        ):
+            raise ValueError("Native Kep and smoothed PK maps must have matching geometry")
+        valid &= np.isfinite(native_kep)
+    brain_mask = np.ones(ktrans.shape, dtype=bool)
+    if brain_mask_file and isdefined(brain_mask_file) and Path(brain_mask_file).is_file():
+        mask_img = cast("nib.Nifti1Image", nib.load(brain_mask_file))
+        brain_mask = mask_img.get_fdata() > 0  # type: ignore[attr-defined]
+        if brain_mask.shape != ktrans.shape or not np.allclose(
+            mask_img.affine, ktrans_img.affine
+        ):
+            raise ValueError("Brain mask and smoothed PK maps must have matching geometry")
+        valid &= brain_mask
+
+    kep = np.full(ktrans.shape, np.nan, dtype=np.float32)
+    np.divide(ktrans, ve, out=kep, where=valid)
+    np.clip(kep, 0.0, max_kep, out=kep)
+    kep[~brain_mask] = 0.0
+    out_path = Path.cwd() / f"{Path(ktrans_file).stem}_derived_kep.nii.gz"
+    header = ktrans_img.header.copy()
+    header.set_data_dtype(np.float32)
+    nib.save(nib.Nifti1Image(kep, ktrans_img.affine, header), out_path)  # type: ignore[attr-defined]
+    result["kep"] = str(out_path)
+    return result
+
+
+def _build_model_free_map_dict(
+    iauc60: str | None = None,
+    iauc90: str | None = None,
+    iauc120: str | None = None,
+    peak: str | None = None,
+    ser: str | None = None,
+    wash_in_slope: str | None = None,
+    wash_out_slope: str | None = None,
+) -> dict[str, str]:
     """Build dictionary of model-free maps for smoothing.
 
-    Note: TTP is excluded from smoothing because it is a discrete timing
-    parameter (quantized to TR). Smoothing creates non-physical intermediate
-    time values. The ttp parameter is accepted but not included in the dict.
-    BAT and curve_type are also excluded (discrete/categorical maps).
+    TTP and BAT are discrete timing maps, and curve type is categorical; none
+    are included because smoothing would create non-physical intermediate
+    values.
     """
     from nipype.interfaces.base import isdefined
 
-    d = {}
+    d: dict[str, str] = {}
     if iauc60 and isdefined(iauc60):
         d["iauc60"] = iauc60
     if iauc90 and isdefined(iauc90):
@@ -2019,31 +2322,10 @@ def _build_model_free_map_dict(iauc60=None, iauc90=None, iauc120=None, peak=None
     return d
 
 
-def _build_uncertainty_map_dict(ktrans_std=None, ve_std=None, vp_std=None, fp_std=None, ps_std=None):  # type: ignore[no-untyped-def]
-    """Build dictionary of uncertainty std maps for smoothing.
-
-    Only posterior std maps are smoothed. CV (std/mean ratio) and CI95 bounds
-    are excluded because smoothing a ratio or derived statistic is physically
-    incorrect -- it conflates spatial averaging with statistical inference.
-    """
-    from nipype.interfaces.base import isdefined
-
-    d = {}
-    if ktrans_std and isdefined(ktrans_std):
-        d["Ktrans_std"] = ktrans_std
-    if ve_std and isdefined(ve_std):
-        d["ve_std"] = ve_std
-    if vp_std and isdefined(vp_std):
-        d["vp_std"] = vp_std
-    # 2CXM-specific uncertainty maps
-    if fp_std and isdefined(fp_std):
-        d["Fp_std"] = fp_std
-    if ps_std and isdefined(ps_std):
-        d["PS_std"] = ps_std
-    return d
-
-
-def _normalize_by_nawm(param_map=None, nawm_mask=None):  # type: ignore[no-untyped-def]
+def _normalize_by_nawm(
+    param_map: str | None = None,
+    nawm_mask: str | None = None,
+) -> str:
     """Normalize parameter map by NAWM median.
 
     Median is used (matching DSC nCBV in ``utils/dsc_signal.py``) so the
@@ -2061,10 +2343,8 @@ def _normalize_by_nawm(param_map=None, nawm_mask=None):  # type: ignore[no-untyp
     Returns
     -------
     str
-        Path to normalized parameter map, or "" if normalization failed.
-        Empty string (not None) is the project-wide Function-node-returns-empty
-        sentinel — downstream consumers declare ``traits.Str`` which rejects
-        ``None`` (see ``TestTransformHelpersReturnEmptyString`` for the contract).
+        Path to normalized parameter map, or ``""`` if normalization fails.
+        The empty string is compatible with downstream ``traits.Str`` inputs.
     """
     from pathlib import Path
 
@@ -2114,25 +2394,31 @@ def _normalize_by_nawm(param_map=None, nawm_mask=None):  # type: ignore[no-untyp
     return out_file
 
 
-def _generate_dce_pk_maps_qc(  # type: ignore[no-untyped-def]
-    ktrans_file,
-    ve_file=None,
-    vp_file=None,
-    fp_file=None,
-    ps_file=None,
-    brain_mask_file=None,
-    model_selection_file=None,
-    delta_bic_file=None,
-    enhancing_mask_file=None,
-    non_enhancing_mask_file=None,
-    nawm_mask_file=None,
-    user_lesion_mask_file=None,
-    roi_mask_file=None,
-    vp_at_bound_map_file=None,
-    model_name="tofts",
-    subject_id="",
-    session_id="",
-):
+def _generate_dce_pk_maps_qc(
+    ktrans_file: str,
+    ve_file: str | None = None,
+    vp_file: str | None = None,
+    fp_file: str | None = None,
+    ps_file: str | None = None,
+    brain_mask_file: str | None = None,
+    qc_mask_file: str | None = None,
+    model_selection_file: str | None = None,
+    delta_bic_file: str | None = None,
+    enhancing_mask_file: str | None = None,
+    non_enhancing_mask_file: str | None = None,
+    nawm_mask_file: str | None = None,
+    user_lesion_mask_file: str | None = None,
+    roi_mask_file: str | None = None,
+    vp_at_bound_map_file: str | None = None,
+    model_name: str = "tofts",
+    subject_id: str = "",
+    session_id: str = "",
+) -> tuple[
+    str | None,
+    str | None,
+    dict[str, dict[str, float]] | None,
+    dict[str, float] | None,
+]:
     """Generate DCE PK parameter maps QC and model selection QC plots.
 
     Lightweight wrapper that loads saved NIfTIs and calls plot functions.
@@ -2152,6 +2438,9 @@ def _generate_dce_pk_maps_qc(  # type: ignore[no-untyped-def]
         Path to PS map NIfTI (may be undefined for non-2cxm).
     brain_mask_file : str, optional
         Path to brain mask NIfTI.
+    qc_mask_file : str, optional
+        Path to quantitative QC mask NIfTI. Its acceptance fraction is reported
+        separately from the finite parameter support shown in the montage.
     model_selection_file : str, optional
         Path to model selection map NIfTI (auto mode).
     delta_bic_file : str, optional
@@ -2194,15 +2483,15 @@ def _generate_dce_pk_maps_qc(  # type: ignore[no-untyped-def]
 
     logger = logging.getLogger("pmriprep.workflows.dce")
 
-    def _safe_load(filepath):  # type: ignore[no-untyped-def]
+    def _safe_load(filepath: str | None) -> "np.ndarray | None":
         if not filepath or not _P(str(filepath)).is_file():
             return None
-        return nib.load(filepath).get_fdata()  # type: ignore[attr-defined]
+        return nib.load(filepath).get_fdata()  # type: ignore[attr-defined,no-any-return]
 
-    pk_param_maps_qc_plot = ""
-    model_selection_qc_plot = ""
-    model_selection_regions = None
-    vp_at_bound_fractions = {}
+    pk_param_maps_qc_plot: str | None = None
+    model_selection_qc_plot: str | None = None
+    model_selection_regions: dict[str, dict[str, float]] | None = None
+    vp_at_bound_fractions: dict[str, float] = {}
 
     try:
         from pmriprep.utils.dce_pk_qc_plots import (
@@ -2213,21 +2502,26 @@ def _generate_dce_pk_maps_qc(  # type: ignore[no-untyped-def]
         if not brain_mask_file:
             raise ValueError("brain_mask_file is required for DCE PK maps QC")
         mask_data = nib.load(brain_mask_file).get_fdata()  # type: ignore[attr-defined]
-        is_auto = model_name == "auto"
+        qc_mask_data = _safe_load(qc_mask_file)
+        if qc_mask_data is not None and qc_mask_data.shape != mask_data.shape:
+            raise ValueError(
+                "DCE QC mask shape does not match the brain mask: "
+                f"{qc_mask_data.shape} != {mask_data.shape}"
+            )
 
         # Build param_maps dict from available files
         param_maps = {}
         ktrans_data = _safe_load(ktrans_file)
         if ktrans_data is not None:
-            param_maps["Ktrans"] = np.nan_to_num(ktrans_data, nan=0.0) if is_auto else ktrans_data
+            param_maps["Ktrans"] = ktrans_data
 
         ve_data = _safe_load(ve_file)
         if ve_data is not None:
-            param_maps["ve"] = np.nan_to_num(ve_data, nan=0.0) if is_auto else ve_data
+            param_maps["ve"] = ve_data
 
         vp_data = _safe_load(vp_file)
         if vp_data is not None:
-            param_maps["vp"] = np.nan_to_num(vp_data, nan=0.0) if is_auto else vp_data
+            param_maps["vp"] = vp_data
 
         fp_data = _safe_load(fp_file)
         if fp_data is not None:
@@ -2241,6 +2535,7 @@ def _generate_dce_pk_maps_qc(  # type: ignore[no-untyped-def]
         pk_param_maps_qc_plot = generate_pk_parameter_maps_qc_plot(
             param_maps=param_maps,
             brain_mask=mask_data,
+            qc_mask=qc_mask_data,
             subject_id=subject_id,
             session_id=session_id,
         )
@@ -2270,7 +2565,7 @@ def _generate_dce_pk_maps_qc(  # type: ignore[no-untyped-def]
             if roi_data is not None:
                 roi_data = (roi_data > 0.5).astype(np.float64)
 
-            regional_stats: dict = {}
+            regional_stats: dict[str, dict[str, float]] = {}
             model_selection_qc_plot = generate_model_selection_qc_plot(
                 model_selection_map=model_sel_data.astype(np.int8),
                 delta_bic_map=delta_bic_data.astype(np.float32),
@@ -2306,7 +2601,7 @@ def _generate_dce_pk_maps_qc(  # type: ignore[no-untyped-def]
             else:
                 vp_at_bound_fractions["whole_brain"] = 0.0
 
-            def _frac_in_roi(roi_bool):  # type: ignore[no-untyped-def]
+            def _frac_in_roi(roi_bool: "np.ndarray") -> float | None:
                 sel = roi_bool & finite
                 return float(np.mean(vpab_bool[sel])) if sel.any() else None
 
@@ -2346,7 +2641,32 @@ def _generate_dce_pk_maps_qc(  # type: ignore[no-untyped-def]
     )
 
 
-def _generate_dce_pk_fit_qc(concentration_file, dce_signal_file=None, aif_file=None, brain_mask_file=None, ktrans_file=None, ve_file=None, vp_file=None, fp_file=None, ps_file=None, r2_file=None, qc_mask_file=None, fitted_curves_file=None, model_selection_file=None, enhancing_mask_file=None, non_enhancing_mask_file=None, volume_tr=1.0, baseline_frames=10, model_name='tofts', subject_id='', session_id=''):  # type: ignore[no-untyped-def]
+def _generate_dce_pk_fit_qc(
+    concentration_file: str,
+    dce_signal_file: str | None = None,
+    aif_file: str | None = None,
+    brain_mask_file: str | None = None,
+    ktrans_file: str | None = None,
+    ve_file: str | None = None,
+    vp_file: str | None = None,
+    fp_file: str | None = None,
+    ps_file: str | None = None,
+    r2_file: str | None = None,
+    fitting_mask_file: str | None = None,
+    optimizer_converged_mask_file: str | None = None,
+    quality_flag_file: str | None = None,
+    qc_mask_file: str | None = None,
+    fitted_curves_file: str | None = None,
+    model_selection_file: str | None = None,
+    enhancing_mask_file: str | None = None,
+    non_enhancing_mask_file: str | None = None,
+    nawm_mask_file: str | None = None,
+    volume_tr: float = 1.0,
+    baseline_frames: int = 10,
+    model_name: str = "tofts",
+    subject_id: str = "",
+    session_id: str = "",
+) -> tuple[str | None, dict[str, object]]:
     """Generate DCE PK modeling fit QC plot.
 
     Lightweight wrapper that loads saved NIfTIs, recomputes the single-voxel
@@ -2375,6 +2695,12 @@ def _generate_dce_pk_fit_qc(concentration_file, dce_signal_file=None, aif_file=N
         Path to PS map NIfTI (may be undefined).
     r2_file : str, optional
         Path to R² map NIfTI.
+    fitting_mask_file : str, optional
+        Path to the PK fitting-eligibility mask.
+    optimizer_converged_mask_file : str, optional
+        Path to the optimizer-convergence mask.
+    quality_flag_file : str, optional
+        Path to the retained-fit categorical quality map.
     qc_mask_file : str, optional
         Path to QC mask NIfTI.
     fitted_curves_file : str, optional
@@ -2385,6 +2711,8 @@ def _generate_dce_pk_fit_qc(concentration_file, dce_signal_file=None, aif_file=N
         Path to enhancing tumor mask NIfTI (optional).
     non_enhancing_mask_file : str, optional
         Path to non-enhancing tumor mask NIfTI (optional).
+    nawm_mask_file : str, optional
+        Path to the NAWM mask NIfTI (optional).
     volume_tr : float, optional
         Volume TR in seconds.
     baseline_frames : int, optional
@@ -2410,10 +2738,10 @@ def _generate_dce_pk_fit_qc(concentration_file, dce_signal_file=None, aif_file=N
 
     logger = logging.getLogger("pmriprep.workflows.dce")
 
-    def _safe_load(filepath):  # type: ignore[no-untyped-def]
+    def _safe_load(filepath: str | None) -> "np.ndarray | None":
         if not filepath or not _P(str(filepath)).is_file():
             return None
-        return nib.load(filepath).get_fdata()  # type: ignore[attr-defined]
+        return nib.load(filepath).get_fdata()  # type: ignore[attr-defined,no-any-return]
 
     if not brain_mask_file or not aif_file:
         return None, {}
@@ -2451,7 +2779,7 @@ def _generate_dce_pk_fit_qc(concentration_file, dce_signal_file=None, aif_file=N
         # Load parameter maps
         ktrans = _safe_load(ktrans_file)
         if ktrans is None:
-            return "", {}
+            return None, {}
 
         is_auto = model_name == "auto"
         ve = _safe_load(ve_file)
@@ -2464,6 +2792,11 @@ def _generate_dce_pk_fit_qc(concentration_file, dce_signal_file=None, aif_file=N
         qc_mask = _safe_load(qc_mask_file)
         if qc_mask is not None:
             qc_mask = qc_mask.astype(np.uint8)
+        fitting_mask_data = _safe_load(fitting_mask_file)
+        optimizer_converged_data = _safe_load(
+            optimizer_converged_mask_file
+        )
+        quality_flag_data = _safe_load(quality_flag_file)
 
         signal_data = _safe_load(dce_signal_file)
         fitted_curves = _safe_load(fitted_curves_file)
@@ -2473,6 +2806,14 @@ def _generate_dce_pk_fit_qc(concentration_file, dce_signal_file=None, aif_file=N
         enh_raw = _safe_load(enhancing_mask_file)
         if enh_raw is not None:
             enhancing_mask_data = (enh_raw > 0.5).astype(np.float64)
+        non_enhancing_mask_data = None
+        ne_raw = _safe_load(non_enhancing_mask_file)
+        if ne_raw is not None:
+            non_enhancing_mask_data = (ne_raw > 0.5).astype(np.float64)
+        nawm_mask_data = None
+        nawm_raw = _safe_load(nawm_mask_file)
+        if nawm_raw is not None:
+            nawm_mask_data = (nawm_raw > 0.5).astype(np.float64)
 
         # Recompute single-voxel fitted curve
         qc_fitted_curve_1d = None
@@ -2494,8 +2835,6 @@ def _generate_dce_pk_fit_qc(concentration_file, dce_signal_file=None, aif_file=N
                 enhancing_mask=enhancing_mask_data,
             )
 
-            # Concrete subclasses of PKModel; mypy infers the dict value as the
-            # abstract base, so the call site below needs an explicit type tag.
             model_cls_map = {
                 "tofts": ToftsModel,
                 "extended_tofts": ExtendedToftsModel,
@@ -2513,7 +2852,7 @@ def _generate_dce_pk_fit_qc(concentration_file, dce_signal_file=None, aif_file=N
                 qc_model_name = model_name
 
             if qc_model_name in model_cls_map:
-                qc_model = model_cls_map[qc_model_name]()
+                qc_model = model_cls_map[qc_model_name]()  # type: ignore[abstract]
                 param_map = {"Ktrans": ktrans, "ve": ve, "vp": vp, "Fp": fp, "PS": ps}
                 qc_params = []
                 for n in qc_model.get_parameter_names():
@@ -2555,10 +2894,50 @@ def _generate_dce_pk_fit_qc(concentration_file, dce_signal_file=None, aif_file=N
             session_id=session_id,
         )
 
-        # FXL-suspect tumor-stratified flag and ROI-stratified Patlak fractions.
-        # conc_data is already baseline-subtracted; np.nanmax gives peak tissue Ct.
-        # Report-only diagnostic — shutter-speed
-        # model not viable at clinical TR_vol.
+        if (
+            fitting_mask_data is not None
+            and optimizer_converged_data is not None
+            and quality_flag_data is not None
+            and qc_mask is not None
+        ):
+            from pmriprep.utils.dce_voxel_prep import (
+                summarize_regional_voxel_accounting,
+            )
+
+            stage_masks = {
+                "fitting_eligible": fitting_mask_data > 0.5,
+                "optimizer_converged": optimizer_converged_data > 0.5,
+                "retained_nondegenerate": quality_flag_data > 0,
+                "quantitative_qc_accepted": qc_mask > 0,
+            }
+            regions = {
+                "enhancing_tumor": (
+                    enhancing_mask_data > 0.5
+                    if enhancing_mask_data is not None
+                    else None
+                ),
+                "non_enhancing_tumor": (
+                    non_enhancing_mask_data > 0.5
+                    if non_enhancing_mask_data is not None
+                    else None
+                ),
+                "nawm": (
+                    nawm_mask_data > 0.5
+                    if nawm_mask_data is not None
+                    else None
+                ),
+            }
+            regional_accounting = summarize_regional_voxel_accounting(
+                mask_bool,
+                stage_masks,
+                regions,
+            )
+            if regional_accounting:
+                pk_voxel_metrics["voxel_accounting_regions"] = (
+                    regional_accounting
+                )
+
+        # Calculate the enhancing-tumor peak-concentration risk metrics.
         peak_ct = np.nanmax(conc_data, axis=-1)
 
         if enhancing_mask_data is not None:
@@ -2591,17 +2970,16 @@ def _generate_dce_pk_fit_qc(concentration_file, dce_signal_file=None, aif_file=N
             pk_voxel_metrics["p95_tumor_peak_Ct"] = None
             pk_voxel_metrics["fxl_status"] = "PASS"
 
-        # ROI-stratified Patlak fraction: intersect model-selection map with
-        # each tissue class. Whole-brain patlak_fraction emitted by
-        # ComputeDCEMaps is only meaningful stratified by tissue class (BBB-DCE
-        # methodology; tissue fractions are
-        # pipeline-empirical: enhancing tumor 20-40%, NAWM/GM 70-90%).
+        # Calculate Patlak fractions separately within each tissue class.
         _PATLAK_CODE = 1  # from _MODEL_SELECTION_CODES in dce_compute.py
         if is_auto and model_sel_data is not None:
-            ne_data = _safe_load(non_enhancing_mask_file)
-            ne_bool = (ne_data > 0.5) if ne_data is not None else None
+            ne_bool = (
+                non_enhancing_mask_data > 0.5
+                if non_enhancing_mask_data is not None
+                else None
+            )
 
-            def _patlak_frac(region_mask):  # type: ignore[no-untyped-def]
+            def _patlak_frac(region_mask: "np.ndarray") -> float | None:
                 region_fitted = region_mask & (model_sel_data > 0)
                 n_region = int(region_fitted.sum())
                 if n_region == 0:
@@ -2633,4 +3011,4 @@ def _generate_dce_pk_fit_qc(concentration_file, dce_signal_file=None, aif_file=N
 
     except Exception as e:
         logger.warning("Failed to generate PK fit QC plot: %s", e, exc_info=True)
-        return "", {}
+        return None, {}

@@ -8,7 +8,6 @@ shape consumed by ``_compute_overall_recommendation``.
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
 

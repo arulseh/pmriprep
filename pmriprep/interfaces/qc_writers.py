@@ -15,6 +15,7 @@ DataSink model:
 """
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 from typing import Any, Optional
@@ -41,18 +42,7 @@ class PMRIPrepDataSink(_NiworkflowsDDS):
 
 
 def _optional_figure_file(desc: str = "") -> traits.Either:
-    """File-trait that also accepts ``None`` from upstream Function nodes.
-
-    Figure-producing Function nodes (e.g. ``_dsc_dce_xval_plot_node``)
-    legitimately return Python ``None`` when their figure is not
-    applicable. Nipype's ``File`` validator calls ``Path(value)``
-    unconditionally, which raises ``TraitError`` on ``None`` and stalls
-    the DAG via a downstream ``FileNotFoundError`` on the missing
-    ``result_*.pklz``. Wrapping ``File(exists=True)`` in
-    ``traits.Either(..., traits.Enum(None))`` lets the value through;
-    each writer's ``_run_interface`` already skips falsy/undefined inputs
-    via ``if not isdefined(src) or not src: continue``.
-    """
+    """Create an optional figure trait accepting a file or ``None``."""
     return traits.Either(
         File(exists=True), traits.Enum(None), desc=desc,
     )
@@ -90,8 +80,8 @@ class AnatFiguresWriter(SimpleInterface):
     """Copies the anat figure filmstrips into ``figures/``.
 
     QC summary fields (recommendation / warnings) live on the canonical
-    ``desc-preproc_T1w.json`` anchor sidecar as flat ``QC*`` keys; this
-    writer no longer emits a session-root ``desc-anatQC_quality.json``.
+    ``desc-preproc_T1w.json`` anchor sidecar as flat ``QC*`` keys. No separate
+    session-root QC summary is emitted.
     """
 
     input_spec = AnatFiguresWriterInputSpec
@@ -131,12 +121,7 @@ class AnatFiguresWriter(SimpleInterface):
 
 
 # ---------------------------------------------------------------------------
-# Dataset description barrier
-# ---------------------------------------------------------------------------
-
-
-# ---------------------------------------------------------------------------
-# AIF timeseries sidecar writer (Phase 2a)
+# AIF timeseries sidecar writer
 # ---------------------------------------------------------------------------
 
 
@@ -165,19 +150,21 @@ def _write_aif_timeseries_sidecar(
     subject: str,
     session: str,
 ) -> None:
-    """Write the JSON sidecar next to a copied AIF curve TXT.
+    """Write the JSON sidecar next to an AIF curve TSV.
 
     Reads ``qc_metrics["aif_detection"]`` (the producer-shape ``aif_qc``
-    dict) and emits flat ``AIF*``-prefixed top-level keys via
+    dict) and emits the canonical ``PerfusionProcessing.AIF`` block via
     :func:`pmriprep.utils.sidecar_builders.build_aif_timeseries_sidecar`.
-    Silently skips when ``qc_metrics`` is missing or empty — the TXT
-    still exists; the sidecar is opt-in metadata.
+    The sidecar is always written. Detection-specific fields are omitted when
+    AIF QC is unavailable, while columns, units, provenance, and sources remain.
     """
-    if not qc_metrics:
-        return
-    aif_qc = qc_metrics.get("aif_detection") if isinstance(qc_metrics, dict) else None
-    if not aif_qc:
-        return
+    aif_qc = (
+        qc_metrics.get("aif_detection")
+        if isinstance(qc_metrics, dict)
+        else None
+    )
+    if not isinstance(aif_qc, dict):
+        aif_qc = None
 
     from pmriprep.utils.sidecar_builders import (
         build_aif_timeseries_sidecar,
@@ -185,6 +172,29 @@ def _write_aif_timeseries_sidecar(
     )
 
     sources = [source_path] if source_path else []
+    volume_tr_s: Optional[float] = None
+    if source_path:
+        source = Path(source_path)
+        sidecar_path = source.with_name(
+            source.name.replace(".nii.gz", ".json").replace(".nii", ".json")
+        )
+        if sidecar_path.exists():
+            try:
+                metadata = json.loads(sidecar_path.read_text())
+                repetition_time = (
+                    metadata.get("RepetitionTime")
+                    if isinstance(metadata, dict)
+                    else None
+                )
+                if (
+                    isinstance(repetition_time, (int, float))
+                    and not isinstance(repetition_time, bool)
+                    and repetition_time > 0
+                ):
+                    volume_tr_s = float(repetition_time)
+            except (json.JSONDecodeError, OSError):
+                pass
+
     sidecar = build_aif_timeseries_sidecar(
         modality=modality,
         source_paths=sources,
@@ -192,6 +202,7 @@ def _write_aif_timeseries_sidecar(
         subject=subject,
         session=session or None,
         aif_qc=aif_qc,
+        volume_tr_s=volume_tr_s,
     )
     json_path = aif_txt.with_suffix(".json")
     json_path.write_text(dump_sidecar_json(sidecar))
@@ -322,9 +333,8 @@ class DSCFiguresWriter(SimpleInterface):
     QC summary fields (recommendation / warnings) live on
     ``desc-dscPreproc_dsc.json`` as flat ``QC*`` keys; per-map lesion
     stats live on the per-PK-map sidecars as ``LesionStats`` fragments.
-    This writer no longer emits a session-root
-    ``desc-dscQC_quality.json`` or copies the per-map lesion/ROI stats
-    JSONs.
+    No separate session-root QC summary or duplicate lesion/ROI statistics
+    JSON is emitted.
     """
 
     input_spec = DSCFiguresWriterInputSpec
@@ -347,9 +357,9 @@ class DSCFiguresWriter(SimpleInterface):
             else None
         )
 
-        prefix = f"sub-{subject}"
-        if session:
-            prefix += f"_ses-{session}"
+        from pmriprep.utils.sidecar_builders import source_entity_prefix
+
+        prefix = source_entity_prefix(source_path, subject, session)
 
         ses_dir = output_dir / "pmriprep" / f"sub-{subject}"
         if session:
@@ -394,6 +404,8 @@ class DSCFiguresWriter(SimpleInterface):
                 continue
             figures_dir.mkdir(parents=True, exist_ok=True)
             fname = figure_filename(subject, session, fig_key, "dsc")
+            base_prefix = source_entity_prefix(None, subject, session)
+            fname = prefix + fname[len(base_prefix):]
             shutil.copy2(src, figures_dir / fname)
 
         return runtime
@@ -466,10 +478,9 @@ class DCEFiguresWriter(SimpleInterface):
     QC summary fields (recommendation / warnings) live on
     ``desc-dcePreproc_dce.json`` as flat ``QC*`` keys; per-PK-map lesion
     stats live on the per-map sidecars as ``LesionStats`` fragments.
-    This writer no longer emits a session-root
-    ``desc-dceQC_quality.json`` or copies the per-map lesion/ROI stats
-    JSONs. It still cleans up stale ``aif_location`` figures on rerun
-    when AIF detection falls back to population/external.
+    No separate session-root QC summary or duplicate lesion/ROI statistics
+    JSON is emitted. AIF location figures are absent for population and
+    external AIFs.
     """
 
     input_spec = DCEFiguresWriterInputSpec
@@ -492,9 +503,9 @@ class DCEFiguresWriter(SimpleInterface):
             else None
         )
 
-        prefix = f"sub-{subject}"
-        if session:
-            prefix += f"_ses-{session}"
+        from pmriprep.utils.sidecar_builders import source_entity_prefix
+
+        prefix = source_entity_prefix(source_path, subject, session)
 
         ses_dir = output_dir / "pmriprep" / f"sub-{subject}"
         if session:
@@ -536,14 +547,18 @@ class DCEFiguresWriter(SimpleInterface):
         # Stale AIF location figure cleanup (population/external AIF)
         qc_metrics = self.inputs.qc_metrics
         if isdefined(qc_metrics) and qc_metrics:
+            aif_detection = qc_metrics.get("aif_detection")
             method = (
-                qc_metrics.get("aif_detection", {})
-                .get("detection_method", "unknown")
+                aif_detection.get("detection_method", "unknown")
+                if isinstance(aif_detection, dict)
+                else "unknown"
             )
             if method in ("population", "external"):
-                stale = figures_dir / figure_filename(
+                stale_name = figure_filename(
                     subject, session, "aif_location", "dce",
                 )
+                base_prefix = source_entity_prefix(None, subject, session)
+                stale = figures_dir / (prefix + stale_name[len(base_prefix):])
                 if stale.exists():
                     stale.unlink()
 
@@ -553,6 +568,8 @@ class DCEFiguresWriter(SimpleInterface):
                 continue
             figures_dir.mkdir(parents=True, exist_ok=True)
             fname = figure_filename(subject, session, fig_key, "dce")
+            base_prefix = source_entity_prefix(None, subject, session)
+            fname = prefix + fname[len(base_prefix):]
             shutil.copy2(src, figures_dir / fname)
 
         return runtime
@@ -563,7 +580,11 @@ class DCEFiguresWriter(SimpleInterface):
 # ---------------------------------------------------------------------------
 
 
-def write_dataset_description_node(output_dir, bids_dir, _trigger=None):
+def write_dataset_description_node(
+    output_dir: str,
+    bids_dir: str,
+    _trigger: object | None = None,
+) -> str:
     """Nipype-Function: write ``dataset_description.json`` to the pipeline root.
 
     Joined on every per-pipeline DataSink's ``out_file`` so it runs exactly

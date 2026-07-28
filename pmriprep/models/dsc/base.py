@@ -73,6 +73,10 @@ class DSCFitResult:
         n_observations: Number of time points used in fitting.
         converged: Whether the fitting algorithm converged.
         fitting_method: Method used ('nlls', 'map', 'vi', 'mcmc').
+        optimizer_status: Backend-specific optimizer termination status.
+        n_function_evaluations: Number of forward-objective evaluations.
+        evaluation_budget_exhausted: Whether optimization stopped at its
+            configured evaluation limit.
 
         # Fitted curves
         fitted_residue: Fitted residue function R(t).
@@ -104,6 +108,9 @@ class DSCFitResult:
     n_observations: int = 0
     converged: bool = False
     fitting_method: str = ""
+    optimizer_status: int | None = None
+    n_function_evaluations: int | None = None
+    evaluation_budget_exhausted: bool = False
 
     # Fitted curves
     fitted_residue: npt.NDArray[np.floating] | None = None
@@ -142,15 +149,13 @@ class DSCFitResult:
         Returns
         -------
         bool
-            True if converged and all R-hat < rhat_max and all ESS > ess_min,
-            or True if not MCMC (no diagnostics to check).
+            True if converged and every available diagnostic passes, or True
+            for non-MCMC results with no diagnostics to check.
         """
-        if not self.rhat or not self.ess:
-            # Not MCMC, or no diagnostics available
+        if not self.rhat and not self.ess:
             return self.converged
-
-        all_rhat_ok = all(r < rhat_max for r in self.rhat.values())
-        all_ess_ok = all(e > ess_min for e in self.ess.values())
+        all_rhat_ok = not self.rhat or all(r < rhat_max for r in self.rhat.values())
+        all_ess_ok = not self.ess or all(e > ess_min for e in self.ess.values())
 
         return self.converged and all_rhat_ok and all_ess_ok
 

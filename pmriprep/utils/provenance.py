@@ -271,12 +271,37 @@ def _enrich_dce(
     t1 = qc.get("t1_mapping")
     if t1 and isinstance(t1, dict):
         t1_block: Dict[str, Any] = {}
-        if "method" in t1:
-            t1_block["method"] = str(t1["method"])
+        method = t1.get("method", t1.get("t1_method"))
+        if method is not None:
+            t1_block["method"] = str(method)
         if "b1_correction" in t1:
             t1_block["B1_correction"] = str(t1["b1_correction"])
-        if t1.get("method") == "assumed":
+        elif "b1_corrected" in t1:
+            t1_block["B1_correction"] = bool(t1["b1_corrected"])
+        if "b1_valid_fraction" in t1:
+            t1_block["B1_valid_fraction"] = _safe_float(
+                t1["b1_valid_fraction"],
+            )
+        if "tissue_statistics_source" in t1:
+            t1_block["tissue_statistics_source"] = str(
+                t1["tissue_statistics_source"],
+            )
+        correction = t1.get("t1_correction")
+        if isinstance(correction, dict):
+            t1_block["correction"] = dict(correction)
+        if method == "assumed":
             t1_block["tissue_segmented"] = bool(t1.get("tissue_t1_used", False))
+            if "assumed_t1_ms" in t1 and t1["assumed_t1_ms"] is not None:
+                t1_block["AssumedT1_ms"] = _safe_float(t1["assumed_t1_ms"])
+            if (
+                "assumed_t1_field_strength_t" in t1
+                and t1["assumed_t1_field_strength_t"] is not None
+            ):
+                t1_block["FieldStrength_T"] = _safe_float(
+                    t1["assumed_t1_field_strength_t"]
+                )
+            if "assumed_t1_policy" in t1 and t1["assumed_t1_policy"] is not None:
+                t1_block["assumption_policy"] = str(t1["assumed_t1_policy"])
             if "mean_t1_wm_ms" in t1:
                 t1_block["T1_WM_ms"] = _safe_float(t1["mean_t1_wm_ms"])
             if "mean_t1_gm_ms" in t1:
@@ -284,36 +309,28 @@ def _enrich_dce(
         if t1_block:
             perf["T1Mapping"] = t1_block
 
+    conversion = qc.get("signal_conversion")
+    if conversion and isinstance(conversion, dict):
+        perf["SignalConversionQC"] = dict(conversion)
+
     # AIF detection
     aif = qc.get("aif_detection")
     if aif and isinstance(aif, dict):
-        aif_block: Dict[str, Any] = {}
-        if "aif_source" in aif:
-            aif_block["method"] = str(aif["aif_source"])
-        if "n_aif_voxels_selected" in aif:
-            aif_block["n_voxels"] = int(aif["n_aif_voxels_selected"])
-        peak = aif.get("peak_mm_mean")
-        if peak is None:
-            peak = aif.get("final_peak_mm")
-        if peak is not None:
-            aif_block["peak_mM"] = _safe_float(peak)
-        fwhm = aif.get("fwhm_seconds_mean")
-        if fwhm is None:
-            fwhm = aif.get("final_fwhm_seconds")
-        if fwhm is not None:
-            aif_block["fwhm_s"] = _safe_float(fwhm)
-        if "quality_score" in aif:
-            aif_block["quality_score"] = _safe_float(aif["quality_score"])
-        if "arterial_cascade_tier" in aif:
-            aif_block["arterial_cascade_tier"] = int(aif["arterial_cascade_tier"])
-        if "atlas_tier_used" in aif:
-            aif_block["atlas_tier_used"] = str(aif["atlas_tier_used"])
-        if "hemisphere_coverage" in aif:
-            aif_block["hemisphere_coverage"] = str(aif["hemisphere_coverage"])
-        if aif.get("population_aif"):
-            aif_block["population_model"] = "parker"
-            if "dose_factor" in aif:
-                aif_block["dose_factor"] = _safe_float(aif["dose_factor"])
+        from pmriprep.utils.aif_provenance import build_aif_provenance_block
+
+        canonical_aif = dict(aif)
+        if "detection_method" not in canonical_aif:
+            source = str(canonical_aif.get("aif_source", ""))
+            if canonical_aif.get("population_aif") or source == "population":
+                canonical_aif["detection_method"] = "population"
+            elif source == "external":
+                canonical_aif["detection_method"] = "external"
+            elif source:
+                canonical_aif["detection_method"] = "atlas"
+        aif_block = build_aif_provenance_block(
+            canonical_aif,
+            modality="DCE",
+        )
         if aif_block:
             perf["AIF"] = aif_block
 
@@ -340,17 +357,21 @@ def _enrich_dce(
                 units_block["hematocrit_used"] = _safe_float(hct_used)
             perf["AIFUnits"] = units_block
 
-        # BloodT1 from AIF detection
+        # Literature blood T1 is currently an AIF amplitude/QC reference; the
+        # detected magnitude signal is converted upstream with the tissue T1
+        # policy. Name and role must not imply arterial signal conversion.
         if "blood_t1_seconds" in aif and aif["blood_t1_seconds"]:
             fs = perf.get("Relaxivity", {}).get("field_strength_T")
             if fs is None:
                 fs = _safe_float(aif.get("field_strength_t"))
-            perf["BloodT1"] = {
+            perf["BloodT1Reference"] = {
                 "value_s": _safe_float(aif["blood_t1_seconds"]),
                 "Source": "literature_lookup",
+                "Role": "aif_expected_peak_and_qc_reference",
+                "AppliedToArterialSignalConversion": False,
             }
             if fs is not None:
-                perf["BloodT1"]["field_strength_T"] = fs
+                perf["BloodT1Reference"]["field_strength_T"] = fs
 
     # Hematocrit
     from pmriprep.utils.dce_constants import HEMATOCRIT_ARTERIAL
@@ -381,14 +402,23 @@ def _enrich_dce(
                 if dist:
                     selection["ModelDistribution"] = dist
             pk_block["model_selection"] = selection
-        if "convergence_rate" in pk:
-            pk_block["convergence_rate"] = _safe_float(pk["convergence_rate"])
+        if isinstance(pk.get("voxel_accounting"), dict):
+            pk_block["VoxelAccounting"] = dict(pk["voxel_accounting"])
+        if isinstance(pk.get("qc_acceptance_policy"), dict):
+            pk_block["QCAcceptancePolicy"] = dict(pk["qc_acceptance_policy"])
+        if isinstance(pk.get("qc_component_failures"), dict):
+            pk_block["QCComponentFailures"] = dict(pk["qc_component_failures"])
         if "r2_median" in pk:
             pk_block["r2_median"] = _safe_float(pk["r2_median"])
         if "qc_voxel_rsquared" in pk:
             pk_block["voxel_rsquared"] = _safe_float(pk["qc_voxel_rsquared"])
         if pk_block:
             perf["PKModeling"] = pk_block
+    suitability = qc.get("model_suitability")
+    if isinstance(suitability, dict):
+        two_cxm = suitability.get("2cxm")
+        if isinstance(two_cxm, dict):
+            perf["ModelSuitability"] = {"2CXM": dict(two_cxm)}
 
 
 def _enrich_dsc(
@@ -446,19 +476,9 @@ def _enrich_dsc(
     # AIF and baseline frames (both from qc["aif_detection"])
     aif = qc.get("aif_detection")
     if aif and isinstance(aif, dict):
-        aif_block: Dict[str, Any] = {}
-        if "detection_method" in aif:
-            aif_block["method"] = str(aif["detection_method"])
-            aif_block["synthetic"] = aif["detection_method"] == "synthetic"
-        if "n_aif_voxels_selected" in aif:
-            aif_block["n_voxels"] = int(aif["n_aif_voxels_selected"])
-        if "quality_score" in aif:
-            aif_block["quality_score"] = _safe_float(aif["quality_score"])
-        aif_metrics = aif.get("aif_metrics") or {}
-        if "fwhm" in aif_metrics:
-            aif_block["fwhm_frames"] = _safe_float(aif_metrics["fwhm"])
-        if "arrival_time_seconds" in aif:
-            aif_block["arrival_time_s"] = _safe_float(aif["arrival_time_seconds"])
+        from pmriprep.utils.aif_provenance import build_aif_provenance_block
+
+        aif_block = build_aif_provenance_block(aif, modality="DSC")
         if aif_block:
             perf["AIF"] = aif_block
 

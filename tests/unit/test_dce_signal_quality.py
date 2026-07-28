@@ -4,6 +4,8 @@ Tests for peak enhancement and baseline tSNR gating in the DCE QC
 recommendation system.
 """
 
+import warnings
+
 import pytest
 
 from pmriprep.utils.dce_constants import (
@@ -44,6 +46,51 @@ class TestDCESignalQualityConstants:
         """B1+ bias thresholds match 1.5T extreme values."""
         assert QC_B1_MEAN_LOW == 0.7
         assert QC_B1_MEAN_HIGH == 1.3
+
+
+def test_two_cxm_suitability_warning_requests_review_not_exclusion() -> None:
+    """Model suitability warnings feed the overall non-fatal recommendation."""
+    from pmriprep.utils.qc_standards import recommend_dce_qc
+
+    result = recommend_dce_qc(
+        {
+            "pk_modeling": {},
+            "model_suitability": {
+                "2cxm": {
+                    "status": "WARN",
+                    "reasons": [
+                        "temporal_sampling_outside_auto_2cxm_eligibility"
+                    ],
+                }
+            },
+        }
+    )
+
+    assert result["recommendation"]["action"] == QCAction.REVIEW
+    assert "2CXM suitability warning" in result["recommendation"]["reason"]
+
+
+def test_measured_reduced_aif_is_distinct_from_population_fallback() -> None:
+    """Reader-facing recommendations distinguish confidence from AIF source."""
+    from pmriprep.utils.qc_standards import recommend_dce_qc
+
+    measured = recommend_dce_qc({
+        "aif_detection": {
+            "aif_source": "detected",
+            "aif_confidence": "reduced",
+        },
+    })["recommendation"]
+    population = recommend_dce_qc({
+        "aif_detection": {
+            "aif_source": "population",
+            "aif_confidence": "low",
+        },
+    })["recommendation"]
+
+    assert "Measured AIF accepted with reduced confidence" in measured["reason"]
+    assert "Population AIF used" not in measured["reason"]
+    assert "Population AIF used" in population["reason"]
+    assert "reduced confidence" not in population["reason"]
 
 
 class TestPeakEnhancementGating:
@@ -107,6 +154,63 @@ class TestPeakEnhancementGating:
         assert rec["action"] == QCAction.REVIEW
         # The warning about population AIF should be present
         assert "population" in rec["reason"].lower() or "injection" in rec["reason"].lower()
+
+
+class TestBaselineSampleCountGating:
+    """Tests for an inadequate pre-contrast sample count."""
+
+    def test_early_bolus_fallback_excludes_quantitative_exam(self) -> None:
+        """A fallback keeps derivatives but forces an EXCLUDE recommendation."""
+        from pmriprep.utils.qc_standards import recommend_dce_qc
+
+        qc = {
+            "preprocessing": {
+                "baseline_status": "POOR",
+                "baseline_fallback_applied": True,
+                "detected_bolus_frame": 2,
+                "baseline_minimum_frames": 5,
+            },
+            "aif_detection": {"aif_confidence": "standard"},
+            "pk_modeling": {"median_residual": 0.01},
+        }
+
+        result = recommend_dce_qc(qc)
+
+        rec = result["recommendation"]
+        assert rec["action"] == QCAction.EXCLUDE
+        assert "Inadequate pre-contrast DCE baseline" in rec["reason"]
+        assert "detected frame 2" in rec["reason"]
+        assert "minimum 5" in rec["reason"]
+        assert "PK maps are unreliable" in rec["reason"]
+
+    def test_normal_baseline_does_not_trigger_exclusion(self) -> None:
+        """A normal detector result leaves the recommendation unchanged."""
+        from pmriprep.utils.qc_standards import recommend_dce_qc
+
+        result = recommend_dce_qc({
+            "preprocessing": {"baseline_fallback_applied": False},
+        })
+
+        assert result["recommendation"]["action"] == QCAction.INCLUDE
+
+
+class TestMotionAvailabilityGating:
+    """Tests for unavailable motion summary QC."""
+
+    def test_unavailable_motion_qc_requires_review(self) -> None:
+        """Unknown motion is REVIEW, not a default INCLUDE."""
+        from pmriprep.utils.qc_standards import recommend_dce_qc
+
+        result = recommend_dce_qc({
+            "preprocessing": {
+                "motion_status": "UNKNOWN",
+                "motion_qc_available": False,
+            },
+        })
+
+        rec = result["recommendation"]
+        assert rec["action"] == QCAction.REVIEW
+        assert "Motion QC unavailable" in rec["reason"]
 
 
 class TestBaselineTSNRGating:
@@ -310,7 +414,7 @@ class TestB1BiasGating:
         result = recommend_dce_qc(qc)
 
         assert "recommendation" in result
-        assert result["recommendation"]["action"] == QCAction.INCLUDE
+        assert result["recommendation"]["action"] == QCAction.REVIEW
 
     def test_b1_mapping_absent_no_crash(self) -> None:
         """Entirely missing b1_mapping section does not crash."""
@@ -325,7 +429,7 @@ class TestB1BiasGating:
         result = recommend_dce_qc(qc)
 
         assert "recommendation" in result
-        assert result["recommendation"]["action"] == QCAction.INCLUDE
+        assert result["recommendation"]["action"] == QCAction.REVIEW
 
 
 class TestBaselineSNRLowFractionGating:
@@ -377,22 +481,22 @@ class TestBaselineSNRLowFractionGating:
         assert result["recommendation"]["action"] == QCAction.REVIEW
 
     def test_nan_fraction_no_spurious_warn(self) -> None:
-        """NaN fraction (metric unavailable) must not raise or flag."""
+        """NaN fraction is unavailable and therefore requires review."""
         from pmriprep.utils.qc_standards import recommend_dce_qc
 
         qc = self._build_qc_metrics(low_fraction=float("nan"))
         result = recommend_dce_qc(qc)
 
-        assert result["recommendation"]["action"] == QCAction.INCLUDE
+        assert result["recommendation"]["action"] == QCAction.REVIEW
 
     def test_absent_fraction_no_crash(self) -> None:
-        """Missing key does not raise."""
+        """A missing metric does not raise and leaves quality unknown."""
         from pmriprep.utils.qc_standards import recommend_dce_qc
 
         qc = self._build_qc_metrics(low_fraction=None)
         result = recommend_dce_qc(qc)
 
-        assert result["recommendation"]["action"] == QCAction.INCLUDE
+        assert result["recommendation"]["action"] == QCAction.REVIEW
 
     def test_never_excludes(self) -> None:
         """Even a fully-low-SNR brain is REVIEW, never EXCLUDE, from this axis."""
@@ -485,10 +589,13 @@ class TestBaselineSNRComputation:
 
         sig = np.ones((4, 4, 2, 2), dtype=np.float64) * 100.0
         mask = np.ones((4, 4, 2), dtype=bool)
-        _, stats = generate_preprocessing_qc_plot(
-            sig, mask, baseline_frames=1, bolus_arrival_frame=1,
-            volume_tr_s=4.0, output_path=str(tmp_path / "qc.png"),
-        )
+        with warnings.catch_warnings(record=True) as warning_records:
+            warnings.simplefilter("always")
+            _, stats = generate_preprocessing_qc_plot(
+                sig, mask, baseline_frames=1, bolus_arrival_frame=1,
+                volume_tr_s=4.0, output_path=str(tmp_path / "qc.png"),
+            )
+        assert not warning_records
         frac = stats["baseline_snr_low_fraction"]
         assert isinstance(frac, float)
         assert math.isnan(frac)

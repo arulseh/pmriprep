@@ -45,6 +45,7 @@ def dsc_inputs(tmp_path):
     conc_f = str(tmp_path / "conc.nii.gz")
     nib.save(nib.Nifti1Image(conc.astype(np.float32), aff), conc_f)
     mask = np.ones((nx, ny, nz), dtype=np.uint8)
+    mask[0, :, :] = 0
     mask_f = str(tmp_path / "mask.nii.gz")
     nib.save(nib.Nifti1Image(mask, aff), mask_f)
     aif = _gamma(t, 3.0, 7.0, 3.0, 2.0)
@@ -114,6 +115,48 @@ def test_config_on_wm_median_normalized(dsc_inputs, tmp_path):
     assert 0.0 <= qc["firstpass_unfittable_fraction"] <= 1.0
 
 
+def test_prefit_smoothing_is_mask_normalized(dsc_inputs, tmp_path):
+    """A spatially constant bolus remains constant at the brain boundary."""
+    conc_img = nib.load(dsc_inputs["concentration_file"])
+    t = np.arange(conc_img.shape[-1], dtype=np.float64)
+    curve = _gamma(t, 2.0, 8.0, 3.0, 2.0)
+    conc = np.broadcast_to(curve, conc_img.shape).copy().astype(np.float32)
+    constant_f = str(tmp_path / "constant_conc.nii.gz")
+    nib.save(nib.Nifti1Image(conc, conc_img.affine, conc_img.header), constant_f)
+    inputs = dict(dsc_inputs)
+    inputs["concentration_file"] = constant_f
+
+    res = _run(
+        inputs,
+        tmp_path,
+        first_pass_cbv=True,
+        wm_mask_dsc=dsc_inputs["wm_mask_file"],
+    )
+
+    data = nib.load(res.outputs.out_rel_cbv_firstpass).get_fdata()
+    mask = nib.load(dsc_inputs["brain_mask_file"]).get_fdata() > 0
+    assert np.allclose(data[mask], 1.0, rtol=0.02, atol=0.02)
+
+
+def test_saved_dsc_diagnostics_are_brain_masked(dsc_inputs, tmp_path):
+    """Saved first-pass, K2, delay, and residue outputs have zero background."""
+    res = _run(
+        dsc_inputs,
+        tmp_path,
+        first_pass_cbv=True,
+        wm_mask_dsc=dsc_inputs["wm_mask_file"],
+        save_residue=True,
+    )
+    mask = nib.load(dsc_inputs["brain_mask_file"]).get_fdata() > 0
+
+    for output_name in ("out_rel_cbv_firstpass", "out_k2", "out_delay"):
+        data = nib.load(getattr(res.outputs, output_name)).get_fdata()
+        assert np.all(data[~mask] == 0), output_name
+
+    residues = nib.load(res.outputs.out_residues).get_fdata()
+    assert np.all(residues[~mask, :] == 0)
+
+
 def test_no_wm_produces_no_map(dsc_inputs, tmp_path):
     """No WM mask: the map has no valid anchor, so it is not produced.
 
@@ -142,6 +185,25 @@ def test_tiny_wm_produces_no_map(dsc_inputs, tmp_path):
     tiny_f = str(tmp_path / "tiny_wm.nii.gz")
     nib.save(nib.Nifti1Image(tiny, dsc_inputs["affine"]), tiny_f)
     res = _run(dsc_inputs, tmp_path, first_pass_cbv=True, wm_mask_dsc=tiny_f)
+    assert not isdefined(res.outputs.out_rel_cbv_firstpass)
+    assert res.outputs.qc_metrics["firstpass_reference"] == "unavailable-wm-reference-rejected"
+
+
+def test_same_shape_wrong_affine_wm_produces_no_map(dsc_inputs, tmp_path):
+    """A same-shaped WM mask on a different physical grid is rejected."""
+    from nipype.interfaces.base import isdefined
+
+    wm_img = nib.load(dsc_inputs["wm_mask_file"])
+    shifted_affine = wm_img.affine.copy()
+    shifted_affine[0, 3] += 10.0
+    shifted_f = str(tmp_path / "shifted_wm.nii.gz")
+    nib.save(
+        nib.Nifti1Image(wm_img.get_fdata().astype(np.uint8), shifted_affine),
+        shifted_f,
+    )
+
+    res = _run(dsc_inputs, tmp_path, first_pass_cbv=True, wm_mask_dsc=shifted_f)
+
     assert not isdefined(res.outputs.out_rel_cbv_firstpass)
     assert res.outputs.qc_metrics["firstpass_reference"] == "unavailable-wm-reference-rejected"
 
@@ -235,7 +297,7 @@ def test_first_pass_sidecar_disclosures(tmp_path):
     }
     wf = init_dsc_datasinks_wf(
         output_dir=out_dir, bids_dir=str(bids),
-        subject_id="t01", session_id=None, present_inputs=present,
+        subject_id="t01", session_id=None, inference="vi", present_inputs=present,
     )
     wf.base_dir = str(tmp_path / "work")
     inp = wf.inputs.inputnode
@@ -301,7 +363,7 @@ def test_first_pass_nii_written(tmp_path):
     present = {"mtt_map", "tmax_map", "psr_map", "ph_map", "rel_cbv_firstpass_map"}
     wf = init_dsc_datasinks_wf(
         output_dir=out_dir, bids_dir=str(bids),
-        subject_id="t01", session_id=None, present_inputs=present,
+        subject_id="t01", session_id=None, inference="vi", present_inputs=present,
     )
     wf.base_dir = str(tmp_path / "work")
     inp = wf.inputs.inputnode

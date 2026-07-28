@@ -8,11 +8,13 @@ import pytest
 from pmriprep.interfaces.dce_aif import (
     AIFDetection,
     _apply_aif_scale,
+    _build_peak_scaling_qc,
     _classify_hemisphere,
     _compute_pool_qc,
     _count_slabs_spanned,
     _evaluate_gates,
     _inflow_exclusion_mm,
+    _resolve_aif_scale,
     compute_dce_aif_fwhm_seconds,
     compute_dce_aif_peak_amplitude_warning,
     compute_dce_aif_washout,
@@ -20,6 +22,8 @@ from pmriprep.interfaces.dce_aif import (
 )
 from pmriprep.data import get_arterial_atlas_cascade
 from pmriprep.utils.dce_constants import (
+    AIF_IDEAL_FWHM_SECONDS,
+    AIF_WASHOUT_PHYSIOLOGIC_CENTER,
     AIF_THRESHOLDS_PERMISSIVE,
     DCE_AIF_PEAK_RATIO_WARN_THRESHOLD,
     DCE_AIF_SCALE_WARN_SUBSTANTIAL,
@@ -30,6 +34,115 @@ from pmriprep.utils.dce_constants import (
     SLAB_EDGE_EXCLUSION_MM_ROLLOFF,
     SSS_EXCLUSION_MM,
 )
+
+
+class TestDCEClusterScoring:
+    """Whole-brain cluster ranking uses physical, physiologic metrics."""
+
+    @staticmethod
+    def _cluster_inputs(
+        first_size: int,
+        second_size: int,
+        first_metrics: dict[str, float],
+        second_metrics: dict[str, float],
+    ) -> tuple[
+        list[tuple[int, int, int]], list[float], list[dict[str, float]]
+    ]:
+        """Build two disconnected candidate clusters with uniform metrics."""
+        first = [(1 + i, 1, 1) for i in range(first_size)]
+        second = [(10 + i, 10, 10) for i in range(second_size)]
+        candidates = first + second
+        scores = [0.8] * len(candidates)
+        metrics = (
+            [first_metrics.copy() for _ in first]
+            + [second_metrics.copy() for _ in second]
+        )
+        return candidates, scores, metrics
+
+    def test_physiologic_washout_beats_tail_collapsed_cluster(self) -> None:
+        """A higher raw washout cannot beat the physiologic washout center."""
+        physiologic = {
+            "fwhm_seconds": AIF_IDEAL_FWHM_SECONDS,
+            "washout": AIF_WASHOUT_PHYSIOLOGIC_CENTER,
+            "upstroke_slope": 1.0,
+        }
+        collapsed = {
+            **physiologic,
+            "washout": 0.99,
+        }
+        candidates, scores, metrics = self._cluster_inputs(
+            3, 3, physiologic, collapsed
+        )
+
+        selected, _, _ = AIFDetection._score_and_select_cluster(
+            candidates, scores, metrics, (20, 20, 20), tr=4.8
+        )
+
+        assert selected == candidates[:3]
+
+    @pytest.mark.parametrize("tr", [2.0, 4.8, 6.0])
+    def test_physical_fwhm_ranking_is_tr_invariant(self, tr: float) -> None:
+        """The same physical cluster wins across temporal resolutions."""
+        ideal = {
+            "fwhm_seconds": AIF_IDEAL_FWHM_SECONDS,
+            "washout": AIF_WASHOUT_PHYSIOLOGIC_CENTER,
+            "upstroke_slope": 1.0,
+        }
+        broad = {
+            **ideal,
+            "fwhm_seconds": 20.0,
+        }
+        # The broad cluster is larger, so this also proves the physical-width
+        # term remains discriminative instead of collapsing at coarse TR.
+        candidates, scores, metrics = self._cluster_inputs(3, 4, ideal, broad)
+
+        selected, _, _ = AIFDetection._score_and_select_cluster(
+            candidates, scores, metrics, (20, 20, 20), tr=tr
+        )
+
+        assert selected == candidates[:3]
+
+    def test_ineligible_cluster_cannot_discard_distal_arterial_keepers(self) -> None:
+        """Zero-score morphology cannot outrank a disconnected valid artery."""
+        arterial = {
+            "fwhm_seconds": 20.5,
+            "washout": 0.79,
+            "upstroke_slope": 0.46,
+        }
+        ineligible = {
+            "fwhm_seconds": AIF_IDEAL_FWHM_SECONDS,
+            "washout": AIF_WASHOUT_PHYSIOLOGIC_CENTER,
+            "upstroke_slope": 1.0,
+        }
+        candidates, scores, metrics = self._cluster_inputs(
+            2, 2, arterial, ineligible
+        )
+        scores[2:] = [0.0, 0.0]
+
+        selected, selected_scores, _ = AIFDetection._score_and_select_cluster(
+            candidates, scores, metrics, (20, 20, 20), tr=4.7618
+        )
+
+        assert selected == candidates[:2]
+        assert selected_scores == [0.8, 0.8]
+
+    def test_no_keeper_eligible_cluster_returns_empty(self) -> None:
+        """Candidates unusable downstream cannot survive cluster selection."""
+        metrics = {
+            "fwhm_seconds": AIF_IDEAL_FWHM_SECONDS,
+            "washout": AIF_WASHOUT_PHYSIOLOGIC_CENTER,
+            "upstroke_slope": 1.0,
+        }
+        candidates, scores, metrics_list = self._cluster_inputs(
+            2, 2, metrics, metrics
+        )
+        scores = [0.0] * len(scores)
+
+        selected = AIFDetection._score_and_select_cluster(
+            candidates, scores, metrics_list, (20, 20, 20), tr=4.7618
+        )
+
+        assert selected == ([], [], [])
 
 
 # =============================================================================
@@ -510,21 +623,21 @@ class TestAIFScalingUnitFix:
         assert iface._get_dose_factor() == pytest.approx(0.25)
 
     def test_effective_target_half_dose_vueway_plasma(self) -> None:
-        """Half-dose Vueway: plasma target = (5.0+7.6)/2 × 0.25 / (1-0.42) ≈ 2.716 mM."""
+        """Half-dose Vueway floor = 5.0 × 0.25 / (1-0.42) ≈ 2.155 mM."""
         iface = self._make_interface(
             dose=0.5, agent_standard_dose=0.05, hematocrit=0.42,
         )
-        peak_min, peak_max = iface._get_expected_peak_range()
-        blood_target = (peak_min + peak_max) / 2.0  # 6.3 × 0.25 = 1.575 mM (blood)
+        peak_min, _peak_max = iface._get_expected_peak_range()
+        blood_target = peak_min
         plasma_target = blood_target / (1.0 - 0.42)
-        assert blood_target == pytest.approx(1.575)
-        assert plasma_target == pytest.approx(2.716, rel=1e-3)
+        assert blood_target == pytest.approx(1.25)
+        assert plasma_target == pytest.approx(2.155, rel=1e-3)
 
     def test_hct_zero_is_no_op_on_conversion(self) -> None:
         """Hct=0 → (1-Hct)=1 → plasma conversion is no-op; target equals Parker fallback."""
         hct = 0.0
-        peak_min, peak_max = 5.0, 7.6
-        blood_target = (peak_min + peak_max) / 2.0
+        peak_min = 5.0
+        blood_target = peak_min
         plasma_target = blood_target / (1.0 - hct)
         assert plasma_target == pytest.approx(blood_target)
 
@@ -581,21 +694,15 @@ class TestAIFScalingUnitFix:
         curve = np.zeros(n, dtype=np.float64)
         curve[10:20] = 6.29  # peak in plasma units
 
-        # Replay scaling arithmetic matching the landed code.
-        current_peak = float(np.max(curve))
         hct = float(iface.inputs.hematocrit)
-        plasma_conv = 1.0 / (1.0 - hct)
-        peak_min, peak_max = iface._get_expected_peak_range()
-        target = (peak_min + peak_max) / 2.0 * plasma_conv
-        scaling_factor = target / current_peak
-        scaled = curve * scaling_factor
+        scaled, scaling_factor = _apply_aif_scale(
+            curve, hct, 0.0, iface._get_expected_peak_range,
+        )
 
-        # Expected plasma target: Parker mid (6.3) / (1-0.42) ≈ 10.862 mM.
-        expected_plasma_target = (5.0 + 7.6) / 2.0 / (1.0 - 0.42)
-        assert target == pytest.approx(expected_plasma_target, rel=1e-4)
-        assert float(np.max(scaled)) == pytest.approx(target, rel=1e-4)
-        # scaling_factor ≈ 10.862 / 6.29 ≈ 1.727 — below warning thresholds.
-        assert scaling_factor == pytest.approx(1.727, rel=1e-3)
+        # Expected plasma floor: Parker minimum (5.0) / (1-0.42) ≈ 8.621 mM.
+        expected_plasma_target = 5.0 / (1.0 - 0.42)
+        assert float(np.max(scaled)) == pytest.approx(expected_plasma_target, rel=1e-4)
+        assert scaling_factor == pytest.approx(1.371, rel=1e-3)
         assert scaling_factor <= 3.4  # no low-confidence warning
         assert scaling_factor <= 5.2  # no unreliable warning
 
@@ -663,7 +770,6 @@ class TestTwoPassCascade:
             )
             candidates = _cascade_res.candidates
             scores = _cascade_res.scores
-            metrics_list = _cascade_res.metrics_list
             detection_method = _cascade_res.detection_method
             atlas_tier_used = _cascade_res.atlas_tier_used
             n_attempted = _cascade_res.cascade_tiers_attempted
@@ -718,7 +824,6 @@ class TestTwoPassCascade:
             )
             candidates = _cascade_res.candidates
             scores = _cascade_res.scores
-            metrics_list = _cascade_res.metrics_list
             detection_method = _cascade_res.detection_method
             atlas_tier_used = _cascade_res.atlas_tier_used
             n_attempted = _cascade_res.cascade_tiers_attempted
@@ -766,7 +871,6 @@ class TestTwoPassCascade:
             )
             candidates = _cascade_res.candidates
             scores = _cascade_res.scores
-            metrics_list = _cascade_res.metrics_list
             detection_method = _cascade_res.detection_method
             atlas_tier_used = _cascade_res.atlas_tier_used
             n_attempted = _cascade_res.cascade_tiers_attempted
@@ -958,7 +1062,6 @@ class TestAnchorGateInCascade:
                 tissue_ttp_frame=10.0,
             )
             candidates = _cascade_res.candidates
-            scores = _cascade_res.scores
             detection_method = _cascade_res.detection_method
             atlas_tier_used = _cascade_res.atlas_tier_used
             n_attempted = _cascade_res.cascade_tiers_attempted
@@ -1065,7 +1168,6 @@ class TestAnchorGateInCascade:
                 tissue_ttp_frame=10.0,
             )
             candidates = _cascade_res.candidates
-            scores = _cascade_res.scores
             detection_method = _cascade_res.detection_method
             atlas_tier_used = _cascade_res.atlas_tier_used
             n_attempted = _cascade_res.cascade_tiers_attempted
@@ -1106,7 +1208,6 @@ class TestAnchorGateInCascade:
                 tissue_ttp_frame=10.0,
             )
             candidates = _cascade_res.candidates
-            scores = _cascade_res.scores
             detection_method = _cascade_res.detection_method
             n_attempted = _cascade_res.cascade_tiers_attempted
 
@@ -1795,25 +1896,11 @@ from pmriprep.interfaces.dce_aif import (  # noqa: E402
     GateQC,
     PoolGateOutcome,
     TierResult,
-    _apply_aif_scale,
-    _compute_pool_qc,
-    _count_slabs_spanned,
-    _evaluate_gates,
     _select_worst_for_trim,
     compute_dce_aif_ratio_30s,
 )
 from pmriprep.utils.dce_constants import (  # noqa: E402
-    DCE_AIF_GATE_FWHM_MAX_SECONDS,
-    DCE_AIF_GATE_G6_MIN_VOXELS_BILATERAL,
-    DCE_AIF_GATE_G6_MIN_VOXELS_UNILATERAL,
-    DCE_AIF_GATE_G6_MIN_SLABS_UNILATERAL,
-    DCE_AIF_GATE_LATE_TAIL_RATIO_MAX,
-    DCE_AIF_GATE_MULTIBUMP_MAX,
-    DCE_AIF_GATE_RATIO30_HARD,
-    DCE_AIF_GATE_RATIO30_WARN,
-    DCE_AIF_GATE_SCALE_G6_CEILING,
     DCE_AIF_GATE_SCALE_HARD,
-    DCE_AIF_TAIL_PEAK_FRACTION,
     DCE_AIF_TAIL_SHOULDER_SECONDS,
 )
 
@@ -1888,6 +1975,173 @@ def test_apply_aif_scale_target_peak_explicit():
     expected_target = 6.0 / (1 - 0.42)
     assert sf == pytest.approx(expected_target / 1.0, rel=1e-6)
     assert out.max() == pytest.approx(expected_target, rel=1e-6)
+
+
+def test_apply_aif_scale_explicit_target_can_scale_downward() -> None:
+    """An explicit user target retains two-sided calibration semantics."""
+    curve = np.array([0, 0, 0, 12.0, 6.0, 3.0])
+    out, sf = _apply_aif_scale(
+        curve, hct=0.42, target_peak=6.0,
+        expected_range_fn=lambda: (5.0, 7.6),
+    )
+    expected_target = 6.0 / (1.0 - 0.42)
+    assert sf == pytest.approx(expected_target / 12.0)
+    assert out.max() == pytest.approx(expected_target)
+
+
+def test_apply_aif_scale_default_raises_peak_to_expected_floor() -> None:
+    """Default calibration raises a sub-bound peak only to the lower bound."""
+    curve = np.array([0, 0, 0, 4.0, 2.0, 1.0])
+    out, sf = _apply_aif_scale(
+        curve, hct=0.42, target_peak=0.0,
+        expected_range_fn=lambda: (5.0, 7.6),
+    )
+    expected_floor = 5.0 / (1.0 - 0.42)
+    assert sf == pytest.approx(expected_floor / 4.0)
+    assert out.max() == pytest.approx(expected_floor)
+
+
+def test_disabled_peak_floor_preserves_curve_but_retains_required_factor() -> None:
+    """Disabling mutation does not disable amplitude-adequacy assessment."""
+    curve = np.array([0, 0, 0, 4.0, 2.0, 1.0])
+    result = _resolve_aif_scale(
+        curve,
+        hct=0.42,
+        target_peak=0.0,
+        expected_range_fn=lambda: (5.0, 7.6),
+        apply_peak_floor=False,
+    )
+
+    assert np.array_equal(result.curve, curve)
+    assert result.applied_factor == 1.0
+    assert result.required_factor == pytest.approx((5.0 / 0.58) / 4.0)
+    assert result.mode == "none"
+
+
+def test_explicit_target_overrides_disabled_peak_floor() -> None:
+    """An explicit target remains authoritative when the automatic floor is off."""
+    curve = np.array([0, 0, 0, 4.0, 2.0, 1.0])
+    result = _resolve_aif_scale(
+        curve,
+        hct=0.42,
+        target_peak=6.0,
+        expected_range_fn=lambda: (5.0, 7.6),
+        apply_peak_floor=False,
+    )
+
+    expected_factor = (6.0 / 0.58) / 4.0
+    assert result.applied_factor == pytest.approx(expected_factor)
+    assert result.required_factor == pytest.approx(expected_factor)
+    assert result.curve.max() == pytest.approx(6.0 / 0.58)
+    assert result.mode == "explicit_target"
+
+
+@pytest.mark.parametrize(
+    (
+        "method", "mode", "emitted", "factor", "required",
+        "enabled", "applied", "raw", "policy", "trigger",
+    ),
+    [
+        (
+            "atlas", "upward_floor", 8.0, 2.0, 2.0,
+            True, True, 4.0, "one_sided_lower_bound",
+            "below_expected_minimum",
+        ),
+        (
+            "atlas", "upward_floor", 8.0, 1.0, 1.0,
+            True, False, 8.0, "one_sided_lower_bound", "not_required",
+        ),
+        (
+            "atlas", "none", 4.0, 1.0, 2.0,
+            False, False, 4.0, "disabled", "disabled",
+        ),
+        (
+            "atlas", "explicit_target", 10.0, 0.5, 0.5,
+            True, True, 20.0, "explicit_target", "explicit_target",
+        ),
+        (
+            "population", "population", 7.0, 1.0, 1.0,
+            False, False, None, "not_applicable", "population_aif",
+        ),
+        (
+            "external", "external", 6.0, 1.0, 1.0,
+            False, False, 6.0, "not_applicable", "external_aif",
+        ),
+    ],
+)
+def test_peak_scaling_qc_states(
+    method: str,
+    mode: str,
+    emitted: float,
+    factor: float,
+    required: float,
+    enabled: bool,
+    applied: bool,
+    raw: float | None,
+    policy: str,
+    trigger: str,
+) -> None:
+    """Peak-scaling provenance distinguishes policy, mutation, and source."""
+    qc = _build_peak_scaling_qc(
+        detection_method=method,
+        emitted_peak_mm=emitted,
+        applied_factor=factor,
+        required_factor=required,
+        calibration_mode=mode,
+    )
+    assert qc["peak_scaling_enabled"] is enabled
+    assert qc["peak_scaling_applied"] is applied
+    if raw is None:
+        assert qc["raw_peak_mm"] is None
+    else:
+        assert qc["raw_peak_mm"] == pytest.approx(raw)
+    assert qc["emitted_peak_mm"] == pytest.approx(emitted)
+    assert qc["peak_scaling_factor"] == pytest.approx(factor)
+    assert qc["peak_scaling_required_factor"] == pytest.approx(required)
+    assert qc["peak_scaling_policy"] == policy
+    assert qc["peak_scaling_trigger"] == trigger
+
+
+def test_disabled_floor_keeps_hypothetical_factor_in_gate_decision() -> None:
+    """G1/G6 amplitude QC remains active when curve mutation is disabled."""
+    detector = AIFDetection(aif_peak_floor=False)
+    concentration = np.zeros((4, 4, 4, 20), dtype=np.float64)
+    curve = np.zeros(20, dtype=np.float64)
+    curve[6:11] = np.array([1.0, 2.5, 4.0, 2.0, 0.8])
+    candidates = [(1, 1, 1), (2, 1, 1)]
+    for coord in candidates:
+        concentration[coord] = curve
+
+    outcome = detector._score_and_gate_pool(
+        candidates,
+        [1.0, 1.0],
+        concentration,
+        np.ones((4, 4, 4), dtype=np.uint8),
+        np.eye(4),
+        tr=2.0,
+        baseline_frames=5,
+        hct=0.42,
+        target_peak=0.0,
+        atlas_tier_label="MCA_ACA_dce_strict",
+    )
+
+    assert outcome.scale_factor == 1.0
+    assert outcome.required_scale_factor > 1.0
+    assert outcome.decision["scale_factor"] == pytest.approx(
+        outcome.required_scale_factor
+    )
+
+
+@pytest.mark.parametrize("peak", [5.0 / 0.58, 12.0, 16.0])
+def test_apply_aif_scale_default_preserves_in_band_and_high_peaks(peak: float) -> None:
+    """Default calibration never changes a peak at or above the lower bound."""
+    curve = np.array([0, 0, 0, peak, peak / 2.0, peak / 4.0])
+    out, sf = _apply_aif_scale(
+        curve, hct=0.42, target_peak=0.0,
+        expected_range_fn=lambda: (5.0, 7.6),
+    )
+    assert sf == 1.0
+    assert np.array_equal(out, curve)
 
 
 # ----- Per-gate basic tests -----------------------------------------------
@@ -1980,8 +2234,8 @@ def test_g6_admit_sub08_archetype():
     assert "G1_via_G6" in dec["warns"]
 
 
-def test_g6_reject_sub0081_v1_archetype():
-    """sub-0081 V1 case: dilated tier (G6_f), n=2 unilateral (G6_g), scale 8.83 (G6_a)."""
+def test_g6_reject_sparse_unilateral_archetype():
+    """Reject a dilated-tier, two-voxel unilateral pool with excessive scale."""
     status, _ = _evaluate_gates(scale_factor=8.83, qc=_make_qc(ratio_30=0.41),
                                  atlas_tier="MCA_ACA_dil_dce_strict",
                                  n_voxels=2, hemisphere="unilateral_left",
@@ -2240,18 +2494,18 @@ def test_bump_detector_short_shoulder_excludes_recirculation():
 # ----- Dose / B0 independence -------------------------------------------
 
 def test_g1_dimensionless_against_dose_corrected_target():
-    """Half-dose AIF with proportionally-halved target gives scale ~1.
+    """Half-dose AIF above the proportionally scaled floor is preserved.
 
     Half-dose plasma peak ~5 mM; expected_range halved to (2.5, 3.8)
-    so midpoint = 3.15 mM blood, target = 3.15 / (1 - 0.42) = 5.43 mM
-    plasma. scaling_factor = 5.43 / 5.0 = 1.087 — passes G1 <= 3.
+    so the lower floor is 2.5 / (1 - 0.42) = 4.31 mM plasma. The
+    measured 5 mM peak is preserved and passes G1.
     """
     curve = np.array([0, 0, 0, 5.0, 2.5, 1.25])
     _out, sf = _apply_aif_scale(
         curve, hct=0.42, target_peak=0.0,
         expected_range_fn=lambda: (2.5, 3.8),
     )
-    assert sf == pytest.approx(1.087, abs=0.05)
+    assert sf == 1.0
     assert sf <= DCE_AIF_GATE_SCALE_HARD
 
 
@@ -2946,10 +3200,10 @@ class TestScoreAndGatePool:
         assert outcome.status == status
         assert outcome.decision == decision
 
-    def test_emitted_curve_is_anchored_to_plasma_target(self) -> None:
-        """Emitted curve is amplitude-anchored (the C2 emit invariant).
+    def test_emitted_curve_is_raised_to_plasma_floor(self) -> None:
+        """Emitted sub-bound curve is raised to the plasma floor.
 
-        Its peak lands at the plasma-unit target, not the raw detected peak.
+        Its peak lands at the lower expected plasma bound.
         """
         tr, baseline_frames, hct = 4.0, 5, 0.42
         cands = [(3, 10, 1), (7, 10, 2)]
@@ -2964,8 +3218,8 @@ class TestScoreAndGatePool:
             tr, baseline_frames, hct, 0.0, "MCA_ACA_dce_strict",
         )
 
-        peak_min, peak_max = det._get_expected_peak_range()
-        target = (peak_min + peak_max) / 2.0 / (1.0 - hct)
+        peak_min, _peak_max = det._get_expected_peak_range()
+        target = peak_min / (1.0 - hct)
         assert float(np.max(outcome.curve_scaled)) == pytest.approx(
             target, rel=1e-4,
         )
@@ -2994,8 +3248,8 @@ class TestScoreAndGatePool:
         assert outcome.decision["n_pool"] == 2
         assert outcome.n_slabs == _count_slabs_spanned(subset)
         assert np.all(np.isfinite(outcome.curve_scaled))
-        peak_min, peak_max = det._get_expected_peak_range()
-        target = (peak_min + peak_max) / 2.0 / (1.0 - hct)
+        peak_min, _peak_max = det._get_expected_peak_range()
+        target = peak_min / (1.0 - hct)
         assert float(np.max(outcome.curve_scaled)) == pytest.approx(
             target, rel=1e-4,
         )
@@ -3054,7 +3308,8 @@ class TestC2DivergenceInSitu:
         orig_tier = TierResult(
             candidates=tier_pool, scores=[0.9, 0.8, 0.7],
             metrics=[self._full_metric()] * 3,
-            curve_scaled=np.zeros(40), scale_factor=1.5, qc=_make_qc(),
+            curve_scaled=np.zeros(40), scale_factor=1.5,
+            required_scale_factor=1.5, qc=_make_qc(),
             atlas_tier="MCA_ACA_dce_strict", hemisphere="bilateral",
             n_slabs=2, status="PASS", gate_decisions=[],
         )
@@ -3069,7 +3324,8 @@ class TestC2DivergenceInSitu:
         sentinel_curve = 7.0 * np.exp(-0.5 * ((t - 8.0) / 2.0) ** 2)
         sentinel_curve[:5] = 0.0
         sentinel = PoolGateOutcome(
-            curve_scaled=sentinel_curve, scale_factor=2.5, qc=_make_qc(),
+            curve_scaled=sentinel_curve, scale_factor=2.5,
+            required_scale_factor=2.5, qc=_make_qc(),
             hemisphere="bilateral", n_slabs=2, status="FAIL_G2",
             decision=GateDecision(
                 tier="MCA_ACA_dce_strict", n_pool=2, scale_factor=2.5,

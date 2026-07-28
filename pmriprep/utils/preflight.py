@@ -206,9 +206,9 @@ def validate_dsc_metadata(
             ),
         ))
 
-    # TR
-    tr = sidecar.get("tr")
-    if tr is None:
+    # Volume TR
+    volume_tr = sidecar.get("volume_tr")
+    if volume_tr is None:
         msgs.append(PreflightMessage(
             level="error",
             code="DSC_MISSING_TR",
@@ -217,18 +217,21 @@ def validate_dsc_metadata(
                 "TR is required for deconvolution timestep and CBV integration."
             ),
         ))
-    elif tr <= 0:
+    elif volume_tr <= 0:
         msgs.append(PreflightMessage(
             level="error",
             code="DSC_INVALID_TR",
-            message=f"RepetitionTime={tr:.6f}s is non-positive (physically impossible).",
+            message=(
+                f"RepetitionTime={volume_tr:.6f}s is non-positive "
+                "(physically impossible)."
+            ),
         ))
-    elif tr > 3.0:
+    elif volume_tr > 3.0:
         msgs.append(PreflightMessage(
             level="warning",
             code="DSC_TR_COARSE",
             message=(
-                f"RepetitionTime={tr:.1f}s is unusually long for DSC. "
+                f"RepetitionTime={volume_tr:.1f}s is unusually long for DSC. "
                 f"Typical DSC TR is 1-2s for adequate first-pass bolus sampling."
             ),
         ))
@@ -970,7 +973,7 @@ def run_preflight(
             report.messages.extend(
                 validate_dsc_temporal_sufficiency(
                     session_data.modalities.dsc_n_volumes,
-                    tr=dsc_sidecar.get("tr") if dsc_sidecar else None,
+                    tr=dsc_sidecar.get("volume_tr") if dsc_sidecar else None,
                 )
             )
 
@@ -1013,5 +1016,34 @@ def run_preflight(
                     session_data.modalities.afi_tr2_ms,
                 )
             )
+
+        if dce_config is not None and dce_config.b1_method == "precomputed":
+            if not session_data.modalities.b1_precomputed_file:
+                report.messages.append(PreflightMessage(
+                    level="error",
+                    code="DCE_B1_PRECOMPUTED_MISSING",
+                    message=(
+                        "b1_method='precomputed' was requested, but no supported "
+                        "TB1map/TB1TFL input was discovered for this session. "
+                        "Provide a precomputed B1+ map, choose b1_method='auto', "
+                        "or explicitly disable B1+ correction with 'none'."
+                    ),
+                ))
+        if dce_config is not None and dce_config.b1_method == "afi":
+            if not (
+                session_data.modalities.afi
+                and session_data.modalities.afi_mode == "4d"
+                and session_data.modalities.afi_4d_file
+            ):
+                report.messages.append(PreflightMessage(
+                    level="error",
+                    code="DCE_B1_AFI_MISSING",
+                    message=(
+                        "b1_method='afi' was requested, but no supported 4D "
+                        "TB1AFI input was discovered for this session. Provide "
+                        "a 4D AFI acquisition, choose b1_method='auto', or "
+                        "explicitly disable B1+ correction with 'none'."
+                    ),
+                ))
 
     return report

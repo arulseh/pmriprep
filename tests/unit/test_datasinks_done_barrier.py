@@ -16,9 +16,6 @@ import json
 from pathlib import Path
 
 import networkx as nx
-import nibabel as nib
-import numpy as np
-import pytest
 
 
 def _write_bids(tmp_path: Path) -> Path:
@@ -84,6 +81,7 @@ def test_dsc_done_barrier_includes_resume_checkpoint(tmp_path: Path) -> None:
         bids_dir=str(tmp_path / "bids"),
         subject_id="01",
         session_id="0001",
+        inference="vi",
         present_inputs={"dsc_moco"},
     )
     ancestors = _ancestors_of(wf, "outputnode")

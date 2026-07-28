@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
-from jinja2 import Environment, PackageLoader
+from jinja2 import ChainableUndefined, Environment, PackageLoader
 
 from pmriprep.utils.dce_constants import (
     QC_B1_MEAN_HIGH,
@@ -54,18 +54,13 @@ _DCE_PK_MODEL_TEXT: dict[str, str] = {
 
 # Boilerplate text for T1 mapping methods
 _T1_METHOD_TEXT: dict[str, str] = {
-    "hybrid": (
-        "Baseline T1 was estimated from variable flip angle images using "
-        "hybrid fitting (linearized DESPOT1 with nonlinear refinement for "
-        "ill-conditioned voxels) [@deoni_2003]"
-    ),
     "wlls": (
         "Baseline T1 was estimated from variable flip angle images using "
         "linearized DESPOT1 fitting [@deoni_2003]"
     ),
     "nlls": (
         "Baseline T1 was estimated from variable flip angle images using "
-        "nonlinear least squares fitting"
+        "WLLS-initialized nonlinear least squares fitting"
     ),
     "external": "using a user-supplied T1 map",
     "assumed": "using literature-based T1 (no T1 mapping performed)",
@@ -391,9 +386,8 @@ def _build_dsc_boilerplate(dsc_qc: dict[str, Any]) -> str:
 
     if aif_source == "synthetic":
         sentences.append(
-            "A synthetic population-derived AIF was used, based on "
-            "gamma-variate parameters from the literature "
-            "[@parker_2006; @mouridsen_2006]."
+            "A dose- and field-strength-scaled synthetic gamma-variate AIF "
+            "was used as a fallback [@rulseh_inprep]."
         )
     elif aif_source == "external":
         sentences.append("A user-supplied arterial input function was used.")
@@ -468,7 +462,7 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> str:
     # conversion can follow the T1 mapping it depends on (strict pipeline order).
     if _motion_was_applied(dce_qc):
         sentences.append(
-            "DCE permeability images were motion-corrected using MCFLIRT "
+            "DCE images were motion-corrected using MCFLIRT "
             "[@jenkinson_2002]."
         )
     else:
@@ -480,8 +474,8 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> str:
 
     # T1 mapping
     t1_info = dce_qc.get("t1_mapping", {})
-    t1_method = t1_info.get("method", "hybrid")
-    t1_text = _T1_METHOD_TEXT.get(t1_method, _T1_METHOD_TEXT["hybrid"])
+    t1_method = t1_info.get("method", "nlls")
+    t1_text = _T1_METHOD_TEXT.get(t1_method, _T1_METHOD_TEXT["nlls"])
 
     # B1+ correction
     b1_method = t1_info.get("b1_correction", "none")
@@ -496,18 +490,7 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> str:
         # T1 source stated inline in the concentration sentence (no separate
         # mapping step to order before it).
         t1_correction = t1_info.get("t1_correction", {})
-        tissue_used = (
-            t1_correction.get("tissue_t1_used", False)
-            or t1_info.get("tissue_t1_used", False)
-        )
-        if t1_method == "assumed" and tissue_used:
-            sentences.append(
-                conc + " using a tissue-segmented T1 map constructed "
-                "from WM/GM probability maps with literature T1 values "
-                "(no variable flip angle T1 mapping performed)."
-            )
-        else:
-            sentences.append(conc + f" {t1_text}.")
+        sentences.append(conc + f" {t1_text}.")
     else:
         # Full VFA T1 mapping: describe the mapping first, then the
         # concentration conversion that uses it.
@@ -520,17 +503,11 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> str:
         # T1 correction status
         t1_correction = t1_info.get("t1_correction", {})
         corr_applied = t1_correction.get("correction_applied", "none")
-        if corr_applied == "offset":
+        if corr_applied == "fallback":
             sentences.append(
-                "An offset correction was applied to the T1 map to "
-                "adjust for systematic overestimation."
-            )
-        elif t1_correction.get("tissue_t1_used", False):
-            sentences.append(
-                "Due to poor variable flip angle conditioning, a "
-                "tissue-segmented T1 map constructed from WM/GM probability "
-                "maps using literature T1 values was used for concentration "
-                "conversion."
+                "The measured variable flip angle T1 map did not satisfy "
+                "the acceptance policy; a uniform field-strength literature "
+                "T1 value was used for concentration conversion."
             )
 
         sentences.append(conc + ".")
@@ -555,7 +532,7 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> str:
         sentences.append(
             "The DCE arterial input function was automatically "
             "detected using MRA-atlas-guided candidate selection with "
-            "dose-aware scaling and quality-weighted averaging "
+            "dose-aware candidate assessment and quality-weighted averaging "
             "[@rulseh_inprep]."
         )
 
@@ -577,8 +554,10 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> str:
         if candidates:
             # Format candidate list nicely (citations live in the @key markers)
             model_names = [_DCE_PK_MODEL_TEXT.get(m, m) for m in candidates]
-            if len(model_names) > 1:
+            if len(model_names) > 2:
                 model_list = ", ".join(model_names[:-1]) + f", and {model_names[-1]}"
+            elif len(model_names) == 2:
+                model_list = f"{model_names[0]} and {model_names[1]}"
             else:
                 model_list = model_names[0] if model_names else "available models"
             sentences.append(
@@ -608,7 +587,7 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> str:
     # NAWM normalization
     if dce_qc.get("nawm_normalization", False):
         sentences.append(
-            "Permeability maps (Ktrans, IAUC60) were normalized to "
+            "DCE parameter maps (Ktrans, IAUC60) were normalized to "
             "automatically segmented contralateral normal-appearing "
             "white matter."
         )
@@ -682,7 +661,7 @@ _PIPELINE_FIGURE_KEYS: dict[str, list[str]] = {
 }
 
 # Per-image canonical sidecar paths whose existence proves the pipeline
-# ran. These replace the legacy ``desc-*QC_quality.json`` summary files
+# ran. These are the report-discovery anchors
 # at session root. The aggregator uses them as
 # presence probes AND as the source of QC* recommendation/warnings flat
 # keys. Anat / tumor_seg patterns use ``{prefix}*`` between the bare
@@ -691,9 +670,10 @@ _PIPELINE_FIGURE_KEYS: dict[str, list[str]] = {
 _PIPELINE_PRESENCE_PROBES: dict[str, str] = {
     "anat": "anat/{prefix}*_space-T1w_desc-preproc_T1w.json",
     "tumor_seg": "anat/{prefix}*_space-T1w_desc-tumorseg_dseg.json",
-    # DSC/DCE preproc sidecars use the bare prefix (no run in name).
-    "dsc": "perf/{prefix}_desc-dscPreproc_dsc.json",
-    "dce": "perf/{prefix}_desc-dcePreproc_dce.json",
+    # DSC/DCE retain recognized source entities (for example ``run`` and
+    # ``acq``), so absorb them between the session prefix and descriptor.
+    "dsc": "perf/{prefix}*_desc-dscPreproc_dsc.json",
+    "dce": "perf/{prefix}*_desc-dcePreproc_dce.json",
 }
 
 
@@ -808,12 +788,34 @@ def _collect_pipeline_images(
         Dict mapping image key to relative path string
         (e.g. ``figures/sub-01_ses-01_desc-brainmask_dsc.png``).
     """
+    prefix_parts = [f"sub-{subject_id}"]
+    if session_id:
+        prefix_parts.append(f"ses-{session_id}")
+    prefix = "_".join(prefix_parts)
+
     images: dict[str, str] = {}
     for key in _PIPELINE_FIGURE_KEYS.get(pipeline, []):
         fname = figure_filename(subject_id, session_id, key, pipeline)
         fpath = figures_dir / fname
         if fpath.exists():
             images[key] = f"figures/{fname}"
+            continue
+
+        # Perfusion figures retain source entities (for example acq, ce,
+        # rec, and run) between the subject/session prefix and desc. Keep
+        # accepting the historical entity-free name above, then discover
+        # the entity-rich form by its exact desc/suffix tail.
+        tail = fname[len(prefix):]
+        matches = sorted(figures_dir.glob(f"{prefix}*{tail}"))
+        if matches:
+            if len(matches) > 1:
+                logger.warning(
+                    "Multiple %s QC figures match %s; using %s",
+                    pipeline,
+                    key,
+                    matches[0].name,
+                )
+            images[key] = f"figures/{matches[0].name}"
     return images
 
 
@@ -914,8 +916,31 @@ def _read_json_safe(path: Path) -> dict[str, Any]:
         return {}
 
 
+def _drop_report_nulls(value: Any) -> Any:
+    """Treat null mapping values as unavailable report fields.
+
+    Report templates use ``is defined`` to decide whether optional metrics
+    should be formatted. JSON ``null`` represents the same unavailable state
+    but remains defined to Jinja, causing numeric filters and arithmetic to
+    fail. Remove null mapping entries recursively while preserving false,
+    zero, empty containers, and list positions.
+    """
+    if isinstance(value, dict):
+        return {
+            key: _drop_report_nulls(item)
+            for key, item in value.items()
+            if item is not None
+        }
+    if isinstance(value, list):
+        return [
+            None if item is None else _drop_report_nulls(item)
+            for item in value
+        ]
+    return value
+
+
 def _qc_keys_from_anchor(anchor: dict[str, Any]) -> dict[str, Any]:
-    """Translate flat ``QC*`` recommendation/warnings keys to legacy nested.
+    """Translate flat ``QC*`` recommendation/warning keys to report structure.
 
     The canonical anchor sidecars carry ``recommendation``, ``warnings``,
     ``provenance_warnings``, ``acquisition_warnings``, and
@@ -950,7 +975,7 @@ def _qc_keys_from_anchor(anchor: dict[str, Any]) -> dict[str, Any]:
 def _load_pipeline_sidecars(
     ses_dir: Path, prefix: str, pipeline: str,
 ) -> dict[str, Any]:
-    """Build the legacy ``qc_metrics`` nested shape from per-image sidecars.
+    """Build the report ``qc_metrics`` structure from per-image sidecars.
 
     Composes the QC summary from the canonical per-image sidecars. The
     nested dict is assembled from:
@@ -1120,8 +1145,7 @@ def _compute_overall_recommendation(
         Overall recommendation dict, or None if no recommendations exist.
     """
     severity = {"include": 0, "review": 1, "exclude": 2}
-    worst_action = "include"
-    reasons: list[str] = []
+    recommendations: list[tuple[str, str, str]] = []
 
     for name, data in pipeline_data.items():
         if data is None:
@@ -1129,13 +1153,23 @@ def _compute_overall_recommendation(
         rec = data.get("qc_metrics", {}).get("recommendation")
         if rec:
             action = rec.get("action", "review")
-            if severity.get(action, 1) > severity.get(worst_action, 0):
-                worst_action = action
-            reasons.append(f"{name.upper()}: {rec.get('reason', '')}")
+            recommendations.append((name, action, str(rec.get("reason", ""))))
 
-    if not reasons:
+    if not recommendations:
         return None
-    return {"action": worst_action, "reason": "; ".join(reasons)}
+    worst_action = max(
+        (action for _, action, _ in recommendations),
+        key=lambda action: severity.get(action, 1),
+    )
+    if worst_action == "include":
+        reason = "No evaluated pipeline QC criterion requires review"
+    else:
+        reason = "; ".join(
+            f"{name.upper()}: {text}"
+            for name, action, text in recommendations
+            if severity.get(action, 1) > 0
+        )
+    return {"action": worst_action, "reason": reason}
 
 
 def _collect_all_warnings(
@@ -1352,7 +1386,9 @@ def generate_unified_report(
             pipeline_data[pipeline_name] = None
             continue
 
-        qc_metrics = _load_pipeline_sidecars(ses_path, prefix, pipeline_name)
+        qc_metrics = _drop_report_nulls(
+            _load_pipeline_sidecars(ses_path, prefix, pipeline_name),
+        )
         images = _collect_pipeline_images(
             subject_id, session_id, pipeline_name, fig_path,
         )
@@ -1481,7 +1517,10 @@ def generate_unified_report(
     }
 
     # Render template
-    env = Environment(loader=PackageLoader("pmriprep", "templates"))
+    env = Environment(
+        loader=PackageLoader("pmriprep", "templates"),
+        undefined=ChainableUndefined,
+    )
     template = env.get_template("report_unified.html")
     html = template.render(**context)
 
@@ -1490,7 +1529,7 @@ def generate_unified_report(
     with open(output_path, "w") as f:
         f.write(html)
 
-    # Clean up legacy per-pipeline HTML reports at the derivatives root
+    # Remove superseded per-pipeline HTML reports at the derivatives root.
     if session_id:
         legacy_dir = ses_path.parent.parent  # sub-XX -> pmriprep/
     else:
@@ -1503,6 +1542,6 @@ def generate_unified_report(
         legacy_path = legacy_dir / legacy_name
         if legacy_path.exists():
             legacy_path.unlink()
-            logger.info("Removed legacy report: %s", legacy_path)
+            logger.info("Removed superseded report: %s", legacy_path)
 
     return output_path

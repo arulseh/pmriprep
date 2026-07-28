@@ -15,7 +15,6 @@ from pmriprep.utils.dsc_signal import (
     normalize_cbv,
     signal_to_concentration,
 )
-from pmriprep.utils.dsc_constants import EPSILON_SIGNAL
 
 
 class TestSignalToConcentration:
@@ -153,7 +152,7 @@ class TestComputePSR:
 
 
 class TestComputePSRLegacy:
-    """Tests for compute_psr_legacy (perf-plus compatible)."""
+    """Tests for the legacy post-baseline PSR definition."""
 
     def test_1d_post_baseline_smin(self) -> None:
         """Legacy uses S_min from post-baseline only."""
@@ -193,7 +192,7 @@ class TestComputePeakHeight:
 
 
 class TestComputePeakHeightLegacy:
-    """Tests for compute_peak_height_legacy (perf-plus compatible)."""
+    """Tests for the legacy post-baseline peak-height definition."""
 
     def test_1d_post_baseline_smin(self) -> None:
         """Legacy uses S_min from post-baseline frames only."""
@@ -283,6 +282,50 @@ class TestNormalizeCBV:
 
         assert factor == 1.0
         np.testing.assert_array_equal(ncbv, cbv)
+
+    def test_zero_background_remains_zero(self) -> None:
+        """NAWM normalization preserves a zero-valued image background."""
+        cbv = np.zeros((5, 5, 5), dtype=np.float64)
+        cbv[1:4, 1:4, 1:4] = 4.0
+        nawm_mask = np.zeros_like(cbv, dtype=bool)
+        nawm_mask[2, 2, 2] = True
+
+        ncbv = normalize_cbv(cbv, nawm_mask=nawm_mask)
+
+        np.testing.assert_array_equal(ncbv[cbv == 0], 0.0)
+        np.testing.assert_array_equal(ncbv[cbv > 0], 1.0)
+
+    def test_nawm_reference_uses_only_finite_positive_values(self) -> None:
+        """Signed residuals and nonfinite sentinels cannot bias the median."""
+        cbv = np.array(
+            [-2.0, 0.0, np.nan, np.inf, 2.0, 4.0],
+            dtype=np.float64,
+        ).reshape((2, 3, 1))
+        nawm_mask = np.ones_like(cbv, dtype=bool)
+
+        _, factor = normalize_cbv(
+            cbv,
+            nawm_mask=nawm_mask,
+            return_normalization_factor=True,
+        )
+
+        assert factor == pytest.approx(3.0)
+
+    def test_brain_fallback_uses_only_finite_positive_values(self) -> None:
+        """Whole-brain fallback applies the same reference admission rule."""
+        cbv = np.array(
+            [-1.0, np.nan, np.inf, 2.0, 6.0],
+            dtype=np.float64,
+        ).reshape((5, 1, 1))
+        brain_mask = np.ones_like(cbv, dtype=bool)
+
+        _, factor = normalize_cbv(
+            cbv,
+            brain_mask=brain_mask,
+            return_normalization_factor=True,
+        )
+
+        assert factor == pytest.approx(4.0)
 
 
 class TestGetBaselineSignal:

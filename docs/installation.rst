@@ -3,8 +3,8 @@ Installation
 
 .. include:: links.rst
 
-PMRIPrep is distributed as a Docker_ / Apptainer_ container image (recommended) and as a
-Python package on PyPI.
+PMRIPrep is distributed as a Docker_ / Apptainer_ container image (recommended) and can
+also be installed from source for development.
 
 Docker (recommended)
 --------------------
@@ -40,19 +40,32 @@ Apptainer
 TemplateFlow templates are pre-populated at ``/opt/templateflow`` inside the image, so no
 extra bind mounts are needed.
 
-pip (development)
------------------
+Source installation (development)
+---------------------------------
 
 .. code-block:: bash
 
-   pip install pmriprep
+   git clone https://github.com/arulseh/pmriprep.git
+   cd pmriprep
+   python -m pip install .
 
-Requires FSL_ and ANTs_ on ``$PATH``; see the ``Dockerfile`` for the full system
-dependency list.
+Source installations are tested on Python 3.10, 3.11, and 3.12 and require FSL_
+and ANTs_ on ``$PATH``. Newer Python versions are not yet part of the release test
+matrix. The container currently uses Python 3.10; see the ``Dockerfile`` for the
+full system dependency list. The default anatomical configuration also requires
+HD-BET; select ANTs brain extraction when HD-BET is not installed. HD-GLIO is an
+optional external dependency for source installations.
 
 System requirements
 -------------------
 
-The pipeline runs on a single core with no strict minimums. Recommended for practical use:
-4+ CPU cores, 8+ GB RAM, and roughly 2 GB of working-directory disk per subject. A GPU is
-optional and used only for brain extraction (HD-BET) and tumor segmentation (HD-GLIO).
+Resource use depends on image dimensions, time points, enabled pipelines, inference method,
+and segmentation tools; no universal RAM, disk, or runtime minimum has been validated. Run
+one representative subject first and size batch jobs from its measured peak memory and work
+directory use. The work directory can be substantially larger than the final derivatives,
+so local scratch storage is recommended. Keep it until processing and report generation have
+completed successfully.
+
+A GPU is optional and used only for brain extraction (HD-BET) and tumor segmentation
+(HD-GLIO). Runtime and memory concurrency scale with ``--nprocs`` and
+``--omp-nthreads``.

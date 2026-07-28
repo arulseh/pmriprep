@@ -122,7 +122,6 @@ class TestBatchedCPIForward:
         aif, tp = dsc_aif_and_time
         dt = tp[1] - tp[0]
         n_cp = 7
-        t_span = 30.0  # production config: covers ~3x max physiological MTT
         model = CPIModel(
             n_control_points=n_cp,
             n_acquisition_frames=int(len(tp)),
@@ -224,6 +223,17 @@ class TestBatchedDSCVIFit:
         assert result.fitted_curves is not None
         assert result.fitted_curves.shape == (5, len(tp))
         assert "noise_std" in result.uncertainties
+        assert "cbf" in result.credible_interval_lower
+        assert "cbf" in result.credible_interval_upper
+        symmetric_lower = np.maximum(
+            result.params["cbf"] - 1.96 * result.uncertainties["cbf"], 0.0
+        )
+        assert not np.allclose(
+            result.credible_interval_lower["cbf"],
+            symmetric_lower,
+            rtol=1e-10,
+            atol=1e-12,
+        )
 
     def test_empty_input(self, dsc_aif_and_time):
         """Handles zero voxels gracefully."""
@@ -253,6 +263,32 @@ class TestBatchedDSCVIFit:
         )
         assert result.n_iterations <= 8
 
+    def test_fractional_weights_reduce_effective_information(
+        self, dsc_aif_and_time
+    ):
+        """Uniform half-weights widen batched DSC VI CBF uncertainty."""
+        aif, tp = dsc_aif_and_time
+        means, stds, transforms, ubs, names, bounds = self._get_vascular_prior_info()
+        tissue = batched_vascular_forward(
+            np.full(5, 0.06), np.full(5, 3.0), np.full(5, 2.0),
+            np.full(5, 1.0), aif, tp,
+        )
+
+        full = batched_dsc_vi_fit(
+            "vascular", tissue, aif, tp,
+            means, stds, transforms, ubs, names, bounds,
+            weights=np.ones(len(tp)),
+        )
+        half = batched_dsc_vi_fit(
+            "vascular", tissue, aif, tp,
+            means, stds, transforms, ubs, names, bounds,
+            weights=np.full(len(tp), 0.5),
+        )
+
+        assert np.median(half.uncertainties["cbf"]) > np.median(
+            full.uncertainties["cbf"]
+        )
+
 
 class TestBatchedCPIVIFit:
     """Tests for CPI batched VI fitting."""
@@ -266,7 +302,6 @@ class TestBatchedCPIVIFit:
 
         dt = tp[1] - tp[0]
         n_cp = 7
-        t_span = 30.0  # production config: covers ~3x max physiological MTT
         model = CPIModel(
             n_control_points=n_cp,
             n_acquisition_frames=int(len(tp)),
@@ -430,6 +465,32 @@ class TestBatchedDSCVICPUConsistency:
         np.testing.assert_allclose(
             batched_cbf, cpu_cbf, rtol=5e-3,
             err_msg=f"CBF: batched={batched_cbf:.6f} CPU={cpu_cbf:.6f}",
+        )
+
+    def test_vascular_nlls_and_vi_share_model_parameterization(
+        self,
+        dsc_aif_and_time: tuple[np.ndarray, np.ndarray],
+    ) -> None:
+        """Vascular NLLS and VI return the same model-space parameter names."""
+        from pmriprep.models.dsc import VascularModel, fit_dsc_model
+
+        aif, tp = dsc_aif_and_time
+        tissue = batched_vascular_forward(
+            np.array([0.06]), np.array([3.0]), np.array([2.0]),
+            np.array([1.5]), aif, tp,
+        )[0]
+
+        nlls = fit_dsc_model(
+            VascularModel(), tissue, aif, tp, method="nlls"
+        )
+        vi = fit_dsc_model(
+            VascularModel(), tissue, aif, tp, method="vi", sloppy=True
+        )
+
+        assert nlls.parameters.keys() == vi.parameters.keys()
+        assert nlls.parameters["cbf"] == pytest.approx(0.06, rel=0.02)
+        assert nlls.parameters["alpha"] * nlls.parameters["beta"] == (
+            pytest.approx(6.0, rel=0.03)
         )
 
 
@@ -646,6 +707,8 @@ class TestBatchedDSCMAPFit:
         assert result.fitted_curves.shape == (5, len(tp))
         assert "noise_std" in result.uncertainties
         assert "cbf" in result.uncertainties
+        assert "cbf" in result.credible_interval_lower
+        assert "cbf" in result.credible_interval_upper
 
     def test_empty_input(self, dsc_aif_and_time):
         """Handles zero voxels gracefully."""
@@ -1014,7 +1077,6 @@ class TestBatchedFitParallel:
         """When n_voxels < parallel_chunk_min, no ProcessPoolExecutor is created
         even if nprocs > 1 — short-circuit avoids worker-spawn overhead.
         """
-        import pmriprep.models.dsc.batched_fitting as bf_mod
 
         sentinel = {"called": False}
 
@@ -1320,6 +1382,96 @@ class TestCPIPCHIPConsistency:
     so it cannot silently widen.
     """
 
+    def test_readout_does_not_claim_cbv_uncertainty_without_covariance(
+        self, dsc_aif_and_time
+    ):
+        """CPI marginal errors cannot define uncertainty of integrated CBV."""
+        import types
+
+        from pmriprep.interfaces.dsc_compute import ComputeDSCMaps
+
+        _aif, tp = dsc_aif_and_time
+        dt = float(tp[1] - tp[0])
+        n_cp = 6
+        model = CPIModel(
+            n_control_points=n_cp, n_acquisition_frames=len(tp), dt=dt,
+        )
+        names = model.get_parameter_names()
+        params = np.array([[0.1] + [0.8] * n_cp])
+        result = types.SimpleNamespace(
+            params={name: params[:, j] for j, name in enumerate(names)},
+            uncertainties={"cbf": np.array([0.01])},
+            r_squared=np.ones(1),
+            converged=np.ones(1, dtype=bool),
+        )
+        mask_coords = (
+            np.zeros(1, dtype=int),
+            np.zeros(1, dtype=int),
+            np.zeros(1, dtype=int),
+        )
+
+        out = ComputeDSCMaps._batched_result_to_voxel_dicts(
+            None,
+            result,
+            mask_coords,
+            "cpi",
+            1,
+            dt,
+            model.control_point_times,
+            tp,
+            model.terminal_time,
+        )[0]
+
+        assert out["cbf_std"] == pytest.approx(0.01)
+        assert "cbv_std" not in out
+        assert "cbv_ci95_lower" not in out
+        assert "cbv_ci95_upper" not in out
+
+    def test_vascular_readout_does_not_assume_cbf_mtt_independence(
+        self, dsc_aif_and_time
+    ):
+        """Marginal CBF/MTT errors cannot define vascular CBV uncertainty."""
+        import types
+
+        from pmriprep.interfaces.dsc_compute import ComputeDSCMaps
+
+        _aif, tp = dsc_aif_and_time
+        result = types.SimpleNamespace(
+            params={
+                "cbf": np.array([0.1]),
+                "mtt": np.array([6.0]),
+                "alpha": np.array([3.0]),
+                "delay": np.array([0.0]),
+            },
+            uncertainties={
+                "cbf": np.array([0.01]),
+                "mtt": np.array([0.5]),
+            },
+            r_squared=np.ones(1),
+            converged=np.ones(1, dtype=bool),
+        )
+        mask_coords = (
+            np.zeros(1, dtype=int),
+            np.zeros(1, dtype=int),
+            np.zeros(1, dtype=int),
+        )
+
+        out = ComputeDSCMaps._batched_result_to_voxel_dicts(
+            None,
+            result,
+            mask_coords,
+            "vascular",
+            1,
+            float(tp[1] - tp[0]),
+            None,
+            tp,
+        )[0]
+
+        assert out["cbf_std"] == pytest.approx(0.01)
+        assert "cbv_std" not in out
+        assert "cbv_ci95_lower" not in out
+        assert "cbv_ci95_upper" not in out
+
     @pytest.mark.parametrize("infer_cpt", [False, True])
     def test_scalar_vs_batched_residue_within_gap(self, dsc_aif_and_time, infer_cpt):
         aif, tp = dsc_aif_and_time
@@ -1392,4 +1544,3 @@ class TestPostHocDelayShiftParity:
         for i in range(2):
             ref = _ref_scalar_delay_shift(conv[i], delay, dt)
             np.testing.assert_allclose(batched[i], ref, atol=1e-12)
-

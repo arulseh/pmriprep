@@ -19,8 +19,8 @@ def base_sidecar() -> dict[str, Any]:
     return {
         "Description": "Volume transfer constant (1/min)",
         "Units": "1/min",
-        "SpatialReference": "bids::pmriprep/sub-X/perf/sub-X_desc-dceMean_stat.nii.gz",
-        "KtransConvention": "plasma_Tofts1999",
+        "SpatialReference": "bids::sub-X/perf/sub-X_desc-dceMean_stat.nii.gz",
+        "InputFunctionCompartment": "plasma",
     }
 
 
@@ -97,20 +97,44 @@ class TestLesionFragment:
 
 
 class TestPKMapKeyDriftGuard:
-    """Regression: every entry in _PK_MAPS must have a _PK_MAP_KEY mapping.
+    """Regression: every typed PK-map entry must carry its enrichment key.
 
-    Otherwise a new PK map would silently emit ``map_key=""`` from the
-    sink wiring (see workflows/dce/datasinks.py:_add_dce_pk_map_sink).
+    Otherwise a new PK map could silently emit ``map_key=""`` from the sink
+    wiring (see workflows/dce/datasinks.py:_add_dce_pk_map_sink).
     """
 
     def test_pk_map_key_covers_all_pk_maps(self) -> None:
-        from pmriprep.workflows.dce.datasinks import _PK_MAP_KEY, _PK_MAPS
+        from pmriprep.workflows.dce.datasinks import _PK_MAPS
 
-        pk_in_attrs = {entry[0] for entry in _PK_MAPS}
-        assert set(_PK_MAP_KEY) == pk_in_attrs, (
-            f"_PK_MAP_KEY drift: missing {pk_in_attrs - set(_PK_MAP_KEY)}; "
-            f"extra {set(_PK_MAP_KEY) - pk_in_attrs}"
+        assert {spec.in_attr: spec.map_key for spec in _PK_MAPS} == {
+            "ktrans_map": "ktrans",
+            "ve_map": "ve",
+            "kep_map": "kep",
+            "vp_map": "vp",
+            "fp_map": "fp",
+            "ps_map": "ps",
+            "e_map": "e",
+        }
+
+    def test_all_pk_output_keys_are_registered_for_aif_provenance(self) -> None:
+        """Every PK-family sink key must survive strict AIF stamping."""
+        from pmriprep.utils.aif_provenance import DCE_POPULATION_AIF_USAGE
+        from pmriprep.workflows.dce.datasinks import (
+            _CV_MAPS,
+            _PK_MAPS,
         )
+
+        emitted = {
+            spec.map_key
+            for table in (_PK_MAPS, _CV_MAPS)
+            for spec in table
+        }
+        assert emitted <= DCE_POPULATION_AIF_USAGE.keys()
+
+        for key in ("fp", "ps", "e"):
+            assert DCE_POPULATION_AIF_USAGE[key] == "ratio_defensible"
+        for key in ("fp_cv", "ps_cv"):
+            assert DCE_POPULATION_AIF_USAGE[key] == "safe"
 
 
 class TestBATCorrectionProvenance:
@@ -148,13 +172,34 @@ class TestBATCorrectionProvenance:
         assert "BATCorrection" not in out.get("PerfusionProcessing", {})
 
 
+class TestInferenceFallbackProvenance:
+    """Bayesian-to-NLLS fallback accounting reaches every PK-map sidecar."""
+
+    def test_surfaces_from_merged_pipeline_qc(
+        self, base_sidecar, pk_qc_metrics,
+    ) -> None:
+        fallback = {
+            "requested_inference": "vi",
+            "fallback_inference": "nlls",
+            "n_retained_voxels": 100,
+            "n_nlls_fallback": 4,
+            "fallback_fraction_of_retained": 0.04,
+        }
+        pk_qc_metrics["pk_modeling"]["inference_fallback"] = fallback
+
+        out = enrich_dce_pk_map_sidecar(
+            dict(base_sidecar), qc_metrics=pk_qc_metrics, map_key="ve",
+        )
+
+        assert out["PerfusionProcessing"]["InferenceFallback"] == fallback
+
+
 class TestEmptyInputs:
     def test_no_qc_metrics(self, base_sidecar):
         out = enrich_dce_pk_map_sidecar(
             dict(base_sidecar), qc_metrics=None, map_key="ktrans",
         )
-        assert all(not k.startswith("PK") for k in out
-                   if k not in {"KtransConvention",})
+        assert all(not k.startswith("PK") for k in out)
 
     def test_no_qc_with_lesion(self, base_sidecar):
         fragment = {"Regions": {"X": {"voxel_count": 1, "stats": {}}}}
