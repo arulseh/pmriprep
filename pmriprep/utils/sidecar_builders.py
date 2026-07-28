@@ -963,6 +963,19 @@ def build_dsc_map_sidecar(
         ref_n = qc_metrics.get("firstpass_reference_n")
         if ref_n is not None:
             sidecar["FirstPassReferenceVoxelCount"] = int(ref_n)
+        perfusion = sidecar.get("PerfusionProcessing")
+        if ref is not None:
+            firstpass_normalization: Dict[str, Any] = {
+                "tissue": "whole-WM FAST",
+                "method": "median_first_pass_area",
+                "reference": str(ref),
+            }
+            if ref_n is not None:
+                firstpass_normalization["voxel_count"] = int(ref_n)
+            sidecar["PerfusionProcessing"] = {
+                **(perfusion if isinstance(perfusion, dict) else {}),
+                "NormalizationReference": firstpass_normalization,
+            }
         unfit = qc_metrics.get("firstpass_unfittable_fraction")
         if unfit is not None:
             sidecar["FirstPassUnfittableFraction"] = float(unfit)

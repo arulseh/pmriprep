@@ -310,6 +310,7 @@ def test_first_pass_sidecar_disclosures(tmp_path):
         "firstpass_reference_n": 1234,
         "firstpass_unfittable_fraction": 0.18,
         "firstpass_prefit_fwhm_mm": 5.0,
+        "normalization_factor": 0.1497,
     }
     wf.run()
 
@@ -328,6 +329,14 @@ def test_first_pass_sidecar_disclosures(tmp_path):
     assert sc["FirstPassReferenceVoxelCount"] == 1234
     assert sc["FirstPassUnfittableFraction"] == 0.18
     assert sc["FirstPassPreSmoothingFWHMmm"] == 5.0
+    nested_ref = sc["PerfusionProcessing"]["NormalizationReference"]
+    assert nested_ref == {
+        "tissue": "whole-WM FAST",
+        "method": "median_first_pass_area",
+        "reference": "firstpass-WM-FAST",
+        "voxel_count": 1234,
+    }
+    assert "cbv_factor" not in nested_ref
     # Removed keys must not resurface.
     assert "FirstPassFallbackFraction" not in sc
     assert "FirstPassLowConfidence" not in sc
@@ -339,6 +348,38 @@ def test_first_pass_sidecar_disclosures(tmp_path):
     assert "intact" in sc["ConcentrationInput"].lower()
     assert "none" in sc["AbsoluteCalibration"].lower()
     assert sc["Units"] == "arbitrary"
+
+
+def test_first_pass_sidecar_replaces_inherited_normalization_without_mutation():
+    """First-pass provenance must not alter the base used by other DSC maps."""
+    from pmriprep.utils.sidecar_builders import build_dsc_map_sidecar
+
+    base = {
+        "PerfusionProcessing": {
+            "QuantificationMode": "relative",
+            "NormalizationReference": {"tissue": "NAWM", "cbv_factor": 0.1497},
+        }
+    }
+    sidecar = build_dsc_map_sidecar(
+        base=base,
+        description="First-pass CBV",
+        map_key="cbv_firstpass",
+        qc_metrics={
+            "firstpass_reference": "firstpass-WM-FAST",
+            "firstpass_reference_n": 1234,
+        },
+    )
+
+    assert sidecar["PerfusionProcessing"]["NormalizationReference"] == {
+        "tissue": "whole-WM FAST",
+        "method": "median_first_pass_area",
+        "reference": "firstpass-WM-FAST",
+        "voxel_count": 1234,
+    }
+    assert base["PerfusionProcessing"]["NormalizationReference"] == {
+        "tissue": "NAWM",
+        "cbv_factor": 0.1497,
+    }
 
 
 def test_first_pass_nii_written(tmp_path):
