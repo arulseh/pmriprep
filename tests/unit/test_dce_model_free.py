@@ -429,6 +429,31 @@ class TestTimeToPeak:
         expected_s = peak_frame * tr_s
         assert np.allclose(result, expected_s)
 
+    @pytest.mark.parametrize(
+        "curve",
+        [
+            np.zeros(8, dtype=np.float64),
+            -np.arange(8, dtype=np.float64),
+            np.array([0.0, 0.1, np.nan, 0.4, 0.2, 0.1, 0.0, 0.0]),
+        ],
+        ids=["flat", "nonpositive", "nonfinite"],
+    )
+    def test_undefined_curve_returns_nan(self, curve: np.ndarray) -> None:
+        """Invalid or non-enhancing curves must not produce plausible TTP."""
+        time_points = np.arange(curve.size, dtype=np.float64) * 5.0 / 60.0
+        result = compute_time_to_peak(curve.reshape(1, 1, 1, -1), time_points)
+        assert np.isnan(result[0, 0, 0])
+
+    def test_mixed_voxel_validity(self) -> None:
+        """An invalid voxel does not prevent a valid voxel from being mapped."""
+        time_points = np.arange(6, dtype=np.float64) * 4.0 / 60.0
+        concentration = np.zeros((2, 1, 1, 6), dtype=np.float64)
+        concentration[0, 0, 0, 3] = 0.5
+        concentration[1, 0, 0, 2] = np.nan
+        result = compute_time_to_peak(concentration, time_points)
+        assert result[0, 0, 0] == pytest.approx(12.0)
+        assert np.isnan(result[1, 0, 0])
+
 
 class TestSER:
     """Tests for compute_signal_enhancement_ratio."""

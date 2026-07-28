@@ -12,6 +12,8 @@ import numpy as np
 import numpy.typing as npt
 from scipy.signal import savgol_filter
 
+from pmriprep.utils.dce_constants import MIN_ENHANCEMENT_MM
+
 logger = logging.getLogger(__name__)
 
 # Signal below this is dead/background (air, outside FOV).
@@ -118,11 +120,17 @@ def compute_time_to_peak(
     Returns
     -------
     numpy.ndarray
-        3D time-to-peak map in seconds.
+        3D acquisition-referenced time-to-peak map in seconds. Voxels with
+        non-finite samples or no positive enhancement are NaN.
     """
-    peak_indices = np.argmax(concentration, axis=-1)
+    valid = (
+        np.all(np.isfinite(concentration), axis=-1)
+        & (np.max(concentration, axis=-1) > MIN_ENHANCEMENT_MM)
+    )
+    finite_concentration = np.where(np.isfinite(concentration), concentration, -np.inf)
+    peak_indices = np.argmax(finite_concentration, axis=-1)
     ttp_minutes = time_points[peak_indices]
-    return ttp_minutes * 60.0  # type: ignore[no-any-return]
+    return np.where(valid, ttp_minutes * 60.0, np.nan)  # type: ignore[no-any-return]
 
 
 def compute_signal_enhancement_ratio(
