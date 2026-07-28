@@ -1442,6 +1442,7 @@ class _DCEModelFreeMaps(NamedTuple):
     wash_out_slope: npt.NDArray[Any]
     bolus_arrival_time: npt.NDArray[Any]
     curve_type: npt.NDArray[Any]
+    iauc_qc: dict[str, Any]
 
 
 class _DCEMotionWeighting(NamedTuple):
@@ -3371,6 +3372,43 @@ class ComputeDCEMaps(BaseInterface):
 
         concentration = prepared.concentration
         time_points = prepared.time_points
+        detected_bolus_frame: Optional[int] = None
+        if isdefined(self.inputs.bolus_arrival_frame):
+            detected_bolus_frame = int(self.inputs.bolus_arrival_frame)
+        iauc_reference_frame = prepared.baseline_frames
+        if detected_bolus_frame is not None:
+            iauc_reference_frame = min(iauc_reference_frame, detected_bolus_frame)
+        reference_time_s = float(time_points[iauc_reference_frame] * 60.0)
+        available_duration_s = float(
+            (time_points[-1] - time_points[iauc_reference_frame]) * 60.0
+        )
+        iauc_windows: dict[str, Any] = {}
+        for cutoff_s in (60.0, 90.0, 120.0):
+            complete = available_duration_s + 6e-8 >= cutoff_s
+            endpoint_min = time_points[iauc_reference_frame] + cutoff_s / 60.0
+            interpolated = complete and not np.any(
+                np.isclose(time_points, endpoint_min, rtol=0.0, atol=1e-9)
+            )
+            iauc_windows[str(int(cutoff_s))] = {
+                "requested_duration_s": cutoff_s,
+                "complete": bool(complete),
+                "cutoff_interpolated": bool(interpolated),
+            }
+            if not complete:
+                logger.warning(
+                    "IAUC%d unavailable: %.3f s acquired after reference frame %d",
+                    int(cutoff_s), available_duration_s, iauc_reference_frame,
+                )
+        iauc_qc = {
+            "reference_frame": iauc_reference_frame,
+            "reference_time_s": reference_time_s,
+            "configured_baseline_frames": int(self.inputs.baseline_frames),
+            "effective_baseline_frames": prepared.baseline_frames,
+            "detected_bolus_arrival_frame": detected_bolus_frame,
+            "reference_selection": "earlier_of_baseline_count_and_detected_arrival",
+            "available_post_reference_duration_s": available_duration_s,
+            "windows": iauc_windows,
+        }
         volume_tr_s: Optional[float] = (
             float(self.inputs.volume_tr)
             if isdefined(self.inputs.volume_tr) and self.inputs.volume_tr is not None
@@ -3398,9 +3436,18 @@ class ComputeDCEMaps(BaseInterface):
                 min_peak_enhancement_percent=float(self.inputs.ser_min_peak_enhancement),
             )
         return _DCEModelFreeMaps(
-            compute_iauc(concentration, time_points, cutoff_s=60.0),
-            compute_iauc(concentration, time_points, cutoff_s=90.0),
-            compute_iauc(concentration, time_points, cutoff_s=120.0),
+            compute_iauc(
+                concentration, time_points, cutoff_s=60.0,
+                bolus_arrival_frame=iauc_reference_frame,
+            ),
+            compute_iauc(
+                concentration, time_points, cutoff_s=90.0,
+                bolus_arrival_frame=iauc_reference_frame,
+            ),
+            compute_iauc(
+                concentration, time_points, cutoff_s=120.0,
+                bolus_arrival_frame=iauc_reference_frame,
+            ),
             prepared.peak_enhancement,
             compute_time_to_peak(concentration, time_points),
             ser,
@@ -3422,6 +3469,7 @@ class ComputeDCEMaps(BaseInterface):
                 brain_mask=prepared.mask,
             ),
             compute_curve_type(ser),
+            iauc_qc,
         )
 
     def _prepare_motion_weighting(
@@ -3687,6 +3735,7 @@ class ComputeDCEMaps(BaseInterface):
             bat_correction,
             self._MAX_VOLUME_TR_2CXM,
         )
+        qc_metrics["iauc"] = model_free.iauc_qc
 
         motion = self._prepare_motion_weighting(header, n_timepoints)
         motion_weights = motion.weights
@@ -3915,6 +3964,7 @@ class ComputeDCEMaps(BaseInterface):
                 wash_out_slope,
                 bat,
                 curve_type,
+                model_free.iauc_qc,
             ),
             self._gen_outfilename,
             _save_dce_map,

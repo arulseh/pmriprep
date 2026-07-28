@@ -121,9 +121,12 @@ _INTERVAL_MAPS: tuple[DCEMapSpec, ...] = tuple(
 # Model-free maps (no model entity). Each entry:
 # (input_attr, suffix, description, units, extra_dict_or_None)
 _MODEL_FREE_MAPS: tuple[DCEMapSpec, ...] = (
-    DCEMapSpec("iauc60_map", "dce", "IAUC60", "Initial Area Under Curve at 60s (mM*min)", "mM*min", "iauc60"),
-    DCEMapSpec("iauc90_map", "dce", "IAUC90", "Initial Area Under Curve at 90s (mM*min)", "mM*min", "iauc90"),
-    DCEMapSpec("iauc120_map", "dce", "IAUC120", "Initial Area Under Curve at 120s (mM*min)", "mM*min", "iauc120"),
+    DCEMapSpec("iauc60_map", "dce", "IAUC60", "Initial area under the concentration curve through 60 seconds", "mM*min", "iauc60",
+     {"ReferencePoint": "selected global IAUC reference frame", "CutoffInterpolation": "linear", "IncompleteWindowValue": "NaN"}),
+    DCEMapSpec("iauc90_map", "dce", "IAUC90", "Initial area under the concentration curve through 90 seconds", "mM*min", "iauc90",
+     {"ReferencePoint": "selected global IAUC reference frame", "CutoffInterpolation": "linear", "IncompleteWindowValue": "NaN"}),
+    DCEMapSpec("iauc120_map", "dce", "IAUC120", "Initial area under the concentration curve through 120 seconds", "mM*min", "iauc120",
+     {"ReferencePoint": "selected global IAUC reference frame", "CutoffInterpolation": "linear", "IncompleteWindowValue": "NaN"}),
     DCEMapSpec("peak_enhancement_map", "dce", "peakEnhancement", "Peak enhancement percentage", "%", "peak_enhancement"),
     DCEMapSpec("time_to_peak_map", "dce", "ttp",
      "Time from acquisition start to peak concentration", "s", "ttp",
@@ -313,9 +316,27 @@ def _build_model_free_extra(
     extra: dict | None,
     map_key: str,
     config_dict: dict | None = None,
+    qc_metrics: dict | None = None,
 ) -> dict | None:
     """Apply configured model-free processing parameters to sidecar metadata."""
     out = dict(extra or {})
+    if map_key.startswith("iauc"):
+        iauc_qc = (qc_metrics or {}).get("iauc", {})
+        cutoff = map_key.removeprefix("iauc")
+        if iauc_qc:
+            out.update({
+                "ReferenceFrame": iauc_qc.get("reference_frame"),
+                "ReferenceTimeSeconds": iauc_qc.get("reference_time_s"),
+                "ReferenceSelection": iauc_qc.get("reference_selection"),
+                "ConfiguredBaselineFrames": iauc_qc.get("configured_baseline_frames"),
+                "EffectiveBaselineFrames": iauc_qc.get("effective_baseline_frames"),
+                "DetectedBolusArrivalFrame": iauc_qc.get("detected_bolus_arrival_frame"),
+                "AvailablePostReferenceDurationSeconds": iauc_qc.get(
+                    "available_post_reference_duration_s"
+                ),
+                "ResolvedWindow": iauc_qc.get("windows", {}).get(cutoff),
+            })
+        return out or None
     if map_key not in {"ser", "curve_type"}:
         return out or None
     dce = config_dict or {}
@@ -1557,10 +1578,13 @@ def init_dce_datasinks_wf(
             continue
         model_free_extra = None
         static_extra = spec.extra
-        if spec.map_key == "ser":
+        if spec.map_key == "ser" or spec.map_key.startswith("iauc"):
+            extra_inputs = ["extra", "map_key", "config_dict"]
+            if spec.map_key.startswith("iauc"):
+                extra_inputs.append("qc_metrics")
             model_free_extra = pe.Node(
                 niu.Function(
-                    input_names=["extra", "map_key", "config_dict"],
+                    input_names=extra_inputs,
                     output_names=["extra"],
                     function=_build_model_free_extra,
                 ),
@@ -1569,6 +1593,8 @@ def init_dce_datasinks_wf(
             model_free_extra.inputs.extra = spec.extra
             model_free_extra.inputs.map_key = spec.map_key
             workflow.connect(inputnode, "config_dict", model_free_extra, "config_dict")
+            if spec.map_key.startswith("iauc"):
+                workflow.connect(inputnode, "qc_metrics", model_free_extra, "qc_metrics")
             static_extra = None
         sink = _add_perf_map_sink(
             workflow, inputnode, base_perf_no_ktrans,

@@ -265,12 +265,39 @@ def test_dce_factory_model_free_no_model_entity(
     inp.ktrans_map = _write_nii(tmp_path / "k.nii.gz")
     for attr in present:
         setattr(inp, attr, _write_nii(tmp_path / f"{attr}.nii.gz"))
-    inp.qc_metrics = {}
+    inp.qc_metrics = {
+        "iauc": {
+            "reference_frame": 5,
+            "reference_time_s": 25.0,
+            "reference_selection": "earlier_of_baseline_count_and_detected_arrival",
+            "configured_baseline_frames": 8,
+            "effective_baseline_frames": 5,
+            "detected_bolus_arrival_frame": 6,
+            "available_post_reference_duration_s": 180.0,
+            "windows": {
+                "60": {
+                    "requested_duration_s": 60.0,
+                    "complete": True,
+                    "cutoff_interpolated": False,
+                }
+            },
+        }
+    }
     wf.run()
 
     perf_out = out / "pmriprep" / "sub-01" / "ses-0001" / "perf"
     # No model entity in filename
     assert (perf_out / "sub-01_ses-0001_desc-dceIAUC60_stat.nii.gz").exists()
+    iauc_sidecar = json.loads(
+        (perf_out / "sub-01_ses-0001_desc-dceIAUC60_stat.json").read_text()
+    )
+    assert iauc_sidecar["ReferencePoint"] == "selected global IAUC reference frame"
+    assert iauc_sidecar["CutoffInterpolation"] == "linear"
+    assert iauc_sidecar["IncompleteWindowValue"] == "NaN"
+    assert iauc_sidecar["ReferenceFrame"] == 5
+    assert iauc_sidecar["ConfiguredBaselineFrames"] == 8
+    assert iauc_sidecar["DetectedBolusArrivalFrame"] == 6
+    assert iauc_sidecar["ResolvedWindow"]["complete"] is True
     assert (perf_out / "sub-01_ses-0001_desc-dcePeakEnhancement_stat.nii.gz").exists()
     ttp_sidecar = json.loads(
         (perf_out / "sub-01_ses-0001_desc-dceTtp_stat.json").read_text()

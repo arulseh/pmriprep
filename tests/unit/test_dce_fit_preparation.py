@@ -205,7 +205,7 @@ def test_compute_model_free_maps_assembles_all_vectorized_outputs() -> None:
         fitting_mask=np.ones((1, 1, 1), dtype=bool),
         peak_enhancement=np.array([[[25.0]]]),
     )
-    interface = ComputeDCEMaps(volume_tr=6.0)
+    interface = ComputeDCEMaps(volume_tr=6.0, baseline_frames=2, bolus_arrival_frame=0)
 
     maps = interface._compute_model_free_maps(prepared)
 
@@ -219,6 +219,10 @@ def test_compute_model_free_maps_assembles_all_vectorized_outputs() -> None:
     assert maps.wash_out_slope.shape == (1, 1, 1)
     assert maps.bolus_arrival_time.shape == (1, 1, 1)
     assert maps.curve_type.shape == (1, 1, 1)
+    assert maps.iauc_qc["reference_frame"] == 0
+    assert maps.iauc_qc["configured_baseline_frames"] == 2
+    assert maps.iauc_qc["effective_baseline_frames"] == 1
+    assert maps.iauc_qc["detected_bolus_arrival_frame"] == 0
 
 
 def test_prepare_motion_weighting_returns_weights_and_matching_qc() -> None:

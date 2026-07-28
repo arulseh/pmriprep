@@ -32,10 +32,13 @@ def compute_iauc(
     concentration: npt.NDArray[np.floating],
     time_points: npt.NDArray[np.floating],
     cutoff_s: float,
+    bolus_arrival_frame: int = 0,
 ) -> npt.NDArray[np.floating]:
     """Compute Initial Area Under Curve via trapezoidal integration.
 
-    Integrates concentration from t=0 up to cutoff_s seconds.
+    Integrates concentration from the selected global IAUC reference frame to
+    exactly ``cutoff_s`` seconds later. The concentration at a cutoff between
+    acquired volumes is linearly interpolated.
 
     Parameters
     ----------
@@ -45,24 +48,50 @@ def compute_iauc(
         1D time array in minutes.
     cutoff_s : float
         Integration cutoff in seconds.
+    bolus_arrival_frame : int, optional
+        Frame defining the start of the integration window.
 
     Returns
     -------
     numpy.ndarray
-        3D IAUC map (mM·min).
+        3D IAUC map (mM·min). Returns NaN when the requested interval is not
+        fully acquired or its samples are non-finite.
     """
-    cutoff_min = cutoff_s / 60.0
-    valid_mask = time_points <= cutoff_min
+    if cutoff_s <= 0:
+        raise ValueError("cutoff_s must be positive")
+    if time_points.ndim != 1 or concentration.shape[-1] != time_points.size:
+        raise ValueError("time_points must be 1D and match the concentration time axis")
+    if not 0 <= bolus_arrival_frame < time_points.size:
+        raise ValueError("bolus_arrival_frame is outside the time axis")
+    if not np.all(np.isfinite(time_points)) or np.any(np.diff(time_points) <= 0):
+        raise ValueError("time_points must be finite and strictly increasing")
 
-    if np.sum(valid_mask) < 2:
-        return np.zeros(concentration.shape[:3], dtype=np.float64)
+    start_min = float(time_points[bolus_arrival_frame])
+    cutoff_min = start_min + cutoff_s / 60.0
+    final_min = float(time_points[-1])
+    time_tolerance_min = 1e-9
+    if cutoff_min > final_min + time_tolerance_min:
+        return np.full(concentration.shape[:3], np.nan, dtype=np.float64)
+    cutoff_min = min(cutoff_min, final_min)
 
-    t_valid = time_points[valid_mask]
-    c_valid = concentration[..., valid_mask]
+    end_index = int(np.searchsorted(time_points, cutoff_min, side="left"))
+    t_valid = time_points[bolus_arrival_frame : end_index + 1].copy()
+    c_valid = concentration[..., bolus_arrival_frame : end_index + 1].copy()
+    if time_points[end_index] != cutoff_min:
+        lower = end_index - 1
+        weight = (cutoff_min - time_points[lower]) / (
+            time_points[end_index] - time_points[lower]
+        )
+        c_valid[..., -1] = (
+            concentration[..., lower]
+            + weight * (concentration[..., end_index] - concentration[..., lower])
+        )
+        t_valid[-1] = cutoff_min
 
     # Trapezoidal integration along last axis
     iauc = np.trapezoid(c_valid, x=t_valid, axis=-1)
-    return np.maximum(iauc, 0.0)  # type: ignore[no-any-return]
+    valid = np.all(np.isfinite(c_valid), axis=-1)
+    return np.where(valid, np.maximum(iauc, 0.0), np.nan)  # type: ignore[no-any-return]
 
 
 def compute_peak_enhancement(

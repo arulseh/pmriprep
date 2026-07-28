@@ -376,6 +376,59 @@ class TestIAUC:
         result = compute_iauc(concentration, time_points, 60.0)
         assert np.all(result >= 0)
 
+    def test_window_starts_at_bolus_arrival(self) -> None:
+        """Pre-contrast acquisition time must not shorten the IAUC window."""
+        time_points = np.arange(10, dtype=np.float64) * 15.0 / 60.0
+        concentration = np.ones((1, 1, 1, 10), dtype=np.float64)
+        result = compute_iauc(
+            concentration, time_points, 60.0, bolus_arrival_frame=2,
+        )
+        assert result[0, 0, 0] == pytest.approx(1.0)
+
+    def test_interpolates_exact_cutoff(self) -> None:
+        """A cutoff between frames uses a linearly interpolated endpoint."""
+        time_points = np.array([0.0, 0.4, 0.8, 1.2], dtype=np.float64)
+        concentration = (2.0 * time_points).reshape(1, 1, 1, -1)
+        result = compute_iauc(concentration, time_points, 60.0)
+        assert result[0, 0, 0] == pytest.approx(1.0)
+
+    def test_incomplete_window_returns_nan(self) -> None:
+        """A partial acquisition must not be mislabeled as full-window IAUC."""
+        time_points = np.arange(6, dtype=np.float64) * 10.0 / 60.0
+        concentration = np.ones((1, 1, 1, 6), dtype=np.float64)
+        result = compute_iauc(concentration, time_points, 60.0)
+        assert np.isnan(result[0, 0, 0])
+
+    def test_exact_window_tolerates_ulp_shortfall(self) -> None:
+        """Equivalent endpoint expressions do not reject a complete window."""
+        time_points = np.linspace(0.0, 1.0, 31, dtype=np.float64)
+        time_points[-1] = np.nextafter(1.0, -np.inf)
+        concentration = np.ones((1, 1, 1, time_points.size), dtype=np.float64)
+        result = compute_iauc(concentration, time_points, 60.0)
+        assert result[0, 0, 0] == pytest.approx(1.0)
+
+    def test_nonfinite_interval_returns_nan(self) -> None:
+        """Non-finite concentration samples make that voxel undefined."""
+        time_points = np.arange(8, dtype=np.float64) * 10.0 / 60.0
+        concentration = np.ones((1, 1, 1, 8), dtype=np.float64)
+        concentration[..., 3] = np.nan
+        result = compute_iauc(concentration, time_points, 60.0)
+        assert np.isnan(result[0, 0, 0])
+
+    @pytest.mark.parametrize(
+        "time_points",
+        [
+            np.array([0.0, 0.5, 0.4, 1.0]),
+            np.array([0.0, 0.5, np.nan, 1.0]),
+        ],
+        ids=["nonmonotonic", "nonfinite"],
+    )
+    def test_invalid_time_axis_raises(self, time_points: np.ndarray) -> None:
+        """Programming/input-contract violations are not physiological NaNs."""
+        concentration = np.ones((1, 1, 1, time_points.size), dtype=np.float64)
+        with pytest.raises(ValueError, match="finite and strictly increasing"):
+            compute_iauc(concentration, time_points, 60.0)
+
 
 class TestPeakEnhancement:
     """Tests for compute_peak_enhancement."""
