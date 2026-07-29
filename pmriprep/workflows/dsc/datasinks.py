@@ -62,8 +62,20 @@ class DSCAnatSpec:
 
 # Always-present DSC perfusion maps.
 _CORE_MAPS: tuple[DSCMapSpec, ...] = (
-    DSCMapSpec("mtt_map", "dsc", "mtt", "Mean transit time", "s", "mtt",
-               {"MTTMethod": "auc_cbv_over_cbf"}),
+    DSCMapSpec(
+        "mtt_map", "dsc", "mtt", "Mean transit time", "s", "mtt",
+        {
+            "PostFitClipping": "none",
+            "UndefinedValue": (
+                "NaN when MTT is negative/non-finite or, for SVD-family methods, "
+                "when AUC-CBV/CBF is undefined"
+            ),
+            "LowFlowCaution": (
+                "AUC-CBV/CBF becomes unstable as positive CBF approaches zero; "
+                "no unvalidated amplitude threshold is applied"
+            ),
+        },
+    ),
     DSCMapSpec(
         "tmax_map", "dsc", "tmax", "Time to maximum of residue function",
         "s", "tmax",
@@ -111,14 +123,17 @@ _CORE_MAPS: tuple[DSCMapSpec, ...] = (
 # bids_suffix/desc mapping defines the public derivative naming contract.
 _REL_MAPS: tuple[DSCMapSpec, ...] = (
     DSCMapSpec("rel_cbf_map", "dscRel", "cbf",
-     "Cerebral blood flow (relative)", "1/min", "cbf"),
+     "Cerebral blood flow (relative)", "1/min", "cbf",
+     {"PostFitClipping": "none", "UndefinedValue": "NaN for negative/non-finite estimates"}),
     DSCMapSpec("rel_cbv_map", "dscRel", "cbv",
      "Cerebral blood volume (relative, deconvolution)", "arbitrary", "cbv",
-     {"CBVMethod": "deconvolution_residue_integral"}),
+     {"CBVMethod": "deconvolution_residue_integral", "PostFitClipping": "none",
+      "UndefinedValue": "NaN for negative/non-finite estimates"}),
     DSCMapSpec("rel_cbv_auc_map", "dscRelAUC", "cbv",
      "Cerebral blood volume (K2-corrected full-bolus AUC, relative)",
      "arbitrary", "cbv_auc",
-     {"CBVMethod": "k2_corrected_full_bolus_auc"}),
+     {"CBVMethod": "k2_corrected_full_bolus_auc", "PostFitClipping": "none",
+      "UndefinedValue": "NaN for negative/non-finite estimates"}),
 )
 
 

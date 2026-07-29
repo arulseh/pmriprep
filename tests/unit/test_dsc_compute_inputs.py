@@ -501,6 +501,21 @@ def test_compute_auc_maps_near_zero_measured_aif_returns_nan(
     assert result.qc["cbv_auc_aif_integral"] == 0.0
 
 
+def test_compute_auc_maps_does_not_clip_large_finite_values(tmp_path: Path) -> None:
+    """Large finite AUC and CBV estimates remain visible for downstream QC."""
+    measured_file = tmp_path / "measured_aif.txt"
+    np.savetxt(measured_file, np.array([0.0, 0.0, 0.1, 0.1, 0.1, 0.1]))
+    concentration = np.zeros((1, 1, 1, 6), dtype=np.float64)
+    concentration[..., 2:] = 5000.0
+
+    result = ComputeDSCMaps(measured_aif_file=str(measured_file))._compute_auc_maps(
+        concentration, concentration, 2, 2, {"arrival_index": 2}, 1.0
+    )
+
+    assert result.corrected[0, 0, 0] > 10000.0
+    assert result.cbv[0, 0, 0] > 10.0
+
+
 def test_compute_auc_maps_missing_aif_and_preload_warning() -> None:
     """Missing denominator and administered preload retain separate QC flags."""
     concentration = np.ones((1, 1, 1, 6), dtype=np.float64)
@@ -564,7 +579,9 @@ def test_finalize_mtt_uses_auc_cbv_for_svd_family(method: str) -> None:
 
     result = ComputeDSCMaps._finalize_mtt(method, fitted, cbf, auc_cbv)
 
-    np.testing.assert_allclose(result, [4.0, 0.0, 0.0, 15.0])
+    np.testing.assert_allclose(
+        result, [4.0, np.nan, np.nan, 15.0], equal_nan=True
+    )
 
 
 @pytest.mark.parametrize("method", ["vascular", "cpi"])
@@ -585,7 +602,7 @@ def test_summarize_dsc_maps_preserves_population_statistics_and_provenance() -> 
     qc = ComputeDSCMaps._summarize_dsc_maps(
         rel_cbf=np.array([10.0, 30.0, 999.0]),
         rel_cbv=np.array([1.0, 3.0, 999.0]),
-        rel_cbv_auc=np.array([-2.0, 4.0, 999.0]),
+        rel_cbv_auc=np.array([np.nan, 4.0, 999.0]),
         mtt=np.array([5.0, 9.0, 999.0]),
         tmax=np.array([3.0, 7.0, 999.0]),
         mask_bool=mask,
@@ -593,12 +610,13 @@ def test_summarize_dsc_maps_preserves_population_statistics_and_provenance() -> 
         preload_class="adequate",
         baseline_info={"baseline_frames_detected": 4},
         aif_bat_seconds=6.0,
+        cbv_auc_qc_source=np.array([-2.0, 4.0, 999.0]),
     )
 
     assert qc["cbf_mean"] == pytest.approx(20.0)
     assert qc["cbf_std"] == pytest.approx(10.0)
     assert qc["cbv_mean"] == pytest.approx(2.0)
-    assert qc["cbv_auc_median"] == pytest.approx(1.0)
+    assert qc["cbv_auc_median"] == pytest.approx(4.0)
     assert qc["cbv_auc_finite_voxels"] == 2
     assert qc["cbv_auc_negative_voxels"] == 1
     assert qc["cbv_auc_negative_fraction"] == pytest.approx(0.5)
@@ -611,7 +629,7 @@ def test_summarize_dsc_maps_preserves_population_statistics_and_provenance() -> 
 
 
 def test_summarize_dsc_maps_empty_synthetic_domain() -> None:
-    """Empty masks retain zero summaries and synthetic-CBV applicability flag."""
+    """Empty masks retain undefined summaries and synthetic-CBV applicability."""
     empty = np.zeros(2)
     qc = ComputeDSCMaps._summarize_dsc_maps(
         empty,
@@ -627,12 +645,32 @@ def test_summarize_dsc_maps_empty_synthetic_domain() -> None:
     )
 
     assert qc["n_voxels"] == 0
-    assert qc["cbf_mean"] == 0.0
-    assert qc["cbv_auc_median"] == 0.0
+    assert np.isnan(qc["cbf_mean"])
+    assert np.isnan(qc["cbv_auc_median"])
     assert qc["cbv_auc_finite_voxels"] == 0
     assert qc["cbv_auc_negative_voxels"] == 0
-    assert qc["cbv_auc_negative_fraction"] == 0.0
+    assert np.isnan(qc["cbv_auc_negative_fraction"])
     assert qc["cbv_literature_range_applicable"] is False
+
+
+def test_summarize_dsc_maps_ignores_undefined_voxels() -> None:
+    """One unavailable estimate does not erase summaries of valid voxels."""
+    values = np.array([2.0, np.nan])
+    qc = ComputeDSCMaps._summarize_dsc_maps(
+        values,
+        values,
+        values,
+        values,
+        values,
+        np.ones(2, dtype=bool),
+        "atlas",
+        "none",
+        {},
+        0.0,
+    )
+
+    assert qc["cbf_mean"] == pytest.approx(2.0)
+    assert qc["mtt_median"] == pytest.approx(2.0)
 
 
 def test_scale_cbf_uncertainty_preserves_optionality_and_units() -> None:
@@ -667,10 +705,13 @@ def test_finalize_dsc_maps_preserves_ranges_units_and_nan_policy() -> None:
         mask_bool=mask,
     )
 
-    np.testing.assert_allclose(result.rel_cbf, [0.0, 100.0, 0.0])
-    np.testing.assert_allclose(result.rel_cbv, [0.0, 10.0, 0.0])
+    assert np.isnan(result.rel_cbf[0])
+    np.testing.assert_allclose(result.rel_cbf[1:], [120.0, 0.0])
+    assert np.isnan(result.rel_cbv[0])
+    np.testing.assert_allclose(result.rel_cbv[1:], [12.0, 0.0])
     assert np.isnan(result.rel_cbv_auc[0])
-    np.testing.assert_allclose(result.mtt, [0.0, 30.0, 0.0])
+    assert np.isnan(result.mtt[0])
+    np.testing.assert_allclose(result.mtt[1:], [40.0, 0.0])
     np.testing.assert_allclose(result.tmax, [-1.0, 70.0, 0.0])
     np.testing.assert_allclose(result.cnr, [-1.0, 2000.0, 0.0])
     np.testing.assert_allclose(result.psr, [-1.0, 250.0, 0.0])

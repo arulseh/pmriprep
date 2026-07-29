@@ -447,7 +447,10 @@ class TestWriterAifBlockPresentOnAllMaps:
         })
         derivatives = _run_writer(
             minimal_inputs,
-            {"cth_alpha_at_bound_fraction": 0.125},
+            {
+                "cth_alpha_at_bound_fraction": 0.125,
+                "deconvolution": {"method": "oSVD"},
+            },
             tmp_path,
         )
 
@@ -487,6 +490,15 @@ class TestWriterAifBlockPresentOnAllMaps:
         assert tmax_meta["Clipping"] == "none"
         assert "oSVD and parametric" in tmax_meta["NegativeValues"]
         assert "unlike tissue concentration TTP" in tmax_meta["TimingConvention"]
+
+        mtt_meta = _load_sidecar(derivatives, "dscMtt_stat")
+        assert mtt_meta["PostFitClipping"] == "none"
+        assert mtt_meta["MTTMethod"].startswith("measured_aif_full_bolus")
+        assert "approaches zero" in mtt_meta["LowFlowCaution"]
+        for suffix in ("dscRelCbf_stat", "dscRelCbv_stat", "dscRelAUCCbv_stat"):
+            meta = _load_sidecar(derivatives, suffix)
+            assert meta["PostFitClipping"] == "none"
+            assert "negative/non-finite" in meta["UndefinedValue"]
 
     def test_signal_quality_map_contract(self, minimal_inputs, tmp_path) -> None:
         """CNR and baseline tSNR are dimensionless and expose exact estimators."""

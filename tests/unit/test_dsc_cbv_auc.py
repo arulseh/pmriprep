@@ -33,7 +33,7 @@ class TestFullBolusWindow:
 
         if aif_auc < EPSILON:
             return np.full(conc_data.shape[:3], np.nan)
-        return np.clip(tissue_auc / aif_auc, 0.0, 10.0)
+        return tissue_auc / aif_auc
 
     def test_uniform_tissue_matches_ratio(self) -> None:
         """Tissue at constant fraction of AIF produces uniform CBV."""
@@ -66,8 +66,8 @@ class TestFullBolusWindow:
         cbv_auc = self._compute_auc_cbv(conc, aif, 1.5, 5)
         assert np.all(np.isnan(cbv_auc))
 
-    def test_negative_tissue_clipped(self) -> None:
-        """Negative tissue AUC clipped to 0 by lower bound of np.clip."""
+    def test_negative_tissue_preserved(self) -> None:
+        """Negative tissue AUC remains visible as an estimator diagnostic."""
         n_frames = 30
         dt = 1.5
         bat = 5
@@ -79,10 +79,10 @@ class TestFullBolusWindow:
         conc[0, 0, 0, bat:15] = -1.0
 
         cbv_auc = self._compute_auc_cbv(conc, aif, dt, bat)
-        assert cbv_auc[0, 0, 0] == pytest.approx(0.0, abs=1e-6)
+        assert cbv_auc[0, 0, 0] == pytest.approx(-1.0, abs=1e-6)
 
-    def test_upper_clip_at_ten(self) -> None:
-        """Very large tissue/AIF ratio clipped at 10.0."""
+    def test_large_ratio_is_not_clipped(self) -> None:
+        """A small AIF denominator remains visible rather than pinning at 10."""
         n_frames = 20
         dt = 1.5
         bat = 5
@@ -94,7 +94,7 @@ class TestFullBolusWindow:
         conc[0, 0, 0, bat:bat + 3] = 10.0  # huge tissue → ratio ~100
 
         cbv_auc = self._compute_auc_cbv(conc, aif, dt, bat)
-        assert cbv_auc[0, 0, 0] == pytest.approx(10.0)
+        assert cbv_auc[0, 0, 0] == pytest.approx(100.0)
 
     def test_same_window_cancels_recirculation(self) -> None:
         """Recirculation in both numerator and denominator cancels in ratio."""

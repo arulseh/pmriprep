@@ -979,6 +979,16 @@ def build_dsc_map_sidecar(
             sidecar["AlphaAtBoundFractionDenominator"] = (
                 "accepted vascular fits"
             )
+    if map_key == "mtt" and isinstance(qc_metrics, dict):
+        deconvolution = qc_metrics.get("deconvolution")
+        if isinstance(deconvolution, dict):
+            method = deconvolution.get("method")
+            if method in {"sSVD", "oSVD", "tikhonov"}:
+                sidecar["MTTMethod"] = (
+                    "measured_aif_full_bolus_auc_cbv_over_deconvolution_cbf"
+                )
+            elif method in {"cpi", "vascular"}:
+                sidecar["MTTMethod"] = "parametric_fitted_mtt"
     apply_aif_sidecar(sidecar, map_key, qc_metrics)
     return sidecar
 

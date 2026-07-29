@@ -1064,10 +1064,10 @@ class ComputeDSCMaps(BaseInterface):
         raw_for_auc = raw_concentration - np.mean(
             raw_concentration[..., :n_baseline], axis=-1, keepdims=True
         )
-        auc_corrected = np.minimum(
-            np.trapezoid(corrected_concentration, dx=dt, axis=-1), 10000.0
+        auc_corrected = np.trapezoid(
+            corrected_concentration, dx=dt, axis=-1
         )
-        auc_raw = np.minimum(np.trapezoid(raw_for_auc, dx=dt, axis=-1), 10000.0)
+        auc_raw = np.trapezoid(raw_for_auc, dx=dt, axis=-1)
         auc_difference = auc_raw - auc_corrected
 
         spatial_shape = corrected_concentration.shape[:3]
@@ -1093,7 +1093,7 @@ class ComputeDSCMaps(BaseInterface):
                 )
                 cbv = np.full(spatial_shape, np.nan, dtype=np.float64)
             else:
-                cbv = np.minimum(tissue_auc_bolus / aif_auc, 10.0)
+                cbv = tissue_auc_bolus / aif_auc
             qc.update(
                 cbv_auc_bat_frame=bat,
                 cbv_auc_end_frame=n_timepoints,
@@ -1218,7 +1218,7 @@ class ComputeDSCMaps(BaseInterface):
             return np.where(
                 (cbf > EPSILON_CONCENTRATION) & np.isfinite(auc_cbv),
                 auc_cbv / cbf,
-                0.0,
+                np.nan,
             )
 
     @staticmethod
@@ -1233,41 +1233,44 @@ class ComputeDSCMaps(BaseInterface):
         preload_class: str,
         baseline_info: dict[str, Any],
         aif_bat_seconds: float,
+        cbv_auc_qc_source: Optional[npt.NDArray[Any]] = None,
     ) -> dict[str, Any]:
         """Reduce finalized DSC maps and acquisition provenance to QC values."""
-        has_voxels = bool(np.any(mask_bool))
-        finite_cbv_auc = mask_bool & np.isfinite(rel_cbv_auc)
+        def _finite_stat(
+            data: npt.NDArray[Any],
+            reducer: Any,
+        ) -> float:
+            values = data[mask_bool]
+            values = values[np.isfinite(values)]
+            return float(reducer(values)) if values.size else np.nan
+
+        cbv_auc_for_qc = (
+            rel_cbv_auc if cbv_auc_qc_source is None else cbv_auc_qc_source
+        )
+        finite_cbv_auc = mask_bool & np.isfinite(cbv_auc_for_qc)
         n_finite_cbv_auc = int(np.sum(finite_cbv_auc))
-        n_negative_cbv_auc = int(np.sum(finite_cbv_auc & (rel_cbv_auc < 0.0)))
+        n_negative_cbv_auc = int(
+            np.sum(finite_cbv_auc & (cbv_auc_for_qc < 0.0))
+        )
         qc = {
-            "cbf_mean": float(np.mean(rel_cbf[mask_bool])) if has_voxels else 0.0,
-            "cbf_std": float(np.std(rel_cbf[mask_bool])) if has_voxels else 0.0,
-            "cbv_mean": float(np.mean(rel_cbv[mask_bool])) if has_voxels else 0.0,
-            "cbv_auc_mean": (
-                float(np.nanmean(rel_cbv_auc[mask_bool])) if has_voxels else 0.0
-            ),
-            "mtt_mean": float(np.mean(mtt[mask_bool])) if has_voxels else 0.0,
-            "tmax_mean": float(np.mean(tmax[mask_bool])) if has_voxels else 0.0,
-            "cbf_median": (
-                float(np.median(rel_cbf[mask_bool])) if has_voxels else 0.0
-            ),
-            "cbv_median": (
-                float(np.median(rel_cbv[mask_bool])) if has_voxels else 0.0
-            ),
-            "cbv_auc_median": (
-                float(np.nanmedian(rel_cbv_auc[mask_bool])) if has_voxels else 0.0
-            ),
+            "cbf_mean": _finite_stat(rel_cbf, np.mean),
+            "cbf_std": _finite_stat(rel_cbf, np.std),
+            "cbv_mean": _finite_stat(rel_cbv, np.mean),
+            "cbv_auc_mean": _finite_stat(rel_cbv_auc, np.mean),
+            "mtt_mean": _finite_stat(mtt, np.mean),
+            "tmax_mean": _finite_stat(tmax, np.mean),
+            "cbf_median": _finite_stat(rel_cbf, np.median),
+            "cbv_median": _finite_stat(rel_cbv, np.median),
+            "cbv_auc_median": _finite_stat(rel_cbv_auc, np.median),
             "cbv_auc_finite_voxels": n_finite_cbv_auc,
             "cbv_auc_negative_voxels": n_negative_cbv_auc,
             "cbv_auc_negative_fraction": (
                 n_negative_cbv_auc / n_finite_cbv_auc
                 if n_finite_cbv_auc > 0
-                else 0.0
+                else np.nan
             ),
-            "mtt_median": float(np.median(mtt[mask_bool])) if has_voxels else 0.0,
-            "tmax_median": (
-                float(np.median(tmax[mask_bool])) if has_voxels else 0.0
-            ),
+            "mtt_median": _finite_stat(mtt, np.median),
+            "tmax_median": _finite_stat(tmax, np.median),
             "n_voxels": int(np.sum(mask_bool)),
             "aif_detection_level": aif_level,
             "preload_classification": preload_class,
@@ -1303,19 +1306,19 @@ class ComputeDSCMaps(BaseInterface):
         cbf_std: Optional[npt.NDArray[Any]],
         mask_bool: npt.NDArray[Any],
     ) -> _DSCFinalMaps:
-        """Apply established output ranges, CBF units, and brain masking."""
-        mtt = np.clip(mtt, 0.0, 30.0)
-        cbf = np.clip(cbf, 0.0, 100.0)
-        cbv = np.clip(cbv, 0.0, 10.0)
-
-        rel_cbf = np.clip(cbf * 60.0, 0.0, 100.0)
-        rel_cbv = np.clip(cbv, 0.0, 10.0)
+        """Apply CBF units and brain masking without post-fit clipping."""
+        rel_cbf = np.where(np.isfinite(cbf) & (cbf >= 0.0), cbf * 60.0, np.nan)
+        rel_cbv = np.where(np.isfinite(cbv) & (cbv >= 0.0), cbv, np.nan)
+        rel_cbv_auc = np.where(
+            np.isfinite(cbv_auc) & (cbv_auc >= 0.0), cbv_auc, np.nan
+        )
+        mtt = np.where(np.isfinite(mtt) & (mtt >= 0.0), mtt, np.nan)
         cbf_std = cls._scale_cbf_uncertainty(cbf_std)
 
         return _DSCFinalMaps(
             rel_cbf=np.where(mask_bool, rel_cbf, 0.0),
             rel_cbv=np.where(mask_bool, rel_cbv, 0.0),
-            rel_cbv_auc=np.where(mask_bool, cbv_auc, 0.0),
+            rel_cbv_auc=np.where(mask_bool, rel_cbv_auc, 0.0),
             mtt=np.where(mask_bool, mtt, 0.0),
             tmax=np.where(mask_bool, tmax, 0.0),
             ttp=np.where(mask_bool, ttp, 0.0),
@@ -1425,6 +1428,7 @@ class ComputeDSCMaps(BaseInterface):
                 preload_class,
                 baseline_info,
                 timing.aif_bat_seconds,
+                auc.cbv,
             )
         )
         return _DSCPostprocessing(raw_concentration, maps, qc)
