@@ -20,10 +20,6 @@ logger = logging.getLogger(__name__)
 # numerical artifact from near-zero baseline voxels.
 _PEAK_ENH_MAX_CAP = 5000.0
 
-# Guard against unstable ratios when late enhancement approaches zero.
-_SER_MAX_CAP = 10.0
-
-
 def compute_iauc(
     concentration: npt.NDArray[np.floating],
     time_points: npt.NDArray[np.floating],
@@ -168,22 +164,16 @@ def compute_signal_enhancement_ratio(
     time_points: npt.NDArray[np.floating],
     bolus_arrival_frame: int = 0,
     baseline_frames: int = 5,
-    early_offset_s: tuple[float, float] = (30.0, 150.0),
-    late_fraction: float = 0.2,
-    min_peak_enhancement_percent: float = 10.0,
-    max_cap: float = _SER_MAX_CAP,
+    early_time_s: float = 120.0,
+    late_time_s: float = 320.0,
 ) -> npt.NDArray[np.floating]:
-    """Compute a protocol-defined signal enhancement ratio (SER).
+    """Compute signal enhancement ratio at fixed post-reference times.
 
-    ``SER = mean(S_early - S0) / mean(S_late - S0)``
+    ``SER = (S_early - S0) / (S_late - S0)``
 
-    High SER indicates washout-like behavior; low SER indicates persistent-like
-    behavior. The timing windows are explicit processing choices rather than a
-    universal DCE-MRI standard.
-
-    Time windows are relative to bolus arrival and adaptive to acquisition
-    length, so the metric is valid for both short (<6 min) and long (>10 min)
-    acquisitions.
+    Signal values at the predefined early and late times are linearly
+    interpolated. The stored ratio is not clipped. A negative late enhancement
+    is retained; only a numerically indeterminate denominator is undefined.
 
     Parameters
     ----------
@@ -195,56 +185,67 @@ def compute_signal_enhancement_ratio(
         Frame index of bolus arrival.
     baseline_frames : int, optional
         Number of pre-contrast frames used to estimate S0.
-    early_offset_s : tuple of (float, float), optional
-        Start and end of the early window in seconds post-bolus.
-    late_fraction : float, optional
-        Fraction of post-bolus duration for late window
-        (capped at 5 min for very long acquisitions).
-    min_peak_enhancement_percent : float, optional
-        Minimum peak relative signal enhancement required for a valid result.
-    max_cap : float, optional
-        Maximum finite ratio retained.
+    early_time_s : float, optional
+        Early sample time in seconds after the selected global reference.
+    late_time_s : float, optional
+        Late sample time in seconds after the selected global reference.
 
     Returns
     -------
     numpy.ndarray
-        3D SER map, clamped to [0, max_cap]. Undefined voxels are NaN.
+        3D SER map. Undefined voxels are NaN.
     """
+    if time_points.ndim != 1 or signal_data.shape[-1] != time_points.size:
+        raise ValueError("time_points must be 1D and match the signal time axis")
     undefined = np.full(signal_data.shape[:3], np.nan, dtype=np.float64)
     if baseline_frames < 1 or baseline_frames >= signal_data.shape[-1]:
+        raise ValueError("baseline_frames must leave at least one post-baseline frame")
+    if not 0 <= bolus_arrival_frame < time_points.size:
+        raise ValueError("bolus_arrival_frame is outside the time axis")
+    if not np.all(np.isfinite(time_points)) or np.any(np.diff(time_points) <= 0):
+        raise ValueError("time_points must be finite and strictly increasing")
+    if not np.isfinite(early_time_s) or early_time_s <= 0:
+        raise ValueError("early_time_s must be finite and positive")
+    if not np.isfinite(late_time_s) or late_time_s <= early_time_s:
+        raise ValueError("late_time_s must be finite and greater than early_time_s")
+
+    reference_min = float(time_points[bolus_arrival_frame])
+    sample_times = reference_min + np.asarray([early_time_s, late_time_s]) / 60.0
+    if sample_times[-1] > float(time_points[-1]) + 1e-9:
         return undefined
+    sample_times = np.minimum(sample_times, float(time_points[-1]))
 
-    bolus_time = time_points[bolus_arrival_frame]
-
-    # Early window: fixed offset from bolus arrival
-    early_start = bolus_time + early_offset_s[0] / 60.0
-    early_end = bolus_time + early_offset_s[1] / 60.0
-    early_mask = (time_points >= early_start) & (time_points <= early_end)
-
-    # Late window: last fraction of post-bolus acquisition, capped at 5 min
-    post_bolus_duration = time_points[-1] - bolus_time
-    late_duration = min(late_fraction * post_bolus_duration, 5.0)
-    late_start = time_points[-1] - late_duration
-    late_mask = (time_points >= late_start) & (time_points <= time_points[-1])
-
-    if late_start <= early_end or np.sum(early_mask) < 2 or np.sum(late_mask) < 2:
-        return undefined
+    def _sample(sample_time: float) -> npt.NDArray[np.floating]:
+        upper = int(np.searchsorted(time_points, sample_time, side="left"))
+        if upper == 0 or np.isclose(time_points[upper], sample_time, rtol=0.0, atol=1e-9):
+            return np.asarray(signal_data[..., upper], dtype=np.float64)
+        lower = upper - 1
+        weight = (sample_time - time_points[lower]) / (
+            time_points[upper] - time_points[lower]
+        )
+        return np.asarray(
+            signal_data[..., lower] + weight * (
+                signal_data[..., upper] - signal_data[..., lower]
+            ),
+            dtype=np.float64,
+        )
 
     baseline = np.mean(signal_data[..., :baseline_frames], axis=-1)
-    early_enhancement = np.mean(signal_data[..., early_mask], axis=-1) - baseline
-    late_enhancement = np.mean(signal_data[..., late_mask], axis=-1) - baseline
-    peak_enhancement = compute_peak_enhancement(signal_data, baseline_frames)
+    early_signal = _sample(float(sample_times[0]))
+    late_signal = _sample(float(sample_times[1]))
+    early_enhancement = early_signal - baseline
+    late_enhancement = late_signal - baseline
+    scale = np.maximum.reduce((np.abs(baseline), np.abs(early_signal), np.abs(late_signal)))
+    denominator_tolerance = 16.0 * np.finfo(np.float64).eps * scale
     valid = (
-        np.isfinite(early_enhancement)
+        np.isfinite(baseline)
+        & np.isfinite(early_enhancement)
         & np.isfinite(late_enhancement)
-        & (early_enhancement > 0)
-        & (late_enhancement > 0)
-        & (peak_enhancement >= min_peak_enhancement_percent)
+        & (np.abs(late_enhancement) > denominator_tolerance)
     )
-    ser = undefined
+    ser = undefined.copy()
     with np.errstate(divide="ignore", invalid="ignore"):
         ser[valid] = early_enhancement[valid] / late_enhancement[valid]
-    np.clip(ser, 0.0, max_cap, out=ser)
 
     return ser  # type: ignore[no-any-return]
 

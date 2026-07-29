@@ -51,26 +51,24 @@ class TestConcentrationParameterValidation:
 
 
 class TestSERConfigValidation:
-    """Protocol-defined SER timing must describe usable ordered windows."""
+    """Protocol-defined SER sample times must be finite and ordered."""
 
     def test_custom_protocol_is_accepted(self) -> None:
         cfg = DCEConfig(
-            ser_early_start_s=45,
-            ser_early_end_s=135,
-            ser_late_fraction=0.25,
-            ser_min_peak_enhancement=12,
+            ser_early_time_s=90,
+            ser_late_time_s=300,
         )
-        assert cfg.ser_early_start_s == 45.0
-        assert cfg.ser_late_fraction == 0.25
+        assert cfg.ser_early_time_s == 90.0
+        assert cfg.ser_late_time_s == 300.0
 
-    def test_early_window_must_be_ordered(self) -> None:
-        with pytest.raises(ValueError, match="ser_early_end_s"):
-            DCEConfig(ser_early_start_s=150, ser_early_end_s=30)
+    def test_sample_times_must_be_ordered(self) -> None:
+        with pytest.raises(ValueError, match="ser_late_time_s"):
+            DCEConfig(ser_early_time_s=300, ser_late_time_s=90)
 
-    @pytest.mark.parametrize("value", [0.0, 1.1, float("nan")])
-    def test_late_fraction_must_be_valid(self, value: float) -> None:
-        with pytest.raises(ValueError, match="ser_late_fraction"):
-            DCEConfig(ser_late_fraction=value)
+    @pytest.mark.parametrize("value", [0.0, -1.0, float("nan")])
+    def test_sample_times_must_be_positive(self, value: float) -> None:
+        with pytest.raises(ValueError, match="ser_early_time_s"):
+            DCEConfig(ser_early_time_s=value)
 
 
 @pytest.mark.parametrize("config_cls", [DCEConfig, DSCConfig])

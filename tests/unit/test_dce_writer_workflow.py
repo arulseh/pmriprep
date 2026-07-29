@@ -62,6 +62,25 @@ def test_dce_factory_smoke(tmp_path: Path, minimal_bids: tuple[Path, str]) -> No
     assert "KtransConvention" not in sidecar
 
 
+def test_unvalidated_model_free_maps_have_no_derivative_sinks(
+    tmp_path: Path, minimal_bids: tuple[Path, str]
+) -> None:
+    """Wash slopes and SER-derived curve classes remain internal outputs."""
+    from pmriprep.workflows.dce.datasinks import init_dce_datasinks_wf
+
+    bids, _ = minimal_bids
+    wf = init_dce_datasinks_wf(
+        output_dir=str(tmp_path / "out"), bids_dir=str(bids),
+        subject_id="01", session_id="0001",
+        pk_model="auto", inference="nlls",
+        present_inputs={"wash_in_slope_map", "wash_out_slope_map", "curve_type_map"},
+    )
+    node_names = set(wf.list_node_names())
+    assert not any("wash_in_slope_map" in name for name in node_names)
+    assert not any("wash_out_slope_map" in name for name in node_names)
+    assert not any("curve_type_map" in name for name in node_names)
+
+
 def test_dce_writer_recreates_deleted_cached_derivative(
     tmp_path: Path, minimal_bids: tuple[Path, str]
 ) -> None:

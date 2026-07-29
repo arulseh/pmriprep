@@ -135,35 +135,13 @@ _MODEL_FREE_MAPS: tuple[DCEMapSpec, ...] = (
      "Time from acquisition start to peak concentration", "s", "ttp",
      {"ReferencePoint": "start of acquisition (volume 0)",
       "UndefinedValue": "NaN for non-enhancing or non-finite curves"}),
-    DCEMapSpec("ser_map", "dce", "SER", "Protocol-defined early-to-late relative signal enhancement ratio", "1", "ser",
-     {"InputCurve": "motion_corrected_signal", "Formula": "mean(Searly-S0)/mean(Slate-S0)",
-      "EarlyWindowSecondsAfterBolus": [30.0, 150.0], "LateWindowFraction": 0.2,
-      "MinimumPeakEnhancementPercent": 10.0, "MaximumValueCap": 10.0}),
-    DCEMapSpec("wash_in_slope_map", "dce", "washInSlope",
-     "Maximum upslope of concentration during wash-in (mM/min)", "mM/min",
-     "wash_in_slope",
-     {"SmoothingMethod": "Savitzky-Golay", "SmoothingWindow": 5,
-      "SmoothingPolyorder": 2, "InputCurve": "concentration"}),
-    DCEMapSpec("wash_out_slope_map", "dce", "washOutSlope",
-     "Linear washout slope (mM/min, negative=washout)", "mM/min",
-     "wash_out_slope",
-     {"PostPeakStartSeconds": 30.0, "PostPeakEndSeconds": 120.0,
-      "MinPoints": 4, "RegressionMethod": "ordinary_least_squares"}),
+    DCEMapSpec("ser_map", "dce", "SER", "Fixed-time early-to-late signal enhancement ratio", "1", "ser",
+     {"InputCurve": "motion_corrected_signal", "Formula": "(Searly-S0)/(Slate-S0)",
+      "SampleInterpolation": "linear",
+      "UndefinedValue": "NaN for incomplete timing, non-finite signal, or numerically indeterminate denominator"}),
     DCEMapSpec("bat_map", "dce", "BAT", "Bolus arrival time (seconds)", "s", "bat",
      {"DetectionMethod": "threshold_then_gradient_fallback",
       "ConfidenceThreshold": "high"}),
-)
-
-
-_CURVE_TYPE_MAP = DCEMapSpec(
-    "curve_type_map", "dce", "curveType",
-    "Descriptive signal-curve classification for meaningfully enhancing voxels",
-    "categorical", "curve_type",
-    {"PersistentThreshold": 0.9, "WashoutThreshold": 1.1,
-     "ValueMapping": {"0": "unclassified", "1": "persistent-like",
-                      "2": "plateau-like", "3": "washout-like"},
-     "Interpretation": "Descriptive only; not an organ-specific diagnostic category"},
-    bids_suffix="dseg",
 )
 
 
@@ -340,27 +318,27 @@ def _build_model_free_extra(
                 "ResolvedWindow": iauc_qc.get("windows", {}).get(cutoff),
             })
         return out or None
-    if map_key not in {"ser", "curve_type"}:
+    if map_key != "ser":
         return out or None
     dce = config_dict or {}
-    if map_key == "curve_type":
-        out.update({
-            "InputMap": "SER",
-            "MinimumPeakEnhancementPercent": float(
-                dce.get("ser_min_peak_enhancement", 10.0)
-            ),
-        })
-        return out
+    ser_qc = (qc_metrics or {}).get("ser", {})
     out.update({
-        "EarlyWindowSecondsAfterBolus": [
-            float(dce.get("ser_early_start_s", 30.0)),
-            float(dce.get("ser_early_end_s", 150.0)),
-        ],
-        "LateWindowFraction": float(dce.get("ser_late_fraction", 0.2)),
-        "MinimumPeakEnhancementPercent": float(
-            dce.get("ser_min_peak_enhancement", 10.0)
+        "EarlySampleTimeSecondsAfterReference": float(
+            dce.get("ser_early_time_s", 120.0)
         ),
-        "MaximumValueCap": 10.0,
+        "LateSampleTimeSecondsAfterReference": float(
+            dce.get("ser_late_time_s", 320.0)
+        ),
+        "ReferenceFrame": ser_qc.get("reference_frame"),
+        "ReferenceTimeSeconds": ser_qc.get("reference_time_s"),
+        "ReferenceSelection": ser_qc.get(
+            "reference_selection", "earlier_of_baseline_count_and_detected_arrival"
+        ),
+        "AvailablePostReferenceDurationSeconds": ser_qc.get(
+            "available_post_reference_duration_s"
+        ),
+        "CompleteTiming": ser_qc.get("complete"),
+        "SampleInterpolation": "linear",
     })
     return out
 
@@ -597,15 +575,15 @@ def _build_dce_smoothed_meta(
         dce = config_dict or {}
         out.update({
             "InputCurve": "motion_corrected_signal",
-            "Formula": "mean(Searly-S0)/mean(Slate-S0)",
-            "EarlyWindowSecondsAfterBolus": [
-                float(dce.get("ser_early_start_s", 30.0)),
-                float(dce.get("ser_early_end_s", 150.0)),
-            ],
-            "LateWindowFraction": float(dce.get("ser_late_fraction", 0.2)),
-            "MinimumPeakEnhancementPercent": float(
-                dce.get("ser_min_peak_enhancement", 10.0)
+            "Formula": "(Searly-S0)/(Slate-S0)",
+            "EarlySampleTimeSecondsAfterReference": float(
+                dce.get("ser_early_time_s", 120.0)
             ),
+            "LateSampleTimeSecondsAfterReference": float(
+                dce.get("ser_late_time_s", 320.0)
+            ),
+            "ReferenceSelection": "earlier_of_baseline_count_and_detected_arrival",
+            "SampleInterpolation": "linear",
         })
     if map_key.endswith("_uncertainty"):
         from pmriprep.utils.uncertainty_provenance import build_uncertainty_provenance
@@ -1051,8 +1029,6 @@ _MF_LESIONSTATS_MAP_KEY: dict[str, str] = {
     "peak_enhancement_map": "peak_enhancement",
     "time_to_peak_map": "ttp",
     "ser_map": "ser",
-    "wash_in_slope_map": "wash_in_slope",
-    "wash_out_slope_map": "wash_out_slope",
 }
 
 # NAWM-normalized DCE maps that carry LesionStats.
@@ -1583,7 +1559,7 @@ def init_dce_datasinks_wf(
         static_extra = spec.extra
         if spec.map_key == "ser" or spec.map_key.startswith("iauc"):
             extra_inputs = ["extra", "map_key", "config_dict"]
-            if spec.map_key.startswith("iauc"):
+            if spec.map_key == "ser" or spec.map_key.startswith("iauc"):
                 extra_inputs.append("qc_metrics")
             model_free_extra = pe.Node(
                 niu.Function(
@@ -1596,7 +1572,7 @@ def init_dce_datasinks_wf(
             model_free_extra.inputs.extra = spec.extra
             model_free_extra.inputs.map_key = spec.map_key
             workflow.connect(inputnode, "config_dict", model_free_extra, "config_dict")
-            if spec.map_key.startswith("iauc"):
+            if spec.map_key == "ser" or spec.map_key.startswith("iauc"):
                 workflow.connect(inputnode, "qc_metrics", model_free_extra, "qc_metrics")
             static_extra = None
         sink = _add_perf_map_sink(
@@ -1605,30 +1581,6 @@ def init_dce_datasinks_wf(
             desc_value=spec.desc, suffix=spec.suffix,
             description=spec.description, units=spec.units, extra=static_extra,
             extra_node=model_free_extra,
-            map_key=spec.map_key, bids_suffix=spec.bids_suffix,
-        )
-        sink_outputs.append((sink, "out_file"))
-
-    # Categorical segmentation: explicit because its BIDS suffix is dseg.
-    spec = _CURVE_TYPE_MAP
-    if spec.in_attr in present:
-        curve_extra = pe.Node(
-            niu.Function(
-                input_names=["extra", "map_key", "config_dict"],
-                output_names=["extra"],
-                function=_build_model_free_extra,
-            ),
-            name=f"{spec.in_attr}_extra",
-        )
-        curve_extra.inputs.extra = spec.extra
-        curve_extra.inputs.map_key = spec.map_key
-        workflow.connect(inputnode, "config_dict", curve_extra, "config_dict")
-        sink = _add_perf_map_sink(
-            workflow, inputnode, base_perf_no_ktrans,
-            name=spec.in_attr, in_attr=spec.in_attr,
-            desc_value=spec.desc, suffix=spec.suffix,
-            description=spec.description, units=spec.units, extra=None,
-            extra_node=curve_extra,
             map_key=spec.map_key, bids_suffix=spec.bids_suffix,
         )
         sink_outputs.append((sink, "out_file"))

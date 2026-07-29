@@ -542,128 +542,63 @@ class TestTimeToPeak:
 class TestSER:
     """Tests for compute_signal_enhancement_ratio."""
 
-    def test_washout(self) -> None:
-        """Higher early than late concentration → SER > 1."""
-        # 80 frames, 10s each → ~13.3 min total; bolus at frame 2
-        n_time = 80
-        time_points = np.arange(n_time, dtype=np.float64) * 10.0 / 60.0
-        bolus_frame = 2
-        concentration = np.full((2, 2, 1, n_time), 100.0, dtype=np.float64)
-        # Early window: bolus + 0.5 to bolus + 2.5 min → ~frames 5-17
-        concentration[..., 5:18] = 120.0
-        # Late window: last 20% of post-bolus → ~last 16 frames
-        concentration[..., 64:] = 110.0
-        result = compute_signal_enhancement_ratio(
-            concentration, time_points, bolus_arrival_frame=bolus_frame,
-        )
-        assert np.all(result > 1.0)
+    @staticmethod
+    def _signal(duration_s: float = 400.0, tr_s: float = 10.0) -> tuple[np.ndarray, np.ndarray]:
+        time_points = np.arange(0.0, duration_s + tr_s, tr_s) / 60.0
+        signal = np.full((1, 1, 1, time_points.size), 100.0, dtype=np.float64)
+        return signal, time_points
 
-    def test_persistent(self) -> None:
-        """Higher late than early → SER < 1."""
-        n_time = 80
-        time_points = np.arange(n_time, dtype=np.float64) * 10.0 / 60.0
-        bolus_frame = 2
-        concentration = np.full((2, 2, 1, n_time), 100.0, dtype=np.float64)
-        concentration[..., 5:18] = 110.0
-        concentration[..., 64:] = 120.0
-        result = compute_signal_enhancement_ratio(
-            concentration, time_points, bolus_arrival_frame=bolus_frame,
-        )
-        assert np.all(result < 1.0)
+    def test_fixed_times_are_independent_of_scan_duration(self) -> None:
+        """Appending later frames must not change fixed-time SER."""
+        values = []
+        for duration_s in (350.0, 600.0):
+            signal, time_points = self._signal(duration_s)
+            signal[..., 12] = 140.0
+            signal[..., 32] = 120.0
+            values.append(compute_signal_enhancement_ratio(signal, time_points)[0, 0, 0])
+        assert values == pytest.approx([2.0, 2.0])
 
-    def test_plateau_near_one(self) -> None:
-        """Constant concentration post-bolus → SER ≈ 1.0."""
-        n_time = 60
-        time_points = np.arange(n_time, dtype=np.float64) * 10.0 / 60.0
-        bolus_frame = 3
-        concentration = np.full((2, 2, 1, n_time), 100.0, dtype=np.float64)
-        concentration[..., bolus_frame:] = 115.0  # constant post-bolus
+    def test_interpolates_fixed_sample_times(self) -> None:
+        """SER samples between volumes use linear interpolation."""
+        signal, time_points = self._signal(tr_s=20.0)
+        signal[..., 5] = 110.0
+        signal[..., 6] = 130.0
+        signal[..., 15] = 100.0
+        signal[..., 16] = 120.0
         result = compute_signal_enhancement_ratio(
-            concentration, time_points, bolus_arrival_frame=bolus_frame,
-            baseline_frames=bolus_frame,
+            signal, time_points, early_time_s=110.0, late_time_s=310.0,
         )
-        assert np.allclose(result, 1.0, atol=0.05)
+        assert result[0, 0, 0] == pytest.approx(2.0)
 
-    def test_short_acquisition(self) -> None:
-        """Short acquisition (5 min) uses adaptive late window, not absolute."""
-        # 40 frames, 7.6s each → ~5.1 min; bolus at frame 7
-        n_time = 40
-        time_points = np.arange(n_time, dtype=np.float64) * 7.6 / 60.0
-        bolus_frame = 7
-        concentration = np.full((3, 3, 1, n_time), 100.0, dtype=np.float64)
-        # Early: frames ~10-25 (0.5-2.5 min post-bolus)
-        concentration[..., 10:26] = 120.0
-        # Late: last 20% of post-bolus → ~last 6-7 frames
-        concentration[..., 33:] = 110.0
-        result = compute_signal_enhancement_ratio(
-            concentration, time_points, bolus_arrival_frame=bolus_frame,
-        )
-        # Should be ~2.0, definitely not millions
-        assert np.all(result > 1.0)
-        assert np.all(result < 10.0)
+    def test_incomplete_late_sample_is_undefined(self) -> None:
+        """An acquisition that misses the late sample returns NaN."""
+        signal, time_points = self._signal(duration_s=300.0)
+        result = compute_signal_enhancement_ratio(signal, time_points)
+        assert np.all(np.isnan(result))
 
     def test_non_enhancing_signal_is_undefined(self) -> None:
         """A non-enhancing signal must not be classified as plateau-like."""
-        n_time = 60
-        time_points = np.arange(n_time, dtype=np.float64) * 10.0 / 60.0
-        concentration = np.zeros((2, 2, 1, n_time), dtype=np.float64)
-        # Near-zero everywhere
-        concentration[..., :] = 1e-12
+        signal, time_points = self._signal()
         result = compute_signal_enhancement_ratio(
-            concentration, time_points, bolus_arrival_frame=3,
+            signal, time_points,
         )
         assert np.all(np.isnan(result))
 
     def test_uses_baseline_subtracted_signal_enhancement(self) -> None:
         """SER is the ratio of early and late enhancement above S0."""
-        n_time = 80
-        time_points = np.arange(n_time, dtype=np.float64) * 10.0 / 60.0
-        signal = np.full((1, 1, 1, n_time), 100.0, dtype=np.float64)
-        signal[..., 5:18] = 140.0
-        signal[..., 64:] = 120.0
-
-        result = compute_signal_enhancement_ratio(
-            signal, time_points, bolus_arrival_frame=2, baseline_frames=2,
-        )
-
+        signal, time_points = self._signal()
+        signal[..., 12] = 140.0
+        signal[..., 32] = 120.0
+        result = compute_signal_enhancement_ratio(signal, time_points)
         assert result[0, 0, 0] == pytest.approx(2.0)
 
-    def test_extreme_ser_clamped(self) -> None:
-        """Near-zero late concentration → raw SER >> 10, clamped to max_cap."""
-        n_time = 80
-        time_points = np.arange(n_time, dtype=np.float64) * 10.0 / 60.0
-        bolus_frame = 2
-        concentration = np.full((2, 2, 1, n_time), 100.0, dtype=np.float64)
-        # High early concentration
-        concentration[..., 5:18] = 150.0
-        # Near-zero late concentration (triggers large raw SER)
-        concentration[..., 64:] = 100.0001
-        result = compute_signal_enhancement_ratio(
-            concentration, time_points, bolus_arrival_frame=bolus_frame,
-        )
-        assert np.all(result <= 10.0)
-        assert np.all(result == 10.0)
-
-    def test_long_acquisition_late_capped(self) -> None:
-        """Long acquisition (>10 min): late window capped at 5 min."""
-        # 120 frames, 10s each → 20 min; bolus at frame 5
-        n_time = 120
-        time_points = np.arange(n_time, dtype=np.float64) * 10.0 / 60.0
-        bolus_frame = 5
-        concentration = np.full((2, 2, 1, n_time), 100.0, dtype=np.float64)
-        # Early: strong signal
-        concentration[..., 8:20] = 130.0
-        # Fill late portion: high value only in last 5 min (frames 90-120)
-        concentration[..., 90:] = 110.0
-        # Put low value in the preceding region (frames 60-90)
-        concentration[..., 60:90] = 101.0
-        result = compute_signal_enhancement_ratio(
-            concentration, time_points, bolus_arrival_frame=bolus_frame,
-        )
-        # Late window should capture frames ~90-120 (last 5 min), not 60-120
-        # So SER ≈ 3.0/1.0 = 3.0, not 3.0/0.55 ≈ 5.5
-        assert np.all(result > 1.0)
-        assert np.all(result < 5.0)
+    def test_ratio_is_uncapped_and_negative_denominator_is_retained(self) -> None:
+        """Stored SER preserves finite ratios instead of clipping or censoring."""
+        signal, time_points = self._signal()
+        signal[..., 12] = 150.0
+        signal[..., 32] = 99.0
+        result = compute_signal_enhancement_ratio(signal, time_points)
+        assert result[0, 0, 0] == pytest.approx(-50.0)
 
 
 # =========================================================================

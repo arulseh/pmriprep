@@ -1581,50 +1581,14 @@
     [
       "pk_modeling",
       "out_wash_in_slope",
-      "lesion_stats",
-      "wash_in_map"
-    ],
-    [
-      "pk_modeling",
-      "out_wash_in_slope",
       "outputnode",
       "wash_in_slope_map"
-    ],
-    [
-      "pk_modeling",
-      "out_wash_in_slope",
-      "roi_stats",
-      "wash_in_map"
-    ],
-    [
-      "pk_modeling",
-      "out_wash_in_slope",
-      "user_lesion_stats",
-      "wash_in_map"
-    ],
-    [
-      "pk_modeling",
-      "out_wash_out_slope",
-      "lesion_stats",
-      "wash_out_map"
     ],
     [
       "pk_modeling",
       "out_wash_out_slope",
       "outputnode",
       "wash_out_slope_map"
-    ],
-    [
-      "pk_modeling",
-      "out_wash_out_slope",
-      "roi_stats",
-      "wash_out_map"
-    ],
-    [
-      "pk_modeling",
-      "out_wash_out_slope",
-      "user_lesion_stats",
-      "wash_out_map"
     ],
     [
       "pk_modeling",
@@ -2746,10 +2710,8 @@
       "model": "auto",
       "n_procs": 1,
       "save_fitted_curves": false,
-      "ser_early_end_s": 150.0,
-      "ser_early_start_s": 30.0,
-      "ser_late_fraction": 0.2,
-      "ser_min_peak_enhancement": 10.0,
+      "ser_early_time_s": 120.0,
+      "ser_late_time_s": 320.0,
       "sloppy": false,
       "tsnr_threshold": 0.0
     },

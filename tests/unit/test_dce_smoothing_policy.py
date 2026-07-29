@@ -96,17 +96,15 @@ def test_smoothed_ser_metadata_records_configured_windows() -> None:
     metadata = _build_dce_smoothed_meta(
         {}, "Smoothed SER", 3.0, map_key="ser",
         config_dict={
-            "ser_early_start_s": 45.0,
-            "ser_early_end_s": 135.0,
-            "ser_late_fraction": 0.25,
-            "ser_min_peak_enhancement": 12.0,
+            "ser_early_time_s": 90.0,
+            "ser_late_time_s": 300.0,
         },
     )
 
     assert metadata["InputCurve"] == "motion_corrected_signal"
-    assert metadata["EarlyWindowSecondsAfterBolus"] == [45.0, 135.0]
-    assert metadata["LateWindowFraction"] == 0.25
-    assert metadata["MinimumPeakEnhancementPercent"] == 12.0
+    assert metadata["EarlySampleTimeSecondsAfterReference"] == 90.0
+    assert metadata["LateSampleTimeSecondsAfterReference"] == 300.0
+    assert metadata["SampleInterpolation"] == "linear"
 
 
 def test_native_ser_metadata_records_configured_windows() -> None:
@@ -115,14 +113,12 @@ def test_native_ser_metadata_records_configured_windows() -> None:
         {"InputCurve": "motion_corrected_signal"},
         "ser",
         {
-            "ser_early_start_s": 45.0,
-            "ser_early_end_s": 135.0,
-            "ser_late_fraction": 0.25,
-            "ser_min_peak_enhancement": 12.0,
+            "ser_early_time_s": 90.0,
+            "ser_late_time_s": 300.0,
         },
     )
 
     assert metadata is not None
-    assert metadata["EarlyWindowSecondsAfterBolus"] == [45.0, 135.0]
-    assert metadata["LateWindowFraction"] == 0.25
-    assert metadata["MinimumPeakEnhancementPercent"] == 12.0
+    assert metadata["EarlySampleTimeSecondsAfterReference"] == 90.0
+    assert metadata["LateSampleTimeSecondsAfterReference"] == 300.0
+    assert metadata["SampleInterpolation"] == "linear"

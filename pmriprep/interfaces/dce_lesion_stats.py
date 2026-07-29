@@ -293,8 +293,6 @@ class DCELesionStats(BaseInterface):
             ("iauc120_map", "iauc120"),
             ("niauc60_map", "niauc60"),
             ("peak_enhancement_map", "peak_enhancement"),
-            ("wash_in_map", "wash_in_slope"),
-            ("wash_out_map", "wash_out_slope"),
             ("ser_map", "ser"),
             ("ttp_map", "ttp"),
         ]

@@ -218,10 +218,8 @@ DCE fields:
 | `motion_correct` | `true` | Apply motion correction |
 | `motion_thresh` | `0.5` | Motion-QC threshold in mm (float) |
 | `tsnr_threshold` | `0.0` | Optional voxel tSNR floor; 0 disables |
-| `ser_early_start_s` | `30.0` | Start of the protocol-defined early SER window after bolus arrival (s) |
-| `ser_early_end_s` | `150.0` | End of the protocol-defined early SER window after bolus arrival (s) |
-| `ser_late_fraction` | `0.2` | Terminal fraction of the post-bolus scan used for SER |
-| `ser_min_peak_enhancement` | `10.0` | Minimum peak relative signal enhancement (%) for SER and curve typing |
+| `ser_early_time_s` | `120.0` | Early SER sample time after the selected global contrast reference (s) |
+| `ser_late_time_s` | `320.0` | Late SER sample time after the selected global contrast reference (s) |
 | `r1_relaxivity` | `null` | Contrast-agent r1 override in s⁻¹ mM⁻¹ (float) |
 | `cbv_constraint_mode` | `auto` | Use reliable DSC CBV as a soft vp prior, or `skip` |
 | `hematocrit` | `0.42` | Arterial hematocrit for plasma conversion (float) |

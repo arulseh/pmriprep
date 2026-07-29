@@ -1671,62 +1671,14 @@
     [
       "pk_modeling",
       "out_wash_in_slope",
-      "build_model_free_dict",
-      "wash_in_slope"
-    ],
-    [
-      "pk_modeling",
-      "out_wash_in_slope",
-      "lesion_stats",
-      "wash_in_map"
-    ],
-    [
-      "pk_modeling",
-      "out_wash_in_slope",
       "outputnode",
       "wash_in_slope_map"
-    ],
-    [
-      "pk_modeling",
-      "out_wash_in_slope",
-      "roi_stats",
-      "wash_in_map"
-    ],
-    [
-      "pk_modeling",
-      "out_wash_in_slope",
-      "user_lesion_stats",
-      "wash_in_map"
-    ],
-    [
-      "pk_modeling",
-      "out_wash_out_slope",
-      "build_model_free_dict",
-      "wash_out_slope"
-    ],
-    [
-      "pk_modeling",
-      "out_wash_out_slope",
-      "lesion_stats",
-      "wash_out_map"
     ],
     [
       "pk_modeling",
       "out_wash_out_slope",
       "outputnode",
       "wash_out_slope_map"
-    ],
-    [
-      "pk_modeling",
-      "out_wash_out_slope",
-      "roi_stats",
-      "wash_out_map"
-    ],
-    [
-      "pk_modeling",
-      "out_wash_out_slope",
-      "user_lesion_stats",
-      "wash_out_map"
     ],
     [
       "pk_modeling",
@@ -2569,7 +2521,7 @@
     }
   },
   "function_sha256": {
-    "build_model_free_dict": "3074057e4a4048b45ac6a2dea7137001b9549eeb0284627b390a1238cc07dba2",
+    "build_model_free_dict": "444f028507ca77723bce245aa1c9b72c2717ca4cc19c5e5a3a4c9a6a2da4beaa",
     "build_pk_dict": "d150bcea85a6d48fbb72799763f123404d45a96104157d4d34475d9e25eb5af3",
     "collect_qc_metrics": "1cb489a2ba7e03b472a7175598a360b9f05ca1b42f856333fc1bc51195c48cac",
     "combine_masks": "f2748155dafc15b2d74a066b3da5db0ed2a4b5486b46ee8ea1f4c7a181de8fcf",
@@ -2851,7 +2803,7 @@
       "subject_id": "0001"
     },
     "build_model_free_dict": {
-      "function_str": "def _build_model_free_map_dict(\n    iauc60: str | None = None,\n    iauc90: str | None = None,\n    iauc120: str | None = None,\n    peak: str | None = None,\n    ser: str | None = None,\n    wash_in_slope: str | None = None,\n    wash_out_slope: str | None = None,\n) -> dict[str, str]:\n    \"\"\"Build dictionary of model-free maps for smoothing.\n\n    TTP and BAT are discrete timing maps, and curve type is categorical; none\n    are included because smoothing would create non-physical intermediate\n    values.\n    \"\"\"\n    from nipype.interfaces.base import isdefined\n\n    d: dict[str, str] = {}\n    if iauc60 and isdefined(iauc60):\n        d[\"iauc60\"] = iauc60\n    if iauc90 and isdefined(iauc90):\n        d[\"iauc90\"] = iauc90\n    if iauc120 and isdefined(iauc120):\n        d[\"iauc120\"] = iauc120\n    if peak and isdefined(peak):\n        d[\"peak_enhancement\"] = peak\n    if ser and isdefined(ser):\n        d[\"ser\"] = ser\n    if wash_in_slope and isdefined(wash_in_slope):\n        d[\"wash_in_slope\"] = wash_in_slope\n    if wash_out_slope and isdefined(wash_out_slope):\n        d[\"wash_out_slope\"] = wash_out_slope\n    return d\n"
+      "function_str": "def _build_model_free_map_dict(\n    iauc60: str | None = None,\n    iauc90: str | None = None,\n    iauc120: str | None = None,\n    peak: str | None = None,\n    ser: str | None = None,\n) -> dict[str, str]:\n    \"\"\"Build dictionary of model-free maps for smoothing.\n\n    TTP and BAT are discrete timing maps, and curve type is categorical; none\n    are included because smoothing would create non-physical intermediate\n    values.\n    \"\"\"\n    from nipype.interfaces.base import isdefined\n\n    d: dict[str, str] = {}\n    if iauc60 and isdefined(iauc60):\n        d[\"iauc60\"] = iauc60\n    if iauc90 and isdefined(iauc90):\n        d[\"iauc90\"] = iauc90\n    if iauc120 and isdefined(iauc120):\n        d[\"iauc120\"] = iauc120\n    if peak and isdefined(peak):\n        d[\"peak_enhancement\"] = peak\n    if ser and isdefined(ser):\n        d[\"ser\"] = ser\n    return d\n"
     },
     "build_pk_dict": {
       "function_str": "def _build_pk_map_dict(\n    ktrans: str | None = None,\n    ve: str | None = None,\n    vp: str | None = None,\n) -> dict[str, str]:\n    \"\"\"Build dictionary of independently estimated PK maps for smoothing.\"\"\"\n    from nipype.interfaces.base import isdefined\n\n    d: dict[str, str] = {}\n    if ktrans and isdefined(ktrans):\n        d[\"ktrans\"] = ktrans\n    if ve and isdefined(ve):\n        d[\"ve\"] = ve\n    if vp and isdefined(vp):\n        d[\"vp\"] = vp\n    return d\n"
@@ -2951,10 +2903,8 @@
       "model": "auto",
       "n_procs": 1,
       "save_fitted_curves": false,
-      "ser_early_end_s": 150.0,
-      "ser_early_start_s": 30.0,
-      "ser_late_fraction": 0.2,
-      "ser_min_peak_enhancement": 10.0,
+      "ser_early_time_s": 120.0,
+      "ser_late_time_s": 320.0,
       "sloppy": false,
       "tsnr_threshold": 0.0
     },

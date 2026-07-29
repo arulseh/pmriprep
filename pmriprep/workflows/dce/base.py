@@ -2223,10 +2223,8 @@ def init_dce_preproc_wf(
         n_procs=max(1, config.num_processes),
         sloppy=config.sloppy,
         aif_bat_alignment=config.aif_bat_alignment,
-        ser_early_start_s=config.ser_early_start_s,
-        ser_early_end_s=config.ser_early_end_s,
-        ser_late_fraction=config.ser_late_fraction,
-        ser_min_peak_enhancement=config.ser_min_peak_enhancement,
+        ser_early_time_s=config.ser_early_time_s,
+        ser_late_time_s=config.ser_late_time_s,
     )
     if random_seed is not None:
         pk_kwargs["random_seed"] = random_seed
@@ -2521,8 +2519,6 @@ def init_dce_preproc_wf(
                 ("outputnode.out_iauc120", "inputnode.iauc120"),
                 ("outputnode.out_peak_enhancement", "inputnode.peak"),
                 ("outputnode.out_ser", "inputnode.ser"),
-                ("outputnode.out_wash_in_slope", "inputnode.wash_in_slope"),
-                ("outputnode.out_wash_out_slope", "inputnode.wash_out_slope"),
             ]),
             (dce_brain_extraction_wf, smoothing_wf, [
                 ("outputnode.out_mask", "inputnode.brain_mask_file"),
@@ -2679,8 +2675,6 @@ def init_dce_preproc_wf(
             ("outputnode.out_peak_enhancement", "inputnode.peak_enhancement_map"),
             ("outputnode.out_time_to_peak", "inputnode.ttp_map"),
             ("outputnode.out_ser", "inputnode.ser_map"),
-            ("outputnode.out_wash_in_slope", "inputnode.wash_in_map"),
-            ("outputnode.out_wash_out_slope", "inputnode.wash_out_map"),
             ("outputnode.out_qc_mask", "inputnode.qc_mask"),
         ]),
         (normalization_wf, lesion_stats_wf, [

@@ -2296,8 +2296,6 @@ def _build_model_free_map_dict(
     iauc120: str | None = None,
     peak: str | None = None,
     ser: str | None = None,
-    wash_in_slope: str | None = None,
-    wash_out_slope: str | None = None,
 ) -> dict[str, str]:
     """Build dictionary of model-free maps for smoothing.
 
@@ -2318,10 +2316,6 @@ def _build_model_free_map_dict(
         d["peak_enhancement"] = peak
     if ser and isdefined(ser):
         d["ser"] = ser
-    if wash_in_slope and isdefined(wash_in_slope):
-        d["wash_in_slope"] = wash_in_slope
-    if wash_out_slope and isdefined(wash_out_slope):
-        d["wash_out_slope"] = wash_out_slope
     return d
 
 

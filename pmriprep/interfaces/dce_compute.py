@@ -1443,6 +1443,7 @@ class _DCEModelFreeMaps(NamedTuple):
     bolus_arrival_time: npt.NDArray[Any]
     curve_type: npt.NDArray[Any]
     iauc_qc: dict[str, Any]
+    ser_qc: dict[str, Any]
 
 
 class _DCEMotionWeighting(NamedTuple):
@@ -2509,10 +2510,8 @@ class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
         usedefault=True,
         desc="tSNR threshold for voxel inclusion (0 = no threshold)",
     )
-    ser_early_start_s = traits.Float(30.0, usedefault=True)
-    ser_early_end_s = traits.Float(150.0, usedefault=True)
-    ser_late_fraction = traits.Float(0.2, usedefault=True)
-    ser_min_peak_enhancement = traits.Float(10.0, usedefault=True)
+    ser_early_time_s = traits.Float(120.0, usedefault=True)
+    ser_late_time_s = traits.Float(320.0, usedefault=True)
     baseline_frames = traits.Int(
         0,
         usedefault=True,
@@ -3414,6 +3413,24 @@ class ComputeDCEMaps(BaseInterface):
             if isdefined(self.inputs.volume_tr) and self.inputs.volume_tr is not None
             else None
         )
+        ser_early_time_s = float(self.inputs.ser_early_time_s)
+        ser_late_time_s = float(self.inputs.ser_late_time_s)
+        ser_complete = available_duration_s + 6e-8 >= ser_late_time_s
+        ser_qc = {
+            "reference_frame": iauc_reference_frame,
+            "reference_time_s": reference_time_s,
+            "reference_selection": "earlier_of_baseline_count_and_detected_arrival",
+            "early_sample_time_s": ser_early_time_s,
+            "late_sample_time_s": ser_late_time_s,
+            "available_post_reference_duration_s": available_duration_s,
+            "complete": bool(ser_complete),
+        }
+        if not ser_complete:
+            logger.warning(
+                "SER unavailable: %.3f s acquired after reference frame %d; "
+                "late sample requires %.3f s",
+                available_duration_s, iauc_reference_frame, ser_late_time_s,
+            )
         ser: npt.NDArray[Any]
         if not isdefined(self.inputs.dce_signal_file):
             ser = np.full(concentration.shape[:3], np.nan, dtype=np.float64)
@@ -3426,14 +3443,10 @@ class ComputeDCEMaps(BaseInterface):
             ser = compute_signal_enhancement_ratio(
                 signal_data,
                 time_points,
-                bolus_arrival_frame=prepared.baseline_frames,
+                bolus_arrival_frame=iauc_reference_frame,
                 baseline_frames=prepared.baseline_frames,
-                early_offset_s=(
-                    float(self.inputs.ser_early_start_s),
-                    float(self.inputs.ser_early_end_s),
-                ),
-                late_fraction=float(self.inputs.ser_late_fraction),
-                min_peak_enhancement_percent=float(self.inputs.ser_min_peak_enhancement),
+                early_time_s=ser_early_time_s,
+                late_time_s=ser_late_time_s,
             )
         return _DCEModelFreeMaps(
             compute_iauc(
@@ -3470,6 +3483,7 @@ class ComputeDCEMaps(BaseInterface):
             ),
             compute_curve_type(ser),
             iauc_qc,
+            ser_qc,
         )
 
     def _prepare_motion_weighting(
@@ -3736,6 +3750,7 @@ class ComputeDCEMaps(BaseInterface):
             self._MAX_VOLUME_TR_2CXM,
         )
         qc_metrics["iauc"] = model_free.iauc_qc
+        qc_metrics["ser"] = model_free.ser_qc
 
         motion = self._prepare_motion_weighting(header, n_timepoints)
         motion_weights = motion.weights
@@ -3965,6 +3980,7 @@ class ComputeDCEMaps(BaseInterface):
                 bat,
                 curve_type,
                 model_free.iauc_qc,
+                model_free.ser_qc,
             ),
             self._gen_outfilename,
             _save_dce_map,

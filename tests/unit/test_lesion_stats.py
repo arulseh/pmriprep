@@ -969,8 +969,6 @@ class TestDCELesionStatsMapKeyCoverage:
             "peak_enhancement_map": "peak_enhancement",
             "time_to_peak_map": "ttp",
             "ser_map": "ser",
-            "wash_in_slope_map": "wash_in_slope",
-            "wash_out_slope_map": "wash_out_slope",
         }
         assert _MF_LESIONSTATS_MAP_KEY == expected
 
