@@ -1,5 +1,6 @@
 """DSC smoothed-derivative policy tests."""
 
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -8,6 +9,7 @@ import numpy as np
 from scipy.ndimage import gaussian_filter
 
 from pmriprep.workflows.dsc._helpers import _smooth_maps
+from pmriprep.workflows._perfusion import smooth_masked_maps
 
 
 def _write_nifti(
@@ -70,3 +72,12 @@ def test_smoothing_rejects_mismatched_mask_affine(tmp_path: Path) -> None:
 
     with np.testing.assert_raises_regex(ValueError, "Brain mask affine"):
         _smooth_maps({"mtt": map_file}, mask_file, 3.0)
+
+
+def test_smoothing_warns_when_brain_mask_is_unavailable(caplog) -> None:
+    """Optional smoothing may degrade non-fatally, but never silently."""
+    with caplog.at_level(logging.WARNING, logger="nipype.workflow"):
+        result = smooth_masked_maps({"mtt": "mtt.nii.gz"}, None, 3.0)
+
+    assert result == {}
+    assert "brain mask is unavailable" in caplog.text

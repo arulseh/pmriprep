@@ -1707,7 +1707,7 @@
     "reg_filmstrip": "00497e133ecfd0f3b852ebd399555ee6e05fcffabbd174d339e925667d3709be",
     "select_aif_exclusion": "3ac6f0a171a3c915c7c043706044fb8dd45d2a9c05f1d1fad613919135724b21",
     "signal_to_conc": "aafea7db6295a9aae640c8e25aa553ef58a8356c39cf66317d554e6a5eea3749",
-    "smooth_hemodynamic": "237d1d5ba155b0deb3b52f997f76ac95e14dfef9a76bfdcfccc3565301be14f7",
+    "smooth_hemodynamic": "7459472fd4c3db9bf18e47beb64b1f6e5dd2014f536722bf5658623905ee6667",
     "transform_brain_mask_qc": "10635bb241954d925171ad0630581af33125d7326d550e5282f1aab5b405ca8a",
     "transform_enhancing_mask": "1455e4849ff2a1f176f8172534cb68abdf939dcc4564d2dc10bf5e61426109d1",
     "transform_lesion": "1455e4849ff2a1f176f8172534cb68abdf939dcc4564d2dc10bf5e61426109d1",
@@ -2052,6 +2052,7 @@
       "baseline_frames": 5
     },
     "smooth_hemodynamic": {
+      "function_str": "def _smooth_maps(\n    map_files: dict[str, str],\n    brain_mask_file: str | None,\n    fwhm: float,\n) -> dict[str, str]:\n    \"\"\"Apply shared brain-masked Gaussian smoothing to DSC maps.\"\"\"\n    from pmriprep.workflows._perfusion import smooth_masked_maps\n\n    return smooth_masked_maps(map_files, brain_mask_file, fwhm)\n",
       "fwhm": 4.0
     },
     "transform_atlas": {

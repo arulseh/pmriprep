@@ -2074,104 +2074,10 @@ def _smooth_dce_maps(
     brain_mask_file: str | None,
     fwhm: float,
 ) -> dict[str, str]:
-    """Apply Gaussian smoothing to a dict of DCE maps.
+    """Apply shared brain-masked Gaussian smoothing to DCE maps."""
+    from pmriprep.workflows._perfusion import smooth_masked_maps
 
-    Uses normalized convolution over finite in-brain source voxels to prevent
-    brain-edge dilution. Undefined source voxels remain undefined in the
-    smoothed derivative.
-
-    Parameters
-    ----------
-    map_files : dict
-        Dict mapping map name to file path.
-    brain_mask_file : str
-        Path to brain mask for re-masking after smoothing.
-    fwhm : float
-        Smoothing FWHM in mm.
-
-    Returns
-    -------
-    dict
-        Dict mapping map name to smoothed file path.
-    """
-    import logging
-    import subprocess
-    from pathlib import Path
-    from typing import cast
-
-    import nibabel as nib
-    import numpy as np
-    from nipype.interfaces.base import isdefined
-
-    logger = logging.getLogger("nipype.workflow")
-
-    results: dict[str, str] = {}
-    if not map_files:
-        return results
-    if not brain_mask_file or not isdefined(brain_mask_file):
-        return results
-    if not Path(brain_mask_file).is_file():
-        return results
-
-    sigma = fwhm / 2.355
-    for name, filepath in map_files.items():
-        if not filepath or not isdefined(filepath):
-            continue
-        if isinstance(filepath, str) and filepath in ("", "None"):
-            continue
-        if not Path(filepath).is_file():
-            continue
-
-        out_path = str(Path.cwd() / f"{Path(filepath).stem}_fwhm{int(fwhm)}.nii.gz")
-
-        img = cast(nib.Nifti1Image, nib.load(filepath))
-        data = img.get_fdata()
-        mask_img = cast(nib.Nifti1Image, nib.load(brain_mask_file))
-        brain_mask = mask_img.get_fdata() > 0
-        if brain_mask.shape != data.shape:
-            raise ValueError(
-                f"Brain mask shape {brain_mask.shape} does not match {name} map {data.shape}"
-            )
-        if not np.allclose(mask_img.affine, img.affine):
-            raise ValueError(f"Brain mask affine does not match {name} map affine")
-
-        source_support = np.isfinite(data) & brain_mask
-        valid_mask = source_support.astype(np.float32)
-        numerator = np.where(source_support, data, 0.0).astype(np.float32)
-        vmask_path = str(Path.cwd() / f"{name}_vmask.nii.gz")
-        num_path = str(Path.cwd() / f"{name}_num.nii.gz")
-        den_path = str(Path.cwd() / f"{name}_den.nii.gz")
-        smooth_num_path = str(Path.cwd() / f"{name}_smooth_num.nii.gz")
-        nib.save(nib.Nifti1Image(valid_mask, img.affine, img.header), vmask_path)
-        nib.save(nib.Nifti1Image(numerator, img.affine, img.header), num_path)
-
-        logger.info("Brain-masked normalized convolution for '%s'", name)
-        try:
-            subprocess.run(
-                ["fslmaths", num_path, "-s", str(sigma), smooth_num_path],
-                check=True, capture_output=True,
-            )
-            subprocess.run(
-                ["fslmaths", vmask_path, "-s", str(sigma), den_path],
-                check=True, capture_output=True,
-            )
-            smooth_num = cast(nib.Nifti1Image, nib.load(smooth_num_path)).get_fdata()
-            smooth_den = cast(nib.Nifti1Image, nib.load(den_path)).get_fdata()
-            smoothed = np.full(data.shape, np.nan, dtype=np.float32)
-            calculable = source_support & (smooth_den > np.finfo(np.float32).eps)
-            smoothed[calculable] = (smooth_num[calculable] / smooth_den[calculable]).astype(
-                np.float32
-            )
-            smoothed[~brain_mask] = 0.0
-            out_header = nib.Nifti1Header.from_header(img.header)
-            out_header.set_data_dtype(np.float32)
-            nib.save(nib.Nifti1Image(smoothed, img.affine, out_header), out_path)
-        finally:
-            for tmp in [vmask_path, num_path, den_path, smooth_num_path]:
-                Path(tmp).unlink(missing_ok=True)
-
-        results[name] = out_path
-    return results
+    return smooth_masked_maps(map_files, brain_mask_file, fwhm)
 
 
 def _build_pk_map_dict(
