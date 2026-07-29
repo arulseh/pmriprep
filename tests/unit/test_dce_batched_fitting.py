@@ -212,6 +212,24 @@ class TestExtendedToftsRecovery:
             result.uncertainties["vp"][0]
         )
 
+    def test_fixed_vp_has_no_fit_derived_standard_error(
+        self,
+        aif_and_time: tuple[np.ndarray, np.ndarray],
+    ) -> None:
+        """A hard external vp is not assigned zero fitting uncertainty."""
+        aif, time_points = aif_and_time
+        tissue = ExtendedToftsModel().evaluate(
+            [0.12, 0.3, 0.03], aif, time_points
+        )
+        result = batched_lm_fit(
+            "extended_tofts", tissue[np.newaxis, :], aif, time_points,
+            fixed_vp=np.array([0.03]), compute_uncertainties=True,
+        )
+        assert result.converged[0]
+        assert np.isfinite(result.uncertainties["ktrans"][0])
+        assert np.isfinite(result.uncertainties["ve"][0])
+        assert np.isnan(result.uncertainties["vp"][0])
+
 
 # ---------------------------------------------------------------------------
 # Test 3: Patlak exact recovery (no noise)
@@ -301,11 +319,11 @@ class TestPatlakExact:
         ) or parameters[1] == pytest.approx(model.get_bounds()[1][1])
         assert at_ktrans_bound or at_vp_bound
         if at_ktrans_bound:
-            assert result.uncertainties["ktrans"][0] == 0.0
+            assert np.isnan(result.uncertainties["ktrans"][0])
         else:
             assert np.isfinite(result.uncertainties["ktrans"][0])
         if at_vp_bound:
-            assert result.uncertainties["vp"][0] == 0.0
+            assert np.isnan(result.uncertainties["vp"][0])
         else:
             assert np.isfinite(result.uncertainties["vp"][0])
 
@@ -364,6 +382,20 @@ class TestPatlakExact:
 
         assert result.params["vp"][0] <= model.get_bounds()[1][1]
         assert result.params["vp"][0] == pytest.approx(0.30)
+
+    def test_patlak_fixed_vp_uncertainty_is_not_reported_as_zero(
+        self,
+        aif_and_time: tuple[np.ndarray, np.ndarray],
+    ) -> None:
+        """A fixed external vp has no fit-derived standard error."""
+        aif, time_points = aif_and_time
+        tissue = PatlakModel().evaluate([0.08, 0.03], aif, time_points)
+        result = batched_patlak_lstsq(
+            tissue[np.newaxis, :], aif, time_points,
+            fixed_vp=np.array([0.03]), compute_uncertainties=True,
+        )
+        assert np.isfinite(result.uncertainties["ktrans"][0])
+        assert np.isnan(result.uncertainties["vp"][0])
 
 
 # ---------------------------------------------------------------------------

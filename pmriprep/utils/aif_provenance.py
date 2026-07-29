@@ -107,23 +107,6 @@ DCE_POPULATION_AIF_USAGE: Final[dict[str, TemplateAIFUsageCategory]] = {
     "vp_uncertainty": "ratio_defensible",
     "fp_uncertainty": "ratio_defensible",
     "ps_uncertainty": "ratio_defensible",
-    # CV (std/mean, AIF cancels)
-    "ktrans_cv": "safe",
-    "ve_cv": "safe",
-    "vp_cv": "safe",
-    "fp_cv": "safe",
-    "ps_cv": "safe",
-    # CI95
-    "ktrans_ci95_lower": "ratio_defensible",
-    "ktrans_ci95_upper": "ratio_defensible",
-    "ve_ci95_lower": "ratio_defensible",
-    "ve_ci95_upper": "ratio_defensible",
-    "vp_ci95_lower": "ratio_defensible",
-    "vp_ci95_upper": "ratio_defensible",
-    "fp_ci95_lower": "ratio_defensible",
-    "fp_ci95_upper": "ratio_defensible",
-    "ps_ci95_lower": "ratio_defensible",
-    "ps_ci95_upper": "ratio_defensible",
     # IAUC (tissue concentration integral, AIF-independent)
     "iauc60": "safe",
     "iauc90": "safe",

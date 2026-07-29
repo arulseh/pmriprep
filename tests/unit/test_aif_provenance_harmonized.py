@@ -279,13 +279,13 @@ class TestApplyAifSidecarDCE:
         apply_aif_sidecar(sidecar, "ser", qc, modality="DCE")
         assert sidecar["AIFDependent"] is False
 
-    def test_cv_safe(self) -> None:
+    def test_absolute_uncertainty_is_aif_dependent(self) -> None:
         from pmriprep.utils.aif_provenance import apply_aif_sidecar
 
         sidecar: dict = {}
         qc = {"aif_detection": {"detection_method": "atlas", "quality_score": 0.8}}
-        apply_aif_sidecar(sidecar, "ktrans_cv", qc, modality="DCE")
-        assert sidecar["TemplateAIFUsage"] == "safe"
+        apply_aif_sidecar(sidecar, "ktrans_uncertainty", qc, modality="DCE")
+        assert sidecar["TemplateAIFUsage"] == "ratio_defensible"
 
     def test_unknown_map_raises(self) -> None:
         from pmriprep.utils.aif_provenance import apply_aif_sidecar

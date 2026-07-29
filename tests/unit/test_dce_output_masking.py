@@ -15,7 +15,6 @@ from pmriprep.interfaces.dce_compute import (
     _DCEModelFreeMaps,
     _build_dce_qc_mask,
     _evaluate_dce_qc_mask,
-    _compute_dce_coefficient_of_variation,
     _write_dce_map,
     _write_dce_fitted_curves,
     _write_dce_model_free_maps,
@@ -24,7 +23,6 @@ from pmriprep.interfaces.dce_compute import (
     _write_dce_uncertainty_maps,
     _zero_dce_background,
 )
-from pmriprep.utils.dce_constants import EPSILON_VE
 from pmriprep.models.dce.batched_models import batched_tofts_model
 
 
@@ -319,35 +317,6 @@ def test_evaluate_dce_qc_mask_reports_overlapping_component_failures() -> None:
     }
 
 
-def test_compute_dce_coefficient_of_variation_preserves_auto_sentinels() -> None:
-    """CV maps retain the strict epsilon gate, auto NaN, and zero background."""
-    values = np.array([[[0.2, EPSILON_VE, 0.4, 0.8]]])
-    standard_deviation = np.array([[[0.1, 0.1, 0.2, 0.4]]])
-    mask = np.array([[[True, True, True, False]]])
-    result = _compute_dce_coefficient_of_variation(
-        values,
-        standard_deviation,
-        mask,
-        True,
-    )
-    assert result.dtype == np.float32
-    assert result[0, 0, 0] == pytest.approx(0.5)
-    assert np.isnan(result[0, 0, 1])
-    assert result[0, 0, 2] == pytest.approx(0.5)
-    assert result[0, 0, 3] == 0.0
-
-
-def test_compute_dce_coefficient_of_variation_marks_undefined_values() -> None:
-    """Relative uncertainty is undefined when the estimate is zero."""
-    result = _compute_dce_coefficient_of_variation(
-        np.zeros((1, 1, 1)),
-        np.ones((1, 1, 1)),
-        np.ones((1, 1, 1), dtype=bool),
-        False,
-    )
-    assert np.isnan(result[0, 0, 0])
-
-
 def test_write_dce_map_overrides_inherited_header_dtype(tmp_path) -> None:
     """DCE serialization writes the requested dtype without inherited scaling."""
     header = nib.Nifti1Header()
@@ -445,7 +414,7 @@ def test_write_dce_parameter_maps_preserves_applicability(
 
 @pytest.mark.parametrize(
     ("save_ve", "save_vp", "save_2cxm", "expected_count"),
-    [(False, False, False, 4), (True, True, True, 16)],
+    [(False, False, False, 1), (True, True, True, 4)],
 )
 def test_write_dce_uncertainty_maps_preserves_applicability(
     save_ve: bool,
@@ -454,27 +423,14 @@ def test_write_dce_uncertainty_maps_preserves_applicability(
     expected_count: int,
 ) -> None:
     """Uncertainty output groups retain model-specific applicability."""
-    values = np.full((1, 1, 1), 0.2)
     sigma = np.full((1, 1, 1), 0.1)
     maps = SimpleNamespace(
-        ktrans=values, ve=values, vp=values, fp=values, ps=values,
         ktrans_std=sigma, ve_std=sigma, vp_std=sigma,
         fp_std=sigma, ps_std=sigma, save_2cxm=save_2cxm,
-        ktrans_ci95_lower=values - sigma,
-        ktrans_ci95_upper=values + sigma,
-        ve_ci95_lower=values - sigma,
-        ve_ci95_upper=values + sigma,
-        vp_ci95_lower=values - sigma,
-        vp_ci95_upper=values + sigma,
-        fp_ci95_lower=values - sigma,
-        fp_ci95_upper=values + sigma,
-        ps_ci95_lower=values - sigma,
-        ps_ci95_upper=values + sigma,
     )
     writes: list[str] = []
     outputs = _write_dce_uncertainty_maps(
         maps,
-        np.ones((1, 1, 1), dtype=bool),
         False,
         save_ve,
         save_vp,
@@ -483,45 +439,24 @@ def test_write_dce_uncertainty_maps_preserves_applicability(
     )
     assert len(outputs) == expected_count
     assert writes == list(outputs.values())
-    assert ("out_ktrans_cv" in outputs) is not save_2cxm
-    assert ("out_fp_cv" in outputs) is save_2cxm
     assert ("out_ktrans_std" in outputs) is not save_2cxm
-    assert ("out_ktrans_ci95_lower" in outputs) is not save_2cxm
     assert ("out_fp_std" in outputs) is save_2cxm
-    assert ("out_fp_ci95_upper" in outputs) is save_2cxm
 
 
-def test_auto_uncertainty_retains_ktrans_cv_outside_2cxm_voxels() -> None:
-    """Auto mode retains its mixed-model Ktrans diagnostic derivative."""
-    values = np.full((1, 1, 1), 0.2)
+def test_auto_uncertainty_retains_ktrans_std_outside_2cxm_voxels() -> None:
+    """Auto mode retains its mixed-model Ktrans uncertainty derivative."""
     sigma = np.full((1, 1, 1), 0.1)
     maps = SimpleNamespace(
-        ktrans=values,
-        ve=values,
-        vp=values,
-        fp=values,
-        ps=values,
         ktrans_std=sigma,
         ve_std=sigma,
         vp_std=sigma,
         fp_std=sigma,
         ps_std=sigma,
         save_2cxm=True,
-        ktrans_ci95_lower=values - sigma,
-        ktrans_ci95_upper=values + sigma,
-        ve_ci95_lower=values - sigma,
-        ve_ci95_upper=values + sigma,
-        vp_ci95_lower=values - sigma,
-        vp_ci95_upper=values + sigma,
-        fp_ci95_lower=values - sigma,
-        fp_ci95_upper=values + sigma,
-        ps_ci95_lower=values - sigma,
-        ps_ci95_upper=values + sigma,
     )
 
     outputs = _write_dce_uncertainty_maps(
         maps,
-        np.ones((1, 1, 1), dtype=bool),
         True,
         True,
         True,
@@ -529,9 +464,7 @@ def test_auto_uncertainty_retains_ktrans_cv_outside_2cxm_voxels() -> None:
         lambda data, path: None,
     )
 
-    assert "out_ktrans_cv" in outputs
     assert "out_ktrans_std" in outputs
-    assert "out_ktrans_ci95_lower" in outputs
 
 
 @pytest.mark.parametrize("is_auto", [False, True])
@@ -654,8 +587,5 @@ def test_saved_dce_categorical_maps_are_brain_masked(tmp_path) -> None:
         assert np.all(data[background] == 0), output_name
     for output_name in (
         "out_ktrans_std", "out_ve_std", "out_vp_std",
-        "out_ktrans_ci95_lower", "out_ktrans_ci95_upper",
-        "out_ve_ci95_lower", "out_ve_ci95_upper",
-        "out_vp_ci95_lower", "out_vp_ci95_upper",
     ):
         assert Path(getattr(result.outputs, output_name)).exists(), output_name

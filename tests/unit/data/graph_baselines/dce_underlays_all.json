@@ -1112,24 +1112,6 @@
     ],
     [
       "pk_modeling",
-      "out_fp_ci95_lower",
-      "outputnode",
-      "fp_ci95_lower"
-    ],
-    [
-      "pk_modeling",
-      "out_fp_ci95_upper",
-      "outputnode",
-      "fp_ci95_upper"
-    ],
-    [
-      "pk_modeling",
-      "out_fp_cv",
-      "outputnode",
-      "fp_cv"
-    ],
-    [
-      "pk_modeling",
       "out_fp_std",
       "outputnode",
       "fp_uncertainty"
@@ -1268,24 +1250,6 @@
     ],
     [
       "pk_modeling",
-      "out_ktrans_ci95_lower",
-      "outputnode",
-      "ktrans_ci95_lower"
-    ],
-    [
-      "pk_modeling",
-      "out_ktrans_ci95_upper",
-      "outputnode",
-      "ktrans_ci95_upper"
-    ],
-    [
-      "pk_modeling",
-      "out_ktrans_cv",
-      "outputnode",
-      "ktrans_cv"
-    ],
-    [
-      "pk_modeling",
       "out_ktrans_std",
       "outputnode",
       "ktrans_uncertainty"
@@ -1361,24 +1325,6 @@
       "out_ps",
       "outputnode",
       "ps_map"
-    ],
-    [
-      "pk_modeling",
-      "out_ps_ci95_lower",
-      "outputnode",
-      "ps_ci95_lower"
-    ],
-    [
-      "pk_modeling",
-      "out_ps_ci95_upper",
-      "outputnode",
-      "ps_ci95_upper"
-    ],
-    [
-      "pk_modeling",
-      "out_ps_cv",
-      "outputnode",
-      "ps_cv"
     ],
     [
       "pk_modeling",
@@ -1538,24 +1484,6 @@
     ],
     [
       "pk_modeling",
-      "out_ve_ci95_lower",
-      "outputnode",
-      "ve_ci95_lower"
-    ],
-    [
-      "pk_modeling",
-      "out_ve_ci95_upper",
-      "outputnode",
-      "ve_ci95_upper"
-    ],
-    [
-      "pk_modeling",
-      "out_ve_cv",
-      "outputnode",
-      "ve_cv"
-    ],
-    [
-      "pk_modeling",
       "out_ve_std",
       "outputnode",
       "ve_uncertainty"
@@ -1613,24 +1541,6 @@
       "out_vp_at_bound_map",
       "dce_pk_maps_qc",
       "vp_at_bound_map_file"
-    ],
-    [
-      "pk_modeling",
-      "out_vp_ci95_lower",
-      "outputnode",
-      "vp_ci95_lower"
-    ],
-    [
-      "pk_modeling",
-      "out_vp_ci95_upper",
-      "outputnode",
-      "vp_ci95_upper"
-    ],
-    [
-      "pk_modeling",
-      "out_vp_cv",
-      "outputnode",
-      "vp_cv"
     ],
     [
       "pk_modeling",
@@ -3189,18 +3099,12 @@
     "e_map",
     "flair_in_dce",
     "flair_postcon_in_dce",
-    "fp_ci95_lower",
-    "fp_ci95_upper",
-    "fp_cv",
     "fp_map",
     "fp_uncertainty",
     "iauc120_map",
     "iauc60_map",
     "iauc90_map",
     "kep_map",
-    "ktrans_ci95_lower",
-    "ktrans_ci95_upper",
-    "ktrans_cv",
     "ktrans_map",
     "ktrans_uncertainty",
     "lesion_mask_dce",
@@ -3214,9 +3118,6 @@
     "pk_modeling_qc_plot",
     "pk_param_maps_qc_plot",
     "preprocessing_qc_plot",
-    "ps_ci95_lower",
-    "ps_ci95_upper",
-    "ps_cv",
     "ps_map",
     "ps_uncertainty",
     "qc_mask",
@@ -3240,15 +3141,9 @@
     "tsnr_map",
     "user_lesion_mask_dce",
     "user_lesion_stats_json",
-    "ve_ci95_lower",
-    "ve_ci95_upper",
-    "ve_cv",
     "ve_map",
     "ve_uncertainty",
     "vfa_registration_qc_plot",
-    "vp_ci95_lower",
-    "vp_ci95_upper",
-    "vp_cv",
     "vp_map",
     "vp_uncertainty"
   ]

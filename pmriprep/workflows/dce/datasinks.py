@@ -87,14 +87,6 @@ _PK_MAPS: tuple[DCEMapSpec, ...] = (
 )
 
 
-_CV_MAPS: tuple[DCEMapSpec, ...] = (
-    DCEMapSpec("ktrans_cv", "dceCV", "Ktrans", "Ktrans coefficient of variation (std/mean)", "1", "ktrans_cv"),
-    DCEMapSpec("ve_cv", "dceCV", "ve", "ve coefficient of variation (std/mean)", "1", "ve_cv"),
-    DCEMapSpec("vp_cv", "dceCV", "vp", "vp coefficient of variation (std/mean)", "1", "vp_cv"),
-    DCEMapSpec("fp_cv", "dceCV", "Fp", "Fp relative uncertainty (2CXM only)", "1", "fp_cv"),
-    DCEMapSpec("ps_cv", "dceCV", "PS", "PS relative uncertainty (2CXM only)", "1", "ps_cv"),
-)
-
 _UNCERTAINTY_MAPS: tuple[DCEMapSpec, ...] = (
     DCEMapSpec("ktrans_uncertainty", "", "Ktrans", "Ktrans uncertainty", "1/min", "ktrans_uncertainty"),
     DCEMapSpec("ve_uncertainty", "", "ve", "ve uncertainty", "1", "ve_uncertainty"),
@@ -102,21 +94,6 @@ _UNCERTAINTY_MAPS: tuple[DCEMapSpec, ...] = (
     DCEMapSpec("fp_uncertainty", "", "Fp", "Fp uncertainty", "mL/min/100mL", "fp_uncertainty"),
     DCEMapSpec("ps_uncertainty", "", "PS", "PS uncertainty", "mL/min/100mL", "ps_uncertainty"),
 )
-
-_INTERVAL_MAPS: tuple[DCEMapSpec, ...] = tuple(
-    DCEMapSpec(
-        f"{key}_ci95_{bound}", "", suffix,
-        f"{suffix} 95% interval {bound} bound", units,
-        f"{key}_ci95_{bound}",
-    )
-    for key, suffix, units in (
-        ("ktrans", "Ktrans", "1/min"), ("ve", "ve", "1"),
-        ("vp", "vp", "1"), ("fp", "Fp", "mL/min/100mL"),
-        ("ps", "PS", "mL/min/100mL"),
-    )
-    for bound in ("lower", "upper")
-)
-
 
 # Model-free maps (no model entity). Each entry:
 # (input_attr, suffix, description, units, extra_dict_or_None)
@@ -1327,14 +1304,6 @@ def init_dce_datasinks_wf(
                 # Inference-specific uncertainty
                 "ktrans_uncertainty", "ve_uncertainty", "vp_uncertainty",
                 "fp_uncertainty", "ps_uncertainty",
-                # CV
-                "ktrans_cv", "ve_cv", "vp_cv", "fp_cv", "ps_cv",
-                # CI95
-                "ktrans_ci95_lower", "ktrans_ci95_upper",
-                "ve_ci95_lower", "ve_ci95_upper",
-                "vp_ci95_lower", "vp_ci95_upper",
-                "fp_ci95_lower", "fp_ci95_upper",
-                "ps_ci95_lower", "ps_ci95_upper",
                 # Model-free
                 "iauc60_map", "iauc90_map", "iauc120_map",
                 "peak_enhancement_map", "time_to_peak_map", "ser_map",
@@ -1466,7 +1435,7 @@ def init_dce_datasinks_wf(
         )
         sink_outputs.append((sink, "out_file"))
 
-    # --- Inference-specific relative uncertainty ---
+    # --- Inference-specific absolute uncertainty ---
     is_nlls = inference.lower() == "nlls"
     uncertainty_desc = "dceStandardError" if is_nlls else "dcePosteriorSD"
     for spec in _UNCERTAINTY_MAPS:
@@ -1492,64 +1461,6 @@ def init_dce_datasinks_wf(
             ),
             units=spec.units, extra=None,
             extra_node=uncertainty_extra, map_key=spec.map_key,
-            bids_suffix=spec.bids_suffix,
-        )
-        sink_outputs.append((sink, "out_file"))
-
-    for spec in _CV_MAPS:
-        if spec.in_attr not in present:
-            continue
-        if pk_model.lower() == "2cxm" and spec.in_attr == "ktrans_cv":
-            continue
-        parameter = spec.map_key.split("_", 1)[0]
-        uncertainty_extra = pe.Node(
-            niu.Function(
-                input_names=["config_dict", "qc_metrics", "umap_key"],
-                output_names=["extra"],
-                function=_build_uncertainty_extra,
-            ),
-            name=f"{spec.in_attr}_extra",
-        )
-        uncertainty_extra.inputs.umap_key = spec.map_key
-        workflow.connect(inputnode, "config_dict", uncertainty_extra, "config_dict")
-        workflow.connect(inputnode, "qc_metrics", uncertainty_extra, "qc_metrics")
-        desc_value = "dceRelativeStandardError" if is_nlls else "dcePosteriorCV"
-        description = (
-            f"{parameter} standard error divided by absolute estimate"
-            if is_nlls
-            else f"{parameter} posterior standard deviation divided by absolute estimate"
-        )
-        sink = _add_perf_map_sink(
-            workflow, inputnode, base_perf,
-            name=spec.in_attr, in_attr=spec.in_attr,
-            desc_value=desc_value, suffix=spec.suffix,
-            description=description, units=spec.units,
-            extra=spec.extra, extra_node=uncertainty_extra, map_key=spec.map_key,
-            bids_suffix=spec.bids_suffix,
-        )
-        sink_outputs.append((sink, "out_file"))
-
-    interval_kind = "ConfidenceInterval" if is_nlls else "CredibleInterval"
-    for spec in _INTERVAL_MAPS:
-        if spec.in_attr not in present:
-            continue
-        bound = "Lower" if spec.in_attr.endswith("lower") else "Upper"
-        interval_extra = pe.Node(
-            niu.Function(
-                input_names=["config_dict", "qc_metrics", "umap_key"],
-                output_names=["extra"], function=_build_uncertainty_extra,
-            ),
-            name=f"{spec.in_attr}_extra",
-        )
-        interval_extra.inputs.umap_key = spec.map_key
-        workflow.connect(inputnode, "config_dict", interval_extra, "config_dict")
-        workflow.connect(inputnode, "qc_metrics", interval_extra, "qc_metrics")
-        sink = _add_perf_map_sink(
-            workflow, inputnode, base_perf,
-            name=spec.in_attr, in_attr=spec.in_attr,
-            desc_value=f"dce{interval_kind}{bound}", suffix=spec.suffix,
-            description=spec.description, units=spec.units, extra=None,
-            extra_node=interval_extra, map_key=spec.map_key,
             bids_suffix=spec.bids_suffix,
         )
         sink_outputs.append((sink, "out_file"))

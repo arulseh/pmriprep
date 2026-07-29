@@ -45,31 +45,11 @@ def test_inference_metadata(
 
 
 def test_nlls_statistics_are_frequentist() -> None:
-    """NLLS sidecars distinguish standard errors and Wald confidence bounds."""
+    """NLLS absolute uncertainty is identified as a standard error."""
     standard_error = build_uncertainty_provenance(
         "nlls", "ktrans_uncertainty", modality="DCE"
     )
     assert standard_error["UncertaintyStatistic"] == "parameter_standard_error"
-
-    interval = build_uncertainty_provenance(
-        "nlls", "ktrans_ci95_lower", modality="DCE"
-    )
-    assert interval["UncertaintyStatistic"] == "confidence_interval_bound"
-    assert interval["ConfidenceIntervalProbability"] == 0.95
-    assert interval["ConfidenceIntervalApproximation"] == "Wald_local_linearization"
-    assert interval["ConfidenceIntervalBounding"] == "parameter_bounds"
-
-
-def test_cv_construction_depends_on_inference() -> None:
-    """Legacy CV maps disclose frequentist versus posterior construction."""
-    nlls = build_uncertainty_provenance("nlls", "ktrans_cv", modality="DCE")
-    vi = build_uncertainty_provenance("vi", "ktrans_cv", modality="DCE")
-
-    assert nlls["CoefficientOfVariationConstruction"].startswith("standard_error")
-    assert vi["CoefficientOfVariationConstruction"].startswith(
-        "posterior_standard_deviation"
-    )
-
 
 def test_svb_spatial_prior_is_described() -> None:
     """SVB sidecars identify the spatial prior and neighborhood."""
@@ -91,26 +71,6 @@ def test_map_fallback_is_disclosed() -> None:
     assert result["UncertaintyStatistic"] == "posterior_standard_deviation"
     assert "prior standard deviations" in result["UncertaintyFallbackBehavior"]
 
-    interval = build_uncertainty_provenance(
-        "map", "ktrans_ci95_lower", modality="DCE"
-    )
-    assert interval["CredibleIntervalConstruction"].endswith(
-        "or_full_parameter_bounds_fallback"
-    )
-
-
-def test_dce_interval_maps_transformed_quantiles_to_parameter_space() -> None:
-    """DCE provenance records the transformed-Gaussian approximation."""
-    result = build_uncertainty_provenance(
-        "vi", "ktrans_ci95_lower", modality="DCE"
-    )
-
-    assert result["CredibleIntervalProbability"] == 0.95
-    assert result["CredibleIntervalConstruction"].startswith(
-        "transformed_mean_plus_or_minus_1.96"
-    )
-    assert result["CredibleIntervalBounding"] == "parameter_bounds"
-
 
 def test_dsc_mcmc_interval_uses_sample_quantiles() -> None:
     """DSC MCMC intervals are distinguished from Gaussian approximations."""
@@ -120,13 +80,3 @@ def test_dsc_mcmc_interval_uses_sample_quantiles() -> None:
 
     assert result["CredibleIntervalConstruction"] == "posterior_sample_quantiles"
     assert result["CredibleIntervalBounding"] == "nonnegative_lower_bound"
-
-
-def test_dce_mcmc_interval_uses_sample_quantiles() -> None:
-    """DCE MCMC provenance follows the retained posterior quantiles."""
-    result = build_uncertainty_provenance(
-        "mcmc", "ktrans_ci95_upper", modality="DCE"
-    )
-
-    assert result["CredibleIntervalConstruction"] == "posterior_sample_quantiles"
-    assert result["CredibleIntervalBounding"] == "parameter_bounds"

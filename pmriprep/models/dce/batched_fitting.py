@@ -561,9 +561,10 @@ def batched_patlak_lstsq(
             np.sum((w[None, :] * residuals) ** 2, axis=1)
             / sigma_denominator
         )
-        # Active-bound parameters have zero conditional local uncertainty;
-        # re-estimated free coefficients use their reduced one-parameter
-        # covariance, while interior voxels use the full two-parameter form.
+        # A symmetric local standard error is undefined for an active-bound
+        # parameter. Re-estimated free coefficients use their reduced
+        # one-parameter covariance, while interior voxels use the full
+        # two-parameter form.
         if fixed_vp is None or soft_box:
             A_full = np.stack([w * aif_integral, w * aif], axis=1)
             ATA = A_full.T @ A_full
@@ -597,12 +598,12 @@ def batched_patlak_lstsq(
                 )
                 uncertainties["ktrans"] = np.where(
                     ktrans_at_bound,
-                    0.0,
+                    np.nan,
                     np.where(vp_is_at_bound, ktrans_reduced, ktrans_full),
                 )
                 uncertainties["vp"] = np.where(
                     vp_is_at_bound,
-                    0.0,
+                    np.nan,
                     np.where(ktrans_at_bound, vp_reduced, vp_full),
                 )
             except np.linalg.LinAlgError:
@@ -613,10 +614,10 @@ def batched_patlak_lstsq(
             ktrans_var = sigma2 / denom_val
             uncertainties["ktrans"] = np.where(
                 ktrans_at_bound,
-                0.0,
+                np.nan,
                 np.sqrt(np.maximum(ktrans_var, 0.0)),
             )
-            uncertainties["vp"] = np.zeros(n_voxels)
+            uncertainties["vp"] = np.full(n_voxels, np.nan)
 
     return FitResult(
         params={"ktrans": ktrans, "vp": vp_out},
@@ -1478,7 +1479,7 @@ def batched_lm_fit(
                     )
 
             if fixed_vp is not None and "vp" in uncertainties:
-                uncertainties["vp"][:] = 0.0
+                uncertainties["vp"][:] = np.nan
 
         for name, values in boundary_uncertainties.items():
             finite = np.isfinite(values)

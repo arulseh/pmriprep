@@ -300,6 +300,9 @@ timing, fit-quality, and QC maps. Applicable NIfTI derivatives have JSON
 sidecars describing units, conventions, processing, and provenance; AIF and
 motion time series are TSV files.
 
+DCE parameter-uncertainty derivatives contain NLLS standard errors or Bayesian
+posterior standard deviations conditional on the fitted inputs and model.
+
 Smoothed maps are additional derivatives. DCE Kep is recomputed from smoothed
 Ktrans and ve; uncertainty, timing, categorical, and fit-quality maps remain at
 native resolution. Native maps are used for quantitative ROI analysis.

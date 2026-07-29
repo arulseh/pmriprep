@@ -2690,19 +2690,13 @@ def _connect_master_dce_outputs_and_datasinks(
     # R² + quality flag are emitted by every PK fit
     dce_present |= {"r2_map", "quality_flag_map"}
     if dce_model != "2cxm":
-        dce_present |= {
-            "ktrans_uncertainty", "ktrans_cv",
-            "ktrans_ci95_lower", "ktrans_ci95_upper",
-        }
+        dce_present.add("ktrans_uncertainty")
     if dce_model in _has_ve_models:
-        dce_present |= {"ve_uncertainty", "ve_cv", "ve_ci95_lower", "ve_ci95_upper"}
+        dce_present.add("ve_uncertainty")
     if dce_model in _has_vp_models:
-        dce_present |= {"vp_uncertainty", "vp_cv", "vp_ci95_lower", "vp_ci95_upper"}
+        dce_present.add("vp_uncertainty")
     if _emit_fp_ps_outputs:
-        dce_present |= {
-            "fp_uncertainty", "ps_uncertainty", "fp_cv", "ps_cv",
-            "fp_ci95_lower", "fp_ci95_upper", "ps_ci95_lower", "ps_ci95_upper",
-        }
+        dce_present |= {"fp_uncertainty", "ps_uncertainty"}
     # NAWM mask
     if dce_has_nawm:
         dce_present.add("nawm_mask")
@@ -2849,23 +2843,6 @@ def _connect_master_dce_outputs_and_datasinks(
             ("outputnode.vp_uncertainty", "inputnode.vp_uncertainty"),
             ("outputnode.fp_uncertainty", "inputnode.fp_uncertainty"),
             ("outputnode.ps_uncertainty", "inputnode.ps_uncertainty"),
-            # Relative uncertainty maps
-            ("outputnode.ktrans_cv", "inputnode.ktrans_cv"),
-            ("outputnode.ve_cv", "inputnode.ve_cv"),
-            ("outputnode.vp_cv", "inputnode.vp_cv"),
-            ("outputnode.fp_cv", "inputnode.fp_cv"),
-            ("outputnode.ps_cv", "inputnode.ps_cv"),
-            # Confidence or credible interval maps
-            ("outputnode.ktrans_ci95_lower", "inputnode.ktrans_ci95_lower"),
-            ("outputnode.ktrans_ci95_upper", "inputnode.ktrans_ci95_upper"),
-            ("outputnode.ve_ci95_lower", "inputnode.ve_ci95_lower"),
-            ("outputnode.ve_ci95_upper", "inputnode.ve_ci95_upper"),
-            ("outputnode.vp_ci95_lower", "inputnode.vp_ci95_lower"),
-            ("outputnode.vp_ci95_upper", "inputnode.vp_ci95_upper"),
-            ("outputnode.fp_ci95_lower", "inputnode.fp_ci95_lower"),
-            ("outputnode.fp_ci95_upper", "inputnode.fp_ci95_upper"),
-            ("outputnode.ps_ci95_lower", "inputnode.ps_ci95_lower"),
-            ("outputnode.ps_ci95_upper", "inputnode.ps_ci95_upper"),
             # Smoothed maps
             ("outputnode.smooth_pk_maps", "inputnode.smooth_pk_maps"),
             ("outputnode.smooth_model_free_maps", "inputnode.smooth_model_free_maps"),

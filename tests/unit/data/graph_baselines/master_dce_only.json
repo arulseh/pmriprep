@@ -254,24 +254,6 @@
     ],
     [
       "dce_wf",
-      "outputnode.fp_ci95_lower",
-      "dce_datasinks_wf",
-      "inputnode.fp_ci95_lower"
-    ],
-    [
-      "dce_wf",
-      "outputnode.fp_ci95_upper",
-      "dce_datasinks_wf",
-      "inputnode.fp_ci95_upper"
-    ],
-    [
-      "dce_wf",
-      "outputnode.fp_cv",
-      "dce_datasinks_wf",
-      "inputnode.fp_cv"
-    ],
-    [
-      "dce_wf",
       "outputnode.fp_map",
       "dce_datasinks_wf",
       "inputnode.fp_map"
@@ -311,24 +293,6 @@
       "outputnode.kep_map",
       "outputnode",
       "dce_kep"
-    ],
-    [
-      "dce_wf",
-      "outputnode.ktrans_ci95_lower",
-      "dce_datasinks_wf",
-      "inputnode.ktrans_ci95_lower"
-    ],
-    [
-      "dce_wf",
-      "outputnode.ktrans_ci95_upper",
-      "dce_datasinks_wf",
-      "inputnode.ktrans_ci95_upper"
-    ],
-    [
-      "dce_wf",
-      "outputnode.ktrans_cv",
-      "dce_datasinks_wf",
-      "inputnode.ktrans_cv"
     ],
     [
       "dce_wf",
@@ -413,24 +377,6 @@
       "outputnode.preprocessing_qc_plot",
       "dce_datasinks_wf",
       "inputnode.preprocessing_qc_plot"
-    ],
-    [
-      "dce_wf",
-      "outputnode.ps_ci95_lower",
-      "dce_datasinks_wf",
-      "inputnode.ps_ci95_lower"
-    ],
-    [
-      "dce_wf",
-      "outputnode.ps_ci95_upper",
-      "dce_datasinks_wf",
-      "inputnode.ps_ci95_upper"
-    ],
-    [
-      "dce_wf",
-      "outputnode.ps_cv",
-      "dce_datasinks_wf",
-      "inputnode.ps_cv"
     ],
     [
       "dce_wf",
@@ -578,24 +524,6 @@
     ],
     [
       "dce_wf",
-      "outputnode.ve_ci95_lower",
-      "dce_datasinks_wf",
-      "inputnode.ve_ci95_lower"
-    ],
-    [
-      "dce_wf",
-      "outputnode.ve_ci95_upper",
-      "dce_datasinks_wf",
-      "inputnode.ve_ci95_upper"
-    ],
-    [
-      "dce_wf",
-      "outputnode.ve_cv",
-      "dce_datasinks_wf",
-      "inputnode.ve_cv"
-    ],
-    [
-      "dce_wf",
       "outputnode.ve_map",
       "dce_datasinks_wf",
       "inputnode.ve_map"
@@ -611,24 +539,6 @@
       "outputnode.ve_uncertainty",
       "dce_datasinks_wf",
       "inputnode.ve_uncertainty"
-    ],
-    [
-      "dce_wf",
-      "outputnode.vp_ci95_lower",
-      "dce_datasinks_wf",
-      "inputnode.vp_ci95_lower"
-    ],
-    [
-      "dce_wf",
-      "outputnode.vp_ci95_upper",
-      "dce_datasinks_wf",
-      "inputnode.vp_ci95_upper"
-    ],
-    [
-      "dce_wf",
-      "outputnode.vp_cv",
-      "dce_datasinks_wf",
-      "inputnode.vp_cv"
     ],
     [
       "dce_wf",

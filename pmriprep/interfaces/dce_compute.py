@@ -127,55 +127,6 @@ def _scatter_dce_uncertainties(
             )
 
 
-def _normal_approximation_intervals(
-    model_name: str,
-    params: dict[str, float],
-    uncertainties: dict[str, float],
-) -> dict[str, tuple[float, float]]:
-    """Construct bounded 95% Wald intervals from NLLS standard errors."""
-    from pmriprep.utils.dce_constants import (
-        FP_BOUNDS,
-        KTRANS_BOUNDS,
-        PS_BOUNDS,
-        VE_BOUNDS,
-        VP_BOUNDS,
-    )
-
-    applicability = {
-        "Ktrans": True,
-        "ve": model_name in ("tofts", "extended_tofts", "2cxm"),
-        "vp": model_name in ("extended_tofts", "patlak", "2cxm"),
-        "Fp": model_name == "2cxm",
-        "PS": model_name == "2cxm",
-    }
-    bounds = {
-        "Ktrans": (KTRANS_BOUNDS.min, KTRANS_BOUNDS.max),
-        "ve": (VE_BOUNDS.min, VE_BOUNDS.max),
-        "vp": (VP_BOUNDS.min, VP_BOUNDS.max),
-        "Fp": (FP_BOUNDS.min, FP_BOUNDS.max),
-        "PS": (PS_BOUNDS.min, PS_BOUNDS.max),
-    }
-    intervals: dict[str, tuple[float, float]] = {}
-    for parameter, applicable in applicability.items():
-        estimate = params.get(parameter)
-        standard_error = uncertainties.get(parameter)
-        if (
-            not applicable
-            or estimate is None
-            or standard_error is None
-            or not np.isfinite(estimate)
-            or not np.isfinite(standard_error)
-            or standard_error < 0
-        ):
-            continue
-        lower_bound, upper_bound = bounds[parameter]
-        intervals[parameter] = (
-            max(float(estimate) - 1.96 * float(standard_error), lower_bound),
-            min(float(estimate) + 1.96 * float(standard_error), upper_bound),
-        )
-    return intervals
-
-
 def _compute_auto_bic(
     tissue_curves: npt.NDArray[np.floating],
     fitted_curves: npt.NDArray[np.floating],
@@ -265,86 +216,6 @@ def _select_auto_bic_winners(
     winner_idx[downgrade] = simplest_idx
     delta_bic[downgrade] = np.nan
     return winner_idx, delta_bic, valid
-
-
-def _inflate_credible_interval(
-    center: float,
-    interval: tuple[float, float],
-    inflation: float,
-    bounds: tuple[float, float],
-) -> tuple[float, float]:
-    """Inflate interval distances from the estimate and clip to model bounds."""
-    lower, upper = interval
-    lower = min(lower, center)
-    upper = max(upper, center)
-    return (
-        max(center - inflation * (center - lower), bounds[0]),
-        min(center + inflation * (upper - center), bounds[1]),
-    )
-
-
-def _scatter_dce_credible_intervals(
-    maps: "_DCEParameterMaps",
-    coords: tuple[int, int, int],
-    model_name: str,
-    params: dict[str, float],
-    intervals: dict[str, tuple[float, float]],
-) -> None:
-    """Scatter model-native intervals with AIF inflation and bound clipping."""
-    from pmriprep.utils.dce_constants import (
-        FP_BOUNDS,
-        KTRANS_BOUNDS,
-        PS_BOUNDS,
-        VE_BOUNDS,
-        VP_BOUNDS,
-    )
-
-    x, y, z = coords
-    if model_name != "2cxm" and "Ktrans" in intervals:
-        lower, upper = _inflate_credible_interval(
-            params.get("Ktrans", 0.0),
-            intervals["Ktrans"],
-            maps.sigma_factor.get("Ktrans", 1.0),
-            (KTRANS_BOUNDS.min, KTRANS_BOUNDS.max),
-        )
-        maps.ktrans_ci95_lower[x, y, z] = lower
-        maps.ktrans_ci95_upper[x, y, z] = upper
-    if model_name in ("tofts", "extended_tofts", "2cxm") and "ve" in intervals:
-        lower, upper = _inflate_credible_interval(
-            params.get("ve", 0.0),
-            intervals["ve"],
-            maps.sigma_factor.get("ve", 1.0),
-            (VE_BOUNDS.min, VE_BOUNDS.max),
-        )
-        maps.ve_ci95_lower[x, y, z] = lower
-        maps.ve_ci95_upper[x, y, z] = upper
-    if model_name in ("extended_tofts", "patlak", "2cxm") and "vp" in intervals:
-        lower, upper = _inflate_credible_interval(
-            params.get("vp", 0.0),
-            intervals["vp"],
-            maps.sigma_factor.get("vp", 1.0),
-            (VP_BOUNDS.min, VP_BOUNDS.max),
-        )
-        maps.vp_ci95_lower[x, y, z] = lower
-        maps.vp_ci95_upper[x, y, z] = upper
-    if model_name == "2cxm" and "Fp" in intervals:
-        lower, upper = _inflate_credible_interval(
-            params.get("Fp", 0.0),
-            intervals["Fp"],
-            maps.sigma_factor.get("Fp", 1.0),
-            (FP_BOUNDS.min, FP_BOUNDS.max),
-        )
-        maps.fp_ci95_lower[x, y, z] = lower
-        maps.fp_ci95_upper[x, y, z] = upper
-    if model_name == "2cxm" and "PS" in intervals:
-        lower, upper = _inflate_credible_interval(
-            params.get("PS", 0.0),
-            intervals["PS"],
-            maps.sigma_factor.get("PS", 1.0),
-            (PS_BOUNDS.min, PS_BOUNDS.max),
-        )
-        maps.ps_ci95_lower[x, y, z] = lower
-        maps.ps_ci95_upper[x, y, z] = upper
 
 
 def _scatter_dce_fit_artifacts(
@@ -525,21 +396,6 @@ def _scatter_dce_fit_results(
         if result["uncertainties"]:
             _scatter_dce_uncertainties(
                 maps, coords, selected_model, result["uncertainties"]
-            )
-        intervals = result.get("credible_intervals") or {}
-        if inference == "nlls" and result["uncertainties"]:
-            intervals = _normal_approximation_intervals(
-                selected_model,
-                params,
-                result["uncertainties"],
-            )
-        if intervals:
-            _scatter_dce_credible_intervals(
-                maps,
-                coords,
-                selected_model,
-                params,
-                intervals,
             )
         _scatter_dce_fit_artifacts(maps, coords, result)
         departure = _compute_vp_prior_departure(
@@ -997,23 +853,6 @@ def _evaluate_dce_qc_mask(
     return _DCEQCMaskEvaluation(result, failures, policy)
 
 
-def _compute_dce_coefficient_of_variation(
-    values: npt.NDArray[Any],
-    standard_deviation: npt.NDArray[Any],
-    mask: npt.NDArray[np.bool_],
-    is_auto: bool,
-) -> npt.NDArray[np.float32]:
-    """Compute a masked DCE coefficient-of-variation map."""
-    with np.errstate(divide="ignore", invalid="ignore"):
-        coefficient = np.where(
-            (np.abs(values) > EPSILON_VE) & np.isfinite(standard_deviation),
-            standard_deviation / np.abs(values),
-            np.nan,
-        ).astype(np.float32)
-    result: npt.NDArray[np.float32] = _zero_dce_background(coefficient, mask)
-    return result
-
-
 def _write_dce_map(
     data: npt.NDArray[Any],
     path: str,
@@ -1110,7 +949,6 @@ def _write_dce_parameter_maps(
 
 def _write_dce_uncertainty_maps(
     maps: "_DCEParameterMaps",
-    mask: npt.NDArray[np.bool_],
     is_auto: bool,
     save_ve: bool,
     save_vp: bool,
@@ -1124,49 +962,22 @@ def _write_dce_uncertainty_maps(
         outputs[name] = generate_path(suffix)
         write_map(values, outputs[name])
 
-    def write_parameter_group(
+    def write_parameter_uncertainty(
         stem: str,
-        values: npt.NDArray[Any],
         standard_deviation: npt.NDArray[Any],
-        interval_lower: npt.NDArray[Any],
-        interval_upper: npt.NDArray[Any],
     ) -> None:
         key = stem.lower() if stem != "Fp" else "fp"
         write(f"out_{key}_std", f"_{stem}_std", standard_deviation)
-        write(
-            f"out_{key}_cv",
-            f"_{stem}_cv",
-            _compute_dce_coefficient_of_variation(
-                values, standard_deviation, mask, is_auto
-            ),
-        )
-        write(f"out_{key}_ci95_lower", f"_{stem}_ci95_lower", interval_lower)
-        write(f"out_{key}_ci95_upper", f"_{stem}_ci95_upper", interval_upper)
 
     if is_auto or not maps.save_2cxm:
-        write_parameter_group(
-            "Ktrans", maps.ktrans, maps.ktrans_std,
-            maps.ktrans_ci95_lower, maps.ktrans_ci95_upper,
-        )
+        write_parameter_uncertainty("Ktrans", maps.ktrans_std)
     if save_ve:
-        write_parameter_group(
-            "ve", maps.ve, maps.ve_std,
-            maps.ve_ci95_lower, maps.ve_ci95_upper,
-        )
+        write_parameter_uncertainty("ve", maps.ve_std)
     if save_vp:
-        write_parameter_group(
-            "vp", maps.vp, maps.vp_std,
-            maps.vp_ci95_lower, maps.vp_ci95_upper,
-        )
+        write_parameter_uncertainty("vp", maps.vp_std)
     if maps.save_2cxm:
-        write_parameter_group(
-            "Fp", maps.fp, maps.fp_std,
-            maps.fp_ci95_lower, maps.fp_ci95_upper,
-        )
-        write_parameter_group(
-            "ps", maps.ps, maps.ps_std,
-            maps.ps_ci95_lower, maps.ps_ci95_upper,
-        )
+        write_parameter_uncertainty("Fp", maps.fp_std)
+        write_parameter_uncertainty("ps", maps.ps_std)
 
     return outputs
 
@@ -1463,16 +1274,6 @@ class _DCEParameterMaps(NamedTuple):
     vp_std: npt.NDArray[Any]
     fp_std: npt.NDArray[Any]
     ps_std: npt.NDArray[Any]
-    ktrans_ci95_lower: npt.NDArray[Any]
-    ktrans_ci95_upper: npt.NDArray[Any]
-    ve_ci95_lower: npt.NDArray[Any]
-    ve_ci95_upper: npt.NDArray[Any]
-    vp_ci95_lower: npt.NDArray[Any]
-    vp_ci95_upper: npt.NDArray[Any]
-    fp_ci95_lower: npt.NDArray[Any]
-    fp_ci95_upper: npt.NDArray[Any]
-    ps_ci95_lower: npt.NDArray[Any]
-    ps_ci95_upper: npt.NDArray[Any]
     sigma_factor: dict[str, float]
     vp_at_bound: npt.NDArray[Any]
     fitted_curves: Optional[npt.NDArray[Any]]
@@ -1981,13 +1782,6 @@ def _fit_single_voxel(
                 uncertainties["Fp"] = result.get_uncertainty("Fp", 0.0)
                 uncertainties["PS"] = result.get_uncertainty("PS", 0.0)
 
-        credible_intervals: dict[str, tuple[float, float]] = {}
-        if result.has_credible_intervals():
-            for parameter in ("Ktrans", "ve", "vp"):
-                interval = result.credible_intervals.get(parameter)
-                if interval is not None:
-                    credible_intervals[parameter] = interval
-
         fitted_curve = None
         if _worker_ctx.get("save_fitted_curves") and result.fitted_curve is not None:
             fitted_curve = result.fitted_curve
@@ -2009,7 +1803,6 @@ def _fit_single_voxel(
             "r_squared": result.r_squared,
             "converged": result.converged,
             "uncertainties": uncertainties,
-            "credible_intervals": credible_intervals,
             "uncertainty_source": result.uncertainty_source,
             "fitted_curve": fitted_curve,
             "quality_flag": quality_flag,
@@ -2661,25 +2454,6 @@ class ComputeDCEMapsOutputSpec(TraitedSpec):
     out_vp_std = File(desc="vp parameter uncertainty map")
     out_fp_std = File(desc="Fp parameter uncertainty map (2CXM only)")
     out_ps_std = File(desc="PS parameter uncertainty map (2CXM only)")
-
-    # Relative uncertainty maps
-    out_ktrans_cv = File(desc="Ktrans relative parameter uncertainty")
-    out_ve_cv = File(desc="ve relative parameter uncertainty")
-    out_vp_cv = File(desc="vp relative parameter uncertainty")
-    out_fp_cv = File(desc="Fp relative parameter uncertainty (2CXM only)")
-    out_ps_cv = File(desc="PS relative parameter uncertainty (2CXM only)")
-
-    # 95% interval bounds (confidence for NLLS; credible otherwise)
-    out_ktrans_ci95_lower = File(desc="Ktrans 95% interval lower bound")
-    out_ktrans_ci95_upper = File(desc="Ktrans 95% interval upper bound")
-    out_ve_ci95_lower = File(desc="ve 95% interval lower bound")
-    out_ve_ci95_upper = File(desc="ve 95% interval upper bound")
-    out_vp_ci95_lower = File(desc="vp 95% interval lower bound")
-    out_vp_ci95_upper = File(desc="vp 95% interval upper bound")
-    out_fp_ci95_lower = File(desc="Fp 95% interval lower bound (2CXM only)")
-    out_fp_ci95_upper = File(desc="Fp 95% interval upper bound (2CXM only)")
-    out_ps_ci95_lower = File(desc="PS 95% interval lower bound (2CXM only)")
-    out_ps_ci95_upper = File(desc="PS 95% interval upper bound (2CXM only)")
 
     # Model-free maps
     out_iauc60 = File(desc="IAUC at 60s (mM·min)")
@@ -3544,16 +3318,6 @@ class ComputeDCEMaps(BaseInterface):
             vp_std=np.full(spatial_shape, np.nan, dtype=np.float64),
             fp_std=np.full(spatial_shape, np.nan, dtype=np.float64),
             ps_std=np.full(spatial_shape, np.nan, dtype=np.float64),
-            ktrans_ci95_lower=np.full(spatial_shape, np.nan, dtype=np.float64),
-            ktrans_ci95_upper=np.full(spatial_shape, np.nan, dtype=np.float64),
-            ve_ci95_lower=np.full(spatial_shape, np.nan, dtype=np.float64),
-            ve_ci95_upper=np.full(spatial_shape, np.nan, dtype=np.float64),
-            vp_ci95_lower=np.full(spatial_shape, np.nan, dtype=np.float64),
-            vp_ci95_upper=np.full(spatial_shape, np.nan, dtype=np.float64),
-            fp_ci95_lower=np.full(spatial_shape, np.nan, dtype=np.float64),
-            fp_ci95_upper=np.full(spatial_shape, np.nan, dtype=np.float64),
-            ps_ci95_lower=np.full(spatial_shape, np.nan, dtype=np.float64),
-            ps_ci95_upper=np.full(spatial_shape, np.nan, dtype=np.float64),
             sigma_factor=sigma_factor,
             vp_at_bound=np.zeros(spatial_shape, dtype=np.float32),
             fitted_curves=fitted_curves,
@@ -3678,16 +3442,6 @@ class ComputeDCEMaps(BaseInterface):
         vp_std = parameter_maps.vp_std
         fp_std = parameter_maps.fp_std
         ps_std = parameter_maps.ps_std
-        ktrans_ci95_lower = parameter_maps.ktrans_ci95_lower
-        ktrans_ci95_upper = parameter_maps.ktrans_ci95_upper
-        ve_ci95_lower = parameter_maps.ve_ci95_lower
-        ve_ci95_upper = parameter_maps.ve_ci95_upper
-        vp_ci95_lower = parameter_maps.vp_ci95_lower
-        vp_ci95_upper = parameter_maps.vp_ci95_upper
-        fp_ci95_lower = parameter_maps.fp_ci95_lower
-        fp_ci95_upper = parameter_maps.fp_ci95_upper
-        ps_ci95_lower = parameter_maps.ps_ci95_lower
-        ps_ci95_upper = parameter_maps.ps_ci95_upper
         vp_at_bound_map = parameter_maps.vp_at_bound
         fitted_curves = parameter_maps.fitted_curves
         save_2cxm = parameter_maps.save_2cxm
@@ -3873,16 +3627,6 @@ class ComputeDCEMaps(BaseInterface):
         vp_std = _zero_dce_background(vp_std, mask_bool)
         fp_std = _zero_dce_background(fp_std, mask_bool)
         ps_std = _zero_dce_background(ps_std, mask_bool)
-        ktrans_ci95_lower = _zero_dce_background(ktrans_ci95_lower, mask_bool)
-        ktrans_ci95_upper = _zero_dce_background(ktrans_ci95_upper, mask_bool)
-        ve_ci95_lower = _zero_dce_background(ve_ci95_lower, mask_bool)
-        ve_ci95_upper = _zero_dce_background(ve_ci95_upper, mask_bool)
-        vp_ci95_lower = _zero_dce_background(vp_ci95_lower, mask_bool)
-        vp_ci95_upper = _zero_dce_background(vp_ci95_upper, mask_bool)
-        fp_ci95_lower = _zero_dce_background(fp_ci95_lower, mask_bool)
-        fp_ci95_upper = _zero_dce_background(fp_ci95_upper, mask_bool)
-        ps_ci95_lower = _zero_dce_background(ps_ci95_lower, mask_bool)
-        ps_ci95_upper = _zero_dce_background(ps_ci95_upper, mask_bool)
         tsnr_map = _zero_dce_background(tsnr_map, mask_bool)
         iauc60 = _zero_dce_background(iauc60, mask_bool)
         iauc90 = _zero_dce_background(iauc90, mask_bool)
@@ -3954,18 +3698,7 @@ class ComputeDCEMaps(BaseInterface):
                     vp_std=vp_std,
                     fp_std=fp_std,
                     ps_std=ps_std,
-                    ktrans_ci95_lower=ktrans_ci95_lower,
-                    ktrans_ci95_upper=ktrans_ci95_upper,
-                    ve_ci95_lower=ve_ci95_lower,
-                    ve_ci95_upper=ve_ci95_upper,
-                    vp_ci95_lower=vp_ci95_lower,
-                    vp_ci95_upper=vp_ci95_upper,
-                    fp_ci95_lower=fp_ci95_lower,
-                    fp_ci95_upper=fp_ci95_upper,
-                    ps_ci95_lower=ps_ci95_lower,
-                    ps_ci95_upper=ps_ci95_upper,
                 ),
-                mask_bool,
                 is_auto,
                 save_ve,
                 save_vp,
@@ -4368,7 +4101,6 @@ class ComputeDCEMaps(BaseInterface):
                 "r_squared": float(winner_result.r_squared[i]),
                 "converged": bool(winner_result.converged[i]),
                 "uncertainties": uncertainties,
-                "credible_intervals": {},
                 "uncertainty_source": "not_computed",
                 "fitted_curve": fitted_curve,
                 "quality_flag": (
@@ -4469,7 +4201,6 @@ class ComputeDCEMaps(BaseInterface):
                 "r_squared": float(fit_result.r_squared[i]),
                 "converged": bool(fit_result.converged[i]),
                 "uncertainties": uncertainties,
-                "credible_intervals": {},
                 "uncertainty_source": "not_computed",
                 "fitted_curve": fitted_curve,
                 "quality_flag": (
