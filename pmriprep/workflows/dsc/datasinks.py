@@ -1282,10 +1282,10 @@ def init_dsc_datasinks_wf(
         "Binary oSVD-fallback mask. 1 = the parametric fit was rejected "
         "(R2<0.5, solver nonconvergence, or fitting failure), oSVD fallback "
         "succeeded, and the saved CBF/CBV/MTT/Tmax come from "
-        "svd_deconvolve_oscillation; the parametric uncertainty maps "
-        "(standard error/posterior SD, relative uncertainty, and intervals) "
-        "are NaN in these voxels. "
-        "0 = the parametric fit was retained."
+        "svd_deconvolve_oscillation; parametric uncertainty is NaN in these "
+        "voxels. 0 = no successful oSVD replacement; this includes retained "
+        "parametric fits, inadmissible curves, and failed fallback attempts. "
+        "Use the sidecar counts to distinguish these cases."
     )
     for in_attr, desc_value, suffix, description, key, bids_sfx in (
         ("parametric_r2_map", "dscParametric", "Rsquared",

@@ -27,8 +27,6 @@ Modality = Literal["DSC", "DCE"]
 AIF_INDEPENDENT_MAPS: Final[frozenset[str]] = frozenset({
     "psr",
     "cnr", "tsnr",
-    "parametric_r2",
-    "fallback",
 })
 
 
@@ -56,8 +54,8 @@ TEMPLATE_AIF_USAGE: Final[dict[str, TemplateAIFUsageCategory]] = {
     "cbf_std": "ratio_defensible",
     "rel_cbf": "ratio_defensible",
     "rel_cbv": "ratio_defensible",
-    "parametric_r2": "safe",
-    "fallback": "safe",
+    "parametric_r2": "qualitative_only",
+    "fallback": "qualitative_only",
 }
 
 

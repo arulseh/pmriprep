@@ -346,6 +346,17 @@ class TestApplyAifSidecar:
         assert sidecar["AIFDependent"] is False
         assert sidecar["TemplateAIFUsage"] == "safe"
 
+    @pytest.mark.parametrize("map_key", ["parametric_r2", "fallback"])
+    def test_parametric_diagnostics_are_aif_dependent(self, map_key: str) -> None:
+        sidecar: dict = {}
+        apply_aif_sidecar(
+            sidecar,
+            map_key,
+            {"aif_detection": {"detection_method": "synthetic"}},
+        )
+        assert sidecar["AIFDependent"] is True
+        assert sidecar["TemplateAIFUsage"] == "qualitative_only"
+
     def test_unknown_map_raises(self) -> None:
         with pytest.raises(KeyError, match="Unknown DSC map key"):
             apply_aif_sidecar({}, "not_a_real_map", None)
@@ -447,6 +458,10 @@ class TestWriterAifBlockPresentOnAllMaps:
         }
         for suffix, units in expected.items():
             assert _load_sidecar(derivatives, suffix)["Units"] == units
+
+        r2_meta = _load_sidecar(derivatives, "dscParametricRsquared_stat")
+        assert r2_meta["AIFDependent"] is True
+        assert r2_meta["TemplateAIFUsage"] == "qualitative_only"
 
         cth_meta = _load_sidecar(derivatives, "dscCth_stat")
         assert cth_meta["Formula"] == "beta * sqrt(alpha) = MTT / sqrt(alpha)"

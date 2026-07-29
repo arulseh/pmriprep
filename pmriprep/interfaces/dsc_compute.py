@@ -2102,30 +2102,36 @@ class ComputeDSCMaps(BaseInterface):
         # likely contain oSVD-derived values for many voxels.
         from pmriprep.utils.dsc_deconvolution import svd_deconvolve_oscillation
 
-        fallback_coords = [
-            res["coords"]
-            for res in results
+        fallback_candidates = [
+            (res["coords"], bool(admissible_mask[index]))
+            for index, res in enumerate(results)
             if res.get("needs_fallback") or res.get("failed")
         ]
         n_fallback_requested = sum(
-            bool(res.get("needs_fallback") or res.get("failed"))
-            and bool(admissible_mask[index])
-            for index, res in enumerate(results)
+            is_admissible for _, is_admissible in fallback_candidates
         )
         n_fallback = 0
         n_fallback_attempted = 0
         n_fallback_failed = 0
-        for coords in fallback_coords:
+        for coords, is_admissible in fallback_candidates:
             x, y, z = coords
             tissue = concentration_data[x, y, z, :]
-            if np.max(np.abs(tissue)) < EPSILON_CONCENTRATION:
-                continue
-            n_fallback_attempted += 1
             # CTH exists only for an accepted vascular fit. Once that fit is
             # rejected, neither a successful oSVD replacement nor a failed
             # fallback supplies a capillary transit-time distribution.
             if cth_map is not None:
                 cth_map[x, y, z] = np.nan
+            if cbf_std_map is not None:
+                cbf_std_map[x, y, z] = np.nan
+            if cbv_std_map is not None:
+                cbv_std_map[x, y, z] = np.nan
+            if not is_admissible:
+                cbf[x, y, z] = np.nan
+                cbv[x, y, z] = np.nan
+                mtt[x, y, z] = np.nan
+                tmax[x, y, z] = np.nan
+                continue
+            n_fallback_attempted += 1
             try:
                 svd_result = svd_deconvolve_oscillation(
                     tissue, aif, dt,
@@ -2135,16 +2141,18 @@ class ComputeDSCMaps(BaseInterface):
                 cbv[x, y, z] = svd_result.cbv
                 mtt[x, y, z] = svd_result.mtt
                 tmax[x, y, z] = svd_result.delay
-                # Parametric uncertainty is unavailable for SVD fallback voxels.
-                if cbf_std_map is not None:
-                    cbf_std_map[x, y, z] = np.nan
-                if cbv_std_map is not None:
-                    cbv_std_map[x, y, z] = 0.0
                 if fallback_mask is not None:
                     fallback_mask[x, y, z] = 1
                 n_fallback += 1
             except Exception:
-                n_fallback_failed += 1  # leave as parametric result or zeros
+                # The parametric fit was already rejected and oSVD supplied no
+                # replacement. Do not publish the rejected estimate or an
+                # initialized zero as a measured perfusion value.
+                cbf[x, y, z] = np.nan
+                cbv[x, y, z] = np.nan
+                mtt[x, y, z] = np.nan
+                tmax[x, y, z] = np.nan
+                n_fallback_failed += 1
 
         # Compile QC metrics
         if r_squared_list:

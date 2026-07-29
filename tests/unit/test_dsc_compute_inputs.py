@@ -244,6 +244,9 @@ def test_parametric_fit_health_uses_admissible_denominator(
     assert cth[0, 0, 0] == pytest.approx(1.25)
     assert np.isnan(cth[1, 0, 0])
     assert np.isnan(cth[2, 0, 0])
+    for map_index in (0, 1, 2, 3, 6):
+        assert np.isnan(result[map_index][2, 0, 0])
+    assert result[9][2, 0, 0] == 0
 
 
 def test_vascular_cth_is_nan_when_osvd_fallback_fails(
@@ -288,7 +291,10 @@ def test_vascular_cth_is_nan_when_osvd_fallback_fails(
         False,
     )
 
-    assert np.isnan(result[5][0, 0, 0])
+    for map_index in (0, 1, 2, 3, 5, 6):
+        assert np.isnan(result[map_index][0, 0, 0])
+    assert result[8][0, 0, 0] == pytest.approx(0.2)
+    assert result[9][0, 0, 0] == 0
     assert result[4]["n_fallback_failed"] == 1
 
 
