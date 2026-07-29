@@ -1057,10 +1057,7 @@ def _write_dce_model_free_maps(
         "out_peak_enhancement": generate_path("_peak_enhancement"),
         "out_time_to_peak": generate_path("_time_to_peak"),
         "out_ser": generate_path("_SER"),
-        "out_wash_in_slope": generate_path("_wash_in_slope"),
-        "out_wash_out_slope": generate_path("_wash_out_slope"),
         "out_bat": generate_path("_BAT"),
-        "out_curve_type": generate_path("_curve_type"),
     }
     write_map(maps.iauc60, outputs["out_iauc60"])
     write_map(maps.iauc90, outputs["out_iauc90"])
@@ -1069,10 +1066,7 @@ def _write_dce_model_free_maps(
         write_map(maps.peak_enhancement, outputs["out_peak_enhancement"])
     write_map(maps.time_to_peak, outputs["out_time_to_peak"])
     write_map(maps.signal_enhancement_ratio, outputs["out_ser"])
-    write_map(maps.wash_in_slope, outputs["out_wash_in_slope"])
-    write_map(maps.wash_out_slope, outputs["out_wash_out_slope"])
     write_map(maps.bolus_arrival_time, outputs["out_bat"])
-    write_map(maps.curve_type, outputs["out_curve_type"], dtype=np.int8)
     return outputs
 
 
@@ -1438,10 +1432,7 @@ class _DCEModelFreeMaps(NamedTuple):
     peak_enhancement: Optional[npt.NDArray[Any]]
     time_to_peak: npt.NDArray[Any]
     signal_enhancement_ratio: npt.NDArray[Any]
-    wash_in_slope: npt.NDArray[Any]
-    wash_out_slope: npt.NDArray[Any]
     bolus_arrival_time: npt.NDArray[Any]
-    curve_type: npt.NDArray[Any]
     iauc_qc: dict[str, Any]
     ser_qc: dict[str, Any]
 
@@ -2700,15 +2691,7 @@ class ComputeDCEMapsOutputSpec(TraitedSpec):
     out_peak_enhancement = File(desc="Peak enhancement percentage")
     out_time_to_peak = File(desc="Time to peak (seconds)")
     out_ser = File(desc="Signal Enhancement Ratio (washout characterization)")
-    out_wash_in_slope = File(desc="Wash-in slope (maximum upslope, mM/min)")
-    out_wash_out_slope = File(desc="Wash-out slope (linear fit, mM/min, signed)")
     out_bat = File(desc="Bolus arrival time (seconds)")
-    out_curve_type = File(
-        desc=(
-            "Descriptive curve classification (0=unclassified, "
-            "1=persistent-like, 2=plateau-like, 3=washout-like)"
-        )
-    )
 
     # Model selection map (auto mode)
     out_model_selection = File(desc="Model selection map (int8: 0=unfitted, 1=patlak, 2=tofts, 3=extended_tofts, 4=2cxm)")
@@ -3361,12 +3344,9 @@ class ComputeDCEMaps(BaseInterface):
         """Compute vectorized semi-quantitative maps before PK fitting."""
         from pmriprep.utils.dce_model_free import (
             compute_bolus_arrival_time,
-            compute_curve_type,
             compute_iauc,
             compute_signal_enhancement_ratio,
             compute_time_to_peak,
-            compute_wash_in_slope,
-            compute_wash_out_slope,
         )
 
         concentration = prepared.concentration
@@ -3408,11 +3388,6 @@ class ComputeDCEMaps(BaseInterface):
             "available_post_reference_duration_s": available_duration_s,
             "windows": iauc_windows,
         }
-        volume_tr_s: Optional[float] = (
-            float(self.inputs.volume_tr)
-            if isdefined(self.inputs.volume_tr) and self.inputs.volume_tr is not None
-            else None
-        )
         ser_early_time_s = float(self.inputs.ser_early_time_s)
         ser_late_time_s = float(self.inputs.ser_late_time_s)
         ser_complete = available_duration_s + 6e-8 >= ser_late_time_s
@@ -3464,24 +3439,12 @@ class ComputeDCEMaps(BaseInterface):
             prepared.peak_enhancement,
             compute_time_to_peak(concentration, time_points),
             ser,
-            compute_wash_in_slope(
-                concentration,
-                time_points,
-                bolus_arrival_frame=prepared.baseline_frames,
-                volume_tr_s=volume_tr_s,
-            ),
-            compute_wash_out_slope(
-                concentration,
-                time_points,
-                volume_tr_s=volume_tr_s,
-            ),
             compute_bolus_arrival_time(
                 concentration,
                 time_points,
                 baseline_frames=prepared.baseline_frames,
                 brain_mask=prepared.mask,
             ),
-            compute_curve_type(ser),
             iauc_qc,
             ser_qc,
         )
@@ -3700,10 +3663,7 @@ class ComputeDCEMaps(BaseInterface):
         peak_enh = model_free.peak_enhancement
         ttp = model_free.time_to_peak
         ser = model_free.signal_enhancement_ratio
-        wash_in_slope = model_free.wash_in_slope
-        wash_out_slope = model_free.wash_out_slope
         bat = model_free.bolus_arrival_time
-        curve_type = model_free.curve_type
         parameter_maps = self._initialize_parameter_maps(
             prepared, model_name, candidate_names,
         )
@@ -3935,10 +3895,7 @@ class ComputeDCEMaps(BaseInterface):
         iauc120 = _zero_dce_background(iauc120, mask_bool)
         ttp = _zero_dce_background(ttp, mask_bool)
         ser = _zero_dce_background(ser, mask_bool)
-        wash_in_slope = _zero_dce_background(wash_in_slope, mask_bool)
-        wash_out_slope = _zero_dce_background(wash_out_slope, mask_bool)
         bat = _zero_dce_background(bat, mask_bool)
-        curve_type = _zero_dce_background(curve_type, mask_bool)
         quality_flag_map = _zero_dce_background(quality_flag_map, mask_bool)
         model_selection_map = _zero_dce_background(model_selection_map, mask_bool)
         if peak_enh is not None:
@@ -3975,10 +3932,7 @@ class ComputeDCEMaps(BaseInterface):
                 peak_enh,
                 ttp,
                 ser,
-                wash_in_slope,
-                wash_out_slope,
                 bat,
-                curve_type,
                 model_free.iauc_qc,
                 model_free.ser_qc,
             ),

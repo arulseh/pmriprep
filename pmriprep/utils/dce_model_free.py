@@ -20,6 +20,9 @@ logger = logging.getLogger(__name__)
 # numerical artifact from near-zero baseline voxels.
 _PEAK_ENH_MAX_CAP = 5000.0
 
+# Require sampled enhancement to exceed precontrast temporal noise.
+_SER_MIN_ENHANCEMENT_NOISE_SD = 3.0
+
 def compute_iauc(
     concentration: npt.NDArray[np.floating],
     time_points: npt.NDArray[np.floating],
@@ -172,8 +175,10 @@ def compute_signal_enhancement_ratio(
     ``SER = (S_early - S0) / (S_late - S0)``
 
     Signal values at the predefined early and late times are linearly
-    interpolated. The stored ratio is not clipped. A negative late enhancement
-    is retained; only a numerically indeterminate denominator is undefined.
+    interpolated. The stored ratio is not clipped. Early enhancement and the
+    absolute late enhancement must both exceed three precontrast noise standard
+    deviations. A negative late enhancement is retained when it clears that
+    validity threshold.
 
     Parameters
     ----------
@@ -200,6 +205,8 @@ def compute_signal_enhancement_ratio(
     undefined = np.full(signal_data.shape[:3], np.nan, dtype=np.float64)
     if baseline_frames < 1 or baseline_frames >= signal_data.shape[-1]:
         raise ValueError("baseline_frames must leave at least one post-baseline frame")
+    if baseline_frames < 2:
+        return undefined
     if not 0 <= bolus_arrival_frame < time_points.size:
         raise ValueError("bolus_arrival_frame is outside the time axis")
     if not np.all(np.isfinite(time_points)) or np.any(np.diff(time_points) <= 0):
@@ -230,18 +237,26 @@ def compute_signal_enhancement_ratio(
             dtype=np.float64,
         )
 
-    baseline = np.mean(signal_data[..., :baseline_frames], axis=-1)
+    baseline_samples = signal_data[..., :baseline_frames]
+    baseline = np.mean(baseline_samples, axis=-1)
+    baseline_noise = np.std(baseline_samples, axis=-1, ddof=1)
     early_signal = _sample(float(sample_times[0]))
     late_signal = _sample(float(sample_times[1]))
     early_enhancement = early_signal - baseline
     late_enhancement = late_signal - baseline
     scale = np.maximum.reduce((np.abs(baseline), np.abs(early_signal), np.abs(late_signal)))
-    denominator_tolerance = 16.0 * np.finfo(np.float64).eps * scale
+    numerical_tolerance = 16.0 * np.finfo(np.float64).eps * scale
+    enhancement_threshold = np.maximum(
+        _SER_MIN_ENHANCEMENT_NOISE_SD * baseline_noise,
+        numerical_tolerance,
+    )
     valid = (
         np.isfinite(baseline)
+        & np.isfinite(baseline_noise)
         & np.isfinite(early_enhancement)
         & np.isfinite(late_enhancement)
-        & (np.abs(late_enhancement) > denominator_tolerance)
+        & (early_enhancement > enhancement_threshold)
+        & (np.abs(late_enhancement) > enhancement_threshold)
     )
     ser = undefined.copy()
     with np.errstate(divide="ignore", invalid="ignore"):

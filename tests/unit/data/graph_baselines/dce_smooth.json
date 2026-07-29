@@ -1028,12 +1028,6 @@
     ],
     [
       "pk_modeling",
-      "out_curve_type",
-      "outputnode",
-      "curve_type_map"
-    ],
-    [
-      "pk_modeling",
       "out_delta_bic",
       "dce_pk_maps_qc",
       "delta_bic_file"
@@ -1670,18 +1664,6 @@
     ],
     [
       "pk_modeling",
-      "out_wash_in_slope",
-      "outputnode",
-      "wash_in_slope_map"
-    ],
-    [
-      "pk_modeling",
-      "out_wash_out_slope",
-      "outputnode",
-      "wash_out_slope_map"
-    ],
-    [
-      "pk_modeling",
       "qc_metrics",
       "collect_qc_metrics",
       "pk_qc"
@@ -2060,9 +2042,7 @@
         "iauc60",
         "iauc90",
         "peak",
-        "ser",
-        "wash_in_slope",
-        "wash_out_slope"
+        "ser"
       ],
       "output_names": [
         "map_dict"
@@ -2541,8 +2521,8 @@
     "resample_dsc_ncbv": "9016b6e864f3d6e0149ee556592202a4fb42cec4b3e2a90946ff48dbfa6caf72",
     "select_aif_exclusion": "3ac6f0a171a3c915c7c043706044fb8dd45d2a9c05f1d1fad613919135724b21",
     "signal_to_concentration": "49bbd728c9822533d2b90a99d2e96c06fdbf423caae8443a900e0a07f5b99e7d",
-    "smooth_model_free_maps": "cb9c9ba1d018501d1d1954057343083b841ca91ec9dffe7e94799b0b315712e5",
-    "smooth_pk_maps": "cb9c9ba1d018501d1d1954057343083b841ca91ec9dffe7e94799b0b315712e5",
+    "smooth_model_free_maps": "298a8a1a257d2f59e798eab7f91dd965dd7d9489eb4ff8cd8bd9fe8413e16e5a",
+    "smooth_pk_maps": "298a8a1a257d2f59e798eab7f91dd965dd7d9489eb4ff8cd8bd9fe8413e16e5a",
     "transform_atlas_cascade": "92097e5d6df046e1997dbee6d10208373b12e5535619d7397855d263159a752a",
     "transform_b1_to_dce": "3805c9b07e0320284ec492d9a2d5ea9e48db04ade1320c301880a9219eab0829",
     "transform_b1_to_vfa": "d7085fd6e919f5095c5bb302c136f392174fa77fd5c1e7cf1a20c37dfbad13fb",
@@ -3204,7 +3184,6 @@
     "bat_map",
     "brain_mask",
     "brain_mask_filmstrip",
-    "curve_type_map",
     "dce_mean",
     "dce_moco",
     "dce_to_t1w_xfm",
@@ -3275,8 +3254,6 @@
     "vp_ci95_upper",
     "vp_cv",
     "vp_map",
-    "vp_uncertainty",
-    "wash_in_slope_map",
-    "wash_out_slope_map"
+    "vp_uncertainty"
   ]
 }

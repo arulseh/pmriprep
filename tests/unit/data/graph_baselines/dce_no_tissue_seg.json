@@ -938,12 +938,6 @@
     ],
     [
       "pk_modeling",
-      "out_curve_type",
-      "outputnode",
-      "curve_type_map"
-    ],
-    [
-      "pk_modeling",
       "out_delta_bic",
       "dce_pk_maps_qc",
       "delta_bic_file"
@@ -1523,18 +1517,6 @@
       "out_vp_std",
       "outputnode",
       "vp_uncertainty"
-    ],
-    [
-      "pk_modeling",
-      "out_wash_in_slope",
-      "outputnode",
-      "wash_in_slope_map"
-    ],
-    [
-      "pk_modeling",
-      "out_wash_out_slope",
-      "outputnode",
-      "wash_out_slope_map"
     ],
     [
       "pk_modeling",
@@ -2856,7 +2838,6 @@
     "bat_map",
     "brain_mask",
     "brain_mask_filmstrip",
-    "curve_type_map",
     "dce_mean",
     "dce_moco",
     "dce_to_t1w_xfm",
@@ -2927,8 +2908,6 @@
     "vp_ci95_upper",
     "vp_cv",
     "vp_map",
-    "vp_uncertainty",
-    "wash_in_slope_map",
-    "wash_out_slope_map"
+    "vp_uncertainty"
   ]
 }

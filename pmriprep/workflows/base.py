@@ -2662,8 +2662,7 @@ def _connect_master_dce_outputs_and_datasinks(
         # Always-present model-free maps + QC
         "iauc60_map", "iauc90_map", "iauc120_map",
         "peak_enhancement_map", "time_to_peak_map", "ser_map",
-        "wash_in_slope_map", "wash_out_slope_map",
-        "bat_map", "curve_type_map",
+        "bat_map",
         "tsnr_map", "qc_mask",
         # Always-present registration + AIF
         "dce_moco", "dce_mean", "motion_params",
@@ -2837,10 +2836,7 @@ def _connect_master_dce_outputs_and_datasinks(
             ("outputnode.peak_enhancement_map", "inputnode.peak_enhancement_map"),
             ("outputnode.time_to_peak_map", "inputnode.time_to_peak_map"),
             ("outputnode.ser_map", "inputnode.ser_map"),
-            ("outputnode.wash_in_slope_map", "inputnode.wash_in_slope_map"),
-            ("outputnode.wash_out_slope_map", "inputnode.wash_out_slope_map"),
             ("outputnode.bat_map", "inputnode.bat_map"),
-            ("outputnode.curve_type_map", "inputnode.curve_type_map"),
             # QC maps
             ("outputnode.tsnr_map", "inputnode.tsnr_map"),
             ("outputnode.qc_mask", "inputnode.qc_mask"),

@@ -76,8 +76,6 @@ class DCELesionStatsInputSpec(BaseInterfaceInputSpec):
 
     # Additional derived maps (all optional)
     peak_enhancement_map = traits.Str(desc="Peak enhancement map path")
-    wash_in_map = traits.Str(desc="Wash-in rate map path")
-    wash_out_map = traits.Str(desc="Wash-out rate map path")
     ser_map = traits.Str(desc="Signal enhancement ratio map path")
     ttp_map = traits.Str(desc="Time to peak map path")
 

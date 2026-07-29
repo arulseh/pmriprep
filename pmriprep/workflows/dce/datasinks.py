@@ -138,7 +138,8 @@ _MODEL_FREE_MAPS: tuple[DCEMapSpec, ...] = (
     DCEMapSpec("ser_map", "dce", "SER", "Fixed-time early-to-late signal enhancement ratio", "1", "ser",
      {"InputCurve": "motion_corrected_signal", "Formula": "(Searly-S0)/(Slate-S0)",
       "SampleInterpolation": "linear",
-      "UndefinedValue": "NaN for incomplete timing, non-finite signal, or numerically indeterminate denominator"}),
+      "MinimumEnhancementNoiseSD": 3.0,
+      "UndefinedValue": "NaN for incomplete timing, non-finite signal, or enhancement not exceeding baseline noise"}),
     DCEMapSpec("bat_map", "dce", "BAT", "Bolus arrival time (seconds)", "s", "bat",
      {"DetectionMethod": "threshold_then_gradient_fallback",
       "ConfidenceThreshold": "high"}),
@@ -204,7 +205,6 @@ _PK_UNITS = {
 _MF_UNITS = {
     "iauc60": "mM*min", "iauc90": "mM*min", "iauc120": "mM*min",
     "peak_enhancement": "%", "ser": "1",
-    "wash_in_slope": "mM/min", "wash_out_slope": "mM/min",
 }
 
 # BIDS-correct suffixes for smoothed-map sinks live inline in
@@ -339,6 +339,7 @@ def _build_model_free_extra(
         ),
         "CompleteTiming": ser_qc.get("complete"),
         "SampleInterpolation": "linear",
+        "MinimumEnhancementNoiseSD": 3.0,
     })
     return out
 
@@ -584,6 +585,7 @@ def _build_dce_smoothed_meta(
             ),
             "ReferenceSelection": "earlier_of_baseline_count_and_detected_arrival",
             "SampleInterpolation": "linear",
+            "MinimumEnhancementNoiseSD": 3.0,
         })
     if map_key.endswith("_uncertainty"):
         from pmriprep.utils.uncertainty_provenance import build_uncertainty_provenance
@@ -889,7 +891,6 @@ def _split_dce_smoothed(
     mf_suffix_bids = {
         "iauc60": "IAUC60", "iauc90": "IAUC90", "iauc120": "IAUC120",
         "peak_enhancement": "peakEnhancement", "ser": "SER",
-        "wash_in_slope": "washInSlope", "wash_out_slope": "washOutSlope",
     }
 
     def _extract_fwhm(src_path: str) -> tuple[str, str]:
@@ -1018,10 +1019,8 @@ def _add_perf_map_sink(
     return sink
 
 
-# Model-free maps that should carry per-region LesionStats. Excluded
-# (intentional): bat_map (timing offset, not
-# magnitude biomarker), curve_type_map (categorical, not amenable to
-# ROI summary stats).
+# Model-free maps that should carry per-region LesionStats. BAT is excluded
+# because a timing offset is not a magnitude biomarker.
 _MF_LESIONSTATS_MAP_KEY: dict[str, str] = {
     "iauc60_map": "iauc60",
     "iauc90_map": "iauc90",
@@ -1331,8 +1330,7 @@ def init_dce_datasinks_wf(
                 # Model-free
                 "iauc60_map", "iauc90_map", "iauc120_map",
                 "peak_enhancement_map", "time_to_peak_map", "ser_map",
-                "wash_in_slope_map", "wash_out_slope_map",
-                "bat_map", "curve_type_map",
+                "bat_map",
                 # QC + model-selection
                 "tsnr_map", "qc_mask", "r2_map", "quality_flag_map",
                 "model_selection_map", "delta_bic_map",

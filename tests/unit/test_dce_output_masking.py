@@ -384,7 +384,7 @@ def test_write_dce_model_free_maps_preserves_output_contract(has_peak: bool) -> 
     array = np.ones((1, 1, 1))
     maps = _DCEModelFreeMaps(
         array, array, array, array if has_peak else None, array,
-        array, array, array, array, array.astype(np.int8), {}, {},
+        array, array, {}, {},
     )
     writes: list[tuple[str, object]] = []
 
@@ -397,8 +397,7 @@ def test_write_dce_model_free_maps_preserves_output_contract(has_peak: bool) -> 
     outputs = _write_dce_model_free_maps(maps, generate_path, write_map)
     assert outputs["out_iauc60"] == "output_IAUC60.nii.gz"
     assert outputs["out_peak_enhancement"] == "output_peak_enhancement.nii.gz"
-    assert outputs["out_curve_type"] == "output_curve_type.nii.gz"
-    assert writes[-1] == ("output_curve_type.nii.gz", np.int8)
+    assert outputs["out_bat"] == "output_BAT.nii.gz"
     peak_writes = [path for path, _ in writes if "peak_enhancement" in path]
     assert bool(peak_writes) is has_peak
 
@@ -650,7 +649,7 @@ def test_saved_dce_categorical_maps_are_brain_masked(tmp_path) -> None:
         os.chdir(previous_cwd)
 
     background = mask == 0
-    for output_name in ("out_curve_type", "out_quality_flag", "out_model_selection"):
+    for output_name in ("out_quality_flag", "out_model_selection"):
         data = nib.load(getattr(result.outputs, output_name)).get_fdata()
         assert np.all(data[background] == 0), output_name
     for output_name in (

@@ -212,12 +212,6 @@
     ],
     [
       "dce_wf",
-      "outputnode.curve_type_map",
-      "dce_datasinks_wf",
-      "inputnode.curve_type_map"
-    ],
-    [
-      "dce_wf",
       "outputnode.dce_mean",
       "dce_datasinks_wf",
       "inputnode.dce_mean"
@@ -665,18 +659,6 @@
       "outputnode.vp_uncertainty",
       "dce_datasinks_wf",
       "inputnode.vp_uncertainty"
-    ],
-    [
-      "dce_wf",
-      "outputnode.wash_in_slope_map",
-      "dce_datasinks_wf",
-      "inputnode.wash_in_slope_map"
-    ],
-    [
-      "dce_wf",
-      "outputnode.wash_out_slope_map",
-      "dce_datasinks_wf",
-      "inputnode.wash_out_slope_map"
     ],
     [
       "inputnode",

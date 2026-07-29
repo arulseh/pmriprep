@@ -2167,7 +2167,7 @@ def _smooth_dce_maps(
                     check=True, capture_output=True,
                 )
                 # Normalize; -nan cleans 0/0→NaN; conditionally threshold
-                preserve_support = name in {"ser", "wash_in_slope", "wash_out_slope"}
+                preserve_support = name == "ser"
                 support_args = ["-mas", vmask_path] if preserve_support else []
                 subprocess.run(
                     ["fslmaths", num_path, "-div", den_path,

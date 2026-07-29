@@ -584,6 +584,24 @@ class TestSER:
         )
         assert np.all(np.isnan(result))
 
+    def test_noise_only_signal_is_undefined(self) -> None:
+        """Baseline-scale noise must not produce finite SER values."""
+        signal, time_points = self._signal()
+        rng = np.random.default_rng(41)
+        signal += rng.normal(0.0, 1.0, size=signal.shape)
+        result = compute_signal_enhancement_ratio(signal, time_points)
+        assert np.all(np.isnan(result))
+
+    def test_noise_gate_is_gain_invariant(self) -> None:
+        """Receiver gain scales enhancement and baseline noise equally."""
+        signal, time_points = self._signal()
+        signal[..., :5] = np.asarray([99.0, 100.0, 101.0, 100.0, 100.0])
+        signal[..., 12] = 140.0
+        signal[..., 32] = 120.0
+        original = compute_signal_enhancement_ratio(signal, time_points)
+        scaled = compute_signal_enhancement_ratio(signal * 100.0, time_points)
+        np.testing.assert_allclose(original, scaled)
+
     def test_uses_baseline_subtracted_signal_enhancement(self) -> None:
         """SER is the ratio of early and late enhancement above S0."""
         signal, time_points = self._signal()

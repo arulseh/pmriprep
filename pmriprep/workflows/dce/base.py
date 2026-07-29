@@ -163,15 +163,12 @@ def init_dce_pk_modeling_wf(
                 "out_peak_enhancement",
                 "out_time_to_peak",
                 "out_ser",
-                "out_wash_in_slope",
-                "out_wash_out_slope",
                 "out_ktrans_std",
                 "out_ve_std",
                 "out_vp_std",
                 "out_fp_std",
                 "out_ps_std",
                 "out_bat",
-                "out_curve_type",
                 "out_tsnr",
                 "out_quality_flag",
                 "out_ktrans_cv",
@@ -244,15 +241,12 @@ def init_dce_pk_modeling_wf(
             ("out_peak_enhancement", "out_peak_enhancement"),
             ("out_time_to_peak", "out_time_to_peak"),
             ("out_ser", "out_ser"),
-            ("out_wash_in_slope", "out_wash_in_slope"),
-            ("out_wash_out_slope", "out_wash_out_slope"),
             ("out_ktrans_std", "out_ktrans_std"),
             ("out_ve_std", "out_ve_std"),
             ("out_vp_std", "out_vp_std"),
             ("out_fp_std", "out_fp_std"),
             ("out_ps_std", "out_ps_std"),
             ("out_bat", "out_bat"),
-            ("out_curve_type", "out_curve_type"),
             ("out_tsnr", "out_tsnr"),
             ("out_quality_flag", "out_quality_flag"),
             ("out_ktrans_cv", "out_ktrans_cv"),
@@ -366,7 +360,7 @@ def init_dce_smoothing_wf(
         Independently estimated PK parameter maps.
     kep_validity
         Native Kep map used only to preserve its defined voxel domain.
-    iauc60, iauc90, iauc120, peak, ser, wash_in_slope, wash_out_slope
+    iauc60, iauc90, iauc120, peak, ser
         Model-free maps.
     brain_mask_file
         DCE-space brain mask (smoothing restricted to brain voxels).
@@ -391,8 +385,6 @@ def init_dce_smoothing_wf(
                 "iauc120",
                 "peak",
                 "ser",
-                "wash_in_slope",
-                "wash_out_slope",
                 "brain_mask_file",
             ]
         ),
@@ -425,7 +417,7 @@ def init_dce_smoothing_wf(
 
     build_mf_dict = pe.Node(
         niu.Function(
-            input_names=["iauc60", "iauc90", "iauc120", "peak", "ser", "wash_in_slope", "wash_out_slope"],
+            input_names=["iauc60", "iauc90", "iauc120", "peak", "ser"],
             output_names=["map_dict"],
             function=_build_model_free_map_dict,
         ),
@@ -471,8 +463,6 @@ def init_dce_smoothing_wf(
             ("iauc120", "iauc120"),
             ("peak", "peak"),
             ("ser", "ser"),
-            ("wash_in_slope", "wash_in_slope"),
-            ("wash_out_slope", "wash_out_slope"),
         ]),
         (build_mf_dict, smooth_model_free, [("map_dict", "map_files")]),
         (inputnode, smooth_model_free, [("brain_mask_file", "brain_mask_file")]),
@@ -517,7 +507,7 @@ def init_dce_lesion_stats_wf(
     ------
     ktrans_map, ve_map, vp_map, kep_map
         PK parameter maps (shared by all three nodes).
-    iauc60_map, iauc90_map, iauc120_map, peak_enhancement_map, ttp_map, ser_map, wash_in_map, wash_out_map
+    iauc60_map, iauc90_map, iauc120_map, peak_enhancement_map, ttp_map, ser_map
         Model-free maps.
     niauc60_map
         NAWM-normalized IAUC60 map.
@@ -555,8 +545,6 @@ def init_dce_lesion_stats_wf(
                 "peak_enhancement_map",
                 "ttp_map",
                 "ser_map",
-                "wash_in_map",
-                "wash_out_map",
                 "niauc60_map",
                 "nawm_mask",
                 "qc_mask",
@@ -603,8 +591,6 @@ def init_dce_lesion_stats_wf(
         ("peak_enhancement_map", "peak_enhancement_map"),
         ("ttp_map", "ttp_map"),
         ("ser_map", "ser_map"),
-        ("wash_in_map", "wash_in_map"),
-        ("wash_out_map", "wash_out_map"),
         ("niauc60_map", "niauc60_map"),
         ("nawm_mask", "nawm_mask"),
         ("qc_mask", "qc_mask"),
@@ -1620,10 +1606,7 @@ def init_dce_preproc_wf(
                 "peak_enhancement_map",
                 "time_to_peak_map",
                 "ser_map",
-                "wash_in_slope_map",
-                "wash_out_slope_map",
                 "bat_map",
-                "curve_type_map",
                 # QC maps
                 "tsnr_map",
                 "qc_mask",
@@ -2748,10 +2731,7 @@ def init_dce_preproc_wf(
             ("outputnode.out_peak_enhancement", "peak_enhancement_map"),
             ("outputnode.out_time_to_peak", "time_to_peak_map"),
             ("outputnode.out_ser", "ser_map"),
-            ("outputnode.out_wash_in_slope", "wash_in_slope_map"),
-            ("outputnode.out_wash_out_slope", "wash_out_slope_map"),
             ("outputnode.out_bat", "bat_map"),
-            ("outputnode.out_curve_type", "curve_type_map"),
         ]),
         # QC maps
         (pk_wf, outputnode, [

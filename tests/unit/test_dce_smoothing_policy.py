@@ -105,6 +105,7 @@ def test_smoothed_ser_metadata_records_configured_windows() -> None:
     assert metadata["EarlySampleTimeSecondsAfterReference"] == 90.0
     assert metadata["LateSampleTimeSecondsAfterReference"] == 300.0
     assert metadata["SampleInterpolation"] == "linear"
+    assert metadata["MinimumEnhancementNoiseSD"] == 3.0
 
 
 def test_native_ser_metadata_records_configured_windows() -> None:
@@ -122,3 +123,4 @@ def test_native_ser_metadata_records_configured_windows() -> None:
     assert metadata["EarlySampleTimeSecondsAfterReference"] == 90.0
     assert metadata["LateSampleTimeSecondsAfterReference"] == 300.0
     assert metadata["SampleInterpolation"] == "linear"
+    assert metadata["MinimumEnhancementNoiseSD"] == 3.0
