@@ -683,8 +683,6 @@ def test_save_base_maps_preserves_result_keys_and_suffixes(
         "out_rel_cbf": "_rel_cbf",
         "out_rel_cbv": "_rel_cbv",
         "out_rel_cbv_auc": "_rel_cbv_auc",
-        "out_rel_auc_raw": "_rel_auc_raw",
-        "out_rel_auc_corr": "_rel_auc_corr",
         "out_tsnr": "_tsnr",
     }
     assert suffixes == list(expected.values())

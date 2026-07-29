@@ -1640,9 +1640,8 @@ def _connect_master_dsc_datasinks(
     dsc_has_nawm = mask_state.has_nawm_source
     dsc_present: set[str] = {
         # Always-present (mandatory in dsc_wf.outputnode)
-        "ttp_map", "cnr_map", "auc_diff_map", "tsnr_map",
+        "ttp_map", "cnr_map", "tsnr_map",
         "rel_cbf_map", "rel_cbv_map", "rel_cbv_auc_map",
-        "rel_auc_raw_map", "rel_auc_corr_map",
         "ncbv_map", "ncbf_map",
         "k2_map",
         "dsc_moco", "dsc_mean", "motion_params",
@@ -1773,7 +1772,6 @@ def _connect_master_dsc_datasinks(
             ("outputnode.psr_map", "inputnode.psr_map"),
             ("outputnode.ttp_map", "inputnode.ttp_map"),
             ("outputnode.cnr_map", "inputnode.cnr_map"),
-            ("outputnode.auc_diff_map", "inputnode.auc_diff_map"),
             ("outputnode.tsnr_map", "inputnode.tsnr_map"),
             # Relative maps
             ("outputnode.rel_cbf_map", "inputnode.rel_cbf_map"),
@@ -1781,8 +1779,6 @@ def _connect_master_dsc_datasinks(
             ("outputnode.rel_cbv_auc_map", "inputnode.rel_cbv_auc_map"),
             ("outputnode.rel_cbv_firstpass_map",
              "inputnode.rel_cbv_firstpass_map"),
-            ("outputnode.rel_auc_raw_map", "inputnode.rel_auc_raw_map"),
-            ("outputnode.rel_auc_corr_map", "inputnode.rel_auc_corr_map"),
             # Normalized maps
             ("outputnode.ncbv_map", "inputnode.ncbv_map"),
             ("outputnode.ncbf_map", "inputnode.ncbf_map"),
@@ -1865,7 +1861,6 @@ def _connect_master_dsc_datasinks(
             (dsc_wf, dsc_datasinks_wf, [
                 ("outputnode.smooth_hemodynamic",
                  "inputnode.smooth_hemodynamic"),
-                ("outputnode.smooth_auc", "inputnode.smooth_auc"),
             ]),
         ])
         dsc_datasinks_wf.inputs.inputnode.smooth_fwhm = dsc_config.smooth_fwhm

@@ -133,12 +133,6 @@
       "aif_curve_plot"
     ],
     [
-      "build_auc_dict",
-      "map_dict",
-      "smooth_auc",
-      "map_files"
-    ],
-    [
       "build_hemo_dict",
       "map_dict",
       "smooth_hemodynamic",
@@ -170,51 +164,9 @@
     ],
     [
       "compute_maps",
-      "out_auc_corr",
-      "lesion_stats",
-      "auc_corr_map"
-    ],
-    [
-      "compute_maps",
-      "out_auc_corr",
-      "roi_stats",
-      "auc_corr_map"
-    ],
-    [
-      "compute_maps",
-      "out_auc_corr",
-      "user_lesion_stats",
-      "auc_corr_map"
-    ],
-    [
-      "compute_maps",
       "out_auc_diff",
       "dsc_leakage_qc",
       "auc_diff_file"
-    ],
-    [
-      "compute_maps",
-      "out_auc_diff",
-      "lesion_stats",
-      "auc_diff_map"
-    ],
-    [
-      "compute_maps",
-      "out_auc_diff",
-      "outputnode",
-      "auc_diff_map"
-    ],
-    [
-      "compute_maps",
-      "out_auc_diff",
-      "roi_stats",
-      "auc_diff_map"
-    ],
-    [
-      "compute_maps",
-      "out_auc_diff",
-      "user_lesion_stats",
-      "auc_diff_map"
     ],
     [
       "compute_maps",
@@ -365,42 +317,6 @@
       "out_qc_fit_data",
       "dsc_fit_qc",
       "qc_fit_data_file"
-    ],
-    [
-      "compute_maps",
-      "out_rel_auc_corr",
-      "build_auc_dict",
-      "rel_auc_corr"
-    ],
-    [
-      "compute_maps",
-      "out_rel_auc_corr",
-      "lesion_stats",
-      "rel_auc_corr_map"
-    ],
-    [
-      "compute_maps",
-      "out_rel_auc_corr",
-      "outputnode",
-      "rel_auc_corr_map"
-    ],
-    [
-      "compute_maps",
-      "out_rel_auc_corr",
-      "roi_stats",
-      "rel_auc_corr_map"
-    ],
-    [
-      "compute_maps",
-      "out_rel_auc_corr",
-      "user_lesion_stats",
-      "rel_auc_corr_map"
-    ],
-    [
-      "compute_maps",
-      "out_rel_auc_raw",
-      "outputnode",
-      "rel_auc_raw_map"
     ],
     [
       "compute_maps",
@@ -730,12 +646,6 @@
       "hdbet_dsc",
       "dsc_brain_mask_file",
       "reg_filmstrip",
-      "brain_mask_file"
-    ],
-    [
-      "hdbet_dsc",
-      "dsc_brain_mask_file",
-      "smooth_auc",
       "brain_mask_file"
     ],
     [
@@ -1351,12 +1261,6 @@
       "signal_file"
     ],
     [
-      "smooth_auc",
-      "smoothed_files",
-      "outputnode",
-      "smooth_auc"
-    ],
-    [
       "smooth_hemodynamic",
       "smoothed_files",
       "outputnode",
@@ -1490,14 +1394,6 @@
     ]
   ],
   "function_io": {
-    "build_auc_dict": {
-      "input_names": [
-        "rel_auc_corr"
-      ],
-      "output_names": [
-        "map_dict"
-      ]
-    },
     "build_hemo_dict": {
       "input_names": [
         "mtt",
@@ -1751,16 +1647,6 @@
         "signal_file"
       ]
     },
-    "smooth_auc": {
-      "input_names": [
-        "brain_mask_file",
-        "fwhm",
-        "map_files"
-      ],
-      "output_names": [
-        "smoothed_files"
-      ]
-    },
     "smooth_hemodynamic": {
       "input_names": [
         "brain_mask_file",
@@ -1836,7 +1722,6 @@
     }
   },
   "function_sha256": {
-    "build_auc_dict": "ecf8c1f7df992b87dabb9a649431380c075347e5f9707aef70068edbe5bfa517",
     "build_hemo_dict": "9576414b5801c40495de1f6779bb19f819a3aab1975cf97aad570d1e335f9f09",
     "combine_masks": "f2748155dafc15b2d74a066b3da5db0ed2a4b5486b46ee8ea1f4c7a181de8fcf",
     "convert_inv_dsc_h5": "018196f529ef8533ba7ea16ac1a69979beb6937dcd2726bef0cead6b76322240",
@@ -1857,7 +1742,6 @@
     "reg_filmstrip": "00497e133ecfd0f3b852ebd399555ee6e05fcffabbd174d339e925667d3709be",
     "select_aif_exclusion": "3ac6f0a171a3c915c7c043706044fb8dd45d2a9c05f1d1fad613919135724b21",
     "signal_to_conc": "aafea7db6295a9aae640c8e25aa553ef58a8356c39cf66317d554e6a5eea3749",
-    "smooth_auc": "f33b732289dcc8537f612b44d2f24c4115d59316352854f24bc8fc66d97bd2e5",
     "smooth_hemodynamic": "f33b732289dcc8537f612b44d2f24c4115d59316352854f24bc8fc66d97bd2e5",
     "transform_brain_mask_qc": "10635bb241954d925171ad0630581af33125d7326d550e5282f1aab5b405ca8a",
     "transform_enhancing_mask": "1455e4849ff2a1f176f8172534cb68abdf939dcc4564d2dc10bf5e61426109d1",
@@ -1873,10 +1757,6 @@
       "n_procs": 1
     },
     "aif_qc_plot": {
-      "mem_gb": 0.2,
-      "n_procs": 1
-    },
-    "build_auc_dict": {
       "mem_gb": 0.2,
       "n_procs": 1
     },
@@ -2008,10 +1888,6 @@
       "mem_gb": 4.0,
       "n_procs": 1
     },
-    "smooth_auc": {
-      "mem_gb": 0.2,
-      "n_procs": 1
-    },
     "smooth_hemodynamic": {
       "mem_gb": 0.2,
       "n_procs": 1
@@ -2074,9 +1950,6 @@
       "session_id": "0001",
       "subject_id": "0001",
       "tr": 1.5
-    },
-    "build_auc_dict": {
-      "function_str": "def _build_auc_corr_dict(rel_auc_corr: str) -> dict[str, str]:\n    return {\"rel_auc_corr\": rel_auc_corr}\n"
     },
     "build_hemo_dict": {
       "function_str": "def _build_hemodynamic_dict(\n    mtt: str,\n    rel_cbf: str,\n    rel_cbv: str,\n    ncbf: str,\n    ncbv: str,\n) -> dict[str, str]:\n    from pathlib import Path as _P\n    d = {\"mtt\": mtt, \"rel_cbf\": rel_cbf, \"rel_cbv\": rel_cbv}\n    for name, val in [\n        (\"ncbf\", ncbf), (\"ncbv\", ncbv),\n    ]:\n        if isinstance(val, str) and val not in (\"\", \"None\") and _P(val).is_file():\n            d[name] = val\n    return d\n"
@@ -2215,9 +2088,6 @@
     "signal_to_conc": {
       "baseline_frames": 5
     },
-    "smooth_auc": {
-      "fwhm": 4.0
-    },
     "smooth_hemodynamic": {
       "fwhm": 4.0
     },
@@ -2252,10 +2122,6 @@
     [
       "aif_qc_plot",
       "AIFQCPlot"
-    ],
-    [
-      "build_auc_dict",
-      "Function"
     ],
     [
       "build_hemo_dict",
@@ -2386,10 +2252,6 @@
       "Function"
     ],
     [
-      "smooth_auc",
-      "Function"
-    ],
-    [
       "smooth_hemodynamic",
       "Function"
     ],
@@ -2439,7 +2301,6 @@
     "aif_metrics",
     "aif_qc",
     "alpha_map",
-    "auc_diff_map",
     "beta_map",
     "brain_mask_dsc",
     "brain_mask_filmstrip",
@@ -2473,15 +2334,12 @@
     "psr_map",
     "qc_metrics",
     "registration_filmstrip",
-    "rel_auc_corr_map",
-    "rel_auc_raw_map",
     "rel_cbf_map",
     "rel_cbv_auc_map",
     "rel_cbv_firstpass_map",
     "rel_cbv_map",
     "roi_mask_dsc",
     "roi_stats_json",
-    "smooth_auc",
     "smooth_hemodynamic",
     "t1w_in_dsc",
     "t1w_postcon_in_dsc",

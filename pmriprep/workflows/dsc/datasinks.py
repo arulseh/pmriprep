@@ -105,10 +105,6 @@ _REL_MAPS: tuple[DSCMapSpec, ...] = (
      "Cerebral blood volume (K2-corrected full-bolus AUC, relative)",
      "arbitrary", "cbv_auc",
      {"CBVMethod": "k2_corrected_full_bolus_auc"}),
-    DSCMapSpec("rel_auc_raw_map", "dscRel", "auc",
-     "AUC raw concentration (relative)", "arbitrary", "auc"),
-    DSCMapSpec("rel_auc_corr_map", "dscRelCorrected", "auc",
-     "AUC corrected concentration (relative)", "arbitrary", "rel_auc_corr"),
 )
 
 
@@ -132,8 +128,6 @@ _OPTIONAL_MAPS: tuple[DSCMapSpec, ...] = (
             "UndefinedValue": "NaN when raw signal or a positive signal drop is unavailable",
         },
     ),
-    DSCMapSpec("auc_diff_map", "dscLeakage", "auc",
-     "Leakage contribution (AUC_raw - AUC_corr)", "arbitrary", "auc_diff"),
     DSCMapSpec(
         "tsnr_map", "dsc", "tsnr", "Baseline temporal signal-to-noise ratio", "1", "tsnr",
         {
@@ -282,7 +276,7 @@ _DSC_OUTPUT_KEYS: frozenset[str] = frozenset(
     [m.map_key for m in _CORE_MAPS + _REL_MAPS + _OPTIONAL_MAPS
      + _NORMALIZED_MAPS + _VASCULAR_MAPS + _UNCERTAINTY_MAPS]
     + ["k2", "parametric_r2", "fallback",
-       "rel_cbf", "rel_cbv", "rel_auc_corr", "ncbf", "ncbv", "mtt"]  # smoothed names
+       "rel_cbf", "rel_cbv", "ncbf", "ncbv", "mtt"]  # smoothed names
 )
 
 
@@ -680,10 +674,9 @@ def _copy_perf_map(
 
 def _split_smooth_dict(
     smooth_hemo: dict[str, str] | None = None,
-    smooth_auc: dict[str, str] | None = None,
     fwhm: float = 0.0,
 ) -> tuple[list[str], list[str], list[str], list[str], list[str], list[str]]:
-    """Flatten the two smoothed-map dicts into per-output ``(name, path, descs)`` tuples.
+    """Flatten the smoothed-map dict into per-output ``(name, path, descs)`` tuples.
 
     Returns six lists: ``in_files``, ``descs``, ``map_keys``,
     ``map_suffixes``, ``desc_prefixes``, and ``units_list`` matching the
@@ -731,27 +724,6 @@ def _split_smooth_dict(
             out_map_suffixes.append(map_suffix)
             out_desc_prefixes.append(desc_prefix)
             out_units.append(units)
-
-    if isdefined(smooth_auc) and smooth_auc:
-        for name, fp in smooth_auc.items():
-            if not (fp and Path(fp).exists()):
-                continue
-            desc_text = (
-                "Relative AUC corrected (smoothed)"
-                if name == "rel_auc_corr"
-                else f"{name} (smoothed)"
-            )
-            desc_prefix = (
-                f"dscRelCorrected{sm_label}"
-                if name == "rel_auc_corr"
-                else f"dsc{sm_label}"
-            )
-            out_files.append(str(fp))
-            out_descs.append(desc_text)
-            out_keys.append(name)
-            out_map_suffixes.append("auc")
-            out_desc_prefixes.append(desc_prefix)
-            out_units.append("arbitrary")
 
     return out_files, out_descs, out_keys, out_map_suffixes, out_desc_prefixes, out_units
 
@@ -1157,11 +1129,10 @@ def init_dsc_datasinks_wf(
                 "mtt_map", "tmax_map", "psr_map",
                 # Relative
                 "rel_cbf_map", "rel_cbv_map", "rel_cbv_auc_map",
-                "rel_auc_raw_map", "rel_auc_corr_map",
                 "rel_cbv_firstpass_map",
                 # Optional
                 "ttp_map",
-                "cnr_map", "auc_diff_map", "tsnr_map",
+                "cnr_map", "tsnr_map",
                 # Normalized
                 "ncbv_map", "ncbf_map",
                 # Vascular
@@ -1173,7 +1144,7 @@ def init_dsc_datasinks_wf(
                 "preload_qc", "preprocessing_stats", "aif_qc",
                 "motion_qc", "aif_metrics",
                 # Smoothing
-                "smooth_hemodynamic", "smooth_auc", "smooth_fwhm",
+                "smooth_hemodynamic", "smooth_fwhm",
                 # Motion + AIF
                 "dsc_moco", "dsc_mean", "motion_params",
                 "aif_curve", "aif_mask",
@@ -1742,7 +1713,7 @@ def init_dsc_datasinks_wf(
     if has_smoothing:
         splitter = pe.Node(
             niu.Function(
-                input_names=["smooth_hemo", "smooth_auc", "fwhm"],
+                input_names=["smooth_hemo", "fwhm"],
                 output_names=[
                     "in_files", "descs", "map_keys",
                     "map_suffixes", "desc_prefixes", "units_list",
@@ -1754,7 +1725,6 @@ def init_dsc_datasinks_wf(
         workflow.connect([
             (inputnode, splitter, [
                 ("smooth_hemodynamic", "smooth_hemo"),
-                ("smooth_auc", "smooth_auc"),
                 ("smooth_fwhm", "fwhm"),
             ]),
         ])

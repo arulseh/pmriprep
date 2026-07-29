@@ -16,7 +16,6 @@ __all__ = [
     "_ConvertXFMOutputSpec",
     "_FLIRTApplyXFMInputSpec",
     "_FLIRTApplyXFMOutputSpec",
-    "_build_auc_corr_dict",
     "_build_hemodynamic_dict",
     "_compute_mean_4d",
     "_compute_prebolus_mean",
@@ -1844,7 +1843,3 @@ def _build_hemodynamic_dict(
         if isinstance(val, str) and val not in ("", "None") and _P(val).is_file():
             d[name] = val
     return d
-
-
-def _build_auc_corr_dict(rel_auc_corr: str) -> dict[str, str]:
-    return {"rel_auc_corr": rel_auc_corr}

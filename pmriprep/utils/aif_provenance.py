@@ -28,7 +28,6 @@ AIF_INDEPENDENT_MAPS: Final[frozenset[str]] = frozenset({
     "k2",
     "psr",
     "cnr", "tsnr",
-    "auc_diff",
     "parametric_r2",
     "fallback",
     "cbv_firstpass",
@@ -54,7 +53,6 @@ TEMPLATE_AIF_USAGE: Final[dict[str, TemplateAIFUsageCategory]] = {
     "psr": "safe",
     "ttp": "qualitative_only",
     "cnr": "safe",
-    "auc_diff": "safe",
     "tsnr": "safe",
     "ncbv": "safe",
     "ncbf": "safe",
@@ -65,7 +63,6 @@ TEMPLATE_AIF_USAGE: Final[dict[str, TemplateAIFUsageCategory]] = {
     "cbf_std": "ratio_defensible",
     "rel_cbf": "ratio_defensible",
     "rel_cbv": "ratio_defensible",
-    "rel_auc_corr": "ratio_defensible",
     "parametric_r2": "safe",
     "fallback": "safe",
 }

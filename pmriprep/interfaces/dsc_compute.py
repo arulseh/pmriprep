@@ -375,8 +375,6 @@ class _DSCFinalMaps(NamedTuple):
     auc_raw: npt.NDArray[Any]
     auc_corrected: npt.NDArray[Any]
     auc_difference: npt.NDArray[Any]
-    rel_auc_raw: npt.NDArray[Any]
-    rel_auc_corrected: npt.NDArray[Any]
     cnr: npt.NDArray[Any]
     tsnr: npt.NDArray[Any]
     psr: npt.NDArray[Any]
@@ -607,8 +605,6 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
         desc="Output gamma-variate first-pass relative CBV map NIfTI "
         "(optional; only when first_pass_cbv is set)",
     )
-    out_rel_auc_raw = File(genfile=True, desc="Output relative AUC raw map NIfTI")
-    out_rel_auc_corr = File(genfile=True, desc="Output relative AUC corrected map NIfTI")
 
     # Output files — quality metrics
     out_tsnr = File(genfile=True, desc="Output baseline tSNR map NIfTI")
@@ -636,8 +632,6 @@ class ComputeDSCMapsOutputSpec(TraitedSpec):
     out_rel_cbf = File(exists=True, desc="Relative CBF map")
     out_rel_cbv = File(exists=True, desc="Relative CBV map (deconvolution)")
     out_rel_cbv_auc = File(exists=True, desc="AUC-based relative CBV map")
-    out_rel_auc_raw = File(exists=True, desc="Relative AUC raw map")
-    out_rel_auc_corr = File(exists=True, desc="Relative AUC corrected map")
 
     # Quality metrics
     out_tsnr = File(exists=True, desc="Baseline tSNR map")
@@ -725,7 +719,7 @@ class ComputeDSCMaps(BaseInterface):
 
     Returns
     -------
-    out_rel_cbf, out_rel_cbv, out_rel_cbv_auc, out_rel_auc_raw, out_rel_auc_corr : str
+    out_rel_cbf, out_rel_cbv, out_rel_cbv_auc : str
         Paths to relative perfusion maps (always produced).
     out_mtt, out_tmax, out_psr, out_ttp, out_cnr : str
         Paths to quantification-independent maps.
@@ -1382,8 +1376,6 @@ class ComputeDSCMaps(BaseInterface):
             auc_raw=np.where(mask_bool, auc_raw, 0.0),
             auc_corrected=np.where(mask_bool, auc_corrected, 0.0),
             auc_difference=np.where(mask_bool, auc_difference, 0.0),
-            rel_auc_raw=np.where(mask_bool, auc_raw, 0.0),
-            rel_auc_corrected=np.where(mask_bool, auc_corrected, 0.0),
             cnr=np.where(mask_bool, cnr, 0.0),
             tsnr=np.where(mask_bool, tsnr, 0.0),
             psr=np.where(mask_bool, psr, 0.0),
@@ -1519,8 +1511,6 @@ class ComputeDSCMaps(BaseInterface):
             "out_rel_cbf": (maps.rel_cbf, "_rel_cbf"),
             "out_rel_cbv": (maps.rel_cbv, "_rel_cbv"),
             "out_rel_cbv_auc": (maps.rel_cbv_auc, "_rel_cbv_auc"),
-            "out_rel_auc_raw": (maps.rel_auc_raw, "_rel_auc_raw"),
-            "out_rel_auc_corr": (maps.rel_auc_corrected, "_rel_auc_corr"),
             "out_tsnr": (maps.tsnr, "_tsnr"),
         }
         results: dict[str, Any] = {

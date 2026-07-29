@@ -33,7 +33,6 @@ from pmriprep.workflows.dsc._helpers import (  # noqa: F401
     ConvertXFM,
     FLIRTApplyXFM,
     _augment_qc_positive_tail,
-    _build_auc_corr_dict,
     _build_hemodynamic_dict,
     _compute_mean_4d,
     _compute_prebolus_mean,
@@ -748,8 +747,8 @@ def init_dsc_deconvolution_wf(
 
     Outputs
     -------
-    out_rel_cbf, out_rel_cbv, out_rel_cbv_auc, out_rel_auc_raw, out_rel_auc_corr
-        Relative perfusion and AUC maps.
+    out_rel_cbf, out_rel_cbv, out_rel_cbv_auc
+        Relative perfusion maps.
     out_mtt, out_tmax, out_ttp
         Transit-time and timing maps.
     out_psr
@@ -796,8 +795,6 @@ def init_dsc_deconvolution_wf(
                 "out_rel_cbv",
                 "out_rel_cbv_auc",
                 "out_rel_cbv_firstpass",
-                "out_rel_auc_raw",
-                "out_rel_auc_corr",
                 "out_mtt",
                 "out_tmax",
                 "out_psr",
@@ -850,8 +847,6 @@ def init_dsc_deconvolution_wf(
             ("out_rel_cbv", "out_rel_cbv"),
             ("out_rel_cbv_auc", "out_rel_cbv_auc"),
             ("out_rel_cbv_firstpass", "out_rel_cbv_firstpass"),
-            ("out_rel_auc_raw", "out_rel_auc_raw"),
-            ("out_rel_auc_corr", "out_rel_auc_corr"),
             ("out_mtt", "out_mtt"),
             ("out_tmax", "out_tmax"),
             ("out_psr", "out_psr"),
@@ -1006,8 +1001,7 @@ def init_dsc_smoothing_wf(
     """Build the DSC perfusion-map smoothing sub-workflow.
 
     Spatially smooths the intensive hemodynamic maps (MTT, rel-CBF, rel-CBV,
-    nCBF, nCBV) and the leakage-corrected relative AUC map (a CBV surrogate)
-    within the brain mask. Timing / leakage maps (Tmax, TTP, PSR, PH, K2,
+    nCBF, nCBV) within the brain mask. Timing / leakage maps (Tmax, TTP, PSR, K2,
     auc_diff) are deliberately NOT smoothed. The orchestrator instantiates this
     sub-workflow only when ``config.smooth_fwhm > 0``.
 
@@ -1027,8 +1021,6 @@ def init_dsc_smoothing_wf(
     ------
     mtt, rel_cbf, rel_cbv, ncbf, ncbv
         Hemodynamic maps (assembled into one dict internally before smoothing).
-    rel_auc_corr
-        Leakage-corrected relative AUC map (CBV surrogate).
     brain_mask_file
         DSC-space brain mask (smoothing is restricted to brain voxels).
 
@@ -1036,8 +1028,6 @@ def init_dsc_smoothing_wf(
     -------
     smoothed_hemodynamic
         Smoothed hemodynamic map files.
-    smoothed_auc
-        Smoothed AUC map file(s).
     """
     workflow = pe.Workflow(name=name)
     inputnode = pe.Node(
@@ -1048,7 +1038,6 @@ def init_dsc_smoothing_wf(
                 "rel_cbv",
                 "ncbf",
                 "ncbv",
-                "rel_auc_corr",
                 "brain_mask_file",
             ]
         ),
@@ -1056,7 +1045,7 @@ def init_dsc_smoothing_wf(
     )
     outputnode = pe.Node(
         niu.IdentityInterface(
-            fields=["smoothed_hemodynamic", "smoothed_auc"]
+            fields=["smoothed_hemodynamic"]
         ),
         name="outputnode",
     )
@@ -1084,25 +1073,6 @@ def init_dsc_smoothing_wf(
     )
     smooth_hemodynamic.inputs.fwhm = fwhm
 
-    # Leakage-corrected AUC (CBV surrogate); only auc_corr is smoothed
-    build_auc_dict = pe.Node(
-        niu.Function(
-            input_names=["rel_auc_corr"],
-            output_names=["map_dict"],
-            function=_build_auc_corr_dict,
-        ),
-        name="build_auc_dict",
-    )
-    smooth_auc = pe.Node(
-        niu.Function(
-            input_names=["map_files", "brain_mask_file", "fwhm"],
-            output_names=["smoothed_files"],
-            function=_smooth_maps,
-        ),
-        name="smooth_auc",
-    )
-    smooth_auc.inputs.fwhm = fwhm
-
     workflow.connect([
         (inputnode, build_hemo_dict, [
             ("mtt", "mtt"),
@@ -1113,11 +1083,7 @@ def init_dsc_smoothing_wf(
         ]),
         (build_hemo_dict, smooth_hemodynamic, [("map_dict", "map_files")]),
         (inputnode, smooth_hemodynamic, [("brain_mask_file", "brain_mask_file")]),
-        (inputnode, build_auc_dict, [("rel_auc_corr", "rel_auc_corr")]),
-        (build_auc_dict, smooth_auc, [("map_dict", "map_files")]),
-        (inputnode, smooth_auc, [("brain_mask_file", "brain_mask_file")]),
         (smooth_hemodynamic, outputnode, [("smoothed_files", "smoothed_hemodynamic")]),
-        (smooth_auc, outputnode, [("smoothed_files", "smoothed_auc")]),
     ])
     return workflow
 
@@ -1156,8 +1122,8 @@ def init_dsc_lesion_stats_wf(
         DSC perfusion and transit-time maps (shared by all three nodes).
     psr_map
         Percentage signal recovery.
-    auc_corr_map, auc_diff_map, rel_auc_corr_map, k2_map
-        Leakage maps.
+    k2_map
+        Leakage-correction parameter map.
     ncbv_map, ncbf_map
         Normalized CBV / CBF maps.
     nawm_mask
@@ -1192,9 +1158,6 @@ def init_dsc_lesion_stats_wf(
                 "tmax_map",
                 "psr_map",
                 "ttp_map",
-                "auc_corr_map",
-                "auc_diff_map",
-                "rel_auc_corr_map",
                 "k2_map",
                 "ncbv_map",
                 "ncbf_map",
@@ -1239,9 +1202,6 @@ def init_dsc_lesion_stats_wf(
         ("tmax_map", "tmax_map"),
         ("psr_map", "psr_map"),
         ("ttp_map", "ttp_map"),
-        ("auc_corr_map", "auc_corr_map"),
-        ("auc_diff_map", "auc_diff_map"),
-        ("rel_auc_corr_map", "rel_auc_corr_map"),
         ("k2_map", "k2_map"),
         ("ncbv_map", "ncbv_map"),
         ("ncbf_map", "ncbf_map"),
@@ -1814,16 +1774,12 @@ def init_dsc_preproc_wf(
         Path to motion parameters file.
     rel_cbf_map, rel_cbv_map
         Relative cerebral blood flow/volume maps (always produced).
-    rel_auc_raw_map, rel_auc_corr_map
-        Relative AUC maps (always produced).
     mtt_map, tmax_map
         Mean transit time and time-to-maximum maps.
     psr_map
         Percent signal recovery map.
     ttp_map, cnr_map
         AIF-arrival-referenced time-to-peak and contrast-to-noise ratio maps.
-    auc_diff_map
-        AUC leakage contribution (raw - corrected).
     tsnr_map
         Baseline temporal-SNR quality map.
     aif_curve
@@ -1926,7 +1882,6 @@ def init_dsc_preproc_wf(
                 "ttp_map",
                 "cnr_map",
                 # AUC decomposition
-                "auc_diff_map",
                 # Vascular model parameters (optional)
                 "alpha_map",
                 "beta_map",
@@ -1940,8 +1895,6 @@ def init_dsc_preproc_wf(
                 "rel_cbf_map",
                 "rel_cbv_map",
                 "rel_cbv_auc_map",
-                "rel_auc_raw_map",
-                "rel_auc_corr_map",
                 # First-pass CBV (optional, opt-in)
                 "rel_cbv_firstpass_map",
                 # Quality metrics
@@ -1974,7 +1927,6 @@ def init_dsc_preproc_wf(
                 "aif_candidates_plot",
                 # Smoothed maps (populated only if smooth_fwhm > 0)
                 "smooth_hemodynamic",
-                "smooth_auc",
                 # QC metrics
                 "qc_metrics",
                 "preload_qc",
@@ -2544,9 +2496,6 @@ def init_dsc_preproc_wf(
             ("outputnode.out_tmax", "inputnode.tmax_map"),
             ("outputnode.out_psr", "inputnode.psr_map"),
             ("outputnode.out_ttp", "inputnode.ttp_map"),
-            ("outputnode.out_auc_corr", "inputnode.auc_corr_map"),
-            ("outputnode.out_auc_diff", "inputnode.auc_diff_map"),
-            ("outputnode.out_rel_auc_corr", "inputnode.rel_auc_corr_map"),
             ("outputnode.out_k2", "inputnode.k2_map"),
         ]),
         (normalization_wf, lesion_stats_wf, [
@@ -2616,14 +2565,12 @@ def init_dsc_preproc_wf(
     # -------------------------------------------------------------------
     if smoothing_wf is not None:
         # nCBF/nCBV come from the normalization sub-wf; the hemodynamic +
-        # AUC-corr maps from deconvolution; brain mask fans out to both
-        # smoothers inside the sub-workflow.
+        # brain mask fans out to the smoother inside the sub-workflow.
         workflow.connect([
             (deconvolution_wf, smoothing_wf, [
                 ("outputnode.out_mtt", "inputnode.mtt"),
                 ("outputnode.out_rel_cbf", "inputnode.rel_cbf"),
                 ("outputnode.out_rel_cbv_auc", "inputnode.rel_cbv"),
-                ("outputnode.out_rel_auc_corr", "inputnode.rel_auc_corr"),
             ]),
             (normalization_wf, smoothing_wf, [
                 ("outputnode.ncbf_file", "inputnode.ncbf"),
@@ -2649,7 +2596,6 @@ def init_dsc_preproc_wf(
             ("outputnode.out_psr", "psr_map"),
             ("outputnode.out_ttp", "ttp_map"),
             ("outputnode.out_cnr", "cnr_map"),
-            ("outputnode.out_auc_diff", "auc_diff_map"),
         ]),
         # Relative maps
         (deconvolution_wf, outputnode, [
@@ -2657,8 +2603,6 @@ def init_dsc_preproc_wf(
             ("outputnode.out_rel_cbv", "rel_cbv_map"),
             ("outputnode.out_rel_cbv_auc", "rel_cbv_auc_map"),
             ("outputnode.out_rel_cbv_firstpass", "rel_cbv_firstpass_map"),
-            ("outputnode.out_rel_auc_raw", "rel_auc_raw_map"),
-            ("outputnode.out_rel_auc_corr", "rel_auc_corr_map"),
         ]),
         # Quality metrics
         (deconvolution_wf, outputnode, [
@@ -2769,7 +2713,6 @@ def init_dsc_preproc_wf(
         workflow.connect([
             (smoothing_wf, outputnode, [
                 ("outputnode.smoothed_hemodynamic", "smooth_hemodynamic"),
-                ("outputnode.smoothed_auc", "smooth_auc"),
             ]),
         ])
 

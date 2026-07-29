@@ -584,12 +584,6 @@
     ],
     [
       "dsc_wf",
-      "outputnode.auc_diff_map",
-      "dsc_datasinks_wf",
-      "inputnode.auc_diff_map"
-    ],
-    [
-      "dsc_wf",
       "outputnode.beta_map",
       "dsc_datasinks_wf",
       "inputnode.beta_map"
@@ -815,18 +809,6 @@
       "outputnode.registration_filmstrip",
       "dsc_datasinks_wf",
       "inputnode.registration_filmstrip"
-    ],
-    [
-      "dsc_wf",
-      "outputnode.rel_auc_corr_map",
-      "dsc_datasinks_wf",
-      "inputnode.rel_auc_corr_map"
-    ],
-    [
-      "dsc_wf",
-      "outputnode.rel_auc_raw_map",
-      "dsc_datasinks_wf",
-      "inputnode.rel_auc_raw_map"
     ],
     [
       "dsc_wf",

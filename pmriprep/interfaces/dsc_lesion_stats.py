@@ -73,9 +73,6 @@ class DSCLesionStatsInputSpec(BaseInterfaceInputSpec):
     psr_map = traits.Str(desc="PSR map path")
     k2_map = traits.Str(desc="K2 leakage correction map path")
     ttp_map = traits.Str(desc="AIF-corrected TTP map path")
-    auc_corr_map = traits.Str(desc="Leakage-corrected AUC map path")
-    auc_diff_map = traits.Str(desc="Leakage AUC (AUC difference) map path")
-    rel_auc_corr_map = traits.Str(desc="Relative leakage-corrected AUC map path")
 
     # AIF provenance — passed from the cascade QC so the lesion-stats
     # sidecar carries the PerfusionProcessing.AIF block (Source /
@@ -312,9 +309,6 @@ class DSCLesionStats(BaseInterface):
             ("psr_map", "psr"),
             ("k2_map", "k2"),
             ("ttp_map", "ttp"),
-            ("auc_corr_map", "auc_corr"),
-            ("auc_diff_map", "auc_diff"),
-            ("rel_auc_corr_map", "rel_auc_corr"),
         ]
 
         for attr, name in map_attrs:

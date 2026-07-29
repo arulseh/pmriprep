@@ -158,51 +158,9 @@
     ],
     [
       "compute_maps",
-      "out_auc_corr",
-      "lesion_stats",
-      "auc_corr_map"
-    ],
-    [
-      "compute_maps",
-      "out_auc_corr",
-      "roi_stats",
-      "auc_corr_map"
-    ],
-    [
-      "compute_maps",
-      "out_auc_corr",
-      "user_lesion_stats",
-      "auc_corr_map"
-    ],
-    [
-      "compute_maps",
       "out_auc_diff",
       "dsc_leakage_qc",
       "auc_diff_file"
-    ],
-    [
-      "compute_maps",
-      "out_auc_diff",
-      "lesion_stats",
-      "auc_diff_map"
-    ],
-    [
-      "compute_maps",
-      "out_auc_diff",
-      "outputnode",
-      "auc_diff_map"
-    ],
-    [
-      "compute_maps",
-      "out_auc_diff",
-      "roi_stats",
-      "auc_diff_map"
-    ],
-    [
-      "compute_maps",
-      "out_auc_diff",
-      "user_lesion_stats",
-      "auc_diff_map"
     ],
     [
       "compute_maps",
@@ -347,36 +305,6 @@
       "out_qc_fit_data",
       "dsc_fit_qc",
       "qc_fit_data_file"
-    ],
-    [
-      "compute_maps",
-      "out_rel_auc_corr",
-      "lesion_stats",
-      "rel_auc_corr_map"
-    ],
-    [
-      "compute_maps",
-      "out_rel_auc_corr",
-      "outputnode",
-      "rel_auc_corr_map"
-    ],
-    [
-      "compute_maps",
-      "out_rel_auc_corr",
-      "roi_stats",
-      "rel_auc_corr_map"
-    ],
-    [
-      "compute_maps",
-      "out_rel_auc_corr",
-      "user_lesion_stats",
-      "rel_auc_corr_map"
-    ],
-    [
-      "compute_maps",
-      "out_rel_auc_raw",
-      "outputnode",
-      "rel_auc_raw_map"
     ],
     [
       "compute_maps",
@@ -2561,7 +2489,6 @@
     "aif_metrics",
     "aif_qc",
     "alpha_map",
-    "auc_diff_map",
     "beta_map",
     "brain_mask_dsc",
     "brain_mask_filmstrip",
@@ -2595,15 +2522,12 @@
     "psr_map",
     "qc_metrics",
     "registration_filmstrip",
-    "rel_auc_corr_map",
-    "rel_auc_raw_map",
     "rel_cbf_map",
     "rel_cbv_auc_map",
     "rel_cbv_firstpass_map",
     "rel_cbv_map",
     "roi_mask_dsc",
     "roi_stats_json",
-    "smooth_auc",
     "smooth_hemodynamic",
     "t1w_in_dsc",
     "t1w_postcon_in_dsc",

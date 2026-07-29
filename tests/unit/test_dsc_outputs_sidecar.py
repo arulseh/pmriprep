@@ -103,9 +103,9 @@ def _run_writer(inputs: dict, qc_metrics: dict | None, tmp_path: Path | None = N
     # so the factory builds a sink for it.
     present = set(inputs.keys()) - {
         "output_dir", "bids_dir", "subject_id", "session_id", "qc_metrics",
-        "smooth_fwhm", "smooth_hemodynamic", "smooth_auc",
+        "smooth_fwhm", "smooth_hemodynamic",
     }
-    has_smoothing = "smooth_hemodynamic" in inputs or "smooth_auc" in inputs
+    has_smoothing = "smooth_hemodynamic" in inputs
     wf = init_dsc_datasinks_wf(
         output_dir=inputs["output_dir"],
         bids_dir=inputs["bids_dir"],
@@ -441,7 +441,6 @@ class TestWriterAifBlockPresentOnAllMaps:
             "beta_map": _write_dummy_nifti(tmp_path / "beta.nii.gz"),
             "cth_map": _write_dummy_nifti(tmp_path / "cth.nii.gz"),
             "cbf_std_map": _write_dummy_nifti(tmp_path / "cbf_std.nii.gz"),
-            "auc_diff_map": _write_dummy_nifti(tmp_path / "auc_diff.nii.gz"),
             "parametric_r2_map": _write_dummy_nifti(tmp_path / "parametric_r2.nii.gz"),
             "config_dict": {"inference": "svb"},
         })
@@ -452,7 +451,6 @@ class TestWriterAifBlockPresentOnAllMaps:
             "dscBeta_stat": "s",
             "dscCth_stat": "s",
             "dscPosteriorSDCbf_stat": "1/min",
-            "dscLeakageAuc_stat": "arbitrary",
             "dscParametricRsquared_stat": "1",
         }
         for suffix, units in expected.items():
