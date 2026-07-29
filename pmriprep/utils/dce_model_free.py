@@ -14,10 +14,6 @@ from scipy.signal import savgol_filter
 
 logger = logging.getLogger(__name__)
 
-# No tissue produces >5000% signal enhancement; anything above is
-# numerical artifact from near-zero baseline voxels.
-_PEAK_ENH_MAX_CAP = 5000.0
-
 # Require sampled enhancement to exceed precontrast temporal noise.
 _SER_MIN_ENHANCEMENT_NOISE_SD = 3.0
 
@@ -94,7 +90,6 @@ def compute_iauc(
 def compute_peak_enhancement(
     signal_data: npt.NDArray[np.floating],
     baseline_frames: int = 5,
-    max_cap: float = _PEAK_ENH_MAX_CAP,
 ) -> npt.NDArray[np.floating]:
     """Compute peak enhancement percentage from raw signal data.
 
@@ -110,9 +105,6 @@ def compute_peak_enhancement(
         4D raw signal data (x, y, z, time).
     baseline_frames : int, optional
         Number of pre-contrast baseline frames.
-    max_cap : float, optional
-        Maximum enhancement percentage (default 5000%).
-        No tissue produces >5000% signal enhancement.
 
     Returns
     -------
@@ -122,16 +114,13 @@ def compute_peak_enhancement(
     """
     if baseline_frames < 1 or baseline_frames >= signal_data.shape[-1]:
         raise ValueError("baseline_frames must leave at least one post-baseline frame")
-    if max_cap <= 0:
-        raise ValueError("max_cap must be positive")
-
     baseline_mean = np.mean(signal_data[..., :baseline_frames], axis=-1)
     peak = np.max(signal_data[..., baseline_frames:], axis=-1)
     valid = np.all(np.isfinite(signal_data), axis=-1) & (baseline_mean > 0.0)
     with np.errstate(divide="ignore", invalid="ignore"):
         enhancement = (peak - baseline_mean) / baseline_mean * 100.0
 
-    enhancement = np.clip(enhancement, 0.0, max_cap)
+    enhancement = np.maximum(enhancement, 0.0)
     return np.asarray(np.where(valid, enhancement, np.nan), dtype=np.float64)
 
 

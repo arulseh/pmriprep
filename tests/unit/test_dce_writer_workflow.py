@@ -323,7 +323,11 @@ def test_dce_factory_model_free_no_model_entity(
     )
     assert peak_sidecar["InputCurve"] == "motion_corrected_signal"
     assert peak_sidecar["PeakSearchStart"] == "first post-baseline frame"
-    assert peak_sidecar["MaximumValueCap"] == 5000.0
+    assert peak_sidecar["TemporalEstimator"] == (
+        "raw maximum without smoothing or clipping"
+    )
+    assert "Residual motion or noise spikes" in peak_sidecar["Limitation"]
+    assert "MaximumValueCap" not in peak_sidecar
     ttp_sidecar = json.loads(
         (perf_out / "sub-01_ses-0001_desc-dceTtp_stat.json").read_text()
     )

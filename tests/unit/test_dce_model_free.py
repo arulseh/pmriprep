@@ -400,14 +400,24 @@ class TestPeakEnhancement:
         with pytest.raises(ValueError, match="leave at least one"):
             compute_peak_enhancement(signal, baseline_frames=baseline_frames)
 
-    def test_max_cap(self) -> None:
-        """Extreme enhancement is capped at max_cap."""
+    def test_extreme_enhancement_is_not_clipped(self) -> None:
+        """The raw-maximum estimator does not pin artifacts to a plausible bound."""
         n_time = 20
         signal = np.zeros((2, 2, 1, n_time), dtype=np.float64)
         signal[..., :5] = 10.0  # low baseline
         signal[..., 10] = 10000.0  # extreme peak
-        result = compute_peak_enhancement(signal, baseline_frames=5, max_cap=5000.0)
-        assert np.all(result <= 5000.0)
+        result = compute_peak_enhancement(signal, baseline_frames=5)
+        assert np.all(result == pytest.approx(99_900.0))
+
+    def test_isolated_postbaseline_spike_remains_the_peak(self) -> None:
+        """Peak enhancement retains the standard raw SImax definition."""
+        signal = np.full((1, 1, 1, 10), 100.0, dtype=np.float64)
+        signal[..., 5:] = 150.0
+        signal[..., 7] = 200.0
+
+        result = compute_peak_enhancement(signal, baseline_frames=5)
+
+        assert result[0, 0, 0] == pytest.approx(100.0)
 
 
 class TestTimeToPeak:
