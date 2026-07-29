@@ -26,7 +26,7 @@ Modality = Literal["DSC", "DCE"]
 #: DSC keys whose computation does not consume the AIF.
 AIF_INDEPENDENT_MAPS: Final[frozenset[str]] = frozenset({
     "k2",
-    "psr", "ph",
+    "psr",
     "cnr", "snr", "tsnr",
     "auc_diff",
     "parametric_r2",
@@ -52,7 +52,6 @@ TEMPLATE_AIF_USAGE: Final[dict[str, TemplateAIFUsageCategory]] = {
     "mtt": "qualitative_only",
     "tmax": "qualitative_only",
     "psr": "safe",
-    "ph": "safe",
     "ttp": "qualitative_only",
     "cnr": "safe",
     "auc_diff": "safe",

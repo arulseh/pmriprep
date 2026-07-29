@@ -752,8 +752,8 @@ def init_dsc_deconvolution_wf(
         Relative perfusion and AUC maps.
     out_mtt, out_tmax, out_ttp
         Transit-time and timing maps.
-    out_psr, out_ph
-        Percentage signal recovery and peak height.
+    out_psr
+        Percentage signal recovery.
     out_auc_raw, out_auc_corr, out_auc_diff, out_k2
         Leakage (blood-brain-barrier) maps.
     out_cnr, out_snr, out_tsnr
@@ -801,7 +801,6 @@ def init_dsc_deconvolution_wf(
                 "out_mtt",
                 "out_tmax",
                 "out_psr",
-                "out_ph",
                 "out_ttp",
                 "out_cnr",
                 "out_auc_raw",
@@ -857,7 +856,6 @@ def init_dsc_deconvolution_wf(
             ("out_mtt", "out_mtt"),
             ("out_tmax", "out_tmax"),
             ("out_psr", "out_psr"),
-            ("out_ph", "out_ph"),
             ("out_ttp", "out_ttp"),
             ("out_cnr", "out_cnr"),
             ("out_auc_raw", "out_auc_raw"),
@@ -1158,8 +1156,8 @@ def init_dsc_lesion_stats_wf(
     ------
     cbf_map, cbv_map, mtt_map, tmax_map, ttp_map
         DSC perfusion and transit-time maps (shared by all three nodes).
-    psr_map, ph_map
-        Percentage signal recovery and peak height.
+    psr_map
+        Percentage signal recovery.
     auc_corr_map, auc_diff_map, rel_auc_corr_map, k2_map
         Leakage maps.
     ncbv_map, ncbf_map
@@ -1195,7 +1193,6 @@ def init_dsc_lesion_stats_wf(
                 "mtt_map",
                 "tmax_map",
                 "psr_map",
-                "ph_map",
                 "ttp_map",
                 "auc_corr_map",
                 "auc_diff_map",
@@ -1243,7 +1240,6 @@ def init_dsc_lesion_stats_wf(
         ("mtt_map", "mtt_map"),
         ("tmax_map", "tmax_map"),
         ("psr_map", "psr_map"),
-        ("ph_map", "ph_map"),
         ("ttp_map", "ttp_map"),
         ("auc_corr_map", "auc_corr_map"),
         ("auc_diff_map", "auc_diff_map"),
@@ -1824,8 +1820,8 @@ def init_dsc_preproc_wf(
         Relative AUC maps (always produced).
     mtt_map, tmax_map
         Mean transit time and time-to-maximum maps.
-    psr_map, ph_map
-        Percent signal recovery and peak height maps.
+    psr_map
+        Percent signal recovery map.
     ttp_map, cnr_map
         AIF-arrival-referenced time-to-peak and contrast-to-noise ratio maps.
     auc_diff_map
@@ -1855,7 +1851,7 @@ def init_dsc_preproc_wf(
     3. AIF detection (atlas-based → automatic → synthetic fallback)
     4. Preload detection and K2 leakage correction (if needed)
     5. Deconvolution (method from config: sSVD, oSVD, tikhonov, vascular, cpi)
-    6. Perfusion parameter extraction (CBF, CBV, MTT, Tmax, PSR, PH)
+    6. Perfusion parameter extraction (CBF, CBV, MTT, Tmax, PSR)
     7. Registration to T1w space
     8. CBV normalization (if NAWM mask available)
 
@@ -1929,7 +1925,6 @@ def init_dsc_preproc_wf(
                 "mtt_map",
                 "tmax_map",
                 "psr_map",
-                "ph_map",
                 "ttp_map",
                 "cnr_map",
                 # AUC decomposition
@@ -2137,7 +2132,7 @@ def init_dsc_preproc_wf(
         mcmc_samples=config.mcmc_samples,
         n_procs=config.num_processes if config.num_processes > 0 else 1,
         # baseline_frames wired dynamically from conc_aif_wf.outputnode.aif_baseline_frames
-        tail_frames=5,  # Post-bolus frames for PSR
+        tail_frames=10,
         first_pass_cbv=config.first_pass_cbv,
         sloppy=config.sloppy,
     )
@@ -2551,7 +2546,6 @@ def init_dsc_preproc_wf(
             ("outputnode.out_mtt", "inputnode.mtt_map"),
             ("outputnode.out_tmax", "inputnode.tmax_map"),
             ("outputnode.out_psr", "inputnode.psr_map"),
-            ("outputnode.out_ph", "inputnode.ph_map"),
             ("outputnode.out_ttp", "inputnode.ttp_map"),
             ("outputnode.out_auc_corr", "inputnode.auc_corr_map"),
             ("outputnode.out_auc_diff", "inputnode.auc_diff_map"),
@@ -2656,7 +2650,6 @@ def init_dsc_preproc_wf(
             ("outputnode.out_mtt", "mtt_map"),
             ("outputnode.out_tmax", "tmax_map"),
             ("outputnode.out_psr", "psr_map"),
-            ("outputnode.out_ph", "ph_map"),
             ("outputnode.out_ttp", "ttp_map"),
             ("outputnode.out_cnr", "cnr_map"),
             ("outputnode.out_auc_diff", "auc_diff_map"),

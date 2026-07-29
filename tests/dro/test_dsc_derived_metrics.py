@@ -1,12 +1,11 @@
 """Phase 5: Derived metrics accuracy tests.
 
-Tests PSR, PH, TTP, AUC on realistic synthetic signals. These metrics
+Tests PSR, TTP, and AUC on realistic synthetic signals. These metrics
 are computed from signal or concentration curves and feed into clinical
 decision-making, so accuracy is critical.
 
 Exercises:
-    dsc_signal.py: compute_psr_legacy(), compute_peak_height_legacy(),
-                   compute_peak_height_conc(), compute_ttp_legacy()
+    dsc_signal.py: compute_psr_legacy(), compute_ttp_legacy()
     dsc_signal.py: normalize_cbv()
 """
 
@@ -15,8 +14,6 @@ import numpy.typing as npt
 import pytest
 
 from pmriprep.utils.dsc_signal import (
-    compute_peak_height_conc,
-    compute_peak_height_legacy,
     compute_psr_legacy,
     compute_ttp_legacy,
     normalize_cbv,
@@ -105,11 +102,11 @@ class TestPSRAnalytic:
             f"PSR at K2=0 ({psrs[0]:.1f}) should be >= PSR at K2=0.2 ({psrs[-1]:.1f})"
         )
 
-    def test_psr_no_signal_drop_epsilon(self) -> None:
-        """No signal drop -> epsilon guard fires, PSR ≈ 0%."""
+    def test_psr_no_signal_drop_is_undefined(self) -> None:
+        """A flat curve has no defined percent signal recovery."""
         signal = np.ones(70, dtype=np.float64) * 1000.0
         psr = compute_psr_legacy(signal, baseline_frames=10, tail_frames=5)
-        assert abs(psr) < 1.0, f"PSR={psr:.1f} should be ~0 for flat signal"
+        assert np.isnan(psr)
 
     def test_psr_4d_input(self) -> None:
         """PSR should work with 4D input."""
@@ -120,59 +117,6 @@ class TestPSRAnalytic:
 
         assert psr_4d.shape == (1, 1, 1)
         assert abs(float(psr_4d[0, 0, 0]) - float(psr_1d)) < 1e-6
-
-
-class TestPeakHeightAnalytic:
-    """Test peak height on known signals."""
-
-    @pytest.mark.parametrize(
-        "tissue_key",
-        [pytest.param("gm", id="GM"),
-         pytest.param("wm", id="WM"),
-         pytest.param("tumor", id="tumor")],
-    )
-    def test_peak_height_legacy_positive(self, tissue_key: str) -> None:
-        """PH (% signal drop) should be positive for valid DSC signal."""
-        signal, _, _ = _make_dsc_signal(tissue_key)
-        ph = compute_peak_height_legacy(signal, baseline_frames=_BASELINE)
-        assert isinstance(ph, float)
-        assert ph > 0, f"PH should be positive, got {ph:.1f}"
-        assert ph < 100, f"PH {ph:.1f}% exceeds 100% (signal below zero?)"
-
-    def test_peak_height_ordering(self) -> None:
-        """Higher CBF tissue should have higher peak height."""
-        phs = {}
-        for key in ["wm", "gm", "tumor"]:
-            signal, _, _ = _make_dsc_signal(key)
-            phs[key] = float(
-                compute_peak_height_legacy(signal, baseline_frames=_BASELINE)
-            )
-
-        # Tumor (CBF=100) > GM (CBF=60) > WM (CBF=20) for peak height
-        assert phs["tumor"] > phs["gm"], (
-            f"tumor PH ({phs['tumor']:.1f}) should > GM PH ({phs['gm']:.1f})"
-        )
-        assert phs["gm"] > phs["wm"], (
-            f"GM PH ({phs['gm']:.1f}) should > WM PH ({phs['wm']:.1f})"
-        )
-
-    @pytest.mark.parametrize(
-        "te",
-        [pytest.param(0.025, id="TE25ms"),
-         pytest.param(0.030, id="TE30ms"),
-         pytest.param(0.040, id="TE40ms")],
-    )
-    def test_peak_height_conc_units(self, te: float) -> None:
-        """PH in concentration domain should be in s⁻¹ and TE-independent."""
-        signal, _, _ = _make_dsc_signal("gm", te=te)
-        signal_4d = signal[np.newaxis, np.newaxis, np.newaxis, :]
-        ph = compute_peak_height_conc(signal_4d, te_seconds=te, baseline_end=_BASELINE)
-        ph_val = float(ph[0, 0, 0])
-
-        assert ph_val > 0, "Concentration-domain PH should be positive"
-        # PH should be approximately the same regardless of TE
-        # (ΔR2* = -ln(S/S0)/TE cancels TE algebraically)
-        assert np.isfinite(ph_val)
 
 
 class TestTTPAnalytic:

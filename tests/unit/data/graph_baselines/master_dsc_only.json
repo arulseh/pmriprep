@@ -368,12 +368,6 @@
     ],
     [
       "dsc_wf",
-      "outputnode.ph_map",
-      "dsc_datasinks_wf",
-      "inputnode.ph_map"
-    ],
-    [
-      "dsc_wf",
       "outputnode.preload_qc",
       "dsc_datasinks_wf",
       "inputnode.preload_qc"

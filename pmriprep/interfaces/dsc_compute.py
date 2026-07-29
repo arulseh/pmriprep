@@ -30,7 +30,7 @@ from pmriprep.utils.dsc_constants import (
     EPSILON_SHAPE,
     EPSILON_SIGNAL,
 )
-from pmriprep.utils.dsc_signal import compute_psr_legacy, compute_peak_height_legacy, compute_ttp_legacy
+from pmriprep.utils.dsc_signal import compute_psr_legacy, compute_ttp_legacy
 
 logger = logging.getLogger(__name__)
 
@@ -336,7 +336,6 @@ class _DSCSignalMetrics(NamedTuple):
     """Signal-derived DSC maps and their QC provenance."""
 
     psr: npt.NDArray[Any]
-    peak_height: npt.NDArray[Any]
     qc: dict[str, Any]
 
 
@@ -383,7 +382,6 @@ class _DSCFinalMaps(NamedTuple):
     snr: npt.NDArray[Any]
     tsnr: npt.NDArray[Any]
     psr: npt.NDArray[Any]
-    peak_height: npt.NDArray[Any]
     delay: Optional[npt.NDArray[Any]]
     residues: Optional[npt.NDArray[Any]]
     cbf_std: Optional[npt.NDArray[Any]]
@@ -518,7 +516,7 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
         desc="Pre-bolus baseline frames (wired from AIF detection)",
     )
     tail_frames = traits.Int(
-        5,
+        10,
         usedefault=True,
         desc="Number of tail frames for PSR calculation",
     )
@@ -595,7 +593,6 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
     out_mtt = File(genfile=True, desc="Output MTT map NIfTI")
     out_tmax = File(genfile=True, desc="Output Tmax map NIfTI")
     out_psr = File(genfile=True, desc="Output PSR map NIfTI")
-    out_ph = File(genfile=True, desc="Output peak height map NIfTI")
     out_cnr = File(genfile=True, desc="Output CNR map NIfTI")
 
     # Output files — AUC decomposition
@@ -627,7 +624,6 @@ class ComputeDSCMapsOutputSpec(TraitedSpec):
     out_mtt = File(exists=True, desc="MTT map (mean transit time)")
     out_tmax = File(exists=True, desc="Tmax map (time to maximum of residue)")
     out_psr = File(exists=True, desc="PSR map (percent signal recovery)")
-    out_ph = File(exists=True, desc="PH map (peak height)")
     out_ttp = File(
         exists=True,
         desc="Tissue time to peak relative to AIF bolus arrival",
@@ -698,7 +694,6 @@ class ComputeDSCMaps(BaseInterface):
     - MTT: Mean transit time (CBV/CBF, central volume theorem)
     - Tmax: Time to maximum of residue function
     - PSR: Percent signal recovery (BBB integrity indicator)
-    - PH: Peak height (contrast effect)
 
     Parameters
     ----------
@@ -709,7 +704,7 @@ class ComputeDSCMaps(BaseInterface):
     brain_mask_file : str
         3D brain mask NIfTI.
     signal_file : str, optional
-        4D raw signal for PSR/PH (if not using concentration).
+        4D raw signal for PSR.
     method : str
         Deconvolution method. Default: 'sSVD'.
     svd_threshold : float
@@ -736,7 +731,7 @@ class ComputeDSCMaps(BaseInterface):
     -------
     out_rel_cbf, out_rel_cbv, out_rel_cbv_auc, out_rel_auc_raw, out_rel_auc_corr : str
         Paths to relative perfusion maps (always produced).
-    out_mtt, out_tmax, out_psr, out_ph, out_ttp, out_cnr : str
+    out_mtt, out_tmax, out_psr, out_ttp, out_cnr : str
         Paths to quantification-independent maps.
     out_auc_raw, out_auc_corr, out_auc_diff : str
         Paths to AUC decomposition maps.
@@ -963,14 +958,15 @@ class ComputeDSCMaps(BaseInterface):
         spatial_shape: tuple[int, ...],
         baseline_frames: int,
         tail_frames: int,
+        brain_mask: npt.NDArray[np.bool_],
     ) -> _DSCSignalMetrics:
-        """Compute PSR and peak height from raw DSC signal when available.
+        """Compute PSR from raw, non-leakage-corrected DSC signal.
 
         Parameters
         ----------
         signal : npt.NDArray, optional
             Raw DSC signal array. Concentration is intentionally not used as a
-            substitute because its PSR/peak-height interpretation differs.
+            substitute because PSR is defined on the signal curve.
         spatial_shape : tuple of int
             Output map shape.
         baseline_frames : int
@@ -981,30 +977,39 @@ class ComputeDSCMaps(BaseInterface):
         Returns
         -------
         _DSCSignalMetrics
-            PSR and peak-height arrays plus unavailable-signal QC state.
+            PSR array plus availability and resolved-window QC state.
 
         """
         if signal is None:
-            zeros = np.zeros(spatial_shape, dtype=np.float64)
             return _DSCSignalMetrics(
-                psr=zeros,
-                peak_height=zeros.copy(),
-                qc={"psr_ph_from_signal": False},
+                psr=np.full(spatial_shape, np.nan, dtype=np.float64),
+                qc={"psr_from_signal": False, "psr_valid_fraction": 0.0},
             )
 
-        psr_result = compute_psr_legacy(signal, baseline_frames, tail_frames)
-        peak_height_result = compute_peak_height_legacy(signal, baseline_frames)
+        psr_result = compute_psr_legacy(
+            signal,
+            baseline_frames,
+            tail_frames,
+            brain_mask=brain_mask,
+            min_drop_noise_sd=5.0,
+        )
         psr = (
             np.full(spatial_shape, psr_result, dtype=np.float64)
             if isinstance(psr_result, float)
             else psr_result
         )
-        peak_height = (
-            np.full(spatial_shape, peak_height_result, dtype=np.float64)
-            if isinstance(peak_height_result, float)
-            else peak_height_result
+        n_brain = int(np.sum(brain_mask))
+        n_valid = int(np.sum(brain_mask & np.isfinite(psr)))
+        return _DSCSignalMetrics(
+            psr=psr,
+            qc={
+                "psr_from_signal": True,
+                "psr_baseline_frames": baseline_frames,
+                "psr_recovery_tail_frames": tail_frames,
+                "psr_min_drop_noise_sd": 5.0,
+                "psr_valid_fraction": n_valid / max(n_brain, 1),
+            },
         )
-        return _DSCSignalMetrics(psr=psr, peak_height=peak_height, qc={})
 
     def _select_raw_concentration(
         self,
@@ -1349,15 +1354,12 @@ class ComputeDSCMaps(BaseInterface):
         snr: npt.NDArray[Any],
         tsnr: npt.NDArray[Any],
         psr: npt.NDArray[Any],
-        peak_height: npt.NDArray[Any],
         delay: Optional[npt.NDArray[Any]],
         residues: Optional[npt.NDArray[Any]],
         cbf_std: Optional[npt.NDArray[Any]],
         mask_bool: npt.NDArray[Any],
     ) -> _DSCFinalMaps:
         """Apply established output ranges, CBF units, and brain masking."""
-        psr = np.clip(psr, 0.0, 200.0)
-        peak_height = np.clip(peak_height, 0.0, 100.0)
         tmax = np.clip(tmax, 0.0, 60.0)
         mtt = np.clip(mtt, 0.0, 30.0)
         cbf = np.clip(cbf, 0.0, 100.0)
@@ -1384,7 +1386,6 @@ class ComputeDSCMaps(BaseInterface):
             snr=np.where(mask_bool, snr, 0.0),
             tsnr=np.where(mask_bool, tsnr, 0.0),
             psr=np.where(mask_bool, psr, 0.0),
-            peak_height=np.where(mask_bool, peak_height, 0.0),
             delay=None if delay is None else np.where(mask_bool, delay, 0.0),
             residues=(
                 None
@@ -1433,7 +1434,7 @@ class ComputeDSCMaps(BaseInterface):
         """Compose model-free maps, final masking, and DSC QC reduction."""
         qc = deconvolution.qc
         signal_metrics = self._compute_signal_metrics(
-            signal, spatial_shape, detected_baseline, tail_frames
+            signal, spatial_shape, detected_baseline, tail_frames, mask_bool
         )
         qc.update(signal_metrics.qc)
 
@@ -1477,7 +1478,6 @@ class ComputeDSCMaps(BaseInterface):
             snr=quality.snr,
             tsnr=quality.tsnr,
             psr=signal_metrics.psr,
-            peak_height=signal_metrics.peak_height,
             delay=deconvolution.delay,
             residues=deconvolution.residues,
             cbf_std=deconvolution.cbf_std,
@@ -1511,7 +1511,6 @@ class ComputeDSCMaps(BaseInterface):
             "out_mtt": (maps.mtt, "_mtt"),
             "out_tmax": (maps.tmax, "_tmax"),
             "out_psr": (maps.psr, "_psr"),
-            "out_ph": (maps.peak_height, "_ph"),
             "out_ttp": (maps.ttp, "_ttp"),
             "out_cnr": (maps.cnr, "_cnr"),
             "out_auc_raw": (maps.auc_raw, "_auc_raw"),

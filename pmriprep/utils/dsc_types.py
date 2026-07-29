@@ -28,7 +28,6 @@ class DSCVoxelResult:
         # Derived metrics
         psr: Percent signal recovery (%). Values <70% indicate BBB disruption,
             >90% indicate intact BBB.
-        ph: Peak height as percentage of baseline signal (%).
         tmax: Time to maximum of residue function (seconds). Ischemic tissue
             typically shows Tmax > 6s.
 
@@ -69,7 +68,6 @@ class DSCVoxelResult:
 
     # Derived metrics
     psr: float = 0.0
-    ph: float = 0.0
     tmax: float = 0.0
 
     # AUC metrics

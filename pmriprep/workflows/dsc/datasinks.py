@@ -65,8 +65,31 @@ _CORE_MAPS: tuple[DSCMapSpec, ...] = (
     DSCMapSpec("mtt_map", "dsc", "mtt", "Mean transit time", "s", "mtt",
                {"MTTMethod": "auc_cbv_over_cbf"}),
     DSCMapSpec("tmax_map", "dsc", "tmax", "Time to maximum of residue function", "s", "tmax"),
-    DSCMapSpec("psr_map", "dsc", "psr", "Percent signal recovery", "%", "psr"),
-    DSCMapSpec("ph_map", "dsc", "ph", "Peak height", "%", "ph"),
+    DSCMapSpec(
+        "psr_map",
+        "dsc",
+        "psr",
+        "Percent signal recovery from the raw, non-leakage-corrected signal",
+        "%",
+        "psr",
+        {
+            "Estimator": "100 * (S1 - Smin) / (S0 - Smin)",
+            "BaselineSignal": "mean over detected pre-bolus volumes",
+            "RecoverySignal": (
+                "mean over final acquired volumes; resolved count recorded in PipelineQC"
+            ),
+            "MinimumSignal": "minimum over post-baseline dynamic series",
+            "MinimumSignalDrop": (
+                "greater than 5 times the larger of voxelwise baseline noise and the "
+                "median positive baseline-noise estimate within the brain mask"
+            ),
+            "UndefinedValue": "NaN when raw signal is unavailable or signal drop is indeterminate",
+            "ProtocolDependence": (
+                "PSR depends on acquisition duration, TR, TE, flip angle, dose, and preload; "
+                "thresholds require a matching acquisition and processing convention"
+            ),
+        },
+    ),
 )
 
 
@@ -1071,7 +1094,7 @@ _ALWAYS_PRESENT_INPUTS = frozenset({
     # All other outputs (moco, mean ref, AIF mask, optional/normalized/
     # vascular/Bayesian/k2/parametric, structural underlays, masks, xfms)
     # are gated by ``present_inputs``.
-    "mtt_map", "tmax_map", "psr_map", "ph_map",
+    "mtt_map", "tmax_map", "psr_map",
 })
 
 
@@ -1092,7 +1115,7 @@ def init_dsc_datasinks_wf(
     ``present_inputs`` is a set of inputnode field names that will be
     wired by the caller. Sinks for absent inputs are NOT created (avoids
     nipype's mandatory-input check failing). The mandatory-perfusion
-    inputs (``mtt_map``, ``tmax_map``, ``psr_map``, ``ph_map``,
+    inputs (``mtt_map``, ``tmax_map``, ``psr_map``,
     ``dsc_moco``, ``dsc_mean``, ``aif_mask``) are always treated as
     present.
     """
@@ -1110,7 +1133,7 @@ def init_dsc_datasinks_wf(
                 # Sources
                 "source_dsc",
                 # Always-present perfusion maps
-                "mtt_map", "tmax_map", "psr_map", "ph_map",
+                "mtt_map", "tmax_map", "psr_map",
                 # Relative
                 "rel_cbf_map", "rel_cbv_map", "rel_cbv_auc_map",
                 "rel_auc_raw_map", "rel_auc_corr_map",

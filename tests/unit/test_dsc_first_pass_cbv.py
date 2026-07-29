@@ -293,7 +293,7 @@ def test_first_pass_sidecar_disclosures(tmp_path):
 
     out_dir = str(tmp_path / "derivatives")
     present = {
-        "mtt_map", "tmax_map", "psr_map", "ph_map", "rel_cbv_firstpass_map",
+        "mtt_map", "tmax_map", "psr_map", "rel_cbv_firstpass_map",
     }
     wf = init_dsc_datasinks_wf(
         output_dir=out_dir, bids_dir=str(bids),
@@ -302,7 +302,7 @@ def test_first_pass_sidecar_disclosures(tmp_path):
     wf.base_dir = str(tmp_path / "work")
     inp = wf.inputs.inputnode
     inp.source_dsc = str(src)
-    for m in ("mtt_map", "tmax_map", "psr_map", "ph_map", "rel_cbv_firstpass_map"):
+    for m in ("mtt_map", "tmax_map", "psr_map", "rel_cbv_firstpass_map"):
         setattr(inp, m, _dummy(m))
     inp.qc_metrics = {
         "aif_detection": {"detection_method": "atlas_strict", "quality_score": 0.85},
@@ -401,7 +401,7 @@ def test_first_pass_nii_written(tmp_path):
         return str(p)
 
     out_dir = str(tmp_path / "derivatives")
-    present = {"mtt_map", "tmax_map", "psr_map", "ph_map", "rel_cbv_firstpass_map"}
+    present = {"mtt_map", "tmax_map", "psr_map", "rel_cbv_firstpass_map"}
     wf = init_dsc_datasinks_wf(
         output_dir=out_dir, bids_dir=str(bids),
         subject_id="t01", session_id=None, inference="vi", present_inputs=present,
@@ -409,7 +409,7 @@ def test_first_pass_nii_written(tmp_path):
     wf.base_dir = str(tmp_path / "work")
     inp = wf.inputs.inputnode
     inp.source_dsc = str(src)
-    for m in ("mtt_map", "tmax_map", "psr_map", "ph_map", "rel_cbv_firstpass_map"):
+    for m in ("mtt_map", "tmax_map", "psr_map", "rel_cbv_firstpass_map"):
         setattr(inp, m, _dummy(m))
     inp.qc_metrics = {
         "aif_detection": {"detection_method": "atlas_strict", "quality_score": 0.85},

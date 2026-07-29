@@ -308,30 +308,6 @@
     ],
     [
       "compute_maps",
-      "out_ph",
-      "lesion_stats",
-      "ph_map"
-    ],
-    [
-      "compute_maps",
-      "out_ph",
-      "outputnode",
-      "ph_map"
-    ],
-    [
-      "compute_maps",
-      "out_ph",
-      "roi_stats",
-      "ph_map"
-    ],
-    [
-      "compute_maps",
-      "out_ph",
-      "user_lesion_stats",
-      "ph_map"
-    ],
-    [
-      "compute_maps",
       "out_psr",
       "dsc_leakage_qc",
       "psr_file"
@@ -1992,7 +1968,7 @@
       "save_residue": false,
       "sloppy": false,
       "svd_threshold": 0.2,
-      "tail_frames": 5,
+      "tail_frames": 10,
       "tr": 1.5
     },
     "concat_mni_to_dsc": {
@@ -2338,7 +2314,6 @@
     "ncbf_map",
     "ncbv_map",
     "parametric_r2_map",
-    "ph_map",
     "preload_qc",
     "preprocessing_stats",
     "psr_map",

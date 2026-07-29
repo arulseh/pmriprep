@@ -1771,7 +1771,6 @@ def _connect_master_dsc_datasinks(
             ("outputnode.mtt_map", "inputnode.mtt_map"),
             ("outputnode.tmax_map", "inputnode.tmax_map"),
             ("outputnode.psr_map", "inputnode.psr_map"),
-            ("outputnode.ph_map", "inputnode.ph_map"),
             ("outputnode.ttp_map", "inputnode.ttp_map"),
             ("outputnode.cnr_map", "inputnode.cnr_map"),
             ("outputnode.auc_diff_map", "inputnode.auc_diff_map"),

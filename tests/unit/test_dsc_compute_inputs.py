@@ -17,7 +17,6 @@ from pmriprep.interfaces.dsc_compute import (
 from pmriprep.models.dsc import VascularModel
 from pmriprep.utils.dsc_constants import EPSILON_CONCENTRATION, EPSILON_SIGNAL
 from pmriprep.utils.dsc_signal import (
-    compute_peak_height_legacy,
     compute_psr_legacy,
 )
 
@@ -269,26 +268,27 @@ def test_prepare_baseline_preserves_pass_through_k2(
     assert result.detection_info["conc_median_baseline_offset"] == 2.0
 
 
-def test_compute_signal_metrics_preserves_legacy_maps() -> None:
-    """Raw-signal PSR and peak height are forwarded without transformation."""
-    signal = np.array([[[[100.0, 100.0, 70.0, 80.0, 90.0]]]])
+def test_compute_signal_metrics_computes_noise_gated_psr() -> None:
+    """Raw-signal PSR uses the configured windows and significance gate."""
+    signal = np.array([[[[100.0, 101.0, 99.0, 100.0, 70.0, 75.0, 80.0, 85.0]]]])
+    mask = np.ones((1, 1, 1), dtype=bool)
 
-    result = ComputeDSCMaps()._compute_signal_metrics(signal, (1, 1, 1), 2, 2)
+    result = ComputeDSCMaps()._compute_signal_metrics(signal, (1, 1, 1), 4, 3, mask)
 
-    expected_psr = compute_psr_legacy(signal, 2, 2)
-    expected_peak = compute_peak_height_legacy(signal, 2)
+    expected_psr = compute_psr_legacy(signal, 4, 3, brain_mask=mask, min_drop_noise_sd=5.0)
     np.testing.assert_allclose(result.psr, expected_psr)
-    np.testing.assert_allclose(result.peak_height, expected_peak)
-    assert result.qc == {}
+    assert result.qc["psr_from_signal"] is True
+    assert result.qc["psr_valid_fraction"] == 1.0
 
 
-def test_compute_signal_metrics_without_signal_returns_zero_maps() -> None:
-    """Unavailable raw signal retains zero maps and explicit QC provenance."""
-    result = ComputeDSCMaps()._compute_signal_metrics(None, (2, 3, 1), 4, 5)
+def test_compute_signal_metrics_without_signal_returns_nan_map() -> None:
+    """Unavailable raw signal is undefined with explicit QC provenance."""
+    result = ComputeDSCMaps()._compute_signal_metrics(
+        None, (2, 3, 1), 4, 5, np.ones((2, 3, 1), dtype=bool)
+    )
 
-    np.testing.assert_array_equal(result.psr, np.zeros((2, 3, 1)))
-    np.testing.assert_array_equal(result.peak_height, np.zeros((2, 3, 1)))
-    assert result.qc == {"psr_ph_from_signal": False}
+    assert np.isnan(result.psr).all()
+    assert result.qc == {"psr_from_signal": False, "psr_valid_fraction": 0.0}
 
 
 def test_select_raw_concentration_preserves_source_precedence(tmp_path: Path) -> None:
@@ -550,7 +550,7 @@ def test_scale_cbf_uncertainty_preserves_optionality_and_units() -> None:
 
 
 def test_finalize_dsc_maps_preserves_ranges_units_and_nan_policy() -> None:
-    """Final maps retain established clipping, CBF units, and timing NaN policy."""
+    """Final maps retain established ranges, CBF units, and timing NaN policy."""
     values = np.array([-1.0, 2.0, 2000.0])
     mask = np.array([True, True, False])
 
@@ -568,7 +568,6 @@ def test_finalize_dsc_maps_preserves_ranges_units_and_nan_policy() -> None:
         snr=values,
         tsnr=values,
         psr=np.array([-1.0, 250.0, 5.0]),
-        peak_height=np.array([-1.0, 120.0, 5.0]),
         delay=np.array([1.0, 2.0, 3.0]),
         residues=np.arange(9.0).reshape(3, 3),
         cbf_std=np.array([0.1, 0.2, 0.3]),
@@ -580,8 +579,7 @@ def test_finalize_dsc_maps_preserves_ranges_units_and_nan_policy() -> None:
     assert np.isnan(result.rel_cbv_auc[0])
     np.testing.assert_allclose(result.mtt, [0.0, 30.0, 0.0])
     np.testing.assert_allclose(result.tmax, [0.0, 60.0, 0.0])
-    np.testing.assert_allclose(result.psr, [0.0, 200.0, 0.0])
-    np.testing.assert_allclose(result.peak_height, [0.0, 100.0, 0.0])
+    np.testing.assert_allclose(result.psr, [-1.0, 250.0, 0.0])
     np.testing.assert_allclose(result.ttp[1:], [3.0, 0.0])
     assert np.isnan(result.ttp[0])
     np.testing.assert_allclose(result.delay, [1.0, 2.0, 0.0])
@@ -606,7 +604,6 @@ def test_finalize_dsc_maps_preserves_optional_outputs() -> None:
         snr=data,
         tsnr=data,
         psr=data,
-        peak_height=data,
         delay=None,
         residues=None,
         cbf_std=None,
@@ -669,7 +666,6 @@ def test_save_base_maps_preserves_result_keys_and_suffixes(
         snr=data,
         tsnr=data,
         psr=data,
-        peak_height=data,
         delay=None,
         residues=None,
         cbf_std=None,
@@ -691,7 +687,6 @@ def test_save_base_maps_preserves_result_keys_and_suffixes(
         "out_mtt": "_mtt",
         "out_tmax": "_tmax",
         "out_psr": "_psr",
-        "out_ph": "_ph",
         "out_ttp": "_ttp",
         "out_cnr": "_cnr",
         "out_auc_raw": "_auc_raw",
@@ -1084,9 +1079,8 @@ def test_prepare_final_outputs_preserves_composition_and_qc_order(
     monkeypatch.setattr(
         interface,
         "_compute_signal_metrics",
-        lambda *args: calls.append("signal") or SimpleNamespace(
-            psr=data * 6.0, peak_height=data * 7.0, qc={"signal": True}
-        ),
+        lambda *args: calls.append("signal")
+        or SimpleNamespace(psr=data * 6.0, qc={"signal": True}),
     )
     monkeypatch.setattr(
         interface,

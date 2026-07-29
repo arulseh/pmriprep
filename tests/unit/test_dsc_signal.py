@@ -4,8 +4,6 @@ import numpy as np
 import pytest
 
 from pmriprep.utils.dsc_signal import (
-    compute_peak_height,
-    compute_peak_height_legacy,
     compute_psr,
     compute_psr_legacy,
     compute_ttp_legacy,
@@ -152,7 +150,7 @@ class TestComputePSR:
 
 
 class TestComputePSRLegacy:
-    """Tests for the legacy post-baseline PSR definition."""
+    """Tests for the production post-baseline PSR definition."""
 
     def test_1d_post_baseline_smin(self) -> None:
         """Legacy uses S_min from post-baseline only."""
@@ -173,43 +171,37 @@ class TestComputePSRLegacy:
         expected = 100.0 * (900.0 - 500.0) / (s0 - 500.0)
         assert psr_legacy == pytest.approx(expected, rel=1e-4)
 
+    def test_final_tail_window_and_unclipped_output(self) -> None:
+        """Recovery uses the final acquired frames and remains unclipped."""
+        signal = np.array([100.0] * 5 + [50.0] + [100.0] * 9 + [175.0] * 5)
 
-class TestComputePeakHeight:
-    """Tests for compute_peak_height."""
+        psr = compute_psr_legacy(signal, baseline_frames=5, tail_frames=5)
 
-    def test_1d_known_values(self) -> None:
-        """Baseline=1000, S_min=400 => PH=60%."""
-        n = 20
-        signal = np.ones(n, dtype=np.float64) * 1000.0
-        signal[10] = 400.0  # Minimum signal during bolus
+        assert psr == pytest.approx(250.0)
 
-        ph = compute_peak_height(signal, baseline_frames=5)
+    def test_nonpositive_drop_is_undefined(self) -> None:
+        """A curve without a positive susceptibility drop has no defined PSR."""
+        signal = np.array([100.0, 101.0, 99.0, 100.0] + [105.0] * 10)
 
-        # PH = 100 * (S_baseline - S_min) / S_baseline
-        # S_min = global min = 400
-        expected = 100.0 * (1000.0 - 400.0) / 1000.0
-        assert ph == pytest.approx(expected, rel=1e-4)
+        assert np.isnan(compute_psr_legacy(signal, baseline_frames=4, tail_frames=4))
 
+    def test_pooled_noise_floor_rejects_low_variance_voxel(self) -> None:
+        """Spatial pooling prevents a spuriously small local noise threshold."""
+        signal = np.empty((2, 1, 1, 12), dtype=np.float64)
+        signal[0, 0, 0] = [100.0] * 4 + [99.0] + [100.0] * 7
+        signal[1, 0, 0] = [98.0, 102.0, 98.0, 102.0] + [70.0] + [90.0] * 7
+        mask = np.ones((2, 1, 1), dtype=bool)
 
-class TestComputePeakHeightLegacy:
-    """Tests for the legacy post-baseline peak-height definition."""
+        psr = compute_psr_legacy(
+            signal,
+            baseline_frames=4,
+            tail_frames=4,
+            brain_mask=mask,
+            min_drop_noise_sd=5.0,
+        )
 
-    def test_1d_post_baseline_smin(self) -> None:
-        """Legacy uses S_min from post-baseline frames only."""
-        n = 20
-        signal = np.ones(n, dtype=np.float64) * 1000.0
-        # Put global minimum in baseline
-        signal[1] = 200.0
-        # Post-baseline minimum
-        signal[10] = 600.0
-
-        ph_legacy = compute_peak_height_legacy(signal, baseline_frames=5)
-
-        # Legacy: S_min from signal[5:] => 600
-        # S0 = mean(signal[:5]) = (1000+200+1000+1000+1000)/5 = 840
-        s0 = np.mean(signal[:5])
-        expected = 100.0 * (s0 - 600.0) / s0
-        assert ph_legacy == pytest.approx(expected, rel=1e-4)
+        assert np.isnan(psr[0, 0, 0])
+        assert np.isfinite(psr[1, 0, 0])
 
 
 class TestComputeTTPLegacy:

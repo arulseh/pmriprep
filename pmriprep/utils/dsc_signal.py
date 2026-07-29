@@ -496,9 +496,11 @@ def compute_psr(
 def compute_psr_legacy(
     signal: npt.NDArray[np.floating],
     baseline_frames: int = 5,
-    tail_frames: int = 5,
+    tail_frames: int = 10,
+    brain_mask: npt.NDArray[np.bool_] | None = None,
+    min_drop_noise_sd: float = 0.0,
 ) -> Union[float, npt.NDArray[np.floating]]:
-    """Compute PSR using the alternate signal-intensity formula.
+    """Compute percent signal recovery from the DSC signal curve.
 
     Formula::
 
@@ -506,9 +508,6 @@ def compute_psr_legacy(
 
     where S0 = mean baseline signal, S1 = mean tail signal,
     Smin = minimum signal in post-baseline frames.
-
-    Returns percentage (~0-100+ range). Kept for integration test
-    compatibility with validation ground truth.
 
     Parameters
     ----------
@@ -518,203 +517,60 @@ def compute_psr_legacy(
         Number of pre-bolus frames for S0.
     tail_frames : int, optional
         Number of post-bolus tail frames for S1 (recovery).
+    brain_mask : np.ndarray, optional
+        Spatial mask used to pool baseline-noise estimates for 4D input.
+    min_drop_noise_sd : float, optional
+        Minimum baseline-to-minimum signal drop in effective noise standard
+        deviations. The effective noise is the larger of the voxel estimate
+        and the median positive estimate within ``brain_mask``.
 
     Returns
     -------
     float or np.ndarray
-        PSR as percentage (0-100+ range).
+        PSR as an unclipped percentage. Undefined voxels are NaN.
     """
+    n_timepoints = signal.shape[-1]
+    if baseline_frames < 2 or tail_frames < 1:
+        raise ValueError("baseline_frames must be at least 2 and tail_frames at least 1")
+    if baseline_frames + tail_frames > n_timepoints:
+        raise ValueError("baseline and recovery windows must not overlap")
+
     if signal.ndim == 1:
         s0 = float(np.mean(signal[:baseline_frames]))
         s_min = float(np.min(signal[baseline_frames:]))
         s1 = float(np.mean(signal[-tail_frames:]))
         denom = s0 - s_min
-        denom_safe = max(abs(denom), EPSILON_SIGNAL)
-        if denom < 0:
-            denom_safe = -denom_safe
-        return 100.0 * (s1 - s_min) / denom_safe
+        noise = float(np.std(signal[:baseline_frames], ddof=1))
+        if (
+            not np.isfinite([s0, s_min, s1, noise]).all()
+            or s0 <= EPSILON_SIGNAL
+            or denom <= min_drop_noise_sd * noise
+        ):
+            return float("nan")
+        return 100.0 * (s1 - s_min) / denom
     elif signal.ndim == 4:
         s0 = np.mean(signal[..., :baseline_frames], axis=-1)
         s_min = np.min(signal[..., baseline_frames:], axis=-1)
         s1 = np.mean(signal[..., -tail_frames:], axis=-1)
         denom = s0 - s_min
-        denom_safe = np.maximum(np.abs(denom), EPSILON_SIGNAL)
-        denom_safe = np.where(denom >= 0, denom_safe, -denom_safe)  # type: ignore[assignment]
-        return 100.0 * (s1 - s_min) / denom_safe  # type: ignore[no-any-return]
-    else:
-        raise ValueError(f"Signal must be 1D or 4D, got {signal.ndim}D")
-
-
-def compute_peak_height(
-    signal: npt.NDArray[np.floating],
-    baseline_frames: int = 10,
-) -> Union[float, npt.NDArray[np.floating]]:
-    """Compute peak height (PH) of DSC signal.
-
-    PH quantifies the maximum signal drop during bolus passage,
-    reflecting contrast agent concentration and vascular density.
-
-    Formula:
-        PH = 100 × (S_baseline - S_min) / S_baseline
-
-    Clinical interpretation:
-        - Higher PH indicates greater signal drop (more contrast effect)
-        - PH correlates with cerebral blood volume (CBV)
-        - Typical values: 20-60% in normal tissue, may be higher in tumors
-
-    Parameters
-    ----------
-    signal : np.ndarray
-        DSC signal array. Can be:
-            - 1D (time,): Single voxel time course
-            - 4D (x, y, z, time): Full 4D volume
-    baseline_frames : int, optional
-        Number of pre-bolus frames for S_baseline.
-        Default is 10.
-
-    Returns
-    -------
-    float or np.ndarray
-        Peak height value(s) as percentage (0-100 range typically).
-        - Scalar float for 1D input
-        - 3D array (x, y, z) for 4D input
-
-    Raises
-    ------
-        ValueError: If signal has invalid dimensions.
-        ValueError: If baseline_frames exceeds signal length.
-
-    Notes
-    -----
-        - ``compute_peak_height_legacy`` provides the alternate formula used
-          by validation comparisons.
-        - s_min uses post-baseline frames only (signal[..., baseline_frames:])
-          to avoid baseline contamination.
-        - PH is always positive when computed from valid DSC signal
-          (signal drops during bolus passage).
-        - PH can exceed 100% if signal drops below zero (artifact).
-        - Epsilon is added to baseline to prevent division by zero.
-    """
-    # Validate input dimensions
-    if signal.ndim not in (1, 4):
-        raise ValueError(f"Signal must be 1D or 4D, got {signal.ndim}D")
-
-    # Get number of timepoints
-    n_timepoints = signal.shape[-1] if signal.ndim == 4 else signal.shape[0]
-
-    if baseline_frames >= n_timepoints:
-        raise ValueError(
-            f"baseline_frames ({baseline_frames}) must be less than "
-            f"number of timepoints ({n_timepoints})"
+        noise = np.std(signal[..., :baseline_frames], axis=-1, ddof=1)
+        pool = np.ones(s0.shape, dtype=bool) if brain_mask is None else brain_mask
+        pool_values = noise[pool & np.isfinite(noise) & (noise > 0)]
+        pooled_noise = float(np.median(pool_values)) if pool_values.size else 0.0
+        effective_noise = np.maximum(noise, pooled_noise)
+        valid = (
+            np.isfinite(s0)
+            & np.isfinite(s_min)
+            & np.isfinite(s1)
+            & np.isfinite(effective_noise)
+            & (s0 > EPSILON_SIGNAL)
+            & (denom > min_drop_noise_sd * effective_noise)
         )
-
-    if baseline_frames < 1:
-        raise ValueError("baseline_frames must be at least 1")
-
-    # Compute signal components
-    # S_min uses post-baseline frames only to find minimum during/after bolus,
-    # avoiding spurious baseline noise minima
-    if signal.ndim == 1:
-        # 1D time series
-        s_baseline = float(np.mean(signal[:baseline_frames]))
-        s_min = float(np.min(signal[baseline_frames:]))
-    else:
-        # 4D volume (x, y, z, time)
-        s_baseline = np.mean(signal[..., :baseline_frames], axis=-1)
-        s_min = np.min(signal[..., baseline_frames:], axis=-1)
-
-    # Compute PH with epsilon guard in denominator
-    s_baseline_safe = np.maximum(np.abs(s_baseline), EPSILON_SIGNAL)
-    # Preserve sign of baseline
-    s_baseline_safe = np.where(
-        s_baseline >= 0, s_baseline_safe, -s_baseline_safe
-    )
-
-    ph = 100.0 * (s_baseline - s_min) / s_baseline_safe
-
-    # Return appropriate type
-    if signal.ndim == 1:
-        return float(ph)
-    else:
-        return ph  # type: ignore[no-any-return]
-
-
-def compute_peak_height_legacy(
-    signal: npt.NDArray[np.floating],
-    baseline_frames: int = 5,
-) -> Union[float, npt.NDArray[np.floating]]:
-    """Compute peak height using the alternate signal-drop formula.
-
-    Formula (standard percentage signal drop)::
-
-        PH = 100 × (S0 - Smin) / S0
-
-    where S0 = mean baseline signal and Smin = minimum signal in
-    post-baseline frames only.
-
-    Returns percentage (0-100 range). Kept for integration test
-    compatibility with validation ground truth.
-
-    Parameters
-    ----------
-    signal : np.ndarray
-        DSC signal array (1D or 4D).
-    baseline_frames : int, optional
-        Number of pre-bolus frames for S0.
-
-    Returns
-    -------
-    float or np.ndarray
-        Peak height as percentage (0-100 range).
-    """
-    if signal.ndim == 1:
-        s0 = float(np.mean(signal[:baseline_frames]))
-        s_min = float(np.min(signal[baseline_frames:]))
-        s0_safe = max(abs(s0), EPSILON_SIGNAL)
-        if s0 >= 0:
-            return 100.0 * (s0 - s_min) / s0_safe
-        else:
-            return 100.0 * (s0 - s_min) / (-s0_safe)
-    elif signal.ndim == 4:
-        s0 = np.mean(signal[..., :baseline_frames], axis=-1)
-        s_min = np.min(signal[..., baseline_frames:], axis=-1)
-        s0_safe = np.maximum(np.abs(s0), EPSILON_SIGNAL)
-        s0_safe = np.where(s0 >= 0, s0_safe, -s0_safe)  # type: ignore[assignment]
-        return 100.0 * (s0 - s_min) / s0_safe  # type: ignore[no-any-return]
+        psr = np.full(s0.shape, np.nan, dtype=np.float64)
+        np.divide(100.0 * (s1 - s_min), denom, out=psr, where=valid)
+        return psr
     else:
         raise ValueError(f"Signal must be 1D or 4D, got {signal.ndim}D")
-
-
-def compute_peak_height_conc(
-    signal: npt.NDArray[np.floating],
-    te_seconds: float,
-    baseline_end: int,
-) -> npt.NDArray[np.floating]:
-    """Compute peak height in concentration domain (ideal method).
-
-    PH = max(delta_R2*) in s^-1 units. Linear with contrast agent
-    concentration, TE-independent, compatible with K2 correction.
-
-    Parameters
-    ----------
-    signal : np.ndarray
-        DSC signal array (4D: x,y,z,time).
-    te_seconds : float
-        Echo time in seconds.
-    baseline_end : int
-        Index of end of baseline period.
-
-    Returns
-    -------
-    np.ndarray
-        Peak height in s^-1 units.
-    """
-    s0 = np.mean(signal[..., :baseline_end], axis=-1, keepdims=True)
-    s0_safe = np.maximum(s0, EPSILON_SIGNAL)
-    s_ratio = np.clip(signal / s0_safe, EPSILON_SIGNAL, None)
-    delta_r2star = -np.log(s_ratio) / te_seconds
-    ph = np.max(delta_r2star, axis=-1)
-    return np.clip(ph, 0.0, None)  # type: ignore[no-any-return]
 
 
 def compute_ttp_legacy(

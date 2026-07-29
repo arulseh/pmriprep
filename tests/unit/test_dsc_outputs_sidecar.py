@@ -72,7 +72,6 @@ def minimal_inputs(tmp_path, minimal_bids_dir):
         "mtt_map": _write_dummy_nifti(tmp_path / "mtt.nii.gz"),
         "tmax_map": _write_dummy_nifti(tmp_path / "tmax.nii.gz"),
         "psr_map": _write_dummy_nifti(tmp_path / "psr.nii.gz"),
-        "ph_map": _write_dummy_nifti(tmp_path / "ph.nii.gz"),
         "rel_cbf_map": _write_dummy_nifti(tmp_path / "rcbf.nii.gz"),
         "rel_cbv_map": _write_dummy_nifti(tmp_path / "rcbv.nii.gz"),
         "rel_cbv_auc_map": _write_dummy_nifti(tmp_path / "rcbv_auc.nii.gz"),
@@ -146,7 +145,7 @@ def test_dsc_writer_recreates_deleted_cached_derivative(
     wf.base_dir = str(tmp_path / "work-recreate")
     inp = wf.inputs.inputnode
     inp.source_dsc = minimal_inputs["source_dsc"]
-    for name in ("mtt_map", "tmax_map", "psr_map", "ph_map"):
+    for name in ("mtt_map", "tmax_map", "psr_map"):
         setattr(inp, name, minimal_inputs[name])
     inp.qc_metrics = {}
 
@@ -421,7 +420,7 @@ class TestWriterAifBlockPresentOnAllMaps:
 
         for suffix in ["dscRelAUCCbv_stat", "dscRelCbv_stat", "dscRelCbf_stat",
                        "dscNawmNormCbv_stat", "dscNawmNormCbf_stat",
-                       "dscMtt_stat", "dscTmax_stat", "dscPsr_stat", "dscPh_stat"]:
+                       "dscMtt_stat", "dscTmax_stat", "dscPsr_stat"]:
             sidecar = _load_sidecar(derivatives, suffix)
             assert _aif_block(sidecar)["Source"] == "measured", suffix
             assert _aif_block(sidecar)["QualityFlag"] == "pass", suffix
@@ -449,7 +448,6 @@ class TestWriterAifBlockPresentOnAllMaps:
         derivatives = _run_writer(minimal_inputs, {}, tmp_path)
 
         expected = {
-            "dscPh_stat": "%",
             "dscAlpha_stat": "1",
             "dscBeta_stat": "s",
             "dscCth_stat": "s",
