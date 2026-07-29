@@ -685,7 +685,6 @@ def recommend_dce_qc(qc_metrics: dict[str, Any]) -> dict[str, Any]:
     from pmriprep.utils.dce_constants import (
         QC_B1_MEAN_HIGH,
         QC_B1_MEAN_LOW,
-        QC_DCE_BASELINE_SNR_LOW_FRACTION_WARN,
         QC_DCE_BASELINE_TSNR_MIN,
         QC_DCE_BASELINE_TSNR_WARN,
         QC_PEAK_ENHANCEMENT_MIN,
@@ -895,27 +894,6 @@ def recommend_dce_qc(qc_metrics: dict[str, Any]) -> dict[str, Any]:
                 f"Baseline tSNR acceptable ({baseline_tsnr:.1f})",
                 0,
             ))
-
-    # Baseline SNR below the Rician-bias floor (report-only spatial-extent flag)
-    snr_low_frac = preprocessing_qc.get("baseline_snr_low_fraction")
-    if (
-        snr_low_frac is not None
-        and snr_low_frac == snr_low_frac  # not NaN
-        and snr_low_frac >= QC_DCE_BASELINE_SNR_LOW_FRACTION_WARN
-    ):
-        recommendations.append(QCRecommendation(
-            QCAction.REVIEW,
-            f"Baseline SNR below the Rician-bias floor in {snr_low_frac:.0%} of brain "
-            "(global acquisition quality; low-SNR magnitude bias may reduce "
-            "estimated enhancement and Ktrans)",
-            1,
-        ))
-    elif snr_low_frac is not None and snr_low_frac == snr_low_frac:
-        recommendations.append(QCRecommendation(
-            QCAction.INCLUDE,
-            f"Low-SNR extent acceptable ({snr_low_frac:.0%} of brain)",
-            0,
-        ))
 
     # B1+ bias
     b1_qc = qc_metrics.get("b1_mapping", {})

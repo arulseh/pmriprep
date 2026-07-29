@@ -19,7 +19,6 @@ from jinja2 import ChainableUndefined, Environment, PackageLoader
 from pmriprep.utils.dce_constants import (
     QC_B1_MEAN_HIGH,
     QC_B1_MEAN_LOW,
-    QC_DCE_BASELINE_SNR_LOW_FRACTION_WARN,
     QC_DCE_BASELINE_TSNR_MIN,
     QC_DCE_BASELINE_TSNR_WARN,
     QC_PEAK_ENHANCEMENT_MIN,
@@ -1404,14 +1403,6 @@ def generate_unified_report(
                     preproc.get("baseline_tsnr"),
                     QC_DCE_BASELINE_TSNR_WARN,
                     QC_DCE_BASELINE_TSNR_MIN,
-                ),
-                # Fraction of brain below the baseline-SNR floor (lower is better).
-                # Warn-capped (poor=inf) so it never shows red — the recommendation
-                # is REVIEW-only, never EXCLUDE.
-                "baseline_snr_low_fraction": _classify_metric_inverse(
-                    preproc.get("baseline_snr_low_fraction"),
-                    QC_DCE_BASELINE_SNR_LOW_FRACTION_WARN,
-                    float("inf"),
                 ),
                 "b1_bias": _classify_b1(
                     b1.get("mean_b1"),

@@ -1571,9 +1571,6 @@ def _dce_preprocessing_cosmetic_keys(
     tsnr = preproc.get("baseline_tsnr")
     if tsnr is not None and tsnr == tsnr:  # present and not NaN
         out["BaselineTSNR"] = float(tsnr)
-    snr_low = preproc.get("baseline_snr_low_fraction")
-    if snr_low is not None and snr_low == snr_low:  # present and not NaN
-        out["BaselineSNRLowFraction"] = float(snr_low)
     if "peak_enh_pct" in preproc:
         out["PeakEnhancementPercent"] = float(preproc["peak_enh_pct"])
     if "n_volumes" in preproc:

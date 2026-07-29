@@ -46,7 +46,6 @@ def dce_qc_metrics() -> dict[str, Any]:
             "motion_status": "PASS",
             "motion_qc_available": True,
             "baseline_tsnr": 32.4, "peak_enh_pct": 65.0,
-            "baseline_snr_low_fraction": 0.04,
             "n_volumes": 75, "tr_ms": 3.8, "volume_tr_s": 4.06,
             "baseline_frames_used": 5,
             "baseline_minimum_frames": 5,
@@ -108,7 +107,6 @@ class TestMotionAndSignalKeys:
         assert out["MotionStatus"] == "PASS"
         assert out["MotionQCAvailable"] is True
         assert out["BaselineTSNR"] == pytest.approx(32.4)
-        assert out["BaselineSNRLowFraction"] == pytest.approx(0.04)
         assert out["PeakEnhancementPercent"] == pytest.approx(65.0)
         assert out["NumberOfVolumes"] == 75
         assert out["BaselineFramesUsed"] == 5
@@ -123,20 +121,8 @@ class TestMotionAndSignalKeys:
         assert out["RepetitionTime"] == pytest.approx(4.06)
         assert out["RepetitionTimeExcitation"] == pytest.approx(0.0038)
 
-    def test_baseline_snr_key_absent_when_missing(self, base_sidecar, dce_qc_metrics):
-        """No BaselineSNRLowFraction key when the metric is absent (membership guard)."""
-        dce_qc_metrics["preprocessing"].pop("baseline_snr_low_fraction")
-        out = enrich_dce_preproc_sidecar(dict(base_sidecar), qc_metrics=dce_qc_metrics)
-        assert "BaselineSNRLowFraction" not in out
-
-    def test_baseline_snr_nan_dropped(self, base_sidecar, dce_qc_metrics):
-        """NaN fraction is dropped (finiteness guard) so the sidecar stays valid JSON."""
-        dce_qc_metrics["preprocessing"]["baseline_snr_low_fraction"] = float("nan")
-        out = enrich_dce_preproc_sidecar(dict(base_sidecar), qc_metrics=dce_qc_metrics)
-        assert "BaselineSNRLowFraction" not in out
-
     def test_baseline_tsnr_nan_dropped(self, base_sidecar, dce_qc_metrics):
-        """NaN baseline tSNR is dropped from the flat key (symmetry with SNR fraction)."""
+        """NaN baseline tSNR is dropped from the flat sidecar keys."""
         dce_qc_metrics["preprocessing"]["baseline_tsnr"] = float("nan")
         out = enrich_dce_preproc_sidecar(dict(base_sidecar), qc_metrics=dce_qc_metrics)
         assert "BaselineTSNR" not in out
@@ -322,7 +308,7 @@ class TestPreprocMetaNoNaN:
         qc = {
             "preprocessing": {
                 "baseline_tsnr": float("nan"),
-                "baseline_snr_low_fraction": np.float32("nan"),  # numpy scalar path
+                "numpy_nan": np.float32("nan"),  # numpy scalar path
                 "mean_tsnr": 20.0,
                 "shape": (4, float("nan"), 3),  # tuple path
             },
@@ -331,11 +317,10 @@ class TestPreprocMetaNoNaN:
         assert meta["SkullStripped"] is True
         # Flat cosmetic keys dropped
         assert "BaselineTSNR" not in meta
-        assert "BaselineSNRLowFraction" not in meta
         # Nested PipelineQC block sanitized (finite metric survives)
         nested = meta["PipelineQC"]["preprocessing"]
         assert "baseline_tsnr" not in nested
-        assert "baseline_snr_low_fraction" not in nested
+        assert "numpy_nan" not in nested
         assert nested["mean_tsnr"] == 20.0
         assert nested["shape"] == [4, None, 3]
         # Strict: allow_nan=False raises on ANY NaN/Inf token (bare or numpy-leaked)

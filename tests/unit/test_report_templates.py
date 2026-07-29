@@ -230,7 +230,6 @@ def test_dce_preprocessing_cards_align_with_dsc_order(env):
         "mean_tsnr": 20.0,
         "mean_cnr": 8.0,
         "baseline_tsnr": 25.0,
-        "baseline_snr_low_fraction": 0.0,
     }
     dce = {
         "qc_metrics": {"preprocessing": preprocessing},
@@ -252,7 +251,6 @@ def test_dce_preprocessing_cards_align_with_dsc_order(env):
         "Mean CNR",
         "Baseline Frames",
         "Mean Baseline tSNR",
-        "Low Baseline SNR",
     )
     assert rendered.index("Baseline Frames") > rendered.index("DCE Preprocessing QC")
 
