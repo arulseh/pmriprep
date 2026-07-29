@@ -53,9 +53,9 @@ def test_nlls_statistics_are_frequentist() -> None:
 
 def test_svb_spatial_prior_is_described() -> None:
     """SVB sidecars identify the spatial prior and neighborhood."""
-    result = build_uncertainty_provenance("svb", "cbf_cv", modality="DSC")
+    result = build_uncertainty_provenance("svb", "cbf_std", modality="DSC")
 
-    assert result["UncertaintyStatistic"] == "coefficient_of_variation"
+    assert result["UncertaintyStatistic"] == "posterior_standard_deviation"
     assert result["SpatialPriorModel"] == "Penny M-prior"
     assert result["SpatialNeighborhood"] == "3D face-connected"
     assert result["SpatialUpdateScheme"] == "synchronous_batched_backtracking"
@@ -70,13 +70,3 @@ def test_map_fallback_is_disclosed() -> None:
 
     assert result["UncertaintyStatistic"] == "posterior_standard_deviation"
     assert "prior standard deviations" in result["UncertaintyFallbackBehavior"]
-
-
-def test_dsc_mcmc_interval_uses_sample_quantiles() -> None:
-    """DSC MCMC intervals are distinguished from Gaussian approximations."""
-    result = build_uncertainty_provenance(
-        "mcmc", "cbfCI95upper", modality="DSC"
-    )
-
-    assert result["CredibleIntervalConstruction"] == "posterior_sample_quantiles"
-    assert result["CredibleIntervalBounding"] == "nonnegative_lower_bound"

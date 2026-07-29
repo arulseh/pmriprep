@@ -540,17 +540,12 @@ def test_summarize_dsc_maps_empty_synthetic_domain() -> None:
 
 
 def test_scale_cbf_uncertainty_preserves_optionality_and_units() -> None:
-    """Available CBF uncertainty maps convert to per-minute units independently."""
+    """Available CBF uncertainty converts to the relative-map per-minute units."""
     std = np.array([0.1, 0.2])
-    upper = np.array([0.3, 0.4])
-
-    scaled_std, scaled_lower, scaled_upper = ComputeDSCMaps._scale_cbf_uncertainty(
-        std, None, upper
-    )
+    scaled_std = ComputeDSCMaps._scale_cbf_uncertainty(std)
 
     np.testing.assert_allclose(scaled_std, [6.0, 12.0])
-    assert scaled_lower is None
-    np.testing.assert_allclose(scaled_upper, [18.0, 24.0])
+    assert ComputeDSCMaps._scale_cbf_uncertainty(None) is None
     np.testing.assert_allclose(std, [0.1, 0.2])
 
 
@@ -577,8 +572,6 @@ def test_finalize_dsc_maps_preserves_ranges_units_and_nan_policy() -> None:
         delay=np.array([1.0, 2.0, 3.0]),
         residues=np.arange(9.0).reshape(3, 3),
         cbf_std=np.array([0.1, 0.2, 0.3]),
-        cbf_ci_lower=None,
-        cbf_ci_upper=np.array([0.2, 0.3, 0.4]),
         mask_bool=mask,
     )
 
@@ -594,8 +587,6 @@ def test_finalize_dsc_maps_preserves_ranges_units_and_nan_policy() -> None:
     np.testing.assert_allclose(result.delay, [1.0, 2.0, 0.0])
     np.testing.assert_allclose(result.residues[2], 0.0)
     np.testing.assert_allclose(result.cbf_std, [6.0, 12.0, 18.0])
-    assert result.cbf_ci_lower is None
-    np.testing.assert_allclose(result.cbf_ci_upper, [12.0, 18.0, 24.0])
 
 
 def test_finalize_dsc_maps_preserves_optional_outputs() -> None:
@@ -619,16 +610,12 @@ def test_finalize_dsc_maps_preserves_optional_outputs() -> None:
         delay=None,
         residues=None,
         cbf_std=None,
-        cbf_ci_lower=None,
-        cbf_ci_upper=None,
         mask_bool=np.ones((1,), dtype=bool),
     )
 
     assert result.delay is None
     assert result.residues is None
     assert result.cbf_std is None
-    assert result.cbf_ci_lower is None
-    assert result.cbf_ci_upper is None
 
 
 def test_save_map_overrides_upstream_header_dtype(
@@ -686,8 +673,6 @@ def test_save_base_maps_preserves_result_keys_and_suffixes(
         delay=None,
         residues=None,
         cbf_std=None,
-        cbf_ci_lower=None,
-        cbf_ci_upper=None,
         mask_bool=np.ones((1,), dtype=bool),
     )
     interface = ComputeDSCMaps()
@@ -727,10 +712,10 @@ def test_save_base_maps_preserves_result_keys_and_suffixes(
     assert results["qc_metrics"] is qc
 
 
-def test_save_parametric_maps_preserves_masking_cv_and_diagnostics(
+def test_save_parametric_maps_preserves_masking_and_diagnostics(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Parametric outputs retain CV guards, CI policy, and diagnostic masking."""
+    """Parametric outputs retain uncertainty and diagnostic masking."""
     interface = ComputeDSCMaps()
     saved: dict[str, tuple[np.ndarray, object]] = {}
 
@@ -746,44 +731,30 @@ def test_save_parametric_maps_preserves_masking_cv_and_diagnostics(
     monkeypatch.setattr(interface, "_save_map", _record_map)
     mask = np.array([True, True, False])
     results = interface._save_parametric_maps(
-        rel_cbf=np.array([10.0, 0.0, 20.0]),
-        rel_cbv=np.array([2.0, 4.0, 8.0]),
         cbf_std=np.array([2.0, 3.0, 4.0]),
         cbv_std=np.array([1.0, 2.0, 3.0]),
-        cbf_ci_lower=np.array([8.0, -1.0, 18.0]),
-        cbf_ci_upper=np.array([12.0, 1.0, 22.0]),
-        cbv_ci_lower=np.array([1.0, 3.0, 7.0]),
-        cbv_ci_upper=np.array([3.0, 5.0, 9.0]),
         parametric_r2=np.array([0.9, 0.5, 0.8]),
         fallback_mask=np.array([0, 1, 1]),
         mask_bool=mask,
-        inference="vi",
         affine=np.eye(4),
         header=object(),
     )
 
     assert set(results) == {
-        "out_cbf_std", "out_cbf_cv", "out_cbv_std", "out_cbv_cv",
-        "out_cbf_ci95_lower", "out_cbf_ci95_upper",
-        "out_cbv_ci95_lower", "out_cbv_ci95_upper",
+        "out_cbf_std", "out_cbv_std",
         "out_parametric_r2", "out_fallback_mask",
     }
     np.testing.assert_allclose(saved["_cbf_std"][0], [2.0, np.nan, 0.0], equal_nan=True)
-    np.testing.assert_allclose(saved["_cbf_cv"][0], [0.2, np.nan, 0.0], equal_nan=True)
-    np.testing.assert_allclose(saved["_cbv_cv"][0], [0.5, np.nan, 0.0], equal_nan=True)
-    np.testing.assert_allclose(
-        saved["_cbf_ci95_lower"][0], [8.0, np.nan, 0.0], equal_nan=True
-    )
     np.testing.assert_allclose(saved["_dscParametric_r2"][0][:2], [0.9, 0.5])
     assert np.isnan(saved["_dscParametric_r2"][0][2])
     np.testing.assert_array_equal(saved["_dscFallback_mask"][0], [0, 1, 0])
     assert saved["_dscFallback_mask"][1] is np.uint8
 
 
-def test_save_parametric_maps_preserves_map_intervals(
+def test_save_parametric_maps_preserves_optional_uncertainty(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """MAP intervals are serialized while independently absent maps stay absent."""
+    """Independently unavailable uncertainty maps remain absent."""
     interface = ComputeDSCMaps()
     monkeypatch.setattr(
         interface,
@@ -793,27 +764,16 @@ def test_save_parametric_maps_preserves_map_intervals(
     data = np.ones((1,))
 
     results = interface._save_parametric_maps(
-        rel_cbf=data,
-        rel_cbv=data,
         cbf_std=None,
         cbv_std=data,
-        cbf_ci_lower=data,
-        cbf_ci_upper=data,
-        cbv_ci_lower=data,
-        cbv_ci_upper=data,
         parametric_r2=None,
         fallback_mask=None,
         mask_bool=np.ones((1,), dtype=bool),
-        inference="map",
         affine=np.eye(4),
         header=object(),
     )
 
-    assert set(results) == {
-        "out_cbv_std", "out_cbv_cv",
-        "out_cbf_ci95_lower", "out_cbf_ci95_upper",
-        "out_cbv_ci95_lower", "out_cbv_ci95_upper",
-    }
+    assert set(results) == {"out_cbv_std"}
 
 
 def test_add_fit_qc_metrics_preserves_voxel_fit_and_tier(
@@ -1051,7 +1011,7 @@ def test_run_deconvolution_normalizes_parametric_state(
 ) -> None:
     """Parametric dispatch preserves all returned maps and motion provenance."""
     interface = ComputeDSCMaps()
-    arrays = [np.full((1,), value) for value in range(1, 16)]
+    arrays = [np.full((1,), value) for value in range(1, 12)]
     qc: dict[str, object] = {"method": method}
     calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
 
@@ -1088,7 +1048,7 @@ def test_run_deconvolution_normalizes_parametric_state(
     assert calls[0][1]["motion_weights"] is weights
     assert result.cbf is arrays[0]
     assert result.alpha is arrays[4]
-    assert result.fallback_mask is arrays[14]
+    assert result.fallback_mask is arrays[10]
     assert result.delay is None
     assert result.residues is None
     assert result.qc["motion_weighting"] is motion_qc
@@ -1112,8 +1072,6 @@ def test_prepare_final_outputs_preserves_composition_and_qc_order(
         delay=data * 5.0,
         residues=np.ones((1, 1, 1, 4)),
         cbf_std=data * 0.1,
-        cbf_ci_lower=data * 0.8,
-        cbf_ci_upper=data * 1.2,
     )
     final_maps = SimpleNamespace(
         rel_cbf=data,
@@ -1212,8 +1170,6 @@ def test_assemble_outputs_preserves_serialization_order_and_optional_branches(
         delay=data * 4.0,
         residues=np.ones((1, 1, 1, 2)),
         cbf_std=data * 0.1,
-        cbf_ci_lower=data * 0.8,
-        cbf_ci_upper=data * 1.2,
     )
     qc: dict[str, object] = {"existing": True}
     postprocessing = SimpleNamespace(raw_concentration=data, maps=maps, qc=qc)
@@ -1246,8 +1202,6 @@ def test_assemble_outputs_preserves_serialization_order_and_optional_branches(
         qc=qc,
         alpha=data * 5.0,
         cbv_std=data * 0.2,
-        cbv_ci_lower=data * 0.7,
-        cbv_ci_upper=data * 1.3,
         parametric_r2=data * 0.9,
         fallback_mask=data,
     )

@@ -302,6 +302,8 @@ motion time series are TSV files.
 
 DCE parameter-uncertainty derivatives contain NLLS standard errors or Bayesian
 posterior standard deviations conditional on the fitted inputs and model.
+DSC parametric CBF uncertainty derivatives use the corresponding conditional
+standard error or posterior standard deviation.
 
 Smoothed maps are additional derivatives. DCE Kep is recomputed from smoothed
 Ktrans and ve; uncertainty, timing, categorical, and fit-quality maps remain at

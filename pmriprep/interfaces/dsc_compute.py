@@ -261,13 +261,7 @@ def _dsc_fit_single_voxel(voxel_data: _DSCVoxelInput) -> dict[str, Any]:
         # on correlated fitted parameters, but DSCFitResult does not retain
         # their joint covariance or derived posterior samples.
         if result.uncertainties:
-            out["cbf_std"] = result.uncertainties.get("cbf", 0.0)
-
-        # Extract credible intervals only for directly fitted CBF.
-        if result.credible_intervals:
-            cbf_ci = result.credible_intervals.get("cbf", (0.0, 0.0))
-            out["cbf_ci95_lower"] = cbf_ci[0]
-            out["cbf_ci95_upper"] = cbf_ci[1]
+            out["cbf_std"] = result.uncertainties.get("cbf", np.nan)
 
         out["r_squared"] = result.r_squared
         out["converged"] = result.passes_convergence()
@@ -393,8 +387,6 @@ class _DSCFinalMaps(NamedTuple):
     delay: Optional[npt.NDArray[Any]]
     residues: Optional[npt.NDArray[Any]]
     cbf_std: Optional[npt.NDArray[Any]]
-    cbf_ci_lower: Optional[npt.NDArray[Any]]
-    cbf_ci_upper: Optional[npt.NDArray[Any]]
 
 
 class _DSCDeconvolutionMaps(NamedTuple):
@@ -412,10 +404,6 @@ class _DSCDeconvolutionMaps(NamedTuple):
     cth: Optional[npt.NDArray[Any]] = None
     cbf_std: Optional[npt.NDArray[Any]] = None
     cbv_std: Optional[npt.NDArray[Any]] = None
-    cbf_ci_lower: Optional[npt.NDArray[Any]] = None
-    cbf_ci_upper: Optional[npt.NDArray[Any]] = None
-    cbv_ci_lower: Optional[npt.NDArray[Any]] = None
-    cbv_ci_upper: Optional[npt.NDArray[Any]] = None
     parametric_r2: Optional[npt.NDArray[Any]] = None
     fallback_mask: Optional[npt.NDArray[Any]] = None
 
@@ -679,9 +667,6 @@ class ComputeDSCMapsOutputSpec(TraitedSpec):
     out_beta = File(desc="Beta map (vascular method only)")
     out_cth = File(desc="CTH map — capillary transit time heterogeneity (vascular only)")
     out_cbf_std = File(desc="CBF parameter standard-error or posterior-SD map")
-    out_cbf_cv = File(desc="CBF relative parameter-uncertainty map")
-    out_cbf_ci95_lower = File(desc="CBF 95% interval lower-bound map")
-    out_cbf_ci95_upper = File(desc="CBF 95% interval upper-bound map")
     out_parametric_r2 = File(
         desc="Per-voxel R² of parametric fit (CPI / Vascular only). "
         "Raw value preserved on fallback voxels; see out_fallback_mask."
@@ -1343,18 +1328,9 @@ class ComputeDSCMaps(BaseInterface):
     @staticmethod
     def _scale_cbf_uncertainty(
         standard_deviation: Optional[npt.NDArray[Any]],
-        ci_lower: Optional[npt.NDArray[Any]],
-        ci_upper: Optional[npt.NDArray[Any]],
-    ) -> tuple[
-        Optional[npt.NDArray[Any]],
-        Optional[npt.NDArray[Any]],
-        Optional[npt.NDArray[Any]],
-    ]:
-        """Convert optional CBF uncertainty maps from inverse seconds to minutes."""
-        return tuple(
-            None if value is None else value * 60.0
-            for value in (standard_deviation, ci_lower, ci_upper)
-        )  # type: ignore[return-value]
+    ) -> Optional[npt.NDArray[Any]]:
+        """Convert an optional CBF uncertainty map from inverse seconds to minutes."""
+        return None if standard_deviation is None else standard_deviation * 60.0
 
     @classmethod
     def _finalize_dsc_maps(
@@ -1377,8 +1353,6 @@ class ComputeDSCMaps(BaseInterface):
         delay: Optional[npt.NDArray[Any]],
         residues: Optional[npt.NDArray[Any]],
         cbf_std: Optional[npt.NDArray[Any]],
-        cbf_ci_lower: Optional[npt.NDArray[Any]],
-        cbf_ci_upper: Optional[npt.NDArray[Any]],
         mask_bool: npt.NDArray[Any],
     ) -> _DSCFinalMaps:
         """Apply established output ranges, CBF units, and brain masking."""
@@ -1392,9 +1366,7 @@ class ComputeDSCMaps(BaseInterface):
 
         rel_cbf = np.clip(cbf * 60.0, 0.0, 100.0)
         rel_cbv = np.clip(cbv, 0.0, 10.0)
-        cbf_std, cbf_ci_lower, cbf_ci_upper = cls._scale_cbf_uncertainty(
-            cbf_std, cbf_ci_lower, cbf_ci_upper
-        )
+        cbf_std = cls._scale_cbf_uncertainty(cbf_std)
 
         return _DSCFinalMaps(
             rel_cbf=np.where(mask_bool, rel_cbf, 0.0),
@@ -1420,8 +1392,6 @@ class ComputeDSCMaps(BaseInterface):
                 else np.where(mask_bool[..., np.newaxis], residues, 0.0)
             ),
             cbf_std=cbf_std,
-            cbf_ci_lower=cbf_ci_lower,
-            cbf_ci_upper=cbf_ci_upper,
         )
 
     def _save_map(
@@ -1511,8 +1481,6 @@ class ComputeDSCMaps(BaseInterface):
             delay=deconvolution.delay,
             residues=deconvolution.residues,
             cbf_std=deconvolution.cbf_std,
-            cbf_ci_lower=deconvolution.cbf_ci_lower,
-            cbf_ci_upper=deconvolution.cbf_ci_upper,
             mask_bool=mask_bool,
         )
         qc.update(
@@ -1567,18 +1535,11 @@ class ComputeDSCMaps(BaseInterface):
     def _save_parametric_maps(
         self,
         *,
-        rel_cbf: npt.NDArray[Any],
-        rel_cbv: npt.NDArray[Any],
         cbf_std: Optional[npt.NDArray[Any]],
         cbv_std: Optional[npt.NDArray[Any]],
-        cbf_ci_lower: Optional[npt.NDArray[Any]],
-        cbf_ci_upper: Optional[npt.NDArray[Any]],
-        cbv_ci_lower: Optional[npt.NDArray[Any]],
-        cbv_ci_upper: Optional[npt.NDArray[Any]],
         parametric_r2: Optional[npt.NDArray[Any]],
         fallback_mask: Optional[npt.NDArray[Any]],
         mask_bool: npt.NDArray[Any],
-        inference: str,
         affine: npt.NDArray[Any],
         header: Any,
     ) -> dict[str, str]:
@@ -1588,9 +1549,9 @@ class ComputeDSCMaps(BaseInterface):
         if fallback_mask is not None:
             valid_fit &= fallback_mask == 0
 
-        for name, suffix, standard_deviation, mean in (
-            ("cbf", "_cbf", cbf_std, rel_cbf),
-            ("cbv", "_cbv", cbv_std, rel_cbv),
+        for name, suffix, standard_deviation in (
+            ("cbf", "_cbf", cbf_std),
+            ("cbv", "_cbv", cbv_std),
         ):
             if standard_deviation is None:
                 continue
@@ -1602,29 +1563,6 @@ class ComputeDSCMaps(BaseInterface):
             outputs[f"out_{name}_std"] = self._save_map(
                 masked_std, f"{suffix}_std", affine, header
             )
-            cv = np.full_like(masked_std, np.nan)
-            valid = valid_fit & (np.abs(mean) > EPSILON_CONCENTRATION)
-            np.divide(masked_std, np.abs(mean), out=cv, where=valid)
-            cv = np.where(mask_bool, cv, 0.0)
-            outputs[f"out_{name}_cv"] = self._save_map(
-                cv, f"{suffix}_cv", affine, header
-            )
-
-        for name, suffix, interval in (
-            ("out_cbf_ci95_lower", "_cbf_ci95_lower", cbf_ci_lower),
-            ("out_cbf_ci95_upper", "_cbf_ci95_upper", cbf_ci_upper),
-            ("out_cbv_ci95_lower", "_cbv_ci95_lower", cbv_ci_lower),
-            ("out_cbv_ci95_upper", "_cbv_ci95_upper", cbv_ci_upper),
-        ):
-            if interval is not None:
-                masked_interval = np.where(
-                    valid_fit,
-                    interval,
-                    np.where(mask_bool, np.nan, 0.0),
-                )
-                outputs[name] = self._save_map(
-                    masked_interval, suffix, affine, header
-                )
 
         if parametric_r2 is not None:
             r2 = np.where(mask_bool, parametric_r2, np.nan).astype(np.float32)
@@ -1691,7 +1629,6 @@ class ComputeDSCMaps(BaseInterface):
 
         (
             cbf, cbv, mtt, tmax, qc, alpha, beta, cth, cbf_std, cbv_std,
-            cbf_ci_lower, cbf_ci_upper, cbv_ci_lower, cbv_ci_upper,
             parametric_r2, fallback_mask,
         ) = self._deconvolve_parametric(
             concentration,
@@ -1718,10 +1655,6 @@ class ComputeDSCMaps(BaseInterface):
             cth=cth,
             cbf_std=cbf_std,
             cbv_std=cbv_std,
-            cbf_ci_lower=cbf_ci_lower,
-            cbf_ci_upper=cbf_ci_upper,
-            cbv_ci_lower=cbv_ci_lower,
-            cbv_ci_upper=cbv_ci_upper,
             parametric_r2=parametric_r2,
             fallback_mask=fallback_mask,
         )
@@ -1890,18 +1823,11 @@ class ComputeDSCMaps(BaseInterface):
         if inputs.method in ("cpi", "vascular"):
             results.update(
                 self._save_parametric_maps(
-                    rel_cbf=maps.rel_cbf,
-                    rel_cbv=maps.rel_cbv,
                     cbf_std=maps.cbf_std,
                     cbv_std=deconvolution.cbv_std,
-                    cbf_ci_lower=maps.cbf_ci_lower,
-                    cbf_ci_upper=maps.cbf_ci_upper,
-                    cbv_ci_lower=deconvolution.cbv_ci_lower,
-                    cbv_ci_upper=deconvolution.cbv_ci_upper,
                     parametric_r2=deconvolution.parametric_r2,
                     fallback_mask=deconvolution.fallback_mask,
                     mask_bool=inputs.mask_bool,
-                    inference=inputs.inference,
                     affine=inputs.affine,
                     header=inputs.header,
                 )
@@ -2184,10 +2110,6 @@ class ComputeDSCMaps(BaseInterface):
         Optional[npt.NDArray[Any]],  # cth_map (vascular only)
         Optional[npt.NDArray[Any]],  # cbf_std_map (parametric only)
         Optional[npt.NDArray[Any]],  # cbv_std_map (parametric only)
-        Optional[npt.NDArray[Any]],  # cbf_ci_lower_map (parametric only)
-        Optional[npt.NDArray[Any]],  # cbf_ci_upper_map (parametric only)
-        Optional[npt.NDArray[Any]],  # cbv_ci_lower_map (parametric only)
-        Optional[npt.NDArray[Any]],  # cbv_ci_upper_map (parametric only)
         Optional[npt.NDArray[Any]],  # parametric_r2_map (parametric only)
         Optional[npt.NDArray[Any]],  # fallback_mask (parametric only)
     ]:
@@ -2227,12 +2149,6 @@ class ComputeDSCMaps(BaseInterface):
             np.zeros(spatial_shape, dtype=np.uint8)
             if method in ("cpi", "vascular") else None
         )
-        has_ci = inference in ("vi", "svb", "mcmc", "map", "nlls")
-        cbf_ci_lower_map = np.full(spatial_shape, np.nan, dtype=np.float64) if has_ci else None
-        cbf_ci_upper_map = np.full(spatial_shape, np.nan, dtype=np.float64) if has_ci else None
-        cbv_ci_lower_map = None
-        cbv_ci_upper_map = None
-
         qc_metrics: dict[str, Any] = {
             "method": method,
             "inference": inference,
@@ -2386,14 +2302,6 @@ class ComputeDSCMaps(BaseInterface):
                 cbf_std_map[x, y, z] = res["cbf_std"]
             if cbv_std_map is not None and "cbv_std" in res:
                 cbv_std_map[x, y, z] = res["cbv_std"]
-            if cbf_ci_lower_map is not None and "cbf_ci95_lower" in res:
-                cbf_ci_lower_map[x, y, z] = res["cbf_ci95_lower"]
-            if cbf_ci_upper_map is not None and "cbf_ci95_upper" in res:
-                cbf_ci_upper_map[x, y, z] = res["cbf_ci95_upper"]
-            if cbv_ci_lower_map is not None and "cbv_ci95_lower" in res:
-                cbv_ci_lower_map[x, y, z] = res["cbv_ci95_lower"]
-            if cbv_ci_upper_map is not None and "cbv_ci95_upper" in res:
-                cbv_ci_upper_map[x, y, z] = res["cbv_ci95_upper"]
 
             if res.get("r_squared") is not None:
                 r_squared_list.append(res["r_squared"])
@@ -2451,14 +2359,6 @@ class ComputeDSCMaps(BaseInterface):
                     cbf_std_map[x, y, z] = np.nan
                 if cbv_std_map is not None:
                     cbv_std_map[x, y, z] = 0.0
-                if cbf_ci_lower_map is not None:
-                    cbf_ci_lower_map[x, y, z] = np.nan
-                if cbf_ci_upper_map is not None:
-                    cbf_ci_upper_map[x, y, z] = np.nan
-                if cbv_ci_lower_map is not None:
-                    cbv_ci_lower_map[x, y, z] = 0.0
-                if cbv_ci_upper_map is not None:
-                    cbv_ci_upper_map[x, y, z] = 0.0
                 if fallback_mask is not None:
                     fallback_mask[x, y, z] = 1
                 n_fallback += 1
@@ -2498,7 +2398,6 @@ class ComputeDSCMaps(BaseInterface):
 
         return (cbf, cbv, mtt, tmax, qc_metrics, alpha_map, beta_map, cth_map,
                 cbf_std_map, cbv_std_map,
-                cbf_ci_lower_map, cbf_ci_upper_map, cbv_ci_lower_map, cbv_ci_upper_map,
                 parametric_r2_map, fallback_mask)
 
     @staticmethod
@@ -2826,25 +2725,10 @@ class ComputeDSCMaps(BaseInterface):
                 else:
                     out["tmax"] = 0.0
 
-            cbf_std_val = 0.0
             if batched_result.uncertainties:
                 cbf_std_val = float(batched_result.uncertainties.get(
-                    "cbf", np.zeros(n_voxels))[i])
+                    "cbf", np.full(n_voxels, np.nan))[i])
                 out["cbf_std"] = cbf_std_val
-
-            interval_lower = getattr(
-                batched_result, "credible_interval_lower", {}
-            )
-            interval_upper = getattr(
-                batched_result, "credible_interval_upper", {}
-            )
-            if "cbf" in interval_lower and "cbf" in interval_upper:
-                out["cbf_ci95_lower"] = float(
-                    interval_lower["cbf"][i]
-                )
-                out["cbf_ci95_upper"] = float(
-                    interval_upper["cbf"][i]
-                )
 
             out["r_squared"] = float(batched_result.r_squared[i])
             out["converged"] = bool(batched_result.converged[i])

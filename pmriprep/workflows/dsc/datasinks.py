@@ -169,11 +169,6 @@ _VASCULAR_MAPS: tuple[DSCMapSpec, ...] = (
 # CBF uncertainty maps. CBV is derived and lacks retained joint covariance.
 _UNCERTAINTY_MAPS: tuple[DSCMapSpec, ...] = (
     DSCMapSpec("cbf_std_map", "dscUncertainty", "cbf", "CBF absolute parameter uncertainty", "1/min", "cbf_std"),
-    DSCMapSpec("cbf_cv_map", "dscCV", "cbf", "CBF relative parameter uncertainty", "1", "cbfCV"),
-    DSCMapSpec("cbf_ci95_lower_map", "dscCI95lower", "cbf",
-     "CBF 95% credible interval lower bound", "1/min", "cbfCI95lower"),
-    DSCMapSpec("cbf_ci95_upper_map", "dscCI95upper", "cbf",
-     "CBF 95% credible interval upper bound", "1/min", "cbfCI95upper"),
 )
 
 
@@ -1128,8 +1123,7 @@ def init_dsc_datasinks_wf(
                 # Vascular
                 "alpha_map", "beta_map", "cth_map",
                 # Inference-specific CBF uncertainty
-                "cbf_std_map", "cbf_cv_map",
-                "cbf_ci95_lower_map", "cbf_ci95_upper_map",
+                "cbf_std_map",
                 # Parametric diagnostics + leakage
                 "k2_map", "parametric_r2_map", "fallback_mask",
                 "preload_qc", "preprocessing_stats", "aif_qc",
@@ -1268,17 +1262,12 @@ def init_dsc_datasinks_wf(
             name=f"{spec.in_attr}_meta",
         )
         is_nlls = inference.lower() == "nlls"
-        if spec.in_attr == "cbf_std_map":
-            desc_value = "dscStandardError" if is_nlls else "dscPosteriorSD"
-            description = "CBF parameter standard error" if is_nlls else "CBF posterior standard deviation"
-        elif spec.in_attr == "cbf_cv_map":
-            desc_value = "dscRelativeStandardError" if is_nlls else "dscPosteriorCV"
-            description = "CBF relative standard error" if is_nlls else "CBF posterior coefficient of variation"
-        else:
-            bound = "lower" if "lower" in spec.in_attr else "upper"
-            interval = "ConfidenceInterval95" if is_nlls else "CredibleInterval95"
-            desc_value = f"dsc{interval}{bound}"
-            description = f"CBF 95% {'confidence' if is_nlls else 'credible'} interval {bound} bound"
+        desc_value = "dscStandardError" if is_nlls else "dscPosteriorSD"
+        description = (
+            "CBF parameter standard error"
+            if is_nlls
+            else "CBF posterior standard deviation"
+        )
         bayes_meta.inputs.description = description
         bayes_meta.inputs.map_key = spec.map_key
         bayes_meta.inputs.units = spec.units

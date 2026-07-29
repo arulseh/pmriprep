@@ -218,24 +218,6 @@
     ],
     [
       "dsc_wf",
-      "outputnode.cbf_ci95_lower_map",
-      "dsc_datasinks_wf",
-      "inputnode.cbf_ci95_lower_map"
-    ],
-    [
-      "dsc_wf",
-      "outputnode.cbf_ci95_upper_map",
-      "dsc_datasinks_wf",
-      "inputnode.cbf_ci95_upper_map"
-    ],
-    [
-      "dsc_wf",
-      "outputnode.cbf_cv_map",
-      "dsc_datasinks_wf",
-      "inputnode.cbf_cv_map"
-    ],
-    [
-      "dsc_wf",
       "outputnode.cbf_std_map",
       "dsc_datasinks_wf",
       "inputnode.cbf_std_map"

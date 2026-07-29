@@ -93,63 +93,11 @@ def build_uncertainty_provenance(
             "signal_to_concentration_conversion",
         ]
 
-    key_lower = map_key.lower()
-    if "cv" in key_lower or "relative_standard_error" in key_lower:
-        statistic = "coefficient_of_variation"
-    elif "ci95" in key_lower or "interval95" in key_lower:
-        if normalized_inference == "nlls":
-            statistic = "confidence_interval_bound"
-        else:
-            statistic = "credible_interval_bound"
-    else:
-        statistic = (
-            "parameter_standard_error"
-            if normalized_inference == "nlls"
-            else "posterior_standard_deviation"
-        )
+    statistic = (
+        "parameter_standard_error"
+        if normalized_inference == "nlls"
+        else "posterior_standard_deviation"
+    )
     metadata["UncertaintyStatistic"] = statistic
-
-    if statistic == "coefficient_of_variation":
-        metadata["CoefficientOfVariationConstruction"] = (
-            "standard_error_divided_by_absolute_estimate"
-            if normalized_inference == "nlls"
-            else "posterior_standard_deviation_divided_by_absolute_estimate"
-        )
-
-    if statistic == "confidence_interval_bound":
-        metadata["ConfidenceIntervalProbability"] = 0.95
-        metadata["ConfidenceIntervalConstruction"] = (
-            "estimate_plus_or_minus_1.96_parameter_standard_errors"
-        )
-        metadata["ConfidenceIntervalApproximation"] = "Wald_local_linearization"
-        if modality.upper() == "DCE":
-            metadata["ConfidenceIntervalBounding"] = "parameter_bounds"
-        elif modality.upper() == "DSC":
-            metadata["ConfidenceIntervalBounding"] = "nonnegative_lower_bound"
-
-    if statistic == "credible_interval_bound":
-        metadata["CredibleIntervalProbability"] = 0.95
-        if normalized_inference == "mcmc":
-            construction = "posterior_sample_quantiles"
-        elif normalized_inference == "map":
-            construction = (
-                "laplace_transformed_mean_plus_or_minus_1.96_transformed_"
-                "posterior_standard_deviations_mapped_to_natural_space_"
-                "or_full_parameter_bounds_fallback"
-            )
-        else:
-            construction = (
-                "transformed_mean_plus_or_minus_1.96_transformed_posterior_"
-                "standard_deviations_mapped_to_natural_space"
-            )
-        metadata["CredibleIntervalConstruction"] = construction
-        if modality.upper() == "DCE":
-            metadata["CredibleIntervalBounding"] = "parameter_bounds"
-        elif modality.upper() == "DSC":
-            metadata["CredibleIntervalBounding"] = (
-                "nonnegative_lower_bound"
-                if normalized_inference == "mcmc"
-                else "parameter_bounds"
-            )
 
     return metadata

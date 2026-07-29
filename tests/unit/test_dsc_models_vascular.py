@@ -72,6 +72,10 @@ class TestDSCFitResult:
         result_without = DSCFitResult()
         assert result_without.has_uncertainty() is False
 
+    def test_missing_uncertainty_is_not_zero(self) -> None:
+        """An unavailable uncertainty must not imply infinite precision."""
+        assert np.isnan(DSCFitResult().get_uncertainty("cbf"))
+
     def test_passes_convergence(self) -> None:
         """passes_convergence checks rhat, ess, and converged flag."""
         good_result = DSCFitResult(

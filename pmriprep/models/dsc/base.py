@@ -176,7 +176,7 @@ class DSCFitResult:
         """
         return self.parameters.get(name, default)
 
-    def get_uncertainty(self, name: str, default: float = 0.0) -> float:
+    def get_uncertainty(self, name: str, default: float = float("nan")) -> float:
         """Get uncertainty (std) for a parameter.
 
         Parameters

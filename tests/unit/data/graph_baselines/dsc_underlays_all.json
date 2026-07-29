@@ -218,24 +218,6 @@
     ],
     [
       "compute_maps",
-      "out_cbf_ci95_lower",
-      "outputnode",
-      "cbf_ci95_lower_map"
-    ],
-    [
-      "compute_maps",
-      "out_cbf_ci95_upper",
-      "outputnode",
-      "cbf_ci95_upper_map"
-    ],
-    [
-      "compute_maps",
-      "out_cbf_cv",
-      "outputnode",
-      "cbf_cv_map"
-    ],
-    [
-      "compute_maps",
       "out_cbf_std",
       "outputnode",
       "cbf_std_map"
@@ -2613,9 +2595,6 @@
     "beta_map",
     "brain_mask_dsc",
     "brain_mask_filmstrip",
-    "cbf_ci95_lower_map",
-    "cbf_ci95_upper_map",
-    "cbf_cv_map",
     "cbf_std_map",
     "cnr_map",
     "cth_map",

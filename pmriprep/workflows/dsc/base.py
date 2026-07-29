@@ -760,8 +760,8 @@ def init_dsc_deconvolution_wf(
         Quality maps.
     out_alpha, out_beta, out_cth
         Vascular-model parameters (undefined for SVD methods).
-    out_cbf_std, out_cbf_cv, out_cbf_ci95_lower, out_cbf_ci95_upper
-        Bayesian uncertainty maps (parametric methods only).
+    out_cbf_std
+        Conditional CBF uncertainty map (parametric methods only).
     out_parametric_r2, out_fallback_mask
         Parametric-fit diagnostics (CPI / vascular only).
     out_qc_fit_data, qc_metrics
@@ -814,9 +814,6 @@ def init_dsc_deconvolution_wf(
                 "out_beta",
                 "out_cth",
                 "out_cbf_std",
-                "out_cbf_cv",
-                "out_cbf_ci95_lower",
-                "out_cbf_ci95_upper",
                 "out_parametric_r2",
                 "out_fallback_mask",
                 "out_qc_fit_data",
@@ -873,9 +870,6 @@ def init_dsc_deconvolution_wf(
             ("out_beta", "out_beta"),
             ("out_cth", "out_cth"),
             ("out_cbf_std", "out_cbf_std"),
-            ("out_cbf_cv", "out_cbf_cv"),
-            ("out_cbf_ci95_lower", "out_cbf_ci95_lower"),
-            ("out_cbf_ci95_upper", "out_cbf_ci95_upper"),
             ("out_parametric_r2", "out_parametric_r2"),
             ("out_fallback_mask", "out_fallback_mask"),
             ("out_qc_fit_data", "out_qc_fit_data"),
@@ -1944,11 +1938,8 @@ def init_dsc_preproc_wf(
                 "alpha_map",
                 "beta_map",
                 "cth_map",
-                # Bayesian uncertainty maps (optional)
+                # Conditional parametric CBF uncertainty map (optional)
                 "cbf_std_map",
-                "cbf_cv_map",
-                "cbf_ci95_lower_map",
-                "cbf_ci95_upper_map",
                 # Parametric-fit diagnostics (CPI/Vascular only)
                 "parametric_r2_map",
                 "fallback_mask",
@@ -2690,12 +2681,9 @@ def init_dsc_preproc_wf(
             ("outputnode.out_beta", "beta_map"),
             ("outputnode.out_cth", "cth_map"),
         ]),
-        # Bayesian uncertainty maps (only for parametric methods: cpi, vascular)
+        # Conditional CBF uncertainty (only for parametric methods: cpi, vascular)
         (deconvolution_wf, outputnode, [
             ("outputnode.out_cbf_std", "cbf_std_map"),
-            ("outputnode.out_cbf_cv", "cbf_cv_map"),
-            ("outputnode.out_cbf_ci95_lower", "cbf_ci95_lower_map"),
-            ("outputnode.out_cbf_ci95_upper", "cbf_ci95_upper_map"),
         ]),
         # Parametric-fit diagnostics (CPI/Vascular only;
         # undefined for SVD methods)

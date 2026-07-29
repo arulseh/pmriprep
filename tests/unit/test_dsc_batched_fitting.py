@@ -1427,6 +1427,47 @@ class TestCPIPCHIPConsistency:
         assert "cbv_ci95_lower" not in out
         assert "cbv_ci95_upper" not in out
 
+    def test_readout_marks_missing_cbf_uncertainty_undefined(
+        self, dsc_aif_and_time
+    ):
+        """A populated uncertainty dictionary without CBF must produce NaN."""
+        import types
+
+        from pmriprep.interfaces.dsc_compute import ComputeDSCMaps
+
+        _aif, tp = dsc_aif_and_time
+        dt = float(tp[1] - tp[0])
+        model = CPIModel(
+            n_control_points=6, n_acquisition_frames=len(tp), dt=dt,
+        )
+        names = model.get_parameter_names()
+        params = np.array([[0.1] + [0.8] * 6])
+        result = types.SimpleNamespace(
+            params={name: params[:, j] for j, name in enumerate(names)},
+            uncertainties={"noise_std": np.array([0.01])},
+            r_squared=np.ones(1),
+            converged=np.ones(1, dtype=bool),
+        )
+        mask_coords = (
+            np.zeros(1, dtype=int),
+            np.zeros(1, dtype=int),
+            np.zeros(1, dtype=int),
+        )
+
+        out = ComputeDSCMaps._batched_result_to_voxel_dicts(
+            None,
+            result,
+            mask_coords,
+            "cpi",
+            1,
+            dt,
+            model.control_point_times,
+            tp,
+            model.terminal_time,
+        )[0]
+
+        assert np.isnan(out["cbf_std"])
+
     def test_vascular_readout_does_not_assume_cbf_mtt_independence(
         self, dsc_aif_and_time
     ):

@@ -176,14 +176,9 @@ def test_nlls_uncertainty_uses_frequentist_derivative_names(tmp_path: Path) -> N
         subject_id="01",
         session_id=None,
         inference="nlls",
-        present_inputs={"cbf_std_map", "cbf_cv_map", "cbf_ci95_lower_map"},
+        present_inputs={"cbf_std_map"},
     )
     assert workflow.get_node("cbf_std_map_sink").inputs.desc == "dscStandardError"
-    assert workflow.get_node("cbf_cv_map_sink").inputs.desc == "dscRelativeStandardError"
-    assert (
-        workflow.get_node("cbf_ci95_lower_map_sink").inputs.desc
-        == "dscConfidenceInterval95lower"
-    )
 
 
 def test_parametric_provenance_carries_fit_health_denominators() -> None:
@@ -447,7 +442,6 @@ class TestWriterAifBlockPresentOnAllMaps:
             "beta_map": _write_dummy_nifti(tmp_path / "beta.nii.gz"),
             "cth_map": _write_dummy_nifti(tmp_path / "cth.nii.gz"),
             "cbf_std_map": _write_dummy_nifti(tmp_path / "cbf_std.nii.gz"),
-            "cbf_cv_map": _write_dummy_nifti(tmp_path / "cbf_cv.nii.gz"),
             "auc_diff_map": _write_dummy_nifti(tmp_path / "auc_diff.nii.gz"),
             "parametric_r2_map": _write_dummy_nifti(tmp_path / "parametric_r2.nii.gz"),
             "config_dict": {"inference": "svb"},
@@ -460,7 +454,6 @@ class TestWriterAifBlockPresentOnAllMaps:
             "dscBeta_stat": "s",
             "dscCth_stat": "s",
             "dscPosteriorSDCbf_stat": "1/min",
-            "dscPosteriorCVCbf_stat": "1",
             "dscLeakageAuc_stat": "arbitrary",
             "dscParametricRsquared_stat": "1",
         }
@@ -477,8 +470,6 @@ class TestWriterAifBlockPresentOnAllMaps:
             == "synchronous_batched_backtracking"
         )
         assert uncertainty_meta["SpatiallyRegularizedParameters"] == ["cbf"]
-        cv_meta = _load_sidecar(derivatives, "dscPosteriorCVCbf_stat")
-        assert cv_meta["UncertaintyStatistic"] == "coefficient_of_variation"
 
     def test_synthetic_template_flags(self, minimal_inputs, tmp_path) -> None:
         qc = {

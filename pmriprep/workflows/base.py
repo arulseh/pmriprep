@@ -1658,8 +1658,7 @@ def _connect_master_dsc_datasinks(
     if dsc_method in ("cpi", "vascular"):
         dsc_present |= {"parametric_r2_map", "fallback_mask"}
         dsc_present |= {
-            "cbf_std_map", "cbf_cv_map",
-            "cbf_ci95_lower_map", "cbf_ci95_upper_map",
+            "cbf_std_map",
         }
     # Vascular method only (alpha/beta/cth params)
     if dsc_method == "vascular":
@@ -1795,9 +1794,6 @@ def _connect_master_dsc_datasinks(
             ("outputnode.cth_map", "inputnode.cth_map"),
             # Inference-specific CBF uncertainty maps
             ("outputnode.cbf_std_map", "inputnode.cbf_std_map"),
-            ("outputnode.cbf_cv_map", "inputnode.cbf_cv_map"),
-            ("outputnode.cbf_ci95_lower_map", "inputnode.cbf_ci95_lower_map"),
-            ("outputnode.cbf_ci95_upper_map", "inputnode.cbf_ci95_upper_map"),
             # Parametric-fit diagnostics (CPI/Vascular only)
             ("outputnode.parametric_r2_map", "inputnode.parametric_r2_map"),
             ("outputnode.fallback_mask", "inputnode.fallback_mask"),
