@@ -976,6 +976,9 @@ def build_dsc_map_sidecar(
         at_bound_fraction = qc_metrics.get("cth_alpha_at_bound_fraction")
         if at_bound_fraction is not None:
             sidecar["AlphaAtBoundFraction"] = float(at_bound_fraction)
+            sidecar["AlphaAtBoundFractionDenominator"] = (
+                "accepted vascular fits"
+            )
     apply_aif_sidecar(sidecar, map_key, qc_metrics)
     return sidecar
 

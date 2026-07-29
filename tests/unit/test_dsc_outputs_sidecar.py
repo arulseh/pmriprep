@@ -467,6 +467,10 @@ class TestWriterAifBlockPresentOnAllMaps:
         assert cth_meta["Formula"] == "beta * sqrt(alpha) = MTT / sqrt(alpha)"
         assert "oSVD" in cth_meta["UndefinedValue"]
         assert cth_meta["AlphaAtBoundFraction"] == pytest.approx(0.125)
+        assert (
+            cth_meta["AlphaAtBoundFractionDenominator"]
+            == "accepted vascular fits"
+        )
 
         uncertainty_meta = _load_sidecar(derivatives, "dscPosteriorSDCbf_stat")
         assert uncertainty_meta["EstimationMethod"] == "svb"
