@@ -1,11 +1,14 @@
 """Tests for DCE spatial-smoothing policy."""
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import nibabel as nib
 import numpy as np
 
-from pmriprep.workflows.dce._helpers import _derive_smoothed_kep
+from scipy.ndimage import gaussian_filter
+
+from pmriprep.workflows.dce._helpers import _derive_smoothed_kep, _smooth_dce_maps
 from pmriprep.workflows.dce.base import init_dce_smoothing_wf
 from pmriprep.workflows.dce.datasinks import (
     _build_dce_smoothed_meta,
@@ -74,7 +77,40 @@ def test_smoothed_metadata_separates_smoothing_from_output_masking() -> None:
         assert metadata["SmoothingType"] == "Gaussian"
         assert metadata["SmoothingFWHM"] == 3.0
         assert metadata["OutputMaskApplied"] is True
+        assert metadata["SmoothingSupport"] == "finite source voxels within the brain mask"
+        assert metadata["InvalidSupportPreserved"] is True
         assert "SmoothingMasked" not in metadata
+
+
+def test_dce_smoothing_preserves_signed_values_and_invalid_support(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Signed SER survives smoothing while failed-fit holes remain undefined."""
+    monkeypatch.chdir(tmp_path)
+    data = np.zeros((7, 7, 7), dtype=np.float32)
+    brain = np.zeros_like(data)
+    brain[2:5, 2:5, 2:5] = 1.0
+    data[brain > 0] = -2.0
+    data[3, 3, 3] = np.nan
+    ser_file = _save_map(tmp_path / "ser.nii.gz", data)
+    mask_file = _save_map(tmp_path / "mask.nii.gz", brain)
+
+    def _fake_fslmaths(command: list[str], **_kwargs) -> SimpleNamespace:
+        assert command[0] == "fslmaths"
+        source = nib.load(command[1])
+        sigma = float(command[command.index("-s") + 1])
+        output = gaussian_filter(source.get_fdata(), sigma=sigma)
+        nib.save(nib.Nifti1Image(output, source.affine, source.header), command[-1])
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr("subprocess.run", _fake_fslmaths)
+    output = _smooth_dce_maps({"ser": ser_file}, mask_file, 3.0)["ser"]
+    smoothed = nib.load(output).get_fdata()
+
+    assert np.isnan(smoothed[3, 3, 3])
+    assert np.allclose(smoothed[(brain > 0) & np.isfinite(data)], -2.0)
+    assert np.all(smoothed[brain == 0] == 0.0)
 
 
 def test_smoothed_metadata_limits_input_compartment_to_pk_maps() -> None:

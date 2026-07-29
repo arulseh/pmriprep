@@ -542,6 +542,8 @@ def _build_dce_smoothed_meta(
         float(fwhm_mm) if str(fwhm_mm).replace(".", "").isdigit() else fwhm_mm
     )
     out["SmoothingType"] = "Gaussian"
+    out["SmoothingSupport"] = "finite source voxels within the brain mask"
+    out["InvalidSupportPreserved"] = True
     out["OutputMaskApplied"] = True
     out["IntendedFor"] = "visualization"
     out["Note"] = "Use non-smoothed maps for quantitative ROI analysis"
