@@ -807,19 +807,19 @@ def _build_signed_auc_cbv_provenance(
     normalized: bool = False,
     include_summary: bool = True,
 ) -> dict[str, object]:
-    """Describe signed AUC-CBV values and expose their in-brain frequency."""
+    """Describe AUC-CBV validity handling and raw negative-estimate frequency."""
     provenance: dict[str, object] = {
-        "ValueDomain": "signed",
-        "NegativeValuesRetained": True,
+        "ValueDomain": "nonnegative_or_NaN",
+        "NegativeValuesRetained": False,
+        "NegativeValueHandling": "encoded_as_NaN",
         "NegativeValueInterpretation": (
             "Non-physiological estimator residuals from noise, baseline error, "
-            "motion, or leakage correction; values are not clipped to avoid "
-            "positive bias."
+            "motion, or leakage correction"
         ),
     }
     if normalized:
         provenance["NormalizationReferenceDomain"] = (
-            "finite_signed_NAWM_with_positive_median_required"
+            "finite_nonnegative_NAWM_with_positive_median_required"
         )
     if not include_summary or not isinstance(qc_metrics, dict):
         return provenance
@@ -836,7 +836,10 @@ def _build_signed_auc_cbv_provenance(
         if value is not None:
             provenance[target] = value
     if "NegativeInBrainVoxelFraction" in provenance:
-        provenance["NegativeFractionDenominator"] = "finite_in_brain_voxels"
+        provenance["NegativeFractionSource"] = "pre_sanitization_AUC_CBV_estimator"
+        provenance["NegativeFractionDenominator"] = (
+            "finite_pre_sanitization_in_brain_voxels"
+        )
     return provenance
 
 

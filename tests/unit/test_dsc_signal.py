@@ -360,6 +360,24 @@ class TestNormalizeCBV:
         with pytest.raises(ValueError, match="NAWM mask shape"):
             normalize_cbv(cbv, nawm_mask_file=mask_path)
 
+    def test_file_normalization_rejects_mismatched_mask_affine(self, tmp_path) -> None:
+        """Same-shaped NAWM data on another grid cannot define the denominator."""
+        import nibabel as nib
+
+        from pmriprep.utils.dsc_signal import normalize_cbv_from_files
+
+        cbv_path = tmp_path / "cbv.nii.gz"
+        mask_path = tmp_path / "nawm.nii.gz"
+        output_path = tmp_path / "ncbv.nii.gz"
+        data = np.ones((3, 3, 3), dtype=np.float64)
+        nib.Nifti1Image(data, np.eye(4)).to_filename(cbv_path)
+        shifted = np.eye(4)
+        shifted[0, 3] = 1.0
+        nib.Nifti1Image(data, shifted).to_filename(mask_path)
+
+        with pytest.raises(ValueError, match="NAWM mask affine"):
+            normalize_cbv_from_files(cbv_path, output_path, nawm_mask_file=mask_path)
+
 
 class TestGetBaselineSignal:
     """Tests for get_baseline_signal."""

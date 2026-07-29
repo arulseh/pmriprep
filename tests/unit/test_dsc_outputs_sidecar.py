@@ -608,17 +608,22 @@ class TestSignedAucCbvProvenance:
         )["SignedEstimator"]
         assert "NormalizationReferenceDomain" not in auc_signed
         assert ncbv_signed["NormalizationReferenceDomain"] == (
-            "finite_signed_NAWM_with_positive_median_required"
+            "finite_nonnegative_NAWM_with_positive_median_required"
         )
 
         for signed in (auc_signed, ncbv_signed):
-            assert signed["ValueDomain"] == "signed"
-            assert signed["NegativeValuesRetained"] is True
+            assert signed["ValueDomain"] == "nonnegative_or_NaN"
+            assert signed["NegativeValuesRetained"] is False
+            assert signed["NegativeValueHandling"] == "encoded_as_NaN"
             assert signed["FiniteInBrainVoxelCount"] == 100
             assert signed["NegativeInBrainVoxelCount"] == 7
             assert signed["NegativeInBrainVoxelFraction"] == pytest.approx(0.07)
             assert (
-                signed["NegativeFractionDenominator"] == "finite_in_brain_voxels"
+                signed["NegativeFractionDenominator"]
+                == "finite_pre_sanitization_in_brain_voxels"
+            )
+            assert signed["NegativeFractionSource"] == (
+                "pre_sanitization_AUC_CBV_estimator"
             )
 
     def test_smoothed_auc_cbv_and_ncbv_retain_policy(
@@ -633,8 +638,8 @@ class TestSignedAucCbvProvenance:
 
         for suffix in ("dscRelAUCSm3Cbv_stat", "dscNawmNormSm3Cbv_stat"):
             signed = _load_sidecar(derivatives, suffix)["SignedEstimator"]
-            assert signed["ValueDomain"] == "signed"
-            assert signed["NegativeValuesRetained"] is True
+            assert signed["ValueDomain"] == "nonnegative_or_NaN"
+            assert signed["NegativeValuesRetained"] is False
             # The available count describes the unsmoothed source map and must
             # not be mislabeled as a measurement of the smoothed derivative.
             assert "NegativeInBrainVoxelFraction" not in signed

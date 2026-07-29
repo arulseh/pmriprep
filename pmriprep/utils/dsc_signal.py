@@ -824,8 +824,9 @@ def normalize_cbv(
             # Get CBV values within NAWM
             cbv_nawm = cbv_map[mask_bool]
 
-            # Preserve the signed estimator distribution in the reference.
-            # Censoring negative residuals would bias the median upward.
+            # Production hemodynamic maps encode non-physical negative
+            # estimates as NaN, so only their finite values define the
+            # normalization reference.
             cbv_nawm_valid = cbv_nawm[np.isfinite(cbv_nawm)]
 
             if len(cbv_nawm_valid) > 0:
@@ -915,6 +916,13 @@ def normalize_cbv_from_files(
     # Load CBV map
     cbv_img = nib.load(cbv_path)
     cbv_data = cbv_img.get_fdata()  # type: ignore[attr-defined]
+
+    if nawm_mask_file is not None:
+        nawm_path = Path(nawm_mask_file)
+        if nawm_path.exists():
+            nawm_img = nib.load(nawm_path)
+            if not np.allclose(nawm_img.affine, cbv_img.affine):  # type: ignore[attr-defined]
+                raise ValueError("NAWM mask affine does not match perfusion map affine")
 
     # Load brain mask if provided
     brain_mask: Optional[npt.NDArray[np.bool_]] = None
