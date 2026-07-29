@@ -926,29 +926,27 @@ def test_save_ancillary_maps_preserves_optional_maps_and_masking(
     np.testing.assert_allclose(nib.load(results["out_residues"]).get_fdata(), residues)
 
 
-def test_save_ancillary_maps_always_emits_zero_k2_fallback(
+def test_save_ancillary_maps_rejects_missing_k2(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Absent optional maps still emit the established all-zero K2 output."""
+    """A missing upstream K2 map cannot be represented as measured zero."""
     monkeypatch.chdir(tmp_path)
     source = _write_image(tmp_path / "concentration.nii.gz", np.ones((2, 1, 1), dtype=np.int16))
     source_img = nib.load(source)
     interface = ComputeDSCMaps(concentration_file=source)
 
-    results = interface._save_ancillary_maps(
-        k2_map_path=None,
-        delay=None,
-        cth=None,
-        residues=np.ones((2, 1, 1, 2)),
-        save_residue=False,
-        mask_bool=np.ones((2, 1, 1), dtype=bool),
-        spatial_shape=(2, 1, 1),
-        affine=source_img.affine,
-        header=source_img.header,
-    )
-
-    assert set(results) == {"out_k2"}
-    np.testing.assert_array_equal(nib.load(results["out_k2"]).get_fdata(), 0.0)
+    with pytest.raises(RuntimeError, match="produced no coefficient map"):
+        interface._save_ancillary_maps(
+            k2_map_path=None,
+            delay=None,
+            cth=None,
+            residues=np.ones((2, 1, 1, 2)),
+            save_residue=False,
+            mask_bool=np.ones((2, 1, 1), dtype=bool),
+            spatial_shape=(2, 1, 1),
+            affine=source_img.affine,
+            header=source_img.header,
+        )
 
 
 @pytest.mark.parametrize("method", ["vascular", "cpi"])

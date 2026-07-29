@@ -239,7 +239,7 @@ _STRUCTURAL_UNDERLAYS: tuple[DSCAnatSpec, ...] = (
 _DSC_OUTPUT_KEYS: frozenset[str] = frozenset(
     [m.map_key for m in _CORE_MAPS + _REL_MAPS + _OPTIONAL_MAPS
      + _NORMALIZED_MAPS + _VASCULAR_MAPS + _UNCERTAINTY_MAPS]
-    + ["k2", "parametric_r2", "fallback",
+    + ["parametric_r2", "fallback",
        "rel_cbf", "rel_cbv", "ncbf", "ncbv", "mtt"]  # smoothed names
 )
 
@@ -692,20 +692,6 @@ def _split_smooth_dict(
     return out_files, out_descs, out_keys, out_map_suffixes, out_desc_prefixes, out_units
 
 
-def _build_k2_extra(preload_qc: dict | None = None) -> dict:
-    """Compose the K2 sidecar's ``extra`` dict from ``preload_qc``."""
-    extra: dict[str, object] = {"LeakageCorrectionMethod": "bsw"}
-    if isinstance(preload_qc, dict):
-        method = preload_qc.get("k2_method")
-        if method:
-            extra["LeakageCorrectionMethod"] = str(method)
-        kep = preload_qc.get("kep_used")
-        if kep is not None:
-            extra["KepUsed"] = kep
-            extra["KepUnits"] = "1/s"
-    return extra
-
-
 def _build_parametric_extra(qc_metrics: dict | None = None) -> dict:
     """Build parametric-fit method, fallback, and denominator provenance."""
     extra: dict[str, object] = {"FallbackThreshold": 0.5}
@@ -1104,8 +1090,8 @@ def init_dsc_datasinks_wf(
                 "cth_map",
                 # Inference-specific CBF uncertainty
                 "cbf_std_map",
-                # Parametric diagnostics + leakage
-                "k2_map", "parametric_r2_map", "fallback_mask",
+                # Parametric diagnostics
+                "parametric_r2_map", "fallback_mask",
                 "preload_qc", "preprocessing_stats", "aif_qc",
                 "motion_qc", "aif_metrics",
                 # Smoothing
@@ -1282,73 +1268,6 @@ def init_dsc_datasinks_wf(
             (bayes_meta, b_sink, [("meta_dict", "meta_dict")]),
         ])
         sink_outputs.append((b_sink, "out_file"))
-
-    # --- K2 leakage map ---
-    if "k2_map" in present:
-        # K2 sidecar needs the preload-derived method + kep details from
-        # ``preload_qc``; build extras via a Function node so they reflect
-        # the actual run rather than a hardcoded "bsw" default.
-        k2_extra_node = pe.Node(
-            niu.Function(
-                input_names=["preload_qc"],
-                output_names=["extra"],
-                function=_build_k2_extra,
-            ),
-            name="k2_extra",
-        )
-        workflow.connect(inputnode, "preload_qc", k2_extra_node, "preload_qc")
-        k2_meta = pe.Node(
-            niu.Function(
-                input_names=[
-                    "base", "description", "map_key", "qc_metrics", "units",
-                    "extra", "lesion_stats_json", "user_lesion_stats_json",
-                    "roi_stats_json",
-                ],
-                output_names=["meta_dict"],
-                function=_build_map_meta,
-            ),
-            name="k2_meta",
-        )
-        k2_meta.inputs.description = "K2 leakage correction map"
-        k2_meta.inputs.map_key = "k2"
-        k2_meta.inputs.units = "1/s"
-        workflow.connect([
-            (base_perf, k2_meta, [("meta_dict", "base")]),
-            (inputnode, k2_meta, [
-                ("qc_metrics", "qc_metrics"),
-                ("lesion_stats_json", "lesion_stats_json"),
-                ("user_lesion_stats_json", "user_lesion_stats_json"),
-                ("roi_stats_json", "roi_stats_json"),
-            ]),
-            (k2_extra_node, k2_meta, [("extra", "extra")]),
-        ])
-        k2_sink = pe.Node(
-            niu.Function(
-                input_names=[
-                    "in_file", "output_dir", "subject", "session",
-                    "desc", "suffix", "meta_dict", "datatype",
-                    "bids_suffix",
-                ],
-                output_names=["out_file"],
-                function=_copy_perf_map,
-            ),
-            name="k2_sink",
-        )
-        k2_sink.inputs.desc = "dsc"
-        k2_sink.inputs.suffix = "k2"
-        k2_sink.inputs.datatype = "perf"
-        k2_sink.inputs.bids_suffix = "stat"
-        workflow.connect([
-            (inputnode, k2_sink, [
-                ("output_dir", "output_dir"),
-                ("subject_id", "subject"),
-                ("session_id", "session"),
-                ("k2_map", "in_file"),
-            ]),
-            (k2_meta, k2_sink, [("meta_dict", "meta_dict")]),
-        ])
-        sink_outputs.append((k2_sink, "out_file"))
-
     # --- Parametric R2 + fallback mask ---
     # R2 is preserved on fallback voxels, while their CBF/CBV/MTT/Tmax values
     # come from oSVD and their parametric uncertainty maps are undefined.

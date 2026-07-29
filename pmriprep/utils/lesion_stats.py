@@ -213,12 +213,10 @@ class LesionStatisticsResult:
 # compute_map_statistics; values are in the map's native units.
 #   Ktrans:  >0.01 min⁻¹ pipeline noise floor
 #   vp:      conservative noise floor for plasma fraction
-#   k2:      >0.001 s⁻¹ pipeline noise floor
 PPP_THRESHOLDS: Dict[str, float] = {
     "Ktrans": 0.01,
     "ktrans": 0.01,  # accept either casing
     "vp": 0.001,
-    "k2": 0.001,
 }
 
 

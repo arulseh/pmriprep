@@ -415,16 +415,6 @@ class TestDSCRegression:
         assert sidecar["TemplateAIFUsage"] == "ratio_defensible"
         assert sidecar["PerfusionProcessing"]["AIF"]["Source"] == "measured"
 
-    def test_dsc_k2_independent(self) -> None:
-        from pmriprep.utils.aif_provenance import apply_aif_sidecar
-
-        sidecar: dict = {}
-        qc = {"aif_detection": {"detection_method": "atlas_strict", "quality_score": 0.8}}
-        apply_aif_sidecar(sidecar, "k2", qc, modality="DSC")
-        assert sidecar["AIFDependent"] is False
-        assert sidecar["TemplateAIFUsage"] == "safe"
-
-
 class TestPublicArtifactSchema:
     def test_dce_prefers_final_emitted_curve_metrics(self) -> None:
         from pmriprep.utils.aif_provenance import build_aif_provenance_block

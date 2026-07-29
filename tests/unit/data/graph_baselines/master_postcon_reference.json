@@ -674,12 +674,6 @@
     ],
     [
       "dsc_wf",
-      "outputnode.k2_map",
-      "dsc_datasinks_wf",
-      "inputnode.k2_map"
-    ],
-    [
-      "dsc_wf",
       "outputnode.lesion_mask_dsc",
       "dsc_datasinks_wf",
       "inputnode.lesion_mask_dsc"

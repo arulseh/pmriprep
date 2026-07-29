@@ -200,30 +200,6 @@
     ],
     [
       "compute_maps",
-      "out_k2",
-      "lesion_stats",
-      "k2_map"
-    ],
-    [
-      "compute_maps",
-      "out_k2",
-      "outputnode",
-      "k2_map"
-    ],
-    [
-      "compute_maps",
-      "out_k2",
-      "roi_stats",
-      "k2_map"
-    ],
-    [
-      "compute_maps",
-      "out_k2",
-      "user_lesion_stats",
-      "k2_map"
-    ],
-    [
-      "compute_maps",
       "out_mtt",
       "build_hemo_dict",
       "mtt"
@@ -2304,7 +2280,6 @@
     "fallback_mask",
     "flair_in_dsc",
     "flair_postcon_in_dsc",
-    "k2_map",
     "lesion_mask_dsc",
     "lesion_stats_json",
     "motion_params",

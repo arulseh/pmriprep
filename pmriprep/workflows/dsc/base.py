@@ -998,7 +998,7 @@ def init_dsc_smoothing_wf(
     """Build the DSC perfusion-map smoothing sub-workflow.
 
     Spatially smooths the intensive hemodynamic maps (MTT, rel-CBF, rel-CBV,
-    nCBF, nCBV) within the brain mask. Timing / leakage maps (Tmax, TTP, PSR, K2,
+    nCBF, nCBV) within the brain mask. Timing and recovery maps (Tmax, TTP, PSR,
     auc_diff) are deliberately NOT smoothed. The orchestrator instantiates this
     sub-workflow only when ``config.smooth_fwhm > 0``.
 
@@ -1119,8 +1119,6 @@ def init_dsc_lesion_stats_wf(
         DSC perfusion and transit-time maps (shared by all three nodes).
     psr_map
         Percentage signal recovery.
-    k2_map
-        Leakage-correction parameter map.
     ncbv_map, ncbf_map
         Normalized CBV / CBF maps.
     nawm_mask
@@ -1155,7 +1153,6 @@ def init_dsc_lesion_stats_wf(
                 "tmax_map",
                 "psr_map",
                 "ttp_map",
-                "k2_map",
                 "ncbv_map",
                 "ncbf_map",
                 "nawm_mask",
@@ -1199,7 +1196,6 @@ def init_dsc_lesion_stats_wf(
         ("tmax_map", "tmax_map"),
         ("psr_map", "psr_map"),
         ("ttp_map", "ttp_map"),
-        ("k2_map", "k2_map"),
         ("ncbv_map", "ncbv_map"),
         ("ncbf_map", "ncbf_map"),
         ("nawm_mask", "nawm_mask"),
@@ -1786,8 +1782,6 @@ def init_dsc_preproc_wf(
         Path to detected/used AIF curve.
     aif_mask
         Path to AIF detection mask.
-    k2_map
-        Path to K2 leakage correction map.
     ncbv_map, ncbf_map
         Normalized CBV/CBF maps (if NAWM mask available).
     smooth_quant_indep, smooth_rel, smooth_abs
@@ -1899,8 +1893,6 @@ def init_dsc_preproc_wf(
                 "aif_curve",
                 "aif_mask",
                 "aif_qc",
-                # Leakage correction
-                "k2_map",
                 # Normalized maps
                 "ncbv_map",
                 "ncbf_map",
@@ -2462,7 +2454,6 @@ def init_dsc_preproc_wf(
             ("outputnode.out_tmax", "inputnode.tmax_map"),
             ("outputnode.out_psr", "inputnode.psr_map"),
             ("outputnode.out_ttp", "inputnode.ttp_map"),
-            ("outputnode.out_k2", "inputnode.k2_map"),
         ]),
         (normalization_wf, lesion_stats_wf, [
             ("outputnode.ncbv_file", "inputnode.ncbv_map"),
@@ -2593,8 +2584,6 @@ def init_dsc_preproc_wf(
             ("outputnode.out_aif_mask", "aif_mask"),
             ("outputnode.qc_metrics", "aif_qc"),
         ]),
-        # Leakage correction (use recomputed K2 from compute_maps when baseline differs)
-        (deconvolution_wf, outputnode, [("outputnode.out_k2", "k2_map")]),
         # Normalized CBV and CBF
         (normalization_wf, outputnode, [("outputnode.ncbv_file", "ncbv_map")]),
         (normalization_wf, outputnode, [("outputnode.ncbf_file", "ncbf_map")]),

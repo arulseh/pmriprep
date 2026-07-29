@@ -1643,7 +1643,6 @@ def _connect_master_dsc_datasinks(
         "ttp_map", "cnr_map", "tsnr_map",
         "rel_cbf_map", "rel_cbv_map", "rel_cbv_auc_map",
         "ncbv_map", "ncbf_map",
-        "k2_map",
         "dsc_moco", "dsc_mean", "motion_params",
         "aif_mask",
         "brain_mask_dsc",
@@ -1784,8 +1783,6 @@ def _connect_master_dsc_datasinks(
             # Parametric-fit diagnostics (CPI/Vascular only)
             ("outputnode.parametric_r2_map", "inputnode.parametric_r2_map"),
             ("outputnode.fallback_mask", "inputnode.fallback_mask"),
-            # Leakage correction
-            ("outputnode.k2_map", "inputnode.k2_map"),
             ("outputnode.preload_qc", "inputnode.preload_qc"),
             # Phase 2/3 BIDS cleanup: in-memory dicts feeding the
             # preproc-4D cosmetic enrichment + verbatim resume sidecar.

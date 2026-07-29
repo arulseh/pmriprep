@@ -1683,11 +1683,10 @@ class ComputeDSCMaps(BaseInterface):
             k2_data = np.where(mask_bool, k2_data, 0.0)
             outputs["out_k2"] = self._save_map(k2_data, "_k2", affine, header)
         else:
-            k2_zeros = np.zeros(spatial_shape, dtype=np.float32)
-            k2_fallback_path = self._gen_outfilename("_k2")
-            k2_fallback_img = nib.Nifti1Image(k2_zeros, affine, header)  # type: ignore[attr-defined]
-            nib.save(k2_fallback_img, k2_fallback_path)  # type: ignore[attr-defined]
-            outputs["out_k2"] = k2_fallback_path
+            raise RuntimeError(
+                "K2 correction produced no coefficient map; refusing to "
+                "substitute an all-zero map"
+            )
 
         if delay is not None:
             outputs["out_delay"] = self._save_map(delay, "_delay", affine, header)

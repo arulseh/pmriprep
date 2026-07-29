@@ -340,7 +340,7 @@ class TestApplyAifSidecar:
     def test_independent_map_marked(self) -> None:
         sidecar: dict = {}
         apply_aif_sidecar(
-            sidecar, "k2",
+            sidecar, "psr",
             {"aif_detection": {"detection_method": "atlas_strict", "quality_score": 0.9}},
         )
         assert sidecar["AIFDependent"] is False
@@ -426,14 +426,6 @@ class TestWriterAifBlockPresentOnAllMaps:
             assert _aif_block(sidecar)["QualityFlag"] == "pass", suffix
             assert "AIFDependent" in sidecar, suffix
             assert "TemplateAIFUsage" in sidecar, suffix
-
-    def test_k2_independent(self, minimal_inputs, tmp_path) -> None:
-        minimal_inputs["k2_map"] = _write_dummy_nifti(tmp_path / "k2.nii.gz")
-        qc = {"aif_detection": {"detection_method": "atlas_strict", "quality_score": 0.9}}
-        derivatives = _run_writer(minimal_inputs, qc, tmp_path)
-        sidecar = _load_sidecar(derivatives, "dscK2_stat")
-        assert sidecar["AIFDependent"] is False
-        assert sidecar["TemplateAIFUsage"] == "safe"
 
     def test_map_units_match_computed_quantities(self, minimal_inputs, tmp_path) -> None:
         minimal_inputs.update({

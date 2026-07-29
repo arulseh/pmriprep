@@ -736,14 +736,6 @@ class TestPPP:
         s = compute_map_statistics(data, mask, map_name="vp")
         assert s.ppp == 0.5
 
-    def test_k2_ppp_above_0p001(self) -> None:
-        # K2 noise floor at 0.001 s⁻¹ (Bjornerud 2011)
-        data = np.array([0.0, 0.0005, 0.001, 0.002, 0.005])
-        mask = np.ones_like(data, dtype=bool)
-        s = compute_map_statistics(data, mask, map_name="k2")
-        # 2 of 5 strictly > 0.001
-        assert abs(s.ppp - 0.4) < 1e-3
-
     def test_non_permeability_map_no_ppp(self) -> None:
         data = np.array([1.0, 2.0, 3.0, 4.0])
         mask = np.ones_like(data, dtype=bool)
@@ -823,8 +815,6 @@ class TestExtractPerMapLesionStatsEnrichment:
                                 "n_valid": 100, "n_total": 100},
                         "ktrans": {"mean": 0.12, "std": 0.05, "median": 0.10,
                                    "n_valid": 100, "n_total": 100},
-                        "k2": {"median": 0.0008, "std": 0.0005, "ppp": 0.12,
-                               "n_valid": 100, "n_total": 100},
                         "ttp": {"median": 5.0, "std": 1.0,
                                          "n_valid": 100, "n_total": 100},
                     },
@@ -884,7 +874,7 @@ class TestExtractPerMapLesionStatsEnrichment:
     def test_map_with_no_fv_just_stats(self, aggregate):
         from pmriprep.utils.lesion_stats import extract_per_map_lesion_stats
 
-        out = extract_per_map_lesion_stats(aggregate, "k2")
+        out = extract_per_map_lesion_stats(aggregate, "ttp")
         assert "Regions" in out
         assert "ClinicalThreshold" not in out
         assert "FractionalVolumes" not in out

@@ -71,7 +71,6 @@ class DSCLesionStatsInputSpec(BaseInterfaceInputSpec):
 
     # Additional maps (all optional)
     psr_map = traits.Str(desc="PSR map path")
-    k2_map = traits.Str(desc="K2 leakage correction map path")
     ttp_map = traits.Str(desc="AIF-corrected TTP map path")
 
     # AIF provenance — passed from the cascade QC so the lesion-stats
@@ -307,7 +306,6 @@ class DSCLesionStats(BaseInterface):
             ("ncbv_map", "ncbv"),
             ("ncbf_map", "ncbf"),
             ("psr_map", "psr"),
-            ("k2_map", "k2"),
             ("ttp_map", "ttp"),
         ]
 
