@@ -12,8 +12,6 @@ import numpy as np
 import numpy.typing as npt
 from scipy.signal import savgol_filter
 
-from pmriprep.utils.dce_constants import MIN_ENHANCEMENT_MM
-
 logger = logging.getLogger(__name__)
 
 # No tissue produces >5000% signal enhancement; anything above is
@@ -22,6 +20,10 @@ _PEAK_ENH_MAX_CAP = 5000.0
 
 # Require sampled enhancement to exceed precontrast temporal noise.
 _SER_MIN_ENHANCEMENT_NOISE_SD = 3.0
+
+# TTP selects a maximum over the post-reference series, so use a conservative
+# noise gate rather than the fixed-time SER threshold.
+_TTP_MIN_PEAK_NOISE_SD = 5.0
 
 def compute_iauc(
     concentration: npt.NDArray[np.floating],
@@ -136,8 +138,11 @@ def compute_peak_enhancement(
 def compute_time_to_peak(
     concentration: npt.NDArray[np.floating],
     time_points: npt.NDArray[np.floating],
+    reference_frame: int = 0,
+    baseline_frames: int = 5,
+    brain_mask: Optional[npt.NDArray[np.floating]] = None,
 ) -> npt.NDArray[np.floating]:
-    """Compute time of maximum enhancement in seconds.
+    """Compute tissue time to peak from a selected global reference.
 
     Parameters
     ----------
@@ -145,21 +150,64 @@ def compute_time_to_peak(
         4D concentration data (x, y, z, time) in mM.
     time_points : numpy.ndarray
         1D time array in minutes.
+    reference_frame : int, optional
+        Selected global contrast-reference frame. Peak searching begins here.
+    baseline_frames : int, optional
+        Number of precontrast frames used to estimate concentration noise.
+    brain_mask : numpy.ndarray, optional
+        Brain mask used to pool a robust spatial noise floor. When omitted,
+        all spatial voxels contribute.
 
     Returns
     -------
     numpy.ndarray
-        3D acquisition-referenced time-to-peak map in seconds. Voxels with
-        non-finite samples or no positive enhancement are NaN.
+        3D reference-relative time-to-peak map in seconds. Voxels with
+        non-finite samples or peak enhancement not exceeding five baseline
+        noise standard deviations are NaN.
     """
+    if time_points.ndim != 1 or concentration.shape[-1] != time_points.size:
+        raise ValueError("time_points must be 1D and match the concentration time axis")
+    if not np.all(np.isfinite(time_points)) or np.any(np.diff(time_points) <= 0):
+        raise ValueError("time_points must be finite and strictly increasing")
+    if not 0 <= reference_frame < time_points.size:
+        raise ValueError("reference_frame is outside the time axis")
+    if baseline_frames < 1 or baseline_frames >= time_points.size:
+        raise ValueError("baseline_frames must leave at least one post-baseline frame")
+    if brain_mask is not None and brain_mask.shape != concentration.shape[:3]:
+        raise ValueError("brain_mask must match the concentration spatial shape")
+
+    undefined = np.full(concentration.shape[:3], np.nan, dtype=np.float64)
+    if baseline_frames < 2:
+        return undefined
+
+    baseline = concentration[..., :baseline_frames]
+    baseline_mean = np.mean(baseline, axis=-1)
+    baseline_noise = np.std(baseline, axis=-1, ddof=1)
+    noise_support = np.isfinite(baseline_noise)
+    if brain_mask is not None:
+        noise_support &= brain_mask > 0
+    pooled_values = baseline_noise[noise_support]
+    pooled_noise = (
+        float(np.median(pooled_values)) if pooled_values.size else 0.0
+    )
+    effective_noise = np.maximum(baseline_noise, pooled_noise)
+    post_reference = concentration[..., reference_frame:]
+    peak_indices = np.argmax(post_reference, axis=-1) + reference_frame
+    peak = np.take_along_axis(
+        concentration, peak_indices[..., np.newaxis], axis=-1,
+    )[..., 0]
+    scale = np.maximum(np.abs(baseline_mean), np.abs(peak))
+    threshold = np.maximum(
+        _TTP_MIN_PEAK_NOISE_SD * effective_noise,
+        16.0 * np.finfo(np.float64).eps * scale,
+    )
     valid = (
         np.all(np.isfinite(concentration), axis=-1)
-        & (np.max(concentration, axis=-1) > MIN_ENHANCEMENT_MM)
+        & np.isfinite(baseline_noise)
+        & ((peak - baseline_mean) > threshold)
     )
-    finite_concentration = np.where(np.isfinite(concentration), concentration, -np.inf)
-    peak_indices = np.argmax(finite_concentration, axis=-1)
-    ttp_minutes = time_points[peak_indices]
-    return np.where(valid, ttp_minutes * 60.0, np.nan)  # type: ignore[no-any-return]
+    ttp_seconds = (time_points[peak_indices] - time_points[reference_frame]) * 60.0
+    return np.where(valid, ttp_seconds, np.nan)  # type: ignore[no-any-return]
 
 
 def compute_signal_enhancement_ratio(
@@ -435,80 +483,6 @@ def compute_wash_out_slope(
     slope = np.where(n_valid >= min_points, slope, np.nan)
 
     return slope  # type: ignore[no-any-return]
-
-
-def compute_bolus_arrival_time(
-    concentration: npt.NDArray[np.floating],
-    time_points: npt.NDArray[np.floating],
-    baseline_frames: int = 5,
-    brain_mask: Optional[npt.NDArray[np.floating]] = None,
-) -> npt.NDArray[np.floating]:
-    """Compute per-voxel bolus arrival time map.
-
-    Wraps ``detect_bolus_arrival_time`` from ``pmriprep.utils.dce_bat``,
-    iterating over all brain voxels. Low-confidence or default-method
-    results are set to NaN.
-
-    Parameters
-    ----------
-    concentration : numpy.ndarray
-        4D concentration data (x, y, z, time) in mM.
-    time_points : numpy.ndarray
-        1D time array in minutes.
-    baseline_frames : int, optional
-        Number of pre-contrast baseline frames.
-    brain_mask : numpy.ndarray, optional
-        Optional 3D brain mask. When provided, voxels where
-        mask <= 0 are skipped (remain NaN), avoiding ~50-70% of
-        the per-voxel loop iterations.
-
-    Returns
-    -------
-    numpy.ndarray
-        3D BAT map in seconds. NaN for low-confidence detections.
-    """
-    from pmriprep.utils.dce_bat import detect_bolus_arrival_time
-
-    spatial_shape = concentration.shape[:3]
-    bat_map = np.full(spatial_shape, np.nan, dtype=np.float64)
-
-    if brain_mask is not None and brain_mask.shape != spatial_shape:
-        raise ValueError(
-            f"brain_mask shape {brain_mask.shape} does not match "
-            f"concentration spatial shape {spatial_shape}"
-        )
-
-    flat_conc = concentration.reshape(-1, concentration.shape[-1])
-    flat_bat = bat_map.ravel()
-    flat_mask = brain_mask.ravel().astype(bool) if brain_mask is not None else None
-
-    has_signal = np.max(np.abs(flat_conc), axis=1) >= 1e-9
-    if flat_mask is not None:
-        n_active = int(np.sum(has_signal & flat_mask))
-        n_in_mask = int(np.sum(flat_mask))
-        logger.info(
-            "Computing BAT for %d active voxels (%d in mask, %d total)",
-            n_active, n_in_mask, flat_conc.shape[0],
-        )
-    else:
-        n_active = int(np.sum(has_signal))
-        logger.info(
-            "Computing BAT for %d active voxels (of %d total)",
-            n_active, flat_conc.shape[0],
-        )
-
-    for i in range(flat_conc.shape[0]):
-        if flat_mask is not None and not flat_mask[i]:
-            continue
-        curve = flat_conc[i]
-        # Skip voxels with no enhancement
-        if np.max(np.abs(curve)) < 1e-9:
-            continue
-        result = detect_bolus_arrival_time(curve, time_points, baseline_frames)
-        if result.confidence != "low" and result.method != "default":
-            flat_bat[i] = result.bat_seconds
-
-    return bat_map
 
 
 def compute_curve_type(

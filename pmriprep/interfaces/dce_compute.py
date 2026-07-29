@@ -1057,7 +1057,6 @@ def _write_dce_model_free_maps(
         "out_peak_enhancement": generate_path("_peak_enhancement"),
         "out_time_to_peak": generate_path("_time_to_peak"),
         "out_ser": generate_path("_SER"),
-        "out_bat": generate_path("_BAT"),
     }
     write_map(maps.iauc60, outputs["out_iauc60"])
     write_map(maps.iauc90, outputs["out_iauc90"])
@@ -1066,7 +1065,6 @@ def _write_dce_model_free_maps(
         write_map(maps.peak_enhancement, outputs["out_peak_enhancement"])
     write_map(maps.time_to_peak, outputs["out_time_to_peak"])
     write_map(maps.signal_enhancement_ratio, outputs["out_ser"])
-    write_map(maps.bolus_arrival_time, outputs["out_bat"])
     return outputs
 
 
@@ -1432,7 +1430,6 @@ class _DCEModelFreeMaps(NamedTuple):
     peak_enhancement: Optional[npt.NDArray[Any]]
     time_to_peak: npt.NDArray[Any]
     signal_enhancement_ratio: npt.NDArray[Any]
-    bolus_arrival_time: npt.NDArray[Any]
     iauc_qc: dict[str, Any]
     ser_qc: dict[str, Any]
 
@@ -2691,7 +2688,6 @@ class ComputeDCEMapsOutputSpec(TraitedSpec):
     out_peak_enhancement = File(desc="Peak enhancement percentage")
     out_time_to_peak = File(desc="Time to peak (seconds)")
     out_ser = File(desc="Signal Enhancement Ratio (washout characterization)")
-    out_bat = File(desc="Bolus arrival time (seconds)")
 
     # Model selection map (auto mode)
     out_model_selection = File(desc="Model selection map (int8: 0=unfitted, 1=patlak, 2=tofts, 3=extended_tofts, 4=2cxm)")
@@ -3343,7 +3339,6 @@ class ComputeDCEMaps(BaseInterface):
     ) -> _DCEModelFreeMaps:
         """Compute vectorized semi-quantitative maps before PK fitting."""
         from pmriprep.utils.dce_model_free import (
-            compute_bolus_arrival_time,
             compute_iauc,
             compute_signal_enhancement_ratio,
             compute_time_to_peak,
@@ -3437,14 +3432,14 @@ class ComputeDCEMaps(BaseInterface):
                 bolus_arrival_frame=iauc_reference_frame,
             ),
             prepared.peak_enhancement,
-            compute_time_to_peak(concentration, time_points),
-            ser,
-            compute_bolus_arrival_time(
+            compute_time_to_peak(
                 concentration,
                 time_points,
+                reference_frame=iauc_reference_frame,
                 baseline_frames=prepared.baseline_frames,
                 brain_mask=prepared.mask,
             ),
+            ser,
             iauc_qc,
             ser_qc,
         )
@@ -3663,7 +3658,6 @@ class ComputeDCEMaps(BaseInterface):
         peak_enh = model_free.peak_enhancement
         ttp = model_free.time_to_peak
         ser = model_free.signal_enhancement_ratio
-        bat = model_free.bolus_arrival_time
         parameter_maps = self._initialize_parameter_maps(
             prepared, model_name, candidate_names,
         )
@@ -3895,7 +3889,6 @@ class ComputeDCEMaps(BaseInterface):
         iauc120 = _zero_dce_background(iauc120, mask_bool)
         ttp = _zero_dce_background(ttp, mask_bool)
         ser = _zero_dce_background(ser, mask_bool)
-        bat = _zero_dce_background(bat, mask_bool)
         quality_flag_map = _zero_dce_background(quality_flag_map, mask_bool)
         model_selection_map = _zero_dce_background(model_selection_map, mask_bool)
         if peak_enh is not None:
@@ -3932,7 +3925,6 @@ class ComputeDCEMaps(BaseInterface):
                 peak_enh,
                 ttp,
                 ser,
-                bat,
                 model_free.iauc_qc,
                 model_free.ser_qc,
             ),

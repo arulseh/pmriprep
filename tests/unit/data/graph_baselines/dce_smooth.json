@@ -1022,12 +1022,6 @@
     ],
     [
       "pk_modeling",
-      "out_bat",
-      "outputnode",
-      "bat_map"
-    ],
-    [
-      "pk_modeling",
       "out_delta_bic",
       "dce_pk_maps_qc",
       "delta_bic_file"
@@ -3181,7 +3175,6 @@
     "aif_mask",
     "b1_map",
     "b1_qc_plot",
-    "bat_map",
     "brain_mask",
     "brain_mask_filmstrip",
     "dce_mean",

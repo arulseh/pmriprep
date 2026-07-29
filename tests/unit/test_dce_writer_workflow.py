@@ -271,7 +271,7 @@ def test_dce_factory_model_free_no_model_entity(
     bids, src = minimal_bids
     out = tmp_path / "out"
 
-    present = {"iauc60_map", "peak_enhancement_map", "time_to_peak_map", "bat_map"}
+    present = {"iauc60_map", "peak_enhancement_map", "time_to_peak_map"}
     wf = init_dce_datasinks_wf(
         output_dir=str(out), bids_dir=str(bids),
         subject_id="01", session_id="0001",
@@ -327,12 +327,12 @@ def test_dce_factory_model_free_no_model_entity(
     ttp_sidecar = json.loads(
         (perf_out / "sub-01_ses-0001_desc-dceTtp_stat.json").read_text()
     )
-    assert ttp_sidecar["ReferencePoint"] == "start of acquisition (volume 0)"
-    assert ttp_sidecar["UndefinedValue"] == "NaN for non-enhancing or non-finite curves"
-    bat_sidecar = json.loads(
-        (perf_out / "sub-01_ses-0001_desc-dceBAT_stat.json").read_text()
-    )
-    assert bat_sidecar["DetectionMethod"] == "threshold_then_gradient_fallback"
+    assert ttp_sidecar["ReferencePoint"] == "selected global contrast reference frame"
+    assert ttp_sidecar["ReferenceFrame"] == 5
+    assert ttp_sidecar["ReferenceTimeSeconds"] == 25.0
+    assert ttp_sidecar["MinimumPeakEnhancementNoiseSD"] == 5.0
+    assert "brain-median" in ttp_sidecar["NoiseEstimate"]
+    assert "biased" in ttp_sidecar["Limitation"]
 
 
 def test_patlak_only_no_ve_kep(tmp_path: Path, minimal_bids: tuple[Path, str]) -> None:

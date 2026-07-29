@@ -200,7 +200,8 @@ def test_align_aif_to_tissue_preserves_non_alignment_reasons() -> None:
 def test_compute_model_free_maps_assembles_all_vectorized_outputs() -> None:
     """The model-free bundle preserves raw peak QC and semi-quantitative maps."""
     prepared = _empty_preparation()._replace(
-        concentration=np.array([[[[0.0, 0.2, 0.5]]]]),
+        concentration=np.array([[[[0.0, 0.0, 1.0]]]]),
+        baseline_frames=2,
         mask=np.ones((1, 1, 1), dtype=float),
         fitting_mask=np.ones((1, 1, 1), dtype=bool),
         peak_enhancement=np.array([[[25.0]]]),
@@ -215,10 +216,9 @@ def test_compute_model_free_maps_assembles_all_vectorized_outputs() -> None:
     assert maps.iauc120.shape == (1, 1, 1)
     assert maps.time_to_peak[0, 0, 0] == 12.0
     assert maps.signal_enhancement_ratio.shape == (1, 1, 1)
-    assert maps.bolus_arrival_time.shape == (1, 1, 1)
     assert maps.iauc_qc["reference_frame"] == 0
     assert maps.iauc_qc["configured_baseline_frames"] == 2
-    assert maps.iauc_qc["effective_baseline_frames"] == 1
+    assert maps.iauc_qc["effective_baseline_frames"] == 2
     assert maps.iauc_qc["detected_bolus_arrival_frame"] == 0
 
 

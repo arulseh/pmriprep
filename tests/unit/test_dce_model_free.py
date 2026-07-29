@@ -1,7 +1,6 @@
 """Tests for DCE model-free semi-quantitative maps.
 
-Tests cover the four new functions (wash-in slope, wash-out slope, BAT,
-curve type) and existing functions (IAUC, peak enhancement, TTP, SER).
+Tests cover model-free DCE utilities and retained production maps.
 """
 
 import logging
@@ -11,7 +10,6 @@ import numpy.typing as npt
 import pytest
 
 from pmriprep.utils.dce_model_free import (
-    compute_bolus_arrival_time,
     compute_curve_type,
     compute_iauc,
     compute_peak_enhancement,
@@ -208,92 +206,6 @@ class TestWashOutSlope:
 
         result = compute_wash_out_slope(concentration, time_points, volume_tr_s=tr_s)
         assert np.all(np.isnan(result))
-
-
-# =========================================================================
-# BAT tests
-# =========================================================================
-
-class TestBolusArrivalTime:
-    """Tests for compute_bolus_arrival_time."""
-
-    def test_known_arrival(self) -> None:
-        """Known bolus arrival should give correct time in seconds."""
-        n_time = 60
-        tr_s = 5.0
-        time_points = np.arange(n_time, dtype=np.float64) * tr_s / 60.0
-
-        concentration = np.zeros((2, 2, 1, n_time), dtype=np.float64)
-        arrival_frame = 10
-        for t in range(arrival_frame, n_time):
-            concentration[..., t] = 2.0 * (1.0 - np.exp(-0.1 * (t - arrival_frame)))
-
-        result = compute_bolus_arrival_time(concentration, time_points, baseline_frames=5)
-        valid = np.isfinite(result)
-        if valid.any():
-            # BAT should be near arrival_frame * tr_s seconds
-            expected_s = arrival_frame * tr_s
-            assert np.all(np.abs(result[valid] - expected_s) < 3 * tr_s)
-
-    def test_no_enhancement(self) -> None:
-        """Flat/zero curve should give NaN."""
-        concentration = np.zeros((2, 2, 1, 30), dtype=np.float64)
-        time_points = np.arange(30, dtype=np.float64) * 5.0 / 60.0
-        result = compute_bolus_arrival_time(concentration, time_points)
-        assert np.all(np.isnan(result))
-
-    def test_consistency_with_direct_call(self) -> None:
-        """Map function should match direct detect_bolus_arrival_time calls."""
-        from pmriprep.utils.dce_bat import detect_bolus_arrival_time
-
-        n_time = 60
-        tr_s = 5.0
-        time_points = np.arange(n_time, dtype=np.float64) * tr_s / 60.0
-
-        rng = np.random.default_rng(99)
-        concentration = np.zeros((2, 1, 1, n_time), dtype=np.float64)
-        for i in range(2):
-            arrival = 8 + i * 2
-            for t in range(arrival, n_time):
-                concentration[i, 0, 0, t] = rng.uniform(0.5, 2.0) * (
-                    1.0 - np.exp(-0.15 * (t - arrival))
-                )
-
-        bat_map = compute_bolus_arrival_time(concentration, time_points, baseline_frames=5)
-
-        for i in range(2):
-            curve = concentration[i, 0, 0, :]
-            direct = detect_bolus_arrival_time(curve, time_points, baseline_frames=5)
-            if direct.confidence != "low" and direct.method != "default":
-                assert np.isfinite(bat_map[i, 0, 0])
-                assert bat_map[i, 0, 0] == pytest.approx(direct.bat_seconds)
-
-    def test_bat_with_brain_mask(self) -> None:
-        """Masked-out voxels should remain NaN; unmasked should get valid BAT."""
-        n_time = 60
-        tr_s = 5.0
-        time_points = np.arange(n_time, dtype=np.float64) * tr_s / 60.0
-
-        # 2x2x1 volume, all voxels have enhancement
-        concentration = np.zeros((2, 2, 1, n_time), dtype=np.float64)
-        arrival_frame = 10
-        for t in range(arrival_frame, n_time):
-            concentration[..., t] = 2.0 * (1.0 - np.exp(-0.1 * (t - arrival_frame)))
-
-        # Mask: only top-left voxel is in-brain
-        brain_mask = np.zeros((2, 2, 1), dtype=np.float64)
-        brain_mask[0, 0, 0] = 1.0
-
-        result = compute_bolus_arrival_time(
-            concentration, time_points, baseline_frames=5, brain_mask=brain_mask,
-        )
-
-        # Masked-out voxels must be NaN
-        assert np.isnan(result[0, 1, 0])
-        assert np.isnan(result[1, 0, 0])
-        assert np.isnan(result[1, 1, 0])
-        # Unmasked voxel should have a finite BAT
-        assert np.isfinite(result[0, 0, 0])
 
 
 # =========================================================================
@@ -502,15 +414,17 @@ class TestTimeToPeak:
     """Tests for compute_time_to_peak."""
 
     def test_known_peak(self) -> None:
-        """Peak at known frame should give correct time in seconds."""
+        """Peak time is measured from the selected global reference."""
         n_time = 20
         tr_s = 5.0
         time_points = np.arange(n_time, dtype=np.float64) * tr_s / 60.0
         concentration = np.zeros((2, 2, 1, n_time), dtype=np.float64)
         peak_frame = 10
         concentration[..., peak_frame] = 1.0
-        result = compute_time_to_peak(concentration, time_points)
-        expected_s = peak_frame * tr_s
+        result = compute_time_to_peak(
+            concentration, time_points, reference_frame=2, baseline_frames=2,
+        )
+        expected_s = (peak_frame - 2) * tr_s
         assert np.allclose(result, expected_s)
 
     @pytest.mark.parametrize(
@@ -525,7 +439,9 @@ class TestTimeToPeak:
     def test_undefined_curve_returns_nan(self, curve: np.ndarray) -> None:
         """Invalid or non-enhancing curves must not produce plausible TTP."""
         time_points = np.arange(curve.size, dtype=np.float64) * 5.0 / 60.0
-        result = compute_time_to_peak(curve.reshape(1, 1, 1, -1), time_points)
+        result = compute_time_to_peak(
+            curve.reshape(1, 1, 1, -1), time_points, baseline_frames=2,
+        )
         assert np.isnan(result[0, 0, 0])
 
     def test_mixed_voxel_validity(self) -> None:
@@ -534,9 +450,39 @@ class TestTimeToPeak:
         concentration = np.zeros((2, 1, 1, 6), dtype=np.float64)
         concentration[0, 0, 0, 3] = 0.5
         concentration[1, 0, 0, 2] = np.nan
-        result = compute_time_to_peak(concentration, time_points)
-        assert result[0, 0, 0] == pytest.approx(12.0)
+        result = compute_time_to_peak(
+            concentration, time_points, reference_frame=2, baseline_frames=2,
+        )
+        assert result[0, 0, 0] == pytest.approx(4.0)
         assert np.isnan(result[1, 0, 0])
+
+    def test_noise_only_curves_are_undefined(self) -> None:
+        """Concentration noise must not produce uniformly distributed TTP."""
+        rng = np.random.default_rng(52)
+        time_points = np.arange(120, dtype=np.float64) * 5.0 / 60.0
+        concentration = rng.normal(0.0, 0.02, size=(200, 1, 1, 120))
+        result = compute_time_to_peak(
+            concentration, time_points, reference_frame=10, baseline_frames=10,
+        )
+        assert np.mean(np.isfinite(result)) < 0.02
+
+    def test_brain_noise_floor_prevents_low_sigma_leakage(self) -> None:
+        """A downward local sigma draw cannot undercut the pooled brain floor."""
+        time_points = np.arange(10, dtype=np.float64) * 5.0 / 60.0
+        concentration = np.zeros((3, 1, 1, 10), dtype=np.float64)
+        concentration[0, 0, 0, :5] = [-0.01, 0.01, -0.01, 0.01, 0.0]
+        concentration[0, 0, 0, 7] = 0.1
+        concentration[1:, 0, 0, :5] = [-0.1, 0.1, -0.1, 0.1, 0.0]
+
+        result = compute_time_to_peak(
+            concentration,
+            time_points,
+            reference_frame=5,
+            baseline_frames=5,
+            brain_mask=np.ones((3, 1, 1), dtype=bool),
+        )
+
+        assert np.isnan(result[0, 0, 0])
 
 
 class TestSER:
@@ -645,12 +591,11 @@ class TestNoInfOutputs:
         wash_out = compute_wash_out_slope(
             concentration, time_points, volume_tr_s=5.0,
         )
-        bat = compute_bolus_arrival_time(concentration, time_points)
         curve_type = compute_curve_type(ser)
 
         for name, arr in [
             ("iauc60", iauc60), ("peak", peak), ("ttp", ttp), ("ser", ser),
-            ("wash_in", wash_in), ("wash_out", wash_out), ("bat", bat),
+            ("wash_in", wash_in), ("wash_out", wash_out),
             ("curve_type", curve_type),
         ]:
             assert not np.any(np.isinf(arr)), f"{name} contains Inf values"

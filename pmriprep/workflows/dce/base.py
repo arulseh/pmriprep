@@ -168,7 +168,6 @@ def init_dce_pk_modeling_wf(
                 "out_vp_std",
                 "out_fp_std",
                 "out_ps_std",
-                "out_bat",
                 "out_tsnr",
                 "out_quality_flag",
                 "out_ktrans_cv",
@@ -246,7 +245,6 @@ def init_dce_pk_modeling_wf(
             ("out_vp_std", "out_vp_std"),
             ("out_fp_std", "out_fp_std"),
             ("out_ps_std", "out_ps_std"),
-            ("out_bat", "out_bat"),
             ("out_tsnr", "out_tsnr"),
             ("out_quality_flag", "out_quality_flag"),
             ("out_ktrans_cv", "out_ktrans_cv"),
@@ -1606,7 +1604,6 @@ def init_dce_preproc_wf(
                 "peak_enhancement_map",
                 "time_to_peak_map",
                 "ser_map",
-                "bat_map",
                 # QC maps
                 "tsnr_map",
                 "qc_mask",
@@ -2731,7 +2728,6 @@ def init_dce_preproc_wf(
             ("outputnode.out_peak_enhancement", "peak_enhancement_map"),
             ("outputnode.out_time_to_peak", "time_to_peak_map"),
             ("outputnode.out_ser", "ser_map"),
-            ("outputnode.out_bat", "bat_map"),
         ]),
         # QC maps
         (pk_wf, outputnode, [

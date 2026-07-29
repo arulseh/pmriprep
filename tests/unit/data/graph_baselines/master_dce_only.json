@@ -194,12 +194,6 @@
     ],
     [
       "dce_wf",
-      "outputnode.bat_map",
-      "dce_datasinks_wf",
-      "inputnode.bat_map"
-    ],
-    [
-      "dce_wf",
       "outputnode.brain_mask",
       "dce_datasinks_wf",
       "inputnode.brain_mask"

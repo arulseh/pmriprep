@@ -384,7 +384,7 @@ def test_write_dce_model_free_maps_preserves_output_contract(has_peak: bool) -> 
     array = np.ones((1, 1, 1))
     maps = _DCEModelFreeMaps(
         array, array, array, array if has_peak else None, array,
-        array, array, {}, {},
+        array, {}, {},
     )
     writes: list[tuple[str, object]] = []
 
@@ -397,7 +397,7 @@ def test_write_dce_model_free_maps_preserves_output_contract(has_peak: bool) -> 
     outputs = _write_dce_model_free_maps(maps, generate_path, write_map)
     assert outputs["out_iauc60"] == "output_IAUC60.nii.gz"
     assert outputs["out_peak_enhancement"] == "output_peak_enhancement.nii.gz"
-    assert outputs["out_bat"] == "output_BAT.nii.gz"
+    assert outputs["out_ser"] == "output_SER.nii.gz"
     peak_writes = [path for path, _ in writes if "peak_enhancement" in path]
     assert bool(peak_writes) is has_peak
 

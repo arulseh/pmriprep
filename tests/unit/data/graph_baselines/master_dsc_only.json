@@ -488,12 +488,6 @@
     ],
     [
       "dsc_wf",
-      "outputnode.rttp_map",
-      "dsc_datasinks_wf",
-      "inputnode.rttp_map"
-    ],
-    [
-      "dsc_wf",
       "outputnode.snr_map",
       "dsc_datasinks_wf",
       "inputnode.snr_map"
@@ -545,12 +539,6 @@
       "outputnode.tsnr_map",
       "dsc_datasinks_wf",
       "inputnode.tsnr_map"
-    ],
-    [
-      "dsc_wf",
-      "outputnode.ttp_corrected_map",
-      "dsc_datasinks_wf",
-      "inputnode.ttp_corrected_map"
     ],
     [
       "dsc_wf",

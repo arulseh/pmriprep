@@ -132,17 +132,18 @@ _MODEL_FREE_MAPS: tuple[DCEMapSpec, ...] = (
       "PeakSearchStart": "first post-baseline frame", "MaximumValueCap": 5000.0,
       "UndefinedValue": "NaN for non-positive baseline or non-finite signal"}),
     DCEMapSpec("time_to_peak_map", "dce", "ttp",
-     "Time from acquisition start to peak concentration", "s", "ttp",
-     {"ReferencePoint": "start of acquisition (volume 0)",
-      "UndefinedValue": "NaN for non-enhancing or non-finite curves"}),
+     "Time from the selected global contrast reference to peak concentration", "s", "ttp",
+     {"ReferencePoint": "selected global contrast reference frame",
+      "PeakSearchStart": "selected global contrast reference frame",
+      "MinimumPeakEnhancementNoiseSD": 5.0,
+      "NoiseEstimate": "maximum of voxelwise and brain-median precontrast temporal standard deviation",
+      "Limitation": "Near-threshold peak timing may be biased by temporal noise",
+      "UndefinedValue": "NaN for non-finite signal or peak enhancement not exceeding baseline noise"}),
     DCEMapSpec("ser_map", "dce", "SER", "Fixed-time early-to-late signal enhancement ratio", "1", "ser",
      {"InputCurve": "motion_corrected_signal", "Formula": "(Searly-S0)/(Slate-S0)",
       "SampleInterpolation": "linear",
       "MinimumEnhancementNoiseSD": 3.0,
       "UndefinedValue": "NaN for incomplete timing, non-finite signal, or enhancement not exceeding baseline noise"}),
-    DCEMapSpec("bat_map", "dce", "BAT", "Bolus arrival time (seconds)", "s", "bat",
-     {"DetectionMethod": "threshold_then_gradient_fallback",
-      "ConfidenceThreshold": "high"}),
 )
 
 
@@ -318,6 +319,19 @@ def _build_model_free_extra(
                 "ResolvedWindow": iauc_qc.get("windows", {}).get(cutoff),
             })
         return out or None
+    if map_key == "ttp":
+        reference_qc = (qc_metrics or {}).get("iauc", {})
+        out.update({
+            "ReferenceFrame": reference_qc.get("reference_frame"),
+            "ReferenceTimeSeconds": reference_qc.get("reference_time_s"),
+            "ReferenceSelection": reference_qc.get("reference_selection"),
+            "ConfiguredBaselineFrames": reference_qc.get("configured_baseline_frames"),
+            "EffectiveBaselineFrames": reference_qc.get("effective_baseline_frames"),
+            "DetectedBolusArrivalFrame": reference_qc.get(
+                "detected_bolus_arrival_frame"
+            ),
+        })
+        return out
     if map_key != "ser":
         return out or None
     dce = config_dict or {}
@@ -1330,7 +1344,6 @@ def init_dce_datasinks_wf(
                 # Model-free
                 "iauc60_map", "iauc90_map", "iauc120_map",
                 "peak_enhancement_map", "time_to_peak_map", "ser_map",
-                "bat_map",
                 # QC + model-selection
                 "tsnr_map", "qc_mask", "r2_map", "quality_flag_map",
                 "model_selection_map", "delta_bic_map",
@@ -1555,9 +1568,9 @@ def init_dce_datasinks_wf(
             continue
         model_free_extra = None
         static_extra = spec.extra
-        if spec.map_key == "ser" or spec.map_key.startswith("iauc"):
+        if spec.map_key in {"ser", "ttp"} or spec.map_key.startswith("iauc"):
             extra_inputs = ["extra", "map_key", "config_dict"]
-            if spec.map_key == "ser" or spec.map_key.startswith("iauc"):
+            if spec.map_key in {"ser", "ttp"} or spec.map_key.startswith("iauc"):
                 extra_inputs.append("qc_metrics")
             model_free_extra = pe.Node(
                 niu.Function(
@@ -1570,7 +1583,7 @@ def init_dce_datasinks_wf(
             model_free_extra.inputs.extra = spec.extra
             model_free_extra.inputs.map_key = spec.map_key
             workflow.connect(inputnode, "config_dict", model_free_extra, "config_dict")
-            if spec.map_key == "ser" or spec.map_key.startswith("iauc"):
+            if spec.map_key in {"ser", "ttp"} or spec.map_key.startswith("iauc"):
                 workflow.connect(inputnode, "qc_metrics", model_free_extra, "qc_metrics")
             static_extra = None
         sink = _add_perf_map_sink(
