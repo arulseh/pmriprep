@@ -926,7 +926,12 @@ def init_dsc_normalization_wf(
     )
     outputnode = pe.Node(
         niu.IdentityInterface(
-            fields=["ncbv_file", "ncbf_file", "normalization_factor"]
+            fields=[
+                "ncbv_file",
+                "ncbf_file",
+                "normalization_factor",
+                "cbf_normalization_factor",
+            ]
         ),
         name="outputnode",
     )
@@ -988,6 +993,7 @@ def init_dsc_normalization_wf(
         ]),
         (normalize_cbf, outputnode, [
             ("ncbf_file", "ncbf_file"),
+            ("normalization_factor", "cbf_normalization_factor"),
         ]),
     ])
     return workflow
@@ -1257,7 +1263,7 @@ def init_dsc_qc_wf(
 
     Inputs
     ------
-    motion_qc_metrics, motion_summary, preload_qc_dict, aif_qc_metrics, deconv_qc_metrics, registration_qc_metrics, normalization_factor
+    motion_qc_metrics, motion_summary, preload_qc_dict, aif_qc_metrics, deconv_qc_metrics, registration_qc_metrics, normalization_factor, cbf_normalization_factor
         Per-sub-workflow QC metric dicts / scalars merged into ``qc_metrics``.
     prebolus_mean_file, dsc_moco, registered_t1w, brain_mask_file
         Images for the registration / preprocessing / brain-mask filmstrips.
@@ -1312,6 +1318,7 @@ def init_dsc_qc_wf(
                 "registered_t1w_mask",
                 "t1w_to_dsc_matrix",
                 "normalization_factor",
+                "cbf_normalization_factor",
                 "brain_mask_file",
                 "tr",
                 "te",
@@ -1349,6 +1356,7 @@ def init_dsc_qc_wf(
                 "deconv_qc",
                 "registration_qc",
                 "normalization_factor",
+                "cbf_normalization_factor",
                 "motion_summary",
                 "aif_metrics",
                 "preprocessing_stats",
@@ -1465,6 +1473,7 @@ def init_dsc_qc_wf(
             ("deconv_qc_metrics", "deconv_qc"),
             ("registration_qc_metrics", "registration_qc"),
             ("normalization_factor", "normalization_factor"),
+            ("cbf_normalization_factor", "cbf_normalization_factor"),
         ]),
         (inputnode, reg_filmstrip, [
             ("prebolus_mean_file", "dsc_mean_file"),
@@ -2473,7 +2482,10 @@ def init_dsc_preproc_wf(
         (transform_brain_mask_qc, qc_wf, [
             ("dsc_brain_mask_file", "inputnode.registered_t1w_mask"),
         ]),
-        (normalization_wf, qc_wf, [("outputnode.normalization_factor", "inputnode.normalization_factor")]),
+        (normalization_wf, qc_wf, [
+            ("outputnode.normalization_factor", "inputnode.normalization_factor"),
+            ("outputnode.cbf_normalization_factor", "inputnode.cbf_normalization_factor"),
+        ]),
         (hdbet_dsc, qc_wf, [("dsc_brain_mask_file", "inputnode.brain_mask_file")]),
         (inputnode, qc_wf, [
             ("tr", "inputnode.tr"),

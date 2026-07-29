@@ -1100,6 +1100,7 @@ def _normalize_cbv(
         a Function-node consumer (``_merge_qc_metrics``) that embeds the
         value into a dict.
     """
+    import math
     from pathlib import Path
 
     # Skip normalization if no NAWM mask available
@@ -1130,6 +1131,9 @@ def _normalize_cbv(
         session=session_id,
         brain_mask_file=None,
     )
+
+    if not math.isfinite(norm_factor) or norm_factor <= 0.0:
+        return "", None
 
     return str(output_path), norm_factor
 
@@ -1166,6 +1170,7 @@ def _normalize_cbf(
         ``""`` empty-string sentinel (not ``None``) on the no-NAWM path —
         same rationale as :func:`_normalize_cbv`.
     """
+    import math
     from pathlib import Path
 
     # Skip normalization if no NAWM mask available
@@ -1196,6 +1201,9 @@ def _normalize_cbf(
         session=session_id,
         brain_mask_file=None,
     )
+
+    if not math.isfinite(norm_factor) or norm_factor <= 0.0:
+        return "", None
 
     return str(output_path), norm_factor
 
@@ -1759,6 +1767,7 @@ def _merge_qc_metrics(
     deconv_qc: dict[str, object] | None,
     registration_qc: dict[str, object] | None,
     normalization_factor: float | None,
+    cbf_normalization_factor: float | None = None,
     motion_summary: dict[str, object] | None = None,
     aif_metrics: dict[str, object] | None = None,
     preprocessing_stats: dict[str, object] | None = None,
@@ -1780,6 +1789,8 @@ def _merge_qc_metrics(
         Registration QC metrics.
     normalization_factor : float
         CBV normalization factor.
+    cbf_normalization_factor : float
+        CBF normalization factor.
     motion_summary : dict, optional
         Motion summary dict from plot_motion_qc.
     aif_metrics : dict, optional
@@ -1821,6 +1832,7 @@ def _merge_qc_metrics(
         "deconvolution": deconv_qc if deconv_qc else {},
         "registration": registration_qc if registration_qc else {},
         "normalization_factor": normalization_factor,
+        "cbf_normalization_factor": cbf_normalization_factor,
         "config": {
             "aif_source": aif_source,
         },

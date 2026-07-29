@@ -954,6 +954,24 @@ def build_dsc_map_sidecar(
         sidecar["Units"] = units
     if extra:
         sidecar.update(extra)
+    if map_key in {"ncbv", "ncbf"} and isinstance(qc_metrics, dict):
+        factor_key = (
+            "normalization_factor"
+            if map_key == "ncbv"
+            else "cbf_normalization_factor"
+        )
+        factor = qc_metrics.get(factor_key)
+        if factor is not None:
+            perfusion = sidecar.get("PerfusionProcessing")
+            sidecar["PerfusionProcessing"] = {
+                **(perfusion if isinstance(perfusion, dict) else {}),
+                "NormalizationReference": {
+                    "tissue": "NAWM",
+                    "method": "median_finite_values_positive_median_required",
+                    "factor": float(factor),
+                    "parameter": "CBV" if map_key == "ncbv" else "CBF",
+                },
+            }
     # Surface the per-run first-pass-CBV reference so the named reference and
     # its voxel count land on the map's own sidecar.
     if map_key == "cbv_firstpass" and isinstance(qc_metrics, dict):

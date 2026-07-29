@@ -314,8 +314,7 @@ class TestEnrichDSC:
         assert perf["AIF"]["Source"] == "measured"
 
         assert perf["QuantificationMode"] == "relative"
-        assert perf["NormalizationReference"]["tissue"] == "NAWM"
-        assert perf["NormalizationReference"]["cbv_factor"] == pytest.approx(0.023, abs=0.001)
+        assert "NormalizationReference" not in perf
 
         assert perf["BaselineFrames"]["n_frames"] == 10
         assert perf["BaselineFrames"]["detection_method"] == "auto_p99"

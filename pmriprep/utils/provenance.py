@@ -493,11 +493,3 @@ def _enrich_dsc(
 
     # Quantification mode (always relative for DSC)
     perf["QuantificationMode"] = "relative"
-
-    # Normalization reference (conditional on actual normalization)
-    norm_factor = qc.get("normalization_factor")
-    if norm_factor is not None:
-        perf["NormalizationReference"] = {
-            "tissue": "NAWM",
-            "cbv_factor": _safe_float(norm_factor),
-        }

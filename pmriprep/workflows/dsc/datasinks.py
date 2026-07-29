@@ -837,7 +837,9 @@ def _build_signed_auc_cbv_provenance(
         ),
     }
     if normalized:
-        provenance["NormalizationReferenceDomain"] = "finite_positive_NAWM"
+        provenance["NormalizationReferenceDomain"] = (
+            "finite_signed_NAWM_with_positive_median_required"
+        )
     if not include_summary or not isinstance(qc_metrics, dict):
         return provenance
     deconvolution = qc_metrics.get("deconvolution")

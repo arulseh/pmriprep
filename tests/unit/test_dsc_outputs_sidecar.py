@@ -531,6 +531,28 @@ class TestSmoothedSidecars:
 
 
 class TestSignedAucCbvProvenance:
+    def test_normalization_reference_is_parameter_specific(
+        self, minimal_inputs, tmp_path
+    ) -> None:
+        """nCBV and nCBF sidecars carry their own NAWM denominators only."""
+        qc = {
+            "normalization_factor": 0.023,
+            "cbf_normalization_factor": 42.0,
+        }
+        derivatives = _run_writer(minimal_inputs, qc, tmp_path)
+
+        ncbv = _load_sidecar(derivatives, "dscNawmNormCbv_stat")
+        ncbf = _load_sidecar(derivatives, "dscNawmNormCbf_stat")
+        raw_cbf = _load_sidecar(derivatives, "dscRelCbf_stat")
+
+        cbv_ref = ncbv["PerfusionProcessing"]["NormalizationReference"]
+        cbf_ref = ncbf["PerfusionProcessing"]["NormalizationReference"]
+        assert cbv_ref["parameter"] == "CBV"
+        assert cbv_ref["factor"] == pytest.approx(0.023)
+        assert cbf_ref["parameter"] == "CBF"
+        assert cbf_ref["factor"] == pytest.approx(42.0)
+        assert "NormalizationReference" not in raw_cbf.get("PerfusionProcessing", {})
+
     def test_auc_cbv_and_ncbv_explain_signed_values(
         self, minimal_inputs, tmp_path
     ) -> None:
@@ -550,7 +572,9 @@ class TestSignedAucCbvProvenance:
             derivatives, "dscNawmNormCbv_stat"
         )["SignedEstimator"]
         assert "NormalizationReferenceDomain" not in auc_signed
-        assert ncbv_signed["NormalizationReferenceDomain"] == "finite_positive_NAWM"
+        assert ncbv_signed["NormalizationReferenceDomain"] == (
+            "finite_signed_NAWM_with_positive_median_required"
+        )
 
         for signed in (auc_signed, ncbv_signed):
             assert signed["ValueDomain"] == "signed"

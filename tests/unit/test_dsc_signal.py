@@ -287,8 +287,8 @@ class TestNormalizeCBV:
         np.testing.assert_array_equal(ncbv[cbv == 0], 0.0)
         np.testing.assert_array_equal(ncbv[cbv > 0], 1.0)
 
-    def test_nawm_reference_uses_only_finite_positive_values(self) -> None:
-        """Signed residuals and nonfinite sentinels cannot bias the median."""
+    def test_nawm_reference_preserves_finite_signed_values(self) -> None:
+        """Signed residuals remain in the reference without nonfinite values."""
         cbv = np.array(
             [-2.0, 0.0, np.nan, np.inf, 2.0, 4.0],
             dtype=np.float64,
@@ -301,10 +301,10 @@ class TestNormalizeCBV:
             return_normalization_factor=True,
         )
 
-        assert factor == pytest.approx(3.0)
+        assert factor == pytest.approx(1.0)
 
-    def test_brain_fallback_uses_only_finite_positive_values(self) -> None:
-        """Whole-brain fallback applies the same reference admission rule."""
+    def test_brain_fallback_uses_finite_signed_values(self) -> None:
+        """Whole-brain fallback applies the same signed reference rule."""
         cbv = np.array(
             [-1.0, np.nan, np.inf, 2.0, 6.0],
             dtype=np.float64,
@@ -317,7 +317,48 @@ class TestNormalizeCBV:
             return_normalization_factor=True,
         )
 
-        assert factor == pytest.approx(4.0)
+        assert factor == pytest.approx(2.0)
+
+    def test_empty_explicit_reference_is_undefined(self) -> None:
+        """An unusable NAWM mask cannot produce an identity-normalized map."""
+        cbv = np.full((3, 3, 3), 4.0, dtype=np.float64)
+        nawm_mask = np.zeros_like(cbv, dtype=bool)
+
+        ncbv, factor = normalize_cbv(
+            cbv,
+            nawm_mask=nawm_mask,
+            return_normalization_factor=True,
+        )
+
+        assert np.isnan(factor)
+        assert np.isnan(ncbv).all()
+
+    def test_nonpositive_explicit_reference_is_undefined(self) -> None:
+        """A mask containing no positive finite estimator values is invalid."""
+        cbv = np.zeros((3, 3, 3), dtype=np.float64)
+        nawm_mask = np.ones_like(cbv, dtype=bool)
+
+        ncbv, factor = normalize_cbv(
+            cbv,
+            nawm_mask=nawm_mask,
+            return_normalization_factor=True,
+        )
+
+        assert np.isnan(factor)
+        assert np.isnan(ncbv).all()
+
+    def test_mismatched_explicit_reference_raises(self, tmp_path) -> None:
+        """A geometrically incompatible reference cannot silently normalize."""
+        import nibabel as nib
+
+        cbv = np.ones((3, 3, 3), dtype=np.float64)
+        mask_path = tmp_path / "nawm.nii.gz"
+        nib.Nifti1Image(
+            np.ones((2, 2, 2), dtype=np.uint8), np.eye(4)
+        ).to_filename(mask_path)
+
+        with pytest.raises(ValueError, match="NAWM mask shape"):
+            normalize_cbv(cbv, nawm_mask_file=mask_path)
 
 
 class TestGetBaselineSignal:

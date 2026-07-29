@@ -780,8 +780,10 @@ def normalize_cbv(
             # Convert to boolean mask (threshold at 0.5 for probability maps)
             effective_mask = nawm_data > 0.5
             if effective_mask.shape != cbv_map.shape:
-                # Silently fail if dimensions don't match
-                effective_mask = None
+                raise ValueError(
+                    f"NAWM mask shape {effective_mask.shape} doesn't match "
+                    f"perfusion map shape {cbv_map.shape}"
+                )
 
     # Priority 3: Auto-detect from derivatives
     if (
@@ -797,10 +799,19 @@ def normalize_cbv(
             nawm_data = nawm_img.get_fdata()  # type: ignore[attr-defined]
             effective_mask = nawm_data > 0.5
             if effective_mask.shape != cbv_map.shape:
-                effective_mask = None
+                raise ValueError(
+                    f"Auto-detected NAWM mask shape {effective_mask.shape} "
+                    f"doesn't match perfusion map shape {cbv_map.shape}"
+                )
 
     # Compute normalization factor
-    normalization_factor: float = 1.0
+    # An explicitly requested tissue reference must yield a valid factor.
+    # Keep the historical identity behavior only when no reference was supplied.
+    normalization_factor = (
+        float("nan")
+        if effective_mask is not None or brain_mask is not None
+        else 1.0
+    )
 
     if effective_mask is not None:
         # Ensure mask is boolean
@@ -813,10 +824,9 @@ def normalize_cbv(
             # Get CBV values within NAWM
             cbv_nawm = cbv_map[mask_bool]
 
-            # Use only finite positive estimator values for the reference.
-            cbv_nawm_valid = cbv_nawm[
-                np.isfinite(cbv_nawm) & (cbv_nawm > EPSILON_CONCENTRATION)
-            ]
+            # Preserve the signed estimator distribution in the reference.
+            # Censoring negative residuals would bias the median upward.
+            cbv_nawm_valid = cbv_nawm[np.isfinite(cbv_nawm)]
 
             if len(cbv_nawm_valid) > 0:
                 # Compute median CBV in NAWM
@@ -827,17 +837,14 @@ def normalize_cbv(
                     normalization_factor = median_cbv_nawm
 
     # Fallback: Use brain mask for whole-brain normalization
-    if normalization_factor == 1.0 and brain_mask is not None:
+    if not np.isfinite(normalization_factor) and brain_mask is not None:
         if brain_mask.shape == cbv_map.shape:
             brain_bool = brain_mask.astype(bool)
             n_brain_voxels = int(np.sum(brain_bool))
 
             if n_brain_voxels > 0:
                 cbv_brain = cbv_map[brain_bool]
-                cbv_brain_valid = cbv_brain[
-                    np.isfinite(cbv_brain)
-                    & (cbv_brain > EPSILON_CONCENTRATION)
-                ]
+                cbv_brain_valid = cbv_brain[np.isfinite(cbv_brain)]
 
                 if len(cbv_brain_valid) > 0:
                     # Use median of whole brain as fallback
@@ -846,8 +853,12 @@ def normalize_cbv(
                     if median_cbv_brain > EPSILON_CONCENTRATION:
                         normalization_factor = median_cbv_brain
 
-    # Compute normalized CBV
-    ncbv_map = cbv_map / normalization_factor
+    # An invalid explicit reference is undefined, never an identity transform
+    # mislabeled as tissue-normalized.
+    if np.isfinite(normalization_factor) and normalization_factor > 0.0:
+        ncbv_map = cbv_map / normalization_factor
+    else:
+        ncbv_map = np.full(cbv_map.shape, np.nan, dtype=np.float64)
 
     if return_normalization_factor:
         return ncbv_map, normalization_factor

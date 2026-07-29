@@ -997,6 +997,12 @@
       "ncbf_map"
     ],
     [
+      "normalize_cbf",
+      "normalization_factor",
+      "merge_qc",
+      "cbf_normalization_factor"
+    ],
+    [
       "positive_tail",
       "qc_dict",
       "dsc_leakage_qc",
@@ -1607,6 +1613,7 @@
         "aif_metrics",
         "aif_qc",
         "aif_source",
+        "cbf_normalization_factor",
         "deconv_qc",
         "motion_qc",
         "motion_summary",
@@ -1871,10 +1878,10 @@
     "dsc_preproc_qc": "120b1f3f6ea69c095663da8e71955876fde923b19fccc8a5691edc8867ad53cb",
     "extract_preload": "5bec40d1755b3c09316a8866cec9c669e6296d60e7cd8a0a85192af3f83a01d9",
     "hist_match_t1w": "33d0ceadebcfcf66ed403151737f0e0d429e96320c2101825b356309caf68f0e",
-    "merge_qc": "7b76575029d4f1359f13b5b7d0c0ea7a1bef0bcf6507f39db63d5a3adfa73592",
+    "merge_qc": "37ca0ba72809bbf07bcc8037e1ee6ff2c9de63338f72ea264e8b5abf363acf8d",
     "motion_qc_plot": "c51bb7f0da9a494256c19c097824adf784a100aa3747678cd1a11a5de8ed286b",
-    "normalize": "2583c0d40fa835c6733f237551b711ee6f9ca3188e4e2341bfd01ab682ff22e6",
-    "normalize_cbf": "df57952a1cdcbd757f4c60dbc599678462c3f0e9c975c451ea9c1433a7b786f9",
+    "normalize": "46e95a18670a3134604db1df88e4aff73813483aa0a8272286af55f0493c78da",
+    "normalize_cbf": "d3d8d3aee06a43e5524d185dc46864e05e9850e216be2760f3e22a54f659e83a",
     "positive_tail": "051ce74bce50a4f0f05d0b81f66418e853e3e2c3f95bae0d3efc7a9edf9b2f52",
     "prebolus_mean": "94ade71cddc7afb13dce74a47091860d8d7ee30fce12cc69505ee224e72fdc8d",
     "preload_correct": "2c2a1c9e9c594645112f6f5df3a29c1b22348247437f63b85f37fbaf63553831",
@@ -2190,7 +2197,7 @@
     },
     "merge_qc": {
       "aif_source": "auto",
-      "function_str": "def _merge_qc_metrics(\n    motion_qc: dict[str, object] | None,\n    preload_qc: dict[str, object] | None,\n    aif_qc: dict[str, object] | None,\n    deconv_qc: dict[str, object] | None,\n    registration_qc: dict[str, object] | None,\n    normalization_factor: float | None,\n    motion_summary: dict[str, object] | None = None,\n    aif_metrics: dict[str, object] | None = None,\n    preprocessing_stats: dict[str, object] | None = None,\n    aif_source: str = \"auto\",\n) -> dict[str, object]:\n    \"\"\"Merge all QC metrics into a single dictionary.\n\n    Parameters\n    ----------\n    motion_qc : dict\n        Motion correction QC metrics.\n    preload_qc : dict\n        Preload detection and correction QC metrics.\n    aif_qc : dict\n        AIF detection QC metrics.\n    deconv_qc : dict\n        Deconvolution QC metrics.\n    registration_qc : dict\n        Registration QC metrics.\n    normalization_factor : float\n        CBV normalization factor.\n    motion_summary : dict, optional\n        Motion summary dict from plot_motion_qc.\n    aif_metrics : dict, optional\n        AIF metrics dict from AIFQCPlot.\n    preprocessing_stats : dict, optional\n        Preprocessing stats dict.\n    aif_source : str, optional\n        AIF source type (\"auto\", \"synthetic\", or \"external\").\n\n    Returns\n    -------\n    dict\n        Combined QC metrics dictionary.\n    \"\"\"\n    motion_data = motion_qc if motion_qc else {}\n    if motion_summary:\n        motion_data = dict(motion_data) if motion_data else {}\n        motion_data[\"motion_summary\"] = motion_summary\n        # Surface a flat motion_applied alongside the (strippable) motion_summary\n        # so it survives filter_pipeline_qc into the sidecar PipelineQC \u2014 the\n        # report boilerplate reads it from there. Mirrors DCE's flat placement.\n        motion_data[\"motion_applied\"] = bool(\n            motion_summary.get(\"motion_applied\", True)\n        )\n\n    preprocessing = dict(preprocessing_stats) if preprocessing_stats else {}\n    if motion_data:\n        preprocessing.update(motion_data)\n\n    aif_data = aif_qc if aif_qc else {}\n    if aif_metrics:\n        aif_data = dict(aif_data) if aif_data else {}\n        aif_data[\"aif_metrics\"] = aif_metrics\n\n    merged: dict[str, object] = {\n        \"preprocessing\": preprocessing,\n        \"preload\": preload_qc if preload_qc else {},\n        \"aif_detection\": aif_data,\n        \"deconvolution\": deconv_qc if deconv_qc else {},\n        \"registration\": registration_qc if registration_qc else {},\n        \"normalization_factor\": normalization_factor,\n        \"config\": {\n            \"aif_source\": aif_source,\n        },\n    }\n    return merged\n"
+      "function_str": "def _merge_qc_metrics(\n    motion_qc: dict[str, object] | None,\n    preload_qc: dict[str, object] | None,\n    aif_qc: dict[str, object] | None,\n    deconv_qc: dict[str, object] | None,\n    registration_qc: dict[str, object] | None,\n    normalization_factor: float | None,\n    cbf_normalization_factor: float | None = None,\n    motion_summary: dict[str, object] | None = None,\n    aif_metrics: dict[str, object] | None = None,\n    preprocessing_stats: dict[str, object] | None = None,\n    aif_source: str = \"auto\",\n) -> dict[str, object]:\n    \"\"\"Merge all QC metrics into a single dictionary.\n\n    Parameters\n    ----------\n    motion_qc : dict\n        Motion correction QC metrics.\n    preload_qc : dict\n        Preload detection and correction QC metrics.\n    aif_qc : dict\n        AIF detection QC metrics.\n    deconv_qc : dict\n        Deconvolution QC metrics.\n    registration_qc : dict\n        Registration QC metrics.\n    normalization_factor : float\n        CBV normalization factor.\n    cbf_normalization_factor : float\n        CBF normalization factor.\n    motion_summary : dict, optional\n        Motion summary dict from plot_motion_qc.\n    aif_metrics : dict, optional\n        AIF metrics dict from AIFQCPlot.\n    preprocessing_stats : dict, optional\n        Preprocessing stats dict.\n    aif_source : str, optional\n        AIF source type (\"auto\", \"synthetic\", or \"external\").\n\n    Returns\n    -------\n    dict\n        Combined QC metrics dictionary.\n    \"\"\"\n    motion_data = motion_qc if motion_qc else {}\n    if motion_summary:\n        motion_data = dict(motion_data) if motion_data else {}\n        motion_data[\"motion_summary\"] = motion_summary\n        # Surface a flat motion_applied alongside the (strippable) motion_summary\n        # so it survives filter_pipeline_qc into the sidecar PipelineQC \u2014 the\n        # report boilerplate reads it from there. Mirrors DCE's flat placement.\n        motion_data[\"motion_applied\"] = bool(\n            motion_summary.get(\"motion_applied\", True)\n        )\n\n    preprocessing = dict(preprocessing_stats) if preprocessing_stats else {}\n    if motion_data:\n        preprocessing.update(motion_data)\n\n    aif_data = aif_qc if aif_qc else {}\n    if aif_metrics:\n        aif_data = dict(aif_data) if aif_data else {}\n        aif_data[\"aif_metrics\"] = aif_metrics\n\n    merged: dict[str, object] = {\n        \"preprocessing\": preprocessing,\n        \"preload\": preload_qc if preload_qc else {},\n        \"aif_detection\": aif_data,\n        \"deconvolution\": deconv_qc if deconv_qc else {},\n        \"registration\": registration_qc if registration_qc else {},\n        \"normalization_factor\": normalization_factor,\n        \"cbf_normalization_factor\": cbf_normalization_factor,\n        \"config\": {\n            \"aif_source\": aif_source,\n        },\n    }\n    return merged\n"
     },
     "motion_correct": {
       "baseline_frames": 5,
