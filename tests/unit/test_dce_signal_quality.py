@@ -647,3 +647,70 @@ def test_displayed_tsnr_uses_only_precontrast_frames(tmp_path) -> None:
     )
 
     assert stats["baseline_tsnr"] == pytest.approx(50.0)
+
+
+def test_preprocessing_qc_omits_bolus_contaminated_cov(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The QC figure must not label whole-series enhancement variance as CoV."""
+    import matplotlib
+    import numpy as np
+    from matplotlib.axes import Axes
+
+    matplotlib.use("Agg")
+
+    from pmriprep.utils.dce_pk_qc_plots import generate_preprocessing_qc_plot
+
+    titles: list[str] = []
+    original_set_title = Axes.set_title
+
+    def _record_title(self, label, *args, **kwargs):
+        titles.append(str(label))
+        return original_set_title(self, label, *args, **kwargs)
+
+    monkeypatch.setattr(Axes, "set_title", _record_title)
+    curve = np.array([100.0, 101.0, 99.0, 140.0, 180.0])
+    signal = np.broadcast_to(curve, (3, 3, 3, curve.size)).copy()
+
+    _, stats = generate_preprocessing_qc_plot(
+        signal,
+        np.ones((3, 3, 3), dtype=bool),
+        baseline_frames=3,
+        bolus_arrival_frame=3,
+        volume_tr_s=4.0,
+        output_path=str(tmp_path / "dce_qc.png"),
+    )
+
+    assert "Baseline tSNR Map" in titles
+    assert "Enhancement CNR (frame 4)" in titles
+    assert not any("Coefficient of Variation" in title for title in titles)
+    assert stats["mean_cnr"] == pytest.approx(80.0)
+
+
+def test_preprocessing_mean_cnr_averages_voxelwise_noise_ratios(tmp_path) -> None:
+    """Whole-brain CNR is a mean of voxelwise ratios, not a product of means."""
+    import matplotlib
+    import numpy as np
+
+    matplotlib.use("Agg")
+
+    from pmriprep.utils.dce_pk_qc_plots import generate_preprocessing_qc_plot
+
+    signal = np.array(
+        [
+            [[[99.0, 100.0, 101.0, 110.0]]],
+            [[[90.0, 100.0, 110.0, 110.0]]],
+        ]
+    )
+    _, stats = generate_preprocessing_qc_plot(
+        signal,
+        np.ones((2, 1, 1), dtype=bool),
+        baseline_frames=3,
+        bolus_arrival_frame=3,
+        volume_tr_s=4.0,
+        output_path=str(tmp_path / "dce_qc.png"),
+    )
+
+    pooled_noise = 5.5
+    expected = np.mean([10.0 / pooled_noise, 10.0 / 10.0])
+    assert stats["mean_cnr"] == pytest.approx(expected, abs=0.01)

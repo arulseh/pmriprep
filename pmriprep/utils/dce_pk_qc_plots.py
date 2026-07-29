@@ -1,7 +1,7 @@
 """DCE pharmacokinetic QC visualization plots.
 
 This module provides three QC plot functions for DCE perfusion processing:
-1. Preprocessing QC — signal quality, enhancement, tSNR, CV
+1. Preprocessing QC — signal quality, enhancement, and baseline tSNR
 2. PK modeling QC — model fit at example voxel, AIF, Ktrans map
 3. PK parameter maps — multi-slice spatial parameter maps
 
@@ -146,7 +146,8 @@ def generate_preprocessing_qc_plot(
 
     Layout (GridSpec 2×4, graphs span 2 cols, images span 1):
         Row 0: Global Signal Time Course (0-1) | Peak Signal (2) | Enhancement Map (3)
-        Row 1: Signal Intensity Histogram (0-1) | tSNR Map (2) | CV Map (3)
+        Row 1: Signal Intensity Histogram (0-1) | Baseline tSNR Map (2) |
+               Enhancement CNR at the global peak frame (3)
 
     FD and summary text are omitted — FD is shown in the dedicated
     motion_qc.png, and summary stats are rendered as HTML metric boxes.
@@ -278,8 +279,6 @@ def generate_preprocessing_qc_plot(
 
     # --- (1, 2) Baseline tSNR Map ---
     ax = fig.add_subplot(gs[1, 2])
-    temporal_mean = np.mean(dce_signal_4d, axis=3)
-    temporal_std = np.std(dce_signal_4d, axis=3)
 
     n_baseline = min(max(1, baseline_frames), n_volumes)
     if n_baseline >= 2:
@@ -294,6 +293,8 @@ def generate_preprocessing_qc_plot(
             )
     else:
         tsnr = np.full(mask_bool.shape, np.nan, dtype=np.float64)
+        baseline_mean = np.full(mask_bool.shape, np.nan, dtype=np.float64)
+        baseline_std = np.full(mask_bool.shape, np.nan, dtype=np.float64)
     tsnr[~mask_bool] = np.nan
     valid_tsnr = tsnr[mask_bool & np.isfinite(tsnr)]
     mean_baseline_tsnr = (
@@ -342,16 +343,40 @@ def generate_preprocessing_qc_plot(
             bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8),
         )
 
-    # --- (1, 3) CV Map ---
+    # --- (1, 3) Enhancement CNR at the global peak frame ---
     ax = fig.add_subplot(gs[1, 3])
-    with np.errstate(divide="ignore", invalid="ignore"):
-        cv = np.where(temporal_mean > 1e-6, temporal_std / temporal_mean, 0.0)
-    cv[~mask_bool] = np.nan
-    cv_slice = get_radiological_slice(cv, axis=2)
-    im = ax.imshow(cv_slice, cmap="viridis", vmin=0, vmax=0.2, aspect="equal")
-    ax.set_title("Coefficient of Variation", fontsize=10)
+    valid_noise = mask_bool & np.isfinite(baseline_std) & (baseline_std > 1e-6)
+    pooled_noise = (
+        float(np.median(baseline_std[valid_noise]))
+        if np.any(valid_noise)
+        else float("nan")
+    )
+    if np.isfinite(pooled_noise) and pooled_noise > 1e-6:
+        effective_noise = np.maximum(baseline_std, pooled_noise)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            enhancement_cnr = (peak_vol - baseline_mean) / effective_noise
+        enhancement_cnr[
+            ~mask_bool | ~np.isfinite(enhancement_cnr)
+        ] = np.nan
+    else:
+        enhancement_cnr = np.full(mask_bool.shape, np.nan, dtype=np.float64)
+    valid_cnr = enhancement_cnr[mask_bool & np.isfinite(enhancement_cnr)]
+    cnr_abs_max = (
+        max(float(np.percentile(np.abs(valid_cnr), 95)), 1.0)
+        if valid_cnr.size
+        else 5.0
+    )
+    cnr_slice = get_radiological_slice(enhancement_cnr, axis=2)
+    im = ax.imshow(
+        cnr_slice,
+        cmap="coolwarm",
+        vmin=-cnr_abs_max,
+        vmax=cnr_abs_max,
+        aspect="equal",
+    )
+    ax.set_title(f"Enhancement CNR (frame {peak_frame})", fontsize=10)
     ax.axis("off")
-    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="CV")
+    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="CNR")
 
     if output_path is None:
         output_path = str(Path.cwd() / "dce_preprocessing_qc.png")
@@ -360,19 +385,13 @@ def generate_preprocessing_qc_plot(
     fig.savefig(out, dpi=150, bbox_inches="tight", facecolor="white")
     plt.close(fig)
 
-    # CNR_DCE: combined signal quality metric
-    # CNR = (peak_enh_pct / 100) × baseline_tSNR
-    # Represents contrast-to-noise ratio for DCE signal change detection
-    if np.isnan(mean_baseline_tsnr) or np.isnan(peak_enh_pct):
-        cnr_dce: float | None = None
-    else:
-        cnr_dce = round((peak_enh_pct / 100.0) * mean_baseline_tsnr, 2)
+    mean_cnr = round(float(np.mean(valid_cnr)), 2) if valid_cnr.size else None
 
     stats: dict[str, Any] = {
         "peak_enh_pct": round(peak_enh_pct, 1),
         "baseline_tsnr": round(mean_baseline_tsnr, 1),
         "baseline_snr_low_fraction": baseline_snr_low_fraction,
-        "mean_cnr": cnr_dce,
+        "mean_cnr": mean_cnr,
         "n_brain_voxels": int(mask_bool.sum()),
         "voxel_size_mm": (
             [float(v) for v in voxel_size_mm] if voxel_size_mm is not None else None
