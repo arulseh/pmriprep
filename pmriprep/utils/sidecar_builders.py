@@ -972,34 +972,6 @@ def build_dsc_map_sidecar(
                     "parameter": "CBV" if map_key == "ncbv" else "CBF",
                 },
             }
-    # Surface the per-run first-pass-CBV reference so the named reference and
-    # its voxel count land on the map's own sidecar.
-    if map_key == "cbv_firstpass" and isinstance(qc_metrics, dict):
-        ref = qc_metrics.get("firstpass_reference")
-        if ref is not None:
-            sidecar["FirstPassReference"] = str(ref)
-        ref_n = qc_metrics.get("firstpass_reference_n")
-        if ref_n is not None:
-            sidecar["FirstPassReferenceVoxelCount"] = int(ref_n)
-        perfusion = sidecar.get("PerfusionProcessing")
-        if ref is not None:
-            firstpass_normalization: Dict[str, Any] = {
-                "tissue": "whole-WM FAST",
-                "method": "median_first_pass_area",
-                "reference": str(ref),
-            }
-            if ref_n is not None:
-                firstpass_normalization["voxel_count"] = int(ref_n)
-            sidecar["PerfusionProcessing"] = {
-                **(perfusion if isinstance(perfusion, dict) else {}),
-                "NormalizationReference": firstpass_normalization,
-            }
-        unfit = qc_metrics.get("firstpass_unfittable_fraction")
-        if unfit is not None:
-            sidecar["FirstPassUnfittableFraction"] = float(unfit)
-        fwhm = qc_metrics.get("firstpass_prefit_fwhm_mm")
-        if fwhm is not None:
-            sidecar["FirstPassPreSmoothingFWHMmm"] = float(fwhm)
     apply_aif_sidecar(sidecar, map_key, qc_metrics)
     return sidecar
 

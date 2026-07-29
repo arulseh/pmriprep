@@ -392,12 +392,6 @@
     ],
     [
       "compute_maps",
-      "out_rel_cbv_firstpass",
-      "outputnode",
-      "rel_cbv_firstpass_map"
-    ],
-    [
-      "compute_maps",
       "out_tmax",
       "dsc_param_maps_qc",
       "tmax_file"
@@ -1887,7 +1881,6 @@
       "cpi_control_points": 0,
       "cpi_infer_cpt": true,
       "cpi_infer_delay": false,
-      "first_pass_cbv": false,
       "inference": "vi",
       "mcmc_samples": 500,
       "method": "oSVD",
@@ -2249,7 +2242,6 @@
     "registration_filmstrip",
     "rel_cbf_map",
     "rel_cbv_auc_map",
-    "rel_cbv_firstpass_map",
     "rel_cbv_map",
     "roi_mask_dsc",
     "roi_stats_json",

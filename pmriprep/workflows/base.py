@@ -1649,9 +1649,6 @@ def _connect_master_dsc_datasinks(
         "brain_mask_dsc",
         "dsc_to_t1w_xfm",
     }
-    # First-pass CBV — opt-in additive stroke/non-tumor map
-    if dsc_config.first_pass_cbv:
-        dsc_present.add("rel_cbv_firstpass_map")
     # Parametric methods only (oSVD/sSVD/tikhonov produce no
     # vascular params, no Bayesian uncertainty, no parametric R²)
     if dsc_method in ("cpi", "vascular"):
@@ -1777,8 +1774,6 @@ def _connect_master_dsc_datasinks(
             ("outputnode.rel_cbf_map", "inputnode.rel_cbf_map"),
             ("outputnode.rel_cbv_map", "inputnode.rel_cbv_map"),
             ("outputnode.rel_cbv_auc_map", "inputnode.rel_cbv_auc_map"),
-            ("outputnode.rel_cbv_firstpass_map",
-             "inputnode.rel_cbv_firstpass_map"),
             # Normalized maps
             ("outputnode.ncbv_map", "inputnode.ncbv_map"),
             ("outputnode.ncbf_map", "inputnode.ncbf_map"),

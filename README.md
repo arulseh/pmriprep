@@ -184,7 +184,6 @@ DSC fields:
 | `leakage_method` | `bsw` | `bsw` or `bidirectional` |
 | `kep` | `null` | Bidirectional-leakage kep override in s⁻¹ |
 | `pre_bolus` | `5` | Initial baseline frames; final baseline is AIF-informed |
-| `first_pass_cbv` | `false` | Add first-pass AUC-rCBV |
 | `motion_correct` | `true` | Apply motion correction |
 | `motion_thresh` | `0.5` | Motion-QC threshold in mm (float) |
 | `smooth_fwhm` | `0.0` | Additional smoothed outputs in mm; 0 (float) disables |

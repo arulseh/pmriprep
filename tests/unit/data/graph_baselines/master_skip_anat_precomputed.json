@@ -746,12 +746,6 @@
     ],
     [
       "dsc_wf",
-      "outputnode.rel_cbv_firstpass_map",
-      "dsc_datasinks_wf",
-      "inputnode.rel_cbv_firstpass_map"
-    ],
-    [
-      "dsc_wf",
       "outputnode.rel_cbv_map",
       "dsc_datasinks_wf",
       "inputnode.rel_cbv_map"

@@ -1139,8 +1139,8 @@ def test_prepare_final_outputs_preserves_composition_and_qc_order(
 def test_assemble_outputs_preserves_serialization_order_and_optional_branches(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Final output assembly retains first-pass, fit-QC, and parametric ordering."""
-    interface = ComputeDSCMaps(first_pass_cbv=True, save_residue=True)
+    """Final output assembly retains fit-QC and parametric ordering."""
+    interface = ComputeDSCMaps(save_residue=True)
     data = np.ones((1, 1, 1))
     maps = SimpleNamespace(
         rel_cbf=data,
@@ -1192,11 +1192,6 @@ def test_assemble_outputs_preserves_serialization_order_and_optional_branches(
     )
     monkeypatch.setattr(
         interface,
-        "_compute_first_pass_cbv",
-        lambda **kwargs: calls.append("first_pass") or "first_pass.nii.gz",
-    )
-    monkeypatch.setattr(
-        interface,
         "_save_ancillary_maps",
         lambda **kwargs: calls.append("ancillary") or {"out_k2": "k2.nii.gz"},
     )
@@ -1223,9 +1218,8 @@ def test_assemble_outputs_preserves_serialization_order_and_optional_branches(
         postprocessing=postprocessing,
     )
 
-    assert calls == ["base", "first_pass", "ancillary", "fit", "fit_summary", "parametric"]
+    assert calls == ["base", "ancillary", "fit", "fit_summary", "parametric"]
     assert results is base_results
     assert interface._results is results
-    assert results["out_rel_cbv_firstpass"] == "first_pass.nii.gz"
     assert results["out_k2"] == "k2.nii.gz"
     assert results["out_cbf_std"] == "std.nii.gz"
