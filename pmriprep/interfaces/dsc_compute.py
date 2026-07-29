@@ -357,10 +357,9 @@ class _DSCAUCMaps(NamedTuple):
 
 
 class _DSCQualityMaps(NamedTuple):
-    """Concentration CNR and raw-signal SNR/tSNR maps."""
+    """Raw-signal CNR and baseline-tSNR maps."""
 
     cnr: npt.NDArray[Any]
-    snr: npt.NDArray[Any]
     tsnr: npt.NDArray[Any]
 
 
@@ -379,7 +378,6 @@ class _DSCFinalMaps(NamedTuple):
     rel_auc_raw: npt.NDArray[Any]
     rel_auc_corrected: npt.NDArray[Any]
     cnr: npt.NDArray[Any]
-    snr: npt.NDArray[Any]
     tsnr: npt.NDArray[Any]
     psr: npt.NDArray[Any]
     delay: Optional[npt.NDArray[Any]]
@@ -613,8 +611,7 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
     out_rel_auc_corr = File(genfile=True, desc="Output relative AUC corrected map NIfTI")
 
     # Output files — quality metrics
-    out_snr = File(genfile=True, desc="Output SNR (baseline) map NIfTI")
-    out_tsnr = File(genfile=True, desc="Output tSNR (temporal) map NIfTI")
+    out_tsnr = File(genfile=True, desc="Output baseline tSNR map NIfTI")
 
 
 class ComputeDSCMapsOutputSpec(TraitedSpec):
@@ -643,8 +640,7 @@ class ComputeDSCMapsOutputSpec(TraitedSpec):
     out_rel_auc_corr = File(exists=True, desc="Relative AUC corrected map")
 
     # Quality metrics
-    out_snr = File(exists=True, desc="SNR map (baseline signal)")
-    out_tsnr = File(exists=True, desc="tSNR map (temporal signal)")
+    out_tsnr = File(exists=True, desc="Baseline tSNR map")
 
     # K2 leakage map (recomputed or pass-through)
     out_k2 = File(desc="K2 leakage correction map (from recomputed or pass-through)")
@@ -735,8 +731,8 @@ class ComputeDSCMaps(BaseInterface):
         Paths to quantification-independent maps.
     out_auc_raw, out_auc_corr, out_auc_diff : str
         Paths to AUC decomposition maps.
-    out_snr, out_tsnr : str
-        Paths to SNR and tSNR quality metric maps.
+    out_tsnr : str
+        Path to the baseline temporal-SNR quality map.
     out_delay : str, optional
         Path to delay map (oSVD).
     out_residues : str, optional
@@ -1185,59 +1181,67 @@ class ComputeDSCMaps(BaseInterface):
 
     def _compute_quality_maps(
         self,
-        raw_concentration: npt.NDArray[Any],
         signal: Optional[npt.NDArray[Any]],
         detected_baseline: int,
+        spatial_shape: tuple[int, ...],
+        brain_mask: npt.NDArray[np.bool_],
     ) -> _DSCQualityMaps:
-        """Compute concentration CNR and raw-signal SNR/tSNR.
+        """Compute raw-signal CNR and baseline temporal SNR.
 
         Parameters
         ----------
-        raw_concentration : npt.NDArray
-            Pre-K2 concentration used for baseline noise and peak contrast.
         signal : npt.NDArray, optional
-            Raw DSC signal used for baseline SNR and whole-series tSNR.
+            Raw DSC signal used for CNR and baseline tSNR.
         detected_baseline : int
             Detected pre-bolus frame count.
+        spatial_shape : tuple of int
+            Output map shape when raw signal is unavailable.
+        brain_mask : np.ndarray
+            Brain domain used to pool the CNR noise floor.
 
         Returns
         -------
         _DSCQualityMaps
-            Unclipped CNR, SNR, and tSNR maps.
+            Unclipped CNR and baseline-tSNR maps.
 
         """
-        baseline_std = np.std(
-            raw_concentration[..., :detected_baseline], axis=-1
-        )
-        peak_concentration = np.max(raw_concentration, axis=-1)
-        with np.errstate(divide="ignore", invalid="ignore"):
-            cnr = np.where(
-                baseline_std > EPSILON_CONCENTRATION,
-                peak_concentration / baseline_std,
-                0.0,
-            )
-
-        spatial_shape = raw_concentration.shape[:3]
         if signal is None:
-            zeros = np.zeros(spatial_shape, dtype=np.float64)
-            return _DSCQualityMaps(cnr=cnr, snr=zeros, tsnr=zeros.copy())
+            undefined = np.full(spatial_shape, np.nan, dtype=np.float64)
+            return _DSCQualityMaps(cnr=undefined, tsnr=undefined.copy())
 
-        snr_baseline_frames = min(
-            detected_baseline, raw_concentration.shape[-1] - 1
-        )
-        baseline_signal = signal[..., :snr_baseline_frames]
+        baseline_frames = min(detected_baseline, signal.shape[-1] - 1)
+        if baseline_frames < 2:
+            undefined = np.full(spatial_shape, np.nan, dtype=np.float64)
+            return _DSCQualityMaps(cnr=undefined, tsnr=undefined.copy())
+
+        baseline_signal = signal[..., :baseline_frames]
         baseline_mean = np.mean(baseline_signal, axis=-1)
-        baseline_signal_std = np.std(baseline_signal, axis=-1, ddof=1)
+        baseline_noise = np.std(baseline_signal, axis=-1, ddof=1)
+        post_baseline_minimum = np.min(signal[..., baseline_frames:], axis=-1)
+        signal_drop = baseline_mean - post_baseline_minimum
+        pool_values = baseline_noise[
+            brain_mask & np.isfinite(baseline_noise) & (baseline_noise > EPSILON_SIGNAL)
+        ]
+        pooled_noise = float(np.median(pool_values)) if pool_values.size else np.nan
+        effective_noise = np.maximum(baseline_noise, pooled_noise)
+        valid_cnr = (
+            np.isfinite(signal_drop)
+            & np.isfinite(effective_noise)
+            & (signal_drop > 0.0)
+            & (effective_noise > EPSILON_SIGNAL)
+        )
+        valid_tsnr = (
+            np.isfinite(baseline_mean)
+            & np.isfinite(baseline_noise)
+            & (baseline_mean > EPSILON_SIGNAL)
+            & (baseline_noise > EPSILON_SIGNAL)
+        )
+        cnr = np.full(spatial_shape, np.nan, dtype=np.float64)
+        tsnr = np.full(spatial_shape, np.nan, dtype=np.float64)
         with np.errstate(divide="ignore", invalid="ignore"):
-            snr = np.where(
-                baseline_signal_std > EPSILON_SIGNAL,
-                baseline_mean / baseline_signal_std,
-                0.0,
-            )
-            all_mean = np.mean(signal, axis=-1)
-            all_std = np.std(signal, axis=-1, ddof=1)
-            tsnr = np.where(all_std > EPSILON_SIGNAL, all_mean / all_std, 0.0)
-        return _DSCQualityMaps(cnr=cnr, snr=snr, tsnr=tsnr)
+            np.divide(signal_drop, effective_noise, out=cnr, where=valid_cnr)
+            np.divide(baseline_mean, baseline_noise, out=tsnr, where=valid_tsnr)
+        return _DSCQualityMaps(cnr=cnr, tsnr=tsnr)
 
     @staticmethod
     def _finalize_mtt(
@@ -1351,7 +1355,6 @@ class ComputeDSCMaps(BaseInterface):
         auc_corrected: npt.NDArray[Any],
         auc_difference: npt.NDArray[Any],
         cnr: npt.NDArray[Any],
-        snr: npt.NDArray[Any],
         tsnr: npt.NDArray[Any],
         psr: npt.NDArray[Any],
         delay: Optional[npt.NDArray[Any]],
@@ -1364,7 +1367,6 @@ class ComputeDSCMaps(BaseInterface):
         mtt = np.clip(mtt, 0.0, 30.0)
         cbf = np.clip(cbf, 0.0, 100.0)
         cbv = np.clip(cbv, 0.0, 10.0)
-        cnr = np.clip(cnr, 0.0, 1000.0)
 
         rel_cbf = np.clip(cbf * 60.0, 0.0, 100.0)
         rel_cbv = np.clip(cbv, 0.0, 10.0)
@@ -1383,7 +1385,6 @@ class ComputeDSCMaps(BaseInterface):
             rel_auc_raw=np.where(mask_bool, auc_raw, 0.0),
             rel_auc_corrected=np.where(mask_bool, auc_corrected, 0.0),
             cnr=np.where(mask_bool, cnr, 0.0),
-            snr=np.where(mask_bool, snr, 0.0),
             tsnr=np.where(mask_bool, tsnr, 0.0),
             psr=np.where(mask_bool, psr, 0.0),
             delay=None if delay is None else np.where(mask_bool, delay, 0.0),
@@ -1456,7 +1457,7 @@ class ComputeDSCMaps(BaseInterface):
         )
         qc.update(auc.qc)
         quality = self._compute_quality_maps(
-            raw_concentration, signal, detected_baseline
+            signal, detected_baseline, spatial_shape, mask_bool
         )
         mtt = self._finalize_mtt(
             method,
@@ -1475,7 +1476,6 @@ class ComputeDSCMaps(BaseInterface):
             auc_corrected=auc.corrected,
             auc_difference=auc.difference,
             cnr=quality.cnr,
-            snr=quality.snr,
             tsnr=quality.tsnr,
             psr=signal_metrics.psr,
             delay=deconvolution.delay,
@@ -1521,7 +1521,6 @@ class ComputeDSCMaps(BaseInterface):
             "out_rel_cbv_auc": (maps.rel_cbv_auc, "_rel_cbv_auc"),
             "out_rel_auc_raw": (maps.rel_auc_raw, "_rel_auc_raw"),
             "out_rel_auc_corr": (maps.rel_auc_corrected, "_rel_auc_corr"),
-            "out_snr": (maps.snr, "_snr"),
             "out_tsnr": (maps.tsnr, "_tsnr"),
         }
         results: dict[str, Any] = {

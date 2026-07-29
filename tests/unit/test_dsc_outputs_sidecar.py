@@ -469,6 +469,23 @@ class TestWriterAifBlockPresentOnAllMaps:
         )
         assert uncertainty_meta["SpatiallyRegularizedParameters"] == ["cbf"]
 
+    def test_signal_quality_map_contract(self, minimal_inputs, tmp_path) -> None:
+        """CNR and baseline tSNR are dimensionless and expose exact estimators."""
+        minimal_inputs.update({
+            "cnr_map": _write_dummy_nifti(tmp_path / "cnr.nii.gz"),
+            "tsnr_map": _write_dummy_nifti(tmp_path / "tsnr.nii.gz"),
+        })
+
+        derivatives = _run_writer(minimal_inputs, {}, tmp_path)
+
+        cnr = _load_sidecar(derivatives, "dscCnr_stat")
+        tsnr = _load_sidecar(derivatives, "dscTsnr_stat")
+        assert cnr["Units"] == "1"
+        assert cnr["Estimator"] == "(S0 - Smin) / sigma0"
+        assert tsnr["Units"] == "1"
+        assert tsnr["TemporalWindow"] == "detected pre-bolus volumes only"
+        assert not list(derivatives.rglob("*dscSnr_stat*"))
+
     def test_synthetic_template_flags(self, minimal_inputs, tmp_path) -> None:
         qc = {
             "aif_detection": {"detection_method": "synthetic", "quality_score": 0.3},

@@ -119,11 +119,32 @@ _OPTIONAL_MAPS: tuple[DSCMapSpec, ...] = (
      "s", "ttp",
      {"ReferencePoint": "AIF bolus arrival time",
       "UndefinedValue": "NaN when tissue peak precedes AIF bolus arrival"}),
-    DSCMapSpec("cnr_map", "dsc", "cnr", "Contrast-to-noise ratio", "arbitrary", "cnr"),
+    DSCMapSpec(
+        "cnr_map", "dsc", "cnr", "DSC signal-drop contrast-to-noise ratio", "1", "cnr",
+        {
+            "Estimator": "(S0 - Smin) / sigma0",
+            "BaselineSignal": "mean over detected pre-bolus volumes",
+            "MinimumSignal": "minimum over post-baseline dynamic series",
+            "NoiseEstimate": (
+                "larger of voxelwise baseline standard deviation and the median positive "
+                "baseline standard deviation within the brain mask"
+            ),
+            "UndefinedValue": "NaN when raw signal or a positive signal drop is unavailable",
+        },
+    ),
     DSCMapSpec("auc_diff_map", "dscLeakage", "auc",
      "Leakage contribution (AUC_raw - AUC_corr)", "arbitrary", "auc_diff"),
-    DSCMapSpec("snr_map", "dsc", "snr", "Signal-to-noise ratio (baseline)", "arbitrary", "snr"),
-    DSCMapSpec("tsnr_map", "dsc", "tsnr", "Temporal signal-to-noise ratio", "arbitrary", "tsnr"),
+    DSCMapSpec(
+        "tsnr_map", "dsc", "tsnr", "Baseline temporal signal-to-noise ratio", "1", "tsnr",
+        {
+            "Estimator": "mean(S0) / sample_standard_deviation(S0)",
+            "TemporalWindow": "detected pre-bolus volumes only",
+            "UndefinedValue": "NaN when raw signal or baseline variance is unavailable",
+            "PrecisionNote": (
+                "Voxelwise precision depends on the number of detected baseline volumes"
+            ),
+        },
+    ),
     DSCMapSpec("rel_cbv_firstpass_map", "dscRelFirstPass", "cbv",
      "First-pass cerebral blood volume, relative. "
      "Stroke / non-tumor first-pass convention.",
@@ -1140,7 +1161,7 @@ def init_dsc_datasinks_wf(
                 "rel_cbv_firstpass_map",
                 # Optional
                 "ttp_map",
-                "cnr_map", "auc_diff_map", "snr_map", "tsnr_map",
+                "cnr_map", "auc_diff_map", "tsnr_map",
                 # Normalized
                 "ncbv_map", "ncbf_map",
                 # Vascular

@@ -470,12 +470,6 @@
     ],
     [
       "compute_maps",
-      "out_snr",
-      "outputnode",
-      "snr_map"
-    ],
-    [
-      "compute_maps",
       "out_tmax",
       "dsc_param_maps_qc",
       "tmax_file"
@@ -2611,7 +2605,6 @@
     "roi_stats_json",
     "smooth_auc",
     "smooth_hemodynamic",
-    "snr_map",
     "t1w_in_dsc",
     "t1w_postcon_in_dsc",
     "t1w_subtraction_in_dsc",

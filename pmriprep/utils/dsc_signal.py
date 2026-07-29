@@ -555,7 +555,9 @@ def compute_psr_legacy(
         denom = s0 - s_min
         noise = np.std(signal[..., :baseline_frames], axis=-1, ddof=1)
         pool = np.ones(s0.shape, dtype=bool) if brain_mask is None else brain_mask
-        pool_values = noise[pool & np.isfinite(noise) & (noise > 0)]
+        pool_values = noise[
+            pool & np.isfinite(noise) & (noise > EPSILON_SIGNAL)
+        ]
         pooled_noise = float(np.median(pool_values)) if pool_values.size else 0.0
         effective_noise = np.maximum(noise, pooled_noise)
         valid = (

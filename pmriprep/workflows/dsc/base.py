@@ -756,7 +756,7 @@ def init_dsc_deconvolution_wf(
         Percentage signal recovery.
     out_auc_raw, out_auc_corr, out_auc_diff, out_k2
         Leakage (blood-brain-barrier) maps.
-    out_cnr, out_snr, out_tsnr
+    out_cnr, out_tsnr
         Quality maps.
     out_alpha, out_beta, out_cth
         Vascular-model parameters (undefined for SVD methods).
@@ -807,7 +807,6 @@ def init_dsc_deconvolution_wf(
                 "out_auc_corr",
                 "out_auc_diff",
                 "out_k2",
-                "out_snr",
                 "out_tsnr",
                 "out_alpha",
                 "out_beta",
@@ -862,7 +861,6 @@ def init_dsc_deconvolution_wf(
             ("out_auc_corr", "out_auc_corr"),
             ("out_auc_diff", "out_auc_diff"),
             ("out_k2", "out_k2"),
-            ("out_snr", "out_snr"),
             ("out_tsnr", "out_tsnr"),
             ("out_alpha", "out_alpha"),
             ("out_beta", "out_beta"),
@@ -1826,8 +1824,8 @@ def init_dsc_preproc_wf(
         AIF-arrival-referenced time-to-peak and contrast-to-noise ratio maps.
     auc_diff_map
         AUC leakage contribution (raw - corrected).
-    snr_map, tsnr_map
-        SNR (baseline) and tSNR (temporal) quality metric maps.
+    tsnr_map
+        Baseline temporal-SNR quality map.
     aif_curve
         Path to detected/used AIF curve.
     aif_mask
@@ -1947,7 +1945,6 @@ def init_dsc_preproc_wf(
                 # First-pass CBV (optional, opt-in)
                 "rel_cbv_firstpass_map",
                 # Quality metrics
-                "snr_map",
                 "tsnr_map",
                 # AIF outputs
                 "aif_curve",
@@ -2665,7 +2662,6 @@ def init_dsc_preproc_wf(
         ]),
         # Quality metrics
         (deconvolution_wf, outputnode, [
-            ("outputnode.out_snr", "snr_map"),
             ("outputnode.out_tsnr", "tsnr_map"),
         ]),
         # Vascular model parameters (optional — undefined for SVD methods)

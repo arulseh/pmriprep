@@ -1640,7 +1640,7 @@ def _connect_master_dsc_datasinks(
     dsc_has_nawm = mask_state.has_nawm_source
     dsc_present: set[str] = {
         # Always-present (mandatory in dsc_wf.outputnode)
-        "ttp_map", "cnr_map", "auc_diff_map", "snr_map", "tsnr_map",
+        "ttp_map", "cnr_map", "auc_diff_map", "tsnr_map",
         "rel_cbf_map", "rel_cbv_map", "rel_cbv_auc_map",
         "rel_auc_raw_map", "rel_auc_corr_map",
         "ncbv_map", "ncbf_map",
@@ -1774,7 +1774,6 @@ def _connect_master_dsc_datasinks(
             ("outputnode.ttp_map", "inputnode.ttp_map"),
             ("outputnode.cnr_map", "inputnode.cnr_map"),
             ("outputnode.auc_diff_map", "inputnode.auc_diff_map"),
-            ("outputnode.snr_map", "inputnode.snr_map"),
             ("outputnode.tsnr_map", "inputnode.tsnr_map"),
             # Relative maps
             ("outputnode.rel_cbf_map", "inputnode.rel_cbf_map"),

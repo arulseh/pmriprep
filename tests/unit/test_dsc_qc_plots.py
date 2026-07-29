@@ -5,7 +5,10 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from pmriprep.utils.dsc_qc_plots import _select_dsc_qc_voxel
+from pmriprep.utils.dsc_qc_plots import (
+    _select_dsc_qc_voxel,
+    generate_dsc_preprocessing_qc_plot,
+)
 
 
 @pytest.fixture
@@ -106,3 +109,22 @@ class TestSelectDSCQCVoxelTiers:
         )
         assert tier == "center"
         assert brain_mask[coord]
+
+
+def test_preprocessing_qc_uses_baseline_tsnr_and_signal_drop_cnr(tmp_path) -> None:
+    """Displayed acquisition metrics match the stored-map signal conventions."""
+    curve = np.array([100.0, 102.0, 98.0, 75.0, 85.0])
+    signal = np.broadcast_to(curve, (3, 3, 3, curve.size)).copy()
+    mask = np.ones((3, 3, 3), dtype=bool)
+
+    _, stats = generate_dsc_preprocessing_qc_plot(
+        signal,
+        mask,
+        baseline_frames=3,
+        volume_tr_s=1.5,
+        output_path=str(tmp_path / "dsc_qc.png"),
+    )
+
+    assert stats["mean_tsnr"] == pytest.approx(50.0)
+    assert stats["mean_cnr"] == pytest.approx(12.5)
+    assert stats["fraction_cnr_gt_4"] == 1.0

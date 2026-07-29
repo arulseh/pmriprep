@@ -15,7 +15,6 @@ from pmriprep.interfaces.dsc_compute import (
     _dsc_init_worker,
 )
 from pmriprep.models.dsc import VascularModel
-from pmriprep.utils.dsc_constants import EPSILON_CONCENTRATION, EPSILON_SIGNAL
 from pmriprep.utils.dsc_signal import (
     compute_psr_legacy,
 )
@@ -409,14 +408,8 @@ def test_compute_auc_maps_missing_aif_and_preload_warning() -> None:
     assert "residual leakage" in result.qc["cbv_auc_preload_warning"]
 
 
-def test_compute_quality_maps_preserves_noise_conventions() -> None:
-    """CNR uses ddof=0 while signal SNR and tSNR retain ddof=1."""
-    raw = np.array(
-        [
-            [[[0.0, 1.0, 2.0, 6.0, 3.0]]],
-            [[[1.0, 1.0, 1.0, 4.0, 2.0]]],
-        ]
-    )
+def test_compute_quality_maps_uses_signal_drop_and_baseline_tsnr() -> None:
+    """CNR and tSNR use the raw signal and stationary baseline window."""
     signal = np.array(
         [
             [[[100.0, 102.0, 98.0, 75.0, 85.0]]],
@@ -424,39 +417,36 @@ def test_compute_quality_maps_preserves_noise_conventions() -> None:
         ]
     )
 
-    result = ComputeDSCMaps()._compute_quality_maps(raw, signal, 3)
+    mask = np.ones((2, 1, 1), dtype=bool)
+    result = ComputeDSCMaps()._compute_quality_maps(signal, 3, mask.shape, mask)
 
-    raw_std = np.std(raw[..., :3], axis=-1)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        expected_cnr = np.where(
-            raw_std > EPSILON_CONCENTRATION, np.max(raw, axis=-1) / raw_std, 0.0
-        )
-    signal_baseline = signal[..., :3]
-    signal_std = np.std(signal_baseline, axis=-1, ddof=1)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        expected_snr = np.where(
-            signal_std > EPSILON_SIGNAL,
-            np.mean(signal_baseline, axis=-1) / signal_std,
-            0.0,
-        )
-    all_std = np.std(signal, axis=-1, ddof=1)
-    expected_tsnr = np.where(
-        all_std > EPSILON_SIGNAL, np.mean(signal, axis=-1) / all_std, 0.0
-    )
-    np.testing.assert_allclose(result.cnr, expected_cnr)
-    np.testing.assert_allclose(result.snr, expected_snr)
-    np.testing.assert_allclose(result.tsnr, expected_tsnr)
+    np.testing.assert_allclose(result.cnr.ravel(), [12.5, 5.0])
+    assert result.tsnr[0, 0, 0] == pytest.approx(50.0)
+    assert np.isnan(result.tsnr[1, 0, 0])
 
 
-def test_compute_quality_maps_without_signal_returns_zero_snr() -> None:
-    """Missing raw signal leaves concentration CNR intact and signal maps zero."""
-    raw = np.array([[[[0.0, 1.0, 2.0, 5.0]]]])
+def test_compute_quality_maps_without_signal_returns_nan() -> None:
+    """Missing raw signal leaves both signal-quality maps undefined."""
+    mask = np.ones((1, 1, 1), dtype=bool)
 
-    result = ComputeDSCMaps()._compute_quality_maps(raw, None, 3)
+    result = ComputeDSCMaps()._compute_quality_maps(None, 3, mask.shape, mask)
 
-    assert result.cnr[0, 0, 0] > 0.0
-    np.testing.assert_array_equal(result.snr, np.zeros((1, 1, 1)))
-    np.testing.assert_array_equal(result.tsnr, np.zeros((1, 1, 1)))
+    assert np.isnan(result.cnr).all()
+    assert np.isnan(result.tsnr).all()
+
+
+def test_compute_quality_maps_rejects_no_drop_and_short_baseline() -> None:
+    """CNR requires a positive signal drop and both maps require baseline variance."""
+    mask = np.ones((1, 1, 1), dtype=bool)
+    no_drop = np.array([[[[100.0, 102.0, 98.0, 105.0, 110.0]]]])
+
+    result = ComputeDSCMaps()._compute_quality_maps(no_drop, 3, mask.shape, mask)
+    short = ComputeDSCMaps()._compute_quality_maps(no_drop, 1, mask.shape, mask)
+
+    assert np.isnan(result.cnr).all()
+    assert np.isfinite(result.tsnr).all()
+    assert np.isnan(short.cnr).all()
+    assert np.isnan(short.tsnr).all()
 
 
 @pytest.mark.parametrize("method", ["sSVD", "oSVD", "tikhonov"])
@@ -564,8 +554,7 @@ def test_finalize_dsc_maps_preserves_ranges_units_and_nan_policy() -> None:
         auc_raw=values,
         auc_corrected=values + 1.0,
         auc_difference=values + 2.0,
-        cnr=values,
-        snr=values,
+        cnr=np.array([-1.0, 2000.0, 5.0]),
         tsnr=values,
         psr=np.array([-1.0, 250.0, 5.0]),
         delay=np.array([1.0, 2.0, 3.0]),
@@ -579,6 +568,7 @@ def test_finalize_dsc_maps_preserves_ranges_units_and_nan_policy() -> None:
     assert np.isnan(result.rel_cbv_auc[0])
     np.testing.assert_allclose(result.mtt, [0.0, 30.0, 0.0])
     np.testing.assert_allclose(result.tmax, [0.0, 60.0, 0.0])
+    np.testing.assert_allclose(result.cnr, [-1.0, 2000.0, 0.0])
     np.testing.assert_allclose(result.psr, [-1.0, 250.0, 0.0])
     np.testing.assert_allclose(result.ttp[1:], [3.0, 0.0])
     assert np.isnan(result.ttp[0])
@@ -601,7 +591,6 @@ def test_finalize_dsc_maps_preserves_optional_outputs() -> None:
         auc_corrected=data,
         auc_difference=data,
         cnr=data,
-        snr=data,
         tsnr=data,
         psr=data,
         delay=None,
@@ -663,7 +652,6 @@ def test_save_base_maps_preserves_result_keys_and_suffixes(
         auc_corrected=data,
         auc_difference=data,
         cnr=data,
-        snr=data,
         tsnr=data,
         psr=data,
         delay=None,
@@ -697,7 +685,6 @@ def test_save_base_maps_preserves_result_keys_and_suffixes(
         "out_rel_cbv_auc": "_rel_cbv_auc",
         "out_rel_auc_raw": "_rel_auc_raw",
         "out_rel_auc_corr": "_rel_auc_corr",
-        "out_snr": "_snr",
         "out_tsnr": "_tsnr",
     }
     assert suffixes == list(expected.values())
@@ -1109,9 +1096,8 @@ def test_prepare_final_outputs_preserves_composition_and_qc_order(
     monkeypatch.setattr(
         interface,
         "_compute_quality_maps",
-        lambda *args: calls.append("quality") or SimpleNamespace(
-            cnr=data * 14.0, snr=data * 15.0, tsnr=data * 16.0
-        ),
+        lambda *args: calls.append("quality")
+        or SimpleNamespace(cnr=data * 14.0, tsnr=data * 16.0),
     )
     monkeypatch.setattr(
         interface,

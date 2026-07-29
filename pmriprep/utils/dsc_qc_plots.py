@@ -199,7 +199,8 @@ def generate_dsc_preprocessing_qc_plot(
 
     # --- (0, 3) Signal Drop Map (%) ---
     ax = fig.add_subplot(gs[0, 3])
-    baseline_vol = np.mean(dsc_signal_4d[..., :max(1, baseline_frames)], axis=3)
+    baseline_end = min(max(1, baseline_frames), n_volumes - 1)
+    baseline_vol = np.mean(dsc_signal_4d[..., :baseline_end], axis=3)
     with np.errstate(divide="ignore", invalid="ignore"):
         signal_drop = np.where(
             baseline_vol > 1.0,
@@ -230,27 +231,48 @@ def generate_dsc_preprocessing_qc_plot(
     ax.set_ylabel("Density")
     ax.legend(fontsize=8)
 
-    # --- (1, 2) tSNR Map ---
+    # --- (1, 2) Baseline tSNR Map ---
     ax = fig.add_subplot(gs[1, 2])
-    with np.errstate(divide="ignore", invalid="ignore"):
-        temporal_mean = np.mean(dsc_signal_4d, axis=3)
-        temporal_std = np.std(dsc_signal_4d, axis=3)
-        tsnr = np.where(temporal_std > 1e-6, temporal_mean / temporal_std, 0.0)
+    if baseline_end >= 2:
+        baseline_series = dsc_signal_4d[..., :baseline_end]
+        temporal_mean = np.mean(baseline_series, axis=3)
+        temporal_std = np.std(baseline_series, axis=3, ddof=1)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            tsnr = np.where(temporal_std > 1e-6, temporal_mean / temporal_std, np.nan)
+    else:
+        tsnr = np.full(mask_bool.shape, np.nan, dtype=np.float64)
     tsnr[~mask_bool] = np.nan
     mean_tsnr = float(np.nanmean(tsnr[mask_bool]))
     tsnr_slice = get_radiological_slice(tsnr, axis=2)
     tsnr_vmax = float(np.nanpercentile(tsnr[mask_bool], 95)) if np.any(mask_bool) else 50.0
     im = ax.imshow(tsnr_slice, cmap="hot", vmin=0, vmax=tsnr_vmax, aspect="equal")
-    ax.set_title("tSNR Map", fontsize=10)
+    ax.set_title("Baseline tSNR Map", fontsize=10)
     ax.axis("off")
     fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="tSNR")
 
     # --- (1, 3) CNR Map ---
     ax = fig.add_subplot(gs[1, 3])
-    with np.errstate(divide="ignore", invalid="ignore"):
-        baseline_std_3d = np.std(dsc_signal_4d[..., :max(1, baseline_frames)], axis=3)
-        peak_drop_3d = baseline_vol - min_vol
-        cnr = np.where(baseline_std_3d > 1e-6, peak_drop_3d / baseline_std_3d, 0.0)
+    if baseline_end >= 2:
+        baseline_std_3d = np.std(
+            dsc_signal_4d[..., :baseline_end], axis=3, ddof=1
+        )
+        post_baseline_min = np.min(dsc_signal_4d[..., baseline_end:], axis=3)
+        peak_drop_3d = baseline_vol - post_baseline_min
+        pool_values = baseline_std_3d[
+            mask_bool & np.isfinite(baseline_std_3d) & (baseline_std_3d > 1e-6)
+        ]
+        pooled_noise = float(np.median(pool_values)) if pool_values.size else np.nan
+        effective_noise = np.maximum(baseline_std_3d, pooled_noise)
+        valid_cnr = (
+            np.isfinite(peak_drop_3d)
+            & np.isfinite(effective_noise)
+            & (peak_drop_3d > 0.0)
+            & (effective_noise > 1e-6)
+        )
+        cnr = np.full(mask_bool.shape, np.nan, dtype=np.float64)
+        np.divide(peak_drop_3d, effective_noise, out=cnr, where=valid_cnr)
+    else:
+        cnr = np.full(mask_bool.shape, np.nan, dtype=np.float64)
     cnr[~mask_bool] = np.nan
     mean_cnr = float(np.nanmean(cnr[mask_bool]))
     # CNR coverage metric: fraction of brain voxels with CNR > threshold (Rose criterion)

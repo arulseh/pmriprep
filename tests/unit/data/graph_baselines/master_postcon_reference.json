@@ -884,12 +884,6 @@
     ],
     [
       "dsc_wf",
-      "outputnode.snr_map",
-      "dsc_datasinks_wf",
-      "inputnode.snr_map"
-    ],
-    [
-      "dsc_wf",
       "outputnode.t1w_in_dsc",
       "dsc_datasinks_wf",
       "inputnode.t1w_in_dsc"
