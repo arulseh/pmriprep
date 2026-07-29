@@ -780,6 +780,8 @@ def _build_smoothed_meta(
     extra = {
         "SmoothingFWHM": float(fwhm),
         "SmoothingType": "Gaussian",
+        "SmoothingSupport": "finite source voxels within the brain mask",
+        "InvalidSupportPreserved": True,
         "OutputMaskApplied": True,
         "IntendedFor": "visualization",
         "Note": "Use non-smoothed maps for quantitative ROI analysis",

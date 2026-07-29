@@ -561,6 +561,8 @@ class TestSmoothedSidecars:
         ncbv_sm = _load_sidecar(derivatives, "dscNawmNormSm3Cbv_stat")
         assert _aif_block(ncbv_sm)["Source"] == "synthetic"
         assert ncbv_sm["TemplateAIFUsage"] == "safe"
+        assert ncbv_sm["SmoothingSupport"] == "finite source voxels within the brain mask"
+        assert ncbv_sm["InvalidSupportPreserved"] is True
 
 
 class TestSignedAucCbvProvenance:
