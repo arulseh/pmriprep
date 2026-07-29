@@ -242,21 +242,6 @@ class TestComputeDCEDerivedMetrics:
             assert f"above_{t}" in ktrans_fv
         assert "hotspot_summary" not in derived
 
-    def test_niauc60_fractional_volumes(self) -> None:
-        """nIAUC60 data produces per-map fractional volumes."""
-        mask = np.ones((10, 10, 1), dtype=bool)
-        niauc60 = np.zeros((10, 10, 1))
-        niauc60.flat[:100] = np.linspace(0.0, 8.0, 100)
-
-        derived = compute_dce_derived_metrics(
-            ktrans_data=None,
-            ve_data=None, vp_data=None, mask=mask,
-            niauc60_data=niauc60,
-        )
-        assert "niauc60" in derived["fractional_volumes"]
-        for t in (1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0):
-            assert f"above_{t}" in derived["fractional_volumes"]["niauc60"]
-
     def test_vp_fractional_volumes(self) -> None:
         """vp data produces per-map fractional volumes."""
         mask = np.ones((10, 10, 1), dtype=bool)
@@ -294,6 +279,20 @@ class TestComputeNAWMReference:
         assert "value_qc_status" not in ref["cbv"]
         # No mask-size editorial — voxel_count is informational only.
         assert "mask_qc_status" not in ref
+
+    def test_quantitative_iauc60_reference_is_reported(self) -> None:
+        """Raw IAUC60 retains NAWM context without constructing a ratio map."""
+        nawm_mask = np.zeros((10, 10, 10), dtype=bool)
+        nawm_mask[1:9, 1:9, 1:9] = True
+        iauc60 = np.full((10, 10, 10), 0.03)
+
+        ref = compute_nawm_reference(
+            nawm_mask, {"iauc60": iauc60}, (1.0, 1.0, 1.0),
+        )
+
+        assert ref["iauc60"]["median"] == pytest.approx(0.03)
+        assert ref["iauc60"]["std"] == pytest.approx(0.0)
+        assert ref["value_qc_status"] == "UNKNOWN"
 
     def test_normalized_and_time_maps_are_range_gated(self) -> None:
         """nCBV and MTT retain interpretable NAWM scales."""
@@ -620,25 +619,12 @@ class TestTransformHelpersReturnEmptyString:
 class TestNormalizeHelpersReturnEmptyString:
     """Contract: NAWM normalization Function nodes return ``""`` (not ``None``).
 
-    These helpers feed ``traits.Str`` consumers in DCE/DSC lesion-stats
-    (``niauc60_map``, ``ncbv_map``, ``ncbf_map``). Returning
+    These helpers feed ``traits.Str`` consumers in DSC lesion-stats
+    (``ncbv_map``, ``ncbf_map``). Returning
     ``None`` triggers a TraitError that under the MultiProc plugin manifests
     as a silent dispatch hang (no work-dir created, no log line) — the same
     failure mode :class:`TestCombineTumorMasksReturnsEmptyString` documents.
     """
-
-    def test_normalize_by_nawm_no_inputs(self) -> None:
-        from pmriprep.workflows.dce.base import _normalize_by_nawm
-
-        assert _normalize_by_nawm(param_map=None, nawm_mask=None) == ""
-
-    def test_normalize_by_nawm_nonexistent_nawm(self) -> None:
-        from pmriprep.workflows.dce.base import _normalize_by_nawm
-
-        assert _normalize_by_nawm(
-            param_map="/nonexistent/ktrans.nii.gz",
-            nawm_mask="/nonexistent/nawm.nii.gz",
-        ) == ""
 
     def test_normalize_cbv_no_nawm(self) -> None:
         from pmriprep.workflows.dsc.base import _normalize_cbv
@@ -668,23 +654,12 @@ class TestLesionStatsAcceptsEmptyMapTrait:
     raise TraitError.
 
     The plain pure-function tests above lock the producer contract; this test
-    locks the consumer contract. If a future refactor re-widens
-    :func:`_normalize_by_nawm` (or its DSC siblings) to return ``None`` while
-    the consumer trait is still strict ``traits.Str``, the silent MultiProc
+    locks the consumer contract. If a future refactor widens a DSC normalization
+    helper to return ``None`` while the consumer trait is still strict
+    ``traits.Str``, the silent MultiProc
     hang documented in 0.50.4's commit message resurfaces. This guards
     against that regression.
     """
-
-    def test_dce_lesion_stats_accepts_empty_string_for_normalized_maps(self) -> None:
-        from pmriprep.interfaces.dce_lesion_stats import DCELesionStats
-
-        iface = DCELesionStats()
-        iface.inputs.subject_id = "test01"
-        iface.inputs.session_id = "visit1"
-        # Should not raise TraitError — these are the values produced by
-        # _normalize_by_nawm on the no-NAWM path.
-        iface.inputs.niauc60_map = ""
-        assert iface.inputs.niauc60_map == ""
 
     def test_dsc_lesion_stats_accepts_empty_string_for_normalized_maps(self) -> None:
         from pmriprep.interfaces.dsc_lesion_stats import DSCLesionStats
@@ -944,7 +919,7 @@ class TestDSCStatsKeyTtp:
 
 
 class TestDCELesionStatsMapKeyCoverage:
-    """Phase 1d: model-free + NAWM-norm DCE maps now get LesionStats."""
+    """Model-free DCE maps get LesionStats."""
 
     def test_mf_dispatcher_covers_intended_maps(self):
         from pmriprep.workflows.dce.datasinks import (
@@ -960,15 +935,6 @@ class TestDCELesionStatsMapKeyCoverage:
             "ser_map": "ser",
         }
         assert _MF_LESIONSTATS_MAP_KEY == expected
-
-    def test_nawmnorm_dispatcher_covers_intended_maps(self):
-        from pmriprep.workflows.dce.datasinks import (
-            _NAWMNORM_LESIONSTATS_MAP_KEY,
-        )
-
-        assert _NAWMNORM_LESIONSTATS_MAP_KEY == {
-            "niauc60_map": "niauc60",
-        }
 
 
 class TestDCEStatisticsQCMasking:

@@ -60,7 +60,6 @@ class DCELesionStatsInputSpec(BaseInterfaceInputSpec):
     iauc60_map = traits.Str(desc="IAUC at 60 seconds map path")
     iauc90_map = traits.Str(desc="IAUC at 90 seconds map path")
     iauc120_map = traits.Str(desc="IAUC at 120 seconds map path")
-    niauc60_map = traits.Str(desc="Normalized IAUC60 map path")
 
     # Mask origin: "tumor_segmentation" or "whole_tumor" (from combine_tumor_masks)
     mask_origin = traits.Str(
@@ -228,7 +227,7 @@ class DCELesionStats(BaseInterface):
             nawm_data = np.asarray(nawm_img.dataobj) > 0  # type: ignore[attr-defined]
             nawm_maps = {
                 k: v for k, v in maps.items()
-                if k in ["ktrans", "ve", "vp", "kep"]
+                if k in ["ktrans", "ve", "vp", "kep", "iauc60"]
             }
             result.nawm_reference = compute_nawm_reference(
                 nawm_data, nawm_maps, voxel_sizes,
@@ -241,7 +240,6 @@ class DCELesionStats(BaseInterface):
             ve_data=maps.get("ve"),
             vp_data=maps.get("vp"),
             mask=primary_mask,
-            niauc60_data=maps.get("niauc60"),
         )
 
         # Augment per-region per-map stats with Cohen's d vs NAWM
@@ -289,7 +287,6 @@ class DCELesionStats(BaseInterface):
             ("iauc60_map", "iauc60"),
             ("iauc90_map", "iauc90"),
             ("iauc120_map", "iauc120"),
-            ("niauc60_map", "niauc60"),
             ("peak_enhancement_map", "peak_enhancement"),
             ("ser_map", "ser"),
             ("ttp_map", "ttp"),

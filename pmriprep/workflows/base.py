@@ -2703,9 +2703,8 @@ def _connect_master_dce_outputs_and_datasinks(
             "fp_uncertainty", "ps_uncertainty", "fp_cv", "ps_cv",
             "fp_ci95_lower", "fp_ci95_upper", "ps_ci95_lower", "ps_ci95_upper",
         }
-    # NAWM normalization + NAWM mask
+    # NAWM mask
     if dce_has_nawm:
-        dce_present.add("niauc60_map")
         dce_present.add("nawm_mask")
     # T1map + B1+map (anat/)
     if not dce_config.no_t1:
@@ -2867,8 +2866,6 @@ def _connect_master_dce_outputs_and_datasinks(
             ("outputnode.fp_ci95_upper", "inputnode.fp_ci95_upper"),
             ("outputnode.ps_ci95_lower", "inputnode.ps_ci95_lower"),
             ("outputnode.ps_ci95_upper", "inputnode.ps_ci95_upper"),
-            # Normalized maps (NAWM-normalized)
-            ("outputnode.niauc60_map", "inputnode.niauc60_map"),
             # Smoothed maps
             ("outputnode.smooth_pk_maps", "inputnode.smooth_pk_maps"),
             ("outputnode.smooth_model_free_maps", "inputnode.smooth_model_free_maps"),

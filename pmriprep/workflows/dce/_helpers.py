@@ -19,7 +19,6 @@ __all__ = [
     "_generate_dce_pk_fit_qc",
     "_generate_dce_pk_maps_qc",
     "_generate_preprocessing_qc",
-    "_normalize_by_nawm",
     "_resample_dsc_cbv_to_dce",
     "_resample_dsc_ncbv_to_dce",
     "_signal_to_concentration_node",
@@ -1091,7 +1090,6 @@ def _collect_qc_metrics(
     use_external_t1: bool = False,
     no_t1: bool = False,
     b1_method: str = "auto",
-    nawm_available: bool = False,
 ) -> dict[str, object]:
     """Collect all QC metrics into a single dictionary.
 
@@ -1127,8 +1125,6 @@ def _collect_qc_metrics(
         Whether T1 mapping was skipped (assumed T1).
     b1_method : str, optional
         B1 correction method used.
-    nawm_available : bool, optional
-        Whether NAWM mask was available for normalization.
 
     Returns
     -------
@@ -1225,8 +1221,6 @@ def _collect_qc_metrics(
         preprocessing = dict(preprocess_qc) if preprocess_qc is not None else {}
         preprocessing.update(preproc_display)
         qc_metrics["preprocessing"] = preprocessing
-
-    qc_metrics["nawm_normalization"] = bool(nawm_available)
 
     from pmriprep.utils.dce_model_suitability import (
         assess_two_cxm_suitability,
@@ -2317,78 +2311,6 @@ def _build_model_free_map_dict(
     if ser and isdefined(ser):
         d["ser"] = ser
     return d
-
-
-def _normalize_by_nawm(
-    param_map: str | None = None,
-    nawm_mask: str | None = None,
-) -> str:
-    """Normalize parameter map by NAWM median.
-
-    Median is used (matching DSC nCBV in ``utils/dsc_signal.py``) so the
-    normalization is robust to a small fraction of non-WM voxels that FSL
-    FAST classifies as WM (notably globus pallidus, parts of thalamus and
-    hippocampus, where iron- and myelin-rich T1 intensity matches WM).
-
-    Parameters
-    ----------
-    param_map : str or None
-        Path to parameter map NIfTI file.
-    nawm_mask : str or None
-        Path to NAWM mask NIfTI file in the same space.
-
-    Returns
-    -------
-    str
-        Path to normalized parameter map, or ``""`` if normalization fails.
-        The empty string is compatible with downstream ``traits.Str`` inputs.
-    """
-    from pathlib import Path
-
-    import nibabel as nib  # type: ignore[import-untyped]
-    import numpy as np
-    from nipype.interfaces.base import isdefined
-
-    if not isdefined(nawm_mask) or nawm_mask is None:
-        return ""
-    if not isdefined(param_map) or param_map is None:
-        return ""
-    if not Path(nawm_mask).is_file():
-        return ""
-    if not Path(param_map).is_file():
-        return ""
-
-    param_img = nib.load(param_map)
-    nawm_img = nib.load(nawm_mask)
-
-    param_data = param_img.get_fdata()  # type: ignore[attr-defined]
-    nawm_data = nawm_img.get_fdata() > 0  # type: ignore[attr-defined]
-
-    # Check shapes match
-    if param_data.shape[:3] != nawm_data.shape[:3]:
-        return ""
-
-    nawm_values = param_data[nawm_data]
-    nawm_values = nawm_values[np.isfinite(nawm_values) & (nawm_values > 0)]
-    if len(nawm_values) < 10:
-        # Not enough valid NAWM voxels
-        return ""
-
-    nawm_median = float(np.median(nawm_values))
-    if nawm_median <= 0:
-        return ""
-
-    # Normalize
-    normalized = param_data / nawm_median
-
-    # Save
-    param_stem = Path(param_map).name.replace(".nii.gz", "").replace(".nii", "")
-    out_file = str(Path.cwd() / f"n{param_stem}.nii.gz")
-    nib.save(
-        nib.Nifti1Image(normalized.astype(np.float32), param_img.affine),  # type: ignore[attr-defined]
-        out_file,
-    )
-    return out_file
 
 
 def _generate_dce_pk_maps_qc(

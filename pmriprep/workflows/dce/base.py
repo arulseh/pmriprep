@@ -44,7 +44,6 @@ from pmriprep.workflows.dce._helpers import (  # noqa: F401
     _generate_dce_pk_fit_qc,
     _generate_dce_pk_maps_qc,
     _generate_preprocessing_qc,
-    _normalize_by_nawm,
     _resample_dsc_cbv_to_dce,
     _resample_dsc_ncbv_to_dce,
     _signal_to_concentration_node,
@@ -267,65 +266,6 @@ def init_dce_pk_modeling_wf(
     return workflow
 
 
-def init_dce_normalization_wf(
-    *,
-    name: str = "dce_normalization_wf",
-) -> pe.Workflow:
-    """Build the DCE NAWM-normalization sub-workflow.
-
-    Normalizes the IAUC60 map to normal-appearing white matter (NAWM).
-
-    Parameters
-    ----------
-    name : str
-        Workflow name.
-
-    Returns
-    -------
-    workflow : nipype.pipeline.engine.Workflow
-        The normalization sub-workflow.
-
-    Inputs
-    ------
-    iauc60_map
-        IAUC60 map to normalize.
-    nawm_mask
-        NAWM reference mask (DCE space).
-
-    Outputs
-    -------
-    niauc60
-        NAWM-normalized IAUC60 map.
-    """
-    workflow = pe.Workflow(name=name)
-    inputnode = pe.Node(
-        niu.IdentityInterface(fields=["iauc60_map", "nawm_mask"]),
-        name="inputnode",
-    )
-    outputnode = pe.Node(
-        niu.IdentityInterface(fields=["niauc60"]),
-        name="outputnode",
-    )
-
-    normalize_iauc60 = pe.Node(
-        niu.Function(
-            input_names=["param_map", "nawm_mask"],
-            output_names=["out_file"],
-            function=_normalize_by_nawm,
-        ),
-        name="normalize_iauc60",
-    )
-
-    workflow.connect([
-        (inputnode, normalize_iauc60, [
-            ("iauc60_map", "param_map"),
-            ("nawm_mask", "nawm_mask"),
-        ]),
-        (normalize_iauc60, outputnode, [("out_file", "niauc60")]),
-    ])
-    return workflow
-
-
 def init_dce_smoothing_wf(
     *,
     fwhm: float,
@@ -483,7 +423,7 @@ def init_dce_lesion_stats_wf(
 
     Extracts per-region statistics from the DCE PK and model-free maps within
     three (independently optional) masks: the tumor-segmentation lesion mask, a
-    user-supplied ROI mask, and a user-supplied lesion mask. The maps, NAWM
+    user-supplied ROI mask, and a user-supplied lesion mask. The maps and NAWM
     reference are shared across all three extractions; the
     ROI and user-lesion extractions force a binary mask.
 
@@ -507,8 +447,6 @@ def init_dce_lesion_stats_wf(
         PK parameter maps (shared by all three nodes).
     iauc60_map, iauc90_map, iauc120_map, peak_enhancement_map, ttp_map, ser_map
         Model-free maps.
-    niauc60_map
-        NAWM-normalized IAUC60 map.
     nawm_mask
         NAWM reference mask.
     tumor_lesion_mask, mask_origin
@@ -543,7 +481,6 @@ def init_dce_lesion_stats_wf(
                 "peak_enhancement_map",
                 "ttp_map",
                 "ser_map",
-                "niauc60_map",
                 "nawm_mask",
                 "qc_mask",
                 "tumor_lesion_mask",
@@ -575,7 +512,7 @@ def init_dce_lesion_stats_wf(
     roi_stats.inputs.subject_id = subject_id
     roi_stats.inputs.session_id = session_id
 
-    # PK / model-free / normalized maps + NAWM are shared by all
+    # PK and model-free maps + NAWM are shared by all
     # three stats nodes; the lesion mask differs (tumor-seg / ROI / user), and
     # only the tumor-seg node receives the mask-origin provenance label.
     shared_inputs = [
@@ -589,7 +526,6 @@ def init_dce_lesion_stats_wf(
         ("peak_enhancement_map", "peak_enhancement_map"),
         ("ttp_map", "ttp_map"),
         ("ser_map", "ser_map"),
-        ("niauc60_map", "niauc60_map"),
         ("nawm_mask", "nawm_mask"),
         ("qc_mask", "qc_mask"),
     ]
@@ -1171,7 +1107,7 @@ def init_dce_qc_collection_wf(
         "b1_qc", "t1_qc", "vfa_qc", "signal_conversion_qc", "preprocess_qc",
         "registration_qc", "aif_qc",
         "pk_qc", "validation_result", "preproc_display", "pk_fit_qc_metrics",
-        "pk_maps_qc_metrics", "vp_at_bound_fractions", "nawm_available",
+        "pk_maps_qc_metrics", "vp_at_bound_fractions",
     ]
     workflow = pe.Workflow(name=name)
     inputnode = pe.Node(niu.IdentityInterface(fields=fields), name="inputnode")
@@ -1641,8 +1577,6 @@ def init_dce_preproc_wf(
                 # Smoothed maps (populated only if config.smooth_fwhm > 0)
                 "smooth_pk_maps",
                 "smooth_model_free_maps",
-                # Normalized maps (requires NAWM mask)
-                "niauc60_map",
                 # QC metrics
                 "qc_metrics",
                 # QC plots
@@ -2301,21 +2235,6 @@ def init_dce_preproc_wf(
     # User-supplied lesion mask is already in DCE native space — no FLIRT.
 
     # ==========================================================================
-    # Node 8a: NAWM Normalization (nKtrans, nIAUC60)
-    # ==========================================================================
-    normalization_wf = init_dce_normalization_wf()
-
-    # Normalize the model-free IAUC60 map to the NAWM reference.
-    workflow.connect([
-        (pk_wf, normalization_wf, [
-            ("outputnode.out_iauc60", "inputnode.iauc60_map"),
-        ]),
-        (dce_lesion_masks_wf, normalization_wf, [
-            ("outputnode.nawm_mask", "inputnode.nawm_mask"),
-        ]),
-    ])
-
-    # ==========================================================================
     # Node 9: DSC-DCE Cross-Validation (optional - skip if config.no_dsc_validation=True)
     # ==========================================================================
     dce_dsc_validation_wf = init_dce_dsc_validation_wf(
@@ -2619,10 +2538,6 @@ def init_dce_preproc_wf(
             ("model_selection_regions", "inputnode.pk_maps_qc_metrics"),
             ("vp_at_bound_fractions", "inputnode.vp_at_bound_fractions"),
         ]),
-        # out_file is a path (truthy) when normalization ran, "" otherwise
-        (normalization_wf, dce_qc_collection_wf, [
-            ("outputnode.niauc60", "inputnode.nawm_available"),
-        ]),
     ])
 
     # ==========================================================================
@@ -2640,7 +2555,7 @@ def init_dce_preproc_wf(
         session_id=session_id,
     )
 
-    # PK + normalized maps + NAWM + field strength are shared by all three
+    # PK maps + NAWM + field strength are shared by all three
     # stats nodes (fanned out inside the sub-wf); the three lesion masks
     # (tumor-seg, user ROI, user lesion) route to their respective nodes.
     workflow.connect([
@@ -2656,9 +2571,6 @@ def init_dce_preproc_wf(
             ("outputnode.out_time_to_peak", "inputnode.ttp_map"),
             ("outputnode.out_ser", "inputnode.ser_map"),
             ("outputnode.out_qc_mask", "inputnode.qc_mask"),
-        ]),
-        (normalization_wf, lesion_stats_wf, [
-            ("outputnode.niauc60", "inputnode.niauc60_map"),
         ]),
         (dce_lesion_masks_wf, lesion_stats_wf, [
             ("outputnode.nawm_mask", "inputnode.nawm_mask"),
@@ -2888,11 +2800,6 @@ def init_dce_preproc_wf(
                 ("outputnode.smoothed_model_free", "smooth_model_free_maps"),
             ]),
         ])
-
-    # Normalized map output connections (requires NAWM mask from tumor segmentation)
-    workflow.connect([
-        (normalization_wf, outputnode, [("outputnode.niauc60", "niauc60_map")]),
-    ])
 
     # Anatomical masks in DCE space output connections
     # Use native DCE brain mask from HD-BET extraction for output

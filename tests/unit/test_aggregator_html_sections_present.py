@@ -130,13 +130,11 @@ def test_boilerplate_scientific_wording_matches_configurable_methods() -> None:
                 "model": "auto",
                 "candidate_models": ["patlak", "extended_tofts"],
             },
-            "nawm_normalization": True,
         }
     )
     assert "DCE images were motion-corrected" in dce
     assert "dose-aware candidate assessment" in dce
     assert ", and the extended Tofts model" not in dce
-    assert "DCE parameter maps (Ktrans, IAUC60)" in dce
 
 
 def test_render_citations_falls_back_to_markdown(tmp_path: Path, monkeypatch) -> None:

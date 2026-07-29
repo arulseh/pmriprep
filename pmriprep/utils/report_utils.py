@@ -584,14 +584,6 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> str:
     if inference_text:
         sentences.append(inference_text)
 
-    # NAWM normalization
-    if dce_qc.get("nawm_normalization", False):
-        sentences.append(
-            "DCE parameter maps (Ktrans, IAUC60) were normalized to "
-            "automatically segmented contralateral normal-appearing "
-            "white matter."
-        )
-
     return " ".join(sentences)
 
 

@@ -55,7 +55,6 @@ def dce_qc_metrics() -> dict[str, Any]:
             "baseline_fallback_reason": "detected_bolus_before_minimum_baseline",
             "baseline_status": "POOR",
         },
-        "nawm_normalization": True,
     }
 
 
@@ -141,12 +140,6 @@ class TestMotionAndSignalKeys:
         dce_qc_metrics["preprocessing"]["baseline_tsnr"] = float("nan")
         out = enrich_dce_preproc_sidecar(dict(base_sidecar), qc_metrics=dce_qc_metrics)
         assert "BaselineTSNR" not in out
-
-
-class TestTopLevelFlags:
-    def test_nawm_normalization(self, base_sidecar, dce_qc_metrics):
-        out = enrich_dce_preproc_sidecar(dict(base_sidecar), qc_metrics=dce_qc_metrics)
-        assert out["NAWMNormalizationApplied"] is True
 
 
 def test_baseline_and_aif_processing_warnings_coexist() -> None:

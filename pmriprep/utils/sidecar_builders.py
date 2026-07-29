@@ -1604,9 +1604,8 @@ def enrich_dce_preproc_sidecar(
 ) -> Dict[str, Any]:
     """Add flat-prefixed cosmetic QC keys to a DCE preproc-4D sidecar.
 
-    Mutates and returns ``sidecar``. Adds ``T1*``, ``B1*``, motion/signal,
-    and top-level ``NAWMNormalizationApplied``
-    flags from the producer-shape ``qc_metrics`` envelope. Existing
+    Mutates and returns ``sidecar``. Adds ``T1*``, ``B1*``, and motion/signal
+    fields from the producer-shape ``qc_metrics`` envelope. Existing
     sidecar fields (``SkullStripped``, ``SpatialReference``, ``Sources``,
     ``Resolution``) are preserved.
     """
@@ -1615,8 +1614,6 @@ def enrich_dce_preproc_sidecar(
     sidecar.update(_dce_t1_cosmetic_keys(qc_metrics.get("t1_mapping")))
     sidecar.update(_dce_b1_cosmetic_keys(qc_metrics.get("b1_mapping")))
     sidecar.update(_dce_preprocessing_cosmetic_keys(qc_metrics.get("preprocessing")))
-    if "nawm_normalization" in qc_metrics:
-        sidecar["NAWMNormalizationApplied"] = bool(qc_metrics["nawm_normalization"])
     return sidecar
 
 

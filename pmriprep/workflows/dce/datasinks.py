@@ -1033,8 +1033,7 @@ def _add_perf_map_sink(
     return sink
 
 
-# Model-free maps that should carry per-region LesionStats. BAT is excluded
-# because a timing offset is not a magnitude biomarker.
+# Model-free maps that should carry per-region LesionStats.
 _MF_LESIONSTATS_MAP_KEY: dict[str, str] = {
     "iauc60_map": "iauc60",
     "iauc90_map": "iauc90",
@@ -1043,12 +1042,6 @@ _MF_LESIONSTATS_MAP_KEY: dict[str, str] = {
     "time_to_peak_map": "ttp",
     "ser_map": "ser",
 }
-
-# NAWM-normalized DCE maps that carry LesionStats.
-_NAWMNORM_LESIONSTATS_MAP_KEY: dict[str, str] = {
-    "niauc60_map": "niauc60",
-}
-
 
 def _add_dce_pk_map_sink(
     workflow: pe.Workflow,
@@ -1347,8 +1340,6 @@ def init_dce_datasinks_wf(
                 # QC + model-selection
                 "tsnr_map", "qc_mask", "r2_map", "quality_flag_map",
                 "model_selection_map", "delta_bic_map",
-                # NAWM-norm
-                "niauc60_map",
                 # Smoothed dicts (variable cardinality)
                 "smooth_pk_maps", "smooth_model_free_maps",
                 # T1/B1 + masks (anat/)
@@ -1725,18 +1716,6 @@ def init_dce_datasinks_wf(
             (dbic_meta, dbic_sink, [("meta_dict", "meta_dict")]),
         ])
         sink_outputs.append((dbic_sink, "out_file"))
-
-    # --- NAWM-normalized maps ---
-    if "niauc60_map" in present:
-        sink = _add_perf_map_sink(
-            workflow, inputnode, base_perf_no_ktrans,
-            name="niauc60_map", in_attr="niauc60_map",
-            desc_value="dceNawmNorm", suffix="IAUC60",
-            description="IAUC at 60s normalized by the NAWM median",
-            units="1", extra=None,
-            map_key="niauc60",
-        )
-        sink_outputs.append((sink, "out_file"))
 
     # --- Motion-corrected 4D + mean ref + AIF mask (perf/) ---
     if "dce_moco" in present:

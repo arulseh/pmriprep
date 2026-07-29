@@ -392,12 +392,6 @@
     ],
     [
       "dce_wf",
-      "outputnode.niauc60_map",
-      "dce_datasinks_wf",
-      "inputnode.niauc60_map"
-    ],
-    [
-      "dce_wf",
       "outputnode.peak_enhancement_map",
       "dce_datasinks_wf",
       "inputnode.peak_enhancement_map"
