@@ -227,7 +227,10 @@ class DCELesionStats(BaseInterface):
             nawm_data = np.asarray(nawm_img.dataobj) > 0  # type: ignore[attr-defined]
             nawm_maps = {
                 k: v for k, v in maps.items()
-                if k in ["ktrans", "ve", "vp", "kep", "iauc60"]
+                if k in [
+                    "ktrans", "ve", "vp", "kep",
+                    "iauc60", "iauc90", "iauc120",
+                ]
             }
             result.nawm_reference = compute_nawm_reference(
                 nawm_data, nawm_maps, voxel_sizes,

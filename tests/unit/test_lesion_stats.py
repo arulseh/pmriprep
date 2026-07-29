@@ -985,6 +985,38 @@ class TestDCEStatisticsQCMasking:
         assert model_free_stats is not None
         assert model_free_stats.n_valid == model_free_stats.n_total == 4
 
+    def test_all_iauc_windows_are_nawm_references(self, tmp_path) -> None:
+        """Every published IAUC window receives the same NAWM context."""
+        import json
+
+        from pmriprep.interfaces.dce_lesion_stats import DCELesionStats
+
+        shape = (2, 2, 1)
+        iface = DCELesionStats()
+        iface.inputs.subject_id = "01"
+        iface.inputs.session_id = "01"
+        iface.inputs.lesion_mask = self._save(
+            tmp_path, "lesion.nii.gz", np.ones(shape)
+        )
+        iface.inputs.nawm_mask = self._save(
+            tmp_path, "nawm.nii.gz", np.ones(shape)
+        )
+        for seconds, value in ((60, 0.03), (90, 0.04), (120, 0.05)):
+            setattr(
+                iface.inputs,
+                f"iauc{seconds}_map",
+                self._save(tmp_path, f"iauc{seconds}.nii.gz", np.full(shape, value)),
+            )
+
+        result = iface.run(cwd=tmp_path)
+        stats = json.loads((tmp_path / "sub-01_ses-01_lesion-stats.json").read_text())
+
+        assert result.outputs.stats_json.endswith("_lesion-stats.json")
+        for seconds, value in ((60, 0.03), (90, 0.04), (120, 0.05)):
+            reference = stats["NAWMReference"][f"iauc{seconds}"]
+            assert reference["median"] == pytest.approx(value)
+            assert reference["std"] == pytest.approx(0.0)
+
     def test_qc_mask_shape_mismatch_fails(self, tmp_path) -> None:
         from pmriprep.interfaces.dce_lesion_stats import DCELesionStats
 
