@@ -371,8 +371,6 @@ class _DSCFinalMaps(NamedTuple):
     cnr: npt.NDArray[Any]
     tsnr: npt.NDArray[Any]
     psr: npt.NDArray[Any]
-    delay: Optional[npt.NDArray[Any]]
-    residues: Optional[npt.NDArray[Any]]
     cbf_std: Optional[npt.NDArray[Any]]
 
 
@@ -384,8 +382,6 @@ class _DSCDeconvolutionMaps(NamedTuple):
     mtt: npt.NDArray[Any]
     tmax: npt.NDArray[Any]
     qc: dict[str, Any]
-    delay: Optional[npt.NDArray[Any]] = None
-    residues: Optional[npt.NDArray[Any]] = None
     cth: Optional[npt.NDArray[Any]] = None
     cbf_std: Optional[npt.NDArray[Any]] = None
     cbv_std: Optional[npt.NDArray[Any]] = None
@@ -531,11 +527,6 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
         usedefault=True,
         desc="Number of parallel processes for voxel fitting (1 = serial)",
     )
-    save_residue = traits.Bool(
-        False,
-        usedefault=True,
-        desc="Save residue functions (large output)",
-    )
     # Motion weighting inputs (from motion_correct)
     fd_values = traits.List(
         traits.Float,
@@ -615,8 +606,6 @@ class ComputeDSCMapsOutputSpec(TraitedSpec):
     out_qc_fit_data = File(desc="JSON with QC voxel fit data for fit QC plot")
 
     # Optional extras
-    out_delay = File(desc="Delay map (oSVD method)")
-    out_residues = File(desc="Residue functions (if save_residue=True)")
     out_cth = File(desc="CTH map — capillary transit time heterogeneity (vascular only)")
     out_cbf_std = File(desc="CBF parameter standard-error or posterior-SD map")
     out_parametric_r2 = File(
@@ -680,8 +669,6 @@ class ComputeDSCMaps(BaseInterface):
         nlls, map, vi, svb. Default: 'vi'.
     mcmc_samples : int
         MCMC samples for Bayesian. Default: 500.
-    save_residue : bool
-        Save residue functions. Default: False.
 
     Returns
     -------
@@ -693,10 +680,6 @@ class ComputeDSCMaps(BaseInterface):
         Paths to AUC decomposition maps.
     out_tsnr : str
         Path to the baseline temporal-SNR quality map.
-    out_delay : str, optional
-        Path to delay map (oSVD).
-    out_residues : str, optional
-        Path to residue functions (if save_residue=True).
     qc_metrics : dict
         QC metrics including deconvolution statistics.
 
@@ -1317,13 +1300,10 @@ class ComputeDSCMaps(BaseInterface):
         cnr: npt.NDArray[Any],
         tsnr: npt.NDArray[Any],
         psr: npt.NDArray[Any],
-        delay: Optional[npt.NDArray[Any]],
-        residues: Optional[npt.NDArray[Any]],
         cbf_std: Optional[npt.NDArray[Any]],
         mask_bool: npt.NDArray[Any],
     ) -> _DSCFinalMaps:
         """Apply established output ranges, CBF units, and brain masking."""
-        tmax = np.clip(tmax, 0.0, 60.0)
         mtt = np.clip(mtt, 0.0, 30.0)
         cbf = np.clip(cbf, 0.0, 100.0)
         cbv = np.clip(cbv, 0.0, 10.0)
@@ -1345,12 +1325,6 @@ class ComputeDSCMaps(BaseInterface):
             cnr=np.where(mask_bool, cnr, 0.0),
             tsnr=np.where(mask_bool, tsnr, 0.0),
             psr=np.where(mask_bool, psr, 0.0),
-            delay=None if delay is None else np.where(mask_bool, delay, 0.0),
-            residues=(
-                None
-                if residues is None
-                else np.where(mask_bool[..., np.newaxis], residues, 0.0)
-            ),
             cbf_std=cbf_std,
         )
 
@@ -1436,8 +1410,6 @@ class ComputeDSCMaps(BaseInterface):
             cnr=quality.cnr,
             tsnr=quality.tsnr,
             psr=signal_metrics.psr,
-            delay=deconvolution.delay,
-            residues=deconvolution.residues,
             cbf_std=deconvolution.cbf_std,
             mask_bool=mask_bool,
         )
@@ -1568,7 +1540,7 @@ class ComputeDSCMaps(BaseInterface):
     ) -> _DSCDeconvolutionMaps:
         """Dispatch DSC deconvolution and normalize its typed return state."""
         if method in ("sSVD", "oSVD", "tikhonov"):
-            cbf, cbv, mtt, tmax, delay, residues, qc = self._deconvolve_svd(
+            cbf, cbv, mtt, tmax, qc = self._deconvolve_svd(
                 concentration, aif, mask, method, dt, threshold, oi_threshold
             )
             return _DSCDeconvolutionMaps(
@@ -1577,8 +1549,6 @@ class ComputeDSCMaps(BaseInterface):
                 mtt=mtt,
                 tmax=tmax,
                 qc=qc,
-                delay=delay,
-                residues=residues,
             )
 
         (
@@ -1662,12 +1632,8 @@ class ComputeDSCMaps(BaseInterface):
         self,
         *,
         k2_map_path: Optional[str],
-        delay: Optional[npt.NDArray[Any]],
         cth: Optional[npt.NDArray[Any]],
-        residues: Optional[npt.NDArray[Any]],
-        save_residue: bool,
         mask_bool: npt.NDArray[Any],
-        spatial_shape: tuple[int, ...],
         affine: npt.NDArray[Any],
         header: Any,
     ) -> dict[str, str]:
@@ -1688,18 +1654,10 @@ class ComputeDSCMaps(BaseInterface):
                 "substitute an all-zero map"
             )
 
-        if delay is not None:
-            outputs["out_delay"] = self._save_map(delay, "_delay", affine, header)
         if cth is not None:
             outputs["out_cth"] = self._save_map(
                 np.where(mask_bool, cth, 0.0), "_cth", affine, header
             )
-
-        if residues is not None and save_residue:
-            residue_path = self._gen_outfilename("_residues")
-            residue_img = nib.Nifti1Image(residues.astype(np.float32), affine)  # type: ignore[attr-defined]
-            nib.save(residue_img, residue_path)  # type: ignore[attr-defined]
-            outputs["out_residues"] = residue_path
         return outputs
 
     def _assemble_outputs(
@@ -1713,19 +1671,14 @@ class ComputeDSCMaps(BaseInterface):
         """Serialize all required and optional DSC interface outputs."""
         maps = postprocessing.maps
         qc = postprocessing.qc
-        spatial_shape = baseline.concentration.shape[:3]
         results = self._save_base_maps(maps, inputs.affine, inputs.header, qc)
         self._results = results
 
         results.update(
             self._save_ancillary_maps(
                 k2_map_path=baseline.k2_map_path,
-                delay=maps.delay,
                 cth=deconvolution.cth,
-                residues=maps.residues,
-                save_residue=bool(self.inputs.save_residue),
                 mask_bool=inputs.mask_bool,
-                spatial_shape=spatial_shape,
                 affine=inputs.affine,
                 header=inputs.header,
             )
@@ -1776,8 +1729,6 @@ class ComputeDSCMaps(BaseInterface):
         npt.NDArray[Any],  # cbv
         npt.NDArray[Any],  # mtt
         npt.NDArray[Any],  # tmax
-        Optional[npt.NDArray[Any]],  # delay (oSVD)
-        Optional[npt.NDArray[Any]],  # residues
         dict[str, Any],  # qc_metrics
     ]:
         """Run SVD-based deconvolution methods."""
@@ -1790,9 +1741,6 @@ class ComputeDSCMaps(BaseInterface):
         qc_metrics: dict[str, Any] = {"method": method}
 
         # Initialize output arrays
-        delay: Optional[npt.NDArray[Any]] = None
-        residues: Optional[npt.NDArray[Any]] = None
-
         mask_bool = mask.astype(bool)
 
         if method == "sSVD":
@@ -1805,7 +1753,6 @@ class ComputeDSCMaps(BaseInterface):
             )
             # Extract tmax from residues
             tmax = np.argmax(res, axis=-1).astype(np.float64) * dt
-            residues = res if self.inputs.save_residue else None
 
         elif method == "oSVD":
             res, cbf, cbv, mtt, oi_values, thresholds_used, delay = svd_deconvolve_oscillation_batch(  # type: ignore[assignment]
@@ -1816,7 +1763,6 @@ class ComputeDSCMaps(BaseInterface):
                 mask=mask_bool,
             )
             tmax = delay.copy()
-            residues = res if self.inputs.save_residue else None
             qc_metrics["oi_mean"] = float(np.mean(oi_values[mask_bool]))
             qc_metrics["threshold_mean"] = float(np.mean(thresholds_used[mask_bool]))
 
@@ -1830,7 +1776,6 @@ class ComputeDSCMaps(BaseInterface):
                 )
             )
             tmax = np.argmax(res, axis=-1).astype(np.float64) * dt
-            residues = res if self.inputs.save_residue else None
             qc_metrics["lambda_mean"] = float(np.mean(lambda_opt[mask_bool]))
             # Fraction of voxels where the Morozov discrepancy selector chose a
             # data-driven λ from the measured noise floor, vs the degenerate
@@ -1848,7 +1793,7 @@ class ComputeDSCMaps(BaseInterface):
         else:
             raise ValueError(f"Unknown SVD method: {method}")
 
-        return cbf, cbv, mtt, tmax, delay, residues, qc_metrics
+        return cbf, cbv, mtt, tmax, qc_metrics
 
     def _deconvolve_parametric(
         self,

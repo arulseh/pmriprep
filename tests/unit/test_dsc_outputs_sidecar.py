@@ -483,6 +483,11 @@ class TestWriterAifBlockPresentOnAllMaps:
         )
         assert uncertainty_meta["SpatiallyRegularizedParameters"] == ["cbf"]
 
+        tmax_meta = _load_sidecar(derivatives, "dscTmax_stat")
+        assert tmax_meta["Clipping"] == "none"
+        assert "oSVD and parametric" in tmax_meta["NegativeValues"]
+        assert "unlike tissue concentration TTP" in tmax_meta["TimingConvention"]
+
     def test_signal_quality_map_contract(self, minimal_inputs, tmp_path) -> None:
         """CNR and baseline tSNR are dimensionless and expose exact estimators."""
         minimal_inputs.update({

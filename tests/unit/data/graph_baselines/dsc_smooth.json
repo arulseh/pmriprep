@@ -1934,7 +1934,6 @@
       "n_procs": 1,
       "oi_threshold": 0.095,
       "preload_classification": "none",
-      "save_residue": false,
       "sloppy": false,
       "svd_threshold": 0.2,
       "tail_frames": 10,

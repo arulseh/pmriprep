@@ -663,8 +663,6 @@ def test_finalize_dsc_maps_preserves_ranges_units_and_nan_policy() -> None:
         cnr=np.array([-1.0, 2000.0, 5.0]),
         tsnr=values,
         psr=np.array([-1.0, 250.0, 5.0]),
-        delay=np.array([1.0, 2.0, 3.0]),
-        residues=np.arange(9.0).reshape(3, 3),
         cbf_std=np.array([0.1, 0.2, 0.3]),
         mask_bool=mask,
     )
@@ -673,18 +671,16 @@ def test_finalize_dsc_maps_preserves_ranges_units_and_nan_policy() -> None:
     np.testing.assert_allclose(result.rel_cbv, [0.0, 10.0, 0.0])
     assert np.isnan(result.rel_cbv_auc[0])
     np.testing.assert_allclose(result.mtt, [0.0, 30.0, 0.0])
-    np.testing.assert_allclose(result.tmax, [0.0, 60.0, 0.0])
+    np.testing.assert_allclose(result.tmax, [-1.0, 70.0, 0.0])
     np.testing.assert_allclose(result.cnr, [-1.0, 2000.0, 0.0])
     np.testing.assert_allclose(result.psr, [-1.0, 250.0, 0.0])
     np.testing.assert_allclose(result.ttp[1:], [3.0, 0.0])
     assert np.isnan(result.ttp[0])
-    np.testing.assert_allclose(result.delay, [1.0, 2.0, 0.0])
-    np.testing.assert_allclose(result.residues[2], 0.0)
     np.testing.assert_allclose(result.cbf_std, [6.0, 12.0, 18.0])
 
 
-def test_finalize_dsc_maps_preserves_optional_outputs() -> None:
-    """Absent timing, delay, residue, and uncertainty maps remain absent."""
+def test_finalize_dsc_maps_preserves_optional_uncertainty() -> None:
+    """Absent uncertainty remains absent."""
     data = np.ones((1,))
     result = ComputeDSCMaps._finalize_dsc_maps(
         cbf=data,
@@ -699,14 +695,10 @@ def test_finalize_dsc_maps_preserves_optional_outputs() -> None:
         cnr=data,
         tsnr=data,
         psr=data,
-        delay=None,
-        residues=None,
         cbf_std=None,
         mask_bool=np.ones((1,), dtype=bool),
     )
 
-    assert result.delay is None
-    assert result.residues is None
     assert result.cbf_std is None
 
 
@@ -760,8 +752,6 @@ def test_save_base_maps_preserves_result_keys_and_suffixes(
         cnr=data,
         tsnr=data,
         psr=data,
-        delay=None,
-        residues=None,
         cbf_std=None,
         mask_bool=np.ones((1,), dtype=bool),
     )
@@ -903,33 +893,24 @@ def test_add_fit_qc_metrics_preserves_absent_and_default_r2(tmp_path: Path) -> N
 def test_save_ancillary_maps_preserves_optional_maps_and_masking(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Ancillary outputs retain optionality, model masking, and residue layout."""
+    """Ancillary outputs retain model masking."""
     monkeypatch.chdir(tmp_path)
     source = _write_image(tmp_path / "concentration.nii.gz", np.ones((2, 1, 1), dtype=np.int16))
     k2_path = _write_image(tmp_path / "upstream_k2.nii.gz", np.array([[[2.0]], [[9.0]]]))
     source_img = nib.load(source)
     interface = ComputeDSCMaps(concentration_file=source)
     mask = np.array([[[True]], [[False]]])
-    residues = np.array([[[[1.0, 2.0]]], [[[0.0, 0.0]]]])
-
     results = interface._save_ancillary_maps(
         k2_map_path=k2_path,
-        delay=np.array([[[4.0]], [[0.0]]]),
         cth=np.array([[[6.0]], [[9.0]]]),
-        residues=residues,
-        save_residue=True,
         mask_bool=mask,
-        spatial_shape=mask.shape,
         affine=source_img.affine,
         header=source_img.header,
     )
 
-    assert set(results) == {
-        "out_k2", "out_delay", "out_cth", "out_residues"
-    }
+    assert set(results) == {"out_k2", "out_cth"}
     np.testing.assert_allclose(nib.load(results["out_k2"]).get_fdata().ravel(), [2.0, 0.0])
     np.testing.assert_allclose(nib.load(results["out_cth"]).get_fdata().ravel(), [6.0, 0.0])
-    np.testing.assert_allclose(nib.load(results["out_residues"]).get_fdata(), residues)
 
 
 def test_save_ancillary_maps_rejects_missing_k2(
@@ -944,12 +925,8 @@ def test_save_ancillary_maps_rejects_missing_k2(
     with pytest.raises(RuntimeError, match="produced no coefficient map"):
         interface._save_ancillary_maps(
             k2_map_path=None,
-            delay=None,
             cth=None,
-            residues=np.ones((2, 1, 1, 2)),
-            save_residue=False,
             mask_bool=np.ones((2, 1, 1), dtype=bool),
-            spatial_shape=(2, 1, 1),
             affine=source_img.affine,
             header=source_img.header,
         )
@@ -1044,7 +1021,7 @@ def test_run_deconvolution_normalizes_svd_state(
 ) -> None:
     """SVD dispatch retains solver arguments and leaves parametric fields absent."""
     interface = ComputeDSCMaps()
-    arrays = [np.full((1,), value) for value in range(1, 7)]
+    arrays = [np.full((1,), value) for value in range(1, 5)]
     qc = {"method": method}
     calls: list[tuple[object, ...]] = []
 
@@ -1077,8 +1054,6 @@ def test_run_deconvolution_normalizes_svd_state(
 
     assert calls[0][3:] == (method, 1.5, 0.2, 0.1)
     assert result.cbf is arrays[0]
-    assert result.delay is arrays[4]
-    assert result.residues is arrays[5]
     assert result.qc is qc
     assert result.cth is None
     assert result.cbf_std is None
@@ -1128,8 +1103,6 @@ def test_run_deconvolution_normalizes_parametric_state(
     assert result.cbf is arrays[0]
     assert result.cth is arrays[4]
     assert result.fallback_mask is arrays[8]
-    assert result.delay is None
-    assert result.residues is None
     assert result.qc["motion_weighting"] is motion_qc
 
 
@@ -1148,8 +1121,6 @@ def test_prepare_final_outputs_preserves_composition_and_qc_order(
         mtt=data * 3.0,
         tmax=data * 4.0,
         qc=qc,
-        delay=data * 5.0,
-        residues=np.ones((1, 1, 1, 4)),
         cbf_std=data * 0.1,
     )
     final_maps = SimpleNamespace(
@@ -1239,13 +1210,11 @@ def test_assemble_outputs_preserves_serialization_order_and_optional_branches(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Final output assembly retains fit-QC and parametric ordering."""
-    interface = ComputeDSCMaps(save_residue=True)
+    interface = ComputeDSCMaps()
     data = np.ones((1, 1, 1))
     maps = SimpleNamespace(
         rel_cbf=data,
         rel_cbv=data * 2.0,
-        delay=data * 4.0,
-        residues=np.ones((1, 1, 1, 2)),
         cbf_std=data * 0.1,
     )
     qc: dict[str, object] = {"existing": True}

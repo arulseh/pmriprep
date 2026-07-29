@@ -64,7 +64,21 @@ class DSCAnatSpec:
 _CORE_MAPS: tuple[DSCMapSpec, ...] = (
     DSCMapSpec("mtt_map", "dsc", "mtt", "Mean transit time", "s", "mtt",
                {"MTTMethod": "auc_cbv_over_cbf"}),
-    DSCMapSpec("tmax_map", "dsc", "tmax", "Time to maximum of residue function", "s", "tmax"),
+    DSCMapSpec(
+        "tmax_map", "dsc", "tmax", "Time to maximum of residue function",
+        "s", "tmax",
+        {
+            "Clipping": "none",
+            "NegativeValues": (
+                "Valid signed delay estimates for oSVD and parametric models; "
+                "sSVD and Tikhonov Tmax are non-negative by construction"
+            ),
+            "TimingConvention": (
+                "Residue/model delay; unlike tissue concentration TTP, a negative "
+                "value is retained as an estimate rather than marked undefined"
+            ),
+        },
+    ),
     DSCMapSpec(
         "psr_map",
         "dsc",
