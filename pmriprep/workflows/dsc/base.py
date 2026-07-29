@@ -742,7 +742,7 @@ def init_dsc_deconvolution_wf(
     k2_map_input_file, preload_classification
         Preload-detection leakage inputs.
     brain_mask_file, enhancing_mask_file, nawm_mask_file
-        DSC-space masks (brain, enhancing tumor, NAWM for rTTP normalization).
+        DSC-space brain and enhancing-tumor masks.
     tr, fd_values
         Acquisition timing and framewise displacement.
 
@@ -750,7 +750,7 @@ def init_dsc_deconvolution_wf(
     -------
     out_rel_cbf, out_rel_cbv, out_rel_cbv_auc, out_rel_auc_raw, out_rel_auc_corr
         Relative perfusion and AUC maps.
-    out_mtt, out_tmax, out_ttp, out_ttp_corrected, out_rttp
+    out_mtt, out_tmax, out_ttp
         Transit-time and timing maps.
     out_psr, out_ph
         Percentage signal recovery and peak height.
@@ -784,7 +784,6 @@ def init_dsc_deconvolution_wf(
                 "signal_file",
                 "raw_concentration_file",
                 "preload_classification",
-                "nawm_mask_file",
                 "wm_mask_dsc",
             ]
         ),
@@ -804,8 +803,6 @@ def init_dsc_deconvolution_wf(
                 "out_psr",
                 "out_ph",
                 "out_ttp",
-                "out_ttp_corrected",
-                "out_rttp",
                 "out_cnr",
                 "out_auc_raw",
                 "out_auc_corr",
@@ -851,7 +848,6 @@ def init_dsc_deconvolution_wf(
             ("signal_file", "signal_file"),
             ("raw_concentration_file", "raw_concentration_file"),
             ("preload_classification", "preload_classification"),
-            ("nawm_mask_file", "nawm_mask_file"),
             ("wm_mask_dsc", "wm_mask_dsc"),
         ]),
         (compute_maps, outputnode, [
@@ -866,8 +862,6 @@ def init_dsc_deconvolution_wf(
             ("out_psr", "out_psr"),
             ("out_ph", "out_ph"),
             ("out_ttp", "out_ttp"),
-            ("out_ttp_corrected", "out_ttp_corrected"),
-            ("out_rttp", "out_rttp"),
             ("out_cnr", "out_cnr"),
             ("out_auc_raw", "out_auc_raw"),
             ("out_auc_corr", "out_auc_corr"),
@@ -1168,7 +1162,7 @@ def init_dsc_lesion_stats_wf(
 
     Inputs
     ------
-    cbf_map, cbv_map, mtt_map, tmax_map, ttp_map, ttp_corrected_map, rttp_map
+    cbf_map, cbv_map, mtt_map, tmax_map, ttp_map
         DSC perfusion and transit-time maps (shared by all three nodes).
     psr_map, ph_map
         Percentage signal recovery and peak height.
@@ -1209,8 +1203,6 @@ def init_dsc_lesion_stats_wf(
                 "psr_map",
                 "ph_map",
                 "ttp_map",
-                "ttp_corrected_map",
-                "rttp_map",
                 "auc_corr_map",
                 "auc_diff_map",
                 "rel_auc_corr_map",
@@ -1259,8 +1251,6 @@ def init_dsc_lesion_stats_wf(
         ("psr_map", "psr_map"),
         ("ph_map", "ph_map"),
         ("ttp_map", "ttp_map"),
-        ("ttp_corrected_map", "ttp_corrected_map"),
-        ("rttp_map", "rttp_map"),
         ("auc_corr_map", "auc_corr_map"),
         ("auc_diff_map", "auc_diff_map"),
         ("rel_auc_corr_map", "rel_auc_corr_map"),
@@ -1325,7 +1315,7 @@ def init_dsc_qc_wf(
         Images for the registration / preprocessing / brain-mask filmstrips.
     out_aif_curve, out_aif_mask, out_raw_aif_curve, gamma_fit_applied, concentration_file, corrected_concentration_file
         AIF, concentration, and leakage-QC inputs.
-    rel_cbf, rel_cbv_auc, mtt, tmax, psr, ttp_corrected, k2, auc_raw, auc_corr, auc_diff, qc_fit_data
+    rel_cbf, rel_cbv_auc, mtt, tmax, psr, ttp, k2, auc_raw, auc_corr, auc_diff, qc_fit_data
         DSC parameter / leakage / fit maps for the QC plots.
     t1w_to_dsc_matrix, t1w_to_mni_xfm, tr, te
         Transforms and acquisition parameters.
@@ -1363,7 +1353,7 @@ def init_dsc_qc_wf(
                 "mtt",
                 "tmax",
                 "psr",
-                "ttp_corrected",
+                "ttp",
                 "k2",
                 "auc_raw",
                 "auc_corr",
@@ -1558,7 +1548,7 @@ def init_dsc_qc_wf(
             ("mtt", "mtt_file"),
             ("tmax", "tmax_file"),
             ("psr", "psr_file"),
-            ("ttp_corrected", "ttp_file"),
+            ("ttp", "ttp_file"),
             ("brain_mask_file", "brain_mask_file"),
         ]),
         (inputnode, dsc_leakage_qc, [
@@ -1843,7 +1833,7 @@ def init_dsc_preproc_wf(
     psr_map, ph_map
         Percent signal recovery and peak height maps.
     ttp_map, cnr_map
-        Time-to-peak and contrast-to-noise ratio maps.
+        AIF-arrival-referenced time-to-peak and contrast-to-noise ratio maps.
     auc_diff_map
         AUC leakage contribution (raw - corrected).
     snr_map, tsnr_map
@@ -1947,8 +1937,6 @@ def init_dsc_preproc_wf(
                 "psr_map",
                 "ph_map",
                 "ttp_map",
-                "ttp_corrected_map",
-                "rttp_map",
                 "cnr_map",
                 # AUC decomposition
                 "auc_diff_map",
@@ -2478,13 +2466,6 @@ def init_dsc_preproc_wf(
         (registration_wf, transform_nawm, [("outputnode.t1w_to_dsc_matrix", "transform_matrix")]),
     ])
 
-    # Wire NAWM mask to compute_maps for rTTP normalization
-    workflow.connect([
-        (transform_nawm, deconvolution_wf, [
-            ("nawm_mask_dsc_file", "inputnode.nawm_mask_file"),
-        ]),
-    ])
-
     # Wire eroded WM mask to compute_maps for first-pass-CBV normalization
     # (only when the optional first-pass map is requested; otherwise
     # deconvolution_wf.inputnode.wm_mask_dsc stays unconnected -> default "").
@@ -2542,7 +2523,7 @@ def init_dsc_preproc_wf(
             ("outputnode.out_mtt", "inputnode.mtt"),
             ("outputnode.out_tmax", "inputnode.tmax"),
             ("outputnode.out_psr", "inputnode.psr"),
-            ("outputnode.out_ttp_corrected", "inputnode.ttp_corrected"),
+            ("outputnode.out_ttp", "inputnode.ttp"),
             ("outputnode.out_k2", "inputnode.k2"),
             ("outputnode.out_auc_raw", "inputnode.auc_raw"),
             ("outputnode.out_auc_corr", "inputnode.auc_corr"),
@@ -2581,8 +2562,6 @@ def init_dsc_preproc_wf(
             ("outputnode.out_psr", "inputnode.psr_map"),
             ("outputnode.out_ph", "inputnode.ph_map"),
             ("outputnode.out_ttp", "inputnode.ttp_map"),
-            ("outputnode.out_ttp_corrected", "inputnode.ttp_corrected_map"),
-            ("outputnode.out_rttp", "inputnode.rttp_map"),
             ("outputnode.out_auc_corr", "inputnode.auc_corr_map"),
             ("outputnode.out_auc_diff", "inputnode.auc_diff_map"),
             ("outputnode.out_rel_auc_corr", "inputnode.rel_auc_corr_map"),
@@ -2688,8 +2667,6 @@ def init_dsc_preproc_wf(
             ("outputnode.out_psr", "psr_map"),
             ("outputnode.out_ph", "ph_map"),
             ("outputnode.out_ttp", "ttp_map"),
-            ("outputnode.out_ttp_corrected", "ttp_corrected_map"),
-            ("outputnode.out_rttp", "rttp_map"),
             ("outputnode.out_cnr", "cnr_map"),
             ("outputnode.out_auc_diff", "auc_diff_map"),
         ]),

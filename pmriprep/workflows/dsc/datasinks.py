@@ -91,18 +91,11 @@ _REL_MAPS: tuple[DSCMapSpec, ...] = (
 
 # Optional maps with per-map desc + bids_suffix
 _OPTIONAL_MAPS: tuple[DSCMapSpec, ...] = (
-    DSCMapSpec("ttp_map", "dsc", "ttp", "Time to peak concentration", "s", "ttp",
-     {"ReferencePoint": "start of acquisition (volume 0)"}),
-    DSCMapSpec("ttp_corrected_map", "dscAifCorrected", "ttp",
-     "Time to peak, corrected for AIF bolus arrival delay. "
-     "Comparable across patients and centers.",
-     "s", "ttpCorrected",
-     {"ReferencePoint": "AIF bolus arrival time"}),
-    DSCMapSpec("rttp_map", "dscNawmRel", "ttp",
-     "Time to peak relative to contralateral NAWM median. "
-     "Positive values indicate delayed perfusion.",
-     "s", "rttp",
-     {"ReferencePoint": "contralateral NAWM median TTP"}),
+    DSCMapSpec("ttp_map", "dsc", "ttp",
+     "Tissue concentration time to peak relative to AIF bolus arrival.",
+     "s", "ttp",
+     {"ReferencePoint": "AIF bolus arrival time",
+      "UndefinedValue": "NaN when tissue peak precedes AIF bolus arrival"}),
     DSCMapSpec("cnr_map", "dsc", "cnr", "Contrast-to-noise ratio", "arbitrary", "cnr"),
     DSCMapSpec("auc_diff_map", "dscLeakage", "auc",
      "Leakage contribution (AUC_raw - AUC_corr)", "arbitrary", "auc_diff"),
@@ -1128,7 +1121,7 @@ def init_dsc_datasinks_wf(
                 "rel_auc_raw_map", "rel_auc_corr_map",
                 "rel_cbv_firstpass_map",
                 # Optional
-                "ttp_map", "ttp_corrected_map", "rttp_map",
+                "ttp_map",
                 "cnr_map", "auc_diff_map", "snr_map", "tsnr_map",
                 # Normalized
                 "ncbv_map", "ncbf_map",

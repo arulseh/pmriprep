@@ -1167,7 +1167,7 @@ def collect_aif_fallback_warning(
             return (
                 f"DSC AIF retained despite a poor gamma-variate fit{r2_txt} "
                 f"— synthetic fallback is disabled. CBF, MTT, and Tmax may "
-                f"be unreliable; AUC-nCBV, raw TTP, and PSR remain interpretable."
+                f"be unreliable; AUC-nCBV and PSR remain interpretable."
             )
         if aif_qc.get("detection_method") != "synthetic":
             return None

@@ -1637,12 +1637,7 @@ def _connect_master_dsc_datasinks(
     # because the sink's `in_file` becomes Undefined.
     dsc_method = (dsc_config.method or "").lower()
     dsc_inference = (dsc_config.inference or "").lower()
-    # Gate on actual NAWM source, not t1w_pre presence. t1w_pre alone
-    # doesn't produce NAWM — that needs tumor_seg or a user mask.
-    # Without a real source, _transform_nawm_to_dsc returns "" and
-    # niworkflows File(exists=True) rejects it at runtime.
     dsc_has_nawm = mask_state.has_nawm_source
-
     dsc_present: set[str] = {
         # Always-present (mandatory in dsc_wf.outputnode)
         "ttp_map", "cnr_map", "auc_diff_map", "snr_map", "tsnr_map",
@@ -1655,10 +1650,6 @@ def _connect_master_dsc_datasinks(
         "brain_mask_dsc",
         "dsc_to_t1w_xfm",
     }
-    # AIF-detection-derived TTP variants
-    dsc_present.add("ttp_corrected_map")
-    if dsc_has_nawm:
-        dsc_present.add("rttp_map")
     # First-pass CBV — opt-in additive stroke/non-tumor map
     if dsc_config.first_pass_cbv:
         dsc_present.add("rel_cbv_firstpass_map")
@@ -1783,8 +1774,6 @@ def _connect_master_dsc_datasinks(
             ("outputnode.psr_map", "inputnode.psr_map"),
             ("outputnode.ph_map", "inputnode.ph_map"),
             ("outputnode.ttp_map", "inputnode.ttp_map"),
-            ("outputnode.ttp_corrected_map", "inputnode.ttp_corrected_map"),
-            ("outputnode.rttp_map", "inputnode.rttp_map"),
             ("outputnode.cnr_map", "inputnode.cnr_map"),
             ("outputnode.auc_diff_map", "inputnode.auc_diff_map"),
             ("outputnode.snr_map", "inputnode.snr_map"),

@@ -332,7 +332,7 @@ def _flag_retained_below_floor(
     logging.getLogger(__name__).warning(
         "Gamma fit R²=%.3f < %.1f but synthetic AIF fallback is disabled; retaining "
         "the detected AIF. Deconvolution maps (CBF, MTT, Tmax) may be unreliable; "
-        "AUC-nCBV, raw TTP, and PSR remain interpretable.",
+        "AUC-nCBV and PSR remain interpretable.",
         gamma_r2, floor,
     )
 
@@ -3584,8 +3584,7 @@ class AIFDetection(BaseInterface):
             qc_metrics["synthetic_aif_warnings"] = [
                 "Synthetic AIF used - automatic detection failed",
                 "Relative quantification only (rCBV, rCBF normalized to contralateral)",
-                "Raw TTP remains valid (tissue-derived, AIF-independent); Tmax "
-                "is derived from the deconvolution residue and is unreliable",
+                "TTP and Tmax depend on the synthetic AIF timing and are qualitative only",
                 "Manual AIF selection recommended for clinical use",
             ]
 
@@ -3659,8 +3658,7 @@ class AIFDetection(BaseInterface):
                 qc_metrics["synthetic_aif_warnings"] = [
                     "Synthetic AIF used - gamma fit R2 below threshold",
                     "Relative quantification only (rCBV, rCBF normalized to contralateral)",
-                    "Raw TTP remains valid (tissue-derived, AIF-independent); Tmax "
-                    "is derived from the deconvolution residue and is unreliable",
+                    "TTP and Tmax depend on the synthetic AIF timing and are qualitative only",
                     "Manual AIF selection recommended for clinical use",
                 ]
                 gamma_fitted_curve = None

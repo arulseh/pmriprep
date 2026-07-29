@@ -725,8 +725,8 @@ def compute_ttp_legacy(
     """Compute TTP as the index of maximum concentration.
 
     Finds time to peak concentration using unsmoothed post-bolus argmax.
-    Returns unclipped TTP so callers can compute derived maps (TTPc, rTTP)
-    before applying their own clipping.
+    Returns unclipped acquisition-referenced peak time so callers can derive
+    AIF-arrival-referenced TTP before applying output clipping.
 
     Parameters
     ----------

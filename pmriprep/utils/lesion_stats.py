@@ -1074,12 +1074,4 @@ def extract_per_map_lesion_stats(
     if fractional_volumes:
         out["FractionalVolumes"] = fractional_volumes
 
-    # Symmetric AIF-correction flag for TTP variants. Lets a downstream
-    # consumer of either map clearly distinguish AIF-corrected from raw
-    # rather than rely on filename inference.
-    if map_name == "ttp":
-        out["AIFCorrected"] = False
-    elif map_name == "ttpCorrected":
-        out["AIFCorrected"] = True
-
     return out

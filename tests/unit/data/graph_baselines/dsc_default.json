@@ -512,30 +512,6 @@
     ],
     [
       "compute_maps",
-      "out_rttp",
-      "lesion_stats",
-      "rttp_map"
-    ],
-    [
-      "compute_maps",
-      "out_rttp",
-      "outputnode",
-      "rttp_map"
-    ],
-    [
-      "compute_maps",
-      "out_rttp",
-      "roi_stats",
-      "rttp_map"
-    ],
-    [
-      "compute_maps",
-      "out_rttp",
-      "user_lesion_stats",
-      "rttp_map"
-    ],
-    [
-      "compute_maps",
       "out_snr",
       "outputnode",
       "snr_map"
@@ -579,56 +555,32 @@
     [
       "compute_maps",
       "out_ttp",
-      "lesion_stats",
-      "ttp_map"
-    ],
-    [
-      "compute_maps",
-      "out_ttp",
-      "outputnode",
-      "ttp_map"
-    ],
-    [
-      "compute_maps",
-      "out_ttp",
-      "roi_stats",
-      "ttp_map"
-    ],
-    [
-      "compute_maps",
-      "out_ttp",
-      "user_lesion_stats",
-      "ttp_map"
-    ],
-    [
-      "compute_maps",
-      "out_ttp_corrected",
       "dsc_param_maps_qc",
       "ttp_file"
     ],
     [
       "compute_maps",
-      "out_ttp_corrected",
+      "out_ttp",
       "lesion_stats",
-      "ttp_corrected_map"
+      "ttp_map"
     ],
     [
       "compute_maps",
-      "out_ttp_corrected",
+      "out_ttp",
       "outputnode",
-      "ttp_corrected_map"
+      "ttp_map"
     ],
     [
       "compute_maps",
-      "out_ttp_corrected",
+      "out_ttp",
       "roi_stats",
-      "ttp_corrected_map"
+      "ttp_map"
     ],
     [
       "compute_maps",
-      "out_ttp_corrected",
+      "out_ttp",
       "user_lesion_stats",
-      "ttp_corrected_map"
+      "ttp_map"
     ],
     [
       "compute_maps",
@@ -1439,12 +1391,6 @@
       "lesion_mask_dsc_file",
       "select_aif_exclusion",
       "transformed_lesion_mask"
-    ],
-    [
-      "transform_nawm",
-      "nawm_mask_dsc_file",
-      "compute_maps",
-      "nawm_mask_file"
     ],
     [
       "transform_nawm",
@@ -2427,7 +2373,6 @@
     "rel_cbv_map",
     "roi_mask_dsc",
     "roi_stats_json",
-    "rttp_map",
     "smooth_auc",
     "smooth_hemodynamic",
     "snr_map",
@@ -2439,7 +2384,6 @@
     "t2w_in_dsc",
     "tmax_map",
     "tsnr_map",
-    "ttp_corrected_map",
     "ttp_map",
     "user_lesion_mask_dsc",
     "user_lesion_stats_json"

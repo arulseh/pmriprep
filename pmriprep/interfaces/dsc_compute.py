@@ -347,11 +347,9 @@ class _DSCSignalMetrics(NamedTuple):
 
 
 class _DSCTimingMaps(NamedTuple):
-    """Raw, AIF-corrected, and optional NAWM-relative DSC timing maps."""
+    """AIF-arrival-referenced DSC tissue time-to-peak map."""
 
     ttp: npt.NDArray[Any]
-    ttp_corrected: npt.NDArray[Any]
-    relative_ttp: Optional[npt.NDArray[Any]]
     aif_bat_seconds: float
 
 
@@ -382,8 +380,6 @@ class _DSCFinalMaps(NamedTuple):
     mtt: npt.NDArray[Any]
     tmax: npt.NDArray[Any]
     ttp: npt.NDArray[Any]
-    ttp_corrected: npt.NDArray[Any]
-    relative_ttp: Optional[npt.NDArray[Any]]
     auc_raw: npt.NDArray[Any]
     auc_corrected: npt.NDArray[Any]
     auc_difference: npt.NDArray[Any]
@@ -583,9 +579,6 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
         mandatory=False,
         desc="Enhancing tumor mask in DSC space for QC voxel selection",
     )
-    nawm_mask_file = traits.Str(
-        desc="NAWM mask in DSC space for rTTP normalization",
-    )
     wm_mask_dsc = traits.Str(
         desc="Eroded whole-WM mask in DSC space (FAST-derived) used as the "
         "first-pass-CBV normalization reference. Empty string when "
@@ -615,7 +608,6 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
     out_tmax = File(genfile=True, desc="Output Tmax map NIfTI")
     out_psr = File(genfile=True, desc="Output PSR map NIfTI")
     out_ph = File(genfile=True, desc="Output peak height map NIfTI")
-    out_ttp = File(genfile=True, desc="Output TTP map NIfTI")
     out_cnr = File(genfile=True, desc="Output CNR map NIfTI")
 
     # Output files — AUC decomposition
@@ -648,9 +640,10 @@ class ComputeDSCMapsOutputSpec(TraitedSpec):
     out_tmax = File(exists=True, desc="Tmax map (time to maximum of residue)")
     out_psr = File(exists=True, desc="PSR map (percent signal recovery)")
     out_ph = File(exists=True, desc="PH map (peak height)")
-    out_ttp = File(exists=True, desc="TTP map (time to peak concentration)")
-    out_ttp_corrected = File(desc="AIF-corrected TTP map (BAT subtracted)")
-    out_rttp = File(desc="NAWM-relative TTP map")
+    out_ttp = File(
+        exists=True,
+        desc="Tissue time to peak relative to AIF bolus arrival",
+    )
     out_cnr = File(exists=True, desc="CNR map (contrast-to-noise ratio)")
 
     # AUC decomposition (always produced)
@@ -1078,50 +1071,32 @@ class ComputeDSCMaps(BaseInterface):
         Returns
         -------
         _DSCTimingMaps
-            Clipped raw TTP for output, AIF-corrected TTP, optional NAWM-relative
-            TTP, and the AIF arrival time in seconds.
+            AIF-arrival-referenced tissue TTP and the AIF arrival time in seconds.
 
         """
-        import nibabel as nib  # type: ignore[import-untyped]
-
         ttp_raw = compute_ttp_legacy(raw_concentration, detected_baseline, dt)
         aif_bat_frames = detection_info.get("arrival_index", detected_baseline)
         aif_bat_seconds = float(aif_bat_frames) * dt
-        ttp_corrected = ttp_raw - aif_bat_seconds
+        ttp = ttp_raw - aif_bat_seconds
 
-        n_negative = int(np.sum(mask_bool & (ttp_corrected < 0)))
+        n_negative = int(np.sum(mask_bool & (ttp < 0)))
         n_mask = int(np.sum(mask_bool))
         if n_mask > 0 and n_negative / n_mask > 0.05:
             logger.warning(
-                "%.1f%% of brain voxels have negative TTPc (ttp < aif_bat=%.1fs). "
+                "%.1f%% of brain voxels have negative TTP (ttp < aif_bat=%.1fs). "
                 "Check AIF QC.",
                 100.0 * n_negative / n_mask,
                 aif_bat_seconds,
             )
 
-        ttp_corrected = np.clip(ttp_corrected, 0.0, 30.0)
-        ttp_corrected = np.where(np.isnan(ttp_raw), np.nan, ttp_corrected)
-
-        relative_ttp: Optional[npt.NDArray[Any]] = None
-        if (
-            isdefined(self.inputs.nawm_mask_file)
-            and str(self.inputs.nawm_mask_file) not in ("", "None")
-            and Path(self.inputs.nawm_mask_file).exists()
-        ):
-            nawm_img = nib.load(self.inputs.nawm_mask_file)
-            nawm_mask = nawm_img.get_fdata() > 0  # type: ignore[attr-defined]
-            nawm_ttp = ttp_raw[nawm_mask]
-            nawm_ttp = nawm_ttp[np.isfinite(nawm_ttp)]
-            if len(nawm_ttp) > 100:
-                relative_ttp = ttp_raw - np.median(nawm_ttp)
-                relative_ttp = np.where(
-                    np.isnan(ttp_raw), np.nan, relative_ttp
-                )
+        ttp = np.where(
+            np.isfinite(ttp_raw) & (ttp >= 0.0),
+            ttp,
+            np.nan,
+        )
 
         return _DSCTimingMaps(
-            ttp=np.clip(ttp_raw, 0.0, 60.0),
-            ttp_corrected=ttp_corrected,
-            relative_ttp=relative_ttp,
+            ttp=ttp,
             aif_bat_seconds=aif_bat_seconds,
         )
 
@@ -1391,8 +1366,6 @@ class ComputeDSCMaps(BaseInterface):
         mtt: npt.NDArray[Any],
         tmax: npt.NDArray[Any],
         ttp: npt.NDArray[Any],
-        ttp_corrected: npt.NDArray[Any],
-        relative_ttp: Optional[npt.NDArray[Any]],
         auc_raw: npt.NDArray[Any],
         auc_corrected: npt.NDArray[Any],
         auc_difference: npt.NDArray[Any],
@@ -1430,18 +1403,6 @@ class ComputeDSCMaps(BaseInterface):
             mtt=np.where(mask_bool, mtt, 0.0),
             tmax=np.where(mask_bool, tmax, 0.0),
             ttp=np.where(mask_bool, ttp, 0.0),
-            ttp_corrected=np.where(
-                mask_bool, np.where(np.isnan(ttp_corrected), 0.0, ttp_corrected), 0.0
-            ),
-            relative_ttp=(
-                None
-                if relative_ttp is None
-                else np.where(
-                    mask_bool,
-                    np.where(np.isnan(relative_ttp), 0.0, relative_ttp),
-                    0.0,
-                )
-            ),
             auc_raw=np.where(mask_bool, auc_raw, 0.0),
             auc_corrected=np.where(mask_bool, auc_corrected, 0.0),
             auc_difference=np.where(mask_bool, auc_difference, 0.0),
@@ -1539,8 +1500,6 @@ class ComputeDSCMaps(BaseInterface):
             mtt=mtt,
             tmax=deconvolution.tmax,
             ttp=timing.ttp,
-            ttp_corrected=timing.ttp_corrected,
-            relative_ttp=timing.relative_ttp,
             auc_raw=auc.raw,
             auc_corrected=auc.corrected,
             auc_difference=auc.difference,
@@ -1586,7 +1545,6 @@ class ComputeDSCMaps(BaseInterface):
             "out_psr": (maps.psr, "_psr"),
             "out_ph": (maps.peak_height, "_ph"),
             "out_ttp": (maps.ttp, "_ttp"),
-            "out_ttp_corrected": (maps.ttp_corrected, "_ttp_corrected"),
             "out_cnr": (maps.cnr, "_cnr"),
             "out_auc_raw": (maps.auc_raw, "_auc_raw"),
             "out_auc_corr": (maps.auc_corrected, "_auc_corr"),
@@ -1818,7 +1776,6 @@ class ComputeDSCMaps(BaseInterface):
     def _save_ancillary_maps(
         self,
         *,
-        relative_ttp: Optional[npt.NDArray[Any]],
         k2_map_path: Optional[str],
         delay: Optional[npt.NDArray[Any]],
         alpha: Optional[npt.NDArray[Any]],
@@ -1835,11 +1792,6 @@ class ComputeDSCMaps(BaseInterface):
         import nibabel as nib  # type: ignore[import-untyped]
 
         outputs: dict[str, str] = {}
-        if relative_ttp is not None:
-            outputs["out_rttp"] = self._save_map(
-                relative_ttp, "_rttp", affine, header
-            )
-
         if k2_map_path is not None:
             k2_data = np.asarray(
                 nib.load(k2_map_path).get_fdata(),  # type: ignore[attr-defined]
@@ -1904,7 +1856,6 @@ class ComputeDSCMaps(BaseInterface):
 
         results.update(
             self._save_ancillary_maps(
-                relative_ttp=maps.relative_ttp,
                 k2_map_path=baseline.k2_map_path,
                 delay=maps.delay,
                 alpha=deconvolution.alpha,

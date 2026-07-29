@@ -850,9 +850,7 @@ class TestExtractPerMapLesionStatsEnrichment:
                                    "n_valid": 100, "n_total": 100},
                         "k2": {"median": 0.0008, "std": 0.0005, "ppp": 0.12,
                                "n_valid": 100, "n_total": 100},
-                        "ttp": {"median": 65.0, "std": 5.0,
-                                "n_valid": 100, "n_total": 100},
-                        "ttpCorrected": {"median": 5.0, "std": 1.0,
+                        "ttp": {"median": 5.0, "std": 1.0,
                                          "n_valid": 100, "n_total": 100},
                     },
                 },
@@ -899,14 +897,6 @@ class TestExtractPerMapLesionStatsEnrichment:
         # NAWM in deconv units
         assert out["NAWMReference"]["median"] == 0.34
 
-    def test_aif_corrected_flag_on_ttp_variants(self, aggregate):
-        from pmriprep.utils.lesion_stats import extract_per_map_lesion_stats
-
-        raw = extract_per_map_lesion_stats(aggregate, "ttp")
-        corrected = extract_per_map_lesion_stats(aggregate, "ttpCorrected")
-        assert raw["AIFCorrected"] is False
-        assert corrected["AIFCorrected"] is True
-
     def test_ktrans_gets_fractional_volumes(self, aggregate):
         from pmriprep.utils.lesion_stats import extract_per_map_lesion_stats
 
@@ -941,8 +931,8 @@ class TestExtractPerMapLesionStatsEnrichment:
         assert extract_per_map_lesion_stats({}, "ncbv") is None
 
 
-class TestDSCStatsKeyTtpCorrected:
-    """Phase 1c: DSC interface stores camelCase 'ttpCorrected', not snake_case."""
+class TestDSCStatsKeyTtp:
+    """DSC lesion statistics use the canonical TTP map key."""
 
     def test_dsc_load_maps_uses_camelcase_ttp(self):
         from pmriprep.interfaces.dsc_lesion_stats import DSCLesionStats
@@ -950,8 +940,7 @@ class TestDSCStatsKeyTtpCorrected:
         # Inspect the source for the map_attrs list (no need to instantiate)
         import inspect
         src = inspect.getsource(DSCLesionStats._load_maps)
-        assert '"ttpCorrected"' in src
-        assert '"ttp_corrected"' not in src
+        assert '"ttp"' in src
 
 
 class TestDCELesionStatsMapKeyCoverage:

@@ -19,7 +19,6 @@ from pmriprep.utils.dsc_constants import EPSILON_CONCENTRATION, EPSILON_SIGNAL
 from pmriprep.utils.dsc_signal import (
     compute_peak_height_legacy,
     compute_psr_legacy,
-    compute_ttp_legacy,
 )
 
 
@@ -303,21 +302,14 @@ def test_select_raw_concentration_preserves_source_precedence(tmp_path: Path) ->
     assert ComputeDSCMaps()._select_raw_concentration(corrected) is corrected
 
 
-def test_compute_timing_maps_uses_unclipped_ttp_for_nawm_reference(
-    tmp_path: Path,
-) -> None:
-    """NAWM-relative timing derives from raw TTP before output clipping."""
-    n_voxels = 102
-    concentration = np.zeros((n_voxels, 1, 1, 8), dtype=np.float64)
-    concentration[:101, 0, 0, 4] = 2.0
-    concentration[101, 0, 0, 6] = 2.0
-    mask = np.ones((n_voxels, 1, 1), dtype=bool)
-    nawm = np.zeros(mask.shape, dtype=np.uint8)
-    nawm[:101] = 1
-    nawm_file = _write_image(tmp_path / "nawm.nii.gz", nawm)
-    interface = ComputeDSCMaps(nawm_mask_file=nawm_file)
+def test_compute_timing_maps_uses_aif_arrival_reference() -> None:
+    """The sole tissue TTP map is referenced to detected AIF arrival."""
+    concentration = np.zeros((2, 1, 1, 8), dtype=np.float64)
+    concentration[0, 0, 0, 4] = 2.0
+    concentration[1, 0, 0, 6] = 2.0
+    mask = np.ones((2, 1, 1), dtype=bool)
 
-    result = interface._compute_timing_maps(
+    result = ComputeDSCMaps()._compute_timing_maps(
         concentration,
         mask,
         detected_baseline=2,
@@ -325,31 +317,30 @@ def test_compute_timing_maps_uses_unclipped_ttp_for_nawm_reference(
         dt=2.0,
     )
 
-    raw_ttp = compute_ttp_legacy(concentration, 2, 2.0)
-    np.testing.assert_allclose(result.ttp, np.clip(raw_ttp, 0.0, 60.0))
-    np.testing.assert_allclose(
-        result.ttp_corrected, np.clip(raw_ttp - 6.0, 0.0, 30.0)
-    )
-    assert result.relative_ttp is not None
-    np.testing.assert_allclose(result.relative_ttp, raw_ttp - np.median(raw_ttp[:101]))
-    assert result.relative_ttp[101, 0, 0] == pytest.approx(4.0)
+    np.testing.assert_allclose(result.ttp[:, 0, 0], [2.0, 6.0])
     assert result.aif_bat_seconds == pytest.approx(6.0)
 
 
-def test_compute_timing_maps_requires_more_than_100_nawm_voxels(
-    tmp_path: Path,
-) -> None:
-    """The existing strict NAWM sample-size gate remains unchanged."""
-    concentration = np.zeros((100, 1, 1, 6), dtype=np.float64)
-    concentration[..., 4] = 1.0
-    mask = np.ones((100, 1, 1), dtype=bool)
-    nawm_file = _write_image(tmp_path / "nawm.nii.gz", mask.astype(np.uint8))
-
-    result = ComputeDSCMaps(nawm_mask_file=nawm_file)._compute_timing_maps(
-        concentration, mask, 2, {"arrival_index": 2}, 1.5
+def test_compute_timing_maps_keeps_prearrival_peaks_undefined() -> None:
+    """A tissue peak before the AIF reference is invalid, not a zero-second TTP."""
+    concentration = np.zeros((1, 1, 1, 6), dtype=np.float64)
+    concentration[..., 2] = 1.0
+    result = ComputeDSCMaps()._compute_timing_maps(
+        concentration, np.ones((1, 1, 1), dtype=bool), 2, {"arrival_index": 3}, 1.5
     )
 
-    assert result.relative_ttp is None
+    assert np.isnan(result.ttp[0, 0, 0])
+
+
+def test_compute_timing_maps_preserves_delays_above_30_seconds() -> None:
+    """Severe physiological delay must not be clipped to a display boundary."""
+    concentration = np.zeros((1, 1, 1, 30), dtype=np.float64)
+    concentration[..., 25] = 1.0
+    result = ComputeDSCMaps()._compute_timing_maps(
+        concentration, np.ones((1, 1, 1), dtype=bool), 2, {"arrival_index": 3}, 2.0
+    )
+
+    assert result.ttp[0, 0, 0] == pytest.approx(44.0)
 
 
 def test_compute_auc_maps_preserves_symmetric_measured_aif_ratio(
@@ -574,9 +565,7 @@ def test_finalize_dsc_maps_preserves_ranges_units_and_nan_policy() -> None:
         cbv_auc=np.array([np.nan, 4.0, 8.0]),
         mtt=np.array([-1.0, 40.0, 5.0]),
         tmax=np.array([-1.0, 70.0, 5.0]),
-        ttp=values,
-        ttp_corrected=np.array([np.nan, 3.0, 4.0]),
-        relative_ttp=np.array([np.nan, -2.0, 4.0]),
+        ttp=np.array([np.nan, 3.0, 4.0]),
         auc_raw=values,
         auc_corrected=values + 1.0,
         auc_difference=values + 2.0,
@@ -600,8 +589,8 @@ def test_finalize_dsc_maps_preserves_ranges_units_and_nan_policy() -> None:
     np.testing.assert_allclose(result.tmax, [0.0, 60.0, 0.0])
     np.testing.assert_allclose(result.psr, [0.0, 200.0, 0.0])
     np.testing.assert_allclose(result.peak_height, [0.0, 100.0, 0.0])
-    np.testing.assert_allclose(result.ttp_corrected, [0.0, 3.0, 0.0])
-    np.testing.assert_allclose(result.relative_ttp, [0.0, -2.0, 0.0])
+    np.testing.assert_allclose(result.ttp[1:], [3.0, 0.0])
+    assert np.isnan(result.ttp[0])
     np.testing.assert_allclose(result.delay, [1.0, 2.0, 0.0])
     np.testing.assert_allclose(result.residues[2], 0.0)
     np.testing.assert_allclose(result.cbf_std, [6.0, 12.0, 18.0])
@@ -619,8 +608,6 @@ def test_finalize_dsc_maps_preserves_optional_outputs() -> None:
         mtt=data,
         tmax=data,
         ttp=data,
-        ttp_corrected=data,
-        relative_ttp=None,
         auc_raw=data,
         auc_corrected=data,
         auc_difference=data,
@@ -637,7 +624,6 @@ def test_finalize_dsc_maps_preserves_optional_outputs() -> None:
         mask_bool=np.ones((1,), dtype=bool),
     )
 
-    assert result.relative_ttp is None
     assert result.delay is None
     assert result.residues is None
     assert result.cbf_std is None
@@ -689,8 +675,6 @@ def test_save_base_maps_preserves_result_keys_and_suffixes(
         mtt=data,
         tmax=data,
         ttp=data,
-        ttp_corrected=data,
-        relative_ttp=None,
         auc_raw=data,
         auc_corrected=data,
         auc_difference=data,
@@ -724,7 +708,6 @@ def test_save_base_maps_preserves_result_keys_and_suffixes(
         "out_psr": "_psr",
         "out_ph": "_ph",
         "out_ttp": "_ttp",
-        "out_ttp_corrected": "_ttp_corrected",
         "out_cnr": "_cnr",
         "out_auc_raw": "_auc_raw",
         "out_auc_corr": "_auc_corr",
@@ -884,7 +867,6 @@ def test_save_ancillary_maps_preserves_optional_maps_and_masking(
     residues = np.array([[[[1.0, 2.0]]], [[[0.0, 0.0]]]])
 
     results = interface._save_ancillary_maps(
-        relative_ttp=np.array([[[3.0]], [[0.0]]]),
         k2_map_path=k2_path,
         delay=np.array([[[4.0]], [[0.0]]]),
         alpha=np.array([[[5.0]], [[8.0]]]),
@@ -899,7 +881,7 @@ def test_save_ancillary_maps_preserves_optional_maps_and_masking(
     )
 
     assert set(results) == {
-        "out_rttp", "out_k2", "out_delay", "out_alpha", "out_cth", "out_residues"
+        "out_k2", "out_delay", "out_alpha", "out_cth", "out_residues"
     }
     np.testing.assert_allclose(nib.load(results["out_k2"]).get_fdata().ravel(), [2.0, 0.0])
     np.testing.assert_allclose(nib.load(results["out_alpha"]).get_fdata().ravel(), [5.0, 0.0])
@@ -917,7 +899,6 @@ def test_save_ancillary_maps_always_emits_zero_k2_fallback(
     interface = ComputeDSCMaps(concentration_file=source)
 
     results = interface._save_ancillary_maps(
-        relative_ttp=None,
         k2_map_path=None,
         delay=None,
         alpha=None,
@@ -1158,9 +1139,7 @@ def test_prepare_final_outputs_preserves_composition_and_qc_order(
         interface,
         "_compute_timing_maps",
         lambda *args: calls.append("timing") or SimpleNamespace(
-            ttp=data * 8.0,
-            ttp_corrected=data * 9.0,
-            relative_ttp=data * 10.0,
+            ttp=data * 9.0,
             aif_bat_seconds=4.5,
         ),
     )
@@ -1230,7 +1209,6 @@ def test_assemble_outputs_preserves_serialization_order_and_optional_branches(
     maps = SimpleNamespace(
         rel_cbf=data,
         rel_cbv=data * 2.0,
-        relative_ttp=data * 3.0,
         delay=data * 4.0,
         residues=np.ones((1, 1, 1, 2)),
         cbf_std=data * 0.1,

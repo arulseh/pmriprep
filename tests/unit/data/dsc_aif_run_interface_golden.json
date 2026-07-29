@@ -129,7 +129,7 @@
         "synthetic_aif_warnings": [
           "Synthetic AIF used - automatic detection failed",
           "Relative quantification only (rCBV, rCBF normalized to contralateral)",
-          "Raw TTP remains valid (tissue-derived, AIF-independent); Tmax is derived from the deconvolution residue and is unreliable",
+          "TTP and Tmax depend on the synthetic AIF timing and are qualitative only",
           "Manual AIF selection recommended for clinical use"
         ],
         "synthetic_fallback_reason": "no_candidates",
@@ -453,7 +453,7 @@
         "synthetic_aif_warnings": [
           "Synthetic AIF used - gamma fit R2 below threshold",
           "Relative quantification only (rCBV, rCBF normalized to contralateral)",
-          "Raw TTP remains valid (tissue-derived, AIF-independent); Tmax is derived from the deconvolution residue and is unreliable",
+          "TTP and Tmax depend on the synthetic AIF timing and are qualitative only",
           "Manual AIF selection recommended for clinical use"
         ],
         "synthetic_fallback_reason": "gamma_r2_floor",

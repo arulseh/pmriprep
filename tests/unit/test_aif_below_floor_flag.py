@@ -69,7 +69,7 @@ class TestFallbackWarning:
         assert w is not None
         assert "retained despite a poor gamma-variate fit" in w
         # Physics wording: CBF/MTT/Tmax unreliable; TTP/PSR/AUC-nCBV survive.
-        assert "Tmax may" in w and "raw TTP" in w
+        assert "Tmax may" in w and "AUC-nCBV" in w
         assert "Tmax are valid" not in w
 
     def test_none_for_normal_real_aif(self) -> None:

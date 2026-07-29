@@ -73,9 +73,7 @@ class DSCLesionStatsInputSpec(BaseInterfaceInputSpec):
     psr_map = traits.Str(desc="PSR map path")
     ph_map = traits.Str(desc="PH map path")
     k2_map = traits.Str(desc="K2 leakage correction map path")
-    ttp_map = traits.Str(desc="Raw TTP map (no AIF correction)")
-    ttp_corrected_map = traits.Str(desc="AIF-corrected TTP map path")
-    rttp_map = traits.Str(desc="NAWM-relative TTP map path")
+    ttp_map = traits.Str(desc="AIF-corrected TTP map path")
     auc_corr_map = traits.Str(desc="Leakage-corrected AUC map path")
     auc_diff_map = traits.Str(desc="Leakage AUC (AUC difference) map path")
     rel_auc_corr_map = traits.Str(desc="Relative leakage-corrected AUC map path")
@@ -316,8 +314,6 @@ class DSCLesionStats(BaseInterface):
             ("ph_map", "ph"),
             ("k2_map", "k2"),
             ("ttp_map", "ttp"),
-            ("ttp_corrected_map", "ttpCorrected"),
-            ("rttp_map", "rttp"),
             ("auc_corr_map", "auc_corr"),
             ("auc_diff_map", "auc_diff"),
             ("rel_auc_corr_map", "rel_auc_corr"),
