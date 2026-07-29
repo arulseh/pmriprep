@@ -622,3 +622,28 @@ class TestBaselineSNRComputation:
         frac = stats["baseline_snr_low_fraction"]
         assert isinstance(frac, float)
         assert math.isnan(frac)
+
+
+def test_displayed_tsnr_uses_only_precontrast_frames(tmp_path) -> None:
+    """Enhancement dynamics do not enter the displayed DCE tSNR denominator."""
+    import matplotlib
+    import numpy as np
+
+    matplotlib.use("Agg")
+
+    from pmriprep.utils.dce_pk_qc_plots import generate_preprocessing_qc_plot
+
+    curve = np.array([100.0, 102.0, 98.0, 150.0, 200.0])
+    signal = np.broadcast_to(curve, (3, 3, 3, curve.size)).copy()
+    mask = np.ones((3, 3, 3), dtype=bool)
+
+    _, stats = generate_preprocessing_qc_plot(
+        signal,
+        mask,
+        baseline_frames=3,
+        bolus_arrival_frame=3,
+        volume_tr_s=4.0,
+        output_path=str(tmp_path / "dce_qc.png"),
+    )
+
+    assert stats["baseline_tsnr"] == pytest.approx(50.0)

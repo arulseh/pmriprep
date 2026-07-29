@@ -5,9 +5,36 @@ from types import SimpleNamespace
 
 import nibabel as nib
 import numpy as np
+import pytest
 
 from pmriprep.interfaces.dce_compute import ComputeDCEMaps, _DCEFitPreparation
 from pmriprep.utils.dce_voxel_prep import prepare_voxel_for_fitting
+
+
+def test_compute_tsnr_uses_baseline_sample_standard_deviation() -> None:
+    """DCE baseline tSNR matches the DSC sample-SD and NaN conventions."""
+    data = np.array(
+        [
+            [[[100.0, 102.0, 98.0, 150.0]]],
+            [[[50.0, 50.0, 50.0, 80.0]]],
+            [[[100.0, 102.0, 98.0, 150.0]]],
+        ]
+    )
+    mask = np.array([[[1]], [[1]], [[0]]], dtype=np.uint8)
+
+    tsnr = ComputeDCEMaps()._compute_tsnr(data, mask, baseline_frames=3)
+
+    assert tsnr[0, 0, 0] == 50.0
+    assert np.isnan(tsnr[1, 0, 0])
+    assert tsnr[2, 0, 0] == 0.0
+
+
+def test_compute_tsnr_short_baseline_is_undefined() -> None:
+    """A single baseline frame cannot define temporal SNR."""
+    data = np.ones((1, 1, 1, 3), dtype=np.float64)
+    mask = np.ones((1, 1, 1), dtype=np.uint8)
+
+    assert np.isnan(ComputeDCEMaps()._compute_tsnr(data, mask, 1)).all()
 
 
 def test_voxel_preparation_preserves_already_converted_concentration() -> None:
@@ -145,6 +172,10 @@ def test_fitting_domain_rejects_nonfinite_concentration(tmp_path: Path) -> None:
     )
 
     assert not interface._prepare_fit_inputs().fitting_mask[0, 0, 0]
+
+    interface.inputs.tsnr_threshold = 5.0
+    with pytest.raises(ValueError, match="tSNR threshold.*unavailable"):
+        interface._prepare_fit_inputs()
 
 
 def _empty_preparation() -> _DCEFitPreparation:

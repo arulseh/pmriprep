@@ -174,7 +174,7 @@ def generate_preprocessing_qc_plot(
     -------
     tuple of (str, dict)
         Tuple of (path to saved QC plot PNG, stats dict with
-        ``peak_enh_pct`` and ``mean_tsnr``).
+        ``peak_enh_pct`` and ``baseline_tsnr``).
     """
     import matplotlib.pyplot as plt  # type: ignore[import-untyped]
     from matplotlib.gridspec import GridSpec
@@ -276,29 +276,29 @@ def generate_preprocessing_qc_plot(
     ax.set_ylabel("Density")
     ax.legend(fontsize=8)
 
-    # --- (1, 2) tSNR Map ---
+    # --- (1, 2) Baseline tSNR Map ---
     ax = fig.add_subplot(gs[1, 2])
-    with np.errstate(divide="ignore", invalid="ignore"):
-        temporal_mean = np.mean(dce_signal_4d, axis=3)
-        temporal_std = np.std(dce_signal_4d, axis=3)
-        tsnr = np.where(temporal_std > 1e-6, temporal_mean / temporal_std, 0.0)
-    tsnr[~mask_bool] = np.nan
-    mean_tsnr = float(np.nanmean(tsnr[mask_bool]))
+    temporal_mean = np.mean(dce_signal_4d, axis=3)
+    temporal_std = np.std(dce_signal_4d, axis=3)
 
-    # Baseline tSNR (pre-contrast frames only) - avoids contrast signal contamination
-    # Full-timeseries tSNR is contaminated by enhancement-induced variance
-    # Require at least 2 frames to compute meaningful std; otherwise return NaN
-    n_baseline = max(1, baseline_frames)
+    n_baseline = min(max(1, baseline_frames), n_volumes)
     if n_baseline >= 2:
         baseline_data = dce_signal_4d[..., :n_baseline]
         with np.errstate(divide="ignore", invalid="ignore"):
             baseline_mean = np.mean(baseline_data, axis=3)
-            baseline_std = np.std(baseline_data, axis=3)
-            baseline_tsnr_map = np.where(baseline_std > 1e-6, baseline_mean / baseline_std, 0.0)
-        mean_baseline_tsnr = float(np.nanmean(baseline_tsnr_map[mask_bool]))
+            baseline_std = np.std(baseline_data, axis=3, ddof=1)
+            tsnr = np.where(
+                (baseline_mean > 1e-6) & (baseline_std > 1e-6),
+                baseline_mean / baseline_std,
+                np.nan,
+            )
     else:
-        # Cannot compute tSNR from single frame
-        mean_baseline_tsnr = float("nan")
+        tsnr = np.full(mask_bool.shape, np.nan, dtype=np.float64)
+    tsnr[~mask_bool] = np.nan
+    valid_tsnr = tsnr[mask_bool & np.isfinite(tsnr)]
+    mean_baseline_tsnr = (
+        float(np.mean(valid_tsnr)) if valid_tsnr.size else float("nan")
+    )
 
     # Baseline SNR (robust): fraction of brain voxels whose baseline signal-to-
     # noise falls below the Rician-bias floor. Below that floor the mean-baseline
@@ -326,9 +326,9 @@ def generate_preprocessing_qc_plot(
             baseline_snr_low_fraction = round(n_low / n_valid, 3)
 
     tsnr_slice = get_radiological_slice(tsnr, axis=2)
-    tsnr_vmax = float(np.nanpercentile(tsnr[mask_bool], 95)) if np.any(mask_bool) else 50.0
+    tsnr_vmax = float(np.percentile(valid_tsnr, 95)) if valid_tsnr.size else 50.0
     im = ax.imshow(tsnr_slice, cmap="hot", vmin=0, vmax=tsnr_vmax, aspect="equal")
-    ax.set_title("tSNR Map", fontsize=10)
+    ax.set_title("Baseline tSNR Map", fontsize=10)
     ax.axis("off")
     fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="tSNR")
     if (
@@ -370,7 +370,6 @@ def generate_preprocessing_qc_plot(
 
     stats: dict[str, Any] = {
         "peak_enh_pct": round(peak_enh_pct, 1),
-        "mean_tsnr": round(mean_tsnr, 1),
         "baseline_tsnr": round(mean_baseline_tsnr, 1),
         "baseline_snr_low_fraction": baseline_snr_low_fraction,
         "mean_cnr": cnr_dce,

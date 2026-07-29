@@ -1505,8 +1505,15 @@ def init_dce_datasinks_wf(
             workflow, inputnode, base_perf_no_ktrans,
             name="tsnr_map", in_attr="tsnr_map",
             desc_value="dce", suffix="tsnr",
-            description="Temporal signal-to-noise ratio", units="arbitrary",
-            extra=None,
+            description="Baseline temporal signal-to-noise ratio", units="1",
+            extra={
+                "Estimator": "mean(S0) / sample_standard_deviation(S0)",
+                "TemporalWindow": "detected pre-bolus volumes only",
+                "UndefinedValue": "NaN when raw signal or baseline variance is unavailable",
+                "PrecisionNote": (
+                    "Voxelwise precision depends on the number of detected baseline volumes"
+                ),
+            },
         )
         sink_outputs.append((sink, "out_file"))
     if "qc_mask" in present:

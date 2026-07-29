@@ -2644,26 +2644,28 @@ class ComputeDCEMaps(BaseInterface):
         """
         spatial_shape = data.shape[:3]
         tsnr = np.zeros(spatial_shape, dtype=np.float64)
+        mask_bool = mask > 0
+        baseline_end = min(baseline_frames, data.shape[-1])
 
-        if baseline_frames < 2:
-            # Not enough frames for tSNR calculation
-            tsnr[mask > 0] = np.inf  # All voxels pass
+        if baseline_end < 2:
+            tsnr[mask_bool] = np.nan
             return tsnr
 
-        # Extract baseline data
-        baseline_data = data[..., :baseline_frames]
+        baseline_data = data[..., :baseline_end]
 
         # Compute mean and std along time axis
         with np.errstate(divide="ignore", invalid="ignore"):
             baseline_mean = np.mean(baseline_data, axis=3)
-            baseline_std = np.std(baseline_data, axis=3)
-
-            # tSNR = mean / std (handle division by zero)
-            tsnr = np.where(
-                baseline_std > EPSILON_VE,
-                np.abs(baseline_mean) / baseline_std,
-                0.0,
+            baseline_std = np.std(baseline_data, axis=3, ddof=1)
+            valid = (
+                mask_bool
+                & np.isfinite(baseline_mean)
+                & np.isfinite(baseline_std)
+                & (baseline_mean > EPSILON_VE)
+                & (baseline_std > EPSILON_VE)
             )
+            tsnr[mask_bool] = np.nan
+            np.divide(baseline_mean, baseline_std, out=tsnr, where=valid)
 
         return tsnr
 
@@ -2856,10 +2858,9 @@ class ComputeDCEMaps(BaseInterface):
             del signal_data
         else:
             logger.warning(
-                "dce_signal_file not provided; computing tSNR from concentration "
-                "data (values will be low — consider wiring dce_preprocess.out_file)"
+                "dce_signal_file not provided; baseline tSNR is unavailable"
             )
-            tsnr_map = self._compute_tsnr(conc_data, mask, baseline_frames)
+            tsnr_map = np.where(mask > 0, np.nan, 0.0)
             peak_enhancement = None
 
         # Admit only brain voxels with finite inputs, configured signal quality,
@@ -2868,6 +2869,11 @@ class ComputeDCEMaps(BaseInterface):
         # standard-deviation threshold is not a valid cross-site criterion.
         mask_bool = mask > 0
         if tsnr_threshold > 0:
+            if not np.any(mask_bool & np.isfinite(tsnr_map)):
+                raise ValueError(
+                    "A positive tSNR threshold was requested, but baseline tSNR "
+                    "is unavailable in every brain voxel"
+                )
             fitting_mask = mask_bool & (tsnr_map >= tsnr_threshold)
         else:
             fitting_mask = mask_bool
@@ -2879,6 +2885,10 @@ class ComputeDCEMaps(BaseInterface):
         )
         if finite_signal_mask is not None:
             fitting_mask &= finite_signal_mask
+        if not np.any(fitting_mask):
+            logger.error(
+                "DCE fitting mask is empty after signal-quality and enhancement gates"
+            )
 
         inference = str(self.inputs.inference)
         mcmc_samples = int(self.inputs.mcmc_samples)

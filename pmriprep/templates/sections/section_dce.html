@@ -359,10 +359,10 @@
                 <div class="metric-value {{ dce.display_status.peak_enh }}">{{ "%.1f"|format(dce.qc_metrics.preprocessing.peak_enh_pct) }}%</div>
             </div>
             {% endif %}
-            {% if dce.qc_metrics.preprocessing.mean_tsnr is defined %}
+            {% if dce.qc_metrics.preprocessing.baseline_tsnr is defined %}
             <div class="metric">
                 <div class="metric-label">Mean tSNR</div>
-                <div class="metric-value">{{ "%.1f"|format(dce.qc_metrics.preprocessing.mean_tsnr) }}</div>
+                <div class="metric-value">{{ "%.1f"|format(dce.qc_metrics.preprocessing.baseline_tsnr) }}</div>
             </div>
             {% endif %}
             {% if dce.qc_metrics.preprocessing.mean_cnr is defined %}
