@@ -54,8 +54,6 @@ TEMPLATE_AIF_USAGE: Final[dict[str, TemplateAIFUsageCategory]] = {
     "ncbv": "safe",
     "ncbf": "safe",
     "k2": "safe",
-    "alpha": "qualitative_only",
-    "beta": "qualitative_only",
     "cth": "qualitative_only",
     "cbf_std": "ratio_defensible",
     "rel_cbf": "ratio_defensible",

@@ -644,18 +644,6 @@
     ],
     [
       "dsc_wf",
-      "outputnode.alpha_map",
-      "dsc_datasinks_wf",
-      "inputnode.alpha_map"
-    ],
-    [
-      "dsc_wf",
-      "outputnode.beta_map",
-      "dsc_datasinks_wf",
-      "inputnode.beta_map"
-    ],
-    [
-      "dsc_wf",
       "outputnode.brain_mask_dsc",
       "dsc_datasinks_wf",
       "inputnode.brain_mask_dsc"

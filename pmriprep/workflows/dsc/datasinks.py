@@ -151,11 +151,20 @@ _NORMALIZED_MAPS: tuple[DSCMapSpec, ...] = (
 )
 
 
-# Vascular model parameters
+# Vascular-model physiological derivative
 _VASCULAR_MAPS: tuple[DSCMapSpec, ...] = (
-    DSCMapSpec("alpha_map", "dsc", "alpha", "Vascular model alpha parameter", "1", "alpha"),
-    DSCMapSpec("beta_map", "dsc", "beta", "Vascular model beta parameter", "s", "beta"),
-    DSCMapSpec("cth_map", "dsc", "cth", "Capillary transit time heterogeneity", "s", "cth"),
+    DSCMapSpec(
+        "cth_map", "dsc", "cth", "Capillary transit time heterogeneity", "s", "cth",
+        {
+            "Estimator": "standard_deviation_of_gamma_transit_time_distribution",
+            "Formula": "beta * sqrt(alpha) = MTT / sqrt(alpha)",
+            "ModelDependency": "vascular_gamma_transit_time_model",
+            "UndefinedValue": (
+                "NaN when the vascular fit is unavailable, replaced by oSVD, "
+                "or alpha is at either fitted bound"
+            ),
+        },
+    ),
 )
 
 
@@ -1092,7 +1101,7 @@ def init_dsc_datasinks_wf(
                 # Normalized
                 "ncbv_map", "ncbf_map",
                 # Vascular
-                "alpha_map", "beta_map", "cth_map",
+                "cth_map",
                 # Inference-specific CBF uncertainty
                 "cbf_std_map",
                 # Parametric diagnostics + leakage

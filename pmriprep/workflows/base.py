@@ -1658,7 +1658,7 @@ def _connect_master_dsc_datasinks(
         }
     # Vascular method only (alpha/beta/cth params)
     if dsc_method == "vascular":
-        dsc_present |= {"alpha_map", "beta_map", "cth_map"}
+        dsc_present.add("cth_map")
 
     if dsc_has_nawm:
         dsc_present.add("nawm_mask_dsc")
@@ -1778,8 +1778,6 @@ def _connect_master_dsc_datasinks(
             ("outputnode.ncbv_map", "inputnode.ncbv_map"),
             ("outputnode.ncbf_map", "inputnode.ncbf_map"),
             # Vascular model parameters
-            ("outputnode.alpha_map", "inputnode.alpha_map"),
-            ("outputnode.beta_map", "inputnode.beta_map"),
             ("outputnode.cth_map", "inputnode.cth_map"),
             # Inference-specific CBF uncertainty maps
             ("outputnode.cbf_std_map", "inputnode.cbf_std_map"),

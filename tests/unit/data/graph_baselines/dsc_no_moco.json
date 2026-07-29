@@ -146,12 +146,6 @@
     ],
     [
       "compute_maps",
-      "out_alpha",
-      "outputnode",
-      "alpha_map"
-    ],
-    [
-      "compute_maps",
       "out_auc_corr",
       "dsc_leakage_qc",
       "auc_corr_file"
@@ -167,12 +161,6 @@
       "out_auc_raw",
       "dsc_leakage_qc",
       "auc_raw_file"
-    ],
-    [
-      "compute_maps",
-      "out_beta",
-      "outputnode",
-      "beta_map"
     ],
     [
       "compute_maps",
@@ -2229,8 +2217,6 @@
     "aif_mask",
     "aif_metrics",
     "aif_qc",
-    "alpha_map",
-    "beta_map",
     "brain_mask_dsc",
     "brain_mask_filmstrip",
     "cbf_std_map",

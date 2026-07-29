@@ -972,6 +972,10 @@ def build_dsc_map_sidecar(
                     "parameter": "CBV" if map_key == "ncbv" else "CBF",
                 },
             }
+    if map_key == "cth" and isinstance(qc_metrics, dict):
+        at_bound_fraction = qc_metrics.get("cth_alpha_at_bound_fraction")
+        if at_bound_fraction is not None:
+            sidecar["AlphaAtBoundFraction"] = float(at_bound_fraction)
     apply_aif_sidecar(sidecar, map_key, qc_metrics)
     return sidecar
 

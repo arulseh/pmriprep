@@ -29,6 +29,7 @@ from pmriprep.utils.dsc_constants import (
     EPSILON_CONCENTRATION,
     EPSILON_SHAPE,
     EPSILON_SIGNAL,
+    VASCULAR_ALPHA_BOUNDS,
 )
 from pmriprep.utils.dsc_signal import compute_psr_legacy, compute_ttp_legacy
 
@@ -385,8 +386,6 @@ class _DSCDeconvolutionMaps(NamedTuple):
     qc: dict[str, Any]
     delay: Optional[npt.NDArray[Any]] = None
     residues: Optional[npt.NDArray[Any]] = None
-    alpha: Optional[npt.NDArray[Any]] = None
-    beta: Optional[npt.NDArray[Any]] = None
     cth: Optional[npt.NDArray[Any]] = None
     cbf_std: Optional[npt.NDArray[Any]] = None
     cbv_std: Optional[npt.NDArray[Any]] = None
@@ -618,8 +617,6 @@ class ComputeDSCMapsOutputSpec(TraitedSpec):
     # Optional extras
     out_delay = File(desc="Delay map (oSVD method)")
     out_residues = File(desc="Residue functions (if save_residue=True)")
-    out_alpha = File(desc="Alpha map (vascular method only)")
-    out_beta = File(desc="Beta map (vascular method only)")
     out_cth = File(desc="CTH map — capillary transit time heterogeneity (vascular only)")
     out_cbf_std = File(desc="CBF parameter standard-error or posterior-SD map")
     out_parametric_r2 = File(
@@ -1585,7 +1582,7 @@ class ComputeDSCMaps(BaseInterface):
             )
 
         (
-            cbf, cbv, mtt, tmax, qc, alpha, beta, cth, cbf_std, cbv_std,
+            cbf, cbv, mtt, tmax, qc, cth, cbf_std, cbv_std,
             parametric_r2, fallback_mask,
         ) = self._deconvolve_parametric(
             concentration,
@@ -1607,8 +1604,6 @@ class ComputeDSCMaps(BaseInterface):
             mtt=mtt,
             tmax=tmax,
             qc=qc,
-            alpha=alpha,
-            beta=beta,
             cth=cth,
             cbf_std=cbf_std,
             cbv_std=cbv_std,
@@ -1668,8 +1663,6 @@ class ComputeDSCMaps(BaseInterface):
         *,
         k2_map_path: Optional[str],
         delay: Optional[npt.NDArray[Any]],
-        alpha: Optional[npt.NDArray[Any]],
-        beta: Optional[npt.NDArray[Any]],
         cth: Optional[npt.NDArray[Any]],
         residues: Optional[npt.NDArray[Any]],
         save_residue: bool,
@@ -1698,15 +1691,10 @@ class ComputeDSCMaps(BaseInterface):
 
         if delay is not None:
             outputs["out_delay"] = self._save_map(delay, "_delay", affine, header)
-        for name, suffix, data in (
-            ("out_alpha", "_alpha", alpha),
-            ("out_beta", "_beta", beta),
-            ("out_cth", "_cth", cth),
-        ):
-            if data is not None:
-                outputs[name] = self._save_map(
-                    np.where(mask_bool, data, 0.0), suffix, affine, header
-                )
+        if cth is not None:
+            outputs["out_cth"] = self._save_map(
+                np.where(mask_bool, cth, 0.0), "_cth", affine, header
+            )
 
         if residues is not None and save_residue:
             residue_path = self._gen_outfilename("_residues")
@@ -1734,8 +1722,6 @@ class ComputeDSCMaps(BaseInterface):
             self._save_ancillary_maps(
                 k2_map_path=baseline.k2_map_path,
                 delay=maps.delay,
-                alpha=deconvolution.alpha,
-                beta=deconvolution.beta,
                 cth=deconvolution.cth,
                 residues=maps.residues,
                 save_residue=bool(self.inputs.save_residue),
@@ -1884,8 +1870,6 @@ class ComputeDSCMaps(BaseInterface):
         npt.NDArray[Any],  # mtt
         npt.NDArray[Any],  # tmax
         dict[str, Any],  # qc_metrics
-        Optional[npt.NDArray[Any]],  # alpha_map (vascular only)
-        Optional[npt.NDArray[Any]],  # beta_map (vascular only)
         Optional[npt.NDArray[Any]],  # cth_map (vascular only)
         Optional[npt.NDArray[Any]],  # cbf_std_map (parametric only)
         Optional[npt.NDArray[Any]],  # cbv_std_map (parametric only)
@@ -1907,9 +1891,10 @@ class ComputeDSCMaps(BaseInterface):
         cbv = np.zeros(spatial_shape, dtype=np.float64)
         mtt = np.zeros(spatial_shape, dtype=np.float64)
         tmax = np.zeros(spatial_shape, dtype=np.float64)
-        alpha_map = np.zeros(spatial_shape, dtype=np.float64) if method == "vascular" else None
-        beta_map = np.zeros(spatial_shape, dtype=np.float64) if method == "vascular" else None
-        cth_map = np.zeros(spatial_shape, dtype=np.float64) if method == "vascular" else None
+        cth_map = (
+            np.full(spatial_shape, np.nan, dtype=np.float64)
+            if method == "vascular" else None
+        )
         cbf_std_map = np.full(spatial_shape, np.nan, dtype=np.float64) if method in ("cpi", "vascular") else None
         # CBV is derived from correlated fitted parameters. Neither scalar nor
         # batched fit results retain the joint covariance needed to propagate
@@ -2060,6 +2045,8 @@ class ComputeDSCMaps(BaseInterface):
         # Scatter results into output arrays
         n_converged = 0
         n_evaluation_budget_exhausted = 0
+        n_cth_accepted = 0
+        n_cth_alpha_at_bound = 0
         r_squared_list: list[float] = []
 
         for res in results:
@@ -2071,12 +2058,29 @@ class ComputeDSCMaps(BaseInterface):
             mtt[x, y, z] = res.get("mtt", 0.0)
             tmax[x, y, z] = res.get("tmax", 0.0)
 
-            if alpha_map is not None and "alpha" in res:
-                alpha_map[x, y, z] = res["alpha"]
-            if beta_map is not None and "beta" in res:
-                beta_map[x, y, z] = res["beta"]
-            if cth_map is not None and "cth" in res:
-                cth_map[x, y, z] = res["cth"]
+            if (
+                cth_map is not None
+                and "cth" in res
+                and "alpha" in res
+                and not res.get("needs_fallback")
+            ):
+                n_cth_accepted += 1
+                alpha_value = float(res["alpha"])
+                alpha_at_bound = np.isclose(
+                    alpha_value,
+                    VASCULAR_ALPHA_BOUNDS.min,
+                    rtol=1e-5,
+                    atol=1e-8,
+                ) or np.isclose(
+                    alpha_value,
+                    VASCULAR_ALPHA_BOUNDS.max,
+                    rtol=1e-5,
+                    atol=1e-8,
+                )
+                if alpha_at_bound:
+                    n_cth_alpha_at_bound += 1
+                else:
+                    cth_map[x, y, z] = res["cth"]
             if cbf_std_map is not None and "cbf_std" in res:
                 cbf_std_map[x, y, z] = res["cbf_std"]
             if cbv_std_map is not None and "cbv_std" in res:
@@ -2118,6 +2122,11 @@ class ComputeDSCMaps(BaseInterface):
             if np.max(np.abs(tissue)) < EPSILON_CONCENTRATION:
                 continue
             n_fallback_attempted += 1
+            # CTH exists only for an accepted vascular fit. Once that fit is
+            # rejected, neither a successful oSVD replacement nor a failed
+            # fallback supplies a capillary transit-time distribution.
+            if cth_map is not None:
+                cth_map[x, y, z] = np.nan
             try:
                 svd_result = svd_deconvolve_oscillation(
                     tissue, aif, dt,
@@ -2128,12 +2137,6 @@ class ComputeDSCMaps(BaseInterface):
                 mtt[x, y, z] = svd_result.mtt
                 tmax[x, y, z] = svd_result.delay
                 # Parametric uncertainty is unavailable for SVD fallback voxels.
-                if alpha_map is not None:
-                    alpha_map[x, y, z] = 0.0
-                if beta_map is not None:
-                    beta_map[x, y, z] = 0.0
-                if cth_map is not None:
-                    cth_map[x, y, z] = 0.0
                 if cbf_std_map is not None:
                     cbf_std_map[x, y, z] = np.nan
                 if cbv_std_map is not None:
@@ -2162,6 +2165,11 @@ class ComputeDSCMaps(BaseInterface):
                 qc_metrics["evaluation_budget_exhausted_rate"] = (
                     n_evaluation_budget_exhausted / max(1, n_admissible)
                 )
+        if method == "vascular":
+            qc_metrics["cth_alpha_at_bound_n"] = n_cth_alpha_at_bound
+            qc_metrics["cth_alpha_at_bound_fraction"] = (
+                n_cth_alpha_at_bound / max(1, n_cth_accepted)
+            )
 
         qc_metrics["n_fallback_requested"] = n_fallback_requested
         qc_metrics["n_fallback_attempted"] = n_fallback_attempted
@@ -2175,7 +2183,7 @@ class ComputeDSCMaps(BaseInterface):
             n_fallback_requested / max(1, n_admissible)
         )
 
-        return (cbf, cbv, mtt, tmax, qc_metrics, alpha_map, beta_map, cth_map,
+        return (cbf, cbv, mtt, tmax, qc_metrics, cth_map,
                 cbf_std_map, cbv_std_map,
                 parametric_r2_map, fallback_mask)
 

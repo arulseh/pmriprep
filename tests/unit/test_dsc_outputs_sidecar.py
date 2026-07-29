@@ -437,24 +437,29 @@ class TestWriterAifBlockPresentOnAllMaps:
 
     def test_map_units_match_computed_quantities(self, minimal_inputs, tmp_path) -> None:
         minimal_inputs.update({
-            "alpha_map": _write_dummy_nifti(tmp_path / "alpha.nii.gz"),
-            "beta_map": _write_dummy_nifti(tmp_path / "beta.nii.gz"),
             "cth_map": _write_dummy_nifti(tmp_path / "cth.nii.gz"),
             "cbf_std_map": _write_dummy_nifti(tmp_path / "cbf_std.nii.gz"),
             "parametric_r2_map": _write_dummy_nifti(tmp_path / "parametric_r2.nii.gz"),
             "config_dict": {"inference": "svb"},
         })
-        derivatives = _run_writer(minimal_inputs, {}, tmp_path)
+        derivatives = _run_writer(
+            minimal_inputs,
+            {"cth_alpha_at_bound_fraction": 0.125},
+            tmp_path,
+        )
 
         expected = {
-            "dscAlpha_stat": "1",
-            "dscBeta_stat": "s",
             "dscCth_stat": "s",
             "dscPosteriorSDCbf_stat": "1/min",
             "dscParametricRsquared_stat": "1",
         }
         for suffix, units in expected.items():
             assert _load_sidecar(derivatives, suffix)["Units"] == units
+
+        cth_meta = _load_sidecar(derivatives, "dscCth_stat")
+        assert cth_meta["Formula"] == "beta * sqrt(alpha) = MTT / sqrt(alpha)"
+        assert "oSVD" in cth_meta["UndefinedValue"]
+        assert cth_meta["AlphaAtBoundFraction"] == pytest.approx(0.125)
 
         uncertainty_meta = _load_sidecar(derivatives, "dscPosteriorSDCbf_stat")
         assert uncertainty_meta["EstimationMethod"] == "svb"

@@ -756,8 +756,8 @@ def init_dsc_deconvolution_wf(
         Leakage (blood-brain-barrier) maps.
     out_cnr, out_tsnr
         Quality maps.
-    out_alpha, out_beta, out_cth
-        Vascular-model parameters (undefined for SVD methods).
+    out_cth
+        Capillary transit-time heterogeneity (vascular method only).
     out_cbf_std
         Conditional CBF uncertainty map (parametric methods only).
     out_parametric_r2, out_fallback_mask
@@ -802,8 +802,6 @@ def init_dsc_deconvolution_wf(
                 "out_auc_diff",
                 "out_k2",
                 "out_tsnr",
-                "out_alpha",
-                "out_beta",
                 "out_cth",
                 "out_cbf_std",
                 "out_parametric_r2",
@@ -852,8 +850,6 @@ def init_dsc_deconvolution_wf(
             ("out_auc_diff", "out_auc_diff"),
             ("out_k2", "out_k2"),
             ("out_tsnr", "out_tsnr"),
-            ("out_alpha", "out_alpha"),
-            ("out_beta", "out_beta"),
             ("out_cth", "out_cth"),
             ("out_cbf_std", "out_cbf_std"),
             ("out_parametric_r2", "out_parametric_r2"),
@@ -1886,9 +1882,7 @@ def init_dsc_preproc_wf(
                 "ttp_map",
                 "cnr_map",
                 # AUC decomposition
-                # Vascular model parameters (optional)
-                "alpha_map",
-                "beta_map",
+                # Vascular-model physiological derivative (optional)
                 "cth_map",
                 # Conditional parametric CBF uncertainty map (optional)
                 "cbf_std_map",
@@ -2579,10 +2573,8 @@ def init_dsc_preproc_wf(
         (deconvolution_wf, outputnode, [
             ("outputnode.out_tsnr", "tsnr_map"),
         ]),
-        # Vascular model parameters (optional — undefined for SVD methods)
+        # Vascular-model CTH (optional — undefined for non-vascular methods)
         (deconvolution_wf, outputnode, [
-            ("outputnode.out_alpha", "alpha_map"),
-            ("outputnode.out_beta", "beta_map"),
             ("outputnode.out_cth", "cth_map"),
         ]),
         # Conditional CBF uncertainty (only for parametric methods: cpi, vascular)

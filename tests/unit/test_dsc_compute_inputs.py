@@ -184,6 +184,8 @@ def test_parametric_fit_health_uses_admissible_denominator(
                 "cbv": 0.2,
                 "mtt": 2.0,
                 "tmax": 0.0,
+                "alpha": 3.0,
+                "cth": 1.25,
             },
             {
                 "coords": (1, 0, 0),
@@ -195,6 +197,8 @@ def test_parametric_fit_health_uses_admissible_denominator(
                 "cbv": 0.2,
                 "mtt": 2.0,
                 "tmax": 0.0,
+                "alpha": 3.0,
+                "cth": 2.5,
             },
             {
                 "coords": (2, 0, 0),
@@ -235,6 +239,102 @@ def test_parametric_fit_health_uses_admissible_denominator(
     assert qc["fallback_rate"] == pytest.approx(0.5)
     assert qc["fallback_requested_rate"] == pytest.approx(0.5)
     assert qc["fe_plateau_rate"] == pytest.approx(0.5)
+    cth = result[5]
+    assert cth is not None
+    assert cth[0, 0, 0] == pytest.approx(1.25)
+    assert np.isnan(cth[1, 0, 0])
+    assert np.isnan(cth[2, 0, 0])
+
+
+def test_vascular_cth_is_nan_when_osvd_fallback_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A rejected vascular fit cannot retain CTH after failed fallback."""
+    concentration = np.zeros((1, 1, 1, 6), dtype=np.float64)
+    concentration[0, 0, 0, 2:4] = [1.0, 0.5]
+    interface = ComputeDSCMaps(inference="map")
+    monkeypatch.setattr(
+        interface,
+        "_dsc_fit_batched_map",
+        lambda **kwargs: [{
+            "coords": (0, 0, 0),
+            "failed": False,
+            "needs_fallback": True,
+            "converged": False,
+            "r_squared": 0.2,
+            "cbf": 0.1,
+            "cbv": 0.2,
+            "mtt": 2.0,
+            "tmax": 0.0,
+            "alpha": 3.0,
+            "cth": 2.5,
+        }],
+    )
+    monkeypatch.setattr(
+        "pmriprep.utils.dsc_deconvolution.svd_deconvolve_oscillation",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("failed")),
+    )
+
+    result = interface._deconvolve_parametric(
+        concentration,
+        np.array([0.0, 0.0, 1.0, 0.5, 0.0, 0.0]),
+        np.ones((1, 1, 1), dtype=np.uint8),
+        "vascular",
+        1.5,
+        "map",
+        100,
+        0,
+        True,
+        False,
+    )
+
+    assert np.isnan(result[5][0, 0, 0])
+    assert result[4]["n_fallback_failed"] == 1
+
+
+@pytest.mark.parametrize("alpha", [0.5, 10.0])
+def test_vascular_cth_is_nan_at_alpha_bound(
+    alpha: float,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CTH is undefined when gamma shape is fixed by either fitted bound."""
+    concentration = np.zeros((1, 1, 1, 6), dtype=np.float64)
+    concentration[0, 0, 0, 2:4] = [1.0, 0.5]
+    interface = ComputeDSCMaps(inference="map")
+    monkeypatch.setattr(
+        interface,
+        "_dsc_fit_batched_map",
+        lambda **kwargs: [{
+            "coords": (0, 0, 0),
+            "failed": False,
+            "needs_fallback": False,
+            "converged": True,
+            "r_squared": 0.9,
+            "cbf": 0.1,
+            "cbv": 0.2,
+            "mtt": 2.0,
+            "tmax": 0.0,
+            "alpha": alpha,
+            "cth": 2.0 / np.sqrt(alpha),
+        }],
+    )
+
+    result = interface._deconvolve_parametric(
+        concentration,
+        np.array([0.0, 0.0, 1.0, 0.5, 0.0, 0.0]),
+        np.ones((1, 1, 1), dtype=np.uint8),
+        "vascular",
+        1.5,
+        "map",
+        100,
+        0,
+        True,
+        False,
+    )
+
+    assert np.isnan(result[5][0, 0, 0])
+    assert result[4]["cth_alpha_at_bound_n"] == 1
+    assert result[4]["cth_alpha_at_bound_fraction"] == pytest.approx(1.0)
 
 
 def test_prepare_baseline_preserves_pass_through_k2(
@@ -809,8 +909,6 @@ def test_save_ancillary_maps_preserves_optional_maps_and_masking(
     results = interface._save_ancillary_maps(
         k2_map_path=k2_path,
         delay=np.array([[[4.0]], [[0.0]]]),
-        alpha=np.array([[[5.0]], [[8.0]]]),
-        beta=None,
         cth=np.array([[[6.0]], [[9.0]]]),
         residues=residues,
         save_residue=True,
@@ -821,10 +919,9 @@ def test_save_ancillary_maps_preserves_optional_maps_and_masking(
     )
 
     assert set(results) == {
-        "out_k2", "out_delay", "out_alpha", "out_cth", "out_residues"
+        "out_k2", "out_delay", "out_cth", "out_residues"
     }
     np.testing.assert_allclose(nib.load(results["out_k2"]).get_fdata().ravel(), [2.0, 0.0])
-    np.testing.assert_allclose(nib.load(results["out_alpha"]).get_fdata().ravel(), [5.0, 0.0])
     np.testing.assert_allclose(nib.load(results["out_cth"]).get_fdata().ravel(), [6.0, 0.0])
     np.testing.assert_allclose(nib.load(results["out_residues"]).get_fdata(), residues)
 
@@ -841,8 +938,6 @@ def test_save_ancillary_maps_always_emits_zero_k2_fallback(
     results = interface._save_ancillary_maps(
         k2_map_path=None,
         delay=None,
-        alpha=None,
-        beta=None,
         cth=None,
         residues=np.ones((2, 1, 1, 2)),
         save_residue=False,
@@ -981,7 +1076,7 @@ def test_run_deconvolution_normalizes_svd_state(
     assert result.delay is arrays[4]
     assert result.residues is arrays[5]
     assert result.qc is qc
-    assert result.alpha is None
+    assert result.cth is None
     assert result.cbf_std is None
 
 
@@ -991,7 +1086,7 @@ def test_run_deconvolution_normalizes_parametric_state(
 ) -> None:
     """Parametric dispatch preserves all returned maps and motion provenance."""
     interface = ComputeDSCMaps()
-    arrays = [np.full((1,), value) for value in range(1, 12)]
+    arrays = [np.full((1,), value) for value in range(1, 10)]
     qc: dict[str, object] = {"method": method}
     calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
 
@@ -1027,8 +1122,8 @@ def test_run_deconvolution_normalizes_parametric_state(
     assert calls[0][0][3:] == (method, 2.0, "map", 321, 7, True, True)
     assert calls[0][1]["motion_weights"] is weights
     assert result.cbf is arrays[0]
-    assert result.alpha is arrays[4]
-    assert result.fallback_mask is arrays[10]
+    assert result.cth is arrays[4]
+    assert result.fallback_mask is arrays[8]
     assert result.delay is None
     assert result.residues is None
     assert result.qc["motion_weighting"] is motion_qc
@@ -1178,7 +1273,7 @@ def test_assemble_outputs_preserves_serialization_order_and_optional_branches(
         mtt=data,
         tmax=data,
         qc=qc,
-        alpha=data * 5.0,
+        cth=data * 5.0,
         cbv_std=data * 0.2,
         parametric_r2=data * 0.9,
         fallback_mask=data,
