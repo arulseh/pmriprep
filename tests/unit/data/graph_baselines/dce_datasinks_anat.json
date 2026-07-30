@@ -1,0 +1,1796 @@
+{
+  "edges": [
+    [
+      "anat_mask_sources",
+      "out",
+      "lesion_mask_dce_meta",
+      "structural_sources"
+    ],
+    [
+      "anat_mask_sources",
+      "out",
+      "nawm_mask_dce_meta",
+      "structural_sources"
+    ],
+    [
+      "base_minimal_meta",
+      "meta_dict",
+      "brain_mask_dce_meta",
+      "base"
+    ],
+    [
+      "base_minimal_meta",
+      "meta_dict",
+      "flair_in_dce_meta",
+      "base"
+    ],
+    [
+      "base_minimal_meta",
+      "meta_dict",
+      "flair_postcon_in_dce_meta",
+      "base"
+    ],
+    [
+      "base_minimal_meta",
+      "meta_dict",
+      "lesion_mask_dce_meta",
+      "base"
+    ],
+    [
+      "base_minimal_meta",
+      "meta_dict",
+      "nawm_mask_dce_meta",
+      "base"
+    ],
+    [
+      "base_minimal_meta",
+      "meta_dict",
+      "roi_mask_dce_meta",
+      "base"
+    ],
+    [
+      "base_minimal_meta",
+      "meta_dict",
+      "t1w_in_dce_meta",
+      "base"
+    ],
+    [
+      "base_minimal_meta",
+      "meta_dict",
+      "t1w_postcon_in_dce_meta",
+      "base"
+    ],
+    [
+      "base_minimal_meta",
+      "meta_dict",
+      "t1w_subtraction_in_dce_meta",
+      "base"
+    ],
+    [
+      "base_minimal_meta",
+      "meta_dict",
+      "t2w_in_dce_meta",
+      "base"
+    ],
+    [
+      "base_minimal_meta",
+      "meta_dict",
+      "user_lesion_mask_dce_meta",
+      "base"
+    ],
+    [
+      "base_perf_meta",
+      "meta_dict",
+      "ktrans_map_meta",
+      "base"
+    ],
+    [
+      "brain_mask_dce_meta",
+      "meta_dict",
+      "brain_mask_dce_sink",
+      "meta_dict"
+    ],
+    [
+      "brain_mask_dce_sink",
+      "out_file",
+      "dd_merge",
+      "in2"
+    ],
+    [
+      "dataset_description",
+      "dd_path",
+      "outputnode",
+      "dataset_description_done"
+    ],
+    [
+      "dataset_description",
+      "dd_path",
+      "outputnode",
+      "done"
+    ],
+    [
+      "dd_merge",
+      "out",
+      "dataset_description",
+      "_trigger"
+    ],
+    [
+      "figures_writer",
+      "aif_curve_txt",
+      "dd_merge",
+      "in13"
+    ],
+    [
+      "flair_in_dce_meta",
+      "meta_dict",
+      "flair_in_dce_sink",
+      "meta_dict"
+    ],
+    [
+      "flair_in_dce_sink",
+      "out_file",
+      "dd_merge",
+      "in10"
+    ],
+    [
+      "flair_postcon_in_dce_meta",
+      "meta_dict",
+      "flair_postcon_in_dce_sink",
+      "meta_dict"
+    ],
+    [
+      "flair_postcon_in_dce_sink",
+      "out_file",
+      "dd_merge",
+      "in11"
+    ],
+    [
+      "inputnode",
+      "aif_candidates_plot",
+      "figures_writer",
+      "aif_candidates_plot"
+    ],
+    [
+      "inputnode",
+      "aif_curve",
+      "figures_writer",
+      "aif_curve"
+    ],
+    [
+      "inputnode",
+      "aif_curve_plot",
+      "figures_writer",
+      "aif_curve_plot"
+    ],
+    [
+      "inputnode",
+      "aif_location_plot",
+      "figures_writer",
+      "aif_location_plot"
+    ],
+    [
+      "inputnode",
+      "b1_qc_plot",
+      "figures_writer",
+      "b1_qc_plot"
+    ],
+    [
+      "inputnode",
+      "bids_dir",
+      "base_minimal_meta",
+      "bids_dir"
+    ],
+    [
+      "inputnode",
+      "bids_dir",
+      "base_perf_meta",
+      "bids_dir"
+    ],
+    [
+      "inputnode",
+      "bids_dir",
+      "base_perf_no_ktrans_meta",
+      "bids_dir"
+    ],
+    [
+      "inputnode",
+      "bids_dir",
+      "dataset_description",
+      "bids_dir"
+    ],
+    [
+      "inputnode",
+      "bids_dir",
+      "figures_writer",
+      "bids_dir"
+    ],
+    [
+      "inputnode",
+      "bids_dir",
+      "flair_in_dce_meta",
+      "bids_dir"
+    ],
+    [
+      "inputnode",
+      "bids_dir",
+      "flair_postcon_in_dce_meta",
+      "bids_dir"
+    ],
+    [
+      "inputnode",
+      "bids_dir",
+      "lesion_mask_dce_meta",
+      "bids_dir"
+    ],
+    [
+      "inputnode",
+      "bids_dir",
+      "nawm_mask_dce_meta",
+      "bids_dir"
+    ],
+    [
+      "inputnode",
+      "bids_dir",
+      "t1w_in_dce_meta",
+      "bids_dir"
+    ],
+    [
+      "inputnode",
+      "bids_dir",
+      "t1w_postcon_in_dce_meta",
+      "bids_dir"
+    ],
+    [
+      "inputnode",
+      "bids_dir",
+      "t1w_subtraction_in_dce_meta",
+      "bids_dir"
+    ],
+    [
+      "inputnode",
+      "bids_dir",
+      "t2w_in_dce_meta",
+      "bids_dir"
+    ],
+    [
+      "inputnode",
+      "brain_mask",
+      "brain_mask_dce_sink",
+      "in_file"
+    ],
+    [
+      "inputnode",
+      "brain_mask_filmstrip",
+      "figures_writer",
+      "brain_mask_filmstrip"
+    ],
+    [
+      "inputnode",
+      "dsc_dce_xval_plot",
+      "figures_writer",
+      "dsc_dce_xval_plot"
+    ],
+    [
+      "inputnode",
+      "flair_in_dce",
+      "flair_in_dce_sink",
+      "in_file"
+    ],
+    [
+      "inputnode",
+      "flair_postcon_in_dce",
+      "flair_postcon_in_dce_sink",
+      "in_file"
+    ],
+    [
+      "inputnode",
+      "ktrans_map",
+      "base_minimal_meta",
+      "reference_voxel_source"
+    ],
+    [
+      "inputnode",
+      "ktrans_map",
+      "base_perf_meta",
+      "reference_voxel_source"
+    ],
+    [
+      "inputnode",
+      "ktrans_map",
+      "base_perf_no_ktrans_meta",
+      "reference_voxel_source"
+    ],
+    [
+      "inputnode",
+      "ktrans_map",
+      "ktrans_map_sink",
+      "in_file"
+    ],
+    [
+      "inputnode",
+      "lesion_mask_dce",
+      "lesion_mask_dce_sink",
+      "in_file"
+    ],
+    [
+      "inputnode",
+      "lesion_stats_json",
+      "ktrans_map_meta",
+      "lesion_stats_json"
+    ],
+    [
+      "inputnode",
+      "model_selection_qc_plot",
+      "figures_writer",
+      "model_selection_qc_plot"
+    ],
+    [
+      "inputnode",
+      "motion_params",
+      "figures_writer",
+      "motion_params"
+    ],
+    [
+      "inputnode",
+      "motion_qc_plot",
+      "figures_writer",
+      "motion_qc_plot"
+    ],
+    [
+      "inputnode",
+      "nawm_mask",
+      "nawm_mask_dce_sink",
+      "in_file"
+    ],
+    [
+      "inputnode",
+      "output_dir",
+      "brain_mask_dce_sink",
+      "output_dir"
+    ],
+    [
+      "inputnode",
+      "output_dir",
+      "dataset_description",
+      "output_dir"
+    ],
+    [
+      "inputnode",
+      "output_dir",
+      "figures_writer",
+      "output_dir"
+    ],
+    [
+      "inputnode",
+      "output_dir",
+      "flair_in_dce_sink",
+      "base_directory"
+    ],
+    [
+      "inputnode",
+      "output_dir",
+      "flair_postcon_in_dce_sink",
+      "base_directory"
+    ],
+    [
+      "inputnode",
+      "output_dir",
+      "ktrans_map_sink",
+      "output_dir"
+    ],
+    [
+      "inputnode",
+      "output_dir",
+      "lesion_mask_dce_sink",
+      "output_dir"
+    ],
+    [
+      "inputnode",
+      "output_dir",
+      "nawm_mask_dce_sink",
+      "output_dir"
+    ],
+    [
+      "inputnode",
+      "output_dir",
+      "roi_mask_dce_sink",
+      "output_dir"
+    ],
+    [
+      "inputnode",
+      "output_dir",
+      "t1w_in_dce_sink",
+      "base_directory"
+    ],
+    [
+      "inputnode",
+      "output_dir",
+      "t1w_postcon_in_dce_sink",
+      "base_directory"
+    ],
+    [
+      "inputnode",
+      "output_dir",
+      "t1w_subtraction_in_dce_sink",
+      "base_directory"
+    ],
+    [
+      "inputnode",
+      "output_dir",
+      "t2w_in_dce_sink",
+      "base_directory"
+    ],
+    [
+      "inputnode",
+      "output_dir",
+      "user_lesion_mask_dce_sink",
+      "output_dir"
+    ],
+    [
+      "inputnode",
+      "pk_modeling_qc_plot",
+      "figures_writer",
+      "pk_modeling_qc_plot"
+    ],
+    [
+      "inputnode",
+      "pk_param_maps_qc_plot",
+      "figures_writer",
+      "pk_param_maps_qc_plot"
+    ],
+    [
+      "inputnode",
+      "preprocessing_qc_plot",
+      "figures_writer",
+      "preprocessing_qc_plot"
+    ],
+    [
+      "inputnode",
+      "provenance_dict",
+      "base_minimal_meta",
+      "provenance_dict"
+    ],
+    [
+      "inputnode",
+      "provenance_dict",
+      "base_perf_meta",
+      "provenance_dict"
+    ],
+    [
+      "inputnode",
+      "provenance_dict",
+      "base_perf_no_ktrans_meta",
+      "provenance_dict"
+    ],
+    [
+      "inputnode",
+      "qc_metrics",
+      "base_perf_meta",
+      "qc_metrics"
+    ],
+    [
+      "inputnode",
+      "qc_metrics",
+      "base_perf_no_ktrans_meta",
+      "qc_metrics"
+    ],
+    [
+      "inputnode",
+      "qc_metrics",
+      "figures_writer",
+      "qc_metrics"
+    ],
+    [
+      "inputnode",
+      "qc_metrics",
+      "ktrans_map_meta",
+      "qc_metrics"
+    ],
+    [
+      "inputnode",
+      "registration_filmstrip",
+      "figures_writer",
+      "registration_filmstrip"
+    ],
+    [
+      "inputnode",
+      "roi_mask_dce",
+      "roi_mask_dce_sink",
+      "in_file"
+    ],
+    [
+      "inputnode",
+      "roi_stats_json",
+      "ktrans_map_meta",
+      "roi_stats_json"
+    ],
+    [
+      "inputnode",
+      "session_id",
+      "base_minimal_meta",
+      "session"
+    ],
+    [
+      "inputnode",
+      "session_id",
+      "base_perf_meta",
+      "session"
+    ],
+    [
+      "inputnode",
+      "session_id",
+      "base_perf_no_ktrans_meta",
+      "session"
+    ],
+    [
+      "inputnode",
+      "session_id",
+      "brain_mask_dce_sink",
+      "session"
+    ],
+    [
+      "inputnode",
+      "session_id",
+      "figures_writer",
+      "session_id"
+    ],
+    [
+      "inputnode",
+      "session_id",
+      "ktrans_map_sink",
+      "session"
+    ],
+    [
+      "inputnode",
+      "session_id",
+      "lesion_mask_dce_sink",
+      "session"
+    ],
+    [
+      "inputnode",
+      "session_id",
+      "nawm_mask_dce_sink",
+      "session"
+    ],
+    [
+      "inputnode",
+      "session_id",
+      "roi_mask_dce_sink",
+      "session"
+    ],
+    [
+      "inputnode",
+      "session_id",
+      "user_lesion_mask_dce_sink",
+      "session"
+    ],
+    [
+      "inputnode",
+      "source_dce",
+      "figures_writer",
+      "source_dce"
+    ],
+    [
+      "inputnode",
+      "source_dce",
+      "flair_in_dce_meta",
+      "perfusion_source"
+    ],
+    [
+      "inputnode",
+      "source_dce",
+      "flair_postcon_in_dce_meta",
+      "perfusion_source"
+    ],
+    [
+      "inputnode",
+      "source_dce",
+      "lesion_mask_dce_meta",
+      "perfusion_source"
+    ],
+    [
+      "inputnode",
+      "source_dce",
+      "nawm_mask_dce_meta",
+      "perfusion_source"
+    ],
+    [
+      "inputnode",
+      "source_dce",
+      "perf_sources",
+      "in1"
+    ],
+    [
+      "inputnode",
+      "source_dce",
+      "t1w_in_dce_meta",
+      "perfusion_source"
+    ],
+    [
+      "inputnode",
+      "source_dce",
+      "t1w_postcon_in_dce_meta",
+      "perfusion_source"
+    ],
+    [
+      "inputnode",
+      "source_dce",
+      "t1w_subtraction_in_dce_meta",
+      "perfusion_source"
+    ],
+    [
+      "inputnode",
+      "source_dce",
+      "t2w_in_dce_meta",
+      "perfusion_source"
+    ],
+    [
+      "inputnode",
+      "source_flair",
+      "anat_mask_sources",
+      "in3"
+    ],
+    [
+      "inputnode",
+      "source_flair",
+      "flair_in_dce_meta",
+      "structural_source"
+    ],
+    [
+      "inputnode",
+      "source_flair",
+      "flair_in_dce_sink",
+      "source_file"
+    ],
+    [
+      "inputnode",
+      "source_flair_postcon",
+      "anat_mask_sources",
+      "in4"
+    ],
+    [
+      "inputnode",
+      "source_flair_postcon",
+      "flair_postcon_in_dce_meta",
+      "structural_source"
+    ],
+    [
+      "inputnode",
+      "source_flair_postcon",
+      "flair_postcon_in_dce_sink",
+      "source_file"
+    ],
+    [
+      "inputnode",
+      "source_t1w",
+      "anat_mask_sources",
+      "in1"
+    ],
+    [
+      "inputnode",
+      "source_t1w",
+      "t1w_in_dce_meta",
+      "structural_source"
+    ],
+    [
+      "inputnode",
+      "source_t1w",
+      "t1w_in_dce_sink",
+      "source_file"
+    ],
+    [
+      "inputnode",
+      "source_t1w",
+      "t1w_subtraction_in_dce_meta",
+      "structural_source"
+    ],
+    [
+      "inputnode",
+      "source_t1w",
+      "t1w_subtraction_in_dce_sink",
+      "source_file"
+    ],
+    [
+      "inputnode",
+      "source_t1w_postcon",
+      "anat_mask_sources",
+      "in2"
+    ],
+    [
+      "inputnode",
+      "source_t1w_postcon",
+      "t1w_postcon_in_dce_meta",
+      "structural_source"
+    ],
+    [
+      "inputnode",
+      "source_t1w_postcon",
+      "t1w_postcon_in_dce_sink",
+      "source_file"
+    ],
+    [
+      "inputnode",
+      "source_t2w",
+      "anat_mask_sources",
+      "in5"
+    ],
+    [
+      "inputnode",
+      "source_t2w",
+      "t2w_in_dce_meta",
+      "structural_source"
+    ],
+    [
+      "inputnode",
+      "source_t2w",
+      "t2w_in_dce_sink",
+      "source_file"
+    ],
+    [
+      "inputnode",
+      "subject_id",
+      "base_minimal_meta",
+      "subject"
+    ],
+    [
+      "inputnode",
+      "subject_id",
+      "base_perf_meta",
+      "subject"
+    ],
+    [
+      "inputnode",
+      "subject_id",
+      "base_perf_no_ktrans_meta",
+      "subject"
+    ],
+    [
+      "inputnode",
+      "subject_id",
+      "brain_mask_dce_sink",
+      "subject"
+    ],
+    [
+      "inputnode",
+      "subject_id",
+      "figures_writer",
+      "subject_id"
+    ],
+    [
+      "inputnode",
+      "subject_id",
+      "ktrans_map_sink",
+      "subject"
+    ],
+    [
+      "inputnode",
+      "subject_id",
+      "lesion_mask_dce_sink",
+      "subject"
+    ],
+    [
+      "inputnode",
+      "subject_id",
+      "nawm_mask_dce_sink",
+      "subject"
+    ],
+    [
+      "inputnode",
+      "subject_id",
+      "roi_mask_dce_sink",
+      "subject"
+    ],
+    [
+      "inputnode",
+      "subject_id",
+      "user_lesion_mask_dce_sink",
+      "subject"
+    ],
+    [
+      "inputnode",
+      "t1_qc_plot",
+      "figures_writer",
+      "t1_qc_plot"
+    ],
+    [
+      "inputnode",
+      "t1w_in_dce",
+      "t1w_in_dce_sink",
+      "in_file"
+    ],
+    [
+      "inputnode",
+      "t1w_postcon_in_dce",
+      "t1w_postcon_in_dce_sink",
+      "in_file"
+    ],
+    [
+      "inputnode",
+      "t1w_subtraction_in_dce",
+      "t1w_subtraction_in_dce_sink",
+      "in_file"
+    ],
+    [
+      "inputnode",
+      "t2w_in_dce",
+      "t2w_in_dce_sink",
+      "in_file"
+    ],
+    [
+      "inputnode",
+      "user_lesion_mask_dce",
+      "user_lesion_mask_dce_sink",
+      "in_file"
+    ],
+    [
+      "inputnode",
+      "user_lesion_stats_json",
+      "ktrans_map_meta",
+      "user_lesion_stats_json"
+    ],
+    [
+      "ktrans_map_meta",
+      "meta_dict",
+      "ktrans_map_sink",
+      "meta_dict"
+    ],
+    [
+      "ktrans_map_sink",
+      "out_file",
+      "dd_merge",
+      "in1"
+    ],
+    [
+      "lesion_mask_dce_meta",
+      "meta_dict",
+      "lesion_mask_dce_sink",
+      "meta_dict"
+    ],
+    [
+      "lesion_mask_dce_sink",
+      "out_file",
+      "dd_merge",
+      "in4"
+    ],
+    [
+      "nawm_mask_dce_meta",
+      "meta_dict",
+      "nawm_mask_dce_sink",
+      "meta_dict"
+    ],
+    [
+      "nawm_mask_dce_sink",
+      "out_file",
+      "dd_merge",
+      "in3"
+    ],
+    [
+      "perf_sources",
+      "out",
+      "base_minimal_meta",
+      "source_paths"
+    ],
+    [
+      "perf_sources",
+      "out",
+      "base_perf_meta",
+      "source_paths"
+    ],
+    [
+      "perf_sources",
+      "out",
+      "base_perf_no_ktrans_meta",
+      "source_paths"
+    ],
+    [
+      "roi_mask_dce_meta",
+      "meta_dict",
+      "roi_mask_dce_sink",
+      "meta_dict"
+    ],
+    [
+      "roi_mask_dce_sink",
+      "out_file",
+      "dd_merge",
+      "in6"
+    ],
+    [
+      "t1w_in_dce_meta",
+      "meta_dict",
+      "t1w_in_dce_sink",
+      "meta_dict"
+    ],
+    [
+      "t1w_in_dce_sink",
+      "out_file",
+      "dd_merge",
+      "in7"
+    ],
+    [
+      "t1w_postcon_in_dce_meta",
+      "meta_dict",
+      "t1w_postcon_in_dce_sink",
+      "meta_dict"
+    ],
+    [
+      "t1w_postcon_in_dce_sink",
+      "out_file",
+      "dd_merge",
+      "in8"
+    ],
+    [
+      "t1w_subtraction_in_dce_meta",
+      "meta_dict",
+      "t1w_subtraction_in_dce_sink",
+      "meta_dict"
+    ],
+    [
+      "t1w_subtraction_in_dce_sink",
+      "out_file",
+      "dd_merge",
+      "in9"
+    ],
+    [
+      "t2w_in_dce_meta",
+      "meta_dict",
+      "t2w_in_dce_sink",
+      "meta_dict"
+    ],
+    [
+      "t2w_in_dce_sink",
+      "out_file",
+      "dd_merge",
+      "in12"
+    ],
+    [
+      "user_lesion_mask_dce_meta",
+      "meta_dict",
+      "user_lesion_mask_dce_sink",
+      "meta_dict"
+    ],
+    [
+      "user_lesion_mask_dce_sink",
+      "out_file",
+      "dd_merge",
+      "in5"
+    ]
+  ],
+  "function_io": {
+    "base_minimal_meta": {
+      "input_names": [
+        "bids_dir",
+        "minimal",
+        "pk_dependent",
+        "provenance_dict",
+        "qc_metrics",
+        "reference_voxel_source",
+        "session",
+        "source_paths",
+        "subject"
+      ],
+      "output_names": [
+        "meta_dict"
+      ]
+    },
+    "base_perf_meta": {
+      "input_names": [
+        "bids_dir",
+        "minimal",
+        "pk_dependent",
+        "provenance_dict",
+        "qc_metrics",
+        "reference_voxel_source",
+        "session",
+        "source_paths",
+        "subject"
+      ],
+      "output_names": [
+        "meta_dict"
+      ]
+    },
+    "base_perf_no_ktrans_meta": {
+      "input_names": [
+        "bids_dir",
+        "minimal",
+        "pk_dependent",
+        "provenance_dict",
+        "qc_metrics",
+        "reference_voxel_source",
+        "session",
+        "source_paths",
+        "subject"
+      ],
+      "output_names": [
+        "meta_dict"
+      ]
+    },
+    "brain_mask_dce_meta": {
+      "input_names": [
+        "base",
+        "description",
+        "extra",
+        "units"
+      ],
+      "output_names": [
+        "meta_dict"
+      ]
+    },
+    "brain_mask_dce_sink": {
+      "input_names": [
+        "bids_suffix",
+        "datatype",
+        "desc",
+        "in_file",
+        "meta_dict",
+        "output_dir",
+        "session",
+        "space",
+        "subject",
+        "suffix"
+      ],
+      "output_names": [
+        "out_file"
+      ]
+    },
+    "dataset_description": {
+      "input_names": [
+        "_trigger",
+        "bids_dir",
+        "output_dir"
+      ],
+      "output_names": [
+        "dd_path"
+      ]
+    },
+    "flair_in_dce_meta": {
+      "input_names": [
+        "base",
+        "bids_dir",
+        "description",
+        "extra",
+        "perfusion_source",
+        "structural_source",
+        "units"
+      ],
+      "output_names": [
+        "meta_dict"
+      ]
+    },
+    "flair_postcon_in_dce_meta": {
+      "input_names": [
+        "base",
+        "bids_dir",
+        "description",
+        "extra",
+        "perfusion_source",
+        "structural_source",
+        "units"
+      ],
+      "output_names": [
+        "meta_dict"
+      ]
+    },
+    "ktrans_map_meta": {
+      "input_names": [
+        "base",
+        "description",
+        "lesion_stats_json",
+        "map_key",
+        "qc_metrics",
+        "roi_stats_json",
+        "units",
+        "user_lesion_stats_json"
+      ],
+      "output_names": [
+        "meta_dict"
+      ]
+    },
+    "ktrans_map_sink": {
+      "input_names": [
+        "bids_suffix",
+        "datatype",
+        "desc",
+        "in_file",
+        "meta_dict",
+        "output_dir",
+        "session",
+        "subject",
+        "suffix"
+      ],
+      "output_names": [
+        "out_file"
+      ]
+    },
+    "lesion_mask_dce_meta": {
+      "input_names": [
+        "base",
+        "bids_dir",
+        "description",
+        "extra",
+        "native_source",
+        "perfusion_source",
+        "resampling_applied",
+        "structural_sources",
+        "units"
+      ],
+      "output_names": [
+        "meta_dict"
+      ]
+    },
+    "lesion_mask_dce_sink": {
+      "input_names": [
+        "bids_suffix",
+        "datatype",
+        "desc",
+        "in_file",
+        "meta_dict",
+        "output_dir",
+        "session",
+        "space",
+        "subject",
+        "suffix"
+      ],
+      "output_names": [
+        "out_file"
+      ]
+    },
+    "nawm_mask_dce_meta": {
+      "input_names": [
+        "base",
+        "bids_dir",
+        "description",
+        "extra",
+        "native_source",
+        "perfusion_source",
+        "resampling_applied",
+        "structural_sources",
+        "units"
+      ],
+      "output_names": [
+        "meta_dict"
+      ]
+    },
+    "nawm_mask_dce_sink": {
+      "input_names": [
+        "bids_suffix",
+        "datatype",
+        "desc",
+        "in_file",
+        "meta_dict",
+        "output_dir",
+        "session",
+        "space",
+        "subject",
+        "suffix"
+      ],
+      "output_names": [
+        "out_file"
+      ]
+    },
+    "roi_mask_dce_meta": {
+      "input_names": [
+        "base",
+        "description",
+        "extra",
+        "units"
+      ],
+      "output_names": [
+        "meta_dict"
+      ]
+    },
+    "roi_mask_dce_sink": {
+      "input_names": [
+        "bids_suffix",
+        "datatype",
+        "desc",
+        "in_file",
+        "meta_dict",
+        "output_dir",
+        "session",
+        "space",
+        "subject",
+        "suffix"
+      ],
+      "output_names": [
+        "out_file"
+      ]
+    },
+    "t1w_in_dce_meta": {
+      "input_names": [
+        "base",
+        "bids_dir",
+        "description",
+        "extra",
+        "perfusion_source",
+        "structural_source",
+        "units"
+      ],
+      "output_names": [
+        "meta_dict"
+      ]
+    },
+    "t1w_postcon_in_dce_meta": {
+      "input_names": [
+        "base",
+        "bids_dir",
+        "description",
+        "extra",
+        "perfusion_source",
+        "structural_source",
+        "units"
+      ],
+      "output_names": [
+        "meta_dict"
+      ]
+    },
+    "t1w_subtraction_in_dce_meta": {
+      "input_names": [
+        "base",
+        "bids_dir",
+        "description",
+        "extra",
+        "perfusion_source",
+        "structural_source",
+        "units"
+      ],
+      "output_names": [
+        "meta_dict"
+      ]
+    },
+    "t2w_in_dce_meta": {
+      "input_names": [
+        "base",
+        "bids_dir",
+        "description",
+        "extra",
+        "perfusion_source",
+        "structural_source",
+        "units"
+      ],
+      "output_names": [
+        "meta_dict"
+      ]
+    },
+    "user_lesion_mask_dce_meta": {
+      "input_names": [
+        "base",
+        "description",
+        "extra",
+        "units"
+      ],
+      "output_names": [
+        "meta_dict"
+      ]
+    },
+    "user_lesion_mask_dce_sink": {
+      "input_names": [
+        "bids_suffix",
+        "datatype",
+        "desc",
+        "in_file",
+        "meta_dict",
+        "output_dir",
+        "session",
+        "space",
+        "subject",
+        "suffix"
+      ],
+      "output_names": [
+        "out_file"
+      ]
+    }
+  },
+  "function_sha256": {
+    "base_minimal_meta": "98ed832b6deb40bf732d84e1e4f2bd5f1f4a86850f159e8c8c4ee8e11f54306b",
+    "base_perf_meta": "98ed832b6deb40bf732d84e1e4f2bd5f1f4a86850f159e8c8c4ee8e11f54306b",
+    "base_perf_no_ktrans_meta": "98ed832b6deb40bf732d84e1e4f2bd5f1f4a86850f159e8c8c4ee8e11f54306b",
+    "brain_mask_dce_meta": "7209f8b8056294d831fddb6abdc9149bd75f4b9890feca702bbe2e7b19674563",
+    "brain_mask_dce_sink": "ca5ae1f893d6aa902d88719c995be8a064c739a193fb68f24a7a6cf4f74b2bb6",
+    "dataset_description": "4f030212e4217b96b33ce28a7ed92f196a066b4199d13919b0c6168ba0c7fa20",
+    "flair_in_dce_meta": "41ce7606742ed3553ab922660c42faaf62916e8bf406524767d584dfd4efb976",
+    "flair_postcon_in_dce_meta": "41ce7606742ed3553ab922660c42faaf62916e8bf406524767d584dfd4efb976",
+    "ktrans_map_meta": "1c94533442eb68a4660356be7da79877233f24bcd85eacb51526424130306f6e",
+    "ktrans_map_sink": "ca5ae1f893d6aa902d88719c995be8a064c739a193fb68f24a7a6cf4f74b2bb6",
+    "lesion_mask_dce_meta": "601c2400948d4a871896fc53551096a6aa18d8b9dd3810e856d1c91447fd984d",
+    "lesion_mask_dce_sink": "ca5ae1f893d6aa902d88719c995be8a064c739a193fb68f24a7a6cf4f74b2bb6",
+    "nawm_mask_dce_meta": "601c2400948d4a871896fc53551096a6aa18d8b9dd3810e856d1c91447fd984d",
+    "nawm_mask_dce_sink": "ca5ae1f893d6aa902d88719c995be8a064c739a193fb68f24a7a6cf4f74b2bb6",
+    "roi_mask_dce_meta": "7209f8b8056294d831fddb6abdc9149bd75f4b9890feca702bbe2e7b19674563",
+    "roi_mask_dce_sink": "ca5ae1f893d6aa902d88719c995be8a064c739a193fb68f24a7a6cf4f74b2bb6",
+    "t1w_in_dce_meta": "41ce7606742ed3553ab922660c42faaf62916e8bf406524767d584dfd4efb976",
+    "t1w_postcon_in_dce_meta": "41ce7606742ed3553ab922660c42faaf62916e8bf406524767d584dfd4efb976",
+    "t1w_subtraction_in_dce_meta": "41ce7606742ed3553ab922660c42faaf62916e8bf406524767d584dfd4efb976",
+    "t2w_in_dce_meta": "41ce7606742ed3553ab922660c42faaf62916e8bf406524767d584dfd4efb976",
+    "user_lesion_mask_dce_meta": "7209f8b8056294d831fddb6abdc9149bd75f4b9890feca702bbe2e7b19674563",
+    "user_lesion_mask_dce_sink": "ca5ae1f893d6aa902d88719c995be8a064c739a193fb68f24a7a6cf4f74b2bb6"
+  },
+  "nipype_version": "1.10.0",
+  "node_attrs": {
+    "anat_mask_sources": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "base_minimal_meta": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "base_perf_meta": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "base_perf_no_ktrans_meta": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "brain_mask_dce_meta": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "brain_mask_dce_sink": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "dataset_description": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "dd_merge": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "figures_writer": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "flair_in_dce_meta": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "flair_in_dce_sink": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "flair_postcon_in_dce_meta": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "flair_postcon_in_dce_sink": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "inputnode": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "ktrans_map_meta": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "ktrans_map_sink": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "lesion_mask_dce_meta": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "lesion_mask_dce_sink": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "nawm_mask_dce_meta": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "nawm_mask_dce_sink": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "outputnode": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "perf_sources": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "roi_mask_dce_meta": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "roi_mask_dce_sink": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "t1w_in_dce_meta": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "t1w_in_dce_sink": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "t1w_postcon_in_dce_meta": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "t1w_postcon_in_dce_sink": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "t1w_subtraction_in_dce_meta": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "t1w_subtraction_in_dce_sink": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "t2w_in_dce_meta": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "t2w_in_dce_sink": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "user_lesion_mask_dce_meta": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "user_lesion_mask_dce_sink": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    }
+  },
+  "node_params": {
+    "anat_mask_sources": {
+      "axis": "vstack",
+      "no_flatten": false,
+      "ravel_inputs": false
+    },
+    "base_minimal_meta": {
+      "function_str": "def _build_dce_base(\n    source_paths: list[str],\n    reference_voxel_source: str,\n    bids_dir: str,\n    subject: str,\n    session: str,\n    provenance_dict: dict | None = None,\n    qc_metrics: dict | None = None,\n    minimal: bool = False,\n    pk_dependent: bool = True,\n) -> dict:\n    from pmriprep.utils.sidecar_builders import build_dce_base_sidecar\n\n    return build_dce_base_sidecar(\n        source_paths=source_paths,\n        reference_voxel_source=reference_voxel_source,\n        bids_dir=bids_dir,\n        subject=subject,\n        session=session or None,\n        provenance_dict=provenance_dict,\n        qc_metrics=qc_metrics,\n        minimal=minimal,\n        pk_dependent=pk_dependent,\n    )\n",
+      "minimal": true,
+      "pk_dependent": false,
+      "qc_metrics": null
+    },
+    "base_perf_meta": {
+      "function_str": "def _build_dce_base(\n    source_paths: list[str],\n    reference_voxel_source: str,\n    bids_dir: str,\n    subject: str,\n    session: str,\n    provenance_dict: dict | None = None,\n    qc_metrics: dict | None = None,\n    minimal: bool = False,\n    pk_dependent: bool = True,\n) -> dict:\n    from pmriprep.utils.sidecar_builders import build_dce_base_sidecar\n\n    return build_dce_base_sidecar(\n        source_paths=source_paths,\n        reference_voxel_source=reference_voxel_source,\n        bids_dir=bids_dir,\n        subject=subject,\n        session=session or None,\n        provenance_dict=provenance_dict,\n        qc_metrics=qc_metrics,\n        minimal=minimal,\n        pk_dependent=pk_dependent,\n    )\n",
+      "minimal": false,
+      "pk_dependent": true
+    },
+    "base_perf_no_ktrans_meta": {
+      "function_str": "def _build_dce_base(\n    source_paths: list[str],\n    reference_voxel_source: str,\n    bids_dir: str,\n    subject: str,\n    session: str,\n    provenance_dict: dict | None = None,\n    qc_metrics: dict | None = None,\n    minimal: bool = False,\n    pk_dependent: bool = True,\n) -> dict:\n    from pmriprep.utils.sidecar_builders import build_dce_base_sidecar\n\n    return build_dce_base_sidecar(\n        source_paths=source_paths,\n        reference_voxel_source=reference_voxel_source,\n        bids_dir=bids_dir,\n        subject=subject,\n        session=session or None,\n        provenance_dict=provenance_dict,\n        qc_metrics=qc_metrics,\n        minimal=minimal,\n        pk_dependent=pk_dependent,\n    )\n",
+      "minimal": false,
+      "pk_dependent": false
+    },
+    "brain_mask_dce_meta": {
+      "description": "Brain mask in DCE space",
+      "function_str": "def _build_dce_meta(\n    base: dict,\n    description: str,\n    units: str | None = None,\n    extra: dict | None = None,\n    map_key: str = \"\",\n    lesion_stats_json: str | None = None,\n    user_lesion_stats_json: str | None = None,\n    roi_stats_json: str | None = None,\n) -> dict:\n    \"\"\"Compose a generic DCE sidecar; optionally inject stats fragments.\n\n    When ``map_key`` is non-empty the per-map fragment from each\n    aggregate stats JSON is attached as ``LesionStats``,\n    ``UserLesionStats``, or ``ROIStats`` respectively.\n    Used for model-free maps and NAWM-normalized maps that aren't routed\n    through ``_build_dce_pk_map_meta``.\n    \"\"\"\n    from pmriprep.utils.aif_provenance import stamp_aif_dependency\n    from pmriprep.utils.lesion_stats import load_lesion_stats_fragment\n\n    out = dict(base)\n    out[\"Description\"] = description\n    if units is not None:\n        out[\"Units\"] = units\n    if extra:\n        out.update(extra)\n    if map_key:\n        stamp_aif_dependency(out, map_key, modality=\"DCE\")\n        fragment = load_lesion_stats_fragment(lesion_stats_json, map_key)\n        if fragment:\n            out[\"LesionStats\"] = fragment\n        user_fragment = load_lesion_stats_fragment(\n            user_lesion_stats_json, map_key,\n        )\n        if user_fragment:\n            out[\"UserLesionStats\"] = user_fragment\n        roi_fragment = load_lesion_stats_fragment(roi_stats_json, map_key)\n        if roi_fragment:\n            out[\"ROIStats\"] = roi_fragment\n    return out\n",
+      "units": null
+    },
+    "brain_mask_dce_sink": {
+      "bids_suffix": "mask",
+      "datatype": "anat",
+      "desc": "brain",
+      "space": "dceref",
+      "suffix": ""
+    },
+    "dd_merge": {
+      "axis": "vstack",
+      "no_flatten": false,
+      "ravel_inputs": false
+    },
+    "figures_writer": {
+      "bids_dir": "",
+      "motion_applied": true,
+      "session_id": ""
+    },
+    "flair_in_dce_meta": {
+      "description": "FLAIR registered to DCE space",
+      "extra": null,
+      "function_str": "def _build_dce_underlay_meta(\n    base: dict,\n    description: str,\n    units: str | None,\n    extra: dict | None,\n    structural_source: str,\n    perfusion_source: str,\n    bids_dir: str,\n) -> dict:\n    \"\"\"Build metadata for a structural image resampled to DCE space.\"\"\"\n    from pmriprep.utils.sidecar_builders import build_sources_list\n\n    out = dict(base)\n    out[\"Description\"] = description\n    if units is not None:\n        out[\"Units\"] = units\n    if extra:\n        out.update(extra)\n    out.update({\n        \"ResamplingApplied\": True,\n        \"Interpolation\": \"spline\",\n        \"TransformDirection\": \"T1w_to_DCE\",\n    })\n    out[\"Sources\"] = build_sources_list(\n        [structural_source, perfusion_source], bids_dir,\n    )\n    return out\n",
+      "units": null
+    },
+    "flair_in_dce_sink": {
+      "check_hdr": true,
+      "compress": [
+        true
+      ],
+      "datatype": "anat",
+      "space": "dceref",
+      "suffix": "FLAIR"
+    },
+    "flair_postcon_in_dce_meta": {
+      "description": "Post-contrast FLAIR registered to DCE space",
+      "extra": null,
+      "function_str": "def _build_dce_underlay_meta(\n    base: dict,\n    description: str,\n    units: str | None,\n    extra: dict | None,\n    structural_source: str,\n    perfusion_source: str,\n    bids_dir: str,\n) -> dict:\n    \"\"\"Build metadata for a structural image resampled to DCE space.\"\"\"\n    from pmriprep.utils.sidecar_builders import build_sources_list\n\n    out = dict(base)\n    out[\"Description\"] = description\n    if units is not None:\n        out[\"Units\"] = units\n    if extra:\n        out.update(extra)\n    out.update({\n        \"ResamplingApplied\": True,\n        \"Interpolation\": \"spline\",\n        \"TransformDirection\": \"T1w_to_DCE\",\n    })\n    out[\"Sources\"] = build_sources_list(\n        [structural_source, perfusion_source], bids_dir,\n    )\n    return out\n",
+      "units": null
+    },
+    "flair_postcon_in_dce_sink": {
+      "ceagent": "GAD",
+      "check_hdr": true,
+      "compress": [
+        true
+      ],
+      "datatype": "anat",
+      "space": "dceref",
+      "suffix": "FLAIR"
+    },
+    "inputnode": {
+      "session_id": "0001",
+      "subject_id": "0001"
+    },
+    "ktrans_map_meta": {
+      "function_str": "def _build_dce_pk_map_meta(\n    base: dict,\n    description: str,\n    units: str | None = None,\n    qc_metrics: dict | None = None,\n    map_key: str = \"\",\n    lesion_stats_json: str | None = None,\n    user_lesion_stats_json: str | None = None,\n    roi_stats_json: str | None = None,\n) -> dict:\n    \"\"\"Compose a DCE per-PK-map sidecar with cosmetic enrichment + stats fragments.\n\n    Extracts the per-map fragment for ``map_key`` (e.g. ``\"ktrans\"``)\n    from each aggregate stats JSON and attaches as ``LesionStats``,\n    ``UserLesionStats``, or ``ROIStats``. Cross-modality fields\n    (``DSCDCECrossValCorrelation``, ``CBVNegativeFraction``) land only on\n    the maps they apply to.\n    \"\"\"\n    from pmriprep.utils.lesion_stats import load_lesion_stats_fragment\n    from pmriprep.utils.sidecar_builders import enrich_dce_pk_map_sidecar\n\n    out = dict(base)\n    out[\"Description\"] = description\n    if units is not None:\n        out[\"Units\"] = units\n\n    fragment = load_lesion_stats_fragment(lesion_stats_json, map_key)\n\n    enrich_dce_pk_map_sidecar(\n        out,\n        qc_metrics=qc_metrics if isinstance(qc_metrics, dict) else None,\n        map_key=map_key,\n        lesion_fragment=fragment,\n    )\n\n    user_fragment = load_lesion_stats_fragment(\n        user_lesion_stats_json, map_key,\n    )\n    if user_fragment:\n        out[\"UserLesionStats\"] = user_fragment\n    roi_fragment = load_lesion_stats_fragment(roi_stats_json, map_key)\n    if roi_fragment:\n        out[\"ROIStats\"] = roi_fragment\n    return out\n",
+      "map_key": "ktrans"
+    },
+    "ktrans_map_sink": {
+      "bids_suffix": "stat",
+      "datatype": "perf",
+      "desc": "dce",
+      "suffix": "Ktrans"
+    },
+    "lesion_mask_dce_meta": {
+      "description": "Tumor segmentation registered to DCE space",
+      "function_str": "def _build_dce_transformed_mask_meta(\n    base: dict,\n    description: str,\n    units: str | None,\n    extra: dict | None,\n    structural_sources: list[str],\n    perfusion_source: str,\n    bids_dir: str,\n    resampling_applied: bool = True,\n    native_source: str | None = None,\n) -> dict:\n    \"\"\"Build metadata for an anatomical mask transformed to DCE space.\"\"\"\n    from pmriprep.utils.sidecar_builders import build_sources_list\n\n    out = dict(base)\n    out[\"Description\"] = description\n    if units is not None:\n        out[\"Units\"] = units\n    if extra:\n        out.update(extra)\n    if resampling_applied:\n        out.update({\n            \"ResamplingApplied\": True,\n            \"Interpolation\": \"nearest_neighbour\",\n            \"TransformDirection\": \"T1w_to_DCE\",\n            \"LabelPreservation\": True,\n        })\n    else:\n        out.update({\n            \"ResamplingApplied\": False,\n            \"Interpolation\": \"none\",\n            \"ReorientationApplied\": True,\n            \"GeometryValidation\": \"shape_and_affine_against_DCE_reference\",\n        })\n    source_paths = (\n        [native_source, perfusion_source]\n        if not resampling_applied and native_source\n        else [*(structural_sources or []), perfusion_source]\n    )\n    out[\"Sources\"] = build_sources_list(\n        source_paths, bids_dir,\n    )\n    return out\n",
+      "native_source": null,
+      "resampling_applied": true,
+      "units": null
+    },
+    "lesion_mask_dce_sink": {
+      "bids_suffix": "dseg",
+      "datatype": "anat",
+      "desc": "lesion",
+      "space": "dceref",
+      "suffix": ""
+    },
+    "nawm_mask_dce_meta": {
+      "description": "Normal-appearing white matter mask in DCE space",
+      "function_str": "def _build_dce_transformed_mask_meta(\n    base: dict,\n    description: str,\n    units: str | None,\n    extra: dict | None,\n    structural_sources: list[str],\n    perfusion_source: str,\n    bids_dir: str,\n    resampling_applied: bool = True,\n    native_source: str | None = None,\n) -> dict:\n    \"\"\"Build metadata for an anatomical mask transformed to DCE space.\"\"\"\n    from pmriprep.utils.sidecar_builders import build_sources_list\n\n    out = dict(base)\n    out[\"Description\"] = description\n    if units is not None:\n        out[\"Units\"] = units\n    if extra:\n        out.update(extra)\n    if resampling_applied:\n        out.update({\n            \"ResamplingApplied\": True,\n            \"Interpolation\": \"nearest_neighbour\",\n            \"TransformDirection\": \"T1w_to_DCE\",\n            \"LabelPreservation\": True,\n        })\n    else:\n        out.update({\n            \"ResamplingApplied\": False,\n            \"Interpolation\": \"none\",\n            \"ReorientationApplied\": True,\n            \"GeometryValidation\": \"shape_and_affine_against_DCE_reference\",\n        })\n    source_paths = (\n        [native_source, perfusion_source]\n        if not resampling_applied and native_source\n        else [*(structural_sources or []), perfusion_source]\n    )\n    out[\"Sources\"] = build_sources_list(\n        source_paths, bids_dir,\n    )\n    return out\n",
+      "resampling_applied": false,
+      "units": null
+    },
+    "nawm_mask_dce_sink": {
+      "bids_suffix": "mask",
+      "datatype": "anat",
+      "desc": "nawm",
+      "space": "dceref",
+      "suffix": ""
+    },
+    "perf_sources": {
+      "axis": "vstack",
+      "no_flatten": false,
+      "ravel_inputs": false
+    },
+    "roi_mask_dce_meta": {
+      "description": "ROI mask registered to DCE space",
+      "function_str": "def _build_dce_meta(\n    base: dict,\n    description: str,\n    units: str | None = None,\n    extra: dict | None = None,\n    map_key: str = \"\",\n    lesion_stats_json: str | None = None,\n    user_lesion_stats_json: str | None = None,\n    roi_stats_json: str | None = None,\n) -> dict:\n    \"\"\"Compose a generic DCE sidecar; optionally inject stats fragments.\n\n    When ``map_key`` is non-empty the per-map fragment from each\n    aggregate stats JSON is attached as ``LesionStats``,\n    ``UserLesionStats``, or ``ROIStats`` respectively.\n    Used for model-free maps and NAWM-normalized maps that aren't routed\n    through ``_build_dce_pk_map_meta``.\n    \"\"\"\n    from pmriprep.utils.aif_provenance import stamp_aif_dependency\n    from pmriprep.utils.lesion_stats import load_lesion_stats_fragment\n\n    out = dict(base)\n    out[\"Description\"] = description\n    if units is not None:\n        out[\"Units\"] = units\n    if extra:\n        out.update(extra)\n    if map_key:\n        stamp_aif_dependency(out, map_key, modality=\"DCE\")\n        fragment = load_lesion_stats_fragment(lesion_stats_json, map_key)\n        if fragment:\n            out[\"LesionStats\"] = fragment\n        user_fragment = load_lesion_stats_fragment(\n            user_lesion_stats_json, map_key,\n        )\n        if user_fragment:\n            out[\"UserLesionStats\"] = user_fragment\n        roi_fragment = load_lesion_stats_fragment(roi_stats_json, map_key)\n        if roi_fragment:\n            out[\"ROIStats\"] = roi_fragment\n    return out\n",
+      "units": null
+    },
+    "roi_mask_dce_sink": {
+      "bids_suffix": "mask",
+      "datatype": "anat",
+      "desc": "roi",
+      "space": "dceref",
+      "suffix": ""
+    },
+    "t1w_in_dce_meta": {
+      "description": "Pre-contrast T1w registered to DCE space",
+      "extra": null,
+      "function_str": "def _build_dce_underlay_meta(\n    base: dict,\n    description: str,\n    units: str | None,\n    extra: dict | None,\n    structural_source: str,\n    perfusion_source: str,\n    bids_dir: str,\n) -> dict:\n    \"\"\"Build metadata for a structural image resampled to DCE space.\"\"\"\n    from pmriprep.utils.sidecar_builders import build_sources_list\n\n    out = dict(base)\n    out[\"Description\"] = description\n    if units is not None:\n        out[\"Units\"] = units\n    if extra:\n        out.update(extra)\n    out.update({\n        \"ResamplingApplied\": True,\n        \"Interpolation\": \"spline\",\n        \"TransformDirection\": \"T1w_to_DCE\",\n    })\n    out[\"Sources\"] = build_sources_list(\n        [structural_source, perfusion_source], bids_dir,\n    )\n    return out\n",
+      "units": null
+    },
+    "t1w_in_dce_sink": {
+      "check_hdr": true,
+      "compress": [
+        true
+      ],
+      "datatype": "anat",
+      "space": "dceref",
+      "suffix": "T1w"
+    },
+    "t1w_postcon_in_dce_meta": {
+      "description": "Post-contrast T1w registered to DCE space",
+      "extra": null,
+      "function_str": "def _build_dce_underlay_meta(\n    base: dict,\n    description: str,\n    units: str | None,\n    extra: dict | None,\n    structural_source: str,\n    perfusion_source: str,\n    bids_dir: str,\n) -> dict:\n    \"\"\"Build metadata for a structural image resampled to DCE space.\"\"\"\n    from pmriprep.utils.sidecar_builders import build_sources_list\n\n    out = dict(base)\n    out[\"Description\"] = description\n    if units is not None:\n        out[\"Units\"] = units\n    if extra:\n        out.update(extra)\n    out.update({\n        \"ResamplingApplied\": True,\n        \"Interpolation\": \"spline\",\n        \"TransformDirection\": \"T1w_to_DCE\",\n    })\n    out[\"Sources\"] = build_sources_list(\n        [structural_source, perfusion_source], bids_dir,\n    )\n    return out\n",
+      "units": null
+    },
+    "t1w_postcon_in_dce_sink": {
+      "ceagent": "GAD",
+      "check_hdr": true,
+      "compress": [
+        true
+      ],
+      "datatype": "anat",
+      "space": "dceref",
+      "suffix": "T1w"
+    },
+    "t1w_subtraction_in_dce_meta": {
+      "description": "Post-pre T1w subtraction registered to DCE space",
+      "extra": null,
+      "function_str": "def _build_dce_underlay_meta(\n    base: dict,\n    description: str,\n    units: str | None,\n    extra: dict | None,\n    structural_source: str,\n    perfusion_source: str,\n    bids_dir: str,\n) -> dict:\n    \"\"\"Build metadata for a structural image resampled to DCE space.\"\"\"\n    from pmriprep.utils.sidecar_builders import build_sources_list\n\n    out = dict(base)\n    out[\"Description\"] = description\n    if units is not None:\n        out[\"Units\"] = units\n    if extra:\n        out.update(extra)\n    out.update({\n        \"ResamplingApplied\": True,\n        \"Interpolation\": \"spline\",\n        \"TransformDirection\": \"T1w_to_DCE\",\n    })\n    out[\"Sources\"] = build_sources_list(\n        [structural_source, perfusion_source], bids_dir,\n    )\n    return out\n",
+      "units": null
+    },
+    "t1w_subtraction_in_dce_sink": {
+      "check_hdr": true,
+      "compress": [
+        true
+      ],
+      "datatype": "anat",
+      "desc": "subtraction",
+      "space": "dceref",
+      "suffix": "T1w"
+    },
+    "t2w_in_dce_meta": {
+      "description": "T2w registered to DCE space",
+      "extra": null,
+      "function_str": "def _build_dce_underlay_meta(\n    base: dict,\n    description: str,\n    units: str | None,\n    extra: dict | None,\n    structural_source: str,\n    perfusion_source: str,\n    bids_dir: str,\n) -> dict:\n    \"\"\"Build metadata for a structural image resampled to DCE space.\"\"\"\n    from pmriprep.utils.sidecar_builders import build_sources_list\n\n    out = dict(base)\n    out[\"Description\"] = description\n    if units is not None:\n        out[\"Units\"] = units\n    if extra:\n        out.update(extra)\n    out.update({\n        \"ResamplingApplied\": True,\n        \"Interpolation\": \"spline\",\n        \"TransformDirection\": \"T1w_to_DCE\",\n    })\n    out[\"Sources\"] = build_sources_list(\n        [structural_source, perfusion_source], bids_dir,\n    )\n    return out\n",
+      "units": null
+    },
+    "t2w_in_dce_sink": {
+      "check_hdr": true,
+      "compress": [
+        true
+      ],
+      "datatype": "anat",
+      "space": "dceref",
+      "suffix": "T2w"
+    },
+    "user_lesion_mask_dce_meta": {
+      "description": "User-supplied lesion mask in DCE native space",
+      "function_str": "def _build_dce_meta(\n    base: dict,\n    description: str,\n    units: str | None = None,\n    extra: dict | None = None,\n    map_key: str = \"\",\n    lesion_stats_json: str | None = None,\n    user_lesion_stats_json: str | None = None,\n    roi_stats_json: str | None = None,\n) -> dict:\n    \"\"\"Compose a generic DCE sidecar; optionally inject stats fragments.\n\n    When ``map_key`` is non-empty the per-map fragment from each\n    aggregate stats JSON is attached as ``LesionStats``,\n    ``UserLesionStats``, or ``ROIStats`` respectively.\n    Used for model-free maps and NAWM-normalized maps that aren't routed\n    through ``_build_dce_pk_map_meta``.\n    \"\"\"\n    from pmriprep.utils.aif_provenance import stamp_aif_dependency\n    from pmriprep.utils.lesion_stats import load_lesion_stats_fragment\n\n    out = dict(base)\n    out[\"Description\"] = description\n    if units is not None:\n        out[\"Units\"] = units\n    if extra:\n        out.update(extra)\n    if map_key:\n        stamp_aif_dependency(out, map_key, modality=\"DCE\")\n        fragment = load_lesion_stats_fragment(lesion_stats_json, map_key)\n        if fragment:\n            out[\"LesionStats\"] = fragment\n        user_fragment = load_lesion_stats_fragment(\n            user_lesion_stats_json, map_key,\n        )\n        if user_fragment:\n            out[\"UserLesionStats\"] = user_fragment\n        roi_fragment = load_lesion_stats_fragment(roi_stats_json, map_key)\n        if roi_fragment:\n            out[\"ROIStats\"] = roi_fragment\n    return out\n",
+      "units": null
+    },
+    "user_lesion_mask_dce_sink": {
+      "bids_suffix": "mask",
+      "datatype": "anat",
+      "desc": "userLesion",
+      "space": "dceref",
+      "suffix": ""
+    }
+  },
+  "nodes": [
+    [
+      "anat_mask_sources",
+      "Merge"
+    ],
+    [
+      "base_minimal_meta",
+      "Function"
+    ],
+    [
+      "base_perf_meta",
+      "Function"
+    ],
+    [
+      "base_perf_no_ktrans_meta",
+      "Function"
+    ],
+    [
+      "brain_mask_dce_meta",
+      "Function"
+    ],
+    [
+      "brain_mask_dce_sink",
+      "Function"
+    ],
+    [
+      "dataset_description",
+      "Function"
+    ],
+    [
+      "dd_merge",
+      "Merge"
+    ],
+    [
+      "figures_writer",
+      "DCEFiguresWriter"
+    ],
+    [
+      "flair_in_dce_meta",
+      "Function"
+    ],
+    [
+      "flair_in_dce_sink",
+      "PMRIPrepDataSink"
+    ],
+    [
+      "flair_postcon_in_dce_meta",
+      "Function"
+    ],
+    [
+      "flair_postcon_in_dce_sink",
+      "PMRIPrepDataSink"
+    ],
+    [
+      "inputnode",
+      "IdentityInterface"
+    ],
+    [
+      "ktrans_map_meta",
+      "Function"
+    ],
+    [
+      "ktrans_map_sink",
+      "Function"
+    ],
+    [
+      "lesion_mask_dce_meta",
+      "Function"
+    ],
+    [
+      "lesion_mask_dce_sink",
+      "Function"
+    ],
+    [
+      "nawm_mask_dce_meta",
+      "Function"
+    ],
+    [
+      "nawm_mask_dce_sink",
+      "Function"
+    ],
+    [
+      "outputnode",
+      "IdentityInterface"
+    ],
+    [
+      "perf_sources",
+      "Merge"
+    ],
+    [
+      "roi_mask_dce_meta",
+      "Function"
+    ],
+    [
+      "roi_mask_dce_sink",
+      "Function"
+    ],
+    [
+      "t1w_in_dce_meta",
+      "Function"
+    ],
+    [
+      "t1w_in_dce_sink",
+      "PMRIPrepDataSink"
+    ],
+    [
+      "t1w_postcon_in_dce_meta",
+      "Function"
+    ],
+    [
+      "t1w_postcon_in_dce_sink",
+      "PMRIPrepDataSink"
+    ],
+    [
+      "t1w_subtraction_in_dce_meta",
+      "Function"
+    ],
+    [
+      "t1w_subtraction_in_dce_sink",
+      "PMRIPrepDataSink"
+    ],
+    [
+      "t2w_in_dce_meta",
+      "Function"
+    ],
+    [
+      "t2w_in_dce_sink",
+      "PMRIPrepDataSink"
+    ],
+    [
+      "user_lesion_mask_dce_meta",
+      "Function"
+    ],
+    [
+      "user_lesion_mask_dce_sink",
+      "Function"
+    ]
+  ],
+  "public_outputnode_fields": [
+    "dataset_description_done",
+    "done"
+  ]
+}

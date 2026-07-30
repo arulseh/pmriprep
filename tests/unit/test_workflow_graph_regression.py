@@ -411,6 +411,31 @@ def _dce_preproc_datasinks(bids: Path) -> pe.Workflow:
     )
 
 
+def _dce_anat_datasinks(bids: Path) -> pe.Workflow:
+    """Build DCE mask and registered-underlay sink branches."""
+    return init_dce_datasinks_wf(
+        output_dir=str(bids / "derivatives"),
+        bids_dir=str(bids),
+        subject_id="0001",
+        session_id="0001",
+        pk_model="auto",
+        inference="nlls",
+        present_inputs={
+            "brain_mask", "nawm_mask", "lesion_mask_dce",
+            "user_lesion_mask_dce", "roi_mask_dce",
+            "t1w_in_dce", "t1w_postcon_in_dce", "t1w_subtraction_in_dce",
+            "flair_in_dce", "flair_postcon_in_dce", "t2w_in_dce",
+        },
+        nawm_needs_transform=False,
+        nawm_source_file=str(
+            bids / "sub-0001" / "ses-0001" / "perf"
+            / "sub-0001_ses-0001_desc-userNawm_mask.nii.gz"
+        ),
+        t1_map_expected=False,
+        b1_map_expected=False,
+    )
+
+
 def _dsc_preproc_datasinks(bids: Path) -> pe.Workflow:
     """Build the public DSC-series and temporal-mean sink branches."""
     return init_dsc_datasinks_wf(
@@ -478,6 +503,7 @@ _ALL_UNDERLAYS = ["t1w_precon", "t1w_postcon", "t1w_subtraction", "flair_precon"
 Builder = Callable[[Path], pe.Workflow]
 
 DCE_MATRIX: list[tuple[str, Builder]] = [
+    ("dce_datasinks_anat", _dce_anat_datasinks),
     ("dce_datasinks_preproc", _dce_preproc_datasinks),
     ("dce_datasinks_t1", _dce_t1_datasinks),
     ("dce_default", lambda b: _dce(b)),

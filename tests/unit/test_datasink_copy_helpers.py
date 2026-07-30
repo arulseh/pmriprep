@@ -92,7 +92,7 @@ def test_transformed_lesion_contract_preserves_labels_and_sources() -> None:
         base, "Tumor segmentation", None,
         {"LabelMap": HDGLIO_BIDS_LABELS},
         structural_sources,
-        "/raw/sub-X/ses-Y/perf/sub-X_ses-Y_dce.nii.gz", "/raw",
+        "/raw/sub-X/ses-Y/perf/sub-X_ses-Y_dce.nii.gz", "/raw", True, None,
     )
     dsc_meta = _build_transformed_mask_meta(
         base, "Tumor segmentation", False, None,
@@ -107,6 +107,10 @@ def test_transformed_lesion_contract_preserves_labels_and_sources() -> None:
     assert dsc_meta["Interpolation"] == "nearest_neighbour"
     assert dsc_meta["TransformDirection"] == "T1w_to_DSC"
     assert dsc_meta["LabelPreservation"] is True
+    assert dce_meta["ResamplingApplied"] is True
+    assert dce_meta["Interpolation"] == "nearest_neighbour"
+    assert dce_meta["TransformDirection"] == "T1w_to_DCE"
+    assert dce_meta["LabelPreservation"] is True
 
 
 def test_dsc_native_nawm_metadata_does_not_claim_resampling() -> None:
@@ -151,6 +155,47 @@ def test_dsc_underlay_metadata_records_resampling() -> None:
     assert meta["TransformDirection"] == "T1w_to_DSC"
 
 
+def test_dce_native_nawm_metadata_does_not_claim_resampling() -> None:
+    from pmriprep.workflows.dce.datasinks import _build_dce_transformed_mask_meta
+
+    meta = _build_dce_transformed_mask_meta(
+        {},
+        "Normal-appearing white matter mask in DCE space",
+        None,
+        {"Type": "ROI"},
+        [],
+        "/raw/sub-X/perf/sub-X_dce.nii.gz",
+        "/raw",
+        False,
+        "/raw/sub-X/perf/sub-X_desc-userNawm_mask.nii.gz",
+    )
+
+    assert meta["ResamplingApplied"] is False
+    assert meta["Interpolation"] == "none"
+    assert meta["ReorientationApplied"] is True
+    assert meta["GeometryValidation"] == "shape_and_affine_against_DCE_reference"
+    assert "TransformDirection" not in meta
+    assert meta["Sources"][0].endswith("sub-X_desc-userNawm_mask.nii.gz")
+
+
+def test_dce_underlay_metadata_records_resampling() -> None:
+    from pmriprep.workflows.dce.datasinks import _build_dce_underlay_meta
+
+    meta = _build_dce_underlay_meta(
+        {},
+        "FLAIR registered to DCE space",
+        None,
+        None,
+        "/raw/sub-X/anat/sub-X_FLAIR.nii.gz",
+        "/raw/sub-X/perf/sub-X_dce.nii.gz",
+        "/raw",
+    )
+
+    assert meta["ResamplingApplied"] is True
+    assert meta["Interpolation"] == "spline"
+    assert meta["TransformDirection"] == "T1w_to_DCE"
+
+
 def test_transformed_mask_metadata_builders_run_in_isolated_functions() -> None:
     """Transformed-mask builders carry no unavailable module globals."""
     import nipype.interfaces.utility as niu
@@ -186,7 +231,7 @@ def test_transformed_mask_metadata_builders_run_in_isolated_functions() -> None:
     dce = niu.Function(
         input_names=[
             "base", "description", "units", "extra", "structural_sources",
-            "perfusion_source", "bids_dir",
+            "perfusion_source", "bids_dir", "resampling_applied", "native_source",
         ],
         output_names=["meta"],
         function=_build_dce_transformed_mask_meta,
@@ -195,6 +240,8 @@ def test_transformed_mask_metadata_builders_run_in_isolated_functions() -> None:
         **common,
         units=None,
         extra={"LabelMap": HDGLIO_BIDS_LABELS},
+        resampling_applied=True,
+        native_source=None,
     )
 
     for result in (dsc.run(), dce.run()):

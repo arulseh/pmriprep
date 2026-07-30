@@ -2765,6 +2765,10 @@ def _connect_master_dce_outputs_and_datasinks(
         t1_source_files=_selected_dce_t1_sources(session_data, dce_config),
         t1_map_expected=not dce_config.no_t1,
         b1_map_expected=dce_config.b1_method != "none",
+        nawm_needs_transform=not bool(dce_config.nawm_mask),
+        nawm_source_file=(
+            str(dce_config.nawm_mask) if dce_config.nawm_mask else None
+        ),
     )
     _dce_cfg = dataclasses.asdict(dce_config)
     for _k, _v in _dce_cfg.items():

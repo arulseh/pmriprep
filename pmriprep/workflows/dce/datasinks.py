@@ -255,7 +255,6 @@ def _build_dce_meta(
         out["Units"] = units
     if extra:
         out.update(extra)
-
     if map_key:
         stamp_aif_dependency(out, map_key, modality="DCE")
         fragment = load_lesion_stats_fragment(lesion_stats_json, map_key)
@@ -681,6 +680,11 @@ def _build_dce_underlay_meta(
         out["Units"] = units
     if extra:
         out.update(extra)
+    out.update({
+        "ResamplingApplied": True,
+        "Interpolation": "spline",
+        "TransformDirection": "T1w_to_DCE",
+    })
     out["Sources"] = build_sources_list(
         [structural_source, perfusion_source], bids_dir,
     )
@@ -695,6 +699,8 @@ def _build_dce_transformed_mask_meta(
     structural_sources: list[str],
     perfusion_source: str,
     bids_dir: str,
+    resampling_applied: bool = True,
+    native_source: str | None = None,
 ) -> dict:
     """Build metadata for an anatomical mask transformed to DCE space."""
     from pmriprep.utils.sidecar_builders import build_sources_list
@@ -705,8 +711,27 @@ def _build_dce_transformed_mask_meta(
         out["Units"] = units
     if extra:
         out.update(extra)
+    if resampling_applied:
+        out.update({
+            "ResamplingApplied": True,
+            "Interpolation": "nearest_neighbour",
+            "TransformDirection": "T1w_to_DCE",
+            "LabelPreservation": True,
+        })
+    else:
+        out.update({
+            "ResamplingApplied": False,
+            "Interpolation": "none",
+            "ReorientationApplied": True,
+            "GeometryValidation": "shape_and_affine_against_DCE_reference",
+        })
+    source_paths = (
+        [native_source, perfusion_source]
+        if not resampling_applied and native_source
+        else [*(structural_sources or []), perfusion_source]
+    )
     out["Sources"] = build_sources_list(
-        [*(structural_sources or []), perfusion_source], bids_dir,
+        source_paths, bids_dir,
     )
     return out
 
@@ -1321,6 +1346,8 @@ def _add_anat_mask_sink(
     source_attr: str = "source_dce",
     extra: dict[str, object] | None = None,
     structural_sources_node: pe.Node | None = None,
+    resampling_applied: bool = True,
+    native_source: str | None = None,
 ) -> pe.Node:
     """Wire a DCE-space mask (brain/nawm/lesion/roi) into anat/."""
     is_structural = source_attr != "source_dce"
@@ -1330,6 +1357,7 @@ def _add_anat_mask_sink(
                 [
                     "base", "description", "units", "extra",
                     "structural_sources", "perfusion_source", "bids_dir",
+                    "resampling_applied", "native_source",
                 ]
                 if is_structural else ["base", "description", "units", "extra"]
             ),
@@ -1349,6 +1377,8 @@ def _add_anat_mask_sink(
     metadata_extra.update(extra or {})
     meta.inputs.extra = metadata_extra
     if is_structural:
+        meta.inputs.resampling_applied = resampling_applied
+        meta.inputs.native_source = native_source
         if structural_sources_node is None:
             raise ValueError("structural_sources_node is required for anatomical masks")
         workflow.connect([
@@ -1409,6 +1439,8 @@ def init_dce_datasinks_wf(
     t1_source_files: Optional[list[str]] = None,
     t1_map_expected: bool = True,
     b1_map_expected: bool = True,
+    nawm_needs_transform: bool = True,
+    nawm_source_file: str | None = None,
     name: str = "dce_datasinks_wf",
 ) -> pe.Workflow:
     """Build the DCE-pipeline DerivativesDataSink chain.
@@ -2030,6 +2062,16 @@ def init_dce_datasinks_wf(
             source_attr=mask_spec.source_attr,
             extra=mask_spec.extra,
             structural_sources_node=anat_mask_sources,
+            resampling_applied=(
+                nawm_needs_transform
+                if mask_spec.in_attr == "nawm_mask"
+                else True
+            ),
+            native_source=(
+                nawm_source_file
+                if mask_spec.in_attr == "nawm_mask"
+                else None
+            ),
         )
         sink_outputs.append((sink, "out_file"))
 
