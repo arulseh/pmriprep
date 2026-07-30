@@ -253,6 +253,53 @@ def test_dce_mean_meta_identifies_all_volume_aggregation() -> None:
     assert out["BaselineFrames"] == 8
 
 
+def test_dsc_aif_mask_sink_skips_nonspatial_curve(tmp_path) -> None:
+    from pmriprep.workflows.dsc.datasinks import _copy_aif_mask
+
+    source = tmp_path / "empty_mask.nii.gz"
+    source.write_bytes(b"placeholder")
+    output_dir = tmp_path / "out"
+
+    out = _copy_aif_mask(
+        in_file=str(source),
+        output_dir=str(output_dir),
+        subject="X",
+        session="Y",
+        desc="dscAif",
+        suffix="",
+        meta_dict={"SpatialSupportAvailable": False},
+    )
+
+    assert out == ""
+    assert not output_dir.exists()
+
+
+def test_dsc_aif_mask_sink_writes_measured_support(tmp_path) -> None:
+    from pmriprep.workflows.dsc.datasinks import _copy_aif_mask
+
+    source = tmp_path / "aif_mask.nii.gz"
+    source.write_bytes(b"measured support")
+    output_dir = tmp_path / "out"
+    metadata = {
+        "Sources": ["bids:raw:sub-X/ses-Y/perf/sub-X_ses-Y_dsc.nii.gz"],
+        "SpatialSupportAvailable": True,
+    }
+
+    out = _copy_aif_mask(
+        in_file=str(source),
+        output_dir=str(output_dir),
+        subject="X",
+        session="Y",
+        desc="dscAif",
+        suffix="",
+        meta_dict=metadata,
+    )
+
+    assert out.endswith("sub-X_ses-Y_desc-dscAif_mask.nii.gz")
+    assert Path(out).read_bytes() == b"measured support"
+    assert Path(out).with_suffix("").with_suffix(".json").is_file()
+
+
 def test_master_b1_source_selection_matches_configured_method() -> None:
     from pmriprep.config.dce import DCEConfig
     from pmriprep.workflows.base import _selected_dce_b1_sources

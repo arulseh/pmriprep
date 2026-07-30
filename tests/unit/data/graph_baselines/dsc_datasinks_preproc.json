@@ -924,7 +924,7 @@
   },
   "function_sha256": {
     "aif_mask_meta": "36f45bcc6f63b25b98ac24ebed2d0bb99715bebd4d82e7fe368c45280678644e",
-    "aif_mask_sink": "fcb4e47901c5216926eb960a4fbdc146b1c7cacea778c10c7f34d3cb614e81f5",
+    "aif_mask_sink": "9c30a3fec5b866e843cdf41e8e3955519068a6fa1d2b88ebba6d725c636d00a7",
     "base_minimal_meta": "6c0308432a124b4e1b1efedac75d61373db50aee3239f6f50e42bcc48ff72fce",
     "base_perf_meta": "6c0308432a124b4e1b1efedac75d61373db50aee3239f6f50e42bcc48ff72fce",
     "dataset_description": "4f030212e4217b96b33ce28a7ed92f196a066b4199d13919b0c6168ba0c7fa20",
@@ -1040,6 +1040,7 @@
       "bids_suffix": "mask",
       "datatype": "perf",
       "desc": "dscAif",
+      "function_str": "def _copy_aif_mask(\n    in_file: str,\n    output_dir: str,\n    subject: str,\n    session: str,\n    desc: str,\n    suffix: str,\n    meta_dict: dict,\n    datatype: str = \"perf\",\n    bids_suffix: str = \"mask\",\n) -> str:\n    \"\"\"Write an AIF support mask only when the AIF has spatial support.\"\"\"\n    import logging\n\n    if isinstance(meta_dict, dict) and meta_dict.get(\"SpatialSupportAvailable\") is False:\n        logging.getLogger(\"nipype.workflow\").info(\n            \"Skipping DSC AIF mask derivative: the selected AIF has no spatial support\"\n        )\n        return \"\"\n\n    from pmriprep.workflows.dsc.datasinks import _copy_perf_map\n\n    return _copy_perf_map(\n        in_file=in_file,\n        output_dir=output_dir,\n        subject=subject,\n        session=session,\n        desc=desc,\n        suffix=suffix,\n        meta_dict=meta_dict,\n        datatype=datatype,\n        bids_suffix=bids_suffix,\n    )\n",
       "suffix": ""
     },
     "anat_mask_sources": {
