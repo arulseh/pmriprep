@@ -120,7 +120,6 @@ def compute_peak_enhancement(
     with np.errstate(divide="ignore", invalid="ignore"):
         enhancement = (peak - baseline_mean) / baseline_mean * 100.0
 
-    enhancement = np.maximum(enhancement, 0.0)
     return np.asarray(np.where(valid, enhancement, np.nan), dtype=np.float64)
 
 

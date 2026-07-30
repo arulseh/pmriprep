@@ -362,6 +362,15 @@ class TestPeakEnhancement:
         result = compute_peak_enhancement(signal)
         assert np.allclose(result, 0.0)
 
+    def test_negative_relative_enhancement_is_retained(self) -> None:
+        """A post-baseline signal decrease is not floored to zero."""
+        signal = np.full((1, 1, 1, 10), 100.0, dtype=np.float64)
+        signal[..., 5:] = 80.0
+
+        result = compute_peak_enhancement(signal, baseline_frames=5)
+
+        assert result[0, 0, 0] == pytest.approx(-20.0)
+
     def test_dead_voxel_guard(self) -> None:
         """Arbitrary scanner scaling below one does not change the result."""
         n_time = 20
