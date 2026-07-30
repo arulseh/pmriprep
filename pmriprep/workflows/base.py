@@ -1731,6 +1731,10 @@ def _connect_master_dsc_datasinks(
         present_inputs=dsc_present,
         has_smoothing=dsc_config.smooth_fwhm > 0,
         motion_correct=dsc_config.motion_correct,
+        nawm_needs_transform=not bool(dsc_config.nawm_mask),
+        nawm_source_file=(
+            str(dsc_config.nawm_mask) if dsc_config.nawm_mask else None
+        ),
     )
     _dsc_cfg = dataclasses.asdict(dsc_config)
     for _k, _v in _dsc_cfg.items():

@@ -98,11 +98,57 @@ def test_transformed_lesion_contract_preserves_labels_and_sources() -> None:
         base, "Tumor segmentation", False, None,
         structural_sources,
         "/raw/sub-X/ses-Y/perf/sub-X_ses-Y_dsc.nii.gz", "/raw",
-        HDGLIO_BIDS_LABELS,
+        HDGLIO_BIDS_LABELS, True, None,
     )
     for meta in (dce_meta, dsc_meta):
         assert len(meta["Sources"]) == 3
         assert meta["LabelMap"] == HDGLIO_BIDS_LABELS
+    assert dsc_meta["ResamplingApplied"] is True
+    assert dsc_meta["Interpolation"] == "nearest_neighbour"
+    assert dsc_meta["TransformDirection"] == "T1w_to_DSC"
+    assert dsc_meta["LabelPreservation"] is True
+
+
+def test_dsc_native_nawm_metadata_does_not_claim_resampling() -> None:
+    from pmriprep.workflows.dsc.datasinks import _build_transformed_mask_meta
+
+    meta = _build_transformed_mask_meta(
+        {},
+        "Normal-appearing white matter mask in DSC space",
+        False,
+        "ROI",
+        [],
+        "/raw/sub-X/perf/sub-X_dsc.nii.gz",
+        "/raw",
+        None,
+        False,
+        "/raw/sub-X/perf/sub-X_desc-userNawm_mask.nii.gz",
+    )
+
+    assert meta["ResamplingApplied"] is False
+    assert meta["Interpolation"] == "none"
+    assert meta["ReorientationApplied"] is True
+    assert meta["GeometryValidation"] == "shape_and_affine_against_DSC_reference"
+    assert "TransformDirection" not in meta
+    assert meta["Sources"][0].endswith("sub-X_desc-userNawm_mask.nii.gz")
+
+
+def test_dsc_underlay_metadata_records_resampling() -> None:
+    from pmriprep.workflows.dsc.datasinks import _build_underlay_meta
+
+    meta = _build_underlay_meta(
+        {},
+        "FLAIR registered to DSC space",
+        False,
+        None,
+        "/raw/sub-X/anat/sub-X_FLAIR.nii.gz",
+        "/raw/sub-X/perf/sub-X_dsc.nii.gz",
+        "/raw",
+    )
+
+    assert meta["ResamplingApplied"] is True
+    assert meta["Interpolation"] == "spline"
+    assert meta["TransformDirection"] == "T1w_to_DSC"
 
 
 def test_transformed_mask_metadata_builders_run_in_isolated_functions() -> None:
@@ -124,7 +170,7 @@ def test_transformed_mask_metadata_builders_run_in_isolated_functions() -> None:
         input_names=[
             "base", "description", "skull_stripped", "mask_type",
             "structural_sources", "perfusion_source", "bids_dir",
-            "segmentation_labels",
+            "segmentation_labels", "resampling_applied", "native_source",
         ],
         output_names=["meta"],
         function=_build_transformed_mask_meta,
@@ -134,6 +180,8 @@ def test_transformed_mask_metadata_builders_run_in_isolated_functions() -> None:
         skull_stripped=False,
         mask_type=None,
         segmentation_labels=HDGLIO_BIDS_LABELS,
+        resampling_applied=True,
+        native_source=None,
     )
     dce = niu.Function(
         input_names=[

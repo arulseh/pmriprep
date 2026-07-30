@@ -424,6 +424,28 @@ def _dsc_preproc_datasinks(bids: Path) -> pe.Workflow:
     )
 
 
+def _dsc_anat_datasinks(bids: Path) -> pe.Workflow:
+    """Build DSC mask and registered-underlay sink branches."""
+    return init_dsc_datasinks_wf(
+        output_dir=str(bids / "derivatives"),
+        bids_dir=str(bids),
+        subject_id="0001",
+        session_id="0001",
+        inference="nlls",
+        present_inputs={
+            "brain_mask_dsc", "nawm_mask_dsc", "lesion_mask_dsc",
+            "user_lesion_mask_dsc", "roi_mask_dsc",
+            "t1w_in_dsc", "t1w_postcon_in_dsc", "t1w_subtraction_in_dsc",
+            "flair_in_dsc", "flair_postcon_in_dsc", "t2w_in_dsc",
+        },
+        nawm_needs_transform=False,
+        nawm_source_file=str(
+            bids / "sub-0001" / "ses-0001" / "perf"
+            / "sub-0001_ses-0001_desc-userNawm_mask.nii.gz"
+        ),
+    )
+
+
 def _anat(
     bids: Path,
     *,
@@ -487,6 +509,7 @@ DCE_MATRIX: list[tuple[str, Builder]] = [
 ]
 
 DSC_MATRIX: list[tuple[str, Builder]] = [
+    ("dsc_datasinks_anat", _dsc_anat_datasinks),
     ("dsc_datasinks_preproc", _dsc_preproc_datasinks),
     ("dsc_default", lambda b: _dsc(b)),
     # smooth_fwhm>0 is the only branch instantiating build_hemo_dict /

@@ -428,6 +428,11 @@ def _build_underlay_meta(
         out["Type"] = mask_type
     if segmentation_labels:
         out["LabelMap"] = dict(segmentation_labels)
+    out.update({
+        "ResamplingApplied": True,
+        "Interpolation": "spline",
+        "TransformDirection": "T1w_to_DSC",
+    })
     out["Sources"] = build_sources_list(
         [structural_source, perfusion_source], bids_dir,
     )
@@ -443,6 +448,8 @@ def _build_transformed_mask_meta(
     perfusion_source: str,
     bids_dir: str,
     segmentation_labels: dict[str, str] | None = None,
+    resampling_applied: bool = True,
+    native_source: str | None = None,
 ) -> dict:
     """Build metadata for an anatomical mask transformed to DSC space."""
     from pmriprep.utils.sidecar_builders import build_sources_list
@@ -455,8 +462,27 @@ def _build_transformed_mask_meta(
         out["Type"] = mask_type
     if segmentation_labels:
         out["LabelMap"] = dict(segmentation_labels)
+    if resampling_applied:
+        out.update({
+            "ResamplingApplied": True,
+            "Interpolation": "nearest_neighbour",
+            "TransformDirection": "T1w_to_DSC",
+            "LabelPreservation": True,
+        })
+    else:
+        out.update({
+            "ResamplingApplied": False,
+            "Interpolation": "none",
+            "ReorientationApplied": True,
+            "GeometryValidation": "shape_and_affine_against_DSC_reference",
+        })
+    source_paths = (
+        [native_source, perfusion_source]
+        if not resampling_applied and native_source
+        else [*(structural_sources or []), perfusion_source]
+    )
     out["Sources"] = build_sources_list(
-        [*(structural_sources or []), perfusion_source], bids_dir,
+        source_paths, bids_dir,
     )
     return out
 
@@ -1022,6 +1048,8 @@ def _add_anat_sink(
     dismiss_entities: tuple = ("acquisition",),
     segmentation_labels: dict[str, str] | None = None,
     structural_sources_node: pe.Node | None = None,
+    resampling_applied: bool = True,
+    native_source: str | None = None,
 ) -> pe.Node:
     """Wire one anat/-side DSC sink (mask, structural underlay).
 
@@ -1044,7 +1072,7 @@ def _add_anat_sink(
         meta_input_names = [
             "base", "description", "skull_stripped", "mask_type",
             "structural_sources", "perfusion_source", "bids_dir",
-            "segmentation_labels",
+            "segmentation_labels", "resampling_applied", "native_source",
         ]
         meta_function = _build_transformed_mask_meta
     elif is_underlay:
@@ -1072,6 +1100,9 @@ def _add_anat_sink(
     meta.inputs.skull_stripped = skull_stripped
     meta.inputs.mask_type = mask_type
     meta.inputs.segmentation_labels = segmentation_labels
+    if is_transformed_mask:
+        meta.inputs.resampling_applied = resampling_applied
+        meta.inputs.native_source = native_source
     workflow.connect([(base_minimal_node, meta, [("meta_dict", "base")])])
     if is_underlay:
         workflow.connect(inputnode, "source_dsc", meta, "perfusion_source")
@@ -1167,6 +1198,8 @@ def init_dsc_datasinks_wf(
     present_inputs: Optional[set[str]] = None,
     has_smoothing: bool = False,
     motion_correct: bool = True,
+    nawm_needs_transform: bool = True,
+    nawm_source_file: str | None = None,
     name: str = "dsc_datasinks_wf",
 ) -> pe.Workflow:
     """Build the DSC-pipeline DerivativesDataSink chain.
@@ -1720,6 +1753,16 @@ def init_dsc_datasinks_wf(
             dismiss_entities=anat_spec.dismiss_entities,
             segmentation_labels=anat_spec.segmentation_labels,
             structural_sources_node=anat_mask_sources,
+            resampling_applied=(
+                nawm_needs_transform
+                if anat_spec.in_attr == "nawm_mask_dsc"
+                else True
+            ),
+            native_source=(
+                nawm_source_file
+                if anat_spec.in_attr == "nawm_mask_dsc"
+                else None
+            ),
         )
         sink_outputs.append((sink, "out_file"))
 

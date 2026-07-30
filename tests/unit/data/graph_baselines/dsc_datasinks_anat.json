@@ -1,0 +1,1892 @@
+{
+  "edges": [
+    [
+      "anat_mask_sources",
+      "out",
+      "lesion_mask_dsc_meta",
+      "structural_sources"
+    ],
+    [
+      "anat_mask_sources",
+      "out",
+      "nawm_mask_dsc_meta",
+      "structural_sources"
+    ],
+    [
+      "base_minimal_meta",
+      "meta_dict",
+      "brain_mask_dsc_meta",
+      "base"
+    ],
+    [
+      "base_minimal_meta",
+      "meta_dict",
+      "flair_in_dsc_meta",
+      "base"
+    ],
+    [
+      "base_minimal_meta",
+      "meta_dict",
+      "flair_postcon_in_dsc_meta",
+      "base"
+    ],
+    [
+      "base_minimal_meta",
+      "meta_dict",
+      "lesion_mask_dsc_meta",
+      "base"
+    ],
+    [
+      "base_minimal_meta",
+      "meta_dict",
+      "nawm_mask_dsc_meta",
+      "base"
+    ],
+    [
+      "base_minimal_meta",
+      "meta_dict",
+      "roi_mask_dsc_meta",
+      "base"
+    ],
+    [
+      "base_minimal_meta",
+      "meta_dict",
+      "t1w_in_dsc_meta",
+      "base"
+    ],
+    [
+      "base_minimal_meta",
+      "meta_dict",
+      "t1w_postcon_in_dsc_meta",
+      "base"
+    ],
+    [
+      "base_minimal_meta",
+      "meta_dict",
+      "t1w_subtraction_in_dsc_meta",
+      "base"
+    ],
+    [
+      "base_minimal_meta",
+      "meta_dict",
+      "t2w_in_dsc_meta",
+      "base"
+    ],
+    [
+      "base_minimal_meta",
+      "meta_dict",
+      "user_lesion_mask_dsc_meta",
+      "base"
+    ],
+    [
+      "base_perf_meta",
+      "meta_dict",
+      "mtt_map_meta",
+      "base"
+    ],
+    [
+      "base_perf_meta",
+      "meta_dict",
+      "psr_map_meta",
+      "base"
+    ],
+    [
+      "base_perf_meta",
+      "meta_dict",
+      "tmax_map_meta",
+      "base"
+    ],
+    [
+      "brain_mask_dsc_meta",
+      "meta_dict",
+      "brain_mask_dsc_sink",
+      "meta_dict"
+    ],
+    [
+      "brain_mask_dsc_sink",
+      "out_file",
+      "dd_merge",
+      "in4"
+    ],
+    [
+      "dataset_description",
+      "dd_path",
+      "outputnode",
+      "dataset_description_done"
+    ],
+    [
+      "dataset_description",
+      "dd_path",
+      "outputnode",
+      "done"
+    ],
+    [
+      "dd_merge",
+      "out",
+      "dataset_description",
+      "_trigger"
+    ],
+    [
+      "figures_writer",
+      "aif_curve_txt",
+      "dd_merge",
+      "in15"
+    ],
+    [
+      "flair_in_dsc_meta",
+      "meta_dict",
+      "flair_in_dsc_sink",
+      "meta_dict"
+    ],
+    [
+      "flair_in_dsc_sink",
+      "out_file",
+      "dd_merge",
+      "in12"
+    ],
+    [
+      "flair_postcon_in_dsc_meta",
+      "meta_dict",
+      "flair_postcon_in_dsc_sink",
+      "meta_dict"
+    ],
+    [
+      "flair_postcon_in_dsc_sink",
+      "out_file",
+      "dd_merge",
+      "in13"
+    ],
+    [
+      "inputnode",
+      "aif_candidates_plot",
+      "figures_writer",
+      "aif_candidates_plot"
+    ],
+    [
+      "inputnode",
+      "aif_curve",
+      "figures_writer",
+      "aif_curve"
+    ],
+    [
+      "inputnode",
+      "aif_curve_plot",
+      "figures_writer",
+      "aif_curve_plot"
+    ],
+    [
+      "inputnode",
+      "aif_location_plot",
+      "figures_writer",
+      "aif_location_plot"
+    ],
+    [
+      "inputnode",
+      "bids_dir",
+      "base_minimal_meta",
+      "bids_dir"
+    ],
+    [
+      "inputnode",
+      "bids_dir",
+      "base_perf_meta",
+      "bids_dir"
+    ],
+    [
+      "inputnode",
+      "bids_dir",
+      "dataset_description",
+      "bids_dir"
+    ],
+    [
+      "inputnode",
+      "bids_dir",
+      "figures_writer",
+      "bids_dir"
+    ],
+    [
+      "inputnode",
+      "bids_dir",
+      "flair_in_dsc_meta",
+      "bids_dir"
+    ],
+    [
+      "inputnode",
+      "bids_dir",
+      "flair_postcon_in_dsc_meta",
+      "bids_dir"
+    ],
+    [
+      "inputnode",
+      "bids_dir",
+      "lesion_mask_dsc_meta",
+      "bids_dir"
+    ],
+    [
+      "inputnode",
+      "bids_dir",
+      "nawm_mask_dsc_meta",
+      "bids_dir"
+    ],
+    [
+      "inputnode",
+      "bids_dir",
+      "t1w_in_dsc_meta",
+      "bids_dir"
+    ],
+    [
+      "inputnode",
+      "bids_dir",
+      "t1w_postcon_in_dsc_meta",
+      "bids_dir"
+    ],
+    [
+      "inputnode",
+      "bids_dir",
+      "t1w_subtraction_in_dsc_meta",
+      "bids_dir"
+    ],
+    [
+      "inputnode",
+      "bids_dir",
+      "t2w_in_dsc_meta",
+      "bids_dir"
+    ],
+    [
+      "inputnode",
+      "brain_mask_dsc",
+      "brain_mask_dsc_sink",
+      "in_file"
+    ],
+    [
+      "inputnode",
+      "brain_mask_filmstrip",
+      "figures_writer",
+      "brain_mask_filmstrip"
+    ],
+    [
+      "inputnode",
+      "dsc_fit_qc_plot",
+      "figures_writer",
+      "dsc_fit_qc_plot"
+    ],
+    [
+      "inputnode",
+      "dsc_leakage_qc_plot",
+      "figures_writer",
+      "dsc_leakage_qc_plot"
+    ],
+    [
+      "inputnode",
+      "dsc_param_maps_qc_plot",
+      "figures_writer",
+      "dsc_param_maps_qc_plot"
+    ],
+    [
+      "inputnode",
+      "dsc_preprocessing_qc_plot",
+      "figures_writer",
+      "dsc_preprocessing_qc_plot"
+    ],
+    [
+      "inputnode",
+      "flair_in_dsc",
+      "flair_in_dsc_sink",
+      "in_file"
+    ],
+    [
+      "inputnode",
+      "flair_postcon_in_dsc",
+      "flair_postcon_in_dsc_sink",
+      "in_file"
+    ],
+    [
+      "inputnode",
+      "lesion_mask_dsc",
+      "lesion_mask_dsc_sink",
+      "in_file"
+    ],
+    [
+      "inputnode",
+      "lesion_stats_json",
+      "mtt_map_meta",
+      "lesion_stats_json"
+    ],
+    [
+      "inputnode",
+      "lesion_stats_json",
+      "psr_map_meta",
+      "lesion_stats_json"
+    ],
+    [
+      "inputnode",
+      "lesion_stats_json",
+      "tmax_map_meta",
+      "lesion_stats_json"
+    ],
+    [
+      "inputnode",
+      "motion_params",
+      "figures_writer",
+      "motion_params"
+    ],
+    [
+      "inputnode",
+      "motion_qc_plot",
+      "figures_writer",
+      "motion_qc_plot"
+    ],
+    [
+      "inputnode",
+      "mtt_map",
+      "base_minimal_meta",
+      "reference_voxel_source"
+    ],
+    [
+      "inputnode",
+      "mtt_map",
+      "base_perf_meta",
+      "reference_voxel_source"
+    ],
+    [
+      "inputnode",
+      "mtt_map",
+      "mtt_map_sink",
+      "in_file"
+    ],
+    [
+      "inputnode",
+      "nawm_mask_dsc",
+      "nawm_mask_dsc_sink",
+      "in_file"
+    ],
+    [
+      "inputnode",
+      "output_dir",
+      "brain_mask_dsc_sink",
+      "base_directory"
+    ],
+    [
+      "inputnode",
+      "output_dir",
+      "dataset_description",
+      "output_dir"
+    ],
+    [
+      "inputnode",
+      "output_dir",
+      "figures_writer",
+      "output_dir"
+    ],
+    [
+      "inputnode",
+      "output_dir",
+      "flair_in_dsc_sink",
+      "base_directory"
+    ],
+    [
+      "inputnode",
+      "output_dir",
+      "flair_postcon_in_dsc_sink",
+      "base_directory"
+    ],
+    [
+      "inputnode",
+      "output_dir",
+      "lesion_mask_dsc_sink",
+      "base_directory"
+    ],
+    [
+      "inputnode",
+      "output_dir",
+      "mtt_map_sink",
+      "output_dir"
+    ],
+    [
+      "inputnode",
+      "output_dir",
+      "nawm_mask_dsc_sink",
+      "base_directory"
+    ],
+    [
+      "inputnode",
+      "output_dir",
+      "psr_map_sink",
+      "output_dir"
+    ],
+    [
+      "inputnode",
+      "output_dir",
+      "roi_mask_dsc_sink",
+      "base_directory"
+    ],
+    [
+      "inputnode",
+      "output_dir",
+      "t1w_in_dsc_sink",
+      "base_directory"
+    ],
+    [
+      "inputnode",
+      "output_dir",
+      "t1w_postcon_in_dsc_sink",
+      "base_directory"
+    ],
+    [
+      "inputnode",
+      "output_dir",
+      "t1w_subtraction_in_dsc_sink",
+      "base_directory"
+    ],
+    [
+      "inputnode",
+      "output_dir",
+      "t2w_in_dsc_sink",
+      "base_directory"
+    ],
+    [
+      "inputnode",
+      "output_dir",
+      "tmax_map_sink",
+      "output_dir"
+    ],
+    [
+      "inputnode",
+      "output_dir",
+      "user_lesion_mask_dsc_sink",
+      "base_directory"
+    ],
+    [
+      "inputnode",
+      "provenance_dict",
+      "base_minimal_meta",
+      "provenance_dict"
+    ],
+    [
+      "inputnode",
+      "provenance_dict",
+      "base_perf_meta",
+      "provenance_dict"
+    ],
+    [
+      "inputnode",
+      "psr_map",
+      "psr_map_sink",
+      "in_file"
+    ],
+    [
+      "inputnode",
+      "qc_metrics",
+      "base_perf_meta",
+      "qc_metrics"
+    ],
+    [
+      "inputnode",
+      "qc_metrics",
+      "figures_writer",
+      "qc_metrics"
+    ],
+    [
+      "inputnode",
+      "qc_metrics",
+      "mtt_map_meta",
+      "qc_metrics"
+    ],
+    [
+      "inputnode",
+      "qc_metrics",
+      "psr_map_meta",
+      "qc_metrics"
+    ],
+    [
+      "inputnode",
+      "qc_metrics",
+      "tmax_map_meta",
+      "qc_metrics"
+    ],
+    [
+      "inputnode",
+      "registration_filmstrip",
+      "figures_writer",
+      "registration_filmstrip"
+    ],
+    [
+      "inputnode",
+      "roi_mask_dsc",
+      "roi_mask_dsc_sink",
+      "in_file"
+    ],
+    [
+      "inputnode",
+      "roi_stats_json",
+      "mtt_map_meta",
+      "roi_stats_json"
+    ],
+    [
+      "inputnode",
+      "roi_stats_json",
+      "psr_map_meta",
+      "roi_stats_json"
+    ],
+    [
+      "inputnode",
+      "roi_stats_json",
+      "tmax_map_meta",
+      "roi_stats_json"
+    ],
+    [
+      "inputnode",
+      "session_id",
+      "base_minimal_meta",
+      "session"
+    ],
+    [
+      "inputnode",
+      "session_id",
+      "base_perf_meta",
+      "session"
+    ],
+    [
+      "inputnode",
+      "session_id",
+      "figures_writer",
+      "session_id"
+    ],
+    [
+      "inputnode",
+      "session_id",
+      "mtt_map_sink",
+      "session"
+    ],
+    [
+      "inputnode",
+      "session_id",
+      "psr_map_sink",
+      "session"
+    ],
+    [
+      "inputnode",
+      "session_id",
+      "tmax_map_sink",
+      "session"
+    ],
+    [
+      "inputnode",
+      "source_dsc",
+      "brain_mask_dsc_sink",
+      "source_file"
+    ],
+    [
+      "inputnode",
+      "source_dsc",
+      "figures_writer",
+      "source_dsc"
+    ],
+    [
+      "inputnode",
+      "source_dsc",
+      "flair_in_dsc_meta",
+      "perfusion_source"
+    ],
+    [
+      "inputnode",
+      "source_dsc",
+      "flair_postcon_in_dsc_meta",
+      "perfusion_source"
+    ],
+    [
+      "inputnode",
+      "source_dsc",
+      "lesion_mask_dsc_meta",
+      "perfusion_source"
+    ],
+    [
+      "inputnode",
+      "source_dsc",
+      "nawm_mask_dsc_meta",
+      "perfusion_source"
+    ],
+    [
+      "inputnode",
+      "source_dsc",
+      "perf_sources",
+      "in1"
+    ],
+    [
+      "inputnode",
+      "source_dsc",
+      "roi_mask_dsc_sink",
+      "source_file"
+    ],
+    [
+      "inputnode",
+      "source_dsc",
+      "t1w_in_dsc_meta",
+      "perfusion_source"
+    ],
+    [
+      "inputnode",
+      "source_dsc",
+      "t1w_postcon_in_dsc_meta",
+      "perfusion_source"
+    ],
+    [
+      "inputnode",
+      "source_dsc",
+      "t1w_subtraction_in_dsc_meta",
+      "perfusion_source"
+    ],
+    [
+      "inputnode",
+      "source_dsc",
+      "t2w_in_dsc_meta",
+      "perfusion_source"
+    ],
+    [
+      "inputnode",
+      "source_dsc",
+      "user_lesion_mask_dsc_sink",
+      "source_file"
+    ],
+    [
+      "inputnode",
+      "source_flair",
+      "anat_mask_sources",
+      "in3"
+    ],
+    [
+      "inputnode",
+      "source_flair",
+      "flair_in_dsc_meta",
+      "structural_source"
+    ],
+    [
+      "inputnode",
+      "source_flair",
+      "flair_in_dsc_sink",
+      "source_file"
+    ],
+    [
+      "inputnode",
+      "source_flair_postcon",
+      "anat_mask_sources",
+      "in4"
+    ],
+    [
+      "inputnode",
+      "source_flair_postcon",
+      "flair_postcon_in_dsc_meta",
+      "structural_source"
+    ],
+    [
+      "inputnode",
+      "source_flair_postcon",
+      "flair_postcon_in_dsc_sink",
+      "source_file"
+    ],
+    [
+      "inputnode",
+      "source_t1w",
+      "anat_mask_sources",
+      "in1"
+    ],
+    [
+      "inputnode",
+      "source_t1w",
+      "lesion_mask_dsc_sink",
+      "source_file"
+    ],
+    [
+      "inputnode",
+      "source_t1w",
+      "nawm_mask_dsc_sink",
+      "source_file"
+    ],
+    [
+      "inputnode",
+      "source_t1w",
+      "t1w_in_dsc_meta",
+      "structural_source"
+    ],
+    [
+      "inputnode",
+      "source_t1w",
+      "t1w_in_dsc_sink",
+      "source_file"
+    ],
+    [
+      "inputnode",
+      "source_t1w",
+      "t1w_subtraction_in_dsc_meta",
+      "structural_source"
+    ],
+    [
+      "inputnode",
+      "source_t1w",
+      "t1w_subtraction_in_dsc_sink",
+      "source_file"
+    ],
+    [
+      "inputnode",
+      "source_t1w_postcon",
+      "anat_mask_sources",
+      "in2"
+    ],
+    [
+      "inputnode",
+      "source_t1w_postcon",
+      "t1w_postcon_in_dsc_meta",
+      "structural_source"
+    ],
+    [
+      "inputnode",
+      "source_t1w_postcon",
+      "t1w_postcon_in_dsc_sink",
+      "source_file"
+    ],
+    [
+      "inputnode",
+      "source_t2w",
+      "anat_mask_sources",
+      "in5"
+    ],
+    [
+      "inputnode",
+      "source_t2w",
+      "t2w_in_dsc_meta",
+      "structural_source"
+    ],
+    [
+      "inputnode",
+      "source_t2w",
+      "t2w_in_dsc_sink",
+      "source_file"
+    ],
+    [
+      "inputnode",
+      "subject_id",
+      "base_minimal_meta",
+      "subject"
+    ],
+    [
+      "inputnode",
+      "subject_id",
+      "base_perf_meta",
+      "subject"
+    ],
+    [
+      "inputnode",
+      "subject_id",
+      "figures_writer",
+      "subject_id"
+    ],
+    [
+      "inputnode",
+      "subject_id",
+      "mtt_map_sink",
+      "subject"
+    ],
+    [
+      "inputnode",
+      "subject_id",
+      "psr_map_sink",
+      "subject"
+    ],
+    [
+      "inputnode",
+      "subject_id",
+      "tmax_map_sink",
+      "subject"
+    ],
+    [
+      "inputnode",
+      "t1w_in_dsc",
+      "t1w_in_dsc_sink",
+      "in_file"
+    ],
+    [
+      "inputnode",
+      "t1w_postcon_in_dsc",
+      "t1w_postcon_in_dsc_sink",
+      "in_file"
+    ],
+    [
+      "inputnode",
+      "t1w_subtraction_in_dsc",
+      "t1w_subtraction_in_dsc_sink",
+      "in_file"
+    ],
+    [
+      "inputnode",
+      "t2w_in_dsc",
+      "t2w_in_dsc_sink",
+      "in_file"
+    ],
+    [
+      "inputnode",
+      "tmax_map",
+      "tmax_map_sink",
+      "in_file"
+    ],
+    [
+      "inputnode",
+      "user_lesion_mask_dsc",
+      "user_lesion_mask_dsc_sink",
+      "in_file"
+    ],
+    [
+      "inputnode",
+      "user_lesion_stats_json",
+      "mtt_map_meta",
+      "user_lesion_stats_json"
+    ],
+    [
+      "inputnode",
+      "user_lesion_stats_json",
+      "psr_map_meta",
+      "user_lesion_stats_json"
+    ],
+    [
+      "inputnode",
+      "user_lesion_stats_json",
+      "tmax_map_meta",
+      "user_lesion_stats_json"
+    ],
+    [
+      "lesion_mask_dsc_meta",
+      "meta_dict",
+      "lesion_mask_dsc_sink",
+      "meta_dict"
+    ],
+    [
+      "lesion_mask_dsc_sink",
+      "out_file",
+      "dd_merge",
+      "in6"
+    ],
+    [
+      "mtt_map_meta",
+      "meta_dict",
+      "mtt_map_sink",
+      "meta_dict"
+    ],
+    [
+      "mtt_map_sink",
+      "out_file",
+      "dd_merge",
+      "in1"
+    ],
+    [
+      "nawm_mask_dsc_meta",
+      "meta_dict",
+      "nawm_mask_dsc_sink",
+      "meta_dict"
+    ],
+    [
+      "nawm_mask_dsc_sink",
+      "out_file",
+      "dd_merge",
+      "in5"
+    ],
+    [
+      "perf_sources",
+      "out",
+      "base_minimal_meta",
+      "source_paths"
+    ],
+    [
+      "perf_sources",
+      "out",
+      "base_perf_meta",
+      "source_paths"
+    ],
+    [
+      "psr_map_meta",
+      "meta_dict",
+      "psr_map_sink",
+      "meta_dict"
+    ],
+    [
+      "psr_map_sink",
+      "out_file",
+      "dd_merge",
+      "in3"
+    ],
+    [
+      "roi_mask_dsc_meta",
+      "meta_dict",
+      "roi_mask_dsc_sink",
+      "meta_dict"
+    ],
+    [
+      "roi_mask_dsc_sink",
+      "out_file",
+      "dd_merge",
+      "in8"
+    ],
+    [
+      "t1w_in_dsc_meta",
+      "meta_dict",
+      "t1w_in_dsc_sink",
+      "meta_dict"
+    ],
+    [
+      "t1w_in_dsc_sink",
+      "out_file",
+      "dd_merge",
+      "in9"
+    ],
+    [
+      "t1w_postcon_in_dsc_meta",
+      "meta_dict",
+      "t1w_postcon_in_dsc_sink",
+      "meta_dict"
+    ],
+    [
+      "t1w_postcon_in_dsc_sink",
+      "out_file",
+      "dd_merge",
+      "in10"
+    ],
+    [
+      "t1w_subtraction_in_dsc_meta",
+      "meta_dict",
+      "t1w_subtraction_in_dsc_sink",
+      "meta_dict"
+    ],
+    [
+      "t1w_subtraction_in_dsc_sink",
+      "out_file",
+      "dd_merge",
+      "in11"
+    ],
+    [
+      "t2w_in_dsc_meta",
+      "meta_dict",
+      "t2w_in_dsc_sink",
+      "meta_dict"
+    ],
+    [
+      "t2w_in_dsc_sink",
+      "out_file",
+      "dd_merge",
+      "in14"
+    ],
+    [
+      "tmax_map_meta",
+      "meta_dict",
+      "tmax_map_sink",
+      "meta_dict"
+    ],
+    [
+      "tmax_map_sink",
+      "out_file",
+      "dd_merge",
+      "in2"
+    ],
+    [
+      "user_lesion_mask_dsc_meta",
+      "meta_dict",
+      "user_lesion_mask_dsc_sink",
+      "meta_dict"
+    ],
+    [
+      "user_lesion_mask_dsc_sink",
+      "out_file",
+      "dd_merge",
+      "in7"
+    ]
+  ],
+  "function_io": {
+    "base_minimal_meta": {
+      "input_names": [
+        "bids_dir",
+        "minimal",
+        "provenance_dict",
+        "qc_metrics",
+        "reference_voxel_source",
+        "session",
+        "source_paths",
+        "subject"
+      ],
+      "output_names": [
+        "meta_dict"
+      ]
+    },
+    "base_perf_meta": {
+      "input_names": [
+        "bids_dir",
+        "minimal",
+        "provenance_dict",
+        "qc_metrics",
+        "reference_voxel_source",
+        "session",
+        "source_paths",
+        "subject"
+      ],
+      "output_names": [
+        "meta_dict"
+      ]
+    },
+    "brain_mask_dsc_meta": {
+      "input_names": [
+        "base",
+        "description",
+        "mask_type",
+        "segmentation_labels",
+        "skull_stripped"
+      ],
+      "output_names": [
+        "meta_dict"
+      ]
+    },
+    "dataset_description": {
+      "input_names": [
+        "_trigger",
+        "bids_dir",
+        "output_dir"
+      ],
+      "output_names": [
+        "dd_path"
+      ]
+    },
+    "flair_in_dsc_meta": {
+      "input_names": [
+        "base",
+        "bids_dir",
+        "description",
+        "mask_type",
+        "perfusion_source",
+        "segmentation_labels",
+        "skull_stripped",
+        "structural_source"
+      ],
+      "output_names": [
+        "meta_dict"
+      ]
+    },
+    "flair_postcon_in_dsc_meta": {
+      "input_names": [
+        "base",
+        "bids_dir",
+        "description",
+        "mask_type",
+        "perfusion_source",
+        "segmentation_labels",
+        "skull_stripped",
+        "structural_source"
+      ],
+      "output_names": [
+        "meta_dict"
+      ]
+    },
+    "lesion_mask_dsc_meta": {
+      "input_names": [
+        "base",
+        "bids_dir",
+        "description",
+        "mask_type",
+        "native_source",
+        "perfusion_source",
+        "resampling_applied",
+        "segmentation_labels",
+        "skull_stripped",
+        "structural_sources"
+      ],
+      "output_names": [
+        "meta_dict"
+      ]
+    },
+    "mtt_map_meta": {
+      "input_names": [
+        "base",
+        "description",
+        "extra",
+        "lesion_stats_json",
+        "map_key",
+        "qc_metrics",
+        "roi_stats_json",
+        "units",
+        "user_lesion_stats_json"
+      ],
+      "output_names": [
+        "meta_dict"
+      ]
+    },
+    "mtt_map_sink": {
+      "input_names": [
+        "bids_suffix",
+        "datatype",
+        "desc",
+        "in_file",
+        "meta_dict",
+        "output_dir",
+        "session",
+        "subject",
+        "suffix"
+      ],
+      "output_names": [
+        "out_file"
+      ]
+    },
+    "nawm_mask_dsc_meta": {
+      "input_names": [
+        "base",
+        "bids_dir",
+        "description",
+        "mask_type",
+        "native_source",
+        "perfusion_source",
+        "resampling_applied",
+        "segmentation_labels",
+        "skull_stripped",
+        "structural_sources"
+      ],
+      "output_names": [
+        "meta_dict"
+      ]
+    },
+    "psr_map_meta": {
+      "input_names": [
+        "base",
+        "description",
+        "extra",
+        "lesion_stats_json",
+        "map_key",
+        "qc_metrics",
+        "roi_stats_json",
+        "units",
+        "user_lesion_stats_json"
+      ],
+      "output_names": [
+        "meta_dict"
+      ]
+    },
+    "psr_map_sink": {
+      "input_names": [
+        "bids_suffix",
+        "datatype",
+        "desc",
+        "in_file",
+        "meta_dict",
+        "output_dir",
+        "session",
+        "subject",
+        "suffix"
+      ],
+      "output_names": [
+        "out_file"
+      ]
+    },
+    "roi_mask_dsc_meta": {
+      "input_names": [
+        "base",
+        "description",
+        "mask_type",
+        "segmentation_labels",
+        "skull_stripped"
+      ],
+      "output_names": [
+        "meta_dict"
+      ]
+    },
+    "t1w_in_dsc_meta": {
+      "input_names": [
+        "base",
+        "bids_dir",
+        "description",
+        "mask_type",
+        "perfusion_source",
+        "segmentation_labels",
+        "skull_stripped",
+        "structural_source"
+      ],
+      "output_names": [
+        "meta_dict"
+      ]
+    },
+    "t1w_postcon_in_dsc_meta": {
+      "input_names": [
+        "base",
+        "bids_dir",
+        "description",
+        "mask_type",
+        "perfusion_source",
+        "segmentation_labels",
+        "skull_stripped",
+        "structural_source"
+      ],
+      "output_names": [
+        "meta_dict"
+      ]
+    },
+    "t1w_subtraction_in_dsc_meta": {
+      "input_names": [
+        "base",
+        "bids_dir",
+        "description",
+        "mask_type",
+        "perfusion_source",
+        "segmentation_labels",
+        "skull_stripped",
+        "structural_source"
+      ],
+      "output_names": [
+        "meta_dict"
+      ]
+    },
+    "t2w_in_dsc_meta": {
+      "input_names": [
+        "base",
+        "bids_dir",
+        "description",
+        "mask_type",
+        "perfusion_source",
+        "segmentation_labels",
+        "skull_stripped",
+        "structural_source"
+      ],
+      "output_names": [
+        "meta_dict"
+      ]
+    },
+    "tmax_map_meta": {
+      "input_names": [
+        "base",
+        "description",
+        "extra",
+        "lesion_stats_json",
+        "map_key",
+        "qc_metrics",
+        "roi_stats_json",
+        "units",
+        "user_lesion_stats_json"
+      ],
+      "output_names": [
+        "meta_dict"
+      ]
+    },
+    "tmax_map_sink": {
+      "input_names": [
+        "bids_suffix",
+        "datatype",
+        "desc",
+        "in_file",
+        "meta_dict",
+        "output_dir",
+        "session",
+        "subject",
+        "suffix"
+      ],
+      "output_names": [
+        "out_file"
+      ]
+    },
+    "user_lesion_mask_dsc_meta": {
+      "input_names": [
+        "base",
+        "description",
+        "mask_type",
+        "segmentation_labels",
+        "skull_stripped"
+      ],
+      "output_names": [
+        "meta_dict"
+      ]
+    }
+  },
+  "function_sha256": {
+    "base_minimal_meta": "6c0308432a124b4e1b1efedac75d61373db50aee3239f6f50e42bcc48ff72fce",
+    "base_perf_meta": "6c0308432a124b4e1b1efedac75d61373db50aee3239f6f50e42bcc48ff72fce",
+    "brain_mask_dsc_meta": "f7366c18d36dc72c4a1d0ec255f373c52a0fc23bfd170370bea2c49d7e98e35b",
+    "dataset_description": "4f030212e4217b96b33ce28a7ed92f196a066b4199d13919b0c6168ba0c7fa20",
+    "flair_in_dsc_meta": "fbbbdfb9afde07600d11b80dfaf5e12289a9d87c417cf0ce75112458577c4fe8",
+    "flair_postcon_in_dsc_meta": "fbbbdfb9afde07600d11b80dfaf5e12289a9d87c417cf0ce75112458577c4fe8",
+    "lesion_mask_dsc_meta": "fbea18713a9d215ca5765017a95c2c724ca332e94803774937122d0c3e54a23e",
+    "mtt_map_meta": "662978f3eb3898bf4142fbe21667e36eedbd3ba27e45b18161c85f85d9663b91",
+    "mtt_map_sink": "fcb4e47901c5216926eb960a4fbdc146b1c7cacea778c10c7f34d3cb614e81f5",
+    "nawm_mask_dsc_meta": "fbea18713a9d215ca5765017a95c2c724ca332e94803774937122d0c3e54a23e",
+    "psr_map_meta": "662978f3eb3898bf4142fbe21667e36eedbd3ba27e45b18161c85f85d9663b91",
+    "psr_map_sink": "fcb4e47901c5216926eb960a4fbdc146b1c7cacea778c10c7f34d3cb614e81f5",
+    "roi_mask_dsc_meta": "f7366c18d36dc72c4a1d0ec255f373c52a0fc23bfd170370bea2c49d7e98e35b",
+    "t1w_in_dsc_meta": "fbbbdfb9afde07600d11b80dfaf5e12289a9d87c417cf0ce75112458577c4fe8",
+    "t1w_postcon_in_dsc_meta": "fbbbdfb9afde07600d11b80dfaf5e12289a9d87c417cf0ce75112458577c4fe8",
+    "t1w_subtraction_in_dsc_meta": "fbbbdfb9afde07600d11b80dfaf5e12289a9d87c417cf0ce75112458577c4fe8",
+    "t2w_in_dsc_meta": "fbbbdfb9afde07600d11b80dfaf5e12289a9d87c417cf0ce75112458577c4fe8",
+    "tmax_map_meta": "662978f3eb3898bf4142fbe21667e36eedbd3ba27e45b18161c85f85d9663b91",
+    "tmax_map_sink": "fcb4e47901c5216926eb960a4fbdc146b1c7cacea778c10c7f34d3cb614e81f5",
+    "user_lesion_mask_dsc_meta": "f7366c18d36dc72c4a1d0ec255f373c52a0fc23bfd170370bea2c49d7e98e35b"
+  },
+  "nipype_version": "1.10.0",
+  "node_attrs": {
+    "anat_mask_sources": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "base_minimal_meta": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "base_perf_meta": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "brain_mask_dsc_meta": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "brain_mask_dsc_sink": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "dataset_description": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "dd_merge": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "figures_writer": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "flair_in_dsc_meta": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "flair_in_dsc_sink": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "flair_postcon_in_dsc_meta": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "flair_postcon_in_dsc_sink": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "inputnode": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "lesion_mask_dsc_meta": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "lesion_mask_dsc_sink": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "mtt_map_meta": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "mtt_map_sink": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "nawm_mask_dsc_meta": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "nawm_mask_dsc_sink": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "outputnode": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "perf_sources": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "psr_map_meta": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "psr_map_sink": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "roi_mask_dsc_meta": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "roi_mask_dsc_sink": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "t1w_in_dsc_meta": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "t1w_in_dsc_sink": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "t1w_postcon_in_dsc_meta": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "t1w_postcon_in_dsc_sink": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "t1w_subtraction_in_dsc_meta": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "t1w_subtraction_in_dsc_sink": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "t2w_in_dsc_meta": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "t2w_in_dsc_sink": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "tmax_map_meta": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "tmax_map_sink": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "user_lesion_mask_dsc_meta": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "user_lesion_mask_dsc_sink": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    }
+  },
+  "node_params": {
+    "anat_mask_sources": {
+      "axis": "vstack",
+      "no_flatten": false,
+      "ravel_inputs": false
+    },
+    "base_minimal_meta": {
+      "function_str": "def _build_base(\n    source_paths: list[str],\n    reference_voxel_source: str,\n    bids_dir: str,\n    subject: str,\n    session: str,\n    provenance_dict: dict | None = None,\n    qc_metrics: dict | None = None,\n    minimal: bool = False,\n) -> dict:\n    from pmriprep.utils.sidecar_builders import build_dsc_base_sidecar\n\n    return build_dsc_base_sidecar(\n        source_paths=source_paths,\n        reference_voxel_source=reference_voxel_source,\n        bids_dir=bids_dir,\n        subject=subject,\n        session=session or None,\n        provenance_dict=provenance_dict,\n        qc_metrics=qc_metrics,\n        minimal=minimal,\n    )\n",
+      "minimal": true,
+      "qc_metrics": null
+    },
+    "base_perf_meta": {
+      "function_str": "def _build_base(\n    source_paths: list[str],\n    reference_voxel_source: str,\n    bids_dir: str,\n    subject: str,\n    session: str,\n    provenance_dict: dict | None = None,\n    qc_metrics: dict | None = None,\n    minimal: bool = False,\n) -> dict:\n    from pmriprep.utils.sidecar_builders import build_dsc_base_sidecar\n\n    return build_dsc_base_sidecar(\n        source_paths=source_paths,\n        reference_voxel_source=reference_voxel_source,\n        bids_dir=bids_dir,\n        subject=subject,\n        session=session or None,\n        provenance_dict=provenance_dict,\n        qc_metrics=qc_metrics,\n        minimal=minimal,\n    )\n",
+      "minimal": false
+    },
+    "brain_mask_dsc_meta": {
+      "description": "Brain mask in DSC space",
+      "function_str": "def _build_minimal_meta(\n    base: dict,\n    description: str,\n    skull_stripped: bool = False,\n    mask_type: str | None = None,\n    segmentation_labels: dict[str, str] | None = None,\n) -> dict:\n    out = dict(base)\n    out[\"Description\"] = description\n    if skull_stripped:\n        out[\"SkullStripped\"] = True\n    if mask_type is not None:\n        out[\"Type\"] = mask_type\n    if segmentation_labels:\n        out[\"LabelMap\"] = dict(segmentation_labels)\n    return out\n",
+      "mask_type": "Brain",
+      "segmentation_labels": null,
+      "skull_stripped": true
+    },
+    "brain_mask_dsc_sink": {
+      "check_hdr": true,
+      "compress": [
+        true
+      ],
+      "datatype": "anat",
+      "desc": "brain",
+      "dismiss_entities": [
+        "acquisition",
+        "ceagent"
+      ],
+      "space": "dscref",
+      "suffix": "mask"
+    },
+    "dd_merge": {
+      "axis": "vstack",
+      "no_flatten": false,
+      "ravel_inputs": false
+    },
+    "figures_writer": {
+      "bids_dir": "",
+      "motion_applied": true,
+      "session_id": ""
+    },
+    "flair_in_dsc_meta": {
+      "description": "FLAIR registered to DSC space",
+      "function_str": "def _build_underlay_meta(\n    base: dict,\n    description: str,\n    skull_stripped: bool,\n    mask_type: str | None,\n    structural_source: str,\n    perfusion_source: str,\n    bids_dir: str,\n    segmentation_labels: dict[str, str] | None = None,\n) -> dict:\n    \"\"\"Build metadata for a structural image resampled to DSC space.\"\"\"\n    from pmriprep.utils.sidecar_builders import build_sources_list\n\n    out = dict(base)\n    out[\"Description\"] = description\n    if skull_stripped:\n        out[\"SkullStripped\"] = True\n    if mask_type is not None:\n        out[\"Type\"] = mask_type\n    if segmentation_labels:\n        out[\"LabelMap\"] = dict(segmentation_labels)\n    out.update({\n        \"ResamplingApplied\": True,\n        \"Interpolation\": \"spline\",\n        \"TransformDirection\": \"T1w_to_DSC\",\n    })\n    out[\"Sources\"] = build_sources_list(\n        [structural_source, perfusion_source], bids_dir,\n    )\n    return out\n",
+      "mask_type": null,
+      "segmentation_labels": null,
+      "skull_stripped": false
+    },
+    "flair_in_dsc_sink": {
+      "check_hdr": true,
+      "compress": [
+        true
+      ],
+      "datatype": "anat",
+      "space": "dscref",
+      "suffix": "FLAIR"
+    },
+    "flair_postcon_in_dsc_meta": {
+      "description": "Post-contrast FLAIR registered to DSC space",
+      "function_str": "def _build_underlay_meta(\n    base: dict,\n    description: str,\n    skull_stripped: bool,\n    mask_type: str | None,\n    structural_source: str,\n    perfusion_source: str,\n    bids_dir: str,\n    segmentation_labels: dict[str, str] | None = None,\n) -> dict:\n    \"\"\"Build metadata for a structural image resampled to DSC space.\"\"\"\n    from pmriprep.utils.sidecar_builders import build_sources_list\n\n    out = dict(base)\n    out[\"Description\"] = description\n    if skull_stripped:\n        out[\"SkullStripped\"] = True\n    if mask_type is not None:\n        out[\"Type\"] = mask_type\n    if segmentation_labels:\n        out[\"LabelMap\"] = dict(segmentation_labels)\n    out.update({\n        \"ResamplingApplied\": True,\n        \"Interpolation\": \"spline\",\n        \"TransformDirection\": \"T1w_to_DSC\",\n    })\n    out[\"Sources\"] = build_sources_list(\n        [structural_source, perfusion_source], bids_dir,\n    )\n    return out\n",
+      "mask_type": null,
+      "segmentation_labels": null,
+      "skull_stripped": false
+    },
+    "flair_postcon_in_dsc_sink": {
+      "ceagent": "GAD",
+      "check_hdr": true,
+      "compress": [
+        true
+      ],
+      "datatype": "anat",
+      "space": "dscref",
+      "suffix": "FLAIR"
+    },
+    "inputnode": {
+      "session_id": "0001",
+      "subject_id": "0001"
+    },
+    "lesion_mask_dsc_meta": {
+      "description": "Tumor segmentation registered to DSC space",
+      "function_str": "def _build_transformed_mask_meta(\n    base: dict,\n    description: str,\n    skull_stripped: bool,\n    mask_type: str | None,\n    structural_sources: list[str],\n    perfusion_source: str,\n    bids_dir: str,\n    segmentation_labels: dict[str, str] | None = None,\n    resampling_applied: bool = True,\n    native_source: str | None = None,\n) -> dict:\n    \"\"\"Build metadata for an anatomical mask transformed to DSC space.\"\"\"\n    from pmriprep.utils.sidecar_builders import build_sources_list\n\n    out = dict(base)\n    out[\"Description\"] = description\n    if skull_stripped:\n        out[\"SkullStripped\"] = True\n    if mask_type is not None:\n        out[\"Type\"] = mask_type\n    if segmentation_labels:\n        out[\"LabelMap\"] = dict(segmentation_labels)\n    if resampling_applied:\n        out.update({\n            \"ResamplingApplied\": True,\n            \"Interpolation\": \"nearest_neighbour\",\n            \"TransformDirection\": \"T1w_to_DSC\",\n            \"LabelPreservation\": True,\n        })\n    else:\n        out.update({\n            \"ResamplingApplied\": False,\n            \"Interpolation\": \"none\",\n            \"ReorientationApplied\": True,\n            \"GeometryValidation\": \"shape_and_affine_against_DSC_reference\",\n        })\n    source_paths = (\n        [native_source, perfusion_source]\n        if not resampling_applied and native_source\n        else [*(structural_sources or []), perfusion_source]\n    )\n    out[\"Sources\"] = build_sources_list(\n        source_paths, bids_dir,\n    )\n    return out\n",
+      "mask_type": null,
+      "native_source": null,
+      "resampling_applied": true,
+      "skull_stripped": false
+    },
+    "lesion_mask_dsc_sink": {
+      "check_hdr": true,
+      "compress": [
+        true
+      ],
+      "datatype": "anat",
+      "desc": "lesion",
+      "space": "dscref",
+      "suffix": "dseg"
+    },
+    "mtt_map_meta": {
+      "description": "Mean transit time",
+      "function_str": "def _build_map_meta(\n    base: dict,\n    description: str,\n    map_key: str,\n    qc_metrics: dict | None = None,\n    units: str | None = None,\n    extra: dict | None = None,\n    lesion_stats_json: str | None = None,\n    user_lesion_stats_json: str | None = None,\n    roi_stats_json: str | None = None,\n) -> dict:\n    \"\"\"Compose a DSC per-map sidecar; injects per-map stats fragments.\n\n    Each aggregate stats JSON (lesion, user-lesion, ROI) is loaded when\n    present and split into per-map fragments via\n    :func:`extract_per_map_lesion_stats`. Fragments are merged into\n    the ``extra`` dict as ``LesionStats``, ``UserLesionStats``, and\n    ``ROIStats`` alongside any caller-provided extras.\n    \"\"\"\n    from pmriprep.utils.lesion_stats import load_lesion_stats_fragment\n    from pmriprep.utils.sidecar_builders import build_dsc_map_sidecar\n\n    fragment = load_lesion_stats_fragment(lesion_stats_json, map_key)\n    user_fragment = load_lesion_stats_fragment(user_lesion_stats_json, map_key)\n\n    merged_extra = dict(extra) if extra else {}\n    if map_key in {\"cbv_auc\", \"ncbv\"}:\n        from pmriprep.workflows.dsc.datasinks import (\n            _build_signed_auc_cbv_provenance,\n        )\n\n        merged_extra[\"SignedEstimator\"] = _build_signed_auc_cbv_provenance(\n            qc_metrics,\n            normalized=map_key == \"ncbv\",\n        )\n    if map_key == \"fallback\":\n        merged_extra[\"Type\"] = \"ROI\"\n    if map_key == \"cbf_std\" and isinstance(qc_metrics, dict):\n        deconvolution = qc_metrics.get(\"deconvolution\")\n        if isinstance(deconvolution, dict):\n            accounting = deconvolution.get(\"map_uncertainty\")\n            if isinstance(accounting, dict):\n                merged_extra[\"MAPUncertaintyAccounting\"] = dict(accounting)\n    if fragment:\n        merged_extra[\"LesionStats\"] = fragment\n    if user_fragment:\n        merged_extra[\"UserLesionStats\"] = user_fragment\n    roi_fragment = load_lesion_stats_fragment(roi_stats_json, map_key)\n    if roi_fragment:\n        merged_extra[\"ROIStats\"] = roi_fragment\n    return build_dsc_map_sidecar(\n        base=base,\n        description=description,\n        map_key=map_key,\n        qc_metrics=qc_metrics,\n        units=units,\n        extra=merged_extra or extra,\n    )\n",
+      "map_key": "mtt",
+      "units": "s"
+    },
+    "mtt_map_sink": {
+      "bids_suffix": "stat",
+      "datatype": "perf",
+      "desc": "dsc",
+      "suffix": "mtt"
+    },
+    "nawm_mask_dsc_meta": {
+      "description": "Normal-appearing white matter mask in DSC space",
+      "function_str": "def _build_transformed_mask_meta(\n    base: dict,\n    description: str,\n    skull_stripped: bool,\n    mask_type: str | None,\n    structural_sources: list[str],\n    perfusion_source: str,\n    bids_dir: str,\n    segmentation_labels: dict[str, str] | None = None,\n    resampling_applied: bool = True,\n    native_source: str | None = None,\n) -> dict:\n    \"\"\"Build metadata for an anatomical mask transformed to DSC space.\"\"\"\n    from pmriprep.utils.sidecar_builders import build_sources_list\n\n    out = dict(base)\n    out[\"Description\"] = description\n    if skull_stripped:\n        out[\"SkullStripped\"] = True\n    if mask_type is not None:\n        out[\"Type\"] = mask_type\n    if segmentation_labels:\n        out[\"LabelMap\"] = dict(segmentation_labels)\n    if resampling_applied:\n        out.update({\n            \"ResamplingApplied\": True,\n            \"Interpolation\": \"nearest_neighbour\",\n            \"TransformDirection\": \"T1w_to_DSC\",\n            \"LabelPreservation\": True,\n        })\n    else:\n        out.update({\n            \"ResamplingApplied\": False,\n            \"Interpolation\": \"none\",\n            \"ReorientationApplied\": True,\n            \"GeometryValidation\": \"shape_and_affine_against_DSC_reference\",\n        })\n    source_paths = (\n        [native_source, perfusion_source]\n        if not resampling_applied and native_source\n        else [*(structural_sources or []), perfusion_source]\n    )\n    out[\"Sources\"] = build_sources_list(\n        source_paths, bids_dir,\n    )\n    return out\n",
+      "mask_type": "ROI",
+      "resampling_applied": false,
+      "segmentation_labels": null,
+      "skull_stripped": false
+    },
+    "nawm_mask_dsc_sink": {
+      "check_hdr": true,
+      "compress": [
+        true
+      ],
+      "datatype": "anat",
+      "desc": "nawm",
+      "space": "dscref",
+      "suffix": "mask"
+    },
+    "perf_sources": {
+      "axis": "vstack",
+      "no_flatten": false,
+      "ravel_inputs": false
+    },
+    "psr_map_meta": {
+      "description": "Percent signal recovery from the raw, non-leakage-corrected signal",
+      "function_str": "def _build_map_meta(\n    base: dict,\n    description: str,\n    map_key: str,\n    qc_metrics: dict | None = None,\n    units: str | None = None,\n    extra: dict | None = None,\n    lesion_stats_json: str | None = None,\n    user_lesion_stats_json: str | None = None,\n    roi_stats_json: str | None = None,\n) -> dict:\n    \"\"\"Compose a DSC per-map sidecar; injects per-map stats fragments.\n\n    Each aggregate stats JSON (lesion, user-lesion, ROI) is loaded when\n    present and split into per-map fragments via\n    :func:`extract_per_map_lesion_stats`. Fragments are merged into\n    the ``extra`` dict as ``LesionStats``, ``UserLesionStats``, and\n    ``ROIStats`` alongside any caller-provided extras.\n    \"\"\"\n    from pmriprep.utils.lesion_stats import load_lesion_stats_fragment\n    from pmriprep.utils.sidecar_builders import build_dsc_map_sidecar\n\n    fragment = load_lesion_stats_fragment(lesion_stats_json, map_key)\n    user_fragment = load_lesion_stats_fragment(user_lesion_stats_json, map_key)\n\n    merged_extra = dict(extra) if extra else {}\n    if map_key in {\"cbv_auc\", \"ncbv\"}:\n        from pmriprep.workflows.dsc.datasinks import (\n            _build_signed_auc_cbv_provenance,\n        )\n\n        merged_extra[\"SignedEstimator\"] = _build_signed_auc_cbv_provenance(\n            qc_metrics,\n            normalized=map_key == \"ncbv\",\n        )\n    if map_key == \"fallback\":\n        merged_extra[\"Type\"] = \"ROI\"\n    if map_key == \"cbf_std\" and isinstance(qc_metrics, dict):\n        deconvolution = qc_metrics.get(\"deconvolution\")\n        if isinstance(deconvolution, dict):\n            accounting = deconvolution.get(\"map_uncertainty\")\n            if isinstance(accounting, dict):\n                merged_extra[\"MAPUncertaintyAccounting\"] = dict(accounting)\n    if fragment:\n        merged_extra[\"LesionStats\"] = fragment\n    if user_fragment:\n        merged_extra[\"UserLesionStats\"] = user_fragment\n    roi_fragment = load_lesion_stats_fragment(roi_stats_json, map_key)\n    if roi_fragment:\n        merged_extra[\"ROIStats\"] = roi_fragment\n    return build_dsc_map_sidecar(\n        base=base,\n        description=description,\n        map_key=map_key,\n        qc_metrics=qc_metrics,\n        units=units,\n        extra=merged_extra or extra,\n    )\n",
+      "map_key": "psr",
+      "units": "%"
+    },
+    "psr_map_sink": {
+      "bids_suffix": "stat",
+      "datatype": "perf",
+      "desc": "dsc",
+      "suffix": "psr"
+    },
+    "roi_mask_dsc_meta": {
+      "description": "ROI mask registered to DSC space",
+      "function_str": "def _build_minimal_meta(\n    base: dict,\n    description: str,\n    skull_stripped: bool = False,\n    mask_type: str | None = None,\n    segmentation_labels: dict[str, str] | None = None,\n) -> dict:\n    out = dict(base)\n    out[\"Description\"] = description\n    if skull_stripped:\n        out[\"SkullStripped\"] = True\n    if mask_type is not None:\n        out[\"Type\"] = mask_type\n    if segmentation_labels:\n        out[\"LabelMap\"] = dict(segmentation_labels)\n    return out\n",
+      "mask_type": "ROI",
+      "segmentation_labels": null,
+      "skull_stripped": false
+    },
+    "roi_mask_dsc_sink": {
+      "check_hdr": true,
+      "compress": [
+        true
+      ],
+      "datatype": "anat",
+      "desc": "roi",
+      "dismiss_entities": [
+        "acquisition"
+      ],
+      "space": "dscref",
+      "suffix": "mask"
+    },
+    "t1w_in_dsc_meta": {
+      "description": "Pre-contrast T1w registered to DSC space",
+      "function_str": "def _build_underlay_meta(\n    base: dict,\n    description: str,\n    skull_stripped: bool,\n    mask_type: str | None,\n    structural_source: str,\n    perfusion_source: str,\n    bids_dir: str,\n    segmentation_labels: dict[str, str] | None = None,\n) -> dict:\n    \"\"\"Build metadata for a structural image resampled to DSC space.\"\"\"\n    from pmriprep.utils.sidecar_builders import build_sources_list\n\n    out = dict(base)\n    out[\"Description\"] = description\n    if skull_stripped:\n        out[\"SkullStripped\"] = True\n    if mask_type is not None:\n        out[\"Type\"] = mask_type\n    if segmentation_labels:\n        out[\"LabelMap\"] = dict(segmentation_labels)\n    out.update({\n        \"ResamplingApplied\": True,\n        \"Interpolation\": \"spline\",\n        \"TransformDirection\": \"T1w_to_DSC\",\n    })\n    out[\"Sources\"] = build_sources_list(\n        [structural_source, perfusion_source], bids_dir,\n    )\n    return out\n",
+      "mask_type": null,
+      "segmentation_labels": null,
+      "skull_stripped": false
+    },
+    "t1w_in_dsc_sink": {
+      "check_hdr": true,
+      "compress": [
+        true
+      ],
+      "datatype": "anat",
+      "space": "dscref",
+      "suffix": "T1w"
+    },
+    "t1w_postcon_in_dsc_meta": {
+      "description": "Post-contrast T1w registered to DSC space",
+      "function_str": "def _build_underlay_meta(\n    base: dict,\n    description: str,\n    skull_stripped: bool,\n    mask_type: str | None,\n    structural_source: str,\n    perfusion_source: str,\n    bids_dir: str,\n    segmentation_labels: dict[str, str] | None = None,\n) -> dict:\n    \"\"\"Build metadata for a structural image resampled to DSC space.\"\"\"\n    from pmriprep.utils.sidecar_builders import build_sources_list\n\n    out = dict(base)\n    out[\"Description\"] = description\n    if skull_stripped:\n        out[\"SkullStripped\"] = True\n    if mask_type is not None:\n        out[\"Type\"] = mask_type\n    if segmentation_labels:\n        out[\"LabelMap\"] = dict(segmentation_labels)\n    out.update({\n        \"ResamplingApplied\": True,\n        \"Interpolation\": \"spline\",\n        \"TransformDirection\": \"T1w_to_DSC\",\n    })\n    out[\"Sources\"] = build_sources_list(\n        [structural_source, perfusion_source], bids_dir,\n    )\n    return out\n",
+      "mask_type": null,
+      "segmentation_labels": null,
+      "skull_stripped": false
+    },
+    "t1w_postcon_in_dsc_sink": {
+      "ceagent": "GAD",
+      "check_hdr": true,
+      "compress": [
+        true
+      ],
+      "datatype": "anat",
+      "space": "dscref",
+      "suffix": "T1w"
+    },
+    "t1w_subtraction_in_dsc_meta": {
+      "description": "Post-pre T1w subtraction registered to DSC space",
+      "function_str": "def _build_underlay_meta(\n    base: dict,\n    description: str,\n    skull_stripped: bool,\n    mask_type: str | None,\n    structural_source: str,\n    perfusion_source: str,\n    bids_dir: str,\n    segmentation_labels: dict[str, str] | None = None,\n) -> dict:\n    \"\"\"Build metadata for a structural image resampled to DSC space.\"\"\"\n    from pmriprep.utils.sidecar_builders import build_sources_list\n\n    out = dict(base)\n    out[\"Description\"] = description\n    if skull_stripped:\n        out[\"SkullStripped\"] = True\n    if mask_type is not None:\n        out[\"Type\"] = mask_type\n    if segmentation_labels:\n        out[\"LabelMap\"] = dict(segmentation_labels)\n    out.update({\n        \"ResamplingApplied\": True,\n        \"Interpolation\": \"spline\",\n        \"TransformDirection\": \"T1w_to_DSC\",\n    })\n    out[\"Sources\"] = build_sources_list(\n        [structural_source, perfusion_source], bids_dir,\n    )\n    return out\n",
+      "mask_type": null,
+      "segmentation_labels": null,
+      "skull_stripped": false
+    },
+    "t1w_subtraction_in_dsc_sink": {
+      "check_hdr": true,
+      "compress": [
+        true
+      ],
+      "datatype": "anat",
+      "desc": "subtraction",
+      "space": "dscref",
+      "suffix": "T1w"
+    },
+    "t2w_in_dsc_meta": {
+      "description": "T2w registered to DSC space",
+      "function_str": "def _build_underlay_meta(\n    base: dict,\n    description: str,\n    skull_stripped: bool,\n    mask_type: str | None,\n    structural_source: str,\n    perfusion_source: str,\n    bids_dir: str,\n    segmentation_labels: dict[str, str] | None = None,\n) -> dict:\n    \"\"\"Build metadata for a structural image resampled to DSC space.\"\"\"\n    from pmriprep.utils.sidecar_builders import build_sources_list\n\n    out = dict(base)\n    out[\"Description\"] = description\n    if skull_stripped:\n        out[\"SkullStripped\"] = True\n    if mask_type is not None:\n        out[\"Type\"] = mask_type\n    if segmentation_labels:\n        out[\"LabelMap\"] = dict(segmentation_labels)\n    out.update({\n        \"ResamplingApplied\": True,\n        \"Interpolation\": \"spline\",\n        \"TransformDirection\": \"T1w_to_DSC\",\n    })\n    out[\"Sources\"] = build_sources_list(\n        [structural_source, perfusion_source], bids_dir,\n    )\n    return out\n",
+      "mask_type": null,
+      "segmentation_labels": null,
+      "skull_stripped": false
+    },
+    "t2w_in_dsc_sink": {
+      "check_hdr": true,
+      "compress": [
+        true
+      ],
+      "datatype": "anat",
+      "space": "dscref",
+      "suffix": "T2w"
+    },
+    "tmax_map_meta": {
+      "description": "Time to maximum of residue function",
+      "function_str": "def _build_map_meta(\n    base: dict,\n    description: str,\n    map_key: str,\n    qc_metrics: dict | None = None,\n    units: str | None = None,\n    extra: dict | None = None,\n    lesion_stats_json: str | None = None,\n    user_lesion_stats_json: str | None = None,\n    roi_stats_json: str | None = None,\n) -> dict:\n    \"\"\"Compose a DSC per-map sidecar; injects per-map stats fragments.\n\n    Each aggregate stats JSON (lesion, user-lesion, ROI) is loaded when\n    present and split into per-map fragments via\n    :func:`extract_per_map_lesion_stats`. Fragments are merged into\n    the ``extra`` dict as ``LesionStats``, ``UserLesionStats``, and\n    ``ROIStats`` alongside any caller-provided extras.\n    \"\"\"\n    from pmriprep.utils.lesion_stats import load_lesion_stats_fragment\n    from pmriprep.utils.sidecar_builders import build_dsc_map_sidecar\n\n    fragment = load_lesion_stats_fragment(lesion_stats_json, map_key)\n    user_fragment = load_lesion_stats_fragment(user_lesion_stats_json, map_key)\n\n    merged_extra = dict(extra) if extra else {}\n    if map_key in {\"cbv_auc\", \"ncbv\"}:\n        from pmriprep.workflows.dsc.datasinks import (\n            _build_signed_auc_cbv_provenance,\n        )\n\n        merged_extra[\"SignedEstimator\"] = _build_signed_auc_cbv_provenance(\n            qc_metrics,\n            normalized=map_key == \"ncbv\",\n        )\n    if map_key == \"fallback\":\n        merged_extra[\"Type\"] = \"ROI\"\n    if map_key == \"cbf_std\" and isinstance(qc_metrics, dict):\n        deconvolution = qc_metrics.get(\"deconvolution\")\n        if isinstance(deconvolution, dict):\n            accounting = deconvolution.get(\"map_uncertainty\")\n            if isinstance(accounting, dict):\n                merged_extra[\"MAPUncertaintyAccounting\"] = dict(accounting)\n    if fragment:\n        merged_extra[\"LesionStats\"] = fragment\n    if user_fragment:\n        merged_extra[\"UserLesionStats\"] = user_fragment\n    roi_fragment = load_lesion_stats_fragment(roi_stats_json, map_key)\n    if roi_fragment:\n        merged_extra[\"ROIStats\"] = roi_fragment\n    return build_dsc_map_sidecar(\n        base=base,\n        description=description,\n        map_key=map_key,\n        qc_metrics=qc_metrics,\n        units=units,\n        extra=merged_extra or extra,\n    )\n",
+      "map_key": "tmax",
+      "units": "s"
+    },
+    "tmax_map_sink": {
+      "bids_suffix": "stat",
+      "datatype": "perf",
+      "desc": "dsc",
+      "suffix": "tmax"
+    },
+    "user_lesion_mask_dsc_meta": {
+      "description": "User-supplied lesion mask in DSC native space",
+      "function_str": "def _build_minimal_meta(\n    base: dict,\n    description: str,\n    skull_stripped: bool = False,\n    mask_type: str | None = None,\n    segmentation_labels: dict[str, str] | None = None,\n) -> dict:\n    out = dict(base)\n    out[\"Description\"] = description\n    if skull_stripped:\n        out[\"SkullStripped\"] = True\n    if mask_type is not None:\n        out[\"Type\"] = mask_type\n    if segmentation_labels:\n        out[\"LabelMap\"] = dict(segmentation_labels)\n    return out\n",
+      "mask_type": "Lesion",
+      "segmentation_labels": null,
+      "skull_stripped": false
+    },
+    "user_lesion_mask_dsc_sink": {
+      "check_hdr": true,
+      "compress": [
+        true
+      ],
+      "datatype": "anat",
+      "desc": "userLesion",
+      "dismiss_entities": [
+        "acquisition"
+      ],
+      "space": "dscref",
+      "suffix": "mask"
+    }
+  },
+  "nodes": [
+    [
+      "anat_mask_sources",
+      "Merge"
+    ],
+    [
+      "base_minimal_meta",
+      "Function"
+    ],
+    [
+      "base_perf_meta",
+      "Function"
+    ],
+    [
+      "brain_mask_dsc_meta",
+      "Function"
+    ],
+    [
+      "brain_mask_dsc_sink",
+      "PMRIPrepDataSink"
+    ],
+    [
+      "dataset_description",
+      "Function"
+    ],
+    [
+      "dd_merge",
+      "Merge"
+    ],
+    [
+      "figures_writer",
+      "DSCFiguresWriter"
+    ],
+    [
+      "flair_in_dsc_meta",
+      "Function"
+    ],
+    [
+      "flair_in_dsc_sink",
+      "PMRIPrepDataSink"
+    ],
+    [
+      "flair_postcon_in_dsc_meta",
+      "Function"
+    ],
+    [
+      "flair_postcon_in_dsc_sink",
+      "PMRIPrepDataSink"
+    ],
+    [
+      "inputnode",
+      "IdentityInterface"
+    ],
+    [
+      "lesion_mask_dsc_meta",
+      "Function"
+    ],
+    [
+      "lesion_mask_dsc_sink",
+      "PMRIPrepDataSink"
+    ],
+    [
+      "mtt_map_meta",
+      "Function"
+    ],
+    [
+      "mtt_map_sink",
+      "Function"
+    ],
+    [
+      "nawm_mask_dsc_meta",
+      "Function"
+    ],
+    [
+      "nawm_mask_dsc_sink",
+      "PMRIPrepDataSink"
+    ],
+    [
+      "outputnode",
+      "IdentityInterface"
+    ],
+    [
+      "perf_sources",
+      "Merge"
+    ],
+    [
+      "psr_map_meta",
+      "Function"
+    ],
+    [
+      "psr_map_sink",
+      "Function"
+    ],
+    [
+      "roi_mask_dsc_meta",
+      "Function"
+    ],
+    [
+      "roi_mask_dsc_sink",
+      "PMRIPrepDataSink"
+    ],
+    [
+      "t1w_in_dsc_meta",
+      "Function"
+    ],
+    [
+      "t1w_in_dsc_sink",
+      "PMRIPrepDataSink"
+    ],
+    [
+      "t1w_postcon_in_dsc_meta",
+      "Function"
+    ],
+    [
+      "t1w_postcon_in_dsc_sink",
+      "PMRIPrepDataSink"
+    ],
+    [
+      "t1w_subtraction_in_dsc_meta",
+      "Function"
+    ],
+    [
+      "t1w_subtraction_in_dsc_sink",
+      "PMRIPrepDataSink"
+    ],
+    [
+      "t2w_in_dsc_meta",
+      "Function"
+    ],
+    [
+      "t2w_in_dsc_sink",
+      "PMRIPrepDataSink"
+    ],
+    [
+      "tmax_map_meta",
+      "Function"
+    ],
+    [
+      "tmax_map_sink",
+      "Function"
+    ],
+    [
+      "user_lesion_mask_dsc_meta",
+      "Function"
+    ],
+    [
+      "user_lesion_mask_dsc_sink",
+      "PMRIPrepDataSink"
+    ]
+  ],
+  "public_outputnode_fields": [
+    "dataset_description_done",
+    "done"
+  ]
+}
