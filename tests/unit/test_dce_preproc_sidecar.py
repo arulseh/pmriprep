@@ -314,7 +314,7 @@ class TestPreprocMetaNoNaN:
             },
         }
         meta = _build_dce_preproc_meta(base, "desc", qc_metrics=qc)
-        assert meta["SkullStripped"] is True
+        assert meta["SkullStripped"] is False
         # Flat cosmetic keys dropped
         assert "BaselineTSNR" not in meta
         # Nested PipelineQC block sanitized (finite metric survives)
@@ -325,6 +325,19 @@ class TestPreprocMetaNoNaN:
         assert nested["shape"] == [4, None, 3]
         # Strict: allow_nan=False raises on ANY NaN/Inf token (bare or numpy-leaked)
         json.dumps(meta, allow_nan=False)
+
+    def test_dce_no_motion_description_is_not_motion_corrected(self):
+        from pmriprep.workflows.dce.datasinks import _build_dce_preproc_meta
+
+        meta = _build_dce_preproc_meta(
+            {},
+            "Motion-corrected 4D DCE time series",
+            config_dict={"motion_correct": False},
+        )
+
+        assert meta["MotionCorrectionApplied"] is False
+        assert "without rigid-body motion correction" in meta["Description"]
+        assert meta["SkullStripped"] is False
 
     def test_dsc_preproc_meta_sanitized(self):
         """The DSC sibling builder is sanitized too (symmetry)."""

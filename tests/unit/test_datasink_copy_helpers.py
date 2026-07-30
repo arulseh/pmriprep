@@ -236,6 +236,23 @@ def test_t1map_provenance_identifies_fallback_and_vfa_sources() -> None:
     assert out["Sources"][-1].endswith("sub-X_ses-Y_flip-1_VFA.nii.gz")
 
 
+def test_dce_mean_meta_identifies_all_volume_aggregation() -> None:
+    from pmriprep.workflows.dce.datasinks import _build_dce_mean_meta
+
+    out = _build_dce_mean_meta(
+        {},
+        {"preprocessing": {"n_volumes": 75, "baseline_frames_used": 8}},
+        motion_correct=False,
+    )
+
+    assert out["TemporalAggregation"] == "arithmetic_mean_all_acquired_volumes"
+    assert out["IncludesPostContrastVolumes"] is True
+    assert out["MotionCorrectionApplied"] is False
+    assert out["SkullStripped"] is False
+    assert out["NumberOfVolumes"] == 75
+    assert out["BaselineFrames"] == 8
+
+
 def test_master_b1_source_selection_matches_configured_method() -> None:
     from pmriprep.config.dce import DCEConfig
     from pmriprep.workflows.base import _selected_dce_b1_sources

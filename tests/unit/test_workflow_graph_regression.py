@@ -394,6 +394,22 @@ def _dce_t1_datasinks(bids: Path) -> pe.Workflow:
     )
 
 
+def _dce_preproc_datasinks(bids: Path) -> pe.Workflow:
+    """Build the public DCE-series and temporal-mean sink branches."""
+    return init_dce_datasinks_wf(
+        output_dir=str(bids / "derivatives"),
+        bids_dir=str(bids),
+        subject_id="0001",
+        session_id="0001",
+        pk_model="auto",
+        inference="nlls",
+        present_inputs={"dce_moco", "dce_mean"},
+        motion_correct=False,
+        t1_map_expected=False,
+        b1_map_expected=False,
+    )
+
+
 def _anat(
     bids: Path,
     *,
@@ -426,6 +442,7 @@ _ALL_UNDERLAYS = ["t1w_precon", "t1w_postcon", "t1w_subtraction", "flair_precon"
 Builder = Callable[[Path], pe.Workflow]
 
 DCE_MATRIX: list[tuple[str, Builder]] = [
+    ("dce_datasinks_preproc", _dce_preproc_datasinks),
     ("dce_datasinks_t1", _dce_t1_datasinks),
     ("dce_default", lambda b: _dce(b)),
     # has_tissue_seg=False on the default VFA path -> isolates the 3 probseg

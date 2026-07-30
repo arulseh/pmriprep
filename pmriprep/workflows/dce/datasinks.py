@@ -488,12 +488,19 @@ def _build_dce_preproc_meta(
     )
 
     out = dict(base)
-    out["Description"] = description
-    out["SkullStripped"] = True
+    motion_applied = (
+        bool(config_dict.get("motion_correct", True))
+        if isinstance(config_dict, dict)
+        else True
+    )
+    out["Description"] = (
+        description
+        if motion_applied
+        else "Preprocessed 4D DCE time series without rigid-body motion correction"
+    )
+    out["SkullStripped"] = False
     if isinstance(config_dict, dict):
-        out["MotionCorrectionApplied"] = bool(
-            config_dict.get("motion_correct", True)
-        )
+        out["MotionCorrectionApplied"] = motion_applied
     enrich_dce_preproc_sidecar(
         out,
         qc_metrics=qc_metrics if isinstance(qc_metrics, dict) else None,
@@ -517,6 +524,33 @@ def _build_dce_preproc_meta(
     if isinstance(config_dict, dict):
         out["PipelineConfiguration"] = build_provenance_block(config_dict)
     return dict(sanitize_for_json(out))
+
+
+def _build_dce_mean_meta(
+    base: dict,
+    qc_metrics: dict | None = None,
+    motion_correct: bool = True,
+) -> dict:
+    """Describe the all-volume DCE temporal mean without implying baseline contrast."""
+    out = dict(base)
+    out.update({
+        "Description": "Temporal mean across all acquired DCE volumes",
+        "TemporalAggregation": "arithmetic_mean_all_acquired_volumes",
+        "IncludesPostContrastVolumes": True,
+        "MotionCorrectionApplied": bool(motion_correct),
+        "SkullStripped": False,
+    })
+    preprocessing = (qc_metrics or {}).get("preprocessing", {})
+    if isinstance(preprocessing, dict):
+        n_volumes = preprocessing.get("n_volumes")
+        if n_volumes is not None:
+            out["NumberOfVolumes"] = int(n_volumes)
+        baseline_frames = preprocessing.get(
+            "baseline_frames_used", preprocessing.get("baseline_frames")
+        )
+        if baseline_frames is not None:
+            out["BaselineFrames"] = int(baseline_frames)
+    return out
 
 
 
@@ -1769,14 +1803,43 @@ def init_dce_datasinks_wf(
         sink_outputs.append((moco_sink, "out_file"))
 
     if "dce_mean" in present:
-        sink = _add_perf_map_sink(
-            workflow, inputnode, base_perf_no_ktrans,
-            name="dce_mean", in_attr="dce_mean",
-            desc_value="dceMean", suffix="",
-            description="Mean DCE reference image",
-            units=None, extra=None,
-            bids_suffix="stat",
+        meta = pe.Node(
+            niu.Function(
+                input_names=["base", "qc_metrics", "motion_correct"],
+                output_names=["meta_dict"],
+                function=_build_dce_mean_meta,
+            ),
+            name="dce_mean_meta",
         )
+        meta.inputs.motion_correct = motion_correct
+        workflow.connect([
+            (base_perf_no_ktrans, meta, [("meta_dict", "base")]),
+            (inputnode, meta, [("qc_metrics", "qc_metrics")]),
+        ])
+        sink = pe.Node(
+            niu.Function(
+                input_names=[
+                    "in_file", "output_dir", "subject", "session",
+                    "desc", "suffix", "meta_dict", "datatype", "bids_suffix",
+                ],
+                output_names=["out_file"],
+                function=_copy_perf_map,
+            ),
+            name="dce_mean_sink",
+        )
+        sink.inputs.desc = "dceMean"
+        sink.inputs.suffix = ""
+        sink.inputs.datatype = "perf"
+        sink.inputs.bids_suffix = "stat"
+        workflow.connect([
+            (inputnode, sink, [
+                ("output_dir", "output_dir"),
+                ("subject_id", "subject"),
+                ("session_id", "session"),
+                ("dce_mean", "in_file"),
+            ]),
+            (meta, sink, [("meta_dict", "meta_dict")]),
+        ])
         sink_outputs.append((sink, "out_file"))
     if "aif_mask" in present:
         meta = pe.Node(

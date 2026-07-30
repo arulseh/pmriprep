@@ -1,0 +1,875 @@
+{
+  "edges": [
+    [
+      "base_perf_meta",
+      "meta_dict",
+      "ktrans_map_meta",
+      "base"
+    ],
+    [
+      "base_perf_no_ktrans_meta",
+      "meta_dict",
+      "dce_mean_meta",
+      "base"
+    ],
+    [
+      "base_perf_no_ktrans_meta",
+      "meta_dict",
+      "dce_moco_meta",
+      "base"
+    ],
+    [
+      "dataset_description",
+      "dd_path",
+      "outputnode",
+      "dataset_description_done"
+    ],
+    [
+      "dataset_description",
+      "dd_path",
+      "outputnode",
+      "done"
+    ],
+    [
+      "dce_mean_meta",
+      "meta_dict",
+      "dce_mean_sink",
+      "meta_dict"
+    ],
+    [
+      "dce_mean_sink",
+      "out_file",
+      "dd_merge",
+      "in3"
+    ],
+    [
+      "dce_moco_meta",
+      "meta_dict",
+      "dce_moco_sink",
+      "meta_dict"
+    ],
+    [
+      "dce_moco_sink",
+      "out_file",
+      "dd_merge",
+      "in2"
+    ],
+    [
+      "dd_merge",
+      "out",
+      "dataset_description",
+      "_trigger"
+    ],
+    [
+      "figures_writer",
+      "aif_curve_txt",
+      "dd_merge",
+      "in4"
+    ],
+    [
+      "inputnode",
+      "aif_candidates_plot",
+      "figures_writer",
+      "aif_candidates_plot"
+    ],
+    [
+      "inputnode",
+      "aif_curve",
+      "figures_writer",
+      "aif_curve"
+    ],
+    [
+      "inputnode",
+      "aif_curve_plot",
+      "figures_writer",
+      "aif_curve_plot"
+    ],
+    [
+      "inputnode",
+      "aif_location_plot",
+      "figures_writer",
+      "aif_location_plot"
+    ],
+    [
+      "inputnode",
+      "b1_qc_plot",
+      "figures_writer",
+      "b1_qc_plot"
+    ],
+    [
+      "inputnode",
+      "bids_dir",
+      "base_minimal_meta",
+      "bids_dir"
+    ],
+    [
+      "inputnode",
+      "bids_dir",
+      "base_perf_meta",
+      "bids_dir"
+    ],
+    [
+      "inputnode",
+      "bids_dir",
+      "base_perf_no_ktrans_meta",
+      "bids_dir"
+    ],
+    [
+      "inputnode",
+      "bids_dir",
+      "dataset_description",
+      "bids_dir"
+    ],
+    [
+      "inputnode",
+      "bids_dir",
+      "figures_writer",
+      "bids_dir"
+    ],
+    [
+      "inputnode",
+      "brain_mask_filmstrip",
+      "figures_writer",
+      "brain_mask_filmstrip"
+    ],
+    [
+      "inputnode",
+      "config_dict",
+      "dce_moco_meta",
+      "config_dict"
+    ],
+    [
+      "inputnode",
+      "dce_mean",
+      "dce_mean_sink",
+      "in_file"
+    ],
+    [
+      "inputnode",
+      "dce_moco",
+      "dce_moco_sink",
+      "in_file"
+    ],
+    [
+      "inputnode",
+      "dsc_dce_xval_plot",
+      "figures_writer",
+      "dsc_dce_xval_plot"
+    ],
+    [
+      "inputnode",
+      "ktrans_map",
+      "base_minimal_meta",
+      "reference_voxel_source"
+    ],
+    [
+      "inputnode",
+      "ktrans_map",
+      "base_perf_meta",
+      "reference_voxel_source"
+    ],
+    [
+      "inputnode",
+      "ktrans_map",
+      "base_perf_no_ktrans_meta",
+      "reference_voxel_source"
+    ],
+    [
+      "inputnode",
+      "ktrans_map",
+      "ktrans_map_sink",
+      "in_file"
+    ],
+    [
+      "inputnode",
+      "lesion_stats_json",
+      "ktrans_map_meta",
+      "lesion_stats_json"
+    ],
+    [
+      "inputnode",
+      "model_selection_qc_plot",
+      "figures_writer",
+      "model_selection_qc_plot"
+    ],
+    [
+      "inputnode",
+      "motion_params",
+      "figures_writer",
+      "motion_params"
+    ],
+    [
+      "inputnode",
+      "motion_qc_plot",
+      "figures_writer",
+      "motion_qc_plot"
+    ],
+    [
+      "inputnode",
+      "output_dir",
+      "dataset_description",
+      "output_dir"
+    ],
+    [
+      "inputnode",
+      "output_dir",
+      "dce_mean_sink",
+      "output_dir"
+    ],
+    [
+      "inputnode",
+      "output_dir",
+      "dce_moco_sink",
+      "output_dir"
+    ],
+    [
+      "inputnode",
+      "output_dir",
+      "figures_writer",
+      "output_dir"
+    ],
+    [
+      "inputnode",
+      "output_dir",
+      "ktrans_map_sink",
+      "output_dir"
+    ],
+    [
+      "inputnode",
+      "pk_modeling_qc_plot",
+      "figures_writer",
+      "pk_modeling_qc_plot"
+    ],
+    [
+      "inputnode",
+      "pk_param_maps_qc_plot",
+      "figures_writer",
+      "pk_param_maps_qc_plot"
+    ],
+    [
+      "inputnode",
+      "preflight_warnings",
+      "dce_moco_meta",
+      "preflight_warnings"
+    ],
+    [
+      "inputnode",
+      "preprocessing_qc_plot",
+      "figures_writer",
+      "preprocessing_qc_plot"
+    ],
+    [
+      "inputnode",
+      "provenance_dict",
+      "base_minimal_meta",
+      "provenance_dict"
+    ],
+    [
+      "inputnode",
+      "provenance_dict",
+      "base_perf_meta",
+      "provenance_dict"
+    ],
+    [
+      "inputnode",
+      "provenance_dict",
+      "base_perf_no_ktrans_meta",
+      "provenance_dict"
+    ],
+    [
+      "inputnode",
+      "provenance_dict",
+      "dce_moco_meta",
+      "provenance_dict"
+    ],
+    [
+      "inputnode",
+      "qc_metrics",
+      "base_perf_meta",
+      "qc_metrics"
+    ],
+    [
+      "inputnode",
+      "qc_metrics",
+      "base_perf_no_ktrans_meta",
+      "qc_metrics"
+    ],
+    [
+      "inputnode",
+      "qc_metrics",
+      "dce_mean_meta",
+      "qc_metrics"
+    ],
+    [
+      "inputnode",
+      "qc_metrics",
+      "dce_moco_meta",
+      "qc_metrics"
+    ],
+    [
+      "inputnode",
+      "qc_metrics",
+      "figures_writer",
+      "qc_metrics"
+    ],
+    [
+      "inputnode",
+      "qc_metrics",
+      "ktrans_map_meta",
+      "qc_metrics"
+    ],
+    [
+      "inputnode",
+      "registration_filmstrip",
+      "figures_writer",
+      "registration_filmstrip"
+    ],
+    [
+      "inputnode",
+      "roi_stats_json",
+      "ktrans_map_meta",
+      "roi_stats_json"
+    ],
+    [
+      "inputnode",
+      "session_id",
+      "base_minimal_meta",
+      "session"
+    ],
+    [
+      "inputnode",
+      "session_id",
+      "base_perf_meta",
+      "session"
+    ],
+    [
+      "inputnode",
+      "session_id",
+      "base_perf_no_ktrans_meta",
+      "session"
+    ],
+    [
+      "inputnode",
+      "session_id",
+      "dce_mean_sink",
+      "session"
+    ],
+    [
+      "inputnode",
+      "session_id",
+      "dce_moco_sink",
+      "session"
+    ],
+    [
+      "inputnode",
+      "session_id",
+      "figures_writer",
+      "session_id"
+    ],
+    [
+      "inputnode",
+      "session_id",
+      "ktrans_map_sink",
+      "session"
+    ],
+    [
+      "inputnode",
+      "source_dce",
+      "figures_writer",
+      "source_dce"
+    ],
+    [
+      "inputnode",
+      "source_dce",
+      "perf_sources",
+      "in1"
+    ],
+    [
+      "inputnode",
+      "source_flair",
+      "anat_mask_sources",
+      "in3"
+    ],
+    [
+      "inputnode",
+      "source_flair_postcon",
+      "anat_mask_sources",
+      "in4"
+    ],
+    [
+      "inputnode",
+      "source_t1w",
+      "anat_mask_sources",
+      "in1"
+    ],
+    [
+      "inputnode",
+      "source_t1w_postcon",
+      "anat_mask_sources",
+      "in2"
+    ],
+    [
+      "inputnode",
+      "source_t2w",
+      "anat_mask_sources",
+      "in5"
+    ],
+    [
+      "inputnode",
+      "subject_id",
+      "base_minimal_meta",
+      "subject"
+    ],
+    [
+      "inputnode",
+      "subject_id",
+      "base_perf_meta",
+      "subject"
+    ],
+    [
+      "inputnode",
+      "subject_id",
+      "base_perf_no_ktrans_meta",
+      "subject"
+    ],
+    [
+      "inputnode",
+      "subject_id",
+      "dce_mean_sink",
+      "subject"
+    ],
+    [
+      "inputnode",
+      "subject_id",
+      "dce_moco_sink",
+      "subject"
+    ],
+    [
+      "inputnode",
+      "subject_id",
+      "figures_writer",
+      "subject_id"
+    ],
+    [
+      "inputnode",
+      "subject_id",
+      "ktrans_map_sink",
+      "subject"
+    ],
+    [
+      "inputnode",
+      "t1_qc_plot",
+      "figures_writer",
+      "t1_qc_plot"
+    ],
+    [
+      "inputnode",
+      "user_lesion_stats_json",
+      "ktrans_map_meta",
+      "user_lesion_stats_json"
+    ],
+    [
+      "ktrans_map_meta",
+      "meta_dict",
+      "ktrans_map_sink",
+      "meta_dict"
+    ],
+    [
+      "ktrans_map_sink",
+      "out_file",
+      "dd_merge",
+      "in1"
+    ],
+    [
+      "perf_sources",
+      "out",
+      "base_minimal_meta",
+      "source_paths"
+    ],
+    [
+      "perf_sources",
+      "out",
+      "base_perf_meta",
+      "source_paths"
+    ],
+    [
+      "perf_sources",
+      "out",
+      "base_perf_no_ktrans_meta",
+      "source_paths"
+    ]
+  ],
+  "function_io": {
+    "base_minimal_meta": {
+      "input_names": [
+        "bids_dir",
+        "minimal",
+        "pk_dependent",
+        "provenance_dict",
+        "qc_metrics",
+        "reference_voxel_source",
+        "session",
+        "source_paths",
+        "subject"
+      ],
+      "output_names": [
+        "meta_dict"
+      ]
+    },
+    "base_perf_meta": {
+      "input_names": [
+        "bids_dir",
+        "minimal",
+        "pk_dependent",
+        "provenance_dict",
+        "qc_metrics",
+        "reference_voxel_source",
+        "session",
+        "source_paths",
+        "subject"
+      ],
+      "output_names": [
+        "meta_dict"
+      ]
+    },
+    "base_perf_no_ktrans_meta": {
+      "input_names": [
+        "bids_dir",
+        "minimal",
+        "pk_dependent",
+        "provenance_dict",
+        "qc_metrics",
+        "reference_voxel_source",
+        "session",
+        "source_paths",
+        "subject"
+      ],
+      "output_names": [
+        "meta_dict"
+      ]
+    },
+    "dataset_description": {
+      "input_names": [
+        "_trigger",
+        "bids_dir",
+        "output_dir"
+      ],
+      "output_names": [
+        "dd_path"
+      ]
+    },
+    "dce_mean_meta": {
+      "input_names": [
+        "base",
+        "motion_correct",
+        "qc_metrics"
+      ],
+      "output_names": [
+        "meta_dict"
+      ]
+    },
+    "dce_mean_sink": {
+      "input_names": [
+        "bids_suffix",
+        "datatype",
+        "desc",
+        "in_file",
+        "meta_dict",
+        "output_dir",
+        "session",
+        "subject",
+        "suffix"
+      ],
+      "output_names": [
+        "out_file"
+      ]
+    },
+    "dce_moco_meta": {
+      "input_names": [
+        "base",
+        "config_dict",
+        "description",
+        "preflight_warnings",
+        "presence_warnings",
+        "provenance_dict",
+        "qc_metrics"
+      ],
+      "output_names": [
+        "meta_dict"
+      ]
+    },
+    "dce_moco_sink": {
+      "input_names": [
+        "bids_suffix",
+        "datatype",
+        "desc",
+        "in_file",
+        "meta_dict",
+        "output_dir",
+        "session",
+        "subject",
+        "suffix"
+      ],
+      "output_names": [
+        "out_file"
+      ]
+    },
+    "ktrans_map_meta": {
+      "input_names": [
+        "base",
+        "description",
+        "lesion_stats_json",
+        "map_key",
+        "qc_metrics",
+        "roi_stats_json",
+        "units",
+        "user_lesion_stats_json"
+      ],
+      "output_names": [
+        "meta_dict"
+      ]
+    },
+    "ktrans_map_sink": {
+      "input_names": [
+        "bids_suffix",
+        "datatype",
+        "desc",
+        "in_file",
+        "meta_dict",
+        "output_dir",
+        "session",
+        "subject",
+        "suffix"
+      ],
+      "output_names": [
+        "out_file"
+      ]
+    }
+  },
+  "function_sha256": {
+    "base_minimal_meta": "98ed832b6deb40bf732d84e1e4f2bd5f1f4a86850f159e8c8c4ee8e11f54306b",
+    "base_perf_meta": "98ed832b6deb40bf732d84e1e4f2bd5f1f4a86850f159e8c8c4ee8e11f54306b",
+    "base_perf_no_ktrans_meta": "98ed832b6deb40bf732d84e1e4f2bd5f1f4a86850f159e8c8c4ee8e11f54306b",
+    "dataset_description": "4f030212e4217b96b33ce28a7ed92f196a066b4199d13919b0c6168ba0c7fa20",
+    "dce_mean_meta": "a44a6ea06e8531a974dba250d97ef7a405462f31fe12100774fc318f8607d861",
+    "dce_mean_sink": "ca5ae1f893d6aa902d88719c995be8a064c739a193fb68f24a7a6cf4f74b2bb6",
+    "dce_moco_meta": "5bbcf6e98686b06f51b99c164dc9eb5cb1d9dccb2b86321ea806312fc3a3431d",
+    "dce_moco_sink": "ca5ae1f893d6aa902d88719c995be8a064c739a193fb68f24a7a6cf4f74b2bb6",
+    "ktrans_map_meta": "1c94533442eb68a4660356be7da79877233f24bcd85eacb51526424130306f6e",
+    "ktrans_map_sink": "ca5ae1f893d6aa902d88719c995be8a064c739a193fb68f24a7a6cf4f74b2bb6"
+  },
+  "nipype_version": "1.10.0",
+  "node_attrs": {
+    "anat_mask_sources": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "base_minimal_meta": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "base_perf_meta": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "base_perf_no_ktrans_meta": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "dataset_description": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "dce_mean_meta": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "dce_mean_sink": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "dce_moco_meta": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "dce_moco_sink": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "dd_merge": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "figures_writer": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "inputnode": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "ktrans_map_meta": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "ktrans_map_sink": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "outputnode": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "perf_sources": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    }
+  },
+  "node_params": {
+    "anat_mask_sources": {
+      "axis": "vstack",
+      "no_flatten": false,
+      "ravel_inputs": false
+    },
+    "base_minimal_meta": {
+      "function_str": "def _build_dce_base(\n    source_paths: list[str],\n    reference_voxel_source: str,\n    bids_dir: str,\n    subject: str,\n    session: str,\n    provenance_dict: dict | None = None,\n    qc_metrics: dict | None = None,\n    minimal: bool = False,\n    pk_dependent: bool = True,\n) -> dict:\n    from pmriprep.utils.sidecar_builders import build_dce_base_sidecar\n\n    return build_dce_base_sidecar(\n        source_paths=source_paths,\n        reference_voxel_source=reference_voxel_source,\n        bids_dir=bids_dir,\n        subject=subject,\n        session=session or None,\n        provenance_dict=provenance_dict,\n        qc_metrics=qc_metrics,\n        minimal=minimal,\n        pk_dependent=pk_dependent,\n    )\n",
+      "minimal": true,
+      "pk_dependent": false,
+      "qc_metrics": null
+    },
+    "base_perf_meta": {
+      "function_str": "def _build_dce_base(\n    source_paths: list[str],\n    reference_voxel_source: str,\n    bids_dir: str,\n    subject: str,\n    session: str,\n    provenance_dict: dict | None = None,\n    qc_metrics: dict | None = None,\n    minimal: bool = False,\n    pk_dependent: bool = True,\n) -> dict:\n    from pmriprep.utils.sidecar_builders import build_dce_base_sidecar\n\n    return build_dce_base_sidecar(\n        source_paths=source_paths,\n        reference_voxel_source=reference_voxel_source,\n        bids_dir=bids_dir,\n        subject=subject,\n        session=session or None,\n        provenance_dict=provenance_dict,\n        qc_metrics=qc_metrics,\n        minimal=minimal,\n        pk_dependent=pk_dependent,\n    )\n",
+      "minimal": false,
+      "pk_dependent": true
+    },
+    "base_perf_no_ktrans_meta": {
+      "function_str": "def _build_dce_base(\n    source_paths: list[str],\n    reference_voxel_source: str,\n    bids_dir: str,\n    subject: str,\n    session: str,\n    provenance_dict: dict | None = None,\n    qc_metrics: dict | None = None,\n    minimal: bool = False,\n    pk_dependent: bool = True,\n) -> dict:\n    from pmriprep.utils.sidecar_builders import build_dce_base_sidecar\n\n    return build_dce_base_sidecar(\n        source_paths=source_paths,\n        reference_voxel_source=reference_voxel_source,\n        bids_dir=bids_dir,\n        subject=subject,\n        session=session or None,\n        provenance_dict=provenance_dict,\n        qc_metrics=qc_metrics,\n        minimal=minimal,\n        pk_dependent=pk_dependent,\n    )\n",
+      "minimal": false,
+      "pk_dependent": false
+    },
+    "dce_mean_meta": {
+      "function_str": "def _build_dce_mean_meta(\n    base: dict,\n    qc_metrics: dict | None = None,\n    motion_correct: bool = True,\n) -> dict:\n    \"\"\"Describe the all-volume DCE temporal mean without implying baseline contrast.\"\"\"\n    out = dict(base)\n    out.update({\n        \"Description\": \"Temporal mean across all acquired DCE volumes\",\n        \"TemporalAggregation\": \"arithmetic_mean_all_acquired_volumes\",\n        \"IncludesPostContrastVolumes\": True,\n        \"MotionCorrectionApplied\": bool(motion_correct),\n        \"SkullStripped\": False,\n    })\n    preprocessing = (qc_metrics or {}).get(\"preprocessing\", {})\n    if isinstance(preprocessing, dict):\n        n_volumes = preprocessing.get(\"n_volumes\")\n        if n_volumes is not None:\n            out[\"NumberOfVolumes\"] = int(n_volumes)\n        baseline_frames = preprocessing.get(\n            \"baseline_frames_used\", preprocessing.get(\"baseline_frames\")\n        )\n        if baseline_frames is not None:\n            out[\"BaselineFrames\"] = int(baseline_frames)\n    return out\n",
+      "motion_correct": false
+    },
+    "dce_mean_sink": {
+      "bids_suffix": "stat",
+      "datatype": "perf",
+      "desc": "dceMean",
+      "suffix": ""
+    },
+    "dce_moco_meta": {
+      "description": "Motion-corrected 4D DCE time series",
+      "presence_warnings": [
+        "Brain mask in DCE space not available",
+        "NAWM mask in DCE space not available",
+        "Lesion mask in DCE space not available",
+        "DCE to T1w registration transform not available"
+      ]
+    },
+    "dce_moco_sink": {
+      "bids_suffix": "dce",
+      "datatype": "perf",
+      "desc": "dcePreproc",
+      "suffix": ""
+    },
+    "dd_merge": {
+      "axis": "vstack",
+      "no_flatten": false,
+      "ravel_inputs": false
+    },
+    "figures_writer": {
+      "bids_dir": "",
+      "motion_applied": false,
+      "session_id": ""
+    },
+    "inputnode": {
+      "session_id": "0001",
+      "subject_id": "0001"
+    },
+    "ktrans_map_meta": {
+      "function_str": "def _build_dce_pk_map_meta(\n    base: dict,\n    description: str,\n    units: str | None = None,\n    qc_metrics: dict | None = None,\n    map_key: str = \"\",\n    lesion_stats_json: str | None = None,\n    user_lesion_stats_json: str | None = None,\n    roi_stats_json: str | None = None,\n) -> dict:\n    \"\"\"Compose a DCE per-PK-map sidecar with cosmetic enrichment + stats fragments.\n\n    Extracts the per-map fragment for ``map_key`` (e.g. ``\"ktrans\"``)\n    from each aggregate stats JSON and attaches as ``LesionStats``,\n    ``UserLesionStats``, or ``ROIStats``. Cross-modality fields\n    (``DSCDCECrossValCorrelation``, ``CBVNegativeFraction``) land only on\n    the maps they apply to.\n    \"\"\"\n    from pmriprep.utils.lesion_stats import load_lesion_stats_fragment\n    from pmriprep.utils.sidecar_builders import enrich_dce_pk_map_sidecar\n\n    out = dict(base)\n    out[\"Description\"] = description\n    if units is not None:\n        out[\"Units\"] = units\n\n    fragment = load_lesion_stats_fragment(lesion_stats_json, map_key)\n\n    enrich_dce_pk_map_sidecar(\n        out,\n        qc_metrics=qc_metrics if isinstance(qc_metrics, dict) else None,\n        map_key=map_key,\n        lesion_fragment=fragment,\n    )\n\n    user_fragment = load_lesion_stats_fragment(\n        user_lesion_stats_json, map_key,\n    )\n    if user_fragment:\n        out[\"UserLesionStats\"] = user_fragment\n    roi_fragment = load_lesion_stats_fragment(roi_stats_json, map_key)\n    if roi_fragment:\n        out[\"ROIStats\"] = roi_fragment\n    return out\n",
+      "map_key": "ktrans"
+    },
+    "ktrans_map_sink": {
+      "bids_suffix": "stat",
+      "datatype": "perf",
+      "desc": "dce",
+      "suffix": "Ktrans"
+    },
+    "perf_sources": {
+      "axis": "vstack",
+      "no_flatten": false,
+      "ravel_inputs": false
+    }
+  },
+  "nodes": [
+    [
+      "anat_mask_sources",
+      "Merge"
+    ],
+    [
+      "base_minimal_meta",
+      "Function"
+    ],
+    [
+      "base_perf_meta",
+      "Function"
+    ],
+    [
+      "base_perf_no_ktrans_meta",
+      "Function"
+    ],
+    [
+      "dataset_description",
+      "Function"
+    ],
+    [
+      "dce_mean_meta",
+      "Function"
+    ],
+    [
+      "dce_mean_sink",
+      "Function"
+    ],
+    [
+      "dce_moco_meta",
+      "Function"
+    ],
+    [
+      "dce_moco_sink",
+      "Function"
+    ],
+    [
+      "dd_merge",
+      "Merge"
+    ],
+    [
+      "figures_writer",
+      "DCEFiguresWriter"
+    ],
+    [
+      "inputnode",
+      "IdentityInterface"
+    ],
+    [
+      "ktrans_map_meta",
+      "Function"
+    ],
+    [
+      "ktrans_map_sink",
+      "Function"
+    ],
+    [
+      "outputnode",
+      "IdentityInterface"
+    ],
+    [
+      "perf_sources",
+      "Merge"
+    ]
+  ],
+  "public_outputnode_fields": [
+    "dataset_description_done",
+    "done"
+  ]
+}
