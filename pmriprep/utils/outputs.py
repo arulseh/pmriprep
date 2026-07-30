@@ -107,13 +107,19 @@ def write_dataset_description(
 
     existing_generated_by: List[Dict[str, Any]] = []
     existing_dataset_links: Dict[str, str] = {}
+    existing_source_datasets: List[Dict[str, str]] = []
     if desc_path.exists():
         try:
             with open(desc_path) as f:
                 existing = json.load(f)
+            if not isinstance(existing, dict):
+                raise ValueError(
+                    f"Existing derivative dataset description must be a JSON object: {desc_path}"
+                )
             existing_generated_by = [
                 e for e in existing.get("GeneratedBy", [])
-                if e.get("Name") not in _PMRIPREP_MANAGED_TOOL_NAMES
+                if isinstance(e, dict)
+                and e.get("Name") not in _PMRIPREP_MANAGED_TOOL_NAMES
             ]
             links = existing.get("DatasetLinks")
             if isinstance(links, dict):
@@ -121,6 +127,13 @@ def write_dataset_description(
                     str(name): str(location)
                     for name, location in links.items()
                 }
+            sources = existing.get("SourceDatasets")
+            if isinstance(sources, list):
+                existing_source_datasets = [
+                    {str(key): str(value) for key, value in source.items()}
+                    for source in sources
+                    if isinstance(source, dict)
+                ]
         except json.JSONDecodeError as exc:
             raise ValueError(
                 f"Existing derivative dataset description is not valid JSON: {desc_path}"
@@ -131,25 +144,68 @@ def write_dataset_description(
         Path(bids_dir).resolve(),
         start=pipeline_dir.resolve(),
     )).as_posix()
+    prior_raw_link = existing_dataset_links.get("raw")
+    prior_raw_path = (
+        (pipeline_dir / prior_raw_link).resolve()
+        if prior_raw_link is not None and ":" not in prior_raw_link
+        else None
+    )
+    if (
+        prior_raw_link is not None
+        and prior_raw_link != raw_dataset_link
+        and prior_raw_path != Path(bids_dir).resolve()
+    ):
+        raise ValueError(
+            "Existing derivative dataset links to a different raw dataset: "
+            f"{prior_raw_link!r} != {raw_dataset_link!r}"
+        )
     dataset_links = {**existing_dataset_links, "raw": raw_dataset_link}
+    if "" in dataset_links:
+        raise ValueError("DatasetLinks must not contain the reserved empty dataset name")
+
+    raw_dataset_path = Path(bids_dir).resolve()
+    source_datasets = list(existing_source_datasets)
+    if not any(
+        source.get("URL") == raw_dataset_link
+        or (
+            source.get("URL") is not None
+            and ":" not in source["URL"]
+            and (pipeline_dir / source["URL"]).resolve() == raw_dataset_path
+        )
+        for source in source_datasets
+    ):
+        source_datasets.append({"URL": raw_dataset_link})
 
     description: Dict[str, Any] = {
         "Name": "PMRIPrep: automated preprocessing and quantification of DSC and DCE MRI",
         "BIDSVersion": BIDS_DERIVATIVES_VERSION,
         "DatasetType": "derivative",
         "DatasetLinks": dataset_links,
-        "GeneratedBy": existing_generated_by + managed_generated_by,
-        "SourceDatasets": [
-            {"URL": raw_dataset_link},
-        ],
+        "GeneratedBy": managed_generated_by + existing_generated_by,
+        "SourceDatasets": source_datasets,
         "HowToAcknowledge": (
             f"Please cite PMRIPrep (version {pmriprep.__version__}), "
             f"{PMRIPREP_CODE_URL}"
         ),
         "License": "Apache-2.0",
     }
-    with open(desc_path, "w") as f:
-        json.dump(description, f, indent=2)
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            dir=pipeline_dir,
+            prefix=".dataset_description.",
+            suffix=".tmp",
+            delete=False,
+        ) as temporary:
+            temporary_path = Path(temporary.name)
+            json.dump(description, temporary, indent=2)
+            temporary.flush()
+            os.fsync(temporary.fileno())
+        os.replace(temporary_path, desc_path)
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
 
     write_derivative_readme(pipeline_dir)
     write_bidsignore(pipeline_dir)

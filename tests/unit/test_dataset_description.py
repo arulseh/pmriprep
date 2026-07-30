@@ -102,13 +102,14 @@ def test_preserves_prior_tool_generated_by(tmp_path: Path) -> None:
     desc = _read(pipeline_dir / "dataset_description.json")
 
     names = [e["Name"] for e in desc["GeneratedBy"]]
+    assert names[0] == "pmriprep"
     assert "fmriprep" in names
     assert "pmriprep" in names
     fmri = next(e for e in desc["GeneratedBy"] if e["Name"] == "fmriprep")
     assert fmri["Version"] == "23.0.0"
 
 
-def test_preserves_foreign_dataset_links(tmp_path: Path) -> None:
+def test_preserves_foreign_dataset_links_and_source_datasets(tmp_path: Path) -> None:
     pipeline_dir = tmp_path / "pmriprep"
     pipeline_dir.mkdir(parents=True)
     (pipeline_dir / "dataset_description.json").write_text(json.dumps({
@@ -116,7 +117,10 @@ def test_preserves_foreign_dataset_links(tmp_path: Path) -> None:
         "BIDSVersion": "1.11.1",
         "DatasetType": "derivative",
         "GeneratedBy": [{"Name": "other"}],
-        "DatasetLinks": {"atlas": "../atlas", "raw": "stale"},
+        "DatasetLinks": {"atlas": "../atlas"},
+        "SourceDatasets": [
+            {"URL": "../atlas", "DOI": "doi:10.1234/example"},
+        ],
     }))
 
     write_dataset_description(pipeline_dir, str(tmp_path / "raw_bids"))
@@ -126,6 +130,85 @@ def test_preserves_foreign_dataset_links(tmp_path: Path) -> None:
         "atlas": "../atlas",
         "raw": "../raw_bids",
     }
+    assert desc["SourceDatasets"] == [
+        {"URL": "../atlas", "DOI": "doi:10.1234/example"},
+        {"URL": "../raw_bids"},
+    ]
+
+
+def test_rejects_conflicting_raw_dataset_link(tmp_path: Path) -> None:
+    pipeline_dir = tmp_path / "pmriprep"
+    pipeline_dir.mkdir(parents=True)
+    (pipeline_dir / "dataset_description.json").write_text(json.dumps({
+        "Name": "existing",
+        "BIDSVersion": "1.11.1",
+        "DatasetType": "derivative",
+        "GeneratedBy": [{"Name": "pmriprep"}],
+        "DatasetLinks": {"raw": "../different_raw"},
+    }))
+
+    with pytest.raises(ValueError, match="different raw dataset"):
+        write_dataset_description(pipeline_dir, str(tmp_path / "raw_bids"))
+
+
+def test_accepts_equivalent_local_raw_dataset_link(tmp_path: Path) -> None:
+    pipeline_dir = tmp_path / "pmriprep"
+    pipeline_dir.mkdir(parents=True)
+    (pipeline_dir / "dataset_description.json").write_text(json.dumps({
+        "Name": "existing",
+        "BIDSVersion": "1.11.1",
+        "DatasetType": "derivative",
+        "GeneratedBy": [{"Name": "pmriprep"}],
+        "DatasetLinks": {"raw": "../raw_bids/"},
+        "SourceDatasets": [{"URL": "../raw_bids/"}],
+    }))
+
+    write_dataset_description(pipeline_dir, str(tmp_path / "raw_bids"))
+    desc = _read(pipeline_dir / "dataset_description.json")
+    assert desc["DatasetLinks"]["raw"] == "../raw_bids"
+    assert desc["SourceDatasets"] == [{"URL": "../raw_bids/"}]
+
+
+def test_rejects_reserved_empty_dataset_link(tmp_path: Path) -> None:
+    pipeline_dir = tmp_path / "pmriprep"
+    pipeline_dir.mkdir(parents=True)
+    (pipeline_dir / "dataset_description.json").write_text(json.dumps({
+        "Name": "existing",
+        "BIDSVersion": "1.11.1",
+        "DatasetType": "derivative",
+        "GeneratedBy": [{"Name": "pmriprep"}],
+        "DatasetLinks": {"": "../invalid"},
+    }))
+
+    with pytest.raises(ValueError, match="reserved empty dataset name"):
+        write_dataset_description(pipeline_dir, str(tmp_path / "raw_bids"))
+
+
+def test_failed_atomic_replace_preserves_existing_description(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pipeline_dir = tmp_path / "pmriprep"
+    pipeline_dir.mkdir(parents=True)
+    desc_path = pipeline_dir / "dataset_description.json"
+    original = json.dumps({
+        "Name": "existing",
+        "BIDSVersion": "1.11.1",
+        "DatasetType": "derivative",
+        "GeneratedBy": [{"Name": "pmriprep"}],
+        "DatasetLinks": {"raw": "../raw_bids"},
+    })
+    desc_path.write_text(original)
+
+    def _fail_replace(_source: Path, _destination: Path) -> None:
+        raise OSError("simulated replacement failure")
+
+    monkeypatch.setattr("pmriprep.utils.outputs.os.replace", _fail_replace)
+    with pytest.raises(OSError, match="simulated replacement failure"):
+        write_dataset_description(pipeline_dir, str(tmp_path / "raw_bids"))
+
+    assert desc_path.read_text() == original
+    assert list(pipeline_dir.glob(".dataset_description.*.tmp")) == []
 
 
 def test_re_run_replaces_stale_pmriprep_entry(tmp_path: Path) -> None:
