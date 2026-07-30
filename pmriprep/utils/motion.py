@@ -38,7 +38,9 @@ def calculate_framewise_displacement(
 
     Notes
     -----
-    FD is undefined for the first frame (reference), so we set it to 0.
+    FD is undefined for the first volume because it has no predecessor, so the
+    returned numerical array uses 0 at that position. Public confounds encode
+    it as ``n/a``.
     """
     motion_params = np.asarray(motion_params, dtype=np.float64)
 
@@ -68,48 +70,3 @@ def calculate_framewise_displacement(
     fd_full[1:] = fd
 
     return fd_full
-
-
-def calculate_rms_displacement(
-    motion_params: npt.NDArray[Any],
-    head_radius: float = 50.0,
-) -> npt.NDArray[Any]:
-    """Calculate RMS displacement from motion parameters.
-
-    RMS displacement combines rotations and translations into a single
-    measure of total displacement from the reference position.
-
-    Parameters
-    ----------
-    motion_params : np.ndarray
-        Motion parameters array with shape (N, 6).
-        Columns: rot_x, rot_y, rot_z (radians), trans_x, trans_y, trans_z (mm).
-    head_radius : float
-        Head radius in mm for converting rotations to displacements (default: 50mm).
-
-    Returns
-    -------
-    np.ndarray
-        RMS displacement for each frame relative to reference (length N).
-
-    Notes
-    -----
-    First frame RMS is always 0 (it's the reference).
-    """
-    motion_params = np.asarray(motion_params, dtype=np.float64)
-
-    if motion_params.ndim == 1:
-        motion_params = motion_params.reshape(-1, 6)
-
-    # Rotations (columns 0-2) in radians, translations (columns 3-5) in mm
-    rot = motion_params[:, :3]  # radians
-    trans = motion_params[:, 3:]  # mm
-
-    # Convert rotations to mm displacement using head radius
-    rot_disp = rot * head_radius  # mm
-
-    # RMS displacement: sqrt(sum of squared displacements / 6)
-    all_disp = np.hstack([rot_disp, trans])  # (N, 6)
-    rms = np.sqrt(np.mean(all_disp ** 2, axis=1))
-
-    return rms  # type: ignore[no-any-return]

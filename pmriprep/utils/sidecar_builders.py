@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 PathLike = Union[str, Path]
 
 _PIPELINE_QC_STRIP_KEYS = frozenset({
-    "fd_list", "rms_list", "outlier_frames",
+    "fd_list", "outlier_frames",
     "candidate_coords", "candidate_scores",
     "cascade_anchor_outcomes", "cascade_gate_decisions",
     "aif_gate_decisions", "motion_summary",

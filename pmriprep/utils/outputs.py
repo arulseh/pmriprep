@@ -258,7 +258,6 @@ _CONFOUNDS_COLUMNS = [
     "rot_y",
     "rot_z",
     "framewise_displacement",
-    "rmsd",
 ]
 
 
@@ -269,12 +268,12 @@ def par_to_confounds_tsv(
     """Convert an FSL mcflirt ``.par`` file to a BIDS confounds TSV.
 
     FSL column order: rot_x, rot_y, rot_z, trans_x, trans_y, trans_z.
-    BIDS column order: trans_x, trans_y, trans_z, rot_x, rot_y, rot_z,
-    framewise_displacement, rmsd.
+    Output column order: trans_x, trans_y, trans_z, rot_x, rot_y, rot_z,
+    framewise_displacement.
 
     Rotations are kept in **radians** (matching fMRIPrep convention).
-    The first row of ``framewise_displacement`` is ``n/a`` because FD is
-    undefined for the reference frame.
+    The first row of ``framewise_displacement`` is ``n/a`` because the first
+    acquired volume has no preceding volume.
 
     Parameters
     ----------
@@ -288,10 +287,7 @@ def par_to_confounds_tsv(
     Path
         Path to the written TSV file.
     """
-    from pmriprep.utils.motion import (
-        calculate_framewise_displacement,
-        calculate_rms_displacement,
-    )
+    from pmriprep.utils.motion import calculate_framewise_displacement
 
     par_file = Path(par_file)
     output_path = Path(output_path)
@@ -301,6 +297,13 @@ def par_to_confounds_tsv(
     params = np.loadtxt(str(par_file))
     if params.ndim == 1:
         params = params.reshape(1, -1)
+    if params.ndim != 2 or params.shape[1] != 6:
+        raise ValueError(
+            "MCFLIRT parameter file must contain exactly 6 columns; "
+            f"got shape {params.shape}"
+        )
+    if not np.all(np.isfinite(params)):
+        raise ValueError("MCFLIRT parameter file contains non-finite values")
 
     # Reorder: FSL [rot(0:3), trans(3:6)] → BIDS [trans, rot]
     trans = params[:, 3:6]
@@ -308,7 +311,6 @@ def par_to_confounds_tsv(
 
     # Compute derived metrics (functions expect FSL order)
     fd = calculate_framewise_displacement(params)
-    rmsd = calculate_rms_displacement(params)
 
     # Build output lines
     n_frames = params.shape[0]
@@ -322,7 +324,6 @@ def par_to_confounds_tsv(
             f"{rot[i, 1]:.6f}",
             f"{rot[i, 2]:.6f}",
             "n/a" if i == 0 else f"{fd[i]:.6f}",
-            f"{rmsd[i]:.6f}",
         ]
         lines.append("\t".join(row_vals))
 
@@ -415,15 +416,6 @@ def write_confounds_sidecar(
             "Description": (
                 "Sum of absolute translations plus rotations "
                 "converted to mm via 50 mm head radius."
-            ),
-            "Units": "mm",
-            "HeadRadius": 50.0,
-        },
-        "rmsd": {
-            "Description": (
-                "Root-mean-square displacement relative to reference frame, "
-                "combining rotations (converted via 50 mm head radius) "
-                "and translations."
             ),
             "Units": "mm",
             "HeadRadius": 50.0,

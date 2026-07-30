@@ -24,7 +24,6 @@ from nipype.interfaces.base import (  # type: ignore[import-untyped]
 
 from pmriprep.utils.motion import (  # noqa: E402
     calculate_framewise_displacement,
-    calculate_rms_displacement,
 )
 
 
@@ -96,10 +95,8 @@ class MotionCorrectionOutputSpec(TraitedSpec):
     out_params = File(exists=True, desc="Motion parameters file (.par)")
     mean_img = File(exists=True, desc="Mean image of motion-corrected data")
     fd = traits.List(traits.Float, desc="Framewise displacement per volume (mm)")
-    rms = traits.List(traits.Float, desc="RMS displacement per volume (mm)")
     fd_mean = traits.Float(desc="Mean framewise displacement (mm)")
     fd_max = traits.Float(desc="Maximum framewise displacement (mm)")
-    rms_mean = traits.Float(desc="Mean RMS displacement (mm)")
     n_outliers = traits.Int(desc="Number of outlier volumes (FD > threshold)")
     outlier_frames = traits.List(traits.Int, desc="Indices of outlier volumes")
     qc_metrics = traits.Dict(desc="QC metrics dictionary")
@@ -137,8 +134,6 @@ class MotionCorrection(CommandLine):
         Mean image of motion-corrected data
     fd : list
         Framewise displacement per volume (mm)
-    rms : list
-        RMS displacement per volume (mm)
     fd_mean : float
         Mean FD across all volumes
     fd_max : float
@@ -312,26 +307,21 @@ class MotionCorrection(CommandLine):
                 # Load motion parameters
                 motion_params = np.loadtxt(params_file)
 
-                # Calculate FD and RMS
+                # Calculate framewise displacement.
                 head_radius = float(self.inputs.head_radius)
                 fd = calculate_framewise_displacement(motion_params, head_radius)
-                rms = calculate_rms_displacement(motion_params, head_radius)
 
                 # Convert to lists for Nipype traits
                 fd_list = [float(x) for x in fd]
-                rms_list = [float(x) for x in rms]
 
                 outputs["fd"] = fd_list
-                outputs["rms"] = rms_list
 
                 # Summary metrics
                 fd_mean = float(np.mean(fd[1:]))  # Exclude first frame (always 0)
                 fd_max = float(np.max(fd))
-                rms_mean = float(np.mean(rms))
 
                 outputs["fd_mean"] = fd_mean
                 outputs["fd_max"] = fd_max
-                outputs["rms_mean"] = rms_mean
 
                 # Outlier detection
                 motion_thresh = float(self.inputs.motion_thresh)
@@ -356,8 +346,6 @@ class MotionCorrection(CommandLine):
                     "fd_max": fd_max,
                     "motion_status": motion_status,
                     "fd_list": fd_list,
-                    "rms_mean": rms_mean,
-                    "rms_list": rms_list,
                     "n_outliers": n_outliers,
                     "outlier_frames": outlier_frames,
                     "motion_thresh": motion_thresh,
