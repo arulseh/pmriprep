@@ -181,6 +181,7 @@ class TestMAPFitting:
         result = fitter.fit_map(concentration, aif, t, compute_uncertainties=True)
 
         assert len(result.uncertainties) > 0
+        assert result.uncertainty_source == "laplace_hessian"
         for name, val in result.uncertainties.items():
             assert val >= 0.0, f"Uncertainty for {name} is negative: {val}"
 
@@ -235,6 +236,7 @@ class TestMAPFitting:
 
         assert np.isnan(result.uncertainties["cbf"])
         assert result.credible_intervals == {}
+        assert result.uncertainty_source == "uncertainty_unavailable"
 
     def test_fit_map_flat_concentration(self) -> None:
         """All-zero concentration yields CBF near zero."""

@@ -263,6 +263,8 @@ def _dsc_fit_single_voxel(voxel_data: _DSCVoxelInput) -> dict[str, Any]:
         # their joint covariance or derived posterior samples.
         if result.uncertainties:
             out["cbf_std"] = result.uncertainties.get("cbf", np.nan)
+        if inference == "map":
+            out["uncertainty_source"] = result.uncertainty_source
 
         out["r_squared"] = result.r_squared
         out["converged"] = result.passes_convergence()
@@ -1995,6 +1997,8 @@ class ComputeDSCMaps(BaseInterface):
         n_evaluation_budget_exhausted = 0
         n_cth_accepted = 0
         n_cth_alpha_at_bound = 0
+        n_map_uncertainty_evaluated = 0
+        n_map_uncertainty_unavailable = 0
         r_squared_list: list[float] = []
 
         for res in results:
@@ -2045,6 +2049,13 @@ class ComputeDSCMaps(BaseInterface):
                 n_converged += 1
             if res.get("evaluation_budget_exhausted"):
                 n_evaluation_budget_exhausted += 1
+            if inference == "map" and not res.get("needs_fallback"):
+                source = res.get("uncertainty_source", "not_computed")
+                if source in {"laplace_hessian", "uncertainty_unavailable"}:
+                    n_map_uncertainty_evaluated += 1
+                    n_map_uncertainty_unavailable += int(
+                        source == "uncertainty_unavailable"
+                    )
 
         # Fallback: run oSVD for voxels where parametric fit failed or R² < 0.5
         # Fall back to oSVD for poor vascular fits; ground truth maps
@@ -2126,6 +2137,15 @@ class ComputeDSCMaps(BaseInterface):
             qc_metrics["cth_alpha_at_bound_fraction"] = (
                 n_cth_alpha_at_bound / max(1, n_cth_accepted)
             )
+        if inference == "map":
+            qc_metrics["map_uncertainty"] = {
+                "n_evaluated": n_map_uncertainty_evaluated,
+                "n_uncertainty_unavailable": n_map_uncertainty_unavailable,
+                "uncertainty_unavailable_fraction": (
+                    n_map_uncertainty_unavailable
+                    / max(1, n_map_uncertainty_evaluated)
+                ),
+            }
 
         qc_metrics["n_fallback_requested"] = n_fallback_requested
         qc_metrics["n_fallback_attempted"] = n_fallback_attempted
@@ -2472,6 +2492,11 @@ class ComputeDSCMaps(BaseInterface):
                 cbf_std_val = float(batched_result.uncertainties.get(
                     "cbf", np.full(n_voxels, np.nan))[i])
                 out["cbf_std"] = cbf_std_val
+                out["uncertainty_source"] = (
+                    "laplace_hessian"
+                    if np.isfinite(cbf_std_val)
+                    else "uncertainty_unavailable"
+                )
 
             out["r_squared"] = float(batched_result.r_squared[i])
             out["converged"] = bool(batched_result.converged[i])

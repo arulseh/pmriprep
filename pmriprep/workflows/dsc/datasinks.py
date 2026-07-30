@@ -339,6 +339,12 @@ def _build_map_meta(
         )
     if map_key == "fallback":
         merged_extra["Type"] = "ROI"
+    if map_key == "cbf_std" and isinstance(qc_metrics, dict):
+        deconvolution = qc_metrics.get("deconvolution")
+        if isinstance(deconvolution, dict):
+            accounting = deconvolution.get("map_uncertainty")
+            if isinstance(accounting, dict):
+                merged_extra["MAPUncertaintyAccounting"] = dict(accounting)
     if fragment:
         merged_extra["LesionStats"] = fragment
     if user_fragment:

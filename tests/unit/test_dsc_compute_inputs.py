@@ -186,6 +186,8 @@ def test_parametric_fit_health_uses_admissible_denominator(
                 "tmax": 0.0,
                 "alpha": 3.0,
                 "cth": 1.25,
+                "cbf_std": np.nan,
+                "uncertainty_source": "uncertainty_unavailable",
             },
             {
                 "coords": (1, 0, 0),
@@ -199,6 +201,8 @@ def test_parametric_fit_health_uses_admissible_denominator(
                 "tmax": 0.0,
                 "alpha": 3.0,
                 "cth": 2.5,
+                "cbf_std": np.nan,
+                "uncertainty_source": "uncertainty_unavailable",
             },
             {
                 "coords": (2, 0, 0),
@@ -239,6 +243,11 @@ def test_parametric_fit_health_uses_admissible_denominator(
     assert qc["fallback_rate"] == pytest.approx(0.5)
     assert qc["fallback_requested_rate"] == pytest.approx(0.5)
     assert qc["fe_plateau_rate"] == pytest.approx(0.5)
+    assert qc["map_uncertainty"] == {
+        "n_evaluated": 1,
+        "n_uncertainty_unavailable": 1,
+        "uncertainty_unavailable_fraction": 1.0,
+    }
     cth = result[5]
     assert cth is not None
     assert cth[0, 0, 0] == pytest.approx(1.25)

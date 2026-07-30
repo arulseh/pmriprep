@@ -73,6 +73,7 @@ class DSCFitResult:
         n_observations: Number of time points used in fitting.
         converged: Whether the fitting algorithm converged.
         fitting_method: Method used ('nlls', 'map', 'vi', 'mcmc').
+        uncertainty_source: Run-time source of uncertainty estimates.
         optimizer_status: Backend-specific optimizer termination status.
         n_function_evaluations: Number of forward-objective evaluations.
         evaluation_budget_exhausted: Whether optimization stopped at its
@@ -108,6 +109,7 @@ class DSCFitResult:
     n_observations: int = 0
     converged: bool = False
     fitting_method: str = ""
+    uncertainty_source: str = "not_computed"
     optimizer_status: int | None = None
     n_function_evaluations: int | None = None
     evaluation_budget_exhausted: bool = False

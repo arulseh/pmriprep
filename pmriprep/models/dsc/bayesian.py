@@ -622,14 +622,17 @@ class BayesianDSCFitter:
                         upper_bounds_t[i],
                         bounds[i],
                     )
+                uncertainty_source = "laplace_hessian"
             except np.linalg.LinAlgError:
                 uncertainties = {
                     name: float("nan") for name in fitting_param_names
                 }
                 credible_intervals = {}
+                uncertainty_source = "uncertainty_unavailable"
         else:
             uncertainties = {}
             credible_intervals = {}
+            uncertainty_source = "not_computed"
 
         # Compute fitted curves using model-space params
         fitted_residue = self.model.compute_fitted_residue(fitted_model_params, time_points)
@@ -650,6 +653,7 @@ class BayesianDSCFitter:
             n_observations=len(concentration),
             converged=converged,
             fitting_method="map",
+            uncertainty_source=uncertainty_source,
             fitted_residue=fitted_residue,
             fitted_tissue_curve=fitted_tissue,
         )

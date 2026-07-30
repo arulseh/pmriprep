@@ -211,6 +211,26 @@ def test_parametric_provenance_carries_fit_health_denominators() -> None:
     assert extra["FallbackSucceededFraction"] == pytest.approx(0.125)
 
 
+def test_cbf_uncertainty_sidecar_carries_map_hessian_accounting() -> None:
+    """CBF posterior-SD metadata explains Hessian-unavailable NaNs."""
+    from pmriprep.workflows.dsc.datasinks import _build_map_meta
+
+    accounting = {
+        "n_evaluated": 80,
+        "n_uncertainty_unavailable": 4,
+        "uncertainty_unavailable_fraction": 0.05,
+    }
+    out = _build_map_meta(
+        {},
+        "CBF posterior standard deviation",
+        "cbf_std",
+        qc_metrics={"deconvolution": {"map_uncertainty": accounting}},
+        units="1/min",
+    )
+
+    assert out["MAPUncertaintyAccounting"] == accounting
+
+
 # =============================================================================
 # AIF block derivation (pure function tests)
 # =============================================================================
