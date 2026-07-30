@@ -749,9 +749,8 @@ def normalize_cbv(
         - If no NAWM mask is available and no brain mask is provided,
           the function returns the original CBV map unchanged with
           a normalization factor of 1.0.
-        - nCBV is unitless (ratio), typically ~1.0 in NAWM and elevated
-          (>1.7-2.0) in tumor regions.
-        - In glioblastoma, nCBV > 1.75 often indicates tumor vs. edema.
+        - nCBV is unitless and is approximately 1.0 in the normalization
+          reference by construction.
     """
     # Validate CBV map
     if cbv_map.ndim != 3:

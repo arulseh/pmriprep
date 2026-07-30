@@ -50,8 +50,6 @@ class MapStatistics:
         skewness: Histogram skewness.
         kurtosis: Histogram kurtosis.
         entropy: Shannon entropy on 64-bin histogram over [p1, p99].
-        ppp: Percent positive pixels above noise threshold; populated only
-            for permeability biomarkers (Ktrans/vp/k2).
         cohens_d_vs_nawm: Pooled-SD Cohen's d of region vs NAWM reference;
             populated post-hoc by ``LesionStatisticsResult.augment_with_cohens_d``.
         n_valid: Count of finite values used in statistics.
@@ -75,7 +73,6 @@ class MapStatistics:
     skewness: Optional[float] = None
     kurtosis: Optional[float] = None
     entropy: Optional[float] = None
-    ppp: Optional[float] = None
     cohens_d_vs_nawm: Optional[float] = None
     n_valid: int = 0
     n_total: int = 0
@@ -151,18 +148,22 @@ class LesionStatisticsResult:
         """Attach pooled-SD Cohen's d vs NAWM to each region's per-map stats.
 
         For every (region, map) pair where the corresponding NAWM
-        reference entry is available, computes::
+        reference entry is available, computes Cohen's d from the group means
+        and sample-size-weighted within-group variance. Stored map standard
+        deviations use the population convention, so their equivalent sums of
+        squares are ``n * std**2``::
 
-            d = (region.median - nawm.median)
-                / sqrt((region.std² + nawm.std²) / 2)
+            pooled_var = (n_region * region.std² + n_nawm * nawm.std²)
+                         / (n_region + n_nawm - 2)
+            d = (region.mean - nawm.mean) / sqrt(pooled_var)
 
         and stores it on the region's ``MapStatistics.cohens_d_vs_nawm``.
         Mutates ``self.regions`` in place. No-op when NAWM reference is
         empty or doesn't carry the matching map.
 
-        This is **pooled-SD Cohen's d**, not Glass's Δ. Pooled is
-        symmetric and conservative; both are defensible — documented
-        in derivatives-keys.md.
+        This is pooled-SD Cohen's d, not Glass's delta. It is a descriptive
+        voxel-distribution effect size; spatial voxels are not independent
+        samples.
         """
         if not self.nawm_reference:
             return
@@ -171,19 +172,26 @@ class LesionStatisticsResult:
                 nawm_entry = self.nawm_reference.get(map_name)
                 if not isinstance(nawm_entry, dict):
                     continue
-                nawm_median = nawm_entry.get("median")
+                nawm_mean = nawm_entry.get("mean")
                 nawm_std = nawm_entry.get("std")
+                nawm_n = nawm_entry.get("n_valid")
                 if (
-                    nawm_median is None
+                    nawm_mean is None
                     or nawm_std is None
-                    or map_stats.median is None
+                    or nawm_n is None
+                    or map_stats.mean is None
                     or map_stats.std is None
+                    or map_stats.n_valid < 2
+                    or int(nawm_n) < 2
                 ):
                     continue
-                pooled_var = (map_stats.std ** 2 + nawm_std ** 2) / 2.0
+                pooled_var = (
+                    map_stats.n_valid * map_stats.std ** 2
+                    + int(nawm_n) * float(nawm_std) ** 2
+                ) / (map_stats.n_valid + int(nawm_n) - 2)
                 if pooled_var <= 0:
                     continue
-                d = (map_stats.median - nawm_median) / float(np.sqrt(pooled_var))
+                d = (map_stats.mean - float(nawm_mean)) / float(np.sqrt(pooled_var))
                 map_stats.cohens_d_vs_nawm = round(float(d), 4)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -206,18 +214,6 @@ class LesionStatisticsResult:
         if self.derived_metrics:
             result["DerivedMetrics"] = self.derived_metrics
         return result
-
-
-# PPP (percent positive pixels) noise-floor thresholds for permeability
-# biomarkers. Map-name keys must match what callers pass to
-# compute_map_statistics; values are in the map's native units.
-#   Ktrans:  >0.01 min⁻¹ pipeline noise floor
-#   vp:      conservative noise floor for plasma fraction
-PPP_THRESHOLDS: Dict[str, float] = {
-    "Ktrans": 0.01,
-    "ktrans": 0.01,  # accept either casing
-    "vp": 0.001,
-}
 
 
 def _safe_skewness(values: np.ndarray) -> Optional[float]:
@@ -265,7 +261,6 @@ def _safe_shannon_entropy(values: np.ndarray, n_bins: int = 64) -> Optional[floa
 def compute_map_statistics(
     map_data: np.ndarray,
     mask: np.ndarray,
-    map_name: Optional[str] = None,
     compute_advanced: bool = True,
 ) -> Optional[MapStatistics]:
     """Compute comprehensive statistics for a perfusion map within a mask.
@@ -276,9 +271,6 @@ def compute_map_statistics(
         3D array of perfusion map values.
     mask : np.ndarray
         3D boolean array defining the ROI.
-    map_name : str, optional
-        Optional map identifier used to enable PPP for known
-        permeability biomarkers (Ktrans/vp/k2).
     compute_advanced : bool, optional
         When True, also compute p98, p99, skewness,
         kurtosis, entropy. Disable for NAWM-reference computation
@@ -344,14 +336,6 @@ def compute_map_statistics(
         stats.kurtosis = _safe_kurtosis(values)
         stats.entropy = _safe_shannon_entropy(values)
 
-    # PPP for permeability biomarkers. Always computed when map_name matches,
-    # regardless of compute_advanced (this is a clinical-quantitation field,
-    # not a histogram-shape diagnostic).
-    if map_name is not None:
-        threshold = PPP_THRESHOLDS.get(map_name)
-        if threshold is not None:
-            stats.ppp = round(float(np.sum(values > threshold) / n_valid), 4)
-
     return stats
 
 
@@ -362,8 +346,8 @@ def compute_fraction_above_threshold(
 ) -> Optional[float]:
     """Compute fraction of voxels above a threshold within mask.
 
-    This is used for fractional volume calculations, e.g., fraction of
-    tumor with nCBV > 1.75 (high-grade glioma indicator).
+    This is used for descriptive fractional-volume calculations over a
+    predefined value grid.
 
     Parameters
     ----------
@@ -547,7 +531,7 @@ def compute_region_volume(
 
 
 # Per-map fractional-volume thresholds. Each map key may have multiple
-# thresholds; output is keyed by ``above_<threshold>`` (e.g., ``above_1.75``).
+# thresholds; output is keyed by ``above_<threshold>`` (e.g., ``above_2.0``).
 DSC_FRACTIONAL_THRESHOLDS: Dict[str, Tuple[float, ...]] = {
     "ncbv": (1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0, 3.25, 3.5, 3.75, 4.0),
     "ncbf": (1.5, 2.0, 3.0),
@@ -580,9 +564,9 @@ def _per_map_fractional_volumes(
             f = compute_fraction_above_threshold(data, mask, t)
             if f is not None:
                 any_value = True
-            # Use a plain decimal in the key (e.g., "above_1.75"); keys with
+            # Use a plain decimal in the key (e.g., "above_2.0"); keys with
             # dots are valid JSON and round-trip through Python/JS without
-            # issue. Documented in derivatives-keys.md.
+            # issue.
             per_map[f"above_{t}"] = f
         if any_value:
             out[map_name] = per_map
@@ -748,14 +732,17 @@ def compute_nawm_reference(
         if map_data is None:
             continue
         stats = compute_map_statistics(
-            map_data, nawm_mask, map_name=None, compute_advanced=False,
+            map_data, nawm_mask, compute_advanced=False,
         )
         if stats is not None and stats.n_valid > 0:
             reference[map_name] = {
+                "mean": stats.mean,
                 "median": stats.median,
                 "std": stats.std,
                 "p25": stats.p25,
                 "p75": stats.p75,
+                "n_valid": stats.n_valid,
+                "n_total": stats.n_total,
             }
 
     # No mask-size editorializing here. The NAWM mask may come from the
@@ -1009,7 +996,7 @@ def extract_per_map_lesion_stats(
             }, ...
           },
           "NAWMReference": {... per-map slice in that map's units ...},
-          "FractionalVolumes": {"above_1.75": 0.137, "above_2.5": ...},
+          "FractionalVolumes": {"above_2.0": 0.137, "above_2.5": ...},
         }
 
     Optional fields are omitted when not applicable. Returns ``None``

@@ -273,8 +273,11 @@ class TestComputeNAWMReference:
 
         assert ref["voxel_count"] == 512
         assert "cbv" in ref
+        assert "mean" in ref["cbv"]
         assert "median" in ref["cbv"]
         assert "std" in ref["cbv"]
+        assert ref["cbv"]["n_valid"] == 512
+        assert ref["cbv"]["n_total"] == 512
         assert ref["value_qc_status"] == "UNKNOWN"
         assert "value_qc_status" not in ref["cbv"]
         # No mask-size editorial — voxel_count is informational only.
@@ -718,31 +721,6 @@ class TestMapStatisticsHistogramMetrics:
         assert s.entropy is None
 
 
-class TestPPP:
-    """Phase 2c: percent positive pixels for permeability biomarkers."""
-
-    def test_ktrans_ppp_above_0p01(self) -> None:
-        # 5 of 12 voxels strictly > 0.01: {0.02, 0.05, 0.1, 0.15, 0.2}
-        data = np.array([0.0, 0.005, 0.02, 0.05, 0.1, 0.15, 0.2,
-                         0.0, 0.0, 0.0, 0.0, 0.0])
-        mask = np.ones_like(data, dtype=bool)
-        s = compute_map_statistics(data, mask, map_name="ktrans")
-        assert abs(s.ppp - 5 / 12) < 1e-3
-
-    def test_vp_ppp_above_0p001(self) -> None:
-        # 3 of 6 voxels strictly > 0.001: {0.002, 0.005, 0.01}
-        data = np.array([0.0, 0.0005, 0.002, 0.005, 0.01, 0.0])
-        mask = np.ones_like(data, dtype=bool)
-        s = compute_map_statistics(data, mask, map_name="vp")
-        assert s.ppp == 0.5
-
-    def test_non_permeability_map_no_ppp(self) -> None:
-        data = np.array([1.0, 2.0, 3.0, 4.0])
-        mask = np.ones_like(data, dtype=bool)
-        s = compute_map_statistics(data, mask, map_name="cbv")
-        assert s.ppp is None
-
-
 class TestCohensDAugmentation:
     """Phase 2b: pooled-SD Cohen's d vs NAWM."""
 
@@ -753,18 +731,19 @@ class TestCohensDAugmentation:
         )
         region = RegionStatistics("tumor", 100, 100.0, 0.1)
         region.perfusion_maps["cbv"] = MapStatistics(
-            median=2.5, std=0.8, n_valid=100, n_total=100,
+            mean=2.5, median=2.4, std=0.8, n_valid=100, n_total=100,
         )
         result.regions["tumor"] = region
         result.nawm_reference = {
-            "cbv": {"median": 1.5, "std": 0.4, "p25": 1.2, "p75": 1.8,
+            "cbv": {"mean": 1.5, "median": 1.4, "std": 0.4,
+                    "n_valid": 50, "n_total": 50, "p25": 1.2, "p75": 1.8,
                     "value_qc_status": "PASS"},
         }
         result.augment_with_cohens_d()
         d = result.regions["tumor"].perfusion_maps["cbv"].cohens_d_vs_nawm
-        # pooled SD = sqrt((0.64 + 0.16)/2) = sqrt(0.4) ≈ 0.6325
-        # d = (2.5 - 1.5) / 0.6325 ≈ 1.5811
-        assert abs(d - 1.5811) < 1e-3
+        # Population SDs imply within-group sums of squares n*std².
+        pooled_sd = np.sqrt((100 * 0.8**2 + 50 * 0.4**2) / 148)
+        assert d == pytest.approx((2.5 - 1.5) / pooled_sd, abs=5e-5)
 
     def test_no_nawm_yields_no_cohen_d(self) -> None:
         result = LesionStatisticsResult(

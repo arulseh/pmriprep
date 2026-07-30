@@ -7,7 +7,7 @@ Supports:
 - Multi-label masks (HD-GLIO: 1=non-enhancing, 2=enhancing)
 - Binary tumor masks
 - NAWM reference values for normalization context
-- Clinical interpretation thresholds
+- Descriptive distribution summaries
 """
 
 from pathlib import Path
@@ -97,7 +97,7 @@ class DSCLesionStats(BaseInterface):
     - Multi-label masks (HD-GLIO: label 1 = non-enhancing, label 2 = enhancing)
     - Binary tumor masks
     - NAWM reference values for normalization context
-    - Clinical interpretation thresholds (nCBV > 1.75 = high-grade)
+    - Descriptive fractional-volume summaries over a predefined value grid
 
     Output files:
         {prefix}_lesion-stats.json  - Comprehensive JSON statistics
@@ -361,10 +361,9 @@ class DSCLesionStats(BaseInterface):
 
         # Compute statistics for each available map. compute_advanced=True
         # turns on histogram metrics (p98/p99/skewness/kurtosis/entropy);
-        # map_name enables PPP for permeability biomarkers.
         for map_name, map_data in maps.items():
             stats = compute_map_statistics(
-                map_data, mask, map_name=map_name, compute_advanced=True,
+                map_data, mask, compute_advanced=True,
             )
             if stats is not None:
                 region.perfusion_maps[map_name] = stats
