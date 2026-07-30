@@ -628,19 +628,19 @@ def build_anat_mask_sidecar(
 
 def _tumor_volumetrics(seg_path: PathLike) -> Dict[str, Any]:
     """Compute per-region tumor volumes from the dseg NIfTI."""
-    import nibabel as nib  # type: ignore[import-untyped]
-
     from pmriprep.config.constants import HDGLIO_LABEL_TO_NAME
-    from pmriprep.utils.lesion_stats import compute_region_volume
+    from pmriprep.utils.lesion_stats import load_validated_tumor_dseg
 
-    img = nib.load(str(seg_path))
-    seg_data = np.asarray(img.dataobj, dtype=np.int16)  # type: ignore[attr-defined]
-    zooms = img.header.get_zooms()[:3]  # type: ignore[attr-defined]
-    voxel_sizes = (float(zooms[0]), float(zooms[1]), float(zooms[2]))
-
-    enh_count, enh_mm3, enh_ml = compute_region_volume(seg_data == 2, voxel_sizes)
-    nenh_count, nenh_mm3, nenh_ml = compute_region_volume(seg_data == 1, voxel_sizes)
-    wt_count, wt_mm3, wt_ml = compute_region_volume(seg_data > 0, voxel_sizes)
+    seg_data, voxel_volume_mm3 = load_validated_tumor_dseg(seg_path)
+    enh_count = int(np.sum(seg_data == 2))
+    nenh_count = int(np.sum(seg_data == 1))
+    wt_count = int(np.sum(seg_data > 0))
+    enh_mm3 = enh_count * voxel_volume_mm3
+    nenh_mm3 = nenh_count * voxel_volume_mm3
+    wt_mm3 = wt_count * voxel_volume_mm3
+    enh_ml = enh_mm3 / 1000.0
+    nenh_ml = nenh_mm3 / 1000.0
+    wt_ml = wt_mm3 / 1000.0
 
     enhancing_fraction: Optional[float] = None
     if wt_ml > 0:

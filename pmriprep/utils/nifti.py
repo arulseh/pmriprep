@@ -8,6 +8,17 @@ import numpy as np
 _ImageT = TypeVar("_ImageT")
 
 
+def physical_voxel_volume_mm3(affine: np.ndarray) -> float:
+    """Return physical voxel-cell volume from a NIfTI spatial affine."""
+    affine_array = np.asarray(affine, dtype=float)
+    if affine_array.shape != (4, 4) or not np.all(np.isfinite(affine_array)):
+        raise ValueError("NIfTI affine must be a finite 4x4 matrix")
+    voxel_volume_mm3 = float(abs(np.linalg.det(affine_array[:3, :3])))
+    if not np.isfinite(voxel_volume_mm3) or voxel_volume_mm3 <= 0:
+        raise ValueError("NIfTI affine must define a positive physical voxel volume")
+    return voxel_volume_mm3
+
+
 def reorient_img_to_ras(img: _ImageT) -> _ImageT:
     """Reorient a NIfTI image to canonical RAS orientation.
 

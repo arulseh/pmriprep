@@ -18,6 +18,8 @@ from typing import Any, Literal, Optional, Union
 import numpy as np
 import numpy.typing as npt
 
+from pmriprep.utils.nifti import physical_voxel_volume_mm3
+
 EPSILON_VOXEL_SIZE = 1e-6      # Guard for zero voxel sizes
 MAX_KERNEL_RADIUS_VOXELS = 200  # Memory safety cap for kernel generation
 
@@ -316,10 +318,7 @@ def get_mask_volume_ml(
 
     mask_img = nib.load(mask_file)
     mask_data = mask_img.get_fdata()  # type: ignore[attr-defined]
-    zooms = mask_img.header.get_zooms()[:3]  # type: ignore[attr-defined]
-
-    # Calculate voxel volume in mm³
-    voxel_volume_mm3 = float(np.prod(zooms))
+    voxel_volume_mm3 = physical_voxel_volume_mm3(mask_img.affine)  # type: ignore[attr-defined]
 
     # Count non-zero voxels
     n_voxels = int(np.sum(mask_data > 0.5))
@@ -369,7 +368,7 @@ def get_mask_statistics(
 
     # Voxel count and volume
     n_voxels = int(np.sum(binary_mask))
-    voxel_volume_mm3 = float(np.prod(zooms))
+    voxel_volume_mm3 = physical_voxel_volume_mm3(mask_img.affine)  # type: ignore[attr-defined]
     volume_mm3 = n_voxels * voxel_volume_mm3
     volume_ml = volume_mm3 / 1000.0
 
@@ -429,7 +428,6 @@ class TumorAnalysis:
 def _analyze_tumor_anatomy(
     tumor_mask: npt.NDArray[np.bool_],
     affine: npt.NDArray[np.float64],
-    voxel_sizes: tuple[float, float, float],
     t1w_to_mni_xfm: Optional[str] = None,
 ) -> TumorAnalysis:
     """Analyze tumor location to determine anatomy for NAWM selection.
@@ -444,8 +442,6 @@ def _analyze_tumor_anatomy(
         3D binary mask of whole tumor
     affine : ndarray
         4x4 affine transformation matrix
-    voxel_sizes : tuple of float
-        Voxel dimensions (x, y, z) in millimeters
     t1w_to_mni_xfm : str, optional
         Path to T1w-to-MNI transform (FLIRT .mat format). If provided,
         the centroid is transformed to MNI space for supratentorial
@@ -510,7 +506,7 @@ def _analyze_tumor_anatomy(
         is_supratentorial = centroid_z > -20.0
 
     # Calculate volume
-    voxel_volume_mm3 = float(np.prod(voxel_sizes))
+    voxel_volume_mm3 = physical_voxel_volume_mm3(affine)
     n_voxels = int(np.sum(tumor_mask))
     volume_ml = n_voxels * voxel_volume_mm3 / 1000.0
 
@@ -905,7 +901,7 @@ def create_nawm_roi(
 
     # Analyze tumor anatomy (with MNI transform if available)
     analysis = _analyze_tumor_anatomy(
-        tumor_mask, affine, voxel_sizes,  # type: ignore[arg-type]
+        tumor_mask, affine,
         t1w_to_mni_xfm=t1w_to_mni_xfm,
     )
 
@@ -1023,7 +1019,7 @@ def create_nawm_roi(
         )
 
     # Calculate final volume
-    voxel_volume_mm3 = float(np.prod(voxel_sizes))
+    voxel_volume_mm3 = physical_voxel_volume_mm3(affine)
     volume_ml = n_voxels * voxel_volume_mm3 / 1000.0
 
     # Determine output path

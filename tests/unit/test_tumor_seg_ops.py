@@ -144,7 +144,7 @@ class TestAnalyzeTumorAnatomy:
         mask = np.zeros((60, 60, 60), dtype=bool)
         # Place tumor in low-i voxels: x_physical = i - 30 < 0 (left in RAS)
         mask[5:15, 28:32, 28:32] = True
-        result = _analyze_tumor_anatomy(mask, affine, (1.0, 1.0, 1.0))
+        result = _analyze_tumor_anatomy(mask, affine)
         assert result.laterality == "left"
 
     def test_right_hemisphere_tumor(self) -> None:
@@ -153,7 +153,7 @@ class TestAnalyzeTumorAnatomy:
         mask = np.zeros((60, 60, 60), dtype=bool)
         # Place tumor in high-i voxels: x_physical = i - 30 > 0 (right in RAS)
         mask[45:55, 28:32, 28:32] = True
-        result = _analyze_tumor_anatomy(mask, affine, (1.0, 1.0, 1.0))
+        result = _analyze_tumor_anatomy(mask, affine)
         assert result.laterality == "right"
 
     def test_bilateral_tumor(self) -> None:
@@ -162,7 +162,7 @@ class TestAnalyzeTumorAnatomy:
         mask = np.zeros((60, 60, 60), dtype=bool)
         # Place tumor symmetrically across midline (voxel 30 = x=0)
         mask[25:35, 28:32, 28:32] = True
-        result = _analyze_tumor_anatomy(mask, affine, (1.0, 1.0, 1.0))
+        result = _analyze_tumor_anatomy(mask, affine)
         assert result.laterality == "bilateral"
 
     def test_supratentorial_high_z(self) -> None:
@@ -171,7 +171,7 @@ class TestAnalyzeTumorAnatomy:
         mask = np.zeros((60, 60, 60), dtype=bool)
         # z_physical = k - 30. For k=40, z=10 > -20 => supratentorial
         mask[28:32, 28:32, 38:42] = True
-        result = _analyze_tumor_anatomy(mask, affine, (1.0, 1.0, 1.0))
+        result = _analyze_tumor_anatomy(mask, affine)
         assert result.is_supratentorial == True  # noqa: E712 (numpy bool)
 
     def test_infratentorial_low_z(self) -> None:
@@ -180,14 +180,14 @@ class TestAnalyzeTumorAnatomy:
         mask = np.zeros((60, 60, 60), dtype=bool)
         # z_physical = k - 30. For k around 5, z = -25 <= -20 => infratentorial
         mask[28:32, 28:32, 3:7] = True
-        result = _analyze_tumor_anatomy(mask, affine, (1.0, 1.0, 1.0))
+        result = _analyze_tumor_anatomy(mask, affine)
         assert result.is_supratentorial == False  # noqa: E712 (numpy bool)
 
     def test_empty_mask(self) -> None:
         """Empty tumor mask returns bilateral, volume=0, supratentorial=True."""
         affine = self._make_ras_affine()
         mask = np.zeros((60, 60, 60), dtype=bool)
-        result = _analyze_tumor_anatomy(mask, affine, (1.0, 1.0, 1.0))
+        result = _analyze_tumor_anatomy(mask, affine)
         assert result.laterality == "bilateral"
         assert result.volume_ml == pytest.approx(0.0)
         assert result.is_supratentorial is True

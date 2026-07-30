@@ -155,9 +155,7 @@ class TestComputeRegionVolume:
         """100 voxels with 1mm^3 voxels gives (100, 100.0, 0.1)."""
         mask = np.zeros((10, 10, 1), dtype=bool)
         mask[:, :, 0] = True  # 100 True voxels
-        voxel_sizes = (1.0, 1.0, 1.0)
-
-        count, vol_mm3, vol_ml = compute_region_volume(mask, voxel_sizes)
+        count, vol_mm3, vol_ml = compute_region_volume(mask, 1.0)
         assert count == 100
         assert vol_mm3 == pytest.approx(100.0, abs=1e-6)
         assert vol_ml == pytest.approx(0.1, abs=1e-6)
@@ -250,8 +248,7 @@ class TestComputeNAWMReference:
         cbv_data = rng.uniform(2.0, 4.0, (10, 10, 10))
 
         maps = {"cbv": cbv_data}
-        voxel_sizes = (1.0, 1.0, 1.0)
-        ref = compute_nawm_reference(nawm_mask, maps, voxel_sizes)
+        ref = compute_nawm_reference(nawm_mask, maps, 1.0)
 
         assert ref["voxel_count"] == 512
         assert "cbv" in ref
@@ -272,7 +269,7 @@ class TestComputeNAWMReference:
         iauc60 = np.full((10, 10, 10), 0.03)
 
         ref = compute_nawm_reference(
-            nawm_mask, {"iauc60": iauc60}, (1.0, 1.0, 1.0),
+            nawm_mask, {"iauc60": iauc60}, 1.0,
         )
 
         assert ref["iauc60"]["median"] == pytest.approx(0.03)
@@ -287,7 +284,7 @@ class TestComputeNAWMReference:
             "ncbv": np.ones((10, 10, 10)),
             "mtt": np.full((10, 10, 10), 5.0),
         }
-        ref = compute_nawm_reference(nawm_mask, maps, (1.0, 1.0, 1.0))
+        ref = compute_nawm_reference(nawm_mask, maps, 1.0)
 
         assert ref["value_qc_status"] == "PASS"
         assert ref["ncbv"]["value_qc_status"] == "PASS"
@@ -297,7 +294,7 @@ class TestComputeNAWMReference:
         """Extreme nCBV median produces a value-level warning."""
         nawm_mask = np.ones((10, 10, 10), dtype=bool)
         maps = {"ncbv": np.full((10, 10, 10), 2.0)}
-        ref = compute_nawm_reference(nawm_mask, maps, (1.0, 1.0, 1.0))
+        ref = compute_nawm_reference(nawm_mask, maps, 1.0)
 
         assert ref["value_qc_status"] == "WARNING"
         assert "ncbv" in ref["value_qc_notes"]
@@ -315,7 +312,7 @@ class TestComputeNAWMReference:
         cbv_data = np.full((5, 5, 5), 2.5)
 
         ref = compute_nawm_reference(
-            nawm_mask, {"cbv": cbv_data}, (1.0, 1.0, 1.0),
+            nawm_mask, {"cbv": cbv_data}, 1.0,
         )
         assert ref["voxel_count"] == 1
         assert "mask_qc_status" not in ref
@@ -336,7 +333,7 @@ class TestComputeNAWMReference:
             "kep": np.full((10, 10, 10), 0.5),
             "peak_enhancement": np.full((10, 10, 10), 50.0),
         }
-        ref = compute_nawm_reference(nawm_mask, maps, (1.0, 1.0, 1.0))
+        ref = compute_nawm_reference(nawm_mask, maps, 1.0)
         assert ref["value_qc_status"] == "UNKNOWN"
         assert "No emitted maps" in ref["value_qc_notes"]
 

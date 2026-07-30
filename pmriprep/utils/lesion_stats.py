@@ -474,7 +474,7 @@ def is_integer_valued(arr: np.ndarray) -> bool:
 
 def compute_region_volume(
     mask: np.ndarray,
-    voxel_sizes: Tuple[float, float, float],
+    voxel_volume_mm3: float,
 ) -> Tuple[int, float, float]:
     """Compute voxel count and volume for a mask.
 
@@ -482,8 +482,9 @@ def compute_region_volume(
     ----------
     mask : np.ndarray
         Boolean 3D array.
-    voxel_sizes : tuple of float
-        Voxel dimensions in mm (x, y, z).
+    voxel_volume_mm3 : float
+        Physical voxel-cell volume in cubic millimetres, normally computed as
+        ``abs(det(affine[:3, :3]))``.
 
     Returns
     -------
@@ -491,7 +492,6 @@ def compute_region_volume(
         Tuple of (voxel_count, volume_mm3, volume_ml).
     """
     voxel_count = int(np.sum(mask))
-    voxel_volume_mm3 = float(np.prod(voxel_sizes))
     volume_mm3 = voxel_count * voxel_volume_mm3
     volume_ml = volume_mm3 / 1000.0
     return voxel_count, volume_mm3, volume_ml
@@ -657,7 +657,7 @@ NAWM_RANGES: Dict[str, Tuple[float, float]] = {
 def compute_nawm_reference(
     nawm_mask: np.ndarray,
     maps: Dict[str, np.ndarray],
-    voxel_sizes: Tuple[float, float, float],
+    voxel_volume_mm3: float,
 ) -> Dict[str, Any]:
     """Compute NAWM reference values for normalization context.
 
@@ -676,8 +676,8 @@ def compute_nawm_reference(
         Boolean NAWM mask.
     maps : dict
         Dictionary mapping map name to 3D array.
-    voxel_sizes : tuple of float
-        Voxel dimensions in mm.
+    voxel_volume_mm3 : float
+        Physical voxel-cell volume in cubic millimetres.
 
     Returns
     -------
@@ -685,7 +685,9 @@ def compute_nawm_reference(
         Dictionary with NAWM statistics for each available map plus
         the QC fields described above.
     """
-    voxel_count, volume_mm3, volume_ml = compute_region_volume(nawm_mask, voxel_sizes)
+    voxel_count, volume_mm3, volume_ml = compute_region_volume(
+        nawm_mask, voxel_volume_mm3,
+    )
 
     if voxel_count == 0:
         return {}
@@ -759,10 +761,49 @@ def compute_nawm_reference(
 
 
 # ---------------------------------------------------------------------------
-# Tumor segmentation dseg.tsv (BIDS-Common-Derivatives ROI summary table)
-#
-# This is the canonical TSV companion for the existing
-# `desc-tumorseg_dseg.nii.gz` label map. Per BIDS, a `_dseg.tsv` is the
+# Shared validation for the tumor dseg label image and its tabular/JSON
+# summaries.
+def load_validated_tumor_dseg(
+    segmentation_file: Union[str, Path],
+) -> Tuple[np.ndarray, float]:
+    """Load an HD-GLIO label image and return its physical voxel volume.
+
+    The image must contain finite integer labels from the registered set
+    ``{0, 1, 2}``. Voxel volume is derived from the affine determinant so
+    oblique or sheared grids are represented by their physical cell volume.
+    """
+    import nibabel as nib  # type: ignore[import-untyped]
+    from pmriprep.utils.nifti import physical_voxel_volume_mm3
+
+    img = nib.load(str(segmentation_file))
+    raw = np.asanyarray(img.dataobj)  # type: ignore[attr-defined]
+    if not np.all(np.isfinite(raw)):
+        raise ValueError(
+            f"HD-GLIO dseg NIfTI contains non-finite values: {segmentation_file}"
+        )
+    rounded = np.rint(raw)
+    if not np.array_equal(raw, rounded):
+        raise ValueError(
+            f"HD-GLIO dseg NIfTI contains non-integer labels: {segmentation_file}"
+        )
+    seg_data = rounded.astype(np.int16)
+    unique_labels = set(np.unique(seg_data).tolist())
+    allowed = {0, 1, 2}
+    unexpected = unique_labels - allowed
+    if unexpected:
+        raise ValueError(
+            f"HD-GLIO dseg NIfTI contains unexpected labels {sorted(unexpected)}; "
+            f"expected subset of {sorted(allowed)}. Source: {segmentation_file}",
+        )
+    try:
+        voxel_volume_mm3 = physical_voxel_volume_mm3(img.affine)  # type: ignore[attr-defined]
+    except ValueError as exc:
+        raise ValueError(
+            f"HD-GLIO dseg NIfTI has invalid affine voxel volume: {segmentation_file}"
+        ) from exc
+    return seg_data, voxel_volume_mm3
+
+
 def write_tumor_dseg_tsv(
     segmentation_file: Union[str, Path],
     output_path: Union[str, Path],
@@ -798,28 +839,16 @@ def write_tumor_dseg_tsv(
     """
     import csv
 
-    import nibabel as nib  # type: ignore[import-untyped]
-
     out_path = Path(output_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    img = nib.load(str(segmentation_file))
-    seg_data = np.asarray(img.dataobj, dtype=np.int16)  # type: ignore[attr-defined]
-    unique_labels = set(np.unique(seg_data).tolist())
-    allowed = {0, 1, 2}
-    unexpected = unique_labels - allowed
-    if unexpected:
-        raise ValueError(
-            f"HD-GLIO dseg NIfTI contains unexpected labels {sorted(unexpected)}; "
-            f"expected subset of {sorted(allowed)}. Source: {segmentation_file}",
-        )
-    zooms = img.header.get_zooms()[:3]  # type: ignore[attr-defined]
-    voxel_sizes = (float(zooms[0]), float(zooms[1]), float(zooms[2]))
+    seg_data, voxel_volume_mm3 = load_validated_tumor_dseg(segmentation_file)
 
     rows: List[Dict[str, Any]] = []
     for index, name, abbreviation, _description in HDGLIO_DSEG_ROWS:
         mask = seg_data == index
-        voxel_count, volume_mm3, _volume_ml = compute_region_volume(mask, voxel_sizes)
+        voxel_count = int(np.sum(mask))
+        volume_mm3 = voxel_count * voxel_volume_mm3
         rows.append({
             "index": index,
             "name": name,

@@ -26,6 +26,8 @@ from nipype.interfaces.base import (  # type: ignore[import-untyped]
     traits,
 )
 
+from pmriprep.utils.nifti import physical_voxel_volume_mm3
+
 
 class HDGLIOPrepInputSpec(BaseInterfaceInputSpec):
     """Input specification for HDGLIOPrep interface."""
@@ -631,10 +633,8 @@ class HDGLIOSegment(BaseInterface):
 
         img = nib.load(segmentation_file)
         data = img.get_fdata()  # type: ignore[attr-defined]
-        zooms = img.header.get_zooms()[:3]  # type: ignore[attr-defined]
-
-        # Calculate voxel volume in mm³, convert to mL
-        voxel_volume_mm3 = float(np.prod(zooms))
+        # Calculate physical voxel-cell volume in mm³, convert to mL.
+        voxel_volume_mm3 = physical_voxel_volume_mm3(img.affine)  # type: ignore[attr-defined]
         voxel_volume_ml = voxel_volume_mm3 / 1000.0
 
         # Count voxels by label

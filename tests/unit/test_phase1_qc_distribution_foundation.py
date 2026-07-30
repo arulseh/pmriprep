@@ -84,6 +84,33 @@ def test_write_tumor_dseg_tsv_rejects_unexpected_labels(tmp_path: Path) -> None:
         write_tumor_dseg_tsv(nii, tmp_path / "out.tsv")
 
 
+def test_write_tumor_dseg_tsv_rejects_fractional_labels(tmp_path: Path) -> None:
+    data = np.zeros((4, 4, 4), dtype=np.float32)
+    data[0, 0, 0] = 1.5
+    nii = tmp_path / "fractional.nii.gz"
+    nib.save(nib.Nifti1Image(data, affine=np.eye(4)), str(nii))
+
+    with pytest.raises(ValueError, match="non-integer labels"):
+        write_tumor_dseg_tsv(nii, tmp_path / "out.tsv")
+
+
+def test_write_tumor_dseg_tsv_uses_affine_voxel_volume(tmp_path: Path) -> None:
+    data = np.zeros((2, 2, 2), dtype=np.int16)
+    data[0, 0, 0] = 1
+    affine = np.array([
+        [2.0, 1.0, 0.0, 0.0],
+        [0.0, 2.0, 0.0, 0.0],
+        [0.0, 0.0, 2.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ])
+    nii = tmp_path / "sheared.nii.gz"
+    nib.save(nib.Nifti1Image(data, affine=affine), str(nii))
+
+    out = write_tumor_dseg_tsv(nii, tmp_path / "out.tsv")
+    nonenhancing = out.read_text().splitlines()[1].split("\t")
+    assert float(nonenhancing[-1]) == pytest.approx(8.0)
+
+
 # ---------------------------------------------------------------------------
 # extract_per_map_lesion_stats
 # ---------------------------------------------------------------------------

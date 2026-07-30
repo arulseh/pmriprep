@@ -11,7 +11,7 @@ Supports:
 """
 
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional
 
 import nibabel as nib
 import numpy as np
@@ -34,6 +34,7 @@ from pmriprep.utils.lesion_stats import (
     extract_label_mask,
     is_integer_valued,
 )
+from pmriprep.utils.nifti import physical_voxel_volume_mm3
 
 
 class DSCLesionStatsInputSpec(BaseInterfaceInputSpec):
@@ -120,7 +121,7 @@ class DSCLesionStats(BaseInterface):
         # Load lesion mask
         lesion_img = nib.load(self.inputs.lesion_mask)
         lesion_data = np.asarray(lesion_img.dataobj)  # type: ignore[attr-defined]
-        voxel_sizes: Tuple[float, float, float] = lesion_img.header.get_zooms()[:3]  # type: ignore[attr-defined]
+        voxel_volume_mm3 = physical_voxel_volume_mm3(lesion_img.affine)  # type: ignore[attr-defined]
 
         # Load all available perfusion maps
         maps = self._load_maps()
@@ -158,7 +159,7 @@ class DSCLesionStats(BaseInterface):
                     if np.sum(label_mask) == 0:
                         continue
                     region_stats = self._compute_region_stats(
-                        f"label_{label}", label_mask, maps, voxel_sizes
+                        f"label_{label}", label_mask, maps, voxel_volume_mm3
                     )
                     if region_stats is not None:
                         result.regions[f"label_{label}"] = region_stats
@@ -177,7 +178,7 @@ class DSCLesionStats(BaseInterface):
                 )
                 binary_mask = lesion_data > 0
                 region_stats = self._compute_region_stats(
-                    "roi", binary_mask, maps, voxel_sizes
+                    "roi", binary_mask, maps, voxel_volume_mm3
                 )
                 if region_stats is not None:
                     result.regions["roi"] = region_stats
@@ -204,7 +205,7 @@ class DSCLesionStats(BaseInterface):
                         continue
 
                     region_stats = self._compute_region_stats(
-                        region_name, label_mask, maps, voxel_sizes
+                        region_name, label_mask, maps, voxel_volume_mm3
                     )
                     if region_stats is not None:
                         result.regions[region_name] = region_stats
@@ -219,7 +220,7 @@ class DSCLesionStats(BaseInterface):
                 else:
                     region_name = "tumor"
                 region_stats = self._compute_region_stats(
-                    region_name, binary_mask, maps, voxel_sizes
+                    region_name, binary_mask, maps, voxel_volume_mm3
                 )
                 if region_stats is not None:
                     result.regions[region_name] = region_stats
@@ -233,7 +234,7 @@ class DSCLesionStats(BaseInterface):
                 if k in ["cbv", "cbf", "ncbv", "ncbf", "mtt"]
             }
             result.nawm_reference = compute_nawm_reference(
-                nawm_data, nawm_maps, voxel_sizes,
+                nawm_data, nawm_maps, voxel_volume_mm3,
             )
 
         # Compute derived metrics for primary region
@@ -328,7 +329,7 @@ class DSCLesionStats(BaseInterface):
         region_name: str,
         mask: np.ndarray,
         maps: Dict[str, np.ndarray],
-        voxel_sizes: Tuple[float, float, float],
+        voxel_volume_mm3: float,
     ) -> Optional[RegionStatistics]:
         """Compute statistics for a single region.
 
@@ -340,15 +341,17 @@ class DSCLesionStats(BaseInterface):
             Boolean mask for the region.
         maps : dict
             Dictionary of perfusion maps.
-        voxel_sizes : tuple of float
-            Voxel dimensions in mm.
+        voxel_volume_mm3 : float
+            Physical voxel-cell volume in cubic millimetres.
 
         Returns
         -------
         RegionStatistics or None
             RegionStatistics object or None if mask is empty.
         """
-        voxel_count, volume_mm3, volume_ml = compute_region_volume(mask, voxel_sizes)
+        voxel_count, volume_mm3, volume_ml = compute_region_volume(
+            mask, voxel_volume_mm3,
+        )
         if voxel_count == 0:
             return None
 

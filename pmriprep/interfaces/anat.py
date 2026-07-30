@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 from typing import Any, Optional
 
-from pmriprep.utils.nifti import nifti_gz_name
+from pmriprep.utils.nifti import nifti_gz_name, physical_voxel_volume_mm3
 from nipype.interfaces.base import (  # type: ignore[import-untyped]
     BaseInterfaceInputSpec,
     CommandLine,
@@ -838,11 +838,7 @@ class BrainExtraction(CommandLine):
         # Load mask
         img = nib.load(mask_file)
         data = img.get_fdata()  # type: ignore[attr-defined]
-        header = img.header  # type: ignore[attr-defined]
-
-        # Get voxel dimensions
-        zooms = header.get_zooms()[:3]  # type: ignore[attr-defined]
-        voxel_vol_mm3 = float(np.prod(zooms))
+        voxel_vol_mm3 = physical_voxel_volume_mm3(img.affine)  # type: ignore[attr-defined]
 
         # Count brain voxels
         n_voxels = int(np.sum(data > 0.5))
