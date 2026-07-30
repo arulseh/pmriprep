@@ -500,12 +500,30 @@ def extract_contrast_agent(source_nifti_path: str) -> Optional[str]:
 # ---------------------------------------------------------------------------
 
 
-_ANAT_PREPROC_STEPS = [
-    "Reorientation to RAS",
-    "Robust FOV cropping",
+_ANAT_REFERENCE_STEPS = [
+    "Reorientation to RAS and robust FOV cropping",
     "N4 bias field correction",
-    "Coregistration to native anat space",
-    "HD-BET brain extraction",
+    "Conditional conformation of submillimeter input voxels to 1 mm",
+    "Brain extraction",
+]
+
+_ANAT_COREGISTERED_STEPS = [
+    "Reorientation to RAS",
+    "N4 bias field correction",
+    "Rigid registration to the anatomical reference",
+    "Application of the anatomical brain mask",
+]
+
+_ANAT_CROPPED_COREGISTERED_STEPS = [
+    "Reorientation to RAS and robust FOV cropping",
+    "N4 bias field correction",
+    "Rigid registration to the anatomical reference",
+    "Application of the anatomical brain mask",
+]
+
+_ANAT_SUBTRACTION_STEPS = [
+    "Rigid registration of the post-contrast T1w image to the pre-contrast reference",
+    "Post-contrast minus pre-contrast signal subtraction within the brain mask",
 ]
 
 
@@ -584,11 +602,21 @@ def build_anat_preproc_sidecar(
     contrast_agent: Optional[str] = None,
     is_postcon_ref: bool = False,
     reference_source: PathLike | None = None,
+    processing_kind: str = "reference",
 ) -> Dict[str, Any]:
     """Build sidecar for a preprocessed/coregistered anat NIfTI."""
     from pmriprep.utils.provenance import get_bids_derivative_provenance
 
     sources = build_sources_list(source_paths, bids_dir)
+    processing_steps = {
+        "reference": _ANAT_REFERENCE_STEPS,
+        "coregistered": _ANAT_COREGISTERED_STEPS,
+        "cropped_coregistered": _ANAT_CROPPED_COREGISTERED_STEPS,
+        "subtraction": _ANAT_SUBTRACTION_STEPS,
+    }
+    if processing_kind not in processing_steps:
+        raise ValueError(f"Unknown anatomical processing kind: {processing_kind!r}")
+    original_source = source_paths[0] if source_paths else reference_voxel_source
     sidecar: Dict[str, Any] = {
         **get_bids_derivative_provenance(),
         "Description": description,
@@ -599,8 +627,8 @@ def build_anat_preproc_sidecar(
         ),
         "Sources": sources,
         **resolution_native_block(reference_voxel_source),
-        "OriginalResolution": compute_original_resolution(reference_voxel_source),
-        "ProcessingSteps": list(_ANAT_PREPROC_STEPS),
+        "OriginalResolution": compute_original_resolution(original_source),
+        "ProcessingSteps": list(processing_steps[processing_kind]),
     }
     if contrast_agent is not None:
         from pmriprep.utils.contrast_agent import get_brand_name
@@ -629,15 +657,21 @@ def build_anat_mask_sidecar(
     return {
         **get_bids_derivative_provenance(),
         "Description": description,
-        "SkullStripped": True,
         "SpatialReference": _anat_spatial_reference(
             subject, session, is_postcon_ref,
             reference_source or (source_paths[0] if source_paths else None),
         ),
         "Sources": build_sources_list(source_paths, bids_dir),
         **resolution_native_block(reference_voxel_source),
-        "OriginalResolution": compute_original_resolution(reference_voxel_source),
-        "ProcessingSteps": list(_ANAT_PREPROC_STEPS),
+        "OriginalResolution": compute_original_resolution(
+            source_paths[0] if source_paths else reference_voxel_source
+        ),
+        "ProcessingSteps": [
+            "Reorientation to RAS and robust FOV cropping",
+            "N4 bias field correction",
+            "Conditional conformation of submillimeter input voxels to 1 mm",
+            "Brain-mask estimation",
+        ],
     }
 
 

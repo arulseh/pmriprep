@@ -34,6 +34,7 @@ def _build_preproc_meta(
     is_anchor_sidecar: bool = False,
     presence_warnings: list | None = None,
     reference_source: str | None = None,
+    processing_kind: str = "reference",
 ) -> dict:
     """Nipype-Function wrapper for ``build_anat_preproc_sidecar``.
 
@@ -64,6 +65,7 @@ def _build_preproc_meta(
         contrast_agent=contrast_agent,
         is_postcon_ref=is_postcon_ref,
         reference_source=reference_source,
+        processing_kind=processing_kind,
     )
     enrich_preproc_anat_sidecar(
         sidecar,
@@ -187,6 +189,7 @@ def _add_one_anat_sink(
     coreg_modality: Optional[str] = None,
     is_anchor_sidecar: bool = False,
     presence_warnings: Optional[list[str]] = None,
+    processing_kind: str = "reference",
 ) -> pe.Node:
     """Wire one DataSink node + its sidecar-builder Function node.
 
@@ -219,6 +222,7 @@ def _add_one_anat_sink(
             "is_anchor_sidecar",
             "presence_warnings",
             "reference_source",
+            "processing_kind",
         ]
     elif builder == "mask":
         builder_fn = _build_mask_meta
@@ -265,6 +269,7 @@ def _add_one_anat_sink(
         meta_node.inputs.coreg_modality = coreg_modality
         meta_node.inputs.is_anchor_sidecar = is_anchor_sidecar
         meta_node.inputs.presence_warnings = presence_warnings or []
+        meta_node.inputs.processing_kind = processing_kind
     elif builder == "mask":
         meta_node.inputs.description = description
     elif builder == "probseg":
@@ -578,6 +583,7 @@ def init_anat_datasinks_wf(
             ce_value="GAD",
             contrast_agent_attr="source_t1w_postcon",
             coreg_modality="T1wCE",
+            processing_kind="cropped_coregistered",
         )
         sink_outputs.append((sink, "out_file"))
 
@@ -593,6 +599,7 @@ def init_anat_datasinks_wf(
             suffix="T2w",
             desc_value="preproc",
             coreg_modality="T2w",
+            processing_kind="coregistered",
         )
         sink_outputs.append((sink, "out_file"))
 
@@ -608,6 +615,7 @@ def init_anat_datasinks_wf(
             suffix="FLAIR",
             desc_value="preproc",
             coreg_modality="FLAIR",
+            processing_kind="coregistered",
         )
         sink_outputs.append((sink, "out_file"))
 
@@ -626,6 +634,7 @@ def init_anat_datasinks_wf(
             ce_value="GAD",
             contrast_agent_attr="source_flair_postcon",
             coreg_modality="FLAIRCE",
+            processing_kind="coregistered",
         )
         sink_outputs.append((sink, "out_file"))
 
@@ -643,6 +652,7 @@ def init_anat_datasinks_wf(
             desc_value="subtraction",
             contrast_agent_attr="source_t1w_postcon",
             is_postcon_ref=is_postcon_ref,
+            processing_kind="subtraction",
         )
         sink_outputs.append((sink, "out_file"))
 

@@ -44,6 +44,13 @@ def test_anat_datasinks_wf_minimal(tmp_path: Path, minimal_bids: Path) -> None:
     work = tmp_path / "work"
 
     src_t1w = minimal_bids / "sub-01" / "ses-0001" / "anat" / "sub-01_ses-0001_T1w.nii.gz"
+    nib.save(
+        nib.Nifti1Image(
+            np.zeros((4, 4, 4), dtype=np.float32),
+            np.diag([2.0, 2.0, 2.0, 1.0]),
+        ),
+        src_t1w,
+    )
     deriv_t1w = _make_nifti(tmp_path / "t1w_preproc.nii.gz")
     deriv_mask = _make_nifti(tmp_path / "brain_mask.nii.gz")
     fake_xfm = tmp_path / "acpc.mat"
@@ -91,6 +98,18 @@ def test_anat_datasinks_wf_minimal(tmp_path: Path, minimal_bids: Path) -> None:
     assert sidecar["SpatialReference"].startswith("bids::sub-")
     assert sidecar["Resolution"] == "native"
     assert isinstance(sidecar["VoxelSize"], list) and len(sidecar["VoxelSize"]) == 3
+    assert sidecar["ProcessingSteps"] == [
+        "Reorientation to RAS and robust FOV cropping",
+        "N4 bias field correction",
+        "Conditional conformation of submillimeter input voxels to 1 mm",
+        "Brain extraction",
+    ]
+    assert sidecar["VoxelSize"] == [1.0, 1.0, 1.0]
+    assert sidecar["OriginalResolution"]["VoxelDimensions"] == [2.0, 2.0, 2.0]
+
+    mask_sidecar = json.loads(mask_json.read_text())
+    assert "SkullStripped" not in mask_sidecar
+    assert mask_sidecar["ProcessingSteps"][-1] == "Brain-mask estimation"
 
     # dataset_description.json written
     dd = out_root / "pmriprep" / "dataset_description.json"
@@ -362,3 +381,17 @@ def test_multi_modality_kitchen_sink(tmp_path: Path, minimal_bids: Path) -> None
     )
     assert "PerfusionProcessing" in postcon_sidecar
     assert "ContrastAgent" in postcon_sidecar["PerfusionProcessing"]
+    assert "Rigid registration to the anatomical reference" in postcon_sidecar[
+        "ProcessingSteps"
+    ]
+    assert postcon_sidecar["ProcessingSteps"][0] == (
+        "Reorientation to RAS and robust FOV cropping"
+    )
+
+    subtraction_sidecar = json.loads(
+        (anat_dir / "sub-01_ses-0001_space-T1w_desc-subtraction_T1w.json").read_text()
+    )
+    assert subtraction_sidecar["ProcessingSteps"] == [
+        "Rigid registration of the post-contrast T1w image to the pre-contrast reference",
+        "Post-contrast minus pre-contrast signal subtraction within the brain mask",
+    ]
