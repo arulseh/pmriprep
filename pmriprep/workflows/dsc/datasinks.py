@@ -480,7 +480,7 @@ def _build_dsc_preproc_meta(
 
     out = dict(base)
     out["Description"] = description
-    out["SkullStripped"] = True
+    out["SkullStripped"] = False
     if isinstance(config_dict, dict):
         out["MotionCorrectionApplied"] = bool(
             config_dict.get("motion_correct", True)
@@ -511,6 +511,33 @@ def _build_dsc_preproc_meta(
     if isinstance(config_dict, dict):
         out["PipelineConfiguration"] = build_provenance_block(config_dict)
     return dict(sanitize_for_json(out))
+
+
+def _build_dsc_mean_meta(
+    base: dict,
+    preprocessing_stats: dict | None = None,
+    motion_correct: bool = True,
+) -> dict:
+    """Describe the all-volume DSC temporal mean without implying baseline contrast."""
+    out = dict(base)
+    out.update({
+        "Description": "Temporal mean across all acquired DSC volumes",
+        "TemporalAggregation": "arithmetic_mean_all_acquired_volumes",
+        "IncludesPostContrastVolumes": True,
+        "MotionCorrectionApplied": bool(motion_correct),
+        "SkullStripped": False,
+    })
+    if isinstance(preprocessing_stats, dict):
+        n_volumes = preprocessing_stats.get("n_volumes")
+        if n_volumes is not None:
+            out["NumberOfVolumes"] = int(n_volumes)
+        baseline_frames = preprocessing_stats.get(
+            "baseline_frames_used",
+            preprocessing_stats.get("baseline_frames_detected"),
+        )
+        if baseline_frames is not None:
+            out["BaselineFrames"] = int(baseline_frames)
+    return out
 
 
 def _write_dsc_resume_checkpoint(
@@ -1540,10 +1567,44 @@ def init_dsc_datasinks_wf(
         ])
         sink_outputs.append((resume_checkpoint, "out_file"))
     if "dsc_mean" in present:
-        sink_outputs.append((_add_minimal_perf_sink(
-            "mean", "dsc_mean", "dscMean", "",
-            "Mean DSC reference image", "stat",
-        ), "out_file"))
+        meta = pe.Node(
+            niu.Function(
+                input_names=["base", "preprocessing_stats", "motion_correct"],
+                output_names=["meta_dict"],
+                function=_build_dsc_mean_meta,
+            ),
+            name="mean_meta",
+        )
+        meta.inputs.motion_correct = motion_correct
+        workflow.connect([
+            (base_minimal, meta, [("meta_dict", "base")]),
+            (inputnode, meta, [("preprocessing_stats", "preprocessing_stats")]),
+        ])
+        sink = pe.Node(
+            niu.Function(
+                input_names=[
+                    "in_file", "output_dir", "subject", "session",
+                    "desc", "suffix", "meta_dict", "datatype", "bids_suffix",
+                ],
+                output_names=["out_file"],
+                function=_copy_perf_map,
+            ),
+            name="mean_sink",
+        )
+        sink.inputs.desc = "dscMean"
+        sink.inputs.suffix = ""
+        sink.inputs.datatype = "perf"
+        sink.inputs.bids_suffix = "stat"
+        workflow.connect([
+            (inputnode, sink, [
+                ("output_dir", "output_dir"),
+                ("subject_id", "subject"),
+                ("session_id", "session"),
+                ("dsc_mean", "in_file"),
+            ]),
+            (meta, sink, [("meta_dict", "meta_dict")]),
+        ])
+        sink_outputs.append((sink, "out_file"))
     if "aif_mask" in present:
         meta = pe.Node(
             niu.Function(

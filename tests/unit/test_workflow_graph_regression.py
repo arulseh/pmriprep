@@ -80,6 +80,7 @@ from pmriprep.workflows.anat.base import init_anat_preproc_wf
 from pmriprep.workflows.dce.base import init_dce_preproc_wf
 from pmriprep.workflows.dce.datasinks import init_dce_datasinks_wf
 from pmriprep.workflows.dsc.base import init_dsc_preproc_wf
+from pmriprep.workflows.dsc.datasinks import init_dsc_datasinks_wf
 
 BASELINE_DIR = Path(__file__).parent / "data" / "graph_baselines"
 _REGEN = os.environ.get("PMRIPREP_REGEN_GRAPH") == "1"
@@ -410,6 +411,19 @@ def _dce_preproc_datasinks(bids: Path) -> pe.Workflow:
     )
 
 
+def _dsc_preproc_datasinks(bids: Path) -> pe.Workflow:
+    """Build the public DSC-series and temporal-mean sink branches."""
+    return init_dsc_datasinks_wf(
+        output_dir=str(bids / "derivatives"),
+        bids_dir=str(bids),
+        subject_id="0001",
+        session_id="0001",
+        inference="nlls",
+        present_inputs={"dsc_moco", "dsc_mean"},
+        motion_correct=False,
+    )
+
+
 def _anat(
     bids: Path,
     *,
@@ -473,6 +487,7 @@ DCE_MATRIX: list[tuple[str, Builder]] = [
 ]
 
 DSC_MATRIX: list[tuple[str, Builder]] = [
+    ("dsc_datasinks_preproc", _dsc_preproc_datasinks),
     ("dsc_default", lambda b: _dsc(b)),
     # smooth_fwhm>0 is the only branch instantiating build_hemo_dict /
     # build_auc_dict -> load-bearing for verifying PR3's embedded-def pull.

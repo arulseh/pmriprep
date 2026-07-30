@@ -347,7 +347,24 @@ class TestPreprocMetaNoNaN:
 
         qc = {"preprocessing": {"baseline_tsnr": float("nan"), "mean_cnr": 4.2}}
         meta = _build_dsc_preproc_meta({"Description": "x"}, "desc", qc_metrics=qc)
-        assert meta["SkullStripped"] is True
+        assert meta["SkullStripped"] is False
         assert "baseline_tsnr" not in meta["PipelineQC"]["preprocessing"]
         assert meta["PipelineQC"]["preprocessing"]["mean_cnr"] == 4.2
         json.dumps(meta, allow_nan=False)
+
+    def test_dsc_mean_meta_describes_all_volume_average(self):
+        from pmriprep.workflows.dsc.datasinks import _build_dsc_mean_meta
+
+        meta = _build_dsc_mean_meta(
+            {},
+            {"n_volumes": 80, "baseline_frames_used": 8},
+            motion_correct=False,
+        )
+
+        assert meta["Description"] == "Temporal mean across all acquired DSC volumes"
+        assert meta["TemporalAggregation"] == "arithmetic_mean_all_acquired_volumes"
+        assert meta["IncludesPostContrastVolumes"] is True
+        assert meta["MotionCorrectionApplied"] is False
+        assert meta["SkullStripped"] is False
+        assert meta["NumberOfVolumes"] == 80
+        assert meta["BaselineFrames"] == 8

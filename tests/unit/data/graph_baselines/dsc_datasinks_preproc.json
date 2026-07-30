@@ -1,0 +1,1132 @@
+{
+  "edges": [
+    [
+      "base_minimal_meta",
+      "meta_dict",
+      "mean_meta",
+      "base"
+    ],
+    [
+      "base_minimal_meta",
+      "meta_dict",
+      "moco_meta",
+      "base"
+    ],
+    [
+      "base_perf_meta",
+      "meta_dict",
+      "mtt_map_meta",
+      "base"
+    ],
+    [
+      "base_perf_meta",
+      "meta_dict",
+      "psr_map_meta",
+      "base"
+    ],
+    [
+      "base_perf_meta",
+      "meta_dict",
+      "tmax_map_meta",
+      "base"
+    ],
+    [
+      "dataset_description",
+      "dd_path",
+      "outputnode",
+      "dataset_description_done"
+    ],
+    [
+      "dataset_description",
+      "dd_path",
+      "outputnode",
+      "done"
+    ],
+    [
+      "dd_merge",
+      "out",
+      "dataset_description",
+      "_trigger"
+    ],
+    [
+      "figures_writer",
+      "aif_curve_txt",
+      "dd_merge",
+      "in7"
+    ],
+    [
+      "inputnode",
+      "aif_candidates_plot",
+      "figures_writer",
+      "aif_candidates_plot"
+    ],
+    [
+      "inputnode",
+      "aif_curve",
+      "figures_writer",
+      "aif_curve"
+    ],
+    [
+      "inputnode",
+      "aif_curve_plot",
+      "figures_writer",
+      "aif_curve_plot"
+    ],
+    [
+      "inputnode",
+      "aif_location_plot",
+      "figures_writer",
+      "aif_location_plot"
+    ],
+    [
+      "inputnode",
+      "aif_metrics",
+      "resume_checkpoint",
+      "aif_metrics"
+    ],
+    [
+      "inputnode",
+      "aif_qc",
+      "resume_checkpoint",
+      "aif_qc"
+    ],
+    [
+      "inputnode",
+      "bids_dir",
+      "base_minimal_meta",
+      "bids_dir"
+    ],
+    [
+      "inputnode",
+      "bids_dir",
+      "base_perf_meta",
+      "bids_dir"
+    ],
+    [
+      "inputnode",
+      "bids_dir",
+      "dataset_description",
+      "bids_dir"
+    ],
+    [
+      "inputnode",
+      "bids_dir",
+      "figures_writer",
+      "bids_dir"
+    ],
+    [
+      "inputnode",
+      "brain_mask_filmstrip",
+      "figures_writer",
+      "brain_mask_filmstrip"
+    ],
+    [
+      "inputnode",
+      "config_dict",
+      "moco_meta",
+      "config_dict"
+    ],
+    [
+      "inputnode",
+      "dsc_fit_qc_plot",
+      "figures_writer",
+      "dsc_fit_qc_plot"
+    ],
+    [
+      "inputnode",
+      "dsc_leakage_qc_plot",
+      "figures_writer",
+      "dsc_leakage_qc_plot"
+    ],
+    [
+      "inputnode",
+      "dsc_mean",
+      "mean_sink",
+      "in_file"
+    ],
+    [
+      "inputnode",
+      "dsc_moco",
+      "moco_sink",
+      "in_file"
+    ],
+    [
+      "inputnode",
+      "dsc_param_maps_qc_plot",
+      "figures_writer",
+      "dsc_param_maps_qc_plot"
+    ],
+    [
+      "inputnode",
+      "dsc_preprocessing_qc_plot",
+      "figures_writer",
+      "dsc_preprocessing_qc_plot"
+    ],
+    [
+      "inputnode",
+      "lesion_stats_json",
+      "mtt_map_meta",
+      "lesion_stats_json"
+    ],
+    [
+      "inputnode",
+      "lesion_stats_json",
+      "psr_map_meta",
+      "lesion_stats_json"
+    ],
+    [
+      "inputnode",
+      "lesion_stats_json",
+      "tmax_map_meta",
+      "lesion_stats_json"
+    ],
+    [
+      "inputnode",
+      "motion_params",
+      "figures_writer",
+      "motion_params"
+    ],
+    [
+      "inputnode",
+      "motion_qc",
+      "resume_checkpoint",
+      "motion_qc"
+    ],
+    [
+      "inputnode",
+      "motion_qc_plot",
+      "figures_writer",
+      "motion_qc_plot"
+    ],
+    [
+      "inputnode",
+      "mtt_map",
+      "base_minimal_meta",
+      "reference_voxel_source"
+    ],
+    [
+      "inputnode",
+      "mtt_map",
+      "base_perf_meta",
+      "reference_voxel_source"
+    ],
+    [
+      "inputnode",
+      "mtt_map",
+      "mtt_map_sink",
+      "in_file"
+    ],
+    [
+      "inputnode",
+      "output_dir",
+      "dataset_description",
+      "output_dir"
+    ],
+    [
+      "inputnode",
+      "output_dir",
+      "figures_writer",
+      "output_dir"
+    ],
+    [
+      "inputnode",
+      "output_dir",
+      "mean_sink",
+      "output_dir"
+    ],
+    [
+      "inputnode",
+      "output_dir",
+      "moco_sink",
+      "output_dir"
+    ],
+    [
+      "inputnode",
+      "output_dir",
+      "mtt_map_sink",
+      "output_dir"
+    ],
+    [
+      "inputnode",
+      "output_dir",
+      "psr_map_sink",
+      "output_dir"
+    ],
+    [
+      "inputnode",
+      "output_dir",
+      "tmax_map_sink",
+      "output_dir"
+    ],
+    [
+      "inputnode",
+      "preflight_warnings",
+      "moco_meta",
+      "preflight_warnings"
+    ],
+    [
+      "inputnode",
+      "preload_qc",
+      "moco_meta",
+      "preload_qc"
+    ],
+    [
+      "inputnode",
+      "preload_qc",
+      "resume_checkpoint",
+      "preload_qc"
+    ],
+    [
+      "inputnode",
+      "preprocessing_stats",
+      "mean_meta",
+      "preprocessing_stats"
+    ],
+    [
+      "inputnode",
+      "preprocessing_stats",
+      "moco_meta",
+      "preprocessing_stats"
+    ],
+    [
+      "inputnode",
+      "preprocessing_stats",
+      "resume_checkpoint",
+      "preprocessing_stats"
+    ],
+    [
+      "inputnode",
+      "provenance_dict",
+      "base_minimal_meta",
+      "provenance_dict"
+    ],
+    [
+      "inputnode",
+      "provenance_dict",
+      "base_perf_meta",
+      "provenance_dict"
+    ],
+    [
+      "inputnode",
+      "provenance_dict",
+      "moco_meta",
+      "provenance_dict"
+    ],
+    [
+      "inputnode",
+      "psr_map",
+      "psr_map_sink",
+      "in_file"
+    ],
+    [
+      "inputnode",
+      "qc_metrics",
+      "base_perf_meta",
+      "qc_metrics"
+    ],
+    [
+      "inputnode",
+      "qc_metrics",
+      "figures_writer",
+      "qc_metrics"
+    ],
+    [
+      "inputnode",
+      "qc_metrics",
+      "moco_meta",
+      "qc_metrics"
+    ],
+    [
+      "inputnode",
+      "qc_metrics",
+      "mtt_map_meta",
+      "qc_metrics"
+    ],
+    [
+      "inputnode",
+      "qc_metrics",
+      "psr_map_meta",
+      "qc_metrics"
+    ],
+    [
+      "inputnode",
+      "qc_metrics",
+      "tmax_map_meta",
+      "qc_metrics"
+    ],
+    [
+      "inputnode",
+      "registration_filmstrip",
+      "figures_writer",
+      "registration_filmstrip"
+    ],
+    [
+      "inputnode",
+      "roi_stats_json",
+      "mtt_map_meta",
+      "roi_stats_json"
+    ],
+    [
+      "inputnode",
+      "roi_stats_json",
+      "psr_map_meta",
+      "roi_stats_json"
+    ],
+    [
+      "inputnode",
+      "roi_stats_json",
+      "tmax_map_meta",
+      "roi_stats_json"
+    ],
+    [
+      "inputnode",
+      "session_id",
+      "base_minimal_meta",
+      "session"
+    ],
+    [
+      "inputnode",
+      "session_id",
+      "base_perf_meta",
+      "session"
+    ],
+    [
+      "inputnode",
+      "session_id",
+      "figures_writer",
+      "session_id"
+    ],
+    [
+      "inputnode",
+      "session_id",
+      "mean_sink",
+      "session"
+    ],
+    [
+      "inputnode",
+      "session_id",
+      "moco_sink",
+      "session"
+    ],
+    [
+      "inputnode",
+      "session_id",
+      "mtt_map_sink",
+      "session"
+    ],
+    [
+      "inputnode",
+      "session_id",
+      "psr_map_sink",
+      "session"
+    ],
+    [
+      "inputnode",
+      "session_id",
+      "resume_checkpoint",
+      "session_id"
+    ],
+    [
+      "inputnode",
+      "session_id",
+      "tmax_map_sink",
+      "session"
+    ],
+    [
+      "inputnode",
+      "source_dsc",
+      "figures_writer",
+      "source_dsc"
+    ],
+    [
+      "inputnode",
+      "source_dsc",
+      "perf_sources",
+      "in1"
+    ],
+    [
+      "inputnode",
+      "source_flair",
+      "anat_mask_sources",
+      "in3"
+    ],
+    [
+      "inputnode",
+      "source_flair_postcon",
+      "anat_mask_sources",
+      "in4"
+    ],
+    [
+      "inputnode",
+      "source_t1w",
+      "anat_mask_sources",
+      "in1"
+    ],
+    [
+      "inputnode",
+      "source_t1w_postcon",
+      "anat_mask_sources",
+      "in2"
+    ],
+    [
+      "inputnode",
+      "source_t2w",
+      "anat_mask_sources",
+      "in5"
+    ],
+    [
+      "inputnode",
+      "subject_id",
+      "base_minimal_meta",
+      "subject"
+    ],
+    [
+      "inputnode",
+      "subject_id",
+      "base_perf_meta",
+      "subject"
+    ],
+    [
+      "inputnode",
+      "subject_id",
+      "figures_writer",
+      "subject_id"
+    ],
+    [
+      "inputnode",
+      "subject_id",
+      "mean_sink",
+      "subject"
+    ],
+    [
+      "inputnode",
+      "subject_id",
+      "moco_sink",
+      "subject"
+    ],
+    [
+      "inputnode",
+      "subject_id",
+      "mtt_map_sink",
+      "subject"
+    ],
+    [
+      "inputnode",
+      "subject_id",
+      "psr_map_sink",
+      "subject"
+    ],
+    [
+      "inputnode",
+      "subject_id",
+      "resume_checkpoint",
+      "subject_id"
+    ],
+    [
+      "inputnode",
+      "subject_id",
+      "tmax_map_sink",
+      "subject"
+    ],
+    [
+      "inputnode",
+      "tmax_map",
+      "tmax_map_sink",
+      "in_file"
+    ],
+    [
+      "inputnode",
+      "user_lesion_stats_json",
+      "mtt_map_meta",
+      "user_lesion_stats_json"
+    ],
+    [
+      "inputnode",
+      "user_lesion_stats_json",
+      "psr_map_meta",
+      "user_lesion_stats_json"
+    ],
+    [
+      "inputnode",
+      "user_lesion_stats_json",
+      "tmax_map_meta",
+      "user_lesion_stats_json"
+    ],
+    [
+      "inputnode",
+      "work_dir",
+      "resume_checkpoint",
+      "work_dir"
+    ],
+    [
+      "mean_meta",
+      "meta_dict",
+      "mean_sink",
+      "meta_dict"
+    ],
+    [
+      "mean_sink",
+      "out_file",
+      "dd_merge",
+      "in6"
+    ],
+    [
+      "moco_meta",
+      "meta_dict",
+      "moco_sink",
+      "meta_dict"
+    ],
+    [
+      "moco_sink",
+      "out_file",
+      "dd_merge",
+      "in4"
+    ],
+    [
+      "mtt_map_meta",
+      "meta_dict",
+      "mtt_map_sink",
+      "meta_dict"
+    ],
+    [
+      "mtt_map_sink",
+      "out_file",
+      "dd_merge",
+      "in1"
+    ],
+    [
+      "perf_sources",
+      "out",
+      "base_minimal_meta",
+      "source_paths"
+    ],
+    [
+      "perf_sources",
+      "out",
+      "base_perf_meta",
+      "source_paths"
+    ],
+    [
+      "psr_map_meta",
+      "meta_dict",
+      "psr_map_sink",
+      "meta_dict"
+    ],
+    [
+      "psr_map_sink",
+      "out_file",
+      "dd_merge",
+      "in3"
+    ],
+    [
+      "resume_checkpoint",
+      "out_file",
+      "dd_merge",
+      "in5"
+    ],
+    [
+      "tmax_map_meta",
+      "meta_dict",
+      "tmax_map_sink",
+      "meta_dict"
+    ],
+    [
+      "tmax_map_sink",
+      "out_file",
+      "dd_merge",
+      "in2"
+    ]
+  ],
+  "function_io": {
+    "base_minimal_meta": {
+      "input_names": [
+        "bids_dir",
+        "minimal",
+        "provenance_dict",
+        "qc_metrics",
+        "reference_voxel_source",
+        "session",
+        "source_paths",
+        "subject"
+      ],
+      "output_names": [
+        "meta_dict"
+      ]
+    },
+    "base_perf_meta": {
+      "input_names": [
+        "bids_dir",
+        "minimal",
+        "provenance_dict",
+        "qc_metrics",
+        "reference_voxel_source",
+        "session",
+        "source_paths",
+        "subject"
+      ],
+      "output_names": [
+        "meta_dict"
+      ]
+    },
+    "dataset_description": {
+      "input_names": [
+        "_trigger",
+        "bids_dir",
+        "output_dir"
+      ],
+      "output_names": [
+        "dd_path"
+      ]
+    },
+    "mean_meta": {
+      "input_names": [
+        "base",
+        "motion_correct",
+        "preprocessing_stats"
+      ],
+      "output_names": [
+        "meta_dict"
+      ]
+    },
+    "mean_sink": {
+      "input_names": [
+        "bids_suffix",
+        "datatype",
+        "desc",
+        "in_file",
+        "meta_dict",
+        "output_dir",
+        "session",
+        "subject",
+        "suffix"
+      ],
+      "output_names": [
+        "out_file"
+      ]
+    },
+    "moco_meta": {
+      "input_names": [
+        "base",
+        "config_dict",
+        "description",
+        "preflight_warnings",
+        "preload_qc",
+        "preprocessing_stats",
+        "presence_warnings",
+        "provenance_dict",
+        "qc_metrics"
+      ],
+      "output_names": [
+        "meta_dict"
+      ]
+    },
+    "moco_sink": {
+      "input_names": [
+        "bids_suffix",
+        "datatype",
+        "desc",
+        "in_file",
+        "meta_dict",
+        "output_dir",
+        "session",
+        "subject",
+        "suffix"
+      ],
+      "output_names": [
+        "out_file"
+      ]
+    },
+    "mtt_map_meta": {
+      "input_names": [
+        "base",
+        "description",
+        "extra",
+        "lesion_stats_json",
+        "map_key",
+        "qc_metrics",
+        "roi_stats_json",
+        "units",
+        "user_lesion_stats_json"
+      ],
+      "output_names": [
+        "meta_dict"
+      ]
+    },
+    "mtt_map_sink": {
+      "input_names": [
+        "bids_suffix",
+        "datatype",
+        "desc",
+        "in_file",
+        "meta_dict",
+        "output_dir",
+        "session",
+        "subject",
+        "suffix"
+      ],
+      "output_names": [
+        "out_file"
+      ]
+    },
+    "psr_map_meta": {
+      "input_names": [
+        "base",
+        "description",
+        "extra",
+        "lesion_stats_json",
+        "map_key",
+        "qc_metrics",
+        "roi_stats_json",
+        "units",
+        "user_lesion_stats_json"
+      ],
+      "output_names": [
+        "meta_dict"
+      ]
+    },
+    "psr_map_sink": {
+      "input_names": [
+        "bids_suffix",
+        "datatype",
+        "desc",
+        "in_file",
+        "meta_dict",
+        "output_dir",
+        "session",
+        "subject",
+        "suffix"
+      ],
+      "output_names": [
+        "out_file"
+      ]
+    },
+    "resume_checkpoint": {
+      "input_names": [
+        "aif_metrics",
+        "aif_qc",
+        "motion_qc",
+        "preload_qc",
+        "preprocessing_stats",
+        "session_id",
+        "subject_id",
+        "work_dir"
+      ],
+      "output_names": [
+        "out_file"
+      ]
+    },
+    "tmax_map_meta": {
+      "input_names": [
+        "base",
+        "description",
+        "extra",
+        "lesion_stats_json",
+        "map_key",
+        "qc_metrics",
+        "roi_stats_json",
+        "units",
+        "user_lesion_stats_json"
+      ],
+      "output_names": [
+        "meta_dict"
+      ]
+    },
+    "tmax_map_sink": {
+      "input_names": [
+        "bids_suffix",
+        "datatype",
+        "desc",
+        "in_file",
+        "meta_dict",
+        "output_dir",
+        "session",
+        "subject",
+        "suffix"
+      ],
+      "output_names": [
+        "out_file"
+      ]
+    }
+  },
+  "function_sha256": {
+    "base_minimal_meta": "6c0308432a124b4e1b1efedac75d61373db50aee3239f6f50e42bcc48ff72fce",
+    "base_perf_meta": "6c0308432a124b4e1b1efedac75d61373db50aee3239f6f50e42bcc48ff72fce",
+    "dataset_description": "4f030212e4217b96b33ce28a7ed92f196a066b4199d13919b0c6168ba0c7fa20",
+    "mean_meta": "5f292e84757e877370f125437ddebc20daba05bcdd170897c8686e03a949e494",
+    "mean_sink": "fcb4e47901c5216926eb960a4fbdc146b1c7cacea778c10c7f34d3cb614e81f5",
+    "moco_meta": "ed3aeaeab1cde104be2eb771d81322be077890870a47fb00c5b0416b78d4dbea",
+    "moco_sink": "fcb4e47901c5216926eb960a4fbdc146b1c7cacea778c10c7f34d3cb614e81f5",
+    "mtt_map_meta": "662978f3eb3898bf4142fbe21667e36eedbd3ba27e45b18161c85f85d9663b91",
+    "mtt_map_sink": "fcb4e47901c5216926eb960a4fbdc146b1c7cacea778c10c7f34d3cb614e81f5",
+    "psr_map_meta": "662978f3eb3898bf4142fbe21667e36eedbd3ba27e45b18161c85f85d9663b91",
+    "psr_map_sink": "fcb4e47901c5216926eb960a4fbdc146b1c7cacea778c10c7f34d3cb614e81f5",
+    "resume_checkpoint": "75f03da8c3c7884f258fbfc706ed795636c66c352f8fa3accbfc006ea4fddc90",
+    "tmax_map_meta": "662978f3eb3898bf4142fbe21667e36eedbd3ba27e45b18161c85f85d9663b91",
+    "tmax_map_sink": "fcb4e47901c5216926eb960a4fbdc146b1c7cacea778c10c7f34d3cb614e81f5"
+  },
+  "nipype_version": "1.10.0",
+  "node_attrs": {
+    "anat_mask_sources": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "base_minimal_meta": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "base_perf_meta": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "dataset_description": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "dd_merge": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "figures_writer": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "inputnode": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "mean_meta": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "mean_sink": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "moco_meta": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "moco_sink": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "mtt_map_meta": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "mtt_map_sink": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "outputnode": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "perf_sources": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "psr_map_meta": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "psr_map_sink": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "resume_checkpoint": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "tmax_map_meta": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "tmax_map_sink": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    }
+  },
+  "node_params": {
+    "anat_mask_sources": {
+      "axis": "vstack",
+      "no_flatten": false,
+      "ravel_inputs": false
+    },
+    "base_minimal_meta": {
+      "function_str": "def _build_base(\n    source_paths: list[str],\n    reference_voxel_source: str,\n    bids_dir: str,\n    subject: str,\n    session: str,\n    provenance_dict: dict | None = None,\n    qc_metrics: dict | None = None,\n    minimal: bool = False,\n) -> dict:\n    from pmriprep.utils.sidecar_builders import build_dsc_base_sidecar\n\n    return build_dsc_base_sidecar(\n        source_paths=source_paths,\n        reference_voxel_source=reference_voxel_source,\n        bids_dir=bids_dir,\n        subject=subject,\n        session=session or None,\n        provenance_dict=provenance_dict,\n        qc_metrics=qc_metrics,\n        minimal=minimal,\n    )\n",
+      "minimal": true,
+      "qc_metrics": null
+    },
+    "base_perf_meta": {
+      "function_str": "def _build_base(\n    source_paths: list[str],\n    reference_voxel_source: str,\n    bids_dir: str,\n    subject: str,\n    session: str,\n    provenance_dict: dict | None = None,\n    qc_metrics: dict | None = None,\n    minimal: bool = False,\n) -> dict:\n    from pmriprep.utils.sidecar_builders import build_dsc_base_sidecar\n\n    return build_dsc_base_sidecar(\n        source_paths=source_paths,\n        reference_voxel_source=reference_voxel_source,\n        bids_dir=bids_dir,\n        subject=subject,\n        session=session or None,\n        provenance_dict=provenance_dict,\n        qc_metrics=qc_metrics,\n        minimal=minimal,\n    )\n",
+      "minimal": false
+    },
+    "dd_merge": {
+      "axis": "vstack",
+      "no_flatten": false,
+      "ravel_inputs": false
+    },
+    "figures_writer": {
+      "bids_dir": "",
+      "motion_applied": false,
+      "session_id": ""
+    },
+    "inputnode": {
+      "session_id": "0001",
+      "subject_id": "0001"
+    },
+    "mean_meta": {
+      "function_str": "def _build_dsc_mean_meta(\n    base: dict,\n    preprocessing_stats: dict | None = None,\n    motion_correct: bool = True,\n) -> dict:\n    \"\"\"Describe the all-volume DSC temporal mean without implying baseline contrast.\"\"\"\n    out = dict(base)\n    out.update({\n        \"Description\": \"Temporal mean across all acquired DSC volumes\",\n        \"TemporalAggregation\": \"arithmetic_mean_all_acquired_volumes\",\n        \"IncludesPostContrastVolumes\": True,\n        \"MotionCorrectionApplied\": bool(motion_correct),\n        \"SkullStripped\": False,\n    })\n    if isinstance(preprocessing_stats, dict):\n        n_volumes = preprocessing_stats.get(\"n_volumes\")\n        if n_volumes is not None:\n            out[\"NumberOfVolumes\"] = int(n_volumes)\n        baseline_frames = preprocessing_stats.get(\n            \"baseline_frames_used\",\n            preprocessing_stats.get(\"baseline_frames_detected\"),\n        )\n        if baseline_frames is not None:\n            out[\"BaselineFrames\"] = int(baseline_frames)\n    return out\n",
+      "motion_correct": false
+    },
+    "mean_sink": {
+      "bids_suffix": "stat",
+      "datatype": "perf",
+      "desc": "dscMean",
+      "suffix": ""
+    },
+    "moco_meta": {
+      "description": "Motion-corrected 4D DSC time series",
+      "presence_warnings": [
+        "Brain mask in DSC space not available",
+        "NAWM mask in DSC space not available",
+        "Lesion mask in DSC space not available",
+        "DSC to T1w registration transform not available"
+      ]
+    },
+    "moco_sink": {
+      "bids_suffix": "dsc",
+      "datatype": "perf",
+      "desc": "dscPreproc",
+      "suffix": ""
+    },
+    "mtt_map_meta": {
+      "description": "Mean transit time",
+      "function_str": "def _build_map_meta(\n    base: dict,\n    description: str,\n    map_key: str,\n    qc_metrics: dict | None = None,\n    units: str | None = None,\n    extra: dict | None = None,\n    lesion_stats_json: str | None = None,\n    user_lesion_stats_json: str | None = None,\n    roi_stats_json: str | None = None,\n) -> dict:\n    \"\"\"Compose a DSC per-map sidecar; injects per-map stats fragments.\n\n    Each aggregate stats JSON (lesion, user-lesion, ROI) is loaded when\n    present and split into per-map fragments via\n    :func:`extract_per_map_lesion_stats`. Fragments are merged into\n    the ``extra`` dict as ``LesionStats``, ``UserLesionStats``, and\n    ``ROIStats`` alongside any caller-provided extras.\n    \"\"\"\n    from pmriprep.utils.lesion_stats import load_lesion_stats_fragment\n    from pmriprep.utils.sidecar_builders import build_dsc_map_sidecar\n\n    fragment = load_lesion_stats_fragment(lesion_stats_json, map_key)\n    user_fragment = load_lesion_stats_fragment(user_lesion_stats_json, map_key)\n\n    merged_extra = dict(extra) if extra else {}\n    if map_key in {\"cbv_auc\", \"ncbv\"}:\n        from pmriprep.workflows.dsc.datasinks import (\n            _build_signed_auc_cbv_provenance,\n        )\n\n        merged_extra[\"SignedEstimator\"] = _build_signed_auc_cbv_provenance(\n            qc_metrics,\n            normalized=map_key == \"ncbv\",\n        )\n    if map_key == \"fallback\":\n        merged_extra[\"Type\"] = \"ROI\"\n    if map_key == \"cbf_std\" and isinstance(qc_metrics, dict):\n        deconvolution = qc_metrics.get(\"deconvolution\")\n        if isinstance(deconvolution, dict):\n            accounting = deconvolution.get(\"map_uncertainty\")\n            if isinstance(accounting, dict):\n                merged_extra[\"MAPUncertaintyAccounting\"] = dict(accounting)\n    if fragment:\n        merged_extra[\"LesionStats\"] = fragment\n    if user_fragment:\n        merged_extra[\"UserLesionStats\"] = user_fragment\n    roi_fragment = load_lesion_stats_fragment(roi_stats_json, map_key)\n    if roi_fragment:\n        merged_extra[\"ROIStats\"] = roi_fragment\n    return build_dsc_map_sidecar(\n        base=base,\n        description=description,\n        map_key=map_key,\n        qc_metrics=qc_metrics,\n        units=units,\n        extra=merged_extra or extra,\n    )\n",
+      "map_key": "mtt",
+      "units": "s"
+    },
+    "mtt_map_sink": {
+      "bids_suffix": "stat",
+      "datatype": "perf",
+      "desc": "dsc",
+      "suffix": "mtt"
+    },
+    "perf_sources": {
+      "axis": "vstack",
+      "no_flatten": false,
+      "ravel_inputs": false
+    },
+    "psr_map_meta": {
+      "description": "Percent signal recovery from the raw, non-leakage-corrected signal",
+      "function_str": "def _build_map_meta(\n    base: dict,\n    description: str,\n    map_key: str,\n    qc_metrics: dict | None = None,\n    units: str | None = None,\n    extra: dict | None = None,\n    lesion_stats_json: str | None = None,\n    user_lesion_stats_json: str | None = None,\n    roi_stats_json: str | None = None,\n) -> dict:\n    \"\"\"Compose a DSC per-map sidecar; injects per-map stats fragments.\n\n    Each aggregate stats JSON (lesion, user-lesion, ROI) is loaded when\n    present and split into per-map fragments via\n    :func:`extract_per_map_lesion_stats`. Fragments are merged into\n    the ``extra`` dict as ``LesionStats``, ``UserLesionStats``, and\n    ``ROIStats`` alongside any caller-provided extras.\n    \"\"\"\n    from pmriprep.utils.lesion_stats import load_lesion_stats_fragment\n    from pmriprep.utils.sidecar_builders import build_dsc_map_sidecar\n\n    fragment = load_lesion_stats_fragment(lesion_stats_json, map_key)\n    user_fragment = load_lesion_stats_fragment(user_lesion_stats_json, map_key)\n\n    merged_extra = dict(extra) if extra else {}\n    if map_key in {\"cbv_auc\", \"ncbv\"}:\n        from pmriprep.workflows.dsc.datasinks import (\n            _build_signed_auc_cbv_provenance,\n        )\n\n        merged_extra[\"SignedEstimator\"] = _build_signed_auc_cbv_provenance(\n            qc_metrics,\n            normalized=map_key == \"ncbv\",\n        )\n    if map_key == \"fallback\":\n        merged_extra[\"Type\"] = \"ROI\"\n    if map_key == \"cbf_std\" and isinstance(qc_metrics, dict):\n        deconvolution = qc_metrics.get(\"deconvolution\")\n        if isinstance(deconvolution, dict):\n            accounting = deconvolution.get(\"map_uncertainty\")\n            if isinstance(accounting, dict):\n                merged_extra[\"MAPUncertaintyAccounting\"] = dict(accounting)\n    if fragment:\n        merged_extra[\"LesionStats\"] = fragment\n    if user_fragment:\n        merged_extra[\"UserLesionStats\"] = user_fragment\n    roi_fragment = load_lesion_stats_fragment(roi_stats_json, map_key)\n    if roi_fragment:\n        merged_extra[\"ROIStats\"] = roi_fragment\n    return build_dsc_map_sidecar(\n        base=base,\n        description=description,\n        map_key=map_key,\n        qc_metrics=qc_metrics,\n        units=units,\n        extra=merged_extra or extra,\n    )\n",
+      "map_key": "psr",
+      "units": "%"
+    },
+    "psr_map_sink": {
+      "bids_suffix": "stat",
+      "datatype": "perf",
+      "desc": "dsc",
+      "suffix": "psr"
+    },
+    "tmax_map_meta": {
+      "description": "Time to maximum of residue function",
+      "function_str": "def _build_map_meta(\n    base: dict,\n    description: str,\n    map_key: str,\n    qc_metrics: dict | None = None,\n    units: str | None = None,\n    extra: dict | None = None,\n    lesion_stats_json: str | None = None,\n    user_lesion_stats_json: str | None = None,\n    roi_stats_json: str | None = None,\n) -> dict:\n    \"\"\"Compose a DSC per-map sidecar; injects per-map stats fragments.\n\n    Each aggregate stats JSON (lesion, user-lesion, ROI) is loaded when\n    present and split into per-map fragments via\n    :func:`extract_per_map_lesion_stats`. Fragments are merged into\n    the ``extra`` dict as ``LesionStats``, ``UserLesionStats``, and\n    ``ROIStats`` alongside any caller-provided extras.\n    \"\"\"\n    from pmriprep.utils.lesion_stats import load_lesion_stats_fragment\n    from pmriprep.utils.sidecar_builders import build_dsc_map_sidecar\n\n    fragment = load_lesion_stats_fragment(lesion_stats_json, map_key)\n    user_fragment = load_lesion_stats_fragment(user_lesion_stats_json, map_key)\n\n    merged_extra = dict(extra) if extra else {}\n    if map_key in {\"cbv_auc\", \"ncbv\"}:\n        from pmriprep.workflows.dsc.datasinks import (\n            _build_signed_auc_cbv_provenance,\n        )\n\n        merged_extra[\"SignedEstimator\"] = _build_signed_auc_cbv_provenance(\n            qc_metrics,\n            normalized=map_key == \"ncbv\",\n        )\n    if map_key == \"fallback\":\n        merged_extra[\"Type\"] = \"ROI\"\n    if map_key == \"cbf_std\" and isinstance(qc_metrics, dict):\n        deconvolution = qc_metrics.get(\"deconvolution\")\n        if isinstance(deconvolution, dict):\n            accounting = deconvolution.get(\"map_uncertainty\")\n            if isinstance(accounting, dict):\n                merged_extra[\"MAPUncertaintyAccounting\"] = dict(accounting)\n    if fragment:\n        merged_extra[\"LesionStats\"] = fragment\n    if user_fragment:\n        merged_extra[\"UserLesionStats\"] = user_fragment\n    roi_fragment = load_lesion_stats_fragment(roi_stats_json, map_key)\n    if roi_fragment:\n        merged_extra[\"ROIStats\"] = roi_fragment\n    return build_dsc_map_sidecar(\n        base=base,\n        description=description,\n        map_key=map_key,\n        qc_metrics=qc_metrics,\n        units=units,\n        extra=merged_extra or extra,\n    )\n",
+      "map_key": "tmax",
+      "units": "s"
+    },
+    "tmax_map_sink": {
+      "bids_suffix": "stat",
+      "datatype": "perf",
+      "desc": "dsc",
+      "suffix": "tmax"
+    }
+  },
+  "nodes": [
+    [
+      "anat_mask_sources",
+      "Merge"
+    ],
+    [
+      "base_minimal_meta",
+      "Function"
+    ],
+    [
+      "base_perf_meta",
+      "Function"
+    ],
+    [
+      "dataset_description",
+      "Function"
+    ],
+    [
+      "dd_merge",
+      "Merge"
+    ],
+    [
+      "figures_writer",
+      "DSCFiguresWriter"
+    ],
+    [
+      "inputnode",
+      "IdentityInterface"
+    ],
+    [
+      "mean_meta",
+      "Function"
+    ],
+    [
+      "mean_sink",
+      "Function"
+    ],
+    [
+      "moco_meta",
+      "Function"
+    ],
+    [
+      "moco_sink",
+      "Function"
+    ],
+    [
+      "mtt_map_meta",
+      "Function"
+    ],
+    [
+      "mtt_map_sink",
+      "Function"
+    ],
+    [
+      "outputnode",
+      "IdentityInterface"
+    ],
+    [
+      "perf_sources",
+      "Merge"
+    ],
+    [
+      "psr_map_meta",
+      "Function"
+    ],
+    [
+      "psr_map_sink",
+      "Function"
+    ],
+    [
+      "resume_checkpoint",
+      "Function"
+    ],
+    [
+      "tmax_map_meta",
+      "Function"
+    ],
+    [
+      "tmax_map_sink",
+      "Function"
+    ]
+  ],
+  "public_outputnode_fields": [
+    "dataset_description_done",
+    "done"
+  ]
+}
