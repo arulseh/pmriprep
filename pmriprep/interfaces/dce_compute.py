@@ -218,6 +218,11 @@ def _select_auto_bic_winners(
     return winner_idx, delta_bic, valid
 
 
+def _candidate_bic_for_selection(candidate: Any) -> float:
+    """Return a candidate BIC only when its optimizer converged."""
+    return float(candidate.bic) if bool(candidate.converged) else np.inf
+
+
 def _scatter_dce_fit_artifacts(
     maps: "_DCEParameterMaps",
     coords: tuple[int, int, int],
@@ -1662,38 +1667,22 @@ def _fit_single_voxel(
                     )
                     continue
 
-            # Select winner = lowest BIC
-            best = min(
-                all_results,
-                key=lambda r: r.bic if np.isfinite(r.bic) else np.inf,
+            result_names = [candidate.model_name for candidate in all_results]
+            winner_idx, selected_delta_bic, _ = _select_auto_bic_winners(
+                result_names,
+                {
+                    candidate.model_name: np.asarray(
+                        [_candidate_bic_for_selection(candidate)]
+                    )
+                    for candidate in all_results
+                },
+                {
+                    candidate.model_name: candidate.n_parameters
+                    for candidate in all_results
+                },
             )
-
-            # Delta-BIC: positive = winner's margin over runner-up
-            sorted_bics = sorted(
-                r.bic for r in all_results if np.isfinite(r.bic)
-            )
-            delta_bic = (
-                sorted_bics[1] - sorted_bics[0]
-                if len(sorted_bics) > 1
-                else np.nan
-            )
-
-            # Require strong BIC evidence to upgrade from simplest model.
-            # ΔBIC ≥ 6 = "strong evidence".
-            # Prevents noise-driven model selection in low-enhancement
-            # voxels where complex models have unidentifiable parameters.
-            _MIN_DELTA_BIC_UPGRADE = 6.0
-            simplest = min(all_results, key=lambda r: r.n_parameters)
-            if (best.model_name != simplest.model_name
-                    and simplest.converged
-                    and delta_bic < _MIN_DELTA_BIC_UPGRADE):
-                logger.debug(
-                    "delta-BIC guard: %s -> %s (ΔBIC=%.2f < %.1f)"
-                    " at (%d,%d,%d)",
-                    best.model_name, simplest.model_name, delta_bic,
-                    _MIN_DELTA_BIC_UPGRADE, x, y, z,
-                )
-                best = simplest
+            best = all_results[int(winner_idx[0])]
+            delta_bic = float(selected_delta_bic[0])
 
             # Bayesian refinement of BIC winner
             if inference == "vi":
@@ -3311,7 +3300,7 @@ class ComputeDCEMaps(BaseInterface):
             ve=np.full(spatial_shape, fill_value, dtype=np.float64),
             vp=np.full(spatial_shape, fill_value, dtype=np.float64),
             kep=np.full(spatial_shape, fill_value, dtype=np.float64),
-            r_squared=np.zeros(spatial_shape, dtype=np.float64),
+            r_squared=np.full(spatial_shape, np.nan, dtype=np.float64),
             fp=np.full(spatial_shape, fill_value, dtype=np.float64),
             ps=np.full(spatial_shape, fill_value, dtype=np.float64),
             extraction_fraction=np.full(

@@ -644,7 +644,12 @@ def _build_model_selection_meta(
 
     out = dict(base)
     out["Description"] = (
-        "Per-voxel BIC model selection: complexity-ordered encoding"
+        "Per-voxel BIC model selection with a conservative complexity guard"
+    )
+    out["SelectionRule"] = (
+        "Choose the lowest-BIC candidate only when it improves on the "
+        "simplest converged candidate by at least 6 BIC units; otherwise "
+        "select the simplest candidate"
     )
     out["LabelEncoding"] = {
         "0": "unfitted",
@@ -676,8 +681,11 @@ def _build_delta_bic_meta(
 
     out = dict(base)
     out["Description"] = (
-        "BIC confidence: runner-up minus winner. "
-        ">2 = positive, >6 = strong, >10 = very strong"
+        "BIC separation for the selected lowest-BIC candidate: runner-up "
+        "minus winner. Undefined when the complexity guard selects the "
+        "simplest candidate instead of the raw BIC winner, or when fewer "
+        "than two candidates converge. >2 = positive, >6 = strong, "
+        ">10 = very strong"
     )
     apply_aif_sidecar(
         out,
@@ -1536,7 +1544,14 @@ def init_dce_datasinks_wf(
             description=(
                 "Coefficient of determination for the per-voxel PK fit"
             ),
-            units="1", extra=None,
+            units="1",
+            extra={
+                "UndefinedValue": "NaN for voxels without a retained PK fit",
+                "Interpretation": (
+                    "Fit-conditional goodness of fit; it does not establish "
+                    "physiological validity or identify the correct PK model"
+                ),
+            },
         )
         sink_outputs.append((sink, "out_file"))
     if "quality_flag_map" in present:

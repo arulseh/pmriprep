@@ -10,10 +10,13 @@ Tests the `model=auto` behavior:
 - NaN parameter maps for non-applicable params
 """
 
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 
 from pmriprep.interfaces.dce_compute import (
+    _candidate_bic_for_selection,
     _compute_auto_bic,
     _select_auto_bic_winners,
 )
@@ -508,6 +511,11 @@ class TestAutoBICDecisionSeam:
         assert valid[0]
         assert names[winner[0]] == "2cxm"
         assert delta[0] == pytest.approx(2.0)
+
+    def test_nonconverged_candidate_bic_is_excluded(self) -> None:
+        candidate = SimpleNamespace(bic=-100.0, converged=False)
+
+        assert np.isinf(_candidate_bic_for_selection(candidate))
 
     def test_all_failed_candidates_are_invalid(self) -> None:
         names = ["patlak", "extended_tofts", "2cxm"]
