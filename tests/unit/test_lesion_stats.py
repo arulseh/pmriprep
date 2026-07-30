@@ -927,8 +927,8 @@ class TestDCELesionStatsMapKeyCoverage:
         assert _MF_LESIONSTATS_MAP_KEY == expected
 
 
-class TestDCEStatisticsQCMasking:
-    """DCE PK statistics use quantitative QC without masking model-free maps."""
+class TestDCEStatisticsMapSupport:
+    """DCE statistics retain the native finite support of each map."""
 
     @staticmethod
     def _save(tmp_path, name, data):
@@ -941,13 +941,11 @@ class TestDCEStatisticsQCMasking:
         )
         return str(path)
 
-    def test_qc_mask_applies_only_to_pk_maps(self, tmp_path) -> None:
+    def test_pk_and_model_free_maps_retain_native_support(self, tmp_path) -> None:
         from pmriprep.interfaces.dce_lesion_stats import DCELesionStats
 
-        qc = np.array([1, 0, 1, 0], dtype=np.uint8).reshape((2, 2, 1))
         values = np.arange(1, 5, dtype=np.float32).reshape((2, 2, 1))
         iface = DCELesionStats()
-        iface.inputs.qc_mask = self._save(tmp_path, "qc.nii.gz", qc)
         iface.inputs.ktrans_map = self._save(
             tmp_path, "ktrans.nii.gz", values
         )
@@ -957,21 +955,17 @@ class TestDCEStatisticsQCMasking:
 
         maps = iface._load_maps()
 
-        np.testing.assert_array_equal(
-            np.isfinite(maps["ktrans"]), qc.astype(bool)
-        )
-        np.testing.assert_array_equal(maps["ktrans"][qc > 0], values[qc > 0])
+        np.testing.assert_array_equal(maps["ktrans"], values)
         np.testing.assert_array_equal(maps["iauc60"], values)
         pk_stats = compute_map_statistics(
-            maps["ktrans"], np.ones_like(qc, dtype=bool)
+            maps["ktrans"], np.ones_like(values, dtype=bool)
         )
         model_free_stats = compute_map_statistics(
-            maps["iauc60"], np.ones_like(qc, dtype=bool)
+            maps["iauc60"], np.ones_like(values, dtype=bool)
         )
         assert pk_stats is not None
-        assert pk_stats.n_valid == 2
-        assert pk_stats.n_total == 4
-        assert pk_stats.median == pytest.approx(2.0)
+        assert pk_stats.n_valid == pk_stats.n_total == 4
+        assert pk_stats.median == pytest.approx(2.5)
         assert model_free_stats is not None
         assert model_free_stats.n_valid == model_free_stats.n_total == 4
 
@@ -1006,21 +1000,6 @@ class TestDCEStatisticsQCMasking:
             reference = stats["NAWMReference"][f"iauc{seconds}"]
             assert reference["median"] == pytest.approx(value)
             assert reference["std"] == pytest.approx(0.0)
-
-    def test_qc_mask_shape_mismatch_fails(self, tmp_path) -> None:
-        from pmriprep.interfaces.dce_lesion_stats import DCELesionStats
-
-        iface = DCELesionStats()
-        iface.inputs.qc_mask = self._save(
-            tmp_path, "qc.nii.gz", np.ones((2, 2, 1))
-        )
-        iface.inputs.ktrans_map = self._save(
-            tmp_path, "ktrans.nii.gz", np.ones((3, 2, 1))
-        )
-
-        with pytest.raises(ValueError, match="QC mask shape"):
-            iface._load_maps()
-
 
 class TestValidateMaskNdim:
     """Tests for validate_mask_ndim()."""

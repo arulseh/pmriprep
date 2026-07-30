@@ -1531,7 +1531,11 @@ def init_dce_datasinks_wf(
             workflow, inputnode, base_perf_no_ktrans,
             name="qc_mask", in_attr="qc_mask",
             desc_value="dceQc", suffix="",
-            description="QC mask (1=good fit, 0=unfitted/poor)",
+            description=(
+                "Heuristic DCE fit-review mask (1=passes all recorded review "
+                "criteria, 0=otherwise); not used to censor quantitative "
+                "derivatives or region statistics"
+            ),
             units=None, extra={"Type": "ROI"},
             bids_suffix="mask",
         )

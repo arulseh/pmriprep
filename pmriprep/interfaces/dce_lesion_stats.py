@@ -46,9 +46,6 @@ class DCELesionStatsInputSpec(BaseInterfaceInputSpec):
 
     # Optional NAWM mask for reference values
     nawm_mask = traits.Str(desc="NAWM mask in DCE space for reference values")
-    qc_mask = traits.Str(
-        desc="DCE quantitative QC mask applied only to PK-map statistics"
-    )
 
     # Core pharmacokinetic maps (all optional - stats computed for available maps)
     ktrans_map = traits.Str(desc="Ktrans map path (min^-1)")
@@ -301,20 +298,6 @@ class DCELesionStats(BaseInterface):
                 if Path(path).exists():
                     img = nib.load(path)
                     maps[name] = np.asarray(img.dataobj)  # type: ignore[attr-defined]
-
-        if self._has_input("qc_mask"):
-            qc_data = np.asarray(
-                nib.load(self.inputs.qc_mask).dataobj  # type: ignore[attr-defined]
-            ) > 0
-            for name in ("ktrans", "ve", "vp", "kep"):
-                if name not in maps:
-                    continue
-                if maps[name].shape != qc_data.shape:
-                    raise ValueError(
-                        f"DCE QC mask shape {qc_data.shape} does not match "
-                        f"{name} map shape {maps[name].shape}"
-                    )
-                maps[name] = np.where(qc_data, maps[name], np.nan)
 
         return maps
 

@@ -452,7 +452,6 @@ def init_dce_lesion_stats_wf(
                 "ttp_map",
                 "ser_map",
                 "nawm_mask",
-                "qc_mask",
                 "tumor_lesion_mask",
                 "mask_origin",
                 "roi_mask",
@@ -497,7 +496,6 @@ def init_dce_lesion_stats_wf(
         ("ttp_map", "ttp_map"),
         ("ser_map", "ser_map"),
         ("nawm_mask", "nawm_mask"),
-        ("qc_mask", "qc_mask"),
     ]
     workflow.connect([
         (inputnode, lesion_stats, shared_inputs + [
@@ -2524,7 +2522,6 @@ def init_dce_preproc_wf(
             ("outputnode.out_peak_enhancement", "inputnode.peak_enhancement_map"),
             ("outputnode.out_time_to_peak", "inputnode.ttp_map"),
             ("outputnode.out_ser", "inputnode.ser_map"),
-            ("outputnode.out_qc_mask", "inputnode.qc_mask"),
         ]),
         (dce_lesion_masks_wf, lesion_stats_wf, [
             ("outputnode.nawm_mask", "inputnode.nawm_mask"),
