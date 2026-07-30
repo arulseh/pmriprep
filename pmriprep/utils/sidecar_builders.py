@@ -1643,6 +1643,22 @@ def enrich_dce_pk_map_sidecar(
                 "the identifiable reporting range"
             ),
         })
+    if map_key == "ve":
+        sidecar.update({
+            "ValueDomain": "model-specific interior volume-fraction range, or NaN",
+            "BoundaryHandling": (
+                "Fits at the applicable optimizer boundary are rejected rather "
+                "than published as ordinary ve estimates"
+            ),
+        })
+    if map_key == "vp":
+        sidecar.update({
+            "ValueDomain": "nonnegative plasma volume fraction, or NaN",
+            "BoundaryHandling": (
+                "Unconstrained fits at the optimizer boundary are rejected; "
+                "externally constrained vp values remain conditional estimates"
+            ),
+        })
     if not qc_metrics or not isinstance(qc_metrics, dict):
         if lesion_fragment:
             sidecar["LesionStats"] = dict(lesion_fragment)

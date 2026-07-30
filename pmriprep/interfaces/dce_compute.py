@@ -50,6 +50,10 @@ def _is_degenerate_dce_fit(
     vp = params.get("vp", 0.0)
     ktrans_low = ktrans < 0 if is_constrained else ktrans <= 0
     if model_name == "2cxm":
+        from pmriprep.models.dce.two_compartment_exchange import (
+            TWO_CXM_VE_BOUNDS,
+        )
+
         fp = params.get("Fp", 0.0)
         ps = params.get("PS", 0.0)
         return (
@@ -57,10 +61,12 @@ def _is_degenerate_dce_fit(
             or fp >= FP_BOUNDS.max
             or ps < 0
             or ps >= PS_BOUNDS.max
-            or ve <= 0
-            or ve >= VE_BOUNDS.max
-            or vp <= 0
-            or vp >= VP_BOUNDS.max
+            or ve <= TWO_CXM_VE_BOUNDS[0]
+            or ve >= TWO_CXM_VE_BOUNDS[1]
+            or (
+                not is_constrained
+                and (vp <= 0 or vp >= VP_BOUNDS.max)
+            )
         )
     if model_name == "patlak":
         return (

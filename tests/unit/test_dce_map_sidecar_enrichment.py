@@ -123,6 +123,15 @@ class TestPKMapKeyDriftGuard:
         assert out["ValueDomain"] == "0 to 10 1/min, or NaN"
         assert "identifiable reporting range" in out["UndefinedValue"]
 
+    @pytest.mark.parametrize("map_key", ["ve", "vp"])
+    def test_volume_fraction_sidecars_record_boundary_handling(
+        self, map_key: str,
+    ) -> None:
+        out = enrich_dce_pk_map_sidecar({}, map_key=map_key)
+
+        assert "BoundaryHandling" in out
+        assert "NaN" in out["ValueDomain"]
+
     def test_all_pk_output_keys_are_registered_for_aif_provenance(self) -> None:
         """Every PK-family sink key must survive strict AIF stamping."""
         from pmriprep.utils.aif_provenance import DCE_POPULATION_AIF_USAGE
