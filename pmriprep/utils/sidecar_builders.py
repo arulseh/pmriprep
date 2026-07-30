@@ -1639,8 +1639,8 @@ def enrich_dce_pk_map_sidecar(
             "Estimator": "Ktrans / ve",
             "ValueDomain": "0 to 10 1/min, or NaN",
             "UndefinedValue": (
-                "NaN when ve is not positive or the derived rate exceeds "
-                "the identifiable reporting range"
+                "NaN when ve is not positive, the EES term is non-identifiable, "
+                "or the derived rate exceeds the identifiable reporting range"
             ),
         })
     if map_key == "ve":
@@ -1648,7 +1648,8 @@ def enrich_dce_pk_map_sidecar(
             "ValueDomain": "model-specific interior volume-fraction range, or NaN",
             "BoundaryHandling": (
                 "Fits at the applicable optimizer boundary are rejected rather "
-                "than published as ordinary ve estimates"
+                "than published as ordinary ve estimates; ve is also undefined "
+                "when a constrained Extended-Tofts fit has zero transfer"
             ),
         })
     if map_key == "vp":

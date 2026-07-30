@@ -95,9 +95,12 @@ def _scatter_dce_uncertainties(
     coords: tuple[int, int, int],
     model_name: str,
     uncertainties: dict[str, float],
+    ees_identifiable: bool = True,
 ) -> None:
     """Scatter model-applicable standard errors/SDs with AIF inflation."""
     x, y, z = coords
+    if model_name in ("tofts", "extended_tofts", "2cxm") and not ees_identifiable:
+        maps.ve_std[x, y, z] = np.nan
     if (
         model_name != "2cxm"
         and "Ktrans" in uncertainties
@@ -108,6 +111,7 @@ def _scatter_dce_uncertainties(
         )
     if (
         model_name in ("tofts", "extended_tofts", "2cxm")
+        and ees_identifiable
         and "ve" in uncertainties
         and np.isfinite(uncertainties["ve"])
     ):
@@ -250,13 +254,14 @@ def _scatter_dce_parameters(
     model_name: str,
     params: dict[str, float],
     r_squared: float,
+    ees_identifiable: bool = True,
 ) -> None:
     """Scatter a non-degenerate model's applicable fitted parameters."""
     x, y, z = coords
     maps.ktrans[x, y, z] = params.get("Ktrans", 0.0)
     if model_name in ("tofts", "extended_tofts", "2cxm"):
-        maps.ve[x, y, z] = params.get("ve", 0.0)
-        maps.kep[x, y, z] = params.get("kep", 0.0)
+        maps.ve[x, y, z] = params.get("ve", 0.0) if ees_identifiable else np.nan
+        maps.kep[x, y, z] = params.get("kep", 0.0) if ees_identifiable else np.nan
     maps.r_squared[x, y, z] = r_squared
     if model_name in ("extended_tofts", "patlak", "2cxm"):
         maps.vp[x, y, z] = params.get("vp", 0.0)
@@ -401,12 +406,19 @@ def _scatter_dce_fit_results(
             map_uncertainty_sources.append(
                 str(result.get("uncertainty_source", "not_computed"))
             )
+        ees_identifiable = not (
+            selected_model == "extended_tofts"
+            and is_constrained
+            and params.get("Ktrans", 0.0) <= 0.0
+        )
         _scatter_dce_parameters(
-            maps, coords, selected_model, params, result["r_squared"]
+            maps, coords, selected_model, params, result["r_squared"],
+            ees_identifiable,
         )
         if result["uncertainties"]:
             _scatter_dce_uncertainties(
-                maps, coords, selected_model, result["uncertainties"]
+                maps, coords, selected_model, result["uncertainties"],
+                ees_identifiable,
             )
         _scatter_dce_fit_artifacts(maps, coords, result)
         departure = _compute_vp_prior_departure(
@@ -1929,8 +1941,8 @@ def _compute_derived_params(
     The reported kep is undefined above ``KEP_BOUNDS.max``.
     A raw kep = Ktrans/ve above that cap marks the kep->inf / ve->0 corner
     where the reversible (ve*Cp) and vascular (vp*Cp) forms coincide and kep
-    is intrinsically non-identifiable; the exact value there is not
-    trustworthy, so it is capped and the voxel is reported as low-confidence.
+    is intrinsically non-identifiable; the reported value is therefore NaN
+    and the voxel is reported as low-confidence.
 
     Parameters
     ----------

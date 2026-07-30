@@ -236,6 +236,27 @@ def test_parameter_scatter_writes_all_2cxm_fields() -> None:
     assert maps.extraction_fraction[0, 0, 0] == 0.2
 
 
+def test_constrained_zero_transfer_keeps_vascular_but_not_ees_parameters() -> None:
+    """At zero transfer, constrained vp is valid but ve and kep are not identified."""
+    maps = _uncertainty_maps()
+    params = {"Ktrans": 0.0, "ve": 0.3, "vp": 0.04, "kep": 0.0}
+
+    _scatter_dce_parameters(
+        maps, (0, 0, 0), "extended_tofts", params, 0.9,
+        ees_identifiable=False,
+    )
+    _scatter_dce_uncertainties(
+        maps, (0, 0, 0), "extended_tofts", {"ve": 0.01},
+        ees_identifiable=False,
+    )
+
+    assert maps.ktrans[0, 0, 0] == 0.0
+    assert maps.vp[0, 0, 0] == 0.04
+    assert np.isnan(maps.ve[0, 0, 0])
+    assert np.isnan(maps.kep[0, 0, 0])
+    assert np.isnan(maps.ve_std[0, 0, 0])
+
+
 def test_degenerate_scatter_uses_auto_nan_for_applicable_patlak_maps() -> None:
     """Auto Patlak rejection marks Ktrans/vp non-applicable without touching ve."""
     maps = _uncertainty_maps()

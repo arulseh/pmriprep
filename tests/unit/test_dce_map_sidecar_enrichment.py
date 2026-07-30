@@ -122,6 +122,7 @@ class TestPKMapKeyDriftGuard:
         assert out["Estimator"] == "Ktrans / ve"
         assert out["ValueDomain"] == "0 to 10 1/min, or NaN"
         assert "identifiable reporting range" in out["UndefinedValue"]
+        assert "EES term is non-identifiable" in out["UndefinedValue"]
 
     @pytest.mark.parametrize("map_key", ["ve", "vp"])
     def test_volume_fraction_sidecars_record_boundary_handling(
