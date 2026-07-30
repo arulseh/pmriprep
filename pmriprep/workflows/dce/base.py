@@ -561,7 +561,7 @@ def init_dce_t1_b1_wf(
         niu.IdentityInterface(fields=[
             "b1_map", "b1_qc", "afi_registration_qc_plot", "b1_qc_plot",
             "t1_map", "t1_support_map", "t1_qc", "vfa_qc",
-            "vfa_registration_qc_plot", "t1_qc_plot",
+            "vfa_reference", "vfa_registration_qc_plot", "t1_qc_plot",
         ]),
         name="outputnode",
     )
@@ -645,6 +645,7 @@ def init_dce_t1_b1_wf(
                 ("qc_plot", "t1_qc_plot"),
             ]),
             (vfa_preprocess, outputnode, [
+                ("reference_file", "vfa_reference"),
                 ("qc_metrics", "vfa_qc"),
                 ("registration_qc_plot", "vfa_registration_qc_plot"),
             ]),
@@ -1887,9 +1888,17 @@ def init_dce_preproc_wf(
     # Nodes 4c-4d: Transform T1/B1 maps to DCE space (conditional)
     # ==========================================================================
     if use_vfa_t1:
+        vfa_to_dce_registration = pe.Node(
+            DCERegistration(cost="normmi", reference_type="precon"),
+            name="vfa_to_dce_registration",
+            mem_gb=_static_mem,
+        )
         transform_t1_to_dce = pe.Node(
             niu.Function(
-                input_names=["t1_map_file", "reference_file"],
+                input_names=[
+                    "t1_map_file", "reference_file", "transform_matrix",
+                    "registration_qc",
+                ],
                 output_names=["out_file"],
                 function=_transform_t1_to_dce,
             ),
@@ -1897,11 +1906,21 @@ def init_dce_preproc_wf(
         )
 
         workflow.connect([
+            (t1_b1_wf, vfa_to_dce_registration, [
+                ("outputnode.vfa_reference", "t1w_file"),
+            ]),
+            (dce_preprocessing_wf, vfa_to_dce_registration, [
+                ("outputnode.baseline_mean_img", "dce_mean"),
+            ]),
             (t1_b1_wf, transform_t1_to_dce, [
                 ("outputnode.t1_map", "t1_map_file"),
             ]),
             (dce_preprocessing_wf, transform_t1_to_dce, [
                 ("outputnode.mean_img", "reference_file"),
+            ]),
+            (vfa_to_dce_registration, transform_t1_to_dce, [
+                ("out_matrix", "transform_matrix"),
+                ("qc_metrics", "registration_qc"),
             ]),
         ])
 
@@ -1983,6 +2002,7 @@ def init_dce_preproc_wf(
                 "baseline_frames",
                 "no_t1",
                 "external_t1",
+                "t1_registration_qc",
             ],
             output_names=["concentration_file", "conversion_qc"],
             function=_signal_to_concentration_node,
@@ -1994,6 +2014,7 @@ def init_dce_preproc_wf(
     # Pass config.no_t1 to the node
     signal_to_conc.inputs.no_t1 = config.no_t1
     signal_to_conc.inputs.external_t1 = use_external_t1
+    signal_to_conc.inputs.t1_registration_qc = None
 
     # Use T1 and B1 maps resampled to DCE space
     workflow.connect([
@@ -2016,6 +2037,9 @@ def init_dce_preproc_wf(
         workflow.connect([
             (transform_t1_to_dce, signal_to_conc, [
                 ("out_file", "t1_map_file"),
+            ]),
+            (vfa_to_dce_registration, signal_to_conc, [
+                ("qc_metrics", "t1_registration_qc"),
             ]),
             (transform_b1_to_dce, signal_to_conc, [
                 ("out_file", "b1_map_file"),

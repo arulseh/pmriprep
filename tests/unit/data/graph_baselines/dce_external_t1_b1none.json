@@ -1912,6 +1912,7 @@
         "no_t1",
         "r1_relaxivity",
         "t1_map_file",
+        "t1_registration_qc",
         "tr"
       ],
       "output_names": [
@@ -2061,7 +2062,7 @@
     "resample_dsc_cbv": "8637643d62fc961aafa3946ba1321ebcf4744121cb1b91e9b01bde70a4024ba3",
     "resample_dsc_ncbv": "9016b6e864f3d6e0149ee556592202a4fb42cec4b3e2a90946ff48dbfa6caf72",
     "select_aif_exclusion": "3ac6f0a171a3c915c7c043706044fb8dd45d2a9c05f1d1fad613919135724b21",
-    "signal_to_concentration": "49bbd728c9822533d2b90a99d2e96c06fdbf423caae8443a900e0a07f5b99e7d",
+    "signal_to_concentration": "3bdcadc879998a670b3c72eef2a79f31efb2c94783b1ec4835e3a88f09168401",
     "transform_atlas_cascade": "92097e5d6df046e1997dbee6d10208373b12e5535619d7397855d263159a752a",
     "transform_brain_mask": "d79c70197847c13c4a4fd38f056ae9911584e27b3d0d1a55b81ebbbc0dc8c3e4",
     "transform_csf_probseg": "832875c9ced77fe1fb5b000924e46d928ab6d69e66f8b209e0b78dad94bb9fba",
@@ -2406,7 +2407,8 @@
     "signal_to_concentration": {
       "b1_map_file": null,
       "external_t1": true,
-      "no_t1": false
+      "no_t1": false,
+      "t1_registration_qc": null
     },
     "transform_brain_mask": {
       "function_str": "def _transform_mask_to_dce(\n    mask_file: str | None = None,\n    reference_file: str | None = None,\n    transform_matrix: str | None = None,\n) -> str:\n    \"\"\"Transform brain mask from T1w space to DCE space.\n\n    Thin Nipype Function-node wrapper around\n    ``pmriprep.utils.registration.transform_mask_to_grid``. The import is\n    intentionally inline because ``niu.Function`` serialises this body\n    via ``inspect.getsource`` and runs it in a worker that cannot see\n    module-level imports.\n\n    Parameters\n    ----------\n    mask_file : str or None\n        Path to brain mask in T1w space (or None).\n    reference_file : str or None\n        Path to DCE reference image for output geometry.\n    transform_matrix : str or None\n        Path to T1w\u2192DCE FLIRT matrix.\n\n    Returns\n    -------\n    str\n        Path to transformed brain mask in DCE space, or \"\" if no mask.\n    \"\"\"\n    from pmriprep.utils.registration import transform_mask_to_grid\n\n    return transform_mask_to_grid(mask_file, reference_file, transform_matrix)\n"

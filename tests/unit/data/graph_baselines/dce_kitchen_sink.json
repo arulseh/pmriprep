@@ -2138,6 +2138,7 @@
         "no_t1",
         "r1_relaxivity",
         "t1_map_file",
+        "t1_registration_qc",
         "tr"
       ],
       "output_names": [
@@ -2346,7 +2347,7 @@
     "resample_dsc_cbv": "8637643d62fc961aafa3946ba1321ebcf4744121cb1b91e9b01bde70a4024ba3",
     "resample_dsc_ncbv": "9016b6e864f3d6e0149ee556592202a4fb42cec4b3e2a90946ff48dbfa6caf72",
     "select_aif_exclusion": "3ac6f0a171a3c915c7c043706044fb8dd45d2a9c05f1d1fad613919135724b21",
-    "signal_to_concentration": "49bbd728c9822533d2b90a99d2e96c06fdbf423caae8443a900e0a07f5b99e7d",
+    "signal_to_concentration": "3bdcadc879998a670b3c72eef2a79f31efb2c94783b1ec4835e3a88f09168401",
     "smooth_model_free_maps": "0e9f70656739ee40159e46a8096403943877fc031d765e8025692ee7c04aafbc",
     "smooth_pk_maps": "0e9f70656739ee40159e46a8096403943877fc031d765e8025692ee7c04aafbc",
     "transform_atlas_cascade": "92097e5d6df046e1997dbee6d10208373b12e5535619d7397855d263159a752a",
@@ -2738,7 +2739,8 @@
     "signal_to_concentration": {
       "b1_map_file": null,
       "external_t1": true,
-      "no_t1": false
+      "no_t1": false,
+      "t1_registration_qc": null
     },
     "smooth_model_free_maps": {
       "function_str": "def _smooth_dce_maps(\n    map_files: dict[str, str],\n    brain_mask_file: str | None,\n    fwhm: float,\n) -> dict[str, str]:\n    \"\"\"Apply shared brain-masked Gaussian smoothing to DCE maps.\"\"\"\n    from pmriprep.workflows._perfusion import smooth_masked_maps\n\n    return smooth_masked_maps(map_files, brain_mask_file, fwhm)\n",

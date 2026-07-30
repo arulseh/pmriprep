@@ -39,6 +39,13 @@ def test_t1_b1_workflow_vfa_mode() -> None:
         .get_node("outputnode")
         .interface._fields
     )
+    assert "vfa_reference" in (
+        init_dce_t1_b1_wf(
+            config=DCEConfig(), subject_id="0001", session_id="0001",
+        )
+        .get_node("outputnode")
+        .interface._fields
+    )
 
 
 def test_t1_b1_workflow_external_t1_mode() -> None:

@@ -308,6 +308,12 @@
     ],
     [
       "dce_preprocess",
+      "baseline_mean_img",
+      "vfa_to_dce_registration",
+      "dce_mean"
+    ],
+    [
+      "dce_preprocess",
       "bolus_arrival_frame",
       "pk_modeling",
       "bolus_arrival_frame"
@@ -1970,6 +1976,12 @@
     ],
     [
       "vfa_preprocess",
+      "reference_file",
+      "vfa_to_dce_registration",
+      "t1w_file"
+    ],
+    [
+      "vfa_preprocess",
       "registration_qc_plot",
       "outputnode",
       "vfa_registration_qc_plot"
@@ -1979,6 +1991,24 @@
       "out_file",
       "vfa_preprocess",
       "vfa_files"
+    ],
+    [
+      "vfa_to_dce_registration",
+      "out_matrix",
+      "transform_t1_to_dce",
+      "transform_matrix"
+    ],
+    [
+      "vfa_to_dce_registration",
+      "qc_metrics",
+      "signal_to_concentration",
+      "t1_registration_qc"
+    ],
+    [
+      "vfa_to_dce_registration",
+      "qc_metrics",
+      "transform_t1_to_dce",
+      "registration_qc"
     ]
   ],
   "function_io": {
@@ -2227,6 +2257,7 @@
         "no_t1",
         "r1_relaxivity",
         "t1_map_file",
+        "t1_registration_qc",
         "tr"
       ],
       "output_names": [
@@ -2369,7 +2400,9 @@
     "transform_t1_to_dce": {
       "input_names": [
         "reference_file",
-        "t1_map_file"
+        "registration_qc",
+        "t1_map_file",
+        "transform_matrix"
       ],
       "output_names": [
         "out_file"
@@ -2475,7 +2508,7 @@
     "resample_dsc_cbv": "8637643d62fc961aafa3946ba1321ebcf4744121cb1b91e9b01bde70a4024ba3",
     "resample_dsc_ncbv": "9016b6e864f3d6e0149ee556592202a4fb42cec4b3e2a90946ff48dbfa6caf72",
     "select_aif_exclusion": "3ac6f0a171a3c915c7c043706044fb8dd45d2a9c05f1d1fad613919135724b21",
-    "signal_to_concentration": "49bbd728c9822533d2b90a99d2e96c06fdbf423caae8443a900e0a07f5b99e7d",
+    "signal_to_concentration": "3bdcadc879998a670b3c72eef2a79f31efb2c94783b1ec4835e3a88f09168401",
     "transform_atlas_cascade": "92097e5d6df046e1997dbee6d10208373b12e5535619d7397855d263159a752a",
     "transform_b1_to_dce": "3805c9b07e0320284ec492d9a2d5ea9e48db04ade1320c301880a9219eab0829",
     "transform_b1_to_vfa": "d7085fd6e919f5095c5bb302c136f392174fa77fd5c1e7cf1a20c37dfbad13fb",
@@ -2489,7 +2522,7 @@
     "transform_nawm_mask": "c6ba5896ec4e8e62856bff5799b517bc43d25a91039140a9714005daf685ab6e",
     "transform_non_enhancing_mask": "d79c70197847c13c4a4fd38f056ae9911584e27b3d0d1a55b81ebbbc0dc8c3e4",
     "transform_stats_lesion": "2ece3db8a3b618705a755d2ebdd6380f308b9fb550a80c57934c8544db2c98b7",
-    "transform_t1_to_dce": "ec7c3c3a7eebc8c6b9182754cf73a892c8117a837e18d4830a6449bcdc7c9c4e",
+    "transform_t1_to_dce": "dca8c1a780fb1a62dc41b5323a05dea65738343a2641796e3b789785d1bdbd98",
     "transform_t1w_postcon_underlay": "b018e01b60030ca04f6b1e172e211aac6cedd4d4c75451e50a7cf0bdb32d6dad",
     "transform_t1w_subtraction_underlay": "b018e01b60030ca04f6b1e172e211aac6cedd4d4c75451e50a7cf0bdb32d6dad",
     "transform_t1w_underlay": "b018e01b60030ca04f6b1e172e211aac6cedd4d4c75451e50a7cf0bdb32d6dad",
@@ -2720,6 +2753,10 @@
     "vfa_reorient": {
       "mem_gb": 0.2,
       "n_procs": 1
+    },
+    "vfa_to_dce_registration": {
+      "mem_gb": 2.0,
+      "n_procs": 1
     }
   },
   "node_params": {
@@ -2874,7 +2911,8 @@
     },
     "signal_to_concentration": {
       "external_t1": false,
-      "no_t1": false
+      "no_t1": false,
+      "t1_registration_qc": null
     },
     "t1_mapping": {
       "b1_qc_pass": true,
@@ -2932,6 +2970,12 @@
     },
     "vfa_preprocess": {
       "skip_coregistration": false
+    },
+    "vfa_to_dce_registration": {
+      "cost": "normmi",
+      "dof": 6,
+      "reference_type": "precon",
+      "search_range": 30
     }
   },
   "nodes": [
@@ -3154,6 +3198,10 @@
     [
       "vfa_reorient",
       "Function"
+    ],
+    [
+      "vfa_to_dce_registration",
+      "DCERegistration"
     ]
   ],
   "public_outputnode_fields": [

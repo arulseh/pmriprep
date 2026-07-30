@@ -598,6 +598,7 @@ def _signal_to_concentration_node(
     baseline_frames: int,
     no_t1: bool,
     external_t1: bool = False,
+    t1_registration_qc: dict[str, object] | None = None,
 ) -> tuple[str, dict[str, object]]:
     """Convert DCE signal to contrast-agent concentration.
 
@@ -628,6 +629,8 @@ def _signal_to_concentration_node(
         If True, skip T1 mapping and use a field-strength default T1.
     external_t1 : bool, optional
         Whether the T1 map is a user-supplied map requiring alignment QC.
+    t1_registration_qc : dict or None, optional
+        VFA-reference-to-DCE registration accounting for internally fitted T1.
 
     Returns
     -------
@@ -711,6 +714,8 @@ def _signal_to_concentration_node(
     conversion_qc["t1_source"] = (
         "assumed" if t1_map is None else "external" if external_t1 else "map"
     )
+    if t1_registration_qc is not None:
+        conversion_qc["vfa_to_dce_registration"] = dict(t1_registration_qc)
     if t1_map is None:
         field_key = get_field_strength_key(field_strength)
         conversion_qc["assumed_t1_ms"] = float(
@@ -1558,12 +1563,14 @@ def _resample_dsc_ncbv_to_dce(
 def _transform_t1_to_dce(
     t1_map_file: str | None = None,
     reference_file: str | None = None,
+    transform_matrix: str | None = None,
+    registration_qc: dict[str, object] | None = None,
 ) -> str | None:
-    """Resample T1 map from VFA space to DCE space.
+    """Transform a VFA-derived T1 map into registered DCE space.
 
-    Uses nilearn continuous interpolation via NIfTI affine headers.
-    This is critical to avoid shape mismatches in signal_to_concentration
-    and pk_modeling.
+    The rigid transform is estimated from the anatomical VFA reference image,
+    not from the smooth parameter map. Values and finite support are resampled
+    separately so interpolation does not dilute T1 at support boundaries.
 
     Parameters
     ----------
@@ -1571,43 +1578,100 @@ def _transform_t1_to_dce(
         Path to T1 map in VFA space (or None).
     reference_file : str or None
         Path to DCE mean image for output geometry.
+    transform_matrix : str or None
+        VFA-reference-to-DCE FLIRT matrix estimated from magnitude images.
+    registration_qc : dict or None
+        Registration QC. Only PASS/WARN registrations are accepted.
 
     Returns
     -------
     str or None
-        Path to T1 map resampled to DCE space, or original if same space.
+        Registered T1 map, or ``None`` when registration is unavailable or poor.
     """
-    if t1_map_file is None or reference_file is None:
-        return t1_map_file
+    if t1_map_file is None:
+        return None
+
+    if reference_file is None or transform_matrix is None:
+        raise RuntimeError(
+            "VFA T1 is available but its DCE reference or registration "
+            "transform is missing"
+        )
+
+    import logging
+    import subprocess
+    import tempfile
 
     from pathlib import Path
 
     import nibabel as nib  # type: ignore[import-untyped]
     import numpy as np
 
+    status = str((registration_qc or {}).get("qc_status", "UNKNOWN")).upper()
+    if status == "UNKNOWN":
+        raise RuntimeError(
+            "VFA-to-DCE registration QC could not be evaluated; refusing to "
+            "change DCE quantification silently"
+        )
+    if status not in {"PASS", "WARN"}:
+        logging.getLogger("pmriprep.workflows.dce").warning(
+            "VFA-to-DCE registration QC is %s; using population T1 fallback",
+            status,
+        )
+        return None
+
     t1_img = nib.load(t1_map_file)
     ref_img = nib.load(reference_file)
+    values = np.asarray(
+        t1_img.get_fdata(), dtype=np.float32,  # type: ignore[attr-defined]
+    )
+    support = np.isfinite(values) & (values > 0)
 
-    # Check if already in the same space
-    if t1_img.shape[:3] == ref_img.shape[:3]:  # type: ignore[attr-defined]
-        affine_diff = float(np.abs(t1_img.affine - ref_img.affine).max())  # type: ignore[attr-defined]
-        if affine_diff < 1e-4:
-            return t1_map_file
-
-    from nilearn.image import resample_to_img  # type: ignore[import-untyped]
-
-    resampled = resample_to_img(t1_img, ref_img, interpolation="continuous")
-
-    # Restore NaN for voxels that were NaN before resampling.
-    # nilearn's continuous interpolation replaces NaN/out-of-FOV with 0,
-    # which downstream causes T1=0 → R1=inf → concentration artifacts.
-    data = resampled.get_fdata()
-    n_invalid = np.sum(data <= 0)
-    if n_invalid > 0:
-        data[data <= 0] = np.nan
-        resampled = nib.Nifti1Image(
-            data.astype(np.float32), resampled.affine, resampled.header,
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp = Path(temp_dir)
+        value_file = temp / "t1_values.nii.gz"
+        support_file = temp / "t1_support.nii.gz"
+        value_out = temp / "t1_values_dce.nii.gz"
+        weight_out = temp / "t1_weights_dce.nii.gz"
+        nearest_out = temp / "t1_support_dce.nii.gz"
+        nib.save(
+            nib.Nifti1Image(
+                np.where(support, values, 0.0), t1_img.affine, t1_img.header,  # type: ignore[attr-defined]
+            ),
+            value_file,
         )
+        nib.save(
+            nib.Nifti1Image(
+                support.astype(np.float32), t1_img.affine, t1_img.header,  # type: ignore[attr-defined]
+            ),
+            support_file,
+        )
+
+        def _apply(source: Path, destination: Path, interpolation: str) -> None:
+            result = subprocess.run(
+                [
+                    "flirt", "-in", str(source), "-ref", str(reference_file),
+                    "-out", str(destination), "-init", str(transform_matrix),
+                    "-applyxfm", "-interp", interpolation,
+                ],
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode != 0:
+                raise RuntimeError(
+                    f"FLIRT T1 resampling failed ({interpolation}): {result.stderr}"
+                )
+
+        _apply(value_file, value_out, "trilinear")
+        _apply(support_file, weight_out, "trilinear")
+        _apply(support_file, nearest_out, "nearestneighbour")
+        numerator = np.asarray(nib.load(value_out).dataobj, dtype=np.float32)  # type: ignore[attr-defined]
+        weights = np.asarray(nib.load(weight_out).dataobj, dtype=np.float32)  # type: ignore[attr-defined]
+        nearest = np.asarray(nib.load(nearest_out).dataobj) > 0.5  # type: ignore[attr-defined]
+
+    data = np.full(ref_img.shape[:3], np.nan, dtype=np.float32)  # type: ignore[attr-defined]
+    keep = nearest & np.isfinite(numerator) & (weights > 1e-6)
+    np.divide(numerator, weights, out=data, where=keep)
+    resampled = nib.Nifti1Image(data, ref_img.affine, ref_img.header)  # type: ignore[attr-defined]
 
     out_file = str(Path.cwd() / "t1_map_dce_space.nii.gz")
     nib.save(resampled, out_file)
