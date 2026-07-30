@@ -215,6 +215,7 @@ class TestBuildProvenanceBlockDCE:
             modality="DCE",
         )
         assert block["Source"] == "external"
+        assert block["QualityFlag"] == "warn"
         assert block["ExternalAIFVerified"] is False
 
     def test_invalid_detection_level_returns_empty(self) -> None:
@@ -475,6 +476,21 @@ class TestPublicArtifactSchema:
             == mask["PerfusionProcessing"]["AIF"]
         )
         assert mask["Type"] == "ROI"
+        assert mask["SpatialSupportAvailable"] is True
+
+    @pytest.mark.parametrize("source", ["external", "population"])
+    def test_nonspatial_dce_aif_mask_is_explicit(self, source: str) -> None:
+        """An empty non-measured AIF mask does not imply failed detection."""
+        from pmriprep.workflows.dce.datasinks import _build_aif_mask_meta
+
+        mask = _build_aif_mask_meta(
+            {},
+            "AIF spatial-support mask",
+            {"aif_detection": {"detection_method": source}},
+        )
+
+        assert mask["SpatialSupportAvailable"] is False
+        assert "No spatial AIF voxels" in mask["EmptyMaskMeaning"]
 
     def test_curve_mask_and_map_use_identical_dsc_block(self, tmp_path) -> None:
         from pmriprep.utils.aif_provenance import apply_aif_sidecar

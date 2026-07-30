@@ -157,10 +157,12 @@ def _derive_quality_flag(
     """
     if source in {"synthetic", "population"}:
         return "poor"
+    if source == "external":
+        return "warn"
     if modality == "DSC":
         detection_level = str(aif_qc.get("detection_method", ""))
         parts = set(split_detection_level(detection_level))
-        if not parts or source == "external":
+        if not parts:
             return "warn"
         if parts <= {"atlas_strict", "atlas_relaxed"}:
             return "pass"

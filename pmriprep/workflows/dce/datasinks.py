@@ -342,12 +342,24 @@ def _build_aif_mask_meta(
     qc_metrics: dict | None,
 ) -> dict:
     """Build an AIF ROI sidecar with the canonical DCE AIF block."""
-    from pmriprep.utils.aif_provenance import apply_aif_provenance_block
+    from pmriprep.utils.aif_provenance import build_aif_provenance_block
 
     out = dict(base)
     out["Description"] = description
     out["Type"] = "ROI"
-    apply_aif_provenance_block(out, qc_metrics, modality="DCE")
+    aif_block = build_aif_provenance_block(qc_metrics, modality="DCE")
+    if aif_block:
+        out.setdefault("PerfusionProcessing", {})["AIF"] = aif_block
+    source = aif_block.get("Source")
+    if source:
+        spatial_support_available = source in {
+            "measured", "gamma_fit_measured",
+        }
+        out["SpatialSupportAvailable"] = spatial_support_available
+        if not spatial_support_available:
+            out["EmptyMaskMeaning"] = (
+                "No spatial AIF voxels were selected for this non-measured curve"
+            )
     return out
 
 
@@ -1745,7 +1757,7 @@ def init_dce_datasinks_wf(
             ),
             name="aif_mask_meta",
         )
-        meta.inputs.description = "AIF detection mask in DCE space"
+        meta.inputs.description = "AIF spatial-support mask in DCE space"
         workflow.connect([
             (base_minimal, meta, [("meta_dict", "base")]),
             (inputnode, meta, [("qc_metrics", "qc_metrics")]),
