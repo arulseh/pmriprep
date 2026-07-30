@@ -103,6 +103,7 @@ _HD_GLIO_SOURCE_ATTRS = (
 
 def _write_tumor_dseg_tsv_node(
     segmentation: str,
+    source_file: str,
     output_dir: str,
     subject: str,
     session: str,
@@ -116,6 +117,7 @@ def _write_tumor_dseg_tsv_node(
     from pathlib import Path
 
     from pmriprep.utils.lesion_stats import write_tumor_dseg_tsv
+    from pmriprep.utils.sidecar_builders import source_entity_prefix
 
     out_root = Path(output_dir) / "pmriprep" / f"sub-{subject}"
     if session:
@@ -123,9 +125,7 @@ def _write_tumor_dseg_tsv_node(
     out_root = out_root / "anat"
     out_root.mkdir(parents=True, exist_ok=True)
 
-    prefix = f"sub-{subject}"
-    if session:
-        prefix += f"_ses-{session}"
+    prefix = source_entity_prefix(source_file, subject, session or None)
     tsv_path = out_root / f"{prefix}_space-T1w_desc-tumorseg_dseg.tsv"
     return str(write_tumor_dseg_tsv(segmentation, tsv_path))
 
@@ -137,7 +137,9 @@ def _add_dseg_tsv_sink(
     """Wire the BIDS-Common-Derivatives ``_dseg.tsv`` companion writer."""
     sink = pe.Node(
         niu.Function(
-            input_names=["segmentation", "output_dir", "subject", "session"],
+            input_names=[
+                "segmentation", "source_file", "output_dir", "subject", "session",
+            ],
             output_names=["out_file"],
             function=_write_tumor_dseg_tsv_node,
         ),
@@ -146,6 +148,7 @@ def _add_dseg_tsv_sink(
     workflow.connect([
         (inputnode, sink, [
             ("segmentation", "segmentation"),
+            ("source_t1w", "source_file"),
             ("output_dir", "output_dir"),
             ("subject_id", "subject"),
             ("session_id", "session"),

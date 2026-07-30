@@ -20,7 +20,7 @@ def minimal_bids_with_tumor_inputs(tmp_path: Path) -> tuple[Path, dict]:
     )
     sources: dict[str, Path] = {}
     for tag, fname in [
-        ("source_t1w", "sub-01_ses-0001_T1w.nii.gz"),
+        ("source_t1w", "sub-01_ses-0001_acq-highres_run-1_T1w.nii.gz"),
         ("source_t1w_postcon", "sub-01_ses-0001_ce-GAD_T1w.nii.gz"),
         ("source_t2w", "sub-01_ses-0001_T2w.nii.gz"),
         ("source_flair", "sub-01_ses-0001_FLAIR.nii.gz"),
@@ -101,13 +101,13 @@ def test_tumor_seg_datasinks_smoke(
     ses = out_root / "pmriprep" / "sub-01" / "ses-0001"
     anat = ses / "anat"
     expected = [
-        anat / "sub-01_ses-0001_space-T1w_desc-tumorseg_dseg.nii.gz",
-        anat / "sub-01_ses-0001_space-T1w_desc-tumorseg_dseg.tsv",
-        anat / "sub-01_ses-0001_space-T1w_desc-enhancing_mask.nii.gz",
-        anat / "sub-01_ses-0001_space-T1w_desc-nonenhancing_mask.nii.gz",
-        anat / "sub-01_ses-0001_space-T1w_desc-wholetumor_mask.nii.gz",
-        anat / "sub-01_ses-0001_space-T1w_desc-lesion_mask.nii.gz",
-        anat / "sub-01_ses-0001_space-T1w_desc-nawm_mask.nii.gz",
+        anat / "sub-01_ses-0001_acq-highres_run-1_space-T1w_desc-tumorseg_dseg.nii.gz",
+        anat / "sub-01_ses-0001_acq-highres_run-1_space-T1w_desc-tumorseg_dseg.tsv",
+        anat / "sub-01_ses-0001_acq-highres_run-1_space-T1w_desc-enhancing_mask.nii.gz",
+        anat / "sub-01_ses-0001_acq-highres_run-1_space-T1w_desc-nonenhancing_mask.nii.gz",
+        anat / "sub-01_ses-0001_acq-highres_run-1_space-T1w_desc-wholetumor_mask.nii.gz",
+        anat / "sub-01_ses-0001_acq-highres_run-1_space-T1w_desc-lesion_mask.nii.gz",
+        anat / "sub-01_ses-0001_acq-highres_run-1_space-T1w_desc-nawm_mask.nii.gz",
     ]
     for p in expected:
         assert p.exists(), f"Missing: {p.name}"
@@ -171,7 +171,14 @@ def test_tumor_seg_sidecar_sources_populated(
         assert isinstance(body["Sources"], list) and body["Sources"], (
             f"{sc.name} has empty Sources"
         )
-        assert all(s.startswith("bids:raw:") for s in body["Sources"]), sc.name
+        if sc.name.endswith("_mask.json") and "desc-nawm" not in sc.name:
+            assert body["Sources"] == [
+                "bids::sub-01/ses-0001/anat/"
+                "sub-01_ses-0001_acq-highres_run-1_space-T1w_"
+                "desc-tumorseg_dseg.nii.gz"
+            ], sc.name
+        else:
+            assert all(s.startswith("bids:raw:") for s in body["Sources"]), sc.name
         assert body.get("SpatialReference", "").startswith("bids::"), sc.name
         assert body.get("Resolution") == "native", sc.name
         assert isinstance(body.get("VoxelSize"), list), sc.name
@@ -209,7 +216,7 @@ def test_tumor_seg_dseg_sidecar_has_volumetrics(
 
     dseg_json = (
         out_root / "pmriprep" / "sub-01" / "ses-0001" / "anat"
-        / "sub-01_ses-0001_space-T1w_desc-tumorseg_dseg.json"
+        / "sub-01_ses-0001_acq-highres_run-1_space-T1w_desc-tumorseg_dseg.json"
     )
     body = json.loads(dseg_json.read_text())
     tv = body["TumorVolumetrics"]

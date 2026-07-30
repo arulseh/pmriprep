@@ -26,6 +26,10 @@ def test_dseg_tsv_sink_node_present_in_workflow() -> None:
     assert "dseg_tsv_sink" in nodes
     # The dseg_sink (NIfTI) must also still be present
     assert "dseg_sink" in nodes
+    inputnode = wf.get_node("inputnode")
+    tsv_sink = wf.get_node("dseg_tsv_sink")
+    connections = wf._graph.get_edge_data(inputnode, tsv_sink)["connect"]
+    assert ("source_t1w", "source_file") in connections
 
 
 def test_write_tumor_dseg_tsv_node_lands_in_anat(tmp_path: Path) -> None:
@@ -38,6 +42,7 @@ def test_write_tumor_dseg_tsv_node_lands_in_anat(tmp_path: Path) -> None:
 
     out = _write_tumor_dseg_tsv_node(
         segmentation=str(nii),
+        source_file="sub-X_ses-Y_acq-highres_run-2_T1w.nii.gz",
         output_dir=str(tmp_path),
         subject="X",
         session="Y",
@@ -46,7 +51,9 @@ def test_write_tumor_dseg_tsv_node_lands_in_anat(tmp_path: Path) -> None:
     assert out_path.exists()
     # anat/ landing per BIDS-Common-Derivatives (companion to _dseg.nii.gz)
     assert out_path.parent.name == "anat"
-    assert out_path.name == "sub-X_ses-Y_space-T1w_desc-tumorseg_dseg.tsv"
+    assert out_path.name == (
+        "sub-X_ses-Y_acq-highres_run-2_space-T1w_desc-tumorseg_dseg.tsv"
+    )
 
     text = out_path.read_text()
     assert text.startswith("index\tname\tabbreviation\tvoxel_count\tvolume_mm3")
@@ -63,6 +70,7 @@ def test_no_session_path(tmp_path: Path) -> None:
 
     out = _write_tumor_dseg_tsv_node(
         segmentation=str(nii),
+        source_file="sub-X_T1w.nii.gz",
         output_dir=str(tmp_path),
         subject="X",
         session="",

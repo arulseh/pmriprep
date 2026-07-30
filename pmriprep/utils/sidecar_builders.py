@@ -756,6 +756,17 @@ def build_tumor_seg_mask_sidecar(
     """Sidecar for a binary tumor-derived mask (enhancing/nonenhancing/whole/lesion)."""
     from pmriprep.utils.provenance import get_bids_derivative_provenance
 
+    source = source_paths[0] if source_paths else None
+    prefix = source_entity_prefix(source, subject, session)
+    parts = [f"sub-{subject}"]
+    if session:
+        parts.append(f"ses-{session}")
+    parts.extend([
+        "anat",
+        f"{prefix}_space-T1w_desc-tumorseg_dseg.nii.gz",
+    ])
+    dseg_source = "bids::" + "/".join(parts)
+
     return {
         **get_bids_derivative_provenance(),
         "Description": description,
@@ -763,9 +774,9 @@ def build_tumor_seg_mask_sidecar(
         "Method": method,
         "SpatialReference": _anat_spatial_reference(
             subject, session, is_postcon_ref,
-            reference_source or (source_paths[0] if source_paths else None),
+            reference_source or source,
         ),
-        "Sources": build_sources_list(source_paths, bids_dir),
+        "Sources": [dseg_source],
         **resolution_native_block(reference_voxel_source),
     }
 
