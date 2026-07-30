@@ -92,6 +92,23 @@ class TestCheckpointFileWrite:
 
 
 class TestRoundTripViaResumeHelper:
+    def test_recovers_nested_inverse_transform(self, tmp_path: Path) -> None:
+        """The skip-DSC loader follows the nested registration node directory."""
+        xfm_dir = (
+            tmp_path / "pmriprep_sub_X_ses_Y_wf" / "dsc_wf"
+            / "dsc_registration_wf" / "invert_dsc_xfm"
+        )
+        xfm_dir.mkdir(parents=True)
+        xfm = xfm_dir / "t1w_to_dsc_inv.mat"
+        xfm.write_text("1 0 0 0\n0 1 0 0\n0 0 1 0\n0 0 0 1\n")
+
+        recovered = _find_previous_dsc_outputs(
+            output_dir=tmp_path, subject_id="X", session_id="Y",
+            work_dir=tmp_path,
+        )
+
+        assert recovered["dsc_to_t1w_xfm"] == str(xfm)
+
     def test_resume_recovers_verbatim_dicts(
         self, tmp_path: Path, representative_qc_dicts: Any,
     ) -> None:

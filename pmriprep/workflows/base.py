@@ -261,8 +261,9 @@ def _find_previous_anat_outputs(
         csf_probseg, t1w_to_mni_xfm, flair_coreg, flair_postcon_coreg, t2w_coreg.
         Values are file paths (str) or None if not found.
     """
-    session_label = f"ses-{session_id}" if session_id else "no-session"
-    wf_name = f"pmriprep_sub{subject_id}_{session_label}_wf"
+    from pmriprep.utils.naming import workflow_dirname
+
+    wf_name = workflow_dirname(subject_id, session_id)
     anat_dir = work_dir / wf_name / "anat_wf"
 
     outputs: dict[str, Optional[str]] = {
@@ -297,7 +298,7 @@ def _find_previous_anat_outputs(
             outputs["brain_mask"] = str(candidates[0])
 
     # White matter probability segmentation (FAST pve_2 = WM)
-    seg_dir = anat_dir / "tissue_segment"
+    seg_dir = anat_dir / "anat_tissue_segmentation_wf" / "tissue_segment"
     if seg_dir.exists():
         candidates = sorted(seg_dir.glob("*_pve_2.nii.gz"))
         if candidates:
@@ -323,28 +324,29 @@ def _find_previous_anat_outputs(
             outputs["t1w_to_mni_xfm"] = str(candidates[0])
 
     # FLAIR coregistered to T1w
-    flair_dir = anat_dir / "coreg_flair"
+    secondary_dir = anat_dir / "anat_secondary_modalities_wf"
+    flair_dir = secondary_dir / "coreg_flair"
     if flair_dir.exists():
         candidates = sorted(flair_dir.glob("*_coreg.nii.gz"))
         if candidates:
             outputs["flair_coreg"] = str(candidates[0])
 
     # T2w coregistered to T1w
-    t2w_dir = anat_dir / "mask_t2w"
+    t2w_dir = secondary_dir / "mask_t2w"
     if t2w_dir.exists():
         candidates = sorted(t2w_dir.glob("*_masked.nii.gz"))
         if candidates:
             outputs["t2w_coreg"] = str(candidates[0])
 
     # T1w post-contrast coregistered and masked
-    postcon_dir = anat_dir / "mask_postcon"
+    postcon_dir = secondary_dir / "mask_postcon"
     if postcon_dir.exists():
         candidates = sorted(postcon_dir.glob("*_masked.nii.gz"))
         if candidates:
             outputs["t1w_postcon_coreg"] = str(candidates[0])
 
     # FLAIR post-contrast coregistered and masked
-    flair_postcon_dir = anat_dir / "mask_flair_postcon"
+    flair_postcon_dir = secondary_dir / "mask_flair_postcon"
     if flair_postcon_dir.exists():
         candidates = sorted(flair_postcon_dir.glob("*_masked.nii.gz"))
         if candidates:
@@ -384,8 +386,9 @@ def _find_previous_tumor_seg_inputs(
     dict
         Dict with keys for tumor segmentation inputs. Values are file paths or None.
     """
-    session_label = f"ses-{session_id}" if session_id else "no-session"
-    wf_name = f"pmriprep_sub{subject_id}_{session_label}_wf"
+    from pmriprep.utils.naming import workflow_dirname
+
+    wf_name = workflow_dirname(subject_id, session_id)
     anat_dir = work_dir / wf_name / "anat_wf"
 
     outputs: dict[str, Optional[str]] = {
@@ -438,7 +441,7 @@ def _find_previous_tumor_seg_inputs(
             outputs["brain_mask"] = str(candidates[0])
 
     # White matter probability segmentation
-    seg_dir = anat_dir / "tissue_segment"
+    seg_dir = anat_dir / "anat_tissue_segmentation_wf" / "tissue_segment"
     if seg_dir.exists():
         candidates = sorted(seg_dir.glob("*_pve_2.nii.gz"))
         if candidates:
@@ -671,8 +674,9 @@ def _find_previous_tumor_seg_outputs(
         segmentation, nawm_mask.
         Values are file paths (str) or None if not found.
     """
-    session_label = f"ses-{session_id}" if session_id else "no-session"
-    wf_name = f"pmriprep_sub{subject_id}_{session_label}_wf"
+    from pmriprep.utils.naming import workflow_dirname
+
+    wf_name = workflow_dirname(subject_id, session_id)
     tumor_seg_dir = work_dir / wf_name / "tumor_seg_wf"
 
     outputs: dict[str, Optional[str]] = {
@@ -855,7 +859,10 @@ def _find_previous_dsc_outputs(
 
         wf_name = workflow_dirname(subject_id, session_id)
 
-        inv_dir = work_dir / wf_name / "dsc_wf" / "invert_dsc_xfm"
+        inv_dir = (
+            work_dir / wf_name / "dsc_wf"
+            / "dsc_registration_wf" / "invert_dsc_xfm"
+        )
         if inv_dir.exists():
             candidates = sorted(inv_dir.glob("*.mat"))
             if candidates:
