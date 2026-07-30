@@ -194,6 +194,39 @@ def test_writer_emits_base_sidecar_without_qc(bids_root, tmp_path) -> None:
     assert all(not key.startswith("AIF") for key in sidecar)
 
 
+def test_writer_credits_external_aif_source(bids_root, tmp_path) -> None:
+    """An externally supplied curve is a source of the emitted AIF TSV."""
+    from pmriprep.interfaces.qc_writers import DSCFiguresWriter
+
+    source = bids_root / "sub-X" / "ses-Y" / "perf" / "sub-X_ses-Y_dsc.nii.gz"
+    external_aif = bids_root / "sub-X" / "ses-Y" / "perf" / "external_aif.txt"
+    np.savetxt(external_aif, np.array([1.0, 2.0, 3.0]))
+    writer = DSCFiguresWriter(
+        output_dir=str(tmp_path / "out"),
+        subject_id="X",
+        session_id="Y",
+        bids_dir=str(bids_root),
+        source_dsc=str(source),
+        aif_curve=str(external_aif),
+        qc_metrics={
+            "aif_detection": {
+                "detection_method": "external",
+                "external_aif": True,
+                "external_aif_file": str(external_aif),
+            },
+        },
+    )
+
+    result = writer.run()
+    sidecar = json.loads(
+        Path(result.outputs.aif_curve_txt).with_suffix(".json").read_text()
+    )
+    assert sidecar["Sources"] == [
+        "bids:raw:sub-X/ses-Y/perf/sub-X_ses-Y_dsc.nii.gz",
+        "bids:raw:sub-X/ses-Y/perf/external_aif.txt",
+    ]
+
+
 def test_aif_sidecar_sampling_metadata() -> None:
     """Sampling metadata describes rows without adding a redundant time column."""
     sidecar = build_aif_timeseries_sidecar(

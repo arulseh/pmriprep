@@ -172,6 +172,10 @@ def _write_aif_timeseries_sidecar(
     )
 
     sources = [source_path] if source_path else []
+    if aif_qc:
+        external_aif_file = aif_qc.get("external_aif_file")
+        if isinstance(external_aif_file, str) and external_aif_file:
+            sources.append(external_aif_file)
     volume_tr_s: Optional[float] = None
     if source_path:
         source = Path(source_path)

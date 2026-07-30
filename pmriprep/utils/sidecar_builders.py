@@ -1180,13 +1180,12 @@ def aif_timeseries_columns(modality: str) -> tuple[str, str, str]:
             "delta_r2_star",
             "1/s",
             "Susceptibility-induced change in transverse relaxation rate "
-            "(delta-R2*) at the AIF voxel(s).",
+            "(delta-R2*) used as the arterial input function.",
         )
     return (  # DCE
         "plasma_concentration_mM",
         "mM",
-        "Plasma gadolinium concentration after blood-to-plasma "
-        "conversion (/(1-Hct)).",
+        "Plasma gadolinium concentration used as the arterial input function.",
     )
 
 
