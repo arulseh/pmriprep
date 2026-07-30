@@ -161,7 +161,7 @@ def test_uncertainty_scatter_leaves_nonapplicable_patlak_fields_zero() -> None:
 def test_fit_artifact_scatter_writes_curve_bound_and_quality() -> None:
     """All non-parameter artifacts use the same voxel coordinate."""
     maps = SimpleNamespace(
-        fitted_curves=np.zeros((1, 1, 1, 3), dtype=np.float32),
+        fitted_curves=np.full((1, 1, 1, 3), np.nan, dtype=np.float32),
         vp_at_bound=np.zeros((1, 1, 1), dtype=np.float32),
         quality_flag=np.zeros((1, 1, 1), dtype=np.int8),
         quality_flag_codes={"good": 1, "high_uncertainty": 3},

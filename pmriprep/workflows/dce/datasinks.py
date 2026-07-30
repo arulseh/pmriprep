@@ -658,6 +658,11 @@ def _build_model_selection_meta(
         "3": "extended_tofts",
         "4": "2cxm",
     }
+    out["PostfitValidity"] = (
+        "The selected-model label may remain available when the selected fit "
+        "is subsequently rejected by physiological or optimizer-boundary "
+        "checks; consult the parameter maps and DCE QC mask for retention"
+    )
     apply_aif_sidecar(
         out,
         "model_selection",
@@ -686,6 +691,11 @@ def _build_delta_bic_meta(
         "simplest candidate instead of the raw BIC winner, or when fewer "
         "than two candidates converge. >2 = positive, >6 = strong, "
         ">10 = very strong"
+    )
+    out["PostfitValidity"] = (
+        "BIC evidence may remain available when the selected fit is "
+        "subsequently rejected by physiological or optimizer-boundary checks; "
+        "consult the parameter maps and DCE QC mask for retention"
     )
     apply_aif_sidecar(
         out,
@@ -1550,10 +1560,16 @@ def init_dce_datasinks_wf(
             ),
             units="1",
             extra={
-                "UndefinedValue": "NaN for voxels without a retained PK fit",
+                "UndefinedValue": "NaN when no optimizer fit is available",
                 "Interpretation": (
                     "Fit-conditional goodness of fit; it does not establish "
                     "physiological validity or identify the correct PK model"
+                ),
+                "PostfitValidity": (
+                    "R-squared may remain finite when a converged fit is "
+                    "subsequently rejected by physiological or optimizer-"
+                    "boundary checks; consult the parameter maps and DCE QC "
+                    "mask for retention"
                 ),
             },
         )

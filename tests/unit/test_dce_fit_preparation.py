@@ -306,6 +306,7 @@ def test_initialize_parameter_maps_preserves_auto_and_uncertainty_state() -> Non
     assert np.isnan(maps.extraction_fraction).all()
     assert maps.fitted_curves is not None
     assert maps.fitted_curves.shape == prepared.concentration.shape
+    assert np.isnan(maps.fitted_curves).all()
     assert maps.save_2cxm is True
     assert maps.quality_flag.dtype == np.int8
     assert maps.model_selection.dtype == np.int8

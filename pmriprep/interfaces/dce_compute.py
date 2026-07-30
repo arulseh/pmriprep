@@ -3313,7 +3313,7 @@ class ComputeDCEMaps(BaseInterface):
                 for parameter, factor in DCE_AIF_G6_SIGMA_INFLATION.items()
             }
         fitted_curves = (
-            np.zeros(prepared.concentration.shape, dtype=np.float32)
+            np.full(prepared.concentration.shape, np.nan, dtype=np.float32)
             if prepared.save_fitted_curves
             else None
         )
