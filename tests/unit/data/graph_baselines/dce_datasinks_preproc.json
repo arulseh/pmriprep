@@ -728,11 +728,11 @@
     "base_perf_no_ktrans_meta": "98ed832b6deb40bf732d84e1e4f2bd5f1f4a86850f159e8c8c4ee8e11f54306b",
     "dataset_description": "4f030212e4217b96b33ce28a7ed92f196a066b4199d13919b0c6168ba0c7fa20",
     "dce_mean_meta": "a44a6ea06e8531a974dba250d97ef7a405462f31fe12100774fc318f8607d861",
-    "dce_mean_sink": "ca5ae1f893d6aa902d88719c995be8a064c739a193fb68f24a7a6cf4f74b2bb6",
+    "dce_mean_sink": "a67bc83cebd4f16e4cf7a40b9afbb8f97729bbbc148a0d2d196cd2c9ed004b32",
     "dce_moco_meta": "5bbcf6e98686b06f51b99c164dc9eb5cb1d9dccb2b86321ea806312fc3a3431d",
-    "dce_moco_sink": "ca5ae1f893d6aa902d88719c995be8a064c739a193fb68f24a7a6cf4f74b2bb6",
+    "dce_moco_sink": "a67bc83cebd4f16e4cf7a40b9afbb8f97729bbbc148a0d2d196cd2c9ed004b32",
     "ktrans_map_meta": "1c94533442eb68a4660356be7da79877233f24bcd85eacb51526424130306f6e",
-    "ktrans_map_sink": "ca5ae1f893d6aa902d88719c995be8a064c739a193fb68f24a7a6cf4f74b2bb6"
+    "ktrans_map_sink": "a67bc83cebd4f16e4cf7a40b9afbb8f97729bbbc148a0d2d196cd2c9ed004b32"
   },
   "nipype_version": "1.10.0",
   "node_attrs": {

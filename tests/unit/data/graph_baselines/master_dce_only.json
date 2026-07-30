@@ -488,6 +488,12 @@
     ],
     [
       "dce_wf",
+      "outputnode.t1w_to_dce_xfm",
+      "dce_datasinks_wf",
+      "inputnode.t1w_to_dce_xfm"
+    ],
+    [
+      "dce_wf",
       "outputnode.t2w_in_dce",
       "dce_datasinks_wf",
       "inputnode.t2w_in_dce"

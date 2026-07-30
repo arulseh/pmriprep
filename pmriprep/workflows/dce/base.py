@@ -9,6 +9,7 @@ from typing import Any, Optional, Union
 
 import nipype.interfaces.utility as niu  # type: ignore[import-untyped]
 import nipype.pipeline.engine as pe  # type: ignore[import-untyped]
+from nipype.interfaces.fsl import ConvertXFM  # type: ignore[import-untyped]
 
 from pmriprep.config.dce import DCEConfig
 from pmriprep.interfaces.common import Reorient, reorient_list_to_ras
@@ -44,6 +45,7 @@ from pmriprep.workflows.dce._helpers import (  # noqa: F401
     _generate_dce_pk_fit_qc,
     _generate_dce_pk_maps_qc,
     _generate_preprocessing_qc,
+    _fsl_to_x5_node,
     _resample_dsc_cbv_to_dce,
     _resample_dsc_ncbv_to_dce,
     _signal_to_concentration_node,
@@ -802,26 +804,43 @@ def init_dce_preprocessing_wf(
 def init_dce_registration_wf(
     *, mem_gb: float, name: str = "dce_registration_wf",
 ) -> pe.Workflow:
-    """Build DCE-to-T1w registration with its consumed output contract."""
+    """Build T1w-to-DCE registration and both derivative transform directions."""
     workflow = pe.Workflow(name=name)
     inputnode = pe.Node(
         niu.IdentityInterface(fields=["dce_mean", "t1w_file", "brain_mask"]),
         name="inputnode",
     )
     outputnode = pe.Node(
-        niu.IdentityInterface(fields=["out_file", "out_matrix", "out_h5", "qc_metrics"]),
+        niu.IdentityInterface(fields=[
+            "out_file", "out_matrix", "t1w_to_dce_h5", "dce_to_t1w_h5", "qc_metrics",
+        ]),
         name="outputnode",
     )
     registration = pe.Node(DCERegistration(), name="dce_registration", mem_gb=mem_gb)
+    invert_xfm = pe.Node(ConvertXFM(invert_xfm=True), name="invert_dce_xfm")
+    convert_inverse = pe.Node(
+        niu.Function(
+            input_names=["mat_path", "reference", "moving"],
+            output_names=["out_h5"],
+            function=_fsl_to_x5_node,
+        ),
+        name="convert_inverse_h5",
+    )
     workflow.connect([
         (inputnode, registration, [
             ("dce_mean", "dce_mean"), ("t1w_file", "t1w_file"),
             ("brain_mask", "brain_mask"),
         ]),
+        (registration, invert_xfm, [("out_matrix", "in_file")]),
+        (invert_xfm, convert_inverse, [("out_file", "mat_path")]),
+        (inputnode, convert_inverse, [
+            ("t1w_file", "reference"), ("dce_mean", "moving"),
+        ]),
         (registration, outputnode, [
             ("out_file", "out_file"), ("out_matrix", "out_matrix"),
-            ("out_h5", "out_h5"), ("qc_metrics", "qc_metrics"),
+            ("out_h5", "t1w_to_dce_h5"), ("qc_metrics", "qc_metrics"),
         ]),
+        (convert_inverse, outputnode, [("out_h5", "dce_to_t1w_h5")]),
     ])
     return workflow
 
@@ -1366,7 +1385,9 @@ def init_dce_preproc_wf(
     aif_mask
         Path to AIF detection mask.
     dce_to_t1w_xfm
-        Path to DCE to T1w transformation matrix.
+        Path to the DCE-to-T1w ITK X5 transform.
+    t1w_to_dce_xfm
+        Path to the T1w-to-DCE ITK X5 transform.
     ktrans_uncertainty
         Path to Ktrans uncertainty map (if Bayesian).
     ve_uncertainty
@@ -1525,6 +1546,7 @@ def init_dce_preproc_wf(
                 "aif_mask",
                 # Registration outputs
                 "dce_to_t1w_xfm",
+                "t1w_to_dce_xfm",
                 # Inference-specific uncertainty outputs
                 "ktrans_uncertainty",
                 "ve_uncertainty",
@@ -2623,7 +2645,8 @@ def init_dce_preproc_wf(
         ]),
         # Registration outputs (.h5 for derivatives)
         (dce_registration_wf, outputnode, [
-            ("outputnode.out_h5", "dce_to_t1w_xfm"),
+            ("outputnode.dce_to_t1w_h5", "dce_to_t1w_xfm"),
+            ("outputnode.t1w_to_dce_h5", "t1w_to_dce_xfm"),
         ]),
         # QC metrics
         (dce_qc_collection_wf, outputnode, [

@@ -2658,6 +2658,7 @@ def _connect_master_dce_outputs_and_datasinks(
         "dce_moco", "dce_mean", "motion_params",
         "aif_curve", "aif_mask",
         "dce_to_t1w_xfm",
+        "t1w_to_dce_xfm",
         # Brain mask in DCE always when DCE runs
         "brain_mask",
     }
@@ -2849,6 +2850,7 @@ def _connect_master_dce_outputs_and_datasinks(
             ("outputnode.aif_mask", "inputnode.aif_mask"),
             # Registration
             ("outputnode.dce_to_t1w_xfm", "inputnode.dce_to_t1w_xfm"),
+            ("outputnode.t1w_to_dce_xfm", "inputnode.t1w_to_dce_xfm"),
             # Uncertainty maps (Bayesian)
             ("outputnode.ktrans_uncertainty", "inputnode.ktrans_uncertainty"),
             ("outputnode.ve_uncertainty", "inputnode.ve_uncertainty"),

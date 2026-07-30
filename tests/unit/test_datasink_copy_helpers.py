@@ -8,6 +8,44 @@ from types import SimpleNamespace
 from traits.trait_base import Undefined
 
 
+def test_dce_transform_sink_names_both_directions(tmp_path: Path) -> None:
+    """DCE X5 filenames must describe the transform direction they contain."""
+    from pmriprep.workflows.dce.datasinks import _copy_dce_xfm
+
+    source = tmp_path / "transform.h5"
+    source.write_bytes(b"x5")
+    output_dir = tmp_path / "derivatives"
+
+    forward = _copy_dce_xfm(
+        str(source), str(output_dir), "01", "02", "T1w", "dceref",
+    )
+    inverse = _copy_dce_xfm(
+        str(source), str(output_dir), "01", "02", "dceref", "T1w",
+    )
+
+    assert Path(forward).name == (
+        "sub-01_ses-02_from-T1w_to-dceref_mode-image_xfm.h5"
+    )
+    assert Path(inverse).name == (
+        "sub-01_ses-02_from-dceref_to-T1w_mode-image_xfm.h5"
+    )
+
+
+def test_dce_transform_sink_rejects_fsl_matrix(tmp_path: Path) -> None:
+    """A FLIRT matrix must not be silently relabelled as an X5 derivative."""
+    import pytest
+
+    from pmriprep.workflows.dce.datasinks import _copy_dce_xfm
+
+    source = tmp_path / "transform.mat"
+    source.write_text("1 0 0 0\n0 1 0 0\n0 0 1 0\n0 0 0 1\n")
+
+    with pytest.raises(ValueError, match="requires an X5 .h5 input"):
+        _copy_dce_xfm(
+            str(source), str(tmp_path / "out"), "01", "", "T1w", "dceref",
+        )
+
+
 def test_tb1map_sink_accepts_undefined_optional_input(tmp_path: Path) -> None:
     """Nipype may omit an unavailable B1 map when T1 mapping is disabled."""
     import nipype.interfaces.utility as niu

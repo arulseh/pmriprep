@@ -99,10 +99,11 @@ def test_dce_registration_workflow_contract() -> None:
     """Registration exposes transforms, registered image, and QC provenance."""
     workflow = init_dce_registration_wf(mem_gb=2.0)
     assert set(workflow.list_node_names()) == {
-        "inputnode", "outputnode", "dce_registration",
+        "inputnode", "outputnode", "dce_registration", "invert_dce_xfm",
+        "convert_inverse_h5",
     }
     assert set(workflow.get_node("outputnode").interface._fields) == {
-        "out_file", "out_matrix", "out_h5", "qc_metrics",
+        "out_file", "out_matrix", "t1w_to_dce_h5", "dce_to_t1w_h5", "qc_metrics",
     }
 
 

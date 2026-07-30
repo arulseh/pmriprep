@@ -884,7 +884,6 @@ def _copy_perf_map(
             desc, suffix, in_file,
         )
         return ""
-
     out_root = Path(output_dir) / "pmriprep" / f"sub-{subject}"
     if session:
         out_root = out_root / f"ses-{session}"
@@ -1007,9 +1006,11 @@ def _copy_dce_xfm(
     output_dir: str,
     subject: str,
     session: str,
+    from_space: str,
+    to_space: str,
     source_file: str | None = None,
 ) -> str:
-    """Copy DCE-to-T1w transform .h5 into the derivatives anat/."""
+    """Copy a DCE registration transform .h5 into the derivatives anat/."""
     import logging
     import shutil
     from pathlib import Path
@@ -1025,6 +1026,10 @@ def _copy_dce_xfm(
             "(in_file=%r)", in_file,
         )
         return ""
+    if Path(in_file).suffix != ".h5":
+        raise ValueError(
+            f"DCE transform derivative requires an X5 .h5 input, got: {in_file}"
+        )
 
     out_root = Path(output_dir) / "pmriprep" / f"sub-{subject}"
     if session:
@@ -1035,7 +1040,7 @@ def _copy_dce_xfm(
     from pmriprep.utils.sidecar_builders import source_entity_prefix
 
     prefix = source_entity_prefix(source_file, subject, session)
-    fname = f"{prefix}_from-dceref_to-T1w_mode-image_xfm.h5"
+    fname = f"{prefix}_from-{from_space}_to-{to_space}_mode-image_xfm.h5"
     out_path = out_root / fname
     shutil.copy2(in_file, out_path)
     return str(out_path)
@@ -1533,7 +1538,8 @@ def init_dce_datasinks_wf(
                 "aif_curve", "aif_mask",
                 # Structural underlays + xfm
                 "t1w_in_dce", "t1w_postcon_in_dce", "t1w_subtraction_in_dce",
-                "flair_in_dce", "flair_postcon_in_dce", "t2w_in_dce", "dce_to_t1w_xfm",
+                "flair_in_dce", "flair_postcon_in_dce", "t2w_in_dce",
+                "dce_to_t1w_xfm", "t1w_to_dce_xfm",
                 # Lesion/ROI
                 "lesion_mask_dce", "lesion_stats_json",
                 "user_lesion_mask_dce", "user_lesion_stats_json",
@@ -2144,23 +2150,31 @@ def init_dce_datasinks_wf(
         )
         sink_outputs.append((sink, "out_file"))
 
-    if "dce_to_t1w_xfm" in present:
+    for xfm_attr, from_space, to_space in (
+        ("dce_to_t1w_xfm", "dceref", "T1w"),
+        ("t1w_to_dce_xfm", "T1w", "dceref"),
+    ):
+        if xfm_attr not in present:
+            continue
         xfm_sink = pe.Node(
             niu.Function(
                 input_names=[
                     "in_file", "output_dir", "subject", "session", "source_file",
+                    "from_space", "to_space",
                 ],
                 output_names=["out_file"],
                 function=_copy_dce_xfm,
             ),
-            name="dce_to_t1w_xfm_sink",
+            name=f"{xfm_attr}_sink",
         )
+        xfm_sink.inputs.from_space = from_space
+        xfm_sink.inputs.to_space = to_space
         workflow.connect([
             (inputnode, xfm_sink, [
                 ("output_dir", "output_dir"),
                 ("subject_id", "subject"),
                 ("session_id", "session"),
-                ("dce_to_t1w_xfm", "in_file"),
+                (xfm_attr, "in_file"),
                 ("source_dce", "source_file"),
             ]),
         ])
