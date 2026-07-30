@@ -144,7 +144,8 @@ def generate_preprocessing_qc_plot(
 ) -> tuple[str, dict[str, Any]]:
     """Generate a 2-row preprocessing QC plot for DCE data.
 
-    Layout (GridSpec 2×4, graphs span 2 cols, images span 1):
+    Layout (GridSpec 2×4, graphs span 2 cols, images span 1)::
+
         Row 0: Global Signal Time Course (0-1) | Peak Signal (2) | Enhancement Map (3)
         Row 1: Signal Intensity Histogram (0-1) | Baseline tSNR Map (2) |
                Enhancement CNR at the global peak frame (3)
