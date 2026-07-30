@@ -1,6 +1,13 @@
 """Serializable helpers shared by DSC and DCE workflows."""
 
 
+def fsl_to_x5_node(mat_path: str, reference: str, moving: str) -> str:
+    """Convert an FSL affine to an ITK X5 transform in a Nipype worker."""
+    from pmriprep.utils.transforms import fsl_to_x5
+
+    return fsl_to_x5(mat_path, reference, moving)
+
+
 def smooth_masked_maps(
     map_files: dict[str, str],
     brain_mask_file: str | None,

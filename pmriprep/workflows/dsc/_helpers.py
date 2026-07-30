@@ -23,7 +23,6 @@ __all__ = [
     "_create_registration_filmstrip",
     "_detect_and_correct_preload",
     "_extract_preload_class",
-    "_fsl_to_x5_node",
     "_generate_dsc_fit_qc",
     "_generate_dsc_leakage_qc",
     "_generate_dsc_param_maps_qc",
@@ -144,13 +143,6 @@ class FLIRTApplyXFM(CommandLine):
         else:
             outputs["out_file"] = self._gen_outfilename()
         return outputs
-
-
-def _fsl_to_x5_node(mat_path: str, reference: str, moving: str) -> str:
-    """Nipype Function-node wrapper for FSL .mat to ITK X5 conversion."""
-    from pmriprep.utils.transforms import fsl_to_x5
-
-    return fsl_to_x5(mat_path, reference, moving)
 
 
 def _histogram_match_t1w_to_dsc(

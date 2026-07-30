@@ -19,7 +19,6 @@ __all__ = [
     "_generate_dce_pk_fit_qc",
     "_generate_dce_pk_maps_qc",
     "_generate_preprocessing_qc",
-    "_fsl_to_x5_node",
     "_resample_dsc_cbv_to_dce",
     "_resample_dsc_ncbv_to_dce",
     "_signal_to_concentration_node",
@@ -37,13 +36,6 @@ __all__ = [
     "_transform_structural_to_dce",
     "_transform_t1_to_dce",
 ]
-
-
-def _fsl_to_x5_node(mat_path: str, reference: str, moving: str) -> str:
-    """Convert an FSL affine to an ITK X5 transform in a Nipype worker."""
-    from pmriprep.utils.transforms import fsl_to_x5
-
-    return fsl_to_x5(mat_path, reference, moving)
 
 
 def _transform_mask_to_dce(

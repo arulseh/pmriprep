@@ -26,6 +26,7 @@ from pmriprep.interfaces.dce_aif_qc import DCEAIFQCPlot
 from pmriprep.interfaces.dce_compute import ComputeDCEMaps
 from pmriprep.data import get_arterial_atlas_cascade
 from pmriprep.workflows._perfusion import (
+    fsl_to_x5_node as _fsl_to_x5_node,
     select_aif_exclusion_mask as _select_aif_exclusion_mask,
     validate_native_mask as _validate_native_mask,
 )
@@ -45,7 +46,6 @@ from pmriprep.workflows.dce._helpers import (  # noqa: F401
     _generate_dce_pk_fit_qc,
     _generate_dce_pk_maps_qc,
     _generate_preprocessing_qc,
-    _fsl_to_x5_node,
     _resample_dsc_cbv_to_dce,
     _resample_dsc_ncbv_to_dce,
     _signal_to_concentration_node,

@@ -2479,7 +2479,7 @@
   "function_sha256": {
     "collect_qc_metrics": "51fc9de28e496aeef00232405428f5d0717dd7e540553588ceef3fb1711d3b1d",
     "combine_masks": "f2748155dafc15b2d74a066b3da5db0ed2a4b5486b46ee8ea1f4c7a181de8fcf",
-    "convert_inverse_h5": "4d84396194a655532dbf3c867001a45ee641eb3e4e80ea25fb52b159b64a0bc2",
+    "convert_inverse_h5": "9a56330576763c1d147a939f4cd92271651e5ebf08d545098cf7ffa59808b4e2",
     "create_aif_mask": "13c9c99cb39a8fdf544fa35125494b14147ec5099862963ceff8f8df840b8f3b",
     "dce_brain_mask_qc": "ced2d6d4b823457166d3fb21083d6220f2b0dc0e0155de5c134e6d98210b5086",
     "dce_early_mean": "fd75a021c6ef482c605e9a7596c6c17381cd8996e63adafc61cb7f30031b6cb0",
@@ -2776,7 +2776,7 @@
       "function_str": "def combine_tumor_masks(\n    tumor_segmentation_file: str | None = None,\n    whole_tumor_mask_file: str | None = None,\n    reference_file: str | None = None,\n) -> tuple[str, str]:\n    \"\"\"Select the best tumor mask for lesion statistics.\n\n    Priority:\n\n    1. If tumor segmentation present: use it (already multi-label:\n       0=bg, 1=non-enhancing, 2=enhancing)\n    2. If only whole_tumor present: use as binary mask\n    3. If none present: return empty-string sentinels\n\n    Parameters\n    ----------\n    tumor_segmentation_file : str, optional\n        Path to multi-label tumor segmentation (or None).\n    whole_tumor_mask_file : str, optional\n        Path to whole tumor binary mask (or None).\n    reference_file : str, optional\n        Path to reference image for output geometry (unused but\n        kept for interface compatibility).\n\n    Returns\n    -------\n    tuple\n        Tuple of (mask_file_path, mask_origin) where mask_origin is\n        \"tumor_segmentation\" or \"whole_tumor\" or \"\" if no masks available.\n        Returns (\"\", \"\") when no masks are available because downstream\n        ``traits.Str`` fields require strings.\n    \"\"\"\n    from pathlib import Path\n\n    from nipype.interfaces.base import isdefined\n\n    def _is_valid_file(f: str | None) -> bool:\n        \"\"\"Check if file path is valid (not None, not Undefined, exists).\"\"\"\n        if f is None:\n            return False\n        if not isdefined(f):\n            return False\n        return Path(f).exists()\n\n    if _is_valid_file(tumor_segmentation_file):\n        return (str(tumor_segmentation_file), \"tumor_segmentation\")\n\n    if _is_valid_file(whole_tumor_mask_file):\n        return (str(whole_tumor_mask_file), \"whole_tumor\")\n\n    return (\"\", \"\")\n"
     },
     "convert_inverse_h5": {
-      "function_str": "def _fsl_to_x5_node(mat_path: str, reference: str, moving: str) -> str:\n    \"\"\"Convert an FSL affine to an ITK X5 transform in a Nipype worker.\"\"\"\n    from pmriprep.utils.transforms import fsl_to_x5\n\n    return fsl_to_x5(mat_path, reference, moving)\n"
+      "function_str": "def fsl_to_x5_node(mat_path: str, reference: str, moving: str) -> str:\n    \"\"\"Convert an FSL affine to an ITK X5 transform in a Nipype worker.\"\"\"\n    from pmriprep.utils.transforms import fsl_to_x5\n\n    return fsl_to_x5(mat_path, reference, moving)\n"
     },
     "dce_brain_extract": {
       "bet_frac": 0.3,

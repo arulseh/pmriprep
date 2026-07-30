@@ -24,6 +24,7 @@ from pmriprep.utils.dsc_constants import (
     DEFAULT_SVD_THRESHOLD,
 )
 from pmriprep.workflows._perfusion import (
+    fsl_to_x5_node as _fsl_to_x5_node,
     select_aif_exclusion_mask as _select_aif_exclusion_mask,
     validate_native_mask as _validate_native_mask,
 )
@@ -40,7 +41,6 @@ from pmriprep.workflows.dsc._helpers import (  # noqa: F401
     _create_registration_filmstrip,
     _detect_and_correct_preload,
     _extract_preload_class,
-    _fsl_to_x5_node,
     _generate_dsc_fit_qc,
     _generate_dsc_leakage_qc,
     _generate_dsc_param_maps_qc,

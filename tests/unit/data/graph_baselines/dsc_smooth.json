@@ -1689,7 +1689,7 @@
   "function_sha256": {
     "build_hemo_dict": "9576414b5801c40495de1f6779bb19f819a3aab1975cf97aad570d1e335f9f09",
     "combine_masks": "f2748155dafc15b2d74a066b3da5db0ed2a4b5486b46ee8ea1f4c7a181de8fcf",
-    "convert_inv_dsc_h5": "018196f529ef8533ba7ea16ac1a69979beb6937dcd2726bef0cead6b76322240",
+    "convert_inv_dsc_h5": "9a56330576763c1d147a939f4cd92271651e5ebf08d545098cf7ffa59808b4e2",
     "dsc_brain_mask_qc": "ced2d6d4b823457166d3fb21083d6220f2b0dc0e0155de5c134e6d98210b5086",
     "dsc_fit_qc": "bf242b9215832d16b16770f1152b765752bca909058926f51e3e78a67c730b3e",
     "dsc_leakage_qc": "11b2ed89b1a4e2d94e27744d590dc6af6433c010f2fa8fbb3a02d99f80263413",
@@ -1943,7 +1943,7 @@
       "concat_xfm": true
     },
     "convert_inv_dsc_h5": {
-      "function_str": "def _fsl_to_x5_node(mat_path: str, reference: str, moving: str) -> str:\n    \"\"\"Nipype Function-node wrapper for FSL .mat to ITK X5 conversion.\"\"\"\n    from pmriprep.utils.transforms import fsl_to_x5\n\n    return fsl_to_x5(mat_path, reference, moving)\n"
+      "function_str": "def fsl_to_x5_node(mat_path: str, reference: str, moving: str) -> str:\n    \"\"\"Convert an FSL affine to an ITK X5 transform in a Nipype worker.\"\"\"\n    from pmriprep.utils.transforms import fsl_to_x5\n\n    return fsl_to_x5(mat_path, reference, moving)\n"
     },
     "dsc_brain_mask_qc": {
       "session_id": "0001",
