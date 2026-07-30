@@ -21,7 +21,6 @@ def base_sidecar() -> dict[str, Any]:
         "SkullStripped": False,
         "SpatialReference": "bids::sub-X/perf/sub-X_desc-dceMean_stat.nii.gz",
         "Sources": ["bids:raw:sub-X/perf/sub-X_dce.nii.gz"],
-        "Resolution": "native",
         "VoxelSize": [1.0, 1.0, 3.0],
         "InputFunctionCompartment": "plasma",
     }

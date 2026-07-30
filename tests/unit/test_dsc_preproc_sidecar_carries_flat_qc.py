@@ -2,8 +2,8 @@
 
 Asserts that ``enrich_dsc_preproc_sidecar`` injects ``Preload*`` and
 unprefixed motion/signal keys onto a base sidecar dict, and that base
-fields (``SkullStripped``, ``SpatialReference``, ``Sources``,
-``Resolution``) survive enrichment unchanged.
+fields (``SkullStripped``, ``SpatialReference``, ``Sources``, and
+``VoxelSize``) survive enrichment unchanged.
 """
 from __future__ import annotations
 
@@ -22,7 +22,6 @@ def base_sidecar() -> dict[str, Any]:
         "SkullStripped": False,
         "SpatialReference": "bids::sub-X/perf/sub-X_desc-dscMean_stat.nii.gz",
         "Sources": ["bids:raw:sub-X/perf/sub-X_dsc.nii.gz"],
-        "Resolution": "native",
         "VoxelSize": [3.0, 3.0, 5.0],
     }
 
@@ -141,7 +140,6 @@ class TestBaseSidecarFieldsSurvive:
         assert out["SkullStripped"] is False
         assert out["SpatialReference"] == base_sidecar["SpatialReference"]
         assert out["Sources"] == base_sidecar["Sources"]
-        assert out["Resolution"] == "native"
         assert out["VoxelSize"] == [3.0, 3.0, 5.0]
 
 

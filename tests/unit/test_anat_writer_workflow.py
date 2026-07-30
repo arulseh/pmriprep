@@ -96,7 +96,7 @@ def test_anat_datasinks_wf_minimal(tmp_path: Path, minimal_bids: Path) -> None:
     assert isinstance(sidecar["Sources"], list) and sidecar["Sources"]
     assert sidecar["Sources"][0].startswith("bids:raw:")
     assert sidecar["SpatialReference"].startswith("bids::sub-")
-    assert sidecar["Resolution"] == "native"
+    assert "Resolution" not in sidecar
     assert isinstance(sidecar["VoxelSize"], list) and len(sidecar["VoxelSize"]) == 3
     assert sidecar["ProcessingSteps"] == [
         "Reorientation to RAS and robust FOV cropping",
@@ -176,7 +176,7 @@ def test_anat_sidecar_correctness_guard(tmp_path: Path, minimal_bids: Path) -> N
         assert isinstance(body["Sources"], list)
         assert all(s.startswith("bids:raw:") for s in body["Sources"])
         assert body.get("SpatialReference", "").startswith("bids::"), sc.name
-        assert body.get("Resolution") == "native", sc.name
+        assert "Resolution" not in body, sc.name
         assert isinstance(body.get("VoxelSize"), list), sc.name
 
 

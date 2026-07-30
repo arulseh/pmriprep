@@ -40,7 +40,7 @@ def test_datasink_meta_dict_survives_for_nonstandard_space(tmp_path: Path) -> No
 
     expected_sources = ["bids:raw:sub-01/ses-0001/anat/sub-01_ses-0001_T1w.nii.gz"]
     expected_spatial_ref = "bids::sub-01/ses-0001/anat/sub-01_ses-0001_space-T1w_desc-preproc_T1w.nii.gz"
-    expected_resolution = "native"
+    expected_custom_metadata = "roundtrip"
     expected_voxel_size = [1.0, 1.0, 1.0]
 
     sink = DerivativesDataSink(
@@ -58,7 +58,7 @@ def test_datasink_meta_dict_survives_for_nonstandard_space(tmp_path: Path) -> No
     sink.inputs.meta_dict = {
         "Sources": expected_sources,
         "SpatialReference": expected_spatial_ref,
-        "Resolution": expected_resolution,
+        "CustomMetadata": expected_custom_metadata,
         "VoxelSize": expected_voxel_size,
         "Description": "Spike-test sidecar",
     }
@@ -77,6 +77,6 @@ def test_datasink_meta_dict_survives_for_nonstandard_space(tmp_path: Path) -> No
     sidecar = json.loads(Path(out_meta).read_text())
     assert sidecar["Sources"] == expected_sources
     assert sidecar["SpatialReference"] == expected_spatial_ref
-    assert sidecar["Resolution"] == expected_resolution
+    assert sidecar["CustomMetadata"] == expected_custom_metadata
     assert sidecar["VoxelSize"] == expected_voxel_size
     assert sidecar["Description"] == "Spike-test sidecar"

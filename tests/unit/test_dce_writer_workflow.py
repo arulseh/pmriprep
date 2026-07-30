@@ -56,7 +56,7 @@ def test_dce_factory_smoke(tmp_path: Path, minimal_bids: tuple[Path, str]) -> No
     assert sidecar["Description"].startswith("Volume transfer constant")
     assert sidecar["Units"] == "1/min"
     assert sidecar["SpatialReference"].startswith("bids::sub-")
-    assert sidecar["Resolution"] == "native"
+    assert "Resolution" not in sidecar
     assert isinstance(sidecar["VoxelSize"], list)
     assert sidecar["InputFunctionCompartment"] == "plasma"
     assert "KtransConvention" not in sidecar

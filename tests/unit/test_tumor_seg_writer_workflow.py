@@ -202,7 +202,7 @@ def test_tumor_seg_sidecar_sources_populated(
         else:
             assert all(s.startswith("bids:raw:") for s in body["Sources"]), sc.name
         assert body.get("SpatialReference", "").startswith("bids::"), sc.name
-        assert body.get("Resolution") == "native", sc.name
+        assert "Resolution" not in body, sc.name
         assert isinstance(body.get("VoxelSize"), list), sc.name
 
 

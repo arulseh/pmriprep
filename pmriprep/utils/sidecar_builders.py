@@ -16,9 +16,9 @@ Sidecar field strategy (M3):
   outputs omit the ``space-`` entity. For anat/ outputs, ``space-T1w``
   is used uniformly per fmriprep precedent; pre- vs post-contrast
   disambiguation lives in this URI.
-- **Resolution**: literal string ``"native"`` (BIDS-Derivatives 1.9
-  keyword for unresampled images). The numeric voxel sizes go in
-  ``VoxelSize: [vx, vy, vz]`` (custom pmriprep field).
+- **VoxelSize**: numeric voxel sizes in millimetres for the emitted image.
+  The BIDS ``Resolution`` metadata field is reserved for describing ``res-``
+  entity values and is not used as a resampling-status flag.
 """
 from __future__ import annotations
 
@@ -292,12 +292,9 @@ def compute_original_resolution(source_nifti: PathLike) -> Dict[str, Any]:
     }
 
 
-def resolution_native_block(source_nifti: PathLike) -> Dict[str, Any]:
-    """BIDS-Derivatives 1.9 ``Resolution: native`` + custom ``VoxelSize``."""
-    return {
-        "Resolution": "native",
-        "VoxelSize": voxel_sizes_from_nifti(source_nifti),
-    }
+def voxel_size_block(source_nifti: PathLike) -> Dict[str, Any]:
+    """Return the emitted image voxel sizes in millimetres."""
+    return {"VoxelSize": voxel_sizes_from_nifti(source_nifti)}
 
 
 # ---------------------------------------------------------------------------
@@ -626,7 +623,7 @@ def build_anat_preproc_sidecar(
             reference_source or (source_paths[0] if source_paths else None),
         ),
         "Sources": sources,
-        **resolution_native_block(reference_voxel_source),
+        **voxel_size_block(reference_voxel_source),
         "OriginalResolution": compute_original_resolution(original_source),
         "ProcessingSteps": list(processing_steps[processing_kind]),
     }
@@ -662,7 +659,7 @@ def build_anat_mask_sidecar(
             reference_source or (source_paths[0] if source_paths else None),
         ),
         "Sources": build_sources_list(source_paths, bids_dir),
-        **resolution_native_block(reference_voxel_source),
+        **voxel_size_block(reference_voxel_source),
         "OriginalResolution": compute_original_resolution(
             source_paths[0] if source_paths else reference_voxel_source
         ),
@@ -751,7 +748,7 @@ def build_tumor_seg_dseg_sidecar(
             reference_source or (source_paths[0] if source_paths else None),
         ),
         "Sources": build_sources_list(source_paths, bids_dir),
-        **resolution_native_block(reference_voxel_source),
+        **voxel_size_block(reference_voxel_source),
         "TumorVolumetrics": _tumor_volumetrics(reference_voxel_source),
         "Columns": {
             "index": {
@@ -821,7 +818,7 @@ def build_tumor_seg_mask_sidecar(
             reference_source or source,
         ),
         "Sources": [dseg_source],
-        **resolution_native_block(reference_voxel_source),
+        **voxel_size_block(reference_voxel_source),
     }
 
 
@@ -885,7 +882,7 @@ def build_tumor_seg_nawm_sidecar(
             reference_source or source,
         ),
         "Sources": sources,
-        **resolution_native_block(reference_voxel_source),
+        **voxel_size_block(reference_voxel_source),
     }
     if isinstance(nawm_qc, dict):
         sidecar["WMProbabilityThreshold"] = 0.9
@@ -964,7 +961,7 @@ def build_dce_base_sidecar(
             subject, session, source_paths[0] if source_paths else None,
         ),
         "Sources": build_sources_list(source_paths, bids_dir),
-        **resolution_native_block(reference_voxel_source),
+        **voxel_size_block(reference_voxel_source),
     }
     if provenance_dict:
         sidecar.update(provenance_dict)
@@ -1018,7 +1015,7 @@ def build_dsc_base_sidecar(
             subject, session, source_paths[0] if source_paths else None,
         ),
         "Sources": build_sources_list(source_paths, bids_dir),
-        **resolution_native_block(reference_voxel_source),
+        **voxel_size_block(reference_voxel_source),
     }
     if provenance_dict:
         sidecar.update(provenance_dict)
@@ -1114,7 +1111,7 @@ def build_anat_probseg_sidecar(
             reference_source or (source_paths[0] if source_paths else None),
         ),
         "Sources": build_sources_list(source_paths, bids_dir),
-        **resolution_native_block(reference_voxel_source),
+        **voxel_size_block(reference_voxel_source),
         "ReferenceContrastType": "precon",
         "ProcessingSteps": [
             "FAST 3-class tissue segmentation (T1-weighted)",
