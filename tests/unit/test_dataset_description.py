@@ -7,7 +7,10 @@ pmriprep) and the malformed-JSON fallback path.
 from __future__ import annotations
 
 import json
+import multiprocessing
 from pathlib import Path
+
+import pytest
 
 from pmriprep.utils.outputs import (
     BIDS_DERIVATIVES_VERSION,
@@ -56,6 +59,15 @@ def test_first_run_writes_pmriprep_entry(tmp_path: Path) -> None:
     readme = pipeline_dir / "README"
     assert readme.exists()
     assert "PMRIPrep derivative dataset" in readme.read_text()
+
+
+def test_keyword_arguments_are_supported(tmp_path: Path) -> None:
+    pipeline_dir = tmp_path / "pmriprep"
+    write_dataset_description(
+        pipeline_dir=pipeline_dir,
+        bids_dir=str(tmp_path / "raw_bids"),
+    )
+    assert _read(pipeline_dir / "dataset_description.json")["DatasetType"] == "derivative"
 
 
 def test_write_bidsignore_idempotent(tmp_path: Path) -> None:
@@ -137,14 +149,35 @@ def test_citation_doi_attached_when_provided(tmp_path: Path) -> None:
     assert pmri["DOI"] == "10.1234/pmriprep.5678"
 
 
-def test_handles_malformed_existing_json(tmp_path: Path) -> None:
+def test_rejects_malformed_existing_json(tmp_path: Path) -> None:
     pipeline_dir = tmp_path / "pmriprep"
     pipeline_dir.mkdir(parents=True)
     (pipeline_dir / "dataset_description.json").write_text("{not valid json")
 
-    # Must not raise; falls back to fresh GeneratedBy (pmriprep + tool suites).
-    write_dataset_description(pipeline_dir, str(tmp_path / "raw_bids"))
+    with pytest.raises(ValueError, match="not valid JSON"):
+        write_dataset_description(pipeline_dir, str(tmp_path / "raw_bids"))
+
+
+def _write_dataset_description_worker(pipeline_dir: str, bids_dir: str) -> None:
+    write_dataset_description(Path(pipeline_dir), bids_dir)
+
+
+def test_concurrent_writers_leave_valid_complete_metadata(tmp_path: Path) -> None:
+    pipeline_dir = tmp_path / "pmriprep"
+    bids_dir = str(tmp_path / "raw_bids")
+    processes = [
+        multiprocessing.Process(
+            target=_write_dataset_description_worker,
+            args=(str(pipeline_dir), bids_dir),
+        )
+        for _ in range(4)
+    ]
+    for process in processes:
+        process.start()
+    for process in processes:
+        process.join(timeout=10)
+        assert process.exitcode == 0
+
     desc = _read(pipeline_dir / "dataset_description.json")
-    names = [e["Name"] for e in desc["GeneratedBy"]]
-    assert names[0] == "pmriprep"
-    assert {"FSL", "ANTs", "Nipype", "HD-BET", "HD-GLIO"} <= set(names)
+    assert desc["DatasetType"] == "derivative"
+    assert len([e for e in desc["GeneratedBy"] if e["Name"] == "pmriprep"]) == 1

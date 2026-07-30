@@ -7,9 +7,12 @@ It also provides shared helper functions used by all four derivative writer
 interfaces (anat, DSC, DCE, HD-GLIO).
 """
 
+import hashlib
 import json
 import os
 import shutil
+import tempfile
+from functools import wraps
 from pathlib import Path
 from typing import Any, Dict, Final, List, Optional, Union
 
@@ -32,6 +35,26 @@ PMRIPREP_CODE_URL: Final[str] = "https://github.com/arulseh/pmriprep"
 # Shared utilities for BIDS-Derivatives output writers
 # -----------------------------------------------------------------------
 
+
+def _dataset_description_locked(func: Any) -> Any:
+    """Serialize dataset-description updates across pipeline writer processes."""
+    @wraps(func)
+    def wrapped(pipeline_dir: Path, *args: Any, **kwargs: Any) -> Any:
+        import fcntl
+
+        resolved = str(Path(pipeline_dir).resolve()).encode()
+        digest = hashlib.sha256(resolved).hexdigest()[:20]
+        lock_path = Path(tempfile.gettempdir()) / f"pmriprep-dd-{digest}.lock"
+        with lock_path.open("a+") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                return func(Path(pipeline_dir), *args, **kwargs)
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+    return wrapped
+
+
+@_dataset_description_locked
 def write_dataset_description(
     pipeline_dir: Path,
     bids_dir: str,
@@ -98,8 +121,10 @@ def write_dataset_description(
                     str(name): str(location)
                     for name, location in links.items()
                 }
-        except (OSError, json.JSONDecodeError):
-            existing_generated_by = []
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"Existing derivative dataset description is not valid JSON: {desc_path}"
+            ) from exc
 
     managed_generated_by = [pmriprep_entry] + build_tool_generatedby_entries()
     raw_dataset_link = Path(os.path.relpath(
