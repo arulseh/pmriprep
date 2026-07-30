@@ -560,7 +560,7 @@
     "ktrans_map_meta": "1c94533442eb68a4660356be7da79877233f24bcd85eacb51526424130306f6e",
     "ktrans_map_sink": "2c508d40de5d74bd594e2958531e3383de2f1b19b305122060d7a865478af65d",
     "t1_map_meta": "79cc0b8f2fb00b9563aae328756cbf32d451f8131ba7d280001a17299571df75",
-    "t1_map_sink": "2c508d40de5d74bd594e2958531e3383de2f1b19b305122060d7a865478af65d"
+    "t1_map_sink": "03ffb7cab5f328cbc8153751ca1ac5507b2634671a6cd8032e23831a3e7336ae"
   },
   "nipype_version": "1.10.0",
   "node_attrs": {
@@ -679,6 +679,7 @@
       "bids_suffix": "T1map",
       "datatype": "anat",
       "desc": "",
+      "function_str": "def _copy_measured_t1_map(\n    in_file: str,\n    output_dir: str,\n    subject: str,\n    session: str,\n    desc: str,\n    suffix: str,\n    meta_dict: dict,\n    datatype: str = \"anat\",\n    bids_suffix: str = \"T1map\",\n    space: str = \"dceref\",\n) -> str:\n    \"\"\"Write the registered T1 map only when VFA mapping was accepted.\"\"\"\n    import logging\n\n    if isinstance(meta_dict, dict) and meta_dict.get(\"T1MappingAccepted\") is False:\n        logging.getLogger(\"nipype.workflow\").warning(\n            \"Skipping VFA T1map derivative: measured T1 mapping was rejected\"\n        )\n        return \"\"\n\n    from pmriprep.workflows.dce.datasinks import _copy_perf_map\n\n    return _copy_perf_map(\n        in_file=in_file,\n        output_dir=output_dir,\n        subject=subject,\n        session=session,\n        desc=desc,\n        suffix=suffix,\n        meta_dict=meta_dict,\n        datatype=datatype,\n        bids_suffix=bids_suffix,\n        space=space,\n    )\n",
       "space": "dceref",
       "suffix": ""
     }

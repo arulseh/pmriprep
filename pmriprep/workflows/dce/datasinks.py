@@ -930,6 +930,43 @@ def _copy_aif_mask(
     )
 
 
+def _copy_measured_t1_map(
+    in_file: str,
+    output_dir: str,
+    subject: str,
+    session: str,
+    desc: str,
+    suffix: str,
+    meta_dict: dict,
+    datatype: str = "anat",
+    bids_suffix: str = "T1map",
+    space: str = "dceref",
+) -> str:
+    """Write the registered T1 map only when VFA mapping was accepted."""
+    import logging
+
+    if isinstance(meta_dict, dict) and meta_dict.get("T1MappingAccepted") is False:
+        logging.getLogger("nipype.workflow").warning(
+            "Skipping VFA T1map derivative: measured T1 mapping was rejected"
+        )
+        return ""
+
+    from pmriprep.workflows.dce.datasinks import _copy_perf_map
+
+    return _copy_perf_map(
+        in_file=in_file,
+        output_dir=output_dir,
+        subject=subject,
+        session=session,
+        desc=desc,
+        suffix=suffix,
+        meta_dict=meta_dict,
+        datatype=datatype,
+        bids_suffix=bids_suffix,
+        space=space,
+    )
+
+
 def _copy_dce_xfm(
     in_file: str,
     output_dir: str,
@@ -1951,7 +1988,7 @@ def init_dce_datasinks_wf(
                     "space",
                 ],
                 output_names=["out_file"],
-                function=_copy_perf_map,
+                function=_copy_measured_t1_map,
             ),
             name="t1_map_sink",
         )

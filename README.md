@@ -289,8 +289,9 @@ options are multipliers of the agent's standard administered dose.
 Derivatives are written under `output_dir/pmriprep/`:
 
 - VFA T1 mapping emits a millisecond `T1map` registered to the native DCE
-  reference grid when magnitude-registration QC is accepted. External T1 maps
-  and precomputed B1+ maps are consumed but are not republished.
+  reference grid when both T1 mapping and magnitude-registration QC are
+  accepted. Population-T1 fallbacks, external T1 maps, and precomputed B1+
+  maps are consumed but are not republished.
 
 ```text
 pmriprep/

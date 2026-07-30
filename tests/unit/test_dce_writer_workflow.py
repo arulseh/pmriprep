@@ -135,6 +135,40 @@ def test_registered_vfa_t1map_skips_absent_registration_output(
     assert not list((out / "pmriprep").rglob("*T1map.nii.gz"))
 
 
+def test_registered_vfa_t1map_skips_population_fallback(
+    tmp_path: Path, minimal_bids: tuple[Path, str],
+) -> None:
+    """A uniform fallback used internally is not published as measured VFA T1."""
+    from pmriprep.workflows.dce.datasinks import init_dce_datasinks_wf
+
+    bids, src = minimal_bids
+    out = tmp_path / "out"
+    wf = init_dce_datasinks_wf(
+        output_dir=str(out), bids_dir=str(bids),
+        subject_id="01", session_id="0001",
+        pk_model="tofts", inference="nlls",
+        present_inputs={"t1_map"},
+    )
+    wf.base_dir = str(tmp_path / "work")
+    inp = wf.inputs.inputnode
+    inp.source_dce = src
+    inp.ktrans_map = _write_nii(tmp_path / "ktrans.nii.gz")
+    inp.t1_map = _write_nii(tmp_path / "population_t1.nii.gz")
+    inp.qc_metrics = {
+        "t1_mapping": {
+            "t1_method": "nlls",
+            "t1_correction": {"correction_applied": "fallback"},
+        },
+        "signal_conversion": {
+            "vfa_to_dce_registration": {"qc_status": "PASS"},
+        },
+    }
+
+    wf.run()
+
+    assert not list((out / "pmriprep").rglob("*T1map.nii.gz"))
+
+
 def test_unvalidated_model_free_maps_have_no_derivative_sinks(
     tmp_path: Path, minimal_bids: tuple[Path, str]
 ) -> None:
