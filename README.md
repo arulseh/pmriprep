@@ -273,7 +273,12 @@ For 3D DCE, use `RepetitionTime` for volume TR and
 B1+ correction recognizes AFI (`*_TB1AFI`), Siemens precomputed flip-angle
 maps (`*_TB1TFL`), and vendor-neutral maps (`*_TB1map`). Encoding is inferred
 from suffix, `Units`, and pixel scale; use `--dce-b1-map-encoding` when metadata
-are ambiguous.
+are ambiguous. AFI magnitude data are rigidly registered before the derived
+B1+ map is transferred between acquisition spaces. A precomputed B1+ map has
+no independent magnitude image for registration and must therefore already be
+world-aligned with the DCE series and, when VFA T1 mapping is used, the VFA
+acquisition. Header-based transfer with no spatial overlap is rejected and
+nominal flip angles are used instead.
 
 `ContrastBolusAgent` is recommended for relaxivity and AIF threshold lookup.
 When absent, PMRIPrep records and warns about its assumptions. DSC and DCE dose

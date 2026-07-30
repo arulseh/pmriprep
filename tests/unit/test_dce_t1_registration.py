@@ -7,7 +7,11 @@ import nibabel as nib
 import numpy as np
 import pytest
 
-from pmriprep.workflows.dce._helpers import _transform_t1_to_dce
+from pmriprep.workflows.dce._helpers import (
+    _apply_registered_b1_ratio,
+    _transform_b1_to_dce,
+    _transform_t1_to_dce,
+)
 
 
 def _write_image(path: Path, data: np.ndarray, affine: np.ndarray) -> str:
@@ -83,3 +87,107 @@ def test_registered_t1_preserves_values_over_valid_support(
     assert output.shape == (4, 4, 4)
     assert np.allclose(output[np.isfinite(output)], 1200.0)
     assert np.isnan(output).any()
+
+
+def test_registered_b1_preserves_ratio_over_valid_support(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Magnitude-derived transfer preserves B1+ ratios at support boundaries."""
+    from nibabel.processing import resample_from_to
+
+    source = np.zeros((2, 2, 2), dtype=np.float32)
+    source[0] = 0.9
+    b1_file = _write_image(
+        tmp_path / "b1.nii.gz", source, np.diag([2.0, 2.0, 2.0, 1.0]),
+    )
+    ref_file = _write_image(tmp_path / "ref.nii.gz", np.ones((4, 4, 4)), np.eye(4))
+    matrix = tmp_path / "afi_to_target.mat"
+    matrix.write_text("1 0 0 0\n0 1 0 0\n0 0 1 0\n0 0 0 1\n")
+
+    def _fake_run(command, **_kwargs):
+        source_img = nib.load(command[command.index("-in") + 1])
+        reference_img = nib.load(command[command.index("-ref") + 1])
+        interpolation = command[command.index("-interp") + 1]
+        order = 0 if interpolation == "nearestneighbour" else 1
+        output = resample_from_to(source_img, reference_img, order=order)
+        nib.save(output, command[command.index("-out") + 1])
+        return SimpleNamespace(returncode=0, stderr="")
+
+    monkeypatch.setattr("subprocess.run", _fake_run)
+    monkeypatch.chdir(tmp_path)
+    result = _apply_registered_b1_ratio(
+        b1_file, ref_file, str(matrix), {"qc_status": "PASS"},
+        "b1_registered.nii.gz",
+    )
+
+    assert result is not None
+    output = nib.load(result).get_fdata()
+    assert np.allclose(output[output > 0], 0.9)
+    assert np.any(output == 0)
+
+
+def test_poor_b1_registration_uses_nominal_flip_angle(tmp_path: Path) -> None:
+    """A poor AFI magnitude registration rejects the measured correction."""
+    b1_file = _write_image(tmp_path / "b1.nii.gz", np.ones((2, 2, 2)), np.eye(4))
+    ref_file = _write_image(tmp_path / "ref.nii.gz", np.ones((2, 2, 2)), np.eye(4))
+    matrix = tmp_path / "afi_to_target.mat"
+    matrix.write_text("1 0 0 0\n0 1 0 0\n0 0 1 0\n0 0 0 1\n")
+
+    assert _apply_registered_b1_ratio(
+        b1_file, ref_file, str(matrix), {"qc_status": "POOR"}, "out.nii.gz",
+    ) is None
+
+
+def test_unknown_b1_registration_qc_fails_loudly(tmp_path: Path) -> None:
+    """Unavailable AFI QC cannot silently disable measured B1 correction."""
+    b1_file = _write_image(tmp_path / "b1.nii.gz", np.ones((2, 2, 2)), np.eye(4))
+    ref_file = _write_image(tmp_path / "ref.nii.gz", np.ones((2, 2, 2)), np.eye(4))
+    matrix = tmp_path / "afi_to_target.mat"
+    matrix.write_text("1 0 0 0\n0 1 0 0\n0 0 1 0\n0 0 0 1\n")
+
+    with pytest.raises(RuntimeError, match="QC could not be evaluated"):
+        _apply_registered_b1_ratio(
+            b1_file, ref_file, str(matrix), {"qc_status": "UNKNOWN"},
+            "out.nii.gz",
+        )
+
+
+def test_afi_b1_requires_registration_matrix(tmp_path: Path) -> None:
+    """AFI must not silently enter the precomputed-map header path."""
+    b1_file = _write_image(tmp_path / "b1.nii.gz", np.ones((2, 2, 2)), np.eye(4))
+    ref_file = _write_image(tmp_path / "ref.nii.gz", np.ones((2, 2, 2)), np.eye(4))
+
+    with pytest.raises(RuntimeError, match="registration transform is missing"):
+        _transform_b1_to_dce(
+            b1_file, ref_file, registration_required=True,
+        )
+
+
+def test_registered_b1_without_target_overlap_is_rejected(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Registered transfer with no support falls back to nominal flip angles."""
+    from nibabel.processing import resample_from_to
+
+    source_affine = np.eye(4)
+    source_affine[:3, 3] = 1000.0
+    b1_file = _write_image(
+        tmp_path / "b1.nii.gz", np.ones((2, 2, 2)), source_affine,
+    )
+    ref_file = _write_image(tmp_path / "ref.nii.gz", np.ones((2, 2, 2)), np.eye(4))
+    matrix = tmp_path / "afi_to_target.mat"
+    matrix.write_text("1 0 0 0\n0 1 0 0\n0 0 1 0\n0 0 0 1\n")
+
+    def _fake_run(command, **_kwargs):
+        source_img = nib.load(command[command.index("-in") + 1])
+        reference_img = nib.load(command[command.index("-ref") + 1])
+        interpolation = command[command.index("-interp") + 1]
+        order = 0 if interpolation == "nearestneighbour" else 1
+        output = resample_from_to(source_img, reference_img, order=order)
+        nib.save(output, command[command.index("-out") + 1])
+        return SimpleNamespace(returncode=0, stderr="")
+
+    monkeypatch.setattr("subprocess.run", _fake_run)
+    assert _apply_registered_b1_ratio(
+        b1_file, ref_file, str(matrix), {"qc_status": "PASS"}, "out.nii.gz",
+    ) is None

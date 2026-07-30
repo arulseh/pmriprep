@@ -68,6 +68,8 @@ def test_afi_b1_recovers_known_flip(
     assert result.outputs.mean_b1 == pytest.approx(actual_fa / nominal_fa, abs=0.02)
     assert result.outputs.qc_metrics["n_valid_voxels"] == np.prod(shape)
     assert result.outputs.qc_pass is True
+    afi_reference = nib.load(result.outputs.reference_file).get_fdata()
+    assert np.allclose(afi_reference, s2)
 
 
 def test_afi_smoothing_fills_supported_internal_gap(tmp_path: Path) -> None:
@@ -194,3 +196,23 @@ def test_b1_resampling_preserves_measured_support(
     assert transformed.shape == (5, 5, 5)
     assert transformed[1, 1, 1] == pytest.approx(0.9)
     assert transformed[4, 4, 4] == 0.0
+
+
+def test_precomputed_b1_without_target_overlap_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A header-transferred B1+ map with no DCE overlap falls back to unity."""
+    from pmriprep.workflows.dce._helpers import _transform_b1_to_dce
+
+    monkeypatch.chdir(tmp_path)
+    source_file = tmp_path / "b1_source.nii.gz"
+    reference_file = tmp_path / "dce_reference.nii.gz"
+    source_affine = np.eye(4)
+    source_affine[:3, 3] = 1000.0
+    nib.save(nib.Nifti1Image(np.ones((3, 3, 3), np.float32), source_affine), source_file)
+    nib.save(
+        nib.Nifti1Image(np.zeros((5, 5, 5), np.float32), np.eye(4)),
+        reference_file,
+    )
+
+    assert _transform_b1_to_dce(str(source_file), str(reference_file)) is None

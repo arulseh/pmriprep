@@ -509,6 +509,8 @@ DCE_MATRIX: list[tuple[str, Builder]] = [
     ("dce_no_t1", lambda b: _dce(b, no_t1=True)),
     ("dce_external_t1_b1auto", lambda b: _dce(b, t1_map_file=_ext_t1(b), b1_method="auto")),
     ("dce_external_t1_b1none", lambda b: _dce(b, t1_map_file=_ext_t1(b), b1_method="none")),
+    ("dce_external_t1_afi", lambda b: _dce(b, t1_map_file=_ext_t1(b), b1_method="afi")),
+    ("dce_afi_vfa", lambda b: _dce(b, b1_method="afi")),
     ("dce_b1_none_vfa", lambda b: _dce(b, b1_method="none")),
     ("dce_smooth", lambda b: _dce(b, smooth_fwhm=4.0)),
     # The single-underlay rows are subsumed for detection by ``dce_underlays_all``

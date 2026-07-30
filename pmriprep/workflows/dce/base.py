@@ -559,7 +559,8 @@ def init_dce_t1_b1_wf(
     )
     outputnode = pe.Node(
         niu.IdentityInterface(fields=[
-            "b1_map", "b1_qc", "afi_registration_qc_plot", "b1_qc_plot",
+            "b1_map", "b1_qc", "afi_reference", "b1_registration_qc",
+            "afi_registration_qc_plot", "b1_qc_plot",
             "t1_map", "t1_support_map", "t1_qc", "vfa_qc",
             "vfa_reference", "vfa_registration_qc_plot", "t1_qc_plot",
         ]),
@@ -591,7 +592,7 @@ def init_dce_t1_b1_wf(
                 ("b1_map_encoding", "b1_map_encoding"),
             ]),
             (b1_mapping, outputnode, [
-                ("out_file", "b1_map"), ("qc_metrics", "b1_qc"),
+                ("reference_file", "afi_reference"), ("qc_metrics", "b1_qc"),
                 ("registration_qc_plot", "afi_registration_qc_plot"),
                 ("qc_plot", "b1_qc_plot"),
             ]),
@@ -610,10 +611,18 @@ def init_dce_t1_b1_wf(
         )
         transform_b1_to_vfa = pe.Node(
             niu.Function(
-                input_names=["b1_map_file", "vfa_ref_file"],
+                input_names=[
+                    "b1_map_file", "vfa_ref_file", "transform_matrix",
+                    "registration_qc", "registration_required",
+                ],
                 output_names=["out_file"], function=_transform_b1_to_vfa,
             ),
             name="transform_b1_to_vfa",
+        )
+        transform_b1_to_vfa.inputs.transform_matrix = None
+        transform_b1_to_vfa.inputs.registration_qc = None
+        transform_b1_to_vfa.inputs.registration_required = (
+            config.b1_method == "afi"
         )
         t1_mapping = pe.Node(
             T1Mapping(
@@ -649,6 +658,37 @@ def init_dce_t1_b1_wf(
                 ("qc_metrics", "vfa_qc"),
                 ("registration_qc_plot", "vfa_registration_qc_plot"),
             ]),
+        ])
+
+        if config.b1_method == "afi":
+            afi_to_vfa_registration = pe.Node(
+                DCERegistration(cost="normmi", reference_type="any"),
+                name="afi_to_vfa_registration",
+            )
+            workflow.connect([
+                (b1_mapping, afi_to_vfa_registration, [
+                    ("reference_file", "t1w_file"),
+                ]),
+                (vfa_preprocess, afi_to_vfa_registration, [
+                    ("reference_file", "dce_mean"),
+                ]),
+                (afi_to_vfa_registration, transform_b1_to_vfa, [
+                    ("out_matrix", "transform_matrix"),
+                    ("qc_metrics", "registration_qc"),
+                ]),
+                (afi_to_vfa_registration, outputnode, [
+                    ("qc_metrics", "b1_registration_qc"),
+                ]),
+                (transform_b1_to_vfa, outputnode, [("out_file", "b1_map")]),
+            ])
+        else:
+            workflow.connect([
+                (b1_mapping, outputnode, [("out_file", "b1_map")]),
+            ])
+
+    elif prepare_b1:
+        workflow.connect([
+            (b1_mapping, outputnode, [("out_file", "b1_map")]),
         ])
 
     return workflow
@@ -1927,11 +1967,19 @@ def init_dce_preproc_wf(
     if need_b1:
         transform_b1_to_dce = pe.Node(
             niu.Function(
-                input_names=["b1_map_file", "reference_file"],
+                input_names=[
+                    "b1_map_file", "reference_file", "transform_matrix",
+                    "registration_qc", "registration_required",
+                ],
                 output_names=["out_file"],
                 function=_transform_b1_to_dce,
             ),
             name="transform_b1_to_dce",
+        )
+        transform_b1_to_dce.inputs.transform_matrix = None
+        transform_b1_to_dce.inputs.registration_qc = None
+        transform_b1_to_dce.inputs.registration_required = (
+            config.b1_method == "afi"
         )
 
         workflow.connect([
@@ -1942,6 +1990,32 @@ def init_dce_preproc_wf(
                 ("outputnode.mean_img", "reference_file"),
             ]),
         ])
+
+        if use_vfa_t1 and config.b1_method == "afi":
+            workflow.connect([
+                (vfa_to_dce_registration, transform_b1_to_dce, [
+                    ("out_matrix", "transform_matrix"),
+                    ("qc_metrics", "registration_qc"),
+                ]),
+            ])
+        elif config.b1_method == "afi":
+            afi_to_dce_registration = pe.Node(
+                DCERegistration(cost="normmi", reference_type="precon"),
+                name="afi_to_dce_registration",
+                mem_gb=_static_mem,
+            )
+            workflow.connect([
+                (t1_b1_wf, afi_to_dce_registration, [
+                    ("outputnode.afi_reference", "t1w_file"),
+                ]),
+                (dce_preprocessing_wf, afi_to_dce_registration, [
+                    ("outputnode.baseline_mean_img", "dce_mean"),
+                ]),
+                (afi_to_dce_registration, transform_b1_to_dce, [
+                    ("out_matrix", "transform_matrix"),
+                    ("qc_metrics", "registration_qc"),
+                ]),
+            ])
 
     if use_external_t1:
         # External T1: validate units, resample to DCE space
@@ -2003,6 +2077,7 @@ def init_dce_preproc_wf(
                 "no_t1",
                 "external_t1",
                 "t1_registration_qc",
+                "b1_registration_qc",
             ],
             output_names=["concentration_file", "conversion_qc"],
             function=_signal_to_concentration_node,
@@ -2015,6 +2090,7 @@ def init_dce_preproc_wf(
     signal_to_conc.inputs.no_t1 = config.no_t1
     signal_to_conc.inputs.external_t1 = use_external_t1
     signal_to_conc.inputs.t1_registration_qc = None
+    signal_to_conc.inputs.b1_registration_qc = None
 
     # Use T1 and B1 maps resampled to DCE space
     workflow.connect([
@@ -2045,6 +2121,12 @@ def init_dce_preproc_wf(
                 ("out_file", "b1_map_file"),
             ]),
         ])
+        if config.b1_method == "afi":
+            workflow.connect([
+                (t1_b1_wf, signal_to_conc, [
+                    ("outputnode.b1_registration_qc", "b1_registration_qc"),
+                ]),
+            ])
     elif use_external_t1:
         workflow.connect([
             (external_t1_to_dce, signal_to_conc, [
@@ -2057,6 +2139,12 @@ def init_dce_preproc_wf(
                     ("out_file", "b1_map_file"),
                 ]),
             ])
+            if config.b1_method == "afi":
+                workflow.connect([
+                    (afi_to_dce_registration, signal_to_conc, [
+                        ("qc_metrics", "b1_registration_qc"),
+                    ]),
+                ])
         else:
             signal_to_conc.inputs.b1_map_file = None
     else:  # no_t1
@@ -2067,6 +2155,12 @@ def init_dce_preproc_wf(
                     ("out_file", "b1_map_file"),
                 ]),
             ])
+            if config.b1_method == "afi":
+                workflow.connect([
+                    (afi_to_dce_registration, signal_to_conc, [
+                        ("qc_metrics", "b1_registration_qc"),
+                    ]),
+                ])
         else:
             signal_to_conc.inputs.b1_map_file = None
 

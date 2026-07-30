@@ -2104,6 +2104,7 @@
     "signal_to_concentration": {
       "input_names": [
         "b1_map_file",
+        "b1_registration_qc",
         "baseline_frames",
         "brain_mask_file",
         "dce_file",
@@ -2135,7 +2136,10 @@
     "transform_b1_to_dce": {
       "input_names": [
         "b1_map_file",
-        "reference_file"
+        "reference_file",
+        "registration_qc",
+        "registration_required",
+        "transform_matrix"
       ],
       "output_names": [
         "out_file"
@@ -2144,6 +2148,9 @@
     "transform_b1_to_vfa": {
       "input_names": [
         "b1_map_file",
+        "registration_qc",
+        "registration_required",
+        "transform_matrix",
         "vfa_ref_file"
       ],
       "output_names": [
@@ -2298,10 +2305,10 @@
     "resample_dsc_cbv": "8637643d62fc961aafa3946ba1321ebcf4744121cb1b91e9b01bde70a4024ba3",
     "resample_dsc_ncbv": "9016b6e864f3d6e0149ee556592202a4fb42cec4b3e2a90946ff48dbfa6caf72",
     "select_aif_exclusion": "3ac6f0a171a3c915c7c043706044fb8dd45d2a9c05f1d1fad613919135724b21",
-    "signal_to_concentration": "3bdcadc879998a670b3c72eef2a79f31efb2c94783b1ec4835e3a88f09168401",
+    "signal_to_concentration": "b32bd20cd2d8abf9ee7751c61e56dfea91dbd62cf764ff60068a69c552574840",
     "transform_atlas_cascade": "92097e5d6df046e1997dbee6d10208373b12e5535619d7397855d263159a752a",
-    "transform_b1_to_dce": "3805c9b07e0320284ec492d9a2d5ea9e48db04ade1320c301880a9219eab0829",
-    "transform_b1_to_vfa": "d7085fd6e919f5095c5bb302c136f392174fa77fd5c1e7cf1a20c37dfbad13fb",
+    "transform_b1_to_dce": "391f866779af2006ac30566f7d9ab335901c584b9d1088d540ffd82bee85f857",
+    "transform_b1_to_vfa": "4728ff290dc8b3861d72fed39787939a32235a00cf481c0d580a43491075b307",
     "transform_brain_mask": "d79c70197847c13c4a4fd38f056ae9911584e27b3d0d1a55b81ebbbc0dc8c3e4",
     "transform_csf_probseg": "832875c9ced77fe1fb5b000924e46d928ab6d69e66f8b209e0b78dad94bb9fba",
     "transform_enhancing_mask": "d79c70197847c13c4a4fd38f056ae9911584e27b3d0d1a55b81ebbbc0dc8c3e4",
@@ -2670,6 +2677,7 @@
       "function_str": "def select_aif_exclusion_mask(\n    user_lesion_mask: str | None = None,\n    transformed_lesion_mask: str | None = None,\n) -> str:\n    \"\"\"Select the lesion mask used to exclude AIF candidates.\n\n    Parameters\n    ----------\n    user_lesion_mask : str or None\n        User-supplied lesion mask in native perfusion space.\n    transformed_lesion_mask : str or None\n        Tumor-segmentation mask transformed to native perfusion space.\n\n    Returns\n    -------\n    str\n        The user mask when present, otherwise the transformed mask or ``\"\"``.\n    \"\"\"\n    from nipype.interfaces.base import isdefined\n\n    if isdefined(user_lesion_mask) and user_lesion_mask not in (None, \"\"):\n        return str(user_lesion_mask)\n    if (\n        isdefined(transformed_lesion_mask)\n        and transformed_lesion_mask not in (None, \"\")\n    ):\n        return str(transformed_lesion_mask)\n    return \"\"\n"
     },
     "signal_to_concentration": {
+      "b1_registration_qc": null,
       "external_t1": false,
       "no_t1": false,
       "t1_registration_qc": null
@@ -2683,6 +2691,16 @@
       "subject_id": "0001",
       "t1_correction_mode": "auto",
       "t1_method": "nlls"
+    },
+    "transform_b1_to_dce": {
+      "registration_qc": null,
+      "registration_required": false,
+      "transform_matrix": null
+    },
+    "transform_b1_to_vfa": {
+      "registration_qc": null,
+      "registration_required": false,
+      "transform_matrix": null
     },
     "transform_brain_mask": {
       "function_str": "def _transform_mask_to_dce(\n    mask_file: str | None = None,\n    reference_file: str | None = None,\n    transform_matrix: str | None = None,\n) -> str:\n    \"\"\"Transform brain mask from T1w space to DCE space.\n\n    Thin Nipype Function-node wrapper around\n    ``pmriprep.utils.registration.transform_mask_to_grid``. The import is\n    intentionally inline because ``niu.Function`` serialises this body\n    via ``inspect.getsource`` and runs it in a worker that cannot see\n    module-level imports.\n\n    Parameters\n    ----------\n    mask_file : str or None\n        Path to brain mask in T1w space (or None).\n    reference_file : str or None\n        Path to DCE reference image for output geometry.\n    transform_matrix : str or None\n        Path to T1w\u2192DCE FLIRT matrix.\n\n    Returns\n    -------\n    str\n        Path to transformed brain mask in DCE space, or \"\" if no mask.\n    \"\"\"\n    from pmriprep.utils.registration import transform_mask_to_grid\n\n    return transform_mask_to_grid(mask_file, reference_file, transform_matrix)\n"

@@ -599,6 +599,7 @@ def _signal_to_concentration_node(
     no_t1: bool,
     external_t1: bool = False,
     t1_registration_qc: dict[str, object] | None = None,
+    b1_registration_qc: dict[str, object] | None = None,
 ) -> tuple[str, dict[str, object]]:
     """Convert DCE signal to contrast-agent concentration.
 
@@ -631,6 +632,8 @@ def _signal_to_concentration_node(
         Whether the T1 map is a user-supplied map requiring alignment QC.
     t1_registration_qc : dict or None, optional
         VFA-reference-to-DCE registration accounting for internally fitted T1.
+    b1_registration_qc : dict or None, optional
+        Magnitude-derived registration accounting for B1+ transfer.
 
     Returns
     -------
@@ -716,6 +719,8 @@ def _signal_to_concentration_node(
     )
     if t1_registration_qc is not None:
         conversion_qc["vfa_to_dce_registration"] = dict(t1_registration_qc)
+    if b1_registration_qc is not None:
+        conversion_qc["b1_registration"] = dict(b1_registration_qc)
     if t1_map is None:
         field_key = get_field_strength_key(field_strength)
         conversion_qc["assumed_t1_ms"] = float(
@@ -1283,11 +1288,15 @@ def _resample_b1_ratio_to_img(b1_img: Any, ref_img: Any) -> Any:
 def _transform_b1_to_vfa(
     b1_map_file: str | None = None,
     vfa_ref_file: str | None = None,
+    transform_matrix: str | None = None,
+    registration_qc: dict[str, object] | None = None,
+    registration_required: bool = False,
 ) -> str | None:
-    """Resample B1+ map from AFI space to VFA space.
+    """Transfer B1+ map from AFI or precomputed space to VFA space.
 
-    Uses nilearn continuous interpolation via NIfTI affine headers.
-    Passes through None unchanged if B1 mapping was skipped.
+    AFI maps use a rigid transform estimated from AFI magnitude data. A
+    precomputed map without a magnitude reference follows its explicit
+    world-aligned input contract and uses NIfTI geometry.
 
     Parameters
     ----------
@@ -1295,6 +1304,12 @@ def _transform_b1_to_vfa(
         Path to B1+ map in AFI space (or None).
     vfa_ref_file : str or None
         Path to VFA reference image for output geometry.
+    transform_matrix : str or None
+        AFI-reference-to-VFA FLIRT matrix, when AFI magnitude is available.
+    registration_qc : dict or None
+        AFI-to-VFA registration QC.
+    registration_required : bool, optional
+        Whether this is an AFI path that must not fall back to header transfer.
 
     Returns
     -------
@@ -1303,6 +1318,19 @@ def _transform_b1_to_vfa(
     """
     if b1_map_file is None or vfa_ref_file is None:
         return b1_map_file
+
+    if registration_required and transform_matrix is None:
+        raise RuntimeError(
+            "AFI B1+ is available but its VFA registration transform is missing"
+        )
+
+    if transform_matrix is not None:
+        from pmriprep.workflows.dce._helpers import _apply_registered_b1_ratio
+
+        return _apply_registered_b1_ratio(
+            b1_map_file, vfa_ref_file, transform_matrix, registration_qc,
+            "b1_map_vfa_space.nii.gz",
+        )
 
     from pathlib import Path
 
@@ -1321,6 +1349,14 @@ def _transform_b1_to_vfa(
             return b1_map_file
 
     resampled = _resample_b1_ratio_to_img(b1_img, ref_img)
+    if not np.any(np.asarray(resampled.dataobj) > 0):  # type: ignore[attr-defined]
+        import logging
+
+        logging.getLogger("pmriprep.workflows.dce").warning(
+            "Precomputed B1+ map has no support on the VFA grid; using nominal "
+            "flip angles"
+        )
+        return None
     out_file = str(Path.cwd() / "b1_map_vfa_space.nii.gz")
     nib.save(resampled, out_file)
     return out_file
@@ -1329,10 +1365,15 @@ def _transform_b1_to_vfa(
 def _transform_b1_to_dce(
     b1_map_file: str | None = None,
     reference_file: str | None = None,
+    transform_matrix: str | None = None,
+    registration_qc: dict[str, object] | None = None,
+    registration_required: bool = False,
 ) -> str | None:
-    """Resample B1+ map to DCE space for signal-to-concentration.
+    """Transfer B1+ map to DCE space for signal-to-concentration.
 
-    Uses nilearn continuous interpolation via NIfTI affine headers.
+    AFI/VFA maps use a rigid transform estimated from magnitude data.
+    Precomputed maps without magnitude references follow their explicit
+    world-aligned input contract and use NIfTI geometry.
 
     Parameters
     ----------
@@ -1340,6 +1381,13 @@ def _transform_b1_to_dce(
         Path to B1+ map (or None).
     reference_file : str or None
         Path to DCE mean image for output geometry.
+    transform_matrix : str or None
+        Source-reference-to-DCE FLIRT matrix, when magnitude registration is
+        available.
+    registration_qc : dict or None
+        Source-reference-to-DCE registration QC.
+    registration_required : bool, optional
+        Whether this is an AFI path that must not fall back to header transfer.
 
     Returns
     -------
@@ -1348,6 +1396,19 @@ def _transform_b1_to_dce(
     """
     if b1_map_file is None or reference_file is None:
         return b1_map_file
+
+    if registration_required and transform_matrix is None:
+        raise RuntimeError(
+            "AFI B1+ is available but its DCE registration transform is missing"
+        )
+
+    if transform_matrix is not None:
+        from pmriprep.workflows.dce._helpers import _apply_registered_b1_ratio
+
+        return _apply_registered_b1_ratio(
+            b1_map_file, reference_file, transform_matrix, registration_qc,
+            "b1_map_dce_space.nii.gz",
+        )
 
     from pathlib import Path
 
@@ -1366,8 +1427,107 @@ def _transform_b1_to_dce(
             return b1_map_file
 
     resampled = _resample_b1_ratio_to_img(b1_img, ref_img)
+    if not np.any(np.asarray(resampled.dataobj) > 0):  # type: ignore[attr-defined]
+        import logging
+
+        logging.getLogger("pmriprep.workflows.dce").warning(
+            "Precomputed B1+ map has no support on the DCE grid; using nominal "
+            "flip angles"
+        )
+        return None
     out_file = str(Path.cwd() / "b1_map_dce_space.nii.gz")
     nib.save(resampled, out_file)
+    return out_file
+
+
+def _apply_registered_b1_ratio(
+    b1_map_file: str,
+    reference_file: str,
+    transform_matrix: str,
+    registration_qc: dict[str, object] | None,
+    output_name: str,
+) -> str | None:
+    """Apply a magnitude-derived rigid transform to a B1+ ratio map."""
+    import logging
+    import subprocess
+    import tempfile
+    from pathlib import Path
+
+    import nibabel as nib  # type: ignore[import-untyped]
+    import numpy as np
+
+    status = str((registration_qc or {}).get("qc_status", "UNKNOWN")).upper()
+    if status == "UNKNOWN":
+        raise RuntimeError(
+            "B1+ registration QC could not be evaluated; refusing to change "
+            "DCE quantification silently"
+        )
+    if status not in {"PASS", "WARN"}:
+        logging.getLogger("pmriprep.workflows.dce").warning(
+            "B1+ registration QC is %s; using nominal flip angles",
+            status,
+        )
+        return None
+
+    b1_img = nib.load(b1_map_file)
+    ref_img = nib.load(reference_file)
+    values = np.asarray(b1_img.get_fdata(), dtype=np.float32)  # type: ignore[attr-defined]
+    support = np.isfinite(values) & (values > 0)
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp = Path(temp_dir)
+        value_file = temp / "b1_values.nii.gz"
+        support_file = temp / "b1_support.nii.gz"
+        value_out = temp / "b1_values_target.nii.gz"
+        weight_out = temp / "b1_weights_target.nii.gz"
+        nearest_out = temp / "b1_support_target.nii.gz"
+        nib.save(
+            nib.Nifti1Image(
+                np.where(support, values, 0.0), b1_img.affine, b1_img.header,  # type: ignore[attr-defined]
+            ),
+            value_file,
+        )
+        nib.save(
+            nib.Nifti1Image(
+                support.astype(np.float32), b1_img.affine, b1_img.header,  # type: ignore[attr-defined]
+            ),
+            support_file,
+        )
+
+        def _apply(source: Path, destination: Path, interpolation: str) -> None:
+            result = subprocess.run(
+                [
+                    "flirt", "-in", str(source), "-ref", str(reference_file),
+                    "-out", str(destination), "-init", str(transform_matrix),
+                    "-applyxfm", "-interp", interpolation,
+                ],
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode != 0:
+                raise RuntimeError(
+                    f"FLIRT B1+ resampling failed ({interpolation}): {result.stderr}"
+                )
+
+        _apply(value_file, value_out, "trilinear")
+        _apply(support_file, weight_out, "trilinear")
+        _apply(support_file, nearest_out, "nearestneighbour")
+        numerator = np.asarray(nib.load(value_out).dataobj, dtype=np.float32)  # type: ignore[attr-defined]
+        weights = np.asarray(nib.load(weight_out).dataobj, dtype=np.float32)  # type: ignore[attr-defined]
+        nearest = np.asarray(nib.load(nearest_out).dataobj) > 0.5  # type: ignore[attr-defined]
+
+    data = np.zeros(ref_img.shape[:3], dtype=np.float32)  # type: ignore[attr-defined]
+    keep = nearest & np.isfinite(numerator) & (weights > 1e-6)
+    if not np.any(keep):
+        logging.getLogger("pmriprep.workflows.dce").warning(
+            "Registered B1+ map has no support on the target grid; using nominal "
+            "flip angles"
+        )
+        return None
+    np.divide(numerator, weights, out=data, where=keep)
+    output = nib.Nifti1Image(data, ref_img.affine, ref_img.header)  # type: ignore[attr-defined]
+    out_file = str(Path.cwd() / output_name)
+    nib.save(output, out_file)
     return out_file
 
 

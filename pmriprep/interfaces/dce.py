@@ -210,6 +210,10 @@ class B1MappingOutputSpec(TraitedSpec):
     """Output specification for B1Mapping interface."""
 
     out_file = File(exists=True, desc="B1+ correction factor map")
+    reference_file = File(
+        exists=True,
+        desc="Long-TR AFI magnitude image used for cross-acquisition registration",
+    )
     mean_b1 = traits.Float(desc="Mean B1+ correction factor within brain mask")
     std_b1 = traits.Float(desc="Standard deviation of B1+ within brain mask")
     qc_pass = traits.Bool(desc="Whether B1+ map passed QC criteria")
@@ -810,6 +814,14 @@ class B1Mapping(SimpleInterface):
         out_img = nib.Nifti1Image(b1_map, affine, header)
         nib.save(out_img, out_file)
 
+        # Cross-acquisition registration uses AFI magnitude data rather than
+        # the smooth B1+ parameter map.
+        afi_reference_file = str(Path.cwd() / "afi_long_tr_reference.nii.gz")
+        nib.save(
+            nib.Nifti1Image(s2.astype(np.float32), affine, header),
+            afi_reference_file,
+        )
+
         # Generate QC plot
         qc_plot_path: Optional[str] = None
         try:
@@ -857,6 +869,7 @@ class B1Mapping(SimpleInterface):
 
         # Set outputs
         self._results["out_file"] = out_file
+        self._results["reference_file"] = afi_reference_file
         self._results["mean_b1"] = mean_b1
         self._results["std_b1"] = std_b1
         self._results["qc_pass"] = qc_pass

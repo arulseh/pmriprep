@@ -39,6 +39,15 @@ def test_t1_b1_workflow_vfa_mode() -> None:
         .get_node("outputnode")
         .interface._fields
     )
+
+
+def test_t1_b1_workflow_afi_registers_magnitude_to_vfa() -> None:
+    """AFI B1 uses its magnitude reference for transfer into VFA space."""
+    assert _names(DCEConfig(b1_method="afi")) == {
+        "inputnode", "outputnode", "b1_mapping", "vfa_reorient",
+        "vfa_preprocess", "afi_to_vfa_registration", "transform_b1_to_vfa",
+        "t1_mapping",
+    }
     assert "vfa_reference" in (
         init_dce_t1_b1_wf(
             config=DCEConfig(), subject_id="0001", session_id="0001",
@@ -52,6 +61,17 @@ def test_t1_b1_workflow_external_t1_mode() -> None:
     """External T1 retains B1 preparation without constructing VFA fitting."""
     config = DCEConfig(t1_map_file=Path("external_t1map.nii.gz"))
     assert _names(config) == {"inputnode", "outputnode", "b1_mapping"}
+
+
+def test_t1_b1_workflow_external_t1_afi_exposes_reference() -> None:
+    """AFI magnitude remains available when VFA T1 fitting is inactive."""
+    config = DCEConfig(
+        t1_map_file=Path("external_t1map.nii.gz"), b1_method="afi",
+    )
+    workflow = init_dce_t1_b1_wf(
+        config=config, subject_id="0001", session_id="0001",
+    )
+    assert "afi_reference" in workflow.get_node("outputnode").interface._fields
 
 
 def test_t1_b1_workflow_no_t1_mode() -> None:
