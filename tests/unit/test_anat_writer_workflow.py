@@ -395,3 +395,10 @@ def test_multi_modality_kitchen_sink(tmp_path: Path, minimal_bids: Path) -> None
         "Rigid registration of the post-contrast T1w image to the pre-contrast reference",
         "Post-contrast minus pre-contrast signal subtraction within the brain mask",
     ]
+    assert subtraction_sidecar["Units"] == "arbitrary"
+    assert subtraction_sidecar["Estimator"] == (
+        "registered_postcontrast_signal_minus_precontrast_signal"
+    )
+    assert subtraction_sidecar["IntensityNormalizationApplied"] is False
+    assert subtraction_sidecar["Quantitative"] is False
+    assert "not suitable for cross-subject" in subtraction_sidecar["Interpretation"]

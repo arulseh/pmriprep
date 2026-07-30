@@ -647,7 +647,10 @@ def init_anat_datasinks_wf(
             name="subtraction",
             in_attr="t1w_subtraction",
             source_attrs=["source_t1w", "source_t1w_postcon"],
-            description="Post-contrast minus pre-contrast subtraction map",
+            description=(
+                "Registered post-contrast minus pre-contrast T1w raw-signal "
+                "difference image"
+            ),
             suffix="T1w",
             desc_value="subtraction",
             contrast_agent_attr="source_t1w_postcon",

@@ -892,6 +892,10 @@ def test_dce_t1w_subtraction_underlay_lands_in_anat(
     sidecar = json.loads(expected.with_suffix("").with_suffix(".json").read_text())
     assert "subtraction" in sidecar["Description"].lower()
     assert "SpatialReference" in sidecar
+    assert sidecar["IntensityNormalizationApplied"] is False
+    assert sidecar["Quantitative"] is False
+    assert sidecar["Units"] == "arbitrary"
+    assert len(sidecar["Sources"]) == 3
 
 
 def test_dce_t1w_subtraction_absent_skips_cleanly(

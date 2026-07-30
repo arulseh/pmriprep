@@ -72,6 +72,7 @@ class DCEAnatImageSpec:
     desc: str = ""
     ceagent: str = ""
     source_attr: str = "source_t1w"
+    is_subtraction: bool = False
 
 
 # PK parameter maps. Model name lives in JSON sidecar (PKModeling.model),
@@ -161,7 +162,8 @@ _STRUCTURAL_UNDERLAYS: tuple[DCEAnatImageSpec, ...] = (
     ),
     DCEAnatImageSpec(
         "t1w_subtraction_in_dce", "T1w",
-        "Post-pre T1w subtraction registered to DCE space", desc="subtraction",
+        "T1w subtraction (post-pre raw-signal difference) registered to DCE space",
+        desc="subtraction", is_subtraction=True,
     ),
     DCEAnatImageSpec(
         "flair_in_dce", "FLAIR", "FLAIR registered to DCE space",
@@ -654,9 +656,14 @@ def _build_dce_underlay_meta(
     structural_source: str,
     perfusion_source: str,
     bids_dir: str,
+    is_subtraction: bool,
+    postcontrast_source: str = "",
 ) -> dict:
     """Build metadata for a structural image resampled to DCE space."""
-    from pmriprep.utils.sidecar_builders import build_sources_list
+    from pmriprep.utils.sidecar_builders import (
+        build_sources_list,
+        subtraction_signal_metadata,
+    )
 
     out = dict(base)
     out["Description"] = description
@@ -669,9 +676,13 @@ def _build_dce_underlay_meta(
         "Interpolation": "spline",
         "TransformDirection": "T1w_to_DCE",
     })
-    out["Sources"] = build_sources_list(
-        [structural_source, perfusion_source], bids_dir,
-    )
+    sources = [structural_source]
+    if is_subtraction:
+        sources.append(postcontrast_source)
+    sources.append(perfusion_source)
+    out["Sources"] = build_sources_list(sources, bids_dir)
+    if is_subtraction:
+        out.update(subtraction_signal_metadata())
     return out
 
 
@@ -1267,6 +1278,7 @@ def _add_anat_image_sink(
     extra: Optional[dict] = None,
     source_attr: str = "source_dce",
     dismiss_entities: tuple = ("acquisition",),
+    is_subtraction: bool = False,
 ) -> pe.Node:
     """Wire an anat-side DCE sink (T1w/FLAIR/T2w/T1map in DCE space).
 
@@ -1283,7 +1295,9 @@ def _add_anat_image_sink(
         niu.Function(
             input_names=(
                 ["base", "description", "units", "extra",
-                 "structural_source", "perfusion_source", "bids_dir"]
+                 "structural_source", "postcontrast_source",
+                 "perfusion_source", "bids_dir",
+                 "is_subtraction"]
                 if is_underlay
                 else ["base", "description", "units", "extra"]
             ),
@@ -1300,9 +1314,11 @@ def _add_anat_image_sink(
     meta.inputs.extra = metadata_extra or None
     workflow.connect(base_minimal_node, "meta_dict", meta, "base")
     if is_underlay:
+        meta.inputs.is_subtraction = is_subtraction
         workflow.connect([
             (inputnode, meta, [
                 (source_attr, "structural_source"),
+                ("source_t1w_postcon", "postcontrast_source"),
                 ("source_dce", "perfusion_source"),
                 ("bids_dir", "bids_dir"),
             ]),
@@ -2060,6 +2076,7 @@ def init_dce_datasinks_wf(
             desc=anat_spec.desc, ce_label=anat_spec.ceagent,
             source_attr=anat_spec.source_attr,
             dismiss_entities=(),
+            is_subtraction=anat_spec.is_subtraction,
         )
         sink_outputs.append((sink, "out_file"))
 

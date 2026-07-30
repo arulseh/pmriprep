@@ -792,6 +792,10 @@ class TestStructuralUnderlayDatatype:
         meta = json.loads(expected.with_suffix("").with_suffix(".json").read_text())
         assert "subtraction" in meta["Description"].lower()
         assert "SpatialReference" in meta
+        assert meta["IntensityNormalizationApplied"] is False
+        assert meta["Quantitative"] is False
+        assert meta["Units"] == "arbitrary"
+        assert len(meta["Sources"]) == 3
 
     def test_t1w_subtraction_absent_skips_cleanly(self, minimal_inputs, tmp_path) -> None:
         """Present-set without the subtraction key => no sink built, no error."""

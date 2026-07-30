@@ -759,6 +759,30 @@
     [
       "inputnode",
       "source_t1w_postcon",
+      "flair_in_dsc_meta",
+      "postcontrast_source"
+    ],
+    [
+      "inputnode",
+      "source_t1w_postcon",
+      "flair_postcon_in_dsc_meta",
+      "postcontrast_source"
+    ],
+    [
+      "inputnode",
+      "source_t1w_postcon",
+      "t1w_in_dsc_meta",
+      "postcontrast_source"
+    ],
+    [
+      "inputnode",
+      "source_t1w_postcon",
+      "t1w_postcon_in_dsc_meta",
+      "postcontrast_source"
+    ],
+    [
+      "inputnode",
+      "source_t1w_postcon",
       "t1w_postcon_in_dsc_meta",
       "structural_source"
     ],
@@ -767,6 +791,18 @@
       "source_t1w_postcon",
       "t1w_postcon_in_dsc_sink",
       "source_file"
+    ],
+    [
+      "inputnode",
+      "source_t1w_postcon",
+      "t1w_subtraction_in_dsc_meta",
+      "postcontrast_source"
+    ],
+    [
+      "inputnode",
+      "source_t1w_postcon",
+      "t2w_in_dsc_meta",
+      "postcontrast_source"
     ],
     [
       "inputnode",
@@ -1079,8 +1115,10 @@
         "base",
         "bids_dir",
         "description",
+        "is_subtraction",
         "mask_type",
         "perfusion_source",
+        "postcontrast_source",
         "segmentation_labels",
         "skull_stripped",
         "structural_source"
@@ -1094,8 +1132,10 @@
         "base",
         "bids_dir",
         "description",
+        "is_subtraction",
         "mask_type",
         "perfusion_source",
+        "postcontrast_source",
         "segmentation_labels",
         "skull_stripped",
         "structural_source"
@@ -1222,8 +1262,10 @@
         "base",
         "bids_dir",
         "description",
+        "is_subtraction",
         "mask_type",
         "perfusion_source",
+        "postcontrast_source",
         "segmentation_labels",
         "skull_stripped",
         "structural_source"
@@ -1237,8 +1279,10 @@
         "base",
         "bids_dir",
         "description",
+        "is_subtraction",
         "mask_type",
         "perfusion_source",
+        "postcontrast_source",
         "segmentation_labels",
         "skull_stripped",
         "structural_source"
@@ -1252,8 +1296,10 @@
         "base",
         "bids_dir",
         "description",
+        "is_subtraction",
         "mask_type",
         "perfusion_source",
+        "postcontrast_source",
         "segmentation_labels",
         "skull_stripped",
         "structural_source"
@@ -1267,8 +1313,10 @@
         "base",
         "bids_dir",
         "description",
+        "is_subtraction",
         "mask_type",
         "perfusion_source",
+        "postcontrast_source",
         "segmentation_labels",
         "skull_stripped",
         "structural_source"
@@ -1330,8 +1378,8 @@
     "base_perf_meta": "6c0308432a124b4e1b1efedac75d61373db50aee3239f6f50e42bcc48ff72fce",
     "brain_mask_dsc_meta": "f7366c18d36dc72c4a1d0ec255f373c52a0fc23bfd170370bea2c49d7e98e35b",
     "dataset_description": "4f030212e4217b96b33ce28a7ed92f196a066b4199d13919b0c6168ba0c7fa20",
-    "flair_in_dsc_meta": "fbbbdfb9afde07600d11b80dfaf5e12289a9d87c417cf0ce75112458577c4fe8",
-    "flair_postcon_in_dsc_meta": "fbbbdfb9afde07600d11b80dfaf5e12289a9d87c417cf0ce75112458577c4fe8",
+    "flair_in_dsc_meta": "2cb4fcb4db9270dae9dc3ac06c90f7861f3967d955a4a5c0059d5f562ed10d84",
+    "flair_postcon_in_dsc_meta": "2cb4fcb4db9270dae9dc3ac06c90f7861f3967d955a4a5c0059d5f562ed10d84",
     "lesion_mask_dsc_meta": "fbea18713a9d215ca5765017a95c2c724ca332e94803774937122d0c3e54a23e",
     "mtt_map_meta": "662978f3eb3898bf4142fbe21667e36eedbd3ba27e45b18161c85f85d9663b91",
     "mtt_map_sink": "fcb4e47901c5216926eb960a4fbdc146b1c7cacea778c10c7f34d3cb614e81f5",
@@ -1339,10 +1387,10 @@
     "psr_map_meta": "662978f3eb3898bf4142fbe21667e36eedbd3ba27e45b18161c85f85d9663b91",
     "psr_map_sink": "fcb4e47901c5216926eb960a4fbdc146b1c7cacea778c10c7f34d3cb614e81f5",
     "roi_mask_dsc_meta": "592e4177afcd14728b536f88717935983e37b83160e33753be5accf828967ade",
-    "t1w_in_dsc_meta": "fbbbdfb9afde07600d11b80dfaf5e12289a9d87c417cf0ce75112458577c4fe8",
-    "t1w_postcon_in_dsc_meta": "fbbbdfb9afde07600d11b80dfaf5e12289a9d87c417cf0ce75112458577c4fe8",
-    "t1w_subtraction_in_dsc_meta": "fbbbdfb9afde07600d11b80dfaf5e12289a9d87c417cf0ce75112458577c4fe8",
-    "t2w_in_dsc_meta": "fbbbdfb9afde07600d11b80dfaf5e12289a9d87c417cf0ce75112458577c4fe8",
+    "t1w_in_dsc_meta": "2cb4fcb4db9270dae9dc3ac06c90f7861f3967d955a4a5c0059d5f562ed10d84",
+    "t1w_postcon_in_dsc_meta": "2cb4fcb4db9270dae9dc3ac06c90f7861f3967d955a4a5c0059d5f562ed10d84",
+    "t1w_subtraction_in_dsc_meta": "2cb4fcb4db9270dae9dc3ac06c90f7861f3967d955a4a5c0059d5f562ed10d84",
+    "t2w_in_dsc_meta": "2cb4fcb4db9270dae9dc3ac06c90f7861f3967d955a4a5c0059d5f562ed10d84",
     "tmax_map_meta": "662978f3eb3898bf4142fbe21667e36eedbd3ba27e45b18161c85f85d9663b91",
     "tmax_map_sink": "fcb4e47901c5216926eb960a4fbdc146b1c7cacea778c10c7f34d3cb614e81f5",
     "user_lesion_mask_dsc_meta": "592e4177afcd14728b536f88717935983e37b83160e33753be5accf828967ade"
@@ -1546,7 +1594,8 @@
     },
     "flair_in_dsc_meta": {
       "description": "FLAIR registered to DSC space",
-      "function_str": "def _build_underlay_meta(\n    base: dict,\n    description: str,\n    skull_stripped: bool,\n    mask_type: str | None,\n    structural_source: str,\n    perfusion_source: str,\n    bids_dir: str,\n    segmentation_labels: dict[str, str] | None = None,\n) -> dict:\n    \"\"\"Build metadata for a structural image resampled to DSC space.\"\"\"\n    from pmriprep.utils.sidecar_builders import build_sources_list\n\n    out = dict(base)\n    out[\"Description\"] = description\n    if skull_stripped:\n        out[\"SkullStripped\"] = True\n    if mask_type is not None:\n        out[\"Type\"] = mask_type\n    if segmentation_labels:\n        out[\"LabelMap\"] = dict(segmentation_labels)\n    out.update({\n        \"ResamplingApplied\": True,\n        \"Interpolation\": \"spline\",\n        \"TransformDirection\": \"T1w_to_DSC\",\n    })\n    out[\"Sources\"] = build_sources_list(\n        [structural_source, perfusion_source], bids_dir,\n    )\n    return out\n",
+      "function_str": "def _build_underlay_meta(\n    base: dict,\n    description: str,\n    skull_stripped: bool,\n    mask_type: str | None,\n    structural_source: str,\n    perfusion_source: str,\n    bids_dir: str,\n    segmentation_labels: dict[str, str] | None = None,\n    is_subtraction: bool = False,\n    postcontrast_source: str = \"\",\n) -> dict:\n    \"\"\"Build metadata for a structural image resampled to DSC space.\"\"\"\n    from pmriprep.utils.sidecar_builders import (\n        build_sources_list,\n        subtraction_signal_metadata,\n    )\n\n    out = dict(base)\n    out[\"Description\"] = description\n    if skull_stripped:\n        out[\"SkullStripped\"] = True\n    if mask_type is not None:\n        out[\"Type\"] = mask_type\n    if segmentation_labels:\n        out[\"LabelMap\"] = dict(segmentation_labels)\n    out.update({\n        \"ResamplingApplied\": True,\n        \"Interpolation\": \"spline\",\n        \"TransformDirection\": \"T1w_to_DSC\",\n    })\n    sources = [structural_source]\n    if is_subtraction:\n        sources.append(postcontrast_source)\n    sources.append(perfusion_source)\n    out[\"Sources\"] = build_sources_list(sources, bids_dir)\n    if is_subtraction:\n        out.update(subtraction_signal_metadata())\n    return out\n",
+      "is_subtraction": false,
       "mask_type": null,
       "segmentation_labels": null,
       "skull_stripped": false
@@ -1562,7 +1611,8 @@
     },
     "flair_postcon_in_dsc_meta": {
       "description": "Post-contrast FLAIR registered to DSC space",
-      "function_str": "def _build_underlay_meta(\n    base: dict,\n    description: str,\n    skull_stripped: bool,\n    mask_type: str | None,\n    structural_source: str,\n    perfusion_source: str,\n    bids_dir: str,\n    segmentation_labels: dict[str, str] | None = None,\n) -> dict:\n    \"\"\"Build metadata for a structural image resampled to DSC space.\"\"\"\n    from pmriprep.utils.sidecar_builders import build_sources_list\n\n    out = dict(base)\n    out[\"Description\"] = description\n    if skull_stripped:\n        out[\"SkullStripped\"] = True\n    if mask_type is not None:\n        out[\"Type\"] = mask_type\n    if segmentation_labels:\n        out[\"LabelMap\"] = dict(segmentation_labels)\n    out.update({\n        \"ResamplingApplied\": True,\n        \"Interpolation\": \"spline\",\n        \"TransformDirection\": \"T1w_to_DSC\",\n    })\n    out[\"Sources\"] = build_sources_list(\n        [structural_source, perfusion_source], bids_dir,\n    )\n    return out\n",
+      "function_str": "def _build_underlay_meta(\n    base: dict,\n    description: str,\n    skull_stripped: bool,\n    mask_type: str | None,\n    structural_source: str,\n    perfusion_source: str,\n    bids_dir: str,\n    segmentation_labels: dict[str, str] | None = None,\n    is_subtraction: bool = False,\n    postcontrast_source: str = \"\",\n) -> dict:\n    \"\"\"Build metadata for a structural image resampled to DSC space.\"\"\"\n    from pmriprep.utils.sidecar_builders import (\n        build_sources_list,\n        subtraction_signal_metadata,\n    )\n\n    out = dict(base)\n    out[\"Description\"] = description\n    if skull_stripped:\n        out[\"SkullStripped\"] = True\n    if mask_type is not None:\n        out[\"Type\"] = mask_type\n    if segmentation_labels:\n        out[\"LabelMap\"] = dict(segmentation_labels)\n    out.update({\n        \"ResamplingApplied\": True,\n        \"Interpolation\": \"spline\",\n        \"TransformDirection\": \"T1w_to_DSC\",\n    })\n    sources = [structural_source]\n    if is_subtraction:\n        sources.append(postcontrast_source)\n    sources.append(perfusion_source)\n    out[\"Sources\"] = build_sources_list(sources, bids_dir)\n    if is_subtraction:\n        out.update(subtraction_signal_metadata())\n    return out\n",
+      "is_subtraction": false,
       "mask_type": null,
       "segmentation_labels": null,
       "skull_stripped": false
@@ -1668,7 +1718,8 @@
     },
     "t1w_in_dsc_meta": {
       "description": "Pre-contrast T1w registered to DSC space",
-      "function_str": "def _build_underlay_meta(\n    base: dict,\n    description: str,\n    skull_stripped: bool,\n    mask_type: str | None,\n    structural_source: str,\n    perfusion_source: str,\n    bids_dir: str,\n    segmentation_labels: dict[str, str] | None = None,\n) -> dict:\n    \"\"\"Build metadata for a structural image resampled to DSC space.\"\"\"\n    from pmriprep.utils.sidecar_builders import build_sources_list\n\n    out = dict(base)\n    out[\"Description\"] = description\n    if skull_stripped:\n        out[\"SkullStripped\"] = True\n    if mask_type is not None:\n        out[\"Type\"] = mask_type\n    if segmentation_labels:\n        out[\"LabelMap\"] = dict(segmentation_labels)\n    out.update({\n        \"ResamplingApplied\": True,\n        \"Interpolation\": \"spline\",\n        \"TransformDirection\": \"T1w_to_DSC\",\n    })\n    out[\"Sources\"] = build_sources_list(\n        [structural_source, perfusion_source], bids_dir,\n    )\n    return out\n",
+      "function_str": "def _build_underlay_meta(\n    base: dict,\n    description: str,\n    skull_stripped: bool,\n    mask_type: str | None,\n    structural_source: str,\n    perfusion_source: str,\n    bids_dir: str,\n    segmentation_labels: dict[str, str] | None = None,\n    is_subtraction: bool = False,\n    postcontrast_source: str = \"\",\n) -> dict:\n    \"\"\"Build metadata for a structural image resampled to DSC space.\"\"\"\n    from pmriprep.utils.sidecar_builders import (\n        build_sources_list,\n        subtraction_signal_metadata,\n    )\n\n    out = dict(base)\n    out[\"Description\"] = description\n    if skull_stripped:\n        out[\"SkullStripped\"] = True\n    if mask_type is not None:\n        out[\"Type\"] = mask_type\n    if segmentation_labels:\n        out[\"LabelMap\"] = dict(segmentation_labels)\n    out.update({\n        \"ResamplingApplied\": True,\n        \"Interpolation\": \"spline\",\n        \"TransformDirection\": \"T1w_to_DSC\",\n    })\n    sources = [structural_source]\n    if is_subtraction:\n        sources.append(postcontrast_source)\n    sources.append(perfusion_source)\n    out[\"Sources\"] = build_sources_list(sources, bids_dir)\n    if is_subtraction:\n        out.update(subtraction_signal_metadata())\n    return out\n",
+      "is_subtraction": false,
       "mask_type": null,
       "segmentation_labels": null,
       "skull_stripped": false
@@ -1684,7 +1735,8 @@
     },
     "t1w_postcon_in_dsc_meta": {
       "description": "Post-contrast T1w registered to DSC space",
-      "function_str": "def _build_underlay_meta(\n    base: dict,\n    description: str,\n    skull_stripped: bool,\n    mask_type: str | None,\n    structural_source: str,\n    perfusion_source: str,\n    bids_dir: str,\n    segmentation_labels: dict[str, str] | None = None,\n) -> dict:\n    \"\"\"Build metadata for a structural image resampled to DSC space.\"\"\"\n    from pmriprep.utils.sidecar_builders import build_sources_list\n\n    out = dict(base)\n    out[\"Description\"] = description\n    if skull_stripped:\n        out[\"SkullStripped\"] = True\n    if mask_type is not None:\n        out[\"Type\"] = mask_type\n    if segmentation_labels:\n        out[\"LabelMap\"] = dict(segmentation_labels)\n    out.update({\n        \"ResamplingApplied\": True,\n        \"Interpolation\": \"spline\",\n        \"TransformDirection\": \"T1w_to_DSC\",\n    })\n    out[\"Sources\"] = build_sources_list(\n        [structural_source, perfusion_source], bids_dir,\n    )\n    return out\n",
+      "function_str": "def _build_underlay_meta(\n    base: dict,\n    description: str,\n    skull_stripped: bool,\n    mask_type: str | None,\n    structural_source: str,\n    perfusion_source: str,\n    bids_dir: str,\n    segmentation_labels: dict[str, str] | None = None,\n    is_subtraction: bool = False,\n    postcontrast_source: str = \"\",\n) -> dict:\n    \"\"\"Build metadata for a structural image resampled to DSC space.\"\"\"\n    from pmriprep.utils.sidecar_builders import (\n        build_sources_list,\n        subtraction_signal_metadata,\n    )\n\n    out = dict(base)\n    out[\"Description\"] = description\n    if skull_stripped:\n        out[\"SkullStripped\"] = True\n    if mask_type is not None:\n        out[\"Type\"] = mask_type\n    if segmentation_labels:\n        out[\"LabelMap\"] = dict(segmentation_labels)\n    out.update({\n        \"ResamplingApplied\": True,\n        \"Interpolation\": \"spline\",\n        \"TransformDirection\": \"T1w_to_DSC\",\n    })\n    sources = [structural_source]\n    if is_subtraction:\n        sources.append(postcontrast_source)\n    sources.append(perfusion_source)\n    out[\"Sources\"] = build_sources_list(sources, bids_dir)\n    if is_subtraction:\n        out.update(subtraction_signal_metadata())\n    return out\n",
+      "is_subtraction": false,
       "mask_type": null,
       "segmentation_labels": null,
       "skull_stripped": false
@@ -1700,8 +1752,9 @@
       "suffix": "T1w"
     },
     "t1w_subtraction_in_dsc_meta": {
-      "description": "Post-pre T1w subtraction registered to DSC space",
-      "function_str": "def _build_underlay_meta(\n    base: dict,\n    description: str,\n    skull_stripped: bool,\n    mask_type: str | None,\n    structural_source: str,\n    perfusion_source: str,\n    bids_dir: str,\n    segmentation_labels: dict[str, str] | None = None,\n) -> dict:\n    \"\"\"Build metadata for a structural image resampled to DSC space.\"\"\"\n    from pmriprep.utils.sidecar_builders import build_sources_list\n\n    out = dict(base)\n    out[\"Description\"] = description\n    if skull_stripped:\n        out[\"SkullStripped\"] = True\n    if mask_type is not None:\n        out[\"Type\"] = mask_type\n    if segmentation_labels:\n        out[\"LabelMap\"] = dict(segmentation_labels)\n    out.update({\n        \"ResamplingApplied\": True,\n        \"Interpolation\": \"spline\",\n        \"TransformDirection\": \"T1w_to_DSC\",\n    })\n    out[\"Sources\"] = build_sources_list(\n        [structural_source, perfusion_source], bids_dir,\n    )\n    return out\n",
+      "description": "T1w subtraction (post-pre raw-signal difference) registered to DSC space",
+      "function_str": "def _build_underlay_meta(\n    base: dict,\n    description: str,\n    skull_stripped: bool,\n    mask_type: str | None,\n    structural_source: str,\n    perfusion_source: str,\n    bids_dir: str,\n    segmentation_labels: dict[str, str] | None = None,\n    is_subtraction: bool = False,\n    postcontrast_source: str = \"\",\n) -> dict:\n    \"\"\"Build metadata for a structural image resampled to DSC space.\"\"\"\n    from pmriprep.utils.sidecar_builders import (\n        build_sources_list,\n        subtraction_signal_metadata,\n    )\n\n    out = dict(base)\n    out[\"Description\"] = description\n    if skull_stripped:\n        out[\"SkullStripped\"] = True\n    if mask_type is not None:\n        out[\"Type\"] = mask_type\n    if segmentation_labels:\n        out[\"LabelMap\"] = dict(segmentation_labels)\n    out.update({\n        \"ResamplingApplied\": True,\n        \"Interpolation\": \"spline\",\n        \"TransformDirection\": \"T1w_to_DSC\",\n    })\n    sources = [structural_source]\n    if is_subtraction:\n        sources.append(postcontrast_source)\n    sources.append(perfusion_source)\n    out[\"Sources\"] = build_sources_list(sources, bids_dir)\n    if is_subtraction:\n        out.update(subtraction_signal_metadata())\n    return out\n",
+      "is_subtraction": true,
       "mask_type": null,
       "segmentation_labels": null,
       "skull_stripped": false
@@ -1718,7 +1771,8 @@
     },
     "t2w_in_dsc_meta": {
       "description": "T2w registered to DSC space",
-      "function_str": "def _build_underlay_meta(\n    base: dict,\n    description: str,\n    skull_stripped: bool,\n    mask_type: str | None,\n    structural_source: str,\n    perfusion_source: str,\n    bids_dir: str,\n    segmentation_labels: dict[str, str] | None = None,\n) -> dict:\n    \"\"\"Build metadata for a structural image resampled to DSC space.\"\"\"\n    from pmriprep.utils.sidecar_builders import build_sources_list\n\n    out = dict(base)\n    out[\"Description\"] = description\n    if skull_stripped:\n        out[\"SkullStripped\"] = True\n    if mask_type is not None:\n        out[\"Type\"] = mask_type\n    if segmentation_labels:\n        out[\"LabelMap\"] = dict(segmentation_labels)\n    out.update({\n        \"ResamplingApplied\": True,\n        \"Interpolation\": \"spline\",\n        \"TransformDirection\": \"T1w_to_DSC\",\n    })\n    out[\"Sources\"] = build_sources_list(\n        [structural_source, perfusion_source], bids_dir,\n    )\n    return out\n",
+      "function_str": "def _build_underlay_meta(\n    base: dict,\n    description: str,\n    skull_stripped: bool,\n    mask_type: str | None,\n    structural_source: str,\n    perfusion_source: str,\n    bids_dir: str,\n    segmentation_labels: dict[str, str] | None = None,\n    is_subtraction: bool = False,\n    postcontrast_source: str = \"\",\n) -> dict:\n    \"\"\"Build metadata for a structural image resampled to DSC space.\"\"\"\n    from pmriprep.utils.sidecar_builders import (\n        build_sources_list,\n        subtraction_signal_metadata,\n    )\n\n    out = dict(base)\n    out[\"Description\"] = description\n    if skull_stripped:\n        out[\"SkullStripped\"] = True\n    if mask_type is not None:\n        out[\"Type\"] = mask_type\n    if segmentation_labels:\n        out[\"LabelMap\"] = dict(segmentation_labels)\n    out.update({\n        \"ResamplingApplied\": True,\n        \"Interpolation\": \"spline\",\n        \"TransformDirection\": \"T1w_to_DSC\",\n    })\n    sources = [structural_source]\n    if is_subtraction:\n        sources.append(postcontrast_source)\n    sources.append(perfusion_source)\n    out[\"Sources\"] = build_sources_list(sources, bids_dir)\n    if is_subtraction:\n        out.update(subtraction_signal_metadata())\n    return out\n",
+      "is_subtraction": false,
       "mask_type": null,
       "segmentation_labels": null,
       "skull_stripped": false

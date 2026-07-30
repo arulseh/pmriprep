@@ -58,6 +58,7 @@ class DSCAnatSpec:
     dismiss_entities: tuple[str, ...] = ("acquisition",)
     source_attr: str = "source_dsc"
     segmentation_labels: dict[str, str] | None = None
+    is_subtraction: bool = False
 
 
 # Always-present DSC perfusion maps.
@@ -243,8 +244,8 @@ _STRUCTURAL_UNDERLAYS: tuple[DSCAnatSpec, ...] = (
     ),
     DSCAnatSpec(
         "t1w_subtraction_in_dsc", "subtraction", "T1w",
-        "Post-pre T1w subtraction registered to DSC space",
-        dismiss_entities=(), source_attr="source_t1w",
+        "T1w subtraction (post-pre raw-signal difference) registered to DSC space",
+        dismiss_entities=(), source_attr="source_t1w", is_subtraction=True,
     ),
     DSCAnatSpec(
         "flair_in_dsc", None, "FLAIR", "FLAIR registered to DSC space",
@@ -449,9 +450,14 @@ def _build_underlay_meta(
     perfusion_source: str,
     bids_dir: str,
     segmentation_labels: dict[str, str] | None = None,
+    is_subtraction: bool = False,
+    postcontrast_source: str = "",
 ) -> dict:
     """Build metadata for a structural image resampled to DSC space."""
-    from pmriprep.utils.sidecar_builders import build_sources_list
+    from pmriprep.utils.sidecar_builders import (
+        build_sources_list,
+        subtraction_signal_metadata,
+    )
 
     out = dict(base)
     out["Description"] = description
@@ -466,9 +472,13 @@ def _build_underlay_meta(
         "Interpolation": "spline",
         "TransformDirection": "T1w_to_DSC",
     })
-    out["Sources"] = build_sources_list(
-        [structural_source, perfusion_source], bids_dir,
-    )
+    sources = [structural_source]
+    if is_subtraction:
+        sources.append(postcontrast_source)
+    sources.append(perfusion_source)
+    out["Sources"] = build_sources_list(sources, bids_dir)
+    if is_subtraction:
+        out.update(subtraction_signal_metadata())
     return out
 
 
@@ -1083,6 +1093,7 @@ def _add_anat_sink(
     structural_sources_node: pe.Node | None = None,
     resampling_applied: bool = True,
     native_source: str | None = None,
+    is_subtraction: bool = False,
 ) -> pe.Node:
     """Wire one anat/-side DSC sink (mask, structural underlay).
 
@@ -1115,8 +1126,8 @@ def _add_anat_sink(
     elif is_underlay:
         meta_input_names = [
             "base", "description", "skull_stripped", "mask_type",
-            "structural_source", "perfusion_source", "bids_dir",
-            "segmentation_labels",
+            "structural_source", "postcontrast_source", "perfusion_source", "bids_dir",
+            "segmentation_labels", "is_subtraction",
         ]
         meta_function = _build_underlay_meta
     elif is_native_user_mask:
@@ -1144,6 +1155,8 @@ def _add_anat_sink(
     meta.inputs.skull_stripped = skull_stripped
     meta.inputs.mask_type = mask_type
     meta.inputs.segmentation_labels = segmentation_labels
+    if is_underlay and not is_transformed_mask:
+        meta.inputs.is_subtraction = is_subtraction
     if is_transformed_mask:
         meta.inputs.resampling_applied = resampling_applied
         meta.inputs.native_source = native_source
@@ -1163,6 +1176,9 @@ def _add_anat_sink(
             workflow.connect(structural_sources_node, "out", meta, "structural_sources")
         else:
             workflow.connect(inputnode, source_attr, meta, "structural_source")
+            workflow.connect(
+                inputnode, "source_t1w_postcon", meta, "postcontrast_source",
+            )
 
     sink = pe.Node(
         PMRIPrepDataSink(
@@ -1802,6 +1818,7 @@ def init_dsc_datasinks_wf(
             source_attr=anat_spec.source_attr,
             dismiss_entities=anat_spec.dismiss_entities,
             segmentation_labels=anat_spec.segmentation_labels,
+            is_subtraction=anat_spec.is_subtraction,
             structural_sources_node=anat_mask_sources,
             resampling_applied=(
                 nawm_needs_transform

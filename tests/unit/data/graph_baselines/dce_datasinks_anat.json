@@ -723,6 +723,30 @@
     [
       "inputnode",
       "source_t1w_postcon",
+      "flair_in_dce_meta",
+      "postcontrast_source"
+    ],
+    [
+      "inputnode",
+      "source_t1w_postcon",
+      "flair_postcon_in_dce_meta",
+      "postcontrast_source"
+    ],
+    [
+      "inputnode",
+      "source_t1w_postcon",
+      "t1w_in_dce_meta",
+      "postcontrast_source"
+    ],
+    [
+      "inputnode",
+      "source_t1w_postcon",
+      "t1w_postcon_in_dce_meta",
+      "postcontrast_source"
+    ],
+    [
+      "inputnode",
+      "source_t1w_postcon",
       "t1w_postcon_in_dce_meta",
       "structural_source"
     ],
@@ -731,6 +755,18 @@
       "source_t1w_postcon",
       "t1w_postcon_in_dce_sink",
       "source_file"
+    ],
+    [
+      "inputnode",
+      "source_t1w_postcon",
+      "t1w_subtraction_in_dce_meta",
+      "postcontrast_source"
+    ],
+    [
+      "inputnode",
+      "source_t1w_postcon",
+      "t2w_in_dce_meta",
+      "postcontrast_source"
     ],
     [
       "inputnode",
@@ -1072,7 +1108,9 @@
         "bids_dir",
         "description",
         "extra",
+        "is_subtraction",
         "perfusion_source",
+        "postcontrast_source",
         "structural_source",
         "units"
       ],
@@ -1086,7 +1124,9 @@
         "bids_dir",
         "description",
         "extra",
+        "is_subtraction",
         "perfusion_source",
+        "postcontrast_source",
         "structural_source",
         "units"
       ],
@@ -1228,7 +1268,9 @@
         "bids_dir",
         "description",
         "extra",
+        "is_subtraction",
         "perfusion_source",
+        "postcontrast_source",
         "structural_source",
         "units"
       ],
@@ -1242,7 +1284,9 @@
         "bids_dir",
         "description",
         "extra",
+        "is_subtraction",
         "perfusion_source",
+        "postcontrast_source",
         "structural_source",
         "units"
       ],
@@ -1256,7 +1300,9 @@
         "bids_dir",
         "description",
         "extra",
+        "is_subtraction",
         "perfusion_source",
+        "postcontrast_source",
         "structural_source",
         "units"
       ],
@@ -1270,7 +1316,9 @@
         "bids_dir",
         "description",
         "extra",
+        "is_subtraction",
         "perfusion_source",
+        "postcontrast_source",
         "structural_source",
         "units"
       ],
@@ -1317,8 +1365,8 @@
     "brain_mask_dce_meta": "7209f8b8056294d831fddb6abdc9149bd75f4b9890feca702bbe2e7b19674563",
     "brain_mask_dce_sink": "2c508d40de5d74bd594e2958531e3383de2f1b19b305122060d7a865478af65d",
     "dataset_description": "4f030212e4217b96b33ce28a7ed92f196a066b4199d13919b0c6168ba0c7fa20",
-    "flair_in_dce_meta": "41ce7606742ed3553ab922660c42faaf62916e8bf406524767d584dfd4efb976",
-    "flair_postcon_in_dce_meta": "41ce7606742ed3553ab922660c42faaf62916e8bf406524767d584dfd4efb976",
+    "flair_in_dce_meta": "3230d015dbe3a9a92fc56ac0e99d470735e8b0d2ed52db53d314da96a79941c7",
+    "flair_postcon_in_dce_meta": "3230d015dbe3a9a92fc56ac0e99d470735e8b0d2ed52db53d314da96a79941c7",
     "ktrans_map_meta": "1c94533442eb68a4660356be7da79877233f24bcd85eacb51526424130306f6e",
     "ktrans_map_sink": "2c508d40de5d74bd594e2958531e3383de2f1b19b305122060d7a865478af65d",
     "lesion_mask_dce_meta": "601c2400948d4a871896fc53551096a6aa18d8b9dd3810e856d1c91447fd984d",
@@ -1327,10 +1375,10 @@
     "nawm_mask_dce_sink": "2c508d40de5d74bd594e2958531e3383de2f1b19b305122060d7a865478af65d",
     "roi_mask_dce_meta": "d2f28e809caba80853be958891eb0a67ac50d735c1a34a6f68fb8beac94da805",
     "roi_mask_dce_sink": "2c508d40de5d74bd594e2958531e3383de2f1b19b305122060d7a865478af65d",
-    "t1w_in_dce_meta": "41ce7606742ed3553ab922660c42faaf62916e8bf406524767d584dfd4efb976",
-    "t1w_postcon_in_dce_meta": "41ce7606742ed3553ab922660c42faaf62916e8bf406524767d584dfd4efb976",
-    "t1w_subtraction_in_dce_meta": "41ce7606742ed3553ab922660c42faaf62916e8bf406524767d584dfd4efb976",
-    "t2w_in_dce_meta": "41ce7606742ed3553ab922660c42faaf62916e8bf406524767d584dfd4efb976",
+    "t1w_in_dce_meta": "3230d015dbe3a9a92fc56ac0e99d470735e8b0d2ed52db53d314da96a79941c7",
+    "t1w_postcon_in_dce_meta": "3230d015dbe3a9a92fc56ac0e99d470735e8b0d2ed52db53d314da96a79941c7",
+    "t1w_subtraction_in_dce_meta": "3230d015dbe3a9a92fc56ac0e99d470735e8b0d2ed52db53d314da96a79941c7",
+    "t2w_in_dce_meta": "3230d015dbe3a9a92fc56ac0e99d470735e8b0d2ed52db53d314da96a79941c7",
     "user_lesion_mask_dce_meta": "d2f28e809caba80853be958891eb0a67ac50d735c1a34a6f68fb8beac94da805",
     "user_lesion_mask_dce_sink": "2c508d40de5d74bd594e2958531e3383de2f1b19b305122060d7a865478af65d"
   },
@@ -1520,7 +1568,8 @@
     "flair_in_dce_meta": {
       "description": "FLAIR registered to DCE space",
       "extra": null,
-      "function_str": "def _build_dce_underlay_meta(\n    base: dict,\n    description: str,\n    units: str | None,\n    extra: dict | None,\n    structural_source: str,\n    perfusion_source: str,\n    bids_dir: str,\n) -> dict:\n    \"\"\"Build metadata for a structural image resampled to DCE space.\"\"\"\n    from pmriprep.utils.sidecar_builders import build_sources_list\n\n    out = dict(base)\n    out[\"Description\"] = description\n    if units is not None:\n        out[\"Units\"] = units\n    if extra:\n        out.update(extra)\n    out.update({\n        \"ResamplingApplied\": True,\n        \"Interpolation\": \"spline\",\n        \"TransformDirection\": \"T1w_to_DCE\",\n    })\n    out[\"Sources\"] = build_sources_list(\n        [structural_source, perfusion_source], bids_dir,\n    )\n    return out\n",
+      "function_str": "def _build_dce_underlay_meta(\n    base: dict,\n    description: str,\n    units: str | None,\n    extra: dict | None,\n    structural_source: str,\n    perfusion_source: str,\n    bids_dir: str,\n    is_subtraction: bool,\n    postcontrast_source: str = \"\",\n) -> dict:\n    \"\"\"Build metadata for a structural image resampled to DCE space.\"\"\"\n    from pmriprep.utils.sidecar_builders import (\n        build_sources_list,\n        subtraction_signal_metadata,\n    )\n\n    out = dict(base)\n    out[\"Description\"] = description\n    if units is not None:\n        out[\"Units\"] = units\n    if extra:\n        out.update(extra)\n    out.update({\n        \"ResamplingApplied\": True,\n        \"Interpolation\": \"spline\",\n        \"TransformDirection\": \"T1w_to_DCE\",\n    })\n    sources = [structural_source]\n    if is_subtraction:\n        sources.append(postcontrast_source)\n    sources.append(perfusion_source)\n    out[\"Sources\"] = build_sources_list(sources, bids_dir)\n    if is_subtraction:\n        out.update(subtraction_signal_metadata())\n    return out\n",
+      "is_subtraction": false,
       "units": null
     },
     "flair_in_dce_sink": {
@@ -1535,7 +1584,8 @@
     "flair_postcon_in_dce_meta": {
       "description": "Post-contrast FLAIR registered to DCE space",
       "extra": null,
-      "function_str": "def _build_dce_underlay_meta(\n    base: dict,\n    description: str,\n    units: str | None,\n    extra: dict | None,\n    structural_source: str,\n    perfusion_source: str,\n    bids_dir: str,\n) -> dict:\n    \"\"\"Build metadata for a structural image resampled to DCE space.\"\"\"\n    from pmriprep.utils.sidecar_builders import build_sources_list\n\n    out = dict(base)\n    out[\"Description\"] = description\n    if units is not None:\n        out[\"Units\"] = units\n    if extra:\n        out.update(extra)\n    out.update({\n        \"ResamplingApplied\": True,\n        \"Interpolation\": \"spline\",\n        \"TransformDirection\": \"T1w_to_DCE\",\n    })\n    out[\"Sources\"] = build_sources_list(\n        [structural_source, perfusion_source], bids_dir,\n    )\n    return out\n",
+      "function_str": "def _build_dce_underlay_meta(\n    base: dict,\n    description: str,\n    units: str | None,\n    extra: dict | None,\n    structural_source: str,\n    perfusion_source: str,\n    bids_dir: str,\n    is_subtraction: bool,\n    postcontrast_source: str = \"\",\n) -> dict:\n    \"\"\"Build metadata for a structural image resampled to DCE space.\"\"\"\n    from pmriprep.utils.sidecar_builders import (\n        build_sources_list,\n        subtraction_signal_metadata,\n    )\n\n    out = dict(base)\n    out[\"Description\"] = description\n    if units is not None:\n        out[\"Units\"] = units\n    if extra:\n        out.update(extra)\n    out.update({\n        \"ResamplingApplied\": True,\n        \"Interpolation\": \"spline\",\n        \"TransformDirection\": \"T1w_to_DCE\",\n    })\n    sources = [structural_source]\n    if is_subtraction:\n        sources.append(postcontrast_source)\n    sources.append(perfusion_source)\n    out[\"Sources\"] = build_sources_list(sources, bids_dir)\n    if is_subtraction:\n        out.update(subtraction_signal_metadata())\n    return out\n",
+      "is_subtraction": false,
       "units": null
     },
     "flair_postcon_in_dce_sink": {
@@ -1609,7 +1659,8 @@
     "t1w_in_dce_meta": {
       "description": "Pre-contrast T1w registered to DCE space",
       "extra": null,
-      "function_str": "def _build_dce_underlay_meta(\n    base: dict,\n    description: str,\n    units: str | None,\n    extra: dict | None,\n    structural_source: str,\n    perfusion_source: str,\n    bids_dir: str,\n) -> dict:\n    \"\"\"Build metadata for a structural image resampled to DCE space.\"\"\"\n    from pmriprep.utils.sidecar_builders import build_sources_list\n\n    out = dict(base)\n    out[\"Description\"] = description\n    if units is not None:\n        out[\"Units\"] = units\n    if extra:\n        out.update(extra)\n    out.update({\n        \"ResamplingApplied\": True,\n        \"Interpolation\": \"spline\",\n        \"TransformDirection\": \"T1w_to_DCE\",\n    })\n    out[\"Sources\"] = build_sources_list(\n        [structural_source, perfusion_source], bids_dir,\n    )\n    return out\n",
+      "function_str": "def _build_dce_underlay_meta(\n    base: dict,\n    description: str,\n    units: str | None,\n    extra: dict | None,\n    structural_source: str,\n    perfusion_source: str,\n    bids_dir: str,\n    is_subtraction: bool,\n    postcontrast_source: str = \"\",\n) -> dict:\n    \"\"\"Build metadata for a structural image resampled to DCE space.\"\"\"\n    from pmriprep.utils.sidecar_builders import (\n        build_sources_list,\n        subtraction_signal_metadata,\n    )\n\n    out = dict(base)\n    out[\"Description\"] = description\n    if units is not None:\n        out[\"Units\"] = units\n    if extra:\n        out.update(extra)\n    out.update({\n        \"ResamplingApplied\": True,\n        \"Interpolation\": \"spline\",\n        \"TransformDirection\": \"T1w_to_DCE\",\n    })\n    sources = [structural_source]\n    if is_subtraction:\n        sources.append(postcontrast_source)\n    sources.append(perfusion_source)\n    out[\"Sources\"] = build_sources_list(sources, bids_dir)\n    if is_subtraction:\n        out.update(subtraction_signal_metadata())\n    return out\n",
+      "is_subtraction": false,
       "units": null
     },
     "t1w_in_dce_sink": {
@@ -1624,7 +1675,8 @@
     "t1w_postcon_in_dce_meta": {
       "description": "Post-contrast T1w registered to DCE space",
       "extra": null,
-      "function_str": "def _build_dce_underlay_meta(\n    base: dict,\n    description: str,\n    units: str | None,\n    extra: dict | None,\n    structural_source: str,\n    perfusion_source: str,\n    bids_dir: str,\n) -> dict:\n    \"\"\"Build metadata for a structural image resampled to DCE space.\"\"\"\n    from pmriprep.utils.sidecar_builders import build_sources_list\n\n    out = dict(base)\n    out[\"Description\"] = description\n    if units is not None:\n        out[\"Units\"] = units\n    if extra:\n        out.update(extra)\n    out.update({\n        \"ResamplingApplied\": True,\n        \"Interpolation\": \"spline\",\n        \"TransformDirection\": \"T1w_to_DCE\",\n    })\n    out[\"Sources\"] = build_sources_list(\n        [structural_source, perfusion_source], bids_dir,\n    )\n    return out\n",
+      "function_str": "def _build_dce_underlay_meta(\n    base: dict,\n    description: str,\n    units: str | None,\n    extra: dict | None,\n    structural_source: str,\n    perfusion_source: str,\n    bids_dir: str,\n    is_subtraction: bool,\n    postcontrast_source: str = \"\",\n) -> dict:\n    \"\"\"Build metadata for a structural image resampled to DCE space.\"\"\"\n    from pmriprep.utils.sidecar_builders import (\n        build_sources_list,\n        subtraction_signal_metadata,\n    )\n\n    out = dict(base)\n    out[\"Description\"] = description\n    if units is not None:\n        out[\"Units\"] = units\n    if extra:\n        out.update(extra)\n    out.update({\n        \"ResamplingApplied\": True,\n        \"Interpolation\": \"spline\",\n        \"TransformDirection\": \"T1w_to_DCE\",\n    })\n    sources = [structural_source]\n    if is_subtraction:\n        sources.append(postcontrast_source)\n    sources.append(perfusion_source)\n    out[\"Sources\"] = build_sources_list(sources, bids_dir)\n    if is_subtraction:\n        out.update(subtraction_signal_metadata())\n    return out\n",
+      "is_subtraction": false,
       "units": null
     },
     "t1w_postcon_in_dce_sink": {
@@ -1638,9 +1690,10 @@
       "suffix": "T1w"
     },
     "t1w_subtraction_in_dce_meta": {
-      "description": "Post-pre T1w subtraction registered to DCE space",
+      "description": "T1w subtraction (post-pre raw-signal difference) registered to DCE space",
       "extra": null,
-      "function_str": "def _build_dce_underlay_meta(\n    base: dict,\n    description: str,\n    units: str | None,\n    extra: dict | None,\n    structural_source: str,\n    perfusion_source: str,\n    bids_dir: str,\n) -> dict:\n    \"\"\"Build metadata for a structural image resampled to DCE space.\"\"\"\n    from pmriprep.utils.sidecar_builders import build_sources_list\n\n    out = dict(base)\n    out[\"Description\"] = description\n    if units is not None:\n        out[\"Units\"] = units\n    if extra:\n        out.update(extra)\n    out.update({\n        \"ResamplingApplied\": True,\n        \"Interpolation\": \"spline\",\n        \"TransformDirection\": \"T1w_to_DCE\",\n    })\n    out[\"Sources\"] = build_sources_list(\n        [structural_source, perfusion_source], bids_dir,\n    )\n    return out\n",
+      "function_str": "def _build_dce_underlay_meta(\n    base: dict,\n    description: str,\n    units: str | None,\n    extra: dict | None,\n    structural_source: str,\n    perfusion_source: str,\n    bids_dir: str,\n    is_subtraction: bool,\n    postcontrast_source: str = \"\",\n) -> dict:\n    \"\"\"Build metadata for a structural image resampled to DCE space.\"\"\"\n    from pmriprep.utils.sidecar_builders import (\n        build_sources_list,\n        subtraction_signal_metadata,\n    )\n\n    out = dict(base)\n    out[\"Description\"] = description\n    if units is not None:\n        out[\"Units\"] = units\n    if extra:\n        out.update(extra)\n    out.update({\n        \"ResamplingApplied\": True,\n        \"Interpolation\": \"spline\",\n        \"TransformDirection\": \"T1w_to_DCE\",\n    })\n    sources = [structural_source]\n    if is_subtraction:\n        sources.append(postcontrast_source)\n    sources.append(perfusion_source)\n    out[\"Sources\"] = build_sources_list(sources, bids_dir)\n    if is_subtraction:\n        out.update(subtraction_signal_metadata())\n    return out\n",
+      "is_subtraction": true,
       "units": null
     },
     "t1w_subtraction_in_dce_sink": {
@@ -1656,7 +1709,8 @@
     "t2w_in_dce_meta": {
       "description": "T2w registered to DCE space",
       "extra": null,
-      "function_str": "def _build_dce_underlay_meta(\n    base: dict,\n    description: str,\n    units: str | None,\n    extra: dict | None,\n    structural_source: str,\n    perfusion_source: str,\n    bids_dir: str,\n) -> dict:\n    \"\"\"Build metadata for a structural image resampled to DCE space.\"\"\"\n    from pmriprep.utils.sidecar_builders import build_sources_list\n\n    out = dict(base)\n    out[\"Description\"] = description\n    if units is not None:\n        out[\"Units\"] = units\n    if extra:\n        out.update(extra)\n    out.update({\n        \"ResamplingApplied\": True,\n        \"Interpolation\": \"spline\",\n        \"TransformDirection\": \"T1w_to_DCE\",\n    })\n    out[\"Sources\"] = build_sources_list(\n        [structural_source, perfusion_source], bids_dir,\n    )\n    return out\n",
+      "function_str": "def _build_dce_underlay_meta(\n    base: dict,\n    description: str,\n    units: str | None,\n    extra: dict | None,\n    structural_source: str,\n    perfusion_source: str,\n    bids_dir: str,\n    is_subtraction: bool,\n    postcontrast_source: str = \"\",\n) -> dict:\n    \"\"\"Build metadata for a structural image resampled to DCE space.\"\"\"\n    from pmriprep.utils.sidecar_builders import (\n        build_sources_list,\n        subtraction_signal_metadata,\n    )\n\n    out = dict(base)\n    out[\"Description\"] = description\n    if units is not None:\n        out[\"Units\"] = units\n    if extra:\n        out.update(extra)\n    out.update({\n        \"ResamplingApplied\": True,\n        \"Interpolation\": \"spline\",\n        \"TransformDirection\": \"T1w_to_DCE\",\n    })\n    sources = [structural_source]\n    if is_subtraction:\n        sources.append(postcontrast_source)\n    sources.append(perfusion_source)\n    out[\"Sources\"] = build_sources_list(sources, bids_dir)\n    if is_subtraction:\n        out.update(subtraction_signal_metadata())\n    return out\n",
+      "is_subtraction": false,
       "units": null
     },
     "t2w_in_dce_sink": {

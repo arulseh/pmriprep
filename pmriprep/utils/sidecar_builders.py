@@ -524,6 +524,21 @@ _ANAT_SUBTRACTION_STEPS = [
 ]
 
 
+def subtraction_signal_metadata() -> Dict[str, Any]:
+    """Describe the non-quantitative signal scale of a T1w subtraction image."""
+    return {
+        "Units": "arbitrary",
+        "Estimator": "registered_postcontrast_signal_minus_precontrast_signal",
+        "IntensityNormalizationApplied": False,
+        "Quantitative": False,
+        "Interpretation": (
+            "Within-subject visualization of signal change; values retain "
+            "scanner-dependent intensity scaling and are not suitable for "
+            "cross-subject or fixed-threshold quantification."
+        ),
+    }
+
+
 def anat_reference_basename(is_postcon_ref: bool = False) -> str:
     """Basename of the anat reference image inside the derivatives tree.
 
@@ -627,6 +642,8 @@ def build_anat_preproc_sidecar(
         "OriginalResolution": compute_original_resolution(original_source),
         "ProcessingSteps": list(processing_steps[processing_kind]),
     }
+    if processing_kind == "subtraction":
+        sidecar.update(subtraction_signal_metadata())
     if contrast_agent is not None:
         from pmriprep.utils.contrast_agent import get_brand_name
         agent_block: Dict[str, str] = {"GenericName": contrast_agent}
