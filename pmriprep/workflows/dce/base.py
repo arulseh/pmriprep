@@ -1584,6 +1584,8 @@ def init_dce_preproc_wf(
                 # Registration outputs
                 "dce_to_t1w_xfm",
                 "t1w_to_dce_xfm",
+                # Registered quantitative support
+                "t1_map",
                 # Inference-specific uncertainty outputs
                 "ktrans_uncertainty",
                 "ve_uncertainty",
@@ -2800,6 +2802,11 @@ def init_dce_preproc_wf(
             ("outputnode.plot_file", "dsc_dce_xval_plot"),
         ]),
     ])
+
+    if use_vfa_t1:
+        workflow.connect([
+            (transform_t1_to_dce, outputnode, [("out_file", "t1_map")]),
+        ])
 
     # T1/B1/VFA QC output connections (conditional on T1 source)
     if use_vfa_t1:

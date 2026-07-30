@@ -363,6 +363,50 @@ def _build_aif_mask_meta(
     return out
 
 
+def _build_t1_map_meta(
+    base: dict,
+    t1_source_paths: list[str] | None,
+    bids_dir: str,
+    qc_metrics: dict | None = None,
+) -> dict:
+    """Build metadata for the registered VFA-derived T1 map."""
+    from pmriprep.utils.sidecar_builders import (
+        _dce_t1_cosmetic_keys,
+        build_sources_list,
+    )
+
+    out = dict(base)
+    out.update({
+        "Description": "VFA T1 relaxation-time map registered to DCE space",
+        "Units": "ms",
+        "UndefinedValue": "NaN",
+        "Estimator": "variable_flip_angle_SPGR",
+        "RegistrationSource": "automatically_selected_VFA_magnitude_reference",
+        "RegistrationTarget": "precontrast_DCE_mean",
+        "RegistrationTransform": "rigid_6DOF",
+        "RegistrationAcceptance": "PASS_or_WARN",
+        "Interpolation": "support_normalized_trilinear",
+        "SupportInterpolation": "nearest_neighbour",
+    })
+    qc = qc_metrics or {}
+    t1_qc = qc.get("t1_mapping")
+    if isinstance(t1_qc, dict):
+        out.update(_dce_t1_cosmetic_keys(t1_qc))
+    signal_qc = qc.get("signal_conversion")
+    registration_qc = (
+        signal_qc.get("vfa_to_dce_registration")
+        if isinstance(signal_qc, dict) else None
+    )
+    if isinstance(registration_qc, dict):
+        out["RegistrationQC"] = dict(registration_qc)
+    sources = list(out.get("Sources", []))
+    for source in build_sources_list(t1_source_paths or [], bids_dir):
+        if source not in sources:
+            sources.append(source)
+    out["Sources"] = sources
+    return out
+
+
 def _build_uncertainty_extra(
     config_dict: dict | None = None,
     qc_metrics: dict | None = None,
@@ -816,7 +860,7 @@ def _copy_perf_map(
 
     # Conditional producers may represent a missing output as Nipype
     # Undefined, None, or an empty string.
-    if not isdefined(in_file) or in_file == "":
+    if not isdefined(in_file) or not in_file:
         logging.getLogger("nipype.workflow").warning(
             "Skipping _copy_perf_map sink (desc=%s, suffix=%s): upstream "
             "produced no output (in_file=%r)",
@@ -1374,6 +1418,7 @@ def init_dce_datasinks_wf(
     present_inputs: Optional[set[str]] = None,
     has_smoothing: bool = False,
     motion_correct: bool = True,
+    t1_source_files: Optional[list[str]] = None,
     nawm_needs_transform: bool = True,
     nawm_source_file: str | None = None,
     user_lesion_source_file: str | None = None,
@@ -1413,7 +1458,7 @@ def init_dce_datasinks_wf(
                 # Smoothed dicts (variable cardinality)
                 "smooth_pk_maps", "smooth_model_free_maps",
                 # Anatomical masks
-                "brain_mask", "nawm_mask",
+                "t1_map", "brain_mask", "nawm_mask",
                 # Motion + AIF
                 "dce_moco", "dce_mean", "motion_params",
                 "aif_curve", "aif_mask",
@@ -1877,6 +1922,50 @@ def init_dce_datasinks_wf(
                 ("subject_id", "subject"),
                 ("session_id", "session"),
                 ("aif_mask", "in_file"),
+            ]),
+            (meta, sink, [("meta_dict", "meta_dict")]),
+        ])
+        sink_outputs.append((sink, "out_file"))
+
+    # --- Registered VFA T1 map (anat/) ---
+    if "t1_map" in present:
+        meta = pe.Node(
+            niu.Function(
+                input_names=["base", "t1_source_paths", "bids_dir", "qc_metrics"],
+                output_names=["meta_dict"],
+                function=_build_t1_map_meta,
+            ),
+            name="t1_map_meta",
+        )
+        meta.inputs.t1_source_paths = list(t1_source_files or [])
+        meta.inputs.bids_dir = bids_dir
+        workflow.connect([
+            (base_minimal, meta, [("meta_dict", "base")]),
+            (inputnode, meta, [("qc_metrics", "qc_metrics")]),
+        ])
+        sink = pe.Node(
+            niu.Function(
+                input_names=[
+                    "in_file", "output_dir", "subject", "session",
+                    "desc", "suffix", "meta_dict", "datatype", "bids_suffix",
+                    "space",
+                ],
+                output_names=["out_file"],
+                function=_copy_perf_map,
+            ),
+            name="t1_map_sink",
+        )
+        sink.inputs.desc = ""
+        sink.inputs.suffix = ""
+        sink.inputs.datatype = "anat"
+        sink.inputs.bids_suffix = "T1map"
+        sink.inputs.space = "dceref"
+        workflow.connect([
+            (inputnode, sink, [
+                ("output_dir", "output_dir"),
+                ("subject_id", "subject"),
+                ("session_id", "session"),
+                ("t1_map", "in_file"),
             ]),
             (meta, sink, [("meta_dict", "meta_dict")]),
         ])

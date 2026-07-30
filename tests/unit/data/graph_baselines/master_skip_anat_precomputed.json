@@ -308,6 +308,12 @@
     ],
     [
       "dce_wf",
+      "outputnode.t1_map",
+      "dce_datasinks_wf",
+      "inputnode.t1_map"
+    ],
+    [
+      "dce_wf",
       "outputnode.t1_qc_plot",
       "dce_datasinks_wf",
       "inputnode.t1_qc_plot"

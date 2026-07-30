@@ -2665,6 +2665,7 @@
     "ser_map",
     "smooth_model_free_maps",
     "smooth_pk_maps",
+    "t1_map",
     "t1_qc_plot",
     "t1w_in_dce",
     "t1w_postcon_in_dce",

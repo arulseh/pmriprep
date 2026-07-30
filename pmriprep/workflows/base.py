@@ -2678,6 +2678,8 @@ def _connect_master_dce_outputs_and_datasinks(
         dce_present.add("vp_uncertainty")
     if _emit_fp_ps_outputs:
         dce_present |= {"fp_uncertainty", "ps_uncertainty"}
+    if not dce_config.no_t1 and dce_config.t1_map_file is None:
+        dce_present.add("t1_map")
     # NAWM mask
     if dce_has_nawm:
         dce_present.add("nawm_mask")
@@ -2739,6 +2741,7 @@ def _connect_master_dce_outputs_and_datasinks(
         present_inputs=dce_present,
         has_smoothing=dce_config.smooth_fwhm > 0,
         motion_correct=dce_config.motion_correct,
+        t1_source_files=[str(path) for path in (session_data.modalities.vfa or [])],
         nawm_needs_transform=not bool(dce_config.nawm_mask),
         nawm_source_file=(
             str(dce_config.nawm_mask) if dce_config.nawm_mask else None
@@ -2814,6 +2817,8 @@ def _connect_master_dce_outputs_and_datasinks(
             # Registration
             ("outputnode.dce_to_t1w_xfm", "inputnode.dce_to_t1w_xfm"),
             ("outputnode.t1w_to_dce_xfm", "inputnode.t1w_to_dce_xfm"),
+            # Registered VFA-derived T1 map
+            ("outputnode.t1_map", "inputnode.t1_map"),
             # Uncertainty maps (Bayesian)
             ("outputnode.ktrans_uncertainty", "inputnode.ktrans_uncertainty"),
             ("outputnode.ve_uncertainty", "inputnode.ve_uncertainty"),

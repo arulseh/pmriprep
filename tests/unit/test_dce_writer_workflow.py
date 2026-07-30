@@ -62,6 +62,79 @@ def test_dce_factory_smoke(tmp_path: Path, minimal_bids: tuple[Path, str]) -> No
     assert "KtransConvention" not in sidecar
 
 
+def test_registered_vfa_t1map_writes_registration_provenance(
+    tmp_path: Path, minimal_bids: tuple[Path, str],
+) -> None:
+    """The public T1map identifies its VFA sources and accepted registration."""
+    from pmriprep.workflows.dce.datasinks import init_dce_datasinks_wf
+
+    bids, src = minimal_bids
+    anat = bids / "sub-01" / "ses-0001" / "anat"
+    anat.mkdir(parents=True)
+    vfa = anat / "sub-01_ses-0001_flip-05_VFA.nii.gz"
+    nib.save(nib.Nifti1Image(np.ones((4, 4, 4), np.float32), np.eye(4)), vfa)
+    out = tmp_path / "out"
+    wf = init_dce_datasinks_wf(
+        output_dir=str(out), bids_dir=str(bids),
+        subject_id="01", session_id="0001",
+        pk_model="tofts", inference="nlls",
+        present_inputs={"t1_map"}, t1_source_files=[str(vfa)],
+    )
+    wf.base_dir = str(tmp_path / "work")
+    inp = wf.inputs.inputnode
+    inp.source_dce = src
+    inp.ktrans_map = _write_nii(tmp_path / "ktrans.nii.gz")
+    inp.t1_map = _write_nii(tmp_path / "t1_map.nii.gz")
+    inp.qc_metrics = {
+        "t1_mapping": {"t1_method": "wlls"},
+        "signal_conversion": {
+            "vfa_to_dce_registration": {
+                "qc_status": "PASS", "correlation": 0.8,
+            },
+        },
+    }
+    wf.run()
+
+    anat_out = out / "pmriprep" / "sub-01" / "ses-0001" / "anat"
+    sidecar = json.loads(
+        (anat_out / "sub-01_ses-0001_space-dceref_T1map.json").read_text()
+    )
+    assert sidecar["Units"] == "ms"
+    assert sidecar["RegistrationSource"].startswith("automatically_selected_VFA")
+    assert sidecar["RegistrationQC"]["qc_status"] == "PASS"
+    assert any("flip-05_VFA.nii.gz" in source for source in sidecar["Sources"])
+
+
+def test_registered_vfa_t1map_skips_absent_registration_output(
+    tmp_path: Path, minimal_bids: tuple[Path, str],
+) -> None:
+    """A rejected VFA registration omits T1map without failing the run."""
+    from pmriprep.workflows.dce.datasinks import init_dce_datasinks_wf
+
+    bids, src = minimal_bids
+    out = tmp_path / "out"
+    wf = init_dce_datasinks_wf(
+        output_dir=str(out), bids_dir=str(bids),
+        subject_id="01", session_id="0001",
+        pk_model="tofts", inference="nlls",
+        present_inputs={"t1_map"},
+    )
+    wf.base_dir = str(tmp_path / "work")
+    inp = wf.inputs.inputnode
+    inp.source_dce = src
+    inp.ktrans_map = _write_nii(tmp_path / "ktrans.nii.gz")
+    inp.t1_map = None
+    inp.qc_metrics = {
+        "signal_conversion": {
+            "vfa_to_dce_registration": {"qc_status": "POOR"},
+        },
+    }
+
+    wf.run()
+
+    assert not list((out / "pmriprep").rglob("*T1map.nii.gz"))
+
+
 def test_unvalidated_model_free_maps_have_no_derivative_sinks(
     tmp_path: Path, minimal_bids: tuple[Path, str]
 ) -> None:

@@ -391,6 +391,22 @@ def _dce_preproc_datasinks(bids: Path) -> pe.Workflow:
     )
 
 
+def _dce_t1_datasinks(bids: Path) -> pe.Workflow:
+    """Build the registered VFA T1-map sink branch."""
+    vfa = bids / "sub-0001" / "ses-0001" / "anat" / "sub-0001_ses-0001_flip-05_VFA.nii.gz"
+    vfa.touch()
+    return init_dce_datasinks_wf(
+        output_dir=str(bids / "derivatives"),
+        bids_dir=str(bids),
+        subject_id="0001",
+        session_id="0001",
+        pk_model="auto",
+        inference="nlls",
+        present_inputs={"t1_map"},
+        t1_source_files=[str(vfa)],
+    )
+
+
 def _dce_anat_datasinks(bids: Path) -> pe.Workflow:
     """Build DCE mask and registered-underlay sink branches."""
     return init_dce_datasinks_wf(
@@ -499,6 +515,7 @@ Builder = Callable[[Path], pe.Workflow]
 DCE_MATRIX: list[tuple[str, Builder]] = [
     ("dce_datasinks_anat", _dce_anat_datasinks),
     ("dce_datasinks_preproc", _dce_preproc_datasinks),
+    ("dce_datasinks_t1", _dce_t1_datasinks),
     ("dce_default", lambda b: _dce(b)),
     # has_tissue_seg=False on the default VFA path -> isolates the 3 probseg
     # transform nodes (dce/base.py:715).
