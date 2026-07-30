@@ -218,6 +218,24 @@ class TestMAPFitting:
             [prior.std_transformed for prior in fitter.priors]
         )
 
+    def test_fit_map_marks_uncertainty_undefined_when_hessian_is_unavailable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A singular Hessian does not publish prior width as posterior SD."""
+        model = VascularModel()
+        concentration, aif, t = _make_synthetic_data(noise_std=0.1)
+        fitter = BayesianDSCFitter(model)
+
+        def _unavailable_hessian(*args: object, **kwargs: object) -> np.ndarray:
+            del args, kwargs
+            return np.full((4, 4), np.nan, dtype=np.float64)
+
+        monkeypatch.setattr(fitter, "_compute_hessian", _unavailable_hessian)
+        result = fitter.fit_map(concentration, aif, t, compute_uncertainties=True)
+
+        assert np.isnan(result.uncertainties["cbf"])
+        assert result.credible_intervals == {}
+
     def test_fit_map_flat_concentration(self) -> None:
         """All-zero concentration yields CBF near zero."""
         model = VascularModel()

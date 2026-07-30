@@ -387,78 +387,6 @@ class BayesianDSCFitter:
 
         return hessian
 
-    def _compute_laplace_uncertainties(
-        self,
-        params: npt.NDArray[np.floating],
-        objective: Callable[[npt.NDArray[np.floating]], float],
-    ) -> tuple[dict[str, float], dict[str, tuple[float, float]]]:
-        """Compute uncertainties using Laplace approximation.
-
-        The Laplace approximation uses the inverse Hessian at the MAP
-        estimate as an approximation to the posterior covariance.
-        Parameters and Hessian are in fitting space; names and bounds
-        use fitting-space definitions.
-
-        Parameters
-        ----------
-        params : npt.NDArray[np.floating]
-            MAP parameter estimates (fitting space).
-        objective : Callable[[npt.NDArray[np.floating]], float]
-            Negative log posterior function (fitting space).
-
-        Returns
-        -------
-        uncertainties : dict
-            dict mapping fitting param names to std deviations
-        credible_intervals : dict
-            dict mapping fitting param names to 95% CIs
-        """
-        fitting_defs = self.model.get_fitting_parameter_definitions()
-        names = [p.name for p in fitting_defs]
-        fitting_bounds = [(p.bounds[0], p.bounds[1]) for p in fitting_defs]
-        uncertainties: dict[str, float] = {}
-        credible_intervals: dict[str, tuple[float, float]] = {}
-
-        try:
-            # Compute Hessian
-            hessian = self._compute_hessian(params, objective)
-
-            # Add regularization for stability
-            reg = 1e-6 * np.eye(len(params))
-            hessian_reg = hessian + reg
-
-            # Inverse Hessian gives covariance approximation
-            covariance = np.linalg.inv(hessian_reg)
-
-            # Extract standard deviations
-            variances = np.diag(covariance)
-            stds = np.sqrt(np.maximum(variances, 0.0))
-
-            for i, name in enumerate(names):
-                std = float(stds[i])
-                uncertainties[name] = std
-
-                # 95% credible interval (mean ± 1.96 std)
-                ci_low = float(params[i] - 1.96 * std)
-                ci_high = float(params[i] + 1.96 * std)
-
-                # Clip to fitting-space bounds
-                ci_low = max(ci_low, fitting_bounds[i][0])
-                ci_high = min(ci_high, fitting_bounds[i][1])
-
-                credible_intervals[name] = (ci_low, ci_high)
-
-        except np.linalg.LinAlgError:
-            # Hessian not invertible; return large uncertainties
-            for i, name in enumerate(names):
-                # Use prior std as uncertainty estimate
-                uncertainties[name] = self.priors[i].std
-                ci_low = fitting_bounds[i][0]
-                ci_high = fitting_bounds[i][1]
-                credible_intervals[name] = (ci_low, ci_high)
-
-        return uncertainties, credible_intervals
-
     def _compute_gof(
         self,
         concentration: npt.NDArray[np.floating],
@@ -696,13 +624,9 @@ class BayesianDSCFitter:
                     )
             except np.linalg.LinAlgError:
                 uncertainties = {
-                    name: self.priors[i].std
-                    for i, name in enumerate(fitting_param_names)
+                    name: float("nan") for name in fitting_param_names
                 }
-                credible_intervals = {
-                    name: bounds[i]
-                    for i, name in enumerate(fitting_param_names)
-                }
+                credible_intervals = {}
         else:
             uncertainties = {}
             credible_intervals = {}
