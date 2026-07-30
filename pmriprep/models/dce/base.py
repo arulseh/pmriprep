@@ -84,7 +84,7 @@ class FitResult:
         Method used ('nlls', 'map', 'mcmc').
     uncertainty_source : str
         Run-time source of uncertainty estimates, such as
-        ``"laplace_hessian"``, ``"prior_fallback"``, or
+        ``"laplace_hessian"``, ``"hessian_unavailable"``, or
         ``"not_computed"``.
     fitted_curve : np.ndarray
         Fitted tissue concentration curve C_t(t).

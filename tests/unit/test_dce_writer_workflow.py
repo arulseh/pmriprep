@@ -208,9 +208,9 @@ def test_map_uncertainty_sidecar_records_run_accounting(
             "n_retained_voxels": 10,
             "n_evaluated": 9,
             "n_laplace_hessian": 7,
-            "n_prior_fallback": 2,
+            "n_hessian_unavailable": 2,
             "n_not_computed": 1,
-            "prior_fallback_fraction": 2 / 9,
+            "hessian_unavailable_fraction": 2 / 9,
         }
     }
     wf.run()
@@ -223,7 +223,7 @@ def test_map_uncertainty_sidecar_records_run_accounting(
     metadata = json.loads(sidecar.read_text())
     accounting = metadata["MAPUncertaintyAccounting"]
     assert accounting["n_laplace_hessian"] == 7
-    assert accounting["n_prior_fallback"] == 2
+    assert accounting["n_hessian_unavailable"] == 2
     assert accounting["n_not_computed"] == 1
     inflation = metadata["AIFUncertaintyInflation"]
     assert inflation["Applied"] is True

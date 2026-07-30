@@ -32,8 +32,7 @@ _INFERENCE_METADATA: dict[str, dict[str, object]] = {
         "PosteriorApproximation": "local_Gaussian",
         "SpatialPriorApplied": False,
         "UncertaintyFallbackBehavior": (
-            "prior standard deviations and full parameter bounds when the "
-            "local Hessian covariance is unavailable"
+            "NaN when the local Hessian covariance is unavailable"
         ),
     },
     "mcmc": {

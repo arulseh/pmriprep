@@ -343,18 +343,23 @@ def test_accumulate_mcmc_diagnostics_retains_ess_without_rhat() -> None:
 
 
 def test_summarize_map_uncertainty_sources_counts_actual_outcomes() -> None:
-    """MAP QC separates Hessian covariance, prior fallback, and no estimate."""
+    """MAP QC separates Hessian covariance, unavailable spread, and no estimate."""
     summary = _summarize_map_uncertainty_sources(
-        ["laplace_hessian", "prior_fallback", "prior_fallback", "not_computed"]
+        [
+            "laplace_hessian",
+            "hessian_unavailable",
+            "hessian_unavailable",
+            "not_computed",
+        ]
     )
 
     assert summary == {
         "n_retained_voxels": 4,
         "n_evaluated": 3,
         "n_laplace_hessian": 1,
-        "n_prior_fallback": 2,
+        "n_hessian_unavailable": 2,
         "n_not_computed": 1,
-        "prior_fallback_fraction": pytest.approx(2 / 3),
+        "hessian_unavailable_fraction": pytest.approx(2 / 3),
     }
 
 
@@ -685,7 +690,7 @@ def test_map_uncertainty_accounting_excludes_postfit_rejection() -> None:
     rejected = {
         **base_result,
         "params": {"Ktrans": KTRANS_BOUNDS.max, "ve": 0.3},
-        "uncertainty_source": "prior_fallback",
+        "uncertainty_source": "hessian_unavailable",
     }
     retained = {
         **base_result,

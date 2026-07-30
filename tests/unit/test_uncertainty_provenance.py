@@ -62,11 +62,11 @@ def test_svb_spatial_prior_is_described() -> None:
     assert result["SpatiallyRegularizedParameters"] == ["cbf"]
 
 
-def test_map_fallback_is_disclosed() -> None:
-    """MAP provenance discloses its Hessian-failure fallback semantics."""
+def test_map_hessian_failure_is_disclosed() -> None:
+    """MAP provenance discloses undefined uncertainty after Hessian failure."""
     result = build_uncertainty_provenance(
         "map", "ktrans_uncertainty", modality="DCE"
     )
 
     assert result["UncertaintyStatistic"] == "posterior_standard_deviation"
-    assert "prior standard deviations" in result["UncertaintyFallbackBehavior"]
+    assert result["UncertaintyFallbackBehavior"].startswith("NaN")

@@ -501,10 +501,10 @@ class TestBayesianMAPFitSynthetic:
             f"Expected R^2 > 0.95 for clean data, got {result.r_squared}"
         )
 
-    def test_map_records_prior_fallback_when_hessian_is_unavailable(
+    def test_map_marks_uncertainty_undefined_when_hessian_is_unavailable(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A singular MAP Hessian records the actual prior fallback."""
+        """A singular MAP Hessian does not publish prior width as posterior SD."""
         tissue_curve, aif, time_points, _ = _make_synthetic_tofts_data()
         fitter = BayesianPKFitter(ToftsModel())
 
@@ -515,9 +515,9 @@ class TestBayesianMAPFitSynthetic:
         monkeypatch.setattr(fitter, "_compute_hessian", _unavailable_hessian)
         result = fitter.fit_map(tissue_curve, aif, time_points)
 
-        assert result.uncertainty_source == "prior_fallback"
-        assert result.uncertainties["Ktrans"] == fitter.priors[0].std
-        assert result.credible_intervals["Ktrans"] == ToftsModel().get_bounds()[0]
+        assert result.uncertainty_source == "hessian_unavailable"
+        assert np.isnan(result.uncertainties["Ktrans"])
+        assert result.credible_intervals == {}
 
 
 # ---------------------------------------------------------------------------

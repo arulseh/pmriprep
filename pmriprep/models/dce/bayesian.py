@@ -526,76 +526,6 @@ class BayesianPKFitter:
 
         return hessian
 
-    def _compute_laplace_uncertainties(
-        self,
-        params: npt.NDArray[np.floating],
-        objective: Callable[[npt.NDArray[np.floating]], float],
-    ) -> tuple[dict[str, float], dict[str, tuple[float, float]]]:
-        """Compute uncertainties using Laplace approximation.
-
-        The Laplace approximation uses the inverse Hessian at the MAP
-        estimate as an approximation to the posterior covariance.
-
-        Parameters
-        ----------
-        params : numpy.ndarray
-            MAP parameter estimates.
-        objective : callable
-            Negative log posterior function.
-
-        Returns
-        -------
-        tuple
-            Tuple of:
-                - uncertainties: dict mapping param names to std deviations
-                - credible_intervals: dict mapping param names to 95% CIs
-        """
-        names = self.model.get_parameter_names()
-        uncertainties: dict[str, float] = {}
-        credible_intervals: dict[str, tuple[float, float]] = {}
-
-        try:
-            # Compute Hessian
-            hessian = self._compute_hessian(params, objective)
-
-            # Add regularization for stability
-            reg = 1e-6 * np.eye(len(params))
-            hessian_reg = hessian + reg
-
-            # Inverse Hessian gives covariance approximation
-            covariance = np.linalg.inv(hessian_reg)
-
-            # Extract standard deviations
-            variances = np.diag(covariance)
-            stds = np.sqrt(np.maximum(variances, 0.0))
-
-            for i, name in enumerate(names):
-                std = float(stds[i])
-                uncertainties[name] = std
-
-                # 95% credible interval (mean ± 1.96 std)
-                ci_low = float(params[i] - 1.96 * std)
-                ci_high = float(params[i] + 1.96 * std)
-
-                # Clip to bounds
-                bounds = self.model.get_bounds()
-                ci_low = max(ci_low, bounds[i][0])
-                ci_high = min(ci_high, bounds[i][1])
-
-                credible_intervals[name] = (ci_low, ci_high)
-
-        except np.linalg.LinAlgError:
-            # Hessian not invertible; return large uncertainties
-            bounds = self.model.get_bounds()
-            for i, name in enumerate(names):
-                # Use prior std as uncertainty estimate
-                uncertainties[name] = self.priors[i].std
-                ci_low = bounds[i][0]
-                ci_high = bounds[i][1]
-                credible_intervals[name] = (ci_low, ci_high)
-
-        return uncertainties, credible_intervals
-
     def fit_map(
         self,
         tissue_curve: npt.NDArray[np.floating],
@@ -809,19 +739,14 @@ class BayesianPKFitter:
                     )
                 uncertainty_source = "laplace_hessian"
             except np.linalg.LinAlgError:
-                # Hessian not invertible; fall back to prior std as
-                # uncertainty estimate (matches _compute_laplace_uncertainties).
+                # A prior width is not a posterior uncertainty estimate. Keep
+                # the fitted parameters, but mark their local spread undefined.
                 names = self.model.get_parameter_names()
-                bounds_natural = self.model.get_bounds()
                 uncertainties = {
-                    name: self.priors[i].std
-                    for i, name in enumerate(names)
+                    name: float("nan") for name in names
                 }
-                credible_intervals = {
-                    name: (bounds_natural[i][0], bounds_natural[i][1])
-                    for i, name in enumerate(names)
-                }
-                uncertainty_source = "prior_fallback"
+                credible_intervals = {}
+                uncertainty_source = "hessian_unavailable"
         else:
             uncertainties = {}
             credible_intervals = {}

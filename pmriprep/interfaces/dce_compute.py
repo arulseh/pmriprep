@@ -487,18 +487,18 @@ def _summarize_vp_prior_departures(values: list[float]) -> dict[str, float]:
 def _summarize_map_uncertainty_sources(
     sources: list[str],
 ) -> dict[str, int | float]:
-    """Summarize run-time MAP Hessian and uncertainty-fallback outcomes."""
+    """Summarize run-time MAP Hessian uncertainty availability."""
     n_laplace = sources.count("laplace_hessian")
-    n_prior_fallback = sources.count("prior_fallback")
+    n_hessian_unavailable = sources.count("hessian_unavailable")
     n_not_computed = sources.count("not_computed")
-    n_evaluated = n_laplace + n_prior_fallback
+    n_evaluated = n_laplace + n_hessian_unavailable
     return {
         "n_retained_voxels": len(sources),
         "n_evaluated": n_evaluated,
         "n_laplace_hessian": n_laplace,
-        "n_prior_fallback": n_prior_fallback,
+        "n_hessian_unavailable": n_hessian_unavailable,
         "n_not_computed": n_not_computed,
-        "prior_fallback_fraction": n_prior_fallback / max(1, n_evaluated),
+        "hessian_unavailable_fraction": n_hessian_unavailable / max(1, n_evaluated),
     }
 
 
