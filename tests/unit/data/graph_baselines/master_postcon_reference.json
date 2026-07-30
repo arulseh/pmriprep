@@ -368,12 +368,6 @@
     ],
     [
       "dce_wf",
-      "outputnode.quality_flag_map",
-      "dce_datasinks_wf",
-      "inputnode.quality_flag_map"
-    ],
-    [
-      "dce_wf",
       "outputnode.r2_map",
       "dce_datasinks_wf",
       "inputnode.r2_map"

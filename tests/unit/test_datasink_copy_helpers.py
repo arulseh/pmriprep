@@ -237,20 +237,6 @@ def test_perfusion_spatial_reference_preserves_source_entities() -> None:
     )
 
 
-def test_dce_quality_flags_use_discrete_segmentation_contract() -> None:
-    from pmriprep.workflows.dce.datasinks import init_dce_datasinks_wf
-
-    workflow = init_dce_datasinks_wf(
-        output_dir="/tmp/out", bids_dir="/tmp/raw", subject_id="X",
-        session_id="Y", pk_model="tofts", inference="nlls",
-        present_inputs={"quality_flag_map"},
-    )
-    sink = workflow.get_node("quality_flag_map_sink")
-    meta = workflow.get_node("quality_flag_map_meta")
-    assert sink.inputs.bids_suffix == "dseg"
-    assert meta.inputs.extra["LabelEncoding"]["4"] == "unreliable_high_kep"
-
-
 class TestDCECopyPerfMap:
     """DCE map copies accept real paths and the supported missing sentinels."""
 

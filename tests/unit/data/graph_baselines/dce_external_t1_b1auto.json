@@ -1238,12 +1238,6 @@
     ],
     [
       "pk_modeling",
-      "out_quality_flag",
-      "outputnode",
-      "quality_flag_map"
-    ],
-    [
-      "pk_modeling",
       "out_r2",
       "dce_pk_fit_qc",
       "r2_file"
@@ -2683,7 +2677,6 @@
     "ps_uncertainty",
     "qc_mask",
     "qc_metrics",
-    "quality_flag_map",
     "r2_map",
     "registration_qc_filmstrip",
     "roi_mask_dce",

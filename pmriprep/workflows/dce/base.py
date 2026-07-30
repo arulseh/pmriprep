@@ -1512,7 +1512,6 @@ def init_dce_preproc_wf(
                 "tsnr_map",
                 "qc_mask",
                 "r2_map",
-                "quality_flag_map",
                 "model_selection_map",
                 "delta_bic_map",
                 # AIF outputs
@@ -2597,7 +2596,6 @@ def init_dce_preproc_wf(
             ("outputnode.out_tsnr", "tsnr_map"),
             ("outputnode.out_qc_mask", "qc_mask"),
             ("outputnode.out_r2", "r2_map"),
-            ("outputnode.out_quality_flag", "quality_flag_map"),
             ("outputnode.out_model_selection", "model_selection_map"),
             ("outputnode.out_delta_bic", "delta_bic_map"),
         ]),

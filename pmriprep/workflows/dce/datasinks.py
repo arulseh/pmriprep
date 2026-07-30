@@ -1318,7 +1318,7 @@ def init_dce_datasinks_wf(
                 "iauc60_map", "iauc90_map", "iauc120_map",
                 "peak_enhancement_map", "time_to_peak_map", "ser_map",
                 # QC + model-selection
-                "tsnr_map", "qc_mask", "r2_map", "quality_flag_map",
+                "tsnr_map", "qc_mask", "r2_map",
                 "model_selection_map", "delta_bic_map",
                 # Smoothed dicts (variable cardinality)
                 "smooth_pk_maps", "smooth_model_free_maps",
@@ -1558,26 +1558,6 @@ def init_dce_datasinks_wf(
             },
         )
         sink_outputs.append((sink, "out_file"))
-    if "quality_flag_map" in present:
-        sink = _add_perf_map_sink(
-            workflow, inputnode, base_perf_no_ktrans,
-            name="quality_flag_map", in_attr="quality_flag_map",
-            desc_value="dceQualityFlag", suffix="",
-            description=(
-                "Quality flag map (0=unfitted, 1=good, 2=poor_convergence, "
-                "3=high_uncertainty, 4=unreliable_high_kep)"
-            ),
-            units=None,
-            extra={
-                "LabelEncoding": {
-                    "0": "unfitted", "1": "good", "2": "poor_convergence",
-                    "3": "high_uncertainty", "4": "unreliable_high_kep",
-                },
-            },
-            bids_suffix="dseg",
-        )
-        sink_outputs.append((sink, "out_file"))
-
     # --- Model selection + delta-BIC (custom builders use minimal base + qc) ---
     if "model_selection_map" in present:
         ms_meta = pe.Node(
