@@ -104,31 +104,26 @@ def test_zero_ktrans_not_inflated() -> None:
     assert recovered < 0.015, f"zero-Ktrans inflated to {recovered:.4f}"
 
 
-def test_kep_rail_flag_and_clamp() -> None:
-    """The non-identifiable kep corner is clamped to KEP_BOUNDS.max and flagged.
+def test_kep_rail_flag_and_nan() -> None:
+    """The non-identifiable kep corner is undefined and flagged.
 
     Raw kep = Ktrans/ve above the physiological cap is intrinsically
-    unreliable; the reported kep must be clamped (not MAX_KEP=1000) and the
-    voxel reported as railed.
+    unreliable; the reported kep must be NaN and the voxel reported as railed.
     """
     from pmriprep.interfaces.dce_compute import _compute_derived_params
-    from pmriprep.utils.dce_constants import KEP_BOUNDS
 
     railed = {"Ktrans": 5.0, "ve": 0.1}  # raw kep = 50 >> cap
     assert _compute_derived_params(railed, "tofts") is True
-    assert railed["kep"] == pytest.approx(KEP_BOUNDS.max)
+    assert np.isnan(railed["kep"])
 
     ok = {"Ktrans": 0.3, "ve": 0.1}  # raw kep = 3, physiological
     assert _compute_derived_params(ok, "tofts") is False
     assert ok["kep"] == pytest.approx(3.0)
 
 
-def test_reported_kep_clamped_to_physiological_cap() -> None:
-    """Model-level compute_derived_parameters clamps reported kep to the cap."""
-    from pmriprep.utils.dce_constants import KEP_BOUNDS
-
-    assert ToftsModel().compute_derived_parameters([5.0, 0.1])["kep"] <= KEP_BOUNDS.max
-    assert (
+def test_reported_kep_is_nan_outside_identifiable_range() -> None:
+    """Model-level derived Kep does not publish a boundary point mass."""
+    assert np.isnan(ToftsModel().compute_derived_parameters([5.0, 0.1])["kep"])
+    assert np.isnan(
         ExtendedToftsModel().compute_derived_parameters([5.0, 0.1, 0.05])["kep"]
-        <= KEP_BOUNDS.max
     )

@@ -366,7 +366,7 @@ class TwoCompartmentExchangeModel(PKModel):
         """
         fp = params[0]
         ps = params[1]
-        ve = max(params[2], EPSILON_VE)
+        ve = params[2]
         vp = max(params[3], EPSILON_VP)
 
         # Get number of time points
@@ -773,8 +773,11 @@ class TwoCompartmentExchangeModel(PKModel):
         # Volume transfer constant (equivalent to Tofts Ktrans, min^-1)
         ktrans = e * fp / 100.0
 
-        # Efflux rate constant (reported kep clamped to the physiological cap,
-        # matching tofts/extended_tofts; above it kep is non-identifiable).
-        kep = min(ktrans / ve, KEP_BOUNDS.max)
+        raw_kep = ktrans / ve if ve > EPSILON_VE else float("nan")
+        kep = (
+            raw_kep
+            if np.isfinite(raw_kep) and raw_kep <= KEP_BOUNDS.max
+            else float("nan")
+        )
 
         return {"E": e, "Ktrans": ktrans, "kep": kep}

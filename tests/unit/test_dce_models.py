@@ -9,7 +9,7 @@ import pytest
 
 from pmriprep.models.dce.extended_tofts import ExtendedToftsModel
 from pmriprep.models.dce.tofts import ToftsModel
-from pmriprep.utils.dce_constants import EPSILON_VE, MAX_KEP
+from pmriprep.utils.dce_constants import EPSILON_VE
 
 
 # ---------------------------------------------------------------------------
@@ -371,7 +371,7 @@ class TestToftsFitRecoversParameters:
 # ---------------------------------------------------------------------------
 
 class TestComputeDerivedParameters:
-    """kep = Ktrans/ve, and kep=0 when ve <= EPSILON_VE."""
+    """Kep equals Ktrans/ve only within its identifiable reporting range."""
 
     def test_kep_normal(self, tofts_model: ToftsModel) -> None:
         derived = tofts_model.compute_derived_parameters([0.1, 0.2])
@@ -380,24 +380,22 @@ class TestComputeDerivedParameters:
 
     def test_kep_zero_ve(self, tofts_model: ToftsModel) -> None:
         derived = tofts_model.compute_derived_parameters([0.1, 0.0])
-        assert derived["kep"] == 0.0, "kep should be 0 when ve=0"
+        assert np.isnan(derived["kep"])
 
     def test_kep_epsilon_ve(self, tofts_model: ToftsModel) -> None:
-        # ve exactly at EPSILON_VE should return 0
         derived = tofts_model.compute_derived_parameters([0.1, EPSILON_VE])
-        assert derived["kep"] == 0.0, "kep should be 0 when ve=EPSILON_VE"
+        assert np.isnan(derived["kep"])
 
     def test_kep_just_above_epsilon(self, tofts_model: ToftsModel) -> None:
-        ve = EPSILON_VE + 1e-6
+        ve = 0.02
         derived = tofts_model.compute_derived_parameters([0.1, ve])
         assert derived["kep"] > 0.0, "kep should be positive when ve > EPSILON_VE"
 
-    def test_kep_clamped_to_max(self, tofts_model: ToftsModel) -> None:
-        # Very large Ktrans / small ve to trigger MAX_KEP clamping
+    def test_kep_above_reporting_range_is_nan(self, tofts_model: ToftsModel) -> None:
         ktrans = 5.0
-        ve = EPSILON_VE + 1e-4  # just above epsilon
+        ve = EPSILON_VE + 1e-4
         derived = tofts_model.compute_derived_parameters([ktrans, ve])
-        assert derived["kep"] <= MAX_KEP, f"kep should be clamped to MAX_KEP={MAX_KEP}"
+        assert np.isnan(derived["kep"])
 
     def test_kep_etofts(self, etofts_model: ExtendedToftsModel) -> None:
         derived = etofts_model.compute_derived_parameters([0.15, 0.3, 0.05])

@@ -1920,7 +1920,7 @@ def _compute_derived_params(
 ) -> bool:
     """Compute derived parameters (kep, E, Ktrans) in place.
 
-    The reported kep is clamped to the physiological cap ``KEP_BOUNDS.max``.
+    The reported kep is undefined above ``KEP_BOUNDS.max``.
     A raw kep = Ktrans/ve above that cap marks the kep->inf / ve->0 corner
     where the reversible (ve*Cp) and vascular (vp*Cp) forms coincide and kep
     is intrinsically non-identifiable; the exact value there is not
@@ -1937,24 +1937,40 @@ def _compute_derived_params(
     -------
     bool
         True if the raw kep exceeded ``KEP_BOUNDS.max`` (the reported kep was
-        clamped), flagging the voxel as low-confidence.
+        set to NaN), flagging the voxel as low-confidence.
     """
     kep_railed = False
     if model_name in ("tofts", "extended_tofts"):
-        ve_val = params_out.get("ve", EPSILON_VE)
-        raw_kep = params_out.get("Ktrans", 0.0) / max(ve_val, EPSILON_VE)
-        kep_railed = raw_kep > KEP_BOUNDS.max
-        params_out["kep"] = min(raw_kep, KEP_BOUNDS.max)
+        ve_val = params_out.get("ve", np.nan)
+        raw_kep = (
+            params_out.get("Ktrans", np.nan) / ve_val
+            if np.isfinite(ve_val) and ve_val > EPSILON_VE
+            else np.nan
+        )
+        kep_railed = np.isfinite(raw_kep) and raw_kep > KEP_BOUNDS.max
+        params_out["kep"] = (
+            raw_kep
+            if np.isfinite(raw_kep) and 0.0 <= raw_kep <= KEP_BOUNDS.max
+            else np.nan
+        )
     elif model_name == "2cxm":
         fp_val = params_out.get("Fp", 0.0)
         ps_val = params_out.get("PS", 0.0)
         E = ps_val / (fp_val + ps_val + EPSILON_RATIO)
         params_out["E"] = E
         params_out["Ktrans"] = E * fp_val / 100.0
-        ve_val = params_out.get("ve", EPSILON_VE)
-        raw_kep = params_out["Ktrans"] / max(ve_val, EPSILON_VE)
-        kep_railed = raw_kep > KEP_BOUNDS.max
-        params_out["kep"] = min(raw_kep, KEP_BOUNDS.max)
+        ve_val = params_out.get("ve", np.nan)
+        raw_kep = (
+            params_out["Ktrans"] / ve_val
+            if np.isfinite(ve_val) and ve_val > EPSILON_VE
+            else np.nan
+        )
+        kep_railed = np.isfinite(raw_kep) and raw_kep > KEP_BOUNDS.max
+        params_out["kep"] = (
+            raw_kep
+            if np.isfinite(raw_kep) and 0.0 <= raw_kep <= KEP_BOUNDS.max
+            else np.nan
+        )
     return kep_railed
 
 

@@ -116,6 +116,13 @@ class TestPKMapKeyDriftGuard:
             "e_map": "e",
         }
 
+    def test_kep_sidecar_records_derived_validity_domain(self) -> None:
+        out = enrich_dce_pk_map_sidecar({}, map_key="kep")
+
+        assert out["Estimator"] == "Ktrans / ve"
+        assert out["ValueDomain"] == "0 to 10 1/min, or NaN"
+        assert "identifiable reporting range" in out["UndefinedValue"]
+
     def test_all_pk_output_keys_are_registered_for_aif_provenance(self) -> None:
         """Every PK-family sink key must survive strict AIF stamping."""
         from pmriprep.utils.aif_provenance import DCE_POPULATION_AIF_USAGE

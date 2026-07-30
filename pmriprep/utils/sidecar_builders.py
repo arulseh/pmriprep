@@ -1634,6 +1634,15 @@ def enrich_dce_pk_map_sidecar(
     and ``TemplateAIFUsage`` tags via the shared AIF provenance module.
     Cross-modality fields land only on the maps they apply to.
     """
+    if map_key == "kep":
+        sidecar.update({
+            "Estimator": "Ktrans / ve",
+            "ValueDomain": "0 to 10 1/min, or NaN",
+            "UndefinedValue": (
+                "NaN when ve is not positive or the derived rate exceeds "
+                "the identifiable reporting range"
+            ),
+        })
     if not qc_metrics or not isinstance(qc_metrics, dict):
         if lesion_fragment:
             sidecar["LesionStats"] = dict(lesion_fragment)

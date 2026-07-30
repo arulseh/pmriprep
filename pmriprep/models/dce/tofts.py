@@ -348,11 +348,11 @@ class ToftsModel(PKModel):
         ktrans = params[0]
         ve = params[1]
 
-        # Reported kep is clamped to the physiological cap; above it kep is
-        # intrinsically non-identifiable (see _compute_derived_params).
+        # Kep is undefined outside the identifiable reporting range.
         if ve > EPSILON_VE:
-            kep = min(ktrans / ve, KEP_BOUNDS.max)
+            raw_kep = ktrans / ve
+            kep = raw_kep if raw_kep <= KEP_BOUNDS.max else float("nan")
         else:
-            kep = 0.0
+            kep = float("nan")
 
         return {"kep": kep}

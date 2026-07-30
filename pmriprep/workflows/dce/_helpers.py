@@ -2119,7 +2119,7 @@ def _derive_smoothed_kep(
     epsilon_ve : float
         Minimum valid ve denominator.
     max_kep : float
-        Maximum reported Kep in inverse minutes.
+        Maximum identifiable reported Kep in inverse minutes.
 
     Returns
     -------
@@ -2149,7 +2149,12 @@ def _derive_smoothed_kep(
     if ktrans.shape != ve.shape or not np.allclose(ktrans_img.affine, ve_img.affine):
         raise ValueError("Smoothed Ktrans and ve maps must have matching geometry")
 
-    valid = np.isfinite(ktrans) & np.isfinite(ve) & (ve >= epsilon_ve)
+    valid = (
+        np.isfinite(ktrans)
+        & (ktrans >= 0.0)
+        & np.isfinite(ve)
+        & (ve > epsilon_ve)
+    )
     if native_kep_file and isdefined(native_kep_file) and Path(native_kep_file).is_file():
         native_kep_img = cast("nib.Nifti1Image", nib.load(native_kep_file))
         native_kep = native_kep_img.get_fdata()  # type: ignore[attr-defined]
@@ -2170,7 +2175,7 @@ def _derive_smoothed_kep(
 
     kep = np.full(ktrans.shape, np.nan, dtype=np.float32)
     np.divide(ktrans, ve, out=kep, where=valid)
-    np.clip(kep, 0.0, max_kep, out=kep)
+    kep[~valid | (kep > max_kep)] = np.nan
     kep[~brain_mask] = 0.0
     out_path = Path.cwd() / f"{Path(ktrans_file).stem}_derived_kep.nii.gz"
     header = ktrans_img.header.copy()

@@ -539,8 +539,12 @@ class ExtendedToftsModel(PKModel):
         aic = float(n_obs * np.log(max(rss, EPSILON_RSS) / n_obs) + 2 * n_free) if n_obs > 0 else float("inf")
         bic = float(n_obs * np.log(max(rss, EPSILON_RSS) / n_obs) + n_free * np.log(n_obs)) if n_obs > 0 else float("inf")
 
-        # Derived parameters (reported kep clamped to the physiological cap)
-        kep = min(ktrans / ve, KEP_BOUNDS.max) if ve > EPSILON_VE else 0.0
+        raw_kep = ktrans / ve if ve > EPSILON_VE else float("nan")
+        kep = (
+            raw_kep
+            if np.isfinite(raw_kep) and raw_kep <= KEP_BOUNDS.max
+            else float("nan")
+        )
 
         param_dict = {"Ktrans": ktrans, "ve": ve, "vp": fixed_vp, "kep": kep}
 
@@ -578,11 +582,11 @@ class ExtendedToftsModel(PKModel):
         ktrans = params[0]
         ve = params[1]
 
-        # Reported kep is clamped to the physiological cap; above it kep is
-        # intrinsically non-identifiable (see _compute_derived_params).
+        # Kep is undefined outside the identifiable reporting range.
         if ve > EPSILON_VE:
-            kep = min(ktrans / ve, KEP_BOUNDS.max)
+            raw_kep = ktrans / ve
+            kep = raw_kep if raw_kep <= KEP_BOUNDS.max else float("nan")
         else:
-            kep = 0.0
+            kep = float("nan")
 
         return {"kep": kep}
