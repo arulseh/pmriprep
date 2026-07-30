@@ -146,7 +146,8 @@ _ANAT_MASKS: tuple[DCEAnatMaskSpec, ...] = (
         "User-supplied lesion mask in DCE native space", mask_type="Lesion",
     ),
     DCEAnatMaskSpec(
-        "roi_mask_dce", "roi_mask_dce", "roi", "ROI mask registered to DCE space",
+        "roi_mask_dce", "roi_mask_dce", "roi",
+        "User-supplied ROI mask in DCE native space",
         mask_type="ROI",
     ),
 )
@@ -687,6 +688,36 @@ def _build_dce_underlay_meta(
     })
     out["Sources"] = build_sources_list(
         [structural_source, perfusion_source], bids_dir,
+    )
+    return out
+
+
+def _build_dce_native_mask_meta(
+    base: dict,
+    description: str,
+    units: str | None,
+    extra: dict | None,
+    native_source: str,
+    perfusion_source: str,
+    bids_dir: str,
+) -> dict:
+    """Build metadata for a validated user mask in native DCE space."""
+    from pmriprep.utils.sidecar_builders import build_sources_list
+
+    out = dict(base)
+    out["Description"] = description
+    if units is not None:
+        out["Units"] = units
+    if extra:
+        out.update(extra)
+    out.update({
+        "ResamplingApplied": False,
+        "Interpolation": "none",
+        "ReorientationApplied": True,
+        "GeometryValidation": "shape_and_affine_against_DCE_reference",
+    })
+    out["Sources"] = build_sources_list(
+        [native_source, perfusion_source], bids_dir,
     )
     return out
 
@@ -1351,6 +1382,10 @@ def _add_anat_mask_sink(
 ) -> pe.Node:
     """Wire a DCE-space mask (brain/nawm/lesion/roi) into anat/."""
     is_structural = source_attr != "source_dce"
+    is_native_user_mask = (
+        not is_structural
+        and in_attr in {"user_lesion_mask_dce", "roi_mask_dce"}
+    )
     meta = pe.Node(
         niu.Function(
             input_names=(
@@ -1359,11 +1394,21 @@ def _add_anat_mask_sink(
                     "structural_sources", "perfusion_source", "bids_dir",
                     "resampling_applied", "native_source",
                 ]
-                if is_structural else ["base", "description", "units", "extra"]
+                if is_structural
+                else [
+                    "base", "description", "units", "extra",
+                    "native_source", "perfusion_source", "bids_dir",
+                ]
+                if is_native_user_mask
+                else ["base", "description", "units", "extra"]
             ),
             output_names=["meta_dict"],
             function=(
-                _build_dce_transformed_mask_meta if is_structural else _build_dce_meta
+                _build_dce_transformed_mask_meta
+                if is_structural
+                else _build_dce_native_mask_meta
+                if is_native_user_mask
+                else _build_dce_meta
             ),
         ),
         name=f"{name}_meta",
@@ -1388,6 +1433,10 @@ def _add_anat_mask_sink(
             ]),
             (structural_sources_node, meta, [("out", "structural_sources")]),
         ])
+    elif is_native_user_mask:
+        meta.inputs.native_source = native_source
+        workflow.connect(inputnode, "source_dce", meta, "perfusion_source")
+        workflow.connect(inputnode, "bids_dir", meta, "bids_dir")
     workflow.connect(base_minimal_node, "meta_dict", meta, "base")
 
     sink = pe.Node(
@@ -1441,6 +1490,8 @@ def init_dce_datasinks_wf(
     b1_map_expected: bool = True,
     nawm_needs_transform: bool = True,
     nawm_source_file: str | None = None,
+    user_lesion_source_file: str | None = None,
+    roi_source_file: str | None = None,
     name: str = "dce_datasinks_wf",
 ) -> pe.Workflow:
     """Build the DCE-pipeline DerivativesDataSink chain.
@@ -2070,6 +2121,10 @@ def init_dce_datasinks_wf(
             native_source=(
                 nawm_source_file
                 if mask_spec.in_attr == "nawm_mask"
+                else user_lesion_source_file
+                if mask_spec.in_attr == "user_lesion_mask_dce"
+                else roi_source_file
+                if mask_spec.in_attr == "roi_mask_dce"
                 else None
             ),
         )

@@ -431,6 +431,14 @@ def _dce_anat_datasinks(bids: Path) -> pe.Workflow:
             bids / "sub-0001" / "ses-0001" / "perf"
             / "sub-0001_ses-0001_desc-userNawm_mask.nii.gz"
         ),
+        user_lesion_source_file=str(
+            bids / "sub-0001" / "ses-0001" / "perf"
+            / "sub-0001_ses-0001_desc-userLesion_mask.nii.gz"
+        ),
+        roi_source_file=str(
+            bids / "sub-0001" / "ses-0001" / "perf"
+            / "sub-0001_ses-0001_desc-userRoi_mask.nii.gz"
+        ),
         t1_map_expected=False,
         b1_map_expected=False,
     )
@@ -467,6 +475,14 @@ def _dsc_anat_datasinks(bids: Path) -> pe.Workflow:
         nawm_source_file=str(
             bids / "sub-0001" / "ses-0001" / "perf"
             / "sub-0001_ses-0001_desc-userNawm_mask.nii.gz"
+        ),
+        user_lesion_source_file=str(
+            bids / "sub-0001" / "ses-0001" / "perf"
+            / "sub-0001_ses-0001_desc-userLesion_mask.nii.gz"
+        ),
+        roi_source_file=str(
+            bids / "sub-0001" / "ses-0001" / "perf"
+            / "sub-0001_ses-0001_desc-userRoi_mask.nii.gz"
         ),
     )
 

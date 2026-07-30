@@ -231,6 +231,12 @@
     [
       "inputnode",
       "bids_dir",
+      "roi_mask_dsc_meta",
+      "bids_dir"
+    ],
+    [
+      "inputnode",
+      "bids_dir",
       "t1w_in_dsc_meta",
       "bids_dir"
     ],
@@ -250,6 +256,12 @@
       "inputnode",
       "bids_dir",
       "t2w_in_dsc_meta",
+      "bids_dir"
+    ],
+    [
+      "inputnode",
+      "bids_dir",
+      "user_lesion_mask_dsc_meta",
       "bids_dir"
     ],
     [
@@ -615,6 +627,12 @@
     [
       "inputnode",
       "source_dsc",
+      "roi_mask_dsc_meta",
+      "perfusion_source"
+    ],
+    [
+      "inputnode",
+      "source_dsc",
       "roi_mask_dsc_sink",
       "source_file"
     ],
@@ -640,6 +658,12 @@
       "inputnode",
       "source_dsc",
       "t2w_in_dsc_meta",
+      "perfusion_source"
+    ],
+    [
+      "inputnode",
+      "source_dsc",
+      "user_lesion_mask_dsc_meta",
       "perfusion_source"
     ],
     [
@@ -1181,8 +1205,11 @@
     "roi_mask_dsc_meta": {
       "input_names": [
         "base",
+        "bids_dir",
         "description",
         "mask_type",
+        "native_source",
+        "perfusion_source",
         "segmentation_labels",
         "skull_stripped"
       ],
@@ -1285,8 +1312,11 @@
     "user_lesion_mask_dsc_meta": {
       "input_names": [
         "base",
+        "bids_dir",
         "description",
         "mask_type",
+        "native_source",
+        "perfusion_source",
         "segmentation_labels",
         "skull_stripped"
       ],
@@ -1308,14 +1338,14 @@
     "nawm_mask_dsc_meta": "fbea18713a9d215ca5765017a95c2c724ca332e94803774937122d0c3e54a23e",
     "psr_map_meta": "662978f3eb3898bf4142fbe21667e36eedbd3ba27e45b18161c85f85d9663b91",
     "psr_map_sink": "fcb4e47901c5216926eb960a4fbdc146b1c7cacea778c10c7f34d3cb614e81f5",
-    "roi_mask_dsc_meta": "f7366c18d36dc72c4a1d0ec255f373c52a0fc23bfd170370bea2c49d7e98e35b",
+    "roi_mask_dsc_meta": "592e4177afcd14728b536f88717935983e37b83160e33753be5accf828967ade",
     "t1w_in_dsc_meta": "fbbbdfb9afde07600d11b80dfaf5e12289a9d87c417cf0ce75112458577c4fe8",
     "t1w_postcon_in_dsc_meta": "fbbbdfb9afde07600d11b80dfaf5e12289a9d87c417cf0ce75112458577c4fe8",
     "t1w_subtraction_in_dsc_meta": "fbbbdfb9afde07600d11b80dfaf5e12289a9d87c417cf0ce75112458577c4fe8",
     "t2w_in_dsc_meta": "fbbbdfb9afde07600d11b80dfaf5e12289a9d87c417cf0ce75112458577c4fe8",
     "tmax_map_meta": "662978f3eb3898bf4142fbe21667e36eedbd3ba27e45b18161c85f85d9663b91",
     "tmax_map_sink": "fcb4e47901c5216926eb960a4fbdc146b1c7cacea778c10c7f34d3cb614e81f5",
-    "user_lesion_mask_dsc_meta": "f7366c18d36dc72c4a1d0ec255f373c52a0fc23bfd170370bea2c49d7e98e35b"
+    "user_lesion_mask_dsc_meta": "592e4177afcd14728b536f88717935983e37b83160e33753be5accf828967ade"
   },
   "nipype_version": "1.10.0",
   "node_attrs": {
@@ -1617,8 +1647,8 @@
       "suffix": "psr"
     },
     "roi_mask_dsc_meta": {
-      "description": "ROI mask registered to DSC space",
-      "function_str": "def _build_minimal_meta(\n    base: dict,\n    description: str,\n    skull_stripped: bool = False,\n    mask_type: str | None = None,\n    segmentation_labels: dict[str, str] | None = None,\n) -> dict:\n    out = dict(base)\n    out[\"Description\"] = description\n    if skull_stripped:\n        out[\"SkullStripped\"] = True\n    if mask_type is not None:\n        out[\"Type\"] = mask_type\n    if segmentation_labels:\n        out[\"LabelMap\"] = dict(segmentation_labels)\n    return out\n",
+      "description": "User-supplied ROI mask in DSC native space",
+      "function_str": "def _build_native_mask_meta(\n    base: dict,\n    description: str,\n    skull_stripped: bool,\n    mask_type: str | None,\n    native_source: str,\n    perfusion_source: str,\n    bids_dir: str,\n    segmentation_labels: dict[str, str] | None = None,\n) -> dict:\n    \"\"\"Build metadata for a validated user mask in native DSC space.\"\"\"\n    from pmriprep.utils.sidecar_builders import build_sources_list\n\n    out = dict(base)\n    out[\"Description\"] = description\n    if skull_stripped:\n        out[\"SkullStripped\"] = True\n    if mask_type is not None:\n        out[\"Type\"] = mask_type\n    if segmentation_labels:\n        out[\"LabelMap\"] = dict(segmentation_labels)\n    out.update({\n        \"ResamplingApplied\": False,\n        \"Interpolation\": \"none\",\n        \"ReorientationApplied\": True,\n        \"GeometryValidation\": \"shape_and_affine_against_DSC_reference\",\n    })\n    out[\"Sources\"] = build_sources_list(\n        [native_source, perfusion_source], bids_dir,\n    )\n    return out\n",
       "mask_type": "ROI",
       "segmentation_labels": null,
       "skull_stripped": false
@@ -1716,7 +1746,7 @@
     },
     "user_lesion_mask_dsc_meta": {
       "description": "User-supplied lesion mask in DSC native space",
-      "function_str": "def _build_minimal_meta(\n    base: dict,\n    description: str,\n    skull_stripped: bool = False,\n    mask_type: str | None = None,\n    segmentation_labels: dict[str, str] | None = None,\n) -> dict:\n    out = dict(base)\n    out[\"Description\"] = description\n    if skull_stripped:\n        out[\"SkullStripped\"] = True\n    if mask_type is not None:\n        out[\"Type\"] = mask_type\n    if segmentation_labels:\n        out[\"LabelMap\"] = dict(segmentation_labels)\n    return out\n",
+      "function_str": "def _build_native_mask_meta(\n    base: dict,\n    description: str,\n    skull_stripped: bool,\n    mask_type: str | None,\n    native_source: str,\n    perfusion_source: str,\n    bids_dir: str,\n    segmentation_labels: dict[str, str] | None = None,\n) -> dict:\n    \"\"\"Build metadata for a validated user mask in native DSC space.\"\"\"\n    from pmriprep.utils.sidecar_builders import build_sources_list\n\n    out = dict(base)\n    out[\"Description\"] = description\n    if skull_stripped:\n        out[\"SkullStripped\"] = True\n    if mask_type is not None:\n        out[\"Type\"] = mask_type\n    if segmentation_labels:\n        out[\"LabelMap\"] = dict(segmentation_labels)\n    out.update({\n        \"ResamplingApplied\": False,\n        \"Interpolation\": \"none\",\n        \"ReorientationApplied\": True,\n        \"GeometryValidation\": \"shape_and_affine_against_DSC_reference\",\n    })\n    out[\"Sources\"] = build_sources_list(\n        [native_source, perfusion_source], bids_dir,\n    )\n    return out\n",
       "mask_type": "Lesion",
       "segmentation_labels": null,
       "skull_stripped": false

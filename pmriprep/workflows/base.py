@@ -1735,6 +1735,12 @@ def _connect_master_dsc_datasinks(
         nawm_source_file=(
             str(dsc_config.nawm_mask) if dsc_config.nawm_mask else None
         ),
+        user_lesion_source_file=(
+            str(dsc_config.lesion_mask) if dsc_config.lesion_mask else None
+        ),
+        roi_source_file=(
+            str(dsc_config.roi_mask) if dsc_config.roi_mask else None
+        ),
     )
     _dsc_cfg = dataclasses.asdict(dsc_config)
     for _k, _v in _dsc_cfg.items():
@@ -2768,6 +2774,12 @@ def _connect_master_dce_outputs_and_datasinks(
         nawm_needs_transform=not bool(dce_config.nawm_mask),
         nawm_source_file=(
             str(dce_config.nawm_mask) if dce_config.nawm_mask else None
+        ),
+        user_lesion_source_file=(
+            str(dce_config.lesion_mask) if dce_config.lesion_mask else None
+        ),
+        roi_source_file=(
+            str(dce_config.roi_mask) if dce_config.roi_mask else None
         ),
     )
     _dce_cfg = dataclasses.asdict(dce_config)

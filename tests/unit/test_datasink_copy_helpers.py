@@ -196,6 +196,49 @@ def test_dce_underlay_metadata_records_resampling() -> None:
     assert meta["TransformDirection"] == "T1w_to_DCE"
 
 
+def test_native_user_mask_metadata_records_exact_analysis_source() -> None:
+    from pmriprep.workflows.dce.datasinks import _ANAT_MASKS as dce_specs
+    from pmriprep.workflows.dce.datasinks import _build_dce_native_mask_meta
+    from pmriprep.workflows.dsc.datasinks import _ANAT_MASKS as dsc_specs
+    from pmriprep.workflows.dsc.datasinks import _build_native_mask_meta
+
+    dce_roi = next(spec for spec in dce_specs if spec.in_attr == "roi_mask_dce")
+    dsc_roi = next(spec for spec in dsc_specs if spec.in_attr == "roi_mask_dsc")
+    assert dce_roi.description == "User-supplied ROI mask in DCE native space"
+    assert dsc_roi.description == "User-supplied ROI mask in DSC native space"
+
+    dsc = _build_native_mask_meta(
+        {},
+        "User-supplied lesion mask in DSC native space",
+        False,
+        "Lesion",
+        "/raw/sub-X/perf/sub-X_desc-userLesion_mask.nii.gz",
+        "/raw/sub-X/perf/sub-X_dsc.nii.gz",
+        "/raw",
+    )
+    dce = _build_dce_native_mask_meta(
+        {},
+        "ROI mask in DCE native space",
+        None,
+        {"Type": "ROI"},
+        "/raw/sub-X/perf/sub-X_desc-userRoi_mask.nii.gz",
+        "/raw/sub-X/perf/sub-X_dce.nii.gz",
+        "/raw",
+    )
+
+    for meta, source_name, reference in (
+        (dsc, "sub-X_desc-userLesion_mask.nii.gz", "DSC"),
+        (dce, "sub-X_desc-userRoi_mask.nii.gz", "DCE"),
+    ):
+        assert meta["ResamplingApplied"] is False
+        assert meta["Interpolation"] == "none"
+        assert meta["ReorientationApplied"] is True
+        assert meta["GeometryValidation"] == (
+            f"shape_and_affine_against_{reference}_reference"
+        )
+        assert meta["Sources"][0].endswith(source_name)
+
+
 def test_transformed_mask_metadata_builders_run_in_isolated_functions() -> None:
     """Transformed-mask builders carry no unavailable module globals."""
     import nipype.interfaces.utility as niu

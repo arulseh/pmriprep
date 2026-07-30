@@ -225,7 +225,7 @@ _ANAT_MASKS: tuple[DSCAnatSpec, ...] = (
         "User-supplied lesion mask in DSC native space", mask_type="Lesion",
     ),
     DSCAnatSpec(
-        "roi_mask_dsc", "roi", "mask", "ROI mask registered to DSC space",
+        "roi_mask_dsc", "roi", "mask", "User-supplied ROI mask in DSC native space",
         mask_type="ROI",
     ),
 )
@@ -377,6 +377,39 @@ def _build_minimal_meta(
         out["Type"] = mask_type
     if segmentation_labels:
         out["LabelMap"] = dict(segmentation_labels)
+    return out
+
+
+def _build_native_mask_meta(
+    base: dict,
+    description: str,
+    skull_stripped: bool,
+    mask_type: str | None,
+    native_source: str,
+    perfusion_source: str,
+    bids_dir: str,
+    segmentation_labels: dict[str, str] | None = None,
+) -> dict:
+    """Build metadata for a validated user mask in native DSC space."""
+    from pmriprep.utils.sidecar_builders import build_sources_list
+
+    out = dict(base)
+    out["Description"] = description
+    if skull_stripped:
+        out["SkullStripped"] = True
+    if mask_type is not None:
+        out["Type"] = mask_type
+    if segmentation_labels:
+        out["LabelMap"] = dict(segmentation_labels)
+    out.update({
+        "ResamplingApplied": False,
+        "Interpolation": "none",
+        "ReorientationApplied": True,
+        "GeometryValidation": "shape_and_affine_against_DSC_reference",
+    })
+    out["Sources"] = build_sources_list(
+        [native_source, perfusion_source], bids_dir,
+    )
     return out
 
 
@@ -1067,6 +1100,10 @@ def _add_anat_sink(
     """
     is_underlay = source_attr != "source_dsc"
     is_transformed_mask = is_underlay and suffix in {"mask", "dseg"}
+    is_native_user_mask = (
+        not is_underlay
+        and in_attr in {"user_lesion_mask_dsc", "roi_mask_dsc"}
+    )
     meta_function: Callable[..., dict]
     if is_transformed_mask:
         meta_input_names = [
@@ -1082,6 +1119,13 @@ def _add_anat_sink(
             "segmentation_labels",
         ]
         meta_function = _build_underlay_meta
+    elif is_native_user_mask:
+        meta_input_names = [
+            "base", "description", "skull_stripped", "mask_type",
+            "native_source", "perfusion_source", "bids_dir",
+            "segmentation_labels",
+        ]
+        meta_function = _build_native_mask_meta
     else:
         meta_input_names = [
             "base", "description", "skull_stripped", "mask_type",
@@ -1103,6 +1147,10 @@ def _add_anat_sink(
     if is_transformed_mask:
         meta.inputs.resampling_applied = resampling_applied
         meta.inputs.native_source = native_source
+    elif is_native_user_mask:
+        meta.inputs.native_source = native_source
+        workflow.connect(inputnode, "source_dsc", meta, "perfusion_source")
+        workflow.connect(inputnode, "bids_dir", meta, "bids_dir")
     workflow.connect([(base_minimal_node, meta, [("meta_dict", "base")])])
     if is_underlay:
         workflow.connect(inputnode, "source_dsc", meta, "perfusion_source")
@@ -1200,6 +1248,8 @@ def init_dsc_datasinks_wf(
     motion_correct: bool = True,
     nawm_needs_transform: bool = True,
     nawm_source_file: str | None = None,
+    user_lesion_source_file: str | None = None,
+    roi_source_file: str | None = None,
     name: str = "dsc_datasinks_wf",
 ) -> pe.Workflow:
     """Build the DSC-pipeline DerivativesDataSink chain.
@@ -1761,6 +1811,10 @@ def init_dsc_datasinks_wf(
             native_source=(
                 nawm_source_file
                 if anat_spec.in_attr == "nawm_mask_dsc"
+                else user_lesion_source_file
+                if anat_spec.in_attr == "user_lesion_mask_dsc"
+                else roi_source_file
+                if anat_spec.in_attr == "roi_mask_dsc"
                 else None
             ),
         )

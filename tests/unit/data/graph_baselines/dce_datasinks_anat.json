@@ -231,6 +231,12 @@
     [
       "inputnode",
       "bids_dir",
+      "roi_mask_dce_meta",
+      "bids_dir"
+    ],
+    [
+      "inputnode",
+      "bids_dir",
       "t1w_in_dce_meta",
       "bids_dir"
     ],
@@ -250,6 +256,12 @@
       "inputnode",
       "bids_dir",
       "t2w_in_dce_meta",
+      "bids_dir"
+    ],
+    [
+      "inputnode",
+      "bids_dir",
+      "user_lesion_mask_dce_meta",
       "bids_dir"
     ],
     [
@@ -603,6 +615,12 @@
     [
       "inputnode",
       "source_dce",
+      "roi_mask_dce_meta",
+      "perfusion_source"
+    ],
+    [
+      "inputnode",
+      "source_dce",
       "t1w_in_dce_meta",
       "perfusion_source"
     ],
@@ -622,6 +640,12 @@
       "inputnode",
       "source_dce",
       "t2w_in_dce_meta",
+      "perfusion_source"
+    ],
+    [
+      "inputnode",
+      "source_dce",
+      "user_lesion_mask_dce_meta",
       "perfusion_source"
     ],
     [
@@ -1170,8 +1194,11 @@
     "roi_mask_dce_meta": {
       "input_names": [
         "base",
+        "bids_dir",
         "description",
         "extra",
+        "native_source",
+        "perfusion_source",
         "units"
       ],
       "output_names": [
@@ -1254,8 +1281,11 @@
     "user_lesion_mask_dce_meta": {
       "input_names": [
         "base",
+        "bids_dir",
         "description",
         "extra",
+        "native_source",
+        "perfusion_source",
         "units"
       ],
       "output_names": [
@@ -1295,13 +1325,13 @@
     "lesion_mask_dce_sink": "ca5ae1f893d6aa902d88719c995be8a064c739a193fb68f24a7a6cf4f74b2bb6",
     "nawm_mask_dce_meta": "601c2400948d4a871896fc53551096a6aa18d8b9dd3810e856d1c91447fd984d",
     "nawm_mask_dce_sink": "ca5ae1f893d6aa902d88719c995be8a064c739a193fb68f24a7a6cf4f74b2bb6",
-    "roi_mask_dce_meta": "7209f8b8056294d831fddb6abdc9149bd75f4b9890feca702bbe2e7b19674563",
+    "roi_mask_dce_meta": "d2f28e809caba80853be958891eb0a67ac50d735c1a34a6f68fb8beac94da805",
     "roi_mask_dce_sink": "ca5ae1f893d6aa902d88719c995be8a064c739a193fb68f24a7a6cf4f74b2bb6",
     "t1w_in_dce_meta": "41ce7606742ed3553ab922660c42faaf62916e8bf406524767d584dfd4efb976",
     "t1w_postcon_in_dce_meta": "41ce7606742ed3553ab922660c42faaf62916e8bf406524767d584dfd4efb976",
     "t1w_subtraction_in_dce_meta": "41ce7606742ed3553ab922660c42faaf62916e8bf406524767d584dfd4efb976",
     "t2w_in_dce_meta": "41ce7606742ed3553ab922660c42faaf62916e8bf406524767d584dfd4efb976",
-    "user_lesion_mask_dce_meta": "7209f8b8056294d831fddb6abdc9149bd75f4b9890feca702bbe2e7b19674563",
+    "user_lesion_mask_dce_meta": "d2f28e809caba80853be958891eb0a67ac50d735c1a34a6f68fb8beac94da805",
     "user_lesion_mask_dce_sink": "ca5ae1f893d6aa902d88719c995be8a064c739a193fb68f24a7a6cf4f74b2bb6"
   },
   "nipype_version": "1.10.0",
@@ -1565,8 +1595,8 @@
       "ravel_inputs": false
     },
     "roi_mask_dce_meta": {
-      "description": "ROI mask registered to DCE space",
-      "function_str": "def _build_dce_meta(\n    base: dict,\n    description: str,\n    units: str | None = None,\n    extra: dict | None = None,\n    map_key: str = \"\",\n    lesion_stats_json: str | None = None,\n    user_lesion_stats_json: str | None = None,\n    roi_stats_json: str | None = None,\n) -> dict:\n    \"\"\"Compose a generic DCE sidecar; optionally inject stats fragments.\n\n    When ``map_key`` is non-empty the per-map fragment from each\n    aggregate stats JSON is attached as ``LesionStats``,\n    ``UserLesionStats``, or ``ROIStats`` respectively.\n    Used for model-free maps and NAWM-normalized maps that aren't routed\n    through ``_build_dce_pk_map_meta``.\n    \"\"\"\n    from pmriprep.utils.aif_provenance import stamp_aif_dependency\n    from pmriprep.utils.lesion_stats import load_lesion_stats_fragment\n\n    out = dict(base)\n    out[\"Description\"] = description\n    if units is not None:\n        out[\"Units\"] = units\n    if extra:\n        out.update(extra)\n    if map_key:\n        stamp_aif_dependency(out, map_key, modality=\"DCE\")\n        fragment = load_lesion_stats_fragment(lesion_stats_json, map_key)\n        if fragment:\n            out[\"LesionStats\"] = fragment\n        user_fragment = load_lesion_stats_fragment(\n            user_lesion_stats_json, map_key,\n        )\n        if user_fragment:\n            out[\"UserLesionStats\"] = user_fragment\n        roi_fragment = load_lesion_stats_fragment(roi_stats_json, map_key)\n        if roi_fragment:\n            out[\"ROIStats\"] = roi_fragment\n    return out\n",
+      "description": "User-supplied ROI mask in DCE native space",
+      "function_str": "def _build_dce_native_mask_meta(\n    base: dict,\n    description: str,\n    units: str | None,\n    extra: dict | None,\n    native_source: str,\n    perfusion_source: str,\n    bids_dir: str,\n) -> dict:\n    \"\"\"Build metadata for a validated user mask in native DCE space.\"\"\"\n    from pmriprep.utils.sidecar_builders import build_sources_list\n\n    out = dict(base)\n    out[\"Description\"] = description\n    if units is not None:\n        out[\"Units\"] = units\n    if extra:\n        out.update(extra)\n    out.update({\n        \"ResamplingApplied\": False,\n        \"Interpolation\": \"none\",\n        \"ReorientationApplied\": True,\n        \"GeometryValidation\": \"shape_and_affine_against_DCE_reference\",\n    })\n    out[\"Sources\"] = build_sources_list(\n        [native_source, perfusion_source], bids_dir,\n    )\n    return out\n",
       "units": null
     },
     "roi_mask_dce_sink": {
@@ -1640,7 +1670,7 @@
     },
     "user_lesion_mask_dce_meta": {
       "description": "User-supplied lesion mask in DCE native space",
-      "function_str": "def _build_dce_meta(\n    base: dict,\n    description: str,\n    units: str | None = None,\n    extra: dict | None = None,\n    map_key: str = \"\",\n    lesion_stats_json: str | None = None,\n    user_lesion_stats_json: str | None = None,\n    roi_stats_json: str | None = None,\n) -> dict:\n    \"\"\"Compose a generic DCE sidecar; optionally inject stats fragments.\n\n    When ``map_key`` is non-empty the per-map fragment from each\n    aggregate stats JSON is attached as ``LesionStats``,\n    ``UserLesionStats``, or ``ROIStats`` respectively.\n    Used for model-free maps and NAWM-normalized maps that aren't routed\n    through ``_build_dce_pk_map_meta``.\n    \"\"\"\n    from pmriprep.utils.aif_provenance import stamp_aif_dependency\n    from pmriprep.utils.lesion_stats import load_lesion_stats_fragment\n\n    out = dict(base)\n    out[\"Description\"] = description\n    if units is not None:\n        out[\"Units\"] = units\n    if extra:\n        out.update(extra)\n    if map_key:\n        stamp_aif_dependency(out, map_key, modality=\"DCE\")\n        fragment = load_lesion_stats_fragment(lesion_stats_json, map_key)\n        if fragment:\n            out[\"LesionStats\"] = fragment\n        user_fragment = load_lesion_stats_fragment(\n            user_lesion_stats_json, map_key,\n        )\n        if user_fragment:\n            out[\"UserLesionStats\"] = user_fragment\n        roi_fragment = load_lesion_stats_fragment(roi_stats_json, map_key)\n        if roi_fragment:\n            out[\"ROIStats\"] = roi_fragment\n    return out\n",
+      "function_str": "def _build_dce_native_mask_meta(\n    base: dict,\n    description: str,\n    units: str | None,\n    extra: dict | None,\n    native_source: str,\n    perfusion_source: str,\n    bids_dir: str,\n) -> dict:\n    \"\"\"Build metadata for a validated user mask in native DCE space.\"\"\"\n    from pmriprep.utils.sidecar_builders import build_sources_list\n\n    out = dict(base)\n    out[\"Description\"] = description\n    if units is not None:\n        out[\"Units\"] = units\n    if extra:\n        out.update(extra)\n    out.update({\n        \"ResamplingApplied\": False,\n        \"Interpolation\": \"none\",\n        \"ReorientationApplied\": True,\n        \"GeometryValidation\": \"shape_and_affine_against_DCE_reference\",\n    })\n    out[\"Sources\"] = build_sources_list(\n        [native_source, perfusion_source], bids_dir,\n    )\n    return out\n",
       "units": null
     },
     "user_lesion_mask_dce_sink": {
