@@ -419,7 +419,7 @@ def _dsc_preproc_datasinks(bids: Path) -> pe.Workflow:
         subject_id="0001",
         session_id="0001",
         inference="nlls",
-        present_inputs={"dsc_moco", "dsc_mean"},
+        present_inputs={"dsc_moco", "dsc_mean", "aif_mask"},
         motion_correct=False,
     )
 

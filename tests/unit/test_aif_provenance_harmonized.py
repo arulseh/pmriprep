@@ -524,3 +524,18 @@ class TestPublicArtifactSchema:
         expected = curve["PerfusionProcessing"]["AIF"]
         assert mask["PerfusionProcessing"]["AIF"] == expected
         assert quantitative_map["PerfusionProcessing"]["AIF"] == expected
+        assert mask["SpatialSupportAvailable"] is True
+
+    @pytest.mark.parametrize("source", ["synthetic", "external"])
+    def test_nonspatial_dsc_aif_mask_is_explicit(self, source: str) -> None:
+        """An empty non-measured AIF mask does not imply failed detection."""
+        from pmriprep.workflows.dsc.datasinks import _build_aif_mask_meta
+
+        mask = _build_aif_mask_meta(
+            {},
+            "AIF spatial-support mask",
+            {"aif_detection": {"detection_method": source}},
+        )
+
+        assert mask["SpatialSupportAvailable"] is False
+        assert "No spatial AIF voxels" in mask["EmptyMaskMeaning"]
