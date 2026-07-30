@@ -360,7 +360,7 @@ class DSCLesionStats(BaseInterface):
         )
 
         # Compute statistics for each available map. compute_advanced=True
-        # turns on histogram metrics (p98/p99/skewness/kurtosis/entropy);
+        # turns on upper-tail and distribution-shape summaries.
         for map_name, map_data in maps.items():
             stats = compute_map_statistics(
                 map_data, mask, compute_advanced=True,

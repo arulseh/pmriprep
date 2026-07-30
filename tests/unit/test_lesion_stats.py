@@ -46,9 +46,6 @@ class TestComputeMapStatistics:
         assert stats.p75 == pytest.approx(np.percentile(values, 75), abs=1e-5)
         assert stats.p90 == pytest.approx(np.percentile(values, 90), abs=1e-5)
         assert stats.p95 == pytest.approx(np.percentile(values, 95), abs=1e-5)
-        assert stats.cv is not None
-        expected_cv = round(float(np.std(values)) / abs(float(np.mean(values))), 4)
-        assert stats.cv == pytest.approx(expected_cv, abs=1e-4)
         assert stats.iqr is not None
         expected_iqr = float(np.percentile(values, 75) - np.percentile(values, 25))
         assert stats.iqr == pytest.approx(expected_iqr, abs=1e-5)
@@ -68,21 +65,6 @@ class TestComputeMapStatistics:
         assert stats.n_valid == 0
         assert stats.n_total == 125
         assert stats.mean is None
-
-    def test_mean_zero_cv_is_none(self) -> None:
-        """When mean is zero, coefficient of variation is None."""
-        data = np.zeros((3, 3, 3))
-        # Create symmetric values that sum to zero
-        data[0, 0, 0] = -1.0
-        data[0, 0, 1] = 1.0
-        mask = np.zeros((3, 3, 3), dtype=bool)
-        mask[0, 0, 0] = True
-        mask[0, 0, 1] = True
-
-        stats = compute_map_statistics(data, mask)
-        assert stats is not None
-        assert stats.cv is None
-
 
 class TestComputeFractionAboveThreshold:
     """Tests for compute_fraction_above_threshold()."""
@@ -427,11 +409,9 @@ class TestMapStatisticsToDict:
             p75=1.5,
             p90=1.8,
             p95=1.9,
-            cv=None,
             iqr=None,
         )
         d = stats.to_dict()
-        assert "cv" not in d
         assert "iqr" not in d
         assert "mean" in d
         assert d["mean"] == 1.0
@@ -445,7 +425,7 @@ class TestRegionStatisticsToDict:
         map_stats = MapStatistics(
             mean=5.0, std=1.0, median=5.0, min=3.0, max=7.0,
             p10=3.5, p25=4.0, p75=6.0, p90=6.5, p95=6.8,
-            cv=0.2, iqr=2.0,
+            iqr=2.0,
         )
         region = RegionStatistics(
             region_name="enhancing_tumor",
@@ -678,8 +658,8 @@ class TestLesionStatsAcceptsEmptyMapTrait:
         assert iface.inputs.ncbf_map == ""
 
 
-class TestMapStatisticsHistogramMetrics:
-    """Phase 2a: p98/p99/skewness/kurtosis/entropy + compute_advanced gating."""
+class TestMapStatisticsDistributionMetrics:
+    """Tests for upper-tail and distribution-shape summaries."""
 
     def test_advanced_metrics_present_on_large_roi(self) -> None:
         rng = np.random.default_rng(42)
@@ -691,7 +671,6 @@ class TestMapStatisticsHistogramMetrics:
         assert s.p99 is not None
         assert s.skewness is not None
         assert s.kurtosis is not None
-        assert s.entropy is not None
         assert s.p98 < s.p99 <= s.max
 
     def test_advanced_metrics_omitted_when_disabled(self) -> None:
@@ -703,22 +682,20 @@ class TestMapStatisticsHistogramMetrics:
         assert s.p99 is None
         assert s.skewness is None
         assert s.kurtosis is None
-        assert s.entropy is None
 
     def test_advanced_metrics_omitted_when_n_valid_below_10(self) -> None:
         data = np.array([1.0, 2.0, 3.0, 4.0])
         mask = np.ones_like(data, dtype=bool)
         s = compute_map_statistics(data, mask, compute_advanced=True)
         assert s.p98 is None
-        assert s.skewness is None
+        assert s.p99 is None
 
-    def test_constant_data_skew_kurt_entropy_none(self) -> None:
+    def test_constant_data_shape_metrics_are_none(self) -> None:
         data = np.ones(200)
         mask = np.ones_like(data, dtype=bool)
         s = compute_map_statistics(data, mask, compute_advanced=True)
         assert s.skewness is None
         assert s.kurtosis is None
-        assert s.entropy is None
 
 
 class TestCohensDAugmentation:

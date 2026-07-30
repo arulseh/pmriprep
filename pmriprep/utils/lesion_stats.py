@@ -45,11 +45,9 @@ class MapStatistics:
         p95: 95th percentile value.
         p98: 98th percentile (robust hotspot).
         p99: 99th percentile (max-robust hotspot).
-        cv: Coefficient of variation (std/mean).
         iqr: Interquartile range (p75 - p25).
-        skewness: Histogram skewness.
-        kurtosis: Histogram kurtosis.
-        entropy: Shannon entropy on 64-bin histogram over [p1, p99].
+        skewness: Population skewness of the finite voxel distribution.
+        kurtosis: Population excess kurtosis of the finite voxel distribution.
         cohens_d_vs_nawm: Pooled-SD Cohen's d of region vs NAWM reference;
             populated post-hoc by ``LesionStatisticsResult.augment_with_cohens_d``.
         n_valid: Count of finite values used in statistics.
@@ -68,11 +66,9 @@ class MapStatistics:
     p95: Optional[float] = None
     p98: Optional[float] = None
     p99: Optional[float] = None
-    cv: Optional[float] = None
     iqr: Optional[float] = None
     skewness: Optional[float] = None
     kurtosis: Optional[float] = None
-    entropy: Optional[float] = None
     cohens_d_vs_nawm: Optional[float] = None
     n_valid: int = 0
     n_total: int = 0
@@ -217,7 +213,7 @@ class LesionStatisticsResult:
 
 
 def _safe_skewness(values: np.ndarray) -> Optional[float]:
-    """Return distribution skewness, or None if undefined."""
+    """Return population skewness, or None if undefined."""
     if values.size < 3:
         return None
     std = float(np.std(values))
@@ -228,7 +224,7 @@ def _safe_skewness(values: np.ndarray) -> Optional[float]:
 
 
 def _safe_kurtosis(values: np.ndarray) -> Optional[float]:
-    """Return excess kurtosis (Fisher's definition: normal → 0), or None."""
+    """Return population excess kurtosis, or None if undefined."""
     if values.size < 4:
         return None
     std = float(np.std(values))
@@ -236,26 +232,6 @@ def _safe_kurtosis(values: np.ndarray) -> Optional[float]:
         return None
     centered = values - float(np.mean(values))
     return round(float(np.mean(centered ** 4) / (std ** 4) - 3.0), 6)
-
-
-def _safe_shannon_entropy(values: np.ndarray, n_bins: int = 64) -> Optional[float]:
-    """Shannon entropy on a 64-bin histogram over [p1, p99].
-
-    Returns None for constant / near-constant data where the histogram
-    range collapses.
-    """
-    if values.size < n_bins:
-        return None
-    p1 = float(np.percentile(values, 1))
-    p99 = float(np.percentile(values, 99))
-    if p99 - p1 <= 0:
-        return None
-    hist, _ = np.histogram(values, bins=n_bins, range=(p1, p99))
-    total = hist.sum()
-    if total == 0:
-        return None
-    probs = hist[hist > 0] / total
-    return round(float(-np.sum(probs * np.log2(probs))), 6)
 
 
 def compute_map_statistics(
@@ -272,10 +248,9 @@ def compute_map_statistics(
     mask : np.ndarray
         3D boolean array defining the ROI.
     compute_advanced : bool, optional
-        When True, also compute p98, p99, skewness,
-        kurtosis, entropy. Disable for NAWM-reference computation
-        where these histogram metrics add noise on small ROIs and
-        aren't used downstream.
+        When True, also compute p98, p99, population skewness, and population
+        excess kurtosis. Disable for NAWM-reference computation where these
+        distribution-shape summaries are not used.
 
     Returns
     -------
@@ -284,9 +259,8 @@ def compute_map_statistics(
         When mask is non-empty but all values are invalid, returns a
         ``MapStatistics`` with ``n_valid=0`` so callers can distinguish
         from empty-mask (None).
-        Advanced histogram metrics (skewness, kurtosis, entropy) are
-        only computed when ``n_valid >= 10`` to avoid unstable values
-        on tiny ROIs.
+        Distribution-shape summaries are only computed when
+        ``n_valid >= 10``.
     """
     # Extract values within mask
     values = map_data[mask]
@@ -307,11 +281,6 @@ def compute_map_statistics(
     p25 = float(np.percentile(values, 25))
     p75 = float(np.percentile(values, 75))
 
-    # Coefficient of variation (avoid division by zero)
-    cv = None
-    if mean_val != 0 and not np.isnan(mean_val):
-        cv = round(std_val / abs(mean_val), 4)
-
     stats = MapStatistics(
         mean=round(mean_val, 6),
         std=round(std_val, 6),
@@ -323,7 +292,6 @@ def compute_map_statistics(
         p75=round(p75, 6),
         p90=round(float(np.percentile(values, 90)), 6),
         p95=round(float(np.percentile(values, 95)), 6),
-        cv=cv,
         iqr=round(p75 - p25, 6),
         n_valid=n_valid,
         n_total=n_total,
@@ -334,7 +302,6 @@ def compute_map_statistics(
         stats.p99 = round(float(np.percentile(values, 99)), 6)
         stats.skewness = _safe_skewness(values)
         stats.kurtosis = _safe_kurtosis(values)
-        stats.entropy = _safe_shannon_entropy(values)
 
     return stats
 
