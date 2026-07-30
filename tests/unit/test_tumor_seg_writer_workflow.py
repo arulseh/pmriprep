@@ -158,7 +158,13 @@ def test_tumor_seg_sidecar_sources_populated(
     inp.non_enhancing_mask = str(masks["nonenhancing"])
     inp.whole_tumor_mask = str(masks["wholetumor"])
     inp.nawm_mask = str(masks["nawm"])
-    inp.qc_metrics = {}
+    inp.qc_metrics = {
+        "nawm": {
+            "atlas_used": True,
+            "erosion_voxels_final": 1,
+            "erosion_mm_final": 1.25,
+        }
+    }
     wf.run()
 
     anat = out_root / "pmriprep" / "sub-01" / "ses-0001" / "anat"
@@ -171,7 +177,23 @@ def test_tumor_seg_sidecar_sources_populated(
         assert isinstance(body["Sources"], list) and body["Sources"], (
             f"{sc.name} has empty Sources"
         )
-        if sc.name.endswith("_mask.json") and "desc-nawm" not in sc.name:
+        if "desc-nawm" in sc.name:
+            assert body["Sources"] == [
+                "bids::sub-01/ses-0001/anat/sub-01_ses-0001_acq-highres_run-1_"
+                "space-T1w_desc-wholetumor_mask.nii.gz",
+                "bids::sub-01/ses-0001/anat/sub-01_ses-0001_acq-highres_run-1_"
+                "space-T1w_label-WM_probseg.nii.gz",
+                "bids::sub-01/ses-0001/anat/sub-01_ses-0001_acq-highres_run-1_"
+                "space-T1w_desc-brain_mask.nii.gz",
+                "bids::sub-01/ses-0001/anat/sub-01_ses-0001_acq-highres_run-1_"
+                "space-T1w_desc-preproc_T1w.nii.gz",
+            ], sc.name
+            assert body["AtlasRestrictionApplied"] is True
+            assert body["WMProbabilityThreshold"] == 0.9
+            assert body["TumorExclusionMarginMillimeters"] == 20.0
+            assert body["ErosionVoxels"] == 1
+            assert body["ErosionMillimeters"] == 1.25
+        elif sc.name.endswith("_mask.json"):
             assert body["Sources"] == [
                 "bids::sub-01/ses-0001/anat/"
                 "sub-01_ses-0001_acq-highres_run-1_space-T1w_"

@@ -75,6 +75,7 @@ def _build_nawm_meta(
     subject: str,
     session: str,
     is_postcon_ref: bool = False,
+    qc_metrics: dict | None = None,
 ) -> dict:
     """Nipype-Function wrapper for ``build_tumor_seg_nawm_sidecar``."""
     from pmriprep.utils.sidecar_builders import build_tumor_seg_nawm_sidecar
@@ -86,6 +87,7 @@ def _build_nawm_meta(
         subject=subject,
         session=session or None,
         is_postcon_ref=is_postcon_ref,
+        qc_metrics=qc_metrics if isinstance(qc_metrics, dict) else None,
     )
 
 
@@ -287,7 +289,7 @@ def _add_nawm_sink(
         niu.Function(
             input_names=[
                 "source_paths", "reference_voxel_source", "bids_dir",
-                "subject", "session", "is_postcon_ref",
+                "subject", "session", "is_postcon_ref", "qc_metrics",
             ],
             output_names=["meta_dict"],
             function=_build_nawm_meta,
@@ -302,6 +304,7 @@ def _add_nawm_sink(
             ("subject_id", "subject"),
             ("session_id", "session"),
             ("nawm_mask", "reference_voxel_source"),
+            ("qc_metrics", "qc_metrics"),
         ]),
     ])
 
@@ -334,11 +337,12 @@ def init_tumor_seg_datasinks_wf(
 ) -> pe.Workflow:
     """Build the tumor-seg DerivativesDataSink chain.
 
-    HD-GLIO consumes T1w-pre, T1w-postcon, T2w, and FLAIR-precon; ``Sources``
-    on every tumor-seg derivative carries that quartet. Tumor-seg only runs
-    when all four modalities are present (gated upstream in ``discovery``),
-    so the structural reference is always the precon T1w (no ``is_postcon_ref``
-    branch needed here, unlike the anat factory).
+    HD-GLIO consumes T1w-pre, T1w-postcon, T2w, and FLAIR-precon, which are
+    recorded on the multiclass dseg. Derived binary masks point to their
+    immediate derivative inputs. Tumor-seg only runs when all four modalities
+    are present (gated upstream in ``discovery``), so the structural reference
+    is always the precon T1w (no ``is_postcon_ref`` branch needed here, unlike
+    the anat factory).
     """
     is_postcon_ref = False  # invariant: tumor-seg requires t1w_pre
     workflow = pe.Workflow(name=name)

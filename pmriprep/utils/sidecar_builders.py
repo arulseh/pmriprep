@@ -557,6 +557,21 @@ def _anat_spatial_reference(
     return "bids::" + "/".join(parts)
 
 
+def _anat_derivative_uri(
+    subject: str,
+    session: Optional[str],
+    source: PathLike | None,
+    filename_tail: str,
+) -> str:
+    """Build a derivative-local URI using the anatomical source entities."""
+    prefix = source_entity_prefix(source, subject, session)
+    parts = [f"sub-{subject}"]
+    if session:
+        parts.append(f"ses-{session}")
+    parts.extend(["anat", f"{prefix}_{filename_tail}"])
+    return "bids::" + "/".join(parts)
+
+
 def build_anat_preproc_sidecar(
     *,
     description: str,
@@ -757,15 +772,10 @@ def build_tumor_seg_mask_sidecar(
     from pmriprep.utils.provenance import get_bids_derivative_provenance
 
     source = source_paths[0] if source_paths else None
-    prefix = source_entity_prefix(source, subject, session)
-    parts = [f"sub-{subject}"]
-    if session:
-        parts.append(f"ses-{session}")
-    parts.extend([
-        "anat",
-        f"{prefix}_space-T1w_desc-tumorseg_dseg.nii.gz",
-    ])
-    dseg_source = "bids::" + "/".join(parts)
+    dseg_source = _anat_derivative_uri(
+        subject, session, source,
+        "space-T1w_desc-tumorseg_dseg.nii.gz",
+    )
 
     return {
         **get_bids_derivative_provenance(),
@@ -790,27 +800,71 @@ def build_tumor_seg_nawm_sidecar(
     session: Optional[str],
     is_postcon_ref: bool = False,
     reference_source: PathLike | None = None,
+    qc_metrics: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Sidecar for the contralateral NAWM mask."""
     from pmriprep.utils.provenance import get_bids_derivative_provenance
 
-    return {
+    source = source_paths[0] if source_paths else None
+    sources = [
+        _anat_derivative_uri(
+            subject, session, source,
+            "space-T1w_desc-wholetumor_mask.nii.gz",
+        ),
+        _anat_derivative_uri(
+            subject, session, source,
+            "space-T1w_label-WM_probseg.nii.gz",
+        ),
+        _anat_derivative_uri(
+            subject, session, source,
+            "space-T1w_desc-brain_mask.nii.gz",
+        ),
+    ]
+    nawm_qc = qc_metrics.get("nawm") if isinstance(qc_metrics, dict) else None
+    atlas_used = nawm_qc.get("atlas_used") if isinstance(nawm_qc, dict) else None
+    if atlas_used is True:
+        sources.append(
+            _anat_derivative_uri(
+                subject, session, source,
+                "space-T1w_desc-preproc_T1w.nii.gz",
+            )
+        )
+
+    restriction = (
+        "contralateral atlas-region restriction"
+        if atlas_used is True
+        else "contralateral hemisphere restriction"
+    )
+    sidecar: Dict[str, Any] = {
         **get_bids_derivative_provenance(),
         "Description": (
-            "Contralateral normal-appearing white matter mask for CBV "
-            "normalization"
+            "Contralateral normal-appearing white matter mask for perfusion "
+            "reference normalization"
         ),
         "Type": "ROI",
         "Method": (
-            "Contralateral WM thresholded at p>=0.9, excluding tumor margin"
+            "Brain-masked WM probability >= 0.9 with "
+            f"{restriction}, 20 mm whole-tumor exclusion, and adaptive erosion"
         ),
         "SpatialReference": _anat_spatial_reference(
             subject, session, is_postcon_ref,
-            reference_source or (source_paths[0] if source_paths else None),
+            reference_source or source,
         ),
-        "Sources": build_sources_list(source_paths, bids_dir),
+        "Sources": sources,
         **resolution_native_block(reference_voxel_source),
     }
+    if isinstance(nawm_qc, dict):
+        sidecar["WMProbabilityThreshold"] = 0.9
+        sidecar["TumorExclusionMarginMillimeters"] = 20.0
+        if isinstance(atlas_used, bool):
+            sidecar["AtlasRestrictionApplied"] = atlas_used
+        erosion_voxels = nawm_qc.get("erosion_voxels_final")
+        if isinstance(erosion_voxels, (int, float)):
+            sidecar["ErosionVoxels"] = int(erosion_voxels)
+        erosion_mm = nawm_qc.get("erosion_mm_final")
+        if isinstance(erosion_mm, (int, float)):
+            sidecar["ErosionMillimeters"] = float(erosion_mm)
+    return sidecar
 
 
 def dce_reference_basename() -> str:
