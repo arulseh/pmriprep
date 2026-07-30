@@ -2577,35 +2577,6 @@ def _connect_master_dce_t1_b1_inputs(
             dce_wf.inputs.inputnode.afi_flip_angle = session_data.modalities.afi_flip_angle
 
 
-def _selected_dce_b1_sources(
-    session_data: SessionData,
-    dce_config: DCEConfig,
-) -> list[str]:
-    """Return the raw B1 inputs selected by the configured DCE B1 method."""
-    modalities = session_data.modalities
-    if dce_config.b1_method == "precomputed" and modalities.b1_precomputed_file:
-        return [str(modalities.b1_precomputed_file)]
-    if (
-        dce_config.b1_method == "afi"
-        and modalities.afi_mode == "4d"
-        and modalities.afi_4d_file
-    ):
-        return [str(modalities.afi_4d_file)]
-    return []
-
-
-def _selected_dce_t1_sources(
-    session_data: SessionData,
-    dce_config: DCEConfig,
-) -> list[str]:
-    """Return the raw inputs used to produce the DCE-space T1 map."""
-    if dce_config.t1_map_file is not None:
-        return [str(dce_config.t1_map_file)]
-    if dce_config.no_t1:
-        return []
-    return [str(path) for path in session_data.modalities.vfa]
-
-
 def _connect_master_dce_outputs_and_datasinks(
     *,
     workflow: pe.Workflow,
@@ -2710,13 +2681,6 @@ def _connect_master_dce_outputs_and_datasinks(
     # NAWM mask
     if dce_has_nawm:
         dce_present.add("nawm_mask")
-    # T1map + B1+map (anat/)
-    if not dce_config.no_t1:
-        dce_present.add("t1_map")
-    if not dce_config.no_t1 and dce_config.t1_map_file is None:
-        dce_present.add("t1_support_map")
-    if dce_config.b1_method != "none":
-        dce_present.add("b1_map")
     # Lesion / ROI
     if dce_has_lesion:
         dce_present.add("lesion_mask_dce")
@@ -2775,10 +2739,6 @@ def _connect_master_dce_outputs_and_datasinks(
         present_inputs=dce_present,
         has_smoothing=dce_config.smooth_fwhm > 0,
         motion_correct=dce_config.motion_correct,
-        b1_source_files=_selected_dce_b1_sources(session_data, dce_config),
-        t1_source_files=_selected_dce_t1_sources(session_data, dce_config),
-        t1_map_expected=not dce_config.no_t1,
-        b1_map_expected=dce_config.b1_method != "none",
         nawm_needs_transform=not bool(dce_config.nawm_mask),
         nawm_source_file=(
             str(dce_config.nawm_mask) if dce_config.nawm_mask else None
@@ -2844,10 +2804,6 @@ def _connect_master_dce_outputs_and_datasinks(
             ("outputnode.r2_map", "inputnode.r2_map"),
             ("outputnode.model_selection_map", "inputnode.model_selection_map"),
             ("outputnode.delta_bic_map", "inputnode.delta_bic_map"),
-            # T1/B1 mapping
-            ("outputnode.t1_map", "inputnode.t1_map"),
-            ("outputnode.t1_support_map", "inputnode.t1_support_map"),
-            ("outputnode.b1_map", "inputnode.b1_map"),
             # Motion-corrected data
             ("outputnode.dce_moco", "inputnode.dce_moco"),
             ("outputnode.dce_mean", "inputnode.dce_mean"),

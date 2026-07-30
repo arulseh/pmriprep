@@ -363,67 +363,6 @@ def _build_aif_mask_meta(
     return out
 
 
-def _build_tb1_meta(
-    base: dict,
-    b1_source_paths: list[str] | None,
-    bids_dir: str,
-    qc_metrics: dict | None = None,
-) -> dict:
-    """Build TB1map metadata from its DCE grid and selected B1 inputs."""
-    from pmriprep.utils.sidecar_builders import build_sources_list
-
-    out = dict(base)
-    out["Description"] = (
-        "B1+ transmit field map (dimensionless ratio, 1.0 = nominal flip angle)"
-    )
-    out["Units"] = "1"
-    out["MissingValue"] = 0
-    b1_qc = (qc_metrics or {}).get("b1_mapping", {})
-    if isinstance(b1_qc, dict) and b1_qc:
-        out["B1Mapping"] = {
-            key: b1_qc[key]
-            for key in (
-                "method", "encoding", "encoding_source", "smoothing_fwhm_mm",
-                "clip_low", "clip_high", "n_valid_voxels", "n_signal_voxels",
-                "valid_fraction_of_signal", "n_b1_outliers_rejected", "qc_pass",
-            )
-            if key in b1_qc
-        }
-    sources = list(out.get("Sources", []))
-    sources.extend(build_sources_list(b1_source_paths or [], bids_dir))
-    out["Sources"] = list(dict.fromkeys(sources))
-    return out
-
-
-def _build_t1_map_meta(
-    base: dict,
-    t1_source_paths: list[str] | None,
-    bids_dir: str,
-    qc_metrics: dict | None = None,
-) -> dict:
-    """Build T1-map metadata with its measurement and support provenance."""
-    from pmriprep.utils.sidecar_builders import (
-        _dce_t1_cosmetic_keys,
-        build_sources_list,
-    )
-
-    out = dict(base)
-    out.update({
-        "Description": "T1 relaxation time map used for DCE concentration conversion",
-        "Units": "ms",
-        "UndefinedValue": "NaN",
-    })
-    t1_qc = (qc_metrics or {}).get("t1_mapping", {})
-    if isinstance(t1_qc, dict):
-        out.update(_dce_t1_cosmetic_keys(t1_qc))
-    sources = list(out.get("Sources", []))
-    for source in build_sources_list(t1_source_paths or [], bids_dir):
-        if source not in sources:
-            sources.append(source)
-    out["Sources"] = sources
-    return out
-
-
 def _build_uncertainty_extra(
     config_dict: dict | None = None,
     qc_metrics: dict | None = None,
@@ -947,60 +886,6 @@ def _copy_aif_mask(
     )
 
 
-def _copy_tb1map(
-    output_dir: str,
-    subject: str,
-    session: str,
-    meta_dict: dict | None = None,
-    in_file: str | None = None,
-) -> str:
-    """Copy a TB1map NIfTI + sidecar to anat/.
-
-    Bypasses ``PMRIPrepDataSink`` because ``TB1map`` is not in the
-    niworkflows default anat-suffix allow-list (`T1w|T2w|T1map|FLAIR|...`).
-    All other DCE-space anat outputs (T1w/FLAIR/T2w/T1map) go through
-    ``_add_anat_image_sink`` → ``PMRIPrepDataSink``.
-    """
-    import logging
-    import shutil
-    from pathlib import Path
-
-    from nipype.interfaces.base import isdefined  # type: ignore[import-untyped]
-
-    # Defensive no-op when upstream produced no B1+ map (e.g., subject
-    # configured b1_method != "none" but the actual mapping failed).
-    # See _copy_perf_map for the sentinel-handling rationale.
-    if in_file is None or not isdefined(in_file) or in_file == "":
-        logging.getLogger("nipype.workflow").warning(
-            "Skipping _copy_tb1map sink: upstream produced no output "
-            "(in_file=%r)", in_file,
-        )
-        return ""
-
-    if meta_dict is None:
-        raise ValueError("TB1map metadata is required when a B1 map is present")
-
-    out_root = Path(output_dir) / "pmriprep" / f"sub-{subject}"
-    if session:
-        out_root = out_root / f"ses-{session}"
-    out_root = out_root / "anat"
-    out_root.mkdir(parents=True, exist_ok=True)
-
-    from pmriprep.utils.sidecar_builders import source_entity_prefix
-
-    sources = meta_dict.get("Sources", []) if isinstance(meta_dict, dict) else []
-    prefix = source_entity_prefix(sources[0] if sources else None, subject, session)
-    stem = f"{prefix}_space-dceref_TB1map"
-    nii_out = out_root / f"{stem}.nii.gz"
-    json_out = out_root / f"{stem}.json"
-
-    shutil.copy2(in_file, nii_out)
-    from pmriprep.utils.sidecar_builders import dump_sidecar_json
-
-    json_out.write_text(dump_sidecar_json(meta_dict))
-    return str(nii_out)
-
-
 def _copy_dce_xfm(
     in_file: str,
     output_dir: str,
@@ -1489,10 +1374,6 @@ def init_dce_datasinks_wf(
     present_inputs: Optional[set[str]] = None,
     has_smoothing: bool = False,
     motion_correct: bool = True,
-    b1_source_files: Optional[list[str]] = None,
-    t1_source_files: Optional[list[str]] = None,
-    t1_map_expected: bool = True,
-    b1_map_expected: bool = True,
     nawm_needs_transform: bool = True,
     nawm_source_file: str | None = None,
     user_lesion_source_file: str | None = None,
@@ -1531,8 +1412,8 @@ def init_dce_datasinks_wf(
                 "model_selection_map", "delta_bic_map",
                 # Smoothed dicts (variable cardinality)
                 "smooth_pk_maps", "smooth_model_free_maps",
-                # T1/B1 + masks (anat/)
-                "t1_map", "t1_support_map", "b1_map", "brain_mask", "nawm_mask",
+                # Anatomical masks
+                "brain_mask", "nawm_mask",
                 # Motion + AIF
                 "dce_moco", "dce_mean", "motion_params",
                 "aif_curve", "aif_mask",
@@ -1863,10 +1744,6 @@ def init_dce_datasinks_wf(
         # full nested-dict shape.
         presence_warnings_dce = [
             warn for cond, warn in (
-                (b1_map_expected and "b1_map" not in present,
-                 "B1+ transmit field map not available"),
-                (t1_map_expected and "t1_map" not in present,
-                 "T1 relaxation time map not available"),
                 ("brain_mask" not in present,
                  "Brain mask in DCE space not available"),
                 ("nawm_mask" not in present,
@@ -2000,96 +1877,6 @@ def init_dce_datasinks_wf(
                 ("subject_id", "subject"),
                 ("session_id", "session"),
                 ("aif_mask", "in_file"),
-            ]),
-            (meta, sink, [("meta_dict", "meta_dict")]),
-        ])
-        sink_outputs.append((sink, "out_file"))
-
-    # --- T1map + B1+map (anat/) ---
-    if "t1_map" in present:
-        meta = pe.Node(
-            niu.Function(
-                input_names=["base", "t1_source_paths", "bids_dir", "qc_metrics"],
-                output_names=["meta_dict"],
-                function=_build_t1_map_meta,
-            ),
-            name="t1_map_meta",
-        )
-        meta.inputs.t1_source_paths = list(t1_source_files or [])
-        meta.inputs.bids_dir = bids_dir
-        workflow.connect([
-            (base_minimal, meta, [("meta_dict", "base")]),
-            (inputnode, meta, [("qc_metrics", "qc_metrics")]),
-        ])
-        sink = pe.Node(
-            PMRIPrepDataSink(
-                check_hdr=True,
-                compress=True,
-                allowed_entities=("space", "datatype", "ceagent"),
-                space="dceref",
-                suffix="T1map",
-                datatype="anat",
-                dismiss_entities=["acquisition"],
-            ),
-            name="t1_map_sink",
-        )
-        workflow.connect([
-            (inputnode, sink, [
-                ("output_dir", "base_directory"),
-                ("t1_map", "in_file"),
-                ("source_dce", "source_file"),
-            ]),
-            (meta, sink, [("meta_dict", "meta_dict")]),
-        ])
-        sink_outputs.append((sink, "out_file"))
-    if "t1_support_map" in present:
-        sink = _add_anat_image_sink(
-            workflow, inputnode, base_minimal,
-            name="t1_support_map", in_attr="t1_support_map", label="dseg",
-            desc="t1Support",
-            description="T1 support provenance labels: 0 outside DCE analysis "
-            "domain, 1 directly measured, 2 locally interpolated, 3 unavailable, "
-            "5 uniform assumption",
-            extra={
-                "LabelMap": {
-                    "0": "Outside DCE analysis domain",
-                    "1": "Directly measured T1",
-                    "2": "Locally interpolated T1",
-                    "3": "T1 unavailable in DCE analysis domain",
-                    "5": "Uniform T1 assumption",
-                },
-            },
-        )
-        sink_outputs.append((sink, "out_file"))
-    if "b1_map" in present:
-        meta = pe.Node(
-            niu.Function(
-                input_names=["base", "b1_source_paths", "bids_dir", "qc_metrics"],
-                output_names=["meta_dict"],
-                function=_build_tb1_meta,
-            ),
-            name="b1_map_meta",
-        )
-        meta.inputs.b1_source_paths = list(b1_source_files or [])
-        meta.inputs.bids_dir = bids_dir
-        workflow.connect(base_minimal, "meta_dict", meta, "base")
-        workflow.connect(inputnode, "qc_metrics", meta, "qc_metrics")
-        sink = pe.Node(
-            niu.Function(
-                input_names=[
-                    "in_file", "output_dir", "subject", "session", "meta_dict",
-                ],
-                output_names=["out_file"],
-                function=_copy_tb1map,
-            ),
-            name="b1_map_sink",
-        )
-        workflow.connect([
-            (inputnode, sink, [
-                ("output_dir", "output_dir"),
-                ("subject_id", "subject"),
-                ("session_id", "session"),
-                ("b1_map", "in_file"),
             ]),
             (meta, sink, [("meta_dict", "meta_dict")]),
         ])

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
 
 from traits.trait_base import Undefined
 
@@ -43,55 +42,6 @@ def test_dce_transform_sink_rejects_fsl_matrix(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="requires an X5 .h5 input"):
         _copy_dce_xfm(
             str(source), str(tmp_path / "out"), "01", "", "T1w", "dceref",
-        )
-
-
-def test_tb1map_sink_accepts_undefined_optional_input(tmp_path: Path) -> None:
-    """Nipype may omit an unavailable B1 map when T1 mapping is disabled."""
-    import nipype.interfaces.utility as niu
-    import nipype.pipeline.engine as pe
-
-    from pmriprep.workflows.dce.datasinks import _copy_tb1map
-
-    node = pe.Node(
-        niu.Function(
-            input_names=[
-                "in_file",
-                "output_dir",
-                "subject",
-                "session",
-                "meta_dict",
-            ],
-            output_names=["out_file"],
-            function=_copy_tb1map,
-        ),
-        name="b1_map_sink",
-        base_dir=str(tmp_path),
-    )
-    node.inputs.output_dir = str(tmp_path / "out")
-    node.inputs.subject = "X"
-    node.inputs.session = "Y"
-
-    result = node.run()
-
-    assert result.outputs.out_file == ""
-
-
-def test_tb1map_sink_requires_metadata_for_real_map(tmp_path: Path) -> None:
-    """A produced B1 map cannot be written without provenance metadata."""
-    import pytest
-
-    from pmriprep.workflows.dce.datasinks import _copy_tb1map
-
-    src = tmp_path / "b1.nii.gz"
-    src.write_bytes(b"fake nifti")
-
-    with pytest.raises(ValueError, match="metadata is required"):
-        _copy_tb1map(
-            output_dir=str(tmp_path / "out"),
-            subject="X",
-            session="Y",
-            in_file=str(src),
         )
 
 
@@ -330,88 +280,6 @@ def test_transformed_mask_metadata_builders_run_in_isolated_functions() -> None:
         assert len(result.outputs.meta["Sources"]) == 2
 
 
-def test_tb1map_uses_standard_suffix_and_dce_source_entities(tmp_path) -> None:
-    from pmriprep.workflows.dce.datasinks import _copy_tb1map
-
-    src = tmp_path / "b1.nii.gz"
-    src.write_bytes(b"fake nifti")
-    out = _copy_tb1map(
-        in_file=str(src), output_dir=str(tmp_path / "out"),
-        subject="X", session="Y",
-        meta_dict={
-            "Sources": [
-                "bids:raw:sub-X/ses-Y/perf/sub-X_ses-Y_acq-fast_run-2_dce.nii.gz"
-            ],
-            "Units": "1",
-        },
-    )
-    assert out.endswith(
-        "sub-X_ses-Y_acq-fast_run-2_space-dceref_TB1map.nii.gz"
-    )
-
-
-def test_tb1map_provenance_includes_grid_and_selected_b1_sources() -> None:
-    from pmriprep.workflows.dce.datasinks import _build_tb1_meta
-
-    base = {
-        "Sources": ["bids:raw:sub-X/ses-Y/perf/sub-X_ses-Y_run-2_dce.nii.gz"],
-        "SpatialReference": "bids::sub-X/ses-Y/perf/ref.nii.gz",
-    }
-    out = _build_tb1_meta(
-        base,
-        [
-            "/raw/sub-X/ses-Y/fmap/sub-X_ses-Y_run-1_TB1map.nii.gz",
-            "/raw/sub-X/ses-Y/fmap/sub-X_ses-Y_run-1_TB1map.nii.gz",
-        ],
-        "/raw",
-        {"b1_mapping": {
-            "method": "precomputed", "encoding": "percent",
-            "n_valid_voxels": 123, "qc_pass": True,
-        }},
-    )
-    assert out["Sources"] == [
-        "bids:raw:sub-X/ses-Y/perf/sub-X_ses-Y_run-2_dce.nii.gz",
-        "bids:raw:sub-X/ses-Y/fmap/sub-X_ses-Y_run-1_TB1map.nii.gz",
-    ]
-    assert out["Units"] == "1"
-    assert out["MissingValue"] == 0
-    assert out["B1Mapping"] == {
-        "method": "precomputed", "encoding": "percent",
-        "n_valid_voxels": 123, "qc_pass": True,
-    }
-
-
-def test_t1map_provenance_identifies_fallback_and_vfa_sources() -> None:
-    from pmriprep.workflows.dce.datasinks import _build_t1_map_meta
-
-    out = _build_t1_map_meta(
-        {
-            "Sources": [
-                "bids:raw:sub-X/ses-Y/perf/sub-X_ses-Y_run-2_dce.nii.gz"
-            ],
-        },
-        ["/raw/sub-X/ses-Y/anat/sub-X_ses-Y_flip-1_VFA.nii.gz"],
-        "/raw",
-        {"t1_mapping": {
-            "t1_method": "wlls",
-            "t1_correction": {
-                "correction_applied": "fallback",
-                "fallback_value_ms": 1200.0,
-                "reason": "insufficient_valid_support",
-            },
-            "t1_support": {"uniform_assumption_voxels": 42},
-        }},
-    )
-
-    assert out["T1Source"] == "uniform_field_strength_fallback"
-    assert out["T1MappingAttempted"] is True
-    assert out["T1MappingAccepted"] is False
-    assert out["T1AssumedValue"] == 1200.0
-    assert out["T1Support"]["uniform_assumption_voxels"] == 42
-    assert out["UndefinedValue"] == "NaN"
-    assert out["Sources"][-1].endswith("sub-X_ses-Y_flip-1_VFA.nii.gz")
-
-
 def test_dce_mean_meta_identifies_all_volume_aggregation() -> None:
     from pmriprep.workflows.dce.datasinks import _build_dce_mean_meta
 
@@ -521,43 +389,6 @@ def test_dce_aif_mask_sink_writes_measured_support(tmp_path) -> None:
     assert out.endswith("sub-X_ses-Y_desc-dceAif_mask.nii.gz")
     assert Path(out).read_bytes() == b"measured support"
     assert Path(out).with_suffix("").with_suffix(".json").is_file()
-
-
-def test_master_b1_source_selection_matches_configured_method() -> None:
-    from pmriprep.config.dce import DCEConfig
-    from pmriprep.workflows.base import _selected_dce_b1_sources
-
-    session = SimpleNamespace(modalities=SimpleNamespace(
-        b1_precomputed_file=Path("/raw/sub-X_TB1map.nii.gz"),
-        afi_mode="4d",
-        afi_4d_file=Path("/raw/sub-X_TB1AFI.nii.gz"),
-    ))
-    config = DCEConfig()
-    config.b1_method = "precomputed"
-    assert _selected_dce_b1_sources(session, config) == [
-        "/raw/sub-X_TB1map.nii.gz"
-    ]
-    config.b1_method = "afi"
-    assert _selected_dce_b1_sources(session, config) == [
-        "/raw/sub-X_TB1AFI.nii.gz"
-    ]
-    config.b1_method = "none"
-    assert _selected_dce_b1_sources(session, config) == []
-
-
-def test_master_t1_source_selection_matches_configured_method() -> None:
-    from pmriprep.config.dce import DCEConfig
-    from pmriprep.workflows.base import _selected_dce_t1_sources
-
-    session = SimpleNamespace(modalities=SimpleNamespace(
-        vfa=[Path("/raw/sub-X_flip-1_VFA.nii.gz"), Path("/raw/sub-X_flip-2_VFA.nii.gz")],
-    ))
-    config = DCEConfig()
-    assert _selected_dce_t1_sources(session, config) == [
-        "/raw/sub-X_flip-1_VFA.nii.gz", "/raw/sub-X_flip-2_VFA.nii.gz",
-    ]
-    config.t1_map_file = Path("/raw/sub-X_T1map.nii.gz")
-    assert _selected_dce_t1_sources(session, config) == ["/raw/sub-X_T1map.nii.gz"]
 
 
 def test_perfusion_spatial_reference_preserves_source_entities() -> None:

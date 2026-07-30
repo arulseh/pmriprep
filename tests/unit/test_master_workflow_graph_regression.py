@@ -164,10 +164,10 @@ def _build_master(
     )
 
 
-def test_master_external_t1_exports_map_used_for_conversion(
+def test_master_external_t1_drives_conversion_without_public_map(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """External T1 drives conversion and exports the DCE-space map actually used."""
+    """External T1 drives conversion without claiming a registered derivative."""
     monkeypatch.setattr("pmriprep.utils.device.detect_torch_device", lambda: "cpu")
     workflow = _build_master(
         tmp_path,
@@ -176,7 +176,7 @@ def test_master_external_t1_exports_map_used_for_conversion(
     )
     node_names = {node.fullname for node in workflow._get_all_nodes()}
     assert any(name.endswith("external_t1_to_dce") for name in node_names)
-    assert any(name.endswith("t1_map_sink") for name in node_names)
+    assert not any(name.endswith("t1_map_sink") for name in node_names)
 
 
 MASTER_MATRIX = [

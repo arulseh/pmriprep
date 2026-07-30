@@ -633,8 +633,6 @@ def test_dce_factory_warnings_in_anchor_sidecar(
     assert anchor.exists(), f"Anchor sidecar missing: {anchor}"
     sidecar = json.loads(anchor.read_text())
     warnings = sidecar.get("QCWarnings", [])
-    assert any("B1+" in w for w in warnings)
-    assert any("T1 relaxation" in w for w in warnings)
     assert any("Brain mask" in w for w in warnings)
     assert any("registration transform" in w for w in warnings)
     assert "InputFunctionCompartment" not in sidecar
@@ -645,30 +643,6 @@ def test_dce_factory_warnings_in_anchor_sidecar(
         / "sub-01_ses-0001_desc-dceQC_quality.json"
     )
     assert not legacy.exists()
-
-
-def test_dce_intentional_t1_b1_skips_do_not_emit_missing_warnings(
-    tmp_path: Path, minimal_bids: tuple[Path, str],
-) -> None:
-    """Configured T1/B1 opt-outs are not reported as missing derivatives."""
-    from pmriprep.workflows.dce.datasinks import init_dce_datasinks_wf
-
-    bids, _ = minimal_bids
-    workflow = init_dce_datasinks_wf(
-        output_dir=str(tmp_path / "out"),
-        bids_dir=str(bids),
-        subject_id="01",
-        session_id="0001",
-        pk_model="tofts",
-        inference="nlls",
-        present_inputs={"dce_moco"},
-        t1_map_expected=False,
-        b1_map_expected=False,
-    )
-
-    warnings = workflow.get_node("dce_moco_meta").inputs.presence_warnings
-    assert not any("T1 relaxation" in warning for warning in warnings)
-    assert not any("B1+" in warning for warning in warnings)
 
 
 # ---------------------------------------------------------------------------

@@ -1516,10 +1516,6 @@ def init_dce_preproc_wf(
                 "dce_moco",
                 "dce_mean",
                 "motion_params",
-                # T1/B1 mapping outputs
-                "b1_map",
-                "t1_map",
-                "t1_support_map",
                 # Pharmacokinetic parameter maps
                 "ktrans_map",
                 "ve_map",
@@ -2687,13 +2683,10 @@ def init_dce_preproc_wf(
         ]),
     ])
 
-    # T1/B1/VFA output connections (conditional on T1 source)
+    # T1/B1/VFA QC output connections (conditional on T1 source)
     if use_vfa_t1:
         workflow.connect([
-            (transform_b1_to_dce, outputnode, [("out_file", "b1_map")]),
             (t1_b1_wf, outputnode, [
-                ("outputnode.t1_map", "t1_map"),
-                ("outputnode.t1_support_map", "t1_support_map"),
                 ("outputnode.vfa_registration_qc_plot", "vfa_registration_qc_plot"),
                 ("outputnode.afi_registration_qc_plot", "afi_registration_qc_plot"),
                 ("outputnode.b1_qc_plot", "b1_qc_plot"),
@@ -2702,7 +2695,6 @@ def init_dce_preproc_wf(
         ])
     elif need_b1:
         workflow.connect([
-            (transform_b1_to_dce, outputnode, [("out_file", "b1_map")]),
             (t1_b1_wf, outputnode, [
                 ("outputnode.afi_registration_qc_plot", "afi_registration_qc_plot"),
                 ("outputnode.b1_qc_plot", "b1_qc_plot"),
@@ -2710,7 +2702,6 @@ def init_dce_preproc_wf(
         ])
     if use_external_t1:
         workflow.connect([
-            (external_t1_to_dce, outputnode, [("out_file", "t1_map")]),
             (external_t1_qc_plot, outputnode, [("plot_file", "t1_qc_plot")]),
         ])
 

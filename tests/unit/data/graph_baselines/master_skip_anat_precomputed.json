@@ -44,12 +44,6 @@
     ],
     [
       "dce_wf",
-      "outputnode.b1_map",
-      "dce_datasinks_wf",
-      "inputnode.b1_map"
-    ],
-    [
-      "dce_wf",
       "outputnode.b1_qc_plot",
       "dce_datasinks_wf",
       "inputnode.b1_qc_plot"
@@ -314,21 +308,9 @@
     ],
     [
       "dce_wf",
-      "outputnode.t1_map",
-      "dce_datasinks_wf",
-      "inputnode.t1_map"
-    ],
-    [
-      "dce_wf",
       "outputnode.t1_qc_plot",
       "dce_datasinks_wf",
       "inputnode.t1_qc_plot"
-    ],
-    [
-      "dce_wf",
-      "outputnode.t1_support_map",
-      "dce_datasinks_wf",
-      "inputnode.t1_support_map"
     ],
     [
       "dce_wf",
