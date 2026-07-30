@@ -205,6 +205,37 @@ def test_tb1map_provenance_includes_grid_and_selected_b1_sources() -> None:
     }
 
 
+def test_t1map_provenance_identifies_fallback_and_vfa_sources() -> None:
+    from pmriprep.workflows.dce.datasinks import _build_t1_map_meta
+
+    out = _build_t1_map_meta(
+        {
+            "Sources": [
+                "bids:raw:sub-X/ses-Y/perf/sub-X_ses-Y_run-2_dce.nii.gz"
+            ],
+        },
+        ["/raw/sub-X/ses-Y/anat/sub-X_ses-Y_flip-1_VFA.nii.gz"],
+        "/raw",
+        {"t1_mapping": {
+            "t1_method": "wlls",
+            "t1_correction": {
+                "correction_applied": "fallback",
+                "fallback_value_ms": 1200.0,
+                "reason": "insufficient_valid_support",
+            },
+            "t1_support": {"uniform_assumption_voxels": 42},
+        }},
+    )
+
+    assert out["T1Source"] == "uniform_field_strength_fallback"
+    assert out["T1MappingAttempted"] is True
+    assert out["T1MappingAccepted"] is False
+    assert out["T1AssumedValue"] == 1200.0
+    assert out["T1Support"]["uniform_assumption_voxels"] == 42
+    assert out["UndefinedValue"] == "NaN"
+    assert out["Sources"][-1].endswith("sub-X_ses-Y_flip-1_VFA.nii.gz")
+
+
 def test_master_b1_source_selection_matches_configured_method() -> None:
     from pmriprep.config.dce import DCEConfig
     from pmriprep.workflows.base import _selected_dce_b1_sources
@@ -225,6 +256,21 @@ def test_master_b1_source_selection_matches_configured_method() -> None:
     ]
     config.b1_method = "none"
     assert _selected_dce_b1_sources(session, config) == []
+
+
+def test_master_t1_source_selection_matches_configured_method() -> None:
+    from pmriprep.config.dce import DCEConfig
+    from pmriprep.workflows.base import _selected_dce_t1_sources
+
+    session = SimpleNamespace(modalities=SimpleNamespace(
+        vfa=[Path("/raw/sub-X_flip-1_VFA.nii.gz"), Path("/raw/sub-X_flip-2_VFA.nii.gz")],
+    ))
+    config = DCEConfig()
+    assert _selected_dce_t1_sources(session, config) == [
+        "/raw/sub-X_flip-1_VFA.nii.gz", "/raw/sub-X_flip-2_VFA.nii.gz",
+    ]
+    config.t1_map_file = Path("/raw/sub-X_T1map.nii.gz")
+    assert _selected_dce_t1_sources(session, config) == ["/raw/sub-X_T1map.nii.gz"]
 
 
 def test_perfusion_spatial_reference_preserves_source_entities() -> None:

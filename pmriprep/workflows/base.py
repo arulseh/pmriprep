@@ -2576,6 +2576,19 @@ def _selected_dce_b1_sources(
         return [str(modalities.afi_4d_file)]
     return []
 
+
+def _selected_dce_t1_sources(
+    session_data: SessionData,
+    dce_config: DCEConfig,
+) -> list[str]:
+    """Return the raw inputs used to produce the DCE-space T1 map."""
+    if dce_config.t1_map_file is not None:
+        return [str(dce_config.t1_map_file)]
+    if dce_config.no_t1:
+        return []
+    return [str(path) for path in session_data.modalities.vfa]
+
+
 def _connect_master_dce_outputs_and_datasinks(
     *,
     workflow: pe.Workflow,
@@ -2745,6 +2758,7 @@ def _connect_master_dce_outputs_and_datasinks(
         has_smoothing=dce_config.smooth_fwhm > 0,
         motion_correct=dce_config.motion_correct,
         b1_source_files=_selected_dce_b1_sources(session_data, dce_config),
+        t1_source_files=_selected_dce_t1_sources(session_data, dce_config),
         t1_map_expected=not dce_config.no_t1,
         b1_map_expected=dce_config.b1_method != "none",
     )

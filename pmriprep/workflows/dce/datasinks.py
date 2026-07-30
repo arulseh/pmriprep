@@ -395,6 +395,35 @@ def _build_tb1_meta(
     return out
 
 
+def _build_t1_map_meta(
+    base: dict,
+    t1_source_paths: list[str] | None,
+    bids_dir: str,
+    qc_metrics: dict | None = None,
+) -> dict:
+    """Build T1-map metadata with its measurement and support provenance."""
+    from pmriprep.utils.sidecar_builders import (
+        _dce_t1_cosmetic_keys,
+        build_sources_list,
+    )
+
+    out = dict(base)
+    out.update({
+        "Description": "T1 relaxation time map used for DCE concentration conversion",
+        "Units": "ms",
+        "UndefinedValue": "NaN",
+    })
+    t1_qc = (qc_metrics or {}).get("t1_mapping", {})
+    if isinstance(t1_qc, dict):
+        out.update(_dce_t1_cosmetic_keys(t1_qc))
+    sources = list(out.get("Sources", []))
+    for source in build_sources_list(t1_source_paths or [], bids_dir):
+        if source not in sources:
+            sources.append(source)
+    out["Sources"] = sources
+    return out
+
+
 def _build_uncertainty_extra(
     config_dict: dict | None = None,
     qc_metrics: dict | None = None,
@@ -1308,6 +1337,7 @@ def init_dce_datasinks_wf(
     has_smoothing: bool = False,
     motion_correct: bool = True,
     b1_source_files: Optional[list[str]] = None,
+    t1_source_files: Optional[list[str]] = None,
     t1_map_expected: bool = True,
     b1_map_expected: bool = True,
     name: str = "dce_datasinks_wf",
@@ -1790,12 +1820,40 @@ def init_dce_datasinks_wf(
 
     # --- T1map + B1+map (anat/) ---
     if "t1_map" in present:
-        sink = _add_anat_image_sink(
-            workflow, inputnode, base_minimal,
-            name="t1_map", in_attr="t1_map", label="T1map",
-            description="T1 relaxation time map (ms)",
-            units="ms",
+        meta = pe.Node(
+            niu.Function(
+                input_names=["base", "t1_source_paths", "bids_dir", "qc_metrics"],
+                output_names=["meta_dict"],
+                function=_build_t1_map_meta,
+            ),
+            name="t1_map_meta",
         )
+        meta.inputs.t1_source_paths = list(t1_source_files or [])
+        meta.inputs.bids_dir = bids_dir
+        workflow.connect([
+            (base_minimal, meta, [("meta_dict", "base")]),
+            (inputnode, meta, [("qc_metrics", "qc_metrics")]),
+        ])
+        sink = pe.Node(
+            PMRIPrepDataSink(
+                check_hdr=True,
+                compress=True,
+                allowed_entities=("space", "datatype", "ceagent"),
+                space="dceref",
+                suffix="T1map",
+                datatype="anat",
+                dismiss_entities=["acquisition"],
+            ),
+            name="t1_map_sink",
+        )
+        workflow.connect([
+            (inputnode, sink, [
+                ("output_dir", "base_directory"),
+                ("t1_map", "in_file"),
+                ("source_dce", "source_file"),
+            ]),
+            (meta, sink, [("meta_dict", "meta_dict")]),
+        ])
         sink_outputs.append((sink, "out_file"))
     if "t1_support_map" in present:
         sink = _add_anat_image_sink(

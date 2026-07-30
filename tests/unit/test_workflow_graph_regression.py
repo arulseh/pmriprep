@@ -78,6 +78,7 @@ from pmriprep.config.dsc import DSCConfig
 from pmriprep.config.anat import AnatConfig
 from pmriprep.workflows.anat.base import init_anat_preproc_wf
 from pmriprep.workflows.dce.base import init_dce_preproc_wf
+from pmriprep.workflows.dce.datasinks import init_dce_datasinks_wf
 from pmriprep.workflows.dsc.base import init_dsc_preproc_wf
 
 BASELINE_DIR = Path(__file__).parent / "data" / "graph_baselines"
@@ -375,6 +376,24 @@ def _dsc(bids: Path, **cfg: Any) -> pe.Workflow:
     )
 
 
+def _dce_t1_datasinks(bids: Path) -> pe.Workflow:
+    """Build the public T1-map sink branch with dynamic provenance."""
+    return init_dce_datasinks_wf(
+        output_dir=str(bids / "derivatives"),
+        bids_dir=str(bids),
+        subject_id="0001",
+        session_id="0001",
+        pk_model="auto",
+        inference="nlls",
+        present_inputs={"t1_map"},
+        t1_source_files=[
+            str(bids / "sub-0001" / "ses-0001" / "anat" / "sub-0001_ses-0001_VFA.nii.gz")
+        ],
+        t1_map_expected=True,
+        b1_map_expected=False,
+    )
+
+
 def _anat(
     bids: Path,
     *,
@@ -407,6 +426,7 @@ _ALL_UNDERLAYS = ["t1w_precon", "t1w_postcon", "t1w_subtraction", "flair_precon"
 Builder = Callable[[Path], pe.Workflow]
 
 DCE_MATRIX: list[tuple[str, Builder]] = [
+    ("dce_datasinks_t1", _dce_t1_datasinks),
     ("dce_default", lambda b: _dce(b)),
     # has_tissue_seg=False on the default VFA path -> isolates the 3 probseg
     # transform nodes (dce/base.py:715).
