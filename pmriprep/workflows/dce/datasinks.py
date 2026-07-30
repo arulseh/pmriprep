@@ -857,6 +857,41 @@ def _copy_perf_map(
     return str(nii_out)
 
 
+def _copy_aif_mask(
+    in_file: str,
+    output_dir: str,
+    subject: str,
+    session: str,
+    desc: str,
+    suffix: str,
+    meta_dict: dict,
+    datatype: str = "perf",
+    bids_suffix: str = "mask",
+) -> str:
+    """Write an AIF support mask only when the AIF has spatial support."""
+    import logging
+
+    if isinstance(meta_dict, dict) and meta_dict.get("SpatialSupportAvailable") is False:
+        logging.getLogger("nipype.workflow").info(
+            "Skipping DCE AIF mask derivative: the selected AIF has no spatial support"
+        )
+        return ""
+
+    from pmriprep.workflows.dce.datasinks import _copy_perf_map
+
+    return _copy_perf_map(
+        in_file=in_file,
+        output_dir=output_dir,
+        subject=subject,
+        session=session,
+        desc=desc,
+        suffix=suffix,
+        meta_dict=meta_dict,
+        datatype=datatype,
+        bids_suffix=bids_suffix,
+    )
+
+
 def _copy_tb1map(
     output_dir: str,
     subject: str,
@@ -1862,7 +1897,7 @@ def init_dce_datasinks_wf(
                     "desc", "suffix", "meta_dict", "datatype", "bids_suffix",
                 ],
                 output_names=["out_file"],
-                function=_copy_perf_map,
+                function=_copy_aif_mask,
             ),
             name="aif_mask_sink",
         )

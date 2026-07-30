@@ -404,7 +404,7 @@ def _dce_preproc_datasinks(bids: Path) -> pe.Workflow:
         session_id="0001",
         pk_model="auto",
         inference="nlls",
-        present_inputs={"dce_moco", "dce_mean"},
+        present_inputs={"dce_moco", "dce_mean", "aif_mask"},
         motion_correct=False,
         t1_map_expected=False,
         b1_map_expected=False,

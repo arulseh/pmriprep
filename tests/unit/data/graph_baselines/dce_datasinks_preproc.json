@@ -1,6 +1,24 @@
 {
   "edges": [
     [
+      "aif_mask_meta",
+      "meta_dict",
+      "aif_mask_sink",
+      "meta_dict"
+    ],
+    [
+      "aif_mask_sink",
+      "out_file",
+      "dd_merge",
+      "in4"
+    ],
+    [
+      "base_minimal_meta",
+      "meta_dict",
+      "aif_mask_meta",
+      "base"
+    ],
+    [
       "base_perf_meta",
       "meta_dict",
       "ktrans_map_meta",
@@ -64,7 +82,7 @@
       "figures_writer",
       "aif_curve_txt",
       "dd_merge",
-      "in4"
+      "in5"
     ],
     [
       "inputnode",
@@ -89,6 +107,12 @@
       "aif_location_plot",
       "figures_writer",
       "aif_location_plot"
+    ],
+    [
+      "inputnode",
+      "aif_mask",
+      "aif_mask_sink",
+      "in_file"
     ],
     [
       "inputnode",
@@ -207,6 +231,12 @@
     [
       "inputnode",
       "output_dir",
+      "aif_mask_sink",
+      "output_dir"
+    ],
+    [
+      "inputnode",
+      "output_dir",
       "dataset_description",
       "output_dir"
     ],
@@ -285,6 +315,12 @@
     [
       "inputnode",
       "qc_metrics",
+      "aif_mask_meta",
+      "qc_metrics"
+    ],
+    [
+      "inputnode",
+      "qc_metrics",
       "base_perf_meta",
       "qc_metrics"
     ],
@@ -329,6 +365,12 @@
       "roi_stats_json",
       "ktrans_map_meta",
       "roi_stats_json"
+    ],
+    [
+      "inputnode",
+      "session_id",
+      "aif_mask_sink",
+      "session"
     ],
     [
       "inputnode",
@@ -417,6 +459,12 @@
     [
       "inputnode",
       "subject_id",
+      "aif_mask_sink",
+      "subject"
+    ],
+    [
+      "inputnode",
+      "subject_id",
       "base_minimal_meta",
       "subject"
     ],
@@ -500,6 +548,32 @@
     ]
   ],
   "function_io": {
+    "aif_mask_meta": {
+      "input_names": [
+        "base",
+        "description",
+        "qc_metrics"
+      ],
+      "output_names": [
+        "meta_dict"
+      ]
+    },
+    "aif_mask_sink": {
+      "input_names": [
+        "bids_suffix",
+        "datatype",
+        "desc",
+        "in_file",
+        "meta_dict",
+        "output_dir",
+        "session",
+        "subject",
+        "suffix"
+      ],
+      "output_names": [
+        "out_file"
+      ]
+    },
     "base_minimal_meta": {
       "input_names": [
         "bids_dir",
@@ -647,6 +721,8 @@
     }
   },
   "function_sha256": {
+    "aif_mask_meta": "8b97eda71134c24c8889b666dd65a552736fd3a6fe5f16ccb1e406a8363c4882",
+    "aif_mask_sink": "93c01285d7934e3dce643b514dd09f9d5c30d1eb75df99136727eb50a04dc364",
     "base_minimal_meta": "98ed832b6deb40bf732d84e1e4f2bd5f1f4a86850f159e8c8c4ee8e11f54306b",
     "base_perf_meta": "98ed832b6deb40bf732d84e1e4f2bd5f1f4a86850f159e8c8c4ee8e11f54306b",
     "base_perf_no_ktrans_meta": "98ed832b6deb40bf732d84e1e4f2bd5f1f4a86850f159e8c8c4ee8e11f54306b",
@@ -660,6 +736,14 @@
   },
   "nipype_version": "1.10.0",
   "node_attrs": {
+    "aif_mask_meta": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "aif_mask_sink": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
     "anat_mask_sources": {
       "mem_gb": 0.2,
       "n_procs": 1
@@ -726,6 +810,17 @@
     }
   },
   "node_params": {
+    "aif_mask_meta": {
+      "description": "AIF spatial-support mask in DCE space",
+      "function_str": "def _build_aif_mask_meta(\n    base: dict,\n    description: str,\n    qc_metrics: dict | None,\n) -> dict:\n    \"\"\"Build an AIF ROI sidecar with the canonical DCE AIF block.\"\"\"\n    from pmriprep.utils.aif_provenance import build_aif_provenance_block\n\n    out = dict(base)\n    out[\"Description\"] = description\n    out[\"Type\"] = \"ROI\"\n    aif_block = build_aif_provenance_block(qc_metrics, modality=\"DCE\")\n    if aif_block:\n        out.setdefault(\"PerfusionProcessing\", {})[\"AIF\"] = aif_block\n    source = aif_block.get(\"Source\")\n    if source:\n        spatial_support_available = source in {\n            \"measured\", \"gamma_fit_measured\",\n        }\n        out[\"SpatialSupportAvailable\"] = spatial_support_available\n        if not spatial_support_available:\n            out[\"EmptyMaskMeaning\"] = (\n                \"No spatial AIF voxels were selected for this non-measured curve\"\n            )\n    return out\n"
+    },
+    "aif_mask_sink": {
+      "bids_suffix": "mask",
+      "datatype": "perf",
+      "desc": "dceAif",
+      "function_str": "def _copy_aif_mask(\n    in_file: str,\n    output_dir: str,\n    subject: str,\n    session: str,\n    desc: str,\n    suffix: str,\n    meta_dict: dict,\n    datatype: str = \"perf\",\n    bids_suffix: str = \"mask\",\n) -> str:\n    \"\"\"Write an AIF support mask only when the AIF has spatial support.\"\"\"\n    import logging\n\n    if isinstance(meta_dict, dict) and meta_dict.get(\"SpatialSupportAvailable\") is False:\n        logging.getLogger(\"nipype.workflow\").info(\n            \"Skipping DCE AIF mask derivative: the selected AIF has no spatial support\"\n        )\n        return \"\"\n\n    from pmriprep.workflows.dce.datasinks import _copy_perf_map\n\n    return _copy_perf_map(\n        in_file=in_file,\n        output_dir=output_dir,\n        subject=subject,\n        session=session,\n        desc=desc,\n        suffix=suffix,\n        meta_dict=meta_dict,\n        datatype=datatype,\n        bids_suffix=bids_suffix,\n    )\n",
+      "suffix": ""
+    },
     "anat_mask_sources": {
       "axis": "vstack",
       "no_flatten": false,
@@ -803,6 +898,14 @@
     }
   },
   "nodes": [
+    [
+      "aif_mask_meta",
+      "Function"
+    ],
+    [
+      "aif_mask_sink",
+      "Function"
+    ],
     [
       "anat_mask_sources",
       "Merge"
