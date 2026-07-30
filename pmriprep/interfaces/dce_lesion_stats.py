@@ -52,6 +52,9 @@ class DCELesionStatsInputSpec(BaseInterfaceInputSpec):
     ve_map = traits.Str(desc="ve (EES volume fraction) map path")
     vp_map = traits.Str(desc="vp (plasma volume fraction) map path")
     kep_map = traits.Str(desc="kep (rate constant) map path")
+    fp_map = traits.Str(desc="Fp (plasma flow) map path")
+    ps_map = traits.Str(desc="PS (permeability-surface area product) map path")
+    e_map = traits.Str(desc="E (extraction fraction) map path")
 
     # IAUC maps (all optional)
     iauc60_map = traits.Str(desc="IAUC at 60 seconds map path")
@@ -284,6 +287,9 @@ class DCELesionStats(BaseInterface):
             ("ve_map", "ve"),
             ("vp_map", "vp"),
             ("kep_map", "kep"),
+            ("fp_map", "fp"),
+            ("ps_map", "ps"),
+            ("e_map", "e"),
             ("iauc60_map", "iauc60"),
             ("iauc90_map", "iauc90"),
             ("iauc120_map", "iauc120"),

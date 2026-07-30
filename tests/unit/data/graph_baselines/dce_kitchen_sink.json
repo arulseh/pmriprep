@@ -957,7 +957,25 @@
     [
       "pk_modeling",
       "out_e",
+      "lesion_stats",
+      "e_map"
+    ],
+    [
+      "pk_modeling",
+      "out_e",
       "outputnode",
+      "e_map"
+    ],
+    [
+      "pk_modeling",
+      "out_e",
+      "roi_stats",
+      "e_map"
+    ],
+    [
+      "pk_modeling",
+      "out_e",
+      "user_lesion_stats",
       "e_map"
     ],
     [
@@ -987,7 +1005,25 @@
     [
       "pk_modeling",
       "out_fp",
+      "lesion_stats",
+      "fp_map"
+    ],
+    [
+      "pk_modeling",
+      "out_fp",
       "outputnode",
+      "fp_map"
+    ],
+    [
+      "pk_modeling",
+      "out_fp",
+      "roi_stats",
+      "fp_map"
+    ],
+    [
+      "pk_modeling",
+      "out_fp",
+      "user_lesion_stats",
       "fp_map"
     ],
     [
@@ -1239,7 +1275,25 @@
     [
       "pk_modeling",
       "out_ps",
+      "lesion_stats",
+      "ps_map"
+    ],
+    [
+      "pk_modeling",
+      "out_ps",
       "outputnode",
+      "ps_map"
+    ],
+    [
+      "pk_modeling",
+      "out_ps",
+      "roi_stats",
+      "ps_map"
+    ],
+    [
+      "pk_modeling",
+      "out_ps",
+      "user_lesion_stats",
       "ps_map"
     ],
     [

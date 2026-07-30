@@ -59,7 +59,7 @@ def _is_degenerate_dce_fit(
         return (
             fp <= 0
             or fp >= FP_BOUNDS.max
-            or ps < 0
+            or ps <= 0
             or ps >= PS_BOUNDS.max
             or ve <= TWO_CXM_VE_BOUNDS[0]
             or ve >= TWO_CXM_VE_BOUNDS[1]

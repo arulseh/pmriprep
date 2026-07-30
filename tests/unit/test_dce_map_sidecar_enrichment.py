@@ -152,6 +152,16 @@ class TestPKMapKeyDriftGuard:
         for key in ("fp_uncertainty", "ps_uncertainty"):
             assert DCE_POPULATION_AIF_USAGE[key] == "ratio_defensible"
 
+    def test_2cxm_sidecars_record_identifiable_domains(self) -> None:
+        for map_key in ("fp", "ps"):
+            out = enrich_dce_pk_map_sidecar({}, map_key=map_key)
+            assert "BoundaryHandling" in out
+            assert "NaN" in out["ValueDomain"]
+
+        extraction = enrich_dce_pk_map_sidecar({}, map_key="e")
+        assert extraction["Estimator"] == "PS / (Fp + PS)"
+        assert "zero-exchange" in extraction["UndefinedValue"]
+
 
 class TestBATCorrectionProvenance:
     """Regression: BATCorrection must surface from the MERGED qc dict.

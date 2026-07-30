@@ -413,7 +413,7 @@ def init_dce_lesion_stats_wf(
 
     Inputs
     ------
-    ktrans_map, ve_map, vp_map, kep_map
+    ktrans_map, ve_map, vp_map, kep_map, fp_map, ps_map, e_map
         PK parameter maps (shared by all three nodes).
     iauc60_map, iauc90_map, iauc120_map, peak_enhancement_map, ttp_map, ser_map
         Model-free maps.
@@ -445,6 +445,9 @@ def init_dce_lesion_stats_wf(
                 "ve_map",
                 "vp_map",
                 "kep_map",
+                "fp_map",
+                "ps_map",
+                "e_map",
                 "iauc60_map",
                 "iauc90_map",
                 "iauc120_map",
@@ -489,6 +492,9 @@ def init_dce_lesion_stats_wf(
         ("ve_map", "ve_map"),
         ("vp_map", "vp_map"),
         ("kep_map", "kep_map"),
+        ("fp_map", "fp_map"),
+        ("ps_map", "ps_map"),
+        ("e_map", "e_map"),
         ("iauc60_map", "iauc60_map"),
         ("iauc90_map", "iauc90_map"),
         ("iauc120_map", "iauc120_map"),
@@ -2515,6 +2521,9 @@ def init_dce_preproc_wf(
             ("outputnode.out_ve", "inputnode.ve_map"),
             ("outputnode.out_vp", "inputnode.vp_map"),
             ("outputnode.out_kep", "inputnode.kep_map"),
+            ("outputnode.out_fp", "inputnode.fp_map"),
+            ("outputnode.out_ps", "inputnode.ps_map"),
+            ("outputnode.out_e", "inputnode.e_map"),
             ("outputnode.out_iauc60", "inputnode.iauc60_map"),
             ("outputnode.out_iauc90", "inputnode.iauc90_map"),
             ("outputnode.out_iauc120", "inputnode.iauc120_map"),

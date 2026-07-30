@@ -1659,6 +1659,23 @@ def enrich_dce_pk_map_sidecar(
                 "externally constrained vp values remain conditional estimates"
             ),
         })
+    if map_key in {"fp", "ps"}:
+        sidecar.update({
+            "ValueDomain": "positive interior optimizer range, or NaN",
+            "BoundaryHandling": (
+                "Fits at either optimizer boundary are rejected rather than "
+                f"published as ordinary {map_key} estimates"
+            ),
+        })
+    if map_key == "e":
+        sidecar.update({
+            "Estimator": "PS / (Fp + PS)",
+            "ValueDomain": "greater than 0 and less than 1, or NaN",
+            "UndefinedValue": (
+                "NaN when the fitted 2CXM parameter set is rejected, including "
+                "zero-exchange and optimizer-boundary solutions"
+            ),
+        })
     if not qc_metrics or not isinstance(qc_metrics, dict):
         if lesion_fragment:
             sidecar["LesionStats"] = dict(lesion_fragment)

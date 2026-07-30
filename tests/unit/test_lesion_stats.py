@@ -952,11 +952,17 @@ class TestDCEStatisticsMapSupport:
         iface.inputs.iauc60_map = self._save(
             tmp_path, "iauc60.nii.gz", values
         )
+        iface.inputs.fp_map = self._save(tmp_path, "fp.nii.gz", values)
+        iface.inputs.ps_map = self._save(tmp_path, "ps.nii.gz", values)
+        iface.inputs.e_map = self._save(tmp_path, "e.nii.gz", values)
 
         maps = iface._load_maps()
 
         np.testing.assert_array_equal(maps["ktrans"], values)
         np.testing.assert_array_equal(maps["iauc60"], values)
+        np.testing.assert_array_equal(maps["fp"], values)
+        np.testing.assert_array_equal(maps["ps"], values)
+        np.testing.assert_array_equal(maps["e"], values)
         pk_stats = compute_map_statistics(
             maps["ktrans"], np.ones_like(values, dtype=bool)
         )
