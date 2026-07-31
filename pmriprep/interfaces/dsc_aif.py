@@ -2169,7 +2169,9 @@ class AIFDetection(BaseInterface):
 
         # --- Build time axis ---
         t = np.arange(n_timepoints) * tr
-        aif = np.zeros(n_timepoints, dtype=np.float64)
+        aif: npt.NDArray[np.float64] = np.zeros(
+            n_timepoints, dtype=np.float64,
+        )
 
         # --- First-pass component ---
         post_arrival = t > t0

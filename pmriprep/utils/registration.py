@@ -269,8 +269,8 @@ def calculate_correlation(
         )
 
     # Flatten images
-    flat1 = image1.ravel()
-    flat2 = image2.ravel()
+    flat1: NDArray[np.floating] = image1.ravel()
+    flat2: NDArray[np.floating] = image2.ravel()
 
     # Apply mask if provided
     if mask is not None:
@@ -418,8 +418,8 @@ def calculate_nmi(
         )
 
     # Flatten images
-    flat1 = image1.ravel().astype(np.float64)
-    flat2 = image2.ravel().astype(np.float64)
+    flat1: NDArray[np.float64] = image1.ravel().astype(np.float64)
+    flat2: NDArray[np.float64] = image2.ravel().astype(np.float64)
 
     # Apply mask if provided
     if mask is not None:

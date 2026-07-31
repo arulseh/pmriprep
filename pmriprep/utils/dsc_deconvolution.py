@@ -361,6 +361,7 @@ def svd_deconvolve_standard_batch(
     # Store original shape for reshaping output
     original_shape = tissue_curves.shape
     n_timepoints = original_shape[-1]
+    tissue_2d: npt.NDArray[np.floating]
 
     # Reshape to 2D (n_voxels, n_timepoints)
     if tissue_curves.ndim > 2:
@@ -749,6 +750,7 @@ def svd_deconvolve_circulant_batch(
     original_shape = tissue_curves.shape
     n_timepoints = original_shape[-1]
     m = 2 * n_timepoints  # Padded length
+    tissue_2d: npt.NDArray[np.floating]
 
     # Reshape to 2D (n_voxels, n_timepoints)
     if tissue_curves.ndim > 2:
@@ -1229,6 +1231,7 @@ def svd_deconvolve_oscillation_batch(
     original_shape = tissue_curves.shape
     n_timepoints = original_shape[-1]
     m = 2 * n_timepoints
+    tissue_2d: npt.NDArray[np.floating]
 
     # Reshape to 2D (n_voxels, n_timepoints)
     if tissue_curves.ndim > 2:
@@ -1749,6 +1752,7 @@ def tikhonov_deconvolve_batch(
     """
     original_shape = tissue_curves.shape
     n_timepoints = original_shape[-1]
+    tissue_2d: npt.NDArray[np.float64]
 
     if n_timepoints == 0:
         raise ValueError("Arrays cannot be empty")

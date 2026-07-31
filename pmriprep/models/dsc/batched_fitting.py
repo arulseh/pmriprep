@@ -1409,7 +1409,9 @@ def batched_dsc_vi_fit(
     # --- State tracking ---
     best_fe = np.full(n_valid, -np.inf)
     best_m = m.copy()
-    best_cov_diag = np.tile(prior_stds_t ** 2, (n_valid, 1))
+    best_cov_diag: npt.NDArray[np.float64] = np.tile(
+        prior_stds_t ** 2, (n_valid, 1),
+    )
     if initial_cov_diag is not None:
         best_cov_diag = np.asarray(initial_cov_diag, dtype=np.float64)[valid_idx].copy()
     best_c = c.copy()

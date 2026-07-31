@@ -542,7 +542,7 @@ def _fit_vascular_nlls(
 
     def _transform_bound(value: float, index: int) -> float:
         if transforms[index] == TransformType.LOG:
-            value = max(value, np.finfo(np.float64).tiny)
+            value = max(value, float(np.finfo(np.float64).tiny))
         return float(
             to_transformed(value, transforms[index], upper_bounds[index])
         )
@@ -633,7 +633,9 @@ def _fit_vascular_nlls(
         np.mean(concentration)
     )
     ss_tot = float(np.sum((sqrt_w * centered) ** 2))
-    r_squared = 1.0 - ss_res / max(ss_tot, np.finfo(np.float64).eps)
+    r_squared = 1.0 - ss_res / max(
+        ss_tot, float(np.finfo(np.float64).eps),
+    )
 
     uncertainties: dict[str, float] = {}
     confidence_intervals: dict[str, tuple[float, float]] = {}

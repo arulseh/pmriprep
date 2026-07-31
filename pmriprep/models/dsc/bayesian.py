@@ -792,7 +792,7 @@ class BayesianDSCFitter:
 
         # Best free energy tracking with step-size reduction
         best_free_energy = float("-inf")
-        best_m = m.copy()
+        best_m: npt.NDArray[np.floating] = m.copy()
         best_cov = np.diag(prior_stds_t**2)
         best_c = c
         best_s = s

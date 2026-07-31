@@ -155,6 +155,7 @@ def _compute_auto_bic(
     from pmriprep.models.dce.base import EPSILON_RSS
 
     n_timepoints = tissue_curves.shape[1]
+    frame_weights: npt.NDArray[np.float64]
     if weights is None:
         frame_weights = np.ones(n_timepoints, dtype=np.float64)
     else:

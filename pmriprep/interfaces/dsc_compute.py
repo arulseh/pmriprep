@@ -2359,7 +2359,9 @@ class ComputeDSCMaps(BaseInterface):
             batched_result = batched_dsc_spatial_vi_fit(
                 **vi_kwargs,
                 mask_coords=mc3,
-                spatial_shape=concentration_data.shape[:3],
+                spatial_shape=cast(
+                    tuple[int, int, int], concentration_data.shape[:3],
+                ),
             )
         else:
             # Parallel batched VI when --nprocs > 1 (spatial path

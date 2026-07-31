@@ -224,7 +224,7 @@ def build_vp_cbv_validation_mask(
             f"{vp_data.shape}, {cbv_data.shape}, {mask.shape}"
         )
 
-    return (
+    valid = (
         mask.astype(bool)
         & np.isfinite(vp_data)
         & np.isfinite(cbv_data)
@@ -233,6 +233,7 @@ def build_vp_cbv_validation_mask(
         & (cbv_data > MIN_NCBV_FOR_VALIDATION)
         & (cbv_data < MAX_NCBV_FOR_VALIDATION)
     )
+    return np.asarray(valid, dtype=np.bool_)
 
 
 def validate_vp_cbv(
