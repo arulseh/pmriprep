@@ -1,4 +1,5 @@
-name: CI
+name: Test, docs and package checks
+run-name: "PMRIPrep validation #${{ github.run_number }} · ${{ github.head_ref || github.ref_name }}"
 
 on:
   push:
@@ -8,6 +9,7 @@ on:
 
 jobs:
   static-and-package:
+    name: Static analysis and release package
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -27,6 +29,7 @@ jobs:
         run: python tests/check_distribution_contents.py dist/*.whl dist/*.tar.gz
 
   unit-tests:
+    name: Unit tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -55,6 +58,7 @@ jobs:
       - run: pytest tests/unit/ --runslow -q --maxfail=20
 
   synthetic-dro-tests:
+    name: Synthetic perfusion DRO tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -66,6 +70,7 @@ jobs:
       - run: pytest tests/dro/ --runslow -m "not local_validation" -q --maxfail=20
 
   doctests:
+    name: Python doctests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -77,6 +82,7 @@ jobs:
       - run: pytest --doctest-modules pmriprep/ -q
 
   docs:
+    name: Sphinx documentation
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
