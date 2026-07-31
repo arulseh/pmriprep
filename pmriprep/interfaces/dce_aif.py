@@ -4236,13 +4236,32 @@ class AIFDetection(BaseInterface):
                 "All values must be finite."
             )
 
-        # Value validation: negative values
-        if np.any(aif_curve < 0):
-            n_neg = int(np.sum(aif_curve < 0))
-            logger.warning(
-                "External AIF has %d negative values; clipping to zero.", n_neg
-            )
-            aif_curve = np.clip(aif_curve, 0.0, None)
+        # Baseline-subtracted concentration may fluctuate below zero from
+        # noise. Preserve signed samples so the AIF integral is not biased by
+        # half-wave rectification.
+        n_negative = int(np.sum(aif_curve < 0))
+        if n_negative:
+            negative_fraction = n_negative / len(aif_curve)
+            minimum_mm = float(np.min(aif_curve))
+            if negative_fraction > 0.3:
+                logger.warning(
+                    "External AIF has %d negative concentration samples "
+                    "(%.0f%%; minimum %.3f mM). Samples were retained to avoid "
+                    "AIF-integral bias, but the high negative fraction warrants "
+                    "review of units and baseline subtraction.",
+                    n_negative,
+                    negative_fraction * 100,
+                    minimum_mm,
+                )
+            else:
+                logger.info(
+                    "External AIF has %d negative concentration samples "
+                    "(%.0f%%; minimum %.3f mM). They were retained as signed "
+                    "baseline-subtracted noise.",
+                    n_negative,
+                    negative_fraction * 100,
+                    minimum_mm,
+                )
 
         # Validate length
         if len(aif_curve) != n_timepoints:
@@ -4328,6 +4347,12 @@ class AIFDetection(BaseInterface):
             # rather than falling through to the report-only quality_score.
             "aif_confidence": "standard",
         }
+        if n_negative:
+            qc_metrics.update(
+                external_aif_negative_samples=n_negative,
+                external_aif_negative_fraction=negative_fraction,
+                external_aif_minimum_mm=minimum_mm,
+            )
         qc_metrics.update(
             _build_peak_scaling_qc(
                 detection_method="external",

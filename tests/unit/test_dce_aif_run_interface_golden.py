@@ -251,6 +251,33 @@ def test_external_aif_accepts_emitted_dce_tsv(
     np.testing.assert_allclose(result.outputs.aif_curve, curve)
 
 
+def test_external_aif_retains_signed_baseline_noise(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Negative external-AIF noise is not rectified into positive AUC bias."""
+    conc, mask = _make_conc()
+    conc_f, mask_f = _write_niftis(tmp_path, conc, mask)
+    ext = tmp_path / "external_aif_signed.txt"
+    t = np.arange(40.0)
+    curve = 6.0 * np.exp(-0.5 * ((t - 8.0) / 2.0) ** 2)
+    curve[:5] = np.array([-0.08, 0.03, -0.04, 0.02, -0.01])
+    np.savetxt(ext, curve)
+
+    with caplog.at_level("INFO"):
+        result = _base_iface(
+            conc_f, mask_f, external_aif_file=str(ext)
+        ).run(cwd=str(tmp_path))
+
+    np.testing.assert_allclose(result.outputs.aif_curve, curve)
+    qc = result.outputs.qc_metrics
+    assert qc["external_aif_negative_samples"] == 3
+    assert qc["external_aif_negative_fraction"] == pytest.approx(3 / 40)
+    assert qc["external_aif_minimum_mm"] == pytest.approx(-0.08)
+    assert "retained as signed baseline-subtracted noise" in caplog.text
+    assert all(record.levelname != "WARNING" for record in caplog.records)
+
+
 def _cell_c2_divergence(tmp_path: Path) -> dict[str, Any]:
     """Cell 2: mocked cascade, C2 divergence — detected emit C2 branch."""
     a, b, c = (10, 10, 10), (10, 11, 10), (11, 10, 10)
