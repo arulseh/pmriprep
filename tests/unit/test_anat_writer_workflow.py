@@ -250,6 +250,54 @@ def test_postcon_only_writes_unconditional_outputs(tmp_path: Path) -> None:
     assert any("ce-GAD" in s for s in sidecar["Sources"]), sidecar["Sources"]
 
 
+def test_postcon_only_secondary_anat_references_postcon_t1w(tmp_path: Path) -> None:
+    """Secondary-anatomy sidecars identify the actual postcon-only reference."""
+    from pmriprep.workflows.anat.datasinks import init_anat_datasinks_wf
+
+    bids = tmp_path / "bids"
+    raw = bids / "sub-01" / "ses-0001" / "anat"
+    raw.mkdir(parents=True)
+    (bids / "dataset_description.json").write_text(
+        json.dumps({"Name": "T", "BIDSVersion": "1.9.0", "DatasetType": "raw"})
+    )
+    src_postcon = _make_nifti(raw / "sub-01_ses-0001_acq-gre_ce-GAD_T1w.nii.gz")
+    src_flair = _make_nifti(raw / "sub-01_ses-0001_acq-3d_ce-GAD_FLAIR.nii.gz")
+
+    out_root = tmp_path / "out"
+    fake_xfm = tmp_path / "acpc.h5"
+    fake_xfm.write_text("ok\n")
+    flair_xfm = tmp_path / "flair_to_t1w.h5"
+    flair_xfm.write_text("ok\n")
+    wf = init_anat_datasinks_wf(
+        output_dir=str(out_root), bids_dir=str(bids),
+        subject_id="01", session_id="0001",
+        has_t1w_pre=False, has_t1w_postcon=True,
+        has_t2w=False, has_flair=True, has_flair_postcon=False,
+        has_tissue_seg=False, has_subtraction=False,
+        is_postcon_ref=True,
+    )
+    wf.base_dir = str(tmp_path / "work")
+    inp = wf.inputs.inputnode
+    inp.source_t1w_postcon = str(src_postcon)
+    inp.source_flair = str(src_flair)
+    inp.t1w_preproc = str(_make_nifti(tmp_path / "t1w.nii.gz"))
+    inp.brain_mask = str(_make_nifti(tmp_path / "mask.nii.gz"))
+    inp.flair_coreg = str(_make_nifti(tmp_path / "flair.nii.gz"))
+    inp.acpc_xfm = str(fake_xfm)
+    inp.flair_to_t1w_xfm = str(flair_xfm)
+    wf.run()
+
+    sidecar_path = (
+        out_root / "pmriprep" / "sub-01" / "ses-0001" / "anat"
+        / "sub-01_ses-0001_acq-3d_ce-GAD_space-T1w_desc-preproc_FLAIR.json"
+    )
+    sidecar = json.loads(sidecar_path.read_text())
+    assert sidecar["SpatialReference"] == (
+        "bids::sub-01/ses-0001/anat/"
+        "sub-01_ses-0001_acq-gre_ce-GAD_space-T1w_desc-preproc_T1w.nii.gz"
+    )
+
+
 def test_warnings_block_populated_in_anchor_sidecar(
     tmp_path: Path, minimal_bids: Path,
 ) -> None:

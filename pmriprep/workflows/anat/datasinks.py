@@ -580,6 +580,7 @@ def init_anat_datasinks_wf(
             ),
             suffix="T2w",
             desc_value="preproc",
+            is_postcon_ref=is_postcon_ref,
             processing_kind="coregistered",
         )
         sink_outputs.append((sink, "out_file"))
@@ -595,6 +596,7 @@ def init_anat_datasinks_wf(
             ),
             suffix="FLAIR",
             desc_value="preproc",
+            is_postcon_ref=is_postcon_ref,
             processing_kind="coregistered",
         )
         sink_outputs.append((sink, "out_file"))
@@ -613,6 +615,7 @@ def init_anat_datasinks_wf(
             desc_value="preproc",
             ce_value="GAD",
             contrast_agent_attr="source_flair_postcon",
+            is_postcon_ref=is_postcon_ref,
             processing_kind="coregistered",
         )
         sink_outputs.append((sink, "out_file"))
