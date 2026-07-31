@@ -45,6 +45,39 @@ def test_dce_transform_sink_rejects_fsl_matrix(tmp_path: Path) -> None:
         )
 
 
+def test_anat_transform_sink_requires_x5(tmp_path: Path) -> None:
+    """An anatomical FLIRT matrix must not be relabelled as X5."""
+    import pytest
+
+    from pmriprep.workflows.anat.datasinks import _copy_xfm
+
+    source = tmp_path / "transform.mat"
+    source.write_text("1 0 0 0\n0 1 0 0\n0 0 1 0\n0 0 0 1\n")
+
+    with pytest.raises(ValueError, match="require X5 .h5 input"):
+        _copy_xfm(
+            str(source), str(tmp_path / "out"), "01", "", "T1w",
+            "MNI152NLin6Asym",
+        )
+
+
+def test_anat_transform_sink_preserves_x5(tmp_path: Path) -> None:
+    """An X5 transform is copied under its truthful BIDS direction."""
+    from pmriprep.workflows.anat.datasinks import _copy_xfm
+
+    source = tmp_path / "transform.h5"
+    source.write_bytes(b"x5")
+
+    result = _copy_xfm(
+        str(source), str(tmp_path / "out"), "01", "02", "T1w",
+        "MNI152NLin6Asym",
+    )
+
+    assert Path(result).name == (
+        "sub-01_ses-02_from-T1w_to-MNI152NLin6Asym_mode-image_xfm.h5"
+    )
+
+
 def test_source_entity_prefix_preserves_canonical_distinguishers() -> None:
     from pmriprep.utils.sidecar_builders import source_entity_prefix
 

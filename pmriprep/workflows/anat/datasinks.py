@@ -334,6 +334,12 @@ def _copy_xfm(
         )
         return ""
 
+    source_path = Path(in_file)
+    if source_path.suffix.lower() != ".h5":
+        raise ValueError(
+            f"Anatomical transform derivatives require X5 .h5 input, got {in_file!r}"
+        )
+
     out_root = Path(output_dir) / "pmriprep" / f"sub-{subject}"
     if session:
         out_root = out_root / f"ses-{session}"
@@ -345,7 +351,7 @@ def _copy_xfm(
         prefix += f"_ses-{session}"
     fname = f"{prefix}_from-{from_space}_to-{to_space}_mode-image_xfm.h5"
     out_path = out_root / fname
-    shutil.copy2(in_file, out_path)
+    shutil.copy2(source_path, out_path)
     return str(out_path)
 
 

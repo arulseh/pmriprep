@@ -53,7 +53,7 @@ def test_anat_datasinks_wf_minimal(tmp_path: Path, minimal_bids: Path) -> None:
     )
     deriv_t1w = _make_nifti(tmp_path / "t1w_preproc.nii.gz")
     deriv_mask = _make_nifti(tmp_path / "brain_mask.nii.gz")
-    fake_xfm = tmp_path / "acpc.mat"
+    fake_xfm = tmp_path / "acpc.h5"
     fake_xfm.write_text("# fake transform\n")
 
     wf = init_anat_datasinks_wf(
@@ -136,7 +136,7 @@ def test_anat_sidecar_correctness_guard(tmp_path: Path, minimal_bids: Path) -> N
     deriv_csf = _make_nifti(tmp_path / "csf.nii.gz")
     deriv_gm = _make_nifti(tmp_path / "gm.nii.gz")
     deriv_wm = _make_nifti(tmp_path / "wm.nii.gz")
-    fake_xfm = tmp_path / "acpc.mat"
+    fake_xfm = tmp_path / "acpc.h5"
     fake_xfm.write_text("ok\n")
 
     wf = init_anat_datasinks_wf(
@@ -203,7 +203,7 @@ def test_postcon_only_writes_unconditional_outputs(tmp_path: Path) -> None:
     out_root = tmp_path / "out"
     deriv_t1w = _make_nifti(tmp_path / "t1w.nii.gz")
     deriv_mask = _make_nifti(tmp_path / "mask.nii.gz")
-    fake_xfm = tmp_path / "acpc.mat"
+    fake_xfm = tmp_path / "acpc.h5"
     fake_xfm.write_text("ok\n")
 
     wf = init_anat_datasinks_wf(
@@ -260,7 +260,7 @@ def test_warnings_block_populated_in_anchor_sidecar(
     src_t1w = minimal_bids / "sub-01" / "ses-0001" / "anat" / "sub-01_ses-0001_T1w.nii.gz"
     deriv_t1w = _make_nifti(tmp_path / "t1w.nii.gz")
     deriv_mask = _make_nifti(tmp_path / "mask.nii.gz")
-    fake_xfm = tmp_path / "acpc.mat"
+    fake_xfm = tmp_path / "acpc.h5"
     fake_xfm.write_text("ok\n")
 
     # No tissue seg, no T2w, no FLAIR — expect three warnings on the anchor.
@@ -345,14 +345,14 @@ def test_multi_modality_kitchen_sink(tmp_path: Path, minimal_bids: Path) -> None
     inp.t2w_coreg = str(deriv("t2w.nii.gz"))
     inp.flair_coreg = str(deriv("flair.nii.gz"))
     inp.t1w_subtraction = str(deriv("subtract.nii.gz"))
-    fake_xfm("acpc.mat")
-    fake_xfm("postcon_to_t1w.mat")
-    fake_xfm("t2w_to_t1w.mat")
-    fake_xfm("flair_to_t1w.mat")
-    inp.acpc_xfm = str(tmp_path / "acpc.mat")
-    inp.t1w_postcon_to_t1w_xfm = str(tmp_path / "postcon_to_t1w.mat")
-    inp.t2w_to_t1w_xfm = str(tmp_path / "t2w_to_t1w.mat")
-    inp.flair_to_t1w_xfm = str(tmp_path / "flair_to_t1w.mat")
+    fake_xfm("acpc.h5")
+    fake_xfm("postcon_to_t1w.h5")
+    fake_xfm("t2w_to_t1w.h5")
+    fake_xfm("flair_to_t1w.h5")
+    inp.acpc_xfm = str(tmp_path / "acpc.h5")
+    inp.t1w_postcon_to_t1w_xfm = str(tmp_path / "postcon_to_t1w.h5")
+    inp.t2w_to_t1w_xfm = str(tmp_path / "t2w_to_t1w.h5")
+    inp.flair_to_t1w_xfm = str(tmp_path / "flair_to_t1w.h5")
     inp.qc_metrics = {"ok": True}
     wf.run()
 

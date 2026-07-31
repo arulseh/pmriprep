@@ -150,7 +150,7 @@ def _create_acpc_registration_filmstrip(
     subject_id: str = "",
     session_id: str = "",
 ) -> str:
-    """Create ACPC-to-MNI registration QC filmstrip.
+    """Create rigid T1w-to-MNI registration QC filmstrip.
 
     Shows ACPC-aligned T1w as background with MNI template edges overlaid
     to assess the quality of the rigid alignment.
@@ -193,7 +193,9 @@ def _create_acpc_registration_filmstrip(
         moving=mni_data,
         output_path=output_path,
         mask=mask,
-        title=qc_figure_title(subject_id, session_id, "ACPC-MNI Alignment QC"),
+        title=qc_figure_title(
+            subject_id, session_id, "Rigid T1w-to-MNI Alignment QC",
+        ),
         voxel_sizes=voxel_sizes,
     )
 
