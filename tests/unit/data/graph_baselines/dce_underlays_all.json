@@ -872,6 +872,12 @@
     ],
     [
       "inputnode",
+      "flip_angle",
+      "vfa_preprocess",
+      "target_flip_angle"
+    ],
+    [
+      "inputnode",
       "gm_probseg",
       "transform_gm_probseg",
       "probseg_file"

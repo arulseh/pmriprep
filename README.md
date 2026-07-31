@@ -284,8 +284,11 @@ are ambiguous. AFI magnitude data are rigidly registered before the derived
 B1+ map is transferred between acquisition spaces. A precomputed B1+ map has
 no independent magnitude image for registration and must therefore already be
 world-aligned with the DCE series and, when VFA T1 mapping is used, the VFA
-acquisition. Header-based transfer with no spatial overlap is rejected and
-nominal flip angles are used instead.
+acquisition. PMRIPrep uses the VFA acquisition closest to the DCE flip angle as
+the shared magnitude reference for VFA-to-DCE and AFI-to-VFA registration when
+those paths are active. Nominal flip-angle proximity is a contrast proxy; the
+sequences may still differ in TR, TE, and spoiling. Header-based transfer with
+inadequate spatial overlap is rejected and nominal flip angles are used instead.
 
 `ContrastBolusAgent` is recommended for relaxivity and AIF threshold lookup.
 When absent, PMRIPrep records and warns about its assumptions. DSC and DCE dose

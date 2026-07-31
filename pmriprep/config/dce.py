@@ -121,6 +121,7 @@ class DCEConfig:
     no_t1: bool = False
     t1_method: Literal["nlls", "wlls"] = "nlls"
     t1_map_file: Optional[Path] = None  # External T1 map (NIfTI, milliseconds)
+
     # Processing settings
     no_dsc_validation: bool = False
     motion_correct: bool = True  # False = assume input already motion-corrected
@@ -151,6 +152,11 @@ class DCEConfig:
 
     # Testing / debug
     sloppy: bool = False  # Use fast, low-quality settings for testing
+
+    @property
+    def uses_vfa_t1(self) -> bool:
+        """Whether this configuration requires VFA-derived T1 mapping."""
+        return not self.no_t1 and self.t1_map_file is None
 
     def __post_init__(self) -> None:
         """Ensure numeric fields have correct types after initialization.

@@ -2487,6 +2487,10 @@ class VFAPreprocessInputSpec(BaseInterfaceInputSpec):
         maxlen=20,
         desc="Flip angles in degrees corresponding to vfa_files",
     )
+    target_flip_angle = traits.Float(
+        mandatory=True,
+        desc="DCE flip angle used to select the closest-angle VFA reference",
+    )
     skip_coregistration = traits.Bool(
         False,
         usedefault=True,
@@ -2516,10 +2520,13 @@ class VFAPreprocess(SimpleInterface):
     """VFA inter-volume coregistration and quality assessment.
 
     This interface performs:
-    1. Quality assessment (SNR/contrast scoring) per VFA volume
-    2. Selection of best-quality VFA as registration reference
-    3. Affine check: skip FLIRT if affines are identical
-    4. FLIRT 6DOF rigid coregistration for non-reference volumes
+    1. Selection of the VFA angle closest to the DCE flip angle as a nominal
+       contrast proxy for the shared DCE and AFI registration reference
+    2. Affine check: skip FLIRT if affines are identical
+    3. FLIRT 6DOF rigid coregistration for non-reference volumes
+
+    Flip angle alone does not determine SPGR contrast; differing TR, TE,
+    spoiling, and tissue T1 can make the selected images dissimilar.
 
     Parameters
     ----------
@@ -2527,6 +2534,8 @@ class VFAPreprocess(SimpleInterface):
         VFA image paths at different flip angles.
     flip_angles : list of float
         Nominal flip angles in degrees.
+    target_flip_angle : float
+        DCE flip angle in degrees used for nominal-angle reference selection.
     skip_coregistration : bool
         If True, skip FLIRT coregistration.
 
@@ -2544,6 +2553,34 @@ class VFAPreprocess(SimpleInterface):
 
     input_spec = VFAPreprocessInputSpec
     output_spec = VFAPreprocessOutputSpec
+
+    @staticmethod
+    def _select_reference_index(
+        flip_angles: list[float],
+        target_flip_angle: float,
+    ) -> int:
+        """Select the VFA angle closest to the DCE acquisition angle."""
+        angles = np.asarray(flip_angles, dtype=np.float64)
+        if angles.size < 2:
+            raise ValueError("VFA T1 mapping requires at least two flip angles")
+        if (
+            not np.all(np.isfinite(angles))
+            or np.any(angles <= 0.0)
+            or not np.isfinite(target_flip_angle)
+            or target_flip_angle <= 0.0
+        ):
+            raise ValueError(
+                "VFA and target DCE flip angles must be finite and positive"
+            )
+        if np.unique(angles).size < 2:
+            raise ValueError(
+                "VFA T1 mapping requires at least two distinct flip angles"
+            )
+        differences = np.abs(angles - float(target_flip_angle))
+        candidates = np.flatnonzero(
+            np.isclose(differences, np.min(differences), rtol=0.0, atol=1e-8)
+        )
+        return int(candidates[np.argmax(angles[candidates])])
 
     @staticmethod
     def _motion_warning_state(
@@ -2890,6 +2927,11 @@ class VFAPreprocess(SimpleInterface):
         vfa_files = list(self.inputs.vfa_files)
         flip_angles = list(self.inputs.flip_angles)
         n_fa = len(vfa_files)
+        if len(flip_angles) != n_fa:
+            raise ValueError(
+                "VFA file and FlipAngle counts differ: "
+                f"{n_fa} files, {len(flip_angles)} angles"
+            )
 
         qc_metrics: dict[str, Any] = {
             "n_flip_angles": n_fa,
@@ -2905,19 +2947,18 @@ class VFAPreprocess(SimpleInterface):
             for img in vfa_imgs
         ]
 
-        # Quality assessment: pick reference by SNR
-        snr_scores = []
-        for i, data in enumerate(vfa_data):
-            nonzero = data[data > 0]
-            if len(nonzero) > 100:
-                snr = float(np.mean(nonzero) / max(np.std(nonzero), 1e-10))
-            else:
-                snr = 0.0
-            snr_scores.append(snr)
-
-        ref_idx = int(np.argmax(snr_scores))
-        qc_metrics["snr_scores"] = snr_scores
+        target_flip_angle = float(self.inputs.target_flip_angle)
+        ref_idx = self._select_reference_index(flip_angles, target_flip_angle)
+        qc_metrics["reference_selection"] = {
+            "method": "closest_nominal_flip_angle_to_DCE",
+            "target_dce_flip_angle_deg": target_flip_angle,
+            "absolute_angle_differences_deg": [
+                abs(float(angle) - target_flip_angle) for angle in flip_angles
+            ],
+            "tie_break": "higher_flip_angle",
+        }
         qc_metrics["reference_index"] = ref_idx
+        qc_metrics["reference_flip_angle_deg"] = float(flip_angles[ref_idx])
 
         # Check if affines are identical (skip coregistration if so)
         ref_affine = vfa_imgs[ref_idx].affine  # type: ignore[attr-defined]
@@ -2931,7 +2972,7 @@ class VFAPreprocess(SimpleInterface):
                 break
 
         qc_metrics["affines_identical"] = affines_identical
-        if affines_identical and n_fa >= 2:
+        if affines_identical:
             try:
                 qc_metrics["motion_assessment"] = self._assess_same_grid_motion(
                     vfa_files=vfa_files,
@@ -2962,7 +3003,6 @@ class VFAPreprocess(SimpleInterface):
         do_coreg = (
             not self.inputs.skip_coregistration
             and not affines_identical
-            and n_fa >= 2
         )
 
         out_dir = Path.cwd()

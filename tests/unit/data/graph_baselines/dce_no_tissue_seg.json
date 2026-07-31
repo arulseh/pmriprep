@@ -746,6 +746,12 @@
     ],
     [
       "inputnode",
+      "flip_angle",
+      "vfa_preprocess",
+      "target_flip_angle"
+    ],
+    [
+      "inputnode",
       "mr_acquisition_type",
       "aif_detection",
       "mr_acquisition_type"

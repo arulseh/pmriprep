@@ -530,11 +530,30 @@ class TestValidateVFAMetadata:
 
     def test_single_angle(self):
         msgs = validate_vfa_metadata([15.0], [0.004])
-        assert any(m.code == "VFA_FEW_ANGLES" for m in msgs)
+        assert any(
+            m.code == "VFA_FEW_ANGLES" and m.level == "error" for m in msgs
+        )
+
+    @pytest.mark.parametrize("angle", [0.0, -5.0, 120.0, float("nan")])
+    def test_invalid_flip_angle(self, angle):
+        msgs = validate_vfa_metadata([angle, 15.0], [0.004, 0.004])
+        assert any(
+            m.code == "VFA_INVALID_FLIP_ANGLE" and m.level == "error"
+            for m in msgs
+        )
 
     def test_identical_angles(self):
         msgs = validate_vfa_metadata([15.0, 15.0], [0.004, 0.004])
-        assert any(m.code == "VFA_FEW_ANGLES" for m in msgs)
+        assert any(
+            m.code == "VFA_FEW_ANGLES" and m.level == "error" for m in msgs
+        )
+
+    def test_missing_flip_angle(self):
+        msgs = validate_vfa_metadata([5.0, None], [0.004, 0.004])
+        assert any(
+            m.code == "VFA_MISSING_FLIP_ANGLE" and m.level == "error"
+            for m in msgs
+        )
 
     def test_missing_tr(self):
         msgs = validate_vfa_metadata([5.0, 15.0], [0.004, None])
@@ -668,10 +687,32 @@ class TestRunPreflight:
             dsc_sidecar=None,
             dce_sidecar=_valid_dce_sidecar(),
             dce_config=DCEConfig(),
-            vfa_flip_angles=[15.0, 15.0],  # identical → warning
+            vfa_flip_angles=[15.0, 15.0],
             vfa_trs=[0.004, 0.004],
         )
         assert any(m.code == "VFA_FEW_ANGLES" for m in report.messages)
+        assert report.has_errors
+
+    def test_vfa_validation_skipped_when_t1_mapping_disabled(self, tmp_path):
+        """Unused discovered VFA metadata does not warn or fail a no-T1 run."""
+        dce_file = tmp_path / "sub-01_dce.nii.gz"
+        dce_file.touch()
+        mods = _make_modalities(
+            dce=dce_file,
+            vfa=[Path("/fake/only_vfa.nii.gz")],
+        )
+
+        report = run_preflight(
+            session_data=_make_session_data(mods),
+            decision=_make_decision(run_dce=True),
+            dsc_sidecar=None,
+            dce_sidecar=_valid_dce_sidecar(),
+            dce_config=DCEConfig(no_t1=True),
+            vfa_flip_angles=[None],
+            vfa_trs=[None],
+        )
+
+        assert not any(message.code.startswith("VFA_") for message in report.messages)
 
     def test_afi_validation_included(self, tmp_path):
         """AFI validation runs when AFI data is present."""

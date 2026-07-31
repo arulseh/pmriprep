@@ -549,7 +549,8 @@ def init_dce_t1_b1_wf(
     workflow = pe.Workflow(name=name)
     inputnode = pe.Node(
         niu.IdentityInterface(fields=[
-            "vfa_files", "vfa_flip_angles", "vfa_tr", "afi_4d_file",
+            "vfa_files", "vfa_flip_angles", "vfa_tr", "dce_flip_angle",
+            "afi_4d_file",
             "afi_tr1", "afi_tr2", "afi_flip_angle", "brain_mask",
             "field_strength", "dce_file", "precomputed_b1_file",
             "b1_nominal_prep_fa", "b1_map_encoding", "csf_probseg",
@@ -568,8 +569,7 @@ def init_dce_t1_b1_wf(
     )
     workflow.add_nodes([inputnode, outputnode])
 
-    use_external_t1 = config.t1_map_file is not None
-    use_vfa_t1 = not config.no_t1 and not use_external_t1
+    use_vfa_t1 = config.uses_vfa_t1
     apply_b1 = config.b1_method != "none"
     prepare_b1 = use_vfa_t1 or apply_b1
 
@@ -636,7 +636,10 @@ def init_dce_t1_b1_wf(
         workflow.connect([
             (inputnode, vfa_reorient, [("vfa_files", "in_files")]),
             (vfa_reorient, vfa_preprocess, [("out_file", "vfa_files")]),
-            (inputnode, vfa_preprocess, [("vfa_flip_angles", "flip_angles")]),
+            (inputnode, vfa_preprocess, [
+                ("vfa_flip_angles", "flip_angles"),
+                ("dce_flip_angle", "target_flip_angle"),
+            ]),
             (b1_mapping, transform_b1_to_vfa, [("out_file", "b1_map_file")]),
             (vfa_preprocess, transform_b1_to_vfa, [("reference_file", "vfa_ref_file")]),
             (vfa_preprocess, t1_mapping, [("out_files", "vfa_files")]),
@@ -1163,7 +1166,7 @@ def init_dce_qc_collection_wf(
     collect.inputs.use_external_t1 = use_external_t1
     collect.inputs.no_t1 = config.no_t1
     collect.inputs.b1_method = config.b1_method
-    use_vfa_t1 = not config.no_t1 and not use_external_t1
+    use_vfa_t1 = config.uses_vfa_t1
     need_b1 = use_vfa_t1 or config.b1_method != "none"
     if not use_vfa_t1:
         collect.inputs.t1_qc = None
@@ -1671,7 +1674,7 @@ def init_dce_preproc_wf(
     #   2. External T1 map: skip VFA fitting, keep B1 for concentration conversion
     #   3. no_t1: skip T1 mapping, use field-strength default T1
     use_external_t1 = config.t1_map_file is not None
-    use_vfa_t1 = not config.no_t1 and not use_external_t1
+    use_vfa_t1 = config.uses_vfa_t1
     # B1 corrects the DCE excitation flip angle independently of the T1 source.
     need_b1 = use_vfa_t1 or config.b1_method != "none"
 
@@ -1686,6 +1689,7 @@ def init_dce_preproc_wf(
                 ("vfa_files", "inputnode.vfa_files"),
                 ("vfa_flip_angles", "inputnode.vfa_flip_angles"),
                 ("vfa_tr", "inputnode.vfa_tr"),
+                ("flip_angle", "inputnode.dce_flip_angle"),
                 ("afi_4d_file", "inputnode.afi_4d_file"),
                 ("afi_tr1", "inputnode.afi_tr1"),
                 ("afi_tr2", "inputnode.afi_tr2"),

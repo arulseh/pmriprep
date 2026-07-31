@@ -608,6 +608,85 @@ def test_connect_master_dce_t1_b1_inputs_preserves_vfa_metadata(
     assert dce_input.b1_map_encoding == "percent"
 
 
+def test_connect_master_dce_t1_b1_inputs_rejects_single_vfa(
+    tmp_path: Path,
+) -> None:
+    """Workflow assembly fails before attempting an underdetermined VFA fit."""
+    session_data = SessionData(
+        subject="0001",
+        session="0001",
+        modalities=ModalityAvailability(vfa=[tmp_path / "flip-05_VFA.nii.gz"]),
+        pipelines=PipelineAvailability(),
+    )
+
+    with pytest.raises(ValueError, match="at least two VFA images"):
+        _connect_master_dce_t1_b1_inputs(
+            workflow=SimpleNamespace(connect=lambda _connections: None),
+            inputnode=SimpleNamespace(),
+            dce_wf=SimpleNamespace(
+                inputs=SimpleNamespace(inputnode=SimpleNamespace())
+            ),
+            session_data=session_data,
+            dce_config=DCEConfig(),
+        )
+
+
+def test_connect_master_dce_t1_b1_inputs_rejects_partial_angles(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every VFA file must retain a one-to-one nominal flip angle."""
+    vfa = [tmp_path / "flip-05_VFA.nii.gz", tmp_path / "flip-15_VFA.nii.gz"]
+    sidecars = {
+        vfa[0]: {"flip_angle": 5.0, "pulse_tr": 0.004},
+        vfa[1]: {"flip_angle": None, "pulse_tr": 0.004},
+    }
+    monkeypatch.setattr(
+        "pmriprep.workflows.base._read_bids_sidecar",
+        lambda path: sidecars[path],
+    )
+    session_data = SessionData(
+        subject="0001",
+        session="0001",
+        modalities=ModalityAvailability(vfa=vfa),
+        pipelines=PipelineAvailability(),
+    )
+
+    with pytest.raises(ValueError, match="Every VFA image requires FlipAngle"):
+        _connect_master_dce_t1_b1_inputs(
+            workflow=SimpleNamespace(connect=lambda _connections: None),
+            inputnode=SimpleNamespace(),
+            dce_wf=SimpleNamespace(
+                inputs=SimpleNamespace(inputnode=SimpleNamespace())
+            ),
+            session_data=session_data,
+            dce_config=DCEConfig(),
+        )
+
+
+def test_connect_master_dce_t1_b1_inputs_ignores_unused_vfa(
+    tmp_path: Path,
+) -> None:
+    """Invalid discovered VFA does not block an explicit no-T1 run."""
+    session_data = SessionData(
+        subject="0001",
+        session="0001",
+        modalities=ModalityAvailability(vfa=[tmp_path / "unused_VFA.nii.gz"]),
+        pipelines=PipelineAvailability(),
+    )
+    connections: list[Any] = []
+
+    _connect_master_dce_t1_b1_inputs(
+        workflow=SimpleNamespace(connect=connections.extend),
+        inputnode=SimpleNamespace(),
+        dce_wf=SimpleNamespace(inputs=SimpleNamespace(inputnode=SimpleNamespace())),
+        session_data=session_data,
+        dce_config=DCEConfig(no_t1=True),
+    )
+
+    assert connections == []
+
+
 def test_prepare_master_context_resolves_session_policy(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -881,7 +960,7 @@ def test_prepare_master_preflight_state_preserves_metadata_policy(
     assert state.gd_multiplicity == 4
     assert state.dsc_agent_dose_source == "bids_sidecar"
     assert state.dsc_agent_source == "bids_sidecar"
-    assert captured["vfa_flip_angles"] == [2.0]
+    assert captured["vfa_flip_angles"] == [2.0, None]
     assert captured["vfa_trs"] == [0.004, 0.005]
     assert captured["logged"] is True
     assert captured["raised"] is True

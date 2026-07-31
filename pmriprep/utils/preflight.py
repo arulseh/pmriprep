@@ -6,6 +6,7 @@ diagnostic messages rather than cryptic failures deep in processing.
 """
 
 import logging
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
@@ -677,7 +678,7 @@ def validate_dce_metadata(
 
 
 def validate_vfa_metadata(
-    vfa_flip_angles: list[float],
+    vfa_flip_angles: list[Optional[float]],
     vfa_trs: list[Optional[float]],
 ) -> list[PreflightMessage]:
     """Validate VFA T1 mapping metadata.
@@ -686,8 +687,8 @@ def validate_vfa_metadata(
 
     Parameters
     ----------
-    vfa_flip_angles : list of float
-        Flip angles extracted from VFA sidecars.
+    vfa_flip_angles : list of float or None
+        Position-preserving flip angles extracted from VFA sidecars.
     vfa_trs : list of float
         TR values extracted from VFA sidecars.
 
@@ -698,15 +699,42 @@ def validate_vfa_metadata(
     """
     msgs: list[PreflightMessage] = []
 
-    distinct_angles = set(vfa_flip_angles)
+    missing_angles = sum(angle is None for angle in vfa_flip_angles)
+    if missing_angles:
+        msgs.append(PreflightMessage(
+            level="error",
+            code="VFA_MISSING_FLIP_ANGLE",
+            message=(
+                f"FlipAngle is missing from {missing_angles} VFA sidecar(s). "
+                "Every VFA image requires a nominal flip angle."
+            ),
+        ))
+
+    valid_angles = [float(angle) for angle in vfa_flip_angles if angle is not None]
+    invalid_angles = [
+        angle
+        for angle in valid_angles
+        if not math.isfinite(angle) or angle <= 0.0 or angle > 90.0
+    ]
+    if invalid_angles:
+        msgs.append(PreflightMessage(
+            level="error",
+            code="VFA_INVALID_FLIP_ANGLE",
+            message=(
+                "VFA FlipAngle values must be finite and in (0, 90] degrees; "
+                f"found {invalid_angles}."
+            ),
+        ))
+
+    distinct_angles = set(valid_angles)
     if len(distinct_angles) < 2:
         msgs.append(PreflightMessage(
-            level="warning",
+            level="error",
             code="VFA_FEW_ANGLES",
             message=(
                 f"Only {len(distinct_angles)} distinct VFA flip angle(s) "
-                f"found ({sorted(distinct_angles)}). T1 mapping requires "
-                f"at least 2 distinct angles for a reliable fit."
+                f"found ({sorted(distinct_angles)}). VFA T1 mapping requires "
+                f"at least 2 distinct angles."
             ),
         ))
 
@@ -721,7 +749,7 @@ def validate_vfa_metadata(
         ))
 
     # Check flip angle conditioning (ratio of max to min)
-    valid_angles = [a for a in vfa_flip_angles if a > 0]
+    valid_angles = [angle for angle in valid_angles if angle > 0]
     if len(valid_angles) >= 2:
         ratio = max(valid_angles) / min(valid_angles)
         if ratio < 1.5:
@@ -926,7 +954,7 @@ def run_preflight(
     dsc_sidecar: Optional[dict[str, Any]],
     dce_sidecar: Optional[dict[str, Any]],
     dce_config: Optional[DCEConfig],
-    vfa_flip_angles: Optional[list[float]] = None,
+    vfa_flip_angles: Optional[list[Optional[float]]] = None,
     vfa_trs: Optional[list[Optional[float]]] = None,
     dsc_config: Optional[DSCConfig] = None,
 ) -> PreflightReport:
@@ -1000,7 +1028,9 @@ def run_preflight(
             )
 
         # VFA validation (only if VFA data present)
+        vfa_t1_active = dce_config is None or dce_config.uses_vfa_t1
         if (session_data.modalities.vfa
+                and vfa_t1_active
                 and vfa_flip_angles is not None
                 and vfa_trs is not None):
             report.messages.extend(

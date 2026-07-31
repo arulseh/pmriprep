@@ -6,10 +6,11 @@ and user-specified skip flags.
 """
 
 import dataclasses
+import logging
+import math
 import re
 from dataclasses import dataclass
 from pathlib import Path
-import logging
 from typing import TYPE_CHECKING, Any, Optional, Union
 
 import nipype.interfaces.utility as niu  # type: ignore[import-untyped]
@@ -628,22 +629,18 @@ def _ensure_tr_ms(
 
 
 def _validate_flip_angle(fa: float, label: str = "") -> float:
-    """Validate a flip angle value is in degrees and within a plausible range.
+    """Validate a nominal VFA flip angle expressed in degrees.
 
     Typical VFA flip angles: 2-30 degrees.
-    DCE flip angles: 10-35 degrees.
+
+    Raises
+    ------
+    ValueError
+        If the angle is non-finite or outside ``(0, 90]`` degrees.
     """
-    import logging
-
-    _log = logging.getLogger("pmriprep.workflows")
-
-    if fa <= 0:
-        _log.warning("Flip angle %s is non-positive (%.2f), this is likely an error", label, fa)
-    elif fa > 90:
-        _log.warning(
-            "Flip angle %s = %.2f° exceeds 90° — may be in radians or invalid",
-            label,
-            fa,
+    if not math.isfinite(fa) or fa <= 0 or fa > 90:
+        raise ValueError(
+            f"Flip angle {label} must be finite and in (0, 90] degrees; got {fa}"
         )
     return fa
 
@@ -2020,8 +2017,7 @@ def _init_master_dce_workflow(
     # Auto-skip T1 mapping when no VFA data is available
     if (
         not session_data.modalities.vfa
-        and not dce_config.no_t1
-        and dce_config.t1_map_file is None
+        and dce_config.uses_vfa_t1
     ):
         _log.warning(
             "No VFA data found for sub-%s ses-%s; "
@@ -2492,11 +2488,15 @@ def _connect_master_dce_t1_b1_inputs(
 ) -> None:
     """Inject VFA and resolved B1 acquisition inputs into DCE."""
     # Connect VFA and AFI inputs if available
-    if session_data.modalities.vfa:
-        import logging as _logging
-
-        _log = _logging.getLogger("pmriprep.workflows")
+    use_vfa_t1 = dce_config.uses_vfa_t1
+    if use_vfa_t1 and session_data.modalities.vfa:
+        _log = logging.getLogger("pmriprep.workflows")
         vfa_list = session_data.modalities.vfa
+        if len(vfa_list) < 2:
+            raise ValueError(
+                "VFA T1 mapping requires at least two VFA images with "
+                "distinct flip angles"
+            )
 
         workflow.connect([
             (inputnode, dce_wf, [("vfa_files", "inputnode.vfa_files")]),
@@ -2521,17 +2521,18 @@ def _connect_master_dce_t1_b1_inputs(
 
         if vfa_flip_angles:
             if len(vfa_flip_angles) != len(vfa_list):
-                _log.warning(
-                    "Found FlipAngle in %d of %d VFA sidecars; "
-                    "T1 mapping may fail",
-                    len(vfa_flip_angles),
-                    len(vfa_list),
+                raise ValueError(
+                    "Every VFA image requires FlipAngle metadata: found "
+                    f"{len(vfa_flip_angles)} values for {len(vfa_list)} images"
+                )
+            if len(set(vfa_flip_angles)) < 2:
+                raise ValueError(
+                    "VFA T1 mapping requires at least two distinct FlipAngle values"
                 )
             dce_wf.inputs.inputnode.vfa_flip_angles = vfa_flip_angles
         else:
-            _log.warning(
-                "No FlipAngle found in VFA sidecar JSONs; "
-                "T1 mapping will fail unless flip angles are configured manually"
+            raise ValueError(
+                "VFA T1 mapping requires FlipAngle metadata for every VFA image"
             )
 
         if vfa_tr_ms is not None:
@@ -2678,7 +2679,7 @@ def _connect_master_dce_outputs_and_datasinks(
         dce_present.add("vp_uncertainty")
     if _emit_fp_ps_outputs:
         dce_present |= {"fp_uncertainty", "ps_uncertainty"}
-    if not dce_config.no_t1 and dce_config.t1_map_file is None:
+    if dce_config.uses_vfa_t1:
         dce_present.add("t1_map")
     # NAWM mask
     if dce_has_nawm:
@@ -3025,7 +3026,7 @@ def _prepare_master_preflight_state(
 
     dsc_sidecar = None
     dce_sidecar = None
-    vfa_flip_angles: Optional[list[float]] = None
+    vfa_flip_angles: Optional[list[Optional[float]]] = None
     vfa_trs: Optional[list[Optional[float]]] = None
     dsc_agent_dose_source: Optional[str] = None
     dsc_agent_source: Optional[str] = None
@@ -3055,13 +3056,13 @@ def _prepare_master_preflight_state(
 
     if decision.run_dce and session_data.modalities.dce:
         dce_sidecar = _read_bids_sidecar(session_data.modalities.dce)
-        if session_data.modalities.vfa:
+        use_vfa_t1 = dce_config.uses_vfa_t1
+        if use_vfa_t1 and session_data.modalities.vfa:
             vfa_flip_angles = []
             vfa_trs = []
             for vfa_path in session_data.modalities.vfa:
                 vfa_sidecar = _read_bids_sidecar(vfa_path)
-                if vfa_sidecar["flip_angle"] is not None:
-                    vfa_flip_angles.append(vfa_sidecar["flip_angle"])
+                vfa_flip_angles.append(vfa_sidecar["flip_angle"])
                 vfa_trs.append(vfa_sidecar.get("pulse_tr"))
 
     report = run_preflight(
