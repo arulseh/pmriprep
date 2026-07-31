@@ -6,11 +6,15 @@ PascalCase top-level keys (no nested blocks) per bids-spec-expert round 3
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
+import nibabel as nib
+import numpy as np
 import pytest
 
 from pmriprep.utils.sidecar_builders import (
+    build_anat_preproc_sidecar,
     enrich_brain_mask_sidecar,
     enrich_preproc_anat_sidecar,
 )
@@ -60,20 +64,12 @@ class TestBrainMaskFlatKeys:
 
 
 class TestPreprocAnatFlatKeys:
-    def test_t1w_no_coreg_keys(self, base_sidecar):
-        qc = {
-            "preprocessing": {
-                "denoising": True, "bias_correction": "N4", "acpc_aligned": True,
-            },
-            "coregistration": {"method": "flirt"},  # ignored when coreg_modality=None
-        }
-        out = enrich_preproc_anat_sidecar(dict(base_sidecar), qc, coreg_modality=None)
+    def test_measured_preprocessing_setting(self, base_sidecar):
+        qc = {"preprocessing": {"denoising": True}}
+        out = enrich_preproc_anat_sidecar(dict(base_sidecar), qc)
         assert out["PreprocessingDenoising"] is True
-        assert out["PreprocessingBiasCorrection"] == "N4"
-        assert out["PreprocessingACPCAligned"] is True
-        assert all(not k.startswith("Coregistration") for k in out)
 
-    def test_t2w_with_coreg_keys(self, base_sidecar):
+    def test_unproduced_fields_are_not_enriched(self, base_sidecar):
         qc = {
             "preprocessing": {"denoising": False},
             "coregistration": {
@@ -81,17 +77,47 @@ class TestPreprocAnatFlatKeys:
                 "correlation_ratio": 0.94,
             },
         }
-        out = enrich_preproc_anat_sidecar(dict(base_sidecar), qc, coreg_modality="T2w")
-        assert out["CoregistrationT2wMethod"] == "flirt"
-        assert out["CoregistrationT2wCostFunction"] == "corratio"
-        assert out["CoregistrationT2wCorrelationRatio"] == pytest.approx(0.94)
+        out = enrich_preproc_anat_sidecar(dict(base_sidecar), qc)
+        assert all(not key.startswith("Coregistration") for key in out)
 
     def test_no_nested_blocks(self, base_sidecar):
         qc = {
             "preprocessing": {"denoising": True},
             "coregistration": {"method": "flirt"},
         }
-        out = enrich_preproc_anat_sidecar(dict(base_sidecar), qc, coreg_modality="FLAIR")
+        out = enrich_preproc_anat_sidecar(dict(base_sidecar), qc)
         # No "Preprocessing" or "Coregistration" nested blocks
         assert "Preprocessing" not in out
         assert "Coregistration" not in out
+
+
+@pytest.mark.parametrize(
+    ("processing_kind", "expected"),
+    [
+        ("reference", False),
+        ("coregistered", True),
+        ("cropped_coregistered", True),
+        ("subtraction", True),
+    ],
+)
+def test_anat_preproc_sidecar_records_coregistration(
+    tmp_path: Path, processing_kind: str, expected: bool,
+) -> None:
+    """Structured registration provenance does not depend on prose."""
+    source = tmp_path / "sub-01_T1w.nii.gz"
+    nib.save(
+        nib.Nifti1Image(np.ones((2, 2, 2), dtype=np.float32), np.eye(4)),
+        source,
+    )
+
+    sidecar = build_anat_preproc_sidecar(
+        description="test",
+        source_paths=[source],
+        reference_voxel_source=source,
+        bids_dir=tmp_path,
+        subject="01",
+        session=None,
+        processing_kind=processing_kind,
+    )
+
+    assert sidecar["CoregistrationApplied"] is expected

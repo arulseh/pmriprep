@@ -183,16 +183,14 @@ def test_enrich_brain_mask_sidecar_happy_path() -> None:
 
 
 def test_enrich_preproc_anat_sidecar_happy_path() -> None:
-    qc = {"preprocessing": {"denoising": True, "bias_correction": "N4", "acpc_aligned": True}}
+    qc = {"preprocessing": {"denoising": True}}
     out = enrich_preproc_anat_sidecar({}, qc)
     assert out["PreprocessingDenoising"] is True
-    assert out["PreprocessingBiasCorrection"] == "N4"
-    assert out["PreprocessingACPCAligned"] is True
     # No nested block
     assert "Preprocessing" not in out
 
 
-def test_enrich_preproc_anat_sidecar_with_coreg_modality() -> None:
+def test_enrich_preproc_anat_sidecar_ignores_unproduced_coreg_metrics() -> None:
     qc = {
         "preprocessing": {"denoising": False},
         "coregistration": {
@@ -200,19 +198,7 @@ def test_enrich_preproc_anat_sidecar_with_coreg_modality() -> None:
             "correlation_ratio": 0.94,
         },
     }
-    out = enrich_preproc_anat_sidecar({}, qc, coreg_modality="T2w")
-    assert out["CoregistrationT2wMethod"] == "flirt"
-    assert out["CoregistrationT2wCostFunction"] == "corratio"
-    assert out["CoregistrationT2wCorrelationRatio"] == pytest.approx(0.94)
-
-
-def test_enrich_preproc_anat_sidecar_t1w_omits_coreg_keys() -> None:
-    qc = {
-        "preprocessing": {"denoising": True},
-        "coregistration": {"method": "flirt"},
-    }
-    # T1w sidecar passes coreg_modality=None — no Coregistration* keys
-    out = enrich_preproc_anat_sidecar({}, qc, coreg_modality=None)
+    out = enrich_preproc_anat_sidecar({}, qc)
     assert all(not k.startswith("Coregistration") for k in out)
 
 

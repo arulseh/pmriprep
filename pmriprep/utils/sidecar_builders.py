@@ -641,6 +641,9 @@ def build_anat_preproc_sidecar(
         **voxel_size_block(reference_voxel_source),
         "OriginalResolution": compute_original_resolution(original_source),
         "ProcessingSteps": list(processing_steps[processing_kind]),
+        "CoregistrationApplied": processing_kind in {
+            "coregistered", "cropped_coregistered", "subtraction",
+        },
     }
     if processing_kind == "subtraction":
         sidecar.update(subtraction_signal_metadata())
@@ -1183,18 +1186,12 @@ def enrich_brain_mask_sidecar(
 def enrich_preproc_anat_sidecar(
     sidecar: Dict[str, Any],
     qc_metrics: Optional[Dict[str, Any]],
-    coreg_modality: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Add flat ``Preprocessing*`` and ``Coregistration<Modality>*`` keys.
+    """Add measured preprocessing settings to an anatomical sidecar.
 
-    Reads ``qc_metrics["preprocessing"]`` (denoising, bias correction,
-    ACPC alignment) and ``qc_metrics["coregistration"]`` (per-modality
-    coreg metrics if present in the calling sidecar's modality scope).
-
-    ``coreg_modality`` is the modality this sidecar describes (e.g.,
-    ``"T2w"``, ``"FLAIR"``); used to namespace coregistration keys
-    (``CoregistrationT2wMethod`` etc.). Pass ``None`` for the T1w
-    reference sidecar (no coregistration applies — T1w is the target).
+    Reads the settings that production records in
+    ``qc_metrics["preprocessing"]``. Registration and other anatomical
+    operations are described by the derivative's ``ProcessingSteps``.
     """
     if not qc_metrics or not isinstance(qc_metrics, dict):
         return sidecar
@@ -1202,22 +1199,6 @@ def enrich_preproc_anat_sidecar(
     if prep and isinstance(prep, dict):
         if "denoising" in prep:
             sidecar["PreprocessingDenoising"] = bool(prep["denoising"])
-        if "bias_correction" in prep:
-            sidecar["PreprocessingBiasCorrection"] = str(prep["bias_correction"])
-        if "acpc_aligned" in prep:
-            sidecar["PreprocessingACPCAligned"] = bool(prep["acpc_aligned"])
-    if coreg_modality:
-        coreg = qc_metrics.get("coregistration")
-        if coreg and isinstance(coreg, dict):
-            prefix = f"Coregistration{coreg_modality}"
-            if "method" in coreg:
-                sidecar[f"{prefix}Method"] = str(coreg["method"])
-            if "cost_function" in coreg:
-                sidecar[f"{prefix}CostFunction"] = str(coreg["cost_function"])
-            if "correlation_ratio" in coreg:
-                sidecar[f"{prefix}CorrelationRatio"] = float(
-                    coreg["correlation_ratio"],
-                )
     return sidecar
 
 

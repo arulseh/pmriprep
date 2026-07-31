@@ -1032,10 +1032,6 @@ def _anat_nested_from_sidecars(
     preproc: dict[str, Any] = {}
     if "PreprocessingDenoising" in anchor:
         preproc["denoising"] = bool(anchor["PreprocessingDenoising"])
-    if "PreprocessingBiasCorrection" in anchor:
-        preproc["bias_correction"] = str(anchor["PreprocessingBiasCorrection"])
-    if "PreprocessingACPCAligned" in anchor:
-        preproc["acpc_aligned"] = bool(anchor["PreprocessingACPCAligned"])
     if preproc:
         out["preprocessing"] = preproc
 
@@ -1078,12 +1074,8 @@ def _anat_nested_from_sidecars(
         if probsegs:
             out["tissue_segmentation"] = probsegs
 
-    # coregistration — a coregistered secondary structural output (post-contrast
-    # T1w, T2w, or FLAIR) carries a flat ``Coregistration<Modality>*`` metadata
-    # key. Keying on that key (not just the filename) excludes the post-contrast
-    # T1w that serves as the *reference* in postcon-only runs, which is ce-GAD
-    # but has no Coregistration block. Absence => a run with no secondary
-    # modalities to coregister.
+    # CoregistrationApplied is derived from the structured processing kind,
+    # rather than inferred from human-readable ProcessingSteps.
     coreg_candidates = (
         f"anat/{prefix}*_ce-GAD_desc-preproc_T1w.json",
         f"anat/{prefix}*_desc-preproc_T2w.json",
@@ -1091,9 +1083,9 @@ def _anat_nested_from_sidecars(
     )
     for pat in coreg_candidates:
         cand = _resolve_bids_anchor(ses_dir, pat)
-        if cand.exists() and any(
-            k.startswith("Coregistration") for k in _read_json_safe(cand)
-        ):
+        if not cand.exists():
+            continue
+        if _read_json_safe(cand).get("CoregistrationApplied") is True:
             out["coregistration"] = {"secondary_modalities": True}
             break
 

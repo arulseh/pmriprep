@@ -125,8 +125,6 @@ def test_load_pipeline_sidecars_anat_boilerplate_fields(tmp_path: Path) -> None:
         {
             "Description": "Preprocessed T1w",
             "PreprocessingDenoising": True,
-            "PreprocessingBiasCorrection": "N4",
-            "PreprocessingACPCAligned": True,
         },
     )
     _write(
@@ -146,8 +144,6 @@ def test_load_pipeline_sidecars_anat_boilerplate_fields(tmp_path: Path) -> None:
     out = _load_pipeline_sidecars(ses, prefix, "anat")
 
     assert out["preprocessing"]["denoising"] is True
-    assert out["preprocessing"]["bias_correction"] == "N4"
-    assert out["preprocessing"]["acpc_aligned"] is True
     assert out["brain_extraction"]["tool"] == "hdbet"
     # BrainExtractionVersion retired: tool version now lives in dataset-level
     # GeneratedBy, not the per-file sidecar, so it is not surfaced here.

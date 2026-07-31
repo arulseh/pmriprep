@@ -30,7 +30,6 @@ def _build_preproc_meta(
     contrast_agent: str | None = None,
     is_postcon_ref: bool = False,
     qc_metrics: dict | None = None,
-    coreg_modality: str | None = None,
     is_anchor_sidecar: bool = False,
     presence_warnings: list | None = None,
     reference_source: str | None = None,
@@ -39,9 +38,7 @@ def _build_preproc_meta(
     """Nipype-Function wrapper for ``build_anat_preproc_sidecar``.
 
     Chains ``enrich_preproc_anat_sidecar`` after the base build so the
-    sidecar carries flat-prefixed ``Preprocessing*`` keys (and
-    ``Coregistration<Modality>*`` keys when ``coreg_modality`` is set
-    for secondary-modality sidecars).
+    sidecar carries measured preprocessing settings.
 
     When ``is_anchor_sidecar=True`` (only the T1w reference preproc
     sidecar — the anat presence probe), also attaches QC* warnings flat
@@ -70,7 +67,6 @@ def _build_preproc_meta(
     enrich_preproc_anat_sidecar(
         sidecar,
         qc_metrics if isinstance(qc_metrics, dict) else None,
-        coreg_modality=coreg_modality or None,
     )
     if is_anchor_sidecar:
         enrich_recommendation_keys(
@@ -172,7 +168,6 @@ def _add_one_anat_sink(
     builder: str = "preproc",
     contrast_agent_attr: Optional[str] = None,
     is_postcon_ref: bool = False,
-    coreg_modality: Optional[str] = None,
     is_anchor_sidecar: bool = False,
     presence_warnings: Optional[list[str]] = None,
     processing_kind: str = "reference",
@@ -204,7 +199,6 @@ def _add_one_anat_sink(
             "contrast_agent",
             "is_postcon_ref",
             "qc_metrics",
-            "coreg_modality",
             "is_anchor_sidecar",
             "presence_warnings",
             "reference_source",
@@ -251,7 +245,6 @@ def _add_one_anat_sink(
         meta_node.inputs.description = description
         meta_node.inputs.skull_stripped = True
         meta_node.inputs.contrast_agent = None
-        meta_node.inputs.coreg_modality = coreg_modality
         meta_node.inputs.is_anchor_sidecar = is_anchor_sidecar
         meta_node.inputs.presence_warnings = presence_warnings or []
         meta_node.inputs.processing_kind = processing_kind
@@ -566,7 +559,6 @@ def init_anat_datasinks_wf(
             desc_value="preproc",
             ce_value="GAD",
             contrast_agent_attr="source_t1w_postcon",
-            coreg_modality="T1wCE",
             processing_kind="cropped_coregistered",
         )
         sink_outputs.append((sink, "out_file"))
@@ -582,7 +574,6 @@ def init_anat_datasinks_wf(
             ),
             suffix="T2w",
             desc_value="preproc",
-            coreg_modality="T2w",
             processing_kind="coregistered",
         )
         sink_outputs.append((sink, "out_file"))
@@ -598,7 +589,6 @@ def init_anat_datasinks_wf(
             ),
             suffix="FLAIR",
             desc_value="preproc",
-            coreg_modality="FLAIR",
             processing_kind="coregistered",
         )
         sink_outputs.append((sink, "out_file"))
@@ -617,7 +607,6 @@ def init_anat_datasinks_wf(
             desc_value="preproc",
             ce_value="GAD",
             contrast_agent_attr="source_flair_postcon",
-            coreg_modality="FLAIRCE",
             processing_kind="coregistered",
         )
         sink_outputs.append((sink, "out_file"))

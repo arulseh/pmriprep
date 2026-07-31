@@ -252,6 +252,27 @@ class TestRunEntityHandling:
         ts = out["tissue_segmentation"]
         assert ts == {"WM": {}, "GM": {}, "CSF": {}}
 
+    def test_anat_coregistration_uses_structured_flag(self, tmp_path) -> None:
+        """A real coregistered derivative activates the methods clause."""
+        import json as _json
+        from pmriprep.utils.report_utils import _anat_nested_from_sidecars
+
+        anat = tmp_path / "anat"
+        anat.mkdir(parents=True)
+        (anat / f"{self.PREFIX}_run-1_desc-preproc_T2w.json").write_text(
+            _json.dumps({
+                "CoregistrationApplied": True,
+                "ProcessingSteps": [
+                    "Reorientation to RAS",
+                    "Rigidly aligned to the anatomical reference",
+                ],
+            })
+        )
+
+        out = _anat_nested_from_sidecars(tmp_path, self.PREFIX, anchor={})
+
+        assert out["coregistration"]["secondary_modalities"] is True
+
     def test_load_pipeline_sidecars_anat_native_over_postcon(
         self, tmp_path,
     ) -> None:
