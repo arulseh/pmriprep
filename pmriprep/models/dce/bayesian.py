@@ -13,7 +13,7 @@ The shared constraint ve + vp <= VP_VE_TOTAL_MAX is enforced during sampling
 for models that have both ve and vp parameters.
 """
 
-from typing import Callable
+from typing import Callable, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -1044,7 +1044,7 @@ class BayesianPKFitter:
             # Step-size reduction: if free energy decreased, interpolate
             if free_energy > best_free_energy:
                 best_free_energy = free_energy
-                best_m = np.asarray(m_new, dtype=np.float64).copy()
+                best_m = cast(npt.NDArray[np.float64], m_new.copy())
                 best_cov = post_cov.copy()
                 best_c = c
                 best_s = s

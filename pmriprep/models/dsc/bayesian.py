@@ -9,7 +9,7 @@ The BayesianDSCFitter class works with any model implementing the DSCModel
 interface, including VascularModel and CPIModel.
 """
 
-from typing import Callable
+from typing import Callable, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -938,7 +938,7 @@ class BayesianDSCFitter:
             # Step-size reduction: if free energy decreased, interpolate
             if free_energy > best_free_energy:
                 best_free_energy = free_energy
-                best_m = np.asarray(m_new, dtype=np.float64).copy()
+                best_m = cast(npt.NDArray[np.float64], m_new.copy())
                 best_cov = post_cov.copy()
                 best_c = c
                 best_s = s
