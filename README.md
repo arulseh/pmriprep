@@ -226,9 +226,6 @@ DCE fields:
 | `tsnr_threshold` | `0.0` | Optional voxel tSNR floor; 0 disables |
 | `ser_early_time_s` | `120.0` | Early SER sample time after the selected global contrast reference (s) |
 | `ser_late_time_s` | `320.0` | Late SER sample time after the selected global contrast reference (s) |
-
-SER is undefined unless both sampled enhancements exceed three precontrast
-temporal-noise standard deviations; this threshold is fixed rather than configurable.
 | `r1_relaxivity` | `null` | Contrast-agent r1 override in s⁻¹ mM⁻¹ (float) |
 | `cbv_constraint_mode` | `auto` | Use reliable DSC CBV as a soft vp prior, or `skip` |
 | `hematocrit` | `0.42` | Arterial hematocrit for plasma conversion (float) |
@@ -236,6 +233,9 @@ temporal-noise standard deviations; this threshold is fixed rather than configur
 | `smooth_fwhm` | `0.0` | Additional smoothed outputs in mm (float); 0 disables |
 | `underlays` | `[]` | Anatomical underlays used in QC |
 | `num_processes` | `0` | Per-pipeline process cap; 0 inherits `--nprocs` |
+
+SER is undefined unless both sampled enhancements exceed three precontrast
+temporal-noise standard deviations; this threshold is fixed rather than configurable.
 
 Anatomical fields:
 
