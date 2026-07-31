@@ -791,6 +791,22 @@ class TestExtractPerMapLesionStatsEnrichment:
                     "ktrans": {"above_0.05": 0.20, "above_0.1": 0.10},
                 },
             },
+            "QCFilteredRegions": {
+                "contrast_enhancing_tumor": {
+                    "perfusion_maps": {
+                        "ktrans": {"median": 0.14, "n_valid": 60, "n_total": 100},
+                    },
+                },
+            },
+            "QCFilteredNAWMReference": {
+                "voxel_count": 1000,
+                "ktrans": {"median": 0.002, "n_valid": 200, "n_total": 1000},
+            },
+            "QCFilteredDerivedMetrics": {
+                "fractional_volumes": {
+                    "ktrans": {"above_0.05": 0.25, "above_0.1": 0.15},
+                },
+            },
         }
 
     def test_normalized_map_gets_fv(self, aggregate):
@@ -823,6 +839,21 @@ class TestExtractPerMapLesionStatsEnrichment:
         assert "ClinicalThreshold" not in out
         assert "FractionalVolumes" in out
         assert "above_0.05" in out["FractionalVolumes"]
+        assert out["QCFilteredRegions"]["contrast_enhancing_tumor"]["stats"][
+            "n_valid"
+        ] == 60
+        assert "voxel_count" not in out["QCFilteredRegions"][
+            "contrast_enhancing_tumor"
+        ]
+        assert "volume_ml" not in out["QCFilteredRegions"][
+            "contrast_enhancing_tumor"
+        ]
+        assert out["QCFilteredNAWMReference"]["median"] == pytest.approx(0.002)
+        assert out["QCFilteredNAWMReference"]["n_valid"] == 200
+        assert out["QCFilteredNAWMReference"]["n_total"] == 1000
+        assert "voxel_count" not in out["QCFilteredNAWMReference"]
+        assert "volume_ml" not in out["QCFilteredNAWMReference"]
+        assert out["QCFilteredFractionalVolumes"]["above_0.05"] == pytest.approx(0.25)
 
     def test_map_with_no_fv_just_stats(self, aggregate):
         from pmriprep.utils.lesion_stats import extract_per_map_lesion_stats
@@ -881,7 +912,7 @@ class TestDCELesionStatsMapKeyCoverage:
 
 
 class TestDCEStatisticsMapSupport:
-    """DCE statistics retain the native finite support of each map."""
+    """DCE statistics use the fit-quality support without changing maps."""
 
     @staticmethod
     def _save(tmp_path, name, data):
@@ -927,6 +958,66 @@ class TestDCEStatisticsMapSupport:
         assert pk_stats.median == pytest.approx(2.5)
         assert model_free_stats is not None
         assert model_free_stats.n_valid == model_free_stats.n_total == 4
+
+    def test_qc_mask_filters_lesion_and_nawm_values(self, tmp_path) -> None:
+        """Lesion and NAWM summaries use the same QC-passing population."""
+        import json
+
+        from pmriprep.interfaces.dce_lesion_stats import DCELesionStats
+
+        shape = (2, 2, 1)
+        values = np.arange(1, 5, dtype=np.float32).reshape(shape)
+        iface = DCELesionStats()
+        iface.inputs.subject_id = "01"
+        iface.inputs.session_id = "01"
+        iface.inputs.lesion_mask = self._save(
+            tmp_path, "lesion.nii.gz", np.ones(shape)
+        )
+        iface.inputs.nawm_mask = self._save(
+            tmp_path, "nawm.nii.gz", np.ones(shape)
+        )
+        iface.inputs.qc_mask = self._save(
+            tmp_path, "qc.nii.gz", np.array([[[1], [0]], [[1], [0]]])
+        )
+        iface.inputs.ktrans_map = self._save(
+            tmp_path, "ktrans.nii.gz", values
+        )
+
+        iface.run(cwd=tmp_path)
+        result = json.loads(
+            (tmp_path / "sub-01_ses-01_lesion-stats.json").read_text()
+        )
+
+        lesion = result["Regions"]["tumor"]["perfusion_maps"]["ktrans"]
+        reference = result["NAWMReference"]["ktrans"]
+        qc_lesion = result["QCFilteredRegions"]["tumor"]["perfusion_maps"][
+            "ktrans"
+        ]
+        qc_reference = result["QCFilteredNAWMReference"]["ktrans"]
+        assert lesion["n_valid"] == reference["n_valid"] == 4
+        assert lesion["median"] == reference["median"] == pytest.approx(2.5)
+        assert qc_lesion["n_total"] == qc_reference["n_total"] == 4
+        assert qc_lesion["n_valid"] == qc_reference["n_valid"] == 2
+        assert qc_lesion["median"] == qc_reference["median"] == pytest.approx(2.0)
+        assert set(result["QCFilteredRegions"]["tumor"]) == {"perfusion_maps"}
+        assert "voxel_count" not in result["QCFilteredNAWMReference"]
+        assert "volume_ml" not in result["QCFilteredNAWMReference"]
+
+    def test_qc_mask_geometry_must_match_maps(self, tmp_path) -> None:
+        """QC-filtered companions reject a mismatched mask grid."""
+        from pmriprep.interfaces.dce_lesion_stats import DCELesionStats
+
+        iface = DCELesionStats()
+        iface.inputs.ktrans_map = self._save(
+            tmp_path, "ktrans.nii.gz", np.ones((2, 2, 1))
+        )
+        iface.inputs.qc_mask = self._save(
+            tmp_path, "qc.nii.gz", np.ones((3, 2, 1))
+        )
+
+        maps = iface._load_maps()
+        with pytest.raises(ValueError, match="QC mask geometry.*ktrans"):
+            iface._qc_filtered_maps(maps)
 
     def test_all_iauc_windows_are_nawm_references(self, tmp_path) -> None:
         """Every published IAUC window receives the same NAWM context."""

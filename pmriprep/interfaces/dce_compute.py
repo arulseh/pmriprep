@@ -728,7 +728,7 @@ def _zero_dce_background(
 def _build_dce_qc_mask(
     fitting_mask: npt.NDArray[np.bool_],
     tsnr: npt.NDArray[Any],
-    peak_enhancement: Optional[npt.NDArray[Any]],
+    signal_qc_available: bool,
     ktrans: npt.NDArray[Any],
     r_squared: npt.NDArray[Any],
     ve: npt.NDArray[Any],
@@ -741,11 +741,11 @@ def _build_dce_qc_mask(
     model_name: str,
     tsnr_threshold: float = 0.0,
 ) -> npt.NDArray[np.uint8]:
-    """Build the physiological and fit-quality acceptance mask."""
+    """Build the fit-quality acceptance mask."""
     return _evaluate_dce_qc_mask(
         fitting_mask,
         tsnr,
-        peak_enhancement,
+        signal_qc_available,
         ktrans,
         r_squared,
         ve,
@@ -771,7 +771,7 @@ class _DCEQCMaskEvaluation(NamedTuple):
 def _evaluate_dce_qc_mask(
     fitting_mask: npt.NDArray[np.bool_],
     tsnr: npt.NDArray[Any],
-    peak_enhancement: Optional[npt.NDArray[Any]],
+    signal_qc_available: bool,
     ktrans: npt.NDArray[Any],
     r_squared: npt.NDArray[Any],
     ve: npt.NDArray[Any],
@@ -785,16 +785,10 @@ def _evaluate_dce_qc_mask(
     tsnr_threshold: float = 0.0,
 ) -> _DCEQCMaskEvaluation:
     """Evaluate acquisition and model-aware fit acceptance."""
-    signal_qc_available = peak_enhancement is not None
     tsnr_ok = (
         tsnr >= tsnr_threshold
         if signal_qc_available and tsnr_threshold > 0
         else np.ones(fitting_mask.shape, dtype=bool)
-    )
-    enhancement_ok = (
-        np.ones(fitting_mask.shape, dtype=bool)
-        if peak_enhancement is None
-        else peak_enhancement >= 10
     )
     ktrans_ok = (ktrans > 0) & (ktrans < 5.0)
     quality_ok = quality_flag == 1
@@ -838,7 +832,6 @@ def _evaluate_dce_qc_mask(
 
     components = {
         "tsnr": tsnr_ok,
-        "peak_enhancement": enhancement_ok,
         "ktrans_range": ktrans_ok,
         "r_squared": r_squared_ok,
         "quality_flag": quality_ok,
@@ -857,9 +850,6 @@ def _evaluate_dce_qc_mask(
                 tsnr_threshold
                 if signal_qc_available and tsnr_threshold > 0
                 else None
-            ),
-            "minimum_peak_enhancement_percent": (
-                None if peak_enhancement is None else 10.0
             ),
         },
         "fit": {
@@ -1042,7 +1032,7 @@ def _write_dce_terminal_outputs(
     qc_evaluation = _evaluate_dce_qc_mask(
         fitting_mask,
         tsnr,
-        peak_enhancement,
+        peak_enhancement is not None,
         maps.ktrans,
         maps.r_squared,
         maps.ve,

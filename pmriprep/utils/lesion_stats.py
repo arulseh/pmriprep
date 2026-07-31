@@ -122,6 +122,12 @@ class LesionStatisticsResult:
         regions: Dictionary mapping region name to its statistics.
         nawm_reference: NAWM reference values for normalization context.
         derived_metrics: Derived metrics (fractional volumes).
+        qc_filtered_regions: Companion region statistics restricted to the
+            modality-specific QC mask.
+        qc_filtered_nawm_reference: Companion NAWM reference restricted to
+            the same QC mask.
+        qc_filtered_derived_metrics: Companion derived metrics restricted to
+            the same QC mask.
     """
 
     subject_id: str
@@ -133,6 +139,9 @@ class LesionStatisticsResult:
     regions: Dict[str, RegionStatistics] = field(default_factory=dict)
     nawm_reference: Optional[Dict[str, Any]] = None
     derived_metrics: Optional[Dict[str, Any]] = None
+    qc_filtered_regions: Dict[str, RegionStatistics] = field(default_factory=dict)
+    qc_filtered_nawm_reference: Optional[Dict[str, Any]] = None
+    qc_filtered_derived_metrics: Optional[Dict[str, Any]] = None
     # AIF provenance for DSC stats: a prebuilt ``PerfusionProcessing.AIF``
     # sub-block (Source, DetectionLevel, QualityFlag, GammaFitApplied,
     # CrossSubjectComparable, optionally SyntheticFallbackReason /
@@ -161,11 +170,23 @@ class LesionStatisticsResult:
         voxel-distribution effect size; spatial voxels are not independent
         samples.
         """
-        if not self.nawm_reference:
+        self._augment_regions_with_cohens_d(self.regions, self.nawm_reference)
+        self._augment_regions_with_cohens_d(
+            self.qc_filtered_regions,
+            self.qc_filtered_nawm_reference,
+        )
+
+    @staticmethod
+    def _augment_regions_with_cohens_d(
+        regions: Dict[str, RegionStatistics],
+        nawm_reference: Optional[Dict[str, Any]],
+    ) -> None:
+        """Attach pooled-SD Cohen's d for one consistently filtered cohort."""
+        if not nawm_reference:
             return
-        for region in self.regions.values():
+        for region in regions.values():
             for map_name, map_stats in region.perfusion_maps.items():
-                nawm_entry = self.nawm_reference.get(map_name)
+                nawm_entry = nawm_reference.get(map_name)
                 if not isinstance(nawm_entry, dict):
                     continue
                 nawm_mean = nawm_entry.get("mean")
@@ -209,6 +230,24 @@ class LesionStatisticsResult:
         result["Regions"] = {k: v.to_dict() for k, v in self.regions.items()}
         if self.derived_metrics:
             result["DerivedMetrics"] = self.derived_metrics
+        if self.qc_filtered_regions:
+            result["QCFilteredRegions"] = {
+                k: {
+                    "perfusion_maps": {
+                        map_name: stats.to_dict()
+                        for map_name, stats in v.perfusion_maps.items()
+                    }
+                }
+                for k, v in self.qc_filtered_regions.items()
+            }
+        if self.qc_filtered_nawm_reference:
+            result["QCFilteredNAWMReference"] = {
+                key: value
+                for key, value in self.qc_filtered_nawm_reference.items()
+                if key not in {"voxel_count", "volume_ml"}
+            }
+        if self.qc_filtered_derived_metrics:
+            result["QCFilteredDerivedMetrics"] = self.qc_filtered_derived_metrics
         return result
 
 
@@ -878,14 +917,15 @@ def write_tumor_dseg_tsv(
 def _slice_nawm_for_map(
     nawm_reference: Optional[Dict[str, Any]],
     map_name: str,
+    *,
+    include_mask_context: bool = True,
 ) -> Optional[Dict[str, Any]]:
     """Slice the modality NAWM reference dict for a single map.
 
     Returns a dict carrying:
-        - ``voxel_count``, ``volume_ml`` (global mask context — informational;
-          consumers apply their own size policy)
-        - ``median``, ``std``, ``p25``, ``p75`` for ``map_name`` (in that
-          map's native units; e.g. normalized maps carry ~1.0 ± noise SD)
+        - optional ``voxel_count``, ``volume_ml`` global mask context
+        - ``median``, ``std``, ``p25``, ``p75``, ``n_valid``, and ``n_total``
+          for ``map_name`` in that map's native units
         - ``value_qc_status`` / ``value_qc_notes`` for that map only
           (cross-map contamination avoided)
 
@@ -898,11 +938,15 @@ def _slice_nawm_for_map(
         return None
 
     out: Dict[str, Any] = {}
-    for k in ("voxel_count", "volume_ml"):
-        if k in nawm_reference:
-            out[k] = nawm_reference[k]
+    if include_mask_context:
+        for k in ("voxel_count", "volume_ml"):
+            if k in nawm_reference:
+                out[k] = nawm_reference[k]
     # Per-map stats and per-map value QC verdict.
-    for k in ("median", "std", "p25", "p75", "value_qc_status"):
+    for k in (
+        "median", "std", "p25", "p75", "n_valid", "n_total",
+        "value_qc_status",
+    ):
         if k in map_stats:
             out[k] = map_stats[k]
 
@@ -977,9 +1021,9 @@ def extract_per_map_lesion_stats(
     Used to inject per-map ``LesionStats`` blocks into perfusion map
     sidecars. The aggregate dict (output of
     :meth:`LesionStatisticsResult.to_dict`) carries per-region per-map
-    stats plus modality-level context (NAWM reference, fractional
-    volumes, mask type). This function slices out everything relevant
-    to ``map_name``.
+    stats plus modality-level context (NAWM reference, fractional volumes,
+    mask type, and explicitly labelled QC-filtered companion statistics).
+    This function slices out everything relevant to ``map_name``.
 
     Returns a fragment of the form::
 
@@ -993,6 +1037,9 @@ def extract_per_map_lesion_stats(
           },
           "NAWMReference": {... per-map slice in that map's units ...},
           "FractionalVolumes": {"above_2.0": 0.137, "above_2.5": ...},
+          "QCFilteredRegions": {... companion region statistics ...},
+          "QCFilteredNAWMReference": {... companion NAWM statistics ...},
+          "QCFilteredFractionalVolumes": {... companion fractions ...},
         }
 
     Optional fields are omitted when not applicable. Returns ``None``
@@ -1026,6 +1073,22 @@ def extract_per_map_lesion_stats(
     nawm_block = _slice_nawm_for_map(
         aggregate.get("NAWMReference"), map_name,
     )
+    qc_regions = aggregate.get("QCFilteredRegions") or {}
+    qc_out_regions: Dict[str, Dict[str, Any]] = {}
+    if isinstance(qc_regions, dict):
+        for region_name, region_block in qc_regions.items():
+            if not isinstance(region_block, dict):
+                continue
+            per_map = region_block.get("perfusion_maps") or {}
+            stats = per_map.get(map_name) if isinstance(per_map, dict) else None
+            if stats is None:
+                continue
+            qc_out_regions[region_name] = {"stats": stats}
+    qc_nawm_block = _slice_nawm_for_map(
+        aggregate.get("QCFilteredNAWMReference"),
+        map_name,
+        include_mask_context=False,
+    )
 
     fractional_volumes = None
     derived = aggregate.get("DerivedMetrics")
@@ -1033,6 +1096,12 @@ def extract_per_map_lesion_stats(
         fv_block = derived.get("fractional_volumes")
         if isinstance(fv_block, dict) and map_name in fv_block:
             fractional_volumes = fv_block[map_name]
+    qc_fractional_volumes = None
+    qc_derived = aggregate.get("QCFilteredDerivedMetrics")
+    if isinstance(qc_derived, dict):
+        qc_fv_block = qc_derived.get("fractional_volumes")
+        if isinstance(qc_fv_block, dict) and map_name in qc_fv_block:
+            qc_fractional_volumes = qc_fv_block[map_name]
 
     mask_type = aggregate.get("LesionMaskType")
 
@@ -1051,5 +1120,11 @@ def extract_per_map_lesion_stats(
         out["NAWMReference"] = nawm_block
     if fractional_volumes:
         out["FractionalVolumes"] = fractional_volumes
+    if qc_out_regions:
+        out["QCFilteredRegions"] = qc_out_regions
+    if qc_nawm_block:
+        out["QCFilteredNAWMReference"] = qc_nawm_block
+    if qc_fractional_volumes:
+        out["QCFilteredFractionalVolumes"] = qc_fractional_volumes
 
     return out

@@ -47,6 +47,7 @@ class DCELesionStatsInputSpec(BaseInterfaceInputSpec):
 
     # Optional NAWM mask for reference values
     nawm_mask = traits.Str(desc="NAWM mask in DCE space for reference values")
+    qc_mask = traits.Str(desc="DCE fit-quality mask in DCE space")
 
     # Core pharmacokinetic maps (all optional - stats computed for available maps)
     ktrans_map = traits.Str(desc="Ktrans map path (min^-1)")
@@ -120,8 +121,12 @@ class DCELesionStats(BaseInterface):
         lesion_data = np.asarray(lesion_img.dataobj)  # type: ignore[attr-defined]
         voxel_volume_mm3 = physical_voxel_volume_mm3(lesion_img.affine)  # type: ignore[attr-defined]
 
-        # Load all available perfusion maps
+        # Load native derivative values first; QC-filtered companions are
+        # computed separately so primary statistics remain reconstructible
+        # directly from the published maps.
         maps = self._load_maps()
+        qc_maps = self._qc_filtered_maps(maps)
+        region_masks: Dict[str, np.ndarray] = {}
 
         if self.inputs.force_binary:
             import logging
@@ -160,6 +165,7 @@ class DCELesionStats(BaseInterface):
                     )
                     if region_stats is not None:
                         result.regions[f"label_{label}"] = region_stats
+                        region_masks[f"label_{label}"] = label_mask
             else:
                 if max_label >= 2 and not is_integer_valued(lesion_data):
                     _log.warning(
@@ -179,6 +185,7 @@ class DCELesionStats(BaseInterface):
                 )
                 if region_stats is not None:
                     result.regions["roi"] = region_stats
+                    region_masks["roi"] = binary_mask
         else:
             # Standard lesion stats mode
             mask_type, max_label = detect_mask_type(lesion_data)
@@ -206,6 +213,7 @@ class DCELesionStats(BaseInterface):
                     )
                     if region_stats is not None:
                         result.regions[region_name] = region_stats
+                        region_masks[region_name] = label_mask
             else:
                 binary_mask = lesion_data > 0
                 # When mask comes from tumor_segmentation with only label 1
@@ -221,6 +229,7 @@ class DCELesionStats(BaseInterface):
                 )
                 if region_stats is not None:
                     result.regions[region_name] = region_stats
+                    region_masks[region_name] = binary_mask
 
         # Compute NAWM reference if mask provided
         if self._has_input("nawm_mask"):
@@ -236,6 +245,14 @@ class DCELesionStats(BaseInterface):
             result.nawm_reference = compute_nawm_reference(
                 nawm_data, nawm_maps, voxel_volume_mm3,
             )
+            qc_nawm_maps = {
+                k: v for k, v in qc_maps.items()
+                if k in nawm_maps
+            }
+            if qc_nawm_maps:
+                result.qc_filtered_nawm_reference = compute_nawm_reference(
+                    nawm_data, qc_nawm_maps, voxel_volume_mm3,
+                )
 
         # Compute derived metrics for primary region
         primary_mask = lesion_data > 0
@@ -245,9 +262,25 @@ class DCELesionStats(BaseInterface):
             vp_data=maps.get("vp"),
             mask=primary_mask,
         )
+        if qc_maps:
+            result.qc_filtered_regions = {
+                name: stats
+                for name, mask in region_masks.items()
+                if (
+                    stats := self._compute_region_stats(
+                        name, mask, qc_maps, voxel_volume_mm3
+                    )
+                ) is not None
+            }
+            result.qc_filtered_derived_metrics = compute_dce_derived_metrics(
+                ktrans_data=qc_maps.get("ktrans"),
+                ve_data=qc_maps.get("ve"),
+                vp_data=qc_maps.get("vp"),
+                mask=primary_mask,
+            )
 
-        # Augment per-region per-map stats with Cohen's d vs NAWM
-        # (no-op when nawm_reference is empty).
+        # Augment native and QC-filtered region statistics against their
+        # consistently matched NAWM populations.
         result.augment_with_cohens_d()
 
         # Write outputs
@@ -274,11 +307,10 @@ class DCELesionStats(BaseInterface):
         return self._results
 
     def _load_maps(self) -> Dict[str, np.ndarray]:
-        """Load finite-valued DCE maps for regional summaries.
+        """Load native DCE map values for regional summaries.
 
-        Model-inapplicable and rejected parameter estimates are encoded as
-        NaN by their producers. The heuristic DCE fitting QC mask is not used
-        to censor otherwise finite derivative values here.
+        Published parameter maps and their primary regional summaries remain
+        uncensored. QC-filtered companion summaries are built separately.
 
         Returns
         -------
@@ -286,7 +318,7 @@ class DCELesionStats(BaseInterface):
             Dictionary mapping map name to 3D numpy array.
         """
         maps: Dict[str, np.ndarray] = {}
-
+        self._map_affines: Dict[str, np.ndarray] = {}
         map_attrs = [
             ("ktrans_map", "ktrans"),
             ("ve_map", "ve"),
@@ -308,9 +340,34 @@ class DCELesionStats(BaseInterface):
                 path = getattr(self.inputs, attr)
                 if Path(path).exists():
                     img = nib.load(path)
-                    maps[name] = np.asarray(img.dataobj)  # type: ignore[attr-defined]
+                    data = np.asarray(img.dataobj)  # type: ignore[attr-defined]
+                    maps[name] = data
+                    self._map_affines[name] = np.asarray(
+                        img.affine  # type: ignore[attr-defined]
+                    )
 
         return maps
+
+    def _qc_filtered_maps(
+        self, maps: Dict[str, np.ndarray]
+    ) -> Dict[str, np.ndarray]:
+        """Return map copies with non-QC samples encoded as unavailable."""
+        if not self._has_input("qc_mask"):
+            return {}
+        qc_img = nib.load(self.inputs.qc_mask)
+        qc_mask = np.asarray(qc_img.dataobj) > 0  # type: ignore[attr-defined]
+        qc_affine = np.asarray(qc_img.affine)  # type: ignore[attr-defined]
+        filtered: Dict[str, np.ndarray] = {}
+        for name, data in maps.items():
+            map_affine = self._map_affines[name]
+            if data.shape != qc_mask.shape or not np.allclose(
+                map_affine, qc_affine, atol=1e-5, rtol=1e-5
+            ):
+                raise ValueError(
+                    f"DCE QC mask geometry does not match {name} map"
+                )
+            filtered[name] = np.where(qc_mask, data, np.nan)
+        return filtered
 
     def _has_input(self, attr: str) -> bool:
         """Check if an input is defined and points to an existing file."""

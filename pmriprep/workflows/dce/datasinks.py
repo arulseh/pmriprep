@@ -1721,9 +1721,10 @@ def init_dce_datasinks_wf(
             name="qc_mask", in_attr="qc_mask",
             desc_value="dceQc", suffix="",
             description=(
-                "Heuristic DCE fit-review mask (1=passes all recorded review "
-                "criteria, 0=otherwise); not used to censor quantitative "
-                "derivatives or region statistics"
+                "DCE fit-quality mask (1=passes all recorded fit-review "
+                "criteria, 0=otherwise); quantitative derivatives remain "
+                "uncensored, and regional summaries include explicitly "
+                "labelled passing-voxel companions"
             ),
             units=None, extra={"Type": "ROI"},
             bids_suffix="mask",

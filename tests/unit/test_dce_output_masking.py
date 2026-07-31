@@ -49,12 +49,12 @@ def test_zero_dce_background_broadcasts_over_time() -> None:
 
 
 def test_build_dce_qc_mask_preserves_strict_thresholds() -> None:
-    """QC acceptance retains inclusive signal gates and strict PK gates."""
+    """QC acceptance retains the configured tSNR and strict PK gates."""
     shape = (1, 1, 4)
     mask = _build_dce_qc_mask(
         np.ones(shape, dtype=bool),
         np.array([[[10.0, 10.0, 10.0, 10.0]]]),
-        np.array([[[10.0, 10.0, 10.0, 10.0]]]),
+        True,
         np.array([[[0.1, 0.0, 5.0, 0.1]]]),
         np.array([[[0.5, 0.9, 0.9, 0.49]]]),
         np.full(shape, 0.2),
@@ -77,7 +77,7 @@ def test_build_dce_qc_mask_auto_patlak_allows_nan_parameters() -> None:
     mask = _build_dce_qc_mask(
         np.ones(shape, dtype=bool),
         np.full(shape, 20.0),
-        None,
+        False,
         np.full(shape, 0.1),
         np.full(shape, 0.8),
         np.array([[[np.nan, 0.8]]]),
@@ -98,7 +98,7 @@ def test_build_dce_qc_mask_skips_signal_qc_without_raw_signal() -> None:
     evaluation = _evaluate_dce_qc_mask(
         np.ones(shape, dtype=bool),
         np.zeros(shape),
-        None,
+        False,
         np.full(shape, 0.1),
         np.full(shape, 0.8),
         np.full(shape, 0.2),
@@ -114,7 +114,6 @@ def test_build_dce_qc_mask_skips_signal_qc_without_raw_signal() -> None:
     assert evaluation.mask.tolist() == [[[1]]]
     assert evaluation.acceptance_policy["acquisition"] == {
         "minimum_tsnr": None,
-        "minimum_peak_enhancement_percent": None,
     }
 
 
@@ -124,7 +123,7 @@ def test_build_dce_qc_mask_uses_model_aware_r_squared_thresholds() -> None:
     mask = _build_dce_qc_mask(
         np.ones(shape, dtype=bool),
         np.full(shape, 20.0),
-        np.full(shape, 20.0),
+        True,
         np.full(shape, 0.1),
         np.array([[[0.0, -0.01, 0.49, 0.5]]]),
         np.full(shape, 0.2),
@@ -145,7 +144,7 @@ def test_build_dce_qc_mask_applies_patlak_threshold_in_fixed_mode() -> None:
     common = {
         "fitting_mask": np.ones(shape, dtype=bool),
         "tsnr": np.full(shape, 20.0),
-        "peak_enhancement": np.full(shape, 20.0),
+        "signal_qc_available": True,
         "ktrans": np.full(shape, 0.1),
         "r_squared": np.array([[[0.0, -0.01]]]),
         "ve": np.full(shape, np.nan),
@@ -167,7 +166,7 @@ def test_evaluate_dce_qc_mask_reports_acceptance_policy() -> None:
     evaluation = _evaluate_dce_qc_mask(
         np.ones(shape, dtype=bool),
         np.full(shape, 20.0),
-        np.full(shape, 20.0),
+        True,
         np.full(shape, 0.1),
         np.full(shape, 0.1),
         np.full(shape, np.nan),
@@ -192,7 +191,7 @@ def test_dce_qc_mask_uses_configured_tsnr_threshold() -> None:
     evaluation = _evaluate_dce_qc_mask(
         np.ones(shape, dtype=bool),
         np.array([[[11.9, 12.0]]]),
-        np.full(shape, 20.0),
+        True,
         np.full(shape, 0.1),
         np.full(shape, 0.8),
         np.full(shape, 0.2),
@@ -217,7 +216,7 @@ def test_default_zero_tsnr_threshold_is_diagnostic_only() -> None:
     evaluation = _evaluate_dce_qc_mask(
         np.ones(shape, dtype=bool),
         np.zeros(shape),
-        np.full(shape, 20.0),
+        True,
         np.full(shape, 0.1),
         np.full(shape, 0.8),
         np.full(shape, 0.2),
@@ -242,7 +241,7 @@ def test_build_dce_qc_mask_rejects_quality_and_required_parameter_failures() -> 
     common = {
         "fitting_mask": np.ones(shape, dtype=bool),
         "tsnr": np.full(shape, 20.0),
-        "peak_enhancement": np.full(shape, 20.0),
+        "signal_qc_available": True,
         "ktrans": np.full(shape, 0.1),
         "r_squared": np.full(shape, 0.8),
         "ve": np.array([[[0.2, 0.2, np.nan, 0.2]]]),
@@ -264,7 +263,7 @@ def test_build_dce_qc_mask_requires_finite_kep_for_reversible_model() -> None:
     arguments = {
         "fitting_mask": np.ones(shape, dtype=bool),
         "tsnr": np.full(shape, 20.0),
-        "peak_enhancement": np.full(shape, 20.0),
+        "signal_qc_available": True,
         "ktrans": np.full(shape, 0.1),
         "r_squared": np.full(shape, 0.8),
         "ve": np.full(shape, 0.2),
@@ -293,7 +292,7 @@ def test_evaluate_dce_qc_mask_reports_overlapping_component_failures() -> None:
     evaluation = _evaluate_dce_qc_mask(
         np.ones(shape, dtype=bool),
         np.array([[[9.0, 20.0, 20.0]]]),
-        np.array([[[20.0, 9.0, 20.0]]]),
+        True,
         np.array([[[0.1, 0.1, 0.0]]]),
         np.array([[[0.8, 0.8, 0.4]]]),
         np.full(shape, 0.2),
@@ -306,10 +305,9 @@ def test_evaluate_dce_qc_mask_reports_overlapping_component_failures() -> None:
         "extended_tofts",
         tsnr_threshold=10.0,
     )
-    assert evaluation.mask.tolist() == [[[0, 0, 0]]]
+    assert evaluation.mask.tolist() == [[[0, 1, 0]]]
     assert evaluation.component_failures == {
         "tsnr": 1,
-        "peak_enhancement": 1,
         "ktrans_range": 1,
         "r_squared": 1,
         "quality_flag": 1,
@@ -522,7 +520,6 @@ def test_write_dce_terminal_outputs_preserves_auto_applicability(is_auto: bool) 
         "scope": "fitted_voxels",
         "counts_are_overlapping": True,
         "tsnr": 0,
-        "peak_enhancement": 0,
         "ktrans_range": 0,
         "r_squared": 0,
         "quality_flag": 0,
