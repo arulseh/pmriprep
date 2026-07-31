@@ -135,6 +135,7 @@ class T1CorrectionResult:
     field_strength_t: float = 3.0
     has_lesion: bool = False
     correction_mode_requested: str = "auto"
+    population_reference_applicable: bool = True
     offset_ms: Optional[float] = None
     fallback_value_ms: Optional[float] = None
     deviation_type: Optional[str] = None
@@ -153,6 +154,7 @@ class T1CorrectionResult:
             "field_strength_t": self.field_strength_t,
             "has_lesion": self.has_lesion,
             "correction_mode_requested": self.correction_mode_requested,
+            "population_reference_applicable": self.population_reference_applicable,
         }
         if self.offset_ms is not None:
             d["offset_ms"] = self.offset_ms
@@ -413,6 +415,7 @@ def apply_t1_correction(
     gm_probseg: Optional[npt.NDArray[np.floating]] = None,
     e1_median: Optional[float] = None,
     b1_corrected: bool = False,
+    population_reference_applicable: bool = True,
 ) -> Tuple[npt.NDArray[np.floating], T1CorrectionResult]:
     """Apply T1 map correction based on median T1 validation.
 
@@ -453,6 +456,9 @@ def apply_t1_correction(
         Whether B1 field mapping was applied. Retained in the internal API
         so callers can provide the complete acquisition state; B1 map quality
         is assessed separately through ``b1_qc_pass``.
+    population_reference_applicable : bool
+        Whether the supplied summary mask excludes high-probability CSF and
+        supports comparison with the normal-parenchymal reference interval.
 
     Returns
     -------
@@ -502,6 +508,7 @@ def apply_t1_correction(
         field_strength_t=field_key,
         has_lesion=has_lesion,
         correction_mode_requested=correction_mode,
+        population_reference_applicable=population_reference_applicable,
     )
 
     if correction_mode == "none":
@@ -527,6 +534,7 @@ def apply_t1_correction(
             e1_median=e1_median,
             b1_corrected=b1_corrected,
             brain_mask=brain_mask,
+            population_reference_applicable=population_reference_applicable,
         )
 
     else:
@@ -547,6 +555,7 @@ def _auto_correct_t1(
     e1_median: Optional[float] = None,
     b1_corrected: bool = False,
     brain_mask: Optional[npt.NDArray[np.bool_]] = None,
+    population_reference_applicable: bool = True,
 ) -> Tuple[npt.NDArray[np.floating], T1CorrectionResult]:
     """Auto-mode T1 correction logic.
 
@@ -563,7 +572,21 @@ def _auto_correct_t1(
     within_warn = t1_ref["warn_low"] <= median_t1 <= t1_ref["warn_high"]
     result.correction_applied = "none"
     result.median_t1_corrected = median_t1
-    if within_warn:
+    if not population_reference_applicable:
+        result.reason = (
+            "Measured T1 retained; normal-parenchymal median comparison "
+            "unavailable without CSF-restricted QC support"
+        )
+        logger.info(
+            "Normal-parenchymal median T1 comparison was not performed because "
+            "no CSF-restricted QC mask was available. The measured map was "
+            "retained; DCE signal conversion accepts finite T1 values from "
+            "%.0f to %.0fms at %.1fT.",
+            MIN_VALID_T1_MS,
+            t1_ref["t1_upper_bound"],
+            result.field_strength_t,
+        )
+    elif within_warn:
         result.reason = "Median T1 within expected population range"
     else:
         result.deviation_type = "low" if median_t1 < expected_median else "high"
@@ -573,10 +596,12 @@ def _auto_correct_t1(
             f"{b1_note}"
         )
         logger.warning(
-            "Median T1 %.0fms is outside the expected population interval "
-            "(%.0f-%.0fms)%s; retaining measured map because it remains "
-            "within the numerical safety envelope",
+            "Median measured T1 is %.0fms, outside the %.1fT normal-parenchymal "
+            "reference interval (%.0f-%.0fms)%s. The CSF-restricted QC summary "
+            "may still include tumor or edema; the measured map was retained "
+            "and no population-T1 fallback was applied.",
             median_t1,
+            result.field_strength_t,
             t1_ref["warn_low"],
             t1_ref["warn_high"],
             b1_note,

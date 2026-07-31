@@ -309,6 +309,53 @@ class TestApplyT1CorrectionAuto:
         )
         assert result.correction_applied == "none"
 
+    def test_population_comparison_unavailable_without_csf_restriction(
+        self,
+        brain_mask: np.ndarray,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A whole-brain median is not compared with parenchymal norms."""
+        t1_map = np.full((10, 10, 10), 2000.0)
+        t1_map[~brain_mask] = np.nan
+
+        with caplog.at_level("INFO"):
+            _, result = apply_t1_correction(
+                t1_map,
+                field_strength=3.0,
+                correction_mode="auto",
+                brain_mask=brain_mask,
+                population_reference_applicable=False,
+            )
+
+        assert result.population_reference_applicable is False
+        assert result.deviation_type is None
+        assert "comparison unavailable" in result.reason
+        assert "no CSF-restricted QC mask was available" in caplog.text
+        assert "numerical safety envelope" not in caplog.text
+
+    def test_population_warning_explains_pathology_retention(
+        self,
+        brain_mask: np.ndarray,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A CSF-restricted deviation remains descriptive in pathology."""
+        t1_map = np.full((10, 10, 10), 2000.0)
+        t1_map[~brain_mask] = np.nan
+
+        with caplog.at_level("WARNING"):
+            _, result = apply_t1_correction(
+                t1_map,
+                field_strength=3.0,
+                correction_mode="auto",
+                brain_mask=brain_mask,
+                population_reference_applicable=True,
+            )
+
+        assert result.population_reference_applicable is True
+        assert result.deviation_type == "high"
+        assert "may still include tumor or edema" in caplog.text
+        assert "no population-T1 fallback was applied" in caplog.text
+
     def test_e1_does_not_change_fit_loss_threshold(
         self, brain_mask: np.ndarray, probsegs: tuple[np.ndarray, np.ndarray],
     ) -> None:
@@ -843,6 +890,12 @@ def test_t1_mapping_preserves_compact_measured_structure(tmp_path: Path) -> None
         )
     ) == support_qc["analysis_domain_voxels"]
     assert result.outputs.qc_metrics["median_filtered"] is False
+    assert (
+        result.outputs.qc_metrics["t1_correction"][
+            "population_reference_applicable"
+        ]
+        is False
+    )
 
 
 def test_t1_mapping_csf_probseg_restricts_qc_not_support(tmp_path: Path) -> None:
@@ -899,6 +952,12 @@ def test_t1_mapping_csf_probseg_restricts_qc_not_support(tmp_path: Path) -> None
     assert support_qc["csf_qc_restricted_voxels"] == 2
     assert result.outputs.qc_metrics["fraction_valid"] == 1.0
     assert result.outputs.qc_metrics["median_t1_ms"] == pytest.approx(1200.0, abs=1.0)
+    assert (
+        result.outputs.qc_metrics["t1_correction"][
+            "population_reference_applicable"
+        ]
+        is True
+    )
 
 
 class TestNLLSFitting:

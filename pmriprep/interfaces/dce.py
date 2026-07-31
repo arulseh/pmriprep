@@ -1789,6 +1789,7 @@ class T1Mapping(SimpleInterface):
             gm_probseg=gm_probseg_arr,
             e1_median=e1_median,
             b1_corrected=b1_corrected,
+            population_reference_applicable=csf_qc_restricted,
         )
         t1_map = t1_map_arr.astype(np.float32)
         if correction_result.correction_applied == "fallback":
