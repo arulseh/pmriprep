@@ -177,6 +177,7 @@ def test_dce_underlay_metadata_records_resampling() -> None:
         "/raw/sub-X/anat/sub-X_FLAIR.nii.gz",
         "/raw/sub-X/perf/sub-X_dce.nii.gz",
         "/raw",
+        False,
     )
 
     assert meta["ResamplingApplied"] is True

@@ -32,17 +32,16 @@ class TestBrainMaskFlatKeys:
     def test_all_fields_present(self, base_sidecar):
         qc = {
             "brain_extraction": {
-                "tool": "hdbet", "version": "v1.0", "device": "mps",
-                "voxel_count": 1_500_000, "volume_ml": 1500.0,
+                "tool": "hdbet", "version": "v1.0",
+                "brain_volume_ml": 1500.0, "brain_volume_mm3": 1_500_000.0,
             },
         }
         out = enrich_brain_mask_sidecar(dict(base_sidecar), qc)
         assert out["BrainExtractionTool"] == "hdbet"
         # Retired per-file key; tool version now lives in dataset-level GeneratedBy.
         assert "BrainExtractionVersion" not in out
-        assert out["BrainExtractionDevice"] == "mps"
-        assert out["BrainExtractionVoxelCount"] == 1_500_000
         assert out["BrainExtractionVolume"] == pytest.approx(1500.0)
+        assert out["BrainExtractionVolumeMm3"] == pytest.approx(1_500_000.0)
         # No nested block (regression guard)
         assert "BrainExtraction" not in out
         # No unit-suffix key (round-3 anti-suffix rule)
@@ -57,7 +56,7 @@ class TestBrainMaskFlatKeys:
         assert out["BrainExtractionTool"] == "hdbet"
         # Optional fields omitted when not in source
         assert "BrainExtractionVersion" not in out
-        assert "BrainExtractionVoxelCount" not in out
+        assert "BrainExtractionVolume" not in out
 
 
 class TestPreprocAnatFlatKeys:

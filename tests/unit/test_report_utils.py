@@ -228,7 +228,6 @@ class TestRunEntityHandling:
                 "BrainExtractionTool": "HD-BET",
                 "BrainExtractionVolume": 1234.94,
                 "BrainExtractionVolumeMm3": 1234940.0,
-                "BrainExtractionQCStatus": "PASS",
             })
         )
         out = _anat_nested_from_sidecars(tmp_path, self.PREFIX, anchor={})
@@ -236,7 +235,6 @@ class TestRunEntityHandling:
         be = out["brain_extraction"]
         assert be["tool"] == "hdbet"
         assert be["brain_volume_ml"] == 1234.94
-        assert be["qc_status"] == "PASS"
 
     def test_anat_tissue_segmentation_with_run_entity(self, tmp_path) -> None:
         """Probseg sidecars with `_run-1` must populate
@@ -276,7 +274,6 @@ class TestRunEntityHandling:
             _json.dumps({
                 "BrainExtractionTool": "HD-BET",
                 "BrainExtractionVolume": 1234.94,
-                "BrainExtractionQCStatus": "PASS",
             })
         )
         out = _load_pipeline_sidecars(tmp_path, self.PREFIX, "anat")

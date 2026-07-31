@@ -1159,7 +1159,7 @@ def enrich_brain_mask_sidecar(
 ) -> Dict[str, Any]:
     """Add flat ``BrainExtraction*`` keys to a brain-mask sidecar.
 
-    Reads ``qc_metrics["brain_extraction"]`` (tool, version, parameters).
+    Reads measured fields from ``qc_metrics["brain_extraction"]``.
     Volume in ``BrainExtractionVolume`` is in mL (documented in sidecar
     Description; no unit suffix in key per BIDS convention).
     """
@@ -1170,10 +1170,6 @@ def enrich_brain_mask_sidecar(
         return sidecar
     if "tool" in be:
         sidecar["BrainExtractionTool"] = str(be["tool"])
-    if "device" in be:
-        sidecar["BrainExtractionDevice"] = str(be["device"])
-    if "voxel_count" in be:
-        sidecar["BrainExtractionVoxelCount"] = int(be["voxel_count"])
     # Accept both fully qualified and short volume keys.
     vol_ml = be.get("brain_volume_ml", be.get("volume_ml"))
     if vol_ml is not None:
@@ -1181,10 +1177,6 @@ def enrich_brain_mask_sidecar(
     vol_mm3 = be.get("brain_volume_mm3", be.get("volume_mm3"))
     if vol_mm3 is not None:
         sidecar["BrainExtractionVolumeMm3"] = float(vol_mm3)
-    if "qc_status" in be:
-        sidecar["BrainExtractionQCStatus"] = str(be["qc_status"])
-    if "warnings" in be and be["warnings"]:
-        sidecar["BrainExtractionWarnings"] = list(be["warnings"])
     return sidecar
 
 

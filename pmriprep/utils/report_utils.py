@@ -1060,12 +1060,6 @@ def _anat_nested_from_sidecars(
         brain_ex["brain_volume_mm3"] = (
             float(mask_sidecar["BrainExtractionVolume"]) * 1000.0
         )
-    if "BrainExtractionVoxelCount" in mask_sidecar:
-        brain_ex["voxel_count"] = int(mask_sidecar["BrainExtractionVoxelCount"])
-    if "BrainExtractionQCStatus" in mask_sidecar:
-        brain_ex["qc_status"] = str(mask_sidecar["BrainExtractionQCStatus"])
-    if "BrainExtractionWarnings" in mask_sidecar:
-        brain_ex["warnings"] = list(mask_sidecar["BrainExtractionWarnings"])
     if brain_ex:
         out["brain_extraction"] = brain_ex
 

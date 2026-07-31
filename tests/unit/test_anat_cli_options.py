@@ -4,6 +4,7 @@ from pathlib import Path
 
 import nibabel as nib
 import numpy as np
+import pytest
 
 from pmriprep.config.anat import AnatConfig
 from pmriprep.interfaces.anat import BiasCorrection, BrainExtraction
@@ -37,6 +38,24 @@ def test_ants_brain_extraction_uses_templateflow_resources(
     assert f"-e {template}" in interface.cmdline
     assert f"-m {prior}" in interface.cmdline
     assert "antsBrainExtraction.sh" in interface.cmdline
+
+
+def test_brain_extraction_reports_volume_without_uncalibrated_status(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Brain-mask size is descriptive and does not imply extraction quality."""
+    source = _nifti(tmp_path / "source.nii.gz")
+    monkeypatch.chdir(tmp_path)
+    interface = BrainExtraction(in_file=str(source), tool="hdbet")
+    mask = np.ones((3, 3, 3), dtype=np.uint8)
+    nib.save(nib.Nifti1Image(mask, np.diag([2.0, 2.0, 2.0, 1.0])), interface._gen_maskfilename())
+
+    qc = interface._list_outputs()["qc_metrics"]
+
+    assert qc["brain_volume_mm3"] == pytest.approx(216.0)
+    assert qc["brain_volume_ml"] == pytest.approx(0.216)
+    assert "qc_status" not in qc
+    assert "warnings" not in qc
 
 
 def test_denoise_adds_ants_denoising_before_n4(tmp_path: Path) -> None:

@@ -16,14 +16,6 @@
         <h3>Brain Extraction</h3>
         {% if anat.qc_metrics.brain_extraction %}
         <div class="metrics">
-            {% if anat.qc_metrics.brain_extraction.qc_status is defined %}
-            <div class="metric">
-                <div class="metric-label">Status</div>
-                <div class="metric-value {% if anat.qc_metrics.brain_extraction.qc_status == 'PASS' %}pass{% elif anat.qc_metrics.brain_extraction.qc_status == 'WARN' %}warn{% else %}poor{% endif %}">
-                    {{ anat.qc_metrics.brain_extraction.qc_status }}
-                </div>
-            </div>
-            {% endif %}
             {% if anat.qc_metrics.brain_extraction.brain_volume_ml is defined %}
             <div class="metric">
                 <div class="metric-label">Brain Volume</div>

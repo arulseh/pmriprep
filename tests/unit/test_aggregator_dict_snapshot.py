@@ -134,7 +134,6 @@ def test_load_pipeline_sidecars_anat_boilerplate_fields(tmp_path: Path) -> None:
         {
             "BrainExtractionTool": "hdbet",
             "BrainExtractionVersion": "1.0",
-            "BrainExtractionVoxelCount": 12345,
             "BrainExtractionVolume": 1.234,
         },
     )
