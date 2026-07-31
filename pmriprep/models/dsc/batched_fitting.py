@@ -1404,7 +1404,7 @@ def batched_dsc_vi_fit(
     c = np.full(n_valid, c_post_init, dtype=np.float64)
     s = np.full(n_valid, s_post_init, dtype=np.float64)
     if initial_noise_precision is not None:
-        s = tau_exp / c
+        np.divide(tau_exp, c, out=s)
 
     # --- State tracking ---
     best_fe = np.full(n_valid, -np.inf)

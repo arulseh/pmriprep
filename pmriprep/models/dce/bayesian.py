@@ -1044,7 +1044,7 @@ class BayesianPKFitter:
             # Step-size reduction: if free energy decreased, interpolate
             if free_energy > best_free_energy:
                 best_free_energy = free_energy
-                best_m = m_new.copy()
+                best_m = np.asarray(m_new, dtype=np.float64).copy()
                 best_cov = post_cov.copy()
                 best_c = c
                 best_s = s
