@@ -777,46 +777,42 @@ def compute_header_init_matrix(
     return out_path
 
 
-def create_header_aligned(
+def write_ras_transform_to_fsl(
+    ras_matrix: NDArray[np.floating],
     moving_file: Union[str, Path],
     reference_file: Union[str, Path],
-    output_dir: Union[str, Path],
-    ext: str = ".nii.gz",
+    output_file: Union[str, Path],
 ) -> str:
-    """Create header-aligned image resampled into reference space.
+    """Serialize a world/RAS affine as an FSL matrix for specific image grids."""
+    from nitransforms.linear import Affine  # type: ignore[import-untyped]
 
-    Uses nibabel's ``resample_from_to`` to align the moving image to the
-    reference grid using NIfTI header geometry.  This pre-alignment
-    exploits sform/qform information so that FLIRT starts from a
-    reasonable initialisation even without a global angular search.
+    transform = Affine(np.asarray(ras_matrix), reference=str(reference_file))
+    transform.to_filename(str(output_file), fmt="fsl", moving=str(moving_file))
+    return str(output_file)
 
-    Parameters
-    ----------
-    moving_file : Path or str
-        Path to moving image (e.g. T1w).
-    reference_file : Path or str
-        Path to reference image (e.g. DSC/DCE mean).
-    output_dir : Path or str
-        Directory for the output file.
-    ext : str
-        File extension (.nii or .nii.gz).
 
-    Returns
-    -------
-    str
-        Path to the header-aligned image.
-    """
-    import nibabel as nib
-    from nibabel.processing import resample_from_to
+def reframe_fsl_transform(
+    matrix_file: Union[str, Path],
+    matrix_moving_file: Union[str, Path],
+    output_moving_file: Union[str, Path],
+    reference_file: Union[str, Path],
+    output_file: Union[str, Path],
+) -> str:
+    """Express an FSL affine for a different moving-image grid."""
+    from nitransforms.linear import Affine  # type: ignore[import-untyped]
 
-    moving_img = nib.load(str(moving_file))
-    ref_img = nib.load(str(reference_file))
-
-    aligned_img = resample_from_to(moving_img, ref_img)
-    out_path = str(Path(output_dir) / f"header_aligned{ext}")
-    nib.save(aligned_img, out_path)
-
-    return out_path
+    transform = Affine.from_filename(
+        str(matrix_file),
+        fmt="fsl",
+        reference=str(reference_file),
+        moving=str(matrix_moving_file),
+    )
+    return write_ras_transform_to_fsl(
+        transform.matrix,
+        output_moving_file,
+        reference_file,
+        output_file,
+    )
 
 
 def compute_dice_for_selection(

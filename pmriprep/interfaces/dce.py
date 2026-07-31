@@ -4319,6 +4319,11 @@ REG_QC_THRESHOLDS: dict[str, float] = {
     "determinant_max": 1.15,
 }
 
+# Provisional support-overlap safety floor for quantitative T1/B1 transfer.
+# This selection Dice is not interchangeable with brain-mask Dice and does
+# not establish voxelwise registration accuracy.
+QUANTITATIVE_TRANSFER_DICE_MIN: float = 0.90
+
 
 class DCERegistrationInputSpec(BaseInterfaceInputSpec):
     """Input specification for DCERegistration interface."""
@@ -4372,6 +4377,11 @@ class DCERegistrationInputSpec(BaseInterfaceInputSpec):
         usedefault=True,
         desc="FLIRT search range in degrees for all axes (default: 30)",
     )
+    require_path_overlap = traits.Bool(
+        False,
+        usedefault=True,
+        desc="Require target-overlap DICE >= 0.90 for quantitative-map transfer",
+    )
 
 
 class DCERegistrationOutputSpec(TraitedSpec):
@@ -4394,10 +4404,11 @@ class DCERegistration(SimpleInterface):
     and similar contrast to structural T1w, so standard FLIRT with normmi
     cost function is appropriate.
 
-    Dual-path registration is used:
+    Three registration candidates are evaluated:
+      Header: Header/world alignment without optimization
       Path A: Header pre-aligned T1w -> FLIRT
       Path B: Original T1w -> FLIRT
-      Best path selected by DICE overlap.
+      Candidate selected by foreground-overlap DICE.
 
     Parameters
     ----------
@@ -4458,13 +4469,15 @@ class DCERegistration(SimpleInterface):
     output_spec = DCERegistrationOutputSpec
 
     def _run_interface(self, runtime: Any) -> Any:
-        """Execute DCE to T1w registration.
+        """Execute T1-weighted magnitude registration to DCE space.
 
-        Implements dual-path registration with DICE selection:
+        Implements three-candidate registration with DICE selection:
 
+        - Header: Header/world alignment without optimization
         - Path A: Header pre-aligned T1w → FLIRT
         - Path B: Original T1w → FLIRT
-        - Select path with best DICE (B must beat A by margin)
+        - Select a candidate only when it beats the preferred fitted path by
+          the configured DICE margin
 
         Parameters
         ----------
@@ -4496,46 +4509,88 @@ class DCERegistration(SimpleInterface):
             temp_path = Path(temp_dir)
             ext = ".nii.gz"
 
-            # Header-based pre-alignment: resample T1w into DCE space
-            from pmriprep.utils.registration import create_header_aligned
-
-            header_aligned_file = create_header_aligned(
-                t1w_file, dce_mean, temp_path, ext
-            )
+            from pmriprep.utils.registration import reframe_fsl_transform
 
             # Setup output paths for dual-path registration
+            header_aligned_file = str(temp_path / f"t1w_header_aligned{ext}")
+            header_matrix = str(temp_path / "t1w_header.mat")
             out_file_a = str(temp_path / f"t1w_reg_pathA{ext}")
+            out_matrix_a_header = str(temp_path / "t1w_reg_pathA_header.mat")
             out_matrix_a = str(temp_path / "t1w_reg_pathA.mat")
             out_file_b = str(temp_path / f"t1w_reg_pathB{ext}")
             out_matrix_b = str(temp_path / "t1w_reg_pathB.mat")
+            try:
+                self._run_header_alignment(
+                    t1w_file,
+                    dce_mean,
+                    header_aligned_file,
+                    header_matrix,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Header-based registration candidate failed; "
+                    "continuing with direct FLIRT path: %s",
+                    exc,
+                )
 
             # Run dual-path FLIRT registration
-            self._run_flirt_dual_path(
+            try:
+                self._run_flirt_dual_path(
+                    header_aligned_file=header_aligned_file,
+                    t1w_file=t1w_file,
+                    dce_mean=dce_mean,
+                    out_file_a=out_file_a,
+                    out_matrix_a=out_matrix_a_header,
+                    out_file_b=out_file_b,
+                    out_matrix_b=out_matrix_b,
+                    dof=dof,
+                    cost=cost,
+                    search_range=search_range,
+                )
+            except RuntimeError:
+                if not (
+                    Path(header_aligned_file).is_file()
+                    and Path(header_matrix).is_file()
+                ):
+                    raise
+                logger.warning(
+                    "Both optimized registration paths failed; evaluating "
+                    "the header-based candidate"
+                )
+            if (
+                Path(out_file_a).is_file()
+                and Path(out_matrix_a_header).is_file()
+            ):
+                reframe_fsl_transform(
+                    out_matrix_a_header,
+                    header_aligned_file,
+                    t1w_file,
+                    dce_mean,
+                    out_matrix_a,
+                )
+
+            # Select best path based on DICE
+            (
+                selected_out_file,
+                selected_matrix,
+                dice_header,
+                dice_a,
+                dice_b,
+                selected_path,
+            ) = self._select_best_path(
                 header_aligned_file=header_aligned_file,
-                t1w_file=t1w_file,
-                dce_mean=dce_mean,
+                header_matrix=header_matrix,
                 out_file_a=out_file_a,
                 out_matrix_a=out_matrix_a,
                 out_file_b=out_file_b,
                 out_matrix_b=out_matrix_b,
-                dof=dof,
-                cost=cost,
-                search_range=search_range,
-            )
-
-            # Select best path based on DICE
-            selected_out_file, selected_matrix, dice_a, dice_b, selected_path = (
-                self._select_best_path(
-                    out_file_a=out_file_a,
-                    out_matrix_a=out_matrix_a,
-                    out_file_b=out_file_b,
-                    out_matrix_b=out_matrix_b,
-                    dce_mean=dce_mean,
-                )
+                dce_mean=dce_mean,
             )
 
             logger.info(
-                "Registration path selection: A=%.3f, B=%.3f → selected %s",
+                "Registration path selection: header=%.3f, A=%.3f, B=%.3f "
+                "→ selected %s",
+                dice_header,
                 dice_a,
                 dice_b,
                 selected_path,
@@ -4547,11 +4602,24 @@ class DCERegistration(SimpleInterface):
 
         # Compute QC metrics (outside temp context so outputs exist)
         qc_metrics = self._compute_qc_metrics(out_file, dce_mean)
+        selected_dice = {
+            "header": dice_header,
+            "A": dice_a,
+            "B": dice_b,
+        }[selected_path]
         qc_metrics["path_selection"] = {
+            "dice_header": dice_header,
             "dice_a": dice_a,
             "dice_b": dice_b,
             "selected": selected_path,
+            "selected_dice": selected_dice,
+            "overlap_required": bool(self.inputs.require_path_overlap),
         }
+        self._apply_path_overlap_gate(
+            qc_metrics,
+            selected_dice,
+            required=bool(self.inputs.require_path_overlap),
+        )
 
         # Set outputs
         from pmriprep.utils.transforms import fsl_to_x5
@@ -4573,6 +4641,43 @@ class DCERegistration(SimpleInterface):
             self._results["nmi"] = qc_metrics["nmi"]
 
         return runtime
+
+    @staticmethod
+    def _run_header_alignment(
+        moving_file: str,
+        reference_file: str,
+        out_file: str,
+        out_matrix: str,
+    ) -> None:
+        """Apply NIfTI header geometry and emit a matching FSL matrix."""
+        header = FLIRT()
+        header.inputs.output_type = "NIFTI_GZ"
+        header.inputs.in_file = moving_file
+        header.inputs.reference = reference_file
+        header.inputs.out_file = out_file
+        header.inputs.out_matrix_file = out_matrix
+        header.inputs.apply_xfm = True
+        header.inputs.uses_qform = True
+        header.inputs.interp = "trilinear"
+        header.run()
+
+    @staticmethod
+    def _apply_path_overlap_gate(
+        qc_metrics: dict[str, Any],
+        selected_dice: float,
+        *,
+        required: bool,
+    ) -> None:
+        """Reject a required registration when target overlap is inadequate."""
+        if not required or selected_dice >= QUANTITATIVE_TRANSFER_DICE_MIN:
+            return
+        warning = (
+            f"Target-overlap DICE {selected_dice:.2f} below threshold "
+            f"{QUANTITATIVE_TRANSFER_DICE_MIN} for quantitative-map transfer"
+        )
+        qc_metrics.setdefault("warnings", []).append(warning)
+        if qc_metrics.get("qc_status") != "UNKNOWN":
+            qc_metrics["qc_status"] = "POOR"
 
     def _run_flirt_dual_path(
         self,
@@ -4676,19 +4781,27 @@ class DCERegistration(SimpleInterface):
 
     def _select_best_path(
         self,
+        header_aligned_file: str,
+        header_matrix: str,
         out_file_a: str,
         out_matrix_a: str,
         out_file_b: str,
         out_matrix_b: str,
         dce_mean: str,
-    ) -> tuple[str, str, float, float, str]:
+    ) -> tuple[str, str, float, float, float, str]:
         """Select best registration path based on DICE overlap.
 
-        Path B must exceed Path A by DICE_SELECTION_MARGIN to be selected,
-        providing a preference for the header-aligned path when close.
+        Path B must exceed Path A by ``DICE_SELECTION_MARGIN`` to be selected.
+        The header/world-aligned candidate replaces the selected fitted path
+        only when its overlap exceeds that fitted path by the same margin.
 
         Parameters
         ----------
+        header_aligned_file : str
+            T1w image resampled to the DCE grid using image headers.
+        header_matrix : str
+            Sqform-derived FSL matrix representing world/header alignment in
+            the original moving-image frame.
         out_file_a : str
             Output file from path A.
         out_matrix_a : str
@@ -4703,17 +4816,24 @@ class DCERegistration(SimpleInterface):
         Returns
         -------
         tuple
-            Tuple of (selected_file, selected_matrix, dice_a, dice_b, path_name).
+            Selected file and matrix, header/A/B overlap Dice, and path name.
 
         Raises
         ------
         RuntimeError
             If neither path produced valid output.
         """
-        file_a_exists = Path(out_file_a).exists()
-        file_b_exists = Path(out_file_b).exists()
+        header_exists = Path(header_aligned_file).is_file() and Path(
+            header_matrix
+        ).is_file()
+        file_a_exists = Path(out_file_a).is_file() and Path(
+            out_matrix_a
+        ).is_file()
+        file_b_exists = Path(out_file_b).is_file() and Path(
+            out_matrix_b
+        ).is_file()
 
-        if not file_a_exists and not file_b_exists:
+        if not header_exists and not file_a_exists and not file_b_exists:
             raise RuntimeError(
                 f"FLIRT registration produced no valid output files.\n"
                 f"Expected file A: {out_file_a}\n"
@@ -4736,19 +4856,52 @@ class DCERegistration(SimpleInterface):
             if file_b_exists
             else 0.0
         )
+        dice_header = (
+            compute_dice_for_selection(header_aligned_file, dce_mean)
+            if header_exists
+            else 0.0
+        )
 
-        # Select best path (B must beat A by margin)
+        # Select the fitted path first, retaining the header-initialized path
+        # unless the original-grid fit improves overlap by a clear margin.
         if file_b_exists and (
             not file_a_exists or dice_b > dice_a + DICE_SELECTION_MARGIN
         ):
-            return out_file_b, out_matrix_b, dice_a, dice_b, "B"
+            selected_file = out_file_b
+            selected_matrix = out_matrix_b
+            selected_dice = dice_b
+            selected_path = "B"
         elif file_a_exists:
-            return out_file_a, out_matrix_a, dice_a, dice_b, "A"
-        else:
+            selected_file = out_file_a
+            selected_matrix = out_matrix_a
+            selected_dice = dice_a
+            selected_path = "A"
+        elif not header_exists:
             raise RuntimeError(
                 "FLIRT registration produced no valid output files. "
                 "Check FSL installation and input images."
             )
+        else:
+            selected_file = header_aligned_file
+            selected_matrix = header_matrix
+            selected_dice = dice_header
+            selected_path = "header"
+
+        # Header/world alignment is a valid candidate in its own right. Use
+        # it when linear optimization substantially worsens target overlap.
+        if dice_header > selected_dice + DICE_SELECTION_MARGIN:
+            selected_file = header_aligned_file
+            selected_matrix = header_matrix
+            selected_path = "header"
+
+        return (
+            selected_file,
+            selected_matrix,
+            dice_header,
+            dice_a,
+            dice_b,
+            selected_path,
+        )
 
     def _compute_qc_metrics(
         self, registered_t1w: str, dce_mean: str

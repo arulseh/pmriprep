@@ -203,6 +203,316 @@ class TestDCERegistrationQCMaskRegression:
         assert qc_metrics["qc_status"] in {"PASS", "WARN", "POOR"}
 
 
+def test_required_path_overlap_rejects_failed_registration() -> None:
+    """A required magnitude registration cannot pass with negligible overlap."""
+    from pmriprep.interfaces.dce import DCERegistration
+
+    qc_metrics: dict[str, object] = {"qc_status": "PASS", "warnings": []}
+    DCERegistration._apply_path_overlap_gate(
+        qc_metrics,
+        0.055,
+        required=True,
+    )
+
+    assert qc_metrics["qc_status"] == "POOR"
+    assert "Target-overlap DICE" in str(qc_metrics["warnings"])
+
+
+def test_required_path_overlap_rejects_intermediate_overlap() -> None:
+    """Gross overlap below 0.90 is insufficient for quantitative transfer."""
+    from pmriprep.interfaces.dce import DCERegistration
+
+    qc_metrics: dict[str, object] = {"qc_status": "PASS", "warnings": []}
+    DCERegistration._apply_path_overlap_gate(
+        qc_metrics,
+        0.85,
+        required=True,
+    )
+
+    assert qc_metrics["qc_status"] == "POOR"
+
+
+def test_required_path_overlap_accepts_quantitative_threshold() -> None:
+    """A selected candidate at the quantitative overlap floor remains eligible."""
+    from pmriprep.interfaces.dce import DCERegistration
+
+    qc_metrics: dict[str, object] = {"qc_status": "PASS", "warnings": []}
+    DCERegistration._apply_path_overlap_gate(
+        qc_metrics,
+        0.90,
+        required=True,
+    )
+
+    assert qc_metrics == {"qc_status": "PASS", "warnings": []}
+
+
+def test_required_path_overlap_preserves_unknown_status() -> None:
+    """Unavailable QC remains a hard error rather than becoming fallback-eligible."""
+    from pmriprep.interfaces.dce import DCERegistration
+
+    qc_metrics: dict[str, object] = {"qc_status": "UNKNOWN", "warnings": []}
+    DCERegistration._apply_path_overlap_gate(
+        qc_metrics,
+        0.05,
+        required=True,
+    )
+
+    assert qc_metrics["qc_status"] == "UNKNOWN"
+
+
+def test_optional_path_overlap_does_not_change_registration_status() -> None:
+    """Structural registration retains its existing overlap policy."""
+    from pmriprep.interfaces.dce import DCERegistration
+
+    qc_metrics: dict[str, object] = {"qc_status": "PASS", "warnings": []}
+    DCERegistration._apply_path_overlap_gate(
+        qc_metrics,
+        0.055,
+        required=False,
+    )
+
+    assert qc_metrics == {"qc_status": "PASS", "warnings": []}
+
+
+def test_header_alignment_retained_when_fitted_overlap_is_worse(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Registration optimization cannot replace a clearly better header alignment."""
+    from pmriprep.interfaces.dce import DCERegistration
+    from pmriprep.utils import registration
+
+    paths = {
+        name: tmp_path / name
+        for name in (
+            "header.nii.gz",
+            "header.mat",
+            "path_a.nii.gz",
+            "path_a.mat",
+            "path_b.nii.gz",
+            "path_b.mat",
+            "dce_mean.nii.gz",
+        )
+    }
+    for path in paths.values():
+        path.touch()
+
+    overlap = {
+        str(paths["header.nii.gz"]): 0.947,
+        str(paths["path_a.nii.gz"]): 0.055,
+        str(paths["path_b.nii.gz"]): 0.055,
+    }
+    monkeypatch.setattr(
+        registration,
+        "compute_dice_for_selection",
+        lambda moving, _fixed: overlap[moving],
+    )
+
+    selected = DCERegistration()._select_best_path(
+        header_aligned_file=str(paths["header.nii.gz"]),
+        header_matrix=str(paths["header.mat"]),
+        out_file_a=str(paths["path_a.nii.gz"]),
+        out_matrix_a=str(paths["path_a.mat"]),
+        out_file_b=str(paths["path_b.nii.gz"]),
+        out_matrix_b=str(paths["path_b.mat"]),
+        dce_mean=str(paths["dce_mean.nii.gz"]),
+    )
+
+    assert selected == (
+        str(paths["header.nii.gz"]),
+        str(paths["header.mat"]),
+        0.947,
+        0.055,
+        0.055,
+        "header",
+    )
+
+
+def test_header_alignment_not_selected_for_submargin_improvement(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A negligible header-overlap difference does not change candidates."""
+    from pmriprep.interfaces.dce import DCERegistration
+    from pmriprep.utils import registration
+
+    paths = {
+        name: tmp_path / name
+        for name in (
+            "header.nii.gz",
+            "header.mat",
+            "path_a.nii.gz",
+            "path_a.mat",
+            "path_b.nii.gz",
+            "path_b.mat",
+            "dce_mean.nii.gz",
+        )
+    }
+    for path in paths.values():
+        path.touch()
+    overlap = {
+        str(paths["header.nii.gz"]): 0.925,
+        str(paths["path_a.nii.gz"]): 0.920,
+        str(paths["path_b.nii.gz"]): 0.900,
+    }
+    monkeypatch.setattr(
+        registration,
+        "compute_dice_for_selection",
+        lambda moving, _fixed: overlap[moving],
+    )
+
+    selected = DCERegistration()._select_best_path(
+        header_aligned_file=str(paths["header.nii.gz"]),
+        header_matrix=str(paths["header.mat"]),
+        out_file_a=str(paths["path_a.nii.gz"]),
+        out_matrix_a=str(paths["path_a.mat"]),
+        out_file_b=str(paths["path_b.nii.gz"]),
+        out_matrix_b=str(paths["path_b.mat"]),
+        dce_mean=str(paths["dce_mean.nii.gz"]),
+    )
+
+    assert selected[-1] == "A"
+
+
+def test_fsl_header_matrix_is_identity_in_original_moving_frame(
+    tmp_path: Path,
+) -> None:
+    """Header transfer matrix represents world identity for the original source."""
+    from nitransforms.linear import Affine
+
+    from pmriprep.utils.registration import write_ras_transform_to_fsl
+
+    moving = tmp_path / "moving.nii.gz"
+    reference = tmp_path / "reference.nii.gz"
+    matrix = tmp_path / "header.mat"
+    moving_affine = np.array([
+        [1.0, 0.0, 0.0, -88.0],
+        [0.0, 1.0, 0.0, -105.0],
+        [0.0, 0.0, 1.0, -70.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ])
+    reference_affine = np.array([
+        [2.5, 0.0, 0.0, -68.0],
+        [0.0, 2.5, 0.0, -90.0],
+        [0.0, 0.0, 4.0, -60.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ])
+    _save_volume(moving, np.ones((16, 16, 16)), moving_affine)
+    _save_volume(reference, np.ones((8, 8, 8)), reference_affine)
+
+    write_ras_transform_to_fsl(np.eye(4), moving, reference, matrix)
+    decoded = Affine.from_filename(
+        matrix,
+        fmt="fsl",
+        reference=reference,
+        moving=moving,
+    )
+
+    np.testing.assert_allclose(decoded.matrix, np.eye(4), atol=1e-7)
+
+
+def test_reframed_path_a_preserves_world_transform(tmp_path: Path) -> None:
+    """Path-A matrix retains its world transform for the original source grid."""
+    from nitransforms.linear import Affine
+
+    from pmriprep.utils.registration import (
+        reframe_fsl_transform,
+        write_ras_transform_to_fsl,
+    )
+
+    original = tmp_path / "original.nii.gz"
+    header = tmp_path / "header.nii.gz"
+    reference = tmp_path / "reference.nii.gz"
+    path_a_header = tmp_path / "path_a_header.mat"
+    path_a_original = tmp_path / "path_a_original.mat"
+    _save_volume(original, np.ones((16, 16, 16)), np.diag([1.0, 1.0, 1.0, 1.0]))
+    _save_volume(header, np.ones((8, 8, 8)), np.diag([2.0, 2.0, 2.0, 1.0]))
+    _save_volume(reference, np.ones((8, 8, 8)), np.diag([2.0, 2.0, 2.0, 1.0]))
+    ras_transform = np.eye(4)
+    ras_transform[:3, 3] = [2.0, -3.0, 1.5]
+    write_ras_transform_to_fsl(
+        ras_transform, header, reference, path_a_header
+    )
+
+    reframe_fsl_transform(
+        path_a_header,
+        header,
+        original,
+        reference,
+        path_a_original,
+    )
+    decoded = Affine.from_filename(
+        path_a_original,
+        fmt="fsl",
+        reference=reference,
+        moving=original,
+    )
+
+    np.testing.assert_allclose(decoded.matrix, ras_transform, atol=1e-7)
+
+
+@pytest.mark.skipif(shutil.which("flirt") is None, reason="FSL FLIRT unavailable")
+def test_header_matrix_applies_original_source_to_reference_grid(
+    tmp_path: Path,
+) -> None:
+    """Published header matrix reproduces header transfer from the original grid."""
+    import subprocess
+
+    from pmriprep.interfaces.dce import DCERegistration
+
+    moving = tmp_path / "moving.nii.gz"
+    reference = tmp_path / "reference.nii.gz"
+    matrix = tmp_path / "header.mat"
+    reapplied = tmp_path / "reapplied.nii.gz"
+    moving_data = np.zeros((16, 16, 16), dtype=np.float32)
+    moving_data[4:12, 5:13, 3:11] = 100.0
+    moving_affine = np.array([
+        [1.0, 0.0, 0.0, -8.0],
+        [0.0, 1.0, 0.0, -8.0],
+        [0.0, 0.0, 1.0, -8.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ])
+    reference_affine = np.array([
+        [2.0, 0.0, 0.0, -6.0],
+        [0.0, 2.0, 0.0, -7.0],
+        [0.0, 0.0, 2.0, -5.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ])
+    _save_volume(moving, moving_data, moving_affine)
+    _save_volume(reference, np.ones((8, 8, 8)), reference_affine)
+    expected = tmp_path / "header_aligned.nii.gz"
+    DCERegistration._run_header_alignment(
+        str(moving),
+        str(reference),
+        str(expected),
+        str(matrix),
+    )
+
+    subprocess.run(
+        [
+            "flirt",
+            "-in",
+            str(moving),
+            "-ref",
+            str(reference),
+            "-applyxfm",
+            "-init",
+            str(matrix),
+            "-interp",
+            "trilinear",
+            "-out",
+            str(reapplied),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    expected_data = np.asarray(nib.load(expected).dataobj)
+    reapplied_data = np.asarray(nib.load(reapplied).dataobj)
+    np.testing.assert_allclose(reapplied_data, expected_data, atol=1e-4)
+
+
 class TestDCERegistrationQCStatusGating:
     """qc_status routing under the recalibrated cross-modal thresholds.
 

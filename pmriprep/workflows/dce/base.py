@@ -662,7 +662,11 @@ def init_dce_t1_b1_wf(
 
         if config.b1_method == "afi":
             afi_to_vfa_registration = pe.Node(
-                DCERegistration(cost="normmi", reference_type="any"),
+                DCERegistration(
+                    cost="normmi",
+                    reference_type="any",
+                    require_path_overlap=True,
+                ),
                 name="afi_to_vfa_registration",
             )
             workflow.connect([
@@ -1931,7 +1935,11 @@ def init_dce_preproc_wf(
     # ==========================================================================
     if use_vfa_t1:
         vfa_to_dce_registration = pe.Node(
-            DCERegistration(cost="normmi", reference_type="precon"),
+            DCERegistration(
+                cost="normmi",
+                reference_type="precon",
+                require_path_overlap=True,
+            ),
             name="vfa_to_dce_registration",
             mem_gb=_static_mem,
         )
@@ -2002,7 +2010,11 @@ def init_dce_preproc_wf(
             ])
         elif config.b1_method == "afi":
             afi_to_dce_registration = pe.Node(
-                DCERegistration(cost="normmi", reference_type="precon"),
+                DCERegistration(
+                    cost="normmi",
+                    reference_type="precon",
+                    require_path_overlap=True,
+                ),
                 name="afi_to_dce_registration",
                 mem_gb=_static_mem,
             )
