@@ -824,6 +824,7 @@ def _dsc_dce_validation_node(
     no_dsc_validation: bool = False,
     pk_qc: dict[str, object] | str | None = None,
     dsc_preload_configured: bool | None = None,
+    dce_model: str | None = None,
 ) -> dict[str, object]:
     """Run DSC-DCE cross-validation.
 
@@ -846,6 +847,8 @@ def _dsc_dce_validation_node(
         ``dsc_cbv_constraint`` when present.
     dsc_preload_configured : bool or None
         Whether DSC preload was configured.
+    dce_model : str or None
+        Configured DCE pharmacokinetic model.
 
     Returns
     -------
@@ -886,7 +889,25 @@ def _dsc_dce_validation_node(
         have_cbv or have_ncbv or (dsc_preload_configured is not None)
     )
 
-    if no_dsc_validation or not vp_file:
+    if no_dsc_validation:
+        return {
+            "skipped": True,
+            "status": "skipped",
+            "reason": "Validation skipped or missing data",
+        }
+
+    if dce_model == "tofts":
+        return {
+            "skipped": True,
+            "status": "SKIPPED",
+            "reason": (
+                "DSC-DCE cross-validation is not applicable to Tofts because "
+                "it does not estimate vp."
+            ),
+            "skip_reason": "vp_not_defined_for_model",
+        }
+
+    if not vp_file:
         return {
             "skipped": True,
             "status": "skipped",

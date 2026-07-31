@@ -428,3 +428,19 @@ class TestDscDceValidationNodeSkipReasons:
         assert result["status"] == "SKIPPED"
         assert "nCBV unavailable" in result["reason"]
         assert "skip_reason" not in result
+
+    def test_reports_tofts_has_no_vp_for_cross_validation(self):
+        result = self._call(
+            vp_file=None,
+            dsc_cbv_file=None,
+            dsc_ncbv_file=None,
+            brain_mask=None,
+            no_dsc_validation=False,
+            pk_qc=None,
+            dsc_preload_configured=True,
+            dce_model="tofts",
+        )
+        assert result["skipped"] is True
+        assert result["status"] == "SKIPPED"
+        assert "does not estimate vp" in result["reason"]
+        assert result["skip_reason"] == "vp_not_defined_for_model"

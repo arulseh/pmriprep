@@ -1053,12 +1053,14 @@ def init_dce_dsc_validation_wf(
             input_names=[
                 "vp_file", "dsc_cbv_file", "dsc_ncbv_file", "brain_mask",
                 "no_dsc_validation", "pk_qc", "dsc_preload_configured",
+                "dce_model",
             ],
             output_names=["validation_result"], function=_dsc_dce_validation_node,
         ),
         name="dsc_dce_validation",
     )
     validation.inputs.no_dsc_validation = config.no_dsc_validation
+    validation.inputs.dce_model = config.model
     plot = pe.Node(
         niu.Function(
             input_names=[

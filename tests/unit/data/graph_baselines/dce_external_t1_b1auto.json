@@ -1877,6 +1877,7 @@
     "dsc_dce_validation": {
       "input_names": [
         "brain_mask",
+        "dce_model",
         "dsc_cbv_file",
         "dsc_ncbv_file",
         "dsc_preload_configured",
@@ -2161,7 +2162,7 @@
     "dce_early_mean": "fd75a021c6ef482c605e9a7596c6c17381cd8996e63adafc61cb7f30031b6cb0",
     "dce_pk_fit_qc": "3206990b014d072947d06ee8c4dcef234d286f8524a901040e186022ced60581",
     "dce_pk_maps_qc": "8532217adf6bd6afb872d35848e1a73522a3befd04972a0a8e5424d0332627cc",
-    "dsc_dce_validation": "669bf89bfcf69ba87cbe21add32fefe0d31e38706825c604a9b68ee01cbe20af",
+    "dsc_dce_validation": "a62365a2e36839e2df581bb2ce88391de795d49af19dc604ab873c277675e8bc",
     "dsc_dce_xval_plot": "eeb9578b0a27b124bb4657558e779e291a640fb3f2bbabe71eb3f3063e6fd51f",
     "external_t1_qc_plot": "000bb565867fae6b83d0aa82d732a1562fca7ab260fbc5b631523104e88cfccd",
     "external_t1_to_dce": "040b96cd6e1f8b623dd8dda541e6e73e481eae4dffcc406ba1db772eb46b233a",
@@ -2453,6 +2454,7 @@
       "search_range": 30
     },
     "dsc_dce_validation": {
+      "dce_model": "auto",
       "no_dsc_validation": false
     },
     "dsc_dce_xval_plot": {
