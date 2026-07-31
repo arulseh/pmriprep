@@ -1,6 +1,8 @@
 """PMRIPrep CLI entry point."""
 
 import argparse
+import hashlib
+import json
 import logging
 import sys
 from dataclasses import asdict
@@ -83,6 +85,123 @@ def _clean_work_dir(work_dir: Path) -> Optional[Path]:
         else:
             child.unlink()
     return work_dir
+
+
+def _prepare_workflow_cache(
+    work_dir: Path,
+    bids_dir: Path,
+    subject_id: str,
+    session_id: Optional[str],
+) -> Path:
+    """Validate or initialize one subject/session Nipype cache namespace.
+
+    Parameters
+    ----------
+    work_dir : pathlib.Path
+        Shared Nipype working-directory root.
+    bids_dir : pathlib.Path
+        Input BIDS dataset root.
+    subject_id, session_id : str or None
+        Subject and optional session identifying the workflow namespace.
+
+    Returns
+    -------
+    pathlib.Path
+        Validated subject/session workflow directory.
+
+    Raises
+    ------
+    RuntimeError
+        If the target namespace contains an unmarked, malformed, or
+        incompatible cache.
+    """
+    import nipype
+
+    from pmriprep.utils.naming import workflow_dirname
+
+    resolved_bids_dir = bids_dir.expanduser().resolve()
+    dataset_description = resolved_bids_dir / "dataset_description.json"
+    try:
+        dataset_identity = hashlib.sha256(dataset_description.read_bytes()).hexdigest()
+    except OSError as error:
+        raise RuntimeError(
+            f"Cannot establish cache identity because {dataset_description} "
+            "cannot be read."
+        ) from error
+
+    workflow_dir = work_dir / workflow_dirname(subject_id, session_id)
+    marker = workflow_dir / ".pmriprep-cache.json"
+    expected: dict[str, Any] = {
+        "CacheSchemaVersion": 1,
+        "PMRIPrepVersion": __version__,
+        "NipypeVersion": nipype.__version__,
+        "PythonVersion": f"{sys.version_info.major}.{sys.version_info.minor}",
+        "BIDSDatasetDescriptionSHA256": dataset_identity,
+        "BIDSDirectory": str(resolved_bids_dir),
+        "Subject": subject_id,
+        "Session": session_id,
+    }
+    compatibility_keys = (
+        "CacheSchemaVersion",
+        "PMRIPrepVersion",
+        "NipypeVersion",
+        "PythonVersion",
+        "BIDSDatasetDescriptionSHA256",
+        "Subject",
+        "Session",
+    )
+    remedy = (
+        f"Select a new --work-dir or move {workflow_dir} aside. "
+        f"--clean-workdir is also available but clears the entire work root "
+        f"{work_dir}."
+    )
+
+    if workflow_dir.exists() and not workflow_dir.is_dir():
+        raise RuntimeError(
+            f"Workflow cache path exists but is not a directory: {workflow_dir}"
+        )
+    workflow_dir.mkdir(parents=True, exist_ok=True)
+
+    if not marker.exists():
+        if any(workflow_dir.iterdir()):
+            label = f"sub-{subject_id}"
+            if session_id:
+                label += f"/ses-{session_id}"
+            raise RuntimeError(
+                f"The workflow cache for {label} at {workflow_dir} contains "
+                "results from an unknown PMRIPrep/Nipype environment. Cache "
+                f"reuse is unsafe. {remedy} Existing cache contents were not "
+                "modified."
+            )
+        marker.write_text(json.dumps(expected, indent=2) + "\n", encoding="utf-8")
+        return workflow_dir
+
+    try:
+        recorded = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError(
+            f"Cannot read the PMRIPrep cache manifest at {marker}. {remedy}"
+        ) from error
+    if not isinstance(recorded, dict):
+        raise RuntimeError(
+            f"Invalid PMRIPrep cache manifest at {marker}. {remedy}"
+        )
+
+    mismatches = [
+        key for key in compatibility_keys if recorded.get(key) != expected[key]
+    ]
+    if mismatches:
+        details = ", ".join(
+            f"{key}={recorded.get(key)!r} (current {expected[key]!r})"
+            for key in mismatches
+        )
+        raise RuntimeError(
+            f"The workflow cache at {workflow_dir} is incompatible with this "
+            f"run: {details}. {remedy} Existing cache contents were not modified."
+        )
+    if recorded != expected:
+        marker.write_text(json.dumps(expected, indent=2) + "\n", encoding="utf-8")
+    return workflow_dir
 
 
 def _dose_type(value: str) -> float:
@@ -1070,6 +1189,12 @@ def run_pmriprep_wf(args: argparse.Namespace) -> None:
             logger.log(IMPORTANT, f"Processing sub-{subject_id}/{session_str}")
 
             try:
+                _prepare_workflow_cache(
+                    work_dir,
+                    args.bids_dir,
+                    subject_id,
+                    session_id,
+                )
                 # Initialize the master workflow
                 workflow = init_pmriprep_wf(
                     bids_dir=args.bids_dir,
