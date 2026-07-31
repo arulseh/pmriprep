@@ -939,7 +939,7 @@ class BayesianDSCFitter:
             if free_energy > best_free_energy:
                 best_free_energy = free_energy
                 best_m = cast(npt.NDArray[np.float64], m_new.copy())
-                best_cov = post_cov.copy()
+                best_cov = cast(npt.NDArray[np.float64], post_cov.copy())
                 best_c = c
                 best_s = s
                 step_scale = 1.0  # reset on success
