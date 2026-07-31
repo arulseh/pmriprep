@@ -30,7 +30,7 @@
           "__f__": "0x0.0p+0"
         },
         {
-          "__f__": "0x0.0p+0"
+          "__f__": "-0x1.4294586d86645p-2"
         },
         {
           "__f__": "0x1.4b026a77f5f43p-1"
@@ -60,82 +60,82 @@
           "__f__": "0x1.b13c22a3b94dap-10"
         },
         {
-          "__f__": "0x0.0p+0"
+          "__f__": "-0x1.1761f392a7eeap-7"
         },
         {
-          "__f__": "0x0.0p+0"
+          "__f__": "-0x1.e53bf13121fbfp-10"
         },
         {
-          "__f__": "0x0.0p+0"
+          "__f__": "-0x1.9cf174e1a3bd4p-13"
         },
         {
-          "__f__": "0x0.0p+0"
+          "__f__": "-0x1.992b7c9e9e806p-17"
         },
         {
-          "__f__": "0x0.0p+0"
+          "__f__": "-0x1.f0a7f1b4769a4p-22"
         },
         {
-          "__f__": "0x0.0p+0"
+          "__f__": "-0x1.792503ec0c504p-27"
         },
         {
-          "__f__": "0x0.0p+0"
+          "__f__": "-0x1.6a1815af33da8p-33"
         },
         {
-          "__f__": "0x0.0p+0"
+          "__f__": "-0x1.ba097be5a1140p-40"
         },
         {
-          "__f__": "0x0.0p+0"
+          "__f__": "-0x1.58331bbc4f08ep-47"
         },
         {
-          "__f__": "0x0.0p+0"
+          "__f__": "-0x1.5693b4db7c839p-55"
         },
         {
-          "__f__": "0x0.0p+0"
+          "__f__": "-0x1.b456fafa62ed5p-64"
         },
         {
-          "__f__": "0x0.0p+0"
+          "__f__": "-0x1.63e1dbc367d31p-73"
         },
         {
-          "__f__": "0x0.0p+0"
+          "__f__": "-0x1.73e907868cf9ep-83"
         },
         {
-          "__f__": "0x0.0p+0"
+          "__f__": "-0x1.f223908e6a415p-94"
         },
         {
-          "__f__": "0x0.0p+0"
+          "__f__": "-0x1.aba853f5be743p-105"
         },
         {
-          "__f__": "0x0.0p+0"
+          "__f__": "-0x1.d6b70683ce045p-117"
         },
         {
-          "__f__": "0x0.0p+0"
+          "__f__": "-0x1.4c277fc0c77b7p-129"
         },
         {
-          "__f__": "0x0.0p+0"
+          "__f__": "-0x1.2c88aae9a1535p-142"
         },
         {
-          "__f__": "0x0.0p+0"
+          "__f__": "-0x1.5caf3126724b2p-156"
         },
         {
-          "__f__": "0x0.0p+0"
+          "__f__": "-0x1.03612fb3160ffp-170"
         },
         {
-          "__f__": "0x0.0p+0"
+          "__f__": "-0x1.eed85f12c5bc1p-186"
         },
         {
-          "__f__": "0x0.0p+0"
+          "__f__": "-0x1.2ea773ad188bdp-201"
         },
         {
-          "__f__": "0x0.0p+0"
+          "__f__": "-0x1.dabe8fb15e06bp-218"
         },
         {
-          "__f__": "0x0.0p+0"
+          "__f__": "-0x1.dd799a0fdb2fcp-235"
         },
         {
-          "__f__": "0x0.0p+0"
+          "__f__": "-0x1.33e8440e8ae0bp-252"
         },
         {
-          "__f__": "0x0.0p+0"
+          "__f__": "-0x1.009777e99eae5p-251"
         },
         {
           "__f__": "0x1.33e8d896c641cp-252"
@@ -145,7 +145,7 @@
         "__f__": "0x1.0000000000000p+0"
       },
       "auc": {
-        "__f__": "0x1.037bbcc27c2fap+7"
+        "__f__": "0x1.00e0e599e691ap+7"
       },
       "blood_t1": {
         "__f__": "0x1.a666666666666p+0"
@@ -153,7 +153,7 @@
       "candidate_count": 2,
       "detection_method": "atlas",
       "fwhm_seconds": {
-        "__f__": "0x1.ccb0b0d9963b8p+3"
+        "__f__": "0x1.cf073bdd8f068p+3"
       },
       "peak_concentration": {
         "__f__": "0x1.13dcb08d3dcb0p+3"
@@ -171,20 +171,20 @@
             "n_pool": 2,
             "qc": {
               "auc_mm_s": {
-                "__f__": "0x1.037bbcc27c2fap+7"
+                "__f__": "0x1.00e0e599e691ap+7"
               },
               "fwhm_seconds": {
-                "__f__": "0x1.ccb0b0d9963b8p+3"
+                "__f__": "0x1.cf073bdd8f068p+3"
               },
               "late_tail_per_peak": {
-                "__f__": "0x1.7cfc9c09109ddp-257"
+                "__f__": "-0x1.3d7cef6f42148p-256"
               },
               "multi_bump_count": 0,
               "peak_mm": {
                 "__f__": "0x1.13dcb08d3dcb0p+3"
               },
               "ratio_30": {
-                "__f__": "0x0.0p+0"
+                "__f__": "-0x1.7f3616732f809p-16"
               },
               "washout": {
                 "__f__": "0x1.0000000000000p+0"
@@ -236,6 +236,20 @@
         "cnr_mean": {
           "__f__": "0x1.4000000000000p+4"
         },
+        "detected_aif_minimum_mm": {
+          "__f__": "-0x1.4294586d86645p-2"
+        },
+        "detected_aif_negative_fraction": {
+          "__f__": "0x1.599999999999ap-1"
+        },
+        "detected_aif_negative_samples": 27,
+        "detected_aif_post_peak_minimum_mm": {
+          "__f__": "-0x1.1761f392a7eeap-7"
+        },
+        "detected_aif_post_peak_negative_fraction": {
+          "__f__": "0x1.a000000000000p-1"
+        },
+        "detected_aif_post_peak_negative_samples": 26,
         "detection_method": "atlas",
         "emitted_peak_mm": {
           "__f__": "0x1.13dcb08d3dcb0p+3"
@@ -247,10 +261,10 @@
           "__f__": "0x1.8000000000000p+1"
         },
         "final_auc": {
-          "__f__": "0x1.037bbcc27c2fap+7"
+          "__f__": "0x1.00e0e599e691ap+7"
         },
         "final_fwhm_seconds": {
-          "__f__": "0x1.ccb0b0d9963b8p+3"
+          "__f__": "0x1.cf073bdd8f068p+3"
         },
         "final_peak_mm": {
           "__f__": "0x1.13dcb08d3dcb0p+3"
@@ -295,7 +309,7 @@
         },
         "peak_scaling_trigger": "below_expected_minimum",
         "quality_score": {
-          "__f__": "0x1.5e8a29b217125p-3"
+          "__f__": "0x1.5c936300ac7c4p-3"
         },
         "raw_peak_mm": {
           "__f__": "0x1.0a049692f2306p+3"
@@ -319,7 +333,7 @@
         }
       },
       "quality_score": {
-        "__f__": "0x1.5e8a29b217125p-3"
+        "__f__": "0x1.5c936300ac7c4p-3"
       },
       "scaling_factor": {
         "__f__": "0x1.09793289ad001p+0"
@@ -544,6 +558,20 @@
         "cnr_mean": {
           "__f__": "0x1.4000000000000p+4"
         },
+        "detected_aif_minimum_mm": {
+          "__f__": "0x0.0p+0"
+        },
+        "detected_aif_negative_fraction": {
+          "__f__": "0x0.0p+0"
+        },
+        "detected_aif_negative_samples": 0,
+        "detected_aif_post_peak_minimum_mm": {
+          "__f__": "0x1.3718d594487fcp-171"
+        },
+        "detected_aif_post_peak_negative_fraction": {
+          "__f__": "0x0.0p+0"
+        },
+        "detected_aif_post_peak_negative_samples": 0,
         "detection_method": "atlas",
         "emitted_peak_mm": {
           "__f__": "0x1.8000000000000p+2"
@@ -871,7 +899,7 @@
           "__f__": "0x0.0p+0"
         },
         {
-          "__f__": "0x0.0p+0"
+          "__f__": "-0x1.4294586d86645p-2"
         },
         {
           "__f__": "0x1.4b026a77f5f43p-1"
@@ -901,82 +929,82 @@
           "__f__": "0x1.b13c22a3b94dap-10"
         },
         {
-          "__f__": "0x0.0p+0"
+          "__f__": "-0x1.1761f392a7eeap-7"
         },
         {
-          "__f__": "0x0.0p+0"
+          "__f__": "-0x1.e53bf13121fbfp-10"
         },
         {
-          "__f__": "0x0.0p+0"
+          "__f__": "-0x1.9cf174e1a3bd4p-13"
         },
         {
-          "__f__": "0x0.0p+0"
+          "__f__": "-0x1.992b7c9e9e806p-17"
         },
         {
-          "__f__": "0x0.0p+0"
+          "__f__": "-0x1.f0a7f1b4769a4p-22"
         },
         {
-          "__f__": "0x0.0p+0"
+          "__f__": "-0x1.792503ec0c504p-27"
         },
         {
-          "__f__": "0x0.0p+0"
+          "__f__": "-0x1.6a1815af33da8p-33"
         },
         {
-          "__f__": "0x0.0p+0"
+          "__f__": "-0x1.ba097be5a1140p-40"
         },
         {
-          "__f__": "0x0.0p+0"
+          "__f__": "-0x1.58331bbc4f08ep-47"
         },
         {
-          "__f__": "0x0.0p+0"
+          "__f__": "-0x1.5693b4db7c839p-55"
         },
         {
-          "__f__": "0x0.0p+0"
+          "__f__": "-0x1.b456fafa62ed5p-64"
         },
         {
-          "__f__": "0x0.0p+0"
+          "__f__": "-0x1.63e1dbc367d31p-73"
         },
         {
-          "__f__": "0x0.0p+0"
+          "__f__": "-0x1.73e907868cf9ep-83"
         },
         {
-          "__f__": "0x0.0p+0"
+          "__f__": "-0x1.f223908e6a415p-94"
         },
         {
-          "__f__": "0x0.0p+0"
+          "__f__": "-0x1.aba853f5be743p-105"
         },
         {
-          "__f__": "0x0.0p+0"
+          "__f__": "-0x1.d6b70683ce045p-117"
         },
         {
-          "__f__": "0x0.0p+0"
+          "__f__": "-0x1.4c277fc0c77b7p-129"
         },
         {
-          "__f__": "0x0.0p+0"
+          "__f__": "-0x1.2c88aae9a1535p-142"
         },
         {
-          "__f__": "0x0.0p+0"
+          "__f__": "-0x1.5caf3126724b2p-156"
         },
         {
-          "__f__": "0x0.0p+0"
+          "__f__": "-0x1.03612fb3160ffp-170"
         },
         {
-          "__f__": "0x0.0p+0"
+          "__f__": "-0x1.eed85f12c5bc1p-186"
         },
         {
-          "__f__": "0x0.0p+0"
+          "__f__": "-0x1.2ea773ad188bdp-201"
         },
         {
-          "__f__": "0x0.0p+0"
+          "__f__": "-0x1.dabe8fb15e06bp-218"
         },
         {
-          "__f__": "0x0.0p+0"
+          "__f__": "-0x1.dd799a0fdb2fcp-235"
         },
         {
-          "__f__": "0x0.0p+0"
+          "__f__": "-0x1.33e8440e8ae0bp-252"
         },
         {
-          "__f__": "0x0.0p+0"
+          "__f__": "-0x1.009777e99eae5p-251"
         },
         {
           "__f__": "0x1.33e8d896c641cp-252"
@@ -986,7 +1014,7 @@
         "__f__": "0x1.0000000000000p+0"
       },
       "auc": {
-        "__f__": "0x1.037bbcc27c2fap+7"
+        "__f__": "0x1.00e0e599e691ap+7"
       },
       "blood_t1": {
         "__f__": "0x1.a666666666666p+0"
@@ -994,7 +1022,7 @@
       "candidate_count": 2,
       "detection_method": "atlas",
       "fwhm_seconds": {
-        "__f__": "0x1.ccb0b0d9963b8p+3"
+        "__f__": "0x1.cf073bdd8f068p+3"
       },
       "peak_concentration": {
         "__f__": "0x1.13dcb08d3dcb0p+3"
@@ -1012,20 +1040,20 @@
             "n_pool": 2,
             "qc": {
               "auc_mm_s": {
-                "__f__": "0x1.037bbcc27c2fap+7"
+                "__f__": "0x1.00e0e599e691ap+7"
               },
               "fwhm_seconds": {
-                "__f__": "0x1.ccb0b0d9963b8p+3"
+                "__f__": "0x1.cf073bdd8f068p+3"
               },
               "late_tail_per_peak": {
-                "__f__": "0x1.7cfc9c09109ddp-257"
+                "__f__": "-0x1.3d7cef6f42148p-256"
               },
               "multi_bump_count": 0,
               "peak_mm": {
                 "__f__": "0x1.13dcb08d3dcb0p+3"
               },
               "ratio_30": {
-                "__f__": "0x0.0p+0"
+                "__f__": "-0x1.7f3616732f809p-16"
               },
               "washout": {
                 "__f__": "0x1.0000000000000p+0"
@@ -1077,6 +1105,20 @@
         "cnr_mean": {
           "__f__": "0x1.4000000000000p+4"
         },
+        "detected_aif_minimum_mm": {
+          "__f__": "-0x1.4294586d86645p-2"
+        },
+        "detected_aif_negative_fraction": {
+          "__f__": "0x1.599999999999ap-1"
+        },
+        "detected_aif_negative_samples": 27,
+        "detected_aif_post_peak_minimum_mm": {
+          "__f__": "-0x1.1761f392a7eeap-7"
+        },
+        "detected_aif_post_peak_negative_fraction": {
+          "__f__": "0x1.a000000000000p-1"
+        },
+        "detected_aif_post_peak_negative_samples": 26,
         "detection_method": "atlas",
         "emitted_peak_mm": {
           "__f__": "0x1.13dcb08d3dcb0p+3"
@@ -1088,10 +1130,10 @@
           "__f__": "0x1.8000000000000p+1"
         },
         "final_auc": {
-          "__f__": "0x1.037bbcc27c2fap+7"
+          "__f__": "0x1.00e0e599e691ap+7"
         },
         "final_fwhm_seconds": {
-          "__f__": "0x1.ccb0b0d9963b8p+3"
+          "__f__": "0x1.cf073bdd8f068p+3"
         },
         "final_peak_mm": {
           "__f__": "0x1.13dcb08d3dcb0p+3"
@@ -1136,7 +1178,7 @@
         },
         "peak_scaling_trigger": "below_expected_minimum",
         "quality_score": {
-          "__f__": "0x1.5e8a29b217125p-3"
+          "__f__": "0x1.5c936300ac7c4p-3"
         },
         "raw_peak_mm": {
           "__f__": "0x1.0a049692f2306p+3"
@@ -1160,7 +1202,7 @@
         }
       },
       "quality_score": {
-        "__f__": "0x1.5e8a29b217125p-3"
+        "__f__": "0x1.5c936300ac7c4p-3"
       },
       "scaling_factor": {
         "__f__": "0x1.09793289ad001p+0"
@@ -1385,6 +1427,20 @@
         "cnr_mean": {
           "__f__": "0x1.4000000000000p+4"
         },
+        "detected_aif_minimum_mm": {
+          "__f__": "0x0.0p+0"
+        },
+        "detected_aif_negative_fraction": {
+          "__f__": "0x0.0p+0"
+        },
+        "detected_aif_negative_samples": 0,
+        "detected_aif_post_peak_minimum_mm": {
+          "__f__": "0x1.3718d594487fcp-171"
+        },
+        "detected_aif_post_peak_negative_fraction": {
+          "__f__": "0x0.0p+0"
+        },
+        "detected_aif_post_peak_negative_samples": 0,
         "detection_method": "atlas",
         "emitted_peak_mm": {
           "__f__": "0x1.8000000000000p+2"

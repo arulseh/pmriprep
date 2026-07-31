@@ -224,6 +224,23 @@ class TestROISizeOne:
         assert aif_mask[9, 10, 10] == 0
         assert aif_mask[10, 10, 9] == 0
 
+    def test_detected_aif_preserves_signed_baseline_noise(self) -> None:
+        """Measured AIF averaging must not rectify negative concentration noise."""
+        conc_data = np.zeros((1, 1, 1, 6), dtype=np.float64)
+        conc_data[0, 0, 0, :] = [-0.10, 0.05, -0.02, 1.0, 0.4, -0.01]
+        brain_mask = np.ones((1, 1, 1), dtype=np.uint8)
+
+        aif_curve, _ = AIFDetection._compute_weighted_roi_aif(
+            [(0, 0, 0)],
+            [1.0],
+            conc_data,
+            brain_mask,
+            roi_size=1,
+            tr=6.0,
+        )
+
+        np.testing.assert_array_equal(aif_curve, conc_data[0, 0, 0, :])
+
     def test_roi_size_3_includes_neighbors(self) -> None:
         """With roi_size=3, mask should include 3x3x3 neighborhood."""
         conc_data, brain_mask = _make_synthetic_dce_4d()

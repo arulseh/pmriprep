@@ -3980,9 +3980,6 @@ class AIFDetection(BaseInterface):
                     aif_curve, window_length=sg_window, polyorder=sg_poly,
                 )
 
-        # Clip negative to zero
-        aif_curve = np.maximum(aif_curve, 0.0)
-
         return aif_curve, aif_mask
 
     # -----------------------------------------------------------------
@@ -5266,6 +5263,32 @@ class AIFDetection(BaseInterface):
                 "multi_bump_tail_warning": bool(multi_bump_warning),
             }
         )
+        if detection_method != "population":
+            negative_samples = aif_curve[aif_curve < 0.0]
+            peak_index = int(np.argmax(aif_curve))
+            post_peak_curve = aif_curve[peak_index + 1 :]
+            post_peak_negative = post_peak_curve[post_peak_curve < 0.0]
+            qc_metrics.update(
+                {
+                    "detected_aif_negative_samples": int(negative_samples.size),
+                    "detected_aif_negative_fraction": float(
+                        negative_samples.size / aif_curve.size
+                    ),
+                    "detected_aif_minimum_mm": (
+                        float(np.min(aif_curve)) if aif_curve.size else None
+                    ),
+                    "detected_aif_post_peak_negative_samples": int(
+                        post_peak_negative.size
+                    ),
+                    "detected_aif_post_peak_negative_fraction": float(
+                        post_peak_negative.size / post_peak_curve.size
+                    ) if post_peak_curve.size else 0.0,
+                    "detected_aif_post_peak_minimum_mm": (
+                        float(np.min(post_peak_curve))
+                        if post_peak_curve.size else None
+                    ),
+                }
+            )
         qc_metrics.update(
             _build_peak_scaling_qc(
                 detection_method=detection_method,

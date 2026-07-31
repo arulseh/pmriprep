@@ -599,7 +599,7 @@ def signal_to_concentration(
 
     # Subtract per-voxel baseline concentration and retain signed noise.
     # Rectifying the result would reintroduce a half-normal positive bias
-    # (~0.8 × σ_C), inflating Ktrans in low-permeability tissue.
+    # (~0.4 × σ_C), inflating Ktrans in low-permeability tissue.
     # This effectively replaces the single-timepoint R1(0) from the T1 map
     # with the temporal mean of pre-bolus R1, which is more accurate and
     # corrects any systematic offset between VFA and dynamic acquisitions.
