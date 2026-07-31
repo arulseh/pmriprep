@@ -2519,11 +2519,10 @@ class VFAPreprocessOutputSpec(TraitedSpec):
 class VFAPreprocess(SimpleInterface):
     """VFA inter-volume coregistration and quality assessment.
 
-    This interface performs:
-    1. Selection of the VFA angle closest to the DCE flip angle as a nominal
-       contrast proxy for the shared DCE and AFI registration reference
-    2. Affine check: skip FLIRT if affines are identical
-    3. FLIRT 6DOF rigid coregistration for non-reference volumes
+    This interface selects the VFA angle closest to the DCE flip angle as a
+    nominal contrast proxy for the shared DCE and AFI registration reference.
+    It skips FLIRT when the affines are identical and otherwise performs 6DOF
+    rigid coregistration of non-reference volumes.
 
     Flip angle alone does not determine SPGR contrast; differing TR, TE,
     spoiling, and tissue T1 can make the selected images dissimilar.
