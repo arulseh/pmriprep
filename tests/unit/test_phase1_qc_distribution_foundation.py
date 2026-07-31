@@ -6,8 +6,8 @@ test failure with a much harder root-cause trace.
 Coverage targets the critical paths only:
 - ``write_tumor_dseg_tsv``: round-trip + label validation + line endings
 - ``extract_per_map_lesion_stats``: empty-input cases + happy path
-- ``enrich_brain_mask_sidecar`` / ``enrich_preproc_anat_sidecar`` /
-  ``enrich_probseg_sidecar``: empty-qc no-op + happy path
+- ``enrich_brain_mask_sidecar`` / ``enrich_preproc_anat_sidecar``:
+  empty-qc no-op + happy path
 - ``build_aif_timeseries_sidecar``: per-modality units (DSC vs DCE) +
   invalid-modality ValueError
 - ``build_tumor_seg_dseg_sidecar``: ``Columns`` block present
@@ -29,7 +29,6 @@ from pmriprep.utils.sidecar_builders import (
     build_tumor_seg_dseg_sidecar,
     enrich_brain_mask_sidecar,
     enrich_preproc_anat_sidecar,
-    enrich_probseg_sidecar,
 )
 
 
@@ -216,24 +215,6 @@ def test_enrich_preproc_anat_sidecar_t1w_omits_coreg_keys() -> None:
     # T1w sidecar passes coreg_modality=None — no Coregistration* keys
     out = enrich_preproc_anat_sidecar({}, qc, coreg_modality=None)
     assert all(not k.startswith("Coregistration") for k in out)
-
-
-def test_enrich_probseg_sidecar_filters_by_tissue_type() -> None:
-    qc = {
-        "tissue_segmentation": {
-            "WM": {"mean_probability": 0.92, "voxel_count": 100, "volume_ml": 0.1},
-            "GM": {"mean_probability": 0.88},
-        },
-    }
-    out_wm = enrich_probseg_sidecar({}, qc, "WM")
-    assert out_wm["TissueSegmentationMeanProbability"] == pytest.approx(0.92)
-    assert out_wm["TissueSegmentationVoxelCount"] == 100
-    assert out_wm["TissueSegmentationVolume"] == pytest.approx(0.1)
-    # No nested block
-    assert "TissueSegmentationStats" not in out_wm
-    # CSF tissue not in qc — no keys written
-    out_csf = enrich_probseg_sidecar({}, qc, "CSF")
-    assert all(not k.startswith("TissueSegmentation") for k in out_csf)
 
 
 # ---------------------------------------------------------------------------

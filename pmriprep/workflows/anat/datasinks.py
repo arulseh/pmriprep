@@ -130,20 +130,12 @@ def _build_probseg_meta(
     subject: str,
     session: str,
     is_postcon_ref: bool = False,
-    qc_metrics: dict | None = None,
     reference_source: str | None = None,
 ) -> dict:
-    """Nipype-Function wrapper for ``build_anat_probseg_sidecar``.
+    """Nipype-Function wrapper for ``build_anat_probseg_sidecar``."""
+    from pmriprep.utils.sidecar_builders import build_anat_probseg_sidecar
 
-    Chains ``enrich_probseg_sidecar`` after the base build so the sidecar
-    carries flat-prefixed ``TissueSegmentation*`` keys.
-    """
-    from pmriprep.utils.sidecar_builders import (
-        build_anat_probseg_sidecar,
-        enrich_probseg_sidecar,
-    )
-
-    sidecar = build_anat_probseg_sidecar(
+    return build_anat_probseg_sidecar(
         tissue_type=tissue_type,
         source_paths=source_paths,
         reference_voxel_source=reference_voxel_source,
@@ -153,12 +145,6 @@ def _build_probseg_meta(
         is_postcon_ref=is_postcon_ref,
         reference_source=reference_source,
     )
-    enrich_probseg_sidecar(
-        sidecar,
-        qc_metrics if isinstance(qc_metrics, dict) else None,
-        tissue_type=tissue_type,
-    )
-    return sidecar
 
 
 def _extract_contrast_agent_node(source_path: str) -> str | None:
@@ -234,7 +220,6 @@ def _add_one_anat_sink(
             "subject",
             "session",
             "is_postcon_ref",
-            "qc_metrics",
             "reference_source",
         ]
     elif builder == "probseg":
@@ -282,7 +267,6 @@ def _add_one_anat_sink(
             ("subject_id", "subject"),
             ("session_id", "session"),
             (in_attr, "reference_voxel_source"),
-            ("qc_metrics", "qc_metrics"),
         ]),
     ])
     reference_attr = "source_t1w_postcon" if is_postcon_ref else "source_t1w"

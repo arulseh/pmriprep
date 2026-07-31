@@ -245,16 +245,14 @@ class TestRunEntityHandling:
         from pmriprep.utils.report_utils import _anat_nested_from_sidecars
         anat = tmp_path / "anat"
         anat.mkdir(parents=True)
-        for tissue, vol in (("WM", 500.0), ("GM", 600.0), ("CSF", 200.0)):
+        for tissue in ("WM", "GM", "CSF"):
             (
                 anat / f"{self.PREFIX}_run-1_space-T1w_label-{tissue}_probseg.json"
-            ).write_text(_json.dumps({"TissueSegmentationVolume": vol}))
+            ).write_text(_json.dumps({"TissueType": tissue}))
         out = _anat_nested_from_sidecars(tmp_path, self.PREFIX, anchor={})
         assert "tissue_segmentation" in out
         ts = out["tissue_segmentation"]
-        assert ts["WM"]["volume_ml"] == 500.0
-        assert ts["GM"]["volume_ml"] == 600.0
-        assert ts["CSF"]["volume_ml"] == 200.0
+        assert ts == {"WM": {}, "GM": {}, "CSF": {}}
 
     def test_load_pipeline_sidecars_anat_native_over_postcon(
         self, tmp_path,

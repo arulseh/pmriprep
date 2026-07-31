@@ -13,7 +13,6 @@ import pytest
 from pmriprep.utils.sidecar_builders import (
     enrich_brain_mask_sidecar,
     enrich_preproc_anat_sidecar,
-    enrich_probseg_sidecar,
 )
 
 
@@ -97,24 +96,3 @@ class TestPreprocAnatFlatKeys:
         # No "Preprocessing" or "Coregistration" nested blocks
         assert "Preprocessing" not in out
         assert "Coregistration" not in out
-
-
-class TestProbsegFlatKeys:
-    def test_per_tissue_flat_keys(self, base_sidecar):
-        qc = {
-            "tissue_segmentation": {
-                "WM": {"mean_probability": 0.92, "voxel_count": 100, "volume_ml": 0.1},
-                "GM": {"mean_probability": 0.88, "voxel_count": 80, "volume_ml": 0.08},
-            },
-        }
-        out_wm = enrich_probseg_sidecar(dict(base_sidecar), qc, "WM")
-        assert out_wm["TissueSegmentationMeanProbability"] == pytest.approx(0.92)
-        assert out_wm["TissueSegmentationVoxelCount"] == 100
-        assert out_wm["TissueSegmentationVolume"] == pytest.approx(0.1)
-        # GM-specific fields don't bleed into WM sidecar
-        assert "TissueSegmentationStats" not in out_wm  # no nested block
-
-    def test_missing_tissue_no_keys(self, base_sidecar):
-        qc = {"tissue_segmentation": {"WM": {"mean_probability": 0.92}}}
-        out_csf = enrich_probseg_sidecar(dict(base_sidecar), qc, "CSF")
-        assert all(not k.startswith("TissueSegmentation") for k in out_csf)

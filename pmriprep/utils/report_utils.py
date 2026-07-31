@@ -1080,21 +1080,7 @@ def _anat_nested_from_sidecars(
                 f"anat/{prefix}*_space-T1w_label-{tissue}_probseg.json",
             )
             if ps.exists():
-                ps_meta = _read_json_safe(ps)
-                tissue_block: dict[str, Any] = {}
-                if "TissueSegmentationMeanProbability" in ps_meta:
-                    tissue_block["mean_probability"] = float(
-                        ps_meta["TissueSegmentationMeanProbability"],
-                    )
-                if "TissueSegmentationVoxelCount" in ps_meta:
-                    tissue_block["voxel_count"] = int(
-                        ps_meta["TissueSegmentationVoxelCount"],
-                    )
-                if "TissueSegmentationVolume" in ps_meta:
-                    tissue_block["volume_ml"] = float(
-                        ps_meta["TissueSegmentationVolume"],
-                    )
-                probsegs[tissue] = tissue_block
+                probsegs[tissue] = {}
         if probsegs:
             out["tissue_segmentation"] = probsegs
 

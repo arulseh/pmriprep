@@ -375,6 +375,19 @@ def test_multi_modality_kitchen_sink(tmp_path: Path, minimal_bids: Path) -> None
     for name in expected:
         assert (anat_dir / name).exists(), f"Missing: {name}"
 
+    wm_sidecar = json.loads(
+        (anat_dir / "sub-01_ses-0001_space-T1w_label-WM_probseg.json").read_text()
+    )
+    assert wm_sidecar["TissueType"] == "WM"
+    assert not any(
+        key in wm_sidecar
+        for key in (
+            "TissueSegmentationMeanProbability",
+            "TissueSegmentationVoxelCount",
+            "TissueSegmentationVolume",
+        )
+    )
+
     # Postcon T1w sidecar must carry the contrast-agent block
     postcon_sidecar = json.loads(
         (anat_dir / "sub-01_ses-0001_ce-GAD_space-T1w_desc-preproc_T1w.json").read_text()

@@ -141,11 +141,7 @@ def test_load_pipeline_sidecars_anat_boilerplate_fields(tmp_path: Path) -> None:
     for tissue in ("WM", "GM", "CSF"):
         _write(
             ses / "anat" / f"{prefix}_space-T1w_label-{tissue}_probseg.json",
-            {
-                "TissueSegmentationMeanProbability": 0.8,
-                "TissueSegmentationVoxelCount": 100,
-                "TissueSegmentationVolume": 0.1,
-            },
+            {"TissueType": tissue},
         )
 
     out = _load_pipeline_sidecars(ses, prefix, "anat")
@@ -158,7 +154,7 @@ def test_load_pipeline_sidecars_anat_boilerplate_fields(tmp_path: Path) -> None:
     # GeneratedBy, not the per-file sidecar, so it is not surfaced here.
     assert "version" not in out["brain_extraction"]
     assert set(out["tissue_segmentation"].keys()) == {"WM", "GM", "CSF"}
-    assert out["tissue_segmentation"]["WM"]["mean_probability"] == 0.8
+    assert out["tissue_segmentation"]["WM"] == {}
 
     # Boilerplate generator now picks up the real values
     from pmriprep.utils.report_utils import _build_anat_boilerplate

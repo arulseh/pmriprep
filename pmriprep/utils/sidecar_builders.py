@@ -1229,36 +1229,6 @@ def enrich_preproc_anat_sidecar(
     return sidecar
 
 
-def enrich_probseg_sidecar(
-    sidecar: Dict[str, Any],
-    qc_metrics: Optional[Dict[str, Any]],
-    tissue_type: str,
-) -> Dict[str, Any]:
-    """Add flat ``TissueSegmentation*`` keys to a probseg sidecar.
-
-    Reads ``qc_metrics["tissue_segmentation"][tissue_type]``
-    (``mean_probability``, ``voxel_count``, ``volume_ml``) for the target
-    tissue (WM/GM/CSF). Per-tissue scope is encoded by the sidecar's
-    ``label-`` entity; no need to repeat tissue type in key names.
-    Volume in ``TissueSegmentationVolume`` is in mL (documented in
-    sidecar Description).
-    """
-    if not qc_metrics or not isinstance(qc_metrics, dict):
-        return sidecar
-    seg = qc_metrics.get("tissue_segmentation")
-    if not seg or not isinstance(seg, dict):
-        return sidecar
-    raw_block = seg.get(tissue_type)
-    block: Dict[str, Any] = raw_block if isinstance(raw_block, dict) else {}
-    if "mean_probability" in block:
-        sidecar["TissueSegmentationMeanProbability"] = float(block["mean_probability"])
-    if "voxel_count" in block:
-        sidecar["TissueSegmentationVoxelCount"] = int(block["voxel_count"])
-    if "volume_ml" in block:
-        sidecar["TissueSegmentationVolume"] = float(block["volume_ml"])
-    return sidecar
-
-
 # ---------------------------------------------------------------------------
 # AIF timeseries sidecars
 # ---------------------------------------------------------------------------
