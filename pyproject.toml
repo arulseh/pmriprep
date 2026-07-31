@@ -62,7 +62,7 @@ test = [
 ]
 dev = [
     "pmriprep[test]",
-    "mypy>=1.0.0,<1.19",
+    "mypy>=1.0.0,<1.20",
     "ruff>=0.6.0",
 ]
 doc = [
