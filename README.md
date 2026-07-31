@@ -68,7 +68,7 @@ image.
 python -m pip install .
 ```
 
-Python 3.10–3.12, FSL, and ANTs are required. The container is the supported
+Python 3.11–3.12, FSL, and ANTs are required. The container is the supported
 way to obtain the complete runtime environment.
 
 ### System Requirements

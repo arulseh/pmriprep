@@ -34,7 +34,7 @@ FROM condaforge/miniforge3:24.11.3-2
 LABEL maintainer="PMRIPrep Developers"
 LABEL org.opencontainers.image.title="PMRIPrep"
 LABEL org.opencontainers.image.description="PMRIPrep: automated preprocessing and quantification of DSC and DCE MRI"
-LABEL org.opencontainers.image.version="0.105.7"
+LABEL org.opencontainers.image.version="0.106.0"
 LABEL org.opencontainers.image.source="https://github.com/arulseh/pmriprep"
 LABEL org.opencontainers.image.licenses="Apache-2.0 AND CC0-1.0"
 
@@ -92,10 +92,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install bids-validator (legacy JS CLI; the Deno v2 rewrite would require Deno 2)
 RUN npm install -g bids-validator@1.14.10 && npm cache clean --force
 
-# Install Python 3.10, FSL, and ANTs via mamba (fast solver)
+# Install Python 3.11, FSL, and ANTs via mamba (fast solver)
 # FSL and ANTs are separate installs because the FSL channel does not
 # carry ANTs packages (mixing channels in one solve can confuse the solver).
-RUN mamba install -y -c conda-forge python=3.10 pip=24.0 && mamba clean -afy
+RUN mamba install -y -c conda-forge python=3.11 pip=24.0 && mamba clean -afy
 
 RUN mamba install -y \
     -c https://fsl.fmrib.ox.ac.uk/fsldownloads/fslconda/public/ \
