@@ -60,6 +60,15 @@ class TestCrossModalityFields:
         # ve sidecar must not carry the cross-modality field
         assert "DSCDCECrossValCorrelation" not in out_ve
 
+    def test_prior_informed_correlation_is_not_labeled_cross_validation(
+        self, base_sidecar, pk_qc_metrics
+    ):
+        pk_qc_metrics["dsc_dce_validation"]["prior_informed"] = True
+        out = enrich_dce_pk_map_sidecar(
+            dict(base_sidecar), qc_metrics=pk_qc_metrics, map_key="ktrans",
+        )
+        assert "DSCDCECrossValCorrelation" not in out
+
     def test_cbv_negative_only_on_vp(self, base_sidecar, pk_qc_metrics):
         out_vp = enrich_dce_pk_map_sidecar(
             dict(base_sidecar), qc_metrics=pk_qc_metrics, map_key="vp",

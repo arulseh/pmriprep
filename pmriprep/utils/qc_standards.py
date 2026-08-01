@@ -185,7 +185,7 @@ class QCStatus:
     WARN: Final[str] = "WARN"
     POOR: Final[str] = "POOR"
     UNKNOWN: Final[str] = "UNKNOWN"
-    CONSTRAINT_COUPLED: Final[str] = "CONSTRAINT-COUPLED"
+    PRIOR_INFORMED: Final[str] = "PRIOR-INFORMED"
 
     #: Severity ordering for worst-of comparisons.
     _SEVERITY: Final[dict[str, int]] = {
@@ -307,7 +307,7 @@ def get_status_color(status: str) -> str:
         QCStatus.WARN: COLORBLIND_PALETTE.warning,
         QCStatus.POOR: COLORBLIND_PALETTE.error,
         QCStatus.UNKNOWN: COLORBLIND_PALETTE.secondary,
-        QCStatus.CONSTRAINT_COUPLED: COLORBLIND_PALETTE.secondary,
+        QCStatus.PRIOR_INFORMED: COLORBLIND_PALETTE.secondary,
     }
     return status_colors.get(status, COLORBLIND_PALETTE.secondary)
 
@@ -916,7 +916,7 @@ def recommend_dce_qc(qc_metrics: dict[str, Any]) -> dict[str, Any]:
     xval = qc_metrics.get("dsc_dce_validation", {})
     if (
         not xval.get("skipped", False)
-        and not xval.get("constraint_coupled", False)
+        and not xval.get("prior_informed", False)
     ):
         xval_status = xval.get("status")
         xval_metrics = xval.get("metrics", {})

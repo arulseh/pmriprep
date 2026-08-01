@@ -1756,7 +1756,7 @@ def enrich_dce_pk_map_sidecar(
         )
     if map_key == "ktrans":
         xval = qc_metrics.get("dsc_dce_validation")
-        if isinstance(xval, dict):
+        if isinstance(xval, dict) and not xval.get("prior_informed", False):
             metrics = xval.get("metrics")
             if isinstance(metrics, dict) and "correlation" in metrics:
                 sidecar["DSCDCECrossValCorrelation"] = float(metrics["correlation"])

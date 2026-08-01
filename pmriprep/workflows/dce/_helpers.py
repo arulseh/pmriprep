@@ -842,9 +842,9 @@ def _dsc_dce_validation_node(
     no_dsc_validation : bool
         If True, skip cross-validation.
     pk_qc : dict or str or None
-        Full ``pk_modeling.qc_metrics`` dict or a constraint-mode string. The
-        function extracts the constraint mode and relative prior width from
-        ``dsc_cbv_constraint`` when present.
+        Full ``pk_modeling.qc_metrics`` dict. The function uses retained-fit
+        accounting to determine whether the output is actually prior-informed
+        and extracts the relative prior standard deviation when applicable.
     dsc_preload_configured : bool or None
         Whether DSC preload was configured.
     dce_model : str or None
@@ -865,23 +865,57 @@ def _dsc_dce_validation_node(
         SYNTHETIC_AIF_REASON_STRING,
     )
 
-    resolved_mode: str | None = None
-    constraint_relative_width: float | None = None
+    from numbers import Integral
+
+    prior_informed = False
+    prior_relative_sd: float | None = None
+    prior_informed_fraction: float | None = None
     constraint_skip_reason: str | None = None
+    prior_accounting_error: str | None = None
     if isinstance(pk_qc, dict):
         constraint_value = pk_qc.get("dsc_cbv_constraint")
         if isinstance(constraint_value, dict):
             mode_value = constraint_value.get("mode")
-            if isinstance(mode_value, str):
-                resolved_mode = mode_value
             width_value = constraint_value.get("vp_uncertainty")
-            if isinstance(width_value, (int, float)):
-                constraint_relative_width = float(width_value)
             skip_value = constraint_value.get("skip_reason")
             if isinstance(skip_value, str):
                 constraint_skip_reason = skip_value
-    elif isinstance(pk_qc, str):
-        resolved_mode = pk_qc
+            if mode_value == "skip":
+                prior_informed_fraction = 0.0
+            elif mode_value == "soft":
+                n_prior = pk_qc.get("n_constrained")
+                accounting = pk_qc.get("voxel_accounting")
+                retained = (
+                    accounting.get("retained_nondegenerate")
+                    if isinstance(accounting, dict)
+                    else None
+                )
+                n_retained = (
+                    retained.get("count") if isinstance(retained, dict) else None
+                )
+                if not isinstance(n_prior, Integral) or not isinstance(
+                    n_retained, Integral
+                ):
+                    prior_accounting_error = (
+                        "retained prior-use accounting is unavailable"
+                    )
+                elif not 0 <= int(n_prior) <= int(n_retained):
+                    prior_accounting_error = (
+                        "retained prior-use counters are inconsistent"
+                    )
+                else:
+                    prior_informed = int(n_prior) > 0
+                    prior_informed_fraction = (
+                        int(n_prior) / int(n_retained) if int(n_retained) else 0.0
+                    )
+                    if prior_informed and isinstance(width_value, (int, float)):
+                        prior_relative_sd = float(width_value)
+            else:
+                prior_accounting_error = "vp prior mode is unavailable"
+        else:
+            prior_accounting_error = "vp prior QC block is unavailable"
+    else:
+        prior_accounting_error = "PK fit QC is unavailable"
 
     have_cbv = bool(dsc_cbv_file) and os.path.isfile(str(dsc_cbv_file))
     have_ncbv = bool(dsc_ncbv_file) and os.path.isfile(str(dsc_ncbv_file))
@@ -954,14 +988,26 @@ def _dsc_dce_validation_node(
             "reason": "DSC-DCE xval skipped: brain_mask unavailable.",
         }
 
+    if prior_accounting_error is not None:
+        return {
+            "skipped": True,
+            "status": "UNKNOWN",
+            "reason": (
+                "DSC-DCE independence could not be established because "
+                f"{prior_accounting_error}."
+            ),
+            "skip_reason": "prior_accounting_unavailable",
+        }
+
     try:
         result = validate_vp_cbv_from_files(
             vp_path=vp_file,
             ncbv_path=dsc_ncbv_file,
             mask_path=brain_mask,
-            constraint_mode=resolved_mode,
+            prior_informed=prior_informed,
             dsc_preload_configured=dsc_preload_configured,
-            constraint_relative_width=constraint_relative_width,
+            prior_relative_sd=prior_relative_sd,
+            prior_informed_fraction=prior_informed_fraction,
         )
         return result.to_dict()
     except Exception as e:

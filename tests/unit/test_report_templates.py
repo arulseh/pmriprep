@@ -99,39 +99,40 @@ def test_registration_description_is_concise(env, template_name, modality):
     assert "intensity contour" not in rendered
 
 
-def test_dce_constraint_coupled_diagnostic_is_not_labeled_validation(env):
+def test_dce_prior_informed_diagnostic_is_not_labeled_validation(env):
     """A DSC-informed vp fit is explicitly reported as non-independent."""
     template = env.get_template("sections/section_dce.html")
     dce = {
         "qc_metrics": {
             "dsc_dce_validation": {
-                "status": "CONSTRAINT-COUPLED",
-                "constraint_coupled": True,
-                "constraint_mode": "soft",
-                "constraint_relative_width": 0.5,
+                "status": "PRIOR-INFORMED",
+                "prior_informed": True,
+                "prior_relative_sd": 0.5,
+                "prior_informed_fraction": 0.75,
                 "metrics": {},
                 "interpretation": (
-                    "DSC nCBV supplied the soft spatial prior for vp; "
+                    "DSC nCBV supplied the retained spatial prior for vp; "
                     "agreement is not independent"
                 ),
             },
         },
-        "images": {"dsc_dce_xval": "constraint.png"},
+        "images": {"dsc_dce_xval": "prior.png"},
         "display_status": {},
     }
 
     rendered = template.render(dce=dce, dsc={"present": True})
 
-    assert "DSC-informed vp Constraint Diagnostic" in rendered
-    assert "CONSTRAINT-COUPLED" in rendered
-    assert "Relative Constraint Width" in rendered
+    assert "DSC-informed vp Prior Diagnostic" in rendered
+    assert "PRIOR-INFORMED" in rendered
+    assert "Prior Relative SD" in rendered
     assert "50%" in rendered
+    assert "75%" in rendered
     assert "No — vp used DSC nCBV" in rendered
     _assert_in_order(
         rendered,
         '<div class="metric-label">Status</div>',
-        '<div class="metric-label">Constraint</div>',
-        '<div class="metric-label">Relative Constraint Width</div>',
+        '<div class="metric-label">Prior Relative SD</div>',
+        '<div class="metric-label">Retained Fits Using Prior</div>',
         '<div class="metric-label">Independence</div>',
     )
     assert '<div class="metric-label">Interpretation</div>' not in rendered

@@ -5,8 +5,9 @@ Generates a 3-panel QC figure for DSC-DCE comparison:
   Panel 2: Bland-Altman plot (in CBV-equivalent units)
   Panel 3: Spatial ratio map (axial slice, diverging colormap)
 
-When DSC nCBV supplied the vp prior, the panels instead diagnose departure
-from that soft constraint; they are not presented as independent validation.
+When a retained fit used the DSC-informed vp prior, the panels instead
+diagnose departure from that prior; they are not presented as independent
+validation.
 
 Uses the colorblind-safe palette from qc_standards.py.
 """
@@ -124,11 +125,11 @@ def generate_xval_plot(
         cbv_from_vp = vp_valid * cbv_unit_factor
         cbv_from_vp_oob = vp_oob * cbv_unit_factor
 
-    is_prior_informed = validation_result.get("constraint_mode") == "soft"
-    constraint_width_value = validation_result.get("constraint_relative_width")
-    constraint_width = (
-        float(constraint_width_value)
-        if isinstance(constraint_width_value, (int, float))
+    is_prior_informed = bool(validation_result.get("prior_informed", False))
+    prior_sd_value = validation_result.get("prior_relative_sd")
+    prior_relative_sd = (
+        float(prior_sd_value)
+        if isinstance(prior_sd_value, (int, float))
         else None
     )
 
@@ -208,15 +209,15 @@ def generate_xval_plot(
                     color=COLORBLIND_PALETTE.error, linewidth=1,
                     label="identity")
 
-            if is_prior_informed and constraint_width is not None:
+            if is_prior_informed and prior_relative_sd is not None:
                 x_line = np.linspace(0, lim_max, 100)
                 ax.fill_between(
                     x_line,
-                    x_line * (1.0 - constraint_width),
-                    x_line * (1.0 + constraint_width),
+                    x_line * (1.0 - prior_relative_sd),
+                    x_line * (1.0 + prior_relative_sd),
                     color=COLORBLIND_PALETTE.warning,
                     alpha=0.18,
-                    label=f"prior ±{constraint_width:.0%}",
+                    label=f"prior mean ± 1 SD ({prior_relative_sd:.0%})",
                 )
                 ax.legend(fontsize=7, loc="lower right")
 
@@ -273,14 +274,14 @@ def generate_xval_plot(
                 alpha=0.8,
             )
             ax.axvline(0.0, color="black", linewidth=1, linestyle="--")
-            if constraint_width is not None:
+            if prior_relative_sd is not None:
                 ax.axvline(
-                    -constraint_width,
+                    -prior_relative_sd,
                     color=COLORBLIND_PALETTE.warning,
                     linewidth=1,
                 )
                 ax.axvline(
-                    constraint_width,
+                    prior_relative_sd,
                     color=COLORBLIND_PALETTE.warning,
                     linewidth=1,
                 )
@@ -408,9 +409,9 @@ def generate_xval_plot(
             VP_NCBV_RATIO_MIN,
         )
 
-        if is_prior_informed and constraint_width is not None:
-            vmin = expected_ratio * (1.0 - constraint_width)
-            vmax = expected_ratio * (1.0 + constraint_width)
+        if is_prior_informed and prior_relative_sd is not None:
+            vmin = expected_ratio * (1.0 - prior_relative_sd)
+            vmax = expected_ratio * (1.0 + prior_relative_sd)
         else:
             vmin = VP_NCBV_RATIO_MIN
             vmax = VP_NCBV_RATIO_MAX

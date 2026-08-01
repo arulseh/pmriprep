@@ -792,7 +792,7 @@
     {% set xval = dce.qc_metrics.dsc_dce_validation %}
     {% if xval.skipped|default(false) %}
     <div class="section">
-        <h3>{{ 'DSC-informed vp Constraint Diagnostic' if xval.constraint_coupled|default(false) else 'DSC-DCE Cross-Validation' }}</h3>
+        <h3>{{ 'DSC-informed vp Prior Diagnostic' if xval.prior_informed|default(false) else 'DSC-DCE Cross-Validation' }}</h3>
         <div class="metrics">
             <div class="metric">
                 <div class="metric-label">Status</div>
@@ -812,30 +812,28 @@
     </div>
     {% elif not xval.skipped|default(false) %}
     <div class="section">
-        <h3>{{ 'DSC-informed vp Constraint Diagnostic' if xval.constraint_coupled|default(false) else 'DSC-DCE Cross-Validation' }}</h3>
+        <h3>{{ 'DSC-informed vp Prior Diagnostic' if xval.prior_informed|default(false) else 'DSC-DCE Cross-Validation' }}</h3>
         <div class="metrics">
             {% if xval.status is defined %}
             <div class="metric">
                 <div class="metric-label">Status</div>
                 <div class="metric-value
                     {%- if xval.status == 'PASS' %} pass
-                    {%- elif xval.status == 'CONSTRAINT-COUPLED' %}
+                    {%- elif xval.status == 'PRIOR-INFORMED' %}
                     {%- elif xval.status == 'WARN' %} warn
                     {%- elif xval.status == 'SKIPPED' %}
                     {%- else %} poor{% endif %}">{{ xval.status }}</div>
             </div>
             {% endif %}
-            {% if xval.constraint_mode is defined and xval.constraint_mode %}
-            <div class="metric">
-                <div class="metric-label">Constraint</div>
-                <div class="metric-value">{{ xval.constraint_mode | replace('_', ' ') | title }}</div>
-            </div>
-            {% endif %}
             {% if xval.metrics is defined %}
-            {% if xval.constraint_coupled is defined and xval.constraint_coupled %}
+            {% if xval.prior_informed is defined and xval.prior_informed %}
             <div class="metric">
-                <div class="metric-label">Relative Constraint Width</div>
-                <div class="metric-value">{% if xval.constraint_relative_width is defined and xval.constraint_relative_width is not none %}{{ "%.0f"|format(xval.constraint_relative_width * 100) }}%{% else %}Not recorded{% endif %}</div>
+                <div class="metric-label">Prior Relative SD</div>
+                <div class="metric-value">{% if xval.prior_relative_sd is defined and xval.prior_relative_sd is not none %}{{ "%.0f"|format(xval.prior_relative_sd * 100) }}%{% else %}Not recorded{% endif %}</div>
+            </div>
+            <div class="metric">
+                <div class="metric-label">Retained Fits Using Prior</div>
+                <div class="metric-value">{% if xval.prior_informed_fraction is defined and xval.prior_informed_fraction is not none %}{{ "%.0f"|format(xval.prior_informed_fraction * 100) }}%{% else %}Not recorded{% endif %}</div>
             </div>
             <div class="metric">
                 <div class="metric-label">Independence</div>

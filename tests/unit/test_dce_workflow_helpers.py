@@ -290,6 +290,7 @@ class TestDscDceValidationNodeDispatch:
                 dsc_cbv_file=nonexistent_cbv,
                 dsc_ncbv_file=ncbv_file,
                 brain_mask=mask_file,
+                pk_qc={"dsc_cbv_constraint": {"mode": "skip"}},
             )
 
         assert out == {"status": "PASS"}
@@ -330,6 +331,7 @@ class TestDscDceValidationNodeDispatch:
                 dsc_cbv_file=cbv_file,
                 dsc_ncbv_file=ncbv_file,
                 brain_mask=mask_file,
+                pk_qc={"dsc_cbv_constraint": {"mode": "skip"}},
             )
 
         assert "cbv_path" not in captured
@@ -444,6 +446,7 @@ class TestDscDceValidationNodeDispatch:
                     dsc_cbv_file=None,
                     dsc_ncbv_file=ncbv_file,
                     brain_mask=mask_file,
+                    pk_qc={"dsc_cbv_constraint": {"mode": "skip"}},
                 )
 
         assert out["status"] == "error"
@@ -452,8 +455,52 @@ class TestDscDceValidationNodeDispatch:
             "simulated validation failure" in r.message for r in caplog.records
         )
 
-    def test_validation_node_extracts_constraint_width(self, tmp_path: Any) -> None:
-        """pk_qc forwards constraint mode and relative prior width."""
+    def test_missing_prior_accounting_does_not_claim_independence(
+        self, tmp_path: Any
+    ) -> None:
+        """Soft mode without retained-fit counters fails closed."""
+        from pmriprep.workflows.dce.base import _dsc_dce_validation_node
+
+        ncbv_file = _write_nifti(tmp_path / "ncbv.nii.gz", np.ones((3, 3, 3)))
+        mask_file = _write_nifti(tmp_path / "mask.nii.gz", np.ones((3, 3, 3)))
+        vp_file = _write_nifti(tmp_path / "vp.nii.gz", 0.02 * np.ones((3, 3, 3)))
+
+        out = _dsc_dce_validation_node(
+            vp_file=vp_file,
+            dsc_ncbv_file=ncbv_file,
+            brain_mask=mask_file,
+            pk_qc={"dsc_cbv_constraint": {"mode": "soft", "vp_uncertainty": 0.5}},
+        )
+
+        assert out["skipped"] is True
+        assert out["status"] == "UNKNOWN"
+        assert out["skip_reason"] == "prior_accounting_unavailable"
+
+    def test_inconsistent_prior_accounting_does_not_get_clamped(
+        self, tmp_path: Any
+    ) -> None:
+        """More prior-informed than retained fits is surfaced as invalid QC."""
+        from pmriprep.workflows.dce.base import _dsc_dce_validation_node
+
+        ncbv_file = _write_nifti(tmp_path / "ncbv.nii.gz", np.ones((3, 3, 3)))
+        mask_file = _write_nifti(tmp_path / "mask.nii.gz", np.ones((3, 3, 3)))
+        vp_file = _write_nifti(tmp_path / "vp.nii.gz", 0.02 * np.ones((3, 3, 3)))
+        out = _dsc_dce_validation_node(
+            vp_file=vp_file,
+            dsc_ncbv_file=ncbv_file,
+            brain_mask=mask_file,
+            pk_qc={
+                "dsc_cbv_constraint": {"mode": "soft", "vp_uncertainty": 0.5},
+                "n_constrained": 41,
+                "voxel_accounting": {"retained_nondegenerate": {"count": 40}},
+            },
+        )
+
+        assert out["status"] == "UNKNOWN"
+        assert "inconsistent" in out["reason"]
+
+    def test_validation_node_uses_retained_prior_accounting(self, tmp_path: Any) -> None:
+        """pk_qc forwards the retained prior fraction and relative SD."""
         from pmriprep.workflows.dce.base import _dsc_dce_validation_node
 
         ncbv_file = _write_nifti(
@@ -474,6 +521,10 @@ class TestDscDceValidationNodeDispatch:
                 "mode": "soft",
                 "vp_uncertainty": 0.5,
             },
+            "n_constrained": np.int64(30),
+            "voxel_accounting": {
+                "retained_nondegenerate": {"count": np.int64(40)}
+            },
         }
 
         with mock.patch(
@@ -488,18 +539,50 @@ class TestDscDceValidationNodeDispatch:
                 pk_qc=pk_qc,
             )
 
-        assert captured["constraint_mode"] == "soft"
-        assert captured["constraint_relative_width"] == 0.5
+        assert captured["prior_informed"] is True
+        assert captured["prior_relative_sd"] == 0.5
+        assert captured["prior_informed_fraction"] == 0.75
         # Guard the dict-vs-string dispatch: ncbv_path must still route through.
         assert captured["ncbv_path"] == ncbv_file
         assert "cbv_path" not in captured
 
+    def test_soft_mode_without_retained_prior_remains_independent(
+        self, tmp_path: Any
+    ) -> None:
+        """A configured prior is not coupling when no retained fit used it."""
+        from pmriprep.workflows.dce.base import _dsc_dce_validation_node
 
-def test_xval_plot_node_emits_constraint_diagnostic(
+        ncbv_file = _write_nifti(tmp_path / "ncbv.nii.gz", np.ones((4, 4, 4)))
+        mask_file = _write_nifti(tmp_path / "mask.nii.gz", np.ones((4, 4, 4)))
+        vp_file = _write_nifti(tmp_path / "vp.nii.gz", 0.02 * np.ones((4, 4, 4)))
+        fake_validate, captured = self._capture_validator()
+        pk_qc = {
+            "dsc_cbv_constraint": {"mode": "soft", "vp_uncertainty": 0.5},
+            "n_constrained": 0,
+            "voxel_accounting": {"retained_nondegenerate": {"count": 40}},
+        }
+
+        with mock.patch(
+            "pmriprep.utils.dce_dsc_validation.validate_vp_cbv_from_files",
+            side_effect=fake_validate,
+        ):
+            _dsc_dce_validation_node(
+                vp_file=vp_file,
+                dsc_ncbv_file=ncbv_file,
+                brain_mask=mask_file,
+                pk_qc=pk_qc,
+            )
+
+        assert captured["prior_informed"] is False
+        assert captured["prior_relative_sd"] is None
+        assert captured["prior_informed_fraction"] == 0.0
+
+
+def test_xval_plot_node_emits_prior_diagnostic(
     tmp_path: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Constraint-coupled results still produce the diagnostic figure."""
+    """Prior-informed results still produce the diagnostic figure."""
     from pathlib import Path
 
     from pmriprep.workflows.dce.base import _dsc_dce_xval_plot_node
@@ -517,10 +600,10 @@ def test_xval_plot_node_emits_constraint_diagnostic(
         dsc_ncbv_file=ncbv_file,
         brain_mask=mask_file,
         validation_result={
-            "status": "CONSTRAINT-COUPLED",
-            "constraint_mode": "soft",
-            "constraint_coupled": True,
-            "constraint_relative_width": 0.5,
+            "status": "PRIOR-INFORMED",
+            "prior_informed": True,
+            "prior_relative_sd": 0.5,
+            "prior_informed_fraction": 0.75,
             "metrics": {"correlation": 1.0, "pearson_correlation": 1.0},
         },
     )

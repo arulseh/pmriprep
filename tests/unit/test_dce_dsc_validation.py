@@ -4,8 +4,8 @@ import numpy as np
 import pytest
 
 from pmriprep.utils.dce_dsc_validation import (
-    CORRELATION_PASS_UNCONSTRAINED,
-    CORRELATION_WARN_UNCONSTRAINED,
+    CORRELATION_PASS,
+    CORRELATION_WARN,
     build_vp_cbv_validation_mask,
     validate_vp_cbv,
 )
@@ -103,17 +103,17 @@ class TestCorrelationStatus:
         assert "Negative" in result.interpretation
 
 
-class TestSoftConstraintCoupling:
-    """Soft constraints make DSC-DCE agreement non-independent."""
+class TestPriorCoupling:
+    """Retained DSC-informed priors make agreement non-independent."""
 
-    def test_soft_moderate_correlation_is_constraint_coupled(self):
-        """Constraint coupling is reported regardless of correlation strength."""
+    def test_prior_moderate_correlation_is_reported_as_informed(self):
+        """Prior coupling is reported regardless of correlation strength."""
         vp, cbv, mask = _make_data(correlation=0.50)
-        result_skip = validate_vp_cbv(vp, cbv, mask, constraint_mode="skip")
-        result_soft = validate_vp_cbv(vp, cbv, mask, constraint_mode="soft")
-        assert result_skip.status == QCStatus.PASS
-        assert result_soft.status == QCStatus.CONSTRAINT_COUPLED
-        assert result_soft.constraint_coupled is True
+        result_independent = validate_vp_cbv(vp, cbv, mask)
+        result_prior = validate_vp_cbv(vp, cbv, mask, prior_informed=True)
+        assert result_independent.status == QCStatus.PASS
+        assert result_prior.status == QCStatus.PRIOR_INFORMED
+        assert result_prior.prior_informed is True
 
 
 class TestCoverageStatus:
@@ -140,55 +140,6 @@ class TestCoverageStatus:
         result = validate_vp_cbv(vp, cbv, mask)
         # 600/5000 = 12% < 20% unconstrained warn threshold → coverage degrades
         assert result.status in (QCStatus.WARN, QCStatus.POOR)
-
-
-class TestSoftConstraintCoverage:
-    """Soft-constrained coverage uses relaxed thresholds."""
-
-    def test_soft_constraint_low_coverage_passes(self):
-        """~6% coverage should PASS under soft constraint (threshold 5%)."""
-        n = 10000
-        rng = np.random.default_rng(42)
-        # 94% below MIN_VP threshold
-        vp_flat = np.full(n, 0.0005)
-        cbv_flat = np.full(n, 1.0)
-        n_valid = 600  # 6% coverage
-        z1 = rng.standard_normal(n_valid)
-        vp_flat[:n_valid] = np.clip(0.019 + 0.008 * z1, 0.002, 0.14)
-        cbv_flat[:n_valid] = np.clip(3.0 + 1.5 * z1, 0.2, 7.5)
-        vp = vp_flat.reshape(n, 1, 1)
-        cbv = cbv_flat.reshape(n, 1, 1)
-        mask = np.ones((n, 1, 1), dtype=bool)
-        result = validate_vp_cbv(vp, cbv, mask, constraint_mode="soft")
-        # Constraint-coupled runs retain descriptive metrics.
-        assert "Insufficient overlap" not in result.interpretation
-        assert "Limited overlap" not in result.interpretation
-
-    def test_soft_constraint_very_low_coverage_poor(self):
-        """Adequate sample count remains a coupled diagnostic at low coverage."""
-        n = 10000
-        rng = np.random.default_rng(42)
-        vp_flat = np.full(n, 0.0005)
-        cbv_flat = np.full(n, 1.0)
-        n_valid = 150  # 1.5% < 2% soft warn threshold
-        # But 150 < MIN_VALID_VOXELS (500) → early return WARN
-        # So use n_valid > 500 but fraction < 2%
-        n = 50000
-        n_valid = 600  # 1.2% < 2% soft warn threshold
-        vp_flat = np.full(n, 0.0005)
-        cbv_flat = np.full(n, 1.0)
-        z1 = rng.standard_normal(n_valid)
-        z2 = rng.standard_normal(n_valid)
-        vp_flat[:n_valid] = np.clip(0.019 + 0.008 * z1, 0.002, 0.14)
-        cbv_flat[:n_valid] = np.clip(
-            1.0 + 0.25 * z1 + 0.25 * z2, 0.31, 4.9
-        )
-        vp = vp_flat.reshape(n, 1, 1)
-        cbv = cbv_flat.reshape(n, 1, 1)
-        mask = np.ones((n, 1, 1), dtype=bool)
-        result = validate_vp_cbv(vp, cbv, mask, constraint_mode="soft")
-        assert result.status == QCStatus.CONSTRAINT_COUPLED
-        assert "not an independent" in result.interpretation
 
 
 class TestRatioStillWorks:
@@ -306,10 +257,10 @@ class TestTightenedThresholds:
     def test_marginal_correlation_unconstrained_warns(self) -> None:
         """ρ≈0.35 is between new WARN (0.20) and PASS (0.40) → WARN."""
         vp, cbv, mask = _make_data(correlation=0.45)
-        result = validate_vp_cbv(vp, cbv, mask, constraint_mode="skip")
+        result = validate_vp_cbv(vp, cbv, mask)
         # correlation=0.45 produces ρ≈0.40, right at the boundary
-        assert result.metrics.correlation >= CORRELATION_WARN_UNCONSTRAINED
-        assert result.metrics.correlation <= CORRELATION_PASS_UNCONSTRAINED + 0.05
+        assert result.metrics.correlation >= CORRELATION_WARN
+        assert result.metrics.correlation <= CORRELATION_PASS + 0.05
         # Status depends on whether ρ lands just above or below 0.40
         assert result.status in (QCStatus.PASS, QCStatus.WARN)
 
@@ -317,7 +268,7 @@ class TestTightenedThresholds:
         """Ratio outside ±30% but within ±50% → WARN with 'marginally' text."""
         # expected = 0.010; vp_mean=0.003 is below the expected range.
         vp, cbv, mask = _make_data(vp_mean=0.003, cbv_mean=1.0)
-        result = validate_vp_cbv(vp, cbv, mask, constraint_mode="skip")
+        result = validate_vp_cbv(vp, cbv, mask)
         if result.metrics.median_ratio < 0.468 or result.metrics.median_ratio > 0.870:
             # Outside PASS band but possibly within WARN band
             if 0.335 <= result.metrics.median_ratio <= 1.004:
@@ -327,7 +278,7 @@ class TestTightenedThresholds:
         """Ratio within ±30% of expected → PASS on ratio component."""
         # Default vp_mean=0.010, cbv_mean=1.0 gives ratio ≈ 0.010.
         vp, cbv, mask = _make_data()
-        result = validate_vp_cbv(vp, cbv, mask, constraint_mode="skip")
+        result = validate_vp_cbv(vp, cbv, mask)
         assert "within the plausibility interval" in result.interpretation
 
 
@@ -356,18 +307,16 @@ class TestNcbvPathValidation:
         vp = vp_flat.reshape(n, 1, 1)
         mask = np.ones((n, 1, 1), dtype=bool)
 
-        result = validate_vp_cbv(
-            vp, ncbv, mask, constraint_mode="skip",
-        )
+        result = validate_vp_cbv(vp, ncbv, mask)
         # Median vp/nCBV should be near NAWM_VP_REFERENCE and inside the
         # factor-of-2 tolerance band.
         assert result.metrics.median_ratio == pytest.approx(
             NAWM_VP_REFERENCE, abs=0.003
         )
-        assert result.constraint_coupled is False
+        assert result.prior_informed is False
 
-    def test_soft_constraint_is_always_reported_as_coupled(self) -> None:
-        """A soft DSC prior makes agreement non-independent at any spread."""
+    def test_retained_prior_is_always_reported_as_nonindependent(self) -> None:
+        """A retained DSC prior makes agreement non-independent at any spread."""
         n = 5000
         rng = np.random.default_rng(11)
         ncbv_flat = np.clip(1.0 + 0.3 * rng.standard_normal(n), 0.4, 4.5)
@@ -380,12 +329,14 @@ class TestNcbvPathValidation:
             vp,
             ncbv,
             mask,
-            constraint_mode="soft",
-            constraint_relative_width=0.5,
+            prior_informed=True,
+            prior_relative_sd=0.5,
+            prior_informed_fraction=0.8,
         )
-        assert result.constraint_coupled is True
-        assert result.status == QCStatus.CONSTRAINT_COUPLED
-        assert result.constraint_relative_width == 0.5
+        assert result.prior_informed is True
+        assert result.status == QCStatus.PRIOR_INFORMED
+        assert result.prior_relative_sd == 0.5
+        assert result.prior_informed_fraction == 0.8
         assert "not an independent" in result.interpretation
 
 class TestDscDceValidationNodeSkipReasons:

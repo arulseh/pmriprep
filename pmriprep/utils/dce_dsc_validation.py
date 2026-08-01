@@ -5,9 +5,10 @@ NAWM-normalized relative CBV (nCBV). The expected ``vp / nCBV`` ratio is
 ``NAWM_VP_REFERENCE`` by construction. PMRIPrep does not calculate absolute
 CBV, so unnormalized relative-CBV maps are not valid inputs here.
 
-For unconstrained fits, the comparison is a coarse cross-modality
-plausibility check. When DSC nCBV supplies the vp prior, the same metrics are
-descriptive constraint diagnostics and are not independent validation.
+For fits that did not retain a DSC-informed prior, the comparison is a coarse
+cross-modality plausibility check. When DSC nCBV supplies the retained vp
+prior, the same metrics are descriptive prior diagnostics and are not
+independent validation.
 """
 
 import logging
@@ -43,22 +44,14 @@ MAX_VP_FOR_VALIDATION: float = 0.15
 #: ρ=0.40 → ~16% shared variance, a conventional "moderate" cutoff. DSC and
 #: DCE measure related but distinct vascular features. ρ<0.20 is
 #: effectively noise.
-CORRELATION_PASS_UNCONSTRAINED: float = 0.40
-CORRELATION_WARN_UNCONSTRAINED: float = 0.20
+CORRELATION_PASS: float = 0.40
+CORRELATION_WARN: float = 0.20
 
-#: Minimum fraction of valid voxels for reliable validation.
-#: Thresholds depend on DCE constraint mode because soft-constrained Bayesian
-#: vp fitting concentrates WM voxels at the lower bound (prior mean
-#: ~NAWM_VP_REFERENCE, σ = 0.40 × prior_mean), so most fall below
-#: MIN_VP_FOR_VALIDATION = 0.001.
-#: The 5-9% that pass represent well-perfused GM — the most informative
-#: subset for cross-validation.
-#: Unconstrained fitting has wider scatter → 35-60% expected coverage.
-
-# Unconstrained or skip: 30%+ valid ensures representative brain sample.
+#: Minimum fraction of valid voxels for reliable independent validation.
+#: 30%+ valid ensures a representative brain sample.
 # 70% filtered means validation operates on a non-representative subset.
-FRACTION_VALID_PASS_UNCONSTRAINED: float = 0.30
-FRACTION_VALID_WARN_UNCONSTRAINED: float = 0.15
+FRACTION_VALID_PASS: float = 0.30
+FRACTION_VALID_WARN: float = 0.15
 
 #: Absolute minimum valid voxels for statistical reliability.
 MIN_VALID_VOXELS: int = 500
@@ -147,18 +140,18 @@ class ValidationResult:
     Attributes
     ----------
     status : str
-        Overall validation status (PASS/WARN/POOR/CONSTRAINT-COUPLED).
+        Overall validation status (PASS/WARN/POOR/PRIOR-INFORMED).
     dsc_preload_configured : bool, optional
         True when user explicitly overrode
         auto-detection with a preload class (i.e., ``preload != "auto"``).
         None if unknown.
-    constraint_mode : str, optional
-        CBV constraint mode used (soft/skip/None).
-    constraint_coupled : bool
-        True when DSC nCBV supplied the vp prior, so the comparison is
-        constraint-coupled rather than independent validation.
-    constraint_relative_width : float, optional
+    prior_informed : bool
+        True when at least one retained fit used the DSC-informed vp prior, so
+        the comparison is not independent validation.
+    prior_relative_sd : float, optional
         Relative standard deviation of the DSC-informed vp prior.
+    prior_informed_fraction : float, optional
+        Fraction of retained nondegenerate fits that used the prior.
     metrics : ValidationMetrics
         Detailed validation metrics.
     interpretation : str
@@ -167,9 +160,9 @@ class ValidationResult:
 
     status: str = QCStatus.UNKNOWN
     dsc_preload_configured: Optional[bool] = None
-    constraint_mode: Optional[str] = None
-    constraint_coupled: bool = False
-    constraint_relative_width: Optional[float] = None
+    prior_informed: bool = False
+    prior_relative_sd: Optional[float] = None
+    prior_informed_fraction: Optional[float] = None
     metrics: ValidationMetrics = field(default_factory=ValidationMetrics)
     interpretation: str = ""
 
@@ -178,9 +171,9 @@ class ValidationResult:
         return {
             "status": self.status,
             "dsc_preload_configured": self.dsc_preload_configured,
-            "constraint_mode": self.constraint_mode,
-            "constraint_coupled": self.constraint_coupled,
-            "constraint_relative_width": self.constraint_relative_width,
+            "prior_informed": self.prior_informed,
+            "prior_relative_sd": self.prior_relative_sd,
+            "prior_informed_fraction": self.prior_informed_fraction,
             "metrics": self.metrics.to_dict(),
             "interpretation": self.interpretation,
         }
@@ -240,9 +233,10 @@ def validate_vp_cbv(
     vp_data: npt.NDArray[np.floating[npt.NBitBase]],
     cbv_data: npt.NDArray[np.floating[npt.NBitBase]],
     mask: npt.NDArray[np.bool_],
-    constraint_mode: Optional[str] = None,
+    prior_informed: bool = False,
     dsc_preload_configured: Optional[bool] = None,
-    constraint_relative_width: Optional[float] = None,
+    prior_relative_sd: Optional[float] = None,
+    prior_informed_fraction: Optional[float] = None,
 ) -> ValidationResult:
     """Validate DCE vp against DSC NAWM-normalized relative CBV.
 
@@ -260,12 +254,14 @@ def validate_vp_cbv(
         3D dimensionless nCBV map array.
     mask : numpy.ndarray
         3D boolean mask for analysis region.
-    constraint_mode : str, optional
-        CBV constraint mode ("soft", "skip", or None).
+    prior_informed : bool, optional
+        Whether at least one retained fit used the DSC-informed vp prior.
     dsc_preload_configured : bool, optional
         Whether DSC preload was configured.
-    constraint_relative_width : float, optional
+    prior_relative_sd : float, optional
         Relative standard deviation of the DSC-informed vp prior.
+    prior_informed_fraction : float, optional
+        Fraction of retained nondegenerate fits that used the prior.
 
     Returns
     -------
@@ -280,10 +276,10 @@ def validate_vp_cbv(
     )
 
     result = ValidationResult(
-        constraint_mode=constraint_mode,
         dsc_preload_configured=dsc_preload_configured,
-        constraint_coupled=constraint_mode == "soft",
-        constraint_relative_width=constraint_relative_width,
+        prior_informed=prior_informed,
+        prior_relative_sd=prior_relative_sd,
+        prior_informed_fraction=prior_informed_fraction,
     )
     metrics = ValidationMetrics()
 
@@ -359,20 +355,22 @@ def validate_vp_cbv(
         metrics.correlation = 0.0
         metrics.pearson_correlation = 0.0
 
-    # A DSC-informed vp fit is coupled to nCBV regardless of how much the
-    # posterior moves away from its prior. Correlation and agreement are
-    # therefore descriptive constraint diagnostics, not validation.
-    if result.constraint_coupled:
-        result.status = QCStatus.CONSTRAINT_COUPLED
+    # A retained DSC-informed vp fit is coupled to nCBV regardless of how much
+    # the posterior moves away from its prior. Correlation and agreement are
+    # therefore descriptive prior diagnostics, not independent validation.
+    if result.prior_informed:
+        result.status = QCStatus.PRIOR_INFORMED
         result.metrics = metrics
         result.interpretation = (
-            "DSC nCBV supplied the soft spatial prior for vp; DSC-DCE "
-            "agreement is constraint-coupled and is not an independent "
+            "DSC nCBV supplied the retained spatial prior for vp; DSC-DCE "
+            "agreement is prior-informed and is not an independent "
             "validation result"
         )
         logger.info(
-            "DSC-DCE constraint diagnostic: width=%s, median_ratio=%.4f",
-            constraint_relative_width,
+            "DSC-DCE prior diagnostic: relative_sd=%s, retained_fraction=%s, "
+            "median_ratio=%.4f",
+            prior_relative_sd,
+            prior_informed_fraction,
             metrics.median_ratio,
         )
         return result
@@ -396,8 +394,8 @@ def validate_vp_cbv(
         )
 
     # --- Correlation status ---
-    corr_pass = CORRELATION_PASS_UNCONSTRAINED
-    corr_warn = CORRELATION_WARN_UNCONSTRAINED
+    corr_pass = CORRELATION_PASS
+    corr_warn = CORRELATION_WARN
 
     if metrics.correlation < 0:
         corr_status = QCStatus.POOR
@@ -426,8 +424,8 @@ def validate_vp_cbv(
         )
 
     # --- Coverage status (constraint-mode-dependent thresholds) ---
-    frac_pass = FRACTION_VALID_PASS_UNCONSTRAINED
-    frac_warn = FRACTION_VALID_WARN_UNCONSTRAINED
+    frac_pass = FRACTION_VALID_PASS
+    frac_warn = FRACTION_VALID_WARN
 
     if metrics.fraction_valid < frac_warn:
         coverage_status = QCStatus.POOR
@@ -464,9 +462,10 @@ def validate_vp_cbv_from_files(
     vp_path: Union[str, Path],
     ncbv_path: Union[str, Path],
     mask_path: Union[str, Path],
-    constraint_mode: Optional[str] = None,
+    prior_informed: bool = False,
     dsc_preload_configured: Optional[bool] = None,
-    constraint_relative_width: Optional[float] = None,
+    prior_relative_sd: Optional[float] = None,
+    prior_informed_fraction: Optional[float] = None,
 ) -> ValidationResult:
     """Validate DCE vp against DSC CBV from NIfTI files.
 
@@ -480,10 +479,14 @@ def validate_vp_cbv_from_files(
         Path to dimensionless NAWM-normalized DSC CBV.
     mask_path : str or pathlib.Path
         Path to mask NIfTI file (brain or tissue mask).
-    constraint_mode : str, optional
-        CBV constraint mode ("soft", "skip", or None).
+    prior_informed : bool, optional
+        Whether at least one retained fit used the DSC-informed vp prior.
     dsc_preload_configured : bool, optional
         Whether DSC preload was configured.
+    prior_relative_sd : float, optional
+        Relative standard deviation of the DSC-informed vp prior.
+    prior_informed_fraction : float, optional
+        Fraction of retained nondegenerate fits that used the prior.
 
     Returns
     -------
@@ -517,7 +520,8 @@ def validate_vp_cbv_from_files(
         vp_data=vp_data,  # type: ignore[arg-type]
         cbv_data=cbv_data,  # type: ignore[arg-type]
         mask=mask,
-        constraint_mode=constraint_mode,
+        prior_informed=prior_informed,
         dsc_preload_configured=dsc_preload_configured,
-        constraint_relative_width=constraint_relative_width,
+        prior_relative_sd=prior_relative_sd,
+        prior_informed_fraction=prior_informed_fraction,
     )
