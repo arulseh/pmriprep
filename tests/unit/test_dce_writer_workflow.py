@@ -172,7 +172,7 @@ def test_registered_vfa_t1map_skips_population_fallback(
 def test_removed_model_free_maps_cannot_create_derivative_sinks(
     tmp_path: Path, minimal_bids: tuple[Path, str]
 ) -> None:
-    """Removed wash slopes and internal curve classes have no sinks."""
+    """Removed model-free maps cannot create derivative sinks."""
     from pmriprep.workflows.dce.datasinks import init_dce_datasinks_wf
 
     bids, _ = minimal_bids

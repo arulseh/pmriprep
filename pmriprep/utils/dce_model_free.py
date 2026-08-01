@@ -1,8 +1,8 @@
 """Model-free DCE maps.
 
 Computes model-assumption-free quantitative maps from DCE signal and concentration data:
-IAUC, peak enhancement, time-to-peak, signal enhancement ratio, bolus arrival
-time, and curve type classification.
+IAUC, peak enhancement, time-to-peak, signal enhancement ratio, and bolus
+arrival time.
 """
 
 import logging
@@ -298,37 +298,3 @@ def compute_signal_enhancement_ratio(
         ser[valid] = early_enhancement[valid] / late_enhancement[valid]
 
     return ser  # type: ignore[no-any-return]
-
-
-def compute_curve_type(
-    ser: npt.NDArray[np.floating],
-    persistent_threshold: float = 0.9,
-    washout_threshold: float = 1.1,
-) -> npt.NDArray[np.integer]:
-    """Classify DCE enhancement curves based on SER values.
-
-    Three descriptive classes are emitted for meaningfully enhancing voxels:
-    persistent-like, plateau-like, and washout-like. These labels do not imply
-    an organ-specific diagnostic standard.
-
-    Parameters
-    ----------
-    ser : numpy.ndarray
-        3D Signal Enhancement Ratio map.
-    persistent_threshold : float, optional
-        SER below this is persistent (default 0.9).
-    washout_threshold : float, optional
-        SER above this is washout (default 1.1).
-
-    Returns
-    -------
-    numpy.ndarray
-        3D int8 map: 0=unclassified (NaN SER), 1=persistent,
-        2=plateau, 3=washout.
-    """
-    curve_type = np.zeros(ser.shape, dtype=np.int8)
-    valid = np.isfinite(ser)
-    curve_type[valid & (ser < persistent_threshold)] = 1
-    curve_type[valid & (ser >= persistent_threshold) & (ser <= washout_threshold)] = 2
-    curve_type[valid & (ser > washout_threshold)] = 3
-    return curve_type

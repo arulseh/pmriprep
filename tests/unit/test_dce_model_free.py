@@ -8,7 +8,6 @@ import numpy.typing as npt
 import pytest
 
 from pmriprep.utils.dce_model_free import (
-    compute_curve_type,
     compute_iauc,
     compute_peak_enhancement,
     compute_signal_enhancement_ratio,
@@ -43,53 +42,6 @@ def gamma_variate_data() -> (
     concentration *= rng.uniform(0.8, 1.2, size=(4, 4, 2, 1))
 
     return concentration, time_points
-
-
-# =========================================================================
-# Curve type tests
-# =========================================================================
-
-class TestCurveType:
-    """Tests for compute_curve_type."""
-
-    def test_persistent(self) -> None:
-        """SER < 0.9 should give type 1 (persistent)."""
-        ser = np.full((2, 2, 1), 0.5, dtype=np.float64)
-        result = compute_curve_type(ser)
-        assert np.all(result == 1)
-
-    def test_plateau(self) -> None:
-        """SER in [0.9, 1.1] should give type 2 (plateau)."""
-        ser = np.full((2, 2, 1), 1.0, dtype=np.float64)
-        result = compute_curve_type(ser)
-        assert np.all(result == 2)
-
-    def test_washout(self) -> None:
-        """SER > 1.1 should give type 3 (washout)."""
-        ser = np.full((2, 2, 1), 1.5, dtype=np.float64)
-        result = compute_curve_type(ser)
-        assert np.all(result == 3)
-
-    def test_nan_ser(self) -> None:
-        """NaN SER should give type 0 (unclassified)."""
-        ser = np.full((2, 2, 1), np.nan, dtype=np.float64)
-        result = compute_curve_type(ser)
-        assert np.all(result == 0)
-
-    def test_custom_thresholds(self) -> None:
-        """Non-default thresholds should be respected."""
-        ser = np.full((2, 2, 1), 0.85, dtype=np.float64)
-        # Default: 0.85 < 0.9 → persistent (type 1)
-        assert np.all(compute_curve_type(ser) == 1)
-        # Custom: 0.85 >= 0.8, <= 1.2 → plateau (type 2)
-        result = compute_curve_type(ser, persistent_threshold=0.8, washout_threshold=1.2)
-        assert np.all(result == 2)
-
-    def test_dtype_int8(self) -> None:
-        """Output should be int8."""
-        ser = np.ones((2, 2, 1), dtype=np.float64)
-        result = compute_curve_type(ser)
-        assert result.dtype == np.int8
 
 
 # =========================================================================
@@ -440,10 +392,8 @@ class TestNoInfOutputs:
         peak = compute_peak_enhancement(signal_like)
         ttp = compute_time_to_peak(concentration, time_points)
         ser = compute_signal_enhancement_ratio(concentration, time_points)
-        curve_type = compute_curve_type(ser)
 
         for name, arr in [
             ("iauc60", iauc60), ("peak", peak), ("ttp", ttp), ("ser", ser),
-            ("curve_type", curve_type),
         ]:
             assert not np.any(np.isinf(arr)), f"{name} contains Inf values"
