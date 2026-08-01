@@ -5,23 +5,21 @@ inputs used by controlled numerical experiments. Production DSC-informed DCE
 fitting does not call this bounded NLLS path; it uses Bayesian vp priors. The
 suite preserves the bounded solver's numerical characterization:
 
-  1. σ → 0 must reproduce HARD behavior (vp exactly fixed).
+  1. σ → 0 must reproduce pinned-vp behavior.
   2. σ → ∞ must reproduce SKIP behavior (vp unconstrained).
   3. σ monotonicity: vp spread grows with σ.
   4. Within-regime cross-backend parity (NLLS serial vs NLLS batched at
      σ=0.4): vp agrees to 2% relative, Ktrans to 1% relative. This is the
-     exact invariant the σ-plumbing must preserve.
-  5. BIC parameter count: HARD reduces k by 1 for constrained voxels;
-     SOFT uses k = k_base (Self-Liang 1987 pragmatic convention).
-  6. Negative cross-regime parity: NLLS box (inference=nlls) and Bayesian
+     numerical relationship characterized by the validation API.
+  5. Negative cross-regime parity: bounded NLLS and Bayesian
      Gaussian (inference=map) produce materially different vp at σ=0.4 on
-     a data-dominated voxel — pinning the user-contract that the two
-     SOFT implementations ARE different by design.
-  7. FitResult boundary indicator: a synthetic cohort with controlled boundary
+     a data-dominated voxel.
+  6. FitResult boundary indicator: a synthetic cohort with controlled boundary
      pressure produces the expected occupancy.
-  8. Serial numerical identity: serial NLLS outputs match the portable
-     reference in tests/fixtures/dce_soft_serial_reference.json. (Slow-marked.)
-  9. fixed_vp unit consistency: array values lie in the physical vp range.
+  7. Serial numerical identity: serial NLLS outputs match the portable
+     reference in tests/fixtures/dce_bounded_vp_serial_reference.json.
+     (Slow-marked.)
+  8. fixed_vp unit consistency: array values lie in the physical vp range.
 
 These are validation API contracts, not claims about production fitting or
 published QC fields.
@@ -239,34 +237,14 @@ def test_nlls_cross_backend_parity_patlak_sigma_0p4(aif_and_time):
 
 
 # ---------------------------------------------------------------------------
-# Assertion 5: BIC parameter count invariant
-# ---------------------------------------------------------------------------
-
-def test_bic_k_uses_k_base_for_all_constraint_modes():
-    """All voxels use k_base in BIC regardless of constraint mode (Self-Liang
-    1987 pragmatic; only mode that keeps Patlak / Extended Tofts BIC
-    comparison stable)."""
-    from pmriprep.utils.dsc_cbv_constraint import ConstraintMode
-
-    n = 10
-    k_base = 3
-
-    for mode in (ConstraintMode.SOFT, ConstraintMode.SKIP):
-        k_arr = np.full(n, k_base, dtype=float)
-        np.testing.assert_array_equal(k_arr, np.full(n, k_base))
-        # mode is unused in the BIC formula — assertion is symbolic.
-        assert mode in (ConstraintMode.SOFT, ConstraintMode.SKIP)
-
-
-# ---------------------------------------------------------------------------
-# Assertion 6: negative cross-regime parity (NLLS-SOFT vs Bayesian-SOFT)
+# Assertion 5: bounded NLLS and Bayesian prior are intentionally distinct
 # ---------------------------------------------------------------------------
 
 def test_negative_cross_regime_parity_data_dominated(aif_and_time):
-    """NLLS-box and Bayesian-Gaussian SOFT must differ at σ=0.4 on a
+    """Bounded NLLS and a Bayesian Gaussian prior must differ at σ=0.4 on a
     data-dominated voxel where the data likelihood peaks far from the
-    prior. Physics-expert-set threshold 10% to avoid solver-tolerance
-    flakiness while still pinning the contract."""
+    prior. The 10% threshold avoids solver-tolerance flakiness while still
+    characterizing the numerical distinction."""
     aif, time_points = aif_and_time
 
     # Construct a single voxel where TRUE vp is far from the prior.
@@ -312,7 +290,7 @@ def test_negative_cross_regime_parity_data_dominated(aif_and_time):
 
 
 # ---------------------------------------------------------------------------
-# Assertion 7: validation FitResult boundary indicator
+# Assertion 6: validation FitResult boundary indicator
 # ---------------------------------------------------------------------------
 
 def test_bounded_fit_boundary_occupancy_in_expected_range(aif_and_time):
@@ -349,10 +327,12 @@ def test_bounded_fit_boundary_occupancy_in_expected_range(aif_and_time):
 
 
 # ---------------------------------------------------------------------------
-# Assertion 8: serial numerical identity against committed baseline (slow)
+# Assertion 7: serial numerical identity against committed baseline (slow)
 # ---------------------------------------------------------------------------
 
-_FIXTURE_PATH = Path(__file__).parent.parent / "fixtures" / "dce_soft_serial_reference.json"
+_FIXTURE_PATH = (
+    Path(__file__).parent.parent / "fixtures" / "dce_bounded_vp_serial_reference.json"
+)
 
 
 def _compute_serial_outputs(aif, time_points):
@@ -387,7 +367,7 @@ def test_serial_numerical_identity(aif_and_time):
     if not _FIXTURE_PATH.exists():
         pytest.skip(
             f"Baseline fixture missing at {_FIXTURE_PATH} — run "
-            f"tests/fixtures/generate_dce_soft_reference.py to create it."
+            f"tests/fixtures/generate_dce_bounded_vp_reference.py to create it."
         )
     baseline = json.loads(_FIXTURE_PATH.read_text())
     for key, observed in outputs.items():
@@ -404,7 +384,7 @@ def test_serial_numerical_identity(aif_and_time):
 
 
 # ---------------------------------------------------------------------------
-# Assertion 9: fixed_vp unit consistency
+# Assertion 8: fixed_vp unit consistency
 # ---------------------------------------------------------------------------
 
 def test_fixed_vp_unit_consistency(aif_and_time):
