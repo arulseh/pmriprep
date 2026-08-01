@@ -717,6 +717,14 @@ def _synth_aif_qc() -> dict[str, Any]:
     }
 
 
+def _accepted_registration_qc() -> dict[str, dict[str, str]]:
+    """Return accepted QC for both transforms in the spatial transfer."""
+    return {
+        "dsc_registration_qc": {"qc_status": "PASS"},
+        "dce_registration_qc": {"qc_status": "PASS"},
+    }
+
+
 class TestVpMagnitudeGate:
     """Tests for the vp median undershoot/overshoot gate."""
 
@@ -732,6 +740,7 @@ class TestVpMagnitudeGate:
             ncbv_file=ncbv_file,
             aif_qc_data=_synth_aif_qc(),
             brain_mask_file=mask_file,
+            **_accepted_registration_qc(),
         )
 
         assert result.config.mode == ConstraintMode.SKIP
@@ -751,6 +760,7 @@ class TestVpMagnitudeGate:
             ncbv_file=ncbv_file,
             aif_qc_data=_synth_aif_qc(),
             brain_mask_file=mask_file,
+            **_accepted_registration_qc(),
         )
 
         assert result.config.mode == ConstraintMode.SKIP
@@ -769,6 +779,7 @@ class TestVpMagnitudeGate:
             ncbv_file=ncbv_file,
             aif_qc_data=_synth_aif_qc(),
             brain_mask_file=mask_file,
+            **_accepted_registration_qc(),
         )
 
         assert result.config.mode != ConstraintMode.SKIP
@@ -798,11 +809,61 @@ class TestNcbvIntegration:
             ncbv_file=ncbv_file,
             aif_qc_data=_synth_aif_qc(),
             brain_mask_file=mask_file,
+            **_accepted_registration_qc(),
         )
 
         assert result.vp_map is not None
         vp_median = float(np.nanmedian(result.vp_map))
         assert vp_median == pytest.approx(NAWM_VP_REFERENCE, rel=1e-6)
+
+    @pytest.mark.parametrize(
+        ("dsc_status", "dce_status"),
+        [("POOR", "PASS"), ("PASS", "POOR"), ("UNKNOWN", "PASS"), ("PASS", None)],
+    )
+    def test_registration_failure_skips_spatial_prior(
+        self, tmp_path: Any, dsc_status: str, dce_status: str | None,
+    ) -> None:
+        """A failed or unavailable transform makes a spatial prior unsafe."""
+        ncbv_file = _write_nifti(tmp_path / "ncbv.nii.gz", np.ones((6, 6, 6)))
+        mask_file = _write_nifti(tmp_path / "mask.nii.gz", np.ones((6, 6, 6)))
+
+        result = prepare_vp_constraint_from_data(
+            ncbv_file=ncbv_file,
+            aif_qc_data=_synth_aif_qc(),
+            brain_mask_file=mask_file,
+            dsc_registration_qc={"qc_status": dsc_status},
+            dce_registration_qc=(
+                {"qc_status": dce_status} if dce_status is not None else None
+            ),
+        )
+
+        assert result.config.mode == ConstraintMode.SKIP
+        assert result.vp_map is None
+        assert result.qc_report["skip_reason"] == "cross_modal_registration_qc"
+
+    def test_registration_warn_preserves_existing_width(self, tmp_path: Any) -> None:
+        """Accepted WARN registration does not invent another prior-width tier."""
+        ncbv_file = _write_nifti(tmp_path / "ncbv.nii.gz", np.ones((6, 6, 6)))
+        mask_file = _write_nifti(tmp_path / "mask.nii.gz", np.ones((6, 6, 6)))
+        common = {
+            "ncbv_file": ncbv_file,
+            "aif_qc_data": _synth_aif_qc(),
+            "brain_mask_file": mask_file,
+        }
+
+        passed = prepare_vp_constraint_from_data(
+            **common,
+            dsc_registration_qc={"qc_status": "PASS"},
+            dce_registration_qc={"qc_status": "PASS"},
+        )
+        warned = prepare_vp_constraint_from_data(
+            **common,
+            dsc_registration_qc={"qc_status": "WARN"},
+            dce_registration_qc={"qc_status": "PASS"},
+        )
+
+        assert warned.config.mode == passed.config.mode == ConstraintMode.SOFT
+        assert warned.config.vp_uncertainty == passed.config.vp_uncertainty
 
     def test_missing_ncbv_file_emits_skip(self, tmp_path: Any) -> None:
         """ncbv_file=None yields SKIP with skip_reason='no_nawm_mask'."""
@@ -1130,11 +1191,13 @@ class TestSkipReasonConstants:
             NO_DSC_RUN_REASON_STRING,
             SKIP_REASON_NO_DSC_RUN,
             SKIP_REASON_NO_NAWM_MASK,
+            SKIP_REASON_REGISTRATION_QC,
             SKIP_REASON_SYNTHETIC_AIF,
             SYNTHETIC_AIF_REASON_STRING,
         )
         assert SKIP_REASON_NO_DSC_RUN == "no_dsc_run"
         assert SKIP_REASON_NO_NAWM_MASK == "no_nawm_mask"
+        assert SKIP_REASON_REGISTRATION_QC == "cross_modal_registration_qc"
         assert SKIP_REASON_SYNTHETIC_AIF == "synthetic_aif"
         assert NO_DSC_RUN_REASON_STRING == "No DSC data provided"
         assert "synthetic" in SYNTHETIC_AIF_REASON_STRING.lower()

@@ -112,6 +112,7 @@ GAMMA_PEAK_RATIO_LOW_MAX: float = 1.20
 SKIP_REASON_NO_DSC_RUN = "no_dsc_run"
 SKIP_REASON_NO_NAWM_MASK = "no_nawm_mask"
 SKIP_REASON_SYNTHETIC_AIF = "synthetic_aif"
+SKIP_REASON_REGISTRATION_QC = "cross_modal_registration_qc"
 NO_DSC_RUN_REASON_STRING = "No DSC data provided"
 SYNTHETIC_AIF_REASON_STRING = (
     "AIF is synthetic (cascade exhausted or gamma-R2 fallback); "
@@ -933,6 +934,8 @@ def prepare_vp_constraint_from_data(
     k2_metrics: Optional[dict[str, Any]] = None,
     dose: float = 1.0,
     agent_standard_dose: float = GD_DOTA_STANDARD_DOSE,
+    dsc_registration_qc: Optional[dict[str, Any]] = None,
+    dce_registration_qc: Optional[dict[str, Any]] = None,
 ) -> VpConstraintResult:
     """Prepare vp constraint map from DSC nCBV for DCE PK modeling.
 
@@ -963,6 +966,10 @@ def prepare_vp_constraint_from_data(
         DSC preload classification string from QC.
     k2_metrics : dict[str, Any], optional
         K2 leakage correction metrics dict from dsc_preload.
+    dsc_registration_qc : dict[str, Any], optional
+        QC for the DSC-to-T1w transform used by the spatial prior.
+    dce_registration_qc : dict[str, Any], optional
+        QC for the T1w-to-DCE transform used by the spatial prior.
 
     Returns
     -------
@@ -1027,6 +1034,44 @@ def prepare_vp_constraint_from_data(
         }
         return result
 
+    registration_statuses = {
+        "dsc_to_t1w": str(
+            (dsc_registration_qc or {}).get("qc_status", "UNKNOWN")
+        ).upper(),
+        "t1w_to_dce": str(
+            (dce_registration_qc or {}).get("qc_status", "UNKNOWN")
+        ).upper(),
+    }
+    unacceptable_registration = {
+        name: status
+        for name, status in registration_statuses.items()
+        if status not in {"PASS", "WARN"}
+    }
+    if unacceptable_registration:
+        detail = ", ".join(
+            f"{name}={status}" for name, status in unacceptable_registration.items()
+        )
+        logger.warning(
+            "vp constraint skipped: quantitative DSC-to-DCE transfer has "
+            "unacceptable registration QC (%s). DCE vp will be fit unconstrained.",
+            detail,
+        )
+        reason = f"Cross-modal registration QC unavailable or failed ({detail})"
+        result.config = ConstraintConfig(
+            mode=ConstraintMode.SKIP,
+            vp_uncertainty=0.0,
+            reason=reason,
+        )
+        result.vp_map = None
+        result.qc_report = {
+            "mode": ConstraintMode.SKIP.value,
+            "reason": reason,
+            "vp_uncertainty": 0.0,
+            "skip_reason": SKIP_REASON_REGISTRATION_QC,
+            "registration_statuses": registration_statuses,
+        }
+        return result
+
     # Load brain mask
     mask_img = nib.load(str(brain_mask_file))
     mask_data: npt.NDArray[np.floating] = mask_img.get_fdata()  # type: ignore[attr-defined]
@@ -1083,6 +1128,7 @@ def prepare_vp_constraint_from_data(
         # Unit annotations so downstream consumers don't conflate scales.
         "cbv_median_units": "ncbv",
         "vp_median_units": "fraction",
+        "registration_statuses": registration_statuses,
     }
 
     if len(vp_valid) > 0:

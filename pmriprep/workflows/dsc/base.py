@@ -1902,6 +1902,7 @@ def init_dsc_preproc_wf(
                 "dsc_to_t1w_h5",
                 "t1w_to_dsc_h5",
                 "registration_filmstrip",
+                "registration_qc",
                 # Structural underlays
                 "t1w_in_dsc",
                 "t1w_postcon_in_dsc",
@@ -2590,6 +2591,7 @@ def init_dsc_preproc_wf(
         # Registration (.mat for internal consumers)
         (registration_wf, outputnode, [("outputnode.dsc_to_t1w_matrix", "dsc_to_t1w_xfm")]),
         (registration_wf, outputnode, [("outputnode.t1w_to_dsc_matrix", "t1w_to_dsc_xfm")]),
+        (registration_wf, outputnode, [("outputnode.qc_metrics", "registration_qc")]),
         # Registration (.h5 for derivatives)
         (registration_wf, outputnode, [("outputnode.t1w_to_dsc_h5", "t1w_to_dsc_h5")]),
         (qc_wf, outputnode, [("outputnode.registration_filmstrip", "registration_filmstrip")]),

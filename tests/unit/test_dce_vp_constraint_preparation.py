@@ -52,6 +52,36 @@ def _write_mask(path: Path) -> str:
     return str(path)
 
 
+def test_dce_only_registration_qc_sentinel_is_trait_safe(tmp_path: Path) -> None:
+    """Inactive DSC state must remain assignable to the strict Dict trait."""
+    from pmriprep.config.dce import DCEConfig
+    from pmriprep.workflows.dce.base import init_dce_preproc_wf
+
+    bids = tmp_path / "bids"
+    perf = bids / "sub-0001" / "ses-0001" / "perf"
+    perf.mkdir(parents=True)
+    (perf / "sub-0001_ses-0001_dce.nii.gz").touch()
+    (bids / "dataset_description.json").write_text(
+        '{"Name": "T", "BIDSVersion": "1.9.0"}'
+    )
+    workflow = init_dce_preproc_wf(
+        bids_dir=bids,
+        output_dir=bids / "derivatives",
+        subject_id="0001",
+        session_id="0001",
+        config=DCEConfig(),
+        has_tissue_seg=True,
+    )
+    inputnode = workflow.get_node("inputnode")
+    pk_modeling = next(
+        node for node in workflow._get_all_nodes() if node.name == "pk_modeling"
+    )
+
+    assert inputnode.inputs.dsc_registration_qc == {}
+    pk_modeling.inputs.dsc_registration_qc = inputnode.inputs.dsc_registration_qc
+    assert pk_modeling.inputs.dsc_registration_qc == {}
+
+
 def test_prepare_vp_constraint_distinguishes_absent_dsc_run(tmp_path: Path) -> None:
     """With no DSC inputs, the typed state retains explicit no-run provenance."""
     interface = ComputeDCEMaps(brain_mask_file=_write_mask(tmp_path / "mask.nii.gz"))
@@ -94,6 +124,8 @@ def test_prepare_vp_constraint_preserves_soft_prior_diagnostics(
         dsc_aif_qc={"detection_method": "atlas"},
         dsc_preprocessing_stats={"fraction_cnr_gt_4": 0.8, "mean_cnr": 6.0},
         dsc_preload_qc={"preload_classification": "adequate", "k2_r2": 0.9},
+        dsc_registration_qc={"qc_status": "WARN"},
+        dce_registration_qc={"qc_status": "PASS"},
         constraint_mode="auto",
         dsc_dose=0.5,
         dsc_agent_standard_dose=0.1,
@@ -112,6 +144,8 @@ def test_prepare_vp_constraint_preserves_soft_prior_diagnostics(
     assert captured["dose"] == 0.5
     assert captured["agent_standard_dose"] == 0.1
     assert captured["preload_classification"] == "adequate"
+    assert captured["dsc_registration_qc"] == {"qc_status": "WARN"}
+    assert captured["dce_registration_qc"] == {"qc_status": "PASS"}
     assert captured["aif_qc_data"]["cnr_whole_brain"] == {
         "fraction_cnr_gt_4": 0.8,
         "mean_cnr": 6.0,

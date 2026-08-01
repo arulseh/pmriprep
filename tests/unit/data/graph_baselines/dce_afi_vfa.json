@@ -619,6 +619,12 @@
       "registration_qc"
     ],
     [
+      "dce_registration",
+      "qc_metrics",
+      "pk_modeling",
+      "dce_registration_qc"
+    ],
+    [
       "dce_reorient",
       "out_file",
       "dce_early_mean",
@@ -755,6 +761,12 @@
       "dsc_ncbv_file",
       "resample_dsc_ncbv",
       "dsc_cbv_file"
+    ],
+    [
+      "inputnode",
+      "dsc_registration_qc",
+      "pk_modeling",
+      "dsc_registration_qc"
     ],
     [
       "inputnode",

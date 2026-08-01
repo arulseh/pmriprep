@@ -1165,6 +1165,12 @@
       "registration_qc"
     ],
     [
+      "register",
+      "qc_metrics",
+      "outputnode",
+      "registration_qc"
+    ],
+    [
       "roi_stats",
       "stats_json",
       "outputnode",
@@ -2295,6 +2301,7 @@
     "psr_map",
     "qc_metrics",
     "registration_filmstrip",
+    "registration_qc",
     "rel_cbf_map",
     "rel_cbv_auc_map",
     "rel_cbv_map",

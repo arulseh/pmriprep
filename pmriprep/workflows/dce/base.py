@@ -134,6 +134,8 @@ def init_dce_pk_modeling_wf(
                 "fd_values",
                 "bolus_arrival_frame",
                 "dsc_ncbv_file",
+                "dsc_registration_qc",
+                "dce_registration_qc",
                 "tumor_mask_file",
             ]
         ),
@@ -198,6 +200,8 @@ def init_dce_pk_modeling_wf(
             ("fd_values", "fd_values"),
             ("bolus_arrival_frame", "bolus_arrival_frame"),
             ("dsc_ncbv_file", "dsc_ncbv_file"),
+            ("dsc_registration_qc", "dsc_registration_qc"),
+            ("dce_registration_qc", "dce_registration_qc"),
             ("tumor_mask_file", "tumor_mask_file"),
         ]),
         (pk_modeling, outputnode, [
@@ -1508,6 +1512,7 @@ def init_dce_preproc_wf(
                 "dsc_cbv_file",       # Relative CBV for QC
                 "dsc_ncbv_file",      # NAWM-normalized CBV (nCBV) — vp prior input
                 "dsc_to_t1w_xfm",
+                "dsc_registration_qc",
                 "dsc_aif_qc_file",
                 # DSC dose parameters — scale CNR coverage thresholds
                 "dsc_dose",                # bolus dose multiplier
@@ -1546,6 +1551,7 @@ def init_dce_preproc_wf(
     inputnode.inputs.dsc_cbv_file = None
     inputnode.inputs.dsc_ncbv_file = None
     inputnode.inputs.dsc_to_t1w_xfm = None
+    inputnode.inputs.dsc_registration_qc = {}
     # Default dose = 1.0 (full-dose Gd-DOTA); overridden from config.dsc
     # at the workflows/base.py integration point when DSC is processed
     # in the same session.
@@ -2317,6 +2323,12 @@ def init_dce_preproc_wf(
         ]),
         (dce_dsc_resampling_wf, pk_wf, [
             ("outputnode.dsc_ncbv_file", "inputnode.dsc_ncbv_file"),
+        ]),
+        (inputnode, pk_wf, [
+            ("dsc_registration_qc", "inputnode.dsc_registration_qc"),
+        ]),
+        (dce_registration_wf, pk_wf, [
+            ("outputnode.qc_metrics", "inputnode.dce_registration_qc"),
         ]),
     ])
 

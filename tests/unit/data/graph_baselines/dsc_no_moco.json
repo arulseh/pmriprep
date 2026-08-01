@@ -1123,6 +1123,12 @@
       "registration_qc"
     ],
     [
+      "register",
+      "qc_metrics",
+      "outputnode",
+      "registration_qc"
+    ],
+    [
       "reorient_mean",
       "mean_file",
       "outputnode",
@@ -2223,6 +2229,7 @@
     "psr_map",
     "qc_metrics",
     "registration_filmstrip",
+    "registration_qc",
     "rel_cbf_map",
     "rel_cbv_auc_map",
     "rel_cbv_map",

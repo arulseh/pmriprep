@@ -2336,6 +2336,14 @@ class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
         mandatory=False,
         desc="DSC preprocessing QC stats (fraction_cnr_gt_4, mean_cnr)",
     )
+    dsc_registration_qc = traits.Dict(
+        mandatory=False,
+        desc="DSC-to-T1w registration QC for spatial vp-prior qualification",
+    )
+    dce_registration_qc = traits.Dict(
+        mandatory=False,
+        desc="T1w-to-DCE registration QC for spatial vp-prior qualification",
+    )
     constraint_mode = traits.Enum(
         "auto",
         "skip",
@@ -3093,6 +3101,16 @@ class ComputeDCEMaps(BaseInterface):
                     k2_metrics=k2_metrics,
                     dose=float(self.inputs.dsc_dose),
                     agent_standard_dose=float(self.inputs.dsc_agent_standard_dose),
+                    dsc_registration_qc=(
+                        dict(self.inputs.dsc_registration_qc)
+                        if isdefined(self.inputs.dsc_registration_qc)
+                        else None
+                    ),
+                    dce_registration_qc=(
+                        dict(self.inputs.dce_registration_qc)
+                        if isdefined(self.inputs.dce_registration_qc)
+                        else None
+                    ),
                 )
                 vp_constraint_map = vp_result.vp_map
                 constraint_mode = vp_result.config.mode

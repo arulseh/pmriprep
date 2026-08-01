@@ -465,6 +465,7 @@ def test_connect_master_dsc_to_dce_preserves_live_constraint_routes() -> None:
             ("outputnode.rel_cbv_auc_map", "inputnode.dsc_cbv_file"),
             ("outputnode.ncbv_map", "inputnode.dsc_ncbv_file"),
             ("outputnode.dsc_to_t1w_xfm", "inputnode.dsc_to_t1w_xfm"),
+            ("outputnode.registration_qc", "inputnode.dsc_registration_qc"),
             ("outputnode.aif_qc", "dce_pk_modeling_wf.pk_modeling.dsc_aif_qc"),
             ("outputnode.preload_qc", "dce_pk_modeling_wf.pk_modeling.dsc_preload_qc"),
             (
