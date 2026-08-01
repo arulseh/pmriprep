@@ -395,9 +395,13 @@ def _build_t1_map_meta(
     })
     qc = qc_metrics or {}
     t1_qc = qc.get("t1_mapping")
-    if isinstance(t1_qc, dict):
-        out.update(_dce_t1_cosmetic_keys(t1_qc))
     signal_qc = qc.get("signal_conversion")
+    out.update(
+        _dce_t1_cosmetic_keys(
+            t1_qc if isinstance(t1_qc, dict) else None,
+            signal_qc if isinstance(signal_qc, dict) else None,
+        )
+    )
     registration_qc = (
         signal_qc.get("vfa_to_dce_registration")
         if isinstance(signal_qc, dict) else None

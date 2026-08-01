@@ -39,6 +39,10 @@ def dce_qc_metrics() -> dict[str, Any]:
                 "reason": "Measured T1 rejected",
             },
         },
+        "signal_conversion": {
+            "t1_source": "assumed",
+            "assumed_t1_ms": 1200.0,
+        },
         "b1_mapping": {"mean_b1": 0.96, "pct_correction_gt_20": 8.5},
         "preprocessing": {
             "fd_mean": 0.21, "fd_max": 0.78, "percent_outliers": 2.1,
@@ -76,7 +80,11 @@ class TestT1Keys:
                 "assumed_t1_ms": 1200.0,
                 "assumed_t1_field_strength_t": 3.0,
                 "assumed_t1_policy": "uniform_field_strength_reference",
-            }
+            },
+            "signal_conversion": {
+                "t1_source": "assumed",
+                "assumed_t1_ms": 1200.0,
+            },
         }
         out = enrich_dce_preproc_sidecar(dict(base_sidecar), qc_metrics=qc)
         assert out["T1AssumedValue"] == pytest.approx(1200.0)
@@ -86,6 +94,62 @@ class TestT1Keys:
         assert out["T1B1Correction"] == "precomputed"
         assert out["T1Source"] == "uniform_field_strength_assumption"
         assert out["T1MappingAttempted"] is False
+
+    def test_missing_signal_source_fails_closed(self, base_sidecar):
+        """Missing retained-source accounting cannot publish a measured T1 map."""
+        qc = {"t1_mapping": {"method": "nlls"}}
+
+        out = enrich_dce_preproc_sidecar(dict(base_sidecar), qc_metrics=qc)
+
+        assert out["T1Source"] == "not_established"
+        assert out["T1MappingAttempted"] is True
+        assert out["T1MappingAccepted"] is False
+        assert out["T1FallbackReason"] == (
+            "Signal-conversion T1 source was not recorded"
+        )
+
+    def test_registration_fallback_uses_retained_signal_source(
+        self, base_sidecar
+    ):
+        """Top-level T1 metadata follows the map used for conversion."""
+        qc = {
+            "t1_mapping": {"method": "nlls"},
+            "signal_conversion": {
+                "t1_source": "assumed",
+                "assumed_t1_ms": 1200.0,
+                "vfa_to_dce_registration": {"qc_status": "POOR"},
+            },
+        }
+
+        out = enrich_dce_preproc_sidecar(dict(base_sidecar), qc_metrics=qc)
+
+        assert out["T1Source"] == "uniform_field_strength_fallback"
+        assert out["T1MappingAttempted"] is True
+        assert out["T1MappingAccepted"] is False
+        assert out["T1AssumedValue"] == 1200.0
+        assert out["T1FallbackReason"] == (
+            "VFA-to-DCE registration QC was POOR"
+        )
+
+    def test_unavailable_external_t1_is_reported_as_fallback(
+        self, base_sidecar
+    ):
+        """A failed configured map is distinct from an intentional assumption."""
+        qc = {
+            "t1_mapping": {"method": "external"},
+            "signal_conversion": {
+                "t1_source": "assumed",
+                "assumed_t1_ms": 1200.0,
+            },
+        }
+
+        out = enrich_dce_preproc_sidecar(dict(base_sidecar), qc_metrics=qc)
+
+        assert out["T1Source"] == "uniform_field_strength_fallback"
+        assert out["T1MappingAttempted"] is False
+        assert out["T1FallbackReason"] == (
+            "Configured T1 source was unavailable during signal conversion"
+        )
 
 
 class TestB1Keys:

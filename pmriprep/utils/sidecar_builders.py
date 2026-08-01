@@ -1546,19 +1546,19 @@ def enrich_recommendation_keys(
 # ---------------------------------------------------------------------------
 
 
-def _dce_t1_cosmetic_keys(t1_qc: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+def _dce_t1_cosmetic_keys(
+    t1_qc: Optional[Dict[str, Any]],
+    signal_qc: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     """Flat ``T1*`` keys for DCE preproc-4D sidecar."""
-    if not t1_qc or not isinstance(t1_qc, dict):
-        return {}
+    if not isinstance(t1_qc, dict):
+        t1_qc = {}
     out: Dict[str, Any] = {}
     method = t1_qc.get("method", t1_qc.get("t1_method"))
     if method is not None:
         out["T1MappingMethod"] = str(method)
     if "b1_correction" in t1_qc:
         out["T1B1Correction"] = str(t1_qc["b1_correction"])
-    if "assumed_t1_ms" in t1_qc and t1_qc["assumed_t1_ms"] is not None:
-        out["T1AssumedValue"] = float(t1_qc["assumed_t1_ms"])
-        out["T1AssumedValueUnits"] = "ms"
     if (
         "assumed_t1_field_strength_t" in t1_qc
         and t1_qc["assumed_t1_field_strength_t"] is not None
@@ -1572,26 +1572,58 @@ def _dce_t1_cosmetic_keys(t1_qc: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     corr: Dict[str, Any] = raw_corr if isinstance(raw_corr, dict) else {}
     if "correction_applied" in corr:
         out["T1CorrectionApplied"] = str(corr["correction_applied"])
-    if method == "assumed":
-        out["T1Source"] = "uniform_field_strength_assumption"
-        out["T1MappingAttempted"] = False
-    elif corr.get("correction_applied") == "fallback":
-        out["T1Source"] = "uniform_field_strength_fallback"
-        out["T1MappingAttempted"] = True
-        out["T1MappingAccepted"] = False
-        if corr.get("fallback_value_ms") is not None:
-            out["T1AssumedValue"] = float(corr["fallback_value_ms"])
-            out["T1AssumedValueUnits"] = "ms"
-        if corr.get("reason"):
-            out["T1FallbackReason"] = str(corr["reason"])
-    else:
-        out["T1Source"] = "external_map" if method == "external" else "measured_vfa"
-        out["T1MappingAttempted"] = method != "external"
-        if method != "external":
-            out["T1MappingAccepted"] = True
+    mapping_fallback_reason = (
+        str(corr["reason"])
+        if corr.get("correction_applied") == "fallback" and corr.get("reason")
+        else None
+    )
     support = t1_qc.get("t1_support")
     if isinstance(support, dict):
         out["T1Support"] = dict(support)
+
+    signal = signal_qc if isinstance(signal_qc, dict) else {}
+    signal_source = signal.get("t1_source")
+    if signal_source == "assumed":
+        fallback_used = method not in {None, "assumed"}
+        mapping_attempted = method not in {None, "assumed", "external"}
+        out["T1Source"] = (
+            "uniform_field_strength_fallback"
+            if fallback_used
+            else "uniform_field_strength_assumption"
+        )
+        out["T1MappingAttempted"] = mapping_attempted
+        if mapping_attempted:
+            out["T1MappingAccepted"] = False
+        if signal.get("assumed_t1_ms") is not None:
+            out["T1AssumedValue"] = float(signal["assumed_t1_ms"])
+            out["T1AssumedValueUnits"] = "ms"
+        registration_qc = signal.get("vfa_to_dce_registration")
+        if mapping_fallback_reason is not None:
+            out["T1FallbackReason"] = mapping_fallback_reason
+        if mapping_attempted and isinstance(registration_qc, dict):
+            status = str(registration_qc.get("qc_status", "UNKNOWN")).upper()
+            if status not in {"PASS", "WARN"} and "T1FallbackReason" not in out:
+                out["T1FallbackReason"] = (
+                    f"VFA-to-DCE registration QC was {status}"
+                )
+        if fallback_used and "T1FallbackReason" not in out:
+            out["T1FallbackReason"] = (
+                "Configured T1 source was unavailable during signal conversion"
+            )
+    elif signal_source == "map":
+        out["T1Source"] = "measured_vfa"
+        out["T1MappingAttempted"] = True
+        out["T1MappingAccepted"] = True
+    elif signal_source == "external":
+        out["T1Source"] = "external_map"
+        out["T1MappingAttempted"] = False
+    else:
+        out["T1Source"] = "not_established"
+        out["T1MappingAttempted"] = method not in {None, "assumed", "external"}
+        out["T1MappingAccepted"] = False
+        out["T1FallbackReason"] = (
+            "Signal-conversion T1 source was not recorded"
+        )
     return out
 
 
@@ -1670,7 +1702,12 @@ def enrich_dce_preproc_sidecar(
     """
     if not qc_metrics or not isinstance(qc_metrics, dict):
         return sidecar
-    sidecar.update(_dce_t1_cosmetic_keys(qc_metrics.get("t1_mapping")))
+    sidecar.update(
+        _dce_t1_cosmetic_keys(
+            qc_metrics.get("t1_mapping"),
+            qc_metrics.get("signal_conversion"),
+        )
+    )
     sidecar.update(_dce_b1_cosmetic_keys(qc_metrics.get("b1_mapping")))
     sidecar.update(_dce_preprocessing_cosmetic_keys(qc_metrics.get("preprocessing")))
     return sidecar

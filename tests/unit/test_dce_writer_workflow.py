@@ -86,9 +86,10 @@ def test_registered_vfa_t1map_writes_registration_provenance(
     inp.ktrans_map = _write_nii(tmp_path / "ktrans.nii.gz")
     inp.t1_map = _write_nii(tmp_path / "t1_map.nii.gz")
     inp.qc_metrics = {
-        "t1_mapping": {"t1_method": "wlls"},
-        "signal_conversion": {
-            "vfa_to_dce_registration": {
+            "t1_mapping": {"t1_method": "wlls"},
+            "signal_conversion": {
+                "t1_source": "map",
+                "vfa_to_dce_registration": {
                 "qc_status": "PASS", "correlation": 0.8,
             },
         },
