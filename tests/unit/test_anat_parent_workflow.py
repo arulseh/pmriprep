@@ -2,10 +2,13 @@
 
 from pathlib import Path
 
+import nibabel as nib
+import numpy as np
 import pytest
 
 from pmriprep.config.anat import AnatConfig
 from pmriprep.workflows.anat.base import (
+    _create_acpc_registration_filmstrip,
     _guarded_tissue_segment,
     _merge_fast_inputs,
     _route_fast_input,
@@ -14,6 +17,56 @@ from pmriprep.workflows.anat.base import (
     init_anat_secondary_modalities_wf,
     init_anat_tissue_segmentation_wf,
 )
+
+
+def test_acpc_filmstrip_compares_subject_and_template_masks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ACPC registration QC supplies both brain boundaries to the plotter."""
+    subject = np.zeros((7, 7, 7), dtype=np.float32)
+    subject[1:6, 1:6, 1:6] = 1.0
+    template = np.zeros_like(subject)
+    template[2:7, 1:6, 1:6] = 2.0
+    affine = np.eye(4)
+    subject_file = tmp_path / "subject_acpc.nii.gz"
+    template_file = tmp_path / "mni_brain.nii.gz"
+    nib.save(nib.Nifti1Image(subject, affine), subject_file)
+    nib.save(nib.Nifti1Image(template, affine), template_file)
+
+    captured: dict[str, object] = {}
+
+    def _capture_plot(**kwargs: object) -> Path:
+        captured.update(kwargs)
+        return Path(str(kwargs["output_path"]))
+
+    monkeypatch.setattr("pmriprep.data.get_mni_brain_template", lambda: template_file)
+    monkeypatch.setattr(
+        "pmriprep.utils.qc_utils.plot_registration_qc_filmstrip",
+        _capture_plot,
+    )
+
+    _create_acpc_registration_filmstrip(str(subject_file))
+
+    np.testing.assert_array_equal(captured["mask"], subject > 0)
+    np.testing.assert_array_equal(captured["moving_mask"], template > 0)
+
+
+def test_acpc_filmstrip_rejects_grid_mismatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ACPC QC cannot compare arrays that do not share the MNI voxel grid."""
+    subject_file = tmp_path / "subject_acpc.nii.gz"
+    template_file = tmp_path / "mni_brain.nii.gz"
+    nib.save(nib.Nifti1Image(np.ones((5, 5, 5)), np.eye(4)), subject_file)
+    shifted = np.eye(4)
+    shifted[0, 3] = 2.0
+    nib.save(nib.Nifti1Image(np.ones((5, 5, 5)), shifted), template_file)
+    monkeypatch.setattr("pmriprep.data.get_mni_brain_template", lambda: template_file)
+
+    with pytest.raises(ValueError, match="must share a voxel grid"):
+        _create_acpc_registration_filmstrip(str(subject_file))
 
 
 def test_tissue_segmentation_workflow_contract() -> None:

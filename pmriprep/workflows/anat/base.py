@@ -152,8 +152,8 @@ def _create_acpc_registration_filmstrip(
 ) -> str:
     """Create rigid T1w-to-MNI registration QC filmstrip.
 
-    Shows ACPC-aligned T1w as background with MNI template edges overlaid
-    to assess the quality of the rigid alignment.
+    Shows ACPC-aligned T1w as background with MNI template edges and both
+    brain-mask boundaries overlaid to assess the rigid alignment.
 
     Parameters
     ----------
@@ -168,6 +168,7 @@ def _create_acpc_registration_filmstrip(
     from pathlib import Path
 
     import nibabel as nib
+    import numpy as np
 
     from pmriprep.data import get_mni_brain_template
     from pmriprep.utils.qc_utils import (
@@ -183,16 +184,26 @@ def _create_acpc_registration_filmstrip(
     voxel_sizes = tuple(t1w_img.header.get_zooms()[:3])
 
     mni_path = str(get_mni_brain_template())
-    mni_data = nib.as_closest_canonical(nib.load(mni_path)).get_fdata()
+    mni_img = nib.as_closest_canonical(nib.load(mni_path))
+    if t1w_img.shape != mni_img.shape or not np.allclose(
+        t1w_img.affine, mni_img.affine, rtol=0.0, atol=1e-3,
+    ):
+        raise ValueError(
+            "ACPC-aligned T1w and MNI template must share a voxel grid for QC"
+        )
+    mni_data = mni_img.get_fdata()
 
-    # Mask from the T1w data (already brain-extracted)
+    # Both inputs are brain-extracted. Their positive supports provide the
+    # fixed and moving boundaries on the common MNI grid.
     mask = t1w_data > 0
+    moving_mask = mni_data > 0
 
     plot_registration_qc_filmstrip(
         fixed=t1w_data,
         moving=mni_data,
         output_path=output_path,
         mask=mask,
+        moving_mask=moving_mask,
         title=qc_figure_title(
             subject_id, session_id, "Rigid T1w-to-MNI Alignment QC",
         ),
