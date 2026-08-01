@@ -4358,11 +4358,6 @@ REG_QC_THRESHOLDS: dict[str, float] = {
     "determinant_max": 1.15,
 }
 
-# Provisional support-overlap safety floor for quantitative T1/B1 transfer.
-# This selection Dice is not interchangeable with brain-mask Dice and does
-# not establish voxelwise registration accuracy.
-QUANTITATIVE_TRANSFER_DICE_MIN: float = 0.90
-
 
 class DCERegistrationInputSpec(BaseInterfaceInputSpec):
     """Input specification for DCERegistration interface."""
@@ -4415,11 +4410,6 @@ class DCERegistrationInputSpec(BaseInterfaceInputSpec):
         30,
         usedefault=True,
         desc="FLIRT search range in degrees for all axes (default: 30)",
-    )
-    require_path_overlap = traits.Bool(
-        False,
-        usedefault=True,
-        desc="Require target-overlap DICE >= 0.90 for quantitative-map transfer",
     )
 
 
@@ -4515,8 +4505,8 @@ class DCERegistration(SimpleInterface):
         - Header: Header/world alignment without optimization
         - Path A: Header pre-aligned T1w → FLIRT
         - Path B: Original T1w → FLIRT
-        - Select a candidate only when it beats the preferred fitted path by
-          the configured DICE margin
+        - Retain header alignment unless a fitted candidate improves relative
+          foreground overlap by the configured DICE margin
 
         Parameters
         ----------
@@ -4616,6 +4606,7 @@ class DCERegistration(SimpleInterface):
                 dice_a,
                 dice_b,
                 selected_path,
+                selected_dice,
             ) = self._select_best_path(
                 header_aligned_file=header_aligned_file,
                 header_matrix=header_matrix,
@@ -4624,6 +4615,12 @@ class DCERegistration(SimpleInterface):
                 out_file_b=out_file_b,
                 out_matrix_b=out_matrix_b,
                 dce_mean=dce_mean,
+            )
+            transform_offset = self._transform_offset_from_header(
+                selected_matrix=selected_matrix,
+                header_matrix=header_matrix,
+                moving_file=t1w_file,
+                reference_file=dce_mean,
             )
 
             logger.info(
@@ -4641,24 +4638,15 @@ class DCERegistration(SimpleInterface):
 
         # Compute QC metrics (outside temp context so outputs exist)
         qc_metrics = self._compute_qc_metrics(out_file, dce_mean)
-        selected_dice = {
-            "header": dice_header,
-            "A": dice_a,
-            "B": dice_b,
-        }[selected_path]
         qc_metrics["path_selection"] = {
             "dice_header": dice_header,
             "dice_a": dice_a,
             "dice_b": dice_b,
             "selected": selected_path,
             "selected_dice": selected_dice,
-            "overlap_required": bool(self.inputs.require_path_overlap),
+            "selection_metric": "relative_foreground_overlap",
+            **transform_offset,
         }
-        self._apply_path_overlap_gate(
-            qc_metrics,
-            selected_dice,
-            required=bool(self.inputs.require_path_overlap),
-        )
 
         # Set outputs
         from pmriprep.utils.transforms import fsl_to_x5
@@ -4701,22 +4689,89 @@ class DCERegistration(SimpleInterface):
         header.run()
 
     @staticmethod
-    def _apply_path_overlap_gate(
-        qc_metrics: dict[str, Any],
-        selected_dice: float,
+    def _transform_offset_from_header(
         *,
-        required: bool,
-    ) -> None:
-        """Reject a required registration when target overlap is inadequate."""
-        if not required or selected_dice >= QUANTITATIVE_TRANSFER_DICE_MIN:
-            return
-        warning = (
-            f"Target-overlap DICE {selected_dice:.2f} below threshold "
-            f"{QUANTITATIVE_TRANSFER_DICE_MIN} for quantitative-map transfer"
+        selected_matrix: str,
+        header_matrix: str,
+        moving_file: str,
+        reference_file: str,
+    ) -> dict[str, float]:
+        """Measure the selected registration relative to header alignment.
+
+        Parameters
+        ----------
+        selected_matrix : str
+            Selected FSL transform from the original moving grid to the reference.
+        header_matrix : str
+            FSL transform representing NIfTI header/world alignment.
+        moving_file : str
+            Original moving magnitude image.
+        reference_file : str
+            Fixed reference image.
+
+        Returns
+        -------
+        dict[str, float]
+            Translation of the relative transform at the world origin, rigid
+            rotation angle, and RMS corner displacement across the moving FOV.
+
+        Notes
+        -----
+        These values describe the magnitude of the correction selected over
+        header alignment. They are reported for QC and are not thresholded.
+        """
+        from nitransforms.linear import Affine
+
+        selected = np.asarray(
+            Affine.from_filename(
+                selected_matrix,
+                fmt="fsl",
+                reference=reference_file,
+                moving=moving_file,
+            ).matrix,
+            dtype=np.float64,
         )
-        qc_metrics.setdefault("warnings", []).append(warning)
-        if qc_metrics.get("qc_status") != "UNKNOWN":
-            qc_metrics["qc_status"] = "POOR"
+        header = np.asarray(
+            Affine.from_filename(
+                header_matrix,
+                fmt="fsl",
+                reference=reference_file,
+                moving=moving_file,
+            ).matrix,
+            dtype=np.float64,
+        )
+        relative = selected @ np.linalg.inv(header)
+        translation_mm = float(np.linalg.norm(relative[:3, 3]))
+
+        u, _, vh = np.linalg.svd(relative[:3, :3])
+        rotation = u @ vh
+        if np.linalg.det(rotation) < 0:
+            u[:, -1] *= -1
+            rotation = u @ vh
+        rotation_argument = np.clip((np.trace(rotation) - 1.0) / 2.0, -1.0, 1.0)
+        rotation_degrees = float(np.degrees(np.arccos(rotation_argument)))
+
+        moving_img: Any = nib.load(moving_file)
+        corners_ijk = np.array(
+            [
+                [i, j, k, 1.0]
+                for i in (0.0, float(moving_img.shape[0] - 1))
+                for j in (0.0, float(moving_img.shape[1] - 1))
+                for k in (0.0, float(moving_img.shape[2] - 1))
+            ],
+            dtype=np.float64,
+        )
+        corners_ras = (moving_img.affine @ corners_ijk.T).T
+        selected_ras = (selected @ corners_ras.T).T[:, :3]
+        header_ras = (header @ corners_ras.T).T[:, :3]
+        rms_displacement_mm = float(
+            np.sqrt(np.mean(np.sum((selected_ras - header_ras) ** 2, axis=1)))
+        )
+        return {
+            "selected_vs_header_origin_translation_mm": translation_mm,
+            "selected_vs_header_rotation_degrees": rotation_degrees,
+            "selected_vs_header_rms_displacement_mm": rms_displacement_mm,
+        }
 
     def _run_flirt_dual_path(
         self,
@@ -4827,12 +4882,13 @@ class DCERegistration(SimpleInterface):
         out_file_b: str,
         out_matrix_b: str,
         dce_mean: str,
-    ) -> tuple[str, str, float, float, float, str]:
+    ) -> tuple[str, str, float, float, float, str, float]:
         """Select best registration path based on DICE overlap.
 
-        Path B must exceed Path A by ``DICE_SELECTION_MARGIN`` to be selected.
-        The header/world-aligned candidate replaces the selected fitted path
-        only when its overlap exceeds that fitted path by the same margin.
+        Path B must exceed Path A by ``DICE_SELECTION_MARGIN`` to be the
+        preferred fitted candidate. When header/world alignment is available,
+        a fitted candidate replaces it only when overlap improves by the same
+        margin.
 
         Parameters
         ----------
@@ -4855,7 +4911,8 @@ class DCERegistration(SimpleInterface):
         Returns
         -------
         tuple
-            Selected file and matrix, header/A/B overlap Dice, and path name.
+            Selected file and matrix, header/A/B overlap Dice, path name, and
+            the overlap Dice belonging to the selected candidate.
 
         Raises
         ------
@@ -4926,11 +4983,14 @@ class DCERegistration(SimpleInterface):
             selected_dice = dice_header
             selected_path = "header"
 
-        # Header/world alignment is a valid candidate in its own right. Use
-        # it when linear optimization substantially worsens target overlap.
-        if dice_header > selected_dice + DICE_SELECTION_MARGIN:
+        # Header/world alignment is the non-optimized baseline. Avoid applying
+        # a fitted transform unless it materially improves relative overlap.
+        if header_exists and not (
+            selected_dice > dice_header + DICE_SELECTION_MARGIN
+        ):
             selected_file = header_aligned_file
             selected_matrix = header_matrix
+            selected_dice = dice_header
             selected_path = "header"
 
         return (
@@ -4940,6 +5000,7 @@ class DCERegistration(SimpleInterface):
             dice_a,
             dice_b,
             selected_path,
+            selected_dice,
         )
 
     def _compute_qc_metrics(

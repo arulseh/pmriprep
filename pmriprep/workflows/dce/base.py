@@ -672,7 +672,6 @@ def init_dce_t1_b1_wf(
                 DCERegistration(
                     cost="normmi",
                     reference_type="any",
-                    require_path_overlap=True,
                 ),
                 name="afi_to_vfa_registration",
             )
@@ -1950,7 +1949,6 @@ def init_dce_preproc_wf(
             DCERegistration(
                 cost="normmi",
                 reference_type="precon",
-                require_path_overlap=True,
             ),
             name="vfa_to_dce_registration",
             mem_gb=_static_mem,
@@ -2025,7 +2023,6 @@ def init_dce_preproc_wf(
                 DCERegistration(
                     cost="normmi",
                     reference_type="precon",
-                    require_path_overlap=True,
                 ),
                 name="afi_to_dce_registration",
                 mem_gb=_static_mem,

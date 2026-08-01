@@ -287,8 +287,11 @@ world-aligned with the DCE series and, when VFA T1 mapping is used, the VFA
 acquisition. PMRIPrep uses the VFA acquisition closest to the DCE flip angle as
 the shared magnitude reference for VFA-to-DCE and AFI-to-VFA registration when
 those paths are active. Nominal flip-angle proximity is a contrast proxy; the
-sequences may still differ in TR, TE, and spoiling. Header-based transfer with
-inadequate spatial overlap is rejected and nominal flip angles are used instead.
+sequences may still differ in TR, TE, and spoiling. PMRIPrep compares
+header-based and fitted candidates using relative foreground overlap.
+Foreground overlap ranks candidates but is not treated as an anatomical Dice
+measurement; registration QC records the selected transform's physical offset
+from header alignment.
 
 `ContrastBolusAgent` is recommended for relaxivity and AIF threshold lookup.
 When absent, PMRIPrep records and warns about its assumptions. DSC and DCE dose

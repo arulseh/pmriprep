@@ -2623,7 +2623,6 @@
       "cost": "normmi",
       "dof": 6,
       "reference_type": "postcon",
-      "require_path_overlap": false,
       "search_range": 30
     },
     "dsc_dce_validation": {
@@ -2760,7 +2759,6 @@
       "cost": "normmi",
       "dof": 6,
       "reference_type": "precon",
-      "require_path_overlap": true,
       "search_range": 30
     }
   },

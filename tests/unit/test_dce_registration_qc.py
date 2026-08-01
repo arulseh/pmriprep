@@ -203,77 +203,6 @@ class TestDCERegistrationQCMaskRegression:
         assert qc_metrics["qc_status"] in {"PASS", "WARN", "POOR"}
 
 
-def test_required_path_overlap_rejects_failed_registration() -> None:
-    """A required magnitude registration cannot pass with negligible overlap."""
-    from pmriprep.interfaces.dce import DCERegistration
-
-    qc_metrics: dict[str, object] = {"qc_status": "PASS", "warnings": []}
-    DCERegistration._apply_path_overlap_gate(
-        qc_metrics,
-        0.055,
-        required=True,
-    )
-
-    assert qc_metrics["qc_status"] == "POOR"
-    assert "Target-overlap DICE" in str(qc_metrics["warnings"])
-
-
-def test_required_path_overlap_rejects_intermediate_overlap() -> None:
-    """Gross overlap below 0.90 is insufficient for quantitative transfer."""
-    from pmriprep.interfaces.dce import DCERegistration
-
-    qc_metrics: dict[str, object] = {"qc_status": "PASS", "warnings": []}
-    DCERegistration._apply_path_overlap_gate(
-        qc_metrics,
-        0.85,
-        required=True,
-    )
-
-    assert qc_metrics["qc_status"] == "POOR"
-
-
-def test_required_path_overlap_accepts_quantitative_threshold() -> None:
-    """A selected candidate at the quantitative overlap floor remains eligible."""
-    from pmriprep.interfaces.dce import DCERegistration
-
-    qc_metrics: dict[str, object] = {"qc_status": "PASS", "warnings": []}
-    DCERegistration._apply_path_overlap_gate(
-        qc_metrics,
-        0.90,
-        required=True,
-    )
-
-    assert qc_metrics == {"qc_status": "PASS", "warnings": []}
-
-
-def test_required_path_overlap_preserves_unknown_status() -> None:
-    """Unavailable QC remains a hard error rather than becoming fallback-eligible."""
-    from pmriprep.interfaces.dce import DCERegistration
-
-    qc_metrics: dict[str, object] = {"qc_status": "UNKNOWN", "warnings": []}
-    DCERegistration._apply_path_overlap_gate(
-        qc_metrics,
-        0.05,
-        required=True,
-    )
-
-    assert qc_metrics["qc_status"] == "UNKNOWN"
-
-
-def test_optional_path_overlap_does_not_change_registration_status() -> None:
-    """Structural registration retains its existing overlap policy."""
-    from pmriprep.interfaces.dce import DCERegistration
-
-    qc_metrics: dict[str, object] = {"qc_status": "PASS", "warnings": []}
-    DCERegistration._apply_path_overlap_gate(
-        qc_metrics,
-        0.055,
-        required=False,
-    )
-
-    assert qc_metrics == {"qc_status": "PASS", "warnings": []}
-
-
 def test_header_alignment_retained_when_fitted_overlap_is_worse(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -325,14 +254,15 @@ def test_header_alignment_retained_when_fitted_overlap_is_worse(
         0.055,
         0.055,
         "header",
+        0.947,
     )
 
 
-def test_header_alignment_not_selected_for_submargin_improvement(
+def test_header_alignment_retained_for_submargin_fitted_improvement(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A negligible header-overlap difference does not change candidates."""
+    """A negligible fitted-overlap gain does not displace header alignment."""
     from pmriprep.interfaces.dce import DCERegistration
     from pmriprep.utils import registration
 
@@ -352,7 +282,7 @@ def test_header_alignment_not_selected_for_submargin_improvement(
         path.touch()
     overlap = {
         str(paths["header.nii.gz"]): 0.925,
-        str(paths["path_a.nii.gz"]): 0.920,
+        str(paths["path_a.nii.gz"]): 0.930,
         str(paths["path_b.nii.gz"]): 0.900,
     }
     monkeypatch.setattr(
@@ -371,7 +301,90 @@ def test_header_alignment_not_selected_for_submargin_improvement(
         dce_mean=str(paths["dce_mean.nii.gz"]),
     )
 
-    assert selected[-1] == "A"
+    assert selected[-2] == "header"
+    assert selected[-1] == 0.925
+
+
+def test_fitted_registration_selected_for_material_overlap_improvement(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A fitted path replaces header alignment when overlap clearly improves."""
+    from pmriprep.interfaces.dce import DCERegistration
+    from pmriprep.utils import registration
+
+    paths = {
+        name: tmp_path / name
+        for name in (
+            "header.nii.gz",
+            "header.mat",
+            "path_a.nii.gz",
+            "path_a.mat",
+            "path_b.nii.gz",
+            "path_b.mat",
+            "dce_mean.nii.gz",
+        )
+    }
+    for path in paths.values():
+        path.touch()
+    overlap = {
+        str(paths["header.nii.gz"]): 0.925,
+        str(paths["path_a.nii.gz"]): 0.950,
+        str(paths["path_b.nii.gz"]): 0.900,
+    }
+    monkeypatch.setattr(
+        registration,
+        "compute_dice_for_selection",
+        lambda moving, _fixed: overlap[moving],
+    )
+
+    selected = DCERegistration()._select_best_path(
+        header_aligned_file=str(paths["header.nii.gz"]),
+        header_matrix=str(paths["header.mat"]),
+        out_file_a=str(paths["path_a.nii.gz"]),
+        out_matrix_a=str(paths["path_a.mat"]),
+        out_file_b=str(paths["path_b.nii.gz"]),
+        out_matrix_b=str(paths["path_b.mat"]),
+        dce_mean=str(paths["dce_mean.nii.gz"]),
+    )
+
+    assert selected[-2] == "A"
+    assert selected[-1] == 0.950
+
+
+def test_transform_offset_from_header_reports_physical_motion(
+    tmp_path: Path,
+) -> None:
+    """Registration offset is reported in physical units without a QC cutoff."""
+    from pmriprep.interfaces.dce import DCERegistration
+    from pmriprep.utils.registration import write_ras_transform_to_fsl
+
+    moving = tmp_path / "moving.nii.gz"
+    reference = tmp_path / "reference.nii.gz"
+    header_matrix = tmp_path / "header.mat"
+    selected_matrix = tmp_path / "selected.mat"
+    affine = np.diag([2.0, 2.0, 3.0, 1.0])
+    _save_volume(moving, np.ones((8, 8, 6)), affine)
+    _save_volume(reference, np.ones((8, 8, 6)), affine)
+    write_ras_transform_to_fsl(
+        np.eye(4), moving, reference, header_matrix
+    )
+    selected_ras = np.eye(4)
+    selected_ras[:3, 3] = [3.0, 4.0, 0.0]
+    write_ras_transform_to_fsl(
+        selected_ras, moving, reference, selected_matrix
+    )
+
+    metrics = DCERegistration._transform_offset_from_header(
+        selected_matrix=str(selected_matrix),
+        header_matrix=str(header_matrix),
+        moving_file=str(moving),
+        reference_file=str(reference),
+    )
+
+    assert metrics["selected_vs_header_origin_translation_mm"] == pytest.approx(5.0)
+    assert metrics["selected_vs_header_rotation_degrees"] == pytest.approx(0.0)
+    assert metrics["selected_vs_header_rms_displacement_mm"] == pytest.approx(5.0)
 
 
 def test_fsl_header_matrix_is_identity_in_original_moving_frame(

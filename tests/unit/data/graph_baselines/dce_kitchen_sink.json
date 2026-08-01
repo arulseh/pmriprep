@@ -2670,7 +2670,6 @@
       "cost": "normmi",
       "dof": 6,
       "reference_type": "postcon",
-      "require_path_overlap": false,
       "search_range": 30
     },
     "derive_smoothed_kep": {
