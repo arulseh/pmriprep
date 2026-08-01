@@ -56,6 +56,7 @@ def test_dsc_registration_qc_transforms_anatomical_mask(
     )
     assert metrics["brain_mask_used"] is True
     assert metrics["dice"] > 0.8
+    assert metrics["qc_status"] == "PASS"
     assert np.isfinite(metrics["nmi"])
     assert np.isfinite(metrics["correlation"])
     assert "dice_computation_failed" not in metrics
@@ -90,7 +91,92 @@ def test_dsc_registration_qc_degrades_to_unmasked_metrics(
         )
 
     assert metrics["brain_mask_used"] is False
+    assert metrics["qc_status"] == "UNKNOWN"
     assert "dice" not in metrics
     assert "dice_computation_failed" not in metrics
     assert np.isfinite(metrics["nmi"])
     assert np.isfinite(metrics["correlation"])
+
+
+def test_dsc_registration_qc_rejects_inadequate_overlap(
+    tmp_path: Path,
+) -> None:
+    """Quantitative transfer is rejected when final mask overlap is below 0.90."""
+    affine = np.eye(4)
+    data = np.random.default_rng(11).uniform(
+        10.0, 100.0, size=(6, 6, 4)
+    ).astype(np.float32)
+    mask = np.ones((6, 6, 4), dtype=np.uint8)
+    registered = tmp_path / "registered_t1w.nii.gz"
+    dsc_mean = tmp_path / "dsc_mean.nii.gz"
+    anatomical_mask = tmp_path / "brain_mask_t1w.nii.gz"
+    transformed_mask = tmp_path / "brain_mask_dsc.nii.gz"
+    matrix = tmp_path / "registration.mat"
+    _save_volume(registered, data, affine)
+    _save_volume(dsc_mean, data, affine)
+    _save_volume(anatomical_mask, mask, affine)
+    _save_volume(transformed_mask, mask, affine)
+    np.savetxt(matrix, np.eye(4))
+
+    interface = DSCRegistration()
+    interface.inputs.brain_mask = str(anatomical_mask)
+    interface.inputs.out_matrix = str(matrix)
+
+    with (
+        patch(
+            "pmriprep.utils.registration.transform_mask_to_grid",
+            return_value=str(transformed_mask),
+        ),
+        patch("pmriprep.utils.registration.calculate_dice", return_value=0.89),
+    ):
+        metrics = interface._compute_qc_metrics(
+            str(registered), str(dsc_mean)
+        )
+
+    assert metrics["dice"] == 0.89
+    assert metrics["qc_status"] == "POOR"
+    assert metrics["qc_status_threshold"] == 0.90
+
+
+def test_dsc_registration_qc_reports_dice_failure(
+    tmp_path: Path,
+    caplog,
+) -> None:
+    """A Dice-computation error is visible and fails quantitative transfer closed."""
+    affine = np.eye(4)
+    data = np.random.default_rng(23).uniform(
+        10.0, 100.0, size=(6, 6, 4)
+    ).astype(np.float32)
+    registered = tmp_path / "registered_t1w.nii.gz"
+    dsc_mean = tmp_path / "dsc_mean.nii.gz"
+    anatomical_mask = tmp_path / "brain_mask_t1w.nii.gz"
+    transformed_mask = tmp_path / "brain_mask_dsc.nii.gz"
+    matrix = tmp_path / "registration.mat"
+    _save_volume(registered, data, affine)
+    _save_volume(dsc_mean, data, affine)
+    _save_volume(anatomical_mask, data, affine)
+    _save_volume(transformed_mask, data, affine)
+    np.savetxt(matrix, np.eye(4))
+
+    interface = DSCRegistration()
+    interface.inputs.brain_mask = str(anatomical_mask)
+    interface.inputs.out_matrix = str(matrix)
+
+    with (
+        patch(
+            "pmriprep.utils.registration.transform_mask_to_grid",
+            return_value=str(transformed_mask),
+        ),
+        patch(
+            "pmriprep.utils.registration.calculate_dice",
+            side_effect=RuntimeError("synthetic Dice failure"),
+        ),
+        caplog.at_level("WARNING"),
+    ):
+        metrics = interface._compute_qc_metrics(
+            str(registered), str(dsc_mean)
+        )
+
+    assert metrics["dice_computation_failed"] is True
+    assert metrics["qc_status"] == "UNKNOWN"
+    assert "synthetic Dice failure" in caplog.text

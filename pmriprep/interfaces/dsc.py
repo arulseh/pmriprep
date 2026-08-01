@@ -377,6 +377,9 @@ class MotionCorrection(CommandLine):
 # distance to true optimum, much better than 30° (15° worst-case)
 DSC_COARSE_SEARCH: int = 15
 DSC_FINE_SEARCH: int = 6
+# Final DSC-space foreground/mask Dice required before a registration may
+# carry quantitative information into another modality.
+DSC_QUANTITATIVE_TRANSFER_DICE_MIN: float = 0.90
 
 
 class DSCRegistrationInputSpec(BaseInterfaceInputSpec):
@@ -738,8 +741,10 @@ class DSCRegistration(SimpleInterface):
         import nibabel as nib
 
         qc_metrics: dict[str, Any] = {}
+        logger = logging.getLogger(__name__)
 
         if not Path(out_file).exists():
+            qc_metrics["qc_status"] = "UNKNOWN"
             return qc_metrics
 
         try:
@@ -762,7 +767,12 @@ class DSCRegistration(SimpleInterface):
                         self._gen_matfilename(),
                         out_dir=Path(out_file).parent,
                     )
-                except Exception:
+                except Exception as exc:
+                    logger.warning(
+                        "Could not transform the anatomical brain mask for "
+                        "DSC registration QC: %s",
+                        exc,
+                    )
                     brain_mask_dsc = ""
 
             # NMI
@@ -800,19 +810,37 @@ class DSCRegistration(SimpleInterface):
                     qc_metrics["dice"] = dice
                     qc_metrics["brain_mask_used"] = True
 
-                    if dice < 0.8:
-                        logging.getLogger(__name__).warning(
+                    if dice < DSC_QUANTITATIVE_TRANSFER_DICE_MIN:
+                        logger.warning(
                             "Registration DICE coefficient is low "
-                            "(%.3f < 0.8). Check registration quality.",
+                            "(%.3f < %.2f). Quantitative cross-modal "
+                            "transfer will be disabled.",
                             dice,
+                            DSC_QUANTITATIVE_TRANSFER_DICE_MIN,
                         )
-                except Exception:
+                except Exception as exc:
+                    logger.warning(
+                        "Could not compute final DSC registration Dice: %s",
+                        exc,
+                    )
                     qc_metrics["brain_mask_used"] = True
                     qc_metrics["dice_computation_failed"] = True
             else:
                 qc_metrics["brain_mask_used"] = False
 
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("DSC registration QC failed: %s", exc)
+
+        status_dice = qc_metrics.get("dice")
+        qc_metrics["qc_status_basis"] = "final_dsc_space_foreground_mask_dice"
+        qc_metrics["qc_status_threshold"] = DSC_QUANTITATIVE_TRANSFER_DICE_MIN
+        if isinstance(status_dice, (int, float)) and np.isfinite(status_dice):
+            qc_metrics["qc_status"] = (
+                "PASS"
+                if status_dice >= DSC_QUANTITATIVE_TRANSFER_DICE_MIN
+                else "POOR"
+            )
+        else:
+            qc_metrics["qc_status"] = "UNKNOWN"
 
         return qc_metrics
