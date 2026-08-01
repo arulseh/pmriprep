@@ -407,6 +407,8 @@ def test_dce_factory_model_free_no_model_entity(
     assert iauc_sidecar["ReferencePoint"] == "selected global IAUC reference frame"
     assert iauc_sidecar["CutoffInterpolation"] == "linear"
     assert iauc_sidecar["IncompleteWindowValue"] == "NaN"
+    assert iauc_sidecar["ValueDomain"] == "signed finite concentration integral, or NaN"
+    assert iauc_sidecar["NegativeValueHandling"] == "retained"
     assert iauc_sidecar["ReferenceFrame"] == 5
     assert iauc_sidecar["ConfiguredBaselineFrames"] == 8
     assert iauc_sidecar["DetectedBolusArrivalFrame"] == 6

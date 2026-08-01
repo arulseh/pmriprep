@@ -280,13 +280,12 @@ class TestIAUC:
         result = compute_iauc(concentration, time_points, 60.0)
         assert np.all(result == 0.0)
 
-    def test_non_negative(self) -> None:
-        """IAUC should always be non-negative."""
-        rng = np.random.default_rng(0)
-        concentration = rng.standard_normal((2, 2, 1, 30))
+    def test_negative_integral_is_retained(self) -> None:
+        """Negative concentration integrals remain signed estimator values."""
+        concentration = np.full((2, 2, 1, 30), -0.1, dtype=np.float64)
         time_points = np.arange(30, dtype=np.float64) * 5.0 / 60.0
         result = compute_iauc(concentration, time_points, 60.0)
-        assert np.all(result >= 0)
+        assert np.allclose(result, -0.1)
 
     def test_window_starts_at_bolus_arrival(self) -> None:
         """Pre-contrast acquisition time must not shorten the IAUC window."""

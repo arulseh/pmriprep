@@ -84,7 +84,7 @@ def compute_iauc(
     # Trapezoidal integration along last axis
     iauc = np.trapezoid(c_valid, x=t_valid, axis=-1)
     valid = np.all(np.isfinite(c_valid), axis=-1)
-    return np.where(valid, np.maximum(iauc, 0.0), np.nan)  # type: ignore[no-any-return]
+    return np.where(valid, iauc, np.nan)  # type: ignore[no-any-return]
 
 
 def compute_peak_enhancement(

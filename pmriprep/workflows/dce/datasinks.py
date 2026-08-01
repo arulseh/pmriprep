@@ -100,11 +100,14 @@ _UNCERTAINTY_MAPS: tuple[DCEMapSpec, ...] = (
 # (input_attr, suffix, description, units, extra_dict_or_None)
 _MODEL_FREE_MAPS: tuple[DCEMapSpec, ...] = (
     DCEMapSpec("iauc60_map", "dce", "IAUC60", "Initial area under the concentration curve through 60 seconds", "mM*min", "iauc60",
-     {"ReferencePoint": "selected global IAUC reference frame", "CutoffInterpolation": "linear", "IncompleteWindowValue": "NaN"}),
+     {"ReferencePoint": "selected global IAUC reference frame", "CutoffInterpolation": "linear", "IncompleteWindowValue": "NaN",
+      "ValueDomain": "signed finite concentration integral, or NaN", "NegativeValueHandling": "retained"}),
     DCEMapSpec("iauc90_map", "dce", "IAUC90", "Initial area under the concentration curve through 90 seconds", "mM*min", "iauc90",
-     {"ReferencePoint": "selected global IAUC reference frame", "CutoffInterpolation": "linear", "IncompleteWindowValue": "NaN"}),
+     {"ReferencePoint": "selected global IAUC reference frame", "CutoffInterpolation": "linear", "IncompleteWindowValue": "NaN",
+      "ValueDomain": "signed finite concentration integral, or NaN", "NegativeValueHandling": "retained"}),
     DCEMapSpec("iauc120_map", "dce", "IAUC120", "Initial area under the concentration curve through 120 seconds", "mM*min", "iauc120",
-     {"ReferencePoint": "selected global IAUC reference frame", "CutoffInterpolation": "linear", "IncompleteWindowValue": "NaN"}),
+     {"ReferencePoint": "selected global IAUC reference frame", "CutoffInterpolation": "linear", "IncompleteWindowValue": "NaN",
+      "ValueDomain": "signed finite concentration integral, or NaN", "NegativeValueHandling": "retained"}),
     DCEMapSpec("peak_enhancement_map", "dce", "peakEnhancement", "Peak post-baseline relative signal enhancement", "%", "peak_enhancement",
      {"InputCurve": "motion_corrected_signal", "Formula": "100*(max(Spost)-mean(Sbaseline))/mean(Sbaseline)",
       "PeakSearchStart": "first post-baseline frame", "TemporalEstimator": "raw maximum without smoothing or clipping",
