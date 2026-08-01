@@ -154,7 +154,6 @@ def init_dce_pk_modeling_wf(
                 "out_ps",
                 "out_e",
                 "out_delta_bic",
-                "out_vp_at_bound_map",
                 "out_r2",
                 "out_qc_mask",
                 "out_fitting_mask",
@@ -215,7 +214,6 @@ def init_dce_pk_modeling_wf(
             ("out_ps", "out_ps"),
             ("out_e", "out_e"),
             ("out_delta_bic", "out_delta_bic"),
-            ("out_vp_at_bound_map", "out_vp_at_bound_map"),
             ("out_r2", "out_r2"),
             ("out_qc_mask", "out_qc_mask"),
             ("out_fitting_mask", "out_fitting_mask"),
@@ -1156,7 +1154,7 @@ def init_dce_qc_collection_wf(
         "b1_qc", "t1_qc", "vfa_qc", "signal_conversion_qc", "preprocess_qc",
         "registration_qc", "aif_qc",
         "pk_qc", "validation_result", "preproc_display", "pk_fit_qc_metrics",
-        "pk_maps_qc_metrics", "vp_at_bound_fractions",
+        "pk_maps_qc_metrics",
     ]
     workflow = pe.Workflow(name=name)
     inputnode = pe.Node(niu.IdentityInterface(fields=fields), name="inputnode")
@@ -2410,14 +2408,12 @@ def init_dce_preproc_wf(
                 "enhancing_mask_file", "non_enhancing_mask_file",
                 "nawm_mask_file",
                 "user_lesion_mask_file", "roi_mask_file",
-                "vp_at_bound_map_file",
                 "model_name", "subject_id", "session_id",
             ],
             output_names=[
                 "pk_param_maps_qc_plot",
                 "model_selection_qc_plot",
                 "model_selection_regions",
-                "vp_at_bound_fractions",
             ],
             function=_generate_dce_pk_maps_qc,
         ),
@@ -2437,7 +2433,6 @@ def init_dce_preproc_wf(
             ("outputnode.out_qc_mask", "qc_mask_file"),
             ("outputnode.out_model_selection", "model_selection_file"),
             ("outputnode.out_delta_bic", "delta_bic_file"),
-            ("outputnode.out_vp_at_bound_map", "vp_at_bound_map_file"),
         ]),
         (dce_brain_extraction_wf, dce_pk_maps_qc, [
             ("outputnode.out_mask", "brain_mask_file"),
@@ -2663,7 +2658,6 @@ def init_dce_preproc_wf(
         ]),
         (dce_pk_maps_qc, dce_qc_collection_wf, [
             ("model_selection_regions", "inputnode.pk_maps_qc_metrics"),
-            ("vp_at_bound_fractions", "inputnode.vp_at_bound_fractions"),
         ]),
     ])
 

@@ -233,12 +233,11 @@ def _scatter_dce_fit_artifacts(
     coords: tuple[int, int, int],
     result: dict[str, Any],
 ) -> None:
-    """Scatter fitted-curve, bound-indicator, and quality-label artifacts."""
+    """Scatter fitted-curve and quality-label artifacts."""
     x, y, z = coords
     fitted_curve = result.get("fitted_curve")
     if maps.fitted_curves is not None and fitted_curve is not None:
         maps.fitted_curves[x, y, z, :] = fitted_curve.astype(np.float32)
-    maps.vp_at_bound[x, y, z] = float(result.get("vp_at_bound", 0.0))
     quality_flag = result.get("quality_flag", "good")
     maps.quality_flag[x, y, z] = maps.quality_flag_codes.get(quality_flag, 1)
 
@@ -602,18 +601,6 @@ def _summarize_dce_fitted_parameters(
     return summary
 
 
-def _fraction_vp_at_bound(
-    mask: npt.NDArray[Any],
-    vp_at_bound: npt.NDArray[Any],
-) -> float:
-    """Return the finite in-mask fraction of fits ending at the vp bound."""
-    values = vp_at_bound[mask]
-    finite = np.isfinite(values)
-    if not np.any(finite):
-        return 0.0
-    return float(np.mean(values[finite] > 0.5))
-
-
 def _fraction_fxl_risk(
     concentration: npt.NDArray[Any],
     fitting_mask: npt.NDArray[Any],
@@ -908,7 +895,6 @@ def _write_dce_model_free_maps(
 
 def _write_dce_parameter_maps(
     maps: "_DCEParameterMaps",
-    mask: npt.NDArray[np.bool_],
     save_ve: bool,
     save_vp: bool,
     generate_path: Callable[[str], str],
@@ -919,15 +905,10 @@ def _write_dce_parameter_maps(
         "out_ktrans": generate_path("_Ktrans"),
         "out_r2": generate_path("_R2"),
         "out_quality_flag": generate_path("_quality_flag"),
-        "out_vp_at_bound_map": generate_path("_vpAtBound"),
     }
     write_map(maps.ktrans, outputs["out_ktrans"])
     write_map(maps.r_squared, outputs["out_r2"])
     write_map(maps.quality_flag, outputs["out_quality_flag"], dtype=np.uint8)
-    write_map(
-        _zero_dce_background(maps.vp_at_bound, mask),
-        outputs["out_vp_at_bound_map"],
-    )
     if save_ve:
         outputs["out_ve"] = generate_path("_ve")
         outputs["out_kep"] = generate_path("_kep")
@@ -1274,7 +1255,6 @@ class _DCEParameterMaps(NamedTuple):
     fp_std: npt.NDArray[Any]
     ps_std: npt.NDArray[Any]
     sigma_factor: dict[str, float]
-    vp_at_bound: npt.NDArray[Any]
     fitted_curves: Optional[npt.NDArray[Any]]
     save_2cxm: bool
 
@@ -2411,13 +2391,6 @@ class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
         genfile=True,
         desc="Output kep map NIfTI (min^-1)",
     )
-    out_vp_at_bound_map = File(
-        genfile=True,
-        desc=(
-            "Output per-voxel binary map (0/1) indicating whether vp ended at "
-            "a bound in the active-set SOFT NLLS path. 0 elsewhere."
-        ),
-    )
 
 
 class ComputeDCEMapsOutputSpec(TraitedSpec):
@@ -2464,14 +2437,6 @@ class ComputeDCEMapsOutputSpec(TraitedSpec):
         desc="Internal optimizer-convergence mask"
     )
     out_fitted_curves = File(desc="Fitted concentration curves (if save_fitted_curves=True)")
-    out_vp_at_bound_map = File(
-        desc=(
-            "Per-voxel binary indicator (0/1) of whether vp ended at a bound "
-            "in the active-set SOFT NLLS path. 0 for interior / HARD / SKIP / "
-            "Bayesian fits. Produced only when constraint_mode=SOFT + "
-            "inference=nlls."
-        ),
-    )
     qc_metrics = traits.Dict(desc="QC metrics dictionary")
     constraint_qc = traits.Dict(desc="DSC CBV constraint QC report")
 
@@ -3346,7 +3311,6 @@ class ComputeDCEMaps(BaseInterface):
             fp_std=np.full(spatial_shape, np.nan, dtype=np.float64),
             ps_std=np.full(spatial_shape, np.nan, dtype=np.float64),
             sigma_factor=sigma_factor,
-            vp_at_bound=np.zeros(spatial_shape, dtype=np.float32),
             fitted_curves=fitted_curves,
             save_2cxm=(
                 (prepared.is_auto and "2cxm" in candidate_names)
@@ -3469,7 +3433,6 @@ class ComputeDCEMaps(BaseInterface):
         vp_std = parameter_maps.vp_std
         fp_std = parameter_maps.fp_std
         ps_std = parameter_maps.ps_std
-        vp_at_bound_map = parameter_maps.vp_at_bound
         fitted_curves = parameter_maps.fitted_curves
         save_2cxm = parameter_maps.save_2cxm
 
@@ -3625,15 +3588,6 @@ class ComputeDCEMaps(BaseInterface):
             )
         )
 
-        # Compute whole-brain fraction of SOFT-NLLS voxels that ended
-        # at a bound (active-set Pass 2 fired). Reported in
-        # constraint_qc; downstream dce_pk_maps_qc stratifies over ROI
-        # masks. Zero everywhere for HARD / SKIP / Bayesian fits.
-        constraint_qc["fraction_vp_at_bound_whole_brain"] = _fraction_vp_at_bound(
-            mask_bool,
-            vp_at_bound_map,
-        )
-
         # Zero background (outside brain mask) on every float map before
         # save. Preserves in-brain NaN so auto-mode "parameter not applicable
         # for the winning model" semantics still reach downstream consumers.
@@ -3676,9 +3630,7 @@ class ComputeDCEMaps(BaseInterface):
                 ps=ps_map,
                 extraction_fraction=e_map,
                 quality_flag=quality_flag_map,
-                vp_at_bound=vp_at_bound_map,
             ),
-            mask_bool,
             save_ve,
             save_vp,
             self._gen_outfilename,
@@ -4091,12 +4043,6 @@ class ComputeDCEMaps(BaseInterface):
             if save_fitted_curves and winner_result.fitted_curves is not None:
                 fitted_curve = winner_result.fitted_curves[i]
 
-            # vp_at_bound propagation: read from the winner's per-voxel
-            # indicator (non-None only for the SOFT NLLS path).
-            vp_at_bound_val = 0.0
-            if winner_result.vp_at_bound is not None:
-                vp_at_bound_val = float(winner_result.vp_at_bound[i])
-
             results.append({
                 "coords": (x, y, z),
                 "params": params_out,
@@ -4120,7 +4066,6 @@ class ComputeDCEMaps(BaseInterface):
                 "constrained": is_constrained,
                 "selected_model_name": winner_name,
                 "delta_bic": float(delta_bic[i]),
-                "vp_at_bound": vp_at_bound_val,
             })
 
         # Bayesian refinement of the canonical batched-NLLS BIC winners.
@@ -4188,11 +4133,6 @@ class ComputeDCEMaps(BaseInterface):
             if fit_result.fitted_curves is not None:
                 fitted_curve = fit_result.fitted_curves[i]
 
-            # vp_at_bound propagation: only populated for the SOFT NLLS path.
-            vp_at_bound_val = 0.0
-            if fit_result.vp_at_bound is not None:
-                vp_at_bound_val = float(fit_result.vp_at_bound[i])
-
             fit_unsuccessful = (
                 not bool(fit_result.converged[i])
                 and float(fit_result.r_squared[i]) < -0.5
@@ -4220,7 +4160,6 @@ class ComputeDCEMaps(BaseInterface):
                 "constrained": is_constrained,
                 "selected_model_name": model_name,
                 "delta_bic": np.nan,
-                "vp_at_bound": vp_at_bound_val,
             })
 
         return results

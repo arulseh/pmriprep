@@ -12,7 +12,6 @@ from pmriprep.interfaces.dce_compute import (
     _accumulate_mcmc_diagnostics,
     _compute_vp_prior_departure,
     _fraction_fxl_risk,
-    _fraction_vp_at_bound,
     _is_degenerate_dce_fit,
     _resolve_dce_fit_quality,
     _initialize_dce_qc_metrics,
@@ -115,7 +114,6 @@ def _uncertainty_maps() -> SimpleNamespace:
         model_selection_codes={"tofts": 2},
         delta_bic=np.full((1, 1, 1), np.nan),
         fitted_curves=None,
-        vp_at_bound=np.zeros((1, 1, 1)),
         quality_flag=np.zeros((1, 1, 1), dtype=np.int8),
         quality_flag_codes={"good": 1},
     )
@@ -153,11 +151,10 @@ def test_uncertainty_scatter_leaves_nonapplicable_patlak_fields_zero() -> None:
     assert maps.ps_std[0, 0, 0] == 0.0
 
 
-def test_fit_artifact_scatter_writes_curve_bound_and_quality() -> None:
+def test_fit_artifact_scatter_writes_curve_and_quality() -> None:
     """All non-parameter artifacts use the same voxel coordinate."""
     maps = SimpleNamespace(
         fitted_curves=np.full((1, 1, 1, 3), np.nan, dtype=np.float32),
-        vp_at_bound=np.zeros((1, 1, 1), dtype=np.float32),
         quality_flag=np.zeros((1, 1, 1), dtype=np.int8),
         quality_flag_codes={"good": 1, "high_uncertainty": 3},
     )
@@ -166,7 +163,6 @@ def test_fit_artifact_scatter_writes_curve_bound_and_quality() -> None:
         (0, 0, 0),
         {
             "fitted_curve": np.array([0.0, 0.2, 0.1]),
-            "vp_at_bound": 1.0,
             "quality_flag": "high_uncertainty",
         },
     )
@@ -174,7 +170,6 @@ def test_fit_artifact_scatter_writes_curve_bound_and_quality() -> None:
         maps.fitted_curves[0, 0, 0],
         np.array([0.0, 0.2, 0.1], dtype=np.float32),
     )
-    assert maps.vp_at_bound[0, 0, 0] == 1.0
     assert maps.quality_flag[0, 0, 0] == 3
 
 
@@ -182,12 +177,10 @@ def test_fit_artifact_scatter_defaults_without_optional_curve() -> None:
     """Missing optional values retain no curve and default to a good label."""
     maps = SimpleNamespace(
         fitted_curves=None,
-        vp_at_bound=np.ones((1, 1, 1), dtype=np.float32),
         quality_flag=np.zeros((1, 1, 1), dtype=np.int8),
         quality_flag_codes={"good": 1},
     )
     _scatter_dce_fit_artifacts(maps, (0, 0, 0), {})
-    assert maps.vp_at_bound[0, 0, 0] == 0.0
     assert maps.quality_flag[0, 0, 0] == 1
 
 
@@ -519,23 +512,6 @@ def test_summarize_dce_fitted_parameters_empty_fit_omits_metrics() -> None:
         True,
         True,
     ) == {}
-
-
-@pytest.mark.parametrize(
-    ("mask", "values", "expected"),
-    [
-        ([True, True, True], [1.0, 0.0, np.nan], 0.5),
-        ([True, False], [np.nan, 1.0], 0.0),
-        ([False, False], [1.0, 1.0], 0.0),
-    ],
-)
-def test_fraction_vp_at_bound_uses_finite_in_mask_values(
-    mask: list[bool],
-    values: list[float],
-    expected: float,
-) -> None:
-    """Whole-brain bound fractions ignore background and non-finite values."""
-    assert _fraction_vp_at_bound(np.array(mask), np.array(values)) == expected
 
 
 def test_fraction_fxl_risk_uses_peak_fitted_concentration() -> None:

@@ -1,10 +1,9 @@
-"""Contract tests for DSC-CBV SOFT constraint parity across fitting backends.
+"""Validation-only contracts for bounded-vp fitting APIs.
 
-The ``vp_uncertainty`` (σ) parameter is plumbed through the
-batched NLLS fitting path. Without it, SOFT mode silently degrades to
-HARD in the batched path because σ is dropped at the dispatcher. This
-test file enforces the structural invariants that a future backend
-(GPU, JAX, alternative solver) would need to satisfy on day one:
+These tests exercise direct low-level ``fixed_vp`` and ``vp_uncertainty``
+inputs used by controlled numerical experiments. Production DSC-informed DCE
+fitting does not call this bounded NLLS path; it uses Bayesian vp priors. The
+suite preserves the bounded solver's numerical characterization:
 
   1. σ → 0 must reproduce HARD behavior (vp exactly fixed).
   2. σ → ∞ must reproduce SKIP behavior (vp unconstrained).
@@ -18,16 +17,14 @@ test file enforces the structural invariants that a future backend
      Gaussian (inference=map) produce materially different vp at σ=0.4 on
      a data-dominated voxel — pinning the user-contract that the two
      SOFT implementations ARE different by design.
-  7. fraction_vp_at_bound diagnostic: synthetic cohort with controlled
-     boundary pressure produces a fraction in the expected range.
+  7. FitResult boundary indicator: a synthetic cohort with controlled boundary
+     pressure produces the expected occupancy.
   8. Serial numerical identity: serial NLLS outputs match the portable
      reference in tests/fixtures/dce_soft_serial_reference.json. (Slow-marked.)
   9. fixed_vp unit consistency: array values lie in the physical vp range.
 
-These contracts make cross-backend invariants structural — a future
-backend added without σ plumbing fails a contract test on day one. Prior
-reviews caught the σ-drop bug only in retrospect; this test suite is the
-"next-time protocol."
+These are validation API contracts, not claims about production fitting or
+published QC fields.
 """
 
 from __future__ import annotations
@@ -315,10 +312,10 @@ def test_negative_cross_regime_parity_data_dominated(aif_and_time):
 
 
 # ---------------------------------------------------------------------------
-# Assertion 7: fraction_vp_at_bound diagnostic
+# Assertion 7: validation FitResult boundary indicator
 # ---------------------------------------------------------------------------
 
-def test_fraction_vp_at_bound_in_expected_range(aif_and_time):
+def test_bounded_fit_boundary_occupancy_in_expected_range(aif_and_time):
     """Cohort with ~30% bound-pressuring voxels produces fraction in [0.15, 0.55]."""
     aif, time_points = aif_and_time
 
@@ -346,7 +343,9 @@ def test_fraction_vp_at_bound_in_expected_range(aif_and_time):
     assert r_soft.vp_at_bound is not None
     frac = float(np.mean(r_soft.vp_at_bound > 0.5))
     # Target is ~30% (far-mask fraction); allow wide envelope for noise.
-    assert 0.15 <= frac <= 0.55, f"fraction_vp_at_bound={frac} outside expected [0.15, 0.55]"
+    assert 0.15 <= frac <= 0.55, (
+        f"bounded-fit occupancy={frac} outside expected [0.15, 0.55]"
+    )
 
 
 # ---------------------------------------------------------------------------

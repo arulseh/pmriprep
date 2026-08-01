@@ -493,7 +493,7 @@ def test_patlak_absent_model_selection_plot_reaches_figures_writer(
             ],
             output_names=[
                 "pk_param_maps_qc_plot", "model_selection_qc_plot",
-                "model_selection_regions", "vp_at_bound_fractions",
+                "model_selection_regions",
             ],
             function=_generate_dce_pk_maps_qc,
         ),

@@ -74,10 +74,6 @@ def assess_two_cxm_suitability(
     t1 = t1 if isinstance(t1, dict) else {}
     constraint = pk.get("dsc_cbv_constraint")
     constraint = constraint if isinstance(constraint, dict) else {}
-    bound_fractions = pk.get("vp_at_bound_fractions")
-    bound_fractions = (
-        dict(bound_fractions) if isinstance(bound_fractions, dict) else {}
-    )
 
     reasons: list[str] = []
     sampling_eligible = pk.get("two_cxm_auto_sampling_eligible")
@@ -114,7 +110,6 @@ def assess_two_cxm_suitability(
         ),
         "quantitative_qc_accepted_count": accepted_count,
         "r2_median_retained_converged": pk.get("r2_median"),
-        "vp_at_bound_fractions": bound_fractions,
         "aif_confidence": aif_confidence,
         "t1_method": t1.get("method", t1.get("t1_method")),
         "b1_correction": t1.get("b1_correction"),

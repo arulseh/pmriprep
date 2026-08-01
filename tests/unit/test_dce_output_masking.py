@@ -386,7 +386,7 @@ def test_write_dce_parameter_maps_preserves_applicability(
     array = np.ones((1, 1, 2))
     maps = SimpleNamespace(
         ktrans=array, r_squared=array, quality_flag=array.astype(np.int8),
-        vp_at_bound=array, ve=array, kep=array, vp=array, fp=array, ps=array,
+        ve=array, kep=array, vp=array, fp=array, ps=array,
         extraction_fraction=array, save_2cxm=save_2cxm,
     )
     writes: list[tuple[str, object, np.ndarray]] = []
@@ -396,18 +396,15 @@ def test_write_dce_parameter_maps_preserves_applicability(
 
     outputs = _write_dce_parameter_maps(
         maps,
-        np.array([[[True, False]]]),
         save_ve,
         save_vp,
         lambda suffix: f"output{suffix}.nii.gz",
         write_map,
     )
-    always = {"out_ktrans", "out_r2", "out_quality_flag", "out_vp_at_bound_map"}
+    always = {"out_ktrans", "out_r2", "out_quality_flag"}
     assert set(outputs) == always | optional_keys
     quality_write = next(write for write in writes if "quality_flag" in write[0])
     assert quality_write[1] is np.uint8
-    bound_write = next(write for write in writes if "vpAtBound" in write[0])
-    assert bound_write[2].tolist() == [[[1.0, 0.0]]]
 
 
 @pytest.mark.parametrize(

@@ -24,7 +24,6 @@ def _qc(
             "two_cxm_auto_sampling_eligible": sampling_eligible,
             "r2_median": 0.7,
             "dsc_cbv_constraint": {"mode": "soft"},
-            "vp_at_bound_fractions": {"whole_brain": 0.12},
             "voxel_accounting": {
                 "fitting_eligible": {"fraction_of_brain": 0.8},
                 "optimizer_converged": {"fraction_of_attempted": 0.6},
@@ -52,7 +51,6 @@ def test_explicit_slow_2cxm_warns_without_rejecting() -> None:
     assert result["metrics"]["quantitative_qc_accepted_fraction_of_retained"] == (
         pytest.approx(0.36)
     )
-    assert result["metrics"]["vp_at_bound_fractions"] == {"whole_brain": 0.12}
 
 
 def test_zero_accepted_and_reduced_aif_add_reasons() -> None:

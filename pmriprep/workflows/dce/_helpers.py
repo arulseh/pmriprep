@@ -1119,7 +1119,6 @@ def _collect_qc_metrics(
     preproc_display: dict[str, object] | None = None,
     pk_fit_qc_metrics: dict[str, object] | None = None,
     pk_maps_qc_metrics: dict[str, object] | None = None,
-    vp_at_bound_fractions: dict[str, object] | None = None,
     use_external_t1: bool = False,
     no_t1: bool = False,
     b1_method: str = "auto",
@@ -1150,8 +1149,6 @@ def _collect_qc_metrics(
         PK fit QC metrics from plot node.
     pk_maps_qc_metrics : dict, optional
         Region→model-distribution mapping from plot node.
-    vp_at_bound_fractions : dict, optional
-        Scalar whole-brain/ROI vp-at-bound fractions.
     use_external_t1 : bool, optional
         Whether external T1 map was used.
     no_t1 : bool, optional
@@ -1240,9 +1237,6 @@ def _collect_qc_metrics(
         have_pk_modeling = True
     if pk_maps_qc_metrics is not None:
         pk_modeling["model_selection_regions"] = pk_maps_qc_metrics
-        have_pk_modeling = True
-    if vp_at_bound_fractions:
-        pk_modeling["vp_at_bound_fractions"] = vp_at_bound_fractions
         have_pk_modeling = True
     if have_pk_modeling:
         qc_metrics["pk_modeling"] = pk_modeling
@@ -2476,16 +2470,10 @@ def _generate_dce_pk_maps_qc(
     nawm_mask_file: str | None = None,
     user_lesion_mask_file: str | None = None,
     roi_mask_file: str | None = None,
-    vp_at_bound_map_file: str | None = None,
     model_name: str = "tofts",
     subject_id: str = "",
     session_id: str = "",
-) -> tuple[
-    str | None,
-    str | None,
-    dict[str, dict[str, float]] | None,
-    dict[str, float] | None,
-]:
+) -> tuple[str | None, str | None, dict[str, dict[str, float]] | None]:
     """Generate DCE PK parameter maps QC and model selection QC plots.
 
     Lightweight wrapper that loads saved NIfTIs and calls plot functions.
@@ -2522,8 +2510,6 @@ def _generate_dce_pk_maps_qc(
         Path to user-supplied lesion mask NIfTI (optional).
     roi_mask_file : str, optional
         Path to user-supplied ROI mask NIfTI (optional).
-    vp_at_bound_map_file : str, optional
-        Path to the vp-at-bound map NIfTI (optional).
     model_name : str, optional
         PK model name.
     subject_id : str, optional
@@ -2535,11 +2521,7 @@ def _generate_dce_pk_maps_qc(
     -------
     tuple
         Tuple of (pk_param_maps_qc_plot, model_selection_qc_plot,
-        model_selection_regions, vp_at_bound_fractions).
-        ``model_selection_regions`` is a pure ``{region: {model: pct}}``
-        mapping; ``vp_at_bound_fractions`` carries scalar whole-brain and
-        per-ROI vp-at-bound fractions separately so downstream consumers
-        (report template, sidecar writer) can rely on a homogeneous shape.
+        model_selection_regions).
     """
     import logging
 
@@ -2558,7 +2540,6 @@ def _generate_dce_pk_maps_qc(
     pk_param_maps_qc_plot: str | None = None
     model_selection_qc_plot: str | None = None
     model_selection_regions: dict[str, dict[str, float]] | None = None
-    vp_at_bound_fractions: dict[str, float] = {}
 
     try:
         from pmriprep.utils.dce_pk_qc_plots import (
@@ -2649,54 +2630,6 @@ def _generate_dce_pk_maps_qc(
             if regional_stats:
                 model_selection_regions = regional_stats
 
-        # Stratify vp_at_bound map by ROI masks already loaded above
-        # (enh_data / ne_data / nawm_data). Only emitted when the
-        # vp_at_bound NIfTI exists (ComputeDCEMaps always writes it;
-        # non-zero only for SOFT NLLS runs). Kept in a dedicated
-        # ``vp_at_bound_fractions`` output so ``model_selection_regions``
-        # stays a homogeneous region→model-dist mapping.
-        vp_at_bound_data = _safe_load(vp_at_bound_map_file)
-        if vp_at_bound_data is not None:
-            brain_bool = mask_data > 0.5
-            vpab_bool = vp_at_bound_data > 0.5
-            finite = np.isfinite(vp_at_bound_data)
-            brain_finite = brain_bool & finite
-            if brain_finite.any():
-                vp_at_bound_fractions["whole_brain"] = float(
-                    np.mean(vpab_bool[brain_finite])
-                )
-            else:
-                vp_at_bound_fractions["whole_brain"] = 0.0
-
-            def _frac_in_roi(roi_bool: "np.ndarray") -> float | None:
-                sel = roi_bool & finite
-                return float(np.mean(vpab_bool[sel])) if sel.any() else None
-
-            # Load ROI masks if model-selection branch didn't already
-            if "enh_data" not in locals():
-                enh_data = _safe_load(enhancing_mask_file)
-                if enh_data is not None:
-                    enh_data = (enh_data > 0.5).astype(np.float64)
-                ne_data = _safe_load(non_enhancing_mask_file)
-                if ne_data is not None:
-                    ne_data = (ne_data > 0.5).astype(np.float64)
-                nawm_data = _safe_load(nawm_mask_file)
-                if nawm_data is not None:
-                    nawm_data = (nawm_data > 0.5).astype(np.float64)
-
-            if enh_data is not None:
-                val = _frac_in_roi(enh_data > 0.5)
-                if val is not None:
-                    vp_at_bound_fractions["enhancing"] = val
-            if ne_data is not None:
-                val = _frac_in_roi(ne_data > 0.5)
-                if val is not None:
-                    vp_at_bound_fractions["tumor_core"] = val
-            if nawm_data is not None:
-                val = _frac_in_roi(nawm_data > 0.5)
-                if val is not None:
-                    vp_at_bound_fractions["nawm"] = val
-
     except Exception as e:
         logger.warning("Failed to generate PK maps QC plots: %s", e, exc_info=True)
 
@@ -2704,7 +2637,6 @@ def _generate_dce_pk_maps_qc(
         pk_param_maps_qc_plot,
         model_selection_qc_plot,
         model_selection_regions,
-        vp_at_bound_fractions or None,
     )
 
 
