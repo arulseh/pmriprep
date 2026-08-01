@@ -65,7 +65,6 @@ TEMPLATE_AIF_USAGE: Final[dict[str, TemplateAIFUsageCategory]] = {
 DCE_AIF_INDEPENDENT_MAPS: Final[frozenset[str]] = frozenset({
     "iauc60", "iauc90", "iauc120",
     "peak_enhancement", "ttp", "ser",
-    "wash_in_slope", "wash_out_slope",
     "curve_type",
 })
 
@@ -94,8 +93,6 @@ DCE_POPULATION_AIF_USAGE: Final[dict[str, TemplateAIFUsageCategory]] = {
     "peak_enhancement": "safe",
     "ttp": "safe",
     "ser": "safe",
-    "wash_in_slope": "safe",
-    "wash_out_slope": "safe",
     "curve_type": "safe",
     # Smoothed PK maps
     "ktrans_sm": "ratio_defensible",

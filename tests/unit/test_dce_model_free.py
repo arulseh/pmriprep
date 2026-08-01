@@ -3,8 +3,6 @@
 Tests cover model-free DCE utilities and retained production maps.
 """
 
-import logging
-
 import numpy as np
 import numpy.typing as npt
 import pytest
@@ -15,8 +13,6 @@ from pmriprep.utils.dce_model_free import (
     compute_peak_enhancement,
     compute_signal_enhancement_ratio,
     compute_time_to_peak,
-    compute_wash_in_slope,
-    compute_wash_out_slope,
 )
 
 
@@ -47,165 +43,6 @@ def gamma_variate_data() -> (
     concentration *= rng.uniform(0.8, 1.2, size=(4, 4, 2, 1))
 
     return concentration, time_points
-
-
-# =========================================================================
-# Wash-in slope tests
-# =========================================================================
-
-class TestWashInSlope:
-    """Tests for compute_wash_in_slope."""
-
-    def test_linear_ramp(self) -> None:
-        """Known linear ramp should produce exact slope."""
-        n_time = 20
-        tr_s = 5.0
-        time_points = np.arange(n_time, dtype=np.float64) * tr_s / 60.0
-
-        # Linear ramp from frame 2 to frame 10, then plateau
-        concentration = np.zeros((2, 2, 1, n_time), dtype=np.float64)
-        slope_val = 2.0  # mM/min
-        for t in range(n_time):
-            if t < 2:
-                concentration[..., t] = 0.0
-            elif t <= 10:
-                concentration[..., t] = slope_val * (time_points[t] - time_points[2])
-            else:
-                concentration[..., t] = slope_val * (time_points[10] - time_points[2])
-
-        result = compute_wash_in_slope(
-            concentration, time_points, bolus_arrival_frame=2, volume_tr_s=tr_s,
-        )
-        # Maximum derivative should be close to 2.0 mM/min
-        # SG smoothing introduces slight overshoot at transition points
-        assert np.allclose(result, slope_val, atol=0.2), f"Expected ~{slope_val}, got {result.ravel()}"
-
-    def test_zero_concentration(self) -> None:
-        """All-zero concentration should return NaN (no bolus)."""
-        concentration = np.zeros((2, 2, 1, 20), dtype=np.float64)
-        time_points = np.arange(20, dtype=np.float64) * 5.0 / 60.0
-        result = compute_wash_in_slope(concentration, time_points)
-        assert np.all(np.isnan(result))
-
-    def test_tr_hard_gate(self) -> None:
-        """TR > 15s should return NaN map without raising."""
-        concentration = np.ones((2, 2, 1, 10), dtype=np.float64)
-        time_points = np.arange(10, dtype=np.float64) * 20.0 / 60.0
-        result = compute_wash_in_slope(concentration, time_points, volume_tr_s=20.0)
-        assert result.shape == (2, 2, 1)
-        assert np.all(np.isnan(result))
-
-    def test_tr_warning(self, caplog: pytest.LogCaptureFixture) -> None:
-        """TR 5-15s should produce warning but still compute valid map."""
-        n_time = 30
-        tr_s = 8.0
-        time_points = np.arange(n_time, dtype=np.float64) * tr_s / 60.0
-        concentration = np.zeros((2, 2, 1, n_time), dtype=np.float64)
-        # Simple ramp
-        for t in range(5, 15):
-            concentration[..., t] = float(t - 5) * 0.1
-        for t in range(15, n_time):
-            concentration[..., t] = 1.0
-
-        with caplog.at_level(logging.WARNING):
-            result = compute_wash_in_slope(
-                concentration, time_points, bolus_arrival_frame=5, volume_tr_s=tr_s,
-            )
-        assert "exceeds 5s" in caplog.text
-        assert not np.all(np.isnan(result))
-
-    def test_no_pre_peak(self) -> None:
-        """Peak at bolus arrival frame should give NaN (< 2 pre-peak frames)."""
-        n_time = 20
-        time_points = np.arange(n_time, dtype=np.float64) * 5.0 / 60.0
-        concentration = np.zeros((2, 2, 1, n_time), dtype=np.float64)
-        # Peak at frame 0, then decay
-        concentration[..., 0] = 10.0
-        for t in range(1, n_time):
-            concentration[..., t] = 10.0 * np.exp(-0.1 * t)
-
-        result = compute_wash_in_slope(concentration, time_points, bolus_arrival_frame=0)
-        assert np.all(np.isnan(result))
-
-    def test_input_unchanged(self) -> None:
-        """Input array must not be modified."""
-        n_time = 20
-        time_points = np.arange(n_time, dtype=np.float64) * 5.0 / 60.0
-        concentration = np.random.default_rng(0).random((2, 2, 1, n_time))
-        original = concentration.copy()
-        compute_wash_in_slope(concentration, time_points)
-        np.testing.assert_array_equal(concentration, original)
-
-
-# =========================================================================
-# Wash-out slope tests
-# =========================================================================
-
-class TestWashOutSlope:
-    """Tests for compute_wash_out_slope."""
-
-    def test_linear_decay(self) -> None:
-        """Known linear decay should produce matching negative slope."""
-        n_time = 60
-        tr_s = 5.0
-        time_points = np.arange(n_time, dtype=np.float64) * tr_s / 60.0
-
-        concentration = np.zeros((2, 2, 1, n_time), dtype=np.float64)
-        # Peak at frame 5, then linear decay
-        decay_rate = -0.3  # mM/min
-        for t in range(n_time):
-            if t <= 5:
-                concentration[..., t] = float(t) * 0.5
-            else:
-                concentration[..., t] = 2.5 + decay_rate * (time_points[t] - time_points[5])
-        concentration = np.maximum(concentration, 0.0)
-
-        result = compute_wash_out_slope(concentration, time_points, volume_tr_s=tr_s)
-        # Should be negative (washout)
-        valid = np.isfinite(result)
-        if valid.any():
-            assert np.all(result[valid] < 0), f"Expected negative slope, got {result[valid]}"
-
-    def test_persistent_positive(self) -> None:
-        """A rising delayed tail after an early global peak has positive slope."""
-        n_time = 60
-        tr_s = 5.0
-        time_points = np.arange(n_time, dtype=np.float64) * tr_s / 60.0
-
-        concentration = np.zeros((2, 2, 1, n_time), dtype=np.float64)
-        concentration[..., :6] = np.linspace(0.0, 2.5, 6)
-        concentration[..., 6:] = np.linspace(1.0, 2.0, n_time - 6)
-        result = compute_wash_out_slope(concentration, time_points, volume_tr_s=tr_s)
-        valid = np.isfinite(result)
-        assert valid.all()
-        assert np.all(result[valid] > 0), f"Expected positive slope, got {result[valid]}"
-
-    def test_insufficient_points(self) -> None:
-        """Fewer than min_points in window should give NaN."""
-        n_time = 10
-        tr_s = 5.0
-        time_points = np.arange(n_time, dtype=np.float64) * tr_s / 60.0
-
-        concentration = np.zeros((2, 2, 1, n_time), dtype=np.float64)
-        concentration[..., 3] = 1.0  # peak at frame 3, very short scan
-
-        result = compute_wash_out_slope(
-            concentration, time_points, volume_tr_s=tr_s, min_points=4,
-        )
-        assert np.all(np.isnan(result))
-
-    def test_late_ttp(self) -> None:
-        """Peak near end of scan should give NaN (window beyond acquisition)."""
-        n_time = 20
-        tr_s = 5.0
-        time_points = np.arange(n_time, dtype=np.float64) * tr_s / 60.0
-
-        concentration = np.zeros((2, 2, 1, n_time), dtype=np.float64)
-        for t in range(n_time):
-            concentration[..., t] = float(t)  # monotonic rise, peak at last frame
-
-        result = compute_wash_out_slope(concentration, time_points, volume_tr_s=tr_s)
-        assert np.all(np.isnan(result))
 
 
 # =========================================================================
@@ -603,17 +440,10 @@ class TestNoInfOutputs:
         peak = compute_peak_enhancement(signal_like)
         ttp = compute_time_to_peak(concentration, time_points)
         ser = compute_signal_enhancement_ratio(concentration, time_points)
-        wash_in = compute_wash_in_slope(
-            concentration, time_points, bolus_arrival_frame=5, volume_tr_s=5.0,
-        )
-        wash_out = compute_wash_out_slope(
-            concentration, time_points, volume_tr_s=5.0,
-        )
         curve_type = compute_curve_type(ser)
 
         for name, arr in [
             ("iauc60", iauc60), ("peak", peak), ("ttp", ttp), ("ser", ser),
-            ("wash_in", wash_in), ("wash_out", wash_out),
             ("curve_type", curve_type),
         ]:
             assert not np.any(np.isinf(arr)), f"{name} contains Inf values"

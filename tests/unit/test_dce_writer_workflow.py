@@ -169,10 +169,10 @@ def test_registered_vfa_t1map_skips_population_fallback(
     assert not list((out / "pmriprep").rglob("*T1map.nii.gz"))
 
 
-def test_unvalidated_model_free_maps_have_no_derivative_sinks(
+def test_removed_model_free_maps_cannot_create_derivative_sinks(
     tmp_path: Path, minimal_bids: tuple[Path, str]
 ) -> None:
-    """Wash slopes and SER-derived curve classes remain internal outputs."""
+    """Removed wash slopes and internal curve classes have no sinks."""
     from pmriprep.workflows.dce.datasinks import init_dce_datasinks_wf
 
     bids, _ = minimal_bids
