@@ -16,7 +16,9 @@ from pmriprep.interfaces.dce_compute import (
 from pmriprep.utils.dsc_cbv_constraint import ConstraintMode
 
 
-def _prepared(*, populated: bool = False) -> _DCEFitPreparation:
+def _prepared(
+    *, populated: bool = False, inference: str = "map",
+) -> _DCEFitPreparation:
     """Build auto-model preparation state with an optional populated domain."""
     shape = (5, 5, 5)
     concentration = np.zeros((*shape, 4), dtype=float)
@@ -41,7 +43,7 @@ def _prepared(*, populated: bool = False) -> _DCEFitPreparation:
         tsnr_map=np.ones(shape, dtype=float),
         peak_enhancement=None,
         fitting_mask=fitting_mask,
-        inference="nlls",
+        inference=inference,
         mcmc_samples=500,
         save_fitted_curves=False,
     )
@@ -94,6 +96,33 @@ def test_prepare_vp_constraint_distinguishes_absent_dsc_run(tmp_path: Path) -> N
     assert result.qc["mode"] == "skip"
     assert result.qc["skip_reason"] == "no_dsc_run"
     assert result.model_name == "patlak"
+    assert result.candidate_names == ["patlak"]
+
+
+def test_prepare_vp_constraint_rejects_nlls_box_before_loading_dsc(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """NLLS cannot receive a DSC-derived vp box, including in auto mode."""
+    monkeypatch.setattr(
+        "pmriprep.utils.dsc_cbv_constraint.prepare_vp_constraint_from_data",
+        lambda **kwargs: pytest.fail("NLLS must not prepare a DSC prior"),
+    )
+    interface = ComputeDCEMaps(
+        brain_mask_file=_write_mask(tmp_path / "mask.nii.gz"),
+        dsc_ncbv_file="ncbv.nii.gz",
+        dsc_aif_qc={"detection_method": "atlas"},
+        constraint_mode="auto",
+    )
+
+    result = interface._prepare_vp_constraint(
+        _prepared(populated=True, inference="nlls")
+    )
+
+    assert result.vp_map is None
+    assert result.mode == ConstraintMode.SKIP
+    assert result.vp_uncertainty == 0.0
+    assert result.qc["skip_reason"] == "nlls_constraint_unsupported"
     assert result.candidate_names == ["patlak"]
 
 

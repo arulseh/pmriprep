@@ -124,7 +124,7 @@ def generate_xval_plot(
         cbv_from_vp = vp_valid * cbv_unit_factor
         cbv_from_vp_oob = vp_oob * cbv_unit_factor
 
-    is_constrained = validation_result.get("constraint_mode") == "soft"
+    is_prior_informed = validation_result.get("constraint_mode") == "soft"
     constraint_width_value = validation_result.get("constraint_relative_width")
     constraint_width = (
         float(constraint_width_value)
@@ -137,8 +137,8 @@ def generate_xval_plot(
         qc_figure_title(
             subject_id,
             session_id,
-            "DSC-informed vp Constraint Diagnostic"
-            if is_constrained else "DSC-DCE Cross-Validation",
+            "DSC-informed vp Prior Diagnostic"
+            if is_prior_informed else "DSC-DCE Cross-Validation",
         ),
         fontsize=12,
         fontweight="bold",
@@ -208,7 +208,7 @@ def generate_xval_plot(
                     color=COLORBLIND_PALETTE.error, linewidth=1,
                     label="identity")
 
-            if is_constrained and constraint_width is not None:
+            if is_prior_informed and constraint_width is not None:
                 x_line = np.linspace(0, lim_max, 100)
                 ax.fill_between(
                     x_line,
@@ -226,8 +226,8 @@ def generate_xval_plot(
             ax.text(
                 0.05,
                 0.92,
-                "Constraint-coupled"
-                if is_constrained
+                "Prior-informed"
+                if is_prior_informed
                 else f"\u03c1 = {rho:.3f} (r = {r_pearson:.3f})",
                 transform=ax.transAxes, fontsize=9,
                 bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8),
@@ -247,7 +247,7 @@ def generate_xval_plot(
 
     ax.grid(True, alpha=0.3)
 
-    # ---- Panel 2: constraint departure or Bland-Altman ----
+    # ---- Panel 2: prior departure or Bland-Altman ----
     ax = axes[1]
     if np.sum(valid_plot) < 10:
         ax.text(
@@ -258,10 +258,10 @@ def generate_xval_plot(
             bbox=dict(boxstyle="round,pad=0.5", facecolor="#f0f0f0"),
         )
         ax.set_title(
-            "Fractional Constraint Departure" if is_constrained else "Bland-Altman",
+            "Fractional Prior Departure" if is_prior_informed else "Bland-Altman",
             fontsize=10,
         )
-    elif is_constrained:
+    elif is_prior_informed:
         if has_metrics:
             vp_reference = expected_ratio * cbv_valid
             departure = vp_valid / vp_reference - 1.0
@@ -296,7 +296,7 @@ def generate_xval_plot(
             )
         ax.set_xlabel("(vp − DSC-informed vp) / DSC-informed vp", fontsize=9)
         ax.set_ylabel("Voxels", fontsize=9)
-        ax.set_title("Fractional Constraint Departure", fontsize=10)
+        ax.set_title("Fractional Prior Departure", fontsize=10)
     else:
         rng = np.random.default_rng(42)
 
@@ -408,7 +408,7 @@ def generate_xval_plot(
             VP_NCBV_RATIO_MIN,
         )
 
-        if is_constrained and constraint_width is not None:
+        if is_prior_informed and constraint_width is not None:
             vmin = expected_ratio * (1.0 - constraint_width)
             vmax = expected_ratio * (1.0 + constraint_width)
         else:

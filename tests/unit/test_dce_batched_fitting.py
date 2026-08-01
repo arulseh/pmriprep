@@ -1263,7 +1263,6 @@ class TestChunkedMultiproc:
     ) -> None:
         """Auto NLLS retains conditional uncertainty from its winning model."""
         from pmriprep.interfaces.dce_compute import ComputeDCEMaps
-        from pmriprep.utils.dsc_cbv_constraint import ConstraintMode
 
         calls: list[bool] = []
 
@@ -1297,9 +1296,6 @@ class TestChunkedMultiproc:
             inference="nlls",
             is_auto=True,
             candidate_names=["patlak"],
-            vp_constraint_map=None,
-            constraint_mode=ConstraintMode.SKIP,
-            constraint_vp_uncertainty=0.0,
             motion_weights=None,
             save_fitted_curves=False,
             sloppy=False,
@@ -1323,14 +1319,15 @@ class TestChunkedMultiproc:
     ) -> None:
         """Auto VI must refine, rather than repeat, batched-NLLS selection."""
         from pmriprep.interfaces.dce_compute import ComputeDCEMaps
-        from pmriprep.utils.dsc_cbv_constraint import ConstraintMode
 
         calls: list[bool] = []
+        fixed_vp_inputs: list[np.ndarray | None] = []
         vp_uncertainties: list[float | None] = []
         selected_before_refinement: list[str] = []
 
         def fake_dispatch(**kwargs: Any) -> FitResult:
             calls.append(kwargs["compute_uncertainties"])
+            fixed_vp_inputs.append(kwargs["fixed_vp"])
             vp_uncertainties.append(kwargs["vp_uncertainty"])
             return FitResult(
                 params={
@@ -1372,9 +1369,6 @@ class TestChunkedMultiproc:
             inference="vi",
             is_auto=True,
             candidate_names=["patlak"],
-            vp_constraint_map=np.full((1, 1, 1), 0.02),
-            constraint_mode=ConstraintMode.SOFT,
-            constraint_vp_uncertainty=0.4,
             motion_weights=None,
             save_fitted_curves=False,
             sloppy=False,
@@ -1387,9 +1381,75 @@ class TestChunkedMultiproc:
         )
 
         assert calls == [False]
-        assert vp_uncertainties == [0.4]
+        assert fixed_vp_inputs == [None]
+        assert vp_uncertainties == [None]
         assert selected_before_refinement == ["patlak"]
         assert results[0]["selected_model_name"] == "patlak"
+
+    def test_fixed_vi_applies_prior_to_vp_model(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A fixed-model Bayesian worker applies and reports an accepted vp prior."""
+        import pmriprep.interfaces.dce_compute as dce_compute
+        from pmriprep.interfaces.dce_compute import VoxelInput
+        from pmriprep.utils.dsc_cbv_constraint import ConstraintMode
+
+        class FakeModel:
+            name = "extended_tofts"
+
+        class FakeResult:
+            model_name = "extended_tofts"
+            parameters = {"Ktrans": 0.1, "ve": 0.3, "vp": 0.04}
+            r_squared = 0.9
+            converged = True
+            uncertainty_source = "not_computed"
+            fitted_curve = None
+
+            @staticmethod
+            def has_uncertainty() -> bool:
+                return False
+
+        prior_overrides: list[Any] = []
+
+        class FakeBayesianFitter:
+            def __init__(self, model: Any, vp_prior_override: Any = None) -> None:
+                del model
+                prior_overrides.append(vp_prior_override)
+
+            @staticmethod
+            def fit_vi(*args: Any, **kwargs: Any) -> FakeResult:
+                del args, kwargs
+                return FakeResult()
+
+        monkeypatch.setattr(
+            dce_compute,
+            "_worker_ctx",
+            {
+                "BayesianPKFitter": FakeBayesianFitter,
+                "create_vp_prior_from_dsc": lambda value, **kwargs: (value, kwargs),
+                "ConstraintMode": ConstraintMode,
+                "model": FakeModel(),
+                "fitter": None,
+                "aif": np.zeros(4),
+                "time_points": np.arange(4, dtype=float),
+                "inference": "vi",
+                "mcmc_samples": 0,
+                "baseline_frames": 1,
+                "constraint_mode_str": "soft",
+                "constraint_vp_uncertainty": 0.4,
+                "motion_weights": None,
+                "sloppy": False,
+                "is_auto": False,
+                "bic_candidates": {},
+                "save_fitted_curves": False,
+            },
+        )
+
+        result = dce_compute._fit_single_voxel(
+            VoxelInput(0, 0, 0, np.array([0.0, 0.1, 0.2, 0.3]), 0.04)
+        )
+
+        assert result["failed"] is False
+        assert result["constrained"] is True
+        assert prior_overrides == [(0.04, {"relative_uncertainty": 0.4})]
 
     def test_auto_bayesian_refinement_preserves_selection_and_delta_bic(
         self, monkeypatch: pytest.MonkeyPatch,

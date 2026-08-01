@@ -1,14 +1,13 @@
-"""DSC CBV to vp constraint utilities for DCE pharmacokinetic modeling.
+"""DSC CBV to vp-prior utilities for DCE pharmacokinetic modeling.
 
-Implements quality-gated conversion of DSC-derived CBV maps to vp constraints
+Implements quality-gated conversion of DSC-derived CBV maps to Bayesian vp priors
 for use in DCE PK model fitting. When DSC data is available and passes quality
-checks, the CBV-derived vp map can constrain the DCE fitting, reducing the
-number of free parameters and improving stability.
+checks, the CBV-derived vp map informs Bayesian fitting without bounding NLLS.
 
-The constraint pipeline:
+The prior pipeline:
     1. Assess DSC CBV quality (CNR coverage, AIF metrics, CBV ranges)
     2. Scale NAWM-normalized CBV to a vp prior
-    3. Determine constraint mode: hard (fix vp), soft (Bayesian prior), skip
+    3. Determine whether to use the soft Bayesian prior or skip it
 
 """
 
@@ -113,6 +112,7 @@ SKIP_REASON_NO_DSC_RUN = "no_dsc_run"
 SKIP_REASON_NO_NAWM_MASK = "no_nawm_mask"
 SKIP_REASON_SYNTHETIC_AIF = "synthetic_aif"
 SKIP_REASON_REGISTRATION_QC = "cross_modal_registration_qc"
+SKIP_REASON_NLLS_UNSUPPORTED = "nlls_constraint_unsupported"
 NO_DSC_RUN_REASON_STRING = "No DSC data provided"
 SYNTHETIC_AIF_REASON_STRING = (
     "AIF is synthetic (cascade exhausted or gamma-R2 fallback); "
@@ -173,7 +173,7 @@ class ConstraintConfig:
 
     Attributes
     ----------
-        mode: Constraint mode (hard, soft, skip).
+        mode: Constraint mode (soft Bayesian prior or skip).
         vp_uncertainty: Relative uncertainty for soft prior (fraction, 0-1).
         reason: Human-readable explanation for the chosen mode.
     """

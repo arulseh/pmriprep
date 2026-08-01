@@ -65,37 +65,32 @@ def test_resolve_dce_fit_quality_prioritizes_convergence(
 
 
 @pytest.mark.parametrize(
-    ("model", "params", "constrained", "expected"),
+    ("model", "params", "expected"),
     [
-        ("tofts", {"Ktrans": 0.1, "ve": 0.3}, False, False),
-        ("tofts", {"Ktrans": 0.0, "ve": 0.3}, False, True),
-        ("tofts", {"Ktrans": KTRANS_BOUNDS.max, "ve": 0.3}, False, True),
-        ("tofts", {"Ktrans": 0.1, "ve": VE_BOUNDS.max}, False, True),
-        ("patlak", {"Ktrans": 0.0, "vp": 0.03}, False, False),
-        ("patlak", {"Ktrans": -1e-6, "vp": 0.03}, False, True),
-        ("patlak", {"Ktrans": 0.1, "vp": 0.0}, False, True),
-        ("patlak", {"Ktrans": 0.1, "vp": 0.0}, True, False),
-        ("extended_tofts", {"Ktrans": 0.0, "ve": 0.3, "vp": 0.03}, True, False),
-        ("extended_tofts", {"Ktrans": 0.0, "ve": 0.3, "vp": 0.03}, False, True),
-        ("extended_tofts", {"Ktrans": 0.1, "ve": 0.3, "vp": VP_BOUNDS.max}, False, True),
-        ("extended_tofts", {"Ktrans": 0.1, "ve": 0.3, "vp": VP_BOUNDS.max}, True, False),
-        ("2cxm", {"Fp": 1.0, "PS": 0.0, "ve": 0.3, "vp": 0.03}, False, True),
-        ("2cxm", {"Fp": 0.0, "PS": 0.1, "ve": 0.3, "vp": 0.03}, False, True),
-        ("2cxm", {"Fp": FP_BOUNDS.max, "PS": 0.1, "ve": 0.3, "vp": 0.03}, False, True),
-        ("2cxm", {"Fp": 1.0, "PS": PS_BOUNDS.max, "ve": 0.3, "vp": 0.03}, False, True),
-        ("2cxm", {"Fp": 1.0, "PS": 0.1, "ve": 0.8, "vp": 0.03}, False, True),
-        ("2cxm", {"Fp": 1.0, "PS": 0.1, "ve": 0.3, "vp": VP_BOUNDS.max}, False, True),
-        ("2cxm", {"Fp": 1.0, "PS": 0.1, "ve": 0.3, "vp": VP_BOUNDS.max}, True, False),
+        ("tofts", {"Ktrans": 0.1, "ve": 0.3}, False),
+        ("tofts", {"Ktrans": 0.0, "ve": 0.3}, True),
+        ("tofts", {"Ktrans": KTRANS_BOUNDS.max, "ve": 0.3}, True),
+        ("tofts", {"Ktrans": 0.1, "ve": VE_BOUNDS.max}, True),
+        ("patlak", {"Ktrans": 0.0, "vp": 0.03}, False),
+        ("patlak", {"Ktrans": -1e-6, "vp": 0.03}, True),
+        ("patlak", {"Ktrans": 0.1, "vp": 0.0}, True),
+        ("extended_tofts", {"Ktrans": 0.0, "ve": 0.3, "vp": 0.03}, True),
+        ("extended_tofts", {"Ktrans": 0.1, "ve": 0.3, "vp": VP_BOUNDS.max}, True),
+        ("2cxm", {"Fp": 1.0, "PS": 0.0, "ve": 0.3, "vp": 0.03}, True),
+        ("2cxm", {"Fp": 0.0, "PS": 0.1, "ve": 0.3, "vp": 0.03}, True),
+        ("2cxm", {"Fp": FP_BOUNDS.max, "PS": 0.1, "ve": 0.3, "vp": 0.03}, True),
+        ("2cxm", {"Fp": 1.0, "PS": PS_BOUNDS.max, "ve": 0.3, "vp": 0.03}, True),
+        ("2cxm", {"Fp": 1.0, "PS": 0.1, "ve": 0.8, "vp": 0.03}, True),
+        ("2cxm", {"Fp": 1.0, "PS": 0.1, "ve": 0.3, "vp": VP_BOUNDS.max}, True),
     ],
 )
 def test_degeneracy_rules_preserve_model_specific_boundaries(
     model: str,
     params: dict[str, float],
-    constrained: bool,
     expected: bool,
 ) -> None:
-    """Exact bounds and constrained-fit exceptions remain unchanged."""
-    assert _is_degenerate_dce_fit(model, params, constrained) is expected
+    """Exact physiological bounds are rejected independently of prior use."""
+    assert _is_degenerate_dce_fit(model, params) is expected
 
 
 def _uncertainty_maps() -> SimpleNamespace:
@@ -234,27 +229,6 @@ def test_parameter_scatter_writes_all_2cxm_fields() -> None:
     assert maps.fp[0, 0, 0] == 20.0
     assert maps.ps[0, 0, 0] == 5.0
     assert maps.extraction_fraction[0, 0, 0] == 0.2
-
-
-def test_constrained_zero_transfer_keeps_vascular_but_not_ees_parameters() -> None:
-    """At zero transfer, constrained vp is valid but ve and kep are not identified."""
-    maps = _uncertainty_maps()
-    params = {"Ktrans": 0.0, "ve": 0.3, "vp": 0.04, "kep": 0.0}
-
-    _scatter_dce_parameters(
-        maps, (0, 0, 0), "extended_tofts", params, 0.9,
-        ees_identifiable=False,
-    )
-    _scatter_dce_uncertainties(
-        maps, (0, 0, 0), "extended_tofts", {"ve": 0.01},
-        ees_identifiable=False,
-    )
-
-    assert maps.ktrans[0, 0, 0] == 0.0
-    assert maps.vp[0, 0, 0] == 0.04
-    assert np.isnan(maps.ve[0, 0, 0])
-    assert np.isnan(maps.kep[0, 0, 0])
-    assert np.isnan(maps.ve_std[0, 0, 0])
 
 
 def test_degenerate_scatter_uses_auto_nan_for_applicable_patlak_maps() -> None:

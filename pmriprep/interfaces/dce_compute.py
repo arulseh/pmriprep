@@ -42,13 +42,11 @@ logger = logging.getLogger(__name__)
 def _is_degenerate_dce_fit(
     model_name: str,
     params: dict[str, float],
-    is_constrained: bool,
 ) -> bool:
     """Return whether a fitted DCE parameter set rails physiological bounds."""
     ktrans = params.get("Ktrans", 0.0)
     ve = params.get("ve", 0.0)
     vp = params.get("vp", 0.0)
-    ktrans_low = ktrans < 0 if is_constrained else ktrans <= 0
     if model_name == "2cxm":
         from pmriprep.models.dce.two_compartment_exchange import (
             TWO_CXM_VE_BOUNDS,
@@ -63,24 +61,24 @@ def _is_degenerate_dce_fit(
             or ps >= PS_BOUNDS.max
             or ve <= TWO_CXM_VE_BOUNDS[0]
             or ve >= TWO_CXM_VE_BOUNDS[1]
-            or (
-                not is_constrained
-                and (vp <= 0 or vp >= VP_BOUNDS.max)
-            )
+            or vp <= 0
+            or vp >= VP_BOUNDS.max
         )
     if model_name == "patlak":
         return (
             ktrans < 0
             or ktrans >= KTRANS_BOUNDS.max
-            or (not is_constrained and (vp <= 0 or vp >= VP_BOUNDS.max))
+            or vp <= 0
+            or vp >= VP_BOUNDS.max
         )
     if model_name == "extended_tofts":
         return (
-            ktrans_low
+            ktrans <= 0
             or ktrans >= KTRANS_BOUNDS.max
             or ve <= 0
             or ve >= VE_BOUNDS.max
-            or (not is_constrained and (vp <= 0 or vp >= VP_BOUNDS.max))
+            or vp <= 0
+            or vp >= VP_BOUNDS.max
         )
     return (
         ktrans <= 0
@@ -95,12 +93,9 @@ def _scatter_dce_uncertainties(
     coords: tuple[int, int, int],
     model_name: str,
     uncertainties: dict[str, float],
-    ees_identifiable: bool = True,
 ) -> None:
     """Scatter model-applicable standard errors/SDs with AIF inflation."""
     x, y, z = coords
-    if model_name in ("tofts", "extended_tofts", "2cxm") and not ees_identifiable:
-        maps.ve_std[x, y, z] = np.nan
     if (
         model_name != "2cxm"
         and "Ktrans" in uncertainties
@@ -111,7 +106,6 @@ def _scatter_dce_uncertainties(
         )
     if (
         model_name in ("tofts", "extended_tofts", "2cxm")
-        and ees_identifiable
         and "ve" in uncertainties
         and np.isfinite(uncertainties["ve"])
     ):
@@ -255,14 +249,13 @@ def _scatter_dce_parameters(
     model_name: str,
     params: dict[str, float],
     r_squared: float,
-    ees_identifiable: bool = True,
 ) -> None:
     """Scatter a non-degenerate model's applicable fitted parameters."""
     x, y, z = coords
     maps.ktrans[x, y, z] = params.get("Ktrans", 0.0)
     if model_name in ("tofts", "extended_tofts", "2cxm"):
-        maps.ve[x, y, z] = params.get("ve", 0.0) if ees_identifiable else np.nan
-        maps.kep[x, y, z] = params.get("kep", 0.0) if ees_identifiable else np.nan
+        maps.ve[x, y, z] = params.get("ve", 0.0)
+        maps.kep[x, y, z] = params.get("kep", 0.0)
     maps.r_squared[x, y, z] = r_squared
     if model_name in ("extended_tofts", "patlak", "2cxm"):
         maps.vp[x, y, z] = params.get("vp", 0.0)
@@ -394,8 +387,7 @@ def _scatter_dce_fit_results(
         selected_model = result.get("selected_model_name", model_name)
         maps.model_selection[coords] = maps.model_selection_codes.get(selected_model, 0)
         maps.delta_bic[coords] = float(result.get("delta_bic", np.nan))
-        is_constrained = result.get("constrained", False)
-        if _is_degenerate_dce_fit(selected_model, params, is_constrained):
+        if _is_degenerate_dce_fit(selected_model, params):
             _scatter_degenerate_dce_fit(
                 maps, coords, selected_model, result["r_squared"]
             )
@@ -407,19 +399,12 @@ def _scatter_dce_fit_results(
             map_uncertainty_sources.append(
                 str(result.get("uncertainty_source", "not_computed"))
             )
-        ees_identifiable = not (
-            selected_model == "extended_tofts"
-            and is_constrained
-            and params.get("Ktrans", 0.0) <= 0.0
-        )
         _scatter_dce_parameters(
             maps, coords, selected_model, params, result["r_squared"],
-            ees_identifiable,
         )
         if result["uncertainties"]:
             _scatter_dce_uncertainties(
                 maps, coords, selected_model, result["uncertainties"],
-                ees_identifiable,
             )
         _scatter_dce_fit_artifacts(maps, coords, result)
         departure = _compute_vp_prior_departure(
@@ -1545,20 +1530,18 @@ def _fit_single_voxel(
             fixed_vp is not None
             and constraint_mode == ConstraintMode.SOFT
             and inference != "nlls"
+            and (is_auto or model.name in _MODEL_HAS_VP)
         ):
             vp_prior = create_vp_prior_from_dsc(
                 fixed_vp, relative_uncertainty=constraint_vp_uncertainty
             )
             if is_auto:
-                # BIC mode: use NLLS constrained for fair comparison
-                # MAP refinement happens post-BIC-selection
-                if hasattr(model, "fit_constrained"):
-                    result = model.fit_constrained(
-                        prepared_curve, aif, time_points, fixed_vp=fixed_vp,
-                        weights=motion_weights,
-                    )
-                # Flag constrained so all BIC candidates get constrained vp
-                constrained = True
+                # Select the model from unconstrained DCE data, then apply the
+                # DSC-informed prior only during Bayesian refinement.
+                result = model.fit(
+                    prepared_curve, aif, time_points,
+                    weights=motion_weights,
+                )
             elif inference == "vi":
                 soft_fitter = BayesianPKFitter(
                     model, vp_prior_override=vp_prior
@@ -1589,24 +1572,6 @@ def _fit_single_voxel(
                     sloppy=sloppy, weights=motion_weights,
                 )
                 constrained = True
-
-        # SOFT constraint with NLLS: tighten vp bounds around DSC value.
-        # Caller owns constraint_vp_uncertainty: must be positive here (upstream
-        # validation at the batched-API boundary raises ValueError on σ = 0.0).
-        elif (
-            fixed_vp is not None
-            and constraint_mode == ConstraintMode.SOFT
-            and inference == "nlls"
-        ):
-            sigma = constraint_vp_uncertainty
-            vp_lo = max(fixed_vp * (1.0 - sigma), VP_BOUNDS.min)
-            vp_hi = min(fixed_vp * (1.0 + sigma), VP_BOUNDS.max)
-            result = model.fit(
-                prepared_curve, aif, time_points,
-                weights=motion_weights,
-                vp_bounds=(vp_lo, vp_hi),
-            )
-            constrained = True
 
         # Unconstrained fallback
         if result is None:
@@ -1649,24 +1614,10 @@ def _fit_single_voxel(
 
             for cname, cmodel in bic_candidates.items():
                 try:
-                    if constrained and fixed_vp is not None and hasattr(cmodel, "fit_constrained"):
-                        cand_result = cmodel.fit_constrained(
-                            prepared_curve, aif, time_points, fixed_vp=fixed_vp,
-                            weights=motion_weights,
-                        )
-                    elif constrained and not hasattr(cmodel, "fit_constrained"):
-                        # Model has no vp to constrain — fit unconstrained
-                        cand_result = cmodel.fit(
-                            prepared_curve, aif, time_points,
-                            weights=motion_weights,
-                        )
-                    elif not constrained:
-                        cand_result = cmodel.fit(
-                            prepared_curve, aif, time_points,
-                            weights=motion_weights,
-                        )
-                    else:
-                        continue
+                    cand_result = cmodel.fit(
+                        prepared_curve, aif, time_points,
+                        weights=motion_weights,
+                    )
                     if cand_result.converged and np.isfinite(cand_result.bic):
                         all_results.append(cand_result)
                 except Exception:
@@ -1709,6 +1660,10 @@ def _fit_single_voxel(
                             prepared_curve, aif, time_points,
                             weights=motion_weights, sloppy=sloppy,
                         )
+                        constrained = (
+                            vp_prior is not None
+                            and best.model_name in _MODEL_HAS_VP
+                        )
                     except Exception:
                         logger.debug(
                             "VI refinement failed at (%d,%d,%d), keeping NLLS",
@@ -1731,6 +1686,10 @@ def _fit_single_voxel(
                             compute_uncertainties=not sloppy,
                             weights=motion_weights, sloppy=sloppy,
                         )
+                        constrained = (
+                            vp_prior is not None
+                            and best.model_name in _MODEL_HAS_VP
+                        )
                     except Exception:
                         logger.debug(
                             "MAP refinement failed at (%d,%d,%d), keeping NLLS",
@@ -1752,6 +1711,10 @@ def _fit_single_voxel(
                             prepared_curve, aif, time_points,
                             n_samples=mcmc_samples, sloppy=sloppy,
                             weights=motion_weights,
+                        )
+                        constrained = (
+                            vp_prior is not None
+                            and best.model_name in _MODEL_HAS_VP
                         )
                     except Exception:
                         logger.debug(
@@ -3044,6 +3007,7 @@ class ComputeDCEMaps(BaseInterface):
         from pmriprep.utils.dsc_cbv_constraint import (
             NO_DSC_RUN_REASON_STRING,
             SKIP_REASON_NO_DSC_RUN,
+            SKIP_REASON_NLLS_UNSUPPORTED,
             ConstraintMode,
             prepare_vp_constraint_from_data,
         )
@@ -3067,6 +3031,27 @@ class ComputeDCEMaps(BaseInterface):
             or (isdefined(self.inputs.dsc_aif_qc) and bool(self.inputs.dsc_aif_qc))
             or (isdefined(self.inputs.dsc_preload_qc) and bool(self.inputs.dsc_preload_qc))
         )
+
+        if (
+            prepared.inference == "nlls"
+            and needs_vp_constraint
+            and dsc_inputs_present
+        ):
+            return _DCEVPConstraint(
+                None,
+                ConstraintMode.SKIP,
+                0.0,
+                {
+                    "mode": "skip",
+                    "reason": (
+                        "DSC-informed vp is available only as a Bayesian prior; "
+                        "bounded NLLS constraints are not supported"
+                    ),
+                    "skip_reason": SKIP_REASON_NLLS_UNSUPPORTED,
+                },
+                model_name,
+                candidate_names,
+            )
 
         if needs_vp_constraint and dsc_inputs_present:
             try:
@@ -3385,7 +3370,8 @@ class ComputeDCEMaps(BaseInterface):
             x, y, z = int(x_raw), int(y_raw), int(z_raw)
             voxel_vp: Optional[float] = None
             if (
-                vp_constraint.vp_map is not None
+                prepared.inference != "nlls"
+                and vp_constraint.vp_map is not None
                 and vp_constraint.mode != ConstraintMode.SKIP
             ):
                 vp_value = float(vp_constraint.vp_map[x, y, z])
@@ -3451,7 +3437,6 @@ class ComputeDCEMaps(BaseInterface):
         bat_correction = bat_alignment.correction
 
         vp_constraint = self._prepare_vp_constraint(prepared)
-        vp_constraint_map = vp_constraint.vp_map
         constraint_mode = vp_constraint.mode
         constraint_vp_uncertainty = vp_constraint.vp_uncertainty
         constraint_qc = vp_constraint.qc
@@ -3526,9 +3511,6 @@ class ComputeDCEMaps(BaseInterface):
             inference=inference,
             is_auto=is_auto,
             candidate_names=candidate_names,
-            vp_constraint_map=vp_constraint_map,
-            constraint_mode=constraint_mode,
-            constraint_vp_uncertainty=constraint_vp_uncertainty,
             motion_weights=motion_weights,
             save_fitted_curves=save_fitted_curves,
             sloppy=sloppy,
@@ -3879,9 +3861,6 @@ class ComputeDCEMaps(BaseInterface):
         inference: str,
         is_auto: bool,
         candidate_names: list[str],
-        vp_constraint_map: Optional[npt.NDArray[Any]],
-        constraint_mode: Any,  # ConstraintMode enum
-        constraint_vp_uncertainty: float,
         motion_weights: Optional[npt.NDArray[np.floating]],
         save_fitted_curves: bool,
         sloppy: bool,
@@ -3915,12 +3894,6 @@ class ComputeDCEMaps(BaseInterface):
             Whether auto-mode BIC selection is active.
         candidate_names : list
             List of candidate model names for auto mode.
-        vp_constraint_map : numpy.ndarray or None
-            vp constraint map or None.
-        constraint_mode : ConstraintMode
-            Constraint mode (SKIP, SOFT).
-        constraint_vp_uncertainty : float
-            Uncertainty for soft constraint.
         motion_weights : numpy.ndarray or None
             Per-frame motion weights or None.
         save_fitted_curves : bool
@@ -3944,9 +3917,14 @@ class ComputeDCEMaps(BaseInterface):
         -------
         list
             List of result dicts matching _fit_single_voxel output format.
+
+        Notes
+        -----
+        Automatic model selection uses unconstrained NLLS likelihoods for BIC.
+        A qualified DSC-derived vp prior is applied only when the selected model
+        is subsequently refined with Bayesian inference.
         """
         from pmriprep.models.dce.batched_fitting import FitResult
-        from pmriprep.utils.dsc_cbv_constraint import ConstraintMode
 
         n_voxels = len(mask_coords[0])
 
@@ -3986,28 +3964,10 @@ class ComputeDCEMaps(BaseInterface):
         tissue_curves = np.nan_to_num(tissue_curves, nan=0.0, posinf=0.0, neginf=0.0)
         coords = np.stack(mask_coords, axis=1)  # (N, 3)
 
-        # Build fixed_vp array
+        # The batched NLLS stage is always unconstrained. DSC-derived vp enters
+        # only the Bayesian refinement through ``voxel_data_list``.
         fixed_vp: Optional[npt.NDArray[np.floating]] = None
-        if vp_constraint_map is not None and constraint_mode != ConstraintMode.SKIP:
-            vp_vals = vp_constraint_map[mask_coords[0], mask_coords[1], mask_coords[2]]
-            valid_vp = np.isfinite(vp_vals) & (vp_vals > 0)
-            fixed_vp = np.where(valid_vp, vp_vals, 0.0)
-            # Zero out invalid entries so they're treated as unconstrained
-            fixed_vp[~valid_vp] = 0.0
-
-        # vp_uncertainty is honored for NLLS and for every auto-mode selection,
-        # whose canonical BIC stage is NLLS regardless of the later inference
-        # engine. For fixed-model MAP + SOFT, the batched pass acts as a HARD
-        # warm-start and CPU MAP refinement applies the Gaussian prior via
-        # create_vp_prior_from_dsc.
-        # For HARD/SKIP, vp_uncertainty is moot (None).
         vp_uncertainty_batched: Optional[float] = None
-        if (
-            constraint_mode == ConstraintMode.SOFT
-            and (inference == "nlls" or is_auto)
-            and fixed_vp is not None
-        ):
-            vp_uncertainty_batched = float(constraint_vp_uncertainty)
 
         results: list[dict[str, Any]] = []
 

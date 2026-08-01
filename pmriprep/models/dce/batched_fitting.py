@@ -7,6 +7,10 @@ weighted least squares, and uncertainty estimation.
 
 Each LM iteration solves a small per-voxel normal equation (2-4 unknowns).
 Forward-model evaluations are batched across all voxels.
+
+Optional fixed-vp and bounded-vp inputs support controlled validation
+experiments. Production DSC-informed fitting supplies vp only through Bayesian
+priors and leaves NLLS unconstrained.
 """
 
 from __future__ import annotations
