@@ -82,7 +82,7 @@ class DCEConfig:
         tofts, extended_tofts, patlak, or 2cxm.
     inference : str
         Inference engine: nlls (default, scipy least_squares),
-        vi (recommended; variational Bayes), map (Laplace MAP),
+        vi (variational Bayes), map (Laplace MAP),
         or mcmc (YAML-only — not exposed via CLI).
     mcmc_samples : int
         Number of MCMC samples for Bayesian inference.
