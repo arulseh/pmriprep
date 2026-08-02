@@ -1404,16 +1404,11 @@ def generate_unified_report(
             }
         elif pipeline_name == "dsc" and qc_metrics:
             preproc = qc_metrics.get("preprocessing", {})
-            preload = qc_metrics.get("preload", {})
             deconv = qc_metrics.get("deconvolution", {})
             display_status = {
                 # Motion outliers (lower is better)
                 "outliers": _classify_metric_inverse(
                     preproc.get("percent_outliers"), 5, 10
-                ),
-                # Leaky voxels (lower is better)
-                "leaky_voxels": _classify_metric_inverse(
-                    preload.get("percent_leaky_voxels"), 5, 20
                 ),
                 # Deconvolution fit quality
                 "rsquared": _classify_metric(

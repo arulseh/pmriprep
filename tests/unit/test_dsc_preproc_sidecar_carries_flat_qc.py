@@ -31,13 +31,19 @@ def preload_qc() -> dict[str, Any]:
     return {
         "k2_method": "bsw",
         "kep_used": None,  # bsw → omitted from sidecar
-        "preload_classification": "inadequate",
-        "preload_classification_source": "k2_primary",
-        "preload_k2_classification": "inadequate",
-        "preload_k2_confidence": "high",
-        "k2_median": 0.012,
-        "percent_leaky_voxels": 4.7,
-        "percent_severe_leakage": 0.3,
+        "preload_classification": "unknown",
+        "preload_classification_source": "signed_k2_uncalibrated",
+        "preload_k2_classification": "unknown",
+        "preload_k2_confidence": 0.0,
+        "k2_median": -0.002,
+        "k2_signed": True,
+        "k2_reference_selection": (
+            "raw_signal_final10_mean_1_baseline_sample_sd"
+        ),
+        "k2_reference_selection_domain": "raw_signal",
+        "percent_negative_k2": 61.0,
+        "percent_k2_undefined": 0.4,
+        "n_k2_valid": 1000,
         "preload_user_specified": False,
     }
 
@@ -66,13 +72,16 @@ class TestPreloadCosmeticKeys:
             preprocessing_stats=preprocessing_stats,
         )
         assert out["PreloadK2Method"] == "bsw"
-        assert out["PreloadClassification"] == "inadequate"
-        assert out["PreloadClassificationSource"] == "k2_primary"
-        assert out["PreloadK2Adequacy"] == "inadequate"
-        assert out["PreloadK2Confidence"] == "high"
-        assert out["PreloadK2Median"] == pytest.approx(0.012)
-        assert out["PreloadPercentLeakyVoxels"] == pytest.approx(4.7)
-        assert out["PreloadPercentSevereLeakage"] == pytest.approx(0.3)
+        assert out["PreloadClassification"] == "unknown"
+        assert out["PreloadClassificationSource"] == "signed_k2_uncalibrated"
+        assert out["PreloadK2Adequacy"] == "unknown"
+        assert out["PreloadK2Confidence"] == "0.0"
+        assert out["PreloadK2Median"] == pytest.approx(-0.002)
+        assert out["PreloadK2Signed"] is True
+        assert out["PreloadK2ReferenceSelectionDomain"] == "raw_signal"
+        assert out["PreloadPercentNegativeK2"] == pytest.approx(61.0)
+        assert out["PreloadPercentK2Undefined"] == pytest.approx(0.4)
+        assert out["PreloadK2ValidVoxels"] == 1000
         assert out["PreloadUserSpecified"] is False
 
     def test_kep_omitted_when_none(self, base_sidecar, preload_qc):

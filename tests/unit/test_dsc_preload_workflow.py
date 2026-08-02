@@ -30,7 +30,6 @@ from pmriprep.utils.dsc_preload import (
     PreloadResult,
 )
 from pmriprep.workflows.dsc.base import (
-    _augment_qc_positive_tail,
     _detect_and_correct_preload,
     init_dsc_deconvolution_wf,
 )
@@ -45,7 +44,7 @@ def test_dsc_compute_node_reserves_internal_worker_count() -> None:
 
 
 def _write_fixtures(tmp_path: Path) -> tuple[str, str, str]:
-    """Write minimal 4D concentration, 3D brain mask, and AIF text fixtures."""
+    """Write minimal concentration, brain-mask, and raw-signal fixtures."""
     shape = (4, 4, 4, 20)
     rng = np.random.default_rng(0)
     conc = rng.normal(0.0, 0.01, size=shape).astype(np.float32)
@@ -56,11 +55,10 @@ def _write_fixtures(tmp_path: Path) -> tuple[str, str, str]:
     mask_path = tmp_path / "mask.nii.gz"
     nib.save(nib.Nifti1Image(mask, np.eye(4)), str(mask_path))
 
-    aif = np.linspace(0.0, 1.0, shape[3])
-    aif_path = tmp_path / "aif.txt"
-    np.savetxt(aif_path, aif)
+    signal_path = tmp_path / "signal.nii.gz"
+    nib.save(nib.Nifti1Image(1000.0 * np.exp(-0.03 * conc), np.eye(4)), signal_path)
 
-    return str(conc_path), str(mask_path), str(aif_path)
+    return str(conc_path), str(mask_path), str(signal_path)
 
 
 def _fake_k2_result(shape: tuple[int, int, int]) -> K2CorrectionResult:
@@ -100,7 +98,7 @@ class TestPreloadPrecedence:
 
     def test_user_override_wins_over_k2(self, tmp_path: Path) -> None:
         """preload='0.3' (user half-dose) overrides K2 classification."""
-        conc, mask, _ = _write_fixtures(tmp_path)
+        conc, mask, signal = _write_fixtures(tmp_path)
         with mock.patch(
             "pmriprep.utils.dsc_preload.apply_k2_correction",
             return_value=_fake_k2_result((4, 4, 4)),
@@ -121,6 +119,7 @@ class TestPreloadPrecedence:
                 field_strength=3.0,
                 tr=1.5,
                 preload="0.3",
+                signal_file=signal,
             )
 
         assert qc["preload_classification_source"] == "user_specified"
@@ -134,7 +133,7 @@ class TestPreloadPrecedence:
         self, tmp_path: Path,
     ) -> None:
         """K2 correction and QC use the baseline supplied by AIF refinement."""
-        conc, mask, _ = _write_fixtures(tmp_path)
+        conc, mask, signal = _write_fixtures(tmp_path)
         with mock.patch(
             "pmriprep.utils.dsc_preload.apply_k2_correction",
             return_value=_fake_k2_result((4, 4, 4)),
@@ -152,15 +151,19 @@ class TestPreloadPrecedence:
                 field_strength=3.0,
                 tr=1.5,
                 preload="auto",
+                signal_file=signal,
                 baseline_frames=17,
             )
 
         assert apply_k2.call_args.kwargs["baseline_frames"] == 17
+        np.testing.assert_allclose(
+            apply_k2.call_args.kwargs["signal"], nib.load(signal).get_fdata()
+        )
         assert qc["baseline_frames_used"] == 17
 
     def test_k2_primary_when_user_auto(self, tmp_path: Path) -> None:
         """preload='auto' + concrete K2 adequacy → effective = adequacy."""
-        conc, mask, _ = _write_fixtures(tmp_path)
+        conc, mask, signal = _write_fixtures(tmp_path)
         with mock.patch(
             "pmriprep.utils.dsc_preload.apply_k2_correction",
             return_value=_fake_k2_result((4, 4, 4)),
@@ -178,6 +181,7 @@ class TestPreloadPrecedence:
                 field_strength=3.0,
                 tr=1.5,
                 preload="auto",
+                signal_file=signal,
             )
 
         assert qc["preload_classification_source"] == "k2_primary"
@@ -187,7 +191,7 @@ class TestPreloadPrecedence:
 
     def test_k2_adequacy_drives_auto_classification(self, tmp_path: Path) -> None:
         """Auto path: K2 adequacy drives the effective classification; advisory is separate."""
-        conc, mask, _ = _write_fixtures(tmp_path)
+        conc, mask, signal = _write_fixtures(tmp_path)
         with mock.patch(
             "pmriprep.utils.dsc_preload.apply_k2_correction",
             return_value=_fake_k2_result((4, 4, 4)),
@@ -205,6 +209,7 @@ class TestPreloadPrecedence:
                 field_strength=3.0,
                 tr=1.5,
                 preload="auto",
+                signal_file=signal,
             )
 
         assert qc["preload_classification"] == K2Adequacy.ADEQUATE.value
@@ -216,7 +221,7 @@ class TestPreloadPrecedence:
 
     def test_k2_unavailable_skips_constraint(self, tmp_path: Path) -> None:
         """preload='auto' + K2 returns UNKNOWN → source='k2_unavailable'."""
-        conc, mask, _ = _write_fixtures(tmp_path)
+        conc, mask, signal = _write_fixtures(tmp_path)
         with mock.patch(
             "pmriprep.utils.dsc_preload.apply_k2_correction",
             return_value=_fake_k2_result((4, 4, 4)),
@@ -234,69 +239,40 @@ class TestPreloadPrecedence:
                 field_strength=3.0,
                 tr=1.5,
                 preload="auto",
+                signal_file=signal,
             )
 
         assert qc["preload_classification_source"] == "k2_unavailable"
         assert qc["preload_classification"] == K2Adequacy.UNKNOWN.value
         assert qc["preload_user_specified"] is False
 
+    def test_signed_k2_uses_uncalibrated_source_label(self, tmp_path: Path) -> None:
+        """Populated signed K2 is distinct from a missing reference."""
+        conc, mask, signal = _write_fixtures(tmp_path)
+        signed_result = _fake_k2_result((4, 4, 4))
+        signed_result.qc_metrics = {
+            "k2_signed": True,
+            "k2_reference_available": True,
+            "k2_median": -0.002,
+            "percent_negative_k2": 60.0,
+        }
+        with mock.patch(
+            "pmriprep.utils.dsc_preload.apply_k2_correction",
+            return_value=signed_result,
+        ), mock.patch(
+            "pmriprep.utils.dsc_preload.detect_preload",
+            return_value=_advisory(PreloadClass.MINIMAL),
+        ):
+            _, _, qc = _detect_and_correct_preload(
+                concentration_file=conc,
+                brain_mask_file=mask,
+                te=0.03,
+                field_strength=3.0,
+                tr=1.5,
+                preload="auto",
+                signal_file=signal,
+            )
 
-def _write_tail_fixtures(tmp_path: Path, tail_ratio: float, k2_value: float, n_tumor: int = 12):
-    """Concentration + K2 map + lesion mask for _augment_qc_positive_tail.
-
-    Each tumor voxel: linear rise to peak (10) at t=5, then plateau at
-    ``tail_ratio * peak`` — so late/peak == ``tail_ratio``. K2 map is uniform
-    ``k2_value`` (0.0 = BSW-blind, >0 = corrected).
-    """
-    shape = (4, 4, 4, 20)
-    conc = np.zeros(shape, dtype=np.float32)
-    curve = np.zeros(20, dtype=np.float32)
-    curve[:6] = np.linspace(0.0, 10.0, 6)
-    curve[6:] = tail_ratio * 10.0
-    tumor = np.zeros(shape[:3], dtype=np.float32)
-    coords = [tuple(c) for c in np.argwhere(np.ones(shape[:3]))[:n_tumor]]
-    for (x, y, z) in coords:
-        conc[x, y, z, :] = curve
-        tumor[x, y, z] = 1.0
-    conc_path = tmp_path / "conc.nii.gz"
-    nib.save(nib.Nifti1Image(conc, np.eye(4)), str(conc_path))
-    k2_path = tmp_path / "k2map.nii.gz"
-    nib.save(nib.Nifti1Image(np.full(shape[:3], k2_value, np.float32), np.eye(4)), str(k2_path))
-    lesion_path = tmp_path / "lesion.nii.gz"
-    nib.save(nib.Nifti1Image(tumor, np.eye(4)), str(lesion_path))
-    return str(conc_path), str(k2_path), str(lesion_path)
-
-
-class TestPositiveTailDetector:
-    """cbv_positive_tail_fraction: fires on positive tail AND k2==0 over tumor."""
-
-    def _run(self, tmp_path, tail_ratio, k2_value, with_mask=True):
-        conc, k2, lesion = _write_tail_fixtures(tmp_path, tail_ratio, k2_value)
-        qc = _augment_qc_positive_tail(
-            qc_dict={"k2_median": 0.002},
-            concentration_file=conc,
-            k2_map_file=k2,
-            lesion_mask_dsc=(lesion if with_mask else None),
-        )
-        return qc
-
-    def test_preexisting_qc_preserved(self, tmp_path: Path) -> None:
-        qc = self._run(tmp_path, tail_ratio=0.5, k2_value=0.0)
-        assert qc["k2_median"] == 0.002  # augment, don't replace
-
-    def test_positive_tail_with_zero_k2_fires(self, tmp_path: Path) -> None:
-        qc = self._run(tmp_path, tail_ratio=0.5, k2_value=0.0)
-        assert qc["cbv_positive_tail_fraction"] == pytest.approx(1.0)
-
-    def test_positive_tail_but_k2_corrected_is_silent(self, tmp_path: Path) -> None:
-        # Non-zero K2 = BSW applied a correction here → not the blind regime.
-        qc = self._run(tmp_path, tail_ratio=0.5, k2_value=0.02)
-        assert qc["cbv_positive_tail_fraction"] == pytest.approx(0.0)
-
-    def test_mild_tail_below_tau_is_silent(self, tmp_path: Path) -> None:
-        qc = self._run(tmp_path, tail_ratio=0.04, k2_value=0.0)  # < TAIL_RATIO_TAU 0.08
-        assert qc["cbv_positive_tail_fraction"] == pytest.approx(0.0)
-
-    def test_no_lesion_mask_defaults_zero(self, tmp_path: Path) -> None:
-        qc = self._run(tmp_path, tail_ratio=0.5, k2_value=0.0, with_mask=False)
-        assert qc["cbv_positive_tail_fraction"] == pytest.approx(0.0)
+        assert qc["preload_classification_source"] == "signed_k2_uncalibrated"
+        assert qc["preload_k2_classification"] == K2Adequacy.UNKNOWN.value
+        assert "not calibrated" in qc["preload_k2_reason"]

@@ -1068,6 +1068,29 @@ class TestSigmaDifferentiation:
         assert cfg_high.vp_uncertainty == pytest.approx(0.40)
         assert cfg_mod.vp_uncertainty == cfg_high.vp_uncertainty
 
+    def test_signed_k2_skips_prior_even_with_user_preload_dose(self) -> None:
+        """A dose label cannot reactivate thresholds invalid for signed K2."""
+        quality = CBVQualityAssessment(
+            confidence="high",
+            use_constraint=True,
+            reasons=[],
+        )
+        signed = {
+            "k2_signed": True,
+            "k2_median": -0.002,
+            "percent_negative_k2": 60.0,
+        }
+
+        config = determine_constraint_mode(
+            quality,
+            preload_classification="half_dose",
+            k2_metrics=signed,
+        )
+
+        assert config.mode == ConstraintMode.SKIP
+        assert config.vp_uncertainty == 0.0
+        assert "uncalibrated" in config.reason
+
     @pytest.mark.parametrize(
         "k2_metrics, expected_sigma, tier",
         [
@@ -1116,50 +1139,6 @@ class TestSigmaFromK2:
 
     def test_neither_is_partial_mid(self) -> None:
         assert _sigma_from_k2(False, False) == (0.50, "partial")
-
-
-class TestPositiveTailOverride:
-    """A5 positive-tail (BSW-blind overestimate) → widen σ / skip, overriding K2."""
-
-    _ADEQUATE_K2 = {"k2_median": 0.002, "percent_leaky_voxels": 2.0}
-
-    def test_present_overrides_adequate_to_wide(self) -> None:
-        """PRESENT positive tail forces σ=0.60 even when K2 looks adequate (0.40)."""
-        mod = CBVQualityAssessment(confidence="moderate", use_constraint=True, reasons=[])
-        k2 = dict(self._ADEQUATE_K2, cbv_positive_tail_fraction=0.70)  # > 0.60
-        cfg = determine_constraint_mode(mod, k2_metrics=k2)
-        assert cfg.mode == ConstraintMode.SOFT
-        assert cfg.vp_uncertainty == pytest.approx(0.60)
-        assert "positive-tail" in cfg.reason.lower()
-
-    def test_present_overrides_in_high_confidence_branch(self) -> None:
-        """The override fires in the high-confidence branch too (not just moderate)."""
-        high = CBVQualityAssessment(confidence="high", use_constraint=True, reasons=[])
-        k2 = dict(self._ADEQUATE_K2, cbv_positive_tail_fraction=0.70)
-        cfg = determine_constraint_mode(high, k2_metrics=k2)
-        assert cfg.vp_uncertainty == pytest.approx(0.60)
-
-    def test_severe_skips_even_at_high_confidence(self) -> None:
-        """SEVERE positive tail → SKIP regardless of DSC confidence."""
-        high = CBVQualityAssessment(confidence="high", use_constraint=True, reasons=[])
-        k2 = dict(self._ADEQUATE_K2, cbv_positive_tail_fraction=0.90)  # > 0.80
-        cfg = determine_constraint_mode(high, k2_metrics=k2)
-        assert cfg.mode == ConstraintMode.SKIP
-        assert cfg.vp_uncertainty == 0.0
-        assert "positive-tail" in cfg.reason.lower()
-
-    def test_low_confidence_with_present_tail_still_skips(self) -> None:
-        """Ordering guard: PRESENT tail must NOT promote a low-confidence SKIP to SOFT."""
-        low = CBVQualityAssessment(confidence="low", use_constraint=False, reasons=["bad"])
-        k2 = dict(self._ADEQUATE_K2, cbv_positive_tail_fraction=0.70)  # PRESENT, not SEVERE
-        cfg = determine_constraint_mode(low, k2_metrics=k2)
-        assert cfg.mode == ConstraintMode.SKIP
-
-    def test_no_tail_fraction_leaves_k2_sigma(self) -> None:
-        """Absent/zero positive-tail fraction → K2-adequacy σ unchanged."""
-        mod = CBVQualityAssessment(confidence="moderate", use_constraint=True, reasons=[])
-        cfg = determine_constraint_mode(mod, k2_metrics=self._ADEQUATE_K2)
-        assert cfg.vp_uncertainty == pytest.approx(0.40)
 
 
 class TestNAWMVpReferenceAnchor:

@@ -33,7 +33,6 @@ from pmriprep.workflows._perfusion import (
 from pmriprep.workflows.dsc._helpers import (  # noqa: F401
     ConvertXFM,
     FLIRTApplyXFM,
-    _augment_qc_positive_tail,
     _build_hemodynamic_dict,
     _compute_mean_4d,
     _compute_prebolus_mean,
@@ -487,7 +486,6 @@ def init_dsc_preload_wf(
                 "field_strength",
                 "tr",
                 "baseline_frames",
-                "lesion_mask_dsc",
             ]
         ),
         name="inputnode",
@@ -532,25 +530,7 @@ def init_dsc_preload_wf(
     preload_correct.inputs.leakage_method = leakage_method
     preload_correct.inputs.kep = kep
 
-    # Node 4b: Positive-tail (BSW-blind overestimate) QC augmentation.
-    # Separate node (not inside preload_correct) so the deconvolution — fed
-    # directly by preload_correct — is not serialized behind the tumor-mask
-    # transform (registration + segmentation) this needs.
-    positive_tail = pe.Node(
-        niu.Function(
-            input_names=[
-                "qc_dict",
-                "concentration_file",
-                "k2_map_file",
-                "lesion_mask_dsc",
-            ],
-            output_names=["qc_dict"],
-            function=_augment_qc_positive_tail,
-        ),
-        name="positive_tail",
-    )
-
-    # Node 4c: Extract preload classification from QC dict
+    # Node 4b: Extract preload classification from QC dict
     extract_preload = pe.Node(
         niu.Function(
             input_names=["qc_dict"],
@@ -570,23 +550,12 @@ def init_dsc_preload_wf(
             ("tr", "tr"),
             ("baseline_frames", "baseline_frames"),
         ]),
-        # Positive-tail QC: augment the preload QC dict downstream, off the
-        # deconvolution critical path. Consumes the raw concentration + K2 map
-        # + tumor mask.
-        (inputnode, positive_tail, [
-            ("concentration_file", "concentration_file"),
-            ("lesion_mask_dsc", "lesion_mask_dsc"),
-        ]),
-        (preload_correct, positive_tail, [
-            ("qc_dict", "qc_dict"),
-            ("k2_map_file", "k2_map_file"),
-        ]),
-        (positive_tail, extract_preload, [("qc_dict", "qc_dict")]),
+        (preload_correct, extract_preload, [("qc_dict", "qc_dict")]),
         (preload_correct, outputnode, [
             ("corrected_concentration_file", "corrected_concentration_file"),
             ("k2_map_file", "k2_map_file"),
         ]),
-        (positive_tail, outputnode, [("qc_dict", "qc_dict")]),
+        (preload_correct, outputnode, [("qc_dict", "qc_dict")]),
         (extract_preload, outputnode, [("preload_classification", "preload_classification")]),
     ])
     return workflow
@@ -2280,12 +2249,6 @@ def init_dsc_preproc_wf(
             ("te", "inputnode.te"),
             ("field_strength", "inputnode.field_strength"),
             ("tr", "inputnode.tr"),
-        ]),
-        # Tumor mask (empty when no segmentation) → positive-tail QC metric.
-        # Lesion preparation depends only on registration + tumor seg (never on
-        # preload output), so this adds no cycle.
-        (lesion_masks_wf, preload_wf, [
-            ("outputnode.tumor_lesion_mask", "inputnode.lesion_mask_dsc"),
         ]),
     ])
 

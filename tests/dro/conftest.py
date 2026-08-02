@@ -485,6 +485,8 @@ class K2DROPhantom(NamedTuple):
     """4D leaky concentration (x, y, z, time) with baseline."""
     clean: npt.NDArray[np.floating]
     """4D clean concentration (x, y, z, time) with baseline."""
+    signal: npt.NDArray[np.floating]
+    """4D raw signal corresponding to the leaky concentration."""
     aif: npt.NDArray[np.floating]
     """1D AIF (n_timepoints total including baseline)."""
     brain_mask: npt.NDArray[np.bool_]
@@ -497,13 +499,13 @@ class K2DROPhantom(NamedTuple):
 
 def generate_k2_dro_phantom(
     k2_enhancing: float = 0.1,
-    n_brain_voxels: int = 100,
+    n_brain_voxels: int = 1200,
     n_enhancing_voxels: int = 10,
     dt_sec: float = 1.5,
     n_timepoints: int = 60,
     baseline_frames: int = 10,
     aif_peak: float = 40.0,
-    noise_frac: float = 0.0,
+    noise_frac: float = 0.001,
     seed: int = 42,
 ) -> K2DROPhantom:
     """Generate a multi-voxel 4D phantom for K2 validation.
@@ -530,7 +532,9 @@ def generate_k2_dro_phantom(
     aif_peak : float
         Peak AIF delta-R2* in s⁻¹.
     noise_frac : float
-        Fraction of peak for Gaussian noise (0=noiseless).
+        Fraction of peak for Gaussian noise. The small nonzero default makes
+        the noise-relative reference-selection path identifiable; pass zero
+        when testing the algebra with an explicitly supplied reference.
     seed : int
         Random seed for reproducibility.
 
@@ -630,6 +634,7 @@ def generate_k2_dro_phantom(
     return K2DROPhantom(
         concentration=concentration,
         clean=clean,
+        signal=1000.0 * np.exp(np.clip(-0.03 * concentration, -50.0, 50.0)),
         aif=aif_full,
         brain_mask=brain_mask,
         enhancing_mask=enhancing_mask,

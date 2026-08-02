@@ -294,6 +294,7 @@ class TestK2CorrectionInChain:
 
         result = apply_k2_correction(
             concentration=conc_post,
+            signal=1000.0 * np.exp(-0.03 * conc_post),
             brain_mask=masks["brain"],
             tr=_DT,
         )

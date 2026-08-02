@@ -458,6 +458,19 @@ class TestConfidenceScore:
 class TestClassifyPreloadAdequacyFromK2:
     """K2-adequacy classifier (dsc_preload.classify_preload_adequacy_from_k2)."""
 
+    def test_signed_k2_is_unknown_until_thresholds_are_calibrated(self) -> None:
+        """Legacy clipped-K2 thresholds do not classify signed coefficients."""
+        cls, confidence, reason = classify_preload_adequacy_from_k2(
+            {
+                "k2_signed": True,
+                "k2_median": 0.002,
+                "percent_leaky_voxels": 0.1,
+            }
+        )
+        assert cls is K2Adequacy.UNKNOWN
+        assert confidence == 0.0
+        assert "not calibrated" in reason
+
     def test_cohort_center_is_adequate(self) -> None:
         """k2_median=0.002, leaky=0.1% (institutional cohort center) → ADEQUATE."""
         cls, conf, reason = classify_preload_adequacy_from_k2(

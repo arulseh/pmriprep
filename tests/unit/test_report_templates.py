@@ -914,6 +914,22 @@ def test_preload_user_specified_keeps_preload_status(env):
     _assert_in_order(rendered, "Preload Status", "K2 Adequacy", "User-Specified Dose")
 
 
+def test_signed_k2_prior_warning_survives_user_preload_label(env):
+    """A dose label does not hide that signed K2 cannot qualify the vp prior."""
+    template = env.get_template("sections/section_dsc.html")
+    dsc_ctx = _dsc_ctx_with_preload(
+        preload_classification="half_dose",
+        preload_classification_source="user_specified",
+        preload_k2_classification="unknown",
+        k2_signed=True,
+    )
+
+    rendered = template.render(dsc=dsc_ctx)
+
+    assert "Signed K2 adequacy thresholds are not calibrated" in rendered
+    assert "DCE vp prior skipped" in rendered
+
+
 def test_preload_user_specified_dose_shows_na_when_absent(env):
     """The User-Specified Dose box always renders, reading N/A on auto-detect runs."""
     template = env.get_template("sections/section_dsc.html")
@@ -937,21 +953,6 @@ def test_preload_user_specified_dose_shows_value(env):
     rendered = template.render(dsc=dsc_ctx)
     assert "User-Specified Dose" in rendered
     assert '<div class="metric-value">0.00</div>' in rendered
-
-
-def test_positive_tail_leakage_warning_renders(env):
-    """cbv_positive_tail_fraction > 0.6 → leakage-section over-estimate warning."""
-    template = env.get_template("sections/section_dsc.html")
-    dsc_ctx = _dsc_ctx_with_preload(
-        preload_classification="adequate",
-        preload_classification_source="k2_primary",
-        cbv_positive_tail_fraction=0.72,
-    )
-    rendered = template.render(dsc=dsc_ctx)
-    assert "over-estimated" in rendered
-    assert "72%" in rendered
-    # Leakage section must not leak vp/constraint language into this warning.
-    assert "vp anchor" not in rendered.split("Preload &amp; Leakage")[-1].split("</div>")[0]
 
 
 def test_dsc_preprocessing_and_aif_cards_follow_common_order(env):
@@ -1052,15 +1053,3 @@ def test_tumor_and_nawm_cards_are_ordered_and_unambiguous(env):
         "Minimum Size Met",
     )
     assert "Atlas Used" not in rendered
-
-
-def test_positive_tail_warning_silent_when_low(env):
-    """Below threshold → no over-estimate warning."""
-    template = env.get_template("sections/section_dsc.html")
-    dsc_ctx = _dsc_ctx_with_preload(
-        preload_classification="adequate",
-        preload_classification_source="k2_primary",
-        cbv_positive_tail_fraction=0.30,
-    )
-    rendered = template.render(dsc=dsc_ctx)
-    assert "over-estimated" not in rendered

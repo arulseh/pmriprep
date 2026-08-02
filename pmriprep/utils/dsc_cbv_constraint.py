@@ -39,8 +39,6 @@ from pmriprep.utils.dsc_constants import (
     K2_SIGMA_SUPPRESSED,
     LEAKY_SIGMA_HIGH,
     LEAKY_SIGMA_LOW,
-    POSITIVE_TAIL_PRESENT_FRAC,
-    POSITIVE_TAIL_SEVERE_FRAC,
     QC_MEAN_CNR_MINIMUM,
 )
 
@@ -329,7 +327,7 @@ def _classify_preload_k2(
     tuple[bool, bool]
         Tuple of (k2_suppressed, high_correction).
     """
-    if not k2_metrics:
+    if not k2_metrics or bool(k2_metrics.get("k2_signed", False)):
         return False, False
 
     k2_med = float(k2_metrics.get("k2_median", 0.0))
@@ -646,7 +644,13 @@ def assess_dsc_cbv_quality(
     classification = _classify_preload_k2(k2_metrics)
     result.preload_k2_classification = classification
     _k2_suppressed, high_correction = classification
-    if high_correction:
+    if bool((k2_metrics or {}).get("k2_signed", False)):
+        result.reasons.append(
+            "Signed K2 adequacy thresholds are not calibrated; "
+            "DSC-informed vp prior is unavailable"
+        )
+        confidence = "low"
+    elif high_correction:
         k2_med = float((k2_metrics or {}).get("k2_median", 0.0))
         pct_leaky = float((k2_metrics or {}).get("percent_leaky_voxels", 0.0))
         result.reasons.append(
@@ -763,18 +767,14 @@ def determine_constraint_mode(
     - **MODE (SOFT vs SKIP)** is governed by DSC *quality/noise*: the
       ``confidence`` tier from :func:`assess_dsc_cbv_quality` (AIF tier, CNR,
       AIF peak/baseline, gamma-peak ratio) plus the hard SKIP triggers
-      (synthetic AIF, ``UNKNOWN`` K2, user ``skip``, and a *severe* BSW-blind
-      positive-tail overestimate). low confidence → SKIP; high/moderate → SOFT.
+      (synthetic AIF, ``UNKNOWN`` K2, and user ``skip``). Low confidence
+      produces SKIP; high/moderate produces SOFT.
     - **σ (prior width, SOFT only)** is governed by K2 leakage-correction
       *adequacy* (a systematic bias on the CBV anchor): adequate → 0.40,
-      partial → 0.50, inadequate → 0.60 (see :func:`_sigma_from_k2`). A
-      *present* positive-tail overestimate overrides the K2 label to 0.60,
-      because such a voxel has K2 pinned at 0 (looks "suppressed") yet its CBV
-      is over-estimated, so the anchor must be loosened, not tightened.
+      partial → 0.50, inadequate → 0.60 (see :func:`_sigma_from_k2`).
 
     Decision order: synthetic AIF → SKIP; UNKNOWN K2 → SKIP; user override;
-    severe positive-tail → SKIP; then confidence → {SOFT with adequacy-derived
-    σ, or SKIP}.
+    then confidence → {SOFT with adequacy-derived σ, or SKIP}.
 
     Parameters
     ----------
@@ -787,8 +787,8 @@ def determine_constraint_mode(
         DSC preload classification string from QC
         (e.g., 'half_dose', 'significant', 'severe', 'none').
     k2_metrics : dict[str, Any], optional
-        K2 leakage correction metrics dict from dsc_preload,
-        containing 'k2_median', 'percent_leaky_voxels', etc.
+        K2 leakage-correction metrics from ``dsc_preload``. Signed metrics
+        are reported but are not assigned an adequacy tier.
 
     Returns
     -------
@@ -826,14 +826,17 @@ def determine_constraint_mode(
 
     if (
         _is_auto(user_override)
-        and preload_classification == _K2Adequacy.UNKNOWN.value
+        and (
+            preload_classification == _K2Adequacy.UNKNOWN.value
+            or bool((k2_metrics or {}).get("k2_signed", False))
+        )
     ):
         return ConstraintConfig(
             mode=ConstraintMode.SKIP,
             vp_uncertainty=0.0,
             reason=(
-                "K2-primary preload classification unavailable "
-                "(UNKNOWN) -- constraint skipped"
+                "Signed K2 adequacy is unavailable or uncalibrated -- "
+                "constraint skipped"
             ),
         )
 
@@ -862,26 +865,6 @@ def determine_constraint_mode(
             ),
         )
 
-    # Positive-tail (BSW-blind overestimate) fraction, plumbed from the DSC
-    # preload stage via k2_metrics. A T2*-dominant positive ΔR2* tail makes K2
-    # pin at 0 (looks "suppressed") while the full-integral CBV over-estimates.
-    positive_tail_fraction = float(
-        (k2_metrics or {}).get("cbv_positive_tail_fraction", 0.0)
-    )
-
-    # Severe positive-tail → SKIP, even at high DSC quality: widening the prior
-    # cannot recenter a large systematic overestimate (only removing/skipping
-    # the anchor moves vp off the over-estimated value).
-    if positive_tail_fraction > POSITIVE_TAIL_SEVERE_FRAC:
-        return ConstraintConfig(
-            mode=ConstraintMode.SKIP,
-            vp_uncertainty=0.0,
-            reason=(
-                "BSW-blind positive-tail CBV overestimate "
-                f"(fraction={positive_tail_fraction:.2f}) -- constraint skipped"
-            ),
-        )
-
     confidence = dsc_quality.confidence
 
     if confidence in ("high", "moderate"):
@@ -897,14 +880,7 @@ def determine_constraint_mode(
         else:
             k2_suppressed, high_correction = _classify_preload_k2(k2_metrics)
 
-        if positive_tail_fraction > POSITIVE_TAIL_PRESENT_FRAC:
-            # Override the K2 label: a present positive tail makes K2 look
-            # suppressed (→ tightest σ) on a CBV that is over-estimated, so
-            # loosen the anchor instead.
-            uncertainty = SIGMA_SOFT_HIGH_K2
-            adequacy = "positive-tail overestimate (K2-blind)"
-        else:
-            uncertainty, adequacy = _sigma_from_k2(k2_suppressed, high_correction)
+        uncertainty, adequacy = _sigma_from_k2(k2_suppressed, high_correction)
 
         return ConstraintConfig(
             mode=ConstraintMode.SOFT,

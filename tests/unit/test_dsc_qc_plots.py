@@ -7,6 +7,7 @@ import pytest
 
 from pmriprep.utils.dsc_qc_plots import (
     _select_dsc_qc_voxel,
+    generate_dsc_leakage_qc_plot,
     generate_dsc_preprocessing_qc_plot,
 )
 
@@ -128,3 +129,43 @@ def test_preprocessing_qc_uses_baseline_tsnr_and_signal_drop_cnr(tmp_path) -> No
     assert stats["mean_tsnr"] == pytest.approx(50.0)
     assert stats["mean_cnr"] == pytest.approx(12.5)
     assert stats["fraction_cnr_gt_4"] == 1.0
+
+
+def test_leakage_qc_accepts_signed_k2(tmp_path) -> None:
+    """The leakage montage supports finite coefficients on both sides of zero."""
+    shape = (5, 5, 5)
+    k2 = np.linspace(-0.1, 0.1, np.prod(shape)).reshape(shape)
+    auc_raw = np.ones(shape)
+    auc_diff = k2 * 2.0
+
+    output = generate_dsc_leakage_qc_plot(
+        k2_map=k2,
+        auc_raw=auc_raw,
+        auc_corr=auc_raw + auc_diff,
+        auc_diff=auc_diff,
+        brain_mask=np.ones(shape, dtype=bool),
+        output_path=str(tmp_path / "signed_k2_qc.png"),
+    )
+
+    assert output == str(tmp_path / "signed_k2_qc.png")
+    assert (tmp_path / "signed_k2_qc.png").is_file()
+
+
+def test_leakage_qc_direct_api_handles_all_nan_k2(tmp_path) -> None:
+    """The plotting utility remains total when called without its workflow guard."""
+    shape = (5, 5, 5)
+    timepoints = 12
+
+    output = generate_dsc_leakage_qc_plot(
+        k2_map=np.full(shape, np.nan),
+        auc_raw=np.ones(shape),
+        auc_corr=np.ones(shape),
+        auc_diff=np.zeros(shape),
+        brain_mask=np.ones(shape, dtype=bool),
+        conc_raw_4d=np.zeros(shape + (timepoints,)),
+        conc_corr_4d=np.zeros(shape + (timepoints,)),
+        output_path=str(tmp_path / "undefined_k2_qc.png"),
+    )
+
+    assert output == str(tmp_path / "undefined_k2_qc.png")
+    assert (tmp_path / "undefined_k2_qc.png").is_file()

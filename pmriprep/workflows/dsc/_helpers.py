@@ -438,7 +438,8 @@ def _detect_and_correct_preload(
         residual ΔR2* thresholds (different physical quantities, same
         class names). Disagreement is logged to QC when both exist.
     signal_file : str, optional
-        Optional path to raw signal NIfTI for preload detection.
+        Path to motion-corrected raw signal NIfTI. Required by ``bsw`` for
+        Conventional BSW reference selection and also used for preload detection.
     baseline_frames : int, optional
         Number of pre-bolus baseline frames.
     leakage_method : str, optional
@@ -538,7 +539,6 @@ def _detect_and_correct_preload(
         qc_metrics["preload_residual_equivalent_fraction"] = residual_equivalent
 
     # --- K2 correction (preload-agnostic, always runs) ------------------
-    qc_metrics["preload_correction_applied"] = True
     if leakage_method == "bidirectional":
         correction_result = apply_k2_correction_bidirectional(
             concentration=conc_data,
@@ -548,8 +548,14 @@ def _detect_and_correct_preload(
             baseline_frames=baseline_frames,
         )
     else:
+        if signal_data is None:
+            raise RuntimeError(
+                "Raw DSC signal is required for BSW reference "
+                "selection"
+            )
         correction_result = apply_k2_correction(
             concentration=conc_data,
+            signal=signal_data,
             brain_mask=brain_mask,
             tr=tr,
             baseline_frames=baseline_frames,
@@ -557,9 +563,11 @@ def _detect_and_correct_preload(
 
     corrected_conc = correction_result.concentration_corrected
     k2_map = correction_result.k2_map
+    qc_metrics["preload_correction_applied"] = bool(
+        correction_result.correction_applied
+    )
 
-    # Update QC metrics with K2 correction stats (k2_median,
-    # percent_leaky_voxels, etc.). Required for the K2-primary classifier.
+    # Update QC metrics with signed K2 distribution and reference accounting.
     if correction_result.qc_metrics:
         qc_metrics.update(correction_result.qc_metrics)
 
@@ -574,7 +582,13 @@ def _detect_and_correct_preload(
         qc_metrics["preload_k2_confidence"] = k2_confidence
         qc_metrics["preload_k2_reason"] = k2_reason
         if k2_class == K2Adequacy.UNKNOWN:
-            qc_metrics["preload_classification_source"] = "k2_unavailable"
+            if qc_metrics.get("k2_reference_available") is False:
+                source = "k2_unavailable"
+            elif qc_metrics.get("k2_signed") is True:
+                source = "signed_k2_uncalibrated"
+            else:
+                source = "k2_unavailable"
+            qc_metrics["preload_classification_source"] = source
             logging.getLogger("pmriprep.workflows").warning(
                 "K2-primary preload classification unavailable (%s); "
                 "downstream DCE constraint will SKIP.",
@@ -618,79 +632,6 @@ def _detect_and_correct_preload(
         nib.save(k2_img, k2_map_file)  # type: ignore[attr-defined]
 
     return corrected_file, k2_map_file, qc_metrics
-
-
-def _augment_qc_positive_tail(
-    qc_dict: dict[str, object] | None,
-    concentration_file: str,
-    k2_map_file: str,
-    lesion_mask_dsc: str | None = None,
-) -> dict[str, object]:
-    """Add the positive-tail (BSW-blind overestimate) fraction to the preload QC.
-
-    A T2*-dominant persistent positive ΔR2* tail makes K2 pin at 0 (the
-    non-negative BSW gate) while the full-integral CBV over-estimates. This
-    flags the tumor-voxel fraction where the late-window tail persists AND K2
-    is zero. Runs as a separate node (after preload correction AND the tumor-
-    mask transform) so the expensive deconvolution — fed directly by the
-    correction node — is not serialized behind tumor segmentation.
-
-    Parameters
-    ----------
-    qc_dict : dict
-        Preload/K2 QC dict from ``_detect_and_correct_preload``.
-    concentration_file : str
-        Path to the (uncorrected) 4D concentration NIfTI — the tail is measured
-        on the observed curve, before add-back.
-    k2_map_file : str
-        Path to the K2 map NIfTI (gated to 0.0 where BSW applied no correction).
-    lesion_mask_dsc : str, optional
-        Whole-tumor mask in DSC space (empty/None → fraction 0.0).
-
-    Returns
-    -------
-    dict
-        ``qc_dict`` with ``cbv_positive_tail_fraction`` added.
-    """
-    import logging
-    import numpy as np
-    import nibabel as nib  # type: ignore[import-untyped]
-
-    from pmriprep.utils.dsc_constants import TAIL_LATE_FRAC, TAIL_RATIO_TAU
-
-    qc_dict = dict(qc_dict) if qc_dict else {}
-    positive_tail_fraction = 0.0
-    if lesion_mask_dsc and k2_map_file:
-        try:
-            conc = nib.load(concentration_file).get_fdata()  # type: ignore[attr-defined]
-            k2_map = nib.load(k2_map_file).get_fdata()  # type: ignore[attr-defined]
-            tumor = nib.load(lesion_mask_dsc).get_fdata() > 0.5  # type: ignore[attr-defined]
-            if (
-                tumor.shape[:3] == conc.shape[:3]
-                and tumor.shape[:3] == k2_map.shape[:3]
-                and int(tumor.sum()) >= 10
-            ):
-                t_curves = conc[tumor]  # (nvox, T)
-                k2_vox = k2_map[tumor]
-                n_late = max(1, int(round(TAIL_LATE_FRAC * t_curves.shape[-1])))
-                peak = np.nanmax(t_curves, axis=-1)
-                late = np.nanmean(t_curves[:, -n_late:], axis=-1)
-                with np.errstate(divide="ignore", invalid="ignore"):
-                    ratio = np.where(peak > 1e-6, late / peak, 0.0)
-                # k2_map is gated to exactly 0.0 by apply_k2_correction; a zero
-                # here is precisely a BSW-uncorrected (blind) voxel.
-                positive_tail_fraction = float(
-                    np.mean((ratio > TAIL_RATIO_TAU) & (k2_vox == 0.0))
-                )
-        except Exception as exc:  # noqa: BLE001 — QC metric must never break the node
-            logging.getLogger("pmriprep.workflows").warning(
-                "Positive-tail fraction computation failed (%s); defaulting to 0.0.",
-                exc,
-            )
-            positive_tail_fraction = 0.0
-
-    qc_dict["cbv_positive_tail_fraction"] = positive_tail_fraction
-    return qc_dict
 
 
 def _compute_prebolus_mean(moco_file: str, baseline_frames: int) -> str:
@@ -1428,8 +1369,11 @@ def _generate_dsc_leakage_qc(
     # Skip if no K2 map (guard against "." or directory paths from unset outputs)
     if not k2_map_file or not _P(k2_map_file).is_file():
         return None
+    if preload_qc and preload_qc.get("preload_correction_applied") is False:
+        return None
 
     import nibabel as nib
+    import numpy as np
     from pmriprep.utils.dsc_qc_plots import generate_dsc_leakage_qc_plot
 
     if not auc_raw_file or not auc_corr_file or not auc_diff_file:
@@ -1439,6 +1383,8 @@ def _generate_dsc_leakage_qc(
     auc_corr_data = nib.load(auc_corr_file).get_fdata()  # type: ignore[attr-defined]
     auc_diff_data = nib.load(auc_diff_file).get_fdata()  # type: ignore[attr-defined]
     mask_data = nib.load(brain_mask_file).get_fdata()  # type: ignore[attr-defined]
+    if not np.any(np.isfinite(k2_data) & (mask_data > 0.5)):
+        return None
 
     conc_raw_4d = None
     if concentration_file and _P(concentration_file).is_file():

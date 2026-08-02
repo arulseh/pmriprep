@@ -1298,6 +1298,26 @@ def test_dsc_absent_qc_plot_producers_use_none() -> None:
     writer.inputs.dsc_fit_qc_plot = fit
 
 
+def test_dsc_leakage_qc_skips_all_nan_k2(tmp_path: Path) -> None:
+    """Unavailable signed K2 must not create a meaningless montage."""
+    from pmriprep.workflows.dsc._helpers import _generate_dsc_leakage_qc
+
+    shape = (4, 4, 4)
+    paths: list[str] = []
+    for name, data in (
+        ("k2", np.full(shape, np.nan)),
+        ("auc_raw", np.ones(shape)),
+        ("auc_corr", np.ones(shape)),
+        ("auc_diff", np.zeros(shape)),
+        ("mask", np.ones(shape)),
+    ):
+        path = tmp_path / f"{name}.nii.gz"
+        nib.save(nib.Nifti1Image(data, np.eye(4)), path)
+        paths.append(str(path))
+
+    assert _generate_dsc_leakage_qc(*paths) is None
+
+
 def test_dsc_fit_qc_node_accepts_undefined_optional_inputs(tmp_path: Path) -> None:
     """Nipype may omit unavailable fit-QC inputs without failing the workflow."""
     import nipype.interfaces.utility as niu

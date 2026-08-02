@@ -14,11 +14,13 @@ from scipy.integrate import cumulative_trapezoid
 
 from pmriprep.utils.dsc_preload import (
     K2CorrectionResult,
+    _compute_ees_concentration,
+    _compute_k2_qc_metrics,
+    _compute_bsw_reference,
     apply_k2_correction,
     apply_k2_correction_bidirectional,
-    estimate_k2_per_voxel,
     estimate_k2_bidirectional,
-    _compute_ees_concentration,
+    estimate_k2_per_voxel,
 )
 from pmriprep.utils.dsc_constants import KEP_DSC_DEFAULT
 
@@ -37,6 +39,133 @@ from .conftest import (
 
 class TestK2EstimationRecovery:
     """Test K2 estimation accuracy against known ground truth."""
+
+    def test_reference_selection_excludes_late_signal_enhancement(self) -> None:
+        """The conventional BSW screen excludes the negative Delta-R2* tail."""
+        n_timepoints = 24
+        baseline = np.array([-0.1, 0.1, -0.1, 0.1, 0.0])
+        reference_curve = np.zeros(n_timepoints, dtype=np.float64)
+        reference_curve[: baseline.size] = baseline
+        reference_curve[6:10] = [1.0, 3.0, 2.0, 0.5]
+        curves = np.repeat(reference_curve[None, :], 300, axis=0)
+        curves[-2, -10:] = 1.0
+        curves[-1, -10:] = -1.0
+
+        concentration = curves.reshape(15, 20, 1, n_timepoints)
+        signal = np.exp(-0.03 * concentration)
+        observed = _compute_bsw_reference(
+            concentration,
+            signal,
+            np.ones((15, 20, 1), dtype=bool),
+            baseline_frames=baseline.size,
+        )
+
+        assert observed is not None
+        expected = (298.0 * reference_curve + curves[-2]) / 299.0
+        np.testing.assert_allclose(observed, expected)
+
+    def test_reference_membership_is_decided_in_raw_signal_domain(self) -> None:
+        """Raw signal, rather than Delta-R2*, determines reference support."""
+        n_timepoints = 24
+        reference_curve = np.zeros(n_timepoints, dtype=np.float64)
+        reference_curve[6:10] = [1.0, 3.0, 2.0, 0.5]
+        curves = np.repeat(reference_curve[None, :], 300, axis=0)
+        curves[-2, -10:] = -2.0
+        curves[-1, -10:] = 2.0
+
+        signal = np.full_like(curves, 1000.0)
+        signal[:, :5] += np.array([-2.0, 2.0, -2.0, 2.0, 0.0])
+        signal[-2, -10:] = 1005.0
+
+        observed = _compute_bsw_reference(
+            curves.reshape(15, 20, 1, n_timepoints),
+            signal.reshape(15, 20, 1, n_timepoints),
+            np.ones((15, 20, 1), dtype=bool),
+            baseline_frames=5,
+        )
+
+        assert observed is not None
+        expected = (298.0 * reference_curve + curves[-1]) / 299.0
+        np.testing.assert_allclose(observed, expected)
+
+    def test_reference_excludes_zero_signal_voxels(self) -> None:
+        """Physically invalid zero-signal voxels cannot dilute the reference."""
+        n_timepoints = 24
+        reference_curve = np.zeros(n_timepoints, dtype=np.float64)
+        reference_curve[6:10] = [1.0, 3.0, 2.0, 0.5]
+        curves = np.repeat(reference_curve[None, :], 300, axis=0)
+        curves[-1] = 0.0
+        signal = 1000.0 * np.exp(-0.03 * curves)
+        signal[-1] = 0.0
+
+        observed = _compute_bsw_reference(
+            curves.reshape(15, 20, 1, n_timepoints),
+            signal.reshape(15, 20, 1, n_timepoints),
+            np.ones((15, 20, 1), dtype=bool),
+            baseline_frames=5,
+        )
+
+        assert observed is not None
+        np.testing.assert_allclose(observed, reference_curve)
+
+    def test_signed_k2_is_not_rectified(self) -> None:
+        """The fitted full-curve coefficient retains either valid sign."""
+        tr = 1.0
+        reference = np.zeros(30, dtype=np.float64)
+        reference[5:12] = [0.5, 1.5, 3.0, 2.0, 1.0, 0.5, 0.2]
+        integral = cumulative_trapezoid(reference, dx=tr, initial=0.0)
+        curves = np.repeat(reference[None, :], 20, axis=0)
+        curves[0] = 1.2 * reference + 0.1 * integral
+        curves[1] = 1.2 * reference - 0.1 * integral
+
+        observed = estimate_k2_per_voxel(
+            curves.reshape(4, 5, 1, 30),
+            brain_mask=np.ones((4, 5, 1), dtype=bool),
+            tr=tr,
+            reference_curve=reference,
+        ).reshape(-1)
+
+        assert observed[0] == pytest.approx(-0.1)
+        assert observed[1] == pytest.approx(0.1)
+
+    def test_canonical_bsw_does_not_censor_large_finite_k2(self) -> None:
+        """Canonical BSW retains finite coefficients without a magnitude cutoff."""
+        tr = 1.0
+        reference = np.zeros(30, dtype=np.float64)
+        reference[5:12] = [0.5, 1.5, 3.0, 2.0, 1.0, 0.5, 0.2]
+        integral = cumulative_trapezoid(reference, dx=tr, initial=0.0)
+        curves = np.repeat(reference[None, :], 20, axis=0)
+        expected_k2 = 0.22
+        curves[0] = reference - expected_k2 * integral
+
+        observed = estimate_k2_per_voxel(
+            curves.reshape(4, 5, 1, 30),
+            brain_mask=np.ones((4, 5, 1), dtype=bool),
+            tr=tr,
+            reference_curve=reference,
+        ).reshape(-1)
+
+        assert observed[0] == pytest.approx(expected_k2)
+        assert np.all(np.isfinite(observed[1:]))
+
+    def test_late_signal_enhancement_failure_is_identified(self) -> None:
+        """A deterministic late signal-enhancement tail fails explicitly."""
+        curves = np.zeros((300, 1, 1, 25), dtype=np.float64)
+        curves[..., 5:15] = 1.0
+        curves[..., 15:] = -0.1
+        qc: dict[str, object] = {}
+
+        signal = np.exp(-0.03 * curves)
+        reference = _compute_bsw_reference(
+            curves,
+            signal,
+            np.ones(curves.shape[:3], dtype=bool),
+            baseline_frames=5,
+            reference_qc=qc,
+        )
+
+        assert reference is None
+        assert qc["k2_reference_failure_reason"] == "insufficient_selected_support"
 
     @pytest.mark.parametrize(
         "k2_true",
@@ -58,6 +187,7 @@ class TestK2EstimationRecovery:
 
         k2_map = estimate_k2_per_voxel(
             concentration=phantom.concentration,
+            signal=phantom.signal,
             brain_mask=phantom.brain_mask,
             tr=phantom.dt,
         )
@@ -100,6 +230,7 @@ class TestK2CorrectionEffectiveness:
 
         result = apply_k2_correction(
             concentration=phantom.concentration,
+            signal=phantom.signal,
             brain_mask=phantom.brain_mask,
             tr=phantom.dt,
         )
@@ -125,12 +256,24 @@ class TestK2CorrectionEffectiveness:
 class TestK2EdgeCases:
     """Edge cases for K2 estimation and correction."""
 
+    def test_bsw_requires_raw_signal_without_explicit_reference(self) -> None:
+        """The public BSW path must not substitute a concentration selector."""
+        phantom = generate_k2_dro_phantom(k2_enhancing=0.1)
+
+        with pytest.raises(ValueError, match="Raw signal is required"):
+            apply_k2_correction(
+                concentration=phantom.concentration,
+                brain_mask=phantom.brain_mask,
+                tr=phantom.dt,
+            )
+
     def test_k2_zero_everywhere(self) -> None:
         """K2=0: corrected should approximately equal input."""
         phantom = generate_k2_dro_phantom(k2_enhancing=0.0)
 
         result = apply_k2_correction(
             concentration=phantom.concentration,
+            signal=phantom.signal,
             brain_mask=phantom.brain_mask,
             tr=phantom.dt,
         )
@@ -152,6 +295,7 @@ class TestK2EdgeCases:
 
         result = apply_k2_correction(
             concentration=phantom.concentration,
+            signal=phantom.signal,
             brain_mask=phantom.brain_mask,
             tr=phantom.dt,
         )
@@ -174,12 +318,12 @@ class TestK2EdgeCases:
         # Should not raise
         k2_map = estimate_k2_per_voxel(
             concentration=phantom.concentration,
+            signal=phantom.signal,
             brain_mask=phantom.brain_mask,
             tr=phantom.dt,
         )
 
-        # K2 may be zero or small — just check finite
-        assert np.all(np.isfinite(k2_map)), "K2 map has NaN/Inf"
+        assert np.all(np.isnan(k2_map)), "Unavailable short-series K2 should be NaN"
 
     def test_k2_correction_result_fields(self) -> None:
         """K2CorrectionResult should have all expected fields."""
@@ -187,6 +331,7 @@ class TestK2EdgeCases:
 
         result = apply_k2_correction(
             concentration=phantom.concentration,
+            signal=phantom.signal,
             brain_mask=phantom.brain_mask,
             tr=phantom.dt,
         )
@@ -197,6 +342,13 @@ class TestK2EdgeCases:
         assert result.auc_tissue.shape == phantom.concentration.shape[:3]
         assert result.correction_applied is True
         assert result.qc_metrics is not None
+        assert result.qc_metrics["k2_signed"] is True
+        assert result.qc_metrics["k2_reference_available"] is True
+        assert result.qc_metrics["k2_reference_selection"] == (
+            "raw_signal_final10_mean_1_baseline_sample_sd"
+        )
+        assert result.qc_metrics["k2_reference_selection_domain"] == "raw_signal"
+        assert 0.0 < result.qc_metrics["k2_reference_selected_fraction"] <= 1.0
 
     def test_precomputed_k2_map(self) -> None:
         """Providing a pre-computed K2 map should bypass estimation."""
@@ -209,6 +361,7 @@ class TestK2EdgeCases:
 
         result = apply_k2_correction(
             concentration=phantom.concentration,
+            signal=phantom.signal,
             brain_mask=phantom.brain_mask,
             tr=phantom.dt,
             k2_map=k2_precomputed,
@@ -242,18 +395,17 @@ class TestK2EdgeCases:
 
         k2_map = estimate_k2_per_voxel(
             concentration=phantom.concentration,
+            signal=phantom.signal,
             brain_mask=sub_mask,
             tr=phantom.dt,
         )
 
-        # Voxels outside mask should be zero
+        # Voxels outside the fitted support are undefined.
         outside_mask = ~sub_mask
-        assert np.all(k2_map[outside_mask] == 0.0), (
-            "Voxels outside brain mask should have K2=0"
-        )
+        assert np.all(np.isnan(k2_map[outside_mask]))
 
     def test_insufficient_brain_voxels_skips_correction(self) -> None:
-        """Tiny mask (<10 voxels) should skip correction gracefully."""
+        """A mask below the validated support floor skips correction gracefully."""
         phantom = generate_k2_dro_phantom(k2_enhancing=0.1)
 
         # Create tiny mask with only 3 voxels
@@ -264,14 +416,19 @@ class TestK2EdgeCases:
 
         result = apply_k2_correction(
             concentration=phantom.concentration,
+            signal=phantom.signal,
             brain_mask=tiny_mask,
             tr=phantom.dt,
         )
 
         assert result.correction_applied is False
-        np.testing.assert_array_equal(
-            result.concentration_corrected, phantom.concentration,
+        assert result.qc_metrics is not None
+        assert result.qc_metrics["k2_signed"] is True
+        assert result.qc_metrics["k2_reference_available"] is False
+        expected = phantom.concentration - np.mean(
+            phantom.concentration[..., :5], axis=-1, keepdims=True
         )
+        np.testing.assert_array_equal(result.concentration_corrected, expected)
 
 
 # =============================================================================
@@ -387,6 +544,7 @@ class TestBidirectionalK2Correction:
 
         result = apply_k2_correction(
             concentration=phantom.concentration,
+            signal=phantom.signal,
             brain_mask=phantom.brain_mask,
             tr=phantom.dt,
         )
@@ -435,14 +593,11 @@ class TestBidirectionalK2Correction:
 class TestK2RecoveryNeutral:
     """K2 recovery on independent (non-inverse-crime) tissue.
 
-    Distinct from the round-trip tests above: the brain and tumor curves are
-    built by the dt/20 fine-grid forward (fine_grid_forward), and the leakage is
-    driven by the CLEAN mean reference, while the estimator computes its own mean
-    reference from the full brain mask -- contaminated by the enhancing voxels.
-    So the estimator recovers K2 from data whose reference it does not know
-    exactly. Guards against a broken K2 regression (wrong sign, scale, slice or
-    conditioning); tolerance is the mean-reference-contamination + conditioning
-    floor (measured within ~20%).
+    The brain and tumor curves are built by the dt/20 fine-grid forward, while
+    the fitted instantaneous term remains a single scaled reference. The known
+    clean reference isolates regression sign and scale while retaining mismatch
+    between the tissue forward model and the fitted instantaneous term. The
+    absolute tolerance covers that model-mismatch floor.
 
     This deliberately does NOT probe the rectangular->trapezoidal cumulative
     switch: the BSW K2 estimate is provably quadrature-invariant. The rect-trap
@@ -503,9 +658,41 @@ class TestK2RecoveryNeutral:
             enh_mask[idx % nx, idx // nx, 0] = True
 
         k2_map = estimate_k2_per_voxel(
-            concentration=conc, brain_mask=brain_mask, tr=dt
+            concentration=conc,
+            brain_mask=brain_mask,
+            tr=dt,
+            baseline_frames=n_bl,
+            reference_curve=c_bar_clean,
         )
         k2_enh = float(np.median(k2_map[enh_mask]))
-        assert k2_enh == pytest.approx(k2_true, rel=0.20), (
-            f"recovered K2={k2_enh:.4f} outside 20% of true {k2_true}"
+
+        # A matched zero-leak control isolates the injected leakage coefficient
+        # from the BSW scaled-reference model's tissue-shape mismatch.
+        conc_control = conc.copy()
+        conc_control[enh_mask] = tumor_clean
+        k2_control_map = estimate_k2_per_voxel(
+            concentration=conc_control,
+            brain_mask=brain_mask,
+            tr=dt,
+            baseline_frames=n_bl,
+            reference_curve=c_bar_clean,
         )
+        k2_control = float(np.median(k2_control_map[enh_mask]))
+        recovered_increment = k2_enh - k2_control
+        assert recovered_increment == pytest.approx(k2_true, abs=1e-10)
+
+
+class TestK2QCMetrics:
+    """Signed K2 distribution summaries use a common finite support."""
+
+    def test_unmasked_qc_retains_signed_distribution(self) -> None:
+        """QC without a mask must not censor negative fitted coefficients."""
+        k2_map = np.array([[[-0.03], [-0.01]], [[0.01], [0.03]]])
+        auc = np.ones_like(k2_map)
+
+        metrics = _compute_k2_qc_metrics(k2_map, None, auc)
+
+        assert metrics["n_brain_voxels"] == 4
+        assert metrics["k2_min"] == pytest.approx(-0.03)
+        assert metrics["k2_p05"] < 0.0
+        assert metrics["percent_negative_k2"] == pytest.approx(50.0)

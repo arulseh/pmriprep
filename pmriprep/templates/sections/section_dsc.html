@@ -349,16 +349,22 @@
                 <div class="metric-value">{{ "%.4f"|format(dsc.qc_metrics.preload.k2_median) }} s<sup>-1</sup></div>
             </div>
             {% endif %}
-            {% if dsc.qc_metrics.preload.percent_leaky_voxels is defined %}
+            {% if dsc.qc_metrics.preload.percent_negative_k2 is defined %}
             <div class="metric">
-                <div class="metric-label">Leaky Voxels</div>
-                <div class="metric-value {{ dsc.display_status.leaky_voxels }}">{{ "%.1f"|format(dsc.qc_metrics.preload.percent_leaky_voxels) }}%</div>
+                <div class="metric-label">Negative K2</div>
+                <div class="metric-value">{{ "%.1f"|format(dsc.qc_metrics.preload.percent_negative_k2) }}%</div>
             </div>
             {% endif %}
-            {% if dsc.qc_metrics.preload.percent_severe_leakage is defined %}
+            {% if dsc.qc_metrics.preload.percent_k2_undefined is defined %}
             <div class="metric">
-                <div class="metric-label">Severe Leakage</div>
-                <div class="metric-value">{{ "%.1f"|format(dsc.qc_metrics.preload.percent_severe_leakage) }}%</div>
+                <div class="metric-label">Undefined K2</div>
+                <div class="metric-value">{{ "%.1f"|format(dsc.qc_metrics.preload.percent_k2_undefined) }}%</div>
+            </div>
+            {% endif %}
+            {% if dsc.qc_metrics.preload.k2_reference_selected_fraction is defined %}
+            <div class="metric">
+                <div class="metric-label">K2 Reference Support</div>
+                <div class="metric-value">{{ "%.1f"|format(100 * dsc.qc_metrics.preload.k2_reference_selected_fraction) }}%</div>
             </div>
             {% endif %}
             {% if dsc.qc_metrics.preload.preload_baseline_delta_r2_advisory is defined and dsc.qc_metrics.preload.preload_baseline_delta_r2_advisory is not none %}
@@ -383,10 +389,11 @@
             {% endif %}
         </div>
         {% if dsc.qc_metrics.preload.preload_classification_source == 'k2_unavailable' %}
-        <p class="preload-note warning">&#9888; K2 metrics empty &mdash; DCE vp constraint skipped.</p>
+        <p class="preload-note warning">&#9888; K2 reference unavailable &mdash; DCE vp prior skipped.</p>
         {% endif %}
-        {% if dsc.qc_metrics.preload.cbv_positive_tail_fraction is defined and dsc.qc_metrics.preload.cbv_positive_tail_fraction > 0.6 %}
-        <p class="preload-note warning">&#9888; Persistent positive &Delta;R2* tail with K2&asymp;0 in {{ "%.0f"|format(dsc.qc_metrics.preload.cbv_positive_tail_fraction * 100) }}% of tumor voxels &mdash; CBV may be <b>over-estimated</b>; leakage correction cannot remove a positive (T2*-dominant) tail.</p>
+        {% if dsc.qc_metrics.preload.k2_signed
+           and dsc.qc_metrics.preload.preload_k2_classification == 'unknown' %}
+        <p class="preload-note warning">&#9888; Signed K2 adequacy thresholds are not calibrated &mdash; DCE vp prior skipped.</p>
         {% endif %}
         {% if dsc.qc_metrics.preload.preload_correction_applied and dsc.images.dsc_leakage_qc %}
         <div class="figure-container" style="margin-top: 20px;">

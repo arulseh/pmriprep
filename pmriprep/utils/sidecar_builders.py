@@ -1345,10 +1345,44 @@ def _preload_cosmetic_keys(preload_qc: Optional[Dict[str, Any]]) -> Dict[str, An
         out["PreloadK2Confidence"] = str(preload_qc["preload_k2_confidence"])
     if "k2_median" in preload_qc:
         out["PreloadK2Median"] = float(preload_qc["k2_median"])
-    if "percent_leaky_voxels" in preload_qc:
-        out["PreloadPercentLeakyVoxels"] = float(preload_qc["percent_leaky_voxels"])
-    if "percent_severe_leakage" in preload_qc:
-        out["PreloadPercentSevereLeakage"] = float(preload_qc["percent_severe_leakage"])
+    if "k2_min" in preload_qc:
+        out["PreloadK2Minimum"] = float(preload_qc["k2_min"])
+    if "k2_p05" in preload_qc:
+        out["PreloadK2Percentile05"] = float(preload_qc["k2_p05"])
+    if "k2_p95" in preload_qc:
+        out["PreloadK2Percentile95"] = float(preload_qc["k2_p95"])
+    if "k2_signed" in preload_qc:
+        out["PreloadK2Signed"] = bool(preload_qc["k2_signed"])
+    if "k2_reference_available" in preload_qc:
+        out["PreloadK2ReferenceAvailable"] = bool(
+            preload_qc["k2_reference_available"]
+        )
+    if "k2_reference_selection" in preload_qc:
+        out["PreloadK2ReferenceSelection"] = str(
+            preload_qc["k2_reference_selection"]
+        )
+    if "k2_reference_selection_domain" in preload_qc:
+        out["PreloadK2ReferenceSelectionDomain"] = str(
+            preload_qc["k2_reference_selection_domain"]
+        )
+    if "k2_reference_selected_voxels" in preload_qc:
+        out["PreloadK2ReferenceSelectedVoxels"] = int(
+            preload_qc["k2_reference_selected_voxels"]
+        )
+    if "k2_reference_selected_fraction" in preload_qc:
+        out["PreloadK2ReferenceSelectedFraction"] = float(
+            preload_qc["k2_reference_selected_fraction"]
+        )
+    if "percent_negative_k2" in preload_qc:
+        out["PreloadPercentNegativeK2"] = float(preload_qc["percent_negative_k2"])
+    if "percent_k2_undefined" in preload_qc:
+        out["PreloadPercentK2Undefined"] = float(preload_qc["percent_k2_undefined"])
+    if "n_k2_valid" in preload_qc:
+        out["PreloadK2ValidVoxels"] = int(preload_qc["n_k2_valid"])
+    if "k2_reference_failure_reason" in preload_qc:
+        out["PreloadK2ReferenceFailureReason"] = str(
+            preload_qc["k2_reference_failure_reason"]
+        )
     if "preload_user_specified" in preload_qc:
         out["PreloadUserSpecified"] = bool(preload_qc["preload_user_specified"])
     return out

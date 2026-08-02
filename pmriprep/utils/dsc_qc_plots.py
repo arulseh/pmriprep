@@ -760,10 +760,19 @@ def generate_dsc_leakage_qc_plot(
     k2_display = k2_map.copy().astype(float)
     k2_display[~mask_bool] = np.nan
     k2_slice = get_radiological_slice(k2_display, axis=2)
-    k2_vals = k2_map[mask_bool & (k2_map > 0)]
-    k2_vmax = float(np.percentile(k2_vals, 95)) if len(k2_vals) > 0 else 0.1
-    im = ax.imshow(k2_slice, cmap="hot", vmin=0, vmax=k2_vmax, aspect="equal")
-    ax.set_title("K2 Map (leakage rate)", fontsize=10)
+    k2_vals = k2_map[mask_bool & np.isfinite(k2_map)]
+    k2_abs_max = (
+        float(np.percentile(np.abs(k2_vals), 95)) if len(k2_vals) > 0 else 0.1
+    )
+    k2_abs_max = max(k2_abs_max, np.finfo(float).eps)
+    im = ax.imshow(
+        k2_slice,
+        cmap="coolwarm",
+        vmin=-k2_abs_max,
+        vmax=k2_abs_max,
+        aspect="equal",
+    )
+    ax.set_title("Signed K2 Map", fontsize=10)
     ax.axis("off")
     fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="s\u207b\u00b9")
 
@@ -804,17 +813,20 @@ def generate_dsc_leakage_qc_plot(
 
     # --- (1,1) Example Voxel Curves ---
     ax = axes[1, 1]
-    if conc_raw_4d is not None and conc_corr_4d is not None:
+    finite_mask = mask_bool & np.isfinite(k2_map)
+    if (
+        conc_raw_4d is not None
+        and conc_corr_4d is not None
+        and np.any(finite_mask)
+    ):
         # Find voxel near 90th percentile K2 (representative leakage,
         # avoiding degenerate max-K2 fits from OLS outliers)
-        k2_masked = k2_map.copy()
-        k2_masked[~mask_bool] = 0
-        k2_vals = k2_masked[mask_bool]
-        p90 = float(np.percentile(k2_vals, 90)) if len(k2_vals) > 0 else 0.0
-        # Find the voxel closest to the 90th percentile value
-        diffs = np.abs(k2_masked - p90)
-        diffs[~mask_bool] = np.inf
-        max_k2_idx = np.unravel_index(np.argmin(diffs), k2_masked.shape)
+        k2_vals = np.abs(k2_map[finite_mask])
+        p90 = float(np.percentile(k2_vals, 90))
+        # Find a representative voxel near the 90th percentile correction magnitude.
+        diffs = np.abs(np.abs(k2_map) - p90)
+        diffs[~finite_mask] = np.inf
+        max_k2_idx = np.unravel_index(np.argmin(diffs), k2_map.shape)
         ex, ey, ez = int(max_k2_idx[0]), int(max_k2_idx[1]), int(max_k2_idx[2])
         n_t = conc_raw_4d.shape[3]
         time_s = np.arange(n_t) * tr
@@ -824,6 +836,17 @@ def generate_dsc_leakage_qc_plot(
                 color=COLORBLIND_PALETTE.primary, linewidth=1.2, label="Corrected")
         ax.set_title(f"Voxel ({ex},{ey},{ez}) — K2={k2_map[ex,ey,ez]:.4f}", fontsize=10)
         ax.legend(fontsize=8)
+    elif not np.any(finite_mask):
+        ax.text(
+            0.5,
+            0.5,
+            "No finite K2 estimates",
+            transform=ax.transAxes,
+            ha="center",
+            va="center",
+            fontsize=10,
+        )
+        ax.set_title("Example Voxel Curves", fontsize=10)
     else:
         ax.text(0.5, 0.5, "No 4D data available",
                 transform=ax.transAxes, ha="center", va="center", fontsize=10)
@@ -835,8 +858,9 @@ def generate_dsc_leakage_qc_plot(
     # --- (1,2) K2 vs PSR Scatter ---
     ax = axes[1, 2]
     if psr is not None:
-        k2_vals_scatter = k2_map[mask_bool]
-        psr_vals_scatter = psr[mask_bool]
+        scatter_mask = mask_bool & np.isfinite(k2_map) & np.isfinite(psr)
+        k2_vals_scatter = k2_map[scatter_mask]
+        psr_vals_scatter = psr[scatter_mask]
         # Subsample for performance
         n_points = min(5000, len(k2_vals_scatter))
         rng = np.random.default_rng(42)

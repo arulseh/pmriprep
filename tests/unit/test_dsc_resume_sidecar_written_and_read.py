@@ -35,8 +35,9 @@ def representative_qc_dicts() -> tuple[dict[str, Any], dict[str, Any], dict[str,
     preload_qc = {
         "k2_method": "bsw",
         "preload_classification": "none",
-        "k2_median": 0.012,
-        "percent_leaky_voxels": 4.7,
+        "k2_median": -0.002,
+        "k2_signed": True,
+        "percent_negative_k2": 61.0,
     }
     preprocessing_stats = {
         "fd_mean": 0.18, "fd_max": 0.62,

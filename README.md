@@ -188,7 +188,7 @@ DSC fields:
 | `lesion_mask` | `null` | Native-DSC lesion mask (statistics and AIF lesion exclusion) |
 | `nawm_mask` | `null` | Native-DSC NAWM mask |
 | `roi_mask` | `null` | Native-DSC statistics-only ROI mask |
-| `leakage_method` | `bsw` | `bsw` or `bidirectional` |
+| `leakage_method` | `bsw` | `bsw` or experimental `bidirectional` leakage correction |
 | `kep` | `null` | Bidirectional-leakage kep override in s⁻¹ |
 | `pre_bolus` | `5` | Initial baseline frames; final baseline is AIF-informed |
 | `motion_correct` | `true` | Apply motion correction |

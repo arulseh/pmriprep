@@ -1049,10 +1049,14 @@ class TestTCIAGBMDSCDRO:
             | dro.roi_masks["nawm"]
         )
         conc_4d = dro.delta_r2[:, :, np.newaxis, :]
+        signal_4d = dro.baseline[:, :, np.newaxis, np.newaxis] * np.exp(
+            -dro.config.te_ms * 1e-3 * conc_4d
+        )
         mask_3d = brain_mask[:, :, np.newaxis]
 
         k2_result = apply_k2_correction(
             concentration=conc_4d,
+            signal=signal_4d,
             brain_mask=mask_3d,
             tr=dro.dt,
         )
@@ -1108,10 +1112,14 @@ class TestTCIAGBMDSCDRO:
         )
         # Add z-dim for 4D requirement
         conc_4d = dro.delta_r2[:, :, np.newaxis, :]
+        signal_4d = dro.baseline[:, :, np.newaxis, np.newaxis] * np.exp(
+            -dro.config.te_ms * 1e-3 * conc_4d
+        )
         mask_3d = brain_mask[:, :, np.newaxis]
 
         k2_result = apply_k2_correction(
             concentration=conc_4d,
+            signal=signal_4d,
             brain_mask=mask_3d,
             tr=dro.dt,
         )
@@ -1586,10 +1594,14 @@ class TestTCIAPreloadLeakage:
             | dro.roi_masks["nawm"]
         )
         conc_4d = dro.delta_r2[:, :, np.newaxis, :]
+        signal_4d = dro.baseline[:, :, np.newaxis, np.newaxis] * np.exp(
+            -dro.config.te_ms * 1e-3 * conc_4d
+        )
         mask_3d = brain_mask[:, :, np.newaxis]
 
         k2_result = apply_k2_correction(
             concentration=conc_4d,
+            signal=signal_4d,
             brain_mask=mask_3d,
             tr=dro.dt,
         )
@@ -1653,10 +1665,14 @@ class TestTCIAPreloadLeakage:
                 | dro.roi_masks["nawm"]
             )
             conc_4d = dro.delta_r2[:, :, np.newaxis, :]
+            signal_4d = dro.baseline[:, :, np.newaxis, np.newaxis] * np.exp(
+                -dro.config.te_ms * 1e-3 * conc_4d
+            )
             mask_3d = brain_mask[:, :, np.newaxis]
 
             k2_result = apply_k2_correction(
                 concentration=conc_4d,
+                signal=signal_4d,
                 brain_mask=mask_3d,
                 tr=dro.dt,
             )

@@ -1836,11 +1836,15 @@ def _resolve_bat_tissue_reference(
 #: the oracle in ``tests/unit/test_resume_qc_round_trip_consumer_keys.py``
 #: so the round-trip parity guard catches future schema drift.
 _K2_QC_KEYS = {
-    "k2_mean", "k2_std", "k2_max", "k2_median",
-    "percent_leaky_voxels", "percent_severe_leakage",
-    "percent_above_clinical_max",
-    "n_brain_voxels", "auc_mean",
-    "cbv_positive_tail_fraction",
+    "k2_mean", "k2_std", "k2_min", "k2_max", "k2_median", "k2_p05", "k2_p95",
+    "percent_negative_k2", "percent_k2_undefined",
+    "n_brain_voxels", "n_k2_valid", "auc_mean",
+    "k2_signed", "k2_reference_available",
+    "k2_reference_total_voxels", "k2_reference_selected_voxels",
+    "k2_reference_selected_fraction", "k2_reference_baseline_frames",
+    "k2_reference_tail_frames", "k2_reference_selection",
+    "k2_reference_selection_domain", "k2_reference_peak",
+    "k2_reference_failure_reason",
 }
 
 
