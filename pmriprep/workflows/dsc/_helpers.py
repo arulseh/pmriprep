@@ -1473,6 +1473,9 @@ def _merge_qc_metrics(
     aif_metrics: dict[str, object] | None = None,
     preprocessing_stats: dict[str, object] | None = None,
     aif_source: str = "auto",
+    auc_raw_file: str | None = None,
+    auc_corr_file: str | None = None,
+    nawm_mask_file: str | None = None,
 ) -> dict[str, object]:
     """Merge all QC metrics into a single dictionary.
 
@@ -1500,12 +1503,22 @@ def _merge_qc_metrics(
         Preprocessing stats dict.
     aif_source : str, optional
         AIF source type ("auto", "synthetic", or "external").
+    auc_raw_file, auc_corr_file : str, optional
+        Raw and BSW-corrected tissue AUC maps used to measure the correction's
+        effect in NAWM.
+    nawm_mask_file : str, optional
+        NAWM mask in native DSC space. When absent, NAWM effect accounting is
+        omitted rather than approximated from whole brain.
 
     Returns
     -------
     dict
         Combined QC metrics dictionary.
     """
+    from pathlib import Path
+
+    import numpy as np
+
     motion_data = motion_qc if motion_qc else {}
     if motion_summary:
         motion_data = dict(motion_data) if motion_data else {}
@@ -1526,9 +1539,50 @@ def _merge_qc_metrics(
         aif_data = dict(aif_data) if aif_data else {}
         aif_data["aif_metrics"] = aif_metrics
 
+    preload_data = dict(preload_qc) if preload_qc else {}
+    raw_path: Path | None = None
+    corr_path: Path | None = None
+    nawm_path: Path | None = None
+    path_inputs = (auc_raw_file, auc_corr_file, nawm_mask_file)
+    if all(isinstance(value, (str, Path)) and str(value) for value in path_inputs):
+        raw_path = Path(auc_raw_file)  # type: ignore[arg-type]
+        corr_path = Path(auc_corr_file)  # type: ignore[arg-type]
+        nawm_path = Path(nawm_mask_file)  # type: ignore[arg-type]
+    if (
+        raw_path is not None
+        and raw_path.is_file()
+        and corr_path is not None
+        and corr_path.is_file()
+        and nawm_path is not None
+        and nawm_path.is_file()
+    ):
+        import nibabel as nib  # type: ignore[import-untyped]
+
+        raw_img = nib.load(raw_path)
+        corrected_img = nib.load(corr_path)
+        nawm_img = nib.load(nawm_path)
+        raw = np.asarray(raw_img.dataobj, dtype=np.float64)  # type: ignore[attr-defined]
+        corrected = np.asarray(corrected_img.dataobj, dtype=np.float64)  # type: ignore[attr-defined]
+        nawm = np.asarray(nawm_img.dataobj) > 0  # type: ignore[attr-defined]
+        affines_match = np.allclose(
+            raw_img.affine, corrected_img.affine  # type: ignore[attr-defined]
+        ) and np.allclose(
+            raw_img.affine, nawm_img.affine  # type: ignore[attr-defined]
+        )
+        if raw.shape != corrected.shape or raw.shape != nawm.shape or not affines_match:
+            raise ValueError(
+                "Raw AUC, corrected AUC, and NAWM mask geometry must match"
+            )
+        valid = nawm & np.isfinite(raw) & np.isfinite(corrected)
+        if np.any(valid):
+            preload_data["nawm_auc_raw_median"] = float(np.median(raw[valid]))
+            preload_data["nawm_auc_corrected_median"] = float(
+                np.median(corrected[valid])
+            )
+
     merged: dict[str, object] = {
         "preprocessing": preprocessing,
-        "preload": preload_qc if preload_qc else {},
+        "preload": preload_data,
         "aif_detection": aif_data,
         "deconvolution": deconv_qc if deconv_qc else {},
         "registration": registration_qc if registration_qc else {},

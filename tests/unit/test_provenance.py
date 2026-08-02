@@ -277,6 +277,8 @@ class TestEnrichDSC:
             "preload": {
                 "preload_correction_applied": True,
                 "k2_median": 0.008,
+                "nawm_auc_raw_median": 1.2,
+                "nawm_auc_corrected_median": 1.1,
                 "preload_source": "unknown",
                 "preload_administered_dose_fraction": None,
                 # Advisory key: preload_baseline_delta_r2_advisory.
@@ -301,6 +303,10 @@ class TestEnrichDSC:
 
         assert perf["LeakageCorrection"]["applied"] is True
         assert perf["LeakageCorrection"]["K2_median"] == pytest.approx(0.008, abs=0.001)
+        assert perf["LeakageCorrection"]["method"] == "bsw"
+        assert "Method" not in perf["LeakageCorrection"]
+        assert perf["LeakageCorrection"]["nawm_auc_raw_median"] == pytest.approx(1.2)
+        assert perf["LeakageCorrection"]["nawm_auc_corrected_median"] == pytest.approx(1.1)
 
         assert perf["PreloadDetection"]["source"] == "unknown"
         assert perf["PreloadDetection"]["baseline_delta_r2_advisory"] == pytest.approx(0.12, abs=0.001)

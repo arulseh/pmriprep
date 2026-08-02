@@ -453,6 +453,10 @@ def _enrich_dsc(
             leak_block["applied"] = bool(preload["preload_correction_applied"])
         if "k2_median" in preload:
             leak_block["K2_median"] = _safe_float(preload["k2_median"])
+        for key in ("nawm_auc_raw_median", "nawm_auc_corrected_median"):
+            if key not in preload:
+                continue
+            leak_block[key] = _safe_float(preload[key])
         perf["LeakageCorrection"] = leak_block
 
         # Administered-preload provenance and continuous advisory measurement.

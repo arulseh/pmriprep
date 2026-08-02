@@ -1258,6 +1258,7 @@ def init_dsc_qc_wf(
                 "normalization_factor",
                 "cbf_normalization_factor",
                 "brain_mask_file",
+                "nawm_mask_file",
                 "tr",
                 "te",
                 "t1w_to_mni_xfm",
@@ -1299,6 +1300,9 @@ def init_dsc_qc_wf(
                 "aif_metrics",
                 "preprocessing_stats",
                 "aif_source",
+                "auc_raw_file",
+                "auc_corr_file",
+                "nawm_mask_file",
             ],
             output_names=["merged_qc"],
             function=_merge_qc_metrics,
@@ -1412,6 +1416,9 @@ def init_dsc_qc_wf(
             ("registration_qc_metrics", "registration_qc"),
             ("normalization_factor", "normalization_factor"),
             ("cbf_normalization_factor", "cbf_normalization_factor"),
+            ("auc_raw", "auc_raw_file"),
+            ("auc_corr", "auc_corr_file"),
+            ("nawm_mask_file", "nawm_mask_file"),
         ]),
         (inputnode, reg_filmstrip, [
             ("prebolus_mean_file", "dsc_mean_file"),
@@ -2342,6 +2349,9 @@ def init_dsc_preproc_wf(
         (preload_wf, qc_wf, [
             ("outputnode.qc_dict", "inputnode.preload_qc_dict"),
             ("outputnode.corrected_concentration_file", "inputnode.corrected_concentration_file"),
+        ]),
+        (transform_nawm, qc_wf, [
+            ("nawm_mask_dsc_file", "inputnode.nawm_mask_file"),
         ]),
         (conc_aif_wf, qc_wf, [
             ("outputnode.qc_metrics", "inputnode.aif_qc_metrics"),
