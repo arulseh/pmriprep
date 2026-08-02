@@ -105,6 +105,25 @@ class DCELesionStats(BaseInterface):
     input_spec = DCELesionStatsInputSpec
     output_spec = DCELesionStatsOutputSpec
 
+    # Single registry for loading and PK-QC applicability. Keeping the
+    # classification beside each map prevents newly loaded maps from silently
+    # inheriting or losing PK-fit filtering.
+    _MAP_ATTRS = (
+        ("ktrans_map", "ktrans", True),
+        ("ve_map", "ve", True),
+        ("vp_map", "vp", True),
+        ("kep_map", "kep", True),
+        ("fp_map", "fp", True),
+        ("ps_map", "ps", True),
+        ("e_map", "e", True),
+        ("iauc60_map", "iauc60", False),
+        ("iauc90_map", "iauc90", False),
+        ("iauc120_map", "iauc120", False),
+        ("peak_enhancement_map", "peak_enhancement", False),
+        ("ser_map", "ser", False),
+        ("ttp_map", "ttp", False),
+    )
+
     def _run_interface(self, runtime: Any) -> Any:
         """Execute lesion statistics extraction."""
         # Initialize results dictionary
@@ -319,23 +338,7 @@ class DCELesionStats(BaseInterface):
         """
         maps: Dict[str, np.ndarray] = {}
         self._map_affines: Dict[str, np.ndarray] = {}
-        map_attrs = [
-            ("ktrans_map", "ktrans"),
-            ("ve_map", "ve"),
-            ("vp_map", "vp"),
-            ("kep_map", "kep"),
-            ("fp_map", "fp"),
-            ("ps_map", "ps"),
-            ("e_map", "e"),
-            ("iauc60_map", "iauc60"),
-            ("iauc90_map", "iauc90"),
-            ("iauc120_map", "iauc120"),
-            ("peak_enhancement_map", "peak_enhancement"),
-            ("ser_map", "ser"),
-            ("ttp_map", "ttp"),
-        ]
-
-        for attr, name in map_attrs:
+        for attr, name, _ in self._MAP_ATTRS:
             if self._has_input(attr):
                 path = getattr(self.inputs, attr)
                 if Path(path).exists():
@@ -351,14 +354,26 @@ class DCELesionStats(BaseInterface):
     def _qc_filtered_maps(
         self, maps: Dict[str, np.ndarray]
     ) -> Dict[str, np.ndarray]:
-        """Return map copies with non-QC samples encoded as unavailable."""
+        """Apply the PK fit-quality mask only to PK-derived map copies.
+
+        Model-free maps encode their own calculability through finite values
+        and NaNs. The compound QC mask may include an optional tSNR criterion,
+        but it necessarily also includes PK-fit criteria; applying it would
+        therefore change the model-free population without measuring
+        model-free quality.
+        """
         if not self._has_input("qc_mask"):
             return {}
         qc_img = nib.load(self.inputs.qc_mask)
         qc_mask = np.asarray(qc_img.dataobj) > 0  # type: ignore[attr-defined]
         qc_affine = np.asarray(qc_img.affine)  # type: ignore[attr-defined]
         filtered: Dict[str, np.ndarray] = {}
+        pk_map_names = {
+            name for _, name, apply_pk_qc in self._MAP_ATTRS if apply_pk_qc
+        }
         for name, data in maps.items():
+            if name not in pk_map_names:
+                continue
             map_affine = self._map_affines[name]
             if data.shape != qc_mask.shape or not np.allclose(
                 map_affine, qc_affine, atol=1e-5, rtol=1e-5

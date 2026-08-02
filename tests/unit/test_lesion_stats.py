@@ -1003,6 +1003,71 @@ class TestDCEStatisticsMapSupport:
         assert "voxel_count" not in result["QCFilteredNAWMReference"]
         assert "volume_ml" not in result["QCFilteredNAWMReference"]
 
+    def test_qc_mask_does_not_filter_model_free_maps(self, tmp_path) -> None:
+        """PK fit quality must not condition model-free DCE statistics."""
+        import json
+
+        from pmriprep.interfaces.dce_lesion_stats import DCELesionStats
+
+        shape = (2, 2, 1)
+        values = np.arange(1, 5, dtype=np.float32).reshape(shape)
+        iface = DCELesionStats()
+        iface.inputs.subject_id = "01"
+        iface.inputs.session_id = "01"
+        iface.inputs.lesion_mask = self._save(
+            tmp_path, "lesion.nii.gz", np.ones(shape)
+        )
+        iface.inputs.nawm_mask = self._save(
+            tmp_path, "nawm.nii.gz", np.ones(shape)
+        )
+        iface.inputs.qc_mask = self._save(
+            tmp_path, "qc.nii.gz", np.array([[[1], [0]], [[1], [0]]])
+        )
+        iface.inputs.ktrans_map = self._save(
+            tmp_path, "ktrans.nii.gz", values
+        )
+        iface.inputs.iauc60_map = self._save(
+            tmp_path, "iauc60.nii.gz", values
+        )
+
+        iface.run(cwd=tmp_path)
+        result = json.loads(
+            (tmp_path / "sub-01_ses-01_lesion-stats.json").read_text()
+        )
+
+        native_maps = result["Regions"]["tumor"]["perfusion_maps"]
+        qc_maps = result["QCFilteredRegions"]["tumor"]["perfusion_maps"]
+        assert native_maps["iauc60"]["n_valid"] == 4
+        assert qc_maps["ktrans"]["n_valid"] == 2
+        assert "iauc60" not in qc_maps
+        assert "iauc60" not in result["QCFilteredNAWMReference"]
+
+    def test_dce_map_registry_classifies_every_loaded_map(self) -> None:
+        """The single loader registry explicitly classifies PK-QC use."""
+        from pmriprep.interfaces.dce_lesion_stats import DCELesionStats
+
+        names = [name for _, name, _ in DCELesionStats._MAP_ATTRS]
+        assert len(names) == len(set(names))
+        classification = {
+            name: apply_pk_qc
+            for _, name, apply_pk_qc in DCELesionStats._MAP_ATTRS
+        }
+        assert classification == {
+            "ktrans": True,
+            "ve": True,
+            "vp": True,
+            "kep": True,
+            "fp": True,
+            "ps": True,
+            "e": True,
+            "iauc60": False,
+            "iauc90": False,
+            "iauc120": False,
+            "peak_enhancement": False,
+            "ser": False,
+            "ttp": False,
+        }
+
     def test_qc_mask_geometry_must_match_maps(self, tmp_path) -> None:
         """QC-filtered companions reject a mismatched mask grid."""
         from pmriprep.interfaces.dce_lesion_stats import DCELesionStats
