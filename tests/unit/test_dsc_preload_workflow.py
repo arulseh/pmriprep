@@ -1,18 +1,4 @@
-"""Workflow-level tests for preload classification precedence.
-
-``_detect_and_correct_preload`` in ``pmriprep/workflows/dsc/base.py`` resolves
-the effective preload class from three sources with strict precedence:
-
-    user override > K2-primary > ΔR2* advisory
-
-These tests exercise that path as a whole, complementing the unit
-tests that cover ``classify_preload`` / ``classify_preload_adequacy_from_k2`` /
-``preload_class_from_dose`` in isolation. These tests mock the four
-``pmriprep.utils.dsc_preload`` entrypoints the function imports locally
-(patch at the source module so the local import resolves to the mock) and
-write small synthetic NIfTI fixtures to ``tmp_path`` so the real nibabel
-I/O runs.
-"""
+"""Workflow-level tests for preload provenance and leakage correction."""
 
 from __future__ import annotations
 
@@ -23,12 +9,7 @@ import nibabel as nib  # type: ignore[import-untyped]
 import numpy as np
 import pytest
 
-from pmriprep.utils.dsc_preload import (
-    K2Adequacy,
-    K2CorrectionResult,
-    PreloadClass,
-    PreloadResult,
-)
+from pmriprep.utils.dsc_preload import K2CorrectionResult, PreloadClass, PreloadResult
 from pmriprep.workflows.dsc.base import (
     _detect_and_correct_preload,
     init_dsc_deconvolution_wf,
@@ -93,11 +74,10 @@ def _chdir_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.chdir(tmp_path)
 
 
-class TestPreloadPrecedence:
-    """user override > K2-primary > ΔR2* advisory."""
+class TestPreloadProvenance:
+    """Administered preload is either a supplied fraction or unknown."""
 
-    def test_user_override_wins_over_k2(self, tmp_path: Path) -> None:
-        """preload='0.3' (user half-dose) overrides K2 classification."""
+    def test_user_dose_is_recorded_without_classification(self, tmp_path: Path) -> None:
         conc, mask, signal = _write_fixtures(tmp_path)
         with mock.patch(
             "pmriprep.utils.dsc_preload.apply_k2_correction",
@@ -105,12 +85,6 @@ class TestPreloadPrecedence:
         ), mock.patch(
             "pmriprep.utils.dsc_preload.detect_preload",
             return_value=_advisory(PreloadClass.MINIMAL),
-        ), mock.patch(
-            "pmriprep.utils.dsc_preload.classify_preload_adequacy_from_k2",
-            return_value=(K2Adequacy.PARTIAL, "high", "stub"),
-        ), mock.patch(
-            "pmriprep.utils.dsc_preload.preload_class_from_dose",
-            return_value=PreloadClass.HALF_DOSE,
         ):
             _, _, qc = _detect_and_correct_preload(
                 concentration_file=conc,
@@ -122,12 +96,10 @@ class TestPreloadPrecedence:
                 signal_file=signal,
             )
 
-        assert qc["preload_classification_source"] == "user_specified"
-        assert qc["preload_classification"] == PreloadClass.HALF_DOSE.value
-        assert qc["preload_user_specified"] is True
-        # K2 adequacy still recorded for reference, but not effective.
-        assert qc["preload_k2_classification"] == K2Adequacy.PARTIAL.value
-        assert "preload_k2_confidence" in qc
+        assert qc["preload_source"] == "user_specified"
+        assert qc["preload_administered_dose_fraction"] == pytest.approx(0.3)
+        assert "preload_classification" not in qc
+        assert "preload_k2_classification" not in qc
 
     def test_refined_baseline_reaches_k2_and_provenance(
         self, tmp_path: Path,
@@ -140,9 +112,6 @@ class TestPreloadPrecedence:
         ) as apply_k2, mock.patch(
             "pmriprep.utils.dsc_preload.detect_preload",
             return_value=_advisory(PreloadClass.MINIMAL),
-        ), mock.patch(
-            "pmriprep.utils.dsc_preload.classify_preload_adequacy_from_k2",
-            return_value=(K2Adequacy.ADEQUATE, "moderate", "stub"),
         ):
             _, _, qc = _detect_and_correct_preload(
                 concentration_file=conc,
@@ -161,8 +130,7 @@ class TestPreloadPrecedence:
         )
         assert qc["baseline_frames_used"] == 17
 
-    def test_k2_primary_when_user_auto(self, tmp_path: Path) -> None:
-        """preload='auto' + concrete K2 adequacy → effective = adequacy."""
+    def test_auto_records_unknown_without_classification(self, tmp_path: Path) -> None:
         conc, mask, signal = _write_fixtures(tmp_path)
         with mock.patch(
             "pmriprep.utils.dsc_preload.apply_k2_correction",
@@ -170,9 +138,6 @@ class TestPreloadPrecedence:
         ), mock.patch(
             "pmriprep.utils.dsc_preload.detect_preload",
             return_value=_advisory(PreloadClass.MINIMAL),
-        ), mock.patch(
-            "pmriprep.utils.dsc_preload.classify_preload_adequacy_from_k2",
-            return_value=(K2Adequacy.ADEQUATE, "moderate", "stub"),
         ):
             _, _, qc = _detect_and_correct_preload(
                 concentration_file=conc,
@@ -184,95 +149,6 @@ class TestPreloadPrecedence:
                 signal_file=signal,
             )
 
-        assert qc["preload_classification_source"] == "k2_primary"
-        assert qc["preload_classification"] == K2Adequacy.ADEQUATE.value
-        assert qc["preload_advisory_classification"] == PreloadClass.MINIMAL.value
-        assert qc["preload_user_specified"] is False
-
-    def test_k2_adequacy_drives_auto_classification(self, tmp_path: Path) -> None:
-        """Auto path: K2 adequacy drives the effective classification; advisory is separate."""
-        conc, mask, signal = _write_fixtures(tmp_path)
-        with mock.patch(
-            "pmriprep.utils.dsc_preload.apply_k2_correction",
-            return_value=_fake_k2_result((4, 4, 4)),
-        ), mock.patch(
-            "pmriprep.utils.dsc_preload.detect_preload",
-            return_value=_advisory(PreloadClass.NONE),
-        ), mock.patch(
-            "pmriprep.utils.dsc_preload.classify_preload_adequacy_from_k2",
-            return_value=(K2Adequacy.ADEQUATE, "moderate", "stub"),
-        ):
-            _, _, qc = _detect_and_correct_preload(
-                concentration_file=conc,
-                brain_mask_file=mask,
-                te=0.03,
-                field_strength=3.0,
-                tr=1.5,
-                preload="auto",
-                signal_file=signal,
-            )
-
-        assert qc["preload_classification"] == K2Adequacy.ADEQUATE.value
-        assert qc["preload_advisory_classification"] == PreloadClass.NONE.value
-        assert qc["preload_classification_source"] == "k2_primary"
-        assert qc["preload_user_specified"] is False
-        # Decouple removed the ΔR2*-vs-K2 disagreement key.
-        assert "preload_k2_vs_advisory_disagreement" not in qc
-
-    def test_k2_unavailable_skips_constraint(self, tmp_path: Path) -> None:
-        """preload='auto' + K2 returns UNKNOWN → source='k2_unavailable'."""
-        conc, mask, signal = _write_fixtures(tmp_path)
-        with mock.patch(
-            "pmriprep.utils.dsc_preload.apply_k2_correction",
-            return_value=_fake_k2_result((4, 4, 4)),
-        ), mock.patch(
-            "pmriprep.utils.dsc_preload.detect_preload",
-            return_value=_advisory(PreloadClass.MINIMAL),
-        ), mock.patch(
-            "pmriprep.utils.dsc_preload.classify_preload_adequacy_from_k2",
-            return_value=(K2Adequacy.UNKNOWN, 0.0, "stub"),
-        ):
-            _, _, qc = _detect_and_correct_preload(
-                concentration_file=conc,
-                brain_mask_file=mask,
-                te=0.03,
-                field_strength=3.0,
-                tr=1.5,
-                preload="auto",
-                signal_file=signal,
-            )
-
-        assert qc["preload_classification_source"] == "k2_unavailable"
-        assert qc["preload_classification"] == K2Adequacy.UNKNOWN.value
-        assert qc["preload_user_specified"] is False
-
-    def test_signed_k2_uses_uncalibrated_source_label(self, tmp_path: Path) -> None:
-        """Populated signed K2 is distinct from a missing reference."""
-        conc, mask, signal = _write_fixtures(tmp_path)
-        signed_result = _fake_k2_result((4, 4, 4))
-        signed_result.qc_metrics = {
-            "k2_signed": True,
-            "k2_reference_available": True,
-            "k2_median": -0.002,
-            "percent_negative_k2": 60.0,
-        }
-        with mock.patch(
-            "pmriprep.utils.dsc_preload.apply_k2_correction",
-            return_value=signed_result,
-        ), mock.patch(
-            "pmriprep.utils.dsc_preload.detect_preload",
-            return_value=_advisory(PreloadClass.MINIMAL),
-        ):
-            _, _, qc = _detect_and_correct_preload(
-                concentration_file=conc,
-                brain_mask_file=mask,
-                te=0.03,
-                field_strength=3.0,
-                tr=1.5,
-                preload="auto",
-                signal_file=signal,
-            )
-
-        assert qc["preload_classification_source"] == "signed_k2_uncalibrated"
-        assert qc["preload_k2_classification"] == K2Adequacy.UNKNOWN.value
-        assert "not calibrated" in qc["preload_k2_reason"]
+        assert qc["preload_source"] == "unknown"
+        assert qc["preload_administered_dose_fraction"] is None
+        assert "preload_classification" not in qc

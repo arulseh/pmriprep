@@ -432,7 +432,7 @@ def test_connect_master_dsc_outputs_preserves_provenance_sources(
         ])
     ]
     assert captured["dose_source"] == ParameterSource.USER_SPECIFIED
-    assert captured["preload_source"] == ParameterSource.AUTO_DETECTED
+    assert captured["preload_source"] == "unknown"
     assert captured["agent_source"] == ParameterSource.BIDS_SIDECAR
     assert captured["agent_standard_dose_source"] == ParameterSource.DEFAULT_FALLBACK
     assert captured["gd_multiplicity"] == 1

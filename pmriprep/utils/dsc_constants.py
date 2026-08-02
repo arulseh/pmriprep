@@ -162,30 +162,6 @@ AIF_PEAK_CEILING_3T: Final[float] = 120.0
 
 
 # =============================================================================
-# K2 residual thresholds (two tiers — different decision commitment levels)
-# =============================================================================
-
-#: Sigma-selection tier (coarser, tolerates looseness). Used by
-#: _classify_preload_k2 in dsc_cbv_constraint to tune the SOFT prior
-#: sigma based on leakage residuals; the decisions here only modulate
-#: uncertainty, never commit to a preload class label.
-K2_SIGMA_SUPPRESSED: Final[float] = 0.01      # s⁻¹
-LEAKY_SIGMA_LOW: Final[float] = 5.0           # percent
-LEAKY_SIGMA_HIGH: Final[float] = 15.0         # percent
-K2_SIGMA_CORRECTION: Final[float] = 0.005     # s⁻¹
-
-#: Primary-classification tier (stricter, commits to a discrete class).
-#: Used by classify_preload_adequacy_from_k2 when the auto path must
-#: decide adequate/partial/inadequate absent user input. Relaxed from
-#: literature-derived 0.003 to 0.005: observed well-suppressed half-dose
-#: GBM cohort sits at k2_median
-#: 0.0018–0.0048, so 0.005 captures it without reclassifying as partial.
-K2_PRIMARY_ADEQUATE: Final[float] = 0.005     # s⁻¹
-K2_PRIMARY_INADEQUATE: Final[float] = 0.01    # s⁻¹, == K2_SIGMA_SUPPRESSED
-LEAKY_PRIMARY_ADEQUATE: Final[float] = 1.0    # percent
-LEAKY_PRIMARY_INADEQUATE: Final[float] = 5.0  # percent, == LEAKY_SIGMA_LOW
-
-# =============================================================================
 # SVD Deconvolution Thresholds
 # =============================================================================
 

@@ -8,13 +8,8 @@ from typing import List, Literal, Optional, Union
 
 from .constants import DOSE_PRESETS
 
-#: Preload input: "auto" classifies preload adequacy from the K2 leakage
-#: residuals (K2-primary; the ΔR2* signal detection still runs but is an
-#: advisory QC diagnostic only, not used for classification). A float is the
-#: administered preload as a multiplier of the agent's standard dose (0.0 = no
-#: preload, 0.5 = half-dose, 1.0 = full standard dose). Both map to a
-#: PreloadClass (utils/dsc_preload.py) for K2 uncertainty tuning, via separate
-#: bin-edge tables (administered dose vs K2-residual adequacy are distinct).
+#: Administered preload as a multiplier of the agent's standard dose, or
+#: ``"auto"`` when the administered preload is unknown.
 PreloadInput = Union[Literal["auto"], float]
 
 logger = logging.getLogger(__name__)
@@ -30,16 +25,13 @@ class DSCConfig:
     Attributes
     ----------
     preload : "auto" or float
-        Contrast preload from a prior injection. `"auto"` (default) classifies
-        preload adequacy from the K2 leakage-correction residuals (K2-primary
-        classifier); the baseline ΔR2* signal detection still runs but is an
-        advisory acquisition-QC diagnostic only and does not drive the
-        classification. A float (0.0–2.0) instead specifies the administered
+        Contrast preload from a prior injection. `"auto"` (default) records
+        the administered preload as unknown; the baseline ΔR2* measurement is
+        retained as an advisory acquisition-QC diagnostic. A float (0.0–2.0)
+        specifies the administered
         preload as a fraction of the agent's standard dose (0.0 = no preload,
-        0.25 = quarter, 0.5 = half, 1.0 = full). User float and K2 adequacy are
-        distinct quantities (administered dose vs residual leakage) and use
-        separate bin-edge tables in `dsc_preload.py`, but both map to the same
-        class system for K2 uncertainty tuning.
+        0.25 = quarter, 0.5 = half, 1.0 = full). It is provenance only and does
+        not gate or tune leakage correction or the DCE vp prior.
     dose : float
         Contrast agent dose multiplier (0.5 = half, 1.0 = full, 2.0 = double).
     agent_standard_dose : float
@@ -269,8 +261,8 @@ class DSCConfig:
         if isinstance(self.preload, str):
             if self.preload != "auto":
                 raise ValueError(
-                    f"Invalid preload={self.preload!r}. Use 'auto' to "
-                    "auto-detect, or a float dose multiplier (e.g., 0.5 for "
+                    f"Invalid preload={self.preload!r}. Use 'auto' when the "
+                    "administered preload is unknown, or a float dose multiplier (e.g., 0.5 for "
                     "half-dose preload). String enums "
                     "('none'/'minimal'/'half_dose'/...) are not accepted; "
                     "use a numeric fraction."

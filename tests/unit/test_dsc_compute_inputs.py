@@ -466,9 +466,7 @@ def test_compute_auc_maps_preserves_symmetric_measured_aif_ratio(
     measured_aif = np.array([1.0, 1.0, 3.0, 5.0, 3.0, 1.0])
     measured_file = tmp_path / "measured_aif.txt"
     np.savetxt(measured_file, measured_aif)
-    interface = ComputeDSCMaps(
-        measured_aif_file=str(measured_file), preload_classification="none"
-    )
+    interface = ComputeDSCMaps(measured_aif_file=str(measured_file))
 
     result = interface._compute_auc_maps(
         raw,
@@ -525,17 +523,16 @@ def test_compute_auc_maps_does_not_clip_large_finite_values(tmp_path: Path) -> N
     assert result.cbv[0, 0, 0] > 10.0
 
 
-def test_compute_auc_maps_missing_aif_and_preload_warning() -> None:
-    """Missing denominator and administered preload retain separate QC flags."""
+def test_compute_auc_maps_missing_aif_reports_unavailable_cbv() -> None:
+    """Missing measured-AIF denominator makes AUC-CBV unavailable."""
     concentration = np.ones((1, 1, 1, 6), dtype=np.float64)
 
-    result = ComputeDSCMaps(preload_classification="half_dose")._compute_auc_maps(
+    result = ComputeDSCMaps()._compute_auc_maps(
         concentration, concentration, 2, 2, {"arrival_index": 2}, 1.0
     )
 
     assert np.all(np.isnan(result.cbv))
     assert result.qc["cbv_auc_measured_aif_missing"] is True
-    assert "residual leakage" in result.qc["cbv_auc_preload_warning"]
 
 
 def test_compute_quality_maps_uses_signal_drop_and_baseline_tsnr() -> None:
@@ -616,7 +613,6 @@ def test_summarize_dsc_maps_preserves_population_statistics_and_provenance() -> 
         tmax=np.array([3.0, 7.0, 999.0]),
         mask_bool=mask,
         aif_level="atlas",
-        preload_class="adequate",
         baseline_info={"baseline_frames_detected": 4},
         aif_bat_seconds=6.0,
         cbv_auc_qc_source=np.array([-2.0, 4.0, 999.0]),
@@ -648,7 +644,6 @@ def test_summarize_dsc_maps_empty_synthetic_domain() -> None:
         empty,
         np.zeros(2, dtype=bool),
         "synthetic",
-        "unknown",
         {},
         0.0,
     )
@@ -673,7 +668,6 @@ def test_summarize_dsc_maps_ignores_undefined_voxels() -> None:
         values,
         np.ones(2, dtype=bool),
         "atlas",
-        "none",
         {},
         0.0,
     )
@@ -1246,7 +1240,6 @@ def test_prepare_final_outputs_preserves_composition_and_qc_order(
         tail_frames=4,
         method="oSVD",
         aif_level="atlas",
-        preload_class="adequate",
     )
 
     assert calls == ["signal", "raw", "timing", "auc", "quality", "mtt", "finalize", "summary"]

@@ -3051,7 +3051,6 @@ class ComputeDCEMaps(BaseInterface):
                     aif_qc_data=aif_qc_data,
                     brain_mask_file=self.inputs.brain_mask_file,
                     mode_override=str(self.inputs.constraint_mode),
-                    preload_classification=preload_qc.get("preload_classification"),
                     k2_metrics=k2_metrics,
                     dose=float(self.inputs.dsc_dose),
                     agent_standard_dose=float(self.inputs.dsc_agent_standard_dose),

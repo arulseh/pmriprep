@@ -112,7 +112,7 @@ Key DSC options:
 |---|---|
 | `--dsc-deconv-method {sSVD,oSVD,tikhonov,vascular,cpi}` | Select deconvolution (default: oSVD) |
 | `--dsc-inference {vi,svb,nlls}` | Select inference for CPI/vascular models (default: vi) |
-| `--dsc-preload {auto\|FLOAT}` | Auto-classify preload adequacy or provide a dose multiplier |
+| `--dsc-preload {auto\|FLOAT}` | Record preload as unknown or provide an administered-dose multiplier |
 | `--dsc-dose DOSE` | Set dose multiplier (`half`, `full`, `double`, or float) |
 | `--dsc-aif-method {auto,synthetic}` | Select detected or synthetic AIF |
 | `--dsc-aif-file FILE` | Supply an external ΔR2* AIF in s⁻¹ |
@@ -176,7 +176,7 @@ DSC fields:
 | `cpi_control_points` | `0` | CPI control points; 0 selects automatically |
 | `cpi_infer_cpt` | `true` | Infer ordered CPI control-point times |
 | `cpi_infer_delay` | `false` | Fit voxelwise CPI bolus delay |
-| `preload` | `auto` | K2-based classification (auto) or administered-dose multiplier (float) |
+| `preload` | `auto` | Administered preload dose fraction, or `auto` when unknown; provenance only |
 | `dose` | `1.0` | Contrast-dose multiplier (float) |
 | `agent_standard_dose` | `0.1` | Agent standard dose in mmol Gd/kg (float) |
 | `aif_method` | `auto` | `auto` or `synthetic` |

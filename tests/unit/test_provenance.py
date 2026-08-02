@@ -23,7 +23,7 @@ def _make_dsc_sidecar() -> dict:
             "ContrastDose": {"standard_dose_mmol_kg": 0.1, "dose_multiplier": 1.0},
             "Deconvolution": {"method": "oSVD"},
             "LeakageCorrection": {"method": "bsw"},
-            "PreloadDetection": {"Source": "auto_detected"},
+            "PreloadDetection": {"source": "unknown"},
         }
     }
 
@@ -277,11 +277,10 @@ class TestEnrichDSC:
             "preload": {
                 "preload_correction_applied": True,
                 "k2_median": 0.008,
-                "preload_classification": "inadequate",
+                "preload_source": "unknown",
+                "preload_administered_dose_fraction": None,
                 # Advisory key: preload_baseline_delta_r2_advisory.
                 "preload_baseline_delta_r2_advisory": 0.12,
-                "preload_classification_source": "k2_primary",
-                "preload_k2_classification": "inadequate",
             },
             "aif_detection": {
                 "detection_method": "atlas_strict",
@@ -303,10 +302,9 @@ class TestEnrichDSC:
         assert perf["LeakageCorrection"]["applied"] is True
         assert perf["LeakageCorrection"]["K2_median"] == pytest.approx(0.008, abs=0.001)
 
-        assert perf["PreloadDetection"]["classification"] == "inadequate"
+        assert perf["PreloadDetection"]["source"] == "unknown"
         assert perf["PreloadDetection"]["baseline_delta_r2_advisory"] == pytest.approx(0.12, abs=0.001)
-        assert perf["PreloadDetection"]["classification_source"] == "k2_primary"
-        assert perf["PreloadDetection"]["k2_classification"] == "inadequate"
+        assert "administered_dose_fraction" not in perf["PreloadDetection"]
 
         assert perf["AIF"]["DetectionLevel"] == "atlas_strict"
         assert perf["AIF"]["FWHM"] == pytest.approx(4.0)
@@ -369,7 +367,7 @@ class TestEnrichDSC:
         sidecar = _make_dce_sidecar()
         dsc_qc = {
             "deconvolution": {"threshold_mean": 0.065},
-            "preload": {"preload_classification": "none"},
+            "preload": {"preload_source": "unknown"},
         }
         result = enrich_provenance_from_qc(sidecar, dsc_qc, "DCE")
         assert "PerfusionProcessing" in result

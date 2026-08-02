@@ -455,15 +455,13 @@ def _enrich_dsc(
             leak_block["K2_median"] = _safe_float(preload["k2_median"])
         perf["LeakageCorrection"] = leak_block
 
-        # PreloadDetection enrichment
+        # Administered-preload provenance and continuous advisory measurement.
         preload_det = perf.get("PreloadDetection", {})
-        if "preload_classification" in preload:
-            preload_det["classification"] = str(preload["preload_classification"])
-        if "preload_classification_source" in preload:
-            preload_det["classification_source"] = str(preload["preload_classification_source"])
-        if "preload_k2_classification" in preload:
-            preload_det["k2_classification"] = str(
-                preload["preload_k2_classification"]
+        if "preload_source" in preload:
+            preload_det["source"] = str(preload["preload_source"])
+        if preload.get("preload_administered_dose_fraction") is not None:
+            preload_det["administered_dose_fraction"] = _safe_float(
+                preload["preload_administered_dose_fraction"]
             )
         # preload_baseline_delta_r2_advisory: tissue-heterogeneity-biased
         # advisory metric, not used for classification.

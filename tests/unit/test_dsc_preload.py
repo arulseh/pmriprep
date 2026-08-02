@@ -5,10 +5,8 @@ import pytest
 from scipy.integrate import cumulative_trapezoid
 
 from pmriprep.utils.dsc_preload import (
-    K2Adequacy,
     PreloadClass,
     classify_preload,
-    classify_preload_adequacy_from_k2,
     get_preload_thresholds,
     _compute_ees_concentration,
 )
@@ -208,52 +206,6 @@ class TestAgentNormalizedThresholds:
             get_preload_thresholds(3.0, agent_standard_dose=-0.1)
 
 
-class TestPreloadClassFromDose:
-    """Bin user-specified administered preload fraction to class."""
-
-    def test_zero_is_none(self) -> None:
-        from pmriprep.utils.dsc_preload import preload_class_from_dose
-        assert preload_class_from_dose(0.0) == PreloadClass.NONE
-
-    def test_small_is_minimal(self) -> None:
-        from pmriprep.utils.dsc_preload import preload_class_from_dose
-        assert preload_class_from_dose(0.05) == PreloadClass.MINIMAL
-        assert preload_class_from_dose(0.10) == PreloadClass.MINIMAL
-
-    def test_quarter_dose_is_half_dose(self) -> None:
-        from pmriprep.utils.dsc_preload import preload_class_from_dose
-        assert preload_class_from_dose(0.25) == PreloadClass.HALF_DOSE
-        assert preload_class_from_dose(0.5) == PreloadClass.HALF_DOSE
-
-    def test_full_is_significant(self) -> None:
-        from pmriprep.utils.dsc_preload import preload_class_from_dose
-        assert preload_class_from_dose(1.0) == PreloadClass.SIGNIFICANT
-        assert preload_class_from_dose(0.75) == PreloadClass.SIGNIFICANT
-
-    def test_double_is_severe(self) -> None:
-        from pmriprep.utils.dsc_preload import preload_class_from_dose
-        assert preload_class_from_dose(1.5) == PreloadClass.SEVERE
-        assert preload_class_from_dose(2.0) == PreloadClass.SEVERE
-
-    def test_boundary_edges(self) -> None:
-        """Edges are lower-inclusive: [lo, hi)."""
-        from pmriprep.utils.dsc_preload import preload_class_from_dose
-        assert preload_class_from_dose(0.01) == PreloadClass.MINIMAL
-        assert preload_class_from_dose(0.20) == PreloadClass.HALF_DOSE
-        assert preload_class_from_dose(0.60) == PreloadClass.SIGNIFICANT
-        assert preload_class_from_dose(1.15) == PreloadClass.SEVERE
-
-    def test_negative_raises(self) -> None:
-        from pmriprep.utils.dsc_preload import preload_class_from_dose
-        with pytest.raises(ValueError, match="non-negative"):
-            preload_class_from_dose(-0.1)
-
-    def test_nan_raises(self) -> None:
-        from pmriprep.utils.dsc_preload import preload_class_from_dose
-        with pytest.raises(ValueError, match="finite"):
-            preload_class_from_dose(float("nan"))
-
-
 class TestResidualEquivalentFraction:
     """Physics of ΔR2* → residual-equivalent fraction inversion."""
 
@@ -450,85 +402,8 @@ class TestConfidenceScore:
             assert 0.0 <= r.confidence <= 1.0
 
 
-# =============================================================================
-# K2-primary preload adequacy classifier
-# =============================================================================
-
-
-class TestClassifyPreloadAdequacyFromK2:
-    """K2-adequacy classifier (dsc_preload.classify_preload_adequacy_from_k2)."""
-
-    def test_signed_k2_is_unknown_until_thresholds_are_calibrated(self) -> None:
-        """Legacy clipped-K2 thresholds do not classify signed coefficients."""
-        cls, confidence, reason = classify_preload_adequacy_from_k2(
-            {
-                "k2_signed": True,
-                "k2_median": 0.002,
-                "percent_leaky_voxels": 0.1,
-            }
-        )
-        assert cls is K2Adequacy.UNKNOWN
-        assert confidence == 0.0
-        assert "not calibrated" in reason
-
-    def test_cohort_center_is_adequate(self) -> None:
-        """k2_median=0.002, leaky=0.1% (institutional cohort center) → ADEQUATE."""
-        cls, conf, reason = classify_preload_adequacy_from_k2(
-            {"k2_median": 0.002, "percent_leaky_voxels": 0.1}
-        )
-        assert cls == K2Adequacy.ADEQUATE
-        assert conf >= 0.5
-        assert "adequate" in reason.lower()
-
-    def test_boundary_below_adequate_threshold(self) -> None:
-        """k2_median=0.004 just below 0.005 threshold, leaky=0.5% < 1.0% → ADEQUATE."""
-        cls, conf, _ = classify_preload_adequacy_from_k2(
-            {"k2_median": 0.004, "percent_leaky_voxels": 0.5}
-        )
-        assert cls == K2Adequacy.ADEQUATE
-        assert conf >= 0.5
-
-    def test_partial_tier(self) -> None:
-        """k2_median=0.007, leaky=2% → PARTIAL (between adequate and inadequate)."""
-        cls, _, reason = classify_preload_adequacy_from_k2(
-            {"k2_median": 0.007, "percent_leaky_voxels": 2.0}
-        )
-        assert cls == K2Adequacy.PARTIAL
-        assert "partial" in reason.lower()
-
-    def test_inadequate_k2_high(self) -> None:
-        """k2_median=0.02 exceeds INADEQUATE threshold → INADEQUATE."""
-        cls, _, reason = classify_preload_adequacy_from_k2(
-            {"k2_median": 0.02, "percent_leaky_voxels": 0.1}
-        )
-        assert cls == K2Adequacy.INADEQUATE
-        assert "inadequate" in reason.lower()
-
-    def test_empty_dict_is_unknown(self) -> None:
-        cls, conf, _ = classify_preload_adequacy_from_k2({})
-        assert cls == K2Adequacy.UNKNOWN
-        assert conf == 0.0
-
-    def test_none_is_unknown(self) -> None:
-        cls, conf, _ = classify_preload_adequacy_from_k2(None)
-        assert cls == K2Adequacy.UNKNOWN
-        assert conf == 0.0
-
-    def test_missing_leaky_key_is_unknown(self) -> None:
-        cls, _, _ = classify_preload_adequacy_from_k2(
-            {"k2_median": 0.002}  # no percent_leaky_voxels
-        )
-        assert cls == K2Adequacy.UNKNOWN
-
-
 class TestPreloadClassHasUnknown:
     """PreloadClass.UNKNOWN is a defined member."""
 
     def test_unknown_exists(self) -> None:
         assert PreloadClass.UNKNOWN.value == "unknown"
-
-    def test_unknown_not_in_dose_edges(self) -> None:
-        from pmriprep.utils.dsc_preload import _PRELOAD_DOSE_EDGES
-        # UNKNOWN is never produced from user dose input — should NOT be
-        # in the dose-to-class binning table.
-        assert PreloadClass.UNKNOWN not in _PRELOAD_DOSE_EDGES

@@ -39,7 +39,6 @@ from pmriprep.workflows.dsc._helpers import (  # noqa: F401
     _create_perfusion_brain_mask_filmstrip,
     _create_registration_filmstrip,
     _detect_and_correct_preload,
-    _extract_preload_class,
     _generate_dsc_fit_qc,
     _generate_dsc_leakage_qc,
     _generate_dsc_param_maps_qc,
@@ -432,8 +431,8 @@ def init_dsc_preload_wf(
 ) -> pe.Workflow:
     """Build the DSC preload-detection + K2 leakage-correction sub-workflow.
 
-    Detects/corrects contrast preload and computes the K2 leakage map (which
-    requires the AIF), then extracts the preload classification.
+    Records administered-preload provenance, performs leakage correction, and
+    computes the K2 map.
 
     Parameters
     ----------
@@ -472,8 +471,6 @@ def init_dsc_preload_wf(
         K2 leakage map.
     qc_dict
         Preload/leakage QC.
-    preload_classification
-        Discrete preload class (for K2 uncertainty tuning downstream).
     """
     workflow = pe.Workflow(name=name)
     inputnode = pe.Node(
@@ -496,7 +493,6 @@ def init_dsc_preload_wf(
                 "corrected_concentration_file",
                 "k2_map_file",
                 "qc_dict",
-                "preload_classification",
             ]
         ),
         name="outputnode",
@@ -530,16 +526,6 @@ def init_dsc_preload_wf(
     preload_correct.inputs.leakage_method = leakage_method
     preload_correct.inputs.kep = kep
 
-    # Node 4b: Extract preload classification from QC dict
-    extract_preload = pe.Node(
-        niu.Function(
-            input_names=["qc_dict"],
-            output_names=["preload_classification"],
-            function=_extract_preload_class,
-        ),
-        name="extract_preload",
-    )
-
     workflow.connect([
         (inputnode, preload_correct, [
             ("concentration_file", "concentration_file"),
@@ -550,13 +536,11 @@ def init_dsc_preload_wf(
             ("tr", "tr"),
             ("baseline_frames", "baseline_frames"),
         ]),
-        (preload_correct, extract_preload, [("qc_dict", "qc_dict")]),
         (preload_correct, outputnode, [
             ("corrected_concentration_file", "corrected_concentration_file"),
             ("k2_map_file", "k2_map_file"),
         ]),
         (preload_correct, outputnode, [("qc_dict", "qc_dict")]),
-        (extract_preload, outputnode, [("preload_classification", "preload_classification")]),
     ])
     return workflow
 
@@ -706,8 +690,8 @@ def init_dsc_deconvolution_wf(
         Leakage-corrected and raw concentration / signal time series.
     aif_file, measured_aif_file, aif_detection_level, baseline_frames
         Arterial input function and detection provenance.
-    k2_map_input_file, preload_classification
-        Preload-detection leakage inputs.
+    k2_map_input_file
+        Leakage-correction input.
     brain_mask_file, enhancing_mask_file, nawm_mask_file
         DSC-space brain and enhancing-tumor masks.
     tr, fd_values
@@ -750,7 +734,6 @@ def init_dsc_deconvolution_wf(
                 "fd_values",
                 "signal_file",
                 "raw_concentration_file",
-                "preload_classification",
             ]
         ),
         name="inputnode",
@@ -803,7 +786,6 @@ def init_dsc_deconvolution_wf(
             ("fd_values", "fd_values"),
             ("signal_file", "signal_file"),
             ("raw_concentration_file", "raw_concentration_file"),
-            ("preload_classification", "preload_classification"),
         ]),
         (compute_maps, outputnode, [
             ("out_rel_cbf", "out_rel_cbf"),
@@ -2282,7 +2264,6 @@ def init_dsc_preproc_wf(
             ("outputnode.concentration_file", "inputnode.raw_concentration_file"),
         ]),
         (preload_wf, deconvolution_wf, [
-            ("outputnode.preload_classification", "inputnode.preload_classification"),
         ]),
     ])
 

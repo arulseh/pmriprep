@@ -24,7 +24,8 @@ _AIF_QC_CONSUMER_KEYS = {
 }
 
 _PRELOAD_QC_CONSUMER_KEYS = {
-    "preload_classification",
+    "preload_source",
+    "preload_administered_dose_fraction",
     "k2_method",
     "k2_mean", "k2_std", "k2_min", "k2_max", "k2_median", "k2_p05", "k2_p95",
     "percent_negative_k2", "percent_k2_undefined",
@@ -74,7 +75,8 @@ def representative_in_process_dicts():
         "quality_score": 0.81,
     }
     preload_qc = {
-        "preload_classification": "none",
+        "preload_source": "user_specified",
+        "preload_administered_dose_fraction": 0.0,
         "k2_method": "bsw",
         "k2_mean": 0.011, "k2_std": 0.005,
         "k2_min": -0.021, "k2_max": 0.087, "k2_median": 0.012,

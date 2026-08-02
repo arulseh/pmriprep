@@ -438,14 +438,6 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
         usedefault=True,
         desc="AIF detection level: 'atlas_strict', 'atlas_relaxed', 'brain_*', or 'synthetic'",
     )
-    preload_classification = traits.Str(
-        "none",
-        usedefault=True,
-        desc="Effective classification: K2 adequacy ('adequate', 'partial', "
-        "'inadequate', 'unknown') on the auto path, or preload-dose class "
-        "('none', 'minimal', 'half_dose', 'significant', 'severe') on the user path",
-    )
-
     # Deconvolution method
     method = traits.Enum(
         "sSVD",
@@ -1106,16 +1098,6 @@ class ComputeDSCMaps(BaseInterface):
             cbv = np.full(spatial_shape, np.nan, dtype=np.float64)
             qc["cbv_auc_measured_aif_missing"] = True
 
-        _PRELOAD_INDICATORS = {"half_dose", "significant", "severe"}
-        preload_class = str(self.inputs.preload_classification)
-        if preload_class in _PRELOAD_INDICATORS:
-            qc["cbv_auc_preload_warning"] = (
-                f"Preload classification '{preload_class}': residual "
-                "leakage may bias full-bolus AUC CBV low (T1-dip, BSW "
-                "under-recovers) or high (positive T2* tail, BSW-uncorrectable). "
-                "Interpret with caution."
-            )
-
         return _DSCAUCMaps(
             raw=auc_raw,
             corrected=auc_corrected,
@@ -1232,7 +1214,6 @@ class ComputeDSCMaps(BaseInterface):
         tmax: npt.NDArray[Any],
         mask_bool: npt.NDArray[np.bool_],
         aif_level: str,
-        preload_class: str,
         baseline_info: dict[str, Any],
         aif_bat_seconds: float,
         cbv_auc_qc_source: Optional[npt.NDArray[Any]] = None,
@@ -1275,7 +1256,6 @@ class ComputeDSCMaps(BaseInterface):
             "tmax_median": _finite_stat(tmax, np.median),
             "n_voxels": int(np.sum(mask_bool)),
             "aif_detection_level": aif_level,
-            "preload_classification": preload_class,
         }
         qc.update(baseline_info)
         qc["aif_bat_seconds"] = aif_bat_seconds
@@ -1367,7 +1347,6 @@ class ComputeDSCMaps(BaseInterface):
         tail_frames: int,
         method: str,
         aif_level: str,
-        preload_class: str,
     ) -> _DSCPostprocessing:
         """Compose model-free maps, final masking, and DSC QC reduction."""
         qc = deconvolution.qc
@@ -1427,7 +1406,6 @@ class ComputeDSCMaps(BaseInterface):
                 maps.tmax,
                 mask_bool,
                 aif_level,
-                preload_class,
                 baseline_info,
                 timing.aif_bat_seconds,
                 auc.cbv,
@@ -2994,7 +2972,6 @@ class ComputeDSCMaps(BaseInterface):
             motion_weighting=motion_weighting,
         )
         aif_level = str(self.inputs.aif_detection_level)
-        preload_class = str(self.inputs.preload_classification)
         postprocessing = self._prepare_final_outputs(
             deconvolution=deconvolution,
             concentration=conc_data,
@@ -3008,7 +2985,6 @@ class ComputeDSCMaps(BaseInterface):
             tail_frames=tail_frames,
             method=method,
             aif_level=aif_level,
-            preload_class=preload_class,
         )
         self._results = self._assemble_outputs(
             inputs=inputs,

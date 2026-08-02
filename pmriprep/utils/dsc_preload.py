@@ -20,13 +20,9 @@ from pmriprep.utils.dsc_constants import (
     EPSILON_SIGNAL,
     GD_DOTA_STANDARD_DOSE,
     BIDIRECTIONAL_K2_ABSOLUTE_SAFETY_BOUND,
-    K2_PRIMARY_ADEQUATE,
-    K2_PRIMARY_INADEQUATE,
     KEP_DSC_DEFAULT,
     KEP_DSC_LOWER,
     KEP_DSC_UPPER,
-    LEAKY_PRIMARY_ADEQUATE,
-    LEAKY_PRIMARY_INADEQUATE,
 )
 
 logger = logging.getLogger(__name__)
@@ -42,11 +38,9 @@ _K2_REFERENCE_TAIL_FRAMES: Final[int] = 10
 class PreloadClass(str, Enum):
     """Administered-preload / residual-ΔR2* severity levels.
 
-    Classes describe either residual contrast effects (ΔR2* auto-detect
-    advisory) or administered preload dose (user-specified float binned by
-    :func:`preload_class_from_dose`). This enum is a *preload* quantity and
-    no longer doubles as a K2-adequacy label — the auto path reports
-    :class:`K2Adequacy` instead.
+    Internal advisory bins for residual contrast effects estimated from
+    baseline ΔR2*. Production outputs retain the continuous measurement rather
+    than publishing these categories.
     """
 
     NONE = "none"
@@ -66,31 +60,6 @@ class PreloadClass(str, Enum):
 
     UNKNOWN = "unknown"
     """Preload could not be determined."""
-
-
-class K2Adequacy(str, Enum):
-    """Adequacy of the K2 leakage correction (CBV trustworthiness).
-
-    Derived from the K2 residual distribution by
-    :func:`classify_preload_adequacy_from_k2`. Low K2 means the CBV
-    correction is reliable regardless of whether preload was physically
-    given (low K2 also occurs in intact-BBB tissue); operationally these
-    are equivalent for the downstream vp constraint. This is *not* a
-    preload-dose measurement.
-    """
-
-    ADEQUATE = "adequate"
-    """K2 suppressed — CBV correction reliable; trust CBV (tight sigma)."""
-
-    PARTIAL = "partial"
-    """Partial suppression — default sigma."""
-
-    INADEQUATE = "inadequate"
-    """K2 too high — CBV relies on a large correction; widen sigma."""
-
-    UNKNOWN = "unknown"
-    """K2 metrics unavailable — downstream SKIPs the constraint (more
-    conservative than silently applying a prior with no basis)."""
 
 
 class PreloadThresholds(NamedTuple):
@@ -193,56 +162,6 @@ def get_preload_thresholds(
 #: Edges are heuristic for K2 uncertainty bucketing; the MINIMAL→HALF_DOSE
 #: edge (0.20) and SIGNIFICANT→SEVERE edge (1.15) in particular are
 #: conventions rather than literature-derived boundaries.
-#:
-#: Note: these edges describe ADMINISTERED preload dose fractions (what the
-#: technician injected). Auto-detection from signal uses a separate set of
-#: ΔR2*-based thresholds (PRELOAD_THRESHOLDS_BY_FIELD) which measure the
-#: RESIDUAL-EQUIVALENT concentration at DSC start (what survived clearance).
-#: The two edge tables are physically distinct and are not expected to
-#: numerically align; they share the same class names for downstream
-#: K2-uncertainty bucketing only.
-_PRELOAD_DOSE_EDGES: Final[dict[PreloadClass, tuple[float, float]]] = {
-    PreloadClass.NONE:         (0.00, 0.01),
-    PreloadClass.MINIMAL:      (0.01, 0.20),
-    PreloadClass.HALF_DOSE:    (0.20, 0.60),
-    PreloadClass.SIGNIFICANT:  (0.60, 1.15),
-    PreloadClass.SEVERE:       (1.15, float("inf")),
-}
-
-
-def preload_class_from_dose(preload_dose: float) -> PreloadClass:
-    """Bin a user-specified administered preload dose fraction to a class.
-
-    Bin edges are right-exclusive half-open intervals ``[lo, hi)``, matching
-    :func:`classify_preload` and :func:`get_preload_thresholds` semantics.
-
-    Parameters
-    ----------
-    preload_dose : float
-        Administered preload as a fraction of the agent's
-        standard single dose (0.0 = no preload, 0.5 = half-dose,
-        1.0 = full dose). Must be finite and non-negative.
-
-    Returns
-    -------
-    PreloadClass
-        PreloadClass enum value for K2 uncertainty tuning.
-
-    Raises
-    ------
-        ValueError: If ``preload_dose`` is negative or non-finite.
-    """
-    if not np.isfinite(preload_dose) or preload_dose < 0:
-        raise ValueError(
-            f"preload_dose must be finite and non-negative, got {preload_dose}"
-        )
-    for cls, (lo, hi) in _PRELOAD_DOSE_EDGES.items():
-        if lo <= preload_dose < hi:
-            return cls
-    # Should be unreachable since SEVERE has hi=inf, but guard anyway
-    return PreloadClass.SEVERE
-
-
 def residual_equivalent_fraction_from_delta_r2(
     delta_r2: float,
     field_strength: float = 3.0,
@@ -351,109 +270,6 @@ class PreloadResult:
 # =============================================================================
 # Preload Detection Functions
 # =============================================================================
-
-
-def classify_preload_adequacy_from_k2(
-    k2_metrics: Optional[dict[str, Any]],
-) -> tuple[K2Adequacy, float, str]:
-    """Classify K2 leakage-correction adequacy from the K2 residual distribution.
-
-    K2 is the direct physical signature of T1-leakage contamination in
-    DSC. Low K2 means the CBV correction is reliable, regardless of whether
-    preload was physically given (low K2 also occurs in intact-BBB tissue);
-    operationally these are equivalent for the downstream constraint. This
-    is an *adequacy* measure, not a preload-dose measurement.
-
-    Thresholds from :mod:`pmriprep.utils.dsc_constants` (physics-expert
-    calibrated for BSW K2 at 3T, relaxed from literature 0.003 → 0.005
-    to match observed well-suppressed half-dose
-    cohort k2_median 0.0018–0.0048):
-
-    * ``k2_median < K2_PRIMARY_ADEQUATE (0.005)`` AND
-      ``percent_leaky < LEAKY_PRIMARY_ADEQUATE (1.0%)``
-      → ``K2Adequacy.ADEQUATE`` (K2-suppressed; trust CBV — tight sigma)
-    * ``k2_median < K2_PRIMARY_INADEQUATE (0.01)`` AND
-      ``percent_leaky < LEAKY_PRIMARY_INADEQUATE (5.0%)``
-      → ``K2Adequacy.PARTIAL`` (partial suppression; default sigma)
-    * otherwise
-      → ``K2Adequacy.INADEQUATE`` (K2 too high; widen sigma)
-    * empty / missing ``k2_metrics``
-      → ``K2Adequacy.UNKNOWN`` (caller SKIPs the constraint)
-
-    ADEQUATE cannot distinguish "preload given + suppressed" from "no
-    preload + intact BBB". Both cases mean K2 correction wasn't needed,
-    which is operationally equivalent for sigma selection.
-
-    Parameters
-    ----------
-    k2_metrics : Optional[dict[str, Any]]
-        QC dict with keys ``k2_median`` (s⁻¹) and
-        ``percent_leaky_voxels`` (%). When `None` or missing either
-        key, returns UNKNOWN.
-
-    Returns
-    -------
-    tuple[K2Adequacy, float, str]
-        Tuple of (adequacy, confidence ∈ [0, 1], reason string).
-        Confidence is ~0.9 far from thresholds and drops toward 0.5 at
-        the boundaries.
-    """
-    if not k2_metrics:
-        return (
-            K2Adequacy.UNKNOWN,
-            0.0,
-            "k2_metrics empty or missing — cannot classify",
-        )
-    if k2_metrics.get("k2_reference_available") is False:
-        return (
-            K2Adequacy.UNKNOWN,
-            0.0,
-            "K2 reference unavailable — cannot classify adequacy",
-        )
-    if bool(k2_metrics.get("k2_signed", False)):
-        return (
-            K2Adequacy.UNKNOWN,
-            0.0,
-            "signed K2 adequacy thresholds are not calibrated",
-        )
-    k2_med = k2_metrics.get("k2_median")
-    leaky = k2_metrics.get("percent_leaky_voxels")
-    if k2_med is None or leaky is None:
-        return (
-            K2Adequacy.UNKNOWN,
-            0.0,
-            "k2_metrics missing k2_median or percent_leaky_voxels",
-        )
-    k2_med = float(k2_med)
-    leaky = float(leaky)
-    if not (np.isfinite(k2_med) and np.isfinite(leaky)) or k2_med < 0 or leaky < 0:
-        return (
-            K2Adequacy.UNKNOWN,
-            0.0,
-            f"k2_metrics invalid: k2_median={k2_med}, percent_leaky={leaky}",
-        )
-
-    if k2_med < K2_PRIMARY_ADEQUATE and leaky < LEAKY_PRIMARY_ADEQUATE:
-        # Log-distance-based confidence: saturates at 0.95 for k2 ≤ K2/4.
-        k2_ratio = max(k2_med, 1e-6) / K2_PRIMARY_ADEQUATE
-        conf = float(np.clip(0.5 + 0.45 * (1.0 - k2_ratio), 0.5, 0.95))
-        return (
-            K2Adequacy.ADEQUATE,
-            conf,
-            f"K2-adequate: k2_median={k2_med:.4f} < {K2_PRIMARY_ADEQUATE}, "
-            f"leaky={leaky:.2f}% < {LEAKY_PRIMARY_ADEQUATE}%",
-        )
-    if k2_med < K2_PRIMARY_INADEQUATE and leaky < LEAKY_PRIMARY_INADEQUATE:
-        return (
-            K2Adequacy.PARTIAL,
-            0.6,
-            f"K2-partial: k2_median={k2_med:.4f}, leaky={leaky:.2f}%",
-        )
-    return (
-        K2Adequacy.INADEQUATE,
-        0.7,
-        f"K2-inadequate: k2_median={k2_med:.4f}, leaky={leaky:.2f}%",
-    )
 
 
 def classify_preload(

@@ -1575,7 +1575,7 @@ def _connect_master_dsc_outputs_and_build_provenance(
         preload_source=(
             ParameterSource.USER_SPECIFIED
             if user_specified.get("dsc_preload")
-            else ParameterSource.AUTO_DETECTED
+            else "unknown"
         ),
         deconv_method=dsc_config.method,
         inference=dsc_config.inference,

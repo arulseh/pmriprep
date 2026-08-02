@@ -493,12 +493,6 @@
       "in_file"
     ],
     [
-      "extract_preload",
-      "preload_classification",
-      "compute_maps",
-      "preload_classification"
-    ],
-    [
       "hdbet_dsc",
       "dsc_brain_file",
       "convert_inv_dsc_h5",
@@ -1023,12 +1017,6 @@
     [
       "preload_correct",
       "qc_dict",
-      "extract_preload",
-      "qc_dict"
-    ],
-    [
-      "preload_correct",
-      "qc_dict",
       "merge_qc",
       "preload_qc"
     ],
@@ -1386,14 +1374,6 @@
         "stats"
       ]
     },
-    "extract_preload": {
-      "input_names": [
-        "qc_dict"
-      ],
-      "output_names": [
-        "preload_classification"
-      ]
-    },
     "hist_match_t1w": {
       "input_names": [
         "brain_mask_file",
@@ -1595,14 +1575,13 @@
     "dsc_leakage_qc": "be283dfe120e2271c465111746ca2f0fa71dc41698d91f3eefa485d26fed2421",
     "dsc_param_maps_qc": "1b8432d6dbd7505c754aaf76d2a86e84be48127f7bb050797c7c0809e97075f4",
     "dsc_preproc_qc": "120b1f3f6ea69c095663da8e71955876fde923b19fccc8a5691edc8867ad53cb",
-    "extract_preload": "5bec40d1755b3c09316a8866cec9c669e6296d60e7cd8a0a85192af3f83a01d9",
     "hist_match_t1w": "33d0ceadebcfcf66ed403151737f0e0d429e96320c2101825b356309caf68f0e",
     "merge_qc": "37ca0ba72809bbf07bcc8037e1ee6ff2c9de63338f72ea264e8b5abf363acf8d",
     "motion_qc_plot": "c51bb7f0da9a494256c19c097824adf784a100aa3747678cd1a11a5de8ed286b",
     "normalize": "46e95a18670a3134604db1df88e4aff73813483aa0a8272286af55f0493c78da",
     "normalize_cbf": "d3d8d3aee06a43e5524d185dc46864e05e9850e216be2760f3e22a54f659e83a",
     "prebolus_mean": "94ade71cddc7afb13dce74a47091860d8d7ee30fce12cc69505ee224e72fdc8d",
-    "preload_correct": "992ab4216e95dfb35b896995f2e23fa0f644466c3bb3f6ca22a801c0f12ede61",
+    "preload_correct": "827905deab3bacd7e71cc1e7e1a0fb0062b46e9669c058641952139bad688635",
     "reg_filmstrip": "00497e133ecfd0f3b852ebd399555ee6e05fcffabbd174d339e925667d3709be",
     "select_aif_exclusion": "3ac6f0a171a3c915c7c043706044fb8dd45d2a9c05f1d1fad613919135724b21",
     "signal_to_conc": "aafea7db6295a9aae640c8e25aa553ef58a8356c39cf66317d554e6a5eea3749",
@@ -1660,10 +1639,6 @@
       "n_procs": 1
     },
     "dsc_reorient": {
-      "mem_gb": 0.2,
-      "n_procs": 1
-    },
-    "extract_preload": {
       "mem_gb": 0.2,
       "n_procs": 1
     },
@@ -1816,7 +1791,6 @@
       "method": "oSVD",
       "n_procs": 1,
       "oi_threshold": 0.095,
-      "preload_classification": "none",
       "sloppy": false,
       "svd_threshold": 0.2,
       "tail_frames": 10,
@@ -1849,9 +1823,6 @@
       "function_str": "def _generate_dsc_preprocessing_qc(\n    dsc_signal_file: str,\n    brain_mask_file: str,\n    baseline_frames: int,\n    tr: float,\n    te: float | None = None,\n    subject_id: str = \"\",\n    session_id: str = \"\",\n) -> tuple[str, dict[str, object]]:\n    \"\"\"Generate DSC preprocessing QC plot.\n\n    Parameters\n    ----------\n    dsc_signal_file : str\n        Path to motion-corrected 4D DSC signal NIfTI.\n    brain_mask_file : str\n        Path to brain mask NIfTI.\n    baseline_frames : int\n        Number of pre-bolus baseline frames.\n    tr : float\n        Repetition time in seconds.\n    te : float, optional\n        Echo time in seconds.\n    subject_id : str, optional\n        Subject identifier.\n    session_id : str, optional\n        Session identifier.\n\n    Returns\n    -------\n    tuple of (str, dict)\n        Tuple of (plot_file path, stats dict).\n    \"\"\"\n    import nibabel as nib\n    from pmriprep.utils.dsc_qc_plots import generate_dsc_preprocessing_qc_plot\n\n    signal_img = nib.load(dsc_signal_file)\n    signal_4d = signal_img.get_fdata()  # type: ignore[attr-defined]\n    mask_data = nib.load(brain_mask_file).get_fdata()  # type: ignore[attr-defined]\n\n    _zooms = signal_img.header.get_zooms()  # type: ignore[attr-defined]\n    voxel_size_mm = (\n        float(_zooms[0]), float(_zooms[1]), float(_zooms[2]),\n    )\n\n    plot_path, stats = generate_dsc_preprocessing_qc_plot(\n        dsc_signal_4d=signal_4d,\n        brain_mask=mask_data,\n        baseline_frames=baseline_frames,\n        volume_tr_s=tr,\n        te_s=te,\n        subject_id=subject_id,\n        session_id=session_id,\n        voxel_size_mm=voxel_size_mm,\n    )\n    return plot_path, stats\n",
       "session_id": "0001",
       "subject_id": "0001"
-    },
-    "extract_preload": {
-      "function_str": "def _extract_preload_class(qc_dict: dict[str, object] | None) -> str:\n    \"\"\"Extract preload classification from preload_correct QC dict.\n\n    Parameters\n    ----------\n    qc_dict : dict\n        QC metrics dictionary from preload correction node.\n\n    Returns\n    -------\n    str\n        Effective classification string: a K2-adequacy value on the auto\n        path (e.g. 'adequate', 'partial', 'inadequate', 'unknown') or a\n        preload-dose class on the user path (e.g. 'none', 'half_dose').\n    \"\"\"\n    if not qc_dict:\n        return \"none\"\n    return str(qc_dict.get(\"preload_classification\", \"none\"))\n"
     },
     "hdbet_dsc": {
       "bet_frac": 0.3,
@@ -2005,10 +1976,6 @@
     [
       "dsc_reorient",
       "Reorient"
-    ],
-    [
-      "extract_preload",
-      "Function"
     ],
     [
       "hdbet_dsc",

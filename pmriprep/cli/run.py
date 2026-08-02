@@ -495,8 +495,8 @@ Examples:
         type=_preload_type,
         default=None,
         metavar="{auto|FLOAT}",
-        help="DSC preload as 'auto' (classify preload adequacy from the K2 "
-        "leakage residuals) or a float administered-dose multiplier relative "
+        help="DSC preload as 'auto' (administered preload unknown) or a float "
+        "administered-dose multiplier relative "
         "to the agent's standard dose (e.g., 0.5 for half-dose preload). "
         "Accepts 0.0 to 2.0.",
     )

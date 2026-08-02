@@ -392,11 +392,11 @@ class TestBuildDscProvenance:
         assert dose["Source"] == "user_specified"
         assert dose["AgentStandardDoseSource"] == "user_specified"
 
-    def test_preload_auto_detected(self) -> None:
-        """Preload auto-detected is the default."""
+    def test_preload_unknown(self) -> None:
+        """Unknown administered preload is the default."""
         prov = build_dsc_provenance()
         preload = prov["PerfusionProcessing"]["PreloadDetection"]
-        assert preload["Source"] == "auto_detected"
+        assert preload == {"source": "unknown"}
 
     def test_preload_user_specified(self) -> None:
         """Preload user-specified recorded correctly."""
@@ -404,7 +404,7 @@ class TestBuildDscProvenance:
             preload_source=ParameterSource.USER_SPECIFIED,
         )
         preload = prov["PerfusionProcessing"]["PreloadDetection"]
-        assert preload["Source"] == "user_specified"
+        assert preload == {"source": "user_specified"}
 
     def test_agent_identity_from_sidecar(self) -> None:
         """BIDS-detected agent includes generic name, brand, and original string."""

@@ -1335,14 +1335,12 @@ def _preload_cosmetic_keys(preload_qc: Optional[Dict[str, Any]]) -> Dict[str, An
         out["PreloadK2Method"] = str(preload_qc["k2_method"])
     if preload_qc.get("kep_used") is not None:
         out["PreloadKepUsed"] = float(preload_qc["kep_used"])
-    if "preload_classification" in preload_qc:
-        out["PreloadClassification"] = str(preload_qc["preload_classification"])
-    if "preload_classification_source" in preload_qc:
-        out["PreloadClassificationSource"] = str(preload_qc["preload_classification_source"])
-    if "preload_k2_classification" in preload_qc:
-        out["PreloadK2Adequacy"] = str(preload_qc["preload_k2_classification"])
-    if "preload_k2_confidence" in preload_qc:
-        out["PreloadK2Confidence"] = str(preload_qc["preload_k2_confidence"])
+    if "preload_source" in preload_qc:
+        out["PreloadSource"] = str(preload_qc["preload_source"])
+    if preload_qc.get("preload_administered_dose_fraction") is not None:
+        out["PreloadAdministeredDoseFraction"] = float(
+            preload_qc["preload_administered_dose_fraction"]
+        )
     if "k2_median" in preload_qc:
         out["PreloadK2Median"] = float(preload_qc["k2_median"])
     if "k2_min" in preload_qc:
@@ -1383,8 +1381,6 @@ def _preload_cosmetic_keys(preload_qc: Optional[Dict[str, Any]]) -> Dict[str, An
         out["PreloadK2ReferenceFailureReason"] = str(
             preload_qc["k2_reference_failure_reason"]
         )
-    if "preload_user_specified" in preload_qc:
-        out["PreloadUserSpecified"] = bool(preload_qc["preload_user_specified"])
     return out
 
 

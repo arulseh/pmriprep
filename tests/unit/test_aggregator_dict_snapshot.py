@@ -40,7 +40,7 @@ def test_load_pipeline_sidecars_dsc(tmp_path: Path) -> None:
             "QCProcessingWarnings": ["AIF fell back to template"],
             "PipelineQC": {
                 "aif_detection": {"detection_method": "atlas_strict", "quality_score": 0.8},
-                "preload": {"k2_method": "bsw", "preload_classification": "none"},
+                "preload": {"k2_method": "bsw", "preload_source": "unknown"},
                 "preprocessing": {"fd_mean": 0.12, "n_volumes": 60},
             },
         },

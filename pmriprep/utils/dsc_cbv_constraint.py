@@ -22,12 +22,10 @@ import numpy.typing as npt
 
 from pmriprep.utils.dce_constants import (
     NAWM_VP_REFERENCE,
+    SIGMA_SOFT_DSC_PRIOR,
     VP_MAX_PHYSIOLOGICAL,
     VP_MEDIAN_MIN,
     VP_MEDIAN_MAX,
-    SIGMA_SOFT_DEFAULT,
-    SIGMA_SOFT_K2_SUPPRESSED,
-    SIGMA_SOFT_HIGH_K2,
 )
 from pmriprep.utils.dsc_aif import (
     GAMMA_PEAK_RATIO_MIN,
@@ -35,10 +33,6 @@ from pmriprep.utils.dsc_aif import (
 )
 from pmriprep.utils.dsc_constants import (
     GD_DOTA_STANDARD_DOSE,
-    K2_SIGMA_CORRECTION,
-    K2_SIGMA_SUPPRESSED,
-    LEAKY_SIGMA_HIGH,
-    LEAKY_SIGMA_LOW,
     QC_MEAN_CNR_MINIMUM,
 )
 
@@ -88,11 +82,6 @@ CBV_MEDIAN_RANGE: tuple[float, float] = (0.3, 3.0)
 
 #: Maximum fraction of negative CBV values before quality downgrade
 CBV_NEGATIVE_FRACTION_MAX: float = 0.01
-
-# Composite K2 criteria for preload-aware uncertainty adjustment (sigma tier).
-# This tier is coarser than the primary classification tier (K2_PRIMARY_*)
-# used by classify_preload_adequacy_from_k2; sigma tuning tolerates looser
-# thresholds than discrete class assignment.
 
 # Gamma peak ratio thresholds for constraint quality gating.
 # Moderate band [0.90, 1.10] imported from dsc_aif.py (single source of truth).
@@ -152,17 +141,10 @@ class CBVQualityAssessment:
     aif_baseline_return: float = 1.0
     cbv_median: Optional[float] = None
     cbv_negative_fraction: Optional[float] = None
-    preload_status: Optional[str] = None
     detection_level: Optional[str] = None
     n_aif_voxels: Optional[int] = None
     gamma_peak_ratio: Optional[float] = None
     reasons: list[str] = field(default_factory=list)
-    #: Cached (k2_suppressed, high_correction) pair from
-    #: :func:`_classify_preload_k2`; populated during quality assessment so
-    #: :func:`determine_constraint_mode` can reuse the classification instead
-    #: of recomputing it. Avoids a second source of truth for the "high K2
-    #: correction" decision.
-    preload_k2_classification: Optional[tuple[bool, bool]] = None
 
 
 @dataclass
@@ -308,37 +290,6 @@ def _downgrade_confidence(current: str, target: str) -> str:
     return current
 
 
-def _classify_preload_k2(
-    k2_metrics: Optional[dict[str, Any]],
-) -> tuple[bool, bool]:
-    """Classify K2-correction status for quality and uncertainty logic.
-
-    Keyed entirely off the K2 residual distribution; the preload label is
-    not consulted (low K2 means the correction is reliable regardless of
-    whether preload was administered).
-
-    Parameters
-    ----------
-    k2_metrics : Optional[dict[str, Any]]
-        K2 leakage correction metrics from dsc_preload.
-
-    Returns
-    -------
-    tuple[bool, bool]
-        Tuple of (k2_suppressed, high_correction).
-    """
-    if not k2_metrics or bool(k2_metrics.get("k2_signed", False)):
-        return False, False
-
-    k2_med = float(k2_metrics.get("k2_median", 0.0))
-    pct_leaky = float(k2_metrics.get("percent_leaky_voxels", 0.0))
-
-    k2_suppressed = k2_med < K2_SIGMA_SUPPRESSED and pct_leaky < LEAKY_SIGMA_LOW
-    high_correction = pct_leaky > LEAKY_SIGMA_HIGH or k2_med > K2_SIGMA_CORRECTION
-
-    return k2_suppressed, high_correction
-
-
 def _bolus_gd_fraction(
     dose: float = 1.0,
     agent_standard_dose: float = GD_DOTA_STANDARD_DOSE,
@@ -386,8 +337,6 @@ def assess_dsc_cbv_quality(
     aif_qc_data: dict[str, Any],
     cbv_data: Optional[npt.NDArray[np.floating]] = None,
     brain_mask: Optional[npt.NDArray[np.floating]] = None,
-    preload_classification: Optional[str] = None,
-    k2_metrics: Optional[dict[str, Any]] = None,
     dose: float = 1.0,
     agent_standard_dose: float = GD_DOTA_STANDARD_DOSE,
 ) -> CBVQualityAssessment:
@@ -414,10 +363,6 @@ def assess_dsc_cbv_quality(
         Optional 3D dimensionless nCBV map for value range validation.
     brain_mask : npt.NDArray[np.floating], optional
         Optional 3D brain mask for nCBV statistics.
-    preload_classification : str, optional
-        DSC preload classification string.
-    k2_metrics : dict[str, Any], optional
-        K2 leakage correction metrics from dsc_preload.
     dose : float, optional
         DSC bolus dose multiplier (1.0 = full standard).
     agent_standard_dose : float, optional
@@ -640,19 +585,6 @@ def assess_dsc_cbv_quality(
                         f"[{CBV_MEDIAN_RANGE[0]}, {CBV_MEDIAN_RANGE[1]}]"
                     )
 
-    result.preload_status = preload_classification
-    classification = _classify_preload_k2(k2_metrics)
-    result.preload_k2_classification = classification
-    _k2_suppressed, high_correction = classification
-    if not bool((k2_metrics or {}).get("k2_signed", False)) and high_correction:
-        k2_med = float((k2_metrics or {}).get("k2_median", 0.0))
-        pct_leaky = float((k2_metrics or {}).get("percent_leaky_voxels", 0.0))
-        result.reasons.append(
-            f"Substantial leakage correction "
-            f"(K2 median={k2_med:.4f}, leaky={pct_leaky:.1f}%): "
-            "CBV relies on large K2 correction"
-        )
-
     result.confidence = confidence
     result.use_constraint = confidence != "low"
 
@@ -719,39 +651,9 @@ def ncbv_to_vp_prior(
 # =============================================================================
 
 
-def _sigma_from_k2(k2_suppressed: bool, high_correction: bool) -> tuple[float, str]:
-    """Select the SOFT vp-prior sigma from K2 leakage-correction adequacy.
-
-    K2 adequacy is a *systematic* (bias) uncertainty on the CBV anchor, distinct
-    from DSC confidence (a *random* uncertainty that governs SOFT-vs-SKIP). A
-    well-suppressed K2 means the anchor is trustworthy (tight prior); a high
-    residual correction means the CBV scale is biased (loose prior). When both
-    flags are set (mid-range K2), ``k2_suppressed`` wins — the adequate tier.
-
-    Parameters
-    ----------
-    k2_suppressed : bool
-        K2 residual is low (adequate leakage correction).
-    high_correction : bool
-        K2 residual is high (inadequate leakage correction).
-
-    Returns
-    -------
-    tuple[float, str]
-        ``(sigma, adequacy_label)`` where ``adequacy_label`` is one of
-        ``'adequate'``, ``'partial'``, ``'inadequate'``.
-    """
-    if k2_suppressed:
-        return SIGMA_SOFT_K2_SUPPRESSED, "adequate"
-    if high_correction:
-        return SIGMA_SOFT_HIGH_K2, "inadequate"
-    return SIGMA_SOFT_DEFAULT, "partial"
-
-
 def determine_constraint_mode(
     dsc_quality: CBVQualityAssessment,
     user_override: Optional[str] = None,
-    preload_classification: Optional[str] = None,
     k2_metrics: Optional[dict[str, Any]] = None,
 ) -> ConstraintConfig:
     """Determine constraint mode from DSC quality assessment.
@@ -761,19 +663,16 @@ def determine_constraint_mode(
     - **MODE (SOFT vs SKIP)** is governed by DSC *quality/noise*: the
       ``confidence`` tier from :func:`assess_dsc_cbv_quality` (AIF tier, CNR,
       AIF peak/baseline, gamma-peak ratio) plus the hard SKIP triggers
-      (synthetic AIF, unavailable leakage reference, unavailable unsigned K2,
-      and user ``skip``). Low confidence produces SKIP; high/moderate produces
-      SOFT.
-    - **σ (prior width, SOFT only)** uses the fixed 0.60 release-policy
-      width for the signed K2 production path. This is the widest qualified
-      existing tier, not a subject-specific uncertainty estimate. Signed
-      leakage metrics remain descriptive and do not enable, disable, or tune
-      the Bayesian prior. The retained unsigned compatibility path continues
-      to use the historical K2 tiers.
+      (synthetic AIF, unavailable leakage reference, and user ``skip``). Low
+      confidence produces SKIP; high/moderate produces SOFT.
+    - **σ (prior width, SOFT only)** uses the fixed 0.60 release-policy width.
+      This is the widest qualified existing tier, not a subject-specific
+      uncertainty estimate. Signed leakage metrics remain descriptive and do
+      not enable, disable, or tune the Bayesian prior.
 
     Decision order: synthetic AIF → SKIP; unavailable leakage reference →
-    SKIP; unavailable unsigned K2 → SKIP; user override; then confidence →
-    {SOFT with the fixed release-policy σ for signed K2, or SKIP}.
+    SKIP; user override; then confidence → {SOFT with the fixed release-policy
+    σ, or SKIP}.
 
     Parameters
     ----------
@@ -782,9 +681,6 @@ def determine_constraint_mode(
     user_override : str, optional
         User-specified mode override ('auto', 'skip'). If 'auto' or None,
         auto-determined from quality.
-    preload_classification : str, optional
-        DSC preload classification string from QC
-        (e.g., 'half_dose', 'significant', 'severe', 'none').
     k2_metrics : dict[str, Any], optional
         K2 leakage-correction metrics from ``dsc_preload``. Signed metrics
         are reported but are not assigned an adequacy tier.
@@ -816,39 +712,16 @@ def determine_constraint_mode(
             reason=SYNTHETIC_AIF_REASON_STRING,
         )
 
-    # An explicit False is the current signed-K2 failure signal. Older QC
-    # dictionaries may omit the key; they remain on the unsigned compatibility
-    # path below, where UNKNOWN adequacy fails closed.
+    # The Bayesian prior requires a successfully estimated leakage reference.
+    # Missing and false values both fail closed; there is no legacy unsigned-K2
+    # compatibility path.
     if _is_auto(user_override) and (k2_metrics or {}).get(
         "k2_reference_available"
-    ) is False:
+    ) is not True:
         return ConstraintConfig(
             mode=ConstraintMode.SKIP,
             vp_uncertainty=0.0,
             reason="K2 leakage reference unavailable -- Bayesian prior skipped",
-        )
-
-    # UNKNOWN unsigned-K2 adequacy → SKIP. Signed K2 is deliberately
-    # unclassified and therefore bypasses this legacy adequacy gate.
-    # This is safer than defaulting an unavailable unsigned estimator to NONE,
-    # which would apply a prior without supporting evidence. It short-circuits
-    # before quality-confidence branches and user override; UNKNOWN only
-    # bypasses the auto branch.
-    from pmriprep.utils.dsc_preload import K2Adequacy as _K2Adequacy
-
-    if (
-        _is_auto(user_override)
-        and (
-            preload_classification == _K2Adequacy.UNKNOWN.value
-            and not bool((k2_metrics or {}).get("k2_signed", False))
-        )
-    ):
-        return ConstraintConfig(
-            mode=ConstraintMode.SKIP,
-            vp_uncertainty=0.0,
-            reason=(
-                "Unsigned K2 adequacy is unavailable -- constraint skipped"
-            ),
         )
 
     # User override
@@ -879,38 +752,17 @@ def determine_constraint_mode(
     confidence = dsc_quality.confidence
 
     if confidence in ("high", "moderate"):
-        if bool((k2_metrics or {}).get("k2_signed", False)):
-            # Signed K2 is descriptive rather than an uncertainty estimator.
-            # Use the widest qualified existing Gaussian-prior tier; this is a
-            # fixed release policy, not a per-subject calibration claim.
-            return ConstraintConfig(
-                mode=ConstraintMode.SOFT,
-                vp_uncertainty=SIGMA_SOFT_HIGH_K2,
-                reason=(
-                    f"{confidence} DSC quality; fixed release-policy Bayesian "
-                    f"prior relative SD={SIGMA_SOFT_HIGH_K2:.2f}; signed K2 "
-                    "reported descriptively"
-                ),
-            )
-
-        # MODE is set (SOFT); σ is governed by K2 adequacy, not DSC confidence
-        # (orthogonal: confidence = random error, K2 adequacy = systematic
-        # bias). Reuse the classification cached during quality assessment when
-        # available; fall back to recomputing only if the quality object
-        # Hand-built QC dictionaries may omit this field.
-        if dsc_quality.preload_k2_classification is not None:
-            k2_suppressed, high_correction = (
-                dsc_quality.preload_k2_classification
-            )
-        else:
-            k2_suppressed, high_correction = _classify_preload_k2(k2_metrics)
-
-        uncertainty, adequacy = _sigma_from_k2(k2_suppressed, high_correction)
-
+        # K2 is descriptive rather than an uncertainty estimator. Use the
+        # widest qualified existing Gaussian-prior tier as a fixed release
+        # policy, not a per-subject calibration claim.
         return ConstraintConfig(
             mode=ConstraintMode.SOFT,
-            vp_uncertainty=uncertainty,
-            reason=f"{confidence} DSC quality; K2 {adequacy} (sigma={uncertainty:.2f})",
+            vp_uncertainty=SIGMA_SOFT_DSC_PRIOR,
+            reason=(
+                f"{confidence} DSC quality; fixed release-policy Bayesian "
+                f"prior relative SD={SIGMA_SOFT_DSC_PRIOR:.2f}; signed K2 "
+                "reported descriptively"
+            ),
         )
     else:
         # low → SKIP. Keep detail — it's the diagnostic breadcrumb.
@@ -931,7 +783,6 @@ def prepare_vp_constraint_from_data(
     aif_qc_data: dict[str, Any],
     brain_mask_file: Union[str, Path],
     mode_override: Optional[str] = None,
-    preload_classification: Optional[str] = None,
     k2_metrics: Optional[dict[str, Any]] = None,
     dose: float = 1.0,
     agent_standard_dose: float = GD_DOTA_STANDARD_DOSE,
@@ -963,8 +814,6 @@ def prepare_vp_constraint_from_data(
         Path to brain mask NIfTI.
     mode_override : str, optional
         User-specified constraint mode override.
-    preload_classification : str, optional
-        DSC preload classification string from QC.
     k2_metrics : dict[str, Any], optional
         K2 leakage correction metrics dict from dsc_preload.
     dsc_registration_qc : dict[str, Any], optional
@@ -1088,8 +937,6 @@ def prepare_vp_constraint_from_data(
         aif_qc_data=aif_qc_data if aif_qc_data else {},
         cbv_data=ncbv_data,
         brain_mask=mask_data,
-        preload_classification=preload_classification,
-        k2_metrics=k2_metrics,
         dose=dose,
         agent_standard_dose=agent_standard_dose,
     )
@@ -1099,7 +946,6 @@ def prepare_vp_constraint_from_data(
     config = determine_constraint_mode(
         quality,
         user_override=mode_override,
-        preload_classification=preload_classification,
         k2_metrics=k2_metrics,
     )
     result.config = config

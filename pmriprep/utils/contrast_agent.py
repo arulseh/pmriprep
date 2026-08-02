@@ -897,7 +897,7 @@ def build_dsc_provenance(
     agent_standard_dose: float = 0.1,
     agent_standard_dose_source: str = ParameterSource.DEFAULT_FALLBACK,
     gd_multiplicity: int = 1,
-    preload_source: str = ParameterSource.AUTO_DETECTED,
+    preload_source: str = "unknown",
     deconv_method: str = "oSVD",
     inference: Optional[str] = None,
     leakage_method: str = "bsw",
@@ -930,7 +930,7 @@ def build_dsc_provenance(
         Gd3+ ions per molecule (1 for monomeric, 4 for
         gadoquatrane). Recorded in provenance when != 1.
     preload_source : str
-        How preload was determined (user_specified or auto_detected).
+        Whether the administered preload was user-specified or is unknown.
     deconv_method : str
         Deconvolution method name.
     inference : str, optional
@@ -1009,7 +1009,7 @@ def build_dsc_provenance(
     perf["ContrastDose"] = dose_dict
     perf["Deconvolution"] = deconv_block
     perf["LeakageCorrection"] = {"method": str(leakage_method)}
-    perf["PreloadDetection"] = {"Source": str(preload_source)}
+    perf["PreloadDetection"] = {"source": str(preload_source)}
     if scanner_metadata:
         block = _build_scanner_metadata_block(scanner_metadata)
         if block:

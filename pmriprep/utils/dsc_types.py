@@ -131,7 +131,6 @@ class DSCQCMetrics:
         outlier_frames: Number of frames flagged as motion outliers.
         aif_quality: AIF detection quality score (0-1).
         aif_detection_level: AIF detection method used ('atlas', 'relaxed', 'synthetic').
-        preload_classification: Detected preload state.
         rhat_max: Maximum Gelman-Rubin R-hat for Bayesian fits.
         ess_min: Minimum effective sample size for Bayesian fits.
     """
@@ -142,7 +141,6 @@ class DSCQCMetrics:
     outlier_frames: int = 0
     aif_quality: float = 0.0
     aif_detection_level: str = ""
-    preload_classification: str = ""
     rhat_max: Optional[float] = None
     ess_min: Optional[int] = None
 

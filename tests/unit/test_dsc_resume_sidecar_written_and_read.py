@@ -34,7 +34,8 @@ def representative_qc_dicts() -> tuple[dict[str, Any], dict[str, Any], dict[str,
     }
     preload_qc = {
         "k2_method": "bsw",
-        "preload_classification": "none",
+        "preload_source": "unknown",
+        "preload_administered_dose_fraction": None,
         "k2_median": -0.002,
         "k2_signed": True,
         "percent_negative_k2": 61.0,

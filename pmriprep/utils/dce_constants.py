@@ -1139,21 +1139,7 @@ VP_NCBV_RATIO_MAX: Final[float] = 0.02
 MIN_NCBV_FOR_VALIDATION: Final[float] = 0.3
 MAX_NCBV_FOR_VALIDATION: Final[float] = 5.0
 
-#: Soft-prior sigma for the DCE vp constraint under NAWM-normalized nCBV,
-#: differentiated by K2 leakage-correction adequacy. The ~40% biological
-#: floor (Hct heterogeneity ~15% CoV + capillary-vs-total-vessel volume
-#: partitioning ~20%) does not diminish with DSC SNR, so DSC *confidence*
-#: (random/noise error) governs the constraint MODE, not σ. K2 adequacy
-#: (systematic/bias error in the CBV anchor) governs σ: a known-inadequate
-#: leakage correction leaves a residual CBV-scale bias that the prior must
-#: not lean on tightly. Values are quadrature sums of the 0.40 floor with
-#: the post-BSW residual CBV-scale error:
-#:
-#:   adequate   = 0.40                (biological floor only)
-#:   partial    ≈ √(0.40² + 0.25²) = 0.50   (modest residual)
-#:   inadequate ≈ √(0.40² + 0.40²) = 0.60   (large residual)
-#: The signed-K2 path separately selects 0.60 as the widest qualified
-#: release-policy tier, not as an estimate of that examination's residual.
-SIGMA_SOFT_K2_SUPPRESSED: Final[float] = 0.40   # adequate
-SIGMA_SOFT_DEFAULT: Final[float] = 0.50         # partial
-SIGMA_SOFT_HIGH_K2: Final[float] = 0.60         # inadequate
+#: Fixed relative SD for the quality-qualified DSC-informed DCE vp prior.
+#: This is the widest qualified release-policy width, not an uncertainty
+#: estimated from the subject's K2 distribution.
+SIGMA_SOFT_DSC_PRIOR: Final[float] = 0.60

@@ -22,7 +22,6 @@ __all__ = [
     "_create_perfusion_brain_mask_filmstrip",
     "_create_registration_filmstrip",
     "_detect_and_correct_preload",
-    "_extract_preload_class",
     "_generate_dsc_fit_qc",
     "_generate_dsc_leakage_qc",
     "_generate_dsc_param_maps_qc",
@@ -455,7 +454,6 @@ def _detect_and_correct_preload(
     tuple of (str, str, dict)
         Tuple of (corrected_concentration_file, k2_map_file, qc_dict).
     """
-    import logging
     import numpy as np
     import nibabel as nib  # type: ignore[import-untyped]
     from pathlib import Path
@@ -487,18 +485,9 @@ def _detect_and_correct_preload(
     qc_metrics["baseline_frames_used"] = int(baseline_frames)
     k2_map_file: str = ""
 
-    # K2-primary is the sole classifier. Run detect_preload() only for the
-    # ΔR2* advisory metric (logged as tissue-heterogeneity-biased motion/
-    # S0-baseline diagnostic; never drives effective_class). K2 correction
-    # runs unconditionally (preload-class-agnostic), and the K2 residual
-    # distribution is then used to classify
-    # preload adequacy (ADEQUATE / PARTIAL / INADEQUATE / UNKNOWN).
-    from pmriprep.utils.dsc_preload import (
-        K2Adequacy,
-        classify_preload_adequacy_from_k2,
-        detect_preload,
-        preload_class_from_dose,
-    )
+    # Estimate continuous baseline ΔR2* for advisory QC only. Leakage
+    # correction runs independently of the administered preload metadata.
+    from pmriprep.utils.dsc_preload import detect_preload
 
     signal_data = None
     if signal_file:
@@ -513,13 +502,9 @@ def _detect_and_correct_preload(
         field_strength=field_strength,
         agent_standard_dose=agent_standard_dose,
     )
-    advisory_class = preload_result.classification.value
-    # Label keys explicitly "advisory_*" so consumers don't confuse this
-    # with the decision-making classification.
     qc_metrics["preload_baseline_delta_r2_advisory"] = (
         preload_result.baseline_delta_r2
     )
-    qc_metrics["preload_advisory_classification"] = advisory_class
     qc_metrics["preload_advisory_method"] = preload_result.detection_method
     qc_metrics["preload_advisory_note"] = (
         "delta-R2* advisory: tissue-heterogeneity-biased; used for acquisition "
@@ -571,47 +556,14 @@ def _detect_and_correct_preload(
     if correction_result.qc_metrics:
         qc_metrics.update(correction_result.qc_metrics)
 
-    # --- Preload classification: user override > K2-primary -------------
+    # --- Administered-preload provenance ---------------------------------
     if isinstance(preload, str) and preload == "auto":
-        k2_class, k2_confidence, k2_reason = (
-            classify_preload_adequacy_from_k2(qc_metrics)
-        )
-        effective_class = k2_class.value
-        qc_metrics["preload_user_specified"] = False
-        qc_metrics["preload_k2_classification"] = effective_class
-        qc_metrics["preload_k2_confidence"] = k2_confidence
-        qc_metrics["preload_k2_reason"] = k2_reason
-        if k2_class == K2Adequacy.UNKNOWN:
-            if qc_metrics.get("k2_reference_available") is False:
-                source = "k2_unavailable"
-            elif qc_metrics.get("k2_signed") is True:
-                source = "signed_k2_uncalibrated"
-            else:
-                source = "k2_unavailable"
-            qc_metrics["preload_classification_source"] = source
-            logging.getLogger("pmriprep.workflows").warning(
-                "K2-primary preload classification unavailable (%s); "
-                "downstream DCE constraint will SKIP.",
-                k2_reason,
-            )
-        else:
-            qc_metrics["preload_classification_source"] = "k2_primary"
+        qc_metrics["preload_source"] = "unknown"
+        qc_metrics["preload_administered_dose_fraction"] = None
     else:
         user_dose = float(preload)
-        user_class = preload_class_from_dose(user_dose).value
-        effective_class = user_class
-        qc_metrics["preload_user_specified"] = True
-        qc_metrics["preload_user_specified_dose"] = user_dose
-        qc_metrics["preload_user_specified_classification"] = user_class
-        qc_metrics["preload_classification_source"] = "user_specified"
-        # Log K2-primary classification for reference (even with user override).
-        k2_class, k2_confidence, _ = classify_preload_adequacy_from_k2(
-            qc_metrics
-        )
-        qc_metrics["preload_k2_classification"] = k2_class.value
-        qc_metrics["preload_k2_confidence"] = k2_confidence
-
-    qc_metrics["preload_classification"] = effective_class
+        qc_metrics["preload_source"] = "user_specified"
+        qc_metrics["preload_administered_dose_fraction"] = user_dose
 
     # Save corrected concentration
     conc_path = Path(concentration_file)
@@ -1113,26 +1065,6 @@ def _create_registration_filmstrip(
     )
 
     return output_path
-
-
-def _extract_preload_class(qc_dict: dict[str, object] | None) -> str:
-    """Extract preload classification from preload_correct QC dict.
-
-    Parameters
-    ----------
-    qc_dict : dict
-        QC metrics dictionary from preload correction node.
-
-    Returns
-    -------
-    str
-        Effective classification string: a K2-adequacy value on the auto
-        path (e.g. 'adequate', 'partial', 'inadequate', 'unknown') or a
-        preload-dose class on the user path (e.g. 'none', 'half_dose').
-    """
-    if not qc_dict:
-        return "none"
-    return str(qc_dict.get("preload_classification", "none"))
 
 
 def _generate_motion_qc_plot(
