@@ -43,6 +43,22 @@ class TestAssessDSCCBVQuality:
         assert result.confidence == "high"
         assert result.use_constraint is True
 
+    def test_signed_k2_does_not_downgrade_anchor_quality(self) -> None:
+        """Signed leakage metrics are descriptive, not a Bayesian-prior gate."""
+        aif_qc_data = {
+            "cnr_whole_brain": {"fraction_cnr_gt_4": 0.995},
+            "aif_peak_height": 0.4,
+            "baseline_return_ratio": 0.15,
+        }
+        result = assess_dsc_cbv_quality(
+            aif_qc_data,
+            k2_metrics={"k2_signed": True, "k2_median": -0.002},
+        )
+
+        assert result.confidence == "high"
+        assert result.use_constraint is True
+        assert not any("prior is unavailable" in reason for reason in result.reasons)
+
     def test_moderate_quality(self) -> None:
         """CNR coverage between moderate and high thresholds gives moderate confidence."""
         aif_qc_data = {
@@ -787,6 +803,31 @@ class TestVpMagnitudeGate:
         assert result.qc_report.get("magnitude_gate_triggered") is not True
         assert VP_MEDIAN_MIN <= result.qc_report["vp_median"] <= VP_MEDIAN_MAX
 
+    def test_signed_k2_preserves_qualified_bayesian_prior(self, tmp_path: Any) -> None:
+        """Production signed K2 retains the fixed prior after gross-quality gates."""
+        ncbv = np.full((8, 8, 8), 1.0, dtype=np.float64)
+        mask = np.ones((8, 8, 8), dtype=np.float32)
+        ncbv_file = _write_nifti(tmp_path / "ncbv.nii.gz", ncbv)
+        mask_file = _write_nifti(tmp_path / "mask.nii.gz", mask)
+
+        result = prepare_vp_constraint_from_data(
+            ncbv_file=ncbv_file,
+            aif_qc_data=_synth_aif_qc(),
+            brain_mask_file=mask_file,
+            preload_classification="unknown",
+            k2_metrics={
+                "k2_signed": True,
+                "k2_median": 0.001,
+                "percent_negative_k2": 35.0,
+            },
+            **_accepted_registration_qc(),
+        )
+
+        assert result.config.mode == ConstraintMode.SOFT
+        assert result.config.vp_uncertainty == pytest.approx(0.60)
+        assert result.vp_map is not None
+        assert result.qc_report["vp_uncertainty"] == pytest.approx(0.60)
+
 
 # =============================================================================
 # nCBV integration path through prepare_vp_constraint_from_data
@@ -961,7 +1002,7 @@ class TestDoseAwareCnrGate:
 
 
 class TestDetermineConstraintModeUnknownSkips:
-    """UNKNOWN preload short-circuits to SKIP regardless of quality."""
+    """Unavailable unsigned-K2 adequacy short-circuits to SKIP."""
 
     def test_unknown_preload_skips_even_with_high_quality(self) -> None:
         """Preload=UNKNOWN → SKIP even if DSC quality signals are excellent."""
@@ -990,6 +1031,42 @@ class TestDetermineConstraintModeUnknownSkips:
             preload_classification="unknown",
         )
         assert config.mode == ConstraintMode.SKIP
+
+    def test_unknown_signed_k2_uses_broad_prior(self) -> None:
+        """Unknown signed-K2 adequacy is descriptive and does not disable the prior."""
+        quality = CBVQualityAssessment(
+            confidence="moderate",
+            use_constraint=True,
+            reasons=["CNR coverage marginal"],
+        )
+        config = determine_constraint_mode(
+            quality,
+            preload_classification="unknown",
+            k2_metrics={"k2_signed": True, "k2_median": 0.001},
+        )
+
+        assert config.mode == ConstraintMode.SOFT
+        assert config.vp_uncertainty == pytest.approx(0.60)
+
+    def test_signed_k2_with_unavailable_reference_skips(self) -> None:
+        """A failed leakage reference remains a gross-quality hard gate."""
+        quality = CBVQualityAssessment(
+            confidence="high",
+            use_constraint=True,
+            reasons=[],
+        )
+        config = determine_constraint_mode(
+            quality,
+            preload_classification="unknown",
+            k2_metrics={
+                "k2_signed": True,
+                "k2_reference_available": False,
+            },
+        )
+
+        assert config.mode == ConstraintMode.SKIP
+        assert config.vp_uncertainty == 0.0
+        assert "reference unavailable" in config.reason
 
 
 class TestBolusGdFractionValidation:
@@ -1068,8 +1145,8 @@ class TestSigmaDifferentiation:
         assert cfg_high.vp_uncertainty == pytest.approx(0.40)
         assert cfg_mod.vp_uncertainty == cfg_high.vp_uncertainty
 
-    def test_signed_k2_skips_prior_even_with_user_preload_dose(self) -> None:
-        """A dose label cannot reactivate thresholds invalid for signed K2."""
+    def test_signed_k2_uses_fixed_release_policy_prior_width(self) -> None:
+        """Signed leakage metrics neither gate nor tune the Bayesian prior."""
         quality = CBVQualityAssessment(
             confidence="high",
             use_constraint=True,
@@ -1087,9 +1164,10 @@ class TestSigmaDifferentiation:
             k2_metrics=signed,
         )
 
-        assert config.mode == ConstraintMode.SKIP
-        assert config.vp_uncertainty == 0.0
-        assert "uncalibrated" in config.reason
+        assert config.mode == ConstraintMode.SOFT
+        assert config.vp_uncertainty == pytest.approx(0.60)
+        assert "fixed release-policy Bayesian prior" in config.reason
+        assert "signed K2 reported descriptively" in config.reason
 
     @pytest.mark.parametrize(
         "k2_metrics, expected_sigma, tier",

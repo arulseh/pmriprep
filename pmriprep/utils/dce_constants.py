@@ -1152,6 +1152,8 @@ MAX_NCBV_FOR_VALIDATION: Final[float] = 5.0
 #:   adequate   = 0.40                (biological floor only)
 #:   partial    ≈ √(0.40² + 0.25²) = 0.50   (modest residual)
 #:   inadequate ≈ √(0.40² + 0.40²) = 0.60   (large residual)
+#: The signed-K2 path separately selects 0.60 as the widest qualified
+#: release-policy tier, not as an estimate of that examination's residual.
 SIGMA_SOFT_K2_SUPPRESSED: Final[float] = 0.40   # adequate
 SIGMA_SOFT_DEFAULT: Final[float] = 0.50         # partial
 SIGMA_SOFT_HIGH_K2: Final[float] = 0.60         # inadequate

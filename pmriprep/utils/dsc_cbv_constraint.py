@@ -644,13 +644,7 @@ def assess_dsc_cbv_quality(
     classification = _classify_preload_k2(k2_metrics)
     result.preload_k2_classification = classification
     _k2_suppressed, high_correction = classification
-    if bool((k2_metrics or {}).get("k2_signed", False)):
-        result.reasons.append(
-            "Signed K2 adequacy thresholds are not calibrated; "
-            "DSC-informed vp prior is unavailable"
-        )
-        confidence = "low"
-    elif high_correction:
+    if not bool((k2_metrics or {}).get("k2_signed", False)) and high_correction:
         k2_med = float((k2_metrics or {}).get("k2_median", 0.0))
         pct_leaky = float((k2_metrics or {}).get("percent_leaky_voxels", 0.0))
         result.reasons.append(
@@ -762,19 +756,24 @@ def determine_constraint_mode(
 ) -> ConstraintConfig:
     """Determine constraint mode from DSC quality assessment.
 
-    Two orthogonal axes decide the outcome:
+    Two independent decisions determine the outcome:
 
     - **MODE (SOFT vs SKIP)** is governed by DSC *quality/noise*: the
       ``confidence`` tier from :func:`assess_dsc_cbv_quality` (AIF tier, CNR,
       AIF peak/baseline, gamma-peak ratio) plus the hard SKIP triggers
-      (synthetic AIF, ``UNKNOWN`` K2, and user ``skip``). Low confidence
-      produces SKIP; high/moderate produces SOFT.
-    - **σ (prior width, SOFT only)** is governed by K2 leakage-correction
-      *adequacy* (a systematic bias on the CBV anchor): adequate → 0.40,
-      partial → 0.50, inadequate → 0.60 (see :func:`_sigma_from_k2`).
+      (synthetic AIF, unavailable leakage reference, unavailable unsigned K2,
+      and user ``skip``). Low confidence produces SKIP; high/moderate produces
+      SOFT.
+    - **σ (prior width, SOFT only)** uses the fixed 0.60 release-policy
+      width for the signed K2 production path. This is the widest qualified
+      existing tier, not a subject-specific uncertainty estimate. Signed
+      leakage metrics remain descriptive and do not enable, disable, or tune
+      the Bayesian prior. The retained unsigned compatibility path continues
+      to use the historical K2 tiers.
 
-    Decision order: synthetic AIF → SKIP; UNKNOWN K2 → SKIP; user override;
-    then confidence → {SOFT with adequacy-derived σ, or SKIP}.
+    Decision order: synthetic AIF → SKIP; unavailable leakage reference →
+    SKIP; unavailable unsigned K2 → SKIP; user override; then confidence →
+    {SOFT with the fixed release-policy σ for signed K2, or SKIP}.
 
     Parameters
     ----------
@@ -817,26 +816,38 @@ def determine_constraint_mode(
             reason=SYNTHETIC_AIF_REASON_STRING,
         )
 
-    # UNKNOWN preload → SKIP. More conservative than defaulting to NONE,
-    # which would silently apply a soft prior to data with no basis for
-    # any prior. Short-circuits before quality-confidence branches and
-    # before user override (user can still request SOFT/SKIP explicitly;
-    # UNKNOWN only bypasses the auto branch).
+    # An explicit False is the current signed-K2 failure signal. Older QC
+    # dictionaries may omit the key; they remain on the unsigned compatibility
+    # path below, where UNKNOWN adequacy fails closed.
+    if _is_auto(user_override) and (k2_metrics or {}).get(
+        "k2_reference_available"
+    ) is False:
+        return ConstraintConfig(
+            mode=ConstraintMode.SKIP,
+            vp_uncertainty=0.0,
+            reason="K2 leakage reference unavailable -- Bayesian prior skipped",
+        )
+
+    # UNKNOWN unsigned-K2 adequacy → SKIP. Signed K2 is deliberately
+    # unclassified and therefore bypasses this legacy adequacy gate.
+    # This is safer than defaulting an unavailable unsigned estimator to NONE,
+    # which would apply a prior without supporting evidence. It short-circuits
+    # before quality-confidence branches and user override; UNKNOWN only
+    # bypasses the auto branch.
     from pmriprep.utils.dsc_preload import K2Adequacy as _K2Adequacy
 
     if (
         _is_auto(user_override)
         and (
             preload_classification == _K2Adequacy.UNKNOWN.value
-            or bool((k2_metrics or {}).get("k2_signed", False))
+            and not bool((k2_metrics or {}).get("k2_signed", False))
         )
     ):
         return ConstraintConfig(
             mode=ConstraintMode.SKIP,
             vp_uncertainty=0.0,
             reason=(
-                "Signed K2 adequacy is unavailable or uncalibrated -- "
-                "constraint skipped"
+                "Unsigned K2 adequacy is unavailable -- constraint skipped"
             ),
         )
 
@@ -868,6 +879,20 @@ def determine_constraint_mode(
     confidence = dsc_quality.confidence
 
     if confidence in ("high", "moderate"):
+        if bool((k2_metrics or {}).get("k2_signed", False)):
+            # Signed K2 is descriptive rather than an uncertainty estimator.
+            # Use the widest qualified existing Gaussian-prior tier; this is a
+            # fixed release policy, not a per-subject calibration claim.
+            return ConstraintConfig(
+                mode=ConstraintMode.SOFT,
+                vp_uncertainty=SIGMA_SOFT_HIGH_K2,
+                reason=(
+                    f"{confidence} DSC quality; fixed release-policy Bayesian "
+                    f"prior relative SD={SIGMA_SOFT_HIGH_K2:.2f}; signed K2 "
+                    "reported descriptively"
+                ),
+            )
+
         # MODE is set (SOFT); σ is governed by K2 adequacy, not DSC confidence
         # (orthogonal: confidence = random error, K2 adequacy = systematic
         # bias). Reuse the classification cached during quality assessment when

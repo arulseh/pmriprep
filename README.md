@@ -227,7 +227,7 @@ DCE fields:
 | `ser_early_time_s` | `120.0` | Early SER sample time after the selected global contrast reference (s) |
 | `ser_late_time_s` | `320.0` | Late SER sample time after the selected global contrast reference (s) |
 | `r1_relaxivity` | `null` | Contrast-agent r1 override in s⁻¹ mM⁻¹ (float) |
-| `cbv_constraint_mode` | `auto` | Use quality-qualified, spatially registered DSC CBV as a Bayesian vp prior, or `skip`; NLLS remains unconstrained |
+| `cbv_constraint_mode` | `auto` | Use qualified DSC CBV as a Bayesian vp prior with fixed 60% release-policy SD, or `skip`; NLLS remains unconstrained |
 | `hematocrit` | `0.42` | Arterial hematocrit for plasma conversion (float) |
 | `no_dsc_validation` | `false` | Skip DSC–DCE cross-validation |
 | `smooth_fwhm` | `0.0` | Additional smoothed outputs in mm (float); 0 disables |
