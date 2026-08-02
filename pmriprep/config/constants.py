@@ -2,10 +2,6 @@
 
 from __future__ import annotations
 
-# Named dose presets resolved to float multipliers
-# Used by DCE, DSC configs, loader, and CLI
-DOSE_PRESETS: dict[str, float] = {"half": 0.5, "full": 1.0, "double": 2.0}
-
 # HD-GLIO tumor segmentation label registry.
 # (int_label, snake_case_name, abbreviation, human_label, description)
 HDGLIO_TUMOR_SEG_LABELS: tuple[tuple[int, str, str, str, str], ...] = (

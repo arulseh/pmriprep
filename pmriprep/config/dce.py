@@ -5,8 +5,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Literal, Optional
 
-from .constants import DOSE_PRESETS
-
 logger = logging.getLogger(__name__)
 
 @dataclass
@@ -237,20 +235,14 @@ class DCEConfig:
         except (ValueError, TypeError) as e:
             raise TypeError(f"DCEConfig integer field has invalid type: {e}") from e
 
-        # Coerce dose: string preset → float, numeric → float
-        if isinstance(self.dose, str):
-            if self.dose in DOSE_PRESETS:
-                self.dose = DOSE_PRESETS[self.dose]
-            else:
-                try:
-                    self.dose = float(self.dose)
-                except (ValueError, TypeError) as e:
-                    raise ValueError(
-                        f"Invalid dose={self.dose!r}. Use a named preset "
-                        f"({', '.join(sorted(DOSE_PRESETS))}) or a positive number."
-                    ) from e
-        else:
+        if isinstance(self.dose, (str, bool)):
+            raise TypeError(
+                f"DCE dose must be an unquoted numeric multiplier, got {self.dose!r}"
+            )
+        try:
             self.dose = float(self.dose)
+        except (ValueError, TypeError) as e:
+            raise TypeError("DCE dose must be a numeric multiplier") from e
         import math
         if not math.isfinite(self.dose) or self.dose <= 0:
             raise ValueError(f"dose must be a finite positive number, got {self.dose}")

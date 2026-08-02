@@ -113,7 +113,7 @@ Key DSC options:
 | `--dsc-deconv-method {sSVD,oSVD,tikhonov,vascular,cpi}` | Select deconvolution (default: oSVD) |
 | `--dsc-inference {vi,svb,nlls}` | Select inference for CPI/vascular models (default: vi) |
 | `--dsc-preload {auto\|FLOAT}` | Record preload as unknown or provide an administered-dose multiplier |
-| `--dsc-dose DOSE` | Set dose multiplier (`half`, `full`, `double`, or float) |
+| `--dsc-dose FLOAT` | Set a positive dose multiplier (for example, `0.5` for half dose) |
 | `--dsc-aif-method {auto,synthetic}` | Select detected or synthetic AIF |
 | `--dsc-aif-file FILE` | Supply an external ΔR2* AIF in s⁻¹ |
 
@@ -125,7 +125,7 @@ Key DCE options:
 | `--dce-inference {nlls,vi}` | Select inference (default: nlls) |
 | `--dce-aif-method {auto,population}` | Select detected or population AIF |
 | `--dce-aif-file FILE` | Supply a plasma-concentration AIF in mM |
-| `--dce-dose DOSE` | Set dose multiplier (`half`, `full`, `double`, or float) |
+| `--dce-dose FLOAT` | Set a positive dose multiplier (for example, `0.5` for half dose) |
 | `--dce-b1-method {auto,afi,precomputed,none}` | Control B1+ correction |
 | `--dce-no-t1` | Use a uniform field-strength reference T1 |
 | `--dce-t1-map FILE` | Supply a millisecond T1 map world-aligned to DCE |

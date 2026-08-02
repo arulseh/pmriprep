@@ -16,7 +16,6 @@ import toml  # type: ignore[import-untyped]
 from pmriprep import __version__
 from pmriprep.cli import logging as plogger
 from pmriprep.cli.logging import IMPORTANT
-from pmriprep.config import DOSE_PRESETS
 
 if TYPE_CHECKING:
     from bids.layout import BIDSLayout
@@ -205,12 +204,12 @@ def _prepare_workflow_cache(
 
 
 def _dose_type(value: str) -> float:
-    """Parse a dose argument as a named preset or positive float.
+    """Parse a dose argument as a positive float.
 
     Parameters
     ----------
     value : str
-        Dose string from CLI (e.g. ``"half"``, ``"1.0"``, ``"0.75"``).
+        Dose string from CLI (e.g. ``"1.0"`` or ``"0.75"``).
 
     Returns
     -------
@@ -220,19 +219,15 @@ def _dose_type(value: str) -> float:
     Raises
     ------
     argparse.ArgumentTypeError
-        If *value* is not a known preset or a finite positive number.
+        If *value* is not a finite positive number.
     """
     import math
 
-    if value in DOSE_PRESETS:
-        return DOSE_PRESETS[value]
     try:
         fval = float(value)
     except ValueError:
         raise argparse.ArgumentTypeError(
-            f"invalid dose value: {value!r}. "
-            f"Use a named preset ({', '.join(sorted(DOSE_PRESETS))}) "
-            f"or a positive number (e.g. 0.75)."
+            f"invalid dose value: {value!r}. Use a positive number (e.g. 0.75)."
         )
     if not math.isfinite(fval) or fval <= 0:
         raise argparse.ArgumentTypeError(
@@ -504,9 +499,8 @@ Examples:
         "--dsc-dose",
         type=_dose_type,
         default=None,
-        metavar="DOSE",
-        help="Dose multiplier (default: 1.0). "
-        "Accepts a float or presets: half, full, double.",
+        metavar="FLOAT",
+        help="Positive dose multiplier (default: 1.0; e.g. 0.5 for half dose).",
     )
     dsc_group.add_argument(
         "--dsc-agent-standard-dose",
@@ -577,9 +571,8 @@ Examples:
         "--dce-dose",
         type=_dose_type,
         default=None,
-        metavar="DOSE",
-        help="Dose multiplier (default: 1.0). "
-        "Accepts a float or presets: half, full, double.",
+        metavar="FLOAT",
+        help="Positive dose multiplier (default: 1.0; e.g. 0.5 for half dose).",
     )
     dce_group.add_argument(
         "--dce-r1",

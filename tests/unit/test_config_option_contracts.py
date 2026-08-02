@@ -203,13 +203,13 @@ def test_configured_aif_extension_is_validated(tmp_path: Path) -> None:
         (["--dsc-deconv-method", "cpi"], "dsc", "method", "cpi"),
         (["--dsc-inference", "svb"], "dsc", "inference", "svb"),
         (["--dsc-preload", "0.5"], "dsc", "preload", 0.5),
-        (["--dsc-dose", "half"], "dsc", "dose", 0.5),
+        (["--dsc-dose", "0.5"], "dsc", "dose", 0.5),
         (["--dsc-agent-standard-dose", "0.05"], "dsc", "agent_standard_dose", 0.05),
         (["--dsc-aif-method", "synthetic"], "dsc", "aif_method", "synthetic"),
         (["--dce-model", "patlak"], "dce", "model", "patlak"),
         (["--dce-inference", "vi"], "dce", "inference", "vi"),
         (["--dce-aif-method", "population"], "dce", "aif_method", "population"),
-        (["--dce-dose", "double"], "dce", "dose", 2.0),
+        (["--dce-dose", "2.0"], "dce", "dose", 2.0),
         (["--dce-r1", "5.0"], "dce", "r1_relaxivity", 5.0),
         (["--dce-b1-method", "none"], "dce", "b1_method", "none"),
         (["--dce-b1-map-encoding", "percent"], "dce", "b1_map_encoding", "percent"),
@@ -235,6 +235,27 @@ def test_cli_and_file_options_build_identical_effective_values(
     }
 
     assert getattr(builders[section](merged), field) == expected
+
+
+@pytest.mark.parametrize("option", ["--dsc-dose", "--dce-dose"])
+@pytest.mark.parametrize("preset", ["half", "full", "double"])
+def test_cli_dose_rejects_named_presets(option: str, preset: str) -> None:
+    """Dose CLI options accept numeric multipliers only."""
+    with pytest.raises(SystemExit):
+        _build_parser().parse_args(
+            ["/tmp/bids", "/tmp/out", "participant", option, preset]
+        )
+
+
+@pytest.mark.parametrize(
+    ("builder", "section"),
+    [(build_dsc_config, "dsc"), (build_dce_config, "dce")],
+)
+@pytest.mark.parametrize("value", ["half", "0.5", True])
+def test_config_dose_rejects_non_numeric_values(builder, section: str, value) -> None:
+    """YAML and JSON dose fields require numeric values, not strings or booleans."""
+    with pytest.raises(TypeError, match="dose must be an unquoted numeric multiplier"):
+        builder({section: {"dose": value}})
 
 
 def test_shared_hdbet_device_cli_reaches_all_brain_extraction_configs() -> None:

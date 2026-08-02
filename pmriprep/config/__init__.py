@@ -2,7 +2,6 @@
 
 from .anat import AnatConfig
 from .constants import (
-    DOSE_PRESETS,
     HDGLIO_BIDS_LABELS,
     HDGLIO_DSEG_ROWS,
     HDGLIO_LABEL_TO_NAME,
@@ -23,7 +22,6 @@ from .loader import (
 __all__ = [
     "AnatConfig",
     "DCEConfig",
-    "DOSE_PRESETS",
     "HDGLIO_BIDS_LABELS",
     "HDGLIO_DSEG_ROWS",
     "HDGLIO_LABEL_TO_NAME",

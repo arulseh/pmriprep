@@ -6,8 +6,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Literal, Optional, Union
 
-from .constants import DOSE_PRESETS
-
 #: Administered preload as a multiplier of the agent's standard dose, or
 #: ``"auto"`` when the administered preload is unknown.
 PreloadInput = Union[Literal["auto"], float]
@@ -207,20 +205,14 @@ class DSCConfig:
         except (ValueError, TypeError) as e:
             raise TypeError(f"DSCConfig integer field has invalid type: {e}") from e
 
-        # Coerce dose: string preset → float, numeric → float
-        if isinstance(self.dose, str):
-            if self.dose in DOSE_PRESETS:
-                self.dose = DOSE_PRESETS[self.dose]
-            else:
-                try:
-                    self.dose = float(self.dose)
-                except (ValueError, TypeError) as e:
-                    raise ValueError(
-                        f"Invalid dose={self.dose!r}. Use a named preset "
-                        f"({', '.join(sorted(DOSE_PRESETS))}) or a positive number."
-                    ) from e
-        else:
+        if isinstance(self.dose, (str, bool)):
+            raise TypeError(
+                f"DSC dose must be an unquoted numeric multiplier, got {self.dose!r}"
+            )
+        try:
             self.dose = float(self.dose)
+        except (ValueError, TypeError) as e:
+            raise TypeError("DSC dose must be a numeric multiplier") from e
         if not math.isfinite(self.dose) or self.dose <= 0:
             raise ValueError(f"dose must be a finite positive number, got {self.dose}")
         if self.dose < 0.2 or self.dose > 3.0:

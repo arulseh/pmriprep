@@ -9,7 +9,6 @@ from typing import Any, Dict, Optional, Union
 import yaml  # type: ignore[import-untyped]
 
 from .anat import AnatConfig
-from .constants import DOSE_PRESETS
 from .dce import DCEConfig
 from .dsc import DSCConfig
 from .tumor_seg import TumorSegConfig
@@ -308,26 +307,6 @@ def _coerce_float(d: Dict[str, Any], key: str) -> None:
             pass  # Leave as-is if conversion fails
 
 
-def _coerce_dose(d: Dict[str, Any], key: str = "dose") -> None:
-    """Resolve a dose value (string preset or numeric) to float in-place."""
-    if key not in d or d[key] is None:
-        return
-    val = d[key]
-    if isinstance(val, str):
-        if val in DOSE_PRESETS:
-            d[key] = DOSE_PRESETS[val]
-        else:
-            try:
-                d[key] = float(val)
-            except (ValueError, TypeError):
-                pass  # Leave for dataclass __post_init__ to raise
-    else:
-        try:
-            d[key] = float(val)
-        except (ValueError, TypeError):
-            pass
-
-
 def build_dsc_config(config_dict: Dict[str, Any]) -> DSCConfig:
     """Build DSCConfig from a configuration dictionary.
 
@@ -362,7 +341,6 @@ def build_dsc_config(config_dict: Dict[str, Any]) -> DSCConfig:
     _coerce_float(dsc_dict, "smooth_fwhm")
     _coerce_float(dsc_dict, "lesion_distance")
     _coerce_float(dsc_dict, "motion_thresh")
-    _coerce_dose(dsc_dict)
 
     # Filter to only valid DSCConfig fields
     return DSCConfig(**dsc_dict)
@@ -401,7 +379,6 @@ def build_dce_config(config_dict: Dict[str, Any]) -> DCEConfig:
     _coerce_float(dce_dict, "r1_relaxivity")
     _coerce_float(dce_dict, "ser_early_time_s")
     _coerce_float(dce_dict, "ser_late_time_s")
-    _coerce_dose(dce_dict)
 
     # Reject unknown keys after supported nested sections are flattened.
     valid_fields = {f.name for f in DCEConfig.__dataclass_fields__.values()}
