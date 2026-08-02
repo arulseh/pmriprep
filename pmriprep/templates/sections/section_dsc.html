@@ -299,12 +299,6 @@
                 <div class="metric-value">{{ dsc.qc_metrics.preload.k2_method }}</div>
             </div>
             {% endif %}
-            {% if dsc.qc_metrics.preload.kep_used is defined %}
-            <div class="metric">
-                <div class="metric-label">k<sub>ep</sub> Used</div>
-                <div class="metric-value">{{ "%.3f"|format(dsc.qc_metrics.preload.kep_used) }} s<sup>-1</sup></div>
-            </div>
-            {% endif %}
             {% if dsc.qc_metrics.preload.k2_mean is defined %}
             <div class="metric">
                 <div class="metric-label">K2 Mean</div>
@@ -356,6 +350,9 @@
             </div>
             {% endif %}
         </div>
+        {% if dsc.qc_metrics.preload.leakage_correction_disabled is sameas true %}
+        <p class="preload-note">Leakage correction was disabled by configuration; DSC maps use the baseline-centered concentration series without K2 correction.</p>
+        {% endif %}
         {% if dsc.qc_metrics.preload.k2_reference_available is sameas false %}
         <p class="preload-note warning">&#9888; K2 reference unavailable; leakage correction was not applied.</p>
         {% endif %}

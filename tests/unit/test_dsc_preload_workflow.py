@@ -152,3 +152,37 @@ class TestPreloadProvenance:
         assert qc["preload_source"] == "unknown"
         assert qc["preload_administered_dose_fraction"] is None
         assert "preload_classification" not in qc
+
+    def test_none_returns_baseline_centered_concentration_without_k2(
+        self, tmp_path: Path,
+    ) -> None:
+        """Disabling K2 correction preserves the common baseline convention."""
+        conc, mask, signal = _write_fixtures(tmp_path)
+        with mock.patch(
+            "pmriprep.utils.dsc_preload.apply_k2_correction"
+        ) as apply_k2, mock.patch(
+            "pmriprep.utils.dsc_preload.detect_preload",
+            return_value=_advisory(PreloadClass.MINIMAL),
+        ):
+            corrected, k2_map, qc = _detect_and_correct_preload(
+                concentration_file=conc,
+                brain_mask_file=mask,
+                te=0.03,
+                field_strength=3.0,
+                tr=1.5,
+                preload="auto",
+                signal_file=signal,
+                leakage_method="none",
+            )
+
+        original = nib.load(conc).get_fdata()
+        centered = nib.load(corrected).get_fdata()
+        expected = original - np.mean(original[..., :5], axis=-1, keepdims=True)
+        np.testing.assert_allclose(centered, expected, atol=1e-6)
+        assert corrected != conc
+        assert corrected.endswith("_baselinecentered.nii.gz")
+        assert k2_map == ""
+        assert qc["k2_method"] == "none"
+        assert qc["preload_correction_applied"] is False
+        assert qc["leakage_correction_disabled"] is True
+        apply_k2.assert_not_called()

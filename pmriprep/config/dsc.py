@@ -90,13 +90,9 @@ class DSCConfig:
         Device for HD-BET brain extraction: auto, cuda, mps, or cpu.
     aif_method : Literal["auto", "synthetic"]
         AIF detection method: auto or synthetic.
-    leakage_method : Literal["bsw", "bidirectional"]
-        K2 leakage correction method. "bsw" uses a cumulative integral without
-        washout; "bidirectional" accounts for EES washout.
-    kep : float, optional
-        EES efflux rate constant in s⁻¹ for bidirectional correction.
-        Only used when leakage_method="bidirectional". Default: 0.005 s⁻¹.
-        Note: DSC uses s⁻¹ (like K2), not min⁻¹ (like DCE kep).
+    leakage_method : Literal["bsw", "none"]
+        Leakage-correction policy. "bsw" applies signed BSW correction;
+        "none" retains the uncorrected concentration series.
     """
 
     # Preload settings
@@ -147,8 +143,7 @@ class DSCConfig:
     hdbet_conda_env: Optional[str] = None
 
     # Leakage correction settings
-    leakage_method: Literal["bsw", "bidirectional"] = "bsw"
-    kep: Optional[float] = None  # s⁻¹, only used when leakage_method="bidirectional"
+    leakage_method: Literal["bsw", "none"] = "bsw"
 
     # Testing / debug
     sloppy: bool = False  # Use fast, low-quality settings for testing
@@ -282,27 +277,12 @@ class DSCConfig:
                 )
 
         # Validate leakage correction settings
-        _valid_leakage = {"bsw", "bidirectional"}
+        _valid_leakage = {"bsw", "none"}
         if self.leakage_method not in _valid_leakage:
             raise ValueError(
                 f"Invalid leakage_method={self.leakage_method!r}. "
                 f"Valid: {sorted(_valid_leakage)}"
             )
-
-        # Validate kep if provided (only used for bidirectional)
-        if self.kep is not None:
-            try:
-                self.kep = float(self.kep)
-            except (ValueError, TypeError) as e:
-                raise TypeError(f"kep must be a number, got {self.kep!r}") from e
-
-            # Import bounds from constants
-            from pmriprep.utils.dsc_constants import KEP_DSC_LOWER, KEP_DSC_UPPER
-            if not (KEP_DSC_LOWER <= self.kep <= KEP_DSC_UPPER):
-                logger.warning(
-                    "kep=%.4f s^-1 outside typical range [%.3f, %.3f] s^-1",
-                    self.kep, KEP_DSC_LOWER, KEP_DSC_UPPER,
-                )
 
         if self.pre_bolus < 3:
             raise ValueError("pre_bolus must be at least 3")

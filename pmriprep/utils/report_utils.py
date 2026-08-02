@@ -401,17 +401,10 @@ def _build_dsc_boilerplate(dsc_qc: dict[str, Any]) -> str:
     # deconvolution, so it precedes the map-quantification sentence.
     preload = dsc_qc.get("preload", {})
     if preload.get("preload_correction_applied"):
-        k2_method = preload.get("k2_method", "bsw")
-        if k2_method == "bidirectional":
-            sentences.append(
-                "Bidirectional K2 leakage correction was applied to account for "
-                "contrast extravasation and washout [@leu_2016]."
-            )
-        else:
-            sentences.append(
-                "K2 leakage correction was applied to account for contrast "
-                "extravasation [@weisskoff_1994; @boxerman_2006]."
-            )
+        sentences.append(
+            "K2 leakage correction was applied to account for contrast "
+            "extravasation [@weisskoff_1994; @boxerman_2006]."
+        )
 
     # Deconvolution method (citation lives in the _DSC_DECONV_TEXT @key marker)
     deconv = dsc_qc.get("deconvolution", {})

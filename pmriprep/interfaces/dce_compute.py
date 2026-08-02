@@ -1845,6 +1845,7 @@ _K2_QC_KEYS = {
     "k2_reference_tail_frames", "k2_reference_selection",
     "k2_reference_selection_domain", "k2_reference_peak",
     "k2_reference_failure_reason",
+    "leakage_correction_disabled",
 }
 
 

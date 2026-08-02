@@ -114,6 +114,7 @@ def test_direct_builders_reject_unknown_options(builder, section: str, option: s
         (lambda: DSCConfig(method="osvd"), "Invalid method"),
         (lambda: DSCConfig(inference="mcmc"), "Invalid inference"),
         (lambda: DSCConfig(aif_method="population"), "Invalid aif_method"),
+        (lambda: DSCConfig(leakage_method="bidirectional"), "Invalid leakage_method"),
         (lambda: AnatConfig(tool="bet"), "Invalid tool"),
         (lambda: TumorSegConfig(device="auto"), "Invalid device"),
     ],
@@ -122,6 +123,12 @@ def test_invalid_categorical_options_fail_before_workflow(factory, match: str) -
     """Categorical YAML values must fail during config construction."""
     with pytest.raises(ValueError, match=match):
         factory()
+
+
+def test_dsc_leakage_correction_can_be_disabled() -> None:
+    """The supported DSC policies are signed BSW and explicit pass-through."""
+    assert DSCConfig(leakage_method="bsw").leakage_method == "bsw"
+    assert DSCConfig(leakage_method="none").leakage_method == "none"
 
 
 def test_removed_t1_correction_mode_is_rejected() -> None:

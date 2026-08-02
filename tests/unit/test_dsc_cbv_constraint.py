@@ -908,6 +908,23 @@ class TestFixedPriorWidth:
         assert "fixed release-policy Bayesian prior" in config.reason
         assert "signed K2 reported descriptively" in config.reason
 
+    def test_disabled_leakage_correction_skips_prior(self) -> None:
+        """An explicitly uncorrected CBV map cannot anchor the DCE prior."""
+        quality = CBVQualityAssessment(
+            confidence="high",
+            use_constraint=True,
+            reasons=[],
+        )
+
+        config = determine_constraint_mode(
+            quality,
+            k2_metrics={"leakage_correction_disabled": True},
+        )
+
+        assert config.mode == ConstraintMode.SKIP
+        assert config.vp_uncertainty == 0.0
+        assert "leakage correction disabled" in config.reason.lower()
+
 class TestNAWMVpReferenceAnchor:
     """NAWM_VP_REFERENCE = 0.010 from Larsson MRM 2009;62:1270.
 

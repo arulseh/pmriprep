@@ -31,7 +31,6 @@ _PRELOAD_QC_CONSUMER_KEYS = {
     "percent_negative_k2", "percent_k2_undefined",
     "n_brain_voxels", "n_k2_valid",
     "auc_mean",
-    "kep_used",
     "percent_negative_k2",
     "k2_signed",
     "k2_reference_available",
@@ -44,6 +43,7 @@ _PRELOAD_QC_CONSUMER_KEYS = {
     "k2_reference_selection_domain",
     "k2_reference_peak",
     "k2_reference_failure_reason",
+    "leakage_correction_disabled",
 }
 
 _PREPROC_STATS_CONSUMER_KEYS = {
@@ -84,7 +84,6 @@ def representative_in_process_dicts():
         "n_brain_voxels": 142_000,
         "n_k2_valid": 141_000,
         "auc_mean": 1.23,
-        "kep_used": None,
         "percent_negative_k2": 41.0,
         "percent_k2_undefined": 1000 / 1420,
         "k2_signed": True,
@@ -98,6 +97,7 @@ def representative_in_process_dicts():
         "k2_reference_selection_domain": "raw_signal",
         "k2_reference_peak": 4.0,
         "k2_reference_failure_reason": "",
+        "leakage_correction_disabled": False,
     }
     preprocessing_stats = {
         "fraction_cnr_gt_4": 0.81,

@@ -663,16 +663,17 @@ def determine_constraint_mode(
     - **MODE (SOFT vs SKIP)** is governed by DSC *quality/noise*: the
       ``confidence`` tier from :func:`assess_dsc_cbv_quality` (AIF tier, CNR,
       AIF peak/baseline, gamma-peak ratio) plus the hard SKIP triggers
-      (synthetic AIF, unavailable leakage reference, and user ``skip``). Low
+      (synthetic AIF, disabled correction, unavailable leakage reference, and
+      user ``skip``). Low
       confidence produces SKIP; high/moderate produces SOFT.
     - **σ (prior width, SOFT only)** uses the fixed 0.60 release-policy width.
       This is the widest qualified existing tier, not a subject-specific
       uncertainty estimate. Signed leakage metrics remain descriptive and do
       not enable, disable, or tune the Bayesian prior.
 
-    Decision order: synthetic AIF → SKIP; unavailable leakage reference →
-    SKIP; user override; then confidence → {SOFT with the fixed release-policy
-    σ, or SKIP}.
+    Decision order: synthetic AIF → SKIP; correction disabled → SKIP;
+    unavailable leakage reference → SKIP; user override; then confidence →
+    {SOFT with the fixed release-policy σ, or SKIP}.
 
     Parameters
     ----------
@@ -710,6 +711,14 @@ def determine_constraint_mode(
             mode=ConstraintMode.SKIP,
             vp_uncertainty=0.0,
             reason=SYNTHETIC_AIF_REASON_STRING,
+        )
+
+    # An uncorrected CBV map is not an acceptable Bayesian-prior anchor.
+    if (k2_metrics or {}).get("leakage_correction_disabled") is True:
+        return ConstraintConfig(
+            mode=ConstraintMode.SKIP,
+            vp_uncertainty=0.0,
+            reason="DSC leakage correction disabled -- Bayesian prior skipped",
         )
 
     # The Bayesian prior requires a successfully estimated leakage reference.

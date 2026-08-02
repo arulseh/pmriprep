@@ -683,7 +683,6 @@ def generate_dsc_leakage_qc_plot(
     session_id: str = "",
     output_path: str | None = None,
     method: str = "bsw",
-    kep_used: float | None = None,
 ) -> str:
     """Generate a 2x3 leakage correction QC plot for DSC.
 
@@ -724,9 +723,7 @@ def generate_dsc_leakage_qc_plot(
     output_path : str, optional
         Path to save PNG. If None, uses CWD.
     method : str, optional
-        K2 correction method ("bsw" or "bidirectional").
-    kep_used : float, optional
-        kep value used for bidirectional correction (s⁻¹).
+        K2 correction method ("bsw").
 
     Returns
     -------
@@ -745,10 +742,7 @@ def generate_dsc_leakage_qc_plot(
 
     # Build title with method info
     method_label = method.upper() if method else "BSW"
-    if method == "bidirectional" and kep_used is not None:
-        title_suffix = f"DSC Leakage QC (Bidirectional, kep={kep_used:.3f} s⁻¹)"
-    else:
-        title_suffix = f"DSC Leakage QC ({method_label})"
+    title_suffix = f"DSC Leakage QC ({method_label})"
 
     fig.suptitle(
         qc_figure_title(subject_id, session_id, title_suffix),

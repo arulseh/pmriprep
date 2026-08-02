@@ -451,6 +451,10 @@ def _enrich_dsc(
         leak_block = perf.get("LeakageCorrection", {})
         if "preload_correction_applied" in preload:
             leak_block["applied"] = bool(preload["preload_correction_applied"])
+        if "leakage_correction_disabled" in preload:
+            leak_block["disabled_by_configuration"] = bool(
+                preload["leakage_correction_disabled"]
+            )
         if "k2_median" in preload:
             leak_block["K2_median"] = _safe_float(preload["k2_median"])
         for key in ("nawm_auc_raw_median", "nawm_auc_corrected_median"):

@@ -14,15 +14,10 @@ import numpy.typing as npt
 from scipy.integrate import cumulative_trapezoid
 from scipy.stats import norm
 
-from pmriprep.models.dce._convolution import analytic_exp_convolution
 from pmriprep.utils.dsc_constants import (
     EPSILON_CONCENTRATION,
     EPSILON_SIGNAL,
     GD_DOTA_STANDARD_DOSE,
-    BIDIRECTIONAL_K2_ABSOLUTE_SAFETY_BOUND,
-    KEP_DSC_DEFAULT,
-    KEP_DSC_LOWER,
-    KEP_DSC_UPPER,
 )
 
 logger = logging.getLogger(__name__)
@@ -798,8 +793,7 @@ class K2CorrectionResult:
         auc_tissue: Area under tissue curve before correction (3D).
         correction_applied: Boolean indicating if correction was applied.
         qc_metrics: QC metrics from correction.
-        method: Leakage correction method ("bsw" or "bidirectional").
-        kep_used: kep value used for bidirectional correction (s⁻¹), or None.
+        method: Leakage correction method ("bsw").
     """
 
     concentration_corrected: npt.NDArray[np.floating]
@@ -808,7 +802,6 @@ class K2CorrectionResult:
     correction_applied: bool = True
     qc_metrics: Optional[dict[str, Any]] = None
     method: str = "bsw"
-    kep_used: Optional[float] = None
 
 
 def _compute_bsw_reference(
@@ -965,58 +958,6 @@ def _compute_bsw_reference(
         )
 
     return np.asarray(c_bar, dtype=np.float64)
-
-
-def _compute_bidirectional_reference(
-    concentration: npt.NDArray[np.floating],
-    brain_mask: Optional[npt.NDArray[np.bool_]],
-    baseline_frames: int,
-    reference_qc: Optional[dict[str, Any]] = None,
-) -> Optional[npt.NDArray[np.floating]]:
-    """Select the experimental bidirectional reference in Delta-R2* space."""
-    if brain_mask is not None:
-        curves = concentration[np.asarray(brain_mask, dtype=bool)]
-    else:
-        curves = concentration[np.max(concentration, axis=-1) > EPSILON_CONCENTRATION]
-    n_voxels, n_timepoints = curves.shape
-    if reference_qc is not None:
-        reference_qc["k2_reference_total_voxels"] = int(n_voxels)
-    if n_voxels < 10 or n_timepoints < 4:
-        if reference_qc is not None:
-            reference_qc["k2_reference_available"] = False
-            reference_qc["k2_reference_selected_voxels"] = 0
-            reference_qc["k2_reference_failure_reason"] = "insufficient_support"
-        return None
-    n_baseline = min(max(int(baseline_frames), 2), n_timepoints - 2)
-    n_tail = min(_K2_REFERENCE_TAIL_FRAMES, n_timepoints - n_baseline)
-    baseline_mean = np.mean(curves[:, :n_baseline], axis=1)
-    baseline_sd = np.std(curves[:, :n_baseline], axis=1, ddof=1)
-    late_mean = np.mean(curves[:, -n_tail:], axis=1)
-    selected = (
-        np.isfinite(late_mean)
-        & np.isfinite(baseline_mean)
-        & np.isfinite(baseline_sd)
-        & (late_mean < baseline_mean + baseline_sd)
-        & (late_mean > baseline_mean - baseline_sd)
-    )
-    n_selected = int(np.count_nonzero(selected))
-    if reference_qc is not None:
-        reference_qc.update(
-            {
-                "k2_reference_selected_voxels": n_selected,
-                "k2_reference_selected_fraction": float(n_selected / n_voxels),
-                "k2_reference_selection": "experimental_symmetric_delta_r2_tail",
-                "k2_reference_selection_domain": "delta_r2_star",
-                "k2_reference_available": n_selected >= 10,
-            }
-        )
-    if n_selected < 10:
-        if reference_qc is not None:
-            reference_qc["k2_reference_failure_reason"] = (
-                "insufficient_selected_support"
-            )
-        return None
-    return np.asarray(np.mean(curves[selected], axis=0), dtype=np.float64)
 
 
 def estimate_k2_per_voxel(
@@ -1349,306 +1290,6 @@ def _compute_k2_qc_metrics(
         ) if n_total else np.nan,
         "auc_mean": float(np.mean(auc_values)) if auc_values.size > 0 else 0.0,
     }
-
-
-# =============================================================================
-# Bidirectional K2 Leakage Correction
-# =============================================================================
-
-
-def _compute_ees_concentration(
-    c_bar: npt.NDArray[np.floating],
-    kep: float,
-    tr: float,
-) -> npt.NDArray[np.floating]:
-    """Compute instantaneous EES concentration with washout.
-
-    Convolves the mean brain reference C̄(t) with an exponential washout
-    kernel to model contrast agent efflux from the extravascular
-    extracellular space (EES).
-
-    C_e(t) = C̄(t) ⊗ exp(-kep × t)
-
-    where ⊗ denotes convolution and kep is the EES efflux rate constant.
-
-    When kep → 0, exp(-kep × t) → 1, and C_e(t) → ∫₀ᵗ C̄(τ)dτ, converging
-    on the trapezoidal BSW cumulative integral (same quadrature).
-
-    Parameters
-    ----------
-    c_bar : npt.NDArray[np.floating]
-        Mean brain reference curve, shape (n_timepoints,).
-    kep : float
-        EES efflux rate constant in s⁻¹.
-    tr : float
-        Repetition time in seconds.
-
-    Returns
-    -------
-    npt.NDArray[np.floating]
-        Instantaneous EES concentration C_e(t), shape (n_timepoints,).
-
-    """
-    # Exact convolution of the piecewise-linear reference with the washout
-    # exponential; rate·dt is dimensionless so kep [s⁻¹] and tr [s] are
-    # consistent. Causal (C_e(0)=0), matching the baseline-subtracted reference.
-    c_e = analytic_exp_convolution(c_bar, kep, tr)
-
-    return np.asarray(c_e, dtype=np.float64)
-
-
-def estimate_k2_bidirectional(
-    concentration: npt.NDArray[np.floating],
-    brain_mask: Optional[npt.NDArray[np.bool_]] = None,
-    tr: float = 1.5,
-    kep: float = KEP_DSC_DEFAULT,
-    baseline_frames: int = 5,
-    reference_curve: Optional[npt.NDArray[np.floating]] = None,
-) -> npt.NDArray[np.floating]:
-    """Estimate K2 leakage parameter using bidirectional model.
-
-    Extends the BSW model to account for contrast agent washout from
-    the EES using a two-regressor design matrix:
-
-        C_voxel(t) = K1 × C̄(t) - K2 × C_e(t)
-
-    where C_e(t) = C̄(t) ⊗ exp(-kep × t) is the instantaneous EES
-    concentration accounting for washout.
-
-    Parameters
-    ----------
-    concentration : npt.NDArray[np.floating]
-        4D concentration array (x, y, z, time).
-    brain_mask : Optional[npt.NDArray[np.bool_]]
-        Optional 3D brain mask.
-    tr : float, optional
-        Repetition time in seconds for integration.
-    kep : float, optional
-        EES efflux rate constant in s⁻¹.
-    baseline_frames : int, optional
-        Number of pre-bolus frames used for reference selection.
-    reference_curve : Optional[npt.NDArray[np.floating]], optional
-        Precomputed BSW reference. When omitted, it is selected from the data.
-
-    Returns
-    -------
-    npt.NDArray[np.floating]
-        3D K2 map with leakage rate per voxel (s⁻¹).
-
-    """
-    if concentration.ndim != 4:
-        raise ValueError(f"Concentration must be 4D, got {concentration.ndim}D")
-    if concentration.shape[-1] < 4:
-        raise ValueError("Bidirectional K2 correction requires at least 4 timepoints")
-
-    n_timepoints = concentration.shape[3]
-    k2_map = np.full(concentration.shape[:3], np.nan, dtype=np.float64)
-
-    # Compute mean brain reference curve C̄(t)
-    reference_qc: dict[str, Any] = {}
-    c_bar = reference_curve
-    if c_bar is None:
-        c_bar = _compute_bidirectional_reference(
-            concentration,
-            brain_mask,
-            baseline_frames=baseline_frames,
-            reference_qc=reference_qc,
-        )
-    else:
-        reference_qc["k2_reference_available"] = True
-        reference_qc["k2_reference_selection"] = "provided"
-    if c_bar is None:
-        return k2_map
-    c_bar = np.asarray(c_bar, dtype=np.float64)
-    if c_bar.shape != (n_timepoints,) or not np.all(np.isfinite(c_bar)):
-        raise ValueError(
-            f"Reference curve must be finite with shape ({n_timepoints},), "
-            f"got {c_bar.shape}"
-        )
-
-    # Compute instantaneous EES concentration with washout
-    c_e = _compute_ees_concentration(c_bar, kep, tr)
-
-    X = np.column_stack([c_bar, -c_e])
-
-    # Condition check on shared design matrix
-    if np.linalg.cond(X) > 1e8:
-        logger.warning("Bidirectional K2 design matrix ill-conditioned")
-        return k2_map
-
-    # Determine valid voxels
-    if brain_mask is not None:
-        valid_mask = brain_mask
-    else:
-        max_conc = np.max(concentration, axis=-1)
-        valid_mask = max_conc > EPSILON_CONCENTRATION
-
-    valid_indices = np.where(valid_mask)
-    n_voxels = len(valid_indices[0])
-
-    if n_voxels == 0:
-        return k2_map
-
-    # Vectorized solve: extract all valid voxel time courses
-    Y = concentration[valid_indices]
-
-    # lstsq: X @ coeffs = Y.T → coeffs shape (2, n_voxels)
-    coeffs, _, _, _ = np.linalg.lstsq(X, Y.T, rcond=None)
-
-    k2_values = coeffs[1, :]
-    outside_safety = np.abs(k2_values) > BIDIRECTIONAL_K2_ABSOLUTE_SAFETY_BOUND
-    if np.any(outside_safety):
-        logger.warning(
-            "%d bidirectional K2 estimates outside the numerical safety "
-            "envelope; encoding as NaN",
-            int(np.sum(outside_safety)),
-        )
-        k2_values[outside_safety] = np.nan
-
-    k2_map[valid_indices] = k2_values
-
-    return k2_map
-
-
-def apply_k2_correction_bidirectional(
-    concentration: npt.NDArray[np.floating],
-    brain_mask: Optional[npt.NDArray[np.bool_]] = None,
-    tr: float = 1.5,
-    kep: Optional[float] = None,
-    k2_map: Optional[npt.NDArray[np.floating]] = None,
-    baseline_frames: int = 5,
-    reference_curve: Optional[npt.NDArray[np.floating]] = None,
-) -> K2CorrectionResult:
-    """Apply bidirectional K2 leakage correction.
-
-    Extends the standard BSW model to account for contrast agent washout
-    from the EES:
-
-        C_corrected(t) = C_tissue(t) + K2 × C_e(t)
-
-    where C_e(t) = C̄(t) ⊗ exp(-kep × t) is the instantaneous EES
-    concentration with exponential washout.
-
-    Key difference from standard BSW:
-    - BSW uses cumulative integral ∫C̄(τ)dτ (no washout, always increases)
-    - Bidirectional uses C_e(t) (accounts for washout, can decrease)
-
-    Parameters
-    ----------
-    concentration : npt.NDArray[np.floating]
-        4D concentration array (x, y, z, time).
-    brain_mask : Optional[npt.NDArray[np.bool_]]
-        Optional 3D brain mask for voxel selection.
-    tr : float, optional
-        Repetition time in seconds.
-    kep : float, optional
-        EES efflux rate in s⁻¹. If None, uses KEP_DSC_DEFAULT (0.005).
-    k2_map : Optional[npt.NDArray[np.floating]]
-        Pre-computed K2 map. If None, K2 is estimated per voxel.
-    baseline_frames : int, optional
-        Number of pre-bolus baseline frames.
-    reference_curve : Optional[npt.NDArray[np.floating]], optional
-        Precomputed BSW reference. Primarily useful for validation.
-
-    Returns
-    -------
-    K2CorrectionResult
-        K2CorrectionResult with corrected concentration and K2 map.
-
-    """
-    if concentration.ndim != 4:
-        raise ValueError(f"Concentration must be 4D, got {concentration.ndim}D")
-    if concentration.shape[-1] < 4:
-        raise ValueError("Bidirectional K2 correction requires at least 4 timepoints")
-
-    if kep is None:
-        kep = KEP_DSC_DEFAULT
-
-    # Validate kep range
-    if not (KEP_DSC_LOWER <= kep <= KEP_DSC_UPPER):
-        logger.warning(
-            "kep=%.4f s^-1 outside typical range [%.3f, %.3f] s^-1",
-            kep, KEP_DSC_LOWER, KEP_DSC_UPPER,
-        )
-
-    # Baseline-subtract before K2 estimation
-    n_bl = min(max(int(baseline_frames), 4), concentration.shape[-1] - 2)
-    conc_bl = np.mean(concentration[..., :n_bl], axis=-1, keepdims=True)
-    concentration = concentration - conc_bl
-
-    # Compute AUC before any early returns (needed for QC).
-    # Trapezoidal integration over the concentration curve.
-    auc_tissue = np.trapezoid(concentration, dx=tr, axis=-1)
-
-    reference_qc: dict[str, Any] = {}
-    c_bar = reference_curve
-    if c_bar is None:
-        c_bar = _compute_bidirectional_reference(
-            concentration,
-            brain_mask,
-            baseline_frames=n_bl,
-            reference_qc=reference_qc,
-        )
-    else:
-        reference_qc["k2_reference_available"] = True
-        reference_qc["k2_reference_selection"] = "provided"
-    if c_bar is None:
-        logger.warning(
-            "Bidirectional K2 correction skipped: insufficient late-tail "
-            "reference support"
-        )
-        return K2CorrectionResult(
-            concentration_corrected=concentration.copy(),
-            k2_map=np.full(concentration.shape[:3], np.nan, dtype=np.float64),
-            auc_tissue=auc_tissue,
-            correction_applied=False,
-            qc_metrics={
-                "k2_method": "bidirectional",
-                "k2_signed": True,
-                **reference_qc,
-            },
-            method="bidirectional",
-            kep_used=kep,
-        )
-
-    # Estimate K2 if not provided
-    if k2_map is None:
-        k2_map = estimate_k2_bidirectional(
-            concentration=concentration,
-            brain_mask=brain_mask,
-            tr=tr,
-            kep=kep,
-            reference_curve=c_bar,
-        )
-
-    # Compute instantaneous EES concentration with washout
-    c_e = _compute_ees_concentration(c_bar, kep, tr)
-    c_e_4d = c_e[np.newaxis, np.newaxis, np.newaxis, :]
-
-    # Expand K2 map for broadcasting
-    finite_k2 = np.where(np.isfinite(k2_map), k2_map, 0.0)
-    k2_expanded = finite_k2[..., np.newaxis]
-
-    # Apply correction: C_corrected(t) = C_tissue(t) + K2 × C_e(t)
-    concentration_corrected = concentration + k2_expanded * c_e_4d
-
-    # Compute QC metrics
-    qc_metrics = _compute_k2_qc_metrics(k2_map, brain_mask, auc_tissue)
-    qc_metrics["k2_method"] = "bidirectional"
-    qc_metrics["kep_used"] = kep
-    qc_metrics["k2_signed"] = True
-    qc_metrics.update(reference_qc)
-
-    return K2CorrectionResult(
-        concentration_corrected=concentration_corrected,
-        k2_map=k2_map,
-        auc_tissue=auc_tissue,
-        correction_applied=True,
-        qc_metrics=qc_metrics,
-        method="bidirectional",
-        kep_used=kep,
-    )
-
 
 def estimate_preload_correction_factor(
     preload_result: PreloadResult,

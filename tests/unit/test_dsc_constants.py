@@ -11,7 +11,6 @@ from pmriprep.utils.dsc_constants import (
     EPSILON_CONCENTRATION,
     EPSILON_DELTA_R2,
     EPSILON_SIGNAL,
-    BIDIRECTIONAL_K2_ABSOLUTE_SAFETY_BOUND,
     MTT_BOUNDS,
     calculate_k_h,
     get_r2_star,
@@ -19,11 +18,6 @@ from pmriprep.utils.dsc_constants import (
     is_valid_detection_level,
     split_detection_level,
 )
-
-
-def test_k2_absolute_safety_bound_is_positive() -> None:
-    """The signed K2 numerical envelope has a positive absolute limit."""
-    assert BIDIRECTIONAL_K2_ABSOLUTE_SAFETY_BOUND == 0.2
 
 
 class TestR2StarTissue:

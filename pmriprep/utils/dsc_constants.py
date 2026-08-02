@@ -87,34 +87,6 @@ EPSILON_SHAPE: Final[float] = 1e-10
 
 
 # =============================================================================
-# Leakage Correction (K2)
-# =============================================================================
-
-#: Absolute numerical safety envelope for experimental bidirectional K2 fits
-#: (s⁻¹). Estimates outside this envelope are undefined rather than clipped.
-BIDIRECTIONAL_K2_ABSOLUTE_SAFETY_BOUND: Final[float] = 0.2
-
-# Bidirectional K2
-# kep = EES efflux rate in s^-1 (NOT min^-1 like DCE literature).
-# Using s^-1 for consistency with K2 units.
-# To convert from DCE (min^-1): kep_s = kep_min / 60.0
-#
-# Measured GBM values:
-#   DCE kep: 0.0050 ± 0.0018 s^-1 (= 0.30 ± 0.11 min^-1)
-#   DSC kep: 0.0057 ± 0.0042 s^-1 (= 0.34 ± 0.25 min^-1)
-# Figure 3D scatter: DCE 0-0.03, DSC 0-0.05 s^-1
-
-#: Default kep for bidirectional K2 correction (s⁻¹), GBM mean
-KEP_DSC_DEFAULT: Final[float] = 0.005
-
-#: Lower bound for kep (s⁻¹), below this ≈ standard BSW
-KEP_DSC_LOWER: Final[float] = 0.001
-
-#: Upper bound for kep (s⁻¹), Leu Fig 3D upper range
-KEP_DSC_UPPER: Final[float] = 0.05
-
-
-# =============================================================================
 # Contrast agent dose reference
 # =============================================================================
 

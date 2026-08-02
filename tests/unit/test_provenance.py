@@ -266,6 +266,23 @@ class TestEnrichDCE:
 class TestEnrichDSC:
     """Tests for DSC provenance enrichment."""
 
+    def test_disabled_leakage_correction_is_explicit(self) -> None:
+        """Configuration-driven omission is preserved in provenance."""
+        result = enrich_provenance_from_qc(
+            _make_dsc_sidecar(),
+            {
+                "preload": {
+                    "preload_correction_applied": False,
+                    "leakage_correction_disabled": True,
+                },
+            },
+            "DSC",
+        )
+
+        leakage = result["PerfusionProcessing"]["LeakageCorrection"]
+        assert leakage["applied"] is False
+        assert leakage["disabled_by_configuration"] is True
+
     def test_full_qc_enrichment(self) -> None:
         """Full QC produces Deconvolution details, LeakageCorrection, AIF, BaselineFrames."""
         sidecar = _make_dsc_sidecar()

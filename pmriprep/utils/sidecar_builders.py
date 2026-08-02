@@ -1323,9 +1323,8 @@ def build_aif_timeseries_sidecar(
 def _preload_cosmetic_keys(preload_qc: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """Flat ``Preload*``-prefixed keys for the DSC preproc-4D sidecar.
 
-    Reads from the producer-shape ``preload_qc`` dict. Optional fields
-    (e.g., ``PreloadKepUsed`` only meaningful for the bidirectional K2
-    method) are omitted when not present in the source dict.
+    Reads from the producer-shape ``preload_qc`` dict. Optional fields are
+    omitted when not present in the source dict.
     """
     if not preload_qc or not isinstance(preload_qc, dict):
         return {}
@@ -1333,8 +1332,6 @@ def _preload_cosmetic_keys(preload_qc: Optional[Dict[str, Any]]) -> Dict[str, An
     out: Dict[str, Any] = {}
     if "k2_method" in preload_qc:
         out["PreloadK2Method"] = str(preload_qc["k2_method"])
-    if preload_qc.get("kep_used") is not None:
-        out["PreloadKepUsed"] = float(preload_qc["kep_used"])
     if "preload_source" in preload_qc:
         out["PreloadSource"] = str(preload_qc["preload_source"])
     if preload_qc.get("preload_administered_dose_fraction") is not None:

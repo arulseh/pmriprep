@@ -425,7 +425,6 @@ def init_dsc_preload_wf(
     agent_standard_dose: float,
     baseline_frames: int,
     leakage_method: str,
-    kep: Optional[float],
     mem_gb: float,
     name: str = "dsc_preload_wf",
 ) -> pe.Workflow:
@@ -443,9 +442,7 @@ def init_dsc_preload_wf(
     baseline_frames : int
         Pre-bolus baseline frames.
     leakage_method : str
-        K2 leakage-correction method ("bsw" or "bidirectional").
-    kep : float or None
-        EES efflux rate (s⁻¹) for bidirectional correction, or None.
+        Leakage-correction method ("bsw" or "none").
     mem_gb : float
         Memory estimate (GB) for the heavy correction node.
     name : str
@@ -511,7 +508,6 @@ def init_dsc_preload_wf(
                 "signal_file",
                 "baseline_frames",
                 "leakage_method",
-                "kep",
                 "agent_standard_dose",
             ],
             output_names=["corrected_concentration_file", "k2_map_file", "qc_dict"],
@@ -524,7 +520,6 @@ def init_dsc_preload_wf(
     preload_correct.inputs.agent_standard_dose = agent_standard_dose
     preload_correct.inputs.baseline_frames = baseline_frames
     preload_correct.inputs.leakage_method = leakage_method
-    preload_correct.inputs.kep = kep
 
     workflow.connect([
         (inputnode, preload_correct, [
@@ -2010,7 +2005,6 @@ def init_dsc_preproc_wf(
         agent_standard_dose=config.agent_standard_dose,
         baseline_frames=config.pre_bolus,
         leakage_method=config.leakage_method,
-        kep=config.kep,
         mem_gb=_heavy_mem,
     )
 

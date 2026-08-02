@@ -13,8 +13,6 @@ import pytest
 from scipy.integrate import cumulative_trapezoid
 from scipy.special import gammainc
 
-from pmriprep.models.dce._convolution import analytic_exp_convolution
-
 from tests.conftest import generate_parker_aif
 
 
@@ -427,54 +425,6 @@ def generate_leaky_dsc_tissue(
         )
     cumsum_ref = cumulative_trapezoid(reference_curve, dx=dt, initial=0.0)
     c_leaky = c_tissue_noleak - k2 * cumsum_ref
-    return np.asarray(c_leaky, dtype=np.float64)
-
-
-def generate_leaky_dsc_tissue_bidirectional(
-    c_tissue_noleak: npt.NDArray[np.floating],
-    reference_curve: npt.NDArray[np.floating],
-    k2: float,
-    kep: float,
-    dt: float,
-) -> npt.NDArray[np.floating]:
-    """Apply bidirectional leakage model to a pre-computed clean tissue curve.
-
-    Uses the Leu 2016 model which accounts for EES washout:
-        C_leaky(t) = C_noleak(t) - K2 * C_e(t)
-
-    where C_e(t) = reference_curve ⊗ exp(-kep*t) (instantaneous with washout).
-
-    Parameters
-    ----------
-    c_tissue_noleak : npt.NDArray[np.floating]
-        Clean tissue concentration (1D, no leakage).
-    reference_curve : npt.NDArray[np.floating]
-        Reference curve for leakage (1D, same length).
-    k2 : float
-        K2 leakage rate parameter.
-    kep : float
-        EES efflux rate constant in s⁻¹.
-    dt : float
-        Time step in seconds.
-
-    Returns
-    -------
-    npt.NDArray[np.floating]
-        Leaky tissue concentration (1D).
-
-    References
-    ----------
-        Leu K et al. AJNR 2016;37(8):1440-1446.
-    """
-    if len(c_tissue_noleak) != len(reference_curve):
-        raise ValueError(
-            f"Tissue ({len(c_tissue_noleak)}) and reference ({len(reference_curve)}) "
-            f"must have same length"
-        )
-    # Exact expconv, matching the estimator's _compute_ees_concentration
-    c_e = analytic_exp_convolution(reference_curve, kep, dt)
-
-    c_leaky = c_tissue_noleak - k2 * c_e
     return np.asarray(c_leaky, dtype=np.float64)
 
 

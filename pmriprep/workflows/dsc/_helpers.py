@@ -409,7 +409,6 @@ def _detect_and_correct_preload(
     signal_file: str | None = None,
     baseline_frames: int = 5,
     leakage_method: str = "bsw",
-    kep: float | None = None,
     agent_standard_dose: float = 0.1,
 ) -> tuple[str, str, dict[str, object]]:
     """Detect preload and apply K2 correction if needed.
@@ -442,9 +441,7 @@ def _detect_and_correct_preload(
     baseline_frames : int, optional
         Number of pre-bolus baseline frames.
     leakage_method : str, optional
-        K2 correction method ("bsw" or "bidirectional").
-    kep : float, optional
-        EES efflux rate in s⁻¹ (bidirectional only).
+        Leakage-correction method ("bsw" or "none").
     agent_standard_dose : float, optional
         Agent's standard dose in mmol Gd/kg. Scales auto-detection
         ΔR2* thresholds linearly.
@@ -458,10 +455,7 @@ def _detect_and_correct_preload(
     import nibabel as nib  # type: ignore[import-untyped]
     from pathlib import Path
 
-    from pmriprep.utils.dsc_preload import (
-        apply_k2_correction,
-        apply_k2_correction_bidirectional,
-    )
+    from pmriprep.utils.dsc_preload import apply_k2_correction
 
     # Load concentration data
     conc_img = nib.load(concentration_file)
@@ -523,16 +517,8 @@ def _detect_and_correct_preload(
     if residual_equivalent is not None:
         qc_metrics["preload_residual_equivalent_fraction"] = residual_equivalent
 
-    # --- K2 correction (preload-agnostic, always runs) ------------------
-    if leakage_method == "bidirectional":
-        correction_result = apply_k2_correction_bidirectional(
-            concentration=conc_data,
-            brain_mask=brain_mask,
-            tr=tr,
-            kep=kep,
-            baseline_frames=baseline_frames,
-        )
-    else:
+    # --- K2 correction (preload-agnostic) -------------------------------
+    if leakage_method == "bsw":
         if signal_data is None:
             raise RuntimeError(
                 "Raw DSC signal is required for BSW reference "
@@ -546,15 +532,24 @@ def _detect_and_correct_preload(
             baseline_frames=baseline_frames,
         )
 
-    corrected_conc = correction_result.concentration_corrected
-    k2_map = correction_result.k2_map
-    qc_metrics["preload_correction_applied"] = bool(
-        correction_result.correction_applied
-    )
-
-    # Update QC metrics with signed K2 distribution and reference accounting.
-    if correction_result.qc_metrics:
-        qc_metrics.update(correction_result.qc_metrics)
+        corrected_conc = correction_result.concentration_corrected
+        k2_map = correction_result.k2_map
+        qc_metrics["preload_correction_applied"] = bool(
+            correction_result.correction_applied
+        )
+        if correction_result.qc_metrics:
+            qc_metrics.update(correction_result.qc_metrics)
+    elif leakage_method == "none":
+        if conc_data.shape[-1] < 4:
+            raise ValueError("Baseline centering requires at least 4 timepoints")
+        n_bl = min(max(int(baseline_frames), 4), conc_data.shape[-1] - 2)
+        baseline = np.mean(conc_data[..., :n_bl], axis=-1, keepdims=True)
+        corrected_conc = conc_data - baseline
+        qc_metrics["preload_correction_applied"] = False
+        qc_metrics["k2_method"] = "none"
+        qc_metrics["leakage_correction_disabled"] = True
+    else:
+        raise ValueError(f"Unsupported leakage_method={leakage_method!r}")
 
     # --- Administered-preload provenance ---------------------------------
     if isinstance(preload, str) and preload == "auto":
@@ -565,7 +560,7 @@ def _detect_and_correct_preload(
         qc_metrics["preload_source"] = "user_specified"
         qc_metrics["preload_administered_dose_fraction"] = user_dose
 
-    # Save corrected concentration
+    # Save the baseline-centred concentration produced by either policy.
     conc_path = Path(concentration_file)
     if conc_path.name.endswith(".nii.gz"):
         base = conc_path.name[:-7]
@@ -573,12 +568,13 @@ def _detect_and_correct_preload(
         base = conc_path.stem
 
     out_dir = Path.cwd()
-    corrected_file = str(out_dir / f"{base}_k2corrected.nii.gz")
+    suffix = "k2corrected" if leakage_method == "bsw" else "baselinecentered"
+    corrected_file = str(out_dir / f"{base}_{suffix}.nii.gz")
     corrected_img = nib.Nifti1Image(corrected_conc.astype(np.float32), affine, header)  # type: ignore[attr-defined]
     nib.save(corrected_img, corrected_file)  # type: ignore[attr-defined]
 
     # Always save K2 map (needed for leakage QC and downstream nodes)
-    if k2_map is not None:
+    if leakage_method == "bsw":
         k2_map_file = str(out_dir / f"{base}_k2map.nii.gz")
         k2_img = nib.Nifti1Image(k2_map.astype(np.float32), affine, header)  # type: ignore[attr-defined]
         nib.save(k2_img, k2_map_file)  # type: ignore[attr-defined]
@@ -1330,16 +1326,12 @@ def _generate_dsc_leakage_qc(
     if psr_file and _P(psr_file).is_file():
         psr_data = nib.load(psr_file).get_fdata()  # type: ignore[attr-defined]
 
-    # Extract method and kep_used from preload_qc dict
+    # Extract the applied leakage-correction method from preload QC.
     method = "bsw"
-    kep_used: float | None = None
     if preload_qc:
         method_value = preload_qc.get("k2_method", "bsw")
         if isinstance(method_value, str):
             method = method_value
-        kep_value = preload_qc.get("kep_used")
-        if isinstance(kep_value, (int, float)):
-            kep_used = float(kep_value)
 
     plot_path = generate_dsc_leakage_qc_plot(
         k2_map=k2_data,
@@ -1354,7 +1346,6 @@ def _generate_dsc_leakage_qc(
         subject_id=subject_id,
         session_id=session_id,
         method=method,
-        kep_used=kep_used,
     )
     return plot_path
 

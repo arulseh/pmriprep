@@ -923,6 +923,24 @@ def test_unavailable_k2_reference_has_distinct_warning(env):
     assert "K2 reference unavailable; leakage correction was not applied" in rendered
 
 
+def test_disabled_leakage_correction_has_explicit_note(env):
+    """Configuration-driven omission is distinguished from reference failure."""
+    template = env.get_template("sections/section_dsc.html")
+    dsc_ctx = _dsc_ctx_with_preload(
+        preload_source="unknown",
+        preload_administered_dose_fraction=None,
+        leakage_correction_disabled=True,
+        preload_correction_applied=False,
+        k2_method="none",
+    )
+
+    rendered = template.render(dsc=dsc_ctx)
+
+    assert "Leakage correction was disabled by configuration" in rendered
+    assert "baseline-centered concentration series" in rendered
+    assert "K2 reference unavailable" not in rendered
+
+
 def test_dsc_preprocessing_and_aif_cards_follow_common_order(env):
     """DSC shared preprocessing and AIF fields follow the DCE hierarchy."""
     template = env.get_template("sections/section_dsc.html")

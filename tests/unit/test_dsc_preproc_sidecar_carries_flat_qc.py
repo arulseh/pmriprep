@@ -30,7 +30,6 @@ def base_sidecar() -> dict[str, Any]:
 def preload_qc() -> dict[str, Any]:
     return {
         "k2_method": "bsw",
-        "kep_used": None,  # bsw → omitted from sidecar
         "preload_source": "unknown",
         "preload_administered_dose_fraction": None,
         "k2_median": -0.002,
@@ -77,23 +76,6 @@ class TestPreloadCosmeticKeys:
         assert out["PreloadPercentNegativeK2"] == pytest.approx(61.0)
         assert out["PreloadPercentK2Undefined"] == pytest.approx(0.4)
         assert out["PreloadK2ValidVoxels"] == 1000
-
-    def test_kep_omitted_when_none(self, base_sidecar, preload_qc):
-        out = enrich_dsc_preproc_sidecar(
-            dict(base_sidecar), preload_qc=preload_qc, preprocessing_stats=None,
-        )
-        # bsw method → kep_used is None → key MUST be omitted
-        assert "PreloadKepUsed" not in out
-
-    def test_kep_present_when_bidirectional(self, base_sidecar):
-        out = enrich_dsc_preproc_sidecar(
-            dict(base_sidecar),
-            preload_qc={"k2_method": "bidirectional", "kep_used": 0.05},
-            preprocessing_stats=None,
-        )
-        assert out["PreloadK2Method"] == "bidirectional"
-        assert out["PreloadKepUsed"] == pytest.approx(0.05)
-
 
 class TestPreprocessingCosmeticKeys:
     def test_motion_and_signal_keys_added(
