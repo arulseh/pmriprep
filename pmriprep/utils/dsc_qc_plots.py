@@ -327,7 +327,7 @@ def generate_dsc_parameter_maps_qc_plot(
     ----------
     param_maps : dict[str, npt.NDArray[Any]]
         Dict mapping parameter name to 3D array.
-        Expected keys: "rCBF", "rCBV", "MTT", "Tmax", "PSR", "TTPᶜ".
+        Expected keys: "rCBF", "rCBV", "MTT", "Tmax", "PSR", "TTP".
     brain_mask : npt.NDArray[Any]
         3D boolean brain mask.
     subject_id : str, optional
@@ -356,7 +356,7 @@ def generate_dsc_parameter_maps_qc_plot(
         "MTT": ("viridis", 0.0, "fixed", 30.0, "seconds"),
         "Tmax": ("plasma", 0.0, "fixed", 30.0, "seconds"),
         "PSR": ("coolwarm", 0.0, "fixed", 200.0, "%"),
-        "TTP\u1d9c": ("viridis", 0.0, "fixed", 20.0, "seconds"),
+        "TTP": ("viridis", 0.0, "fixed", 20.0, "seconds"),
     }
 
     # Filter to params that exist in the input

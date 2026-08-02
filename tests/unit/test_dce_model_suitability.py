@@ -131,6 +131,11 @@ def test_qc_collection_runs_suitability_after_merging_inputs() -> None:
         "reduced_aif_confidence",
     ]
     assert assessment["metrics"]["t1_method"] == "external"
+    assert collected["b1_mapping"] == {
+        "method": "none",
+        "b1_status": "Skipped by configuration",
+        "skipped": True,
+    }
 
 
 def test_qc_collection_discloses_assumed_t1_and_independent_b1() -> None:

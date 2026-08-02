@@ -215,6 +215,28 @@ def test_dce_b1_cards_follow_qc_hierarchy(env):
     )
 
 
+def test_dce_disabled_b1_is_reported_without_figure(env):
+    """An explicit configuration skip remains visible as text-only QC."""
+    template = env.get_template("sections/section_dce.html")
+    dce = {
+        "qc_metrics": {
+            "b1_mapping": {
+                "method": "none",
+                "b1_status": "Skipped by configuration",
+                "skipped": True,
+            },
+        },
+        "images": {},
+        "display_status": {},
+    }
+
+    rendered = template.render(dce=dce)
+
+    assert "B1+ Mapping Quality" in rendered
+    assert "Skipped by configuration" in rendered
+    assert "B1+ Mapping QC" not in rendered
+
+
 def test_dce_preprocessing_cards_align_with_dsc_order(env):
     """DCE shared acquisition/QC fields use the common DSC/DCE order."""
     template = env.get_template("sections/section_dce.html")

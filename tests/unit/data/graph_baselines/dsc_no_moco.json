@@ -1607,7 +1607,7 @@
     "dsc_brain_mask_qc": "ced2d6d4b823457166d3fb21083d6220f2b0dc0e0155de5c134e6d98210b5086",
     "dsc_fit_qc": "bf242b9215832d16b16770f1152b765752bca909058926f51e3e78a67c730b3e",
     "dsc_leakage_qc": "7fc88cadfd2cb7acdcdd61c093e9d3b931e1cf26b582ac561943f0bc3c20b4b9",
-    "dsc_param_maps_qc": "1b8432d6dbd7505c754aaf76d2a86e84be48127f7bb050797c7c0809e97075f4",
+    "dsc_param_maps_qc": "57021c2b01a09cec8ccdee7a76cdf5ea7a38f60d3f1f7984a6b9655871c2c997",
     "dsc_preproc_qc": "120b1f3f6ea69c095663da8e71955876fde923b19fccc8a5691edc8867ad53cb",
     "hist_match_t1w": "33d0ceadebcfcf66ed403151737f0e0d429e96320c2101825b356309caf68f0e",
     "merge_qc": "f9ea32d6f14389a29579ac76aa48ccfec18295c15c6bf008ee01be74ebd9c5e6",
@@ -1615,7 +1615,7 @@
     "normalize": "46e95a18670a3134604db1df88e4aff73813483aa0a8272286af55f0493c78da",
     "normalize_cbf": "d3d8d3aee06a43e5524d185dc46864e05e9850e216be2760f3e22a54f659e83a",
     "prebolus_mean": "94ade71cddc7afb13dce74a47091860d8d7ee30fce12cc69505ee224e72fdc8d",
-    "preload_correct": "23bfa8be6203202854ea34067cd797be56589a80fd8242c3b5096026a44fa7b8",
+    "preload_correct": "1051436450f57cdb3c1f03f7f8ee8f9394325e4253456b49c7872858617b2901",
     "reg_filmstrip": "00497e133ecfd0f3b852ebd399555ee6e05fcffabbd174d339e925667d3709be",
     "reorient_mean": "2119dc2418fc164e60000986438a4f8e227f0fb4a886b7e3deb6e6f8dda08b5d",
     "select_aif_exclusion": "3ac6f0a171a3c915c7c043706044fb8dd45d2a9c05f1d1fad613919135724b21",
@@ -1854,6 +1854,7 @@
       "subject_id": "0001"
     },
     "dsc_param_maps_qc": {
+      "function_str": "def _generate_dsc_param_maps_qc(\n    rel_cbf_file: str,\n    rel_cbv_file: str,\n    mtt_file: str,\n    tmax_file: str,\n    psr_file: str,\n    ttp_file: str,\n    brain_mask_file: str,\n    subject_id: str = \"\",\n    session_id: str = \"\",\n) -> str:\n    \"\"\"Generate DSC parameter maps QC plot.\n\n    Parameters\n    ----------\n    rel_cbf_file : str\n        Path to relative CBF map NIfTI.\n    rel_cbv_file : str\n        Path to relative CBV map NIfTI.\n    mtt_file : str\n        Path to MTT map NIfTI.\n    tmax_file : str\n        Path to Tmax map NIfTI.\n    psr_file : str\n        Path to PSR map NIfTI.\n    ttp_file : str\n        Path to TTP map NIfTI.\n    brain_mask_file : str\n        Path to brain mask NIfTI.\n    subject_id : str, optional\n        Subject identifier.\n    session_id : str, optional\n        Session identifier.\n\n    Returns\n    -------\n    str\n        Path to the generated QC plot PNG.\n    \"\"\"\n    import nibabel as nib\n    from pmriprep.utils.dsc_qc_plots import generate_dsc_parameter_maps_qc_plot\n\n    mask_data = nib.load(brain_mask_file).get_fdata()  # type: ignore[attr-defined]\n\n    param_maps = {}\n    for name, filepath in [\n        (\"rCBF\", rel_cbf_file),\n        (\"rCBV\", rel_cbv_file),\n        (\"MTT\", mtt_file),\n        (\"Tmax\", tmax_file),\n        (\"PSR\", psr_file),\n        (\"TTP\", ttp_file),\n    ]:\n        if filepath:\n            from pathlib import Path as _P\n            if _P(filepath).is_file():\n                param_maps[name] = nib.load(filepath).get_fdata()  # type: ignore[attr-defined]\n\n    plot_path = generate_dsc_parameter_maps_qc_plot(\n        param_maps=param_maps,\n        brain_mask=mask_data,\n        subject_id=subject_id,\n        session_id=session_id,\n    )\n    return plot_path\n",
       "session_id": "0001",
       "subject_id": "0001"
     },

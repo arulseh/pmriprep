@@ -330,17 +330,7 @@ def generate_vfa_t1_qc_plot(
     ax.set_ylabel("Signal ratio")
     ax.set_title("T1 vs VFA Signal Ratio", fontsize=11)
 
-    # Add correction annotation if provided
-    if correction_info is not None:
-        correction_text = (
-            f"Correction: {correction_info.get('correction_applied', 'none')} | "
-            f"Original median: {correction_info.get('median_t1_original', 0):.0f}ms | "
-            f"Corrected: {correction_info.get('median_t1_corrected', 0):.0f}ms"
-        )
-        fig.text(0.5, 0.01, correction_text, ha="center", fontsize=9,
-                 style="italic", color="gray")
-
-    plt.tight_layout(rect=(0, 0.03, 1, 0.96))
+    plt.tight_layout(rect=(0, 0, 1, 0.96))
     fig.savefig(output_path, dpi=150, bbox_inches="tight", facecolor="white")
     plt.close(fig)
 

@@ -55,3 +55,30 @@ def test_dsc_map_labels_are_horizontal_and_nonfinite_support_is_explicit(
         assert np.ma.isMaskedArray(plotted)
         masked_voxels += int(np.count_nonzero(np.ma.getmaskarray(plotted)))
     assert masked_voxels > 0
+
+
+def test_ttp_uses_plain_qc_label(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The AIF-relative timing definition does not require a custom acronym."""
+    captured: dict[str, matplotlib.figure.Figure] = {}
+
+    def capture_figure(
+        figure: matplotlib.figure.Figure,
+        *_args: object,
+        **_kwargs: object,
+    ) -> None:
+        captured["figure"] = figure
+
+    monkeypatch.setattr(matplotlib.figure.Figure, "savefig", capture_figure)
+    brain = np.ones((5, 5, 5), dtype=bool)
+    generate_dsc_parameter_maps_qc_plot(
+        {"TTP": np.full(brain.shape, 5.0)},
+        brain,
+        output_path=str(tmp_path / "dsc.png"),
+    )
+
+    labels = [text.get_text() for axis in captured["figure"].axes for text in axis.texts]
+    assert any(label.startswith("TTP") for label in labels)
+    assert all("TTPᶜ" not in label for label in labels)

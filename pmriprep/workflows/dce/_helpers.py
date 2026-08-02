@@ -1209,7 +1209,15 @@ def _collect_qc_metrics(
     """
     qc_metrics: dict[str, object] = {}
 
-    if b1_qc is not None:
+    if b1_method == "none":
+        b1_mapping = dict(b1_qc) if b1_qc is not None else {}
+        b1_mapping.update({
+            "method": "none",
+            "b1_status": "Skipped by configuration",
+            "skipped": True,
+        })
+        qc_metrics["b1_mapping"] = b1_mapping
+    elif b1_qc is not None:
         qc_metrics["b1_mapping"] = b1_qc
     if signal_conversion_qc is not None:
         qc_metrics["signal_conversion"] = signal_conversion_qc

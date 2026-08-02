@@ -1228,7 +1228,7 @@ def _generate_dsc_param_maps_qc(
         ("MTT", mtt_file),
         ("Tmax", tmax_file),
         ("PSR", psr_file),
-        ("TTP\u1d9c", ttp_file),
+        ("TTP", ttp_file),
     ]:
         if filepath:
             from pathlib import Path as _P
