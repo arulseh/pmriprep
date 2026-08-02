@@ -1245,11 +1245,11 @@ def _generate_dsc_param_maps_qc(
 
 
 def _generate_dsc_leakage_qc(
-    k2_map_file: str,
-    auc_raw_file: str,
-    auc_corr_file: str,
-    auc_diff_file: str,
-    brain_mask_file: str,
+    k2_map_file: str = "",
+    auc_raw_file: str = "",
+    auc_corr_file: str = "",
+    auc_diff_file: str = "",
+    brain_mask_file: str = "",
     concentration_file: str | None = None,
     corrected_concentration_file: str | None = None,
     psr_file: str | None = None,

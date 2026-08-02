@@ -16,6 +16,7 @@ from pmriprep.workflows.dsc.base import (
     _detect_and_correct_preload,
     init_dsc_deconvolution_wf,
     init_dsc_preload_wf,
+    init_dsc_qc_wf,
 )
 
 
@@ -122,6 +123,26 @@ def test_leakage_policy_executes_through_preload_and_deconvolution(
         assert isdefined(outputs.out_k2) and Path(outputs.out_k2).is_file()
     else:
         assert not isdefined(outputs.out_k2)
+
+
+def test_leakage_qc_node_accepts_undefined_k2_output(tmp_path: Path) -> None:
+    """The ``none`` policy may leave the connected K2 input undefined."""
+    workflow = init_dsc_qc_wf(
+        baseline_frames=5,
+        subject_id="0001",
+        session_id="0001",
+        aif_source="auto",
+    )
+    node = workflow.get_node("dsc_leakage_qc")
+    node.base_dir = str(tmp_path)
+    node.inputs.preload_qc = {
+        "k2_method": "none",
+        "preload_correction_applied": False,
+    }
+
+    result = node.run()
+
+    assert result.outputs.plot_file is None
 
 
 def _fake_k2_result(shape: tuple[int, int, int]) -> K2CorrectionResult:
