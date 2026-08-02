@@ -881,15 +881,15 @@ def _dsc_ctx_with_preload(**preload) -> dict:
     }
 
 
-def test_preload_auto_shows_k2_adequacy(env):
-    """Auto (k2_primary) path labels the box 'K2 Adequacy', not a preload dose."""
+def test_preload_auto_shows_leakage_correction_adequacy(env):
+    """Auto path labels leakage-correction adequacy, not a preload dose."""
     template = env.get_template("sections/section_dsc.html")
     dsc_ctx = _dsc_ctx_with_preload(
         preload_classification="adequate",
         preload_classification_source="k2_primary",
     )
     rendered = template.render(dsc=dsc_ctx)
-    assert '<div class="metric-label" title="Reliability of the K2 leakage correction / CBV trustworthiness — not a preload measurement.">K2 Adequacy</div>' in rendered
+    assert '<div class="metric-label" title="Reliability of the K2 leakage correction / CBV trustworthiness — not a preload measurement.">Leakage-Correction Adequacy</div>' in rendered
     assert "Adequate" in rendered
     # No preload-dose framing on the auto path, and the "Preload Source" box removed.
     assert '<div class="metric-label">Preload Status</div>' not in rendered
@@ -899,7 +899,7 @@ def test_preload_auto_shows_k2_adequacy(env):
 
 
 def test_preload_user_specified_keeps_preload_status(env):
-    """User-specified path keeps the 'Preload Status' label; K2 box reads 'K2 Adequacy'."""
+    """User preload and leakage-correction adequacy remain separate."""
     template = env.get_template("sections/section_dsc.html")
     dsc_ctx = _dsc_ctx_with_preload(
         preload_classification="half_dose",
@@ -909,13 +909,13 @@ def test_preload_user_specified_keeps_preload_status(env):
     rendered = template.render(dsc=dsc_ctx)
     assert '<div class="metric-label">Preload Status</div>' in rendered
     assert "Half Dose" in rendered
-    assert "K2 Adequacy" in rendered
+    assert "Leakage-Correction Adequacy" in rendered
     assert "Adequate" in rendered
-    _assert_in_order(rendered, "Preload Status", "K2 Adequacy", "User-Specified Dose")
+    _assert_in_order(rendered, "Preload Status", "Leakage-Correction Adequacy", "User-Specified Dose")
 
 
-def test_signed_k2_prior_warning_survives_user_preload_label(env):
-    """A dose label does not hide that signed K2 cannot qualify the vp prior."""
+def test_signed_k2_adequacy_survives_user_preload_label(env):
+    """A dose label does not hide uncalibrated leakage-correction adequacy."""
     template = env.get_template("sections/section_dsc.html")
     dsc_ctx = _dsc_ctx_with_preload(
         preload_classification="half_dose",
@@ -926,8 +926,47 @@ def test_signed_k2_prior_warning_survives_user_preload_label(env):
 
     rendered = template.render(dsc=dsc_ctx)
 
-    assert "Signed K2 adequacy thresholds are not calibrated" in rendered
-    assert "DCE vp prior skipped" in rendered
+    assert "Leakage-Correction Adequacy" in rendered
+    assert "Not Calibrated" in rendered
+    assert "Leakage-correction adequacy thresholds for signed K2 are not calibrated" not in rendered
+    assert "DCE vp prior skipped" not in rendered
+    assert "Unavailable" not in rendered
+
+
+def test_auto_signed_k2_labels_uncalibrated_thresholds(env):
+    """Auto signed-K2 QC distinguishes uncalibrated thresholds from absent K2."""
+    template = env.get_template("sections/section_dsc.html")
+    dsc_ctx = _dsc_ctx_with_preload(
+        preload_classification="unknown",
+        preload_classification_source="signed_k2_uncalibrated",
+        preload_k2_classification="unknown",
+        k2_signed=True,
+    )
+
+    rendered = template.render(dsc=dsc_ctx)
+
+    assert "Leakage-Correction Adequacy" in rendered
+    assert "Not Calibrated" in rendered
+    assert "Leakage-correction adequacy thresholds for signed K2 are not calibrated" in rendered
+    assert "DCE vp prior skipped" not in rendered
+    assert "Unavailable" not in rendered
+
+
+def test_unavailable_k2_reference_has_distinct_warning(env):
+    """Unavailable reference reports skipped correction without calibration warning."""
+    template = env.get_template("sections/section_dsc.html")
+    dsc_ctx = _dsc_ctx_with_preload(
+        preload_classification="unknown",
+        preload_classification_source="k2_unavailable",
+        preload_k2_classification="unknown",
+        k2_signed=True,
+        preload_correction_applied=False,
+    )
+
+    rendered = template.render(dsc=dsc_ctx)
+
+    assert "K2 reference unavailable; leakage correction was not applied" in rendered
+    assert "Leakage-correction adequacy thresholds for signed K2 are not calibrated" not in rendered
 
 
 def test_preload_user_specified_dose_shows_na_when_absent(env):

@@ -308,17 +308,27 @@
                 <div class="metric-label">Preload Status</div>
                 <div class="metric-value">{{ preload_labels[dsc.qc_metrics.preload.preload_classification] | default(dsc.qc_metrics.preload.preload_classification | replace("_", " ") | title) }}</div>
             </div>
+            {% elif dsc.qc_metrics.preload.preload_classification_source == 'signed_k2_uncalibrated' %}
+            <div class="metric">
+                <div class="metric-label" title="Whether the signed K2 distribution supports adequate DSC leakage suppression.">Leakage-Correction Adequacy</div>
+                <div class="metric-value">Not Calibrated</div>
+            </div>
             {% else %}
             <div class="metric">
-                <div class="metric-label" title="Reliability of the K2 leakage correction / CBV trustworthiness — not a preload measurement.">K2 Adequacy</div>
+                <div class="metric-label" title="Reliability of the K2 leakage correction / CBV trustworthiness — not a preload measurement.">Leakage-Correction Adequacy</div>
                 <div class="metric-value">{{ adequacy_labels[dsc.qc_metrics.preload.preload_classification] | default(dsc.qc_metrics.preload.preload_classification | replace("_", " ") | title) }}</div>
             </div>
             {% endif %}
             {% endif %}
             {% if dsc.qc_metrics.preload.preload_k2_classification is defined and dsc.qc_metrics.preload.preload_classification_source == 'user_specified' %}
             <div class="metric">
-                <div class="metric-label" title="Reliability of the K2 leakage correction / CBV trustworthiness — not a preload measurement.">K2 Adequacy</div>
+                {% if dsc.qc_metrics.preload.k2_signed and dsc.qc_metrics.preload.preload_k2_classification == 'unknown' %}
+                <div class="metric-label" title="Whether the signed K2 distribution supports adequate DSC leakage suppression.">Leakage-Correction Adequacy</div>
+                <div class="metric-value">Not Calibrated</div>
+                {% else %}
+                <div class="metric-label" title="Reliability of the K2 leakage correction / CBV trustworthiness — not a preload measurement.">Leakage-Correction Adequacy</div>
                 <div class="metric-value">{{ adequacy_labels[dsc.qc_metrics.preload.preload_k2_classification] | default(dsc.qc_metrics.preload.preload_k2_classification | replace("_", " ") | title) }}</div>
+                {% endif %}
             </div>
             {% endif %}
             <div class="metric">
@@ -389,11 +399,10 @@
             {% endif %}
         </div>
         {% if dsc.qc_metrics.preload.preload_classification_source == 'k2_unavailable' %}
-        <p class="preload-note warning">&#9888; K2 reference unavailable &mdash; DCE vp prior skipped.</p>
+        <p class="preload-note warning">&#9888; K2 reference unavailable; leakage correction was not applied.</p>
         {% endif %}
-        {% if dsc.qc_metrics.preload.k2_signed
-           and dsc.qc_metrics.preload.preload_k2_classification == 'unknown' %}
-        <p class="preload-note warning">&#9888; Signed K2 adequacy thresholds are not calibrated &mdash; DCE vp prior skipped.</p>
+        {% if dsc.qc_metrics.preload.preload_classification_source == 'signed_k2_uncalibrated' %}
+        <p class="preload-note warning">&#9888; Leakage-correction adequacy thresholds for signed K2 are not calibrated.</p>
         {% endif %}
         {% if dsc.qc_metrics.preload.preload_correction_applied and dsc.images.dsc_leakage_qc %}
         <div class="figure-container" style="margin-top: 20px;">
