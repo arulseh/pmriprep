@@ -2019,6 +2019,7 @@ def init_dsc_preproc_wf(
         cpi_infer_cpt=config.cpi_infer_cpt,
         cpi_infer_delay=config.cpi_infer_delay,
         inference=config.inference,
+        leakage_method=config.leakage_method,
         mcmc_samples=config.mcmc_samples,
         n_procs=config.num_processes if config.num_processes > 0 else 1,
         # baseline_frames wired dynamically from conc_aif_wf.outputnode.aif_baseline_frames

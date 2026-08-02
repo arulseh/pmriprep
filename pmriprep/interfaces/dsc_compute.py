@@ -307,6 +307,7 @@ class _DSCComputeInputs(NamedTuple):
     mcmc_samples: int
     baseline_frames: int
     tail_frames: int
+    leakage_method: str
 
 
 class _DSCMotionWeighting(NamedTuple):
@@ -530,6 +531,12 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
     k2_map_input_file = File(
         mandatory=False,
         desc="K2 map from preload_correct (passed through when baseline not recomputed)",
+    )
+    leakage_method = traits.Enum(
+        "bsw",
+        "none",
+        usedefault=True,
+        desc="Leakage-correction policy; only 'none' permits an absent K2 map",
     )
     enhancing_mask_file = traits.Either(
         File(exists=True),
@@ -757,6 +764,7 @@ class ComputeDSCMaps(BaseInterface):
             mcmc_samples=int(self.inputs.mcmc_samples),
             baseline_frames=int(self.inputs.baseline_frames),
             tail_frames=int(self.inputs.tail_frames),
+            leakage_method=str(self.inputs.leakage_method),
         )
 
     def _gen_outfilename(self, suffix: str) -> str:
@@ -1616,6 +1624,7 @@ class ComputeDSCMaps(BaseInterface):
         self,
         *,
         k2_map_path: Optional[str],
+        leakage_method: str,
         cth: Optional[npt.NDArray[Any]],
         mask_bool: npt.NDArray[Any],
         affine: npt.NDArray[Any],
@@ -1632,7 +1641,7 @@ class ComputeDSCMaps(BaseInterface):
             )
             k2_data = np.where(mask_bool, k2_data, 0.0)
             outputs["out_k2"] = self._save_map(k2_data, "_k2", affine, header)
-        else:
+        elif leakage_method != "none":
             raise RuntimeError(
                 "K2 correction produced no coefficient map; refusing to "
                 "substitute an all-zero map"
@@ -1661,6 +1670,7 @@ class ComputeDSCMaps(BaseInterface):
         results.update(
             self._save_ancillary_maps(
                 k2_map_path=baseline.k2_map_path,
+                leakage_method=inputs.leakage_method,
                 cth=deconvolution.cth,
                 mask_bool=inputs.mask_bool,
                 affine=inputs.affine,

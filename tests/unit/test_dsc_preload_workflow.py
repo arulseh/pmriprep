@@ -6,6 +6,8 @@ from pathlib import Path
 from unittest import mock
 
 import nibabel as nib  # type: ignore[import-untyped]
+from nipype.interfaces.base import isdefined
+from nipype.pipeline import engine as pe
 import numpy as np
 import pytest
 
@@ -13,6 +15,7 @@ from pmriprep.utils.dsc_preload import K2CorrectionResult, PreloadClass, Preload
 from pmriprep.workflows.dsc.base import (
     _detect_and_correct_preload,
     init_dsc_deconvolution_wf,
+    init_dsc_preload_wf,
 )
 
 
@@ -40,6 +43,85 @@ def _write_fixtures(tmp_path: Path) -> tuple[str, str, str]:
     nib.save(nib.Nifti1Image(1000.0 * np.exp(-0.03 * conc), np.eye(4)), signal_path)
 
     return str(conc_path), str(mask_path), str(signal_path)
+
+
+def _write_executable_fixtures(tmp_path: Path) -> tuple[str, str, str, str]:
+    """Write a sufficiently supported bolus phantom for an executable workflow."""
+    curve = np.array(
+        [0, 0, 0, 0, 0, 0.2, 0.8, 1.8, 1.2, 0.7,
+         0.45, 0.32, 0.25, 0.20, 0.16, 0.13, 0.11, 0.09, 0.08, 0.07],
+        dtype=np.float32,
+    )
+    concentration = np.broadcast_to(curve, (8, 8, 8, curve.size)).copy()
+    concentration_file = tmp_path / "executable_conc.nii.gz"
+    nib.save(nib.Nifti1Image(concentration, np.eye(4)), concentration_file)
+
+    mask_file = tmp_path / "executable_mask.nii.gz"
+    nib.save(nib.Nifti1Image(np.ones((8, 8, 8), dtype=np.uint8), np.eye(4)), mask_file)
+
+    signal_file = tmp_path / "executable_signal.nii.gz"
+    signal = 1000.0 * np.exp(-0.03 * concentration)
+    nib.save(nib.Nifti1Image(signal.astype(np.float32), np.eye(4)), signal_file)
+
+    aif_file = tmp_path / "executable_aif.txt"
+    np.savetxt(aif_file, curve)
+    return str(concentration_file), str(mask_file), str(signal_file), str(aif_file)
+
+
+@pytest.mark.parametrize("leakage_method", ["bsw", "none"])
+def test_leakage_policy_executes_through_preload_and_deconvolution(
+    tmp_path: Path, leakage_method: str
+) -> None:
+    """Each public leakage policy executes across the connected DSC seam."""
+    concentration, mask, signal, aif = _write_executable_fixtures(tmp_path)
+    workflow = pe.Workflow(name=f"smoke_{leakage_method}", base_dir=str(tmp_path))
+    preload = init_dsc_preload_wf(
+        preload="auto",
+        agent_standard_dose=0.1,
+        baseline_frames=5,
+        leakage_method=leakage_method,
+        mem_gb=0.1,
+        name="preload",
+    )
+    deconvolution = init_dsc_deconvolution_wf(
+        dsc_map_kwargs={
+            "method": "sSVD",
+            "leakage_method": leakage_method,
+            "n_procs": 1,
+        },
+        mem_gb=0.1,
+        name="deconvolution",
+    )
+    preload.inputs.inputnode.concentration_file = concentration
+    preload.inputs.inputnode.signal_file = signal
+    preload.inputs.inputnode.brain_mask_file = mask
+    preload.inputs.inputnode.te = 0.03
+    preload.inputs.inputnode.field_strength = 3.0
+    preload.inputs.inputnode.tr = 1.5
+    preload.inputs.inputnode.baseline_frames = 5
+    deconvolution.inputs.inputnode.aif_file = aif
+    deconvolution.inputs.inputnode.measured_aif_file = aif
+    deconvolution.inputs.inputnode.aif_detection_level = "synthetic"
+    deconvolution.inputs.inputnode.baseline_frames = 5
+    deconvolution.inputs.inputnode.brain_mask_file = mask
+    deconvolution.inputs.inputnode.tr = 1.5
+    deconvolution.inputs.inputnode.signal_file = signal
+    deconvolution.inputs.inputnode.raw_concentration_file = concentration
+    workflow.connect([
+        (preload, deconvolution, [
+            ("outputnode.corrected_concentration_file", "inputnode.concentration_file"),
+            ("outputnode.k2_map_file", "inputnode.k2_map_input_file"),
+        ]),
+    ])
+
+    graph = workflow.run(plugin="Linear")
+    compute = next(node for node in graph.nodes if node.name == "compute_maps")
+    outputs = compute.result.outputs
+    assert Path(outputs.out_rel_cbv).is_file()
+    if leakage_method == "bsw":
+        assert isdefined(outputs.out_k2) and Path(outputs.out_k2).is_file()
+    else:
+        assert not isdefined(outputs.out_k2)
 
 
 def _fake_k2_result(shape: tuple[int, int, int]) -> K2CorrectionResult:

@@ -946,6 +946,7 @@ def test_save_ancillary_maps_preserves_optional_maps_and_masking(
     mask = np.array([[[True]], [[False]]])
     results = interface._save_ancillary_maps(
         k2_map_path=k2_path,
+        leakage_method="bsw",
         cth=np.array([[[6.0]], [[9.0]]]),
         mask_bool=mask,
         affine=source_img.affine,
@@ -969,11 +970,33 @@ def test_save_ancillary_maps_rejects_missing_k2(
     with pytest.raises(RuntimeError, match="produced no coefficient map"):
         interface._save_ancillary_maps(
             k2_map_path=None,
+            leakage_method="bsw",
             cth=None,
             mask_bool=np.ones((2, 1, 1), dtype=bool),
             affine=source_img.affine,
             header=source_img.header,
         )
+
+
+def test_save_ancillary_maps_allows_missing_k2_when_leakage_disabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Explicitly disabled leakage correction must not synthesize a K2 map."""
+    monkeypatch.chdir(tmp_path)
+    source = _write_image(tmp_path / "concentration.nii.gz", np.ones((1, 1, 1)))
+    source_img = nib.load(source)
+    interface = ComputeDSCMaps(concentration_file=source, leakage_method="none")
+
+    results = interface._save_ancillary_maps(
+        k2_map_path=None,
+        leakage_method="none",
+        cth=None,
+        mask_bool=np.ones((1, 1, 1), dtype=bool),
+        affine=source_img.affine,
+        header=source_img.header,
+    )
+
+    assert "out_k2" not in results
 
 
 @pytest.mark.parametrize("method", ["vascular", "cpi"])
@@ -1276,6 +1299,7 @@ def test_assemble_outputs_preserves_serialization_order_and_optional_branches(
         svd_threshold=0.2,
         oi_threshold=0.1,
         signal=None,
+        leakage_method="bsw",
     )
     baseline = SimpleNamespace(
         concentration=np.ones((1, 1, 1, 2)),
