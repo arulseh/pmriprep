@@ -1327,16 +1327,17 @@ def _resample_b1_ratio_to_img(b1_img: Any, ref_img: Any) -> Any:
     values = np.where(support, data, 0.0)
     value_img = nib.Nifti1Image(values, b1_img.affine)  # type: ignore[attr-defined]
     support_img = nib.Nifti1Image(support.astype(np.float32), b1_img.affine)  # type: ignore[attr-defined]
-    numerator = resample_to_img(
-        value_img, ref_img, interpolation="continuous", force_resample=True,
-        copy_header=True,
-    )
     with warnings.catch_warnings():
-        # Continuous support weights are intentional: they normalize the
-        # interpolated numerator. The nearest-neighbour map below defines the
+        # A spatially uniform B1+ ratio can look binary to nilearn's value-based
+        # detector. Both the measured ratio and its normalization weights are
+        # intentionally continuous; the nearest-neighbour map below defines the
         # retained binary support.
         warnings.filterwarnings(
             "ignore", message="Resampling binary images with continuous"
+        )
+        numerator = resample_to_img(
+            value_img, ref_img, interpolation="continuous", force_resample=True,
+            copy_header=True,
         )
         weights = resample_to_img(
             support_img, ref_img, interpolation="continuous", force_resample=True,

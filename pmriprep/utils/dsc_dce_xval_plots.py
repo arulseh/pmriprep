@@ -402,8 +402,7 @@ def generate_xval_plot(
         # Diverging colormap centered at expected ratio
         # Set NaN (background) to black so it's distinct from coolwarm's
         # near-white center (RGB ~0.87), which represents the expected ratio.
-        cmap = plt.get_cmap("coolwarm").copy()
-        cmap.set_bad(color="black")
+        cmap = plt.get_cmap("coolwarm").with_extremes(bad="black")
         from pmriprep.utils.dce_constants import (
             VP_NCBV_RATIO_MAX,
             VP_NCBV_RATIO_MIN,
