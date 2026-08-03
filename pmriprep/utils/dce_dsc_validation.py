@@ -142,9 +142,8 @@ class ValidationResult:
     status : str
         Overall validation status (PASS/WARN/POOR/PRIOR-INFORMED).
     dsc_preload_configured : bool, optional
-        True when user explicitly overrode
-        auto-detection with a preload class (i.e., ``preload != "auto"``).
-        None if unknown.
+        True when the administered preload was supplied as a numeric dose;
+        false when it was recorded as unknown.
     prior_informed : bool
         True when at least one retained fit used the DSC-informed vp prior, so
         the comparison is not independent validation.

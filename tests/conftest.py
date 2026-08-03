@@ -1112,7 +1112,7 @@ def synthetic_dce_aif() -> npt.NDArray[Any]:
 def sample_dsc_config() -> Dict[str, Any]:
     """Fixture providing a sample DSC configuration dict."""
     return {
-        "preload": "auto",
+        "preload": "unknown",
         "dose": 1.0,
         "method": "sSVD",
         "bayesian": "vi",

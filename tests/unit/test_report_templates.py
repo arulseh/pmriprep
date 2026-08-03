@@ -903,8 +903,8 @@ def _dsc_ctx_with_preload(**preload) -> dict:
     }
 
 
-def test_preload_auto_shows_unknown_administered_dose(env):
-    """Auto mode does not infer an administered-dose category."""
+def test_unknown_preload_shows_unknown_administered_dose(env):
+    """Unknown preload does not imply an administered-dose category."""
     template = env.get_template("sections/section_dsc.html")
     dsc_ctx = _dsc_ctx_with_preload(
         preload_source="unknown",

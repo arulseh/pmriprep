@@ -1601,7 +1601,7 @@
     "normalize": "46e95a18670a3134604db1df88e4aff73813483aa0a8272286af55f0493c78da",
     "normalize_cbf": "d3d8d3aee06a43e5524d185dc46864e05e9850e216be2760f3e22a54f659e83a",
     "prebolus_mean": "94ade71cddc7afb13dce74a47091860d8d7ee30fce12cc69505ee224e72fdc8d",
-    "preload_correct": "1051436450f57cdb3c1f03f7f8ee8f9394325e4253456b49c7872858617b2901",
+    "preload_correct": "3a167cfc7d2a478b9486454ecde184f5e793b04295d3f129fef700518bbed9fe",
     "reg_filmstrip": "00497e133ecfd0f3b852ebd399555ee6e05fcffabbd174d339e925667d3709be",
     "select_aif_exclusion": "3ac6f0a171a3c915c7c043706044fb8dd45d2a9c05f1d1fad613919135724b21",
     "signal_to_conc": "aafea7db6295a9aae640c8e25aa553ef58a8356c39cf66317d554e6a5eea3749",
@@ -1903,7 +1903,7 @@
       "agent_standard_dose": 0.1,
       "baseline_frames": 5,
       "leakage_method": "bsw",
-      "preload": "auto"
+      "preload": "unknown"
     },
     "reg_filmstrip": {
       "session_id": "0001",

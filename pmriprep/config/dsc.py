@@ -7,8 +7,8 @@ from pathlib import Path
 from typing import List, Literal, Optional, Union
 
 #: Administered preload as a multiplier of the agent's standard dose, or
-#: ``"auto"`` when the administered preload is unknown.
-PreloadInput = Union[Literal["auto"], float]
+#: ``"unknown"`` when the administered preload is not known.
+PreloadInput = Union[Literal["unknown"], float]
 
 logger = logging.getLogger(__name__)
 
@@ -22,8 +22,8 @@ class DSCConfig:
 
     Attributes
     ----------
-    preload : "auto" or float
-        Contrast preload from a prior injection. `"auto"` (default) records
+    preload : "unknown" or float
+        Contrast preload from a prior injection. `"unknown"` (default) records
         the administered preload as unknown; the baseline ΔR2* measurement is
         retained as an advisory acquisition-QC diagnostic. A float (0.0–2.0)
         specifies the administered
@@ -96,7 +96,7 @@ class DSCConfig:
     """
 
     # Preload settings
-    preload: PreloadInput = "auto"
+    preload: PreloadInput = "unknown"
     dose: float = 1.0
     agent_standard_dose: float = 0.1  # mmol Gd/kg (0.1=standard, 0.05=gadopiclenol, 0.04=gadoquatrane)
 
@@ -244,14 +244,14 @@ class DSCConfig:
         except (ValueError, TypeError) as e:
             raise TypeError(f"DSCConfig float field has invalid type: {e}") from e
 
-        # preload: "auto" or float dose multiplier. Reject enum strings.
+        # preload: "unknown" or float dose multiplier. Reject enum strings.
         if isinstance(self.preload, str):
-            if self.preload != "auto":
+            if self.preload != "unknown":
                 raise ValueError(
-                    f"Invalid preload={self.preload!r}. Use 'auto' when the "
+                    f"Invalid preload={self.preload!r}. Use 'unknown' when the "
                     "administered preload is unknown, or a float dose multiplier (e.g., 0.5 for "
                     "half-dose preload). String enums "
-                    "('none'/'minimal'/'half_dose'/...) are not accepted; "
+                    "('auto'/'none'/'minimal'/'half_dose'/...) are not accepted; "
                     "use a numeric fraction."
                 )
         else:
@@ -259,7 +259,7 @@ class DSCConfig:
                 self.preload = float(self.preload)
             except (ValueError, TypeError) as e:
                 raise TypeError(
-                    f"preload must be 'auto' or a number, got {self.preload!r}"
+                    f"preload must be 'unknown' or a number, got {self.preload!r}"
                 ) from e
             if not math.isfinite(self.preload):
                 raise ValueError(

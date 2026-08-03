@@ -171,7 +171,7 @@ def residual_equivalent_fraction_from_delta_r2(
     because of renal clearance between preload and DSC bolus (5–10 min for
     ASFNR-style preload protocols; clearance depends on GFR).
 
-    Used for QC transparency so auto-detection output can be compared to
+    Used for QC transparency so the advisory estimate can be compared to
     user-specified administered dose (different physical quantities, same
     class system for bucketing).
 

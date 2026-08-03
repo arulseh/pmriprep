@@ -411,7 +411,7 @@ def _detect_and_correct_preload(
     leakage_method: str = "bsw",
     agent_standard_dose: float = 0.1,
 ) -> tuple[str, str, dict[str, object]]:
-    """Detect preload and apply K2 correction if needed.
+    """Record preload provenance and apply the configured K2 correction.
 
     This is a Function node wrapper for preload detection and K2 correction.
 
@@ -428,13 +428,9 @@ def _detect_and_correct_preload(
     tr : float
         Repetition time in seconds.
     preload : str or float
-        User-specified preload — "auto" for signal-based detection,
-        or a float administered dose fraction (0.0 = none, 0.5 = half).
-        Auto-detection always runs; user override (if not "auto") takes
-        precedence for the effective class emitted to downstream. User
-        administered fraction is binned separately from auto-detection
-        residual ΔR2* thresholds (different physical quantities, same
-        class names). Disagreement is logged to QC when both exist.
+        ``"unknown"`` when the administered preload is unknown, or a float
+        administered-dose fraction (0.0 = none, 0.5 = half). This value is
+        recorded for provenance and does not control leakage correction.
     signal_file : str, optional
         Path to motion-corrected raw signal NIfTI. Required by ``bsw`` for
         Conventional BSW reference selection and also used for preload detection.
@@ -443,8 +439,7 @@ def _detect_and_correct_preload(
     leakage_method : str, optional
         Leakage-correction method ("bsw" or "none").
     agent_standard_dose : float, optional
-        Agent's standard dose in mmol Gd/kg. Scales auto-detection
-        ΔR2* thresholds linearly.
+        Agent's standard dose in mmol Gd/kg. Scales advisory ΔR2* thresholds.
 
     Returns
     -------
@@ -505,15 +500,15 @@ def _detect_and_correct_preload(
         "QC (motion, S0 baseline) only. Not used to classify preload."
     )
 
-    auto_details = preload_result.details or {}
-    effective_thresholds = auto_details.get("effective_thresholds")
+    advisory_details = preload_result.details or {}
+    effective_thresholds = advisory_details.get("effective_thresholds")
     if effective_thresholds is not None:
         qc_metrics["preload_thresholds_effective"] = {
             **effective_thresholds,
             "agent_standard_dose": agent_standard_dose,
         }
 
-    residual_equivalent = auto_details.get("residual_equivalent_fraction")
+    residual_equivalent = advisory_details.get("residual_equivalent_fraction")
     if residual_equivalent is not None:
         qc_metrics["preload_residual_equivalent_fraction"] = residual_equivalent
 
@@ -552,7 +547,7 @@ def _detect_and_correct_preload(
         raise ValueError(f"Unsupported leakage_method={leakage_method!r}")
 
     # --- Administered-preload provenance ---------------------------------
-    if isinstance(preload, str) and preload == "auto":
+    if isinstance(preload, str) and preload == "unknown":
         qc_metrics["preload_source"] = "unknown"
         qc_metrics["preload_administered_dose_fraction"] = None
     else:

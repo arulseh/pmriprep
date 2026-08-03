@@ -1936,13 +1936,9 @@ def _connect_master_dsc_to_dce(
             ])
 
         # Pass DSC preload config to validation node.
-        # True when user explicitly overrode auto-detection with a
-        # numeric preload dose (any float fraction including 0.0).
-        # `dsc_config.preload` is "auto" or a float; `!= "auto"` matches
-        # every float value, so this comparison is the correct
-        # "user-specified?" check under the new type.
+        # True when a numeric administered preload dose was supplied.
         dce_wf.inputs.dce_dsc_validation_wf.inputnode.dsc_preload_configured = (
-            dsc_config.preload != "auto"
+            dsc_config.preload != "unknown"
         )
 
     elif dce_config.model in ("extended_tofts", "2cxm", "auto", "patlak"):

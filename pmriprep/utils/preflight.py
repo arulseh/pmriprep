@@ -318,7 +318,7 @@ def validate_dsc_metadata(
             if r1 is not None and r1 >= HIGH_R1_THRESHOLD and no_confirmed_preload:
                 if isinstance(preload, str):
                     detail = (
-                        "Preload status is unknown (auto-detect). If no "
+                        "Preload status is unknown. If no "
                         "preload is present, T1 shine-through will be "
                         "disproportionately severe."
                     )

@@ -210,12 +210,12 @@ class TestMeasuredAIFPathCoverage:
 
 
 class TestPreloadConfig:
-    """Verify DSCConfig.preload `'auto' | float` semantics."""
+    """Verify DSCConfig.preload `'unknown' | float` semantics."""
 
-    def test_default_is_auto(self) -> None:
+    def test_default_is_unknown(self) -> None:
         from pmriprep.config.dsc import DSCConfig
         config = DSCConfig()
-        assert config.preload == "auto"
+        assert config.preload == "unknown"
 
     def test_valid_float_dose(self) -> None:
         from pmriprep.config.dsc import DSCConfig
@@ -226,9 +226,16 @@ class TestPreloadConfig:
     def test_invalid_string_raises(self) -> None:
         """Old enum values now rejected — users must migrate to float."""
         from pmriprep.config.dsc import DSCConfig
-        for enum_val in ["half_dose", "significant", "severe", "minimal", "none", "yes"]:
+        for enum_val in [
+            "auto", "half_dose", "significant", "severe", "minimal", "none", "yes",
+        ]:
             with pytest.raises(ValueError, match="Invalid preload"):
                 DSCConfig(preload=enum_val)  # type: ignore[arg-type]
+
+    def test_old_auto_value_points_to_unknown(self) -> None:
+        from pmriprep.config.dsc import DSCConfig
+        with pytest.raises(ValueError, match=r"'auto'.*Use 'unknown'"):
+            DSCConfig(preload="auto")  # type: ignore[arg-type]
 
     def test_out_of_range_raises(self) -> None:
         from pmriprep.config.dsc import DSCConfig
@@ -244,14 +251,14 @@ class TestPreloadConfig:
 
 
 class TestCLIPreloadType:
-    """Parsing of --dsc-preload as 'auto' | float via _preload_type()."""
+    """Parsing of --dsc-preload as 'unknown' | float via _preload_type()."""
 
-    def test_auto_passes_through(self) -> None:
+    def test_unknown_passes_through(self) -> None:
         from pmriprep.cli.run import _preload_type
-        assert _preload_type("auto") == "auto"
+        assert _preload_type("unknown") == "unknown"
 
     def test_zero_is_user_specified(self) -> None:
-        """0.0 must be preserved (not falsy-coerced to None/auto)."""
+        """0.0 must be preserved (not falsy-coerced to None/unknown)."""
         from pmriprep.cli.run import _preload_type
         val = _preload_type("0.0")
         assert val == 0.0
@@ -267,10 +274,12 @@ class TestCLIPreloadType:
     def test_invalid_string_raises(self) -> None:
         import argparse
         from pmriprep.cli.run import _preload_type
-        with pytest.raises(argparse.ArgumentTypeError, match="must be 'auto'"):
+        with pytest.raises(argparse.ArgumentTypeError, match="must be 'unknown'"):
             _preload_type("half_dose")
-        with pytest.raises(argparse.ArgumentTypeError, match="must be 'auto'"):
+        with pytest.raises(argparse.ArgumentTypeError, match="must be 'unknown'"):
             _preload_type("yes")
+        with pytest.raises(argparse.ArgumentTypeError, match="must be 'unknown'"):
+            _preload_type("auto")
 
     def test_out_of_range_raises(self) -> None:
         import argparse

@@ -860,7 +860,7 @@ def _make_dsc_config(**overrides):
     """Create a DSCConfig with sensible defaults for testing."""
     from pmriprep.config.dsc import DSCConfig
     defaults = dict(
-        preload="auto",
+        preload="unknown",
         dose=1.0,
         agent_standard_dose=0.1,
     )
@@ -886,7 +886,7 @@ class TestDSCAgentGuardrails:
         sc = _valid_dsc_sidecar()
         sc["contrast_agent"] = "gadoquatrane"
         sc["flip_angle"] = 30.0
-        cfg = _make_dsc_config(preload="auto", agent_standard_dose=0.04)
+        cfg = _make_dsc_config(preload="unknown", agent_standard_dose=0.04)
         msgs = validate_dsc_metadata(sc, dsc_config=cfg)
         codes = [m.code for m in msgs]
         assert "DSC_HIGH_R1_NO_PRELOAD" in codes
@@ -919,11 +919,11 @@ class TestDSCAgentGuardrails:
         with pytest.raises(ValueError, match="Unsupported DSC leakage_method"):
             validate_dsc_metadata(sc, dsc_config=cfg)
 
-    def test_high_r1_auto_preload_warning(self):
+    def test_high_r1_unknown_preload_warning(self):
         sc = _valid_dsc_sidecar()
         sc["contrast_agent"] = "gadopiclenol"
         sc["flip_angle"] = 30.0
-        cfg = _make_dsc_config(preload="auto", agent_standard_dose=0.05)
+        cfg = _make_dsc_config(preload="unknown", agent_standard_dose=0.05)
         msgs = validate_dsc_metadata(sc, dsc_config=cfg)
         codes = [m.code for m in msgs]
         assert "DSC_HIGH_R1_NO_PRELOAD" in codes
@@ -950,12 +950,12 @@ class TestDSCAgentGuardrails:
         assert "without confirmed preload" not in msg.message
         assert "no preload (user-specified)" in msg.message
 
-    def test_high_r1_auto_preload_includes_cta(self):
-        # Auto-detect keeps the confirmation call-to-action.
+    def test_high_r1_unknown_preload_includes_cta(self):
+        # Unknown preload keeps the confirmation call-to-action.
         sc = _valid_dsc_sidecar()
         sc["contrast_agent"] = "gadopiclenol"
         sc["flip_angle"] = 30.0
-        cfg = _make_dsc_config(preload="auto", agent_standard_dose=0.05)
+        cfg = _make_dsc_config(preload="unknown", agent_standard_dose=0.05)
         msgs = validate_dsc_metadata(sc, dsc_config=cfg)
         msg = next(m for m in msgs if m.code == "DSC_HIGH_R1_NO_PRELOAD")
         assert "Use --dsc-preload to confirm preload status." in msg.message
@@ -1026,7 +1026,7 @@ class TestDSCAgentGuardrails:
         sc = _valid_dsc_sidecar()
         sc["contrast_agent"] = "gadobutrol"
         sc["flip_angle"] = 30.0
-        cfg = _make_dsc_config(preload="auto")
+        cfg = _make_dsc_config(preload="unknown")
         msgs = validate_dsc_metadata(sc, dsc_config=cfg)
         agent_codes = {m.code for m in msgs if m.code.startswith("DSC_H") or m.code.startswith("DSC_LOW")}
         assert len(agent_codes) == 0
@@ -1034,7 +1034,7 @@ class TestDSCAgentGuardrails:
     def test_no_agent_no_warnings(self):
         sc = _valid_dsc_sidecar()
         sc["contrast_agent"] = None
-        cfg = _make_dsc_config(preload="auto")
+        cfg = _make_dsc_config(preload="unknown")
         msgs = validate_dsc_metadata(sc, dsc_config=cfg)
         agent_codes = {m.code for m in msgs if "AGENT" in m.code or "R1" in m.code or "DOSE" in m.code}
         assert len(agent_codes) == 0

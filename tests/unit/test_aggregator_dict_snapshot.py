@@ -35,7 +35,7 @@ def test_load_pipeline_sidecars_dsc(tmp_path: Path) -> None:
             "QCRecommendationAction": "review",
             "QCRecommendationReason": "AIF marginal",
             "QCWarnings": ["Brain mask in DSC space not available"],
-            "QCProvenanceWarnings": ["DSC preload auto-detected"],
+            "QCProvenanceWarnings": ["DSC preload unknown"],
             "QCAcquisitionWarnings": ["Low effective dose"],
             "QCProcessingWarnings": ["AIF fell back to template"],
             "PipelineQC": {
@@ -54,7 +54,7 @@ def test_load_pipeline_sidecars_dsc(tmp_path: Path) -> None:
     assert out["recommendation"]["action"] == "review"
     assert out["recommendation"]["reason"] == "AIF marginal"
     assert out["warnings"] == ["Brain mask in DSC space not available"]
-    assert out["provenance_warnings"] == ["DSC preload auto-detected"]
+    assert out["provenance_warnings"] == ["DSC preload unknown"]
     assert out["acquisition_warnings"] == ["Low effective dose"]
     assert out["processing_warnings"] == ["AIF fell back to template"]
 

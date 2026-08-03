@@ -237,34 +237,34 @@ def _dose_type(value: str) -> float:
 
 
 def _preload_type(value: str) -> str | float:
-    """Parse a --dsc-preload argument as 'auto' or a float dose multiplier.
+    """Parse a --dsc-preload argument as 'unknown' or a float dose multiplier.
 
     Parameters
     ----------
     value : str
-        Either the literal ``"auto"`` or a float string representing the
+        Either the literal ``"unknown"`` or a float string representing the
         administered preload as a fraction of the agent's standard dose
         (e.g., ``"0.5"`` for half-dose preload).
 
     Returns
     -------
     str or float
-        ``"auto"`` unchanged, or the parsed float value in [0.0, 2.0].
+        ``"unknown"`` unchanged, or the parsed float value in [0.0, 2.0].
 
     Raises
     ------
     argparse.ArgumentTypeError
-        If *value* is neither ``"auto"`` nor a finite float in [0.0, 2.0].
+        If *value* is neither ``"unknown"`` nor a finite float in [0.0, 2.0].
     """
     import math
 
-    if value == "auto":
-        return "auto"
+    if value == "unknown":
+        return "unknown"
     try:
         fval = float(value)
     except ValueError:
         raise argparse.ArgumentTypeError(
-            f"--dsc-preload must be 'auto' or a float dose multiplier, "
+            f"--dsc-preload must be 'unknown' or a float dose multiplier, "
             f"got {value!r}. Example: --dsc-preload 0.5 for half-dose preload."
         )
     if not math.isfinite(fval):
@@ -489,11 +489,12 @@ Examples:
         "--dsc-preload",
         type=_preload_type,
         default=None,
-        metavar="{auto|FLOAT}",
-        help="DSC preload as 'auto' (administered preload unknown) or a float "
+        metavar="{unknown|FLOAT}",
+        help="DSC preload as 'unknown' or a float "
         "administered-dose multiplier relative "
         "to the agent's standard dose (e.g., 0.5 for half-dose preload). "
-        "Accepts 0.0 to 2.0.",
+        "Accepts 0.0 to 2.0. Recorded for provenance only; it does not alter "
+        "leakage correction or DCE vp prior handling.",
     )
     dsc_group.add_argument(
         "--dsc-dose",

@@ -77,7 +77,7 @@ def test_leakage_policy_executes_through_preload_and_deconvolution(
     concentration, mask, signal, aif = _write_executable_fixtures(tmp_path)
     workflow = pe.Workflow(name=f"smoke_{leakage_method}", base_dir=str(tmp_path))
     preload = init_dsc_preload_wf(
-        preload="auto",
+        preload="unknown",
         agent_standard_dose=0.1,
         baseline_frames=5,
         leakage_method=leakage_method,
@@ -222,7 +222,7 @@ class TestPreloadProvenance:
                 te=0.03,
                 field_strength=3.0,
                 tr=1.5,
-                preload="auto",
+                preload="unknown",
                 signal_file=signal,
                 baseline_frames=17,
             )
@@ -233,7 +233,7 @@ class TestPreloadProvenance:
         )
         assert qc["baseline_frames_used"] == 17
 
-    def test_auto_records_unknown_without_classification(self, tmp_path: Path) -> None:
+    def test_unknown_records_unknown_without_classification(self, tmp_path: Path) -> None:
         conc, mask, signal = _write_fixtures(tmp_path)
         with mock.patch(
             "pmriprep.utils.dsc_preload.apply_k2_correction",
@@ -248,7 +248,7 @@ class TestPreloadProvenance:
                 te=0.03,
                 field_strength=3.0,
                 tr=1.5,
-                preload="auto",
+                preload="unknown",
                 signal_file=signal,
             )
 
@@ -273,7 +273,7 @@ class TestPreloadProvenance:
                 te=0.03,
                 field_strength=3.0,
                 tr=1.5,
-                preload="auto",
+                preload="unknown",
                 signal_file=signal,
                 leakage_method="none",
             )

@@ -435,8 +435,8 @@ def init_dsc_preload_wf(
 
     Parameters
     ----------
-    preload : "auto" or float
-        Administered preload dose multiplier ("auto" to detect).
+    preload : "unknown" or float
+        Administered preload dose multiplier, or ``"unknown"``.
     agent_standard_dose : float
         Agent's standard dose (mmol Gd/kg).
     baseline_frames : int

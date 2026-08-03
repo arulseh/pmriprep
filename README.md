@@ -93,7 +93,7 @@ Common options:
 | `--nprocs N` | Limit workflow and fitting processes (default: 1) |
 | `--omp-nthreads N` | Limit threads per process |
 | `--mem-gb GB` | Set the Nipype memory limit |
-| `--config-file PATH` | Load advanced scientific options from YAML or JSON |
+| `--config-file PATH` | Load options from a YAML or JSON configuration file |
 | `--skip-tumor-seg`, `--skip-dsc`, `--skip-dce` | Disable optional pipelines |
 | `--report-only` | Rebuild HTML reports from existing derivatives |
 
@@ -103,7 +103,6 @@ Key DSC options:
 |---|---|
 | `--dsc-deconv-method {sSVD,oSVD,tikhonov,vascular,cpi}` | Select deconvolution (default: oSVD) |
 | `--dsc-inference {vi,svb,nlls}` | Select inference for CPI/vascular models (default: vi) |
-| `--dsc-preload {auto\|FLOAT}` | Record preload as unknown or provide an administered-dose multiplier |
 | `--dsc-dose FLOAT` | Set a positive dose multiplier (for example, `0.5` for half dose) |
 | `--dsc-aif-method {auto,synthetic}` | Select detected or synthetic AIF |
 | `--dsc-aif-file FILE` | Supply an external ΔR2* AIF in s⁻¹ |
@@ -167,7 +166,7 @@ DSC fields:
 | `cpi_control_points` | `0` | CPI control points; 0 selects automatically |
 | `cpi_infer_cpt` | `true` | Infer ordered CPI control-point times |
 | `cpi_infer_delay` | `false` | Fit voxelwise CPI bolus delay |
-| `preload` | `auto` | Administered preload dose fraction, or `auto` when unknown; provenance only |
+| `preload` | `unknown` | Administered preload dose fraction, or `unknown`; provenance only |
 | `dose` | `1.0` | Contrast-dose multiplier (float) |
 | `agent_standard_dose` | `0.1` | Agent standard dose in mmol Gd/kg (float) |
 | `aif_method` | `auto` | `auto` or `synthetic` |

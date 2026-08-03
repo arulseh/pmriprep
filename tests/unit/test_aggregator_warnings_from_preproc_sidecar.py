@@ -36,7 +36,7 @@ def test_recommendation_and_warnings_propagate(tmp_path: Path) -> None:
             "QCRecommendationAction": "review",
             "QCRecommendationReason": "AIF marginal",
             "QCWarnings": ["Brain mask in DSC space not available"],
-            "QCProvenanceWarnings": ["DSC preload auto-detected"],
+            "QCProvenanceWarnings": ["DSC preload unknown"],
             "QCAcquisitionWarnings": ["Low effective dose"],
             "QCProcessingWarnings": ["AIF fell back to template"],
         },
@@ -73,7 +73,7 @@ def test_recommendation_and_warnings_propagate(tmp_path: Path) -> None:
     )
 
     prov = _collect_provenance_warnings(pipeline_data)
-    assert prov.get("DSC Perfusion") == ["DSC preload auto-detected"]
+    assert prov.get("DSC Perfusion") == ["DSC preload unknown"]
 
     acq = _collect_pipeline_warnings(pipeline_data, "acquisition_warnings")
     assert acq.get("DSC Perfusion") == ["Low effective dose"]
