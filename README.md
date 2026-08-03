@@ -166,9 +166,9 @@ DSC fields:
 | `cpi_control_points` | `0` | CPI control points; 0 selects automatically |
 | `cpi_infer_cpt` | `true` | Infer ordered CPI control-point times |
 | `cpi_infer_delay` | `false` | Fit voxelwise CPI bolus delay |
-| `preload` | `unknown` | Administered preload dose fraction, or `unknown`; provenance only |
 | `dose` | `1.0` | Contrast-dose multiplier (float; for example, 0.5 for half dose) |
 | `agent_standard_dose` | `0.1` | Agent standard dose in mmol Gd/kg (float) |
+| `preload` | `unknown` | Administered preload dose fraction, or `unknown`; provenance only |
 | `aif_method` | `auto` | `auto` or `synthetic` |
 | `aif_file` | `null` | External ΔR2* AIF; bypasses detection |
 | `aif_mask_file` | `null` | AIF search-space mask (native-DSC space) |
@@ -193,13 +193,15 @@ DCE fields:
 | `model` | `auto` | BIC selection (`auto`) or a fixed PK model (`patlak`, `tofts`, `extended_tofts`, `2cxm`) |
 | `inference` | `nlls` | `nlls` or `vi` |
 | `dose` | `1.0` | Contrast-dose multiplier (float; for example, 0.5 for half dose) |
+| `r1_relaxivity` | `null` | Contrast-agent r1 override in s⁻¹ mM⁻¹ (float) |
+| `hematocrit` | `0.42` | Arterial hematocrit for plasma conversion (float) |
 | `aif_method` | `auto` | `auto` or `population` |
-| `aif_peak_floor` | `true` | Raise (only) low detected AIF peaks to the dose-adjusted floor |
-| `target_peak` | `null` | Explicit blood-scale AIF peak calibration in mM |
 | `aif_file` | `null` | External plasma AIF; bypasses detection and scaling |
 | `aif_mask_file` | `null` | AIF search-space mask (native-DCE space) |
 | `lesion_distance` | `15.0` | Minimum distance from lesion in mm for AIF candidates (float) |
 | `n_aif_candidates` | `10` | Maximum averaged candidates; minimum configuration is 3 |
+| `aif_peak_floor` | `true` | Raise (only) low detected AIF peaks to the dose-adjusted floor |
+| `target_peak` | `null` | Explicit blood-scale AIF peak calibration in mM |
 | `aif_bat_alignment` | `auto` | Guarded AIF-to-tissue BAT alignment or `off` |
 | `lesion_mask` | `null` | Lesion mask (statistics and AIF lesion exclusion; native-DCE space) |
 | `nawm_mask` | `null` | NAWM mask (native-DCE space) |
@@ -215,9 +217,7 @@ DCE fields:
 | `tsnr_threshold` | `0.0` | Optional voxel tSNR floor; 0 disables |
 | `ser_early_time_s` | `120.0` | Early SER sample time after the selected global contrast reference (s) |
 | `ser_late_time_s` | `320.0` | Late SER sample time after the selected global contrast reference (s) |
-| `r1_relaxivity` | `null` | Contrast-agent r1 override in s⁻¹ mM⁻¹ (float) |
 | `cbv_constraint_mode` | `auto` | `auto` uses QC-accepted DSC nCBV as a broad Bayesian vp prior (60% relative SD); `skip` disables it. NLLS is always unconstrained |
-| `hematocrit` | `0.42` | Arterial hematocrit for plasma conversion (float) |
 | `no_dsc_validation` | `false` | Skip DSC–DCE cross-validation |
 | `smooth_fwhm` | `0.0` | Additional smoothed outputs in mm (float); 0 disables |
 | `underlays` | `[]` | Anatomical images to save in DCE space (`t1w_precon`, `t1w_postcon`, `t1w_subtraction`, `flair_precon`, `flair_postcon`, `t2w`) |
@@ -276,11 +276,6 @@ dose options are multipliers of the agent's standard administered dose.
 
 Derivatives are written under `output_dir/pmriprep/`:
 
-- VFA T1 mapping emits a millisecond `T1map` registered to the native DCE
-  reference grid when both T1 mapping and magnitude-registration QC are
-  accepted. Population-T1 fallbacks, external T1 maps, and precomputed B1+
-  maps are consumed but are not republished.
-
 ```text
 pmriprep/
   dataset_description.json
@@ -291,20 +286,36 @@ pmriprep/
     sub-XX[_ses-YY].html
 ```
 
-DSC outputs include relative CBF/CBV, AUC-CBV, MTT, Tmax, leakage, timing, and
-signal-quality maps. DCE outputs include PK, model-selection, model-free,
-timing, fit-quality, and QC maps. Applicable NIfTI derivatives have JSON
-sidecars describing units, conventions, processing, and provenance; AIF and
-motion time series are TSV files.
+Output availability depends on the supplied modalities and configuration:
+
+- Anatomical outputs include preprocessed images, masks, tumor segmentation,
+  and transforms.
+- DSC outputs include relative and NAWM-normalized perfusion maps, AUC-CBV,
+  MTT, Tmax, PSR, leakage and signal-quality diagnostics, masks, and regional
+  statistics.
+- DCE outputs include PK, model-selection, model-free, timing, fit-quality,
+  QC, mask, and regional-statistics derivatives. Quantitative maps remain
+  uncensored; regional statistics retain the native finite-value summaries and
+  add explicitly labelled QC-filtered companions when a DCE QC mask is
+  available.
+
+Accepted VFA T1 mapping emits a millisecond `T1map` registered to the native
+DCE reference grid. Population-T1 fallbacks and external T1 maps are consumed
+without being republished. B1+ maps are likewise used for correction but are
+not emitted as derivatives.
+
+Applicable NIfTI derivatives have JSON sidecars describing units, conventions,
+processing, and provenance. AIF and motion time series are TSV files; regional
+statistics are JSON files.
 
 DCE parameter-uncertainty derivatives contain NLLS standard errors or Bayesian
 posterior standard deviations conditional on the fitted inputs and model.
 DSC parametric CBF uncertainty derivatives use the corresponding conditional
 standard error or posterior standard deviation.
 
-Smoothed maps are additional derivatives. DCE Kep is recomputed from smoothed
+Smoothed maps are additional derivatives. DCE kep is recomputed from smoothed
 Ktrans and ve; uncertainty, timing, categorical, and fit-quality maps remain at
-native resolution. Native maps are used for quantitative ROI analysis.
+native resolution. Unsmoothed maps are used for quantitative regional analysis.
 
 The HTML report summarizes anatomy, masks, registration, motion, AIF selection,
 T1/B1 processing, leakage correction, model fits, parameter maps, voxel
