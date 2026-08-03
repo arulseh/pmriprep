@@ -289,7 +289,9 @@ pmriprep/
 Output availability depends on the supplied modalities and configuration:
 
 - Anatomical outputs include preprocessed images, masks, tumor segmentation,
-  and transforms.
+  and transforms. Secondary T1w, T2w, and FLAIR images are prepared only when
+  required for tumor segmentation, T1w subtraction or reference handling, or a
+  requested DSC/DCE underlay.
 - DSC outputs include relative and NAWM-normalized perfusion maps, AUC-CBV,
   MTT, Tmax, PSR, leakage and signal-quality diagnostics, masks, and regional
   statistics.

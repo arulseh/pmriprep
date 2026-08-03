@@ -86,6 +86,83 @@ class PipelineDecision:
     dce_reason: Optional[str] = None
 
 
+@dataclass(frozen=True)
+class _AnatomicalModalityPlan:
+    """Secondary anatomical modalities required by enabled consumers."""
+
+    t1w_postcon: bool = False
+    t2w: bool = False
+    flair: bool = False
+    flair_postcon: bool = False
+
+
+def _plan_anatomical_modalities(
+    *,
+    session_data: SessionData,
+    decision: PipelineDecision,
+    anat_config: AnatConfig,
+    dsc_config: DSCConfig,
+    dce_config: DCEConfig,
+    reference_plan: "_MasterReferencePlan",
+) -> _AnatomicalModalityPlan:
+    """Select secondary anatomy needed by an enabled downstream consumer.
+
+    Discovery alone does not trigger preprocessing. A secondary modality is
+    prepared when it supports tumor segmentation, a requested perfusion-space
+    underlay, T1w subtraction, or a selected perfusion registration reference.
+    """
+    requested_underlays: set[str] = set()
+    if decision.run_dsc:
+        requested_underlays.update(dsc_config.underlays)
+    if decision.run_dce:
+        requested_underlays.update(dce_config.underlays)
+
+    selected_reference_types = {
+        selection.candidate.image_type.value
+        for selection in (reference_plan.dsc, reference_plan.dce)
+        if selection is not None
+    }
+    has_pre = session_data.modalities.t1w_pre is not None
+    has_post = session_data.modalities.t1w_ce_gad is not None
+    tumor = decision.run_tumor_seg
+    return _AnatomicalModalityPlan(
+        t1w_postcon=bool(
+            has_pre
+            and has_post
+            and (
+                tumor
+                or anat_config.create_subtraction
+                or "t1w_postcon" in requested_underlays
+                or "t1w_subtraction" in requested_underlays
+                or "t1w_postcon" in selected_reference_types
+            )
+        ),
+        t2w=bool(
+            session_data.modalities.t2w
+            and (
+                tumor
+                or "t2w" in requested_underlays
+                or "t2w" in selected_reference_types
+            )
+        ),
+        flair=bool(
+            session_data.modalities.flair
+            and (
+                tumor
+                or "flair_precon" in requested_underlays
+                or "flair_precon" in selected_reference_types
+            )
+        ),
+        flair_postcon=bool(
+            session_data.modalities.flair_postcon
+            and (
+                "flair_postcon" in requested_underlays
+                or "flair_postcon" in selected_reference_types
+            )
+        ),
+    )
+
+
 def decide_pipelines(
     session_data: SessionData,
     skip_flags: PipelineSkipFlags,
@@ -947,6 +1024,7 @@ def _init_master_anatomical_preprocessing(
     outputnode: pe.Node,
     session_data: SessionData,
     decision: PipelineDecision,
+    modality_plan: _AnatomicalModalityPlan,
     bids_dir: Path,
     subject_id: str,
     session_id: Optional[str],
@@ -989,22 +1067,40 @@ def _init_master_anatomical_preprocessing(
         subject_id=subject_id,
         session_id=session_id,
         config=anat_config,
-        has_t1w_postcon=(
-            session_data.modalities.t1w_pre is not None
-            and session_data.modalities.t1w_ce_gad is not None
-        ),
-        has_t2w=session_data.modalities.t2w is not None,
-        has_flair=session_data.modalities.flair is not None,
-        has_flair_postcon=session_data.modalities.flair_postcon is not None,
+        has_t1w_postcon=modality_plan.t1w_postcon,
+        has_t2w=modality_plan.t2w,
+        has_flair=modality_plan.flair,
+        has_flair_postcon=modality_plan.flair_postcon,
         mem_limit_gb=mem_limit_gb,
         name="anat_wf",
     )
     input_edges = (
         ("t1w_pre", session_data.modalities.t1w_pre, "inputnode.t1w_precon"),
-        ("t1w_postcon", session_data.modalities.t1w_ce_gad, "inputnode.t1w_postcon"),
-        ("t2w", session_data.modalities.t2w, "inputnode.t2w"),
-        ("flair", session_data.modalities.flair, "inputnode.flair"),
-        ("flair_postcon", session_data.modalities.flair_postcon, "inputnode.flair_postcon"),
+        (
+            "t1w_postcon",
+            (
+                session_data.modalities.t1w_ce_gad
+                if (
+                    modality_plan.t1w_postcon
+                    or session_data.modalities.t1w_pre is None
+                )
+                else None
+            ),
+            "inputnode.t1w_postcon",
+        ),
+        (
+            "t2w", session_data.modalities.t2w if modality_plan.t2w else None,
+            "inputnode.t2w",
+        ),
+        (
+            "flair", session_data.modalities.flair if modality_plan.flair else None,
+            "inputnode.flair",
+        ),
+        (
+            "flair_postcon",
+            session_data.modalities.flair_postcon if modality_plan.flair_postcon else None,
+            "inputnode.flair_postcon",
+        ),
     )
     for source, path, target in input_edges:
         if path:
@@ -1034,6 +1130,8 @@ def _connect_master_anatomical_datasinks(
     inputnode: pe.Node,
     report_barrier: pe.Node,
     session_data: SessionData,
+    modality_plan: _AnatomicalModalityPlan,
+    anat_config: AnatConfig,
     bids_dir: Path,
     output_dir: Path,
     subject_id: str,
@@ -1045,15 +1143,21 @@ def _connect_master_anatomical_datasinks(
     """Connect anatomical derivatives and their report-completion signal."""
     from pmriprep.workflows.anat.datasinks import init_anat_datasinks_wf
 
+    publish_postcon = has_t1w_postcon and (
+        not has_t1w_pre or modality_plan.t1w_postcon
+    )
     sinks = init_anat_datasinks_wf(
         output_dir=str(output_dir), bids_dir=str(bids_dir), subject_id=subject_id,
         session_id=session_id, has_t1w_pre=has_t1w_pre,
-        has_t1w_postcon=has_t1w_postcon,
-        has_t2w=bool(session_data.modalities.t2w),
-        has_flair=bool(session_data.modalities.flair),
-        has_flair_postcon=bool(session_data.modalities.flair_postcon),
+        has_t1w_postcon=publish_postcon,
+        has_t2w=modality_plan.t2w,
+        has_flair=modality_plan.flair,
+        has_flair_postcon=modality_plan.flair_postcon,
         has_tissue_seg=has_t1w_pre,
-        has_subtraction=has_t1w_pre and has_t1w_postcon,
+        has_subtraction=(
+            has_t1w_pre and modality_plan.t1w_postcon
+            and anat_config.create_subtraction
+        ),
         is_postcon_ref=is_postcon_ref,
     )
     workflow.connect([(anat_wf, sinks, [
@@ -1074,18 +1178,22 @@ def _connect_master_anatomical_datasinks(
             ]),
             (inputnode, sinks, [("t1w_pre", "inputnode.source_t1w")]),
         ])
-    if has_t1w_postcon and has_t1w_pre:
-        workflow.connect([(anat_wf, sinks, [
+    if modality_plan.t1w_postcon and has_t1w_pre:
+        postcon_connections = [
             ("outputnode.t1w_postcon_coreg", "inputnode.t1w_postcon_coreg"),
             ("outputnode.t1w_postcon_to_t1w_xfm", "inputnode.t1w_postcon_to_t1w_xfm"),
-            ("outputnode.t1w_subtraction", "inputnode.t1w_subtraction"),
             ("outputnode.coreg_filmstrip_postcon", "inputnode.coreg_filmstrip_postcon"),
-        ])])
-    if has_t1w_postcon:
+        ]
+        if anat_config.create_subtraction:
+            postcon_connections.append(
+                ("outputnode.t1w_subtraction", "inputnode.t1w_subtraction")
+            )
+        workflow.connect([(anat_wf, sinks, postcon_connections)])
+    if publish_postcon:
         workflow.connect([(inputnode, sinks, [
             ("t1w_postcon", "inputnode.source_t1w_postcon"),
         ])])
-    if session_data.modalities.t2w:
+    if modality_plan.t2w:
         workflow.connect([
             (anat_wf, sinks, [
                 ("outputnode.t2w_coreg", "inputnode.t2w_coreg"),
@@ -1094,7 +1202,7 @@ def _connect_master_anatomical_datasinks(
             ]),
             (inputnode, sinks, [("t2w", "inputnode.source_t2w")]),
         ])
-    if session_data.modalities.flair:
+    if modality_plan.flair:
         workflow.connect([
             (anat_wf, sinks, [
                 ("outputnode.flair_coreg", "inputnode.flair_coreg"),
@@ -1103,7 +1211,7 @@ def _connect_master_anatomical_datasinks(
             ]),
             (inputnode, sinks, [("flair", "inputnode.source_flair")]),
         ])
-    if session_data.modalities.flair_postcon:
+    if modality_plan.flair_postcon:
         workflow.connect([
             (anat_wf, sinks, [
                 ("outputnode.flair_postcon_coreg", "inputnode.flair_postcon_coreg"),
@@ -3431,6 +3539,14 @@ def init_pmriprep_wf(
     )
     dsc_ref_selection = reference_plan.dsc
     dce_ref_selection = reference_plan.dce
+    anatomical_modality_plan = _plan_anatomical_modalities(
+        session_data=session_data,
+        decision=decision,
+        anat_config=anat_config,
+        dsc_config=dsc_config,
+        dce_config=dce_config,
+        reference_plan=reference_plan,
+    )
 
     # -------------------------------------------------------------------
     # Pre-flight validation: read sidecars and validate metadata
@@ -3462,6 +3578,7 @@ def init_pmriprep_wf(
         outputnode=outputnode,
         session_data=session_data,
         decision=decision,
+        modality_plan=anatomical_modality_plan,
         bids_dir=bids_dir,
         subject_id=subject_id,
         session_id=session_id,
@@ -3496,6 +3613,8 @@ def init_pmriprep_wf(
             inputnode=inputnode,
             report_barrier=report_barrier,
             session_data=session_data,
+            modality_plan=anatomical_modality_plan,
+            anat_config=anat_config,
             bids_dir=bids_dir,
             output_dir=output_dir,
             subject_id=subject_id,

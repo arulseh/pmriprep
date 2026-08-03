@@ -25,6 +25,8 @@ from pmriprep.workflows.base import (
     _connect_master_dsc_to_dce,
     _connect_master_dce_t1_b1_inputs,
     _init_master_workflow_nodes,
+    _MasterReferencePlan,
+    _plan_anatomical_modalities,
     _prepare_master_workflow_context,
     _prepare_master_preflight_state,
     _select_master_structural_references,
@@ -134,6 +136,9 @@ def _build_master(
     skip_anat: bool = False,
     tumor_seg: bool = False,
     external_t1: bool = False,
+    create_subtraction: bool = True,
+    dsc_underlays: list[str] | None = None,
+    dce_underlays: list[str] | None = None,
 ) -> Any:
     bids = _write_case(root, modalities)
     if external_t1:
@@ -144,7 +149,9 @@ def _build_master(
             b1_method="none",
         )
     else:
-        dce_config = DCEConfig(no_t1=True, b1_method="none")
+        dce_config = DCEConfig(
+            no_t1=True, b1_method="none", underlays=dce_underlays or [],
+        )
     return init_pmriprep_wf(
         bids_dir=bids,
         output_dir=root / "out",
@@ -156,12 +163,30 @@ def _build_master(
             skip_dsc="dsc" not in modalities,
             skip_dce="dce" not in modalities,
         ),
-        anat_config=AnatConfig(),
+        anat_config=AnatConfig(create_subtraction=create_subtraction),
         tumor_seg_config=TumorSegConfig(conda_env="hdglio-test"),
-        dsc_config=DSCConfig(),
+        dsc_config=DSCConfig(underlays=dsc_underlays or []),
         dce_config=dce_config,
         work_dir=root / "work",
     )
+
+
+def test_master_omits_unused_discovered_secondary_anatomy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only downstream demand creates secondary-anatomy processing nodes."""
+    monkeypatch.setattr("pmriprep.utils.device.detect_torch_device", lambda: "cpu")
+    workflow = _build_master(
+        tmp_path,
+        modalities={"t1w_pre", "t1w_postcon", "t2w", "flair"},
+        tumor_seg=False,
+        create_subtraction=False,
+    )
+    node_names = {node.fullname for node in workflow._get_all_nodes()}
+
+    assert not any("reorient_postcon" in name for name in node_names)
+    assert not any("reorient_t2w" in name for name in node_names)
+    assert not any("reorient_flair" in name for name in node_names)
 
 
 def test_master_external_t1_drives_conversion_without_public_map(
@@ -238,6 +263,80 @@ def test_master_regen_flag_not_set_in_normal_run() -> None:
     assert not _REGEN, (
         "PMRIPREP_REGEN_MASTER_GRAPH=1 is set: baselines were regenerated, not verified"
     )
+
+
+def _secondary_anat_session() -> SessionData:
+    """Return discovery state with every secondary anatomical modality."""
+    return SessionData(
+        subject="0001",
+        session="0001",
+        modalities=ModalityAvailability(
+            t1w_pre=Path("pre.nii.gz"),
+            t1w_ce_gad=Path("post.nii.gz"),
+            t2w=Path("t2w.nii.gz"),
+            flair=Path("flair.nii.gz"),
+            flair_postcon=Path("flair_post.nii.gz"),
+        ),
+        pipelines=PipelineAvailability(),
+    )
+
+
+def test_secondary_anatomy_is_not_processed_by_discovery_alone() -> None:
+    """Unused discovered secondary anatomy does not create processing work."""
+    plan = _plan_anatomical_modalities(
+        session_data=_secondary_anat_session(),
+        decision=PipelineDecision(run_tumor_seg=False, run_dsc=False, run_dce=False),
+        anat_config=AnatConfig(create_subtraction=False),
+        dsc_config=DSCConfig(),
+        dce_config=DCEConfig(),
+        reference_plan=_MasterReferencePlan(dsc=None, dce=None),
+    )
+
+    assert not any((plan.t1w_postcon, plan.t2w, plan.flair, plan.flair_postcon))
+
+
+def test_secondary_anatomy_follows_enabled_consumers() -> None:
+    """Tumor inputs and requested underlays retain their required modalities."""
+    tumor_plan = _plan_anatomical_modalities(
+        session_data=_secondary_anat_session(),
+        decision=PipelineDecision(run_tumor_seg=True, run_dsc=False, run_dce=False),
+        anat_config=AnatConfig(create_subtraction=False),
+        dsc_config=DSCConfig(),
+        dce_config=DCEConfig(),
+        reference_plan=_MasterReferencePlan(dsc=None, dce=None),
+    )
+    assert tumor_plan.t1w_postcon
+    assert tumor_plan.t2w
+    assert tumor_plan.flair
+    assert not tumor_plan.flair_postcon
+
+    underlay_plan = _plan_anatomical_modalities(
+        session_data=_secondary_anat_session(),
+        decision=PipelineDecision(run_tumor_seg=False, run_dsc=True, run_dce=True),
+        anat_config=AnatConfig(create_subtraction=False),
+        dsc_config=DSCConfig(underlays=["t2w"]),
+        dce_config=DCEConfig(underlays=["flair_postcon"]),
+        reference_plan=_MasterReferencePlan(dsc=None, dce=None),
+    )
+    assert not underlay_plan.t1w_postcon
+    assert underlay_plan.t2w
+    assert not underlay_plan.flair
+    assert underlay_plan.flair_postcon
+
+    selected_flair = SimpleNamespace(
+        candidate=SimpleNamespace(
+            image_type=SimpleNamespace(value="flair_precon")
+        )
+    )
+    reference_plan = _plan_anatomical_modalities(
+        session_data=_secondary_anat_session(),
+        decision=PipelineDecision(run_tumor_seg=False, run_dsc=True, run_dce=False),
+        anat_config=AnatConfig(create_subtraction=False),
+        dsc_config=DSCConfig(),
+        dce_config=DCEConfig(),
+        reference_plan=_MasterReferencePlan(dsc=selected_flair, dce=None),
+    )
+    assert reference_plan.flair
 
 
 def test_connect_master_dsc_anatomy_preserves_live_underlay_routes() -> None:
