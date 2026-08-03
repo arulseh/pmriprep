@@ -210,7 +210,7 @@ DCE fields:
 | `t1_map_file` | `null` | External T1 map in milliseconds, world-aligned to DCE |
 | `t1_method` | `nlls` | WLLS-initialized nonlinear fitting, or faster `wlls` |
 | `b1_method` | `auto` | `auto`, `afi`, `precomputed`, or `none` |
-| `b1_map_encoding` | `auto` | Infer or specify precomputed B1+ pixel encoding |
+| `b1_map_encoding` | `auto` | Infer (`auto`) or specify precomputed B1+ pixel encoding (`actual_flip_deci_deg`, `actual_flip_deg`, `percent`, or `ratio`) |
 | `baseline_frames` | `0` | Baseline frames (0 = auto-detect; minimum 5) |
 | `motion_correct` | `true` | Apply motion correction |
 | `motion_thresh` | `0.5` | Motion-QC threshold in mm (float) |
@@ -244,7 +244,7 @@ Tumor-segmentation fields:
 A normal run requires `dataset_description.json` and an anatomical T1w image.
 Pre-contrast T1w is preferred; post-contrast-only anatomy is supported. DSC and
 DCE run when corresponding 4D `*_dsc.nii.gz` and `*_dce.nii.gz` images are
-present. HD-GLIO additionally requires pre- and post-contrast T1w, T2w, and
+present. HD-GLIO requires pre- and post-contrast T1w, T2w, and
 FLAIR.
 
 | Input | Required metadata |
@@ -261,16 +261,16 @@ For 3D DCE, `RepetitionTime` is the volume TR and
 B1+ correction accepts AFI (`*_TB1AFI`), Siemens precomputed flip-angle maps
 (`*_TB1TFL`), and vendor-neutral maps (`*_TB1map`). The default
 `--dce-b1-map-encoding auto` infers precomputed-map encoding from the suffix,
-`Units`, and pixel scale. When inference is ambiguous, select
-`actual_flip_deci_deg`, `actual_flip_deg`, `percent`, or `ratio` explicitly.
+`Units`, and pixel scale. When inference is ambiguous, set encoding explicitly.
 AFI magnitude data are registered automatically. A precomputed map has no
 independent magnitude image and must already be world-aligned with the DCE
 series. When VFA T1 mapping is used, PMRIPrep applies the inverse of the
 accepted VFA-to-DCE transform to transfer that map into VFA space.
 
-`ContrastBolusAgent` enables agent-specific relaxivity and AIF thresholds. When
-it is absent, PMRIPrep records and warns about the assumptions used. DSC and DCE
-dose options are multipliers of the agent's standard administered dose.
+When `ContrastBolusAgent` is absent or unrecognized, PMRIPrep uses Gd-DTPA as
+the fallback agent: field-strength-specific Gd-DTPA r1 for DCE and a standard
+dose of 0.1 mmol Gd/kg for dose-adjusted AIF handling. DSC and DCE dose options
+are multipliers of the agent's standard administered dose.
 
 ## Outputs and QC
 
@@ -344,5 +344,5 @@ Use [`CITATION.cff`](CITATION.cff) or cite:
 
 ## Support
 
-Report problems at <https://github.com/arulseh/pmriprep/issues>. Contributions
-are described in the [contribution guide](https://github.com/arulseh/pmriprep/blob/main/CONTRIBUTING.md).
+Report problems at <https://github.com/arulseh/pmriprep/issues>. For development
+and contribution guidelines, see [CONTRIBUTING.md](CONTRIBUTING.md).
