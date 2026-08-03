@@ -2444,20 +2444,13 @@ class AIFDetection(BaseInterface):
         return candidates, adjusted_scores, metrics_list
 
     @staticmethod
-    def _ensure_bilateral_balance(
+    def _select_top_candidates(
         candidates: list[tuple[int, int, int]],
         scores: list[float],
         metrics_list: list[dict[str, float]],
-        affine: npt.NDArray[Any],
         n_select: int,
     ) -> tuple[list[tuple[int, int, int]], list[float], list[dict[str, float]]]:
-        """Ensure bilateral AIF representation.
-
-        Guarantees at least ``min_per_hemisphere`` candidates from each
-        hemisphere (world-space x=0 as midline). Remaining slots filled
-        by score ranking (higher is better).
-
-        ``min_per_hemisphere`` is adaptive: ``max(1, min(2, n_select // 4))``
+        """Select the highest-scoring AIF candidates.
 
         Parameters
         ----------
@@ -2467,62 +2460,21 @@ class AIFDetection(BaseInterface):
             Candidate scores (higher is better).
         metrics_list : list
             Candidate metrics.
-        affine : np.ndarray
-            4x4 affine matrix (voxel -> RAS world).
         n_select : int
             Number of candidates to select.
 
         Returns
         -------
         tuple of (list, list, list)
-            Selected (candidates, scores, metrics) with bilateral guarantee,
-            sorted by score descending.
+            Selected candidates, scores, and metrics sorted by score.
         """
-        if not candidates or len(candidates) <= n_select:
-            return candidates, scores, metrics_list
-
-        min_per_hemisphere = max(1, min(2, n_select // 4))
-
-        # Sort by score descending first
-        sorted_idx = sorted(
+        selected = sorted(
             range(len(candidates)), key=lambda i: scores[i], reverse=True
-        )
-
-        # Split by world-space x (RAS: x<0 = left)
-        left_idx: list[int] = []
-        right_idx: list[int] = []
-        for i in sorted_idx:
-            x, y, z = candidates[i]
-            voxel = np.array([x, y, z], dtype=float)
-            world_x = float(affine[0, :3] @ voxel + affine[0, 3])
-            (left_idx if world_x < 0 else right_idx).append(i)
-
-        # Graceful fallthrough: if one hemisphere is empty, just return top N
-        if not left_idx or not right_idx:
-            top = sorted_idx[:n_select]
-            return (
-                [candidates[i] for i in top],
-                [scores[i] for i in top],
-                [metrics_list[i] for i in top],
-            )
-
-        # Reserve minimum from each, fill rest by score
-        min_l = min(min_per_hemisphere, len(left_idx))
-        min_r = min(min_per_hemisphere, len(right_idx))
-        selected = set(left_idx[:min_l] + right_idx[:min_r])
-
-        # Fill remaining slots from sorted order
-        for i in sorted_idx:
-            if len(selected) >= n_select:
-                break
-            selected.add(i)
-
-        # Sort final selection by score descending
-        final = sorted(selected, key=lambda i: scores[i], reverse=True)
+        )[:n_select]
         return (
-            [candidates[i] for i in final],
-            [scores[i] for i in final],
-            [metrics_list[i] for i in final],
+            [candidates[i] for i in selected],
+            [scores[i] for i in selected],
+            [metrics_list[i] for i in selected],
         )
 
     @staticmethod
@@ -4645,21 +4597,11 @@ class AIFDetection(BaseInterface):
                 conc_data.shape[:3], affine, tumor_lat,
             )
 
-        # ===== Bilateral balance (always applied) =====
+        # ===== Select top-scoring candidates =====
         if candidates:
-            candidates, scores, metrics_list = self._ensure_bilateral_balance(
-                candidates, scores, metrics_list,
-                affine, n_candidates,
+            candidates, scores, metrics_list = self._select_top_candidates(
+                candidates, scores, metrics_list, n_candidates,
             )
-
-        # ===== Take top N =====
-        if candidates and len(candidates) > n_candidates:
-            sorted_idx = sorted(
-                range(len(candidates)), key=lambda i: scores[i], reverse=True
-            )[:n_candidates]
-            candidates = [candidates[i] for i in sorted_idx]
-            scores = [scores[i] for i in sorted_idx]
-            metrics_list = [metrics_list[i] for i in sorted_idx]
 
         # Venous filtering already applied inside _find_candidates_in_mask
         # (after cluster selection). No need to duplicate here.

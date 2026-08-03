@@ -3149,6 +3149,21 @@ class TestCascadeGateDecisions:
 # =============================================================================
 
 
+def test_select_top_candidates_does_not_reserve_hemispheres() -> None:
+    """Candidate selection follows score order without a hemisphere quota."""
+    candidates = [(1, 0, 0), (2, 0, 0), (3, 0, 0), (9, 0, 0)]
+    scores = [0.9, 0.8, 0.7, 0.1]
+    metrics = [{"index": float(index)} for index in range(4)]
+
+    selected, selected_scores, selected_metrics = AIFDetection._select_top_candidates(
+        candidates, scores, metrics, n_select=3
+    )
+
+    assert selected == candidates[:3]
+    assert selected_scores == scores[:3]
+    assert selected_metrics == metrics[:3]
+
+
 class TestScoreAndGatePool:
     """Pin the extracted ``_score_and_gate_pool`` helper.
 
@@ -3359,7 +3374,7 @@ class TestC2DivergenceInSitu:
         with patch.object(
             AIFDetection, "_run_two_pass_cascade", return_value=cascade,
         ), patch.object(
-            AIFDetection, "_ensure_bilateral_balance",
+            AIFDetection, "_select_top_candidates",
             side_effect=lambda cands, scs, mets, *a, **k: (cands, scs, mets),
         ), patch.object(AIFDetection, "_score_and_gate_pool", spy):
             iface.run()

@@ -286,7 +286,7 @@ def _cell_c2_divergence(tmp_path: Path) -> dict[str, Any]:
     casc = _cascade([a, b], [0.9, 0.8], _tier_result([a, b, c]))
     iface = _base_iface(conc_f, mask_f)
     with patch.object(AIFDetection, "_run_two_pass_cascade", return_value=casc), \
-         patch.object(AIFDetection, "_ensure_bilateral_balance", side_effect=_IDENTITY_BALANCE):
+         patch.object(AIFDetection, "_select_top_candidates", side_effect=_IDENTITY_BALANCE):
         iface.run()
     return _snapshot(iface)
 
@@ -299,7 +299,7 @@ def _cell_c2_nondivergent(tmp_path: Path) -> dict[str, Any]:
     casc = _cascade([a, b, c], [0.9, 0.8, 0.7], _tier_result([a, b, c]))
     iface = _base_iface(conc_f, mask_f)
     with patch.object(AIFDetection, "_run_two_pass_cascade", return_value=casc), \
-         patch.object(AIFDetection, "_ensure_bilateral_balance", side_effect=_IDENTITY_BALANCE):
+         patch.object(AIFDetection, "_select_top_candidates", side_effect=_IDENTITY_BALANCE):
         iface.run()
     return _snapshot(iface)
 
@@ -316,7 +316,7 @@ def _cell_final_timing_marginal(tmp_path: Path) -> dict[str, Any]:
     casc = _cascade([a, b, c], [0.9, 0.8, 0.7], _tier_result([a, b, c]))
     iface = _base_iface(conc_f, mask_f)
     with patch.object(AIFDetection, "_run_two_pass_cascade", return_value=casc), \
-         patch.object(AIFDetection, "_ensure_bilateral_balance", side_effect=_IDENTITY_BALANCE):
+         patch.object(AIFDetection, "_select_top_candidates", side_effect=_IDENTITY_BALANCE):
         iface.run()
     snapshot = _snapshot(iface)
     assert snapshot["results"]["aif_confidence"] == "reduced"
@@ -337,7 +337,7 @@ def _cell_hs2_emptied(tmp_path: Path) -> dict[str, Any]:
     casc = _cascade([a, b, c], [0.2, 0.15, 0.1], _tier_result([a, b, c]))
     iface = _base_iface(conc_f, mask_f)
     with patch.object(AIFDetection, "_run_two_pass_cascade", return_value=casc), \
-         patch.object(AIFDetection, "_ensure_bilateral_balance", side_effect=_IDENTITY_BALANCE):
+         patch.object(AIFDetection, "_select_top_candidates", side_effect=_IDENTITY_BALANCE):
         iface.run()
     return _snapshot(iface)
 
@@ -351,7 +351,7 @@ def _cell_filtered_nonzero(tmp_path: Path) -> dict[str, Any]:
     casc = _cascade([a, b, c], [0.9, 0.8, 0.2], _tier_result([a, b, c]))
     iface = _base_iface(conc_f, mask_f)
     with patch.object(AIFDetection, "_run_two_pass_cascade", return_value=casc), \
-         patch.object(AIFDetection, "_ensure_bilateral_balance", side_effect=_IDENTITY_BALANCE):
+         patch.object(AIFDetection, "_select_top_candidates", side_effect=_IDENTITY_BALANCE):
         iface.run()
     return _snapshot(iface)
 
