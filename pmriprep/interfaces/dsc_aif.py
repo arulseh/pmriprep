@@ -881,69 +881,6 @@ class AIFDetection(BaseInterface):
         return combined, n_contra, n_ipsi
 
     # -----------------------------------------------------------------
-    # Step 2c: Bilateral balance (ensures both hemispheres represented)
-    # -----------------------------------------------------------------
-
-    @staticmethod
-    def _ensure_bilateral_balance(
-        scored: list[tuple[float, tuple[int, int, int], dict[str, Any]]],
-        affine: npt.NDArray[Any],
-        n_select: int,
-    ) -> list[tuple[float, tuple[int, int, int], dict[str, Any]]]:
-        """Ensure bilateral AIF representation.
-
-        Guarantees at least ``min_per_hemisphere`` candidates from each
-        hemisphere (world-space x=0 as midline). Remaining slots filled
-        by cost ranking.
-
-        ``min_per_hemisphere`` is adaptive: ``max(1, min(2, n_select // 4))``
-          - n_select=10 -> 2 per hemisphere
-          - n_select=5 (GBM) -> 1 per hemisphere
-
-        Parameters
-        ----------
-        scored : list
-            List of ``(cost, (x,y,z), metrics)`` tuples, sorted by cost.
-        affine : ndarray
-            4x4 affine transformation matrix (voxel -> RAS world).
-        n_select : int
-            Number of candidates to select.
-
-        Returns
-        -------
-        list
-            Selected candidates with bilateral guarantee, sorted by cost.
-        """
-        min_per_hemisphere = max(1, min(2, n_select // 4))
-
-        if len(scored) <= n_select or min_per_hemisphere <= 0:
-            return scored[:n_select]
-
-        # Split by world-space x (RAS: x<0 = left)
-        left: list[tuple[float, tuple[int, int, int], dict[str, Any]]] = []
-        right: list[tuple[float, tuple[int, int, int], dict[str, Any]]] = []
-        for entry in scored:
-            _, coord, _ = entry
-            world_x = float(
-                affine[0, :3] @ np.array(coord, dtype=float) + affine[0, 3]
-            )
-            (left if world_x < 0 else right).append(entry)
-
-        # Graceful fallthrough: if one hemisphere is empty, just return by cost
-        if not left or not right:
-            return scored[:n_select]
-
-        # Reserve minimum from each, fill rest by cost
-        min_l = min(min_per_hemisphere, len(left))
-        min_r = min(min_per_hemisphere, len(right))
-        selected = left[:min_l] + right[:min_r]
-        used = {id(e) for e in selected}
-        remaining = [e for e in scored if id(e) not in used]
-        selected.extend(remaining[: n_select - len(selected)])
-        selected.sort(key=lambda x: x[0])
-        return selected
-
-    # -----------------------------------------------------------------
     # Step 3: Spatial exclusions
     # -----------------------------------------------------------------
 
@@ -1502,9 +1439,9 @@ class AIFDetection(BaseInterface):
     ) -> tuple[list[tuple[float, tuple[int, int, int], dict[str, Any]]], int]:
         """Score pre-filtered candidates and return ALL that pass.
 
-        Post-scoring filters (distance, contralateral penalty, bilateral
-        balance) run after this method, so all passing candidates are
-        returned for downstream selection.
+        Post-scoring distance, laterality, and kinetic filters run after this
+        method, so all passing candidates are returned for downstream
+        selection.
 
         Returns
         -------
@@ -2881,11 +2818,9 @@ class AIFDetection(BaseInterface):
                 postfilter_diagnostics,
             )
 
-        candidates = self._ensure_bilateral_balance(
-            candidates,
-            context.affine,
-            n_candidates,
-        )
+        candidates = sorted(candidates, key=lambda candidate: candidate[0])[
+            :n_candidates
+        ]
         return _TierCandidateResult(
             candidates,
             n_available,

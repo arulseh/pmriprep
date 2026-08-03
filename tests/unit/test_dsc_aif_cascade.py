@@ -648,8 +648,7 @@ class TestTrimLoopEdgeCases:
         assert result is None
 
     def test_below_floor_skips_loop(self) -> None:
-        """``len(scored) < MIN`` should never enter pool acceptance
-        (possible after _ensure_bilateral_balance filtering)."""
+        """``len(scored) < MIN`` should never enter pool acceptance."""
         # This is a semantic check on the trim loop's entry condition.
         # The real cascade skips the loop when len(pool) < MIN; we
         # verify the predicate directly.

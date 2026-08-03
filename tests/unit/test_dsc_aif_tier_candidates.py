@@ -33,7 +33,10 @@ def test_tier_candidate_stages_run_in_order(
     detector = AIFDetection()
     context = _context()
     calls: list[str] = []
-    candidates = [(0.5, (0, 0, 0), {"baseline_return_ratio": 5.0})]
+    candidates = [
+        (0.6, (0, 0, 1), {"baseline_return_ratio": 5.0}),
+        (0.5, (0, 0, 0), {"baseline_return_ratio": 5.0}),
+    ]
 
     def prepare(*args: Any) -> np.ndarray:
         calls.append("search")
@@ -56,23 +59,18 @@ def test_tier_candidate_stages_run_in_order(
         calls.append("kinetic")
         return list(candidates), {"aif_n_after_filters": 1}
 
-    def balance(*args: Any, **kwargs: Any) -> list[tuple]:
-        calls.append("balance")
-        return list(candidates)
-
     monkeypatch.setattr(detector, "_prepare_search_mask", prepare)
     monkeypatch.setattr(detector, "_find_aif_candidate_voxels", find)
     monkeypatch.setattr(detector, "_score_and_select_candidates", score)
     monkeypatch.setattr(detector, "_apply_post_scoring_filters", spatial)
     monkeypatch.setattr(detector, "_apply_postscore_aif_filters", kinetic)
-    monkeypatch.setattr(detector, "_ensure_bilateral_balance", balance)
 
     result = detector._prepare_tier_candidates(
-        context, "relaxed", None, False, 3, 5, 8.0,
+        context, "relaxed", None, False, 1, 5, 8.0,
     )
 
-    assert calls == ["search", "find", "score", "spatial", "kinetic", "balance"]
-    assert result.candidates == candidates
+    assert calls == ["search", "find", "score", "spatial", "kinetic"]
+    assert result.candidates == [candidates[1]]
     assert result.n_available == 4
     assert result.filter_metadata == {"distance_filter": "applied"}
     assert result.postfilter_diagnostics == {"aif_n_after_filters": 1}
