@@ -1,0 +1,3076 @@
+{
+  "edges": [
+    [
+      "aif_detection",
+      "aif_uncertainty_inflation_factor",
+      "pk_modeling",
+      "aif_uncertainty_inflation_factor"
+    ],
+    [
+      "aif_detection",
+      "detection_method",
+      "pk_modeling",
+      "aif_detection_method"
+    ],
+    [
+      "aif_detection",
+      "out_aif_curve",
+      "aif_qc_plot",
+      "aif_curve_file"
+    ],
+    [
+      "aif_detection",
+      "out_aif_curve",
+      "dce_pk_fit_qc",
+      "aif_file"
+    ],
+    [
+      "aif_detection",
+      "out_aif_curve",
+      "outputnode",
+      "aif_curve"
+    ],
+    [
+      "aif_detection",
+      "out_aif_curve",
+      "pk_modeling",
+      "aif_file"
+    ],
+    [
+      "aif_detection",
+      "out_aif_mask",
+      "aif_qc_plot",
+      "aif_mask_file"
+    ],
+    [
+      "aif_detection",
+      "out_aif_mask",
+      "outputnode",
+      "aif_mask"
+    ],
+    [
+      "aif_detection",
+      "qc_metrics",
+      "aif_qc_plot",
+      "qc_metrics"
+    ],
+    [
+      "aif_detection",
+      "qc_metrics",
+      "collect_qc_metrics",
+      "aif_qc"
+    ],
+    [
+      "aif_qc_plot",
+      "out_aif_candidates",
+      "outputnode",
+      "aif_candidates_qc_plot"
+    ],
+    [
+      "aif_qc_plot",
+      "out_aif_location",
+      "outputnode",
+      "aif_location_qc_plot"
+    ],
+    [
+      "aif_qc_plot",
+      "out_aif_plot",
+      "outputnode",
+      "aif_curve_qc_plot"
+    ],
+    [
+      "b1_mapping",
+      "out_file",
+      "transform_b1_to_dce",
+      "b1_map_file"
+    ],
+    [
+      "b1_mapping",
+      "out_file",
+      "transform_b1_to_vfa",
+      "b1_map_file"
+    ],
+    [
+      "b1_mapping",
+      "qc_metrics",
+      "collect_qc_metrics",
+      "b1_qc"
+    ],
+    [
+      "b1_mapping",
+      "qc_pass",
+      "t1_mapping",
+      "b1_qc_pass"
+    ],
+    [
+      "b1_mapping",
+      "qc_plot",
+      "outputnode",
+      "b1_qc_plot"
+    ],
+    [
+      "b1_mapping",
+      "registration_qc_plot",
+      "outputnode",
+      "afi_registration_qc_plot"
+    ],
+    [
+      "collect_qc_metrics",
+      "qc_metrics",
+      "outputnode",
+      "qc_metrics"
+    ],
+    [
+      "combine_masks",
+      "combined_mask_file",
+      "transform_stats_lesion",
+      "lesion_mask_file"
+    ],
+    [
+      "combine_masks",
+      "mask_origin",
+      "lesion_stats",
+      "mask_origin"
+    ],
+    [
+      "convert_inverse_h5",
+      "out_h5",
+      "outputnode",
+      "dce_to_t1w_xfm"
+    ],
+    [
+      "create_aif_mask",
+      "out_file",
+      "aif_detection",
+      "brain_mask_file"
+    ],
+    [
+      "dce_brain_extract",
+      "out_brain",
+      "convert_inverse_h5",
+      "moving"
+    ],
+    [
+      "dce_brain_extract",
+      "out_brain",
+      "dce_registration",
+      "dce_mean"
+    ],
+    [
+      "dce_brain_extract",
+      "out_mask",
+      "aif_qc_plot",
+      "brain_mask_file"
+    ],
+    [
+      "dce_brain_extract",
+      "out_mask",
+      "create_aif_mask",
+      "dce_native_mask"
+    ],
+    [
+      "dce_brain_extract",
+      "out_mask",
+      "dce_brain_mask_qc",
+      "brain_mask_file"
+    ],
+    [
+      "dce_brain_extract",
+      "out_mask",
+      "dce_pk_fit_qc",
+      "brain_mask_file"
+    ],
+    [
+      "dce_brain_extract",
+      "out_mask",
+      "dce_pk_maps_qc",
+      "brain_mask_file"
+    ],
+    [
+      "dce_brain_extract",
+      "out_mask",
+      "dce_preprocess",
+      "brain_mask"
+    ],
+    [
+      "dce_brain_extract",
+      "out_mask",
+      "outputnode",
+      "brain_mask"
+    ],
+    [
+      "dce_brain_extract",
+      "out_mask",
+      "pk_modeling",
+      "brain_mask_file"
+    ],
+    [
+      "dce_brain_extract",
+      "out_mask",
+      "preprocessing_qc",
+      "brain_mask_file"
+    ],
+    [
+      "dce_brain_extract",
+      "out_mask",
+      "reg_filmstrip",
+      "brain_mask_file"
+    ],
+    [
+      "dce_brain_extract",
+      "out_mask",
+      "signal_to_concentration",
+      "brain_mask_file"
+    ],
+    [
+      "dce_brain_mask_qc",
+      "out_file",
+      "outputnode",
+      "brain_mask_filmstrip"
+    ],
+    [
+      "dce_early_mean",
+      "out_file",
+      "dce_brain_extract",
+      "dce_mean"
+    ],
+    [
+      "dce_pk_fit_qc",
+      "pk_modeling_qc_plot",
+      "outputnode",
+      "pk_modeling_qc_plot"
+    ],
+    [
+      "dce_pk_fit_qc",
+      "pk_voxel_metrics",
+      "collect_qc_metrics",
+      "pk_fit_qc_metrics"
+    ],
+    [
+      "dce_pk_maps_qc",
+      "model_selection_qc_plot",
+      "outputnode",
+      "model_selection_qc_plot"
+    ],
+    [
+      "dce_pk_maps_qc",
+      "model_selection_regions",
+      "collect_qc_metrics",
+      "pk_maps_qc_metrics"
+    ],
+    [
+      "dce_pk_maps_qc",
+      "pk_param_maps_qc_plot",
+      "outputnode",
+      "pk_param_maps_qc_plot"
+    ],
+    [
+      "dce_preprocess",
+      "baseline_frames",
+      "aif_detection",
+      "baseline_frames"
+    ],
+    [
+      "dce_preprocess",
+      "baseline_frames",
+      "dce_pk_fit_qc",
+      "baseline_frames"
+    ],
+    [
+      "dce_preprocess",
+      "baseline_frames",
+      "pk_modeling",
+      "baseline_frames"
+    ],
+    [
+      "dce_preprocess",
+      "baseline_frames",
+      "preprocessing_qc",
+      "baseline_frames"
+    ],
+    [
+      "dce_preprocess",
+      "baseline_frames",
+      "signal_to_concentration",
+      "baseline_frames"
+    ],
+    [
+      "dce_preprocess",
+      "baseline_mean_img",
+      "dce_brain_mask_qc",
+      "mean_file"
+    ],
+    [
+      "dce_preprocess",
+      "baseline_mean_img",
+      "transform_b1_to_vfa",
+      "registration_source_file"
+    ],
+    [
+      "dce_preprocess",
+      "baseline_mean_img",
+      "vfa_to_dce_registration",
+      "dce_mean"
+    ],
+    [
+      "dce_preprocess",
+      "bolus_arrival_frame",
+      "pk_modeling",
+      "bolus_arrival_frame"
+    ],
+    [
+      "dce_preprocess",
+      "bolus_arrival_frame",
+      "preprocessing_qc",
+      "bolus_arrival_frame"
+    ],
+    [
+      "dce_preprocess",
+      "fd",
+      "pk_modeling",
+      "fd_values"
+    ],
+    [
+      "dce_preprocess",
+      "mean_img",
+      "combine_masks",
+      "reference_file"
+    ],
+    [
+      "dce_preprocess",
+      "mean_img",
+      "outputnode",
+      "dce_mean"
+    ],
+    [
+      "dce_preprocess",
+      "mean_img",
+      "reg_filmstrip",
+      "dce_mean_file"
+    ],
+    [
+      "dce_preprocess",
+      "mean_img",
+      "resample_dsc_cbv",
+      "dce_reference"
+    ],
+    [
+      "dce_preprocess",
+      "mean_img",
+      "resample_dsc_ncbv",
+      "dce_reference"
+    ],
+    [
+      "dce_preprocess",
+      "mean_img",
+      "transform_atlas_cascade",
+      "reference_file"
+    ],
+    [
+      "dce_preprocess",
+      "mean_img",
+      "transform_b1_to_dce",
+      "reference_file"
+    ],
+    [
+      "dce_preprocess",
+      "mean_img",
+      "transform_brain_mask",
+      "reference_file"
+    ],
+    [
+      "dce_preprocess",
+      "mean_img",
+      "transform_csf_probseg",
+      "reference_file"
+    ],
+    [
+      "dce_preprocess",
+      "mean_img",
+      "transform_enhancing_mask",
+      "reference_file"
+    ],
+    [
+      "dce_preprocess",
+      "mean_img",
+      "transform_gm_probseg",
+      "reference_file"
+    ],
+    [
+      "dce_preprocess",
+      "mean_img",
+      "transform_lesion",
+      "reference_file"
+    ],
+    [
+      "dce_preprocess",
+      "mean_img",
+      "transform_nawm_mask",
+      "reference_file"
+    ],
+    [
+      "dce_preprocess",
+      "mean_img",
+      "transform_non_enhancing_mask",
+      "reference_file"
+    ],
+    [
+      "dce_preprocess",
+      "mean_img",
+      "transform_stats_lesion",
+      "reference_file"
+    ],
+    [
+      "dce_preprocess",
+      "mean_img",
+      "transform_t1_to_dce",
+      "reference_file"
+    ],
+    [
+      "dce_preprocess",
+      "mean_img",
+      "transform_wm_probseg",
+      "reference_file"
+    ],
+    [
+      "dce_preprocess",
+      "mean_img",
+      "validate_roi_mask",
+      "reference_file"
+    ],
+    [
+      "dce_preprocess",
+      "mean_img",
+      "validate_user_lesion_mask",
+      "reference_file"
+    ],
+    [
+      "dce_preprocess",
+      "out_file",
+      "aif_qc_plot",
+      "dce_file"
+    ],
+    [
+      "dce_preprocess",
+      "out_file",
+      "dce_pk_fit_qc",
+      "dce_signal_file"
+    ],
+    [
+      "dce_preprocess",
+      "out_file",
+      "outputnode",
+      "dce_moco"
+    ],
+    [
+      "dce_preprocess",
+      "out_file",
+      "pk_modeling",
+      "dce_signal_file"
+    ],
+    [
+      "dce_preprocess",
+      "out_file",
+      "preprocessing_qc",
+      "dce_file"
+    ],
+    [
+      "dce_preprocess",
+      "out_file",
+      "signal_to_concentration",
+      "dce_file"
+    ],
+    [
+      "dce_preprocess",
+      "out_params",
+      "motion_qc_plot",
+      "motion_params_file"
+    ],
+    [
+      "dce_preprocess",
+      "out_params",
+      "outputnode",
+      "motion_params"
+    ],
+    [
+      "dce_preprocess",
+      "qc_metrics",
+      "collect_qc_metrics",
+      "preprocess_qc"
+    ],
+    [
+      "dce_registration",
+      "out_file",
+      "reg_filmstrip",
+      "registered_t1w_file"
+    ],
+    [
+      "dce_registration",
+      "out_h5",
+      "outputnode",
+      "t1w_to_dce_xfm"
+    ],
+    [
+      "dce_registration",
+      "out_matrix",
+      "aif_qc_plot",
+      "t1w_to_dce_xfm"
+    ],
+    [
+      "dce_registration",
+      "out_matrix",
+      "invert_dce_xfm",
+      "in_file"
+    ],
+    [
+      "dce_registration",
+      "out_matrix",
+      "resample_dsc_cbv",
+      "t1w_to_dce_xfm"
+    ],
+    [
+      "dce_registration",
+      "out_matrix",
+      "resample_dsc_ncbv",
+      "t1w_to_dce_xfm"
+    ],
+    [
+      "dce_registration",
+      "out_matrix",
+      "transform_atlas_cascade",
+      "t1w_to_dce_xfm"
+    ],
+    [
+      "dce_registration",
+      "out_matrix",
+      "transform_brain_mask",
+      "transform_matrix"
+    ],
+    [
+      "dce_registration",
+      "out_matrix",
+      "transform_csf_probseg",
+      "transform_matrix"
+    ],
+    [
+      "dce_registration",
+      "out_matrix",
+      "transform_enhancing_mask",
+      "transform_matrix"
+    ],
+    [
+      "dce_registration",
+      "out_matrix",
+      "transform_gm_probseg",
+      "transform_matrix"
+    ],
+    [
+      "dce_registration",
+      "out_matrix",
+      "transform_lesion",
+      "transform_matrix"
+    ],
+    [
+      "dce_registration",
+      "out_matrix",
+      "transform_nawm_mask",
+      "transform_matrix"
+    ],
+    [
+      "dce_registration",
+      "out_matrix",
+      "transform_non_enhancing_mask",
+      "transform_matrix"
+    ],
+    [
+      "dce_registration",
+      "out_matrix",
+      "transform_stats_lesion",
+      "transform_matrix"
+    ],
+    [
+      "dce_registration",
+      "out_matrix",
+      "transform_wm_probseg",
+      "transform_matrix"
+    ],
+    [
+      "dce_registration",
+      "qc_metrics",
+      "collect_qc_metrics",
+      "registration_qc"
+    ],
+    [
+      "dce_registration",
+      "qc_metrics",
+      "pk_modeling",
+      "dce_registration_qc"
+    ],
+    [
+      "dce_reorient",
+      "out_file",
+      "dce_early_mean",
+      "dce_file"
+    ],
+    [
+      "dce_reorient",
+      "out_file",
+      "dce_preprocess",
+      "in_file"
+    ],
+    [
+      "dsc_dce_validation",
+      "validation_result",
+      "collect_qc_metrics",
+      "validation_result"
+    ],
+    [
+      "dsc_dce_validation",
+      "validation_result",
+      "dsc_dce_xval_plot",
+      "validation_result"
+    ],
+    [
+      "dsc_dce_xval_plot",
+      "plot_file",
+      "outputnode",
+      "dsc_dce_xval_plot"
+    ],
+    [
+      "inputnode",
+      "afi_4d_file",
+      "b1_mapping",
+      "afi_4d_file"
+    ],
+    [
+      "inputnode",
+      "afi_flip_angle",
+      "b1_mapping",
+      "nominal_flip_angle"
+    ],
+    [
+      "inputnode",
+      "afi_tr1",
+      "b1_mapping",
+      "tr1"
+    ],
+    [
+      "inputnode",
+      "afi_tr2",
+      "b1_mapping",
+      "tr2"
+    ],
+    [
+      "inputnode",
+      "agent_standard_dose",
+      "aif_detection",
+      "agent_standard_dose"
+    ],
+    [
+      "inputnode",
+      "b1_map_encoding",
+      "b1_mapping",
+      "b1_map_encoding"
+    ],
+    [
+      "inputnode",
+      "b1_nominal_prep_fa",
+      "b1_mapping",
+      "b1_nominal_prep_fa"
+    ],
+    [
+      "inputnode",
+      "brain_mask",
+      "b1_mapping",
+      "brain_mask"
+    ],
+    [
+      "inputnode",
+      "brain_mask",
+      "dce_registration",
+      "brain_mask"
+    ],
+    [
+      "inputnode",
+      "brain_mask",
+      "t1_mapping",
+      "brain_mask"
+    ],
+    [
+      "inputnode",
+      "brain_mask",
+      "transform_brain_mask",
+      "mask_file"
+    ],
+    [
+      "inputnode",
+      "csf_probseg",
+      "transform_csf_probseg",
+      "probseg_file"
+    ],
+    [
+      "inputnode",
+      "dce_file",
+      "b1_mapping",
+      "reference_file"
+    ],
+    [
+      "inputnode",
+      "dce_file",
+      "dce_reorient",
+      "in_file"
+    ],
+    [
+      "inputnode",
+      "dsc_agent_standard_dose",
+      "pk_modeling",
+      "dsc_agent_standard_dose"
+    ],
+    [
+      "inputnode",
+      "dsc_cbv_file",
+      "resample_dsc_cbv",
+      "dsc_cbv_file"
+    ],
+    [
+      "inputnode",
+      "dsc_dose",
+      "pk_modeling",
+      "dsc_dose"
+    ],
+    [
+      "inputnode",
+      "dsc_ncbv_file",
+      "resample_dsc_ncbv",
+      "dsc_cbv_file"
+    ],
+    [
+      "inputnode",
+      "dsc_registration_qc",
+      "pk_modeling",
+      "dsc_registration_qc"
+    ],
+    [
+      "inputnode",
+      "dsc_to_t1w_xfm",
+      "resample_dsc_cbv",
+      "dsc_to_t1w_xfm"
+    ],
+    [
+      "inputnode",
+      "dsc_to_t1w_xfm",
+      "resample_dsc_ncbv",
+      "dsc_to_t1w_xfm"
+    ],
+    [
+      "inputnode",
+      "enhancing_mask",
+      "transform_enhancing_mask",
+      "mask_file"
+    ],
+    [
+      "inputnode",
+      "field_strength",
+      "aif_detection",
+      "field_strength"
+    ],
+    [
+      "inputnode",
+      "field_strength",
+      "b1_mapping",
+      "field_strength"
+    ],
+    [
+      "inputnode",
+      "field_strength",
+      "signal_to_concentration",
+      "field_strength"
+    ],
+    [
+      "inputnode",
+      "field_strength",
+      "t1_mapping",
+      "field_strength"
+    ],
+    [
+      "inputnode",
+      "flip_angle",
+      "signal_to_concentration",
+      "flip_angle"
+    ],
+    [
+      "inputnode",
+      "flip_angle",
+      "vfa_preprocess",
+      "target_flip_angle"
+    ],
+    [
+      "inputnode",
+      "gm_probseg",
+      "transform_gm_probseg",
+      "probseg_file"
+    ],
+    [
+      "inputnode",
+      "mr_acquisition_type",
+      "aif_detection",
+      "mr_acquisition_type"
+    ],
+    [
+      "inputnode",
+      "nawm_mask",
+      "transform_nawm_mask",
+      "mask_file"
+    ],
+    [
+      "inputnode",
+      "nawm_needs_transform",
+      "transform_nawm_mask",
+      "needs_transform"
+    ],
+    [
+      "inputnode",
+      "non_enhancing_mask",
+      "transform_non_enhancing_mask",
+      "mask_file"
+    ],
+    [
+      "inputnode",
+      "precomputed_b1_file",
+      "b1_mapping",
+      "precomputed_b1_file"
+    ],
+    [
+      "inputnode",
+      "r1_relaxivity",
+      "signal_to_concentration",
+      "r1_relaxivity"
+    ],
+    [
+      "inputnode",
+      "roi_mask",
+      "validate_roi_mask",
+      "mask_file"
+    ],
+    [
+      "inputnode",
+      "t1w_reference",
+      "convert_inverse_h5",
+      "reference"
+    ],
+    [
+      "inputnode",
+      "t1w_reference",
+      "dce_registration",
+      "t1w_file"
+    ],
+    [
+      "inputnode",
+      "t1w_to_mni_xfm",
+      "aif_qc_plot",
+      "t1w_to_mni_xfm"
+    ],
+    [
+      "inputnode",
+      "t1w_to_mni_xfm",
+      "transform_atlas_cascade",
+      "t1w_to_mni_xfm"
+    ],
+    [
+      "inputnode",
+      "te",
+      "preprocessing_qc",
+      "te"
+    ],
+    [
+      "inputnode",
+      "tr",
+      "preprocessing_qc",
+      "tr_ms"
+    ],
+    [
+      "inputnode",
+      "tr",
+      "signal_to_concentration",
+      "tr"
+    ],
+    [
+      "inputnode",
+      "tumor_segmentation",
+      "combine_masks",
+      "tumor_segmentation_file"
+    ],
+    [
+      "inputnode",
+      "user_lesion_mask",
+      "validate_user_lesion_mask",
+      "mask_file"
+    ],
+    [
+      "inputnode",
+      "vfa_files",
+      "vfa_reorient",
+      "in_files"
+    ],
+    [
+      "inputnode",
+      "vfa_flip_angles",
+      "t1_mapping",
+      "flip_angles"
+    ],
+    [
+      "inputnode",
+      "vfa_flip_angles",
+      "vfa_preprocess",
+      "flip_angles"
+    ],
+    [
+      "inputnode",
+      "vfa_tr",
+      "t1_mapping",
+      "tr"
+    ],
+    [
+      "inputnode",
+      "volume_tr",
+      "aif_detection",
+      "tr"
+    ],
+    [
+      "inputnode",
+      "volume_tr",
+      "aif_qc_plot",
+      "tr"
+    ],
+    [
+      "inputnode",
+      "volume_tr",
+      "dce_pk_fit_qc",
+      "volume_tr"
+    ],
+    [
+      "inputnode",
+      "volume_tr",
+      "dce_preprocess",
+      "volume_tr"
+    ],
+    [
+      "inputnode",
+      "volume_tr",
+      "motion_qc_plot",
+      "tr"
+    ],
+    [
+      "inputnode",
+      "volume_tr",
+      "pk_modeling",
+      "volume_tr"
+    ],
+    [
+      "inputnode",
+      "volume_tr",
+      "preprocessing_qc",
+      "volume_tr_s"
+    ],
+    [
+      "inputnode",
+      "whole_tumor_mask",
+      "combine_masks",
+      "whole_tumor_mask_file"
+    ],
+    [
+      "inputnode",
+      "whole_tumor_mask",
+      "transform_lesion",
+      "lesion_mask_file"
+    ],
+    [
+      "inputnode",
+      "wm_probseg",
+      "transform_wm_probseg",
+      "probseg_file"
+    ],
+    [
+      "invert_dce_xfm",
+      "out_file",
+      "convert_inverse_h5",
+      "mat_path"
+    ],
+    [
+      "invert_vfa_to_dce_xfm",
+      "out_file",
+      "transform_b1_to_vfa",
+      "transform_matrix"
+    ],
+    [
+      "lesion_stats",
+      "stats_json",
+      "outputnode",
+      "lesion_stats_json"
+    ],
+    [
+      "motion_qc_plot",
+      "plot_file",
+      "outputnode",
+      "motion_qc_plot"
+    ],
+    [
+      "pk_modeling",
+      "out_delta_bic",
+      "dce_pk_maps_qc",
+      "delta_bic_file"
+    ],
+    [
+      "pk_modeling",
+      "out_delta_bic",
+      "outputnode",
+      "delta_bic_map"
+    ],
+    [
+      "pk_modeling",
+      "out_e",
+      "lesion_stats",
+      "e_map"
+    ],
+    [
+      "pk_modeling",
+      "out_e",
+      "outputnode",
+      "e_map"
+    ],
+    [
+      "pk_modeling",
+      "out_e",
+      "roi_stats",
+      "e_map"
+    ],
+    [
+      "pk_modeling",
+      "out_e",
+      "user_lesion_stats",
+      "e_map"
+    ],
+    [
+      "pk_modeling",
+      "out_fitted_curves",
+      "dce_pk_fit_qc",
+      "fitted_curves_file"
+    ],
+    [
+      "pk_modeling",
+      "out_fitting_mask",
+      "dce_pk_fit_qc",
+      "fitting_mask_file"
+    ],
+    [
+      "pk_modeling",
+      "out_fp",
+      "dce_pk_fit_qc",
+      "fp_file"
+    ],
+    [
+      "pk_modeling",
+      "out_fp",
+      "dce_pk_maps_qc",
+      "fp_file"
+    ],
+    [
+      "pk_modeling",
+      "out_fp",
+      "lesion_stats",
+      "fp_map"
+    ],
+    [
+      "pk_modeling",
+      "out_fp",
+      "outputnode",
+      "fp_map"
+    ],
+    [
+      "pk_modeling",
+      "out_fp",
+      "roi_stats",
+      "fp_map"
+    ],
+    [
+      "pk_modeling",
+      "out_fp",
+      "user_lesion_stats",
+      "fp_map"
+    ],
+    [
+      "pk_modeling",
+      "out_fp_std",
+      "outputnode",
+      "fp_uncertainty"
+    ],
+    [
+      "pk_modeling",
+      "out_iauc120",
+      "lesion_stats",
+      "iauc120_map"
+    ],
+    [
+      "pk_modeling",
+      "out_iauc120",
+      "outputnode",
+      "iauc120_map"
+    ],
+    [
+      "pk_modeling",
+      "out_iauc120",
+      "roi_stats",
+      "iauc120_map"
+    ],
+    [
+      "pk_modeling",
+      "out_iauc120",
+      "user_lesion_stats",
+      "iauc120_map"
+    ],
+    [
+      "pk_modeling",
+      "out_iauc60",
+      "lesion_stats",
+      "iauc60_map"
+    ],
+    [
+      "pk_modeling",
+      "out_iauc60",
+      "outputnode",
+      "iauc60_map"
+    ],
+    [
+      "pk_modeling",
+      "out_iauc60",
+      "roi_stats",
+      "iauc60_map"
+    ],
+    [
+      "pk_modeling",
+      "out_iauc60",
+      "user_lesion_stats",
+      "iauc60_map"
+    ],
+    [
+      "pk_modeling",
+      "out_iauc90",
+      "lesion_stats",
+      "iauc90_map"
+    ],
+    [
+      "pk_modeling",
+      "out_iauc90",
+      "outputnode",
+      "iauc90_map"
+    ],
+    [
+      "pk_modeling",
+      "out_iauc90",
+      "roi_stats",
+      "iauc90_map"
+    ],
+    [
+      "pk_modeling",
+      "out_iauc90",
+      "user_lesion_stats",
+      "iauc90_map"
+    ],
+    [
+      "pk_modeling",
+      "out_kep",
+      "lesion_stats",
+      "kep_map"
+    ],
+    [
+      "pk_modeling",
+      "out_kep",
+      "outputnode",
+      "kep_map"
+    ],
+    [
+      "pk_modeling",
+      "out_kep",
+      "roi_stats",
+      "kep_map"
+    ],
+    [
+      "pk_modeling",
+      "out_kep",
+      "user_lesion_stats",
+      "kep_map"
+    ],
+    [
+      "pk_modeling",
+      "out_ktrans",
+      "dce_pk_fit_qc",
+      "ktrans_file"
+    ],
+    [
+      "pk_modeling",
+      "out_ktrans",
+      "dce_pk_maps_qc",
+      "ktrans_file"
+    ],
+    [
+      "pk_modeling",
+      "out_ktrans",
+      "lesion_stats",
+      "ktrans_map"
+    ],
+    [
+      "pk_modeling",
+      "out_ktrans",
+      "outputnode",
+      "ktrans_map"
+    ],
+    [
+      "pk_modeling",
+      "out_ktrans",
+      "roi_stats",
+      "ktrans_map"
+    ],
+    [
+      "pk_modeling",
+      "out_ktrans",
+      "user_lesion_stats",
+      "ktrans_map"
+    ],
+    [
+      "pk_modeling",
+      "out_ktrans_std",
+      "outputnode",
+      "ktrans_uncertainty"
+    ],
+    [
+      "pk_modeling",
+      "out_model_selection",
+      "dce_pk_fit_qc",
+      "model_selection_file"
+    ],
+    [
+      "pk_modeling",
+      "out_model_selection",
+      "dce_pk_maps_qc",
+      "model_selection_file"
+    ],
+    [
+      "pk_modeling",
+      "out_model_selection",
+      "dsc_dce_xval_plot",
+      "model_selection_file"
+    ],
+    [
+      "pk_modeling",
+      "out_model_selection",
+      "outputnode",
+      "model_selection_map"
+    ],
+    [
+      "pk_modeling",
+      "out_optimizer_converged_mask",
+      "dce_pk_fit_qc",
+      "optimizer_converged_mask_file"
+    ],
+    [
+      "pk_modeling",
+      "out_peak_enhancement",
+      "lesion_stats",
+      "peak_enhancement_map"
+    ],
+    [
+      "pk_modeling",
+      "out_peak_enhancement",
+      "outputnode",
+      "peak_enhancement_map"
+    ],
+    [
+      "pk_modeling",
+      "out_peak_enhancement",
+      "roi_stats",
+      "peak_enhancement_map"
+    ],
+    [
+      "pk_modeling",
+      "out_peak_enhancement",
+      "user_lesion_stats",
+      "peak_enhancement_map"
+    ],
+    [
+      "pk_modeling",
+      "out_ps",
+      "dce_pk_fit_qc",
+      "ps_file"
+    ],
+    [
+      "pk_modeling",
+      "out_ps",
+      "dce_pk_maps_qc",
+      "ps_file"
+    ],
+    [
+      "pk_modeling",
+      "out_ps",
+      "lesion_stats",
+      "ps_map"
+    ],
+    [
+      "pk_modeling",
+      "out_ps",
+      "outputnode",
+      "ps_map"
+    ],
+    [
+      "pk_modeling",
+      "out_ps",
+      "roi_stats",
+      "ps_map"
+    ],
+    [
+      "pk_modeling",
+      "out_ps",
+      "user_lesion_stats",
+      "ps_map"
+    ],
+    [
+      "pk_modeling",
+      "out_ps_std",
+      "outputnode",
+      "ps_uncertainty"
+    ],
+    [
+      "pk_modeling",
+      "out_qc_mask",
+      "dce_pk_fit_qc",
+      "qc_mask_file"
+    ],
+    [
+      "pk_modeling",
+      "out_qc_mask",
+      "dce_pk_maps_qc",
+      "qc_mask_file"
+    ],
+    [
+      "pk_modeling",
+      "out_qc_mask",
+      "lesion_stats",
+      "qc_mask"
+    ],
+    [
+      "pk_modeling",
+      "out_qc_mask",
+      "outputnode",
+      "qc_mask"
+    ],
+    [
+      "pk_modeling",
+      "out_qc_mask",
+      "roi_stats",
+      "qc_mask"
+    ],
+    [
+      "pk_modeling",
+      "out_qc_mask",
+      "user_lesion_stats",
+      "qc_mask"
+    ],
+    [
+      "pk_modeling",
+      "out_quality_flag",
+      "dce_pk_fit_qc",
+      "quality_flag_file"
+    ],
+    [
+      "pk_modeling",
+      "out_r2",
+      "dce_pk_fit_qc",
+      "r2_file"
+    ],
+    [
+      "pk_modeling",
+      "out_r2",
+      "outputnode",
+      "r2_map"
+    ],
+    [
+      "pk_modeling",
+      "out_ser",
+      "lesion_stats",
+      "ser_map"
+    ],
+    [
+      "pk_modeling",
+      "out_ser",
+      "outputnode",
+      "ser_map"
+    ],
+    [
+      "pk_modeling",
+      "out_ser",
+      "roi_stats",
+      "ser_map"
+    ],
+    [
+      "pk_modeling",
+      "out_ser",
+      "user_lesion_stats",
+      "ser_map"
+    ],
+    [
+      "pk_modeling",
+      "out_time_to_peak",
+      "lesion_stats",
+      "ttp_map"
+    ],
+    [
+      "pk_modeling",
+      "out_time_to_peak",
+      "outputnode",
+      "time_to_peak_map"
+    ],
+    [
+      "pk_modeling",
+      "out_time_to_peak",
+      "roi_stats",
+      "ttp_map"
+    ],
+    [
+      "pk_modeling",
+      "out_time_to_peak",
+      "user_lesion_stats",
+      "ttp_map"
+    ],
+    [
+      "pk_modeling",
+      "out_tsnr",
+      "outputnode",
+      "tsnr_map"
+    ],
+    [
+      "pk_modeling",
+      "out_ve",
+      "dce_pk_fit_qc",
+      "ve_file"
+    ],
+    [
+      "pk_modeling",
+      "out_ve",
+      "dce_pk_maps_qc",
+      "ve_file"
+    ],
+    [
+      "pk_modeling",
+      "out_ve",
+      "lesion_stats",
+      "ve_map"
+    ],
+    [
+      "pk_modeling",
+      "out_ve",
+      "outputnode",
+      "ve_map"
+    ],
+    [
+      "pk_modeling",
+      "out_ve",
+      "roi_stats",
+      "ve_map"
+    ],
+    [
+      "pk_modeling",
+      "out_ve",
+      "user_lesion_stats",
+      "ve_map"
+    ],
+    [
+      "pk_modeling",
+      "out_ve_std",
+      "outputnode",
+      "ve_uncertainty"
+    ],
+    [
+      "pk_modeling",
+      "out_vp",
+      "dce_pk_fit_qc",
+      "vp_file"
+    ],
+    [
+      "pk_modeling",
+      "out_vp",
+      "dce_pk_maps_qc",
+      "vp_file"
+    ],
+    [
+      "pk_modeling",
+      "out_vp",
+      "dsc_dce_validation",
+      "vp_file"
+    ],
+    [
+      "pk_modeling",
+      "out_vp",
+      "dsc_dce_xval_plot",
+      "vp_file"
+    ],
+    [
+      "pk_modeling",
+      "out_vp",
+      "lesion_stats",
+      "vp_map"
+    ],
+    [
+      "pk_modeling",
+      "out_vp",
+      "outputnode",
+      "vp_map"
+    ],
+    [
+      "pk_modeling",
+      "out_vp",
+      "roi_stats",
+      "vp_map"
+    ],
+    [
+      "pk_modeling",
+      "out_vp",
+      "user_lesion_stats",
+      "vp_map"
+    ],
+    [
+      "pk_modeling",
+      "out_vp_std",
+      "outputnode",
+      "vp_uncertainty"
+    ],
+    [
+      "pk_modeling",
+      "qc_metrics",
+      "collect_qc_metrics",
+      "pk_qc"
+    ],
+    [
+      "pk_modeling",
+      "qc_metrics",
+      "dsc_dce_validation",
+      "pk_qc"
+    ],
+    [
+      "preprocessing_qc",
+      "plot_file",
+      "outputnode",
+      "preprocessing_qc_plot"
+    ],
+    [
+      "preprocessing_qc",
+      "preproc_display_stats",
+      "collect_qc_metrics",
+      "preproc_display"
+    ],
+    [
+      "reg_filmstrip",
+      "filmstrip_file",
+      "outputnode",
+      "registration_qc_filmstrip"
+    ],
+    [
+      "resample_dsc_cbv",
+      "cbv_in_dce",
+      "dsc_dce_validation",
+      "dsc_cbv_file"
+    ],
+    [
+      "resample_dsc_ncbv",
+      "cbv_in_dce",
+      "dsc_dce_validation",
+      "dsc_ncbv_file"
+    ],
+    [
+      "resample_dsc_ncbv",
+      "cbv_in_dce",
+      "dsc_dce_xval_plot",
+      "dsc_ncbv_file"
+    ],
+    [
+      "resample_dsc_ncbv",
+      "cbv_in_dce",
+      "pk_modeling",
+      "dsc_ncbv_file"
+    ],
+    [
+      "roi_stats",
+      "stats_json",
+      "outputnode",
+      "roi_stats_json"
+    ],
+    [
+      "select_aif_exclusion",
+      "out_mask",
+      "aif_detection",
+      "lesion_mask_file"
+    ],
+    [
+      "signal_to_concentration",
+      "concentration_file",
+      "aif_detection",
+      "concentration_file"
+    ],
+    [
+      "signal_to_concentration",
+      "concentration_file",
+      "dce_pk_fit_qc",
+      "concentration_file"
+    ],
+    [
+      "signal_to_concentration",
+      "concentration_file",
+      "pk_modeling",
+      "concentration_file"
+    ],
+    [
+      "signal_to_concentration",
+      "conversion_qc",
+      "collect_qc_metrics",
+      "signal_conversion_qc"
+    ],
+    [
+      "t1_mapping",
+      "out_file",
+      "transform_t1_to_dce",
+      "t1_map_file"
+    ],
+    [
+      "t1_mapping",
+      "qc_metrics",
+      "collect_qc_metrics",
+      "t1_qc"
+    ],
+    [
+      "t1_mapping",
+      "qc_plot",
+      "outputnode",
+      "t1_qc_plot"
+    ],
+    [
+      "transform_atlas_cascade",
+      "out_files",
+      "aif_detection",
+      "atlas_mask_files"
+    ],
+    [
+      "transform_b1_to_dce",
+      "out_file",
+      "signal_to_concentration",
+      "b1_map_file"
+    ],
+    [
+      "transform_b1_to_vfa",
+      "out_file",
+      "t1_mapping",
+      "b1_map"
+    ],
+    [
+      "transform_brain_mask",
+      "out_file",
+      "create_aif_mask",
+      "t1w_mask_in_dce"
+    ],
+    [
+      "transform_brain_mask",
+      "out_file",
+      "dsc_dce_validation",
+      "brain_mask"
+    ],
+    [
+      "transform_brain_mask",
+      "out_file",
+      "dsc_dce_xval_plot",
+      "brain_mask"
+    ],
+    [
+      "transform_brain_mask",
+      "out_file",
+      "reg_filmstrip",
+      "registered_t1w_mask_file"
+    ],
+    [
+      "transform_csf_probseg",
+      "out_file",
+      "t1_mapping",
+      "csf_probseg"
+    ],
+    [
+      "transform_enhancing_mask",
+      "out_file",
+      "dce_pk_fit_qc",
+      "enhancing_mask_file"
+    ],
+    [
+      "transform_enhancing_mask",
+      "out_file",
+      "dce_pk_maps_qc",
+      "enhancing_mask_file"
+    ],
+    [
+      "transform_enhancing_mask",
+      "out_file",
+      "pk_modeling",
+      "tumor_mask_file"
+    ],
+    [
+      "transform_gm_probseg",
+      "out_file",
+      "t1_mapping",
+      "gm_probseg"
+    ],
+    [
+      "transform_lesion",
+      "lesion_mask_dce_file",
+      "select_aif_exclusion",
+      "transformed_lesion_mask"
+    ],
+    [
+      "transform_nawm_mask",
+      "out_file",
+      "dce_pk_fit_qc",
+      "nawm_mask_file"
+    ],
+    [
+      "transform_nawm_mask",
+      "out_file",
+      "dce_pk_maps_qc",
+      "nawm_mask_file"
+    ],
+    [
+      "transform_nawm_mask",
+      "out_file",
+      "lesion_stats",
+      "nawm_mask"
+    ],
+    [
+      "transform_nawm_mask",
+      "out_file",
+      "outputnode",
+      "nawm_mask"
+    ],
+    [
+      "transform_nawm_mask",
+      "out_file",
+      "roi_stats",
+      "nawm_mask"
+    ],
+    [
+      "transform_nawm_mask",
+      "out_file",
+      "user_lesion_stats",
+      "nawm_mask"
+    ],
+    [
+      "transform_non_enhancing_mask",
+      "out_file",
+      "dce_pk_fit_qc",
+      "non_enhancing_mask_file"
+    ],
+    [
+      "transform_non_enhancing_mask",
+      "out_file",
+      "dce_pk_maps_qc",
+      "non_enhancing_mask_file"
+    ],
+    [
+      "transform_stats_lesion",
+      "lesion_mask_dce_file",
+      "lesion_stats",
+      "lesion_mask"
+    ],
+    [
+      "transform_stats_lesion",
+      "lesion_mask_dce_file",
+      "outputnode",
+      "lesion_mask_dce"
+    ],
+    [
+      "transform_t1_to_dce",
+      "out_file",
+      "outputnode",
+      "t1_map"
+    ],
+    [
+      "transform_t1_to_dce",
+      "out_file",
+      "signal_to_concentration",
+      "t1_map_file"
+    ],
+    [
+      "transform_wm_probseg",
+      "out_file",
+      "t1_mapping",
+      "wm_probseg"
+    ],
+    [
+      "user_lesion_stats",
+      "stats_json",
+      "outputnode",
+      "user_lesion_stats_json"
+    ],
+    [
+      "validate_roi_mask",
+      "validated_mask",
+      "dce_pk_maps_qc",
+      "roi_mask_file"
+    ],
+    [
+      "validate_roi_mask",
+      "validated_mask",
+      "outputnode",
+      "roi_mask_dce"
+    ],
+    [
+      "validate_roi_mask",
+      "validated_mask",
+      "roi_stats",
+      "lesion_mask"
+    ],
+    [
+      "validate_user_lesion_mask",
+      "validated_mask",
+      "dce_pk_maps_qc",
+      "user_lesion_mask_file"
+    ],
+    [
+      "validate_user_lesion_mask",
+      "validated_mask",
+      "outputnode",
+      "user_lesion_mask_dce"
+    ],
+    [
+      "validate_user_lesion_mask",
+      "validated_mask",
+      "select_aif_exclusion",
+      "user_lesion_mask"
+    ],
+    [
+      "validate_user_lesion_mask",
+      "validated_mask",
+      "user_lesion_stats",
+      "lesion_mask"
+    ],
+    [
+      "vfa_preprocess",
+      "out_files",
+      "t1_mapping",
+      "vfa_files"
+    ],
+    [
+      "vfa_preprocess",
+      "qc_metrics",
+      "collect_qc_metrics",
+      "vfa_qc"
+    ],
+    [
+      "vfa_preprocess",
+      "reference_file",
+      "transform_b1_to_vfa",
+      "vfa_ref_file"
+    ],
+    [
+      "vfa_preprocess",
+      "reference_file",
+      "vfa_to_dce_registration",
+      "t1w_file"
+    ],
+    [
+      "vfa_preprocess",
+      "registration_qc_plot",
+      "outputnode",
+      "vfa_registration_qc_plot"
+    ],
+    [
+      "vfa_reorient",
+      "out_file",
+      "vfa_preprocess",
+      "vfa_files"
+    ],
+    [
+      "vfa_to_dce_registration",
+      "out_matrix",
+      "invert_vfa_to_dce_xfm",
+      "in_file"
+    ],
+    [
+      "vfa_to_dce_registration",
+      "out_matrix",
+      "transform_t1_to_dce",
+      "transform_matrix"
+    ],
+    [
+      "vfa_to_dce_registration",
+      "qc_metrics",
+      "signal_to_concentration",
+      "t1_registration_qc"
+    ],
+    [
+      "vfa_to_dce_registration",
+      "qc_metrics",
+      "transform_b1_to_vfa",
+      "registration_qc"
+    ],
+    [
+      "vfa_to_dce_registration",
+      "qc_metrics",
+      "transform_t1_to_dce",
+      "registration_qc"
+    ]
+  ],
+  "function_io": {
+    "collect_qc_metrics": {
+      "input_names": [
+        "aif_qc",
+        "b1_method",
+        "b1_qc",
+        "no_t1",
+        "pk_fit_qc_metrics",
+        "pk_maps_qc_metrics",
+        "pk_qc",
+        "preproc_display",
+        "preprocess_qc",
+        "registration_qc",
+        "signal_conversion_qc",
+        "t1_qc",
+        "use_external_t1",
+        "validation_result",
+        "vfa_qc"
+      ],
+      "output_names": [
+        "qc_metrics"
+      ]
+    },
+    "combine_masks": {
+      "input_names": [
+        "reference_file",
+        "tumor_segmentation_file",
+        "whole_tumor_mask_file"
+      ],
+      "output_names": [
+        "combined_mask_file",
+        "mask_origin"
+      ]
+    },
+    "convert_inverse_h5": {
+      "input_names": [
+        "mat_path",
+        "moving",
+        "reference"
+      ],
+      "output_names": [
+        "out_h5"
+      ]
+    },
+    "create_aif_mask": {
+      "input_names": [
+        "dce_native_mask",
+        "t1w_mask_in_dce"
+      ],
+      "output_names": [
+        "out_file"
+      ]
+    },
+    "dce_brain_mask_qc": {
+      "input_names": [
+        "brain_mask_file",
+        "mean_file",
+        "session_id",
+        "subject_id"
+      ],
+      "output_names": [
+        "out_file"
+      ]
+    },
+    "dce_early_mean": {
+      "input_names": [
+        "dce_file"
+      ],
+      "output_names": [
+        "out_file"
+      ]
+    },
+    "dce_pk_fit_qc": {
+      "input_names": [
+        "aif_file",
+        "baseline_frames",
+        "brain_mask_file",
+        "concentration_file",
+        "dce_signal_file",
+        "enhancing_mask_file",
+        "fitted_curves_file",
+        "fitting_mask_file",
+        "fp_file",
+        "ktrans_file",
+        "model_name",
+        "model_selection_file",
+        "nawm_mask_file",
+        "non_enhancing_mask_file",
+        "optimizer_converged_mask_file",
+        "ps_file",
+        "qc_mask_file",
+        "quality_flag_file",
+        "r2_file",
+        "session_id",
+        "subject_id",
+        "ve_file",
+        "volume_tr",
+        "vp_file"
+      ],
+      "output_names": [
+        "pk_modeling_qc_plot",
+        "pk_voxel_metrics"
+      ]
+    },
+    "dce_pk_maps_qc": {
+      "input_names": [
+        "brain_mask_file",
+        "delta_bic_file",
+        "enhancing_mask_file",
+        "fp_file",
+        "ktrans_file",
+        "model_name",
+        "model_selection_file",
+        "nawm_mask_file",
+        "non_enhancing_mask_file",
+        "ps_file",
+        "qc_mask_file",
+        "roi_mask_file",
+        "session_id",
+        "subject_id",
+        "user_lesion_mask_file",
+        "ve_file",
+        "vp_file"
+      ],
+      "output_names": [
+        "model_selection_qc_plot",
+        "model_selection_regions",
+        "pk_param_maps_qc_plot"
+      ]
+    },
+    "dsc_dce_validation": {
+      "input_names": [
+        "brain_mask",
+        "dce_model",
+        "dsc_cbv_file",
+        "dsc_ncbv_file",
+        "dsc_preload_configured",
+        "no_dsc_validation",
+        "pk_qc",
+        "vp_file"
+      ],
+      "output_names": [
+        "validation_result"
+      ]
+    },
+    "dsc_dce_xval_plot": {
+      "input_names": [
+        "brain_mask",
+        "dsc_ncbv_file",
+        "model_selection_file",
+        "session_id",
+        "subject_id",
+        "validation_result",
+        "vp_file"
+      ],
+      "output_names": [
+        "plot_file"
+      ]
+    },
+    "motion_qc_plot": {
+      "input_names": [
+        "motion_applied",
+        "motion_params_file",
+        "session_id",
+        "subject_id",
+        "tr"
+      ],
+      "output_names": [
+        "plot_file"
+      ]
+    },
+    "preprocessing_qc": {
+      "input_names": [
+        "baseline_frames",
+        "bolus_arrival_frame",
+        "brain_mask_file",
+        "dce_file",
+        "session_id",
+        "subject_id",
+        "te",
+        "tr_ms",
+        "volume_tr_s"
+      ],
+      "output_names": [
+        "plot_file",
+        "preproc_display_stats"
+      ]
+    },
+    "reg_filmstrip": {
+      "input_names": [
+        "brain_mask_file",
+        "dce_mean_file",
+        "registered_t1w_file",
+        "registered_t1w_mask_file",
+        "session_id",
+        "subject_id"
+      ],
+      "output_names": [
+        "filmstrip_file"
+      ]
+    },
+    "resample_dsc_cbv": {
+      "input_names": [
+        "dce_reference",
+        "dsc_cbv_file",
+        "dsc_to_t1w_xfm",
+        "t1w_to_dce_xfm"
+      ],
+      "output_names": [
+        "cbv_in_dce"
+      ]
+    },
+    "resample_dsc_ncbv": {
+      "input_names": [
+        "dce_reference",
+        "dsc_cbv_file",
+        "dsc_to_t1w_xfm",
+        "t1w_to_dce_xfm"
+      ],
+      "output_names": [
+        "cbv_in_dce"
+      ]
+    },
+    "select_aif_exclusion": {
+      "input_names": [
+        "transformed_lesion_mask",
+        "user_lesion_mask"
+      ],
+      "output_names": [
+        "out_mask"
+      ]
+    },
+    "signal_to_concentration": {
+      "input_names": [
+        "b1_map_file",
+        "b1_registration_qc",
+        "baseline_frames",
+        "brain_mask_file",
+        "dce_file",
+        "external_t1",
+        "field_strength",
+        "flip_angle",
+        "no_t1",
+        "r1_relaxivity",
+        "t1_map_file",
+        "t1_registration_qc",
+        "tr"
+      ],
+      "output_names": [
+        "concentration_file",
+        "conversion_qc"
+      ]
+    },
+    "transform_atlas_cascade": {
+      "input_names": [
+        "atlas_files",
+        "reference_file",
+        "t1w_to_dce_xfm",
+        "t1w_to_mni_xfm"
+      ],
+      "output_names": [
+        "out_files"
+      ]
+    },
+    "transform_b1_to_dce": {
+      "input_names": [
+        "b1_map_file",
+        "reference_file",
+        "registration_qc",
+        "registration_required",
+        "transform_matrix"
+      ],
+      "output_names": [
+        "out_file"
+      ]
+    },
+    "transform_b1_to_vfa": {
+      "input_names": [
+        "b1_map_file",
+        "registration_qc",
+        "registration_required",
+        "registration_source_file",
+        "transform_matrix",
+        "vfa_ref_file"
+      ],
+      "output_names": [
+        "out_file"
+      ]
+    },
+    "transform_brain_mask": {
+      "input_names": [
+        "mask_file",
+        "reference_file",
+        "transform_matrix"
+      ],
+      "output_names": [
+        "out_file"
+      ]
+    },
+    "transform_csf_probseg": {
+      "input_names": [
+        "probseg_file",
+        "reference_file",
+        "transform_matrix"
+      ],
+      "output_names": [
+        "out_file"
+      ]
+    },
+    "transform_enhancing_mask": {
+      "input_names": [
+        "mask_file",
+        "reference_file",
+        "transform_matrix"
+      ],
+      "output_names": [
+        "out_file"
+      ]
+    },
+    "transform_gm_probseg": {
+      "input_names": [
+        "probseg_file",
+        "reference_file",
+        "transform_matrix"
+      ],
+      "output_names": [
+        "out_file"
+      ]
+    },
+    "transform_lesion": {
+      "input_names": [
+        "lesion_mask_file",
+        "reference_file",
+        "transform_matrix"
+      ],
+      "output_names": [
+        "lesion_mask_dce_file"
+      ]
+    },
+    "transform_nawm_mask": {
+      "input_names": [
+        "mask_file",
+        "needs_transform",
+        "reference_file",
+        "transform_matrix"
+      ],
+      "output_names": [
+        "out_file"
+      ]
+    },
+    "transform_non_enhancing_mask": {
+      "input_names": [
+        "mask_file",
+        "reference_file",
+        "transform_matrix"
+      ],
+      "output_names": [
+        "out_file"
+      ]
+    },
+    "transform_stats_lesion": {
+      "input_names": [
+        "lesion_mask_file",
+        "reference_file",
+        "transform_matrix"
+      ],
+      "output_names": [
+        "lesion_mask_dce_file"
+      ]
+    },
+    "transform_t1_to_dce": {
+      "input_names": [
+        "reference_file",
+        "registration_qc",
+        "t1_map_file",
+        "transform_matrix"
+      ],
+      "output_names": [
+        "out_file"
+      ]
+    },
+    "transform_wm_probseg": {
+      "input_names": [
+        "probseg_file",
+        "reference_file",
+        "transform_matrix"
+      ],
+      "output_names": [
+        "out_file"
+      ]
+    },
+    "validate_roi_mask": {
+      "input_names": [
+        "mask_file",
+        "mask_label",
+        "reference_file"
+      ],
+      "output_names": [
+        "validated_mask"
+      ]
+    },
+    "validate_user_lesion_mask": {
+      "input_names": [
+        "mask_file",
+        "mask_label",
+        "reference_file"
+      ],
+      "output_names": [
+        "validated_mask"
+      ]
+    },
+    "vfa_reorient": {
+      "input_names": [
+        "in_files"
+      ],
+      "output_names": [
+        "out_file"
+      ]
+    }
+  },
+  "function_sha256": {
+    "collect_qc_metrics": "9d994eccc24676048f18310d5b68ae1f9a6586debebeaa5360bb1a9a5ad65e67",
+    "combine_masks": "f2748155dafc15b2d74a066b3da5db0ed2a4b5486b46ee8ea1f4c7a181de8fcf",
+    "convert_inverse_h5": "9a56330576763c1d147a939f4cd92271651e5ebf08d545098cf7ffa59808b4e2",
+    "create_aif_mask": "13c9c99cb39a8fdf544fa35125494b14147ec5099862963ceff8f8df840b8f3b",
+    "dce_brain_mask_qc": "ced2d6d4b823457166d3fb21083d6220f2b0dc0e0155de5c134e6d98210b5086",
+    "dce_early_mean": "fd75a021c6ef482c605e9a7596c6c17381cd8996e63adafc61cb7f30031b6cb0",
+    "dce_pk_fit_qc": "3206990b014d072947d06ee8c4dcef234d286f8524a901040e186022ced60581",
+    "dce_pk_maps_qc": "22e20c8933642cab60dbf5a7dd5d676e89aa3136ac2308830a672f2d30d7f49a",
+    "dsc_dce_validation": "08386d6d85e3bccad9154cab18519e91ed67709d40b68e6ee16d0f1373054f67",
+    "dsc_dce_xval_plot": "eeb9578b0a27b124bb4657558e779e291a640fb3f2bbabe71eb3f3063e6fd51f",
+    "motion_qc_plot": "36616aba56123999797c0b5e14d6ec9903e15bea44b1958923c89616b1fb1b2f",
+    "preprocessing_qc": "f8f38c2ec15fc59432d72e59996e80c8d1cb4ede4505bf0ba33af3caa07b09a6",
+    "reg_filmstrip": "275519aaedfc5af9379fc2e49fd0bee20c4629d63c5491d25d2e6e825fa1ca3f",
+    "resample_dsc_cbv": "8637643d62fc961aafa3946ba1321ebcf4744121cb1b91e9b01bde70a4024ba3",
+    "resample_dsc_ncbv": "9016b6e864f3d6e0149ee556592202a4fb42cec4b3e2a90946ff48dbfa6caf72",
+    "select_aif_exclusion": "3ac6f0a171a3c915c7c043706044fb8dd45d2a9c05f1d1fad613919135724b21",
+    "signal_to_concentration": "b32bd20cd2d8abf9ee7751c61e56dfea91dbd62cf764ff60068a69c552574840",
+    "transform_atlas_cascade": "92097e5d6df046e1997dbee6d10208373b12e5535619d7397855d263159a752a",
+    "transform_b1_to_dce": "391f866779af2006ac30566f7d9ab335901c584b9d1088d540ffd82bee85f857",
+    "transform_b1_to_vfa": "fb24623d46f069112650dc250dd17eebb5d8967f60f7057b8b5ba5080e0f77a5",
+    "transform_brain_mask": "d79c70197847c13c4a4fd38f056ae9911584e27b3d0d1a55b81ebbbc0dc8c3e4",
+    "transform_csf_probseg": "832875c9ced77fe1fb5b000924e46d928ab6d69e66f8b209e0b78dad94bb9fba",
+    "transform_enhancing_mask": "d79c70197847c13c4a4fd38f056ae9911584e27b3d0d1a55b81ebbbc0dc8c3e4",
+    "transform_gm_probseg": "832875c9ced77fe1fb5b000924e46d928ab6d69e66f8b209e0b78dad94bb9fba",
+    "transform_lesion": "2ece3db8a3b618705a755d2ebdd6380f308b9fb550a80c57934c8544db2c98b7",
+    "transform_nawm_mask": "c6ba5896ec4e8e62856bff5799b517bc43d25a91039140a9714005daf685ab6e",
+    "transform_non_enhancing_mask": "d79c70197847c13c4a4fd38f056ae9911584e27b3d0d1a55b81ebbbc0dc8c3e4",
+    "transform_stats_lesion": "2ece3db8a3b618705a755d2ebdd6380f308b9fb550a80c57934c8544db2c98b7",
+    "transform_t1_to_dce": "dca8c1a780fb1a62dc41b5323a05dea65738343a2641796e3b789785d1bdbd98",
+    "transform_wm_probseg": "832875c9ced77fe1fb5b000924e46d928ab6d69e66f8b209e0b78dad94bb9fba",
+    "validate_roi_mask": "a165487201a8e6d14f055c1f72f41bcec5cdb1ab589d7469e3aff501cb28f07b",
+    "validate_user_lesion_mask": "a165487201a8e6d14f055c1f72f41bcec5cdb1ab589d7469e3aff501cb28f07b",
+    "vfa_reorient": "03f0bda97a55e26d25a885880beab082b354e306166c6b3ffac5a0e9aa378c4f"
+  },
+  "nipype_version": "1.10.0",
+  "node_attrs": {
+    "aif_detection": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "aif_qc_plot": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "b1_mapping": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "collect_qc_metrics": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "combine_masks": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "convert_inverse_h5": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "create_aif_mask": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "dce_brain_extract": {
+      "mem_gb": 2.0,
+      "n_procs": 1
+    },
+    "dce_brain_mask_qc": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "dce_early_mean": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "dce_pk_fit_qc": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "dce_pk_maps_qc": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "dce_preprocess": {
+      "mem_gb": 6.0,
+      "n_procs": 1
+    },
+    "dce_registration": {
+      "mem_gb": 2.0,
+      "n_procs": 1
+    },
+    "dce_reorient": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "dsc_dce_validation": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "dsc_dce_xval_plot": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "inputnode": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "invert_dce_xfm": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "invert_vfa_to_dce_xfm": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "lesion_stats": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "motion_qc_plot": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "outputnode": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "pk_modeling": {
+      "mem_gb": 6.0,
+      "n_procs": 1
+    },
+    "preprocessing_qc": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "reg_filmstrip": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "resample_dsc_cbv": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "resample_dsc_ncbv": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "roi_stats": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "select_aif_exclusion": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "signal_to_concentration": {
+      "mem_gb": 6.0,
+      "n_procs": 1
+    },
+    "t1_mapping": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "transform_atlas_cascade": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "transform_b1_to_dce": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "transform_b1_to_vfa": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "transform_brain_mask": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "transform_csf_probseg": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "transform_enhancing_mask": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "transform_gm_probseg": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "transform_lesion": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "transform_nawm_mask": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "transform_non_enhancing_mask": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "transform_stats_lesion": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "transform_t1_to_dce": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "transform_wm_probseg": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "user_lesion_stats": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "validate_roi_mask": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "validate_user_lesion_mask": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "vfa_preprocess": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "vfa_reorient": {
+      "mem_gb": 0.2,
+      "n_procs": 1
+    },
+    "vfa_to_dce_registration": {
+      "mem_gb": 2.0,
+      "n_procs": 1
+    }
+  },
+  "node_params": {
+    "aif_detection": {
+      "agent_standard_dose": 0.1,
+      "aif_method": "auto",
+      "aif_peak_floor": true,
+      "baseline_frames": 0,
+      "dose": 1.0,
+      "field_strength": 3.0,
+      "hematocrit": 0.42,
+      "lesion_distance": 15.0,
+      "mr_acquisition_type": "",
+      "n_candidates": 10,
+      "target_peak": 0.0
+    },
+    "aif_qc_plot": {
+      "session_id": "0001",
+      "subject_id": "0001",
+      "tr": 1.5
+    },
+    "b1_mapping": {
+      "b1_map_encoding": "auto",
+      "field_strength": 3.0,
+      "session_id": "0001",
+      "skip_b1": false,
+      "smoothing_fwhm": 8.0,
+      "subject_id": "0001"
+    },
+    "collect_qc_metrics": {
+      "b1_method": "precomputed",
+      "function_str": "def _collect_qc_metrics(\n    b1_qc: dict[str, object] | None,\n    t1_qc: dict[str, object] | None,\n    signal_conversion_qc: dict[str, object] | None,\n    preprocess_qc: dict[str, object] | None,\n    registration_qc: dict[str, object] | None,\n    aif_qc: dict[str, object] | None,\n    pk_qc: dict[str, object] | None,\n    validation_result: dict[str, object] | None,\n    vfa_qc: dict[str, object] | None = None,\n    preproc_display: dict[str, object] | None = None,\n    pk_fit_qc_metrics: dict[str, object] | None = None,\n    pk_maps_qc_metrics: dict[str, object] | None = None,\n    use_external_t1: bool = False,\n    no_t1: bool = False,\n    b1_method: str = \"auto\",\n) -> dict[str, object]:\n    \"\"\"Collect all QC metrics into a single dictionary.\n\n    Parameters\n    ----------\n    b1_qc : dict or None\n        B1+ mapping QC metrics (None if not performed).\n    t1_qc : dict or None\n        T1 mapping QC metrics (None if external or no_t1).\n    preprocess_qc : dict or None\n        Preprocessing QC metrics.\n    registration_qc : dict or None\n        Registration QC metrics.\n    aif_qc : dict or None\n        AIF detection QC metrics.\n    pk_qc : dict or None\n        Pharmacokinetic modeling QC metrics.\n    validation_result : dict or None\n        DSC-DCE validation result.\n    vfa_qc : dict or None\n        VFA inter-volume preprocessing and motion-assessment metrics.\n    preproc_display : dict, optional\n        Preprocessing display stats.\n    pk_fit_qc_metrics : dict, optional\n        PK fit QC metrics from plot node.\n    pk_maps_qc_metrics : dict, optional\n        Region\u2192model-distribution mapping from plot node.\n    use_external_t1 : bool, optional\n        Whether external T1 map was used.\n    no_t1 : bool, optional\n        Whether T1 mapping was skipped (assumed T1).\n    b1_method : str, optional\n        B1 correction method used.\n\n    Returns\n    -------\n    dict\n        Combined QC metrics dictionary.\n    \"\"\"\n    qc_metrics: dict[str, object] = {}\n\n    if b1_method == \"none\":\n        b1_mapping = dict(b1_qc) if b1_qc is not None else {}\n        b1_mapping.update({\n            \"method\": \"none\",\n            \"b1_status\": \"Skipped by configuration\",\n            \"skipped\": True,\n        })\n        qc_metrics[\"b1_mapping\"] = b1_mapping\n    elif b1_qc is not None:\n        qc_metrics[\"b1_mapping\"] = b1_qc\n    if signal_conversion_qc is not None:\n        qc_metrics[\"signal_conversion\"] = signal_conversion_qc\n\n    # T1 mapping section - handle VFA, external, and assumed cases\n    if t1_qc is not None:\n        # VFA T1 fitting was performed - t1_method already in qc\n        t1_mapping = dict(t1_qc)\n        # Add B1 correction method for boilerplate\n        if b1_qc is not None:\n            b1_correction = b1_qc.get(\"method\", b1_method)\n        else:\n            b1_correction = \"none\"\n        t1_mapping[\"b1_correction\"] = b1_correction\n        if vfa_qc is not None:\n            t1_mapping[\"vfa_preprocessing\"] = dict(vfa_qc)\n        qc_metrics[\"t1_mapping\"] = t1_mapping\n    elif use_external_t1:\n        # External T1 map was provided\n        alignment = (\n            signal_conversion_qc.get(\"external_t1_alignment\")\n            if isinstance(signal_conversion_qc, dict)\n            else None\n        )\n        qc_metrics[\"t1_mapping\"] = {\n            \"method\": \"external\",\n            \"b1_correction\": b1_method if b1_method != \"none\" else \"none\",\n            \"external_alignment\": alignment,\n        }\n    elif no_t1:\n        # No T1 mapping - using assumed literature values\n        conversion = (\n            signal_conversion_qc\n            if isinstance(signal_conversion_qc, dict)\n            else {}\n        )\n        if b1_qc is not None:\n            b1_correction = str(b1_qc.get(\"method\", b1_method))\n        else:\n            b1_correction = \"none\"\n        qc_metrics[\"t1_mapping\"] = {\n            \"method\": \"assumed\",\n            \"t1_status\": \"Skipped by configuration\",\n            \"skipped\": True,\n            \"assumed_t1_ms\": conversion.get(\"assumed_t1_ms\"),\n            \"assumed_t1_field_strength_t\": conversion.get(\n                \"assumed_t1_field_strength_t\"\n            ),\n            \"assumed_t1_policy\": conversion.get(\"assumed_t1_policy\"),\n            \"b1_correction\": b1_correction,\n        }\n\n    if preprocess_qc is not None:\n        qc_metrics[\"preprocessing\"] = preprocess_qc\n    if registration_qc is not None:\n        qc_metrics[\"registration\"] = registration_qc\n    if aif_qc is not None:\n        qc_metrics[\"aif_detection\"] = aif_qc\n    pk_modeling = dict(pk_qc) if pk_qc is not None else {}\n    have_pk_modeling = pk_qc is not None\n    if pk_fit_qc_metrics is not None:\n        fit_metrics = dict(pk_fit_qc_metrics)\n        regional_accounting = fit_metrics.pop(\n            \"voxel_accounting_regions\", None\n        )\n        pk_modeling.update(fit_metrics)\n        if regional_accounting:\n            accounting = pk_modeling.get(\"voxel_accounting\")\n            if isinstance(accounting, dict):\n                accounting[\"regions\"] = regional_accounting\n        have_pk_modeling = True\n    if pk_maps_qc_metrics is not None:\n        pk_modeling[\"model_selection_regions\"] = pk_maps_qc_metrics\n        have_pk_modeling = True\n    if have_pk_modeling:\n        qc_metrics[\"pk_modeling\"] = pk_modeling\n    if validation_result is not None:\n        qc_metrics[\"dsc_dce_validation\"] = validation_result\n\n    # Merge display stats (TR, tSNR, peak enhancement) into preprocessing.\n    if preproc_display is not None:\n        preprocessing = dict(preprocess_qc) if preprocess_qc is not None else {}\n        preprocessing.update(preproc_display)\n        qc_metrics[\"preprocessing\"] = preprocessing\n\n    from pmriprep.utils.dce_model_suitability import (\n        assess_two_cxm_suitability,\n    )\n\n    qc_metrics[\"model_suitability\"] = {\n        \"2cxm\": assess_two_cxm_suitability(qc_metrics)\n    }\n\n    return qc_metrics\n",
+      "no_t1": false,
+      "use_external_t1": false
+    },
+    "combine_masks": {
+      "function_str": "def combine_tumor_masks(\n    tumor_segmentation_file: str | None = None,\n    whole_tumor_mask_file: str | None = None,\n    reference_file: str | None = None,\n) -> tuple[str, str]:\n    \"\"\"Select the best tumor mask for lesion statistics.\n\n    Priority:\n\n    1. If tumor segmentation present: use it (already multi-label:\n       0=bg, 1=non-enhancing, 2=enhancing)\n    2. If only whole_tumor present: use as binary mask\n    3. If none present: return empty-string sentinels\n\n    Parameters\n    ----------\n    tumor_segmentation_file : str, optional\n        Path to multi-label tumor segmentation (or None).\n    whole_tumor_mask_file : str, optional\n        Path to whole tumor binary mask (or None).\n    reference_file : str, optional\n        Path to reference image for output geometry (unused but\n        kept for interface compatibility).\n\n    Returns\n    -------\n    tuple\n        Tuple of (mask_file_path, mask_origin) where mask_origin is\n        \"tumor_segmentation\" or \"whole_tumor\" or \"\" if no masks available.\n        Returns (\"\", \"\") when no masks are available because downstream\n        ``traits.Str`` fields require strings.\n    \"\"\"\n    from pathlib import Path\n\n    from nipype.interfaces.base import isdefined\n\n    def _is_valid_file(f: str | None) -> bool:\n        \"\"\"Check if file path is valid (not None, not Undefined, exists).\"\"\"\n        if f is None:\n            return False\n        if not isdefined(f):\n            return False\n        return Path(f).exists()\n\n    if _is_valid_file(tumor_segmentation_file):\n        return (str(tumor_segmentation_file), \"tumor_segmentation\")\n\n    if _is_valid_file(whole_tumor_mask_file):\n        return (str(whole_tumor_mask_file), \"whole_tumor\")\n\n    return (\"\", \"\")\n"
+    },
+    "convert_inverse_h5": {
+      "function_str": "def fsl_to_x5_node(mat_path: str, reference: str, moving: str) -> str:\n    \"\"\"Convert an FSL affine to an ITK X5 transform in a Nipype worker.\"\"\"\n    from pmriprep.utils.transforms import fsl_to_x5\n\n    return fsl_to_x5(mat_path, reference, moving)\n"
+    },
+    "dce_brain_extract": {
+      "bet_frac": 0.3,
+      "fill_holes": true,
+      "hdbet_conda_env": "",
+      "hdbet_device": "auto",
+      "method": "hdbet",
+      "use_gpu": false
+    },
+    "dce_brain_mask_qc": {
+      "session_id": "0001",
+      "subject_id": "0001"
+    },
+    "dce_pk_fit_qc": {
+      "model_name": "auto",
+      "session_id": "0001",
+      "subject_id": "0001"
+    },
+    "dce_pk_maps_qc": {
+      "model_name": "auto",
+      "session_id": "0001",
+      "subject_id": "0001"
+    },
+    "dce_preprocess": {
+      "apply_motion_correction": true,
+      "baseline_frames": 0,
+      "cost": "normcorr",
+      "head_radius": 50.0,
+      "interpolation": "trilinear",
+      "motion_thresh": 0.5,
+      "ref_vol": "baseline_mean",
+      "volume_tr": 0.0
+    },
+    "dce_registration": {
+      "cost": "normmi",
+      "dof": 6,
+      "reference_type": "postcon",
+      "search_range": 30
+    },
+    "dsc_dce_validation": {
+      "dce_model": "auto",
+      "no_dsc_validation": false
+    },
+    "dsc_dce_xval_plot": {
+      "function_str": "def _dsc_dce_xval_plot_node(\n    vp_file: str | None = None,\n    dsc_ncbv_file: str | None = None,\n    brain_mask: str | None = None,\n    validation_result: dict[str, object] | None = None,\n    subject_id: str = \"\",\n    session_id: str = \"\",\n    model_selection_file: str | None = None,\n) -> str | None:\n    \"\"\"Generate the DSC-DCE cross-validation plot.\n\n    Parameters\n    ----------\n    vp_file : str or None\n        Path to the DCE vp (plasma volume) map.\n    dsc_ncbv_file : str or None\n        NAWM-normalized CBV. The plot is drawn on the dimensionless\n        nCBV scale with expected ratio =\n        ``NAWM_VP_REFERENCE``, matching the validation metrics.\n    brain_mask : str or None\n        Path to brain mask in DCE space.\n    validation_result : dict or None\n        Result dict from the DSC-DCE validation node.\n    subject_id : str, optional\n        Subject identifier.\n    session_id : str, optional\n        Session identifier.\n    model_selection_file : str or None\n        Path to the model selection map NIfTI (auto mode), for coloring.\n\n    Returns\n    -------\n    str or None\n        Path to plot PNG, or None if skipped.\n    \"\"\"\n    import os\n\n    if not vp_file or not brain_mask:\n        return None\n    if validation_result and validation_result.get(\"skipped\"):\n        return None\n    have_ncbv = bool(dsc_ncbv_file) and os.path.isfile(str(dsc_ncbv_file))\n    # Cross-validation requires NAWM-normalized CBV.\n    if not have_ncbv or dsc_ncbv_file is None:\n        return None\n\n    try:\n        import nibabel as nib  # type: ignore[import-untyped]\n        import numpy as np\n\n        from pmriprep.utils.dsc_dce_xval_plots import generate_xval_plot\n\n        cbv_source = dsc_ncbv_file\n\n        vp_data = np.asarray(\n            nib.load(vp_file).get_fdata(), dtype=np.float64  # type: ignore[attr-defined]\n        )\n        cbv_data = np.asarray(\n            nib.load(cbv_source).get_fdata(), dtype=np.float64  # type: ignore[attr-defined]\n        )\n        mask = np.asarray(\n            nib.load(brain_mask).get_fdata(), dtype=np.bool_  # type: ignore[attr-defined]\n        )\n\n        model_sel = None\n        if model_selection_file:\n            model_sel = np.asarray(\n                nib.load(model_selection_file).get_fdata(),  # type: ignore[attr-defined]\n                dtype=np.int8,\n            )\n\n        return generate_xval_plot(\n            vp_data=vp_data,\n            cbv_data=cbv_data,\n            mask=mask,\n            validation_result=validation_result or {},\n            subject_id=subject_id,\n            session_id=session_id,\n            model_selection=model_sel,\n        )\n    except Exception:\n        import logging\n        logging.getLogger(__name__).warning(\n            \"DSC-DCE xval plot failed\", exc_info=True\n        )\n        return None\n",
+      "model_selection_file": null,
+      "session_id": "0001",
+      "subject_id": "0001"
+    },
+    "inputnode": {
+      "dsc_agent_standard_dose": 0.1,
+      "dsc_cbv_file": null,
+      "dsc_dose": 1.0,
+      "dsc_ncbv_file": null,
+      "dsc_to_t1w_xfm": null,
+      "nawm_needs_transform": true,
+      "t1w_postcon_underlay": null,
+      "t1w_subtraction_underlay": null,
+      "t1w_underlay": null,
+      "t2w_in_t1w": null
+    },
+    "invert_dce_xfm": {
+      "invert_xfm": true,
+      "output_type": "NIFTI_GZ"
+    },
+    "invert_vfa_to_dce_xfm": {
+      "invert_xfm": true,
+      "output_type": "NIFTI_GZ"
+    },
+    "lesion_stats": {
+      "force_binary": false,
+      "mask_origin": "",
+      "session_id": "0001",
+      "subject_id": "0001"
+    },
+    "motion_qc_plot": {
+      "motion_applied": true,
+      "session_id": "0001",
+      "subject_id": "0001"
+    },
+    "pk_modeling": {
+      "aif_bat_alignment": "auto",
+      "aif_detection_method": "population",
+      "aif_uncertainty_inflation_factor": 1.0,
+      "baseline_frames": 0,
+      "constraint_mode": "auto",
+      "dsc_agent_standard_dose": 0.1,
+      "dsc_dose": 1.0,
+      "inference": "nlls",
+      "mcmc_samples": 500,
+      "model": "auto",
+      "n_procs": 1,
+      "save_fitted_curves": false,
+      "ser_early_time_s": 120.0,
+      "ser_late_time_s": 320.0,
+      "sloppy": false,
+      "tsnr_threshold": 0.0
+    },
+    "preprocessing_qc": {
+      "session_id": "0001",
+      "subject_id": "0001"
+    },
+    "reg_filmstrip": {
+      "session_id": "0001",
+      "subject_id": "0001"
+    },
+    "resample_dsc_cbv": {
+      "function_str": "def _resample_dsc_cbv_to_dce(\n    dsc_cbv_file: str | None = None,\n    dsc_to_t1w_xfm: str | None = None,\n    t1w_to_dce_xfm: str | None = None,\n    dce_reference: str | None = None,\n) -> str:\n    \"\"\"Resample DSC CBV map to DCE native space.\n\n    Chains two existing transforms: DSC\u2192T1w + T1w\u2192DCE = DSC\u2192DCE,\n    then applies the combined transform with trilinear interpolation\n    (not spline, to avoid negative CBV values).\n\n    Parameters\n    ----------\n    dsc_cbv_file : str or None\n        Path to DSC-derived relative CBV map (DSC native space).\n    dsc_to_t1w_xfm : str or None\n        Path to DSC\u2192T1w FLIRT transform matrix.\n    t1w_to_dce_xfm : str or None\n        Path to T1w\u2192DCE FLIRT transform matrix (from DCE registration step).\n    dce_reference : str or None\n        Path to DCE reference image for output geometry.\n\n    Returns\n    -------\n    str\n        Path to CBV map resampled to DCE space, or empty string if inputs\n        are missing (empty string avoids nipype File trait validation errors\n        when None flows through workflow connections).\n    \"\"\"\n    import logging\n    import os\n\n    _log = logging.getLogger(\"pmriprep.workflows.dce\")\n\n    if not dsc_cbv_file or not os.path.isfile(str(dsc_cbv_file)):\n        return \"\"\n    if not dsc_to_t1w_xfm or not os.path.isfile(str(dsc_to_t1w_xfm)):\n        return \"\"\n    if not t1w_to_dce_xfm or not os.path.isfile(str(t1w_to_dce_xfm)):\n        return \"\"\n    if not dce_reference or not os.path.isfile(str(dce_reference)):\n        return \"\"\n\n    import subprocess\n\n    out_dir = os.getcwd()\n    dsc_to_dce_xfm = os.path.join(out_dir, \"dsc_to_dce.mat\")\n    cbv_in_dce = os.path.join(out_dir, \"dsc_cbv_in_dce.nii.gz\")\n\n    # Chain: DSC\u2192T1w + T1w\u2192DCE = DSC\u2192DCE\n    result = subprocess.run(\n        [\n            \"convert_xfm\",\n            \"-omat\", dsc_to_dce_xfm,\n            \"-concat\", str(t1w_to_dce_xfm), str(dsc_to_t1w_xfm),\n        ],\n        capture_output=True,\n        text=True,\n    )\n    if result.returncode != 0:\n        _log.warning(\n            \"convert_xfm failed (rc=%d): %s\", result.returncode, result.stderr\n        )\n        return \"\"\n\n    # Apply combined transform with trilinear interpolation\n    result = subprocess.run(\n        [\n            \"flirt\",\n            \"-in\", str(dsc_cbv_file),\n            \"-ref\", str(dce_reference),\n            \"-out\", cbv_in_dce,\n            \"-init\", dsc_to_dce_xfm,\n            \"-applyxfm\",\n            \"-interp\", \"trilinear\",\n        ],\n        capture_output=True,\n        text=True,\n    )\n    if result.returncode != 0:\n        _log.warning(\n            \"FLIRT resampling of DSC CBV failed (rc=%d): %s\",\n            result.returncode, result.stderr,\n        )\n        return \"\"\n\n    return cbv_in_dce\n"
+    },
+    "roi_stats": {
+      "force_binary": true,
+      "mask_origin": "",
+      "session_id": "0001",
+      "subject_id": "0001"
+    },
+    "select_aif_exclusion": {
+      "function_str": "def select_aif_exclusion_mask(\n    user_lesion_mask: str | None = None,\n    transformed_lesion_mask: str | None = None,\n) -> str:\n    \"\"\"Select the lesion mask used to exclude AIF candidates.\n\n    Parameters\n    ----------\n    user_lesion_mask : str or None\n        User-supplied lesion mask in native perfusion space.\n    transformed_lesion_mask : str or None\n        Tumor-segmentation mask transformed to native perfusion space.\n\n    Returns\n    -------\n    str\n        The user mask when present, otherwise the transformed mask or ``\"\"``.\n    \"\"\"\n    from nipype.interfaces.base import isdefined\n\n    if isdefined(user_lesion_mask) and user_lesion_mask not in (None, \"\"):\n        return str(user_lesion_mask)\n    if (\n        isdefined(transformed_lesion_mask)\n        and transformed_lesion_mask not in (None, \"\")\n    ):\n        return str(transformed_lesion_mask)\n    return \"\"\n"
+    },
+    "signal_to_concentration": {
+      "b1_registration_qc": null,
+      "external_t1": false,
+      "no_t1": false,
+      "t1_registration_qc": null
+    },
+    "t1_mapping": {
+      "b1_qc_pass": true,
+      "csf_threshold": 0.5,
+      "field_strength": 3.0,
+      "session_id": "0001",
+      "skip_t1": false,
+      "subject_id": "0001",
+      "t1_correction_mode": "auto",
+      "t1_method": "nlls"
+    },
+    "transform_b1_to_dce": {
+      "registration_qc": null,
+      "registration_required": false,
+      "transform_matrix": null
+    },
+    "transform_b1_to_vfa": {
+      "registration_qc": null,
+      "registration_required": true,
+      "registration_source_file": null,
+      "transform_matrix": null
+    },
+    "transform_brain_mask": {
+      "function_str": "def _transform_mask_to_dce(\n    mask_file: str | None = None,\n    reference_file: str | None = None,\n    transform_matrix: str | None = None,\n) -> str:\n    \"\"\"Transform brain mask from T1w space to DCE space.\n\n    Thin Nipype Function-node wrapper around\n    ``pmriprep.utils.registration.transform_mask_to_grid``. The import is\n    intentionally inline because ``niu.Function`` serialises this body\n    via ``inspect.getsource`` and runs it in a worker that cannot see\n    module-level imports.\n\n    Parameters\n    ----------\n    mask_file : str or None\n        Path to brain mask in T1w space (or None).\n    reference_file : str or None\n        Path to DCE reference image for output geometry.\n    transform_matrix : str or None\n        Path to T1w\u2192DCE FLIRT matrix.\n\n    Returns\n    -------\n    str\n        Path to transformed brain mask in DCE space, or \"\" if no mask.\n    \"\"\"\n    from pmriprep.utils.registration import transform_mask_to_grid\n\n    return transform_mask_to_grid(mask_file, reference_file, transform_matrix)\n"
+    },
+    "transform_enhancing_mask": {
+      "function_str": "def _transform_mask_to_dce(\n    mask_file: str | None = None,\n    reference_file: str | None = None,\n    transform_matrix: str | None = None,\n) -> str:\n    \"\"\"Transform brain mask from T1w space to DCE space.\n\n    Thin Nipype Function-node wrapper around\n    ``pmriprep.utils.registration.transform_mask_to_grid``. The import is\n    intentionally inline because ``niu.Function`` serialises this body\n    via ``inspect.getsource`` and runs it in a worker that cannot see\n    module-level imports.\n\n    Parameters\n    ----------\n    mask_file : str or None\n        Path to brain mask in T1w space (or None).\n    reference_file : str or None\n        Path to DCE reference image for output geometry.\n    transform_matrix : str or None\n        Path to T1w\u2192DCE FLIRT matrix.\n\n    Returns\n    -------\n    str\n        Path to transformed brain mask in DCE space, or \"\" if no mask.\n    \"\"\"\n    from pmriprep.utils.registration import transform_mask_to_grid\n\n    return transform_mask_to_grid(mask_file, reference_file, transform_matrix)\n"
+    },
+    "transform_nawm_mask": {
+      "function_str": "def _transform_mask_to_dce_conditional(\n    mask_file: str | None = None,\n    reference_file: str | None = None,\n    transform_matrix: str | None = None,\n    needs_transform: bool = True,\n) -> str:\n    \"\"\"Transform mask to DCE space, or pass through if already native.\n\n    When ``needs_transform`` is True (tumor-seg mask in T1w space), delegates\n    to ``transform_mask_to_grid``.  When False (user-supplied mask already in\n    DCE native space), validates geometry and returns the input path.\n\n    Parameters\n    ----------\n    mask_file : str or None\n        Path to mask (or None).\n    reference_file : str or None\n        Path to DCE reference image for output geometry.\n    transform_matrix : str or None\n        Path to T1w\u2192DCE FLIRT matrix (only used when needs_transform=True).\n    needs_transform : bool\n        If False, skip FLIRT and return input path as-is.\n\n    Returns\n    -------\n    str\n        Path to mask in DCE space, or \"\" if no mask.\n    \"\"\"\n    from nipype.interfaces.base import isdefined\n\n    if not isdefined(mask_file) or mask_file is None:\n        return \"\"\n\n    from pathlib import Path\n\n    if not Path(mask_file).is_file():\n        return \"\"\n\n    if not needs_transform:\n        import nibabel as nib\n        import numpy as np\n\n        mask_img = nib.load(str(mask_file))\n        ref_img = nib.load(str(reference_file))\n        if mask_img.shape[:3] != ref_img.shape[:3]:  # type: ignore[attr-defined]\n            raise ValueError(\n                f\"User-supplied mask shape {mask_img.shape[:3]} does not \"  # type: ignore[attr-defined]\n                f\"match DCE volume shape {ref_img.shape[:3]}. \"  # type: ignore[attr-defined]\n                f\"Masks under [dce] config must be in DCE native space.\"\n            )\n        affine_diff = float(\n            np.abs(mask_img.affine - ref_img.affine).max()  # type: ignore[attr-defined]\n        )\n        if affine_diff > 1.0:\n            raise ValueError(\n                f\"User-supplied mask affine differs from DCE volume by \"\n                f\"{affine_diff:.2f} (max element). \"\n                f\"Masks under [dce] config must be in DCE native space.\"\n            )\n        return str(mask_file)\n\n    from pmriprep.utils.registration import transform_mask_to_grid\n\n    return transform_mask_to_grid(mask_file, reference_file, transform_matrix)\n"
+    },
+    "transform_non_enhancing_mask": {
+      "function_str": "def _transform_mask_to_dce(\n    mask_file: str | None = None,\n    reference_file: str | None = None,\n    transform_matrix: str | None = None,\n) -> str:\n    \"\"\"Transform brain mask from T1w space to DCE space.\n\n    Thin Nipype Function-node wrapper around\n    ``pmriprep.utils.registration.transform_mask_to_grid``. The import is\n    intentionally inline because ``niu.Function`` serialises this body\n    via ``inspect.getsource`` and runs it in a worker that cannot see\n    module-level imports.\n\n    Parameters\n    ----------\n    mask_file : str or None\n        Path to brain mask in T1w space (or None).\n    reference_file : str or None\n        Path to DCE reference image for output geometry.\n    transform_matrix : str or None\n        Path to T1w\u2192DCE FLIRT matrix.\n\n    Returns\n    -------\n    str\n        Path to transformed brain mask in DCE space, or \"\" if no mask.\n    \"\"\"\n    from pmriprep.utils.registration import transform_mask_to_grid\n\n    return transform_mask_to_grid(mask_file, reference_file, transform_matrix)\n"
+    },
+    "user_lesion_stats": {
+      "force_binary": true,
+      "mask_origin": "",
+      "session_id": "0001",
+      "subject_id": "0001"
+    },
+    "validate_roi_mask": {
+      "function_str": "def validate_native_mask(\n    mask_file: str | None = None,\n    reference_file: str | None = None,\n    mask_label: str = \"mask\",\n) -> str:\n    \"\"\"Validate that a mask matches its native perfusion image grid.\n\n    Parameters\n    ----------\n    mask_file : str or None\n        Path to the mask NIfTI.\n    reference_file : str or None\n        Path to the perfusion reference image.\n    mask_label : str\n        Human-readable label used in validation errors.\n\n    Returns\n    -------\n    str\n        The validated mask path, or ``\"\"`` when no mask is supplied.\n\n    Raises\n    ------\n    ValueError\n        If the mask shape or affine does not match the reference grid.\n    \"\"\"\n    from nipype.interfaces.base import isdefined\n\n    if not isdefined(mask_file) or mask_file in (None, \"\"):\n        return \"\"\n\n    import nibabel as nib\n    import numpy as np\n\n    mask_img = nib.load(str(mask_file))\n    ref_img = nib.load(str(reference_file))\n    if mask_img.shape[:3] != ref_img.shape[:3]:  # type: ignore[attr-defined]\n        raise ValueError(\n            f\"User-supplied {mask_label} shape {mask_img.shape[:3]} does not \"  # type: ignore[attr-defined]\n            f\"match perfusion volume shape {ref_img.shape[:3]}. \"  # type: ignore[attr-defined]\n            \"Masks under config must be in perfusion native space.\"\n        )\n    affine_diff = float(\n        np.abs(mask_img.affine - ref_img.affine).max()  # type: ignore[attr-defined]\n    )\n    if affine_diff > 1.0:\n        raise ValueError(\n            f\"User-supplied {mask_label} affine differs from perfusion volume \"\n            f\"by {affine_diff:.2f} (max element). \"\n            \"Masks under config must be in perfusion native space.\"\n        )\n    return str(mask_file)\n",
+      "mask_label": "dce.roi_mask"
+    },
+    "validate_user_lesion_mask": {
+      "function_str": "def validate_native_mask(\n    mask_file: str | None = None,\n    reference_file: str | None = None,\n    mask_label: str = \"mask\",\n) -> str:\n    \"\"\"Validate that a mask matches its native perfusion image grid.\n\n    Parameters\n    ----------\n    mask_file : str or None\n        Path to the mask NIfTI.\n    reference_file : str or None\n        Path to the perfusion reference image.\n    mask_label : str\n        Human-readable label used in validation errors.\n\n    Returns\n    -------\n    str\n        The validated mask path, or ``\"\"`` when no mask is supplied.\n\n    Raises\n    ------\n    ValueError\n        If the mask shape or affine does not match the reference grid.\n    \"\"\"\n    from nipype.interfaces.base import isdefined\n\n    if not isdefined(mask_file) or mask_file in (None, \"\"):\n        return \"\"\n\n    import nibabel as nib\n    import numpy as np\n\n    mask_img = nib.load(str(mask_file))\n    ref_img = nib.load(str(reference_file))\n    if mask_img.shape[:3] != ref_img.shape[:3]:  # type: ignore[attr-defined]\n        raise ValueError(\n            f\"User-supplied {mask_label} shape {mask_img.shape[:3]} does not \"  # type: ignore[attr-defined]\n            f\"match perfusion volume shape {ref_img.shape[:3]}. \"  # type: ignore[attr-defined]\n            \"Masks under config must be in perfusion native space.\"\n        )\n    affine_diff = float(\n        np.abs(mask_img.affine - ref_img.affine).max()  # type: ignore[attr-defined]\n    )\n    if affine_diff > 1.0:\n        raise ValueError(\n            f\"User-supplied {mask_label} affine differs from perfusion volume \"\n            f\"by {affine_diff:.2f} (max element). \"\n            \"Masks under config must be in perfusion native space.\"\n        )\n    return str(mask_file)\n",
+      "mask_label": "dce.lesion_mask"
+    },
+    "vfa_preprocess": {
+      "skip_coregistration": false
+    },
+    "vfa_to_dce_registration": {
+      "cost": "normmi",
+      "dof": 6,
+      "reference_type": "precon",
+      "search_range": 30
+    }
+  },
+  "nodes": [
+    [
+      "aif_detection",
+      "AIFDetection"
+    ],
+    [
+      "aif_qc_plot",
+      "DCEAIFQCPlot"
+    ],
+    [
+      "b1_mapping",
+      "B1Mapping"
+    ],
+    [
+      "collect_qc_metrics",
+      "Function"
+    ],
+    [
+      "combine_masks",
+      "Function"
+    ],
+    [
+      "convert_inverse_h5",
+      "Function"
+    ],
+    [
+      "create_aif_mask",
+      "Function"
+    ],
+    [
+      "dce_brain_extract",
+      "DCEBrainExtract"
+    ],
+    [
+      "dce_brain_mask_qc",
+      "Function"
+    ],
+    [
+      "dce_early_mean",
+      "Function"
+    ],
+    [
+      "dce_pk_fit_qc",
+      "Function"
+    ],
+    [
+      "dce_pk_maps_qc",
+      "Function"
+    ],
+    [
+      "dce_preprocess",
+      "DCEPreprocess"
+    ],
+    [
+      "dce_registration",
+      "DCERegistration"
+    ],
+    [
+      "dce_reorient",
+      "Reorient"
+    ],
+    [
+      "dsc_dce_validation",
+      "Function"
+    ],
+    [
+      "dsc_dce_xval_plot",
+      "Function"
+    ],
+    [
+      "inputnode",
+      "IdentityInterface"
+    ],
+    [
+      "invert_dce_xfm",
+      "ConvertXFM"
+    ],
+    [
+      "invert_vfa_to_dce_xfm",
+      "ConvertXFM"
+    ],
+    [
+      "lesion_stats",
+      "DCELesionStats"
+    ],
+    [
+      "motion_qc_plot",
+      "Function"
+    ],
+    [
+      "outputnode",
+      "IdentityInterface"
+    ],
+    [
+      "pk_modeling",
+      "ComputeDCEMaps"
+    ],
+    [
+      "preprocessing_qc",
+      "Function"
+    ],
+    [
+      "reg_filmstrip",
+      "Function"
+    ],
+    [
+      "resample_dsc_cbv",
+      "Function"
+    ],
+    [
+      "resample_dsc_ncbv",
+      "Function"
+    ],
+    [
+      "roi_stats",
+      "DCELesionStats"
+    ],
+    [
+      "select_aif_exclusion",
+      "Function"
+    ],
+    [
+      "signal_to_concentration",
+      "Function"
+    ],
+    [
+      "t1_mapping",
+      "T1Mapping"
+    ],
+    [
+      "transform_atlas_cascade",
+      "Function"
+    ],
+    [
+      "transform_b1_to_dce",
+      "Function"
+    ],
+    [
+      "transform_b1_to_vfa",
+      "Function"
+    ],
+    [
+      "transform_brain_mask",
+      "Function"
+    ],
+    [
+      "transform_csf_probseg",
+      "Function"
+    ],
+    [
+      "transform_enhancing_mask",
+      "Function"
+    ],
+    [
+      "transform_gm_probseg",
+      "Function"
+    ],
+    [
+      "transform_lesion",
+      "Function"
+    ],
+    [
+      "transform_nawm_mask",
+      "Function"
+    ],
+    [
+      "transform_non_enhancing_mask",
+      "Function"
+    ],
+    [
+      "transform_stats_lesion",
+      "Function"
+    ],
+    [
+      "transform_t1_to_dce",
+      "Function"
+    ],
+    [
+      "transform_wm_probseg",
+      "Function"
+    ],
+    [
+      "user_lesion_stats",
+      "DCELesionStats"
+    ],
+    [
+      "validate_roi_mask",
+      "Function"
+    ],
+    [
+      "validate_user_lesion_mask",
+      "Function"
+    ],
+    [
+      "vfa_preprocess",
+      "VFAPreprocess"
+    ],
+    [
+      "vfa_reorient",
+      "Function"
+    ],
+    [
+      "vfa_to_dce_registration",
+      "DCERegistration"
+    ]
+  ],
+  "public_outputnode_fields": [
+    "afi_registration_qc_plot",
+    "aif_candidates_qc_plot",
+    "aif_curve",
+    "aif_curve_qc_plot",
+    "aif_location_qc_plot",
+    "aif_mask",
+    "b1_qc_plot",
+    "brain_mask",
+    "brain_mask_filmstrip",
+    "dce_mean",
+    "dce_moco",
+    "dce_to_t1w_xfm",
+    "delta_bic_map",
+    "dsc_dce_xval_plot",
+    "e_map",
+    "flair_in_dce",
+    "flair_postcon_in_dce",
+    "fp_map",
+    "fp_uncertainty",
+    "iauc120_map",
+    "iauc60_map",
+    "iauc90_map",
+    "kep_map",
+    "ktrans_map",
+    "ktrans_uncertainty",
+    "lesion_mask_dce",
+    "lesion_stats_json",
+    "model_selection_map",
+    "model_selection_qc_plot",
+    "motion_params",
+    "motion_qc_plot",
+    "nawm_mask",
+    "peak_enhancement_map",
+    "pk_modeling_qc_plot",
+    "pk_param_maps_qc_plot",
+    "preprocessing_qc_plot",
+    "ps_map",
+    "ps_uncertainty",
+    "qc_mask",
+    "qc_metrics",
+    "r2_map",
+    "registration_qc_filmstrip",
+    "roi_mask_dce",
+    "roi_stats_json",
+    "ser_map",
+    "smooth_model_free_maps",
+    "smooth_pk_maps",
+    "t1_map",
+    "t1_qc_plot",
+    "t1w_in_dce",
+    "t1w_postcon_in_dce",
+    "t1w_subtraction_in_dce",
+    "t1w_to_dce_xfm",
+    "t2w_in_dce",
+    "time_to_peak_map",
+    "tsnr_map",
+    "user_lesion_mask_dce",
+    "user_lesion_stats_json",
+    "ve_map",
+    "ve_uncertainty",
+    "vfa_registration_qc_plot",
+    "vp_map",
+    "vp_uncertainty"
+  ]
+}

@@ -30,7 +30,8 @@ def test_t1_b1_workflow_vfa_mode() -> None:
     """VFA mode constructs the complete B1-corrected T1 chain."""
     assert _names(DCEConfig()) == {
         "inputnode", "outputnode", "b1_mapping", "vfa_reorient",
-        "vfa_preprocess", "transform_b1_to_vfa", "t1_mapping",
+        "vfa_preprocess", "vfa_to_dce_registration", "transform_b1_to_vfa",
+        "t1_mapping",
     }
     assert "vfa_qc" in (
         init_dce_t1_b1_wf(
@@ -45,8 +46,8 @@ def test_t1_b1_workflow_afi_registers_magnitude_to_vfa() -> None:
     """AFI B1 uses its magnitude reference for transfer into VFA space."""
     assert _names(DCEConfig(b1_method="afi")) == {
         "inputnode", "outputnode", "b1_mapping", "vfa_reorient",
-        "vfa_preprocess", "afi_to_vfa_registration", "transform_b1_to_vfa",
-        "t1_mapping",
+        "vfa_preprocess", "vfa_to_dce_registration", "afi_to_vfa_registration",
+        "transform_b1_to_vfa", "t1_mapping",
     }
     assert "vfa_reference" in (
         init_dce_t1_b1_wf(
@@ -55,6 +56,24 @@ def test_t1_b1_workflow_afi_registers_magnitude_to_vfa() -> None:
         .get_node("outputnode")
         .interface._fields
     )
+
+
+def test_precomputed_b1_uses_dce_to_vfa_transform() -> None:
+    """A DCE-aligned precomputed B1 map reaches VFA through the inverse transform."""
+    workflow = init_dce_t1_b1_wf(
+        config=DCEConfig(b1_method="precomputed"),
+        subject_id="0001",
+        session_id="0001",
+    )
+    registration = workflow.get_node("vfa_to_dce_registration")
+    inverse = workflow.get_node("invert_vfa_to_dce_xfm")
+    transform = workflow.get_node("transform_b1_to_vfa")
+    inverse_input = workflow._graph.get_edge_data(registration, inverse)["connect"]
+    transform_input = workflow._graph.get_edge_data(inverse, transform)["connect"]
+
+    assert ("out_matrix", "in_file") in inverse_input
+    assert ("out_file", "transform_matrix") in transform_input
+    assert transform.inputs.registration_required is True
 
 
 def test_t1_b1_workflow_external_t1_mode() -> None:

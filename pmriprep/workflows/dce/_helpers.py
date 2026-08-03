@@ -1361,12 +1361,13 @@ def _transform_b1_to_vfa(
     transform_matrix: str | None = None,
     registration_qc: dict[str, object] | None = None,
     registration_required: bool = False,
+    registration_source_file: str | None = None,
 ) -> str | None:
     """Transfer B1+ map from AFI or precomputed space to VFA space.
 
-    AFI maps use a rigid transform estimated from AFI magnitude data. A
-    precomputed map without a magnitude reference follows its explicit
-    world-aligned input contract and uses NIfTI geometry.
+    AFI maps use a rigid AFI-to-VFA transform estimated from magnitude data.
+    Precomputed maps are anchored to DCE and use the inverse of the accepted
+    VFA-to-DCE transform.
 
     Parameters
     ----------
@@ -1375,11 +1376,16 @@ def _transform_b1_to_vfa(
     vfa_ref_file : str or None
         Path to VFA reference image for output geometry.
     transform_matrix : str or None
-        AFI-reference-to-VFA FLIRT matrix, when AFI magnitude is available.
+        Source-reference-to-VFA FLIRT matrix: AFI-to-VFA for AFI maps or
+        DCE-to-VFA for precomputed maps.
     registration_qc : dict or None
-        AFI-to-VFA registration QC.
+        Registration QC for the magnitude-derived transform.
     registration_required : bool, optional
-        Whether this is an AFI path that must not fall back to header transfer.
+        Whether magnitude registration is required rather than header transfer.
+    registration_source_file : str or None
+        Image defining the moving-image grid in which ``transform_matrix`` was
+        estimated. Precomputed B1+ is first resampled to this DCE grid so the
+        inverse FLIRT matrix is applied in its native scaled-mm frame.
 
     Returns
     -------
@@ -1391,14 +1397,36 @@ def _transform_b1_to_vfa(
 
     if registration_required and transform_matrix is None:
         raise RuntimeError(
-            "AFI B1+ is available but its VFA registration transform is missing"
+            "B1+ is available but its VFA registration transform is missing"
         )
 
     if transform_matrix is not None:
+        registered_source = b1_map_file
+        if registration_source_file is not None:
+            from pathlib import Path
+
+            import nibabel as nib  # type: ignore[import-untyped]
+            import numpy as np
+
+            from pmriprep.workflows.dce._helpers import _resample_b1_ratio_to_img
+
+            b1_img = nib.load(b1_map_file)
+            source_img = nib.load(registration_source_file)
+            same_grid = (
+                b1_img.shape[:3] == source_img.shape[:3]  # type: ignore[attr-defined]
+                and float(np.abs(b1_img.affine - source_img.affine).max()) < 1e-4  # type: ignore[attr-defined]
+            )
+            if not same_grid:
+                on_source_grid = _resample_b1_ratio_to_img(b1_img, source_img)
+                registered_source = str(
+                    Path.cwd() / "b1_map_dce_registration_grid.nii.gz"
+                )
+                nib.save(on_source_grid, registered_source)
+
         from pmriprep.workflows.dce._helpers import _apply_registered_b1_ratio
 
         return _apply_registered_b1_ratio(
-            b1_map_file, vfa_ref_file, transform_matrix, registration_qc,
+            registered_source, vfa_ref_file, transform_matrix, registration_qc,
             "b1_map_vfa_space.nii.gz",
         )
 

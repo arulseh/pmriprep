@@ -2334,6 +2334,7 @@
         "b1_map_file",
         "registration_qc",
         "registration_required",
+        "registration_source_file",
         "transform_matrix",
         "vfa_ref_file"
       ],
@@ -2497,7 +2498,7 @@
     "smooth_pk_maps": "0e9f70656739ee40159e46a8096403943877fc031d765e8025692ee7c04aafbc",
     "transform_atlas_cascade": "92097e5d6df046e1997dbee6d10208373b12e5535619d7397855d263159a752a",
     "transform_b1_to_dce": "391f866779af2006ac30566f7d9ab335901c584b9d1088d540ffd82bee85f857",
-    "transform_b1_to_vfa": "4728ff290dc8b3861d72fed39787939a32235a00cf481c0d580a43491075b307",
+    "transform_b1_to_vfa": "fb24623d46f069112650dc250dd17eebb5d8967f60f7057b8b5ba5080e0f77a5",
     "transform_brain_mask": "d79c70197847c13c4a4fd38f056ae9911584e27b3d0d1a55b81ebbbc0dc8c3e4",
     "transform_csf_probseg": "832875c9ced77fe1fb5b000924e46d928ab6d69e66f8b209e0b78dad94bb9fba",
     "transform_enhancing_mask": "d79c70197847c13c4a4fd38f056ae9911584e27b3d0d1a55b81ebbbc0dc8c3e4",
@@ -2929,6 +2930,7 @@
     "transform_b1_to_vfa": {
       "registration_qc": null,
       "registration_required": false,
+      "registration_source_file": null,
       "transform_matrix": null
     },
     "transform_brain_mask": {

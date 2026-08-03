@@ -10,6 +10,7 @@ import pytest
 from pmriprep.workflows.dce._helpers import (
     _apply_registered_b1_ratio,
     _transform_b1_to_dce,
+    _transform_b1_to_vfa,
     _transform_t1_to_dce,
 )
 
@@ -124,6 +125,56 @@ def test_registered_b1_preserves_ratio_over_valid_support(
     output = nib.load(result).get_fdata()
     assert np.allclose(output[output > 0], 0.9)
     assert np.any(output == 0)
+
+
+def test_precomputed_b1_is_regridded_before_dce_to_vfa_transform(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """The inverse FLIRT matrix is applied in its DCE moving-image frame."""
+    from nibabel.processing import resample_from_to
+
+    b1_file = _write_image(
+        tmp_path / "b1_coarse.nii.gz",
+        np.full((2, 2, 2), 0.9),
+        np.diag([2.0, 2.0, 2.0, 1.0]),
+    )
+    dce_file = _write_image(
+        tmp_path / "dce_reference.nii.gz", np.ones((4, 4, 4)), np.eye(4),
+    )
+    vfa_file = _write_image(
+        tmp_path / "vfa_reference.nii.gz", np.ones((4, 4, 4)), np.eye(4),
+    )
+    matrix = tmp_path / "dce_to_vfa.mat"
+    matrix.write_text("1 0 0 0\n0 1 0 0\n0 0 1 0\n0 0 0 1\n")
+    applied_source_grids: list[tuple[tuple[int, ...], np.ndarray]] = []
+
+    def _fake_run(command, **_kwargs):
+        source_img = nib.load(command[command.index("-in") + 1])
+        reference_img = nib.load(command[command.index("-ref") + 1])
+        applied_source_grids.append((source_img.shape, source_img.affine.copy()))
+        interpolation = command[command.index("-interp") + 1]
+        order = 0 if interpolation == "nearestneighbour" else 1
+        nib.save(
+            resample_from_to(source_img, reference_img, order=order),
+            command[command.index("-out") + 1],
+        )
+        return SimpleNamespace(returncode=0, stderr="")
+
+    monkeypatch.setattr("subprocess.run", _fake_run)
+    monkeypatch.chdir(tmp_path)
+    result = _transform_b1_to_vfa(
+        b1_file,
+        vfa_file,
+        str(matrix),
+        {"qc_status": "PASS"},
+        registration_required=True,
+        registration_source_file=dce_file,
+    )
+
+    assert result is not None
+    assert applied_source_grids
+    assert all(shape == (4, 4, 4) for shape, _ in applied_source_grids)
+    assert all(np.allclose(affine, np.eye(4)) for _, affine in applied_source_grids)
 
 
 def test_poor_b1_registration_uses_nominal_flip_angle(tmp_path: Path) -> None:

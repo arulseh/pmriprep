@@ -528,6 +528,7 @@ def init_dce_t1_b1_wf(
     config: DCEConfig,
     subject_id: str,
     session_id: Optional[str],
+    mem_gb: float = 2.0,
     name: str = "dce_t1_b1_wf",
 ) -> pe.Workflow:
     """Build pre-registration DCE T1/B1 preparation.
@@ -540,6 +541,8 @@ def init_dce_t1_b1_wf(
         BIDS subject identifier used in interface provenance.
     session_id : str or None
         Optional BIDS session identifier used in interface provenance.
+    mem_gb : float, optional
+        Memory reserved for VFA-to-DCE registration.
     name : str
         Workflow name.
 
@@ -558,7 +561,7 @@ def init_dce_t1_b1_wf(
             "afi_tr1", "afi_tr2", "afi_flip_angle", "brain_mask",
             "field_strength", "dce_file", "precomputed_b1_file",
             "b1_nominal_prep_fa", "b1_map_encoding", "csf_probseg",
-            "wm_probseg", "gm_probseg",
+            "wm_probseg", "gm_probseg", "dce_reference",
         ]),
         name="inputnode",
     )
@@ -568,6 +571,7 @@ def init_dce_t1_b1_wf(
             "afi_registration_qc_plot", "b1_qc_plot",
             "t1_map", "t1_support_map", "t1_qc", "vfa_qc",
             "vfa_reference", "vfa_registration_qc_plot", "t1_qc_plot",
+            "vfa_to_dce_xfm", "vfa_to_dce_registration_qc",
         ]),
         name="outputnode",
     )
@@ -618,6 +622,7 @@ def init_dce_t1_b1_wf(
                 input_names=[
                     "b1_map_file", "vfa_ref_file", "transform_matrix",
                     "registration_qc", "registration_required",
+                    "registration_source_file",
                 ],
                 output_names=["out_file"], function=_transform_b1_to_vfa,
             ),
@@ -625,8 +630,9 @@ def init_dce_t1_b1_wf(
         )
         transform_b1_to_vfa.inputs.transform_matrix = None
         transform_b1_to_vfa.inputs.registration_qc = None
+        transform_b1_to_vfa.inputs.registration_source_file = None
         transform_b1_to_vfa.inputs.registration_required = (
-            config.b1_method == "afi"
+            config.b1_method in {"afi", "precomputed"}
         )
         t1_mapping = pe.Node(
             T1Mapping(
@@ -637,6 +643,14 @@ def init_dce_t1_b1_wf(
         )
         t1_mapping.inputs.subject_id = subject_id
         t1_mapping.inputs.session_id = session_id or ""
+        vfa_to_dce_registration = pe.Node(
+            DCERegistration(
+                cost="normmi",
+                reference_type="precon",
+            ),
+            name="vfa_to_dce_registration",
+            mem_gb=mem_gb,
+        )
         workflow.connect([
             (inputnode, vfa_reorient, [("vfa_files", "in_files")]),
             (vfa_reorient, vfa_preprocess, [("out_file", "vfa_files")]),
@@ -665,6 +679,16 @@ def init_dce_t1_b1_wf(
                 ("qc_metrics", "vfa_qc"),
                 ("registration_qc_plot", "vfa_registration_qc_plot"),
             ]),
+            (vfa_preprocess, vfa_to_dce_registration, [
+                ("reference_file", "t1w_file"),
+            ]),
+            (inputnode, vfa_to_dce_registration, [
+                ("dce_reference", "dce_mean"),
+            ]),
+            (vfa_to_dce_registration, outputnode, [
+                ("out_matrix", "vfa_to_dce_xfm"),
+                ("qc_metrics", "vfa_to_dce_registration_qc"),
+            ]),
         ])
 
         if config.b1_method == "afi":
@@ -690,6 +714,25 @@ def init_dce_t1_b1_wf(
                     ("qc_metrics", "b1_registration_qc"),
                 ]),
                 (transform_b1_to_vfa, outputnode, [("out_file", "b1_map")]),
+            ])
+        elif config.b1_method == "precomputed":
+            invert_vfa_to_dce = pe.Node(
+                ConvertXFM(invert_xfm=True), name="invert_vfa_to_dce_xfm",
+            )
+            workflow.connect([
+                (vfa_to_dce_registration, invert_vfa_to_dce, [
+                    ("out_matrix", "in_file"),
+                ]),
+                (invert_vfa_to_dce, transform_b1_to_vfa, [
+                    ("out_file", "transform_matrix"),
+                ]),
+                (vfa_to_dce_registration, transform_b1_to_vfa, [
+                    ("qc_metrics", "registration_qc"),
+                ]),
+                (inputnode, transform_b1_to_vfa, [
+                    ("dce_reference", "registration_source_file"),
+                ]),
+                (b1_mapping, outputnode, [("out_file", "b1_map")]),
             ])
         else:
             workflow.connect([
@@ -1689,6 +1732,7 @@ def init_dce_preproc_wf(
         config=config,
         subject_id=subject_id,
         session_id=session_id,
+        mem_gb=_static_mem,
     )
     if need_b1 or use_vfa_t1:
         workflow.connect([
@@ -1731,6 +1775,12 @@ def init_dce_preproc_wf(
             ("volume_tr", "inputnode.volume_tr"),
         ]),
     ])
+    if use_vfa_t1:
+        workflow.connect([
+            (dce_preprocessing_wf, t1_b1_wf, [
+                ("outputnode.baseline_mean_img", "inputnode.dce_reference"),
+            ]),
+        ])
 
     # ==========================================================================
     # Node 3b: Motion QC Plot
@@ -1945,14 +1995,6 @@ def init_dce_preproc_wf(
     # Nodes 4c-4d: Transform T1/B1 maps to DCE space (conditional)
     # ==========================================================================
     if use_vfa_t1:
-        vfa_to_dce_registration = pe.Node(
-            DCERegistration(
-                cost="normmi",
-                reference_type="precon",
-            ),
-            name="vfa_to_dce_registration",
-            mem_gb=_static_mem,
-        )
         transform_t1_to_dce = pe.Node(
             niu.Function(
                 input_names=[
@@ -1966,21 +2008,15 @@ def init_dce_preproc_wf(
         )
 
         workflow.connect([
-            (t1_b1_wf, vfa_to_dce_registration, [
-                ("outputnode.vfa_reference", "t1w_file"),
-            ]),
-            (dce_preprocessing_wf, vfa_to_dce_registration, [
-                ("outputnode.baseline_mean_img", "dce_mean"),
-            ]),
             (t1_b1_wf, transform_t1_to_dce, [
                 ("outputnode.t1_map", "t1_map_file"),
             ]),
             (dce_preprocessing_wf, transform_t1_to_dce, [
                 ("outputnode.mean_img", "reference_file"),
             ]),
-            (vfa_to_dce_registration, transform_t1_to_dce, [
-                ("out_matrix", "transform_matrix"),
-                ("qc_metrics", "registration_qc"),
+            (t1_b1_wf, transform_t1_to_dce, [
+                ("outputnode.vfa_to_dce_xfm", "transform_matrix"),
+                ("outputnode.vfa_to_dce_registration_qc", "registration_qc"),
             ]),
         ])
 
@@ -2013,9 +2049,9 @@ def init_dce_preproc_wf(
 
         if use_vfa_t1 and config.b1_method == "afi":
             workflow.connect([
-                (vfa_to_dce_registration, transform_b1_to_dce, [
-                    ("out_matrix", "transform_matrix"),
-                    ("qc_metrics", "registration_qc"),
+                (t1_b1_wf, transform_b1_to_dce, [
+                    ("outputnode.vfa_to_dce_xfm", "transform_matrix"),
+                    ("outputnode.vfa_to_dce_registration_qc", "registration_qc"),
                 ]),
             ])
         elif config.b1_method == "afi":
@@ -2137,8 +2173,8 @@ def init_dce_preproc_wf(
             (transform_t1_to_dce, signal_to_conc, [
                 ("out_file", "t1_map_file"),
             ]),
-            (vfa_to_dce_registration, signal_to_conc, [
-                ("qc_metrics", "t1_registration_qc"),
+            (t1_b1_wf, signal_to_conc, [
+                ("outputnode.vfa_to_dce_registration_qc", "t1_registration_qc"),
             ]),
             (transform_b1_to_dce, signal_to_conc, [
                 ("out_file", "b1_map_file"),
