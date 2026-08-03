@@ -73,18 +73,9 @@ way to obtain the complete runtime environment.
 
 ### System Requirements
 
-Resource needs vary substantially with image size, inference method, and
-enabled pipelines. Run a representative subject before sizing a cohort job.
-Keep the work directory until outputs have been checked; use a fresh work
-directory when changing PMRIPrep versions or scientific configuration if cache
-reuse is not intended. PMRIPrep records compatibility separately for each
-subject/session workflow and refuses unsafe reuse across incompatible Nipype,
-Python, PMRIPrep, cache-schema, or BIDS dataset-description environments.
-Unrelated subject/session caches in the same work directory are not affected,
-and moving the same dataset between mount points does not invalidate its
-cache. Use a new `--work-dir` or move the named subject/session workflow
-directory aside for a scoped reset. `--clean-workdir` clears the entire work
-root.
+Container execution requires Docker or Apptainer. Source installations require
+Python 3.11–3.12, FSL, and ANTs. An NVIDIA GPU is optional; CPU, memory, and disk
+requirements depend on the input data and enabled pipelines.
 
 ## Usage
 
