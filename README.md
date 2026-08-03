@@ -167,43 +167,43 @@ DSC fields:
 | `cpi_infer_cpt` | `true` | Infer ordered CPI control-point times |
 | `cpi_infer_delay` | `false` | Fit voxelwise CPI bolus delay |
 | `preload` | `unknown` | Administered preload dose fraction, or `unknown`; provenance only |
-| `dose` | `1.0` | Contrast-dose multiplier (float) |
+| `dose` | `1.0` | Contrast-dose multiplier (float; for example, 0.5 for half dose) |
 | `agent_standard_dose` | `0.1` | Agent standard dose in mmol Gd/kg (float) |
 | `aif_method` | `auto` | `auto` or `synthetic` |
 | `aif_file` | `null` | External ΔR2* AIF; bypasses detection |
-| `aif_mask_file` | `null` | DSC-space AIF search mask |
-| `lesion_distance` | `15.0` | Minimum lesion distance in mm for AIF candidates (float) |
+| `aif_mask_file` | `null` | AIF search-space mask (native-DSC space) |
+| `lesion_distance` | `15.0` | Minimum distance from lesion in mm for AIF candidates (float) |
 | `n_aif_candidates` | `10` | Maximum averaged candidates; minimum configuration is 3 |
 | `disable_aif_fallback` | `false` | Fail or retain a flagged AIF instead of substituting synthetic |
-| `lesion_mask` | `null` | Native-DSC lesion mask (statistics and AIF lesion exclusion) |
-| `nawm_mask` | `null` | Native-DSC NAWM mask |
-| `roi_mask` | `null` | Native-DSC statistics-only ROI mask |
+| `lesion_mask` | `null` | Lesion mask (statistics and AIF lesion exclusion; native-DSC space) |
+| `nawm_mask` | `null` | NAWM mask (native-DSC space) |
+| `roi_mask` | `null` | Statistics-only ROI mask (native-DSC space) |
 | `leakage_method` | `bsw` | `bsw` leakage correction or `none` for baseline centering without leakage correction |
 | `pre_bolus` | `5` | Initial baseline frames; final baseline is AIF-informed |
 | `motion_correct` | `true` | Apply motion correction |
 | `motion_thresh` | `0.5` | Motion-QC threshold in mm (float) |
-| `smooth_fwhm` | `0.0` | Additional smoothed outputs in mm; 0 (float) disables |
-| `underlays` | `[]` | Anatomical images to save in DSC space |
+| `smooth_fwhm` | `0.0` | Additional smoothed outputs in mm (float); 0 disables |
+| `underlays` | `[]` | Anatomical images to save in DSC space (`t1w_precon`, `t1w_postcon`, `t1w_subtraction`, `flair_precon`, `flair_postcon`, `t2w`) |
 | `num_processes` | `0` | Per-pipeline process cap; 0 inherits `--nprocs` |
 
 DCE fields:
 
 | Field | Default | Description |
 |---|---:|---|
-| `model` | `auto` | BIC selection or a fixed PK model (`patlak`, `tofts`, `extended_tofts`, `2cxm`) |
+| `model` | `auto` | BIC selection (`auto`) or a fixed PK model (`patlak`, `tofts`, `extended_tofts`, `2cxm`) |
 | `inference` | `nlls` | `nlls` or `vi` |
-| `dose` | `1.0` | Contrast-dose multiplier (float) |
+| `dose` | `1.0` | Contrast-dose multiplier (float; for example, 0.5 for half dose) |
 | `aif_method` | `auto` | `auto` or `population` |
 | `aif_peak_floor` | `true` | Raise (only) low detected AIF peaks to the dose-adjusted floor |
 | `target_peak` | `null` | Explicit blood-scale AIF peak calibration in mM |
 | `aif_file` | `null` | External plasma AIF; bypasses detection and scaling |
-| `aif_mask_file` | `null` | DCE-space AIF search mask |
-| `lesion_distance` | `15.0` | Minimum lesion distance in mm for AIF candidates (float) |
+| `aif_mask_file` | `null` | AIF search-space mask (native-DCE space) |
+| `lesion_distance` | `15.0` | Minimum distance from lesion in mm for AIF candidates (float) |
 | `n_aif_candidates` | `10` | Maximum averaged candidates; minimum configuration is 3 |
 | `aif_bat_alignment` | `auto` | Guarded AIF-to-tissue BAT alignment or `off` |
-| `lesion_mask` | `null` | Native-DCE lesion mask (statistics and AIF lesion exclusion) |
-| `nawm_mask` | `null` | Native-DCE NAWM mask |
-| `roi_mask` | `null` | Native-DCE statistics-only ROI mask |
+| `lesion_mask` | `null` | Lesion mask (statistics and AIF lesion exclusion; native-DCE space) |
+| `nawm_mask` | `null` | NAWM mask (native-DCE space) |
+| `roi_mask` | `null` | Statistics-only ROI mask (native-DCE space) |
 | `no_t1` | `false` | Skip VFA fitting and use field-strength default T1 |
 | `t1_map_file` | `null` | External T1 map in milliseconds, world-aligned to DCE |
 | `t1_method` | `nlls` | WLLS-initialized nonlinear fitting, or faster `wlls` |
@@ -216,15 +216,12 @@ DCE fields:
 | `ser_early_time_s` | `120.0` | Early SER sample time after the selected global contrast reference (s) |
 | `ser_late_time_s` | `320.0` | Late SER sample time after the selected global contrast reference (s) |
 | `r1_relaxivity` | `null` | Contrast-agent r1 override in s⁻¹ mM⁻¹ (float) |
-| `cbv_constraint_mode` | `auto` | Use qualified DSC CBV as a Bayesian vp prior with fixed 60% release-policy SD, or `skip`; NLLS remains unconstrained |
+| `cbv_constraint_mode` | `auto` | `auto` uses QC-accepted DSC nCBV as a broad Bayesian vp prior (60% relative SD); `skip` disables it. NLLS is always unconstrained |
 | `hematocrit` | `0.42` | Arterial hematocrit for plasma conversion (float) |
 | `no_dsc_validation` | `false` | Skip DSC–DCE cross-validation |
 | `smooth_fwhm` | `0.0` | Additional smoothed outputs in mm (float); 0 disables |
-| `underlays` | `[]` | Anatomical underlays used in QC |
+| `underlays` | `[]` | Anatomical images to save in DCE space (`t1w_precon`, `t1w_postcon`, `t1w_subtraction`, `flair_precon`, `flair_postcon`, `t2w`) |
 | `num_processes` | `0` | Per-pipeline process cap; 0 inherits `--nprocs` |
-
-SER is undefined unless both sampled enhancements exceed three precontrast
-temporal-noise standard deviations; this threshold is fixed rather than configurable.
 
 Anatomical fields:
 
@@ -242,11 +239,6 @@ Tumor-segmentation fields:
 | `nawm_erosion` | `2` | NAWM-mask erosion iterations (int) |
 | `nawm_min_voxels` | `500` | Minimum accepted NAWM voxels (int) |
 
-Masks (`lesion_mask`, `nawm_mask`, `roi_mask`) must already be in the native
-perfusion space. `underlays` accepts `t1w_precon`, `t1w_postcon`,
-`t1w_subtraction`, `flair_precon`, `flair_postcon`, and `t2w`. Unknown sections
-or fields fail before workflow construction.
-
 ## BIDS inputs
 
 A normal run requires `dataset_description.json` and an anatomical T1w image.
@@ -262,29 +254,23 @@ FLAIR.
 | VFA | `RepetitionTime`, `FlipAngle`; at least two distinct angles |
 | AFI | `RepetitionTime`, `FlipAngle` |
 
-For 3D DCE, use `RepetitionTime` for volume TR and
-`RepetitionTimeExcitation` for pulse-sequence TR. For 2D DCE,
-`RepetitionTime` may serve both roles.
+For 3D DCE, `RepetitionTime` is the volume TR and
+`RepetitionTimeExcitation` is the excitation TR. For 2D DCE,
+`RepetitionTime` may provide both.
 
-B1+ correction recognizes AFI (`*_TB1AFI`), Siemens precomputed flip-angle
-maps (`*_TB1TFL`), and vendor-neutral maps (`*_TB1map`). Encoding is inferred
-from suffix, `Units`, and pixel scale; use `--dce-b1-map-encoding` when metadata
-are ambiguous. AFI magnitude data are rigidly registered before the derived
-B1+ map is transferred between acquisition spaces. A precomputed B1+ map has
-no independent magnitude image for registration and must therefore already be
-world-aligned with the DCE series and, when VFA T1 mapping is used, the VFA
-acquisition. PMRIPrep uses the VFA acquisition closest to the DCE flip angle as
-the shared magnitude reference for VFA-to-DCE and AFI-to-VFA registration when
-those paths are active. Nominal flip-angle proximity is a contrast proxy; the
-sequences may still differ in TR, TE, and spoiling. PMRIPrep compares
-header-based and fitted candidates using relative foreground overlap.
-Foreground overlap ranks candidates but is not treated as an anatomical Dice
-measurement; registration QC records the selected transform's physical offset
-from header alignment.
+B1+ correction accepts AFI (`*_TB1AFI`), Siemens precomputed flip-angle maps
+(`*_TB1TFL`), and vendor-neutral maps (`*_TB1map`). The default
+`--dce-b1-map-encoding auto` infers precomputed-map encoding from the suffix,
+`Units`, and pixel scale. When inference is ambiguous, select
+`actual_flip_deci_deg`, `actual_flip_deg`, `percent`, or `ratio` explicitly.
+AFI magnitude data are registered automatically. A precomputed map has no
+independent magnitude image and must already be world-aligned with the DCE
+series. When VFA T1 mapping is used, PMRIPrep applies the inverse of the
+accepted VFA-to-DCE transform to transfer that map into VFA space.
 
-`ContrastBolusAgent` is recommended for relaxivity and AIF threshold lookup.
-When absent, PMRIPrep records and warns about its assumptions. DSC and DCE dose
-options are multipliers of the agent's standard administered dose.
+`ContrastBolusAgent` enables agent-specific relaxivity and AIF thresholds. When
+it is absent, PMRIPrep records and warns about the assumptions used. DSC and DCE
+dose options are multipliers of the agent's standard administered dose.
 
 ## Outputs and QC
 
