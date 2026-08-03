@@ -878,6 +878,9 @@ class TestDSCAgentGuardrails:
         msgs = validate_dsc_metadata(sc, dsc_config=cfg)
         codes = [m.code for m in msgs]
         assert "DSC_HIGH_R1_NO_PRELOAD" in codes
+        msg = next(m for m in msgs if m.code == "DSC_HIGH_R1_NO_PRELOAD")
+        assert "reduce the non-enhancing reference support" in msg.message
+        assert "unvalidated for agents" not in msg.message
 
     def test_high_r1_gadoquatrane_warning(self):
         sc = _valid_dsc_sidecar()
@@ -887,6 +890,34 @@ class TestDSCAgentGuardrails:
         msgs = validate_dsc_metadata(sc, dsc_config=cfg)
         codes = [m.code for m in msgs]
         assert "DSC_HIGH_R1_NO_PRELOAD" in codes
+
+    def test_high_r1_with_leakage_disabled_does_not_describe_bsw(self):
+        """An intentional correction opt-out reports retained contamination."""
+        sc = _valid_dsc_sidecar()
+        sc["contrast_agent"] = "gadopiclenol"
+        sc["flip_angle"] = 30.0
+        cfg = _make_dsc_config(
+            preload=0.0,
+            agent_standard_dose=0.05,
+            leakage_method="none",
+        )
+
+        msgs = validate_dsc_metadata(sc, dsc_config=cfg)
+
+        msg = next(m for m in msgs if m.code == "DSC_HIGH_R1_NO_PRELOAD")
+        assert "disabled by configuration" in msg.message
+        assert "BSW" not in msg.message
+        assert "unvalidated for agents" not in msg.message
+
+    def test_high_r1_rejects_unknown_leakage_policy(self):
+        """A future policy cannot silently inherit the disabled-policy text."""
+        sc = _valid_dsc_sidecar()
+        sc["contrast_agent"] = "gadopiclenol"
+        cfg = _make_dsc_config(preload=0.0, agent_standard_dose=0.05)
+        cfg.leakage_method = "experimental"  # type: ignore[assignment]
+
+        with pytest.raises(ValueError, match="Unsupported DSC leakage_method"):
+            validate_dsc_metadata(sc, dsc_config=cfg)
 
     def test_high_r1_auto_preload_warning(self):
         sc = _valid_dsc_sidecar()

@@ -331,14 +331,31 @@ def validate_dsc_metadata(
                     )
                     lead = "with no preload (user-specified)"
                     cta = ""
+                if dsc_config.leakage_method == "bsw":
+                    correction_detail = (
+                        "Strong T1 shine-through can reduce the non-enhancing "
+                        "reference support available to BSW leakage correction; "
+                        "correction will be skipped if that reference cannot be "
+                        "estimated reliably."
+                    )
+                elif dsc_config.leakage_method == "none":
+                    correction_detail = (
+                        "Leakage correction is disabled by configuration, so "
+                        "this contamination is not corrected and may bias DSC "
+                        "perfusion estimates."
+                    )
+                else:
+                    raise ValueError(
+                        "Unsupported DSC leakage_method="
+                        f"{dsc_config.leakage_method!r}"
+                    )
                 msgs.append(PreflightMessage(
                     level="warning",
                     code="DSC_HIGH_R1_NO_PRELOAD",
                     message=(
                         f"High-r1 agent ({agent_raw}, r1={r1:.1f} s-1/mM) "
                         f"{lead}. {detail} "
-                        f"BW leakage correction is unvalidated for agents "
-                        f"with r1 >= {HIGH_R1_THRESHOLD}.{cta}"
+                        f"{correction_detail}{cta}"
                     ),
                 ))
 
