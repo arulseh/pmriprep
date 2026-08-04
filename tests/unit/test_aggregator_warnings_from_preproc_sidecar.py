@@ -65,18 +65,18 @@ def test_recommendation_and_warnings_propagate(tmp_path: Path) -> None:
     assert "AIF good" not in rec["reason"]
 
     warnings = _collect_all_warnings(pipeline_data)
-    assert "DSC Perfusion" in warnings
-    assert "Brain mask in DSC space not available" in warnings["DSC Perfusion"]
-    assert "DCE Permeability" in warnings
+    assert "DSC Processing" in warnings
+    assert "Brain mask in DSC space not available" in warnings["DSC Processing"]
+    assert "DCE Processing" in warnings
     assert (
-        "Lesion mask in DCE space not available" in warnings["DCE Permeability"]
+        "Lesion mask in DCE space not available" in warnings["DCE Processing"]
     )
 
     prov = _collect_provenance_warnings(pipeline_data)
-    assert prov.get("DSC Perfusion") == ["DSC preload unknown"]
+    assert prov.get("DSC Processing") == ["DSC preload unknown"]
 
     acq = _collect_pipeline_warnings(pipeline_data, "acquisition_warnings")
-    assert acq.get("DSC Perfusion") == ["Low effective dose"]
+    assert acq.get("DSC Processing") == ["Low effective dose"]
 
     proc = _collect_pipeline_warnings(pipeline_data, "processing_warnings")
-    assert proc.get("DSC Perfusion") == ["AIF fell back to template"]
+    assert proc.get("DSC Processing") == ["AIF fell back to template"]

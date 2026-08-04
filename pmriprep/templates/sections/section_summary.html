@@ -62,7 +62,7 @@
         <h3>Pipelines</h3>
         <div class="metrics">
             <div class="metric">
-                <div class="metric-label">Anatomical</div>
+                <div class="metric-label">Anatomical Processing</div>
                 <div class="metric-value {% if ran_pipelines.anat %}pass{% else %}warn{% endif %}">{{ "Ran" if ran_pipelines.anat else "Skipped" }}</div>
             </div>
             <div class="metric">
@@ -70,11 +70,11 @@
                 <div class="metric-value {% if ran_pipelines.tumor_seg %}pass{% else %}warn{% endif %}">{{ "Ran" if ran_pipelines.tumor_seg else "Skipped" }}</div>
             </div>
             <div class="metric">
-                <div class="metric-label">DSC Perfusion</div>
+                <div class="metric-label">DSC Processing</div>
                 <div class="metric-value {% if ran_pipelines.dsc %}pass{% else %}warn{% endif %}">{{ "Ran" if ran_pipelines.dsc else "Skipped" }}</div>
             </div>
             <div class="metric">
-                <div class="metric-label">DCE Permeability</div>
+                <div class="metric-label">DCE Processing</div>
                 <div class="metric-value {% if ran_pipelines.dce %}pass{% else %}warn{% endif %}">{{ "Ran" if ran_pipelines.dce else "Skipped" }}</div>
             </div>
         </div>

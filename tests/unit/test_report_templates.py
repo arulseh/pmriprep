@@ -692,7 +692,7 @@ def test_parent_render_tolerates_missing_dsc_qc_sections(env):
 
     rendered = template.render(**_minimal_parent_ctx(dsc=dsc_ctx, dce=None))
 
-    assert "<h2>DSC Perfusion</h2>" in rendered
+    assert "<h2>DSC Processing</h2>" in rendered
 
 
 def test_dce_xval_error_hides_raw_exception(env):
@@ -865,7 +865,7 @@ def test_summary_renders_acquisition_warnings(env):
     """Acquisition advisory section renders when warnings present."""
     template = env.get_template("sections/section_summary.html")
     ctx = _summary_ctx(acquisition_warnings={
-        "DSC Perfusion": ["[DSC_LOW_EFFECTIVE_DOSE] Low dose warning"],
+        "DSC Processing": ["[DSC_LOW_EFFECTIVE_DOSE] Low dose warning"],
     })
     rendered = template.render(**ctx)
     assert "Acquisition Advisory" in rendered
@@ -884,7 +884,7 @@ def test_summary_renders_processing_warnings(env):
     """Processing advisory section renders when AIF fallback present."""
     template = env.get_template("sections/section_summary.html")
     ctx = _summary_ctx(processing_warnings={
-        "DSC Perfusion": ["AIF fell back to Parker population template"],
+        "DSC Processing": ["AIF fell back to Parker population template"],
     })
     rendered = template.render(**ctx)
     assert "Processing Advisory" in rendered

@@ -1147,10 +1147,10 @@ def _collect_all_warnings(
     """
     all_warnings: dict[str, list[str]] = {}
     display_names = {
-        "anat": "Anatomical",
+        "anat": "Anatomical Processing",
         "tumor_seg": "Tumor Segmentation",
-        "dsc": "DSC Perfusion",
-        "dce": "DCE Permeability",
+        "dsc": "DSC Processing",
+        "dce": "DCE Processing",
     }
     for name, data in pipeline_data.items():
         if data is None:
@@ -1183,8 +1183,8 @@ def _collect_provenance_warnings(
     """
     result: dict[str, list[str]] = {}
     display_names = {
-        "dsc": "DSC Perfusion",
-        "dce": "DCE Permeability",
+        "dsc": "DSC Processing",
+        "dce": "DCE Processing",
     }
     for name in ("dsc", "dce"):
         data = pipeline_data.get(name)
@@ -1216,8 +1216,8 @@ def _collect_pipeline_warnings(
     """
     result: dict[str, list[str]] = {}
     display_names = {
-        "dsc": "DSC Perfusion",
-        "dce": "DCE Permeability",
+        "dsc": "DSC Processing",
+        "dce": "DCE Processing",
     }
     for name in ("dsc", "dce"):
         data = pipeline_data.get(name)
