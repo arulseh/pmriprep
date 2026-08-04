@@ -560,9 +560,8 @@ def _build_dce_pk_map_meta(
 
     Extracts the per-map fragment for ``map_key`` (e.g. ``"ktrans"``)
     from each aggregate stats JSON and attaches as ``LesionStats``,
-    ``UserLesionStats``, or ``ROIStats``. Cross-modality fields
-    (``DSCDCECrossValCorrelation``, ``CBVNegativeFraction``) land only on
-    the maps they apply to.
+    ``UserLesionStats``, or ``ROIStats``. Map-specific QC fields such as
+    ``CBVNegativeFraction`` land only on the map they apply to.
     """
     from pmriprep.utils.lesion_stats import load_lesion_stats_fragment
     from pmriprep.utils.sidecar_builders import enrich_dce_pk_map_sidecar
@@ -1213,9 +1212,8 @@ def _add_dce_pk_map_sink(
     """Wire a DCE PK-map sink with flat-key cosmetic enrichment.
 
     Adds ``PK*`` keys + per-map ``LesionStats`` fragment via
-    ``_build_dce_pk_map_meta``. Cross-modality fields land only where
-    they apply (Ktrans → ``DSCDCECrossValCorrelation``; vp →
-    ``CBVNegativeFraction``).
+    ``_build_dce_pk_map_meta``. Map-specific QC fields land only where
+    they apply (vp → ``CBVNegativeFraction``).
     """
     meta = pe.Node(
         niu.Function(
@@ -1540,6 +1538,7 @@ def init_dce_datasinks_wf(
                 "preprocessing_qc_plot", "pk_modeling_qc_plot",
                 "pk_param_maps_qc_plot", "model_selection_qc_plot",
                 "dsc_dce_xval_plot",
+                "dsc_dce_region_xval_plot",
             ],
         ),
         name="inputnode",
@@ -2219,6 +2218,7 @@ def init_dce_datasinks_wf(
             ("pk_param_maps_qc_plot", "pk_param_maps_qc_plot"),
             ("model_selection_qc_plot", "model_selection_qc_plot"),
             ("dsc_dce_xval_plot", "dsc_dce_xval_plot"),
+            ("dsc_dce_region_xval_plot", "dsc_dce_region_xval_plot"),
         ]),
     ])
 

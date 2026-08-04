@@ -185,7 +185,6 @@ class QCStatus:
     WARN: Final[str] = "WARN"
     POOR: Final[str] = "POOR"
     UNKNOWN: Final[str] = "UNKNOWN"
-    PRIOR_INFORMED: Final[str] = "PRIOR-INFORMED"
 
     #: Severity ordering for worst-of comparisons.
     _SEVERITY: Final[dict[str, int]] = {
@@ -307,7 +306,6 @@ def get_status_color(status: str) -> str:
         QCStatus.WARN: COLORBLIND_PALETTE.warning,
         QCStatus.POOR: COLORBLIND_PALETTE.error,
         QCStatus.UNKNOWN: COLORBLIND_PALETTE.secondary,
-        QCStatus.PRIOR_INFORMED: COLORBLIND_PALETTE.secondary,
     }
     return status_colors.get(status, COLORBLIND_PALETTE.secondary)
 

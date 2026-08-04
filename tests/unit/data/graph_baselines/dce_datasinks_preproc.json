@@ -176,6 +176,12 @@
     ],
     [
       "inputnode",
+      "dsc_dce_region_xval_plot",
+      "figures_writer",
+      "dsc_dce_region_xval_plot"
+    ],
+    [
+      "inputnode",
       "dsc_dce_xval_plot",
       "figures_writer",
       "dsc_dce_xval_plot"
@@ -731,7 +737,7 @@
     "dce_mean_sink": "2c508d40de5d74bd594e2958531e3383de2f1b19b305122060d7a865478af65d",
     "dce_moco_meta": "5bbcf6e98686b06f51b99c164dc9eb5cb1d9dccb2b86321ea806312fc3a3431d",
     "dce_moco_sink": "2c508d40de5d74bd594e2958531e3383de2f1b19b305122060d7a865478af65d",
-    "ktrans_map_meta": "1c94533442eb68a4660356be7da79877233f24bcd85eacb51526424130306f6e",
+    "ktrans_map_meta": "e06e914f690f276584c4f474916486658700483fd3bd4113a21174e8ec69691d",
     "ktrans_map_sink": "2c508d40de5d74bd594e2958531e3383de2f1b19b305122060d7a865478af65d"
   },
   "nipype_version": "1.10.0",
@@ -882,7 +888,7 @@
       "subject_id": "0001"
     },
     "ktrans_map_meta": {
-      "function_str": "def _build_dce_pk_map_meta(\n    base: dict,\n    description: str,\n    units: str | None = None,\n    qc_metrics: dict | None = None,\n    map_key: str = \"\",\n    lesion_stats_json: str | None = None,\n    user_lesion_stats_json: str | None = None,\n    roi_stats_json: str | None = None,\n) -> dict:\n    \"\"\"Compose a DCE per-PK-map sidecar with cosmetic enrichment + stats fragments.\n\n    Extracts the per-map fragment for ``map_key`` (e.g. ``\"ktrans\"``)\n    from each aggregate stats JSON and attaches as ``LesionStats``,\n    ``UserLesionStats``, or ``ROIStats``. Cross-modality fields\n    (``DSCDCECrossValCorrelation``, ``CBVNegativeFraction``) land only on\n    the maps they apply to.\n    \"\"\"\n    from pmriprep.utils.lesion_stats import load_lesion_stats_fragment\n    from pmriprep.utils.sidecar_builders import enrich_dce_pk_map_sidecar\n\n    out = dict(base)\n    out[\"Description\"] = description\n    if units is not None:\n        out[\"Units\"] = units\n\n    fragment = load_lesion_stats_fragment(lesion_stats_json, map_key)\n\n    enrich_dce_pk_map_sidecar(\n        out,\n        qc_metrics=qc_metrics if isinstance(qc_metrics, dict) else None,\n        map_key=map_key,\n        lesion_fragment=fragment,\n    )\n\n    user_fragment = load_lesion_stats_fragment(\n        user_lesion_stats_json, map_key,\n    )\n    if user_fragment:\n        out[\"UserLesionStats\"] = user_fragment\n    roi_fragment = load_lesion_stats_fragment(roi_stats_json, map_key)\n    if roi_fragment:\n        out[\"ROIStats\"] = roi_fragment\n    return out\n",
+      "function_str": "def _build_dce_pk_map_meta(\n    base: dict,\n    description: str,\n    units: str | None = None,\n    qc_metrics: dict | None = None,\n    map_key: str = \"\",\n    lesion_stats_json: str | None = None,\n    user_lesion_stats_json: str | None = None,\n    roi_stats_json: str | None = None,\n) -> dict:\n    \"\"\"Compose a DCE per-PK-map sidecar with cosmetic enrichment + stats fragments.\n\n    Extracts the per-map fragment for ``map_key`` (e.g. ``\"ktrans\"``)\n    from each aggregate stats JSON and attaches as ``LesionStats``,\n    ``UserLesionStats``, or ``ROIStats``. Map-specific QC fields such as\n    ``CBVNegativeFraction`` land only on the map they apply to.\n    \"\"\"\n    from pmriprep.utils.lesion_stats import load_lesion_stats_fragment\n    from pmriprep.utils.sidecar_builders import enrich_dce_pk_map_sidecar\n\n    out = dict(base)\n    out[\"Description\"] = description\n    if units is not None:\n        out[\"Units\"] = units\n\n    fragment = load_lesion_stats_fragment(lesion_stats_json, map_key)\n\n    enrich_dce_pk_map_sidecar(\n        out,\n        qc_metrics=qc_metrics if isinstance(qc_metrics, dict) else None,\n        map_key=map_key,\n        lesion_fragment=fragment,\n    )\n\n    user_fragment = load_lesion_stats_fragment(\n        user_lesion_stats_json, map_key,\n    )\n    if user_fragment:\n        out[\"UserLesionStats\"] = user_fragment\n    roi_fragment = load_lesion_stats_fragment(roi_stats_json, map_key)\n    if roi_fragment:\n        out[\"ROIStats\"] = roi_fragment\n    return out\n",
       "map_key": "ktrans"
     },
     "ktrans_map_sink": {

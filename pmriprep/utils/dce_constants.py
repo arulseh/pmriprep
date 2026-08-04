@@ -1121,24 +1121,6 @@ NAWM_VP_REFERENCE: Final[float] = 0.010
 VP_MEDIAN_MIN: Final[float] = 0.005
 VP_MEDIAN_MAX: Final[float] = 0.03
 
-#: Acceptable tolerance on the post-DCE-fit vp / nCBV ratio, used by
-#: cross-validation. Target is NAWM_VP_REFERENCE (0.010). Tolerance is a
-#: factor-of-2 in either direction (log-symmetric) — the Hct ±20%, NAWM
-#: CBV ±15%, DCE NLLS noise ±25%, σ=0.40 posterior spread ±15% per-component
-#: RSS is ~40%, so factor-of-2 (±100%) is conservative for a
-#: gross-miscalibration gate rather than a biological-scatter flag.
-#: Values outside [0.005, 0.02] indicate the DCE posterior vp and DSC nCBV
-#: don't agree within expected tolerance — flag as validation mismatch.
-VP_NCBV_RATIO_MIN: Final[float] = 0.005
-VP_NCBV_RATIO_MAX: Final[float] = 0.02
-
-#: nCBV input range for cross-validation (per-voxel values to retain).
-#: Upper bound 5.0 covers hypervascular HGG tumor rim (clinical GBM
-#: rCBV reported up to ~6). Voxels beyond 5.0 are likely
-#: vessels or partial-volume artifacts and are excluded from ratio stats.
-MIN_NCBV_FOR_VALIDATION: Final[float] = 0.3
-MAX_NCBV_FOR_VALIDATION: Final[float] = 5.0
-
 #: Fixed relative SD for the quality-qualified DSC-informed DCE vp prior.
 #: This is the widest qualified release-policy width, not an uncertainty
 #: estimated from the subject's K2 distribution.

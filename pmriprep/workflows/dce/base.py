@@ -1081,23 +1081,27 @@ def init_dce_dsc_validation_wf(
     session_id: Optional[str],
     name: str = "dce_dsc_validation_wf",
 ) -> pe.Workflow:
-    """Build DSC-DCE quantitative cross-validation and its QC plot."""
+    """Build descriptive DSC-DCE vascular concordance and its QC plot."""
     workflow = pe.Workflow(name=name)
     inputnode = pe.Node(
         niu.IdentityInterface(fields=[
             "vp_file", "dsc_cbv_file", "dsc_ncbv_file", "brain_mask",
-            "pk_qc", "dsc_preload_configured", "model_selection_file",
+            "nawm_mask", "region_mask", "pk_qc", "dsc_preload_configured",
+            "model_selection_file",
         ]),
         name="inputnode",
     )
     outputnode = pe.Node(
-        niu.IdentityInterface(fields=["validation_result", "plot_file"]),
+        niu.IdentityInterface(
+            fields=["validation_result", "plot_file", "region_plot_file"]
+        ),
         name="outputnode",
     )
     validation = pe.Node(
         niu.Function(
             input_names=[
                 "vp_file", "dsc_cbv_file", "dsc_ncbv_file", "brain_mask",
+                "nawm_mask", "region_mask",
                 "no_dsc_validation", "pk_qc", "dsc_preload_configured",
                 "dce_model",
             ],
@@ -1111,9 +1115,10 @@ def init_dce_dsc_validation_wf(
         niu.Function(
             input_names=[
                 "vp_file", "dsc_ncbv_file", "brain_mask", "validation_result",
-                "subject_id", "session_id", "model_selection_file",
+                "region_mask", "subject_id", "session_id", "model_selection_file",
             ],
-            output_names=["plot_file"], function=_dsc_dce_xval_plot_node,
+            output_names=["plot_file", "region_plot_file"],
+            function=_dsc_dce_xval_plot_node,
         ),
         name="dsc_dce_xval_plot",
     )
@@ -1124,16 +1129,18 @@ def init_dce_dsc_validation_wf(
         (inputnode, validation, [
             ("vp_file", "vp_file"), ("dsc_cbv_file", "dsc_cbv_file"),
             ("dsc_ncbv_file", "dsc_ncbv_file"), ("brain_mask", "brain_mask"),
+            ("nawm_mask", "nawm_mask"), ("region_mask", "region_mask"),
             ("pk_qc", "pk_qc"),
             ("dsc_preload_configured", "dsc_preload_configured"),
         ]),
         (inputnode, plot, [
             ("vp_file", "vp_file"), ("dsc_ncbv_file", "dsc_ncbv_file"),
-            ("brain_mask", "brain_mask"),
+            ("brain_mask", "brain_mask"), ("region_mask", "region_mask"),
         ]),
         (validation, plot, [("validation_result", "validation_result")]),
         (validation, outputnode, [("validation_result", "validation_result")]),
         (plot, outputnode, [("plot_file", "plot_file")]),
+        (plot, outputnode, [("region_plot_file", "region_plot_file")]),
     ])
     if config.model == "auto":
         workflow.connect([
@@ -1690,6 +1697,7 @@ def init_dce_preproc_wf(
                 "brain_mask_filmstrip",
                 # DSC-DCE cross-validation plot
                 "dsc_dce_xval_plot",
+                "dsc_dce_region_xval_plot",
                 # Anatomical masks in DCE space
                 "brain_mask",
                 "nawm_mask",
@@ -2413,6 +2421,10 @@ def init_dce_preproc_wf(
         (dce_anatomical_masks_wf, dce_dsc_validation_wf, [
             ("outputnode.brain_mask", "inputnode.brain_mask"),
         ]),
+        (dce_lesion_masks_wf, dce_dsc_validation_wf, [
+            ("outputnode.nawm_mask", "inputnode.nawm_mask"),
+            ("outputnode.lesion_mask", "inputnode.region_mask"),
+        ]),
         # Feed resampled DSC CBV (deferred from Node 7c)
         (dce_dsc_resampling_wf, dce_dsc_validation_wf, [
             ("outputnode.dsc_cbv_file", "inputnode.dsc_cbv_file"),
@@ -2860,6 +2872,7 @@ def init_dce_preproc_wf(
         # DSC-DCE cross-validation plot
         (dce_dsc_validation_wf, outputnode, [
             ("outputnode.plot_file", "dsc_dce_xval_plot"),
+            ("outputnode.region_plot_file", "dsc_dce_region_xval_plot"),
         ]),
     ])
 

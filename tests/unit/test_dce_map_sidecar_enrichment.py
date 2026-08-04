@@ -1,9 +1,8 @@
 """PR1 (BIDS arc finishing): DCE per-PK-map sidecar enrichment.
 
-Asserts ``enrich_dce_pk_map_sidecar`` produces flat ``PK*`` keys, attaches
-cross-modality fields only on the maps they apply to (Ktrans →
-``DSCDCECrossValCorrelation``; vp → ``CBVNegativeFraction``), and accepts
-per-map ``LesionStats`` fragments.
+Asserts ``enrich_dce_pk_map_sidecar`` produces flat ``PK*`` keys, keeps
+cross-modal concordance in the QC record, attaches map-specific QC only where
+it applies (vp → ``CBVNegativeFraction``), and accepts per-map statistics.
 """
 from __future__ import annotations
 
@@ -49,25 +48,14 @@ def pk_qc_metrics() -> dict[str, Any]:
 
 
 class TestCrossModalityFields:
-    def test_dsc_dce_correlation_only_on_ktrans(self, base_sidecar, pk_qc_metrics):
-        out_ktrans = enrich_dce_pk_map_sidecar(
-            dict(base_sidecar), qc_metrics=pk_qc_metrics, map_key="ktrans",
-        )
-        out_ve = enrich_dce_pk_map_sidecar(
-            dict(base_sidecar), qc_metrics=pk_qc_metrics, map_key="ve",
-        )
-        assert out_ktrans["DSCDCECrossValCorrelation"] == pytest.approx(0.72)
-        # ve sidecar must not carry the cross-modality field
-        assert "DSCDCECrossValCorrelation" not in out_ve
-
-    def test_prior_informed_correlation_is_not_labeled_cross_validation(
+    def test_concordance_is_not_duplicated_into_map_sidecars(
         self, base_sidecar, pk_qc_metrics
     ):
-        pk_qc_metrics["dsc_dce_validation"]["prior_informed"] = True
-        out = enrich_dce_pk_map_sidecar(
-            dict(base_sidecar), qc_metrics=pk_qc_metrics, map_key="ktrans",
-        )
-        assert "DSCDCECrossValCorrelation" not in out
+        for map_key in ("ktrans", "ve", "vp"):
+            out = enrich_dce_pk_map_sidecar(
+                dict(base_sidecar), qc_metrics=pk_qc_metrics, map_key=map_key,
+            )
+            assert "DSCDCECrossValCorrelation" not in out
 
     def test_cbv_negative_only_on_vp(self, base_sidecar, pk_qc_metrics):
         out_vp = enrich_dce_pk_map_sidecar(

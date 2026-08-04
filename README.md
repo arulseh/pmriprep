@@ -218,7 +218,7 @@ DCE fields:
 | `ser_early_time_s` | `60.0` | Early SER sample time after the selected global contrast reference (s) |
 | `ser_late_time_s` | `300.0` | Late SER sample time after the selected global contrast reference (s) |
 | `cbv_constraint_mode` | `auto` | `auto` uses QC-accepted DSC nCBV as a broad Bayesian vp prior (60% relative SD); `skip` disables it. NLLS is always unconstrained |
-| `no_dsc_validation` | `false` | Skip DSC–DCE cross-validation |
+| `no_dsc_validation` | `false` | Skip descriptive DSC–DCE vascular concordance measurement |
 | `smooth_fwhm` | `0.0` | Additional smoothed outputs in mm (float); 0 disables |
 | `underlays` | `[]` | Anatomical images to save in DCE space (`t1w_precon`, `t1w_postcon`, `t1w_subtraction`, `flair_precon`, `flair_postcon`, `t2w`) |
 | `num_processes` | `0` | Per-pipeline process cap; 0 inherits `--nprocs` |

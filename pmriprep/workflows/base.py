@@ -2954,6 +2954,10 @@ def _connect_master_dce_outputs_and_datasinks(
             ("outputnode.t1_qc_plot", "inputnode.t1_qc_plot"),
             # DSC-DCE cross-validation plot
             ("outputnode.dsc_dce_xval_plot", "inputnode.dsc_dce_xval_plot"),
+            (
+                "outputnode.dsc_dce_region_xval_plot",
+                "inputnode.dsc_dce_region_xval_plot",
+            ),
             # Structural underlays
             ("outputnode.t1w_in_dce", "inputnode.t1w_in_dce"),
             ("outputnode.t1w_postcon_in_dce", "inputnode.t1w_postcon_in_dce"),

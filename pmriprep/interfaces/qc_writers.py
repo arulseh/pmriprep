@@ -434,6 +434,7 @@ _DCE_FIGURE_KEYS = {
     "pk_param_maps_qc": "pk_param_maps_qc_plot",
     "model_selection_qc": "model_selection_qc_plot",
     "dsc_dce_xval": "dsc_dce_xval_plot",
+    "dsc_dce_region_xval": "dsc_dce_region_xval_plot",
 }
 
 
@@ -467,6 +468,7 @@ class DCEFiguresWriterInputSpec(BaseInterfaceInputSpec):
     pk_param_maps_qc_plot = _optional_figure_file()
     model_selection_qc_plot = _optional_figure_file()
     dsc_dce_xval_plot = _optional_figure_file()
+    dsc_dce_region_xval_plot = _optional_figure_file()
 
 
 class DCEFiguresWriterOutputSpec(TraitedSpec):

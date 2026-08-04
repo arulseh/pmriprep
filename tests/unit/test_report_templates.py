@@ -105,7 +105,7 @@ def test_dce_prior_informed_diagnostic_is_not_labeled_validation(env):
     dce = {
         "qc_metrics": {
             "dsc_dce_validation": {
-                "status": "PRIOR-INFORMED",
+                "status": "PRIOR_INFORMED",
                 "prior_informed": True,
                 "prior_relative_sd": 0.5,
                 "prior_informed_fraction": 0.75,
@@ -116,18 +116,22 @@ def test_dce_prior_informed_diagnostic_is_not_labeled_validation(env):
                 ),
             },
         },
-        "images": {"dsc_dce_xval": "prior.png"},
+        "images": {
+            "dsc_dce_xval": "prior.png",
+            "dsc_dce_region_xval": "prior-region.png",
+        },
         "display_status": {},
     }
 
     rendered = template.render(dce=dce, dsc={"present": True})
 
-    assert "DSC-informed vp Prior Diagnostic" in rendered
-    assert "PRIOR-INFORMED" in rendered
+    assert "DSC-DCE Vascular Concordance" in rendered
+    assert "PRIOR_INFORMED" in rendered
     assert "Prior Relative SD" in rendered
     assert "50%" in rendered
     assert "75%" in rendered
     assert "No — vp used DSC nCBV" in rendered
+    assert "prior-region.png" in rendered
     _assert_in_order(
         rendered,
         '<div class="metric-label">Status</div>',
@@ -678,7 +682,7 @@ def test_parent_render_shows_dsc_blocks_when_dsc_present(env):
     ctx = _minimal_parent_ctx(dsc=dsc_ctx, dce=_dce_ctx_with_dsc_blocks())
     rendered = template.render(**ctx)
     assert "<h3>DSC CBV Constraint</h3>" in rendered
-    assert "<h3>DSC-DCE Cross-Validation</h3>" in rendered
+    assert "<h3>DSC-DCE Vascular Concordance</h3>" in rendered
 
 
 def test_parent_render_tolerates_missing_dsc_qc_sections(env):

@@ -606,6 +606,7 @@ FIGURE_NAME_MAP: dict[str, tuple[str, str]] = {
     "pk_param_maps_qc": ("pkparammaps", "dce"),
     "model_selection_qc": ("modelselection", "dce"),
     "dsc_dce_xval": ("dscxval", "dce"),
+    "dsc_dce_region_xval": ("dscxvalregion", "dce"),
     # Anatomical
     "brain_mask": ("brainmask", "anat"),
     "tissue_seg": ("tissueseg", "anat"),
@@ -640,7 +641,8 @@ _PIPELINE_FIGURE_KEYS: dict[str, list[str]] = {
     "dce": [
         "dce_brain_mask", "motion", "b1", "t1", "preprocessing_qc",
         "aif_curve", "aif_location", "aif_candidates", "pk_modeling_qc", "pk_param_maps_qc",
-        "model_selection_qc", "dsc_dce_xval", "registration",
+        "model_selection_qc", "dsc_dce_xval", "dsc_dce_region_xval",
+        "registration",
     ],
 }
 
@@ -1355,7 +1357,6 @@ def generate_unified_report(
             preproc = qc_metrics.get("preprocessing", {})
             b1 = qc_metrics.get("b1_mapping", {})
             pk = qc_metrics.get("pk_modeling", {})
-            xval = qc_metrics.get("dsc_dce_validation", {})
             cbv_c = qc_metrics.get("cbv_constraint", {})
             display_status = {
                 # Signal quality
@@ -1385,10 +1386,6 @@ def generate_unified_report(
                 # PK fit quality
                 "rsquared": _classify_metric(
                     pk.get("qc_voxel_rsquared"), 0.9, 0.7,
-                ),
-                # Cross-validation correlation
-                "xval_correlation": _classify_metric(
-                    xval.get("metrics", {}).get("correlation"), 0.7, 0.4
                 ),
                 # CBV constraint negative fraction (lower is better)
                 "cbv_negative": _classify_metric_inverse(

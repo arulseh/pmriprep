@@ -631,6 +631,12 @@
       "dsc_dce_xval_plot"
     ],
     [
+      "dsc_dce_xval_plot",
+      "region_plot_file",
+      "outputnode",
+      "dsc_dce_region_xval_plot"
+    ],
+    [
       "inputnode",
       "afi_4d_file",
       "b1_mapping",
@@ -1725,6 +1731,12 @@
     [
       "transform_nawm_mask",
       "out_file",
+      "dsc_dce_validation",
+      "nawm_mask"
+    ],
+    [
+      "transform_nawm_mask",
+      "out_file",
       "lesion_stats",
       "nawm_mask"
     ],
@@ -1757,6 +1769,18 @@
       "out_file",
       "dce_pk_maps_qc",
       "non_enhancing_mask_file"
+    ],
+    [
+      "transform_stats_lesion",
+      "lesion_mask_dce_file",
+      "dsc_dce_validation",
+      "region_mask"
+    ],
+    [
+      "transform_stats_lesion",
+      "lesion_mask_dce_file",
+      "dsc_dce_xval_plot",
+      "region_mask"
     ],
     [
       "transform_stats_lesion",
@@ -2028,8 +2052,10 @@
         "dsc_cbv_file",
         "dsc_ncbv_file",
         "dsc_preload_configured",
+        "nawm_mask",
         "no_dsc_validation",
         "pk_qc",
+        "region_mask",
         "vp_file"
       ],
       "output_names": [
@@ -2041,13 +2067,15 @@
         "brain_mask",
         "dsc_ncbv_file",
         "model_selection_file",
+        "region_mask",
         "session_id",
         "subject_id",
         "validation_result",
         "vp_file"
       ],
       "output_names": [
-        "plot_file"
+        "plot_file",
+        "region_plot_file"
       ]
     },
     "motion_qc_plot": {
@@ -2320,8 +2348,8 @@
     "dce_early_mean": "fd75a021c6ef482c605e9a7596c6c17381cd8996e63adafc61cb7f30031b6cb0",
     "dce_pk_fit_qc": "3206990b014d072947d06ee8c4dcef234d286f8524a901040e186022ced60581",
     "dce_pk_maps_qc": "22e20c8933642cab60dbf5a7dd5d676e89aa3136ac2308830a672f2d30d7f49a",
-    "dsc_dce_validation": "08386d6d85e3bccad9154cab18519e91ed67709d40b68e6ee16d0f1373054f67",
-    "dsc_dce_xval_plot": "eeb9578b0a27b124bb4657558e779e291a640fb3f2bbabe71eb3f3063e6fd51f",
+    "dsc_dce_validation": "5acd97bbad9b064b0a5ba5926194f2975ef64a312b43434f90f711fdbc3b93d0",
+    "dsc_dce_xval_plot": "4b3043f6b55becca0f1b47f258f81d1409455bf4f1fa0bea62b1be65fe452777",
     "motion_qc_plot": "36616aba56123999797c0b5e14d6ec9903e15bea44b1958923c89616b1fb1b2f",
     "preprocessing_qc": "f8f38c2ec15fc59432d72e59996e80c8d1cb4ede4505bf0ba33af3caa07b09a6",
     "reg_filmstrip": "275519aaedfc5af9379fc2e49fd0bee20c4629d63c5491d25d2e6e825fa1ca3f",
@@ -2631,7 +2659,6 @@
       "no_dsc_validation": false
     },
     "dsc_dce_xval_plot": {
-      "function_str": "def _dsc_dce_xval_plot_node(\n    vp_file: str | None = None,\n    dsc_ncbv_file: str | None = None,\n    brain_mask: str | None = None,\n    validation_result: dict[str, object] | None = None,\n    subject_id: str = \"\",\n    session_id: str = \"\",\n    model_selection_file: str | None = None,\n) -> str | None:\n    \"\"\"Generate the DSC-DCE cross-validation plot.\n\n    Parameters\n    ----------\n    vp_file : str or None\n        Path to the DCE vp (plasma volume) map.\n    dsc_ncbv_file : str or None\n        NAWM-normalized CBV. The plot is drawn on the dimensionless\n        nCBV scale with expected ratio =\n        ``NAWM_VP_REFERENCE``, matching the validation metrics.\n    brain_mask : str or None\n        Path to brain mask in DCE space.\n    validation_result : dict or None\n        Result dict from the DSC-DCE validation node.\n    subject_id : str, optional\n        Subject identifier.\n    session_id : str, optional\n        Session identifier.\n    model_selection_file : str or None\n        Path to the model selection map NIfTI (auto mode), for coloring.\n\n    Returns\n    -------\n    str or None\n        Path to plot PNG, or None if skipped.\n    \"\"\"\n    import os\n\n    if not vp_file or not brain_mask:\n        return None\n    if validation_result and validation_result.get(\"skipped\"):\n        return None\n    have_ncbv = bool(dsc_ncbv_file) and os.path.isfile(str(dsc_ncbv_file))\n    # Cross-validation requires NAWM-normalized CBV.\n    if not have_ncbv or dsc_ncbv_file is None:\n        return None\n\n    try:\n        import nibabel as nib  # type: ignore[import-untyped]\n        import numpy as np\n\n        from pmriprep.utils.dsc_dce_xval_plots import generate_xval_plot\n\n        cbv_source = dsc_ncbv_file\n\n        vp_data = np.asarray(\n            nib.load(vp_file).get_fdata(), dtype=np.float64  # type: ignore[attr-defined]\n        )\n        cbv_data = np.asarray(\n            nib.load(cbv_source).get_fdata(), dtype=np.float64  # type: ignore[attr-defined]\n        )\n        mask = np.asarray(\n            nib.load(brain_mask).get_fdata(), dtype=np.bool_  # type: ignore[attr-defined]\n        )\n\n        model_sel = None\n        if model_selection_file:\n            model_sel = np.asarray(\n                nib.load(model_selection_file).get_fdata(),  # type: ignore[attr-defined]\n                dtype=np.int8,\n            )\n\n        return generate_xval_plot(\n            vp_data=vp_data,\n            cbv_data=cbv_data,\n            mask=mask,\n            validation_result=validation_result or {},\n            subject_id=subject_id,\n            session_id=session_id,\n            model_selection=model_sel,\n        )\n    except Exception:\n        import logging\n        logging.getLogger(__name__).warning(\n            \"DSC-DCE xval plot failed\", exc_info=True\n        )\n        return None\n",
       "model_selection_file": null,
       "session_id": "0001",
       "subject_id": "0001"
@@ -2980,6 +3007,7 @@
     "dce_moco",
     "dce_to_t1w_xfm",
     "delta_bic_map",
+    "dsc_dce_region_xval_plot",
     "dsc_dce_xval_plot",
     "e_map",
     "flair_in_dce",

@@ -821,12 +821,14 @@ def _dsc_dce_validation_node(
     dsc_cbv_file: str | None = None,
     dsc_ncbv_file: str | None = None,
     brain_mask: str | None = None,
+    nawm_mask: str | None = None,
+    region_mask: str | None = None,
     no_dsc_validation: bool = False,
     pk_qc: dict[str, object] | str | None = None,
     dsc_preload_configured: bool | None = None,
     dce_model: str | None = None,
 ) -> dict[str, object]:
-    """Run DSC-DCE cross-validation.
+    """Measure descriptive DSC-DCE vascular concordance.
 
     Parameters
     ----------
@@ -835,12 +837,15 @@ def _dsc_dce_validation_node(
     dsc_cbv_file : str or None
         Path to resampled DSC CBV map in DCE space.
     dsc_ncbv_file : str or None
-        Optional NAWM-normalized CBV. When provided, validation
-        uses the nCBV-anchored expected ratio (``NAWM_VP_REFERENCE``).
+        NAWM-normalized CBV in DCE space.
     brain_mask : str or None
         Path to brain mask in DCE space.
+    nawm_mask : str or None
+        Path to NAWM mask in DCE space for normalization.
+    region_mask : str or None
+        Optional lesion-region mask in DCE space.
     no_dsc_validation : bool
-        If True, skip cross-validation.
+        If True, skip concordance measurement.
     pk_qc : dict or str or None
         Full ``pk_modeling.qc_metrics`` dict. The function uses retained-fit
         accounting to determine whether the output is actually prior-informed
@@ -926,7 +931,7 @@ def _dsc_dce_validation_node(
     if no_dsc_validation:
         return {
             "skipped": True,
-            "status": "skipped",
+            "status": "SKIPPED",
             "reason": "Validation skipped or missing data",
         }
 
@@ -944,12 +949,12 @@ def _dsc_dce_validation_node(
     if not vp_file:
         return {
             "skipped": True,
-            "status": "skipped",
+            "status": "SKIPPED",
             "reason": "Validation skipped or missing data",
         }
 
     # Synthetic-AIF CBV does not have the subject-specific scale required by
-    # the NAWM-anchored cross-validation ratio bands.
+    # a subject-specific vascular scale.
     if constraint_skip_reason == SKIP_REASON_SYNTHETIC_AIF:
         return {
             "skipped": True,
@@ -966,17 +971,13 @@ def _dsc_dce_validation_node(
             "skip_reason": SKIP_REASON_NO_DSC_RUN,
         }
 
-    # Cross-validation is defined for NAWM-normalized CBV; the expected
-    # vp-to-CBV ratio is undefined for unanchored relative CBV.
-    if dsc_ncbv_file is None or not have_ncbv:
+    if dsc_ncbv_file is None or not have_ncbv or not nawm_mask:
         return {
             "skipped": True,
             "status": "SKIPPED",
             "reason": (
-                "DSC-DCE xval skipped: nCBV unavailable (no NAWM mask). "
-                "Pipeline does not produce absolute mL/100g CBV, so the "
-                "literature-derived expected ratio against rel-AUC-CBV "
-                "is undefined. Provide a NAWM mask to enable xval."
+                "DSC-DCE concordance skipped: a DCE-space NAWM mask and "
+                "NAWM-normalized DSC CBV are required."
             ),
         }
 
@@ -1004,6 +1005,8 @@ def _dsc_dce_validation_node(
             vp_path=vp_file,
             ncbv_path=dsc_ncbv_file,
             mask_path=brain_mask,
+            nawm_mask_path=nawm_mask,
+            region_mask_path=region_mask,
             prior_informed=prior_informed,
             dsc_preload_configured=dsc_preload_configured,
             prior_relative_sd=prior_relative_sd,
@@ -1018,7 +1021,7 @@ def _dsc_dce_validation_node(
         )
         return {
             "skipped": True,
-            "status": "error",
+            "status": "ERROR",
             "reason": str(e),
         }
 
@@ -1068,23 +1071,24 @@ def _dsc_dce_xval_plot_node(
     vp_file: str | None = None,
     dsc_ncbv_file: str | None = None,
     brain_mask: str | None = None,
+    region_mask: str | None = None,
     validation_result: dict[str, object] | None = None,
     subject_id: str = "",
     session_id: str = "",
     model_selection_file: str | None = None,
-) -> str | None:
-    """Generate the DSC-DCE cross-validation plot.
+) -> tuple[str | None, str | None]:
+    """Generate whole-brain and optional lesion-region concordance plots.
 
     Parameters
     ----------
     vp_file : str or None
         Path to the DCE vp (plasma volume) map.
     dsc_ncbv_file : str or None
-        NAWM-normalized CBV. The plot is drawn on the dimensionless
-        nCBV scale with expected ratio =
-        ``NAWM_VP_REFERENCE``, matching the validation metrics.
+        NAWM-normalized CBV in DCE space.
     brain_mask : str or None
         Path to brain mask in DCE space.
+    region_mask : str or None
+        Optional lesion-region mask in DCE space.
     validation_result : dict or None
         Result dict from the DSC-DCE validation node.
     subject_id : str, optional
@@ -1096,21 +1100,23 @@ def _dsc_dce_xval_plot_node(
 
     Returns
     -------
-    str or None
-        Path to plot PNG, or None if skipped.
+    tuple of (str or None, str or None)
+        Whole-brain and optional lesion-region plot paths.
     """
     import os
 
     if not vp_file or not brain_mask:
-        return None
+        return None, None
     if validation_result and validation_result.get("skipped"):
-        return None
+        return None, None
     have_ncbv = bool(dsc_ncbv_file) and os.path.isfile(str(dsc_ncbv_file))
-    # Cross-validation requires NAWM-normalized CBV.
+    # Concordance requires NAWM-normalized CBV.
     if not have_ncbv or dsc_ncbv_file is None:
-        return None
+        return None, None
 
     try:
+        from pathlib import Path
+
         import nibabel as nib  # type: ignore[import-untyped]
         import numpy as np
 
@@ -1118,8 +1124,9 @@ def _dsc_dce_xval_plot_node(
 
         cbv_source = dsc_ncbv_file
 
+        vp_img = nib.load(vp_file)
         vp_data = np.asarray(
-            nib.load(vp_file).get_fdata(), dtype=np.float64  # type: ignore[attr-defined]
+            vp_img.get_fdata(), dtype=np.float64  # type: ignore[attr-defined]
         )
         cbv_data = np.asarray(
             nib.load(cbv_source).get_fdata(), dtype=np.float64  # type: ignore[attr-defined]
@@ -1127,6 +1134,12 @@ def _dsc_dce_xval_plot_node(
         mask = np.asarray(
             nib.load(brain_mask).get_fdata(), dtype=np.bool_  # type: ignore[attr-defined]
         )
+        region = None
+        if region_mask and os.path.isfile(str(region_mask)):
+            region = np.asarray(
+                nib.load(region_mask).get_fdata(),  # type: ignore[attr-defined]
+                dtype=np.bool_,
+            )
 
         model_sel = None
         if model_selection_file:
@@ -1135,21 +1148,43 @@ def _dsc_dce_xval_plot_node(
                 dtype=np.int8,
             )
 
-        return generate_xval_plot(
+        zooms = vp_img.header.get_zooms()  # type: ignore[attr-defined]
+        whole_brain_plot = generate_xval_plot(
             vp_data=vp_data,
             cbv_data=cbv_data,
-            mask=mask,
+            brain_mask=mask,
             validation_result=validation_result or {},
+            voxel_sizes_mm=tuple(float(x) for x in zooms[:3]),  # type: ignore[arg-type]
             subject_id=subject_id,
             session_id=session_id,
             model_selection=model_sel,
+            output_path=str(Path.cwd() / "dsc_dce_xval_wholebrain.png"),
         )
+        region_plot = None
+        if region is not None and (validation_result or {}).get("region_metrics"):
+            region_plot = generate_xval_plot(
+                vp_data=vp_data,
+                cbv_data=cbv_data,
+                brain_mask=mask,
+                domain_mask=region,
+                domain_label=str(
+                    (validation_result or {}).get("region_label", "Lesion region")
+                ),
+                metrics_key="region_metrics",
+                validation_result=validation_result or {},
+                voxel_sizes_mm=tuple(float(x) for x in zooms[:3]),  # type: ignore[arg-type]
+                subject_id=subject_id,
+                session_id=session_id,
+                model_selection=model_sel,
+                output_path=str(Path.cwd() / "dsc_dce_xval_region.png"),
+            )
+        return whole_brain_plot, region_plot
     except Exception:
         import logging
         logging.getLogger(__name__).warning(
             "DSC-DCE xval plot failed", exc_info=True
         )
-        return None
+        return None, None
 
 
 def _collect_qc_metrics(

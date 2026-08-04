@@ -75,9 +75,7 @@ AIF_BASELINE_RETURN_MARGINAL: float = 0.30
 #: NAWM-normalized). NAWM=1.0 by construction; normal whole-brain median
 #: ~0.7–1.5; tumor-heavy subjects up to ~2–3. Outside this range, the
 #: normalization reference or the underlying CBV map is compromised.
-#: Note: MAX_NCBV_FOR_VALIDATION=5.0 is a PER-VOXEL upper bound that
-#: accommodates hypervascular HGG tumor-rim (clinical GBM rCBV up
-#: to ~6); this median range is for the whole-brain distribution.
+#: This median range is for the whole-brain distribution.
 CBV_MEDIAN_RANGE: tuple[float, float] = (0.3, 3.0)
 
 #: Maximum fraction of negative CBV values before quality downgrade

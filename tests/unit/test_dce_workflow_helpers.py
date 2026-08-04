@@ -290,6 +290,7 @@ class TestDscDceValidationNodeDispatch:
                 dsc_cbv_file=nonexistent_cbv,
                 dsc_ncbv_file=ncbv_file,
                 brain_mask=mask_file,
+                nawm_mask=mask_file,
                 pk_qc={"dsc_cbv_constraint": {"mode": "skip"}},
             )
 
@@ -331,6 +332,7 @@ class TestDscDceValidationNodeDispatch:
                 dsc_cbv_file=cbv_file,
                 dsc_ncbv_file=ncbv_file,
                 brain_mask=mask_file,
+                nawm_mask=mask_file,
                 pk_qc={"dsc_cbv_constraint": {"mode": "skip"}},
             )
 
@@ -446,10 +448,11 @@ class TestDscDceValidationNodeDispatch:
                     dsc_cbv_file=None,
                     dsc_ncbv_file=ncbv_file,
                     brain_mask=mask_file,
+                    nawm_mask=mask_file,
                     pk_qc={"dsc_cbv_constraint": {"mode": "skip"}},
                 )
 
-        assert out["status"] == "error"
+        assert out["status"] == "ERROR"
         assert "simulated validation failure" in out["reason"]
         assert any(
             "simulated validation failure" in r.message for r in caplog.records
@@ -469,6 +472,7 @@ class TestDscDceValidationNodeDispatch:
             vp_file=vp_file,
             dsc_ncbv_file=ncbv_file,
             brain_mask=mask_file,
+            nawm_mask=mask_file,
             pk_qc={"dsc_cbv_constraint": {"mode": "soft", "vp_uncertainty": 0.5}},
         )
 
@@ -489,6 +493,7 @@ class TestDscDceValidationNodeDispatch:
             vp_file=vp_file,
             dsc_ncbv_file=ncbv_file,
             brain_mask=mask_file,
+            nawm_mask=mask_file,
             pk_qc={
                 "dsc_cbv_constraint": {"mode": "soft", "vp_uncertainty": 0.5},
                 "n_constrained": 41,
@@ -536,6 +541,7 @@ class TestDscDceValidationNodeDispatch:
                 dsc_cbv_file=None,
                 dsc_ncbv_file=ncbv_file,
                 brain_mask=mask_file,
+                nawm_mask=mask_file,
                 pk_qc=pk_qc,
             )
 
@@ -570,6 +576,7 @@ class TestDscDceValidationNodeDispatch:
                 vp_file=vp_file,
                 dsc_ncbv_file=ncbv_file,
                 brain_mask=mask_file,
+                nawm_mask=mask_file,
                 pk_qc=pk_qc,
             )
 
@@ -593,23 +600,33 @@ def test_xval_plot_node_emits_prior_diagnostic(
     vp_file = _write_nifti(tmp_path / "vp.nii.gz", vp)
     ncbv_file = _write_nifti(tmp_path / "ncbv.nii.gz", ncbv)
     mask_file = _write_nifti(tmp_path / "mask.nii.gz", np.ones(shape))
+    region_file_in = _write_nifti(tmp_path / "region.nii.gz", np.ones(shape))
     monkeypatch.chdir(tmp_path)
 
-    out_file = _dsc_dce_xval_plot_node(
+    out_file, region_file = _dsc_dce_xval_plot_node(
         vp_file=vp_file,
         dsc_ncbv_file=ncbv_file,
         brain_mask=mask_file,
+        region_mask=region_file_in,
         validation_result={
-            "status": "PRIOR-INFORMED",
+            "status": "PRIOR_INFORMED",
             "prior_informed": True,
             "prior_relative_sd": 0.5,
             "prior_informed_fraction": 0.75,
             "metrics": {"correlation": 1.0, "pearson_correlation": 1.0},
+            "region_metrics": {"correlation": 1.0, "pearson_correlation": 1.0},
+            "region_label": "Lesion region",
+            "normalization": {
+                "dce_vp_nawm_median": 0.01,
+                "dsc_ncbv_nawm_median": 1.0,
+            },
         },
     )
 
     assert out_file is not None
     assert Path(out_file).is_file()
+    assert region_file is not None
+    assert Path(region_file).is_file()
 
 
 # =============================================================================

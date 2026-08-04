@@ -182,6 +182,12 @@
     ],
     [
       "dce_wf",
+      "outputnode.dsc_dce_region_xval_plot",
+      "dce_datasinks_wf",
+      "inputnode.dsc_dce_region_xval_plot"
+    ],
+    [
+      "dce_wf",
       "outputnode.dsc_dce_xval_plot",
       "dce_datasinks_wf",
       "inputnode.dsc_dce_xval_plot"
