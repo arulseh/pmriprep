@@ -104,3 +104,27 @@ def test_empty_search_stops_before_scoring(
 
     assert result.candidates == []
     assert result.postfilter_diagnostics is None
+
+
+def test_all_candidates_inside_lesion_margin_exhaust_tier() -> None:
+    """A fully excluded spatial pool proceeds to the next cascade tier."""
+    detector = AIFDetection()
+    lesion_mask = np.zeros((20, 20, 20), dtype=np.uint8)
+    lesion_mask[10, 10, 10] = 1
+    candidates = [
+        (0.1, (10, 10, 11), {}),
+        (0.2, (10, 11, 10), {}),
+        (0.3, (11, 10, 10), {}),
+    ]
+
+    filtered, metadata = detector._apply_post_scoring_filters(
+        candidates,
+        lesion_mask,
+        np.eye(4),
+        (1.0, 1.0, 1.0),
+        lesion_min_distance_mm=15.0,
+    )
+
+    assert filtered == []
+    assert metadata["n_distance_excluded"] == 3
+    assert metadata["all_candidates_excluded_by_distance"] is True

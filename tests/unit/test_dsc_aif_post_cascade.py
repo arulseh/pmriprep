@@ -50,6 +50,7 @@ def _cascade(*, accepted: bool = True) -> dsc_aif._CascadeDetectionResult:
         tiers_attempted=["atlas_strict"],
         tier_provenance={"atlas_strict": 1} if accepted else {},
         postfilter_diagnostics={"atlas_strict": {"aif_n_after_filters": 1}},
+        spatial_filter_diagnostics={},
     )
 
 
@@ -186,6 +187,7 @@ def test_gamma_fit_refreshes_final_peak_provenance(
 
 def test_cascade_exhaustion_builds_complete_synthetic_qc(
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """No-candidate fallback stamps acquisition and postfilter QC in one state."""
     detector = dsc_aif.AIFDetection()
@@ -196,9 +198,18 @@ def test_cascade_exhaustion_builds_complete_synthetic_qc(
         lambda *args: (synthetic, {"synthetic_peak": 8.0}),
     )
 
-    state = detector._finalize_post_cascade(
-        _context(), _cascade(accepted=False), 3, logging.getLogger(__name__)
+    exhausted = _cascade(accepted=False)._replace(
+        spatial_filter_diagnostics={
+            "atlas_strict": {
+                "n_distance_excluded": 3,
+                "all_candidates_excluded_by_distance": True,
+            }
+        }
     )
+    with caplog.at_level(logging.WARNING):
+        state = detector._finalize_post_cascade(
+            _context(), exhausted, 3, logging.getLogger(__name__)
+        )
 
     assert state.detection_level == "synthetic"
     assert state.candidate_count == 0
@@ -211,3 +222,29 @@ def test_cascade_exhaustion_builds_complete_synthetic_qc(
     assert state.qc_metrics["cascade_postfilter_diags"] == (
         _cascade(accepted=False).postfilter_diagnostics
     )
+    assert "exhausted all candidate tiers" in caplog.text
+    assert "using the synthetic AIF fallback" in caplog.text
+    assert "3 candidates excluded by lesion distance" in caplog.text
+    assert state.qc_metrics["cascade_spatial_filter_diags"] == (
+        exhausted.spatial_filter_diagnostics
+    )
+
+
+def test_cascade_exhaustion_logs_before_disabled_fallback_error(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Terminal detection failure is explicit when fallback is disabled."""
+    detector = dsc_aif.AIFDetection()
+
+    with caplog.at_level(logging.ERROR), pytest.raises(
+        RuntimeError, match="failed at all levels"
+    ):
+        detector._finalize_post_cascade(
+            _context(disable_fallback=True),
+            _cascade(accepted=False),
+            3,
+            logging.getLogger(__name__),
+        )
+
+    assert "exhausted all candidate tiers" in caplog.text
+    assert "synthetic fallback is disabled" in caplog.text

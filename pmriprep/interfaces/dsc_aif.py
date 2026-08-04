@@ -177,6 +177,7 @@ class _CascadeDetectionResult(NamedTuple):
     tiers_attempted: list[str]
     tier_provenance: dict[str, int]
     postfilter_diagnostics: dict[str, dict[str, Any]]
+    spatial_filter_diagnostics: dict[str, dict[str, Any]]
 
 
 class _FinalizedDetectedAIF(NamedTuple):
@@ -1558,8 +1559,6 @@ class AIFDetection(BaseInterface):
         -------
         tuple of (filtered_candidates, filter_metadata)
         """
-        import logging
-
         meta: dict[str, Any] = {}
 
         # --- Step 4.5: Distance-based lesion filtering ---
@@ -1590,14 +1589,11 @@ class AIFDetection(BaseInterface):
             if filtered:
                 top_candidates = filtered
             else:
-                # All excluded — keep originals with warning
-                logging.getLogger(__name__).warning(
-                    "All %d AIF candidates were <%.0fmm from lesion. "
-                    "Keeping closest candidate(s).",
-                    len(top_candidates), lesion_min_distance_mm,
-                )
-                for _, _, m in top_candidates:
-                    m["lesion_distance_warning"] = True
+                # A fully excluded tier is normal cascade behavior. Return an
+                # empty pool so the next tier is attempted; terminal fallback
+                # or failure is reported explicitly downstream.
+                meta["all_candidates_excluded_by_distance"] = True
+                top_candidates = []
 
         # --- Step 4.6: Soft contralateral hemisphere penalty ---
         # Always applied when a lesion mask is present. Uses enhancing_mask
@@ -3230,6 +3226,7 @@ class AIFDetection(BaseInterface):
         # accept from, so the synthetic-fallback branch can surface why
         # each tier failed.
         postfilter_diags_per_tier: dict[str, dict[str, Any]] = {}
+        spatial_filter_diags_per_tier: dict[str, dict[str, Any]] = {}
         if aif_method == "synthetic":
             pass  # Go directly to synthetic
         else:
@@ -3250,6 +3247,7 @@ class AIFDetection(BaseInterface):
             )
 
             for crit, roi, level_name, is_atlas in attempts:
+                tiers_attempted.append(level_name)
                 frac = _CASCADE_N_CANDIDATES_FRACTION.get(crit, 0.6)
                 level_n_candidates = max(
                     MIN_AIF_CANDIDATES_ACCEPT,
@@ -3267,6 +3265,8 @@ class AIFDetection(BaseInterface):
                 )
                 scored = tier_candidates.candidates
                 f_meta = tier_candidates.filter_metadata
+                if "n_distance_excluded" in f_meta:
+                    spatial_filter_diags_per_tier[level_name] = dict(f_meta)
                 if tier_candidates.postfilter_diagnostics is not None:
                     postfilter_diags_per_tier[level_name] = (
                         tier_candidates.postfilter_diagnostics
@@ -3276,8 +3276,6 @@ class AIFDetection(BaseInterface):
 
                 if cascade_initial_level is None:
                     cascade_initial_level = level_name
-                tiers_attempted.append(level_name)
-
                 # Sort survivors by cost (lowest first).
                 scored.sort(key=lambda x: x[0])
 
@@ -3413,6 +3411,7 @@ class AIFDetection(BaseInterface):
             tiers_attempted,
             dict(union_state.tier_provenance),
             postfilter_diags_per_tier,
+            spatial_filter_diags_per_tier,
         )
 
         return cascade
@@ -3485,6 +3484,21 @@ class AIFDetection(BaseInterface):
             baseline_frames = finalized.baseline_frames
             candidate_baseline_frames = finalized.baseline_frames
         elif not context.disable_fallback:
+            if context.aif_method != "synthetic":
+                distance_excluded = sum(
+                    int(metrics.get("n_distance_excluded", 0))
+                    for metrics in cascade.spatial_filter_diagnostics.values()
+                )
+                distance_detail = (
+                    f" ({distance_excluded} candidates excluded by lesion distance)"
+                    if distance_excluded
+                    else ""
+                )
+                logger.warning(
+                    "DSC AIF detection exhausted all candidate tiers; "
+                    "using the synthetic AIF fallback%s",
+                    distance_detail,
+                )
             aif_curve, synth_metrics = self._prepare_cached_synthetic_fallback(
                 conc_data,
                 context.brain_mask,
@@ -3501,12 +3515,20 @@ class AIFDetection(BaseInterface):
             _clear_stale_real_aif_keys(qc_metrics)
             baseline_frames = aif_baseline_frames
         else:
+            logger.error(
+                "DSC AIF detection exhausted all candidate tiers and "
+                "synthetic fallback is disabled"
+            )
             raise RuntimeError(
                 "AIF detection failed at all levels and "
                 "synthetic fallback is disabled"
             )
 
         qc_metrics["detection_method"] = detection_level
+        if cascade.spatial_filter_diagnostics:
+            qc_metrics["cascade_spatial_filter_diags"] = dict(
+                cascade.spatial_filter_diagnostics
+            )
         qc_metrics["quality_score"] = quality_score
         if detection_level != "synthetic":
             qc_metrics["n_aif_voxels_selected"] = len(top_candidates)

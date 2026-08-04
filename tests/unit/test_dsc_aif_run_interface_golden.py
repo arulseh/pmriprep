@@ -122,6 +122,7 @@ def _cascade(*, accepted: bool = True) -> dsc_aif._CascadeDetectionResult:
         tiers_attempted=["atlas_strict"],
         tier_provenance={"atlas_strict": 1} if accepted else {},
         postfilter_diagnostics={"atlas_strict": {"aif_n_after_filters": 1}},
+        spatial_filter_diagnostics={},
     )
 
 

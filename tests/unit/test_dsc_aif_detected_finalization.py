@@ -79,6 +79,7 @@ def test_detected_aif_finalization_builds_mask_and_cascade_qc(
                 "aif_n_filtered_tail": 2,
             },
         },
+        spatial_filter_diagnostics={},
     )
     context = SimpleNamespace(
         concentration=np.zeros((3, 3, 3, 8)),
