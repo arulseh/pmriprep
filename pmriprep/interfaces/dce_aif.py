@@ -1664,7 +1664,7 @@ class AIFDetection(BaseInterface):
     - Cluster-based spatial selection (26-connectivity)
     - Inverse-score weighted averaging (single-voxel default, optional ROI expansion)
     - Savitzky-Golay smoothing
-    - Contralateral hemisphere preference and distance-based lesion filtering
+    - Distance-based lesion filtering
 
     Parameters
     ----------
@@ -2338,110 +2338,6 @@ class AIFDetection(BaseInterface):
         x_lo = max(0, x_center - x_exclude)
         x_hi = min(nx, x_center + x_exclude + 1)
         mask[x_lo:x_hi, :, :] = 0
-
-    # -----------------------------------------------------------------
-    # Contralateral Hemisphere Preference (Phase 6)
-    # -----------------------------------------------------------------
-
-    @staticmethod
-    def _determine_tumor_laterality(
-        lesion_mask: npt.NDArray[Any],
-        affine: npt.NDArray[Any],
-    ) -> str | None:
-        """Determine tumor laterality from lesion mask center-of-mass.
-
-        Parameters
-        ----------
-        lesion_mask : np.ndarray
-            3D lesion mask.
-        affine : np.ndarray
-            4x4 NIfTI affine matrix (voxel→RAS world).
-
-        Returns
-        -------
-        str or None
-            'left', 'right', 'bilateral', or None if no lesion.
-        """
-        lesion_coords = np.argwhere(lesion_mask > 0.5)
-        if len(lesion_coords) == 0:
-            return None
-
-        # Center of mass in voxel space
-        com_voxel = np.mean(lesion_coords, axis=0)
-
-        # Convert to RAS world coordinates
-        com_world = affine[:3, :3] @ com_voxel + affine[:3, 3]
-        x_ras = com_world[0]
-
-        # Check extent: bilateral if lesion spans >10mm past midline on both sides
-        all_world = (affine[:3, :3] @ lesion_coords.T).T + affine[:3, 3]
-        x_min, x_max = float(np.min(all_world[:, 0])), float(np.max(all_world[:, 0]))
-
-        if x_min < -10.0 and x_max > 10.0:
-            return "bilateral"
-        elif x_ras < 0:
-            return "left"
-        else:
-            return "right"
-
-    @staticmethod
-    def _filter_candidates_by_hemisphere(
-        candidates: list[tuple[int, int, int]],
-        scores: list[float],
-        metrics_list: list[dict[str, float]],
-        brain_shape: tuple[int, ...],
-        affine: npt.NDArray[Any],
-        tumor_laterality: str | None,
-    ) -> tuple[list[tuple[int, int, int]], list[float], list[dict[str, float]]]:
-        """Apply soft score penalty to ipsilateral candidates.
-
-        For non-bilateral tumors, subtracts a score penalty from
-        ipsilateral candidates rather than hard-filtering them. This
-        preserves bilateral representation while preferring contralateral
-        voxels.
-
-        Parameters
-        ----------
-        candidates : list
-            Candidate voxel coordinates.
-        scores : list
-            Candidate scores (higher is better).
-        metrics_list : list
-            Candidate metrics.
-        brain_shape : tuple
-            Spatial dimensions.
-        affine : np.ndarray
-            Affine matrix.
-        tumor_laterality : str or None
-            'left', 'right', 'bilateral', or None.
-
-        Returns
-        -------
-        tuple of (list, list, list)
-            All (candidates, scores, metrics) with ipsilateral scores
-            penalized. Not sorted (caller handles sorting).
-        """
-        if not candidates or tumor_laterality is None or tumor_laterality == "bilateral":
-            return candidates, scores, metrics_list
-
-        # Soft penalty for ipsilateral candidates
-        # DCE scores are 0-1, proportional to DSC 3.0/~15.0
-        IPSILATERAL_PENALTY_SCORE = 0.12
-
-        adjusted_scores = list(scores)
-        for i, (x, y, z) in enumerate(candidates):
-            voxel = np.array([x, y, z], dtype=float)
-            world = affine[:3, :3] @ voxel + affine[:3, 3]
-            x_ras = world[0]
-
-            is_ipsilateral = (
-                (tumor_laterality == "left" and x_ras < 0)
-                or (tumor_laterality == "right" and x_ras > 0)
-            )
-            if is_ipsilateral:
-                adjusted_scores[i] = max(0.01, adjusted_scores[i] - IPSILATERAL_PENALTY_SCORE)
-
-        return candidates, adjusted_scores, metrics_list
 
     @staticmethod
     def _select_top_candidates(
@@ -4587,14 +4483,6 @@ class AIFDetection(BaseInterface):
                 "AIF cascade: all %d tiers exhausted without producing "
                 "any anchored keeper. Falling back to Parker population AIF.",
                 cascade_tiers_attempted,
-            )
-
-        # ===== Phase 6: Soft contralateral penalty =====
-        if candidates and lesion_mask is not None:
-            tumor_lat = self._determine_tumor_laterality(lesion_mask, affine)
-            candidates, scores, metrics_list = self._filter_candidates_by_hemisphere(
-                candidates, scores, metrics_list,
-                conc_data.shape[:3], affine, tumor_lat,
             )
 
         # ===== Select top-scoring candidates =====

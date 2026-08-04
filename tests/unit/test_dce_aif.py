@@ -1908,9 +1908,11 @@ class TestDCEAIFDetectionLesionMaskFileTrait:
 # =============================================================================
 
 from pmriprep.interfaces.dce_aif import (  # noqa: E402
+    AIFParams,
     CascadeResult,
     GateDecision,
     GateQC,
+    LoadedInputs,
     PoolGateOutcome,
     TierResult,
     _select_worst_for_trim,
@@ -3149,19 +3151,71 @@ class TestCascadeGateDecisions:
 # =============================================================================
 
 
-def test_select_top_candidates_does_not_reserve_hemispheres() -> None:
-    """Candidate selection follows score order without a hemisphere quota."""
-    candidates = [(1, 0, 0), (2, 0, 0), (3, 0, 0), (9, 0, 0)]
-    scores = [0.9, 0.8, 0.7, 0.1]
+def test_detection_has_no_hemisphere_score_prior(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A unilateral lesion cannot demote the best-scoring ipsilateral voxel."""
+    shape = (20, 20, 20)
+    affine = np.eye(4)
+    affine[0, 3] = -10.0
+    loaded = LoadedInputs(
+        conc_data=np.zeros((*shape, 20), dtype=float),
+        affine=affine,
+        header=None,
+        brain_mask=np.ones(shape, dtype=np.uint8),
+    )
+    lesion = np.zeros(shape, dtype=np.uint8)
+    lesion[15, 10, 10] = 1  # right-sided tumor in RAS space
+    candidates = [
+        (15, 10, 10),  # ipsilateral and highest-scoring
+        (5, 10, 10),
+        (4, 10, 10),
+        (3, 10, 10),
+    ]
+    scores = [0.90, 0.85, 0.80, 0.75]
     metrics = [{"index": float(index)} for index in range(4)]
-
-    selected, selected_scores, selected_metrics = AIFDetection._select_top_candidates(
-        candidates, scores, metrics, n_select=3
+    cascade = CascadeResult(
+        candidates=candidates,
+        scores=scores,
+        metrics_list=metrics,
+        detection_method="atlas",
+        atlas_tier_used="MCA_ACA_dce_strict",
+        cascade_tiers_attempted=1,
+        anchor_outcomes=[],
+        tier_result=None,
+        tier_gate_decisions=[],
+    )
+    detector = AIFDetection()
+    detector.inputs.hematocrit = 0.42
+    detector.inputs.mr_acquisition_type = "3D"
+    monkeypatch.setattr(
+        detector, "_calculate_tissue_ttp_reference", lambda *args: 8.0,
+    )
+    monkeypatch.setattr(
+        detector, "_run_two_pass_cascade", lambda *args, **kwargs: cascade,
     )
 
-    assert selected == candidates[:3]
-    assert selected_scores == scores[:3]
-    assert selected_metrics == metrics[:3]
+    state = detector._run_detection(
+        loaded,
+        atlas_masks=[],
+        atlas_names=[],
+        lesion_mask=lesion,
+        params=AIFParams(
+            aif_method="auto",
+            n_candidates=2,
+            baseline_frames=5,
+            field_strength=3.0,
+            tr=2.0,
+            target_peak=0.0,
+            lesion_distance=15.0,
+            n_timepoints=20,
+            blood_t1=1.6,
+            voxel_sizes=(1.0, 1.0, 1.0),
+        ),
+    )
+
+    assert state.candidates == candidates[:2]
+    assert state.scores == scores[:2]
 
 
 class TestScoreAndGatePool:
