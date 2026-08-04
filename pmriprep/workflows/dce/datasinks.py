@@ -321,10 +321,10 @@ def _build_model_free_extra(
     ser_qc = (qc_metrics or {}).get("ser", {})
     out.update({
         "EarlySampleTimeSecondsAfterReference": float(
-            dce.get("ser_early_time_s", 120.0)
+            dce.get("ser_early_time_s", 60.0)
         ),
         "LateSampleTimeSecondsAfterReference": float(
-            dce.get("ser_late_time_s", 320.0)
+            dce.get("ser_late_time_s", 300.0)
         ),
         "ReferenceFrame": ser_qc.get("reference_frame"),
         "ReferenceTimeSeconds": ser_qc.get("reference_time_s"),
@@ -639,10 +639,10 @@ def _build_dce_smoothed_meta(
             "InputCurve": "motion_corrected_signal",
             "Formula": "(Searly-S0)/(Slate-S0)",
             "EarlySampleTimeSecondsAfterReference": float(
-                dce.get("ser_early_time_s", 120.0)
+                dce.get("ser_early_time_s", 60.0)
             ),
             "LateSampleTimeSecondsAfterReference": float(
-                dce.get("ser_late_time_s", 320.0)
+                dce.get("ser_late_time_s", 300.0)
             ),
             "ReferenceSelection": "earlier_of_baseline_count_and_detected_arrival",
             "SampleInterpolation": "linear",

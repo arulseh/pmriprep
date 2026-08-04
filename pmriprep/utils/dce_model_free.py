@@ -202,8 +202,8 @@ def compute_signal_enhancement_ratio(
     time_points: npt.NDArray[np.floating],
     bolus_arrival_frame: int = 0,
     baseline_frames: int = 5,
-    early_time_s: float = 120.0,
-    late_time_s: float = 320.0,
+    early_time_s: float = 60.0,
+    late_time_s: float = 300.0,
 ) -> npt.NDArray[np.floating]:
     """Compute signal enhancement ratio at fixed post-reference times.
 

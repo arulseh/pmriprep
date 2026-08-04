@@ -2253,8 +2253,8 @@ class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
         usedefault=True,
         desc="tSNR threshold for voxel inclusion (0 = no threshold)",
     )
-    ser_early_time_s = traits.Float(120.0, usedefault=True)
-    ser_late_time_s = traits.Float(320.0, usedefault=True)
+    ser_early_time_s = traits.Float(60.0, usedefault=True)
+    ser_late_time_s = traits.Float(300.0, usedefault=True)
     baseline_frames = traits.Int(
         0,
         usedefault=True,

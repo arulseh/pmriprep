@@ -128,8 +128,8 @@ class DCEConfig:
     baseline_frames: int = 0  # 0 = auto-detect
     dose: float = 1.0
     tsnr_threshold: float = 0.0  # 0 = no threshold
-    ser_early_time_s: float = 120.0
-    ser_late_time_s: float = 320.0
+    ser_early_time_s: float = 60.0
+    ser_late_time_s: float = 300.0
 
     # Model settings
     model: str = "auto"

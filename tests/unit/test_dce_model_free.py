@@ -306,8 +306,8 @@ class TestSER:
         values = []
         for duration_s in (350.0, 600.0):
             signal, time_points = self._signal(duration_s)
-            signal[..., 12] = 140.0
-            signal[..., 32] = 120.0
+            signal[..., 6] = 140.0
+            signal[..., 30] = 120.0
             values.append(compute_signal_enhancement_ratio(signal, time_points)[0, 0, 0])
         assert values == pytest.approx([2.0, 2.0])
 
@@ -325,7 +325,7 @@ class TestSER:
 
     def test_incomplete_late_sample_is_undefined(self) -> None:
         """An acquisition that misses the late sample returns NaN."""
-        signal, time_points = self._signal(duration_s=300.0)
+        signal, time_points = self._signal(duration_s=290.0)
         result = compute_signal_enhancement_ratio(signal, time_points)
         assert np.all(np.isnan(result))
 
@@ -349,8 +349,8 @@ class TestSER:
         """Receiver gain scales enhancement and baseline noise equally."""
         signal, time_points = self._signal()
         signal[..., :5] = np.asarray([99.0, 100.0, 101.0, 100.0, 100.0])
-        signal[..., 12] = 140.0
-        signal[..., 32] = 120.0
+        signal[..., 6] = 140.0
+        signal[..., 30] = 120.0
         original = compute_signal_enhancement_ratio(signal, time_points)
         scaled = compute_signal_enhancement_ratio(signal * 100.0, time_points)
         np.testing.assert_allclose(original, scaled)
@@ -358,16 +358,16 @@ class TestSER:
     def test_uses_baseline_subtracted_signal_enhancement(self) -> None:
         """SER is the ratio of early and late enhancement above S0."""
         signal, time_points = self._signal()
-        signal[..., 12] = 140.0
-        signal[..., 32] = 120.0
+        signal[..., 6] = 140.0
+        signal[..., 30] = 120.0
         result = compute_signal_enhancement_ratio(signal, time_points)
         assert result[0, 0, 0] == pytest.approx(2.0)
 
     def test_ratio_is_uncapped_and_negative_denominator_is_retained(self) -> None:
         """Stored SER preserves finite ratios instead of clipping or censoring."""
         signal, time_points = self._signal()
-        signal[..., 12] = 150.0
-        signal[..., 32] = 99.0
+        signal[..., 6] = 150.0
+        signal[..., 30] = 99.0
         result = compute_signal_enhancement_ratio(signal, time_points)
         assert result[0, 0, 0] == pytest.approx(-50.0)
 

@@ -2873,8 +2873,8 @@
       "model": "auto",
       "n_procs": 1,
       "save_fitted_curves": false,
-      "ser_early_time_s": 120.0,
-      "ser_late_time_s": 320.0,
+      "ser_early_time_s": 60.0,
+      "ser_late_time_s": 300.0,
       "sloppy": false,
       "tsnr_threshold": 0.0
     },

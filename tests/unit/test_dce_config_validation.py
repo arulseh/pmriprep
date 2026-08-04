@@ -53,6 +53,11 @@ class TestConcentrationParameterValidation:
 class TestSERConfigValidation:
     """Protocol-defined SER sample times must be finite and ordered."""
 
+    def test_defaults_use_one_and_five_minute_samples(self) -> None:
+        cfg = DCEConfig()
+        assert cfg.ser_early_time_s == 60.0
+        assert cfg.ser_late_time_s == 300.0
+
     def test_custom_protocol_is_accepted(self) -> None:
         cfg = DCEConfig(
             ser_early_time_s=90,
