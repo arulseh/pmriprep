@@ -816,20 +816,12 @@ class AIFDetection(BaseInterface):
         return "left" if x_mm < 0 else "right"
 
     @staticmethod
-    def _filter_candidates_by_hemisphere(
+    def _count_candidates_by_hemisphere(
         top_candidates: list[tuple[float, tuple[int, int, int], dict[str, Any]]],
         affine: npt.NDArray[Any],
         tumor_laterality: str,
-    ) -> tuple[
-        list[tuple[float, tuple[int, int, int], dict[str, Any]]],
-        int,
-        int,
-    ]:
-        """Apply soft cost penalty to ipsilateral candidates.
-
-        For non-bilateral tumors, adds a cost penalty to ipsilateral
-        candidates rather than hard-filtering them. This preserves
-        bilateral representation while preferring contralateral voxels.
+    ) -> tuple[int, int]:
+        """Count candidate laterality without changing selection scores.
 
         Parameters
         ----------
@@ -842,25 +834,19 @@ class AIFDetection(BaseInterface):
 
         Returns
         -------
-        tuple of (filtered, n_contra, n_ipsi)
-            filtered : all candidates with ipsilateral cost penalty,
-                sorted by adjusted cost.
+        tuple of (n_contra, n_ipsi)
             n_contra : count of contralateral candidates.
             n_ipsi : count of ipsilateral candidates.
         """
         if tumor_laterality == "bilateral":
-            return top_candidates, 0, 0
+            return 0, 0
 
         contra_side = "right" if tumor_laterality == "left" else "left"
 
-        # Soft penalty for ipsilateral candidates (cost range ~2-15)
-        IPSILATERAL_PENALTY = 3.0
+        n_contra = 0
+        n_ipsi = 0
 
-        contra: list[tuple[float, tuple[int, int, int], dict[str, Any]]] = []
-        adjusted_ipsi: list[tuple[float, tuple[int, int, int], dict[str, Any]]] = []
-
-        for entry in top_candidates:
-            cost, coord, metrics = entry
+        for _, coord, _ in top_candidates:
             coord_homog = np.array(
                 [coord[0], coord[1], coord[2], 1.0]
             )
@@ -868,18 +854,11 @@ class AIFDetection(BaseInterface):
             cand_side = "left" if world[0] < 0 else "right"
 
             if cand_side == contra_side:
-                contra.append(entry)
+                n_contra += 1
             else:
-                adjusted_ipsi.append(
-                    (cost + IPSILATERAL_PENALTY, coord, metrics)
-                )
+                n_ipsi += 1
 
-        n_contra = len(contra)
-        n_ipsi = len(adjusted_ipsi)
-
-        combined = contra + adjusted_ipsi
-        combined.sort(key=lambda x: x[0])
-        return combined, n_contra, n_ipsi
+        return n_contra, n_ipsi
 
     # -----------------------------------------------------------------
     # Step 3: Spatial exclusions
@@ -1516,7 +1495,7 @@ class AIFDetection(BaseInterface):
         return scored, n_available
 
     # -----------------------------------------------------------------
-    # Step 8b: Post-scoring filters (distance + contralateral)
+    # Step 8b: Post-scoring distance filter and laterality accounting
     # -----------------------------------------------------------------
 
     def _apply_post_scoring_filters(
@@ -1531,11 +1510,11 @@ class AIFDetection(BaseInterface):
         list[tuple[float, tuple[int, int, int], dict[str, Any]]],
         dict[str, Any],
     ]:
-        """Apply distance and soft contralateral filters after scoring.
+        """Apply distance filtering and record candidate laterality.
 
         Step 4.5: Distance-based lesion exclusion.
-        Step 4.6: Soft contralateral penalty (always applied when a
-        lesion mask is present; no hard filter).
+        Step 4.6: Descriptive laterality accounting when a unilateral
+        lesion mask is present. Candidate costs and ordering are unchanged.
 
         Parameters
         ----------
@@ -1595,10 +1574,9 @@ class AIFDetection(BaseInterface):
                 meta["all_candidates_excluded_by_distance"] = True
                 top_candidates = []
 
-        # --- Step 4.6: Soft contralateral hemisphere penalty ---
-        # Always applied when a lesion mask is present. Uses enhancing_mask
-        # for laterality if provided (avoids bilateral misclassification
-        # from dilated whole-tumor masks crossing midline).
+        # --- Step 4.6: Descriptive candidate laterality accounting ---
+        # Uses enhancing_mask for laterality if provided (avoids bilateral
+        # misclassification from dilated whole-tumor masks crossing midline).
         tumor_laterality: Optional[str] = None
         n_contra = 0
         n_ipsi = 0
@@ -1615,11 +1593,7 @@ class AIFDetection(BaseInterface):
                 laterality_mask, affine
             )
             if tumor_laterality is not None and tumor_laterality != "bilateral":
-                (
-                    top_candidates,
-                    n_contra,
-                    n_ipsi,
-                ) = self._filter_candidates_by_hemisphere(
+                n_contra, n_ipsi = self._count_candidates_by_hemisphere(
                     top_candidates, affine, tumor_laterality,
                 )
 
@@ -3698,7 +3672,7 @@ class AIFDetection(BaseInterface):
         1. Build attempts list: atlas (strict/relaxed/permissive) then
            brain (relaxed/permissive).
         2. Each attempt: prepare mask -> find candidates -> score ->
-           post-scoring filters (distance + contralateral).
+           post-scoring distance filtering and laterality accounting.
         3. On success, finalize metrics and break.
         4. Synthetic fallback if all attempts fail.
         """

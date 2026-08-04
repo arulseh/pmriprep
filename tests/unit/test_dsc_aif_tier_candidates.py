@@ -128,3 +128,23 @@ def test_all_candidates_inside_lesion_margin_exhaust_tier() -> None:
     assert filtered == []
     assert metadata["n_distance_excluded"] == 3
     assert metadata["all_candidates_excluded_by_distance"] is True
+
+
+def test_laterality_accounting_does_not_change_candidate_ranking() -> None:
+    """Hemisphere labels are descriptive and cannot alter AIF scores."""
+    candidates = [
+        (1.0, (8, 0, 0), {}),   # ipsilateral and best-ranked
+        (1.5, (-8, 0, 0), {}),  # contralateral
+        (2.0, (9, 0, 0), {}),   # ipsilateral
+    ]
+
+    original_costs = [candidate[0] for candidate in candidates]
+    n_contra, n_ipsi = AIFDetection._count_candidates_by_hemisphere(
+        candidates,
+        np.eye(4),
+        tumor_laterality="right",
+    )
+
+    assert [candidate[0] for candidate in candidates] == original_costs
+    assert n_contra == 1
+    assert n_ipsi == 2
