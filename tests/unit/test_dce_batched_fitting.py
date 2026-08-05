@@ -1458,7 +1458,8 @@ class TestChunkedMultiproc:
         import pmriprep.interfaces.dce_compute as dce_compute
         from pmriprep.interfaces.dce_compute import ComputeDCEMaps, VoxelInput
 
-        caplog.set_level("INFO", logger=dce_compute.__name__)
+        caplog.set_level("INFO", logger="nipype.interface")
+        assert dce_compute.logger.name == "nipype.interface"
 
         batched_results = [
             {

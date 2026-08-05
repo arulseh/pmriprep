@@ -15,7 +15,7 @@ from pmriprep.models.bayesian_utils import TransformType
 from pmriprep.models.dsc.batched_fitting import DSCBatchedFitResult, batched_dsc_vi_fit
 from pmriprep.utils.dsc_constants import EPSILON_CONCENTRATION
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("nipype.interface")
 
 def _build_neighborhood_graph(
     mask_coords: tuple[npt.NDArray, npt.NDArray, npt.NDArray],
@@ -383,6 +383,7 @@ def batched_dsc_spatial_vi_fit(
             posteriors, adj, degree, aK
         )
 
+        logger.info("SVB sweep %d/%d", sweep + 1, n_spatial_sweeps)
         logger.debug(
             "SVB sweep %d/%d: aK = %s",
             sweep + 1, n_spatial_sweeps,

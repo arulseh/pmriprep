@@ -37,7 +37,7 @@ from pmriprep.utils.dce_constants import (
 )
 from pmriprep.utils.dce_voxel_prep import prepare_voxel_for_fitting
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("nipype.interface")
 
 
 def _is_degenerate_dce_fit(

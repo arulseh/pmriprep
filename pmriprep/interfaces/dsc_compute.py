@@ -33,7 +33,7 @@ from pmriprep.utils.dsc_constants import (
 )
 from pmriprep.utils.dsc_signal import compute_psr_legacy, compute_ttp_legacy
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("nipype.interface")
 
 # ---------------------------------------------------------------------------
 # Module-level worker for parallel parametric deconvolution

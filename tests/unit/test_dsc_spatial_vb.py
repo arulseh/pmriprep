@@ -764,7 +764,9 @@ class TestSpatialVIIntegration:
         )
         assert result.params["cbf"].shape == (1,)
 
-    def test_non_sloppy_inner_iterations(self) -> None:
+    def test_non_sloppy_inner_iterations(
+        self, caplog: pytest.LogCaptureFixture,
+    ) -> None:
         """Non-sloppy spatial VI (4 inner iters) runs without error."""
         from pmriprep.models.bayesian_utils import build_priors_from_params
         from pmriprep.models.dsc.spatial_vb import batched_dsc_spatial_vi_fit
@@ -778,25 +780,28 @@ class TestSpatialVIIntegration:
         fitting_bounds = [(p.bounds[0], p.bounds[1]) for p in fitting_defs]
         cp_times = np.array(model._control_point_times, dtype=np.float64)
 
-        result = batched_dsc_spatial_vi_fit(
-            model_type="cpi",
-            tissue_curves=tissue_curves,
-            aif=aif,
-            time_points=t,
-            mask_coords=mask_coords,
-            spatial_shape=(3, 3, 1),
-            prior_means_nat=np.array([p.mean for p in priors]),
-            prior_stds_nat=np.array([p.std for p in priors]),
-            transforms=[p.transform for p in priors],
-            upper_bounds=[p.upper_bound for p in priors],
-            fitting_param_names=fitting_names,
-            fitting_bounds=fitting_bounds,
-            control_point_times=cp_times,
-            toeplitz_matrix=toeplitz,
-            prior_means_transformed=np.array([p.mean_transformed for p in priors]),
-            prior_stds_transformed=np.array([p.std_transformed for p in priors]),
-            sloppy=False,
-            n_spatial_sweeps=2,
-        )
+        with caplog.at_level("INFO", logger="nipype.interface"):
+            result = batched_dsc_spatial_vi_fit(
+                model_type="cpi",
+                tissue_curves=tissue_curves,
+                aif=aif,
+                time_points=t,
+                mask_coords=mask_coords,
+                spatial_shape=(3, 3, 1),
+                prior_means_nat=np.array([p.mean for p in priors]),
+                prior_stds_nat=np.array([p.std for p in priors]),
+                transforms=[p.transform for p in priors],
+                upper_bounds=[p.upper_bound for p in priors],
+                fitting_param_names=fitting_names,
+                fitting_bounds=fitting_bounds,
+                control_point_times=cp_times,
+                toeplitz_matrix=toeplitz,
+                prior_means_transformed=np.array([p.mean_transformed for p in priors]),
+                prior_stds_transformed=np.array([p.std_transformed for p in priors]),
+                sloppy=False,
+                n_spatial_sweeps=2,
+            )
         assert result.params["cbf"].shape == (9,)
         assert np.all(np.isfinite(result.params["cbf"]))
+        assert "SVB: ordinary-VI warm start" in caplog.text
+        assert "SVB sweep 1/2" in caplog.text
