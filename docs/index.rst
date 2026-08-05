@@ -10,7 +10,7 @@ produces BIDS-Derivatives-style outputs with HTML QC reports.
 Features
 --------
 
-- **DSC processing** -- five deconvolution methods (sSVD, oSVD, Tikhonov, CPI, Vascular) and K2 leakage correction.
+- **DSC processing** -- five deconvolution methods (sSVD, oSVD, Tikhonov, CPI, Vascular) and BSW leakage correction.
 - **DCE processing** -- four pharmacokinetic models (Tofts, Extended Tofts, Patlak, 2CXM) plus model-free maps.
 - **Inference** -- nonlinear least squares and variational inference, plus spatial variational Bayes for DSC vascular models.
 - **Automatic AIF detection** -- multi-level arterial input function detection with population fallback, or a user-supplied external AIF.
