@@ -707,6 +707,7 @@ def test_parent_render_shows_dsc_blocks_when_dsc_present(env):
     assert "<h3>NAWM-Normalized vp–nCBV Concordance</h3>" in rendered
     assert '<div class="metric" style="grid-column: 1 / -1;">' in rendered
     assert '<div class="metric-label">Reason</div>' in rendered
+    assert '<div class="metric-note">No DSC data were available for a vp prior.</div>' in rendered
     assert "No DSC data were available for a vp prior." in rendered
 
 
