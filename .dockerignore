@@ -20,9 +20,6 @@ htmlcov/
 # Data directories
 work/
 sourcedata/
-test_outputs/
-bak/
-debug/
 
 # Nipype
 crash-*.txt

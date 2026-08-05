@@ -20,9 +20,6 @@ htmlcov/
 # Raw data
 work/
 sourcedata/
-test_outputs/
-bak/
-debug/
 
 # Documentation site
 docs/_build/
