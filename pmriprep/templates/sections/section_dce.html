@@ -863,9 +863,9 @@
             {% if (xval.interpretation is defined and xval.interpretation) or xval.prior_informed|default(false) %}
             <div class="metric" style="grid-column: 1 / -1;">
                 <div class="metric-label">Notes</div>
-                <div class="metric-value">
+                <div class="metric-note">
                     {% if xval.interpretation is defined and xval.interpretation %}{{ xval.interpretation }}{% endif %}
-                    {% if xval.prior_informed|default(false) %}{% if xval.interpretation is defined and xval.interpretation %}<br>{% endif %}The figure uses {{ xval.smoothing_sigma_mm }} mm-smoothed jointly valid maps, including retained fits that did not use the prior. The departure metrics use unsmoothed retained fits in which the prior was applied.{% endif %}
+                    {% if xval.prior_informed|default(false) %}{% if xval.interpretation is defined and xval.interpretation %}<br>{% endif %}The figure uses {{ xval.smoothing_sigma_mm }} mm-smoothed jointly-valid maps, including retained fits that did not use the prior. The prior-departure summaries above use only unsmoothed retained fits that used the prior.{% endif %}
                 </div>
             </div>
             {% endif %}

@@ -119,7 +119,7 @@ def test_dce_prior_informed_diagnostic_is_not_labeled_validation(env):
                 "metrics": {},
                 "interpretation": (
                     "DSC nCBV supplied the vp prior used by retained Bayesian fits; "
-                    "the comparison is not independent"
+                    "the comparison is not independent."
                 ),
             },
         },
@@ -148,8 +148,9 @@ def test_dce_prior_informed_diagnostic_is_not_labeled_validation(env):
     assert "&gt; 2 Prior SD" in rendered
     assert "3%" in rendered
     assert '<div class="metric-label">Notes</div>' in rendered
+    assert '<div class="metric-note">' in rendered
     assert "including retained fits that did not use the prior" in rendered
-    assert "departure metrics use unsmoothed retained fits" in rendered
+    assert "prior-departure summaries above use only unsmoothed retained fits" in rendered
     assert "Preload Config" not in rendered
     assert "DSC-informed vp prior applied" not in rendered
     assert "prior-region.png" in rendered

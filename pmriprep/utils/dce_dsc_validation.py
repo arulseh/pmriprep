@@ -245,7 +245,7 @@ def validate_vp_cbv(
 
     result.interpretation = (
         "DSC nCBV supplied the vp prior used by retained Bayesian fits; the "
-        "comparison is not independent"
+        "comparison is not independent."
         if prior_informed
         else "Independent descriptive DSC-DCE concordance after within-subject "
         "NAWM normalization and matched 1 mm Gaussian smoothing"
