@@ -87,7 +87,4 @@ jobs:
 
       # Push the already-tested image (no rebuild)
       - name: Push tested image
-        run: |
-          echo "${{ steps.meta.outputs.tags }}" | while read -r tag; do
-            docker push "$tag"
-          done
+        run: docker image push --all-tags "${REGISTRY}/${IMAGE_NAME}"
