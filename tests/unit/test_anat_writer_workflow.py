@@ -76,7 +76,10 @@ def test_anat_datasinks_wf_minimal(tmp_path: Path, minimal_bids: Path) -> None:
     inputs.t1w_preproc = str(deriv_t1w)
     inputs.brain_mask = str(deriv_mask)
     inputs.acpc_xfm = str(fake_xfm)
-    inputs.qc_metrics = {"resolution_tier": "excellent"}
+    inputs.qc_metrics = {
+        "resolution_tier": "excellent",
+        "brain_extraction": {"tool": "hdbet", "brain_volume_ml": 42.0},
+    }
 
     wf.run()
 
@@ -110,6 +113,8 @@ def test_anat_datasinks_wf_minimal(tmp_path: Path, minimal_bids: Path) -> None:
     mask_sidecar = json.loads(mask_json.read_text())
     assert "SkullStripped" not in mask_sidecar
     assert mask_sidecar["ProcessingSteps"][-1] == "Brain-mask estimation"
+    assert mask_sidecar["BrainExtractionTool"] == "hdbet"
+    assert mask_sidecar["BrainExtractionVolume"] == 42.0
 
     # dataset_description.json written
     dd = out_root / "pmriprep" / "dataset_description.json"

@@ -366,6 +366,8 @@ class TestBoilerplateConditionalMoco:
 
         text = _build_dce_boilerplate({"preprocessing": {"motion_applied": False}})
         assert "motion-corrected using MCFLIRT" not in text
+        assert "DCE images were assumed" in text
+        assert "DCE permeability images" not in text
         assert "assumed" in text and "no additional motion correction" in text
 
 

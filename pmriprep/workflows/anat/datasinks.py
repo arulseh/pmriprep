@@ -214,6 +214,7 @@ def _add_one_anat_sink(
             "subject",
             "session",
             "is_postcon_ref",
+            "qc_metrics",
             "reference_source",
         ]
     elif builder == "probseg":
@@ -264,6 +265,8 @@ def _add_one_anat_sink(
     ])
     reference_attr = "source_t1w_postcon" if is_postcon_ref else "source_t1w"
     workflow.connect(inputnode, reference_attr, meta_node, "reference_source")
+    if builder == "mask":
+        workflow.connect(inputnode, "qc_metrics", meta_node, "qc_metrics")
 
     # Optional contrast-agent extraction
     if builder == "preproc" and contrast_agent_attr:

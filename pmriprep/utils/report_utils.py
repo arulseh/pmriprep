@@ -459,7 +459,7 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> str:
         )
     else:
         sentences.append(
-            "DCE permeability images were assumed to be already "
+            "DCE images were assumed to be already "
             "motion-corrected, so no additional motion correction was applied "
             "(residual motion was assessed for quality control)."
         )
