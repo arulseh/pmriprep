@@ -15,9 +15,7 @@ under CC0.
 
 The source vessel-probability image was thresholded at 20% occurrence. Apparent
 non-arterial structures were removed manually, the result was morphologically
-processed, and the 0.5 mm image was resampled to the 2 mm FSL MNI152 grid. The
-four files provide full-arterial and MCA/ACA subsets, each in undilated and
-dilated form.
+processed, and the 0.5 mm image was resampled to the 2 mm FSL MNI152 grid.
 
 ## Anatomical region masks (`mni_regions`)
 
