@@ -311,7 +311,8 @@ def test_warnings_block_populated_in_anchor_sidecar(
     fake_xfm = tmp_path / "acpc.h5"
     fake_xfm.write_text("ok\n")
 
-    # No tissue seg, no T2w, no FLAIR — expect three warnings on the anchor.
+    # Missing optional T2w/FLAIR inputs are not warnings. Missing tissue
+    # segmentation remains consequential output provenance.
     wf = init_anat_datasinks_wf(
         output_dir=str(out_root), bids_dir=str(minimal_bids),
         subject_id="01", session_id="0001",
@@ -336,8 +337,8 @@ def test_warnings_block_populated_in_anchor_sidecar(
     sidecar = json.loads(anchor.read_text())
     warnings = sidecar.get("QCWarnings", [])
     assert any("Tissue segmentation" in w for w in warnings), warnings
-    assert any("FLAIR not available" in w for w in warnings), warnings
-    assert any("T2w not available" in w for w in warnings), warnings
+    assert not any("FLAIR not available" in w for w in warnings), warnings
+    assert not any("T2w not available" in w for w in warnings), warnings
 
     # No QC JSON orphan at session root
     legacy_qc = (

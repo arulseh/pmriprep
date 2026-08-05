@@ -126,6 +126,26 @@ def test_prepare_vp_constraint_rejects_nlls_box_before_loading_dsc(
     assert result.candidate_names == ["patlak"]
 
 
+def test_prepare_vp_constraint_reports_missing_nawm_before_nlls_policy(
+    tmp_path: Path,
+) -> None:
+    """A missing nCBV anchor is the primary NLLS skip reason."""
+    interface = ComputeDCEMaps(
+        brain_mask_file=_write_mask(tmp_path / "mask.nii.gz"),
+        dsc_aif_qc={"detection_method": "atlas"},
+        constraint_mode="auto",
+    )
+
+    result = interface._prepare_vp_constraint(
+        _prepared(populated=True, inference="nlls")
+    )
+
+    assert result.vp_map is None
+    assert result.mode == ConstraintMode.SKIP
+    assert result.qc["skip_reason"] == "no_nawm_mask"
+    assert result.qc["reason"] == "nCBV unavailable (no NAWM reference)"
+
+
 def test_prepare_vp_constraint_preserves_soft_prior_diagnostics(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

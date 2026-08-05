@@ -792,7 +792,7 @@
     {% set xval = dce.qc_metrics.dsc_dce_validation %}
     {% if xval.skipped|default(false) %}
     <div class="section">
-        <h3>DSC-DCE Vascular Concordance</h3>
+        <h3>NAWM-Normalized vp–nCBV Concordance</h3>
         <div class="metrics">
             <div class="metric">
                 <div class="metric-label">Status</div>
@@ -805,14 +805,11 @@
             {% else %}
             {{ xval.reason|default('DSC–DCE comparison was skipped for this subject.') }}
             {% endif %}
-            {% if 'NAWM' in xval.reason|default('') %}
-            This is expected for bilateral disease or when tumor segmentation provides no contralateral NAWM. vp quantification proceeds without cross-modality validation.
-            {% endif %}
         </p>
     </div>
     {% elif not xval.skipped|default(false) %}
     <div class="section">
-        <h3>DSC-DCE Vascular Concordance</h3>
+        <h3>NAWM-Normalized vp–nCBV Concordance</h3>
         <div class="metrics">
             {% if xval.status is defined %}
             <div class="metric">
@@ -853,12 +850,6 @@
                 <div class="metric-value">{{ "%.3f"|format(xval.region_metrics.correlation) }} / {{ "%.3f"|format(xval.region_metrics.pearson_correlation) }}</div>
             </div>
             {% endif %}
-            {% endif %}
-            {% if xval.dsc_preload_configured is defined and xval.dsc_preload_configured is not none %}
-            <div class="metric">
-                <div class="metric-label">Preload Config</div>
-                <div class="metric-value">{{ "yes" if xval.dsc_preload_configured else "no" }}</div>
-            </div>
             {% endif %}
         </div>
         {% if xval.interpretation is defined and xval.interpretation %}

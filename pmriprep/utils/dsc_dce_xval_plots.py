@@ -92,7 +92,7 @@ def generate_xval_plot(
     prior_relative_sd = float(prior_sd) if isinstance(prior_sd, (int, float)) else None
 
     fig, axes = plt.subplots(1, 3, figsize=(15, 4.5))
-    title = "DSC-informed vp Prior Diagnostic" if is_prior_informed else "DSC-DCE Vascular Concordance"
+    title = "NAWM-Normalized vp–nCBV Concordance"
     fig.suptitle(
         qc_figure_title(subject_id, session_id, f"{title} — {domain_label}"),
         fontsize=12,
@@ -157,8 +157,8 @@ def generate_xval_plot(
         ax.set_ylim(0, limit * 1.05)
     else:
         ax.text(0.5, 0.5, "Insufficient valid voxels", transform=ax.transAxes, ha="center", va="center")
-    ax.set_xlabel("DSC relative CBV (NAWM=1)", fontsize=9)
-    ax.set_ylabel("DCE relative vp (NAWM=1)", fontsize=9)
+    ax.set_xlabel("DSC nCBV (NAWM = 1)", fontsize=9)
+    ax.set_ylabel("DCE NAWM-normalized vp", fontsize=9)
     ax.set_title("vp vs CBV Scatter", fontsize=10)
     ax.grid(True, alpha=0.3)
 
@@ -216,8 +216,8 @@ def generate_xval_plot(
         ax.set_xlim(0, max(float(np.percentile(means, 98)), 1e-6))
         diff_limit = max(float(np.percentile(np.abs(differences), 98)), 1e-6)
         ax.set_ylim(-diff_limit, diff_limit)
-        ax.set_xlabel("Mean relative vascular volume", fontsize=9)
-        ax.set_ylabel("Difference (DCE − DSC)", fontsize=9)
+        ax.set_xlabel("Mean of NAWM-normalized vp and nCBV", fontsize=9)
+        ax.set_ylabel("NAWM-normalized vp − nCBV", fontsize=9)
         ax.set_title("Bland-Altman", fontsize=10)
         ax.legend(fontsize=7, loc="lower right", framealpha=0.9)
     else:
@@ -244,7 +244,12 @@ def generate_xval_plot(
         ax.contour(brain_slice, levels=[0.5], colors=["0.65"], linewidths=0.8)
         if domain_mask is not None:
             ax.contour(domain_slice, levels=[0.5], colors=["white"], linewidths=1.0)
-        fig.colorbar(image, ax=ax, shrink=0.75, label="DCE relative vp − DSC relative CBV")
+        fig.colorbar(
+            image,
+            ax=ax,
+            shrink=0.75,
+            label="DCE NAWM-normalized vp − DSC nCBV",
+        )
         ax.set_title(f"Spatial Difference — {domain_label}", fontsize=10)
         ax.axis("off")
     else:

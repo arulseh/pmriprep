@@ -492,14 +492,12 @@ def init_anat_datasinks_wf(
             )
             preproc_ce = None
         # The T1w preproc sidecar is the anatomical-presence probe and carries
-        # flat QC warning keys for the HTML aggregator. Availability warnings
-        # are derived from the discovered modality flags.
+        # flat QC warning keys for the HTML aggregator. Missing optional
+        # anatomical inputs are not processing problems and are omitted.
         anat_presence_warnings = [
             warn for cond, warn in (
                 (not has_tissue_seg,
                  "Tissue segmentation (WM/GM/CSF probability maps) not available"),
-                (not has_flair, "FLAIR not available"),
-                (not has_t2w, "T2w not available"),
             ) if cond
         ]
         sink = _add_one_anat_sink(

@@ -971,14 +971,22 @@ def _dsc_dce_validation_node(
             "skip_reason": SKIP_REASON_NO_DSC_RUN,
         }
 
-    if dsc_ncbv_file is None or not have_ncbv or not nawm_mask:
+    if dsc_ncbv_file is None or not have_ncbv:
         return {
             "skipped": True,
             "status": "SKIPPED",
             "reason": (
-                "DSC-DCE concordance skipped: a DCE-space NAWM mask and "
-                "NAWM-normalized DSC CBV are required."
+                "NAWM-normalized DSC CBV unavailable: no NAWM reference mask "
+                "was supplied or generated. DSC-informed vp prior and "
+                "DSC-DCE concordance unavailable."
             ),
+        }
+
+    if not nawm_mask:
+        return {
+            "skipped": True,
+            "status": "SKIPPED",
+            "reason": "DSC-DCE concordance unavailable: DCE-space NAWM mask missing.",
         }
 
     # The file-based validator requires a DCE-space brain mask.

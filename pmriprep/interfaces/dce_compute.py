@@ -3006,6 +3006,7 @@ class ComputeDCEMaps(BaseInterface):
             prepared.inference == "nlls"
             and needs_vp_constraint
             and dsc_inputs_present
+            and ncbv_available
         ):
             return _DCEVPConstraint(
                 None,

@@ -374,7 +374,8 @@ class TestDscDceValidationNodeDispatch:
 
         assert out["skipped"] is True
         assert out["status"] == "SKIPPED"
-        assert "NAWM" in out["reason"]
+        assert "no NAWM reference mask was supplied or generated" in out["reason"]
+        assert "vp prior and DSC-DCE concordance unavailable" in out["reason"]
         assert captured == {}  # validator was not called
 
     def test_no_cbv_no_ncbv_returns_skipped(self, tmp_path: Any) -> None:
@@ -418,7 +419,30 @@ class TestDscDceValidationNodeDispatch:
         )
         assert out["skipped"] is True
         assert out["status"] == "SKIPPED"
-        assert "NAWM" in out["reason"]
+        assert "no NAWM reference mask was supplied or generated" in out["reason"]
+
+    def test_ncbv_without_dce_nawm_skips_only_concordance(
+        self, tmp_path: Any,
+    ) -> None:
+        """Missing DCE-space NAWM does not imply that DCE fitting failed."""
+        from pmriprep.workflows.dce.base import _dsc_dce_validation_node
+
+        vp_file = _write_nifti(tmp_path / "vp.nii.gz", np.ones((3, 3, 3)))
+        ncbv_file = _write_nifti(tmp_path / "ncbv.nii.gz", np.ones((3, 3, 3)))
+        brain_file = _write_nifti(tmp_path / "brain.nii.gz", np.ones((3, 3, 3)))
+
+        out = _dsc_dce_validation_node(
+            vp_file=vp_file,
+            dsc_ncbv_file=ncbv_file,
+            brain_mask=brain_file,
+            nawm_mask=None,
+            pk_qc={"dsc_cbv_constraint": {"mode": "soft"}},
+        )
+
+        assert out["status"] == "SKIPPED"
+        assert out["reason"] == (
+            "DSC-DCE concordance unavailable: DCE-space NAWM mask missing."
+        )
 
     def test_exception_is_logged_with_traceback(
         self, tmp_path: Any, caplog: pytest.LogCaptureFixture,
