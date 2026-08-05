@@ -1523,7 +1523,7 @@ def _run_workflow(
             plugin_args["memory_gb"] = args.mem_gb
 
         # Tell nipype how many GPU slots are available when any node uses GPU.
-        # GPU nodes include: HD-BET brain extraction (--hdbet-device cuda/mps)
+        # GPU nodes include HD-BET brain extraction (--hdbet-device cuda/mps)
         # and HD-GLIO tumor segmentation (--tumor-seg-device cuda/mps).
         # nipype's gpu_count() relies on nvidia-smi which may not be on PATH
         # inside containers (e.g., Apptainer --contain).  Without this,

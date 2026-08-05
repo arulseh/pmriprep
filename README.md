@@ -14,14 +14,17 @@ PMRIPrep provides:
 - Automatic or external arterial input functions;
 - VFA T1 mapping with optional B1+ correction;
 - Anatomical preprocessing, optional HD-GLIO tumor segmentation, and NAWM
-  normalization; 
+  normalization;
 - Provenance-rich derivatives and visual QC.
 
 ## Installation
 
 ### Containers
 
-For Docker:
+Containers provide the supported complete runtime environment and include
+TemplateFlow resources.
+
+#### Docker
 
 Install:
 ```bash
@@ -40,9 +43,9 @@ docker run --rm --init \
 
 Add `--gpus all` to the Docker command for NVIDIA GPU support. HD-BET falls
 back to CPU when needed; HD-GLIO tumor segmentation is skipped when GPU is
-unavailable. TemplateFlow resources are included in the image.
+unavailable.
 
-For Apptainer:
+#### Apptainer
 
 Install:
 ```bash
@@ -59,8 +62,8 @@ apptainer run --cleanenv \
   /data /out participant --participant-label 01 -w /work
 ```
 
-Add `--nv` for NVIDIA GPU support. TemplateFlow resources are included in the
-image.
+Add `--nv` for NVIDIA GPU support. HD-BET falls back to CPU when needed;
+HD-GLIO tumor segmentation is skipped when GPU is unavailable.
 
 ### Source installation
 
@@ -68,14 +71,10 @@ image.
 python -m pip install .
 ```
 
-Python 3.11–3.12, FSL, and ANTs are required. The container is the supported
-way to obtain the complete runtime environment.
-
-### System Requirements
-
-Container execution requires Docker or Apptainer. Source installations require
-Python 3.11–3.12, FSL, and ANTs. An NVIDIA GPU is optional; CPU, memory, and disk
-requirements depend on the input data and enabled pipelines.
+Source installations require Python 3.11–3.12, FSL, and ANTs. HD-BET and
+HD-GLIO are optional: missing HD-BET falls back to ANTs for anatomical images
+and to FSL BET for DSC/DCE images, while missing HD-GLIO skips tumor
+segmentation.
 
 ## Usage
 

@@ -9,6 +9,7 @@ import dataclasses
 import logging
 import math
 import re
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, Union
@@ -248,8 +249,8 @@ def _check_tumor_seg_device(
     """Check whether the requested tumor-seg device is available.
 
     When ``conda_env`` is set, the check is skipped because the host
-    environment's PyTorch may differ from the conda env where HD-GLIO
-    actually runs (e.g. bare-metal MPS with --tumor-seg-conda-env hdglio-mps).
+    environment's PyTorch may differ from the conda environment where HD-GLIO
+    actually runs.
 
     When config is None (e.g. in tests that don't pass a config), returns
     True — the data-availability check earlier in decide_pipelines already
@@ -269,9 +270,13 @@ def _check_tumor_seg_device(
     if config is None:
         return True, ""
 
-    # When running in a separate conda env, the host PyTorch is irrelevant
+    # An explicitly selected environment is validated by its execution node;
+    # host executables and PyTorch do not describe that environment.
     if config.conda_env:
         return True, ""
+
+    if shutil.which("hd_glio_predict") is None:
+        return False, "HD-GLIO is not installed; tumor segmentation is unavailable."
 
     device = config.device
 
@@ -298,8 +303,7 @@ def _check_tumor_seg_device(
                 hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
             ):
                 return False, (
-                    "MPS not available (--tumor-seg-device mps). "
-                    "Tumor segmentation requires GPU acceleration. "
+                    "MPS is unavailable in the active host environment. "
                     "Use --skip-tumor-seg to proceed without tumor segmentation."
                 )
         except ImportError:
@@ -310,6 +314,25 @@ def _check_tumor_seg_device(
     # device == "cpu": always available (user explicitly chose slow path)
 
     return True, ""
+
+
+def _resolve_anat_brain_extraction_tool(config: AnatConfig) -> AnatConfig:
+    """Use ANTs when optional host HD-BET is unavailable.
+
+    A configured conda environment remains strict because its executable is
+    resolved only when that environment is launched. A replacement config is
+    returned so availability resolution does not mutate the caller's policy.
+    """
+    if (
+        config.tool == "hdbet"
+        and not config.hdbet_conda_env
+        and shutil.which("hd-bet") is None
+    ):
+        logging.getLogger("pmriprep.workflows").warning(
+            "HD-BET is not installed; using ANTs brain extraction"
+        )
+        return dataclasses.replace(config, tool="ants")
+    return config
 
 
 def _find_previous_anat_outputs(
@@ -3347,6 +3370,9 @@ def _prepare_master_workflow_context(
     )
     resolved_dsc_config = copy.deepcopy(dsc_config) if dsc_config is not None else DSCConfig()
     resolved_dce_config = copy.deepcopy(dce_config) if dce_config is not None else DCEConfig()
+    resolved_anat_config = _resolve_anat_brain_extraction_tool(
+        resolved_anat_config
+    )
 
     session_data = discover_session_data(
         resolved_bids_dir, subject_id, session_id, layout=layout

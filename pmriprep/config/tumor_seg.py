@@ -21,12 +21,13 @@ class TumorSegConfig:
     nawm_min_voxels : int
         Minimum voxels required in NAWM ROI.
     device : Literal["cuda", "mps", "cpu"]
-        Device for inference: cuda (NVIDIA GPU), mps (Apple Silicon), or cpu.
+        Execution device requested from the configured HD-GLIO environment.
+        ``mps`` requires an HD-GLIO installation that supports that backend.
     conda_env : str, optional
         Conda environment name where the segmentation tool is installed.
         When set, the command is wrapped with ``conda run -n <env>``.
-        Required when the tool has conflicting dependencies (e.g.,
-        "hdglio-mps" on Apple Silicon, "hdbet-env" on Linux).
+        Required when the tool has conflicting dependencies (e.g., a
+        dedicated ``"tumor-seg-runtime"`` environment).
     """
 
     # Tool selection (for future extensibility)

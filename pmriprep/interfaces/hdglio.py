@@ -12,7 +12,6 @@ HDGLIOSegment
     Deep learning tumor segmentation using HD-GLIO
 """
 
-import platform
 import re
 from pathlib import Path
 from typing import Any
@@ -401,14 +400,14 @@ class HDGLIOSegmentInputSpec(CommandLineInputSpec):
         "mps",
         "cpu",
         usedefault=True,
-        desc="Device for inference: cuda (NVIDIA GPU), mps (Apple Silicon), or cpu",
+        desc="Execution device requested from the configured HD-GLIO environment",
     )
     conda_env = traits.Str(
         desc=(
             "Conda environment name to run hd_glio_predict in via "
             "'conda run -n <env>'. Required when HD-GLIO is installed in a "
             "separate environment due to dependency conflicts (e.g., "
-            "hdglio-mps for Apple Silicon)."
+            "tumor-seg-runtime)."
         ),
     )
     validate_output = traits.Bool(
@@ -458,9 +457,9 @@ class HDGLIOSegment(BaseInterface):
     output_dir : str, optional
         Output directory for segmentation results
     device : {'cuda', 'mps', 'cpu'}
-        Device for inference:
+        Execution device requested from the configured environment:
         - 'cuda': NVIDIA GPU (requires CUDA and appropriate drivers)
-        - 'mps': Apple Silicon GPU (macOS with M1/M2/M3 chips)
+        - 'mps': MPS backend supplied by a compatible custom installation
         - 'cpu': CPU only (slowest, but always available)
     validate_output : bool
         If True (default), validate that output contains tumor voxels
@@ -498,16 +497,13 @@ class HDGLIOSegment(BaseInterface):
     2. **All 4 modalities**: T1w-pre, T1w-ce-GAD, T2w, FLAIR required
     3. **Matching dimensions**: All images must have same shape
     4. **NO bias correction**: Images should NOT be bias-corrected
-    5. **GPU recommended**: CUDA or MPS for reasonable inference speed
+    5. **GPU recommended**: CUDA for the upstream distribution
 
     Device selection:
 
     - CUDA is fastest if NVIDIA GPU is available
-    - MPS works on Apple Silicon (M1/M2/M3) Macs
+    - MPS requires a separately configured HD-GLIO installation with MPS support
     - CPU is always available but much slower (~10-30x slower)
-
-    The interface automatically detects Apple Silicon and uses MPS if
-    device='mps' is specified. On non-Apple systems, 'mps' falls back to CPU.
 
     See Also
     --------
@@ -523,36 +519,20 @@ class HDGLIOSegment(BaseInterface):
             return Path(self.inputs.output_dir)
         return Path.cwd()
 
-    def _get_device_flag(self) -> str:
-        """Get appropriate device flag for hd_glio_predict command.
+    def _recorded_device(self) -> str:
+        """Return the requested execution device for QC metadata.
 
         Returns
         -------
         str
-            Device flag string for the command line
+            Requested execution device.
 
         Notes
         -----
-        Device handling:
-        - 'cuda': Use NVIDIA GPU (--device cuda)
-        - 'mps': Use Apple Silicon GPU, but HD-GLIO uses --device mps
-        - 'cpu': Use CPU only (--device cpu)
-
-        On non-Apple systems with 'mps' specified, falls back to 'cpu'.
+        This value records the requested execution device in QC metadata. The
+        HD-GLIO command does not accept a device argument.
         """
-        device: str = str(self.inputs.device)
-
-        if device == "mps":
-            # Check if running on Apple Silicon
-            is_apple_silicon = (
-                platform.system() == "Darwin" and platform.machine() in ("arm64", "aarch64")
-            )
-            if not is_apple_silicon:
-                # Fall back to CPU on non-Apple systems
-                return "cpu"
-            return "mps"
-
-        return device
+        return str(self.inputs.device)
 
     def _get_output_file(self) -> Path:
         """Get the output file path for hd_glio_predict.
@@ -751,7 +731,7 @@ class HDGLIOSegment(BaseInterface):
         cmd_portable = re.sub(r'/[^\s]+/([^\s/]+)', r'\1', cmd)
         qc_metrics: dict[str, Any] = {
             "command": cmd_portable,
-            "device": self._get_device_flag(),
+            "device": self._recorded_device(),
         }
 
         if self.inputs.validate_output:

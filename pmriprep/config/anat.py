@@ -21,7 +21,7 @@ class AnatConfig:
     denoise : bool
         Apply ANTs denoising to anatomical images.
     hdbet_conda_env : Optional[str]
-        Conda environment name for HD-BET (e.g. ``'hdbet-env'``).
+        Conda environment name for HD-BET (e.g. ``'hdbet-runtime'``).
         When ``None`` (the default), HD-BET is called directly without
         ``conda run`` wrapping — this is the expected Docker behaviour.
     """
