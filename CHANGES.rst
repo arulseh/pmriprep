@@ -9,4 +9,4 @@ Initial release candidate.
   and four pharmacokinetic models.
 * ENH: Add shared anatomical processing and optional tumor segmentation.
 * ENH: Write provenance-rich derivatives and per-session HTML QC reports.
-* MNT: Provide Python 3.10--3.12 packaging and Docker/Apptainer distribution.
+* MNT: Provide Python 3.11--3.12 packaging and Docker/Apptainer distribution.
