@@ -147,12 +147,6 @@
     [
       "brain_extract",
       "out_mask",
-      "create_subtraction",
-      "brain_mask"
-    ],
-    [
-      "brain_extract",
-      "out_mask",
       "hybrid_fast_chain",
       "brain_mask"
     ],
@@ -267,12 +261,6 @@
     [
       "conform",
       "out_file",
-      "create_subtraction",
-      "precon_file"
-    ],
-    [
-      "conform",
-      "out_file",
       "hybrid_fast_chain",
       "reference_file"
     ],
@@ -333,12 +321,6 @@
     [
       "coreg_postcon",
       "out_file",
-      "create_subtraction",
-      "postcon_file"
-    ],
-    [
-      "coreg_postcon",
-      "out_file",
       "mask_postcon",
       "in_file"
     ],
@@ -395,12 +377,6 @@
       "out_matrix",
       "tumor_seg_xfm_t2w",
       "in_matrix"
-    ],
-    [
-      "create_subtraction",
-      "out_file",
-      "outputnode",
-      "t1w_subtraction"
     ],
     [
       "determine_mode",
@@ -938,10 +914,6 @@
       "mem_gb": 0.2,
       "n_procs": 1
     },
-    "create_subtraction": {
-      "mem_gb": 0.2,
-      "n_procs": 1
-    },
     "determine_mode": {
       "mem_gb": 0.2,
       "n_procs": 1
@@ -1255,10 +1227,6 @@
     [
       "coreg_t2w",
       "Coregistration"
-    ],
-    [
-      "create_subtraction",
-      "T1wSubtraction"
     ],
     [
       "determine_mode",

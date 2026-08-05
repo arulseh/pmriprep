@@ -140,12 +140,6 @@
     ],
     [
       "anat_wf",
-      "outputnode.t1w_subtraction",
-      "anat_datasinks_wf",
-      "inputnode.t1w_subtraction"
-    ],
-    [
-      "anat_wf",
       "outputnode.t1w_to_mni_h5",
       "anat_datasinks_wf",
       "inputnode.acpc_xfm"

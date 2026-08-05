@@ -566,6 +566,9 @@ DSC_MATRIX: list[tuple[str, Builder]] = [
 ANAT_MATRIX: list[tuple[str, Builder]] = [
     ("anat_default", lambda b: _anat(b)),
     ("anat_postcon", lambda b: _anat(b, has_t1w_postcon=True)),
+    ("anat_with_subtraction", lambda b: _anat(
+        b, has_t1w_postcon=True, create_subtraction=True,
+    )),
     ("anat_all_modalities", lambda b: _anat(
         b,
         has_t1w_postcon=True,

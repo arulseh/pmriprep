@@ -335,6 +335,24 @@ def _resolve_anat_brain_extraction_tool(config: AnatConfig) -> AnatConfig:
     return config
 
 
+def _resolve_anat_subtraction_policy(
+    config: AnatConfig,
+    *,
+    decision: PipelineDecision,
+    dsc_config: DSCConfig,
+    dce_config: DCEConfig,
+) -> AnatConfig:
+    """Enable T1w subtraction when an active perfusion underlay requests it."""
+    requested = (
+        decision.run_dsc and "t1w_subtraction" in dsc_config.underlays
+    ) or (
+        decision.run_dce and "t1w_subtraction" in dce_config.underlays
+    )
+    if requested and not config.create_subtraction:
+        return dataclasses.replace(config, create_subtraction=True)
+    return config
+
+
 def _find_previous_anat_outputs(
     work_dir: Path,
     subject_id: str,
@@ -3416,6 +3434,12 @@ def _prepare_master_workflow_context(
 
     decision = decide_pipelines(
         session_data, resolved_skip_flags, resolved_tumor_seg_config
+    )
+    resolved_anat_config = _resolve_anat_subtraction_policy(
+        resolved_anat_config,
+        decision=decision,
+        dsc_config=resolved_dsc_config,
+        dce_config=resolved_dce_config,
     )
     return _MasterWorkflowContext(
         bids_dir=resolved_bids_dir,

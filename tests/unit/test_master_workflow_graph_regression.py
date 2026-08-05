@@ -17,6 +17,7 @@ from pmriprep.config.dce import DCEConfig
 from pmriprep.config.dsc import DSCConfig
 from pmriprep.config.tumor_seg import TumorSegConfig
 from pmriprep.workflows.base import (
+    _resolve_anat_subtraction_policy,
     PipelineDecision,
     PipelineSkipFlags,
     _connect_master_dsc_anatomy,
@@ -136,7 +137,7 @@ def _build_master(
     skip_anat: bool = False,
     tumor_seg: bool = False,
     external_t1: bool = False,
-    create_subtraction: bool = True,
+    create_subtraction: bool = False,
     dsc_underlays: list[str] | None = None,
     dce_underlays: list[str] | None = None,
 ) -> Any:
@@ -187,6 +188,53 @@ def test_master_omits_unused_discovered_secondary_anatomy(
     assert not any("reorient_postcon" in name for name in node_names)
     assert not any("reorient_t2w" in name for name in node_names)
     assert not any("reorient_flair" in name for name in node_names)
+
+
+@pytest.mark.parametrize("pipeline", ["dsc", "dce"])
+def test_subtraction_underlay_enables_creation_for_active_pipeline(
+    pipeline: str,
+) -> None:
+    """Either active perfusion pipeline can imply subtraction creation."""
+    resolved = _resolve_anat_subtraction_policy(
+        AnatConfig(),
+        decision=PipelineDecision(
+            run_tumor_seg=False,
+            run_dsc=pipeline == "dsc",
+            run_dce=pipeline == "dce",
+        ),
+        dsc_config=DSCConfig(
+            underlays=["t1w_subtraction"] if pipeline == "dsc" else []
+        ),
+        dce_config=DCEConfig(
+            underlays=["t1w_subtraction"] if pipeline == "dce" else []
+        ),
+    )
+    assert resolved.create_subtraction is True
+
+
+def test_skipped_pipeline_does_not_enable_subtraction() -> None:
+    """An underlay on a disabled pipeline does not trigger anatomical work."""
+    resolved = _resolve_anat_subtraction_policy(
+        AnatConfig(),
+        decision=PipelineDecision(run_tumor_seg=False, run_dsc=False, run_dce=False),
+        dsc_config=DSCConfig(underlays=["t1w_subtraction"]),
+        dce_config=DCEConfig(),
+    )
+    assert resolved.create_subtraction is False
+
+
+def test_requested_subtraction_underlay_builds_anatomical_node(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The implied policy reaches the actual master anatomical graph."""
+    monkeypatch.setattr("pmriprep.utils.device.detect_torch_device", lambda: "cpu")
+    workflow = _build_master(
+        tmp_path,
+        modalities={"t1w_pre", "t1w_postcon", "dsc"},
+        dsc_underlays=["t1w_subtraction"],
+    )
+    node_names = {node.fullname for node in workflow._get_all_nodes()}
+    assert any(name.endswith("create_subtraction") for name in node_names)
 
 
 def test_master_external_t1_drives_conversion_without_public_map(
@@ -293,6 +341,21 @@ def test_secondary_anatomy_is_not_processed_by_discovery_alone() -> None:
     )
 
     assert not any((plan.t1w_postcon, plan.t2w, plan.flair, plan.flair_postcon))
+
+
+def test_subtraction_underlay_requires_paired_pre_and_postcontrast_t1w() -> None:
+    """A postcontrast-only reference cannot produce a subtraction image."""
+    session = _secondary_anat_session()
+    session.modalities.t1w_pre = None
+    plan = _plan_anatomical_modalities(
+        session_data=session,
+        decision=PipelineDecision(run_tumor_seg=False, run_dsc=True, run_dce=False),
+        anat_config=AnatConfig(create_subtraction=True),
+        dsc_config=DSCConfig(underlays=["t1w_subtraction"]),
+        dce_config=DCEConfig(),
+        reference_plan=_MasterReferencePlan(dsc=None, dce=None),
+    )
+    assert plan.t1w_postcon is False
 
 
 def test_secondary_anatomy_follows_enabled_consumers() -> None:

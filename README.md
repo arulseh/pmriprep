@@ -127,8 +127,8 @@ follow the corresponding NiPreps conventions.
 ## Configuration
 
 The file schema has four optional top-level mappings: `dsc`, `dce`, `anat`, and
-`tumor_seg`. Options within each section are flat. CLI scientific options
-override their file equivalents.
+`tumor_seg`. Options within each section are flat. CLI options override their
+file equivalents. Example configuration:
 
 ```yaml
 dsc:
@@ -149,7 +149,7 @@ dce:
 anat:
   tool: hdbet
   denoise: false
-  create_subtraction: true
+  create_subtraction: false
 
 tumor_seg:
   nawm_erosion: 2
@@ -228,7 +228,7 @@ Anatomical fields:
 |---|---:|---|
 | `tool` | `hdbet` | `hdbet` or `ants` brain extraction |
 | `denoise` | `false` | Apply ANTs denoising |
-| `create_subtraction` | `true` | Create post-minus-precontrast T1w difference image (not quantitative) |
+| `create_subtraction` | `false` | Create post-minus-precontrast T1w difference image (not quantitative); implied when a DSC or DCE `t1w_subtraction` underlay is requested |
 
 Tumor-segmentation fields:
 
