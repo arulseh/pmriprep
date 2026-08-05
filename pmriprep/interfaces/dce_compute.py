@@ -3015,8 +3015,8 @@ class ComputeDCEMaps(BaseInterface):
                 {
                     "mode": "skip",
                     "reason": (
-                        "DSC-informed vp is available only as a Bayesian prior; "
-                        "bounded NLLS constraints are not supported"
+                        "DSC-informed vp priors are supported only for Bayesian "
+                        "fitting; NLLS remained unconstrained."
                     ),
                     "skip_reason": SKIP_REASON_NLLS_UNSUPPORTED,
                 },
@@ -3081,12 +3081,20 @@ class ComputeDCEMaps(BaseInterface):
                     )
 
             except Exception as exc:
+                logger.warning(
+                    "DSC-informed vp prior preparation failed; continuing without "
+                    "the prior.",
+                    exc_info=exc,
+                )
                 vp_constraint_map = None
                 constraint_mode = ConstraintMode.SKIP
                 constraint_vp_uncertainty = 0.0
                 constraint_qc = {
                     "mode": "skip",
-                    "reason": f"Failed to load DSC CBV constraint: {exc}",
+                    "reason": (
+                        "The DSC-informed vp prior could not be prepared; review the "
+                        "processing log."
+                    ),
                     "skip_reason": "constraint_preparation_failed",
                 }
 

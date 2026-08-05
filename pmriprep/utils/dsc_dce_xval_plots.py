@@ -239,7 +239,7 @@ def generate_xval_plot(
             [-3, -2, -1, 0, 1, 2, 3],
             ["≤ −3", "−2", "−1", "0", "1", "2", "≥ 3"],
         )
-        ax.set_xlabel("Smoothed map difference / nominal prior SD", fontsize=9)
+        ax.set_xlabel("vp − prior mean (prior SD units)", fontsize=9)
         ax.set_ylabel("Voxels", fontsize=9)
         ax.set_title("Smoothed Map-to-Prior Difference", fontsize=10)
     elif enough:
@@ -329,7 +329,7 @@ def generate_xval_plot(
             ax=ax,
             shrink=0.75,
             label=(
-                "Smoothed map difference / nominal prior SD"
+                "vp − prior mean (prior SD units)"
                 if is_prior_informed
                 else "DCE NAWM-normalized vp − DSC nCBV"
             ),

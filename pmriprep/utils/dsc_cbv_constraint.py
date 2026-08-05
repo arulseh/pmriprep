@@ -98,10 +98,9 @@ SKIP_REASON_NO_NAWM_MASK = "no_nawm_mask"
 SKIP_REASON_SYNTHETIC_AIF = "synthetic_aif"
 SKIP_REASON_REGISTRATION_QC = "cross_modal_registration_qc"
 SKIP_REASON_NLLS_UNSUPPORTED = "nlls_constraint_unsupported"
-NO_DSC_RUN_REASON_STRING = "No DSC data provided"
+NO_DSC_RUN_REASON_STRING = "No DSC data were available for a vp prior."
 SYNTHETIC_AIF_REASON_STRING = (
-    "AIF is synthetic (cascade exhausted or gamma-R2 fallback); "
-    "relative CBV amplitude is not subject-calibrated"
+    "The DSC AIF was synthetic, so its CBV scale was not suitable for a DCE vp prior."
 )
 
 
@@ -716,7 +715,7 @@ def determine_constraint_mode(
         return ConstraintConfig(
             mode=ConstraintMode.SKIP,
             vp_uncertainty=0.0,
-            reason="DSC leakage correction disabled -- Bayesian prior skipped",
+            reason="DSC leakage correction was disabled, so its CBV map was not used as a vp prior.",
         )
 
     # The Bayesian prior requires a successfully estimated leakage reference.
@@ -728,7 +727,7 @@ def determine_constraint_mode(
         return ConstraintConfig(
             mode=ConstraintMode.SKIP,
             vp_uncertainty=0.0,
-            reason="K2 leakage reference unavailable -- Bayesian prior skipped",
+            reason="The DSC leakage-reference curve was unavailable, so its CBV map was not used as a vp prior.",
         )
 
     # User override
@@ -740,7 +739,7 @@ def determine_constraint_mode(
             return ConstraintConfig(
                 mode=ConstraintMode.SKIP,
                 vp_uncertainty=0.0,
-                reason="User override: skip",
+                reason="The DSC-informed vp prior was disabled by configuration.",
             )
         logger.warning(
             "Unrecognized constraint user_override %r — falling back to "
@@ -751,8 +750,8 @@ def determine_constraint_mode(
             mode=ConstraintMode.SKIP,
             vp_uncertainty=0.0,
             reason=(
-                f"Unrecognized user_override {user_override!r} -> SKIP "
-                "(valid: 'auto', 'skip')"
+                f"The prior mode {user_override!r} was invalid, so the DSC-informed "
+                "vp prior was not applied."
             ),
         )
 
@@ -766,9 +765,8 @@ def determine_constraint_mode(
             mode=ConstraintMode.SOFT,
             vp_uncertainty=SIGMA_SOFT_DSC_PRIOR,
             reason=(
-                f"{confidence} DSC quality; fixed release-policy Bayesian "
-                f"prior relative SD={SIGMA_SOFT_DSC_PRIOR:.2f}; signed K2 "
-                "reported descriptively"
+                "DSC signal, AIF, leakage-reference, and cross-modal registration "
+                "QC supported use of the NAWM-normalized CBV prior."
             ),
         )
     else:
@@ -776,7 +774,12 @@ def determine_constraint_mode(
         return ConstraintConfig(
             mode=ConstraintMode.SKIP,
             vp_uncertainty=0.0,
-            reason="; ".join(dsc_quality.reasons) if dsc_quality.reasons else "low DSC quality",
+            reason=(
+                "DSC QC did not support use of the vp prior: "
+                + "; ".join(dsc_quality.reasons)
+                if dsc_quality.reasons
+                else "DSC QC did not support use of the vp prior."
+            ),
         )
 
 
@@ -880,7 +883,7 @@ def prepare_vp_constraint_from_data(
         result.config = ConstraintConfig(
             mode=ConstraintMode.SKIP,
             vp_uncertainty=0.0,
-            reason="nCBV unavailable (no NAWM reference)",
+            reason="No NAWM-normalized DSC CBV map was available for a vp prior.",
         )
         result.vp_map = None
         result.qc_report = {
@@ -913,7 +916,10 @@ def prepare_vp_constraint_from_data(
             "unacceptable registration QC (%s). DCE vp will be fit unconstrained.",
             detail,
         )
-        reason = f"Cross-modal registration QC unavailable or failed ({detail})"
+        reason = (
+            "Cross-modal registration QC did not support transfer of the DSC-informed "
+            f"vp prior ({detail})."
+        )
         result.config = ConstraintConfig(
             mode=ConstraintMode.SKIP,
             vp_uncertainty=0.0,
@@ -1013,8 +1019,8 @@ def prepare_vp_constraint_from_data(
                 mode=ConstraintMode.SKIP,
                 vp_uncertainty=0.0,
                 reason=(
-                    f"vp_median {vp_median:.4f} outside "
-                    f"[{VP_MEDIAN_MIN}, {VP_MEDIAN_MAX}]"
+                    f"The derived vp prior median ({vp_median:.4f}) was outside the "
+                    f"supported range [{VP_MEDIAN_MIN}, {VP_MEDIAN_MAX}]."
                 ),
             )
             # Critical: reassign into result so caller sees consistent

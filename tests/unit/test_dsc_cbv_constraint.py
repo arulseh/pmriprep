@@ -550,7 +550,7 @@ class TestVpMagnitudeGate:
 
         assert result.config.mode == ConstraintMode.SKIP
         assert result.vp_map is None
-        assert "vp_median" in result.config.reason
+        assert "derived vp prior median" in result.config.reason
         assert result.qc_report.get("magnitude_gate_triggered") is True
 
     def test_overshoot_downgrades_to_skip(self, tmp_path: Any) -> None:
@@ -822,7 +822,7 @@ class TestDetermineConstraintReferenceGate:
 
         assert config.mode == ConstraintMode.SKIP
         assert config.vp_uncertainty == 0.0
-        assert "reference unavailable" in config.reason
+        assert "leakage-reference curve was unavailable" in config.reason
 
 
 class TestBolusGdFractionValidation:
@@ -924,8 +924,7 @@ class TestFixedPriorWidth:
 
         assert config.mode == ConstraintMode.SOFT
         assert config.vp_uncertainty == pytest.approx(0.60)
-        assert "fixed release-policy Bayesian prior" in config.reason
-        assert "signed K2 reported descriptively" in config.reason
+        assert "QC supported use of the NAWM-normalized CBV prior" in config.reason
 
     def test_disabled_leakage_correction_skips_prior(self) -> None:
         """An explicitly uncorrected CBV map cannot anchor the DCE prior."""
@@ -942,7 +941,7 @@ class TestFixedPriorWidth:
 
         assert config.mode == ConstraintMode.SKIP
         assert config.vp_uncertainty == 0.0
-        assert "leakage correction disabled" in config.reason.lower()
+        assert "leakage correction was disabled" in config.reason.lower()
 
 
 class TestNAWMVpReferenceAnchor:
@@ -987,7 +986,7 @@ class TestSkipReasonConstants:
         assert SKIP_REASON_NO_NAWM_MASK == "no_nawm_mask"
         assert SKIP_REASON_REGISTRATION_QC == "cross_modal_registration_qc"
         assert SKIP_REASON_SYNTHETIC_AIF == "synthetic_aif"
-        assert NO_DSC_RUN_REASON_STRING == "No DSC data provided"
+        assert NO_DSC_RUN_REASON_STRING == "No DSC data were available for a vp prior."
         assert "synthetic" in SYNTHETIC_AIF_REASON_STRING.lower()
 
 

@@ -452,7 +452,7 @@ class TestDscDceValidationNodeDispatch:
         )
         assert out["skipped"] is True
         assert out["status"] == "SKIPPED"
-        assert out["reason"] == "No DSC data provided"
+        assert out["reason"] == "No DSC data were available for a vp prior."
         assert out["skip_reason"] == "no_dsc_run"
 
     def test_no_ncbv_but_dsc_configured_returns_nawm_skip(self, tmp_path: Any) -> None:

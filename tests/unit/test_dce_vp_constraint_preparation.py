@@ -143,7 +143,9 @@ def test_prepare_vp_constraint_reports_missing_nawm_before_nlls_policy(
     assert result.vp_map is None
     assert result.mode == ConstraintMode.SKIP
     assert result.qc["skip_reason"] == "no_nawm_mask"
-    assert result.qc["reason"] == "nCBV unavailable (no NAWM reference)"
+    assert result.qc["reason"] == (
+        "No NAWM-normalized DSC CBV map was available for a vp prior."
+    )
 
 
 def test_prepare_vp_constraint_preserves_soft_prior_diagnostics(

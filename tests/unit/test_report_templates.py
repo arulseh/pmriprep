@@ -25,14 +25,14 @@ def _dce_ctx_with_dsc_blocks() -> dict:
             "pk_modeling": {
                 "dsc_cbv_constraint": {
                     "mode": "skip",
-                    "reason": "No DSC data provided",
+                    "reason": "No DSC data were available for a vp prior.",
                     "skip_reason": "no_dsc_run",
                 }
             },
             "dsc_dce_validation": {
                 "skipped": True,
                 "status": "SKIPPED",
-                "reason": "No DSC data provided",
+                "reason": "No DSC data were available for a vp prior.",
                 "skip_reason": "no_dsc_run",
             },
         },
@@ -118,8 +118,8 @@ def test_dce_prior_informed_diagnostic_is_not_labeled_validation(env):
                 "dsc_preload_configured": True,
                 "metrics": {},
                 "interpretation": (
-                    "DSC nCBV supplied the retained spatial prior for vp; "
-                    "agreement is not independent"
+                    "DSC nCBV supplied the vp prior used by retained Bayesian fits; "
+                    "the comparison is not independent"
                 ),
             },
         },
@@ -133,29 +133,32 @@ def test_dce_prior_informed_diagnostic_is_not_labeled_validation(env):
     rendered = template.render(dce=dce, dsc={"present": True})
 
     assert "DSC-Informed vp Prior Diagnostics" in rendered
-    assert "PRIOR_INFORMED" in rendered
+    assert "Prior Informed" in rendered
+    assert "PRIOR_INFORMED" not in rendered
     assert "Prior Relative SD" in rendered
     assert "50%" in rendered
     assert "75%" in rendered
-    assert "No — vp used DSC nCBV" in rendered
+    assert "Independence" not in rendered
     assert "Median Absolute Prior Departure" in rendered
     assert "0.96 SD" in rendered
     assert "90th-Percentile Absolute Departure" in rendered
     assert "1.33 SD" in rendered
-    assert "Within 0.5 Prior SD" in rendered
+    assert "&lt; 0.5 Prior SD" in rendered
     assert "18%" in rendered
-    assert "Beyond 2 Prior SD" in rendered
+    assert "&gt; 2 Prior SD" in rendered
     assert "3%" in rendered
+    assert '<div class="metric-label">Notes</div>' in rendered
     assert "including retained fits that did not use the prior" in rendered
-    assert "departure metrics above use unsmoothed retained fits" in rendered
+    assert "departure metrics use unsmoothed retained fits" in rendered
     assert "Preload Config" not in rendered
+    assert "DSC-informed vp prior applied" not in rendered
     assert "prior-region.png" in rendered
     _assert_in_order(
         rendered,
         '<div class="metric-label">Status</div>',
         '<div class="metric-label">Prior Relative SD</div>',
         '<div class="metric-label">Retained Fits Using Prior</div>',
-        '<div class="metric-label">Independence</div>',
+        '<div class="metric-label">Median Absolute Prior Departure</div>',
     )
     assert '<div class="metric-label">Interpretation</div>' not in rendered
 
@@ -701,6 +704,9 @@ def test_parent_render_shows_dsc_blocks_when_dsc_present(env):
     rendered = template.render(**ctx)
     assert "<h3>DSC CBV Constraint</h3>" in rendered
     assert "<h3>NAWM-Normalized vp–nCBV Concordance</h3>" in rendered
+    assert '<div class="metric" style="grid-column: 1 / -1;">' in rendered
+    assert '<div class="metric-label">Reason</div>' in rendered
+    assert "No DSC data were available for a vp prior." in rendered
 
 
 def test_parent_render_tolerates_missing_dsc_qc_sections(env):
@@ -731,6 +737,8 @@ def test_dce_xval_error_hides_raw_exception(env):
     rendered = template.render(dce=dce, dsc={"qc_metrics": {}})
 
     assert "DSC–DCE comparison could not be completed" in rendered
+    assert '<div class="metric-value">Error</div>' in rendered
+    assert "Skipped (informational)" not in rendered
     assert "/private/work" not in rendered
 
 

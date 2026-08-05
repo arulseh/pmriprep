@@ -244,8 +244,8 @@ def validate_vp_cbv(
             result.region_label = "Lesion region"
 
     result.interpretation = (
-        "DSC nCBV supplied the retained spatial prior for vp; concordance is "
-        "prior-informed and is not independent validation"
+        "DSC nCBV supplied the vp prior used by retained Bayesian fits; the "
+        "comparison is not independent"
         if prior_informed
         else "Independent descriptive DSC-DCE concordance after within-subject "
         "NAWM normalization and matched 1 mm Gaussian smoothing"
