@@ -1233,6 +1233,8 @@ def _collect_qc_metrics(
     use_external_t1: bool = False,
     no_t1: bool = False,
     b1_method: str = "auto",
+    t1_skip_reason: str | None = None,
+    b1_skip_reason: str | None = None,
 ) -> dict[str, object]:
     """Collect all QC metrics into a single dictionary.
 
@@ -1266,6 +1268,10 @@ def _collect_qc_metrics(
         Whether T1 mapping was skipped (assumed T1).
     b1_method : str, optional
         B1 correction method used.
+    t1_skip_reason : str, optional
+        Factual reason T1 mapping was not performed.
+    b1_skip_reason : str, optional
+        Factual reason B1+ mapping was not performed.
 
     Returns
     -------
@@ -1278,7 +1284,7 @@ def _collect_qc_metrics(
         b1_mapping = dict(b1_qc) if b1_qc is not None else {}
         b1_mapping.update({
             "method": "none",
-            "b1_status": "Skipped by configuration",
+            "b1_status": b1_skip_reason or "Skipped by configuration",
             "skipped": True,
         })
         qc_metrics["b1_mapping"] = b1_mapping
@@ -1325,7 +1331,7 @@ def _collect_qc_metrics(
             b1_correction = "none"
         qc_metrics["t1_mapping"] = {
             "method": "assumed",
-            "t1_status": "Skipped by configuration",
+            "t1_status": t1_skip_reason or "Skipped by configuration",
             "skipped": True,
             "assumed_t1_ms": conversion.get("assumed_t1_ms"),
             "assumed_t1_field_strength_t": conversion.get(

@@ -1196,7 +1196,11 @@ def init_dce_underlays_wf(
 
 
 def init_dce_qc_collection_wf(
-    *, config: DCEConfig, name: str = "dce_qc_collection_wf",
+    *,
+    config: DCEConfig,
+    t1_skip_reason: str | None = None,
+    b1_skip_reason: str | None = None,
+    name: str = "dce_qc_collection_wf",
 ) -> pe.Workflow:
     """Aggregate DCE processing, modeling, validation, and display QC."""
     fields = [
@@ -1212,6 +1216,7 @@ def init_dce_qc_collection_wf(
         niu.Function(
             input_names=[
                 *fields, "use_external_t1", "no_t1", "b1_method",
+                "t1_skip_reason", "b1_skip_reason",
             ],
             output_names=["qc_metrics"], function=_collect_qc_metrics,
         ),
@@ -1221,6 +1226,8 @@ def init_dce_qc_collection_wf(
     collect.inputs.use_external_t1 = use_external_t1
     collect.inputs.no_t1 = config.no_t1
     collect.inputs.b1_method = config.b1_method
+    collect.inputs.t1_skip_reason = t1_skip_reason
+    collect.inputs.b1_skip_reason = b1_skip_reason
     use_vfa_t1 = config.uses_vfa_t1
     need_b1 = use_vfa_t1 or config.b1_method != "none"
     if not use_vfa_t1:
@@ -1386,6 +1393,8 @@ def init_dce_preproc_wf(
     random_seed: Optional[int] = None,
     mem_gb: Optional[float] = None,
     mem_limit_gb: Optional[float] = None,
+    t1_skip_reason: Optional[str] = None,
+    b1_skip_reason: Optional[str] = None,
     name: str = "dce_preproc_wf",
 ) -> pe.Workflow:
     """Initialize the DCE (Dynamic Contrast Enhanced) preprocessing workflow.
@@ -1418,6 +1427,10 @@ def init_dce_preproc_wf(
         Memory estimate (GB) for heavy nodes. If None, uses a capped default.
     mem_limit_gb : float, optional
         Upper bound (GB) used to cap per-node memory estimates.
+    t1_skip_reason : str, optional
+        Factual reason T1 mapping was not performed.
+    b1_skip_reason : str, optional
+        Factual reason B1+ mapping was not performed.
     name : str
         Name of the workflow (default: "dce_preproc_wf").
 
@@ -2658,7 +2671,11 @@ def init_dce_preproc_wf(
     # ==========================================================================
     # Node 11: Collect QC Metrics
     # ==========================================================================
-    dce_qc_collection_wf = init_dce_qc_collection_wf(config=config)
+    dce_qc_collection_wf = init_dce_qc_collection_wf(
+        config=config,
+        t1_skip_reason=t1_skip_reason,
+        b1_skip_reason=b1_skip_reason,
+    )
 
     if use_vfa_t1:
         workflow.connect([

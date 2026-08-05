@@ -170,6 +170,29 @@ def test_qc_collection_discloses_assumed_t1_and_independent_b1() -> None:
     }
 
 
+def test_qc_collection_reports_missing_mapping_data_factually() -> None:
+    """Resolved auto skips remain distinct from explicit configuration skips."""
+    from pmriprep.workflows.dce._helpers import _collect_qc_metrics
+
+    collected = _collect_qc_metrics(
+        b1_qc=None,
+        t1_qc=None,
+        signal_conversion_qc={"assumed_t1_ms": 1200.0},
+        preprocess_qc=None,
+        registration_qc=None,
+        aif_qc=None,
+        pk_qc=None,
+        validation_result=None,
+        no_t1=True,
+        b1_method="none",
+        t1_skip_reason="No VFA data available",
+        b1_skip_reason="No B1+ data available",
+    )
+
+    assert collected["t1_mapping"]["t1_status"] == "No VFA data available"
+    assert collected["b1_mapping"]["b1_status"] == "No B1+ data available"
+
+
 def test_qc_collection_nests_vfa_motion_provenance_with_t1() -> None:
     """Inter-VFA assessment reaches the quantitative T1 provenance block."""
     from pmriprep.workflows.dce._helpers import _collect_qc_metrics

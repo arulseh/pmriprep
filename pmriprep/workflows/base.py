@@ -2119,6 +2119,10 @@ def _init_master_dce_workflow(
     from pmriprep.workflows.dce.base import init_dce_preproc_wf
 
     _log = logging.getLogger("pmriprep.workflows")
+    t1_skip_reason = "Skipped by configuration" if dce_config.no_t1 else None
+    b1_skip_reason = (
+        "Skipped by configuration" if dce_config.b1_method == "none" else None
+    )
     # Auto-skip T1 mapping when no VFA data is available
     if (
         not session_data.modalities.vfa
@@ -2130,6 +2134,7 @@ def _init_master_dce_workflow(
             subject_id, session_id,
         )
         dce_config.no_t1 = True
+        t1_skip_reason = "No VFA data available"
 
     # Resolve b1_method="auto" to a concrete method based on available data
     b1_method = dce_config.b1_method
@@ -2149,6 +2154,7 @@ def _init_master_dce_workflow(
                 subject_id, session_id,
             )
             b1_method = "none"
+            b1_skip_reason = "No usable 4D AFI data available"
         else:
             _log.warning(
                 "No B1+ data (AFI or pre-computed map) found for sub-%s ses-%s; "
@@ -2156,6 +2162,7 @@ def _init_master_dce_workflow(
                 subject_id, session_id,
             )
             b1_method = "none"
+            b1_skip_reason = "No B1+ data available"
         dce_config.b1_method = b1_method
 
     dce_wf = init_dce_preproc_wf(
@@ -2168,6 +2175,8 @@ def _init_master_dce_workflow(
         random_seed=random_seed,
         mem_gb=mem_gb,
         mem_limit_gb=mem_limit_gb,
+        t1_skip_reason=t1_skip_reason,
+        b1_skip_reason=b1_skip_reason,
         name="dce_wf",
     )
 
