@@ -13,6 +13,24 @@ from pmriprep.utils.dce_dsc_validation import (
 )
 
 
+def _robust_departure_range(
+    departure: npt.NDArray[np.float64],
+    prior_relative_sd: Optional[float],
+) -> tuple[float, float]:
+    """Return a finite central range for the prior-departure histogram."""
+    lower, upper = np.percentile(departure, [1.0, 99.0])
+    anchors = [float(lower), float(upper), 0.0]
+    if prior_relative_sd is not None:
+        anchors.extend([-prior_relative_sd, prior_relative_sd])
+    lo = min(anchors)
+    hi = max(anchors)
+    if not hi > lo:
+        padding = max(abs(lo) * 0.05, 1e-6)
+        lo -= padding
+        hi += padding
+    return lo, hi
+
+
 def generate_xval_plot(
     vp_data: npt.NDArray[Any],
     cbv_data: npt.NDArray[Any],
@@ -148,11 +166,31 @@ def generate_xval_plot(
     if enough and is_prior_informed:
         departure = vp_values / cbv_values - 1.0
         departure = departure[np.isfinite(departure)]
-        ax.hist(departure, bins=60, color=COLORBLIND_PALETTE.primary, alpha=0.8)
+        departure_range = _robust_departure_range(departure, prior_relative_sd)
+        outside = int(np.count_nonzero(
+            (departure < departure_range[0]) | (departure > departure_range[1])
+        ))
+        ax.hist(
+            departure,
+            bins=60,
+            range=departure_range,
+            color=COLORBLIND_PALETTE.primary,
+            alpha=0.8,
+        )
         ax.axvline(0, color="black", linewidth=1, linestyle="--")
         if prior_relative_sd is not None:
             ax.axvline(-prior_relative_sd, color=COLORBLIND_PALETTE.warning, linewidth=1)
             ax.axvline(prior_relative_sd, color=COLORBLIND_PALETTE.warning, linewidth=1)
+        if outside:
+            ax.text(
+                0.98,
+                0.96,
+                f"Central 98% shown; {outside:,} outside",
+                transform=ax.transAxes,
+                fontsize=7,
+                ha="right",
+                va="top",
+            )
         ax.set_xlabel("(vp − DSC-informed vp) / DSC-informed vp", fontsize=9)
         ax.set_ylabel("Voxels", fontsize=9)
         ax.set_title("Fractional Prior Departure", fontsize=10)

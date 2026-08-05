@@ -130,3 +130,13 @@ class TestDscDceValidationNodeSkipReasons:
         result = self._call(dce_model="tofts", dsc_preload_configured=True)
         assert result["status"] == "SKIPPED"
         assert result["skip_reason"] == "vp_not_defined_for_model"
+
+def test_prior_departure_histogram_range_ignores_extreme_denominator_tail() -> None:
+    """Near-zero prior values must not flatten the displayed distribution."""
+    from pmriprep.utils.dsc_dce_xval_plots import _robust_departure_range
+
+    departure = np.concatenate([np.linspace(-0.5, 0.5, 1000), np.array([1e16])])
+    lower, upper = _robust_departure_range(departure, prior_relative_sd=0.6)
+
+    assert lower == pytest.approx(-0.6)
+    assert upper < 1.0
