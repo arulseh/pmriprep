@@ -241,10 +241,10 @@ Tumor-segmentation fields:
 ## BIDS inputs
 
 A normal run requires `dataset_description.json` and an anatomical T1w image.
-Pre-contrast T1w is preferred; post-contrast-only anatomy is supported. DSC and
-DCE run when corresponding 4D `*_dsc.nii.gz` and `*_dce.nii.gz` images are
-present. HD-GLIO requires pre- and post-contrast T1w, T2w, and
-FLAIR.
+Post-contrast-only T1w anatomy is supported, but downstream options requiring a
+pre-contrast T1w reference are unavailable. DSC and DCE run when corresponding
+4D `*_dsc.nii.gz` and `*_dce.nii.gz` images are present. HD-GLIO requires pre-
+and post-contrast T1w, T2w, and FLAIR.
 
 | Input | Required metadata |
 |---|---|
@@ -294,11 +294,11 @@ Output availability depends on the supplied modalities and configuration:
 - DSC outputs include relative and NAWM-normalized perfusion maps, AUC-CBV,
   MTT, Tmax, PSR, leakage and signal-quality diagnostics, masks, and regional
   statistics.
-- DCE outputs include PK, model-selection, model-free, timing, fit-quality,
-  QC, mask, and regional-statistics derivatives. Quantitative maps remain
-  uncensored; regional statistics retain the native finite-value summaries and
-  add explicitly labelled QC-filtered companions when a DCE QC mask is
-  available.
+- DCE outputs include PK, model-selection, model-free, timing, and fit-quality
+  derivatives, a fit-quality acceptance mask, and regional statistics.
+  Quantitative maps remain uncensored; regional statistics retain native
+  finite-value summaries and add explicitly labelled summaries restricted to
+  passing voxels when the acceptance mask is available.
 
 Accepted VFA T1 mapping emits a millisecond `T1map` registered to the native
 DCE reference grid. Population-T1 fallbacks and external T1 maps are consumed
