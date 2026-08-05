@@ -1467,31 +1467,45 @@ class TestChunkedMultiproc:
                 "selected_model_name": "patlak",
                 "delta_bic": 8.0,
                 "failed": False,
+                "converged": True,
+                "params": {"Ktrans": 0.01, "vp": 0.02},
             },
             {
                 "coords": (1, 0, 0),
                 "selected_model_name": "extended_tofts",
                 "delta_bic": 12.0,
                 "failed": False,
+                "converged": True,
+                "params": {"Ktrans": 0.02, "ve": 0.3, "vp": 0.01},
             },
             {
                 "coords": (2, 0, 0),
                 "selected_model_name": "patlak",
                 "delta_bic": 20.0,
                 "failed": False,
+                "converged": False,
+                "params": {"Ktrans": 0.03, "vp": 0.04},
             },
         ]
         voxels = [
             VoxelInput(index, 0, 0, np.zeros(4), None)
             for index in range(3)
         ]
-        seen: list[tuple[int, str, bool, list[str]]] = []
+        seen: list[tuple[int, str, bool, list[str], dict[str, float] | None]] = []
 
         def fake_fit(voxel: VoxelInput) -> dict[str, Any]:
             selected_model = str(dce_compute._worker_ctx["model_name"])
             is_auto = bool(dce_compute._worker_ctx["is_auto"])
             candidate_models = sorted(dce_compute._worker_ctx["bic_candidates"])
-            seen.append((voxel.x, selected_model, is_auto, candidate_models))
+            seen.append(
+                (
+                    voxel.x,
+                    selected_model,
+                    is_auto,
+                    candidate_models,
+                    voxel.initial_parameters,
+                )
+            )
             return {
                 "coords": (voxel.x, voxel.y, voxel.z),
                 "selected_model_name": selected_model,
@@ -1525,9 +1539,15 @@ class TestChunkedMultiproc:
         )
 
         assert seen == [
-            (0, "patlak", False, []),
-            (2, "patlak", False, []),
-            (1, "extended_tofts", False, []),
+            (0, "patlak", False, [], {"Ktrans": 0.01, "vp": 0.02}),
+            (2, "patlak", False, [], None),
+            (
+                1,
+                "extended_tofts",
+                False,
+                [],
+                {"Ktrans": 0.02, "ve": 0.3, "vp": 0.01},
+            ),
         ]
         assert results[0]["selected_model_name"] == "patlak"
         assert results[0]["delta_bic"] == 8.0
@@ -1540,6 +1560,7 @@ class TestChunkedMultiproc:
         assert results[2]["inference_fallback"] is True
         assert "inference_fallback" not in batched_results[2]
         assert "Starting DCE VI refinement for 3 voxels" in caplog.text
+        assert "CPU worker processes (configured: 1)" in caplog.text
         assert "DCE VI refinement group 1/2: patlak (2 voxels)" in caplog.text
         assert "DCE VI refinement finished" in caplog.text
         assert "2/3 retained, 1 fell back to batched NLLS" in caplog.text
@@ -1553,10 +1574,16 @@ class TestChunkedMultiproc:
 
         batched = [{"failed": False, "converged": True, "params": {"Ktrans": 0.1}}]
         voxel = VoxelInput(0, 0, 0, np.zeros(4), None)
+        seen_initial: list[dict[str, float] | None] = []
+
+        def fake_fit(value: VoxelInput) -> dict[str, Any]:
+            seen_initial.append(value.initial_parameters)
+            return {"failed": True, "converged": False}
+
         monkeypatch.setattr(
             dce_compute,
             "_fit_single_voxel",
-            lambda _: {"failed": True, "converged": False},
+            fake_fit,
         )
         init_args = (
             np.zeros(4),
@@ -1584,3 +1611,4 @@ class TestChunkedMultiproc:
         assert results[0]["params"] == {"Ktrans": 0.1}
         assert results[0]["inference_fallback"] is True
         assert "inference_fallback" not in batched[0]
+        assert seen_initial == [{"Ktrans": 0.1}]

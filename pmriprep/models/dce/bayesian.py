@@ -13,7 +13,7 @@ The shared constraint ve + vp <= VP_VE_TOTAL_MAX is enforced during sampling
 for models that have both ve and vp parameters.
 """
 
-from typing import Callable, cast
+from typing import Callable, Mapping, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -535,6 +535,7 @@ class BayesianPKFitter:
         compute_uncertainties: bool = True,
         weights: npt.NDArray[np.floating] | None = None,
         sloppy: bool = False,
+        initial_parameters: Mapping[str, float] | None = None,
     ) -> FitResult:
         """Fit model using MAP estimation with Laplace approximation.
 
@@ -560,6 +561,9 @@ class BayesianPKFitter:
             Values in [0, 1] where 1.0 = full weight.
         sloppy : bool, optional
             Use fast, low-quality settings for testing.
+        initial_parameters : mapping of str to float or None, optional
+            Natural-space parameters used for the NLLS warm-start candidate.
+            When omitted or incomplete, the scalar NLLS fit is computed.
 
         Returns
         -------
@@ -622,21 +626,35 @@ class BayesianPKFitter:
             dtype=np.float64,
         )
 
-        # NLLS warm-start: use model.fit() (curve_fit TRF) as third start point
+        # NLLS warm-start candidate. A preceding batched fit may supply this
+        # candidate; otherwise compute it with the scalar model implementation.
         x0_nlls_nat = x0_prior_nat.copy()
-        try:
-            nlls_result = self.model.fit(
-                tissue_curve, aif, time_points, weights=weights,
+        param_names = self.model.get_parameter_names()
+        if initial_parameters is not None:
+            supplied = np.array(
+                [initial_parameters.get(name, np.nan) for name in param_names],
+                dtype=np.float64,
             )
-            if nlls_result.converged:
-                param_names = self.model.get_parameter_names()
-                x0_nlls_nat = np.array(
-                    [nlls_result.parameters.get(p, x0_prior_nat[i])
-                     for i, p in enumerate(param_names)],
-                    dtype=np.float64,
+            if np.all(np.isfinite(supplied)):
+                x0_nlls_nat = supplied
+            else:
+                initial_parameters = None
+
+        if initial_parameters is None:
+            try:
+                nlls_result = self.model.fit(
+                    tissue_curve, aif, time_points, weights=weights,
                 )
-        except (ValueError, RuntimeError, np.linalg.LinAlgError):
-            pass
+                if nlls_result.converged:
+                    x0_nlls_nat = np.array(
+                        [
+                            nlls_result.parameters.get(p, x0_prior_nat[i])
+                            for i, p in enumerate(param_names)
+                        ],
+                        dtype=np.float64,
+                    )
+            except (ValueError, RuntimeError, np.linalg.LinAlgError):
+                pass
 
         # Clip natural-space start points, then transform to unconstrained space
         lower = np.array([b[0] for b in bounds])
@@ -797,6 +815,7 @@ class BayesianPKFitter:
         noise_prior: tuple[float, float] | None = None,
         weights: npt.NDArray[np.floating] | None = None,
         sloppy: bool = False,
+        initial_parameters: Mapping[str, float] | None = None,
     ) -> FitResult:
         """Fit model using FABBER-style linearized Variational Bayes.
 
@@ -826,6 +845,9 @@ class BayesianPKFitter:
             ``sum(weights)`` effective observations to the noise posterior.
         sloppy : bool, optional
             Use fast, low-quality settings for testing.
+        initial_parameters : mapping of str to float or None, optional
+            Natural-space parameter values used to initialize the variational
+            linearization. When omitted, an NLLS warm start is computed.
 
         Returns
         -------
@@ -884,28 +906,39 @@ class BayesianPKFitter:
         # model around a distant prior mean, which can trap low-uptake curves
         # at a poor local approximation.
         m_nat = np.array([p.mean for p in self.priors], dtype=np.float64)
-        try:
-            warm_result = self.model.fit(
-                tissue_curve,
-                aif,
-                time_points,
-                weights=weights,
+        if initial_parameters is not None:
+            supplied = np.array(
+                [initial_parameters.get(name, np.nan) for name in param_names],
+                dtype=np.float64,
             )
-            if warm_result.converged:
-                m_nat = np.array(
-                    [
-                        warm_result.parameters.get(name, m_nat[index])
-                        for index, name in enumerate(param_names)
-                    ],
-                    dtype=np.float64,
+            if np.all(np.isfinite(supplied)):
+                m_nat = supplied
+            else:
+                initial_parameters = None
+
+        if initial_parameters is None:
+            try:
+                warm_result = self.model.fit(
+                    tissue_curve,
+                    aif,
+                    time_points,
+                    weights=weights,
                 )
-        except (ValueError, RuntimeError, np.linalg.LinAlgError):
-            data_guess = self.model.estimate_initial_guess(
-                tissue_curve,
-                aif,
-                time_points,
-            )
-            m_nat = np.asarray(data_guess, dtype=np.float64)
+                if warm_result.converged:
+                    m_nat = np.array(
+                        [
+                            warm_result.parameters.get(name, m_nat[index])
+                            for index, name in enumerate(param_names)
+                        ],
+                        dtype=np.float64,
+                    )
+            except (ValueError, RuntimeError, np.linalg.LinAlgError):
+                data_guess = self.model.estimate_initial_guess(
+                    tissue_curve,
+                    aif,
+                    time_points,
+                )
+                m_nat = np.asarray(data_guess, dtype=np.float64)
         for i in range(n_params):
             m_nat[i] = np.clip(m_nat[i], bounds[i][0], bounds[i][1])
         m_nat = np.asarray(self._apply_volume_constraint(m_nat), dtype=np.float64)

@@ -1148,6 +1148,7 @@ class VoxelInput(NamedTuple):
     z: int
     tissue_curve: npt.NDArray[Any]
     voxel_vp: Optional[float]
+    initial_parameters: Optional[dict[str, float]] = None
 
 
 class BatchedChunkArgs(NamedTuple):
@@ -1463,7 +1464,7 @@ def _fit_single_voxel(
     create_vp_prior_from_dsc = _worker_ctx["create_vp_prior_from_dsc"]
     ConstraintMode = _worker_ctx["ConstraintMode"]
 
-    x, y, z, tissue_curve, voxel_vp = voxel_data
+    x, y, z, tissue_curve, voxel_vp, initial_parameters = voxel_data
 
     model = _worker_ctx["model"]
     fitter = _worker_ctx["fitter"]
@@ -1531,6 +1532,7 @@ def _fit_single_voxel(
                     prepared_curve, aif, time_points,
                     weights=motion_weights,
                     sloppy=sloppy,
+                    initial_parameters=initial_parameters,
                 )
                 constrained = True
             elif inference == "map":
@@ -1542,6 +1544,7 @@ def _fit_single_voxel(
                     compute_uncertainties=not sloppy,
                     weights=motion_weights,
                     sloppy=sloppy,
+                    initial_parameters=initial_parameters,
                 )
                 constrained = True
             elif inference == "mcmc":
@@ -1567,6 +1570,7 @@ def _fit_single_voxel(
                     prepared_curve, aif, time_points,
                     weights=motion_weights,
                     sloppy=sloppy,
+                    initial_parameters=initial_parameters,
                 )
             elif inference == "map" and fitter is not None:
                 result = fitter.fit_map(
@@ -1574,6 +1578,7 @@ def _fit_single_voxel(
                     compute_uncertainties=not sloppy,
                     weights=motion_weights,
                     sloppy=sloppy,
+                    initial_parameters=initial_parameters,
                 )
             elif inference == "mcmc" and fitter is not None:
                 result = fitter.fit_mcmc(
@@ -1640,6 +1645,7 @@ def _fit_single_voxel(
                         best = winner_fitter.fit_vi(
                             prepared_curve, aif, time_points,
                             weights=motion_weights, sloppy=sloppy,
+                            initial_parameters=initial_parameters,
                         )
                         constrained = (
                             vp_prior is not None
@@ -1666,6 +1672,7 @@ def _fit_single_voxel(
                             prepared_curve, aif, time_points,
                             compute_uncertainties=not sloppy,
                             weights=motion_weights, sloppy=sloppy,
+                            initial_parameters=initial_parameters,
                         )
                         constrained = (
                             vp_prior is not None
@@ -4208,6 +4215,18 @@ class ComputeDCEMaps(BaseInterface):
         # CPU MAP refinement using multiprocessing
         _init_worker(*init_args)
         n_voxels = len(voxel_data_list)
+        refinement_voxels = [
+            voxel._replace(
+                initial_parameters=(
+                    result.get("params")
+                    if result.get("converged", False)
+                    else None
+                )
+            )
+            for voxel, result in zip(
+                voxel_data_list, batched_results, strict=True
+            )
+        ]
 
         if n_procs > 1:
             from concurrent.futures import ProcessPoolExecutor
@@ -4219,7 +4238,7 @@ class ComputeDCEMaps(BaseInterface):
             )
             try:
                 cpu_results = list(executor.map(
-                    _fit_single_voxel, voxel_data_list, chunksize=chunk_size,
+                    _fit_single_voxel, refinement_voxels, chunksize=chunk_size,
                 ))
             except BaseException:
                 from pmriprep.utils.processes import terminate_process_pool
@@ -4232,11 +4251,11 @@ class ComputeDCEMaps(BaseInterface):
             else:
                 executor.shutdown(wait=True, cancel_futures=True)
         else:
-            cpu_results = [_fit_single_voxel(vd) for vd in voxel_data_list]
+            cpu_results = [_fit_single_voxel(vd) for vd in refinement_voxels]
 
         # Use CPU MAP results where they converged, batched NLLS otherwise
         final_results = []
-        for fit_res, cpu_res in zip(batched_results, cpu_results):
+        for fit_res, cpu_res in zip(batched_results, cpu_results, strict=True):
             if cpu_res.get("converged", False) and not cpu_res.get("failed", True):
                 cpu_res["inference_fallback"] = False
                 final_results.append(cpu_res)
@@ -4312,10 +4331,12 @@ class ComputeDCEMaps(BaseInterface):
         refinement_start = time.perf_counter()
         logger.info(
             "Starting DCE %s refinement for %d voxels across %d selected "
-            "model groups; this CPU per-voxel stage may take several minutes",
+            "model groups; scalar voxel fits are distributed across CPU worker "
+            "processes (configured: %d) and may take several minutes",
             inference_name,
             n_refinable,
             len(selected_groups),
+            max(1, n_procs),
         )
         n_retained = 0
         n_fallback = 0
@@ -4346,7 +4367,16 @@ class ComputeDCEMaps(BaseInterface):
                 random_seed,
                 None,
             )
-            group_voxels = [voxel_data_list[index] for index in indices]
+            group_voxels = [
+                voxel_data_list[index]._replace(
+                    initial_parameters=(
+                        batched_results[index].get("params")
+                        if batched_results[index].get("converged", False)
+                        else None
+                    )
+                )
+                for index in indices
+            ]
             _init_worker(*fixed_init_args)
 
             if n_procs > 1:
@@ -4382,7 +4412,7 @@ class ComputeDCEMaps(BaseInterface):
 
             group_retained = 0
             group_fallback = 0
-            for index, refined in zip(indices, refined_results):
+            for index, refined in zip(indices, refined_results, strict=True):
                 if refined.get("failed", True) or not refined.get(
                     "converged", False
                 ):

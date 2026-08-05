@@ -375,6 +375,58 @@ class TestVIConvergenceAndInitialization:
         assert result.parameters["Ktrans"] == pytest.approx(0.01, rel=0.10)
         assert result.parameters["ve"] == pytest.approx(0.10, rel=0.10)
 
+    def test_supplied_initial_parameters_skip_redundant_nlls(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A complete batched warm start bypasses the scalar NLLS fit."""
+        tissue_curve, aif, time_points, _ = _make_synthetic_tofts_data(
+            ktrans=0.12,
+            ve=0.30,
+        )
+        model = ToftsModel()
+        warm = model.fit(tissue_curve, aif, time_points)
+        assert warm.converged
+
+        def fail_if_called(*args: object, **kwargs: object) -> None:
+            del args, kwargs
+            raise AssertionError("scalar NLLS warm start was called")
+
+        monkeypatch.setattr(model, "fit", fail_if_called)
+        result = BayesianPKFitter(model).fit_vi(
+            tissue_curve,
+            aif,
+            time_points,
+            initial_parameters=warm.parameters,
+        )
+
+        assert result.converged
+        assert result.parameters["Ktrans"] == pytest.approx(0.12, rel=0.10)
+        assert result.parameters["ve"] == pytest.approx(0.30, rel=0.10)
+
+    def test_incomplete_initial_parameters_keep_scalar_warm_start(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An incomplete external warm start falls back to scalar NLLS."""
+        tissue_curve, aif, time_points, _ = _make_synthetic_tofts_data()
+        model = ToftsModel()
+        original_fit = model.fit
+        calls = 0
+
+        def record_fit(*args: object, **kwargs: object):
+            nonlocal calls
+            calls += 1
+            return original_fit(*args, **kwargs)
+
+        monkeypatch.setattr(model, "fit", record_fit)
+        BayesianPKFitter(model).fit_vi(
+            tissue_curve,
+            aif,
+            time_points,
+            initial_parameters={"Ktrans": 0.1},
+        )
+
+        assert calls == 1
+
 
 # ---------------------------------------------------------------------------
 # Tests 7-8: create_vp_prior_from_dsc
@@ -518,6 +570,35 @@ class TestBayesianMAPFitSynthetic:
         assert result.uncertainty_source == "hessian_unavailable"
         assert np.isnan(result.uncertainties["Ktrans"])
         assert result.credible_intervals == {}
+
+    def test_supplied_map_initial_parameters_skip_redundant_nlls(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """MAP keeps three starts without recomputing its NLLS candidate."""
+        tissue_curve, aif, time_points, _ = _make_synthetic_tofts_data(
+            ktrans=0.1,
+            ve=0.2,
+        )
+        model = ToftsModel()
+        warm = model.fit(tissue_curve, aif, time_points)
+        assert warm.converged
+
+        def fail_if_called(*args: object, **kwargs: object) -> None:
+            del args, kwargs
+            raise AssertionError("scalar NLLS warm start was called")
+
+        monkeypatch.setattr(model, "fit", fail_if_called)
+        result = BayesianPKFitter(model).fit_map(
+            tissue_curve,
+            aif,
+            time_points,
+            compute_uncertainties=False,
+            initial_parameters=warm.parameters,
+        )
+
+        assert result.converged
+        assert result.parameters["Ktrans"] == pytest.approx(0.1, rel=0.3)
+        assert result.parameters["ve"] == pytest.approx(0.2, rel=0.3)
 
 
 # ---------------------------------------------------------------------------
