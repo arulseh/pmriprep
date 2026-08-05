@@ -30,14 +30,18 @@ def test_validation_mask_is_jointly_finite_positive() -> None:
     cbv = np.array([1.0, 1.0, 1.0, 1.0]).reshape(4, 1, 1)
     mask = np.ones((4, 1, 1), dtype=bool)
     assert build_vp_cbv_validation_mask(vp, cbv, mask)[:, 0, 0].tolist() == [
-        True, False, False, False,
+        True,
+        False,
+        False,
+        False,
     ]
 
 
 def test_validation_mask_rejects_shape_mismatch() -> None:
     with pytest.raises(ValueError, match="shapes must match"):
         build_vp_cbv_validation_mask(
-            np.ones((2, 2, 2)), np.ones((2, 2, 2)),
+            np.ones((2, 2, 2)),
+            np.ones((2, 2, 2)),
             np.ones((2, 2, 1), dtype=bool),
         )
 
@@ -45,7 +49,11 @@ def test_validation_mask_rejects_shape_mismatch() -> None:
 def test_independent_concordance_uses_measured_nawm_normalization() -> None:
     vp, cbv, brain, nawm, tumor = _make_data()
     result = validate_vp_cbv(
-        vp, cbv, brain, nawm_mask=nawm, region_mask=tumor,
+        vp,
+        cbv,
+        brain,
+        nawm_mask=nawm,
+        region_mask=tumor,
     )
     assert result.status == "INDEPENDENT"
     assert result.metrics.correlation > 0.8
@@ -62,8 +70,13 @@ def test_prior_use_changes_label_not_measurement() -> None:
     vp, cbv, brain, nawm, _ = _make_data()
     independent = validate_vp_cbv(vp, cbv, brain, nawm_mask=nawm)
     informed = validate_vp_cbv(
-        vp, cbv, brain, nawm_mask=nawm, prior_informed=True,
-        prior_relative_sd=0.6, prior_informed_fraction=0.75,
+        vp,
+        cbv,
+        brain,
+        nawm_mask=nawm,
+        prior_informed=True,
+        prior_relative_sd=0.6,
+        prior_informed_fraction=0.75,
     )
     assert informed.status == "PRIOR_INFORMED"
     assert informed.metrics.correlation == pytest.approx(
@@ -77,7 +90,11 @@ def test_small_or_absent_tumor_is_omitted_without_downgrade() -> None:
     tumor[:] = False
     tumor[: MIN_VALID_VOXELS - 1] = True
     result = validate_vp_cbv(
-        vp, cbv, brain, nawm_mask=nawm, region_mask=tumor,
+        vp,
+        cbv,
+        brain,
+        nawm_mask=nawm,
+        region_mask=tumor,
     )
     assert result.status == "INDEPENDENT"
     assert result.region_metrics is None
@@ -108,6 +125,7 @@ class TestDscDceValidationNodeSkipReasons:
     @staticmethod
     def _call(**kwargs):
         from pmriprep.workflows.dce.base import _dsc_dce_validation_node
+
         return _dsc_dce_validation_node(**kwargs)
 
     def test_reports_no_dsc_run(self, tmp_path):
@@ -121,7 +139,9 @@ class TestDscDceValidationNodeSkipReasons:
         vp_file = tmp_path / "vp.nii.gz"
         vp_file.write_bytes(b"dummy")
         result = self._call(
-            vp_file=str(vp_file), dsc_preload_configured=True, pk_qc=None,
+            vp_file=str(vp_file),
+            dsc_preload_configured=True,
+            pk_qc=None,
         )
         assert result["status"] == "SKIPPED"
         assert "NAWM" in result["reason"]
@@ -132,29 +152,19 @@ class TestDscDceValidationNodeSkipReasons:
         assert result["skip_reason"] == "vp_not_defined_for_model"
 
 
-def test_prior_departure_is_bounded_with_near_zero_reference() -> None:
-    """Near-zero prior values must remain visible without flattening the plot."""
+def test_prior_departure_uses_fitter_scale_and_floor() -> None:
+    """The plot must use the same relative width and floor as the fitter."""
     from pmriprep.utils.dsc_dce_xval_plots import (
-        _finite_symmetric_relative_differences,
+        _signed_prior_departure,
     )
 
-    departure = _finite_symmetric_relative_differences(
-        np.array([1.0, 1.0, 2.0]),
-        np.array([1e-16, 1.0, 1.0]),
+    departure = _signed_prior_departure(
+        np.array([0.002, 0.016, 0.004]),
+        np.array([0.001, 0.010, 0.010]),
+        0.6,
     )
 
-    np.testing.assert_allclose(departure, [2.0, 0.0, 2.0 / 3.0])
-    assert np.all(np.abs(departure) <= 2.0)
+    np.testing.assert_allclose(departure, [1.0, 1.0, -1.0])
 
-
-def test_prior_sd_bounds_are_mapped_to_symmetric_difference() -> None:
-    """Multiplicative prior limits must use the plotted difference scale."""
-    from pmriprep.utils.dsc_dce_xval_plots import _symmetric_prior_sd_bounds
-
-    lower, upper = _symmetric_prior_sd_bounds(0.6)
-
-    assert lower == pytest.approx(-6.0 / 7.0)
-    assert upper == pytest.approx(6.0 / 13.0)
-
-    with pytest.raises(ValueError, match="0 <= relative_sd < 1"):
-        _symmetric_prior_sd_bounds(2.0)
+    with pytest.raises(ValueError, match="must be positive"):
+        _signed_prior_departure(np.array([0.01]), np.array([0.01]), 0.0)

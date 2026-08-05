@@ -109,6 +109,12 @@ def test_dce_prior_informed_diagnostic_is_not_labeled_validation(env):
                 "prior_informed": True,
                 "prior_relative_sd": 0.5,
                 "prior_informed_fraction": 0.75,
+                "prior_departure": {
+                    "z_departure_median": 0.96,
+                    "z_departure_p90": 1.33,
+                    "frac_prior_dominated": 0.18,
+                    "frac_strong_departure": 0.032,
+                },
                 "dsc_preload_configured": True,
                 "metrics": {},
                 "interpretation": (
@@ -126,12 +132,22 @@ def test_dce_prior_informed_diagnostic_is_not_labeled_validation(env):
 
     rendered = template.render(dce=dce, dsc={"present": True})
 
-    assert "NAWM-Normalized vp–nCBV Concordance" in rendered
+    assert "DSC-Informed vp Prior Diagnostics" in rendered
     assert "PRIOR_INFORMED" in rendered
     assert "Prior Relative SD" in rendered
     assert "50%" in rendered
     assert "75%" in rendered
     assert "No — vp used DSC nCBV" in rendered
+    assert "Median Absolute Prior Departure" in rendered
+    assert "0.96 SD" in rendered
+    assert "90th-Percentile Absolute Departure" in rendered
+    assert "1.33 SD" in rendered
+    assert "Within 0.5 Prior SD" in rendered
+    assert "18%" in rendered
+    assert "Beyond 2 Prior SD" in rendered
+    assert "3%" in rendered
+    assert "including retained fits that did not use the prior" in rendered
+    assert "departure metrics above use unsmoothed retained fits" in rendered
     assert "Preload Config" not in rendered
     assert "prior-region.png" in rendered
     _assert_in_order(

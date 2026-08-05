@@ -982,6 +982,7 @@ def prepare_vp_constraint_from_data(
         # Unit annotations so downstream consumers don't conflate scales.
         "cbv_median_units": "ncbv",
         "vp_median_units": "fraction",
+        "nawm_vp_reference": NAWM_VP_REFERENCE,
         "registration_statuses": registration_statuses,
     }
 

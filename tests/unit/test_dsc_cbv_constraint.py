@@ -410,7 +410,9 @@ class TestNormalizeAifQcKeys:
 class TestQcReportSchema:
     """Tests that qc_report uses the (mode, reason) key schema."""
 
-    def test_qc_report_keys_from_prepare_vp_constraint_from_data(self, tmp_path: Any) -> None:
+    def test_qc_report_keys_from_prepare_vp_constraint_from_data(
+        self, tmp_path: Any
+    ) -> None:
         """prepare_vp_constraint_from_data returns qc_report with 'mode'/'reason' keys."""
         import nibabel as nib
 
@@ -440,7 +442,9 @@ class TestQcReportSchema:
         assert "mode" in qc, "qc_report must have 'mode' key"
         assert "reason" in qc, "qc_report must have 'reason' key"
         assert "constraint_mode" not in qc, "old 'constraint_mode' key must not exist"
-        assert "constraint_reason" not in qc, "old 'constraint_reason' key must not exist"
+        assert "constraint_reason" not in qc, (
+            "old 'constraint_reason' key must not exist"
+        )
         assert qc["mode"] in ("soft", "skip")
 
     def test_qc_report_skip_default_schema(self) -> None:
@@ -503,6 +507,7 @@ class TestNcbvToVpPrior:
 
 def _write_nifti(path: Any, data: np.ndarray) -> str:
     import nibabel as nib  # type: ignore[import-untyped]
+
     img = nib.Nifti1Image(data.astype(np.float32), affine=np.eye(4))
     nib.save(img, str(path))
     return str(path)
@@ -623,9 +628,7 @@ class TestVpMagnitudeGate:
 class TestNcbvIntegration:
     """End-to-end tests confirming the production path uses ncbv_to_vp_prior."""
 
-    def test_prepare_vp_constraint_uses_ncbv_to_vp_prior(
-        self, tmp_path: Any
-    ) -> None:
+    def test_prepare_vp_constraint_uses_ncbv_to_vp_prior(self, tmp_path: Any) -> None:
         """nCBV median 1.0 yields vp_map median ≈ NAWM_VP_REFERENCE (0.02)."""
         ncbv = np.full((6, 6, 6), 1.0, dtype=np.float64)
         mask = np.ones((6, 6, 6), dtype=np.float32)
@@ -643,13 +646,17 @@ class TestNcbvIntegration:
         assert result.vp_map is not None
         vp_median = float(np.nanmedian(result.vp_map))
         assert vp_median == pytest.approx(NAWM_VP_REFERENCE, rel=1e-6)
+        assert result.qc_report["nawm_vp_reference"] == pytest.approx(NAWM_VP_REFERENCE)
 
     @pytest.mark.parametrize(
         ("dsc_status", "dce_status"),
         [("POOR", "PASS"), ("PASS", "POOR"), ("UNKNOWN", "PASS"), ("PASS", None)],
     )
     def test_registration_failure_skips_spatial_prior(
-        self, tmp_path: Any, dsc_status: str, dce_status: str | None,
+        self,
+        tmp_path: Any,
+        dsc_status: str,
+        dce_status: str | None,
     ) -> None:
         """A failed or unavailable transform makes a spatial prior unsafe."""
         ncbv_file = _write_nifti(tmp_path / "ncbv.nii.gz", np.ones((6, 6, 6)))
@@ -733,6 +740,7 @@ class TestDoseAwareCnrGate:
     def test_full_dose_thresholds_unchanged(self) -> None:
         """dose=1.0 × agent=0.1 (Gd-DOTA) → full-dose thresholds."""
         from pmriprep.utils.dsc_cbv_constraint import _bolus_gd_fraction
+
         assert _bolus_gd_fraction(1.0, 0.1) == pytest.approx(1.0)
 
     def test_half_dose_gddota_half_thresholds(self) -> None:
@@ -752,6 +760,7 @@ class TestDoseAwareCnrGate:
     def test_half_dose_vueway_scaled(self) -> None:
         """dose=0.5 × agent=0.05 (Vueway half-dose) → eff=0.25."""
         from pmriprep.utils.dsc_cbv_constraint import _bolus_gd_fraction
+
         assert _bolus_gd_fraction(0.5, 0.05) == pytest.approx(0.25)
 
     def test_atlas_strict_bypasses_skip_at_low_cnr(self) -> None:
@@ -777,6 +786,7 @@ class TestDoseAwareCnrGate:
     def test_double_dose_tightens_thresholds(self) -> None:
         """dose=2.0 → eff=2.0; coverage 0.80 (passes at full-dose) now SKIPs."""
         from pmriprep.utils.dsc_cbv_constraint import _bolus_gd_fraction
+
         # Double dose bumps SKIP threshold from 0.70 → 1.4 (clamped implicit at 1.0).
         # Sub with coverage 0.80 hits SKIP now where it cleared at full-dose.
         assert _bolus_gd_fraction(2.0, 0.1) == pytest.approx(2.0)
@@ -784,6 +794,7 @@ class TestDoseAwareCnrGate:
     def test_very_low_effective_dose_clamp(self) -> None:
         """dose=0.25 × agent=0.04 (gadoquatrane quarter) → eff=0.1."""
         from pmriprep.utils.dsc_cbv_constraint import _bolus_gd_fraction
+
         # SKIP threshold becomes 0.07 — gate essentially disabled for
         # very-low-dose protocols. Documents behavior; subjects pass trivially.
         assert _bolus_gd_fraction(0.25, 0.04) == pytest.approx(0.1)
@@ -792,9 +803,12 @@ class TestDoseAwareCnrGate:
 class TestDetermineConstraintReferenceGate:
     """The K2 reference is a binary availability gate, not a classifier."""
 
-    @pytest.mark.parametrize("k2_metrics", [None, {}, {"k2_reference_available": False}])
+    @pytest.mark.parametrize(
+        "k2_metrics", [None, {}, {"k2_reference_available": False}]
+    )
     def test_missing_or_unavailable_reference_skips(
-        self, k2_metrics: dict[str, Any] | None,
+        self,
+        k2_metrics: dict[str, Any] | None,
     ) -> None:
         quality = CBVQualityAssessment(
             confidence="high",
@@ -816,16 +830,19 @@ class TestBolusGdFractionValidation:
 
     def test_zero_dose_raises(self) -> None:
         from pmriprep.utils.dsc_cbv_constraint import _bolus_gd_fraction
+
         with pytest.raises(ValueError, match="dose must be positive"):
             _bolus_gd_fraction(0.0, 0.1)
 
     def test_negative_dose_raises(self) -> None:
         from pmriprep.utils.dsc_cbv_constraint import _bolus_gd_fraction
+
         with pytest.raises(ValueError, match="dose must be positive"):
             _bolus_gd_fraction(-0.1, 0.1)
 
     def test_zero_agent_raises(self) -> None:
         from pmriprep.utils.dsc_cbv_constraint import _bolus_gd_fraction
+
         with pytest.raises(ValueError, match="agent_standard_dose"):
             _bolus_gd_fraction(1.0, 0.0)
 
@@ -873,7 +890,9 @@ class TestFixedPriorWidth:
     def test_confidence_does_not_stratify_sigma(self) -> None:
         """High and moderate confidence use the same fixed width."""
         high = CBVQualityAssessment(confidence="high", use_constraint=True, reasons=[])
-        mod = CBVQualityAssessment(confidence="moderate", use_constraint=True, reasons=[])
+        mod = CBVQualityAssessment(
+            confidence="moderate", use_constraint=True, reasons=[]
+        )
         available = {"k2_reference_available": True, "k2_signed": True}
 
         cfg_high = determine_constraint_mode(high, k2_metrics=available)
@@ -925,6 +944,7 @@ class TestFixedPriorWidth:
         assert config.vp_uncertainty == 0.0
         assert "leakage correction disabled" in config.reason.lower()
 
+
 class TestNAWMVpReferenceAnchor:
     """NAWM_VP_REFERENCE = 0.010 from Larsson MRM 2009;62:1270.
 
@@ -934,6 +954,7 @@ class TestNAWMVpReferenceAnchor:
 
     def test_nawm_vp_reference_value(self) -> None:
         from pmriprep.utils.dce_constants import NAWM_VP_REFERENCE
+
         assert NAWM_VP_REFERENCE == 0.010
 
     def test_nawm_vp_reference_inside_median_bounds(self) -> None:
@@ -941,8 +962,11 @@ class TestNAWMVpReferenceAnchor:
         NAWM-like nCBV inputs never trip the magnitude gate.
         """
         from pmriprep.utils.dce_constants import (
-            NAWM_VP_REFERENCE, VP_MEDIAN_MIN, VP_MEDIAN_MAX,
+            NAWM_VP_REFERENCE,
+            VP_MEDIAN_MIN,
+            VP_MEDIAN_MAX,
         )
+
         assert VP_MEDIAN_MIN < NAWM_VP_REFERENCE < VP_MEDIAN_MAX
 
 
@@ -958,6 +982,7 @@ class TestSkipReasonConstants:
             SKIP_REASON_SYNTHETIC_AIF,
             SYNTHETIC_AIF_REASON_STRING,
         )
+
         assert SKIP_REASON_NO_DSC_RUN == "no_dsc_run"
         assert SKIP_REASON_NO_NAWM_MASK == "no_nawm_mask"
         assert SKIP_REASON_REGISTRATION_QC == "cross_modal_registration_qc"
@@ -976,8 +1001,10 @@ class TestPrepareVpConstraintSyntheticAif:
 
     def test_skip_on_detection_level_synthetic(self, tmp_path) -> None:
         from pmriprep.utils.dsc_cbv_constraint import (
-            prepare_vp_constraint_from_data, SKIP_REASON_SYNTHETIC_AIF,
+            prepare_vp_constraint_from_data,
+            SKIP_REASON_SYNTHETIC_AIF,
         )
+
         # Brain mask file required by signature; synthetic branch
         # short-circuits before it's loaded, so a placeholder suffices.
         mask_path = tmp_path / "brain_mask.nii.gz"
@@ -995,8 +1022,10 @@ class TestPrepareVpConstraintSyntheticAif:
     def test_skip_on_cbv_auc_denominator_is_synthetic(self, tmp_path) -> None:
         """Legacy flag (``cbv_auc_denominator_is_synthetic``) also fires."""
         from pmriprep.utils.dsc_cbv_constraint import (
-            prepare_vp_constraint_from_data, SKIP_REASON_SYNTHETIC_AIF,
+            prepare_vp_constraint_from_data,
+            SKIP_REASON_SYNTHETIC_AIF,
         )
+
         mask_path = tmp_path / "brain_mask.nii.gz"
         mask_path.write_text("")
         result = prepare_vp_constraint_from_data(
@@ -1007,9 +1036,7 @@ class TestPrepareVpConstraintSyntheticAif:
         assert result.config.mode == ConstraintMode.SKIP
         assert result.qc_report["skip_reason"] == SKIP_REASON_SYNTHETIC_AIF
 
-    def test_synthetic_short_circuits_before_missing_ncbv(
-        self, tmp_path
-    ) -> None:
+    def test_synthetic_short_circuits_before_missing_ncbv(self, tmp_path) -> None:
         """Synthetic-AIF SKIP precedes the no-NAWM-mask SKIP — the reason
         in QC must be ``synthetic_aif``, not ``no_nawm_mask``."""
         from pmriprep.utils.dsc_cbv_constraint import (
@@ -1017,6 +1044,7 @@ class TestPrepareVpConstraintSyntheticAif:
             SKIP_REASON_SYNTHETIC_AIF,
             SKIP_REASON_NO_NAWM_MASK,
         )
+
         mask_path = tmp_path / "brain_mask.nii.gz"
         mask_path.write_text("")
         result = prepare_vp_constraint_from_data(
@@ -1030,8 +1058,10 @@ class TestPrepareVpConstraintSyntheticAif:
     def test_measured_aif_does_not_short_circuit(self, tmp_path) -> None:
         """Measured AIF + missing ncbv → normal NO_NAWM_MASK SKIP, not synthetic."""
         from pmriprep.utils.dsc_cbv_constraint import (
-            prepare_vp_constraint_from_data, SKIP_REASON_NO_NAWM_MASK,
+            prepare_vp_constraint_from_data,
+            SKIP_REASON_NO_NAWM_MASK,
         )
+
         mask_path = tmp_path / "brain_mask.nii.gz"
         mask_path.write_text("")
         result = prepare_vp_constraint_from_data(
@@ -1045,9 +1075,7 @@ class TestPrepareVpConstraintSyntheticAif:
 class TestDetermineConstraintModeSyntheticOverride:
     """`determine_constraint_mode` forces SKIP when AIF is synthetic."""
 
-    def _make_quality(
-        self, detection_level: str = "measured"
-    ) -> CBVQualityAssessment:
+    def _make_quality(self, detection_level: str = "measured") -> CBVQualityAssessment:
         return CBVQualityAssessment(
             cbv_median=1.0,
             confidence="high",

@@ -34,9 +34,7 @@ def test_signal_conversion_node_reports_invalid_t1(tmp_path: Any) -> None:
     signal[..., 5:] = 120.0
     t1 = np.array([[[1200.0]], [[np.nan]]])
     dce_file = _write_nifti(tmp_path / "dce.nii.gz", signal)
-    brain_mask_file = _write_nifti(
-        tmp_path / "brain_mask.nii.gz", np.ones((2, 1, 1))
-    )
+    brain_mask_file = _write_nifti(tmp_path / "brain_mask.nii.gz", np.ones((2, 1, 1)))
     t1_file = _write_nifti(tmp_path / "t1.nii.gz", t1)
     with mock.patch("pathlib.Path.cwd", return_value=tmp_path):
         output, qc = _signal_to_concentration_node(
@@ -71,9 +69,7 @@ def test_external_t1_reports_alignment_metrics(tmp_path: Any) -> None:
     signal = np.repeat(baseline[..., None], 10, axis=3)
     signal[..., 5:] *= 1.1
     dce_file = _write_nifti(tmp_path / "dce.nii.gz", signal)
-    brain_mask_file = _write_nifti(
-        tmp_path / "brain_mask.nii.gz", np.ones((6, 6, 6))
-    )
+    brain_mask_file = _write_nifti(tmp_path / "brain_mask.nii.gz", np.ones((6, 6, 6)))
     t1_file = _write_nifti(tmp_path / "external_t1.nii.gz", t1)
     with mock.patch("pathlib.Path.cwd", return_value=tmp_path):
         _, qc = _signal_to_concentration_node(
@@ -140,22 +136,34 @@ def test_no_t1_signal_conversion_retains_b1_correction(tmp_path: Any) -> None:
     signal = np.full((1, 1, 1, 10), 100.0)
     signal[..., 5:] = 130.0
     dce_file = _write_nifti(tmp_path / "dce.nii.gz", signal)
-    brain_mask_file = _write_nifti(
-        tmp_path / "brain_mask.nii.gz", np.ones((1, 1, 1))
-    )
-    b1_file = _write_nifti(
-        tmp_path / "b1.nii.gz", np.full((1, 1, 1), 0.8)
-    )
+    brain_mask_file = _write_nifti(tmp_path / "brain_mask.nii.gz", np.ones((1, 1, 1)))
+    b1_file = _write_nifti(tmp_path / "b1.nii.gz", np.full((1, 1, 1), 0.8))
 
     with mock.patch("pathlib.Path.cwd", return_value=tmp_path):
         nominal_file, nominal_qc = _signal_to_concentration_node(
-            dce_file, brain_mask_file, None, None,
-            15.0, 0.005, 3.0, 3.8, 5, True,
+            dce_file,
+            brain_mask_file,
+            None,
+            None,
+            15.0,
+            0.005,
+            3.0,
+            3.8,
+            5,
+            True,
         )
         nominal = np.asarray(nib.load(nominal_file).dataobj).copy()
         corrected_file, corrected_qc = _signal_to_concentration_node(
-            dce_file, brain_mask_file, None, b1_file,
-            15.0, 0.005, 3.0, 3.8, 5, True,
+            dce_file,
+            brain_mask_file,
+            None,
+            b1_file,
+            15.0,
+            0.005,
+            3.0,
+            3.8,
+            5,
+            True,
         )
         corrected = np.asarray(nib.load(corrected_file).dataobj).copy()
 
@@ -165,10 +173,7 @@ def test_no_t1_signal_conversion_retains_b1_correction(tmp_path: Any) -> None:
     assert corrected_qc["t1_source"] == "assumed"
     assert corrected_qc["assumed_t1_ms"] == pytest.approx(1200.0)
     assert corrected_qc["assumed_t1_field_strength_t"] == pytest.approx(3.0)
-    assert (
-        corrected_qc["assumed_t1_policy"]
-        == "uniform_field_strength_reference"
-    )
+    assert corrected_qc["assumed_t1_policy"] == "uniform_field_strength_reference"
 
 
 def test_unity_b1_sentinel_is_not_reported_as_correction(tmp_path: Any) -> None:
@@ -180,22 +185,34 @@ def test_unity_b1_sentinel_is_not_reported_as_correction(tmp_path: Any) -> None:
     signal = np.full((1, 1, 1, 10), 100.0)
     signal[..., 5:] = 130.0
     dce_file = _write_nifti(tmp_path / "dce.nii.gz", signal)
-    brain_mask_file = _write_nifti(
-        tmp_path / "brain_mask.nii.gz", np.ones((1, 1, 1))
-    )
-    unity_b1_file = _write_nifti(
-        tmp_path / "unity_b1.nii.gz", np.ones((1, 1, 1))
-    )
+    brain_mask_file = _write_nifti(tmp_path / "brain_mask.nii.gz", np.ones((1, 1, 1)))
+    unity_b1_file = _write_nifti(tmp_path / "unity_b1.nii.gz", np.ones((1, 1, 1)))
 
     with mock.patch("pathlib.Path.cwd", return_value=tmp_path):
         nominal_file, _ = _signal_to_concentration_node(
-            dce_file, brain_mask_file, None, None,
-            15.0, 0.005, 3.0, 3.8, 5, True,
+            dce_file,
+            brain_mask_file,
+            None,
+            None,
+            15.0,
+            0.005,
+            3.0,
+            3.8,
+            5,
+            True,
         )
         nominal = np.asarray(nib.load(nominal_file).dataobj).copy()
         unity_file, unity_qc = _signal_to_concentration_node(
-            dce_file, brain_mask_file, None, unity_b1_file,
-            15.0, 0.005, 3.0, 3.8, 5, True,
+            dce_file,
+            brain_mask_file,
+            None,
+            unity_b1_file,
+            15.0,
+            0.005,
+            3.0,
+            3.8,
+            5,
+            True,
         )
         unity = np.asarray(nib.load(unity_file).dataobj).copy()
 
@@ -209,12 +226,8 @@ def test_signal_conversion_node_rejects_brain_mask_shape_mismatch(
     """Conversion QC cannot silently use a misregistered mask domain."""
     from pmriprep.workflows.dce._helpers import _signal_to_concentration_node
 
-    dce_file = _write_nifti(
-        tmp_path / "dce.nii.gz", np.ones((2, 1, 1, 10))
-    )
-    brain_mask_file = _write_nifti(
-        tmp_path / "brain_mask.nii.gz", np.ones((3, 1, 1))
-    )
+    dce_file = _write_nifti(tmp_path / "dce.nii.gz", np.ones((2, 1, 1, 10)))
+    brain_mask_file = _write_nifti(tmp_path / "brain_mask.nii.gz", np.ones((3, 1, 1)))
 
     with pytest.raises(ValueError, match="brain mask shape"):
         _signal_to_concentration_node(
@@ -256,7 +269,8 @@ class TestDscDceValidationNodeDispatch:
         return fake_validate, captured
 
     def test_missing_cbv_file_does_not_reach_validator(
-        self, tmp_path: Any,
+        self,
+        tmp_path: Any,
     ) -> None:
         """When only nCBV exists, validation uses that nCBV path.
 
@@ -266,9 +280,7 @@ class TestDscDceValidationNodeDispatch:
         """
         from pmriprep.workflows.dce.base import _dsc_dce_validation_node
 
-        ncbv_file = _write_nifti(
-            tmp_path / "ncbv.nii.gz", np.ones((4, 4, 4))
-        )
+        ncbv_file = _write_nifti(tmp_path / "ncbv.nii.gz", np.ones((4, 4, 4)))
         mask_file = _write_nifti(
             tmp_path / "mask.nii.gz",
             np.ones((4, 4, 4), dtype=np.float32),
@@ -305,9 +317,7 @@ class TestDscDceValidationNodeDispatch:
         """
         from pmriprep.workflows.dce.base import _dsc_dce_validation_node
 
-        ncbv_file = _write_nifti(
-            tmp_path / "ncbv.nii.gz", np.ones((4, 4, 4))
-        )
+        ncbv_file = _write_nifti(tmp_path / "ncbv.nii.gz", np.ones((4, 4, 4)))
         cbv_file = _write_nifti(
             tmp_path / "cbv.nii.gz",
             3.0 * np.ones((4, 4, 4), dtype=np.float32),
@@ -338,6 +348,51 @@ class TestDscDceValidationNodeDispatch:
 
         assert "cbv_path" not in captured
         assert captured["ncbv_path"] == ncbv_file
+
+    def test_prior_departure_accounting_reaches_report_result(
+        self,
+        tmp_path: Any,
+    ) -> None:
+        """Retained-fit prior diagnostics are copied into the HTML result."""
+        from pmriprep.workflows.dce.base import _dsc_dce_validation_node
+
+        ncbv_file = _write_nifti(tmp_path / "ncbv.nii.gz", np.ones((4, 4, 4)))
+        mask_file = _write_nifti(tmp_path / "mask.nii.gz", np.ones((4, 4, 4)))
+        vp_file = _write_nifti(tmp_path / "vp.nii.gz", 0.02 * np.ones((4, 4, 4)))
+        fake_validate, _ = self._capture_validator()
+        pk_qc = {
+            "dsc_cbv_constraint": {
+                "mode": "soft",
+                "vp_uncertainty": 0.6,
+                "nawm_vp_reference": 0.01,
+            },
+            "n_constrained": 75,
+            "voxel_accounting": {"retained_nondegenerate": {"count": 100}},
+            "z_departure_median": 0.96,
+            "z_departure_p90": 1.33,
+            "frac_prior_dominated": 0.18,
+            "frac_strong_departure": 0.032,
+        }
+
+        with mock.patch(
+            "pmriprep.utils.dce_dsc_validation.validate_vp_cbv_from_files",
+            side_effect=fake_validate,
+        ):
+            out = _dsc_dce_validation_node(
+                vp_file=vp_file,
+                dsc_ncbv_file=ncbv_file,
+                brain_mask=mask_file,
+                nawm_mask=mask_file,
+                pk_qc=pk_qc,
+            )
+
+        assert out["prior_departure"] == {
+            "z_departure_median": 0.96,
+            "z_departure_p90": 1.33,
+            "frac_prior_dominated": 0.18,
+            "frac_strong_departure": 0.032,
+        }
+        assert out["prior_nawm_vp_reference"] == pytest.approx(0.01)
 
     def test_workflow_skips_xval_on_no_nawm(self, tmp_path: Any) -> None:
         """When only rel-AUC-CBV is available (no NAWM → no nCBV),
@@ -422,7 +477,8 @@ class TestDscDceValidationNodeDispatch:
         assert "no NAWM reference mask was supplied or generated" in out["reason"]
 
     def test_ncbv_without_dce_nawm_skips_only_concordance(
-        self, tmp_path: Any,
+        self,
+        tmp_path: Any,
     ) -> None:
         """Missing DCE-space NAWM does not imply that DCE fitting failed."""
         from pmriprep.workflows.dce.base import _dsc_dce_validation_node
@@ -445,7 +501,9 @@ class TestDscDceValidationNodeDispatch:
         )
 
     def test_exception_is_logged_with_traceback(
-        self, tmp_path: Any, caplog: pytest.LogCaptureFixture,
+        self,
+        tmp_path: Any,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         """Validation exceptions are logged with exc_info, not silently swallowed."""
         from pmriprep.workflows.dce.base import _dsc_dce_validation_node
@@ -455,9 +513,7 @@ class TestDscDceValidationNodeDispatch:
             tmp_path / "mask.nii.gz",
             np.ones((3, 3, 3), dtype=np.float32),
         )
-        ncbv_file = _write_nifti(
-            tmp_path / "ncbv.nii.gz", np.ones((3, 3, 3))
-        )
+        ncbv_file = _write_nifti(tmp_path / "ncbv.nii.gz", np.ones((3, 3, 3)))
 
         def boom(**_: Any) -> Any:
             raise RuntimeError("simulated validation failure")
@@ -478,9 +534,7 @@ class TestDscDceValidationNodeDispatch:
 
         assert out["status"] == "ERROR"
         assert "simulated validation failure" in out["reason"]
-        assert any(
-            "simulated validation failure" in r.message for r in caplog.records
-        )
+        assert any("simulated validation failure" in r.message for r in caplog.records)
 
     def test_missing_prior_accounting_does_not_claim_independence(
         self, tmp_path: Any
@@ -528,13 +582,13 @@ class TestDscDceValidationNodeDispatch:
         assert out["status"] == "UNKNOWN"
         assert "inconsistent" in out["reason"]
 
-    def test_validation_node_uses_retained_prior_accounting(self, tmp_path: Any) -> None:
+    def test_validation_node_uses_retained_prior_accounting(
+        self, tmp_path: Any
+    ) -> None:
         """pk_qc forwards the retained prior fraction and relative SD."""
         from pmriprep.workflows.dce.base import _dsc_dce_validation_node
 
-        ncbv_file = _write_nifti(
-            tmp_path / "ncbv.nii.gz", np.ones((4, 4, 4))
-        )
+        ncbv_file = _write_nifti(tmp_path / "ncbv.nii.gz", np.ones((4, 4, 4)))
         mask_file = _write_nifti(
             tmp_path / "mask.nii.gz",
             np.ones((4, 4, 4), dtype=np.float32),
@@ -551,9 +605,7 @@ class TestDscDceValidationNodeDispatch:
                 "vp_uncertainty": 0.5,
             },
             "n_constrained": np.int64(30),
-            "voxel_accounting": {
-                "retained_nondegenerate": {"count": np.int64(40)}
-            },
+            "voxel_accounting": {"retained_nondegenerate": {"count": np.int64(40)}},
         }
 
         with mock.patch(
@@ -664,11 +716,7 @@ class TestFindPreviousDscOutputsNcbv:
     @staticmethod
     def _make_layout(tmp_path: Any, subject_id: str, session_id: str):
         perf_dir = (
-            tmp_path
-            / "pmriprep"
-            / f"sub-{subject_id}"
-            / f"ses-{session_id}"
-            / "perf"
+            tmp_path / "pmriprep" / f"sub-{subject_id}" / f"ses-{session_id}" / "perf"
         )
         perf_dir.mkdir(parents=True)
         return perf_dir
@@ -693,7 +741,9 @@ class TestFindPreviousDscOutputsNcbv:
         assert outputs.get("ncbv_map") == str(ncbv_path)
 
     def test_ncbv_missing_warns_and_sets_none(
-        self, tmp_path: Any, caplog: pytest.LogCaptureFixture,
+        self,
+        tmp_path: Any,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         """Layout with no dscNawmNormCbv_stat → ``ncbv_map is None`` and a warning fires."""
         from pmriprep.workflows.base import _find_previous_dsc_outputs
@@ -726,7 +776,8 @@ class TestComputeDCEMapsDoseTraits:
     `prepare_vp_constraint_from_data`."""
 
     def test_dose_traits_forwarded_to_prepare_vp_constraint_from_data(
-        self, tmp_path: Any,
+        self,
+        tmp_path: Any,
     ) -> None:
         """`self.inputs.dsc_dose` + `.dsc_agent_standard_dose` flow through
         to `prepare_vp_constraint_from_data(dose=..., agent_standard_dose=...)`."""
@@ -791,7 +842,9 @@ class TestMaskProducersReturnEmptyString:
     def test_select_aif_exclusion_mask_prefers_user_then_transformed(self) -> None:
         from pmriprep.workflows.dce.base import _select_aif_exclusion_mask
 
-        assert _select_aif_exclusion_mask("/user.nii.gz", "/seg.nii.gz") == "/user.nii.gz"
+        assert (
+            _select_aif_exclusion_mask("/user.nii.gz", "/seg.nii.gz") == "/user.nii.gz"
+        )
         assert _select_aif_exclusion_mask("", "/seg.nii.gz") == "/seg.nii.gz"
 
     def test_transform_probseg_returns_empty_on_missing_input(self) -> None:
@@ -801,7 +854,9 @@ class TestMaskProducersReturnEmptyString:
         assert _transform_probseg_to_dce("/p.nii.gz", None, "/xfm.mat") == ""
         assert _transform_probseg_to_dce("/p.nii.gz", "/ref.nii.gz", None) == ""
         # Non-existent path on disk also degrades to "".
-        assert _transform_probseg_to_dce("/nope.nii.gz", "/ref.nii.gz", "/xfm.mat") == ""
+        assert (
+            _transform_probseg_to_dce("/nope.nii.gz", "/ref.nii.gz", "/xfm.mat") == ""
+        )
 
 
 class TestT1MappingProbsegTraitsAcceptEmptyString:

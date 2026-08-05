@@ -1020,7 +1020,29 @@ def _dsc_dce_validation_node(
             prior_relative_sd=prior_relative_sd,
             prior_informed_fraction=prior_informed_fraction,
         )
-        return result.to_dict()
+        output = result.to_dict()
+        if prior_informed and isinstance(pk_qc, dict):
+            constraint_qc = pk_qc.get("dsc_cbv_constraint")
+            if isinstance(constraint_qc, dict) and isinstance(
+                constraint_qc.get("nawm_vp_reference"), (int, float)
+            ):
+                output["prior_nawm_vp_reference"] = float(
+                    constraint_qc["nawm_vp_reference"]
+                )
+            departure_keys = (
+                "z_departure_median",
+                "z_departure_p90",
+                "frac_prior_dominated",
+                "frac_strong_departure",
+            )
+            departure = {
+                key: pk_qc[key]
+                for key in departure_keys
+                if isinstance(pk_qc.get(key), (int, float))
+            }
+            if departure:
+                output["prior_departure"] = departure
+        return output
     except Exception as e:
         import logging
 
