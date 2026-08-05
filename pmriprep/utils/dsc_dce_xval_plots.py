@@ -13,22 +13,26 @@ from pmriprep.utils.dce_dsc_validation import (
 )
 
 
-def _robust_departure_range(
-    departure: npt.NDArray[np.float64],
-    prior_relative_sd: Optional[float],
-) -> tuple[float, float]:
-    """Return a finite central range for the prior-departure histogram."""
-    lower, upper = np.percentile(departure, [1.0, 99.0])
-    anchors = [float(lower), float(upper), 0.0]
-    if prior_relative_sd is not None:
-        anchors.extend([-prior_relative_sd, prior_relative_sd])
-    lo = min(anchors)
-    hi = max(anchors)
-    if not hi > lo:
-        padding = max(abs(lo) * 0.05, 1e-6)
-        lo -= padding
-        hi += padding
-    return lo, hi
+def _finite_symmetric_relative_differences(
+    values: npt.NDArray[np.float64],
+    reference: npt.NDArray[np.float64],
+) -> npt.NDArray[np.float64]:
+    """Return finite bounded differences, without preserving input indices."""
+    denominator = np.abs(values) + np.abs(reference)
+    valid = np.isfinite(values) & np.isfinite(reference) & (denominator > 0)
+    return np.asarray(
+        2.0 * (values[valid] - reference[valid]) / denominator[valid],
+        dtype=np.float64,
+    )
+
+
+def _symmetric_prior_sd_bounds(relative_sd: float) -> tuple[float, float]:
+    """Map multiplicative prior bounds into symmetric-difference space."""
+    if not 0.0 <= relative_sd < 1.0:
+        raise ValueError("Prior relative SD guide requires 0 <= relative_sd < 1")
+    return -2.0 * relative_sd / (2.0 - relative_sd), 2.0 * relative_sd / (
+        2.0 + relative_sd
+    )
 
 
 def generate_xval_plot(
@@ -164,36 +168,22 @@ def generate_xval_plot(
 
     ax = axes[1]
     if enough and is_prior_informed:
-        departure = vp_values / cbv_values - 1.0
-        departure = departure[np.isfinite(departure)]
-        departure_range = _robust_departure_range(departure, prior_relative_sd)
-        outside = int(np.count_nonzero(
-            (departure < departure_range[0]) | (departure > departure_range[1])
-        ))
+        departure = _finite_symmetric_relative_differences(vp_values, cbv_values)
         ax.hist(
             departure,
             bins=60,
-            range=departure_range,
+            range=(-2.0, 2.0),
             color=COLORBLIND_PALETTE.primary,
             alpha=0.8,
         )
         ax.axvline(0, color="black", linewidth=1, linestyle="--")
         if prior_relative_sd is not None:
-            ax.axvline(-prior_relative_sd, color=COLORBLIND_PALETTE.warning, linewidth=1)
-            ax.axvline(prior_relative_sd, color=COLORBLIND_PALETTE.warning, linewidth=1)
-        if outside:
-            ax.text(
-                0.98,
-                0.96,
-                f"Central 98% shown; {outside:,} outside",
-                transform=ax.transAxes,
-                fontsize=7,
-                ha="right",
-                va="top",
-            )
-        ax.set_xlabel("(vp − DSC-informed vp) / DSC-informed vp", fontsize=9)
+            lower, upper = _symmetric_prior_sd_bounds(prior_relative_sd)
+            ax.axvline(lower, color=COLORBLIND_PALETTE.warning, linewidth=1)
+            ax.axvline(upper, color=COLORBLIND_PALETTE.warning, linewidth=1)
+        ax.set_xlabel("2(vp − DSC-informed vp) / (|vp| + |DSC-informed vp|)", fontsize=9)
         ax.set_ylabel("Voxels", fontsize=9)
-        ax.set_title("Fractional Prior Departure", fontsize=10)
+        ax.set_title("Symmetric vp–Prior Difference", fontsize=10)
     elif enough:
         means = (vp_values[sample] + cbv_values[sample]) / 2
         differences = vp_values[sample] - cbv_values[sample]

@@ -131,12 +131,30 @@ class TestDscDceValidationNodeSkipReasons:
         assert result["status"] == "SKIPPED"
         assert result["skip_reason"] == "vp_not_defined_for_model"
 
-def test_prior_departure_histogram_range_ignores_extreme_denominator_tail() -> None:
-    """Near-zero prior values must not flatten the displayed distribution."""
-    from pmriprep.utils.dsc_dce_xval_plots import _robust_departure_range
 
-    departure = np.concatenate([np.linspace(-0.5, 0.5, 1000), np.array([1e16])])
-    lower, upper = _robust_departure_range(departure, prior_relative_sd=0.6)
+def test_prior_departure_is_bounded_with_near_zero_reference() -> None:
+    """Near-zero prior values must remain visible without flattening the plot."""
+    from pmriprep.utils.dsc_dce_xval_plots import (
+        _finite_symmetric_relative_differences,
+    )
 
-    assert lower == pytest.approx(-0.6)
-    assert upper < 1.0
+    departure = _finite_symmetric_relative_differences(
+        np.array([1.0, 1.0, 2.0]),
+        np.array([1e-16, 1.0, 1.0]),
+    )
+
+    np.testing.assert_allclose(departure, [2.0, 0.0, 2.0 / 3.0])
+    assert np.all(np.abs(departure) <= 2.0)
+
+
+def test_prior_sd_bounds_are_mapped_to_symmetric_difference() -> None:
+    """Multiplicative prior limits must use the plotted difference scale."""
+    from pmriprep.utils.dsc_dce_xval_plots import _symmetric_prior_sd_bounds
+
+    lower, upper = _symmetric_prior_sd_bounds(0.6)
+
+    assert lower == pytest.approx(-6.0 / 7.0)
+    assert upper == pytest.approx(6.0 / 13.0)
+
+    with pytest.raises(ValueError, match="0 <= relative_sd < 1"):
+        _symmetric_prior_sd_bounds(2.0)
