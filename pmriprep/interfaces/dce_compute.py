@@ -6,6 +6,7 @@ curves and AIF using various PK models.
 """
 
 import logging
+import time
 from functools import partial
 from pathlib import Path
 from typing import Any, Callable, NamedTuple, Optional
@@ -4291,22 +4292,45 @@ class ComputeDCEMaps(BaseInterface):
             if selected_model:
                 selected_groups.setdefault(selected_model, []).append(index)
 
-        for selected_model, indices in selected_groups.items():
-            (
-                aif,
-                time_points,
-                _auto_model_name,
-                inference,
-                mcmc_samples,
-                baseline_frames,
-                constraint_mode_str,
-                constraint_vp_uncertainty,
-                save_fitted_curves,
-                motion_weights,
-                sloppy,
-                random_seed,
-                _candidate_names,
-            ) = init_args
+        (
+            aif,
+            time_points,
+            _auto_model_name,
+            inference,
+            mcmc_samples,
+            baseline_frames,
+            constraint_mode_str,
+            constraint_vp_uncertainty,
+            save_fitted_curves,
+            motion_weights,
+            sloppy,
+            random_seed,
+            _candidate_names,
+        ) = init_args
+        n_refinable = sum(len(indices) for indices in selected_groups.values())
+        inference_name = str(inference).upper()
+        refinement_start = time.perf_counter()
+        logger.info(
+            "Starting DCE %s refinement for %d voxels across %d selected "
+            "model groups; this CPU per-voxel stage may take several minutes",
+            inference_name,
+            n_refinable,
+            len(selected_groups),
+        )
+        n_retained = 0
+        n_fallback = 0
+
+        for group_index, (selected_model, indices) in enumerate(
+            selected_groups.items(), start=1
+        ):
+            logger.info(
+                "DCE %s refinement group %d/%d: %s (%d voxels)",
+                inference_name,
+                group_index,
+                len(selected_groups),
+                selected_model,
+                len(indices),
+            )
             fixed_init_args = (
                 aif,
                 time_points,
@@ -4356,6 +4380,8 @@ class ComputeDCEMaps(BaseInterface):
                     _fit_single_voxel(voxel) for voxel in group_voxels
                 ]
 
+            group_retained = 0
+            group_fallback = 0
             for index, refined in zip(indices, refined_results):
                 if refined.get("failed", True) or not refined.get(
                     "converged", False
@@ -4363,11 +4389,35 @@ class ComputeDCEMaps(BaseInterface):
                     fallback_result = dict(batched_results[index])
                     fallback_result["inference_fallback"] = True
                     final_results[index] = fallback_result
+                    n_fallback += 1
+                    group_fallback += 1
                     continue
                 refined["selected_model_name"] = selected_model
                 refined["delta_bic"] = batched_results[index]["delta_bic"]
                 refined["inference_fallback"] = False
                 final_results[index] = refined
+                n_retained += 1
+                group_retained += 1
+
+            logger.info(
+                "Completed DCE %s refinement group %d/%d: %d retained, "
+                "%d fell back to batched NLLS",
+                inference_name,
+                group_index,
+                len(selected_groups),
+                group_retained,
+                group_fallback,
+            )
+
+        logger.info(
+            "DCE %s refinement finished in %.1f s: %d/%d retained, "
+            "%d fell back to batched NLLS",
+            inference_name,
+            time.perf_counter() - refinement_start,
+            n_retained,
+            n_refinable,
+            n_fallback,
+        )
 
         return final_results
 

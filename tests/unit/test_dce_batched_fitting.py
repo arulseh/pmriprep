@@ -1452,11 +1452,13 @@ class TestChunkedMultiproc:
         assert prior_overrides == [(0.04, {"relative_uncertainty": 0.4})]
 
     def test_auto_bayesian_refinement_preserves_selection_and_delta_bic(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
     ) -> None:
         """Grouped refinement cannot change canonical BIC state."""
         import pmriprep.interfaces.dce_compute as dce_compute
         from pmriprep.interfaces.dce_compute import ComputeDCEMaps, VoxelInput
+
+        caplog.set_level("INFO", logger=dce_compute.__name__)
 
         batched_results = [
             {
@@ -1536,6 +1538,10 @@ class TestChunkedMultiproc:
         assert results[2]["delta_bic"] == 20.0
         assert results[2]["inference_fallback"] is True
         assert "inference_fallback" not in batched_results[2]
+        assert "Starting DCE VI refinement for 3 voxels" in caplog.text
+        assert "DCE VI refinement group 1/2: patlak (2 voxels)" in caplog.text
+        assert "DCE VI refinement finished" in caplog.text
+        assert "2/3 retained, 1 fell back to batched NLLS" in caplog.text
 
     def test_fixed_map_refinement_marks_nlls_fallback(
         self, monkeypatch: pytest.MonkeyPatch,
