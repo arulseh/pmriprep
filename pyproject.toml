@@ -4,17 +4,28 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pmriprep"
-version = "0.125.0"
+version = "1.0.0rc1"
 description = "PMRIPrep: automated preprocessing and quantification of DSC and DCE MRI"
 readme = "README.md"
 license = "Apache-2.0 AND CC0-1.0"
+keywords = [
+    "neuroimaging",
+    "perfusion MRI",
+    "dynamic susceptibility contrast MRI",
+    "dynamic contrast-enhanced MRI",
+    "cerebral perfusion",
+    "pharmacokinetic modeling",
+    "quantitative MRI",
+    "BIDS",
+    "reproducible workflows",
+]
 license-files = ["LICENSE", "NOTICE", "pmriprep/data/atlases/LICENSE-CC0-1.0.txt"]
 requires-python = ">=3.11,<3.13"
 authors = [
     {name = "PMRIPrep Developers"}
 ]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
