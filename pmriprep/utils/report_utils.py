@@ -33,8 +33,9 @@ _DSC_DECONV_TEXT: dict[str, str] = {
     "sSVD": "standard singular value decomposition [@ostergaard_1996]",
     "oSVD": "oscillation-index regularized singular value decomposition [@wu_2003]",
     "tikhonov": (
-        "Tikhonov-regularized deconvolution with L-curve corner detection "
-        "[@calamante_2003; @hansen_1998]"
+        "Tikhonov-regularized deconvolution with the regularization parameter "
+        "selected by the Morozov discrepancy principle "
+        "[@calamante_2003; @hansen_1998; @morozov_1966]"
     ),
     "vascular": (
         "the vascular model with gamma-variate transit time distribution "
@@ -48,7 +49,7 @@ _DCE_PK_MODEL_TEXT: dict[str, str] = {
     "tofts": "the standard Tofts model [@tofts_1991]",
     "extended_tofts": "the extended Tofts model [@tofts_1999]",
     "patlak": "the Patlak model [@patlak_1983]",
-    "2cxm": "the two-compartment exchange model [@sourbron_2011; @brix_2004]",
+    "2cxm": "the two-compartment exchange model [@sourbron_2013; @brix_2004]",
 }
 
 # Boilerplate text for T1 mapping methods
@@ -59,10 +60,10 @@ _T1_METHOD_TEXT: dict[str, str] = {
     ),
     "nlls": (
         "Baseline T1 was estimated from variable flip angle images using "
-        "WLLS-initialized nonlinear least squares fitting"
+        "WLLS-initialized nonlinear least squares fitting [@deoni_2003]"
     ),
-    "external": "using a user-supplied T1 map",
-    "assumed": "using literature-based T1 (no T1 mapping performed)",
+    "external": "a user-supplied T1 map",
+    "assumed": "a uniform field-strength-dependent T1",
 }
 
 # Boilerplate text for B1+ correction
@@ -227,10 +228,11 @@ def _generate_boilerplate_text(
     # Tumor segmentation
     if ran_pipelines.get("tumor_seg"):
         sentences.append(
-            "Automated lesion segmentation was performed using HD-GLIO "
-            "[@kickingereder_2019], providing lesion masks for arterial input "
-            "function candidate exclusion and lateralization of a contralateral "
-            "normal-appearing white matter region of interest."
+            "Automated glioma segmentation was performed using HD-GLIO "
+            "[@kickingereder_2019]. Tumor masks were used for regional analysis "
+            "and arterial input function candidate exclusion. When available, a "
+            "contralateral normal-appearing white matter region of interest was "
+            "used for normalization."
         )
 
     # DSC perfusion
@@ -369,7 +371,7 @@ def _build_dsc_boilerplate(dsc_qc: dict[str, Any]) -> str:
     # Concentration conversion (uses the S0 baseline)
     sentences.append(
         "The signal was converted to concentration-time curves via ΔR2* "
-        "estimation."
+        "estimation [@boxerman_1995]."
     )
 
     # Registration
@@ -381,12 +383,28 @@ def _build_dsc_boilerplate(dsc_qc: dict[str, Any]) -> str:
     # AIF detection
     aif_info = dsc_qc.get("aif_detection") or dsc_qc.get("aif", {})
     config_info = dsc_qc.get("config", {})
-    aif_source = config_info.get("aif_source") or aif_info.get("aif_method", "auto")
+    aif_metrics = aif_info.get("aif_metrics", {})
+    if not isinstance(aif_metrics, dict):
+        aif_metrics = {}
+    configured_aif_source = config_info.get("aif_source")
+    detected_aif_source = (
+        aif_info.get("detection_method")
+        or aif_info.get("detection_level")
+        or aif_info.get("aif_method")
+        or aif_metrics.get("detection_method")
+    )
+    if configured_aif_source == "external":
+        aif_source = "external"
+    elif configured_aif_source == "synthetic" or detected_aif_source == "synthetic":
+        aif_source = "synthetic"
+    else:
+        aif_source = detected_aif_source or configured_aif_source or "auto"
 
     if aif_source == "synthetic":
+        fallback = " as a fallback" if aif_info.get("synthetic_fallback_reason") else ""
         sentences.append(
             "A dose- and field-strength-scaled synthetic gamma-variate AIF "
-            "was used as a fallback [@rulseh_inprep]."
+            f"was used{fallback} [@rulseh_inprep]."
         )
     elif aif_source == "external":
         sentences.append("A user-supplied arterial input function was used.")
@@ -394,7 +412,7 @@ def _build_dsc_boilerplate(dsc_qc: dict[str, Any]) -> str:
         sentences.append(
             "The DSC arterial input function was automatically "
             "detected using MRA-atlas-guided voxel selection with a "
-            "multi-level criteria cascade [@rulseh_inprep]."
+            "multi-level criteria cascade [@mouches_2019; @rulseh_inprep]."
         )
 
     # Leakage correction is applied to the concentration curves BEFORE
@@ -402,8 +420,21 @@ def _build_dsc_boilerplate(dsc_qc: dict[str, Any]) -> str:
     preload = dsc_qc.get("preload", {})
     if preload.get("preload_correction_applied"):
         sentences.append(
-            "K2 leakage correction was applied to account for contrast "
-            "extravasation [@weisskoff_1994; @boxerman_2006]."
+            "Per-voxel BSW leakage correction was applied to account for "
+            "contrast extravasation [@boxerman_2006]."
+        )
+    elif preload.get("leakage_correction_disabled"):
+        sentences.append(
+            "BSW leakage correction was disabled; tissue concentration curves "
+            "were baseline-centered without estimating or applying K2."
+        )
+    elif preload.get("k2_method") == "bsw" or (
+        preload.get("k2_reference_available") is False
+    ):
+        sentences.append(
+            "BSW leakage correction was not applied as an eligible reference "
+            "curve could not be constructed; tissue concentration curves remained "
+            "baseline-centered."
         )
 
     # Deconvolution method (citation lives in the _DSC_DECONV_TEXT @key marker)
@@ -427,9 +458,8 @@ def _build_dsc_boilerplate(dsc_qc: dict[str, Any]) -> str:
     norm_factor = dsc_qc.get("normalization_factor")
     if norm_factor is not None and norm_factor > 0:
         sentences.append(
-            "Hemodynamic maps (CBF, CBV) were normalized to "
-            "automatically segmented contralateral normal-appearing "
-            "white matter."
+            "Hemodynamic maps (CBF and CBV) were normalized to contralateral "
+            "normal-appearing white matter."
         )
 
     return " ".join(sentences)
@@ -466,23 +496,44 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> str:
 
     # T1 mapping
     t1_info = dce_qc.get("t1_mapping", {})
-    t1_method = t1_info.get("method", "nlls")
+    signal_info = dce_qc.get("signal_conversion", {})
+    t1_method = t1_info.get("method", t1_info.get("t1_method", "nlls"))
     t1_text = _T1_METHOD_TEXT.get(t1_method, _T1_METHOD_TEXT["nlls"])
 
     # B1+ correction
-    b1_method = t1_info.get("b1_correction", "none")
-    b1_text = _B1_CORRECTION_TEXT.get(b1_method, "")
+    b1_info = dce_qc.get("b1_mapping", {})
+    b1_method = t1_info.get("b1_correction", b1_info.get("method", "none"))
+    b1_applied = signal_info.get("b1_correction_applied")
+    if not isinstance(b1_applied, bool):
+        b1_applied = b1_method != "none"
+    b1_text = _B1_CORRECTION_TEXT.get(b1_method, "") if b1_applied else ""
 
     conc = (
-        "The signal was converted to gadolinium concentration using the "
-        "spoiled gradient echo signal model"
+        "DCE signal was converted to gadolinium concentration with the "
+        "spoiled gradient echo signal model [@schabel_2008]"
     )
 
     if t1_method in ("external", "assumed"):
         # T1 source stated inline in the concentration sentence (no separate
         # mapping step to order before it).
-        t1_correction = t1_info.get("t1_correction", {})
-        sentences.append(conc + f" {t1_text}.")
+        if t1_method == "assumed":
+            assumed_t1 = t1_info.get(
+                "assumed_t1_ms", signal_info.get("assumed_t1_ms")
+            )
+            field_strength = t1_info.get(
+                "assumed_t1_field_strength_t",
+                signal_info.get("assumed_t1_field_strength_t"),
+            )
+            if isinstance(assumed_t1, (int, float)):
+                t1_text = (
+                    "a uniform field-strength-dependent T1 of "
+                    f"{assumed_t1:g} ms"
+                )
+                if isinstance(field_strength, (int, float)):
+                    t1_text += f" at {field_strength:g} T"
+            else:
+                t1_text = "a uniform field-strength-dependent T1"
+        sentences.append(conc + f" and {t1_text}{b1_text}.")
     else:
         # Full VFA T1 mapping: describe the mapping first, then the
         # concentration conversion that uses it.
@@ -503,6 +554,10 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> str:
             )
 
         sentences.append(conc + ".")
+        if b1_text:
+            sentences.append(
+                "The same B1+ correction was applied during DCE signal conversion."
+            )
 
     # Registration
     sentences.append(
@@ -525,16 +580,17 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> str:
             "The DCE arterial input function was automatically "
             "detected using MRA-atlas-guided candidate selection with "
             "dose-aware candidate assessment and quality-weighted averaging "
-            "[@rulseh_inprep]."
+            "[@mouches_2019; @rulseh_inprep]."
         )
 
-    # Hematocrit correction (only for auto-detected AIF; population AIF
-    # already includes hematocrit correction)
-    if aif_source not in ("population", "external"):
+    # Detected and population AIFs are blood curves converted to plasma;
+    # user-supplied DCE AIFs are required to be plasma concentration already.
+    if aif_source != "external":
         hct = aif_info.get("hematocrit", 0.42)
         sentences.append(
             f"The arterial input function was corrected from whole-blood to "
-            f"plasma concentration using an assumed hematocrit of {hct}."
+            f"plasma concentration using a hematocrit of {hct} "
+            f"[@tofts_1999]."
         )
 
     # Pharmacokinetic modeling
@@ -555,12 +611,14 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> str:
             sentences.append(
                 f"Pharmacokinetic analysis was performed using per-voxel "
                 f"model selection by the Bayesian information criterion "
+                f"[@schwarz_1978] "
                 f"among {model_list}."
             )
         else:
             sentences.append(
                 "Pharmacokinetic analysis was performed using per-voxel "
-                "model selection by the Bayesian information criterion."
+                "model selection by the Bayesian information criterion "
+                "[@schwarz_1978]."
             )
     else:
         model_text = _DCE_PK_MODEL_TEXT.get(model, model)
@@ -568,13 +626,36 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> str:
             f"Pharmacokinetic analysis was performed using {model_text}."
         )
 
-    # Inference engine — DCE NLLS path produces no boilerplate sentence
-    # (the `nlls` entry is generic; emit only when a Bayesian engine
-    # was actually used).
+    sentences.append(
+        "Tissue concentration curves were calculated by product integration of "
+        "the piecewise-linear plasma arterial input function with each model's "
+        "impulse response [@sourbron_2007]."
+    )
+
+    # Inference engine
     inference = pk_info.get("inference", "nlls")
     inference_text = _INFERENCE_TEXT.get(inference, "")
     if inference_text:
         sentences.append(inference_text)
+
+    constraint = pk_info.get("dsc_cbv_constraint", {})
+    n_constrained = pk_info.get("n_constrained", 0)
+    if (
+        isinstance(constraint, dict)
+        and constraint.get("mode") == "soft"
+        and isinstance(n_constrained, (int, float))
+        and n_constrained > 0
+    ):
+        relative_sd = constraint.get("vp_uncertainty")
+        width_text = (
+            f" with a relative standard deviation of {float(relative_sd):.0%}"
+            if isinstance(relative_sd, (int, float))
+            else ""
+        )
+        sentences.append(
+            "A spatially varying DSC-informed vp prior"
+            f"{width_text} was used by retained Bayesian fits."
+        )
 
     return " ".join(sentences)
 
