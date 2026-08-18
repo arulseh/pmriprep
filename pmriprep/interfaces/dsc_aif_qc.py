@@ -274,7 +274,7 @@ class AIFQCPlot(BaseInterface):
                     time, raw_aif_curve,
                     color=COLORBLIND_PALETTE.primary,
                     linewidth=1, marker=".", markersize=3,
-                    alpha=0.5, label="Raw AIF",
+                    alpha=0.5, label="Measured AIF",
                 )
                 ax.plot(
                     time, aif_curve,
@@ -348,6 +348,8 @@ class AIFQCPlot(BaseInterface):
             elif raw_aif_curve is not None and not gamma_fit_applied:
                 r_sq_str = f", R\u00b2={r_sq:.3f}" if r_sq is not None else ""
                 title_suffix = f" | Gamma fit rejected{r_sq_str}"
+            elif qc.get("gamma_fit_converged") is False:
+                title_suffix = " | Gamma fit unavailable"
             else:
                 title_suffix = ""
             ax.set_title(

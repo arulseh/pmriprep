@@ -289,6 +289,7 @@
         "cascade_downgraded": false,
         "detection_method": "atlas_strict",
         "gamma_fit_applied": true,
+        "gamma_fit_converged": true,
         "gamma_fit_r_squared": {
           "__f__": "0x1.e666666666666p-1"
         },
@@ -427,6 +428,7 @@
         "detection_method": "synthetic",
         "gamma_aif_fallback_to_raw": true,
         "gamma_fit_applied": false,
+        "gamma_fit_converged": true,
         "gamma_fit_r_squared": {
           "__f__": "-0x1.0000000000000p-2"
         },
@@ -595,6 +597,7 @@
         "cascade_downgraded": false,
         "detection_method": "atlas_strict",
         "gamma_fit_applied": false,
+        "gamma_fit_converged": true,
         "gamma_fit_r_squared": {
           "__f__": "-0x1.0000000000000p-2"
         },

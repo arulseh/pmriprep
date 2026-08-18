@@ -187,6 +187,7 @@ def _run_cell(tmp_path: Path, mode: str) -> dict[str, Any]:
     ) -> tuple[bool, np.ndarray | None, np.ndarray, np.ndarray | None]:
         del gamma_fit_mode, baseline_frames, tr
         fitted = curve * 0.9
+        qc_metrics["gamma_fit_converged"] = True
         qc_metrics["gamma_fit_r_squared"] = 0.95 if mode == "gamma_applied" else -0.25
         if mode == "gamma_applied":
             qc_metrics["gamma_fit_applied"] = True

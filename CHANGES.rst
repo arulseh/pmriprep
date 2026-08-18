@@ -1,7 +1,9 @@
-1.0.0rc2.dev0 (unreleased)
+1.0.0rc2.dev1 (unreleased)
 ==========================
 
 * FIX: Preserve measured DCE AIF temporal samples without noncausal smoothing.
+* FIX: Keep DSC gamma-variate initialization within solver bounds and retain an
+  accepted measured AIF when the optional gamma fit fails.
 
 1.0.0rc1 (2026-08-06)
 ======================

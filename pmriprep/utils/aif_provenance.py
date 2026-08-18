@@ -314,6 +314,12 @@ def build_aif_provenance_block(
         block["GammaFitApplied"] = bool(
             aif_qc.get("gamma_fit_applied", False),
         )
+        gamma_converged = aif_qc.get("gamma_fit_converged")
+        if gamma_converged is not None:
+            block["GammaFitConverged"] = bool(gamma_converged)
+        gamma_failure = aif_qc.get("gamma_fit_failure_reason")
+        if gamma_failure is not None:
+            block["GammaFitFailureReason"] = str(gamma_failure)
         gamma_r2 = aif_qc.get("gamma_fit_r_squared")
         if gamma_r2 is not None:
             block["GammaFitRSquared"] = float(gamma_r2)

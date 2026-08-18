@@ -167,6 +167,8 @@ class GammaVariateFitResult:
         ``[baseline_frames : peak_idx + max(10, 2*FWHM)]`` when
         ``remove_recirculation=True``; equal to ``n_frames - baseline_frames``
         otherwise. Gamma fitting is ill-posed below ~8 samples.
+    failure_reason : str or None
+        Stable reason code when optimization does not converge or raises.
     """
 
     fitted_curve: npt.NDArray[Any]
@@ -182,6 +184,7 @@ class GammaVariateFitResult:
     fit_converged: bool
     recirculation_removed: bool = True
     first_pass_n: int = 0
+    failure_reason: Optional[str] = None
 
 
 def _gamma_variate_model(
@@ -494,6 +497,32 @@ def fit_gamma_variate(
     bounds_lower = (0.0, 0.0, 0.1, 0.1)
     bounds_upper = (np.inf, float(n_frames) / 2.0, 10.0, 20.0)
 
+    # Initial estimates are heuristic and can be driven outside the solver
+    # domain by a late noisy maximum. Project finite estimates onto the same
+    # declared bounds before optimization.
+    p0_array = np.asarray(p0, dtype=np.float64)
+    failure_reason: Optional[str] = None
+    if not np.all(np.isfinite(p0_array)):
+        # Keep initialization failures on the same non-converged result
+        # contract as optimizer failures. Candidate-quality callers can then
+        # reject this optional fit without aborting AIF detection.
+        failure_reason = "nonfinite_initialization"
+        p0_array = np.asarray(
+            (1.0, float(baseline_frames), 2.0, 3.0),
+            dtype=np.float64,
+        )
+    p0_projected = np.clip(
+        p0_array,
+        np.asarray(bounds_lower, dtype=np.float64),
+        np.asarray(bounds_upper, dtype=np.float64),
+    )
+    p0 = (
+        float(p0_projected[0]),
+        float(p0_projected[1]),
+        float(p0_projected[2]),
+        float(p0_projected[3]),
+    )
+
     # Create fitting weights
     # Higher weight around peak, lower in baseline and tail
     peak_idx = int(np.argmax(curve_shifted))
@@ -510,21 +539,28 @@ def fit_gamma_variate(
         weights[cutoff:] = 0.01  # Minimal weight on tail/recirculation
 
     # Perform nonlinear least squares fit
-    try:
-        result = optimize.least_squares(
-            _gamma_variate_residual,
-            p0,
-            args=(t, curve_shifted, weights),
-            bounds=(bounds_lower, bounds_upper),
-            method="trf",
-            max_nfev=1000,
-        )
-        fit_converged = result.success
-        amplitude, t0, alpha, beta = result.x
-    except Exception:
-        # Fit failed, return initial estimates
+    if failure_reason is not None:
         fit_converged = False
         amplitude, t0, alpha, beta = p0
+    else:
+        try:
+            result = optimize.least_squares(
+                _gamma_variate_residual,
+                p0,
+                args=(t, curve_shifted, weights),
+                bounds=(bounds_lower, bounds_upper),
+                method="trf",
+                max_nfev=1000,
+            )
+            fit_converged = result.success
+            if not fit_converged:
+                failure_reason = "optimizer_not_converged"
+            amplitude, t0, alpha, beta = result.x
+        except Exception:
+            # Fit failed, return initial estimates
+            fit_converged = False
+            failure_reason = "optimizer_error"
+            amplitude, t0, alpha, beta = p0
 
     # Generate fitted curve
     fitted_curve = _gamma_variate_model(t, amplitude, t0, alpha, beta)
@@ -627,6 +663,7 @@ def fit_gamma_variate(
         residual_rms=residual_rms,
         r_squared=r_squared,
         fit_converged=fit_converged,
+        failure_reason=failure_reason,
         recirculation_removed=recirculation_removed,
         first_pass_n=first_pass_n,
     )

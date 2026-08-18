@@ -15,6 +15,7 @@ class TestFlagHelper:
     def _flag(self, qc, **kw):
         from pmriprep.interfaces.dsc_aif import _flag_retained_below_floor
 
+        qc.setdefault("gamma_fit_converged", True)
         defaults = dict(
             disable_fallback=True, detection_level="atlas_strict",
             gamma_fit_applied=False,
@@ -45,6 +46,13 @@ class TestFlagHelper:
             {"gamma_fit_r_squared": 0.8})
         assert "aif_gamma_fit_below_floor_retained" not in self._flag(
             {"gamma_fit_r_squared": 0.0})
+
+    def test_noop_when_fit_did_not_converge(self) -> None:
+        """A failed optimizer cannot establish that the measured AIF is poor."""
+        assert "aif_gamma_fit_below_floor_retained" not in self._flag({
+            "gamma_fit_converged": False,
+            "gamma_fit_r_squared": -0.4,
+        })
 
     def test_noop_when_r2_absent(self) -> None:
         # except / gamma_fit_mode=="off" paths leave no gamma_fit_r_squared.

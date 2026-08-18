@@ -168,6 +168,65 @@ class TestFitGammaVariate:
         assert result.fit_converged is True
         assert result.r_squared > 0.95
 
+    def test_initial_estimate_is_projected_into_solver_bounds(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A late noisy maximum cannot make the optimizer start infeasible."""
+        captured: dict[str, np.ndarray] = {}
+
+        def fake_least_squares(
+            _function: object,
+            x0: np.ndarray,
+            *,
+            args: object,
+            bounds: tuple[tuple[float, ...], tuple[float, ...]],
+            method: str,
+            max_nfev: int,
+        ) -> object:
+            del args, method, max_nfev
+            lower, upper = (np.asarray(bound, dtype=float) for bound in bounds)
+            captured["x0"] = np.asarray(x0, dtype=float)
+            assert np.all(captured["x0"] >= lower)
+            assert np.all(captured["x0"] <= upper)
+            return type(
+                "Result",
+                (),
+                {"success": False, "x": captured["x0"]},
+            )()
+
+        monkeypatch.setattr(
+            "pmriprep.utils.dsc_aif.optimize.least_squares",
+            fake_least_squares,
+        )
+        t = np.arange(120, dtype=float)
+        late_peak = 20.0 * np.exp(-0.5 * ((t - 80.0) / 5.0) ** 2)
+        initial = _estimate_initial_params(late_peak, baseline_frames=40)
+        assert initial[1] > 60.0
+
+        result = fit_gamma_variate(late_peak, baseline_frames=40)
+
+        assert captured["x0"][1] == 60.0
+        assert result.fit_converged is False
+        assert result.failure_reason == "optimizer_not_converged"
+
+    def test_nonfinite_initial_estimate_returns_typed_failure(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A non-finite heuristic estimate cannot escape as an exception."""
+        monkeypatch.setattr(
+            "pmriprep.utils.dsc_aif._estimate_initial_params",
+            lambda *args: (float("inf"), 5.0, 2.0, 3.0),
+        )
+        t = np.arange(60, dtype=float)
+        aif = _gamma_variate_model(t, amplitude=10.0, t0=5.0, alpha=2.5, beta=3.0)
+
+        result = fit_gamma_variate(aif, baseline_frames=5)
+
+        assert result.fit_converged is False
+        assert result.failure_reason == "nonfinite_initialization"
+
     def test_with_recirculation(self) -> None:
         """AIF with secondary peak triggers recirculation detection with good R²."""
         t = np.arange(60, dtype=np.float64)

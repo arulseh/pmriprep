@@ -316,12 +316,14 @@ def _flag_retained_below_floor(
     ``disable_aif_fallback`` the detected AIF is retained instead; this annotates
     that case so it is not silent — the AIF itself is NOT modified, only flagged.
 
-    No-ops unless fallback is disabled, a real (non-synthetic) AIF was detected, the
-    gamma fit was not applied, and ``gamma_fit_r_squared`` is present and below the
-    floor (it is absent in the fit-exception and ``gamma_fit_mode=="off"`` paths,
-    which therefore stay unflagged — symmetric with the fallback-enabled behaviour).
+    No-ops unless fallback is disabled, a real (non-synthetic) AIF was detected,
+    the gamma fit converged but was not applied, and ``gamma_fit_r_squared`` is
+    present and below the floor. Optimizer failures are reported separately and
+    do not establish that the measured AIF is inadequate.
     """
     if gamma_fit_applied or not disable_fallback or detection_level == "synthetic":
+        return
+    if qc_metrics.get("gamma_fit_converged") is not True:
         return
     gamma_r2 = qc_metrics.get("gamma_fit_r_squared")
     if gamma_r2 is None or gamma_r2 >= floor:
@@ -3548,7 +3550,12 @@ class AIFDetection(BaseInterface):
             and detection_level != "synthetic"
         ):
             gamma_r2 = qc_metrics.get("gamma_fit_r_squared")
-            if gamma_r2 is not None and gamma_r2 < GAMMA_R2_SYNTHETIC_FALLBACK:
+            gamma_fit_converged = qc_metrics.get("gamma_fit_converged")
+            if (
+                gamma_fit_converged is True
+                and gamma_r2 is not None
+                and gamma_r2 < GAMMA_R2_SYNTHETIC_FALLBACK
+            ):
                 logger.warning(
                     "Gamma fit R²=%.3f < %.1f; falling back to synthetic AIF",
                     gamma_r2,
@@ -3747,14 +3754,18 @@ class AIFDetection(BaseInterface):
                 preserve_auc=True,
                 tr=tr,
             )
+            qc_metrics["gamma_fit_converged"] = fit_result.fit_converged
+            if fit_result.failure_reason is not None:
+                qc_metrics["gamma_fit_failure_reason"] = fit_result.failure_reason
+            if fit_result.fit_converged:
+                qc_metrics["gamma_fit_r_squared"] = fit_result.r_squared
+                qc_metrics["gamma_fit_auc_ratio"] = fit_result.auc_ratio
 
             if gamma_fit_mode == "on":
                 # ``on`` mode uses the convergence and R² gate.
                 if fit_result.fit_converged and fit_result.r_squared > 0.5:
                     qc_metrics["gamma_fit_applied"] = True
                     qc_metrics["gamma_fit_mode"] = "on"
-                    qc_metrics["gamma_fit_r_squared"] = fit_result.r_squared
-                    qc_metrics["gamma_fit_auc_ratio"] = fit_result.auc_ratio
                     qc_metrics["gamma_recirculation_removed"] = (
                         fit_result.recirculation_removed
                     )
@@ -3763,7 +3774,7 @@ class AIFDetection(BaseInterface):
                     qc_metrics["gamma_fit_applied"] = False
                     qc_metrics["gamma_fit_mode"] = "on"
                     qc_metrics["gamma_fit_rejected_reason"] = (
-                        "no_convergence"
+                        fit_result.failure_reason or "optimizer_not_converged"
                         if not fit_result.fit_converged
                         else f"low_r_squared_{fit_result.r_squared:.3f}"
                     )
@@ -3778,8 +3789,6 @@ class AIFDetection(BaseInterface):
             )
             qc_metrics["gamma_fit_mode"] = "auto"
             qc_metrics["gamma_fit_auto_metrics"] = detail_metrics
-            qc_metrics["gamma_fit_r_squared"] = fit_result.r_squared
-            qc_metrics["gamma_fit_auc_ratio"] = fit_result.auc_ratio
 
             if decision.apply:
                 qc_metrics["gamma_fit_applied"] = True
@@ -3792,12 +3801,16 @@ class AIFDetection(BaseInterface):
             else:
                 qc_metrics["gamma_fit_applied"] = False
                 qc_metrics["gamma_fit_rejected_reason"] = decision.reason
+                if not fit_result.fit_converged:
+                    return False, None, aif_curve, None
                 # Save fitted curve for QC overlay (rejected fit shown dashed)
                 qc_metrics["gamma_fit_rejection_curve_available"] = True
                 return False, fit_result.fitted_curve, aif_curve, fit_result.fitted_curve
 
         except Exception:
             qc_metrics["gamma_fit_applied"] = False
+            qc_metrics["gamma_fit_converged"] = False
+            qc_metrics["gamma_fit_failure_reason"] = "fit_exception"
             qc_metrics["gamma_fit_rejected_reason"] = "exception"
             return False, None, aif_curve, None
 

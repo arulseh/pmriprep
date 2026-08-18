@@ -138,6 +138,26 @@ class TestBuildProvenanceBlockDSC:
         assert block["CrossSubjectComparable"] is False
         assert block["SyntheticFallbackReason"] == "no_candidates"
 
+    def test_gamma_optimizer_failure_is_explicit(self) -> None:
+        """A retained measured AIF carries optional gamma-fit failure provenance."""
+        from pmriprep.utils.aif_provenance import build_aif_provenance_block
+
+        block = build_aif_provenance_block(
+            {"aif_detection": {
+                "detection_method": "atlas_strict",
+                "quality_score": 0.8,
+                "gamma_fit_applied": False,
+                "gamma_fit_converged": False,
+                "gamma_fit_failure_reason": "optimizer_error",
+            }},
+            modality="DSC",
+        )
+
+        assert block["Source"] == "measured"
+        assert block["GammaFitApplied"] is False
+        assert block["GammaFitConverged"] is False
+        assert block["GammaFitFailureReason"] == "optimizer_error"
+
     def test_missing_quality_score_omits_key(self) -> None:
         from pmriprep.utils.aif_provenance import build_aif_provenance_block
 

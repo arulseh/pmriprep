@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from pmriprep.interfaces import dsc_aif
+from pmriprep.utils.dsc_aif import GammaVariateFitResult
 
 
 def _context(*, disable_fallback: bool = False) -> dsc_aif._DSCAIFDetectionContext:
@@ -89,6 +90,7 @@ def test_gamma_r2_floor_replaces_detected_state_with_synthetic(
         curve = np.asarray(args[0])
         qc_metrics = args[-1]
         assert isinstance(qc_metrics, dict)
+        qc_metrics["gamma_fit_converged"] = True
         qc_metrics["gamma_fit_r_squared"] = -0.25
         return False, curve * 0.9, curve, curve * 0.9
 
@@ -143,6 +145,7 @@ def test_disabled_fallback_retains_sub_floor_detected_aif(
         curve = np.asarray(args[0])
         qc_metrics = args[-1]
         assert isinstance(qc_metrics, dict)
+        qc_metrics["gamma_fit_converged"] = True
         qc_metrics["gamma_fit_r_squared"] = -0.25
         return False, None, curve, curve * 0.9
 
@@ -161,6 +164,100 @@ def test_disabled_fallback_retains_sub_floor_detected_aif(
     assert state.qc_metrics["aif_gamma_fit_below_floor_retained"] is True
     assert state.qc_metrics["gamma_r2_retained"] == -0.25
     assert state.qc_metrics["aif_quality"] == "detected"
+
+
+def test_gamma_optimizer_failure_retains_detected_aif(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An optional gamma-fit failure cannot invalidate an accepted measured AIF."""
+    detector = dsc_aif.AIFDetection()
+    detected = _detected_result()
+    monkeypatch.setattr(
+        detector,
+        "_finalize_detected_aif",
+        lambda *args: detected,
+    )
+
+    def fail_gamma(*args: object) -> tuple[bool, None, np.ndarray, None]:
+        curve = np.asarray(args[0])
+        qc_metrics = args[-1]
+        assert isinstance(qc_metrics, dict)
+        qc_metrics["gamma_fit_converged"] = False
+        qc_metrics["gamma_fit_failure_reason"] = "optimizer_error"
+        qc_metrics["gamma_fit_rejected_reason"] = "Fit did not converge"
+        qc_metrics["gamma_fit_r_squared"] = -1.0
+        return False, None, curve, None
+
+    monkeypatch.setattr(detector, "_apply_gamma_fit_if_appropriate", fail_gamma)
+    state = detector._finalize_post_cascade(
+        _context(), _cascade(), 2, logging.getLogger(__name__)
+    )
+
+    np.testing.assert_array_equal(state.curve, detected.curve)
+    assert state.detection_level == "atlas_strict"
+    assert state.mask.sum() == 1
+    assert state.qc_metrics["gamma_fit_converged"] is False
+    assert state.qc_metrics["gamma_fit_failure_reason"] == "optimizer_error"
+    assert "synthetic_fallback_reason" not in state.qc_metrics
+    assert "aif_gamma_fit_below_floor_retained" not in state.qc_metrics
+
+
+def test_gamma_optimizer_failure_has_no_numeric_fit_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed optimizer cannot publish or apply its provisional fitted curve."""
+    curve = np.array([0.0, 0.0, 1.0, 4.0, 2.0, 0.5])
+    failed = GammaVariateFitResult(
+        fitted_curve=curve * 0.9,
+        amplitude=1.0,
+        t0=2.0,
+        alpha=2.0,
+        beta=3.0,
+        auc_original=7.5,
+        auc_fitted=6.75,
+        auc_ratio=0.9,
+        residual_rms=0.1,
+        r_squared=-1.0,
+        fit_converged=False,
+        failure_reason="optimizer_error",
+    )
+    monkeypatch.setattr(
+        "pmriprep.utils.dsc_aif.fit_gamma_variate",
+        lambda **kwargs: failed,
+    )
+    qc_metrics: dict[str, object] = {}
+
+    applied, overlay, retained, gamma_curve = (
+        dsc_aif.AIFDetection._apply_gamma_fit_if_appropriate(
+            curve,
+            "auto",
+            2,
+            1.5,
+            qc_metrics,
+        )
+    )
+
+    assert applied is False
+    assert overlay is None
+    np.testing.assert_array_equal(retained, curve)
+    assert gamma_curve is None
+    assert qc_metrics["gamma_fit_converged"] is False
+    assert qc_metrics["gamma_fit_failure_reason"] == "optimizer_error"
+    assert "gamma_fit_r_squared" not in qc_metrics
+    assert "gamma_fit_auc_ratio" not in qc_metrics
+
+
+def test_nonfinite_gamma_initialization_fails_candidate_gate_gracefully(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Candidate gamma-shape screening converts initialization failure to None."""
+    monkeypatch.setattr(
+        "pmriprep.utils.dsc_aif._estimate_initial_params",
+        lambda *args: (float("inf"), 2.0, 2.0, 3.0),
+    )
+    curve = np.array([0.0, 0.0, 1.0, 4.0, 2.0, 0.5])
+
+    assert dsc_aif._compute_aif_peak_ratio(curve, 2, 1.5) is None
 
 
 def test_gamma_fit_refreshes_final_peak_provenance(
