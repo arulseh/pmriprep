@@ -1,5 +1,10 @@
-1.0.0rc1 (unreleased)
-=====================
+1.0.0rc2.dev0 (unreleased)
+==========================
+
+* FIX: Preserve measured DCE AIF temporal samples without noncausal smoothing.
+
+1.0.0rc1 (2026-08-06)
+======================
 
 Initial release candidate.
 

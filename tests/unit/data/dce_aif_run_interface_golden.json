@@ -30,122 +30,122 @@
           "__f__": "0x0.0p+0"
         },
         {
-          "__f__": "-0x1.4294586d86645p-2"
+          "__f__": "0x0.0p+0"
         },
         {
-          "__f__": "0x1.4b026a77f5f43p-1"
+          "__f__": "0x0.0p+0"
         },
         {
-          "__f__": "0x1.bc8fde98495fcp+1"
+          "__f__": "0x1.c5a42248ee5e4p+1"
         },
         {
-          "__f__": "0x1.cc0fb6b09d80dp+2"
+          "__f__": "0x1.b9c9415848a49p+2"
         },
         {
           "__f__": "0x1.13dcb08d3dcb0p+3"
         },
         {
-          "__f__": "0x1.c56ca8c275b56p+2"
+          "__f__": "0x1.b9c9415848a49p+2"
         },
         {
-          "__f__": "0x1.eedb0f149083ep+1"
+          "__f__": "0x1.c5a42248ee5e4p+1"
         },
         {
-          "__f__": "0x1.5198f02524d2cp+0"
+          "__f__": "0x1.2aabc4aef7801p+0"
         },
         {
-          "__f__": "0x1.e22232ae71ff9p-3"
+          "__f__": "0x1.f8542ef3d3f8cp-3"
         },
         {
-          "__f__": "0x1.b13c22a3b94dap-10"
+          "__f__": "0x1.110391fdc9ddap-5"
         },
         {
-          "__f__": "-0x1.1761f392a7eeap-7"
+          "__f__": "0x1.7b0cb4d34b7fep-9"
         },
         {
-          "__f__": "-0x1.e53bf13121fbfp-10"
+          "__f__": "0x1.516ed98029170p-13"
         },
         {
-          "__f__": "-0x1.9cf174e1a3bd4p-13"
+          "__f__": "0x1.8133e0e3ca57dp-18"
         },
         {
-          "__f__": "-0x1.992b7c9e9e806p-17"
+          "__f__": "0x1.19f30d0af9c90p-23"
         },
         {
-          "__f__": "-0x1.f0a7f1b4769a4p-22"
+          "__f__": "0x1.08a5118ee780ap-29"
         },
         {
-          "__f__": "-0x1.792503ec0c504p-27"
+          "__f__": "0x1.3e8a92c6c4cb7p-36"
         },
         {
-          "__f__": "-0x1.6a1815af33da8p-33"
+          "__f__": "0x1.ebacde7436e66p-44"
         },
         {
-          "__f__": "-0x1.ba097be5a1140p-40"
+          "__f__": "0x1.e69957c4046f6p-52"
         },
         {
-          "__f__": "-0x1.58331bbc4f08ep-47"
+          "__f__": "0x1.34c6caa677204p-60"
         },
         {
-          "__f__": "-0x1.5693b4db7c839p-55"
+          "__f__": "0x1.f6865f352d854p-70"
         },
         {
-          "__f__": "-0x1.b456fafa62ed5p-64"
+          "__f__": "0x1.06316907d6bd0p-79"
         },
         {
-          "__f__": "-0x1.63e1dbc367d31p-73"
+          "__f__": "0x1.5eda4c7632867p-90"
         },
         {
-          "__f__": "-0x1.73e907868cf9ep-83"
+          "__f__": "0x1.2d07837e5d688p-101"
         },
         {
-          "__f__": "-0x1.f223908e6a415p-94"
+          "__f__": "0x1.4b35aefbc8a60p-113"
         },
         {
-          "__f__": "-0x1.aba853f5be743p-105"
+          "__f__": "0x1.d35005fadf9e5p-126"
         },
         {
-          "__f__": "-0x1.d6b70683ce045p-117"
+          "__f__": "0x1.a6c220347dc7dp-139"
         },
         {
-          "__f__": "-0x1.4c277fc0c77b7p-129"
+          "__f__": "0x1.ea70f92ddea35p-153"
         },
         {
-          "__f__": "-0x1.2c88aae9a1535p-142"
+          "__f__": "0x1.6cce602c8721ep-167"
         },
         {
-          "__f__": "-0x1.5caf3126724b2p-156"
+          "__f__": "0x1.5bf97d3bf47e6p-182"
         },
         {
-          "__f__": "-0x1.03612fb3160ffp-170"
+          "__f__": "0x1.a9a40034bea28p-198"
         },
         {
-          "__f__": "-0x1.eed85f12c5bc1p-186"
+          "__f__": "0x1.4dd3343705af8p-214"
         },
         {
-          "__f__": "-0x1.2ea773ad188bdp-201"
+          "__f__": "0x1.4fbdccd9cd473p-231"
         },
         {
-          "__f__": "-0x1.dabe8fb15e06bp-218"
+          "__f__": "0x1.b10362b19553fp-249"
         },
         {
-          "__f__": "-0x1.dd799a0fdb2fcp-235"
+          "__f__": "0x1.6613f81e3210ap-267"
         },
         {
-          "__f__": "-0x1.33e8440e8ae0bp-252"
+          "__f__": "0x1.7bb88486266cep-286"
         },
         {
-          "__f__": "-0x1.009777e99eae5p-251"
+          "__f__": "0x1.022f676b0b72dp-305"
         },
         {
-          "__f__": "0x1.33e8d896c641cp-252"
+          "__f__": "0x1.c23bf2fb8cf1fp-326"
         }
       ],
       "aif_uncertainty_inflation_factor": {
         "__f__": "0x1.0000000000000p+0"
       },
       "auc": {
-        "__f__": "0x1.00e0e599e691ap+7"
+        "__f__": "0x1.ef6c6f3c7ba6dp+6"
       },
       "blood_t1": {
         "__f__": "0x1.a666666666666p+0"
@@ -153,7 +153,7 @@
       "candidate_count": 2,
       "detection_method": "atlas",
       "fwhm_seconds": {
-        "__f__": "0x1.cf073bdd8f068p+3"
+        "__f__": "0x1.c598d8a9157d0p+3"
       },
       "peak_concentration": {
         "__f__": "0x1.13dcb08d3dcb0p+3"
@@ -171,27 +171,27 @@
             "n_pool": 2,
             "qc": {
               "auc_mm_s": {
-                "__f__": "0x1.00e0e599e691ap+7"
+                "__f__": "0x1.ef6c6f3c7ba6dp+6"
               },
               "fwhm_seconds": {
-                "__f__": "0x1.cf073bdd8f068p+3"
+                "__f__": "0x1.c598d8a9157d0p+3"
               },
               "late_tail_per_peak": {
-                "__f__": "-0x1.3d7cef6f42148p-256"
+                "__f__": "0x1.d5d77ec48a145p-291"
               },
               "multi_bump_count": 0,
               "peak_mm": {
                 "__f__": "0x1.13dcb08d3dcb0p+3"
               },
               "ratio_30": {
-                "__f__": "-0x1.7f3616732f809p-16"
+                "__f__": "0x1.6577d2bee8d4ap-21"
               },
               "washout": {
                 "__f__": "0x1.0000000000000p+0"
               }
             },
             "scale_factor": {
-              "__f__": "0x1.09793289ad001p+0"
+              "__f__": "0x1.0000000000000p+0"
             },
             "status": "PASS",
             "tier": "MCA_ACA_dce_strict",
@@ -237,19 +237,19 @@
           "__f__": "0x1.4000000000000p+4"
         },
         "detected_aif_minimum_mm": {
-          "__f__": "-0x1.4294586d86645p-2"
+          "__f__": "0x0.0p+0"
         },
         "detected_aif_negative_fraction": {
-          "__f__": "0x1.599999999999ap-1"
+          "__f__": "0x0.0p+0"
         },
-        "detected_aif_negative_samples": 27,
+        "detected_aif_negative_samples": 0,
         "detected_aif_post_peak_minimum_mm": {
-          "__f__": "-0x1.1761f392a7eeap-7"
+          "__f__": "0x1.c23bf2fb8cf1fp-326"
         },
         "detected_aif_post_peak_negative_fraction": {
-          "__f__": "0x1.a000000000000p-1"
+          "__f__": "0x0.0p+0"
         },
-        "detected_aif_post_peak_negative_samples": 26,
+        "detected_aif_post_peak_negative_samples": 0,
         "detection_method": "atlas",
         "emitted_peak_mm": {
           "__f__": "0x1.13dcb08d3dcb0p+3"
@@ -261,10 +261,10 @@
           "__f__": "0x1.8000000000000p+1"
         },
         "final_auc": {
-          "__f__": "0x1.00e0e599e691ap+7"
+          "__f__": "0x1.ef6c6f3c7ba6dp+6"
         },
         "final_fwhm_seconds": {
-          "__f__": "0x1.cf073bdd8f068p+3"
+          "__f__": "0x1.c598d8a9157d0p+3"
         },
         "final_peak_mm": {
           "__f__": "0x1.13dcb08d3dcb0p+3"
@@ -298,28 +298,28 @@
         "peak_mm_mean": {
           "__f__": "0x1.0000000000000p+2"
         },
-        "peak_scaling_applied": true,
+        "peak_scaling_applied": false,
         "peak_scaling_enabled": true,
         "peak_scaling_factor": {
-          "__f__": "0x1.09793289ad001p+0"
+          "__f__": "0x1.0000000000000p+0"
         },
         "peak_scaling_policy": "one_sided_lower_bound",
         "peak_scaling_required_factor": {
-          "__f__": "0x1.09793289ad001p+0"
+          "__f__": "0x1.0000000000000p+0"
         },
-        "peak_scaling_trigger": "below_expected_minimum",
+        "peak_scaling_trigger": "not_required",
         "quality_score": {
-          "__f__": "0x1.5c936300ac7c4p-3"
+          "__f__": "0x1.647f78e51293ap-3"
         },
         "raw_peak_mm": {
-          "__f__": "0x1.0a049692f2306p+3"
+          "__f__": "0x1.13dcb08d3dcb0p+3"
         },
         "required_scaling_factor": {
-          "__f__": "0x1.09793289ad001p+0"
+          "__f__": "0x1.0000000000000p+0"
         },
         "required_scaling_factor_warning": false,
         "scaling_factor": {
-          "__f__": "0x1.09793289ad001p+0"
+          "__f__": "0x1.0000000000000p+0"
         },
         "scaling_factor_warning": false,
         "tissue_ttp_frame": {
@@ -333,10 +333,10 @@
         }
       },
       "quality_score": {
-        "__f__": "0x1.5c936300ac7c4p-3"
+        "__f__": "0x1.647f78e51293ap-3"
       },
       "scaling_factor": {
-        "__f__": "0x1.09793289ad001p+0"
+        "__f__": "0x1.0000000000000p+0"
       }
     }
   },
@@ -899,122 +899,122 @@
           "__f__": "0x0.0p+0"
         },
         {
-          "__f__": "-0x1.4294586d86645p-2"
+          "__f__": "0x0.0p+0"
         },
         {
-          "__f__": "0x1.4b026a77f5f43p-1"
+          "__f__": "0x0.0p+0"
         },
         {
-          "__f__": "0x1.bc8fde98495fcp+1"
+          "__f__": "0x1.c5a42248ee5e4p+1"
         },
         {
-          "__f__": "0x1.cc0fb6b09d80dp+2"
+          "__f__": "0x1.b9c9415848a49p+2"
         },
         {
           "__f__": "0x1.13dcb08d3dcb0p+3"
         },
         {
-          "__f__": "0x1.c56ca8c275b56p+2"
+          "__f__": "0x1.b9c9415848a49p+2"
         },
         {
-          "__f__": "0x1.eedb0f149083ep+1"
+          "__f__": "0x1.c5a42248ee5e4p+1"
         },
         {
-          "__f__": "0x1.5198f02524d2cp+0"
+          "__f__": "0x1.2aabc4aef7801p+0"
         },
         {
-          "__f__": "0x1.e22232ae71ff9p-3"
+          "__f__": "0x1.f8542ef3d3f8cp-3"
         },
         {
-          "__f__": "0x1.b13c22a3b94dap-10"
+          "__f__": "0x1.110391fdc9ddap-5"
         },
         {
-          "__f__": "-0x1.1761f392a7eeap-7"
+          "__f__": "0x1.7b0cb4d34b7fep-9"
         },
         {
-          "__f__": "-0x1.e53bf13121fbfp-10"
+          "__f__": "0x1.516ed98029170p-13"
         },
         {
-          "__f__": "-0x1.9cf174e1a3bd4p-13"
+          "__f__": "0x1.8133e0e3ca57dp-18"
         },
         {
-          "__f__": "-0x1.992b7c9e9e806p-17"
+          "__f__": "0x1.19f30d0af9c90p-23"
         },
         {
-          "__f__": "-0x1.f0a7f1b4769a4p-22"
+          "__f__": "0x1.08a5118ee780ap-29"
         },
         {
-          "__f__": "-0x1.792503ec0c504p-27"
+          "__f__": "0x1.3e8a92c6c4cb7p-36"
         },
         {
-          "__f__": "-0x1.6a1815af33da8p-33"
+          "__f__": "0x1.ebacde7436e66p-44"
         },
         {
-          "__f__": "-0x1.ba097be5a1140p-40"
+          "__f__": "0x1.e69957c4046f6p-52"
         },
         {
-          "__f__": "-0x1.58331bbc4f08ep-47"
+          "__f__": "0x1.34c6caa677204p-60"
         },
         {
-          "__f__": "-0x1.5693b4db7c839p-55"
+          "__f__": "0x1.f6865f352d854p-70"
         },
         {
-          "__f__": "-0x1.b456fafa62ed5p-64"
+          "__f__": "0x1.06316907d6bd0p-79"
         },
         {
-          "__f__": "-0x1.63e1dbc367d31p-73"
+          "__f__": "0x1.5eda4c7632867p-90"
         },
         {
-          "__f__": "-0x1.73e907868cf9ep-83"
+          "__f__": "0x1.2d07837e5d688p-101"
         },
         {
-          "__f__": "-0x1.f223908e6a415p-94"
+          "__f__": "0x1.4b35aefbc8a60p-113"
         },
         {
-          "__f__": "-0x1.aba853f5be743p-105"
+          "__f__": "0x1.d35005fadf9e5p-126"
         },
         {
-          "__f__": "-0x1.d6b70683ce045p-117"
+          "__f__": "0x1.a6c220347dc7dp-139"
         },
         {
-          "__f__": "-0x1.4c277fc0c77b7p-129"
+          "__f__": "0x1.ea70f92ddea35p-153"
         },
         {
-          "__f__": "-0x1.2c88aae9a1535p-142"
+          "__f__": "0x1.6cce602c8721ep-167"
         },
         {
-          "__f__": "-0x1.5caf3126724b2p-156"
+          "__f__": "0x1.5bf97d3bf47e6p-182"
         },
         {
-          "__f__": "-0x1.03612fb3160ffp-170"
+          "__f__": "0x1.a9a40034bea28p-198"
         },
         {
-          "__f__": "-0x1.eed85f12c5bc1p-186"
+          "__f__": "0x1.4dd3343705af8p-214"
         },
         {
-          "__f__": "-0x1.2ea773ad188bdp-201"
+          "__f__": "0x1.4fbdccd9cd473p-231"
         },
         {
-          "__f__": "-0x1.dabe8fb15e06bp-218"
+          "__f__": "0x1.b10362b19553fp-249"
         },
         {
-          "__f__": "-0x1.dd799a0fdb2fcp-235"
+          "__f__": "0x1.6613f81e3210ap-267"
         },
         {
-          "__f__": "-0x1.33e8440e8ae0bp-252"
+          "__f__": "0x1.7bb88486266cep-286"
         },
         {
-          "__f__": "-0x1.009777e99eae5p-251"
+          "__f__": "0x1.022f676b0b72dp-305"
         },
         {
-          "__f__": "0x1.33e8d896c641cp-252"
+          "__f__": "0x1.c23bf2fb8cf1fp-326"
         }
       ],
       "aif_uncertainty_inflation_factor": {
         "__f__": "0x1.0000000000000p+0"
       },
       "auc": {
-        "__f__": "0x1.00e0e599e691ap+7"
+        "__f__": "0x1.ef6c6f3c7ba6dp+6"
       },
       "blood_t1": {
         "__f__": "0x1.a666666666666p+0"
@@ -1022,7 +1022,7 @@
       "candidate_count": 2,
       "detection_method": "atlas",
       "fwhm_seconds": {
-        "__f__": "0x1.cf073bdd8f068p+3"
+        "__f__": "0x1.c598d8a9157d0p+3"
       },
       "peak_concentration": {
         "__f__": "0x1.13dcb08d3dcb0p+3"
@@ -1040,27 +1040,27 @@
             "n_pool": 2,
             "qc": {
               "auc_mm_s": {
-                "__f__": "0x1.00e0e599e691ap+7"
+                "__f__": "0x1.ef6c6f3c7ba6dp+6"
               },
               "fwhm_seconds": {
-                "__f__": "0x1.cf073bdd8f068p+3"
+                "__f__": "0x1.c598d8a9157d0p+3"
               },
               "late_tail_per_peak": {
-                "__f__": "-0x1.3d7cef6f42148p-256"
+                "__f__": "0x1.d5d77ec48a145p-291"
               },
               "multi_bump_count": 0,
               "peak_mm": {
                 "__f__": "0x1.13dcb08d3dcb0p+3"
               },
               "ratio_30": {
-                "__f__": "-0x1.7f3616732f809p-16"
+                "__f__": "0x1.6577d2bee8d4ap-21"
               },
               "washout": {
                 "__f__": "0x1.0000000000000p+0"
               }
             },
             "scale_factor": {
-              "__f__": "0x1.09793289ad001p+0"
+              "__f__": "0x1.0000000000000p+0"
             },
             "status": "PASS",
             "tier": "MCA_ACA_dce_strict",
@@ -1106,19 +1106,19 @@
           "__f__": "0x1.4000000000000p+4"
         },
         "detected_aif_minimum_mm": {
-          "__f__": "-0x1.4294586d86645p-2"
+          "__f__": "0x0.0p+0"
         },
         "detected_aif_negative_fraction": {
-          "__f__": "0x1.599999999999ap-1"
+          "__f__": "0x0.0p+0"
         },
-        "detected_aif_negative_samples": 27,
+        "detected_aif_negative_samples": 0,
         "detected_aif_post_peak_minimum_mm": {
-          "__f__": "-0x1.1761f392a7eeap-7"
+          "__f__": "0x1.c23bf2fb8cf1fp-326"
         },
         "detected_aif_post_peak_negative_fraction": {
-          "__f__": "0x1.a000000000000p-1"
+          "__f__": "0x0.0p+0"
         },
-        "detected_aif_post_peak_negative_samples": 26,
+        "detected_aif_post_peak_negative_samples": 0,
         "detection_method": "atlas",
         "emitted_peak_mm": {
           "__f__": "0x1.13dcb08d3dcb0p+3"
@@ -1130,10 +1130,10 @@
           "__f__": "0x1.8000000000000p+1"
         },
         "final_auc": {
-          "__f__": "0x1.00e0e599e691ap+7"
+          "__f__": "0x1.ef6c6f3c7ba6dp+6"
         },
         "final_fwhm_seconds": {
-          "__f__": "0x1.cf073bdd8f068p+3"
+          "__f__": "0x1.c598d8a9157d0p+3"
         },
         "final_peak_mm": {
           "__f__": "0x1.13dcb08d3dcb0p+3"
@@ -1167,28 +1167,28 @@
         "peak_mm_mean": {
           "__f__": "0x1.0000000000000p+2"
         },
-        "peak_scaling_applied": true,
+        "peak_scaling_applied": false,
         "peak_scaling_enabled": true,
         "peak_scaling_factor": {
-          "__f__": "0x1.09793289ad001p+0"
+          "__f__": "0x1.0000000000000p+0"
         },
         "peak_scaling_policy": "one_sided_lower_bound",
         "peak_scaling_required_factor": {
-          "__f__": "0x1.09793289ad001p+0"
+          "__f__": "0x1.0000000000000p+0"
         },
-        "peak_scaling_trigger": "below_expected_minimum",
+        "peak_scaling_trigger": "not_required",
         "quality_score": {
-          "__f__": "0x1.5c936300ac7c4p-3"
+          "__f__": "0x1.647f78e51293ap-3"
         },
         "raw_peak_mm": {
-          "__f__": "0x1.0a049692f2306p+3"
+          "__f__": "0x1.13dcb08d3dcb0p+3"
         },
         "required_scaling_factor": {
-          "__f__": "0x1.09793289ad001p+0"
+          "__f__": "0x1.0000000000000p+0"
         },
         "required_scaling_factor_warning": false,
         "scaling_factor": {
-          "__f__": "0x1.09793289ad001p+0"
+          "__f__": "0x1.0000000000000p+0"
         },
         "scaling_factor_warning": false,
         "tissue_ttp_frame": {
@@ -1202,10 +1202,10 @@
         }
       },
       "quality_score": {
-        "__f__": "0x1.5c936300ac7c4p-3"
+        "__f__": "0x1.647f78e51293ap-3"
       },
       "scaling_factor": {
-        "__f__": "0x1.09793289ad001p+0"
+        "__f__": "0x1.0000000000000p+0"
       }
     }
   },

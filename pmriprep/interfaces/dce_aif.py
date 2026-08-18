@@ -1663,7 +1663,6 @@ class AIFDetection(BaseInterface):
     - Upstroke slope metric for arterial/venous discrimination
     - Cluster-based spatial selection (26-connectivity)
     - Inverse-score weighted averaging (single-voxel default, optional ROI expansion)
-    - Savitzky-Golay smoothing
     - Distance-based lesion filtering
 
     Parameters
@@ -3052,7 +3051,7 @@ class AIFDetection(BaseInterface):
             gate status, and gate decision for this pool.
         """
         curve_blood, _ = self._compute_weighted_roi_aif(
-            cands, scores, conc_data, brain_mask, tr=tr,
+            cands, scores, conc_data, brain_mask,
         )
         curve_plasma = curve_blood / (1.0 - hct) if hct < 1.0 else curve_blood
         scale = _resolve_aif_scale(
@@ -3719,7 +3718,7 @@ class AIFDetection(BaseInterface):
         return candidates, scores, all_metrics
 
     # -----------------------------------------------------------------
-    # Weighted ROI Averaging + Smoothing (Phase 5)
+    # Weighted ROI Averaging (Phase 5)
     # -----------------------------------------------------------------
 
     @staticmethod
@@ -3729,9 +3728,8 @@ class AIFDetection(BaseInterface):
         conc_data: npt.NDArray[Any],
         brain_mask: npt.NDArray[Any],
         roi_size: int = 1,
-        tr: float = 1.0,
     ) -> tuple[npt.NDArray[Any], npt.NDArray[Any]]:
-        """Compute inverse-score weighted AIF with optional ROI averaging and smoothing.
+        """Compute an inverse-score weighted AIF with optional ROI averaging.
 
         When ``roi_size=1`` (default), each candidate contributes only its own
         voxel curve — no spatial expansion into neighboring tissue.  This
@@ -3750,16 +3748,13 @@ class AIFDetection(BaseInterface):
             3D brain mask.
         roi_size : int, optional
             Side length of cubic ROI (1 = single voxel).
-        tr : float, optional
-            Temporal resolution in seconds (for adaptive smoothing).
 
         Returns
         -------
         tuple of (np.ndarray, np.ndarray)
-            (aif_curve, aif_mask) — smoothed 1D AIF and 3D boolean mask.
+            Spatially averaged 1D AIF and 3D boolean mask. Temporal samples are
+            retained without filtering.
         """
-        from scipy.signal import savgol_filter
-
         nt = conc_data.shape[-1]
         aif_mask = np.zeros(conc_data.shape[:3], dtype=np.uint8)
 
@@ -3814,19 +3809,6 @@ class AIFDetection(BaseInterface):
                 weighted_aif += weights[i] * roi_aif
 
             aif_curve = weighted_aif
-
-        # Savitzky-Golay smoothing for noise reduction (standard TR only).
-        # At TR > 5s, the acquisition itself low-pass filters the signal
-        # and the first-pass peak spans only 1-3 frames. SG would
-        # destructively broaden the peak (e.g., 44% attenuation at TR=7.6s).
-        # Do not smooth DCE AIF by default at long TR.
-        if len(aif_curve) >= 5 and tr <= 5.0:
-            sg_window = min(5, len(aif_curve))
-            sg_poly = 2
-            if sg_window >= 3:
-                aif_curve = savgol_filter(
-                    aif_curve, window_length=sg_window, polyorder=sg_poly,
-                )
 
         return aif_curve, aif_mask
 
@@ -3941,7 +3923,7 @@ class AIFDetection(BaseInterface):
         retry1_scores = scores[:top_n]
         retry1_curve, retry1_mask = AIFDetection._compute_weighted_roi_aif(
             retry1_cands, retry1_scores, conc_data, brain_mask,
-            roi_size=1, tr=tr,
+            roi_size=1,
         )
         retry1_fwhm = compute_dce_aif_fwhm_seconds(retry1_curve, tr, baseline_frames)
         retry1_peak = float(np.max(retry1_curve))
@@ -3965,7 +3947,7 @@ class AIFDetection(BaseInterface):
         best_score = [scores[0]]
         retry2_curve, retry2_mask = AIFDetection._compute_weighted_roi_aif(
             best_cand, best_score, conc_data, brain_mask,
-            roi_size=1, tr=tr,
+            roi_size=1,
         )
         retry2_fwhm = compute_dce_aif_fwhm_seconds(retry2_curve, tr, baseline_frames)
         validation_qc["retry2_fwhm_seconds"] = round(retry2_fwhm, 1)
@@ -4654,7 +4636,7 @@ class AIFDetection(BaseInterface):
                 aif_mask[cx, cy, cz] = 1
         else:
             aif_curve, aif_mask = self._compute_weighted_roi_aif(
-                candidates, scores, conc_data, brain_mask, tr=tr,
+                candidates, scores, conc_data, brain_mask,
             )
 
             # Phase 5b: Validate averaged AIF FWHM against candidate FWHM

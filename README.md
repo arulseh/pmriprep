@@ -271,6 +271,9 @@ the fallback agent: field-strength-specific Gd-DTPA r1 for DCE and a standard
 dose of 0.1 mmol Gd/kg for dose-adjusted AIF handling. DSC and DCE dose options
 are multipliers of the agent's standard administered dose.
 
+Detected DCE AIFs are spatially averaged from the selected arterial voxels
+without temporal filtering. Baseline-centered signed samples are retained.
+
 ## Outputs and QC
 
 Derivatives are written under `output_dir/pmriprep/`:

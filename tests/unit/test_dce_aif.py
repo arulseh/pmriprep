@@ -212,7 +212,7 @@ class TestROISizeOne:
         scores = [1.0, 0.8]
 
         aif_curve, aif_mask = AIFDetection._compute_weighted_roi_aif(
-            candidates, scores, conc_data, brain_mask, roi_size=1, tr=4.0,
+            candidates, scores, conc_data, brain_mask, roi_size=1,
         )
 
         # Mask should only contain the 2 candidate voxels
@@ -236,7 +236,6 @@ class TestROISizeOne:
             conc_data,
             brain_mask,
             roi_size=1,
-            tr=6.0,
         )
 
         np.testing.assert_array_equal(aif_curve, conc_data[0, 0, 0, :])
@@ -248,7 +247,7 @@ class TestROISizeOne:
         scores = [1.0]
 
         _, aif_mask = AIFDetection._compute_weighted_roi_aif(
-            candidates, scores, conc_data, brain_mask, roi_size=3, tr=4.0,
+            candidates, scores, conc_data, brain_mask, roi_size=3,
         )
 
         # Should include 3x3x3 = 27 voxels around (10,10,10)
@@ -263,10 +262,10 @@ class TestROISizeOne:
         baseline_frames = 5
 
         aif_r1, _ = AIFDetection._compute_weighted_roi_aif(
-            candidates, scores, conc_data, brain_mask, roi_size=1, tr=tr,
+            candidates, scores, conc_data, brain_mask, roi_size=1,
         )
         aif_r3, _ = AIFDetection._compute_weighted_roi_aif(
-            candidates, scores, conc_data, brain_mask, roi_size=3, tr=tr,
+            candidates, scores, conc_data, brain_mask, roi_size=3,
         )
 
         fwhm_r1 = compute_dce_aif_fwhm_seconds(aif_r1, tr, baseline_frames)
@@ -388,93 +387,38 @@ class TestAtlasCascade:
 
 
 # =============================================================================
-# Test: TR-adaptive Savitzky-Golay
+# Test: measured-AIF temporal fidelity
 # =============================================================================
 
 
-class TestTRAdaptiveSavgol:
-    """Verify Savitzky-Golay window adapts to TR."""
+class TestMeasuredAIFTemporalFidelity:
+    """Verify measured-AIF averaging does not mix temporal samples."""
 
-    def test_savgol_low_tr_uses_window_5(self) -> None:
-        """At TR=2s, smoothing should use window=5 (standard)."""
-        conc_data, brain_mask = _make_synthetic_dce_4d(shape=(20, 20, 20, 60))
-        candidates = [(10, 10, 10)]
-        scores = [1.0]
-        tr = 2.0
+    def test_postarrival_sample_does_not_change_baseline(self) -> None:
+        """A post-arrival impulse must not leak into an earlier baseline frame."""
+        curve = np.array([0.03, -0.02, 0.01, -0.01, -0.01, 8.0, 3.0, 1.0])
+        conc_data = curve.reshape((1, 1, 1, -1))
+        brain_mask = np.ones((1, 1, 1), dtype=np.uint8)
 
-        aif_tr2, _ = AIFDetection._compute_weighted_roi_aif(
-            candidates, scores, conc_data, brain_mask, roi_size=1, tr=tr,
-        )
-        # Curve should be smoothed (not raw)
-        raw = conc_data[10, 10, 10, :].copy()
-        # Smoothed curve should differ from raw (SG changes values slightly)
-        # But peak should be preserved approximately
-        assert abs(float(np.max(aif_tr2)) - float(np.max(raw))) < 1.0
-
-    def test_savgol_high_tr_skips_smoothing(self) -> None:
-        """At TR=8s, SG smoothing should be skipped entirely — peak fully preserved."""
-        conc_data, brain_mask = _make_synthetic_dce_4d(
-            shape=(20, 20, 20, 15), baseline_frames=3,
-        )
-        candidates = [(10, 10, 10)]
-        scores = [1.0]
-        tr = 8.0
-
-        aif_high_tr, _ = AIFDetection._compute_weighted_roi_aif(
-            candidates, scores, conc_data, brain_mask, roi_size=1, tr=tr,
+        aif_curve, _ = AIFDetection._compute_weighted_roi_aif(
+            [(0, 0, 0)], [1.0], conc_data, brain_mask,
         )
 
-        # SG is skipped at TR > 5s, so peak should be fully preserved
-        raw_peak = float(np.max(conc_data[10, 10, 10, :]))
-        smoothed_peak = float(np.max(aif_high_tr))
-        assert smoothed_peak > 0.9 * raw_peak, (
-            f"High-TR peak not preserved: {smoothed_peak:.2f} vs raw {raw_peak:.2f}"
+        np.testing.assert_array_equal(aif_curve[:5], curve[:5])
+
+    def test_weighted_average_preserves_each_timepoint(self) -> None:
+        """Multi-voxel averaging acts only across space, never across time."""
+        conc_data = np.zeros((2, 1, 1, 6), dtype=np.float64)
+        conc_data[0, 0, 0] = [-0.1, 0.1, 0.0, 6.0, 2.0, 0.5]
+        conc_data[1, 0, 0] = [0.2, -0.2, 0.0, 3.0, 1.0, 0.25]
+        brain_mask = np.ones((2, 1, 1), dtype=np.uint8)
+
+        aif_curve, _ = AIFDetection._compute_weighted_roi_aif(
+            [(0, 0, 0), (1, 0, 0)], [3.0, 1.0], conc_data, brain_mask,
         )
 
-    def test_savgol_short_curve_no_crash(self) -> None:
-        """Curves with < 5 timepoints should not crash."""
-        conc_data = np.random.rand(5, 5, 5, 3).astype(np.float64)
-        brain_mask = np.ones((5, 5, 5), dtype=np.uint8)
-        candidates = [(2, 2, 2)]
-        scores = [1.0]
-
-        # Should not raise
-        aif, mask = AIFDetection._compute_weighted_roi_aif(
-            candidates, scores, conc_data, brain_mask, roi_size=1, tr=4.0,
-        )
-        assert len(aif) == 3
-
-    def test_savgol_skipped_for_narrow_peak(self) -> None:
-        """Delta-like peak at TR=8s should be preserved (>95% of raw) since SG is skipped."""
-        nt = 15
-        baseline_frames = 3
-        tr = 8.0
-
-        # Create data with a very narrow arterial peak (~0.3 frame sigma)
-        shape = (10, 10, 10, nt)
-        conc_data = np.zeros(shape, dtype=np.float64)
-        brain_mask = np.ones(shape[:3], dtype=np.uint8)
-
-        t = np.arange(nt, dtype=np.float64)
-        # Delta-like peak: sigma=0.3 frames, almost all energy in one frame
-        peak_frame = baseline_frames + 1
-        arterial_curve = 5.0 * np.exp(-0.5 * ((t - peak_frame) / 0.3) ** 2)
-        arterial_curve[:baseline_frames] = 0.0
-        conc_data[5, 5, 5, :] = arterial_curve
-
-        candidates = [(5, 5, 5)]
-        scores = [1.0]
-
-        aif_out, _ = AIFDetection._compute_weighted_roi_aif(
-            candidates, scores, conc_data, brain_mask, roi_size=1, tr=tr,
-        )
-
-        raw_peak = float(np.max(arterial_curve))
-        out_peak = float(np.max(aif_out))
-        # SG skipped at TR=8s → peak should be >95% preserved
-        assert out_peak > 0.95 * raw_peak, (
-            f"Narrow peak at high TR not preserved: {out_peak:.3f} vs raw {raw_peak:.3f}"
-        )
+        expected = 0.75 * conc_data[0, 0, 0] + 0.25 * conc_data[1, 0, 0]
+        np.testing.assert_array_equal(aif_curve, expected)
 
 
 # =============================================================================
@@ -3265,7 +3209,7 @@ class TestScoreAndGatePool:
 
         # Manual replay of the identical primitive sequence.
         curve_blood, _ = AIFDetection._compute_weighted_roi_aif(
-            cands, scores, conc_data, brain_mask, tr=tr,
+            cands, scores, conc_data, brain_mask,
         )
         curve_plasma = curve_blood / (1.0 - hct)
         curve_scaled, sf = _apply_aif_scale(
