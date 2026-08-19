@@ -1103,6 +1103,7 @@ def init_anat_preproc_wf(
             device=config.hdbet_device,
             conda_env=config.hdbet_conda_env or "",
             use_gpu=resolve_device_uses_gpu(config.hdbet_device),
+            sloppy=config.sloppy,
         ),
         name="brain_extract",
         mem_gb=cap_mem_gb(2.0, mem_limit_gb),

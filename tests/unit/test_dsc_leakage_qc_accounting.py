@@ -33,6 +33,7 @@ def test_merge_qc_records_descriptive_bsw_effect(tmp_path: Path) -> None:
         aif_qc=None,
         deconv_qc={"cbv_auc_negative_fraction": 0.02},
         registration_qc=None,
+        brain_extraction_qc=None,
         normalization_factor=1.0,
         auc_raw_file=raw,
         auc_corr_file=corrected,
@@ -56,6 +57,7 @@ def test_merge_qc_omits_nawm_effect_without_mask() -> None:
         aif_qc=None,
         deconv_qc=None,
         registration_qc=None,
+        brain_extraction_qc=None,
         normalization_factor=1.0,
     )
 
@@ -78,6 +80,7 @@ def test_merge_qc_rejects_mismatched_nawm_geometry(tmp_path: Path) -> None:
             aif_qc=None,
             deconv_qc=None,
             registration_qc=None,
+            brain_extraction_qc=None,
             normalization_factor=1.0,
             auc_raw_file=raw,
             auc_corr_file=corrected,

@@ -1453,6 +1453,7 @@ def _merge_qc_metrics(
     aif_qc: dict[str, object] | None,
     deconv_qc: dict[str, object] | None,
     registration_qc: dict[str, object] | None,
+    brain_extraction_qc: dict[str, object] | None,
     normalization_factor: float | None,
     cbf_normalization_factor: float | None = None,
     motion_summary: dict[str, object] | None = None,
@@ -1477,6 +1478,8 @@ def _merge_qc_metrics(
         Deconvolution QC metrics.
     registration_qc : dict
         Registration QC metrics.
+    brain_extraction_qc : dict
+        Native DSC brain-extraction method and execution settings.
     normalization_factor : float
         CBV normalization factor.
     cbf_normalization_factor : float
@@ -1578,6 +1581,8 @@ def _merge_qc_metrics(
             "aif_source": aif_source,
         },
     }
+    if brain_extraction_qc:
+        merged["brain_extraction"] = brain_extraction_qc
     return merged
 
 

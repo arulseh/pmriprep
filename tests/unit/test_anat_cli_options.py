@@ -46,7 +46,9 @@ def test_brain_extraction_reports_volume_without_uncalibrated_status(
     """Brain-mask size is descriptive and does not imply extraction quality."""
     source = _nifti(tmp_path / "source.nii.gz")
     monkeypatch.chdir(tmp_path)
-    interface = BrainExtraction(in_file=str(source), tool="hdbet")
+    interface = BrainExtraction(
+        in_file=str(source), tool="hdbet", device="cpu",
+    )
     mask = np.ones((3, 3, 3), dtype=np.uint8)
     nib.save(nib.Nifti1Image(mask, np.diag([2.0, 2.0, 2.0, 1.0])), interface._gen_maskfilename())
 
@@ -54,8 +56,36 @@ def test_brain_extraction_reports_volume_without_uncalibrated_status(
 
     assert qc["brain_volume_mm3"] == pytest.approx(216.0)
     assert qc["brain_volume_ml"] == pytest.approx(0.216)
+    assert qc["hdbet_device"] == "cpu"
+    assert qc["hdbet_tta_used"] is False
     assert "qc_status" not in qc
     assert "warnings" not in qc
+
+
+@pytest.mark.parametrize(
+    ("device", "sloppy", "expects_disabled"),
+    [
+        ("cpu", False, True),
+        ("cuda", False, False),
+        ("mps", False, False),
+        ("cuda", True, True),
+    ],
+)
+def test_anatomical_hdbet_tta_policy(
+    tmp_path: Path,
+    device: str,
+    sloppy: bool,
+    expects_disabled: bool,
+) -> None:
+    """The anatomical command follows the shared device and mode policy."""
+    source = _nifti(tmp_path / f"source_{device}_{sloppy}.nii.gz")
+    command = BrainExtraction(
+        in_file=str(source),
+        tool="hdbet",
+        device=device,
+        sloppy=sloppy,
+    ).cmdline
+    assert ("--disable_tta" in command) is expects_disabled
 
 
 def test_denoise_adds_ants_denoising_before_n4(tmp_path: Path) -> None:
@@ -77,3 +107,11 @@ def test_anat_options_reach_workflow_nodes(tmp_path: Path) -> None:
     assert nodes["brain_extract"].inputs.tool == "ants"
     assert nodes["bias_correct"].inputs.denoise is True
     assert nodes["merge_qc"].inputs.denoising is True
+
+    sloppy_workflow = init_anat_preproc_wf(
+        bids_dir=tmp_path,
+        subject_id="01",
+        config=AnatConfig(sloppy=True),
+    )
+    sloppy_nodes = {node.name: node for node in sloppy_workflow._get_all_nodes()}
+    assert sloppy_nodes["brain_extract"].inputs.sloppy is True

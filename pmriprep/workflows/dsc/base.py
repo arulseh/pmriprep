@@ -1247,6 +1247,7 @@ def init_dsc_qc_wf(
                 "auc_diff",
                 "qc_fit_data",
                 "registration_qc_metrics",
+                "brain_extraction_qc_metrics",
                 "registered_t1w",
                 "registered_t1w_mask",
                 "t1w_to_dsc_matrix",
@@ -1289,6 +1290,7 @@ def init_dsc_qc_wf(
                 "aif_qc",
                 "deconv_qc",
                 "registration_qc",
+                "brain_extraction_qc",
                 "normalization_factor",
                 "cbf_normalization_factor",
                 "motion_summary",
@@ -1409,6 +1411,7 @@ def init_dsc_qc_wf(
             ("aif_qc_metrics", "aif_qc"),
             ("deconv_qc_metrics", "deconv_qc"),
             ("registration_qc_metrics", "registration_qc"),
+            ("brain_extraction_qc_metrics", "brain_extraction_qc"),
             ("normalization_factor", "normalization_factor"),
             ("cbf_normalization_factor", "cbf_normalization_factor"),
             ("auc_raw", "auc_raw_file"),
@@ -1942,6 +1945,7 @@ def init_dsc_preproc_wf(
     hdbet_dsc.inputs.hdbet_device = config.hdbet_device
     hdbet_dsc.inputs.hdbet_conda_env = config.hdbet_conda_env or ""
     hdbet_dsc.inputs.use_gpu = resolve_device_uses_gpu(config.hdbet_device)
+    hdbet_dsc.inputs.sloppy = config.sloppy
 
     # -------------------------------------------------------------------
     # Node 1b2: Histogram Match T1w to DSC (for FLIRT convergence)
@@ -2382,7 +2386,10 @@ def init_dsc_preproc_wf(
             ("outputnode.normalization_factor", "inputnode.normalization_factor"),
             ("outputnode.cbf_normalization_factor", "inputnode.cbf_normalization_factor"),
         ]),
-        (hdbet_dsc, qc_wf, [("dsc_brain_mask_file", "inputnode.brain_mask_file")]),
+        (hdbet_dsc, qc_wf, [
+            ("dsc_brain_mask_file", "inputnode.brain_mask_file"),
+            ("qc_metrics", "inputnode.brain_extraction_qc_metrics"),
+        ]),
         (inputnode, qc_wf, [
             ("tr", "inputnode.tr"),
             ("te", "inputnode.te"),

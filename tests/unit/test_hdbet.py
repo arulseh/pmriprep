@@ -56,6 +56,57 @@ class TestRunHdbet:
         mask_data = mask_img.get_fdata()
         assert set(np.unique(mask_data)).issubset({0, 1})
 
+    @pytest.mark.parametrize(
+        ("device", "sloppy", "expects_disabled"),
+        [
+            ("cpu", False, True),
+            ("cuda", False, False),
+            ("mps", False, False),
+            ("cuda", True, True),
+            ("mps", True, True),
+        ],
+    )
+    def test_tta_command_policy(
+        self,
+        tmp_path: Path,
+        device: str,
+        sloppy: bool,
+        expects_disabled: bool,
+    ) -> None:
+        """Normal GPU execution retains TTA; CPU and sloppy disable it."""
+        from pmriprep.utils.hdbet import run_hdbet
+
+        in_file = str(tmp_path / f"input_{device}_{sloppy}.nii.gz")
+        out_brain = str(tmp_path / f"brain_{device}_{sloppy}.nii.gz")
+        _make_nifti(in_file, np.ones((3, 3, 3)))
+        captured: list[str] = []
+        captured_timeout: list[int] = []
+
+        def fake_run(cmd, **kwargs):
+            captured.extend(cmd)
+            captured_timeout.append(kwargs["timeout"])
+            _make_nifti(out_brain, np.ones((3, 3, 3)))
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+        with patch("pmriprep.utils.hdbet.run_isolated_command", side_effect=fake_run):
+            succeeded, _ = run_hdbet(
+                in_file=in_file,
+                out_brain=out_brain,
+                device=device,
+                sloppy=sloppy,
+            )
+
+        assert succeeded
+        assert ("--disable_tta" in captured) is expects_disabled
+        assert captured_timeout == [300 if expects_disabled else 2400]
+
+    def test_auto_device_controls_tta(self) -> None:
+        """Auto resolution applies the policy to the concrete device."""
+        from pmriprep.utils.hdbet import resolve_hdbet_execution
+
+        with patch("pmriprep.utils.device.detect_torch_device", return_value="cuda"):
+            assert resolve_hdbet_execution("auto") == ("cuda", True)
+
     def test_called_process_error_logs_stderr(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture,
     ) -> None:
@@ -253,6 +304,27 @@ class TestDSCBrainExtract:
         assert hasattr(spec, "dsc_brain_file")
         assert hasattr(spec, "dsc_brain_mask_file")
         assert hasattr(spec, "method_used")
+        assert hasattr(spec, "qc_metrics")
+
+    def test_hdbet_qc_records_execution_policy(self, tmp_path: Path) -> None:
+        """Successful DSC HD-BET records its concrete TTA policy."""
+        from pmriprep.interfaces.dsc_brain import DSCBrainExtract
+
+        in_file = str(tmp_path / "dsc_mean.nii.gz")
+        _make_nifti(in_file, np.ones((3, 3, 3)))
+        interface = DSCBrainExtract(
+            dsc_mean_file=in_file,
+            hdbet_device="mps",
+        )
+        with patch.object(interface, "_run_hdbet", return_value=True):
+            interface._run_interface(MagicMock())
+
+        qc = interface._results["qc_metrics"]
+        assert qc == {
+            "method_used": "hdbet",
+            "hdbet_device": "mps",
+            "hdbet_tta_used": True,
+        }
 
     def test_input_trait_names(self) -> None:
         """Input trait names must match workflow connections."""
@@ -263,6 +335,7 @@ class TestDSCBrainExtract:
         assert hasattr(spec, "hdbet_device")
         assert hasattr(spec, "hdbet_conda_env")
         assert hasattr(spec, "use_gpu")
+        assert hasattr(spec, "sloppy")
 
 
 class TestDCEBrainExtract:
@@ -277,7 +350,60 @@ class TestDCEBrainExtract:
         assert hasattr(spec, "hdbet_device")
         assert hasattr(spec, "hdbet_conda_env")
         assert hasattr(spec, "use_gpu")
+        assert hasattr(spec, "sloppy")
         assert not hasattr(spec, "t1w_brain_mask")
+
+    def test_hdbet_qc_records_execution_policy(self, tmp_path: Path) -> None:
+        """Successful DCE HD-BET records its concrete TTA policy."""
+        from pmriprep.interfaces.dce import DCEBrainExtract
+
+        in_file = str(tmp_path / "dce_mean.nii.gz")
+        _make_nifti(in_file, np.ones((3, 3, 3)))
+        interface = DCEBrainExtract(
+            dce_mean=in_file,
+            hdbet_device="cuda",
+            sloppy=True,
+            fill_holes=False,
+        )
+        with (
+            patch.object(interface, "_run_hdbet", return_value=True),
+            patch.object(interface, "_compute_qc_metrics", return_value={}),
+        ):
+            interface._run_interface(MagicMock())
+
+        qc = interface._results["qc_metrics"]
+        assert qc == {
+            "method_used": "hdbet",
+            "hdbet_device": "cuda",
+            "hdbet_tta_used": False,
+        }
+
+
+def test_perfusion_workflows_propagate_sloppy(tmp_path: Path) -> None:
+    """DCE and DSC HD-BET nodes receive the public sloppy setting."""
+    from pmriprep.config.dce import DCEConfig
+    from pmriprep.config.dsc import DSCConfig
+    from pmriprep.workflows.dce.base import init_dce_brain_extraction_wf
+    from pmriprep.workflows.dsc.base import init_dsc_preproc_wf
+
+    dce_workflow = init_dce_brain_extraction_wf(
+        config=DCEConfig(sloppy=True),
+        mem_gb=1.0,
+    )
+    dce_nodes = {node.name: node for node in dce_workflow._get_all_nodes()}
+    assert dce_nodes["dce_brain_extract"].inputs.sloppy is True
+
+    bids_dir = tmp_path / "bids"
+    bids_dir.mkdir()
+    dsc_workflow = init_dsc_preproc_wf(
+        bids_dir=bids_dir,
+        output_dir=tmp_path / "derivatives",
+        subject_id="01",
+        session_id="01",
+        config=DSCConfig(sloppy=True),
+    )
+    dsc_nodes = {node.name: node for node in dsc_workflow._get_all_nodes()}
+    assert dsc_nodes["hdbet_dsc"].inputs.sloppy is True
 
 
 class TestAnatomicalBrainExtraction:

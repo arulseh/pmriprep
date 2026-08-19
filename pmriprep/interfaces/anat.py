@@ -594,6 +594,11 @@ class BrainExtractionInputSpec(CommandLineInputSpec):
         usedefault=True,
         desc="Whether this node uses GPU (for nipype scheduling)",
     )
+    sloppy = traits.Bool(
+        False,
+        usedefault=True,
+        desc="Disable HD-BET test-time augmentation for fast testing",
+    )
 
 
 class BrainExtractionOutputSpec(TraitedSpec):
@@ -622,6 +627,8 @@ class BrainExtraction(CommandLine):
         Brain extraction tool: "hdbet" (default) or "ants"
     device : str
         HD-BET device: "auto" (auto-detect), "cuda", "mps" (Apple Silicon), "cpu"
+    sloppy : bool
+        Disable HD-BET test-time augmentation for faster testing.
     ants_template : str, optional
         ANTs extraction template (required if tool="ants")
     ants_probability_mask : str, optional
@@ -654,6 +661,9 @@ class BrainExtraction(CommandLine):
     - "mps": Force Apple Silicon GPU (M1/M2/M3)
     - "cpu": Force CPU mode
 
+    HD-BET test-time augmentation is enabled for normal CUDA and MPS execution
+    and disabled for CPU or sloppy execution.
+
     For Apple Silicon (arm64) systems, HD-BET will automatically use MPS
     when device="auto" and CUDA is unavailable.
 
@@ -684,13 +694,13 @@ class BrainExtraction(CommandLine):
 
     def _get_hdbet_device(self) -> str:
         """Get HD-BET device string based on settings and architecture."""
-        from pmriprep.utils.device import detect_torch_device
+        return self._get_hdbet_execution()[0]
 
-        device = self.inputs.device
+    def _get_hdbet_execution(self) -> tuple[str, bool]:
+        """Resolve the HD-BET device and test-time augmentation policy."""
+        from pmriprep.utils.hdbet import resolve_hdbet_execution
 
-        if device == "auto":
-            return detect_torch_device()
-        return device  # type: ignore[no-any-return]
+        return resolve_hdbet_execution(self.inputs.device, self.inputs.sloppy)
 
     @staticmethod
     def _get_ants_templates() -> tuple[str, str]:
@@ -728,12 +738,11 @@ class BrainExtraction(CommandLine):
         cmd_parts: list[str] = []
 
         if tool == "hdbet":
-            device = self._get_hdbet_device()
+            device, use_tta = self._get_hdbet_execution()
 
-            hdbet_base = (
-                f"hd-bet -i {in_file} -o {out_file} "
-                f"-device {device} --disable_tta"
-            )
+            hdbet_base = f"hd-bet -i {in_file} -o {out_file} -device {device}"
+            if not use_tta:
+                hdbet_base += " --disable_tta"
 
             if isdefined(self.inputs.conda_env) and self.inputs.conda_env:
                 hdbet_cmd = (
@@ -785,6 +794,12 @@ class BrainExtraction(CommandLine):
         qc_metrics: dict[str, Any] = {
             "tool": self.inputs.tool,  # hdbet or ants
         }
+        if self.inputs.tool == "hdbet":
+            device, use_tta = self._get_hdbet_execution()
+            qc_metrics.update({
+                "hdbet_device": device,
+                "hdbet_tta_used": use_tta,
+            })
         try:
             brain_vol = self._compute_brain_volume()
             if brain_vol is not None:

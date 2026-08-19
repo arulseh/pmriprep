@@ -382,10 +382,16 @@ class TestMotionAppliedSurvivesPipelineQCFilter:
         merged = _merge_qc_metrics(
             motion_qc={"motion_status": "pass"},
             preload_qc={}, aif_qc={}, deconv_qc={}, registration_qc={},
+            brain_extraction_qc={
+                "method_used": "hdbet",
+                "hdbet_device": "cuda",
+                "hdbet_tta_used": True,
+            },
             normalization_factor=0.0,
             motion_summary={"motion_applied": False, "fd_mean": 0.05},
         )
         assert merged["preprocessing"]["motion_applied"] is False
+        assert merged["brain_extraction"]["hdbet_tta_used"] is True
 
         filtered = filter_pipeline_qc(merged)
         # motion_summary is stripped, but the flat flag remains.

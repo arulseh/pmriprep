@@ -4040,6 +4040,11 @@ class DCEBrainExtractInputSpec(BaseInterfaceInputSpec):
         usedefault=True,
         desc="Whether this node uses GPU (for nipype scheduling)",
     )
+    sloppy = traits.Bool(
+        False,
+        usedefault=True,
+        desc="Disable HD-BET test-time augmentation for fast testing",
+    )
 
 
 class DCEBrainExtractOutputSpec(TraitedSpec):
@@ -4155,6 +4160,14 @@ class DCEBrainExtract(SimpleInterface):
         # Compute QC metrics
         qc_metrics = self._compute_qc_metrics(out_mask, dce_mean)
         qc_metrics["method_used"] = method_used
+        if method_used == "hdbet":
+            from pmriprep.utils.hdbet import resolve_hdbet_execution
+
+            device, use_tta = resolve_hdbet_execution(
+                self.inputs.hdbet_device,
+                self.inputs.sloppy,
+            )
+            qc_metrics.update({"hdbet_device": device, "hdbet_tta_used": use_tta})
 
         # Set outputs
         self._results["out_brain"] = out_brain
@@ -4183,6 +4196,7 @@ class DCEBrainExtract(SimpleInterface):
             out_brain=out_brain,
             device=self.inputs.hdbet_device,
             conda_env=conda_env,
+            sloppy=self.inputs.sloppy,
         )
         if succeeded and mask_path:
             if str(mask_path) != out_mask:

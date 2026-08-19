@@ -452,6 +452,7 @@
     "brain_extract": {
       "conda_env": "",
       "device": "auto",
+      "sloppy": false,
       "tool": "hdbet",
       "use_gpu": false
     },

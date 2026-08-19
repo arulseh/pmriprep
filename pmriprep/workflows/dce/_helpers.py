@@ -1222,6 +1222,7 @@ def _collect_qc_metrics(
     t1_qc: dict[str, object] | None,
     signal_conversion_qc: dict[str, object] | None,
     preprocess_qc: dict[str, object] | None,
+    brain_extraction_qc: dict[str, object] | None,
     registration_qc: dict[str, object] | None,
     aif_qc: dict[str, object] | None,
     pk_qc: dict[str, object] | None,
@@ -1246,6 +1247,8 @@ def _collect_qc_metrics(
         T1 mapping QC metrics (None if external or no_t1).
     preprocess_qc : dict or None
         Preprocessing QC metrics.
+    brain_extraction_qc : dict or None
+        Native DCE brain-extraction method and execution settings.
     registration_qc : dict or None
         Registration QC metrics.
     aif_qc : dict or None
@@ -1343,6 +1346,8 @@ def _collect_qc_metrics(
 
     if preprocess_qc is not None:
         qc_metrics["preprocessing"] = preprocess_qc
+    if brain_extraction_qc is not None:
+        qc_metrics["brain_extraction"] = brain_extraction_qc
     if registration_qc is not None:
         qc_metrics["registration"] = registration_qc
     if aif_qc is not None:

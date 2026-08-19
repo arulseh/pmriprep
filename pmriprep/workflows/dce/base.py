@@ -824,6 +824,7 @@ def init_dce_brain_extraction_wf(
             hdbet_device=config.hdbet_device,
             hdbet_conda_env=config.hdbet_conda_env or "",
             use_gpu=resolve_device_uses_gpu(config.hdbet_device),
+            sloppy=config.sloppy,
         ),
         name="dce_brain_extract",
         mem_gb=mem_gb,
@@ -1205,6 +1206,7 @@ def init_dce_qc_collection_wf(
     """Aggregate DCE processing, modeling, validation, and display QC."""
     fields = [
         "b1_qc", "t1_qc", "vfa_qc", "signal_conversion_qc", "preprocess_qc",
+        "brain_extraction_qc",
         "registration_qc", "aif_qc",
         "pk_qc", "validation_result", "preproc_display", "pk_fit_qc_metrics",
         "pk_maps_qc_metrics",
@@ -2698,6 +2700,9 @@ def init_dce_preproc_wf(
         ]),
         (dce_preprocessing_wf, dce_qc_collection_wf, [
             ("outputnode.qc_metrics", "inputnode.preprocess_qc"),
+        ]),
+        (dce_brain_extraction_wf, dce_qc_collection_wf, [
+            ("outputnode.qc_metrics", "inputnode.brain_extraction_qc"),
         ]),
         (dce_registration_wf, dce_qc_collection_wf, [
             ("outputnode.qc_metrics", "inputnode.registration_qc"),

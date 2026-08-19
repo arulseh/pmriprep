@@ -52,6 +52,11 @@ class DSCBrainExtractInputSpec(BaseInterfaceInputSpec):
         usedefault=True,
         desc="Whether this node uses GPU (for nipype scheduling)",
     )
+    sloppy = traits.Bool(
+        False,
+        usedefault=True,
+        desc="Disable HD-BET test-time augmentation for fast testing",
+    )
     bet_frac = traits.Float(
         0.3,
         usedefault=True,
@@ -65,6 +70,7 @@ class DSCBrainExtractOutputSpec(TraitedSpec):
     dsc_brain_file = File(desc="Brain-extracted DSC mean image")
     dsc_brain_mask_file = File(desc="Binary brain mask in DSC native space")
     method_used = traits.Str(desc="Extraction method that succeeded")
+    qc_metrics = traits.Dict(desc="QC metrics for brain extraction")
 
 
 class DSCBrainExtract(SimpleInterface):
@@ -112,6 +118,19 @@ class DSCBrainExtract(SimpleInterface):
         self._results["dsc_brain_file"] = out_brain
         self._results["dsc_brain_mask_file"] = out_mask
         self._results["method_used"] = method_used
+        qc_metrics: dict[str, object] = {"method_used": method_used}
+        if method_used == "hdbet":
+            from pmriprep.utils.hdbet import resolve_hdbet_execution
+
+            device, use_tta = resolve_hdbet_execution(
+                self.inputs.hdbet_device,
+                self.inputs.sloppy,
+            )
+            qc_metrics.update({
+                "hdbet_device": device,
+                "hdbet_tta_used": use_tta,
+            })
+        self._results["qc_metrics"] = qc_metrics
 
         return runtime
 
@@ -134,6 +153,7 @@ class DSCBrainExtract(SimpleInterface):
             out_brain=out_brain,
             device=self.inputs.hdbet_device,
             conda_env=conda_env,
+            sloppy=self.inputs.sloppy,
         )
         if succeeded and mask_path:
             if str(mask_path) != out_mask:

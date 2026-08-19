@@ -18,6 +18,38 @@ from pmriprep.utils.processes import run_isolated_command
 
 logger = logging.getLogger(__name__)
 
+_TTA_TIMEOUT_MULTIPLIER = 8
+
+
+def resolve_hdbet_execution(
+    device: str,
+    sloppy: bool = False,
+) -> tuple[str, bool]:
+    """Resolve the HD-BET device and test-time augmentation policy.
+
+    Parameters
+    ----------
+    device : str
+        Requested Torch device: ``"auto"``, ``"cuda"``, ``"mps"``, or
+        ``"cpu"``.
+    sloppy : bool
+        Whether fast testing settings are requested.
+
+    Returns
+    -------
+    resolved_device : str
+        Concrete Torch device.
+    use_tta : bool
+        True when mirrored test-time augmentation should be enabled.
+    """
+    if device == "auto":
+        from pmriprep.utils.device import detect_torch_device
+
+        device = detect_torch_device()
+    if device not in {"cuda", "mps", "cpu"}:
+        raise ValueError(f"Unsupported HD-BET device: {device!r}")
+    return device, device in {"cuda", "mps"} and not sloppy
+
 
 def run_hdbet(
     in_file: str,
@@ -25,6 +57,7 @@ def run_hdbet(
     device: str = "auto",
     conda_env: str = "",
     timeout: int = 300,
+    sloppy: bool = False,
 ) -> tuple[bool, Optional[str]]:
     """Run HD-BET brain extraction as a subprocess.
 
@@ -46,7 +79,12 @@ def run_hdbet(
         Conda environment name.  When non-empty, HD-BET is
         invoked via ``conda run -n <env>``.
     timeout : int
-        Subprocess timeout in seconds (default 300 = 5 min).
+        Base subprocess timeout in seconds (default 300 = 5 min). When TTA is
+        enabled, this limit is multiplied by eight to cover the mirrored
+        predictions.
+    sloppy : bool
+        Disable test-time augmentation for faster testing. TTA is also
+        disabled on CPU and otherwise enabled on CUDA or MPS.
 
     Returns
     -------
@@ -56,18 +94,22 @@ def run_hdbet(
             - *mask_path*: Path to the derived binary mask, or None on
               failure.
     """
-    # Resolve device
-    if device == "auto":
-        from pmriprep.utils.device import detect_torch_device
-        device = detect_torch_device()
+    device, use_tta = resolve_hdbet_execution(device, sloppy)
+    effective_timeout = timeout * (_TTA_TIMEOUT_MULTIPLIER if use_tta else 1)
 
     hdbet_args = [
         "hd-bet",
         "-i", str(in_file),
         "-o", str(out_brain),
         "-device", device,
-        "--disable_tta",
     ]
+    if not use_tta:
+        hdbet_args.append("--disable_tta")
+    logger.info(
+        "Starting HD-BET on %s with test-time augmentation %s",
+        device,
+        "enabled" if use_tta else "disabled",
+    )
 
     # Conda wrapping
     if conda_env:
@@ -80,10 +122,10 @@ def run_hdbet(
     try:
         result = run_isolated_command(
             cmd,
-            timeout=timeout,
+            timeout=effective_timeout,
         )
     except subprocess.TimeoutExpired:
-        logger.warning("HD-BET timed out after %d seconds", timeout)
+        logger.warning("HD-BET timed out after %d seconds", effective_timeout)
         return False, None
     except (FileNotFoundError, OSError) as e:
         # OSError covers Apptainer/Singularity missing-executable cases

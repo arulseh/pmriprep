@@ -123,6 +123,8 @@ Use `pmriprep --help` for the complete execution interface. `--use-plugin`
 accepts a Nipype plugin YAML/JSON for cluster schedulers. `--clean-workdir`,
 `--resource-monitor`, `--write-graph`, `--stop-on-first-crash`, and `--sloppy`
 follow the corresponding NiPreps conventions.
+HD-BET uses test-time augmentation on CUDA and MPS; CPU and sloppy execution
+disable it for speed.
 
 ## Configuration
 

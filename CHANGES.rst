@@ -1,4 +1,4 @@
-1.0.0rc2.dev3 (unreleased)
+1.0.0rc2.dev4 (unreleased)
 ==========================
 
 * FIX: Preserve measured DCE AIF temporal samples without noncausal smoothing.
@@ -6,6 +6,8 @@
   accepted measured AIF when the optional gamma fit fails.
 * FIX: Prevent pre-bolus noise from initializing DSC gamma-variate bolus onset.
 * FIX: Use a uniform positive-R² criterion in the DCE fit-quality mask.
+* FIX: Retain HD-BET test-time augmentation for normal GPU execution, with a
+  scaled timeout and recorded execution QC.
 
 1.0.0rc1 (2026-08-06)
 ======================
