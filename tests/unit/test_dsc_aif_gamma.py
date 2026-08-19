@@ -28,7 +28,7 @@ class TestAIFSmoothingWindow:
         [(0.5, 15), (1.5, 5), (3.0, 3)],
     )
     def test_window_tracks_duration(self, tr: float, expected: int) -> None:
-        """The window remains near 7.5 seconds across representative TRs."""
+        """The sample count tracks the time target across representative TRs."""
         assert get_aif_smoothing_window(100, tr) == expected
 
     def test_window_is_odd_and_capped_to_curve(self) -> None:
@@ -123,6 +123,26 @@ class TestEstimateInitialParams:
         assert 0.5 * true_alpha <= alpha_est <= 1.5 * true_alpha + 1.0
         # beta within 50%
         assert 0.5 * true_beta <= beta_est <= 1.5 * true_beta + 1.0
+
+    def test_prebolus_noise_cannot_initialize_bolus_onset(self) -> None:
+        """The validated baseline is a lower bound for the initial t0."""
+        baseline_frames = 40
+        t = np.arange(80, dtype=np.float64)
+        curve = _gamma_variate_model(
+            t,
+            amplitude=8.0,
+            t0=42.0,
+            alpha=2.5,
+            beta=2.0,
+        )
+        curve[5] = 0.15 * float(np.max(curve))
+
+        _, t0_est, _, _ = _estimate_initial_params(
+            curve,
+            baseline_frames=baseline_frames,
+        )
+
+        assert t0_est >= baseline_frames - 0.5
 
 
 class TestComputeAUC:

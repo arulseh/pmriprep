@@ -20,7 +20,7 @@ from pmriprep.utils.dsc_constants import (
 
 
 def get_aif_smoothing_window(n_timepoints: int, tr: float) -> int:
-    """Return an odd Savitzky-Golay window near the DSC time target.
+    """Return a TR-adaptive odd Savitzky-Golay smoothing window.
 
     Parameters
     ----------
@@ -294,11 +294,11 @@ def _estimate_initial_params(
         # Flat curve, return defaults
         return (1.0, float(baseline_frames), 2.0, 3.0)
 
-    # Estimate t0: first frame where signal exceeds 10% of peak
+    # Estimate t0 from the first post-baseline frame exceeding 10% of peak.
     threshold = baseline + 0.1 * peak_value
-    rising_indices = np.where(aif_curve > threshold)[0]
+    rising_indices = np.where(aif_curve[baseline_frames:] > threshold)[0]
     if len(rising_indices) > 0:
-        t0_estimate = float(rising_indices[0]) - 0.5
+        t0_estimate = float(baseline_frames + rising_indices[0]) - 0.5
     else:
         t0_estimate = float(baseline_frames)
 
