@@ -1,10 +1,11 @@
-1.0.0rc2.dev2 (unreleased)
+1.0.0rc2.dev3 (unreleased)
 ==========================
 
 * FIX: Preserve measured DCE AIF temporal samples without noncausal smoothing.
 * FIX: Keep DSC gamma-variate initialization within solver bounds and retain an
   accepted measured AIF when the optional gamma fit fails.
 * FIX: Prevent pre-bolus noise from initializing DSC gamma-variate bolus onset.
+* FIX: Use a uniform positive-R² criterion in the DCE fit-quality mask.
 
 1.0.0rc1 (2026-08-06)
 ======================

@@ -66,10 +66,7 @@ class TestEnrichDCE:
                 "qc_acceptance_policy": {
                     "acquisition": {"minimum_tsnr": 10.0},
                     "fit": {
-                        "minimum_r_squared": {
-                            "patlak": 0.0,
-                            "reversible_models": 0.5,
-                        }
+                        "minimum_r_squared_exclusive": 0.0,
                     },
                 },
                 "qc_component_failures": {
@@ -129,8 +126,8 @@ class TestEnrichDCE:
         )
         assert (
             perf["PKModeling"]["QCAcceptancePolicy"]["fit"][
-                "minimum_r_squared"
-            ]["patlak"]
+                "minimum_r_squared_exclusive"
+            ]
             == 0.0
         )
         assert (

@@ -773,16 +773,9 @@ def _evaluate_dce_qc_mask(
             model_name == "patlak",
             dtype=bool,
         )
-    # Whole-curve R² is ill-conditioned when Patlak is selected for subtle
-    # leakage because the tissue-curve variance approaches the noise floor.
-    # Retain a minimal R² >= 0 requirement (better than a constant predictor)
-    # for Patlak, while reversible models retain the established R² >= 0.5
-    # fit-quality threshold.
-    r_squared_ok = np.where(
-        is_patlak_voxel,
-        r_squared >= 0.0,
-        r_squared >= 0.5,
-    )
+    # R² > 0 requires the fitted curve to outperform its temporal mean. This
+    # is a minimal fit-adequacy screen, not evidence of parameter reliability.
+    r_squared_ok = r_squared > 0.0
     patlak_ok = np.isfinite(vp)
     tofts_ok = np.isfinite(ve) & (ve < 0.95) & np.isfinite(kep) & (kep > 0.001)
     extended_ok = (
@@ -826,10 +819,7 @@ def _evaluate_dce_qc_mask(
             ),
         },
         "fit": {
-            "minimum_r_squared": {
-                "patlak": 0.0,
-                "reversible_models": 0.5,
-            },
+            "minimum_r_squared_exclusive": 0.0,
             "required_quality_flag": "good",
             "ktrans_minimum_per_min_exclusive": 0.0,
             "ktrans_maximum_per_min_exclusive": 5.0,

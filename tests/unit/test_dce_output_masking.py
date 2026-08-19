@@ -48,8 +48,8 @@ def test_zero_dce_background_broadcasts_over_time() -> None:
     np.testing.assert_array_equal(masked[0, 0, 1], 0.0)
 
 
-def test_build_dce_qc_mask_preserves_strict_thresholds() -> None:
-    """QC acceptance retains the configured tSNR and strict PK gates."""
+def test_build_dce_qc_mask_preserves_parameter_thresholds() -> None:
+    """QC acceptance retains the configured tSNR and PK parameter gates."""
     shape = (1, 1, 4)
     mask = _build_dce_qc_mask(
         np.ones(shape, dtype=bool),
@@ -67,7 +67,7 @@ def test_build_dce_qc_mask_preserves_strict_thresholds() -> None:
         "tofts",
         tsnr_threshold=10.0,
     )
-    assert mask.tolist() == [[[1, 0, 0, 0]]]
+    assert mask.tolist() == [[[1, 0, 0, 1]]]
     assert mask.dtype == np.uint8
 
 
@@ -117,29 +117,29 @@ def test_build_dce_qc_mask_skips_signal_qc_without_raw_signal() -> None:
     }
 
 
-def test_build_dce_qc_mask_uses_model_aware_r_squared_thresholds() -> None:
-    """Patlak retains non-negative R² while reversible fits require 0.5."""
-    shape = (1, 1, 4)
+def test_build_dce_qc_mask_uses_uniform_positive_r_squared_threshold() -> None:
+    """Every retained model must outperform the temporal-mean predictor."""
+    shape = (1, 1, 6)
     mask = _build_dce_qc_mask(
         np.ones(shape, dtype=bool),
         np.full(shape, 20.0),
         True,
         np.full(shape, 0.1),
-        np.array([[[0.0, -0.01, 0.49, 0.5]]]),
+        np.array([[[0.0, -0.01, 0.49, 0.5, 0.0, -0.01]]]),
         np.full(shape, 0.2),
         np.full(shape, 0.1),
         np.full(shape, 0.5),
         np.ones(shape, dtype=np.int8),
-        np.array([[[1, 1, 3, 3]]], dtype=np.int8),
+        np.array([[[1, 1, 3, 3, 3, 3]]], dtype=np.int8),
         {"patlak": 1},
         True,
         "auto",
     )
-    assert mask.tolist() == [[[1, 0, 0, 1]]]
+    assert mask.tolist() == [[[0, 0, 1, 1, 0, 0]]]
 
 
-def test_build_dce_qc_mask_applies_patlak_threshold_in_fixed_mode() -> None:
-    """Fixed Patlak uses the same non-negative R² acceptance as auto mode."""
+def test_build_dce_qc_mask_applies_strict_threshold_in_fixed_mode() -> None:
+    """Fixed Patlak also requires strictly positive R²."""
     shape = (1, 1, 2)
     common = {
         "fitting_mask": np.ones(shape, dtype=bool),
@@ -157,7 +157,7 @@ def test_build_dce_qc_mask_applies_patlak_threshold_in_fixed_mode() -> None:
         "model_name": "patlak",
     }
 
-    assert _build_dce_qc_mask(**common).tolist() == [[[1, 0]]]
+    assert _build_dce_qc_mask(**common).tolist() == [[[0, 0]]]
 
 
 def test_evaluate_dce_qc_mask_reports_acceptance_policy() -> None:
@@ -179,10 +179,9 @@ def test_evaluate_dce_qc_mask_reports_acceptance_policy() -> None:
         "auto",
     )
     assert evaluation.acceptance_policy["acquisition"]["minimum_tsnr"] is None
-    assert evaluation.acceptance_policy["fit"]["minimum_r_squared"] == {
-        "patlak": 0.0,
-        "reversible_models": 0.5,
-    }
+    assert evaluation.acceptance_policy["fit"][
+        "minimum_r_squared_exclusive"
+    ] == 0.0
 
 
 def test_dce_qc_mask_uses_configured_tsnr_threshold() -> None:
@@ -294,7 +293,7 @@ def test_evaluate_dce_qc_mask_reports_overlapping_component_failures() -> None:
         np.array([[[9.0, 20.0, 20.0]]]),
         True,
         np.array([[[0.1, 0.1, 0.0]]]),
-        np.array([[[0.8, 0.8, 0.4]]]),
+        np.array([[[0.8, 0.8, -0.1]]]),
         np.full(shape, 0.2),
         np.full(shape, 0.1),
         np.full(shape, 0.5),
