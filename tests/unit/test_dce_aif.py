@@ -1,4 +1,4 @@
-"""Unit tests for DCE AIF detection fixes: ROI averaging, FWHM validation, atlas cascade."""
+"""Unit tests for DCE AIF detection, averaging, gates, and atlas cascade."""
 
 from unittest.mock import MagicMock, patch
 
@@ -274,82 +274,6 @@ class TestROISizeOne:
         # roi_size=1 should give narrower or equal FWHM
         assert fwhm_r1 <= fwhm_r3 + 1e-6, (
             f"roi_size=1 FWHM ({fwhm_r1:.1f}s) should be <= roi_size=3 FWHM ({fwhm_r3:.1f}s)"
-        )
-
-
-# =============================================================================
-# Test: FWHM validation triggers retry
-# =============================================================================
-
-
-class TestFWHMValidation:
-    """Verify _validate_dce_averaged_aif detects broadened curves and retries."""
-
-    def test_fwhm_validation_triggers_retry_on_broad_aif(self) -> None:
-        """Averaged AIF with FWHM >> candidate FWHM should trigger retry."""
-        conc_data, brain_mask = _make_synthetic_dce_4d(
-            arterial_peak=5.0, tissue_peak=0.5,
-        )
-        tr = 4.0
-        baseline_frames = 5
-
-        candidates = [(10, 10, 10), (10, 11, 10), (11, 10, 10)]
-        scores = [1.0, 0.9, 0.8]
-
-        # Create a deliberately broadened "averaged" AIF (as if ROI expansion
-        # contaminated it with tissue). Use a very broad Gaussian.
-        nt = conc_data.shape[3]
-        t = np.arange(nt, dtype=np.float64)
-        broad_aif = 2.0 * np.exp(-0.5 * ((t - 10) / 8.0) ** 2)
-        broad_aif[:baseline_frames] = 0.0
-
-        # Candidate metrics with narrow FWHM
-        metrics_list: list[dict[str, float]] = [
-            {"fwhm_seconds": 12.0, "peak_mm": 5.0, "washout": 0.7, "cnr": 50.0,
-             "auc": 100.0, "fwhm_frames": 3.0},
-            {"fwhm_seconds": 13.0, "peak_mm": 4.8, "washout": 0.65, "cnr": 45.0,
-             "auc": 95.0, "fwhm_frames": 3.2},
-            {"fwhm_seconds": 11.0, "peak_mm": 4.5, "washout": 0.72, "cnr": 40.0,
-             "auc": 90.0, "fwhm_frames": 2.8},
-        ]
-
-        aif_out, mask_out, val_qc = AIFDetection._validate_dce_averaged_aif(
-            broad_aif, candidates, scores, metrics_list,
-            conc_data, brain_mask, tr, baseline_frames,
-        )
-
-        # Should have retried (retries > 0)
-        assert val_qc.get("aif_validation_retries", 0) > 0, (
-            "Expected validation to trigger retry on broadened AIF"
-        )
-
-    def test_fwhm_validation_accepts_good_aif(self) -> None:
-        """AIF with FWHM close to candidate mean should pass without retry."""
-        conc_data, brain_mask = _make_synthetic_dce_4d()
-        tr = 4.0
-        baseline_frames = 5
-
-        candidates = [(10, 10, 10), (10, 11, 10)]
-        scores = [1.0, 0.9]
-
-        # Use candidate voxel curve directly as averaged AIF (no broadening)
-        good_aif = conc_data[10, 10, 10, :].copy()
-
-        fwhm_of_aif = compute_dce_aif_fwhm_seconds(good_aif, tr, baseline_frames)
-        metrics_list: list[dict[str, float]] = [
-            {"fwhm_seconds": fwhm_of_aif, "peak_mm": 5.0, "washout": 0.7,
-             "cnr": 50.0, "auc": 100.0, "fwhm_frames": fwhm_of_aif / tr},
-            {"fwhm_seconds": fwhm_of_aif + 1.0, "peak_mm": 4.8, "washout": 0.65,
-             "cnr": 45.0, "auc": 95.0, "fwhm_frames": (fwhm_of_aif + 1.0) / tr},
-        ]
-
-        _, _, val_qc = AIFDetection._validate_dce_averaged_aif(
-            good_aif, candidates, scores, metrics_list,
-            conc_data, brain_mask, tr, baseline_frames,
-        )
-
-        assert val_qc.get("aif_validation_retries", 0) == 0, (
-            "Good AIF should not trigger validation retry"
         )
 
 
@@ -3290,16 +3214,10 @@ class TestScoreAndGatePool:
 # =============================================================================
 
 
-class TestC2DivergenceInSitu:
-    """Drive the C2 re-gate/rebuild branch inside ``_run_interface``.
+class TestDetectedAIFEmissionInSitu:
+    """Drive detected-AIF emission branches inside ``_run_interface``.
 
-    The `if cur_cand_set != tier_cand_set:` routing is otherwise pinned only
-    via the direct `_score_and_gate_pool` helper tests. This forces divergence
-    (the cascade's `tier_result.candidates` a strict superset of the emitted
-    `candidates`) with a mocked cascade + a spy on `_score_and_gate_pool`, and
-    asserts `_run_interface` routes the spy's outcome into the emitted AIF and
-    rebuilds `tier_result` from it (so the emitted status — not the original
-    cascade status — drives provenance).
+    Cover the C2 re-gate/rebuild route and the anchored Pass-2 singleton route.
     """
 
     @staticmethod
@@ -3390,3 +3308,44 @@ class TestC2DivergenceInSitu:
         # cascade tier_result was PASS, so a "reduced" confidence proves the
         # C2 rebuild (not the original) drives downstream provenance.
         assert res["aif_confidence"] == "reduced"
+
+    def test_pass2_singleton_is_emitted_with_qc(self, tmp_path, monkeypatch) -> None:
+        """An anchored Pass-2 singleton remains a measured AIF with provenance."""
+        import nibabel as nib
+
+        conc_f, mask_f = self._write_niftis(tmp_path)
+        monkeypatch.chdir(tmp_path)
+
+        candidate = (10, 10, 10)
+        hematocrit = 0.42
+        concentration = np.asarray(nib.load(conc_f).dataobj)
+        expected_curve = concentration[candidate] / (1.0 - hematocrit)
+        cascade = CascadeResult(
+            candidates=[candidate], scores=[0.9],
+            metrics_list=[self._full_metric()], detection_method="atlas",
+            atlas_tier_used="MCA_ACA_dce_strict",
+            cascade_tiers_attempted=10, anchor_outcomes=[], tier_result=None,
+            tier_gate_decisions=[],
+        )
+
+        iface = AIFDetection()
+        iface.inputs.concentration_file = conc_f
+        iface.inputs.brain_mask_file = mask_f
+        iface.inputs.tr = 4.0
+        iface.inputs.hematocrit = hematocrit
+
+        with patch.object(
+            AIFDetection, "_run_two_pass_cascade", return_value=cascade,
+        ), patch.object(
+            AIFDetection, "_select_top_candidates",
+            side_effect=lambda cands, scs, mets, *a, **k: (cands, scs, mets),
+        ):
+            iface.run()
+
+        res = iface._results
+        assert res["scaling_factor"] == pytest.approx(1.0)
+        np.testing.assert_allclose(res["aif_curve"], expected_curve)
+        assert res["candidate_count"] == 1
+        assert res["qc_metrics"]["n_aif_voxels_selected"] == 1
+        assert res["qc_metrics"]["candidate_coords"] == [list(candidate)]
+        assert "aif_validation_retries" not in res["qc_metrics"]

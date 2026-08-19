@@ -4,7 +4,7 @@ This pins the end-to-end behaviour of the DCE AIF detection interface across a
 config matrix BEFORE the ~790-line ``_run_interface`` is decomposed into phase
 methods, and is the byte-identity gate for every extraction step. It also closes
 a real coverage gap: the interface was previously exercised end-to-end only by
-``TestC2DivergenceInSitu``.
+``TestDetectedAIFEmissionInSitu``.
 
 Each matrix cell runs ``_run_interface`` (via ``iface.run()``), canonicalises
 ``self._results`` at FULL float precision (``float.hex``) plus the on-disk AIF

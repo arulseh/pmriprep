@@ -3813,176 +3813,6 @@ class AIFDetection(BaseInterface):
         return aif_curve, aif_mask
 
     # -----------------------------------------------------------------
-    # Post-Averaging FWHM Validation with Retry Cascade
-    # -----------------------------------------------------------------
-
-    @staticmethod
-    def _validate_dce_averaged_aif(
-        aif_curve: npt.NDArray[Any],
-        candidates: list[tuple[int, int, int]],
-        scores: list[float],
-        metrics_list: list[dict[str, float]],
-        conc_data: npt.NDArray[Any],
-        brain_mask: npt.NDArray[Any],
-        tr: float,
-        baseline_frames: int,
-    ) -> tuple[npt.NDArray[Any], npt.NDArray[Any], dict[str, Any]]:
-        """Validate averaged AIF FWHM and retry with fewer candidates if degraded.
-
-        Tissue contamination from ROI expansion or heterogeneous candidates can
-        broaden the averaged AIF well beyond the individual candidate FWHM.
-        This method detects such broadening and retries with progressively
-        fewer candidates until the FWHM is acceptable.
-
-        Ported from DSC ``_validate_averaged_aif`` (dsc_aif.py:1333) with
-        DCE-specific criteria (FWHM ratio instead of SPR).
-
-        Parameters
-        ----------
-        aif_curve : np.ndarray
-            1D averaged AIF from ``_compute_weighted_roi_aif``.
-        candidates : list
-            Candidate voxel coordinates.
-        scores : list
-            Candidate quality scores.
-        metrics_list : list
-            Per-candidate metric dicts (must contain ``fwhm_seconds``).
-        conc_data : np.ndarray
-            4D concentration data.
-        brain_mask : np.ndarray
-            3D brain mask.
-        tr : float
-            Temporal resolution in seconds.
-        baseline_frames : int
-            Number of pre-bolus baseline frames.
-
-        Returns
-        -------
-        tuple of (np.ndarray, np.ndarray, dict)
-            (aif_curve, aif_mask, validation_qc) — validated AIF, mask, and QC dict.
-        """
-        validation_qc: dict[str, Any] = {}
-
-        # Compute final FWHM of the averaged curve
-        final_fwhm = compute_dce_aif_fwhm_seconds(aif_curve, tr, baseline_frames)
-        final_peak = float(np.max(aif_curve))
-
-        # Compute mean candidate FWHM and peak
-        candidate_fwhms = [
-            m.get("fwhm_seconds", 0.0) for m in metrics_list if m.get("fwhm_seconds", 0.0) > 0
-        ]
-        candidate_peaks = [m.get("peak_mm", 0.0) for m in metrics_list if m.get("peak_mm", 0.0) > 0]
-
-        if not candidate_fwhms or not candidate_peaks:
-            # No valid candidate metrics — can't validate, accept as-is
-            aif_mask = np.zeros(conc_data.shape[:3], dtype=np.uint8)
-            for x, y, z in candidates:
-                aif_mask[x, y, z] = 1
-            validation_qc["aif_validation_skipped"] = True
-            return aif_curve, aif_mask, validation_qc
-
-        mean_cand_fwhm = float(np.mean(candidate_fwhms))
-        mean_cand_peak = float(np.mean(candidate_peaks))
-
-        validation_qc["averaged_fwhm_seconds"] = round(final_fwhm, 1)
-        validation_qc["candidate_fwhm_mean_seconds"] = round(mean_cand_fwhm, 1)
-        validation_qc["averaged_peak_mm"] = round(final_peak, 3)
-        validation_qc["candidate_peak_mean_mm"] = round(mean_cand_peak, 3)
-
-        # Check for broadening / attenuation
-        fwhm_ratio = final_fwhm / max(mean_cand_fwhm, 0.1)
-        peak_ratio = final_peak / max(mean_cand_peak, EPSILON_CONCENTRATION)
-
-        needs_retry = fwhm_ratio > 2.0 or peak_ratio < 0.3
-        validation_qc["fwhm_ratio"] = round(fwhm_ratio, 2)
-        validation_qc["peak_ratio"] = round(peak_ratio, 2)
-
-        if not needs_retry:
-            validation_qc["aif_validation_retries"] = 0
-            aif_mask = np.zeros(conc_data.shape[:3], dtype=np.uint8)
-            for x, y, z in candidates:
-                aif_mask[x, y, z] = 1
-            return aif_curve, aif_mask, validation_qc
-
-        # --- Retry 1: roi_size=1 with top 3 candidates ---
-        retry_reason = []
-        if fwhm_ratio > 2.0:
-            retry_reason.append(f"fwhm_ratio={fwhm_ratio:.1f}")
-        if peak_ratio < 0.3:
-            retry_reason.append(f"peak_ratio={peak_ratio:.2f}")
-        validation_qc["aif_validation_retry_reason"] = ", ".join(retry_reason)
-
-        logger.warning(
-            "AIF FWHM validation: averaged FWHM %.1fs vs candidate mean %.1fs "
-            "(ratio %.1f). Retrying with top 3 candidates, roi_size=1.",
-            final_fwhm, mean_cand_fwhm, fwhm_ratio,
-        )
-
-        top_n = min(3, len(candidates))
-        retry1_cands = candidates[:top_n]
-        retry1_scores = scores[:top_n]
-        retry1_curve, retry1_mask = AIFDetection._compute_weighted_roi_aif(
-            retry1_cands, retry1_scores, conc_data, brain_mask,
-            roi_size=1,
-        )
-        retry1_fwhm = compute_dce_aif_fwhm_seconds(retry1_curve, tr, baseline_frames)
-        retry1_peak = float(np.max(retry1_curve))
-        validation_qc["retry1_fwhm_seconds"] = round(retry1_fwhm, 1)
-        validation_qc["retry1_peak_mm"] = round(retry1_peak, 3)
-
-        retry1_fwhm_ratio = retry1_fwhm / max(mean_cand_fwhm, 0.1)
-        if retry1_fwhm_ratio <= 2.0 and retry1_peak / max(mean_cand_peak, EPSILON_CONCENTRATION) >= 0.3:
-            validation_qc["aif_validation_retries"] = 1
-            validation_qc["aif_validation_final_roi_size"] = 1
-            return retry1_curve, retry1_mask, validation_qc
-
-        # --- Retry 2: single best candidate, no averaging ---
-        logger.warning(
-            "AIF FWHM validation retry 1 still degraded (FWHM %.1fs). "
-            "Using single best candidate.",
-            retry1_fwhm,
-        )
-
-        best_cand = [candidates[0]]
-        best_score = [scores[0]]
-        retry2_curve, retry2_mask = AIFDetection._compute_weighted_roi_aif(
-            best_cand, best_score, conc_data, brain_mask,
-            roi_size=1,
-        )
-        retry2_fwhm = compute_dce_aif_fwhm_seconds(retry2_curve, tr, baseline_frames)
-        validation_qc["retry2_fwhm_seconds"] = round(retry2_fwhm, 1)
-        validation_qc["retry2_peak_mm"] = round(float(np.max(retry2_curve)), 3)
-
-        # Pick the best result across all attempts
-        attempts = [
-            (aif_curve, fwhm_ratio, 0),
-            (retry1_curve, retry1_fwhm_ratio, 1),
-            (retry2_curve, retry2_fwhm / max(mean_cand_fwhm, 0.1), 2),
-        ]
-        # Prefer the attempt closest to candidate FWHM (ratio closest to 1.0)
-        best_attempt = min(attempts, key=lambda a: abs(a[1] - 1.0))
-        best_curve = best_attempt[0]
-        best_retry_idx = best_attempt[2]
-
-        if best_retry_idx == 0:
-            best_mask = np.zeros(conc_data.shape[:3], dtype=np.uint8)
-            for x, y, z in candidates:
-                best_mask[x, y, z] = 1
-        elif best_retry_idx == 1:
-            best_mask = retry1_mask
-        else:
-            best_mask = retry2_mask
-
-        validation_qc["aif_validation_retries"] = 2
-        validation_qc["aif_validation_best_attempt"] = best_retry_idx
-        validation_qc["aif_validation_final_roi_size"] = 1
-        if best_attempt[1] > 2.0:
-            validation_qc["aif_fwhm_warning"] = True
-            validation_qc["aif_fwhm_confidence"] = "reduced"
-
-        return best_curve, best_mask, validation_qc
-
-    # -----------------------------------------------------------------
     # External AIF Handling
     # -----------------------------------------------------------------
 
@@ -4571,9 +4401,6 @@ class AIFDetection(BaseInterface):
         tissue_ttp_frame = state.tissue_ttp_frame
         tier_result = state.tier_result
         n_filtered_out = state.n_filtered_out
-        # validation_qc is emit-local (relocated from the pre-detection init);
-        # the C2/reuse sub-branches never assign it before its read.
-        validation_qc: dict[str, Any] = {}
         aif_curve: npt.NDArray[Any]
         aif_mask = np.zeros(conc_data.shape[:3], dtype=np.uint8)
         quality_score = 0.0
@@ -4587,7 +4414,7 @@ class AIFDetection(BaseInterface):
         )
         qc_metrics: dict[str, Any] = {}
 
-        # Phase 5: Weighted ROI averaging + smoothing
+        # Phase 5: Weighted candidate averaging
         # When the cascade ran G1-G6 acceptance gates with progressive
         # trim (gates_enabled in _run_two_pass_cascade), the accepted
         # tier's averaged + Hct-corrected + rescaled curve is already
@@ -4635,14 +4462,12 @@ class AIFDetection(BaseInterface):
             for cx, cy, cz in candidates:
                 aif_mask[cx, cy, cz] = 1
         else:
+            # In production, the only detected AIF without a G1-G6
+            # ``tier_result`` is the anchored Pass-2 singleton. Its candidate
+            # metrics and emitted curve remain represented in the standard QC
+            # fields below; there is no smaller pool to retry.
             aif_curve, aif_mask = self._compute_weighted_roi_aif(
                 candidates, scores, conc_data, brain_mask,
-            )
-
-            # Phase 5b: Validate averaged AIF FWHM against candidate FWHM
-            aif_curve, aif_mask, validation_qc = self._validate_dce_averaged_aif(
-                aif_curve, candidates, scores, metrics_list,
-                conc_data, brain_mask, tr, baseline_frames,
             )
 
             # Convert measured AIF from blood to plasma concentration
@@ -4690,10 +4515,6 @@ class AIFDetection(BaseInterface):
             }
             if atlas_tier_used is not None:
                 qc_metrics["atlas_tier_used"] = atlas_tier_used
-
-        # Merge FWHM validation QC
-        if validation_qc:
-            qc_metrics.update(validation_qc)
 
         # Hemisphere coverage: classify candidates as left/right via RAS x-coord
         if candidates:

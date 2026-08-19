@@ -1,4 +1,4 @@
-1.0.0rc2.dev5 (unreleased)
+1.0.0rc2.dev6 (unreleased)
 ==========================
 
 * FIX: Replace the universal CPI/vascular R² fallback threshold with a
@@ -11,6 +11,8 @@
 * FIX: Use a uniform positive-R² criterion in the DCE fit-quality mask.
 * FIX: Retain HD-BET test-time augmentation for normal GPU execution, with a
   scaled timeout and recorded execution QC.
+* MNT: Remove the obsolete post-cascade DCE AIF retry policy while preserving
+  the active G1--G6 candidate-pool trimming and singleton fallback.
 
 1.0.0rc1 (2026-08-06)
 ======================
