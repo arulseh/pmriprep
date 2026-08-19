@@ -568,7 +568,7 @@ def _detect_and_correct_preload(
     corrected_img = nib.Nifti1Image(corrected_conc.astype(np.float32), affine, header)  # type: ignore[attr-defined]
     nib.save(corrected_img, corrected_file)  # type: ignore[attr-defined]
 
-    # Always save K2 map (needed for leakage QC and downstream nodes)
+    # A coefficient map exists only when BSW correction was requested.
     if leakage_method == "bsw":
         k2_map_file = str(out_dir / f"{base}_k2map.nii.gz")
         k2_img = nib.Nifti1Image(k2_map.astype(np.float32), affine, header)  # type: ignore[attr-defined]
