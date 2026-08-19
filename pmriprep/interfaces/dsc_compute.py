@@ -108,10 +108,22 @@ def _parametric_fit_needs_fallback(
     """Return whether a parametric fit requires oSVD fallback.
 
     Budget-limited CPI NLLS fits retain their finite endpoint and are judged
-    by the same R² gate as fixed-schedule VI. Other NLLS/MAP termination
-    failures still require fallback.
+    by the same minimum-adequacy rule as fixed-schedule VI. Other NLLS/MAP
+    termination failures still require fallback.
     """
-    bad_r2 = float(result.r_squared) < 0.5
+    r_squared = float(result.r_squared)
+    bad_r2 = not np.isfinite(r_squared) or r_squared < 0.0
+    bad_result = (
+        any(not np.isfinite(float(value)) for value in result.parameters.values())
+        or (
+            result.fitted_tissue_curve is not None
+            and not np.all(np.isfinite(result.fitted_tissue_curve))
+        )
+        or (
+            result.fitted_residue is not None
+            and not np.all(np.isfinite(result.fitted_residue))
+        )
+    )
     budget_limited_nlls = (
         inference == "nlls"
         and bool(result.evaluation_budget_exhausted)
@@ -121,7 +133,21 @@ def _parametric_fit_needs_fallback(
         and not bool(result.converged)
         and not budget_limited_nlls
     )
-    return bad_r2 or bad_solver_convergence
+    return bad_r2 or bad_result or bad_solver_convergence
+
+
+def _parametric_outputs_are_finite(
+    result: dict[str, Any],
+    method: str,
+) -> bool:
+    """Return whether the quantitative outputs required by a fit are finite."""
+    required = ["cbf", "cbv", "mtt", "tmax"]
+    if method == "vascular":
+        required.extend(["alpha", "beta", "cth"])
+    return all(
+        key in result and np.isfinite(float(result[key]))
+        for key in required
+    )
 
 
 def _dsc_init_worker(
@@ -273,11 +299,13 @@ def _dsc_fit_single_voxel(voxel_data: _DSCVoxelInput) -> dict[str, Any]:
         )
         out["n_function_evaluations"] = result.n_function_evaluations
 
-        # Flag poor fits for oSVD fallback. R² gate applies to every
-        # inference method; the `converged` flag only gates NLLS/MAP
-        # because for VI/SVB the FABBER 10-iter schedule rarely satisfies
-        # the strict FE-plateau convergence test even on usable fits.
-        if _parametric_fit_needs_fallback(result, inference):
+        # Reject non-finite or worse-than-mean fits. The `converged` flag only
+        # gates NLLS/MAP because fixed-schedule VI/SVB rarely satisfies its
+        # strict FE-plateau diagnostic even on usable fits.
+        if (
+            _parametric_fit_needs_fallback(result, inference)
+            or not _parametric_outputs_are_finite(out, method)
+        ):
             out["needs_fallback"] = True
 
         return out
@@ -1932,6 +1960,7 @@ class ComputeDSCMaps(BaseInterface):
                 motion_weights=motion_weights,
                 sloppy=sloppy,
                 spatial=(inference == "svb"),
+                fit_admissible=admissible_mask,
             )
         elif inference == "map":
             results = self._dsc_fit_batched_map(
@@ -1949,6 +1978,7 @@ class ComputeDSCMaps(BaseInterface):
                 mean_tissue=mean_tissue,
                 motion_weights=motion_weights,
                 sloppy=sloppy,
+                fit_admissible=admissible_mask,
             )
         elif n_procs > 1:
             from concurrent.futures import ProcessPoolExecutor
@@ -2027,12 +2057,13 @@ class ComputeDSCMaps(BaseInterface):
                 cbv_std_map[x, y, z] = res["cbv_std"]
 
             if res.get("r_squared") is not None:
-                r_squared_list.append(res["r_squared"])
-                # Scatter raw parametric R² into 3-D map even on
-                # would-fallback voxels — keeps the close-call vs
-                # catastrophic distinction visible in the saved map.
-                if parametric_r2_map is not None:
-                    parametric_r2_map[x, y, z] = float(res["r_squared"])
+                r_squared = float(res["r_squared"])
+                if np.isfinite(r_squared):
+                    r_squared_list.append(r_squared)
+                    # Scatter raw parametric R² even on fallback voxels so
+                    # close calls remain distinct from catastrophic fits.
+                    if parametric_r2_map is not None:
+                        parametric_r2_map[x, y, z] = r_squared
             if res.get("converged"):
                 n_converged += 1
             if res.get("evaluation_budget_exhausted"):
@@ -2045,9 +2076,8 @@ class ComputeDSCMaps(BaseInterface):
                         source == "uncertainty_unavailable"
                     )
 
-        # Fallback: run oSVD for voxels where parametric fit failed or R² < 0.5
-        # Fall back to oSVD for poor vascular fits; ground truth maps
-        # likely contain oSVD-derived values for many voxels.
+        # Run oSVD where the requested parametric estimator did not produce a
+        # finite fit that outperformed the tissue curve's temporal mean.
         from pmriprep.utils.dsc_deconvolution import svd_deconvolve_oscillation
 
         fallback_candidates = [
@@ -2139,9 +2169,8 @@ class ComputeDSCMaps(BaseInterface):
         qc_metrics["n_fallback_attempted"] = n_fallback_attempted
         qc_metrics["n_fallback_osvd"] = n_fallback
         qc_metrics["n_fallback_failed"] = n_fallback_failed
-        # Fallback rate is the actual fit-health signal for parametric
-        # methods: voxels rejected by the R² < 0.5 gate fall through to
-        # oSVD. Always populated (zero for non-parametric methods).
+        # Fallback rate is the actual fit-health signal for parametric methods.
+        # It is always populated (zero for non-parametric methods).
         qc_metrics["fallback_rate"] = n_fallback / max(1, n_admissible)
         qc_metrics["fallback_requested_rate"] = (
             n_fallback_requested / max(1, n_admissible)
@@ -2264,6 +2293,7 @@ class ComputeDSCMaps(BaseInterface):
         sloppy: bool,
         spatial: bool = False,
         mean_tissue: Optional[npt.NDArray[np.floating]] = None,
+        fit_admissible: Optional[npt.NDArray[np.bool_]] = None,
     ) -> list[dict[str, Any]]:
         """Batched VI for DSC parametric models.
 
@@ -2296,6 +2326,8 @@ class ComputeDSCMaps(BaseInterface):
             Whether to use sloppy mode.
         spatial : bool
             Use spatial VB wrapper (MRF neighbor coupling).
+        fit_admissible : npt.NDArray[np.bool_], optional
+            Original finite-signal eligibility mask for the fitted voxels.
 
         Returns
         -------
@@ -2363,6 +2395,8 @@ class ComputeDSCMaps(BaseInterface):
             batched_result, mask_coords, method, n_voxels, dt,
             s["cp_times"], time_points, s["cpi_t_terminal"],
             s["cpi_infer_delay"],
+            fit_admissible=fit_admissible,
+            inference="svb" if spatial else "vi",
         )
 
     def _batched_result_to_voxel_dicts(
@@ -2376,6 +2410,8 @@ class ComputeDSCMaps(BaseInterface):
         time_points: npt.NDArray[np.floating],
         cpi_t_terminal: Optional[float] = None,
         cpi_infer_delay: bool = False,
+        fit_admissible: Optional[npt.NDArray[np.bool_]] = None,
+        inference: str = "vi",
     ) -> list[dict[str, Any]]:
         """Convert DSCBatchedFitResult to per-voxel result dicts.
 
@@ -2403,6 +2439,11 @@ class ComputeDSCMaps(BaseInterface):
         cpi_infer_delay : bool, optional
             Whether the CPI fit carried a per-voxel ``delay`` parameter; when
             True ``out["tmax"]`` reports it (CBV/MTT stay delay-invariant).
+        fit_admissible : npt.NDArray[np.bool_], optional
+            Whether each tissue curve carried enough signal to reach the
+            optimizer. Omitted for direct readout tests with pre-fitted data.
+        inference : str, optional
+            Inference engine used to produce the batched result.
 
         Returns
         -------
@@ -2490,15 +2531,27 @@ class ComputeDSCMaps(BaseInterface):
 
             out["r_squared"] = float(batched_result.r_squared[i])
             out["converged"] = bool(batched_result.converged[i])
-            # Fallback gate: fit quality only. The `converged` flag tracks
-            # the strict FE-plateau test, but FABBER's protocol is a fixed
-            # 10-iter schedule (see batched_fitting.py:1006-1013) — most
-            # voxels never satisfy the 1e-4 relative FE plateau in that
-            # window even when their parameter fits are perfectly usable.
-            # Gating on `not converged` would silently fall back ~100% of
-            # voxels to oSVD; gate on R² instead.
-            out["needs_fallback"] = float(batched_result.r_squared[i]) < 0.5
-            out["failed"] = float(batched_result.r_squared[i]) < -0.5
+            # Fixed-schedule VI/SVB rarely satisfies the strict FE-plateau
+            # diagnostic even for usable fits, so convergence is descriptive
+            # for those engines. MAP convergence remains an acceptance check.
+            fitted_curves = getattr(batched_result, "fitted_curves", None)
+            fitted_curve_is_finite = (
+                fitted_curves is None
+                or np.all(np.isfinite(fitted_curves[i]))
+            )
+            r_squared = float(batched_result.r_squared[i])
+            admissible = (
+                True if fit_admissible is None else bool(fit_admissible[i])
+            )
+            out["needs_fallback"] = (
+                not admissible
+                or not np.isfinite(r_squared)
+                or r_squared < 0.0
+                or not _parametric_outputs_are_finite(out, method)
+                or not fitted_curve_is_finite
+                or (inference == "map" and not bool(out["converged"]))
+            )
+            out["failed"] = not admissible
 
             results.append(out)
 
@@ -2520,6 +2573,7 @@ class ComputeDSCMaps(BaseInterface):
         motion_weights: Optional[npt.NDArray[np.floating]],
         sloppy: bool,
         mean_tissue: Optional[npt.NDArray[np.floating]] = None,
+        fit_admissible: Optional[npt.NDArray[np.bool_]] = None,
     ) -> list[dict[str, Any]]:
         """Batched MAP for DSC parametric models.
 
@@ -2550,6 +2604,8 @@ class ComputeDSCMaps(BaseInterface):
             Per-frame weights or None.
         sloppy : bool
             Whether to use sloppy mode.
+        fit_admissible : npt.NDArray[np.bool_], optional
+            Original finite-signal eligibility mask for the fitted voxels.
 
         Returns
         -------
@@ -2595,6 +2651,8 @@ class ComputeDSCMaps(BaseInterface):
             batched_result, mask_coords, method, n_voxels, dt,
             s["cp_times"], time_points, s["cpi_t_terminal"],
             s["cpi_infer_delay"],
+            fit_admissible=fit_admissible,
+            inference="map",
         )
 
     def _save_qc_fit_data(

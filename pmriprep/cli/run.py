@@ -477,12 +477,11 @@ Examples:
     dsc_group.add_argument(
         "--dsc-inference",
         choices=["nlls", "map", "vi", "svb"],
-        metavar="{vi,svb,nlls}",
+        metavar="{vi,svb}",
         default=None,
         help="Inference engine for parametric DSC methods (cpi, vascular): "
         "vi (default, linearized variational inference), "
-        "svb (spatial variational Bayes with a boundary-corrected M-prior), "
-        "nlls (nonlinear least squares). "
+        "or svb (spatial variational Bayes with a boundary-corrected M-prior). "
         "SVD methods ignore this option.",
     )
     dsc_group.add_argument(

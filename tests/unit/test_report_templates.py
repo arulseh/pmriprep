@@ -849,6 +849,7 @@ def test_deconv_panel_fallback_only_for_parametric(env):
     )
     cpi_rendered = template.render(dsc=cpi_ctx)
     assert ">oSVD Fallback<" in cpi_rendered
+    assert '<div class="metric-value">7.0%</div>' in cpi_rendered
 
     osvd_ctx = _dsc_ctx_with_deconv("oSVD", fallback_rate=0.0)
     osvd_rendered = template.render(dsc=osvd_ctx)

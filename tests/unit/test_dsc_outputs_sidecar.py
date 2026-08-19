@@ -209,6 +209,8 @@ def test_parametric_provenance_carries_fit_health_denominators() -> None:
     assert extra["FallbackFailedVoxelCount"] == 2
     assert extra["FallbackRequestedFraction"] == pytest.approx(0.15)
     assert extra["FallbackSucceededFraction"] == pytest.approx(0.125)
+    assert extra["FallbackMinimumRSquared"] == pytest.approx(0.0)
+    assert extra["FallbackMinimumRSquaredInclusive"] is True
 
 
 def test_cbf_uncertainty_sidecar_carries_map_hessian_accounting() -> None:

@@ -1485,11 +1485,6 @@ def generate_unified_report(
                 "rsquared": _classify_metric(
                     deconv.get("qc_voxel_rsquared"), 0.9, 0.7,
                 ),
-                # oSVD fallback rate for parametric methods (lower is better:
-                # high fallback fraction means few voxels passed the R² gate).
-                "fallback": _classify_metric_inverse(
-                    deconv.get("fallback_rate"), 0.10, 0.25
-                ),
             }
 
         pipeline_data[pipeline_name] = {

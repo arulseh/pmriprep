@@ -40,7 +40,8 @@ class DSCConfig:
     inference : str
         Inference method for parametric deconvolution:
         ``vi`` (default — linearized variational inference), ``svb`` (spatial
-        variational Bayes), ``map``, or ``nlls`` (nonlinear least squares).
+        variational Bayes). Additional inference engines are retained for
+        internal validation but are not part of the documented user surface.
     mcmc_samples : int
         Number of MCMC samples for Bayesian inference.
     cpi_control_points : int

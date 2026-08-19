@@ -471,7 +471,7 @@
             {% if dsc.qc_metrics.deconvolution.fallback_rate is defined and dsc.qc_metrics.deconvolution.method in ["cpi", "vascular"] %}
             <div class="metric">
                 <div class="metric-label">oSVD Fallback</div>
-                <div class="metric-value {{ dsc.display_status.fallback }}">{{ "%.1f"|format(dsc.qc_metrics.deconvolution.fallback_rate * 100) }}%</div>
+                <div class="metric-value">{{ "%.1f"|format(dsc.qc_metrics.deconvolution.fallback_rate * 100) }}%</div>
             </div>
             {% endif %}
         </div>

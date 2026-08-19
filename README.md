@@ -101,7 +101,7 @@ Key DSC options:
 | Option | Description |
 |---|---|
 | `--dsc-deconv-method {sSVD,oSVD,tikhonov,vascular,cpi}` | Select deconvolution (default: oSVD) |
-| `--dsc-inference {vi,svb,nlls}` | Select inference for CPI/vascular models (default: vi) |
+| `--dsc-inference {vi,svb}` | Select inference for CPI/vascular models (default: vi) |
 | `--dsc-dose FLOAT` | Set a positive dose multiplier (for example, `0.5` for half dose) |
 | `--dsc-aif-method {auto,synthetic}` | Select detected or synthetic AIF |
 | `--dsc-aif-file FILE` | Supply an external ΔR2* AIF in s⁻¹ |
@@ -163,7 +163,7 @@ DSC fields:
 | Field | Default | Description |
 |---|---:|---|
 | `method` | `oSVD` | `sSVD`, `oSVD`, `tikhonov`, `vascular`, or `cpi` |
-| `inference` | `vi` | `vi`, `svb` or `nlls` for CPI/vascular |
+| `inference` | `vi` | `vi` or `svb` for CPI/vascular |
 | `cpi_control_points` | `0` | CPI control points; 0 selects automatically |
 | `cpi_infer_cpt` | `true` | Infer ordered CPI control-point times |
 | `cpi_infer_delay` | `false` | Fit voxelwise CPI bolus delay |

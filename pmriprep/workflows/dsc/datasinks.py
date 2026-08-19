@@ -872,7 +872,10 @@ def _split_smooth_dict(
 
 def _build_parametric_extra(qc_metrics: dict | None = None) -> dict:
     """Build parametric-fit method, fallback, and denominator provenance."""
-    extra: dict[str, object] = {"FallbackThreshold": 0.5}
+    extra: dict[str, object] = {
+        "FallbackMinimumRSquared": 0.0,
+        "FallbackMinimumRSquaredInclusive": True,
+    }
     if isinstance(qc_metrics, dict):
         deconv = qc_metrics.get("deconvolution") or {}
         if isinstance(deconv, dict):
@@ -1509,7 +1512,7 @@ def init_dsc_datasinks_wf(
         if in_attr not in present:
             continue
         # Build extras from qc_metrics["deconvolution"] (FitMethod +
-        # InferenceEngine + FallbackThreshold).
+        # InferenceEngine + fallback adequacy criterion).
         param_extra = pe.Node(
             niu.Function(
                 input_names=["qc_metrics"],

@@ -3,8 +3,8 @@
 from pmriprep.cli.run import _build_parser
 
 
-def test_map_inference_remains_backward_compatible() -> None:
-    """Existing explicit MAP invocations remain accepted."""
+def test_internal_inference_modes_remain_backward_compatible() -> None:
+    """Existing explicit internal-mode invocations remain accepted."""
     parser = _build_parser()
     args = parser.parse_args(
         [
@@ -21,13 +21,28 @@ def test_map_inference_remains_backward_compatible() -> None:
     assert args.dsc_inference == "map"
     assert args.dce_inference == "map"
 
+    args = parser.parse_args(
+        [
+            "/tmp/bids",
+            "/tmp/out",
+            "participant",
+            "--dsc-inference",
+            "nlls",
+        ]
+    )
+    assert args.dsc_inference == "nlls"
+
 
 def test_map_inference_is_hidden_from_normal_help() -> None:
     """Normal help advertises recommended inference modes only."""
-    help_text = _build_parser().format_help()
+    parser = _build_parser()
+    help_text = parser.format_help()
+    dsc_help = parser._option_string_actions["--dsc-inference"].help
 
-    assert "--dsc-inference {vi,svb,nlls}" in help_text
+    assert "--dsc-inference {vi,svb}" in help_text
     assert "--dce-inference {nlls,vi}" in help_text
+    assert dsc_help is not None
+    assert "nonlinear least squares" not in dsc_help
     assert "Laplace MAP" not in help_text
     assert "maximum a posteriori" not in help_text
 

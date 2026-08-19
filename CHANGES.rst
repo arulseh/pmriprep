@@ -1,6 +1,9 @@
-1.0.0rc2.dev4 (unreleased)
+1.0.0rc2.dev5 (unreleased)
 ==========================
 
+* FIX: Replace the universal CPI/vascular R² fallback threshold with a
+  minimum fit-adequacy rule, preserve rejected-fit QC, and hide internal DSC
+  inference engines.
 * FIX: Preserve measured DCE AIF temporal samples without noncausal smoothing.
 * FIX: Keep DSC gamma-variate initialization within solver bounds and retain an
   accepted measured AIF when the optional gamma fit fails.

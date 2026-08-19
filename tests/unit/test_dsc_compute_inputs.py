@@ -161,6 +161,63 @@ def test_vascular_nlls_worker_returns_parametric_fit() -> None:
     assert result["r_squared"] > 0.999
 
 
+def test_batched_parametric_fallback_uses_minimum_adequacy_rule() -> None:
+    """Batched fits retain low-positive R² and reject invalid results."""
+    n_voxels = 5
+    result = SimpleNamespace(
+        params={
+            "cbf": np.array([0.1, 0.1, 0.1, 0.1, np.nan]),
+            "mtt": np.full(n_voxels, 4.0),
+            "alpha": np.full(n_voxels, 2.0),
+            "delay": np.zeros(n_voxels),
+        },
+        uncertainties={},
+        r_squared=np.array([-0.01, 0.0, 0.2, np.nan, 0.9]),
+        converged=np.ones(n_voxels, dtype=bool),
+        fitted_curves=np.ones((n_voxels, 6), dtype=np.float64),
+    )
+    coords = (
+        np.arange(n_voxels),
+        np.zeros(n_voxels, dtype=int),
+        np.zeros(n_voxels, dtype=int),
+    )
+
+    outputs = ComputeDSCMaps._batched_result_to_voxel_dicts(
+        None,
+        result,
+        coords,
+        "vascular",
+        n_voxels,
+        1.5,
+        None,
+        np.arange(6, dtype=np.float64) * 1.5,
+    )
+
+    assert [output["needs_fallback"] for output in outputs] == [
+        True,
+        False,
+        False,
+        True,
+        True,
+    ]
+    assert outputs[0]["failed"] is False
+    assert outputs[0]["r_squared"] == pytest.approx(-0.01)
+
+    result.converged[2] = False
+    map_outputs = ComputeDSCMaps._batched_result_to_voxel_dicts(
+        None,
+        result,
+        coords,
+        "vascular",
+        n_voxels,
+        1.5,
+        None,
+        np.arange(6, dtype=np.float64) * 1.5,
+        inference="map",
+    )
+    assert map_outputs[2]["needs_fallback"] is True
+
+
 def test_parametric_fit_health_uses_admissible_denominator(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
