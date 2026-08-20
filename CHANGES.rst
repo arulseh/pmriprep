@@ -1,6 +1,8 @@
-1.0.0rc2.dev7 (unreleased)
+1.0.0rc2.dev8 (unreleased)
 ==========================
 
+* FIX: Restrict the fractional superior DCE AIF exclusion to whole-brain
+  fallback, preserving the full arterial-atlas territory above slab rolloff.
 * FIX: Replace the universal CPI/vascular R² fallback threshold with a
   minimum fit-adequacy rule, preserve rejected-fit QC, and hide internal DSC
   inference engines.

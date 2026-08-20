@@ -2146,6 +2146,7 @@ class AIFDetection(BaseInterface):
         slab_edge_superior_mm: float = SSS_EXCLUSION_MM,
         erosion_iterations: int = BRAIN_EROSION_ITERATIONS,
         physical_erosion_mm: float = 0.0,
+        apply_superior_fraction_exclusion: bool = True,
     ) -> npt.NDArray[Any]:
         """Prepare the search mask with erosion, slab exclusion, and lesion distance.
 
@@ -2156,7 +2157,8 @@ class AIFDetection(BaseInterface):
            margins (inferior usually larger to remove 3D-slab entry-slice
            inflow contamination).
         3. Midline exclusion (skipped when ``skip_midline=True``).
-        4. Top-25% superior cut (``SUPERIOR_EXCLUSION_FRACTION``).
+        4. Optional top-25% superior cut
+           (``SUPERIOR_EXCLUSION_FRACTION``).
         5. Lesion exclusion (binary + distance-based).
         6. Physical-distance erosion in mm (``physical_erosion_mm``),
            applied last so its mm-from-edge measurement uses the
@@ -2167,9 +2169,9 @@ class AIFDetection(BaseInterface):
         small ``BRAIN_EROSION_ITERATIONS_ATLAS=2`` + ``SLAB_EDGE_
         EXCLUSION_MM_ROLLOFF=4 mm`` rolloff edge and ``physical_erosion_mm
         =0``. Whole-brain fallback callers have no anatomical prior and
-        need a depth-protective margin, so they layer ``BRAIN_EROSION_
+        need depth and venous protection, so they layer ``BRAIN_EROSION_
         ITERATIONS=8`` + ``WB_FALLBACK_DEPTH_EROSION_MM=10 mm`` physical
-        depth on top.
+        depth and the superior fractional cut on top.
 
         Parameters
         ----------
@@ -2196,16 +2198,15 @@ class AIFDetection(BaseInterface):
             the superior sagittal sinus out of candidates; atlas-
             constrained callers should pass
             ``SLAB_EDGE_EXCLUSION_MM_ROLLOFF`` since the atlas already
-            excludes SSS by anatomy. Step 4 below applies an additional
-            ``SUPERIOR_EXCLUSION_FRACTION`` (top 25%) cut on top of this.
+            excludes SSS by anatomy.
         erosion_iterations : int
             Number of binary erosion iterations. Use
             ``BRAIN_EROSION_ITERATIONS_ATLAS`` for atlas-constrained
             search.
         physical_erosion_mm : float
             Additional physical-distance erosion in mm, applied as Step 6
-            on top of the slab/midline/top-25%/lesion cuts. Used by the
-            whole-brain fallback caller to strip the lateral cortical
+            after the slab, midline, optional superior, and lesion cuts. Used
+            by the whole-brain fallback caller to strip the lateral cortical
             surface where cortical-vein drainage produces arterial-shaped
             curves at clinical TR. Atlas callers leave at
             ``0.0`` (preserves full atlas territory). Computed via
@@ -2214,6 +2215,11 @@ class AIFDetection(BaseInterface):
             depth cut would leave fewer than ``BRAIN_EROSION_MIN_VOXELS``
             voxels (thin sagittal slab / pediatric / atrophic case), the
             cut is skipped and a warning is logged.
+        apply_superior_fraction_exclusion : bool
+            Apply the fractional superior cut used by whole-brain fallback
+            to reduce cortical-vein contamination. Atlas-constrained search
+            disables it because the arterial atlas already excludes venous
+            structures.
 
         Returns
         -------
@@ -2231,9 +2237,9 @@ class AIFDetection(BaseInterface):
 
         # Step 2: Directional slab-edge exclusion under RAS+.
         # Inferior side uses the larger inflow exclusion; superior side
-        # uses the small rolloff exclusion. The superior cut is typically
-        # subsumed by Step 4 (top-25% exclusion); the parameter is exposed
-        # for completeness and for thick-slab cases.
+        # uses the small rolloff exclusion. In whole-brain search this margin
+        # is typically subsumed by the fractional superior cut; atlas search
+        # retains it as the only superior slab-edge exclusion.
         #
         # Axial-slab proxy guard: through-plane (z) thickness must be
         # greater than in-plane voxel size for the inferior-as-inflow
@@ -2276,10 +2282,11 @@ class AIFDetection(BaseInterface):
         if not skip_midline:
             AIFDetection._apply_midline_exclusion(search_mask)
 
-        # Step 4: Superior slice exclusion (top 25%) - avoid cortical vein drainage
-        z_superior = int(nz * SUPERIOR_EXCLUSION_FRACTION)
-        if z_superior < nz:
-            search_mask[:, :, z_superior:] = 0
+        # Step 4: Whole-brain superior exclusion to avoid cortical-vein drainage.
+        if apply_superior_fraction_exclusion:
+            z_superior = int(nz * SUPERIOR_EXCLUSION_FRACTION)
+            if z_superior < nz:
+                search_mask[:, :, z_superior:] = 0
 
         # Step 5: Lesion exclusion (binary + distance-based)
         if lesion_mask is not None and np.any(lesion_mask > 0):
@@ -4218,6 +4225,7 @@ class AIFDetection(BaseInterface):
             slab_edge_inferior_mm=inferior_inflow_mm,
             slab_edge_superior_mm=SLAB_EDGE_EXCLUSION_MM_ROLLOFF,
             erosion_iterations=BRAIN_EROSION_ITERATIONS_ATLAS,
+            apply_superior_fraction_exclusion=False,
         )
         # Whole-brain fallback: full erosion, midline exclusion,
         # SSS-sized superior margin, and a 10 mm physical-depth cut

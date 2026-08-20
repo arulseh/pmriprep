@@ -1336,10 +1336,13 @@ class TestInflowExclusionAppliedUniversally:
             erosion_iterations=0, skip_midline=True,
             slab_edge_inferior_mm=inflow_mm,
             slab_edge_superior_mm=SLAB_EDGE_EXCLUSION_MM_ROLLOFF,
+            apply_superior_fraction_exclusion=False,
         )
         assert out[:, :, :inflow_slices].sum() == 0
         assert out[:, :, -1:].sum() == 0
         assert out[:, :, inflow_slices].sum() > 0
+        # Atlas search retains arterial support above the old top-25% cut.
+        assert out[:, :, int(0.75 * nz)].sum() > 0
 
     def test_wb_call_site_zeroes_inflow_inferior_and_sss_superior(self) -> None:
         """WB tier: inferior=_inflow_exclusion_mm, superior=SSS_EXCLUSION_MM.
@@ -1359,6 +1362,7 @@ class TestInflowExclusionAppliedUniversally:
         )
         assert out[:, :, :inflow_slices].sum() == 0
         assert out[:, :, -sss_slices:].sum() == 0
+        assert out[:, :, int(0.75 * nz):].sum() == 0
         assert out[:, :, inflow_slices].sum() > 0
 
     def test_3d_acquisition_isotropic_voxel_passes_axial_proxy(self) -> None:
@@ -3335,6 +3339,9 @@ class TestDetectedAIFEmissionInSitu:
         iface.inputs.hematocrit = hematocrit
 
         with patch.object(
+            AIFDetection, "_prepare_search_mask",
+            wraps=AIFDetection._prepare_search_mask,
+        ) as prepare_spy, patch.object(
             AIFDetection, "_run_two_pass_cascade", return_value=cascade,
         ), patch.object(
             AIFDetection, "_select_top_candidates",
@@ -3349,3 +3356,16 @@ class TestDetectedAIFEmissionInSitu:
         assert res["qc_metrics"]["n_aif_voxels_selected"] == 1
         assert res["qc_metrics"]["candidate_coords"] == [list(candidate)]
         assert "aif_validation_retries" not in res["qc_metrics"]
+        assert prepare_spy.call_count == 2
+        assert (
+            prepare_spy.call_args_list[0].kwargs[
+                "apply_superior_fraction_exclusion"
+            ]
+            is False
+        )
+        assert (
+            prepare_spy.call_args_list[1].kwargs.get(
+                "apply_superior_fraction_exclusion", True,
+            )
+            is True
+        )
