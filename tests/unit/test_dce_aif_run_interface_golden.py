@@ -188,6 +188,10 @@ def _cascade(
         detection_method=detection_method, atlas_tier_used="MCA_ACA_dce_strict",
         cascade_tiers_attempted=1, anchor_outcomes=[], tier_result=tier_result,
         tier_gate_decisions=[],
+        atlas_search_outcome=(
+            "selected" if detection_method == "atlas" else "exhausted"
+        ),
+        atlas_search_support_voxels=125,
     )
 
 

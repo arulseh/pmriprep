@@ -1379,6 +1379,8 @@ class CascadeResult:
     cascade_tiers_attempted: int
     anchor_outcomes: list[dict[str, Any]]
     tier_result: TierResult | None
+    atlas_search_outcome: Literal["selected", "exhausted", "unavailable_or_empty"]
+    atlas_search_support_voxels: int
     tier_gate_decisions: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -1427,6 +1429,10 @@ class DetectionState:
     anchor_outcomes: list[dict[str, Any]]
     tier_gate_decisions: list[dict[str, Any]]
     tier_result: TierResult | None
+    atlas_search_outcome: (
+        Literal["selected", "exhausted", "unavailable_or_empty"] | None
+    )
+    atlas_search_support_voxels: int | None
     n_filtered_out: int
 
     @classmethod
@@ -1436,7 +1442,8 @@ class DetectionState:
             detection_method="population", candidates=[], scores=[],
             metrics_list=[], tissue_ttp_frame=None, detection_attempt=None,
             atlas_tier_used=None, anchor_outcomes=[], tier_gate_decisions=[],
-            tier_result=None, n_filtered_out=0,
+            tier_result=None, atlas_search_outcome=None,
+            atlas_search_support_voxels=None, n_filtered_out=0,
         )
 
 
@@ -3237,6 +3244,14 @@ class AIFDetection(BaseInterface):
               empty when the tier was skipped before gates ran).
               Order matches ``anchor_outcomes`` (atlas tightest →
               broadest × strict → permissive, then ``wb_relaxed``).
+            - ``atlas_search_outcome``: whether an atlas tier was selected,
+              atlas tiers were exhausted, or no usable transformed-atlas
+              support reached the detector. This describes the cascade-stage
+              search; a selected pool can still be replaced by the population
+              AIF if the downstream keeper filter empties it. Explicit
+              population mode bypasses the cascade and omits this QC field.
+            - ``atlas_search_support_voxels``: voxel count in the transformed
+              atlas union after intersection with ``atlas_search_mask``.
         """
         candidates: list[tuple[int, int, int]] = []
         scores: list[float] = []
@@ -3247,6 +3262,15 @@ class AIFDetection(BaseInterface):
         anchor_outcomes: list[dict[str, Any]] = []
         tier_gate_decisions: list[dict[str, Any]] = []
         tier_result: TierResult | None = None
+
+        atlas_search_support_voxels = 0
+        if atlas_masks:
+            atlas_union = np.zeros(atlas_search_mask.shape, dtype=bool)
+            for atlas_mask in atlas_masks:
+                atlas_union |= np.asarray(atlas_mask) > 0.5
+            atlas_search_support_voxels = int(
+                np.count_nonzero(atlas_union & (atlas_search_mask > 0.5))
+            )
 
         # Per-tier gate evaluation requires the inputs used to average,
         # rescale, and compute QC. Callers that omit them use the quorum and
@@ -3469,6 +3493,16 @@ class AIFDetection(BaseInterface):
                 detection_method, atlas_tier_used, _,
             ) = best_single_keeper
 
+        atlas_search_outcome: Literal[
+            "selected", "exhausted", "unavailable_or_empty"
+        ]
+        if detection_method == "atlas":
+            atlas_search_outcome = "selected"
+        elif atlas_search_support_voxels == 0:
+            atlas_search_outcome = "unavailable_or_empty"
+        else:
+            atlas_search_outcome = "exhausted"
+
         return CascadeResult(
             candidates=candidates,
             scores=scores,
@@ -3478,6 +3512,8 @@ class AIFDetection(BaseInterface):
             cascade_tiers_attempted=cascade_tiers_attempted,
             anchor_outcomes=anchor_outcomes,
             tier_result=tier_result,
+            atlas_search_outcome=atlas_search_outcome,
+            atlas_search_support_voxels=atlas_search_support_voxels,
             tier_gate_decisions=tier_gate_decisions,
         )
 
@@ -4279,6 +4315,8 @@ class AIFDetection(BaseInterface):
         anchor_outcomes = cascade_result.anchor_outcomes
         tier_result = cascade_result.tier_result
         tier_gate_decisions = cascade_result.tier_gate_decisions
+        atlas_search_outcome = cascade_result.atlas_search_outcome
+        atlas_search_support_voxels = cascade_result.atlas_search_support_voxels
         # Narrow back to Literal for the typed local.
         detection_method = (  # type: ignore[assignment]
             "atlas" if detection_method_str == "atlas"
@@ -4388,6 +4426,8 @@ class AIFDetection(BaseInterface):
             anchor_outcomes=anchor_outcomes,
             tier_gate_decisions=tier_gate_decisions,
             tier_result=tier_result,
+            atlas_search_outcome=atlas_search_outcome,
+            atlas_search_support_voxels=atlas_search_support_voxels,
             n_filtered_out=n_filtered_out,
         )
 
@@ -4678,6 +4718,13 @@ class AIFDetection(BaseInterface):
         target_peak = params.target_peak
         blood_t1 = params.blood_t1
         field_strength = params.field_strength
+
+        if state.atlas_search_outcome is not None:
+            qc_metrics["atlas_search_outcome"] = state.atlas_search_outcome
+        if state.atlas_search_support_voxels is not None:
+            qc_metrics["atlas_search_support_voxels"] = (
+                state.atlas_search_support_voxels
+            )
 
         # ===== Cascade provenance (fires on both detected and population) =====
         if anchor_outcomes:

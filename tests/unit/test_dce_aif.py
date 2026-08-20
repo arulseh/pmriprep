@@ -621,6 +621,28 @@ def _make_atlas_cascade(n: int = 3) -> tuple[list[np.ndarray], list[str]]:
 class TestTwoPassCascade:
     """Regression tests for the Issue #2 two-pass cascade contract."""
 
+    def test_no_atlas_support_is_recorded_separately_from_exhaustion(self) -> None:
+        """A transformed atlas outside the search mask has zero support."""
+        detector = AIFDetection()
+        inputs = _make_cascade_inputs()
+        inputs["atlas_search_mask"] = np.zeros_like(inputs["atlas_search_mask"])
+        with patch.object(
+            AIFDetection, "_find_candidates_in_mask",
+            return_value=([], [], []),
+        ):
+            result = detector._run_two_pass_cascade(
+                **inputs,
+                atlas_masks=[np.ones_like(inputs["atlas_search_mask"])],
+                atlas_names=["outside_search"],
+                n_candidates=10,
+                tr=4.0,
+                baseline_frames=5,
+                tissue_ttp_frame=10.0,
+            )
+
+        assert result.atlas_search_outcome == "unavailable_or_empty"
+        assert result.atlas_search_support_voxels == 0
+
     def test_descends_when_strict_returns_zero_scored(self) -> None:
         """Strict tier returning 10 zero-scored candidates must NOT
         short-circuit the cascade. Relaxed at the same atlas level should
@@ -766,6 +788,8 @@ class TestTwoPassCascade:
         assert n_attempted == 10
         assert mock_find.call_count == 10
         assert len(anchor_outcomes) == 10
+        assert _cascade_res.atlas_search_outcome == "exhausted"
+        assert _cascade_res.atlas_search_support_voxels > 0
         # Pass 1 selected nothing; Pass 2 had no single-keeper tier to use.
         assert candidates == []
         assert scores == []
@@ -3056,6 +3080,8 @@ def test_detection_has_no_hemisphere_score_prior(
         anchor_outcomes=[],
         tier_result=None,
         tier_gate_decisions=[],
+        atlas_search_outcome="selected",
+        atlas_search_support_voxels=125,
     )
     detector = AIFDetection()
     detector.inputs.hematocrit = 0.42
@@ -3270,6 +3296,8 @@ class TestDetectedAIFEmissionInSitu:
             detection_method="atlas", atlas_tier_used="MCA_ACA_dce_strict",
             cascade_tiers_attempted=1, anchor_outcomes=[],
             tier_result=orig_tier, tier_gate_decisions=[],
+            atlas_search_outcome="selected",
+            atlas_search_support_voxels=125,
         )
 
         t = np.arange(40.0)
@@ -3330,6 +3358,8 @@ class TestDetectedAIFEmissionInSitu:
             atlas_tier_used="MCA_ACA_dce_strict",
             cascade_tiers_attempted=10, anchor_outcomes=[], tier_result=None,
             tier_gate_decisions=[],
+            atlas_search_outcome="selected",
+            atlas_search_support_voxels=125,
         )
 
         iface = AIFDetection()
@@ -3355,6 +3385,8 @@ class TestDetectedAIFEmissionInSitu:
         assert res["candidate_count"] == 1
         assert res["qc_metrics"]["n_aif_voxels_selected"] == 1
         assert res["qc_metrics"]["candidate_coords"] == [list(candidate)]
+        assert res["qc_metrics"]["atlas_search_outcome"] == "selected"
+        assert res["qc_metrics"]["atlas_search_support_voxels"] == 125
         assert "aif_validation_retries" not in res["qc_metrics"]
         assert prepare_spy.call_count == 2
         assert (

@@ -1,6 +1,8 @@
-1.0.0rc2.dev8 (unreleased)
+1.0.0rc2.dev9 (unreleased)
 ==========================
 
+* ENH: Record whether the transformed DCE arterial-atlas search was selected,
+  exhausted, or unavailable, together with its usable voxel support.
 * FIX: Restrict the fractional superior DCE AIF exclusion to whole-brain
   fallback, preserving the full arterial-atlas territory above slab rolloff.
 * FIX: Replace the universal CPI/vascular R² fallback threshold with a
