@@ -1,4 +1,4 @@
-1.0.0rc2.dev6 (unreleased)
+1.0.0rc2.dev7 (unreleased)
 ==========================
 
 * FIX: Replace the universal CPI/vascular R² fallback threshold with a
@@ -13,6 +13,9 @@
   scaled timeout and recorded execution QC.
 * MNT: Remove the obsolete post-cascade DCE AIF retry policy while preserving
   the active G1--G6 candidate-pool trimming and singleton fallback.
+* MNT: Re-store bundled arterial and anatomical region masks in RAS orientation
+  on their existing TemplateFlow-equivalent MNI152NLin6Asym grids, correcting
+  the region-mask space codes to MNI152 without changing world-space support.
 
 1.0.0rc1 (2026-08-06)
 ======================

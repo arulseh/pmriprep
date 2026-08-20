@@ -15,7 +15,9 @@ under CC0.
 
 The source vessel-probability image was thresholded at 20% occurrence. Apparent
 non-arterial structures were removed manually, the result was morphologically
-processed, and the 0.5 mm image was resampled to the 2 mm FSL MNI152 grid.
+processed, and the 0.5 mm image was resampled to the 2 mm FSL MNI152 grid. The
+bundled masks are stored in RAS orientation on the corresponding TemplateFlow
+MNI152NLin6Asym resolution-2 grid; world-space voxel support is unchanged.
 
 ## Anatomical region masks (`mni_regions`)
 
@@ -28,4 +30,6 @@ cerebellar region masks, not lobar or NAWM masks.
 
 The exact FreeSurfer version, source template or subject, original label list,
 and manual-edit record are unavailable. These details are stated as unavailable
-rather than reconstructed.
+rather than reconstructed. The bundled masks are stored in RAS orientation on
+the corresponding TemplateFlow MNI152NLin6Asym resolution-1 grid, with NIfTI
+space codes set to MNI152; world-space voxel support is unchanged.
