@@ -74,7 +74,6 @@ from pmriprep.utils.dce_constants import (
     SLAB_EDGE_EXCLUSION_MM_ROLLOFF,
     SSS_EXCLUSION_MM,
     SUPERIOR_EXCLUSION_FRACTION,
-    WB_FALLBACK_DEPTH_EROSION_MM,
     compute_fwhm_threshold_frames,
     compute_timing_margin_frames,
     get_aif_thresholds,
@@ -98,6 +97,14 @@ _MIN_CANDIDATES_FOR_DETECTED = 2
 # pediatric or extreme-cardiac-output cohorts are added later, expose as
 # a config knob rather than tuning this constant.
 _MAX_ANCHOR_POST_ARRIVAL_S: float = 10.0
+
+# Whole-brain fallback spatial policy. Atlas-constrained tiers use the
+# arterial atlas and retain their separate, lighter spatial preparation.
+_WB_DEPTH_EROSION_MM: float = 12.0
+_WB_POSTERIOR_FRACTION: float = 0.60
+_WB_MIDLINE_HALF_WIDTH_FRACTION: float = 0.15
+_WB_SYMMETRY_MAX_ANGLE_DEGREES: float = 25.0
+_WB_SYMMETRY_MAX_SHIFT_MM: float = 10.0
 
 
 def _inflow_exclusion_mm(
@@ -1433,6 +1440,9 @@ class DetectionState:
         Literal["selected", "exhausted", "unavailable_or_empty"] | None
     )
     atlas_search_support_voxels: int | None
+    whole_brain_search_support_voxels: int | None
+    whole_brain_symmetry_angle_degrees: float | None
+    whole_brain_symmetry_overlap: float | None
     n_filtered_out: int
 
     @classmethod
@@ -1443,7 +1453,11 @@ class DetectionState:
             metrics_list=[], tissue_ttp_frame=None, detection_attempt=None,
             atlas_tier_used=None, anchor_outcomes=[], tier_gate_decisions=[],
             tier_result=None, atlas_search_outcome=None,
-            atlas_search_support_voxels=None, n_filtered_out=0,
+            atlas_search_support_voxels=None,
+            whole_brain_search_support_voxels=None,
+            whole_brain_symmetry_angle_degrees=None,
+            whole_brain_symmetry_overlap=None,
+            n_filtered_out=0,
         )
 
 
@@ -2143,6 +2157,149 @@ class AIFDetection(BaseInterface):
     # -----------------------------------------------------------------
 
     @staticmethod
+    def _brain_symmetry_midline_zone(
+        brain_mask: npt.NDArray[Any],
+        affine: npt.NDArray[Any],
+    ) -> tuple[npt.NDArray[np.bool_] | None, float, float]:
+        """Estimate a posterior midline exclusion zone from brain symmetry.
+
+        The axial brain projection is reflected across candidate in-plane
+        axes, and the axis with greatest overlap is retained. The exclusion
+        spans the central 30% of brain width only over the posterior 60% of
+        brain length, preserving anterior midline arterial territory.
+
+        Parameters
+        ----------
+        brain_mask : ndarray
+            Three-dimensional brain mask.
+        affine : ndarray
+            Voxel-to-world affine for ``brain_mask``.
+
+        Returns
+        -------
+        zone : ndarray of bool or None
+            Three-dimensional exclusion zone, or ``None`` when symmetry
+            cannot be estimated.
+        angle_degrees : float
+            Estimated midline-normal angle relative to the first in-plane
+            voxel axis.
+        overlap : float
+            Dice overlap between the brain projection and its reflection.
+        """
+        from scipy.ndimage import map_coordinates
+
+        brain = np.asarray(brain_mask) > 0.5
+        projection = np.any(brain, axis=2)
+        points = np.argwhere(projection)
+        if points.shape[0] < 10:
+            return None, float("nan"), float("nan")
+
+        affine_array = np.asarray(affine, dtype=float)
+        first_axis = affine_array[:3, 0]
+        second_axis = affine_array[:3, 1]
+        first_norm = float(np.linalg.norm(first_axis))
+        if first_norm <= 0:
+            return None, float("nan"), float("nan")
+        basis_first = first_axis / first_norm
+        second_orthogonal = second_axis - np.dot(second_axis, basis_first) * basis_first
+        second_norm = float(np.linalg.norm(second_orthogonal))
+        if second_norm <= 0:
+            return None, float("nan"), float("nan")
+        basis_second = second_orthogonal / second_norm
+        basis = np.column_stack((basis_first, basis_second))
+        plane_matrix = basis.T @ affine_array[:3, :2]
+        plane_offset = basis.T @ affine_array[:3, 3]
+        try:
+            inverse_plane_matrix = np.linalg.inv(plane_matrix)
+        except np.linalg.LinAlgError:
+            return None, float("nan"), float("nan")
+
+        grid = np.indices(projection.shape, dtype=float).reshape(2, -1).T
+        grid_plane = grid @ plane_matrix.T + plane_offset
+        brain_plane = points @ plane_matrix.T + plane_offset
+        center = np.mean(brain_plane, axis=0)
+
+        def _search(
+            angles: npt.NDArray[np.floating[Any]],
+            shifts: npt.NDArray[np.floating[Any]],
+        ) -> tuple[float, float, float, npt.NDArray[np.float64], float]:
+            best: tuple[
+                float, float, float, npt.NDArray[np.float64], float,
+            ] | None = None
+            projection_float = projection.astype(float)
+            for angle_degrees in angles:
+                angle_radians = np.deg2rad(angle_degrees)
+                normal = np.asarray(
+                    [np.cos(angle_radians), np.sin(angle_radians)],
+                    dtype=np.float64,
+                )
+                center_projection = float(center @ normal)
+                for shift_mm in shifts:
+                    position = center_projection + float(shift_mm)
+                    signed = grid_plane @ normal - position
+                    reflected_plane = grid_plane - 2.0 * signed[:, None] * normal
+                    reflected_voxels = (
+                        reflected_plane - plane_offset
+                    ) @ inverse_plane_matrix.T
+                    reflected = map_coordinates(
+                        projection_float,
+                        [reflected_voxels[:, 0], reflected_voxels[:, 1]],
+                        order=1,
+                        mode="constant",
+                        cval=0.0,
+                    ).reshape(projection.shape)
+                    denominator = float(np.sum(projection) + np.sum(reflected))
+                    overlap = (
+                        2.0 * float(np.sum(projection * reflected)) / denominator
+                        if denominator > 0 else 0.0
+                    )
+                    candidate = (
+                        overlap, float(angle_degrees), position, normal,
+                        float(shift_mm),
+                    )
+                    if best is None or candidate[0] > best[0]:
+                        best = candidate
+            assert best is not None
+            return best
+
+        coarse = _search(
+            np.arange(
+                -_WB_SYMMETRY_MAX_ANGLE_DEGREES,
+                _WB_SYMMETRY_MAX_ANGLE_DEGREES + 0.01,
+                2.0,
+            ),
+            np.arange(
+                -_WB_SYMMETRY_MAX_SHIFT_MM,
+                _WB_SYMMETRY_MAX_SHIFT_MM + 0.01,
+                1.0,
+            ),
+        )
+        best = _search(
+            np.arange(coarse[1] - 2.0, coarse[1] + 2.01, 0.25),
+            np.arange(coarse[4] - 1.0, coarse[4] + 1.01, 0.25),
+        )
+        overlap, angle_degrees, position, normal, _ = best
+        signed = (grid_plane @ normal - position).reshape(projection.shape)
+        projected_width = brain_plane @ normal
+        brain_width = float(np.ptp(projected_width))
+
+        anterior_axis = np.asarray([-normal[1], normal[0]], dtype=float)
+        world_anterior = np.asarray([0.0, 1.0, 0.0]) @ basis
+        if float(anterior_axis @ world_anterior) < 0:
+            anterior_axis *= -1.0
+        brain_ap = brain_plane @ anterior_axis
+        posterior_cutoff = float(np.min(brain_ap)) + (
+            _WB_POSTERIOR_FRACTION * float(np.ptp(brain_ap))
+        )
+        grid_ap = (grid_plane @ anterior_axis).reshape(projection.shape)
+        zone_2d = (
+            (grid_ap <= posterior_cutoff)
+            & (np.abs(signed) <= _WB_MIDLINE_HALF_WIDTH_FRACTION * brain_width)
+        )
+        zone = np.broadcast_to(zone_2d[:, :, None], brain.shape).copy()
+        return zone, angle_degrees, overlap
+
+    @staticmethod
     def _prepare_search_mask(
         brain_mask: npt.NDArray[Any],
         voxel_sizes: tuple[float, ...],
@@ -2154,6 +2311,7 @@ class AIFDetection(BaseInterface):
         erosion_iterations: int = BRAIN_EROSION_ITERATIONS,
         physical_erosion_mm: float = 0.0,
         apply_superior_fraction_exclusion: bool = True,
+        symmetry_midline_zone: npt.NDArray[Any] | None = None,
     ) -> npt.NDArray[Any]:
         """Prepare the search mask with erosion, slab exclusion, and lesion distance.
 
@@ -2163,7 +2321,9 @@ class AIFDetection(BaseInterface):
         2. Directional slab-edge exclusion: separate inferior / superior
            margins (inferior usually larger to remove 3D-slab entry-slice
            inflow contamination).
-        3. Midline exclusion (skipped when ``skip_midline=True``).
+        3. Midline exclusion (skipped when ``skip_midline=True``). With a
+           supplied ``symmetry_midline_zone``, use that posterior-only band;
+           otherwise use a scanner-axis strip.
         4. Optional top-25% superior cut
            (``SUPERIOR_EXCLUSION_FRACTION``).
         5. Lesion exclusion (binary + distance-based).
@@ -2173,12 +2333,10 @@ class AIFDetection(BaseInterface):
 
         Atlas vs WB asymmetry: atlas callers rely on the MRA-derived
         anatomical specificity of the atlas mask itself, so they use a
-        small ``BRAIN_EROSION_ITERATIONS_ATLAS=2`` + ``SLAB_EDGE_
-        EXCLUSION_MM_ROLLOFF=4 mm`` rolloff edge and ``physical_erosion_mm
-        =0``. Whole-brain fallback callers have no anatomical prior and
-        need depth and venous protection, so they layer ``BRAIN_EROSION_
-        ITERATIONS=8`` + ``WB_FALLBACK_DEPTH_EROSION_MM=10 mm`` physical
-        depth and the superior fractional cut on top.
+        small ``BRAIN_EROSION_ITERATIONS_ATLAS=2`` and a 4-mm rolloff.
+        Production whole-brain fallback uses one physical brain-edge depth
+        rule, directional slab margins, and the symmetry-aligned posterior
+        midline band instead of overlapping voxel-count and fractional cuts.
 
         Parameters
         ----------
@@ -2223,10 +2381,12 @@ class AIFDetection(BaseInterface):
             voxels (thin sagittal slab / pediatric / atrophic case), the
             cut is skipped and a warning is logged.
         apply_superior_fraction_exclusion : bool
-            Apply the fractional superior cut used by whole-brain fallback
-            to reduce cortical-vein contamination. Atlas-constrained search
-            disables it because the arterial atlas already excludes venous
-            structures.
+            Apply the optional fractional superior cut for standalone mask
+            preparation. Production atlas and whole-brain callers disable it
+            in favor of their physical slab margins.
+        symmetry_midline_zone : ndarray, optional
+            Precomputed symmetry-aligned posterior midline exclusion zone for
+            whole-brain search. When absent, use a scanner-axis midline strip.
 
         Returns
         -------
@@ -2235,18 +2395,22 @@ class AIFDetection(BaseInterface):
         """
         from scipy.ndimage import binary_erosion
 
-        # Step 1: Erode brain mask
-        search_mask = binary_erosion(
-            brain_mask > 0.5, iterations=erosion_iterations
-        ).astype(brain_mask.dtype)
-        if np.sum(search_mask) < BRAIN_EROSION_MIN_VOXELS:
-            search_mask = (brain_mask > 0.5).astype(brain_mask.dtype)
+        # Step 1: Erode brain mask when requested. SciPy interprets zero
+        # iterations as erosion until convergence, so handle zero explicitly.
+        brain_bool = brain_mask > 0.5
+        if erosion_iterations > 0:
+            search_mask = binary_erosion(
+                brain_bool, iterations=erosion_iterations
+            ).astype(brain_mask.dtype)
+            if np.sum(search_mask) < BRAIN_EROSION_MIN_VOXELS:
+                search_mask = brain_bool.astype(brain_mask.dtype)
+        else:
+            search_mask = brain_bool.astype(brain_mask.dtype)
 
         # Step 2: Directional slab-edge exclusion under RAS+.
         # Inferior side uses the larger inflow exclusion; superior side
-        # uses the small rolloff exclusion. In whole-brain search this margin
-        # is typically subsumed by the fractional superior cut; atlas search
-        # retains it as the only superior slab-edge exclusion.
+        # uses the small rolloff exclusion. Production search uses these
+        # physical margins instead of a fractional superior cut.
         #
         # Axial-slab proxy guard: through-plane (z) thickness must be
         # greater than in-plane voxel size for the inferior-as-inflow
@@ -2287,7 +2451,10 @@ class AIFDetection(BaseInterface):
         # (MRA-derived atlas already excludes venous structures; midline
         # exclusion removes 47-68% of atlas voxels including ICA and ACA)
         if not skip_midline:
-            AIFDetection._apply_midline_exclusion(search_mask)
+            if symmetry_midline_zone is None:
+                AIFDetection._apply_midline_exclusion(search_mask)
+            else:
+                search_mask[np.asarray(symmetry_midline_zone) > 0] = 0
 
         # Step 4: Whole-brain superior exclusion to avoid cortical-vein drainage.
         if apply_superior_fraction_exclusion:
@@ -2341,9 +2508,9 @@ class AIFDetection(BaseInterface):
     def _apply_midline_exclusion(mask: npt.NDArray[Any]) -> None:
         """Zero out the central midline strip of a search mask (in-place).
 
-        Used for whole-brain AIF search to exclude sagittal sinus.
-        Not needed for atlas-constrained search where the atlas already
-        excludes venous structures.
+        This scanner-axis fallback is used when no symmetry-aligned posterior
+        midline zone is supplied. Atlas-constrained search skips it because the
+        atlas already excludes venous structures.
         """
         nx = mask.shape[0]
         x_center = nx // 2
@@ -4263,12 +4430,14 @@ class AIFDetection(BaseInterface):
             erosion_iterations=BRAIN_EROSION_ITERATIONS_ATLAS,
             apply_superior_fraction_exclusion=False,
         )
-        # Whole-brain fallback: full erosion, midline exclusion,
-        # SSS-sized superior margin, and a 10 mm physical-depth cut
-        # to strip the lateral cortical surface where cortical-vein
-        # drainage produces arterial-shaped curves at clinical TR.
-        # Atlas search skips this cut so it
-        # retains 75-94 % of MCA_ACA territory.
+        # Whole-brain fallback: one physical brain-edge depth rule,
+        # directional slab margins, and a symmetry-aligned posterior midline
+        # exclusion. The anterior midline remains available for arterial
+        # candidates. Atlas search retains its lighter preparation because
+        # the arterial atlas already excludes venous structures.
+        symmetry_zone, symmetry_angle, symmetry_overlap = (
+            self._brain_symmetry_midline_zone(brain_mask, affine)
+        )
         wb_search_mask = self._prepare_search_mask(
             brain_mask,
             voxel_sizes,
@@ -4277,8 +4446,13 @@ class AIFDetection(BaseInterface):
             skip_midline=False,
             slab_edge_inferior_mm=inferior_inflow_mm,
             slab_edge_superior_mm=SSS_EXCLUSION_MM,
-            erosion_iterations=BRAIN_EROSION_ITERATIONS,
-            physical_erosion_mm=WB_FALLBACK_DEPTH_EROSION_MM,
+            erosion_iterations=0,
+            physical_erosion_mm=_WB_DEPTH_EROSION_MM,
+            apply_superior_fraction_exclusion=False,
+            symmetry_midline_zone=symmetry_zone,
+        )
+        whole_brain_search_support_voxels = int(
+            np.count_nonzero(wb_search_mask > 0.5)
         )
 
         # ===== Phase 3: Compute tissue TTP reference =====
@@ -4428,6 +4602,13 @@ class AIFDetection(BaseInterface):
             tier_result=tier_result,
             atlas_search_outcome=atlas_search_outcome,
             atlas_search_support_voxels=atlas_search_support_voxels,
+            whole_brain_search_support_voxels=whole_brain_search_support_voxels,
+            whole_brain_symmetry_angle_degrees=(
+                float(symmetry_angle) if np.isfinite(symmetry_angle) else None
+            ),
+            whole_brain_symmetry_overlap=(
+                float(symmetry_overlap) if np.isfinite(symmetry_overlap) else None
+            ),
             n_filtered_out=n_filtered_out,
         )
 
@@ -4724,6 +4905,18 @@ class AIFDetection(BaseInterface):
         if state.atlas_search_support_voxels is not None:
             qc_metrics["atlas_search_support_voxels"] = (
                 state.atlas_search_support_voxels
+            )
+        if state.whole_brain_search_support_voxels is not None:
+            qc_metrics["whole_brain_search_support_voxels"] = (
+                state.whole_brain_search_support_voxels
+            )
+        if state.whole_brain_symmetry_angle_degrees is not None:
+            qc_metrics["whole_brain_symmetry_angle_degrees"] = (
+                state.whole_brain_symmetry_angle_degrees
+            )
+        if state.whole_brain_symmetry_overlap is not None:
+            qc_metrics["whole_brain_symmetry_overlap"] = (
+                state.whole_brain_symmetry_overlap
             )
 
         # ===== Cascade provenance (fires on both detected and population) =====

@@ -332,6 +332,13 @@
         },
         "washout_mean": {
           "__f__": "0x1.999999999999ap-1"
+        },
+        "whole_brain_search_support_voxels": 5866,
+        "whole_brain_symmetry_angle_degrees": {
+          "__f__": "-0x1.8000000000000p+0"
+        },
+        "whole_brain_symmetry_overlap": {
+          "__f__": "0x1.e5c2c679c6cfep-1"
         }
       },
       "quality_score": {
@@ -656,6 +663,13 @@
         },
         "washout_mean": {
           "__f__": "0x1.999999999999bp-1"
+        },
+        "whole_brain_search_support_voxels": 5866,
+        "whole_brain_symmetry_angle_degrees": {
+          "__f__": "-0x1.8000000000000p+0"
+        },
+        "whole_brain_symmetry_overlap": {
+          "__f__": "0x1.e5c2c679c6cfep-1"
         }
       },
       "quality_score": {
@@ -1205,6 +1219,13 @@
         },
         "washout_mean": {
           "__f__": "0x1.999999999999ap-1"
+        },
+        "whole_brain_search_support_voxels": 5866,
+        "whole_brain_symmetry_angle_degrees": {
+          "__f__": "-0x1.8000000000000p+0"
+        },
+        "whole_brain_symmetry_overlap": {
+          "__f__": "0x1.e5c2c679c6cfep-1"
         }
       },
       "quality_score": {
@@ -1529,6 +1550,13 @@
         },
         "washout_mean": {
           "__f__": "0x1.999999999999bp-1"
+        },
+        "whole_brain_search_support_voxels": 5866,
+        "whole_brain_symmetry_angle_degrees": {
+          "__f__": "-0x1.8000000000000p+0"
+        },
+        "whole_brain_symmetry_overlap": {
+          "__f__": "0x1.e5c2c679c6cfep-1"
         }
       },
       "quality_score": {
@@ -1774,7 +1802,14 @@
         "scaling_factor": {
           "__f__": "0x1.0000000000000p+0"
         },
-        "scaling_factor_warning": false
+        "scaling_factor_warning": false,
+        "whole_brain_search_support_voxels": 5866,
+        "whole_brain_symmetry_angle_degrees": {
+          "__f__": "-0x1.8000000000000p+0"
+        },
+        "whole_brain_symmetry_overlap": {
+          "__f__": "0x1.e5c2c679c6cfep-1"
+        }
       },
       "quality_score": {
         "__f__": "0x1.0000000000000p-1"
@@ -2036,7 +2071,14 @@
         "scaling_factor": {
           "__f__": "0x1.0000000000000p+0"
         },
-        "scaling_factor_warning": false
+        "scaling_factor_warning": false,
+        "whole_brain_search_support_voxels": 1310,
+        "whole_brain_symmetry_angle_degrees": {
+          "__f__": "-0x1.8000000000000p+0"
+        },
+        "whole_brain_symmetry_overlap": {
+          "__f__": "0x1.e5c2c679c6cfep-1"
+        }
       },
       "quality_score": {
         "__f__": "0x1.0000000000000p-1"
@@ -2529,7 +2571,14 @@
         "scaling_factor": {
           "__f__": "0x1.0000000000000p+0"
         },
-        "scaling_factor_warning": false
+        "scaling_factor_warning": false,
+        "whole_brain_search_support_voxels": 5866,
+        "whole_brain_symmetry_angle_degrees": {
+          "__f__": "-0x1.8000000000000p+0"
+        },
+        "whole_brain_symmetry_overlap": {
+          "__f__": "0x1.e5c2c679c6cfep-1"
+        }
       },
       "quality_score": {
         "__f__": "0x1.0000000000000p-1"

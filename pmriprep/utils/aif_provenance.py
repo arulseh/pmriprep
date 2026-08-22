@@ -269,6 +269,21 @@ def build_aif_provenance_block(
         block["PeakAmplitude"] = float(peak)
         block["PeakAmplitudeUnits"] = "1/s" if modality == "DSC" else "mM"
     if modality == "DCE":
+        atlas_outcome = aif_qc.get("atlas_search_outcome")
+        if atlas_outcome is not None:
+            block["AtlasSearchOutcome"] = str(atlas_outcome)
+        atlas_support = aif_qc.get("atlas_search_support_voxels")
+        if atlas_support is not None:
+            block["AtlasSearchSupportVoxels"] = int(atlas_support)
+        whole_brain_support = aif_qc.get("whole_brain_search_support_voxels")
+        if whole_brain_support is not None:
+            block["WholeBrainSearchSupportVoxels"] = int(whole_brain_support)
+        symmetry_angle = aif_qc.get("whole_brain_symmetry_angle_degrees")
+        if symmetry_angle is not None:
+            block["WholeBrainSymmetryAngleDegrees"] = float(symmetry_angle)
+        symmetry_overlap = aif_qc.get("whole_brain_symmetry_overlap")
+        if symmetry_overlap is not None:
+            block["WholeBrainSymmetryOverlap"] = float(symmetry_overlap)
         fwhm = aif_qc.get("final_fwhm_seconds")
         if fwhm is None:
             fwhm = aif_qc.get("fwhm_seconds_mean")

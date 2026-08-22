@@ -1,6 +1,8 @@
-1.0.0rc2.dev9 (unreleased)
-==========================
+1.0.0rc2.dev10 (unreleased)
+===========================
 
+* FIX: Consolidate DCE whole-brain AIF spatial exclusions around physical
+  brain/slab distances and a symmetry-aligned posterior midline venous band.
 * ENH: Record whether the transformed DCE arterial-atlas search was selected,
   exhausted, or unavailable, together with its usable voxel support.
 * FIX: Restrict the fractional superior DCE AIF exclusion to whole-brain

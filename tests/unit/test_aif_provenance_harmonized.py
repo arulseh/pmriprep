@@ -188,6 +188,11 @@ class TestBuildProvenanceBlockDCE:
                 "peak_scaling_required_factor": 2.0,
                 "peak_scaling_policy": "one_sided_lower_bound",
                 "peak_scaling_trigger": "below_expected_minimum",
+                "atlas_search_outcome": "selected",
+                "atlas_search_support_voxels": 830,
+                "whole_brain_search_support_voxels": 4120,
+                "whole_brain_symmetry_angle_degrees": -3.25,
+                "whole_brain_symmetry_overlap": 0.97,
             }},
             modality="DCE",
         )
@@ -197,6 +202,11 @@ class TestBuildProvenanceBlockDCE:
         assert block["Confidence"] == "standard"
         assert block["UncertaintyInflationFactor"] == pytest.approx(1.0)
         assert block["Hematocrit"] == pytest.approx(0.42)
+        assert block["AtlasSearchOutcome"] == "selected"
+        assert block["AtlasSearchSupportVoxels"] == 830
+        assert block["WholeBrainSearchSupportVoxels"] == 4120
+        assert block["WholeBrainSymmetryAngleDegrees"] == pytest.approx(-3.25)
+        assert block["WholeBrainSymmetryOverlap"] == pytest.approx(0.97)
         assert block["PeakScaling"] == {
             "Enabled": True,
             "Applied": True,

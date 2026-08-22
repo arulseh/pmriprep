@@ -820,19 +820,6 @@ INFLOW_EXCLUSION_MM_INFERIOR_BASE: Final[float] = 20.0
 #: naive 4×slice = 32mm exclusion would zero half the slab).
 INFLOW_EXCLUSION_MAX_SLAB_FRACTION: Final[float] = 0.35
 
-#: Physical erosion (mm) applied to the whole-brain AIF fallback search
-#: mask only, in addition to slab-edge / midline / top-25% cuts. Removes
-#: the lateral cortical surface (depth < 10 mm from brain edge) where
-#: cortical-vein drainage produces arterial-shaped curves at clinical TR
-#: (peak frame ≈ tissue+15, sharp washout). Atlas search keeps its
-#: smaller rolloff-only edge cut so atlas detection retains 75-94% of
-#: MCA_ACA territory; the depth-protective margin is reserved for the
-#: WB fallback which has no anatomical prior.
-#:
-#: The 10 mm cut removes superficial cortical veins while preserving deeper
-#: MCA segments. FWHM and washout gates reject broad late-peaking curves.
-WB_FALLBACK_DEPTH_EROSION_MM: Final[float] = 10.0
-
 #: Hard minimum distance (mm) from lesion for AIF candidates. Below this,
 #: partial volume with tumor feeding vessels corrupts bolus shape.
 LESION_EXCLUSION_FLOOR_MM: Final[float] = 10.0

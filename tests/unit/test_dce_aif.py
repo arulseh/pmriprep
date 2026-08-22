@@ -1315,6 +1315,107 @@ class TestPrepareSearchMaskDirectional:
         assert out[:, :, 6].sum() > 0     # z=6 retained
 
 
+class TestWholeBrainSymmetryExclusion:
+    """Whole-brain fallback uses a brain-aligned posterior midline band."""
+
+    @staticmethod
+    def _ellipsoid(
+        shape: tuple[int, int, int],
+        angle_degrees: float = 0.0,
+    ) -> np.ndarray:
+        x, y = np.indices(shape[:2], dtype=float)
+        x -= (shape[0] - 1) / 2.0
+        y -= (shape[1] - 1) / 2.0
+        angle = np.deg2rad(angle_degrees)
+        across = np.cos(angle) * x + np.sin(angle) * y
+        anterior = -np.sin(angle) * x + np.cos(angle) * y
+        projection = (across / 40.0) ** 2 + (anterior / 50.0) ** 2 <= 1.0
+        return np.broadcast_to(projection[:, :, None], shape).astype(np.uint8)
+
+    def test_symmetry_plane_tracks_in_plane_rotation(self) -> None:
+        brain = self._ellipsoid((101, 121, 9), angle_degrees=12.0)
+        zone, angle, overlap = AIFDetection._brain_symmetry_midline_zone(
+            brain,
+            np.eye(4),
+        )
+
+        assert zone is not None
+        assert angle == pytest.approx(12.0, abs=1.0)
+        assert overlap > 0.98
+        assert zone.shape == brain.shape
+
+    def test_posterior_band_preserves_anterior_midline(self) -> None:
+        brain = self._ellipsoid((101, 121, 9))
+        zone, _, _ = AIFDetection._brain_symmetry_midline_zone(
+            brain,
+            np.eye(4),
+        )
+        assert zone is not None
+        out = AIFDetection._prepare_search_mask(
+            brain,
+            voxel_sizes=(1.0, 1.0, 1.0),
+            skip_midline=False,
+            slab_edge_inferior_mm=0.0,
+            slab_edge_superior_mm=0.0,
+            erosion_iterations=0,
+            physical_erosion_mm=0.0,
+            apply_superior_fraction_exclusion=False,
+            symmetry_midline_zone=zone,
+        )
+
+        assert out[50, 25, 4] == 0
+        assert out[50, 100, 4] == 1
+
+    def test_degenerate_symmetry_uses_scanner_axis_fallback(self) -> None:
+        brain = self._ellipsoid((101, 121, 9))
+        invalid_affine = np.zeros((4, 4), dtype=float)
+        zone, angle, overlap = AIFDetection._brain_symmetry_midline_zone(
+            brain,
+            invalid_affine,
+        )
+
+        assert zone is None
+        assert np.isnan(angle)
+        assert np.isnan(overlap)
+        out = AIFDetection._prepare_search_mask(
+            brain,
+            voxel_sizes=(1.0, 1.0, 1.0),
+            skip_midline=False,
+            slab_edge_inferior_mm=0.0,
+            slab_edge_superior_mm=0.0,
+            erosion_iterations=0,
+            physical_erosion_mm=0.0,
+            apply_superior_fraction_exclusion=False,
+            symmetry_midline_zone=zone,
+        )
+
+        assert out[50, 25, 4] == 0
+        assert out[50, 100, 4] == 0
+
+    def test_zero_binary_erosion_is_explicitly_skipped(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        brain = self._ellipsoid((101, 121, 9))
+
+        def fail_if_called(*args: object, **kwargs: object) -> np.ndarray:
+            raise AssertionError("binary erosion must not run when iterations=0")
+
+        monkeypatch.setattr("scipy.ndimage.binary_erosion", fail_if_called)
+        out = AIFDetection._prepare_search_mask(
+            brain,
+            voxel_sizes=(1.0, 1.0, 1.0),
+            skip_midline=True,
+            slab_edge_inferior_mm=0.0,
+            slab_edge_superior_mm=0.0,
+            erosion_iterations=0,
+            physical_erosion_mm=0.0,
+            apply_superior_fraction_exclusion=False,
+        )
+
+        assert np.any(out)
+
+
 class TestSlabEdgeConstants:
     """Renamed slab-edge constants reflect actual physics rationale."""
 
@@ -3387,6 +3488,11 @@ class TestDetectedAIFEmissionInSitu:
         assert res["qc_metrics"]["candidate_coords"] == [list(candidate)]
         assert res["qc_metrics"]["atlas_search_outcome"] == "selected"
         assert res["qc_metrics"]["atlas_search_support_voxels"] == 125
+        assert res["qc_metrics"]["whole_brain_search_support_voxels"] > 0
+        assert np.isfinite(
+            res["qc_metrics"]["whole_brain_symmetry_angle_degrees"]
+        )
+        assert 0.0 < res["qc_metrics"]["whole_brain_symmetry_overlap"] <= 1.0
         assert "aif_validation_retries" not in res["qc_metrics"]
         assert prepare_spy.call_count == 2
         assert (
@@ -3395,9 +3501,8 @@ class TestDetectedAIFEmissionInSitu:
             ]
             is False
         )
-        assert (
-            prepare_spy.call_args_list[1].kwargs.get(
-                "apply_superior_fraction_exclusion", True,
-            )
-            is True
-        )
+        whole_brain_kwargs = prepare_spy.call_args_list[1].kwargs
+        assert whole_brain_kwargs["erosion_iterations"] == 0
+        assert whole_brain_kwargs["physical_erosion_mm"] == pytest.approx(12.0)
+        assert whole_brain_kwargs["apply_superior_fraction_exclusion"] is False
+        assert np.any(whole_brain_kwargs["symmetry_midline_zone"])
