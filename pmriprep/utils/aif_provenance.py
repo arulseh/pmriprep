@@ -326,6 +326,12 @@ def build_aif_provenance_block(
 
     # DSC-specific fields
     if modality == "DSC":
+        atlas_edge_exclusion = aif_qc.get(
+            "atlas_brain_edge_exclusion_target_mm"
+        )
+        if atlas_edge_exclusion is not None:
+            block["AtlasBrainEdgeExclusionTarget"] = float(atlas_edge_exclusion)
+            block["AtlasBrainEdgeExclusionTargetUnits"] = "mm"
         block["GammaFitApplied"] = bool(
             aif_qc.get("gamma_fit_applied", False),
         )

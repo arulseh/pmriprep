@@ -38,8 +38,9 @@ def test_tier_candidate_stages_run_in_order(
         (0.5, (0, 0, 0), {"baseline_return_ratio": 5.0}),
     ]
 
-    def prepare(*args: Any) -> np.ndarray:
+    def prepare(*args: Any, **kwargs: Any) -> np.ndarray:
         calls.append("search")
+        assert kwargs["voxel_sizes"] is None
         return np.ones((2, 2, 2), dtype=bool)
 
     def find(*args: Any, **kwargs: Any) -> tuple[np.ndarray, np.ndarray]:
@@ -85,7 +86,7 @@ def test_empty_search_stops_before_scoring(
     monkeypatch.setattr(
         detector,
         "_prepare_search_mask",
-        lambda *args: np.ones((2, 2, 2), dtype=bool),
+        lambda *args, **kwargs: np.ones((2, 2, 2), dtype=bool),
     )
     monkeypatch.setattr(
         detector,
@@ -104,6 +105,34 @@ def test_empty_search_stops_before_scoring(
 
     assert result.candidates == []
     assert result.postfilter_diagnostics is None
+
+
+@pytest.mark.parametrize("atlas_is_mra", [True, False])
+def test_roi_tier_passes_physical_voxel_sizes(
+    monkeypatch: pytest.MonkeyPatch,
+    atlas_is_mra: bool,
+) -> None:
+    """Bundled and user-supplied ROIs receive physical voxel sampling."""
+    detector = AIFDetection()
+    context = _context()
+    observed: dict[str, Any] = {}
+
+    def prepare(*args: Any, **kwargs: Any) -> np.ndarray:
+        observed.update(kwargs)
+        return np.zeros((2, 2, 2), dtype=bool)
+
+    monkeypatch.setattr(detector, "_prepare_search_mask", prepare)
+    monkeypatch.setattr(
+        detector,
+        "_find_aif_candidate_voxels",
+        lambda *args, **kwargs: (np.empty((0, 3), dtype=int), np.zeros((2, 2, 2))),
+    )
+
+    detector._prepare_tier_candidates(
+        context, "strict", context.atlas_mask, atlas_is_mra, 3, 5, 8.0,
+    )
+
+    assert observed["voxel_sizes"] == context.voxel_sizes
 
 
 def test_all_candidates_inside_lesion_margin_exhaust_tier() -> None:

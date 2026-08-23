@@ -15,7 +15,12 @@ from typing import Any, Final, NamedTuple, Optional, Sequence
 
 import numpy as np
 import numpy.typing as npt
-from scipy.ndimage import binary_erosion, generate_binary_structure  # type: ignore[import-untyped]
+from scipy.ndimage import (  # type: ignore[import-untyped]
+    binary_erosion,
+    binary_fill_holes,
+    distance_transform_edt,
+    generate_binary_structure,
+)
 from scipy.signal import savgol_filter  # type: ignore[import-untyped]
 
 from nipype.interfaces.base import (  # type: ignore[import-untyped]
@@ -54,6 +59,11 @@ from pmriprep.utils.dsc_constants import (
 # candidates with spurious noise peaks are already rejected by the TTP
 # minimum check in ``_score_candidate_cost`` (strict ≥ 5 s, relaxed ≥ 3 s).
 _FP_GAP_SECONDS: float = 3.0
+
+#: Minimum physical distance from the outer in-plane brain boundary for DSC
+#: arterial-atlas candidates. The original brain mask is intersected afterward,
+#: so internal holes remain excluded without creating additional exclusion rims.
+_ATLAS_BRAIN_EDGE_EXCLUSION_MM: Final[float] = 8.0
 
 # Minimum number of AIF candidates before accepting a cascade level.
 # If a level finds fewer than this, the cascade continues to more relaxed
@@ -668,7 +678,8 @@ class AIFDetection(BaseInterface):
     """Arterial Input Function (AIF) detection for DSC-MRI.
 
     Implements the AIF detection pipeline with:
-    - Brain mask erosion (4 iterations) to exclude cortical veins
+    - Physical in-plane brain-edge exclusion for arterial-atlas tiers
+    - Four-iteration in-plane erosion for whole-brain fallback tiers
     - Adaptive percentile candidate pre-filtering (99.5% -> 95%)
     - SSS / edge-slice spatial exclusions
     - Tissue TTP cross-validation
@@ -705,12 +716,14 @@ class AIFDetection(BaseInterface):
         roi_mask: Optional[npt.NDArray[Any]],
         lesion_mask: Optional[npt.NDArray[Any]],
         erosion_iterations: int = 4,
+        voxel_sizes: Optional[tuple[float, float, float]] = None,
     ) -> npt.NDArray[Any]:
-        """Prepare binary search mask with erosion and exclusion.
+        """Prepare a binary search mask with edge and lesion exclusion.
 
-        Erosion for cortical vein exclusion, optional ROI intersection,
-        and binary lesion exclusion.  Distance-based lesion filtering
-        happens *after* scoring (see ``_apply_post_scoring_filters``).
+        Atlas tiers use a physical in-plane distance from the filled outer
+        brain boundary. Whole-brain tiers retain the in-plane binary erosion.
+        Distance-based lesion filtering happens *after* scoring (see
+        ``_apply_post_scoring_filters``).
 
         Parameters
         ----------
@@ -721,38 +734,72 @@ class AIFDetection(BaseInterface):
         lesion_mask : ndarray or None
             Optional 3D lesion mask to exclude.
         erosion_iterations : int
-            Number of binary erosion iterations (default 4).
+            Number of in-plane binary erosion iterations for whole-brain
+            tiers (default 4).
+        voxel_sizes : tuple of float or None
+            Voxel sizes in millimetres. Required when ``roi_mask`` is given.
 
         Returns
         -------
         ndarray
             3D boolean search mask.
         """
-        # In-plane-only erosion: preserves all slices while excluding
-        # cortical surface voxels. 3D erosion with 4 iterations removes
-        # ~4 voxels from all faces including z, which wipes out skull-base
-        # slices where the best AIF candidates (ICA, MCA M1) reside.
-        # Input orientation is RAS, so z is the slice direction (axis 2).
-        struct_inplane = generate_binary_structure(3, 1)  # 6-connected
-        struct_inplane[:, :, 0] = 0  # Remove z-minus connectivity
-        struct_inplane[:, :, 2] = 0  # Remove z-plus connectivity
-        eroded = binary_erosion(
-            brain_mask > 0.5,
-            structure=struct_inplane,
-            iterations=erosion_iterations,
-        ).astype(bool)
-
+        brain_bool = brain_mask > 0.5
         if roi_mask is not None:
-            search = eroded & (roi_mask > 0.5)
+            if voxel_sizes is None:
+                raise ValueError(
+                    "voxel_sizes are required for DSC atlas edge exclusion"
+                )
+            if len(voxel_sizes) != 3 or any(
+                not np.isfinite(size) or size <= 0 for size in voxel_sizes
+            ):
+                raise ValueError(
+                    "voxel_sizes must contain three finite positive values"
+                )
+
+            # Fill enclosed holes only for measuring distance to the outer
+            # in-plane boundary. Intersecting with brain_bool afterward keeps
+            # the original anatomical support while avoiding erosion rims
+            # around small mask defects.
+            envelope = np.stack(
+                [
+                    binary_fill_holes(brain_bool[:, :, z])
+                    for z in range(brain_bool.shape[2])
+                ],
+                axis=2,
+            )
+            distance_from_edge = np.stack(
+                [
+                    distance_transform_edt(
+                        envelope[:, :, z],
+                        sampling=voxel_sizes[:2],
+                    )
+                    for z in range(brain_bool.shape[2])
+                ],
+                axis=2,
+            )
+            atlas_interior = brain_bool & (
+                distance_from_edge >= _ATLAS_BRAIN_EDGE_EXCLUSION_MM
+            )
+            search = atlas_interior & (roi_mask > 0.5)
             if not np.any(search):
-                # Fallback: uneroded intersection
-                search = (brain_mask > 0.5) & (roi_mask > 0.5)
+                search = brain_bool & (roi_mask > 0.5)
         else:
+            # In-plane-only erosion preserves skull-base slices where ICA/MCA
+            # candidates may occur while excluding the cortical surface.
+            struct_inplane = generate_binary_structure(3, 1)  # 6-connected
+            struct_inplane[:, :, 0] = 0
+            struct_inplane[:, :, 2] = 0
+            eroded = binary_erosion(
+                brain_bool,
+                structure=struct_inplane,
+                iterations=erosion_iterations,
+            ).astype(bool)
             search = eroded
 
         # Preserve a non-empty search domain when erosion removes all voxels.
         if not np.any(search):
-            search = (brain_mask > 0.5).copy()
+            search = brain_bool.copy()
             if roi_mask is not None:
                 search &= roi_mask > 0.5
 
@@ -2742,6 +2789,7 @@ class AIFDetection(BaseInterface):
             context.brain_mask,
             roi,
             context.lesion_mask,
+            voxel_sizes=context.voxel_sizes if roi is not None else None,
         )
         candidate_voxels, peak_map = self._find_aif_candidate_voxels(
             context.concentration,
@@ -3514,6 +3562,12 @@ class AIFDetection(BaseInterface):
         qc_metrics["aif_baseline_frames"] = aif_baseline_frames
         qc_metrics["baseline_frames_used"] = baseline_frames
         qc_metrics["baseline_detection_method"] = "auto_p99"
+        if context.aif_method != "synthetic" and (
+            context.atlas_mask is not None or context.full_atlas_mask is not None
+        ):
+            qc_metrics["atlas_brain_edge_exclusion_target_mm"] = (
+                _ATLAS_BRAIN_EDGE_EXCLUSION_MM
+            )
 
         if detection_level == "synthetic":
             qc_metrics["synthetic_aif_warnings"] = [

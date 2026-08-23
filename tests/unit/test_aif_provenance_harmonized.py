@@ -123,6 +123,20 @@ class TestBuildProvenanceBlockDSC:
         assert block["GammaFitApplied"] is False
         assert block["QualityScore"] == pytest.approx(0.8)
 
+    def test_atlas_edge_exclusion_is_recorded(self) -> None:
+        from pmriprep.utils.aif_provenance import build_aif_provenance_block
+
+        block = build_aif_provenance_block(
+            {"aif_detection": {
+                "detection_method": "atlas_strict",
+                "atlas_brain_edge_exclusion_target_mm": 8.0,
+            }},
+            modality="DSC",
+        )
+
+        assert block["AtlasBrainEdgeExclusionTarget"] == pytest.approx(8.0)
+        assert block["AtlasBrainEdgeExclusionTargetUnits"] == "mm"
+
     def test_synthetic(self) -> None:
         from pmriprep.utils.aif_provenance import build_aif_provenance_block
 
