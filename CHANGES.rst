@@ -1,6 +1,8 @@
-1.0.0rc2.dev12 (unreleased)
+1.0.0rc2.dev13 (unreleased)
 ===========================
 
+* ENH: Harmonize descriptive DSC and DCE AIF laterality provenance for final
+  candidate pools without changing candidate selection or acceptance.
 * FIX: Use an 8 mm physical in-plane brain-edge exclusion for every DSC AIF
   tier and replace scanner-axis whole-brain venous cuts with a symmetry-aligned
   posterior midline exclusion before candidate selection.

@@ -906,6 +906,8 @@ class TestSyntheticFallbackQcConsistency:
         "candidate_coords", "candidate_scores",
         "n_left_candidates", "n_right_candidates",
         "hemisphere_coverage", "is_bilateral",
+        "tumor_laterality", "laterality_mask_source",
+        "n_contralateral", "n_ipsilateral",
         "aif_slice", "aif_edge_slice_warning",
         "best_cost", "mean_cost",
         "cascade_accepted_roi_size",

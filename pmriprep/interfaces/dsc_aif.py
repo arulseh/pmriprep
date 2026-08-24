@@ -31,6 +31,7 @@ from nipype.interfaces.base import (  # type: ignore[import-untyped]
     traits,
 )
 
+from pmriprep.utils.aif_laterality import describe_tumor_relative_aif_candidates
 from pmriprep.utils.dsc_constants import (
     AIF_PEAK_CEILING_3T,
     AIF_PEAK_FLOOR_3T,
@@ -265,6 +266,8 @@ _STALE_REAL_AIF_KEYS: Final[tuple[str, ...]] = (
     "candidate_coords", "candidate_scores",
     "n_left_candidates", "n_right_candidates",
     "hemisphere_coverage", "is_bilateral",
+    "tumor_laterality", "laterality_mask_source",
+    "n_contralateral", "n_ipsilateral",
     "aif_slice", "aif_edge_slice_warning",
     "best_cost", "mean_cost",
     "cascade_accepted_roi_size",
@@ -992,103 +995,6 @@ class AIFDetection(BaseInterface):
         return zone, angle_degrees, overlap
 
     # -----------------------------------------------------------------
-    # Step 2b: World-coordinate hemisphere methods
-    # -----------------------------------------------------------------
-
-    @staticmethod
-    def _determine_tumor_laterality(
-        lesion_mask: npt.NDArray[Any],
-        affine: npt.NDArray[Any],
-        midline_tolerance_mm: float = 10.0,
-    ) -> Optional[str]:
-        """Determine tumor hemisphere using world (RAS) coordinates.
-
-        Parameters
-        ----------
-        lesion_mask : ndarray
-            3D lesion mask (values > 0.5 = lesion).
-        affine : ndarray
-            4x4 affine transformation matrix (voxel -> RAS world).
-        midline_tolerance_mm : float
-            Distance from midline (x=0) for bilateral classification.
-
-        Returns
-        -------
-        str or None
-            ``'left'``, ``'right'``, ``'bilateral'``, or ``None`` if
-            the mask is empty.
-        """
-        coords = np.argwhere(lesion_mask > 0.5)  # (N, 3) voxel coords
-        if len(coords) == 0:
-            return None
-
-        # Center of mass in voxel space
-        com_voxel = coords.mean(axis=0)
-
-        # Convert to world coordinates using affine
-        com_world = affine @ np.append(com_voxel, 1.0)
-        x_mm = float(com_world[0])
-
-        # Convert all lesion voxels to world for bilateral check
-        coords_homog = np.column_stack([coords, np.ones(len(coords))])
-        coords_world = (affine @ coords_homog.T).T
-        x_coords_mm = coords_world[:, 0]
-
-        x_min, x_max = float(x_coords_mm.min()), float(x_coords_mm.max())
-
-        # Bilateral if tumor significantly spans midline on both sides
-        if x_min < -midline_tolerance_mm and x_max > midline_tolerance_mm:
-            return "bilateral"
-
-        # RAS convention: x < 0 = left hemisphere
-        return "left" if x_mm < 0 else "right"
-
-    @staticmethod
-    def _count_candidates_by_hemisphere(
-        top_candidates: list[tuple[float, tuple[int, int, int], dict[str, Any]]],
-        affine: npt.NDArray[Any],
-        tumor_laterality: str,
-    ) -> tuple[int, int]:
-        """Count candidate laterality without changing selection scores.
-
-        Parameters
-        ----------
-        top_candidates : list
-            List of ``(cost, (x,y,z), metrics)`` tuples.
-        affine : ndarray
-            4x4 affine transformation matrix (voxel -> RAS world).
-        tumor_laterality : str
-            ``'left'``, ``'right'``, or ``'bilateral'``.
-
-        Returns
-        -------
-        tuple of (n_contra, n_ipsi)
-            n_contra : count of contralateral candidates.
-            n_ipsi : count of ipsilateral candidates.
-        """
-        if tumor_laterality == "bilateral":
-            return 0, 0
-
-        contra_side = "right" if tumor_laterality == "left" else "left"
-
-        n_contra = 0
-        n_ipsi = 0
-
-        for _, coord, _ in top_candidates:
-            coord_homog = np.array(
-                [coord[0], coord[1], coord[2], 1.0]
-            )
-            world = affine @ coord_homog
-            cand_side = "left" if world[0] < 0 else "right"
-
-            if cand_side == contra_side:
-                n_contra += 1
-            else:
-                n_ipsi += 1
-
-        return n_contra, n_ipsi
-
-    # -----------------------------------------------------------------
     # Step 3: Percentile candidate finder
     # -----------------------------------------------------------------
 
@@ -1656,26 +1562,22 @@ class AIFDetection(BaseInterface):
         return scored, n_available
 
     # -----------------------------------------------------------------
-    # Step 8b: Post-scoring distance filter and laterality accounting
+    # Step 8b: Post-scoring lesion-distance filter
     # -----------------------------------------------------------------
 
     def _apply_post_scoring_filters(
         self,
         top_candidates: list[tuple[float, tuple[int, int, int], dict[str, Any]]],
         lesion_mask: Optional[npt.NDArray[Any]],
-        affine: npt.NDArray[Any],
         voxel_sizes: tuple[float, ...],
         lesion_min_distance_mm: float = LESION_EXCLUSION_DISTANCE_MM,
-        enhancing_mask: Optional[npt.NDArray[Any]] = None,
     ) -> tuple[
         list[tuple[float, tuple[int, int, int], dict[str, Any]]],
         dict[str, Any],
     ]:
-        """Apply distance filtering and record candidate laterality.
+        """Apply distance-based lesion exclusion.
 
         Step 4.5: Distance-based lesion exclusion.
-        Step 4.6: Descriptive laterality accounting when a unilateral
-        lesion mask is present. Candidate costs and ordering are unchanged.
 
         Parameters
         ----------
@@ -1683,17 +1585,10 @@ class AIFDetection(BaseInterface):
             Scored ``(cost, (x,y,z), metrics)`` tuples.
         lesion_mask : ndarray or None
             3D lesion mask (dilated whole-tumor) for distance exclusion.
-        affine : ndarray
-            4x4 affine transformation matrix (voxel -> RAS world).
         voxel_sizes : tuple of float
             Voxel dimensions in mm ``(dx, dy, dz)``.
         lesion_min_distance_mm : float
             Minimum Euclidean distance from lesion in mm.
-        enhancing_mask : ndarray or None
-            3D enhancing tumor mask for laterality determination.
-            Uses this instead of ``lesion_mask`` for laterality to
-            avoid bilateral misclassification from dilated whole-tumor
-            masks that cross the midline.
 
         Returns
         -------
@@ -1734,37 +1629,6 @@ class AIFDetection(BaseInterface):
                 # or failure is reported explicitly downstream.
                 meta["all_candidates_excluded_by_distance"] = True
                 top_candidates = []
-
-        # --- Step 4.6: Descriptive candidate laterality accounting ---
-        # Uses enhancing_mask for laterality if provided (avoids bilateral
-        # misclassification from dilated whole-tumor masks crossing midline).
-        tumor_laterality: Optional[str] = None
-        n_contra = 0
-        n_ipsi = 0
-
-        laterality_mask = enhancing_mask if (
-            enhancing_mask is not None and np.any(enhancing_mask > 0.5)
-        ) else lesion_mask
-
-        if (
-            laterality_mask is not None
-            and np.any(laterality_mask > 0.5)
-        ):
-            tumor_laterality = self._determine_tumor_laterality(
-                laterality_mask, affine
-            )
-            if tumor_laterality is not None and tumor_laterality != "bilateral":
-                n_contra, n_ipsi = self._count_candidates_by_hemisphere(
-                    top_candidates, affine, tumor_laterality,
-                )
-
-        meta["tumor_laterality"] = tumor_laterality
-        meta["n_contralateral"] = n_contra
-        meta["n_ipsilateral"] = n_ipsi
-        meta["laterality_mask_source"] = (
-            "enhancing" if (enhancing_mask is not None and np.any(enhancing_mask > 0.5))
-            else "lesion"
-        )
 
         return top_candidates, meta
 
@@ -2934,10 +2798,8 @@ class AIFDetection(BaseInterface):
         candidates, filter_metadata = self._apply_post_scoring_filters(
             candidates,
             context.lesion_mask,
-            context.affine,
             context.voxel_sizes,
             lesion_min_distance_mm=context.lesion_distance,
-            enhancing_mask=context.enhancing_mask,
         )
         if not is_atlas:
             filter_metadata["whole_brain_symmetry_method"] = (
@@ -3156,6 +3018,14 @@ class AIFDetection(BaseInterface):
         )
         qc_metrics.update(baseline_diagnostics)
         qc_metrics.update(cascade.filter_metadata)
+        qc_metrics.update(
+            describe_tumor_relative_aif_candidates(
+                [coordinate for _, coordinate, _ in cascade.candidates],
+                context.affine,
+                context.lesion_mask,
+                enhancing_mask=context.enhancing_mask,
+            )
+        )
         if cascade.initial_level is not None:
             qc_metrics["cascade_downgraded"] = (
                 cascade.initial_level != cascade.detection_level

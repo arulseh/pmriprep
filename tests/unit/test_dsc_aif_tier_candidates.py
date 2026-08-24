@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 from pmriprep.interfaces.dsc_aif import AIFDetection
+from pmriprep.utils.aif_laterality import describe_tumor_relative_aif_candidates
 
 
 def _context() -> SimpleNamespace:
@@ -181,7 +182,6 @@ def test_all_candidates_inside_lesion_margin_exhaust_tier() -> None:
     filtered, metadata = detector._apply_post_scoring_filters(
         candidates,
         lesion_mask,
-        np.eye(4),
         (1.0, 1.0, 1.0),
         lesion_min_distance_mm=15.0,
     )
@@ -200,12 +200,15 @@ def test_laterality_accounting_does_not_change_candidate_ranking() -> None:
     ]
 
     original_costs = [candidate[0] for candidate in candidates]
-    n_contra, n_ipsi = AIFDetection._count_candidates_by_hemisphere(
-        candidates,
+    lesion_mask = np.zeros((21, 2, 2), dtype=np.uint8)
+    lesion_mask[18, 0, 0] = 1
+    metadata = describe_tumor_relative_aif_candidates(
+        [candidate[1] for candidate in candidates],
         np.eye(4),
-        tumor_laterality="right",
+        lesion_mask,
     )
 
     assert [candidate[0] for candidate in candidates] == original_costs
-    assert n_contra == 1
-    assert n_ipsi == 2
+    assert metadata["tumor_laterality"] == "right"
+    assert metadata["n_contralateral"] == 1
+    assert metadata["n_ipsilateral"] == 2

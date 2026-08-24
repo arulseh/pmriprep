@@ -2734,6 +2734,7 @@ def init_dce_preproc_wf(
     workflow.connect([
         (dce_lesion_masks_wf, aif_detection, [
             ("outputnode.aif_exclusion_mask", "lesion_mask_file"),
+            ("outputnode.enhancing_mask", "enhancing_mask_file"),
         ]),
     ])
 

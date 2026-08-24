@@ -29,6 +29,10 @@ def aif_qc() -> dict[str, Any]:
         "quality_score": 0.81,
         "cascade_final_level": "atlas_strict",
         "hemisphere_coverage": "bilateral",
+        "tumor_laterality": "left",
+        "laterality_mask_source": "enhancing",
+        "n_contralateral": 4,
+        "n_ipsilateral": 2,
         "gamma_fit_applied": True,
         "gamma_fit_r_squared": 0.94,
         "gamma_fit_auc_ratio": 0.97,
@@ -85,6 +89,10 @@ class TestCanonicalAIFBlock:
         assert block["QualityScore"] == pytest.approx(0.81)
         assert block["ArterialCascadeTier"] == "atlas_strict"
         assert block["HemisphereCoverage"] == "bilateral"
+        assert block["TumorLaterality"] == "left"
+        assert block["TumorLateralityMaskSource"] == "enhancing"
+        assert block["NumberOfContralateralCandidates"] == 4
+        assert block["NumberOfIpsilateralCandidates"] == 2
         assert block["GammaFitApplied"] is True
         assert block["GammaFitRSquared"] == pytest.approx(0.94)
         assert block["GammaFitAUCRatio"] == pytest.approx(0.97)
@@ -118,6 +126,10 @@ class TestCanonicalAIFBlock:
         block = sidecar["PerfusionProcessing"]["AIF"]
         assert block["PeakAmplitude"] == pytest.approx(12.5)
         assert block["PeakAmplitudeUnits"] == "mM"
+        assert block["TumorLaterality"] == "left"
+        assert block["TumorLateralityMaskSource"] == "enhancing"
+        assert block["NumberOfContralateralCandidates"] == 4
+        assert block["NumberOfIpsilateralCandidates"] == 2
 
 
 class TestOptionalKeysOmitted:

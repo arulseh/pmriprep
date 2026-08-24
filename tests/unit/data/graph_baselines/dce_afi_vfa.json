@@ -1725,6 +1725,12 @@
     [
       "transform_enhancing_mask",
       "out_file",
+      "aif_detection",
+      "enhancing_mask_file"
+    ],
+    [
+      "transform_enhancing_mask",
+      "out_file",
       "dce_pk_fit_qc",
       "enhancing_mask_file"
     ],

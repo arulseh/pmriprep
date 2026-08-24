@@ -317,6 +317,18 @@ def build_aif_provenance_block(
     hemisphere_coverage = aif_qc.get("hemisphere_coverage")
     if hemisphere_coverage is not None:
         block["HemisphereCoverage"] = str(hemisphere_coverage)
+    tumor_laterality = aif_qc.get("tumor_laterality")
+    if tumor_laterality is not None:
+        block["TumorLaterality"] = str(tumor_laterality)
+    laterality_mask_source = aif_qc.get("laterality_mask_source")
+    if laterality_mask_source is not None:
+        block["TumorLateralityMaskSource"] = str(laterality_mask_source)
+    n_contralateral = aif_qc.get("n_contralateral")
+    if n_contralateral is not None:
+        block["NumberOfContralateralCandidates"] = int(n_contralateral)
+    n_ipsilateral = aif_qc.get("n_ipsilateral")
+    if n_ipsilateral is not None:
+        block["NumberOfIpsilateralCandidates"] = int(n_ipsilateral)
     hct = aif_qc.get("hematocrit") or aif_qc.get("hematocrit_used")
     if hct is not None:
         block["Hematocrit"] = float(hct)

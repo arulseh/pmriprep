@@ -29,6 +29,7 @@ from nipype.interfaces.base import (  # type: ignore[import-untyped]
     traits,
 )
 
+from pmriprep.utils.aif_laterality import describe_tumor_relative_aif_candidates
 from pmriprep.utils.dce_constants import (
     AIF_CNR_SATURATION,
     AIF_FWHM_BAND_HALFWIDTH_SECONDS,
@@ -1444,6 +1445,7 @@ class DetectionState:
     whole_brain_symmetry_angle_degrees: float | None
     whole_brain_symmetry_overlap: float | None
     n_filtered_out: int
+    tumor_relative_laterality: dict[str, str | int]
 
     @classmethod
     def population_default(cls) -> "DetectionState":
@@ -1458,6 +1460,7 @@ class DetectionState:
             whole_brain_symmetry_angle_degrees=None,
             whole_brain_symmetry_overlap=None,
             n_filtered_out=0,
+            tumor_relative_laterality={},
         )
 
 
@@ -1536,6 +1539,12 @@ class DCEAIFDetectionInputSpec(BaseInterfaceInputSpec):
             "provide (per the workflow Function-node-returns-empty-string "
             "convention used by _transform_lesion_mask_to_dce)."
         ),
+    )
+    enhancing_mask_file = traits.Either(
+        File(exists=True),
+        traits.Enum(""),
+        mandatory=False,
+        desc="Optional 3D enhancing tumor mask for laterality determination",
     )
 
     # Detection parameters
@@ -4296,8 +4305,13 @@ class AIFDetection(BaseInterface):
 
     def _load_atlas_and_lesion_masks(
         self,
-    ) -> tuple[list[npt.NDArray[Any]], list[str], Optional[npt.NDArray[Any]]]:
-        """Load the optional atlas cascade masks + lesion mask (P2)."""
+    ) -> tuple[
+        list[npt.NDArray[Any]],
+        list[str],
+        Optional[npt.NDArray[Any]],
+        Optional[npt.NDArray[Any]],
+    ]:
+        """Load optional atlas, lesion, and enhancing masks (P2)."""
         import nibabel as nib  # type: ignore[import-untyped]
 
         # Optional atlas masks — build ordered list (tightest → broadest)
@@ -4325,8 +4339,12 @@ class AIFDetection(BaseInterface):
         if self.inputs.lesion_mask_file:
             lesion_img = nib.load(self.inputs.lesion_mask_file)
             lesion_mask = lesion_img.get_fdata()  # type: ignore[attr-defined]
+        enhancing_mask: Optional[npt.NDArray[Any]] = None
+        if self.inputs.enhancing_mask_file:
+            enhancing_img = nib.load(self.inputs.enhancing_mask_file)
+            enhancing_mask = enhancing_img.get_fdata()  # type: ignore[attr-defined]
 
-        return atlas_masks, atlas_names, lesion_mask
+        return atlas_masks, atlas_names, lesion_mask, enhancing_mask
 
     def _read_params(
         self, conc_data: npt.NDArray[Any], header: Any,
@@ -4361,6 +4379,7 @@ class AIFDetection(BaseInterface):
         atlas_masks: list[npt.NDArray[Any]],
         atlas_names: list[str],
         lesion_mask: Optional[npt.NDArray[Any]],
+        enhancing_mask: Optional[npt.NDArray[Any]],
         params: AIFParams,
     ) -> DetectionState:
         """Run the detection cascade + post-cascade filters (P5)."""
@@ -4610,6 +4629,12 @@ class AIFDetection(BaseInterface):
                 float(symmetry_overlap) if np.isfinite(symmetry_overlap) else None
             ),
             n_filtered_out=n_filtered_out,
+            tumor_relative_laterality=describe_tumor_relative_aif_candidates(
+                candidates,
+                affine,
+                lesion_mask,
+                enhancing_mask=enhancing_mask,
+            ),
         )
 
     def _emit_detected_aif(
@@ -4744,6 +4769,8 @@ class AIFDetection(BaseInterface):
             }
             if atlas_tier_used is not None:
                 qc_metrics["atlas_tier_used"] = atlas_tier_used
+
+        qc_metrics.update(state.tumor_relative_laterality)
 
         # Hemisphere coverage: classify candidates as left/right via RAS x-coord
         if candidates:
@@ -5243,14 +5270,21 @@ class AIFDetection(BaseInterface):
             return self._handle_external_aif(
                 runtime, loaded.conc_data, loaded.affine, loaded.brain_mask,
             )
-        atlas_masks, atlas_names, lesion_mask = self._load_atlas_and_lesion_masks()
+        atlas_masks, atlas_names, lesion_mask, enhancing_mask = (
+            self._load_atlas_and_lesion_masks()
+        )
         params = self._read_params(loaded.conc_data, loaded.header)
 
         if params.aif_method == "population":
             state = DetectionState.population_default()
         else:
             state = self._run_detection(
-                loaded, atlas_masks, atlas_names, lesion_mask, params,
+                loaded,
+                atlas_masks,
+                atlas_names,
+                lesion_mask,
+                enhancing_mask,
+                params,
             )
 
         if state.candidates:

@@ -3163,6 +3163,8 @@ def test_detection_has_no_hemisphere_score_prior(
     )
     lesion = np.zeros(shape, dtype=np.uint8)
     lesion[15, 10, 10] = 1  # right-sided tumor in RAS space
+    enhancing = np.zeros(shape, dtype=np.uint8)
+    enhancing[5, 10, 10] = 1  # preferred left-sided laterality mask
     candidates = [
         (15, 10, 10),  # ipsilateral and highest-scoring
         (5, 10, 10),
@@ -3199,6 +3201,7 @@ def test_detection_has_no_hemisphere_score_prior(
         atlas_masks=[],
         atlas_names=[],
         lesion_mask=lesion,
+        enhancing_mask=enhancing,
         params=AIFParams(
             aif_method="auto",
             n_candidates=2,
@@ -3215,6 +3218,12 @@ def test_detection_has_no_hemisphere_score_prior(
 
     assert state.candidates == candidates[:2]
     assert state.scores == scores[:2]
+    assert state.tumor_relative_laterality == {
+        "tumor_laterality": "left",
+        "laterality_mask_source": "enhancing",
+        "n_contralateral": 1,
+        "n_ipsilateral": 1,
+    }
 
 
 class TestScoreAndGatePool:

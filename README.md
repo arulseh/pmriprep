@@ -312,7 +312,9 @@ not emitted as derivatives.
 
 Applicable NIfTI derivatives have JSON sidecars describing units, conventions,
 processing, and provenance. AIF and motion time series are TSV files; regional
-statistics are JSON files.
+statistics are JSON files. When a lesion mask is available, detected-AIF
+provenance reports tumor laterality and the final candidate counts relative to
+a unilateral lesion; these fields do not affect candidate selection.
 
 DCE parameter-uncertainty derivatives contain NLLS standard errors or Bayesian
 posterior standard deviations conditional on the fitted inputs and model.

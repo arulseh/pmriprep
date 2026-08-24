@@ -81,6 +81,8 @@ def test_detected_aif_finalization_builds_mask_and_cascade_qc(
         },
         spatial_filter_diagnostics={},
     )
+    lesion_mask = np.zeros((3, 3, 3), dtype=np.uint8)
+    lesion_mask[2, 1, 1] = 1
     context = SimpleNamespace(
         concentration=np.zeros((3, 3, 3, 8)),
         brain_mask=np.ones((3, 3, 3)),
@@ -88,6 +90,8 @@ def test_detected_aif_finalization_builds_mask_and_cascade_qc(
         tr=1.5,
         n_candidates=10,
         baseline_frames=3,
+        lesion_mask=lesion_mask,
+        enhancing_mask=None,
     )
     monkeypatch.setattr(
         detector,
@@ -114,3 +118,7 @@ def test_detected_aif_finalization_builds_mask_and_cascade_qc(
     assert result.qc_metrics["aif_n_filtered_tail"] == 2
     assert result.qc_metrics["aif_peak_time_spread_frames"] == 2.0
     assert result.qc_metrics["aif_tail_max_fraction"] == 0.2
+    assert result.qc_metrics["tumor_laterality"] == "right"
+    assert result.qc_metrics["laterality_mask_source"] == "lesion"
+    assert result.qc_metrics["n_contralateral"] == 0
+    assert result.qc_metrics["n_ipsilateral"] == 2
