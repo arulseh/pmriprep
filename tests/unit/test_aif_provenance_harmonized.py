@@ -123,19 +123,25 @@ class TestBuildProvenanceBlockDSC:
         assert block["GammaFitApplied"] is False
         assert block["QualityScore"] == pytest.approx(0.8)
 
-    def test_atlas_edge_exclusion_is_recorded(self) -> None:
+    def test_spatial_policy_is_recorded(self) -> None:
         from pmriprep.utils.aif_provenance import build_aif_provenance_block
 
         block = build_aif_provenance_block(
             {"aif_detection": {
-                "detection_method": "atlas_strict",
-                "atlas_brain_edge_exclusion_target_mm": 8.0,
+                "detection_method": "brain_relaxed",
+                "brain_edge_exclusion_target_mm": 8.0,
+                "whole_brain_symmetry_method": "brain_projection_reflection",
+                "whole_brain_symmetry_angle_degrees": -2.5,
+                "whole_brain_symmetry_overlap": 0.96,
             }},
             modality="DSC",
         )
 
-        assert block["AtlasBrainEdgeExclusionTarget"] == pytest.approx(8.0)
-        assert block["AtlasBrainEdgeExclusionTargetUnits"] == "mm"
+        assert block["BrainEdgeExclusionTarget"] == pytest.approx(8.0)
+        assert block["BrainEdgeExclusionTargetUnits"] == "mm"
+        assert block["WholeBrainSymmetryMethod"] == "brain_projection_reflection"
+        assert block["WholeBrainSymmetryAngleDegrees"] == pytest.approx(-2.5)
+        assert block["WholeBrainSymmetryOverlap"] == pytest.approx(0.96)
 
     def test_synthetic(self) -> None:
         from pmriprep.utils.aif_provenance import build_aif_provenance_block

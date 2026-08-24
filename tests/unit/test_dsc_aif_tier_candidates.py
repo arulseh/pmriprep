@@ -40,7 +40,8 @@ def test_tier_candidate_stages_run_in_order(
 
     def prepare(*args: Any, **kwargs: Any) -> np.ndarray:
         calls.append("search")
-        assert kwargs["voxel_sizes"] is None
+        assert kwargs["voxel_sizes"] == context.voxel_sizes
+        assert kwargs["apply_posterior_midline_exclusion"] is True
         return np.ones((2, 2, 2), dtype=bool)
 
     def find(*args: Any, **kwargs: Any) -> tuple[np.ndarray, np.ndarray]:
@@ -67,13 +68,25 @@ def test_tier_candidate_stages_run_in_order(
     monkeypatch.setattr(detector, "_apply_postscore_aif_filters", kinetic)
 
     result = detector._prepare_tier_candidates(
-        context, "relaxed", None, False, 1, 5, 8.0,
+        context,
+        "relaxed",
+        None,
+        False,
+        None,
+        float("nan"),
+        float("nan"),
+        1,
+        5,
+        8.0,
     )
 
     assert calls == ["search", "find", "score", "spatial", "kinetic"]
     assert result.candidates == [candidates[1]]
     assert result.n_available == 4
-    assert result.filter_metadata == {"distance_filter": "applied"}
+    assert result.filter_metadata == {
+        "distance_filter": "applied",
+        "whole_brain_symmetry_method": "scanner_axis_fallback",
+    }
     assert result.postfilter_diagnostics == {"aif_n_after_filters": 1}
 
 
@@ -100,7 +113,16 @@ def test_empty_search_stops_before_scoring(
     monkeypatch.setattr(detector, "_score_and_select_candidates", fail_if_called)
 
     result = detector._prepare_tier_candidates(
-        context, "strict", context.atlas_mask, True, 3, 5, 8.0,
+        context,
+        "strict",
+        context.atlas_mask,
+        True,
+        None,
+        float("nan"),
+        float("nan"),
+        3,
+        5,
+        8.0,
     )
 
     assert result.candidates == []
@@ -129,10 +151,20 @@ def test_roi_tier_passes_physical_voxel_sizes(
     )
 
     detector._prepare_tier_candidates(
-        context, "strict", context.atlas_mask, atlas_is_mra, 3, 5, 8.0,
+        context,
+        "strict",
+        context.atlas_mask,
+        atlas_is_mra,
+        None,
+        float("nan"),
+        float("nan"),
+        3,
+        5,
+        8.0,
     )
 
     assert observed["voxel_sizes"] == context.voxel_sizes
+    assert observed["apply_posterior_midline_exclusion"] is not atlas_is_mra
 
 
 def test_all_candidates_inside_lesion_margin_exhaust_tier() -> None:

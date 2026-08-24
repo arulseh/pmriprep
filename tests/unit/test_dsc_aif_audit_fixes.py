@@ -367,8 +367,8 @@ class TestSingleBestProvenance:
     ) -> None:
         """Multi-voxel union → single-best fallback collapses provenance to 1.
 
-        Two sharp arterial voxels (both interior, so both survive the
-        4-iteration erosion) pass per-voxel scoring and enter the cascade's
+        Two sharp anterior arterial voxels (both beyond the physical edge and
+        posterior-midline exclusions) pass per-voxel scoring and enter the cascade's
         union pool, so ``union_tier_provenance`` accumulates 2 before any
         fallback (asserted via ``n_aif_voxels_available == 2``). The background
         is a low, late, broad tissue bolus whose peak concentration (~4) sits
@@ -404,8 +404,8 @@ class TestSingleBestProvenance:
             recirculation_height=6.0,
             recirc_frame=40,
         )
-        # Both voxels are >= 4 from every face, so both survive erosion.
-        for coord in ((5, 6, 6), (8, 6, 6)):
+        # Both voxels are physically interior and anterior to the venous band.
+        for coord in ((5, 9, 6), (8, 9, 6)):
             conc[coord[0], coord[1], coord[2], :] = curve
 
         brain = np.ones(shape, dtype=np.float64)

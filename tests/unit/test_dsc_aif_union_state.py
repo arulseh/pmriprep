@@ -21,8 +21,8 @@ def _empty_union() -> dsc_aif._CascadeUnionState:
     return dsc_aif._CascadeUnionState([], set(), {}, {}, {})
 
 
-def test_union_deduplicates_coordinates_and_preserves_first_metadata() -> None:
-    """A broader tier cannot replace a coordinate or metadata already accepted."""
+def test_union_deduplicates_and_preserves_spatial_provenance() -> None:
+    """A broader tier adds its symmetry provenance without replacing metadata."""
     state = _empty_union()
     shared = _candidate(0.5, (0, 0, 0))
     dsc_aif.AIFDetection._add_candidates_to_union(
@@ -37,13 +37,19 @@ def test_union_deduplicates_coordinates_and_preserves_first_metadata() -> None:
         [shared, _candidate(1.5, (0, 1, 0)), _candidate(2.0, (1, 0, 0))],
         "brain_relaxed",
         3,
-        {"search_source": "brain"},
+        {
+            "search_source": "brain",
+            "whole_brain_symmetry_method": "brain_projection_reflection",
+        },
     )
 
     assert len(state.candidates) == 3
     assert state.tier_provenance == {"atlas_relaxed": 2, "brain_relaxed": 1}
     assert state.coordinate_origins[(0, 0, 0)] == "atlas_relaxed"
-    assert state.filter_metadata == {"search_source": "atlas"}
+    assert state.filter_metadata == {
+        "search_source": "atlas",
+        "whole_brain_symmetry_method": "brain_projection_reflection",
+    }
 
 
 def test_union_acceptance_rebuilds_trimmed_provenance_in_cascade_order(

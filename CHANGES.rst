@@ -1,8 +1,9 @@
-1.0.0rc2.dev11 (unreleased)
+1.0.0rc2.dev12 (unreleased)
 ===========================
 
-* FIX: Use an 8 mm physical in-plane brain-edge exclusion for DSC arterial-
-  atlas AIF tiers while preserving the established whole-brain fallback rule.
+* FIX: Use an 8 mm physical in-plane brain-edge exclusion for every DSC AIF
+  tier and replace scanner-axis whole-brain venous cuts with a symmetry-aligned
+  posterior midline exclusion before candidate selection.
 * FIX: Consolidate DCE whole-brain AIF spatial exclusions around physical
   brain/slab distances and a symmetry-aligned posterior midline venous band.
 * ENH: Record whether the transformed DCE arterial-atlas search was selected,

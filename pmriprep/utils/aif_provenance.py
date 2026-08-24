@@ -326,12 +326,19 @@ def build_aif_provenance_block(
 
     # DSC-specific fields
     if modality == "DSC":
-        atlas_edge_exclusion = aif_qc.get(
-            "atlas_brain_edge_exclusion_target_mm"
-        )
-        if atlas_edge_exclusion is not None:
-            block["AtlasBrainEdgeExclusionTarget"] = float(atlas_edge_exclusion)
-            block["AtlasBrainEdgeExclusionTargetUnits"] = "mm"
+        brain_edge_exclusion = aif_qc.get("brain_edge_exclusion_target_mm")
+        if brain_edge_exclusion is not None:
+            block["BrainEdgeExclusionTarget"] = float(brain_edge_exclusion)
+            block["BrainEdgeExclusionTargetUnits"] = "mm"
+        symmetry_method = aif_qc.get("whole_brain_symmetry_method")
+        if symmetry_method is not None:
+            block["WholeBrainSymmetryMethod"] = str(symmetry_method)
+        symmetry_angle = aif_qc.get("whole_brain_symmetry_angle_degrees")
+        if symmetry_angle is not None:
+            block["WholeBrainSymmetryAngleDegrees"] = float(symmetry_angle)
+        symmetry_overlap = aif_qc.get("whole_brain_symmetry_overlap")
+        if symmetry_overlap is not None:
+            block["WholeBrainSymmetryOverlap"] = float(symmetry_overlap)
         block["GammaFitApplied"] = bool(
             aif_qc.get("gamma_fit_applied", False),
         )

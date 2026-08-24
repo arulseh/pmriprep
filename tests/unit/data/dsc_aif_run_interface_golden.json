@@ -105,6 +105,9 @@
         "baseline_frames_initial": 2,
         "baseline_frames_used": 3,
         "bootstrap_baseline_frames": 2,
+        "brain_edge_exclusion_target_mm": {
+          "__f__": "0x1.0000000000000p+3"
+        },
         "cascade_postfilter_diags": {
           "atlas_strict": {
             "aif_n_after_filters": 1
@@ -285,6 +288,9 @@
         "baseline_frames_initial": 2,
         "baseline_frames_used": 2,
         "bootstrap_baseline_frames": 2,
+        "brain_edge_exclusion_target_mm": {
+          "__f__": "0x1.0000000000000p+3"
+        },
         "candidate_baseline_frames": 2,
         "cascade_downgraded": false,
         "detection_method": "atlas_strict",
@@ -414,6 +420,9 @@
         "baseline_frames_initial": 2,
         "baseline_frames_used": 3,
         "bootstrap_baseline_frames": 2,
+        "brain_edge_exclusion_target_mm": {
+          "__f__": "0x1.0000000000000p+3"
+        },
         "candidate_baseline_frames": 2,
         "cascade_downgraded": false,
         "cascade_postfilter_diags": {
@@ -593,6 +602,9 @@
         "baseline_frames_initial": 2,
         "baseline_frames_used": 2,
         "bootstrap_baseline_frames": 2,
+        "brain_edge_exclusion_target_mm": {
+          "__f__": "0x1.0000000000000p+3"
+        },
         "candidate_baseline_frames": 2,
         "cascade_downgraded": false,
         "detection_method": "atlas_strict",
