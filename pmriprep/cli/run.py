@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import logging
+import os
 import sys
 from dataclasses import asdict
 from pathlib import Path
@@ -1428,6 +1429,45 @@ def _workflow_uses_gpu(workflow: Any) -> bool:
     )
 
 
+def _automatic_gpu_slots(workflow: Any) -> int | None:
+    """Return the safe automatic GPU concurrency for a workflow.
+
+    PMRIPrep's external GPU tools select the default visible device; Nipype's
+    GPU resource counter does not assign a distinct device to each node.
+    Automatic execution must therefore serialize GPU nodes even when several
+    devices are visible. Multi-GPU execution requires separate invocations
+    whose device visibility is restricted by the runtime or scheduler.
+    """
+    if not _workflow_uses_gpu(workflow):
+        return None
+
+    from pmriprep.utils.gpu import detect_gpu_count
+
+    n_gpus = detect_gpu_count()
+    if n_gpus > 1:
+        visible_devices = os.getenv("CUDA_VISIBLE_DEVICES", "<unset>")
+        logger.warning(
+            "Detected %d visible GPUs (CUDA_VISIBLE_DEVICES=%s), but PMRIPrep "
+            "does not assign individual devices to workflow nodes; scheduling "
+            "one GPU node at a time. Use separate device-isolated invocations "
+            "to run on multiple GPUs.",
+            n_gpus,
+            visible_devices,
+        )
+    elif n_gpus == 1:
+        logger.info(
+            "Detected 1 GPU (CUDA_VISIBLE_DEVICES=%s); scheduling one GPU "
+            "node at a time",
+            os.getenv("CUDA_VISIBLE_DEVICES", "<unset>"),
+        )
+    else:
+        logger.warning(
+            "GPU detection returned 0 but GPU nodes are present; defaulting "
+            "to 1 GPU slot"
+        )
+    return 1
+
+
 def _merge_user_plugin_resources(
     workflow: Any,
     args: argparse.Namespace,
@@ -1444,18 +1484,21 @@ def _merge_user_plugin_resources(
         merged["memory_gb"] = args.mem_gb
 
     if "n_gpu_procs" not in merged:
-        if _workflow_uses_gpu(workflow):
-            from pmriprep.utils.gpu import detect_gpu_count
-
-            n_gpus = detect_gpu_count()
-            merged["n_gpu_procs"] = max(n_gpus, 1)
-            if n_gpus > 0:
-                logger.info("Detected %d GPU(s) for scheduling", n_gpus)
-            else:
-                logger.warning(
-                    "GPU detection returned 0 but GPU nodes are present; "
-                    "defaulting to 1 GPU slot"
-                )
+        gpu_slots = _automatic_gpu_slots(workflow)
+        if gpu_slots is not None:
+            merged["n_gpu_procs"] = gpu_slots
+    elif (
+        isinstance(merged["n_gpu_procs"], (int, float))
+        and not isinstance(merged["n_gpu_procs"], bool)
+        and merged["n_gpu_procs"] > 1
+        and _workflow_uses_gpu(workflow)
+    ):
+        logger.warning(
+            "The plugin requests %s concurrent GPU nodes, but PMRIPrep does "
+            "not assign individual devices; concurrent nodes may use the same "
+            "GPU unless device isolation is provided externally.",
+            merged["n_gpu_procs"],
+        )
     return merged
 
 
@@ -1521,7 +1564,9 @@ def _run_workflow(
             # Convert GB to bytes for nipype
             plugin_args["memory_gb"] = args.mem_gb
 
-        # Tell nipype how many GPU slots are available when any node uses GPU.
+        # Give Nipype one GPU slot when any node uses a GPU. The external tools
+        # select the default visible device, so visible device count cannot be
+        # used as concurrency without per-node device assignment.
         # GPU nodes include HD-BET brain extraction (--hdbet-device cuda/mps)
         # and HD-GLIO tumor segmentation (--tumor-seg-device cuda/mps).
         # nipype's gpu_count() relies on nvidia-smi which may not be on PATH
@@ -1531,19 +1576,9 @@ def _run_workflow(
         # Inspect the constructed graph rather than the raw CLI namespace.
         # YAML configuration and per-pipeline defaults may differ from absent
         # CLI values; the node attributes are the effective scheduling state.
-        if _workflow_uses_gpu(workflow):
-            from pmriprep.utils.gpu import detect_gpu_count
-
-            n_gpus = detect_gpu_count()
-            if n_gpus > 0:
-                plugin_args["n_gpu_procs"] = n_gpus
-                logger.info("Detected %d GPU(s) for scheduling", n_gpus)
-            else:
-                plugin_args["n_gpu_procs"] = 1
-                logger.warning(
-                    "GPU detection returned 0 but GPU nodes are present; "
-                    "defaulting to 1 GPU slot"
-                )
+        gpu_slots = _automatic_gpu_slots(workflow)
+        if gpu_slots is not None:
+            plugin_args["n_gpu_procs"] = gpu_slots
 
         logger.info(f"Running workflow with {args.nprocs} processors")
         _run_with_cleanup(plugin, plugin_args)

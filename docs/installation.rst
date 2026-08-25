@@ -20,7 +20,7 @@ Docker (recommended)
        ghcr.io/arulseh/pmriprep:latest \
        /data /out participant --participant-label 01 -w /work
 
-Add ``--gpus all`` for GPU support (required for HD-GLIO tumor segmentation). When no GPU
+Add ``--gpus 1`` for GPU support (required for HD-GLIO tumor segmentation). When no GPU
 is detected, tumor segmentation is skipped automatically and the remaining pipelines run.
 
 Apptainer

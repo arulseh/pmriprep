@@ -159,7 +159,7 @@ def test_workflow_cleanup_failure_preserves_interrupt(
 def test_multiproc_gpu_slots_follow_constructed_workflow(
     monkeypatch: pytest.MonkeyPatch, use_gpu: bool,
 ) -> None:
-    """YAML-resolved node state, not absent CLI device flags, controls slots."""
+    """GPU workflows are detected from node state and serialized by default."""
     from pmriprep.cli.run import _run_workflow
 
     calls: list[tuple[str, dict[str, Any] | None]] = []
@@ -185,7 +185,7 @@ def test_multiproc_gpu_slots_follow_constructed_workflow(
 
     expected = {"n_procs": 4}
     if use_gpu:
-        expected["n_gpu_procs"] = 2
+        expected["n_gpu_procs"] = 1
     assert calls == [("MultiProc", expected)]
 
 
@@ -208,10 +208,42 @@ def test_gpu_demand_uses_nipype_node_input_contract() -> None:
     assert _workflow_uses_gpu(_Workflow())
 
 
+def test_automatic_gpu_slots_reports_unassigned_visible_devices(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Multiple visible devices are serialized with an actionable warning."""
+    from pmriprep.cli.run import _automatic_gpu_slots
+
+    class _Node:
+        def is_gpu_node(self) -> bool:
+            return True
+
+    class _Workflow:
+        def _get_all_nodes(self):
+            return [_Node()]
+
+    warnings: list[tuple[str, tuple[Any, ...]]] = []
+    monkeypatch.setattr("pmriprep.utils.gpu.detect_gpu_count", lambda: 2)
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "1,3")
+    monkeypatch.setattr(
+        "pmriprep.cli.run.logger.warning",
+        lambda message, *args: warnings.append((message, args)),
+    )
+
+    assert _automatic_gpu_slots(_Workflow()) == 1
+    assert warnings == [(
+        "Detected %d visible GPUs (CUDA_VISIBLE_DEVICES=%s), but PMRIPrep "
+        "does not assign individual devices to workflow nodes; scheduling "
+        "one GPU node at a time. Use separate device-isolated invocations "
+        "to run on multiple GPUs.",
+        (2, "1,3"),
+    )]
+
+
 def test_user_multiproc_merges_cli_resources(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """User MultiProc follows fMRIPrep resource precedence and GPU discovery."""
+    """User MultiProc follows CLI resources and safe GPU serialization."""
     from pmriprep.cli.run import _run_workflow
 
     plugin_file = tmp_path / "plugin.yaml"
@@ -247,7 +279,7 @@ def test_user_multiproc_merges_cli_resources(
         "n_procs": 3,
         "memory_gb": 12.0,
         "maxtasksperchild": 1,
-        "n_gpu_procs": 2,
+        "n_gpu_procs": 1,
     })]
 
 

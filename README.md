@@ -41,7 +41,7 @@ docker run --rm --init \
   /data /out participant --participant-label 01 -w /work
 ```
 
-Add `--gpus all` to the Docker command for NVIDIA GPU support. HD-BET falls
+Add `--gpus 1` to the Docker command for NVIDIA GPU support. HD-BET falls
 back to CPU when needed; HD-GLIO tumor segmentation is skipped when GPU is
 unavailable.
 

@@ -1,6 +1,9 @@
-1.0.0rc2.dev13 (unreleased)
+1.0.0rc2.dev14 (unreleased)
 ===========================
 
+* FIX: Serialize GPU-dependent workflow nodes by default because external GPU
+  tools select the default visible device rather than receiving per-node GPU
+  assignments, and warn when visible devices exceed safe automatic concurrency.
 * ENH: Harmonize descriptive DSC and DCE AIF laterality provenance for final
   candidate pools without changing candidate selection or acceptance.
 * FIX: Use an 8 mm physical in-plane brain-edge exclusion for every DSC AIF

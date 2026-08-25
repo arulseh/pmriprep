@@ -23,7 +23,7 @@
 #   /work   - Working directory for intermediate files (optional, recommended)
 #
 # GPU support (NVIDIA):
-#   docker run --gpus all -it --rm \
+#   docker run --gpus 1 -it --rm \
 #     -v /path/to/bids_dir:/data:ro \
 #     -v /path/to/output:/out \
 #     pmriprep:latest \
@@ -34,7 +34,7 @@ FROM condaforge/miniforge3:24.11.3-2
 LABEL maintainer="PMRIPrep Developers"
 LABEL org.opencontainers.image.title="PMRIPrep"
 LABEL org.opencontainers.image.description="PMRIPrep: automated preprocessing and quantification of DSC and DCE MRI"
-LABEL org.opencontainers.image.version="1.0.0rc2.dev13"
+LABEL org.opencontainers.image.version="1.0.0rc2.dev14"
 LABEL org.opencontainers.image.source="https://github.com/arulseh/pmriprep"
 LABEL org.opencontainers.image.licenses="Apache-2.0 AND CC0-1.0"
 
@@ -56,7 +56,7 @@ ENV MPLCONFIGDIR="/tmp/matplotlib"
 ENV IS_DOCKER_8395080871=1
 
 # NVIDIA container labels — enables proper GPU pass-through with
-# `docker run --gpus all` and Apptainer's `--nv` flag.
+# Docker's `--gpus` option and Apptainer's `--nv` flag.
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
