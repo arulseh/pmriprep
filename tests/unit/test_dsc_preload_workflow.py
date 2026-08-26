@@ -13,9 +13,9 @@ import pytest
 
 from pmriprep.utils.dsc_preload import K2CorrectionResult, PreloadClass, PreloadResult
 from pmriprep.workflows.dsc.base import (
-    _detect_and_correct_preload,
+    _apply_dsc_leakage_policy,
     init_dsc_deconvolution_wf,
-    init_dsc_preload_wf,
+    init_dsc_leakage_wf,
     init_dsc_qc_wf,
 )
 
@@ -70,19 +70,19 @@ def _write_executable_fixtures(tmp_path: Path) -> tuple[str, str, str, str]:
 
 
 @pytest.mark.parametrize("leakage_method", ["bsw", "none"])
-def test_leakage_policy_executes_through_preload_and_deconvolution(
+def test_leakage_policy_executes_through_correction_and_deconvolution(
     tmp_path: Path, leakage_method: str
 ) -> None:
     """Each public leakage policy executes across the connected DSC seam."""
     concentration, mask, signal, aif = _write_executable_fixtures(tmp_path)
     workflow = pe.Workflow(name=f"smoke_{leakage_method}", base_dir=str(tmp_path))
-    preload = init_dsc_preload_wf(
+    leakage = init_dsc_leakage_wf(
         preload="unknown",
         agent_standard_dose=0.1,
         baseline_frames=5,
         leakage_method=leakage_method,
         mem_gb=0.1,
-        name="preload",
+        name="leakage",
     )
     deconvolution = init_dsc_deconvolution_wf(
         dsc_map_kwargs={
@@ -93,13 +93,13 @@ def test_leakage_policy_executes_through_preload_and_deconvolution(
         mem_gb=0.1,
         name="deconvolution",
     )
-    preload.inputs.inputnode.concentration_file = concentration
-    preload.inputs.inputnode.signal_file = signal
-    preload.inputs.inputnode.brain_mask_file = mask
-    preload.inputs.inputnode.te = 0.03
-    preload.inputs.inputnode.field_strength = 3.0
-    preload.inputs.inputnode.tr = 1.5
-    preload.inputs.inputnode.baseline_frames = 5
+    leakage.inputs.inputnode.concentration_file = concentration
+    leakage.inputs.inputnode.signal_file = signal
+    leakage.inputs.inputnode.brain_mask_file = mask
+    leakage.inputs.inputnode.te = 0.03
+    leakage.inputs.inputnode.field_strength = 3.0
+    leakage.inputs.inputnode.tr = 1.5
+    leakage.inputs.inputnode.baseline_frames = 5
     deconvolution.inputs.inputnode.aif_file = aif
     deconvolution.inputs.inputnode.measured_aif_file = aif
     deconvolution.inputs.inputnode.aif_detection_level = "synthetic"
@@ -109,7 +109,7 @@ def test_leakage_policy_executes_through_preload_and_deconvolution(
     deconvolution.inputs.inputnode.signal_file = signal
     deconvolution.inputs.inputnode.raw_concentration_file = concentration
     workflow.connect([
-        (preload, deconvolution, [
+        (leakage, deconvolution, [
             ("outputnode.corrected_concentration_file", "inputnode.concentration_file"),
             ("outputnode.k2_map_file", "inputnode.k2_map_input_file"),
         ]),
@@ -173,7 +173,7 @@ def _advisory(cls: PreloadClass) -> PreloadResult:
 
 @pytest.fixture(autouse=True)
 def _chdir_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Confine ``_detect_and_correct_preload``'s ``Path.cwd()`` writes to tmp_path."""
+    """Confine ``_apply_dsc_leakage_policy`` output writes to ``tmp_path``."""
     monkeypatch.chdir(tmp_path)
 
 
@@ -189,7 +189,7 @@ class TestPreloadProvenance:
             "pmriprep.utils.dsc_preload.detect_preload",
             return_value=_advisory(PreloadClass.MINIMAL),
         ):
-            _, _, qc = _detect_and_correct_preload(
+            _, _, qc = _apply_dsc_leakage_policy(
                 concentration_file=conc,
                 brain_mask_file=mask,
                 te=0.03,
@@ -216,7 +216,7 @@ class TestPreloadProvenance:
             "pmriprep.utils.dsc_preload.detect_preload",
             return_value=_advisory(PreloadClass.MINIMAL),
         ):
-            _, _, qc = _detect_and_correct_preload(
+            _, _, qc = _apply_dsc_leakage_policy(
                 concentration_file=conc,
                 brain_mask_file=mask,
                 te=0.03,
@@ -242,7 +242,7 @@ class TestPreloadProvenance:
             "pmriprep.utils.dsc_preload.detect_preload",
             return_value=_advisory(PreloadClass.MINIMAL),
         ):
-            _, _, qc = _detect_and_correct_preload(
+            _, _, qc = _apply_dsc_leakage_policy(
                 concentration_file=conc,
                 brain_mask_file=mask,
                 te=0.03,
@@ -267,7 +267,7 @@ class TestPreloadProvenance:
             "pmriprep.utils.dsc_preload.detect_preload",
             return_value=_advisory(PreloadClass.MINIMAL),
         ):
-            corrected, k2_map, qc = _detect_and_correct_preload(
+            corrected, k2_map, qc = _apply_dsc_leakage_policy(
                 concentration_file=conc,
                 brain_mask_file=mask,
                 te=0.03,

@@ -558,7 +558,7 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
 
     k2_map_input_file = File(
         mandatory=False,
-        desc="K2 map from preload_correct (passed through when baseline not recomputed)",
+        desc="K2 map from leakage_correct (passed through when baseline not recomputed)",
     )
     leakage_method = traits.Enum(
         "bsw",

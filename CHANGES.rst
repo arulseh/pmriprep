@@ -1,6 +1,8 @@
-1.0.0rc2.dev14 (unreleased)
+1.0.0rc2.dev15 (unreleased)
 ===========================
 
+* MNT: Name the DSC leakage-correction workflow independently of administered
+  preload provenance.
 * FIX: Serialize GPU-dependent workflow nodes by default because external GPU
   tools select the default visible device rather than receiving per-node GPU
   assignments, and warn when visible devices exceed safe automatic concurrency.

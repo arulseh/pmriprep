@@ -17,7 +17,7 @@ class DSCConfig:
     """Configuration for DSC perfusion processing.
 
     This dataclass contains all parameters for DSC perfusion processing,
-    including preload detection, deconvolution, AIF detection, registration,
+    including preload provenance, deconvolution, AIF detection, registration,
     quantification, and processing options.
 
     Attributes

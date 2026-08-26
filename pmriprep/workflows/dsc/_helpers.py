@@ -16,12 +16,12 @@ __all__ = [
     "_ConvertXFMOutputSpec",
     "_FLIRTApplyXFMInputSpec",
     "_FLIRTApplyXFMOutputSpec",
+    "_apply_dsc_leakage_policy",
     "_build_hemodynamic_dict",
     "_compute_mean_4d",
     "_compute_prebolus_mean",
     "_create_perfusion_brain_mask_filmstrip",
     "_create_registration_filmstrip",
-    "_detect_and_correct_preload",
     "_generate_dsc_fit_qc",
     "_generate_dsc_leakage_qc",
     "_generate_dsc_param_maps_qc",
@@ -399,7 +399,7 @@ def _signal_to_concentration(
     return conc_file, signal_file
 
 
-def _detect_and_correct_preload(
+def _apply_dsc_leakage_policy(
     concentration_file: str,
     brain_mask_file: str,
     te: float,
@@ -411,9 +411,7 @@ def _detect_and_correct_preload(
     leakage_method: str = "bsw",
     agent_standard_dose: float = 0.1,
 ) -> tuple[str, str, dict[str, object]]:
-    """Record preload provenance and apply the configured K2 correction.
-
-    This is a Function node wrapper for preload detection and K2 correction.
+    """Apply the configured leakage policy and record preload provenance.
 
     Parameters
     ----------
@@ -433,7 +431,8 @@ def _detect_and_correct_preload(
         recorded for provenance and does not control leakage correction.
     signal_file : str, optional
         Path to motion-corrected raw signal NIfTI. Required by ``bsw`` for
-        Conventional BSW reference selection and also used for preload detection.
+        conventional BSW reference selection and also used for the baseline
+        delta-R2* advisory metric.
     baseline_frames : int, optional
         Number of pre-bolus baseline frames.
     leakage_method : str, optional
@@ -1471,7 +1470,7 @@ def _merge_qc_metrics(
     motion_qc : dict
         Motion correction QC metrics.
     preload_qc : dict
-        Preload detection and correction QC metrics.
+        Leakage QC metrics and administered-preload provenance.
     aif_qc : dict
         AIF detection QC metrics.
     deconv_qc : dict

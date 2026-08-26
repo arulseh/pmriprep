@@ -33,12 +33,12 @@ from pmriprep.workflows._perfusion import (
 from pmriprep.workflows.dsc._helpers import (  # noqa: F401
     ConvertXFM,
     FLIRTApplyXFM,
+    _apply_dsc_leakage_policy,
     _build_hemodynamic_dict,
     _compute_mean_4d,
     _compute_prebolus_mean,
     _create_perfusion_brain_mask_filmstrip,
     _create_registration_filmstrip,
-    _detect_and_correct_preload,
     _generate_dsc_fit_qc,
     _generate_dsc_leakage_qc,
     _generate_dsc_param_maps_qc,
@@ -419,19 +419,19 @@ def init_dsc_motion_wf(
     return workflow
 
 
-def init_dsc_preload_wf(
+def init_dsc_leakage_wf(
     *,
     preload: Union[str, float],
     agent_standard_dose: float,
     baseline_frames: int,
     leakage_method: str,
     mem_gb: float,
-    name: str = "dsc_preload_wf",
+    name: str = "dsc_leakage_wf",
 ) -> pe.Workflow:
-    """Build the DSC preload-detection + K2 leakage-correction sub-workflow.
+    """Build the DSC leakage-correction sub-workflow.
 
-    Records administered-preload provenance, performs leakage correction, and
-    computes the K2 map.
+    Applies the configured leakage policy, records administered-preload
+    provenance, and computes the K2 map when BSW is selected.
 
     Parameters
     ----------
@@ -451,7 +451,7 @@ def init_dsc_preload_wf(
     Returns
     -------
     workflow : nipype.pipeline.engine.Workflow
-        The preload/K2 sub-workflow.
+        The leakage-correction sub-workflow.
 
     Inputs
     ------
@@ -467,7 +467,7 @@ def init_dsc_preload_wf(
     k2_map_file
         K2 leakage map.
     qc_dict
-        Preload/leakage QC.
+        Leakage QC and preload provenance.
     """
     workflow = pe.Workflow(name=name)
     inputnode = pe.Node(
@@ -495,8 +495,7 @@ def init_dsc_preload_wf(
         name="outputnode",
     )
 
-    # Node 4: Preload Detection and K2 Correction
-    preload_correct = pe.Node(
+    leakage_correct = pe.Node(
         niu.Function(
             input_names=[
                 "concentration_file",
@@ -511,18 +510,18 @@ def init_dsc_preload_wf(
                 "agent_standard_dose",
             ],
             output_names=["corrected_concentration_file", "k2_map_file", "qc_dict"],
-            function=_detect_and_correct_preload,
+            function=_apply_dsc_leakage_policy,
         ),
-        name="preload_correct",
+        name="leakage_correct",
         mem_gb=mem_gb,
     )
-    preload_correct.inputs.preload = preload
-    preload_correct.inputs.agent_standard_dose = agent_standard_dose
-    preload_correct.inputs.baseline_frames = baseline_frames
-    preload_correct.inputs.leakage_method = leakage_method
+    leakage_correct.inputs.preload = preload
+    leakage_correct.inputs.agent_standard_dose = agent_standard_dose
+    leakage_correct.inputs.baseline_frames = baseline_frames
+    leakage_correct.inputs.leakage_method = leakage_method
 
     workflow.connect([
-        (inputnode, preload_correct, [
+        (inputnode, leakage_correct, [
             ("concentration_file", "concentration_file"),
             ("signal_file", "signal_file"),
             ("brain_mask_file", "brain_mask_file"),
@@ -531,11 +530,11 @@ def init_dsc_preload_wf(
             ("tr", "tr"),
             ("baseline_frames", "baseline_frames"),
         ]),
-        (preload_correct, outputnode, [
+        (leakage_correct, outputnode, [
             ("corrected_concentration_file", "corrected_concentration_file"),
             ("k2_map_file", "k2_map_file"),
         ]),
-        (preload_correct, outputnode, [("qc_dict", "qc_dict")]),
+        (leakage_correct, outputnode, [("qc_dict", "qc_dict")]),
     ])
     return workflow
 
@@ -1753,7 +1752,7 @@ def init_dsc_preproc_wf(
     1. Motion correction (mcflirt)
     2. Signal-to-concentration conversion (ΔR2*)
     3. AIF detection (atlas-based → automatic → synthetic fallback)
-    4. Preload detection and K2 leakage correction (if needed)
+    4. Leakage correction and preload-provenance recording
     5. Deconvolution (method from config: sSVD, oSVD, tikhonov, vascular, cpi)
     6. Perfusion parameter extraction (CBF, CBV, MTT, Tmax, PSR)
     7. Registration to T1w space
@@ -2001,10 +2000,10 @@ def init_dsc_preproc_wf(
     )
 
     # -------------------------------------------------------------------
-    # Node 4: Preload Detection and K2 Correction
+    # Node 4: Leakage correction and preload provenance
     # K2 correction needs the AIF, so runs after AIF detection
     # -------------------------------------------------------------------
-    preload_wf = init_dsc_preload_wf(
+    leakage_wf = init_dsc_leakage_wf(
         preload=config.preload,
         agent_standard_dose=config.agent_standard_dose,
         baseline_frames=config.pre_bolus,
@@ -2222,28 +2221,28 @@ def init_dsc_preproc_wf(
         ]),
     ])
 
-    # Signal Conversion to Preload Correction
+    # Signal conversion to leakage correction
     # Use DSC-space brain mask for proper geometry match
     workflow.connect([
-        (conc_aif_wf, preload_wf, [
+        (conc_aif_wf, leakage_wf, [
             ("outputnode.concentration_file", "inputnode.concentration_file"),
             ("outputnode.signal_file", "inputnode.signal_file"),
             ("outputnode.aif_baseline_frames", "inputnode.baseline_frames"),
         ]),
-        (hdbet_dsc, preload_wf, [
+        (hdbet_dsc, leakage_wf, [
             ("dsc_brain_mask_file", "inputnode.brain_mask_file"),
         ]),
-        (inputnode, preload_wf, [
+        (inputnode, leakage_wf, [
             ("te", "inputnode.te"),
             ("field_strength", "inputnode.field_strength"),
             ("tr", "inputnode.tr"),
         ]),
     ])
 
-    # Preload Correction to DSC Map Computation
+    # Leakage correction to DSC map computation
     # Use DSC-space brain mask for proper geometry match
     workflow.connect([
-        (preload_wf, deconvolution_wf, [
+        (leakage_wf, deconvolution_wf, [
             ("outputnode.corrected_concentration_file", "inputnode.concentration_file"),
             ("outputnode.k2_map_file", "inputnode.k2_map_input_file"),
         ]),
@@ -2268,8 +2267,6 @@ def init_dsc_preproc_wf(
         (conc_aif_wf, deconvolution_wf, [
             ("outputnode.signal_file", "inputnode.signal_file"),
             ("outputnode.concentration_file", "inputnode.raw_concentration_file"),
-        ]),
-        (preload_wf, deconvolution_wf, [
         ]),
     ])
 
@@ -2345,7 +2342,7 @@ def init_dsc_preproc_wf(
             ("outputnode.prebolus_mean_file", "inputnode.prebolus_mean_file"),
             ("outputnode.dsc_moco", "inputnode.dsc_moco"),
         ]),
-        (preload_wf, qc_wf, [
+        (leakage_wf, qc_wf, [
             ("outputnode.qc_dict", "inputnode.preload_qc_dict"),
             ("outputnode.corrected_concentration_file", "inputnode.corrected_concentration_file"),
         ]),
@@ -2613,7 +2610,7 @@ def init_dsc_preproc_wf(
     workflow.connect([
         # QC metrics
         (qc_wf, outputnode, [("outputnode.qc_metrics", "qc_metrics")]),
-        (preload_wf, outputnode, [("outputnode.qc_dict", "preload_qc")]),
+        (leakage_wf, outputnode, [("outputnode.qc_dict", "preload_qc")]),
         (motion_wf, outputnode, [("outputnode.motion_qc_metrics", "motion_qc")]),
         (qc_wf, outputnode, [("outputnode.aif_metrics", "aif_metrics")]),
     ])

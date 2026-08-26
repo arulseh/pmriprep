@@ -2276,7 +2276,7 @@ class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
     )
     dsc_preload_qc = traits.Dict(
         mandatory=False,
-        desc="DSC preload + K2 QC metrics dict from preload_correct node",
+        desc="DSC leakage QC and preload provenance from leakage_correct node",
     )
     dsc_preprocessing_stats = traits.Dict(
         mandatory=False,

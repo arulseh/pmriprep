@@ -425,8 +425,8 @@ def fit_gamma_variate(
     This function fits the model:
         C(t) = A × (t - t0)^α × exp(-(t - t0) / β)
 
-    The gamma-variate model represents the first-pass bolus only,
-    allowing removal of recirculation effects for preload correction.
+    The gamma-variate model represents the first-pass bolus only, allowing
+    recirculation to be excluded from the modeled AIF.
 
     Parameters
     ----------
@@ -455,7 +455,7 @@ def fit_gamma_variate(
     - It has analytical AUC: AUC = A × β^(α+1) × Γ(α+1)
     - Recirculation appears as positive residual after washout
 
-    For preload correction:
+    For first-pass AIF modeling:
     - Fit gamma-variate to measured AIF
     - The fitted curve represents first-pass only
     - Residual (measured - fitted) contains recirculation
