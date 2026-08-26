@@ -4,7 +4,7 @@ run-name: "PMRIPrep validation #${{ github.run_number }} · ${{ github.head_ref 
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
     branches: [main]
 
