@@ -2,6 +2,7 @@ name: Test, docs and package checks
 run-name: "PMRIPrep validation #${{ github.run_number }} · ${{ github.head_ref || github.ref_name }}"
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
   pull_request:
