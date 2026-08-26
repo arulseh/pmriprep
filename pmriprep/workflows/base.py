@@ -1801,6 +1801,8 @@ def _connect_master_dsc_datasinks(
         "brain_mask_dsc",
         "dsc_to_t1w_xfm",
     }
+    if dsc_config.leakage_method == "bsw":
+        dsc_present.add("k2_map")
     # Parametric methods only (oSVD/sSVD/tikhonov produce no
     # vascular params, no Bayesian uncertainty, no parametric R²)
     if dsc_method in ("cpi", "vascular"):
@@ -1932,6 +1934,7 @@ def _connect_master_dsc_datasinks(
             ("outputnode.ttp_map", "inputnode.ttp_map"),
             ("outputnode.cnr_map", "inputnode.cnr_map"),
             ("outputnode.tsnr_map", "inputnode.tsnr_map"),
+            ("outputnode.k2_map", "inputnode.k2_map"),
             # Relative maps
             ("outputnode.rel_cbf_map", "inputnode.rel_cbf_map"),
             ("outputnode.rel_cbv_map", "inputnode.rel_cbv_map"),

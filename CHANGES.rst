@@ -1,6 +1,10 @@
-1.0.0rc2.dev15 (unreleased)
+1.0.0rc2.dev16 (unreleased)
 ===========================
 
+* FIX: Publish the signed DSC K2 coefficient map when BSW leakage correction
+  is applied.
+* FIX: Align Nipype GPU detection with PMRIPrep and report automatic GPU
+  serialization without implying that concurrent execution was requested.
 * MNT: Name the DSC leakage-correction workflow independently of administered
   preload provenance.
 * FIX: Serialize GPU-dependent workflow nodes by default because external GPU

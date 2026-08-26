@@ -1445,14 +1445,10 @@ def _automatic_gpu_slots(workflow: Any) -> int | None:
 
     n_gpus = detect_gpu_count()
     if n_gpus > 1:
-        visible_devices = os.getenv("CUDA_VISIBLE_DEVICES", "<unset>")
-        logger.warning(
-            "Detected %d visible GPUs (CUDA_VISIBLE_DEVICES=%s), but PMRIPrep "
-            "does not assign individual devices to workflow nodes; scheduling "
-            "one GPU node at a time. Use separate device-isolated invocations "
-            "to run on multiple GPUs.",
+        logger.info(
+            "Detected %d visible GPUs; PMRIPrep will schedule one GPU node at "
+            "a time",
             n_gpus,
-            visible_devices,
         )
     elif n_gpus == 1:
         logger.info(
@@ -1522,7 +1518,23 @@ def _run_workflow(
 
     enable_child_subreaper()
 
-    def _run_with_cleanup(plugin: str, plugin_args: dict[str, Any] | None = None) -> None:
+    def _run_with_cleanup(
+        plugin: str,
+        plugin_args: dict[str, Any] | None = None,
+        *,
+        harmonize_gpu_detection: bool = True,
+    ) -> None:
+        patched_module = None
+        original_gpu_count = None
+        if harmonize_gpu_detection and plugin == "MultiProc":
+            from nipype.pipeline.plugins import multiproc
+            from pmriprep.utils.gpu import detect_gpu_count
+
+            detected_gpus = detect_gpu_count()
+            if detected_gpus > 0:
+                patched_module = multiproc
+                original_gpu_count = multiproc.gpu_count
+                multiproc.gpu_count = lambda: detected_gpus
         try:
             workflow.run(plugin=plugin, plugin_args=plugin_args)
         except BaseException as error:
@@ -1536,6 +1548,9 @@ def _run_workflow(
                     cleanup_error,
                 )
             raise
+        finally:
+            if patched_module is not None and original_gpu_count is not None:
+                patched_module.gpu_count = original_gpu_count
 
     # User-supplied plugin config takes precedence over the auto
     # MultiProc/Linear selection. Useful for cluster schedulers
@@ -1543,6 +1558,7 @@ def _run_workflow(
     user_plugin = getattr(args, "use_plugin", None)
     if user_plugin is not None:
         plugin, plugin_args = _load_plugin_config(user_plugin)
+        explicit_gpu_slots = "n_gpu_procs" in plugin_args
         plugin_args = _merge_user_plugin_resources(
             workflow, args, plugin, plugin_args,
         )
@@ -1550,7 +1566,11 @@ def _run_workflow(
             "Running workflow with user-supplied plugin %s (from %s)",
             plugin, user_plugin,
         )
-        _run_with_cleanup(plugin, plugin_args)
+        _run_with_cleanup(
+            plugin,
+            plugin_args,
+            harmonize_gpu_detection=not explicit_gpu_slots,
+        )
         return
 
     # Determine execution plugin based on nprocs

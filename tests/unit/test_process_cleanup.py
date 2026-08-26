@@ -208,10 +208,10 @@ def test_gpu_demand_uses_nipype_node_input_contract() -> None:
     assert _workflow_uses_gpu(_Workflow())
 
 
-def test_automatic_gpu_slots_reports_unassigned_visible_devices(
+def test_automatic_gpu_slots_reports_serialized_visible_devices(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Multiple visible devices are serialized with an actionable warning."""
+    """Multiple visible devices are serialized without a request warning."""
     from pmriprep.cli.run import _automatic_gpu_slots
 
     class _Node:
@@ -222,22 +222,53 @@ def test_automatic_gpu_slots_reports_unassigned_visible_devices(
         def _get_all_nodes(self):
             return [_Node()]
 
-    warnings: list[tuple[str, tuple[Any, ...]]] = []
+    messages: list[tuple[str, tuple[Any, ...]]] = []
     monkeypatch.setattr("pmriprep.utils.gpu.detect_gpu_count", lambda: 2)
-    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "1,3")
     monkeypatch.setattr(
-        "pmriprep.cli.run.logger.warning",
-        lambda message, *args: warnings.append((message, args)),
+        "pmriprep.cli.run.logger.info",
+        lambda message, *args: messages.append((message, args)),
     )
 
     assert _automatic_gpu_slots(_Workflow()) == 1
-    assert warnings == [(
-        "Detected %d visible GPUs (CUDA_VISIBLE_DEVICES=%s), but PMRIPrep "
-        "does not assign individual devices to workflow nodes; scheduling "
-        "one GPU node at a time. Use separate device-isolated invocations "
-        "to run on multiple GPUs.",
-        (2, "1,3"),
+    assert messages == [(
+        "Detected %d visible GPUs; PMRIPrep will schedule one GPU node at "
+        "a time",
+        (2,),
     )]
+
+
+def test_run_workflow_harmonizes_nipype_gpu_detection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Nipype sees the same available GPU count used by PMRIPrep."""
+    from nipype.pipeline.plugins import multiproc
+
+    from pmriprep.cli.run import _run_workflow
+
+    observed: list[int] = []
+    original_gpu_count = multiproc.gpu_count
+
+    class _Node:
+        def is_gpu_node(self) -> bool:
+            return True
+
+    class _Workflow:
+        def _get_all_nodes(self):
+            return [_Node()]
+
+        def run(self, *, plugin: str, plugin_args: Any = None) -> None:
+            observed.append(multiproc.gpu_count())
+
+    monkeypatch.setattr("pmriprep.utils.processes.enable_child_subreaper", lambda: True)
+    monkeypatch.setattr("pmriprep.utils.gpu.detect_gpu_count", lambda: 2)
+
+    _run_workflow(
+        _Workflow(),
+        Namespace(nprocs=4, mem_gb=None, use_plugin=None),
+    )
+
+    assert observed == [2]
+    assert multiproc.gpu_count is original_gpu_count
 
 
 def test_user_multiproc_merges_cli_resources(

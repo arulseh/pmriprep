@@ -460,6 +460,39 @@ class TestWriterAifBlockPresentOnAllMaps:
             assert "AIFDependent" in sidecar, suffix
             assert "TemplateAIFUsage" in sidecar, suffix
 
+    def test_signed_k2_is_published_as_aif_independent(
+        self, minimal_inputs, tmp_path,
+    ) -> None:
+        minimal_inputs["k2_map"] = _write_dummy_nifti(tmp_path / "k2.nii.gz")
+        qc = {
+            "aif_detection": {
+                "detection_method": "atlas_strict",
+                "quality_score": 0.9,
+            }
+        }
+        derivatives = _run_writer(minimal_inputs, qc, tmp_path)
+
+        assert len(list(derivatives.rglob("*dscK2_stat.nii.gz"))) == 1
+        sidecar = _load_sidecar(derivatives, "dscK2_stat")
+        assert sidecar["Units"] == "1/s"
+        assert sidecar["AIFDependent"] is False
+        assert sidecar["TemplateAIFUsage"] == "safe"
+        assert sidecar["SignedCoefficient"] is True
+
+    def test_k2_sink_is_conditional(self, minimal_inputs) -> None:
+        from pmriprep.workflows.dsc.datasinks import init_dsc_datasinks_wf
+
+        workflow = init_dsc_datasinks_wf(
+            output_dir=minimal_inputs["output_dir"],
+            bids_dir=minimal_inputs["bids_dir"],
+            subject_id=minimal_inputs["subject_id"],
+            session_id=minimal_inputs["session_id"],
+            inference="nlls",
+            present_inputs=set(),
+        )
+
+        assert "k2_map_sink" not in workflow.list_node_names()
+
     def test_map_units_match_computed_quantities(self, minimal_inputs, tmp_path) -> None:
         minimal_inputs.update({
             "cth_map": _write_dummy_nifti(tmp_path / "cth.nii.gz"),

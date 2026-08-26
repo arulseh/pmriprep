@@ -206,6 +206,12 @@
     ],
     [
       "compute_maps",
+      "out_k2",
+      "outputnode",
+      "k2_map"
+    ],
+    [
+      "compute_maps",
       "out_mtt",
       "dsc_param_maps_qc",
       "mtt_file"
@@ -2166,6 +2172,7 @@
     "fallback_mask",
     "flair_in_dsc",
     "flair_postcon_in_dsc",
+    "k2_map",
     "lesion_mask_dsc",
     "lesion_stats_json",
     "motion_params",

@@ -1830,7 +1830,8 @@ def init_dsc_preproc_wf(
                 "psr_map",
                 "ttp_map",
                 "cnr_map",
-                # AUC decomposition
+                # Leakage correction
+                "k2_map",
                 # Vascular-model physiological derivative (optional)
                 "cth_map",
                 # Conditional parametric CBF uncertainty map (optional)
@@ -2517,6 +2518,10 @@ def init_dsc_preproc_wf(
         # Quality metrics
         (deconvolution_wf, outputnode, [
             ("outputnode.out_tsnr", "tsnr_map"),
+        ]),
+        # Leakage-correction coefficient (defined only for BSW)
+        (deconvolution_wf, outputnode, [
+            ("outputnode.out_k2", "k2_map"),
         ]),
         # Vascular-model CTH (optional — undefined for non-vascular methods)
         (deconvolution_wf, outputnode, [

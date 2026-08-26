@@ -169,6 +169,16 @@ _OPTIONAL_MAPS: tuple[DSCMapSpec, ...] = (
             ),
         },
     ),
+    DSCMapSpec(
+        "k2_map", "dsc", "k2", "Signed BSW leakage-correction coefficient",
+        "1/s", "k2",
+        {
+            "Estimator": "voxelwise_unconstrained_ordinary_least_squares",
+            "LeakageCorrectionMethod": "bsw",
+            "SignedCoefficient": True,
+            "UndefinedValue": "NaN when the BSW coefficient cannot be estimated",
+        },
+    ),
 )
 
 
@@ -1299,7 +1309,7 @@ def init_dsc_datasinks_wf(
                 "rel_cbf_map", "rel_cbv_map", "rel_cbv_auc_map",
                 # Optional
                 "ttp_map",
-                "cnr_map", "tsnr_map",
+                "cnr_map", "tsnr_map", "k2_map",
                 # Normalized
                 "ncbv_map", "ncbf_map",
                 # Vascular
