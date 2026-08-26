@@ -76,6 +76,10 @@ HD-GLIO are optional: missing HD-BET falls back to ANTs for anatomical images
 and to FSL BET for DSC/DCE images, while missing HD-GLIO skips tumor
 segmentation.
 
+Runtime depends on image dimensions, time points, enabled pipelines, inference
+method, and available hardware. Recent validation runs using 32 CPU workers
+completed in approximately 5–15 minutes per session.
+
 ## Usage
 
 ```bash
@@ -273,9 +277,6 @@ the fallback agent: field-strength-specific Gd-DTPA r1 for DCE and a standard
 dose of 0.1 mmol Gd/kg for dose-adjusted AIF handling. DSC and DCE dose options
 are multipliers of the agent's standard administered dose.
 
-Detected DCE AIFs are spatially averaged from the selected arterial voxels
-without temporal filtering. Baseline-centered signed samples are retained.
-
 ## Outputs and QC
 
 Derivatives are written under `output_dir/pmriprep/`:
@@ -300,10 +301,9 @@ Output availability depends on the supplied modalities and configuration:
   MTT, Tmax, PSR, leakage and signal-quality diagnostics, masks, and regional
   statistics.
 - DCE outputs include PK, model-selection, model-free, timing, and fit-quality
-  derivatives, a fit-quality acceptance mask, and regional statistics.
-  Quantitative maps remain uncensored; regional statistics retain native
-  finite-value summaries and add explicitly labelled summaries restricted to
-  passing voxels when the acceptance mask is available.
+  derivatives, a QC mask, and regional statistics. Quantitative maps are not
+  filtered. Regional statistics are reported for all finite voxels and, when a
+  QC mask is available, separately for voxels that pass QC.
 
 Accepted VFA T1 mapping emits a millisecond `T1map` registered to the native
 DCE reference grid. Population-T1 fallbacks and external T1 maps are consumed
