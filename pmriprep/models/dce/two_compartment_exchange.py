@@ -28,16 +28,15 @@ from pmriprep.models.dce.initialization import estimate_ktrans_uptake
 from pmriprep.utils.dce_constants import (
     EPSILON_EIGENVALUE,
     EPSILON_FLOW,
-    EPSILON_VE,
     EPSILON_VE_FORWARD,
     EPSILON_VP,
     FP_BOUNDS,
-    KEP_BOUNDS,
     PS_BOUNDS,
     VE_BOUNDS,
     VP_BOUNDS,
     VP_VE_TOTAL_MAX,
 )
+from pmriprep.utils.dce_metrics import compute_kep
 
 
 class TwoCompartmentExchangeModel(PKModel):
@@ -760,7 +759,7 @@ class TwoCompartmentExchangeModel(PKModel):
         """
         fp = params[0]
         ps = params[1]
-        ve = max(params[2], EPSILON_VE)
+        ve = params[2]
 
         # Guard against division by zero
         fp_plus_ps = max(fp + ps, EPSILON_FLOW)
@@ -771,11 +770,6 @@ class TwoCompartmentExchangeModel(PKModel):
         # Volume transfer constant (equivalent to Tofts Ktrans, min^-1)
         ktrans = e * fp / 100.0
 
-        raw_kep = ktrans / ve if ve > EPSILON_VE else float("nan")
-        kep = (
-            raw_kep
-            if np.isfinite(raw_kep) and raw_kep <= KEP_BOUNDS.max
-            else float("nan")
-        )
+        kep = compute_kep(ktrans, ve)
 
         return {"E": e, "Ktrans": ktrans, "kep": kep}

@@ -104,26 +104,20 @@ def test_zero_ktrans_not_inflated() -> None:
     assert recovered < 0.015, f"zero-Ktrans inflated to {recovered:.4f}"
 
 
-def test_kep_rail_flag_and_nan() -> None:
-    """The non-identifiable kep corner is undefined and flagged.
-
-    Raw kep = Ktrans/ve above the physiological cap is intrinsically
-    unreliable; the reported kep must be NaN and the voxel reported as railed.
-    """
+def test_kep_quality_flag_preserves_finite_value() -> None:
+    """High-kep classification does not suppress the finite derived value."""
     from pmriprep.interfaces.dce_compute import _compute_derived_params
 
     railed = {"Ktrans": 5.0, "ve": 0.1}  # raw kep = 50 >> cap
     assert _compute_derived_params(railed, "tofts") is True
-    assert np.isnan(railed["kep"])
+    assert railed["kep"] == pytest.approx(50.0)
 
     ok = {"Ktrans": 0.3, "ve": 0.1}  # raw kep = 3, physiological
     assert _compute_derived_params(ok, "tofts") is False
     assert ok["kep"] == pytest.approx(3.0)
 
 
-def test_reported_kep_is_nan_outside_identifiable_range() -> None:
-    """Model-level derived Kep does not publish a boundary point mass."""
-    assert np.isnan(ToftsModel().compute_derived_parameters([5.0, 0.1])["kep"])
-    assert np.isnan(
-        ExtendedToftsModel().compute_derived_parameters([5.0, 0.1, 0.05])["kep"]
-    )
+def test_models_report_high_finite_kep() -> None:
+    """Both Tofts models report finite ratios without upper clipping."""
+    assert ToftsModel().compute_derived_parameters([5.0, 0.1])["kep"] == pytest.approx(50)
+    assert ExtendedToftsModel().compute_derived_parameters([5.0, 0.1, 0.05])["kep"] == pytest.approx(50)

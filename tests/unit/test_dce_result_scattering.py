@@ -638,7 +638,8 @@ def test_nonconverged_very_poor_r2_is_unsuccessful_not_execution_error() -> None
     assert result["failure_reason"] == "nonconverged_very_poor_r2"
 
 
-def test_map_uncertainty_accounting_excludes_postfit_rejection() -> None:
+@pytest.mark.parametrize("rejected_rate", [KTRANS_BOUNDS.max, np.nan, np.inf])
+def test_map_uncertainty_accounting_excludes_postfit_rejection(rejected_rate: float) -> None:
     """MAP retained-voxel accounting excludes a degenerate rejected fit."""
     voxels = [
         VoxelInput(0, 0, 0, np.zeros(3), None),
@@ -660,7 +661,7 @@ def test_map_uncertainty_accounting_excludes_postfit_rejection() -> None:
     }
     rejected = {
         **base_result,
-        "params": {"Ktrans": KTRANS_BOUNDS.max, "ve": 0.3},
+        "params": {"Ktrans": rejected_rate, "ve": 0.3},
         "uncertainty_source": "hessian_unavailable",
     }
     retained = {

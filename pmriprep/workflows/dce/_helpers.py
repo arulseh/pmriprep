@@ -2502,8 +2502,6 @@ def _derive_smoothed_kep(
     smoothed_pk: dict[str, str] | None,
     native_kep_file: str | None,
     brain_mask_file: str | None,
-    epsilon_ve: float,
-    max_kep: float,
 ) -> dict[str, str]:
     """Add Kep derived from the spatially smoothed Ktrans and ve maps.
 
@@ -2516,10 +2514,6 @@ def _derive_smoothed_kep(
         is defined, notably excluding Patlak voxels in automatic model mode.
     brain_mask_file : str or None
         DCE-space brain mask used to restrict the derived map.
-    epsilon_ve : float
-        Minimum valid ve denominator.
-    max_kep : float
-        Maximum identifiable reported Kep in inverse minutes.
 
     Returns
     -------
@@ -2553,7 +2547,7 @@ def _derive_smoothed_kep(
         np.isfinite(ktrans)
         & (ktrans >= 0.0)
         & np.isfinite(ve)
-        & (ve > epsilon_ve)
+        & (ve > 0.0)
     )
     if native_kep_file and isdefined(native_kep_file) and Path(native_kep_file).is_file():
         native_kep_img = cast("nib.Nifti1Image", nib.load(native_kep_file))
@@ -2574,8 +2568,9 @@ def _derive_smoothed_kep(
         valid &= brain_mask
 
     kep = np.full(ktrans.shape, np.nan, dtype=np.float32)
-    np.divide(ktrans, ve, out=kep, where=valid)
-    kep[~valid | (kep > max_kep)] = np.nan
+    with np.errstate(over="ignore", divide="ignore", invalid="ignore"):
+        np.divide(ktrans, ve, out=kep, where=valid)
+    kep[~valid | ~np.isfinite(kep)] = np.nan
     kep[~brain_mask] = 0.0
     out_path = Path.cwd() / f"{Path(ktrans_file).stem}_derived_kep.nii.gz"
     header = ktrans_img.header.copy()

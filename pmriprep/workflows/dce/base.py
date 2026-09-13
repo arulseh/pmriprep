@@ -349,18 +349,12 @@ def init_dce_smoothing_wf(
         niu.Function(
             input_names=[
                 "smoothed_pk", "native_kep_file", "brain_mask_file",
-                "epsilon_ve", "max_kep",
             ],
             output_names=["smoothed_pk_with_kep"],
             function=_derive_smoothed_kep,
         ),
         name="derive_smoothed_kep",
     )
-    from pmriprep.utils.dce_constants import EPSILON_VE, KEP_BOUNDS
-
-    derive_kep.inputs.epsilon_ve = EPSILON_VE
-    derive_kep.inputs.max_kep = KEP_BOUNDS.max
-
     workflow.connect([
         (inputnode, build_pk_dict, [
             ("ktrans", "ktrans"),

@@ -37,6 +37,7 @@ from pmriprep.utils.dce_constants import (
     VP_VE_TOTAL_MAX,
 )
 from pmriprep.utils.dce_voxel_prep import prepare_voxel_for_fitting
+from pmriprep.utils.dce_metrics import compute_kep
 
 logger = logging.getLogger("nipype.interface")
 
@@ -49,6 +50,9 @@ def _is_degenerate_dce_fit(
     ktrans = params.get("Ktrans", 0.0)
     ve = params.get("ve", 0.0)
     vp = params.get("vp", 0.0)
+    rate_names = ("Fp", "PS") if model_name == "2cxm" else ("Ktrans",)
+    if any(not np.isfinite(params.get(name, np.nan)) for name in rate_names):
+        return True
     if model_name != "patlak":
         if not np.isfinite(ve) or not 0 < ve <= VE_BOUNDS.max:
             return True
@@ -1868,11 +1872,9 @@ def _compute_derived_params(
 ) -> bool:
     """Compute derived parameters (kep, E, Ktrans) in place.
 
-    The reported kep is undefined above ``KEP_BOUNDS.max``.
-    A raw kep = Ktrans/ve above that cap marks the kep->inf / ve->0 corner
-    where the reversible (ve*Cp) and vascular (vp*Cp) forms coincide and kep
-    is intrinsically non-identifiable; the reported value is therefore NaN
-    and the voxel is reported as low-confidence.
+    Finite ratios are reported independently of the high-kep quality flag.
+    The flag applies above ``KEP_BOUNDS.max`` for every valid positive ve;
+    it is a quality-classification rule, not a mathematical reporting domain.
 
     Parameters
     ----------
@@ -1884,42 +1886,22 @@ def _compute_derived_params(
     Returns
     -------
     bool
-        True if the raw kep exceeded ``KEP_BOUNDS.max`` (the reported kep was
-        set to NaN), flagging the voxel as low-confidence.
+        True if the high-kep quality criterion is met.
     """
-    kep_railed = False
     if model_name in ("tofts", "extended_tofts"):
-        ve_val = params_out.get("ve", np.nan)
-        raw_kep = (
-            params_out.get("Ktrans", np.nan) / ve_val
-            if np.isfinite(ve_val) and ve_val > EPSILON_VE
-            else np.nan
-        )
-        kep_railed = np.isfinite(raw_kep) and raw_kep > KEP_BOUNDS.max
-        params_out["kep"] = (
-            raw_kep
-            if np.isfinite(raw_kep) and 0.0 <= raw_kep <= KEP_BOUNDS.max
-            else np.nan
-        )
+        ktrans = params_out.get("Ktrans", np.nan)
     elif model_name == "2cxm":
         fp_val = params_out.get("Fp", 0.0)
         ps_val = params_out.get("PS", 0.0)
         E = ps_val / (fp_val + ps_val + EPSILON_RATIO)
         params_out["E"] = E
         params_out["Ktrans"] = E * fp_val / 100.0
-        ve_val = params_out.get("ve", np.nan)
-        raw_kep = (
-            params_out["Ktrans"] / ve_val
-            if np.isfinite(ve_val) and ve_val > EPSILON_VE
-            else np.nan
-        )
-        kep_railed = np.isfinite(raw_kep) and raw_kep > KEP_BOUNDS.max
-        params_out["kep"] = (
-            raw_kep
-            if np.isfinite(raw_kep) and 0.0 <= raw_kep <= KEP_BOUNDS.max
-            else np.nan
-        )
-    return kep_railed
+        ktrans = params_out["Ktrans"]
+    else:
+        return False
+    kep = compute_kep(ktrans, params_out.get("ve", np.nan))
+    params_out["kep"] = kep
+    return bool(np.isfinite(kep) and kep > KEP_BOUNDS.max)
 
 
 def _resolve_dce_fit_quality(

@@ -29,12 +29,11 @@ from pmriprep.models.dce.initialization import (
     estimate_ve_late_phase,
 )
 from pmriprep.utils.dce_constants import (
-    EPSILON_VE,
     EPSILON_VE_FORWARD,
-    KEP_BOUNDS,
     KTRANS_BOUNDS,
     VE_BOUNDS,
 )
+from pmriprep.utils.dce_metrics import compute_kep
 
 
 class ToftsModel(PKModel):
@@ -348,11 +347,4 @@ class ToftsModel(PKModel):
         ktrans = params[0]
         ve = params[1]
 
-        # Kep is undefined outside the identifiable reporting range.
-        if ve > EPSILON_VE:
-            raw_kep = ktrans / ve
-            kep = raw_kep if raw_kep <= KEP_BOUNDS.max else float("nan")
-        else:
-            kep = float("nan")
-
-        return {"kep": kep}
+        return {"kep": compute_kep(ktrans, ve)}

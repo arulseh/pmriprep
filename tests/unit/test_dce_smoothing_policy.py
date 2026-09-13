@@ -42,14 +42,13 @@ def test_derive_smoothed_kep_uses_smoothed_components(
 
     result = _derive_smoothed_kep(
         {"ktrans": ktrans, "ve": ve}, native_kep, mask,
-        epsilon_ve=0.001, max_kep=10.0,
     )
 
     assert set(result) == {"ktrans", "ve", "kep"}
     kep = nib.load(result["kep"]).get_fdata()
     np.testing.assert_allclose(
         kep,
-        np.array([[[2.0, np.nan, np.nan, 0.0]]]),
+        np.array([[[2.0, 2000.0, np.nan, 0.0]]]),
         equal_nan=True,
     )
 
@@ -66,6 +65,19 @@ def test_dce_smoothing_workflow_excludes_uncertainty_and_native_kep() -> None:
     assert "vp_std" not in input_fields
     assert workflow.get_node("derive_smoothed_kep") is not None
     assert "smooth_uncertainty_maps" not in workflow.list_node_names()
+
+
+def test_smoothed_kep_rejects_overflow_and_preserves_native_support(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Float32 overflow and inapplicable native voxels remain missing."""
+    ktrans = _save_map(tmp_path / "ktrans.nii.gz", np.array([[[1e30, 0.1, 0.1, 0.1]]]))
+    ve = _save_map(tmp_path / "ve.nii.gz", np.array([[[1e-30, 0.01, 0, 0.001]]]))
+    native = _save_map(tmp_path / "native.nii.gz", np.array([[[1, np.nan, 1, 1]]]))
+    monkeypatch.chdir(tmp_path)
+    result = _derive_smoothed_kep({"ktrans": ktrans, "ve": ve}, native, None)
+    values = nib.load(result["kep"]).get_fdata()
+    np.testing.assert_allclose(values, [[[np.nan, np.nan, np.nan, 100]]], equal_nan=True)
 
 
 def test_smoothed_metadata_separates_smoothing_from_output_masking() -> None:

@@ -2193,8 +2193,6 @@
     "derive_smoothed_kep": {
       "input_names": [
         "brain_mask_file",
-        "epsilon_ve",
-        "max_kep",
         "native_kep_file",
         "smoothed_pk"
       ],
@@ -2527,7 +2525,7 @@
     "dce_early_mean": "fd75a021c6ef482c605e9a7596c6c17381cd8996e63adafc61cb7f30031b6cb0",
     "dce_pk_fit_qc": "3206990b014d072947d06ee8c4dcef234d286f8524a901040e186022ced60581",
     "dce_pk_maps_qc": "22e20c8933642cab60dbf5a7dd5d676e89aa3136ac2308830a672f2d30d7f49a",
-    "derive_smoothed_kep": "9bf2ac3b21628416ec35f04614a1a85c16442f1f6da3399a3aeea640deca6c06",
+    "derive_smoothed_kep": "9d77ddbc3f115272f7f188c18ac8ee0998320c3c2282e5898faf2b6c45412af8",
     "dsc_dce_validation": "8a9705269eebd644f77a51608d1c63737d3f4d58114d62f90a19d3a260fda663",
     "dsc_dce_xval_plot": "4b3043f6b55becca0f1b47f258f81d1409455bf4f1fa0bea62b1be65fe452777",
     "motion_qc_plot": "36616aba56123999797c0b5e14d6ec9903e15bea44b1958923c89616b1fb1b2f",
@@ -2864,10 +2862,6 @@
       "dof": 6,
       "reference_type": "postcon",
       "search_range": 30
-    },
-    "derive_smoothed_kep": {
-      "epsilon_ve": 0.001,
-      "max_kep": 10.0
     },
     "dsc_dce_validation": {
       "dce_model": "auto",

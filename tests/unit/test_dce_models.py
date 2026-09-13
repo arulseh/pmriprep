@@ -382,18 +382,18 @@ class TestComputeDerivedParameters:
 
     def test_kep_epsilon_ve(self, tofts_model: ToftsModel) -> None:
         derived = tofts_model.compute_derived_parameters([0.1, EPSILON_VE])
-        assert np.isnan(derived["kep"])
+        assert derived["kep"] == pytest.approx(0.1 / EPSILON_VE)
 
     def test_kep_just_above_epsilon(self, tofts_model: ToftsModel) -> None:
         ve = 0.02
         derived = tofts_model.compute_derived_parameters([0.1, ve])
         assert derived["kep"] > 0.0, "kep should be positive when ve > EPSILON_VE"
 
-    def test_kep_above_reporting_range_is_nan(self, tofts_model: ToftsModel) -> None:
+    def test_high_finite_kep_is_reported(self, tofts_model: ToftsModel) -> None:
         ktrans = 5.0
         ve = EPSILON_VE + 1e-4
         derived = tofts_model.compute_derived_parameters([ktrans, ve])
-        assert np.isnan(derived["kep"])
+        assert derived["kep"] == pytest.approx(ktrans / ve)
 
     def test_kep_etofts(self, etofts_model: ExtendedToftsModel) -> None:
         derived = etofts_model.compute_derived_parameters([0.15, 0.3, 0.05])

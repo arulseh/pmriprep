@@ -34,14 +34,13 @@ from pmriprep.models.dce.initialization import (
     estimate_vp_peak_ratio,
 )
 from pmriprep.utils.dce_constants import (
-    EPSILON_VE,
     EPSILON_VE_FORWARD,
-    KEP_BOUNDS,
     KTRANS_BOUNDS,
     VE_BOUNDS,
     VP_BOUNDS,
     VP_VE_TOTAL_MAX,
 )
+from pmriprep.utils.dce_metrics import compute_kep
 
 
 class ExtendedToftsModel(PKModel):
@@ -541,12 +540,7 @@ class ExtendedToftsModel(PKModel):
         aic = float(n_obs * np.log(max(rss, EPSILON_RSS) / n_obs) + 2 * n_free) if n_obs > 0 else float("inf")
         bic = float(n_obs * np.log(max(rss, EPSILON_RSS) / n_obs) + n_free * np.log(n_obs)) if n_obs > 0 else float("inf")
 
-        raw_kep = ktrans / ve if ve > EPSILON_VE else float("nan")
-        kep = (
-            raw_kep
-            if np.isfinite(raw_kep) and raw_kep <= KEP_BOUNDS.max
-            else float("nan")
-        )
+        kep = compute_kep(ktrans, ve)
 
         param_dict = {"Ktrans": ktrans, "ve": ve, "vp": fixed_vp, "kep": kep}
 
@@ -584,11 +578,4 @@ class ExtendedToftsModel(PKModel):
         ktrans = params[0]
         ve = params[1]
 
-        # Kep is undefined outside the identifiable reporting range.
-        if ve > EPSILON_VE:
-            raw_kep = ktrans / ve
-            kep = raw_kep if raw_kep <= KEP_BOUNDS.max else float("nan")
-        else:
-            kep = float("nan")
-
-        return {"kep": kep}
+        return {"kep": compute_kep(ktrans, ve)}
