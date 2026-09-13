@@ -35,9 +35,9 @@ from pmriprep.models.dce.initialization import (
 )
 from pmriprep.utils.dce_constants import (
     EPSILON_VE,
+    EPSILON_VE_FORWARD,
     KEP_BOUNDS,
     KTRANS_BOUNDS,
-    MAX_KEP,
     VE_BOUNDS,
     VP_BOUNDS,
     VP_VE_TOTAL_MAX,
@@ -62,7 +62,7 @@ class ExtendedToftsModel(PKModel):
             - Typical tumor values: 0.01-0.5 min⁻¹
             - High-grade glioma: can exceed 0.5 min⁻¹
 
-        ve: Extravascular extracellular volume fraction, 0.01-1.0
+        ve: Extravascular extracellular volume fraction, 0-1
             - Fraction of tissue that is interstitial space
             - Typical brain values: 0.1-0.3
             - Tumor values: often increased 0.3-0.6
@@ -200,11 +200,12 @@ class ExtendedToftsModel(PKModel):
             Tissue concentration values C_t(t) at each time point in mM.
         """
         ktrans = params[0]
-        ve = max(params[1], EPSILON_VE)  # Guard against division by zero
+        ve = max(params[1], EPSILON_VE_FORWARD)
         vp = params[2]
 
-        # Compute efflux rate constant, clamped to physiological maximum
-        kep = min(ktrans / ve, MAX_KEP)
+        if params[1] <= 0:
+            return vp * np.asarray(aif, dtype=np.float64)
+        kep = ktrans / ve
 
         # Get time step (assume uniform sampling)
         n_times = len(time_points)

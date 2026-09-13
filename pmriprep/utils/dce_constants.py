@@ -29,11 +29,11 @@ DCE_DETECTION_LEVELS: Final[tuple[str, ...]] = get_args(DCEDetectionLevel)
 #: Minimum ve (extravascular extracellular volume fraction) value
 EPSILON_VE: Final[float] = 0.001
 
-#: Maximum allowed sum of ve + vp when the volume constraint is enforced
-#: post-fit. 0.999 leaves a small slack to keep LOG_LOGIT inverse-transform
-#: numerically well-behaved at the boundary; using exactly 1.0 occasionally
-#: produces NaN gradients in the boundary cell of the optimizer.
-VP_VE_TOTAL_MAX: Final[float] = 0.999
+#: Numerical EES-volume floor for positive-volume forward evaluation
+EPSILON_VE_FORWARD: Final[float] = 1e-6
+
+#: Maximum combined plasma and extravascular extracellular volume fraction
+VP_VE_TOTAL_MAX: Final[float] = 1.0
 
 #: Minimum T1 value in seconds
 EPSILON_T1: Final[float] = 0.01
@@ -555,23 +555,13 @@ class ParameterBounds(NamedTuple):
 KTRANS_BOUNDS: Final[ParameterBounds] = ParameterBounds(0.0, 5.0)
 
 #: ve (extravascular extracellular volume) bounds (fraction)
-VE_BOUNDS: Final[ParameterBounds] = ParameterBounds(0.0, 0.9)
+VE_BOUNDS: Final[ParameterBounds] = ParameterBounds(0.0, 1.0)
 
 #: vp (plasma volume fraction) bounds
 VP_BOUNDS: Final[ParameterBounds] = ParameterBounds(0.0, 1.0)
 
 #: kep (efflux rate) bounds in min^-1
 KEP_BOUNDS: Final[ParameterBounds] = ParameterBounds(0.0, 10.0)
-
-#: Maximum kep (efflux rate) for the forward model. Must be high enough to
-#: avoid biasing the optimizer — capping in evaluate() flattens the objective
-#: surface for Ktrans/ve combinations where true kep > cap. 1000.0 is
-#: effectively uncapped for physiological parameters
-#: while still guarding against degenerate numerics.
-MAX_KEP: Final[float] = 1000.0
-
-#: Maximum eigenvalue for 2CXM slow compartment (similar to kep)
-MAX_EIGENVALUE_SLOW: Final[float] = 20.0
 
 #: Fp (plasma flow) bounds in mL/min/100mL for 2CXM
 FP_BOUNDS: Final[ParameterBounds] = ParameterBounds(0.0, 200.0)

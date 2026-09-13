@@ -24,10 +24,8 @@ from pmriprep.models.dce._convolution import analytic_exp_convolution
 from pmriprep.utils.dce_constants import (
     EPSILON_EIGENVALUE,
     EPSILON_FLOW,
-    EPSILON_VE,
-    MAX_KEP,
+    EPSILON_VE_FORWARD,
     EPSILON_VP,
-    MAX_EIGENVALUE_SLOW,
 )
 
 logger = logging.getLogger("nipype.interface")
@@ -177,11 +175,9 @@ def batched_tofts_model(
         ktrans_batch = ktrans[batch_start:batch_end]
         ve_batch = ve[batch_start:batch_end]
 
-        ve_safe = np.maximum(ve_batch, EPSILON_VE)
-        # Cap kep to match the scalar path (tofts.evaluate also caps at
-        # MAX_KEP), so the analytic convolution gives identical scalar/batched
-        # output at the ve->0 degenerate limit; also a physical bound.
-        kep = np.minimum(ktrans_batch / ve_safe, MAX_KEP)
+        ve_safe = np.maximum(ve_batch, EPSILON_VE_FORWARD)
+        ktrans_batch = np.where(ve_batch > 0, ktrans_batch, 0.0)
+        kep = ktrans_batch / ve_safe
 
         conv_result = analytic_exp_convolution(aif, kep, dt)
 
@@ -280,9 +276,9 @@ def batched_extended_tofts_model(
 
         vascular_term = vp_batch[:, None] * aif[None, :]
 
-        ve_safe = np.maximum(ve_batch, EPSILON_VE)
-        # Cap kep — see tofts batch above for rationale.
-        kep = np.minimum(ktrans_batch / ve_safe, MAX_KEP)
+        ve_safe = np.maximum(ve_batch, EPSILON_VE_FORWARD)
+        ktrans_batch = np.where(ve_batch > 0, ktrans_batch, 0.0)
+        kep = ktrans_batch / ve_safe
 
         conv_result = analytic_exp_convolution(aif, kep, dt)
 
@@ -473,7 +469,7 @@ def batched_2cxm_model(
         ps_rate = np.maximum(ps_d, 0.0) / 100.0
 
         vp_safe = np.maximum(vp_d, EPSILON_VP)
-        ve_safe = np.maximum(ve_d, EPSILON_VE)
+        ve_safe = np.maximum(ve_d, EPSILON_VE_FORWARD)
 
         k_pe = ps_rate / vp_safe
         k_ep = ps_rate / ve_safe
@@ -486,13 +482,13 @@ def batched_2cxm_model(
         sqrt_disc = np.sqrt(discriminant)
 
         k1 = (-trace + sqrt_disc) / 2
-        k2_raw = (-trace - sqrt_disc) / 2
+        k2_raw = np.divide(det, k1, out=np.zeros_like(det), where=k1 > 0)
 
         k1_final = np.maximum(k1, k2_raw)
         k2_final = np.minimum(k1, k2_raw)
 
         k1_final = np.maximum(k1_final, EPSILON_EIGENVALUE)
-        k2_final = np.clip(k2_final, EPSILON_EIGENVALUE, MAX_EIGENVALUE_SLOW)
+        k2_final = np.maximum(k2_final, EPSILON_EIGENVALUE)
 
         denom = k1_final - k2_final
         degenerate = denom < EPSILON_EIGENVALUE
@@ -514,6 +510,12 @@ def batched_2cxm_model(
         conv2 = analytic_exp_convolution(aif, k2_used, dt)
 
         tissue_curves[batch_start:batch_end, :] = a1[:, None] * conv1 + a2[:, None] * conv2
+        zero_ve = ve_d <= 0
+        if np.any(zero_ve):
+            tissue_curves[batch_start:batch_end, :][zero_ve] = (
+                fp_rate[zero_ve, None]
+                * analytic_exp_convolution(aif, k_out[zero_ve], dt)
+            )
 
     return ModelResult(
         tissue_curves=tissue_curves,

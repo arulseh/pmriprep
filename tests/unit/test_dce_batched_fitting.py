@@ -776,7 +776,7 @@ class TestConstrainedAutoMode:
         )
         assert reference.success
         assert result.converged[0]
-        assert result.params["ve"][0] + result.params["vp"][0] <= 0.999 + 1e-12
+        assert result.params["ve"][0] + result.params["vp"][0] <= VP_VE_TOTAL_MAX + 1e-12
         parameters = np.array(
             [result.params["ktrans"][0], result.params["ve"][0]]
         )

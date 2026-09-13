@@ -130,18 +130,7 @@ class TestHessianComputation:
     """Tests for _compute_hessian edge cases."""
 
     def test_hessian_diagonal_fallback_near_boundary(self) -> None:
-        """When params are near ve+vp~1.0 boundary, perturbations violate
-        the constraint and Hessian falls back to prior curvature.
-
-        The Hessian uses eps = max(1e-5, 1e-5 * |param|) for perturbations.
-        For ve=0.7 (eps≈7e-6) and vp=0.2999 (eps≈3e-6), ve+vp=0.9999.
-        Perturbing both up gives 0.9999+7e-6+3e-6 > 1.0, triggering
-        the volume constraint fallback for off-diagonal (ve,vp) entries.
-        But diagonal entries (i==j) double-perturb the same param.
-
-        For a robust test: use params at the upper bound of ve (VE_BOUNDS.max=0.9).
-        Perturbation up exceeds bounds → validate_params returns False → -inf → fallback.
-        """
+        """Curvature remains finite at a feasible fraction-box boundary."""
         tissue_curve, aif, time_points, _ = _make_synthetic_tofts_data()
         model = ExtendedToftsModel()
         fitter = BayesianPKFitter(model)
@@ -160,11 +149,9 @@ class TestHessianComputation:
                 return 1e30
             return -lp
 
-        # Set ve at its upper bound (0.9). Perturbation up pushes ve > 0.9
-        # → validate_params returns False → log_posterior = -inf → 1e30
-        # → Hessian entries are non-finite → fallback to prior curvature
+        # Use zero plasma volume so the box endpoint is jointly feasible.
         from pmriprep.utils.dce_constants import VE_BOUNDS
-        params_boundary = np.array([0.1, VE_BOUNDS.max, 0.05])
+        params_boundary = np.array([0.1, VE_BOUNDS.max, 0.0])
 
         hessian = fitter._compute_hessian(params_boundary, neg_log_posterior)
 
@@ -264,7 +251,7 @@ class TestVolumeConstraint:
         np.testing.assert_array_equal(result, params)
 
     def test_volume_constraint_scaling(self) -> None:
-        """When ve+vp > 1.0, both should be scaled proportionally to sum to 0.999."""
+        """Excess compartment volumes are scaled to the shared sum limit."""
         model = ExtendedToftsModel()
         fitter = BayesianPKFitter(model)
 
@@ -273,11 +260,11 @@ class TestVolumeConstraint:
 
         result = fitter._apply_volume_constraint(params)
 
-        # Sum should be 0.999
+        # Sum should equal the shared occupancy limit.
         result_ve = result[fitter._ve_index]
         result_vp = result[fitter._vp_index]
-        assert np.isclose(result_ve + result_vp, 0.999, atol=1e-10), (
-            f"Expected ve + vp = 0.999, got {result_ve + result_vp}"
+        assert np.isclose(result_ve + result_vp, VP_VE_TOTAL_MAX, atol=1e-10), (
+            f"Expected ve + vp = {VP_VE_TOTAL_MAX}, got {result_ve + result_vp}"
         )
 
         # Ratio ve/vp should be preserved
@@ -301,10 +288,10 @@ class TestVolumeConstraint:
         np.testing.assert_array_equal(result, params)
 
     def test_volume_support_check_uses_shared_limit(self) -> None:
-        """Bayesian sampling rejects the numerical safety margin above 0.999."""
+        """Bayesian sampling admits the boundary and rejects excess occupancy."""
         fitter = BayesianPKFitter(ExtendedToftsModel())
-        on_boundary = np.array([0.1, 0.799, 0.2])
-        above_boundary = np.array([0.1, 0.7995, 0.2])
+        on_boundary = np.array([0.1, VP_VE_TOTAL_MAX - 0.2, 0.2])
+        above_boundary = on_boundary + np.array([0, 0.0005, 0])
 
         assert np.sum(on_boundary[1:]) == pytest.approx(VP_VE_TOTAL_MAX)
         assert fitter._check_volume_constraint(on_boundary)
@@ -326,7 +313,7 @@ class TestVolumeConstraint:
 
         result = fitter.fit_vi(tissue_curve, aif, time_points)
 
-        assert result.parameters["ve"] + result.parameters["vp"] <= 0.999 + 1e-12
+        assert result.parameters["ve"] + result.parameters["vp"] <= VP_VE_TOTAL_MAX + 1e-12
 
 
 class TestVIConvergenceAndInitialization:

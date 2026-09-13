@@ -25,7 +25,6 @@ import numpy.typing as npt
 from pmriprep.models.dce.batched_models import evaluate_model
 from pmriprep.models.dce.extended_tofts import ExtendedToftsModel
 from pmriprep.models.dce.two_compartment_exchange import (
-    TWO_CXM_VE_BOUNDS,
     TwoCompartmentExchangeModel,
 )
 from pmriprep.utils.dce_constants import (
@@ -59,10 +58,6 @@ _PARAM_BOUNDS: dict[str, tuple[float, float]] = {
     "vp": (VP_BOUNDS.min, VP_BOUNDS.max),
     "fp": (FP_BOUNDS.min, FP_BOUNDS.max),
     "ps": (PS_BOUNDS.min, PS_BOUNDS.max),
-}
-
-_MODEL_SPECIFIC_BOUNDS: dict[str, dict[str, tuple[float, float]]] = {
-    "2cxm": {"ve": TWO_CXM_VE_BOUNDS},
 }
 
 # Parameter-specific finite difference floors (scale-aware)
@@ -721,8 +716,8 @@ def _batched_initial_guess(
             if mean_aif > 0.05 * aif_peak:
                 ve_init = np.clip(
                     np.mean(tissue_curves[:, late_start:], axis=1) / mean_aif,
-                    0.01,
-                    0.8,
+                    VE_BOUNDS.min,
+                    VE_BOUNDS.max,
                 )
             else:
                 ve_init = np.full(n_voxels, 0.2)
@@ -1059,12 +1054,8 @@ def batched_lm_fit(
     vp_subtracted = False
     if fixed_vp is not None:
         fixed_vp = np.clip(np.asarray(fixed_vp, dtype=np.float64), *_PARAM_BOUNDS["vp"])
-        minimum_ve = TWO_CXM_VE_BOUNDS[0] if model_name == "2cxm" else 0.0
         if not np.all(np.isfinite(fixed_vp)) or (
             model_name in ("extended_tofts", "2cxm")
-            and np.any(fixed_vp > VP_VE_TOTAL_MAX - minimum_ve)
-        ) or (
-            model_name == "extended_tofts"
             and np.any(fixed_vp >= VP_VE_TOTAL_MAX)
         ):
             raise ValueError("fixed_vp leaves no feasible joint tissue-volume domain")
@@ -1079,12 +1070,11 @@ def batched_lm_fit(
     n_free = len(free_param_names)
 
     # Get bounds for free parameters
-    model_bounds = _MODEL_SPECIFIC_BOUNDS.get(model_name, {})
     bounds_lo = np.array(
-        [model_bounds.get(name, _PARAM_BOUNDS[name])[0] for name in free_param_names]
+        [_PARAM_BOUNDS[name][0] for name in free_param_names]
     )
     bounds_hi = np.array(
-        [model_bounds.get(name, _PARAM_BOUNDS[name])[1] for name in free_param_names]
+        [_PARAM_BOUNDS[name][1] for name in free_param_names]
     )
 
     # Initialize parameters from original (un-subtracted) tissue curves

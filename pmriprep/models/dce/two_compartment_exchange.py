@@ -14,7 +14,7 @@ The tissue concentration is computed using an analytical solution based on
 eigenvalue decomposition of the two-compartment system.
 """
 
-from typing import Final, Optional, Sequence
+from typing import Optional, Sequence
 
 import numpy as np
 import numpy.typing as npt
@@ -29,16 +29,15 @@ from pmriprep.utils.dce_constants import (
     EPSILON_EIGENVALUE,
     EPSILON_FLOW,
     EPSILON_VE,
+    EPSILON_VE_FORWARD,
     EPSILON_VP,
     FP_BOUNDS,
-    MAX_EIGENVALUE_SLOW,
     KEP_BOUNDS,
     PS_BOUNDS,
+    VE_BOUNDS,
     VP_BOUNDS,
     VP_VE_TOTAL_MAX,
 )
-
-TWO_CXM_VE_BOUNDS: Final[tuple[float, float]] = (0.01, 0.8)
 
 
 class TwoCompartmentExchangeModel(PKModel):
@@ -80,7 +79,7 @@ class TwoCompartmentExchangeModel(PKModel):
             - Typical brain values: 0-5 mL/min/100mL (intact BBB)
             - Tumor values: can exceed 20 mL/min/100mL
 
-        ve: Extravascular extracellular volume fraction, 0.01-0.8
+        ve: Extravascular extracellular volume fraction, 0-1
             - Fraction of tissue that is interstitial space
             - Typical brain values: 0.1-0.3
             - Tumor values: often increased 0.3-0.6
@@ -150,7 +149,7 @@ class TwoCompartmentExchangeModel(PKModel):
             ),
             ModelParameter(
                 name="ve",
-                bounds=TWO_CXM_VE_BOUNDS,
+                bounds=(VE_BOUNDS.min, VE_BOUNDS.max),
                 typical_range=(0.1, 0.5),
                 transform=TransformType.LOG_LOGIT,
                 description="Extravascular extracellular volume fraction",
@@ -217,7 +216,7 @@ class TwoCompartmentExchangeModel(PKModel):
                 cp_late = aif[late_start:]
                 mean_cp = float(np.mean(cp_late))
                 if mean_cp > 0.05 * np.max(aif):
-                    ve_init = float(np.clip(np.mean(ct_late) / mean_cp, 0.01, 0.8))
+                    ve_init = float(np.clip(np.mean(ct_late) / mean_cp, VE_BOUNDS.min, VE_BOUNDS.max))
                 else:
                     ve_init = 0.2
             else:
@@ -267,8 +266,11 @@ class TwoCompartmentExchangeModel(PKModel):
         """
         # Guard against division by zero
         vp = max(vp, EPSILON_VP)
-        ve = max(ve, EPSILON_VE)
         fp = max(fp, EPSILON_FLOW)
+        if ve <= 0:
+            rate = fp / 100.0 / vp
+            return rate, rate, fp / 100.0, 0.0
+        ve = max(ve, EPSILON_VE_FORWARD)
 
         # Convert from mL/min/100mL to min^-1 (fractional rate)
         fp_rate = fp / 100.0
@@ -294,7 +296,7 @@ class TwoCompartmentExchangeModel(PKModel):
 
         # K1 and K2 are the magnitudes of the eigenvalues (positive)
         k1 = (-trace + sqrt_disc) / 2
-        k2 = (-trace - sqrt_disc) / 2
+        k2 = det / k1 if k1 > 0 else 0.0
 
         # Ensure K1 > K2 (K1 is the larger eigenvalue)
         if k2 > k1:
@@ -303,10 +305,6 @@ class TwoCompartmentExchangeModel(PKModel):
         # Guard against zero eigenvalues
         k1 = max(k1, EPSILON_EIGENVALUE)
         k2 = max(k2, EPSILON_EIGENVALUE)
-
-        # Clamp k2 (slow eigenvalue) for numerical stability
-        # k1 (fast) can remain large - it's plasma transit
-        k2 = min(k2, MAX_EIGENVALUE_SLOW)
 
         # Compute coefficients A1 and A2 for the impulse response:
         # h(t) = A1 × exp(-K1×t) + A2 × exp(-K2×t)
@@ -661,7 +659,7 @@ class TwoCompartmentExchangeModel(PKModel):
 
         # Clamp fixed_vp to valid range
         fixed_vp = float(np.clip(fixed_vp, VP_BOUNDS.min, VP_BOUNDS.max))
-        if not np.isfinite(fixed_vp) or fixed_vp > VP_VE_TOTAL_MAX - TWO_CXM_VE_BOUNDS[0]:
+        if not np.isfinite(fixed_vp) or fixed_vp >= VP_VE_TOTAL_MAX:
             raise ValueError("fixed_vp leaves no feasible joint tissue-volume domain")
 
         # Set initial guess for [Fp, PS, ve]
@@ -675,8 +673,8 @@ class TwoCompartmentExchangeModel(PKModel):
             x0 = list(initial_guess[:3])
 
         # Bounds: ve upper bound clamped so ve + vp <= 1.0
-        ve_upper = min(TWO_CXM_VE_BOUNDS[1], VP_VE_TOTAL_MAX - fixed_vp)
-        bounds_lo = [FP_BOUNDS.min, PS_BOUNDS.min, TWO_CXM_VE_BOUNDS[0]]
+        ve_upper = min(VE_BOUNDS.max, VP_VE_TOTAL_MAX - fixed_vp)
+        bounds_lo = [FP_BOUNDS.min, PS_BOUNDS.min, VE_BOUNDS.min]
         bounds_hi = [FP_BOUNDS.max, PS_BOUNDS.max, ve_upper]
 
         # Objective: evaluate with [Fp, PS, ve, fixed_vp]
@@ -705,7 +703,7 @@ class TwoCompartmentExchangeModel(PKModel):
         # Clip to bounds
         fp_fit = float(np.clip(fitted_3p[0], FP_BOUNDS.min, FP_BOUNDS.max))
         ps_fit = float(np.clip(fitted_3p[1], PS_BOUNDS.min, PS_BOUNDS.max))
-        ve_fit = float(np.clip(fitted_3p[2], TWO_CXM_VE_BOUNDS[0], ve_upper))
+        ve_fit = float(np.clip(fitted_3p[2], VE_BOUNDS.min, ve_upper))
 
         fitted_params = [fp_fit, ps_fit, ve_fit, fixed_vp]
 

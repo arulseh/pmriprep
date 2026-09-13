@@ -18,7 +18,7 @@ from pmriprep.models.dce.extended_tofts import ExtendedToftsModel
 from pmriprep.models.dce.patlak import PatlakModel
 from pmriprep.models.dce.tofts import ToftsModel
 from pmriprep.models.dce.two_compartment_exchange import TwoCompartmentExchangeModel
-from pmriprep.utils.dce_constants import get_r1_relaxivity
+from pmriprep.utils.dce_constants import VP_VE_TOTAL_MAX, get_r1_relaxivity
 from pmriprep.utils.dce_signal import ernst_signal_model, signal_to_concentration_simple
 
 from .conftest import add_gaussian_noise, add_rician_noise, generate_parker_aif_dro
@@ -661,7 +661,7 @@ class TestDCEEdgeCases:
 
         assert result.converged
         assert result.parameters["ve"] + result.parameters["vp"] == pytest.approx(
-            0.999
+            VP_VE_TOTAL_MAX
         )
         assert result.uncertainties["ve"] == pytest.approx(
             result.uncertainties["vp"]
@@ -690,7 +690,7 @@ class TestDCEEdgeCases:
             initial_guess=[0.12, 0.85],
         )
 
-        assert result.parameters["ve"] + result.parameters["vp"] <= 0.999 + 1e-12
+        assert result.parameters["ve"] + result.parameters["vp"] <= VP_VE_TOTAL_MAX + 1e-12
 
     def test_patlak_reduces_to_linear(
         self,

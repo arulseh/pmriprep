@@ -139,7 +139,7 @@ def test_joint_volume_still_rejects_impossible_fits() -> None:
 @pytest.mark.parametrize("name,vp", [
     ("extended_tofts", 1.0),
     ("extended_tofts", VP_VE_TOTAL_MAX),
-    ("2cxm", 0.995),
+    ("2cxm", VP_VE_TOTAL_MAX),
 ])
 def test_fixed_vp_cannot_leave_empty_volume_domain(
     sampling: tuple[np.ndarray, np.ndarray],

@@ -69,7 +69,7 @@ def test_resolve_dce_fit_quality_prioritizes_convergence(
         ("tofts", {"Ktrans": 0.1, "ve": 0.3}, False),
         ("tofts", {"Ktrans": 0.0, "ve": 0.3}, True),
         ("tofts", {"Ktrans": KTRANS_BOUNDS.max, "ve": 0.3}, True),
-        ("tofts", {"Ktrans": 0.1, "ve": VE_BOUNDS.max}, True),
+        ("tofts", {"Ktrans": 0.1, "ve": VE_BOUNDS.max}, False),
         ("patlak", {"Ktrans": 0.0, "vp": 0.03}, False),
         ("patlak", {"Ktrans": -1e-6, "vp": 0.03}, True),
         ("patlak", {"Ktrans": 0.1, "vp": 0.0}, False),
@@ -79,7 +79,7 @@ def test_resolve_dce_fit_quality_prioritizes_convergence(
         ("2cxm", {"Fp": 0.0, "PS": 0.1, "ve": 0.3, "vp": 0.03}, True),
         ("2cxm", {"Fp": FP_BOUNDS.max, "PS": 0.1, "ve": 0.3, "vp": 0.03}, True),
         ("2cxm", {"Fp": 1.0, "PS": PS_BOUNDS.max, "ve": 0.3, "vp": 0.03}, True),
-        ("2cxm", {"Fp": 1.0, "PS": 0.1, "ve": 0.8, "vp": 0.03}, True),
+        ("2cxm", {"Fp": 1.0, "PS": 0.1, "ve": 0.8, "vp": 0.03}, False),
         ("2cxm", {"Fp": 1.0, "PS": 0.1, "ve": 0.3, "vp": VP_BOUNDS.max}, True),
     ],
 )
@@ -88,7 +88,7 @@ def test_degeneracy_rules_preserve_model_specific_boundaries(
     params: dict[str, float],
     expected: bool,
 ) -> None:
-    """Exact physiological bounds are rejected independently of prior use."""
+    """Fraction and rate boundaries follow their respective retention policies."""
     assert _is_degenerate_dce_fit(model, params) is expected
 
 

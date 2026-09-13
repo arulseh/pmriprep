@@ -11,7 +11,6 @@ from pmriprep.utils.dce_constants import (
     HEMATOCRIT_ARTERIAL,
     capillary_hematocrit,
     KTRANS_BOUNDS,
-    MAX_KEP,
     MIN_ENHANCEMENT_MM,
     MIN_MEANINGFUL_ENHANCEMENT_MM,
     VE_BOUNDS,
@@ -182,7 +181,6 @@ class TestConstantValues:
         assert abs(capillary_hematocrit() - 0.357) < 1e-6
         assert abs(capillary_hematocrit(0.30) - 0.255) < 1e-6  # anemia
         assert EPSILON_T1 == 0.01
-        assert MAX_KEP == 1000.0
 
 
 class TestB1Thresholds:

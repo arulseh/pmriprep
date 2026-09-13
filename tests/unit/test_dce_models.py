@@ -205,11 +205,11 @@ class TestZeroAIF:
 # ---------------------------------------------------------------------------
 
 class TestExtremeKep:
-    """Very small ve produces kep >> 1 that gets clamped to MAX_KEP."""
+    """Very small ve produces large efflux rates with finite forward curves."""
 
     def test_extreme_kep(self, tofts_model: ToftsModel) -> None:
         ktrans = 0.5
-        ve = 0.0001  # kep = 0.5/0.0001 = 5000, should be clamped to MAX_KEP
+        ve = 0.0001  # kep = 5000 min^-1
 
         time = np.arange(50) * 0.1
         aif = _parker_like_aif(time)
@@ -313,9 +313,7 @@ class TestVolumeConstraint:
     def test_volume_constraint_boundary(
         self, etofts_model: ExtendedToftsModel
     ) -> None:
-        # ve=0.7, vp=0.3 -> total=1.0; constraint scales to VP_VE_TOTAL_MAX
-        # (0.999) leaving slack at the LOG_LOGIT bound while preserving
-        # the ve:vp ratio.
+        # Unit occupancy preserves both compartment volumes.
         from pmriprep.utils.dce_constants import VP_VE_TOTAL_MAX
 
         ktrans, ve, vp = etofts_model._apply_volume_constraint([0.1, 0.7, 0.3])
