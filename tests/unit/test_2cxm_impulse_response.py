@@ -41,6 +41,8 @@ def _ode_impulse_response(
         (80.0, 20.0, 0.4, 0.10),   # moderate extraction
         (60.0, 2.0, 0.2, 0.05),    # low PS (leakage-limited)
         (40.0, 5.0, 0.3, 0.02),    # small vp
+        (40.0, 5.0, 0.3, 0.0005),
+        (40.0, 5.0, 0.3, 0.000001),
         (50.0, 10.0, 0.5, 0.15),   # larger volumes
     ],
 )

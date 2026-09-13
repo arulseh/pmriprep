@@ -67,7 +67,7 @@ class ExtendedToftsModel(PKModel):
             - Typical brain values: 0.1-0.3
             - Tumor values: often increased 0.3-0.6
 
-        vp: Plasma volume fraction, 0.001-0.3
+        vp: Plasma volume fraction, 0-1
             - Fraction of tissue that is blood plasma
             - Typical brain values: 0.01-0.05
             - Well-vascularized tumors: can exceed 0.1
@@ -486,6 +486,8 @@ class ExtendedToftsModel(PKModel):
 
         # Clamp fixed_vp to valid range
         fixed_vp = float(np.clip(fixed_vp, VP_BOUNDS.min, VP_BOUNDS.max))
+        if not np.isfinite(fixed_vp) or fixed_vp >= VP_VE_TOTAL_MAX:
+            raise ValueError("fixed_vp leaves no feasible joint tissue-volume domain")
 
         # Set initial guess for [Ktrans, ve]
         if initial_guess is None:
@@ -496,7 +498,6 @@ class ExtendedToftsModel(PKModel):
 
         # Bounds: ve upper bound clamped so ve + vp <= 1.0
         ve_upper = min(VE_BOUNDS.max, VP_VE_TOTAL_MAX - fixed_vp)
-        ve_upper = max(ve_upper, EPSILON_VE)
         bounds_lo = [KTRANS_BOUNDS.min, VE_BOUNDS.min]
         bounds_hi = [KTRANS_BOUNDS.max, ve_upper]
 

@@ -268,7 +268,7 @@ class TestPatlakExact:
         [
             (0.08, -0.06),
             (-0.05, 0.08),
-            (0.08, 0.50),
+            (0.08, 1.50),
             (6.0, 0.08),
         ],
     )
@@ -370,18 +370,18 @@ class TestPatlakExact:
         """Hard and soft external vp constraints cannot exceed model support."""
         aif, time_points = aif_and_time
         model = PatlakModel()
-        tissue = model.evaluate([0.08, 0.30], aif, time_points)
+        tissue = model.evaluate([0.08, 1.0], aif, time_points)
 
         result = batched_patlak_lstsq(
             tissue[np.newaxis, :],
             aif,
             time_points,
-            fixed_vp=np.array([0.50]),
+            fixed_vp=np.array([1.50]),
             vp_uncertainty=vp_uncertainty,
         )
 
         assert result.params["vp"][0] <= model.get_bounds()[1][1]
-        assert result.params["vp"][0] == pytest.approx(0.30)
+        assert result.params["vp"][0] == pytest.approx(1.0)
 
     def test_patlak_fixed_vp_uncertainty_is_not_reported_as_zero(
         self,

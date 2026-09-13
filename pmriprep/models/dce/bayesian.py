@@ -37,7 +37,7 @@ from pmriprep.models.dce.base import (
     FitResult,
     PKModel,
 )
-from pmriprep.utils.dce_constants import VP_VE_TOTAL_MAX
+from pmriprep.utils.dce_constants import VP_BOUNDS, VP_VE_TOTAL_MAX
 
 # Re-export BayesianPrior for backward compatibility
 __all__ = [
@@ -1456,7 +1456,7 @@ def create_vp_prior_from_dsc(
     std = max(vp_value * relative_uncertainty, 0.001)
     # vp uses LOG_LOGIT transform; compute transformed prior stats
     from pmriprep.models.bayesian_utils import transform_prior
-    ub = 0.3  # VP_BOUNDS.max default
+    ub = VP_BOUNDS.max
     t_mean, t_std = transform_prior(
         max(vp_value, 1e-10), std, TransformType.LOG_LOGIT, ub
     )

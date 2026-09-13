@@ -67,7 +67,7 @@ class PatlakModel(PKModel):
             - For intact BBB: typically < 0.05 min⁻¹
             - For disrupted BBB: can exceed 0.1 min⁻¹
 
-        vp: Plasma volume fraction, 0.001-0.3
+        vp: Plasma volume fraction, 0-1
             - Fraction of tissue that is blood plasma
             - Typical brain values: 0.01-0.05
             - Well-vascularized tumors: can exceed 0.1
@@ -154,9 +154,9 @@ class PatlakModel(PKModel):
             result = self.fit_graphical(tissue_curve, aif, time_points)
             ktrans = result.parameters.get("Ktrans", 0.0)
             vp_val = result.parameters.get("vp", 0.0)
-            # Clamp to typical physiological range
+            # Keep the uptake initialization within its typical range.
             ktrans = max(0.001, min(ktrans, 1.0))
-            vp_val = max(0.001, min(vp_val, 0.3))
+            vp_val = float(np.clip(vp_val, VP_BOUNDS.min, VP_BOUNDS.max))
             return [ktrans, vp_val]
         except Exception:
             return self.get_initial_guess()

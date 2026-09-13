@@ -34,7 +34,6 @@ from pmriprep.utils.dce_constants import (
     MAX_EIGENVALUE_SLOW,
     KEP_BOUNDS,
     PS_BOUNDS,
-    VE_BOUNDS,
     VP_BOUNDS,
     VP_VE_TOTAL_MAX,
 )
@@ -86,7 +85,7 @@ class TwoCompartmentExchangeModel(PKModel):
             - Typical brain values: 0.1-0.3
             - Tumor values: often increased 0.3-0.6
 
-        vp: Plasma volume fraction, 0.001-0.3
+        vp: Plasma volume fraction, 0-1
             - Fraction of tissue that is blood plasma
             - Typical brain values: 0.01-0.05
             - Well-vascularized tumors: can exceed 0.1
@@ -662,6 +661,8 @@ class TwoCompartmentExchangeModel(PKModel):
 
         # Clamp fixed_vp to valid range
         fixed_vp = float(np.clip(fixed_vp, VP_BOUNDS.min, VP_BOUNDS.max))
+        if not np.isfinite(fixed_vp) or fixed_vp > VP_VE_TOTAL_MAX - TWO_CXM_VE_BOUNDS[0]:
+            raise ValueError("fixed_vp leaves no feasible joint tissue-volume domain")
 
         # Set initial guess for [Fp, PS, ve]
         if initial_guess is None:
@@ -674,9 +675,8 @@ class TwoCompartmentExchangeModel(PKModel):
             x0 = list(initial_guess[:3])
 
         # Bounds: ve upper bound clamped so ve + vp <= 1.0
-        ve_upper = min(0.8, 1.0 - fixed_vp)
-        ve_upper = max(ve_upper, EPSILON_VE)
-        bounds_lo = [FP_BOUNDS.min, PS_BOUNDS.min, VE_BOUNDS.min]
+        ve_upper = min(TWO_CXM_VE_BOUNDS[1], VP_VE_TOTAL_MAX - fixed_vp)
+        bounds_lo = [FP_BOUNDS.min, PS_BOUNDS.min, TWO_CXM_VE_BOUNDS[0]]
         bounds_hi = [FP_BOUNDS.max, PS_BOUNDS.max, ve_upper]
 
         # Objective: evaluate with [Fp, PS, ve, fixed_vp]
@@ -705,7 +705,7 @@ class TwoCompartmentExchangeModel(PKModel):
         # Clip to bounds
         fp_fit = float(np.clip(fitted_3p[0], FP_BOUNDS.min, FP_BOUNDS.max))
         ps_fit = float(np.clip(fitted_3p[1], PS_BOUNDS.min, PS_BOUNDS.max))
-        ve_fit = float(np.clip(fitted_3p[2], VE_BOUNDS.min, ve_upper))
+        ve_fit = float(np.clip(fitted_3p[2], TWO_CXM_VE_BOUNDS[0], ve_upper))
 
         fitted_params = [fp_fit, ps_fit, ve_fit, fixed_vp]
 

@@ -62,8 +62,8 @@ EPSILON_DENOM_ABS: Final[float] = 1e-12
 #: Minimum Ktrans value in min^-1
 EPSILON_KTRANS: Final[float] = 0.001
 
-#: Minimum vp (plasma volume fraction) value
-EPSILON_VP: Final[float] = 0.001
+#: Numerical plasma-volume floor for division in the 2CXM forward model
+EPSILON_VP: Final[float] = 1e-6
 
 #: Minimum B1+ correction factor
 EPSILON_B1: Final[float] = 1e-6
@@ -558,7 +558,7 @@ KTRANS_BOUNDS: Final[ParameterBounds] = ParameterBounds(0.0, 5.0)
 VE_BOUNDS: Final[ParameterBounds] = ParameterBounds(0.0, 0.9)
 
 #: vp (plasma volume fraction) bounds
-VP_BOUNDS: Final[ParameterBounds] = ParameterBounds(0.001, 0.3)
+VP_BOUNDS: Final[ParameterBounds] = ParameterBounds(0.0, 1.0)
 
 #: kep (efflux rate) bounds in min^-1
 KEP_BOUNDS: Final[ParameterBounds] = ParameterBounds(0.0, 10.0)

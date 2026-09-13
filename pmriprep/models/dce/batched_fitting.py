@@ -676,10 +676,9 @@ def _batched_initial_guess(
     aif_peak = np.max(aif)
     aif_peak_idx = np.argmax(aif)
 
-    # Match the scalar 2CXM data-driven initializer. A distant starting point
-    # can lead the ill-conditioned four-parameter objective to a good-looking
-    # but incorrect boundary solution.
-    if model_name == "2cxm":
+    # Match the scalar exchange-model initializers. A distant starting point
+    # can lead the ill-conditioned objective to an incorrect boundary solution.
+    if model_name in ("2cxm", "extended_tofts"):
         tissue_peak_indices = np.argmax(tissue_curves, axis=1)
         start = int(aif_peak_idx) + 1
         ends = np.minimum(
@@ -731,6 +730,11 @@ def _batched_initial_guess(
             ve_init = np.full(n_voxels, 0.2)
 
         initial = {
+            "ktrans": np.clip(
+                ktrans_init,
+                _PARAM_BOUNDS["ktrans"][0] + 1e-6,
+                _PARAM_BOUNDS["ktrans"][1],
+            ),
             "fp": np.clip(
                 ktrans_init * 120.0,
                 _PARAM_BOUNDS["fp"][0] + 1e-3,
@@ -1054,6 +1058,16 @@ def batched_lm_fit(
     # Handle vp constraint
     vp_subtracted = False
     if fixed_vp is not None:
+        fixed_vp = np.clip(np.asarray(fixed_vp, dtype=np.float64), *_PARAM_BOUNDS["vp"])
+        minimum_ve = TWO_CXM_VE_BOUNDS[0] if model_name == "2cxm" else 0.0
+        if not np.all(np.isfinite(fixed_vp)) or (
+            model_name in ("extended_tofts", "2cxm")
+            and np.any(fixed_vp > VP_VE_TOTAL_MAX - minimum_ve)
+        ) or (
+            model_name == "extended_tofts"
+            and np.any(fixed_vp >= VP_VE_TOTAL_MAX)
+        ):
+            raise ValueError("fixed_vp leaves no feasible joint tissue-volume domain")
         if model_name in ("extended_tofts", "patlak"):
             tissue_curves = tissue_curves - fixed_vp[:, None] * aif[None, :]
             all_param_names = [p for p in all_param_names if p != "vp"]

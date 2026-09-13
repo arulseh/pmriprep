@@ -34,6 +34,7 @@ from pmriprep.utils.dce_constants import (
     PS_BOUNDS,
     VE_BOUNDS,
     VP_BOUNDS,
+    VP_VE_TOTAL_MAX,
 )
 from pmriprep.utils.dce_voxel_prep import prepare_voxel_for_fitting
 
@@ -48,6 +49,11 @@ def _is_degenerate_dce_fit(
     ktrans = params.get("Ktrans", 0.0)
     ve = params.get("ve", 0.0)
     vp = params.get("vp", 0.0)
+    if model_name in ("patlak", "extended_tofts", "2cxm"):
+        if not np.isfinite(vp) or not VP_BOUNDS.min <= vp <= VP_BOUNDS.max:
+            return True
+        if model_name != "patlak" and ve + vp > VP_VE_TOTAL_MAX + 1e-12:
+            return True
     if model_name == "2cxm":
         from pmriprep.models.dce.two_compartment_exchange import (
             TWO_CXM_VE_BOUNDS,
@@ -62,15 +68,11 @@ def _is_degenerate_dce_fit(
             or ps >= PS_BOUNDS.max
             or ve <= TWO_CXM_VE_BOUNDS[0]
             or ve >= TWO_CXM_VE_BOUNDS[1]
-            or vp <= 0
-            or vp >= VP_BOUNDS.max
         )
     if model_name == "patlak":
         return (
             ktrans < 0
             or ktrans >= KTRANS_BOUNDS.max
-            or vp <= 0
-            or vp >= VP_BOUNDS.max
         )
     if model_name == "extended_tofts":
         return (
@@ -78,8 +80,6 @@ def _is_degenerate_dce_fit(
             or ktrans >= KTRANS_BOUNDS.max
             or ve <= 0
             or ve >= VE_BOUNDS.max
-            or vp <= 0
-            or vp >= VP_BOUNDS.max
         )
     return (
         ktrans <= 0
