@@ -13,11 +13,12 @@ The shared constraint ve + vp <= VP_VE_TOTAL_MAX is enforced during sampling
 for models that have both ve and vp parameters.
 """
 
-from typing import Callable, Mapping, cast
+from typing import Callable, Mapping
 
 import numpy as np
 import numpy.typing as npt
 from scipy import optimize  # type: ignore[import-untyped]
+from scipy.special import digamma, gammaln  # type: ignore[import-untyped]
 
 from pmriprep.models.bayesian_utils import (
     BayesianPrior,
@@ -57,6 +58,9 @@ DEFAULT_MCMC_SAMPLES: int = 500
 
 #: Default maximum iterations for MAP optimization
 DEFAULT_MAP_MAX_ITER: int = 1000
+
+#: Absolute local free-energy change for VI objective convergence (nats).
+VI_FREE_ENERGY_TOL: float = 0.01
 
 #: Threshold for independently generated R-hat diagnostics.
 QC_RHAT_MAX: float = 1.1
@@ -113,6 +117,62 @@ def _bounded_vi_mean(
     if not result.success or not np.all(np.isfinite(result.x)):
         raise RuntimeError("Bound-constrained VI mean update failed")
     return np.asarray(result.x, dtype=np.float64)
+
+
+def _vi_noise_and_free_energy(
+    mean: npt.NDArray[np.float64],
+    covariance: npt.NDArray[np.float64],
+    gram: npt.NDArray[np.float64],
+    weighted_rss: float,
+    prior_mean: npt.NDArray[np.float64],
+    prior_precision: npt.NDArray[np.float64],
+    noise_prior: tuple[float, float],
+    n_eff: float,
+) -> tuple[float, float, float]:
+    """Evaluate a VI trial's noise posterior and local free-energy score.
+
+    Parameters
+    ----------
+    mean, covariance : numpy.ndarray
+        Trial Gaussian parameters in transformed space.
+    gram : numpy.ndarray
+        Weighted Jacobian Gram matrix evaluated at the trial mean.
+    weighted_rss : float
+        Weighted residual sum of squares evaluated at the trial mean.
+    prior_mean, prior_precision : numpy.ndarray
+        Gaussian parameter prior in transformed space.
+    noise_prior : tuple of float
+        Gamma shape and scale of the noise precision prior.
+    n_eff : float
+        Effective number of observations.
+
+    Returns
+    -------
+    c, s, free_energy : float
+        Trial Gamma shape, scale, and approximate local free-energy score.
+    """
+    c0, s0 = noise_prior
+    c = c0 + n_eff / 2.0
+    trace_term = float(np.trace(covariance @ gram))
+    s = 1.0 / (1.0 / s0 + 0.5 * (weighted_rss + trace_term))
+    tau_exp = c * s
+    dm = mean - prior_mean
+    sign_cov, logdet_cov = np.linalg.slogdet(covariance)
+    sign_prior, logdet_prior_prec = np.linalg.slogdet(prior_precision)
+    free_energy = (
+        0.5 * n_eff * (np.log(tau_exp) - np.log(2 * np.pi))
+        - 0.5 * tau_exp * (weighted_rss + trace_term)
+        - 0.5 * float(dm @ prior_precision @ dm)
+        - 0.5 * float(np.trace(prior_precision @ covariance))
+        + 0.5 * logdet_cov * sign_cov
+        + 0.5 * logdet_prior_prec * sign_prior
+        + 0.5 * mean.size
+    )
+    gamma_kl = -(
+        (c - c0) * digamma(c) - gammaln(c) + gammaln(c0)
+        + c0 * (np.log(s0) - np.log(s)) + c * (s / s0 - 1.0)
+    )
+    return float(c), float(s), float(free_energy + gamma_kl)
 
 
 class BayesianPKFitter:
@@ -904,6 +964,12 @@ class BayesianPKFitter:
         Covariance remains a local Gaussian approximation, with reported
         marginal intervals intersected with model support; this is not an
         exact truncated-posterior uncertainty calculation at an active bound.
+        Backtracking trials are evaluated before acceptance. Convergence
+        requires an accepted trial and either a small full proposed mean
+        update or absolute free-energy changes below ``VI_FREE_ENERGY_TOL``
+        for both the full proposal and accepted trial. Shrinking an update
+        alone cannot establish convergence. An exhausted line search without
+        accepted progress is not itself evidence of convergence.
 
         """
         if sloppy:
@@ -1011,66 +1077,61 @@ class BayesianPKFitter:
         s = s0
         tau_exp = c * s  # E[tau] = shape * scale
 
-        # Best free energy tracking with step-size reduction
+        # Only accepted trials may update the returned posterior or the next
+        # iteration's linearization and noise precision.
         best_free_energy = float("-inf")
-        best_m: npt.NDArray[np.floating] = m.copy()
+        best_m = m.copy()
         best_cov = np.diag(prior_stds_t**2)
         best_c = c
         best_s = s
-        step_scale = 1.0
 
-        converged = False
-        for iteration in range(n_iterations):
-            # Inverse-transform m to natural space for forward model
-            m_nat = np.array([
-                float(from_transformed(m[k], transforms[k], upper_bounds_t[k]))
-                for k in range(n_params)
-            ], dtype=np.float64)
-
-            # 1. Evaluate forward model at current mean
-            try:
-                g_m = self.model.evaluate(list(m_nat), aif, time_points)
-            except (ValueError, RuntimeError):
-                break
-            g_m = np.asarray(g_m, dtype=np.float64)
-
-            # 2. Compute Jacobian via central finite differences in
-            # transformed space
+        def jacobian(
+            mean: npt.NDArray[np.floating],
+            natural: npt.NDArray[np.float64],
+        ) -> npt.NDArray[np.float64]:
+            """Evaluate bound-aware finite differences at the supplied mean."""
             J = np.zeros((n_obs, n_params), dtype=np.float64)
-            deltas = np.maximum(np.abs(m) * 1e-5, 1e-10)
+            deltas = np.maximum(np.abs(mean) * 1e-5, 1e-10)
             for j in range(n_params):
                 # Only inverse-transform the perturbed param (not all n_params)
-                p_nat = m_nat.copy()
-                n_nat = m_nat.copy()
-                plus_t = min(m[j] + deltas[j], upper_t[j])
-                minus_t = max(m[j] - deltas[j], lower_t[j])
+                p_nat = natural.copy()
+                n_nat = natural.copy()
+                plus_t = min(mean[j] + deltas[j], upper_t[j])
+                minus_t = max(mean[j] - deltas[j], lower_t[j])
                 p_nat[j] = float(np.clip(from_transformed(plus_t, transforms[j], upper_bounds_t[j]), *bounds[j]))
                 n_nat[j] = float(np.clip(from_transformed(minus_t, transforms[j], upper_bounds_t[j]), *bounds[j]))
-                try:
-                    g_plus = self.model.evaluate(list(p_nat), aif, time_points)
-                    g_minus = self.model.evaluate(list(n_nat), aif, time_points)
-                except (ValueError, RuntimeError):
-                    continue
+                g_plus = self.model.evaluate(list(p_nat), aif, time_points)
+                g_minus = self.model.evaluate(list(n_nat), aif, time_points)
                 J[:, j] = (np.asarray(g_plus) - np.asarray(g_minus)) / (plus_t - minus_t)
+            if not np.all(np.isfinite(J)):
+                raise ValueError("Nonfinite VI trial Jacobian")
+            return J
 
+        converged = False
+        try:
+            g_m = np.asarray(self.model.evaluate(list(m_nat), aif, time_points), dtype=np.float64)
+            J = jacobian(m, m_nat)
+        except (ValueError, RuntimeError):
+            n_iterations = 0
+        for iteration in range(n_iterations):
             # Residual
             k_res = y - g_m
 
-            # 3. Update posterior precision: Λ = Λ₀ + <τ> J^T W J
+            # Update posterior precision: Λ = Λ₀ + <τ> J^T W J
             if w is not None:
                 JtWJ = J.T @ (w[:, np.newaxis] * J)
             else:
                 JtWJ = J.T @ J
             post_prec = prior_prec + tau_exp * JtWJ
 
-            # 4. Update posterior covariance
+            # Update posterior covariance
             try:
-                post_cov = np.linalg.inv(post_prec)
+                post_cov = np.asarray(np.linalg.inv(post_prec), dtype=np.float64)
             except np.linalg.LinAlgError:
                 post_prec += 1e-6 * np.eye(n_params)
-                post_cov = np.linalg.inv(post_prec)
+                post_cov = np.asarray(np.linalg.inv(post_prec), dtype=np.float64)
 
-            # 5. Update posterior mean (in transformed space)
+            # Update posterior mean (in transformed space)
             if w is not None:
                 rhs = prior_prec @ prior_means_t + tau_exp * J.T @ (w * (k_res + J @ m))
             else:
@@ -1081,85 +1142,68 @@ class BayesianPKFitter:
             except (RuntimeError, np.linalg.LinAlgError):
                 break
 
-            # 6. Update noise precision posterior
-            c = c0 + n_eff / 2.0
-            m_new_nat = np.array([
-                # The solve enforces support; clipping removes inverse-transform
-                # roundoff at an active bound, not an out-of-domain estimate.
-                float(np.clip(from_transformed(m_new[k], transforms[k], upper_bounds_t[k]), *bounds[k]))
-                for k in range(n_params)
-            ], dtype=np.float64)
-            m_new_nat = np.asarray(
-                self._apply_volume_constraint(m_new_nat),
-                dtype=np.float64,
-            )
-            m_new = np.array([
-                float(to_transformed(
-                    m_new_nat[k],
-                    transforms[k],
-                    upper_bounds_t[k],
-                ))
-                for k in range(n_params)
-            ], dtype=np.float64)
-            try:
-                g_new = self.model.evaluate(list(m_new_nat), aif, time_points)
-            except (ValueError, RuntimeError):
-                g_new = g_m
-            k_new = y - np.asarray(g_new, dtype=np.float64)
-            trace_term = float(np.trace(post_cov @ JtWJ))
-            if w is not None:
-                weighted_kk = float(k_new @ (w * k_new))
-            else:
-                weighted_kk = float(k_new @ k_new)
-            s = 1.0 / (1.0 / s0 + 0.5 * (weighted_kk + trace_term))
-            tau_exp = c * s
-
-            # 7. Compute free energy (analytic ELBO)
-            dm = m_new - prior_means_t
-            sign_cov, logdet_cov = np.linalg.slogdet(post_cov)
-            sign_prior_prec, logdet_prior_prec = np.linalg.slogdet(prior_prec)
-            logdet_prior_cov = -logdet_prior_prec
-            sign_prior = sign_prior_prec
-
-            free_energy = (
-                0.5 * n_eff * (np.log(tau_exp) - np.log(2 * np.pi))
-                - 0.5 * tau_exp * (weighted_kk + trace_term)
-                - 0.5 * float(dm @ prior_prec @ dm)
-                - 0.5 * float(np.trace(prior_prec @ post_cov))
-                + 0.5 * logdet_cov * sign_cov
-                - 0.5 * logdet_prior_cov * sign_prior
-                + 0.5 * n_params
-            )
-
-            # Gamma KL: -KL(q(tau) || p(tau)) for shape-scale Gamma
-            from scipy.special import digamma, gammaln
-            gamma_kl = -((c - c0) * digamma(c) - gammaln(c) + gammaln(c0)
-                          + c0 * (np.log(s0) - np.log(s))
-                          + c * (s / s0 - 1.0))
-            free_energy += gamma_kl
-
-            # Step-size reduction: if free energy decreased, interpolate
-            if free_energy > best_free_energy:
-                best_free_energy = free_energy
-                best_m = cast(npt.NDArray[np.float64], m_new.copy())
-                best_cov = cast(npt.NDArray[np.float64], post_cov.copy())
-                best_c = c
-                best_s = s
-                step_scale = 1.0
-            else:
-                step_scale *= 0.5
-                if step_scale < 1e-4:
+            # Each trial gets its own forward/Jacobian evaluation and Gamma
+            # update. The covariance is the proposed local Gaussian update;
+            # rejected trials must not alter the accepted state.
+            previous_free_energy = best_free_energy
+            full_free_energy = float("nan")
+            step_scale = 1.0
+            accepted = False
+            while step_scale >= 1e-4:
+                trial_m = m + step_scale * (m_new - m)
+                trial_nat = np.array([
+                    float(np.clip(from_transformed(trial_m[k], transforms[k], upper_bounds_t[k]), *bounds[k]))
+                    for k in range(n_params)
+                ], dtype=np.float64)
+                trial_nat = np.asarray(
+                    self._apply_volume_constraint(trial_nat), dtype=np.float64,
+                )
+                trial_m = np.array([
+                    float(to_transformed(trial_nat[k], transforms[k], upper_bounds_t[k]))
+                    for k in range(n_params)
+                ], dtype=np.float64)
+                if step_scale == 1.0:
+                    full_param_change = float(np.max(np.abs(trial_m - m)))
+                try:
+                    g_trial = self.model.evaluate(list(trial_nat), aif, time_points)
+                    trial_J = jacobian(trial_m, trial_nat)
+                except (ValueError, RuntimeError):
+                    step_scale *= 0.5
+                    continue
+                residual = y - np.asarray(g_trial, dtype=np.float64)
+                weighted_rss = float(residual @ (w * residual if w is not None else residual))
+                trial_gram = trial_J.T @ (w[:, np.newaxis] * trial_J if w is not None else trial_J)
+                trial_c, trial_s, free_energy = _vi_noise_and_free_energy(
+                    trial_m, post_cov, trial_gram, weighted_rss,
+                    prior_means_t, prior_prec, (c0, s0), n_eff,
+                )
+                if step_scale == 1.0:
+                    full_free_energy = free_energy
+                if np.isfinite(free_energy) and free_energy >= best_free_energy:
+                    best_free_energy = free_energy
+                    best_m = trial_m.copy()
+                    best_cov = post_cov.copy()
+                    best_c, best_s = trial_c, trial_s
+                    accepted = True
                     break
-                m_new = m + step_scale * (m_new - m)
+                step_scale *= 0.5
+            if not accepted:
+                break
 
             # Convergence check
-            if iteration > 0:
-                param_change = float(np.max(np.abs(m_new - m)))
-                if param_change < 1e-3:  # 0.1% relative for log-params
-                    converged = True
-                    m = m_new
-                    break
-            m = m_new
+            # Check the undamped proposal as well as the accepted improvement:
+            # backtracking can make the latter tiny far from a stable score.
+            objective_stable = (
+                abs(full_free_energy - previous_free_energy) < VI_FREE_ENERGY_TOL
+                and abs(best_free_energy - previous_free_energy) < VI_FREE_ENERGY_TOL
+            )
+            if iteration > 0 and (full_param_change < 1e-3 or objective_stable):
+                converged = True
+                break
+            m = best_m.copy()
+            tau_exp = best_c * best_s
+            g_m = np.asarray(g_trial, dtype=np.float64)
+            J = trial_J
 
         # Inverse-transform best parameters to natural space
         fitted_params = np.array([

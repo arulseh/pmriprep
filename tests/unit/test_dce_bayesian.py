@@ -20,12 +20,13 @@ from pmriprep.models.dce.bayesian import (
     create_vp_prior_from_dsc,
     fit_pk_model,
 )
+from pmriprep.models.dce import bayesian as bayesian_module
 from pmriprep.models.dce.base import FitResult, PKModel
 from pmriprep.models.dce.extended_tofts import ExtendedToftsModel
 from pmriprep.models.dce.patlak import PatlakModel
 from pmriprep.models.dce.tofts import ToftsModel
 from pmriprep.models.dce.two_compartment_exchange import TwoCompartmentExchangeModel
-from pmriprep.models.bayesian_utils import to_transformed
+from pmriprep.models.bayesian_utils import from_transformed, to_transformed
 from pmriprep.utils.dce_constants import (
     DCE_AIF_G6_SIGMA_INFLATION,
     VP_VE_TOTAL_MAX,
@@ -357,6 +358,164 @@ class TestVolumeConstraint:
 class TestVIConvergenceAndInitialization:
     """VI reports honest termination and recovers informative low uptake."""
 
+    @pytest.mark.parametrize("rejected_score", [-np.inf, np.nan])
+    @pytest.mark.parametrize("weighted", [False, True])
+    def test_rejected_trials_preserve_entire_accepted_posterior(
+        self, monkeypatch: pytest.MonkeyPatch, rejected_score: float, weighted: bool,
+    ) -> None:
+        """Failed line searches cannot leak trial means, covariance or noise."""
+        tissue, aif, time, _ = _make_synthetic_tofts_data()
+        weights = np.linspace(0.2, 1.0, len(time)) if weighted else None
+        fitter = BayesianPKFitter(ToftsModel(), noise_std=0.001)
+        expected = fitter.fit_vi(tissue, aif, time, n_iterations=1, weights=weights)
+        evaluate_trial = bayesian_module._vi_noise_and_free_energy
+        calls = 0
+
+        def reject_after_first(*args: object) -> tuple[float, float, float]:
+            nonlocal calls
+            calls += 1
+            c, s, energy = evaluate_trial(*args)
+            return (c, s, energy) if calls == 1 else (c, s, rejected_score)
+
+        monkeypatch.setattr(bayesian_module, "_vi_noise_and_free_energy", reject_after_first)
+        result = fitter.fit_vi(tissue, aif, time, n_iterations=30, weights=weights)
+
+        assert calls > 2  # Multiple smaller trials were actually scored.
+        assert not result.converged
+        assert result.quality_flag == "poor_convergence"
+        assert result.parameters == expected.parameters
+        assert result.uncertainties == expected.uncertainties
+        assert result.credible_intervals == expected.credible_intervals
+        np.testing.assert_array_equal(result.fitted_curve, expected.fitted_curve)
+
+    @pytest.mark.parametrize("weighted", [False, True])
+    def test_shortened_trial_is_rescored_but_cannot_manufacture_convergence(
+        self, monkeypatch: pytest.MonkeyPatch, weighted: bool,
+    ) -> None:
+        """An accepted tiny movement is not convergence of a large proposal."""
+        tissue, aif, time, _ = _make_synthetic_tofts_data()
+        weights = np.linspace(0.2, 1.0, len(time)) if weighted else None
+        fitter = BayesianPKFitter(ToftsModel(), noise_std=0.001)
+        evaluate_trial = bayesian_module._vi_noise_and_free_energy
+        solve_mean = bayesian_module._bounded_vi_mean
+        means: list[np.ndarray] = []
+        noise: list[tuple[float, float]] = []
+        covariances: list[np.ndarray] = []
+
+        def propose_mean(*args: object) -> np.ndarray:
+            if not means:
+                return solve_mean(*args)
+            return means[0] + np.array([0.01, 0.0])
+
+        def score_trial(*args: object) -> tuple[float, float, float]:
+            mean, cov, gram, rss = args[:4]
+            natural = [float(from_transformed(value, p.transform, p.upper_bound))
+                       for value, p in zip(mean, fitter.priors)]
+            residual = tissue - fitter.model.evaluate(natural, aif, time)
+            expected_rss = float(residual @ (weights * residual if weighted else residual))
+            assert rss == pytest.approx(expected_rss, rel=1e-12)
+            # Independently check the trial-location Jacobian and Gamma rate.
+            jac = np.empty((time.size, len(natural)))
+            for j in range(len(natural)):
+                delta = max(abs(mean[j]) * 1e-5, 1e-10)
+                plus, minus = natural.copy(), natural.copy()
+                p = fitter.priors[j]
+                plus[j] = float(from_transformed(mean[j] + delta, p.transform, p.upper_bound))
+                minus[j] = float(from_transformed(mean[j] - delta, p.transform, p.upper_bound))
+                jac[:, j] = (fitter.model.evaluate(plus, aif, time)
+                             - fitter.model.evaluate(minus, aif, time)) / (2 * delta)
+            expected_gram = jac.T @ (weights[:, None] * jac if weighted else jac)
+            np.testing.assert_allclose(gram, expected_gram, rtol=1e-8)
+            c, s, _ = evaluate_trial(*args)
+            assert c == pytest.approx(10 + (weights.sum() if weighted else time.size) / 2)
+            assert s == pytest.approx(1 / (1e-5 + 0.5 * (rss + np.trace(cov @ gram))))
+            means.append(mean.copy())
+            noise.append((c, s))
+            covariances.append(cov.copy())
+            # First trial accepted; next full/half/quarter/eighth rejected;
+            # finally accept 1/16 of the full 0.01 transformed-space update.
+            return c, s, 0.0 if len(means) == 1 else (1e-6 if len(means) == 6 else -1.0)
+
+        monkeypatch.setattr(bayesian_module, "_bounded_vi_mean", propose_mean)
+        monkeypatch.setattr(bayesian_module, "_vi_noise_and_free_energy", score_trial)
+        result = fitter.fit_vi(tissue, aif, time, n_iterations=2, weights=weights)
+
+        assert len(means) == 6
+        assert np.max(np.abs(means[-1] - means[0])) < 1e-3
+        assert np.max(np.abs(means[1] - means[0])) > 1e-3
+        assert not result.converged
+        assert result.quality_flag == "poor_convergence"
+        for i, name in enumerate(fitter.model.get_parameter_names()):
+            prior = fitter.priors[i]
+            assert to_transformed(result.parameters[name], prior.transform, prior.upper_bound) == pytest.approx(means[-1][i])
+        assert result.uncertainties["noise_std"] == pytest.approx(1 / np.sqrt(np.prod(noise[-1])))
+        # Ktrans is log-transformed, so its delta-method SD is mean * log SD.
+        assert result.uncertainties["Ktrans"] == pytest.approx(
+            result.parameters["Ktrans"] * np.sqrt(covariances[-1][0, 0]),
+        )
+
+    @pytest.mark.parametrize("full_change,accepted_change,expected", [
+        (0.005, 0.005, True),
+        (0.009999, 0.009999, True),
+        (0.01, 0.01, False),
+        (0.010001, 0.010001, False),
+        (-0.005, 0.001, True),
+        (-0.02, 0.001, False),
+        (np.nan, 0.001, False),
+        (-0.005, 0.02, False),
+    ])
+    def test_objective_convergence_checks_full_and_accepted_score_changes(
+        self, monkeypatch: pytest.MonkeyPatch, full_change: float,
+        accepted_change: float, expected: bool,
+    ) -> None:
+        """Score convergence cannot be manufactured by damping a bad proposal."""
+        tissue, aif, time, _ = _make_synthetic_tofts_data()
+        fitter = BayesianPKFitter(ToftsModel(), noise_std=0.001)
+        solve_mean = bayesian_module._bounded_vi_mean
+        evaluate_trial = bayesian_module._vi_noise_and_free_energy
+        means: list[np.ndarray] = []
+
+        def propose_mean(*args: object) -> np.ndarray:
+            return solve_mean(*args) if not means else means[0] + 0.05
+
+        def score_trial(*args: object) -> tuple[float, float, float]:
+            c, s, _ = evaluate_trial(*args)
+            means.append(args[0].copy())
+            score = 0.0 if len(means) == 1 else (full_change if len(means) == 2 else accepted_change)
+            return c, s, score
+
+        monkeypatch.setattr(bayesian_module, "_bounded_vi_mean", propose_mean)
+        monkeypatch.setattr(bayesian_module, "_vi_noise_and_free_energy", score_trial)
+        result = fitter.fit_vi(tissue, aif, time, n_iterations=2)
+        assert np.max(np.abs(means[1] - means[0])) > 1e-3
+        assert result.converged is expected
+        assert result.quality_flag == ("good" if expected else "poor_convergence")
+
+    @pytest.mark.parametrize("realization", [0, 10, 39])
+    def test_extended_tofts_score_plateau_converges_without_more_iterations(
+        self, realization: int,
+    ) -> None:
+        """An objective-stable noisy fit need not have a tiny full mean update."""
+        time = np.arange(0, 6.0, 5 / 60)
+        aif = sum(
+            amp / (width * np.sqrt(2 * np.pi)) * np.exp(-(time - center) ** 2 / (2 * width**2))
+            for amp, center, width in zip((0.809, 0.330), (0.17046, 0.365), (0.0563, 0.132))
+        )
+        aif += 1.050 * np.exp(-0.1685 * time) / (1 + np.exp(-38.078 * (time - 0.483)))
+        model = ExtendedToftsModel()
+        clean = model.evaluate([0.15, 0.35, 0.05], aif, time)
+        draws = np.random.default_rng(2).normal(0, 0.02 * clean.max(), (40, clean.size))
+        tissue = clean + draws[realization]
+        fitter = BayesianPKFitter(model)
+        result = fitter.fit_vi(tissue, aif, time)
+        extended = fitter.fit_vi(tissue, aif, time, n_iterations=1000)
+        assert result.converged
+        assert result.quality_flag == "good"
+        assert result.r_squared > 0.95
+        assert extended.parameters == result.parameters
+        assert extended.uncertainties == result.uncertainties
+        assert extended.converged
+
     def test_single_iteration_is_not_converged(self) -> None:
         """One update cannot satisfy the production VI convergence contract."""
         tissue_curve, aif, time_points, _ = _make_synthetic_tofts_data(
@@ -373,6 +532,95 @@ class TestVIConvergenceAndInitialization:
 
         assert not result.converged
         assert result.quality_flag == "poor_convergence"
+
+    @pytest.mark.parametrize("failure", ["exception", "nonfinite"])
+    def test_invalid_forward_trials_do_not_replace_accepted_state(
+        self, monkeypatch: pytest.MonkeyPatch, failure: str,
+    ) -> None:
+        """Invalid trial predictions cannot borrow the accepted prediction."""
+        tissue, aif, time, _ = _make_synthetic_tofts_data()
+        fitter = BayesianPKFitter(ToftsModel(), noise_std=0.001)
+        expected = fitter.fit_vi(tissue, aif, time, n_iterations=1)
+        evaluate = fitter.model.evaluate
+        solve_mean = bayesian_module._bounded_vi_mean
+        natural = [expected.parameters[n] for n in fitter.model.get_parameter_names()]
+        transformed = np.array([float(to_transformed(v, p.transform, p.upper_bound))
+                                for v, p in zip(natural, fitter.priors)])
+        reject = False
+        solves = 0
+        failures = 0
+
+        def propose_mean(*args: object) -> np.ndarray:
+            nonlocal solves, reject
+            solves += 1
+            if solves == 1:
+                return solve_mean(*args)
+            reject = True
+            return transformed + 0.1
+
+        def reject_prediction(params: list[float], *args: object) -> np.ndarray:
+            nonlocal failures
+            if reject and not np.allclose(params, natural, rtol=0, atol=1e-12):
+                failures += 1
+                if failure == "exception":
+                    raise ValueError("invalid trial prediction")
+                return np.full(len(time), np.nan)
+            return evaluate(params, *args)
+
+        monkeypatch.setattr(bayesian_module, "_bounded_vi_mean", propose_mean)
+        monkeypatch.setattr(fitter.model, "evaluate", reject_prediction)
+        result = fitter.fit_vi(tissue, aif, time)
+        assert failures > 1
+        assert not result.converged
+        assert result.parameters == expected.parameters
+        assert result.uncertainties == expected.uncertainties
+        assert result.credible_intervals == expected.credible_intervals
+
+    def test_exchange_large_full_updates_do_not_converge_under_backtracking(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A current-domain 2CXM curve exercises persistent small accepted trials."""
+        time = np.arange(73) * 5 / 60
+        u = np.maximum(time - 0.5, 0.0)
+        x = u / 0.06
+        aif = 5 * (x / 3) ** 3 * np.exp(3 - x) + 0.6 * (-np.expm1(-u / 0.1)) * np.exp(-u / 2)
+        model = TwoCompartmentExchangeModel()
+        truth = [20.0, 80.0, 0.02, 0.15]
+        tissue = model.evaluate(truth, aif, time)
+        fitter = BayesianPKFitter(model, noise_std=0.001,
+                                  vp_prior_override=create_vp_prior_from_dsc(0.15, 0.6))
+        score_trial = bayesian_module._vi_noise_and_free_energy
+        solve_mean = bayesian_module._bounded_vi_mean
+        iteration = -1
+        accepted: list[tuple[int, np.ndarray, float]] = []
+        full_trials: list[np.ndarray] = []
+        last_scored_iteration = -1
+
+        def propose_mean(*args: object) -> np.ndarray:
+            nonlocal iteration
+            iteration += 1
+            return solve_mean(*args)
+
+        def record_trial(*args: object) -> tuple[float, float, float]:
+            nonlocal last_scored_iteration
+            c, s, energy = score_trial(*args)
+            if iteration != last_scored_iteration:
+                full_trials.append(args[0].copy())
+                last_scored_iteration = iteration
+            if np.isfinite(energy) and (not accepted or energy >= accepted[-1][2]):
+                accepted.append((iteration, args[0].copy(), energy))
+            return c, s, energy
+
+        monkeypatch.setattr(bayesian_module, "_bounded_vi_mean", propose_mean)
+        monkeypatch.setattr(bayesian_module, "_vi_noise_and_free_energy", record_trial)
+        result = fitter.fit_vi(tissue, aif, time)
+        assert len(accepted) > 2
+        assert np.max(np.abs(full_trials[-1] - accepted[-2][1])) > 1e-3
+        assert not result.converged
+        assert result.quality_flag == "poor_convergence"
+        for i, name in enumerate(model.get_parameter_names()):
+            p = fitter.priors[i]
+            assert to_transformed(result.parameters[name], p.transform, p.upper_bound) == pytest.approx(accepted[-1][1][i])
 
     def test_low_permeability_warm_start_recovers_noiseless_curve(self) -> None:
         """VI must not replace informative low uptake with a poor prior fit."""
