@@ -92,6 +92,95 @@ def test_degeneracy_rules_preserve_model_specific_boundaries(
     assert _is_degenerate_dce_fit(model, params) is expected
 
 
+_RATE_CEILING_CASES = [
+    ("tofts", "Ktrans", KTRANS_BOUNDS.max),
+    ("extended_tofts", "Ktrans", KTRANS_BOUNDS.max),
+    ("patlak", "Ktrans", KTRANS_BOUNDS.max),
+    ("2cxm", "Fp", FP_BOUNDS.max),
+    ("2cxm", "PS", PS_BOUNDS.max),
+]
+
+
+@pytest.mark.parametrize("model,rate,ceiling", _RATE_CEILING_CASES)
+@pytest.mark.parametrize("position,expected", [
+    ("exact", True), ("adjacent_below", True), ("adjacent_above", True),
+    ("interior_nudge", True), ("inside_tolerance", True),
+    ("outside_tolerance", False), ("interior", False),
+])
+def test_rate_ceiling_rejection_is_numerically_consistent(
+    model: str, rate: str, ceiling: float, position: str, expected: bool,
+) -> None:
+    """Endpoint nudges are rejected without excluding distinguishable interiors."""
+    values = {
+        "exact": ceiling,
+        "adjacent_below": np.nextafter(ceiling, 0),
+        "adjacent_above": np.nextafter(ceiling, np.inf),
+        "interior_nudge": ceiling - 1e-10 * ceiling,
+        "inside_tolerance": ceiling * (1 - 5e-11),
+        "outside_tolerance": ceiling * (1 - 2e-10),
+        "interior": ceiling * (1 - 1e-8),
+    }
+    params = {"Ktrans": 0.1, "Fp": 40., "PS": 20., "ve": 0.3, "vp": 0.03}
+    params[rate] = values[position]
+    assert _is_degenerate_dce_fit(model, params) is expected
+
+
+@pytest.mark.parametrize("model,rate,ceiling", _RATE_CEILING_CASES)
+@pytest.mark.parametrize("value", [0., float(np.nextafter(0., 1.)), 1e-12, -1e-12])
+def test_rate_ceiling_tolerance_does_not_change_zero_rate_policy(
+    model: str, rate: str, ceiling: float, value: float,
+) -> None:
+    """Upper-endpoint tolerance must not introduce a lower rate floor."""
+    params = {"Ktrans": 0.1, "Fp": 40., "PS": 20., "ve": 0.3, "vp": 0.03}
+    params[rate] = value
+    expected = value < 0 if model == "patlak" else value <= 0
+    assert _is_degenerate_dce_fit(model, params) is expected
+
+
+@pytest.mark.parametrize("model,rate,ceiling", _RATE_CEILING_CASES)
+@pytest.mark.parametrize("is_auto", [False, True])
+@pytest.mark.parametrize("inference", ["nlls", "vi"])
+def test_rate_ceiling_scattering_preserves_rejection_and_accounting(
+    model: str, rate: str, ceiling: float, is_auto: bool, inference: str,
+) -> None:
+    """Exact and nudged endpoints get identical map and accounting outcomes."""
+    for value, rejected in [
+        (ceiling, True), (np.nextafter(ceiling, 0), True),
+        (ceiling - 1e-10 * ceiling, True), (ceiling * (1 - 1e-8), False),
+    ]:
+        params = {"Ktrans": 0.1, "Fp": 40., "PS": 20., "ve": 0.3,
+                  "vp": 0.03, "kep": 1 / 3, "E": 1 / 3}
+        params[rate] = value
+        maps = _uncertainty_maps()
+        maps.model_selection_codes = {model: 4}
+        result = {
+            "failed": False, "coords": (0, 0, 0), "params": params,
+            "selected_model_name": model, "converged": True, "r_squared": 0.99,
+            "uncertainties": {rate: 0.1}, "quality_flag": "good",
+        }
+        summary = _scatter_dce_fit_results(
+            [VoxelInput(0, 0, 0, np.zeros(3), None)], [result], maps,
+            "auto" if is_auto else model, is_auto, inference, ConstraintMode.SKIP, 0.,
+        )
+        assert summary.n_optimizer_converged == 1
+        assert summary.n_rejected_postfit == int(rejected)
+        assert summary.n_retained == int(not rejected)
+        assert maps.optimizer_converged.item()
+        assert maps.model_selection.item() == 4
+        assert maps.r_squared.item() == 0.99
+        assert np.isnan(maps.ktrans.item()) == rejected
+        assert maps.quality_flag.item() == int(not rejected)
+        rate_map_name = {"Ktrans": "ktrans", "Fp": "fp", "PS": "ps"}[rate]
+        uncertainty = getattr(maps, rate_map_name + "_std").item()
+        if rejected:
+            assert uncertainty == 0.
+            if model == "2cxm":
+                assert maps.fp.item() == 0. and maps.ps.item() == 0.
+        else:
+            assert uncertainty > 0.
+            assert getattr(maps, rate_map_name).item() == value
+
+
 def _uncertainty_maps() -> SimpleNamespace:
     """Build the mutable uncertainty fields consumed by the scatter helper."""
     return SimpleNamespace(

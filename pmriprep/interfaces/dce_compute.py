@@ -41,18 +41,27 @@ from pmriprep.utils.dce_metrics import compute_kep
 
 logger = logging.getLogger("nipype.interface")
 
+# Numerical endpoint tolerance for strictly feasible optimizer nudges.
+_RATE_BOUND_RTOL: float = 1e-10
+
 
 def _is_degenerate_dce_fit(
     model_name: str,
     params: dict[str, float],
 ) -> bool:
-    """Return whether a fitted DCE parameter set rails physiological bounds."""
+    """Return whether a DCE fit violates the parameter-retention rules."""
     ktrans = params.get("Ktrans", 0.0)
     ve = params.get("ve", 0.0)
     vp = params.get("vp", 0.0)
-    rate_names = ("Fp", "PS") if model_name == "2cxm" else ("Ktrans",)
-    if any(not np.isfinite(params.get(name, np.nan)) for name in rate_names):
-        return True
+    rate_ceilings = (
+        (("Fp", FP_BOUNDS.max), ("PS", PS_BOUNDS.max))
+        if model_name == "2cxm" else (("Ktrans", KTRANS_BOUNDS.max),)
+    )
+    for name, ceiling in rate_ceilings:
+        value = params.get(name, np.nan)
+        tolerance = _RATE_BOUND_RTOL * max(1.0, abs(ceiling))
+        if not np.isfinite(value) or value >= ceiling - tolerance:
+            return True
     if model_name != "patlak":
         if not np.isfinite(ve) or not 0 < ve <= VE_BOUNDS.max:
             return True
@@ -64,26 +73,10 @@ def _is_degenerate_dce_fit(
     if model_name == "2cxm":
         fp = params.get("Fp", 0.0)
         ps = params.get("PS", 0.0)
-        return (
-            fp <= 0
-            or fp >= FP_BOUNDS.max
-            or ps <= 0
-            or ps >= PS_BOUNDS.max
-        )
+        return fp <= 0 or ps <= 0
     if model_name == "patlak":
-        return (
-            ktrans < 0
-            or ktrans >= KTRANS_BOUNDS.max
-        )
-    if model_name == "extended_tofts":
-        return (
-            ktrans <= 0
-            or ktrans >= KTRANS_BOUNDS.max
-        )
-    return (
-        ktrans <= 0
-        or ktrans >= KTRANS_BOUNDS.max
-    )
+        return ktrans < 0
+    return ktrans <= 0
 
 
 def _scatter_dce_uncertainties(
