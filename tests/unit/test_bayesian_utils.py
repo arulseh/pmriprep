@@ -70,6 +70,15 @@ def test_transformed_gaussian_interval_is_ordered_and_asymmetric(
 # BayesianPrior dataclass
 # ---------------------------------------------------------------------------
 
+
+def test_interval_outside_support_is_undefined_not_reversed() -> None:
+    """Disjoint support cannot be repaired by swapping or clipping endpoints."""
+    interval = transformed_gaussian_interval(
+        np.log(150), 0.01, TransformType.LOG, natural_bounds=(0.0, 100.0),
+    )
+    assert np.all(np.isnan(interval))
+
+
 class TestBayesianPrior:
     """Tests for the BayesianPrior dataclass."""
 

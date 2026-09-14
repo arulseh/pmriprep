@@ -8,6 +8,7 @@ from typing import Any
 
 import numpy as np
 import pytest
+from scipy.integrate import solve_ivp
 from scipy.optimize import lsq_linear, minimize
 
 from pmriprep.models.dce.batched_models import (
@@ -19,6 +20,7 @@ from pmriprep.models.dce.batched_models import (
 )
 from pmriprep.models.dce.batched_fitting import (
     FitResult,
+    _scaled_lm_step,
     batched_lm_fit,
     batched_patlak_lstsq,
 )
@@ -28,6 +30,73 @@ from pmriprep.models.dce.two_compartment_exchange import (
     TwoCompartmentExchangeModel,
 )
 from pmriprep.utils.dce_constants import VP_VE_TOTAL_MAX
+
+
+@pytest.mark.parametrize("force_fallback", [False, True])
+def test_scaled_lm_step_preserves_small_parameter_directions(
+    monkeypatch: pytest.MonkeyPatch, force_fallback: bool,
+) -> None:
+    """Mixed parameter units must not truncate an identifiable direction."""
+    jacobian = np.array([[1.0, 0.0], [0.0, 1e-7]])
+    residual = jacobian @ np.array([2.0, 300.0])
+    if force_fallback:
+        def fail_direct_solve(matrices: np.ndarray, rhs: np.ndarray) -> np.ndarray:
+            raise np.linalg.LinAlgError("Injected direct-solve failure")
+
+        monkeypatch.setattr(np.linalg, "solve", fail_direct_solve)
+    step = _scaled_lm_step(
+        (jacobian.T @ jacobian)[None], (jacobian.T @ residual)[None],
+        [jacobian[:, j][None] for j in range(2)], residual[None],
+        np.ones(2), np.array([1e-10]),
+    )
+    np.testing.assert_allclose(step[0], [2.0, 300.0], rtol=2e-8)
+
+
+@pytest.mark.parametrize("fp,ps,ceiling", [(120.0, 80.0, 100.0), (40.0, 300.0, 500.0), (120.0, 450.0, 500.0)])
+def test_batched_2cxm_independent_ode_recovery(
+    monkeypatch: pytest.MonkeyPatch, fp: float, ps: float, ceiling: float,
+) -> None:
+    """Recover interior fits in both production and expanded finite domains."""
+    from pmriprep.models.dce import batched_fitting, two_compartment_exchange
+    from pmriprep.utils.dce_constants import ParameterBounds
+
+    monkeypatch.setattr(two_compartment_exchange, "PS_BOUNDS", ParameterBounds(0, ceiling))
+    monkeypatch.setitem(batched_fitting._PARAM_BOUNDS, "ps", (0.0, ceiling))
+    t = np.arange(73) * 5 / 60
+    u = np.maximum(t - 0.5, 0)
+    x = u / 0.06
+    aif = 5 * (x / 3) ** 3 * np.exp(3 - x) + 0.6 * (-np.expm1(-u / .1)) * np.exp(-u / 2)
+    ve, vp = .2, .05
+
+    def rhs(now: float, state: np.ndarray) -> list[float]:
+        cp, ce = state
+        exchange = ps / 100 * (cp - ce)
+        return [(fp / 100 * (np.interp(now, t, aif) - cp) - exchange) / vp, exchange / ve]
+
+    reference = solve_ivp(rhs, (0, 6), [0., 0.], t_eval=t,
+                          method="Radau", rtol=1e-9, atol=1e-12, max_step=5/240)
+    assert reference.success
+    tissue = vp * reference.y[0] + ve * reference.y[1]
+    result = batched_lm_fit("2cxm", tissue[None], aif, t)
+    assert result.converged[0]
+    actual = [result.params[key][0] for key in ("fp", "ps", "ve", "vp")]
+    np.testing.assert_allclose(actual, [fp, ps, ve, vp], rtol=1e-3)
+
+
+def test_scaled_lm_step_preserves_weighted_damped_objective() -> None:
+    """Column scaling is a change of coordinates, not a new regularizer."""
+    rng = np.random.default_rng(304)
+    jacobian = rng.normal(size=(10, 3))
+    weights = np.linspace(0.1, 1, 10)
+    residual = rng.normal(size=10)
+    gram = jacobian.T @ (weights[:, None] * jacobian)
+    rhs = jacobian.T @ (weights * residual)
+    expected = np.linalg.solve(gram + 0.03 * np.diag(np.diag(gram)), rhs)
+    actual = _scaled_lm_step(
+        gram[None], rhs[None], [jacobian[:, j][None] for j in range(3)],
+        residual[None], weights, np.array([0.03]),
+    )
+    np.testing.assert_allclose(actual[0], expected, rtol=1e-12)
 
 
 # ---------------------------------------------------------------------------

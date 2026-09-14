@@ -16,12 +16,15 @@ import pytest
 
 from pmriprep.models.dce.bayesian import (
     BayesianPKFitter,
+    _bounded_vi_mean,
     create_vp_prior_from_dsc,
     fit_pk_model,
 )
+from pmriprep.models.dce.base import FitResult, PKModel
 from pmriprep.models.dce.extended_tofts import ExtendedToftsModel
-from pmriprep.models.dce.base import FitResult
+from pmriprep.models.dce.patlak import PatlakModel
 from pmriprep.models.dce.tofts import ToftsModel
+from pmriprep.models.dce.two_compartment_exchange import TwoCompartmentExchangeModel
 from pmriprep.models.bayesian_utils import to_transformed
 from pmriprep.utils.dce_constants import (
     DCE_AIF_G6_SIGMA_INFLATION,
@@ -32,6 +35,41 @@ from pmriprep.utils.dce_constants import (
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def test_bounded_vi_mean_reoptimizes_correlated_parameters() -> None:
+    """An active bound changes the other coordinate, unlike output clipping."""
+    precision = np.array([[2.0, 1.0], [1.0, 2.0]])
+    unconstrained = np.array([2.0, 0.0])
+    result = _bounded_vi_mean(
+        precision, precision @ unconstrained, unconstrained,
+        np.array([-np.inf, -np.inf]), np.array([1.0, np.inf]),
+    )
+    np.testing.assert_allclose(result, [1.0, 0.5], atol=1e-9)
+
+
+@pytest.mark.parametrize("model,truth", [
+    (PatlakModel(), [7.0, 0.05]),
+    (ToftsModel(), [7.0, 0.2]),
+    (ExtendedToftsModel(), [7.0, 0.2, 0.05]),
+    (TwoCompartmentExchangeModel(), [120.0, 150.0, 0.2, 0.05]),
+    (TwoCompartmentExchangeModel(), [250.0, 20.0, 0.2, 0.05]),
+])
+def test_vi_respects_finite_rate_support(model: PKModel, truth: list[float]) -> None:
+    """Strong out-of-domain signals cannot yield impossible means/intervals."""
+    t = np.linspace(0, 6, 121)
+    aif = 5 * np.exp(-0.5 * ((t - 0.7) / 0.15) ** 2)
+    aif += np.where(t > 0.5, 0.6 * np.exp(-(t - 0.5) / 2), 0)
+    tissue = model.evaluate(truth, aif, t)
+    fitter = BayesianPKFitter(model, noise_std=0.001)
+    priors_before = [vars(prior).copy() for prior in fitter.priors]
+    result = fitter.fit_vi(tissue, aif, t)
+    assert [vars(prior) for prior in fitter.priors] == priors_before
+    for name, (lo, hi) in zip(model.get_parameter_names(), model.get_bounds()):
+        value = result.parameters[name]
+        lower, upper = result.credible_intervals[name]
+        assert lo <= value <= hi
+        assert lo <= lower <= value <= upper <= hi
 
 
 def test_uncertainty_source_appends_to_fit_result_layout() -> None:

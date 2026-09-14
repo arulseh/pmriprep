@@ -71,6 +71,50 @@ QC_ESS_MIN: int = 100
 EPSILON_SIGMA_CONCENTRATION: float = 0.001
 
 
+def _bounded_vi_mean(
+    precision: npt.NDArray[np.float64],
+    rhs: npt.NDArray[np.float64],
+    unconstrained: npt.NDArray[np.float64],
+    lower: npt.NDArray[np.float64],
+    upper: npt.NDArray[np.float64],
+) -> npt.NDArray[np.float64]:
+    """Minimize the local Gaussian mean objective within transformed bounds.
+
+    Parameters
+    ----------
+    precision : numpy.ndarray
+        Positive-definite local posterior precision matrix.
+    rhs : numpy.ndarray
+        Linear term in the quadratic mean objective.
+    unconstrained : numpy.ndarray
+        Unconstrained mean update.
+    lower, upper : numpy.ndarray
+        Bounds in the same coordinates as the mean and precision.
+
+    Returns
+    -------
+    numpy.ndarray
+        Bound-constrained mean, with all free coordinates reoptimized.
+
+    Raises
+    ------
+    RuntimeError
+        If the constrained solve fails or returns a nonfinite mean.
+    """
+    if np.all(np.isfinite(unconstrained)) and np.all(
+        (unconstrained >= lower) & (unconstrained <= upper)
+    ):
+        return unconstrained
+    factor = np.linalg.cholesky(precision)
+    target = np.linalg.solve(factor, rhs)
+    result = optimize.lsq_linear(
+        factor.T, target, bounds=(lower, upper), method="bvls", tol=1e-10,
+    )
+    if not result.success or not np.all(np.isfinite(result.x)):
+        raise RuntimeError("Bound-constrained VI mean update failed")
+    return np.asarray(result.x, dtype=np.float64)
+
+
 class BayesianPKFitter:
     """Bayesian inference for DCE pharmacokinetic models.
 
@@ -854,6 +898,13 @@ class BayesianPKFitter:
         FitResult
             FitResult with parameters, uncertainties, and credible intervals.
 
+        Notes
+        -----
+        Finite rate bounds constrain each local quadratic mean update.
+        Covariance remains a local Gaussian approximation, with reported
+        marginal intervals intersected with model support; this is not an
+        exact truncated-posterior uncertainty calculation at an active bound.
+
         """
         if sloppy:
             n_iterations = 8
@@ -874,9 +925,16 @@ class BayesianPKFitter:
             w = None
         n_eff = float(np.sum(w)) if w is not None else float(n_obs)
 
-        # Build transform info from priors
-        transforms = [p.transform for p in self.priors]
-        upper_bounds_t = [p.upper_bound for p in self.priors]
+        # Fractions already have bounded transforms. Log-transformed rates
+        # still require their finite model ceilings in transformed coordinates.
+        lower_t = np.full(n_params, -np.inf)
+        upper_t = np.full(n_params, np.inf)
+        for i, (transform, (lo, hi)) in enumerate(zip(transforms, bounds)):
+            if transform == TransformType.LOG:
+                lower_t[i] = np.log(lo) if lo > 0 else -np.inf
+                upper_t[i] = np.log(hi)
+            elif transform == TransformType.IDENTITY:
+                lower_t[i], upper_t[i] = lo, hi
 
         # Prior precision matrix in transformed space
         prior_means_t = np.array(
@@ -984,14 +1042,16 @@ class BayesianPKFitter:
                 # Only inverse-transform the perturbed param (not all n_params)
                 p_nat = m_nat.copy()
                 n_nat = m_nat.copy()
-                p_nat[j] = float(from_transformed(m[j] + deltas[j], transforms[j], upper_bounds_t[j]))
-                n_nat[j] = float(from_transformed(m[j] - deltas[j], transforms[j], upper_bounds_t[j]))
+                plus_t = min(m[j] + deltas[j], upper_t[j])
+                minus_t = max(m[j] - deltas[j], lower_t[j])
+                p_nat[j] = float(np.clip(from_transformed(plus_t, transforms[j], upper_bounds_t[j]), *bounds[j]))
+                n_nat[j] = float(np.clip(from_transformed(minus_t, transforms[j], upper_bounds_t[j]), *bounds[j]))
                 try:
                     g_plus = self.model.evaluate(list(p_nat), aif, time_points)
                     g_minus = self.model.evaluate(list(n_nat), aif, time_points)
                 except (ValueError, RuntimeError):
                     continue
-                J[:, j] = (np.asarray(g_plus) - np.asarray(g_minus)) / (2 * deltas[j])
+                J[:, j] = (np.asarray(g_plus) - np.asarray(g_minus)) / (plus_t - minus_t)
 
             # Residual
             k_res = y - g_m
@@ -1016,13 +1076,17 @@ class BayesianPKFitter:
             else:
                 rhs = prior_prec @ prior_means_t + tau_exp * J.T @ (k_res + J @ m)
             m_new = post_cov @ rhs
-
-            # NO CLIPPING — transformed space is unconstrained
+            try:
+                m_new = _bounded_vi_mean(post_prec, rhs, m_new, lower_t, upper_t)
+            except (RuntimeError, np.linalg.LinAlgError):
+                break
 
             # 6. Update noise precision posterior
             c = c0 + n_eff / 2.0
             m_new_nat = np.array([
-                float(from_transformed(m_new[k], transforms[k], upper_bounds_t[k]))
+                # The solve enforces support; clipping removes inverse-transform
+                # roundoff at an active bound, not an out-of-domain estimate.
+                float(np.clip(from_transformed(m_new[k], transforms[k], upper_bounds_t[k]), *bounds[k]))
                 for k in range(n_params)
             ], dtype=np.float64)
             m_new_nat = np.asarray(
@@ -1099,7 +1163,7 @@ class BayesianPKFitter:
 
         # Inverse-transform best parameters to natural space
         fitted_params = np.array([
-            float(from_transformed(best_m[k], transforms[k], upper_bounds_t[k]))
+            float(np.clip(from_transformed(best_m[k], transforms[k], upper_bounds_t[k]), *bounds[k]))
             for k in range(n_params)
         ], dtype=np.float64)
         fitted_params = np.asarray(

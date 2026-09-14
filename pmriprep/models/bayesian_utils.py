@@ -151,6 +151,7 @@ def transformed_gaussian_interval(
     -------
     tuple of float
         Ordered lower and upper interval limits in natural coordinates.
+        Both limits are NaN if the interval has no overlap with model support.
     """
     endpoints = np.asarray(from_transformed(
         np.asarray([
@@ -165,6 +166,8 @@ def transformed_gaussian_interval(
     if natural_bounds is not None:
         lower = max(lower, natural_bounds[0])
         upper = min(upper, natural_bounds[1])
+    if lower > upper:
+        return float("nan"), float("nan")
     return lower, upper
 
 

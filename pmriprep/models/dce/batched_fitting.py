@@ -952,6 +952,63 @@ def _batched_lm_fit_soft_box(
     )
 
 
+def _scaled_lm_step(
+    gram: npt.NDArray[np.float64],
+    rhs: npt.NDArray[np.float64],
+    jacobian_columns: list[npt.NDArray[np.float64]],
+    residuals: npt.NDArray[np.float64],
+    weights: npt.NDArray[np.float64],
+    damping: npt.NDArray[np.float64],
+) -> npt.NDArray[np.float64]:
+    """Solve damped LM steps in column-normalized parameter coordinates.
+
+    Parameters
+    ----------
+    gram : numpy.ndarray
+        Weighted Jacobian Gram matrices, shape (voxels, parameters, parameters).
+    rhs : numpy.ndarray
+        Weighted Jacobian-residual products, shape (voxels, parameters).
+    jacobian_columns : list of numpy.ndarray
+        Jacobian columns, each shape (voxels, observations).
+    residuals : numpy.ndarray
+        Observed minus predicted curves, shape (voxels, observations).
+    weights : numpy.ndarray
+        Observation weights.
+    damping : numpy.ndarray
+        Per-voxel LM damping factors.
+
+    Returns
+    -------
+    numpy.ndarray
+        Steps in natural parameter units. Failed solves return zero steps.
+    """
+    n_voxels, n_parameters = rhs.shape
+    scale = np.sqrt(np.maximum(np.diagonal(gram, axis1=1, axis2=2), 1e-12))
+    normalized = gram / scale[:, :, None] / scale[:, None, :]
+    for j in range(n_parameters):
+        normalized[:, j, j] += damping
+    normalized_rhs = rhs / scale
+    step = np.zeros((n_voxels, n_parameters), dtype=np.float64)
+    try:
+        return np.linalg.solve(normalized, normalized_rhs[:, :, None])[:, :, 0] / scale
+    except np.linalg.LinAlgError:
+        pass
+    # On direct-solve failure, use the augmented Jacobian rather than its Gram
+    # matrix to avoid squaring the condition number.
+    for index in range(n_voxels):
+        jacobian = np.column_stack([column[index] for column in jacobian_columns])
+        design = np.vstack([
+            np.sqrt(weights)[:, None] * jacobian / scale[index],
+            np.sqrt(damping[index]) * np.eye(n_parameters),
+        ])
+        target = np.concatenate([np.sqrt(weights) * residuals[index], np.zeros(n_parameters)])
+        try:
+            step[index] = np.linalg.lstsq(design, target, rcond=None)[0]
+        except np.linalg.LinAlgError:
+            pass
+    return step / scale
+
+
 def batched_lm_fit(
     model_name: str,
     tissue_curves: npt.NDArray[np.floating],
@@ -1208,30 +1265,7 @@ def batched_lm_fit(
                 JtJ[:, j, k] = val
                 JtJ[:, k, j] = val
 
-        # Damping
-        lam_active = lam[active_idx]
-        for j in range(n_free):
-            diag_val = np.maximum(JtJ[:, j, j].copy(), 1e-12)
-            JtJ[:, j, j] += lam_active * diag_val
-
-        # Solve normal equations (batched, with condition-number pre-filter)
-        dp = np.zeros((n_active, n_free))
-        conds = np.linalg.cond(JtJ)
-        well_conditioned = conds < 1e12
-        if np.any(well_conditioned):
-            good = np.where(well_conditioned)[0]
-            dp[good] = np.linalg.solve(
-                JtJ[good], Jtr[good, :, np.newaxis],
-            )[:, :, 0]
-        # Poorly conditioned voxels: use lstsq fallback (more robust)
-        ill_conditioned = ~well_conditioned
-        if np.any(ill_conditioned):
-            bad = np.where(ill_conditioned)[0]
-            for bi in bad:
-                try:
-                    dp[bi] = np.linalg.lstsq(JtJ[bi], Jtr[bi], rcond=1e-8)[0]
-                except np.linalg.LinAlgError:
-                    pass  # keep dp=0
+        dp = _scaled_lm_step(JtJ, Jtr, J_columns, residuals, w, lam[active_idx])
 
         # Trial step
         p_trial = p_active + dp
@@ -1354,6 +1388,25 @@ def batched_lm_fit(
                         initial_guess=initial,
                         weights=weights,
                     )
+                    if model_name == "2cxm":
+                        # A zero-volume seed can trap the refit in a reduced
+                        # model. Also try the normal data-driven initialization,
+                        # retaining only the better weighted objective.
+                        restarted = scalar_model.fit(
+                            tissue_curves[index], aif, time_points, weights=weights,
+                        )
+                        if restarted.converged:
+                            parameter_names = ("Fp", "PS", "ve", "vp")
+                            restarted_curve = scalar_model.evaluate(
+                                [restarted.parameters[name] for name in parameter_names], aif, time_points,
+                            )
+                            seeded_curve = scalar_model.evaluate(
+                                [result.parameters[name] for name in parameter_names], aif, time_points,
+                            )
+                            if not result.converged or np.sum(
+                                w * (tissue_curves[index] - restarted_curve) ** 2
+                            ) < np.sum(w * (tissue_curves[index] - seeded_curve) ** 2):
+                                result = restarted
                 if not result.converged:
                     continue
                 result_names = (
