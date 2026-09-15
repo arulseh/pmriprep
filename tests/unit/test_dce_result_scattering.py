@@ -713,7 +713,6 @@ def test_nonconverged_very_poor_r2_is_unsuccessful_not_execution_error() -> None
         converged=np.array([False]),
         uncertainties={},
         fitted_curves=None,
-        vp_at_bound=None,
     )
 
     result = ComputeDCEMaps()._fit_result_to_dicts(

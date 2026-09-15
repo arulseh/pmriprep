@@ -672,25 +672,6 @@ class TestDCEEdgeCases:
         projected_rss = float(np.sum((curve - projected_curve) ** 2))
         assert result.residual_sum_squares < projected_rss
 
-    def test_fixed_vp_volume_constraint_etofts(
-        self,
-        dce_aif_and_time: Tuple[npt.NDArray[Any], npt.NDArray[Any]],
-    ) -> None:
-        """A scalar fixed-vp ET fit uses the same joint-volume boundary."""
-        aif, time_min = dce_aif_and_time
-        model = ExtendedToftsModel()
-        fixed_vp = 0.25
-        curve = model.evaluate([0.12, 0.85, fixed_vp], aif, time_min)
-
-        result = model.fit_constrained(
-            curve,
-            aif,
-            time_min,
-            fixed_vp=fixed_vp,
-            initial_guess=[0.12, 0.85],
-        )
-
-        assert result.parameters["ve"] + result.parameters["vp"] <= VP_VE_TOTAL_MAX + 1e-12
 
     def test_patlak_reduces_to_linear(
         self,

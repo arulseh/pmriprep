@@ -196,7 +196,6 @@ class ToftsModel(PKModel):
         time_points: npt.NDArray[np.floating],
         initial_guess: Optional[Sequence[float]] = None,
         weights: Optional[npt.NDArray[np.floating]] = None,
-        vp_bounds: Optional[tuple[float, float]] = None,
     ) -> FitResult:
         """Fit the Standard Tofts model to observed tissue concentration data.
 
@@ -217,9 +216,6 @@ class ToftsModel(PKModel):
             If None, uses data-driven estimate or default.
         weights : np.ndarray, optional
             Optional per-frame weights for motion-weighted fitting.
-        vp_bounds : tuple, optional
-            Accepted for interface compatibility but ignored
-            (standard Tofts has no vp parameter).
 
         Returns
         -------

@@ -1134,19 +1134,14 @@ class VoxelInput(NamedTuple):
 class BatchedChunkArgs(NamedTuple):
     """Typed container for batched NLLS chunk-worker arguments.
 
-    Pickle-safe across ``ProcessPoolExecutor.map`` because it is defined
-    at module top-level (a nested NamedTuple definition would raise
-    PicklingError at runtime). Named fields replace a prior positional
-    tuple so that adding fields (e.g., ``vp_uncertainty``) is
-    compile-time-checked instead of positionally-dropped silently.
+    Defined at module scope for process-pool pickling. Named fields keep
+    chunk-worker inputs explicit and type-checkable.
     """
 
     model_name: str
     tissue_curves: npt.NDArray[Any]
     aif: npt.NDArray[Any]
     time_points: npt.NDArray[Any]
-    fixed_vp: Optional[npt.NDArray[Any]]
-    vp_uncertainty: Optional[float]
     weights: Optional[npt.NDArray[Any]]
     save_fitted_curves: bool
     compute_uncertainties: bool
@@ -1479,23 +1474,23 @@ def _fit_single_voxel(
     try:
         result = None
         constrained = False
-        fixed_vp: Optional[float] = None
+        prior_vp: Optional[float] = None
         vp_prior = None  # Hoisted for BIC winner MAP refinement
         delta_bic = np.nan
 
         # Determine constraint state
         if voxel_vp is not None and constraint_mode != ConstraintMode.SKIP:
-            fixed_vp = voxel_vp
+            prior_vp = voxel_vp
 
         # SOFT constraint: Bayesian with informative vp prior
         if (
-            fixed_vp is not None
+            prior_vp is not None
             and constraint_mode == ConstraintMode.SOFT
             and inference != "nlls"
             and (is_auto or model.name in _MODEL_HAS_VP)
         ):
             vp_prior = create_vp_prior_from_dsc(
-                fixed_vp, relative_uncertainty=constraint_vp_uncertainty
+                prior_vp, relative_uncertainty=constraint_vp_uncertainty
             )
             if is_auto:
                 # Select the model from unconstrained DCE data, then apply the
@@ -1582,7 +1577,7 @@ def _fit_single_voxel(
                 try:
                     cand_result = cmodel.fit(
                         prepared_curve, aif, time_points,
-                        weights=motion_weights,
+                    weights=motion_weights,
                     )
                     if cand_result.converged and np.isfinite(cand_result.bic):
                         all_results.append(cand_result)
@@ -1910,179 +1905,6 @@ def _resolve_dce_fit_quality(
     return base_quality
 
 
-def _merge_fit_results(
-    r_const: Any,
-    const_idx: npt.NDArray[np.intp],
-    r_free: Any,
-    free_idx: npt.NDArray[np.intp],
-    n_voxels: int,
-    model_name: str,
-) -> Any:
-    """Merge two FitResult objects at original indices.
-
-    Scatters constrained and free results back into full (N,) arrays.
-
-    Parameters
-    ----------
-    r_const : Any
-        FitResult for constrained voxels.
-    const_idx : numpy.ndarray
-        Global indices of constrained voxels.
-    r_free : Any
-        FitResult for free (unconstrained) voxels.
-    free_idx : numpy.ndarray
-        Global indices of free voxels.
-    n_voxels : int
-        Total number of voxels.
-    model_name : str
-        Model name for the merged result.
-
-    Returns
-    -------
-    Any
-        Merged FitResult with all voxels at their original positions.
-    """
-    from pmriprep.models.dce.batched_fitting import FitResult
-
-    # Merge params
-    params: dict[str, npt.NDArray[np.floating]] = {}
-    all_keys = set(r_const.params.keys()) | set(r_free.params.keys())
-    for key in all_keys:
-        arr = np.zeros(n_voxels, dtype=np.float64)
-        if key in r_const.params:
-            arr[const_idx] = r_const.params[key]
-        if key in r_free.params:
-            arr[free_idx] = r_free.params[key]
-        params[key] = arr
-
-    # Merge r_squared and converged
-    r_squared = np.zeros(n_voxels, dtype=np.float64)
-    r_squared[const_idx] = r_const.r_squared
-    r_squared[free_idx] = r_free.r_squared
-
-    converged = np.zeros(n_voxels, dtype=bool)
-    converged[const_idx] = r_const.converged
-    converged[free_idx] = r_free.converged
-
-    # Merge fitted_curves
-    fitted_curves: Optional[npt.NDArray[np.floating]] = None
-    if r_const.fitted_curves is not None and r_free.fitted_curves is not None:
-        n_time = r_const.fitted_curves.shape[1]
-        fitted_curves = np.zeros((n_voxels, n_time), dtype=np.float64)
-        fitted_curves[const_idx] = r_const.fitted_curves
-        fitted_curves[free_idx] = r_free.fitted_curves
-    elif r_const.fitted_curves is not None:
-        n_time = r_const.fitted_curves.shape[1]
-        fitted_curves = np.zeros((n_voxels, n_time), dtype=np.float64)
-        fitted_curves[const_idx] = r_const.fitted_curves
-    elif r_free.fitted_curves is not None:
-        n_time = r_free.fitted_curves.shape[1]
-        fitted_curves = np.zeros((n_voxels, n_time), dtype=np.float64)
-        fitted_curves[free_idx] = r_free.fitted_curves
-
-    # Merge uncertainties
-    uncertainties: dict[str, npt.NDArray[np.floating]] = {}
-    unc_keys = set(r_const.uncertainties.keys()) | set(r_free.uncertainties.keys())
-    for key in unc_keys:
-        arr = np.full(n_voxels, np.nan)
-        if key in r_const.uncertainties:
-            arr[const_idx] = r_const.uncertainties[key]
-        if key in r_free.uncertainties:
-            arr[free_idx] = r_free.uncertainties[key]
-        uncertainties[key] = arr
-
-    n_iterations = max(r_const.n_iterations, r_free.n_iterations)
-
-    # Preserve vp_at_bound from the constrained branch; unconstrained voxels
-    # (fixed_vp=0) cannot hit a bound by definition, so they're 0 in the map.
-    vp_at_bound: Optional[npt.NDArray[np.floating]] = None
-    if r_const.vp_at_bound is not None:
-        vp_at_bound = np.zeros(n_voxels, dtype=np.float32)
-        vp_at_bound[const_idx] = r_const.vp_at_bound
-
-    return FitResult(
-        params=params,
-        r_squared=r_squared,
-        converged=converged,
-        fitted_curves=fitted_curves,
-        n_iterations=n_iterations,
-        model_name=model_name,
-        uncertainties=uncertainties,
-        vp_at_bound=vp_at_bound,
-    )
-
-
-def _fit_with_split_constraint(
-    fit_fn: Any,
-    tissue_curves: npt.NDArray[np.floating],
-    fixed_vp: Optional[npt.NDArray[np.floating]],
-    model_name: str,
-    n_voxels: int,
-    vp_uncertainty: Optional[float] = None,
-    **fit_kwargs: Any,
-) -> Any:
-    """Handle mixed constrained/unconstrained voxels by splitting batches.
-
-    When fixed_vp contains a mix of zeros (unconstrained) and positive values
-    (constrained), splits into two batches, fits separately, and merges.
-    ``vp_uncertainty`` is forwarded to the constrained batch only; the
-    unconstrained batch receives ``vp_uncertainty=None`` since there is no
-    prior to apply to those voxels.
-
-    Parameters
-    ----------
-    fit_fn : Any
-        Fitting function (batched_lm_fit or batched_patlak_lstsq).
-    tissue_curves : numpy.ndarray
-        Observed tissue curves, shape (N, T).
-    fixed_vp : numpy.ndarray or None
-        Fixed vp values or None. Zeros = unconstrained.
-    model_name : str
-        Model name.
-    n_voxels : int
-        Total number of voxels.
-    vp_uncertainty : float, optional
-        Relative σ for SOFT box constraint (None = HARD).
-    **fit_kwargs : Any
-        Additional kwargs passed to fit_fn.
-
-    Returns
-    -------
-    Any
-        FitResult with all voxels correctly handled.
-    """
-    if fixed_vp is None or model_name not in _MODEL_HAS_VP:
-        return fit_fn(
-            tissue_curves, fixed_vp=None, vp_uncertainty=None, **fit_kwargs,
-        )
-
-    has_constraint = fixed_vp > 0
-    if np.all(has_constraint):
-        return fit_fn(
-            tissue_curves, fixed_vp=fixed_vp,
-            vp_uncertainty=vp_uncertainty, **fit_kwargs,
-        )
-    if not np.any(has_constraint):
-        return fit_fn(
-            tissue_curves, fixed_vp=None, vp_uncertainty=None, **fit_kwargs,
-        )
-
-    # Mixed: split, fit separately, merge.
-    const_idx = np.where(has_constraint)[0]
-    free_idx = np.where(~has_constraint)[0]
-    r_const = fit_fn(
-        tissue_curves[const_idx], fixed_vp=fixed_vp[const_idx],
-        vp_uncertainty=vp_uncertainty, **fit_kwargs,
-    )
-    r_free = fit_fn(
-        tissue_curves[free_idx], fixed_vp=None,
-        vp_uncertainty=None, **fit_kwargs,
-    )
-    return _merge_fit_results(
-        r_const, const_idx, r_free, free_idx, n_voxels, model_name,
-    )
-
-
 def _init_batched_worker() -> None:
     """Minimal ProcessPool initializer for batched LM chunk workers.
 
@@ -2099,16 +1921,11 @@ def _init_batched_worker() -> None:
 
 
 def _fit_chunk_nlls(args: BatchedChunkArgs) -> Any:
-    """Fit one voxel chunk via batched LM / lstsq with mixed-constraint split.
+    """Fit one voxel chunk via batched LM or bounded linear least squares.
 
     Picklable entry point for ``ProcessPoolExecutor``. Deterministic:
     ``batched_lm_fit`` carries no RNG, so no seed plumbing is needed
     unless that changes in the future.
-
-    Accepts a ``BatchedChunkArgs`` NamedTuple (see module docstring) — this
-    replaces a prior positional tuple to prevent silent parameter drops
-    (e.g. the historical `vp_uncertainty` drop that caused SOFT to behave
-    as HARD in the batched NLLS path).
 
     Returns
     -------
@@ -2124,28 +1941,19 @@ def _fit_chunk_nlls(args: BatchedChunkArgs) -> Any:
     tissue_curves = args.tissue_curves
     aif = args.aif
     time_points = args.time_points
-    fixed_vp = args.fixed_vp
-    vp_uncertainty = args.vp_uncertainty
     weights = args.weights
     save_fitted_curves = args.save_fitted_curves
     compute_uncertainties = args.compute_uncertainties
 
-    # Closures are cheap to build inside the worker (not pickled across
-    # processes); aif and time_points have already been transferred.
     if model_name == "patlak":
-        def fit_fn(tc: npt.NDArray[np.floating], **kw: Any) -> Any:
-            return batched_patlak_lstsq(tc, aif, time_points, **kw)
-    else:
-        def fit_fn(tc: npt.NDArray[np.floating], **kw: Any) -> Any:
-            return batched_lm_fit(model_name, tc, aif, time_points, **kw)
-
-    return _fit_with_split_constraint(
-        fit_fn,
-        tissue_curves,
-        fixed_vp,
-        model_name,
-        len(tissue_curves),
-        vp_uncertainty=vp_uncertainty,
+        return batched_patlak_lstsq(
+            tissue_curves, aif, time_points,
+            weights=weights,
+            save_fitted_curves=save_fitted_curves,
+            compute_uncertainties=compute_uncertainties,
+        )
+    return batched_lm_fit(
+        model_name, tissue_curves, aif, time_points,
         weights=weights,
         save_fitted_curves=save_fitted_curves,
         compute_uncertainties=compute_uncertainties,
@@ -3696,13 +3504,11 @@ class ComputeDCEMaps(BaseInterface):
         tissue_curves: npt.NDArray[np.floating],
         aif: npt.NDArray[np.floating],
         time_points: npt.NDArray[np.floating],
-        fixed_vp: Optional[npt.NDArray[np.floating]],
         weights: Optional[npt.NDArray[np.floating]],
         save_fitted_curves: bool,
         compute_uncertainties: bool,
         n_procs: int,
         n_voxels: int,
-        vp_uncertainty: Optional[float] = None,
     ) -> Any:
         """Split voxels into n_procs chunks and fit each chunk in parallel.
 
@@ -3716,9 +3522,6 @@ class ComputeDCEMaps(BaseInterface):
         threshold, process-spawn overhead (~100 ms) dominates the batched
         LM runtime and multiproc is a net loss.
 
-        ``vp_uncertainty`` is the relative σ for the SOFT box constraint;
-        passed through to ``_fit_chunk_nlls`` via ``BatchedChunkArgs``.
-        Pass None for HARD / unconstrained.
         """
         from pmriprep.models.dce.batched_fitting import concat_fit_results
 
@@ -3733,8 +3536,6 @@ class ComputeDCEMaps(BaseInterface):
                     tissue_curves=tissue_curves,
                     aif=aif,
                     time_points=time_points,
-                    fixed_vp=fixed_vp,
-                    vp_uncertainty=vp_uncertainty,
                     weights=weights,
                     save_fitted_curves=save_curves,
                     compute_uncertainties=compute_unc,
@@ -3746,15 +3547,12 @@ class ComputeDCEMaps(BaseInterface):
         chunk_args: list[BatchedChunkArgs] = []
         for idx in chunk_index_arrays:
             tc_chunk = tissue_curves[idx]
-            fvp_chunk = fixed_vp[idx] if fixed_vp is not None else None
             chunk_args.append(
                 BatchedChunkArgs(
                     model_name=model_name,
                     tissue_curves=tc_chunk,
                     aif=aif,
                     time_points=time_points,
-                    fixed_vp=fvp_chunk,
-                    vp_uncertainty=vp_uncertainty,
                     weights=weights,
                     save_fitted_curves=save_curves,
                     compute_uncertainties=compute_unc,
@@ -3897,21 +3695,16 @@ class ComputeDCEMaps(BaseInterface):
 
         # The batched NLLS stage is always unconstrained. DSC-derived vp enters
         # only the Bayesian refinement through ``voxel_data_list``.
-        fixed_vp: Optional[npt.NDArray[np.floating]] = None
-        vp_uncertainty_batched: Optional[float] = None
 
         results: list[dict[str, Any]] = []
 
         if not is_auto:
-            # Single-model batched fit with split constraint handling,
-            # parallelized across n_procs voxel chunks.
+            # Single-model batched fit parallelized across voxel chunks.
             fit_result = self._dispatch_batched_chunks(
                 model_name=model_name,
                 tissue_curves=tissue_curves,
                 aif=aif,
                 time_points=time_points,
-                fixed_vp=fixed_vp,
-                vp_uncertainty=vp_uncertainty_batched,
                 weights=motion_weights,
                 save_fitted_curves=(
                     save_fitted_curves or inference == "map"
@@ -3923,7 +3716,6 @@ class ComputeDCEMaps(BaseInterface):
 
             results = self._fit_result_to_dicts(
                 fit_result, coords, model_name,
-                fixed_vp=fixed_vp,
             )
 
             # MAP refinement: use batched fit as warm-start for CPU MAP
@@ -3943,9 +3735,7 @@ class ComputeDCEMaps(BaseInterface):
                     tissue_curves=tissue_curves,
                     aif=aif,
                     time_points=time_points,
-                    fixed_vp=fixed_vp,
-                    vp_uncertainty=vp_uncertainty_batched,
-                    weights=motion_weights,
+                        weights=motion_weights,
                     save_fitted_curves=True,
                     compute_uncertainties=inference == "nlls",
                     n_procs=n_procs,
@@ -3969,10 +3759,6 @@ class ComputeDCEMaps(BaseInterface):
             if result.fitted_curves is None:
                 bic_arrays[cname] = np.full(n_voxels, np.inf)
                 continue
-            # SOFT box constraints retain the full model parameter count.
-            # Exact fixed-vp selection stages reduce every candidate by the
-            # same one parameter, leaving all pairwise BIC differences
-            # unchanged.
             bic_arrays[cname] = _compute_auto_bic(
                 tissue_curves,
                 result.fitted_curves,
@@ -3997,13 +3783,6 @@ class ComputeDCEMaps(BaseInterface):
             selection_failed = not bool(valid_selection[i])
 
             x, y, z = int(coords[i, 0]), int(coords[i, 1]), int(coords[i, 2])
-
-            # Determine constraint state for this voxel
-            is_constrained = (
-                fixed_vp is not None
-                and winner_name in _MODEL_HAS_VP
-                and fixed_vp[i] > 0
-            )
 
             # Normalize param names to match CPU output format
             params_out: dict[str, float] = {}
@@ -4042,7 +3821,7 @@ class ComputeDCEMaps(BaseInterface):
                     "all_candidate_models_failed" if selection_failed else None
                 ),
                 "failure_stage": "fit" if selection_failed else None,
-                "constrained": is_constrained,
+                "constrained": False,
                 "selected_model_name": winner_name,
                 "delta_bic": float(delta_bic[i]),
             })
@@ -4060,7 +3839,6 @@ class ComputeDCEMaps(BaseInterface):
         fit_result: Any,
         coords: npt.NDArray[Any],
         model_name: str,
-        fixed_vp: Optional[npt.NDArray[np.floating]] = None,
     ) -> list[dict[str, Any]]:
         """Convert FitResult to list of per-voxel dicts.
 
@@ -4075,8 +3853,6 @@ class ComputeDCEMaps(BaseInterface):
             Voxel coordinates, shape (N, 3).
         model_name : str
             Model name.
-        fixed_vp : numpy.ndarray, optional
-            Fixed vp values or None.
 
         Returns
         -------
@@ -4088,12 +3864,6 @@ class ComputeDCEMaps(BaseInterface):
 
         for i in range(n_voxels):
             x, y, z = int(coords[i, 0]), int(coords[i, 1]), int(coords[i, 2])
-
-            is_constrained = (
-                fixed_vp is not None
-                and model_name in _MODEL_HAS_VP
-                and fixed_vp[i] > 0
-            )
 
             # Build params dict with normalized names
             params_out: dict[str, float] = {}
@@ -4136,7 +3906,7 @@ class ComputeDCEMaps(BaseInterface):
                     "nonconverged_very_poor_r2" if fit_unsuccessful else None
                 ),
                 "failure_stage": "fit" if fit_unsuccessful else None,
-                "constrained": is_constrained,
+                "constrained": False,
                 "selected_model_name": model_name,
                 "delta_bic": np.nan,
             })

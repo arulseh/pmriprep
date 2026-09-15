@@ -18,7 +18,6 @@ from typing import Optional, Sequence
 
 import numpy as np
 import numpy.typing as npt
-from scipy import optimize
 from scipy.optimize import curve_fit
 
 from pmriprep.models.bayesian_utils import TransformType
@@ -429,7 +428,6 @@ class TwoCompartmentExchangeModel(PKModel):
         time_points: npt.NDArray[np.floating],
         initial_guess: Optional[Sequence[float]] = None,
         weights: Optional[npt.NDArray[np.floating]] = None,
-        vp_bounds: Optional[tuple[float, float]] = None,
     ) -> FitResult:
         """Fit the 2CXM model to observed tissue concentration data.
 
@@ -466,10 +464,6 @@ class TwoCompartmentExchangeModel(PKModel):
 
         # Get bounds for optimization
         bounds = self.get_bounds()
-        if vp_bounds is not None:
-            bounds = self._apply_vp_bounds_override(bounds, vp_bounds)
-            vp_idx = self.get_parameter_names().index("vp")
-            x0[vp_idx] = float(np.clip(x0[vp_idx], vp_bounds[0], vp_bounds[1]))
         lower_bounds = [b[0] for b in bounds]
         upper_bounds = [b[1] for b in bounds]
 
@@ -617,124 +611,6 @@ class TwoCompartmentExchangeModel(PKModel):
             fitting_method="nlls",
             fitted_curve=fitted_curve,
             quality_flag=quality_flag,
-        )
-
-    def fit_constrained(
-        self,
-        tissue_curve: npt.NDArray[np.floating],
-        aif: npt.NDArray[np.floating],
-        time_points: npt.NDArray[np.floating],
-        fixed_vp: float,
-        initial_guess: Optional[Sequence[float]] = None,
-        weights: Optional[npt.NDArray[np.floating]] = None,
-    ) -> FitResult:
-        """Fit 2CXM with vp fixed from DSC CBV.
-
-        Free parameters are [Fp, PS, ve] with vp held constant.
-        The ve upper bound is adjusted so that ve + fixed_vp <= 1.0.
-
-        Parameters
-        ----------
-        tissue_curve : np.ndarray
-            Observed tissue concentration values C_t(t) in mM.
-        aif : np.ndarray
-            Arterial input function plasma concentration values Cp(t) in mM.
-        time_points : np.ndarray
-            Time points (minutes) corresponding to measurements.
-        fixed_vp : float
-            Fixed plasma volume fraction from DSC CBV.
-        initial_guess : Sequence[float], optional
-            Optional initial values [Fp, PS, ve].
-            If None, uses parameter definition prior means.
-        weights : np.ndarray, optional
-            Optional per-frame weights for motion-weighted fitting.
-
-        Returns
-        -------
-        FitResult
-            FitResult with n_parameters=3 and fitting_method='nlls_constrained_vp'.
-        """
-        n_obs = len(tissue_curve)
-
-        # Clamp fixed_vp to valid range
-        fixed_vp = float(np.clip(fixed_vp, VP_BOUNDS.min, VP_BOUNDS.max))
-        if not np.isfinite(fixed_vp) or fixed_vp >= VP_VE_TOTAL_MAX:
-            raise ValueError("fixed_vp leaves no feasible joint tissue-volume domain")
-
-        # Set initial guess for [Fp, PS, ve]
-        if initial_guess is None:
-            x0 = self.estimate_initial_guess(
-                tissue_curve,
-                aif,
-                time_points,
-            )[:3]
-        else:
-            x0 = list(initial_guess[:3])
-
-        # Bounds: ve upper bound clamped so ve + vp <= 1.0
-        ve_upper = min(VE_BOUNDS.max, VP_VE_TOTAL_MAX - fixed_vp)
-        bounds_lo = [FP_BOUNDS.min, PS_BOUNDS.min, VE_BOUNDS.min]
-        bounds_hi = [FP_BOUNDS.max, PS_BOUNDS.max, ve_upper]
-
-        # Objective: evaluate with [Fp, PS, ve, fixed_vp]
-        def objective(params: npt.NDArray[np.floating]) -> float:
-            full_params = [params[0], params[1], params[2], fixed_vp]
-            predicted = self.evaluate(full_params, aif, time_points)
-            residuals = tissue_curve - predicted
-            if weights is not None:
-                return float(np.sum(weights * residuals**2))
-            return float(np.sum(residuals**2))
-
-        try:
-            result = optimize.minimize(
-                objective,
-                x0=x0,
-                method="L-BFGS-B",
-                bounds=list(zip(bounds_lo, bounds_hi)),
-                options={"maxiter": 1000, "ftol": 1e-10},
-            )
-            converged = result.success
-            fitted_3p = result.x.tolist()
-        except Exception:
-            converged = False
-            fitted_3p = x0
-
-        # Clip to bounds
-        fp_fit = float(np.clip(fitted_3p[0], FP_BOUNDS.min, FP_BOUNDS.max))
-        ps_fit = float(np.clip(fitted_3p[1], PS_BOUNDS.min, PS_BOUNDS.max))
-        ve_fit = float(np.clip(fitted_3p[2], VE_BOUNDS.min, ve_upper))
-
-        fitted_params = [fp_fit, ps_fit, ve_fit, fixed_vp]
-
-        # Compute fitted curve and goodness-of-fit
-        fitted_curve = self.evaluate(fitted_params, aif, time_points)
-        rss = float(np.sum((tissue_curve - fitted_curve) ** 2))
-        r_squared = self.compute_r_squared(tissue_curve, fitted_curve)
-        # Use 3 free parameters for AIC/BIC
-        n_free = 3
-        aic = float(n_obs * np.log(rss / n_obs) + 2 * n_free) if rss > 0 and n_obs > 0 else float("inf")
-        bic = float(n_obs * np.log(rss / n_obs) + n_free * np.log(n_obs)) if rss > 0 and n_obs > 0 else float("inf")
-
-        # Derived parameters
-        derived = self.compute_derived_parameters(fitted_params)
-
-        param_dict = {
-            "Fp": fp_fit, "PS": ps_fit, "ve": ve_fit, "vp": fixed_vp,
-        }
-        param_dict.update(derived)
-
-        return FitResult(
-            parameters=param_dict,
-            r_squared=r_squared,
-            residual_sum_squares=rss,
-            aic=aic,
-            bic=bic,
-            model_name=self.name,
-            n_parameters=n_free,
-            n_observations=n_obs,
-            converged=converged,
-            fitting_method="nlls_constrained_vp",
-            fitted_curve=fitted_curve,
         )
 
     def compute_derived_parameters(

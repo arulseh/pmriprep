@@ -136,29 +136,6 @@ def test_joint_volume_still_rejects_impossible_fits() -> None:
         )
 
 
-@pytest.mark.parametrize("name,vp", [
-    ("extended_tofts", 1.0),
-    ("extended_tofts", VP_VE_TOTAL_MAX),
-    ("2cxm", VP_VE_TOTAL_MAX),
-])
-def test_fixed_vp_cannot_leave_empty_volume_domain(
-    sampling: tuple[np.ndarray, np.ndarray],
-    name: str,
-    vp: float,
-) -> None:
-    """Fixed plasma fractions must leave room for the model's EES domain."""
-    time, aif = sampling
-    model = (
-        ExtendedToftsModel()
-        if name == "extended_tofts"
-        else TwoCompartmentExchangeModel()
-    )
-    with pytest.raises(ValueError, match="joint tissue-volume"):
-        model.fit_constrained(aif, aif, time, fixed_vp=vp)
-    with pytest.raises(ValueError, match="joint tissue-volume"):
-        batched_lm_fit(name, aif[None, :], aif, time, fixed_vp=np.array([vp]))
-
-
 def test_2cxm_zero_vp_forward_limit(sampling: tuple[np.ndarray, np.ndarray]) -> None:
     """Zero plasma volume approaches the reduced exchange-model limit."""
     from pmriprep.models.dce.tofts import ToftsModel

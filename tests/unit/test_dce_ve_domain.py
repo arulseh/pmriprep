@@ -146,43 +146,8 @@ def test_bayesian_ve_intervals(
         assert result.parameters["ve"] == pytest.approx(ve, rel=0.05)
 
 
-@pytest.mark.parametrize("name", ["extended_tofts", "2cxm"])
-def test_high_fixed_vp_is_accepted_with_feasible_ve(
-    sampling: tuple[np.ndarray, np.ndarray], name: str,
-) -> None:
-    """High fixed vp is accepted without returning excess EES occupancy."""
-    time, aif = sampling
-    model = ExtendedToftsModel() if name == "extended_tofts" else TwoCompartmentExchangeModel()
-    truth = [0.1, 0.004, 0.995] if name == "extended_tofts" else [40, 10, 0.004, 0.995]
-    tissue = model.evaluate(truth, aif, time)
-    scalar = model.fit_constrained(tissue, aif, time, fixed_vp=0.995)
-    batch = batched_lm_fit(name, tissue[None], aif, time, fixed_vp=np.array([0.995]))
-    assert 0 <= scalar.parameters["ve"] <= 0.005 + 1e-12
-    assert 0 <= batch.params["ve"][0] <= 0.005 + 1e-12
-    if name == "extended_tofts":
-        assert scalar.parameters["ve"] > 0
-        assert batch.params["ve"][0] > 0
-
-
-def test_fixed_vp_2cxm_zero_ve_is_rejected() -> None:
+def test_2cxm_zero_ve_is_rejected() -> None:
     """A feasible zero-EES result is not a retained exchange-tissue estimate."""
     assert _is_degenerate_dce_fit(
         "2cxm", {"Fp": 40, "PS": 10, "ve": 0, "vp": 0.995},
     )
-
-
-def test_fixed_vp_2cxm_positive_solution_is_representable(
-    sampling: tuple[np.ndarray, np.ndarray],
-) -> None:
-    """An exact positive-EES solution remains valid when supplied as the start."""
-    time, aif = sampling
-    model = TwoCompartmentExchangeModel()
-    truth = [40, 10, 0.004, 0.995]
-    tissue = model.evaluate(truth, aif, time)
-    result = model.fit_constrained(
-        tissue, aif, time, fixed_vp=truth[3], initial_guess=truth[:3],
-    )
-    assert result.converged
-    assert result.parameters["ve"] == pytest.approx(truth[2], rel=1e-5)
-    assert result.residual_sum_squares < 1e-12
-    assert not _is_degenerate_dce_fit("2cxm", result.parameters)

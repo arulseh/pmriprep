@@ -32,6 +32,55 @@ from pmriprep.models.dce.two_compartment_exchange import (
 from pmriprep.utils.dce_constants import VP_VE_TOTAL_MAX
 
 
+@pytest.mark.parametrize("model_name", ["patlak", "tofts", "extended_tofts", "2cxm"])
+@pytest.mark.parametrize("weighted", [False, True])
+@pytest.mark.parametrize("save_curves,compute_uncertainties", [(False, False), (True, False), (False, True), (True, True)])
+def test_chunk_worker_forwards_fit_inputs(
+    monkeypatch: pytest.MonkeyPatch,
+    model_name: str,
+    weighted: bool,
+    save_curves: bool,
+    compute_uncertainties: bool,
+) -> None:
+    """Both chunk-worker routes preserve arrays, weights and output options."""
+    from pmriprep.interfaces.dce_compute import BatchedChunkArgs, _fit_chunk_nlls
+    from pmriprep.models.dce import batched_fitting
+
+    curves = np.zeros((2, 5))
+    aif = np.arange(5, dtype=float)
+    time = aif / 10
+    weights = np.linspace(0.2, 1.0, 5) if weighted else None
+    sentinel = object()
+    calls = 0
+
+    def fit(*args: Any, **kwargs: Any) -> object:
+        nonlocal calls
+        calls += 1
+        if model_name != "patlak":
+            assert args[0] == model_name
+            args = args[1:]
+        assert len(args) == 3
+        assert all(actual is expected for actual, expected in zip(args, (curves, aif, time)))
+        assert set(kwargs) == {"weights", "save_fitted_curves", "compute_uncertainties"}
+        assert kwargs["weights"] is weights
+        assert kwargs["save_fitted_curves"] is save_curves
+        assert kwargs["compute_uncertainties"] is compute_uncertainties
+        return sentinel
+
+    def wrong_route(*args: Any, **kwargs: Any) -> None:
+        pytest.fail("Chunk worker selected the wrong fitter")
+
+    monkeypatch.setattr(batched_fitting, "batched_patlak_lstsq", fit if model_name == "patlak" else wrong_route)
+    monkeypatch.setattr(batched_fitting, "batched_lm_fit", fit if model_name != "patlak" else wrong_route)
+    result = _fit_chunk_nlls(BatchedChunkArgs(
+        model_name=model_name, tissue_curves=curves, aif=aif, time_points=time,
+        weights=weights, save_fitted_curves=save_curves,
+        compute_uncertainties=compute_uncertainties,
+    ))
+    assert result is sentinel
+    assert calls == 1
+
+
 @pytest.mark.parametrize("force_fallback", [False, True])
 def test_scaled_lm_step_preserves_small_parameter_directions(
     monkeypatch: pytest.MonkeyPatch, force_fallback: bool,
@@ -281,24 +330,6 @@ class TestExtendedToftsRecovery:
             result.uncertainties["vp"][0]
         )
 
-    def test_fixed_vp_has_no_fit_derived_standard_error(
-        self,
-        aif_and_time: tuple[np.ndarray, np.ndarray],
-    ) -> None:
-        """A hard external vp is not assigned zero fitting uncertainty."""
-        aif, time_points = aif_and_time
-        tissue = ExtendedToftsModel().evaluate(
-            [0.12, 0.3, 0.03], aif, time_points
-        )
-        result = batched_lm_fit(
-            "extended_tofts", tissue[np.newaxis, :], aif, time_points,
-            fixed_vp=np.array([0.03]), compute_uncertainties=True,
-        )
-        assert result.converged[0]
-        assert np.isfinite(result.uncertainties["ktrans"][0])
-        assert np.isfinite(result.uncertainties["ve"][0])
-        assert np.isnan(result.uncertainties["vp"][0])
-
 
 # ---------------------------------------------------------------------------
 # Test 3: Patlak exact recovery (no noise)
@@ -430,42 +461,6 @@ class TestPatlakExact:
         )
         assert objective(parameters) == pytest.approx(reference.fun, rel=1e-9)
 
-    @pytest.mark.parametrize("vp_uncertainty", [None, 0.4])
-    def test_patlak_constraint_center_is_clipped_to_model_support(
-        self,
-        aif_and_time: tuple[np.ndarray, np.ndarray],
-        vp_uncertainty: float | None,
-    ) -> None:
-        """Hard and soft external vp constraints cannot exceed model support."""
-        aif, time_points = aif_and_time
-        model = PatlakModel()
-        tissue = model.evaluate([0.08, 1.0], aif, time_points)
-
-        result = batched_patlak_lstsq(
-            tissue[np.newaxis, :],
-            aif,
-            time_points,
-            fixed_vp=np.array([1.50]),
-            vp_uncertainty=vp_uncertainty,
-        )
-
-        assert result.params["vp"][0] <= model.get_bounds()[1][1]
-        assert result.params["vp"][0] == pytest.approx(1.0)
-
-    def test_patlak_fixed_vp_uncertainty_is_not_reported_as_zero(
-        self,
-        aif_and_time: tuple[np.ndarray, np.ndarray],
-    ) -> None:
-        """A fixed external vp has no fit-derived standard error."""
-        aif, time_points = aif_and_time
-        tissue = PatlakModel().evaluate([0.08, 0.03], aif, time_points)
-        result = batched_patlak_lstsq(
-            tissue[np.newaxis, :], aif, time_points,
-            fixed_vp=np.array([0.03]), compute_uncertainties=True,
-        )
-        assert np.isfinite(result.uncertainties["ktrans"][0])
-        assert np.isnan(result.uncertainties["vp"][0])
-
 
 # ---------------------------------------------------------------------------
 # Test 4: 2CXM recovery
@@ -560,43 +555,6 @@ class TestTwoCXMRecovery:
             batched.uncertainties["vp"][0]
         )
 
-    def test_2cxm_fixed_vp_scalar_and_batched_recover_permeability_limit(
-        self,
-        aif_and_time: tuple[np.ndarray, np.ndarray],
-    ) -> None:
-        """Fixed-vp paths recover a noiseless permeability-limited curve."""
-        aif, time_points = aif_and_time
-        model = TwoCompartmentExchangeModel()
-        truth = {"Fp": 100.0, "PS": 5.0, "ve": 0.2, "vp": 0.02}
-        tissue = model.evaluate(
-            [truth[name] for name in ("Fp", "PS", "ve", "vp")],
-            aif,
-            time_points,
-        )
-
-        scalar = model.fit_constrained(
-            tissue,
-            aif,
-            time_points,
-            fixed_vp=truth["vp"],
-        )
-        batched = batched_lm_fit(
-            "2cxm",
-            tissue[np.newaxis, :],
-            aif,
-            time_points,
-            fixed_vp=np.array([truth["vp"]]),
-            max_iter=150,
-        )
-
-        assert scalar.converged
-        assert batched.converged[0]
-        for name in ("Fp", "PS", "ve"):
-            assert scalar.parameters[name] == pytest.approx(truth[name], rel=0.01)
-            assert batched.params[name.lower()][0] == pytest.approx(
-                truth[name],
-                rel=0.01,
-            )
 
     def test_2cxm_recovery(self, aif_and_time):
         """1000 voxels, 1% noise, 4 params → params within 10% for 80%."""
@@ -620,50 +578,6 @@ class TestTwoCXMRecovery:
         fp_err = np.abs(result.params["fp"][converged] - fp_true[converged])
         fp_rel = fp_err / np.maximum(fp_true[converged], 1e-6)
         assert np.median(fp_rel) < 0.6
-
-
-# ---------------------------------------------------------------------------
-# Test 5: vp constraint
-# ---------------------------------------------------------------------------
-
-class TestVpConstraint:
-    def test_fixed_vp_roundtrip(self, aif_and_time):
-        """fixed_vp → output vp matches input, Ktrans/ve recovered."""
-        aif, time_points = aif_and_time
-        rng = np.random.RandomState(50)
-        n = 500
-        ktrans_true = rng.uniform(0.05, 0.2, n)
-        ve_true = rng.uniform(0.1, 0.4, n)
-        vp_true = rng.uniform(0.02, 0.08, n)
-
-        result_fwd = batched_extended_tofts_model(
-            ktrans_true, ve_true, vp_true, aif, time_points,
-        )
-        tissue = result_fwd.tissue_curves + 0.005 * rng.randn(*result_fwd.tissue_curves.shape)
-
-        result = batched_lm_fit(
-            "extended_tofts", tissue, aif, time_points,
-            fixed_vp=vp_true, max_iter=50,
-        )
-
-        # vp should match input exactly
-        np.testing.assert_allclose(result.params["vp"], vp_true, rtol=1e-10)
-
-    def test_patlak_fixed_vp(self, aif_and_time):
-        """Patlak with fixed vp: 1-parameter solve for Ktrans."""
-        aif, time_points = aif_and_time
-        tissue, ktrans_true, vp_true = _generate_patlak_data(
-            aif, time_points, n_voxels=200,
-        )
-
-        result = batched_patlak_lstsq(
-            tissue, aif, time_points, fixed_vp=vp_true,
-        )
-
-        np.testing.assert_allclose(
-            result.params["ktrans"], ktrans_true, rtol=1e-5,
-        )
-        np.testing.assert_allclose(result.params["vp"], vp_true, rtol=1e-10)
 
 
 # ---------------------------------------------------------------------------
@@ -795,104 +709,6 @@ class TestResultDictFormat:
         assert result.model_name == "tofts"
         assert isinstance(result.uncertainties, dict)
         assert result.n_iterations > 0
-
-
-# ---------------------------------------------------------------------------
-# Test 10: Constrained auto-mode
-# ---------------------------------------------------------------------------
-
-class TestConstrainedAutoMode:
-    def test_fixed_vp_respects_joint_volume_constraint(self, aif_and_time):
-        """A fixed vp solves on the matching per-voxel upper bound on ve."""
-        aif, time_points = aif_and_time
-        model = ExtendedToftsModel()
-        ktrans = np.array([0.12])
-        ve = np.array([0.85])
-        fixed_vp = np.array([0.25])
-        tissue = batched_extended_tofts_model(
-            ktrans, ve, fixed_vp, aif, time_points,
-        ).tissue_curves
-
-        result = batched_lm_fit(
-            "extended_tofts",
-            tissue,
-            aif,
-            time_points,
-            fixed_vp=fixed_vp,
-            max_iter=100,
-        )
-
-        def objective(parameters: np.ndarray) -> float:
-            predicted = model.evaluate(
-                [parameters[0], parameters[1], fixed_vp[0]],
-                aif,
-                time_points,
-            )
-            return float(np.sum((tissue[0] - predicted) ** 2))
-
-        reference = minimize(
-            objective,
-            x0=np.array([0.12, 0.70]),
-            method="SLSQP",
-            bounds=[
-                model.get_bounds()[0],
-                (
-                    model.get_bounds()[1][0],
-                    VP_VE_TOTAL_MAX - fixed_vp[0],
-                ),
-            ],
-            options={"maxiter": 4000, "ftol": 1e-14},
-        )
-        assert reference.success
-        assert result.converged[0]
-        assert result.params["ve"][0] + result.params["vp"][0] <= VP_VE_TOTAL_MAX + 1e-12
-        parameters = np.array(
-            [result.params["ktrans"][0], result.params["ve"][0]]
-        )
-        assert objective(parameters) == pytest.approx(reference.fun, rel=1e-3)
-
-    def test_constrained_vp_preserved(self, aif_and_time):
-        """100 constrained + 100 unconstrained: mixed vp handling."""
-        aif, time_points = aif_and_time
-        rng = np.random.RandomState(100)
-        n = 200
-
-        kt = rng.uniform(0.05, 0.2, n)
-        ve = rng.uniform(0.15, 0.4, n)
-        vp = rng.uniform(0.02, 0.08, n)
-
-        tissue = batched_extended_tofts_model(
-            kt, ve, vp, aif, time_points,
-        ).tissue_curves
-
-        # Constrain first half only; second half are unconstrained (zero)
-        fixed_vp = np.zeros(n)
-        fixed_vp[:100] = vp[:100]
-
-        from pmriprep.interfaces.dce_compute import _fit_with_split_constraint
-
-        def _lm_fit(tc, **kw):
-            return batched_lm_fit(
-                "extended_tofts", tc, aif, time_points, **kw,
-            )
-
-        result = _fit_with_split_constraint(
-            _lm_fit, tissue, fixed_vp, "extended_tofts", n,
-            weights=None,
-            max_iter=30,
-            save_fitted_curves=False,
-            compute_uncertainties=False,
-        )
-
-        # Constrained voxels should have exact vp
-        np.testing.assert_allclose(
-            result.params["vp"][:100], vp[:100], rtol=1e-10,
-        )
-
-        # Unconstrained voxels should have vp > 0 (fitted freely, not forced to 0)
-        assert np.all(result.params["vp"][100:] > 0), (
-            "Unconstrained voxels should have vp > 0 from free fitting"
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -1187,7 +1003,6 @@ class TestChunkedMultiproc:
             tissue_curves=tissue,
             aif=aif,
             time_points=time_points,
-            fixed_vp=None,
             weights=None,
             save_fitted_curves=True,
             compute_uncertainties=False,
@@ -1199,7 +1014,6 @@ class TestChunkedMultiproc:
             tissue_curves=tissue,
             aif=aif,
             time_points=time_points,
-            fixed_vp=None,
             weights=None,
             save_fitted_curves=True,
             compute_uncertainties=False,
@@ -1220,38 +1034,6 @@ class TestChunkedMultiproc:
             r1.fitted_curves, r4.fitted_curves, atol=1e-10, rtol=0,
         )
 
-    def test_dispatch_handles_mixed_fixed_vp(self, aif_and_time):
-        """Mixed constrained / unconstrained voxels across chunks."""
-        from pmriprep.interfaces.dce_compute import ComputeDCEMaps
-
-        aif, time_points = aif_and_time
-        tissue, *_ = _generate_etofts_data(
-            aif, time_points, n_voxels=1500, noise_level=0.02,
-        )
-        fixed_vp = np.zeros(1500)
-        # First half constrained at 0.04, second half free.
-        fixed_vp[:750] = 0.04
-
-        iface = ComputeDCEMaps()
-        r_multi = iface._dispatch_batched_chunks(
-            model_name="extended_tofts",
-            tissue_curves=tissue,
-            aif=aif,
-            time_points=time_points,
-            fixed_vp=fixed_vp,
-            weights=None,
-            save_fitted_curves=False,
-            compute_uncertainties=False,
-            n_procs=4,
-            n_voxels=1500,
-        )
-        # Constrained voxels must land exactly at fixed_vp.
-        np.testing.assert_allclose(
-            r_multi.params["vp"][:750], 0.04, atol=1e-10,
-        )
-        # Free voxels should span a plausible range (not pinned to 0.04).
-        free_vp = r_multi.params["vp"][750:]
-        assert np.std(free_vp) > 0.001
 
     def test_dispatch_auto_mode_bic_chunked_matches_inline(self, aif_and_time):
         """Auto-mode BIC selection is identical at n_procs=1 and n_procs=4.
@@ -1278,7 +1060,6 @@ class TestChunkedMultiproc:
                     tissue_curves=tissue,
                     aif=aif,
                     time_points=time_points,
-                    fixed_vp=None,
                     weights=None,
                     save_fitted_curves=True,
                     compute_uncertainties=False,
@@ -1390,14 +1171,12 @@ class TestChunkedMultiproc:
         from pmriprep.interfaces.dce_compute import ComputeDCEMaps
 
         calls: list[bool] = []
-        fixed_vp_inputs: list[np.ndarray | None] = []
-        vp_uncertainties: list[float | None] = []
         selected_before_refinement: list[str] = []
 
         def fake_dispatch(**kwargs: Any) -> FitResult:
             calls.append(kwargs["compute_uncertainties"])
-            fixed_vp_inputs.append(kwargs["fixed_vp"])
-            vp_uncertainties.append(kwargs["vp_uncertainty"])
+            assert "fixed_vp" not in kwargs
+            assert "vp_uncertainty" not in kwargs
             return FitResult(
                 params={
                     "ktrans": np.array([0.1]),
@@ -1450,8 +1229,6 @@ class TestChunkedMultiproc:
         )
 
         assert calls == [False]
-        assert fixed_vp_inputs == [None]
-        assert vp_uncertainties == [None]
         assert selected_before_refinement == ["patlak"]
         assert results[0]["selected_model_name"] == "patlak"
 
