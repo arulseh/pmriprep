@@ -746,6 +746,8 @@ def batched_lm_fit(
         Relative cost function convergence tolerance. Default 1e-6.
     xtol : float, optional
         Relative parameter convergence tolerance. Default 1e-5.
+        For 2CXM, a small step with continuing relative cost improvement
+        requires confirmation by a scalar refit.
     save_fitted_curves : bool, optional
         Whether to store final fitted curves.
     compute_uncertainties : bool, optional
@@ -792,6 +794,7 @@ def batched_lm_fit(
     active = np.ones(n_voxels, dtype=bool)
     best_cost = np.full(n_voxels, np.inf)
     converged_flags = np.zeros(n_voxels, dtype=bool)
+    small_step_refit = np.zeros(n_voxels, dtype=bool)
 
     # FD floors for each free parameter
     fd_floors = np.array([_PARAM_FD_FLOORS.get(p, 1e-6) for p in free_param_names])
@@ -911,6 +914,13 @@ def batched_lm_fit(
             xtol_check = (dp_norm / (p_norm + 1e-12)) < xtol
 
             acc_converged = ftol_check | xtol_check
+            if model_name == "2cxm":
+                # Damping can make a step small while the objective still
+                # improves materially. Require scalar confirmation of this stop.
+                ambiguous = xtol_check & ~ftol_check
+                small_step_refit[acc_global[ambiguous]] = True
+                active[acc_global[ambiguous]] = False
+                acc_converged &= ~ambiguous
 
             conv_global_idx = acc_global[acc_converged]
             converged_flags[conv_global_idx] = True
@@ -940,9 +950,8 @@ def batched_lm_fit(
         model_name, all_param_dict, aif, time_points,
     ).tissue_curves
 
-    boundary_uncertainties: dict[str, npt.NDArray[np.float64]] = {}
-    needs_boundary_refit = model_name in ("extended_tofts", "2cxm")
-    if needs_boundary_refit:
+    scalar_uncertainties: dict[str, npt.NDArray[np.float64]] = {}
+    if model_name in ("extended_tofts", "2cxm"):
         volume = all_param_dict["ve"] + all_param_dict["vp"]
         at_box_bound = np.any(
             np.isclose(params, bounds_lo[None, :], rtol=0.0, atol=1e-10)
@@ -952,22 +961,22 @@ def batched_lm_fit(
         at_volume_bound = np.isclose(
             volume, VP_VE_TOTAL_MAX, rtol=0.0, atol=1e-10
         )
-        boundary_indices = np.where(
+        refit_indices = np.where(
             at_volume_bound
             if model_name == "extended_tofts"
-            else at_box_bound | at_volume_bound
+            else at_box_bound | at_volume_bound | small_step_refit
         )[0]
-        if boundary_indices.size:
+        if refit_indices.size:
             scalar_model = (
                 ExtendedToftsModel()
                 if model_name == "extended_tofts"
                 else TwoCompartmentExchangeModel()
             )
-            boundary_uncertainties = {
+            scalar_uncertainties = {
                 name: np.full(n_voxels, np.nan, dtype=np.float64)
                 for name in full_names
             }
-            for index in boundary_indices:
+            for index in refit_indices:
                 initial = [float(all_param_dict[name][index]) for name in full_names]
                 result = scalar_model.fit(
                     tissue_curves[index],
@@ -1029,7 +1038,7 @@ def batched_lm_fit(
                         ),
                         np.nan,
                     )
-                    boundary_uncertainties[name][index] = uncertainty
+                    scalar_uncertainties[name][index] = uncertainty
 
     final_r2 = _compute_r_squared(tissue_curves, all_predicted)
     final_fitted = all_predicted if save_fitted_curves else None
@@ -1100,7 +1109,7 @@ def batched_lm_fit(
                         np.maximum(cov_batch[:, j, j], 0.0),
                     )
 
-        for name, values in boundary_uncertainties.items():
+        for name, values in scalar_uncertainties.items():
             finite = np.isfinite(values)
             uncertainties[name][finite] = values[finite]
 

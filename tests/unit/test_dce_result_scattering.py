@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from pmriprep.interfaces import dce_compute
 from pmriprep.interfaces.dce_compute import (
     ComputeDCEMaps,
     VoxelInput,
@@ -35,6 +36,7 @@ from pmriprep.utils.dce_constants import (
     FP_BOUNDS,
     KTRANS_BOUNDS,
     PS_BOUNDS,
+    ParameterBounds,
     VE_BOUNDS,
     VP_BOUNDS,
 )
@@ -98,6 +100,8 @@ _RATE_CEILING_CASES = [
     ("patlak", "Ktrans", KTRANS_BOUNDS.max),
     ("2cxm", "Fp", FP_BOUNDS.max),
     ("2cxm", "PS", PS_BOUNDS.max),
+    ("2cxm", "PS", 500.0),
+    ("2cxm", "Fp", 500.0),
 ]
 
 
@@ -109,8 +113,10 @@ _RATE_CEILING_CASES = [
 ])
 def test_rate_ceiling_rejection_is_numerically_consistent(
     model: str, rate: str, ceiling: float, position: str, expected: bool,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Endpoint nudges are rejected without excluding distinguishable interiors."""
+    monkeypatch.setattr(dce_compute, f"{rate.upper()}_BOUNDS", ParameterBounds(0, ceiling))
     values = {
         "exact": ceiling,
         "adjacent_below": np.nextafter(ceiling, 0),
@@ -129,8 +135,10 @@ def test_rate_ceiling_rejection_is_numerically_consistent(
 @pytest.mark.parametrize("value", [0., float(np.nextafter(0., 1.)), 1e-12, -1e-12])
 def test_rate_ceiling_tolerance_does_not_change_zero_rate_policy(
     model: str, rate: str, ceiling: float, value: float,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Upper-endpoint tolerance must not introduce a lower rate floor."""
+    monkeypatch.setattr(dce_compute, f"{rate.upper()}_BOUNDS", ParameterBounds(0, ceiling))
     params = {"Ktrans": 0.1, "Fp": 40., "PS": 20., "ve": 0.3, "vp": 0.03}
     params[rate] = value
     expected = value < 0 if model == "patlak" else value <= 0
@@ -142,12 +150,17 @@ def test_rate_ceiling_tolerance_does_not_change_zero_rate_policy(
 @pytest.mark.parametrize("inference", ["nlls", "vi"])
 def test_rate_ceiling_scattering_preserves_rejection_and_accounting(
     model: str, rate: str, ceiling: float, is_auto: bool, inference: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Exact and nudged endpoints get identical map and accounting outcomes."""
-    for value, rejected in [
+    monkeypatch.setattr(dce_compute, f"{rate.upper()}_BOUNDS", ParameterBounds(0, ceiling))
+    cases = [
         (ceiling, True), (np.nextafter(ceiling, 0), True),
         (ceiling - 1e-10 * ceiling, True), (ceiling * (1 - 1e-8), False),
-    ]:
+    ]
+    if rate in ("PS", "Fp") and ceiling == 500.0:
+        cases.extend([(100.0, False), (200.0, False), (300.0, False), (450.0, False)])
+    for value, rejected in cases:
         params = {"Ktrans": 0.1, "Fp": 40., "PS": 20., "ve": 0.3,
                   "vp": 0.03, "kep": 1 / 3, "E": 1 / 3}
         params[rate] = value

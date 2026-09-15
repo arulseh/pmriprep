@@ -101,16 +101,22 @@ def test_scaled_lm_step_preserves_small_parameter_directions(
     np.testing.assert_allclose(step[0], [2.0, 300.0], rtol=2e-8)
 
 
-@pytest.mark.parametrize("fp,ps,ceiling", [(120.0, 80.0, 100.0), (40.0, 300.0, 500.0), (120.0, 450.0, 500.0)])
+@pytest.mark.parametrize("fp,ps,fp_ceiling,ps_ceiling", [
+    (120., 80., 200., 100.), (40., 300., 200., 500.), (120., 450., 200., 500.),
+    (300., 40., 500., 100.), (450., 40., 500., 100.),
+    (300., 150., 500., 500.), (450., 450., 500., 500.),
+])
 def test_batched_2cxm_independent_ode_recovery(
-    monkeypatch: pytest.MonkeyPatch, fp: float, ps: float, ceiling: float,
+    monkeypatch: pytest.MonkeyPatch, fp: float, ps: float,
+    fp_ceiling: float, ps_ceiling: float,
 ) -> None:
     """Recover interior fits in both production and expanded finite domains."""
     from pmriprep.models.dce import batched_fitting, two_compartment_exchange
     from pmriprep.utils.dce_constants import ParameterBounds
 
-    monkeypatch.setattr(two_compartment_exchange, "PS_BOUNDS", ParameterBounds(0, ceiling))
-    monkeypatch.setitem(batched_fitting._PARAM_BOUNDS, "ps", (0.0, ceiling))
+    for name, ceiling in (("FP", fp_ceiling), ("PS", ps_ceiling)):
+        monkeypatch.setattr(two_compartment_exchange, name + "_BOUNDS", ParameterBounds(0, ceiling))
+        monkeypatch.setitem(batched_fitting._PARAM_BOUNDS, name.lower(), (0.0, ceiling))
     t = np.arange(73) * 5 / 60
     u = np.maximum(t - 0.5, 0)
     x = u / 0.06
@@ -130,6 +136,102 @@ def test_batched_2cxm_independent_ode_recovery(
     assert result.converged[0]
     actual = [result.params[key][0] for key in ("fp", "ps", "ve", "vp")]
     np.testing.assert_allclose(actual, [fp, ps, ve, vp], rtol=1e-3)
+    model = two_compartment_exchange.TwoCompartmentExchangeModel()
+    predicted = model.evaluate(actual, aif, t)
+    assert np.sum((predicted - tissue) ** 2) / np.sum(tissue**2) < 1e-8
+    scalar = model.fit(tissue, aif, t)
+    assert scalar.converged
+    np.testing.assert_allclose(
+        [scalar.parameters[key] for key in ("Fp", "PS", "ve", "vp")],
+        [fp, ps, ve, vp], rtol=1e-3,
+    )
+    assert scalar.residual_sum_squares / np.sum(tissue**2) < 1e-8
+
+
+@pytest.mark.parametrize("ceilings", [(200., 100.), (500., 500.)])
+@pytest.mark.parametrize("truth", [
+    [11.500746144009431, 2.3695054876065345, .34559137446283594, .19236753475802834],
+    [20., 80., .02, .15],
+    [78.77, 18.67, .0726, .0601],
+])
+def test_2cxm_small_step_recovery(
+    monkeypatch: pytest.MonkeyPatch, ceilings: tuple[float, float], truth: list[float],
+) -> None:
+    """Small optimizer steps must not hide recoverable noiseless residuals."""
+    from pmriprep.models.dce import batched_fitting, two_compartment_exchange
+    from pmriprep.utils.dce_constants import ParameterBounds
+
+    for name, ceiling in zip(("FP", "PS"), ceilings):
+        monkeypatch.setattr(two_compartment_exchange, name + "_BOUNDS", ParameterBounds(0, ceiling))
+        monkeypatch.setitem(batched_fitting._PARAM_BOUNDS, name.lower(), (0., ceiling))
+    t = np.arange(121) * 3 / 60
+    u = np.maximum(t - .5, 0.)
+    x = u / .06
+    aif = 5 * (x / 3) ** 3 * np.exp(3 - x) + .6 * (-np.expm1(-u / .1)) * np.exp(-u / 2)
+    fp, ps, ve, vp = truth
+
+    def rhs(now: float, state: np.ndarray) -> list[float]:
+        cp, ce = state
+        exchange = ps / 100 * (cp - ce)
+        return [(fp / 100 * (np.interp(now, t, aif) - cp) - exchange) / vp, exchange / ve]
+
+    reference = solve_ivp(rhs, (0, 6), [0., 0.], t_eval=t,
+                          method="Radau", rtol=1e-9, atol=1e-12, max_step=3/240)
+    assert reference.success
+    tissue = vp * reference.y[0] + ve * reference.y[1]
+    model = TwoCompartmentExchangeModel()
+    for weights in (None, np.linspace(.2, 1., t.size)):
+        batch = batched_lm_fit("2cxm", tissue[None], aif, t, weights=weights,
+                               save_fitted_curves=True, compute_uncertainties=True)
+        scalar = model.fit(tissue, aif, t, weights=weights)
+        assert batch.converged[0]
+        assert scalar.converged
+        assert batch.fitted_curves is not None
+        np.testing.assert_allclose(
+            batch.fitted_curves[0],
+            model.evaluate([batch.params[key][0] for key in ("fp", "ps", "ve", "vp")], aif, t),
+        )
+        assert all(np.isfinite(values[0]) for values in batch.uncertainties.values())
+        for actual in (
+            [batch.params[key][0] for key in ("fp", "ps", "ve", "vp")],
+            [scalar.parameters[key] for key in ("Fp", "PS", "ve", "vp")],
+        ):
+            np.testing.assert_allclose(actual, truth, rtol=1e-3)
+            predicted = model.evaluate(actual, aif, t)
+            assert np.sum((predicted - tissue) ** 2) / np.sum(tissue**2) < 1e-10
+
+
+@pytest.mark.parametrize("scalar_converged", [False, True])
+def test_2cxm_small_step_requires_successful_improving_refit(
+    monkeypatch: pytest.MonkeyPatch, scalar_converged: bool,
+) -> None:
+    """Failed or worse scalar refits cannot certify a damped batch stop."""
+    from pmriprep.models.dce.base import FitResult as ScalarFitResult
+
+    t = np.arange(121) * 3 / 60
+    u = np.maximum(t - .5, 0.)
+    x = u / .06
+    aif = 5 * (x / 3) ** 3 * np.exp(3 - x) + .6 * (-np.expm1(-u / .1)) * np.exp(-u / 2)
+    model = TwoCompartmentExchangeModel()
+    tissue = model.evaluate(
+        [11.500746144009431, 2.3695054876065345, .34559137446283594, .19236753475802834], aif, t,
+    )
+    seeds: list[Any] = []
+
+    def unsuccessful_refit(self: Any, *args: Any, **kwargs: Any) -> ScalarFitResult:
+        seeds.append(kwargs.get("initial_guess"))
+        np.testing.assert_array_equal(args[0], tissue)
+        return ScalarFitResult(
+            parameters={"Fp": 1., "PS": 1., "ve": .1, "vp": .01},
+            converged=scalar_converged,
+        )
+
+    monkeypatch.setattr(TwoCompartmentExchangeModel, "fit", unsuccessful_refit)
+    result = batched_lm_fit("2cxm", tissue[None], aif, t, save_fitted_curves=True)
+    assert len(seeds) == 2
+    assert seeds[0] is not None and seeds[1] is None
+    assert not result.converged[0]
+    assert result.params["fp"][0] > 10.
 
 
 def test_scaled_lm_step_preserves_weighted_damped_objective() -> None:

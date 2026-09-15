@@ -494,6 +494,9 @@ class TwoCompartmentExchangeModel(PKModel):
                 p0=x0,
                 bounds=(lower_bounds, upper_bounds),
                 method="trf",
+                # Absolute gradients can be tiny in weak rate directions
+                # before the relative objective or parameter steps stabilize.
+                gtol=None,
                 maxfev=2000,
                 sigma=sigma_arr,
                 absolute_sigma=False,
@@ -543,6 +546,7 @@ class TwoCompartmentExchangeModel(PKModel):
                         [bounds[0][1], bounds[1][1], ve_upper],
                     ),
                     method="trf",
+                    gtol=None,
                     maxfev=2000,
                     sigma=sigma_arr,
                     absolute_sigma=False,

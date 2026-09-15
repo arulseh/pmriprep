@@ -29,6 +29,7 @@ from pmriprep.models.dce.two_compartment_exchange import TwoCompartmentExchangeM
 from pmriprep.models.bayesian_utils import from_transformed, to_transformed
 from pmriprep.utils.dce_constants import (
     DCE_AIF_G6_SIGMA_INFLATION,
+    ParameterBounds,
     VP_VE_TOTAL_MAX,
 )
 
@@ -71,6 +72,74 @@ def test_vi_respects_finite_rate_support(model: PKModel, truth: list[float]) -> 
         lower, upper = result.credible_intervals[name]
         assert lo <= value <= hi
         assert lo <= lower <= value <= upper <= hi
+
+
+@pytest.mark.parametrize("fp,ps,fp_ceiling,ps_ceiling", [
+    (120., 40., 200., 500.), (120., 150., 200., 500.),
+    (120., 450., 200., 500.), (120., 650., 200., 500.),
+    (450., 40., 500., 100.), (650., 40., 500., 100.),
+    (120., 80., 500., 500.), (450., 450., 500., 500.),
+    (650., 650., 500., 500.),
+])
+@pytest.mark.parametrize("with_vp_prior", [False, True])
+def test_vi_expanded_rate_support_preserves_prior_settings(
+    monkeypatch: pytest.MonkeyPatch, fp: float, ps: float,
+    fp_ceiling: float, ps_ceiling: float, with_vp_prior: bool,
+) -> None:
+    """Expanded fit support preserves priors and yields valid or unavailable intervals."""
+    from pmriprep.models.dce import two_compartment_exchange as exchange
+
+    vp_prior = create_vp_prior_from_dsc(0.05, 0.6) if with_vp_prior else None
+    baseline = BayesianPKFitter(TwoCompartmentExchangeModel(), vp_prior_override=vp_prior)
+    baseline_priors = [vars(prior).copy() for prior in baseline.priors]
+    monkeypatch.setattr(exchange, "FP_BOUNDS", ParameterBounds(0, fp_ceiling))
+    monkeypatch.setattr(exchange, "PS_BOUNDS", ParameterBounds(0, ps_ceiling))
+    model = TwoCompartmentExchangeModel()
+    fitter = BayesianPKFitter(model, noise_std=0.001, vp_prior_override=vp_prior)
+    assert [vars(prior) for prior in fitter.priors] == baseline_priors
+    t = np.linspace(0, 6, 121)
+    aif = 5 * np.exp(-0.5 * ((t - 0.7) / 0.15) ** 2)
+    aif += np.where(t > 0.5, 0.6 * np.exp(-(t - 0.5) / 2), 0)
+    tissue = model.evaluate([fp, ps, 0.2, 0.05], aif, t)
+    result = fitter.fit_vi(tissue, aif, t)
+    assert [vars(prior) for prior in fitter.priors] == baseline_priors
+    for name, (lo, hi) in zip(model.get_parameter_names(), model.get_bounds()):
+        value = result.parameters[name]
+        lower, upper = result.credible_intervals[name]
+        assert lo <= value <= hi
+        if np.isfinite(lower) and np.isfinite(upper):
+            assert lo <= lower <= value <= upper <= hi
+        else:
+            assert np.isnan(lower) and np.isnan(upper)
+
+
+@pytest.mark.parametrize("rate,truth,fp_ceiling", [
+    ("PS", [120., 650., .2, .05], 200.),
+    ("PS", [120., 650., .2, .05], 500.),
+    ("Fp", [650., 40., .2, .05], 500.),
+])
+def test_vi_expanded_rate_ceiling_is_enforced_and_rejected(
+    monkeypatch: pytest.MonkeyPatch, rate: str, truth: list[float], fp_ceiling: float,
+) -> None:
+    """A high-precision out-of-domain likelihood rails at the configured ceiling."""
+    from pmriprep.interfaces import dce_compute
+    from pmriprep.models.dce import two_compartment_exchange as exchange
+
+    bounds = ParameterBounds(0, 500)
+    monkeypatch.setattr(exchange, "FP_BOUNDS", ParameterBounds(0, fp_ceiling))
+    monkeypatch.setattr(dce_compute, "FP_BOUNDS", ParameterBounds(0, fp_ceiling))
+    monkeypatch.setattr(exchange, "PS_BOUNDS", bounds)
+    monkeypatch.setattr(dce_compute, "PS_BOUNDS", bounds)
+    model = TwoCompartmentExchangeModel()
+    t = np.linspace(0, 6, 121)
+    aif = 5 * np.exp(-0.5 * ((t - 0.7) / 0.15) ** 2)
+    aif += np.where(t > 0.5, 0.6 * np.exp(-(t - 0.5) / 2), 0)
+    tissue = model.evaluate(truth, aif, t)
+    result = BayesianPKFitter(model, noise_std=1e-5).fit_vi(tissue, aif, t)
+    assert result.parameters[rate] == pytest.approx(500, rel=0, abs=1e-9)
+    lower, upper = result.credible_intervals[rate]
+    assert 0 <= lower <= result.parameters[rate] <= upper == 500
+    assert dce_compute._is_degenerate_dce_fit("2cxm", result.parameters)
 
 
 def test_uncertainty_source_appends_to_fit_result_layout() -> None:
