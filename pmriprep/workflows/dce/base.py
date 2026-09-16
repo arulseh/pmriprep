@@ -171,7 +171,7 @@ def init_dce_pk_modeling_wf(
                 "out_fp_std",
                 "out_ps_std",
                 "out_tsnr",
-                "out_quality_flag",
+                "out_retained_nondegenerate_mask",
             ]
         ),
         name="outputnode",
@@ -234,7 +234,10 @@ def init_dce_pk_modeling_wf(
             ("out_fp_std", "out_fp_std"),
             ("out_ps_std", "out_ps_std"),
             ("out_tsnr", "out_tsnr"),
-            ("out_quality_flag", "out_quality_flag"),
+            (
+                "out_retained_nondegenerate_mask",
+                "out_retained_nondegenerate_mask",
+            ),
         ]),
     ])
     return workflow
@@ -2512,7 +2515,8 @@ def init_dce_preproc_wf(
                 "brain_mask_file",
                 "ktrans_file", "ve_file", "vp_file", "fp_file", "ps_file",
                 "r2_file", "fitting_mask_file",
-                "optimizer_converged_mask_file", "quality_flag_file",
+                "optimizer_converged_mask_file",
+                "retained_nondegenerate_mask_file",
                 "qc_mask_file", "fitted_curves_file",
                 "model_selection_file", "enhancing_mask_file",
                 "non_enhancing_mask_file", "nawm_mask_file",
@@ -2554,7 +2558,10 @@ def init_dce_preproc_wf(
                 "outputnode.out_optimizer_converged_mask",
                 "optimizer_converged_mask_file",
             ),
-            ("outputnode.out_quality_flag", "quality_flag_file"),
+            (
+                "outputnode.out_retained_nondegenerate_mask",
+                "retained_nondegenerate_mask_file",
+            ),
             ("outputnode.out_qc_mask", "qc_mask_file"),
             ("outputnode.out_fitted_curves", "fitted_curves_file"),
             ("outputnode.out_model_selection", "model_selection_file"),

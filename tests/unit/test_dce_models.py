@@ -247,9 +247,7 @@ class TestFlatTissueCurveFitting:
         assert result.parameters["Ktrans"] < 0.01, (
             f"Ktrans should be near zero for flat curve, got {result.parameters['Ktrans']}"
         )
-        assert result.quality_flag in ("poor_convergence", "high_uncertainty", "good"), (
-            f"Unexpected quality flag: {result.quality_flag}"
-        )
+        assert isinstance(result.converged, bool)
 
 
 # ---------------------------------------------------------------------------

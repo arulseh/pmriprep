@@ -413,17 +413,6 @@ class ExtendedToftsModel(PKModel):
         param_dict = self.params_to_dict(fitted_params)
         param_dict.update(derived)
 
-        # Compute quality flag
-        quality_flag = "good"
-        if not converged:
-            quality_flag = "poor_convergence"
-        elif uncertainties:
-            for pname, unc in uncertainties.items():
-                pval = param_dict.get(pname, 0.0)
-                if abs(pval) > 1e-10 and unc / abs(pval) > 0.5:
-                    quality_flag = "high_uncertainty"
-                    break
-
         return FitResult(
             parameters=param_dict,
             uncertainties=uncertainties,
@@ -437,7 +426,6 @@ class ExtendedToftsModel(PKModel):
             converged=converged,
             fitting_method="nlls",
             fitted_curve=fitted_curve,
-            quality_flag=quality_flag,
         )
 
     def compute_derived_parameters(

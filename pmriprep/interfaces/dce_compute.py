@@ -43,6 +43,9 @@ logger = logging.getLogger("nipype.interface")
 
 # Numerical endpoint tolerance for strictly feasible optimizer nudges.
 _RATE_BOUND_RTOL: float = 1e-10
+# Absolute fraction tolerance used only to classify optimizer contact with the
+# physical volume endpoints in the secondary quantitative QC mask.
+_VOLUME_QC_ENDPOINT_ATOL: float = 1e-6
 
 
 def _is_degenerate_dce_fit(
@@ -224,13 +227,11 @@ def _scatter_dce_fit_artifacts(
     coords: tuple[int, int, int],
     result: dict[str, Any],
 ) -> None:
-    """Scatter fitted-curve and quality-label artifacts."""
+    """Scatter fitted-curve artifacts."""
     x, y, z = coords
     fitted_curve = result.get("fitted_curve")
     if maps.fitted_curves is not None and fitted_curve is not None:
         maps.fitted_curves[x, y, z, :] = fitted_curve.astype(np.float32)
-    quality_flag = result.get("quality_flag", "good")
-    maps.quality_flag[x, y, z] = maps.quality_flag_codes.get(quality_flag, 1)
 
 
 def _scatter_dce_parameters(
@@ -384,6 +385,7 @@ def _scatter_dce_fit_results(
             n_rejected_postfit += 1
             continue
         n_retained += 1
+        maps.retained_nondegenerate[coords] = True
         n_inference_fallback += int(bool(result.get("inference_fallback", False)))
         if inference == "map":
             map_uncertainty_sources.append(
@@ -507,15 +509,13 @@ def _summarize_inference_fallback(
     }
 
 
-def _summarize_dce_categorical_qc(
+def _summarize_dce_model_selection(
     is_auto: bool,
     candidate_names: list[str],
     model_selection: npt.NDArray[Any],
     model_selection_codes: dict[str, int],
-    quality_flag: npt.NDArray[Any],
-    fitting_mask: npt.NDArray[Any],
 ) -> dict[str, Any]:
-    """Summarize model-selection and quality-label categorical maps."""
+    """Summarize the model-selection categorical map."""
     summary: dict[str, Any] = {
         "model_selection": "auto" if is_auto else "fixed",
     }
@@ -527,11 +527,6 @@ def _summarize_dce_categorical_qc(
             summary[f"n_{model_name}_selected"] = count
             summary[f"{model_name}_fraction"] = count / max(1, n_total)
 
-    quality_values = quality_flag[fitting_mask]
-    summary["quality_n_good"] = int(np.sum(quality_values == 1))
-    summary["quality_n_poor_convergence"] = int(np.sum(quality_values == 2))
-    summary["quality_n_high_uncertainty"] = int(np.sum(quality_values == 3))
-    summary["quality_n_unreliable_high_kep"] = int(np.sum(quality_values == 4))
     return summary
 
 
@@ -690,6 +685,8 @@ def _zero_dce_background(
 
 def _build_dce_qc_mask(
     fitting_mask: npt.NDArray[np.bool_],
+    optimizer_converged: npt.NDArray[np.bool_],
+    retained_nondegenerate: npt.NDArray[np.bool_],
     tsnr: npt.NDArray[Any],
     signal_qc_available: bool,
     ktrans: npt.NDArray[Any],
@@ -697,7 +694,6 @@ def _build_dce_qc_mask(
     ve: npt.NDArray[Any],
     vp: npt.NDArray[Any],
     kep: npt.NDArray[Any],
-    quality_flag: npt.NDArray[Any],
     model_selection: npt.NDArray[Any],
     model_selection_codes: dict[str, int],
     is_auto: bool,
@@ -707,6 +703,8 @@ def _build_dce_qc_mask(
     """Build the fit-quality acceptance mask."""
     return _evaluate_dce_qc_mask(
         fitting_mask,
+        optimizer_converged,
+        retained_nondegenerate,
         tsnr,
         signal_qc_available,
         ktrans,
@@ -714,7 +712,6 @@ def _build_dce_qc_mask(
         ve,
         vp,
         kep,
-        quality_flag,
         model_selection,
         model_selection_codes,
         is_auto,
@@ -733,6 +730,8 @@ class _DCEQCMaskEvaluation(NamedTuple):
 
 def _evaluate_dce_qc_mask(
     fitting_mask: npt.NDArray[np.bool_],
+    optimizer_converged: npt.NDArray[np.bool_],
+    retained_nondegenerate: npt.NDArray[np.bool_],
     tsnr: npt.NDArray[Any],
     signal_qc_available: bool,
     ktrans: npt.NDArray[Any],
@@ -740,7 +739,6 @@ def _evaluate_dce_qc_mask(
     ve: npt.NDArray[Any],
     vp: npt.NDArray[Any],
     kep: npt.NDArray[Any],
-    quality_flag: npt.NDArray[Any],
     model_selection: npt.NDArray[Any],
     model_selection_codes: dict[str, int],
     is_auto: bool,
@@ -753,45 +751,68 @@ def _evaluate_dce_qc_mask(
         if signal_qc_available and tsnr_threshold > 0
         else np.ones(fitting_mask.shape, dtype=bool)
     )
-    ktrans_ok = (ktrans > 0) & (ktrans < 5.0)
-    quality_ok = quality_flag == 1
+    ktrans_ok = np.isfinite(ktrans) & (ktrans > 0) & (ktrans < KTRANS_BOUNDS.max)
 
-    is_patlak_voxel = model_selection == model_selection_codes.get("patlak", -1)
-    if not is_auto:
-        is_patlak_voxel = np.full(
-            fitting_mask.shape,
-            model_name == "patlak",
-            dtype=bool,
-        )
     # R² > 0 requires the fitted curve to outperform its temporal mean. This
     # is a minimal fit-adequacy screen, not evidence of parameter reliability.
-    r_squared_ok = r_squared > 0.0
-    patlak_ok = np.isfinite(vp)
-    tofts_ok = np.isfinite(ve) & (ve < 0.95) & np.isfinite(kep) & (kep > 0.001)
-    extended_ok = (
+    r_squared_ok = np.isfinite(r_squared) & (r_squared > 0.0)
+    patlak_volume_ok = (
+        np.isfinite(vp)
+        & (vp > _VOLUME_QC_ENDPOINT_ATOL)
+        & (vp < VP_BOUNDS.max - _VOLUME_QC_ENDPOINT_ATOL)
+    )
+    tofts_volume_ok = (
+        np.isfinite(ve)
+        & (ve > _VOLUME_QC_ENDPOINT_ATOL)
+        & (ve < VE_BOUNDS.max - _VOLUME_QC_ENDPOINT_ATOL)
+    )
+    extended_volume_ok = (
         np.isfinite(ve)
         & np.isfinite(vp)
-        & ((ve + vp) < 0.95)
-        & np.isfinite(kep)
-        & (kep > 0.001)
+        & (ve > _VOLUME_QC_ENDPOINT_ATOL)
+        & (vp > _VOLUME_QC_ENDPOINT_ATOL)
+        & ((ve + vp) < VP_VE_TOTAL_MAX - _VOLUME_QC_ENDPOINT_ATOL)
     )
+    reversible_kep_ok = (
+        np.isfinite(kep)
+        & (kep > KEP_BOUNDS.min)
+        & (kep <= KEP_BOUNDS.max)
+    )
+
     if is_auto:
-        parameters_ok = np.where(is_patlak_voxel, patlak_ok, extended_ok)
+        is_patlak = model_selection == model_selection_codes.get("patlak", -1)
+        is_tofts = model_selection == model_selection_codes.get("tofts", -1)
+        is_extended = model_selection == model_selection_codes.get(
+            "extended_tofts", -1
+        )
+        is_2cxm = model_selection == model_selection_codes.get("2cxm", -1)
+        volume_ok = (
+            (is_patlak & patlak_volume_ok)
+            | (is_tofts & tofts_volume_ok)
+            | ((is_extended | is_2cxm) & extended_volume_ok)
+        )
+        kep_ok = is_patlak | ((is_tofts | is_extended | is_2cxm) & reversible_kep_ok)
     elif model_name == "patlak":
-        parameters_ok = patlak_ok
+        volume_ok = patlak_volume_ok
+        kep_ok = np.ones(fitting_mask.shape, dtype=bool)
     elif model_name == "tofts":
-        parameters_ok = tofts_ok
+        volume_ok = tofts_volume_ok
+        kep_ok = reversible_kep_ok
     elif model_name in ("extended_tofts", "2cxm"):
-        parameters_ok = extended_ok
+        volume_ok = extended_volume_ok
+        kep_ok = reversible_kep_ok
     else:
-        parameters_ok = np.ones(fitting_mask.shape, dtype=bool)
+        volume_ok = np.zeros(fitting_mask.shape, dtype=bool)
+        kep_ok = np.zeros(fitting_mask.shape, dtype=bool)
 
     components = {
+        "optimizer_converged": optimizer_converged,
+        "retained_nondegenerate": retained_nondegenerate,
         "tsnr": tsnr_ok,
         "ktrans_range": ktrans_ok,
         "r_squared": r_squared_ok,
-        "quality_flag": quality_ok,
-        "model_parameters": parameters_ok,
+        "volume_interior": volume_ok,
+        "kep_range": kep_ok,
     }
     qc_mask = fitting_mask.copy()
     for component in components.values():
@@ -810,10 +831,42 @@ def _evaluate_dce_qc_mask(
         },
         "fit": {
             "minimum_r_squared_exclusive": 0.0,
-            "required_quality_flag": "good",
+            "requires_optimizer_convergence": True,
+            "requires_retained_nondegenerate_fit": True,
             "ktrans_minimum_per_min_exclusive": 0.0,
-            "ktrans_maximum_per_min_exclusive": 5.0,
-            "model_specific_parameter_checks": True,
+            "ktrans_maximum_per_min_exclusive": KTRANS_BOUNDS.max,
+            "uncertainty_used_for_acceptance": False,
+            "volume_endpoint_absolute_tolerance": _VOLUME_QC_ENDPOINT_ATOL,
+            "model_specific_volume_checks": {
+                "patlak": {
+                    "vp_minimum_exclusive": _VOLUME_QC_ENDPOINT_ATOL,
+                    "vp_maximum_exclusive": (
+                        VP_BOUNDS.max - _VOLUME_QC_ENDPOINT_ATOL
+                    ),
+                },
+                "tofts": {
+                    "ve_minimum_exclusive": _VOLUME_QC_ENDPOINT_ATOL,
+                    "ve_maximum_exclusive": (
+                        VE_BOUNDS.max - _VOLUME_QC_ENDPOINT_ATOL
+                    ),
+                },
+                "extended_tofts": {
+                    "ve_minimum_exclusive": _VOLUME_QC_ENDPOINT_ATOL,
+                    "vp_minimum_exclusive": _VOLUME_QC_ENDPOINT_ATOL,
+                    "ve_plus_vp_maximum_exclusive": (
+                        VP_VE_TOTAL_MAX - _VOLUME_QC_ENDPOINT_ATOL
+                    ),
+                },
+                "2cxm": {
+                    "ve_minimum_exclusive": _VOLUME_QC_ENDPOINT_ATOL,
+                    "vp_minimum_exclusive": _VOLUME_QC_ENDPOINT_ATOL,
+                    "ve_plus_vp_maximum_exclusive": (
+                        VP_VE_TOTAL_MAX - _VOLUME_QC_ENDPOINT_ATOL
+                    ),
+                },
+            },
+            "reversible_model_kep_minimum_per_min_exclusive": KEP_BOUNDS.min,
+            "reversible_model_kep_maximum_per_min_inclusive": KEP_BOUNDS.max,
         },
     }
     result: npt.NDArray[np.uint8] = qc_mask.astype(np.uint8)
@@ -885,11 +938,9 @@ def _write_dce_parameter_maps(
     outputs = {
         "out_ktrans": generate_path("_Ktrans"),
         "out_r2": generate_path("_R2"),
-        "out_quality_flag": generate_path("_quality_flag"),
     }
     write_map(maps.ktrans, outputs["out_ktrans"])
     write_map(maps.r_squared, outputs["out_r2"])
-    write_map(maps.quality_flag, outputs["out_quality_flag"], dtype=np.uint8)
     if save_ve:
         outputs["out_ve"] = generate_path("_ve")
         outputs["out_kep"] = generate_path("_kep")
@@ -964,6 +1015,9 @@ def _write_dce_terminal_outputs(
         "out_optimizer_converged_mask": generate_path(
             "_optimizer_converged_mask"
         ),
+        "out_retained_nondegenerate_mask": generate_path(
+            "_retained_nondegenerate_mask"
+        ),
     }
     write_map(tsnr, outputs["out_tsnr"])
     write_map(
@@ -976,8 +1030,15 @@ def _write_dce_terminal_outputs(
         outputs["out_optimizer_converged_mask"],
         dtype=np.uint8,
     )
+    write_map(
+        maps.retained_nondegenerate,
+        outputs["out_retained_nondegenerate_mask"],
+        dtype=np.uint8,
+    )
     qc_evaluation = _evaluate_dce_qc_mask(
         fitting_mask,
+        maps.optimizer_converged,
+        maps.retained_nondegenerate,
         tsnr,
         peak_enhancement is not None,
         maps.ktrans,
@@ -985,7 +1046,6 @@ def _write_dce_terminal_outputs(
         maps.ve,
         maps.vp,
         maps.kep,
-        maps.quality_flag,
         maps.model_selection,
         maps.model_selection_codes,
         is_auto,
@@ -1008,7 +1068,7 @@ def _write_dce_terminal_outputs(
                 "fraction_of_brain": n_accepted / max(1, brain),
             }
         qc_metrics["qc_component_failures"] = {
-            "scope": "fitted_voxels",
+            "scope": "fitting_eligible_voxels",
             "counts_are_overlapping": True,
             **qc_evaluation.component_failures,
         }
@@ -1210,7 +1270,7 @@ class _DCEMotionWeighting(NamedTuple):
 
 
 class _DCEParameterMaps(NamedTuple):
-    """Allocated mutable PK, uncertainty, categorical, and fit-curve maps."""
+    """Allocated mutable PK, uncertainty, status, and fit-curve maps."""
 
     ktrans: npt.NDArray[Any]
     ve: npt.NDArray[Any]
@@ -1221,8 +1281,7 @@ class _DCEParameterMaps(NamedTuple):
     ps: npt.NDArray[Any]
     extraction_fraction: npt.NDArray[Any]
     optimizer_converged: npt.NDArray[Any]
-    quality_flag: npt.NDArray[Any]
-    quality_flag_codes: dict[str, int]
+    retained_nondegenerate: npt.NDArray[Any]
     model_selection: npt.NDArray[Any]
     model_selection_codes: dict[str, int]
     delta_bic: npt.NDArray[Any]
@@ -1432,7 +1491,7 @@ def _fit_single_voxel(
     -------
     dict
         Dict with keys: coords, params, r_squared, converged, uncertainties,
-        fitted_curve, quality_flag, failed, failure_reason, failure_stage,
+        fitted_curve, failed, failure_reason, failure_stage,
         constrained.
     """
     BayesianPKFitter = _worker_ctx["BayesianPKFitter"]
@@ -1710,16 +1769,8 @@ def _fit_single_voxel(
         if _worker_ctx.get("save_fitted_curves") and result.fitted_curve is not None:
             fitted_curve = result.fitted_curve
 
-        # Clamp the reported kep and flag the non-identifiable high-kep corner,
-        # matching the batched-assembly path so the QC flag has full parity.
         params = dict(result.parameters)
-        kep_railed = _compute_derived_params(params, effective_model)
-        base_quality = getattr(result, "quality_flag", "good")
-        quality_flag = _resolve_dce_fit_quality(
-            bool(result.converged),
-            base_quality,
-            kep_railed,
-        )
+        _compute_derived_params(params, effective_model)
 
         return {
             "coords": (x, y, z),
@@ -1729,7 +1780,6 @@ def _fit_single_voxel(
             "uncertainties": uncertainties,
             "uncertainty_source": result.uncertainty_source,
             "fitted_curve": fitted_curve,
-            "quality_flag": quality_flag,
             "rhat": getattr(result, "rhat", {}),
             "ess": getattr(result, "ess", {}),
             "failed": False,
@@ -1857,12 +1907,8 @@ def _normalize_param_name(pname: str) -> str:
 def _compute_derived_params(
     params_out: dict[str, float],
     model_name: str,
-) -> bool:
+) -> None:
     """Compute derived parameters (kep, E, Ktrans) in place.
-
-    Finite ratios are reported independently of the high-kep quality flag.
-    The flag applies above ``KEP_BOUNDS.max`` for every valid positive ve;
-    it is a quality-classification rule, not a mathematical reporting domain.
 
     Parameters
     ----------
@@ -1871,10 +1917,6 @@ def _compute_derived_params(
     model_name : str
         Model name for determining which derivations to apply.
 
-    Returns
-    -------
-    bool
-        True if the high-kep quality criterion is met.
     """
     if model_name in ("tofts", "extended_tofts"):
         ktrans = params_out.get("Ktrans", np.nan)
@@ -1886,23 +1928,9 @@ def _compute_derived_params(
         params_out["Ktrans"] = E * fp_val / 100.0
         ktrans = params_out["Ktrans"]
     else:
-        return False
+        return
     kep = compute_kep(ktrans, params_out.get("ve", np.nan))
     params_out["kep"] = kep
-    return bool(np.isfinite(kep) and kep > KEP_BOUNDS.max)
-
-
-def _resolve_dce_fit_quality(
-    converged: bool,
-    base_quality: str,
-    kep_railed: bool,
-) -> str:
-    """Enforce convergence before applying secondary DCE quality labels."""
-    if not converged:
-        return "poor_convergence"
-    if kep_railed and base_quality == "good":
-        return "unreliable_high_kep"
-    return base_quality
 
 
 def _init_batched_worker() -> None:
@@ -2207,13 +2235,15 @@ class ComputeDCEMapsOutputSpec(TraitedSpec):
     out_delta_bic = File(desc="Delta-BIC confidence map (runner-up BIC minus winner BIC; >2 = positive evidence)")
 
     # QC outputs
-    out_quality_flag = File(desc="Quality flag map (0=unfitted, 1=good, 2=poor_convergence, 3=high_uncertainty, 4=unreliable_high_kep)")
     out_r2 = File(desc="R² (goodness of fit) map")
     out_tsnr = File(desc="tSNR map (always computed)")
     out_qc_mask = File(desc="QC mask (1=good fit, 0=unfitted/poor)")
     out_fitting_mask = File(desc="Internal fitting-eligibility mask")
     out_optimizer_converged_mask = File(
         desc="Internal optimizer-convergence mask"
+    )
+    out_retained_nondegenerate_mask = File(
+        desc="Internal mask of fits retained in primary parameter maps"
     )
     out_fitted_curves = File(desc="Fitted concentration curves (if save_fitted_curves=True)")
     qc_metrics = traits.Dict(desc="QC metrics dictionary")
@@ -3048,12 +3078,6 @@ class ComputeDCEMaps(BaseInterface):
         # model-selection mode. A numerical zero is reserved for a retained
         # fit whose parameter estimate is genuinely zero.
         fill_value = np.nan
-        quality_flag_codes = {
-            "good": 1,
-            "poor_convergence": 2,
-            "high_uncertainty": 3,
-            "unreliable_high_kep": 4,
-        }
         model_selection_codes = {
             "patlak": 1,
             "tofts": 2,
@@ -3087,8 +3111,7 @@ class ComputeDCEMaps(BaseInterface):
                 spatial_shape, fill_value, dtype=np.float64
             ),
             optimizer_converged=np.zeros(spatial_shape, dtype=bool),
-            quality_flag=np.zeros(spatial_shape, dtype=np.int8),
-            quality_flag_codes=quality_flag_codes,
+            retained_nondegenerate=np.zeros(spatial_shape, dtype=bool),
             model_selection=np.zeros(spatial_shape, dtype=np.int8),
             model_selection_codes=model_selection_codes,
             delta_bic=np.full(spatial_shape, np.nan, dtype=np.float32),
@@ -3211,7 +3234,7 @@ class ComputeDCEMaps(BaseInterface):
         fp_map = parameter_maps.fp
         ps_map = parameter_maps.ps
         e_map = parameter_maps.extraction_fraction
-        quality_flag_map = parameter_maps.quality_flag
+        retained_nondegenerate_map = parameter_maps.retained_nondegenerate
         model_selection_map = parameter_maps.model_selection
         _MODEL_SELECTION_CODES = parameter_maps.model_selection_codes
         delta_bic_map = parameter_maps.delta_bic
@@ -3317,13 +3340,11 @@ class ComputeDCEMaps(BaseInterface):
         )
 
         qc_metrics.update(
-            _summarize_dce_categorical_qc(
+            _summarize_dce_model_selection(
                 is_auto,
                 candidate_names,
                 model_selection_map,
                 _MODEL_SELECTION_CODES,
-                quality_flag_map,
-                fitting_mask,
             )
         )
 
@@ -3398,7 +3419,9 @@ class ComputeDCEMaps(BaseInterface):
         iauc120 = _zero_dce_background(iauc120, mask_bool)
         ttp = _zero_dce_background(ttp, mask_bool)
         ser = _zero_dce_background(ser, mask_bool)
-        quality_flag_map = _zero_dce_background(quality_flag_map, mask_bool)
+        retained_nondegenerate_map = _zero_dce_background(
+            retained_nondegenerate_map, mask_bool
+        )
         model_selection_map = _zero_dce_background(model_selection_map, mask_bool)
         if peak_enh is not None:
             peak_enh = _zero_dce_background(peak_enh, mask_bool)
@@ -3416,7 +3439,7 @@ class ComputeDCEMaps(BaseInterface):
                 fp=fp_map,
                 ps=ps_map,
                 extraction_fraction=e_map,
-                quality_flag=quality_flag_map,
+                retained_nondegenerate=retained_nondegenerate_map,
             ),
             save_ve,
             save_vp,
@@ -3789,7 +3812,7 @@ class ComputeDCEMaps(BaseInterface):
             for pname, parr in winner_result.params.items():
                 params_out[_normalize_param_name(pname)] = float(parr[i])
 
-            kep_railed = _compute_derived_params(params_out, winner_name)
+            _compute_derived_params(params_out, winner_name)
 
             # Uncertainties
             uncertainties: dict[str, float] = {}
@@ -3807,13 +3830,11 @@ class ComputeDCEMaps(BaseInterface):
                 "r_squared": float(winner_result.r_squared[i]),
                 "converged": bool(winner_result.converged[i]),
                 "uncertainties": uncertainties,
-                "uncertainty_source": "not_computed",
-                "fitted_curve": fitted_curve,
-                "quality_flag": (
-                    "poor_convergence" if not winner_result.converged[i]
-                    else "unreliable_high_kep" if kep_railed
-                    else "good"
+                "uncertainty_source": (
+                    "local_jacobian_covariance"
+                    if winner_result.uncertainties else "not_computed"
                 ),
+                "fitted_curve": fitted_curve,
                 "rhat": {},
                 "ess": {},
                 "failed": selection_failed,
@@ -3870,7 +3891,7 @@ class ComputeDCEMaps(BaseInterface):
             for pname, parr in fit_result.params.items():
                 params_out[_normalize_param_name(pname)] = float(parr[i])
 
-            kep_railed = _compute_derived_params(params_out, model_name)
+            _compute_derived_params(params_out, model_name)
 
             # Uncertainties
             uncertainties: dict[str, float] = {}
@@ -3892,13 +3913,11 @@ class ComputeDCEMaps(BaseInterface):
                 "r_squared": float(fit_result.r_squared[i]),
                 "converged": bool(fit_result.converged[i]),
                 "uncertainties": uncertainties,
-                "uncertainty_source": "not_computed",
-                "fitted_curve": fitted_curve,
-                "quality_flag": (
-                    "poor_convergence" if not fit_result.converged[i]
-                    else "unreliable_high_kep" if kep_railed
-                    else "good"
+                "uncertainty_source": (
+                    "local_jacobian_covariance"
+                    if fit_result.uncertainties else "not_computed"
                 ),
+                "fitted_curve": fitted_curve,
                 "rhat": {},
                 "ess": {},
                 "failed": fit_unsuccessful,

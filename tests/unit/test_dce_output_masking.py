@@ -53,6 +53,8 @@ def test_build_dce_qc_mask_preserves_parameter_thresholds() -> None:
     shape = (1, 1, 4)
     mask = _build_dce_qc_mask(
         np.ones(shape, dtype=bool),
+        np.ones(shape, dtype=bool),
+        np.ones(shape, dtype=bool),
         np.array([[[10.0, 10.0, 10.0, 10.0]]]),
         True,
         np.array([[[0.1, 0.0, 5.0, 0.1]]]),
@@ -60,7 +62,6 @@ def test_build_dce_qc_mask_preserves_parameter_thresholds() -> None:
         np.full(shape, 0.2),
         np.full(shape, 0.1),
         np.full(shape, 0.01),
-        np.ones(shape, dtype=np.int8),
         np.zeros(shape, dtype=np.int8),
         {"patlak": 1},
         False,
@@ -76,6 +77,8 @@ def test_build_dce_qc_mask_auto_patlak_allows_nan_parameters() -> None:
     shape = (1, 1, 2)
     mask = _build_dce_qc_mask(
         np.ones(shape, dtype=bool),
+        np.ones(shape, dtype=bool),
+        np.ones(shape, dtype=bool),
         np.full(shape, 20.0),
         False,
         np.full(shape, 0.1),
@@ -83,7 +86,6 @@ def test_build_dce_qc_mask_auto_patlak_allows_nan_parameters() -> None:
         np.array([[[np.nan, 0.8]]]),
         np.array([[[0.1, 0.2]]]),
         np.array([[[np.nan, 0.001]]]),
-        np.ones(shape, dtype=np.int8),
         np.array([[[1, 3]]], dtype=np.int8),
         {"patlak": 1},
         True,
@@ -97,6 +99,8 @@ def test_build_dce_qc_mask_skips_signal_qc_without_raw_signal() -> None:
     shape = (1, 1, 1)
     evaluation = _evaluate_dce_qc_mask(
         np.ones(shape, dtype=bool),
+        np.ones(shape, dtype=bool),
+        np.ones(shape, dtype=bool),
         np.zeros(shape),
         False,
         np.full(shape, 0.1),
@@ -104,7 +108,6 @@ def test_build_dce_qc_mask_skips_signal_qc_without_raw_signal() -> None:
         np.full(shape, 0.2),
         np.full(shape, 0.1),
         np.full(shape, 0.5),
-        np.ones(shape, dtype=np.int8),
         np.zeros(shape, dtype=np.int8),
         {"patlak": 1},
         False,
@@ -122,6 +125,8 @@ def test_build_dce_qc_mask_uses_uniform_positive_r_squared_threshold() -> None:
     shape = (1, 1, 6)
     mask = _build_dce_qc_mask(
         np.ones(shape, dtype=bool),
+        np.ones(shape, dtype=bool),
+        np.ones(shape, dtype=bool),
         np.full(shape, 20.0),
         True,
         np.full(shape, 0.1),
@@ -129,9 +134,8 @@ def test_build_dce_qc_mask_uses_uniform_positive_r_squared_threshold() -> None:
         np.full(shape, 0.2),
         np.full(shape, 0.1),
         np.full(shape, 0.5),
-        np.ones(shape, dtype=np.int8),
         np.array([[[1, 1, 3, 3, 3, 3]]], dtype=np.int8),
-        {"patlak": 1},
+        {"patlak": 1, "extended_tofts": 3},
         True,
         "auto",
     )
@@ -143,6 +147,8 @@ def test_build_dce_qc_mask_applies_strict_threshold_in_fixed_mode() -> None:
     shape = (1, 1, 2)
     common = {
         "fitting_mask": np.ones(shape, dtype=bool),
+        "optimizer_converged": np.ones(shape, dtype=bool),
+        "retained_nondegenerate": np.ones(shape, dtype=bool),
         "tsnr": np.full(shape, 20.0),
         "signal_qc_available": True,
         "ktrans": np.full(shape, 0.1),
@@ -150,7 +156,6 @@ def test_build_dce_qc_mask_applies_strict_threshold_in_fixed_mode() -> None:
         "ve": np.full(shape, np.nan),
         "vp": np.full(shape, 0.1),
         "kep": np.full(shape, np.nan),
-        "quality_flag": np.ones(shape, dtype=np.int8),
         "model_selection": np.zeros(shape, dtype=np.int8),
         "model_selection_codes": {"patlak": 1},
         "is_auto": False,
@@ -165,6 +170,8 @@ def test_evaluate_dce_qc_mask_reports_acceptance_policy() -> None:
     shape = (1, 1, 1)
     evaluation = _evaluate_dce_qc_mask(
         np.ones(shape, dtype=bool),
+        np.ones(shape, dtype=bool),
+        np.ones(shape, dtype=bool),
         np.full(shape, 20.0),
         True,
         np.full(shape, 0.1),
@@ -172,7 +179,6 @@ def test_evaluate_dce_qc_mask_reports_acceptance_policy() -> None:
         np.full(shape, np.nan),
         np.full(shape, 0.1),
         np.full(shape, np.nan),
-        np.ones(shape, dtype=np.int8),
         np.ones(shape, dtype=np.int8),
         {"patlak": 1},
         True,
@@ -182,12 +188,83 @@ def test_evaluate_dce_qc_mask_reports_acceptance_policy() -> None:
     assert evaluation.acceptance_policy["fit"][
         "minimum_r_squared_exclusive"
     ] == 0.0
+    assert evaluation.acceptance_policy["fit"][
+        "uncertainty_used_for_acceptance"
+    ] is False
+
+
+@pytest.mark.parametrize(
+    ("model_name", "ve", "vp", "accepted"),
+    [
+        ("patlak", np.nan, 1e-6, False),
+        ("patlak", np.nan, 2e-6, True),
+        ("patlak", np.nan, 1.0 - 1e-6, False),
+        ("tofts", 1e-6, 0.0, False),
+        ("tofts", 2e-6, 0.0, True),
+        ("tofts", 1.0 - 1e-6, 0.0, False),
+        ("extended_tofts", 0.4, 0.6 - 1e-6, False),
+        ("extended_tofts", 0.4, 0.6 - 2e-6, True),
+        ("2cxm", 0.4, 0.6 - 1e-6, False),
+        ("2cxm", 0.4, 0.6 - 2e-6, True),
+    ],
+)
+def test_dce_qc_volume_checks_reject_only_numerical_endpoint_contact(
+    model_name: str,
+    ve: float,
+    vp: float,
+    accepted: bool,
+) -> None:
+    """Volume QC uses the full physical domain with a numerical endpoint guard."""
+    result = _build_dce_qc_mask(
+        fitting_mask=np.array([True]),
+        optimizer_converged=np.array([True]),
+        retained_nondegenerate=np.array([True]),
+        tsnr=np.array([0.0]),
+        signal_qc_available=False,
+        ktrans=np.array([0.1]),
+        r_squared=np.array([0.9]),
+        ve=np.array([ve]),
+        vp=np.array([vp]),
+        kep=np.array([0.5]),
+        model_selection=np.array([0]),
+        model_selection_codes={},
+        is_auto=False,
+        model_name=model_name,
+    )
+    assert bool(result[0]) is accepted
+
+
+@pytest.mark.parametrize("kep,accepted", [(0.0, False), (10.0, True), (10.0001, False)])
+def test_dce_qc_kep_range_has_inclusive_upper_threshold(
+    kep: float,
+    accepted: bool,
+) -> None:
+    """Reversible-model QC accepts kep=10 but rejects values above it."""
+    result = _build_dce_qc_mask(
+        fitting_mask=np.array([True]),
+        optimizer_converged=np.array([True]),
+        retained_nondegenerate=np.array([True]),
+        tsnr=np.array([0.0]),
+        signal_qc_available=False,
+        ktrans=np.array([0.1]),
+        r_squared=np.array([0.9]),
+        ve=np.array([0.2]),
+        vp=np.array([0.1]),
+        kep=np.array([kep]),
+        model_selection=np.array([0]),
+        model_selection_codes={},
+        is_auto=False,
+        model_name="extended_tofts",
+    )
+    assert bool(result[0]) is accepted
 
 
 def test_dce_qc_mask_uses_configured_tsnr_threshold() -> None:
     """A non-default configured threshold controls acceptance and provenance."""
     shape = (1, 1, 2)
     evaluation = _evaluate_dce_qc_mask(
+        np.ones(shape, dtype=bool),
+        np.ones(shape, dtype=bool),
         np.ones(shape, dtype=bool),
         np.array([[[11.9, 12.0]]]),
         True,
@@ -196,7 +273,6 @@ def test_dce_qc_mask_uses_configured_tsnr_threshold() -> None:
         np.full(shape, 0.2),
         np.full(shape, 0.1),
         np.full(shape, 0.5),
-        np.ones(shape, dtype=np.int8),
         np.zeros(shape, dtype=np.int8),
         {"patlak": 1},
         False,
@@ -214,6 +290,8 @@ def test_default_zero_tsnr_threshold_is_diagnostic_only() -> None:
     shape = (1, 1, 1)
     evaluation = _evaluate_dce_qc_mask(
         np.ones(shape, dtype=bool),
+        np.ones(shape, dtype=bool),
+        np.ones(shape, dtype=bool),
         np.zeros(shape),
         True,
         np.full(shape, 0.1),
@@ -221,7 +299,6 @@ def test_default_zero_tsnr_threshold_is_diagnostic_only() -> None:
         np.full(shape, 0.2),
         np.full(shape, 0.1),
         np.full(shape, 0.5),
-        np.ones(shape, dtype=np.int8),
         np.zeros(shape, dtype=np.int8),
         {"patlak": 1},
         False,
@@ -234,11 +311,13 @@ def test_default_zero_tsnr_threshold_is_diagnostic_only() -> None:
     assert evaluation.acceptance_policy["acquisition"]["minimum_tsnr"] is None
 
 
-def test_build_dce_qc_mask_rejects_quality_and_required_parameter_failures() -> None:
-    """Only good fits with all model-required parameters are accepted."""
+def test_build_dce_qc_mask_rejects_fit_stage_and_parameter_failures() -> None:
+    """Fit stages and model-required parameters gate acceptance independently."""
     shape = (1, 1, 4)
     common = {
         "fitting_mask": np.ones(shape, dtype=bool),
+        "optimizer_converged": np.array([[[True, False, True, True]]]),
+        "retained_nondegenerate": np.array([[[True, True, False, True]]]),
         "tsnr": np.full(shape, 20.0),
         "signal_qc_available": True,
         "ktrans": np.full(shape, 0.1),
@@ -246,7 +325,6 @@ def test_build_dce_qc_mask_rejects_quality_and_required_parameter_failures() -> 
         "ve": np.array([[[0.2, 0.2, np.nan, 0.2]]]),
         "vp": np.array([[[0.1, 0.1, 0.1, np.nan]]]),
         "kep": np.full(shape, 0.5),
-        "quality_flag": np.array([[[1, 2, 1, 1]]], dtype=np.int8),
         "model_selection": np.zeros(shape, dtype=np.int8),
         "model_selection_codes": {"patlak": 1},
         "is_auto": False,
@@ -261,6 +339,8 @@ def test_build_dce_qc_mask_requires_finite_kep_for_reversible_model() -> None:
     shape = (1, 1, 1)
     arguments = {
         "fitting_mask": np.ones(shape, dtype=bool),
+        "optimizer_converged": np.ones(shape, dtype=bool),
+        "retained_nondegenerate": np.ones(shape, dtype=bool),
         "tsnr": np.full(shape, 20.0),
         "signal_qc_available": True,
         "ktrans": np.full(shape, 0.1),
@@ -268,7 +348,6 @@ def test_build_dce_qc_mask_requires_finite_kep_for_reversible_model() -> None:
         "ve": np.full(shape, 0.2),
         "vp": np.full(shape, 0.1),
         "kep": np.full(shape, np.nan),
-        "quality_flag": np.ones(shape, dtype=np.int8),
         "model_selection": np.zeros(shape, dtype=np.int8),
         "model_selection_codes": {"patlak": 1},
         "is_auto": False,
@@ -290,6 +369,8 @@ def test_evaluate_dce_qc_mask_reports_overlapping_component_failures() -> None:
     shape = (1, 1, 3)
     evaluation = _evaluate_dce_qc_mask(
         np.ones(shape, dtype=bool),
+        np.array([[[False, True, True]]]),
+        np.array([[[True, True, False]]]),
         np.array([[[9.0, 20.0, 20.0]]]),
         True,
         np.array([[[0.1, 0.1, 0.0]]]),
@@ -297,7 +378,6 @@ def test_evaluate_dce_qc_mask_reports_overlapping_component_failures() -> None:
         np.full(shape, 0.2),
         np.full(shape, 0.1),
         np.full(shape, 0.5),
-        np.array([[[1, 1, 2]]], dtype=np.int8),
         np.zeros(shape, dtype=np.int8),
         {"patlak": 1},
         False,
@@ -306,11 +386,13 @@ def test_evaluate_dce_qc_mask_reports_overlapping_component_failures() -> None:
     )
     assert evaluation.mask.tolist() == [[[0, 1, 0]]]
     assert evaluation.component_failures == {
+        "optimizer_converged": 1,
+        "retained_nondegenerate": 1,
         "tsnr": 1,
         "ktrans_range": 1,
         "r_squared": 1,
-        "quality_flag": 1,
-        "model_parameters": 0,
+        "volume_interior": 0,
+        "kep_range": 0,
     }
 
 
@@ -384,7 +466,7 @@ def test_write_dce_parameter_maps_preserves_applicability(
     """PK output assembly retains parameter and model applicability."""
     array = np.ones((1, 1, 2))
     maps = SimpleNamespace(
-        ktrans=array, r_squared=array, quality_flag=array.astype(np.int8),
+        ktrans=array, r_squared=array,
         ve=array, kep=array, vp=array, fp=array, ps=array,
         extraction_fraction=array, save_2cxm=save_2cxm,
     )
@@ -400,10 +482,8 @@ def test_write_dce_parameter_maps_preserves_applicability(
         lambda suffix: f"output{suffix}.nii.gz",
         write_map,
     )
-    always = {"out_ktrans", "out_r2", "out_quality_flag"}
+    always = {"out_ktrans", "out_r2"}
     assert set(outputs) == always | optional_keys
-    quality_write = next(write for write in writes if "quality_flag" in write[0])
-    assert quality_write[1] is np.uint8
 
 
 @pytest.mark.parametrize(
@@ -473,7 +553,7 @@ def test_write_dce_terminal_outputs_preserves_auto_applicability(is_auto: bool) 
         vp=values,
         kep=np.full(shape, 0.01),
         optimizer_converged=np.ones(shape, dtype=bool),
-        quality_flag=np.ones(shape, dtype=np.int8),
+        retained_nondegenerate=np.ones(shape, dtype=bool),
         model_selection=np.ones(shape, dtype=np.int8),
         model_selection_codes={"patlak": 1},
         delta_bic=values,
@@ -504,7 +584,7 @@ def test_write_dce_terminal_outputs_preserves_auto_applicability(is_auto: bool) 
     )
     assert {
         "out_tsnr", "out_fitting_mask", "out_optimizer_converged_mask",
-        "out_qc_mask",
+        "out_retained_nondegenerate_mask", "out_qc_mask",
     }.issubset(outputs)
     assert ("out_model_selection" in outputs) is is_auto
     assert ("out_delta_bic" in outputs) is is_auto
@@ -513,20 +593,22 @@ def test_write_dce_terminal_outputs_preserves_auto_applicability(is_auto: bool) 
     assert accepted["count"] == 1
     assert accepted["fraction_of_retained"] == 1.0
     assert qc_metrics["qc_component_failures"] == {
-        "scope": "fitted_voxels",
+        "scope": "fitting_eligible_voxels",
         "counts_are_overlapping": True,
+        "optimizer_converged": 0,
+        "retained_nondegenerate": 0,
         "tsnr": 0,
         "ktrans_range": 0,
         "r_squared": 0,
-        "quality_flag": 0,
-        "model_parameters": 0,
+        "volume_interior": 0,
+        "kep_range": 0,
     }
     if is_auto:
         assert next(dtype for path, dtype in writes if "modelSelection" in path) is np.int8
 
 
-def test_saved_dce_categorical_maps_are_brain_masked(tmp_path) -> None:
-    """Saved curve, fit-quality, and model-selection labels have zero background."""
+def test_saved_dce_status_maps_are_brain_masked(tmp_path) -> None:
+    """Saved fit-status and model-selection maps have zero background."""
     shape = (4, 4, 4)
     n_timepoints = 40
     time_points = np.linspace(0.0, 4.0, n_timepoints)
@@ -575,7 +657,11 @@ def test_saved_dce_categorical_maps_are_brain_masked(tmp_path) -> None:
         os.chdir(previous_cwd)
 
     background = mask == 0
-    for output_name in ("out_quality_flag", "out_model_selection"):
+    for output_name in (
+        "out_optimizer_converged_mask",
+        "out_retained_nondegenerate_mask",
+        "out_model_selection",
+    ):
         data = nib.load(getattr(result.outputs, output_name)).get_fdata()
         assert np.all(data[background] == 0), output_name
     for output_name in (

@@ -148,7 +148,7 @@ def test_uncertainty_source_appends_to_fit_result_layout() -> None:
     """Uncertainty provenance does not shift existing positional fields."""
     names = [field.name for field in fields(FitResult)]
 
-    assert names[-3:] == ["fitted_curve", "quality_flag", "uncertainty_source"]
+    assert names[-2:] == ["fitted_curve", "uncertainty_source"]
 
 def _make_synthetic_tofts_data(
     ktrans: float = 0.1,
@@ -453,7 +453,6 @@ class TestVIConvergenceAndInitialization:
 
         assert calls > 2  # Multiple smaller trials were actually scored.
         assert not result.converged
-        assert result.quality_flag == "poor_convergence"
         assert result.parameters == expected.parameters
         assert result.uncertainties == expected.uncertainties
         assert result.credible_intervals == expected.credible_intervals
@@ -515,7 +514,6 @@ class TestVIConvergenceAndInitialization:
         assert np.max(np.abs(means[-1] - means[0])) < 1e-3
         assert np.max(np.abs(means[1] - means[0])) > 1e-3
         assert not result.converged
-        assert result.quality_flag == "poor_convergence"
         for i, name in enumerate(fitter.model.get_parameter_names()):
             prior = fitter.priors[i]
             assert to_transformed(result.parameters[name], prior.transform, prior.upper_bound) == pytest.approx(means[-1][i])
@@ -560,7 +558,6 @@ class TestVIConvergenceAndInitialization:
         result = fitter.fit_vi(tissue, aif, time, n_iterations=2)
         assert np.max(np.abs(means[1] - means[0])) > 1e-3
         assert result.converged is expected
-        assert result.quality_flag == ("good" if expected else "poor_convergence")
 
     @pytest.mark.parametrize("realization", [0, 10, 39])
     def test_extended_tofts_score_plateau_converges_without_more_iterations(
@@ -581,7 +578,6 @@ class TestVIConvergenceAndInitialization:
         result = fitter.fit_vi(tissue, aif, time)
         extended = fitter.fit_vi(tissue, aif, time, n_iterations=1000)
         assert result.converged
-        assert result.quality_flag == "good"
         assert result.r_squared > 0.95
         assert extended.parameters == result.parameters
         assert extended.uncertainties == result.uncertainties
@@ -602,7 +598,6 @@ class TestVIConvergenceAndInitialization:
         )
 
         assert not result.converged
-        assert result.quality_flag == "poor_convergence"
 
     @pytest.mark.parametrize("failure", ["exception", "nonfinite"])
     def test_invalid_forward_trials_do_not_replace_accepted_state(
@@ -688,7 +683,6 @@ class TestVIConvergenceAndInitialization:
         assert len(accepted) > 2
         assert np.max(np.abs(full_trials[-1] - accepted[-2][1])) > 1e-3
         assert not result.converged
-        assert result.quality_flag == "poor_convergence"
         for i, name in enumerate(model.get_parameter_names()):
             p = fitter.priors[i]
             assert to_transformed(result.parameters[name], p.transform, p.upper_bound) == pytest.approx(accepted[-1][1][i])
@@ -946,7 +940,7 @@ class TestBayesianMAPFitSynthetic:
 
 
 # ---------------------------------------------------------------------------
-# Tests 13-15: Weighted MCMC likelihood and quality_flag
+# Tests 13-15: Weighted MCMC likelihood and diagnostics
 # ---------------------------------------------------------------------------
 
 class TestWeightedLogLikelihoodWithSigma:
@@ -1081,38 +1075,8 @@ class TestFitMCMCWeights:
         assert captured["bounds"][0] == (-50.0, 50.0)  # type: ignore[index]
 
 
-class TestMCMCQualityFlag:
-    """Test that fit_mcmc sets quality_flag based on convergence diagnostics."""
-
-    def test_quality_flag_set_on_converged(self) -> None:
-        """A converged MCMC run should have quality_flag='good'."""
-        tissue_curve, aif, time_points, _ = _make_synthetic_tofts_data()
-        model = ToftsModel()
-        fitter = BayesianPKFitter(model)
-
-        result = fitter.fit_mcmc(
-            tissue_curve, aif, time_points,
-            n_samples=200,
-        )
-
-        # If converged, quality_flag should be "good"
-        if result.converged:
-            assert result.quality_flag == "good"
-        else:
-            assert result.quality_flag == "poor_convergence"
-
-    def test_quality_flag_always_set(self) -> None:
-        """fit_mcmc should always set quality_flag (not rely on default)."""
-        tissue_curve, aif, time_points, _ = _make_synthetic_tofts_data()
-        model = ToftsModel()
-        fitter = BayesianPKFitter(model)
-
-        result = fitter.fit_mcmc(
-            tissue_curve, aif, time_points, sloppy=True,
-        )
-
-        # quality_flag must be explicitly set (not the dataclass default)
-        assert result.quality_flag in ("good", "poor_convergence")
+class TestMCMCDiagnostics:
+    """Test MCMC convergence diagnostics."""
 
     def test_ensemble_ess_populated_without_invalid_rhat(self) -> None:
         """MCMC reports ensemble ESS but no coupled-walker R-hat."""

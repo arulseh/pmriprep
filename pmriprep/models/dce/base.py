@@ -118,9 +118,6 @@ class FitResult:
     # Fitted curve
     fitted_curve: Optional[npt.NDArray[np.floating]] = None
 
-    # Fit quality flag: "good", "poor_convergence", or "high_uncertainty"
-    quality_flag: str = "good"
-
     # Uncertainty provenance
     uncertainty_source: str = "not_computed"
 

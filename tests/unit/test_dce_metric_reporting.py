@@ -7,7 +7,6 @@ from pmriprep.interfaces.dce_compute import (
     _build_dce_qc_mask,
     _compute_derived_params,
     _is_degenerate_dce_fit,
-    _resolve_dce_fit_quality,
 )
 from pmriprep.models.dce.tofts import ToftsModel
 from pmriprep.models.dce.extended_tofts import ExtendedToftsModel
@@ -15,20 +14,20 @@ from pmriprep.models.dce.two_compartment_exchange import TwoCompartmentExchangeM
 from pmriprep.utils.dce_metrics import compute_kep
 
 
-@pytest.mark.parametrize("ktrans,ve,expected,flag", [
-    (0.1, 0.01, 10, False), (0.1001, 0.01, 10.01, True),
-    (0.0025, 0.0005, 5, False), (0.1, 0.0005, 200, True),
-    (0.1, 1e-8, 1e7, True),
-    (0, 0.2, 0, False),
+@pytest.mark.parametrize("ktrans,ve,expected", [
+    (0.1, 0.01, 10), (0.1001, 0.01, 10.01),
+    (0.0025, 0.0005, 5), (0.1, 0.0005, 200),
+    (0.1, 1e-8, 1e7),
+    (0, 0.2, 0),
 ])
-def test_finite_ratios_and_quality_are_separate(
-    ktrans: float, ve: float, expected: float, flag: bool,
+def test_finite_ratios_are_reported_without_qc_classification(
+    ktrans: float, ve: float, expected: float,
 ) -> None:
-    """High finite ratios are flagged throughout the positive-volume domain."""
+    """Derived maps report finite ratios throughout the positive-volume domain."""
     for model in (ToftsModel(), ExtendedToftsModel()):
         assert model.compute_derived_parameters([ktrans, ve, 0.02])["kep"] == pytest.approx(expected)
         params = {"Ktrans": ktrans, "ve": ve, "vp": 0.02}
-        assert bool(_compute_derived_params(params, model.name)) is flag
+        _compute_derived_params(params, model.name)
         assert params["kep"] == pytest.approx(expected)
 
 
@@ -57,8 +56,7 @@ def test_2cxm_derived_ratio_parity(ve: float) -> None:
     """2CXM scalar and batched-result reporting preserve the same finite ratio."""
     scalar = TwoCompartmentExchangeModel().compute_derived_parameters([40, 10, ve, 0.02])
     batch = {"Fp": 40, "PS": 10, "ve": ve, "vp": 0.02}
-    flagged = _compute_derived_params(batch, "2cxm")
-    assert flagged is (0.08 / ve > 10)
+    _compute_derived_params(batch, "2cxm")
     assert scalar["kep"] == pytest.approx(0.08 / ve)
     assert batch["kep"] == pytest.approx(scalar["kep"])
 
@@ -69,20 +67,21 @@ def test_2cxm_derived_ratio_parity(ve: float) -> None:
     (0.0005, 0.1, False), (1e-8, 0.1, False),
     (0.0005, 0.0025, True),
 ])
-def test_high_kep_flag_reaches_unchanged_qc_mask(
+def test_kep_range_directly_gates_qc_mask(
     name: str, ve: float, ktrans: float, accepted: bool,
 ) -> None:
-    """Extreme finite ratios cannot pass via the low-ve classification gap."""
+    """Extreme finite ratios cannot pass the explicit kep criterion."""
     params = {"Ktrans": ktrans, "ve": ve, "vp": 0.02,
               "Fp": ktrans * 200, "PS": ktrans * 200}
-    flagged = _compute_derived_params(params, name)
-    quality = _resolve_dce_fit_quality(True, "good", flagged)
-    quality_code = 4 if quality == "unreliable_high_kep" else 1
+    _compute_derived_params(params, name)
     result = _build_dce_qc_mask(
-        fitting_mask=np.array([True]), tsnr=np.array([100.0]),
+        fitting_mask=np.array([True]),
+        optimizer_converged=np.array([True]),
+        retained_nondegenerate=np.array([True]),
+        tsnr=np.array([100.0]),
         signal_qc_available=False, ktrans=np.array([params["Ktrans"]]),
         r_squared=np.array([0.99]), ve=np.array([ve]), vp=np.array([0.02]),
-        kep=np.array([params["kep"]]), quality_flag=np.array([quality_code]),
+        kep=np.array([params["kep"]]),
         model_selection=np.array([1]), model_selection_codes={name: 1},
         is_auto=False, model_name=name,
     )

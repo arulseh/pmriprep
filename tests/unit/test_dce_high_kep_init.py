@@ -104,16 +104,16 @@ def test_zero_ktrans_not_inflated() -> None:
     assert recovered < 0.015, f"zero-Ktrans inflated to {recovered:.4f}"
 
 
-def test_kep_quality_flag_preserves_finite_value() -> None:
-    """High-kep classification does not suppress the finite derived value."""
+def test_kep_reporting_preserves_finite_value() -> None:
+    """Derived reporting preserves finite kep values beyond the QC range."""
     from pmriprep.interfaces.dce_compute import _compute_derived_params
 
     railed = {"Ktrans": 5.0, "ve": 0.1}  # raw kep = 50 >> cap
-    assert _compute_derived_params(railed, "tofts") is True
+    _compute_derived_params(railed, "tofts")
     assert railed["kep"] == pytest.approx(50.0)
 
     ok = {"Ktrans": 0.3, "ve": 0.1}  # raw kep = 3, physiological
-    assert _compute_derived_params(ok, "tofts") is False
+    _compute_derived_params(ok, "tofts")
     assert ok["kep"] == pytest.approx(3.0)
 
 

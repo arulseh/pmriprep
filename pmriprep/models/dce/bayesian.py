@@ -1226,7 +1226,6 @@ class BayesianPKFitter:
             converged=converged,
             fitting_method="vi",
             fitted_curve=fitted_curve,
-            quality_flag="good" if converged else "poor_convergence",
         )
 
     def fit_mcmc(
@@ -1459,8 +1458,6 @@ class BayesianPKFitter:
 
         all_ess_ok = all(e > QC_ESS_MIN for e in ess)
         converged = bool(np.all(reliable)) and all_ess_ok
-        quality_flag = "good" if converged else "poor_convergence"
-
         # Compute fitted curve using posterior mean
         fitted_params = posterior_mean
         fitted_curve = self.model.evaluate(list(fitted_params), aif, time_points)
@@ -1490,7 +1487,6 @@ class BayesianPKFitter:
             converged=converged,
             fitting_method="mcmc",
             fitted_curve=fitted_curve,
-            quality_flag=quality_flag,
         )
 
 

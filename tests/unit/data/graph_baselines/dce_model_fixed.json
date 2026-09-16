@@ -1370,12 +1370,6 @@
     ],
     [
       "pk_modeling",
-      "out_quality_flag",
-      "dce_pk_fit_qc",
-      "quality_flag_file"
-    ],
-    [
-      "pk_modeling",
       "out_r2",
       "dce_pk_fit_qc",
       "r2_file"
@@ -1385,6 +1379,12 @@
       "out_r2",
       "outputnode",
       "r2_map"
+    ],
+    [
+      "pk_modeling",
+      "out_retained_nondegenerate_mask",
+      "dce_pk_fit_qc",
+      "retained_nondegenerate_mask_file"
     ],
     [
       "pk_modeling",
@@ -2021,8 +2021,8 @@
         "optimizer_converged_mask_file",
         "ps_file",
         "qc_mask_file",
-        "quality_flag_file",
         "r2_file",
+        "retained_nondegenerate_mask_file",
         "session_id",
         "subject_id",
         "ve_file",
@@ -2361,7 +2361,7 @@
     "create_aif_mask": "13c9c99cb39a8fdf544fa35125494b14147ec5099862963ceff8f8df840b8f3b",
     "dce_brain_mask_qc": "ced2d6d4b823457166d3fb21083d6220f2b0dc0e0155de5c134e6d98210b5086",
     "dce_early_mean": "fd75a021c6ef482c605e9a7596c6c17381cd8996e63adafc61cb7f30031b6cb0",
-    "dce_pk_fit_qc": "3206990b014d072947d06ee8c4dcef234d286f8524a901040e186022ced60581",
+    "dce_pk_fit_qc": "ea610e699089c32c3606df70138abb51296b2e1d643b6b2c1804c041076006bc",
     "dce_pk_maps_qc": "22e20c8933642cab60dbf5a7dd5d676e89aa3136ac2308830a672f2d30d7f49a",
     "dsc_dce_validation": "8a9705269eebd644f77a51608d1c63737d3f4d58114d62f90a19d3a260fda663",
     "dsc_dce_xval_plot": "4b3043f6b55becca0f1b47f258f81d1409455bf4f1fa0bea62b1be65fe452777",

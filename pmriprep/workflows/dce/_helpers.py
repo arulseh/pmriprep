@@ -2807,7 +2807,7 @@ def _generate_dce_pk_fit_qc(
     r2_file: str | None = None,
     fitting_mask_file: str | None = None,
     optimizer_converged_mask_file: str | None = None,
-    quality_flag_file: str | None = None,
+    retained_nondegenerate_mask_file: str | None = None,
     qc_mask_file: str | None = None,
     fitted_curves_file: str | None = None,
     model_selection_file: str | None = None,
@@ -2852,8 +2852,8 @@ def _generate_dce_pk_fit_qc(
         Path to the PK fitting-eligibility mask.
     optimizer_converged_mask_file : str, optional
         Path to the optimizer-convergence mask.
-    quality_flag_file : str, optional
-        Path to the retained-fit categorical quality map.
+    retained_nondegenerate_mask_file : str, optional
+        Path to the mask of fits retained in primary parameter maps.
     qc_mask_file : str, optional
         Path to QC mask NIfTI.
     fitted_curves_file : str, optional
@@ -2949,7 +2949,9 @@ def _generate_dce_pk_fit_qc(
         optimizer_converged_data = _safe_load(
             optimizer_converged_mask_file
         )
-        quality_flag_data = _safe_load(quality_flag_file)
+        retained_nondegenerate_data = _safe_load(
+            retained_nondegenerate_mask_file
+        )
 
         signal_data = _safe_load(dce_signal_file)
         fitted_curves = _safe_load(fitted_curves_file)
@@ -3050,7 +3052,7 @@ def _generate_dce_pk_fit_qc(
         if (
             fitting_mask_data is not None
             and optimizer_converged_data is not None
-            and quality_flag_data is not None
+            and retained_nondegenerate_data is not None
             and qc_mask is not None
         ):
             from pmriprep.utils.dce_voxel_prep import (
@@ -3060,7 +3062,7 @@ def _generate_dce_pk_fit_qc(
             stage_masks = {
                 "fitting_eligible": fitting_mask_data > 0.5,
                 "optimizer_converged": optimizer_converged_data > 0.5,
-                "retained_nondegenerate": quality_flag_data > 0,
+                "retained_nondegenerate": retained_nondegenerate_data > 0.5,
                 "quantitative_qc_accepted": qc_mask > 0,
             }
             regions = {

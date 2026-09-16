@@ -14,14 +14,13 @@ from pmriprep.interfaces.dce_compute import (
     _compute_vp_prior_departure,
     _fraction_fxl_risk,
     _is_degenerate_dce_fit,
-    _resolve_dce_fit_quality,
     _initialize_dce_qc_metrics,
     _scatter_degenerate_dce_fit,
     _scatter_dce_fit_artifacts,
     _scatter_dce_fit_results,
     _scatter_dce_parameters,
     _scatter_dce_uncertainties,
-    _summarize_dce_categorical_qc,
+    _summarize_dce_model_selection,
     _summarize_dce_fitted_parameters,
     _summarize_dce_fit_outcomes,
     _summarize_dce_r2,
@@ -40,29 +39,6 @@ from pmriprep.utils.dce_constants import (
     VE_BOUNDS,
     VP_BOUNDS,
 )
-
-
-@pytest.mark.parametrize(
-    ("converged", "base_quality", "kep_railed", "expected"),
-    [
-        (False, "good", False, "poor_convergence"),
-        (False, "high_uncertainty", True, "poor_convergence"),
-        (True, "good", True, "unreliable_high_kep"),
-        (True, "high_uncertainty", True, "high_uncertainty"),
-        (True, "good", False, "good"),
-    ],
-)
-def test_resolve_dce_fit_quality_prioritizes_convergence(
-    converged: bool,
-    base_quality: str,
-    kep_railed: bool,
-    expected: str,
-) -> None:
-    """Nonconvergence cannot remain good or be hidden by a secondary flag."""
-    assert (
-        _resolve_dce_fit_quality(converged, base_quality, kep_railed)
-        == expected
-    )
 
 
 @pytest.mark.parametrize(
@@ -169,7 +145,7 @@ def test_rate_ceiling_scattering_preserves_rejection_and_accounting(
         result = {
             "failed": False, "coords": (0, 0, 0), "params": params,
             "selected_model_name": model, "converged": True, "r_squared": 0.99,
-            "uncertainties": {rate: 0.1}, "quality_flag": "good",
+            "uncertainties": {rate: 0.1},
         }
         summary = _scatter_dce_fit_results(
             [VoxelInput(0, 0, 0, np.zeros(3), None)], [result], maps,
@@ -182,7 +158,7 @@ def test_rate_ceiling_scattering_preserves_rejection_and_accounting(
         assert maps.model_selection.item() == 4
         assert maps.r_squared.item() == 0.99
         assert np.isnan(maps.ktrans.item()) == rejected
-        assert maps.quality_flag.item() == int(not rejected)
+        assert maps.retained_nondegenerate.item() == (not rejected)
         rate_map_name = {"Ktrans": "ktrans", "Fp": "fp", "PS": "ps"}[rate]
         uncertainty = getattr(maps, rate_map_name + "_std").item()
         if rejected:
@@ -216,8 +192,7 @@ def _uncertainty_maps() -> SimpleNamespace:
         model_selection_codes={"tofts": 2},
         delta_bic=np.full((1, 1, 1), np.nan),
         fitted_curves=None,
-        quality_flag=np.zeros((1, 1, 1), dtype=np.int8),
-        quality_flag_codes={"good": 1},
+        retained_nondegenerate=np.zeros((1, 1, 1), dtype=bool),
     )
 
 
@@ -253,37 +228,28 @@ def test_uncertainty_scatter_leaves_nonapplicable_patlak_fields_zero() -> None:
     assert maps.ps_std[0, 0, 0] == 0.0
 
 
-def test_fit_artifact_scatter_writes_curve_and_quality() -> None:
-    """All non-parameter artifacts use the same voxel coordinate."""
+def test_fit_artifact_scatter_writes_curve() -> None:
+    """The optional fitted curve uses the fit voxel coordinate."""
     maps = SimpleNamespace(
         fitted_curves=np.full((1, 1, 1, 3), np.nan, dtype=np.float32),
-        quality_flag=np.zeros((1, 1, 1), dtype=np.int8),
-        quality_flag_codes={"good": 1, "high_uncertainty": 3},
     )
     _scatter_dce_fit_artifacts(
         maps,
         (0, 0, 0),
         {
             "fitted_curve": np.array([0.0, 0.2, 0.1]),
-            "quality_flag": "high_uncertainty",
         },
     )
     np.testing.assert_array_equal(
         maps.fitted_curves[0, 0, 0],
         np.array([0.0, 0.2, 0.1], dtype=np.float32),
     )
-    assert maps.quality_flag[0, 0, 0] == 3
 
 
 def test_fit_artifact_scatter_defaults_without_optional_curve() -> None:
-    """Missing optional values retain no curve and default to a good label."""
-    maps = SimpleNamespace(
-        fitted_curves=None,
-        quality_flag=np.zeros((1, 1, 1), dtype=np.int8),
-        quality_flag_codes={"good": 1},
-    )
+    """Missing optional values leave the absent curve unchanged."""
+    maps = SimpleNamespace(fitted_curves=None)
     _scatter_dce_fit_artifacts(maps, (0, 0, 0), {})
-    assert maps.quality_flag[0, 0, 0] == 1
 
 
 def test_parameter_scatter_respects_patlak_applicability() -> None:
@@ -536,43 +502,32 @@ def test_summarize_vp_prior_departures_empty_input_omits_metrics() -> None:
     assert _summarize_vp_prior_departures([]) == {}
 
 
-def test_summarize_dce_categorical_qc_counts_models_and_quality() -> None:
-    """Auto categorical QC reports candidate fractions and in-domain labels."""
+def test_summarize_dce_model_selection_counts_models() -> None:
+    """Automatic selection reports candidate counts and fractions."""
     model_selection = np.array([[[1, 3], [3, 0]]])
-    quality = np.array([[[1, 2], [3, 4]]])
-    fitting_mask = np.array([[[True, True], [True, False]]])
-    summary = _summarize_dce_categorical_qc(
+    summary = _summarize_dce_model_selection(
         True,
         ["patlak", "extended_tofts"],
         model_selection,
         {"patlak": 1, "extended_tofts": 3},
-        quality,
-        fitting_mask,
     )
     assert summary["model_selection"] == "auto"
     assert summary["n_patlak_selected"] == 1
     assert summary["patlak_fraction"] == pytest.approx(1 / 3)
     assert summary["n_extended_tofts_selected"] == 2
     assert summary["extended_tofts_fraction"] == pytest.approx(2 / 3)
-    assert summary["quality_n_good"] == 1
-    assert summary["quality_n_poor_convergence"] == 1
-    assert summary["quality_n_high_uncertainty"] == 1
-    assert summary["quality_n_unreliable_high_kep"] == 0
 
 
-def test_summarize_dce_categorical_qc_fixed_mode_omits_candidates() -> None:
-    """Fixed-model QC omits automatic candidate counts and fractions."""
-    summary = _summarize_dce_categorical_qc(
+def test_summarize_dce_model_selection_fixed_mode_omits_candidates() -> None:
+    """Fixed-model reporting omits automatic candidate counts and fractions."""
+    summary = _summarize_dce_model_selection(
         False,
         [],
         np.zeros((1, 1, 1), dtype=np.int8),
         {},
-        np.ones((1, 1, 1), dtype=np.int8),
-        np.ones((1, 1, 1), dtype=bool),
     )
     assert summary["model_selection"] == "fixed"
     assert "candidate_models" not in summary
-    assert summary["quality_n_good"] == 1
 
 
 def test_summarize_dce_fitted_parameters_preserves_applicability() -> None:
@@ -756,7 +711,6 @@ def test_map_uncertainty_accounting_excludes_postfit_rejection(rejected_rate: fl
         "converged": True,
         "uncertainties": {},
         "fitted_curve": None,
-        "quality_flag": "good",
         "rhat": {},
         "ess": {},
     }
