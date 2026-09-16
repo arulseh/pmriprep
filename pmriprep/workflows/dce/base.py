@@ -134,6 +134,7 @@ def init_dce_pk_modeling_wf(
                 "fd_values",
                 "bolus_arrival_frame",
                 "dsc_ncbv_file",
+                "nawm_exclusion_reason",
                 "dsc_registration_qc",
                 "dce_registration_qc",
                 "tumor_mask_file",
@@ -199,6 +200,7 @@ def init_dce_pk_modeling_wf(
             ("fd_values", "fd_values"),
             ("bolus_arrival_frame", "bolus_arrival_frame"),
             ("dsc_ncbv_file", "dsc_ncbv_file"),
+            ("nawm_exclusion_reason", "nawm_exclusion_reason"),
             ("dsc_registration_qc", "dsc_registration_qc"),
             ("dce_registration_qc", "dce_registration_qc"),
             ("tumor_mask_file", "tumor_mask_file"),
@@ -1084,7 +1086,8 @@ def init_dce_dsc_validation_wf(
     inputnode = pe.Node(
         niu.IdentityInterface(fields=[
             "vp_file", "dsc_cbv_file", "dsc_ncbv_file", "brain_mask",
-            "nawm_mask", "region_mask", "pk_qc", "dsc_preload_configured",
+            "nawm_mask", "nawm_exclusion_reason", "region_mask", "pk_qc",
+            "dsc_preload_configured",
             "model_selection_file",
         ]),
         name="inputnode",
@@ -1099,7 +1102,7 @@ def init_dce_dsc_validation_wf(
         niu.Function(
             input_names=[
                 "vp_file", "dsc_cbv_file", "dsc_ncbv_file", "brain_mask",
-                "nawm_mask", "region_mask",
+                "nawm_mask", "nawm_exclusion_reason", "region_mask",
                 "no_dsc_validation", "pk_qc", "dsc_preload_configured",
                 "dce_model",
             ],
@@ -1128,6 +1131,7 @@ def init_dce_dsc_validation_wf(
             ("vp_file", "vp_file"), ("dsc_cbv_file", "dsc_cbv_file"),
             ("dsc_ncbv_file", "dsc_ncbv_file"), ("brain_mask", "brain_mask"),
             ("nawm_mask", "nawm_mask"), ("region_mask", "region_mask"),
+            ("nawm_exclusion_reason", "nawm_exclusion_reason"),
             ("pk_qc", "pk_qc"),
             ("dsc_preload_configured", "dsc_preload_configured"),
         ]),
@@ -1596,6 +1600,7 @@ def init_dce_preproc_wf(
                 "t2w_in_t1w",  # T2w coregistered to T1w space (from anat)
                 # NAWM mask input (for normalization)
                 "nawm_mask",
+                "nawm_exclusion_reason",  # Reason an auto-generated NAWM mask is QC-only
                 "nawm_needs_transform",  # True if nawm_mask is in T1w space (tumor seg)
                 # Generic ROI mask in DCE native space (optional)
                 "roi_mask",
@@ -1618,6 +1623,7 @@ def init_dce_preproc_wf(
     inputnode.inputs.dsc_agent_standard_dose = 0.1
 
     inputnode.inputs.nawm_needs_transform = True
+    inputnode.inputs.nawm_exclusion_reason = ""
 
     # Default structural underlay inputs to None
     inputnode.inputs.t1w_underlay = None
@@ -2377,6 +2383,7 @@ def init_dce_preproc_wf(
         ]),
         (inputnode, pk_wf, [
             ("dsc_registration_qc", "inputnode.dsc_registration_qc"),
+            ("nawm_exclusion_reason", "inputnode.nawm_exclusion_reason"),
         ]),
         (dce_registration_wf, pk_wf, [
             ("outputnode.qc_metrics", "inputnode.dce_registration_qc"),
@@ -2436,6 +2443,9 @@ def init_dce_preproc_wf(
         (dce_lesion_masks_wf, dce_dsc_validation_wf, [
             ("outputnode.nawm_mask", "inputnode.nawm_mask"),
             ("outputnode.lesion_mask", "inputnode.region_mask"),
+        ]),
+        (inputnode, dce_dsc_validation_wf, [
+            ("nawm_exclusion_reason", "inputnode.nawm_exclusion_reason"),
         ]),
         # Feed resampled DSC CBV (deferred from Node 7c)
         (dce_dsc_resampling_wf, dce_dsc_validation_wf, [

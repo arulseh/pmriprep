@@ -734,6 +734,18 @@
     ],
     [
       "inputnode",
+      "nawm_exclusion_reason",
+      "dsc_dce_validation",
+      "nawm_exclusion_reason"
+    ],
+    [
+      "inputnode",
+      "nawm_exclusion_reason",
+      "pk_modeling",
+      "nawm_exclusion_reason"
+    ],
+    [
+      "inputnode",
       "nawm_mask",
       "transform_nawm_mask",
       "mask_file"
@@ -1839,6 +1851,7 @@
         "dsc_cbv_file",
         "dsc_ncbv_file",
         "dsc_preload_configured",
+        "nawm_exclusion_reason",
         "nawm_mask",
         "no_dsc_validation",
         "pk_qc",
@@ -2112,7 +2125,7 @@
     "dce_early_mean": "fd75a021c6ef482c605e9a7596c6c17381cd8996e63adafc61cb7f30031b6cb0",
     "dce_pk_fit_qc": "ea610e699089c32c3606df70138abb51296b2e1d643b6b2c1804c041076006bc",
     "dce_pk_maps_qc": "22e20c8933642cab60dbf5a7dd5d676e89aa3136ac2308830a672f2d30d7f49a",
-    "dsc_dce_validation": "8a9705269eebd644f77a51608d1c63737d3f4d58114d62f90a19d3a260fda663",
+    "dsc_dce_validation": "0f04208c58f8a6d1e6aa2009949a7012e750a9cb7d486141c04bbc5998215bb4",
     "dsc_dce_xval_plot": "4b3043f6b55becca0f1b47f258f81d1409455bf4f1fa0bea62b1be65fe452777",
     "external_t1_qc_plot": "000bb565867fae6b83d0aa82d732a1562fca7ab260fbc5b631523104e88cfccd",
     "external_t1_to_dce": "040b96cd6e1f8b623dd8dda541e6e73e481eae4dffcc406ba1db772eb46b233a",
@@ -2409,6 +2422,7 @@
       "dsc_dose": 1.0,
       "dsc_ncbv_file": null,
       "dsc_to_t1w_xfm": null,
+      "nawm_exclusion_reason": "",
       "nawm_needs_transform": true,
       "t1w_postcon_underlay": null,
       "t1w_subtraction_underlay": null,

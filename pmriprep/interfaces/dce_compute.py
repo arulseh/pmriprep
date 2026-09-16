@@ -2069,6 +2069,10 @@ class ComputeDCEMapsInputSpec(BaseInterfaceInputSpec):
              "the vp prior via vp = NAWM_VP_REFERENCE × nCBV. Empty string "
              "when DSC has no NAWM reference → constraint cleanly SKIPs.",
     )
+    nawm_exclusion_reason = traits.Str(
+        desc="Reason an automatically generated NAWM mask was excluded from "
+             "quantitative use; reported when the DSC-informed vp prior skips.",
+    )
     tumor_mask_file = traits.Str(
         desc="Enhancing-tumor mask (HD-GLIO label 2) on the DCE grid, used as "
              "the tissue-arrival reference for AIF BAT pre-alignment. Empty "
@@ -2868,6 +2872,12 @@ class ComputeDCEMaps(BaseInterface):
                     dce_registration_qc=(
                         dict(self.inputs.dce_registration_qc)
                         if isdefined(self.inputs.dce_registration_qc)
+                        else None
+                    ),
+                    nawm_exclusion_reason=(
+                        str(self.inputs.nawm_exclusion_reason)
+                        if isdefined(self.inputs.nawm_exclusion_reason)
+                        and bool(self.inputs.nawm_exclusion_reason)
                         else None
                     ),
                 )

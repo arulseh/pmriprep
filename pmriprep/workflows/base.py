@@ -771,11 +771,40 @@ def _validate_flip_angle(fa: float, label: str = "") -> float:
     return fa
 
 
+def _load_cached_nawm_status(
+    create_nawm_dir: Path,
+) -> tuple[Optional[bool], Optional[str]]:
+    """Recover quantitative NAWM eligibility from a prior Nipype result."""
+    result_files = sorted(create_nawm_dir.glob("result_*.pklz"))
+    if not result_files:
+        return None, "cached_nawm_validity_unavailable"
+    try:
+        from nipype.pipeline.engine.utils import load_resultfile
+
+        result = load_resultfile(result_files[-1])
+        nawm_result = result.outputs.nawm_result
+        analysis = nawm_result.get("analysis") if isinstance(nawm_result, dict) else None
+        if not isinstance(analysis, dict):
+            return None, "cached_nawm_validity_unavailable"
+        valid = analysis.get("valid") is True
+        reason_value = analysis.get("quantitative_use_exclusion_reason")
+        reason = None if valid else (
+            str(reason_value) if reason_value else "cached_nawm_invalid"
+        )
+        return valid, reason
+    except Exception as exc:
+        logging.getLogger("pmriprep.workflows").warning(
+            "Could not recover cached NAWM validity from %s: %s",
+            result_files[-1], exc,
+        )
+        return None, "cached_nawm_validity_unavailable"
+
+
 def _find_previous_tumor_seg_outputs(
     work_dir: Path,
     subject_id: str,
     session_id: Optional[str],
-) -> dict[str, Optional[str]]:
+) -> dict[str, Any]:
     """Find previously-computed tumor segmentation outputs in the work directory.
 
     When --skip-tumor-seg is used, DSC/DCE workflows may still need
@@ -802,12 +831,15 @@ def _find_previous_tumor_seg_outputs(
     wf_name = workflow_dirname(subject_id, session_id)
     tumor_seg_dir = work_dir / wf_name / "tumor_seg_wf"
 
-    outputs: dict[str, Optional[str]] = {
+    outputs: dict[str, Any] = {
         "whole_tumor_mask": None,
         "enhancing_mask": None,
         "non_enhancing_mask": None,
         "segmentation": None,
         "nawm_mask": None,
+        "nawm_mask_for_quantification": None,
+        "nawm_valid": None,
+        "nawm_exclusion_reason": None,
     }
 
     if not tumor_seg_dir.exists():
@@ -840,6 +872,14 @@ def _find_previous_tumor_seg_outputs(
         if nawm_dir.exists():
             for f in nawm_dir.glob("*.nii.gz"):
                 outputs["nawm_mask"] = str(f)
+
+    if outputs["nawm_mask"] is not None:
+        nawm_dir = tumor_seg_dir / "create_nawm"
+        valid, reason = _load_cached_nawm_status(nawm_dir)
+        outputs["nawm_valid"] = valid
+        outputs["nawm_exclusion_reason"] = reason
+        if valid is True:
+            outputs["nawm_mask_for_quantification"] = outputs["nawm_mask"]
 
     # Check select_whole_tumor node for whole tumor mask
     if outputs["whole_tumor_mask"] is None:
@@ -1649,11 +1689,26 @@ def _connect_master_dsc_masks(
         logger.info("DSC: user nawm_mask=%s (DSC native space)", user_nawm)
     elif tumor_seg_wf is not None:
         workflow.connect([
-            (tumor_seg_wf, dsc_wf, [("outputnode.nawm_mask", "inputnode.nawm_mask")]),
+            (tumor_seg_wf, dsc_wf, [
+                ("outputnode.nawm_mask_for_quantification", "inputnode.nawm_mask"),
+                ("outputnode.nawm_exclusion_reason", "inputnode.nawm_exclusion_reason"),
+            ]),
         ])
+    elif previous.get("nawm_mask_for_quantification"):
+        dsc_wf.inputs.inputnode.nawm_mask = previous["nawm_mask_for_quantification"]
+        logger.info(
+            "DSC skip-tumor-seg: loaded valid nawm_mask from %s",
+            previous["nawm_mask_for_quantification"],
+        )
     elif previous.get("nawm_mask"):
-        dsc_wf.inputs.inputnode.nawm_mask = previous["nawm_mask"]
-        logger.info("DSC skip-tumor-seg: loaded nawm_mask from %s", previous["nawm_mask"])
+        dsc_wf.inputs.inputnode.nawm_exclusion_reason = (
+            previous.get("nawm_exclusion_reason") or "cached_nawm_validity_unavailable"
+        )
+        logger.warning(
+            "DSC skip-tumor-seg: cached NAWM retained for QC but excluded "
+            "from normalization (%s)",
+            previous.get("nawm_exclusion_reason") or "validity_not_established",
+        )
 
     if user_lesion:
         lesion_reorient = pe.Node(Reorient(), name="dsc_lesion_reorient")
@@ -1680,7 +1735,11 @@ def _connect_master_dsc_masks(
                 logger.info("skip-tumor-seg: loaded %s from %s", input_field, previous[key])
 
     return _MasterDSCMaskState(
-        has_nawm_source=bool(user_nawm or tumor_seg_wf is not None or previous.get("nawm_mask")),
+        has_nawm_source=bool(
+            user_nawm
+            or tumor_seg_wf is not None
+            or previous.get("nawm_mask_for_quantification")
+        ),
         has_whole_tumor_source=bool(
             decision.run_tumor_seg or previous.get("whole_tumor_mask")
         ),
@@ -2618,10 +2677,25 @@ def _connect_master_dce_masks(
         dce_wf.inputs.inputnode.nawm_needs_transform = False
         logger.info("DCE: user nawm_mask=%s (DCE native space)", user_nawm)
     elif tumor_seg_wf is not None:
-        workflow.connect([(tumor_seg_wf, dce_wf, [("outputnode.nawm_mask", "inputnode.nawm_mask")])])
+        workflow.connect([(tumor_seg_wf, dce_wf, [
+            ("outputnode.nawm_mask_for_quantification", "inputnode.nawm_mask"),
+            ("outputnode.nawm_exclusion_reason", "inputnode.nawm_exclusion_reason"),
+        ])])
+    elif previous.get("nawm_mask_for_quantification"):
+        dce_wf.inputs.inputnode.nawm_mask = previous["nawm_mask_for_quantification"]
+        logger.info(
+            "DCE skip-tumor-seg: loaded valid nawm_mask from %s",
+            previous["nawm_mask_for_quantification"],
+        )
     elif previous.get("nawm_mask"):
-        dce_wf.inputs.inputnode.nawm_mask = previous["nawm_mask"]
-        logger.info("DCE skip-tumor-seg: loaded nawm_mask from %s", previous["nawm_mask"])
+        dce_wf.inputs.inputnode.nawm_exclusion_reason = (
+            previous.get("nawm_exclusion_reason") or "cached_nawm_validity_unavailable"
+        )
+        logger.warning(
+            "DCE skip-tumor-seg: cached NAWM retained for QC but excluded "
+            "from quantitative use (%s)",
+            previous.get("nawm_exclusion_reason") or "validity_not_established",
+        )
     if user_lesion:
         node = pe.Node(Reorient(), name="dce_lesion_reorient")
         node.inputs.in_file = str(user_lesion)
@@ -2640,7 +2714,11 @@ def _connect_master_dce_masks(
                 setattr(dce_wf.inputs.inputnode, field, previous[key])
                 logger.info("skip-tumor-seg (DCE): loaded %s from %s", field, previous[key])
     return _MasterDCEMaskState(
-        has_nawm_source=bool(user_nawm or tumor_seg_wf is not None or previous.get("nawm_mask")),
+        has_nawm_source=bool(
+            user_nawm
+            or tumor_seg_wf is not None
+            or previous.get("nawm_mask_for_quantification")
+        ),
         has_lesion_source=bool(decision.run_tumor_seg or previous.get("whole_tumor_mask")),
     )
 

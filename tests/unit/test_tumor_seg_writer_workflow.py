@@ -163,6 +163,12 @@ def test_tumor_seg_sidecar_sources_populated(
             "atlas_used": True,
             "erosion_voxels_final": 1,
             "erosion_mm_final": 1.25,
+            "valid": False,
+            "n_voxels": 75,
+            "minimum_required_voxels": 100,
+            "quantitative_use_exclusion_reason": (
+                "insufficient_voxels_after_erosion_relaxation"
+            ),
         }
     }
     wf.run()
@@ -193,6 +199,12 @@ def test_tumor_seg_sidecar_sources_populated(
             assert body["TumorExclusionMarginMillimeters"] == 20.0
             assert body["ErosionVoxels"] == 1
             assert body["ErosionMillimeters"] == 1.25
+            assert body["ValidForQuantification"] is False
+            assert body["VoxelCount"] == 75
+            assert body["MinimumRequiredVoxels"] == 100
+            assert body["QuantitativeUseExclusionReason"] == (
+                "insufficient_voxels_after_erosion_relaxation"
+            )
         elif sc.name.endswith("_mask.json"):
             assert body["Sources"] == [
                 "bids::sub-01/ses-0001/anat/"

@@ -1254,6 +1254,7 @@ def init_dsc_qc_wf(
                 "cbf_normalization_factor",
                 "brain_mask_file",
                 "nawm_mask_file",
+                "nawm_exclusion_reason",
                 "tr",
                 "te",
                 "t1w_to_mni_xfm",
@@ -1299,6 +1300,7 @@ def init_dsc_qc_wf(
                 "auc_raw_file",
                 "auc_corr_file",
                 "nawm_mask_file",
+                "nawm_exclusion_reason",
             ],
             output_names=["merged_qc"],
             function=_merge_qc_metrics,
@@ -1416,6 +1418,7 @@ def init_dsc_qc_wf(
             ("auc_raw", "auc_raw_file"),
             ("auc_corr", "auc_corr_file"),
             ("nawm_mask_file", "nawm_mask_file"),
+            ("nawm_exclusion_reason", "nawm_exclusion_reason"),
         ]),
         (inputnode, reg_filmstrip, [
             ("prebolus_mean_file", "dsc_mean_file"),
@@ -1793,6 +1796,7 @@ def init_dsc_preproc_wf(
                 "tumor_segmentation",  # Multi-label tumor segmentation for lesion stats (optional, T1w space)
                 "user_lesion_mask",  # User-supplied lesion mask in DSC native space (optional)
                 "nawm_mask",  # NAWM mask for normalization (optional)
+                "nawm_exclusion_reason",  # Reason an auto-generated NAWM mask is QC-only
                 "nawm_needs_transform",  # True if nawm_mask is in T1w space (tumor seg)
                 "roi_mask",  # Generic ROI mask in DSC native space (optional)
                 "t1w_to_mni_xfm",  # T1w to MNI transform (from ACPC alignment)
@@ -1812,6 +1816,7 @@ def init_dsc_preproc_wf(
     inputnode.inputs.field_strength = 3.0  # 3T
     inputnode.inputs.tr = 1.5  # 1.5s TR
     inputnode.inputs.nawm_needs_transform = True
+    inputnode.inputs.nawm_exclusion_reason = ""
 
     # -------------------------------------------------------------------
     # Output Node
@@ -2392,6 +2397,7 @@ def init_dsc_preproc_wf(
             ("tr", "inputnode.tr"),
             ("te", "inputnode.te"),
             ("t1w_to_mni_xfm", "inputnode.t1w_to_mni_xfm"),
+            ("nawm_exclusion_reason", "inputnode.nawm_exclusion_reason"),
         ]),
     ])
 

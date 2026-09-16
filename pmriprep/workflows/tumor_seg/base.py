@@ -30,11 +30,22 @@ def _select_whole_tumor(masks: dict[str, str]) -> str:
     return masks["whole_tumor"]
 
 
-def _extract_nawm_mask_path(
+def _extract_nawm_outputs(
     nawm_result: dict[str, str | dict[str, object]],
-) -> str:
-    """Extract NAWM mask file path from result dict."""
-    return str(nawm_result["output_file"])
+) -> tuple[str, str, bool, str]:
+    """Separate the saved NAWM mask from its quantitative-use contract."""
+    mask_path = str(nawm_result["output_file"])
+    analysis = nawm_result.get("analysis")
+    if not isinstance(analysis, dict):
+        raise TypeError("NAWM analysis must be a dictionary")
+    valid = analysis.get("valid") is True
+    reason = ""
+    if not valid:
+        value = analysis.get("quantitative_use_exclusion_reason")
+        reason = (
+            str(value) if value else "nawm_validity_not_established"
+        )
+    return mask_path, mask_path if valid else "", valid, reason
 
 
 def _extract_nawm_analysis_dict(
@@ -345,7 +356,13 @@ def init_tumor_seg_wf(
     whole_tumor_mask
         Path to whole tumor mask (labels 1 + 2).
     nawm_mask
-        Path to contralateral NAWM mask for CBV normalization.
+        Path to the generated contralateral NAWM mask, retained for QC.
+    nawm_mask_for_quantification
+        NAWM path only when the configured minimum-size criterion was met.
+    nawm_valid
+        Whether the generated NAWM mask is eligible for quantitative use.
+    nawm_exclusion_reason
+        Factual reason quantitative use was withheld, or an empty string.
     qc_metrics
         Dictionary of QC metrics from segmentation.
 
@@ -402,6 +419,9 @@ def init_tumor_seg_wf(
                 "non_enhancing_mask",
                 "whole_tumor_mask",
                 "nawm_mask",
+                "nawm_mask_for_quantification",
+                "nawm_valid",
+                "nawm_exclusion_reason",
                 "qc_metrics",
                 "seg_filmstrip_postcon",
                 "seg_filmstrip_flair",
@@ -576,19 +596,28 @@ def init_tumor_seg_wf(
         ]),
     ])
 
-    # Extract NAWM mask path from result dict
+    # Keep the generated mask for QC, but expose a separate fail-closed path
+    # for normalization and other quantitative consumers.
     extract_nawm_path = pe.Node(
         niu.Function(
             input_names=["nawm_result"],
-            output_names=["nawm_mask"],
-            function=_extract_nawm_mask_path,
+            output_names=[
+                "nawm_mask", "nawm_mask_for_quantification",
+                "nawm_valid", "nawm_exclusion_reason",
+            ],
+            function=_extract_nawm_outputs,
         ),
         name="extract_nawm_path",
     )
 
     workflow.connect([
         (create_nawm, extract_nawm_path, [("nawm_result", "nawm_result")]),
-        (extract_nawm_path, outputnode, [("nawm_mask", "nawm_mask")]),
+        (extract_nawm_path, outputnode, [
+            ("nawm_mask", "nawm_mask"),
+            ("nawm_mask_for_quantification", "nawm_mask_for_quantification"),
+            ("nawm_valid", "nawm_valid"),
+            ("nawm_exclusion_reason", "nawm_exclusion_reason"),
+        ]),
     ])
 
     # -------------------------------------------------------------------

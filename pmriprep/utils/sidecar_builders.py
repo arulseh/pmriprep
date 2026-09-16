@@ -915,6 +915,18 @@ def build_tumor_seg_nawm_sidecar(
         erosion_mm = nawm_qc.get("erosion_mm_final")
         if isinstance(erosion_mm, (int, float)):
             sidecar["ErosionMillimeters"] = float(erosion_mm)
+        valid = nawm_qc.get("valid")
+        if isinstance(valid, bool):
+            sidecar["ValidForQuantification"] = valid
+        n_voxels = nawm_qc.get("n_voxels")
+        if isinstance(n_voxels, (int, float)):
+            sidecar["VoxelCount"] = int(n_voxels)
+        minimum_voxels = nawm_qc.get("minimum_required_voxels")
+        if isinstance(minimum_voxels, (int, float)):
+            sidecar["MinimumRequiredVoxels"] = int(minimum_voxels)
+        exclusion_reason = nawm_qc.get("quantitative_use_exclusion_reason")
+        if isinstance(exclusion_reason, str) and exclusion_reason:
+            sidecar["QuantitativeUseExclusionReason"] = exclusion_reason
     return sidecar
 
 

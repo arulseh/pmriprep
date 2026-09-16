@@ -15,6 +15,41 @@ from pmriprep.utils.tumor_seg import (
     dilate_mask_from_array,
     erode_mask_from_array,
 )
+from pmriprep.workflows.tumor_seg.base import _extract_nawm_outputs
+
+
+def test_extract_nawm_outputs_separates_qc_and_quantitative_paths() -> None:
+    """An undersized mask remains available for QC but not quantification."""
+    result = {
+        "output_file": "/tmp/nawm.nii.gz",
+        "analysis": {
+            "valid": False,
+            "quantitative_use_exclusion_reason": (
+                "insufficient_voxels_after_erosion_relaxation"
+            ),
+        },
+    }
+
+    raw, quantitative, valid, reason = _extract_nawm_outputs(result)
+
+    assert raw == "/tmp/nawm.nii.gz"
+    assert quantitative == ""
+    assert valid is False
+    assert reason == "insufficient_voxels_after_erosion_relaxation"
+
+
+def test_extract_nawm_outputs_passes_valid_mask_to_quantification() -> None:
+    """A generated mask meeting the size criterion retains both roles."""
+    result = {
+        "output_file": "/tmp/nawm.nii.gz",
+        "analysis": {"valid": True},
+    }
+
+    raw, quantitative, valid, reason = _extract_nawm_outputs(result)
+
+    assert raw == quantitative == "/tmp/nawm.nii.gz"
+    assert valid is True
+    assert reason == ""
 
 
 class TestCreateSphericalKernel:

@@ -1462,6 +1462,7 @@ def _merge_qc_metrics(
     auc_raw_file: str | None = None,
     auc_corr_file: str | None = None,
     nawm_mask_file: str | None = None,
+    nawm_exclusion_reason: str | None = None,
 ) -> dict[str, object]:
     """Merge all QC metrics into a single dictionary.
 
@@ -1497,6 +1498,9 @@ def _merge_qc_metrics(
     nawm_mask_file : str, optional
         NAWM mask in native DSC space. When absent, NAWM effect accounting is
         omitted rather than approximated from whole brain.
+    nawm_exclusion_reason : str, optional
+        Reason an automatically generated NAWM mask was retained for QC but
+        excluded from quantitative normalization.
 
     Returns
     -------
@@ -1582,6 +1586,11 @@ def _merge_qc_metrics(
     }
     if brain_extraction_qc:
         merged["brain_extraction"] = brain_extraction_qc
+    if nawm_exclusion_reason:
+        merged["nawm_reference"] = {
+            "eligible_for_quantification": False,
+            "exclusion_reason": nawm_exclusion_reason,
+        }
     return merged
 
 

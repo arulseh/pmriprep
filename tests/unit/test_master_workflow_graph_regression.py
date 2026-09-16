@@ -25,6 +25,7 @@ from pmriprep.workflows.base import (
     _connect_master_dsc_masks,
     _connect_master_dsc_outputs_and_build_provenance,
     _connect_master_dsc_to_dce,
+    _connect_master_dce_masks,
     _connect_master_dce_t1_b1_inputs,
     _init_master_workflow_nodes,
     _MasterReferencePlan,
@@ -539,6 +540,9 @@ def test_connect_master_dsc_masks_loads_cached_tumor_outputs(
     """Cached tumor masks retain their DSC input roles and availability state."""
     previous = {
         "nawm_mask": tmp_path / "nawm.nii.gz",
+        "nawm_mask_for_quantification": tmp_path / "nawm.nii.gz",
+        "nawm_valid": True,
+        "nawm_exclusion_reason": None,
         "whole_tumor_mask": tmp_path / "whole.nii.gz",
         "enhancing_mask": tmp_path / "enhancing.nii.gz",
         "segmentation": tmp_path / "seg.nii.gz",
@@ -560,13 +564,77 @@ def test_connect_master_dsc_masks_loads_cached_tumor_outputs(
     )
 
     assert vars(inputnode) == {
-        "nawm_mask": previous["nawm_mask"],
+        "nawm_mask": previous["nawm_mask_for_quantification"],
         "whole_tumor_mask": previous["whole_tumor_mask"],
         "enhancing_mask": previous["enhancing_mask"],
         "tumor_segmentation": previous["segmentation"],
     }
     assert state.has_nawm_source is True
     assert state.has_whole_tumor_source is True
+
+
+def test_connect_master_dsc_masks_withholds_invalid_cached_nawm(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An invalid cached auto-NAWM mask cannot enter DSC normalization."""
+    previous = {
+        "nawm_mask": tmp_path / "nawm.nii.gz",
+        "nawm_mask_for_quantification": None,
+        "nawm_valid": False,
+        "nawm_exclusion_reason": "insufficient_voxels_after_erosion_relaxation",
+    }
+    monkeypatch.setattr(
+        "pmriprep.workflows.base._find_previous_tumor_seg_outputs",
+        lambda *args: previous,
+    )
+    inputnode = SimpleNamespace()
+
+    state = _connect_master_dsc_masks(
+        workflow=SimpleNamespace(connect=lambda connections: None),
+        dsc_wf=SimpleNamespace(inputs=SimpleNamespace(inputnode=inputnode)),
+        tumor_seg_wf=None,
+        decision=PipelineDecision(run_tumor_seg=False),
+        dsc_config=DSCConfig(),
+        work_dir=tmp_path / "work",
+        subject_id="0001",
+        session_id="0001",
+    )
+
+    assert not hasattr(inputnode, "nawm_mask")
+    assert inputnode.nawm_exclusion_reason == previous["nawm_exclusion_reason"]
+    assert state.has_nawm_source is False
+
+
+def test_connect_master_dce_masks_withholds_invalid_cached_nawm(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An invalid cached auto-NAWM mask cannot enter DCE consumers."""
+    previous = {
+        "nawm_mask": tmp_path / "nawm.nii.gz",
+        "nawm_mask_for_quantification": None,
+        "nawm_valid": False,
+        "nawm_exclusion_reason": "insufficient_voxels_after_erosion_relaxation",
+    }
+    monkeypatch.setattr(
+        "pmriprep.workflows.base._find_previous_tumor_seg_outputs",
+        lambda *args: previous,
+    )
+    inputnode = SimpleNamespace()
+
+    state = _connect_master_dce_masks(
+        workflow=SimpleNamespace(connect=lambda connections: None),
+        dce_wf=SimpleNamespace(inputs=SimpleNamespace(inputnode=inputnode)),
+        tumor_seg_wf=None,
+        decision=PipelineDecision(run_tumor_seg=False),
+        dce_config=DCEConfig(),
+        work_dir=tmp_path / "work",
+        subject_id="0001",
+        session_id="0001",
+    )
+
+    assert not hasattr(inputnode, "nawm_mask")
+    assert inputnode.nawm_exclusion_reason == previous["nawm_exclusion_reason"]
+    assert state.has_nawm_source is False
 
 
 def test_connect_master_dsc_outputs_preserves_provenance_sources(

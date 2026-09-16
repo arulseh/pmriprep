@@ -716,6 +716,25 @@ class TestNcbvIntegration:
         assert result.vp_map is None
         assert result.qc_report.get("skip_reason") == "no_nawm_mask"
 
+    def test_missing_ncbv_reports_generated_nawm_exclusion(self, tmp_path: Any) -> None:
+        """The vp-prior skip preserves the upstream auto-NAWM reason."""
+        mask_file = _write_nifti(
+            tmp_path / "mask.nii.gz", np.ones((4, 4, 4), dtype=np.float32)
+        )
+        reason = "insufficient_voxels_after_erosion_relaxation"
+
+        result = prepare_vp_constraint_from_data(
+            ncbv_file=None,
+            aif_qc_data=_synth_aif_qc(),
+            brain_mask_file=mask_file,
+            nawm_exclusion_reason=reason,
+        )
+
+        assert result.config.mode == ConstraintMode.SKIP
+        assert result.qc_report["skip_reason"] == "no_nawm_mask"
+        assert result.qc_report["nawm_exclusion_reason"] == reason
+        assert "retained for QC" in str(result.qc_report["reason"])
+
 
 # =============================================================================
 # Dose-aware CNR coverage gate

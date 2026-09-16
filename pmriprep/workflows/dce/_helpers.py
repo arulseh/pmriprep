@@ -822,6 +822,7 @@ def _dsc_dce_validation_node(
     dsc_ncbv_file: str | None = None,
     brain_mask: str | None = None,
     nawm_mask: str | None = None,
+    nawm_exclusion_reason: str | None = None,
     region_mask: str | None = None,
     no_dsc_validation: bool = False,
     pk_qc: dict[str, object] | str | None = None,
@@ -842,6 +843,9 @@ def _dsc_dce_validation_node(
         Path to brain mask in DCE space.
     nawm_mask : str or None
         Path to NAWM mask in DCE space for normalization.
+    nawm_exclusion_reason : str or None
+        Reason an automatically generated NAWM mask was retained for QC but
+        excluded from quantitative use.
     region_mask : str or None
         Optional lesion-region mask in DCE space.
     no_dsc_validation : bool
@@ -969,6 +973,19 @@ def _dsc_dce_validation_node(
             "status": "SKIPPED",
             "reason": NO_DSC_RUN_REASON_STRING,
             "skip_reason": SKIP_REASON_NO_DSC_RUN,
+        }
+
+    if nawm_exclusion_reason:
+        return {
+            "skipped": True,
+            "status": "SKIPPED",
+            "reason": (
+                "Automatically generated NAWM was retained for QC but excluded "
+                "from quantitative use: "
+                f"{nawm_exclusion_reason}. DSC-informed vp prior and DSC-DCE "
+                "concordance unavailable."
+            ),
+            "skip_reason": nawm_exclusion_reason,
         }
 
     if dsc_ncbv_file is None or not have_ncbv:

@@ -268,6 +268,24 @@ class TestDscDceValidationNodeDispatch:
 
         return fake_validate, captured
 
+    def test_invalid_generated_nawm_reports_factual_skip_reason(self) -> None:
+        """Invalid auto-NAWM explains loss of the prior and concordance."""
+        from pmriprep.workflows.dce.base import _dsc_dce_validation_node
+
+        reason = "insufficient_voxels_after_erosion_relaxation"
+        out = _dsc_dce_validation_node(
+            vp_file="vp.nii.gz",
+            dsc_preload_configured=False,
+            nawm_exclusion_reason=reason,
+            pk_qc={"dsc_cbv_constraint": {"mode": "skip"}},
+        )
+
+        assert out["skipped"] is True
+        assert out["status"] == "SKIPPED"
+        assert out["skip_reason"] == reason
+        assert "retained for QC" in str(out["reason"])
+        assert "vp prior" in str(out["reason"])
+
     def test_missing_cbv_file_does_not_reach_validator(
         self,
         tmp_path: Any,

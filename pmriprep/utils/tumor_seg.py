@@ -1065,6 +1065,12 @@ def create_nawm_roi(
             "fallback_used": fallback_used,
             "atlas_used": atlas_used,
             "valid": valid,
+            "minimum_required_voxels": nawm_min_voxels,
+            "quantitative_use_exclusion_reason": (
+                None
+                if valid
+                else "insufficient_voxels_after_erosion_relaxation"
+            ),
             "erosion_voxels_final": erosion_voxels_final,
             "erosion_mm_final": erosion_mm_final,
             "qc_steps": qc_steps,

@@ -798,6 +798,7 @@ def prepare_vp_constraint_from_data(
     agent_standard_dose: float = GD_DOTA_STANDARD_DOSE,
     dsc_registration_qc: Optional[dict[str, Any]] = None,
     dce_registration_qc: Optional[dict[str, Any]] = None,
+    nawm_exclusion_reason: Optional[str] = None,
 ) -> VpConstraintResult:
     """Prepare vp constraint map from DSC nCBV for DCE PK modeling.
 
@@ -830,6 +831,9 @@ def prepare_vp_constraint_from_data(
         QC for the DSC-to-T1w transform used by the spatial prior.
     dce_registration_qc : dict[str, Any], optional
         QC for the T1w-to-DCE transform used by the spatial prior.
+    nawm_exclusion_reason : str, optional
+        Factual upstream reason an automatically generated NAWM mask was
+        withheld from quantitative use.
 
     Returns
     -------
@@ -880,10 +884,16 @@ def prepare_vp_constraint_from_data(
             "vp constraint skipped: nCBV unavailable (no NAWM reference "
             "mask). DCE vp will be fit unconstrained."
         )
+        reason = (
+            "Automatically generated NAWM was retained for QC but excluded "
+            f"from quantitative use: {nawm_exclusion_reason}."
+            if nawm_exclusion_reason
+            else "No NAWM-normalized DSC CBV map was available for a vp prior."
+        )
         result.config = ConstraintConfig(
             mode=ConstraintMode.SKIP,
             vp_uncertainty=0.0,
-            reason="No NAWM-normalized DSC CBV map was available for a vp prior.",
+            reason=reason,
         )
         result.vp_map = None
         result.qc_report = {
@@ -892,6 +902,8 @@ def prepare_vp_constraint_from_data(
             "vp_uncertainty": result.config.vp_uncertainty,
             "skip_reason": SKIP_REASON_NO_NAWM_MASK,
         }
+        if nawm_exclusion_reason:
+            result.qc_report["nawm_exclusion_reason"] = nawm_exclusion_reason
         return result
 
     registration_statuses = {

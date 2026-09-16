@@ -67,6 +67,25 @@ def test_merge_qc_omits_nawm_effect_without_mask() -> None:
     assert "nawm_auc_corrected_median" not in leakage
 
 
+def test_merge_qc_records_generated_nawm_exclusion_reason() -> None:
+    """DSC QC explains why auto-NAWM normalization was withheld."""
+    merged = _merge_qc_metrics(
+        motion_qc=None,
+        preload_qc=None,
+        aif_qc=None,
+        deconv_qc=None,
+        registration_qc=None,
+        brain_extraction_qc=None,
+        normalization_factor=None,
+        nawm_exclusion_reason="insufficient_voxels_after_erosion_relaxation",
+    )
+
+    assert merged["nawm_reference"] == {
+        "eligible_for_quantification": False,
+        "exclusion_reason": "insufficient_voxels_after_erosion_relaxation",
+    }
+
+
 def test_merge_qc_rejects_mismatched_nawm_geometry(tmp_path: Path) -> None:
     """A sidecar statistic is never computed across mismatched voxel grids."""
     raw = _write_nifti(tmp_path / "raw.nii.gz", np.ones((2, 2, 2)))
