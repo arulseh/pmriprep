@@ -297,6 +297,10 @@ _ISOTROPY_PENALTY_THRESHOLD = 2.5  # Highly anisotropic → -10%
 _FAST_GATE_RESOLUTION = 2.0   # Max geometric mean (mm) for FAST viability
 _FAST_GATE_ISOTROPY = 2.5     # Max isotropy ratio for FAST viability
 
+# DCE registration benefits from a contrast-matched anatomical reference, but
+# contrast state must not replace the resolution and isotropy assessment.
+_DCE_CONTRAST_MATCH_FACTOR = 1.25
+
 # Physics-validated base confidence table
 # (image_type, is_high_res) -> base confidence
 _BASE_CONFIDENCE_TABLE: Dict[Tuple[ImageType, bool], float] = {
@@ -520,10 +524,10 @@ def _apply_application_overrides(
     elif application == "dce_registration":
         # DCE benefits from post-contrast T1w (matching contrast state)
         if img_type == ImageType.T1W_POSTCON:
-            confidence = 0.98
+            confidence *= _DCE_CONTRAST_MATCH_FACTOR
         elif img_type == ImageType.T1W_PRECON and has_postcon_available:
             # Penalize precon when postcon is available
-            confidence *= 0.8
+            confidence /= _DCE_CONTRAST_MATCH_FACTOR
 
     # dsc_registration, brain_extraction, default: no overrides
 
@@ -748,8 +752,8 @@ def select_structural_reference_v2(
 ) -> Optional[StructuralReferenceSelection]:
     """Select the optimal structural reference using confidence scoring.
 
-    Chains base confidence -> isotropy adjustment -> application overrides
-    -> coverage check -> selects highest confidence.
+    Chains base confidence -> isotropy adjustment -> application overrides,
+    selects the highest confidence, then reports pre-registration FOV overlap.
 
     Parameters
     ----------
@@ -788,7 +792,9 @@ def select_structural_reference_v2(
     scored.sort(key=lambda x: -x[0])
     best_conf, best_cand = scored[0]
 
-    # Compute FOV coverage if perfusion path provided
+    # Report pre-registration overlap for the selected candidate. This is not
+    # a ranking input because header displacement may be corrected by the
+    # subsequent registration and is not equivalent to missing coverage.
     coverage = 1.0
     if perfusion_path is not None:
         coverage = compute_fov_coverage(best_cand.path, perfusion_path)

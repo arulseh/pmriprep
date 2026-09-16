@@ -189,11 +189,16 @@ class TestApplicationOverrides:
         result = _apply_application_overrides(0.9, cand, "fast_segmentation")
         assert result == pytest.approx(0.9)
 
-    def test_dce_postcon_boost(self) -> None:
-        """DCE registration boosts postcon T1w to 0.98."""
+    def test_dce_postcon_bonus_preserves_quality_score(self) -> None:
+        """DCE registration adds a bounded bonus to postcon quality."""
         cand = _make_candidate(ImageType.T1W_POSTCON)
         result = _apply_application_overrides(0.7, cand, "dce_registration")
-        assert result == pytest.approx(0.98)
+        assert result == pytest.approx(0.875)
+
+        low_quality = _apply_application_overrides(
+            0.3, cand, "dce_registration",
+        )
+        assert low_quality == pytest.approx(0.375)
 
     def test_dce_precon_penalized_when_postcon_available(self) -> None:
         """DCE penalizes precon T1w by *0.8 when postcon is available."""
@@ -305,7 +310,31 @@ class TestEndToEndSelection:
         )
         assert result is not None
         assert result.candidate.image_type == ImageType.T1W_POSTCON
-        assert result.confidence == pytest.approx(0.98, abs=0.05)
+        assert result.confidence == pytest.approx(0.91875)
+
+    def test_high_res_precon_wins_over_low_res_postcon_for_dce(self) -> None:
+        """Contrast matching does not replace the image-quality score."""
+        precon = _make_candidate(ImageType.T1W_PRECON, is_high_res=True)
+        postcon = _make_candidate(ImageType.T1W_POSTCON, is_high_res=False)
+        result = select_structural_reference_v2(
+            [precon, postcon], application="dce_registration",
+        )
+        assert result is not None
+        assert result.candidate.image_type == ImageType.T1W_PRECON
+
+    def test_isotropic_precon_wins_over_anisotropic_postcon_for_dce(self) -> None:
+        """Contrast matching cannot erase a strong anisotropy penalty."""
+        precon = _make_candidate(ImageType.T1W_PRECON, is_high_res=True)
+        postcon = _make_candidate(
+            ImageType.T1W_POSTCON,
+            is_high_res=True,
+            isotropy_ratio=3.0,
+        )
+        result = select_structural_reference_v2(
+            [precon, postcon], application="dce_registration",
+        )
+        assert result is not None
+        assert result.candidate.image_type == ImageType.T1W_PRECON
 
     def test_precon_wins_for_fast(self) -> None:
         """For FAST, precon T1w wins (postcon excluded)."""
@@ -510,11 +539,11 @@ class TestScoreCandidate:
         # base=1.0, isotropy penalty *0.9 → 0.9
         assert score == pytest.approx(0.9)
 
-    def test_dce_postcon_overrides_dominate(self) -> None:
-        """DCE application override sets postcon to 0.98."""
+    def test_dce_postcon_bonus_retains_prior_quality_adjustments(self) -> None:
+        """DCE contrast preference retains prior quality adjustments."""
         cand = _make_candidate(ImageType.T1W_POSTCON, is_high_res=True)
         score = _score_candidate(cand, "dce_registration", has_postcon_available=True)
-        assert score == pytest.approx(0.98)
+        assert score == pytest.approx(0.91875)
 
 
 class TestBuildCandidatesFromSession:
