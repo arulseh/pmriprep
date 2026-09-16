@@ -255,7 +255,7 @@ def test_parametric_fit_health_uses_admissible_denominator(
                 "cbf": 0.1,
                 "cbv": 0.2,
                 "mtt": 2.0,
-                "tmax": 0.0,
+                "tmax": 10.0,
                 "alpha": 3.0,
                 "cth": 2.5,
                 "cbf_std": np.nan,
@@ -272,7 +272,7 @@ def test_parametric_fit_health_uses_admissible_denominator(
     monkeypatch.setattr(
         "pmriprep.utils.dsc_deconvolution.svd_deconvolve_oscillation",
         lambda *args, **kwargs: SimpleNamespace(
-            cbf=0.2, cbv=0.3, mtt=1.5, delay=0.0
+            cbf=0.2, cbv=0.3, mtt=1.5, delay=10.0
         ),
     )
 
@@ -299,6 +299,8 @@ def test_parametric_fit_health_uses_admissible_denominator(
     assert qc["n_fallback_failed"] == 0
     assert qc["fallback_rate"] == pytest.approx(0.5)
     assert qc["fallback_requested_rate"] == pytest.approx(0.5)
+    assert qc["delay_at_bound_n"] == 0
+    assert qc["delay_at_bound_fraction"] == pytest.approx(0.0)
     assert qc["fe_plateau_rate"] == pytest.approx(0.5)
     assert qc["map_uncertainty"] == {
         "n_evaluated": 1,
@@ -472,6 +474,75 @@ def test_vascular_mtt_bound_contact_is_reported(
     assert result[2][0, 0, 0] == pytest.approx(mtt)
     assert result[4]["mtt_at_bound_n"] == int(at_bound)
     assert result[4]["mtt_at_bound_fraction"] == pytest.approx(float(at_bound))
+
+
+@pytest.mark.parametrize(
+    "method,cpi_infer_delay,delay,at_bound",
+    [
+        ("vascular", False, -3.0, True),
+        ("vascular", False, 10.0, True),
+        ("vascular", False, np.nextafter(10.0, 0.0), True),
+        ("vascular", False, 2.0, False),
+        ("cpi", True, 10.0, True),
+        ("cpi", False, 0.0, None),
+    ],
+)
+def test_parametric_delay_bound_contact_is_reported(
+    method: str,
+    cpi_infer_delay: bool,
+    delay: float,
+    at_bound: bool | None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Report fitted-delay endpoint contact without treating assumed CPI zero as fitted."""
+    concentration = np.zeros((1, 1, 1, 6), dtype=np.float64)
+    concentration[0, 0, 0, 2:4] = [1.0, 0.5]
+    interface = ComputeDSCMaps(inference="map")
+    result_row = {
+        "coords": (0, 0, 0),
+        "failed": False,
+        "needs_fallback": False,
+        "converged": True,
+        "r_squared": 0.9,
+        "cbf": 0.1,
+        "cbv": 0.6,
+        "mtt": 6.0,
+        "tmax": delay,
+    }
+    if method == "vascular":
+        result_row.update(
+            fitted_mtt=6.0,
+            alpha=3.0,
+            cth=6.0 / np.sqrt(3.0),
+        )
+    monkeypatch.setattr(
+        interface,
+        "_dsc_fit_batched_map",
+        lambda **kwargs: [result_row],
+    )
+
+    result = interface._deconvolve_parametric(
+        concentration,
+        np.array([0.0, 0.0, 1.0, 0.5, 0.0, 0.0]),
+        np.ones((1, 1, 1), dtype=np.uint8),
+        method,
+        1.5,
+        "map",
+        100,
+        4,
+        False,
+        cpi_infer_delay,
+    )
+
+    assert result[3][0, 0, 0] == pytest.approx(delay)
+    if at_bound is None:
+        assert "delay_at_bound_n" not in result[4]
+        assert "delay_at_bound_fraction" not in result[4]
+    else:
+        assert result[4]["delay_at_bound_n"] == int(at_bound)
+        assert result[4]["delay_at_bound_fraction"] == pytest.approx(
+            float(at_bound)
+        )
 
 
 def test_prepare_baseline_preserves_pass_through_k2(

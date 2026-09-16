@@ -31,6 +31,7 @@ from pmriprep.utils.dsc_constants import (
     EPSILON_SIGNAL,
     MTT_BOUNDS,
     VASCULAR_ALPHA_BOUNDS,
+    VASCULAR_DELAY_BOUNDS,
 )
 from pmriprep.utils.dsc_signal import compute_psr_legacy, compute_ttp_legacy
 
@@ -2019,9 +2020,14 @@ class ComputeDSCMaps(BaseInterface):
         n_cth_alpha_at_bound = 0
         n_vascular_accepted = 0
         n_vascular_mtt_at_bound = 0
+        n_delay_accepted = 0
+        n_delay_at_bound = 0
         n_map_uncertainty_evaluated = 0
         n_map_uncertainty_unavailable = 0
         r_squared_list: list[float] = []
+        delay_fitted = method == "vascular" or (
+            method == "cpi" and cpi_infer_delay
+        )
 
         for res in results:
             if res["failed"]:
@@ -2047,6 +2053,22 @@ class ComputeDSCMaps(BaseInterface):
                     atol=1e-8,
                 )
                 n_vascular_mtt_at_bound += int(mtt_at_bound)
+
+            if delay_fitted and not res.get("needs_fallback"):
+                n_delay_accepted += 1
+                fitted_delay = float(res.get("tmax", 0.0))
+                delay_at_bound = np.isclose(
+                    fitted_delay,
+                    VASCULAR_DELAY_BOUNDS.min,
+                    rtol=1e-5,
+                    atol=1e-8,
+                ) or np.isclose(
+                    fitted_delay,
+                    VASCULAR_DELAY_BOUNDS.max,
+                    rtol=1e-5,
+                    atol=1e-8,
+                )
+                n_delay_at_bound += int(delay_at_bound)
 
             if (
                 cth_map is not None
@@ -2178,6 +2200,11 @@ class ComputeDSCMaps(BaseInterface):
             qc_metrics["mtt_at_bound_n"] = n_vascular_mtt_at_bound
             qc_metrics["mtt_at_bound_fraction"] = (
                 n_vascular_mtt_at_bound / max(1, n_vascular_accepted)
+            )
+        if delay_fitted:
+            qc_metrics["delay_at_bound_n"] = n_delay_at_bound
+            qc_metrics["delay_at_bound_fraction"] = (
+                n_delay_at_bound / max(1, n_delay_accepted)
             )
         if inference == "map":
             qc_metrics["map_uncertainty"] = {

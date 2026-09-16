@@ -172,6 +172,43 @@ def test_vascular_mtt_sidecar_reports_bound_occupancy() -> None:
     assert "MTTAtBoundFraction" not in cpi_sidecar
 
 
+@pytest.mark.parametrize("nested", [False, True])
+def test_tmax_sidecar_reports_fitted_delay_bound_occupancy(nested: bool) -> None:
+    """Fitted-delay boundary contact supports flat and production QC layouts."""
+    deconvolution = {
+        "method": "vascular",
+        "delay_at_bound_fraction": 0.125,
+    }
+    qc_metrics = (
+        {"deconvolution": deconvolution} if nested else deconvolution
+    )
+    sidecar = build_dsc_map_sidecar(
+        base={},
+        description="Fitted vascular delay",
+        map_key="tmax",
+        qc_metrics=qc_metrics,
+        units="s",
+    )
+
+    assert sidecar["FittedDelayAtBoundFraction"] == pytest.approx(0.125)
+    assert sidecar["FittedDelayAtBoundFractionDenominator"] == (
+        "accepted fitted-delay parametric fits"
+    )
+
+
+def test_tmax_sidecar_omits_bound_occupancy_when_delay_is_not_fitted() -> None:
+    """Default CPI does not label its assumed zero Tmax as a fitted delay."""
+    sidecar = build_dsc_map_sidecar(
+        base={},
+        description="CPI Tmax",
+        map_key="tmax",
+        qc_metrics={"deconvolution": {"method": "cpi"}},
+        units="s",
+    )
+
+    assert "FittedDelayAtBoundFraction" not in sidecar
+
+
 def test_dsc_writer_recreates_deleted_cached_derivative(
     minimal_inputs: dict, tmp_path: Path,
 ) -> None:

@@ -1123,6 +1123,20 @@ def build_dsc_map_sidecar(
                 sidecar["MTTAtBoundFractionDenominator"] = (
                     "accepted vascular fits"
                 )
+    if map_key == "tmax" and isinstance(qc_metrics, dict):
+        deconvolution = qc_metrics.get("deconvolution")
+        method_metrics = (
+            deconvolution if isinstance(deconvolution, dict) else qc_metrics
+        )
+        at_bound_fraction = method_metrics.get(
+            "delay_at_bound_fraction",
+            qc_metrics.get("delay_at_bound_fraction"),
+        )
+        if at_bound_fraction is not None:
+            sidecar["FittedDelayAtBoundFraction"] = float(at_bound_fraction)
+            sidecar["FittedDelayAtBoundFractionDenominator"] = (
+                "accepted fitted-delay parametric fits"
+            )
     apply_aif_sidecar(sidecar, map_key, qc_metrics)
     return sidecar
 
