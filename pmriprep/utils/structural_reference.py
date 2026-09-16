@@ -899,22 +899,18 @@ def _determine_processing_mode_v2(
     precon_conf = _score_candidate(precon_cand, "brain_extraction")
     postcon_conf = _score_candidate(postcon_cand, "brain_extraction")
 
-    # Quality-dependent FAST penalty for postcon
-    # Better precon → higher penalty (less reason to use postcon)
-    precon_tier = classify_resolution(precon_info.geometric_mean)
-    precon_acceptable_quality = (
+    # Quality-dependent FAST penalty for postcon. A precontrast image receives
+    # the stronger penalty only when it is both high-resolution and not highly
+    # anisotropic; all other cases use the lower penalty.
+    precon_good_quality = (
         precon_is_high_res
         and precon_info.isotropy_ratio <= 2.0
     )
 
-    if precon_acceptable_quality and precon_tier in (
-        ResolutionTier.EXCELLENT, ResolutionTier.GOOD,
-    ):
+    if precon_good_quality:
         fast_penalty = 0.3  # Precon is GOOD/EXCELLENT
-    elif precon_acceptable_quality:
-        fast_penalty = 0.2  # Precon is ACCEPTABLE
     else:
-        fast_penalty = 0.1  # Precon is POOR or highly anisotropic
+        fast_penalty = 0.1  # Precon is ACCEPTABLE/POOR or highly anisotropic
 
     # Postcon wins only if its confidence minus penalty exceeds precon
     postcon_wins = (postcon_conf - fast_penalty) > precon_conf

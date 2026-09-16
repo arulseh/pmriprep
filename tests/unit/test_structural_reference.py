@@ -434,20 +434,42 @@ class TestDetermineProcessingModeV2:
         assert ref == str(postcon)
         assert is_postcon is True
 
-    def test_hybrid_fast_with_acceptable_precon(self, tmp_path: Path) -> None:
+    def test_hybrid_fast_with_acceptable_precon(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         """1.8mm precon + 1mm postcon: postcon wins, hybrid FAST on precon."""
         precon = tmp_path / "sub-01_T1w.nii.gz"
         postcon = tmp_path / "sub-01_ce-GAD_T1w.nii.gz"
         _create_nifti(precon, voxel_sizes=(1.8, 1.8, 1.8))
         _create_nifti(postcon, voxel_sizes=(1.0, 1.0, 1.0))
-        ref, is_postcon, fast = _determine_processing_mode_v2(
-            str(precon), str(postcon),
-        )
+        with caplog.at_level("INFO", logger="pmriprep.utils.structural_reference"):
+            ref, is_postcon, fast = _determine_processing_mode_v2(
+                str(precon), str(postcon),
+            )
         assert ref == str(postcon)
         assert is_postcon is True
         # 1.8mm precon: geometric_mean=1.8, isotropy=1.0
         # Meets FAST gate (<=2.0mm and isotropy <=3.0)
         assert fast == str(precon)
+        assert "penalty=0.10" in caplog.text
+
+    def test_good_resolution_boundary_uses_strong_penalty(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The inclusive 1.5 mm high-resolution boundary uses the 0.30 tier."""
+        precon = tmp_path / "sub-01_T1w.nii.gz"
+        postcon = tmp_path / "sub-01_ce-GAD_T1w.nii.gz"
+        _create_nifti(precon, voxel_sizes=(1.5, 1.5, 1.5))
+        _create_nifti(postcon, voxel_sizes=(1.0, 1.0, 1.0))
+
+        with caplog.at_level("INFO", logger="pmriprep.utils.structural_reference"):
+            ref, is_postcon, _fast = _determine_processing_mode_v2(
+                str(precon), str(postcon),
+            )
+
+        assert ref == str(precon)
+        assert is_postcon is False
+        assert "penalty=0.30" in caplog.text
 
 
 class TestMapSelectionToAnatOutput:
