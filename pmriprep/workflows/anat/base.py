@@ -443,21 +443,25 @@ def _run_hybrid_fast_chain(
     reference_file: str | None = None,
     brain_mask: str | None = None,
     denoise: bool = True,
-) -> str | None:
-    """Run full hybrid FAST preprocessing chain or return None.
+    prepare_subtraction: bool = False,
+) -> tuple[str | None, str | None]:
+    """Register precontrast T1w to a postcontrast reference when needed.
 
-    When postcon is reference and precon passes the quality gate,
-    run: reorient → bias correct → coregister to postcon → mask.
-    Otherwise return None immediately (no CommandLine nodes touched).
+    The registered image is prepared when it is eligible for hybrid FAST or
+    when subtraction of an upstream-validated sequence pair was requested.
+    FAST eligibility remains an independent tissue-segmentation decision.
     """
     if not is_postcon_ref:
-        return None
+        return None, None
 
     from pmriprep.utils.structural_reference import _determine_processing_mode_v2
 
     _, _, fast_t1w = _determine_processing_mode_v2(t1w_precon, t1w_postcon)
-    if fast_t1w is None:
-        return None
+    source_t1w = fast_t1w
+    if source_t1w is None and prepare_subtraction:
+        source_t1w = t1w_precon
+    if source_t1w is None:
+        return None, None
 
     from pmriprep.interfaces.anat import (
         ApplyMask,
@@ -466,7 +470,7 @@ def _run_hybrid_fast_chain(
         ReorientAndCrop,
     )
 
-    reoriented = ReorientAndCrop(in_file=fast_t1w).run().outputs.out_file
+    reoriented = ReorientAndCrop(in_file=source_t1w).run().outputs.out_file
     bias_corrected = BiasCorrection(
         in_file=reoriented, denoise=denoise,
     ).run().outputs.out_file
@@ -477,7 +481,25 @@ def _run_hybrid_fast_chain(
     masked: str = ApplyMask(
         in_file=coregistered, mask_file=brain_mask,
     ).run().outputs.out_file
-    return masked
+    fast_input = masked if fast_t1w is not None else None
+    return fast_input, masked
+
+
+def _route_t1w_subtraction_inputs(
+    reference_file: str,
+    postcon_coreg: str,
+    precon_coreg: str | None,
+    is_postcon_ref: bool,
+) -> tuple[str, str]:
+    """Route registered T1w images while preserving post-minus-pre order."""
+    if is_postcon_ref:
+        if precon_coreg is None:
+            raise ValueError(
+                "T1w subtraction requires precontrast T1w registered to the "
+                "postcontrast reference"
+            )
+        return reference_file, precon_coreg
+    return postcon_coreg, reference_file
 
 
 def _merge_fast_inputs(
@@ -493,6 +515,7 @@ def _merge_fast_inputs(
 def init_anat_tissue_segmentation_wf(
     *,
     denoise: bool,
+    prepare_subtraction: bool = False,
     name: str = "anat_tissue_segmentation_wf",
 ) -> pe.Workflow:
     """Initialize conditional anatomical tissue segmentation.
@@ -501,6 +524,9 @@ def init_anat_tissue_segmentation_wf(
     ----------
     denoise : bool
         Whether to denoise the precontrast image in the hybrid FAST chain.
+    prepare_subtraction : bool
+        Whether to retain a registered precontrast image for subtraction when
+        postcontrast is the anatomical reference.
     name : str
         Workflow name.
 
@@ -518,7 +544,9 @@ def init_anat_tissue_segmentation_wf(
         name="inputnode",
     )
     outputnode = pe.Node(
-        niu.IdentityInterface(fields=["wm_probseg", "gm_probseg", "csf_probseg"]),
+        niu.IdentityInterface(fields=[
+            "wm_probseg", "gm_probseg", "csf_probseg", "precon_coreg",
+        ]),
         name="outputnode",
     )
     check_fast_mode = pe.Node(
@@ -533,14 +561,15 @@ def init_anat_tissue_segmentation_wf(
         niu.Function(
             input_names=[
                 "t1w_precon", "t1w_postcon", "is_postcon_ref",
-                "reference_file", "brain_mask", "denoise",
+                "reference_file", "brain_mask", "denoise", "prepare_subtraction",
             ],
-            output_names=["out_file"],
+            output_names=["fast_input", "precon_coreg"],
             function=_run_hybrid_fast_chain,
         ),
         name="hybrid_fast_chain",
     )
     hybrid_fast_chain.inputs.denoise = denoise
+    hybrid_fast_chain.inputs.prepare_subtraction = prepare_subtraction
     merge_fast = pe.Node(
         niu.Function(
             input_names=["normal_input", "hybrid_input"],
@@ -572,7 +601,7 @@ def init_anat_tissue_segmentation_wf(
             ("brain_mask", "brain_mask"),
         ]),
         (check_fast_mode, merge_fast, [("out_file", "normal_input")]),
-        (hybrid_fast_chain, merge_fast, [("out_file", "hybrid_input")]),
+        (hybrid_fast_chain, merge_fast, [("fast_input", "hybrid_input")]),
         (merge_fast, tissue_segment, [("out_file", "in_file")]),
         (tissue_segment, outputnode, [
             ("wm_probseg", "wm_probseg"),
@@ -580,6 +609,12 @@ def init_anat_tissue_segmentation_wf(
             ("csf_probseg", "csf_probseg"),
         ]),
     ])
+    if prepare_subtraction:
+        workflow.connect([
+            (hybrid_fast_chain, outputnode, [
+                ("precon_coreg", "precon_coreg"),
+            ]),
+        ])
     return workflow
 
 
@@ -814,6 +849,7 @@ def init_anat_preproc_wf(
     subject_id: str,
     session_id: Optional[str] = None,
     config: Optional[AnatConfig] = None,
+    has_t1w_precon: bool = True,
     has_t1w_postcon: bool = False,
     has_t2w: bool = False,
     has_flair: bool = False,
@@ -838,6 +874,8 @@ def init_anat_preproc_wf(
         BIDS session identifier (without 'ses-' prefix).
     config : AnatConfig, optional
         Anatomical preprocessing configuration. Uses defaults if not provided.
+    has_t1w_precon : bool
+        Whether T1w pre-contrast image is available.
     has_t1w_postcon : bool
         Whether T1w post-contrast image is available.
     has_t2w : bool
@@ -884,13 +922,13 @@ def init_anat_preproc_wf(
     t1w_to_mni_xfm
         Path to T1w to MNI transform.
     t1w_postcon_coreg
-        T1w post-contrast coregistered to pre-contrast.
+        T1w post-contrast in the selected anatomical reference space.
     t2w_coreg
         T2w coregistered to T1w.
     flair_coreg
         FLAIR coregistered to T1w.
     t1w_postcon_to_t1w_xfm
-        T1w postcon to T1w transform.
+        T1w postcontrast to the selected anatomical reference transform.
     t2w_to_t1w_xfm
         T2w to T1w transform.
     flair_to_t1w_xfm
@@ -923,7 +961,8 @@ def init_anat_preproc_wf(
     - T1w post-contrast is used as the structural reference
     - Hybrid FAST: if precon meets quality gate, it is coregistered to
       postcon space for tissue segmentation; otherwise FAST is skipped
-    - T1w subtraction is SKIPPED (requires both pre and post)
+    - When both contrast states are available, precontrast is coregistered to
+      postcontrast space and subtraction remains postcontrast minus precontrast
     - A warning is logged about reduced accuracy
     """
     # Use default config if not provided
@@ -1198,8 +1237,12 @@ def init_anat_preproc_wf(
     # SKIPPED in postcon-only mode (gadolinium disrupts tissue boundaries)
     # -------------------------------------------------------------------
 
+    create_subtraction = (
+        config.create_subtraction and has_t1w_precon and has_t1w_postcon
+    )
     tissue_segmentation_wf = init_anat_tissue_segmentation_wf(
         denoise=config.denoise,
+        prepare_subtraction=create_subtraction,
     )
     workflow.connect([
         (brain_extract, tissue_segmentation_wf, [
@@ -1222,19 +1265,41 @@ def init_anat_preproc_wf(
     # Step 8: T1w Subtraction (when both pre and post available)
     # -------------------------------------------------------------------
 
-    if config.create_subtraction and has_t1w_postcon:
-        create_subtraction = pe.Node(
+    if create_subtraction:
+        route_subtraction = pe.Node(
+            niu.Function(
+                input_names=[
+                    "reference_file", "postcon_coreg", "precon_coreg",
+                    "is_postcon_ref",
+                ],
+                output_names=["postcon_file", "precon_file"],
+                function=_route_t1w_subtraction_inputs,
+            ),
+            name="route_subtraction",
+        )
+        create_subtraction_node = pe.Node(
             T1wSubtraction(),
             name="create_subtraction",
         )
 
-        # Use FLIRT-coregistered postcon image
         workflow.connect([
-            (secondary_modalities_wf, create_subtraction, [
-                ("outputnode.t1w_postcon_coreg", "postcon_file"),
+            (conform, route_subtraction, [("out_file", "reference_file")]),
+            (secondary_modalities_wf, route_subtraction, [
+                ("outputnode.t1w_postcon_coreg", "postcon_coreg"),
             ]),
-            (conform, create_subtraction, [("out_file", "precon_file")]),
-            (brain_extract, create_subtraction, [("out_mask", "brain_mask")]),
+            (tissue_segmentation_wf, route_subtraction, [
+                ("outputnode.precon_coreg", "precon_coreg"),
+            ]),
+            (determine_mode, route_subtraction, [
+                ("is_postcon_ref", "is_postcon_ref"),
+            ]),
+            (route_subtraction, create_subtraction_node, [
+                ("postcon_file", "postcon_file"),
+                ("precon_file", "precon_file"),
+            ]),
+            (brain_extract, create_subtraction_node, [
+                ("out_mask", "brain_mask"),
+            ]),
         ])
 
     # -------------------------------------------------------------------
@@ -1398,9 +1463,11 @@ def init_anat_preproc_wf(
             ]),
         ])
     # Subtraction image
-    if config.create_subtraction and has_t1w_postcon:
+    if create_subtraction:
         workflow.connect([
-            (create_subtraction, outputnode, [("out_file", "t1w_subtraction")]),
+            (create_subtraction_node, outputnode, [
+                ("out_file", "t1w_subtraction"),
+            ]),
         ])
 
     # Store config in workflow for reference by child nodes

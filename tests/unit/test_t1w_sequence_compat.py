@@ -63,10 +63,11 @@ class TestT1wSequenceCompatibility:
         )
 
         with caplog.at_level(logging.DEBUG, logger="pmriprep.workflows.discovery"):
-            _check_t1w_sequence_compatibility(pre, post, _MockLayout())
+            compatible = _check_t1w_sequence_compatibility(pre, post, _MockLayout())
 
+        assert compatible is True
         assert not any(r.levelno >= logging.WARNING for r in caplog.records)
-        assert any("compatibility confirmed" in r.message for r in caplog.records)
+        assert any("No T1w sequence mismatch" in r.message for r in caplog.records)
 
     def test_mismatched_acq_entities_warns(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
@@ -77,8 +78,9 @@ class TestT1wSequenceCompatibility:
         post.touch()
 
         with caplog.at_level(logging.DEBUG, logger="pmriprep.workflows.discovery"):
-            _check_t1w_sequence_compatibility(pre, post, _MockLayout())
+            compatible = _check_t1w_sequence_compatibility(pre, post, _MockLayout())
 
+        assert compatible is False
         warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
         assert len(warnings) >= 1
         assert "different pulse sequences" in warnings[0].message

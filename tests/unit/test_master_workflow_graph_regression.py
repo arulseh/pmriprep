@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -221,6 +222,25 @@ def test_skipped_pipeline_does_not_enable_subtraction() -> None:
         dce_config=DCEConfig(),
     )
     assert resolved.create_subtraction is False
+
+
+def test_sequence_mismatch_disables_requested_subtraction(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Registration cannot make different T1w sequences subtractable."""
+    with caplog.at_level(logging.WARNING, logger="pmriprep.workflows"):
+        resolved = _resolve_anat_subtraction_policy(
+            AnatConfig(create_subtraction=True),
+            decision=PipelineDecision(
+                run_tumor_seg=False, run_dsc=False, run_dce=False,
+            ),
+            dsc_config=DSCConfig(),
+            dce_config=DCEConfig(),
+            sequence_compatible=False,
+        )
+
+    assert resolved.create_subtraction is False
+    assert "not from compatible sequences" in caplog.text
 
 
 def test_requested_subtraction_underlay_builds_anatomical_node(

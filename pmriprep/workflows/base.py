@@ -341,15 +341,23 @@ def _resolve_anat_subtraction_policy(
     decision: PipelineDecision,
     dsc_config: DSCConfig,
     dce_config: DCEConfig,
+    sequence_compatible: Optional[bool] = None,
 ) -> AnatConfig:
-    """Enable T1w subtraction when an active perfusion underlay requests it."""
+    """Resolve subtraction requests against underlays and sequence pairing."""
     requested = (
         decision.run_dsc and "t1w_subtraction" in dsc_config.underlays
     ) or (
         decision.run_dce and "t1w_subtraction" in dce_config.underlays
     )
-    if requested and not config.create_subtraction:
-        return dataclasses.replace(config, create_subtraction=True)
+    create_subtraction = config.create_subtraction or requested
+    if create_subtraction and sequence_compatible is False:
+        logging.getLogger("pmriprep.workflows").warning(
+            "Skipping T1w subtraction because the selected pre- and "
+            "postcontrast images are not from compatible sequences."
+        )
+        create_subtraction = False
+    if create_subtraction != config.create_subtraction:
+        return dataclasses.replace(config, create_subtraction=create_subtraction)
     return config
 
 
@@ -1108,6 +1116,7 @@ def _init_master_anatomical_preprocessing(
         subject_id=subject_id,
         session_id=session_id,
         config=anat_config,
+        has_t1w_precon=session_data.modalities.t1w_pre is not None,
         has_t1w_postcon=modality_plan.t1w_postcon,
         has_t2w=modality_plan.t2w,
         has_flair=modality_plan.flair,
@@ -3443,6 +3452,7 @@ def _prepare_master_workflow_context(
         decision=decision,
         dsc_config=resolved_dsc_config,
         dce_config=resolved_dce_config,
+        sequence_compatible=session_data.modalities.t1w_subtraction_compatible,
     )
     return _MasterWorkflowContext(
         bids_dir=resolved_bids_dir,

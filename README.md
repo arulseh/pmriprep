@@ -234,7 +234,7 @@ Anatomical fields:
 |---|---:|---|
 | `tool` | `hdbet` | `hdbet` or `ants` brain extraction |
 | `denoise` | `false` | Apply ANTs denoising |
-| `create_subtraction` | `false` | Create post-minus-precontrast T1w difference image (not quantitative); implied when a DSC or DCE `t1w_subtraction` underlay is requested |
+| `create_subtraction` | `false` | Create post-minus-precontrast T1w difference image from a sequence-compatible pair (not quantitative); implied when a DSC or DCE `t1w_subtraction` underlay is requested |
 
 Tumor-segmentation fields:
 

@@ -25,6 +25,10 @@ class ModalityAvailability:
         Path to pre-contrast T1w image, if available.
     t1w_ce_gad : Path, optional
         Path to contrast-enhanced T1w (GAD) image, if available.
+    t1w_subtraction_compatible : bool, optional
+        Whether the selected pre- and postcontrast T1w images have no detected
+        sequence mismatch and may be used for subtraction. ``None`` when a
+        pair was not evaluated.
     t2w : Path, optional
         Path to T2w image, if available.
     flair : Path, optional
@@ -53,6 +57,7 @@ class ModalityAvailability:
 
     t1w_pre: Optional[Path] = None
     t1w_ce_gad: Optional[Path] = None
+    t1w_subtraction_compatible: Optional[bool] = None
     t2w: Optional[Path] = None
     flair: Optional[Path] = None
     flair_postcon: Optional[Path] = None
@@ -246,12 +251,13 @@ def _check_t1w_sequence_compatibility(
     t1w_pre: Path,
     t1w_postcon: Path,
     layout: "BIDSLayout",
-) -> None:
-    """Warn if pre- and post-contrast T1w use different pulse sequences.
+) -> bool:
+    """Return whether pre- and postcontrast T1w are subtraction-compatible.
 
     Compares acquisition metadata across three tiers of severity. Logs
     warnings when mismatches are detected; logs info when compatibility
-    is confirmed. Never raises — all metadata access is defensive.
+    is confirmed. Never raises — all metadata access is defensive. Missing
+    metadata does not by itself disqualify a pair.
 
     Parameters
     ----------
@@ -261,6 +267,12 @@ def _check_t1w_sequence_compatibility(
         Path to post-contrast T1w image.
     layout : BIDSLayout
         BIDS layout for metadata access (sidecar inheritance honored).
+
+    Returns
+    -------
+    bool
+        ``False`` when available metadata demonstrates a sequence mismatch;
+        otherwise ``True``.
 
     Notes
     -----
@@ -396,8 +408,9 @@ def _check_t1w_sequence_compatibility(
 
     if not warned:
         logger.info(
-            "T1w sequence compatibility confirmed for subtraction map.",
+            "No T1w sequence mismatch detected for subtraction map.",
         )
+    return not warned
 
 
 def _classify_orientation(iop: List[float]) -> str:
@@ -994,7 +1007,7 @@ def discover_session_data(
     modalities.t1w_ce_gad = _find_t1w_ce_gad(layout, subject, session)
 
     if modalities.t1w_pre and modalities.t1w_ce_gad:
-        _check_t1w_sequence_compatibility(
+        modalities.t1w_subtraction_compatible = _check_t1w_sequence_compatibility(
             modalities.t1w_pre, modalities.t1w_ce_gad, layout
         )
 

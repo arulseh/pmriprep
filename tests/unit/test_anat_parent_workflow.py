@@ -1,6 +1,7 @@
 """Characterization tests for anatomical parent-workflow decomposition."""
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import nibabel as nib
 import numpy as np
@@ -12,7 +13,9 @@ from pmriprep.workflows.anat.base import (
     _guarded_tissue_segment,
     _merge_fast_inputs,
     _route_fast_input,
+    _route_t1w_subtraction_inputs,
     _run_hybrid_fast_chain,
+    init_anat_preproc_wf,
     init_anat_qc_filmstrips_wf,
     init_anat_secondary_modalities_wf,
     init_anat_tissue_segmentation_wf,
@@ -70,7 +73,7 @@ def test_acpc_filmstrip_rejects_grid_mismatch(
 
 
 def test_tissue_segmentation_workflow_contract() -> None:
-    """The extracted workflow retains the four named FAST routing nodes."""
+    """The extracted workflow retains its named FAST routing nodes."""
     workflow = init_anat_tissue_segmentation_wf(denoise=False)
 
     assert {node.name for node in workflow._graph.nodes()} == {
@@ -82,6 +85,7 @@ def test_tissue_segmentation_workflow_contract() -> None:
         "outputnode",
     }
     assert workflow.get_node("hybrid_fast_chain").inputs.denoise is False
+    assert workflow.get_node("hybrid_fast_chain").inputs.prepare_subtraction is False
 
 
 def test_secondary_modalities_workflow_all_branches() -> None:
@@ -150,7 +154,7 @@ def test_fast_normal_and_empty_paths_do_not_run_commands() -> None:
     assert _merge_fast_inputs("normal.nii.gz", "hybrid.nii.gz") == "normal.nii.gz"
     assert _merge_fast_inputs(None, "hybrid.nii.gz") == "hybrid.nii.gz"
     assert _guarded_tissue_segment(None) == (None, None, None)
-    assert _run_hybrid_fast_chain(is_postcon_ref=False) is None
+    assert _run_hybrid_fast_chain(is_postcon_ref=False) == (None, None)
 
 
 @pytest.mark.parametrize("fast_t1w", [None, "precon.nii.gz"])
@@ -170,3 +174,79 @@ def test_fast_postcon_route_is_owned_by_hybrid_chain(
         t1w_postcon="postcon.nii.gz",
         is_postcon_ref=True,
     ) is None
+
+
+@pytest.mark.parametrize(
+    ("is_postcon_ref", "expected"),
+    [
+        (False, ("postcon_coreg.nii.gz", "reference.nii.gz")),
+        (True, ("reference.nii.gz", "precon_coreg.nii.gz")),
+    ],
+)
+def test_subtraction_inputs_preserve_post_minus_pre_for_either_reference(
+    is_postcon_ref: bool,
+    expected: tuple[str, str],
+) -> None:
+    """Reference selection changes registration direction, not subtraction sign."""
+    assert _route_t1w_subtraction_inputs(
+        "reference.nii.gz",
+        "postcon_coreg.nii.gz",
+        "precon_coreg.nii.gz",
+        is_postcon_ref,
+    ) == expected
+
+
+def test_postcon_reference_subtraction_requires_registered_precon() -> None:
+    """A postcontrast reference cannot be silently subtracted from itself."""
+    with pytest.raises(ValueError, match="requires precontrast T1w registered"):
+        _route_t1w_subtraction_inputs(
+            "reference.nii.gz",
+            "postcon_coreg.nii.gz",
+            None,
+            True,
+        )
+
+
+def test_sequence_matched_subtraction_registration_is_independent_of_fast(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An upstream-approved subtraction pair need not supply FAST input."""
+    monkeypatch.setattr(
+        "pmriprep.utils.structural_reference._determine_processing_mode_v2",
+        lambda _pre, _post: (Path("postcon.nii.gz"), True, None),
+    )
+
+    class _FakeInterface:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        def run(self) -> SimpleNamespace:
+            return SimpleNamespace(outputs=SimpleNamespace(out_file="prepared.nii.gz"))
+
+    for name in ("ReorientAndCrop", "BiasCorrection", "Coregistration", "ApplyMask"):
+        monkeypatch.setattr(f"pmriprep.interfaces.anat.{name}", _FakeInterface)
+
+    fast_input, prepared = _run_hybrid_fast_chain(
+        t1w_precon="precon.nii.gz",
+        t1w_postcon="postcon.nii.gz",
+        is_postcon_ref=True,
+        reference_file="reference.nii.gz",
+        brain_mask="mask.nii.gz",
+        prepare_subtraction=True,
+    )
+    assert prepared == "prepared.nii.gz"
+    assert fast_input is None
+
+
+def test_postcontrast_only_workflow_does_not_build_subtraction(tmp_path: Path) -> None:
+    """A subtraction node requires both T1w contrast states."""
+    workflow = init_anat_preproc_wf(
+        bids_dir=tmp_path,
+        subject_id="01",
+        config=AnatConfig(create_subtraction=True),
+        has_t1w_precon=False,
+        has_t1w_postcon=True,
+    )
+    names = {node.name for node in workflow._get_all_nodes()}
+    assert "create_subtraction" not in names
+    assert "route_subtraction" not in names

@@ -1041,12 +1041,12 @@ class T1wSubtractionInputSpec(CommandLineInputSpec):
     postcon_file = File(
         exists=True,
         mandatory=True,
-        desc="Post-contrast T1w image (coregistered to precon)",
+        desc="Post-contrast T1w image in the shared subtraction grid",
     )
     precon_file = File(
         exists=True,
         mandatory=True,
-        desc="Pre-contrast T1w image (reference)",
+        desc="Pre-contrast T1w image in the shared subtraction grid",
     )
     brain_mask = File(
         exists=True,
@@ -1079,9 +1079,9 @@ class T1wSubtraction(CommandLine):
     Parameters
     ----------
     postcon_file : str
-        Post-contrast T1w image (must be coregistered to precon)
+        Post-contrast T1w image in the shared subtraction grid.
     precon_file : str
-        Pre-contrast T1w image (reference space)
+        Pre-contrast T1w image in the shared subtraction grid.
     brain_mask : str, optional
         Brain mask to apply to subtraction (removes background)
 
@@ -1096,7 +1096,7 @@ class T1wSubtraction(CommandLine):
     Notes
     -----
     Important considerations:
-    - Post-contrast image MUST be coregistered to pre-contrast space
+    - Both images MUST occupy the same voxel grid
     - Both images should be bias-corrected for accurate subtraction
     - Negative values may occur where signal decreases (e.g., T2* effects)
     - Brain mask helps remove skull/background artifacts

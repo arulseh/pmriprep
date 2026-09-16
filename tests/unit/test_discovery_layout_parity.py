@@ -116,6 +116,25 @@ def test_find_t1w_ce_gad_fallback(tmp_path: Path) -> None:
     assert chosen2 is not None and "DOTAREM" in chosen2.name
 
 
+def test_discovery_marks_mismatched_t1w_pair_ineligible_for_subtraction(
+    tmp_path: Path,
+) -> None:
+    """Independent T1w availability does not imply a valid subtraction pair."""
+    bids = tmp_path / "bids"
+    anat = bids / "sub-01" / "anat"
+    anat.mkdir(parents=True)
+    _write_dd(bids)
+    _touch_nii(anat / "sub-01_acq-mprage_T1w.nii.gz", {})
+    _touch_nii(anat / "sub-01_acq-spgr_ce-GAD_T1w.nii.gz", {})
+
+    layout = BIDSLayout(str(bids), validate=False)
+    session = discover_session_data(bids, "01", None, layout=layout)
+
+    assert session.modalities.t1w_pre is not None
+    assert session.modalities.t1w_ce_gad is not None
+    assert session.modalities.t1w_subtraction_compatible is False
+
+
 def test_find_dsc_prefers_bold_or_perf_named_files(tmp_path: Path) -> None:
     """When multiple *dsc* files exist, prefer one with _bold or perf in name."""
     from pmriprep.workflows.discovery import _find_dsc
@@ -130,5 +149,3 @@ def test_find_dsc_prefers_bold_or_perf_named_files(tmp_path: Path) -> None:
     layout = BIDSLayout(str(bids), validate=False)
     chosen = _find_dsc(layout, "01", None)
     assert chosen is not None and "_bold" in chosen.name
-
-
