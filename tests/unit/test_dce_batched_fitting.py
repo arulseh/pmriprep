@@ -438,6 +438,83 @@ class TestExtendedToftsRecovery:
 # ---------------------------------------------------------------------------
 
 class TestPatlakExact:
+    @pytest.mark.parametrize("n_frames", [127, 128, 256, 361])
+    @pytest.mark.parametrize("weighted", [False, True])
+    def test_uncertainty_frame_count_and_reduced_covariance(
+        self, n_frames: int, weighted: bool,
+    ) -> None:
+        """Frame counts do not overflow for interior or active-bound fits."""
+        time = np.linspace(0., 6., n_frames)
+        aif = 5*np.exp(-0.5*((time-.5)/.15)**2)
+        integral = np.zeros_like(aif)
+        integral[1:] = np.cumsum(.5*(aif[:-1]+aif[1:])*np.diff(time))
+        design = np.column_stack((integral, aif))
+        latent = np.array([[.08, .06], [-.02, .08], [.08, 1.5]])
+        tissue = latent @ design.T
+        tissue += np.random.default_rng(29).normal(0., .001, tissue.shape)
+        weights = np.linspace(.2, 1., n_frames) if weighted else np.ones(n_frames)
+        weights_arg = weights if weighted else None
+        ordinary = batched_patlak_lstsq(tissue, aif, time, weights=weights_arg)
+        result = batched_patlak_lstsq(
+            tissue, aif, time, weights=weights_arg, compute_uncertainties=True,
+        )
+        for name in ("ktrans", "vp"):
+            np.testing.assert_array_equal(result.params[name], ordinary.params[name])
+        parameters = np.column_stack((result.params["ktrans"], result.params["vp"]))
+        free_coordinates = ([0, 1], [1], [0])
+        for index, free in enumerate(free_coordinates):
+            reference = lsq_linear(
+                np.sqrt(weights)[:, None]*design, np.sqrt(weights)*tissue[index],
+                bounds=([0., 0.], [5., 1.]), tol=1e-14,
+            )
+            assert reference.success
+            np.testing.assert_allclose(parameters[index], reference.x, rtol=1e-8, atol=1e-10)
+            residual = tissue[index]-design @ parameters[index]
+            variance = np.sum(weights*residual**2)/(n_frames-len(free))
+            free_design = design[:, free]
+            covariance = variance*np.linalg.inv(free_design.T @ (weights[:, None]*free_design))
+            for column, name in enumerate(("ktrans", "vp")):
+                if column in free:
+                    assert result.uncertainties[name][index] == pytest.approx(
+                        np.sqrt(covariance[free.index(column), free.index(column)]), rel=1e-10,
+                    )
+                else:
+                    assert np.isnan(result.uncertainties[name][index])
+
+    @pytest.mark.parametrize("n_frames", [127, 128, 361])
+    @pytest.mark.parametrize("inference", ["nlls", "vi"])
+    def test_auto_selection_keeps_patlak_for_long_series(
+        self, n_frames: int, inference: str,
+    ) -> None:
+        """Uncertainty computation cannot remove Patlak from automatic BIC."""
+        from pmriprep.interfaces.dce_compute import ComputeDCEMaps, VoxelInput, _worker_ctx
+
+        time = np.arange(n_frames)*5/60
+        aif = 5*np.exp(-.5*((time-.5)/.15)**2)
+        tissue = PatlakModel().evaluate([.02, .05], aif, time)
+        tissue += np.random.default_rng(17).normal(0., .001, n_frames)
+        interface = ComputeDCEMaps()
+        candidates = interface._build_candidate_set(5.)
+        voxels = [VoxelInput(0, 0, 0, tissue, None)]
+        try:
+            results = interface._fit_batched(
+                conc_data=tissue[None, None, None, :],
+                mask_coords=(np.array([0]), np.array([0]), np.array([0])),
+                aif=aif, time_points=time, model_name=candidates[-1],
+                inference=inference, is_auto=True, candidate_names=candidates,
+                motion_weights=None, save_fitted_curves=True, sloppy=False,
+                mcmc_samples=0, baseline_frames=5, n_procs=1, random_seed=None,
+                init_args=(aif, time, candidates[-1], inference, 0, 5, "skip", 0.,
+                           True, None, False, None, candidates),
+                voxel_data_list=voxels,
+            )
+        finally:
+            _worker_ctx.clear()
+        assert len(results) == 1
+        assert not results[0]["failed"]
+        assert results[0]["selected_model_name"] == "patlak"
+        assert np.isfinite(results[0]["delta_bic"])
+
     def test_patlak_exact_recovery(self, aif_and_time):
         """No noise → machine precision recovery (linear model)."""
         aif, time_points = aif_and_time

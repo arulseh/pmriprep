@@ -426,8 +426,8 @@ def batched_patlak_lstsq(
             )
         )
         free_counts = (
-            (~ktrans_at_bound).astype(np.int8)
-            + (~vp_is_at_bound).astype(np.int8)
+            (~ktrans_at_bound).astype(np.intp)
+            + (~vp_is_at_bound).astype(np.intp)
         )
         sigma_denominator = np.maximum(n_timepoints - free_counts, 1)
         sigma2 = (
