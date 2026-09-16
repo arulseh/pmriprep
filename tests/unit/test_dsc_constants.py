@@ -70,14 +70,14 @@ class TestParameterBounds:
     """Tests for physiological parameter bounds."""
 
     def test_cbf_bounds_valid(self) -> None:
-        """CBF bounds are (0.0, 1.0) with min < max (relative s⁻¹ units)."""
+        """CBF bounds are (0.0, 2.0) with min < max (relative s⁻¹ units)."""
         assert CBF_BOUNDS.min == 0.0
         assert CBF_BOUNDS.max == 2.0
         assert CBF_BOUNDS.min < CBF_BOUNDS.max
 
     def test_mtt_bounds_valid(self) -> None:
-        """MTT bounds are (0.0, 30.0) with min < max."""
-        assert MTT_BOUNDS.min == 0.0
+        """Vascular fitting MTT bounds are (0.5, 30.0) with min < max."""
+        assert MTT_BOUNDS.min == 0.5
         assert MTT_BOUNDS.max == 30.0
         assert MTT_BOUNDS.min < MTT_BOUNDS.max
 

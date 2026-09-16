@@ -364,12 +364,17 @@ def test_vascular_cth_is_nan_when_osvd_fallback_fails(
     assert result[4]["n_fallback_failed"] == 1
 
 
-@pytest.mark.parametrize("alpha", [0.5, 10.0])
-def test_vascular_cth_is_nan_at_alpha_bound(
+@pytest.mark.parametrize(
+    "alpha,at_bound",
+    [(0.5, True), (100.0, True), (np.nextafter(100.0, 0.0), True),
+     (10.0, False), (25.0, False), (99.0, False)],
+)
+def test_vascular_cth_readout_respects_shape_support(
     alpha: float,
+    at_bound: bool,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """CTH is undefined when gamma shape is fixed by either fitted bound."""
+    """Withhold bound-contact CTH, retaining interior CTH and perfusion maps."""
     concentration = np.zeros((1, 1, 1, 6), dtype=np.float64)
     concentration[0, 0, 0, 2:4] = [1.0, 0.5]
     interface = ComputeDSCMaps(inference="map")
@@ -404,9 +409,13 @@ def test_vascular_cth_is_nan_at_alpha_bound(
         False,
     )
 
-    assert np.isnan(result[5][0, 0, 0])
-    assert result[4]["cth_alpha_at_bound_n"] == 1
-    assert result[4]["cth_alpha_at_bound_fraction"] == pytest.approx(1.0)
+    assert np.isnan(result[5][0, 0, 0]) == at_bound
+    if not at_bound:
+        assert result[5][0, 0, 0] == pytest.approx(2.0 / np.sqrt(alpha))
+    for index, expected in [(0, 0.1), (1, 0.2), (2, 2.0)]:
+        assert result[index][0, 0, 0] == pytest.approx(expected)
+    assert result[4]["cth_alpha_at_bound_n"] == int(at_bound)
+    assert result[4]["cth_alpha_at_bound_fraction"] == pytest.approx(float(at_bound))
 
 
 def test_prepare_baseline_preserves_pass_through_k2(

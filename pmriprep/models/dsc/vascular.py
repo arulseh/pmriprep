@@ -19,6 +19,7 @@ from pmriprep.models.dsc.base import (
 )
 from pmriprep.utils.dsc_constants import (
     CBF_BOUNDS,
+    MTT_BOUNDS,
     VASCULAR_ALPHA_BOUNDS,
     VASCULAR_BETA_BOUNDS,
     VASCULAR_DELAY_BOUNDS,
@@ -47,14 +48,15 @@ class VascularModel(DSCModel):
 
     Parameters
     ----------
-        cbf: Cerebral blood flow (mL/100g/min). This is R(0), the
+        cbf: Relative flow amplitude (s⁻¹). This is R(0), the
              maximum height of the residue function.
         alpha: Shape parameter of the gamma distribution (dimensionless).
                Controls the sharpness of the transit time distribution.
-               Range: 0.5 to 10.
+               Range: 0.5 to 100.
         beta: Scale parameter of the gamma distribution (seconds).
               Controls the spread of transit times.
-              Range: 0.1 to 10s.
+              Derived as MTT / alpha; marginal range: 0.005 to 60 s.
+              MTT and alpha define the joint fitting support.
         delay: Bolus arrival delay relative to AIF (seconds). Applied as a
                time shift of the convolved curve in tissue_curve, not to the
                residue shape. Can be negative for tissue ahead of the AIF
@@ -77,9 +79,10 @@ class VascularModel(DSCModel):
       typical range, wide in log space) so the data dominate the fit. Per-voxel
       priors seeded from an SVD pre-fit are deliberately avoided: they would
       re-import the SVD delay and low-flow bias this model exists to remove.
-    - The shape parameter α is capped at 10. Above ~20-30 α is effectively
-      unidentifiable (CBV = CBF·MTT is invariant in α at fixed MTT), so the
-      cap bounds an ill-conditioned shape parameter at no cost to CBF/CBV/MTT.
+    - The shape domain includes narrow transit-time distributions. Shape
+      recovery remains sensitive to sampling and noise; its limit can affect
+      jointly fitted CBF and MTT. MTT is fitted within 0.5 to 30 s, and beta
+      is derived from MTT and alpha rather than independently constrained.
 
     """
 
@@ -95,6 +98,9 @@ class VascularModel(DSCModel):
 
     def get_parameter_definitions(self) -> list[DSCModelParameter]:
         """Get parameter definitions for the vascular model.
+
+        These are marginal model-space ranges. Joint support is specified by
+        :meth:`get_fitting_parameter_definitions` through MTT = alpha * beta.
 
         Returns
         -------
@@ -152,10 +158,10 @@ class VascularModel(DSCModel):
     def get_fitting_parameter_definitions(self) -> list[DSCModelParameter]:
         """Get parameter definitions for fitting space (CBF, MTT, alpha, delay).
 
-        The Bayesian fitter works in this reparameterized space where MTT
-        replaces beta. This breaks the banana-shaped (alpha, beta) degeneracy
-        since MTT = alpha * beta is directly identifiable from the residue
-        function area, while alpha captures only the shape.
+        Fitting uses MTT in place of beta to separate transit duration from
+        distribution shape. This reduces alpha/beta coupling but does not
+        guarantee parameter identifiability at a given sampling rate or noise
+        level. Beta is derived as MTT / alpha.
 
         Returns
         -------
@@ -176,7 +182,7 @@ class VascularModel(DSCModel):
             ),
             DSCModelParameter(
                 name="mtt",
-                bounds=(0.5, 30.0),
+                bounds=(MTT_BOUNDS.min, MTT_BOUNDS.max),
                 typical_range=(2.0, 8.0),  # mean=5.0s
                 transform=TransformType.LOG,
                 transformed_prior_sigma=1.0,

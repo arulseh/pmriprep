@@ -1,5 +1,6 @@
 """Vascular VI support, posterior/readout consistency and endpoint recovery."""
 
+from dataclasses import replace
 from typing import Any
 
 import numpy as np
@@ -19,6 +20,7 @@ from pmriprep.models.dsc.batched_fitting import (
     batched_vascular_forward,
 )
 from pmriprep.models.dsc.spatial_vb import batched_dsc_spatial_vi_fit
+from pmriprep.models.dsc.vascular import _fit_vascular_nlls
 
 
 def _setup() -> tuple[dict[str, Any], list[BayesianPrior]]:
@@ -70,7 +72,7 @@ def test_vascular_vi_posterior_and_readout_share_bounded_point(
             [0.06, 0.2, 3.0, 2.0],
             [0.06, 40.0, 3.0, 2.0],
             [0.06, 6.0, 0.2, 2.0],
-            [0.06, 6.0, 15.0, 2.0],
+            [0.06, 6.0, 200.0, 2.0],
             [0.06, 6.0, 3.0, -5.0],
             [0.06, 6.0, 3.0, 12.0],
             [3.0, 6.0, 3.0, 2.0],
@@ -156,6 +158,8 @@ def test_vascular_vi_reoptimizes_other_parameters_at_ceiling(
 ) -> None:
     """A feasible fit improves on merely clipping the out-of-box solution."""
     kwargs, _ = _setup()
+    # Exercise reoptimization at a supplied box, independently of defaults.
+    kwargs["fitting_bounds"][2] = (0.5, 10.0)
     truth = np.array([[0.06, mtt, alpha, 2.0]])
     tissue = _forward(truth, kwargs["aif"], kwargs["time_points"])
     result = batched_dsc_vi_fit(**kwargs, tissue_curves=tissue)
@@ -178,7 +182,78 @@ def test_vascular_vi_ordinary_recovery() -> None:
     assert result.r_squared[0] > 0.999999
 
 
-@pytest.mark.parametrize("truth", [[0.06, 40.0, 3.0, 2.0], [0.06, 6.0, 15.0, 2.0]])
+def test_vascular_shape_support_does_not_change_gaussian_priors() -> None:
+    """A wider LOG support must not implicitly change population priors."""
+    definitions = VascularModel().get_fitting_parameter_definitions()
+    narrower = [replace(p, bounds=(0.5, 10.0)) if p.name == "alpha" else p
+                for p in definitions]
+    for actual, reference in zip(
+        build_priors_from_params(definitions), build_priors_from_params(narrower)
+    ):
+        assert actual.transform == reference.transform
+        assert actual.upper_bound == reference.upper_bound
+        np.testing.assert_array_equal(
+            [actual.mean, actual.std, actual.mean_transformed, actual.std_transformed],
+            [reference.mean, reference.std, reference.mean_transformed, reference.std_transformed],
+        )
+
+
+@pytest.mark.parametrize("method", ["nlls", "vi", "svb"])
+@pytest.mark.parametrize("weighted", [False, True])
+@pytest.mark.parametrize("alpha", [3.0, 25.0, 100.0, 200.0])
+def test_vascular_narrow_distribution_recovery_and_support(
+    method: str, weighted: bool, alpha: float
+) -> None:
+    """Resolve sampled narrow distributions; bound above-support challenges."""
+    kwargs, _ = _setup()
+    times = np.arange(0.0, 120.0, 0.5)
+    u = np.maximum(times - 15.0, 0.0)
+    aif = 5.0 * (u / 4.5) ** 3 * np.exp(3.0 - u / 1.5)
+    kwargs.update(time_points=times, aif=aif)
+    truth = np.tile([0.06, 8.0, alpha, 2.0], (3, 1))
+    tissue = _forward(truth, aif, times)
+    weights = np.ones(len(times))
+    if weighted:
+        weights[(times >= 19.0) & (times <= 23.0)] = 0.2
+    kwargs["weights"] = weights
+    model = VascularModel()
+    if method == "nlls":
+        result = _fit_vascular_nlls(model, tissue[0], aif, times, weights=weights)
+        assert result is not None
+        fitted = model.model_to_fitting_params(
+            np.array([result.parameters[p] for p in model.get_parameter_names()])
+        )[None, :]
+        curves = np.asarray(result.fitted_tissue_curve)[None, :]
+        target = tissue[:1]
+    else:
+        if method == "vi":
+            batched = batched_dsc_vi_fit(**kwargs, tissue_curves=tissue)
+        else:
+            batched = batched_dsc_spatial_vi_fit(
+                **kwargs, tissue_curves=tissue,
+                mask_coords=(np.arange(3), np.zeros(3, dtype=int), np.zeros(3, dtype=int)),
+                spatial_shape=(3, 1, 1),
+            )
+        fitted = np.column_stack([batched.params[p] for p in kwargs["fitting_param_names"]])
+        curves = batched.fitted_curves
+        target = tissue
+    for j, (lo, hi) in enumerate(kwargs["fitting_bounds"]):
+        assert np.all(fitted[:, j] >= lo - 1e-12)
+        assert np.all(fitted[:, j] <= hi + 1e-12)
+    np.testing.assert_allclose(curves, _forward(fitted, aif, times), rtol=1e-10, atol=1e-12)
+    relative_rss = np.sum(weights * (curves - target) ** 2) / np.sum(weights * target ** 2)
+    if alpha <= 100.0:
+        np.testing.assert_allclose(fitted, truth[:len(fitted)], rtol=1e-3)
+        assert relative_rss < 1e-8
+    else:
+        np.testing.assert_allclose(fitted[:, 2], 100.0, rtol=1e-6)
+        assert relative_rss < 1e-4
+
+
+@pytest.mark.parametrize("truth", [
+    [0.06, 40.0, 3.0, 2.0], [0.06, 6.0, 200.0, 2.0],
+    [0.06, 8.0, 25.0, 2.0], [0.06, 8.0, 100.0, 2.0],
+])
 def test_scalar_vascular_vi_respects_same_fitting_support(truth: list[float]) -> None:
     kwargs, _ = _setup()
     tissue = _forward(np.array([truth]), kwargs["aif"], kwargs["time_points"])[0]

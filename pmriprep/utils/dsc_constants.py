@@ -242,22 +242,24 @@ class ParameterBounds(NamedTuple):
 #: deconvolution (r2* scales both tissue and AIF equally).
 CBF_BOUNDS: Final[ParameterBounds] = ParameterBounds(0.0, 2.0)
 
-#: MTT bounds in seconds
-MTT_BOUNDS: Final[ParameterBounds] = ParameterBounds(0.0, 30.0)
+#: Vascular fitting-space MTT bounds in seconds; not an SVD readout clamp.
+MTT_BOUNDS: Final[ParameterBounds] = ParameterBounds(0.5, 30.0)
 
 
 # =============================================================================
 # Vascular (Gamma-Variate) Model Parameters
 # =============================================================================
 
-#: Alpha (shape) parameter bounds for gamma-variate model. The upper bound is
-#: capped at 10: above ~20-30 the shape α is effectively unidentifiable (CBV
-#: = CBF·MTT is invariant in α at fixed MTT), so the cap bounds an
-#: ill-conditioned shape parameter at no cost to CBF/CBV/MTT.
-VASCULAR_ALPHA_BOUNDS: Final[ParameterBounds] = ParameterBounds(0.5, 10.0)
+#: Gamma shape fitting support, including narrow transit-time distributions.
+#: The ceiling is a finite model-domain limit, not a measured shape value.
+VASCULAR_ALPHA_BOUNDS: Final[ParameterBounds] = ParameterBounds(0.5, 100.0)
 
-#: Beta (scale) parameter bounds in seconds for gamma-variate model
-VASCULAR_BETA_BOUNDS: Final[ParameterBounds] = ParameterBounds(0.1, 10.0)
+#: Marginal beta envelope in seconds, derived from beta = MTT / alpha.
+#: Joint support is defined in MTT/alpha space, not an independent beta box.
+VASCULAR_BETA_BOUNDS: Final[ParameterBounds] = ParameterBounds(
+    MTT_BOUNDS.min / VASCULAR_ALPHA_BOUNDS.max,
+    MTT_BOUNDS.max / VASCULAR_ALPHA_BOUNDS.min,
+)
 
 #: Delay parameter bounds in seconds (can be negative for early arrival)
 VASCULAR_DELAY_BOUNDS: Final[ParameterBounds] = ParameterBounds(-3.0, 10.0)

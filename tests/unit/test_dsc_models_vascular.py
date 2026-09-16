@@ -5,6 +5,11 @@ import pytest
 
 from pmriprep.models.dsc.base import DSCFitResult, DSCModelParameter
 from pmriprep.models.dsc.vascular import VascularModel
+from pmriprep.utils.dsc_constants import (
+    MTT_BOUNDS,
+    VASCULAR_ALPHA_BOUNDS,
+    VASCULAR_BETA_BOUNDS,
+)
 
 
 # =============================================================================
@@ -190,8 +195,26 @@ class TestVascularModel:
         """Parameters within bounds are valid; out-of-bounds are not."""
         model = VascularModel()
         assert model.validate_params([0.08, 3.0, 2.0, 0.0]) is True
-        # CBF bounds are (0.0, 1.0) — negative CBF is out of bounds
+        # Negative flow is outside the relative-amplitude domain.
         assert model.validate_params([-1.0, 3.0, 2.0, 0.0]) is False
+
+    @pytest.mark.parametrize("mtt", [0.5, 5.0, 30.0])
+    @pytest.mark.parametrize("alpha", [0.5, 3.0, 100.0])
+    def test_derived_beta_envelope_contains_fitting_domain(
+        self, mtt: float, alpha: float
+    ) -> None:
+        """Marginal model metadata must not exclude supported fitting points."""
+        model = VascularModel()
+        definitions = model.get_fitting_parameter_definitions()
+        assert definitions[1].bounds == MTT_BOUNDS == (0.5, 30.0)
+        assert definitions[2].bounds == VASCULAR_ALPHA_BOUNDS == (0.5, 100.0)
+        assert VASCULAR_BETA_BOUNDS == (0.005, 60.0)
+        fitting = np.array([0.06, mtt, alpha, 2.0])
+        natural = model.fitting_to_model_params(fitting)
+        assert model.validate_params(natural)
+        np.testing.assert_allclose(model.model_to_fitting_params(natural), fitting)
+        np.testing.assert_allclose(model.clip_params(natural), natural)
+        assert natural[2] == pytest.approx(mtt / alpha)
 
     def test_get_parameter_names(self) -> None:
         """Parameter names are returned in expected order."""
