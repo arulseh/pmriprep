@@ -82,7 +82,7 @@ class VascularModel(DSCModel):
       re-import the SVD delay and low-flow bias this model exists to remove.
     - The shape domain includes narrow transit-time distributions. Shape
       recovery remains sensitive to sampling and noise; its limit can affect
-      jointly fitted CBF and MTT. MTT is fitted within 0.5 to 30 s, and beta
+      jointly fitted CBF and MTT. MTT is fitted within 0.5 to 60 s, and beta
       is derived from MTT and alpha rather than independently constrained.
 
     """
