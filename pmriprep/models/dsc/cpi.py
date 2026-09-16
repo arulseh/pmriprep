@@ -14,7 +14,7 @@ The parameterization follows the Quantiphyse convention:
 - C_tissue(t) = CBF × [A @ R_norm]
 """
 
-from typing import Sequence
+from typing import Final, Sequence
 
 import numpy as np
 import numpy.typing as npt
@@ -39,6 +39,8 @@ from pmriprep.utils.dsc_constants import (
 CPI_N_MIN: int = 4
 CPI_N_MAX: int = 24
 CPI_DEFAULT_N: int = 6
+CPI_LOG_SPACING_BOUNDS: Final[tuple[float, float]] = (-5.0, 5.0)
+"""Support for log-transformed inferred spacings measured in seconds."""
 
 
 class CPIModel(DSCModel):
@@ -268,7 +270,7 @@ class CPIModel(DSCModel):
                 params.append(
                     DSCModelParameter(
                         name=f"s{i + 1}",
-                        bounds=(-5.0, 5.0),
+                        bounds=CPI_LOG_SPACING_BOUNDS,
                         typical_range=(log_spacing, log_spacing),
                         transform=TransformType.IDENTITY,
                         transformed_prior_sigma=spacing_sigma,

@@ -1271,6 +1271,34 @@ class TestCPIReadoutResidueParity:
         cbv_s = _cpi_readout(spread, names, cp_times, tp, dt, t_term)[0]["cbv"]
         assert abs(cbv_e - cbv_s) > 0.01 * max(cbv_e, cbv_s)
 
+    def test_readout_marks_spacing_endpoint_contact(self, dsc_aif_and_time):
+        """Expose inferred-spacing rail contact without changing map readouts."""
+        model, aif, tp, dt, n_cp, cp_times, t_term = self._grid(
+            True, dsc_aif_and_time
+        )
+        names = model.get_parameter_names()
+        fracs = [[0.8, 0.7, 0.6, 0.5, 0.4, 0.3]] * 4
+        params = _cpi_param_matrix(
+            n_cp,
+            [0.1, 0.1, 0.1, 0.1],
+            fracs,
+            [[3.0, 4.0, 5.0, 7.0, 9.0, 12.0]] * 4,
+        )
+        first_spacing = 1 + n_cp
+        params[0, first_spacing] = -5.0
+        params[1, first_spacing] = 5.0
+        params[2, first_spacing] = np.nextafter(5.0, 0.0)
+        params[3, first_spacing] = 4.9
+
+        outputs = _cpi_readout(params, names, cp_times, tp, dt, t_term)
+
+        assert [out["cpi_spacing_at_bound"] for out in outputs] == [
+            True,
+            True,
+            True,
+            False,
+        ]
+
     @pytest.mark.parametrize("infer_cpt", [False, True])
     def test_readout_mtt_matches_scalar_get_mtt(self, dsc_aif_and_time, infer_cpt):
         # Independent anchor (no batched_cpi_residue): the batched readout MTT

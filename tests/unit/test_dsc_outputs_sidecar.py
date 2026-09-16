@@ -209,6 +209,58 @@ def test_tmax_sidecar_omits_bound_occupancy_when_delay_is_not_fitted() -> None:
     assert "FittedDelayAtBoundFraction" not in sidecar
 
 
+@pytest.mark.parametrize("nested", [False, True])
+@pytest.mark.parametrize("map_key", ["cbv", "ncbv", "rel_cbv", "mtt"])
+def test_cpi_volume_and_transit_sidecars_report_spacing_bound_occupancy(
+    nested: bool,
+    map_key: str,
+) -> None:
+    """CPI spacing rails accompany residue-derived volume and transit maps."""
+    deconvolution = {
+        "method": "cpi",
+        "cpi_spacing_at_bound_fraction": 0.125,
+    }
+    qc_metrics = (
+        {"deconvolution": deconvolution} if nested else deconvolution
+    )
+
+    sidecar = build_dsc_map_sidecar(
+        base={},
+        description="CPI residue-derived map",
+        map_key=map_key,
+        qc_metrics=qc_metrics,
+        units="s" if map_key == "mtt" else "arbitrary",
+    )
+
+    assert sidecar["CPIControlPointSpacingAtBoundFraction"] == pytest.approx(
+        0.125
+    )
+    assert sidecar["CPIControlPointSpacingAtBoundFractionDenominator"] == (
+        "accepted CPI fits with inferred control-point positions"
+    )
+
+
+@pytest.mark.parametrize("map_key", ["cbf", "cbv_auc", "tmax"])
+def test_cpi_spacing_bound_occupancy_omits_unrelated_sidecars(
+    map_key: str,
+) -> None:
+    """Do not imply that CPI spacing directly parameterizes unrelated maps."""
+    sidecar = build_dsc_map_sidecar(
+        base={},
+        description="Unrelated CPI map",
+        map_key=map_key,
+        qc_metrics={
+            "deconvolution": {
+                "method": "cpi",
+                "cpi_spacing_at_bound_fraction": 0.125,
+            }
+        },
+        units="arbitrary",
+    )
+
+    assert "CPIControlPointSpacingAtBoundFraction" not in sidecar
+
+
 def test_dsc_writer_recreates_deleted_cached_derivative(
     minimal_inputs: dict, tmp_path: Path,
 ) -> None:

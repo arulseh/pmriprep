@@ -545,6 +545,64 @@ def test_parametric_delay_bound_contact_is_reported(
         )
 
 
+@pytest.mark.parametrize("infer_control_points", [False, True])
+def test_cpi_spacing_bound_contact_uses_accepted_fit_denominator(
+    infer_control_points: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Report accepted inferred-spacing rails without counting fallback fits."""
+    concentration = np.zeros((3, 1, 1, 6), dtype=np.float64)
+    concentration[:, 0, 0, 2:4] = [1.0, 0.5]
+    interface = ComputeDSCMaps(inference="map")
+    rows = []
+    for index, (at_bound, needs_fallback) in enumerate(
+        ((True, False), (False, False), (True, True))
+    ):
+        rows.append({
+            "coords": (index, 0, 0),
+            "failed": False,
+            "needs_fallback": needs_fallback,
+            "converged": True,
+            "r_squared": 0.9,
+            "cbf": 0.1,
+            "cbv": 0.6,
+            "mtt": 6.0,
+            "tmax": 0.0,
+            "cpi_spacing_at_bound": at_bound,
+        })
+    monkeypatch.setattr(
+        interface,
+        "_dsc_fit_batched_map",
+        lambda **kwargs: rows,
+    )
+    monkeypatch.setattr(
+        "pmriprep.utils.dsc_deconvolution.svd_deconvolve_oscillation",
+        lambda *args, **kwargs: SimpleNamespace(
+            cbf=0.2, cbv=0.3, mtt=1.5, delay=0.0
+        ),
+    )
+
+    result = interface._deconvolve_parametric(
+        concentration,
+        np.array([0.0, 0.0, 1.0, 0.5, 0.0, 0.0]),
+        np.ones((3, 1, 1), dtype=np.uint8),
+        "cpi",
+        1.5,
+        "map",
+        100,
+        4,
+        infer_control_points,
+        False,
+    )
+
+    if infer_control_points:
+        assert result[4]["cpi_spacing_at_bound_n"] == 1
+        assert result[4]["cpi_spacing_at_bound_fraction"] == pytest.approx(0.5)
+    else:
+        assert "cpi_spacing_at_bound_n" not in result[4]
+        assert "cpi_spacing_at_bound_fraction" not in result[4]
+
+
 def test_prepare_baseline_preserves_pass_through_k2(
     tmp_path: Path,
 ) -> None:

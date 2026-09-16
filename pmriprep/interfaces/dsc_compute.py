@@ -23,6 +23,7 @@ from nipype.interfaces.base import (  # type: ignore[import-untyped]
 )
 
 from pmriprep.models.dsc.base import DSCFitResult
+from pmriprep.models.dsc.cpi import CPI_LOG_SPACING_BOUNDS
 from pmriprep.utils.dsc_constants import (
     DEFAULT_OI_THRESHOLD,
     DEFAULT_SVD_THRESHOLD,
@@ -149,6 +150,28 @@ def _parametric_outputs_are_finite(
     return all(
         key in result and np.isfinite(float(result[key]))
         for key in required
+    )
+
+
+def _cpi_spacing_at_bound(
+    values: npt.ArrayLike,
+) -> npt.NDArray[np.bool_] | np.bool_:
+    """Return whether any inferred CPI spacing lies at its numerical support."""
+    spacing = np.asarray(values, dtype=np.float64)
+    endpoint = np.isclose(
+        spacing,
+        CPI_LOG_SPACING_BOUNDS[0],
+        rtol=1e-5,
+        atol=1e-8,
+    ) | np.isclose(
+        spacing,
+        CPI_LOG_SPACING_BOUNDS[1],
+        rtol=1e-5,
+        atol=1e-8,
+    )
+    return cast(
+        npt.NDArray[np.bool_] | np.bool_,
+        np.any(endpoint, axis=-1),
     )
 
 
@@ -286,6 +309,15 @@ def _dsc_fit_single_voxel(voxel_data: _DSCVoxelInput) -> dict[str, Any]:
                 out["cbv"] = 0.0
                 out["mtt"] = 0.0
                 out["tmax"] = 0.0
+            spacing_values = [
+                float(value)
+                for name, value in result.parameters.items()
+                if name.startswith("s") and name[1:].isdigit()
+            ]
+            if spacing_values:
+                out["cpi_spacing_at_bound"] = bool(
+                    _cpi_spacing_at_bound(spacing_values)
+                )
 
         # Extract uncertainty only for directly fitted CBF. Derived CBV depends
         # on correlated fitted parameters, but DSCFitResult does not retain
@@ -2022,6 +2054,8 @@ class ComputeDSCMaps(BaseInterface):
         n_vascular_mtt_at_bound = 0
         n_delay_accepted = 0
         n_delay_at_bound = 0
+        n_cpi_spacing_accepted = 0
+        n_cpi_spacing_at_bound = 0
         n_map_uncertainty_evaluated = 0
         n_map_uncertainty_unavailable = 0
         r_squared_list: list[float] = []
@@ -2069,6 +2103,16 @@ class ComputeDSCMaps(BaseInterface):
                     atol=1e-8,
                 )
                 n_delay_at_bound += int(delay_at_bound)
+
+            if (
+                method == "cpi"
+                and cpi_infer_cpt
+                and not res.get("needs_fallback")
+            ):
+                n_cpi_spacing_accepted += 1
+                n_cpi_spacing_at_bound += int(
+                    bool(res.get("cpi_spacing_at_bound", False))
+                )
 
             if (
                 cth_map is not None
@@ -2205,6 +2249,11 @@ class ComputeDSCMaps(BaseInterface):
             qc_metrics["delay_at_bound_n"] = n_delay_at_bound
             qc_metrics["delay_at_bound_fraction"] = (
                 n_delay_at_bound / max(1, n_delay_accepted)
+            )
+        if method == "cpi" and cpi_infer_cpt:
+            qc_metrics["cpi_spacing_at_bound_n"] = n_cpi_spacing_at_bound
+            qc_metrics["cpi_spacing_at_bound_fraction"] = (
+                n_cpi_spacing_at_bound / max(1, n_cpi_spacing_accepted)
             )
         if inference == "map":
             qc_metrics["map_uncertainty"] = {
@@ -2510,6 +2559,7 @@ class ComputeDSCMaps(BaseInterface):
         # fitted (parity with the NLLS fitted_residue integral). Reassemble the
         # (N, P) parameter matrix in canonical order [cbf, f1..fN (, s1..sN)].
         cpi_r_norm: Optional[npt.NDArray[np.floating]] = None
+        cpi_spacing_at_bound: Optional[npt.NDArray[np.bool_]] = None
         if method == "cpi" and cp_times is not None:
             n_cp_local = len(cp_times)
             cols = [np.asarray(batched_result.params["cbf"], dtype=np.float64)]
@@ -2518,10 +2568,16 @@ class ComputeDSCMaps(BaseInterface):
                 for k in range(1, n_cp_local + 1)
             ]
             if "s1" in batched_result.params:
-                cols += [
+                spacing_cols = [
                     np.asarray(batched_result.params[f"s{k}"], dtype=np.float64)
                     for k in range(1, n_cp_local + 1)
                 ]
+                cols += spacing_cols
+                spacing_matrix = np.column_stack(spacing_cols)
+                cpi_spacing_at_bound = np.asarray(
+                    _cpi_spacing_at_bound(spacing_matrix),
+                    dtype=np.bool_,
+                )
             if cpi_infer_delay and "delay" in batched_result.params:
                 cols.append(
                     np.asarray(batched_result.params["delay"], dtype=np.float64)
@@ -2570,6 +2626,10 @@ class ComputeDSCMaps(BaseInterface):
                     out["tmax"] = float(batched_result.params["delay"][i])
                 else:
                     out["tmax"] = 0.0
+                if cpi_spacing_at_bound is not None:
+                    out["cpi_spacing_at_bound"] = bool(
+                        cpi_spacing_at_bound[i]
+                    )
 
             if batched_result.uncertainties:
                 cbf_std_val = float(batched_result.uncertainties.get(

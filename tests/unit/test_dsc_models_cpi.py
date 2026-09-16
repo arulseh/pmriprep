@@ -5,6 +5,7 @@ import pytest
 
 from pmriprep.models.bayesian_utils import TransformType
 from pmriprep.models.dsc.cpi import (
+    CPI_LOG_SPACING_BOUNDS,
     CPIModel,
     _fit_cpi_simple,
     estimate_bolus_duration,
@@ -334,8 +335,8 @@ def test_nlls_honors_identity_parameter_bounds(
     assert captured["max_nfev"] == 50
     assert lower[0] == 0.0
     assert np.isposinf(upper[0])
-    np.testing.assert_array_equal(lower[5:9], -5.0)
-    np.testing.assert_array_equal(upper[5:9], 5.0)
+    np.testing.assert_array_equal(lower[5:9], CPI_LOG_SPACING_BOUNDS[0])
+    np.testing.assert_array_equal(upper[5:9], CPI_LOG_SPACING_BOUNDS[1])
     assert (lower[-1], upper[-1]) == model.get_parameter_definitions()[-1].bounds
 
     full_result = _fit_cpi_simple(

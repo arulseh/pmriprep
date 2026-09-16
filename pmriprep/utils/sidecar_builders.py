@@ -1137,6 +1137,25 @@ def build_dsc_map_sidecar(
             sidecar["FittedDelayAtBoundFractionDenominator"] = (
                 "accepted fitted-delay parametric fits"
             )
+    if map_key in {"cbv", "ncbv", "rel_cbv", "mtt"} and isinstance(
+        qc_metrics, dict
+    ):
+        deconvolution = qc_metrics.get("deconvolution")
+        method_metrics = (
+            deconvolution if isinstance(deconvolution, dict) else qc_metrics
+        )
+        method = method_metrics.get("method", qc_metrics.get("method"))
+        at_bound_fraction = method_metrics.get(
+            "cpi_spacing_at_bound_fraction",
+            qc_metrics.get("cpi_spacing_at_bound_fraction"),
+        )
+        if method == "cpi" and at_bound_fraction is not None:
+            sidecar["CPIControlPointSpacingAtBoundFraction"] = float(
+                at_bound_fraction
+            )
+            sidecar["CPIControlPointSpacingAtBoundFractionDenominator"] = (
+                "accepted CPI fits with inferred control-point positions"
+            )
     apply_aif_sidecar(sidecar, map_key, qc_metrics)
     return sidecar
 
