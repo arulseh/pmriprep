@@ -744,10 +744,10 @@ def batched_lm_fit(
         Maximum LM iterations. Default 100.
     ftol : float, optional
         Relative cost function convergence tolerance. Default 1e-6.
+        For 2CXM, meeting only one of ftol and xtol requires confirmation
+        by a scalar refit.
     xtol : float, optional
         Relative parameter convergence tolerance. Default 1e-5.
-        For 2CXM, a small step with continuing relative cost improvement
-        requires confirmation by a scalar refit.
     save_fitted_curves : bool, optional
         Whether to store final fitted curves.
     compute_uncertainties : bool, optional
@@ -794,7 +794,7 @@ def batched_lm_fit(
     active = np.ones(n_voxels, dtype=bool)
     best_cost = np.full(n_voxels, np.inf)
     converged_flags = np.zeros(n_voxels, dtype=bool)
-    small_step_refit = np.zeros(n_voxels, dtype=bool)
+    ambiguous_stop_refit = np.zeros(n_voxels, dtype=bool)
 
     # FD floors for each free parameter
     fd_floors = np.array([_PARAM_FD_FLOORS.get(p, 1e-6) for p in free_param_names])
@@ -915,10 +915,11 @@ def batched_lm_fit(
 
             acc_converged = ftol_check | xtol_check
             if model_name == "2cxm":
-                # Damping can make a step small while the objective still
-                # improves materially. Require scalar confirmation of this stop.
-                ambiguous = xtol_check & ~ftol_check
-                small_step_refit[acc_global[ambiguous]] = True
+                # A small step can hide ongoing objective improvement, and
+                # a cost plateau can hide large parameter changes. Confirm
+                # either one-sided stop with the scalar solver.
+                ambiguous = xtol_check ^ ftol_check
+                ambiguous_stop_refit[acc_global[ambiguous]] = True
                 active[acc_global[ambiguous]] = False
                 acc_converged &= ~ambiguous
 
@@ -964,7 +965,7 @@ def batched_lm_fit(
         refit_indices = np.where(
             at_volume_bound
             if model_name == "extended_tofts"
-            else at_box_bound | at_volume_bound | small_step_refit
+            else at_box_bound | at_volume_bound | ambiguous_stop_refit
         )[0]
         if refit_indices.size:
             scalar_model = (

@@ -105,18 +105,20 @@ def test_scaled_lm_step_preserves_small_parameter_directions(
     (120., 80., 200., 100.), (40., 300., 200., 500.), (120., 450., 200., 500.),
     (300., 40., 500., 100.), (450., 40., 500., 100.),
     (300., 150., 500., 500.), (450., 450., 500., 500.),
+    (450., 40., None, None), (40., 450., None, None), (450., 450., None, None),
 ])
 def test_batched_2cxm_independent_ode_recovery(
     monkeypatch: pytest.MonkeyPatch, fp: float, ps: float,
-    fp_ceiling: float, ps_ceiling: float,
+    fp_ceiling: float | None, ps_ceiling: float | None,
 ) -> None:
     """Recover interior fits in both production and expanded finite domains."""
     from pmriprep.models.dce import batched_fitting, two_compartment_exchange
     from pmriprep.utils.dce_constants import ParameterBounds
 
     for name, ceiling in (("FP", fp_ceiling), ("PS", ps_ceiling)):
-        monkeypatch.setattr(two_compartment_exchange, name + "_BOUNDS", ParameterBounds(0, ceiling))
-        monkeypatch.setitem(batched_fitting._PARAM_BOUNDS, name.lower(), (0.0, ceiling))
+        if ceiling is not None:
+            monkeypatch.setattr(two_compartment_exchange, name + "_BOUNDS", ParameterBounds(0, ceiling))
+            monkeypatch.setitem(batched_fitting._PARAM_BOUNDS, name.lower(), (0.0, ceiling))
     t = np.arange(73) * 5 / 60
     u = np.maximum(t - 0.5, 0)
     x = u / 0.06
@@ -232,6 +234,137 @@ def test_2cxm_small_step_requires_successful_improving_refit(
     assert seeds[0] is not None and seeds[1] is None
     assert not result.converged[0]
     assert result.params["fp"][0] > 10.
+
+
+@pytest.fixture(scope="module")
+def parker_exchange_case() -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Independent exchange curve with bolus-centered motion weights."""
+    from pmriprep.interfaces.dce_compute import _compute_motion_weights
+
+    time = np.arange(121) * 3 / 60
+    u = np.maximum(time - .5, 0.)
+    aif = sum(
+        amplitude / (width * np.sqrt(2 * np.pi)) * np.exp(-.5 * ((u - center) / width)**2)
+        for amplitude, center, width in zip((.809, .330), (.17046, .365), (.0563, .132))
+    )
+    aif += 1.05 * np.exp(-.1685*u) / (1 + np.exp(-38.078*(u-.483)))
+    aif = np.where(time > .5, aif, 0.)
+
+    def rhs(now: float, state: np.ndarray) -> list[float]:
+        cp, ce = state
+        exchange = .8 * (cp - ce)
+        return [(1.2 * (np.interp(now, time, aif) - cp) - exchange) / .05, exchange / .2]
+
+    reference = solve_ivp(rhs, (0., 6.), [0., 0.], t_eval=time,
+                          method="Radau", rtol=1e-9, atol=1e-12, max_step=3/240)
+    assert reference.success
+    tissue = .05 * reference.y[0] + .2 * reference.y[1]
+    fd = np.zeros(time.size)
+    peak = int(np.argmax(aif))
+    fd[peak-1:peak+3] = 1.
+    weights = _compute_motion_weights(fd.tolist(), 10, time.size, 2.)
+    return tissue, aif, time, weights
+
+
+@pytest.mark.parametrize("ceilings", [(200., 100.), (500., 500.)])
+@pytest.mark.parametrize("weighted", [False, True])
+def test_2cxm_small_cost_change_recovery(
+    monkeypatch: pytest.MonkeyPatch, ceilings: tuple[float, float], weighted: bool,
+    parker_exchange_case: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+) -> None:
+    """A transient cost plateau cannot certify a poorly fitted exchange curve."""
+    from pmriprep.models.dce import batched_fitting, two_compartment_exchange
+    from pmriprep.utils.dce_constants import ParameterBounds
+
+    for name, ceiling in zip(("FP", "PS"), ceilings):
+        monkeypatch.setattr(two_compartment_exchange, name + "_BOUNDS", ParameterBounds(0, ceiling))
+        monkeypatch.setitem(batched_fitting._PARAM_BOUNDS, name.lower(), (0., ceiling))
+    tissue, aif, time, motion_weights = parker_exchange_case
+    weights = motion_weights if weighted else None
+    result = batched_lm_fit("2cxm", tissue[None], aif, time, weights=weights,
+                            save_fitted_curves=True, compute_uncertainties=True)
+    assert result.converged[0]
+    np.testing.assert_allclose(
+        [result.params[key][0] for key in ("fp", "ps", "ve", "vp")],
+        [120., 80., .2, .05], rtol=1e-3,
+    )
+    assert result.fitted_curves is not None
+    w = motion_weights if weighted else np.ones(time.size)
+    assert np.sum(w * (result.fitted_curves[0]-tissue)**2) / np.sum(w*tissue**2) < 1e-10
+    assert all(np.isfinite(values[0]) for values in result.uncertainties.values())
+
+
+@pytest.mark.parametrize("scalar_converged", [False, True])
+def test_2cxm_cost_stop_requires_successful_improving_refit(
+    monkeypatch: pytest.MonkeyPatch, scalar_converged: bool,
+    parker_exchange_case: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+) -> None:
+    """Neither failed nor worse refits can certify a cost-only batch stop."""
+    from pmriprep.models.dce import batched_fitting, two_compartment_exchange
+    from pmriprep.models.dce.base import FitResult as ScalarFitResult
+    from pmriprep.utils.dce_constants import ParameterBounds
+
+    for name in ("FP", "PS"):
+        monkeypatch.setattr(two_compartment_exchange, name + "_BOUNDS", ParameterBounds(0, 500.))
+        monkeypatch.setitem(batched_fitting._PARAM_BOUNDS, name.lower(), (0., 500.))
+    tissue, aif, time, weights = parker_exchange_case
+    seeds: list[Any] = []
+
+    def unsuccessful_refit(self: Any, *args: Any, **kwargs: Any) -> ScalarFitResult:
+        seeds.append(kwargs.get("initial_guess"))
+        np.testing.assert_array_equal(args[0], tissue)
+        assert kwargs["weights"] is weights
+        return ScalarFitResult(parameters={"Fp": 1., "PS": 1., "ve": .1, "vp": .01},
+                               converged=scalar_converged)
+
+    monkeypatch.setattr(TwoCompartmentExchangeModel, "fit", unsuccessful_refit)
+    result = batched_lm_fit("2cxm", tissue[None], aif, time, weights=weights,
+                            save_fitted_curves=True)
+    assert len(seeds) == 2
+    assert seeds[0] is not None and seeds[1] is None
+    assert not result.converged[0]
+    np.testing.assert_array_equal(
+        [result.params[key][0] for key in ("fp", "ps", "ve", "vp")], seeds[0],
+    )
+
+
+@pytest.mark.parametrize("ceilings", [(200., 100.), (500., 500.)])
+def test_auto_selection_uses_confirmed_exchange_fit(
+    monkeypatch: pytest.MonkeyPatch, ceilings: tuple[float, float],
+    parker_exchange_case: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+) -> None:
+    """Recoverable weighted exchange data remain eligible for automatic BIC."""
+    from pmriprep.interfaces import dce_compute
+    from pmriprep.models.dce import batched_fitting, two_compartment_exchange
+    from pmriprep.utils.dce_constants import ParameterBounds
+
+    for name, ceiling in zip(("FP", "PS"), ceilings):
+        bounds = ParameterBounds(0, ceiling)
+        monkeypatch.setattr(two_compartment_exchange, name + "_BOUNDS", bounds)
+        monkeypatch.setattr(dce_compute, name + "_BOUNDS", bounds)
+        monkeypatch.setitem(batched_fitting._PARAM_BOUNDS, name.lower(), (0., ceiling))
+    tissue, aif, time, weights = parker_exchange_case
+    interface = dce_compute.ComputeDCEMaps()
+    candidates = interface._build_candidate_set(3.)
+    results = interface._fit_batched(
+        conc_data=tissue[None, None, None, :],
+        mask_coords=(np.array([0]), np.array([0]), np.array([0])),
+        aif=aif, time_points=time, model_name=candidates[-1],
+        inference="nlls", is_auto=True, candidate_names=candidates,
+        motion_weights=weights, save_fitted_curves=True, sloppy=False,
+        mcmc_samples=0, baseline_frames=10, n_procs=1, random_seed=None,
+        init_args=(), voxel_data_list=[],
+    )
+    assert len(results) == 1
+    result = results[0]
+    assert not result["failed"]
+    assert result["selected_model_name"] == "2cxm"
+    assert np.isfinite(result["delta_bic"])
+    assert not dce_compute._is_degenerate_dce_fit("2cxm", result["params"])
+    np.testing.assert_allclose(
+        [result["params"][key] for key in ("Fp", "PS", "ve", "vp")],
+        [120., 80., .2, .05], rtol=1e-3,
+    )
 
 
 def test_scaled_lm_step_preserves_weighted_damped_objective() -> None:

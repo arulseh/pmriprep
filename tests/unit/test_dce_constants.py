@@ -1,5 +1,6 @@
 """Unit tests for DCE physics constants."""
 
+import numpy as np
 import pytest
 
 from pmriprep.utils import dce_constants
@@ -24,6 +25,30 @@ from pmriprep.utils.dce_constants import (
     get_tissue_t1_ranges,
     is_low_temporal_resolution,
 )
+
+
+def test_exchange_rate_support_reaches_all_consumers() -> None:
+    """Scalar, batched, Bayesian and retention paths share finite rate support."""
+    from pmriprep.interfaces import dce_compute
+    from pmriprep.models.dce import batched_fitting, two_compartment_exchange
+    from pmriprep.models.dce.bayesian import BayesianPKFitter
+
+    model = two_compartment_exchange.TwoCompartmentExchangeModel()
+    definitions = model.get_parameter_definitions()
+    assert model.get_bounds()[:2] == [(0., 500.), (0., 500.)]
+    assert BayesianPKFitter(model).model.get_bounds()[:2] == [(0., 500.), (0., 500.)]
+    assert [definition.typical_range for definition in definitions[:2]] == [(20., 100.), (5., 50.)]
+    for name in ("FP", "PS"):
+        bounds = getattr(dce_constants, name + "_BOUNDS")
+        assert (bounds.min, bounds.max) == (0., 500.)
+        assert getattr(two_compartment_exchange, name + "_BOUNDS") is bounds
+        assert getattr(dce_compute, name + "_BOUNDS") is bounds
+        assert batched_fitting._PARAM_BOUNDS[name.lower()] == (0., 500.)
+    for rate in ("Fp", "PS"):
+        for value, rejected in ((150., False), (300., False), (450., False),
+                                (np.nextafter(500., 0.), True), (500., True), (501., True)):
+            parameters = {"Fp": 40., "PS": 10., "ve": .2, "vp": .05, rate: value}
+            assert dce_compute._is_degenerate_dce_fit("2cxm", parameters) is rejected
 
 
 class TestMinMeaningfulEnhancement:

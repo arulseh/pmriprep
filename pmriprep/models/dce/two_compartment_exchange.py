@@ -65,13 +65,13 @@ class TwoCompartmentExchangeModel(PKModel):
 
     Parameters
     ----------
-        Fp: Plasma flow rate (mL/min/100mL), 0-200
+        Fp: Plasma flow rate (mL/min/100mL), 0-500
             - Represents blood plasma flow through the tissue
             - Higher values indicate more perfusion
             - Typical brain values: 40-60 mL/min/100mL
             - Tumor values: often elevated 60-120 mL/min/100mL
 
-        PS: Permeability-surface area product (mL/min/100mL), 0-100
+        PS: Permeability-surface area product (mL/min/100mL), 0-500
             - Represents capillary permeability × surface area
             - Higher values indicate more permeable vessels
             - Typical brain values: 0-5 mL/min/100mL (intact BBB)

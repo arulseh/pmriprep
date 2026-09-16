@@ -56,9 +56,11 @@ def test_bounded_vi_mean_reoptimizes_correlated_parameters() -> None:
     (ExtendedToftsModel(), [7.0, 0.2, 0.05]),
     (TwoCompartmentExchangeModel(), [120.0, 150.0, 0.2, 0.05]),
     (TwoCompartmentExchangeModel(), [250.0, 20.0, 0.2, 0.05]),
+    (TwoCompartmentExchangeModel(), [120.0, 650.0, 0.2, 0.05]),
+    (TwoCompartmentExchangeModel(), [650.0, 20.0, 0.2, 0.05]),
 ])
 def test_vi_respects_finite_rate_support(model: PKModel, truth: list[float]) -> None:
-    """Strong out-of-domain signals cannot yield impossible means/intervals."""
+    """Strong signals inside or outside support yield bounded means/intervals."""
     t = np.linspace(0, 6, 121)
     aif = 5 * np.exp(-0.5 * ((t - 0.7) / 0.15) ** 2)
     aif += np.where(t > 0.5, 0.6 * np.exp(-(t - 0.5) / 2), 0)

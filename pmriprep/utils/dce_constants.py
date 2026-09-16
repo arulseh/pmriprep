@@ -564,10 +564,10 @@ VP_BOUNDS: Final[ParameterBounds] = ParameterBounds(0.0, 1.0)
 KEP_BOUNDS: Final[ParameterBounds] = ParameterBounds(0.0, 10.0)
 
 #: Fp (plasma flow) bounds in mL/min/100mL for 2CXM
-FP_BOUNDS: Final[ParameterBounds] = ParameterBounds(0.0, 200.0)
+FP_BOUNDS: Final[ParameterBounds] = ParameterBounds(0.0, 500.0)
 
 #: PS (permeability-surface area product) bounds in mL/min/100mL for 2CXM
-PS_BOUNDS: Final[ParameterBounds] = ParameterBounds(0.0, 100.0)
+PS_BOUNDS: Final[ParameterBounds] = ParameterBounds(0.0, 500.0)
 
 
 # =============================================================================
