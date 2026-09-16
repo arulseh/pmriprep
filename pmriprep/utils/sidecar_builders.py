@@ -1090,6 +1090,11 @@ def build_dsc_map_sidecar(
             }
     if map_key == "cth" and isinstance(qc_metrics, dict):
         at_bound_fraction = qc_metrics.get("cth_alpha_at_bound_fraction")
+        deconvolution = qc_metrics.get("deconvolution")
+        if at_bound_fraction is None and isinstance(deconvolution, dict):
+            at_bound_fraction = deconvolution.get(
+                "cth_alpha_at_bound_fraction"
+            )
         if at_bound_fraction is not None:
             sidecar["AlphaAtBoundFraction"] = float(at_bound_fraction)
             sidecar["AlphaAtBoundFractionDenominator"] = (
@@ -1097,14 +1102,27 @@ def build_dsc_map_sidecar(
             )
     if map_key == "mtt" and isinstance(qc_metrics, dict):
         deconvolution = qc_metrics.get("deconvolution")
-        if isinstance(deconvolution, dict):
-            method = deconvolution.get("method")
-            if method in {"sSVD", "oSVD", "tikhonov"}:
-                sidecar["MTTMethod"] = (
-                    "measured_aif_full_bolus_auc_cbv_over_deconvolution_cbf"
+        method_metrics = (
+            deconvolution if isinstance(deconvolution, dict) else qc_metrics
+        )
+        method = method_metrics.get("method", qc_metrics.get("method"))
+        if method in {"sSVD", "oSVD", "tikhonov"}:
+            sidecar["MTTMethod"] = (
+                "measured_aif_full_bolus_auc_cbv_over_deconvolution_cbf"
+            )
+        elif method == "cpi":
+            sidecar["MTTMethod"] = "fitted_residue_integral"
+        elif method == "vascular":
+            sidecar["MTTMethod"] = "parametric_fitted_mtt"
+            at_bound_fraction = method_metrics.get(
+                "mtt_at_bound_fraction",
+                qc_metrics.get("mtt_at_bound_fraction"),
+            )
+            if at_bound_fraction is not None:
+                sidecar["MTTAtBoundFraction"] = float(at_bound_fraction)
+                sidecar["MTTAtBoundFractionDenominator"] = (
+                    "accepted vascular fits"
                 )
-            elif method in {"cpi", "vascular"}:
-                sidecar["MTTMethod"] = "parametric_fitted_mtt"
     apply_aif_sidecar(sidecar, map_key, qc_metrics)
     return sidecar
 

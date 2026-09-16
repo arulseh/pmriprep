@@ -29,6 +29,7 @@ from pmriprep.utils.dsc_constants import (
     EPSILON_CONCENTRATION,
     EPSILON_SHAPE,
     EPSILON_SIGNAL,
+    MTT_BOUNDS,
     VASCULAR_ALPHA_BOUNDS,
 )
 from pmriprep.utils.dsc_signal import compute_psr_legacy, compute_ttp_legacy
@@ -265,6 +266,7 @@ def _dsc_fit_single_voxel(voxel_data: _DSCVoxelInput) -> dict[str, Any]:
             )
             out["cbv"] = float(np.trapezoid(residue, dx=dt))
             out["mtt"] = out["cbv"] / cbf_val if cbf_val > EPSILON_CONCENTRATION else 0.0
+            out["fitted_mtt"] = float(alpha) * float(beta)
             out["tmax"] = delay
             out["alpha"] = alpha
             out["beta"] = beta
@@ -2015,6 +2017,8 @@ class ComputeDSCMaps(BaseInterface):
         n_evaluation_budget_exhausted = 0
         n_cth_accepted = 0
         n_cth_alpha_at_bound = 0
+        n_vascular_accepted = 0
+        n_vascular_mtt_at_bound = 0
         n_map_uncertainty_evaluated = 0
         n_map_uncertainty_unavailable = 0
         r_squared_list: list[float] = []
@@ -2027,6 +2031,22 @@ class ComputeDSCMaps(BaseInterface):
             cbv[x, y, z] = res.get("cbv", 0.0)
             mtt[x, y, z] = res.get("mtt", 0.0)
             tmax[x, y, z] = res.get("tmax", 0.0)
+
+            if method == "vascular" and not res.get("needs_fallback"):
+                n_vascular_accepted += 1
+                fitted_mtt = float(res.get("fitted_mtt", res.get("mtt", 0.0)))
+                mtt_at_bound = np.isclose(
+                    fitted_mtt,
+                    MTT_BOUNDS.min,
+                    rtol=1e-5,
+                    atol=1e-8,
+                ) or np.isclose(
+                    fitted_mtt,
+                    MTT_BOUNDS.max,
+                    rtol=1e-5,
+                    atol=1e-8,
+                )
+                n_vascular_mtt_at_bound += int(mtt_at_bound)
 
             if (
                 cth_map is not None
@@ -2154,6 +2174,10 @@ class ComputeDSCMaps(BaseInterface):
             qc_metrics["cth_alpha_at_bound_n"] = n_cth_alpha_at_bound
             qc_metrics["cth_alpha_at_bound_fraction"] = (
                 n_cth_alpha_at_bound / max(1, n_cth_accepted)
+            )
+            qc_metrics["mtt_at_bound_n"] = n_vascular_mtt_at_bound
+            qc_metrics["mtt_at_bound_fraction"] = (
+                n_vascular_mtt_at_bound / max(1, n_vascular_accepted)
             )
         if inference == "map":
             qc_metrics["map_uncertainty"] = {
@@ -2501,6 +2525,7 @@ class ComputeDSCMaps(BaseInterface):
                 out["cbf"] = cbf_val
                 out["cbv"] = cbf_val * mtt_val
                 out["mtt"] = mtt_val
+                out["fitted_mtt"] = mtt_val
                 out["tmax"] = delay_val
                 out["alpha"] = alpha_val
                 out["beta"] = beta_val

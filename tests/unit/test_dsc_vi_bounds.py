@@ -68,9 +68,9 @@ def test_vascular_vi_posterior_and_readout_share_bounded_point(
     truth = np.array(
         [
             [0.06, 6.0, 3.0, 2.0],
-            [0.06, 29.0, 0.6, 2.0],
+            [0.06, 59.0, 0.6, 2.0],
             [0.06, 0.2, 3.0, 2.0],
-            [0.06, 40.0, 3.0, 2.0],
+            [0.06, 80.0, 3.0, 2.0],
             [0.06, 6.0, 0.2, 2.0],
             [0.06, 6.0, 200.0, 2.0],
             [0.06, 6.0, 3.0, -5.0],
@@ -159,6 +159,7 @@ def test_vascular_vi_reoptimizes_other_parameters_at_ceiling(
     """A feasible fit improves on merely clipping the out-of-box solution."""
     kwargs, _ = _setup()
     # Exercise reoptimization at a supplied box, independently of defaults.
+    kwargs["fitting_bounds"][1] = (0.5, 30.0)
     kwargs["fitting_bounds"][2] = (0.5, 10.0)
     truth = np.array([[0.06, mtt, alpha, 2.0]])
     tissue = _forward(truth, kwargs["aif"], kwargs["time_points"])
@@ -180,6 +181,44 @@ def test_vascular_vi_ordinary_recovery() -> None:
     )
     np.testing.assert_allclose(fitted, truth[0], rtol=1e-4)
     assert result.r_squared[0] > 0.999999
+
+
+@pytest.mark.parametrize("method", ["nlls", "vi", "svb"])
+def test_vascular_long_mtt_headroom_recovers_joint_fit(method: str) -> None:
+    """A plausible-volume 45-s curve must not rail and bias fitted flow."""
+    kwargs, _ = _setup()
+    truth = np.array([[0.004, 45.0, 3.0, 2.0]])
+    tissue = _forward(truth, kwargs["aif"], kwargs["time_points"])
+    if method == "nlls":
+        model = VascularModel()
+        result = _fit_vascular_nlls(
+            model,
+            tissue[0],
+            kwargs["aif"],
+            kwargs["time_points"],
+        )
+        assert result is not None
+        fitted = model.model_to_fitting_params(
+            np.array([result.parameters[p] for p in model.get_parameter_names()])
+        )
+    elif method == "vi":
+        result = batched_dsc_vi_fit(**kwargs, tissue_curves=tissue)
+        fitted = np.array(
+            [result.params[name][0] for name in kwargs["fitting_param_names"]]
+        )
+    else:
+        result = batched_dsc_spatial_vi_fit(
+            **kwargs,
+            tissue_curves=tissue,
+            mask_coords=(np.array([0]), np.array([0]), np.array([0])),
+            spatial_shape=(1, 1, 1),
+        )
+        fitted = np.array(
+            [result.params[name][0] for name in kwargs["fitting_param_names"]]
+        )
+
+    np.testing.assert_allclose(fitted[:2], truth[0, :2], rtol=5e-3)
+    assert fitted[1] < 59.0
 
 
 def test_vascular_shape_support_does_not_change_gaussian_priors() -> None:
@@ -251,7 +290,7 @@ def test_vascular_narrow_distribution_recovery_and_support(
 
 
 @pytest.mark.parametrize("truth", [
-    [0.06, 40.0, 3.0, 2.0], [0.06, 6.0, 200.0, 2.0],
+    [0.06, 80.0, 3.0, 2.0], [0.06, 6.0, 200.0, 2.0],
     [0.06, 8.0, 25.0, 2.0], [0.06, 8.0, 100.0, 2.0],
 ])
 def test_scalar_vascular_vi_respects_same_fitting_support(truth: list[float]) -> None:
@@ -276,7 +315,7 @@ def test_scalar_vascular_vi_respects_same_fitting_support(truth: list[float]) ->
     "endpoint,transform",
     [
         (0.5, TransformType.LOG),
-        (30.0, TransformType.LOG),
+        (60.0, TransformType.LOG),
         (-3.0, TransformType.IDENTITY),
         (10.0, TransformType.IDENTITY),
     ],
@@ -290,7 +329,7 @@ def test_bounded_jacobian_uses_nonzero_feasible_difference(
     """At either endpoint, differentiate within support rather than flattening."""
     natural = np.array([[0.06, endpoint]])
     log_parameter = transform == TransformType.LOG
-    lo, hi = (0.5, 30.0) if log_parameter else (-3.0, 10.0)
+    lo, hi = (0.5, 60.0) if log_parameter else (-3.0, 10.0)
     mean = np.array([[np.log(0.06), np.log(endpoint) if log_parameter else endpoint]])
     lower = np.array([-np.inf, np.log(lo) if log_parameter else lo])
     upper = np.array([np.log(2.0), np.log(hi) if log_parameter else hi])

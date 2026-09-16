@@ -198,7 +198,7 @@ class TestVascularModel:
         # Negative flow is outside the relative-amplitude domain.
         assert model.validate_params([-1.0, 3.0, 2.0, 0.0]) is False
 
-    @pytest.mark.parametrize("mtt", [0.5, 5.0, 30.0])
+    @pytest.mark.parametrize("mtt", [0.5, 5.0, 60.0])
     @pytest.mark.parametrize("alpha", [0.5, 3.0, 100.0])
     def test_derived_beta_envelope_contains_fitting_domain(
         self, mtt: float, alpha: float
@@ -206,9 +206,9 @@ class TestVascularModel:
         """Marginal model metadata must not exclude supported fitting points."""
         model = VascularModel()
         definitions = model.get_fitting_parameter_definitions()
-        assert definitions[1].bounds == MTT_BOUNDS == (0.5, 30.0)
+        assert definitions[1].bounds == MTT_BOUNDS == (0.5, 60.0)
         assert definitions[2].bounds == VASCULAR_ALPHA_BOUNDS == (0.5, 100.0)
-        assert VASCULAR_BETA_BOUNDS == (0.005, 60.0)
+        assert VASCULAR_BETA_BOUNDS == (0.005, 120.0)
         fitting = np.array([0.06, mtt, alpha, 2.0])
         natural = model.fitting_to_model_params(fitting)
         assert model.validate_params(natural)

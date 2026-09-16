@@ -242,8 +242,8 @@ class ParameterBounds(NamedTuple):
 #: deconvolution (r2* scales both tissue and AIF equally).
 CBF_BOUNDS: Final[ParameterBounds] = ParameterBounds(0.0, 2.0)
 
-#: Vascular fitting-space MTT bounds in seconds; not an SVD readout clamp.
-MTT_BOUNDS: Final[ParameterBounds] = ParameterBounds(0.5, 30.0)
+#: Vascular fitting-space MTT bounds in seconds; not an SVD/CPI readout clamp.
+MTT_BOUNDS: Final[ParameterBounds] = ParameterBounds(0.5, 60.0)
 
 
 # =============================================================================

@@ -56,7 +56,7 @@ class VascularModel(DSCModel):
                Range: 0.5 to 100.
         beta: Scale parameter of the gamma distribution (seconds).
               Controls the spread of transit times.
-              Derived as MTT / alpha; marginal range: 0.005 to 60 s.
+              Derived as MTT / alpha; marginal range: 0.005 to 120 s.
               MTT and alpha define the joint fitting support.
         delay: Bolus arrival delay relative to AIF (seconds). Applied as a
                time shift of the convolved curve in tissue_curve, not to the

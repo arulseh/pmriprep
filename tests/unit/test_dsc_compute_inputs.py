@@ -418,6 +418,62 @@ def test_vascular_cth_readout_respects_shape_support(
     assert result[4]["cth_alpha_at_bound_fraction"] == pytest.approx(float(at_bound))
 
 
+@pytest.mark.parametrize(
+    "mtt,at_bound",
+    [
+        (0.5, True),
+        (60.0, True),
+        (np.nextafter(60.0, 0.0), True),
+        (10.0, False),
+        (59.0, False),
+    ],
+)
+def test_vascular_mtt_bound_contact_is_reported(
+    mtt: float,
+    at_bound: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Report accepted vascular fits at either MTT endpoint without masking."""
+    concentration = np.zeros((1, 1, 1, 6), dtype=np.float64)
+    concentration[0, 0, 0, 2:4] = [1.0, 0.5]
+    interface = ComputeDSCMaps(inference="map")
+    monkeypatch.setattr(
+        interface,
+        "_dsc_fit_batched_map",
+        lambda **kwargs: [{
+            "coords": (0, 0, 0),
+            "failed": False,
+            "needs_fallback": False,
+            "converged": True,
+            "r_squared": 0.9,
+            "cbf": 0.1,
+            "cbv": 0.1 * mtt,
+            "mtt": mtt,
+            "fitted_mtt": mtt,
+            "tmax": 0.0,
+            "alpha": 3.0,
+            "cth": mtt / np.sqrt(3.0),
+        }],
+    )
+
+    result = interface._deconvolve_parametric(
+        concentration,
+        np.array([0.0, 0.0, 1.0, 0.5, 0.0, 0.0]),
+        np.ones((1, 1, 1), dtype=np.uint8),
+        "vascular",
+        1.5,
+        "map",
+        100,
+        0,
+        True,
+        False,
+    )
+
+    assert result[2][0, 0, 0] == pytest.approx(mtt)
+    assert result[4]["mtt_at_bound_n"] == int(at_bound)
+    assert result[4]["mtt_at_bound_fraction"] == pytest.approx(float(at_bound))
+
+
 def test_prepare_baseline_preserves_pass_through_k2(
     tmp_path: Path,
 ) -> None:

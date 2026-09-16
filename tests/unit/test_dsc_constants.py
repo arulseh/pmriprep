@@ -76,9 +76,9 @@ class TestParameterBounds:
         assert CBF_BOUNDS.min < CBF_BOUNDS.max
 
     def test_mtt_bounds_valid(self) -> None:
-        """Vascular fitting MTT bounds are (0.5, 30.0) with min < max."""
+        """Vascular fitting MTT bounds are (0.5, 60.0) with min < max."""
         assert MTT_BOUNDS.min == 0.5
-        assert MTT_BOUNDS.max == 30.0
+        assert MTT_BOUNDS.max == 60.0
         assert MTT_BOUNDS.min < MTT_BOUNDS.max
 
 

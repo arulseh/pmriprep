@@ -23,6 +23,7 @@ from pmriprep.utils.aif_provenance import (
     apply_aif_sidecar,
     build_aif_provenance_block,
 )
+from pmriprep.utils.sidecar_builders import build_dsc_map_sidecar
 
 
 def _write_dummy_nifti(path: Path) -> str:
@@ -126,6 +127,49 @@ def _run_writer(inputs: dict, qc_metrics: dict | None, tmp_path: Path | None = N
         inp.qc_metrics = qc_metrics
     wf.run()
     return Path(inputs["output_dir"])
+
+
+def test_vascular_mtt_sidecar_reports_bound_occupancy() -> None:
+    """Vascular MTT boundary contact is informational derivative metadata."""
+    sidecar = build_dsc_map_sidecar(
+        base={},
+        description="Vascular mean transit time",
+        map_key="mtt",
+        qc_metrics={
+            "deconvolution": {
+                "method": "vascular",
+                "mtt_at_bound_fraction": 0.125,
+            },
+        },
+        units="s",
+    )
+
+    assert sidecar["MTTMethod"] == "parametric_fitted_mtt"
+    assert sidecar["MTTAtBoundFraction"] == pytest.approx(0.125)
+    assert sidecar["MTTAtBoundFractionDenominator"] == "accepted vascular fits"
+
+    flat_sidecar = build_dsc_map_sidecar(
+        base={},
+        description="Vascular mean transit time",
+        map_key="mtt",
+        qc_metrics={
+            "method": "vascular",
+            "mtt_at_bound_fraction": 0.25,
+        },
+        units="s",
+    )
+    assert flat_sidecar["MTTMethod"] == "parametric_fitted_mtt"
+    assert flat_sidecar["MTTAtBoundFraction"] == pytest.approx(0.25)
+
+    cpi_sidecar = build_dsc_map_sidecar(
+        base={},
+        description="CPI mean transit time",
+        map_key="mtt",
+        qc_metrics={"deconvolution": {"method": "cpi"}},
+        units="s",
+    )
+    assert cpi_sidecar["MTTMethod"] == "fitted_residue_integral"
+    assert "MTTAtBoundFraction" not in cpi_sidecar
 
 
 def test_dsc_writer_recreates_deleted_cached_derivative(
@@ -503,8 +547,10 @@ class TestWriterAifBlockPresentOnAllMaps:
         derivatives = _run_writer(
             minimal_inputs,
             {
-                "cth_alpha_at_bound_fraction": 0.125,
-                "deconvolution": {"method": "oSVD"},
+                "deconvolution": {
+                    "method": "oSVD",
+                    "cth_alpha_at_bound_fraction": 0.125,
+                },
             },
             tmp_path,
         )
