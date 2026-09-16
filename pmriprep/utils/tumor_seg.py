@@ -568,6 +568,11 @@ def _create_hemisphere_mask(
     hemisphere : {"left", "right"}
         Which hemisphere to select (RAS: left = x < 0, right = x > 0)
 
+    Notes
+    -----
+    Voxels exactly on the RAS midsagittal plane (x = 0) are excluded from both
+    masks because they are not unambiguously ipsilateral or contralateral.
+
     Returns
     -------
     ndarray of bool
@@ -654,10 +659,12 @@ def _select_region_atlas(
     Atlas selection logic:
     - Supratentorial left tumor  -> Supra_R.nii.gz (right supra for NAWM)
     - Supratentorial right tumor -> Supra_L.nii.gz (left supra for NAWM)
-    - Supratentorial bilateral   -> Supra.nii.gz (both hemispheres of region)
+    - Supratentorial bilateral   -> Supra.nii.gz (later intersected with the
+      selected lower-tumor-volume hemisphere)
     - Infratentorial left tumor  -> Cerebellum_R.nii.gz
     - Infratentorial right tumor -> Cerebellum_L.nii.gz
-    - Infratentorial bilateral   -> Cerebellum.nii.gz
+    - Infratentorial bilateral   -> Cerebellum.nii.gz (later intersected with
+      the selected lower-tumor-volume hemisphere)
     """
     masks_path = Path(region_masks_dir)
 
@@ -860,7 +867,8 @@ def create_nawm_roi(
 
     1. Base mask: brain_mask (if provided) or np.ones()
     2. WM threshold: intersect with wm_data >= 0.9
-    3. Region mask: intersect with atlas or hemisphere mask
+    3. Region mask: restrict to the selected hemisphere and, when available,
+       its atlas-defined supratentorial or cerebellar region
     4. Tumor exclusion: subtract dilated tumor (20mm margin)
     5. Erosion: SINGLE pass, ellipsoidal kernel of nawm_erosion * min(voxel_sizes) mm
     6. Adaptive fallback: erosion-only reduction (2 -> 1 -> 0 voxels)
@@ -939,7 +947,7 @@ def create_nawm_roi(
                     atlas_data = atlas_img.get_fdata()  # type: ignore[attr-defined]
                     atlas_binary = atlas_data > 0.5
                     if atlas_binary.shape == tumor_mask.shape:
-                        region_mask = atlas_binary
+                        region_mask = atlas_binary & hemisphere_mask
                         atlas_used = True
                 finally:
                     tmp_atlas = Path(transformed_atlas)

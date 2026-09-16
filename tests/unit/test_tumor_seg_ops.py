@@ -1,5 +1,8 @@
 """Unit tests for tumor segmentation pure utility functions."""
 
+from pathlib import Path
+
+import nibabel as nib
 import numpy as np
 import pytest
 
@@ -8,6 +11,7 @@ from pmriprep.utils.tumor_seg import (
     _analyze_tumor_anatomy,
     _create_hemisphere_mask,
     _create_spherical_kernel,
+    create_nawm_roi,
     dilate_mask_from_array,
     erode_mask_from_array,
 )
@@ -211,6 +215,7 @@ class TestCreateHemisphereMask:
         mask = _create_hemisphere_mask(shape, affine, "left")
         # Voxels with i < 10 have x_physical = i - 10 < 0, so should be True
         assert mask[0, 10, 10]   # i=0, x=-10 (left)
+        assert not mask[10, 10, 10]  # i=10, x=0 (midline)
         assert not mask[15, 10, 10]  # i=15, x=+5 (right)
 
     def test_right_hemisphere_mask(self) -> None:
@@ -219,6 +224,7 @@ class TestCreateHemisphereMask:
         affine = self._make_ras_affine()
         mask = _create_hemisphere_mask(shape, affine, "right")
         assert mask[15, 10, 10]   # i=15, x=+5 (right)
+        assert not mask[10, 10, 10]  # i=10, x=0 (midline)
         assert not mask[0, 10, 10]  # i=0, x=-10 (left)
 
 
@@ -249,3 +255,74 @@ class TestTumorAnalysisDataclass:
             volume_ml=0.0,
         )
         assert ta.centroid_mni is None
+
+
+@pytest.mark.parametrize("use_atlas", [False, True])
+def test_bilateral_nawm_preserves_lower_tumor_volume_hemisphere(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    use_atlas: bool,
+) -> None:
+    """Atlas restriction must not undo bilateral hemisphere selection."""
+    shape = (20, 8, 8)
+    affine = np.eye(4)
+    affine[:3, 3] = (-10.0, -4.0, -4.0)
+
+    tumor = np.zeros(shape, dtype=np.uint8)
+    tumor[4:6, 3:5, 3:5] = 1  # 8 left-hemisphere voxels
+    tumor[14:17, 3:5, 3:5] = 1  # 12 right-hemisphere voxels
+    wm = np.ones(shape, dtype=np.float32)
+    brain = np.ones(shape, dtype=np.uint8)
+
+    def _save(name: str, data: np.ndarray) -> Path:
+        path = tmp_path / name
+        nib.save(nib.Nifti1Image(data, affine), path)
+        return path
+
+    tumor_file = _save("tumor.nii.gz", tumor)
+    wm_file = _save("wm.nii.gz", wm)
+    brain_file = _save("brain.nii.gz", brain)
+
+    atlas_kwargs: dict[str, str] = {}
+    atlas_constraint = np.ones(shape, dtype=bool)
+    if use_atlas:
+        region_dir = tmp_path / "regions"
+        region_dir.mkdir()
+        _save("regions/Supra.nii.gz", np.ones(shape, dtype=np.uint8))
+        atlas_constraint[:, :, 4:] = False
+        transformed_atlas = _save(
+            "transformed_atlas.nii.gz", atlas_constraint.astype(np.uint8)
+        )
+        transform = tmp_path / "t1w_to_mni.mat"
+        np.savetxt(transform, np.eye(4))
+        monkeypatch.setattr(
+            "pmriprep.utils.tumor_seg._transform_atlas_to_t1w",
+            lambda *_args: str(transformed_atlas),
+        )
+        atlas_kwargs = {
+            "t1w_to_mni_xfm": str(transform),
+            "reference_image": str(tumor_file),
+            "region_masks_dir": str(region_dir),
+        }
+
+    result = create_nawm_roi(
+        tumor_mask_file=tumor_file,
+        wm_probseg_file=wm_file,
+        output_file=tmp_path / f"nawm_{use_atlas}.nii.gz",
+        tumor_margin_mm=0.0,
+        nawm_erosion=0,
+        nawm_min_voxels=1,
+        brain_mask_file=brain_file,
+        **atlas_kwargs,
+    )
+
+    analysis = result["analysis"]
+    assert analysis["tumor_laterality"] == "bilateral"
+    assert analysis["selected_hemisphere"] == "left"
+    assert analysis["atlas_used"] is use_atlas
+
+    nawm = np.asarray(nib.load(result["output_file"]).dataobj) > 0
+    left = _create_hemisphere_mask(shape, affine, "left")
+    assert np.any(nawm)
+    assert not np.any(nawm & ~left)
+    assert np.array_equal(nawm, left & atlas_constraint & ~(tumor > 0))
