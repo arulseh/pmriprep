@@ -10,7 +10,52 @@ from typing import Callable, Protocol, Sequence
 
 import numpy as np
 import numpy.typing as npt
+from scipy import optimize
 from scipy.special import expit  # numerically stable sigmoid
+
+
+def _bounded_vi_mean(
+    precision: npt.NDArray[np.float64],
+    rhs: npt.NDArray[np.float64],
+    unconstrained: npt.NDArray[np.float64],
+    lower: npt.NDArray[np.float64],
+    upper: npt.NDArray[np.float64],
+) -> npt.NDArray[np.float64]:
+    """Minimize the local Gaussian mean objective within transformed bounds.
+
+    Parameters
+    ----------
+    precision : numpy.ndarray
+        Positive-definite local posterior precision matrix.
+    rhs : numpy.ndarray
+        Linear term in the quadratic mean objective.
+    unconstrained : numpy.ndarray
+        Unconstrained mean update.
+    lower, upper : numpy.ndarray
+        Bounds in the same coordinates as the mean and precision.
+
+    Returns
+    -------
+    numpy.ndarray
+        Bound-constrained mean, with all free coordinates reoptimized.
+
+    Raises
+    ------
+    RuntimeError
+        If the constrained solve fails or returns a nonfinite mean.
+    """
+    if np.all(np.isfinite(unconstrained)) and np.all(
+        (unconstrained >= lower) & (unconstrained <= upper)
+    ):
+        return unconstrained
+    factor = np.linalg.cholesky(precision)
+    target = np.linalg.solve(factor, rhs)
+    result = optimize.lsq_linear(
+        factor.T, target, bounds=(lower, upper), method="bvls", tol=1e-10,
+    )
+    if not result.success or not np.all(np.isfinite(result.x)):
+        raise RuntimeError("Bound-constrained VI mean update failed")
+    return np.asarray(result.x, dtype=np.float64)
 
 
 # ---------------------------------------------------------------------------

@@ -25,6 +25,7 @@ from scipy.special import gammainc
 
 from pmriprep.models.bayesian_utils import (
     TransformType,
+    _bounded_vi_mean,
     from_transformed_batch,
     log_jacobian_det,
     to_transformed_batch,
@@ -676,6 +677,7 @@ def _compute_jacobian_columns(
     bounds_hi: npt.NDArray[np.floating],
     cbf_idx: int,
     fitting_param_names: list[str] | None = None,
+    transformed_bounds: tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]] | None = None,
 ) -> list[npt.NDArray[np.floating]]:
     """Compute Jacobian columns: analytical CBF + forward FD for others.
 
@@ -710,6 +712,8 @@ def _compute_jacobian_columns(
     fitting_param_names : list[str] or None, optional
         Optional parameter names; used to detect
         log-spacing columns (starting with "s") for relaxed FD step.
+    transformed_bounds : tuple of numpy.ndarray or None, optional
+        Bounds for feasible one-sided differences in transformed coordinates.
 
     Returns
     -------
@@ -742,6 +746,21 @@ def _compute_jacobian_columns(
             continue
 
         nat_plus = m_nat_a.copy()
+        if transformed_bounds is not None:
+            lower_t, upper_t = transformed_bounds
+            trial_t = np.minimum(m_a[:, j] + deltas[:, j], upper_t[j])
+            # Use a full inward step rather than a tiny gap below a ceiling.
+            backward = m_a[:, j] + deltas[:, j] > upper_t[j]
+            trial_t[backward] = np.maximum(
+                m_a[backward, j] - deltas[backward, j], lower_t[j]
+            )
+            actual_delta = trial_t - m_a[:, j]
+            nat_plus[:, j] = from_transformed_batch(
+                trial_t, transforms[j], upper_bounds[j],
+            )
+            g_plus = evaluate_fn(nat_plus)
+            J_columns.append((g_plus - g_m) / actual_delta[:, None])
+            continue
         nat_plus[:, j] = from_transformed_batch(
             m_a[:, j] + deltas[:, j], transforms[j], upper_bounds[j],
         )
@@ -1061,6 +1080,10 @@ def batched_dsc_vi_fit(
     Implements the linearized VB algorithm vectorized across all voxels.
     Supports both CPI and Vascular models.
 
+    Vascular bounds constrain the local Gaussian mean updates, including
+    spatial updates. Covariance remains a local Gaussian approximation;
+    intervals at active bounds are not exact truncated-posterior intervals.
+
     Parameters
     ----------
     model_type : str
@@ -1322,6 +1345,18 @@ def batched_dsc_vi_fit(
     bounds_lo = np.array([b[0] for b in fitting_bounds])
     bounds_hi = np.array([b[1] for b in fitting_bounds])
 
+    transformed_bounds = None
+    if model_type == "vascular":
+        lower_t = np.full(n_params, -np.inf)
+        upper_t = np.full(n_params, np.inf)
+        for j, (transform, (lo, hi)) in enumerate(zip(transforms, fitting_bounds)):
+            if transform == TransformType.LOG:
+                lower_t[j] = np.log(lo) if lo > 0 else -np.inf
+                upper_t[j] = np.log(hi)
+            elif transform == TransformType.IDENTITY:
+                lower_t[j], upper_t[j] = lo, hi
+        transformed_bounds = (lower_t, upper_t)
+
     # --- Initialize posterior mean ---
     m_nat = np.tile(prior_means_nat, (n_valid, 1)).astype(np.float64)
     for j in range(n_params):
@@ -1465,6 +1500,7 @@ def batched_dsc_vi_fit(
             m_a, m_nat_a, g_m, _evaluate,
             transforms, upper_bounds, bounds_lo, bounds_hi, cbf_idx,
             fitting_param_names=fitting_param_names,
+            transformed_bounds=transformed_bounds,
         )
 
         # Residual
@@ -1504,10 +1540,19 @@ def batched_dsc_vi_fit(
 
         m_new = np.einsum("nij,nj->ni", post_cov, rhs)
 
-        # IDENTITY params: clip to bounds in transformed space (= natural space)
-        for j in range(n_params):
-            if transforms[j] == TransformType.IDENTITY:
-                m_new[:, j] = np.clip(m_new[:, j], bounds_lo[j], bounds_hi[j])
+        if transformed_bounds is not None:
+            outside = np.any(
+                ~np.isfinite(m_new) | (m_new < lower_t) | (m_new > upper_t), axis=1
+            )
+            for i in np.flatnonzero(outside):
+                m_new[i] = _bounded_vi_mean(
+                    post_prec[i], rhs[i], m_new[i], lower_t, upper_t,
+                )
+        else:
+            # IDENTITY params: transformed and natural coordinates coincide.
+            for j in range(n_params):
+                if transforms[j] == TransformType.IDENTITY:
+                    m_new[:, j] = np.clip(m_new[:, j], bounds_lo[j], bounds_hi[j])
 
         # Spatial linearization can propose a poor full step for nonlinear CPI
         # residue parameters. Accept only steps that improve the conditional

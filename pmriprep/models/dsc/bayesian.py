@@ -18,6 +18,7 @@ from scipy import optimize  # type: ignore[import-untyped]
 from pmriprep.models.bayesian_utils import (
     BayesianPrior,
     TransformType,
+    _bounded_vi_mean,
     build_priors_from_params,
     compute_goodness_of_fit,
     compute_log_prior,
@@ -675,8 +676,9 @@ class BayesianDSCFitter:
         Gaussian posterior updates. Noise precision is treated as a conjugate
         Gamma random variable.
 
-        Each iteration uses one linearized forward-model evaluation followed
-        by analytic Gaussian posterior updates.
+        Vascular mean updates solve the local Gaussian objective within the
+        fitting bounds. The covariance remains a local Gaussian approximation,
+        not the covariance of an exact truncated posterior at an active bound.
 
         Parameters
         ----------
@@ -687,7 +689,7 @@ class BayesianDSCFitter:
         time_points : npt.NDArray[np.floating]
             Time points (seconds).
         n_iterations : int, optional
-            Maximum VB iterations (default 20).
+            Maximum VB iterations (default 30).
         noise_prior : tuple[float, float] or None, optional
             Optional (c0, s0) Gamma prior on noise precision
             tau = 1/sigma^2. If None, uses non-informative prior.
@@ -720,6 +722,18 @@ class BayesianDSCFitter:
         # Build transform info from priors
         transforms = [p.transform for p in self.priors]
         upper_bounds = [p.upper_bound for p in self.priors]
+
+        # Explicit support for vascular Gaussian mean updates.
+        bounded_vascular = self.model.name == "vascular"
+        lower_t = np.full(n_params, -np.inf)
+        upper_t = np.full(n_params, np.inf)
+        if bounded_vascular:
+            for j, (transform, (lo, hi)) in enumerate(zip(transforms, bounds)):
+                if transform == TransformType.LOG:
+                    lower_t[j] = np.log(lo) if lo > 0 else -np.inf
+                    upper_t[j] = np.log(hi)
+                elif transform == TransformType.IDENTITY:
+                    lower_t[j], upper_t[j] = lo, hi
 
         # Prior precision matrix in transformed space
         prior_means_t = np.array(
@@ -827,9 +841,10 @@ class BayesianDSCFitter:
                 # Perturb only param j in transformed space
                 m_plus_j = m[j] + deltas[j]
                 m_minus_j = m[j] - deltas[j]
-                # For IDENTITY params, clip perturbations to natural bounds.
-                # LOG/LOG_LOGIT are unconstrained in transformed space.
-                if transforms[j] == TransformType.IDENTITY:
+                if bounded_vascular:
+                    m_plus_j = min(m_plus_j, upper_t[j])
+                    m_minus_j = max(m_minus_j, lower_t[j])
+                elif transforms[j] == TransformType.IDENTITY:
                     m_plus_j = min(m_plus_j, bounds[j][1])
                     m_minus_j = max(m_minus_j, bounds[j][0])
                 # Only inverse-transform the perturbed param (not all n_params)
@@ -877,11 +892,12 @@ class BayesianDSCFitter:
                 rhs = rhs + mono_eta
             m_new = post_cov @ rhs
 
-            # For LOG/LOG_LOGIT, transformed space is unconstrained (bounds
-            # enforced by inverse transform). For IDENTITY, clip to bounds.
-            for i in range(n_params):
-                if transforms[i] == TransformType.IDENTITY:
-                    m_new[i] = np.clip(m_new[i], bounds[i][0], bounds[i][1])
+            if bounded_vascular:
+                m_new = _bounded_vi_mean(post_prec, rhs, m_new, lower_t, upper_t)
+            else:
+                for i in range(n_params):
+                    if transforms[i] == TransformType.IDENTITY:
+                        m_new[i] = np.clip(m_new[i], bounds[i][0], bounds[i][1])
 
             # 6. Update noise precision posterior: Gamma(c, s)
             # Fractional motion weights contribute their effective frame count.
