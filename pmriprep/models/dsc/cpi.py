@@ -27,6 +27,7 @@ from pmriprep.models.dsc.base import (
     DSCModelParameter,
     ParamsLike,
 )
+from pmriprep.models.dsc.convolution import apply_convolution_delay
 from pmriprep.utils.dsc_constants import (
     CBF_BOUNDS,
     EPSILON_CONCENTRATION,
@@ -535,24 +536,21 @@ class CPIModel(DSCModel):
         # matrix already includes dt, so no additional multiplication
         tissue = cbf * (self._conv_cache @ residue)
 
-        # Optional bolus delay: shift the convolved curve by delay via linear
-        # interpolation. For a linear convolution, shifting the result equals
-        # shifting the AIF before convolving, so the precomputed matrix is
-        # reused. The residue (hence CBV and MTT) is unaffected by delay.
+        # Complete the response before advancing it beyond the measured window.
         if self._infer_delay:
             delay = float(params[-1])
-            dt = float(time_points[1] - time_points[0])
-            delay_frac = delay / dt
-            n_shift = int(np.floor(delay_frac))
-            f_shift = delay_frac - n_shift
-            src = np.arange(n_times) - n_shift
-            shifted = np.zeros(n_times, dtype=np.float64)
-            lo = (src >= 0) & (src < n_times)
-            shifted[lo] = (1.0 - f_shift) * tissue[src[lo]]
-            hi_src = src - 1
-            hi = lo & (hi_src >= 0) & (hi_src < n_times)
-            shifted[hi] += f_shift * tissue[hi_src[hi]]
-            tissue = shifted
+            cp_times = self._compute_cp_times_from_params(params)
+            terminal = (
+                float(cp_times[-1] + cp_times[-1] - cp_times[-2])
+                if self._infer_cpt else self._terminal_time
+            )
+            tissue = apply_convolution_delay(
+                tissue[None, :], residue[None, :], aif, time_points, np.array([delay]),
+                lambda rows, grid: self.residue_function(
+                    params, np.minimum(grid, terminal)
+                )[None, :],
+                residue_scale=np.array([cbf]),
+            )[0]
 
         return tissue
 

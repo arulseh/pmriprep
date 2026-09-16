@@ -31,6 +31,10 @@ from pmriprep.models.bayesian_utils import (
     to_transformed_batch,
     transform_prior,
 )
+from pmriprep.models.dsc.convolution import (
+    _apply_post_hoc_delay_shift as _apply_post_hoc_delay_shift,
+    apply_convolution_delay,
+)
 from pmriprep.utils.dsc_constants import (
     EPSILON_CONCENTRATION,
 )
@@ -215,53 +219,15 @@ def batched_vascular_forward(
     A = volterra_matrix if volterra_matrix is not None else build_volterra_matrix(aif, dt)
     conv = R @ A.T
 
-    return _apply_post_hoc_delay_shift(conv, delay, dt)
-
-
-def _apply_post_hoc_delay_shift(
-    conv: npt.NDArray[np.floating],
-    delay: npt.NDArray[np.floating],
-    dt: float,
-) -> npt.NDArray[np.floating]:
-    """Shift each row of a convolved curve by its per-voxel delay (seconds).
-
-    Linear-interpolation shift of ``conv`` (shape (N, T)) by ``delay`` (shape
-    (N,)); out-of-range shifted samples are zero-filled. For a linear
-    convolution this equals shifting the AIF by ``delay`` before convolving, so
-    a precomputed convolution operator can be reused. Shared by the vascular
-    and CPI batched forwards; the residue (hence CBV and MTT) is unaffected.
-    """
-    n_voxels, n_times = conv.shape
-    delay_frac = delay / dt
-    n_shift = np.floor(delay_frac).astype(int)
-    f_shift = delay_frac - n_shift  # fractional part, (N,)
-
-    indices = np.arange(n_times)[None, :]  # (1, T)
-    src_all = indices - n_shift[:, None]   # (N, T)
-    row_idx = np.arange(n_voxels)[:, None]
-
-    # Integer-shift contribution: (1 - f) * conv[i - n_shift]
-    valid_lo = (src_all >= 0) & (src_all < n_times)
-    src_clipped = np.clip(src_all, 0, n_times - 1)
-    shifted: npt.NDArray[np.floating] = np.where(
-        valid_lo,
-        (1.0 - f_shift[:, None]) * conv[row_idx, src_clipped],
-        0.0,
+    return apply_convolution_delay(
+        conv, R, aif, time_points, delay,
+        lambda rows, grid: cbf[rows, None] * (
+            1.0 - gammainc(
+                alpha_safe[rows, None],
+                np.maximum(grid, 0.0)[None, :] / beta_safe[rows, None],
+            )
+        ),
     )
-
-    # Fractional contribution: f * conv[i - n_shift - 1]. Gate on valid_lo (the
-    # integer tap) so a fractional tap is never added where the integer tap was
-    # zero-filled — matches the scalar shift exactly, incl. negative non-integer
-    # delays at the curve tail.
-    src_hi = src_all - 1
-    valid_hi = valid_lo & (src_hi >= 0) & (src_hi < n_times)
-    src_hi_clipped = np.clip(src_hi, 0, n_times - 1)
-    shifted += np.where(
-        valid_hi,
-        f_shift[:, None] * conv[row_idx, src_hi_clipped],
-        0.0,
-    )
-    return shifted
 
 
 # ---------------------------------------------------------------------------
@@ -481,11 +447,18 @@ def batched_cpi_forward(
             toeplitz_matrix @ R_norm[start:end].T
         ).T
 
-    # Optional bolus delay: post-hoc linear-interp shift of the convolved curve
-    # (equivalent to shifting the AIF before convolving; residue unaffected).
+    # Delay changes the tissue curve, not the residue used for CBV/MTT.
     if infer_delay:
-        dt = float(time_points[1] - time_points[0]) if n_times > 1 else 1.0
-        return _apply_post_hoc_delay_shift(tissue, params[:, -1], dt)
+        if n_times < 2:
+            return _apply_post_hoc_delay_shift(tissue, params[:, -1], 1.0)
+        return apply_convolution_delay(
+            tissue, R_norm, aif, time_points, params[:, -1],
+            lambda rows, grid: batched_cpi_residue(
+                params[rows], grid, control_point_times,
+                t_terminal=t_terminal, infer_delay=True,
+            ),
+            residue_scale=cbf,
+        )
 
     return tissue
 

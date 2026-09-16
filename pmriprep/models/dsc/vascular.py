@@ -17,6 +17,7 @@ from pmriprep.models.dsc.base import (
     DSCModelParameter,
     ParamsLike,
 )
+from pmriprep.models.dsc.convolution import apply_convolution_delay
 from pmriprep.utils.dsc_constants import (
     CBF_BOUNDS,
     MTT_BOUNDS,
@@ -352,26 +353,11 @@ class VascularModel(DSCModel):
         R = self.residue_function(params, time_points)
         conv = build_volterra_matrix(aif, dt) @ R
 
-        # Apply delay as post-hoc shift with linear interpolation
-        # (smooth, differentiable w.r.t. delay for MAP/VB Jacobian)
-        delay_frac = delay / dt
-        n_shift = int(np.floor(delay_frac))
-        f_shift = delay_frac - n_shift  # fractional part in [0, 1)
-
-        # Vectorized: build index arrays for the two interpolation sources
-        src_indices = np.arange(n_times) - n_shift  # integer-shifted source
-        C_t = np.zeros(n_times, dtype=np.float64)
-
-        # Integer-shift contribution: (1 - f) * conv[i - n_shift]
-        valid_lo = (src_indices >= 0) & (src_indices < n_times)
-        C_t[valid_lo] = (1.0 - f_shift) * conv[src_indices[valid_lo]]
-
-        # Fractional contribution: f * conv[i - n_shift - 1]
-        src_hi = src_indices - 1
-        valid_hi = valid_lo & (src_hi >= 0) & (src_hi < n_times)
-        C_t[valid_hi] += f_shift * conv[src_hi[valid_hi]]
-
-        return C_t
+        tissue: npt.NDArray[np.floating] = apply_convolution_delay(
+            conv[None, :], R[None, :], aif, time_points, np.array([delay]),
+            lambda rows, grid: self.residue_function(params, grid)[None, :],
+        )[0]
+        return tissue
 
     def compute_derived_parameters(
         self, params: ParamsLike
