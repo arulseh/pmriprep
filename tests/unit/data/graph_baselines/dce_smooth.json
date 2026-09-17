@@ -207,6 +207,12 @@
     [
       "dce_brain_extract",
       "out_mask",
+      "dce_registration",
+      "native_brain_mask"
+    ],
+    [
+      "dce_brain_extract",
+      "out_mask",
       "derive_smoothed_kep",
       "brain_mask_file"
     ],

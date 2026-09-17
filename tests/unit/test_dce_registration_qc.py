@@ -108,12 +108,15 @@ class TestDCERegistrationQCMaskRegression:
 
         # DCE-grid mask that the resampler is expected to produce.
         dce_mask_data = np.ones((8, 8, 4), dtype=np.int16)
+        native_mask_data = np.zeros((8, 8, 4), dtype=np.int16)
+        native_mask_data[2:6, 2:6, 1:3] = 1
 
         t1w_file = tmp_path / "t1w.nii.gz"
         dce_mean_file = tmp_path / "dce_mean.nii.gz"
         registered_t1w_file = tmp_path / "registered_t1w.nii.gz"
         anat_mask_file = tmp_path / "brain_mask_anat.nii.gz"
         dce_mask_file = tmp_path / "brain_mask_dce.nii.gz"
+        native_mask_file = tmp_path / "native_brain_mask_dce.nii.gz"
         out_matrix = tmp_path / "registration.mat"
 
         _save_volume(t1w_file, anat_mask_data.astype(np.float32), anat_affine)
@@ -121,12 +124,14 @@ class TestDCERegistrationQCMaskRegression:
         _save_volume(registered_t1w_file, registered_t1w_data, dce_affine)
         _save_volume(anat_mask_file, anat_mask_data, anat_affine)
         _save_volume(dce_mask_file, dce_mask_data, dce_affine)
+        _save_volume(native_mask_file, native_mask_data, dce_affine)
         _identity_flirt_mat(out_matrix)
 
         interface = DCERegistration()
         interface.inputs.t1w_file = str(t1w_file)
         interface.inputs.dce_mean = str(dce_mean_file)
         interface.inputs.brain_mask = str(anat_mask_file)
+        interface.inputs.native_brain_mask = str(native_mask_file)
         interface.inputs.out_file = str(registered_t1w_file)
         interface.inputs.out_matrix = str(out_matrix)
 
@@ -148,8 +153,15 @@ class TestDCERegistrationQCMaskRegression:
         assert np.isfinite(qc_metrics["correlation"])
         assert np.isfinite(qc_metrics["dice"])
 
-        assert qc_metrics["qc_status"] in {"PASS", "WARN", "POOR"}, qc_metrics
+        assert qc_metrics["qc_status"] == "PASS", qc_metrics
         assert qc_metrics["brain_mask_used"] is True
+        assert qc_metrics["native_perfusion_mask_metrics_role"] == (
+            "descriptive_not_gated"
+        )
+        assert qc_metrics["native_perfusion_mask_used"] is True
+        assert qc_metrics["native_perfusion_mask_dice"] < 0.5
+        assert qc_metrics["native_perfusion_mask_correlation"] == pytest.approx(1.0)
+        assert np.isfinite(qc_metrics["native_perfusion_mask_nmi"])
 
     def test_qc_status_unknown_when_mask_resample_returns_empty(
         self, tmp_path: Path

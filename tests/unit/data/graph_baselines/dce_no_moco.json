@@ -195,6 +195,12 @@
     [
       "dce_brain_extract",
       "out_mask",
+      "dce_registration",
+      "native_brain_mask"
+    ],
+    [
+      "dce_brain_extract",
+      "out_mask",
       "outputnode",
       "brain_mask"
     ],

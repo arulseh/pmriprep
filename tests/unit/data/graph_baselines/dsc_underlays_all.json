@@ -597,6 +597,12 @@
     [
       "hdbet_dsc",
       "dsc_brain_mask_file",
+      "register",
+      "native_brain_mask"
+    ],
+    [
+      "hdbet_dsc",
+      "dsc_brain_mask_file",
       "transform_brain_mask_qc",
       "hdbet_mask_file"
     ],

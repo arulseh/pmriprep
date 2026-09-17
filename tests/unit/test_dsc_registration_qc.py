@@ -23,21 +23,26 @@ def test_dsc_registration_qc_transforms_anatomical_mask(
     rng = np.random.default_rng(42)
     dsc_data = rng.uniform(50.0, 200.0, size=(8, 8, 4)).astype(np.float32)
     anat_mask = np.ones((16, 16, 8), dtype=np.uint8)
-    dsc_mask = np.ones((8, 8, 4), dtype=np.uint8)
+    transformed_mask_data = np.ones((8, 8, 4), dtype=np.uint8)
+    native_mask_data = np.zeros((8, 8, 4), dtype=np.uint8)
+    native_mask_data[2:6, 2:6, 1:3] = 1
 
     registered = tmp_path / "registered_t1w.nii.gz"
     dsc_mean = tmp_path / "dsc_mean.nii.gz"
     anatomical_mask = tmp_path / "brain_mask_t1w.nii.gz"
     transformed_mask = tmp_path / "brain_mask_dsc.nii.gz"
+    native_mask = tmp_path / "native_brain_mask_dsc.nii.gz"
     matrix = tmp_path / "registration.mat"
     _save_volume(registered, dsc_data, dsc_affine)
     _save_volume(dsc_mean, dsc_data, dsc_affine)
     _save_volume(anatomical_mask, anat_mask, anat_affine)
-    _save_volume(transformed_mask, dsc_mask, dsc_affine)
+    _save_volume(transformed_mask, transformed_mask_data, dsc_affine)
+    _save_volume(native_mask, native_mask_data, dsc_affine)
     np.savetxt(matrix, np.eye(4))
 
     interface = DSCRegistration()
     interface.inputs.brain_mask = str(anatomical_mask)
+    interface.inputs.native_brain_mask = str(native_mask)
     interface.inputs.out_matrix = str(matrix)
 
     with patch(
@@ -60,6 +65,11 @@ def test_dsc_registration_qc_transforms_anatomical_mask(
     assert np.isfinite(metrics["nmi"])
     assert np.isfinite(metrics["correlation"])
     assert "dice_computation_failed" not in metrics
+    assert metrics["native_perfusion_mask_metrics_role"] == "descriptive_not_gated"
+    assert metrics["native_perfusion_mask_used"] is True
+    assert metrics["native_perfusion_mask_dice"] < 0.5
+    assert np.isfinite(metrics["native_perfusion_mask_correlation"])
+    assert np.isfinite(metrics["native_perfusion_mask_nmi"])
 
 
 def test_dsc_registration_qc_degrades_to_unmasked_metrics(

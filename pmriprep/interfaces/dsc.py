@@ -407,6 +407,13 @@ class DSCRegistrationInputSpec(BaseInterfaceInputSpec):
         exists=True,
         desc="Brain mask for QC metric calculation (optional)",
     )
+    native_brain_mask = File(
+        exists=True,
+        desc=(
+            "Independently extracted native DSC brain mask for descriptive "
+            "registration QC (optional)"
+        ),
+    )
     dof = traits.Int(
         6,
         usedefault=True,
@@ -827,6 +834,41 @@ class DSCRegistration(SimpleInterface):
                     qc_metrics["dice_computation_failed"] = True
             else:
                 qc_metrics["brain_mask_used"] = False
+
+            native_mask = (
+                str(self.inputs.native_brain_mask)
+                if isdefined(self.inputs.native_brain_mask)
+                and Path(self.inputs.native_brain_mask).exists()
+                else ""
+            )
+            qc_metrics["native_perfusion_mask_metrics_role"] = (
+                "descriptive_not_gated"
+            )
+            qc_metrics["native_perfusion_mask_used"] = bool(native_mask)
+            if native_mask:
+                try:
+                    qc_metrics["native_perfusion_mask_correlation"] = (
+                        calculate_correlation_from_files(
+                            out_file, dsc_mean, mask_path=native_mask
+                        )
+                    )
+                    qc_metrics["native_perfusion_mask_nmi"] = (
+                        calculate_nmi_from_files(
+                            out_file, dsc_mean, mask_path=native_mask
+                        )
+                    )
+                    if brain_mask_dsc:
+                        transformed_mask = nib.load(brain_mask_dsc).get_fdata()  # type: ignore[attr-defined]
+                        native_mask_data = nib.load(native_mask).get_fdata()  # type: ignore[attr-defined]
+                        qc_metrics["native_perfusion_mask_dice"] = calculate_dice(
+                            transformed_mask, native_mask_data, threshold=0.5
+                        )
+                except Exception as exc:
+                    logger.warning(
+                        "Could not compute native-mask DSC registration metrics: %s",
+                        exc,
+                    )
+                    qc_metrics["native_perfusion_mask_metrics_failed"] = True
 
         except Exception as exc:
             logger.warning("DSC registration QC failed: %s", exc)

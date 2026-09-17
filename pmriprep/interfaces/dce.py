@@ -4398,6 +4398,13 @@ class DCERegistrationInputSpec(BaseInterfaceInputSpec):
         exists=True,
         desc="Brain mask for QC metric calculation (optional)",
     )
+    native_brain_mask = File(
+        exists=True,
+        desc=(
+            "Independently extracted native DCE brain mask for descriptive "
+            "registration QC (optional)"
+        ),
+    )
     dof = traits.Int(
         6,
         usedefault=True,
@@ -5154,6 +5161,45 @@ class DCERegistration(SimpleInterface):
             qc_metrics["cost_function"] = self.inputs.cost
             qc_metrics["reference_type"] = self.inputs.reference_type
             qc_metrics["brain_mask_used"] = mask_path_dce is not None
+
+            native_mask_path = (
+                str(self.inputs.native_brain_mask)
+                if isdefined(self.inputs.native_brain_mask)
+                and Path(self.inputs.native_brain_mask).exists()
+                else ""
+            )
+            qc_metrics["native_perfusion_mask_metrics_role"] = (
+                "descriptive_not_gated"
+            )
+            qc_metrics["native_perfusion_mask_used"] = bool(native_mask_path)
+            if native_mask_path:
+                try:
+                    qc_metrics["native_perfusion_mask_correlation"] = (
+                        calculate_correlation_from_files(
+                            registered_t1w,
+                            dce_mean,
+                            mask_path=native_mask_path,
+                        )
+                    )
+                    qc_metrics["native_perfusion_mask_nmi"] = (
+                        calculate_nmi_from_files(
+                            registered_t1w,
+                            dce_mean,
+                            mask_path=native_mask_path,
+                        )
+                    )
+                    if mask_path_dce:
+                        transformed_mask = nib.load(mask_path_dce).get_fdata()  # type: ignore[attr-defined]
+                        native_mask = nib.load(native_mask_path).get_fdata()  # type: ignore[attr-defined]
+                        qc_metrics["native_perfusion_mask_dice"] = calculate_dice(
+                            transformed_mask, native_mask, threshold=0.5
+                        )
+                except Exception as exc:
+                    logger.warning(
+                        "Could not compute native-mask DCE registration metrics: %s",
+                        exc,
+                    )
+                    qc_metrics["native_perfusion_mask_metrics_failed"] = True
 
             # Determine overall QC status
             qc_metrics["warnings"] = warnings_list

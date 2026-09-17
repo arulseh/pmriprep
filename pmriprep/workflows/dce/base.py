@@ -901,7 +901,9 @@ def init_dce_registration_wf(
     """Build T1w-to-DCE registration and both derivative transform directions."""
     workflow = pe.Workflow(name=name)
     inputnode = pe.Node(
-        niu.IdentityInterface(fields=["dce_mean", "t1w_file", "brain_mask"]),
+        niu.IdentityInterface(
+            fields=["dce_mean", "t1w_file", "brain_mask", "native_brain_mask"]
+        ),
         name="inputnode",
     )
     outputnode = pe.Node(
@@ -924,6 +926,7 @@ def init_dce_registration_wf(
         (inputnode, registration, [
             ("dce_mean", "dce_mean"), ("t1w_file", "t1w_file"),
             ("brain_mask", "brain_mask"),
+            ("native_brain_mask", "native_brain_mask"),
         ]),
         (registration, invert_xfm, [("out_matrix", "in_file")]),
         (invert_xfm, convert_inverse, [("out_file", "mat_path")]),
@@ -1928,6 +1931,7 @@ def init_dce_preproc_wf(
         ]),
         (dce_brain_extraction_wf, dce_registration_wf, [
             ("outputnode.out_brain", "inputnode.dce_mean"),
+            ("outputnode.out_mask", "inputnode.native_brain_mask"),
         ]),
     ])
 

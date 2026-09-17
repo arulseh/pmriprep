@@ -593,6 +593,7 @@ def init_dsc_registration_wf(
             fields=[
                 "matched_t1w_file",
                 "brain_mask",
+                "native_brain_mask",
                 "dsc_brain",
                 "t1w_to_mni_xfm",
             ]
@@ -632,6 +633,7 @@ def init_dsc_registration_wf(
         (inputnode, register, [
             ("matched_t1w_file", "t1w_file"),
             ("brain_mask", "brain_mask"),
+            ("native_brain_mask", "native_brain_mask"),
             ("dsc_brain", "dsc_mean"),
         ]),
         (inputnode, invert_mni_xfm, [("t1w_to_mni_xfm", "in_file")]),
@@ -2293,7 +2295,10 @@ def init_dsc_preproc_wf(
             ("brain_mask", "inputnode.brain_mask"),
             ("t1w_to_mni_xfm", "inputnode.t1w_to_mni_xfm"),
         ]),
-        (hdbet_dsc, registration_wf, [("dsc_brain_file", "inputnode.dsc_brain")]),
+        (hdbet_dsc, registration_wf, [
+            ("dsc_brain_file", "inputnode.dsc_brain"),
+            ("dsc_brain_mask_file", "inputnode.native_brain_mask"),
+        ]),
     ])
 
     # Step 4: Transform arterial atlas from MNI to DSC space
