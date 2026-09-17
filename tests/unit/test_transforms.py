@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import shutil
+import subprocess
 from pathlib import Path
 
 import nibabel as nib
 import numpy as np
+import pytest
 
 
 def _make_nifti(path: Path, shape: tuple = (10, 10, 10)) -> str:
@@ -41,6 +44,69 @@ class TestFslToX5:
 
         loaded = Affine.from_filename(h5_path)
         np.testing.assert_allclose(loaded.matrix, np.eye(4), atol=1e-6)
+
+    def test_roundtrip_nonidentity(self, tmp_path: Path) -> None:
+        """The composite contains the converted affine, not a trailing identity."""
+        from nitransforms.linear import Affine
+
+        from pmriprep.utils.transforms import fsl_to_x5
+
+        moving = _make_nifti(tmp_path / "moving.nii.gz")
+        reference = _make_nifti(tmp_path / "reference.nii.gz")
+        matrix = np.eye(4)
+        matrix[:3, 3] = [4.0, -3.0, 2.0]
+        mat = tmp_path / "nonidentity.mat"
+        Affine(matrix, reference=reference).to_filename(
+            mat, fmt="fsl", moving=moving
+        )
+
+        loaded = Affine.from_filename(fsl_to_x5(mat, reference, moving))
+
+        np.testing.assert_allclose(loaded.matrix, matrix, atol=1e-6)
+
+    def test_ants_reads_composite(self, tmp_path: Path) -> None:
+        """The emitted transform follows the ITK HDF5 composite contract."""
+        if shutil.which("antsApplyTransforms") is None:
+            pytest.skip("ANTs is not installed")
+
+        from nitransforms.linear import Affine
+
+        from pmriprep.utils.transforms import fsl_to_x5
+
+        moving = _make_nifti(tmp_path / "moving.nii.gz")
+        moving_data = np.zeros((10, 10, 10), dtype=np.float32)
+        moving_data[5, 5, 5] = 1.0
+        nib.save(nib.Nifti1Image(moving_data, np.eye(4)), moving)
+        reference = _make_nifti(tmp_path / "reference.nii.gz")
+        matrix = np.eye(4)
+        matrix[:3, 3] = [1.0, 0.0, 0.0]
+        mat = tmp_path / "translation.mat"
+        Affine(matrix, reference=reference).to_filename(
+            mat, fmt="fsl", moving=moving
+        )
+        h5_path = fsl_to_x5(mat, reference, moving)
+
+        result = subprocess.run(
+            [
+                "antsApplyTransforms",
+                "-d", "3",
+                "-i", moving,
+                "-r", reference,
+                "-o", str(tmp_path / "resampled.nii.gz"),
+                "-n", "NearestNeighbor",
+                "-t", h5_path,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        assert result.returncode == 0, result.stderr
+        resampled = np.asarray(
+            nib.load(tmp_path / "resampled.nii.gz").get_fdata()
+        )
+        assert np.count_nonzero(resampled) == 1
+        assert not np.array_equal(resampled, moving_data)
 
     def test_sentinel_empty_string(self) -> None:
         """Empty string sentinel returns empty string."""

@@ -47,24 +47,30 @@ def fsl_to_x5(
     offset = np.asarray(itk_xfm["offset"], dtype=np.float64)
     itk_params = np.concatenate([params_4x4[:3, :3].ravel(), params_4x4[:3, 3]])
 
-    identity_params = np.array(
-        [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0], dtype=np.float64,
-    )
+    string_type = h5py.string_dtype(encoding="ascii")
     with h5py.File(str(h5_path), "w") as f:
+        f.create_dataset(
+            "HDFVersion",
+            data=f"HDF5 library version: {h5py.version.hdf5_version}",
+            dtype=string_type,
+        )
+        f.create_dataset("ITKVersion", data="5.0.0", dtype=string_type)
+        f.create_dataset("OSName", data="unknown", dtype=string_type)
+        f.create_dataset("OSVersion", data="unknown", dtype=string_type)
         grp = f.create_group("TransformGroup")
         g0 = grp.create_group("0")
         g0.create_dataset(
             "TransformType",
-            data=np.array([b"AffineTransform_double_3_3"]),
+            data=np.array(["CompositeTransform_double_3_3"], dtype=object),
+            dtype=string_type,
         )
-        g0.create_dataset("TransformParameters", data=itk_params)
-        g0.create_dataset("TransformFixedParameters", data=offset)
         g1 = grp.create_group("1")
         g1.create_dataset(
             "TransformType",
-            data=np.array([b"AffineTransform_double_3_3"]),
+            data=np.array(["AffineTransform_double_3_3"], dtype=object),
+            dtype=string_type,
         )
-        g1.create_dataset("TransformParameters", data=identity_params)
-        g1.create_dataset("TransformFixedParameters", data=np.zeros(3, dtype=np.float64))
+        g1.create_dataset("TransformParameters", data=itk_params)
+        g1.create_dataset("TransformFixedParameters", data=offset)
 
     return str(h5_path)
