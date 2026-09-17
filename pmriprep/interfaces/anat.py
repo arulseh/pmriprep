@@ -406,7 +406,7 @@ class CoregistrationInputSpec(CommandLineInputSpec):
         desc="Output transformation matrix (FLIRT .mat format)",
     )
     modality = traits.Enum(
-        "T1_postcon",
+        "T1_contrast_pair",
         "FLAIR",
         "T2w",
         "T1w",
@@ -435,9 +435,9 @@ class Coregistration(CommandLine):
     of various MRI modalities to a reference T1w image. Cost functions are
     selected based on the modality to optimize registration accuracy:
 
-    - T1 post-contrast (ce-GAD): normmi (normalized mutual information)
+    - Paired pre-/post-contrast T1w: normmi (normalized mutual information)
     - FLAIR, T2w: normcorr (normalized correlation)
-    - T1w: corratio (correlation ratio)
+    - Same-contrast T1w: corratio (correlation ratio)
 
     Parameters
     ----------
@@ -446,7 +446,7 @@ class Coregistration(CommandLine):
     reference : str
         Reference/target image (typically bias-corrected T1w)
     modality : str
-        Modality of moving image: T1_postcon, FLAIR, T2w, T1w
+        Registration contrast: T1_contrast_pair, FLAIR, T2w, or T1w
     dof : int
         Degrees of freedom (default: 6 for rigid body)
 
@@ -462,7 +462,7 @@ class Coregistration(CommandLine):
     -----
     Cost function selection by modality:
 
-    - normmi: Best for T1 post-contrast where intensity changes due to Gd
+    - normmi: Used for paired T1w where Gd changes tissue intensities
     - normcorr: Best for FLAIR/T2w where contrast inverts vs T1
     - corratio: Best for same-modality registration (T1w to T1w)
 
@@ -477,7 +477,7 @@ class Coregistration(CommandLine):
 
     # Cost function mapping by modality
     _COST_FUNCTIONS: dict[str, str] = {
-        "T1_postcon": "normmi",
+        "T1_contrast_pair": "normmi",
         "FLAIR": "normcorr",
         "T2w": "normcorr",
         "T1w": "corratio",

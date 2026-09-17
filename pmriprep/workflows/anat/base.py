@@ -476,7 +476,7 @@ def _run_hybrid_fast_chain(
     ).run().outputs.out_file
     coregistered = Coregistration(
         in_file=bias_corrected, reference=reference_file,
-        modality="T1w", dof=6,
+        modality="T1_contrast_pair", dof=6,
     ).run().outputs.out_file
     masked: str = ApplyMask(
         in_file=coregistered, mask_file=brain_mask,
@@ -670,7 +670,10 @@ def init_anat_secondary_modalities_wf(
         )
 
     modalities = [
-        ("postcon", "t1w_postcon", has_t1w_postcon, "T1_postcon", True),
+        (
+            "postcon", "t1w_postcon", has_t1w_postcon,
+            "T1_contrast_pair", True,
+        ),
         ("t2w", "t2w", has_t2w, "T2w", False),
         ("flair", "flair", has_flair, "FLAIR", False),
         ("flair_postcon", "flair_postcon", has_flair_postcon, "FLAIR", False),

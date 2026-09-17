@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 from pmriprep.config.anat import AnatConfig
+from pmriprep.interfaces.anat import Coregistration
 from pmriprep.workflows.anat.base import (
     _create_acpc_registration_filmstrip,
     _guarded_tissue_segment,
@@ -107,6 +108,23 @@ def test_secondary_modalities_workflow_all_branches() -> None:
             for suffix in ("postcon", "t2w", "flair", "flair_postcon")
         },
     }
+    assert workflow.get_node("coreg_postcon").inputs.modality == "T1_contrast_pair"
+
+
+def test_paired_t1_coregistration_uses_normmi(tmp_path: Path) -> None:
+    """Paired T1w registration uses one cost in either direction."""
+    moving = tmp_path / "moving.nii.gz"
+    reference = tmp_path / "reference.nii.gz"
+    nib.save(nib.Nifti1Image(np.ones((3, 3, 3)), np.eye(4)), moving)
+    nib.save(nib.Nifti1Image(np.ones((3, 3, 3)), np.eye(4)), reference)
+
+    interface = Coregistration(
+        in_file=str(moving),
+        reference=str(reference),
+        modality="T1_contrast_pair",
+    )
+
+    assert "-cost normmi" in interface.cmdline
 
 
 def test_secondary_modalities_workflow_empty_contract() -> None:
@@ -216,9 +234,12 @@ def test_sequence_matched_subtraction_registration_is_independent_of_fast(
         lambda _pre, _post: (Path("postcon.nii.gz"), True, None),
     )
 
+    coregistration_kwargs: dict[str, object] = {}
+
     class _FakeInterface:
-        def __init__(self, **_kwargs: object) -> None:
-            pass
+        def __init__(self, **kwargs: object) -> None:
+            if "modality" in kwargs:
+                coregistration_kwargs.update(kwargs)
 
         def run(self) -> SimpleNamespace:
             return SimpleNamespace(outputs=SimpleNamespace(out_file="prepared.nii.gz"))
@@ -236,6 +257,7 @@ def test_sequence_matched_subtraction_registration_is_independent_of_fast(
     )
     assert prepared == "prepared.nii.gz"
     assert fast_input is None
+    assert coregistration_kwargs["modality"] == "T1_contrast_pair"
 
 
 def test_postcontrast_only_workflow_does_not_build_subtraction(tmp_path: Path) -> None:
