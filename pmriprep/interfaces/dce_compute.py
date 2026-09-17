@@ -1633,19 +1633,12 @@ def _fit_single_voxel(
             all_results = [result]  # primary model already fitted
 
             for cname, cmodel in bic_candidates.items():
-                try:
-                    cand_result = cmodel.fit(
-                        prepared_curve, aif, time_points,
+                cand_result = cmodel.fit(
+                    prepared_curve, aif, time_points,
                     weights=motion_weights,
-                    )
-                    if cand_result.converged and np.isfinite(cand_result.bic):
-                        all_results.append(cand_result)
-                except Exception:
-                    logger.debug(
-                        "BIC candidate %s failed at (%d,%d,%d)",
-                        cname, x, y, z, exc_info=True,
-                    )
-                    continue
+                )
+                if cand_result.converged and np.isfinite(cand_result.bic):
+                    all_results.append(cand_result)
 
             result_names = [candidate.model_name for candidate in all_results]
             winner_idx, selected_delta_bic, _ = _select_auto_bic_winners(
@@ -1790,6 +1783,14 @@ def _fit_single_voxel(
         }
 
     except Exception:
+        # Recoverable optimizer nonconvergence is represented in-band by the
+        # fitters.  In automatic mode an escaping exception would silently
+        # change the candidate set and potentially the winning model, so fail
+        # the run rather than converting it to a per-voxel execution failure.
+        # Fixed-model mode retains explicit failed-voxel accounting because no
+        # alternative model can be selected in response to that failure.
+        if is_auto:
+            raise
         return {
             "coords": (x, y, z),
             "failed": True,
@@ -3762,25 +3763,17 @@ class ComputeDCEMaps(BaseInterface):
         # Auto mode: fit ALL candidate models using batched fitting, select via BIC
         fit_results: dict[str, FitResult] = {}
         for cname in candidate_names:
-            try:
-                fit_results[cname] = self._dispatch_batched_chunks(
-                    model_name=cname,
-                    tissue_curves=tissue_curves,
-                    aif=aif,
-                    time_points=time_points,
-                        weights=motion_weights,
-                    save_fitted_curves=True,
-                    compute_uncertainties=inference == "nlls",
-                    n_procs=n_procs,
-                    n_voxels=n_voxels,
-                )
-            except Exception:
-                logger.warning("Batched auto-mode: model %s failed", cname, exc_info=True)
-
-        if not fit_results:
-            logger.warning("All batched auto-mode models failed, falling to CPU")
-            _init_worker(*init_args)
-            return [_fit_single_voxel(vd) for vd in voxel_data_list]
+            fit_results[cname] = self._dispatch_batched_chunks(
+                model_name=cname,
+                tissue_curves=tissue_curves,
+                aif=aif,
+                time_points=time_points,
+                weights=motion_weights,
+                save_fitted_curves=True,
+                compute_uncertainties=inference == "nlls",
+                n_procs=n_procs,
+                n_voxels=n_voxels,
+            )
 
         # BIC per model per voxel
         _N_PARAMS: dict[str, int] = {

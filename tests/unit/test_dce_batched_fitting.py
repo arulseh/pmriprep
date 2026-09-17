@@ -1476,6 +1476,174 @@ class TestChunkedMultiproc:
             "vp": 0.002,
         }
 
+    def test_batched_auto_propagates_unexpected_candidate_exception(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A candidate implementation error cannot silently reduce the BIC set."""
+        from pmriprep.interfaces.dce_compute import ComputeDCEMaps
+
+        class CandidateImplementationError(Exception):
+            pass
+
+        def fake_dispatch(**kwargs: Any) -> FitResult:
+            if kwargs["model_name"] == "extended_tofts":
+                raise CandidateImplementationError("injected candidate failure")
+            return FitResult(
+                params={"ktrans": np.array([0.1]), "vp": np.array([0.02])},
+                r_squared=np.array([1.0]),
+                converged=np.array([True]),
+                fitted_curves=np.zeros((1, 4)),
+                n_iterations=1,
+                model_name="patlak",
+            )
+
+        interface = ComputeDCEMaps()
+        monkeypatch.setattr(interface, "_dispatch_batched_chunks", fake_dispatch)
+        coords = (np.array([0]), np.array([0]), np.array([0]))
+
+        with pytest.raises(CandidateImplementationError, match="injected"):
+            interface._fit_batched(
+                conc_data=np.zeros((1, 1, 1, 4)),
+                mask_coords=coords,
+                aif=np.zeros(4),
+                time_points=np.arange(4, dtype=float),
+                model_name="auto",
+                inference="nlls",
+                is_auto=True,
+                candidate_names=["patlak", "extended_tofts"],
+                motion_weights=None,
+                save_fitted_curves=False,
+                sloppy=False,
+                mcmc_samples=0,
+                baseline_frames=1,
+                n_procs=1,
+                random_seed=42,
+                init_args=(),
+                voxel_data_list=[],
+            )
+
+    def test_batched_auto_preserves_candidate_nonconvergence(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An optimizer nonconvergence remains an in-band candidate outcome."""
+        from pmriprep.interfaces.dce_compute import ComputeDCEMaps
+
+        def fake_dispatch(**kwargs: Any) -> FitResult:
+            model_name = str(kwargs["model_name"])
+            converged = model_name == "extended_tofts"
+            if converged:
+                params = {
+                    "ktrans": np.array([0.1]),
+                    "ve": np.array([0.3]),
+                    "vp": np.array([0.02]),
+                }
+            else:
+                params = {"ktrans": np.array([0.0]), "vp": np.array([0.0])}
+            return FitResult(
+                params=params,
+                r_squared=np.array([1.0 if converged else -1.0]),
+                converged=np.array([converged]),
+                fitted_curves=np.zeros((1, 4)),
+                n_iterations=1,
+                model_name=model_name,
+            )
+
+        interface = ComputeDCEMaps()
+        monkeypatch.setattr(interface, "_dispatch_batched_chunks", fake_dispatch)
+        coords = (np.array([0]), np.array([0]), np.array([0]))
+        result = interface._fit_batched(
+            conc_data=np.zeros((1, 1, 1, 4)),
+            mask_coords=coords,
+            aif=np.zeros(4),
+            time_points=np.arange(4, dtype=float),
+            model_name="auto",
+            inference="nlls",
+            is_auto=True,
+            candidate_names=["patlak", "extended_tofts"],
+            motion_weights=None,
+            save_fitted_curves=False,
+            sloppy=False,
+            mcmc_samples=0,
+            baseline_frames=1,
+            n_procs=1,
+            random_seed=42,
+            init_args=(),
+            voxel_data_list=[],
+        )[0]
+
+        assert not result["failed"]
+        assert result["selected_model_name"] == "extended_tofts"
+
+    def test_scalar_auto_propagates_unexpected_candidate_exception(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Scalar automatic fitting also fails loudly on candidate code errors."""
+        import pmriprep.interfaces.dce_compute as dce_compute
+        from pmriprep.interfaces.dce_compute import VoxelInput
+        from pmriprep.utils.dsc_cbv_constraint import ConstraintMode
+
+        class CandidateImplementationError(Exception):
+            pass
+
+        class FakeResult:
+            model_name = "patlak"
+            parameters = {"Ktrans": 0.1, "vp": 0.02}
+            r_squared = 1.0
+            converged = True
+            bic = 1.0
+            n_parameters = 2
+            uncertainty_source = "not_computed"
+            fitted_curve = None
+
+            @staticmethod
+            def has_uncertainty() -> bool:
+                return False
+
+        class PrimaryModel:
+            name = "patlak"
+
+            @staticmethod
+            def fit(*args: Any, **kwargs: Any) -> FakeResult:
+                del args, kwargs
+                return FakeResult()
+
+        class BrokenCandidate:
+            @staticmethod
+            def fit(*args: Any, **kwargs: Any) -> None:
+                del args, kwargs
+                raise CandidateImplementationError("injected candidate failure")
+
+        monkeypatch.setattr(
+            dce_compute,
+            "_worker_ctx",
+            {
+                "BayesianPKFitter": object,
+                "create_vp_prior_from_dsc": object,
+                "ConstraintMode": ConstraintMode,
+                "model": PrimaryModel(),
+                "fitter": None,
+                "aif": np.zeros(4),
+                "time_points": np.arange(4, dtype=float),
+                "inference": "nlls",
+                "mcmc_samples": 0,
+                "baseline_frames": 1,
+                "constraint_mode_str": "skip",
+                "constraint_vp_uncertainty": 0.0,
+                "motion_weights": None,
+                "sloppy": False,
+                "is_auto": True,
+                "bic_candidates": {"extended_tofts": BrokenCandidate()},
+                "save_fitted_curves": False,
+            },
+        )
+
+        with pytest.raises(CandidateImplementationError, match="injected"):
+            dce_compute._fit_single_voxel(
+                VoxelInput(
+                    0, 0, 0, np.array([0.0, 0.1, 0.2, 0.3]), None
+                )
+            )
+
     def test_auto_vi_uses_batched_selection_before_refinement(
         self, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
