@@ -156,7 +156,7 @@ class TestDCERegistrationQCMaskRegression:
     ) -> None:
         """If the resampler returns "" (transform unavailable), the DICE
         branch short-circuits but NMI/Correlation still compute unmasked.
-        ``brain_mask_used`` reports False, status is PASS/WARN/POOR.
+        ``brain_mask_used`` reports False and the quantitative gate fails closed.
         """
         from pmriprep.interfaces.dce import DCERegistration
 
@@ -200,7 +200,8 @@ class TestDCERegistrationQCMaskRegression:
         assert "correlation" in qc_metrics
         assert "dice" not in qc_metrics
         assert qc_metrics["brain_mask_used"] is False
-        assert qc_metrics["qc_status"] in {"PASS", "WARN", "POOR"}
+        assert qc_metrics["missing_required_metrics"] == ["dice"]
+        assert qc_metrics["qc_status"] == "UNKNOWN"
 
 
 def test_header_alignment_retained_when_fitted_overlap_is_worse(
@@ -603,3 +604,54 @@ class TestDCERegistrationQCStatusGating:
             )
 
         assert qc_metrics["qc_status"] == expected, qc_metrics
+        assert qc_metrics["qc_status_basis"] == (
+            "final_dce_space_foreground_mask_dice_and_correlation"
+        )
+        assert qc_metrics["qc_status_thresholds"] == {
+            "dice_min": 0.80,
+            "correlation_min": 0.03,
+        }
+        assert "missing_required_metrics" not in qc_metrics
+
+    def test_qc_status_unknown_when_required_metric_fails(
+        self, tmp_path: Path,
+    ) -> None:
+        """A metric implementation error cannot default the transfer gate to PASS."""
+        from pmriprep.interfaces.dce import DCERegistration
+
+        affine = np.eye(4)
+        data = np.random.default_rng(23).uniform(10.0, 100.0, size=(6, 6, 4))
+        mask = np.ones(data.shape, dtype=np.uint8)
+        t1w_file = tmp_path / "t1w.nii.gz"
+        dce_mean_file = tmp_path / "dce_mean.nii.gz"
+        registered_t1w_file = tmp_path / "registered_t1w.nii.gz"
+        mask_file = tmp_path / "brain_mask.nii.gz"
+        out_matrix = tmp_path / "registration.mat"
+        _save_volume(t1w_file, data, affine)
+        _save_volume(dce_mean_file, data, affine)
+        _save_volume(registered_t1w_file, data, affine)
+        _save_volume(mask_file, mask, affine)
+        _identity_flirt_mat(out_matrix)
+
+        interface = DCERegistration()
+        interface.inputs.t1w_file = str(t1w_file)
+        interface.inputs.dce_mean = str(dce_mean_file)
+        interface.inputs.brain_mask = str(mask_file)
+        interface.inputs.out_file = str(registered_t1w_file)
+        interface.inputs.out_matrix = str(out_matrix)
+
+        with patch(
+            "pmriprep.utils.registration.transform_mask_to_grid",
+            return_value=str(mask_file),
+        ), patch(
+            "pmriprep.utils.registration.calculate_correlation_from_files",
+            side_effect=RuntimeError("injected correlation failure"),
+        ):
+            qc_metrics = interface._compute_qc_metrics(
+                str(registered_t1w_file), str(dce_mean_file)
+            )
+
+        assert np.isfinite(qc_metrics["dice"])
+        assert "correlation" not in qc_metrics
+        assert qc_metrics["missing_required_metrics"] == ["correlation"]
+        assert qc_metrics["qc_status"] == "UNKNOWN"

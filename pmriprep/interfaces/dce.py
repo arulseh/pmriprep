@@ -5157,17 +5157,29 @@ class DCERegistration(SimpleInterface):
 
             # Determine overall QC status
             qc_metrics["warnings"] = warnings_list
-            if warnings_list:
-                # Check if any are failures (below min thresholds)
-                dice = qc_metrics.get("dice", 1.0)
-                corr = qc_metrics.get("correlation", 1.0)
-                if (
-                    dice < REG_QC_THRESHOLDS["dice_min"]
-                    or corr < REG_QC_THRESHOLDS["correlation_min"]
-                ):
-                    qc_metrics["qc_status"] = "POOR"
-                else:
-                    qc_metrics["qc_status"] = "WARN"
+            qc_metrics["qc_status_basis"] = (
+                "final_dce_space_foreground_mask_dice_and_correlation"
+            )
+            qc_metrics["qc_status_thresholds"] = {
+                "dice_min": REG_QC_THRESHOLDS["dice_min"],
+                "correlation_min": REG_QC_THRESHOLDS["correlation_min"],
+            }
+            missing_required = [
+                metric for metric in ("dice", "correlation")
+                if not isinstance(qc_metrics.get(metric), (int, float))
+                or not np.isfinite(qc_metrics[metric])
+            ]
+            if missing_required:
+                qc_metrics["missing_required_metrics"] = missing_required
+                qc_metrics["qc_status"] = "UNKNOWN"
+            elif (
+                qc_metrics["dice"] < REG_QC_THRESHOLDS["dice_min"]
+                or qc_metrics["correlation"]
+                < REG_QC_THRESHOLDS["correlation_min"]
+            ):
+                qc_metrics["qc_status"] = "POOR"
+            elif warnings_list:
+                qc_metrics["qc_status"] = "WARN"
             else:
                 qc_metrics["qc_status"] = "PASS"
 
