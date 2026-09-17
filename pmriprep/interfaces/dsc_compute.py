@@ -142,9 +142,13 @@ def _parametric_fit_needs_fallback(
 def _parametric_outputs_are_finite(
     result: dict[str, Any],
     method: str,
+    *,
+    cpi_infer_delay: bool = False,
 ) -> bool:
     """Return whether the quantitative outputs required by a fit are finite."""
-    required = ["cbf", "cbv", "mtt", "tmax"]
+    required = ["cbf", "cbv", "mtt"]
+    if method != "cpi" or cpi_infer_delay:
+        required.append("tmax")
     if method == "vascular":
         required.extend(["alpha", "beta", "cth"])
     return all(
@@ -215,6 +219,7 @@ def _dsc_init_worker(
     _dsc_worker_ctx["dt"] = dt
     _dsc_worker_ctx["motion_weights"] = motion_weights
     _dsc_worker_ctx["sloppy"] = sloppy
+    _dsc_worker_ctx["cpi_infer_delay"] = bool(cpi_infer_delay)
 
     # Pre-build model template so each voxel can cheaply instantiate
     if method == "vascular":
@@ -303,12 +308,21 @@ def _dsc_fit_single_voxel(voxel_data: _DSCVoxelInput) -> dict[str, Any]:
                 out["mtt"] = cbv_val / cbf_val if cbf_val > EPSILON_CONCENTRATION else 0.0
                 # CPI reports the fitted bolus delay (FABBER inferdelay) when
                 # enabled; the residue (CBV/MTT) is delay-invariant. Without
-                # infer_delay the parameter is absent, so tmax is 0.
-                out["tmax"] = float(result.parameters.get("delay", 0.0))
+                # infer_delay, timing was not estimated and must not be
+                # represented as a measured zero.
+                out["tmax"] = (
+                    float(result.parameters.get("delay", np.nan))
+                    if bool(_dsc_worker_ctx.get("cpi_infer_delay"))
+                    else np.nan
+                )
             else:
                 out["cbv"] = 0.0
                 out["mtt"] = 0.0
-                out["tmax"] = 0.0
+                out["tmax"] = (
+                    float(result.parameters.get("delay", np.nan))
+                    if bool(_dsc_worker_ctx.get("cpi_infer_delay"))
+                    else np.nan
+                )
             spacing_values = [
                 float(value)
                 for name, value in result.parameters.items()
@@ -339,7 +353,13 @@ def _dsc_fit_single_voxel(voxel_data: _DSCVoxelInput) -> dict[str, Any]:
         # strict FE-plateau diagnostic even on usable fits.
         if (
             _parametric_fit_needs_fallback(result, inference)
-            or not _parametric_outputs_are_finite(out, method)
+            or not _parametric_outputs_are_finite(
+                out,
+                method,
+                cpi_infer_delay=bool(
+                    _dsc_worker_ctx.get("cpi_infer_delay", False)
+                ),
+            )
         ):
             out["needs_fallback"] = True
 
@@ -1918,6 +1938,16 @@ class ComputeDSCMaps(BaseInterface):
             "method": method,
             "inference": inference,
         }
+        if method == "cpi":
+            qc_metrics["tmax_method"] = (
+                "fitted_cpi_delay"
+                if cpi_infer_delay
+                else "not_estimated_for_retained_cpi"
+            )
+            qc_metrics["fallback_tmax_method"] = "osvd_residue_delay"
+        elif method == "vascular":
+            qc_metrics["tmax_method"] = "fitted_vascular_delay"
+            qc_metrics["fallback_tmax_method"] = "osvd_residue_delay"
 
         # Get mask indices
         mask_coords = np.where(mask > 0)
@@ -2070,7 +2100,11 @@ class ComputeDSCMaps(BaseInterface):
             cbf[x, y, z] = res.get("cbf", 0.0)
             cbv[x, y, z] = res.get("cbv", 0.0)
             mtt[x, y, z] = res.get("mtt", 0.0)
-            tmax[x, y, z] = res.get("tmax", 0.0)
+            tmax[x, y, z] = (
+                np.nan
+                if method == "cpi" and not cpi_infer_delay
+                else res.get("tmax", 0.0)
+            )
 
             if method == "vascular" and not res.get("needs_fallback"):
                 n_vascular_accepted += 1
@@ -2625,7 +2659,7 @@ class ComputeDSCMaps(BaseInterface):
                 if cpi_infer_delay and "delay" in batched_result.params:
                     out["tmax"] = float(batched_result.params["delay"][i])
                 else:
-                    out["tmax"] = 0.0
+                    out["tmax"] = np.nan
                 if cpi_spacing_at_bound is not None:
                     out["cpi_spacing_at_bound"] = bool(
                         cpi_spacing_at_bound[i]
@@ -2659,7 +2693,11 @@ class ComputeDSCMaps(BaseInterface):
                 not admissible
                 or not np.isfinite(r_squared)
                 or r_squared < 0.0
-                or not _parametric_outputs_are_finite(out, method)
+                or not _parametric_outputs_are_finite(
+                    out,
+                    method,
+                    cpi_infer_delay=cpi_infer_delay,
+                )
                 or not fitted_curve_is_finite
                 or (inference == "map" and not bool(out["converged"]))
             )

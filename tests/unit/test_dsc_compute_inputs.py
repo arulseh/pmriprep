@@ -161,6 +161,57 @@ def test_vascular_nlls_worker_returns_parametric_fit() -> None:
     assert result["r_squared"] > 0.999
 
 
+@pytest.mark.parametrize(
+    "infer_delay,expected_tmax",
+    [(False, np.nan), (True, 2.25)],
+)
+def test_cpi_scalar_worker_preserves_delay_setting(
+    infer_delay: bool,
+    expected_tmax: float,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The scalar CPI readout distinguishes absent and fitted timing."""
+    time_points = np.arange(12, dtype=np.float64) * 1.5
+    aif = np.linspace(0.0, 1.0, len(time_points))
+    fitted_residue = np.linspace(0.1, 0.01, len(time_points))
+    fit_result = SimpleNamespace(
+        parameters={"cbf": 0.1, "delay": 2.25},
+        fitted_residue=fitted_residue,
+        fitted_tissue_curve=np.ones_like(time_points),
+        uncertainties={},
+        uncertainty_source="not_computed",
+        r_squared=0.9,
+        converged=True,
+        evaluation_budget_exhausted=False,
+        n_function_evaluations=5,
+        passes_convergence=lambda: True,
+    )
+    monkeypatch.setattr(
+        "pmriprep.models.dsc.fit_dsc_model",
+        lambda **kwargs: fit_result,
+    )
+    _dsc_init_worker(
+        aif=aif,
+        time_points=time_points,
+        method="cpi",
+        inference="nlls",
+        mcmc_samples=500,
+        cpi_control_points=4,
+        bolus_duration_frames=4,
+        dt=1.5,
+        cpi_infer_delay=infer_delay,
+    )
+
+    result = _dsc_fit_single_voxel((0, 0, 0, np.ones_like(time_points)))
+
+    assert result["failed"] is False
+    assert result.get("needs_fallback") is not True
+    if np.isnan(expected_tmax):
+        assert np.isnan(result["tmax"])
+    else:
+        assert result["tmax"] == pytest.approx(expected_tmax)
+
+
 def test_batched_parametric_fallback_uses_minimum_adequacy_rule() -> None:
     """Batched fits retain low-positive R² and reject invalid results."""
     n_voxels = 5
@@ -534,7 +585,10 @@ def test_parametric_delay_bound_contact_is_reported(
         cpi_infer_delay,
     )
 
-    assert result[3][0, 0, 0] == pytest.approx(delay)
+    if method == "cpi" and not cpi_infer_delay:
+        assert np.isnan(result[3][0, 0, 0])
+    else:
+        assert result[3][0, 0, 0] == pytest.approx(delay)
     if at_bound is None:
         assert "delay_at_bound_n" not in result[4]
         assert "delay_at_bound_fraction" not in result[4]
@@ -578,7 +632,7 @@ def test_cpi_spacing_bound_contact_uses_accepted_fit_denominator(
     monkeypatch.setattr(
         "pmriprep.utils.dsc_deconvolution.svd_deconvolve_oscillation",
         lambda *args, **kwargs: SimpleNamespace(
-            cbf=0.2, cbv=0.3, mtt=1.5, delay=0.0
+            cbf=0.2, cbv=0.3, mtt=1.5, delay=2.5
         ),
     )
 
@@ -601,6 +655,11 @@ def test_cpi_spacing_bound_contact_uses_accepted_fit_denominator(
     else:
         assert "cpi_spacing_at_bound_n" not in result[4]
         assert "cpi_spacing_at_bound_fraction" not in result[4]
+    assert np.isnan(result[3][0, 0, 0])
+    assert np.isnan(result[3][1, 0, 0])
+    assert result[3][2, 0, 0] == pytest.approx(2.5)
+    assert result[4]["tmax_method"] == "not_estimated_for_retained_cpi"
+    assert result[4]["fallback_tmax_method"] == "osvd_residue_delay"
 
 
 def test_prepare_baseline_preserves_pass_through_k2(

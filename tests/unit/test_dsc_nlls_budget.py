@@ -97,6 +97,23 @@ def test_nonfinite_derived_output_falls_back() -> None:
     assert not _parametric_outputs_are_finite(output, "cpi")
 
 
+def test_unestimated_default_cpi_timing_does_not_trigger_fallback() -> None:
+    """NaN timing is expected when default CPI does not fit delay."""
+    output = {
+        "cbf": 0.1,
+        "cbv": 0.4,
+        "mtt": 4.0,
+        "tmax": float("nan"),
+    }
+
+    assert _parametric_outputs_are_finite(output, "cpi")
+    assert not _parametric_outputs_are_finite(
+        output,
+        "cpi",
+        cpi_infer_delay=True,
+    )
+
+
 def test_nonbudget_nlls_failure_falls_back() -> None:
     """Other solver failures remain distinct from controlled termination."""
     result = DSCFitResult(

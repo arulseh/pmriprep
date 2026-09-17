@@ -1238,7 +1238,7 @@ class TestCPIReadoutResidueParity:
             exp_cbv = cbf[i] * float(np.trapezoid(R[i], dx=dt))
             assert out["cbv"] == pytest.approx(exp_cbv, abs=1e-10)
             assert out["mtt"] == pytest.approx(exp_cbv / cbf[i], abs=1e-10)
-            assert out["tmax"] == 0.0
+            assert np.isnan(out["tmax"])
 
     def test_readout_cbv_depends_on_last_fraction(self, dsc_aif_and_time):
         # Pre-fix the readout dropped fN, so CBV was exactly invariant to it;

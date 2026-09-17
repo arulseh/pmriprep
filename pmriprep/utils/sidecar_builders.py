@@ -1140,6 +1140,18 @@ def build_dsc_map_sidecar(
         method_metrics = (
             deconvolution if isinstance(deconvolution, dict) else qc_metrics
         )
+        tmax_method = method_metrics.get(
+            "tmax_method",
+            qc_metrics.get("tmax_method"),
+        )
+        if tmax_method is not None:
+            sidecar["TmaxMethod"] = str(tmax_method)
+        fallback_tmax_method = method_metrics.get(
+            "fallback_tmax_method",
+            qc_metrics.get("fallback_tmax_method"),
+        )
+        if fallback_tmax_method is not None:
+            sidecar["FallbackTmaxMethod"] = str(fallback_tmax_method)
         at_bound_fraction = method_metrics.get(
             "delay_at_bound_fraction",
             qc_metrics.get("delay_at_bound_fraction"),

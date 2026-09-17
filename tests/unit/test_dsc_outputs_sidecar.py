@@ -196,16 +196,24 @@ def test_tmax_sidecar_reports_fitted_delay_bound_occupancy(nested: bool) -> None
     )
 
 
-def test_tmax_sidecar_omits_bound_occupancy_when_delay_is_not_fitted() -> None:
-    """Default CPI does not label its assumed zero Tmax as a fitted delay."""
+def test_tmax_sidecar_reports_unestimated_default_cpi_timing() -> None:
+    """Default CPI distinguishes unestimated timing from measured zero."""
     sidecar = build_dsc_map_sidecar(
         base={},
         description="CPI Tmax",
         map_key="tmax",
-        qc_metrics={"deconvolution": {"method": "cpi"}},
+        qc_metrics={
+            "deconvolution": {
+                "method": "cpi",
+                "tmax_method": "not_estimated_for_retained_cpi",
+                "fallback_tmax_method": "osvd_residue_delay",
+            },
+        },
         units="s",
     )
 
+    assert sidecar["TmaxMethod"] == "not_estimated_for_retained_cpi"
+    assert sidecar["FallbackTmaxMethod"] == "osvd_residue_delay"
     assert "FittedDelayAtBoundFraction" not in sidecar
 
 

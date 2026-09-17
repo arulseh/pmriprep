@@ -1306,7 +1306,7 @@ class TestBatchedMAPCPIRecovery:
             assert outs[i]["cbv"] == pytest.approx(
                 outs[i]["cbf"] * outs[i]["mtt"], rel=1e-6
             )
-            assert outs[i]["tmax"] == 0.0  # no infer_delay
+            assert np.isnan(outs[i]["tmax"])  # timing was not inferred
 
 
 class TestCPIDelayRecovery:
