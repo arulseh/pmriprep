@@ -1,15 +1,7 @@
-"""Batched fitting for DSC perfusion models.
+"""Shared batched VI/SVB support and vascular MAP fitting.
 
-This module provides batched forward model evaluation, Variational Bayes
-fitting, and MAP fitting for DSC-MRI parametric models (CPI and Vascular).
-The key optimization is vectorizing forward model evaluations across all
-voxels simultaneously.
-
-Supported models:
-
-- **CPI**: Control-point interpolation with PCHIP residue functions.
-  Vectorized Fritsch-Carlson PCHIP on CPU + shared Toeplitz matmul.
-- **Vascular**: Gamma-variate residue with FFT convolution + delay shift.
+Signal-domain CPI supplies its forward model through the VI adapter.
+Vascular fitting uses the product-integration concentration operator.
 """
 
 from __future__ import annotations
@@ -32,9 +24,14 @@ from pmriprep.models.bayesian_utils import (
     transform_prior,
 )
 from pmriprep.models.dsc.convolution import (
-    _apply_post_hoc_delay_shift as _apply_post_hoc_delay_shift,
     apply_convolution_delay,
 )
+from pmriprep.models.dsc.vi_adapter import (
+    DSCVIModelAdapter,
+    DSCVIPosterior,
+    feasible_mean_update,
+)
+from pmriprep.models.dsc.local_vi import conditional_mean_gain, local_vi_state
 from pmriprep.utils.dsc_constants import (
     EPSILON_CONCENTRATION,
 )
@@ -68,9 +65,9 @@ def _build_vi_update_prior_terms(
     prior_means_t : npt.NDArray[np.floating]
         Independent-prior means in transformed space.
     mono_prec : npt.NDArray[np.floating], optional
-        Structural CPI monotonicity precision.
+        Structural monotonicity precision.
     mono_eta : npt.NDArray[np.floating], optional
-        Structural CPI monotonicity information-vector contribution.
+        Structural monotonicity information-vector contribution.
     spatial_replaces_parameter_prior : bool
         Whether a boundary-corrected FABBER M-prior replaces the independent
         parameter prior.
@@ -128,8 +125,9 @@ class DSCBatchedFitResult:
         converged: Convergence flags, shape (N,).
         fitted_curves: Fitted tissue curves, shape (N, T) or None.
         n_iterations: Number of fitting iterations performed.
-        model_name: Name of the fitted model ('cpi' or 'vascular').
+        model_name: Name of the fitted vascular model or VI adapter.
         uncertainties: Parameter uncertainties, param_name -> (N,).
+        full_posterior: Optional complete local Gaussian/Gamma factors.
     """
 
     # Use Mapping (covariant) rather than dict (invariant) so callers can
@@ -151,6 +149,7 @@ class DSCBatchedFitResult:
     credible_interval_upper: Mapping[str, npt.NDArray[np.floating]] = field(
         default_factory=dict
     )
+    full_posterior: DSCVIPosterior | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -214,7 +213,7 @@ def batched_vascular_forward(
 
     # Forward via the shared (1, 4, 1)/6 product-integration operator: per voxel
     # C = A @ R, batched as C = R @ Aᵀ. One quadrature across
-    # every direct forward (sSVD/Tikhonov/CPI/vascular), matching the scalar
+    # the sSVD/Tikhonov/vascular forward, matching the scalar
     # tissue_curve. The delay shift is applied AFTER, matching the scalar model.
     A = volterra_matrix if volterra_matrix is not None else build_volterra_matrix(aif, dt)
     conv = R @ A.T
@@ -229,411 +228,6 @@ def batched_vascular_forward(
         ),
     )
 
-
-# ---------------------------------------------------------------------------
-# Batched CPI forward model
-# ---------------------------------------------------------------------------
-
-
-def _append_terminal_anchor(
-    cp_times: npt.NDArray[np.floating],
-    cp_vals: npt.NDArray[np.floating],
-    t_terminal: float | None = None,
-) -> tuple[npt.NDArray[np.floating], npt.NDArray[np.floating]]:
-    """Append terminal R=0 anchor (and prepend t=0 anchor) for shared CP grid.
-
-    Mirrors FABBER's CPI boundary conditions: prepend (t=0, amp=1) when the
-    first CP sits beyond t=0, and append (t_terminal, amp=0).
-
-    Parameters
-    ----------
-    cp_times : npt.NDArray[np.floating]
-        Control point times, shape (K,).
-    cp_vals : npt.NDArray[np.floating]
-        Control point values, shape (N, K).
-    t_terminal : float or None, optional
-        Optional explicit terminal time. If None, defaults to
-        ``cp_times[-1] + (cp_times[-1] - cp_times[-2])``.
-
-    Returns
-    -------
-    tuple[npt.NDArray[np.floating], npt.NDArray[np.floating]]
-        Extended (cp_times, cp_vals) with anchors applied.
-    """
-    if t_terminal is None:
-        spacing = float(cp_times[-1] - cp_times[-2]) if len(cp_times) >= 2 else 1.0
-        t_terminal = float(cp_times[-1]) + spacing
-
-    n_voxels = cp_vals.shape[0]
-    if float(cp_times[0]) > 0.0:
-        cp_times_ext = np.concatenate([[0.0], cp_times, [t_terminal]])
-        ones = np.ones((n_voxels, 1), dtype=cp_vals.dtype)
-        zeros = np.zeros((n_voxels, 1), dtype=cp_vals.dtype)
-        cp_vals_ext = np.concatenate([ones, cp_vals, zeros], axis=1)
-    else:
-        cp_times_ext = np.append(cp_times, t_terminal)
-        zeros = np.zeros((n_voxels, 1), dtype=cp_vals.dtype)
-        cp_vals_ext = np.concatenate([cp_vals, zeros], axis=1)
-    return cp_times_ext, cp_vals_ext
-
-
-def _append_terminal_anchor_per_voxel(
-    cp_times: npt.NDArray[np.floating],
-    cp_vals: npt.NDArray[np.floating],
-) -> tuple[npt.NDArray[np.floating], npt.NDArray[np.floating]]:
-    """Per-voxel variant of ``_append_terminal_anchor`` (for ``infer_cpt``).
-
-    Parameters
-    ----------
-    cp_times : npt.NDArray[np.floating]
-        Control point times per voxel, shape (N, K).
-    cp_vals : npt.NDArray[np.floating]
-        Control point values, shape (N, K).
-
-    Returns
-    -------
-    tuple[npt.NDArray[np.floating], npt.NDArray[np.floating]]
-        Extended (cp_times, cp_vals) each shape (N, K+2): prepended (0, 1)
-        and appended (t_terminal, 0) per voxel.
-    """
-    n_voxels, n_cp = cp_vals.shape
-    last_spacing = (cp_times[:, -1] - cp_times[:, -2]) if n_cp >= 2 else np.ones(n_voxels)
-    t_term = cp_times[:, -1] + last_spacing  # (N,)
-
-    zeros = np.zeros((n_voxels, 1), dtype=cp_vals.dtype)
-    ones = np.ones((n_voxels, 1), dtype=cp_vals.dtype)
-    leading_t = np.zeros((n_voxels, 1), dtype=cp_times.dtype)
-    cp_times_ext = np.concatenate([leading_t, cp_times, t_term[:, None]], axis=1)
-    cp_vals_ext = np.concatenate([ones, cp_vals, zeros], axis=1)
-    return cp_times_ext, cp_vals_ext
-
-
-def batched_cpi_residue(
-    params: npt.NDArray[np.floating],
-    time_points: npt.NDArray[np.floating],
-    control_point_times: npt.NDArray[np.floating],
-    t_terminal: float | None = None,
-    infer_delay: bool = False,
-) -> npt.NDArray[np.floating]:
-    """Batched dimensionless CPI residue R_norm(t) for N voxels.
-
-    Shared residue construction for both the forward model
-    (:func:`batched_cpi_forward`) and the CBV/MTT readout, so the two cannot
-    drift apart. Builds the PCHIP-interpolated residue from the multiplicative
-    fraction parameters, with the (t=0, amp=1) boundary anchor and the terminal
-    R=0 anchor applied at construction time. Output is independent of CBF.
-
-    Supports both fixed and per-voxel control point times. When ``params`` has
-    width ``1 + 2*n_cp``, columns ``[1+n_cp..2*n_cp]`` are log-spacings between
-    CPs (FABBER ``infer-cpt``) and per-voxel CP times are reconstructed via
-    cumulative sum; otherwise the fixed ``control_point_times`` are used.
-
-    Parameters
-    ----------
-    params : npt.NDArray[np.floating]
-        Parameter matrix, shape (N, P). P = 1 + n_cp: column 0 = CBF (not used
-        here), columns 1..n_cp = fractions. P = 1 + 2*n_cp: above plus columns
-        [1+n_cp..2*n_cp] = log-spacings.
-    time_points : npt.NDArray[np.floating]
-        Time points (seconds), shape (T,).
-    control_point_times : npt.NDArray[np.floating]
-        Default control point time locations, shape (n_cp,).
-    t_terminal : float or None, optional
-        Terminal anchor time (seconds) for the fixed-CP layout. If None,
-        defaults to ``control_point_times[-1] + spacing``.
-    infer_delay : bool, optional
-        Whether ``params`` carries a trailing ``delay`` column (delay-agnostic
-        here; only widens the layout check so the column is not mistaken for a
-        log-spacing).
-
-    Returns
-    -------
-    npt.NDArray[np.floating]
-        Dimensionless residue R_norm in [0, 1], shape (N, T).
-    """
-    n_cp = len(control_point_times)
-    # FABBER layout: params = [cbf, f_1..f_N] (no infer_cpt) or
-    # [cbf, f_1..f_N, s_1..s_N] (infer_cpt), with an optional trailing `delay`
-    # column when infer_delay. All N fractions are free; the (t=0, amp=1) BC is
-    # added at PCHIP-construction time. The delay column does not affect R(t).
-    has_log_spacings = params.shape[1] == 1 + 2 * n_cp + (1 if infer_delay else 0)
-
-    # Cumulative product of multiplicative fractions: R(tpos[k]) = f1*...*fk
-    fracs = np.clip(params[:, 1 : 1 + n_cp], 0.0, 1.0)  # (N, n_cp)
-    cp_vals: npt.NDArray[np.floating] = np.cumprod(fracs, axis=1).astype(np.float64)
-
-    R_norm: npt.NDArray[np.floating]
-    if has_log_spacings:
-        log_s = params[:, 1 + n_cp : 1 + 2 * n_cp]  # (N, n_cp)
-        spacings = np.exp(np.clip(log_s, -50.0, 50.0))
-        per_voxel_cp_times = np.cumsum(spacings, axis=1)
-        cp_times_ext, cp_vals_ext = _append_terminal_anchor_per_voxel(
-            per_voxel_cp_times, cp_vals
-        )
-        R_norm = _batched_pchip_per_voxel(cp_times_ext, cp_vals_ext, time_points)
-    else:
-        cp_times_ext, cp_vals_ext = _append_terminal_anchor(
-            control_point_times, cp_vals, t_terminal=t_terminal,
-        )
-        R_norm = _batched_pchip(cp_times_ext, cp_vals_ext, time_points)
-
-    R_norm = np.clip(R_norm, 0.0, 1.0)  # (N, T)
-    return R_norm
-
-
-def batched_cpi_forward(
-    params: npt.NDArray[np.floating],
-    aif: npt.NDArray[np.floating],
-    time_points: npt.NDArray[np.floating],
-    control_point_times: npt.NDArray[np.floating],
-    toeplitz_matrix: npt.NDArray[np.floating],
-    t_terminal: float | None = None,
-    infer_delay: bool = False,
-) -> npt.NDArray[np.floating]:
-    """Batched CPI model forward evaluation for N voxels.
-
-    Computes tissue concentration via the PCHIP-interpolated residue convolved
-    with the AIF using a precomputed (1,4,1)/6 convolution matrix.
-
-    C_tissue(t) = CBF * (A @ R_norm(t))
-
-    Supports both fixed and per-voxel control point times. When ``params`` has
-    width ``1 + 2*n_cp``, columns ``[1+n_cp..2*n_cp]`` are log-spacings between
-    CPs (FABBER ``infer-cpt``) and per-voxel CP times are reconstructed via
-    cumulative sum.
-
-    Parameters
-    ----------
-    params : npt.NDArray[np.floating]
-        Parameter matrix, shape (N, P). P = 1 + n_cp: column 0 = CBF, columns
-        1..n_cp = fractions. P = 1 + 2*n_cp: above plus columns
-        [1+n_cp..2*n_cp] = log-spacings.
-    aif : npt.NDArray[np.floating]
-        Arterial input function, shape (T,).
-    time_points : npt.NDArray[np.floating]
-        Time points (seconds), shape (T,).
-    control_point_times : npt.NDArray[np.floating]
-        Default control point time locations, shape (K,).
-    toeplitz_matrix : npt.NDArray[np.floating]
-        Precomputed (1,4,1)/6 convolution matrix, shape (T, T).
-    t_terminal : float or None, optional
-        Terminal anchor time (seconds) for fixed-CP layout.
-    infer_delay : bool, optional
-        If True, ``params[:, -1]`` is a per-voxel bolus delay applied as a
-        post-hoc shift of the convolved curve (residue/CBV/MTT unaffected).
-
-    Returns
-    -------
-    npt.NDArray[np.floating]
-        Tissue concentration curves, shape (N, T).
-    """
-    n_voxels = params.shape[0]
-    n_times = len(time_points)
-
-    cbf = params[:, 0]  # (N,)
-    R_norm = batched_cpi_residue(
-        params, time_points, control_point_times, t_terminal=t_terminal,
-        infer_delay=infer_delay,
-    )
-
-    # Toeplitz matmul: C = CBF * (A @ R_norm^T)^T
-    # Memory batching: (T,T) @ (T,N) costs T*N*8 bytes for the result.
-    # For N=200K, T=100: ~160MB. Batch to keep under ~500MB.
-    _MAX_BATCH = 20000  # ~16MB per batch at T=100
-    tissue = np.zeros((n_voxels, n_times), dtype=np.float64)
-    for start in range(0, n_voxels, _MAX_BATCH):
-        end = min(start + _MAX_BATCH, n_voxels)
-        tissue[start:end] = cbf[start:end, None] * (
-            toeplitz_matrix @ R_norm[start:end].T
-        ).T
-
-    # Delay changes the tissue curve, not the residue used for CBV/MTT.
-    if infer_delay:
-        if n_times < 2:
-            return _apply_post_hoc_delay_shift(tissue, params[:, -1], 1.0)
-        return apply_convolution_delay(
-            tissue, R_norm, aif, time_points, params[:, -1],
-            lambda rows, grid: batched_cpi_residue(
-                params[rows], grid, control_point_times,
-                t_terminal=t_terminal, infer_delay=True,
-            ),
-            residue_scale=cbf,
-        )
-
-    return tissue
-
-
-def _batched_pchip(
-    x: npt.NDArray[np.floating],
-    y: npt.NDArray[np.floating],
-    xi: npt.NDArray[np.floating],
-) -> npt.NDArray[np.floating]:
-    """Vectorized PCHIP interpolation for N sets of y-values.
-
-    Uses Fritsch-Carlson monotone slopes computed on (N, K) arrays
-    simultaneously, avoiding per-voxel scipy.interpolate calls.
-
-    Parameters
-    ----------
-    x : npt.NDArray[np.floating]
-        Knot positions, shape (K,). Must be strictly increasing.
-    y : npt.NDArray[np.floating]
-        Knot values, shape (N, K).
-    xi : npt.NDArray[np.floating]
-        Evaluation points, shape (T,).
-
-    Returns
-    -------
-    npt.NDArray[np.floating]
-        Interpolated values, shape (N, T).
-    """
-    _, n_knots = y.shape
-
-    # Compute intervals and slopes
-    h = np.diff(x)  # (K-1,)
-    delta = np.diff(y, axis=1) / h[None, :]  # (N, K-1)
-
-    # Fritsch-Carlson monotone slopes
-    d = np.zeros_like(y)  # (N, K)
-
-    # Interior slopes
-    for k in range(1, n_knots - 1):
-        d1 = delta[:, k - 1]
-        d2 = delta[:, k]
-        # Where signs differ or either is zero → slope = 0
-        same_sign = (d1 * d2) > 0
-        # Harmonic mean for monotone interpolation
-        d[:, k] = np.where(
-            same_sign,
-            2.0 * d1 * d2 / (d1 + d2 + 1e-300),
-            0.0,
-        )
-
-    # Endpoint slopes (one-sided)
-    d[:, 0] = delta[:, 0]
-    d[:, -1] = delta[:, -1]
-
-    # Clamp endpoint slopes for monotonicity
-    for endpoint, side in [(0, 0), (-1, -1)]:
-        sign_match = d[:, endpoint] * delta[:, side] > 0
-        d[:, endpoint] = np.where(sign_match, d[:, endpoint], 0.0)
-
-    # Find intervals for each evaluation point
-    # np.searchsorted returns index of rightmost knot <= xi
-    indices = np.searchsorted(x, xi, side='right') - 1
-    indices = np.clip(indices, 0, n_knots - 2)  # (T,)
-
-    # Hermite basis evaluation
-    t_local = (xi - x[indices]) / h[indices]  # (T,) normalized [0, 1]
-    t_local = np.clip(t_local, 0.0, 1.0)
-
-    # Hermite basis functions
-    t2 = t_local ** 2
-    t3 = t_local ** 3
-    h00 = 2 * t3 - 3 * t2 + 1      # (T,)
-    h10 = t3 - 2 * t2 + t_local     # (T,)
-    h01 = -2 * t3 + 3 * t2          # (T,)
-    h11 = t3 - t2                    # (T,)
-
-    # Gather values at interval boundaries for all voxels
-    y0 = y[:, indices]              # (N, T)
-    y1 = y[:, indices + 1]          # (N, T)
-    d0 = d[:, indices] * h[indices] # (N, T) — scale slopes by interval width
-    d1 = d[:, indices + 1] * h[indices]
-
-    # Evaluate: result = h00*y0 + h10*d0 + h01*y1 + h11*d1
-    result: npt.NDArray[np.floating] = (
-        h00[None, :] * y0
-        + h10[None, :] * d0
-        + h01[None, :] * y1
-        + h11[None, :] * d1
-    )
-
-    return result
-
-
-def _batched_pchip_per_voxel(
-    x: npt.NDArray[np.floating],
-    y: npt.NDArray[np.floating],
-    xi: npt.NDArray[np.floating],
-) -> npt.NDArray[np.floating]:
-    """Per-voxel PCHIP for ``infer_cpt`` (CP times vary per voxel).
-
-    Parameters
-    ----------
-    x : npt.NDArray[np.floating]
-        Knot positions per voxel, shape (N, K). Must be strictly
-        increasing along axis=1.
-    y : npt.NDArray[np.floating]
-        Knot values per voxel, shape (N, K).
-    xi : npt.NDArray[np.floating]
-        Evaluation points (shared), shape (T,).
-
-    Returns
-    -------
-    npt.NDArray[np.floating]
-        Interpolated values, shape (N, T).
-    """
-    n_voxels, n_knots = y.shape
-    n_eval = len(xi)
-
-    h = np.diff(x, axis=1)  # (N, K-1)
-    h = np.where(h <= 0.0, 1e-12, h)
-    delta = np.diff(y, axis=1) / h  # (N, K-1)
-
-    d = np.zeros_like(y)  # (N, K)
-
-    # Interior slopes — Fritsch-Carlson harmonic mean
-    if n_knots >= 3:
-        d1 = delta[:, :-1]  # (N, K-2)
-        d2 = delta[:, 1:]
-        same_sign = (d1 * d2) > 0
-        d[:, 1:-1] = np.where(
-            same_sign,
-            2.0 * d1 * d2 / (d1 + d2 + 1e-300),
-            0.0,
-        )
-
-    # Endpoint slopes (one-sided)
-    d[:, 0] = delta[:, 0]
-    d[:, -1] = delta[:, -1]
-
-    # Clamp endpoint slopes for monotonicity
-    sign0 = d[:, 0] * delta[:, 0] > 0
-    d[:, 0] = np.where(sign0, d[:, 0], 0.0)
-    signN = d[:, -1] * delta[:, -1] > 0
-    d[:, -1] = np.where(signN, d[:, -1], 0.0)
-
-    # Per-voxel intervals: searchsorted broadcast in a small Python loop
-    # (n_voxels can be 100k+ but n_eval ~50 so this is dominated by numpy ops)
-    result = np.zeros((n_voxels, n_eval), dtype=np.float64)
-    for v in range(n_voxels):
-        xv = x[v]
-        idx = np.searchsorted(xv, xi, side='right') - 1
-        idx = np.clip(idx, 0, n_knots - 2)
-        hv = h[v, idx]
-        t_local = (xi - xv[idx]) / hv
-        t_local = np.clip(t_local, 0.0, 1.0)
-
-        t2 = t_local ** 2
-        t3 = t_local ** 3
-        h00 = 2 * t3 - 3 * t2 + 1
-        h10 = t3 - 2 * t2 + t_local
-        h01 = -2 * t3 + 3 * t2
-        h11 = t3 - t2
-
-        y0 = y[v, idx]
-        y1 = y[v, idx + 1]
-        d0 = d[v, idx] * hv
-        d1v = d[v, idx + 1] * hv
-        result[v] = h00 * y0 + h10 * d0 + h01 * y1 + h11 * d1v
-
-    return result
-
-
-# ---------------------------------------------------------------------------
-# Shared helpers for batched fitting (VI and MAP)
-# ---------------------------------------------------------------------------
 
 _FD_REL = 1e-5
 _FD_FLOOR = 1e-10
@@ -783,6 +377,20 @@ def _assemble_JtWJ(
     n_active = J_columns[0].shape[0]
     JtWJ = np.zeros((n_active, n_params, n_params))
     JtWk = np.zeros((n_active, n_params))
+    if n_params >= 16 and all(column.flags.c_contiguous for column in J_columns):
+        jacobian = np.asarray(J_columns)
+        weighted = w[None, None, :] * jacobian
+        JtWk[:] = np.sum(weighted * k_res[None], axis=2).T
+        rows, columns = np.triu_indices(n_params)
+        # Bound the two gathered column blocks and their product together.
+        pair_bytes = max(1, 3 * n_active * k_res.shape[1] * jacobian.itemsize)
+        block_size = max(1, min(64, 8_000_000 // pair_bytes))
+        for first in range(0, rows.size, block_size):
+            js, ks = rows[first:first+block_size], columns[first:first+block_size]
+            values = np.sum(weighted[js] * jacobian[ks], axis=2).T
+            JtWJ[:, js, ks] = values
+            JtWJ[:, ks, js] = values
+        return JtWJ, JtWk
     for j in range(n_params):
         wJ_j = w[None, :] * J_columns[j]
         JtWk[:, j] = np.sum(wJ_j * k_res, axis=1)
@@ -1025,10 +633,6 @@ def batched_dsc_vi_fit(
     fitting_bounds: list[tuple[float, float]],
     mono_prec: Optional[npt.NDArray[np.floating]] = None,
     mono_eta: Optional[npt.NDArray[np.floating]] = None,
-    control_point_times: Optional[npt.NDArray[np.floating]] = None,
-    toeplitz_matrix: Optional[npt.NDArray[np.floating]] = None,
-    cpi_t_terminal: Optional[float] = None,
-    cpi_infer_delay: bool = False,
     nlls_seeds: Optional[npt.NDArray[np.floating]] = None,
     prior_means_transformed: Optional[npt.NDArray[np.floating]] = None,
     prior_stds_transformed: Optional[npt.NDArray[np.floating]] = None,
@@ -1047,11 +651,13 @@ def batched_dsc_vi_fit(
     n_iterations_override: Optional[int] = None,
     nprocs: int = 1,
     parallel_chunk_min: int = 5000,
+    model_adapter: DSCVIModelAdapter | None = None,
+    return_full_posterior: bool = False,
 ) -> DSCBatchedFitResult:
     """Batched Variational Bayes fitting for DSC perfusion models.
 
     Implements the linearized VB algorithm vectorized across all voxels.
-    Supports both CPI and Vascular models.
+    Supports the vascular model or an explicitly supplied model adapter.
 
     Vascular bounds constrain the local Gaussian mean updates, including
     spatial updates. Covariance remains a local Gaussian approximation;
@@ -1060,7 +666,7 @@ def batched_dsc_vi_fit(
     Parameters
     ----------
     model_type : str
-        'cpi' or 'vascular'.
+        Vascular model; VI also accepts the supplied adapter's identifier.
     tissue_curves : npt.NDArray[np.floating]
         Observed tissue curves, shape (N, T).
     aif : npt.NDArray[np.floating]
@@ -1080,11 +686,7 @@ def batched_dsc_vi_fit(
     fitting_bounds : list[tuple[float, float]]
         Per-parameter bounds in fitting space, length P.
     mono_prec : npt.NDArray[np.floating], optional
-        CPI monotonicity precision matrix, shape (P, P) or None.
-    control_point_times : npt.NDArray[np.floating], optional
-        CPI control point times, shape (K,) or None.
-    toeplitz_matrix : npt.NDArray[np.floating], optional
-        Precomputed Toeplitz matrix, shape (T, T) or None.
+        Structural monotonicity precision matrix, shape (P, P) or None.
     nlls_seeds : npt.NDArray[np.floating], optional
         NLLS seed parameters for initialization, shape (N, P) or None.
     prior_means_transformed : npt.NDArray[np.floating], optional
@@ -1111,7 +713,7 @@ def batched_dsc_vi_fit(
     spatial_replaces_parameter_prior : bool, optional
         Replace the independent parameter prior with ``spatial_prec_diag`` and
         ``spatial_eta``, matching FABBER's boundary-corrected M-prior. Structural
-        CPI monotonicity terms remain active. Requires both spatial arrays.
+        Structural monotonicity terms remain active. Requires both spatial arrays.
     spatial_parameter_mask : npt.NDArray[np.bool_], optional
         Boolean parameter selector for M-prior replacement, shape (P,).
     initial_means_transformed : npt.NDArray[np.floating], optional
@@ -1144,12 +746,24 @@ def batched_dsc_vi_fit(
         Minimum voxel count to actually use the
         parallel path when ``nprocs > 1``. Default 5000 — below this,
         the worker spawn + import overhead (~1-3s per worker) dominates.
+    model_adapter : DSCVIModelAdapter, optional
+        Observation prediction, natural-coordinate Jacobian and mean domain.
+        Overrides the built-in forward model and concentration-specific flow
+        derivative. Requires single-process execution; evaluation remains batched.
+    return_full_posterior : bool, optional
+        Retain full within-voxel covariance and Gamma noise factors for
+        diagnostics/model comparison. Requires single-process execution.
 
     Returns
     -------
     DSCBatchedFitResult
         DSCBatchedFitResult with fitted parameters, R², convergence, uncertainties.
     """
+    if nprocs != 1 and (model_adapter is not None or return_full_posterior):
+        raise ValueError("model adapters and full posterior output require nprocs=1")
+    if model_adapter is None and model_type != "vascular":
+        raise ValueError(f"Unsupported DSC model without an adapter: {model_type}")
+
     # ----- Multiprocess dispatch -----
     # When nprocs > 1 and the voxel batch is large enough to amortise
     # worker spawn overhead, split the voxel axis across worker
@@ -1179,10 +793,6 @@ def batched_dsc_vi_fit(
                 fitting_bounds=fitting_bounds,
                 mono_prec=mono_prec,
                 mono_eta=mono_eta,
-                control_point_times=control_point_times,
-                toeplitz_matrix=toeplitz_matrix,
-                cpi_t_terminal=cpi_t_terminal,
-                cpi_infer_delay=cpi_infer_delay,
                 nlls_seeds=nlls_seeds,
                 prior_means_transformed=prior_means_transformed,
                 prior_stds_transformed=prior_stds_transformed,
@@ -1252,6 +862,11 @@ def batched_dsc_vi_fit(
         n_iterations = 8
     # Disables ELBO step-size/convergence (spatial_vb.py is sole consumer)
     _spatial_mode = n_iterations_override is not None
+    _consistent_mode = model_adapter is not None and not _spatial_mode
+    if _consistent_mode and (spatial_prec_diag is not None or spatial_eta is not None):
+        raise ValueError("consistent local factors require ordinary non-spatial VI")
+    if _consistent_mode and n_iterations < 1:
+        raise ValueError("consistent local fitting requires at least one iteration")
 
     # Pre-filter: exclude voxels with negligible signal
     voxel_max = np.max(np.abs(tissue_curves), axis=1)
@@ -1271,6 +886,12 @@ def batched_dsc_vi_fit(
             params=out_params, r_squared=out_r2, converged=out_converged,
             fitted_curves=None, n_iterations=0, model_name=model_type,
             uncertainties=out_uncertainties,
+            full_posterior=DSCVIPosterior(
+                np.full((n_voxels, n_params), np.nan),
+                np.full((n_voxels, n_params, n_params), np.nan),
+                np.full(n_voxels, np.nan),
+                np.full(n_voxels, np.nan),
+            ) if return_full_posterior else None,
         )
 
     y = tissue_curves[valid_idx]  # (N_valid, T)
@@ -1291,12 +912,12 @@ def batched_dsc_vi_fit(
             )
     prior_prec = np.diag(1.0 / (prior_stds_t ** 2))
 
-    # Add CPI monotonicity penalty
+    # Add Structural monotonicity penalty
     if mono_prec is not None:
         prior_prec = prior_prec + mono_prec
 
     # FABBER's boundary-corrected M-prior replaces the independent parameter
-    # prior rather than adding to it. Structural CPI monotonicity terms remain.
+    # prior rather than adding to it. Structural monotonicity terms remain.
     update_prior_prec, update_prior_eta = _build_vi_update_prior_terms(
         prior_prec,
         prior_means_t,
@@ -1319,7 +940,7 @@ def batched_dsc_vi_fit(
     bounds_hi = np.array([b[1] for b in fitting_bounds])
 
     transformed_bounds = None
-    if model_type == "vascular":
+    if model_type == "vascular" or model_adapter is not None:
         lower_t = np.full(n_params, -np.inf)
         upper_t = np.full(n_params, np.inf)
         for j, (transform, (lo, hi)) in enumerate(zip(transforms, fitting_bounds)):
@@ -1368,6 +989,16 @@ def batched_dsc_vi_fit(
 
     def _evaluate(params_fitting: npt.NDArray[np.floating]) -> npt.NDArray[np.floating]:
         """Evaluate forward model from fitting-space natural parameters."""
+        if model_adapter is not None:
+            values = np.asarray(params_fitting, dtype=np.float64)
+            if not np.all(model_adapter.admissible(values)):
+                raise ValueError("forward parameters violate the model domain")
+            prediction = np.asarray(model_adapter.predict(values), dtype=np.float64)
+            if prediction.shape != (values.shape[0], n_obs) or not np.all(
+                np.isfinite(prediction)
+            ):
+                raise ValueError("model prediction must be finite with shape (N, T)")
+            return prediction
         if model_type == "vascular":
             # Fitting space: (cbf, mtt, alpha, delay) → model: (cbf, alpha, beta, delay)
             cbf_v = params_fitting[:, 0]
@@ -1379,15 +1010,10 @@ def batched_dsc_vi_fit(
                 cbf_v, alpha_v, beta_v, delay_v, aif, time_points,
                 volterra_matrix=_vasc_volterra,
             )
-        else:  # cpi
-            if control_point_times is None or toeplitz_matrix is None:
-                raise ValueError("CPI model requires control_point_times and toeplitz_matrix")
-            return batched_cpi_forward(
-                params_fitting, aif, time_points,
-                control_point_times, toeplitz_matrix,
-                t_terminal=cpi_t_terminal,
-                infer_delay=cpi_infer_delay,
-            )
+        raise ValueError(f"Unsupported DSC model without an adapter: {model_type}")
+
+    if model_adapter is not None and not np.all(model_adapter.admissible(m_nat)):
+        raise ValueError("initial mean violates the model domain")
 
     # --- Noise posterior init ---
     # FABBER's GetInitialPosterior c=50, s=1e-8 gives tau ~ 5e-7 — far below
@@ -1422,6 +1048,10 @@ def batched_dsc_vi_fit(
     )
     if initial_cov_diag is not None:
         best_cov_diag = np.asarray(initial_cov_diag, dtype=np.float64)[valid_idx].copy()
+    best_cov_full = None
+    if return_full_posterior:
+        best_cov_full = np.zeros((n_valid, n_params, n_params), dtype=np.float64)
+        best_cov_full[:, range(n_params), range(n_params)] = best_cov_diag
     best_c = c.copy()
     best_s = s.copy()
     step_scale = np.ones(n_valid)
@@ -1447,6 +1077,39 @@ def batched_dsc_vi_fit(
 
     last_iteration = 0
 
+    def _jacobian_columns(
+        means: npt.NDArray[np.floating],
+        natural: npt.NDArray[np.floating],
+        prediction: npt.NDArray[np.floating],
+    ) -> list[npt.NDArray[np.floating]]:
+        """Evaluate every derivative at the supplied mean and prediction."""
+        if model_adapter is None:
+            return _compute_jacobian_columns(
+                means, natural, prediction, _evaluate,
+                transforms, upper_bounds, bounds_lo, bounds_hi, cbf_idx,
+                fitting_param_names=fitting_param_names,
+                transformed_bounds=transformed_bounds,
+            )
+        natural_jacobian = np.asarray(
+            model_adapter.jacobian(np.asarray(natural, dtype=np.float64)), dtype=np.float64
+        )
+        if natural_jacobian.shape != (len(means), n_obs, n_params) or not np.all(
+            np.isfinite(natural_jacobian)
+        ):
+            raise ValueError("model Jacobian must be finite with shape (N, T, P)")
+        return [
+            natural_jacobian[:, :, j] * np.broadcast_to(
+                np.exp(log_jacobian_det(natural[:, j], transforms[j], upper_bounds[j])),
+                (len(means),),
+            )[:, None]
+            for j in range(n_params)
+        ]
+
+    local_prior_mean = np.asarray(
+        np.linalg.solve(update_prior_prec, update_prior_eta) if _consistent_mode else prior_means_t,
+        dtype=np.float64,
+    )
+
     for iteration in range(n_iterations):
         last_iteration = iteration
         n_active = int(np.sum(active))
@@ -1469,18 +1132,27 @@ def batched_dsc_vi_fit(
         g_m = _evaluate(m_nat_a)
 
         # 3. Jacobian: analytic CBF + forward FD for remaining params
-        J_columns = _compute_jacobian_columns(
-            m_a, m_nat_a, g_m, _evaluate,
-            transforms, upper_bounds, bounds_lo, bounds_hi, cbf_idx,
-            fitting_param_names=fitting_param_names,
-            transformed_bounds=transformed_bounds,
-        )
+        J_columns = _jacobian_columns(m_a, m_nat_a, g_m)
 
         # Residual
         k_res = y_a - g_m
 
         # 4. Build JtWJ via column-loop
         JtWJ, JtWk = _assemble_JtWJ(J_columns, k_res, w)
+
+        if _consistent_mode:
+            current_state = local_vi_state(
+                m_a, np.stack(J_columns, axis=-1), k_res,
+                local_prior_mean, update_prior_prec, w,
+            )
+            tau_a = current_state.shape * current_state.scale
+            best_fe[a_idx] = current_state.score
+            best_m[a_idx] = m_a
+            best_cov_diag[a_idx] = np.diagonal(current_state.covariance, axis1=1, axis2=2)
+            if best_cov_full is not None:
+                best_cov_full[a_idx] = current_state.covariance
+            best_c[a_idx] = current_state.shape
+            best_s[a_idx] = current_state.scale
 
         # 5. Posterior precision and covariance
         post_prec = update_prior_prec[None, :, :] + tau_a[:, None, None] * JtWJ
@@ -1489,7 +1161,7 @@ def batched_dsc_vi_fit(
             sp_a = spatial_prec_diag[valid_idx][a_idx]
             post_prec[:, range(n_params), range(n_params)] += sp_a
 
-        post_cov = np.linalg.inv(post_prec)
+        post_cov = current_state.covariance if _consistent_mode else np.linalg.inv(post_prec)
         bad_cov = ~np.isfinite(post_cov).all(axis=(1, 2))
         if np.any(bad_cov):
             post_prec[bad_cov] += 1e-6 * np.eye(n_params)
@@ -1512,6 +1184,11 @@ def batched_dsc_vi_fit(
             rhs = rhs + sp_eta_a
 
         m_new = np.einsum("nij,nj->ni", post_cov, rhs)
+        if _consistent_mode:
+            mean_gradient = tau_a[:, None] * JtWk - (
+                m_a - local_prior_mean
+            ) @ update_prior_prec
+            m_new = m_a + np.einsum("nij,nj->ni", post_cov, mean_gradient)
 
         if transformed_bounds is not None:
             outside = np.any(
@@ -1526,6 +1203,73 @@ def batched_dsc_vi_fit(
             for j in range(n_params):
                 if transforms[j] == TransformType.IDENTITY:
                     m_new[:, j] = np.clip(m_new[:, j], bounds_lo[j], bounds_hi[j])
+
+        full_param_change = np.max(np.abs(m_new - m_a), axis=1)
+        if model_adapter is not None:
+            m_new = feasible_mean_update(
+                m_a, m_new, model_adapter, transforms, upper_bounds
+            )
+
+        if _consistent_mode:
+            proposal = m_new.copy()
+            accepted = np.zeros(n_active, dtype=bool)
+            step = np.ones(n_active)
+            for _ in range(14):
+                pending = np.flatnonzero(~accepted)
+                if not len(pending):
+                    break
+                trial = m_a[pending] + step[pending, None] * (proposal[pending] - m_a[pending])
+                natural = np.column_stack([
+                    from_transformed_batch(trial[:, j], transforms[j], upper_bounds[j])
+                    for j in range(n_params)
+                ])
+                assert model_adapter is not None
+                invalid_trial = ~model_adapter.admissible(natural)
+                if np.any(invalid_trial):
+                    full_step = invalid_trial & (step[pending] == 1.0)
+                    trial[full_step] = proposal[pending[full_step]]
+                    trial[invalid_trial] = feasible_mean_update(
+                        m_a[pending[invalid_trial]], trial[invalid_trial],
+                        model_adapter, transforms, upper_bounds,
+                    )
+                    for j in range(n_params):
+                        natural[invalid_trial, j] = from_transformed_batch(
+                            trial[invalid_trial, j], transforms[j], upper_bounds[j]
+                        )
+                prediction = _evaluate(natural)
+                gain = conditional_mean_gain(
+                    trial - m_a[pending], prediction - g_m[pending], k_res[pending],
+                    m_a[pending] - local_prior_mean, update_prior_prec, tau_a[pending], w,
+                )
+                improves = np.isfinite(gain) & (gain >= 0)
+                local = pending[improves]
+                if not len(local):
+                    step[pending] *= 0.5
+                    continue
+                columns = _jacobian_columns(trial[improves], natural[improves], prediction[improves])
+                trial_state = local_vi_state(
+                    trial[improves], np.stack(columns, axis=-1), y_a[local] - prediction[improves],
+                    local_prior_mean, update_prior_prec, w,
+                )
+                global_indices = a_idx[local]
+                if len(local):
+                    best_m[global_indices] = trial[improves]
+                    best_fe[global_indices] = trial_state.score
+                    best_cov_diag[global_indices] = np.diagonal(trial_state.covariance, axis1=1, axis2=2)
+                    if best_cov_full is not None:
+                        best_cov_full[global_indices] = trial_state.covariance
+                    best_c[global_indices] = trial_state.shape
+                    best_s[global_indices] = trial_state.scale
+                    accepted[local] = True
+                step[pending[~improves]] *= 0.5
+            newly_converged = accepted & (full_param_change < 1e-3)
+            converged[a_idx[newly_converged]] = True
+            active[a_idx[~accepted | newly_converged]] = False
+            m[a_idx] = best_m[a_idx]
+            c[a_idx] = best_c[a_idx]
+            s[a_idx] = best_s[a_idx]
+            tau_exp[a_idx] = best_c[a_idx] * best_s[a_idx]
+            continue
 
         # Spatial linearization can propose a poor full step for nonlinear CPI
         # residue parameters. Accept only steps that improve the conditional
@@ -1653,6 +1397,8 @@ def batched_dsc_vi_fit(
                 best_cov_diag[accepted_global] = np.diagonal(
                     post_cov[accepted_local], axis1=1, axis2=2
                 )
+                if best_cov_full is not None:
+                    best_cov_full[accepted_global] = post_cov[accepted_local]
                 best_c[accepted_global] = c_new
                 best_s[accepted_global] = s_new[accepted_local]
         else:
@@ -1667,6 +1413,8 @@ def batched_dsc_vi_fit(
                 best_cov_diag[imp_global] = np.diagonal(
                     post_cov[imp_local], axis1=1, axis2=2,
                 )
+                if best_cov_full is not None:
+                    best_cov_full[imp_global] = post_cov[imp_local]
                 best_c[imp_global] = c_new
                 best_s[imp_global] = s_new[imp_local]
                 step_scale[imp_global] = 1.0
@@ -1747,6 +1495,31 @@ def batched_dsc_vi_fit(
     for j in range(n_params):
         fitted_nat[:, j] = np.clip(fitted_nat[:, j], bounds_lo[j], bounds_hi[j])
 
+    if model_adapter is not None and _spatial_mode:
+        prediction = _evaluate(fitted_nat)
+        jacobian = np.stack(
+            _jacobian_columns(best_m, fitted_nat, prediction), axis=-1
+        )
+        for spatial_row in range(n_valid):
+            effective_precision = update_prior_prec.copy()
+            effective_information = update_prior_eta.copy()
+            if spatial_prec_diag is not None:
+                effective_precision += np.diag(spatial_prec_diag[valid_idx[spatial_row]])
+            if spatial_eta is not None:
+                effective_information += spatial_eta[valid_idx[spatial_row]]
+            effective_mean = np.asarray(
+                np.linalg.solve(effective_precision, effective_information), dtype=np.float64
+            )
+            row_slice = slice(spatial_row, spatial_row + 1)
+            state = local_vi_state(
+                best_m[row_slice], jacobian[row_slice], y[row_slice] - prediction[row_slice],
+                effective_mean, effective_precision, w,
+            )
+            best_cov_diag[spatial_row] = np.diag(state.covariance[0])
+            if best_cov_full is not None:
+                best_cov_full[spatial_row] = state.covariance[0]
+            best_c[spatial_row], best_s[spatial_row] = state.shape, state.scale[0]
+
     # --- Uncertainties via delta method ---
     out_ci_lower = {
         name: np.zeros(n_voxels, dtype=np.float64)
@@ -1800,6 +1573,18 @@ def batched_dsc_vi_fit(
         out_post_means[valid_idx] = best_m
         out_post_cov[valid_idx] = best_cov_diag
 
+    full_posterior = None
+    if best_cov_full is not None:
+        full_mean = np.full((n_voxels, n_params), np.nan)
+        full_cov = np.full((n_voxels, n_params, n_params), np.nan)
+        full_shape = np.full(n_voxels, np.nan)
+        full_scale = np.full(n_voxels, np.nan)
+        full_mean[valid_idx] = best_m
+        full_cov[valid_idx] = best_cov_full
+        full_shape[valid_idx] = best_c
+        full_scale[valid_idx] = best_s
+        full_posterior = DSCVIPosterior(full_mean, full_cov, full_shape, full_scale)
+
     return DSCBatchedFitResult(
         params=out_params, r_squared=out_r2, converged=out_converged,
         fitted_curves=out_fitted, n_iterations=last_iteration + 1,
@@ -1808,6 +1593,7 @@ def batched_dsc_vi_fit(
         credible_interval_upper=out_ci_upper,
         posterior_means_transformed=out_post_means,
         posterior_cov_diag=out_post_cov,
+        full_posterior=full_posterior,
     )
 
 
@@ -1856,7 +1642,7 @@ def _run_map_gauss_newton(
     prior_prec : npt.NDArray[np.floating]
         Prior precision matrix, shape (P, P).
     mono_eta : npt.NDArray[np.floating] or None
-        CPI monotonicity bias, shape (P,) or None.
+        Structural monotonicity bias, shape (P,) or None.
     transforms : list[TransformType]
         Per-parameter transform types.
     upper_bounds : list[float | None]
@@ -2097,10 +1883,6 @@ def batched_dsc_map_fit(
     fitting_bounds: list[tuple[float, float]],
     mono_prec: Optional[npt.NDArray[np.floating]] = None,
     mono_eta: Optional[npt.NDArray[np.floating]] = None,
-    control_point_times: Optional[npt.NDArray[np.floating]] = None,
-    toeplitz_matrix: Optional[npt.NDArray[np.floating]] = None,
-    cpi_t_terminal: Optional[float] = None,
-    cpi_infer_delay: bool = False,
     nlls_seeds: Optional[npt.NDArray[np.floating]] = None,
     prior_means_transformed: Optional[npt.NDArray[np.floating]] = None,
     prior_stds_transformed: Optional[npt.NDArray[np.floating]] = None,
@@ -2124,7 +1906,7 @@ def batched_dsc_map_fit(
     Parameters
     ----------
     model_type : str
-        'cpi' or 'vascular'.
+        Vascular model; VI also accepts the supplied adapter's identifier.
     tissue_curves : npt.NDArray[np.floating]
         Observed tissue curves, shape (N, T).
     aif : npt.NDArray[np.floating]
@@ -2144,13 +1926,9 @@ def batched_dsc_map_fit(
     fitting_bounds : list[tuple[float, float]]
         Per-parameter bounds in fitting space, length P.
     mono_prec : npt.NDArray[np.floating], optional
-        CPI monotonicity precision matrix, shape (P, P) or None.
+        Structural monotonicity precision matrix, shape (P, P) or None.
     mono_eta : npt.NDArray[np.floating], optional
-        CPI monotonicity bias, shape (P,) or None.
-    control_point_times : npt.NDArray[np.floating], optional
-        CPI control point times, shape (K,) or None.
-    toeplitz_matrix : npt.NDArray[np.floating], optional
-        Precomputed Toeplitz matrix, shape (T, T) or None.
+        Structural monotonicity bias, shape (P,) or None.
     nlls_seeds : npt.NDArray[np.floating], optional
         NLLS seed parameters for multi-start init, shape (N, P)
         or None. Used as second start point alongside prior means.
@@ -2187,6 +1965,9 @@ def batched_dsc_map_fit(
         DSCBatchedFitResult with fitted parameters, R², convergence,
         and Laplace uncertainties.
     """
+    if model_type != "vascular":
+        raise ValueError("Batched DSC MAP supports vascular only")
+
     # ----- Multiprocess dispatch -----
     # Same chunk + pool + concatenate workflow as batched_dsc_vi_fit.
     # MAP has no spatial-VB equivalent, so no spatial guard is needed —
@@ -2205,10 +1986,6 @@ def batched_dsc_map_fit(
             fitting_bounds=fitting_bounds,
             mono_prec=mono_prec,
             mono_eta=mono_eta,
-            control_point_times=control_point_times,
-            toeplitz_matrix=toeplitz_matrix,
-            cpi_t_terminal=cpi_t_terminal,
-            cpi_infer_delay=cpi_infer_delay,
             nlls_seeds=nlls_seeds,
             prior_means_transformed=prior_means_transformed,
             prior_stds_transformed=prior_stds_transformed,
@@ -2305,15 +2082,7 @@ def batched_dsc_map_fit(
                 cbf_v, alpha_v, beta_v, delay_v, aif, time_points,
                 volterra_matrix=_vasc_volterra,
             )
-        else:  # cpi
-            if control_point_times is None or toeplitz_matrix is None:
-                raise ValueError("CPI model requires control_point_times and toeplitz_matrix")
-            return batched_cpi_forward(
-                params_fitting, aif, time_points,
-                control_point_times, toeplitz_matrix,
-                t_terminal=cpi_t_terminal,
-                infer_delay=cpi_infer_delay,
-            )
+        raise ValueError(f"Unsupported DSC model without an adapter: {model_type}")
 
     # --- Multi-start initialization ---
     # Start 0: prior means

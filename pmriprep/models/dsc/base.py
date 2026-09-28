@@ -408,9 +408,7 @@ class DSCModel(ABC):
     ) -> float:
         """Monotonicity log-prior for Bayesian fitting. Returns 0.0.
 
-        Vestigial — CPI now guarantees monotonicity structurally via
-        multiplicative fractions (cumulative product). No model overrides
-        this method.
+        Models may override this optional structural-prior contribution.
         """
         return 0.0
 
@@ -420,8 +418,7 @@ class DSCModel(ABC):
     ) -> npt.NDArray[np.floating] | None:
         """Monotonicity precision matrix for VI. Returns None.
 
-        Vestigial — CPI now guarantees monotonicity structurally.
-        Callers guard with ``if mono_prec is not None``.
+        The default model has no additional structural precision.
         """
         return None
 
@@ -431,8 +428,7 @@ class DSCModel(ABC):
     ) -> npt.NDArray[np.floating] | None:
         """Monotonicity eta correction for VI. Returns None.
 
-        Vestigial — CPI now guarantees monotonicity structurally.
-        Callers guard with ``if mono_eta is not None``.
+        The default model has no additional structural information vector.
         """
         return None
 
@@ -444,7 +440,7 @@ class DSCModel(ABC):
         """Compute the residue function for fitted output storage.
 
         By default returns residue_function() directly. Models where
-        residue_function() returns a dimensionless form (e.g. CPI) should
+        residue_function() returns a dimensionless form should
         override this to include the appropriate scaling (e.g. CBF × R).
 
         Parameters

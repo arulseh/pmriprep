@@ -14,6 +14,7 @@ import numpy.typing as npt
 from scipy.integrate import cumulative_trapezoid
 from scipy.stats import norm
 
+from pmriprep.utils.bsw_guidance import BSWGuidance, build_bsw_guidance
 from pmriprep.utils.dsc_constants import (
     EPSILON_CONCENTRATION,
     EPSILON_SIGNAL,
@@ -794,6 +795,7 @@ class K2CorrectionResult:
         correction_applied: Boolean indicating if correction was applied.
         qc_metrics: QC metrics from correction.
         method: Leakage correction method ("bsw").
+        guidance: Optional conditional coefficient and reference uncertainty.
     """
 
     concentration_corrected: npt.NDArray[np.floating]
@@ -802,6 +804,15 @@ class K2CorrectionResult:
     correction_applied: bool = True
     qc_metrics: Optional[dict[str, Any]] = None
     method: str = "bsw"
+    guidance: Optional[BSWGuidance] = None
+
+
+@dataclass(frozen=True)
+class _BSWReferenceSelection:
+    """Mean reference and the exact membership used to calculate it."""
+
+    curve: npt.NDArray[np.floating]
+    mask: npt.NDArray[np.bool_]
 
 
 def _compute_bsw_reference(
@@ -811,6 +822,20 @@ def _compute_bsw_reference(
     baseline_frames: int = 5,
     reference_qc: Optional[dict[str, Any]] = None,
 ) -> Optional[npt.NDArray[np.floating]]:
+    """Return the selected reference mean, retaining selection QC accounting."""
+    selected = _select_bsw_reference(
+        concentration, signal, brain_mask, baseline_frames, reference_qc,
+    )
+    return None if selected is None else selected.curve
+
+
+def _select_bsw_reference(
+    concentration: npt.NDArray[np.floating],
+    signal: npt.NDArray[np.floating],
+    brain_mask: Optional[npt.NDArray[np.bool_]],
+    baseline_frames: int = 5,
+    reference_qc: Optional[dict[str, Any]] = None,
+) -> Optional[_BSWReferenceSelection]:
     """Compute the conventional BSW non-enhancing reference curve C̄(t).
 
     Reference membership follows a conventional signal-domain profile: the
@@ -834,8 +859,8 @@ def _compute_bsw_reference(
 
     Returns
     -------
-    Optional[npt.NDArray[np.floating]]
-        1D array (n_timepoints,) or None if insufficient voxels.
+    _BSWReferenceSelection or None
+        Reference mean and voxel membership, or None for insufficient support.
     """
     # Reference support floors target a p95 whole-brain median-K2 perturbation
     # below 0.001 s^-1. The warning level additionally targets a p95 relative
@@ -957,7 +982,10 @@ def _compute_bsw_reference(
             n_used,
         )
 
-    return np.asarray(c_bar, dtype=np.float64)
+    selected_mask = np.zeros(concentration.shape[:3], dtype=np.bool_)
+    selected_indices = tuple(index[non_leaky] for index in valid_indices)
+    selected_mask[selected_indices] = True
+    return _BSWReferenceSelection(np.asarray(c_bar, dtype=np.float64), selected_mask)
 
 
 def estimate_k2_per_voxel(
@@ -1089,6 +1117,8 @@ def apply_k2_correction(
     baseline_frames: int = 5,
     signal: Optional[npt.NDArray[np.floating]] = None,
     reference_curve: Optional[npt.NDArray[np.floating]] = None,
+    *,
+    return_guidance: bool = False,
 ) -> K2CorrectionResult:
     """Apply K2 leakage correction using the BSW method with mean brain reference.
 
@@ -1122,6 +1152,10 @@ def apply_k2_correction(
         Required unless ``reference_curve`` is supplied.
     reference_curve : Optional[npt.NDArray[np.floating]], optional
         Precomputed BSW reference. Primarily useful for validation.
+    return_guidance : bool, optional
+        Retain exact reference membership, empirical covariance and conditional
+        coefficient SE. Does not change the correction or existing QC fields.
+        A supplied mean without reference samples has unavailable covariance.
 
     Returns
     -------
@@ -1133,6 +1167,9 @@ def apply_k2_correction(
         raise ValueError(f"Concentration must be 4D, got {concentration.ndim}D")
     if concentration.shape[-1] < 4:
         raise ValueError("K2 correction requires at least 4 timepoints")
+    if return_guidance and (not np.isfinite(tr) or tr <= 0):
+        raise ValueError("positive finite TR in seconds required")
+    supplied_coefficient = k2_map is not None
 
     # Baseline-subtract before K2 estimation. The BSW model assumes
     # C(t)=0 at baseline; non-zero offset biases the cumulative integral
@@ -1147,18 +1184,20 @@ def apply_k2_correction(
 
     reference_qc: dict[str, Any] = {}
     c_bar = reference_curve
+    selected = None
     if c_bar is None:
         if signal is None:
             raise ValueError(
                 "Raw signal is required for BSW reference selection"
             )
-        c_bar = _compute_bsw_reference(
+        selected = _select_bsw_reference(
             concentration,
             signal,
             brain_mask,
             baseline_frames=n_bl,
             reference_qc=reference_qc,
         )
+        c_bar = None if selected is None else selected.curve
     else:
         reference_qc["k2_reference_available"] = True
         reference_qc["k2_reference_selection"] = "provided"
@@ -1173,6 +1212,13 @@ def apply_k2_correction(
             correction_applied=False,
             qc_metrics={"k2_method": "bsw", "k2_signed": True, **reference_qc},
             method="bsw",
+            guidance=(build_bsw_guidance(
+                concentration, np.full(concentration.shape[:3], np.nan),
+                tr=tr, baseline_frames=n_bl, brain_mask=brain_mask,
+                reference_curve=None, reference_mask=None,
+                reference_failure=reference_qc.get("k2_reference_failure_reason"),
+                supplied_coefficient=supplied_coefficient,
+            ) if return_guidance else None),
         )
 
     # Estimate K2 if not provided
@@ -1213,6 +1259,12 @@ def apply_k2_correction(
         correction_applied=True,
         qc_metrics=qc_metrics,
         method="bsw",
+        guidance=(build_bsw_guidance(
+            concentration, k2_map, tr=tr, baseline_frames=n_bl,
+            brain_mask=brain_mask, reference_curve=c_bar,
+            reference_mask=None if selected is None else selected.mask,
+            supplied_coefficient=supplied_coefficient,
+        ) if return_guidance else None),
     )
 
 

@@ -508,6 +508,7 @@ def generate_dsc_fit_qc_plot(
     session_id: str = "",
     output_path: str | None = None,
     raw_signal: npt.NDArray[Any] | None = None,
+    fit_domain: str = "concentration",
 ) -> tuple[str, dict[str, Any]]:
     """Generate a 2x2 fit QC plot for DSC deconvolution methods.
 
@@ -517,7 +518,7 @@ def generate_dsc_fit_qc_plot(
 
     Panels:
         (0,0) Raw signal intensity at example voxel (shows bolus signal drop)
-        (0,1) Model fit curve overlaid on tissue concentration + R^2 badge
+        (0,1) Model fit overlaid on its measured domain + R^2 badge
         (1,0) AIF concentration curve
         (1,1) CBF map at voxel slice with marker
 
@@ -526,7 +527,7 @@ def generate_dsc_fit_qc_plot(
     tissue_concentration : npt.NDArray[Any]
         1D measured concentration at QC voxel.
     model_prediction : npt.NDArray[Any] or None
-        1D model-fitted concentration at QC voxel.
+        1D model prediction at QC voxel, in the declared fitting domain.
     aif : npt.NDArray[Any]
         1D AIF concentration array.
     time_points : npt.NDArray[Any]
@@ -551,6 +552,8 @@ def generate_dsc_fit_qc_plot(
         Path to save PNG. If None, uses CWD.
     raw_signal : npt.NDArray[Any], optional
         1D raw signal intensity at QC voxel (optional).
+    fit_domain : {"concentration", "signal"}, optional
+        Domain of the saved prediction and reported R-squared.
 
     Returns
     -------
@@ -569,6 +572,10 @@ def generate_dsc_fit_qc_plot(
     voxel_r2 = r_squared
     time_points_s = time_points
     fitted_curve = model_prediction
+    if fit_domain not in ("concentration", "signal"):
+        raise ValueError("unknown DSC fitting domain")
+    if fit_domain == "signal" and raw_signal is None:
+        raise ValueError("signal-domain fit QC requires the original measured signal")
 
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
     from pmriprep.utils.qc_utils import qc_figure_title
@@ -596,7 +603,8 @@ def generate_dsc_fit_qc_plot(
 
     # --- (0,1) Model Fit ---
     ax = axes[0, 1]
-    ax.plot(time_points_s, voxel_conc, "o", color=COLORBLIND_PALETTE.primary,
+    observed_fit = raw_signal if fit_domain == "signal" else voxel_conc
+    ax.plot(time_points_s, observed_fit, "o", color=COLORBLIND_PALETTE.primary,
             markersize=4, label="Measured", alpha=0.7)
     if fitted_curve is not None and np.any(fitted_curve != 0):
         ax.plot(time_points_s[:len(fitted_curve)], fitted_curve,
@@ -610,7 +618,7 @@ def generate_dsc_fit_qc_plot(
                 bbox=dict(boxstyle="round,pad=0.3", facecolor=badge_color, alpha=0.9))
     ax.set_title("Model Fit", fontsize=10)
     ax.set_xlabel("Time (s)")
-    ax.set_ylabel(r"$\Delta$R$_2^*$ (s$^{-1}$)")
+    ax.set_ylabel("Signal (a.u.)" if fit_domain == "signal" else r"$\Delta$R$_2^*$ (s$^{-1}$)")
     ax.legend(fontsize=8)
     ax.grid(True, alpha=0.3)
 

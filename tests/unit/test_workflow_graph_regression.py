@@ -70,6 +70,7 @@ import nipype.interfaces.utility as niu
 import nipype.pipeline.engine as pe
 import pytest
 from nipype.interfaces.base import isdefined
+from nipype.interfaces.fsl.base import FSLCommand
 from nipype.interfaces.utility import IdentityInterface
 from nipype.pipeline.engine.utils import _remove_identity_node
 
@@ -589,8 +590,8 @@ MATRIX: list[tuple[str, Builder]] = ANAT_MATRIX + DCE_MATRIX + DSC_MATRIX
 # Regression test
 # ---------------------------------------------------------------------------
 @pytest.fixture(autouse=True)
-def _deterministic_device(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Pin device detection so the graph signature is hardware-independent.
+def _deterministic_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin hardware detection and FSL defaults for a portable graph signature.
 
     ``use_gpu`` is resolved at construction time (``resolve_device_uses_gpu`` ->
     ``detect_torch_device``), which yields ``"mps"`` on Apple Silicon and ``"cpu"``
@@ -598,6 +599,8 @@ def _deterministic_device(monkeypatch: pytest.MonkeyPatch) -> None:
     across dev and CI so the committed baselines stay portable.
     """
     monkeypatch.setattr("pmriprep.utils.device.detect_torch_device", lambda: "cpu")
+    monkeypatch.setenv("FSLOUTPUTTYPE", "NIFTI_GZ")
+    monkeypatch.setattr(FSLCommand, "_output_type", "NIFTI_GZ")
 
 
 @pytest.fixture
@@ -657,8 +660,8 @@ def test_dsc_method_is_parameter_not_topology(bids: Path) -> None:
     """Documents that DSC ``method`` is a node parameter, not a topology gate.
 
     The non-default method (cpi) must leave nodes/edges/function bodies identical
-    to the default while differing only in the node_params tier at
-    ``compute_maps.method``.
+    to the default. CPI also requests lossless upstream BSW guidance as a
+    node parameter, without introducing another workflow branch.
     """
     default = graph_signature(_dsc(bids))
     cpi = graph_signature(_dsc(bids, method="cpi"))
@@ -668,6 +671,14 @@ def test_dsc_method_is_parameter_not_topology(bids: Path) -> None:
     assert cpi["node_params"] != default["node_params"]
     assert cpi["node_params"]["compute_maps"]["method"] == "cpi"
     assert default["node_params"]["compute_maps"]["method"] != "cpi"
+    assert cpi["node_params"]["leakage_correct"]["return_guidance"] is True
+    assert default["node_params"]["leakage_correct"]["return_guidance"] is False
+    assert cpi["node_params"]["compute_maps"]["cpi_dispersion"] == "none"
+    assert cpi["node_params"]["compute_maps"]["cpi_infer_delay"] is True
+    assert cpi["node_params"]["compute_maps"]["cpi_fallback"] == "osvd"
+    assert "cpi_infer_cpt" not in cpi["node_params"]["compute_maps"]
+    assert ("leakage_correct", "guidance_file", "compute_maps", "bsw_guidance_file") in cpi["edges"]
+    assert ("inputnode", "te", "compute_maps", "te") in cpi["edges"]
 
 
 def test_dce_peak_floor_is_routed_as_parameter(bids: Path) -> None:

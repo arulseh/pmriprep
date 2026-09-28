@@ -428,18 +428,20 @@ class TestK2EdgeCases:
 
 
 # =============================================================================
-# Bidirectional K2 Tests (Leu et al. 2016)
+# Reference-generated leakage with tissue/reference transit mismatch
 # =============================================================================
 
 
-class TestK2RecoveryNeutral:
-    """K2 recovery on independent (non-inverse-crime) tissue.
+class TestK2RecoveryWithTransitMismatch:
+    """K2 recovery with reference-generated leakage and differing tissue transit.
 
     The brain and tumor curves are built by the dt/20 fine-grid forward, while
     the fitted instantaneous term remains a single scaled reference. The known
     clean reference isolates regression sign and scale while retaining mismatch
     between the tissue forward model and the fitted instantaneous term. The
-    absolute tolerance covers that model-mismatch floor.
+    absolute tolerance covers that model mismatch. The leakage itself uses
+    the fitted reference-integral equation; this is not an independent
+    extravasation validation.
 
     This deliberately does NOT probe the rectangular->trapezoidal cumulative
     switch: the BSW K2 estimate is provably quadrature-invariant. The rect-trap
@@ -451,7 +453,7 @@ class TestK2RecoveryNeutral:
     """
 
     @pytest.mark.parametrize("k2_true", [0.02, 0.05, 0.1])
-    def test_k2_recovers_from_independent_leakage(self, k2_true: float) -> None:
+    def test_k2_recovers_reference_generated_leakage(self, k2_true: float) -> None:
         dt = 1.5
         n_bl, n_post = 8, 52
         n = n_bl + n_post

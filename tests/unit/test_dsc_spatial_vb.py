@@ -366,8 +366,7 @@ class TestSpatialVIIntegration:
         cbf: float = 0.1,
     ) -> tuple:
         """Create synthetic NxNx1 homogeneous phantom."""
-        from pmriprep.models.dsc.cpi import CPIModel
-        from pmriprep.utils.dsc_deconvolution import build_volterra_matrix
+        from pmriprep.models.dsc.vascular import VascularModel
 
         n_voxels = n_side * n_side
         t = np.linspace(0, 40, n_timepoints)
@@ -375,15 +374,10 @@ class TestSpatialVIIntegration:
         aif = (t / 3.0) * np.exp(-t / 5.0)
         aif[0] = 0.0
 
-        model = CPIModel(
-            n_control_points=6,
-            n_acquisition_frames=n_timepoints,
-            dt=dt,
-        )
-        toeplitz = build_volterra_matrix(aif, dt)
+        model = VascularModel()
 
         rng = np.random.default_rng(42)
-        params = [cbf, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4]  # cbf + 6 fractions
+        params = [cbf, 3.0, 2.0, 0.0]  # cbf, alpha, beta, delay
         clean_curve = model.tissue_curve(params, aif, t)
         tissue_curves = np.tile(clean_curve, (n_voxels, 1))
         tissue_curves += rng.normal(0, noise_std, (n_voxels, n_timepoints))
@@ -391,21 +385,20 @@ class TestSpatialVIIntegration:
         x, y = np.mgrid[0:n_side, 0:n_side]
         mask_coords = (x.ravel(), y.ravel(), np.zeros(n_voxels, dtype=int))
 
-        return tissue_curves, aif, t, dt, mask_coords, model, toeplitz
+        return tissue_curves, aif, t, dt, mask_coords, model
 
     def test_spatial_vi_runs_without_error(self) -> None:
         """Spatial VI wrapper completes without errors."""
         from pmriprep.models.bayesian_utils import build_priors_from_params
         from pmriprep.models.dsc.spatial_vb import batched_dsc_spatial_vi_fit
 
-        tissue_curves, aif, t, dt, mask_coords, model, toeplitz = (
+        tissue_curves, aif, t, dt, mask_coords, model = (
             self._make_synthetic_data()
         )
         fitting_defs = list(model.get_fitting_parameter_definitions())
         priors = build_priors_from_params(fitting_defs)
         fitting_names = [p.name for p in fitting_defs]
         fitting_bounds = [(p.bounds[0], p.bounds[1]) for p in fitting_defs]
-        cp_times = np.array(model._control_point_times, dtype=np.float64)
         means_nat = np.array([p.mean for p in priors], dtype=np.float64)
         stds_nat = np.array([p.std for p in priors], dtype=np.float64)
         means_t = np.array([p.mean_transformed for p in priors], dtype=np.float64)
@@ -414,7 +407,7 @@ class TestSpatialVIIntegration:
         ubs: list[float | None] = [p.upper_bound for p in priors]
 
         result = batched_dsc_spatial_vi_fit(
-            model_type="cpi",
+            model_type="vascular",
             tissue_curves=tissue_curves,
             aif=aif,
             time_points=t,
@@ -428,8 +421,6 @@ class TestSpatialVIIntegration:
             fitting_bounds=fitting_bounds,
             mono_prec=None,
             mono_eta=None,
-            control_point_times=cp_times,
-            toeplitz_matrix=toeplitz,
             prior_means_transformed=means_t,
             prior_stds_transformed=stds_t,
             sloppy=True,
@@ -441,19 +432,18 @@ class TestSpatialVIIntegration:
         assert result.fitted_curves is not None
         assert np.all(np.isfinite(result.params["cbf"]))
 
-    def test_spatial_vi_preserves_cpi_fit_quality(self) -> None:
-        """CPI spatial updates remain finite and retain useful CBF recovery."""
+    def test_spatial_vi_preserves_vascular_fit_quality(self) -> None:
+        """Vascular spatial updates remain finite and retain useful CBF recovery."""
         from pmriprep.models.bayesian_utils import build_priors_from_params
         from pmriprep.models.dsc.spatial_vb import batched_dsc_spatial_vi_fit
 
-        tissue_curves, aif, t, dt, mask_coords, model, toeplitz = (
+        tissue_curves, aif, t, dt, mask_coords, model = (
             self._make_synthetic_data(n_side=6, noise_std=0.01)
         )
         fitting_defs = list(model.get_fitting_parameter_definitions())
         priors = build_priors_from_params(fitting_defs)
         fitting_names = [p.name for p in fitting_defs]
         fitting_bounds = [(p.bounds[0], p.bounds[1]) for p in fitting_defs]
-        cp_times = np.array(model._control_point_times, dtype=np.float64)
         means_nat = np.array([p.mean for p in priors], dtype=np.float64)
         stds_nat = np.array([p.std for p in priors], dtype=np.float64)
         means_t = np.array([p.mean_transformed for p in priors], dtype=np.float64)
@@ -462,7 +452,7 @@ class TestSpatialVIIntegration:
         ubs: list[float | None] = [p.upper_bound for p in priors]
 
         common_kwargs: dict = dict(
-            model_type="cpi",
+            model_type="vascular",
             tissue_curves=tissue_curves,
             aif=aif,
             time_points=t,
@@ -474,8 +464,6 @@ class TestSpatialVIIntegration:
             fitting_bounds=fitting_bounds,
             mono_prec=None,
             mono_eta=None,
-            control_point_times=cp_times,
-            toeplitz_matrix=toeplitz,
             prior_means_transformed=means_t,
             prior_stds_transformed=stds_t,
         )
@@ -492,38 +480,24 @@ class TestSpatialVIIntegration:
         assert np.median(np.abs(cbf - 0.1) / 0.1) < 0.25
         assert np.median(result_svb.r_squared) > 0.5
 
-    def test_cpi_synchronous_update_is_translation_invariant(self) -> None:
-        """A one-voxel coordinate translation leaves CPI SVB unchanged."""
+    def test_synchronous_update_is_translation_invariant(self) -> None:
+        """A one-voxel coordinate translation leaves vascular SVB unchanged."""
         from pmriprep.models.bayesian_utils import build_priors_from_params
-        from pmriprep.models.dsc.batched_fitting import batched_cpi_forward
-        from pmriprep.models.dsc.cpi import CPIModel
+        from pmriprep.models.dsc.batched_fitting import batched_vascular_forward
+        from pmriprep.models.dsc.vascular import VascularModel
         from pmriprep.models.dsc.spatial_vb import batched_dsc_spatial_vi_fit
-        from pmriprep.utils.dsc_deconvolution import build_volterra_matrix
 
         side = 4
         n_voxels = side**2
         time_points = np.linspace(0.0, 40.0, 40)
-        dt = float(time_points[1] - time_points[0])
         aif = (time_points / 3.0) * np.exp(-time_points / 5.0)
         aif[0] = 0.0
-        model = CPIModel(
-            n_control_points=6,
-            n_acquisition_frames=len(time_points),
-            dt=dt,
-        )
-        convolution = build_volterra_matrix(aif, dt)
+        model = VascularModel()
         cbf_truth = np.linspace(0.025, 0.14, n_voxels)
-        fractions = np.linspace(0.65, 0.92, n_voxels)
-        params = np.column_stack(
-            [cbf_truth, np.repeat(fractions[:, None], 6, axis=1)]
-        )
-        tissue = batched_cpi_forward(
-            params,
-            aif,
-            time_points,
-            np.asarray(model._control_point_times),
-            convolution,
-            t_terminal=model.terminal_time,
+        alpha = np.linspace(2.0, 4.0, n_voxels)
+        tissue = batched_vascular_forward(
+            cbf_truth, alpha, np.full(n_voxels, 2.0),
+            np.zeros(n_voxels), aif, time_points,
         )
         tissue += np.random.default_rng(20260725).normal(
             0.0, 0.008, tissue.shape
@@ -532,7 +506,7 @@ class TestSpatialVIIntegration:
         definitions = list(model.get_fitting_parameter_definitions())
         priors = build_priors_from_params(definitions)
         common = dict(
-            model_type="cpi",
+            model_type="vascular",
             tissue_curves=tissue,
             aif=aif,
             time_points=time_points,
@@ -546,9 +520,6 @@ class TestSpatialVIIntegration:
                 (definition.bounds[0], definition.bounds[1])
                 for definition in definitions
             ],
-            control_point_times=np.asarray(model._control_point_times),
-            toeplitz_matrix=convolution,
-            cpi_t_terminal=model.terminal_time,
             prior_means_transformed=np.array(
                 [prior.mean_transformed for prior in priors]
             ),
@@ -573,18 +544,8 @@ class TestSpatialVIIntegration:
         cbf_b = np.asarray(result_b.params["cbf"])
         np.testing.assert_allclose(cbf_a, cbf_b, rtol=1e-12, atol=1e-12)
 
-        def _mtt(result: object) -> np.ndarray:
-            result_params = getattr(result, "params")
-            values = np.column_stack(
-                [
-                    result_params["cbf"],
-                    *[result_params[f"f{i}"] for i in range(1, 7)],
-                ]
-            )
-            return np.array([model.get_mtt(row) for row in values])
-
         np.testing.assert_allclose(
-            _mtt(result_a), _mtt(result_b), rtol=1e-12, atol=1e-12
+            result_a.params["mtt"], result_b.params["mtt"], rtol=1e-12, atol=1e-12,
         )
 
     def test_batched_ordering_agrees_with_sequential_reference(self) -> None:
@@ -724,27 +685,19 @@ class TestSpatialVIIntegration:
         aif = (t / 3.0) * np.exp(-t / 5.0)
         aif[0] = 0.0
 
-        from pmriprep.models.dsc.cpi import CPIModel
-        from pmriprep.utils.dsc_deconvolution import build_volterra_matrix
+        from pmriprep.models.dsc.vascular import VascularModel
 
-        dt = float(t[1] - t[0])
-        model = CPIModel(
-            n_control_points=6,
-            n_acquisition_frames=int(len(t)),
-            dt=dt,
-        )
-        toeplitz = build_volterra_matrix(aif, dt)
-        params = [0.1, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4]  # cbf + 6 fractions
+        model = VascularModel()
+        params = [0.1, 3.0, 2.0, 0.0]  # cbf, alpha, beta, delay
         tissue = model.tissue_curve(params, aif, t).reshape(1, -1)
 
         fitting_defs = list(model.get_fitting_parameter_definitions())
         priors = build_priors_from_params(fitting_defs)
         fitting_names = [p.name for p in fitting_defs]
         fitting_bounds = [(p.bounds[0], p.bounds[1]) for p in fitting_defs]
-        cp_times = np.array(model._control_point_times, dtype=np.float64)
 
         result = batched_dsc_spatial_vi_fit(
-            model_type="cpi",
+            model_type="vascular",
             tissue_curves=tissue,
             aif=aif,
             time_points=t,
@@ -756,8 +709,6 @@ class TestSpatialVIIntegration:
             upper_bounds=[p.upper_bound for p in priors],
             fitting_param_names=fitting_names,
             fitting_bounds=fitting_bounds,
-            control_point_times=cp_times,
-            toeplitz_matrix=toeplitz,
             prior_means_transformed=np.array([p.mean_transformed for p in priors]),
             prior_stds_transformed=np.array([p.std_transformed for p in priors]),
             sloppy=True,
@@ -771,18 +722,17 @@ class TestSpatialVIIntegration:
         from pmriprep.models.bayesian_utils import build_priors_from_params
         from pmriprep.models.dsc.spatial_vb import batched_dsc_spatial_vi_fit
 
-        tissue_curves, aif, t, dt, mask_coords, model, toeplitz = (
+        tissue_curves, aif, t, dt, mask_coords, model = (
             self._make_synthetic_data(n_side=3)
         )
         fitting_defs = list(model.get_fitting_parameter_definitions())
         priors = build_priors_from_params(fitting_defs)
         fitting_names = [p.name for p in fitting_defs]
         fitting_bounds = [(p.bounds[0], p.bounds[1]) for p in fitting_defs]
-        cp_times = np.array(model._control_point_times, dtype=np.float64)
 
         with caplog.at_level("INFO", logger="nipype.interface"):
             result = batched_dsc_spatial_vi_fit(
-                model_type="cpi",
+                model_type="vascular",
                 tissue_curves=tissue_curves,
                 aif=aif,
                 time_points=t,
@@ -794,8 +744,6 @@ class TestSpatialVIIntegration:
                 upper_bounds=[p.upper_bound for p in priors],
                 fitting_param_names=fitting_names,
                 fitting_bounds=fitting_bounds,
-                control_point_times=cp_times,
-                toeplitz_matrix=toeplitz,
                 prior_means_transformed=np.array([p.mean_transformed for p in priors]),
                 prior_stds_transformed=np.array([p.std_transformed for p in priors]),
                 sloppy=False,

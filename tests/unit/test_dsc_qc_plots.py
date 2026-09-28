@@ -169,3 +169,36 @@ def test_leakage_qc_direct_api_handles_all_nan_k2(tmp_path) -> None:
 
     assert output == str(tmp_path / "undefined_k2_qc.png")
     assert (tmp_path / "undefined_k2_qc.png").is_file()
+
+
+@pytest.mark.parametrize("domain", ["signal", "concentration"])
+def test_fit_plot_compares_observation_and_prediction_in_same_domain(tmp_path, monkeypatch, domain) -> None:
+    """Original signal is the observation for a saved CPI signal prediction."""
+    import matplotlib.pyplot as plt
+    from pmriprep.utils.dsc_qc_plots import generate_dsc_fit_qc_plot
+
+    original = plt.subplots
+    captured = []
+
+    def subplots(*args, **kwargs):
+        result = original(*args, **kwargs)
+        captured.append(result)
+        return result
+
+    monkeypatch.setattr(plt, "subplots", subplots)
+    concentration = np.array([0., 0., 2., 1., .1])
+    signal = 100*np.exp(-.03*concentration)
+    observed = signal if domain == "signal" else concentration
+    prediction = observed*.99
+    output, _ = generate_dsc_fit_qc_plot(
+        tissue_concentration=concentration, model_prediction=prediction,
+        aif=concentration, time_points=np.arange(5.)*2,
+        cbf_map=np.ones((3, 3, 3)), brain_mask=np.ones((3, 3, 3)),
+        qc_voxel=(1, 1, 1), qc_voxel_cbf=1., raw_signal=signal,
+        fit_domain=domain, output_path=str(tmp_path / (domain + ".png")),
+    )
+    ax = captured[0][1][0, 1]
+    np.testing.assert_array_equal(ax.lines[0].get_ydata(), observed)
+    np.testing.assert_array_equal(ax.lines[1].get_ydata(), prediction)
+    assert ("Signal" in ax.get_ylabel()) == (domain == "signal")
+    assert output == str(tmp_path / (domain + ".png"))

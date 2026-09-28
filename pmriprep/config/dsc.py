@@ -45,7 +45,13 @@ class DSCConfig:
     mcmc_samples : int
         Number of MCMC samples for Bayesian inference.
     cpi_control_points : int
-        Number of control points for CPI model (0 = auto-select).
+        Number of control points for CPI (0 = auto-select; manual 5–12).
+    cpi_infer_delay : bool
+        Infer arrival delay. False conditions it at zero and reports it missing.
+    cpi_dispersion : {"auto", "none", "gamma"}
+        Automatic plain/gamma selection or a specified arterial transport model.
+    cpi_fallback : {"osvd", "none"}
+        Substitute rejected CPI measurements with oSVD, or leave them missing.
     aif_file : Optional[Path]
         Path to external AIF curve file (.txt, .npz, or .npy).
         Values must be DeltaR2* concentration in s^-1.
@@ -106,17 +112,9 @@ class DSCConfig:
     inference: Literal["nlls", "map", "vi", "svb"] = "vi"
     mcmc_samples: int = 500
     cpi_control_points: int = 0  # 0 = auto-select
-    # Default True: lets CPs migrate to optimal locations via inferred
-    # log-spacings; cuts CBF bias on Normal WM and Long MTT tissues by ~50%.
-    # Costs ~3x per-voxel compute. Deliberate deviation from FABBER, which ships
-    # infer-cpt off ("not recommended"); the log-spacing parameterization
-    # (positive, ordered by construction) avoids the instability FABBER warns of.
-    # Set False to match FABBER --infer-cpt false.
-    cpi_infer_cpt: bool = True
-    # FABBER dsc_cpi `inferdelay`, OFF by default (matches FABBER default).
-    # When True, fits a per-voxel bolus arrival delay applied as a post-hoc
-    # shift of the convolved curve; the residue (hence CBV and MTT) is unaffected.
-    cpi_infer_delay: bool = False
+    cpi_infer_delay: bool = True
+    cpi_dispersion: Literal["auto", "none", "gamma"] = "none"
+    cpi_fallback: Literal["osvd", "none"] = "osvd"
 
     # AIF detection settings
     aif_file: Optional[Path] = None
@@ -168,7 +166,6 @@ class DSCConfig:
                 )
 
         for option in (
-            "cpi_infer_cpt",
             "cpi_infer_delay",
             "disable_aif_fallback",
             "motion_correct",
@@ -195,7 +192,6 @@ class DSCConfig:
         try:
             self.pre_bolus = int(self.pre_bolus)
             self.mcmc_samples = int(self.mcmc_samples)
-            self.cpi_control_points = int(self.cpi_control_points)
             self.n_aif_candidates = int(self.n_aif_candidates)
             self.num_processes = int(self.num_processes)
         except (ValueError, TypeError) as e:
@@ -289,8 +285,11 @@ class DSCConfig:
             raise ValueError("pre_bolus must be at least 3")
         if self.mcmc_samples <= 0:
             raise ValueError("mcmc_samples must be greater than zero")
-        if self.cpi_control_points < 0:
-            raise ValueError("cpi_control_points must be non-negative (0 = automatic)")
+        from pmriprep.models.dsc.signal_cpi.settings import CPIOptions
+        CPIOptions(self.cpi_control_points, self.cpi_infer_delay,
+                   self.cpi_dispersion, self.cpi_fallback)
+        if self.method == "cpi" and self.inference not in ("vi", "svb"):
+            raise ValueError("CPI supports vi or svb inference")
         if self.n_aif_candidates < 3:
             raise ValueError("n_aif_candidates must be at least 3")
         if self.num_processes < 0:

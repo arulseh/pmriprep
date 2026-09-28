@@ -23,7 +23,6 @@ import numpy.typing as npt
 import pytest
 
 from pmriprep.models.dsc.bayesian import fit_dsc_model
-from pmriprep.models.dsc.cpi import CPIModel, _fit_cpi_simple
 from pmriprep.models.dsc.vascular import VascularModel
 from pmriprep.utils.dsc_deconvolution import (
     svd_deconvolve_circulant,
@@ -318,9 +317,9 @@ OSVD_QIBA_NOISY = [
 class TestQIBAOSVDExponential:
     """oSVD recovery with QIBA AIF (recirculation) and exponential residue.
 
-    oSVD uses an OI-regularized block-circulant matrix. Evaluated
-    against a neutral fine-grid (non-inverse-crime) ground truth, so
-    cross-method comparison is fair. MTT = CBV/CBF is semi-quantitative:
+    oSVD uses an OI-regularized block-circulant matrix. Tissue is generated
+    from frame-interpolated AIF/residue curves, whose interpolation assumptions
+    are shared with some fitted operators. MTT = CBV/CBF is semi-quantitative:
     regularization under-recovers CBV (~30%) and CBF = max(R̂) is mis-estimated
     at the residue peak, giving up to ~17% MTT error on exponential residues
     even at zero noise.
@@ -340,7 +339,7 @@ class TestQIBAOSVDExponential:
         result = svd_deconvolve_oscillation(tissue, aif, dt)
         assert result.cbf > 0, f"CBF should be positive, got {result.cbf}"
         assert result.mtt > 0, f"MTT should be positive, got {result.mtt}"
-        # 0.20 = per-tissue max |MTT err| measured on the neutral fine-grid GT
+        # 0.20 = per-tissue max |MTT err| measured on this frame-interpolated GT
         # (deterministic at zero noise); oSVD MTT is semi-quantitative.
         _assert_param_recovery(result.mtt, mtt, 0.20, param_name="MTT")
 
@@ -403,81 +402,6 @@ class TestQIBATikhonovExponential:
 
         _assert_param_recovery(result.cbf, cbf, 0.35, param_name="CBF")
         _assert_param_recovery(result.mtt, mtt, 0.58, param_name="MTT")
-
-
-# =============================================================================
-# CPI with exponential residue
-# =============================================================================
-
-_CPI_EXP_XFAIL = pytest.mark.xfail(
-    reason="CPI basis resolution limit with recirculation AIF",
-    strict=True,
-)
-_CPI_QIBA_NOISE = (
-    ("zero", 0.45, 0.40),
-    ("low", 0.68, 0.55),
-    ("medium", 0.75, 0.65),
-)
-_CPI_EXP_FAILING = {
-    ("normal_gm", "zero"),
-    ("normal_gm", "low"),
-    ("normal_wm", "zero"),
-    ("normal_wm", "low"),
-    ("normal_wm", "medium"),
-    ("peritumoral", "zero"),
-}
-CPI_QIBA_CASES = [
-    pytest.param(
-        tissue_key,
-        noise_key,
-        cbf_tol,
-        mtt_tol,
-        id=f"{tissue_key}-{noise_key}",
-        marks=_CPI_EXP_XFAIL if (tissue_key, noise_key) in _CPI_EXP_FAILING else (),
-    )
-    for tissue_key in ("normal_gm", "normal_wm", "tumor", "peritumoral")
-    for noise_key, cbf_tol, mtt_tol in _CPI_QIBA_NOISE
-]
-
-
-class TestQIBACPIExponential:
-    """CPI recovery with QIBA AIF and exponential residue.
-
-    CPI uses PCHIP spline through control points. Expected failures are
-    restricted to the tissue/noise cells that exceed the recovery bounds.
-    """
-
-    @pytest.mark.parametrize(
-        "tissue_key,noise_key,cbf_tol,mtt_tol",
-        CPI_QIBA_CASES,
-    )
-    def test_cpi_exponential(
-        self,
-        tissue_key: str,
-        noise_key: str,
-        cbf_tol: float,
-        mtt_tol: float,
-    ) -> None:
-        """Test CPI recovery with QIBA recirculation AIF."""
-        tissue, aif, dt, time_sec, cbf, mtt = _make_qiba_exponential_data(
-            tissue_key, noise_key
-        )
-
-        model = CPIModel(
-            n_control_points=6,
-            n_acquisition_frames=int(len(time_sec)),
-            dt=float(time_sec[1] - time_sec[0]),
-        )
-        result = _fit_cpi_simple(model, tissue, aif, time_sec)
-        assert result is not None, "CPI fit returned None"
-        assert result.converged or result.r_squared > 0.9
-
-        fitted_params = model.dict_to_params(result.parameters)
-        recovered_cbf = model.get_cbf(fitted_params)
-        recovered_mtt = model.get_mtt(fitted_params, time_sec)
-
-        _assert_param_recovery(recovered_cbf, cbf, cbf_tol, param_name="CBF")
-        _assert_param_recovery(recovered_mtt, mtt, mtt_tol, param_name="MTT")
 
 
 # =============================================================================
@@ -605,7 +529,7 @@ OSVD_CTH_NOISY = [
 class TestQIBAOSVDCTH:
     """oSVD recovery with QIBA AIF and CTH gamma-variate residue.
 
-    Evaluated against a neutral fine-grid (non-inverse-crime) ground truth. The
+    Evaluated against frame-interpolated fine-grid reference curves. The
     acquisition window (120s) captures the full residue, so the bias is not tail
     truncation. MTT = CBV/CBF is semi-quantitative: regularization under-recovers
     CBV by ~30% (roughly shape-independent), and CBF = max(R̂) overshoots at a
@@ -627,7 +551,7 @@ class TestQIBAOSVDCTH:
         result = svd_deconvolve_oscillation(tissue, aif, dt)
         # CBF is the reliable oSVD output (the OI threshold is selected on CBF);
         # assert it in a measured band (max |CBF err| ~20% at zero noise on the
-        # fair fine-grid GT).
+        # frame-interpolated fine-grid GT).
         _assert_param_recovery(result.cbf, cbf, 0.25, param_name="CBF")
         # MTT = CBV/CBF is semi-quantitative and NOT an accuracy claim here:
         # ~30% CBV under-recovery (smoothing) + CBF = max(R̂) overshoot at a
@@ -687,78 +611,6 @@ class TestQIBATikhonovCTH:
 
         _assert_param_recovery(result.cbf, cbf, 0.30, param_name="CBF")
         _assert_param_recovery(result.mtt, mtt, 0.50, param_name="MTT")
-
-
-# =============================================================================
-# CPI with CTH residue
-# =============================================================================
-
-_CPI_CTH_XFAIL = pytest.mark.xfail(
-    reason="CPI basis resolution limit with recirculation AIF",
-    strict=True,
-)
-CPI_CTH_CASES = [
-    pytest.param(
-        tissue_key,
-        cth_key,
-        noise_key,
-        cbf_tol,
-        mtt_tol,
-        id=f"{tissue_key}-{cth_key}-{noise_key}",
-        marks=_CPI_CTH_XFAIL if tissue_key == "normal_gm" else (),
-    )
-    for tissue_key, cth_key in (
-        ("normal_gm", "low_cth"),
-        ("normal_gm", "high_cth"),
-        ("tumor", "low_cth"),
-        ("tumor", "high_cth"),
-    )
-    for noise_key, cbf_tol, mtt_tol in (
-        ("zero", 0.50, 0.40),
-        ("low", 0.70, 0.60),
-    )
-]
-
-
-class TestQIBACPICTH:
-    """CPI recovery with CTH residue.
-
-    CPI's PCHIP spline is designed for non-exponential residues. Expected
-    failures are restricted to normal-GM cells affected by the basis limit.
-    """
-
-    @pytest.mark.parametrize(
-        "tissue_key,cth_key,noise_key,cbf_tol,mtt_tol",
-        CPI_CTH_CASES,
-    )
-    def test_cpi_cth(
-        self,
-        tissue_key: str,
-        cth_key: str,
-        noise_key: str,
-        cbf_tol: float,
-        mtt_tol: float,
-    ) -> None:
-        """Test CPI recovery with CTH residue."""
-        tissue, aif, dt, time_sec, cbf, mtt, alpha = _make_qiba_cth_data(
-            tissue_key, cth_key, noise_key
-        )
-
-        model = CPIModel(
-            n_control_points=6,
-            n_acquisition_frames=int(len(time_sec)),
-            dt=float(time_sec[1] - time_sec[0]),
-        )
-        result = _fit_cpi_simple(model, tissue, aif, time_sec)
-        assert result is not None, "CPI fit returned None"
-        assert result.converged or result.r_squared > 0.9
-
-        fitted_params = model.dict_to_params(result.parameters)
-        recovered_cbf = model.get_cbf(fitted_params)
-        recovered_mtt = model.get_mtt(fitted_params, time_sec)
-
-        _assert_param_recovery(recovered_cbf, cbf, cbf_tol, param_name="CBF")
-        _assert_param_recovery(recovered_mtt, mtt, mtt_tol, param_name="MTT")
 
 
 # =============================================================================

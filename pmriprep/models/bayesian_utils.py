@@ -30,7 +30,7 @@ def _bounded_vi_mean(
     rhs : numpy.ndarray
         Linear term in the quadratic mean objective.
     unconstrained : numpy.ndarray
-        Unconstrained mean update.
+        Unconstrained minimizer of the same local quadratic objective.
     lower, upper : numpy.ndarray
         Bounds in the same coordinates as the mean and precision.
 
@@ -43,19 +43,44 @@ def _bounded_vi_mean(
     ------
     RuntimeError
         If the constrained solve fails or returns a nonfinite mean.
+
+    Notes
+    -----
+    The bounded problem is expressed as distance from the unconstrained mean
+    in the precision metric. Diagonal scaling changes coordinates without
+    changing the objective, so parameter units do not determine the solution.
     """
     if np.all(np.isfinite(unconstrained)) and np.all(
         (unconstrained >= lower) & (unconstrained <= upper)
     ):
         return unconstrained
-    factor = np.linalg.cholesky(precision)
-    target = np.linalg.solve(factor, rhs)
+    diagonal = np.diag(precision)
+    if not np.all(np.isfinite(diagonal)) or np.any(diagonal <= 0):
+        raise RuntimeError("Bound-constrained VI mean requires positive finite precision")
+    scales = np.sqrt(diagonal)
+    scaled_precision = precision / scales[:, None] / scales[None, :]
+    center = unconstrained
+    if not np.all(np.isfinite(center)):
+        center = np.linalg.solve(scaled_precision, rhs / scales) / scales
+        if not np.all(np.isfinite(center)):
+            raise RuntimeError("Bound-constrained VI mean update failed")
+        if np.all((center >= lower) & (center <= upper)):
+            return center
+    factor = np.linalg.cholesky(scaled_precision)
     result = optimize.lsq_linear(
-        factor.T, target, bounds=(lower, upper), method="bvls", tol=1e-10,
+        factor.T,
+        np.zeros_like(rhs),
+        bounds=((lower - center) * scales, (upper - center) * scales),
+        method="bvls",
+        tol=1e-10,
     )
     if not result.success or not np.all(np.isfinite(result.x)):
         raise RuntimeError("Bound-constrained VI mean update failed")
-    return np.asarray(result.x, dtype=np.float64)
+    mean = center + result.x / scales
+    if not np.all(np.isfinite(mean)):
+        raise RuntimeError("Bound-constrained VI mean update failed")
+    # Remove only roundoff overshoot after the correlated constrained solve.
+    return np.asarray(np.clip(mean, lower, upper), dtype=np.float64)
 
 
 # ---------------------------------------------------------------------------

@@ -426,6 +426,7 @@ def init_dsc_leakage_wf(
     baseline_frames: int,
     leakage_method: str,
     mem_gb: float,
+    return_guidance: bool = False,
     name: str = "dsc_leakage_wf",
 ) -> pe.Workflow:
     """Build the DSC leakage-correction sub-workflow.
@@ -445,6 +446,8 @@ def init_dsc_leakage_wf(
         Leakage-correction method ("bsw" or "none").
     mem_gb : float
         Memory estimate (GB) for the heavy correction node.
+    return_guidance : bool
+        Preserve the exact BSW reference and uncertainty for signal CPI.
     name : str
         Workflow name.
 
@@ -466,6 +469,8 @@ def init_dsc_leakage_wf(
         Leakage-corrected concentration.
     k2_map_file
         K2 leakage map.
+    guidance_file
+        Exact BSW guidance archive, or empty when not requested.
     qc_dict
         Leakage QC and preload provenance.
     """
@@ -489,6 +494,7 @@ def init_dsc_leakage_wf(
             fields=[
                 "corrected_concentration_file",
                 "k2_map_file",
+                "guidance_file",
                 "qc_dict",
             ]
         ),
@@ -508,8 +514,9 @@ def init_dsc_leakage_wf(
                 "baseline_frames",
                 "leakage_method",
                 "agent_standard_dose",
+                "return_guidance",
             ],
-            output_names=["corrected_concentration_file", "k2_map_file", "qc_dict"],
+            output_names=["corrected_concentration_file", "k2_map_file", "qc_dict", "guidance_file"],
             function=_apply_dsc_leakage_policy,
         ),
         name="leakage_correct",
@@ -519,6 +526,7 @@ def init_dsc_leakage_wf(
     leakage_correct.inputs.agent_standard_dose = agent_standard_dose
     leakage_correct.inputs.baseline_frames = baseline_frames
     leakage_correct.inputs.leakage_method = leakage_method
+    leakage_correct.inputs.return_guidance = return_guidance
 
     workflow.connect([
         (inputnode, leakage_correct, [
@@ -533,6 +541,7 @@ def init_dsc_leakage_wf(
         (leakage_correct, outputnode, [
             ("corrected_concentration_file", "corrected_concentration_file"),
             ("k2_map_file", "k2_map_file"),
+            ("guidance_file", "guidance_file"),
         ]),
         (leakage_correct, outputnode, [("qc_dict", "qc_dict")]),
     ])
@@ -669,7 +678,8 @@ def init_dsc_deconvolution_wf(
     dsc_map_kwargs : dict
         Keyword arguments forwarded verbatim to ``ComputeDSCMaps`` (method,
         thresholds, inference settings, ``random_seed`` when set, etc.). Built by
-        the orchestrator from the run configuration.
+        the orchestrator from the run configuration. CPI additionally receives
+        the node's memory allocation for its worker cap.
     mem_gb : float
         Memory estimate (GB) for the deconvolution node.
     name : str
@@ -686,12 +696,12 @@ def init_dsc_deconvolution_wf(
         Leakage-corrected and raw concentration / signal time series.
     aif_file, measured_aif_file, aif_detection_level, baseline_frames
         Arterial input function and detection provenance.
-    k2_map_input_file
-        Leakage-correction input.
+    k2_map_input_file, bsw_guidance_file
+        Leakage-correction coefficient map and exact CPI guidance archive.
     brain_mask_file, enhancing_mask_file, nawm_mask_file
         DSC-space brain and enhancing-tumor masks.
-    tr, fd_values
-        Acquisition timing and framewise displacement.
+    tr, te, fd_values
+        Acquisition timing, echo time and framewise displacement.
 
     Outputs
     -------
@@ -720,6 +730,7 @@ def init_dsc_deconvolution_wf(
             fields=[
                 "concentration_file",
                 "k2_map_input_file",
+                "bsw_guidance_file",
                 "aif_file",
                 "measured_aif_file",
                 "aif_detection_level",
@@ -727,6 +738,7 @@ def init_dsc_deconvolution_wf(
                 "brain_mask_file",
                 "enhancing_mask_file",
                 "tr",
+                "te",
                 "fd_values",
                 "signal_file",
                 "raw_concentration_file",
@@ -761,6 +773,8 @@ def init_dsc_deconvolution_wf(
         name="outputnode",
     )
 
+    if dsc_map_kwargs.get("method") == "cpi":
+        dsc_map_kwargs = dsc_map_kwargs | {"fitting_memory_gb": mem_gb}
     compute_maps = pe.Node(
         ComputeDSCMaps(**dsc_map_kwargs),
         name="compute_maps",
@@ -772,6 +786,7 @@ def init_dsc_deconvolution_wf(
         (inputnode, compute_maps, [
             ("concentration_file", "concentration_file"),
             ("k2_map_input_file", "k2_map_input_file"),
+            ("bsw_guidance_file", "bsw_guidance_file"),
             ("aif_file", "aif_file"),
             ("measured_aif_file", "measured_aif_file"),
             ("aif_detection_level", "aif_detection_level"),
@@ -779,6 +794,7 @@ def init_dsc_deconvolution_wf(
             ("brain_mask_file", "brain_mask_file"),
             ("enhancing_mask_file", "enhancing_mask_file"),
             ("tr", "tr"),
+            ("te", "te"),
             ("fd_values", "fd_values"),
             ("signal_file", "signal_file"),
             ("raw_concentration_file", "raw_concentration_file"),
@@ -2016,6 +2032,7 @@ def init_dsc_preproc_wf(
         agent_standard_dose=config.agent_standard_dose,
         baseline_frames=config.pre_bolus,
         leakage_method=config.leakage_method,
+        return_guidance=config.method == "cpi" and config.leakage_method == "bsw",
         mem_gb=_heavy_mem,
     )
 
@@ -2027,8 +2044,9 @@ def init_dsc_preproc_wf(
         svd_threshold=DEFAULT_SVD_THRESHOLD,
         oi_threshold=DEFAULT_OI_THRESHOLD,
         cpi_control_points=config.cpi_control_points,
-        cpi_infer_cpt=config.cpi_infer_cpt,
         cpi_infer_delay=config.cpi_infer_delay,
+        cpi_dispersion=config.cpi_dispersion,
+        cpi_fallback=config.cpi_fallback,
         inference=config.inference,
         leakage_method=config.leakage_method,
         mcmc_samples=config.mcmc_samples,
@@ -2041,7 +2059,8 @@ def init_dsc_preproc_wf(
         dsc_map_kwargs["random_seed"] = random_seed
     deconvolution_wf = init_dsc_deconvolution_wf(
         dsc_map_kwargs=dsc_map_kwargs,
-        mem_gb=_heavy_mem,
+        mem_gb=(cap_mem_gb(_heavy_mem + 0.5 * dsc_map_kwargs["n_procs"], mem_limit_gb)
+                if config.method == "cpi" else _heavy_mem),
     )
 
     # -------------------------------------------------------------------
@@ -2253,6 +2272,7 @@ def init_dsc_preproc_wf(
         (leakage_wf, deconvolution_wf, [
             ("outputnode.corrected_concentration_file", "inputnode.concentration_file"),
             ("outputnode.k2_map_file", "inputnode.k2_map_input_file"),
+            ("outputnode.guidance_file", "inputnode.bsw_guidance_file"),
         ]),
         (conc_aif_wf, deconvolution_wf, [
             ("outputnode.out_aif_curve", "inputnode.aif_file"),
@@ -2268,6 +2288,7 @@ def init_dsc_preproc_wf(
         ]),
         (inputnode, deconvolution_wf, [
             ("tr", "inputnode.tr"),
+            ("te", "inputnode.te"),
         ]),
         (motion_wf, deconvolution_wf, [
             ("outputnode.fd_values", "inputnode.fd_values"),

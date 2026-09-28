@@ -410,7 +410,8 @@ def _apply_dsc_leakage_policy(
     baseline_frames: int = 5,
     leakage_method: str = "bsw",
     agent_standard_dose: float = 0.1,
-) -> tuple[str, str, dict[str, object]]:
+    return_guidance: bool = False,
+) -> tuple[str, str, dict[str, object], str]:
     """Apply the configured leakage policy and record preload provenance.
 
     Parameters
@@ -439,11 +440,13 @@ def _apply_dsc_leakage_policy(
         Leakage-correction method ("bsw" or "none").
     agent_standard_dose : float, optional
         Agent's standard dose in mmol Gd/kg. Scales advisory ΔR2* thresholds.
+    return_guidance : bool, optional
+        Save the exact BSW reference and coefficient uncertainty for signal CPI.
 
     Returns
     -------
-    tuple of (str, str, dict)
-        Tuple of (corrected_concentration_file, k2_map_file, qc_dict).
+    tuple of (str, str, dict, str)
+        Corrected concentration, K2 map, QC, and optional guidance archive.
     """
     import numpy as np
     import nibabel as nib  # type: ignore[import-untyped]
@@ -472,6 +475,7 @@ def _apply_dsc_leakage_policy(
     qc_metrics: dict[str, object] = {}
     qc_metrics["baseline_frames_used"] = int(baseline_frames)
     k2_map_file: str = ""
+    guidance_file = ""
 
     # Estimate continuous baseline ΔR2* for advisory QC only. Leakage
     # correction runs independently of the administered preload metadata.
@@ -524,6 +528,7 @@ def _apply_dsc_leakage_policy(
             brain_mask=brain_mask,
             tr=tr,
             baseline_frames=baseline_frames,
+            return_guidance=return_guidance,
         )
 
         corrected_conc = correction_result.concentration_corrected
@@ -533,6 +538,12 @@ def _apply_dsc_leakage_policy(
         )
         if correction_result.qc_metrics:
             qc_metrics.update(correction_result.qc_metrics)
+        if return_guidance:
+            from pmriprep.utils.bsw_guidance_io import save_bsw_guidance
+            if correction_result.guidance is None:
+                raise RuntimeError("BSW correction did not supply requested CPI guidance")
+            guidance_file = save_bsw_guidance(correction_result.guidance,
+                                              Path.cwd() / "bsw_guidance.npz", affine)
     elif leakage_method == "none":
         if conc_data.shape[-1] < 4:
             raise ValueError("Baseline centering requires at least 4 timepoints")
@@ -573,7 +584,7 @@ def _apply_dsc_leakage_policy(
         k2_img = nib.Nifti1Image(k2_map.astype(np.float32), affine, header)  # type: ignore[attr-defined]
         nib.save(k2_img, k2_map_file)  # type: ignore[attr-defined]
 
-    return corrected_file, k2_map_file, qc_metrics
+    return corrected_file, k2_map_file, qc_metrics, guidance_file
 
 
 def _compute_prebolus_mean(moco_file: str, baseline_frames: int) -> str:
@@ -1427,6 +1438,7 @@ def _generate_dsc_fit_qc(
         qc_voxel_cbf=voxel_cbf,
         r_squared=r_squared,
         method=method,
+        fit_domain=fit_data.get("fit_domain", "concentration"),
         output_path=out_path,
         subject_id=subject_id,
         session_id=session_id,

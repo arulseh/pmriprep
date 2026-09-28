@@ -363,7 +363,8 @@ class TestTypecheckVerification:
     def test_import_models(self) -> None:
         """Verify model modules import."""
         from pmriprep.models.dsc import base as dsc_model_base
-        from pmriprep.models.dsc import vascular, cpi, bayesian as dsc_bayesian
+        from pmriprep.models.dsc import vascular, bayesian as dsc_bayesian
+        from pmriprep.models.dsc.signal_cpi.maps import fit_cpi_maps
         from pmriprep.models.dce import base as dce_model_base
         from pmriprep.models.dce import tofts, extended_tofts, patlak
         from pmriprep.models.dce import two_compartment_exchange
@@ -371,7 +372,7 @@ class TestTypecheckVerification:
 
         assert dsc_model_base.DSCModel is not None
         assert vascular.VascularModel is not None
-        assert cpi.CPIModel is not None
+        assert callable(fit_cpi_maps)
         assert dsc_bayesian.BayesianDSCFitter is not None
         assert dce_model_base.PKModel is not None
         assert tofts.ToftsModel is not None

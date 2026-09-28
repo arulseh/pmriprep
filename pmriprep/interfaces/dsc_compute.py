@@ -1,14 +1,14 @@
 """DSC map computation interface for perfusion quantification.
 
 This module implements the main Nipype interface for computing DSC
-perfusion parameter maps (CBF, CBV, MTT, Tmax, PSR, PH) from
-concentration curves and AIF using various deconvolution methods.
+perfusion parameter maps (CBF, CBV, MTT, Tmax, PSR, PH). CPI fits original
+signal; other deconvolution methods use concentration curves and an AIF.
 """
 
 import json
 import logging
 from pathlib import Path
-from typing import Any, NamedTuple, Optional, cast
+from typing import TYPE_CHECKING, Any, NamedTuple, Optional, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -23,7 +23,6 @@ from nipype.interfaces.base import (  # type: ignore[import-untyped]
 )
 
 from pmriprep.models.dsc.base import DSCFitResult
-from pmriprep.models.dsc.cpi import CPI_LOG_SPACING_BOUNDS
 from pmriprep.utils.dsc_constants import (
     DEFAULT_OI_THRESHOLD,
     DEFAULT_SVD_THRESHOLD,
@@ -35,6 +34,9 @@ from pmriprep.utils.dsc_constants import (
     VASCULAR_DELAY_BOUNDS,
 )
 from pmriprep.utils.dsc_signal import compute_psr_legacy, compute_ttp_legacy
+
+if TYPE_CHECKING:
+    from pmriprep.models.dsc.signal_cpi.maps import CPIMaps
 
 logger = logging.getLogger("nipype.interface")
 
@@ -110,7 +112,7 @@ def _parametric_fit_needs_fallback(
 ) -> bool:
     """Return whether a parametric fit requires oSVD fallback.
 
-    Budget-limited CPI NLLS fits retain their finite endpoint and are judged
+    Budget-limited NLLS fits retain their finite endpoint and are judged
     by the same minimum-adequacy rule as fixed-schedule VI. Other NLLS/MAP
     termination failures still require fallback.
     """
@@ -139,43 +141,11 @@ def _parametric_fit_needs_fallback(
     return bad_r2 or bad_result or bad_solver_convergence
 
 
-def _parametric_outputs_are_finite(
-    result: dict[str, Any],
-    method: str,
-    *,
-    cpi_infer_delay: bool = False,
-) -> bool:
-    """Return whether the quantitative outputs required by a fit are finite."""
-    required = ["cbf", "cbv", "mtt"]
-    if method != "cpi" or cpi_infer_delay:
-        required.append("tmax")
-    if method == "vascular":
-        required.extend(["alpha", "beta", "cth"])
+def _parametric_outputs_are_finite(result: dict[str, Any]) -> bool:
+    """Return whether all required vascular fit outputs are finite."""
     return all(
         key in result and np.isfinite(float(result[key]))
-        for key in required
-    )
-
-
-def _cpi_spacing_at_bound(
-    values: npt.ArrayLike,
-) -> npt.NDArray[np.bool_] | np.bool_:
-    """Return whether any inferred CPI spacing lies at its numerical support."""
-    spacing = np.asarray(values, dtype=np.float64)
-    endpoint = np.isclose(
-        spacing,
-        CPI_LOG_SPACING_BOUNDS[0],
-        rtol=1e-5,
-        atol=1e-8,
-    ) | np.isclose(
-        spacing,
-        CPI_LOG_SPACING_BOUNDS[1],
-        rtol=1e-5,
-        atol=1e-8,
-    )
-    return cast(
-        npt.NDArray[np.bool_] | np.bool_,
-        np.any(endpoint, axis=-1),
+        for key in ("cbf", "cbv", "mtt", "tmax", "alpha", "beta", "cth")
     )
 
 
@@ -185,25 +155,19 @@ def _dsc_init_worker(
     method: str,
     inference: str,
     mcmc_samples: int,
-    cpi_control_points: int,
-    bolus_duration_frames: int,
     dt: float,
     motion_weights: Any = None,
     sloppy: bool = False,
     random_seed: Optional[int] = None,
-    cpi_infer_cpt: bool = True,
-    cpi_infer_delay: bool = False,
-    mean_tissue: Any = None,
 ) -> None:
     """Initialise shared state once per worker process."""
     from pmriprep.utils.parallel import limit_worker_threads
     limit_worker_threads()
 
-    from pmriprep.models.dsc import (
-        VascularModel,
-        CPIModel,
-        select_n_control_points,
-    )
+    from pmriprep.models.dsc import VascularModel
+
+    if method != "vascular":
+        raise ValueError("The concentration-model worker supports vascular only")
 
     # Seed RNG in worker process for reproducibility — offset by PID
     # so parallel workers explore different random sequences
@@ -219,30 +183,8 @@ def _dsc_init_worker(
     _dsc_worker_ctx["dt"] = dt
     _dsc_worker_ctx["motion_weights"] = motion_weights
     _dsc_worker_ctx["sloppy"] = sloppy
-    _dsc_worker_ctx["cpi_infer_delay"] = bool(cpi_infer_delay)
 
-    # Pre-build model template so each voxel can cheaply instantiate
-    if method == "vascular":
-        _dsc_worker_ctx["model_factory"] = lambda: VascularModel()
-    else:  # cpi
-        n_cp = cpi_control_points
-        if n_cp == 0:
-            n_cp = select_n_control_points(
-                bolus_duration_frames,
-                infer_cpt=bool(cpi_infer_cpt),
-                mean_tissue=mean_tissue,
-                dt=float(dt),
-            )
-        n_frames = int(len(time_points))
-        _dsc_worker_ctx["model_factory"] = (
-            lambda _ncp=n_cp, _nf=n_frames, _dt=dt, _ic=bool(cpi_infer_cpt), _id=bool(cpi_infer_delay): CPIModel(
-                n_control_points=_ncp,
-                n_acquisition_frames=_nf,
-                dt=_dt,
-                infer_cpt=_ic,
-                infer_delay=_id,
-            )
-        )
+    _dsc_worker_ctx["model_factory"] = VascularModel
 
 
 def _dsc_fit_single_voxel(voxel_data: _DSCVoxelInput) -> dict[str, Any]:
@@ -255,7 +197,6 @@ def _dsc_fit_single_voxel(voxel_data: _DSCVoxelInput) -> dict[str, Any]:
     if np.max(np.abs(tissue_curve)) < EPSILON_CONCENTRATION:
         return {"coords": (x, y, z), "failed": True}
 
-    method = _dsc_worker_ctx["method"]
     inference = _dsc_worker_ctx["inference"]
     aif = _dsc_worker_ctx["aif"]
     time_points = _dsc_worker_ctx["time_points"]
@@ -282,57 +223,23 @@ def _dsc_fit_single_voxel(voxel_data: _DSCVoxelInput) -> dict[str, Any]:
         cbf_val = result.parameters.get("cbf", result.parameters.get("CBF", 0.0))
         out["cbf"] = cbf_val
 
-        if method == "vascular":
-            alpha = result.parameters.get("alpha", 1.0)
-            beta = result.parameters.get("beta", 1.0)
-            delay = result.parameters.get("delay", 0.0)
+        alpha = result.parameters.get("alpha", 1.0)
+        beta = result.parameters.get("beta", 1.0)
+        delay = result.parameters.get("delay", 0.0)
 
-            # Compute residue for derived parameters:
-            # CBV = integral of residue, MTT = CBV / CBF (central volume theorem)
-            model = _dsc_worker_ctx["model_factory"]()
-            residue = model.residue_function(
-                [cbf_val, alpha, beta, 0.0], time_points  # delay=0 for clean residue
-            )
-            out["cbv"] = float(np.trapezoid(residue, dx=dt))
-            out["mtt"] = out["cbv"] / cbf_val if cbf_val > EPSILON_CONCENTRATION else 0.0
-            out["fitted_mtt"] = float(alpha) * float(beta)
-            out["tmax"] = delay
-            out["alpha"] = alpha
-            out["beta"] = beta
-            out["cth"] = beta * np.sqrt(alpha)
-        else:  # cpi
-            if result.fitted_residue is not None:
-                res = result.fitted_residue
-                cbv_val = float(np.trapezoid(res, dx=dt))
-                out["cbv"] = cbv_val
-                out["mtt"] = cbv_val / cbf_val if cbf_val > EPSILON_CONCENTRATION else 0.0
-                # CPI reports the fitted bolus delay (FABBER inferdelay) when
-                # enabled; the residue (CBV/MTT) is delay-invariant. Without
-                # infer_delay, timing was not estimated and must not be
-                # represented as a measured zero.
-                out["tmax"] = (
-                    float(result.parameters.get("delay", np.nan))
-                    if bool(_dsc_worker_ctx.get("cpi_infer_delay"))
-                    else np.nan
-                )
-            else:
-                out["cbv"] = 0.0
-                out["mtt"] = 0.0
-                out["tmax"] = (
-                    float(result.parameters.get("delay", np.nan))
-                    if bool(_dsc_worker_ctx.get("cpi_infer_delay"))
-                    else np.nan
-                )
-            spacing_values = [
-                float(value)
-                for name, value in result.parameters.items()
-                if name.startswith("s") and name[1:].isdigit()
-            ]
-            if spacing_values:
-                out["cpi_spacing_at_bound"] = bool(
-                    _cpi_spacing_at_bound(spacing_values)
-                )
-
+        # Compute residue for derived parameters:
+        # CBV = integral of residue, MTT = CBV / CBF (central volume theorem)
+        model = _dsc_worker_ctx["model_factory"]()
+        residue = model.residue_function(
+            [cbf_val, alpha, beta, 0.0], time_points  # delay=0 for clean residue
+        )
+        out["cbv"] = float(np.trapezoid(residue, dx=dt))
+        out["mtt"] = out["cbv"] / cbf_val if cbf_val > EPSILON_CONCENTRATION else 0.0
+        out["fitted_mtt"] = float(alpha) * float(beta)
+        out["tmax"] = delay
+        out["alpha"] = alpha
+        out["beta"] = beta
+        out["cth"] = beta * np.sqrt(alpha)
         # Extract uncertainty only for directly fitted CBF. Derived CBV depends
         # on correlated fitted parameters, but DSCFitResult does not retain
         # their joint covariance or derived posterior samples.
@@ -353,13 +260,7 @@ def _dsc_fit_single_voxel(voxel_data: _DSCVoxelInput) -> dict[str, Any]:
         # strict FE-plateau diagnostic even on usable fits.
         if (
             _parametric_fit_needs_fallback(result, inference)
-            or not _parametric_outputs_are_finite(
-                out,
-                method,
-                cpi_infer_delay=bool(
-                    _dsc_worker_ctx.get("cpi_infer_delay", False)
-                ),
-            )
+            or not _parametric_outputs_are_finite(out)
         ):
             out["needs_fallback"] = True
 
@@ -384,7 +285,6 @@ class _DSCComputeInputs(NamedTuple):
     svd_threshold: float
     oi_threshold: float
     cpi_control_points: int
-    cpi_infer_cpt: bool
     cpi_infer_delay: bool
     inference: str
     mcmc_samples: int
@@ -473,6 +373,7 @@ class _DSCDeconvolutionMaps(NamedTuple):
     cbv_std: Optional[npt.NDArray[Any]] = None
     parametric_r2: Optional[npt.NDArray[Any]] = None
     fallback_mask: Optional[npt.NDArray[Any]] = None
+    cpi_fit: Optional["CPIMaps"] = None
 
 
 class _DSCPostprocessing(NamedTuple):
@@ -510,7 +411,7 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
     signal_file = File(
         exists=True,
         mandatory=False,
-        desc="Optional 4D raw signal for PSR/PH calculation (if not using concentration)",
+        desc="Original 4D signal; required for CPI and used for signal-quality maps",
     )
     raw_concentration_file = File(
         exists=True,
@@ -549,21 +450,17 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
         usedefault=True,
         desc="Number of CPI control points (0 = auto-select)",
     )
-    cpi_infer_cpt = traits.Bool(
+    cpi_infer_delay = traits.Bool(
         True,
         usedefault=True,
-        desc="Infer control point times via log-spacing parameters "
-             "(default True). Lets CPs migrate to optimal locations; cuts "
-             "bias on long-MTT/low-CBF tissues by ~50%. Costs ~3x per-voxel "
-             "compute. Set False to match FABBER --infer-cpt false.",
+        desc="Infer CPI arrival delay; false conditions it at zero and reports timing missing",
     )
-    cpi_infer_delay = traits.Bool(
-        False,
-        usedefault=True,
-        desc="Infer a per-voxel bolus arrival delay for CPI (FABBER "
-             "inferdelay), off by default. Applied as a post-hoc shift of the "
-             "convolved curve; the residue (CBV/MTT) is unaffected.",
-    )
+    cpi_dispersion = traits.Enum("none", "auto", "gamma", usedefault=True,
+                                 desc="CPI arterial dispersion selection")
+    cpi_fallback = traits.Enum("osvd", "none", usedefault=True,
+                               desc="Replace rejected CPI fits with oSVD or leave missing")
+    te = traits.Float(desc="Echo time in seconds, required by signal-domain CPI")
+    bsw_guidance_file = File(desc="Exact upstream BSW guidance archive for CPI")
 
     # Time parameters
     tr = traits.Float(
@@ -604,6 +501,9 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
         1,
         usedefault=True,
         desc="Number of parallel processes for voxel fitting (1 = serial)",
+    )
+    fitting_memory_gb = traits.Float(
+        desc="Scheduler memory allocation for CPI, used to limit fitting workers",
     )
     # Motion weighting inputs (from motion_correct)
     fd_values = traits.List(
@@ -841,7 +741,6 @@ class ComputeDSCMaps(BaseInterface):
             svd_threshold=float(self.inputs.svd_threshold),
             oi_threshold=float(self.inputs.oi_threshold),
             cpi_control_points=int(self.inputs.cpi_control_points),
-            cpi_infer_cpt=bool(self.inputs.cpi_infer_cpt),
             cpi_infer_delay=bool(self.inputs.cpi_infer_delay),
             inference=str(self.inputs.inference),
             mcmc_samples=int(self.inputs.mcmc_samples),
@@ -902,7 +801,8 @@ class ComputeDSCMaps(BaseInterface):
         concentration = concentration - concentration_offset
         detection_info["aif_baseline_offset"] = round(aif_baseline_offset, 4)
         detection_info["conc_median_baseline_offset"] = round(
-            float(np.median(concentration_offset[inputs.mask_bool])), 4
+            float(np.median(concentration_offset[inputs.mask_bool]))
+            if np.any(inputs.mask_bool) else float("nan"), 4
         )
 
         return _DSCBaselinePreparation(
@@ -1608,9 +1508,6 @@ class ComputeDSCMaps(BaseInterface):
         oi_threshold: float,
         inference: str,
         mcmc_samples: int,
-        cpi_control_points: int,
-        cpi_infer_cpt: bool,
-        cpi_infer_delay: bool,
         motion_weighting: _DSCMotionWeighting,
     ) -> _DSCDeconvolutionMaps:
         """Dispatch DSC deconvolution and normalize its typed return state."""
@@ -1637,9 +1534,6 @@ class ComputeDSCMaps(BaseInterface):
             dt,
             inference,
             mcmc_samples,
-            cpi_control_points,
-            cpi_infer_cpt,
-            cpi_infer_delay,
             motion_weights=motion_weighting.weights,
         )
         qc["motion_weighting"] = motion_weighting.qc
@@ -1656,6 +1550,116 @@ class ComputeDSCMaps(BaseInterface):
             fallback_mask=fallback_mask,
         )
 
+    def _deconvolve_signal_cpi(
+        self, inputs: _DSCComputeInputs, baseline: _DSCBaselinePreparation,
+        motion: _DSCMotionWeighting,
+    ) -> _DSCDeconvolutionMaps:
+        """Fit original signal with exact upstream guidance and optional replacement."""
+        import nibabel as nib
+        from pmriprep.models.dsc.signal_cpi.acquisition import prepare_cpi_acquisition
+        from pmriprep.models.dsc.signal_cpi.maps import fit_cpi_maps
+        from pmriprep.models.dsc.signal_cpi.settings import CPIOptions
+        from pmriprep.utils.bsw_guidance_io import load_bsw_guidance
+
+        if inputs.signal is None or not isdefined(self.inputs.te) or self.inputs.te <= 0:
+            raise ValueError("Signal-domain CPI requires original signal and positive echo time in seconds")
+        if inputs.inference not in ("vi", "svb"):
+            raise ValueError("CPI supports vi or svb inference")
+        for path in (self.inputs.signal_file, self.inputs.brain_mask_file, self.inputs.raw_concentration_file):
+            if isdefined(path) and path:
+                image: Any = nib.load(path)
+                if (image.shape[:3] != inputs.concentration.shape[:3]
+                        or not np.allclose(image.affine, inputs.affine, rtol=0, atol=1e-5)):
+                    raise ValueError("CPI signal, concentration and mask must share the native spatial grid")
+        if inputs.signal.shape != inputs.concentration.shape:
+            raise ValueError("CPI signal and concentration must have identical spatial/frame dimensions")
+        guidance = None
+        if inputs.leakage_method == "bsw":
+            if not isdefined(self.inputs.bsw_guidance_file) or not self.inputs.bsw_guidance_file:
+                raise ValueError("BSW-guided CPI requires the exact upstream guidance archive")
+            guidance = load_bsw_guidance(self.inputs.bsw_guidance_file, affine=inputs.affine,
+                                         shape=inputs.signal.shape, tr=inputs.dt)
+        options = CPIOptions(inputs.cpi_control_points, inputs.cpi_infer_delay,
+                              self.inputs.cpi_dispersion, self.inputs.cpi_fallback)
+        acquisition = prepare_cpi_acquisition(inputs.signal, baseline.aif,
+            np.arange(inputs.signal.shape[-1], dtype=float)*inputs.dt, float(self.inputs.te), guidance,
+            options=options, inference_method=inputs.inference, temporal_weights=motion.weights,
+            leakage_method=self.inputs.leakage_method, mask=inputs.mask_bool,
+            baseline_frames=baseline.n_baseline, sloppy=bool(self.inputs.sloppy))
+        raw = self._select_raw_concentration(baseline.concentration)
+        if raw.shape != inputs.signal.shape:
+            raise ValueError("CPI fallback concentration must match the signal acquisition")
+        raw = raw - np.mean(raw[..., :baseline.n_baseline], axis=-1, keepdims=True)
+        result = fit_cpi_maps(acquisition, raw, baseline.concentration, oi_target=inputs.oi_threshold,
+            prediction_file=Path.cwd() / "cpi_signal_predictions.npy",
+            n_procs=int(self.inputs.n_procs),
+            memory_gb=(float(self.inputs.fitting_memory_gb)
+                       if isdefined(self.inputs.fitting_memory_gb) else None))
+        result.qc["motion_weighting"] = motion.qc
+        return _DSCDeconvolutionMaps(result.cbf, result.cbv, result.mtt, result.delay, result.qc,
+            cbf_std=result.cbf_std, parametric_r2=result.r_squared, fallback_mask=result.fallback_mask,
+            cpi_fit=result)
+
+    def _save_signal_cpi_qc(
+        self, cbf: npt.NDArray[Any], concentration: npt.NDArray[Any], aif: npt.NDArray[Any],
+        mask: npt.NDArray[Any], dt: float, signal: npt.NDArray[Any] | None,
+        result: "CPIMaps",
+    ) -> None:
+        """Serialize an actual selected signal fit without rerunning inference."""
+        from scipy.ndimage import binary_erosion
+        from pmriprep.utils.dsc_qc_plots import _select_dsc_qc_voxel
+        from pmriprep.utils.sidecar_builders import dump_sidecar_json
+
+        eligible = mask & np.isfinite(result.dispersion) & np.all(np.isfinite(result.predictions), axis=-1)
+        if signal is None or not np.any(eligible):
+            return
+        voxel, tier = _select_dsc_qc_voxel(
+            cbf, eligible, binary_erosion,
+            enhancing_mask=self._load_qc_enhancing_mask(concentration.shape[:3]),
+        )
+        index = tuple(voxel)
+        path = self._gen_outfilename("_qc_fit_data").replace(".nii.gz", ".json")
+        record = dict(voxel=list(voxel), voxel_cbf=float(cbf[index]), r_squared=float(result.r_squared[index]),
+            method="cpi", fit_domain="signal", inference=str(self.inputs.inference),
+            dispersion="gamma" if result.dispersion[index] else "none",
+            converged=bool(result.converged[index]), fitted_k2=float(result.fitted_k2[index]),
+            tissue_concentration=concentration[index].tolist(), model_prediction=result.predictions[index].tolist(),
+            aif=aif.tolist(), time_points=(np.arange(aif.size)*dt).tolist(), raw_signal=signal[index].tolist(),
+            prediction_source="selected_voxel_posterior")
+        Path(path).write_text(dump_sidecar_json(record))
+        self._results["out_qc_fit_data"] = path
+        self._qc_voxel_tier = tier
+
+    def _load_qc_enhancing_mask(
+        self, spatial_shape: tuple[int, ...],
+    ) -> npt.NDArray[Any] | None:
+        """Load optional enhancing support on the native concentration grid.
+
+        Parameters
+        ----------
+        spatial_shape : tuple of int
+            Shape of the native concentration image used for QC selection.
+
+        Returns
+        -------
+        ndarray or None
+            Native-grid mask, nearest-neighbour resampled when necessary.
+        """
+        import nibabel as nib
+
+        if not isdefined(self.inputs.enhancing_mask_file) or not self.inputs.enhancing_mask_file:
+            return None
+        enhancing: Any = nib.load(self.inputs.enhancing_mask_file)
+        concentration: Any = nib.load(self.inputs.concentration_file)
+        data = enhancing.get_fdata()
+        if data.shape[:3] != spatial_shape or not np.allclose(
+            enhancing.affine, concentration.affine, atol=1e-3
+        ):
+            from nilearn.image import resample_to_img
+
+            data = (resample_to_img(enhancing, concentration, interpolation="nearest").get_fdata() > 0.5).astype(np.float64)
+        return np.asarray(data)
+
     def _save_fit_qc_data(
         self,
         *,
@@ -1667,15 +1671,18 @@ class ComputeDSCMaps(BaseInterface):
         method: str,
         inference: str,
         mcmc_samples: int,
-        cpi_control_points: int,
-        cpi_infer_cpt: bool,
-        cpi_infer_delay: bool,
         threshold: float,
         oi_threshold: float,
         signal: Optional[npt.NDArray[Any]],
+        cpi_fit: Optional["CPIMaps"] = None,
     ) -> None:
         """Dispatch fit-QC serialization to the selected method family."""
-        if method in ("vascular", "cpi"):
+        if method == "cpi":
+            if cpi_fit is None:
+                raise ValueError("CPI QC requires the selected signal-fit record")
+            self._save_signal_cpi_qc(rel_cbf, concentration, aif, mask_bool, dt, signal, cpi_fit)
+            return
+        if method == "vascular":
             self._save_qc_fit_data(
                 rel_cbf,
                 concentration,
@@ -1685,9 +1692,6 @@ class ComputeDSCMaps(BaseInterface):
                 method,
                 inference,
                 mcmc_samples,
-                cpi_control_points,
-                cpi_infer_cpt,
-                cpi_infer_delay,
                 signal_data=signal,
             )
             return
@@ -1769,12 +1773,10 @@ class ComputeDSCMaps(BaseInterface):
             method=inputs.method,
             inference=inputs.inference,
             mcmc_samples=inputs.mcmc_samples,
-            cpi_control_points=inputs.cpi_control_points,
-            cpi_infer_cpt=inputs.cpi_infer_cpt,
-            cpi_infer_delay=inputs.cpi_infer_delay,
             threshold=inputs.svd_threshold,
             oi_threshold=inputs.oi_threshold,
             signal=inputs.signal,
+            cpi_fit=deconvolution.cpi_fit,
         )
         self._add_fit_qc_metrics(maps.rel_cbv, qc)
 
@@ -1881,9 +1883,6 @@ class ComputeDSCMaps(BaseInterface):
         dt: float,
         inference: str,
         mcmc_samples: int,
-        cpi_control_points: int,
-        cpi_infer_cpt: bool,
-        cpi_infer_delay: bool,
         motion_weights: Optional[npt.NDArray[np.floating]] = None,
     ) -> tuple[
         npt.NDArray[Any],  # cbf
@@ -1897,11 +1896,12 @@ class ComputeDSCMaps(BaseInterface):
         Optional[npt.NDArray[Any]],  # parametric_r2_map (parametric only)
         Optional[npt.NDArray[Any]],  # fallback_mask (parametric only)
     ]:
-        """Run parametric model deconvolution (vascular, CPI).
+        """Run parametric model deconvolution (vascular).
 
         Uses multiprocessing.Pool when n_procs > 1.
         """
-        from pmriprep.models.dsc import estimate_bolus_duration
+        if method != "vascular":
+            raise ValueError("The concentration-model route supports vascular only")
 
         spatial_shape = concentration_data.shape[:3]
         n_timepoints = concentration_data.shape[3]
@@ -1916,7 +1916,7 @@ class ComputeDSCMaps(BaseInterface):
             np.full(spatial_shape, np.nan, dtype=np.float64)
             if method == "vascular" else None
         )
-        cbf_std_map = np.full(spatial_shape, np.nan, dtype=np.float64) if method in ("cpi", "vascular") else None
+        cbf_std_map = np.full(spatial_shape, np.nan, dtype=np.float64) if method == "vascular" else None
         # CBV is derived from correlated fitted parameters. Neither scalar nor
         # batched fit results retain the joint covariance needed to propagate
         # its uncertainty, so no CBV uncertainty map is emitted.
@@ -1928,26 +1928,18 @@ class ComputeDSCMaps(BaseInterface):
         # the saved CBF/CBV/MTT/Tmax in that voxel).
         parametric_r2_map = (
             np.full(spatial_shape, np.nan, dtype=np.float32)
-            if method in ("cpi", "vascular") else None
+            if method == "vascular" else None
         )
         fallback_mask = (
             np.zeros(spatial_shape, dtype=np.uint8)
-            if method in ("cpi", "vascular") else None
+            if method == "vascular" else None
         )
         qc_metrics: dict[str, Any] = {
             "method": method,
             "inference": inference,
         }
-        if method == "cpi":
-            qc_metrics["tmax_method"] = (
-                "fitted_cpi_delay"
-                if cpi_infer_delay
-                else "not_estimated_for_retained_cpi"
-            )
-            qc_metrics["fallback_tmax_method"] = "osvd_residue_delay"
-        elif method == "vascular":
-            qc_metrics["tmax_method"] = "fitted_vascular_delay"
-            qc_metrics["fallback_tmax_method"] = "osvd_residue_delay"
+        qc_metrics["tmax_method"] = "fitted_vascular_delay"
+        qc_metrics["fallback_tmax_method"] = "osvd_residue_delay"
 
         # Get mask indices
         mask_coords = np.where(mask > 0)
@@ -1964,18 +1956,6 @@ class ComputeDSCMaps(BaseInterface):
             n_fit_admissible=n_admissible,
             n_fit_inadmissible=n_voxels - n_admissible,
         )
-
-        # Estimate bolus duration once from AIF for CPI
-        bolus_duration_frames = estimate_bolus_duration(aif)
-
-        # Mean tissue across in-mask voxels for the MTT-adaptive auto-N
-        # floor (used by select_n_control_points when cpi_infer_cpt=True).
-        mean_tissue = np.mean(
-            concentration_data[
-                mask_coords[0], mask_coords[1], mask_coords[2], :
-            ],
-            axis=0,
-        ).astype(np.float64)
 
         # Build voxel work items only for paths that consume them.
         # VI/SVB and MAP take concentration_data + mask_coords directly
@@ -2000,9 +1980,7 @@ class ComputeDSCMaps(BaseInterface):
         )
         init_args = (
             aif, time_points, method, inference, mcmc_samples,
-            cpi_control_points, bolus_duration_frames, dt,
-            motion_weights, sloppy, random_seed, cpi_infer_cpt,
-            cpi_infer_delay, mean_tissue,
+            dt, motion_weights, sloppy, random_seed,
         )
 
         n_procs = max(1, int(self.inputs.n_procs))
@@ -2017,11 +1995,6 @@ class ComputeDSCMaps(BaseInterface):
                 method=method,
                 dt=dt,
                 n_voxels=n_voxels,
-                cpi_control_points=cpi_control_points,
-                cpi_infer_cpt=cpi_infer_cpt,
-                cpi_infer_delay=cpi_infer_delay,
-                bolus_duration_frames=bolus_duration_frames,
-                mean_tissue=mean_tissue,
                 motion_weights=motion_weights,
                 sloppy=sloppy,
                 spatial=(inference == "svb"),
@@ -2036,11 +2009,6 @@ class ComputeDSCMaps(BaseInterface):
                 method=method,
                 dt=dt,
                 n_voxels=n_voxels,
-                cpi_control_points=cpi_control_points,
-                cpi_infer_cpt=cpi_infer_cpt,
-                cpi_infer_delay=cpi_infer_delay,
-                bolus_duration_frames=bolus_duration_frames,
-                mean_tissue=mean_tissue,
                 motion_weights=motion_weights,
                 sloppy=sloppy,
                 fit_admissible=admissible_mask,
@@ -2084,14 +2052,10 @@ class ComputeDSCMaps(BaseInterface):
         n_vascular_mtt_at_bound = 0
         n_delay_accepted = 0
         n_delay_at_bound = 0
-        n_cpi_spacing_accepted = 0
-        n_cpi_spacing_at_bound = 0
         n_map_uncertainty_evaluated = 0
         n_map_uncertainty_unavailable = 0
         r_squared_list: list[float] = []
-        delay_fitted = method == "vascular" or (
-            method == "cpi" and cpi_infer_delay
-        )
+        delay_fitted = True
 
         for res in results:
             if res["failed"]:
@@ -2100,11 +2064,7 @@ class ComputeDSCMaps(BaseInterface):
             cbf[x, y, z] = res.get("cbf", 0.0)
             cbv[x, y, z] = res.get("cbv", 0.0)
             mtt[x, y, z] = res.get("mtt", 0.0)
-            tmax[x, y, z] = (
-                np.nan
-                if method == "cpi" and not cpi_infer_delay
-                else res.get("tmax", 0.0)
-            )
+            tmax[x, y, z] = res.get("tmax", 0.0)
 
             if method == "vascular" and not res.get("needs_fallback"):
                 n_vascular_accepted += 1
@@ -2137,16 +2097,6 @@ class ComputeDSCMaps(BaseInterface):
                     atol=1e-8,
                 )
                 n_delay_at_bound += int(delay_at_bound)
-
-            if (
-                method == "cpi"
-                and cpi_infer_cpt
-                and not res.get("needs_fallback")
-            ):
-                n_cpi_spacing_accepted += 1
-                n_cpi_spacing_at_bound += int(
-                    bool(res.get("cpi_spacing_at_bound", False))
-                )
 
             if (
                 cth_map is not None
@@ -2257,7 +2207,7 @@ class ComputeDSCMaps(BaseInterface):
             qc_metrics["r_squared_mean"] = float(np.mean(r_squared_list))
             qc_metrics["r_squared_std"] = float(np.std(r_squared_list))
 
-        if method in ("cpi", "vascular"):
+        if method == "vascular":
             qc_metrics["n_converged"] = n_converged
             # FE/NLP plateau rate is informational only (FABBER 10-iter
             # spec rarely satisfies the strict plateau in 10 iters by
@@ -2283,11 +2233,6 @@ class ComputeDSCMaps(BaseInterface):
             qc_metrics["delay_at_bound_n"] = n_delay_at_bound
             qc_metrics["delay_at_bound_fraction"] = (
                 n_delay_at_bound / max(1, n_delay_accepted)
-            )
-        if method == "cpi" and cpi_infer_cpt:
-            qc_metrics["cpi_spacing_at_bound_n"] = n_cpi_spacing_at_bound
-            qc_metrics["cpi_spacing_at_bound_fraction"] = (
-                n_cpi_spacing_at_bound / max(1, n_cpi_spacing_accepted)
             )
         if inference == "map":
             qc_metrics["map_uncertainty"] = {
@@ -2319,13 +2264,6 @@ class ComputeDSCMaps(BaseInterface):
         method: str,
         concentration_data: npt.NDArray[Any],
         mask_coords: tuple[npt.NDArray[Any], ...],
-        aif: npt.NDArray[np.floating],
-        dt: float,
-        cpi_control_points: int,
-        bolus_duration_frames: int,
-        cpi_infer_cpt: bool = True,
-        cpi_infer_delay: bool = False,
-        mean_tissue: Optional[npt.NDArray[np.floating]] = None,
     ) -> dict[str, Any]:
         """Build model, priors, and fitting kwargs for batched DSC fitting.
 
@@ -2335,55 +2273,24 @@ class ComputeDSCMaps(BaseInterface):
         -------
         dict
             Dict with keys: tissue_curves, fitting_names, fitting_bounds,
-            mono_prec, mono_eta, cp_times, conv_matrix, means_nat, stds_nat,
+            means_nat, stds_nat,
             means_t, stds_t, transforms, ubs.
         """
         from pmriprep.models.bayesian_utils import build_priors_from_params
-        from pmriprep.models.dsc import CPIModel, VascularModel, select_n_control_points
-        from pmriprep.utils.dsc_deconvolution import build_volterra_matrix
+        from pmriprep.models.dsc import VascularModel
+        if method != "vascular":
+            raise ValueError("The concentration-model setup supports vascular only")
 
         tissue_curves = concentration_data[
             mask_coords[0], mask_coords[1], mask_coords[2], :
         ]
         tissue_curves = np.nan_to_num(tissue_curves, nan=0.0, posinf=0.0, neginf=0.0)
 
-        if method == "vascular":
-            model = VascularModel()
-            fitting_defs = model.get_fitting_parameter_definitions()
-            priors = build_priors_from_params(fitting_defs)
-            fitting_names = [p.name for p in fitting_defs]
-            fitting_bounds = [(p.bounds[0], p.bounds[1]) for p in fitting_defs]
-            mono_prec = None
-            mono_eta = None
-            cp_times = None
-            conv_matrix = None
-            cpi_t_terminal = None
-        else:  # cpi
-            n_cp = cpi_control_points
-            if n_cp == 0:
-                n_cp = select_n_control_points(
-                    bolus_duration_frames,
-                    infer_cpt=bool(cpi_infer_cpt),
-                    mean_tissue=mean_tissue,
-                    dt=float(dt),
-                )
-            n_timepoints = int(concentration_data.shape[3])
-            cpi_model = CPIModel(
-                n_control_points=n_cp,
-                n_acquisition_frames=n_timepoints,
-                dt=float(dt),
-                infer_cpt=bool(cpi_infer_cpt),
-                infer_delay=bool(cpi_infer_delay),
-            )
-            fitting_defs = list(cpi_model.get_fitting_parameter_definitions())
-            priors = build_priors_from_params(fitting_defs)
-            fitting_names = [p.name for p in fitting_defs]
-            fitting_bounds = [(p.bounds[0], p.bounds[1]) for p in fitting_defs]
-            mono_prec = None
-            mono_eta = None
-            cp_times = np.array(cpi_model._control_point_times, dtype=np.float64)
-            conv_matrix = build_volterra_matrix(aif, dt)
-            cpi_t_terminal = float(cpi_model.terminal_time)
+        model = VascularModel()
+        fitting_defs = model.get_fitting_parameter_definitions()
+        priors = build_priors_from_params(fitting_defs)
+        fitting_names = [p.name for p in fitting_defs]
+        fitting_bounds = [(p.bounds[0], p.bounds[1]) for p in fitting_defs]
 
         means_nat = np.array([p.mean for p in priors], dtype=np.float64)
         stds_nat = np.array([p.std for p in priors], dtype=np.float64)
@@ -2396,12 +2303,6 @@ class ComputeDSCMaps(BaseInterface):
             tissue_curves=tissue_curves,
             fitting_names=fitting_names,
             fitting_bounds=fitting_bounds,
-            mono_prec=mono_prec,
-            mono_eta=mono_eta,
-            cp_times=cp_times,
-            conv_matrix=conv_matrix,
-            cpi_t_terminal=cpi_t_terminal,
-            cpi_infer_delay=bool(cpi_infer_delay),
             means_nat=means_nat,
             stds_nat=stds_nat,
             means_t=means_t,
@@ -2419,14 +2320,9 @@ class ComputeDSCMaps(BaseInterface):
         method: str,
         dt: float,
         n_voxels: int,
-        cpi_control_points: int,
-        cpi_infer_cpt: bool,
-        cpi_infer_delay: bool,
-        bolus_duration_frames: int,
         motion_weights: Optional[npt.NDArray[np.floating]],
         sloppy: bool,
         spatial: bool = False,
-        mean_tissue: Optional[npt.NDArray[np.floating]] = None,
         fit_admissible: Optional[npt.NDArray[np.bool_]] = None,
     ) -> list[dict[str, Any]]:
         """Batched VI for DSC parametric models.
@@ -2445,15 +2341,11 @@ class ComputeDSCMaps(BaseInterface):
         time_points : npt.NDArray[np.floating]
             Time points (seconds), shape (T,).
         method : str
-            'cpi' or 'vascular'.
+            Must be 'vascular'.
         dt : float
             Time step (seconds).
         n_voxels : int
             Number of voxels.
-        cpi_control_points : int
-            Number of CPI control points.
-        bolus_duration_frames : int
-            Bolus duration in frames.
         motion_weights : npt.NDArray[np.floating] or None
             Per-frame weights or None.
         sloppy : bool
@@ -2471,11 +2363,7 @@ class ComputeDSCMaps(BaseInterface):
         from pmriprep.models.dsc.batched_fitting import batched_dsc_vi_fit
 
         s = self._build_dsc_parametric_setup(
-            method, concentration_data, mask_coords, aif, dt,
-            cpi_control_points, bolus_duration_frames,
-            cpi_infer_cpt=cpi_infer_cpt,
-            cpi_infer_delay=cpi_infer_delay,
-            mean_tissue=mean_tissue,
+            method, concentration_data, mask_coords,
         )
 
         vi_label = "SVB" if spatial else "VI"
@@ -2492,12 +2380,6 @@ class ComputeDSCMaps(BaseInterface):
             upper_bounds=s["ubs"],
             fitting_param_names=s["fitting_names"],
             fitting_bounds=s["fitting_bounds"],
-            mono_prec=s["mono_prec"],
-            mono_eta=s["mono_eta"],
-            control_point_times=s["cp_times"],
-            toeplitz_matrix=s["conv_matrix"],
-            cpi_t_terminal=s["cpi_t_terminal"],
-            cpi_infer_delay=s["cpi_infer_delay"],
             prior_means_transformed=s["means_t"],
             prior_stds_transformed=s["stds_t"],
             weights=motion_weights,
@@ -2526,9 +2408,7 @@ class ComputeDSCMaps(BaseInterface):
             )
 
         return self._batched_result_to_voxel_dicts(
-            batched_result, mask_coords, method, n_voxels, dt,
-            s["cp_times"], time_points, s["cpi_t_terminal"],
-            s["cpi_infer_delay"],
+            batched_result, mask_coords, method, n_voxels,
             fit_admissible=fit_admissible,
             inference="svb" if spatial else "vi",
         )
@@ -2539,11 +2419,6 @@ class ComputeDSCMaps(BaseInterface):
         mask_coords: tuple[npt.NDArray[Any], ...],
         method: str,
         n_voxels: int,
-        dt: float,
-        cp_times: Optional[npt.NDArray[np.floating]],
-        time_points: npt.NDArray[np.floating],
-        cpi_t_terminal: Optional[float] = None,
-        cpi_infer_delay: bool = False,
         fit_admissible: Optional[npt.NDArray[np.bool_]] = None,
         inference: str = "vi",
     ) -> list[dict[str, Any]]:
@@ -2558,21 +2433,9 @@ class ComputeDSCMaps(BaseInterface):
         mask_coords : tuple of npt.NDArray[Any]
             Tuple of coordinate arrays.
         method : str
-            'cpi' or 'vascular'.
+            Must be 'vascular'.
         n_voxels : int
             Number of voxels.
-        dt : float
-            Time step (seconds).
-        cp_times : npt.NDArray[np.floating] or None
-            CPI control point times or None.
-        time_points : npt.NDArray[np.floating]
-            Time points (seconds), shape (T,).
-        cpi_t_terminal : float or None, optional
-            CPI terminal anchor time (seconds); must match the value the forward
-            model used so the readout integrates the residue that was fitted.
-        cpi_infer_delay : bool, optional
-            Whether the CPI fit carried a per-voxel ``delay`` parameter; when
-            True ``out["tmax"]`` reports it (CBV/MTT stay delay-invariant).
         fit_admissible : npt.NDArray[np.bool_], optional
             Whether each tissue curve carried enough signal to reach the
             optimizer. Omitted for direct readout tests with pre-fitted data.
@@ -2584,43 +2447,9 @@ class ComputeDSCMaps(BaseInterface):
         list of dict
             List of per-voxel result dicts.
         """
-        from pmriprep.models.dsc.batched_fitting import batched_cpi_residue
-
+        if method != "vascular":
+            raise ValueError("The concentration-model readout supports vascular only")
         results: list[dict[str, Any]] = []
-
-        # Precompute the CPI residue for every voxel via the SAME helper the
-        # forward model uses, so the readout integrates the residue that was
-        # fitted (parity with the NLLS fitted_residue integral). Reassemble the
-        # (N, P) parameter matrix in canonical order [cbf, f1..fN (, s1..sN)].
-        cpi_r_norm: Optional[npt.NDArray[np.floating]] = None
-        cpi_spacing_at_bound: Optional[npt.NDArray[np.bool_]] = None
-        if method == "cpi" and cp_times is not None:
-            n_cp_local = len(cp_times)
-            cols = [np.asarray(batched_result.params["cbf"], dtype=np.float64)]
-            cols += [
-                np.asarray(batched_result.params[f"f{k}"], dtype=np.float64)
-                for k in range(1, n_cp_local + 1)
-            ]
-            if "s1" in batched_result.params:
-                spacing_cols = [
-                    np.asarray(batched_result.params[f"s{k}"], dtype=np.float64)
-                    for k in range(1, n_cp_local + 1)
-                ]
-                cols += spacing_cols
-                spacing_matrix = np.column_stack(spacing_cols)
-                cpi_spacing_at_bound = np.asarray(
-                    _cpi_spacing_at_bound(spacing_matrix),
-                    dtype=np.bool_,
-                )
-            if cpi_infer_delay and "delay" in batched_result.params:
-                cols.append(
-                    np.asarray(batched_result.params["delay"], dtype=np.float64)
-                )
-            params_matrix = np.column_stack(cols)
-            cpi_r_norm = batched_cpi_residue(
-                params_matrix, time_points, cp_times,
-                t_terminal=cpi_t_terminal, infer_delay=cpi_infer_delay,
-            )
 
         for i in range(n_voxels):
             x = int(mask_coords[0][i])
@@ -2632,38 +2461,20 @@ class ComputeDSCMaps(BaseInterface):
                 "failed": False,
             }
 
-            if method == "vascular":
-                cbf_val = float(batched_result.params["cbf"][i])
-                mtt_val = float(batched_result.params["mtt"][i])
-                alpha_val = float(batched_result.params["alpha"][i])
-                delay_val = float(batched_result.params["delay"][i])
-                beta_val = mtt_val / max(alpha_val, EPSILON_SHAPE)
+            cbf_val = float(batched_result.params["cbf"][i])
+            mtt_val = float(batched_result.params["mtt"][i])
+            alpha_val = float(batched_result.params["alpha"][i])
+            delay_val = float(batched_result.params["delay"][i])
+            beta_val = mtt_val / max(alpha_val, EPSILON_SHAPE)
 
-                out["cbf"] = cbf_val
-                out["cbv"] = cbf_val * mtt_val
-                out["mtt"] = mtt_val
-                out["fitted_mtt"] = mtt_val
-                out["tmax"] = delay_val
-                out["alpha"] = alpha_val
-                out["beta"] = beta_val
-                out["cth"] = beta_val * np.sqrt(alpha_val)
-            else:  # cpi
-                cbf_val = float(batched_result.params["cbf"][i])
-                out["cbf"] = cbf_val
-                if cbf_val > EPSILON_CONCENTRATION and cpi_r_norm is not None:
-                    cbv_val = cbf_val * float(np.trapezoid(cpi_r_norm[i], dx=dt))
-                else:
-                    cbv_val = 0.0
-                out["cbv"] = cbv_val
-                out["mtt"] = cbv_val / cbf_val if cbf_val > EPSILON_CONCENTRATION else 0.0
-                if cpi_infer_delay and "delay" in batched_result.params:
-                    out["tmax"] = float(batched_result.params["delay"][i])
-                else:
-                    out["tmax"] = np.nan
-                if cpi_spacing_at_bound is not None:
-                    out["cpi_spacing_at_bound"] = bool(
-                        cpi_spacing_at_bound[i]
-                    )
+            out["cbf"] = cbf_val
+            out["cbv"] = cbf_val * mtt_val
+            out["mtt"] = mtt_val
+            out["fitted_mtt"] = mtt_val
+            out["tmax"] = delay_val
+            out["alpha"] = alpha_val
+            out["beta"] = beta_val
+            out["cth"] = beta_val * np.sqrt(alpha_val)
 
             if batched_result.uncertainties:
                 cbf_std_val = float(batched_result.uncertainties.get(
@@ -2693,11 +2504,7 @@ class ComputeDSCMaps(BaseInterface):
                 not admissible
                 or not np.isfinite(r_squared)
                 or r_squared < 0.0
-                or not _parametric_outputs_are_finite(
-                    out,
-                    method,
-                    cpi_infer_delay=cpi_infer_delay,
-                )
+                or not _parametric_outputs_are_finite(out)
                 or not fitted_curve_is_finite
                 or (inference == "map" and not bool(out["converged"]))
             )
@@ -2716,13 +2523,8 @@ class ComputeDSCMaps(BaseInterface):
         method: str,
         dt: float,
         n_voxels: int,
-        cpi_control_points: int,
-        cpi_infer_cpt: bool,
-        cpi_infer_delay: bool,
-        bolus_duration_frames: int,
         motion_weights: Optional[npt.NDArray[np.floating]],
         sloppy: bool,
-        mean_tissue: Optional[npt.NDArray[np.floating]] = None,
         fit_admissible: Optional[npt.NDArray[np.bool_]] = None,
     ) -> list[dict[str, Any]]:
         """Batched MAP for DSC parametric models.
@@ -2741,15 +2543,11 @@ class ComputeDSCMaps(BaseInterface):
         time_points : npt.NDArray[np.floating]
             Time points (seconds), shape (T,).
         method : str
-            'cpi' or 'vascular'.
+            Must be 'vascular'.
         dt : float
             Time step (seconds).
         n_voxels : int
             Number of voxels.
-        cpi_control_points : int
-            Number of CPI control points.
-        bolus_duration_frames : int
-            Bolus duration in frames.
         motion_weights : npt.NDArray[np.floating] or None
             Per-frame weights or None.
         sloppy : bool
@@ -2765,11 +2563,7 @@ class ComputeDSCMaps(BaseInterface):
         from pmriprep.models.dsc.batched_fitting import batched_dsc_map_fit
 
         s = self._build_dsc_parametric_setup(
-            method, concentration_data, mask_coords, aif, dt,
-            cpi_control_points, bolus_duration_frames,
-            cpi_infer_cpt=cpi_infer_cpt,
-            cpi_infer_delay=cpi_infer_delay,
-            mean_tissue=mean_tissue,
+            method, concentration_data, mask_coords,
         )
 
         batched_result = batched_dsc_map_fit(
@@ -2783,12 +2577,6 @@ class ComputeDSCMaps(BaseInterface):
             upper_bounds=s["ubs"],
             fitting_param_names=s["fitting_names"],
             fitting_bounds=s["fitting_bounds"],
-            mono_prec=s["mono_prec"],
-            mono_eta=s["mono_eta"],
-            control_point_times=s["cp_times"],
-            toeplitz_matrix=s["conv_matrix"],
-            cpi_t_terminal=s["cpi_t_terminal"],
-            cpi_infer_delay=s["cpi_infer_delay"],
             prior_means_transformed=s["means_t"],
             prior_stds_transformed=s["stds_t"],
             weights=motion_weights,
@@ -2798,9 +2586,7 @@ class ComputeDSCMaps(BaseInterface):
         )
 
         return self._batched_result_to_voxel_dicts(
-            batched_result, mask_coords, method, n_voxels, dt,
-            s["cp_times"], time_points, s["cpi_t_terminal"],
-            s["cpi_infer_delay"],
+            batched_result, mask_coords, method, n_voxels,
             fit_admissible=fit_admissible,
             inference="map",
         )
@@ -2815,9 +2601,6 @@ class ComputeDSCMaps(BaseInterface):
         method: str,
         inference: str,
         mcmc_samples: int,
-        cpi_control_points: int,
-        cpi_infer_cpt: bool,
-        cpi_infer_delay: bool,
         signal_data: npt.NDArray[Any] | None = None,
     ) -> None:
         """Select a QC voxel and save its fit data as JSON.
@@ -2840,13 +2623,11 @@ class ComputeDSCMaps(BaseInterface):
         dt : float
             Temporal resolution in seconds.
         method : str
-            Deconvolution method ('vascular' or 'cpi').
+            Deconvolution method ('vascular').
         inference : str
             Inference engine ('nlls', 'map', 'vi', 'svb').
         mcmc_samples : int
             Number of MCMC samples.
-        cpi_control_points : int
-            Number of CPI control points (0=auto).
         signal_data : npt.NDArray[Any] or None, optional
             4D raw signal data (optional, for QC plot).
         """
@@ -2855,11 +2636,11 @@ class ComputeDSCMaps(BaseInterface):
         from pmriprep.utils.dsc_qc_plots import _select_dsc_qc_voxel
         from pmriprep.models.dsc import (
             VascularModel,
-            CPIModel,
             fit_dsc_model,
-            estimate_bolus_duration,
-            select_n_control_points,
         )
+
+        if method != "vascular":
+            raise ValueError("Concentration-model QC supports vascular only")
 
         try:
             # Load and resample enhancing mask if available
@@ -2902,32 +2683,7 @@ class ComputeDSCMaps(BaseInterface):
             n_timepoints = conc_data.shape[3]
             time_points = np.arange(n_timepoints, dtype=np.float64) * dt
 
-            # Build model instance
-            model_instance: Any
-            if method == "vascular":
-                model_instance = VascularModel()
-            else:
-                bolus_duration_frames = estimate_bolus_duration(aif)
-                n_cp = cpi_control_points
-                if n_cp == 0:
-                    # Mean tissue across in-mask voxels for the
-                    # MTT-adaptive auto-N floor.
-                    mt_mean = np.mean(
-                        conc_data[mask_bool, :], axis=0,
-                    ).astype(np.float64)
-                    n_cp = select_n_control_points(
-                        bolus_duration_frames,
-                        infer_cpt=bool(cpi_infer_cpt),
-                        mean_tissue=mt_mean,
-                        dt=float(dt),
-                    )
-                model_instance = CPIModel(
-                    n_control_points=n_cp,
-                    n_acquisition_frames=n_timepoints,
-                    dt=float(dt),
-                    infer_cpt=bool(cpi_infer_cpt),
-                    infer_delay=bool(cpi_infer_delay),
-                )
+            model_instance = VascularModel()
 
             # Fit the QC voxel
             result = fit_dsc_model(
@@ -2950,9 +2706,7 @@ class ComputeDSCMaps(BaseInterface):
                 model_prediction = result.fitted_tissue_curve
             elif result.fitted_residue is not None:
                 # Fallback: reconstruct from residue via the Volterra
-                # product-integration operator. Only parametric models (CPI,
-                # vascular) reach this branch, and they all use the Volterra
-                # forward, so this matches their forward operator.
+                # product-integration operator used by the vascular model.
                 from pmriprep.utils.dsc_deconvolution import build_volterra_matrix
                 model_prediction = build_volterra_matrix(aif, dt) @ result.fitted_residue
             else:
@@ -3148,9 +2902,6 @@ class ComputeDSCMaps(BaseInterface):
         dt = inputs.dt
         threshold = inputs.svd_threshold
         oi_threshold = inputs.oi_threshold
-        cpi_control_points = inputs.cpi_control_points
-        cpi_infer_cpt = inputs.cpi_infer_cpt
-        cpi_infer_delay = inputs.cpi_infer_delay
         inference = inputs.inference
         mcmc_samples = inputs.mcmc_samples
 
@@ -3174,21 +2925,21 @@ class ComputeDSCMaps(BaseInterface):
         motion_weighting = self._prepare_motion_weighting(
             method, header, conc_data.shape[3], dt, detected_baseline
         )
-        deconvolution = self._run_deconvolution(
-            concentration=conc_data,
-            aif=aif,
-            mask=mask,
-            method=method,
-            dt=dt,
-            threshold=threshold,
-            oi_threshold=oi_threshold,
-            inference=inference,
-            mcmc_samples=mcmc_samples,
-            cpi_control_points=cpi_control_points,
-            cpi_infer_cpt=cpi_infer_cpt,
-            cpi_infer_delay=cpi_infer_delay,
-            motion_weighting=motion_weighting,
-        )
+        if method == "cpi":
+            deconvolution = self._deconvolve_signal_cpi(inputs, baseline, motion_weighting)
+        else:
+            deconvolution = self._run_deconvolution(
+                concentration=conc_data,
+                aif=aif,
+                mask=mask,
+                method=method,
+                dt=dt,
+                threshold=threshold,
+                oi_threshold=oi_threshold,
+                inference=inference,
+                mcmc_samples=mcmc_samples,
+                motion_weighting=motion_weighting,
+            )
         aif_level = str(self.inputs.aif_detection_level)
         postprocessing = self._prepare_final_outputs(
             deconvolution=deconvolution,

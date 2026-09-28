@@ -145,6 +145,27 @@ def test_leakage_qc_node_accepts_undefined_k2_output(tmp_path: Path) -> None:
     assert result.outputs.plot_file is None
 
 
+def test_bsw_node_serializes_guidance_when_requested(tmp_path: Path) -> None:
+    """The serialized Nipype Function can deliver the lossless fourth output."""
+    from pmriprep.utils.bsw_guidance_io import load_bsw_guidance
+
+    concentration, mask, signal, _ = _write_executable_fixtures(tmp_path)
+    wf = init_dsc_leakage_wf(preload="unknown", agent_standard_dose=.1,
+        baseline_frames=5, leakage_method="bsw", mem_gb=.1, return_guidance=True)
+    node = wf.get_node("leakage_correct")
+    node.base_dir = str(tmp_path)
+    node.inputs.concentration_file = concentration
+    node.inputs.brain_mask_file = mask
+    node.inputs.signal_file = signal
+    node.inputs.te = .03
+    node.inputs.tr = 1.5
+    node.inputs.field_strength = 3.
+    result = node.run().outputs
+    guidance = load_bsw_guidance(result.guidance_file, affine=np.eye(4), shape=(8, 8, 8, 20), tr=1.5)
+    assert guidance.baseline_frames == 5
+    np.testing.assert_allclose(nib.load(result.k2_map_file).get_fdata(), guidance.k2, rtol=1e-6)
+
+
 def _fake_k2_result(shape: tuple[int, int, int]) -> K2CorrectionResult:
     """Stub K2 correction result with realistic QC metrics for the K2 classifier."""
     return K2CorrectionResult(
@@ -189,7 +210,7 @@ class TestPreloadProvenance:
             "pmriprep.utils.dsc_preload.detect_preload",
             return_value=_advisory(PreloadClass.MINIMAL),
         ):
-            _, _, qc = _apply_dsc_leakage_policy(
+            _, _, qc, _ = _apply_dsc_leakage_policy(
                 concentration_file=conc,
                 brain_mask_file=mask,
                 te=0.03,
@@ -216,7 +237,7 @@ class TestPreloadProvenance:
             "pmriprep.utils.dsc_preload.detect_preload",
             return_value=_advisory(PreloadClass.MINIMAL),
         ):
-            _, _, qc = _apply_dsc_leakage_policy(
+            _, _, qc, _ = _apply_dsc_leakage_policy(
                 concentration_file=conc,
                 brain_mask_file=mask,
                 te=0.03,
@@ -242,7 +263,7 @@ class TestPreloadProvenance:
             "pmriprep.utils.dsc_preload.detect_preload",
             return_value=_advisory(PreloadClass.MINIMAL),
         ):
-            _, _, qc = _apply_dsc_leakage_policy(
+            _, _, qc, _ = _apply_dsc_leakage_policy(
                 concentration_file=conc,
                 brain_mask_file=mask,
                 te=0.03,
@@ -267,7 +288,7 @@ class TestPreloadProvenance:
             "pmriprep.utils.dsc_preload.detect_preload",
             return_value=_advisory(PreloadClass.MINIMAL),
         ):
-            corrected, k2_map, qc = _apply_dsc_leakage_policy(
+            corrected, k2_map, qc, guidance = _apply_dsc_leakage_policy(
                 concentration_file=conc,
                 brain_mask_file=mask,
                 te=0.03,
@@ -285,6 +306,7 @@ class TestPreloadProvenance:
         assert corrected != conc
         assert corrected.endswith("_baselinecentered.nii.gz")
         assert k2_map == ""
+        assert guidance == ""
         assert qc["k2_method"] == "none"
         assert qc["preload_correction_applied"] is False
         assert qc["leakage_correction_disabled"] is True

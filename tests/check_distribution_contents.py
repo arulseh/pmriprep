@@ -9,6 +9,15 @@ from pathlib import Path
 
 
 REQUIRED_PACKAGE_FILES = {
+    "pmriprep/models/dsc/signal_cpi/maps.py",
+    "pmriprep/models/dsc/signal_cpi/execution.py",
+    "pmriprep/models/dsc/signal_cpi/count.py",
+    "pmriprep/models/dsc/signal_cpi/residue.py",
+    "pmriprep/models/dsc/signal_cpi/precision.py",
+    "pmriprep/models/dsc/signal_cpi/native.py",
+    "pmriprep/models/dsc/local_vi.py",
+    "pmriprep/models/dsc/vi_adapter.py",
+    "pmriprep/utils/bsw_guidance_io.py",
     "pmriprep/templates/report_unified.html",
     "pmriprep/data/atlases/README.md",
     "pmriprep/data/atlases/LICENSE-CC0-1.0.txt",
@@ -16,6 +25,7 @@ REQUIRED_PACKAGE_FILES = {
     "pmriprep/data/atlases/mni_regions/Supra.nii.gz",
 }
 FORBIDDEN_PARTS = {"bak", "debug", "sourcedata", "test_outputs", "tests", "work"}
+FORBIDDEN_PACKAGE_FILES = {"pmriprep/models/dsc/cpi.py"}
 
 
 def _validate_members(path: Path, members: set[str]) -> None:
@@ -28,6 +38,8 @@ def _validate_members(path: Path, members: set[str]) -> None:
     }
     missing = REQUIRED_PACKAGE_FILES - package_members
     assert not missing, f"{path.name} is missing required files: {sorted(missing)}"
+    obsolete = FORBIDDEN_PACKAGE_FILES & package_members
+    assert not obsolete, f"{path.name} contains unsupported modules: {sorted(obsolete)}"
 
     leaked = sorted(
         member for member in normalized
@@ -45,6 +57,13 @@ def _validate_wheel(path: Path) -> None:
         assert len(entry_points) == 1, f"{path.name} has invalid entry-point metadata"
         text = archive.read(entry_points[0]).decode()
         assert "pmriprep = pmriprep.cli.run:main" in text
+        native = [name for name in members if
+                  name.startswith("pmriprep/models/dsc/signal_cpi/_convolution.")
+                  and name.endswith((".so", ".pyd"))]
+        assert len(native) == 1, f"{path.name} must contain exactly one compiled CPI kernel"
+        metadata = [name for name in members if name.endswith(".dist-info/WHEEL")]
+        assert len(metadata) == 1
+        assert "Root-Is-Purelib: false" in archive.read(metadata[0]).decode()
 
 
 def _validate_sdist(path: Path) -> None:
@@ -54,8 +73,10 @@ def _validate_sdist(path: Path) -> None:
     _validate_members(path, members)
     roots = {Path(member).name for member in members}
     assert {
-        "CHANGES.rst", "CITATION.cff", "CODE_OF_CONDUCT.md", "CONTRIBUTING.md",
+        "CHANGES.rst", "CITATION.cff", "CODE_OF_CONDUCT.md", "CONTRIBUTING.md", "setup.py",
     } <= roots
+    assert any(name.endswith("pmriprep/models/dsc/signal_cpi/_convolution.c") for name in members)
+    assert not any(name.endswith((".so", ".pyd", ".dylib")) for name in members)
 
 
 def main() -> None:

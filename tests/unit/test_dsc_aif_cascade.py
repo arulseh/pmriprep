@@ -4,6 +4,7 @@ import math
 from typing import Optional
 
 import numpy as np
+import pytest
 
 from pmriprep.interfaces.dsc_aif import (
     MIN_AIF_CANDIDATES_ACCEPT,
@@ -248,11 +249,12 @@ class TestAccumulatingCascade:
             assert result.roi_size == 1
             assert result.spr >= 0.0
 
+    @pytest.mark.filterwarnings("error::RuntimeWarning")
     def test_pool_acceptance_returns_none_on_bad_curves(self) -> None:
         """A pool whose averaged curve fails quality gates returns None."""
         aif = AIFDetection()
         shape = (10, 10, 5, 120)
-        conc_data = np.random.randn(*shape) * 0.1  # noise only
+        conc_data = np.random.RandomState(3).randn(*shape) * 0.1  # noise only
         brain_mask = np.ones(shape[:3])
 
         candidates = [(1.0, (5, 5, 2), {})]

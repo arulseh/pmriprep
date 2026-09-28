@@ -1,13 +1,11 @@
-"""Tests for adaptive control-point selection under cpi_infer_cpt=True."""
+"""Tests for the CPI count heuristic, before acquisition support checks."""
 
 from __future__ import annotations
 
 import numpy as np
 import pytest
 
-from pmriprep.models.dsc.cpi import (
-    CPI_N_MAX,
-    CPI_N_MIN,
+from pmriprep.models.dsc.signal_cpi.count import (
     estimate_tail_decay_time_seconds,
     select_n_control_points,
 )
@@ -31,7 +29,7 @@ def _convolve_exp(aif: np.ndarray, dt: float, tau: float) -> np.ndarray:
     n = len(aif)
     t = np.arange(n) * dt
     residue = np.exp(-t / tau)
-    # Trapezoidal Toeplitz convolution (matches CPI forward model)
+    # Smooth synthetic concentration curve for tail-length characterization
     a = aif.copy()
     tissue = np.zeros(n, dtype=np.float64)
     for i in range(n):
@@ -115,64 +113,36 @@ class TestSelectNAdaptive:
     def aif_dt(self) -> tuple[np.ndarray, float]:
         return _synthetic_aif(), 1.5
 
-    def test_no_change_when_infer_cpt_false(self, aif_dt) -> None:
-        """Non-adaptive (positional, infer_cpt=False) path ignores mean_tissue."""
-        # Bolus duration 15 frames → n_bolus = 9, n_spacing = 4 → N = 9
-        n_legacy = select_n_control_points(15)
-        assert n_legacy == 9
-        # Even with mean_tissue provided, infer_cpt=False ignores it
+    def test_count_is_clipped_ceiling_of_tail_seconds(self, aif_dt) -> None:
+        """The heuristic is unchanged before the fitting policy restricts it."""
         aif, dt = aif_dt
-        mt = _convolve_exp(aif, dt, tau=20.0)  # would force N high if active
-        n_no_change = select_n_control_points(
-            15, mean_tissue=mt, dt=dt, infer_cpt=False,
-        )
-        assert n_no_change == 9
-
-    def test_adaptive_ignores_bolus_duration(self, aif_dt) -> None:
-        """Adaptive path discards ``bolus_duration_frames``.
-
-        Under ``infer_cpt=True`` n_bolus is dropped (CPs migrate to where
-        they're needed). The selector should depend only on the tissue
-        tail, not on the bolus passage length passed in.
-        """
-        aif, dt = aif_dt
-        mt = _convolve_exp(aif, dt, tau=4.0)
-        # Same tissue, very different bolus_duration_frames inputs:
-        n_short_bolus = select_n_control_points(
-            5, infer_cpt=True, mean_tissue=mt, dt=dt,
-        )
-        n_long_bolus = select_n_control_points(
-            40, infer_cpt=True, mean_tissue=mt, dt=dt,
-        )
-        # Non-adaptive would give n_bolus=4 vs 22 — wildly different. Adaptive
-        # ignores bolus_duration_frames entirely.
-        assert n_short_bolus == n_long_bolus
-        # And the non-adaptive path responds to bolus_duration_frames:
-        n_legacy_short = select_n_control_points(5)   # infer_cpt=False
-        n_legacy_long = select_n_control_points(40)
-        assert n_legacy_short < n_legacy_long
+        tissue = _convolve_exp(aif, dt, tau=4.0)
+        expected = max(4, min(24, int(np.ceil(
+            estimate_tail_decay_time_seconds(tissue, dt) / 3.0,
+        ))))
+        assert select_n_control_points(tissue, dt) == expected
 
     def test_medium_mtt_clears_cliff(self, aif_dt) -> None:
         """τ=12s tissue must yield N ≥ 8 (empirical cliff)."""
         aif, dt = aif_dt
         mt = _convolve_exp(aif, dt, tau=12.0)
-        n = select_n_control_points(15, infer_cpt=True, mean_tissue=mt, dt=dt)
+        n = select_n_control_points(mean_tissue=mt, dt=dt)
         assert n >= 8
 
     def test_stroke_mtt_elevates_n(self, aif_dt) -> None:
-        """τ=20s stroke-like tissue must elevate N above the non-adaptive baseline of 9."""
+        """Long tissue tails increase the count recommendation."""
         aif, dt = aif_dt
         mt = _convolve_exp(aif, dt, tau=20.0)
-        n = select_n_control_points(15, infer_cpt=True, mean_tissue=mt, dt=dt)
+        n = select_n_control_points(mean_tissue=mt, dt=dt)
         # Stroke needs N≥14 per the cliff analysis; clamp at max_n=24
         assert n >= 14
-        assert n <= CPI_N_MAX
+        assert n <= 24
 
     def test_pathological_mtt_clamped_to_max(self, aif_dt) -> None:
-        """Extreme MTT clamps to CPI_N_MAX."""
+        """Extreme MTT clamps to 24."""
         # Synthesize a curve that never decays below 10% in a long acquisition;
         # cap will set decay = 0.5 * 90s = 45s → N = ceil(45/3) = 15.
-        # To actually hit CPI_N_MAX we need an even longer apparent decay.
+        # To actually hit 24 we need an even longer apparent decay.
         # Use the cap directly: compose a 200-frame curve with persistent tail.
         n_frames = 200
         dt = 1.5
@@ -180,15 +150,12 @@ class TestSelectNAdaptive:
         tissue[:5] = np.linspace(0.0, 1.0, 5)
         tissue[5:] = 0.5  # plateau forever — cap kicks in at 0.5 * 300s = 150s
         n = select_n_control_points(
-            15, infer_cpt=True, mean_tissue=tissue, dt=dt,
+            mean_tissue=tissue, dt=dt,
         )
-        assert n == CPI_N_MAX  # 24
+        assert n == 24  # 24
 
     def test_min_n_floor_holds(self, aif_dt) -> None:
-        """If both non-adaptive and adaptive floors are below min_n, return min_n."""
-        # Tiny bolus_duration → non-adaptive n_bolus=2, n_spacing=4. Zero tissue
-        # gives fallback 30s decay → N=10 (overrides). So use a curve where
-        # decay is small enough that min_n=4 dominates.
+        """A short tail retains the minimum count recommendation."""
         n_frames = 30
         dt = 1.5
         # Single short spike then immediate decay → fast tail
@@ -196,6 +163,6 @@ class TestSelectNAdaptive:
         tissue[5] = 1.0  # peak
         tissue[6] = 0.05  # below 10% next frame
         n = select_n_control_points(
-            2, infer_cpt=True, mean_tissue=tissue, dt=dt,
+            mean_tissue=tissue, dt=dt,
         )
-        assert n == CPI_N_MIN  # 4
+        assert n == 4  # 4

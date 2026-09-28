@@ -578,13 +578,14 @@ def fit_gamma_variate(
         eval_start = baseline_frames
         eval_end = n_frames
 
+    quality_curve = curve_shifted[eval_start:eval_end]
     ss_res = float(
-        np.sum((curve_shifted[eval_start:eval_end] - fitted_curve[eval_start:eval_end]) ** 2)
+        np.sum((quality_curve - fitted_curve[eval_start:eval_end]) ** 2)
     )
-    ss_tot = float(
-        np.sum(
-            (curve_shifted[eval_start:eval_end] - np.mean(curve_shifted[eval_start:eval_end])) ** 2
-        )
+    # An empty first-pass window supplies no fit-quality evidence.
+    ss_tot = (
+        float(np.sum((quality_curve - np.mean(quality_curve)) ** 2))
+        if quality_curve.size else 0.0
     )
 
     if ss_tot > EPSILON_CONCENTRATION:

@@ -145,9 +145,10 @@ def generate_dsc_aif_dro(
     peak_delta_r2. The default alpha=2.5/beta=3.0 is a broad (venous-tier,
     FWHM ~10 s) bolus used by the method-recovery regression guards; the
     arterial first-pass shape is alpha=3.0/beta=1.5 (FWHM ~5 s). For a narrow
-    AIF on a coarse axis, pass oversample>1 to build the curve on a fine grid
-    (dt_sec/oversample) and block-average back to dt_sec, which models the TR
-    integration and avoids a peak-sampling bias in the ground-truth convolution.
+    AIF on a coarse axis, oversample>1 builds the curve on a fine grid
+    (dt_sec/oversample) and block-averages forward from each reported frame time.
+    That is an explicit box-window sampling assumption, not a universal MRI
+    acquisition model; it is different from the point samples at oversample=1.
 
     Parameters
     ----------
@@ -855,15 +856,17 @@ def fine_grid_forward(
     dt: float,
     oversample: int = 20,
 ) -> npt.NDArray[np.floating]:
-    """Neutral (non-inverse-crime) tissue forward via fine-grid convolution.
+    """Convolve linearly reconstructed frame samples on a finer grid.
 
     Approximates C(t) = ∫ AIF(τ)·R(t-τ) dτ by resampling both the AIF and the
     residue onto a ``dt/oversample`` grid, convolving with ``np.convolve``, and
-    downsampling back to frames. Because it never touches any deconvolution
-    matrix, it is matched to NONE of the sSVD/Tikhonov (Volterra), oSVD/cSVD
-    (block-circulant), or CPI operators — so cross-method comparisons on this
-    ground truth reflect genuine method accuracy rather than an inverse-crime
-    advantage. Drop-in replacement for :func:`dsc_forward_model`.
+    downsampling back to frames. No deconvolution matrix is called, but the
+    piecewise-linear reconstruction shares assumptions with fitted operators.
+    Increasing ``oversample`` reduces integration error, not the interpolation
+    error already introduced by the frame samples. This is a sampled-curve
+    regression fixture, not a claim of operator-independent physical truth.
+    Use ``tests.dro.dsc_reference.continuous_tissue`` when the continuous input
+    and residue functions are available for independent recovery evaluation.
 
     Parameters
     ----------

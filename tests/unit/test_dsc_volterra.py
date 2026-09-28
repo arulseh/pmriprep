@@ -1,20 +1,7 @@
-"""CPI Volterra operator: correctness vs Sourbron eq-(7) + deviation from FABBER.
+"""Shared product-integration operator and finite-grid convolution accuracy.
 
-pmriprep's CPI convolution uses the Sourbron eq-7 product-integration Volterra
-discretization (the correct form). FSL FABBER's
-``dsc_cpi`` ``voltera`` mode has an off-by-one in the interior stencil (its
-(1,4,1)/6 lands one sample early) plus a nonzero row-0 corner, both deviations
-from that reference; pmriprep implements the corrected form. These guards run
-everywhere (no FABBER install needed):
-
-1. ``TestVolterraMatrixSourbron`` — ``build_volterra_matrix`` equals a literal
-   Sourbron eq-(7) reference port to round-off. Locks the vectorized builder
-   (interior centred on the lag, first-column ``A_i^-``, diagonal ``A_0^+``,
-   row 0 all-zero).
-2. ``TestFabberDeviation`` — the operator deliberately differs from a literal
-   port of FABBER's off-by-one ``voltera`` (documents the correction).
-3. ``TestVolterraForwardAccuracy`` — the operator convolves to within ~1% of a
-   fine-grid continuous convolution, well under a 2% can-fail bound.
+Check the explicit stencil, endpoint handling and independent fine-grid
+convolution. These guards require no external executable.
 """
 import numpy as np
 import numpy.typing as npt

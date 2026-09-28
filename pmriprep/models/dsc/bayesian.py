@@ -6,7 +6,7 @@ Provides Bayesian fitting methods for DSC models including:
 - MCMC (Markov Chain Monte Carlo) with ensemble sampling
 
 The BayesianDSCFitter class works with any model implementing the DSCModel
-interface, including VascularModel and CPIModel.
+interface, including VascularModel.
 """
 
 from typing import Callable, cast
@@ -65,7 +65,7 @@ class BayesianDSCFitter:
 
     Attributes
     ----------
-        model: DSC model to fit (VascularModel, CPIModel, etc.)
+        model: Concentration-domain DSC model to fit.
         priors: Gaussian priors for each parameter
         noise_std: Assumed noise standard deviation (estimated if not provided)
     """
@@ -89,7 +89,7 @@ class BayesianDSCFitter:
         self.noise_std = noise_std
 
         # Build priors from fitting-space parameter definitions.
-        # For models without reparameterization (e.g. CPI), this is identical
+        # For models without reparameterization, this is identical
         # to get_parameter_definitions(). For VascularModel, this uses the
         # (CBF, MTT, alpha, delay) parameterization instead of (CBF, alpha,
         # beta, delay).
@@ -764,15 +764,14 @@ class BayesianDSCFitter:
             s0 = 1e3
 
         # Initialize posterior mean from model's initial guess, converted to
-        # fitting space. For CPI, get_initial_guess() provides exponential-decay
-        # fractions; fitting_to_model is identity so no conversion needed.
+        # fitting space.
         m_nat = self.model.model_to_fitting_params(
             np.array(self.model.get_initial_guess(), dtype=np.float64)
         )
         for i in range(n_params):
             m_nat[i] = np.clip(m_nat[i], bounds[i][0], bounds[i][1])
 
-        # Seed from NLLS if model provides one (e.g. CPI). This prevents
+        # Seed from NLLS if the model provides one. This prevents
         # tau collapse when the default initial guess is far from truth.
         # NLLS seed is in model space; convert to fitting space.
         nlls_seed = self.model.compute_nlls_seed(y, aif, time_points)
@@ -1363,25 +1362,19 @@ def fit_dsc_model(
         method_lower = "vi"
 
     if method_lower == "nlls":
-        from pmriprep.models.dsc.cpi import CPIModel, _fit_cpi_simple
         from pmriprep.models.dsc.vascular import (
             VascularModel,
             _fit_vascular_nlls,
         )
 
-        if isinstance(model, CPIModel):
-            result = _fit_cpi_simple(
-                model, concentration, aif, time_points,
-                weights=weights, sloppy=sloppy,
-            )
-        elif isinstance(model, VascularModel):
+        if isinstance(model, VascularModel):
             result = _fit_vascular_nlls(
                 model, concentration, aif, time_points,
                 weights=weights, sloppy=sloppy,
             )
         else:
             raise ValueError(
-                "method='nlls' is only supported for CPIModel and "
+                "method='nlls' is only supported for "
                 f"VascularModel; got {type(model).__name__}."
             )
         if result is None:

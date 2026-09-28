@@ -141,9 +141,6 @@ def test_vascular_vi_posterior_and_readout_share_bounded_point(
         coords,
         "vascular",
         len(truth),
-        1.0,
-        None,
-        kwargs["time_points"],
         inference="svb" if spatial else "vi",
     )
     for i, voxel in enumerate(readout):

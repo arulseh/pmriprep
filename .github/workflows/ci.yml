@@ -18,7 +18,7 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-      - run: pip install ".[dev]"
+      - run: pip install "setuptools>=77.0" wheel ".[dev]"
       - run: mypy pmriprep/ --ignore-missing-imports
       - run: ruff check pmriprep/ tests/
       - name: Build release archives
@@ -42,7 +42,9 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
-      - run: pip install ".[test]"
+      - run: pip install -e ".[test]"
+      - name: Verify compiled CPI kernel
+        run: python -c "from pmriprep.models.dsc.signal_cpi import native; assert native.available()"
       - name: Verify installed CLI version
         run: |
           python - <<'PY'

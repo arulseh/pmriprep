@@ -11,15 +11,11 @@ Subpackages:
 from pmriprep.models.dsc import (
     BayesianDSCFitter,
     BayesianPrior,
-    CPIModel,
     DSCFitResult,
     DSCModel,
     DSCModelParameter,
     VascularModel,
-    estimate_bolus_duration,
     fit_dsc_model,
-    select_n_by_bic,
-    select_n_control_points,
 )
 
 from pmriprep.models.dce import (
@@ -32,15 +28,11 @@ __all__ = [
     # DSC models
     "BayesianDSCFitter",
     "BayesianPrior",
-    "CPIModel",
     "DSCFitResult",
     "DSCModel",
     "DSCModelParameter",
     "VascularModel",
-    "estimate_bolus_duration",
     "fit_dsc_model",
-    "select_n_by_bic",
-    "select_n_control_points",
     # DCE models
     "FitResult",
     "ModelParameter",

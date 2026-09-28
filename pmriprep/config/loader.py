@@ -335,7 +335,8 @@ def build_dsc_config(config_dict: Dict[str, Any]) -> DSCConfig:
     # Type coerce numeric fields
     _coerce_int(dsc_dict, "pre_bolus")
     _coerce_int(dsc_dict, "mcmc_samples")
-    _coerce_int(dsc_dict, "cpi_control_points")
+    if isinstance(dsc_dict.get("cpi_control_points"), str):
+        _coerce_int(dsc_dict, "cpi_control_points")
     _coerce_int(dsc_dict, "n_aif_candidates")
     _coerce_int(dsc_dict, "num_processes")
     _coerce_float(dsc_dict, "smooth_fwhm")

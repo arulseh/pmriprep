@@ -903,6 +903,12 @@ def _build_parametric_extra(qc_metrics: dict | None = None) -> dict:
                 ("n_fallback_failed", "FallbackFailedVoxelCount"),
                 ("fallback_requested_rate", "FallbackRequestedFraction"),
                 ("fallback_rate", "FallbackSucceededFraction"),
+                ("fit_domain", "FitDomain"),
+                ("cpi_fallback", "FallbackPolicy"),
+                ("fallback_fraction_denominator", "FallbackFractionDenominator"),
+                ("n_missing", "MissingMeasurementVoxelCount"),
+                ("rejection_reasons", "RejectionReasons"),
+                ("fallback_outcomes", "FallbackOutcomes"),
             ):
                 if source in deconv:
                     extra[target] = deconv[source]
@@ -1499,14 +1505,16 @@ def init_dsc_datasinks_wf(
     # come from oSVD and their parametric uncertainty maps are undefined.
     _PARAMETRIC_R2_DESC = (
         "Per-voxel R2 (coefficient of determination) of the parametric DSC "
-        "fit (CPI / Vascular) against the K2-corrected tissue concentration. "
+        "fit against the measured signal for CPI or K2-corrected concentration "
+        "for the vascular model. "
         "Raw parametric R2 is preserved on voxels that fell back to oSVD -- "
         "see dscFallback_mask to identify those. The CBF/CBV/MTT/Tmax saved "
         "in fallback voxels comes from oSVD, NOT from a fit with this R2."
     )
     _FALLBACK_DESC = (
         "Binary oSVD-fallback mask. 1 = the parametric fit was rejected "
-        "(R2<0.5, solver nonconvergence, or fitting failure), oSVD fallback "
+        "(invalid measurements or R2<0; additional solver checks apply to "
+        "non-variational vascular fitting), oSVD fallback "
         "succeeded, and the saved CBF/CBV/MTT/Tmax come from "
         "svd_deconvolve_oscillation; parametric uncertainty is NaN in these "
         "voxels. 0 = no successful oSVD replacement; this includes retained "

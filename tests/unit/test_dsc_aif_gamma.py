@@ -178,6 +178,20 @@ class TestComputeAUC:
 class TestFitGammaVariate:
     """Tests for fit_gamma_variate."""
 
+    @pytest.mark.parametrize("peak_frame", [0, 10])
+    @pytest.mark.filterwarnings("error::RuntimeWarning")
+    def test_empty_quality_window_has_zero_r_squared(self, peak_frame: int) -> None:
+        """A peak inside the baseline cannot supply first-pass fit quality."""
+        aif = np.zeros(60, dtype=np.float64)
+        aif[peak_frame] = 10.0
+
+        result = fit_gamma_variate(aif, baseline_frames=20)
+
+        assert result.first_pass_n == 0
+        assert result.r_squared == 0.0
+        assert np.all(np.isfinite(result.fitted_curve))
+        assert np.isfinite(result.residual_rms)
+
     def test_clean_data(self) -> None:
         """Clean synthetic AIF produces high R-squared and convergence."""
         t = np.arange(60, dtype=np.float64)

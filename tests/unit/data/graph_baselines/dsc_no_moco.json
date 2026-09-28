@@ -747,6 +747,12 @@
     [
       "inputnode",
       "te",
+      "compute_maps",
+      "te"
+    ],
+    [
+      "inputnode",
+      "te",
       "dsc_preproc_qc",
       "te"
     ],
@@ -851,6 +857,12 @@
       "corrected_concentration_file",
       "dsc_leakage_qc",
       "corrected_concentration_file"
+    ],
+    [
+      "leakage_correct",
+      "guidance_file",
+      "compute_maps",
+      "bsw_guidance_file"
     ],
     [
       "leakage_correct",
@@ -1441,12 +1453,14 @@
         "field_strength",
         "leakage_method",
         "preload",
+        "return_guidance",
         "signal_file",
         "te",
         "tr"
       ],
       "output_names": [
         "corrected_concentration_file",
+        "guidance_file",
         "k2_map_file",
         "qc_dict"
       ]
@@ -1631,12 +1645,12 @@
     "combine_masks": "f2748155dafc15b2d74a066b3da5db0ed2a4b5486b46ee8ea1f4c7a181de8fcf",
     "convert_inv_dsc_h5": "9a56330576763c1d147a939f4cd92271651e5ebf08d545098cf7ffa59808b4e2",
     "dsc_brain_mask_qc": "ced2d6d4b823457166d3fb21083d6220f2b0dc0e0155de5c134e6d98210b5086",
-    "dsc_fit_qc": "bf242b9215832d16b16770f1152b765752bca909058926f51e3e78a67c730b3e",
+    "dsc_fit_qc": "e09346ed9ad3ff6080523add51fdeeb55c9432a7e185560cb317ea8de6b60b42",
     "dsc_leakage_qc": "290ca4f8572ea6fa6011685596514e928c6082424b0e9fb62dffb1dd45245e0c",
     "dsc_param_maps_qc": "57021c2b01a09cec8ccdee7a76cdf5ea7a38f60d3f1f7984a6b9655871c2c997",
     "dsc_preproc_qc": "120b1f3f6ea69c095663da8e71955876fde923b19fccc8a5691edc8867ad53cb",
     "hist_match_t1w": "33d0ceadebcfcf66ed403151737f0e0d429e96320c2101825b356309caf68f0e",
-    "leakage_correct": "cf488c09ce832b0b3bd08ba269e23ef31b0b15938964b4af8308a0fa639df251",
+    "leakage_correct": "96aadc05b63ad1b4a48a81f52539ee5880d3ff803b4ea73081253a47a9ac323a",
     "merge_qc": "88b701d6e29343027e947d681990619d8dc258cb47101d7638302ff74976cf0f",
     "motion_qc_plot": "c51bb7f0da9a494256c19c097824adf784a100aa3747678cd1a11a5de8ed286b",
     "normalize": "46e95a18670a3134604db1df88e4aff73813483aa0a8272286af55f0493c78da",
@@ -1849,8 +1863,9 @@
       "aif_detection_level": "atlas",
       "baseline_frames": 5,
       "cpi_control_points": 0,
-      "cpi_infer_cpt": true,
-      "cpi_infer_delay": false,
+      "cpi_dispersion": "none",
+      "cpi_fallback": "osvd",
+      "cpi_infer_delay": true,
       "inference": "vi",
       "leakage_method": "bsw",
       "mcmc_samples": 500,
@@ -1915,7 +1930,8 @@
       "agent_standard_dose": 0.1,
       "baseline_frames": 5,
       "leakage_method": "bsw",
-      "preload": "unknown"
+      "preload": "unknown",
+      "return_guidance": false
     },
     "lesion_stats": {
       "force_binary": false,

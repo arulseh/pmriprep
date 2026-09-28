@@ -5,7 +5,7 @@ neighboring voxels' parameters, reducing noise without explicit smoothing.
 """
 
 import logging
-from typing import Optional
+from typing import Callable, Optional
 
 import numpy as np
 import numpy.typing as npt
@@ -13,6 +13,7 @@ from scipy import sparse
 
 from pmriprep.models.bayesian_utils import TransformType
 from pmriprep.models.dsc.batched_fitting import DSCBatchedFitResult, batched_dsc_vi_fit
+from pmriprep.models.dsc.vi_adapter import DSCVIModelAdapter
 from pmriprep.utils.dsc_constants import EPSILON_CONCENTRATION
 
 logger = logging.getLogger("nipype.interface")
@@ -210,10 +211,6 @@ def batched_dsc_spatial_vi_fit(
     fitting_bounds: list[tuple[float, float]],
     mono_prec: Optional[npt.NDArray[np.floating]] = None,
     mono_eta: Optional[npt.NDArray[np.floating]] = None,
-    control_point_times: Optional[npt.NDArray[np.floating]] = None,
-    toeplitz_matrix: Optional[npt.NDArray[np.floating]] = None,
-    cpi_t_terminal: Optional[float] = None,
-    cpi_infer_delay: bool = False,
     nlls_seeds: Optional[npt.NDArray[np.floating]] = None,
     prior_means_transformed: Optional[npt.NDArray[np.floating]] = None,
     prior_stds_transformed: Optional[npt.NDArray[np.floating]] = None,
@@ -222,6 +219,9 @@ def batched_dsc_spatial_vi_fit(
     save_fitted_curves: bool = False,
     n_spatial_sweeps: int = 10,
     spatial_tol: Optional[float] = None,
+    model_adapter: DSCVIModelAdapter | None = None,
+    return_full_posterior: bool = False,
+    local_fit: Callable[..., DSCBatchedFitResult] | None = None,
 ) -> DSCBatchedFitResult:
     """Spatial VB wrapper around batched VI.
 
@@ -234,7 +234,7 @@ def batched_dsc_spatial_vi_fit(
     Parameters
     ----------
     model_type : str
-        'cpi' or 'vascular'.
+        Vascular model or the supplied VI adapter's identifier.
     tissue_curves : npt.NDArray[np.floating]
         Observed tissue curves, shape (N, T).
     aif : npt.NDArray[np.floating]
@@ -261,10 +261,6 @@ def batched_dsc_spatial_vi_fit(
         Monotonicity precision matrix or None.
     mono_eta : npt.NDArray[np.floating], optional
         Monotonicity eta correction or None.
-    control_point_times : npt.NDArray[np.floating], optional
-        CPI control point times or None.
-    toeplitz_matrix : npt.NDArray[np.floating], optional
-        Precomputed Toeplitz matrix or None.
     nlls_seeds : npt.NDArray[np.floating], optional
         NLLS seed parameters or None.
     prior_means_transformed : npt.NDArray[np.floating], optional
@@ -282,12 +278,23 @@ def batched_dsc_spatial_vi_fit(
     spatial_tol : float, optional
         Optional relative ``aK`` convergence tolerance. ``None`` (default)
         runs ten spatial sweeps after the ordinary-VI warm start.
+    model_adapter : DSCVIModelAdapter, optional
+        Model evaluations and mean domain passed to the shared batched fitter.
+    return_full_posterior : bool, optional
+        Retain complete local factors on the final result, not cross-voxel
+        covariance. Default False avoids additional covariance storage.
+    local_fit : callable, optional
+        Explicit local-update dispatcher with the batched fitter's keyword
+        contract, for models with voxel-specific independent priors. It must
+        preserve row order and synchronous sweep state. None uses the shared
+        batched fitter directly; the spatial algorithm is identical.
 
     Returns
     -------
     DSCBatchedFitResult
         DSCBatchedFitResult with fitted parameters from spatial VB.
     """
+    fit_local = batched_dsc_vi_fit if local_fit is None else local_fit
     n_params = len(fitting_param_names)
     spatial_parameter_mask = np.asarray(
         [name == "cbf" for name in fitting_param_names], dtype=bool,
@@ -311,7 +318,7 @@ def batched_dsc_spatial_vi_fit(
 
     if not has_any_neighbors:
         logger.info("SVB: no voxel neighbors found, falling back to standard VI")
-        return batched_dsc_vi_fit(
+        return fit_local(
             model_type=model_type,
             tissue_curves=tissue_curves,
             aif=aif,
@@ -324,21 +331,19 @@ def batched_dsc_spatial_vi_fit(
             fitting_bounds=fitting_bounds,
             mono_prec=mono_prec,
             mono_eta=mono_eta,
-            control_point_times=control_point_times,
-            toeplitz_matrix=toeplitz_matrix,
-            cpi_t_terminal=cpi_t_terminal,
-            cpi_infer_delay=cpi_infer_delay,
             nlls_seeds=nlls_seeds,
             prior_means_transformed=prior_means_transformed,
             prior_stds_transformed=prior_stds_transformed,
             weights=weights,
             sloppy=sloppy,
             save_fitted_curves=save_fitted_curves,
+            model_adapter=model_adapter,
+            return_full_posterior=return_full_posterior,
         )
 
     aK = np.zeros(n_params, dtype=np.float64)
     logger.info("SVB: ordinary-VI warm start")
-    result = batched_dsc_vi_fit(
+    result = fit_local(
         model_type=model_type,
         tissue_curves=tissue_curves,
         aif=aif,
@@ -351,10 +356,6 @@ def batched_dsc_spatial_vi_fit(
         fitting_bounds=fitting_bounds,
         mono_prec=mono_prec,
         mono_eta=mono_eta,
-        control_point_times=control_point_times,
-        toeplitz_matrix=toeplitz_matrix,
-        cpi_t_terminal=cpi_t_terminal,
-        cpi_infer_delay=cpi_infer_delay,
         nlls_seeds=nlls_seeds,
         prior_means_transformed=prior_means_transformed,
         prior_stds_transformed=prior_stds_transformed,
@@ -362,6 +363,7 @@ def batched_dsc_spatial_vi_fit(
         sloppy=sloppy,
         save_fitted_curves=False,
         return_posteriors=True,
+        model_adapter=model_adapter,
     )
     warm_means = result.posterior_means_transformed
     warm_cov_diag = result.posterior_cov_diag
@@ -390,7 +392,7 @@ def batched_dsc_spatial_vi_fit(
             np.array2string(aK, precision=3, separator=", "),
         )
 
-        result = batched_dsc_vi_fit(
+        result = fit_local(
             model_type=model_type,
             tissue_curves=tissue_curves,
             aif=aif,
@@ -403,10 +405,6 @@ def batched_dsc_spatial_vi_fit(
             fitting_bounds=fitting_bounds,
             mono_prec=mono_prec,
             mono_eta=mono_eta,
-            control_point_times=control_point_times,
-            toeplitz_matrix=toeplitz_matrix,
-            cpi_t_terminal=cpi_t_terminal,
-            cpi_infer_delay=cpi_infer_delay,
             nlls_seeds=None,
             prior_means_transformed=prior_means_transformed,
             prior_stds_transformed=prior_stds_transformed,
@@ -421,6 +419,8 @@ def batched_dsc_spatial_vi_fit(
             initial_noise_precision=noise_precision,
             return_posteriors=True,
             n_iterations_override=1,
+            model_adapter=model_adapter,
+            return_full_posterior=return_full_posterior,
         )
         result_means = result.posterior_means_transformed
         result_cov_diag = result.posterior_cov_diag

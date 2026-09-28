@@ -16,15 +16,8 @@ from pmriprep.models.dsc.bayesian import (
     BayesianPrior,
     fit_dsc_model,
 )
-from pmriprep.models.dsc.cpi import (
-    CPIModel,
-    estimate_bolus_duration,
-    select_n_by_bic,
-    select_n_control_points,
-)
 from pmriprep.models.dsc.batched_fitting import (
     DSCBatchedFitResult,
-    batched_cpi_forward,
     batched_dsc_vi_fit,
     batched_vascular_forward,
 )
@@ -33,18 +26,13 @@ from pmriprep.models.dsc.vascular import VascularModel
 __all__ = [
     "BayesianDSCFitter",
     "BayesianPrior",
-    "CPIModel",
     "DSCBatchedFitResult",
     "DSCFitResult",
     "DSCModel",
     "DSCModelParameter",
     "ParamsLike",
     "VascularModel",
-    "batched_cpi_forward",
     "batched_dsc_vi_fit",
     "batched_vascular_forward",
-    "estimate_bolus_duration",
     "fit_dsc_model",
-    "select_n_by_bic",
-    "select_n_control_points",
 ]

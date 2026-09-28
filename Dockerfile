@@ -34,7 +34,7 @@ FROM condaforge/miniforge3:24.11.3-2
 LABEL maintainer="PMRIPrep Developers"
 LABEL org.opencontainers.image.title="PMRIPrep"
 LABEL org.opencontainers.image.description="PMRIPrep: automated preprocessing and quantification of DSC and DCE MRI"
-LABEL org.opencontainers.image.version="1.0.0rc3.dev28"
+LABEL org.opencontainers.image.version="1.0.0rc3.dev29"
 LABEL org.opencontainers.image.source="https://github.com/arulseh/pmriprep"
 LABEL org.opencontainers.image.licenses="Apache-2.0 AND CC0-1.0"
 
@@ -69,6 +69,7 @@ ENV RESULTS_FOLDER=/opt/nnunet_results
 USER root
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bc \
+    build-essential \
     curl \
     dc \
     file \
@@ -158,7 +159,11 @@ RUN (pip install --no-cache-dir HD-GLIO==2.0 || \
 COPY --chown=1000:1000 . /src/pmriprep
 WORKDIR /src/pmriprep
 
-RUN pip install --no-cache-dir ".[test,dev]" && pip cache purge
+RUN pip install --no-cache-dir "setuptools>=77.0" wheel && \
+    pip install --no-cache-dir ".[test,dev]" && \
+    python setup.py build_ext --inplace && pip cache purge
+
+RUN cd /tmp && python -c "from pmriprep.models.dsc.signal_cpi import native; assert native.available(), 'compiled CPI kernel missing'"
 
 # Download required TemplateFlow templates to a shared location
 # (not under $HOME, which Apptainer auto-binds from the host)

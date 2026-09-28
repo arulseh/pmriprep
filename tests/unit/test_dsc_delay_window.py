@@ -5,10 +5,8 @@ import pytest
 from scipy.integrate import quad
 from scipy.special import gammaincc
 
-from pmriprep.models.dsc import CPIModel, VascularModel
+from pmriprep.models.dsc import VascularModel
 from pmriprep.models.dsc.batched_fitting import (
-    batched_cpi_forward,
-    batched_cpi_residue,
     batched_vascular_forward,
 )
 from pmriprep.models.dsc.convolution import (
@@ -50,11 +48,10 @@ def test_vascular_negative_delay_tail_matches_continuous_reference(
     assert scalar[-1] == pytest.approx(reference, rel=0.02)
 
 
-@pytest.mark.parametrize("model_kind", ["vascular", "cpi_fixed", "cpi_inferred"])
 @pytest.mark.parametrize("dt", [0.5, 1.0, 2.0])
 @pytest.mark.parametrize("delay", [-3.0, -1.3, 0.0, 2.7])
 def test_forward_delay_matches_extended_convolution(
-    model_kind: str, dt: float, delay: float
+    dt: float, delay: float
 ) -> None:
     """Extending the causal response preserves the measured-window prediction."""
     times = np.arange(0.0, 60.0, dt)
@@ -62,38 +59,14 @@ def test_forward_delay_matches_extended_convolution(
     extra = max(0, int(np.ceil(-delay / dt)))
     extended_times = np.arange(len(times) + extra) * dt
     operator = build_volterra_matrix(np.pad(aif, (0, extra)), dt)
-    if model_kind == "vascular":
-        model = VascularModel()
-        params = [0.006, 3.0, 25.0 / 3.0, delay]
-        residue = model.residue_function(params, extended_times)
-        batch = batched_vascular_forward(
-            np.array([params[0]]), np.array([params[1]]), np.array([params[2]]),
-            np.array([delay]), aif, times,
-        )[0]
-        batch_residue = residue
-    else:
-        model = CPIModel(
-            n_control_points=4, n_acquisition_frames=len(times), dt=dt,
-            infer_cpt=model_kind == "cpi_inferred", infer_delay=True,
-        )
-        params = [0.006, 0.9, 0.8, 0.7, 0.6]
-        if model_kind == "cpi_inferred":
-            params.extend(np.log([10.0, 10.0, 10.0, 10.0]))
-        params.append(delay)
-        terminal = 50.0 if model_kind == "cpi_inferred" else model.terminal_time
-        residue = params[0] * model.residue_function(
-            params, np.minimum(extended_times, terminal)
-        )
-        batch = batched_cpi_forward(
-            np.array([params]), aif, times, model.control_point_times,
-            build_volterra_matrix(aif, dt), t_terminal=model.terminal_time,
-            infer_delay=True,
-        )[0]
-        # Check convolution independently of the two existing interpolators.
-        batch_residue = params[0] * batched_cpi_residue(
-            np.array([params]), extended_times, model.control_point_times,
-            t_terminal=model.terminal_time, infer_delay=True,
-        )[0]
+    model = VascularModel()
+    params = [0.006, 3.0, 25.0 / 3.0, delay]
+    residue = model.residue_function(params, extended_times)
+    batch = batched_vascular_forward(
+        np.array([params[0]]), np.array([params[1]]), np.array([params[2]]),
+        np.array([delay]), aif, times,
+    )[0]
+    batch_residue = residue
     complete = operator @ residue
     expected = np.interp(times - delay, extended_times, complete, left=0.0, right=0.0)
     scalar = model.tissue_curve(params, aif, times)
@@ -188,7 +161,7 @@ def test_negative_delay_fit_predicts_complete_tail(method: str, weighted: bool) 
         fitted = np.array([result.params[p.name][0] for p in definitions])
         prediction = result.fitted_curves[0]
         voxel = ComputeDSCMaps()._batched_result_to_voxel_dicts(
-            result, coords, "vascular", 3, 1.0, None, times, inference=method,
+            result, coords, "vascular", 3, inference=method,
         )[0]
         assert voxel["cbv"] == pytest.approx(fitted[0] * fitted[1])
         assert voxel["mtt"] == pytest.approx(fitted[1])

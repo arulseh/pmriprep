@@ -52,7 +52,7 @@ _PIPELINE_QC_STRIP_KEYS = frozenset({
 
 _CONFIG_STRIP_KEYS = frozenset({
     "n_procs", "nprocs", "hdbet_device", "tumor_seg_device",
-    "disable_aif_fallback", "n_aif_candidates", "cpi_infer_cpt", "cpi_infer_delay",
+    "disable_aif_fallback", "n_aif_candidates",
     "underlays", "no_t1", "no_dsc_validation",
 })
 

@@ -2,3 +2,4 @@ include CHANGES.rst
 include CITATION.cff
 include CODE_OF_CONDUCT.md
 include CONTRIBUTING.md
+include pmriprep/models/dsc/signal_cpi/_convolution.c

@@ -119,7 +119,7 @@ def create_provenance_dict(
     # Configuration used (strip internal/runtime fields and None values)
     if config_used:
         _PROVENANCE_EXCLUDE = {
-            "mcmc_samples", "cpi_control_points",
+            "mcmc_samples",
             "hdbet_device", "hdbet_conda_env",
             "num_processes",
         }

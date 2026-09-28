@@ -71,6 +71,7 @@ HD-GLIO tumor segmentation is skipped when GPU is unavailable.
 python -m pip install .
 ```
 
+Building from source requires a C compiler and Python development headers.
 Source installations require Python 3.11–3.12, FSL, and ANTs. HD-BET and
 HD-GLIO are optional: missing HD-BET falls back to ANTs for anatomical images
 and to FSL BET for DSC/DCE images, while missing HD-GLIO skips tumor
@@ -127,7 +128,10 @@ Use `pmriprep --help` for the complete execution interface. `--use-plugin`
 accepts a Nipype plugin YAML/JSON for cluster schedulers. `--clean-workdir`,
 `--resource-monitor`, `--write-graph`, `--stop-on-first-crash`, and `--sloppy`
 follow the corresponding NiPreps conventions.
-HD-BET uses test-time augmentation on CUDA and MPS; CPU and sloppy execution
+
+CPI fitting uses single-threaded workers up to the process and node-memory
+limits; `--sloppy` reduces its fitting iterations for testing. HD-BET uses
+test-time augmentation on CUDA and MPS; CPU and sloppy execution
 disable it for speed.
 
 ## Configuration
@@ -168,9 +172,10 @@ DSC fields:
 |---|---:|---|
 | `method` | `oSVD` | `sSVD`, `oSVD`, `tikhonov`, `vascular`, or `cpi` |
 | `inference` | `vi` | `vi` or `svb` for CPI/vascular |
-| `cpi_control_points` | `0` | CPI control points; 0 selects automatically |
-| `cpi_infer_cpt` | `true` | Infer ordered CPI control-point times |
-| `cpi_infer_delay` | `false` | Fit voxelwise CPI bolus delay |
+| `cpi_control_points` | `0` | Number of CPI residue control points (0 = automatic; otherwise 5–12) |
+| `cpi_infer_delay` | `true` | Fit voxelwise arrival delay; false fixes it at zero and reports timing as not estimated |
+| `cpi_dispersion` | `none` | `none` omits arterial-dispersion fitting; `auto` or `gamma` enables the dispersed model (substantially slower) |
+| `cpi_fallback` | `osvd` | Replace rejected CPI fits with oSVD; `none` leaves those measurements missing |
 | `dose` | `1.0` | Contrast-dose multiplier (float; for example, 0.5 for half dose) |
 | `agent_standard_dose` | `0.1` | Agent standard dose in mmol Gd/kg (float) |
 | `preload` | `unknown` | Administered preload dose fraction, or `unknown`; provenance only |
@@ -183,7 +188,7 @@ DSC fields:
 | `lesion_mask` | `null` | Lesion mask (statistics and AIF lesion exclusion; native-DSC space) |
 | `nawm_mask` | `null` | NAWM mask (native-DSC space) |
 | `roi_mask` | `null` | Statistics-only ROI mask (native-DSC space) |
-| `leakage_method` | `bsw` | `bsw` leakage correction or `none` for baseline centering without leakage correction |
+| `leakage_method` | `bsw` | BSW correction (guidance for joint signal-domain CPI); `none` disables leakage correction/estimation |
 | `pre_bolus` | `5` | Initial baseline frames; final baseline is AIF-informed |
 | `motion_correct` | `true` | Apply motion correction |
 | `motion_thresh` | `0.5` | Motion-QC threshold in mm (float) |

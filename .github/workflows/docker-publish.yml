@@ -77,6 +77,8 @@ jobs:
           docker run --rm "$IMAGE_TAG" --help
           test "$(docker run --rm "$IMAGE_TAG" --version)" = \
             "pmriprep ${{ steps.meta_prep.outputs.version }}"
+          docker run --rm --entrypoint python "$IMAGE_TAG" -c \
+            "from pmriprep.models.dsc.signal_cpi import native; assert native.available()"
 
       # Run unit tests inside the container
       - name: Unit tests

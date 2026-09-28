@@ -49,10 +49,9 @@ def test_load_compute_inputs_preserves_arrays_and_settings(tmp_path: Path) -> No
         tr=1.2,
         svd_threshold=0.15,
         oi_threshold=0.07,
-        cpi_control_points=4,
-        cpi_infer_cpt=False,
+        cpi_control_points=5,
         cpi_infer_delay=True,
-        inference="map",
+        inference="vi",
         mcmc_samples=321,
         baseline_frames=7,
         tail_frames=8,
@@ -71,10 +70,9 @@ def test_load_compute_inputs_preserves_arrays_and_settings(tmp_path: Path) -> No
     assert result.dt == pytest.approx(1.2)
     assert result.svd_threshold == pytest.approx(0.15)
     assert result.oi_threshold == pytest.approx(0.07)
-    assert result.cpi_control_points == 4
-    assert result.cpi_infer_cpt is False
+    assert result.cpi_control_points == 5
     assert result.cpi_infer_delay is True
-    assert result.inference == "map"
+    assert result.inference == "vi"
     assert result.mcmc_samples == 321
     assert result.baseline_frames == 7
     assert result.tail_frames == 8
@@ -143,8 +141,6 @@ def test_vascular_nlls_worker_returns_parametric_fit() -> None:
         method="vascular",
         inference="nlls",
         mcmc_samples=500,
-        cpi_control_points=0,
-        bolus_duration_frames=10,
         dt=1.5,
     )
 
@@ -159,57 +155,6 @@ def test_vascular_nlls_worker_returns_parametric_fit() -> None:
     assert result["beta"] == pytest.approx(2.0, rel=0.05)
     assert result["tmax"] == pytest.approx(1.5, abs=0.1)
     assert result["r_squared"] > 0.999
-
-
-@pytest.mark.parametrize(
-    "infer_delay,expected_tmax",
-    [(False, np.nan), (True, 2.25)],
-)
-def test_cpi_scalar_worker_preserves_delay_setting(
-    infer_delay: bool,
-    expected_tmax: float,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The scalar CPI readout distinguishes absent and fitted timing."""
-    time_points = np.arange(12, dtype=np.float64) * 1.5
-    aif = np.linspace(0.0, 1.0, len(time_points))
-    fitted_residue = np.linspace(0.1, 0.01, len(time_points))
-    fit_result = SimpleNamespace(
-        parameters={"cbf": 0.1, "delay": 2.25},
-        fitted_residue=fitted_residue,
-        fitted_tissue_curve=np.ones_like(time_points),
-        uncertainties={},
-        uncertainty_source="not_computed",
-        r_squared=0.9,
-        converged=True,
-        evaluation_budget_exhausted=False,
-        n_function_evaluations=5,
-        passes_convergence=lambda: True,
-    )
-    monkeypatch.setattr(
-        "pmriprep.models.dsc.fit_dsc_model",
-        lambda **kwargs: fit_result,
-    )
-    _dsc_init_worker(
-        aif=aif,
-        time_points=time_points,
-        method="cpi",
-        inference="nlls",
-        mcmc_samples=500,
-        cpi_control_points=4,
-        bolus_duration_frames=4,
-        dt=1.5,
-        cpi_infer_delay=infer_delay,
-    )
-
-    result = _dsc_fit_single_voxel((0, 0, 0, np.ones_like(time_points)))
-
-    assert result["failed"] is False
-    assert result.get("needs_fallback") is not True
-    if np.isnan(expected_tmax):
-        assert np.isnan(result["tmax"])
-    else:
-        assert result["tmax"] == pytest.approx(expected_tmax)
 
 
 def test_batched_parametric_fallback_uses_minimum_adequacy_rule() -> None:
@@ -239,9 +184,6 @@ def test_batched_parametric_fallback_uses_minimum_adequacy_rule() -> None:
         coords,
         "vascular",
         n_voxels,
-        1.5,
-        None,
-        np.arange(6, dtype=np.float64) * 1.5,
     )
 
     assert [output["needs_fallback"] for output in outputs] == [
@@ -261,9 +203,6 @@ def test_batched_parametric_fallback_uses_minimum_adequacy_rule() -> None:
         coords,
         "vascular",
         n_voxels,
-        1.5,
-        None,
-        np.arange(6, dtype=np.float64) * 1.5,
         inference="map",
     )
     assert map_outputs[2]["needs_fallback"] is True
@@ -335,9 +274,6 @@ def test_parametric_fit_health_uses_admissible_denominator(
         1.5,
         "map",
         100,
-        0,
-        True,
-        False,
     )
     qc = result[4]
 
@@ -405,9 +341,6 @@ def test_vascular_cth_is_nan_when_osvd_fallback_fails(
         1.5,
         "map",
         100,
-        0,
-        True,
-        False,
     )
 
     for map_index in (0, 1, 2, 3, 5, 6):
@@ -457,9 +390,6 @@ def test_vascular_cth_readout_respects_shape_support(
         1.5,
         "map",
         100,
-        0,
-        True,
-        False,
     )
 
     assert np.isnan(result[5][0, 0, 0]) == at_bound
@@ -517,9 +447,6 @@ def test_vascular_mtt_bound_contact_is_reported(
         1.5,
         "map",
         100,
-        0,
-        True,
-        False,
     )
 
     assert result[2][0, 0, 0] == pytest.approx(mtt)
@@ -528,24 +455,21 @@ def test_vascular_mtt_bound_contact_is_reported(
 
 
 @pytest.mark.parametrize(
-    "method,cpi_infer_delay,delay,at_bound",
+    "method,delay,at_bound",
     [
-        ("vascular", False, -3.0, True),
-        ("vascular", False, 10.0, True),
-        ("vascular", False, np.nextafter(10.0, 0.0), True),
-        ("vascular", False, 2.0, False),
-        ("cpi", True, 10.0, True),
-        ("cpi", False, 0.0, None),
+        ("vascular", -3.0, True),
+        ("vascular", 10.0, True),
+        ("vascular", np.nextafter(10.0, 0.0), True),
+        ("vascular", 2.0, False),
     ],
 )
 def test_parametric_delay_bound_contact_is_reported(
     method: str,
-    cpi_infer_delay: bool,
     delay: float,
     at_bound: bool | None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Report fitted-delay endpoint contact without treating assumed CPI zero as fitted."""
+    """Report vascular fitted-delay endpoint contact."""
     concentration = np.zeros((1, 1, 1, 6), dtype=np.float64)
     concentration[0, 0, 0, 2:4] = [1.0, 0.5]
     interface = ComputeDSCMaps(inference="map")
@@ -580,15 +504,9 @@ def test_parametric_delay_bound_contact_is_reported(
         1.5,
         "map",
         100,
-        4,
-        False,
-        cpi_infer_delay,
     )
 
-    if method == "cpi" and not cpi_infer_delay:
-        assert np.isnan(result[3][0, 0, 0])
-    else:
-        assert result[3][0, 0, 0] == pytest.approx(delay)
+    assert result[3][0, 0, 0] == pytest.approx(delay)
     if at_bound is None:
         assert "delay_at_bound_n" not in result[4]
         assert "delay_at_bound_fraction" not in result[4]
@@ -597,69 +515,6 @@ def test_parametric_delay_bound_contact_is_reported(
         assert result[4]["delay_at_bound_fraction"] == pytest.approx(
             float(at_bound)
         )
-
-
-@pytest.mark.parametrize("infer_control_points", [False, True])
-def test_cpi_spacing_bound_contact_uses_accepted_fit_denominator(
-    infer_control_points: bool,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Report accepted inferred-spacing rails without counting fallback fits."""
-    concentration = np.zeros((3, 1, 1, 6), dtype=np.float64)
-    concentration[:, 0, 0, 2:4] = [1.0, 0.5]
-    interface = ComputeDSCMaps(inference="map")
-    rows = []
-    for index, (at_bound, needs_fallback) in enumerate(
-        ((True, False), (False, False), (True, True))
-    ):
-        rows.append({
-            "coords": (index, 0, 0),
-            "failed": False,
-            "needs_fallback": needs_fallback,
-            "converged": True,
-            "r_squared": 0.9,
-            "cbf": 0.1,
-            "cbv": 0.6,
-            "mtt": 6.0,
-            "tmax": 0.0,
-            "cpi_spacing_at_bound": at_bound,
-        })
-    monkeypatch.setattr(
-        interface,
-        "_dsc_fit_batched_map",
-        lambda **kwargs: rows,
-    )
-    monkeypatch.setattr(
-        "pmriprep.utils.dsc_deconvolution.svd_deconvolve_oscillation",
-        lambda *args, **kwargs: SimpleNamespace(
-            cbf=0.2, cbv=0.3, mtt=1.5, delay=2.5
-        ),
-    )
-
-    result = interface._deconvolve_parametric(
-        concentration,
-        np.array([0.0, 0.0, 1.0, 0.5, 0.0, 0.0]),
-        np.ones((3, 1, 1), dtype=np.uint8),
-        "cpi",
-        1.5,
-        "map",
-        100,
-        4,
-        infer_control_points,
-        False,
-    )
-
-    if infer_control_points:
-        assert result[4]["cpi_spacing_at_bound_n"] == 1
-        assert result[4]["cpi_spacing_at_bound_fraction"] == pytest.approx(0.5)
-    else:
-        assert "cpi_spacing_at_bound_n" not in result[4]
-        assert "cpi_spacing_at_bound_fraction" not in result[4]
-    assert np.isnan(result[3][0, 0, 0])
-    assert np.isnan(result[3][1, 0, 0])
-    assert result[3][2, 0, 0] == pytest.approx(2.5)
-    assert result[4]["tmax_method"] == "not_estimated_for_retained_cpi"
-    assert result[4]["fallback_tmax_method"] == "osvd_residue_delay"
 
 
 def test_prepare_baseline_preserves_pass_through_k2(
@@ -1309,7 +1164,7 @@ def test_save_ancillary_maps_allows_missing_k2_when_leakage_disabled(
     assert "out_k2" not in results
 
 
-@pytest.mark.parametrize("method", ["vascular", "cpi"])
+@pytest.mark.parametrize("method", ["vascular"])
 def test_save_fit_qc_data_dispatches_parametric_methods(
     method: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1338,16 +1193,13 @@ def test_save_fit_qc_data_dispatches_parametric_methods(
         method=method,
         inference="vi",
         mcmc_samples=321,
-        cpi_control_points=7,
-        cpi_infer_cpt=True,
-        cpi_infer_delay=False,
         threshold=0.2,
         oi_threshold=0.1,
         signal=signal,
     )
 
     assert len(calls) == 1
-    assert calls[0][0][4:] == (1.5, method, "vi", 321, 7, True, False)
+    assert calls[0][0][4:] == (1.5, method, "vi", 321)
     assert calls[0][1]["signal_data"] is signal
 
 
@@ -1379,9 +1231,6 @@ def test_save_fit_qc_data_dispatches_svd_methods(
         method=method,
         inference="map",
         mcmc_samples=100,
-        cpi_control_points=5,
-        cpi_infer_cpt=False,
-        cpi_infer_delay=True,
         threshold=0.25,
         oi_threshold=0.15,
         signal=None,
@@ -1423,9 +1272,6 @@ def test_run_deconvolution_normalizes_svd_state(
         oi_threshold=0.1,
         inference="vi",
         mcmc_samples=100,
-        cpi_control_points=5,
-        cpi_infer_cpt=False,
-        cpi_infer_delay=False,
         motion_weighting=SimpleNamespace(weights=None, qc={}),
     )
 
@@ -1436,7 +1282,7 @@ def test_run_deconvolution_normalizes_svd_state(
     assert result.cbf_std is None
 
 
-@pytest.mark.parametrize("method", ["vascular", "cpi"])
+@pytest.mark.parametrize("method", ["vascular"])
 def test_run_deconvolution_normalizes_parametric_state(
     method: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1469,13 +1315,10 @@ def test_run_deconvolution_normalizes_parametric_state(
         oi_threshold=0.1,
         inference="map",
         mcmc_samples=321,
-        cpi_control_points=7,
-        cpi_infer_cpt=True,
-        cpi_infer_delay=True,
         motion_weighting=SimpleNamespace(weights=weights, qc=motion_qc),
     )
 
-    assert calls[0][0][3:] == (method, 2.0, "map", 321, 7, True, True)
+    assert calls[0][0][3:] == (method, 2.0, "map", 321)
     assert calls[0][1]["motion_weights"] is weights
     assert result.cbf is arrays[0]
     assert result.cth is arrays[4]
@@ -1603,9 +1446,6 @@ def test_assemble_outputs_preserves_serialization_order_and_optional_branches(
         method="vascular",
         inference="vi",
         mcmc_samples=500,
-        cpi_control_points=6,
-        cpi_infer_cpt=True,
-        cpi_infer_delay=False,
         svd_threshold=0.2,
         oi_threshold=0.1,
         signal=None,

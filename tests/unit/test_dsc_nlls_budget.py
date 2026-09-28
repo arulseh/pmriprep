@@ -85,33 +85,14 @@ def test_nonfinite_parameter_or_prediction_falls_back() -> None:
     assert _parametric_fit_needs_fallback(bad_prediction, "vi")
 
 
-def test_nonfinite_derived_output_falls_back() -> None:
-    """Derived quantitative outputs use the same finite-result contract."""
-    output = {
-        "cbf": 0.1,
-        "cbv": float("inf"),
-        "mtt": 4.0,
-        "tmax": 0.0,
-    }
-
-    assert not _parametric_outputs_are_finite(output, "cpi")
-
-
-def test_unestimated_default_cpi_timing_does_not_trigger_fallback() -> None:
-    """NaN timing is expected when default CPI does not fit delay."""
-    output = {
-        "cbf": 0.1,
-        "cbv": 0.4,
-        "mtt": 4.0,
-        "tmax": float("nan"),
-    }
-
-    assert _parametric_outputs_are_finite(output, "cpi")
-    assert not _parametric_outputs_are_finite(
-        output,
-        "cpi",
-        cpi_infer_delay=True,
-    )
+@pytest.mark.parametrize("field", ["cbf", "cbv", "mtt", "tmax", "alpha", "beta", "cth"])
+@pytest.mark.parametrize("invalid", [np.nan, np.inf])
+def test_nonfinite_derived_output_falls_back(field: str, invalid: float) -> None:
+    """Every required vascular output is checked, including fitted timing."""
+    output = dict(cbf=0.1, cbv=0.4, mtt=4.0, tmax=0.0, alpha=2.0, beta=2.0, cth=2.8)
+    assert _parametric_outputs_are_finite(output)
+    output[field] = invalid
+    assert not _parametric_outputs_are_finite(output)
 
 
 def test_nonbudget_nlls_failure_falls_back() -> None:
