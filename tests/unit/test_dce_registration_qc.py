@@ -143,7 +143,9 @@ class TestDCERegistrationQCMaskRegression:
             return_value=str(dce_mask_file),
         ):
             qc_metrics = interface._compute_qc_metrics(
-                str(registered_t1w_file), str(dce_mean_file)
+                str(registered_t1w_file),
+                str(dce_mean_file),
+                foreground_dice=0.95,
             )
 
         assert "nmi" in qc_metrics, qc_metrics
@@ -154,6 +156,7 @@ class TestDCERegistrationQCMaskRegression:
         assert np.isfinite(qc_metrics["dice"])
 
         assert qc_metrics["qc_status"] == "PASS", qc_metrics
+        assert qc_metrics["dice_source"] == "brain_mask"
         assert qc_metrics["brain_mask_used"] is True
         assert qc_metrics["native_perfusion_mask_metrics_role"] == (
             "descriptive_not_gated"
@@ -204,13 +207,16 @@ class TestDCERegistrationQCMaskRegression:
             return_value="",
         ):
             qc_metrics = interface._compute_qc_metrics(
-                str(registered_t1w_file), str(dce_mean_file)
+                str(registered_t1w_file),
+                str(dce_mean_file),
+                foreground_dice=0.95,
             )
 
         # NMI / Correlation still compute (unmasked); DICE absent.
         assert "nmi" in qc_metrics
         assert "correlation" in qc_metrics
         assert "dice" not in qc_metrics
+        assert qc_metrics["dice_source"] == "brain_mask"
         assert qc_metrics["brain_mask_used"] is False
         assert qc_metrics["missing_required_metrics"] == ["dice"]
         assert qc_metrics["qc_status"] == "UNKNOWN"
@@ -617,13 +623,72 @@ class TestDCERegistrationQCStatusGating:
 
         assert qc_metrics["qc_status"] == expected, qc_metrics
         assert qc_metrics["qc_status_basis"] == (
-            "final_dce_space_foreground_mask_dice_and_correlation"
+            "final_dce_space_brain_mask_dice_and_correlation"
         )
+        assert qc_metrics["dice_source"] == "brain_mask"
         assert qc_metrics["qc_status_thresholds"] == {
             "dice_min": 0.80,
             "correlation_min": 0.03,
         }
         assert "missing_required_metrics" not in qc_metrics
+
+    @pytest.mark.parametrize(
+        "foreground_dice,expected",
+        [(0.85, "PASS"), (0.75, "POOR"), (None, "UNKNOWN")],
+        ids=["accepted", "rejected", "unavailable"],
+    )
+    def test_unmasked_registration_uses_selected_foreground_overlap(
+        self,
+        tmp_path: Path,
+        foreground_dice: float | None,
+        expected: str,
+    ) -> None:
+        """Unmasked VFA/AFI registrations use labelled foreground overlap."""
+        from pmriprep.interfaces.dce import DCERegistration
+
+        affine = np.eye(4)
+        data = np.random.default_rng(29).uniform(10.0, 100.0, size=(6, 6, 4))
+        t1w_file = tmp_path / "t1w.nii.gz"
+        dce_mean_file = tmp_path / "dce_mean.nii.gz"
+        registered_t1w_file = tmp_path / "registered_t1w.nii.gz"
+        out_matrix = tmp_path / "registration.mat"
+        _save_volume(t1w_file, data, affine)
+        _save_volume(dce_mean_file, data, affine)
+        _save_volume(registered_t1w_file, data, affine)
+        _identity_flirt_mat(out_matrix)
+
+        interface = DCERegistration()
+        interface.inputs.t1w_file = str(t1w_file)
+        interface.inputs.dce_mean = str(dce_mean_file)
+        interface.inputs.out_file = str(registered_t1w_file)
+        interface.inputs.out_matrix = str(out_matrix)
+
+        with patch(
+            "pmriprep.utils.registration.calculate_nmi_from_files",
+            return_value=0.5,
+        ), patch(
+            "pmriprep.utils.registration.calculate_correlation_from_files",
+            return_value=0.9,
+        ), patch.object(
+            DCERegistration, "_check_transform_determinant", return_value=1.0,
+        ):
+            qc_metrics = interface._compute_qc_metrics(
+                str(registered_t1w_file),
+                str(dce_mean_file),
+                foreground_dice=foreground_dice,
+            )
+
+        assert qc_metrics["dice_source"] == "foreground_overlap"
+        assert qc_metrics["qc_status_basis"] == (
+            "final_dce_space_foreground_overlap_and_correlation"
+        )
+        assert qc_metrics["brain_mask_used"] is False
+        assert qc_metrics["qc_status"] == expected
+        if foreground_dice is None:
+            assert "dice" not in qc_metrics
+            assert qc_metrics["missing_required_metrics"] == ["dice"]
+        else:
+            assert qc_metrics["dice"] == pytest.approx(foreground_dice)
 
     def test_qc_status_unknown_when_required_metric_fails(
         self, tmp_path: Path,
@@ -664,6 +729,7 @@ class TestDCERegistrationQCStatusGating:
             )
 
         assert np.isfinite(qc_metrics["dice"])
+        assert qc_metrics["dice_source"] == "brain_mask"
         assert "correlation" not in qc_metrics
         assert qc_metrics["missing_required_metrics"] == ["correlation"]
         assert qc_metrics["qc_status"] == "UNKNOWN"

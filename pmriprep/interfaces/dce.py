@@ -4658,7 +4658,11 @@ class DCERegistration(SimpleInterface):
             shutil.copy(selected_matrix, out_matrix)
 
         # Compute QC metrics (outside temp context so outputs exist)
-        qc_metrics = self._compute_qc_metrics(out_file, dce_mean)
+        qc_metrics = self._compute_qc_metrics(
+            out_file,
+            dce_mean,
+            foreground_dice=selected_dice,
+        )
         qc_metrics["path_selection"] = {
             "dice_header": dice_header,
             "dice_a": dice_a,
@@ -5025,7 +5029,11 @@ class DCERegistration(SimpleInterface):
         )
 
     def _compute_qc_metrics(
-        self, registered_t1w: str, dce_mean: str
+        self,
+        registered_t1w: str,
+        dce_mean: str,
+        *,
+        foreground_dice: float | None = None,
     ) -> dict[str, Any]:
         """Compute registration QC metrics with validation thresholds.
 
@@ -5035,6 +5043,9 @@ class DCERegistration(SimpleInterface):
             Path to registered T1w image.
         dce_mean : str
             Path to reference DCE mean image.
+        foreground_dice : float or None, optional
+            Foreground-overlap DICE for the selected registration candidate.
+            Used only when no explicit source-space brain mask is available.
 
         Returns
         -------
@@ -5063,6 +5074,8 @@ class DCERegistration(SimpleInterface):
                 self.inputs.brain_mask
             ).exists():
                 mask_path = str(self.inputs.brain_mask)
+            dice_source = "brain_mask" if mask_path is not None else "foreground_overlap"
+            qc_metrics["dice_source"] = dice_source
 
             # Resample the input mask onto the DCE grid using the just-
             # computed FLIRT matrix. Without this step the mask remains
@@ -5135,6 +5148,18 @@ class DCERegistration(SimpleInterface):
                 except Exception as exc:
                     logger.warning("DICE calculation failed: %s", exc)
 
+            if (
+                mask_path is None
+                and foreground_dice is not None
+                and np.isfinite(foreground_dice)
+            ):
+                qc_metrics["dice"] = float(foreground_dice)
+                if foreground_dice < REG_QC_THRESHOLDS["dice_min"]:
+                    warnings_list.append(
+                        f"Foreground overlap {foreground_dice:.2f} below threshold "
+                        f"{REG_QC_THRESHOLDS['dice_min']}"
+                    )
+
             # Check transform determinant for volume preservation
             out_matrix = self._gen_matfilename()
             if Path(out_matrix).exists():
@@ -5204,7 +5229,9 @@ class DCERegistration(SimpleInterface):
             # Determine overall QC status
             qc_metrics["warnings"] = warnings_list
             qc_metrics["qc_status_basis"] = (
-                "final_dce_space_foreground_mask_dice_and_correlation"
+                "final_dce_space_brain_mask_dice_and_correlation"
+                if dice_source == "brain_mask"
+                else "final_dce_space_foreground_overlap_and_correlation"
             )
             qc_metrics["qc_status_thresholds"] = {
                 "dice_min": REG_QC_THRESHOLDS["dice_min"],
