@@ -78,3 +78,19 @@ def test_failed_constrained_solve_is_not_silently_clipped(
     with pytest.raises(RuntimeError, match="Bound-constrained"):
         _bounded_vi_mean(np.eye(1), np.array([2.0]), np.array([2.0]),
                          np.zeros(1), np.ones(1))
+
+
+def test_linear_algebra_failure_uses_documented_runtime_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A SciPy BVLS failure is normalized to the shared solver contract."""
+    def fail(*args: object, **kwargs: object) -> None:
+        raise np.linalg.LinAlgError("SVD did not converge")
+
+    monkeypatch.setattr(bayesian_utils.optimize, "lsq_linear", fail)
+    with pytest.raises(RuntimeError, match=r"condition=1.*finite_center=True") as error:
+        _bounded_vi_mean(
+            np.eye(1), np.array([2.0]), np.array([2.0]),
+            np.zeros(1), np.ones(1),
+        )
+    assert isinstance(error.value.__cause__, np.linalg.LinAlgError)

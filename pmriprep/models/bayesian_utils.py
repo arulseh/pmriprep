@@ -54,31 +54,76 @@ def _bounded_vi_mean(
         (unconstrained >= lower) & (unconstrained <= upper)
     ):
         return unconstrained
+    finite_precision = bool(np.all(np.isfinite(precision)))
+    finite_rhs = bool(np.all(np.isfinite(rhs)))
+    finite_bounds = bool(
+        np.all(np.isfinite(lower) | np.isneginf(lower))
+        and np.all(np.isfinite(upper) | np.isposinf(upper))
+        and np.all(lower <= upper)
+    )
+
+    def _failure_context() -> str:
+        condition = float("nan")
+        if finite_precision:
+            try:
+                condition = float(np.linalg.cond(precision))
+            except np.linalg.LinAlgError:
+                pass
+        return (
+            f"condition={condition:.6g}, finite_precision={finite_precision}, "
+            f"finite_rhs={finite_rhs}, finite_center="
+            f"{bool(np.all(np.isfinite(unconstrained)))}, "
+            f"finite_bounds={finite_bounds}"
+        )
+
+    if not finite_precision or not finite_rhs or not finite_bounds:
+        raise RuntimeError(
+            f"Bound-constrained VI mean received invalid inputs ({_failure_context()})"
+        )
     diagonal = np.diag(precision)
     if not np.all(np.isfinite(diagonal)) or np.any(diagonal <= 0):
-        raise RuntimeError("Bound-constrained VI mean requires positive finite precision")
+        raise RuntimeError(
+            "Bound-constrained VI mean requires positive finite precision "
+            f"({_failure_context()})"
+        )
     scales = np.sqrt(diagonal)
     scaled_precision = precision / scales[:, None] / scales[None, :]
     center = unconstrained
     if not np.all(np.isfinite(center)):
-        center = np.linalg.solve(scaled_precision, rhs / scales) / scales
+        try:
+            center = np.linalg.solve(scaled_precision, rhs / scales) / scales
+        except np.linalg.LinAlgError as exc:
+            raise RuntimeError(
+                f"Bound-constrained VI mean update failed ({_failure_context()})"
+            ) from exc
         if not np.all(np.isfinite(center)):
-            raise RuntimeError("Bound-constrained VI mean update failed")
+            raise RuntimeError(
+                f"Bound-constrained VI mean update failed ({_failure_context()})"
+            )
         if np.all((center >= lower) & (center <= upper)):
             return center
-    factor = np.linalg.cholesky(scaled_precision)
-    result = optimize.lsq_linear(
-        factor.T,
-        np.zeros_like(rhs),
-        bounds=((lower - center) * scales, (upper - center) * scales),
-        method="bvls",
-        tol=1e-10,
-    )
+    try:
+        factor = np.linalg.cholesky(scaled_precision)
+        result = optimize.lsq_linear(
+            factor.T,
+            np.zeros_like(rhs),
+            bounds=((lower - center) * scales, (upper - center) * scales),
+            method="bvls",
+            tol=1e-10,
+        )
+    except np.linalg.LinAlgError as exc:
+        raise RuntimeError(
+            f"Bound-constrained VI mean update failed ({_failure_context()})"
+        ) from exc
     if not result.success or not np.all(np.isfinite(result.x)):
-        raise RuntimeError("Bound-constrained VI mean update failed")
+        raise RuntimeError(
+            f"Bound-constrained VI mean update failed ({_failure_context()})"
+        )
     mean = center + result.x / scales
     if not np.all(np.isfinite(mean)):
-        raise RuntimeError("Bound-constrained VI mean update failed")
+        raise RuntimeError(
+            f"Bound-constrained VI mean update failed ({_failure_context()})"
+        )
     # Remove only roundoff overshoot after the correlated constrained solve.
     return np.asarray(np.clip(mean, lower, upper), dtype=np.float64)
 

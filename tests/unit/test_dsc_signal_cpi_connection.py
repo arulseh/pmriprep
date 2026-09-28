@@ -29,6 +29,41 @@ def selection(flow: float, *, converged: bool = True) -> LeakageBatch:
     )
 
 
+def test_bounded_mean_failure_requests_visible_fallback() -> None:
+    """A contained VI numerical failure retains its specific fallback reason."""
+    diagnostic = LeakageBatch(
+        [], [], [{"selected": None, "assessment": None}], [],
+        {"failure_reasons": np.array(["bounded_mean_failed"], dtype=object)},
+        seconds=0.0, iterations=1,
+    )
+    output = classify_result(4, 0.002, diagnostic)
+    assert output.status == "fallback_requested"
+    assert output.reasons == ("bounded_mean_failed",)
+
+
+def test_selected_restart_uses_its_original_diagnostic_row() -> None:
+    """A failed earlier restart cannot shift selected curves or uncertainty."""
+    diagnostic = selection(0.01)
+    fit = replace(diagnostic.fits[0], restart=1)
+    assessment = replace(diagnostic.assessments[0], restart=1)
+    diagnostic.fits = [fit]
+    diagnostic.assessments = [assessment]
+    diagnostic.rows = [{"selected": fit, "assessment": assessment}]
+    diagnostic.leakage = [{"restart": 1, "k2": 0.003}]
+    diagnostic.arrays.update(
+        owners=np.array([0, 0]),
+        restarts=np.array([0, 1]),
+        failure_reasons=np.array(["bounded_mean_failed", None], dtype=object),
+        fitted_curves=np.array([[np.nan] * 10, [987.0] * 10]),
+        covariance=np.array([np.full((2, 2), np.nan), np.diag([4e-6, 1.0])]),
+    )
+
+    output = classify_result(8, 0.004, diagnostic)
+    assert output.status == "retained"
+    np.testing.assert_array_equal(output.fitted_signal, np.full(10, 987.0))
+    assert output.cbf_std == 0.002
+
+
 @pytest.mark.parametrize("converged", [True, False])
 @pytest.mark.parametrize("flow", [
     0.0, np.nextafter(0.0, 1.0), 2.168404344971009e-19,

@@ -10,6 +10,8 @@ import pytest
 from scipy.integrate import cumulative_trapezoid
 
 from pmriprep.models.dsc.local_vi import local_vi_state
+from pmriprep.models.dsc.batched_fitting import DSCBatchedFitResult
+from pmriprep.models.dsc.vi_adapter import DSCVIPosterior
 from pmriprep.models.dsc.signal_cpi import connection, leakage, spatial
 from pmriprep.models.dsc.signal_cpi.residue import signal_evaluator
 from pmriprep.models.dsc.signal_cpi.geometry import Model
@@ -144,6 +146,40 @@ def test_none_dispatches_vascular_model_to_same_engine(
     monkeypatch.setattr(leakage, "batched_dsc_vi_fit", capture)
     with pytest.raises(Captured):
         leakage.fit_without_leakage(signals[0, 0, 0], aif, time, te, 5, family=family)
+
+
+def test_all_bounded_mean_failures_request_fallback(
+    inputs: Any, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Failed restart rows reach CPI policy without evaluating invalid states."""
+    signals, aif, time, te, _ = inputs
+
+    def failed_result(**kwargs: Any) -> DSCBatchedFitResult:
+        starts = np.asarray(kwargs["initial_means_transformed"])
+        n_rows, n_params = starts.shape
+        posterior = DSCVIPosterior(
+            np.full_like(starts, np.nan),
+            np.full((n_rows, n_params, n_params), np.nan),
+            np.full(n_rows, np.nan), np.full(n_rows, np.nan),
+        )
+        return DSCBatchedFitResult(
+            params={"cbf": np.full(n_rows, np.nan)},
+            r_squared=np.full(n_rows, np.nan),
+            converged=np.zeros(n_rows, dtype=bool),
+            fitted_curves=np.full((n_rows, len(time)), np.nan),
+            n_iterations=1, model_name="signal_cpi",
+            full_posterior=posterior,
+            failure_reasons=("bounded_mean_failed",) * n_rows,
+        )
+
+    monkeypatch.setattr(leakage, "batched_dsc_vi_fit", failed_result)
+    diagnostic = leakage.fit_without_leakage(
+        signals[0, 0, 0], aif, time, te, 5,
+    )
+    output = connection.classify_result(0, np.nan, diagnostic)
+    assert diagnostic.fits == []
+    assert output.status == "fallback_requested"
+    assert output.reasons == ("bounded_mean_failed",)
 
 
 @pytest.mark.parametrize("family", ["cpi", "cpi_vtf"])

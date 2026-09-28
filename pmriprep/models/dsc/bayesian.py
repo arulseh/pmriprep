@@ -892,7 +892,10 @@ class BayesianDSCFitter:
             m_new = post_cov @ rhs
 
             if bounded_vascular:
-                m_new = _bounded_vi_mean(post_prec, rhs, m_new, lower_t, upper_t)
+                try:
+                    m_new = _bounded_vi_mean(post_prec, rhs, m_new, lower_t, upper_t)
+                except RuntimeError:
+                    break
             else:
                 for i in range(n_params):
                     if transforms[i] == TransformType.IDENTITY:

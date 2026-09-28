@@ -445,9 +445,18 @@ def _fit_model(
     )
     posterior, prediction = result.full_posterior, result.fitted_curves
     assert posterior is not None and prediction is not None
-    jacobian = evaluator.jacobians(posterior.mean)
+    failure_reasons = result.failure_reasons or (None,) * len(posterior.mean)
+    successful = np.array([reason is None for reason in failure_reasons], dtype=bool)
+    jacobian = np.full(
+        (len(posterior.mean), signal.size, posterior.mean.shape[1]), np.nan,
+        dtype=np.float64,
+    )
+    if np.any(successful):
+        jacobian[successful] = evaluator.jacobians(posterior.mean[successful])
     fits, assessments, leakage = [], [], []
     for i, mean in enumerate(posterior.mean):
+        if not successful[i]:
+            continue
         fit, assessed, inferred_leakage = readout_state(
             model, observations[i], mean, posterior.covariance[i],
             float(posterior.noise_shape[i]), float(posterior.noise_scale[i]),
@@ -461,11 +470,20 @@ def _fit_model(
                   noise_shape=posterior.noise_shape, noise_scale=posterior.noise_scale,
                   fitted_curves=prediction, jacobian=jacobian, starts=means,
                   prior_mean=model.prior.mean, prior_covariance=model.prior.covariance,
-                  converged=result.converged)
+                  converged=result.converged,
+                  owners=np.asarray(owners, dtype=np.int64),
+                  restarts=np.asarray(restarts, dtype=np.int64),
+                  failure_reasons=np.asarray(failure_reasons, dtype=object))
     if isinstance(model, BSWCenteredModel):
         arrays.update(reference_mean=model.reference.mean, reference_basis=model.reference.basis)
     if weights is not None:
         arrays["weights"] = weights
-    return LeakageBatch(fits, assessments, select_valid_restarts(fits, assessments, len(signals)),
-                        leakage, arrays, perf_counter() - started, result.n_iterations,
+    rows = select_valid_restarts(fits, assessments, len(signals))
+    for voxel, row in enumerate(rows):
+        row["n_failed_starts"] = sum(
+            owner == voxel and reason is not None
+            for owner, reason in zip(owners, failure_reasons, strict=True)
+        )
+    return LeakageBatch(fits, assessments, rows, leakage, arrays,
+                        perf_counter() - started, result.n_iterations,
                         "bsw" if has_leakage else "none", infer_delay)

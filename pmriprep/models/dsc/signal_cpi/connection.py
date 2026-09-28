@@ -292,8 +292,17 @@ def classify_result(index: int, bsw_k2: float, result: LeakageBatch) -> GuidedVo
     prediction = None
     cbf_std = np.nan
     if fit is not None:
-        selected = next(i for i, value in enumerate(result.fits)
-                        if value.restart == fit.restart and value.voxel == fit.voxel)
+        if "owners" in result.arrays and "restarts" in result.arrays:
+            matches = np.flatnonzero(
+                (np.asarray(result.arrays["owners"]) == fit.voxel)
+                & (np.asarray(result.arrays["restarts"]) == fit.restart)
+            )
+            if len(matches) != 1:
+                raise ValueError("selected CPI fit has ambiguous restart ownership")
+            selected = int(matches[0])
+        else:
+            selected = next(i for i, value in enumerate(result.fits)
+                            if value.restart == fit.restart and value.voxel == fit.voxel)
         if "fitted_curves" in result.arrays:
             prediction = _readonly(result.arrays["fitted_curves"][selected])
         if "covariance" in result.arrays:
@@ -304,7 +313,13 @@ def classify_result(index: int, bsw_k2: float, result: LeakageBatch) -> GuidedVo
         assessment = replace(assessment, voxel=index)
     reasons: list[str] = []
     if fit is None or assessment is None:
-        reasons.append("no_valid_variational_state")
+        numerical_failures = tuple(
+            dict.fromkeys(
+                reason for reason in result.arrays.get("failure_reasons", ())
+                if isinstance(reason, str)
+            )
+        )
+        reasons.extend(numerical_failures or ("no_valid_variational_state",))
     else:
         if not assessment.valid:
             reasons.extend(assessment.reasons or ("invalid_variational_state",))

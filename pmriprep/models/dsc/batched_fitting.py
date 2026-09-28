@@ -128,6 +128,7 @@ class DSCBatchedFitResult:
         model_name: Name of the fitted vascular model or VI adapter.
         uncertainties: Parameter uncertainties, param_name -> (N,).
         full_posterior: Optional complete local Gaussian/Gamma factors.
+        failure_reasons: Per-voxel numerical failure reason, or ``None``.
     """
 
     # Use Mapping (covariant) rather than dict (invariant) so callers can
@@ -150,6 +151,7 @@ class DSCBatchedFitResult:
         default_factory=dict
     )
     full_posterior: DSCVIPosterior | None = None
+    failure_reasons: tuple[str | None, ...] = ()
 
 
 # ---------------------------------------------------------------------------
@@ -580,6 +582,9 @@ def _concat_dsc_batched_results(
             )
             if head.posterior_cov_diag is not None else None
         ),
+        failure_reasons=tuple(
+            reason for result in results for reason in result.failure_reasons
+        ),
     )
 
 
@@ -892,6 +897,7 @@ def batched_dsc_vi_fit(
                 np.full(n_voxels, np.nan),
                 np.full(n_voxels, np.nan),
             ) if return_full_posterior else None,
+            failure_reasons=(None,) * n_voxels,
         )
 
     y = tissue_curves[valid_idx]  # (N_valid, T)
@@ -1058,6 +1064,7 @@ def batched_dsc_vi_fit(
 
     active = np.ones(n_valid, dtype=bool)
     converged = np.zeros(n_valid, dtype=bool)
+    failure_reasons: list[str | None] = [None] * n_valid
     fe_plateau_count = np.zeros(n_valid, dtype=np.int32)
 
     w = np.ones(n_obs, dtype=np.float64) if weights is None else np.asarray(weights, dtype=np.float64)
@@ -1195,9 +1202,20 @@ def batched_dsc_vi_fit(
                 ~np.isfinite(m_new) | (m_new < lower_t) | (m_new > upper_t), axis=1
             )
             for i in np.flatnonzero(outside):
-                m_new[i] = _bounded_vi_mean(
-                    post_prec[i], rhs[i], m_new[i], lower_t, upper_t,
-                )
+                try:
+                    m_new[i] = _bounded_vi_mean(
+                        post_prec[i], rhs[i], m_new[i], lower_t, upper_t,
+                    )
+                except RuntimeError as exc:
+                    failed_index = int(a_idx[i])
+                    failure_reasons[failed_index] = "bounded_mean_failed"
+                    logger.debug(
+                        "DSC VI bounded mean failed for fit row %d: %s",
+                        int(valid_idx[failed_index]), exc,
+                    )
+                    active[failed_index] = False
+                    converged[failed_index] = False
+                    m_new[i] = m_a[i]
         else:
             # IDENTITY params: transformed and natural coordinates coincide.
             for j in range(n_params):
@@ -1265,6 +1283,11 @@ def batched_dsc_vi_fit(
             newly_converged = accepted & (full_param_change < 1e-3)
             converged[a_idx[newly_converged]] = True
             active[a_idx[~accepted | newly_converged]] = False
+            failed_now = np.array(
+                [failure_reasons[index] is not None for index in a_idx], dtype=bool
+            )
+            converged[a_idx[failed_now]] = False
+            active[a_idx[failed_now]] = False
             m[a_idx] = best_m[a_idx]
             c[a_idx] = best_c[a_idx]
             s[a_idx] = best_s[a_idx]
@@ -1461,6 +1484,12 @@ def batched_dsc_vi_fit(
                 converged[conv_global] = True
                 active[conv_global] = False
 
+        failed_now = np.array(
+            [failure_reasons[index] is not None for index in a_idx], dtype=bool
+        )
+        converged[a_idx[failed_now]] = False
+        active[a_idx[failed_now]] = False
+
         # Update state
         still_active = active[a_idx]
         if np.any(still_active):
@@ -1480,8 +1509,10 @@ def batched_dsc_vi_fit(
     # The fixed 10-iteration VI schedule makes the FE-plateau count
     # informational only. Final fit quality is gated downstream by R².
     logger.info(
-        "DSC batched VI finished %d-iteration schedule (n=%d): %d at FE plateau",
+        "DSC batched VI finished %d-iteration schedule (n=%d): "
+        "%d at FE plateau, %d numerical failures",
         last_iteration + 1, n_voxels, int(np.sum(converged)),
+        sum(reason is not None for reason in failure_reasons),
     )
 
     # --- Post-convergence: inverse-transform best params ---
@@ -1559,11 +1590,23 @@ def batched_dsc_vi_fit(
         out_params[name][valid_idx] = fitted_nat[:, j]
     out_r2[valid_idx] = r2_valid
     out_converged[valid_idx] = converged
+    failed_valid = np.array([reason is not None for reason in failure_reasons], dtype=bool)
+    failed_output = valid_idx[failed_valid]
+    if len(failed_output):
+        for name in fitting_param_names:
+            out_params[name][failed_output] = np.nan
+            out_uncertainties[name][failed_output] = np.nan
+            out_ci_lower[name][failed_output] = np.nan
+            out_ci_upper[name][failed_output] = np.nan
+        out_uncertainties["noise_std"][failed_output] = np.nan
+        out_r2[failed_output] = np.nan
+        out_converged[failed_output] = False
 
     out_fitted = None
     if save_fitted_curves:
         out_fitted = np.zeros((n_voxels, n_obs), dtype=np.float64)
         out_fitted[valid_idx] = final_pred
+        out_fitted[failed_output] = np.nan
 
     out_post_means = None
     out_post_cov = None
@@ -1572,6 +1615,8 @@ def batched_dsc_vi_fit(
         out_post_cov = np.zeros((n_voxels, n_params), dtype=np.float64)
         out_post_means[valid_idx] = best_m
         out_post_cov[valid_idx] = best_cov_diag
+        out_post_means[failed_output] = np.nan
+        out_post_cov[failed_output] = np.nan
 
     full_posterior = None
     if best_cov_full is not None:
@@ -1583,7 +1628,15 @@ def batched_dsc_vi_fit(
         full_cov[valid_idx] = best_cov_full
         full_shape[valid_idx] = best_c
         full_scale[valid_idx] = best_s
+        full_mean[failed_output] = np.nan
+        full_cov[failed_output] = np.nan
+        full_shape[failed_output] = np.nan
+        full_scale[failed_output] = np.nan
         full_posterior = DSCVIPosterior(full_mean, full_cov, full_shape, full_scale)
+
+    out_failure_reasons: list[str | None] = [None] * n_voxels
+    for local_index, output_index in enumerate(valid_idx):
+        out_failure_reasons[int(output_index)] = failure_reasons[local_index]
 
     return DSCBatchedFitResult(
         params=out_params, r_squared=out_r2, converged=out_converged,
@@ -1594,6 +1647,7 @@ def batched_dsc_vi_fit(
         posterior_means_transformed=out_post_means,
         posterior_cov_diag=out_post_cov,
         full_posterior=full_posterior,
+        failure_reasons=tuple(out_failure_reasons),
     )
 
 

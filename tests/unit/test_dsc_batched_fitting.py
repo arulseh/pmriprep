@@ -213,6 +213,49 @@ class TestBatchedDSCVIFit:
         )
         assert result.n_iterations <= 8
 
+    def test_bounded_mean_failure_is_isolated_to_one_voxel(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """One row's numerical bound failure does not discard the batch."""
+        from pmriprep.models.bayesian_utils import TransformType
+        from pmriprep.models.dsc import batched_fitting
+        from pmriprep.models.dsc.vi_adapter import DSCVIModelAdapter
+
+        original = batched_fitting._bounded_vi_mean
+        calls = 0
+
+        def fail_once(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise RuntimeError("forced bounded solve failure")
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(batched_fitting, "_bounded_vi_mean", fail_once)
+        time = np.arange(6.0)
+        observations = np.vstack((np.full(6, 10.0), np.full(6, 8.0)))
+        adapter = DSCVIModelAdapter(
+            predict=lambda means: np.repeat(means[:, :1], len(time), axis=1),
+            jacobian=lambda means: np.ones((len(means), len(time), 1)),
+            valid_mean=lambda means: np.all((means >= 0) & (means <= 1), axis=1),
+        )
+        result = batched_dsc_vi_fit(
+            "test_adapter", observations, np.ones_like(time), time,
+            np.array([0.5]), np.array([1.0]), [TransformType.IDENTITY], [None],
+            ["cbf"], [(0.0, 1.0)], initial_means_transformed=np.full((2, 1), 0.5),
+            n_iterations=2, model_adapter=adapter, return_full_posterior=True,
+            save_fitted_curves=True,
+        )
+
+        assert calls >= 2
+        assert result.failure_reasons == ("bounded_mean_failed", None)
+        assert np.isnan(result.params["cbf"][0])
+        assert np.isfinite(result.params["cbf"][1])
+        assert not result.converged[0]
+        assert result.full_posterior is not None
+        assert np.isnan(result.full_posterior.mean[0]).all()
+        assert np.isfinite(result.full_posterior.mean[1]).all()
+
     def test_fractional_weights_reduce_effective_information(
         self, dsc_aif_and_time
     ):
