@@ -231,8 +231,8 @@ def _generate_boilerplate_text(
             "Automated glioma segmentation was performed using HD-GLIO "
             "[@kickingereder_2019]. Tumor masks were used for regional analysis "
             "and arterial input function candidate exclusion. When available, a "
-            "contralateral normal-appearing white matter region of interest was "
-            "used for normalization."
+            "tumor-informed supratentorial normal-appearing white matter region "
+            "of interest was used for normalization."
         )
 
     # DSC perfusion

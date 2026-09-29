@@ -853,7 +853,7 @@ def build_tumor_seg_nawm_sidecar(
     reference_source: PathLike | None = None,
     qc_metrics: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Sidecar for the contralateral NAWM mask."""
+    """Sidecar for the supratentorial NAWM normalization mask."""
     from pmriprep.utils.provenance import get_bids_derivative_provenance
 
     source = source_paths[0] if source_paths else None
@@ -882,20 +882,27 @@ def build_tumor_seg_nawm_sidecar(
         )
 
     restriction = (
-        "contralateral atlas-region restriction"
+        "atlas-defined supratentorial restriction for every tumor location; "
+        "tumor compartment from registered atlas overlap"
         if atlas_used is True
-        else "contralateral hemisphere restriction"
+        else "hemisphere restriction because the supratentorial atlas was unavailable"
+    )
+    description = (
+        "Supratentorial normal-appearing white matter mask for perfusion "
+        "reference normalization"
+        if atlas_used is True
+        else "Hemisphere-restricted normal-appearing white matter candidate "
+        "retained for QC because supratentorial atlas restriction was unavailable"
     )
     sidecar: Dict[str, Any] = {
         **get_bids_derivative_provenance(),
-        "Description": (
-            "Contralateral normal-appearing white matter mask for perfusion "
-            "reference normalization"
-        ),
+        "Description": description,
         "Type": "ROI",
         "Method": (
             "Brain-masked WM probability >= 0.9 with "
-            f"{restriction}, 20 mm whole-tumor exclusion, and adaptive erosion"
+            f"{restriction}; hemisphere selection from the subject-space brain "
+            "symmetry midline using a 60% tumor-laterality rule; 20 mm "
+            "whole-tumor exclusion; and adaptive erosion"
         ),
         "SpatialReference": _anat_spatial_reference(
             subject, session, is_postcon_ref,
@@ -927,6 +934,35 @@ def build_tumor_seg_nawm_sidecar(
         exclusion_reason = nawm_qc.get("quantitative_use_exclusion_reason")
         if isinstance(exclusion_reason, str) and exclusion_reason:
             sidecar["QuantitativeUseExclusionReason"] = exclusion_reason
+        string_fields = {
+            "compartment_label": "TumorCompartment",
+            "tumor_laterality": "TumorLaterality",
+            "selected_hemisphere": "SelectedHemisphere",
+            "hemisphere_selection_rule": "HemisphereSelectionRule",
+            "laterality_method": "LateralityMethod",
+            "nawm_compartment": "NAWMCompartment",
+        }
+        for source_key, output_key in string_fields.items():
+            value = nawm_qc.get(source_key)
+            if isinstance(value, str):
+                sidecar[output_key] = value
+        numeric_fields = {
+            "f_supra": "SupratentorialOverlapFraction",
+            "f_cereb": "CerebellarOverlapFraction",
+            "f_other": "OtherOverlapFraction",
+            "atlas_coverage": "AtlasCoverageFraction",
+            "left_fraction": "TumorLeftFraction",
+            "right_fraction": "TumorRightFraction",
+            "midline_angle_degrees": "MidlineAngleDegrees",
+            "symmetry_dice": "SymmetryDice",
+        }
+        for source_key, output_key in numeric_fields.items():
+            value = nawm_qc.get(source_key)
+            if isinstance(value, (int, float)) and np.isfinite(value):
+                sidecar[output_key] = float(value)
+        warnings = nawm_qc.get("warnings")
+        if isinstance(warnings, list) and all(isinstance(item, str) for item in warnings):
+            sidecar["Warnings"] = warnings
     return sidecar
 
 

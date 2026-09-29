@@ -59,6 +59,12 @@
         <h3>NAWM ROI</h3>
         {% if tumor_seg.qc_metrics.nawm %}
         <div class="metrics">
+            {% if tumor_seg.qc_metrics.nawm.compartment_label is defined %}
+            <div class="metric">
+                <div class="metric-label">Tumor Compartment</div>
+                <div class="metric-value">{{ tumor_seg.qc_metrics.nawm.compartment_label }}</div>
+            </div>
+            {% endif %}
             {% if tumor_seg.qc_metrics.nawm.selected_hemisphere is defined %}
             <div class="metric">
                 <div class="metric-label">Selected Hemisphere</div>
@@ -84,6 +90,9 @@
             </div>
             {% endif %}
         </div>
+        {% if tumor_seg.qc_metrics.nawm.warnings %}
+        <p class="warning">NAWM selection warning: {{ tumor_seg.qc_metrics.nawm.warnings|join(", ") }}</p>
+        {% endif %}
         {% endif %}
         {% if tumor_seg.images.nawm_flair %}
         <div style="margin-top: 20px;">

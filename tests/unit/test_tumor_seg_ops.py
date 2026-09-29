@@ -7,10 +7,10 @@ import numpy as np
 import pytest
 
 from pmriprep.utils.tumor_seg import (
-    TumorAnalysis,
     _analyze_tumor_anatomy,
     _create_hemisphere_mask,
     _create_spherical_kernel,
+    _estimate_brain_symmetry_midline,
     create_nawm_roi,
     dilate_mask_from_array,
     erode_mask_from_array,
@@ -204,23 +204,31 @@ class TestAnalyzeTumorAnatomy:
         result = _analyze_tumor_anatomy(mask, affine)
         assert result.laterality == "bilateral"
 
-    def test_supratentorial_high_z(self) -> None:
-        """Tumor with centroid z > -20 is classified as supratentorial."""
+    def test_supratentorial_atlas_overlap(self) -> None:
+        """The largest atlas overlap classifies a supratentorial tumor."""
         affine = self._make_ras_affine()
         mask = np.zeros((60, 60, 60), dtype=bool)
-        # z_physical = k - 30. For k=40, z=10 > -20 => supratentorial
         mask[28:32, 28:32, 38:42] = True
-        result = _analyze_tumor_anatomy(mask, affine)
-        assert result.is_supratentorial == True  # noqa: E712 (numpy bool)
+        supra = np.zeros_like(mask)
+        supra[:, :, 30:] = True
+        cerebellum = np.zeros_like(mask)
+        cerebellum[:, :, :20] = True
+        result = _analyze_tumor_anatomy(mask, affine, supra, cerebellum)
+        assert result.is_supratentorial is True
+        assert result.compartment == "supratentorial"
 
-    def test_infratentorial_low_z(self) -> None:
-        """Tumor with centroid z <= -20 is classified as infratentorial."""
+    def test_infratentorial_atlas_overlap(self) -> None:
+        """The largest atlas overlap classifies an infratentorial tumor."""
         affine = self._make_ras_affine()
         mask = np.zeros((60, 60, 60), dtype=bool)
-        # z_physical = k - 30. For k around 5, z = -25 <= -20 => infratentorial
         mask[28:32, 28:32, 3:7] = True
-        result = _analyze_tumor_anatomy(mask, affine)
-        assert result.is_supratentorial == False  # noqa: E712 (numpy bool)
+        supra = np.zeros_like(mask)
+        supra[:, :, 30:] = True
+        cerebellum = np.zeros_like(mask)
+        cerebellum[:, :, :20] = True
+        result = _analyze_tumor_anatomy(mask, affine, supra, cerebellum)
+        assert result.is_supratentorial is False
+        assert result.compartment == "infratentorial"
 
     def test_empty_mask(self) -> None:
         """Empty tumor mask returns bilateral, volume=0, supratentorial=True."""
@@ -262,34 +270,20 @@ class TestCreateHemisphereMask:
         assert not mask[10, 10, 10]  # i=10, x=0 (midline)
         assert not mask[0, 10, 10]  # i=0, x=-10 (left)
 
-
-class TestTumorAnalysisDataclass:
-    """Tests for the TumorAnalysis dataclass."""
-
-    def test_all_fields_accessible(self) -> None:
-        """All TumorAnalysis fields can be set and read."""
-        ta = TumorAnalysis(
-            is_supratentorial=True,
-            laterality="left",
-            centroid_voxels=(10.0, 20.0, 30.0),
-            volume_ml=42.5,
-            centroid_mni=(5.0, -10.0, 25.0),
-        )
-        assert ta.is_supratentorial is True
-        assert ta.laterality == "left"
-        assert ta.centroid_voxels == (10.0, 20.0, 30.0)
-        assert ta.volume_ml == pytest.approx(42.5)
-        assert ta.centroid_mni == (5.0, -10.0, 25.0)
-
-    def test_centroid_mni_default_none(self) -> None:
-        """centroid_mni defaults to None when not provided."""
-        ta = TumorAnalysis(
-            is_supratentorial=False,
-            laterality="right",
-            centroid_voxels=(0.0, 0.0, 0.0),
-            volume_ml=0.0,
-        )
-        assert ta.centroid_mni is None
+    def test_subject_midline_does_not_assume_world_origin(self) -> None:
+        """A translated native image is divided using brain symmetry."""
+        shape = (20, 20, 20)
+        affine = np.eye(4)
+        affine[:3, 3] = (100.0, -10.0, -10.0)
+        brain = np.ones(shape, dtype=bool)
+        midline = _estimate_brain_symmetry_midline(brain, affine)
+        assert midline is not None
+        left = _create_hemisphere_mask(shape, affine, "left", midline)
+        right = _create_hemisphere_mask(shape, affine, "right", midline)
+        assert left[2, 10, 10]
+        assert right[17, 10, 10]
+        assert np.any(left)
+        assert np.any(right)
 
 
 @pytest.mark.parametrize("use_atlas", [False, True])
@@ -323,16 +317,26 @@ def test_bilateral_nawm_preserves_lower_tumor_volume_hemisphere(
     if use_atlas:
         region_dir = tmp_path / "regions"
         region_dir.mkdir()
-        _save("regions/Supra.nii.gz", np.ones(shape, dtype=np.uint8))
-        atlas_constraint[:, :, 4:] = False
-        transformed_atlas = _save(
-            "transformed_atlas.nii.gz", atlas_constraint.astype(np.uint8)
-        )
+        supra_source = _save("regions/Supra.nii.gz", np.ones(shape, dtype=np.uint8))
+        _save("regions/Cerebellum.nii.gz", np.zeros(shape, dtype=np.uint8))
         transform = tmp_path / "t1w_to_mni.mat"
         np.savetxt(transform, np.eye(4))
+
+        transform_calls = 0
+
+        def _mock_transform(atlas_path: str, *_args: str) -> str:
+            nonlocal transform_calls
+            transform_calls += 1
+            data = (
+                atlas_constraint.astype(np.uint8)
+                if Path(atlas_path) == supra_source
+                else np.zeros(shape, dtype=np.uint8)
+            )
+            return str(_save(f"transformed_{transform_calls}.nii.gz", data))
+
         monkeypatch.setattr(
             "pmriprep.utils.tumor_seg._transform_atlas_to_t1w",
-            lambda *_args: str(transformed_atlas),
+            _mock_transform,
         )
         atlas_kwargs = {
             "t1w_to_mni_xfm": str(transform),
@@ -355,9 +359,77 @@ def test_bilateral_nawm_preserves_lower_tumor_volume_hemisphere(
     assert analysis["tumor_laterality"] == "bilateral"
     assert analysis["selected_hemisphere"] == "left"
     assert analysis["atlas_used"] is use_atlas
+    assert analysis["valid"] is use_atlas
+    assert analysis["nawm_compartment"] == (
+        "supratentorial" if use_atlas else "hemisphere_unrestricted"
+    )
+    assert analysis["quantitative_use_exclusion_reason"] == (
+        None if use_atlas else "supratentorial_atlas_unavailable"
+    )
 
     nawm = np.asarray(nib.load(result["output_file"]).dataobj) > 0
     left = _create_hemisphere_mask(shape, affine, "left")
     assert np.any(nawm)
     assert not np.any(nawm & ~left)
     assert np.array_equal(nawm, left & atlas_constraint & ~(tumor > 0))
+
+
+def test_infratentorial_tumor_uses_bilateral_supratentorial_nawm(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cerebellar tumor never selects cerebellar white matter as reference."""
+    shape = (20, 8, 10)
+    affine = np.eye(4)
+    affine[:3, 3] = (-10.0, -4.0, -5.0)
+    supra = np.zeros(shape, dtype=np.uint8)
+    supra[:, :, 5:] = 1
+    cerebellum = np.zeros(shape, dtype=np.uint8)
+    cerebellum[:, :, :5] = 1
+    tumor = np.zeros(shape, dtype=np.uint8)
+    tumor[8:12, 3:5, 1:3] = 1
+
+    def _save(name: str, data: np.ndarray) -> Path:
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        nib.save(nib.Nifti1Image(data, affine), path)
+        return path
+
+    tumor_file = _save("tumor.nii.gz", tumor)
+    wm_file = _save("wm.nii.gz", np.ones(shape, dtype=np.float32))
+    brain_file = _save("brain.nii.gz", np.ones(shape, dtype=np.uint8))
+    region_dir = tmp_path / "regions"
+    supra_source = _save("regions/Supra.nii.gz", supra)
+    _save("regions/Cerebellum.nii.gz", cerebellum)
+    transform = tmp_path / "t1w_to_mni.mat"
+    np.savetxt(transform, np.eye(4))
+    calls = 0
+
+    def _mock_transform(atlas_path: str, *_args: str) -> str:
+        nonlocal calls
+        calls += 1
+        data = supra if Path(atlas_path) == supra_source else cerebellum
+        return str(_save(f"transformed_{calls}.nii.gz", data))
+
+    monkeypatch.setattr(
+        "pmriprep.utils.tumor_seg._transform_atlas_to_t1w", _mock_transform
+    )
+    result = create_nawm_roi(
+        tumor_file,
+        wm_file,
+        output_file=tmp_path / "nawm.nii.gz",
+        tumor_margin_mm=0.0,
+        nawm_erosion=0,
+        nawm_min_voxels=1,
+        t1w_to_mni_xfm=str(transform),
+        reference_image=str(tumor_file),
+        region_masks_dir=str(region_dir),
+        brain_mask_file=brain_file,
+    )
+
+    analysis = result["analysis"]
+    assert analysis["compartment_label"] == "infratentorial"
+    assert analysis["selected_hemisphere"] == "both"
+    assert "infratentorial_tumor_uses_bilateral_supratentorial_nawm" in analysis["warnings"]
+    nawm = np.asarray(nib.load(result["output_file"]).dataobj) > 0
+    assert np.array_equal(nawm, supra.astype(bool))

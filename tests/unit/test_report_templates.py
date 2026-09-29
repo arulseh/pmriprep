@@ -1072,11 +1072,15 @@ def test_tumor_and_nawm_cards_are_ordered_and_unambiguous(env):
                 },
             },
             "nawm": {
-                "selected_hemisphere": "right",
+                "compartment_label": "infratentorial",
+                "selected_hemisphere": "both",
                 "n_voxels": 1000,
                 "volume_ml": 2.0,
                 "valid": True,
                 "atlas_used": True,
+                "warnings": [
+                    "infratentorial_tumor_uses_bilateral_supratentorial_nawm"
+                ],
             },
         },
         "images": {},
@@ -1088,9 +1092,11 @@ def test_tumor_and_nawm_cards_are_ordered_and_unambiguous(env):
         "Total Tumor Volume",
         "Enhancing Volume",
         "Non-Enhancing Volume",
+        "Tumor Compartment",
         "Selected Hemisphere",
         "NAWM Voxels",
         "NAWM Volume",
         "Minimum Size Met",
+        "NAWM selection warning",
     )
     assert "Atlas Used" not in rendered

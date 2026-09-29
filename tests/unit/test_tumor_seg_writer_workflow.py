@@ -161,6 +161,18 @@ def test_tumor_seg_sidecar_sources_populated(
     inp.qc_metrics = {
         "nawm": {
             "atlas_used": True,
+            "compartment_label": "infratentorial",
+            "tumor_laterality": "bilateral",
+            "selected_hemisphere": "both",
+            "laterality_method": "brain_symmetry",
+            "nawm_compartment": "supratentorial",
+            "f_supra": 0.1,
+            "f_cereb": 0.8,
+            "f_other": 0.1,
+            "atlas_coverage": 0.9,
+            "warnings": [
+                "infratentorial_tumor_uses_bilateral_supratentorial_nawm"
+            ],
             "erosion_voxels_final": 1,
             "erosion_mm_final": 1.25,
             "valid": False,
@@ -195,6 +207,13 @@ def test_tumor_seg_sidecar_sources_populated(
                 "space-T1w_desc-preproc_T1w.nii.gz",
             ], sc.name
             assert body["AtlasRestrictionApplied"] is True
+            assert body["TumorCompartment"] == "infratentorial"
+            assert body["SelectedHemisphere"] == "both"
+            assert body["NAWMCompartment"] == "supratentorial"
+            assert body["CerebellarOverlapFraction"] == 0.8
+            assert body["Warnings"] == [
+                "infratentorial_tumor_uses_bilateral_supratentorial_nawm"
+            ]
             assert body["WMProbabilityThreshold"] == 0.9
             assert body["TumorExclusionMarginMillimeters"] == 20.0
             assert body["ErosionVoxels"] == 1
@@ -316,3 +335,36 @@ def test_init_pmriprep_wf_skip_anat_with_tumor_seg(tmp_path: Path) -> None:
         work_dir=str(tmp_path / "work"),
     )
     assert wf is not None
+
+
+def test_nawm_sidecar_is_honest_when_supratentorial_atlas_is_unavailable(
+    minimal_bids_with_tumor_inputs: tuple[Path, dict],
+) -> None:
+    """A QC-only fallback must not claim a supratentorial compartment."""
+    from pmriprep.utils.sidecar_builders import build_tumor_seg_nawm_sidecar
+
+    bids, sources = minimal_bids_with_tumor_inputs
+    sidecar = build_tumor_seg_nawm_sidecar(
+        source_paths=[sources["source_t1w"]],
+        reference_voxel_source=sources["source_t1w"],
+        bids_dir=bids,
+        subject="01",
+        session="0001",
+        qc_metrics={
+            "nawm": {
+                "atlas_used": False,
+                "nawm_compartment": "hemisphere_unrestricted",
+                "valid": False,
+                "quantitative_use_exclusion_reason": (
+                    "supratentorial_atlas_unavailable"
+                ),
+            }
+        },
+    )
+
+    assert sidecar["NAWMCompartment"] == "hemisphere_unrestricted"
+    assert sidecar["ValidForQuantification"] is False
+    assert sidecar["QuantitativeUseExclusionReason"] == (
+        "supratentorial_atlas_unavailable"
+    )
+    assert sidecar["Description"].startswith("Hemisphere-restricted")

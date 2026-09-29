@@ -8,10 +8,10 @@ Functions
 extract_tumor_masks
     Extract binary masks for enhancing, non-enhancing, and whole tumor
 create_nawm_roi
-    Create contralateral normal-appearing white matter ROI for CBV normalization
+    Create supratentorial normal-appearing white matter ROI for normalization
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Optional, Union
 
@@ -22,6 +22,9 @@ from pmriprep.utils.nifti import physical_voxel_volume_mm3
 
 EPSILON_VOXEL_SIZE = 1e-6      # Guard for zero voxel sizes
 MAX_KERNEL_RADIUS_VOXELS = 200  # Memory safety cap for kernel generation
+NAWM_LATERALITY_FRACTION = 0.60
+NAWM_SYMMETRY_MAX_ANGLE_DEGREES = 25.0
+NAWM_SYMMETRY_MAX_SHIFT_MM = 10.0
 
 
 def extract_tumor_masks(
@@ -402,143 +405,206 @@ def get_mask_statistics(
 
 @dataclass
 class TumorAnalysis:
-    """Results from analyzing tumor anatomical location.
-
-    Attributes
-    ----------
-    is_supratentorial : bool
-        True if tumor is supratentorial (above tentorium)
-    laterality : Literal["left", "right", "bilateral"]
-        Hemisphere containing majority of tumor mass
-    centroid_voxels : tuple[float, float, float]
-        Center of mass in voxel coordinates
-    volume_ml : float
-        Tumor volume in milliliters
-    centroid_mni : tuple[float, float, float], optional
-        Center of mass in MNI coordinates (if MNI transform available)
-    """
+    """Tumor compartment and laterality used for NAWM selection."""
 
     is_supratentorial: bool
     laterality: Literal["left", "right", "bilateral"]
     centroid_voxels: tuple[float, float, float]
     volume_ml: float
-    centroid_mni: Optional[tuple[float, float, float]] = field(default=None)
+    compartment: Literal["supratentorial", "infratentorial", "unavailable"]
+    supratentorial_fraction: float
+    cerebellar_fraction: float
+    other_fraction: float
+    atlas_coverage_fraction: float
+    left_fraction: float
+    right_fraction: float
+    laterality_method: Literal["brain_symmetry", "world_x_fallback"]
+    midline_angle_degrees: float
+    symmetry_dice: float
+
+
+@dataclass
+class _MidlineEstimate:
+    """Subject-space midsagittal plane estimated from brain symmetry."""
+
+    signed_distance: npt.NDArray[np.float64]
+    angle_degrees: float
+    symmetry_dice: float
+
+
+def _estimate_brain_symmetry_midline(
+    brain_mask: npt.NDArray[np.bool_],
+    affine: npt.NDArray[np.float64],
+) -> Optional[_MidlineEstimate]:
+    """Estimate a subject-space midsagittal plane from axial brain symmetry."""
+    from scipy.ndimage import map_coordinates  # type: ignore[import-untyped]
+
+    brain = np.asarray(brain_mask, dtype=bool)
+    projection = np.any(brain, axis=2)
+    points = np.argwhere(projection)
+    if points.shape[0] < 10:
+        return None
+
+    affine_array = np.asarray(affine, dtype=float)
+    first_axis = affine_array[:3, 0]
+    second_axis = affine_array[:3, 1]
+    first_norm = float(np.linalg.norm(first_axis))
+    if first_norm <= 0:
+        return None
+    basis_first = first_axis / first_norm
+    second_orthogonal = second_axis - np.dot(second_axis, basis_first) * basis_first
+    second_norm = float(np.linalg.norm(second_orthogonal))
+    if second_norm <= 0:
+        return None
+    basis_second = second_orthogonal / second_norm
+    basis = np.column_stack((basis_first, basis_second))
+    plane_matrix = basis.T @ affine_array[:3, :2]
+    plane_offset = basis.T @ affine_array[:3, 3]
+    try:
+        inverse_plane_matrix = np.linalg.inv(plane_matrix)
+    except np.linalg.LinAlgError:
+        return None
+
+    # Score on a bounded grid so native 1-mm T1w matrices do not turn this
+    # one-time geometric estimate into a large workflow cost. The final plane
+    # is evaluated on the full image grid below.
+    sample_step = max(1, int(np.ceil(max(projection.shape) / 96)))
+    sample_i = np.arange(0, projection.shape[0], sample_step)
+    sample_j = np.arange(0, projection.shape[1], sample_step)
+    sample_ii, sample_jj = np.meshgrid(sample_i, sample_j, indexing="ij")
+    search_grid = np.column_stack((sample_ii.ravel(), sample_jj.ravel()))
+    search_grid_plane = search_grid @ plane_matrix.T + plane_offset
+    projection_sample = projection[np.ix_(sample_i, sample_j)]
+    brain_plane = points @ plane_matrix.T + plane_offset
+    center = np.mean(brain_plane, axis=0)
+    projection_float = projection.astype(float)
+
+    def _search(
+        angles: npt.NDArray[np.float64],
+        shifts: npt.NDArray[np.float64],
+    ) -> tuple[float, float, float, npt.NDArray[np.float64], float]:
+        best: Optional[tuple[float, float, float, npt.NDArray[np.float64], float]] = (
+            None
+        )
+        for angle_degrees in angles:
+            radians = np.deg2rad(angle_degrees)
+            normal = np.asarray([np.cos(radians), np.sin(radians)], dtype=float)
+            center_projection = float(center @ normal)
+            for shift_mm in shifts:
+                position = center_projection + float(shift_mm)
+                signed = search_grid_plane @ normal - position
+                reflected_plane = search_grid_plane - 2.0 * signed[:, None] * normal
+                reflected_voxels = (
+                    reflected_plane - plane_offset
+                ) @ inverse_plane_matrix.T
+                reflected = map_coordinates(
+                    projection_float,
+                    [reflected_voxels[:, 0], reflected_voxels[:, 1]],
+                    order=1,
+                    mode="constant",
+                    cval=0.0,
+                ).reshape(projection_sample.shape)
+                denominator = float(np.sum(projection_sample) + np.sum(reflected))
+                overlap = (
+                    2.0 * float(np.sum(projection_sample * reflected)) / denominator
+                    if denominator > 0
+                    else 0.0
+                )
+                candidate = (
+                    overlap,
+                    float(angle_degrees),
+                    position,
+                    normal,
+                    float(shift_mm),
+                )
+                if best is None or candidate[0] > best[0]:
+                    best = candidate
+        if best is None:
+            raise RuntimeError("Brain-symmetry search produced no result")
+        return best
+
+    coarse = _search(
+        np.arange(
+            -NAWM_SYMMETRY_MAX_ANGLE_DEGREES,
+            NAWM_SYMMETRY_MAX_ANGLE_DEGREES + 0.01,
+            2.0,
+        ),
+        np.arange(-NAWM_SYMMETRY_MAX_SHIFT_MM, NAWM_SYMMETRY_MAX_SHIFT_MM + 0.01, 1.0),
+    )
+    overlap, angle_degrees, position, normal, _ = _search(
+        np.arange(coarse[1] - 2.0, coarse[1] + 2.01, 0.25),
+        np.arange(coarse[4] - 1.0, coarse[4] + 1.01, 0.25),
+    )
+    # Orient positive distance toward world-space right (RAS +x).
+    if float((basis @ normal)[0]) < 0:
+        normal = -normal
+        position = -position
+    full_grid = np.indices(projection.shape, dtype=float).reshape(2, -1).T
+    full_grid_plane = full_grid @ plane_matrix.T + plane_offset
+    signed_2d = (full_grid_plane @ normal - position).reshape(projection.shape)
+    signed_3d = np.broadcast_to(signed_2d[:, :, None], brain.shape).copy()
+    return _MidlineEstimate(signed_3d, angle_degrees, overlap)
 
 
 def _analyze_tumor_anatomy(
     tumor_mask: npt.NDArray[np.bool_],
     affine: npt.NDArray[np.float64],
-    t1w_to_mni_xfm: Optional[str] = None,
+    supratentorial_mask: Optional[npt.NDArray[np.bool_]] = None,
+    cerebellar_mask: Optional[npt.NDArray[np.bool_]] = None,
+    midline: Optional[_MidlineEstimate] = None,
 ) -> TumorAnalysis:
-    """Analyze tumor location to determine anatomy for NAWM selection.
-
-    Determines whether tumor is supratentorial or infratentorial based on
-    centroid position, and which hemisphere contains the majority of tumor
-    mass for contralateral NAWM selection.
-
-    Parameters
-    ----------
-    tumor_mask : ndarray of bool
-        3D binary mask of whole tumor
-    affine : ndarray
-        4x4 affine transformation matrix
-    t1w_to_mni_xfm : str, optional
-        Path to T1w-to-MNI transform (FLIRT .mat format). If provided,
-        the centroid is transformed to MNI space for supratentorial
-        classification using z > -15mm (matching source MNI_TENTORIUM_Z).
-        If not provided, falls back to RAS z > -20mm heuristic.
-
-    Returns
-    -------
-    TumorAnalysis
-        Analysis results including location and laterality
-
-    Notes
-    -----
-    Laterality is determined by comparing tumor volume in each hemisphere.
-    The midline is assumed to be at x=0 in RAS coordinates. If tumor spans
-    both hemispheres relatively equally (<60% in either), it's marked as
-    bilateral.
-
-    When t1w_to_mni_xfm is provided, supratentorial determination uses
-    z > -15mm in MNI space (MNI_TENTORIUM_Z from source). Otherwise,
-    falls back to z > -20mm in RAS space.
-    """
+    """Classify tumor compartment by atlas overlap and laterality by symmetry."""
     from scipy import ndimage  # type: ignore[import-untyped]
 
-    # Guard: empty tumor mask
-    if not np.any(tumor_mask):
-        return TumorAnalysis(
-            is_supratentorial=True,
-            laterality="bilateral",
-            centroid_voxels=(0.0, 0.0, 0.0),
-            volume_ml=0.0,
-            centroid_mni=None,
-        )
-
-    # MNI tentorium z-threshold
-    MNI_TENTORIUM_Z = -15.0
-
-    # Get centroid in voxel coordinates
-    centroid_voxels = ndimage.center_of_mass(tumor_mask)
-
-    # Convert centroid to physical (RAS) coordinates
-    # Affine transforms from voxel to physical space
-    centroid_vox_homog = np.array([*centroid_voxels, 1.0])
-    centroid_ras = affine @ centroid_vox_homog
-    centroid_x, centroid_y, centroid_z = centroid_ras[:3]
-
-    # Determine supratentorial vs infratentorial
-    centroid_mni: Optional[tuple[float, float, float]] = None
-    if t1w_to_mni_xfm is not None:
-        # Transform centroid to MNI space for accurate classification
-        mni_coords = _transform_point_to_mni(
-            centroid_ras[:3], t1w_to_mni_xfm
-        )
-        if mni_coords is not None:
-            centroid_mni = mni_coords
-            is_supratentorial = mni_coords[2] > MNI_TENTORIUM_Z
-        else:
-            # Transform failed, fall back to RAS heuristic
-            is_supratentorial = centroid_z > -20.0
-    else:
-        # No MNI transform available, use RAS heuristic
-        is_supratentorial = centroid_z > -20.0
-
-    # Calculate volume
-    voxel_volume_mm3 = physical_voxel_volume_mm3(affine)
     n_voxels = int(np.sum(tumor_mask))
+    centroid_voxels = (
+        tuple(float(value) for value in ndimage.center_of_mass(tumor_mask))
+        if n_voxels
+        else (0.0, 0.0, 0.0)
+    )
+    voxel_volume_mm3 = physical_voxel_volume_mm3(affine)
     volume_ml = n_voxels * voxel_volume_mm3 / 1000.0
 
-    # Determine laterality by comparing volume in each hemisphere
-    # Create coordinate grid for x position (RAS)
-    shape = tumor_mask.shape
-    i_coords = np.arange(shape[0])
-    j_coords = np.arange(shape[1])
-    k_coords = np.arange(shape[2])
-    ii, jj, kk = np.meshgrid(i_coords, j_coords, k_coords, indexing="ij")
+    if n_voxels and supratentorial_mask is not None and cerebellar_mask is not None:
+        supra_voxels = int(np.sum(tumor_mask & supratentorial_mask))
+        cereb_voxels = int(np.sum(tumor_mask & cerebellar_mask))
+        covered = supratentorial_mask | cerebellar_mask
+        other_voxels = int(np.sum(tumor_mask & ~covered))
+        supratentorial_fraction = supra_voxels / n_voxels
+        cerebellar_fraction = cereb_voxels / n_voxels
+        other_fraction = other_voxels / n_voxels
+        atlas_coverage_fraction = (supra_voxels + cereb_voxels) / n_voxels
+        is_supratentorial = supratentorial_fraction > max(
+            cerebellar_fraction, other_fraction
+        )
+        compartment: Literal["supratentorial", "infratentorial", "unavailable"] = (
+            "supratentorial" if is_supratentorial else "infratentorial"
+        )
+    else:
+        supratentorial_fraction = float("nan")
+        cerebellar_fraction = float("nan")
+        other_fraction = float("nan")
+        atlas_coverage_fraction = float("nan")
+        is_supratentorial = True
+        compartment = "unavailable"
 
-    # Transform to physical x coordinate
-    # x_physical = affine[0,0]*i + affine[0,1]*j + affine[0,2]*k + affine[0,3]
-    x_physical = (
-        affine[0, 0] * ii + affine[0, 1] * jj + affine[0, 2] * kk + affine[0, 3]
-    )
-
-    # Count tumor voxels in each hemisphere (RAS: +x = right, -x = left)
-    left_voxels = int(np.sum(tumor_mask & (x_physical < 0)))
-    right_voxels = int(np.sum(tumor_mask & (x_physical > 0)))
+    laterality_mask = tumor_mask
+    if supratentorial_mask is not None:
+        laterality_mask = tumor_mask & supratentorial_mask
+    left_mask = _create_hemisphere_mask(tumor_mask.shape, affine, "left", midline)
+    right_mask = _create_hemisphere_mask(tumor_mask.shape, affine, "right", midline)
+    left_voxels = int(np.sum(laterality_mask & left_mask))
+    right_voxels = int(np.sum(laterality_mask & right_mask))
     total_voxels = left_voxels + right_voxels
-
     if total_voxels == 0:
+        left_fraction = right_fraction = 0.0
         laterality: Literal["left", "right", "bilateral"] = "bilateral"
     else:
         left_fraction = left_voxels / total_voxels
         right_fraction = right_voxels / total_voxels
-
-        # If >60% in one hemisphere, assign laterality
-        if left_fraction > 0.6:
+        if left_fraction > NAWM_LATERALITY_FRACTION:
             laterality = "left"
-        elif right_fraction > 0.6:
+        elif right_fraction > NAWM_LATERALITY_FRACTION:
             laterality = "right"
         else:
             laterality = "bilateral"
@@ -546,9 +612,22 @@ def _analyze_tumor_anatomy(
     return TumorAnalysis(
         is_supratentorial=is_supratentorial,
         laterality=laterality,
-        centroid_voxels=tuple(float(c) for c in centroid_voxels),  # type: ignore[arg-type]
+        centroid_voxels=centroid_voxels,  # type: ignore[arg-type]
         volume_ml=volume_ml,
-        centroid_mni=centroid_mni,
+        compartment=compartment,
+        supratentorial_fraction=supratentorial_fraction,
+        cerebellar_fraction=cerebellar_fraction,
+        other_fraction=other_fraction,
+        atlas_coverage_fraction=atlas_coverage_fraction,
+        left_fraction=left_fraction,
+        right_fraction=right_fraction,
+        laterality_method=(
+            "brain_symmetry" if midline is not None else "world_x_fallback"
+        ),
+        midline_angle_degrees=(
+            midline.angle_degrees if midline is not None else float("nan")
+        ),
+        symmetry_dice=(midline.symmetry_dice if midline is not None else float("nan")),
     )
 
 
@@ -556,8 +635,9 @@ def _create_hemisphere_mask(
     shape: tuple[int, int, int],
     affine: npt.NDArray[np.float64],
     hemisphere: Literal["left", "right"],
+    midline: Optional[_MidlineEstimate] = None,
 ) -> npt.NDArray[np.bool_]:
-    """Create a mask for one hemisphere based on RAS x coordinate.
+    """Create a hemisphere mask from a subject midline or world-x fallback.
 
     Parameters
     ----------
@@ -567,10 +647,12 @@ def _create_hemisphere_mask(
         4x4 affine transformation matrix
     hemisphere : {"left", "right"}
         Which hemisphere to select (RAS: left = x < 0, right = x > 0)
+    midline : _MidlineEstimate, optional
+        Subject-space midsagittal plane. If unavailable, world x=0 is used.
 
     Notes
     -----
-    Voxels exactly on the RAS midsagittal plane (x = 0) are excluded from both
+    Voxels exactly on the selected midsagittal plane are excluded from both
     masks because they are not unambiguously ipsilateral or contralateral.
 
     Returns
@@ -578,7 +660,16 @@ def _create_hemisphere_mask(
     ndarray of bool
         Binary mask for the selected hemisphere
     """
-    # Create coordinate grid
+    if midline is not None:
+        if midline.signed_distance.shape != shape:
+            raise ValueError("Midline estimate shape does not match requested mask")
+        return (
+            midline.signed_distance < 0
+            if hemisphere == "left"
+            else midline.signed_distance > 0
+        )
+
+    # World-x fallback when a brain-derived symmetry plane is unavailable.
     i_coords = np.arange(shape[0])
     j_coords = np.arange(shape[1])
     k_coords = np.arange(shape[2])
@@ -596,104 +687,6 @@ def _create_hemisphere_mask(
         mask = x_physical > 0
 
     return mask
-
-
-def _transform_point_to_mni(
-    point_ras: npt.NDArray[np.float64],
-    t1w_to_mni_xfm: str,
-) -> Optional[tuple[float, float, float]]:
-    """Transform a point from T1w RAS space to MNI space.
-
-    Applies the T1w-to-MNI transform (FLIRT .mat format) to convert
-    a point from native T1w space to MNI space.
-
-    Parameters
-    ----------
-    point_ras : ndarray
-        3-element array of RAS coordinates in T1w space
-    t1w_to_mni_xfm : str
-        Path to T1w-to-MNI FLIRT transform (.mat file)
-
-    Returns
-    -------
-    tuple of float or None
-        (x, y, z) in MNI space, or None if transform fails
-    """
-    try:
-        # Load T1w-to-MNI transform directly
-        t1w_to_mni = np.loadtxt(t1w_to_mni_xfm)
-
-        # Apply transform: MNI = T1w_to_MNI @ [x, y, z, 1]
-        point_homog = np.array([point_ras[0], point_ras[1], point_ras[2], 1.0])
-        mni_coords = t1w_to_mni @ point_homog
-
-        return (float(mni_coords[0]), float(mni_coords[1]), float(mni_coords[2]))
-
-    except (FileNotFoundError, OSError, ValueError):
-        return None
-
-
-def _select_region_atlas(
-    analysis: TumorAnalysis,
-    region_masks_dir: str,
-) -> Optional[str]:
-    """Select an MNI anatomical region mask for the tumor location.
-
-    For supratentorial tumors, selects a supratentorial atlas region on the
-    contralateral side. For infratentorial tumors, selects a cerebellar atlas.
-
-    Parameters
-    ----------
-    analysis : TumorAnalysis
-        Results from tumor anatomy analysis
-    region_masks_dir : str
-        Directory containing supratentorial and cerebellar region masks.
-
-    Returns
-    -------
-    str or None
-        Path to selected atlas file, or None if not found
-
-    Notes
-    -----
-    Atlas selection logic:
-    - Supratentorial left tumor  -> Supra_R.nii.gz (right supra for NAWM)
-    - Supratentorial right tumor -> Supra_L.nii.gz (left supra for NAWM)
-    - Supratentorial bilateral   -> Supra.nii.gz (later intersected with the
-      selected lower-tumor-volume hemisphere)
-    - Infratentorial left tumor  -> Cerebellum_R.nii.gz
-    - Infratentorial right tumor -> Cerebellum_L.nii.gz
-    - Infratentorial bilateral   -> Cerebellum.nii.gz (later intersected with
-      the selected lower-tumor-volume hemisphere)
-    """
-    masks_path = Path(region_masks_dir)
-
-    if analysis.is_supratentorial:
-        region = "Supra"
-    else:
-        region = "Cerebellum"
-
-    # Select contralateral side
-    if analysis.laterality == "left":
-        atlas_name = f"{region}_R.nii.gz"
-    elif analysis.laterality == "right":
-        atlas_name = f"{region}_L.nii.gz"
-    else:
-        # Bilateral: use both hemispheres of the region
-        atlas_name = f"{region}.nii.gz"
-
-    atlas_path = masks_path / atlas_name
-    if atlas_path.exists():
-        return str(atlas_path)
-
-    # Fallback: try full-region atlas (no hemisphere suffix)
-    if analysis.laterality != "bilateral":
-        fallback_name = ("Supra" if analysis.is_supratentorial else "Cerebellum") + ".nii.gz"
-        fallback_path = masks_path / fallback_name
-        if fallback_path.exists():
-            return str(fallback_path)
-
-    return None
 
 
 def _transform_atlas_to_t1w(
@@ -783,17 +776,16 @@ def create_nawm_roi(
     region_masks_dir: Optional[str] = None,
     brain_mask_file: Optional[Union[str, Path]] = None,
 ) -> dict[str, Any]:
-    """Create contralateral normal-appearing white matter ROI for CBV normalization.
+    """Create a supratentorial NAWM ROI for perfusion normalization.
 
     This function creates an NAWM (Normal Appearing White Matter) ROI for
-    use in normalizing DSC CBV maps. The NAWM is selected from the hemisphere
-    contralateral to the tumor to avoid contamination by peritumoral edema
-    or infiltrating tumor cells.
+    use in normalizing perfusion maps. For supratentorial tumors, NAWM is
+    selected contralaterally or from the lower-burden hemisphere. For
+    infratentorial tumors, both supratentorial hemispheres are retained.
 
-    When atlas files and MNI transform are provided, NAWM is restricted to the
-    anatomically appropriate region (supratentorial or cerebellar) rather than
-    just the contralateral hemisphere, preventing cerebellar WM from contaminating
-    NAWM estimates for supratentorial tumors.
+    When atlas files and the MNI transform are available, the whole tumor is
+    classified by overlap with transformed supratentorial and cerebellar masks.
+    The reference ROI itself is always restricted to supratentorial white matter.
 
     The order of operations follows the reference implementation:
     brain_mask -> WM threshold -> region mask -> tumor exclusion -> erosion,
@@ -821,12 +813,12 @@ def create_nawm_roi(
         (from HDGLIOConfig.nawm_min_voxels)
     t1w_to_mni_xfm : str, optional
         Path to T1w-to-MNI transform (.mat). Required for atlas-based
-        region restriction and MNI-space tumor classification.
+        region restriction and tumor-compartment classification.
     reference_image : str, optional
         Path to T1w reference image for atlas transformation.
     region_masks_dir : str, optional
-        Directory containing MNI supratentorial and cerebellar region masks
-        (e.g., Supra_L.nii.gz, Cerebellum_R.nii.gz).
+        Directory containing the full MNI supratentorial and cerebellar region
+        masks (``Supra.nii.gz`` and ``Cerebellum.nii.gz``).
     brain_mask_file : str or Path, optional
         Path to brain mask NIfTI file. Used as the initial base constraint
         (Step 1). If None, all voxels are considered.
@@ -839,8 +831,11 @@ def create_nawm_roi(
         - "analysis": Dictionary with analysis details:
 
             - "tumor_laterality": "left", "right", or "bilateral"
-            - "tumor_supratentorial": bool
-            - "selected_hemisphere": "left" or "right"
+            - "compartment_label": "supratentorial", "infratentorial", or
+              "unavailable"
+            - "f_supra", "f_cereb", "f_other": tumor overlap fractions
+            - "selected_hemisphere": "left", "right", or "both"
+            - "nawm_compartment": always "supratentorial"
             - "n_voxels": Final voxel count in NAWM ROI
             - "volume_ml": NAWM ROI volume in milliliters
             - "fallback_used": bool indicating if adaptive fallback was needed
@@ -867,8 +862,8 @@ def create_nawm_roi(
 
     1. Base mask: brain_mask (if provided) or np.ones()
     2. WM threshold: intersect with wm_data >= 0.9
-    3. Region mask: restrict to the selected hemisphere and, when available,
-       its atlas-defined supratentorial or cerebellar region
+    3. Region mask: restrict to supratentorial tissue and, for supratentorial
+       tumors, the selected hemisphere
     4. Tumor exclusion: subtract dilated tumor (20mm margin)
     5. Erosion: SINGLE pass, ellipsoidal kernel of nawm_erosion * min(voxel_sizes) mm
     6. Adaptive fallback: erosion-only reduction (2 -> 1 -> 0 voxels)
@@ -905,54 +900,123 @@ def create_nawm_roi(
 
     # Get voxel sizes
     zooms = header.get_zooms()[:3]  # type: ignore[attr-defined]
-    voxel_sizes = tuple(float(z) for z in zooms)
+    voxel_sizes: tuple[float, float, float] = (
+        float(zooms[0]),
+        float(zooms[1]),
+        float(zooms[2]),
+    )
 
-    # Analyze tumor anatomy (with MNI transform if available)
+    # Load the brain mask before laterality analysis so the midsagittal plane
+    # is estimated in native T1w geometry rather than assumed to be world x=0.
+    if brain_mask_file is not None:
+        brain_img = nib.load(brain_mask_file)
+        brain_data = brain_img.get_fdata()  # type: ignore[attr-defined]
+        brain_mask = brain_data > 0.5
+        if brain_mask.shape != tumor_mask.shape:
+            raise ValueError(
+                f"Dimension mismatch: brain mask {brain_mask.shape} vs "
+                f"tumor mask {tumor_mask.shape}"
+            )
+    else:
+        brain_mask = np.ones(tumor_mask.shape, dtype=bool)
+
+    midline = (
+        _estimate_brain_symmetry_midline(brain_mask, affine)
+        if brain_mask_file is not None
+        else None
+    )
+    warnings: list[str] = []
+    if midline is None:
+        warnings.append("symmetry_midline_unavailable_world_x_fallback")
+        logger.warning(
+            "Brain-symmetry midline unavailable; NAWM laterality uses world x=0"
+        )
+
+    # Transform both full atlas compartments into T1w space. The small overlap
+    # in the source masks is assigned to cerebellum so it cannot enter the
+    # supratentorial normalization ROI or be double-counted during classification.
+    atlas_used = False
+    supra_mask: Optional[npt.NDArray[np.bool_]] = None
+    cerebellar_mask: Optional[npt.NDArray[np.bool_]] = None
+    if region_masks_dir and t1w_to_mni_xfm and reference_image:
+        transformed_masks: dict[str, npt.NDArray[np.bool_]] = {}
+        for name in ("Supra", "Cerebellum"):
+            atlas_path = Path(region_masks_dir) / f"{name}.nii.gz"
+            if not atlas_path.exists():
+                continue
+            transformed_atlas = _transform_atlas_to_t1w(
+                str(atlas_path), reference_image, t1w_to_mni_xfm
+            )
+            if transformed_atlas is None:
+                continue
+            try:
+                atlas_data = nib.load(transformed_atlas).get_fdata()  # type: ignore[attr-defined]
+                atlas_binary = atlas_data > 0.5
+                if atlas_binary.shape == tumor_mask.shape:
+                    transformed_masks[name] = atlas_binary
+            finally:
+                tmp_atlas = Path(transformed_atlas)
+                if tmp_atlas.exists():
+                    tmp_atlas.unlink()
+        cerebellar_mask = transformed_masks.get("Cerebellum")
+        supra_mask = transformed_masks.get("Supra")
+        if supra_mask is not None:
+            if cerebellar_mask is not None:
+                supra_mask = supra_mask & ~cerebellar_mask
+            atlas_used = True
+    if not atlas_used:
+        warnings.append("supratentorial_atlas_unavailable")
+        logger.warning(
+            "Supratentorial atlas restriction unavailable; NAWM selection "
+            "falls back to a hemisphere-only mask"
+        )
+
     analysis = _analyze_tumor_anatomy(
-        tumor_mask, affine,
-        t1w_to_mni_xfm=t1w_to_mni_xfm,
+        tumor_mask,
+        affine,
+        supratentorial_mask=supra_mask,
+        cerebellar_mask=cerebellar_mask,
+        midline=midline,
     )
 
     # Determine which hemisphere to use for NAWM
     # For unilateral tumors: select contralateral hemisphere
     # For bilateral tumors: select hemisphere with less tumor volume
-    if analysis.laterality == "left":
-        selected_hemisphere: Literal["left", "right"] = "right"
+    if analysis.compartment == "infratentorial":
+        selected_hemisphere: Literal["left", "right", "both"] = "both"
+        hemisphere_selection_rule = "bilateral_supratentorial_for_infratentorial_tumor"
+        warnings.append("infratentorial_tumor_uses_bilateral_supratentorial_nawm")
+        hemisphere_mask = np.ones(tumor_mask.shape, dtype=bool)
+    elif analysis.laterality == "left":
+        selected_hemisphere = "right"
+        hemisphere_selection_rule = "contralateral_to_lateralized_supratentorial_tumor"
+        hemisphere_mask = _create_hemisphere_mask(
+            tumor_mask.shape, affine, selected_hemisphere, midline
+        )
     elif analysis.laterality == "right":
         selected_hemisphere = "left"
+        hemisphere_selection_rule = "contralateral_to_lateralized_supratentorial_tumor"
+        hemisphere_mask = _create_hemisphere_mask(
+            tumor_mask.shape, affine, selected_hemisphere, midline
+        )
     else:
-        # Bilateral: count voxels in each hemisphere and pick the one with less tumor
-        hemi_left = _create_hemisphere_mask(tumor_mask.shape, affine, "left")
-        hemi_right = _create_hemisphere_mask(tumor_mask.shape, affine, "right")
-        left_tumor = int(np.sum(tumor_mask & hemi_left))
-        right_tumor = int(np.sum(tumor_mask & hemi_right))
+        # Bilateral supratentorial tumor: choose the lower-burden hemisphere.
+        hemi_left = _create_hemisphere_mask(tumor_mask.shape, affine, "left", midline)
+        hemi_right = _create_hemisphere_mask(tumor_mask.shape, affine, "right", midline)
+        tumor_for_burden = (
+            tumor_mask & supra_mask if supra_mask is not None else tumor_mask
+        )
+        left_tumor = int(np.sum(tumor_for_burden & hemi_left))
+        right_tumor = int(np.sum(tumor_for_burden & hemi_right))
         selected_hemisphere = "left" if left_tumor <= right_tumor else "right"
+        hemisphere_selection_rule = "lower_supratentorial_tumor_burden"
+        hemisphere_mask = _create_hemisphere_mask(
+            tumor_mask.shape, affine, selected_hemisphere, midline
+        )
 
-    # Create hemisphere mask (default region constraint)
-    hemisphere_mask = _create_hemisphere_mask(tumor_mask.shape, affine, selected_hemisphere)
-
-    # --- Atlas-based region restriction ---
-    atlas_used = False
     region_mask = hemisphere_mask
-
-    if region_masks_dir and t1w_to_mni_xfm and reference_image:
-        atlas_path = _select_region_atlas(analysis, region_masks_dir)
-        if atlas_path is not None:
-            transformed_atlas = _transform_atlas_to_t1w(
-                atlas_path, reference_image, t1w_to_mni_xfm
-            )
-            if transformed_atlas is not None:
-                try:
-                    atlas_img = nib.load(transformed_atlas)
-                    atlas_data = atlas_img.get_fdata()  # type: ignore[attr-defined]
-                    atlas_binary = atlas_data > 0.5
-                    if atlas_binary.shape == tumor_mask.shape:
-                        region_mask = atlas_binary & hemisphere_mask
-                        atlas_used = True
-                finally:
-                    tmp_atlas = Path(transformed_atlas)
-                    if tmp_atlas.exists():
-                        tmp_atlas.unlink()
+    if supra_mask is not None:
+        region_mask = supra_mask & hemisphere_mask
 
     # ---------------------------------------------------------------
     # Sequential order of operations
@@ -960,12 +1024,7 @@ def create_nawm_roi(
     qc_steps: dict[str, int] = {}
 
     # Step 1: Base mask — brain_mask (if provided) or all voxels
-    if brain_mask_file is not None:
-        brain_img = nib.load(brain_mask_file)
-        brain_data = brain_img.get_fdata()  # type: ignore[attr-defined]
-        nawm_mask = brain_data > 0.5
-    else:
-        nawm_mask = np.ones(tumor_mask.shape, dtype=bool)
+    nawm_mask = brain_mask.copy()
     qc_steps["initial_voxels"] = int(np.sum(nawm_mask))
 
     # Step 2: WM threshold — intersect with wm_data >= wm_threshold
@@ -1003,7 +1062,9 @@ def create_nawm_roi(
         for reduced_erosion in range(nawm_erosion - 1, -1, -1):
             reduced_mm = reduced_erosion * min_vox
             if reduced_mm > 0:
-                nawm_mask = erode_mask_from_array(pre_erosion_mask, reduced_mm, voxel_sizes)  # type: ignore[arg-type]
+                nawm_mask = erode_mask_from_array(
+                    pre_erosion_mask, reduced_mm, voxel_sizes
+                )  # type: ignore[arg-type]
             else:
                 nawm_mask = pre_erosion_mask.copy()
             n_voxels = int(np.sum(nawm_mask))
@@ -1015,9 +1076,12 @@ def create_nawm_roi(
     qc_steps["after_adaptive_erosion"] = int(np.sum(nawm_mask))
     n_voxels = int(np.sum(nawm_mask))
 
-    # Determine validity — save mask even if below minimum
-    valid = n_voxels >= nawm_min_voxels
-    if not valid:
+    # Quantitative use requires both sufficient size and a verified
+    # supratentorial restriction. A hemisphere-only fallback remains useful
+    # for visual QC but can include posterior-fossa white matter.
+    sufficient_size = n_voxels >= nawm_min_voxels
+    valid = sufficient_size and atlas_used
+    if not sufficient_size:
         logger.warning(
             "NAWM ROI has only %d voxels (minimum: %d). "
             "Mask saved but marked valid=False. "
@@ -1025,6 +1089,18 @@ def create_nawm_roi(
             n_voxels,
             nawm_min_voxels,
         )
+    elif not atlas_used:
+        logger.warning(
+            "NAWM mask saved for QC but excluded from quantitative use because "
+            "the supratentorial atlas restriction was unavailable"
+        )
+
+    if not atlas_used:
+        exclusion_reason: Optional[str] = "supratentorial_atlas_unavailable"
+    elif not sufficient_size:
+        exclusion_reason = "insufficient_voxels_after_erosion_relaxation"
+    else:
+        exclusion_reason = None
 
     # Calculate final volume
     voxel_volume_mm3 = physical_voxel_volume_mm3(affine)
@@ -1058,19 +1134,29 @@ def create_nawm_roi(
         "output_file": str(out_path),
         "analysis": {
             "tumor_laterality": analysis.laterality,
-            "tumor_supratentorial": analysis.is_supratentorial,
+            "compartment_label": analysis.compartment,
+            "f_supra": analysis.supratentorial_fraction,
+            "f_cereb": analysis.cerebellar_fraction,
+            "f_other": analysis.other_fraction,
+            "atlas_coverage": analysis.atlas_coverage_fraction,
+            "left_fraction": analysis.left_fraction,
+            "right_fraction": analysis.right_fraction,
+            "laterality_method": analysis.laterality_method,
+            "midline_angle_degrees": analysis.midline_angle_degrees,
+            "symmetry_dice": analysis.symmetry_dice,
             "selected_hemisphere": selected_hemisphere,
+            "hemisphere_selection_rule": hemisphere_selection_rule,
+            "nawm_compartment": (
+                "supratentorial" if atlas_used else "hemisphere_unrestricted"
+            ),
+            "warnings": warnings,
             "n_voxels": float(n_voxels),
             "volume_ml": volume_ml,
             "fallback_used": fallback_used,
             "atlas_used": atlas_used,
             "valid": valid,
             "minimum_required_voxels": nawm_min_voxels,
-            "quantitative_use_exclusion_reason": (
-                None
-                if valid
-                else "insufficient_voxels_after_erosion_relaxation"
-            ),
+            "quantitative_use_exclusion_reason": exclusion_reason,
             "erosion_voxels_final": erosion_voxels_final,
             "erosion_mm_final": erosion_mm_final,
             "qc_steps": qc_steps,

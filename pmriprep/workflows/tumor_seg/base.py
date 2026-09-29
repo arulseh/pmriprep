@@ -356,7 +356,7 @@ def init_tumor_seg_wf(
     whole_tumor_mask
         Path to whole tumor mask (labels 1 + 2).
     nawm_mask
-        Path to the generated contralateral NAWM mask, retained for QC.
+        Path to the generated supratentorial NAWM mask, retained for QC.
     nawm_mask_for_quantification
         NAWM path only when the configured minimum-size criterion was met.
     nawm_valid
@@ -372,7 +372,7 @@ def init_tumor_seg_wf(
     1. Prepare images for HD-GLIO (NO bias correction, NO intensity normalization)
     2. Run HD-GLIO deep learning segmentation
     3. Extract individual tumor masks (enhancing, non-enhancing, whole)
-    4. Create contralateral NAWM ROI for CBV normalization
+    4. Create tumor-informed supratentorial NAWM ROI for normalization
 
     HD-GLIO requires all 4 modalities: T1w-pre, T1w-ce-GAD, T2w, FLAIR.
     """
@@ -558,7 +558,7 @@ def init_tumor_seg_wf(
 
     # -------------------------------------------------------------------
     # Step 4: NAWM ROI Creation (US-081)
-    # - Create contralateral NAWM mask for CBV normalization
+    # - Create tumor-informed supratentorial NAWM mask for normalization
     # - Use WM probability >= 0.9, exclude tumor + 20mm margin
     # - Apply config.nawm_erosion (default: 2 voxels)
     # - Ensure >= config.nawm_min_voxels (default: 500)
