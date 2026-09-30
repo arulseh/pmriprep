@@ -369,6 +369,49 @@ class TestEnrichDSC:
         # Old key must not have been re-introduced.
         assert "convergence_rate" not in deconv
 
+    def test_cpi_provenance_uses_executed_options(self) -> None:
+        """Runtime CPI choices replace static construction-time assumptions."""
+        sidecar = _make_dsc_sidecar()
+        sidecar["PerfusionProcessing"]["Deconvolution"].update({
+            "method": "cpi",
+            "inference": "vi",
+            "fit_domain": "signal",
+            "cpi_model": "continuous_cubic_residue",
+        })
+        control_points = {
+            "cpi": {
+                "requested": 0,
+                "selected": 9,
+                "allowed": [5, 6, 7, 8, 9, 10, 11, 12],
+                "selection_method": "automatic",
+            }
+        }
+        qc = {
+            "deconvolution": {
+                "method": "cpi",
+                "inference": "svb",
+                "fit_domain": "signal",
+                "cpi_dispersion": "auto",
+                "cpi_infer_delay": True,
+                "cpi_control_points": control_points,
+                "cpi_leakage_method": "none",
+                "cpi_fallback": "osvd",
+                "cpi_selection_stage": "ordinary_vi_before_spatial_refinement",
+                "cpi_gamma_fraction": 0.25,
+                "spatial_sweeps": 3,
+            }
+        }
+        result = enrich_provenance_from_qc(sidecar, qc, "DSC")
+        deconv = result["PerfusionProcessing"]["Deconvolution"]
+        assert deconv["inference"] == "svb"
+        assert deconv["cpi_dispersion"] == "auto"
+        assert deconv["cpi_infer_delay"] is True
+        assert deconv["cpi_control_points"] == control_points
+        assert deconv["cpi_leakage_method"] == "none"
+        assert deconv["cpi_fallback"] == "osvd"
+        assert deconv["cpi_gamma_fraction"] == pytest.approx(0.25)
+        assert deconv["spatial_sweeps"] == 3
+
     def test_no_normalization_factor(self) -> None:
         """NormalizationReference omitted when no normalization_factor."""
         sidecar = _make_dsc_sidecar()

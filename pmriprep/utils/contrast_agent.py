@@ -961,24 +961,10 @@ def build_dsc_provenance(
     deconv_block: dict[str, Any] = {"method": str(deconv_method)}
     if inference is not None and deconv_method in ("cpi", "vascular"):
         deconv_block["inference"] = str(inference)
-        # Identify the executing implementation separately from the published
-        # parameterization/prior lineage used by the CPI path.
         if deconv_method == "cpi":
             deconv_block["inference_engine"] = "pmriprep"
-            deconv_block["cpi_parameterization"] = "fabber_derived"
-            deconv_block["cpi_prior_profile"] = "fabber_derived"
-            deconv_block["cpi_cbf_prior"] = {
-                "transform": "identity",
-                "mean": 1.0,
-                "var": 1e6,
-            }
-            deconv_block["cpi_fraction_prior"] = {
-                "transform": "sigmoid",
-                "fitting_space_mean": 0.5,
-                "fitting_space_var": 1e7,
-            }
-            deconv_block["vb_max_iterations"] = 10
-            deconv_block["vb_noise_prior"] = {"c0": 1e-6, "s0": 1e6}
+            deconv_block["fit_domain"] = "signal"
+            deconv_block["cpi_model"] = "continuous_cubic_residue"
 
     perf: dict[str, Any] = {}
 

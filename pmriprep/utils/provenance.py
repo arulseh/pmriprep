@@ -430,6 +430,21 @@ def _enrich_dsc(
     deconv = qc.get("deconvolution")
     if deconv and isinstance(deconv, dict):
         deconv_block = perf.get("Deconvolution", {})
+        for key in (
+            "method",
+            "inference",
+            "fit_domain",
+            "cpi_dispersion",
+            "cpi_infer_delay",
+            "cpi_control_points",
+            "cpi_leakage_method",
+            "cpi_fallback",
+            "cpi_selection_stage",
+            "cpi_gamma_fraction",
+            "spatial_sweeps",
+        ):
+            if key in deconv:
+                deconv_block[key] = deconv[key]
         if "threshold_mean" in deconv:
             deconv_block["threshold_mean"] = _safe_float(deconv["threshold_mean"])
         if "oi_mean" in deconv:
