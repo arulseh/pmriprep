@@ -11,7 +11,11 @@ from scipy.interpolate import PchipInterpolator
 from pmriprep.models.dsc.local_vi import local_vi_state
 from pmriprep.models.dsc.signal_cpi.connection import fit_voxels, prepare_acquisition
 from pmriprep.models.dsc.signal_cpi.leakage import readout_state
-from pmriprep.models.dsc.signal_cpi.policy import assess_fit, model_for
+from pmriprep.models.dsc.signal_cpi.policy import (
+    assess_fit,
+    factor_diagnostic,
+    model_for,
+)
 from pmriprep.models.dsc.signal_cpi.residue import signal_evaluator
 
 
@@ -135,6 +139,36 @@ def test_directional_cbf_covariance_corruption_is_rejected(
     assert assessment.covariance_identity_error > 1e-4
     assert not assessment.valid
     assert assessment.reasons == ("inconsistent_local_factors",)
+
+
+def test_factor_diagnostic_handles_more_parameters_than_frames() -> None:
+    """Prior-only null-space directions remain valid in underdetermined fits."""
+    rng = np.random.default_rng(42)
+    n_frames, n_parameters = 6, 9
+    jacobian = rng.normal(size=(n_frames, n_parameters))
+    residual = rng.normal(scale=0.01, size=n_frames)
+    prior_variance = np.linspace(0.5, 2.0, n_parameters)
+    prior_covariance = np.diag(prior_variance)
+    local = local_vi_state(
+        np.zeros((1, n_parameters)),
+        jacobian[None],
+        residual[None],
+        np.zeros(n_parameters),
+        np.diag(1 / prior_variance),
+        np.ones(n_frames),
+    )
+
+    diagnostic = factor_diagnostic(
+        local.covariance[0],
+        jacobian,
+        prior_covariance,
+        residual,
+        local.shape,
+        local.scale[0],
+    )
+
+    assert diagnostic["covariance_relative_error"] < np.sqrt(np.finfo(float).eps)
+    assert diagnostic["covariance_precision_identity_max_eigen_error"] < 1e-4
 
 
 def test_clean_short_mtt_fit_is_not_rejected_by_roundoff() -> None:

@@ -63,9 +63,14 @@ def factor_diagnostic(
     weighted_jacobian = (
         jacobian if weights is None else np.sqrt(weights)[:, None] * jacobian
     )
-    _, singular, vectors = np.linalg.svd(weighted_jacobian @ prior_root)
+    _, singular, vectors = np.linalg.svd(
+        weighted_jacobian @ prior_root,
+        full_matrices=weighted_jacobian.shape[0] < weighted_jacobian.shape[1],
+    )
+    eigenvalues = np.zeros(vectors.shape[0])
+    eigenvalues[: singular.size] = singular**2
     basis = prior_root @ vectors.T
-    expected_scaled = basis / np.sqrt(1 + precision * singular**2)[None, :]
+    expected_scaled = basis / np.sqrt(1 + precision * eigenvalues)[None, :]
     expected_covariance = expected_scaled @ expected_scaled.T
     covariance_relative_error = float(
         np.linalg.norm(covariance - expected_covariance, ord="fro")
