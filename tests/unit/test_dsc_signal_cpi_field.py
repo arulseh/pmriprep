@@ -126,7 +126,13 @@ def test_actual_selected_cpi_field_matches_existing_single_family() -> None:
         leakage_method="none", inference_method="svb",
         options=CPIOptions(dispersion="none", infer_delay=False, control_points=5))
     expected = spatial.fit_spatial_voxels(a.branches[0], keep_diagnostics=True)
-    actual = field.fit_selected_field(a, keep_diagnostics=True)
+    completed: list[None] = []
+    actual = field.fit_selected_field(
+        a,
+        keep_diagnostics=True,
+        on_selection_result=lambda: completed.append(None),
+    )
+    assert len(completed) == 2
     for before, after in zip(expected.voxels, actual.voxels, strict=True):
         assert after.status == before.status
         assert np.isnan(after.delay)
@@ -147,7 +153,7 @@ def test_empty_or_rejected_field_does_not_run_spatial_engine(monkeypatch: pytest
         leakage_method="none", inference_method="svb", mask=np.zeros((1, 1, 1), bool))
     assert field.fit_selected_field(a).voxels == ()
     bad = connection.GuidedVoxel(0, "fallback_requested", ("no_valid_state",))
-    monkeypatch.setattr(field, "fit_selected_voxels", lambda _: iter([bad]))
+    monkeypatch.setattr(field, "fit_selected_voxels", lambda _, **kwargs: iter([bad]))
     result = field.fit_selected_field(a)
     assert result.voxels == (bad,) and result.local_calls == 0
     with pytest.raises(ValueError, match="svb"):

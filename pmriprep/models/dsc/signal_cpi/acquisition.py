@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import Iterator, Literal, Sequence
+from typing import Callable, Iterator, Literal, Sequence
 
 import numpy as np
 
@@ -112,6 +112,7 @@ def choose_transport(rows: Sequence[GuidedVoxel]) -> GuidedVoxel:
 def fit_selected_voxels(
     acquisition: CPIAcquisition, indices: Sequence[int] | None = None,
     *, executor: CPIExecutor | None = None, ordered: bool = True,
+    on_result: Callable[[], None] | None = None,
 ) -> Iterator[GuidedVoxel]:
     """Fit ordinary-VI branches in lockstep and release each losing posterior.
 
@@ -127,6 +128,8 @@ def fit_selected_voxels(
     ordered : bool, optional
         Preserve requested voxel order. Image-indexed consumers may disable
         ordering to refill workers as soon as any voxel finishes.
+    on_result : callable, optional
+        Controller-side callback after each completed selected voxel.
 
     Yields
     ------
@@ -140,9 +143,14 @@ def fit_selected_voxels(
         if (any(isinstance(i, (bool, np.bool_)) or not isinstance(i, (int, np.integer))
                 or not 0 <= i < n for i in selected) or len(set(selected)) != len(selected)):
             raise ValueError("unique in-range integer spatial indices required")
-        yield from executor.map(_fit_selected_row,
-                                ((_voxel_acquisition(acquisition, i), int(i)) for i in selected),
-                                ordered=ordered)
+        for row in executor.map(
+            _fit_selected_row,
+            ((_voxel_acquisition(acquisition, i), int(i)) for i in selected),
+            ordered=ordered,
+        ):
+            if on_result is not None:
+                on_result()
+            yield row
         return
     iterators = [fit_voxels(replace(a, inference_method="vi"), indices)
                  for a in acquisition.branches]
@@ -150,7 +158,10 @@ def fit_selected_voxels(
         # Rejected voxels also retain the identity of the evaluated branch.
         owned = [replace(row, family=branch.family)
                  for row, branch in zip(rows, acquisition.branches, strict=True)]
-        yield choose_transport(owned)
+        chosen = choose_transport(owned)
+        if on_result is not None:
+            on_result()
+        yield chosen
 
 
 def _voxel_acquisition(acquisition: CPIAcquisition, index: int) -> CPIAcquisition:

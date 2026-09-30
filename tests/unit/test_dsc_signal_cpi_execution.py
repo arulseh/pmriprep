@@ -263,8 +263,17 @@ def test_vi_parallel_matches_same_voxel_priors_and_all_starts(
     a = prepared(leakage, dispersion, infer_delay=delay)
     expected = list(acquisition.fit_selected_voxels(a, [1, 0]))
     for n in (1, 2, 4):
+        completed: list[None] = []
         with execution.CPIExecutor(_resources(n)) as executor:
-            actual = list(acquisition.fit_selected_voxels(a, [1, 0], executor=executor))
+            actual = list(
+                acquisition.fit_selected_voxels(
+                    a,
+                    [1, 0],
+                    executor=executor,
+                    on_result=lambda: completed.append(None),
+                )
+            )
+        assert len(completed) == 2
         compare_rows(expected, actual)
         assert all(r.diagnostics.iterations <= 8 for r in actual if r.diagnostics)
     with execution.CPIExecutor(_resources(2)) as executor:

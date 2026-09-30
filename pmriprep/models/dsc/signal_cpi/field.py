@@ -176,6 +176,7 @@ class CommonCBFDispatcher:
 def fit_selected_field(
     acquisition: CPIAcquisition, *, keep_diagnostics: bool = False,
     executor: CPIExecutor | None = None,
+    on_selection_result: Callable[[], None] | None = None,
 ) -> SpatialGuidedResult:
     """Select by ordinary VI, then share CBF spatial information across families.
 
@@ -188,6 +189,8 @@ def fit_selected_field(
         Retain full final local posterior states for small diagnostic fields.
     executor : CPIExecutor, optional
         Reuse the pool for ordinary selection and synchronous local updates.
+    on_selection_result : callable, optional
+        Controller-side callback after each initial independent voxel fit.
 
     Returns
     -------
@@ -202,8 +205,15 @@ def fit_selected_field(
     outputs, indices, arguments, models, evaluators = {}, [], [], [], []
     shared: dict[Model, tuple[BSWCenteredModel | MovingLayoutSignalCPI,
                              LeakageBatchEvaluator | SignalBatchEvaluator, DSCVIModelAdapter]] = {}
-    selected = (fit_selected_voxels(acquisition) if executor is None else
-                fit_selected_voxels(acquisition, executor=executor))
+    selected = (
+        fit_selected_voxels(acquisition, on_result=on_selection_result)
+        if executor is None
+        else fit_selected_voxels(
+            acquisition,
+            executor=executor,
+            on_result=on_selection_result,
+        )
+    )
     for row in selected:
         outputs[row.flat_index] = row if keep_diagnostics else replace(row, diagnostics=None)
         if row.status not in ("retained", "provisional"):

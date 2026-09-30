@@ -1,6 +1,7 @@
 """CPI image assembly preserves selected-fit identity and fallback accounting."""
 
 from dataclasses import replace
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +13,33 @@ from pmriprep.models.dsc.signal_cpi.acquisition import prepare_cpi_acquisition
 from pmriprep.models.dsc.signal_cpi.connection import GuidedVoxel
 from pmriprep.models.dsc.signal_cpi.policy import FitAssessment
 from pmriprep.models.dsc.signal_cpi.settings import CPIOptions
+
+
+@pytest.mark.parametrize("label", ["CPI fitting", "CPI initial fitting"])
+def test_progress_reports_count_elapsed_and_remaining(
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    label: str,
+) -> None:
+    """Long voxel fits report bounded controller-side progress and completion."""
+    ticks = iter([0.0, 60.0, 300.0, 600.0])
+    monkeypatch.setattr(maps.time, "monotonic", lambda: next(ticks))
+    reporter = maps._CPIProgress(20, label=label)
+    with caplog.at_level(logging.INFO, logger="nipype.interface"):
+        reporter.advance()
+        reporter.advance()
+        reporter.completed = 19
+        reporter.advance()
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert messages == [
+        f"{label} progress: 1/20 voxels (5.0%); elapsed 1m 00s; "
+        "estimated remaining 19m 00s",
+        f"{label} progress: 2/20 voxels (10.0%); elapsed 5m 00s; "
+        "estimated remaining 45m 00s",
+        f"{label} progress: 20/20 voxels (100.0%); elapsed 10m 00s; "
+        "estimated remaining 0s",
+    ]
 
 
 @pytest.mark.parametrize("fallback", ["none", "osvd"])
