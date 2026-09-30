@@ -82,3 +82,36 @@ def test_ttp_uses_plain_qc_label(
     labels = [text.get_text() for axis in captured["figure"].axes for text in axis.texts]
     assert any(label.startswith("TTP") for label in labels)
     assert all("TTPᶜ" not in label for label in labels)
+
+
+def test_arrival_delay_uses_signed_symmetric_display(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AIF-relative arrival delay is labelled and displayed around zero."""
+    captured: dict[str, matplotlib.figure.Figure] = {}
+
+    def capture_figure(
+        figure: matplotlib.figure.Figure,
+        *_args: object,
+        **_kwargs: object,
+    ) -> None:
+        captured["figure"] = figure
+
+    monkeypatch.setattr(matplotlib.figure.Figure, "savefig", capture_figure)
+    brain = np.ones((5, 5, 5), dtype=bool)
+    delay = np.linspace(-2.0, 4.0, brain.size).reshape(brain.shape)
+    generate_dsc_parameter_maps_qc_plot(
+        {"Arrival delay": delay},
+        brain,
+        output_path=str(tmp_path / "arrival_delay.png"),
+    )
+
+    figure = captured["figure"]
+    labels = [text.get_text() for axis in figure.axes for text in axis.texts]
+    assert any(label.startswith("Arrival delay") for label in labels)
+    image_axes = [axis for axis in figure.axes if len(axis.images) == 2]
+    assert len(image_axes) == 3
+    for axis in image_axes:
+        vmin, vmax = axis.images[1].get_clim()
+        assert vmin == pytest.approx(-vmax)

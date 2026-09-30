@@ -1412,6 +1412,7 @@
         "rel_cbv_file",
         "session_id",
         "subject_id",
+        "timing_label",
         "tmax_file",
         "ttp_file"
       ],
@@ -1647,7 +1648,7 @@
     "dsc_brain_mask_qc": "ced2d6d4b823457166d3fb21083d6220f2b0dc0e0155de5c134e6d98210b5086",
     "dsc_fit_qc": "e09346ed9ad3ff6080523add51fdeeb55c9432a7e185560cb317ea8de6b60b42",
     "dsc_leakage_qc": "290ca4f8572ea6fa6011685596514e928c6082424b0e9fb62dffb1dd45245e0c",
-    "dsc_param_maps_qc": "57021c2b01a09cec8ccdee7a76cdf5ea7a38f60d3f1f7984a6b9655871c2c997",
+    "dsc_param_maps_qc": "7bd8b51f151647f1c6aeda7e71b462d62d8d8148a256ba13ea86ea916e3f016b",
     "dsc_preproc_qc": "120b1f3f6ea69c095663da8e71955876fde923b19fccc8a5691edc8867ad53cb",
     "hist_match_t1w": "33d0ceadebcfcf66ed403151737f0e0d429e96320c2101825b356309caf68f0e",
     "leakage_correct": "96aadc05b63ad1b4a48a81f52539ee5880d3ff803b4ea73081253a47a9ac323a",
@@ -1896,9 +1897,10 @@
       "subject_id": "0001"
     },
     "dsc_param_maps_qc": {
-      "function_str": "def _generate_dsc_param_maps_qc(\n    rel_cbf_file: str,\n    rel_cbv_file: str,\n    mtt_file: str,\n    tmax_file: str,\n    psr_file: str,\n    ttp_file: str,\n    brain_mask_file: str,\n    subject_id: str = \"\",\n    session_id: str = \"\",\n) -> str:\n    \"\"\"Generate DSC parameter maps QC plot.\n\n    Parameters\n    ----------\n    rel_cbf_file : str\n        Path to relative CBF map NIfTI.\n    rel_cbv_file : str\n        Path to relative CBV map NIfTI.\n    mtt_file : str\n        Path to MTT map NIfTI.\n    tmax_file : str\n        Path to Tmax map NIfTI.\n    psr_file : str\n        Path to PSR map NIfTI.\n    ttp_file : str\n        Path to TTP map NIfTI.\n    brain_mask_file : str\n        Path to brain mask NIfTI.\n    subject_id : str, optional\n        Subject identifier.\n    session_id : str, optional\n        Session identifier.\n\n    Returns\n    -------\n    str\n        Path to the generated QC plot PNG.\n    \"\"\"\n    import nibabel as nib\n    from pmriprep.utils.dsc_qc_plots import generate_dsc_parameter_maps_qc_plot\n\n    mask_data = nib.load(brain_mask_file).get_fdata()  # type: ignore[attr-defined]\n\n    param_maps = {}\n    for name, filepath in [\n        (\"rCBF\", rel_cbf_file),\n        (\"rCBV\", rel_cbv_file),\n        (\"MTT\", mtt_file),\n        (\"Tmax\", tmax_file),\n        (\"PSR\", psr_file),\n        (\"TTP\", ttp_file),\n    ]:\n        if filepath:\n            from pathlib import Path as _P\n            if _P(filepath).is_file():\n                param_maps[name] = nib.load(filepath).get_fdata()  # type: ignore[attr-defined]\n\n    plot_path = generate_dsc_parameter_maps_qc_plot(\n        param_maps=param_maps,\n        brain_mask=mask_data,\n        subject_id=subject_id,\n        session_id=session_id,\n    )\n    return plot_path\n",
+      "function_str": "def _generate_dsc_param_maps_qc(\n    rel_cbf_file: str,\n    rel_cbv_file: str,\n    mtt_file: str,\n    tmax_file: str,\n    psr_file: str,\n    ttp_file: str,\n    brain_mask_file: str,\n    timing_label: str = \"Tmax\",\n    subject_id: str = \"\",\n    session_id: str = \"\",\n) -> str:\n    \"\"\"Generate DSC parameter maps QC plot.\n\n    Parameters\n    ----------\n    rel_cbf_file : str\n        Path to relative CBF map NIfTI.\n    rel_cbv_file : str\n        Path to relative CBV map NIfTI.\n    mtt_file : str\n        Path to MTT map NIfTI.\n    tmax_file : str\n        Path to the method-specific timing map NIfTI.\n    psr_file : str\n        Path to PSR map NIfTI.\n    ttp_file : str\n        Path to TTP map NIfTI.\n    brain_mask_file : str\n        Path to brain mask NIfTI.\n    subject_id : str, optional\n        Subject identifier.\n    session_id : str, optional\n        Session identifier.\n\n    Returns\n    -------\n    str\n        Path to the generated QC plot PNG.\n    \"\"\"\n    import nibabel as nib\n    from pmriprep.utils.dsc_qc_plots import generate_dsc_parameter_maps_qc_plot\n\n    mask_data = nib.load(brain_mask_file).get_fdata()  # type: ignore[attr-defined]\n\n    param_maps = {}\n    for name, filepath in [\n        (\"rCBF\", rel_cbf_file),\n        (\"rCBV\", rel_cbv_file),\n        (\"MTT\", mtt_file),\n        (timing_label, tmax_file),\n        (\"PSR\", psr_file),\n        (\"TTP\", ttp_file),\n    ]:\n        if filepath:\n            from pathlib import Path as _P\n            if _P(filepath).is_file():\n                param_maps[name] = nib.load(filepath).get_fdata()  # type: ignore[attr-defined]\n\n    plot_path = generate_dsc_parameter_maps_qc_plot(\n        param_maps=param_maps,\n        brain_mask=mask_data,\n        subject_id=subject_id,\n        session_id=session_id,\n    )\n    return plot_path\n",
       "session_id": "0001",
-      "subject_id": "0001"
+      "subject_id": "0001",
+      "timing_label": "Tmax"
     },
     "dsc_preproc_qc": {
       "baseline_frames": 5,
@@ -1937,7 +1939,8 @@
       "force_binary": false,
       "mask_origin": "",
       "session_id": "0001",
-      "subject_id": "0001"
+      "subject_id": "0001",
+      "timing_map_name": "tmax"
     },
     "merge_qc": {
       "aif_source": "auto",
@@ -1981,7 +1984,8 @@
       "force_binary": true,
       "mask_origin": "",
       "session_id": "0001",
-      "subject_id": "0001"
+      "subject_id": "0001",
+      "timing_map_name": "tmax"
     },
     "select_aif_exclusion": {
       "function_str": "def select_aif_exclusion_mask(\n    user_lesion_mask: str | None = None,\n    transformed_lesion_mask: str | None = None,\n) -> str:\n    \"\"\"Select the lesion mask used to exclude AIF candidates.\n\n    Parameters\n    ----------\n    user_lesion_mask : str or None\n        User-supplied lesion mask in native perfusion space.\n    transformed_lesion_mask : str or None\n        Tumor-segmentation mask transformed to native perfusion space.\n\n    Returns\n    -------\n    str\n        The user mask when present, otherwise the transformed mask or ``\"\"``.\n    \"\"\"\n    from nipype.interfaces.base import isdefined\n\n    if isdefined(user_lesion_mask) and user_lesion_mask not in (None, \"\"):\n        return str(user_lesion_mask)\n    if (\n        isdefined(transformed_lesion_mask)\n        and transformed_lesion_mask not in (None, \"\")\n    ):\n        return str(transformed_lesion_mask)\n    return \"\"\n"
@@ -2001,7 +2005,8 @@
       "force_binary": true,
       "mask_origin": "",
       "session_id": "0001",
-      "subject_id": "0001"
+      "subject_id": "0001",
+      "timing_map_name": "tmax"
     },
     "validate_roi_mask": {
       "function_str": "def validate_native_mask(\n    mask_file: str | None = None,\n    reference_file: str | None = None,\n    mask_label: str = \"mask\",\n) -> str:\n    \"\"\"Validate that a mask matches its native perfusion image grid.\n\n    Parameters\n    ----------\n    mask_file : str or None\n        Path to the mask NIfTI.\n    reference_file : str or None\n        Path to the perfusion reference image.\n    mask_label : str\n        Human-readable label used in validation errors.\n\n    Returns\n    -------\n    str\n        The validated mask path, or ``\"\"`` when no mask is supplied.\n\n    Raises\n    ------\n    ValueError\n        If the mask shape or affine does not match the reference grid.\n    \"\"\"\n    from nipype.interfaces.base import isdefined\n\n    if not isdefined(mask_file) or mask_file in (None, \"\"):\n        return \"\"\n\n    import nibabel as nib\n    import numpy as np\n\n    mask_img = nib.load(str(mask_file))\n    ref_img = nib.load(str(reference_file))\n    if mask_img.shape[:3] != ref_img.shape[:3]:  # type: ignore[attr-defined]\n        raise ValueError(\n            f\"User-supplied {mask_label} shape {mask_img.shape[:3]} does not \"  # type: ignore[attr-defined]\n            f\"match perfusion volume shape {ref_img.shape[:3]}. \"  # type: ignore[attr-defined]\n            \"Masks under config must be in perfusion native space.\"\n        )\n    affine_diff = float(\n        np.abs(mask_img.affine - ref_img.affine).max()  # type: ignore[attr-defined]\n    )\n    if affine_diff > 1.0:\n        raise ValueError(\n            f\"User-supplied {mask_label} affine differs from perfusion volume \"\n            f\"by {affine_diff:.2f} (max element). \"\n            \"Masks under config must be in perfusion native space.\"\n        )\n    return str(mask_file)\n",

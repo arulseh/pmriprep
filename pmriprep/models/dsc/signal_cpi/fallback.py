@@ -112,5 +112,5 @@ def resolve_fallbacks(
                 yield CPIOutputVoxel(row, "missing", fallback_attempted=True,
                                      fallback_reason="invalid_osvd_measurement")
                 continue
-            yield CPIOutputVoxel(row, "osvd", fit.cbf, fit.cbv, fit.mtt, fit.delay,
+            yield CPIOutputVoxel(row, "osvd", fit.cbf, fit.cbv, fit.mtt, np.nan,
                                  fallback_attempted=True)

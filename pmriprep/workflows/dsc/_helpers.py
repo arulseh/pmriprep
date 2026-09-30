@@ -1190,6 +1190,7 @@ def _generate_dsc_param_maps_qc(
     psr_file: str,
     ttp_file: str,
     brain_mask_file: str,
+    timing_label: str = "Tmax",
     subject_id: str = "",
     session_id: str = "",
 ) -> str:
@@ -1204,7 +1205,7 @@ def _generate_dsc_param_maps_qc(
     mtt_file : str
         Path to MTT map NIfTI.
     tmax_file : str
-        Path to Tmax map NIfTI.
+        Path to the method-specific timing map NIfTI.
     psr_file : str
         Path to PSR map NIfTI.
     ttp_file : str
@@ -1231,7 +1232,7 @@ def _generate_dsc_param_maps_qc(
         ("rCBF", rel_cbf_file),
         ("rCBV", rel_cbv_file),
         ("MTT", mtt_file),
-        ("Tmax", tmax_file),
+        (timing_label, tmax_file),
         ("PSR", psr_file),
         ("TTP", ttp_file),
     ]:

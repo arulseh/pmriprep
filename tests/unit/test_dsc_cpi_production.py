@@ -209,6 +209,7 @@ def test_rejected_production_voxels_follow_configured_fallback(
         assert np.all(np.isnan(cbf)) and not np.any(mask)
     else:
         assert np.all(np.isfinite(cbf)) and np.all(mask == 1)
+    assert np.all(np.isnan(read_image(output.out_tmax)))
     assert np.all(np.isnan(read_image(output.out_cbf_std)))
     assert np.all(np.isfinite(read_image(output.out_rel_cbv_auc)))
     assert captured_maps[0].qc["n_fallback_requested"] == 2

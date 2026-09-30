@@ -52,7 +52,13 @@ class DSCLesionStatsInputSpec(BaseInterfaceInputSpec):
     cbf_map = traits.Str(desc="CBF map path")
     cbv_map = traits.Str(desc="CBV map path")
     mtt_map = traits.Str(desc="MTT map path")
-    tmax_map = traits.Str(desc="Tmax map path")
+    tmax_map = traits.Str(desc="Method-specific deconvolution timing map path")
+    timing_map_name = traits.Enum(
+        "tmax",
+        "arrival_delay",
+        usedefault=True,
+        desc="Public name for the method-specific timing measurement",
+    )
 
     # Normalized maps (optional - only available when NAWM mask present)
     ncbv_map = traits.Str(desc="Normalized CBV map path")
@@ -303,7 +309,7 @@ class DSCLesionStats(BaseInterface):
             ("cbf_map", "cbf"),
             ("cbv_map", "cbv"),
             ("mtt_map", "mtt"),
-            ("tmax_map", "tmax"),
+            ("tmax_map", str(self.inputs.timing_map_name)),
             ("ncbv_map", "ncbv"),
             ("ncbf_map", "ncbf"),
             ("psr_map", "psr"),

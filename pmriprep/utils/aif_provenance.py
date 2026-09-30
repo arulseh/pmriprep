@@ -45,6 +45,7 @@ TEMPLATE_AIF_USAGE: Final[dict[str, TemplateAIFUsageCategory]] = {
     "auc_corr": "ratio_defensible",
     "mtt": "qualitative_only",
     "tmax": "qualitative_only",
+    "arrival_delay": "qualitative_only",
     "psr": "safe",
     "ttp": "qualitative_only",
     "cnr": "safe",

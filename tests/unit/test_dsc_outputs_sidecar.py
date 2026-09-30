@@ -107,12 +107,18 @@ def _run_writer(inputs: dict, qc_metrics: dict | None, tmp_path: Path | None = N
         "smooth_fwhm", "smooth_hemodynamic",
     }
     has_smoothing = "smooth_hemodynamic" in inputs
+    deconvolution = (
+        qc_metrics.get("deconvolution", {})
+        if isinstance(qc_metrics, dict)
+        else {}
+    )
     wf = init_dsc_datasinks_wf(
         output_dir=inputs["output_dir"],
         bids_dir=inputs["bids_dir"],
         subject_id=inputs["subject_id"],
         session_id=inputs["session_id"],
         inference="vi",
+        deconvolution_method=deconvolution.get("method", "oSVD"),
         present_inputs=present,
         has_smoothing=has_smoothing,
     )
@@ -196,25 +202,77 @@ def test_tmax_sidecar_reports_fitted_delay_bound_occupancy(nested: bool) -> None
     )
 
 
-def test_tmax_sidecar_reports_unestimated_default_cpi_timing() -> None:
-    """Default CPI distinguishes unestimated timing from measured zero."""
+def test_arrival_delay_sidecar_reports_unestimated_cpi_timing() -> None:
+    """CPI distinguishes unestimated arrival delay from measured zero."""
     sidecar = build_dsc_map_sidecar(
         base={},
-        description="CPI Tmax",
-        map_key="tmax",
+        description="CPI arrival delay",
+        map_key="arrival_delay",
         qc_metrics={
             "deconvolution": {
                 "method": "cpi",
-                "tmax_method": "not_estimated_for_retained_cpi",
-                "fallback_tmax_method": "osvd_residue_delay",
+                "arrival_delay_method": "not_estimated",
             },
         },
         units="s",
     )
 
-    assert sidecar["TmaxMethod"] == "not_estimated_for_retained_cpi"
-    assert sidecar["FallbackTmaxMethod"] == "osvd_residue_delay"
+    assert sidecar["ArrivalDelayMethod"] == "not_estimated"
+    assert "FallbackArrivalDelayMethod" not in sidecar
+    assert "MixedEstimator" not in sidecar
     assert "FittedDelayAtBoundFraction" not in sidecar
+
+
+def test_arrival_delay_sidecar_reports_fitted_estimator_only() -> None:
+    """Fallback perfusion does not introduce a second delay estimator."""
+    sidecar = build_dsc_map_sidecar(
+        base={},
+        description="AIF-relative fitted arrival delay",
+        map_key="arrival_delay",
+        qc_metrics={
+            "deconvolution": {
+                "method": "cpi",
+                "arrival_delay_method": "fitted_aif_relative_arrival_delay",
+                "fallback_rate": 0.125,
+                "delay_at_bound_fraction": 0.01,
+                "arrival_delay_finite_voxels": 875,
+                "arrival_delay_finite_fraction": 0.875,
+            },
+        },
+        units="s",
+    )
+    assert sidecar["ArrivalDelayMethod"] == "fitted_aif_relative_arrival_delay"
+    assert "FallbackArrivalDelayMethod" not in sidecar
+    assert "MixedEstimator" not in sidecar
+    assert sidecar["ArrivalDelayFiniteVoxelCount"] == 875
+    assert sidecar["ArrivalDelayFiniteVoxelFraction"] == pytest.approx(0.875)
+    assert sidecar["ArrivalDelayCoverageDenominator"] == "DSC analysis mask"
+    assert sidecar["FittedDelayAtBoundFraction"] == pytest.approx(0.01)
+    assert "TmaxMethod" not in sidecar
+
+
+def test_cpi_timing_derivative_is_named_arrival_delay(
+    minimal_inputs: dict, tmp_path: Path,
+) -> None:
+    """The public CPI timing derivative is not labelled as conventional Tmax."""
+    derivatives = _run_writer(
+        minimal_inputs,
+        {
+            "deconvolution": {
+                "method": "cpi",
+                "arrival_delay_method": "fitted_aif_relative_arrival_delay",
+                "fallback_rate": 0.0,
+            },
+        },
+        tmp_path,
+    )
+    assert len(list(derivatives.rglob("*dscArrivalDelay_stat.nii.gz"))) == 1
+    assert not list(derivatives.rglob("*dscTmax_stat.nii.gz"))
+    sidecar = _load_sidecar(derivatives, "dscArrivalDelay_stat")
+    assert sidecar["ArrivalDelayMethod"] == "fitted_aif_relative_arrival_delay"
+    assert "FallbackArrivalDelayMethod" not in sidecar
+    assert "MixedEstimator" not in sidecar
+    assert "NaN" in sidecar["RejectedFitValues"]
 
 
 @pytest.mark.parametrize("nested", [False, True])
@@ -686,7 +744,8 @@ class TestWriterAifBlockPresentOnAllMaps:
 
         tmax_meta = _load_sidecar(derivatives, "dscTmax_stat")
         assert tmax_meta["Clipping"] == "none"
-        assert "oSVD and parametric" in tmax_meta["NegativeValues"]
+        assert "oSVD" in tmax_meta["NegativeValues"]
+        assert "parametric" not in tmax_meta["NegativeValues"]
         assert "unlike tissue concentration TTP" in tmax_meta["TimingConvention"]
 
         mtt_meta = _load_sidecar(derivatives, "dscMtt_stat")

@@ -539,7 +539,7 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
 
     # Output files — quantification-independent
     out_mtt = File(genfile=True, desc="Output MTT map NIfTI")
-    out_tmax = File(genfile=True, desc="Output Tmax map NIfTI")
+    out_tmax = File(genfile=True, desc="Output method-specific timing map NIfTI")
     out_psr = File(genfile=True, desc="Output PSR map NIfTI")
     out_cnr = File(genfile=True, desc="Output CNR map NIfTI")
 
@@ -562,7 +562,7 @@ class ComputeDSCMapsOutputSpec(TraitedSpec):
 
     # Quantification-independent (always produced)
     out_mtt = File(exists=True, desc="MTT map (mean transit time)")
-    out_tmax = File(exists=True, desc="Tmax map (time to maximum of residue)")
+    out_tmax = File(exists=True, desc="Method-specific deconvolution timing map")
     out_psr = File(exists=True, desc="PSR map (percent signal recovery)")
     out_ttp = File(
         exists=True,
@@ -1208,6 +1208,7 @@ class ComputeDSCMaps(BaseInterface):
         baseline_info: dict[str, Any],
         aif_bat_seconds: float,
         cbv_auc_qc_source: Optional[npt.NDArray[Any]] = None,
+        method: str = "oSVD",
     ) -> dict[str, Any]:
         """Reduce finalized DSC maps and acquisition provenance to QC values."""
         def _finite_stat(
@@ -1226,13 +1227,19 @@ class ComputeDSCMaps(BaseInterface):
         n_negative_cbv_auc = int(
             np.sum(finite_cbv_auc & (cbv_auc_for_qc < 0.0))
         )
+        timing_name = (
+            "arrival_delay" if method in {"cpi", "vascular"} else "tmax"
+        )
+        n_voxels = int(np.sum(mask_bool))
+        timing_values = tmax[mask_bool]
+        timing_values = timing_values[np.isfinite(timing_values)]
+        n_finite_timing = int(timing_values.size)
         qc = {
             "cbf_mean": _finite_stat(rel_cbf, np.mean),
             "cbf_std": _finite_stat(rel_cbf, np.std),
             "cbv_mean": _finite_stat(rel_cbv, np.mean),
             "cbv_auc_mean": _finite_stat(rel_cbv_auc, np.mean),
             "mtt_mean": _finite_stat(mtt, np.mean),
-            "tmax_mean": _finite_stat(tmax, np.mean),
             "cbf_median": _finite_stat(rel_cbf, np.median),
             "cbv_median": _finite_stat(rel_cbv, np.median),
             "cbv_auc_median": _finite_stat(rel_cbv_auc, np.median),
@@ -1244,10 +1251,17 @@ class ComputeDSCMaps(BaseInterface):
                 else np.nan
             ),
             "mtt_median": _finite_stat(mtt, np.median),
-            "tmax_median": _finite_stat(tmax, np.median),
-            "n_voxels": int(np.sum(mask_bool)),
+            "n_voxels": n_voxels,
             "aif_detection_level": aif_level,
         }
+        if timing_name == "tmax" or n_finite_timing > 0:
+            qc[f"{timing_name}_mean"] = _finite_stat(tmax, np.mean)
+            qc[f"{timing_name}_median"] = _finite_stat(tmax, np.median)
+        if timing_name == "arrival_delay":
+            qc["arrival_delay_finite_voxels"] = n_finite_timing
+            qc["arrival_delay_finite_fraction"] = (
+                n_finite_timing / n_voxels if n_voxels > 0 else np.nan
+            )
         qc.update(baseline_info)
         qc["aif_bat_seconds"] = aif_bat_seconds
         qc["cbv_literature_range_applicable"] = aif_level != "synthetic"
@@ -1400,6 +1414,7 @@ class ComputeDSCMaps(BaseInterface):
                 baseline_info,
                 timing.aif_bat_seconds,
                 auc.cbv,
+                method,
             )
         )
         return _DSCPostprocessing(raw_concentration, maps, qc)
@@ -1925,7 +1940,8 @@ class ComputeDSCMaps(BaseInterface):
         # R² inits to NaN so plotting tools render outside-brain voxels
         # transparent; raw parametric R² is preserved on fallback voxels
         # (the fallback mask separately flags which method produced
-        # the saved CBF/CBV/MTT/Tmax in that voxel).
+        # the saved CBF/CBV/MTT in that voxel). Arrival delay remains NaN
+        # because oSVD residue-peak timing is a different quantity.
         parametric_r2_map = (
             np.full(spatial_shape, np.nan, dtype=np.float32)
             if method == "vascular" else None
@@ -1938,8 +1954,7 @@ class ComputeDSCMaps(BaseInterface):
             "method": method,
             "inference": inference,
         }
-        qc_metrics["tmax_method"] = "fitted_vascular_delay"
-        qc_metrics["fallback_tmax_method"] = "osvd_residue_delay"
+        qc_metrics["arrival_delay_method"] = "fitted_aif_relative_arrival_delay"
 
         # Get mask indices
         mask_coords = np.where(mask > 0)
@@ -2188,7 +2203,7 @@ class ComputeDSCMaps(BaseInterface):
                 cbf[x, y, z] = svd_result.cbf
                 cbv[x, y, z] = svd_result.cbv
                 mtt[x, y, z] = svd_result.mtt
-                tmax[x, y, z] = svd_result.delay
+                tmax[x, y, z] = np.nan
                 if fallback_mask is not None:
                     fallback_mask[x, y, z] = 1
                 n_fallback += 1

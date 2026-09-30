@@ -303,7 +303,8 @@ Output availability depends on the supplied modalities and configuration:
   required for tumor segmentation, T1w subtraction or reference handling, or a
   requested DSC/DCE underlay.
 - DSC outputs include relative and NAWM-normalized perfusion maps, AUC-CBV,
-  MTT, Tmax, PSR, leakage and signal-quality diagnostics, masks, and regional
+  MTT, SVD-family Tmax or parametric AIF-relative arrival delay, PSR, leakage
+  and signal-quality diagnostics, masks, and regional
   statistics.
 - DCE outputs include PK, model-selection, model-free, timing, and fit-quality
   derivatives, a QC mask, and regional statistics. Quantitative maps are not

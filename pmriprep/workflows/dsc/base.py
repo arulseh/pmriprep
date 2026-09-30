@@ -670,8 +670,9 @@ def init_dsc_deconvolution_wf(
     """Build the DSC deconvolution (perfusion-map computation) sub-workflow.
 
     Wraps :class:`~pmriprep.interfaces.dsc_compute.ComputeDSCMaps`, which performs
-    residue-function deconvolution to produce CBF/CBV/MTT/Tmax and leakage (K2)
-    maps from the leakage-corrected concentration time series and the AIF.
+    residue-function deconvolution to produce CBF, CBV, MTT, method-specific
+    timing, and leakage (K2) maps from the leakage-corrected concentration time
+    series and the AIF.
 
     Parameters
     ----------
@@ -1052,6 +1053,7 @@ def init_dsc_lesion_stats_wf(
     *,
     subject_id: str,
     session_id: Optional[str],
+    deconvolution_method: str = "oSVD",
     name: str = "dsc_lesion_stats_wf",
 ) -> pe.Workflow:
     """Build the DSC lesion / ROI / user-mask statistics sub-workflow.
@@ -1068,6 +1070,9 @@ def init_dsc_lesion_stats_wf(
         BIDS subject label.
     session_id : str or None
         BIDS session label.
+    deconvolution_method : str
+        Method used to label the shared timing-map input as either Tmax or
+        AIF-relative arrival delay in regional statistics.
     name : str
         Workflow name.
 
@@ -1146,6 +1151,13 @@ def init_dsc_lesion_stats_wf(
     user_lesion_stats = pe.Node(
         DSCLesionStats(force_binary=True), name="user_lesion_stats"
     )
+    timing_map_name = (
+        "arrival_delay"
+        if deconvolution_method in {"cpi", "vascular"}
+        else "tmax"
+    )
+    for stats_node in (lesion_stats, roi_stats, user_lesion_stats):
+        stats_node.inputs.timing_map_name = timing_map_name
     user_lesion_stats.inputs.subject_id = subject_id
     user_lesion_stats.inputs.session_id = session_id
 
@@ -1184,6 +1196,7 @@ def init_dsc_qc_wf(
     session_id: Optional[str],
     aif_source: str,
     baseline_frames: int,
+    deconvolution_method: str = "oSVD",
     name: str = "dsc_qc_wf",
 ) -> pe.Workflow:
     """Build the DSC quality-control / reports sub-workflow.
@@ -1203,6 +1216,8 @@ def init_dsc_qc_wf(
         AIF provenance label for the merged QC ("external", "synthetic", "auto").
     baseline_frames : int
         Pre-bolus baseline frame count (S0) for the preprocessing QC plot.
+    deconvolution_method : str
+        Method used to label the timing map in the parameter-map report.
     name : str
         Workflow name.
 
@@ -1370,7 +1385,7 @@ def init_dsc_qc_wf(
             input_names=[
                 "rel_cbf_file", "rel_cbv_file", "mtt_file",
                 "tmax_file", "psr_file", "ttp_file",
-                "brain_mask_file", "subject_id", "session_id",
+                "brain_mask_file", "timing_label", "subject_id", "session_id",
             ],
             output_names=["plot_file"],
             function=_generate_dsc_param_maps_qc,
@@ -1379,6 +1394,11 @@ def init_dsc_qc_wf(
     )
     dsc_param_maps_qc.inputs.subject_id = subject_id
     dsc_param_maps_qc.inputs.session_id = session_id or ""
+    dsc_param_maps_qc.inputs.timing_label = (
+        "Arrival delay"
+        if deconvolution_method in {"cpi", "vascular"}
+        else "Tmax"
+    )
 
     dsc_leakage_qc = pe.Node(
         niu.Function(
@@ -2128,6 +2148,7 @@ def init_dsc_preproc_wf(
     lesion_stats_wf = init_dsc_lesion_stats_wf(
         subject_id=subject_id,
         session_id=session_id,
+        deconvolution_method=config.method,
     )
 
     normalization_wf = init_dsc_normalization_wf(
@@ -2159,6 +2180,7 @@ def init_dsc_preproc_wf(
         session_id=session_id,
         aif_source=aif_source,
         baseline_frames=config.pre_bolus,
+        deconvolution_method=config.method,
     )
 
     # -------------------------------------------------------------------

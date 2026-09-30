@@ -792,9 +792,10 @@ def _dsc_ctx_with_deconv(method: str, **deconv_extra) -> dict:
         "cbf_median": 50.0,
         "cbv_median": 1.5,
         "mtt_median": 4.0,
-        "tmax_median": 1.5,
         "n_voxels": 1000,
     }
+    if method not in {"cpi", "vascular"}:
+        deconv["tmax_median"] = 1.5
     deconv.update(deconv_extra)
     return {
         "qc_metrics": {
@@ -822,14 +823,32 @@ def test_deconv_panel_inference_shown_for_cpi(env):
     assert ">vi<" in rendered
 
 
-def test_deconv_panel_hides_tmax_for_cpi(env):
-    """CPI does not model bolus delay — Tmax stat must be hidden."""
+def test_deconv_panel_labels_cpi_arrival_delay(env):
+    """CPI fitted arrival delay is shown without calling it Tmax."""
     template = env.get_template("sections/section_dsc.html")
     dsc_ctx = _dsc_ctx_with_deconv(
         "cpi", inference="vi", fallback_rate=0.05, solver_convergence_rate=0.0,
+        arrival_delay_median=-0.5, arrival_delay_finite_fraction=0.95,
     )
     rendered = template.render(dsc=dsc_ctx)
     assert ">Median Tmax<" not in rendered
+    assert ">Median arrival delay<" in rendered
+    assert ">-0.50 s<" in rendered
+    assert ">Arrival-delay coverage<" in rendered
+    assert ">95.0%<" in rendered
+
+
+def test_deconv_panel_omits_unestimated_cpi_arrival_delay(env):
+    """CPI with no finite fitted delays reports coverage without a NaN value."""
+    template = env.get_template("sections/section_dsc.html")
+    dsc_ctx = _dsc_ctx_with_deconv(
+        "cpi", inference="vi", arrival_delay_finite_fraction=0.0,
+    )
+    rendered = template.render(dsc=dsc_ctx)
+    assert ">Median arrival delay<" not in rendered
+    assert ">Median Tmax<" not in rendered
+    assert ">Arrival-delay coverage<" in rendered
+    assert ">0.0%<" in rendered
 
 
 def test_deconv_panel_shows_tmax_for_osvd(env):

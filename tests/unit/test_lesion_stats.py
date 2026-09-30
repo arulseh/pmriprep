@@ -892,6 +892,27 @@ class TestDSCStatsKeyTtp:
         assert '"ttp"' in src
 
 
+def test_dsc_load_maps_uses_configured_timing_name(tmp_path) -> None:
+    """Parametric timing is exposed as arrival delay, not Tmax."""
+    import nibabel as nib
+
+    from pmriprep.interfaces.dsc_lesion_stats import DSCLesionStats
+
+    timing_file = tmp_path / "timing.nii.gz"
+    nib.save(
+        nib.Nifti1Image(np.full((2, 2, 2), -0.25, dtype=np.float32), np.eye(4)),
+        timing_file,
+    )
+    iface = DSCLesionStats()
+    iface.inputs.tmax_map = str(timing_file)
+    iface.inputs.timing_map_name = "arrival_delay"
+
+    maps = iface._load_maps()
+
+    assert "arrival_delay" in maps
+    assert "tmax" not in maps
+
+
 class TestDCELesionStatsMapKeyCoverage:
     """Model-free DCE maps get LesionStats."""
 

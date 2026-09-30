@@ -197,10 +197,9 @@ def _assemble_maps(
         fallback_outcomes=dict(failed),
         cpi_spacing_at_bound_n=spacing_bound,
         cpi_spacing_at_bound_fraction=spacing_bound / max(1, accepted),
-        tmax_method="fitted_arrival_delay" if a.infer_delay else "not_estimated",
-        fallback_tmax_method="osvd_residue_peak_delay"
-        if acquisition.options.fallback == "osvd"
-        else "disabled",
+        arrival_delay_method=(
+            "fitted_aif_relative_arrival_delay" if a.infer_delay else "not_estimated"
+        ),
         spatial_sweeps=spatial_sweeps,
         cpi_selection_stage="ordinary_vi_before_spatial_refinement",
     )

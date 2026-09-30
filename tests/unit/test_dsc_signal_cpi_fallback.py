@@ -66,8 +66,9 @@ def test_none_uses_raw_not_corrected_curve_and_real_osvd(prepared: Any) -> None:
     result = resolve(a, raw, [rejected()], corrected=raw*100)[0]
     assert result.source == "osvd" and result.fallback_attempted
     assert result.fallback_reason is None
-    for name in ("cbf", "cbv", "mtt", "delay"):
+    for name in ("cbf", "cbv", "mtt"):
         assert getattr(result, name) == getattr(expected, name)
+    assert np.isnan(result.delay)
     assert np.isnan(result.cbf_std) and np.isnan(result.fitted_k2)
 
 

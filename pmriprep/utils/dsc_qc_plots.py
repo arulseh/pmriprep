@@ -327,7 +327,8 @@ def generate_dsc_parameter_maps_qc_plot(
     ----------
     param_maps : dict[str, npt.NDArray[Any]]
         Dict mapping parameter name to 3D array.
-        Expected keys: "rCBF", "rCBV", "MTT", "Tmax", "PSR", "TTP".
+        Expected keys include "rCBF", "rCBV", "MTT", "Tmax" or
+        "Arrival delay", "PSR", and "TTP".
     brain_mask : npt.NDArray[Any]
         3D boolean brain mask.
     subject_id : str, optional
@@ -355,6 +356,7 @@ def generate_dsc_parameter_maps_qc_plot(
         "rCBV": ("hot", 0.0, "pct98", None, "a.u."),
         "MTT": ("viridis", 0.0, "fixed", 30.0, "seconds"),
         "Tmax": ("plasma", 0.0, "fixed", 30.0, "seconds"),
+        "Arrival delay": ("coolwarm", -1.0, "symmetric_pct98", None, "seconds"),
         "PSR": ("coolwarm", 0.0, "fixed", 200.0, "%"),
         "TTP": ("viridis", 0.0, "fixed", 20.0, "seconds"),
     }
@@ -396,7 +398,11 @@ def generate_dsc_parameter_maps_qc_plot(
         # Determine vmax
         display_mask = mask_bool & np.isfinite(data)
         data_masked = data[display_mask]
-        if vmax_mode.startswith("pct") and len(data_masked) > 0:
+        if vmax_mode.startswith("symmetric_pct") and len(data_masked) > 0:
+            pct = int(vmax_mode.removeprefix("symmetric_pct"))
+            limit = max(float(np.percentile(np.abs(data_masked), pct)), 1e-3)
+            vmin, vmax = -limit, limit
+        elif vmax_mode.startswith("pct") and len(data_masked) > 0:
             pct = int(vmax_mode[3:])
             vmax = float(np.percentile(data_masked, pct))
             vmax = max(vmax, vmin + 1e-3)

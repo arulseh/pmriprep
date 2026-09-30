@@ -432,10 +432,21 @@
                 <div class="metric-value">{{ "%.2f"|format(dsc.qc_metrics.deconvolution.mtt_median) }} s</div>
             </div>
             {% endif %}
-            {% if dsc.qc_metrics.deconvolution.tmax_median is defined and dsc.qc_metrics.deconvolution.method != "cpi" %}
+            {% if dsc.qc_metrics.deconvolution.arrival_delay_median is defined %}
+            <div class="metric">
+                <div class="metric-label">Median arrival delay</div>
+                <div class="metric-value">{{ "%.2f"|format(dsc.qc_metrics.deconvolution.arrival_delay_median) }} s</div>
+            </div>
+            {% elif dsc.qc_metrics.deconvolution.tmax_median is defined %}
             <div class="metric">
                 <div class="metric-label">Median Tmax</div>
                 <div class="metric-value">{{ "%.2f"|format(dsc.qc_metrics.deconvolution.tmax_median) }} s</div>
+            </div>
+            {% endif %}
+            {% if dsc.qc_metrics.deconvolution.arrival_delay_finite_fraction is defined %}
+            <div class="metric">
+                <div class="metric-label">Arrival-delay coverage</div>
+                <div class="metric-value">{{ "%.1f"|format(dsc.qc_metrics.deconvolution.arrival_delay_finite_fraction * 100) }}%</div>
             </div>
             {% endif %}
             {% if dsc.qc_metrics.deconvolution.n_voxels is defined %}

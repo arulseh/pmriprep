@@ -1171,23 +1171,44 @@ def build_dsc_map_sidecar(
                 sidecar["MTTAtBoundFractionDenominator"] = (
                     "accepted vascular fits"
                 )
-    if map_key == "tmax" and isinstance(qc_metrics, dict):
+    if map_key in {"tmax", "arrival_delay"} and isinstance(qc_metrics, dict):
         deconvolution = qc_metrics.get("deconvolution")
         method_metrics = (
             deconvolution if isinstance(deconvolution, dict) else qc_metrics
         )
-        tmax_method = method_metrics.get(
-            "tmax_method",
-            qc_metrics.get("tmax_method"),
-        )
-        if tmax_method is not None:
-            sidecar["TmaxMethod"] = str(tmax_method)
-        fallback_tmax_method = method_metrics.get(
-            "fallback_tmax_method",
-            qc_metrics.get("fallback_tmax_method"),
-        )
-        if fallback_tmax_method is not None:
-            sidecar["FallbackTmaxMethod"] = str(fallback_tmax_method)
+        if map_key == "arrival_delay":
+            timing_method = method_metrics.get(
+                "arrival_delay_method",
+                qc_metrics.get("arrival_delay_method"),
+            )
+            if timing_method is not None:
+                sidecar["ArrivalDelayMethod"] = str(timing_method)
+            finite_voxels = method_metrics.get(
+                "arrival_delay_finite_voxels",
+                qc_metrics.get("arrival_delay_finite_voxels"),
+            )
+            if finite_voxels is not None:
+                sidecar["ArrivalDelayFiniteVoxelCount"] = int(finite_voxels)
+            finite_fraction = method_metrics.get(
+                "arrival_delay_finite_fraction",
+                qc_metrics.get("arrival_delay_finite_fraction"),
+            )
+            if finite_fraction is not None:
+                sidecar["ArrivalDelayFiniteVoxelFraction"] = float(finite_fraction)
+                sidecar["ArrivalDelayCoverageDenominator"] = "DSC analysis mask"
+        else:
+            tmax_method = method_metrics.get(
+                "tmax_method",
+                qc_metrics.get("tmax_method"),
+            )
+            if tmax_method is not None:
+                sidecar["TmaxMethod"] = str(tmax_method)
+            fallback_tmax_method = method_metrics.get(
+                "fallback_tmax_method",
+                qc_metrics.get("fallback_tmax_method"),
+            )
+            if fallback_tmax_method is not None:
+                sidecar["FallbackTmaxMethod"] = str(fallback_tmax_method)
         at_bound_fraction = method_metrics.get(
             "delay_at_bound_fraction",
             qc_metrics.get("delay_at_bound_fraction"),

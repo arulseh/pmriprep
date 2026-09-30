@@ -1951,6 +1951,7 @@ def _connect_master_dsc_datasinks(
         subject_id=subject_id,
         session_id=session_id,
         inference=dsc_inference,
+        deconvolution_method=dsc_config.method,
         present_inputs=dsc_present,
         has_smoothing=dsc_config.smooth_fwhm > 0,
         motion_correct=dsc_config.motion_correct,

@@ -83,11 +83,11 @@ _CORE_MAPS: tuple[DSCMapSpec, ...] = (
         {
             "Clipping": "none",
             "NegativeValues": (
-                "Valid signed delay estimates for oSVD and parametric models; "
-                "sSVD and Tikhonov Tmax are non-negative by construction"
+                "Valid signed residue-peak delay estimates for oSVD; sSVD and "
+                "Tikhonov Tmax are non-negative by construction"
             ),
             "TimingConvention": (
-                "Residue/model delay; unlike tissue concentration TTP, a negative "
+                "Residue-peak delay; unlike tissue concentration TTP, a negative "
                 "value is retained as an estimate rather than marked undefined"
             ),
         },
@@ -117,6 +117,29 @@ _CORE_MAPS: tuple[DSCMapSpec, ...] = (
             ),
         },
     ),
+)
+
+_ARRIVAL_DELAY_MAP = DSCMapSpec(
+    "tmax_map",
+    "dsc",
+    "arrivalDelay",
+    "AIF-relative fitted arrival delay",
+    "s",
+    "arrival_delay",
+    {
+        "Clipping": "none",
+        "TimingReference": "arterial_input_function",
+        "PhysiologicalArrivalTime": False,
+        "NegativeValues": "Valid fitted arrivals earlier than the measured AIF",
+        "TimingConvention": (
+            "AIF-relative model nuisance parameter; not an absolute physiological "
+            "arrival time"
+        ),
+        "RejectedFitValues": (
+            "NaN; the fallback mask identifies voxels where CBF, CBV, and MTT "
+            "were substituted by oSVD"
+        ),
+    },
 )
 
 
@@ -1278,6 +1301,7 @@ def init_dsc_datasinks_wf(
     subject_id: str,
     session_id: Optional[str],
     inference: str,
+    deconvolution_method: str = "oSVD",
     present_inputs: Optional[set[str]] = None,
     has_smoothing: bool = False,
     motion_correct: bool = True,
@@ -1289,6 +1313,13 @@ def init_dsc_datasinks_wf(
 ) -> pe.Workflow:
     """Build the DSC-pipeline DerivativesDataSink chain.
 
+    Parameters
+    ----------
+    deconvolution_method : str
+        Method used to choose the public timing-map name and metadata. CPI and
+        vascular fits report AIF-relative arrival delay; SVD-family methods
+        report Tmax.
+
     ``present_inputs`` is a set of inputnode field names that will be
     wired by the caller. Sinks for absent inputs are NOT created (avoids
     nipype's mandatory-input check failing). The mandatory-perfusion
@@ -1298,6 +1329,8 @@ def init_dsc_datasinks_wf(
     """
     if present_inputs is None:
         present_inputs = set()
+    if deconvolution_method not in {"sSVD", "oSVD", "tikhonov", "vascular", "cpi"}:
+        raise ValueError("unknown DSC deconvolution method")
     present = set(_ALWAYS_PRESENT_INPUTS) | set(present_inputs)
 
     workflow = pe.Workflow(name=name)
@@ -1418,8 +1451,14 @@ def init_dsc_datasinks_wf(
     sink_outputs: list[tuple[pe.Node, str]] = []
 
     # --- Core + Rel + Optional + Normalized + Vascular maps ---
+    core_maps = tuple(
+        _ARRIVAL_DELAY_MAP
+        if spec.in_attr == "tmax_map" and deconvolution_method in {"cpi", "vascular"}
+        else spec
+        for spec in _CORE_MAPS
+    )
     for table in (
-        _CORE_MAPS, _REL_MAPS, _OPTIONAL_MAPS,
+        core_maps, _REL_MAPS, _OPTIONAL_MAPS,
         _NORMALIZED_MAPS, _VASCULAR_MAPS,
     ):
         for spec in table:
@@ -1501,23 +1540,25 @@ def init_dsc_datasinks_wf(
         ])
         sink_outputs.append((b_sink, "out_file"))
     # --- Parametric R2 + fallback mask ---
-    # R2 is preserved on fallback voxels, while their CBF/CBV/MTT/Tmax values
-    # come from oSVD and their parametric uncertainty maps are undefined.
+    # R2 is preserved on fallback voxels, while their CBF/CBV/MTT values come
+    # from oSVD. Parametric uncertainty and fitted arrival delay are undefined.
     _PARAMETRIC_R2_DESC = (
         "Per-voxel R2 (coefficient of determination) of the parametric DSC "
         "fit against the measured signal for CPI or K2-corrected concentration "
         "for the vascular model. "
         "Raw parametric R2 is preserved on voxels that fell back to oSVD -- "
-        "see dscFallback_mask to identify those. The CBF/CBV/MTT/Tmax saved "
-        "in fallback voxels comes from oSVD, NOT from a fit with this R2."
+        "see dscFallback_mask to identify those. The CBF/CBV/MTT saved in "
+        "fallback voxels comes from oSVD, NOT from a fit with this R2; fitted "
+        "arrival delay is NaN."
     )
     _FALLBACK_DESC = (
         "Binary oSVD-fallback mask. 1 = the parametric fit was rejected "
         "(invalid measurements or R2<0; additional solver checks apply to "
         "non-variational vascular fitting), oSVD fallback "
-        "succeeded, and the saved CBF/CBV/MTT/Tmax come from "
-        "svd_deconvolve_oscillation; parametric uncertainty is NaN in these "
-        "voxels. 0 = no successful oSVD replacement; this includes retained "
+        "succeeded, and the saved CBF/CBV/MTT come from "
+        "svd_deconvolve_oscillation; parametric uncertainty and fitted arrival "
+        "delay are NaN in these voxels. 0 = no successful oSVD replacement; "
+        "this includes retained "
         "parametric fits, inadmissible curves, and failed fallback attempts. "
         "Use the sidecar counts to distinguish these cases."
     )

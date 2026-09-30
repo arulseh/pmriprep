@@ -299,6 +299,9 @@ def test_parametric_fit_health_uses_admissible_denominator(
     assert cth[0, 0, 0] == pytest.approx(1.25)
     assert np.isnan(cth[1, 0, 0])
     assert np.isnan(cth[2, 0, 0])
+    assert result[0][1, 0, 0] == pytest.approx(0.2)
+    assert result[2][1, 0, 0] == pytest.approx(1.5)
+    assert np.isnan(result[3][1, 0, 0])
     for map_index in (0, 1, 2, 3, 6):
         assert np.isnan(result[map_index][2, 0, 0])
     assert result[9][2, 0, 0] == 0
@@ -820,6 +823,51 @@ def test_summarize_dsc_maps_empty_synthetic_domain() -> None:
     assert qc["cbv_auc_negative_voxels"] == 0
     assert np.isnan(qc["cbv_auc_negative_fraction"])
     assert qc["cbv_literature_range_applicable"] is False
+
+
+@pytest.mark.parametrize("method", ["cpi", "vascular"])
+def test_parametric_timing_summary_is_arrival_delay(method: str) -> None:
+    """Fitted parametric timing is not summarized as conventional Tmax."""
+    values = np.array([-0.5, 0.5])
+    qc = ComputeDSCMaps._summarize_dsc_maps(
+        values,
+        values,
+        values,
+        values,
+        values,
+        np.ones(2, dtype=bool),
+        "atlas",
+        {},
+        0.0,
+        method=method,
+    )
+    assert qc["arrival_delay_mean"] == pytest.approx(0.0)
+    assert qc["arrival_delay_median"] == pytest.approx(0.0)
+    assert qc["arrival_delay_finite_voxels"] == 2
+    assert qc["arrival_delay_finite_fraction"] == pytest.approx(1.0)
+    assert "tmax_mean" not in qc
+    assert "tmax_median" not in qc
+
+
+def test_parametric_timing_summary_omits_empty_measurement() -> None:
+    """An unestimated arrival-delay map does not produce a NaN median label."""
+    values = np.ones(2)
+    qc = ComputeDSCMaps._summarize_dsc_maps(
+        values,
+        values,
+        values,
+        values,
+        np.full(2, np.nan),
+        np.ones(2, dtype=bool),
+        "atlas",
+        {},
+        0.0,
+        method="cpi",
+    )
+    assert qc["arrival_delay_finite_voxels"] == 0
+    assert qc["arrival_delay_finite_fraction"] == 0.0
+    assert "arrival_delay_mean" not in qc
+    assert "arrival_delay_median" not in qc
 
 
 def test_summarize_dsc_maps_ignores_undefined_voxels() -> None:

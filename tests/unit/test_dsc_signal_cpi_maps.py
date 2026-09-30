@@ -91,5 +91,6 @@ def test_mixed_map_keeps_provisional_fit_and_only_marks_actual_replacement(
         assert result.qc["n_fallback_attempted"] == 0 and result.qc["n_missing"] == 2
     else:
         assert np.isfinite(result.cbf[2]).all() and result.fallback_mask[2, 0, 0] == 1
+        assert np.isnan(result.delay[2, 0, 0])
         assert result.qc["n_fallback_attempted"] == 1 and result.qc["n_missing"] == 1
         assert result.qc["fallback_rate"] == 0.25
