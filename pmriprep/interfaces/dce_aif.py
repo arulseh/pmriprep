@@ -417,6 +417,27 @@ def compute_dce_aif_peak_amplitude_warning(
     return ratio, ratio > threshold
 
 
+def _dce_aif_peak_ceiling(expected_peak_max: float, criteria: str) -> float:
+    """Return the dose-scaled upper candidate peak accepted by a cascade tier."""
+    multiplier = 3.0 if criteria in ("strict", "relaxed") else 5.0
+    return expected_peak_max * multiplier
+
+
+def _dce_aif_report_status(
+    confidence: str,
+    peak_amplitude_warning: bool,
+    multi_bump_warning: bool,
+) -> str:
+    """Map gate confidence and final-curve warnings to the report status."""
+    from pmriprep.utils.qc_standards import QCStatus
+
+    if confidence == "standard" and not (
+        peak_amplitude_warning or multi_bump_warning
+    ):
+        return QCStatus.PASS
+    return QCStatus.WARN
+
+
 def detect_dce_aif_multi_bump_tail(
     aif_curve: npt.NDArray[Any],
     tr: float,
@@ -1105,6 +1126,7 @@ def _evaluate_gates(
     n_voxels: int,
     hemisphere: str,
     n_slabs_spanned: int,
+    peak_ceiling_mm: float | None = None,
 ) -> tuple[GateStatus, GateDecision]:
     """Evaluate the 7 acceptance gates against a candidate pool.
 
@@ -1132,6 +1154,10 @@ def _evaluate_gates(
         ``"bilateral"`` / ``"unilateral_left"`` / ``"unilateral_right"``.
     n_slabs_spanned : int
         Distinct z-slice count in the pool (used by G6 (g) unilateral).
+    peak_ceiling_mm : float or None, optional
+        Dose- and tier-specific upper peak limit for the emitted plasma AIF.
+        ``None`` preserves the standalone gate evaluation used by callers
+        without dose metadata.
 
     Returns
     -------
@@ -1187,6 +1213,10 @@ def _evaluate_gates(
     # caught gate-side because _apply_aif_scale returns scale=1.0 for such a peak,
     # which would otherwise pass the scale-based G1.
     if qc["peak_mm"] < MIN_MEANINGFUL_ENHANCEMENT_MM:
+        return _record("FAIL_G1", "G1")
+    if peak_ceiling_mm is not None and (
+        not np.isfinite(qc["peak_mm"]) or qc["peak_mm"] > peak_ceiling_mm
+    ):
         return _record("FAIL_G1", "G1")
 
     if not g1_fail:
@@ -2736,8 +2766,8 @@ class AIFDetection(BaseInterface):
             peak_tol = 0.15
         else:
             peak_tol = 0.5 if criteria in ("strict", "relaxed") else 0.3
-        peak_ceiling = 3.0 if criteria in ("strict", "relaxed") else 5.0
-        if peak < peak_min * peak_tol or peak > peak_max * peak_ceiling:
+        peak_ceiling = _dce_aif_peak_ceiling(peak_max, criteria)
+        if peak < peak_min * peak_tol or peak > peak_ceiling:
             return 0.0, metrics
 
         # 4. CNR
@@ -2834,6 +2864,7 @@ class AIFDetection(BaseInterface):
         candidate_peak: float,
         peak_min_expected: float,
         peak_floor: float,
+        peak_ceiling: float,
         tier_used: int,
         is_likely_venous: bool,
         atlas_constrained: bool,
@@ -2856,6 +2887,8 @@ class AIFDetection(BaseInterface):
             Expected minimum arterial peak for this dose.
         peak_floor : float
             Minimum peak to allow rescue (criteria/mode-dependent).
+        peak_ceiling : float
+            Maximum peak to allow rescue (criteria/dose-dependent).
         tier_used : int
             Arterial cascade tier (1=strict, 7=last resort).
         is_likely_venous : bool
@@ -2868,7 +2901,11 @@ class AIFDetection(BaseInterface):
         float
             Rescue score (0.0 if rejected, else tier-based score x peak adequacy).
         """
-        if candidate_peak < peak_floor:
+        if (
+            not np.isfinite(candidate_peak)
+            or candidate_peak < peak_floor
+            or candidate_peak > peak_ceiling
+        ):
             return 0.0
         base_score = max(0.1, round(1.0 - (tier_used - 1) * 0.1, 2))
         # For whole-brain detection, scale by peak adequacy to penalize
@@ -3254,9 +3291,16 @@ class AIFDetection(BaseInterface):
         qc = _compute_pool_qc(scale.curve, tr, baseline_frames)
         hemisphere, _n_left, _n_right = _classify_hemisphere(cands, affine)
         n_slabs = _count_slabs_spanned(cands)
+        criteria = atlas_tier_label.rsplit("_", maxsplit=1)[-1]
+        _, peak_max_blood = self._get_expected_peak_range()
+        peak_ceiling_blood = _dce_aif_peak_ceiling(peak_max_blood, criteria)
+        peak_ceiling_plasma = (
+            peak_ceiling_blood / (1.0 - hct) if hct < 1.0 else peak_ceiling_blood
+        )
         status, decision = _evaluate_gates(
             scale.required_factor, qc, atlas_tier_label,
             len(cands), hemisphere, n_slabs,
+            peak_ceiling_mm=peak_ceiling_plasma,
         )
         return PoolGateOutcome(
             curve_scaled=scale.curve,
@@ -3857,7 +3901,8 @@ class AIFDetection(BaseInterface):
         # Score candidates for ranking (using individual _score_dce_candidate for ranking)
         # Pass tissue TTP so timing is factored into scoring
         # Precompute physiological peak floor (loop-invariant)
-        peak_min_expected, _ = self._get_expected_peak_range()
+        peak_min_expected, peak_max_expected = self._get_expected_peak_range()
+        peak_ceiling = _dce_aif_peak_ceiling(peak_max_expected, criteria)
         # Whole-brain: higher floor (match scorer's peak_tol) to reject venous
         # candidates that lack a spatial prior.
         # Atlas-constrained: keep permissive floor — low peaks (0.8-1.3 mM at
@@ -3885,16 +3930,18 @@ class AIFDetection(BaseInterface):
             if score <= 0:
                 candidate_peak = all_metrics[idx].get("peak_mm", 0.0)
                 score = self._compute_rescue_score(
-                    candidate_peak, peak_min_expected, peak_floor,
+                    candidate_peak, peak_min_expected, peak_floor, peak_ceiling,
                     tier_used,
                     bool(all_metrics[idx].get("is_likely_venous", False)),
                     atlas_constrained,
                 )
                 if score <= 0:
                     logger.debug(
-                        "Rescue rejected voxel %d: peak %.2f mM < floor %.2f mM "
+                        "Rescue rejected voxel %d: peak %.2f mM outside "
+                        "[%.2f, %.2f] mM "
                         "(criteria=%s, atlas=%s)",
-                        idx, candidate_peak, peak_floor, criteria, atlas_constrained,
+                        idx, candidate_peak, peak_floor, peak_ceiling,
+                        criteria, atlas_constrained,
                     )
             scores.append(score)
 
@@ -5131,13 +5178,12 @@ class AIFDetection(BaseInterface):
         # detected AIF as POOR. aif_confidence already encodes the G1-G6 gate
         # outcome: "standard" (gates passed) / "reduced" (G6-admitted or C2
         # re-gate fail) / "low" (population fallback).
-        from pmriprep.utils.qc_standards import QCStatus
         _aif_confidence = qc_metrics.get("aif_confidence", "reduced")
-        if _aif_confidence == "standard":
-            aif_status = QCStatus.PASS
-        else:  # "reduced" (marginal / G6-admitted / C2 re-gate fail) or
-            # "low" (population fallback) — flag for review, not certify
-            aif_status = QCStatus.WARN
+        aif_status = _dce_aif_report_status(
+            _aif_confidence,
+            peak_amplitude_warning,
+            multi_bump_warning,
+        )
 
         # Add final metrics to QC dict
         qc_metrics.update(

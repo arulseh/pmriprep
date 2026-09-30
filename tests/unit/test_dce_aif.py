@@ -12,6 +12,8 @@ from pmriprep.interfaces.dce_aif import (
     _classify_hemisphere,
     _compute_pool_qc,
     _count_slabs_spanned,
+    _dce_aif_peak_ceiling,
+    _dce_aif_report_status,
     _evaluate_gates,
     _inflow_exclusion_mm,
     _resolve_aif_scale,
@@ -400,6 +402,7 @@ class TestComputeRescueScore:
         """Whole-brain: peak below floor (1.858 < 2.5 mM) → rejected."""
         score = AIFDetection._compute_rescue_score(
             candidate_peak=1.858, peak_min_expected=5.0, peak_floor=2.5,
+            peak_ceiling=22.8,
             tier_used=1, is_likely_venous=False, atlas_constrained=False,
         )
         assert score == 0.0
@@ -411,6 +414,7 @@ class TestComputeRescueScore:
         """
         score = AIFDetection._compute_rescue_score(
             candidate_peak=3.0, peak_min_expected=5.0, peak_floor=2.5,
+            peak_ceiling=22.8,
             tier_used=1, is_likely_venous=False, atlas_constrained=False,
         )
         assert abs(score - 0.6) < 1e-6
@@ -422,6 +426,7 @@ class TestComputeRescueScore:
         """
         score = AIFDetection._compute_rescue_score(
             candidate_peak=3.0, peak_min_expected=5.0, peak_floor=2.5,
+            peak_ceiling=22.8,
             tier_used=1, is_likely_venous=True, atlas_constrained=False,
         )
         assert abs(score - 0.18) < 1e-6
@@ -430,6 +435,7 @@ class TestComputeRescueScore:
         """Atlas-constrained: no peak adequacy penalty (low peaks expected)."""
         score = AIFDetection._compute_rescue_score(
             candidate_peak=1.0, peak_min_expected=5.0, peak_floor=0.75,
+            peak_ceiling=22.8,
             tier_used=1, is_likely_venous=False, atlas_constrained=True,
         )
         # base_score=1.0, peak_adequacy=1.0 (atlas skips scaling)
@@ -439,6 +445,7 @@ class TestComputeRescueScore:
         """Atlas-constrained: 0.9 mM passes the 0.75 mM floor."""
         score = AIFDetection._compute_rescue_score(
             candidate_peak=0.9, peak_min_expected=5.0, peak_floor=0.75,
+            peak_ceiling=22.8,
             tier_used=1, is_likely_venous=False, atlas_constrained=True,
         )
         assert score > 0.0
@@ -448,6 +455,7 @@ class TestComputeRescueScore:
         for atlas, floor in ((True, 0.75), (False, 2.5)):
             score = AIFDetection._compute_rescue_score(
                 candidate_peak=0.0, peak_min_expected=5.0, peak_floor=floor,
+                peak_ceiling=22.8,
                 tier_used=1, is_likely_venous=False, atlas_constrained=atlas,
             )
             assert score == 0.0
@@ -460,9 +468,23 @@ class TestComputeRescueScore:
         """
         score = AIFDetection._compute_rescue_score(
             candidate_peak=1.5, peak_min_expected=2.5, peak_floor=1.25,
+            peak_ceiling=11.4,
             tier_used=1, is_likely_venous=False, atlas_constrained=False,
         )
         assert abs(score - 0.6) < 1e-6
+
+    def test_rescue_rejects_over_ceiling_peak_with_atlas(self) -> None:
+        """An atlas prior must not restore an implausibly high candidate."""
+        score = AIFDetection._compute_rescue_score(
+            candidate_peak=328.0,
+            peak_min_expected=3.75,
+            peak_floor=0.5625,
+            peak_ceiling=_dce_aif_peak_ceiling(5.7, "strict"),
+            tier_used=1,
+            is_likely_venous=False,
+            atlas_constrained=True,
+        )
+        assert score == 0.0
 
 
 # =============================================================================
@@ -1619,6 +1641,28 @@ class TestDCEAIFPeakAmplitudeWarning:
         assert warn is True
 
 
+@pytest.mark.parametrize(
+    ("confidence", "peak_warning", "bump_warning", "expected"),
+    [
+        ("standard", False, False, "PASS"),
+        ("standard", True, False, "WARN"),
+        ("standard", False, True, "WARN"),
+        ("reduced", False, False, "WARN"),
+    ],
+)
+def test_dce_aif_report_status_honours_final_curve_warnings(
+    confidence: str,
+    peak_warning: bool,
+    bump_warning: bool,
+    expected: str,
+) -> None:
+    """A final-curve warning cannot coexist with a passing AIF status."""
+    assert (
+        _dce_aif_report_status(confidence, peak_warning, bump_warning)
+        == expected
+    )
+
+
 # =============================================================================
 # Test: Multi-bump tail detector
 # =============================================================================
@@ -2248,6 +2292,35 @@ def test_g6_admit_sub08_archetype():
                                    n_slabs_spanned=3)
     assert status == "G6_ADMIT"
     assert "G1_via_G6" in dec["warns"]
+
+
+def test_g1_rejects_pooled_peak_above_dose_ceiling():
+    """A high pooled peak cannot pass after candidate rescue or averaging."""
+    status, decision = _evaluate_gates(
+        scale_factor=1.0,
+        qc=_make_qc(peak=62.9),
+        atlas_tier="MCA_ACA_dce_strict",
+        n_voxels=10,
+        hemisphere="bilateral",
+        n_slabs_spanned=3,
+        peak_ceiling_mm=29.5,
+    )
+    assert status == "FAIL_G1"
+    assert decision["failing_gate"] == "G1"
+
+
+def test_g1_accepts_pooled_peak_at_dose_ceiling():
+    """The physiological ceiling is inclusive."""
+    status, _ = _evaluate_gates(
+        scale_factor=1.0,
+        qc=_make_qc(peak=29.5),
+        atlas_tier="MCA_ACA_dce_strict",
+        n_voxels=10,
+        hemisphere="bilateral",
+        n_slabs_spanned=3,
+        peak_ceiling_mm=29.5,
+    )
+    assert status == "PASS"
 
 
 def test_g6_reject_sparse_unilateral_archetype():
