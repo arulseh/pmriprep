@@ -16,6 +16,9 @@ from .signal import MovingLayoutSignalCPI
 from .residue import PhysicalSignalCPI
 from .weights import checked_weights
 
+_LOCAL_FACTOR_COVARIANCE_RTOL = np.sqrt(np.finfo(np.float64).eps)
+_LOCAL_FACTOR_IDENTITY_ATOL = 1e-4
+
 
 def candidate_orders(n_frames: int, *, model: Model = "cpi") -> tuple[int, ...]:
     """Return every supported count with more observations than mean parameters."""
@@ -53,6 +56,21 @@ def factor_diagnostic(
     required_precision = prior_precision + precision * gram
     root = np.linalg.cholesky(covariance)
     whitened = root.T @ required_precision @ root
+    root_prior_precision = np.linalg.cholesky(prior_precision)
+    prior_root = np.linalg.solve(
+        root_prior_precision.T, np.eye(root_prior_precision.shape[0]),
+    )
+    weighted_jacobian = (
+        jacobian if weights is None else np.sqrt(weights)[:, None] * jacobian
+    )
+    _, singular, vectors = np.linalg.svd(weighted_jacobian @ prior_root)
+    basis = prior_root @ vectors.T
+    expected_scaled = basis / np.sqrt(1 + precision * singular**2)[None, :]
+    expected_covariance = expected_scaled @ expected_scaled.T
+    covariance_relative_error = float(
+        np.linalg.norm(covariance - expected_covariance, ord="fro")
+        / np.linalg.norm(expected_covariance, ord="fro")
+    )
     return {
         "stored_gamma_rate": rate,
         "fixed_covariance_required_gamma_rate": required_rate,
@@ -62,6 +80,7 @@ def factor_diagnostic(
         "covariance_precision_identity_max_eigen_error": float(
             np.max(np.abs(np.linalg.eigvalsh(whitened) - 1.0))
         ),
+        "covariance_relative_error": covariance_relative_error,
     }
 
 
@@ -223,6 +242,7 @@ class FitAssessment:
     r_squared: float | None
     gamma_rate_ratio: float | None
     covariance_identity_error: float | None
+    covariance_relative_error: float | None = None
 
 
 def assess_fit(
@@ -286,7 +306,7 @@ def assess_fit(
         reasons.append("invalid_noise_precision")
     if fit.cbf < 0 or fit.cbv < 0 or fit.mtt <= 0 or fit.s0 <= 0:
         reasons.append("invalid_readout")
-    ratio = identity = r_squared = None
+    ratio = identity = covariance_error = r_squared = None
     if finite and dimensions:
         if model.valid_mean(mean):
             if not np.allclose(prediction, model.predict(mean), rtol=0,
@@ -323,9 +343,13 @@ def assess_fit(
                 )
                 ratio = diagnostic["gamma_rate_ratio"]
                 identity = diagnostic["covariance_precision_identity_max_eigen_error"]
+                covariance_error = diagnostic["covariance_relative_error"]
                 if (
                     not np.isclose(ratio, 1.0, rtol=1e-6, atol=0)
-                    or not np.isfinite(identity) or identity > 1e-6
+                    or not np.isfinite(identity)
+                    or identity > _LOCAL_FACTOR_IDENTITY_ATOL
+                    or not np.isfinite(covariance_error)
+                    or covariance_error > _LOCAL_FACTOR_COVARIANCE_RTOL
                     or not np.isclose(shape, 1e-6 + effective_count / 2, rtol=1e-10)
                 ):
                     reasons.append("inconsistent_local_factors")
@@ -337,7 +361,7 @@ def assess_fit(
         warnings.append("zero_flow")
     return FitAssessment(
         fit.voxel, fit.restart, not reasons, fit.converged,
-        tuple(reasons), tuple(warnings), r_squared, ratio, identity,
+        tuple(reasons), tuple(warnings), r_squared, ratio, identity, covariance_error,
     )
 
 
