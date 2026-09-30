@@ -23,6 +23,12 @@ from pmriprep.utils.processes import terminate_process_pool
 T = TypeVar("T")
 R = TypeVar("R")
 
+# The workflow reserves this in addition to image-buffer estimates and the
+# per-worker fitting allocation. It covers the controller interpreter, loaded
+# numerical libraries, and image-indexed bookkeeping that remain resident while
+# the spawned fitting pool is active.
+CPI_CONTROLLER_MEMORY_GB = 4.0
+
 
 @dataclass(frozen=True)
 class CPIResources:
@@ -33,6 +39,27 @@ class CPIResources:
     threads_per_process: int
     memory_gb: float | None
     estimated_worker_gb: float
+
+
+def estimate_worker_memory_gb(n_frames: int = 120, n_points: int = 12) -> float:
+    """Estimate resident memory for one CPI fitting worker.
+
+    Parameters
+    ----------
+    n_frames : int, optional
+        Number of acquisition frames.
+    n_points : int, optional
+        Maximum number of residue control points.
+
+    Returns
+    -------
+    float
+        Estimated worker memory in decimal gigabytes.
+    """
+    if min(n_frames, n_points) < 1:
+        raise ValueError("CPI execution dimensions must be positive")
+    workspace = max(768_000_000, 8 * n_frames**2 * n_points * 64)
+    return (256_000_000 + workspace) / 1e9
 
 
 def plan_resources(
@@ -71,8 +98,8 @@ def plan_resources(
         raise ValueError("invalid CPI execution dimensions")
     # Include cached kernels, refinement state and allocator headroom as well
     # as the bounded interval-node temporaries and acquisition-sized geometry.
-    workspace = max(768_000_000, 8 * n_frames**2 * n_points * 64)
-    worker_bytes = 256_000_000 + workspace
+    worker_bytes = round(estimate_worker_memory_gb(n_frames, n_points) * 1e9)
+    workspace = worker_bytes - 256_000_000
     workers = min(n_procs, max(1, n_voxels))
     if memory_gb is not None and n_voxels:
         remaining = memory_gb * 1e9 - psutil.Process().memory_info().rss - extra_parent_bytes

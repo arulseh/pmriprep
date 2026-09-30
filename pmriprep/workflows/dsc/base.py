@@ -2077,10 +2077,23 @@ def init_dsc_preproc_wf(
     )
     if random_seed is not None:
         dsc_map_kwargs["random_seed"] = random_seed
+    if config.method == "cpi":
+        from pmriprep.models.dsc.signal_cpi.execution import (
+            CPI_CONTROLLER_MEMORY_GB,
+            estimate_worker_memory_gb,
+        )
+
+        cpi_memory_gb = (
+            _heavy_mem
+            + CPI_CONTROLLER_MEMORY_GB
+            + estimate_worker_memory_gb() * dsc_map_kwargs["n_procs"]
+        )
+        deconvolution_memory_gb = cap_mem_gb(cpi_memory_gb, mem_limit_gb)
+    else:
+        deconvolution_memory_gb = _heavy_mem
     deconvolution_wf = init_dsc_deconvolution_wf(
         dsc_map_kwargs=dsc_map_kwargs,
-        mem_gb=(cap_mem_gb(_heavy_mem + 0.5 * dsc_map_kwargs["n_procs"], mem_limit_gb)
-                if config.method == "cpi" else _heavy_mem),
+        mem_gb=deconvolution_memory_gb,
     )
 
     # -------------------------------------------------------------------

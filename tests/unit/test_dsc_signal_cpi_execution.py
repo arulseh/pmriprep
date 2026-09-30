@@ -162,6 +162,49 @@ def test_workspace_includes_adaptive_headroom_and_grows_with_acquisition() -> No
     assert execution.plan_resources(4, 100, 400, 12).estimated_worker_gb > ordinary.estimated_worker_gb
 
 
+def test_workflow_allocation_does_not_halve_large_cpi_pool(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unconstrained large-memory node can use every requested CPI process."""
+    from pmriprep.config.dsc import DSCConfig
+    from pmriprep.workflows.dsc.base import init_dsc_preproc_wf
+
+    requested = 82
+    base_memory = 1.2
+    wf = init_dsc_preproc_wf(
+        bids_dir=tmp_path,
+        output_dir=tmp_path / "out",
+        subject_id="test",
+        session_id="test",
+        config=DSCConfig(method="cpi", num_processes=requested, sloppy=True),
+        mem_gb=base_memory,
+        mem_limit_gb=200.0,
+    )
+    node = wf.get_node("dsc_deconvolution_wf.compute_maps")
+    expected = (
+        base_memory
+        + execution.CPI_CONTROLLER_MEMORY_GB
+        + requested * execution.estimate_worker_memory_gb()
+    )
+    assert node.mem_gb == pytest.approx(expected)
+    assert node.inputs.fitting_memory_gb == pytest.approx(expected)
+
+    monkeypatch.setattr(
+        execution.psutil,
+        "Process",
+        lambda: SimpleNamespace(memory_info=lambda: SimpleNamespace(rss=3_300_000_000)),
+    )
+    resources = execution.plan_resources(
+        requested,
+        81_306,
+        120,
+        6,
+        memory_gb=node.inputs.fitting_memory_gb,
+        extra_parent_bytes=90_000_000,
+    )
+    assert resources.processes == requested
+
+
 @pytest.mark.parametrize("workers,memory", [(0, None), (True, None), (1, 0), (1, np.nan)])
 def test_invalid_execution_limits_raise(workers: Any, memory: Any) -> None:
     """Invalid limits are configuration errors, not failed voxels."""
@@ -367,5 +410,6 @@ def test_cpi_worker_allocation_respects_workflow_memory_limit(tmp_path: Path, me
         mem_gb=1., mem_limit_gb=memory_limit)
     node = wf.get_node("dsc_deconvolution_wf.compute_maps")
     assert node.n_procs == node.inputs.n_procs == 4
-    assert node.mem_gb == node.inputs.fitting_memory_gb == min(3., memory_limit)
+    uncapped = 1. + execution.CPI_CONTROLLER_MEMORY_GB + 4 * execution.estimate_worker_memory_gb()
+    assert node.mem_gb == node.inputs.fitting_memory_gb == min(uncapped, memory_limit)
     assert node.inputs.sloppy
