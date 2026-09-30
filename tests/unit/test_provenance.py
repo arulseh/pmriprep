@@ -353,20 +353,20 @@ class TestEnrichDSC:
         result = enrich_provenance_from_qc(sidecar, qc, "DSC")
         assert result["PerfusionProcessing"]["Deconvolution"]["lambda_mean"] == pytest.approx(0.15)
 
-    def test_parametric_fe_plateau_and_fallback(self) -> None:
-        """CPI/Vascular runs propagate fe_plateau_rate and fallback_rate."""
+    def test_parametric_convergence_and_fallback(self) -> None:
+        """Parametric runs propagate solver convergence and fallback rates."""
         sidecar = _make_dsc_sidecar()
         qc = {
             "deconvolution": {
-                "fe_plateau_rate": 0.0001,
+                "solver_convergence_rate": 0.75,
                 "fallback_rate": 0.07,
             },
         }
         result = enrich_provenance_from_qc(sidecar, qc, "DSC")
         deconv = result["PerfusionProcessing"]["Deconvolution"]
-        assert deconv["fe_plateau_rate"] == pytest.approx(0.0001, abs=1e-6)
+        assert deconv["solver_convergence_rate"] == pytest.approx(0.75)
         assert deconv["fallback_rate"] == pytest.approx(0.07, abs=1e-6)
-        # Old key must not have been re-introduced.
+        assert "fe_plateau_rate" not in deconv
         assert "convergence_rate" not in deconv
 
     def test_cpi_provenance_uses_executed_options(self) -> None:

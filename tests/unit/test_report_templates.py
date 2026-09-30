@@ -814,7 +814,7 @@ def test_deconv_panel_inference_shown_for_cpi(env):
     """CPI runs render an "Inference" metric box (not a "Bayesian" label)."""
     template = env.get_template("sections/section_dsc.html")
     dsc_ctx = _dsc_ctx_with_deconv(
-        "cpi", inference="vi", fallback_rate=0.05, fe_plateau_rate=0.0001,
+        "cpi", inference="vi", fallback_rate=0.05, solver_convergence_rate=0.75,
     )
     rendered = template.render(dsc=dsc_ctx)
     assert ">Inference<" in rendered
@@ -826,7 +826,7 @@ def test_deconv_panel_hides_tmax_for_cpi(env):
     """CPI does not model bolus delay — Tmax stat must be hidden."""
     template = env.get_template("sections/section_dsc.html")
     dsc_ctx = _dsc_ctx_with_deconv(
-        "cpi", inference="vi", fallback_rate=0.05, fe_plateau_rate=0.0,
+        "cpi", inference="vi", fallback_rate=0.05, solver_convergence_rate=0.0,
     )
     rendered = template.render(dsc=dsc_ctx)
     assert ">Median Tmax<" not in rendered
@@ -845,7 +845,7 @@ def test_deconv_panel_fallback_only_for_parametric(env):
     template = env.get_template("sections/section_dsc.html")
 
     cpi_ctx = _dsc_ctx_with_deconv(
-        "cpi", inference="vi", fallback_rate=0.07, fe_plateau_rate=0.0001,
+        "cpi", inference="vi", fallback_rate=0.07, solver_convergence_rate=0.75,
     )
     cpi_rendered = template.render(dsc=cpi_ctx)
     assert ">oSVD Fallback<" in cpi_rendered

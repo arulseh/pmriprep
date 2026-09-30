@@ -2209,10 +2209,9 @@ class ComputeDSCMaps(BaseInterface):
 
         if method == "vascular":
             qc_metrics["n_converged"] = n_converged
-            # FE/NLP plateau rate is informational only (FABBER 10-iter
-            # spec rarely satisfies the strict plateau in 10 iters by
-            # design); fit quality is gated by R² in the fallback path.
-            qc_metrics["fe_plateau_rate"] = n_converged / max(1, n_admissible)
+            qc_metrics["solver_convergence_rate"] = (
+                n_converged / max(1, n_admissible)
+            )
             if inference == "nlls":
                 qc_metrics["n_evaluation_budget_exhausted"] = (
                     n_evaluation_budget_exhausted

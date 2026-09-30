@@ -181,7 +181,7 @@ def _assemble_maps(
         n_fit_admissible=admissible,
         n_fit_inadmissible=n_mask - admissible,
         n_converged=n_converged,
-        fe_plateau_rate=n_converged / max(1, admissible),
+        solver_convergence_rate=n_converged / max(1, admissible),
         n_cpi_retained=accepted,
         n_cpi_gamma=gamma,
         cpi_gamma_fraction=gamma / max(1, accepted),

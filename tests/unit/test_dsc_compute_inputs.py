@@ -288,7 +288,7 @@ def test_parametric_fit_health_uses_admissible_denominator(
     assert qc["fallback_requested_rate"] == pytest.approx(0.5)
     assert qc["delay_at_bound_n"] == 0
     assert qc["delay_at_bound_fraction"] == pytest.approx(0.0)
-    assert qc["fe_plateau_rate"] == pytest.approx(0.5)
+    assert qc["solver_convergence_rate"] == pytest.approx(0.5)
     assert qc["map_uncertainty"] == {
         "n_evaluated": 1,
         "n_uncertainty_unavailable": 1,
