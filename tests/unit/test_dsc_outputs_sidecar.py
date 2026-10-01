@@ -135,6 +135,79 @@ def _run_writer(inputs: dict, qc_metrics: dict | None, tmp_path: Path | None = N
     return Path(inputs["output_dir"])
 
 
+def test_cbv_sidecars_report_statistics_from_their_own_images(
+    tmp_path: Path, minimal_inputs: dict,
+) -> None:
+    """Lesion, user-lesion and ROI summaries retain distinct CBV estimators."""
+    from pmriprep.workflows.dsc.base import init_dsc_lesion_stats_wf
+
+    def save_image(name: str, data: np.ndarray) -> str:
+        path = tmp_path / f"{name}.nii.gz"
+        nib.save(nib.Nifti1Image(data.astype(np.float32), np.eye(4)), path)
+        return str(path)
+
+    shape = (4, 4, 4)
+    indices = np.arange(64, dtype=np.float32).reshape(shape)
+    residue_cbv = indices + 1
+    auc_cbv = 100 + indices**2
+    residue_cbv[0, 0, 0] = np.nan
+    auc_cbv[3, 3, 3] = np.nan
+    nawm = np.zeros(shape, dtype=bool)
+    nawm[2:] = True
+    normalized_cbv = auc_cbv / np.nanmedian(auc_cbv[nawm])
+    images = {"cbv": residue_cbv, "cbv_auc": auc_cbv, "ncbv": normalized_cbv}
+
+    lesion = np.zeros(shape, dtype=np.float32)
+    lesion[0] = 2
+    lesion[1] = 1
+    roi = np.zeros(shape, dtype=bool)
+    roi[:, 1, :] = True
+    user_lesion = np.zeros(shape, dtype=bool)
+    user_lesion[:, 0, :] = True
+
+    inputs = dict(minimal_inputs)
+    for name, attr in (
+        ("cbv", "rel_cbv_map"), ("cbv_auc", "rel_cbv_auc_map"), ("ncbv", "ncbv_map"),
+    ):
+        inputs[attr] = save_image(name, images[name])
+
+    stats_wf = init_dsc_lesion_stats_wf(subject_id="test01", session_id="01")
+    stats_wf.base_dir = str(tmp_path / "stats_work")
+    stats_wf.inputs.inputnode.cbv_map = inputs["rel_cbv_map"]
+    stats_wf.inputs.inputnode.cbv_auc_map = inputs["rel_cbv_auc_map"]
+    stats_wf.inputs.inputnode.ncbv_map = inputs["ncbv_map"]
+    stats_wf.inputs.inputnode.nawm_mask = save_image("nawm", nawm)
+    stats_wf.inputs.inputnode.tumor_lesion_mask = save_image("lesion", lesion)
+    stats_wf.inputs.inputnode.roi_mask = save_image("roi", roi)
+    stats_wf.inputs.inputnode.user_mask = save_image("user_lesion", user_lesion)
+    stats_graph = stats_wf.run(plugin="Linear")
+    for node in stats_graph.nodes():
+        inputs[f"{node.name}_json"] = node.result.outputs.stats_json
+
+    derivatives = _run_writer(inputs, qc_metrics=None, tmp_path=tmp_path)
+    selections = (
+        ("LesionStats", "contrast_enhancing_tumor", lesion == 2),
+        ("LesionStats", "non_enhancing_tumor", lesion == 1),
+        ("ROIStats", "roi", roi),
+        ("UserLesionStats", "roi", user_lesion),
+    )
+    for map_key, desc in (
+        ("cbv", "dscRelCbv"), ("cbv_auc", "dscRelAUCCbv"), ("ncbv", "dscNawmNormCbv"),
+    ):
+        image = images[map_key]
+        sidecar = _load_sidecar(derivatives, desc)
+        for fragment_key, region, mask in selections:
+            fragment = sidecar[fragment_key]
+            stats = fragment["Regions"][region]["stats"]
+            # Regional statistics are serialized to six decimal places.
+            assert stats["median"] == round(float(np.nanmedian(image[mask])), 6)
+            assert stats["n_valid"] == int(np.count_nonzero(np.isfinite(image[mask])))
+            assert stats["n_total"] == int(np.count_nonzero(mask))
+            reference = fragment["NAWMReference"]
+            assert reference["median"] == round(float(np.nanmedian(image[nawm])), 6)
+            assert reference["n_valid"] == int(np.count_nonzero(np.isfinite(image[nawm])))
+
+
 def test_vascular_mtt_sidecar_reports_bound_occupancy() -> None:
     """Vascular MTT boundary contact is informational derivative metadata."""
     sidecar = build_dsc_map_sidecar(

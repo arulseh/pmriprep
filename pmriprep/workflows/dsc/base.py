@@ -1085,6 +1085,9 @@ def init_dsc_lesion_stats_wf(
     ------
     cbf_map, cbv_map, mtt_map, tmax_map, ttp_map
         DSC perfusion and transit-time maps (shared by all three nodes).
+        ``cbv_map`` is the deconvolution residue-integral CBV.
+    cbv_auc_map
+        AUC-based CBV, using the configured leakage correction.
     psr_map
         Percentage signal recovery.
     ncbv_map, ncbf_map
@@ -1117,6 +1120,7 @@ def init_dsc_lesion_stats_wf(
             fields=[
                 "cbf_map",
                 "cbv_map",
+                "cbv_auc_map",
                 "mtt_map",
                 "tmax_map",
                 "psr_map",
@@ -1167,6 +1171,7 @@ def init_dsc_lesion_stats_wf(
     shared_inputs = [
         ("cbf_map", "cbf_map"),
         ("cbv_map", "cbv_map"),
+        ("cbv_auc_map", "cbv_auc_map"),
         ("mtt_map", "mtt_map"),
         ("tmax_map", "tmax_map"),
         ("psr_map", "psr_map"),
@@ -2471,7 +2476,8 @@ def init_dsc_preproc_wf(
     workflow.connect([
         (deconvolution_wf, lesion_stats_wf, [
             ("outputnode.out_rel_cbf", "inputnode.cbf_map"),
-            ("outputnode.out_rel_cbv_auc", "inputnode.cbv_map"),
+            ("outputnode.out_rel_cbv", "inputnode.cbv_map"),
+            ("outputnode.out_rel_cbv_auc", "inputnode.cbv_auc_map"),
             ("outputnode.out_mtt", "inputnode.mtt_map"),
             ("outputnode.out_tmax", "inputnode.tmax_map"),
             ("outputnode.out_psr", "inputnode.psr_map"),

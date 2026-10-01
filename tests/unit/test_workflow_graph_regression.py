@@ -681,6 +681,15 @@ def test_dsc_method_is_parameter_not_topology(bids: Path) -> None:
     assert ("inputnode", "te", "compute_maps", "te") in cpi["edges"]
 
 
+def test_dsc_cbv_statistics_use_distinct_map_sources(bids: Path) -> None:
+    """Every regional-statistics path receives both native CBV estimators."""
+    edges = graph_signature(_dsc(bids))["edges"]
+    for node in ("lesion_stats", "roi_stats", "user_lesion_stats"):
+        assert ("compute_maps", "out_rel_cbv", node, "cbv_map") in edges
+        assert ("compute_maps", "out_rel_cbv_auc", node, "cbv_auc_map") in edges
+        assert ("compute_maps", "out_rel_cbv_auc", node, "cbv_map") not in edges
+
+
 def test_dce_peak_floor_is_routed_as_parameter(bids: Path) -> None:
     """Disabling the peak floor changes only the AIF node parameter."""
     enabled = graph_signature(_dce(bids))

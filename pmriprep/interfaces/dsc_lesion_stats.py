@@ -50,7 +50,8 @@ class DSCLesionStatsInputSpec(BaseInterfaceInputSpec):
 
     # Core perfusion maps (all optional - stats computed for available maps)
     cbf_map = traits.Str(desc="CBF map path")
-    cbv_map = traits.Str(desc="CBV map path")
+    cbv_map = traits.Str(desc="Deconvolution residue-integral CBV map path")
+    cbv_auc_map = traits.Str(desc="AUC-based CBV map path")
     mtt_map = traits.Str(desc="MTT map path")
     tmax_map = traits.Str(desc="Method-specific deconvolution timing map path")
     timing_map_name = traits.Enum(
@@ -237,7 +238,7 @@ class DSCLesionStats(BaseInterface):
             nawm_data = np.asarray(nawm_img.dataobj) > 0  # type: ignore[attr-defined]
             nawm_maps = {
                 k: v for k, v in maps.items()
-                if k in ["cbv", "cbf", "ncbv", "ncbf", "mtt"]
+                if k in ["cbv", "cbv_auc", "cbf", "ncbv", "ncbf", "mtt"]
             }
             result.nawm_reference = compute_nawm_reference(
                 nawm_data, nawm_maps, voxel_volume_mm3,
@@ -308,6 +309,7 @@ class DSCLesionStats(BaseInterface):
         map_attrs = [
             ("cbf_map", "cbf"),
             ("cbv_map", "cbv"),
+            ("cbv_auc_map", "cbv_auc"),
             ("mtt_map", "mtt"),
             ("tmax_map", str(self.inputs.timing_map_name)),
             ("ncbv_map", "ncbv"),

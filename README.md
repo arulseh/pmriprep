@@ -321,6 +321,9 @@ processing, and provenance. AIF and motion time series are TSV files; regional
 statistics are JSON files. When a lesion mask is available, detected-AIF
 provenance reports tumor laterality and the final candidate counts relative to
 a unilateral lesion; these fields do not affect candidate selection.
+DSC regional statistics distinguish residue-integral CBV (`cbv`) from
+AUC-CBV (`cbv_auc`); each map's sidecar reports its own regional values.
+Normalized CBV (`ncbv`) is based on AUC-CBV.
 
 DCE parameter-uncertainty derivatives contain NLLS standard errors or Bayesian
 posterior standard deviations conditional on the fitted inputs and model.

@@ -333,8 +333,26 @@
     [
       "compute_maps",
       "out_rel_cbv",
+      "lesion_stats",
+      "cbv_map"
+    ],
+    [
+      "compute_maps",
+      "out_rel_cbv",
       "outputnode",
       "rel_cbv_map"
+    ],
+    [
+      "compute_maps",
+      "out_rel_cbv",
+      "roi_stats",
+      "cbv_map"
+    ],
+    [
+      "compute_maps",
+      "out_rel_cbv",
+      "user_lesion_stats",
+      "cbv_map"
     ],
     [
       "compute_maps",
@@ -346,7 +364,7 @@
       "compute_maps",
       "out_rel_cbv_auc",
       "lesion_stats",
-      "cbv_map"
+      "cbv_auc_map"
     ],
     [
       "compute_maps",
@@ -364,13 +382,13 @@
       "compute_maps",
       "out_rel_cbv_auc",
       "roi_stats",
-      "cbv_map"
+      "cbv_auc_map"
     ],
     [
       "compute_maps",
       "out_rel_cbv_auc",
       "user_lesion_stats",
-      "cbv_map"
+      "cbv_auc_map"
     ],
     [
       "compute_maps",
