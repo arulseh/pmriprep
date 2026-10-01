@@ -7,8 +7,10 @@ import pytest
 from scipy.optimize import brentq
 
 from pmriprep.models.bayesian_utils import TransformType
+from pmriprep.models.dsc import batched_fitting
 from pmriprep.models.dsc.batched_fitting import batched_dsc_vi_fit
-from pmriprep.models.dsc.local_vi import local_vi_state
+from pmriprep.models.dsc import local_vi
+from pmriprep.models.dsc.local_vi import LocalVIFactorError, local_vi_state
 from pmriprep.models.dsc.vi_adapter import DSCVIModelAdapter
 from pmriprep.models.dsc.signal_cpi.probability import GaussianPrior, GammaPrecision, local_free_energy
 
@@ -55,6 +57,35 @@ def test_local_factors_match_direct_covariance_and_scalar_root(
                 GammaPrecision(1e-6, 1e-6),
             )
             assert state.score[i] == pytest.approx(score, abs=1e-9)
+
+
+def test_local_svd_failure_has_a_specific_numerical_exception(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A data-dependent SVD failure is distinguishable from a coding error."""
+    def fail(*args: Any, **kwargs: Any) -> None:
+        raise np.linalg.LinAlgError("forced nonconvergence")
+
+    monkeypatch.setattr(local_vi.np.linalg, "svd", fail)
+    with pytest.raises(LocalVIFactorError, match="singular-value decomposition"):
+        local_vi_state(
+            np.zeros((1, 1)), np.ones((1, 2, 1)), np.ones((1, 2)),
+            np.zeros(1), np.eye(1), np.ones(2),
+        )
+
+
+def test_local_factor_batch_failure_isolated_to_its_row() -> None:
+    """Retry a failed local-factor batch row by row without losing good rows."""
+    mean = np.array([[0.0], [1.0]])
+    jacobian = np.ones((2, 3, 1))
+    jacobian[0, 1, 0] = np.nan
+    state, failed = batched_fitting._isolated_local_vi_state(
+        mean, jacobian, np.ones((2, 3)),
+        np.zeros(1), np.eye(1), np.ones(3),
+    )
+    np.testing.assert_array_equal(failed, [True, False])
+    assert np.isnan(state.covariance[0]).all()
+    assert np.isfinite(state.covariance[1]).all()
 
 
 def inputs(nonlinear: bool = False, wrong_derivative: bool = False) -> dict[str, Any]:
@@ -122,6 +153,73 @@ def test_backtracked_step_has_its_own_factors_at_budget_exit() -> None:
     assert 0.2 < result.params["cbf"][0] < 2.5
     assert not result.converged[0]
     assert_consistent(args, result)
+
+
+def test_failed_trial_factors_shrink_step_instead_of_failing_fit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A numerically bad trial is rejected while the restart remains usable."""
+    original = batched_fitting._isolated_local_vi_state
+    calls = 0
+
+    def fail_first_trial(*args: Any, **kwargs: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        state, failed = original(*args, **kwargs)
+        if calls == 2:
+            failed[:] = True
+        return state, failed
+
+    monkeypatch.setattr(batched_fitting, "_isolated_local_vi_state", fail_first_trial)
+    result = batched_dsc_vi_fit(**inputs(), n_iterations=4)
+    assert calls >= 3
+    assert result.failure_reasons == (None,)
+    assert np.isfinite(result.params["cbf"][0])
+
+
+def test_current_factor_failure_isolated_to_one_restart(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A bad current state does not discard another restart in the same batch."""
+    args = inputs()
+    args["tissue_curves"] = np.repeat(args["tissue_curves"], 2, axis=0)
+    args["initial_means_transformed"] = np.array([[0.0], [0.1]])
+    original = batched_fitting._isolated_local_vi_state
+    isolated = False
+
+    def fail_one(*values: Any, **kwargs: Any) -> Any:
+        nonlocal isolated
+        state, failed = original(*values, **kwargs)
+        if not isolated and len(failed) == 2:
+            failed[0] = True
+            isolated = True
+        return state, failed
+
+    monkeypatch.setattr(batched_fitting, "_isolated_local_vi_state", fail_one)
+    result = batched_dsc_vi_fit(**args, n_iterations=4)
+    assert result.failure_reasons == ("local_factor_failed", None)
+    assert np.isnan(result.params["cbf"][0])
+    assert np.isfinite(result.params["cbf"][1])
+
+
+def test_spatial_final_factor_failure_isolated_to_one_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SVB reports a failed final local factor without aborting its field."""
+    def fail(*args: Any, **kwargs: Any) -> None:
+        raise LocalVIFactorError("forced spatial row failure")
+
+    monkeypatch.setattr(batched_fitting, "local_vi_state", fail)
+    args = inputs()
+    result = batched_dsc_vi_fit(
+        **args, n_iterations_override=1,
+        spatial_prec_diag=np.ones((1, 1)), spatial_eta=np.zeros((1, 1)),
+        spatial_replaces_parameter_prior=True,
+        spatial_parameter_mask=np.array([True]),
+    )
+    assert result.failure_reasons == ("local_factor_failed",)
+    assert result.full_posterior is not None
+    assert np.isfinite(result.full_posterior.mean[0]).all()
 
 
 def test_linear_fixed_point_remains_converged_with_consistent_factors() -> None:

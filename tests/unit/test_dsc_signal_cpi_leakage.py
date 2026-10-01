@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 from scipy.integrate import cumulative_trapezoid
 
-from pmriprep.models.dsc.local_vi import local_vi_state
+from pmriprep.models.dsc.local_vi import LocalVIFactorError, local_vi_state
 from pmriprep.models.dsc.signal_cpi import connection, leakage, spatial
 from pmriprep.models.dsc.signal_cpi.geometry import Model
 from pmriprep.models.dsc.signal_cpi.policy import model_for
@@ -77,6 +77,36 @@ def test_automatic_count_and_voxel_dispatch(acquisition: Any, family: Model, mon
     assert [r.flat_index for r in connection.fit_voxels(prepared, [1, 0])] == [1, 0]
     assert seen == [(prepared.decision.selected, .01, family),
                     (prepared.decision.selected, -.01, family)]
+
+
+def test_local_factor_failure_requests_voxel_fallback(
+    acquisition: Any, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A data-dependent local SVD failure cannot abort the whole CPI map."""
+    prepared = connection.prepare_acquisition(*acquisition)
+
+    def fail(*args: Any, **kwargs: Any) -> None:
+        raise LocalVIFactorError("forced local factor failure")
+
+    monkeypatch.setattr(connection, "fit_with_prior", fail)
+    output = list(connection.fit_voxels(prepared, [0]))[0]
+    assert output.status == "fallback_requested"
+    assert output.reasons == ("local_factor_failed",)
+    assert output.bsw_k2 == pytest.approx(-0.01)
+
+
+def test_unexpected_cpi_error_still_propagates(
+    acquisition: Any, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fallback handling must not conceal programming errors."""
+    prepared = connection.prepare_acquisition(*acquisition)
+
+    def fail(*args: Any, **kwargs: Any) -> None:
+        raise TypeError("broken CPI interface")
+
+    monkeypatch.setattr(connection, "fit_with_prior", fail)
+    with pytest.raises(TypeError, match="broken CPI interface"):
+        list(connection.fit_voxels(prepared, [0]))
 
 
 def test_gamma_count_reserves_two_additional_coordinates(acquisition: Any) -> None:

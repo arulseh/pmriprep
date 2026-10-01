@@ -2514,8 +2514,13 @@ class ComputeDSCMaps(BaseInterface):
             admissible = (
                 True if fit_admissible is None else bool(fit_admissible[i])
             )
+            failure_reasons = getattr(batched_result, "failure_reasons", ())
+            numerical_failure = (
+                i < len(failure_reasons) and failure_reasons[i] is not None
+            )
             out["needs_fallback"] = (
                 not admissible
+                or numerical_failure
                 or not np.isfinite(r_squared)
                 or r_squared < 0.0
                 or not _parametric_outputs_are_finite(out)

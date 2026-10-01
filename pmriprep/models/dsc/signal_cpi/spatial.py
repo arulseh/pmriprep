@@ -57,6 +57,9 @@ def _join_results(rows: list[DSCBatchedFitResult]) -> DSCBatchedFitResult:
         posterior_cov_diag=array("posterior_cov_diag"),
         credible_interval_lower=mapping("credible_interval_lower"),
         credible_interval_upper=mapping("credible_interval_upper"), full_posterior=posterior,
+        failure_reasons=tuple(
+            reason for row in rows for reason in row.failure_reasons
+        ),
     )
 
 
@@ -117,6 +120,38 @@ class RowPriorDispatcher:
                              return_full_posterior=True, return_posteriors=True,
                              save_fitted_curves=True)
             result = batched_dsc_vi_fit(**arguments)
+            failure_reason = result.failure_reasons[0] if result.failure_reasons else None
+            if failure_reason is not None:
+                carry_mean = arguments.get("initial_means_transformed")
+                if carry_mean is None:
+                    carry_mean = arguments.get("nlls_seeds")
+                if carry_mean is None:
+                    carry_mean = self.means[i:i + 1]
+                carry_cov = arguments.get("initial_cov_diag")
+                if carry_cov is None:
+                    carry_cov = self.stds[i:i + 1] ** 2
+                carry_mean = np.asarray(carry_mean, dtype=np.float64)
+                carry_cov = np.asarray(carry_cov, dtype=np.float64)
+                posterior = result.full_posterior
+                if posterior is not None:
+                    noise_shape = np.where(
+                        np.isfinite(posterior.noise_shape), posterior.noise_shape, 1.0,
+                    )
+                    noise_scale = np.where(
+                        np.isfinite(posterior.noise_scale), posterior.noise_scale, 1.0,
+                    )
+                    posterior = DSCVIPosterior(
+                        carry_mean.copy(),
+                        np.asarray([np.diag(carry_cov[0])], dtype=np.float64),
+                        noise_shape,
+                        noise_scale,
+                    )
+                result = replace(
+                    result,
+                    posterior_means_transformed=carry_mean.copy(),
+                    posterior_cov_diag=carry_cov.copy(),
+                    full_posterior=posterior,
+                )
             precision, eta = _build_vi_update_prior_terms(
                 np.diag(1 / self.stds[i]**2), self.means[i], arguments.get("mono_prec"),
                 arguments.get("mono_eta"),
@@ -221,6 +256,14 @@ def fit_spatial_voxels(
         """Assess the actual conditional local state before releasing its covariance."""
         posterior, prediction = result.full_posterior, result.fitted_curves
         assert posterior is not None and prediction is not None
+        failure_reason = result.failure_reasons[0] if result.failure_reasons else None
+        if failure_reason is not None:
+            outputs[indices[i]] = GuidedVoxel(
+                indices[i], "fallback_requested", (failure_reason,),
+                bsw_k2=float(a.k2[indices[i]]), family=a.family,
+                leakage_method=a.leakage_method,
+            )
+            return
         jacobian = evaluator.jacobians(posterior.mean)
         fit, assessment, leakage = readout_state(
             model, a.signals[indices[i]], posterior.mean[0], posterior.covariance[0],

@@ -1,5 +1,6 @@
 """Row-specific leakage priors through the shared spatial-VB schedule."""
 
+from dataclasses import replace
 from typing import Any
 
 import numpy as np
@@ -10,7 +11,7 @@ from pmriprep.models.dsc.batched_fitting import DSCBatchedFitResult, batched_dsc
 from pmriprep.models.dsc.signal_cpi import spatial
 from pmriprep.models.dsc.signal_cpi.probability import GaussianPrior
 from pmriprep.models.dsc.spatial_vb import batched_dsc_spatial_vi_fit
-from pmriprep.models.dsc.vi_adapter import DSCVIModelAdapter
+from pmriprep.models.dsc.vi_adapter import DSCVIModelAdapter, DSCVIPosterior
 
 
 def linear_arguments() -> dict[str, Any]:
@@ -105,3 +106,55 @@ def test_no_edges_match_identical_vi_schedule() -> None:
     assert actual.full_posterior is not None and joined.full_posterior is not None
     for name in ("mean", "covariance", "noise_shape", "noise_scale"):
         np.testing.assert_array_equal(getattr(actual.full_posterior, name), getattr(joined.full_posterior, name))
+
+
+def test_join_preserves_row_failure_reasons() -> None:
+    """Spatial row assembly cannot discard numerical-failure provenance."""
+    args = linear_arguments()
+    rows = []
+    for i, reason in enumerate(("local_factor_failed", None, None)):
+        row_args = args | {
+            "tissue_curves": args["tissue_curves"][i:i + 1],
+            "nlls_seeds": args["nlls_seeds"][i:i + 1],
+        }
+        result = batched_dsc_vi_fit(**row_args)
+        rows.append(replace(result, failure_reasons=(reason,)))
+    assert spatial._join_results(rows).failure_reasons == (
+        "local_factor_failed", None, None,
+    )
+
+
+def test_dispatcher_carries_finite_state_past_failed_spatial_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A rejected SVB row cannot poison later spatial sweeps with NaNs."""
+    args = linear_arguments()
+    row_args = args | {
+        "tissue_curves": args["tissue_curves"][:1],
+        "nlls_seeds": args["nlls_seeds"][:1],
+    }
+    failed = batched_dsc_vi_fit(**row_args)
+    assert failed.full_posterior is not None
+    failed = replace(
+        failed,
+        posterior_means_transformed=np.full((1, 2), np.nan),
+        posterior_cov_diag=np.full((1, 2), np.nan),
+        full_posterior=DSCVIPosterior(
+            np.full((1, 2), np.nan), np.full((1, 2, 2), np.nan),
+            np.array([np.nan]), np.array([np.nan]),
+        ),
+        failure_reasons=("local_factor_failed",),
+    )
+    monkeypatch.setattr(spatial, "batched_dsc_vi_fit", lambda **kwargs: failed)
+    dispatcher = spatial.RowPriorDispatcher(
+        np.array([[1.0, 1.0]]), np.array([[2.0, 2.0]]),
+        keep_full_posterior=True,
+    )
+    result = dispatcher(**row_args)
+    assert result.failure_reasons == ("local_factor_failed",)
+    assert result.posterior_means_transformed is not None
+    assert result.posterior_cov_diag is not None
+    assert np.isfinite(result.posterior_means_transformed).all()
+    assert np.isfinite(result.posterior_cov_diag).all()
+    assert result.full_posterior is not None
+    assert np.isfinite(result.full_posterior.covariance).all()

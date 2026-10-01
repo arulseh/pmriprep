@@ -8,6 +8,7 @@ from typing import Iterator, Literal, Sequence, cast
 import numpy as np
 from scipy.integrate import cumulative_trapezoid
 
+from pmriprep.models.dsc.local_vi import LocalVIFactorError
 from pmriprep.utils.bsw_guidance import BSWGuidance, BSWGuidanceStatus
 
 from .leakage import (
@@ -402,15 +403,26 @@ def fit_voxels(
                               leakage_method=a.leakage_method)
             continue
         assert a.decision is not None
-        if a.leakage_method == "none":
-            result = fit_without_leakage(a.signals[i], a.aif, a.time, a.te, a.decision.selected,
-                                        weights=a.weights, family=a.family, infer_delay=a.infer_delay,
-                                        sloppy=a.sloppy)
-        else:
-            assert a.reference is not None
-            result = fit_with_prior(a.signals[i], a.aif, a.time, a.te, a.decision.selected,
-                                    a.reference, BSWPrior(float(a.k2[i]), float(a.k2_sd[i])),
-                                    weights=a.weights, family=a.family, infer_delay=a.infer_delay,
-                                    sloppy=a.sloppy)
+        try:
+            if a.leakage_method == "none":
+                result = fit_without_leakage(
+                    a.signals[i], a.aif, a.time, a.te, a.decision.selected,
+                    weights=a.weights, family=a.family, infer_delay=a.infer_delay,
+                    sloppy=a.sloppy,
+                )
+            else:
+                assert a.reference is not None
+                result = fit_with_prior(
+                    a.signals[i], a.aif, a.time, a.te, a.decision.selected,
+                    a.reference, BSWPrior(float(a.k2[i]), float(a.k2_sd[i])),
+                    weights=a.weights, family=a.family, infer_delay=a.infer_delay,
+                    sloppy=a.sloppy,
+                )
+        except LocalVIFactorError:
+            yield GuidedVoxel(
+                i, "fallback_requested", ("local_factor_failed",),
+                bsw_k2=float(a.k2[i]), leakage_method=a.leakage_method,
+            )
+            continue
         row = classify_result(i, float(a.k2[i]), result)
         yield replace(row, family=a.family)

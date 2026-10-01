@@ -9,6 +9,10 @@ from scipy.special import digamma, gammaln
 Array = npt.NDArray[np.float64]
 
 
+class LocalVIFactorError(RuntimeError):
+    """Raised when numerical linear algebra cannot form local VI factors."""
+
+
 @dataclass(frozen=True)
 class LocalVIState:
     """Local covariance, Gamma shape/scale, and normalized variational score."""
@@ -101,21 +105,26 @@ def local_vi_state(
     linearization, not exact nonlinear evidence or a truncated posterior.
     """
     if (
-        not all(
-            np.all(np.isfinite(x))
-            for x in (mean, jacobian, residual, prior_mean, prior_precision, weights)
-        )
+        not all(np.all(np.isfinite(x)) for x in (prior_mean, prior_precision, weights))
         or np.any(weights < 0)
         or np.sum(weights) <= 0
     ):
-        raise ValueError("finite local factors and nonnegative weights required")
+        raise ValueError("finite prior factors and nonnegative weights required")
+    if not all(np.all(np.isfinite(x)) for x in (mean, jacobian, residual)):
+        raise LocalVIFactorError("local VI mean, Jacobian, or residual is non-finite")
     n_parameters = mean.shape[1]
     root_precision = np.linalg.cholesky(prior_precision)
     prior_root = np.linalg.solve(root_precision.T, np.eye(n_parameters))
     weighted = jacobian * np.sqrt(weights)[None, :, None]
-    _, singular, vectors = np.linalg.svd(
-        weighted @ prior_root, full_matrices=jacobian.shape[1] < n_parameters
-    )
+    whitened = weighted @ prior_root
+    if not np.all(np.isfinite(whitened)):
+        raise LocalVIFactorError("local VI prior-whitened Jacobian is non-finite")
+    try:
+        _, singular, vectors = np.linalg.svd(
+            whitened, full_matrices=jacobian.shape[1] < n_parameters
+        )
+    except np.linalg.LinAlgError as exc:
+        raise LocalVIFactorError("local VI singular-value decomposition failed") from exc
     eigenvalues = np.zeros((len(mean), n_parameters))
     eigenvalues[:, : singular.shape[1]] = singular**2
     shape0, rate0 = 1e-6, 1e-6
@@ -139,7 +148,7 @@ def local_vi_state(
         if np.all(upper - lower <= 1e-10 * np.maximum(precision, np.finfo(float).tiny)):
             break
     else:
-        raise RuntimeError("local noise/covariance factors did not settle")
+        raise LocalVIFactorError("local noise/covariance factors did not settle")
     precision = 0.5 * (lower + upper)
     denominator = 1 + precision[:, None] * eigenvalues
     basis = prior_root @ np.swapaxes(vectors, 1, 2)

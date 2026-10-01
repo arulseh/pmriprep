@@ -31,7 +31,12 @@ from pmriprep.models.dsc.vi_adapter import (
     DSCVIPosterior,
     feasible_mean_update,
 )
-from pmriprep.models.dsc.local_vi import conditional_mean_gain, local_vi_state
+from pmriprep.models.dsc.local_vi import (
+    LocalVIFactorError,
+    LocalVIState,
+    conditional_mean_gain,
+    local_vi_state,
+)
 from pmriprep.utils.dsc_constants import (
     EPSILON_CONCENTRATION,
 )
@@ -44,6 +49,45 @@ logger = logging.getLogger("nipype.interface")
 #: below any physical scale so it only fires on truly degenerate inputs.
 #: Not a physics constant.
 _EPSILON_NUMERICAL: Final[float] = 1e-30
+
+
+def _isolated_local_vi_state(
+    mean: npt.NDArray[np.float64],
+    jacobian: npt.NDArray[np.float64],
+    residual: npt.NDArray[np.float64],
+    prior_mean: npt.NDArray[np.float64],
+    prior_precision: npt.NDArray[np.float64],
+    weights: npt.NDArray[np.float64],
+) -> tuple[LocalVIState, npt.NDArray[np.bool_]]:
+    """Settle local factors while identifying only numerically failed rows."""
+    try:
+        return (
+            local_vi_state(mean, jacobian, residual, prior_mean, prior_precision, weights),
+            np.zeros(len(mean), dtype=bool),
+        )
+    except LocalVIFactorError:
+        pass
+
+    covariance = np.full((len(mean), mean.shape[1], mean.shape[1]), np.nan)
+    scale = np.full(len(mean), np.nan)
+    score = np.full(len(mean), np.nan)
+    failed = np.zeros(len(mean), dtype=bool)
+    shape = 1e-6 + float(np.sum(weights)) / 2
+    for row in range(len(mean)):
+        row_slice = slice(row, row + 1)
+        try:
+            state = local_vi_state(
+                mean[row_slice], jacobian[row_slice], residual[row_slice],
+                prior_mean, prior_precision, weights,
+            )
+        except LocalVIFactorError:
+            failed[row] = True
+            continue
+        covariance[row] = state.covariance[0]
+        scale[row] = state.scale[0]
+        score[row] = state.score[0]
+        shape = state.shape
+    return LocalVIState(covariance, shape, scale, score), failed
 
 
 def _build_vi_update_prior_terms(
@@ -1148,10 +1192,23 @@ def batched_dsc_vi_fit(
         JtWJ, JtWk = _assemble_JtWJ(J_columns, k_res, w)
 
         if _consistent_mode:
-            current_state = local_vi_state(
+            current_state, factor_failed = _isolated_local_vi_state(
                 m_a, np.stack(J_columns, axis=-1), k_res,
                 local_prior_mean, update_prior_prec, w,
             )
+            if np.any(factor_failed):
+                failed_indices = a_idx[factor_failed]
+                for failed_index in failed_indices:
+                    failure_reasons[int(failed_index)] = "local_factor_failed"
+                active[failed_indices] = False
+                converged[failed_indices] = False
+                logger.debug(
+                    "DSC VI local factors failed for %d fit row(s)",
+                    len(failed_indices),
+                )
+                # Retry the surviving rows together on the next iteration so
+                # every downstream array remains aligned to the active set.
+                continue
             tau_a = current_state.shape * current_state.scale
             best_fe[a_idx] = current_state.score
             best_m[a_idx] = m_a
@@ -1265,20 +1322,25 @@ def batched_dsc_vi_fit(
                     step[pending] *= 0.5
                     continue
                 columns = _jacobian_columns(trial[improves], natural[improves], prediction[improves])
-                trial_state = local_vi_state(
+                trial_state, factor_failed = _isolated_local_vi_state(
                     trial[improves], np.stack(columns, axis=-1), y_a[local] - prediction[improves],
                     local_prior_mean, update_prior_prec, w,
                 )
-                global_indices = a_idx[local]
-                if len(local):
-                    best_m[global_indices] = trial[improves]
-                    best_fe[global_indices] = trial_state.score
-                    best_cov_diag[global_indices] = np.diagonal(trial_state.covariance, axis1=1, axis2=2)
+                settled = ~factor_failed
+                settled_local = local[settled]
+                global_indices = a_idx[settled_local]
+                if len(settled_local):
+                    best_m[global_indices] = trial[improves][settled]
+                    best_fe[global_indices] = trial_state.score[settled]
+                    best_cov_diag[global_indices] = np.diagonal(
+                        trial_state.covariance[settled], axis1=1, axis2=2,
+                    )
                     if best_cov_full is not None:
-                        best_cov_full[global_indices] = trial_state.covariance
+                        best_cov_full[global_indices] = trial_state.covariance[settled]
                     best_c[global_indices] = trial_state.shape
-                    best_s[global_indices] = trial_state.scale
-                    accepted[local] = True
+                    best_s[global_indices] = trial_state.scale[settled]
+                    accepted[settled_local] = True
+                step[local[factor_failed]] *= 0.5
                 step[pending[~improves]] *= 0.5
             newly_converged = accepted & (full_param_change < 1e-3)
             converged[a_idx[newly_converged]] = True
@@ -1542,10 +1604,19 @@ def batched_dsc_vi_fit(
                 np.linalg.solve(effective_precision, effective_information), dtype=np.float64
             )
             row_slice = slice(spatial_row, spatial_row + 1)
-            state = local_vi_state(
-                best_m[row_slice], jacobian[row_slice], y[row_slice] - prediction[row_slice],
-                effective_mean, effective_precision, w,
-            )
+            try:
+                state = local_vi_state(
+                    best_m[row_slice], jacobian[row_slice], y[row_slice] - prediction[row_slice],
+                    effective_mean, effective_precision, w,
+                )
+            except LocalVIFactorError:
+                failure_reasons[spatial_row] = "local_factor_failed"
+                converged[spatial_row] = False
+                logger.debug(
+                    "DSC spatial VI local factors failed for fit row %d",
+                    int(valid_idx[spatial_row]),
+                )
+                continue
             best_cov_diag[spatial_row] = np.diag(state.covariance[0])
             if best_cov_full is not None:
                 best_cov_full[spatial_row] = state.covariance[0]
@@ -1592,7 +1663,7 @@ def batched_dsc_vi_fit(
     out_converged[valid_idx] = converged
     failed_valid = np.array([reason is not None for reason in failure_reasons], dtype=bool)
     failed_output = valid_idx[failed_valid]
-    if len(failed_output):
+    if len(failed_output) and not _spatial_mode:
         for name in fitting_param_names:
             out_params[name][failed_output] = np.nan
             out_uncertainties[name][failed_output] = np.nan
@@ -1606,7 +1677,8 @@ def batched_dsc_vi_fit(
     if save_fitted_curves:
         out_fitted = np.zeros((n_voxels, n_obs), dtype=np.float64)
         out_fitted[valid_idx] = final_pred
-        out_fitted[failed_output] = np.nan
+        if not _spatial_mode:
+            out_fitted[failed_output] = np.nan
 
     out_post_means = None
     out_post_cov = None
@@ -1615,8 +1687,9 @@ def batched_dsc_vi_fit(
         out_post_cov = np.zeros((n_voxels, n_params), dtype=np.float64)
         out_post_means[valid_idx] = best_m
         out_post_cov[valid_idx] = best_cov_diag
-        out_post_means[failed_output] = np.nan
-        out_post_cov[failed_output] = np.nan
+        if not _spatial_mode:
+            out_post_means[failed_output] = np.nan
+            out_post_cov[failed_output] = np.nan
 
     full_posterior = None
     if best_cov_full is not None:
@@ -1628,10 +1701,11 @@ def batched_dsc_vi_fit(
         full_cov[valid_idx] = best_cov_full
         full_shape[valid_idx] = best_c
         full_scale[valid_idx] = best_s
-        full_mean[failed_output] = np.nan
-        full_cov[failed_output] = np.nan
-        full_shape[failed_output] = np.nan
-        full_scale[failed_output] = np.nan
+        if not _spatial_mode:
+            full_mean[failed_output] = np.nan
+            full_cov[failed_output] = np.nan
+            full_shape[failed_output] = np.nan
+            full_scale[failed_output] = np.nan
         full_posterior = DSCVIPosterior(full_mean, full_cov, full_shape, full_scale)
 
     out_failure_reasons: list[str | None] = [None] * n_voxels

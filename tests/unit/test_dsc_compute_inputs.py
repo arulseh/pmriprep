@@ -171,6 +171,7 @@ def test_batched_parametric_fallback_uses_minimum_adequacy_rule() -> None:
         r_squared=np.array([-0.01, 0.0, 0.2, np.nan, 0.9]),
         converged=np.ones(n_voxels, dtype=bool),
         fitted_curves=np.ones((n_voxels, 6), dtype=np.float64),
+        failure_reasons=(None,) * n_voxels,
     )
     coords = (
         np.arange(n_voxels),
@@ -206,6 +207,18 @@ def test_batched_parametric_fallback_uses_minimum_adequacy_rule() -> None:
         inference="map",
     )
     assert map_outputs[2]["needs_fallback"] is True
+
+    result.converged[2] = True
+    result.failure_reasons = (None, None, "bounded_mean_failed", None, None)
+    svb_outputs = ComputeDSCMaps._batched_result_to_voxel_dicts(
+        None,
+        result,
+        coords,
+        "vascular",
+        n_voxels,
+        inference="svb",
+    )
+    assert svb_outputs[2]["needs_fallback"] is True
 
 
 def test_parametric_fit_health_uses_admissible_denominator(
