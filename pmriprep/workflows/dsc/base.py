@@ -57,7 +57,6 @@ from pmriprep.workflows.dsc._helpers import (  # noqa: F401
 )
 
 
-
 def init_dsc_concentration_aif_wf(
     *,
     baseline_frames: int,
@@ -716,12 +715,10 @@ def init_dsc_deconvolution_wf(
         Leakage (blood-brain-barrier) maps.
     out_cnr, out_tsnr
         Quality maps.
-    out_cth
-        Capillary transit-time heterogeneity (vascular method only).
     out_cbf_std
         Conditional CBF uncertainty map (parametric methods only).
     out_parametric_r2, out_fallback_mask
-        Parametric-fit diagnostics (CPI / vascular only).
+        Parametric-fit diagnostics (CPI only).
     out_qc_fit_data, qc_metrics
         Deconvolution QC-fit data and the QC ``qc_metrics`` dict.
     """
@@ -763,7 +760,6 @@ def init_dsc_deconvolution_wf(
                 "out_auc_diff",
                 "out_k2",
                 "out_tsnr",
-                "out_cth",
                 "out_cbf_std",
                 "out_parametric_r2",
                 "out_fallback_mask",
@@ -814,7 +810,6 @@ def init_dsc_deconvolution_wf(
             ("out_auc_diff", "out_auc_diff"),
             ("out_k2", "out_k2"),
             ("out_tsnr", "out_tsnr"),
-            ("out_cth", "out_cth"),
             ("out_cbf_std", "out_cbf_std"),
             ("out_parametric_r2", "out_parametric_r2"),
             ("out_fallback_mask", "out_fallback_mask"),
@@ -1157,7 +1152,7 @@ def init_dsc_lesion_stats_wf(
     )
     timing_map_name = (
         "arrival_delay"
-        if deconvolution_method in {"cpi", "vascular"}
+        if deconvolution_method == "cpi"
         else "tmax"
     )
     for stats_node in (lesion_stats, roi_stats, user_lesion_stats):
@@ -1401,7 +1396,7 @@ def init_dsc_qc_wf(
     dsc_param_maps_qc.inputs.session_id = session_id or ""
     dsc_param_maps_qc.inputs.timing_label = (
         "Arrival delay"
-        if deconvolution_method in {"cpi", "vascular"}
+        if deconvolution_method == "cpi"
         else "Tmax"
     )
 
@@ -1799,7 +1794,7 @@ def init_dsc_preproc_wf(
     2. Signal-to-concentration conversion (ΔR2*)
     3. AIF detection (atlas-based → automatic → synthetic fallback)
     4. Leakage correction and preload-provenance recording
-    5. Deconvolution (method from config: sSVD, oSVD, tikhonov, vascular, cpi)
+    5. Deconvolution (method from config: sSVD, oSVD, tikhonov, cpi)
     6. Perfusion parameter extraction (CBF, CBV, MTT, Tmax, PSR)
     7. Registration to T1w space
     8. CBV normalization (if NAWM mask available)
@@ -1880,11 +1875,9 @@ def init_dsc_preproc_wf(
                 "cnr_map",
                 # Leakage correction
                 "k2_map",
-                # Vascular-model physiological derivative (optional)
-                "cth_map",
                 # Conditional parametric CBF uncertainty map (optional)
                 "cbf_std_map",
-                # Parametric-fit diagnostics (CPI/Vascular only)
+                # Parametric-fit diagnostics (CPI only)
                 "parametric_r2_map",
                 "fallback_mask",
                 # Relative maps (always produced)
@@ -2074,7 +2067,6 @@ def init_dsc_preproc_wf(
         cpi_fallback=config.cpi_fallback,
         inference=config.inference,
         leakage_method=config.leakage_method,
-        mcmc_samples=config.mcmc_samples,
         n_procs=config.num_processes if config.num_processes > 0 else 1,
         # baseline_frames wired dynamically from conc_aif_wf.outputnode.aif_baseline_frames
         tail_frames=10,
@@ -2596,15 +2588,11 @@ def init_dsc_preproc_wf(
         (deconvolution_wf, outputnode, [
             ("outputnode.out_k2", "k2_map"),
         ]),
-        # Vascular-model CTH (optional — undefined for non-vascular methods)
-        (deconvolution_wf, outputnode, [
-            ("outputnode.out_cth", "cth_map"),
-        ]),
-        # Conditional CBF uncertainty (only for parametric methods: cpi, vascular)
+        # Conditional CBF uncertainty (only for CPI)
         (deconvolution_wf, outputnode, [
             ("outputnode.out_cbf_std", "cbf_std_map"),
         ]),
-        # Parametric-fit diagnostics (CPI/Vascular only;
+        # Parametric-fit diagnostics (CPI only;
         # undefined for SVD methods)
         (deconvolution_wf, outputnode, [
             ("outputnode.out_parametric_r2", "parametric_r2_map"),

@@ -9,11 +9,8 @@ from typing import Any, Tuple
 import numpy as np
 import numpy.typing as npt
 import pytest
+from scipy.special import gammainc
 
-from pmriprep.models.bayesian_utils import build_priors_from_params
-from pmriprep.models.dsc.batched_fitting import batched_dsc_map_fit
-from pmriprep.models.dsc.bayesian import fit_dsc_model
-from pmriprep.models.dsc.vascular import VascularModel
 from pmriprep.utils.dsc_constants import DEFAULT_LAMBDA_RANGE
 from pmriprep.utils.dsc_deconvolution import (
     _build_modified_first_derivative_matrix,
@@ -525,7 +522,7 @@ class TestTikhonovRecovery:
     directly in ``test_modified_penalty_beats_l1_on_dispersed``.
     """
 
-    # (cbf, alpha, beta) — survival-function residue (Vascular model); cbf is
+    # (cbf, alpha, beta) — gamma survival-function residue; cbf is
     # the un-dispersed peak. The dispersed ground truth is recomputed per case.
     GAMMA_PARAMS = [
         pytest.param(0.10, 3.0, 1.5, id="normal_gm"),
@@ -568,9 +565,7 @@ class TestTikhonovRecovery:
             peak_delta_r2=40.0,
         )
         dt = 1.5
-        residue = VascularModel().residue_function(
-            [cbf, alpha, beta, 0.0], time_sec
-        )
+        residue = cbf * (1.0 - gammainc(alpha, time_sec / beta))
         # Dispersed forward: tissue from the VTF-dispersed AIF; deconvolve with
         # the un-dispersed AIF (the production mismatch that makes the effective
         # residue rise from zero).
@@ -627,9 +622,7 @@ class TestTikhonovRecovery:
             (0.10, 3.0, 1.5), (0.04, 4.0, 1.5),
             (0.16, 2.0, 3.0), (0.13, 3.0, 4.0),
         ]:
-            residue = VascularModel().residue_function(
-                [cbf, alpha, beta, 0.0], time_sec
-            )
+            residue = cbf * (1.0 - gammainc(alpha, time_sec / beta))
             tissue = dsc_forward_model_volterra(aif_disp, residue, dt)
             tissue = add_gaussian_noise(
                 tissue, 0.02 * float(np.max(np.abs(tissue))), seed=7
@@ -649,258 +642,6 @@ class TestTikhonovRecovery:
             f"modified penalty lost to pure L₁ on {losses}/4 dispersed "
             f"tissues at 2% noise"
         )
-
-
-# =============================================================================
-# Vascular Model Recovery
-# =============================================================================
-
-# (cbf, alpha, beta, delay)
-VASCULAR_PARAMS = [
-    pytest.param(0.10, 3.0, 1.5, 0.0, id="normal_gm"),
-    pytest.param(0.04, 4.0, 1.5, 0.0, id="normal_wm"),
-    pytest.param(0.16, 2.0, 3.0, 0.0, id="tumor"),
-    pytest.param(0.02, 3.5, 2.0, 0.0, id="low_flow"),
-    pytest.param(0.10, 3.0, 1.5, 3.0, id="delayed"),
-]
-
-# (noise_fraction, cbf_tol, mtt_tol)
-# CBF and MTT tolerances (relative). MAP uses informative priors, so
-# at high noise the prior pulls low-flow estimates toward prior mean.
-# High-noise tolerances cover normal_wm (~25-35% error).
-VASCULAR_NOISE_LEVELS = [
-    pytest.param(0.0, 0.07, 0.08, id="zero"),
-    pytest.param(0.02, 0.29, 0.37, id="low"),
-    pytest.param(0.05, 0.42, 0.65, id="medium"),
-    pytest.param(0.10, 0.54, 0.92, id="high"),
-]
-
-
-def _make_vascular_test_data(
-    cbf: float,
-    alpha: float,
-    beta: float,
-    delay: float,
-    noise_frac: float = 0.0,
-    n_timepoints: int = 60,
-    dt_sec: float = 1.5,
-    baseline_frames: int = 10,
-    seed: int = 42,
-) -> Tuple[
-    npt.NDArray[np.floating],
-    npt.NDArray[np.floating],
-    npt.NDArray[np.floating],
-]:
-    """Generate vascular model test data with known parameters.
-
-    Uses VascularModel.tissue_curve() for data generation (FFT convolution),
-    ensuring a true round-trip test with the MAP fitter.
-
-    Parameters
-    ----------
-    cbf : float
-        Cerebral blood flow (mL/100g/min).
-    alpha : float
-        Gamma shape parameter.
-    beta : float
-        Gamma scale parameter (seconds).
-    delay : float
-        Bolus arrival delay (seconds).
-    noise_frac : float
-        Noise as fraction of peak concentration.
-    n_timepoints : int
-        Number of time points.
-    dt_sec : float
-        Time step in seconds.
-    baseline_frames : int
-        Number of pre-bolus baseline frames.
-    seed : int
-        Random seed for reproducibility.
-
-    Returns
-    -------
-    Tuple[npt.NDArray[np.floating], npt.NDArray[np.floating], npt.NDArray[np.floating]]
-        Tuple of (tissue_concentration, aif, time_sec).
-    """
-    aif, time_sec = generate_dsc_aif_dro(
-        n_timepoints=n_timepoints,
-        dt_sec=dt_sec,
-        baseline_frames=baseline_frames,
-        peak_delta_r2=40.0,
-    )
-
-    model = VascularModel()
-    tissue = model.tissue_curve([cbf, alpha, beta, delay], aif, time_sec)
-
-    if noise_frac > 0:
-        peak = float(np.max(np.abs(tissue)))
-        if peak > 0:
-            tissue = add_gaussian_noise(tissue, noise_frac * peak, seed=seed)
-
-    return tissue, aif, time_sec
-
-
-class TestVascularRecovery:
-    """Test vascular (gamma-variate) model parameter recovery via MAP.
-
-    The vascular model uses a gamma distribution of transit times
-    (Mouridsen et al., 2006). We test recovery of CBF and MTT (= alpha * beta).
-    Alpha and beta are coupled and NOT asserted separately.
-
-    For the delayed parameter combination, we also check delay recovery.
-    """
-
-    @pytest.mark.parametrize("noise_frac,cbf_tol,mtt_tol", VASCULAR_NOISE_LEVELS)
-    @pytest.mark.parametrize("cbf,alpha,beta,delay", VASCULAR_PARAMS)
-    def test_vascular(
-        self,
-        cbf: float,
-        alpha: float,
-        beta: float,
-        delay: float,
-        noise_frac: float,
-        cbf_tol: float,
-        mtt_tol: float,
-    ) -> None:
-        """Test vascular model recovery of CBF and MTT."""
-        tissue, aif, time_sec = _make_vascular_test_data(
-            cbf, alpha, beta, delay, noise_frac
-        )
-
-        model = VascularModel()
-        # Provide noise_std to avoid zero-noise baseline estimation (std=0
-        # gets clamped to 1e-7, making the likelihood overwhelm gradients).
-        # Use 1% of peak as a reasonable noise floor for the optimizer.
-        peak = float(np.max(np.abs(tissue)))
-        noise_std = max(noise_frac * peak, 0.01 * peak) if peak > 0 else 1.0
-        result = fit_dsc_model(
-            model, tissue, aif, time_sec, method="map",
-            compute_uncertainties=False, noise_std=noise_std,
-        )
-        assert result is not None, "Vascular MAP fit returned None"
-
-        # Extract CBF directly from result
-        recovered_cbf = result.parameters["cbf"]
-        _assert_param_recovery(recovered_cbf, cbf, cbf_tol, param_name="CBF")
-
-        # Derive MTT from fitted alpha and beta
-        fitted_params = model.dict_to_params(result.parameters)
-        derived = model.compute_derived_parameters(fitted_params)
-        recovered_mtt = derived["mtt"]
-        true_mtt = alpha * beta
-        _assert_param_recovery(recovered_mtt, true_mtt, mtt_tol, param_name="MTT")
-
-        # For delayed combo, also check delay recovery
-        if delay > 0:
-            dt = float(time_sec[1] - time_sec[0])
-            recovered_delay = result.parameters["delay"]
-            assert abs(recovered_delay - delay) < 1.5 * dt, (
-                f"Delay: |{recovered_delay:.3f} - {delay:.3f}| = "
-                f"{abs(recovered_delay - delay):.3f} >= {1.5 * dt:.3f}"
-            )
-
-
-class TestVascularNLLSRecovery:
-    """Verify priors-off vascular recovery in the identifiable fit space."""
-
-    @pytest.mark.parametrize(
-        "cbf,alpha,beta,delay",
-        [
-            (0.03, 2.0, 2.5, -1.0),
-            (0.06, 3.0, 2.0, 0.0),
-            (0.10, 5.0, 1.6, 1.5),
-        ],
-    )
-    @pytest.mark.parametrize("noise_frac", [0.0, 0.02])
-    def test_vascular_nlls(
-        self,
-        cbf: float,
-        alpha: float,
-        beta: float,
-        delay: float,
-        noise_frac: float,
-    ) -> None:
-        """NLLS recovers CBF and MTT without replacing beta by MTT."""
-        tissue, aif, time_sec = _make_vascular_test_data(
-            cbf, alpha, beta, delay, noise_frac
-        )
-
-        result = fit_dsc_model(
-            VascularModel(), tissue, aif, time_sec, method="nlls"
-        )
-
-        assert result.fitting_method == "nlls"
-        assert result.converged
-        assert result.parameters.keys() == {"cbf", "alpha", "beta", "delay"}
-        assert result.r_squared > (0.98 if noise_frac else 0.999999)
-        assert result.parameters["cbf"] == pytest.approx(cbf, rel=0.10)
-        recovered_mtt = result.parameters["alpha"] * result.parameters["beta"]
-        assert recovered_mtt == pytest.approx(alpha * beta, rel=0.12)
-        assert 0.5 <= result.parameters["alpha"] <= 10.0
-        assert 0.1 <= result.parameters["beta"] <= 10.0
-        assert -3.0 <= result.parameters["delay"] <= 10.0
-        assert np.all(np.isfinite(result.fitted_tissue_curve))
-        assert np.all(np.isfinite(result.fitted_residue))
-        assert result.uncertainties["cbf"] >= 0.0
-        cbf_interval = result.credible_intervals["cbf"]
-        assert 0.0 <= cbf_interval[0] <= result.parameters["cbf"]
-        assert result.parameters["cbf"] <= cbf_interval[1] <= 2.0
-
-    def test_motion_weight_excludes_corrupted_peak_frame(self) -> None:
-        """Zero motion weight removes a corrupted frame from the objective."""
-        tissue, aif, time_sec = _make_vascular_test_data(
-            0.06, 3.0, 2.0, 0.0
-        )
-        peak_index = int(np.argmax(tissue))
-        corrupted = tissue.copy()
-        corrupted[peak_index] += 3.0 * float(np.max(tissue))
-        weights = np.ones(len(tissue), dtype=np.float64)
-        weights[peak_index] = 0.0
-
-        result = fit_dsc_model(
-            VascularModel(),
-            corrupted,
-            aif,
-            time_sec,
-            method="nlls",
-            weights=weights,
-        )
-
-        assert result.parameters["cbf"] == pytest.approx(0.06, rel=0.02)
-        recovered_mtt = result.parameters["alpha"] * result.parameters["beta"]
-        assert recovered_mtt == pytest.approx(6.0, rel=0.03)
-        assert result.r_squared > 0.999
-
-    @pytest.mark.parametrize(
-        "cbf,alpha,beta,delay",
-        [
-            (0.001, 0.55, 9.0, 9.0),
-            (1.5, 9.0, 3.0, -2.5),
-        ],
-    )
-    def test_near_bound_round_trip(
-        self,
-        cbf: float,
-        alpha: float,
-        beta: float,
-        delay: float,
-    ) -> None:
-        """Near-bound fits stay finite and recover the generating curve."""
-        tissue, aif, time_sec = _make_vascular_test_data(
-            cbf, alpha, beta, delay
-        )
-
-        result = fit_dsc_model(
-            VascularModel(), tissue, aif, time_sec, method="nlls"
-        )
-
-        assert result.converged
-        assert result.evaluation_budget_exhausted is False
-        assert result.r_squared > 0.999999
-        assert result.parameters["cbf"] == pytest.approx(cbf, rel=0.01)
-        assert result.parameters["alpha"] == pytest.approx(alpha, rel=0.01)
-        assert result.parameters["beta"] == pytest.approx(beta, rel=0.01)
-        assert result.parameters["delay"] == pytest.approx(delay, abs=0.02)
 
 
 # =============================================================================
@@ -926,8 +667,8 @@ def _make_gamma_test_data(
 ]:
     """Generate test data with gamma-variate residue.
 
-    Uses VascularModel.residue_function() to create the gamma-variate
-    residue R(t) = CBF * [1 - gammainc(alpha, t/beta)], then convolves
+    Creates the gamma-variate residue R(t) = CBF * [1 - gammainc(alpha, t/beta)],
+    then convolves
     with the DRO AIF via the specified forward model.
 
     Returns
@@ -944,8 +685,7 @@ def _make_gamma_test_data(
         baseline_frames=baseline_frames,
     )
 
-    model = VascularModel()
-    residue = model.residue_function([cbf, alpha, beta, 0.0], time_sec)
+    residue = cbf * (1.0 - gammainc(alpha, time_sec / beta))
     tissue = forward_model(aif, residue, dt_sec)
 
     if noise_frac > 0:
@@ -955,65 +695,6 @@ def _make_gamma_test_data(
 
     true_mtt = alpha * beta
     return tissue, aif, time_sec, true_mtt
-
-
-class TestBatchedMAPVascularRecovery:
-    """Test batched MAP recovery for vascular model on DRO data.
-
-    Validates that the vectorized Gauss-Newton MAP path produces the same
-    quality of parameter recovery as the per-voxel scipy MAP.
-    """
-
-    @pytest.mark.parametrize("noise_frac,cbf_tol,mtt_tol", VASCULAR_NOISE_LEVELS)
-    @pytest.mark.parametrize("cbf,alpha,beta,delay", VASCULAR_PARAMS)
-    def test_batched_vascular_map(
-        self,
-        cbf: float,
-        alpha: float,
-        beta: float,
-        delay: float,
-        noise_frac: float,
-        cbf_tol: float,
-        mtt_tol: float,
-    ) -> None:
-        n_seeds = 5
-        tissues = []
-        for seed in range(n_seeds):
-            t, aif, time_sec = _make_vascular_test_data(
-                cbf, alpha, beta, delay, noise_frac, seed=seed,
-            )
-            tissues.append(t)
-        tissue_curves = np.stack(tissues)
-
-        model = VascularModel()
-        fitting_defs = list(model.get_fitting_parameter_definitions())
-        priors = build_priors_from_params(fitting_defs)
-
-        result = batched_dsc_map_fit(
-            model_type="vascular",
-            tissue_curves=tissue_curves,
-            aif=aif,
-            time_points=time_sec,
-            prior_means_nat=np.array([p.mean for p in priors]),
-            prior_stds_nat=np.array([p.std for p in priors]),
-            transforms=[p.transform for p in priors],
-            upper_bounds=[p.upper_bound for p in priors],
-            fitting_param_names=[p.name for p in fitting_defs],
-            fitting_bounds=[(p.bounds[0], p.bounds[1]) for p in fitting_defs],
-            prior_means_transformed=np.array([p.mean_transformed for p in priors]),
-            prior_stds_transformed=np.array([p.std_transformed for p in priors]),
-            compute_uncertainties=False,
-        )
-
-        conv = result.converged
-        assert np.sum(conv) >= 3, f"Only {np.sum(conv)}/{n_seeds} converged"
-
-        recovered_cbf = float(np.median(result.params["cbf"][conv]))
-        _assert_param_recovery(recovered_cbf, cbf, cbf_tol, param_name="CBF")
-
-        true_mtt = alpha * beta
-        recovered_mtt = float(np.median(result.params["mtt"][conv]))
-        _assert_param_recovery(recovered_mtt, true_mtt, mtt_tol, param_name="MTT")
 
 
 # =============================================================================

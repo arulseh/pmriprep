@@ -934,7 +934,7 @@ def build_dsc_provenance(
     deconv_method : str
         Deconvolution method name.
     inference : str, optional
-        Inference method (nlls/map/vb/svb) for CPI/vascular.
+        Inference method (nlls/map/vb/svb) for CPI.
     leakage_method : str
         Leakage correction method name.
     scanner_metadata : dict, optional
@@ -959,7 +959,7 @@ def build_dsc_provenance(
         populate AIF fields itself.
     """
     deconv_block: dict[str, Any] = {"method": str(deconv_method)}
-    if inference is not None and deconv_method in ("cpi", "vascular"):
+    if inference is not None and deconv_method == "cpi":
         deconv_block["inference"] = str(inference)
         if deconv_method == "cpi":
             deconv_block["inference_engine"] = "pmriprep"

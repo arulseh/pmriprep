@@ -518,7 +518,7 @@ def generate_dsc_fit_qc_plot(
 ) -> tuple[str, dict[str, Any]]:
     """Generate a 2x2 fit QC plot for DSC deconvolution methods.
 
-    For parametric methods (vascular, CPI), shows the per-voxel model fit.
+    For parametric methods (CPI), shows the per-voxel model fit.
     For SVD methods (sSVD, oSVD, tikhonov), shows the reconstructed
     concentration from AIF convolved with the recovered residue function.
 

@@ -11,10 +11,7 @@ import pytest
 from pmriprep.interfaces.dsc_compute import (
     ComputeDSCMaps,
     _DSCDeconvolutionMaps,
-    _dsc_fit_single_voxel,
-    _dsc_init_worker,
 )
-from pmriprep.models.dsc import VascularModel
 from pmriprep.utils.dsc_signal import (
     compute_psr_legacy,
 )
@@ -52,7 +49,6 @@ def test_load_compute_inputs_preserves_arrays_and_settings(tmp_path: Path) -> No
         cpi_control_points=5,
         cpi_infer_delay=True,
         inference="vi",
-        mcmc_samples=321,
         baseline_frames=7,
         tail_frames=8,
     )
@@ -73,7 +69,6 @@ def test_load_compute_inputs_preserves_arrays_and_settings(tmp_path: Path) -> No
     assert result.cpi_control_points == 5
     assert result.cpi_infer_delay is True
     assert result.inference == "vi"
-    assert result.mcmc_samples == 321
     assert result.baseline_frames == 7
     assert result.tail_frames == 8
 
@@ -126,411 +121,6 @@ def test_prepare_motion_weighting_disabled_paths(method: str) -> None:
 
     assert result.weights is None
     assert result.qc == {"applied": False}
-
-
-def test_vascular_nlls_worker_returns_parametric_fit() -> None:
-    """Advertised vascular NLLS reaches the vascular solver, not fallback."""
-    time_points = np.arange(50, dtype=np.float64) * 1.5
-    aif = np.exp(-0.5 * ((time_points - 15.0) / 3.0) ** 2)
-    tissue = VascularModel().tissue_curve(
-        [0.06, 3.0, 2.0, 1.5], aif, time_points
-    )
-    _dsc_init_worker(
-        aif=aif,
-        time_points=time_points,
-        method="vascular",
-        inference="nlls",
-        mcmc_samples=500,
-        dt=1.5,
-    )
-
-    result = _dsc_fit_single_voxel((0, 0, 0, tissue))
-
-    assert result["failed"] is False
-    assert result.get("needs_fallback") is not True
-    assert result["converged"] is True
-    assert result["cbf"] == pytest.approx(0.06, rel=0.02)
-    assert result["mtt"] == pytest.approx(6.0, rel=0.03)
-    assert result["alpha"] == pytest.approx(3.0, rel=0.05)
-    assert result["beta"] == pytest.approx(2.0, rel=0.05)
-    assert result["tmax"] == pytest.approx(1.5, abs=0.1)
-    assert result["r_squared"] > 0.999
-
-
-def test_batched_parametric_fallback_uses_minimum_adequacy_rule() -> None:
-    """Batched fits retain low-positive R² and reject invalid results."""
-    n_voxels = 5
-    result = SimpleNamespace(
-        params={
-            "cbf": np.array([0.1, 0.1, 0.1, 0.1, np.nan]),
-            "mtt": np.full(n_voxels, 4.0),
-            "alpha": np.full(n_voxels, 2.0),
-            "delay": np.zeros(n_voxels),
-        },
-        uncertainties={},
-        r_squared=np.array([-0.01, 0.0, 0.2, np.nan, 0.9]),
-        converged=np.ones(n_voxels, dtype=bool),
-        fitted_curves=np.ones((n_voxels, 6), dtype=np.float64),
-        failure_reasons=(None,) * n_voxels,
-    )
-    coords = (
-        np.arange(n_voxels),
-        np.zeros(n_voxels, dtype=int),
-        np.zeros(n_voxels, dtype=int),
-    )
-
-    outputs = ComputeDSCMaps._batched_result_to_voxel_dicts(
-        None,
-        result,
-        coords,
-        "vascular",
-        n_voxels,
-    )
-
-    assert [output["needs_fallback"] for output in outputs] == [
-        True,
-        False,
-        False,
-        True,
-        True,
-    ]
-    assert outputs[0]["failed"] is False
-    assert outputs[0]["r_squared"] == pytest.approx(-0.01)
-
-    result.converged[2] = False
-    map_outputs = ComputeDSCMaps._batched_result_to_voxel_dicts(
-        None,
-        result,
-        coords,
-        "vascular",
-        n_voxels,
-        inference="map",
-    )
-    assert map_outputs[2]["needs_fallback"] is True
-
-    result.converged[2] = True
-    result.failure_reasons = (None, None, "bounded_mean_failed", None, None)
-    svb_outputs = ComputeDSCMaps._batched_result_to_voxel_dicts(
-        None,
-        result,
-        coords,
-        "vascular",
-        n_voxels,
-        inference="svb",
-    )
-    assert svb_outputs[2]["needs_fallback"] is True
-
-
-def test_parametric_fit_health_uses_admissible_denominator(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Zero curves do not dilute fallback or convergence fractions."""
-    concentration = np.zeros((3, 1, 1, 6), dtype=np.float64)
-    concentration[0, 0, 0, 2:4] = [1.0, 0.5]
-    concentration[1, 0, 0, 2:4] = [0.8, 0.4]
-    mask = np.ones((3, 1, 1), dtype=np.uint8)
-    interface = ComputeDSCMaps(inference="map")
-    monkeypatch.setattr(
-        interface,
-        "_dsc_fit_batched_map",
-        lambda **kwargs: [
-            {
-                "coords": (0, 0, 0),
-                "failed": False,
-                "needs_fallback": False,
-                "converged": True,
-                "r_squared": 0.9,
-                "cbf": 0.1,
-                "cbv": 0.2,
-                "mtt": 2.0,
-                "tmax": 0.0,
-                "alpha": 3.0,
-                "cth": 1.25,
-                "cbf_std": np.nan,
-                "uncertainty_source": "uncertainty_unavailable",
-            },
-            {
-                "coords": (1, 0, 0),
-                "failed": False,
-                "needs_fallback": True,
-                "converged": False,
-                "r_squared": 0.2,
-                "cbf": 0.1,
-                "cbv": 0.2,
-                "mtt": 2.0,
-                "tmax": 10.0,
-                "alpha": 3.0,
-                "cth": 2.5,
-                "cbf_std": np.nan,
-                "uncertainty_source": "uncertainty_unavailable",
-            },
-            {
-                "coords": (2, 0, 0),
-                "failed": True,
-                "needs_fallback": True,
-                "converged": False,
-            },
-        ],
-    )
-    monkeypatch.setattr(
-        "pmriprep.utils.dsc_deconvolution.svd_deconvolve_oscillation",
-        lambda *args, **kwargs: SimpleNamespace(
-            cbf=0.2, cbv=0.3, mtt=1.5, delay=10.0
-        ),
-    )
-
-    result = interface._deconvolve_parametric(
-        concentration,
-        np.array([0.0, 0.0, 1.0, 0.5, 0.0, 0.0]),
-        mask,
-        "vascular",
-        1.5,
-        "map",
-        100,
-    )
-    qc = result[4]
-
-    assert qc["n_mask_voxels"] == 3
-    assert qc["n_fit_admissible"] == 2
-    assert qc["n_fit_inadmissible"] == 1
-    assert qc["n_fallback_requested"] == 1
-    assert qc["n_fallback_attempted"] == 1
-    assert qc["n_fallback_osvd"] == 1
-    assert qc["n_fallback_failed"] == 0
-    assert qc["fallback_rate"] == pytest.approx(0.5)
-    assert qc["fallback_requested_rate"] == pytest.approx(0.5)
-    assert qc["delay_at_bound_n"] == 0
-    assert qc["delay_at_bound_fraction"] == pytest.approx(0.0)
-    assert qc["solver_convergence_rate"] == pytest.approx(0.5)
-    assert qc["map_uncertainty"] == {
-        "n_evaluated": 1,
-        "n_uncertainty_unavailable": 1,
-        "uncertainty_unavailable_fraction": 1.0,
-    }
-    cth = result[5]
-    assert cth is not None
-    assert cth[0, 0, 0] == pytest.approx(1.25)
-    assert np.isnan(cth[1, 0, 0])
-    assert np.isnan(cth[2, 0, 0])
-    assert result[0][1, 0, 0] == pytest.approx(0.2)
-    assert result[2][1, 0, 0] == pytest.approx(1.5)
-    assert np.isnan(result[3][1, 0, 0])
-    for map_index in (0, 1, 2, 3, 6):
-        assert np.isnan(result[map_index][2, 0, 0])
-    assert result[9][2, 0, 0] == 0
-
-
-def test_vascular_cth_is_nan_when_osvd_fallback_fails(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A rejected vascular fit cannot retain CTH after failed fallback."""
-    concentration = np.zeros((1, 1, 1, 6), dtype=np.float64)
-    concentration[0, 0, 0, 2:4] = [1.0, 0.5]
-    interface = ComputeDSCMaps(inference="map")
-    monkeypatch.setattr(
-        interface,
-        "_dsc_fit_batched_map",
-        lambda **kwargs: [{
-            "coords": (0, 0, 0),
-            "failed": False,
-            "needs_fallback": True,
-            "converged": False,
-            "r_squared": 0.2,
-            "cbf": 0.1,
-            "cbv": 0.2,
-            "mtt": 2.0,
-            "tmax": 0.0,
-            "alpha": 3.0,
-            "cth": 2.5,
-        }],
-    )
-    monkeypatch.setattr(
-        "pmriprep.utils.dsc_deconvolution.svd_deconvolve_oscillation",
-        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("failed")),
-    )
-
-    result = interface._deconvolve_parametric(
-        concentration,
-        np.array([0.0, 0.0, 1.0, 0.5, 0.0, 0.0]),
-        np.ones((1, 1, 1), dtype=np.uint8),
-        "vascular",
-        1.5,
-        "map",
-        100,
-    )
-
-    for map_index in (0, 1, 2, 3, 5, 6):
-        assert np.isnan(result[map_index][0, 0, 0])
-    assert result[8][0, 0, 0] == pytest.approx(0.2)
-    assert result[9][0, 0, 0] == 0
-    assert result[4]["n_fallback_failed"] == 1
-
-
-@pytest.mark.parametrize(
-    "alpha,at_bound",
-    [(0.5, True), (100.0, True), (np.nextafter(100.0, 0.0), True),
-     (10.0, False), (25.0, False), (99.0, False)],
-)
-def test_vascular_cth_readout_respects_shape_support(
-    alpha: float,
-    at_bound: bool,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Withhold bound-contact CTH, retaining interior CTH and perfusion maps."""
-    concentration = np.zeros((1, 1, 1, 6), dtype=np.float64)
-    concentration[0, 0, 0, 2:4] = [1.0, 0.5]
-    interface = ComputeDSCMaps(inference="map")
-    monkeypatch.setattr(
-        interface,
-        "_dsc_fit_batched_map",
-        lambda **kwargs: [{
-            "coords": (0, 0, 0),
-            "failed": False,
-            "needs_fallback": False,
-            "converged": True,
-            "r_squared": 0.9,
-            "cbf": 0.1,
-            "cbv": 0.2,
-            "mtt": 2.0,
-            "tmax": 0.0,
-            "alpha": alpha,
-            "cth": 2.0 / np.sqrt(alpha),
-        }],
-    )
-
-    result = interface._deconvolve_parametric(
-        concentration,
-        np.array([0.0, 0.0, 1.0, 0.5, 0.0, 0.0]),
-        np.ones((1, 1, 1), dtype=np.uint8),
-        "vascular",
-        1.5,
-        "map",
-        100,
-    )
-
-    assert np.isnan(result[5][0, 0, 0]) == at_bound
-    if not at_bound:
-        assert result[5][0, 0, 0] == pytest.approx(2.0 / np.sqrt(alpha))
-    for index, expected in [(0, 0.1), (1, 0.2), (2, 2.0)]:
-        assert result[index][0, 0, 0] == pytest.approx(expected)
-    assert result[4]["cth_alpha_at_bound_n"] == int(at_bound)
-    assert result[4]["cth_alpha_at_bound_fraction"] == pytest.approx(float(at_bound))
-
-
-@pytest.mark.parametrize(
-    "mtt,at_bound",
-    [
-        (0.5, True),
-        (60.0, True),
-        (np.nextafter(60.0, 0.0), True),
-        (10.0, False),
-        (59.0, False),
-    ],
-)
-def test_vascular_mtt_bound_contact_is_reported(
-    mtt: float,
-    at_bound: bool,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Report accepted vascular fits at either MTT endpoint without masking."""
-    concentration = np.zeros((1, 1, 1, 6), dtype=np.float64)
-    concentration[0, 0, 0, 2:4] = [1.0, 0.5]
-    interface = ComputeDSCMaps(inference="map")
-    monkeypatch.setattr(
-        interface,
-        "_dsc_fit_batched_map",
-        lambda **kwargs: [{
-            "coords": (0, 0, 0),
-            "failed": False,
-            "needs_fallback": False,
-            "converged": True,
-            "r_squared": 0.9,
-            "cbf": 0.1,
-            "cbv": 0.1 * mtt,
-            "mtt": mtt,
-            "fitted_mtt": mtt,
-            "tmax": 0.0,
-            "alpha": 3.0,
-            "cth": mtt / np.sqrt(3.0),
-        }],
-    )
-
-    result = interface._deconvolve_parametric(
-        concentration,
-        np.array([0.0, 0.0, 1.0, 0.5, 0.0, 0.0]),
-        np.ones((1, 1, 1), dtype=np.uint8),
-        "vascular",
-        1.5,
-        "map",
-        100,
-    )
-
-    assert result[2][0, 0, 0] == pytest.approx(mtt)
-    assert result[4]["mtt_at_bound_n"] == int(at_bound)
-    assert result[4]["mtt_at_bound_fraction"] == pytest.approx(float(at_bound))
-
-
-@pytest.mark.parametrize(
-    "method,delay,at_bound",
-    [
-        ("vascular", -3.0, True),
-        ("vascular", 10.0, True),
-        ("vascular", np.nextafter(10.0, 0.0), True),
-        ("vascular", 2.0, False),
-    ],
-)
-def test_parametric_delay_bound_contact_is_reported(
-    method: str,
-    delay: float,
-    at_bound: bool | None,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Report vascular fitted-delay endpoint contact."""
-    concentration = np.zeros((1, 1, 1, 6), dtype=np.float64)
-    concentration[0, 0, 0, 2:4] = [1.0, 0.5]
-    interface = ComputeDSCMaps(inference="map")
-    result_row = {
-        "coords": (0, 0, 0),
-        "failed": False,
-        "needs_fallback": False,
-        "converged": True,
-        "r_squared": 0.9,
-        "cbf": 0.1,
-        "cbv": 0.6,
-        "mtt": 6.0,
-        "tmax": delay,
-    }
-    if method == "vascular":
-        result_row.update(
-            fitted_mtt=6.0,
-            alpha=3.0,
-            cth=6.0 / np.sqrt(3.0),
-        )
-    monkeypatch.setattr(
-        interface,
-        "_dsc_fit_batched_map",
-        lambda **kwargs: [result_row],
-    )
-
-    result = interface._deconvolve_parametric(
-        concentration,
-        np.array([0.0, 0.0, 1.0, 0.5, 0.0, 0.0]),
-        np.ones((1, 1, 1), dtype=np.uint8),
-        method,
-        1.5,
-        "map",
-        100,
-    )
-
-    assert result[3][0, 0, 0] == pytest.approx(delay)
-    if at_bound is None:
-        assert "delay_at_bound_n" not in result[4]
-        assert "delay_at_bound_fraction" not in result[4]
-    else:
-        assert result[4]["delay_at_bound_n"] == int(at_bound)
-        assert result[4]["delay_at_bound_fraction"] == pytest.approx(
-            float(at_bound)
-        )
 
 
 def test_prepare_baseline_preserves_pass_through_k2(
@@ -771,7 +361,7 @@ def test_finalize_mtt_uses_auc_cbv_for_svd_family(method: str) -> None:
     )
 
 
-@pytest.mark.parametrize("method", ["vascular", "cpi"])
+@pytest.mark.parametrize("method", ["cpi"])
 def test_finalize_mtt_preserves_parametric_result(method: str) -> None:
     """Parametric methods retain the MTT returned by their fitted model."""
     fitted = np.array([2.0, 4.0])
@@ -838,7 +428,7 @@ def test_summarize_dsc_maps_empty_synthetic_domain() -> None:
     assert qc["cbv_literature_range_applicable"] is False
 
 
-@pytest.mark.parametrize("method", ["cpi", "vascular"])
+@pytest.mark.parametrize("method", ["cpi"])
 def test_parametric_timing_summary_is_arrival_delay(method: str) -> None:
     """Fitted parametric timing is not summarized as conventional Tmax."""
     values = np.array([-0.5, 0.5])
@@ -1173,15 +763,13 @@ def test_save_ancillary_maps_preserves_optional_maps_and_masking(
     results = interface._save_ancillary_maps(
         k2_map_path=k2_path,
         leakage_method="bsw",
-        cth=np.array([[[6.0]], [[9.0]]]),
         mask_bool=mask,
         affine=source_img.affine,
         header=source_img.header,
     )
 
-    assert set(results) == {"out_k2", "out_cth"}
+    assert set(results) == {"out_k2"}
     np.testing.assert_allclose(nib.load(results["out_k2"]).get_fdata().ravel(), [2.0, 0.0])
-    np.testing.assert_allclose(nib.load(results["out_cth"]).get_fdata().ravel(), [6.0, 0.0])
 
 
 def test_save_ancillary_maps_rejects_missing_k2(
@@ -1197,7 +785,6 @@ def test_save_ancillary_maps_rejects_missing_k2(
         interface._save_ancillary_maps(
             k2_map_path=None,
             leakage_method="bsw",
-            cth=None,
             mask_bool=np.ones((2, 1, 1), dtype=bool),
             affine=source_img.affine,
             header=source_img.header,
@@ -1216,7 +803,6 @@ def test_save_ancillary_maps_allows_missing_k2_when_leakage_disabled(
     results = interface._save_ancillary_maps(
         k2_map_path=None,
         leakage_method="none",
-        cth=None,
         mask_bool=np.ones((1, 1, 1), dtype=bool),
         affine=source_img.affine,
         header=source_img.header,
@@ -1225,16 +811,16 @@ def test_save_ancillary_maps_allows_missing_k2_when_leakage_disabled(
     assert "out_k2" not in results
 
 
-@pytest.mark.parametrize("method", ["vascular"])
+@pytest.mark.parametrize("method", ["cpi"])
 def test_save_fit_qc_data_dispatches_parametric_methods(
     method: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Vascular-family methods retain all parametric QC fitting settings."""
+    """CPI QC uses the selected signal fit without a separate refit."""
     interface = ComputeDSCMaps()
     calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
     monkeypatch.setattr(
         interface,
-        "_save_qc_fit_data",
+        "_save_signal_cpi_qc",
         lambda *args, **kwargs: calls.append((args, kwargs)),
     )
     monkeypatch.setattr(
@@ -1245,6 +831,7 @@ def test_save_fit_qc_data_dispatches_parametric_methods(
     data = np.ones((1,))
     signal = np.full((1,), 2.0)
 
+    selected_fit = object()
     interface._save_fit_qc_data(
         rel_cbf=data,
         concentration=data,
@@ -1252,16 +839,14 @@ def test_save_fit_qc_data_dispatches_parametric_methods(
         mask_bool=data.astype(bool),
         dt=1.5,
         method=method,
-        inference="vi",
-        mcmc_samples=321,
         threshold=0.2,
         oi_threshold=0.1,
         signal=signal,
+        cpi_fit=selected_fit,
     )
 
     assert len(calls) == 1
-    assert calls[0][0][4:] == (1.5, method, "vi", 321)
-    assert calls[0][1]["signal_data"] is signal
+    assert calls[0][0][4:] == (1.5, signal, selected_fit)
 
 
 @pytest.mark.parametrize("method", ["sSVD", "oSVD", "tikhonov"])
@@ -1278,7 +863,7 @@ def test_save_fit_qc_data_dispatches_svd_methods(
     )
     monkeypatch.setattr(
         interface,
-        "_save_qc_fit_data",
+        "_save_signal_cpi_qc",
         lambda *args, **kwargs: pytest.fail("parametric QC dispatcher called"),
     )
     data = np.ones((1,))
@@ -1290,8 +875,6 @@ def test_save_fit_qc_data_dispatches_svd_methods(
         mask_bool=data.astype(bool),
         dt=2.0,
         method=method,
-        inference="map",
-        mcmc_samples=100,
         threshold=0.25,
         oi_threshold=0.15,
         signal=None,
@@ -1319,7 +902,7 @@ def test_run_deconvolution_normalizes_svd_state(
     monkeypatch.setattr(interface, "_deconvolve_svd", _svd)
     monkeypatch.setattr(
         interface,
-        "_deconvolve_parametric",
+        "_deconvolve_signal_cpi",
         lambda *args, **kwargs: pytest.fail("parametric solver called"),
     )
     data = np.ones((1,))
@@ -1331,60 +914,12 @@ def test_run_deconvolution_normalizes_svd_state(
         dt=1.5,
         threshold=0.2,
         oi_threshold=0.1,
-        inference="vi",
-        mcmc_samples=100,
-        motion_weighting=SimpleNamespace(weights=None, qc={}),
     )
 
     assert calls[0][3:] == (method, 1.5, 0.2, 0.1)
     assert result.cbf is arrays[0]
     assert result.qc is qc
-    assert result.cth is None
     assert result.cbf_std is None
-
-
-@pytest.mark.parametrize("method", ["vascular"])
-def test_run_deconvolution_normalizes_parametric_state(
-    method: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Parametric dispatch preserves all returned maps and motion provenance."""
-    interface = ComputeDSCMaps()
-    arrays = [np.full((1,), value) for value in range(1, 10)]
-    qc: dict[str, object] = {"method": method}
-    calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
-
-    def _parametric(*args: object, **kwargs: object) -> tuple[object, ...]:
-        calls.append((args, kwargs))
-        return (*arrays[:4], qc, *arrays[4:])
-
-    monkeypatch.setattr(interface, "_deconvolve_parametric", _parametric)
-    monkeypatch.setattr(
-        interface,
-        "_deconvolve_svd",
-        lambda *args, **kwargs: pytest.fail("SVD solver called"),
-    )
-    data = np.ones((1,))
-    weights = np.array([0.5])
-    motion_qc = {"enabled": True}
-    result = interface._run_deconvolution(
-        concentration=data,
-        aif=data,
-        mask=data,
-        method=method,
-        dt=2.0,
-        threshold=0.2,
-        oi_threshold=0.1,
-        inference="map",
-        mcmc_samples=321,
-        motion_weighting=SimpleNamespace(weights=weights, qc=motion_qc),
-    )
-
-    assert calls[0][0][3:] == (method, 2.0, "map", 321)
-    assert calls[0][1]["motion_weights"] is weights
-    assert result.cbf is arrays[0]
-    assert result.cth is arrays[4]
-    assert result.fallback_mask is arrays[8]
-    assert result.qc["motion_weighting"] is motion_qc
 
 
 def test_prepare_final_outputs_preserves_composition_and_qc_order(
@@ -1504,9 +1039,8 @@ def test_assemble_outputs_preserves_serialization_order_and_optional_branches(
         header=object(),
         mask_bool=data.astype(bool),
         dt=1.5,
-        method="vascular",
+        method="cpi",
         inference="vi",
-        mcmc_samples=500,
         svd_threshold=0.2,
         oi_threshold=0.1,
         signal=None,
@@ -1524,7 +1058,6 @@ def test_assemble_outputs_preserves_serialization_order_and_optional_branches(
         mtt=data,
         tmax=data,
         qc=qc,
-        cth=data * 5.0,
         cbv_std=data * 0.2,
         parametric_r2=data * 0.9,
         fallback_mask=data,

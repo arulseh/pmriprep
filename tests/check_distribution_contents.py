@@ -17,6 +17,8 @@ REQUIRED_PACKAGE_FILES = {
     "pmriprep/models/dsc/signal_cpi/native.py",
     "pmriprep/models/dsc/local_vi.py",
     "pmriprep/models/dsc/vi_adapter.py",
+    "pmriprep/models/dsc/batched_fitting.py",
+    "pmriprep/models/dsc/spatial_vb.py",
     "pmriprep/utils/bsw_guidance_io.py",
     "pmriprep/templates/report_unified.html",
     "pmriprep/data/atlases/README.md",
@@ -25,7 +27,13 @@ REQUIRED_PACKAGE_FILES = {
     "pmriprep/data/atlases/mni_regions/Supra.nii.gz",
 }
 FORBIDDEN_PARTS = {"bak", "debug", "sourcedata", "test_outputs", "tests", "work"}
-FORBIDDEN_PACKAGE_FILES = {"pmriprep/models/dsc/cpi.py"}
+FORBIDDEN_PACKAGE_FILES = {
+    "pmriprep/models/dsc/cpi.py",
+    "pmriprep/models/dsc/vascular.py",
+    "pmriprep/models/dsc/base.py",
+    "pmriprep/models/dsc/bayesian.py",
+    "pmriprep/models/dsc/convolution.py",
+}
 
 
 def _validate_members(path: Path, members: set[str]) -> None:

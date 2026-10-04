@@ -500,12 +500,6 @@
     ],
     [
       "dsc_wf",
-      "outputnode.cth_map",
-      "dsc_datasinks_wf",
-      "inputnode.cth_map"
-    ],
-    [
-      "dsc_wf",
       "outputnode.dsc_fit_qc_plot",
       "dsc_datasinks_wf",
       "inputnode.dsc_fit_qc_plot"

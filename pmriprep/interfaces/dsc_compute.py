@@ -22,16 +22,11 @@ from nipype.interfaces.base import (  # type: ignore[import-untyped]
     traits,
 )
 
-from pmriprep.models.dsc.base import DSCFitResult
 from pmriprep.utils.dsc_constants import (
     DEFAULT_OI_THRESHOLD,
     DEFAULT_SVD_THRESHOLD,
     EPSILON_CONCENTRATION,
-    EPSILON_SHAPE,
     EPSILON_SIGNAL,
-    MTT_BOUNDS,
-    VASCULAR_ALPHA_BOUNDS,
-    VASCULAR_DELAY_BOUNDS,
 )
 from pmriprep.utils.dsc_signal import compute_psr_legacy, compute_ttp_legacy
 
@@ -39,20 +34,6 @@ if TYPE_CHECKING:
     from pmriprep.models.dsc.signal_cpi.maps import CPIMaps
 
 logger = logging.getLogger("nipype.interface")
-
-# ---------------------------------------------------------------------------
-# Module-level worker for parallel parametric deconvolution
-# ---------------------------------------------------------------------------
-class _DSCVoxelInput(NamedTuple):
-    """Lightweight struct for a single voxel's data."""
-
-    x: int
-    y: int
-    z: int
-    tissue_curve: Any  # npt.NDArray
-
-
-_dsc_worker_ctx: dict[str, Any] = {}
 
 
 def _compute_dsc_motion_weights(
@@ -106,170 +87,6 @@ def _compute_dsc_motion_weights(
     return weights
 
 
-def _parametric_fit_needs_fallback(
-    result: DSCFitResult,
-    inference: str,
-) -> bool:
-    """Return whether a parametric fit requires oSVD fallback.
-
-    Budget-limited NLLS fits retain their finite endpoint and are judged
-    by the same minimum-adequacy rule as fixed-schedule VI. Other NLLS/MAP
-    termination failures still require fallback.
-    """
-    r_squared = float(result.r_squared)
-    bad_r2 = not np.isfinite(r_squared) or r_squared < 0.0
-    bad_result = (
-        any(not np.isfinite(float(value)) for value in result.parameters.values())
-        or (
-            result.fitted_tissue_curve is not None
-            and not np.all(np.isfinite(result.fitted_tissue_curve))
-        )
-        or (
-            result.fitted_residue is not None
-            and not np.all(np.isfinite(result.fitted_residue))
-        )
-    )
-    budget_limited_nlls = (
-        inference == "nlls"
-        and bool(result.evaluation_budget_exhausted)
-    )
-    bad_solver_convergence = (
-        inference in ("nlls", "map")
-        and not bool(result.converged)
-        and not budget_limited_nlls
-    )
-    return bad_r2 or bad_result or bad_solver_convergence
-
-
-def _parametric_outputs_are_finite(result: dict[str, Any]) -> bool:
-    """Return whether all required vascular fit outputs are finite."""
-    return all(
-        key in result and np.isfinite(float(result[key]))
-        for key in ("cbf", "cbv", "mtt", "tmax", "alpha", "beta", "cth")
-    )
-
-
-def _dsc_init_worker(
-    aif: Any,
-    time_points: Any,
-    method: str,
-    inference: str,
-    mcmc_samples: int,
-    dt: float,
-    motion_weights: Any = None,
-    sloppy: bool = False,
-    random_seed: Optional[int] = None,
-) -> None:
-    """Initialise shared state once per worker process."""
-    from pmriprep.utils.parallel import limit_worker_threads
-    limit_worker_threads()
-
-    from pmriprep.models.dsc import VascularModel
-
-    if method != "vascular":
-        raise ValueError("The concentration-model worker supports vascular only")
-
-    # Seed RNG in worker process for reproducibility — offset by PID
-    # so parallel workers explore different random sequences
-    if random_seed is not None:
-        import os
-        np.random.seed(random_seed + os.getpid() % (2**31))
-
-    _dsc_worker_ctx["aif"] = aif
-    _dsc_worker_ctx["time_points"] = time_points
-    _dsc_worker_ctx["method"] = method
-    _dsc_worker_ctx["inference"] = inference
-    _dsc_worker_ctx["mcmc_samples"] = mcmc_samples
-    _dsc_worker_ctx["dt"] = dt
-    _dsc_worker_ctx["motion_weights"] = motion_weights
-    _dsc_worker_ctx["sloppy"] = sloppy
-
-    _dsc_worker_ctx["model_factory"] = VascularModel
-
-
-def _dsc_fit_single_voxel(voxel_data: _DSCVoxelInput) -> dict[str, Any]:
-    """Fit a single voxel — called from pool workers."""
-    from pmriprep.models.dsc import fit_dsc_model
-
-    x, y, z, tissue_curve = voxel_data
-
-    # Skip near-zero curves
-    if np.max(np.abs(tissue_curve)) < EPSILON_CONCENTRATION:
-        return {"coords": (x, y, z), "failed": True}
-
-    inference = _dsc_worker_ctx["inference"]
-    aif = _dsc_worker_ctx["aif"]
-    time_points = _dsc_worker_ctx["time_points"]
-    dt = _dsc_worker_ctx["dt"]
-    motion_weights = _dsc_worker_ctx.get("motion_weights")
-    sloppy = _dsc_worker_ctx.get("sloppy", False)
-
-    try:
-        model_instance = _dsc_worker_ctx["model_factory"]()
-
-        result = fit_dsc_model(
-            model=model_instance,
-            concentration=tissue_curve,
-            aif=aif,
-            time_points=time_points,
-            method=inference,
-            mcmc_samples=_dsc_worker_ctx["mcmc_samples"],
-            compute_uncertainties=not sloppy,
-            weights=motion_weights,
-            sloppy=sloppy,
-        )
-
-        out: dict[str, Any] = {"coords": (x, y, z), "failed": False}
-        cbf_val = result.parameters.get("cbf", result.parameters.get("CBF", 0.0))
-        out["cbf"] = cbf_val
-
-        alpha = result.parameters.get("alpha", 1.0)
-        beta = result.parameters.get("beta", 1.0)
-        delay = result.parameters.get("delay", 0.0)
-
-        # Compute residue for derived parameters:
-        # CBV = integral of residue, MTT = CBV / CBF (central volume theorem)
-        model = _dsc_worker_ctx["model_factory"]()
-        residue = model.residue_function(
-            [cbf_val, alpha, beta, 0.0], time_points  # delay=0 for clean residue
-        )
-        out["cbv"] = float(np.trapezoid(residue, dx=dt))
-        out["mtt"] = out["cbv"] / cbf_val if cbf_val > EPSILON_CONCENTRATION else 0.0
-        out["fitted_mtt"] = float(alpha) * float(beta)
-        out["tmax"] = delay
-        out["alpha"] = alpha
-        out["beta"] = beta
-        out["cth"] = beta * np.sqrt(alpha)
-        # Extract uncertainty only for directly fitted CBF. Derived CBV depends
-        # on correlated fitted parameters, but DSCFitResult does not retain
-        # their joint covariance or derived posterior samples.
-        if result.uncertainties:
-            out["cbf_std"] = result.uncertainties.get("cbf", np.nan)
-        if inference == "map":
-            out["uncertainty_source"] = result.uncertainty_source
-
-        out["r_squared"] = result.r_squared
-        out["converged"] = result.passes_convergence()
-        out["evaluation_budget_exhausted"] = (
-            result.evaluation_budget_exhausted
-        )
-        out["n_function_evaluations"] = result.n_function_evaluations
-
-        # Reject non-finite or worse-than-mean fits. The `converged` flag only
-        # gates NLLS/MAP because fixed-schedule VI/SVB rarely satisfies its
-        # strict FE-plateau diagnostic even on usable fits.
-        if (
-            _parametric_fit_needs_fallback(result, inference)
-            or not _parametric_outputs_are_finite(out)
-        ):
-            out["needs_fallback"] = True
-
-        return out
-
-    except Exception:
-        return {"coords": (x, y, z), "failed": True, "needs_fallback": True}
-
-
 class _DSCComputeInputs(NamedTuple):
     """Validated image arrays and acquisition settings for DSC fitting."""
 
@@ -287,7 +104,6 @@ class _DSCComputeInputs(NamedTuple):
     cpi_control_points: int
     cpi_infer_delay: bool
     inference: str
-    mcmc_samples: int
     baseline_frames: int
     tail_frames: int
     leakage_method: str
@@ -368,7 +184,6 @@ class _DSCDeconvolutionMaps(NamedTuple):
     mtt: npt.NDArray[Any]
     tmax: npt.NDArray[Any]
     qc: dict[str, Any]
-    cth: Optional[npt.NDArray[Any]] = None
     cbf_std: Optional[npt.NDArray[Any]] = None
     cbv_std: Optional[npt.NDArray[Any]] = None
     parametric_r2: Optional[npt.NDArray[Any]] = None
@@ -428,10 +243,9 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
         "sSVD",
         "oSVD",
         "tikhonov",
-        "vascular",
         "cpi",
         usedefault=True,
-        desc="Deconvolution method: sSVD, oSVD, tikhonov, vascular, or cpi",
+        desc="Deconvolution method: sSVD, oSVD, tikhonov, or cpi",
     )
 
     # Method-specific parameters
@@ -479,21 +293,14 @@ class ComputeDSCMapsInputSpec(BaseInterfaceInputSpec):
         desc="Number of tail frames for PSR calculation",
     )
 
-    # Inference options for parametric methods (cpi, vascular)
+    # Inference options for parametric methods (cpi)
     inference = traits.Enum(
         "vi",
         "svb",
-        "map",
-        "nlls",
         usedefault=True,
-        desc="Inference engine for parametric deconvolution (cpi, vascular): "
-             "vi (linearized VI, default), svb (spatial VB), map, or nlls. "
+        desc="Inference engine for parametric deconvolution (cpi): "
+             "vi (linearized VI, default) or svb (spatial VB). "
              "SVD methods ignore this option.",
-    )
-    mcmc_samples = traits.Int(
-        500,
-        usedefault=True,
-        desc="Number of MCMC samples for Bayesian inference",
     )
 
     # Processing options
@@ -590,15 +397,14 @@ class ComputeDSCMapsOutputSpec(TraitedSpec):
     out_qc_fit_data = File(desc="JSON with QC voxel fit data for fit QC plot")
 
     # Optional extras
-    out_cth = File(desc="CTH map — capillary transit time heterogeneity (vascular only)")
     out_cbf_std = File(desc="CBF parameter standard-error or posterior-SD map")
     out_parametric_r2 = File(
-        desc="Per-voxel R² of parametric fit (CPI / Vascular only). "
+        desc="Per-voxel R² of parametric fit (CPI only). "
         "Raw value preserved on fallback voxels; see out_fallback_mask."
     )
     out_fallback_mask = File(
         desc="Binary mask: 1 where parametric fit fell back to oSVD "
-        "(CPI / Vascular only)"
+        "(CPI only)"
     )
     qc_metrics = traits.Dict(desc="QC metrics dictionary")
 
@@ -614,7 +420,6 @@ class ComputeDSCMaps(BaseInterface):
     - sSVD: Standard SVD (Østergaard method)
     - oSVD: Oscillation-index limited SVD (adaptive regularization, delay-insensitive)
     - tikhonov: Morozov-selected first-order Tikhonov regularization
-    - vascular: Gamma-variate vascular model
     - cpi: Control Point Interpolation model
 
     Output maps:
@@ -649,10 +454,8 @@ class ComputeDSCMaps(BaseInterface):
     tail_frames : int
         Tail frames for PSR. Default: 5.
     inference : str
-        Inference engine for parametric methods (cpi/vascular):
-        nlls, map, vi, svb. Default: 'vi'.
-    mcmc_samples : int
-        MCMC samples for Bayesian. Default: 500.
+        Inference engine for parametric methods (cpi):
+        vi or svb. Default: 'vi'.
 
     Returns
     -------
@@ -681,8 +484,8 @@ class ComputeDSCMaps(BaseInterface):
     CBF/CBV/MTT are in relative units unless the input concentration was
     computed with absolute r2* values.
 
-    For Bayesian methods (map, vi, mcmc), uncertainty maps are also
-    generated when method is 'vascular' or 'cpi'.
+    For CPI with VI or spatial VB, uncertainty maps are also
+    generated when method is 'cpi'.
 
     The oSVD method additionally outputs a delay map showing the
     estimated tracer arrival delay relative to the AIF.
@@ -743,7 +546,6 @@ class ComputeDSCMaps(BaseInterface):
             cpi_control_points=int(self.inputs.cpi_control_points),
             cpi_infer_delay=bool(self.inputs.cpi_infer_delay),
             inference=str(self.inputs.inference),
-            mcmc_samples=int(self.inputs.mcmc_samples),
             baseline_frames=int(self.inputs.baseline_frames),
             tail_frames=int(self.inputs.tail_frames),
             leakage_method=str(self.inputs.leakage_method),
@@ -844,7 +646,7 @@ class ComputeDSCMaps(BaseInterface):
 
         """
         if (
-            method not in ("vascular", "cpi")
+            method != "cpi"
             or not isdefined(self.inputs.fd_values)
             or not self.inputs.fd_values
         ):
@@ -1228,7 +1030,7 @@ class ComputeDSCMaps(BaseInterface):
             np.sum(finite_cbv_auc & (cbv_auc_for_qc < 0.0))
         )
         timing_name = (
-            "arrival_delay" if method in {"cpi", "vascular"} else "tmax"
+            "arrival_delay" if method == "cpi" else "tmax"
         )
         n_voxels = int(np.sum(mask_bool))
         timing_values = tmax[mask_bool]
@@ -1521,9 +1323,6 @@ class ComputeDSCMaps(BaseInterface):
         dt: float,
         threshold: float,
         oi_threshold: float,
-        inference: str,
-        mcmc_samples: int,
-        motion_weighting: _DSCMotionWeighting,
     ) -> _DSCDeconvolutionMaps:
         """Dispatch DSC deconvolution and normalize its typed return state."""
         if method in ("sSVD", "oSVD", "tikhonov"):
@@ -1538,32 +1337,7 @@ class ComputeDSCMaps(BaseInterface):
                 qc=qc,
             )
 
-        (
-            cbf, cbv, mtt, tmax, qc, cth, cbf_std, cbv_std,
-            parametric_r2, fallback_mask,
-        ) = self._deconvolve_parametric(
-            concentration,
-            aif,
-            mask,
-            method,
-            dt,
-            inference,
-            mcmc_samples,
-            motion_weights=motion_weighting.weights,
-        )
-        qc["motion_weighting"] = motion_weighting.qc
-        return _DSCDeconvolutionMaps(
-            cbf=cbf,
-            cbv=cbv,
-            mtt=mtt,
-            tmax=tmax,
-            qc=qc,
-            cth=cth,
-            cbf_std=cbf_std,
-            cbv_std=cbv_std,
-            parametric_r2=parametric_r2,
-            fallback_mask=fallback_mask,
-        )
+        raise ValueError(f"Unknown concentration deconvolution method: {method}")
 
     def _deconvolve_signal_cpi(
         self, inputs: _DSCComputeInputs, baseline: _DSCBaselinePreparation,
@@ -1684,8 +1458,6 @@ class ComputeDSCMaps(BaseInterface):
         mask_bool: npt.NDArray[Any],
         dt: float,
         method: str,
-        inference: str,
-        mcmc_samples: int,
         threshold: float,
         oi_threshold: float,
         signal: Optional[npt.NDArray[Any]],
@@ -1696,19 +1468,6 @@ class ComputeDSCMaps(BaseInterface):
             if cpi_fit is None:
                 raise ValueError("CPI QC requires the selected signal-fit record")
             self._save_signal_cpi_qc(rel_cbf, concentration, aif, mask_bool, dt, signal, cpi_fit)
-            return
-        if method == "vascular":
-            self._save_qc_fit_data(
-                rel_cbf,
-                concentration,
-                aif,
-                mask_bool,
-                dt,
-                method,
-                inference,
-                mcmc_samples,
-                signal_data=signal,
-            )
             return
         self._save_qc_fit_data_svd(
             rel_cbf,
@@ -1727,7 +1486,6 @@ class ComputeDSCMaps(BaseInterface):
         *,
         k2_map_path: Optional[str],
         leakage_method: str,
-        cth: Optional[npt.NDArray[Any]],
         mask_bool: npt.NDArray[Any],
         affine: npt.NDArray[Any],
         header: Any,
@@ -1749,10 +1507,6 @@ class ComputeDSCMaps(BaseInterface):
                 "substitute an all-zero map"
             )
 
-        if cth is not None:
-            outputs["out_cth"] = self._save_map(
-                np.where(mask_bool, cth, 0.0), "_cth", affine, header
-            )
         return outputs
 
     def _assemble_outputs(
@@ -1773,7 +1527,6 @@ class ComputeDSCMaps(BaseInterface):
             self._save_ancillary_maps(
                 k2_map_path=baseline.k2_map_path,
                 leakage_method=inputs.leakage_method,
-                cth=deconvolution.cth,
                 mask_bool=inputs.mask_bool,
                 affine=inputs.affine,
                 header=inputs.header,
@@ -1786,8 +1539,6 @@ class ComputeDSCMaps(BaseInterface):
             mask_bool=inputs.mask_bool,
             dt=inputs.dt,
             method=inputs.method,
-            inference=inputs.inference,
-            mcmc_samples=inputs.mcmc_samples,
             threshold=inputs.svd_threshold,
             oi_threshold=inputs.oi_threshold,
             signal=inputs.signal,
@@ -1795,7 +1546,7 @@ class ComputeDSCMaps(BaseInterface):
         )
         self._add_fit_qc_metrics(maps.rel_cbv, qc)
 
-        if inputs.method in ("cpi", "vascular"):
+        if inputs.method == "cpi":
             results.update(
                 self._save_parametric_maps(
                     cbf_std=maps.cbf_std,
@@ -1889,877 +1640,6 @@ class ComputeDSCMaps(BaseInterface):
 
         return cbf, cbv, mtt, tmax, qc_metrics
 
-    def _deconvolve_parametric(
-        self,
-        concentration_data: npt.NDArray[Any],
-        aif: npt.NDArray[Any],
-        mask: npt.NDArray[Any],
-        method: str,
-        dt: float,
-        inference: str,
-        mcmc_samples: int,
-        motion_weights: Optional[npt.NDArray[np.floating]] = None,
-    ) -> tuple[
-        npt.NDArray[Any],  # cbf
-        npt.NDArray[Any],  # cbv
-        npt.NDArray[Any],  # mtt
-        npt.NDArray[Any],  # tmax
-        dict[str, Any],  # qc_metrics
-        Optional[npt.NDArray[Any]],  # cth_map (vascular only)
-        Optional[npt.NDArray[Any]],  # cbf_std_map (parametric only)
-        Optional[npt.NDArray[Any]],  # cbv_std_map (parametric only)
-        Optional[npt.NDArray[Any]],  # parametric_r2_map (parametric only)
-        Optional[npt.NDArray[Any]],  # fallback_mask (parametric only)
-    ]:
-        """Run parametric model deconvolution (vascular).
-
-        Uses multiprocessing.Pool when n_procs > 1.
-        """
-        if method != "vascular":
-            raise ValueError("The concentration-model route supports vascular only")
-
-        spatial_shape = concentration_data.shape[:3]
-        n_timepoints = concentration_data.shape[3]
-        time_points = np.arange(n_timepoints, dtype=np.float64) * dt
-
-        # Initialize output arrays
-        cbf = np.zeros(spatial_shape, dtype=np.float64)
-        cbv = np.zeros(spatial_shape, dtype=np.float64)
-        mtt = np.zeros(spatial_shape, dtype=np.float64)
-        tmax = np.zeros(spatial_shape, dtype=np.float64)
-        cth_map = (
-            np.full(spatial_shape, np.nan, dtype=np.float64)
-            if method == "vascular" else None
-        )
-        cbf_std_map = np.full(spatial_shape, np.nan, dtype=np.float64) if method == "vascular" else None
-        # CBV is derived from correlated fitted parameters. Neither scalar nor
-        # batched fit results retain the joint covariance needed to propagate
-        # its uncertainty, so no CBV uncertainty map is emitted.
-        cbv_std_map = None
-        # Parametric-fit R² map and oSVD-fallback mask (parametric only).
-        # R² inits to NaN so plotting tools render outside-brain voxels
-        # transparent; raw parametric R² is preserved on fallback voxels
-        # (the fallback mask separately flags which method produced
-        # the saved CBF/CBV/MTT in that voxel). Arrival delay remains NaN
-        # because oSVD residue-peak timing is a different quantity.
-        parametric_r2_map = (
-            np.full(spatial_shape, np.nan, dtype=np.float32)
-            if method == "vascular" else None
-        )
-        fallback_mask = (
-            np.zeros(spatial_shape, dtype=np.uint8)
-            if method == "vascular" else None
-        )
-        qc_metrics: dict[str, Any] = {
-            "method": method,
-            "inference": inference,
-        }
-        qc_metrics["arrival_delay_method"] = "fitted_aif_relative_arrival_delay"
-
-        # Get mask indices
-        mask_coords = np.where(mask > 0)
-        n_voxels = len(mask_coords[0])
-        masked_curves = concentration_data[
-            mask_coords[0], mask_coords[1], mask_coords[2], :
-        ]
-        admissible_mask = (
-            np.max(np.abs(masked_curves), axis=1) >= EPSILON_CONCENTRATION
-        )
-        n_admissible = int(np.sum(admissible_mask))
-        qc_metrics.update(
-            n_mask_voxels=n_voxels,
-            n_fit_admissible=n_admissible,
-            n_fit_inadmissible=n_voxels - n_admissible,
-        )
-
-        # Build voxel work items only for paths that consume them.
-        # VI/SVB and MAP take concentration_data + mask_coords directly
-        # via vectorized gather; pre-building N namedtuples + N×T copies
-        # wastes ~40 MB at 50K voxels × 100 timepoints.
-        voxel_data_list: list[_DSCVoxelInput] = []
-        if inference == "nlls":
-            for i in range(n_voxels):
-                x, y, z = (
-                    int(mask_coords[0][i]),
-                    int(mask_coords[1][i]),
-                    int(mask_coords[2][i]),
-                )
-                voxel_data_list.append(
-                    _DSCVoxelInput(x, y, z, concentration_data[x, y, z, :])
-                )
-
-        # Worker initializer args
-        sloppy = bool(self.inputs.sloppy)
-        random_seed = (
-            int(self.inputs.random_seed) if isdefined(self.inputs.random_seed) else None
-        )
-        init_args = (
-            aif, time_points, method, inference, mcmc_samples,
-            dt, motion_weights, sloppy, random_seed,
-        )
-
-        n_procs = max(1, int(self.inputs.n_procs))
-
-        # Batched VI path: vectorized Variational Bayes in single process
-        if inference in ("vi", "svb"):
-            results = self._dsc_fit_batched_vi(
-                concentration_data=concentration_data,
-                mask_coords=mask_coords,
-                aif=aif,
-                time_points=time_points,
-                method=method,
-                dt=dt,
-                n_voxels=n_voxels,
-                motion_weights=motion_weights,
-                sloppy=sloppy,
-                spatial=(inference == "svb"),
-                fit_admissible=admissible_mask,
-            )
-        elif inference == "map":
-            results = self._dsc_fit_batched_map(
-                concentration_data=concentration_data,
-                mask_coords=mask_coords,
-                aif=aif,
-                time_points=time_points,
-                method=method,
-                dt=dt,
-                n_voxels=n_voxels,
-                motion_weights=motion_weights,
-                sloppy=sloppy,
-                fit_admissible=admissible_mask,
-            )
-        elif n_procs > 1:
-            from concurrent.futures import ProcessPoolExecutor
-
-            chunk_size = max(1, n_voxels // (n_procs * 10))
-            executor = ProcessPoolExecutor(
-                max_workers=n_procs,
-                initializer=_dsc_init_worker,
-                initargs=init_args,
-            )
-            try:
-                results = list(executor.map(
-                    _dsc_fit_single_voxel, voxel_data_list,
-                    chunksize=chunk_size,
-                ))
-            except BaseException:
-                from pmriprep.utils.processes import terminate_process_pool
-
-                logger.warning(
-                    "Parallel DSC fitting aborted; terminating workers"
-                )
-                terminate_process_pool(executor)
-                raise
-            else:
-                executor.shutdown(wait=True, cancel_futures=True)
-        else:
-            # Serial path: avoid multiprocessing overhead
-            _dsc_init_worker(*init_args)
-            results = [_dsc_fit_single_voxel(vd) for vd in voxel_data_list]
-            _dsc_worker_ctx.clear()
-
-        # Scatter results into output arrays
-        n_converged = 0
-        n_evaluation_budget_exhausted = 0
-        n_cth_accepted = 0
-        n_cth_alpha_at_bound = 0
-        n_vascular_accepted = 0
-        n_vascular_mtt_at_bound = 0
-        n_delay_accepted = 0
-        n_delay_at_bound = 0
-        n_map_uncertainty_evaluated = 0
-        n_map_uncertainty_unavailable = 0
-        r_squared_list: list[float] = []
-        delay_fitted = True
-
-        for res in results:
-            if res["failed"]:
-                continue
-            x, y, z = res["coords"]
-            cbf[x, y, z] = res.get("cbf", 0.0)
-            cbv[x, y, z] = res.get("cbv", 0.0)
-            mtt[x, y, z] = res.get("mtt", 0.0)
-            tmax[x, y, z] = res.get("tmax", 0.0)
-
-            if method == "vascular" and not res.get("needs_fallback"):
-                n_vascular_accepted += 1
-                fitted_mtt = float(res.get("fitted_mtt", res.get("mtt", 0.0)))
-                mtt_at_bound = np.isclose(
-                    fitted_mtt,
-                    MTT_BOUNDS.min,
-                    rtol=1e-5,
-                    atol=1e-8,
-                ) or np.isclose(
-                    fitted_mtt,
-                    MTT_BOUNDS.max,
-                    rtol=1e-5,
-                    atol=1e-8,
-                )
-                n_vascular_mtt_at_bound += int(mtt_at_bound)
-
-            if delay_fitted and not res.get("needs_fallback"):
-                n_delay_accepted += 1
-                fitted_delay = float(res.get("tmax", 0.0))
-                delay_at_bound = np.isclose(
-                    fitted_delay,
-                    VASCULAR_DELAY_BOUNDS.min,
-                    rtol=1e-5,
-                    atol=1e-8,
-                ) or np.isclose(
-                    fitted_delay,
-                    VASCULAR_DELAY_BOUNDS.max,
-                    rtol=1e-5,
-                    atol=1e-8,
-                )
-                n_delay_at_bound += int(delay_at_bound)
-
-            if (
-                cth_map is not None
-                and "cth" in res
-                and "alpha" in res
-                and not res.get("needs_fallback")
-            ):
-                n_cth_accepted += 1
-                alpha_value = float(res["alpha"])
-                alpha_at_bound = np.isclose(
-                    alpha_value,
-                    VASCULAR_ALPHA_BOUNDS.min,
-                    rtol=1e-5,
-                    atol=1e-8,
-                ) or np.isclose(
-                    alpha_value,
-                    VASCULAR_ALPHA_BOUNDS.max,
-                    rtol=1e-5,
-                    atol=1e-8,
-                )
-                if alpha_at_bound:
-                    n_cth_alpha_at_bound += 1
-                else:
-                    cth_map[x, y, z] = res["cth"]
-            if cbf_std_map is not None and "cbf_std" in res:
-                cbf_std_map[x, y, z] = res["cbf_std"]
-            if cbv_std_map is not None and "cbv_std" in res:
-                cbv_std_map[x, y, z] = res["cbv_std"]
-
-            if res.get("r_squared") is not None:
-                r_squared = float(res["r_squared"])
-                if np.isfinite(r_squared):
-                    r_squared_list.append(r_squared)
-                    # Scatter raw parametric R² even on fallback voxels so
-                    # close calls remain distinct from catastrophic fits.
-                    if parametric_r2_map is not None:
-                        parametric_r2_map[x, y, z] = r_squared
-            if res.get("converged"):
-                n_converged += 1
-            if res.get("evaluation_budget_exhausted"):
-                n_evaluation_budget_exhausted += 1
-            if inference == "map" and not res.get("needs_fallback"):
-                source = res.get("uncertainty_source", "not_computed")
-                if source in {"laplace_hessian", "uncertainty_unavailable"}:
-                    n_map_uncertainty_evaluated += 1
-                    n_map_uncertainty_unavailable += int(
-                        source == "uncertainty_unavailable"
-                    )
-
-        # Run oSVD where the requested parametric estimator did not produce a
-        # finite fit that outperformed the tissue curve's temporal mean.
-        from pmriprep.utils.dsc_deconvolution import svd_deconvolve_oscillation
-
-        fallback_candidates = [
-            (res["coords"], bool(admissible_mask[index]))
-            for index, res in enumerate(results)
-            if res.get("needs_fallback") or res.get("failed")
-        ]
-        n_fallback_requested = sum(
-            is_admissible for _, is_admissible in fallback_candidates
-        )
-        n_fallback = 0
-        n_fallback_attempted = 0
-        n_fallback_failed = 0
-        for coords, is_admissible in fallback_candidates:
-            x, y, z = coords
-            tissue = concentration_data[x, y, z, :]
-            # CTH exists only for an accepted vascular fit. Once that fit is
-            # rejected, neither a successful oSVD replacement nor a failed
-            # fallback supplies a capillary transit-time distribution.
-            if cth_map is not None:
-                cth_map[x, y, z] = np.nan
-            if cbf_std_map is not None:
-                cbf_std_map[x, y, z] = np.nan
-            if cbv_std_map is not None:
-                cbv_std_map[x, y, z] = np.nan
-            if not is_admissible:
-                cbf[x, y, z] = np.nan
-                cbv[x, y, z] = np.nan
-                mtt[x, y, z] = np.nan
-                tmax[x, y, z] = np.nan
-                continue
-            n_fallback_attempted += 1
-            try:
-                svd_result = svd_deconvolve_oscillation(
-                    tissue, aif, dt,
-                    oi_target=float(self.inputs.oi_threshold),
-                )
-                cbf[x, y, z] = svd_result.cbf
-                cbv[x, y, z] = svd_result.cbv
-                mtt[x, y, z] = svd_result.mtt
-                tmax[x, y, z] = np.nan
-                if fallback_mask is not None:
-                    fallback_mask[x, y, z] = 1
-                n_fallback += 1
-            except Exception:
-                # The parametric fit was already rejected and oSVD supplied no
-                # replacement. Do not publish the rejected estimate or an
-                # initialized zero as a measured perfusion value.
-                cbf[x, y, z] = np.nan
-                cbv[x, y, z] = np.nan
-                mtt[x, y, z] = np.nan
-                tmax[x, y, z] = np.nan
-                n_fallback_failed += 1
-
-        # Compile QC metrics
-        if r_squared_list:
-            qc_metrics["r_squared_mean"] = float(np.mean(r_squared_list))
-            qc_metrics["r_squared_std"] = float(np.std(r_squared_list))
-
-        if method == "vascular":
-            qc_metrics["n_converged"] = n_converged
-            qc_metrics["solver_convergence_rate"] = (
-                n_converged / max(1, n_admissible)
-            )
-            if inference == "nlls":
-                qc_metrics["n_evaluation_budget_exhausted"] = (
-                    n_evaluation_budget_exhausted
-                )
-                qc_metrics["evaluation_budget_exhausted_rate"] = (
-                    n_evaluation_budget_exhausted / max(1, n_admissible)
-                )
-        if method == "vascular":
-            qc_metrics["cth_alpha_at_bound_n"] = n_cth_alpha_at_bound
-            qc_metrics["cth_alpha_at_bound_fraction"] = (
-                n_cth_alpha_at_bound / max(1, n_cth_accepted)
-            )
-            qc_metrics["mtt_at_bound_n"] = n_vascular_mtt_at_bound
-            qc_metrics["mtt_at_bound_fraction"] = (
-                n_vascular_mtt_at_bound / max(1, n_vascular_accepted)
-            )
-        if delay_fitted:
-            qc_metrics["delay_at_bound_n"] = n_delay_at_bound
-            qc_metrics["delay_at_bound_fraction"] = (
-                n_delay_at_bound / max(1, n_delay_accepted)
-            )
-        if inference == "map":
-            qc_metrics["map_uncertainty"] = {
-                "n_evaluated": n_map_uncertainty_evaluated,
-                "n_uncertainty_unavailable": n_map_uncertainty_unavailable,
-                "uncertainty_unavailable_fraction": (
-                    n_map_uncertainty_unavailable
-                    / max(1, n_map_uncertainty_evaluated)
-                ),
-            }
-
-        qc_metrics["n_fallback_requested"] = n_fallback_requested
-        qc_metrics["n_fallback_attempted"] = n_fallback_attempted
-        qc_metrics["n_fallback_osvd"] = n_fallback
-        qc_metrics["n_fallback_failed"] = n_fallback_failed
-        # Fallback rate is the actual fit-health signal for parametric methods.
-        # It is always populated (zero for non-parametric methods).
-        qc_metrics["fallback_rate"] = n_fallback / max(1, n_admissible)
-        qc_metrics["fallback_requested_rate"] = (
-            n_fallback_requested / max(1, n_admissible)
-        )
-
-        return (cbf, cbv, mtt, tmax, qc_metrics, cth_map,
-                cbf_std_map, cbv_std_map,
-                parametric_r2_map, fallback_mask)
-
-    @staticmethod
-    def _build_dsc_parametric_setup(
-        method: str,
-        concentration_data: npt.NDArray[Any],
-        mask_coords: tuple[npt.NDArray[Any], ...],
-    ) -> dict[str, Any]:
-        """Build model, priors, and fitting kwargs for batched DSC fitting.
-
-        Shared by both batched VI and batched MAP paths.
-
-        Returns
-        -------
-        dict
-            Dict with keys: tissue_curves, fitting_names, fitting_bounds,
-            means_nat, stds_nat,
-            means_t, stds_t, transforms, ubs.
-        """
-        from pmriprep.models.bayesian_utils import build_priors_from_params
-        from pmriprep.models.dsc import VascularModel
-        if method != "vascular":
-            raise ValueError("The concentration-model setup supports vascular only")
-
-        tissue_curves = concentration_data[
-            mask_coords[0], mask_coords[1], mask_coords[2], :
-        ]
-        tissue_curves = np.nan_to_num(tissue_curves, nan=0.0, posinf=0.0, neginf=0.0)
-
-        model = VascularModel()
-        fitting_defs = model.get_fitting_parameter_definitions()
-        priors = build_priors_from_params(fitting_defs)
-        fitting_names = [p.name for p in fitting_defs]
-        fitting_bounds = [(p.bounds[0], p.bounds[1]) for p in fitting_defs]
-
-        means_nat = np.array([p.mean for p in priors], dtype=np.float64)
-        stds_nat = np.array([p.std for p in priors], dtype=np.float64)
-        means_t = np.array([p.mean_transformed for p in priors], dtype=np.float64)
-        stds_t = np.array([p.std_transformed for p in priors], dtype=np.float64)
-        transforms = [p.transform for p in priors]
-        ubs: list[float | None] = [p.upper_bound for p in priors]
-
-        return dict(
-            tissue_curves=tissue_curves,
-            fitting_names=fitting_names,
-            fitting_bounds=fitting_bounds,
-            means_nat=means_nat,
-            stds_nat=stds_nat,
-            means_t=means_t,
-            stds_t=stds_t,
-            transforms=transforms,
-            ubs=ubs,
-        )
-
-    def _dsc_fit_batched_vi(
-        self,
-        concentration_data: npt.NDArray[Any],
-        mask_coords: tuple[npt.NDArray[Any], ...],
-        aif: npt.NDArray[np.floating],
-        time_points: npt.NDArray[np.floating],
-        method: str,
-        dt: float,
-        n_voxels: int,
-        motion_weights: Optional[npt.NDArray[np.floating]],
-        sloppy: bool,
-        spatial: bool = False,
-        fit_admissible: Optional[npt.NDArray[np.bool_]] = None,
-    ) -> list[dict[str, Any]]:
-        """Batched VI for DSC parametric models.
-
-        Extracts priors from model definitions and calls batched_dsc_vi_fit.
-        Runs in a single process with vectorized numpy operations.
-
-        Parameters
-        ----------
-        concentration_data : npt.NDArray[Any]
-            Concentration data, shape (X, Y, Z, T).
-        mask_coords : tuple of npt.NDArray[Any]
-            Tuple of coordinate arrays.
-        aif : npt.NDArray[np.floating]
-            AIF, shape (T,).
-        time_points : npt.NDArray[np.floating]
-            Time points (seconds), shape (T,).
-        method : str
-            Must be 'vascular'.
-        dt : float
-            Time step (seconds).
-        n_voxels : int
-            Number of voxels.
-        motion_weights : npt.NDArray[np.floating] or None
-            Per-frame weights or None.
-        sloppy : bool
-            Whether to use sloppy mode.
-        spatial : bool
-            Use spatial VB wrapper (MRF neighbor coupling).
-        fit_admissible : npt.NDArray[np.bool_], optional
-            Original finite-signal eligibility mask for the fitted voxels.
-
-        Returns
-        -------
-        list of dict
-            List of per-voxel result dicts.
-        """
-        from pmriprep.models.dsc.batched_fitting import batched_dsc_vi_fit
-
-        s = self._build_dsc_parametric_setup(
-            method, concentration_data, mask_coords,
-        )
-
-        vi_label = "SVB" if spatial else "VI"
-        logger.info("DSC batched %s: fitting %s on %d voxels", vi_label, method, n_voxels)
-
-        vi_kwargs: dict[str, Any] = dict(
-            model_type=method,
-            tissue_curves=s["tissue_curves"],
-            aif=aif,
-            time_points=time_points,
-            prior_means_nat=s["means_nat"],
-            prior_stds_nat=s["stds_nat"],
-            transforms=s["transforms"],
-            upper_bounds=s["ubs"],
-            fitting_param_names=s["fitting_names"],
-            fitting_bounds=s["fitting_bounds"],
-            prior_means_transformed=s["means_t"],
-            prior_stds_transformed=s["stds_t"],
-            weights=motion_weights,
-            sloppy=sloppy,
-            save_fitted_curves=True,
-        )
-
-        if spatial:
-            from pmriprep.models.dsc.spatial_vb import batched_dsc_spatial_vi_fit
-            mc3: tuple[npt.NDArray[Any], npt.NDArray[Any], npt.NDArray[Any]] = (
-                mask_coords[0], mask_coords[1], mask_coords[2],
-            )
-            batched_result = batched_dsc_spatial_vi_fit(
-                **vi_kwargs,
-                mask_coords=mc3,
-                spatial_shape=cast(
-                    tuple[int, int, int], concentration_data.shape[:3],
-                ),
-            )
-        else:
-            # Parallel batched VI when --nprocs > 1 (spatial path
-            # remains single-process — voxels are coupled via the
-            # M-prior, see batched_fitting.py guard).
-            batched_result = batched_dsc_vi_fit(
-                **vi_kwargs, nprocs=int(self.inputs.n_procs),
-            )
-
-        return self._batched_result_to_voxel_dicts(
-            batched_result, mask_coords, method, n_voxels,
-            fit_admissible=fit_admissible,
-            inference="svb" if spatial else "vi",
-        )
-
-    def _batched_result_to_voxel_dicts(
-        self,
-        batched_result: Any,
-        mask_coords: tuple[npt.NDArray[Any], ...],
-        method: str,
-        n_voxels: int,
-        fit_admissible: Optional[npt.NDArray[np.bool_]] = None,
-        inference: str = "vi",
-    ) -> list[dict[str, Any]]:
-        """Convert DSCBatchedFitResult to per-voxel result dicts.
-
-        Shared by both batched VI and batched MAP paths.
-
-        Parameters
-        ----------
-        batched_result : Any
-            DSCBatchedFitResult from VI or MAP.
-        mask_coords : tuple of npt.NDArray[Any]
-            Tuple of coordinate arrays.
-        method : str
-            Must be 'vascular'.
-        n_voxels : int
-            Number of voxels.
-        fit_admissible : npt.NDArray[np.bool_], optional
-            Whether each tissue curve carried enough signal to reach the
-            optimizer. Omitted for direct readout tests with pre-fitted data.
-        inference : str, optional
-            Inference engine used to produce the batched result.
-
-        Returns
-        -------
-        list of dict
-            List of per-voxel result dicts.
-        """
-        if method != "vascular":
-            raise ValueError("The concentration-model readout supports vascular only")
-        results: list[dict[str, Any]] = []
-
-        for i in range(n_voxels):
-            x = int(mask_coords[0][i])
-            y = int(mask_coords[1][i])
-            z = int(mask_coords[2][i])
-
-            out: dict[str, Any] = {
-                "coords": (x, y, z),
-                "failed": False,
-            }
-
-            cbf_val = float(batched_result.params["cbf"][i])
-            mtt_val = float(batched_result.params["mtt"][i])
-            alpha_val = float(batched_result.params["alpha"][i])
-            delay_val = float(batched_result.params["delay"][i])
-            beta_val = mtt_val / max(alpha_val, EPSILON_SHAPE)
-
-            out["cbf"] = cbf_val
-            out["cbv"] = cbf_val * mtt_val
-            out["mtt"] = mtt_val
-            out["fitted_mtt"] = mtt_val
-            out["tmax"] = delay_val
-            out["alpha"] = alpha_val
-            out["beta"] = beta_val
-            out["cth"] = beta_val * np.sqrt(alpha_val)
-
-            if batched_result.uncertainties:
-                cbf_std_val = float(batched_result.uncertainties.get(
-                    "cbf", np.full(n_voxels, np.nan))[i])
-                out["cbf_std"] = cbf_std_val
-                out["uncertainty_source"] = (
-                    "laplace_hessian"
-                    if np.isfinite(cbf_std_val)
-                    else "uncertainty_unavailable"
-                )
-
-            out["r_squared"] = float(batched_result.r_squared[i])
-            out["converged"] = bool(batched_result.converged[i])
-            # Fixed-schedule VI/SVB rarely satisfies the strict FE-plateau
-            # diagnostic even for usable fits, so convergence is descriptive
-            # for those engines. MAP convergence remains an acceptance check.
-            fitted_curves = getattr(batched_result, "fitted_curves", None)
-            fitted_curve_is_finite = (
-                fitted_curves is None
-                or np.all(np.isfinite(fitted_curves[i]))
-            )
-            r_squared = float(batched_result.r_squared[i])
-            admissible = (
-                True if fit_admissible is None else bool(fit_admissible[i])
-            )
-            failure_reasons = getattr(batched_result, "failure_reasons", ())
-            numerical_failure = (
-                i < len(failure_reasons) and failure_reasons[i] is not None
-            )
-            out["needs_fallback"] = (
-                not admissible
-                or numerical_failure
-                or not np.isfinite(r_squared)
-                or r_squared < 0.0
-                or not _parametric_outputs_are_finite(out)
-                or not fitted_curve_is_finite
-                or (inference == "map" and not bool(out["converged"]))
-            )
-            out["failed"] = not admissible
-
-            results.append(out)
-
-        return results
-
-    def _dsc_fit_batched_map(
-        self,
-        concentration_data: npt.NDArray[Any],
-        mask_coords: tuple[npt.NDArray[Any], ...],
-        aif: npt.NDArray[np.floating],
-        time_points: npt.NDArray[np.floating],
-        method: str,
-        dt: float,
-        n_voxels: int,
-        motion_weights: Optional[npt.NDArray[np.floating]],
-        sloppy: bool,
-        fit_admissible: Optional[npt.NDArray[np.bool_]] = None,
-    ) -> list[dict[str, Any]]:
-        """Batched MAP for DSC parametric models.
-
-        Extracts priors from model definitions and calls batched_dsc_map_fit.
-        Runs in a single process with vectorized numpy operations.
-
-        Parameters
-        ----------
-        concentration_data : npt.NDArray[Any]
-            Concentration data, shape (X, Y, Z, T).
-        mask_coords : tuple of npt.NDArray[Any]
-            Tuple of coordinate arrays.
-        aif : npt.NDArray[np.floating]
-            AIF, shape (T,).
-        time_points : npt.NDArray[np.floating]
-            Time points (seconds), shape (T,).
-        method : str
-            Must be 'vascular'.
-        dt : float
-            Time step (seconds).
-        n_voxels : int
-            Number of voxels.
-        motion_weights : npt.NDArray[np.floating] or None
-            Per-frame weights or None.
-        sloppy : bool
-            Whether to use sloppy mode.
-        fit_admissible : npt.NDArray[np.bool_], optional
-            Original finite-signal eligibility mask for the fitted voxels.
-
-        Returns
-        -------
-        list of dict
-            List of per-voxel result dicts.
-        """
-        from pmriprep.models.dsc.batched_fitting import batched_dsc_map_fit
-
-        s = self._build_dsc_parametric_setup(
-            method, concentration_data, mask_coords,
-        )
-
-        batched_result = batched_dsc_map_fit(
-            model_type=method,
-            tissue_curves=s["tissue_curves"],
-            aif=aif,
-            time_points=time_points,
-            prior_means_nat=s["means_nat"],
-            prior_stds_nat=s["stds_nat"],
-            transforms=s["transforms"],
-            upper_bounds=s["ubs"],
-            fitting_param_names=s["fitting_names"],
-            fitting_bounds=s["fitting_bounds"],
-            prior_means_transformed=s["means_t"],
-            prior_stds_transformed=s["stds_t"],
-            weights=motion_weights,
-            sloppy=sloppy,
-            save_fitted_curves=True,
-            nprocs=int(self.inputs.n_procs),
-        )
-
-        return self._batched_result_to_voxel_dicts(
-            batched_result, mask_coords, method, n_voxels,
-            fit_admissible=fit_admissible,
-            inference="map",
-        )
-
-    def _save_qc_fit_data(
-        self,
-        cbf_map: npt.NDArray[Any],
-        conc_data: npt.NDArray[Any],
-        aif: npt.NDArray[Any],
-        mask_bool: npt.NDArray[np.bool_],
-        dt: float,
-        method: str,
-        inference: str,
-        mcmc_samples: int,
-        signal_data: npt.NDArray[Any] | None = None,
-    ) -> None:
-        """Select a QC voxel and save its fit data as JSON.
-
-        The QC voxel is chosen near the median CBF in the eroded brain mask.
-        Its tissue curve is re-fit to produce the model prediction, which
-        is saved alongside the measured concentration and AIF for the
-        fit QC plot.
-
-        Parameters
-        ----------
-        cbf_map : npt.NDArray[Any]
-            3D relative CBF map (masked).
-        conc_data : npt.NDArray[Any]
-            4D concentration data.
-        aif : npt.NDArray[Any]
-            1D AIF concentration curve.
-        mask_bool : npt.NDArray[np.bool_]
-            3D boolean brain mask.
-        dt : float
-            Temporal resolution in seconds.
-        method : str
-            Deconvolution method ('vascular').
-        inference : str
-            Inference engine ('nlls', 'map', 'vi', 'svb').
-        mcmc_samples : int
-            Number of MCMC samples.
-        signal_data : npt.NDArray[Any] or None, optional
-            4D raw signal data (optional, for QC plot).
-        """
-        import nibabel as nib  # type: ignore[import-untyped]
-        from scipy.ndimage import binary_erosion  # type: ignore[import-untyped]
-        from pmriprep.utils.dsc_qc_plots import _select_dsc_qc_voxel
-        from pmriprep.models.dsc import (
-            VascularModel,
-            fit_dsc_model,
-        )
-
-        if method != "vascular":
-            raise ValueError("Concentration-model QC supports vascular only")
-
-        try:
-            # Load and resample enhancing mask if available
-            enhancing_mask_data: npt.NDArray[Any] | None = None
-            if (
-                isdefined(self.inputs.enhancing_mask_file)
-                and self.inputs.enhancing_mask_file
-            ):
-                enh_img = nib.load(self.inputs.enhancing_mask_file)
-                conc_img = nib.load(self.inputs.concentration_file)
-                enh_data = enh_img.get_fdata()  # type: ignore[attr-defined]
-                needs_resample = (
-                    enh_data.shape[:3] != conc_data.shape[:3]
-                    or not np.allclose(
-                        enh_img.affine, conc_img.affine, atol=1e-3  # type: ignore[attr-defined]
-                    )
-                )
-                if needs_resample:
-                    from nilearn.image import resample_to_img  # type: ignore[import-untyped]
-                    resampled = resample_to_img(
-                        enh_img, conc_img, interpolation="nearest"
-                    )
-                    enhancing_mask_data = (
-                        resampled.get_fdata() > 0.5  # type: ignore[attr-defined]
-                    ).astype(np.float64)
-                else:
-                    enhancing_mask_data = enh_data
-
-            qc_voxel, qc_voxel_tier = _select_dsc_qc_voxel(
-                cbf_map, mask_bool, binary_erosion,
-                enhancing_mask=enhancing_mask_data,
-            )
-            x, y, z = qc_voxel
-            self._qc_voxel_tier = qc_voxel_tier
-            tissue_curve = conc_data[x, y, z, :].astype(np.float64)
-
-            if np.max(np.abs(tissue_curve)) < EPSILON_CONCENTRATION:
-                return
-
-            n_timepoints = conc_data.shape[3]
-            time_points = np.arange(n_timepoints, dtype=np.float64) * dt
-
-            model_instance = VascularModel()
-
-            # Fit the QC voxel
-            result = fit_dsc_model(
-                model=model_instance,
-                concentration=tissue_curve,
-                aif=aif,
-                time_points=time_points,
-                method=inference,
-                mcmc_samples=mcmc_samples,
-                compute_uncertainties=False,
-            )
-
-            if result is None:
-                return
-
-            # Use the model's fitted tissue curve directly (matches the
-            # model's forward operator).
-            model_prediction: npt.NDArray[Any]
-            if result.fitted_tissue_curve is not None:
-                model_prediction = result.fitted_tissue_curve
-            elif result.fitted_residue is not None:
-                # Fallback: reconstruct from residue via the Volterra
-                # product-integration operator used by the vascular model.
-                from pmriprep.utils.dsc_deconvolution import build_volterra_matrix
-                model_prediction = build_volterra_matrix(aif, dt) @ result.fitted_residue
-            else:
-                return
-
-            # Extract raw signal at QC voxel (for signal intensity panel)
-            raw_signal: list[float] | None = None
-            if signal_data is not None and signal_data.ndim == 4:
-                raw_signal = signal_data[x, y, z, :].tolist()
-
-            # Save as JSON
-            base_path = self._gen_outfilename("_qc_fit_data")
-            # _gen_outfilename appends .nii.gz; replace with .json
-            qc_fit_path = base_path.replace(".nii.gz", ".json")
-            qc_fit_dict = {
-                "voxel": [x, y, z],
-                "voxel_cbf": float(cbf_map[x, y, z]),
-                "r_squared": float(result.r_squared) if result.r_squared else 0.0,
-                "method": method,
-                "tissue_concentration": tissue_curve.tolist(),
-                "model_prediction": model_prediction.tolist(),
-                "aif": aif.tolist(),
-                "time_points": time_points.tolist(),
-                "raw_signal": raw_signal,
-            }
-
-            from pmriprep.utils.sidecar_builders import dump_sidecar_json
-            with open(qc_fit_path, "w") as f:
-                f.write(dump_sidecar_json(qc_fit_dict))
-
-            self._results["out_qc_fit_data"] = qc_fit_path
-
-        except Exception as e:
-            logger.warning(f"Failed to generate QC fit data: {e}")
 
     def _save_qc_fit_data_svd(
         self,
@@ -2922,10 +1802,9 @@ class ComputeDSCMaps(BaseInterface):
         threshold = inputs.svd_threshold
         oi_threshold = inputs.oi_threshold
         inference = inputs.inference
-        mcmc_samples = inputs.mcmc_samples
 
-        # SVD methods are direct matrix decompositions — Bayesian/NLLS
-        # inference only applies to parametric fitting (cpi, vascular).
+        # SVD methods are direct matrix decompositions — Bayesian
+        # inference only applies to parametric fitting (cpi).
         if method in ("sSVD", "oSVD", "tikhonov") and inference != "vi":
             logger.debug(
                 "inference='%s' ignored for SVD method '%s'.",
@@ -2955,9 +1834,6 @@ class ComputeDSCMaps(BaseInterface):
                 dt=dt,
                 threshold=threshold,
                 oi_threshold=oi_threshold,
-                inference=inference,
-                mcmc_samples=mcmc_samples,
-                motion_weighting=motion_weighting,
             )
         aif_level = str(self.inputs.aif_detection_level)
         postprocessing = self._prepare_final_outputs(

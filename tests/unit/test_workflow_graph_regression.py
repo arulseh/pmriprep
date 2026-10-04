@@ -446,7 +446,6 @@ def _dsc_preproc_datasinks(bids: Path) -> pe.Workflow:
         bids_dir=str(bids),
         subject_id="0001",
         session_id="0001",
-        inference="nlls",
         present_inputs={"dsc_moco", "dsc_mean", "aif_mask"},
         motion_correct=False,
     )
@@ -459,7 +458,6 @@ def _dsc_anat_datasinks(bids: Path) -> pe.Workflow:
         bids_dir=str(bids),
         subject_id="0001",
         session_id="0001",
-        inference="nlls",
         present_inputs={
             "brain_mask_dsc", "nawm_mask_dsc", "lesion_mask_dsc",
             "user_lesion_mask_dsc", "roi_mask_dsc",

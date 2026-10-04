@@ -188,12 +188,6 @@
     ],
     [
       "compute_maps",
-      "out_cth",
-      "outputnode",
-      "cth_map"
-    ],
-    [
-      "compute_maps",
       "out_fallback_mask",
       "outputnode",
       "fallback_mask"
@@ -2108,7 +2102,6 @@
       "cpi_infer_delay": true,
       "inference": "vi",
       "leakage_method": "bsw",
-      "mcmc_samples": 500,
       "method": "oSVD",
       "n_procs": 1,
       "oi_threshold": 0.095,
@@ -2472,7 +2465,6 @@
     "brain_mask_filmstrip",
     "cbf_std_map",
     "cnr_map",
-    "cth_map",
     "dsc_fit_qc_plot",
     "dsc_leakage_qc_plot",
     "dsc_mean",

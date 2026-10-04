@@ -22,8 +22,6 @@ import numpy as np
 import numpy.typing as npt
 import pytest
 
-from pmriprep.models.dsc.bayesian import fit_dsc_model
-from pmriprep.models.dsc.vascular import VascularModel
 from pmriprep.utils.dsc_deconvolution import (
     svd_deconvolve_circulant,
     svd_deconvolve_oscillation,
@@ -61,11 +59,6 @@ N_TIMEPOINTS = 80
 DT_SEC = 1.5
 BASELINE_FRAMES = 10
 SEED = 42
-
-# QIBA tissue params use CBF in mL/100g/min; VascularModel uses mL/mL/s.
-# Conversion: mL/100g/min ÷ 6000 = mL/mL/s  (60 s/min × 100 g/100g).
-_CBF_QIBA_TO_MODEL = 6000.0
-
 
 # =============================================================================
 # Helpers
@@ -195,14 +188,6 @@ SVD_TISSUES = [
     pytest.param("low_perfusion", id="low_perfusion"),
 ]
 
-# 4 tissues for Vascular (drop low_perfusion and tumor_high)
-VASCULAR_TISSUES = [
-    pytest.param("normal_gm", id="normal_gm"),
-    pytest.param("normal_wm", id="normal_wm"),
-    pytest.param("tumor", id="tumor"),
-    pytest.param("peritumoral", id="peritumoral"),
-]
-
 # CTH combos: 3 cth x 2 tissues = 6
 CTH_COMBOS = [
     pytest.param("normal_gm", "low_cth", id="normal_gm-low_cth"),
@@ -212,15 +197,6 @@ CTH_COMBOS = [
     pytest.param("tumor", "moderate_cth", id="tumor-moderate_cth"),
     pytest.param("tumor", "high_cth", id="tumor-high_cth"),
 ]
-
-# CTH combos for Vascular (4 combos)
-VASCULAR_CTH_COMBOS = [
-    pytest.param("normal_gm", "low_cth", id="normal_gm-low_cth"),
-    pytest.param("normal_gm", "high_cth", id="normal_gm-high_cth"),
-    pytest.param("tumor", "low_cth", id="tumor-low_cth"),
-    pytest.param("tumor", "high_cth", id="tumor-high_cth"),
-]
-
 
 # =============================================================================
 # sSVD with exponential residue
@@ -405,78 +381,6 @@ class TestQIBATikhonovExponential:
 
 
 # =============================================================================
-# Vascular model with exponential residue
-# =============================================================================
-
-# Vascular MAP uses its own forward model (gamma residue + FFT convolution).
-# For exponential residue data, we still test Toeplitz-generated tissue curves
-# since the MAP fitter must handle model mismatch (gamma ≠ exponential).
-VASCULAR_QIBA_NOISE = [
-    pytest.param("zero", 0.20, 0.20, id="zero"),
-    pytest.param("low", 0.40, 0.50, id="low"),
-    pytest.param("medium", 0.55, 0.80, id="medium"),
-    pytest.param("high", 0.65, 1.05, id="high"),
-]
-
-
-class TestQIBAVascularExponential:
-    """Vascular MAP recovery with QIBA AIF and exponential residue.
-
-    Tests model mismatch: data generated with exponential residue,
-    fitted with gamma-variate model. Zero-noise CBF error ~18% is
-    expected from the model mismatch + recirculation AIF.
-    """
-
-    @pytest.mark.parametrize("noise_key,cbf_tol,mtt_tol", VASCULAR_QIBA_NOISE)
-    @pytest.mark.parametrize("tissue_key", VASCULAR_TISSUES)
-    def test_vascular_exponential(
-        self,
-        tissue_key: str,
-        noise_key: str,
-        cbf_tol: float,
-        mtt_tol: float,
-    ) -> None:
-        """Test vascular MAP recovery with QIBA recirculation AIF."""
-        # MAP prior mean ~0.08 pulls normal_wm (CBF=0.0033) upward
-        if tissue_key == "normal_wm" and noise_key != "zero":
-            pytest.xfail(
-                "MAP prior bias pulls low CBF upward at all noise levels"
-            )
-
-        tissue, aif, dt, time_sec, cbf, mtt = _make_qiba_exponential_data(
-            tissue_key, noise_key
-        )
-
-        # Scale tissue from QIBA units (mL/100g/min) to model units (mL/mL/s)
-        tissue = tissue / _CBF_QIBA_TO_MODEL
-        cbf_model = cbf / _CBF_QIBA_TO_MODEL
-
-        model = VascularModel()
-        peak = float(np.max(np.abs(tissue)))
-        noise_frac = QIBA_NOISE_LEVELS[noise_key].fraction
-        noise_std = max(noise_frac * peak, 0.01 * peak) if peak > 0 else 1.0
-
-        result = fit_dsc_model(
-            model,
-            tissue,
-            aif,
-            time_sec,
-            method="map",
-            compute_uncertainties=False,
-            noise_std=noise_std,
-        )
-        assert result is not None, "Vascular MAP fit returned None"
-
-        recovered_cbf = result.parameters["cbf"]
-        _assert_param_recovery(recovered_cbf, cbf_model, cbf_tol, param_name="CBF")
-
-        fitted_params = model.dict_to_params(result.parameters)
-        derived = model.compute_derived_parameters(fitted_params)
-        recovered_mtt = derived["mtt"]
-        _assert_param_recovery(recovered_mtt, mtt, mtt_tol, param_name="MTT")
-
-
-# =============================================================================
 # sSVD with CTH residue
 # =============================================================================
 
@@ -611,91 +515,6 @@ class TestQIBATikhonovCTH:
 
         _assert_param_recovery(result.cbf, cbf, 0.30, param_name="CBF")
         _assert_param_recovery(result.mtt, mtt, 0.50, param_name="MTT")
-
-
-# =============================================================================
-# Vascular with CTH residue — round-trip (self-consistent model)
-# =============================================================================
-
-VASCULAR_CTH_NOISE = [
-    pytest.param("zero", 0.25, 0.25, id="zero"),
-    pytest.param("low", 0.40, 0.55, id="low"),
-    pytest.param("medium", 0.55, 0.80, id="medium"),
-    pytest.param("high", 0.65, 1.05, id="high"),
-]
-
-
-class TestQIBAVascularCTH:
-    """Vascular MAP recovery with CTH residue — true round-trip.
-
-    Data generated via VascularModel.tissue_curve() with gamma residue,
-    fitted with the same model. Recirculation AIF increases zero-noise
-    error (~15-24% CBF) vs Tier 1's <5% due to AIF complexity.
-    """
-
-    @pytest.mark.parametrize("noise_key,cbf_tol,mtt_tol", VASCULAR_CTH_NOISE)
-    @pytest.mark.parametrize("tissue_key,cth_key", VASCULAR_CTH_COMBOS)
-    def test_vascular_cth(
-        self,
-        tissue_key: str,
-        cth_key: str,
-        noise_key: str,
-        cbf_tol: float,
-        mtt_tol: float,
-    ) -> None:
-        """Test vascular MAP round-trip with CTH residue."""
-        params = QIBA_TISSUE_PARAMS[tissue_key]
-        cth = CTH_CONFIGS[cth_key]
-        noise = QIBA_NOISE_LEVELS[noise_key]
-
-        aif, time_sec = generate_qiba_aif(
-            n_timepoints=N_TIMEPOINTS,
-            dt_sec=DT_SEC,
-            baseline_frames=BASELINE_FRAMES,
-        )
-
-        # Scale CBF from QIBA units (mL/100g/min) to model units (mL/mL/s)
-        cbf_model = params.cbf / _CBF_QIBA_TO_MODEL
-        beta = params.mtt / cth.alpha
-        true_params = [cbf_model, cth.alpha, beta, 0.0]
-
-        model = VascularModel()
-        tissue = model.tissue_curve(true_params, aif, time_sec)
-
-        if noise.fraction > 0:
-            peak = float(np.max(np.abs(tissue)))
-            if peak > 0:
-                tissue = add_gaussian_noise(
-                    tissue, noise.fraction * peak, seed=SEED
-                )
-
-        peak = float(np.max(np.abs(tissue)))
-        noise_std = (
-            max(noise.fraction * peak, 0.01 * peak) if peak > 0 else 1.0
-        )
-
-        result = fit_dsc_model(
-            model,
-            tissue,
-            aif,
-            time_sec,
-            method="map",
-            compute_uncertainties=False,
-            noise_std=noise_std,
-        )
-        assert result is not None, "Vascular MAP fit returned None"
-
-        recovered_cbf = result.parameters["cbf"]
-        _assert_param_recovery(
-            recovered_cbf, cbf_model, cbf_tol, param_name="CBF"
-        )
-
-        fitted_params = model.dict_to_params(result.parameters)
-        derived = model.compute_derived_parameters(fitted_params)
-        recovered_mtt = derived["mtt"]
-        _assert_param_recovery(
-            recovered_mtt, params.mtt, mtt_tol, param_name="MTT"
-        )
 
 
 # =============================================================================

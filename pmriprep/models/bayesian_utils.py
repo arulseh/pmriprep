@@ -1,7 +1,7 @@
 """Shared Bayesian inference utilities for DSC and DCE perfusion models.
 
 Provides generic MCMC sampling, convergence diagnostics, and statistical
-utilities used by both BayesianDSCFitter and BayesianPKFitter.
+utilities used by the DSC inference engine and BayesianPKFitter.
 """
 
 import enum
@@ -514,11 +514,11 @@ def transform_prior(
 
 
 # ---------------------------------------------------------------------------
-# Protocol for parameter definitions (DSCModelParameter / ModelParameter)
+# Protocol for parameter definitions
 # ---------------------------------------------------------------------------
 
 class ParameterDef(Protocol):
-    """Protocol matching both DSCModelParameter and DCE ModelParameter."""
+    """Protocol for model parameter definitions."""
 
     transform: TransformType
     bounds: tuple[float, float]

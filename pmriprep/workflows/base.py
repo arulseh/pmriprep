@@ -1857,7 +1857,6 @@ def _connect_master_dsc_datasinks(
     # an unpopulated key here triggers nipype mandatory-input crashes
     # because the sink's `in_file` becomes Undefined.
     dsc_method = (dsc_config.method or "").lower()
-    dsc_inference = (dsc_config.inference or "").lower()
     dsc_has_nawm = mask_state.has_nawm_source
     dsc_present: set[str] = {
         # Always-present (mandatory in dsc_wf.outputnode)
@@ -1871,16 +1870,12 @@ def _connect_master_dsc_datasinks(
     }
     if dsc_config.leakage_method == "bsw":
         dsc_present.add("k2_map")
-    # Parametric methods only (oSVD/sSVD/tikhonov produce no
-    # vascular params, no Bayesian uncertainty, no parametric R²)
-    if dsc_method in ("cpi", "vascular"):
+    # CPI fit uncertainty and diagnostics
+    if dsc_method == "cpi":
         dsc_present |= {"parametric_r2_map", "fallback_mask"}
         dsc_present |= {
             "cbf_std_map",
         }
-    # Vascular method only (alpha/beta/cth params)
-    if dsc_method == "vascular":
-        dsc_present.add("cth_map")
 
     if dsc_has_nawm:
         dsc_present.add("nawm_mask_dsc")
@@ -1950,7 +1945,6 @@ def _connect_master_dsc_datasinks(
         bids_dir=str(bids_dir),
         subject_id=subject_id,
         session_id=session_id,
-        inference=dsc_inference,
         deconvolution_method=dsc_config.method,
         present_inputs=dsc_present,
         has_smoothing=dsc_config.smooth_fwhm > 0,
@@ -2011,11 +2005,9 @@ def _connect_master_dsc_datasinks(
             # Normalized maps
             ("outputnode.ncbv_map", "inputnode.ncbv_map"),
             ("outputnode.ncbf_map", "inputnode.ncbf_map"),
-            # Vascular model parameters
-            ("outputnode.cth_map", "inputnode.cth_map"),
             # Inference-specific CBF uncertainty maps
             ("outputnode.cbf_std_map", "inputnode.cbf_std_map"),
-            # Parametric-fit diagnostics (CPI/Vascular only)
+            # Parametric-fit diagnostics (CPI only)
             ("outputnode.parametric_r2_map", "inputnode.parametric_r2_map"),
             ("outputnode.fallback_mask", "inputnode.fallback_mask"),
             ("outputnode.preload_qc", "inputnode.preload_qc"),

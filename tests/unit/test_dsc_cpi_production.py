@@ -135,13 +135,14 @@ def test_actual_interface_uses_signal_and_preserves_selected_fit(
     )
     monkeypatch.setattr(
         interface,
-        "_deconvolve_parametric",
-        lambda *a, **k: pytest.fail("old CPI route"),
+        "_run_deconvolution",
+        lambda *a, **k: pytest.fail("CPI must use the signal fitting route"),
     )
     monkeypatch.setattr(
-        interface, "_save_qc_fit_data", lambda *a, **k: pytest.fail("QC must not refit")
+        interface, "_save_qc_fit_data_svd", lambda *a, **k: pytest.fail("QC must use the selected CPI fit")
     )
     output = interface.run().outputs
+    assert len(captured_maps) == 1
     native = captured_maps[0]
     assert not any(isinstance(value, CPIMaps) for value in vars(interface).values())
     np.testing.assert_allclose(
@@ -289,7 +290,7 @@ def test_upstream_helper_saves_requested_exact_guidance(
 
 
 @pytest.mark.parametrize(
-    "fault", ["no_te", "no_signal", "off_grid", "no_guidance", "wrong_engine"]
+    "fault", ["no_te", "no_signal", "off_grid", "no_guidance"]
 )
 def test_cpi_rejects_missing_or_mismatched_contract(
     files: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str
@@ -306,8 +307,6 @@ def test_cpi_rejects_missing_or_mismatched_contract(
         nib.save(nib.Nifti1Image(files["signal"], np.eye(4)), files["signal_file"])
     elif fault == "no_guidance":
         interface.inputs.leakage_method = "bsw"
-    else:
-        interface.inputs.inference = "map"
     with pytest.raises(ValueError, match="CPI"):
         interface.run()
 

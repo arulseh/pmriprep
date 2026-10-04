@@ -393,9 +393,8 @@ def test_process_group_cleanup_reaps_already_exited_child(
 @pytest.mark.parametrize(
     ("relative_path", "cleanup_call"),
     [
-        ("pmriprep/interfaces/dsc_compute.py", "terminate_process_pool(executor)"),
         ("pmriprep/interfaces/dce_compute.py", "terminate_process_pool(executor)"),
-        ("pmriprep/models/dsc/batched_fitting.py", "terminate_process_pool(pool)"),
+        ("pmriprep/models/dsc/signal_cpi/execution.py", "terminate_process_pool(self.pool)"),
     ],
 )
 def test_fitting_executors_join_workers(

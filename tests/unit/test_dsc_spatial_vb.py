@@ -311,7 +311,7 @@ class TestFabberMPriorContract:
                 converged=np.zeros(n_voxels, dtype=bool),
                 fitted_curves=None,
                 n_iterations=1,
-                model_name="vascular",
+                model_name="linear",
                 uncertainties={"noise_std": np.full(n_voxels, 0.5)},
                 posterior_means_transformed=means,
                 posterior_cov_diag=np.ones_like(means),
@@ -319,7 +319,7 @@ class TestFabberMPriorContract:
 
         monkeypatch.setattr(spatial_vb, "batched_dsc_vi_fit", fake_vi_fit)
         spatial_result = spatial_vb.batched_dsc_spatial_vi_fit(
-            model_type="vascular",
+            model_type="linear",
             tissue_curves=np.ones((2, 3)),
             aif=np.ones(3),
             time_points=np.arange(3, dtype=float),
@@ -355,401 +355,41 @@ class TestFabberMPriorContract:
         np.testing.assert_allclose(spatial_result.params["cbf"], 4.0)
 
 
-class TestSpatialVIIntegration:
-    """Integration tests for spatial VB wrapper."""
+@pytest.mark.parametrize("sloppy", [False, True])
+def test_adapter_spatial_translation_and_permutation(sloppy: bool) -> None:
+    """Graph translation and row ordering preserve the same complete field."""
+    from tests.unit.test_dsc_batched_fitting import linear_arguments
+    from pmriprep.models.dsc.spatial_vb import batched_dsc_spatial_vi_fit
 
-    def _make_synthetic_data(
-        self,
-        n_side: int = 5,
-        n_timepoints: int = 40,
-        noise_std: float = 0.005,
-        cbf: float = 0.1,
-    ) -> tuple:
-        """Create synthetic NxNx1 homogeneous phantom."""
-        from pmriprep.models.dsc.vascular import VascularModel
+    args = linear_arguments(9)
+    args.pop("return_full_posterior")
+    x, y = np.mgrid[0:3, 0:3]
+    coords = (x.ravel(), y.ravel(), np.zeros(9, int))
+    original = batched_dsc_spatial_vi_fit(**args, mask_coords=coords,
+        spatial_shape=(3,3,1), sloppy=sloppy)
+    order = np.array([8,3,2,5,4,7,1,0,6])
+    args["tissue_curves"] = args["tissue_curves"][order]
+    shifted = batched_dsc_spatial_vi_fit(**args,
+        mask_coords=(coords[0][order]+1, coords[1][order], coords[2][order]),
+        spatial_shape=(4,3,1), sloppy=sloppy)
+    for key in ("cbf", "offset"):
+        np.testing.assert_allclose(shifted.params[key][np.argsort(order)],
+            original.params[key], rtol=1e-8, atol=1e-10)
+    assert np.all(original.r_squared > .95)
 
-        n_voxels = n_side * n_side
-        t = np.linspace(0, 40, n_timepoints)
-        dt = float(t[1] - t[0])
-        aif = (t / 3.0) * np.exp(-t / 5.0)
-        aif[0] = 0.0
 
-        model = VascularModel()
+def test_single_voxel_matches_vi_warm_start() -> None:
+    """An isolated field preserves the ordinary local posterior and predictions."""
+    from tests.unit.test_dsc_batched_fitting import linear_arguments
+    from pmriprep.models.dsc.batched_fitting import batched_dsc_vi_fit
+    from pmriprep.models.dsc.spatial_vb import batched_dsc_spatial_vi_fit
 
-        rng = np.random.default_rng(42)
-        params = [cbf, 3.0, 2.0, 0.0]  # cbf, alpha, beta, delay
-        clean_curve = model.tissue_curve(params, aif, t)
-        tissue_curves = np.tile(clean_curve, (n_voxels, 1))
-        tissue_curves += rng.normal(0, noise_std, (n_voxels, n_timepoints))
-
-        x, y = np.mgrid[0:n_side, 0:n_side]
-        mask_coords = (x.ravel(), y.ravel(), np.zeros(n_voxels, dtype=int))
-
-        return tissue_curves, aif, t, dt, mask_coords, model
-
-    def test_spatial_vi_runs_without_error(self) -> None:
-        """Spatial VI wrapper completes without errors."""
-        from pmriprep.models.bayesian_utils import build_priors_from_params
-        from pmriprep.models.dsc.spatial_vb import batched_dsc_spatial_vi_fit
-
-        tissue_curves, aif, t, dt, mask_coords, model = (
-            self._make_synthetic_data()
-        )
-        fitting_defs = list(model.get_fitting_parameter_definitions())
-        priors = build_priors_from_params(fitting_defs)
-        fitting_names = [p.name for p in fitting_defs]
-        fitting_bounds = [(p.bounds[0], p.bounds[1]) for p in fitting_defs]
-        means_nat = np.array([p.mean for p in priors], dtype=np.float64)
-        stds_nat = np.array([p.std for p in priors], dtype=np.float64)
-        means_t = np.array([p.mean_transformed for p in priors], dtype=np.float64)
-        stds_t = np.array([p.std_transformed for p in priors], dtype=np.float64)
-        transforms = [p.transform for p in priors]
-        ubs: list[float | None] = [p.upper_bound for p in priors]
-
-        result = batched_dsc_spatial_vi_fit(
-            model_type="vascular",
-            tissue_curves=tissue_curves,
-            aif=aif,
-            time_points=t,
-            mask_coords=mask_coords,
-            spatial_shape=(5, 5, 1),
-            prior_means_nat=means_nat,
-            prior_stds_nat=stds_nat,
-            transforms=transforms,
-            upper_bounds=ubs,
-            fitting_param_names=fitting_names,
-            fitting_bounds=fitting_bounds,
-            mono_prec=None,
-            mono_eta=None,
-            prior_means_transformed=means_t,
-            prior_stds_transformed=stds_t,
-            sloppy=True,
-            save_fitted_curves=True,
-            n_spatial_sweeps=3,
-        )
-
-        assert result.params["cbf"].shape == (25,)
-        assert result.fitted_curves is not None
-        assert np.all(np.isfinite(result.params["cbf"]))
-
-    def test_spatial_vi_preserves_vascular_fit_quality(self) -> None:
-        """Vascular spatial updates remain finite and retain useful CBF recovery."""
-        from pmriprep.models.bayesian_utils import build_priors_from_params
-        from pmriprep.models.dsc.spatial_vb import batched_dsc_spatial_vi_fit
-
-        tissue_curves, aif, t, dt, mask_coords, model = (
-            self._make_synthetic_data(n_side=6, noise_std=0.01)
-        )
-        fitting_defs = list(model.get_fitting_parameter_definitions())
-        priors = build_priors_from_params(fitting_defs)
-        fitting_names = [p.name for p in fitting_defs]
-        fitting_bounds = [(p.bounds[0], p.bounds[1]) for p in fitting_defs]
-        means_nat = np.array([p.mean for p in priors], dtype=np.float64)
-        stds_nat = np.array([p.std for p in priors], dtype=np.float64)
-        means_t = np.array([p.mean_transformed for p in priors], dtype=np.float64)
-        stds_t = np.array([p.std_transformed for p in priors], dtype=np.float64)
-        transforms = [p.transform for p in priors]
-        ubs: list[float | None] = [p.upper_bound for p in priors]
-
-        common_kwargs: dict = dict(
-            model_type="vascular",
-            tissue_curves=tissue_curves,
-            aif=aif,
-            time_points=t,
-            prior_means_nat=means_nat,
-            prior_stds_nat=stds_nat,
-            transforms=transforms,
-            upper_bounds=ubs,
-            fitting_param_names=fitting_names,
-            fitting_bounds=fitting_bounds,
-            mono_prec=None,
-            mono_eta=None,
-            prior_means_transformed=means_t,
-            prior_stds_transformed=stds_t,
-        )
-
-        result_svb = batched_dsc_spatial_vi_fit(
-            **common_kwargs,
-            mask_coords=mask_coords,
-            spatial_shape=(6, 6, 1),
-            save_fitted_curves=False,
-        )
-
-        cbf = np.asarray(result_svb.params["cbf"])
-        assert np.all(np.isfinite(cbf))
-        assert np.median(np.abs(cbf - 0.1) / 0.1) < 0.25
-        assert np.median(result_svb.r_squared) > 0.5
-
-    def test_synchronous_update_is_translation_invariant(self) -> None:
-        """A one-voxel coordinate translation leaves vascular SVB unchanged."""
-        from pmriprep.models.bayesian_utils import build_priors_from_params
-        from pmriprep.models.dsc.batched_fitting import batched_vascular_forward
-        from pmriprep.models.dsc.vascular import VascularModel
-        from pmriprep.models.dsc.spatial_vb import batched_dsc_spatial_vi_fit
-
-        side = 4
-        n_voxels = side**2
-        time_points = np.linspace(0.0, 40.0, 40)
-        aif = (time_points / 3.0) * np.exp(-time_points / 5.0)
-        aif[0] = 0.0
-        model = VascularModel()
-        cbf_truth = np.linspace(0.025, 0.14, n_voxels)
-        alpha = np.linspace(2.0, 4.0, n_voxels)
-        tissue = batched_vascular_forward(
-            cbf_truth, alpha, np.full(n_voxels, 2.0),
-            np.zeros(n_voxels), aif, time_points,
-        )
-        tissue += np.random.default_rng(20260725).normal(
-            0.0, 0.008, tissue.shape
-        )
-
-        definitions = list(model.get_fitting_parameter_definitions())
-        priors = build_priors_from_params(definitions)
-        common = dict(
-            model_type="vascular",
-            tissue_curves=tissue,
-            aif=aif,
-            time_points=time_points,
-            spatial_shape=(side, side, 1),
-            prior_means_nat=np.array([prior.mean for prior in priors]),
-            prior_stds_nat=np.array([prior.std for prior in priors]),
-            transforms=[prior.transform for prior in priors],
-            upper_bounds=[prior.upper_bound for prior in priors],
-            fitting_param_names=[definition.name for definition in definitions],
-            fitting_bounds=[
-                (definition.bounds[0], definition.bounds[1])
-                for definition in definitions
-            ],
-            prior_means_transformed=np.array(
-                [prior.mean_transformed for prior in priors]
-            ),
-            prior_stds_transformed=np.array(
-                [prior.std_transformed for prior in priors]
-            ),
-        )
-        x, y = np.mgrid[0:side, 0:side]
-        coords = (x.ravel(), y.ravel(), np.zeros(n_voxels, dtype=int))
-        result_a = batched_dsc_spatial_vi_fit(
-            **common,
-            mask_coords=coords,
-        )
-        shifted_common = dict(common)
-        shifted_common["spatial_shape"] = (side + 1, side, 1)
-        result_b = batched_dsc_spatial_vi_fit(
-            **shifted_common,
-            mask_coords=(coords[0] + 1, coords[1], coords[2]),
-        )
-
-        cbf_a = np.asarray(result_a.params["cbf"])
-        cbf_b = np.asarray(result_b.params["cbf"])
-        np.testing.assert_allclose(cbf_a, cbf_b, rtol=1e-12, atol=1e-12)
-
-        np.testing.assert_allclose(
-            result_a.params["mtt"], result_b.params["mtt"], rtol=1e-12, atol=1e-12,
-        )
-
-    def test_batched_ordering_agrees_with_sequential_reference(self) -> None:
-        """Synchronous and sequential vascular updates remain numerically close.
-
-        The production synchronous-backtracking schedule deliberately differs
-        from the sequential in-place reference. Agreement within 0.1% guards
-        against scientifically material divergence without requiring
-        platform-dependent near-bitwise agreement between the two schedules.
-        """
-        from pmriprep.models.bayesian_utils import build_priors_from_params
-        from pmriprep.models.dsc import VascularModel
-        from pmriprep.models.dsc.batched_fitting import (
-            batched_dsc_vi_fit,
-            batched_vascular_forward,
-        )
-        from pmriprep.models.dsc.spatial_vb import batched_dsc_spatial_vi_fit
-
-        model = VascularModel()
-        fitting_defs = list(model.get_fitting_parameter_definitions())
-        priors = build_priors_from_params(fitting_defs)
-        names = [parameter.name for parameter in fitting_defs]
-        bounds = [(parameter.bounds[0], parameter.bounds[1]) for parameter in fitting_defs]
-        means_nat = np.array([prior.mean for prior in priors])
-        stds_nat = np.array([prior.std for prior in priors])
-        means_t = np.array([prior.mean_transformed for prior in priors])
-        stds_t = np.array([prior.std_transformed for prior in priors])
-        transforms = [prior.transform for prior in priors]
-        upper_bounds = [prior.upper_bound for prior in priors]
-
-        time_points = np.linspace(0.0, 36.0, 37)
-        aif = (time_points / 3.0) ** 3 * np.exp(-time_points / 3.0)
-        aif[0] = 0.0
-        cbf = np.full(9, 0.06)
-        mtt = np.full(9, 5.0)
-        cbf[4] = 0.11
-        mtt[4] = 9.0
-        alpha = np.full(9, 3.0)
-        beta = mtt / alpha
-        delay = np.zeros(9)
-        tissue = batched_vascular_forward(
-            cbf, alpha, beta, delay, aif, time_points
-        )
-        tissue += np.random.default_rng(42).normal(0.0, 0.002, tissue.shape)
-        x, y = np.mgrid[0:3, 0:3]
-        coords = (x.ravel(), y.ravel(), np.zeros(9, dtype=int))
-
-        common_kwargs = dict(
-            model_type="vascular",
-            aif=aif,
-            time_points=time_points,
-            prior_means_nat=means_nat,
-            prior_stds_nat=stds_nat,
-            transforms=transforms,
-            upper_bounds=upper_bounds,
-            fitting_param_names=names,
-            fitting_bounds=bounds,
-            prior_means_transformed=means_t,
-            prior_stds_transformed=stds_t,
-        )
-        jacobi = batched_dsc_spatial_vi_fit(
-            **common_kwargs,
-            tissue_curves=tissue,
-            mask_coords=coords,
-            spatial_shape=(3, 3, 1),
-        )
-
-        adj, degree = _build_neighborhood_graph(coords, (3, 3, 1))
-        warm = batched_dsc_vi_fit(
-            **common_kwargs,
-            tissue_curves=tissue,
-            return_posteriors=True,
-        )
-        assert warm.posterior_means_transformed is not None
-        assert warm.posterior_cov_diag is not None
-        posterior_means = warm.posterior_means_transformed.copy()
-        posterior_cov = warm.posterior_cov_diag.copy()
-        warm_noise_std = warm.uncertainties["noise_std"]
-        noise_precision = 1.0 / warm_noise_std**2
-        spatial_parameter_mask = np.array([name == "cbf" for name in names])
-        a_k = np.zeros(len(names))
-        a_k[spatial_parameter_mask] = 1e-8
-        sequential_params = {name: np.zeros(9) for name in names}
-
-        for sweep in range(10):
-            if sweep > 0:
-                updated_a_k = _update_aK_penny(
-                    posterior_means, posterior_cov, adj, degree
-                )
-                a_k[spatial_parameter_mask] = updated_a_k[
-                    spatial_parameter_mask
-                ]
-            for voxel in range(9):
-                spatial_prec, spatial_eta = _compute_spatial_contributions(
-                    posterior_means, adj, degree, a_k
-                )
-                result = batched_dsc_vi_fit(
-                    **common_kwargs,
-                    tissue_curves=tissue[voxel:voxel + 1],
-                    spatial_prec_diag=spatial_prec[voxel:voxel + 1],
-                    spatial_eta=spatial_eta[voxel:voxel + 1],
-                    spatial_replaces_parameter_prior=True,
-                    spatial_parameter_mask=spatial_parameter_mask,
-                    initial_means_transformed=posterior_means[voxel:voxel + 1],
-                    initial_noise_precision=noise_precision[voxel:voxel + 1],
-                    return_posteriors=True,
-                    n_iterations_override=1,
-                )
-                assert result.posterior_means_transformed is not None
-                assert result.posterior_cov_diag is not None
-                posterior_means[voxel] = result.posterior_means_transformed[0]
-                posterior_cov[voxel] = result.posterior_cov_diag[0]
-                noise_std = result.uncertainties["noise_std"][0]
-                noise_precision[voxel] = 1.0 / noise_std**2
-                for name in names:
-                    sequential_params[name][voxel] = result.params[name][0]
-        for name in ("cbf", "mtt"):
-            reference = np.maximum(np.abs(sequential_params[name]), 1e-8)
-            relative_difference = np.abs(
-                jacobi.params[name] - sequential_params[name]
-            ) / reference
-            max_relative_difference = float(np.max(relative_difference))
-            assert max_relative_difference < 1e-3, (
-                f"{name} synchronous/sequential divergence "
-                f"{max_relative_difference:.3%} exceeds 0.1%"
-            )
-
-        assert np.median(np.abs(jacobi.params["cbf"] - cbf) / cbf) < 0.25
-        assert np.median(np.abs(jacobi.params["mtt"] - mtt) / mtt) < 0.35
-
-    def test_fallback_single_voxel(self) -> None:
-        """Single-voxel mask falls back to standard VI."""
-        from pmriprep.models.bayesian_utils import build_priors_from_params
-        from pmriprep.models.dsc.spatial_vb import batched_dsc_spatial_vi_fit
-
-        t = np.linspace(0, 40, 40)
-        aif = (t / 3.0) * np.exp(-t / 5.0)
-        aif[0] = 0.0
-
-        from pmriprep.models.dsc.vascular import VascularModel
-
-        model = VascularModel()
-        params = [0.1, 3.0, 2.0, 0.0]  # cbf, alpha, beta, delay
-        tissue = model.tissue_curve(params, aif, t).reshape(1, -1)
-
-        fitting_defs = list(model.get_fitting_parameter_definitions())
-        priors = build_priors_from_params(fitting_defs)
-        fitting_names = [p.name for p in fitting_defs]
-        fitting_bounds = [(p.bounds[0], p.bounds[1]) for p in fitting_defs]
-
-        result = batched_dsc_spatial_vi_fit(
-            model_type="vascular",
-            tissue_curves=tissue,
-            aif=aif,
-            time_points=t,
-            mask_coords=(np.array([0]), np.array([0]), np.array([0])),
-            spatial_shape=(1, 1, 1),
-            prior_means_nat=np.array([p.mean for p in priors]),
-            prior_stds_nat=np.array([p.std for p in priors]),
-            transforms=[p.transform for p in priors],
-            upper_bounds=[p.upper_bound for p in priors],
-            fitting_param_names=fitting_names,
-            fitting_bounds=fitting_bounds,
-            prior_means_transformed=np.array([p.mean_transformed for p in priors]),
-            prior_stds_transformed=np.array([p.std_transformed for p in priors]),
-            sloppy=True,
-        )
-        assert result.params["cbf"].shape == (1,)
-
-    def test_non_sloppy_inner_iterations(
-        self, caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        """Non-sloppy spatial VI (4 inner iters) runs without error."""
-        from pmriprep.models.bayesian_utils import build_priors_from_params
-        from pmriprep.models.dsc.spatial_vb import batched_dsc_spatial_vi_fit
-
-        tissue_curves, aif, t, dt, mask_coords, model = (
-            self._make_synthetic_data(n_side=3)
-        )
-        fitting_defs = list(model.get_fitting_parameter_definitions())
-        priors = build_priors_from_params(fitting_defs)
-        fitting_names = [p.name for p in fitting_defs]
-        fitting_bounds = [(p.bounds[0], p.bounds[1]) for p in fitting_defs]
-
-        with caplog.at_level("INFO", logger="nipype.interface"):
-            result = batched_dsc_spatial_vi_fit(
-                model_type="vascular",
-                tissue_curves=tissue_curves,
-                aif=aif,
-                time_points=t,
-                mask_coords=mask_coords,
-                spatial_shape=(3, 3, 1),
-                prior_means_nat=np.array([p.mean for p in priors]),
-                prior_stds_nat=np.array([p.std for p in priors]),
-                transforms=[p.transform for p in priors],
-                upper_bounds=[p.upper_bound for p in priors],
-                fitting_param_names=fitting_names,
-                fitting_bounds=fitting_bounds,
-                prior_means_transformed=np.array([p.mean_transformed for p in priors]),
-                prior_stds_transformed=np.array([p.std_transformed for p in priors]),
-                sloppy=False,
-                n_spatial_sweeps=2,
-            )
-        assert result.params["cbf"].shape == (9,)
-        assert np.all(np.isfinite(result.params["cbf"]))
-        assert "SVB: ordinary-VI warm start" in caplog.text
-        assert "SVB sweep 1/2" in caplog.text
+    args = linear_arguments(1)
+    local = batched_dsc_vi_fit(**args, return_posteriors=True)
+    args.pop("return_full_posterior")
+    spatial = batched_dsc_spatial_vi_fit(**args,
+        mask_coords=(np.zeros(1,int),)*3, spatial_shape=(1,1,1))
+    for name in ("cbf", "offset"):
+        np.testing.assert_array_equal(local.params[name], spatial.params[name])
+        np.testing.assert_array_equal(local.uncertainties[name], spatial.uncertainties[name])
+    np.testing.assert_array_equal(local.fitted_curves, spatial.fitted_curves)

@@ -36,14 +36,11 @@ class DSCConfig:
         Agent's recommended dose in mmol Gd/kg. Default 0.1 (standard).
         Use 0.05 for gadopiclenol, 0.04 for gadoquatrane.
     method : str
-        Deconvolution method: sSVD, oSVD, tikhonov, vascular, or cpi.
+        Deconvolution method: sSVD, oSVD, tikhonov, or cpi.
     inference : str
         Inference method for parametric deconvolution:
         ``vi`` (default — linearized variational inference), ``svb`` (spatial
-        variational Bayes). Additional inference engines are retained for
-        internal validation but are not part of the documented user surface.
-    mcmc_samples : int
-        Number of MCMC samples for Bayesian inference.
+        variational Bayes). SVD methods ignore this option.
     cpi_control_points : int
         Number of control points for CPI (0 = auto-select; manual 5–12).
     cpi_infer_delay : bool
@@ -109,8 +106,7 @@ class DSCConfig:
 
     # Deconvolution settings
     method: str = "oSVD"
-    inference: Literal["nlls", "map", "vi", "svb"] = "vi"
-    mcmc_samples: int = 500
+    inference: Literal["vi", "svb"] = "vi"
     cpi_control_points: int = 0  # 0 = auto-select
     cpi_infer_delay: bool = True
     cpi_dispersion: Literal["auto", "none", "gamma"] = "none"
@@ -154,8 +150,8 @@ class DSCConfig:
         YAML/JSON config files or CLI arguments.
         """
         categorical_options = {
-            "method": ({"sSVD", "oSVD", "tikhonov", "vascular", "cpi"}, self.method),
-            "inference": ({"nlls", "map", "vi", "svb"}, self.inference),
+            "method": ({"sSVD", "oSVD", "tikhonov", "cpi"}, self.method),
+            "inference": ({"vi", "svb"}, self.inference),
             "aif_method": ({"auto", "synthetic"}, self.aif_method),
             "hdbet_device": ({"auto", "cuda", "mps", "cpu"}, self.hdbet_device),
         }
@@ -191,7 +187,6 @@ class DSCConfig:
         # Coerce integer fields (these have non-None defaults)
         try:
             self.pre_bolus = int(self.pre_bolus)
-            self.mcmc_samples = int(self.mcmc_samples)
             self.n_aif_candidates = int(self.n_aif_candidates)
             self.num_processes = int(self.num_processes)
         except (ValueError, TypeError) as e:
@@ -283,13 +278,9 @@ class DSCConfig:
 
         if self.pre_bolus < 3:
             raise ValueError("pre_bolus must be at least 3")
-        if self.mcmc_samples <= 0:
-            raise ValueError("mcmc_samples must be greater than zero")
         from pmriprep.models.dsc.signal_cpi.settings import CPIOptions
         CPIOptions(self.cpi_control_points, self.cpi_infer_delay,
                    self.cpi_dispersion, self.cpi_fallback)
-        if self.method == "cpi" and self.inference not in ("vi", "svb"):
-            raise ValueError("CPI supports vi or svb inference")
         if self.n_aif_candidates < 3:
             raise ValueError("n_aif_candidates must be at least 3")
         if self.num_processes < 0:

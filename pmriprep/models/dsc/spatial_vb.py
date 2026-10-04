@@ -234,7 +234,7 @@ def batched_dsc_spatial_vi_fit(
     Parameters
     ----------
     model_type : str
-        Vascular model or the supplied VI adapter's identifier.
+        Identifier of the supplied VI adapter.
     tissue_curves : npt.NDArray[np.floating]
         Observed tissue curves, shape (N, T).
     aif : npt.NDArray[np.floating]

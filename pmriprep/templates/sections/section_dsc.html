@@ -408,7 +408,7 @@
                 <div class="metric-value">{{ dsc.qc_metrics.deconvolution.method }}</div>
             </div>
             {% endif %}
-            {% if dsc.qc_metrics.deconvolution.method is defined and dsc.qc_metrics.deconvolution.method in ["cpi", "vascular"] %}
+            {% if dsc.qc_metrics.deconvolution.method is defined and dsc.qc_metrics.deconvolution.method == "cpi" %}
             <div class="metric">
                 <div class="metric-label">Inference</div>
                 <div class="metric-value">{{ dsc.qc_metrics.deconvolution.inference }}</div>
@@ -479,7 +479,7 @@
                 <div class="metric-value">{{ "%.3f"|format(dsc.qc_metrics.deconvolution.r_squared_mean) }}</div>
             </div>
             {% endif %}
-            {% if dsc.qc_metrics.deconvolution.fallback_rate is defined and dsc.qc_metrics.deconvolution.method in ["cpi", "vascular"] %}
+            {% if dsc.qc_metrics.deconvolution.fallback_rate is defined and dsc.qc_metrics.deconvolution.method == "cpi" %}
             <div class="metric">
                 <div class="metric-label">oSVD Fallback</div>
                 <div class="metric-value">{{ "%.1f"|format(dsc.qc_metrics.deconvolution.fallback_rate * 100) }}%</div>

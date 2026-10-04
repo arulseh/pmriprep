@@ -282,17 +282,17 @@ def test_cli_none_does_not_override_file_option() -> None:
     parsed = _build_parser().parse_args(["/tmp/bids", "/tmp/out", "participant"])
     merged = merge_cli_config(
         vars(parsed),
-        {"dce": {"model": "extended_tofts"}, "dsc": {"method": "vascular"}},
+        {"dce": {"model": "extended_tofts"}, "dsc": {"method": "tikhonov"}},
     )
 
     assert build_dce_config(merged).model == "extended_tofts"
-    assert build_dsc_config(merged).method == "vascular"
+    assert build_dsc_config(merged).method == "tikhonov"
 
 
 def test_cli_merge_does_not_mutate_file_config() -> None:
     """CLI precedence preserves the loaded file values used by provenance."""
     file_config = {
-        "dsc": {"method": "vascular"},
+        "dsc": {"method": "tikhonov"},
         "dce": {"model": "extended_tofts"},
     }
 
@@ -304,7 +304,7 @@ def test_cli_merge_does_not_mutate_file_config() -> None:
     assert merged["dsc"]["method"] == "cpi"
     assert merged["dce"]["model"] == "patlak"
     assert file_config == {
-        "dsc": {"method": "vascular"},
+        "dsc": {"method": "tikhonov"},
         "dce": {"model": "extended_tofts"},
     }
 
@@ -391,3 +391,90 @@ def test_invalid_numeric_domains_fail_before_workflow(factory, match: str) -> No
     """Impossible public numeric values fail during config construction."""
     with pytest.raises(ValueError, match=match):
         factory()
+
+
+@pytest.mark.parametrize("field,option,value", [
+    ("method", "--dsc-deconv-method", "vascular"),
+    ("method", "--dsc-deconv-method", "unknown"),
+    ("inference", "--dsc-inference", "nlls"),
+    ("inference", "--dsc-inference", "map"),
+    ("inference", "--dsc-inference", "mcmc"),
+])
+def test_invalid_dsc_choice_fails_before_processing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, field: str, option: str, value: str,
+) -> None:
+    """Both CLI and merged configuration reject unsupported choices early."""
+    from pmriprep.cli.run import main
+
+    bids = tmp_path / "bids"
+    bids.mkdir()
+    output = tmp_path / "out"
+    config = _write_config(tmp_path / "config.yaml", f"dsc:\n  {field}: {value}\n")
+    monkeypatch.setattr("pmriprep.utils.bids.validate_bids_input",
+                        lambda *args, **kwargs: pytest.fail("input processing started"))
+    monkeypatch.setattr("pmriprep.cli.run.run_pmriprep_wf",
+                        lambda *args, **kwargs: pytest.fail("workflow started"))
+    for selection in ([option, value], ["--config-file", str(config)]):
+        with pytest.raises(SystemExit) as error:
+            main([str(bids), str(output), "participant", *selection])
+        assert error.value.code != 0
+        assert not output.exists()
+
+
+@pytest.mark.parametrize("method", ["sSVD", "oSVD", "tikhonov", "cpi"])
+def test_supported_dsc_override_reaches_effective_config(method: str) -> None:
+    """Explicit supported CLI choices supersede file values without coercion."""
+    parsed = _build_parser().parse_args(
+        ["/tmp/bids", "/tmp/out", "participant", "--dsc-deconv-method", method])
+    merged = merge_cli_config(vars(parsed), {"dsc": {"method": "vascular"}})
+    assert build_dsc_config(merged).method == method
+
+
+def test_dsc_interface_rejects_unsupported_method_and_has_no_cth() -> None:
+    """Direct interfaces enforce the same method and derivative contract."""
+    from traits.trait_errors import TraitError
+    from pmriprep.interfaces.dsc_compute import ComputeDSCMaps
+    from pmriprep.workflows.dsc.datasinks import init_dsc_datasinks_wf
+
+    with pytest.raises(TraitError):
+        ComputeDSCMaps(method="vascular")
+    assert "out_cth" not in ComputeDSCMaps().output_spec().traits()
+    with pytest.raises(ValueError, match="method"):
+        init_dsc_datasinks_wf(output_dir="/tmp/out", bids_dir="/tmp/bids",
+            subject_id="01", session_id="01", deconvolution_method="vascular")
+
+
+@pytest.mark.parametrize("inference", ["nlls", "map", "mcmc"])
+def test_dsc_interface_rejects_unsupported_inference(inference: str) -> None:
+    """Direct interfaces cannot retain an ineffective inference selection."""
+    from traits.trait_errors import TraitError
+    from pmriprep.interfaces.dsc_compute import ComputeDSCMaps
+
+    with pytest.raises(TraitError):
+        ComputeDSCMaps(inference=inference)
+
+
+@pytest.mark.parametrize("inference", ["nlls", "vi", "map"])
+def test_dce_inference_selection_is_independent(inference: str) -> None:
+    """DSC's inference choices do not alter DCE's existing dispatch controls."""
+    from pmriprep.interfaces.dce_compute import ComputeDCEMaps
+
+    parsed = _build_parser().parse_args([
+        "/tmp/bids", "/tmp/out", "participant", "--dce-inference", inference])
+    config = build_dce_config(merge_cli_config(vars(parsed), {}))
+    assert config.inference == inference
+    assert ComputeDCEMaps(inference=config.inference).inputs.inference == inference
+
+
+def test_mcmc_configuration_is_dce_only() -> None:
+    """DCE retains its internal sampling path; DSC has no sampling settings."""
+    from pmriprep.interfaces.dce_compute import ComputeDCEMaps
+    from pmriprep.interfaces.dsc_compute import ComputeDSCMaps
+
+    config = build_dce_config({"dce": {"inference": "mcmc", "mcmc_samples": "321"}})
+    assert config.inference == "mcmc"
+    assert config.mcmc_samples == 321
+    assert ComputeDCEMaps(inference=config.inference, mcmc_samples=config.mcmc_samples).inputs.mcmc_samples == 321
+    with pytest.raises(ValueError, match="Unknown dsc configuration option"):
+        build_dsc_config({"dsc": {"mcmc_samples": 321}})
+    assert "mcmc_samples" not in ComputeDSCMaps().inputs.traits()

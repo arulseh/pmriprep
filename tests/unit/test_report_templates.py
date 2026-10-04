@@ -794,7 +794,7 @@ def _dsc_ctx_with_deconv(method: str, **deconv_extra) -> dict:
         "mtt_median": 4.0,
         "n_voxels": 1000,
     }
-    if method not in {"cpi", "vascular"}:
+    if method != "cpi":
         deconv["tmax_median"] = 1.5
     deconv.update(deconv_extra)
     return {
@@ -860,7 +860,7 @@ def test_deconv_panel_shows_tmax_for_osvd(env):
 
 
 def test_deconv_panel_fallback_only_for_parametric(env):
-    """oSVD Fallback metric box only renders for parametric methods (cpi, vascular)."""
+    """oSVD Fallback metric box only renders for parametric methods (cpi)."""
     template = env.get_template("sections/section_dsc.html")
 
     cpi_ctx = _dsc_ctx_with_deconv(

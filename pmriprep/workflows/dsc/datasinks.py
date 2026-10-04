@@ -214,23 +214,6 @@ _NORMALIZED_MAPS: tuple[DSCMapSpec, ...] = (
 )
 
 
-# Vascular-model physiological derivative
-_VASCULAR_MAPS: tuple[DSCMapSpec, ...] = (
-    DSCMapSpec(
-        "cth_map", "dsc", "cth", "Capillary transit time heterogeneity", "s", "cth",
-        {
-            "Estimator": "standard_deviation_of_gamma_transit_time_distribution",
-            "Formula": "beta * sqrt(alpha) = MTT / sqrt(alpha)",
-            "ModelDependency": "vascular_gamma_transit_time_model",
-            "UndefinedValue": (
-                "NaN when the vascular fit is unavailable, replaced by oSVD, "
-                "or alpha is at either fitted bound"
-            ),
-        },
-    ),
-)
-
-
 # CBF uncertainty maps. CBV is derived and lacks retained joint covariance.
 _UNCERTAINTY_MAPS: tuple[DSCMapSpec, ...] = (
     DSCMapSpec("cbf_std_map", "dscUncertainty", "cbf", "CBF absolute parameter uncertainty", "1/min", "cbf_std"),
@@ -301,7 +284,7 @@ _STRUCTURAL_UNDERLAYS: tuple[DSCAnatSpec, ...] = (
 #: every emitted key is registered in :data:`TEMPLATE_AIF_USAGE`.
 _DSC_OUTPUT_KEYS: frozenset[str] = frozenset(
     [m.map_key for m in _CORE_MAPS + _REL_MAPS + _OPTIONAL_MAPS
-     + _NORMALIZED_MAPS + _VASCULAR_MAPS + _UNCERTAINTY_MAPS]
+     + _NORMALIZED_MAPS + _UNCERTAINTY_MAPS]
     + ["parametric_r2", "fallback",
        "rel_cbf", "rel_cbv", "ncbf", "ncbv", "mtt"]  # smoothed names
 )
@@ -373,12 +356,6 @@ def _build_map_meta(
         )
     if map_key == "fallback":
         merged_extra["Type"] = "ROI"
-    if map_key == "cbf_std" and isinstance(qc_metrics, dict):
-        deconvolution = qc_metrics.get("deconvolution")
-        if isinstance(deconvolution, dict):
-            accounting = deconvolution.get("map_uncertainty")
-            if isinstance(accounting, dict):
-                merged_extra["MAPUncertaintyAccounting"] = dict(accounting)
     if fragment:
         merged_extra["LesionStats"] = fragment
     if user_fragment:
@@ -1288,7 +1265,7 @@ def _add_xfm_sink(
 _ALWAYS_PRESENT_INPUTS = frozenset({
     # The four DSC core perfusion maps are mandatory inputs to the factory.
     # All other outputs (moco, mean ref, AIF mask, optional/normalized/
-    # vascular/Bayesian/k2/parametric, structural underlays, masks, xfms)
+    # Bayesian/k2/parametric, structural underlays, masks, xfms)
     # are gated by ``present_inputs``.
     "mtt_map", "tmax_map", "psr_map",
 })
@@ -1300,7 +1277,6 @@ def init_dsc_datasinks_wf(
     bids_dir: str,
     subject_id: str,
     session_id: Optional[str],
-    inference: str,
     deconvolution_method: str = "oSVD",
     present_inputs: Optional[set[str]] = None,
     has_smoothing: bool = False,
@@ -1316,9 +1292,8 @@ def init_dsc_datasinks_wf(
     Parameters
     ----------
     deconvolution_method : str
-        Method used to choose the public timing-map name and metadata. CPI and
-        vascular fits report AIF-relative arrival delay; SVD-family methods
-        report Tmax.
+        Method used to choose the public timing-map name and metadata. CPI
+        fits report AIF-relative arrival delay; SVD-family methods report Tmax.
 
     ``present_inputs`` is a set of inputnode field names that will be
     wired by the caller. Sinks for absent inputs are NOT created (avoids
@@ -1329,7 +1304,7 @@ def init_dsc_datasinks_wf(
     """
     if present_inputs is None:
         present_inputs = set()
-    if deconvolution_method not in {"sSVD", "oSVD", "tikhonov", "vascular", "cpi"}:
+    if deconvolution_method not in {"sSVD", "oSVD", "tikhonov", "cpi"}:
         raise ValueError("unknown DSC deconvolution method")
     present = set(_ALWAYS_PRESENT_INPUTS) | set(present_inputs)
 
@@ -1351,8 +1326,6 @@ def init_dsc_datasinks_wf(
                 "cnr_map", "tsnr_map", "k2_map",
                 # Normalized
                 "ncbv_map", "ncbf_map",
-                # Vascular
-                "cth_map",
                 # Inference-specific CBF uncertainty
                 "cbf_std_map",
                 # Parametric diagnostics
@@ -1450,16 +1423,16 @@ def init_dsc_datasinks_wf(
 
     sink_outputs: list[tuple[pe.Node, str]] = []
 
-    # --- Core + Rel + Optional + Normalized + Vascular maps ---
+    # --- Core + Rel + Optional + Normalized maps ---
     core_maps = tuple(
         _ARRIVAL_DELAY_MAP
-        if spec.in_attr == "tmax_map" and deconvolution_method in {"cpi", "vascular"}
+        if spec.in_attr == "tmax_map" and deconvolution_method == "cpi"
         else spec
         for spec in _CORE_MAPS
     )
     for table in (
         core_maps, _REL_MAPS, _OPTIONAL_MAPS,
-        _NORMALIZED_MAPS, _VASCULAR_MAPS,
+        _NORMALIZED_MAPS,
     ):
         for spec in table:
             if spec.in_attr not in present:
@@ -1498,14 +1471,7 @@ def init_dsc_datasinks_wf(
             ),
             name=f"{spec.in_attr}_meta",
         )
-        is_nlls = inference.lower() == "nlls"
-        desc_value = "dscStandardError" if is_nlls else "dscPosteriorSD"
-        description = (
-            "CBF parameter standard error"
-            if is_nlls
-            else "CBF posterior standard deviation"
-        )
-        bayes_meta.inputs.description = description
+        bayes_meta.inputs.description = "CBF posterior standard deviation"
         bayes_meta.inputs.map_key = spec.map_key
         bayes_meta.inputs.units = spec.units
         workflow.connect([
@@ -1525,7 +1491,7 @@ def init_dsc_datasinks_wf(
             ),
             name=f"{spec.in_attr}_sink",
         )
-        b_sink.inputs.desc = desc_value
+        b_sink.inputs.desc = "dscPosteriorSD"
         b_sink.inputs.suffix = spec.suffix
         b_sink.inputs.datatype = "perf"
         b_sink.inputs.bids_suffix = "stat"
@@ -1544,8 +1510,7 @@ def init_dsc_datasinks_wf(
     # from oSVD. Parametric uncertainty and fitted arrival delay are undefined.
     _PARAMETRIC_R2_DESC = (
         "Per-voxel R2 (coefficient of determination) of the parametric DSC "
-        "fit against the measured signal for CPI or K2-corrected concentration "
-        "for the vascular model. "
+        "fit against the measured signal for CPI. "
         "Raw parametric R2 is preserved on voxels that fell back to oSVD -- "
         "see dscFallback_mask to identify those. The CBF/CBV/MTT saved in "
         "fallback voxels comes from oSVD, NOT from a fit with this R2; fitted "
@@ -1553,8 +1518,7 @@ def init_dsc_datasinks_wf(
     )
     _FALLBACK_DESC = (
         "Binary oSVD-fallback mask. 1 = the parametric fit was rejected "
-        "(invalid measurements or R2<0; additional solver checks apply to "
-        "non-variational vascular fitting), oSVD fallback "
+        "(invalid measurements or R2<0), oSVD fallback "
         "succeeded, and the saved CBF/CBV/MTT come from "
         "svd_deconvolve_oscillation; parametric uncertainty and fitted arrival "
         "delay are NaN in these voxels. 0 = no successful oSVD replacement; "

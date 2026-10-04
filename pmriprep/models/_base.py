@@ -1,9 +1,7 @@
-"""Shared base dataclasses for DCE and DSC pharmacokinetic models.
+"""Base dataclasses for pharmacokinetic models.
 
-Both modalities define a parameter dataclass with identical fields and
-methods (bounds, typical_range, transform, prior helpers). This module
-provides the canonical implementation; ``models/dce/base.py`` and
-``models/dsc/base.py`` subclass it.
+The parameter definition provides bounds, typical ranges, transforms and
+prior helpers used by ``models/dce/base.py``.
 """
 
 from dataclasses import dataclass

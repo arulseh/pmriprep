@@ -3,8 +3,8 @@
 from pmriprep.cli.run import _build_parser
 
 
-def test_internal_inference_modes_remain_backward_compatible() -> None:
-    """Existing explicit internal-mode invocations remain accepted."""
+def test_internal_dce_inference_and_supported_dsc_modes_are_accepted() -> None:
+    """DCE retains hidden MAP while DSC exposes only its supported engines."""
     parser = _build_parser()
     args = parser.parse_args(
         [
@@ -12,13 +12,13 @@ def test_internal_inference_modes_remain_backward_compatible() -> None:
             "/tmp/out",
             "participant",
             "--dsc-inference",
-            "map",
+            "vi",
             "--dce-inference",
             "map",
         ]
     )
 
-    assert args.dsc_inference == "map"
+    assert args.dsc_inference == "vi"
     assert args.dce_inference == "map"
 
     args = parser.parse_args(
@@ -27,10 +27,10 @@ def test_internal_inference_modes_remain_backward_compatible() -> None:
             "/tmp/out",
             "participant",
             "--dsc-inference",
-            "nlls",
+            "svb",
         ]
     )
-    assert args.dsc_inference == "nlls"
+    assert args.dsc_inference == "svb"
 
 
 def test_map_inference_is_hidden_from_normal_help() -> None:

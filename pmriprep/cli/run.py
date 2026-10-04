@@ -471,16 +471,16 @@ Examples:
     )
     dsc_group.add_argument(
         "--dsc-deconv-method",
-        choices=["sSVD", "oSVD", "tikhonov", "vascular", "cpi"],
+        choices=["sSVD", "oSVD", "tikhonov", "cpi"],
         default=None,
         help="Deconvolution method for DSC (default: oSVD).",
     )
     dsc_group.add_argument(
         "--dsc-inference",
-        choices=["nlls", "map", "vi", "svb"],
+        choices=["vi", "svb"],
         metavar="{vi,svb}",
         default=None,
-        help="Inference engine for parametric DSC methods (cpi, vascular): "
+        help="Inference engine for parametric DSC methods (cpi): "
         "vi (default, linearized variational inference), "
         "or svb (spatial variational Bayes with a boundary-corrected M-prior). "
         "SVD methods ignore this option.",
@@ -750,6 +750,17 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     # Validate bids_dir exists
     if not args.bids_dir.is_dir():
         parser.error(f"bids_dir does not exist: {args.bids_dir}")
+
+    # Validate the effective DSC options before input processing or output creation.
+    if args.config_file is not None and not args.report_only:
+        from pmriprep.config.loader import build_dsc_config, load_config, merge_cli_config
+
+        if not args.config_file.is_file():
+            parser.error(f"config_file does not exist: {args.config_file}")
+        try:
+            build_dsc_config(merge_cli_config(vars(args), load_config(args.config_file)))
+        except ValueError as error:
+            parser.error(str(error))
 
     # Run BIDS validator (warn-and-skip if binary missing; sys.exit on failure).
     from pmriprep.utils.bids import validate_bids_input

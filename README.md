@@ -9,7 +9,7 @@ HTML QC reports.
 
 PMRIPrep provides:
 
-- DSC deconvolution with sSVD, oSVD, Tikhonov, CPI, or vascular models;
+- DSC deconvolution with sSVD, oSVD, Tikhonov, or CPI;
 - DCE pharmacokinetic modelling with Patlak, Tofts, Extended Tofts, or 2CXM;
 - Automatic or external arterial input functions;
 - VFA T1 mapping with optional B1+ correction;
@@ -105,8 +105,8 @@ Key DSC options:
 
 | Option | Description |
 |---|---|
-| `--dsc-deconv-method {sSVD,oSVD,tikhonov,vascular,cpi}` | Select deconvolution (default: oSVD) |
-| `--dsc-inference {vi,svb}` | Select inference for CPI/vascular models (default: vi) |
+| `--dsc-deconv-method {sSVD,oSVD,tikhonov,cpi}` | Select deconvolution (default: oSVD) |
+| `--dsc-inference {vi,svb}` | Select inference for CPI models (default: vi) |
 | `--dsc-dose FLOAT` | Set a positive dose multiplier (for example, `0.5` for half dose) |
 | `--dsc-aif-method {auto,synthetic}` | Select detected or synthetic AIF |
 | `--dsc-aif-file FILE` | Supply an external ΔR2* AIF in s⁻¹ |
@@ -170,8 +170,8 @@ DSC fields:
 
 | Field | Default | Description |
 |---|---:|---|
-| `method` | `oSVD` | `sSVD`, `oSVD`, `tikhonov`, `vascular`, or `cpi` |
-| `inference` | `vi` | `vi` or `svb` for CPI/vascular |
+| `method` | `oSVD` | `sSVD`, `oSVD`, `tikhonov`, `cpi` |
+| `inference` | `vi` | `vi` or `svb` for CPI |
 | `cpi_control_points` | `0` | Number of CPI residue control points (0 = automatic; otherwise 5–12) |
 | `cpi_infer_delay` | `true` | Fit voxelwise arrival delay; false fixes it at zero and reports timing as not estimated |
 | `cpi_dispersion` | `none` | `none` omits arterial-dispersion fitting; `auto` or `gamma` enables the dispersed model (substantially slower) |

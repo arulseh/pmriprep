@@ -14,7 +14,7 @@ class DSCVoxelResult:
 
     Contains all perfusion parameters derived from DSC-MRI processing,
     including basic hemodynamic parameters, model-derived metrics,
-    vascular model parameters, and Bayesian uncertainty estimates.
+    and Bayesian uncertainty estimates.
 
     Attributes
     ----------
@@ -39,14 +39,6 @@ class DSCVoxelResult:
         k2: K2 leakage correction factor (s^-1). Values near zero indicate
             little fitted leakage correction.
         correction_applied: Whether leakage correction was applied.
-
-        # Vascular (gamma-variate) model parameters
-        alpha: Shape parameter of gamma-variate vascular transit time
-            distribution. Typical range: 0.5-10.
-        beta: Scale parameter (seconds) of gamma-variate distribution.
-            Typical range: 0.1-10.
-        cth: Capillary transit time heterogeneity (seconds).
-            CTH = beta * sqrt(alpha).
 
         # Bayesian uncertainty estimates (only populated for Bayesian methods)
         cbf_std: Standard deviation of CBF posterior distribution.
@@ -78,11 +70,6 @@ class DSCVoxelResult:
     k2: float = 0.0
     correction_applied: bool = False
 
-    # Vascular model parameters (optional, populated for vascular method)
-    alpha: Optional[float] = None
-    beta: Optional[float] = None
-    cth: Optional[float] = None
-
     # Bayesian uncertainty estimates (optional, populated for Bayesian methods)
     cbf_std: Optional[float] = None
     cbv_std: Optional[float] = None
@@ -107,16 +94,6 @@ class DSCVoxelResult:
             self.cbv_std is not None,
             self.cbf_credible_lower is not None,
         ])
-
-    def has_vascular_params(self) -> bool:
-        """Check if vascular model parameters are available.
-
-        Returns
-        -------
-        bool
-            True if vascular model parameters (alpha, beta) are populated.
-        """
-        return self.alpha is not None and self.beta is not None
 
 
 @dataclass

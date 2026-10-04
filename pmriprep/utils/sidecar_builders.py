@@ -1136,18 +1136,6 @@ def build_dsc_map_sidecar(
                     "parameter": "CBV" if map_key == "ncbv" else "CBF",
                 },
             }
-    if map_key == "cth" and isinstance(qc_metrics, dict):
-        at_bound_fraction = qc_metrics.get("cth_alpha_at_bound_fraction")
-        deconvolution = qc_metrics.get("deconvolution")
-        if at_bound_fraction is None and isinstance(deconvolution, dict):
-            at_bound_fraction = deconvolution.get(
-                "cth_alpha_at_bound_fraction"
-            )
-        if at_bound_fraction is not None:
-            sidecar["AlphaAtBoundFraction"] = float(at_bound_fraction)
-            sidecar["AlphaAtBoundFractionDenominator"] = (
-                "accepted vascular fits"
-            )
     if map_key == "mtt" and isinstance(qc_metrics, dict):
         deconvolution = qc_metrics.get("deconvolution")
         method_metrics = (
@@ -1160,17 +1148,6 @@ def build_dsc_map_sidecar(
             )
         elif method == "cpi":
             sidecar["MTTMethod"] = "fitted_residue_integral"
-        elif method == "vascular":
-            sidecar["MTTMethod"] = "parametric_fitted_mtt"
-            at_bound_fraction = method_metrics.get(
-                "mtt_at_bound_fraction",
-                qc_metrics.get("mtt_at_bound_fraction"),
-            )
-            if at_bound_fraction is not None:
-                sidecar["MTTAtBoundFraction"] = float(at_bound_fraction)
-                sidecar["MTTAtBoundFractionDenominator"] = (
-                    "accepted vascular fits"
-                )
     if map_key in {"tmax", "arrival_delay"} and isinstance(qc_metrics, dict):
         deconvolution = qc_metrics.get("deconvolution")
         method_metrics = (
@@ -1567,8 +1544,6 @@ def enrich_dsc_preproc_sidecar(
     sidecar.update(_preload_cosmetic_keys(preload_qc))
     sidecar.update(_preprocessing_cosmetic_keys(preprocessing_stats))
     return sidecar
-
-
 
 
 # ---------------------------------------------------------------------------

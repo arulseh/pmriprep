@@ -1,19 +1,15 @@
-"""Shared batched VI/SVB support and vascular MAP fitting.
-
-Signal-domain CPI supplies its forward model through the VI adapter.
-Vascular fitting uses the product-integration concentration operator.
-"""
+"""Shared batched VI/SVB support for explicit forward-model adapters."""
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from typing import Final, Optional
 
 import numpy as np
 import numpy.typing as npt
-from scipy.special import gammainc
+from scipy.special import digamma, gammaln
 
 from pmriprep.models.bayesian_utils import (
     TransformType,
@@ -22,9 +18,6 @@ from pmriprep.models.bayesian_utils import (
     log_jacobian_det,
     to_transformed_batch,
     transform_prior,
-)
-from pmriprep.models.dsc.convolution import (
-    apply_convolution_delay,
 )
 from pmriprep.models.dsc.vi_adapter import (
     DSCVIModelAdapter,
@@ -40,11 +33,10 @@ from pmriprep.models.dsc.local_vi import (
 from pmriprep.utils.dsc_constants import (
     EPSILON_CONCENTRATION,
 )
-from pmriprep.utils.dsc_deconvolution import build_volterra_matrix
 
 logger = logging.getLogger("nipype.interface")
 
-#: Numerical floor used as a divide guard in batched VI/MAP fits
+#: Numerical floor used as a divide guard in batched VI fits
 #: (R² denominators, sigma² floors, Jacobian column scaling). Set well
 #: below any physical scale so it only fires on truly degenerate inputs.
 #: Not a physics constant.
@@ -169,7 +161,7 @@ class DSCBatchedFitResult:
         converged: Convergence flags, shape (N,).
         fitted_curves: Fitted tissue curves, shape (N, T) or None.
         n_iterations: Number of fitting iterations performed.
-        model_name: Name of the fitted vascular model or VI adapter.
+        model_name: Name of the VI adapter.
         uncertainties: Parameter uncertainties, param_name -> (N,).
         full_posterior: Optional complete local Gaussian/Gamma factors.
         failure_reasons: Per-voxel numerical failure reason, or ``None``.
@@ -197,203 +189,6 @@ class DSCBatchedFitResult:
     full_posterior: DSCVIPosterior | None = None
     failure_reasons: tuple[str | None, ...] = ()
 
-
-# ---------------------------------------------------------------------------
-# Batched Vascular forward model
-# ---------------------------------------------------------------------------
-
-
-def batched_vascular_forward(
-    cbf: npt.NDArray[np.floating],
-    alpha: npt.NDArray[np.floating],
-    beta: npt.NDArray[np.floating],
-    delay: npt.NDArray[np.floating],
-    aif: npt.NDArray[np.floating],
-    time_points: npt.NDArray[np.floating],
-    volterra_matrix: Optional[npt.NDArray[np.floating]] = None,
-) -> npt.NDArray[np.floating]:
-    """Batched Vascular model forward evaluation for N voxels.
-
-    Computes tissue concentration via the shared (1, 4, 1)/6
-    product-integration (Volterra) operator applied to the gamma-variate
-    residue, with post-hoc delay shift.
-
-    Parameters
-    ----------
-    cbf : npt.NDArray[np.floating]
-        CBF values, shape (N,).
-    alpha : npt.NDArray[np.floating]
-        Gamma shape, shape (N,).
-    beta : npt.NDArray[np.floating]
-        Gamma scale (seconds), shape (N,).
-    delay : npt.NDArray[np.floating]
-        Bolus arrival delay (seconds), shape (N,).
-    aif : npt.NDArray[np.floating]
-        Arterial input function, shape (T,).
-    time_points : npt.NDArray[np.floating]
-        Time points (seconds), shape (T,).
-    volterra_matrix : npt.NDArray[np.floating], optional
-        Precomputed (T, T) Volterra operator from ``build_volterra_matrix(aif,
-        dt)``. Pass it to avoid rebuilding the constant matrix on every call
-        inside a fitting loop; if None it is built here.
-
-    Returns
-    -------
-    npt.NDArray[np.floating]
-        Tissue concentration curves, shape (N, T).
-    """
-    n_voxels = len(cbf)
-    n_times = len(time_points)
-    dt = float(time_points[1] - time_points[0]) if n_times > 1 else 1.0
-    if n_times < 2:
-        return np.zeros((n_voxels, n_times), dtype=np.float64)
-
-    # Guard parameters
-    alpha_safe = np.maximum(alpha, 1e-10)
-    beta_safe = np.maximum(beta, 1e-10)
-
-    # Residue on the native grid, shape (N, T). Delay-agnostic:
-    # R(t) = CBF·[1 − gammainc(α, t/β)].
-    x = np.maximum(np.asarray(time_points, dtype=np.float64), 0.0)[None, :] / beta_safe[:, None]
-    R = cbf[:, None] * (1.0 - gammainc(alpha_safe[:, None], x))
-
-    # Forward via the shared (1, 4, 1)/6 product-integration operator: per voxel
-    # C = A @ R, batched as C = R @ Aᵀ. One quadrature across
-    # the sSVD/Tikhonov/vascular forward, matching the scalar
-    # tissue_curve. The delay shift is applied AFTER, matching the scalar model.
-    A = volterra_matrix if volterra_matrix is not None else build_volterra_matrix(aif, dt)
-    conv = R @ A.T
-
-    return apply_convolution_delay(
-        conv, R, aif, time_points, delay,
-        lambda rows, grid: cbf[rows, None] * (
-            1.0 - gammainc(
-                alpha_safe[rows, None],
-                np.maximum(grid, 0.0)[None, :] / beta_safe[rows, None],
-            )
-        ),
-    )
-
-
-_FD_REL = 1e-5
-_FD_FLOOR = 1e-10
-
-
-def _compute_jacobian_columns(
-    m_a: npt.NDArray[np.floating],
-    m_nat_a: npt.NDArray[np.floating],
-    g_m: npt.NDArray[np.floating],
-    evaluate_fn: "Callable[[npt.NDArray[np.floating]], npt.NDArray[np.floating]]",
-    transforms: list[TransformType],
-    upper_bounds: list[float | None],
-    bounds_lo: npt.NDArray[np.floating],
-    bounds_hi: npt.NDArray[np.floating],
-    cbf_idx: int,
-    fitting_param_names: list[str] | None = None,
-    transformed_bounds: tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]] | None = None,
-) -> list[npt.NDArray[np.floating]]:
-    """Compute Jacobian columns: analytical CBF + forward FD for others.
-
-    For CBF parameter:
-    - LOG transform: ∂g/∂(log cbf) = g (since g = cbf · h(rest)).
-    - IDENTITY transform: ∂g/∂cbf = g / cbf = h(rest).
-
-    For log-spacing parameters (name starts with "s") under IDENTITY transform,
-    a looser FD step is used because PCHIP knot-shift roundoff dominates the
-    default 1e-5 step.
-
-    Parameters
-    ----------
-    m_a : npt.NDArray[np.floating]
-        Transformed parameters, shape (n_active, P).
-    m_nat_a : npt.NDArray[np.floating]
-        Natural-space parameters, shape (n_active, P).
-    g_m : npt.NDArray[np.floating]
-        Forward model at current params, shape (n_active, T).
-    evaluate_fn : Callable[[npt.NDArray[np.floating]], npt.NDArray[np.floating]]
-        Batched forward model callable.
-    transforms : list[TransformType]
-        Per-parameter transform types.
-    upper_bounds : list[float | None]
-        Per-parameter upper bounds for LOG_LOGIT.
-    bounds_lo : npt.NDArray[np.floating]
-        Lower bounds in natural space, shape (P,).
-    bounds_hi : npt.NDArray[np.floating]
-        Upper bounds in natural space, shape (P,).
-    cbf_idx : int
-        Index of CBF parameter (uses analytical Jacobian).
-    fitting_param_names : list[str] or None, optional
-        Optional parameter names; used to detect
-        log-spacing columns (starting with "s") for relaxed FD step.
-    transformed_bounds : tuple of numpy.ndarray or None, optional
-        Bounds for feasible one-sided differences in transformed coordinates.
-
-    Returns
-    -------
-    list[npt.NDArray[np.floating]]
-        List of P arrays, each shape (n_active, T).
-    """
-    n_params = m_a.shape[1]
-    deltas = np.maximum(np.abs(m_a) * _FD_REL, _FD_FLOOR)
-
-    # Looser FD step for log-spacing columns to clear PCHIP knot-shift roundoff.
-    if fitting_param_names is not None:
-        for j in range(n_params):
-            name = fitting_param_names[j]
-            if (
-                transforms[j] == TransformType.IDENTITY
-                and j != cbf_idx
-                and name.startswith("s")
-            ):
-                deltas[:, j] = np.maximum(np.abs(m_a[:, j]) * 1e-4, 1e-3)
-
-    J_columns: list[npt.NDArray[np.floating]] = []
-
-    for j in range(n_params):
-        if j == cbf_idx:
-            if transforms[j] == TransformType.LOG:
-                J_columns.append(g_m)
-            else:  # IDENTITY
-                cbf_vals = m_nat_a[:, cbf_idx, None]
-                J_columns.append(g_m / np.maximum(cbf_vals, _EPSILON_NUMERICAL))
-            continue
-
-        nat_plus = m_nat_a.copy()
-        if transformed_bounds is not None:
-            lower_t, upper_t = transformed_bounds
-            trial_t = np.minimum(m_a[:, j] + deltas[:, j], upper_t[j])
-            # Use a full inward step rather than a tiny gap below a ceiling.
-            backward = m_a[:, j] + deltas[:, j] > upper_t[j]
-            trial_t[backward] = np.maximum(
-                m_a[backward, j] - deltas[backward, j], lower_t[j]
-            )
-            actual_delta = trial_t - m_a[:, j]
-            nat_plus[:, j] = from_transformed_batch(
-                trial_t, transforms[j], upper_bounds[j],
-            )
-            g_plus = evaluate_fn(nat_plus)
-            J_columns.append((g_plus - g_m) / actual_delta[:, None])
-            continue
-        nat_plus[:, j] = from_transformed_batch(
-            m_a[:, j] + deltas[:, j], transforms[j], upper_bounds[j],
-        )
-
-        if transforms[j] == TransformType.IDENTITY:
-            nat_plus[:, j] = np.clip(nat_plus[:, j], bounds_lo[j], bounds_hi[j])
-
-        g_plus = evaluate_fn(nat_plus)
-
-        if transforms[j] == TransformType.IDENTITY:
-            actual_delta = nat_plus[:, j] - m_nat_a[:, j]
-            actual_delta = np.maximum(np.abs(actual_delta), _FD_FLOOR) * np.sign(
-                np.where(actual_delta == 0.0, 1.0, actual_delta)
-            )
-        else:
-            actual_delta = deltas[:, j]
-
-        J_columns.append((g_plus - g_m) / actual_delta[:, None])
-
-    return J_columns
 
 
 def _assemble_JtWJ(
@@ -472,203 +267,6 @@ def _compute_r_squared(
     return result
 
 
-# ---------------------------------------------------------------------------
-# Multiprocess dispatch helpers (used by batched_dsc_vi_fit /
-# batched_dsc_map_fit when nprocs>1; per-voxel updates inside the
-# batched fit functions are independent so the voxel batch can be
-# split across workers and the results concatenated voxel-axis-wise).
-#
-# Spatial VB is NOT in scope: it couples voxels through a sparse
-# adjacency M-prior, so it cannot be chunked safely. The dispatchers
-# raise ValueError on the spatial path.
-# ---------------------------------------------------------------------------
-
-#: Voxel-axis kwargs that must be sliced when chunking. All other
-#: keyword args are broadcast unchanged to every worker.
-_VOXEL_AXIS_KWARGS: tuple[str, ...] = ("tissue_curves", "nlls_seeds")
-
-
-def _init_blas_single_threaded() -> None:
-    """Worker-pool initialiser: clamp BLAS / OpenMP threads to 1.
-
-    Without this clamp, N workers each spawning B BLAS threads creates
-    N×B-way thread contention and wipes out any parallel speedup. The
-    production Dockerfile sets ``MKL_NUM_THREADS=1`` /
-    ``OMP_NUM_THREADS=1``, but local-dev runs without those env vars
-    need the explicit clamp.
-
-    NOTE: ``threadpool_limits`` returns a ``_ThreadpoolLimiter``
-    instance whose ``__exit__`` / explicit ``unregister()`` would
-    *restore* the original thread count. Discarding the returned
-    object is correct: the limit is applied as a side effect inside
-    ``__init__`` (it calls into the loaded BLAS / OpenMP libs
-    directly) and persists for the worker's full lifetime when the
-    object is GC'd. **Do not** rewrite as ``with threadpool_limits(...)``
-    — that would defeat the purpose by restoring on context exit.
-    """
-    from threadpoolctl import threadpool_limits
-    threadpool_limits(limits=1, user_api="blas")
-    threadpool_limits(limits=1, user_api="openmp")
-
-
-def _split_chunks(n: int, nprocs: int) -> list[tuple[int, int]]:
-    """Split ``range(n)`` into ``nprocs`` contiguous (start, end) chunks.
-
-    Chunks are of approximately equal size.
-    """
-    nprocs = max(1, int(nprocs))
-    base, extra = divmod(n, nprocs)
-    chunks: list[tuple[int, int]] = []
-    cursor = 0
-    for i in range(nprocs):
-        size = base + (1 if i < extra else 0)
-        if size <= 0:
-            continue
-        chunks.append((cursor, cursor + size))
-        cursor += size
-    return chunks
-
-
-def _chunk_kwargs(full_kwargs: dict, start: int, end: int) -> dict:
-    """Return a copy of ``full_kwargs`` with voxel-axis arrays sliced.
-
-    Arrays are sliced to ``[start:end]``. ``nprocs`` is forced to 1 so
-    the worker takes the single-process path (no recursion footgun).
-    """
-    out = dict(full_kwargs)
-    for key in _VOXEL_AXIS_KWARGS:
-        v = out.get(key)
-        if v is not None:
-            out[key] = v[start:end]
-    out["nprocs"] = 1
-    return out
-
-
-def _vi_chunk_worker(kwargs: dict) -> "DSCBatchedFitResult":
-    """Top-level pickle-safe worker — calls the single-process VI path."""
-    return batched_dsc_vi_fit(**kwargs)
-
-
-def _map_chunk_worker(kwargs: dict) -> "DSCBatchedFitResult":
-    """Top-level pickle-safe worker — calls the single-process MAP path."""
-    return batched_dsc_map_fit(**kwargs)
-
-
-def _concat_dsc_batched_results(
-    results: list["DSCBatchedFitResult"],
-) -> "DSCBatchedFitResult":
-    """Concatenate per-chunk DSCBatchedFitResult objects voxel-axis-wise.
-
-    All voxel-indexed fields (``params[*]``, ``r_squared``, ``converged``,
-    ``fitted_curves``, ``uncertainties[*]``, ``posterior_means_transformed``,
-    ``posterior_cov_diag``) are concatenated along axis 0. Shared
-    metadata fields (``model_name``, ``n_iterations``) must agree
-    across chunks; ``n_iterations`` is reduced by ``max`` (workers may
-    converge at different iters).
-
-    Field list anchored on ``DSCBatchedFitResult`` definition; re-grep
-    that dataclass when adding new fields.
-    """
-    if not results:
-        raise ValueError("_concat_dsc_batched_results: empty results list")
-
-    # Sanity check: shared metadata must agree across chunks.
-    model_names = {r.model_name for r in results}
-    if len(model_names) != 1:
-        raise AssertionError(f"chunk model_name mismatch: {model_names}")
-
-    head = results[0]
-    return DSCBatchedFitResult(
-        params={
-            k: np.concatenate([r.params[k] for r in results])
-            for k in head.params
-        },
-        r_squared=np.concatenate([r.r_squared for r in results]),
-        converged=np.concatenate([r.converged for r in results]),
-        fitted_curves=(
-            np.concatenate(
-                [r.fitted_curves for r in results], axis=0,
-            )
-            if head.fitted_curves is not None else None
-        ),
-        n_iterations=max(r.n_iterations for r in results),
-        model_name=head.model_name,
-        uncertainties=(
-            {
-                k: np.concatenate([r.uncertainties[k] for r in results])
-                for k in head.uncertainties
-            }
-            if head.uncertainties else {}
-        ),
-        credible_interval_lower=(
-            {
-                k: np.concatenate([r.credible_interval_lower[k] for r in results])
-                for k in head.credible_interval_lower
-            }
-            if head.credible_interval_lower else {}
-        ),
-        credible_interval_upper=(
-            {
-                k: np.concatenate([r.credible_interval_upper[k] for r in results])
-                for k in head.credible_interval_upper
-            }
-            if head.credible_interval_upper else {}
-        ),
-        posterior_means_transformed=(
-            np.concatenate(
-                [r.posterior_means_transformed for r in results], axis=0,
-            )
-            if head.posterior_means_transformed is not None else None
-        ),
-        posterior_cov_diag=(
-            np.concatenate(
-                [r.posterior_cov_diag for r in results], axis=0,
-            )
-            if head.posterior_cov_diag is not None else None
-        ),
-        failure_reasons=tuple(
-            reason for result in results for reason in result.failure_reasons
-        ),
-    )
-
-
-def _run_chunked_in_pool(
-    full_kwargs: dict,
-    nprocs: int,
-    worker: Callable[[dict], "DSCBatchedFitResult"],
-) -> "DSCBatchedFitResult":
-    """Run the chunk + ProcessPoolExecutor + concat workflow.
-
-    Shared by the parallel VI and MAP dispatchers.
-    """
-    from concurrent.futures import ProcessPoolExecutor
-
-    n_voxels = full_kwargs["tissue_curves"].shape[0]
-    chunks = _split_chunks(n_voxels, nprocs)
-    # _split_chunks always returns ≥1 chunk for n_voxels ≥ 1, and the
-    # dispatchers don't reach this helper when n_voxels == 0 (threshold
-    # gate above). The 1-chunk case (e.g. nprocs > n_voxels) runs the
-    # worker synchronously without spawning a pool.
-    assert chunks, "internal error: _split_chunks produced no chunks"
-    chunk_kwargs_list = [_chunk_kwargs(full_kwargs, s, e) for (s, e) in chunks]
-    if len(chunk_kwargs_list) == 1:
-        return worker(chunk_kwargs_list[0])
-    pool = ProcessPoolExecutor(
-        max_workers=len(chunk_kwargs_list),
-        initializer=_init_blas_single_threaded,
-    )
-    try:
-        results = list(pool.map(worker, chunk_kwargs_list))
-    except BaseException:
-        from pmriprep.utils.processes import terminate_process_pool
-
-        terminate_process_pool(pool)
-        raise
-    else:
-        pool.shutdown(wait=True, cancel_futures=True)
-    return _concat_dsc_batched_results(results)
-
-
 def batched_dsc_vi_fit(
     model_type: str,
     tissue_curves: npt.NDArray[np.floating],
@@ -699,23 +297,22 @@ def batched_dsc_vi_fit(
     return_posteriors: bool = False,
     n_iterations_override: Optional[int] = None,
     nprocs: int = 1,
-    parallel_chunk_min: int = 5000,
     model_adapter: DSCVIModelAdapter | None = None,
     return_full_posterior: bool = False,
 ) -> DSCBatchedFitResult:
     """Batched Variational Bayes fitting for DSC perfusion models.
 
     Implements the linearized VB algorithm vectorized across all voxels.
-    Supports the vascular model or an explicitly supplied model adapter.
+    Requires an explicitly supplied model adapter.
 
-    Vascular bounds constrain the local Gaussian mean updates, including
+    Model bounds constrain the local Gaussian mean updates, including
     spatial updates. Covariance remains a local Gaussian approximation;
     intervals at active bounds are not exact truncated-posterior intervals.
 
     Parameters
     ----------
     model_type : str
-        Vascular model; VI also accepts the supplied adapter's identifier.
+        Identifier of the supplied model adapter.
     tissue_curves : npt.NDArray[np.floating]
         Observed tissue curves, shape (N, T).
     aif : npt.NDArray[np.floating]
@@ -783,18 +380,7 @@ def batched_dsc_vi_fit(
         and disables ELBO-based step-size reduction. Used by spatial VB
         wrapper where the ELBO is invalidated by spatial terms.
     nprocs : int, optional
-        When > 1, split the voxel batch across worker processes.
-        Per-voxel updates are independent so chunked == single-process
-        up to floating-point reduction order. Spatial VB
-        (``spatial_prec_diag`` / ``spatial_eta`` set) is rejected with
-        ``ValueError`` because voxels are coupled via the M-prior.
-        Default 1 (single process). The dispatcher silently
-        short-circuits to single-process when ``n_voxels <
-        parallel_chunk_min`` to avoid worker-spawn overhead.
-    parallel_chunk_min : int, optional
-        Minimum voxel count to actually use the
-        parallel path when ``nprocs > 1``. Default 5000 — below this,
-        the worker spawn + import overhead (~1-3s per worker) dominates.
+        Must be one; callers schedule adapter fits externally.
     model_adapter : DSCVIModelAdapter, optional
         Observation prediction, natural-coordinate Jacobian and mean domain.
         Overrides the built-in forward model and concentration-specific flow
@@ -808,60 +394,10 @@ def batched_dsc_vi_fit(
     DSCBatchedFitResult
         DSCBatchedFitResult with fitted parameters, R², convergence, uncertainties.
     """
-    if nprocs != 1 and (model_adapter is not None or return_full_posterior):
+    if nprocs != 1:
         raise ValueError("model adapters and full posterior output require nprocs=1")
-    if model_adapter is None and model_type != "vascular":
+    if model_adapter is None:
         raise ValueError(f"Unsupported DSC model without an adapter: {model_type}")
-
-    # ----- Multiprocess dispatch -----
-    # When nprocs > 1 and the voxel batch is large enough to amortise
-    # worker spawn overhead, split the voxel axis across worker
-    # processes. Per-voxel updates are independent (each voxel's
-    # posterior depends only on its own data + shared read-only
-    # priors / AIF / Toeplitz), so chunked + concatenated == single
-    # process up to floating-point reduction-order. Spatial VB is
-    # rejected because the M-prior couples voxels through neighbours.
-    if nprocs > 1:
-        if spatial_prec_diag is not None or spatial_eta is not None:
-            raise ValueError(
-                "spatial VB couples voxels through neighbours; "
-                "nprocs>1 not supported. Use single-process "
-                "(nprocs=1) or batched_dsc_spatial_vi_fit."
-            )
-        if tissue_curves.shape[0] >= parallel_chunk_min:
-            full_kwargs = dict(
-                model_type=model_type,
-                tissue_curves=tissue_curves,
-                aif=aif,
-                time_points=time_points,
-                prior_means_nat=prior_means_nat,
-                prior_stds_nat=prior_stds_nat,
-                transforms=transforms,
-                upper_bounds=upper_bounds,
-                fitting_param_names=fitting_param_names,
-                fitting_bounds=fitting_bounds,
-                mono_prec=mono_prec,
-                mono_eta=mono_eta,
-                nlls_seeds=nlls_seeds,
-                prior_means_transformed=prior_means_transformed,
-                prior_stds_transformed=prior_stds_transformed,
-                weights=weights,
-                n_iterations=n_iterations,
-                sloppy=sloppy,
-                save_fitted_curves=save_fitted_curves,
-                spatial_prec_diag=spatial_prec_diag,
-                spatial_eta=spatial_eta,
-                spatial_replaces_parameter_prior=spatial_replaces_parameter_prior,
-                spatial_parameter_mask=spatial_parameter_mask,
-                initial_means_transformed=initial_means_transformed,
-                initial_cov_diag=initial_cov_diag,
-                initial_noise_precision=initial_noise_precision,
-                return_posteriors=return_posteriors,
-                n_iterations_override=n_iterations_override,
-            )
-            return _run_chunked_in_pool(full_kwargs, nprocs, _vi_chunk_worker)
-
-    from scipy.special import digamma, gammaln
 
     tissue_curves = np.nan_to_num(tissue_curves, nan=0.0, posinf=0.0, neginf=0.0)
     n_voxels, n_obs = tissue_curves.shape
@@ -948,7 +484,7 @@ def batched_dsc_vi_fit(
 
     # --- Prior setup ---
     # Use pre-transformed means/stds if provided (preserves transformed_prior_sigma
-    # overrides from BayesianPrior, e.g., FABBER sigma=1.0 convention for Vascular).
+    # overrides from transformed-coordinate priors).
     if prior_means_transformed is not None and prior_stds_transformed is not None:
         prior_means_t = np.asarray(prior_means_transformed, dtype=np.float64)
         prior_stds_t = np.asarray(prior_stds_transformed, dtype=np.float64)
@@ -990,7 +526,7 @@ def batched_dsc_vi_fit(
     bounds_hi = np.array([b[1] for b in fitting_bounds])
 
     transformed_bounds = None
-    if model_type == "vascular" or model_adapter is not None:
+    if model_adapter is not None:
         lower_t = np.full(n_params, -np.inf)
         upper_t = np.full(n_params, np.inf)
         for j, (transform, (lo, hi)) in enumerate(zip(transforms, fitting_bounds)):
@@ -1029,38 +565,17 @@ def batched_dsc_vi_fit(
         m[:, j] = to_transformed_batch(m_nat[:, j], transforms[j], upper_bounds[j])
 
     # --- Forward model dispatch ---
-    # Precompute the constant Volterra operator once (aif/dt are fixed across the
-    # fit) so the vascular forward does not rebuild it on every _evaluate call.
-    _vasc_volterra = (
-        build_volterra_matrix(aif, float(time_points[1] - time_points[0]))
-        if model_type == "vascular" and len(time_points) >= 2
-        else None
-    )
-
     def _evaluate(params_fitting: npt.NDArray[np.floating]) -> npt.NDArray[np.floating]:
         """Evaluate forward model from fitting-space natural parameters."""
-        if model_adapter is not None:
-            values = np.asarray(params_fitting, dtype=np.float64)
-            if not np.all(model_adapter.admissible(values)):
-                raise ValueError("forward parameters violate the model domain")
-            prediction = np.asarray(model_adapter.predict(values), dtype=np.float64)
-            if prediction.shape != (values.shape[0], n_obs) or not np.all(
-                np.isfinite(prediction)
-            ):
-                raise ValueError("model prediction must be finite with shape (N, T)")
-            return prediction
-        if model_type == "vascular":
-            # Fitting space: (cbf, mtt, alpha, delay) → model: (cbf, alpha, beta, delay)
-            cbf_v = params_fitting[:, 0]
-            mtt_v = params_fitting[:, 1]
-            alpha_v = params_fitting[:, 2]
-            delay_v = params_fitting[:, 3]
-            beta_v = mtt_v / np.maximum(alpha_v, 1e-10)
-            return batched_vascular_forward(
-                cbf_v, alpha_v, beta_v, delay_v, aif, time_points,
-                volterra_matrix=_vasc_volterra,
-            )
-        raise ValueError(f"Unsupported DSC model without an adapter: {model_type}")
+        values = np.asarray(params_fitting, dtype=np.float64)
+        if not np.all(model_adapter.admissible(values)):
+            raise ValueError("forward parameters violate the model domain")
+        prediction = np.asarray(model_adapter.predict(values), dtype=np.float64)
+        if prediction.shape != (values.shape[0], n_obs) or not np.all(
+            np.isfinite(prediction)
+        ):
+            raise ValueError("model prediction must be finite with shape (N, T)")
+        return prediction
 
     if model_adapter is not None and not np.all(model_adapter.admissible(m_nat)):
         raise ValueError("initial mean violates the model domain")
@@ -1134,13 +649,6 @@ def batched_dsc_vi_fit(
         prediction: npt.NDArray[np.floating],
     ) -> list[npt.NDArray[np.floating]]:
         """Evaluate every derivative at the supplied mean and prediction."""
-        if model_adapter is None:
-            return _compute_jacobian_columns(
-                means, natural, prediction, _evaluate,
-                transforms, upper_bounds, bounds_lo, bounds_hi, cbf_idx,
-                fitting_param_names=fitting_param_names,
-                transformed_bounds=transformed_bounds,
-            )
         natural_jacobian = np.asarray(
             model_adapter.jacobian(np.asarray(natural, dtype=np.float64)), dtype=np.float64
         )
@@ -1722,659 +1230,4 @@ def batched_dsc_vi_fit(
         posterior_cov_diag=out_post_cov,
         full_posterior=full_posterior,
         failure_reasons=tuple(out_failure_reasons),
-    )
-
-
-# ---------------------------------------------------------------------------
-# Batched DSC MAP (Maximum A Posteriori)
-# ---------------------------------------------------------------------------
-
-
-def _run_map_gauss_newton(
-    y: npt.NDArray[np.floating],
-    m_init: npt.NDArray[np.floating],
-    sigma_sq_init: npt.NDArray[np.floating],
-    prior_means_t: npt.NDArray[np.floating],
-    prior_prec: npt.NDArray[np.floating],
-    mono_eta: Optional[npt.NDArray[np.floating]],
-    transforms: list[TransformType],
-    upper_bounds: list[float | None],
-    bounds_lo: npt.NDArray[np.floating],
-    bounds_hi: npt.NDArray[np.floating],
-    cbf_idx: int,
-    w: npt.NDArray[np.floating],
-    n_eff: float,
-    evaluate_fn: "Callable[[npt.NDArray[np.floating]], npt.NDArray[np.floating]]",
-    n_iterations: int,
-    n_noise_iterations: int,
-    fitting_param_names: list[str] | None = None,
-) -> tuple[
-    npt.NDArray[np.floating],  # best_m (n_valid, P)
-    npt.NDArray[np.floating],  # best_nlp (n_valid,)
-    npt.NDArray[np.floating],  # best_sigma_sq (n_valid,)
-    npt.NDArray[np.bool_],     # converged (n_valid,)
-    int,                       # last_iteration
-]:
-    """Run Gauss-Newton MAP optimization with profile likelihood noise.
-
-    Parameters
-    ----------
-    y : npt.NDArray[np.floating]
-        Observed curves, shape (n_valid, T).
-    m_init : npt.NDArray[np.floating]
-        Initial transformed parameters, shape (n_valid, P).
-    sigma_sq_init : npt.NDArray[np.floating]
-        Initial noise variance, shape (n_valid,).
-    prior_means_t : npt.NDArray[np.floating]
-        Prior means in transformed space, shape (P,).
-    prior_prec : npt.NDArray[np.floating]
-        Prior precision matrix, shape (P, P).
-    mono_eta : npt.NDArray[np.floating] or None
-        Structural monotonicity bias, shape (P,) or None.
-    transforms : list[TransformType]
-        Per-parameter transform types.
-    upper_bounds : list[float | None]
-        Per-parameter LOG_LOGIT upper bounds.
-    bounds_lo : npt.NDArray[np.floating]
-        Lower bounds in natural space, shape (P,).
-    bounds_hi : npt.NDArray[np.floating]
-        Upper bounds in natural space, shape (P,).
-    cbf_idx : int
-        Index of CBF parameter.
-    w : npt.NDArray[np.floating]
-        Per-frame weights, shape (T,).
-    n_eff : float
-        Effective number of observations for noise estimation.
-    evaluate_fn : Callable[[npt.NDArray[np.floating]], npt.NDArray[np.floating]]
-        Batched forward model.
-    n_iterations : int
-        Gauss-Newton iterations per noise loop.
-    n_noise_iterations : int
-        Profile likelihood outer iterations.
-
-    Returns
-    -------
-    tuple
-        Tuple of (best_m, best_nlp, best_sigma_sq, converged, last_iteration).
-    """
-    n_valid = y.shape[0]
-    n_obs = y.shape[1]
-    n_params = m_init.shape[1]
-
-    m = m_init.copy()
-    sigma_sq = sigma_sq_init.copy()
-
-    best_nlp = np.full(n_valid, np.inf)
-    best_m = m.copy()
-    best_sigma_sq = sigma_sq.copy()
-
-    converged = np.zeros(n_valid, dtype=bool)
-    last_iteration = 0
-
-    for sigma_iter in range(n_noise_iterations):
-        tau = 1.0 / np.maximum(sigma_sq, _EPSILON_NUMERICAL)
-
-        # Reset per-iteration state (NLP values from previous sigma are
-        # invalid because tau changed)
-        best_nlp[:] = np.inf
-        active = ~converged.copy()
-        step_scale = np.ones(n_valid)
-        nlp_plateau_count = np.zeros(n_valid, dtype=np.int32)
-        prev_nlp = np.full(n_valid, np.inf)
-
-        for iteration in range(n_iterations):
-            last_iteration = sigma_iter * n_iterations + iteration
-            n_active = int(np.sum(active))
-            if n_active == 0:
-                break
-
-            a_idx = np.where(active)[0]
-            m_a = m[a_idx]
-            y_a = y[a_idx]
-            tau_a = tau[a_idx]
-
-            # 1. Inverse-transform
-            m_nat_a = np.zeros_like(m_a)
-            for j in range(n_params):
-                m_nat_a[:, j] = from_transformed_batch(
-                    m_a[:, j], transforms[j], upper_bounds[j],
-                )
-
-            # 2. Forward model
-            g_m = evaluate_fn(m_nat_a)
-
-            # 3. Jacobian
-            J_columns = _compute_jacobian_columns(
-                m_a, m_nat_a, g_m, evaluate_fn,
-                transforms, upper_bounds, bounds_lo, bounds_hi, cbf_idx,
-                fitting_param_names=fitting_param_names,
-            )
-
-            # 4. Residual
-            k_res = y_a - g_m
-
-            # 5. JtWJ
-            JtWJ, _JtWk = _assemble_JtWJ(J_columns, k_res, w)
-
-            # 6. Posterior precision and covariance
-            post_prec = prior_prec[None, :, :] + tau_a[:, None, None] * JtWJ
-            post_cov = np.linalg.inv(post_prec)
-            bad_cov = ~np.isfinite(post_cov).all(axis=(1, 2))
-            if np.any(bad_cov):
-                post_prec[bad_cov] += 1e-6 * np.eye(n_params)
-                post_cov[bad_cov] = np.linalg.inv(post_prec[bad_cov])
-
-            # 7. Gauss-Newton mean update
-            Jm = np.zeros((n_active, n_obs))
-            for j in range(n_params):
-                Jm += J_columns[j] * m_a[:, j:j + 1]
-
-            lam0_mu0 = prior_prec @ prior_means_t
-            if mono_eta is not None:
-                lam0_mu0 = lam0_mu0 + mono_eta
-            data_term = np.zeros((n_active, n_params))
-            for j in range(n_params):
-                data_term[:, j] = np.sum(
-                    w[None, :] * J_columns[j] * (k_res + Jm), axis=1,
-                )
-            rhs = lam0_mu0[None, :] + tau_a[:, None] * data_term
-            m_new = np.einsum("nij,nj->ni", post_cov, rhs)
-
-            # Clip IDENTITY params
-            for j in range(n_params):
-                if transforms[j] == TransformType.IDENTITY:
-                    m_new[:, j] = np.clip(m_new[:, j], bounds_lo[j], bounds_hi[j])
-
-            # 8. Compute negative log posterior
-            m_new_nat = np.zeros_like(m_new)
-            for j in range(n_params):
-                m_new_nat[:, j] = from_transformed_batch(
-                    m_new[:, j], transforms[j], upper_bounds[j],
-                )
-            g_new = evaluate_fn(m_new_nat)
-            k_new = y_a - g_new
-            weighted_rss = np.sum(w[None, :] * k_new ** 2, axis=1)
-            dm = m_new - prior_means_t[None, :]
-            prior_term = np.sum(dm * (dm @ prior_prec), axis=1)
-            nlp = 0.5 * tau_a * weighted_rss + 0.5 * prior_term
-
-            # 9. Step-size reduction (objective-based)
-            cur_best = best_nlp[a_idx].copy()
-            improved = nlp < cur_best
-
-            imp_local = np.where(improved)[0]
-            if len(imp_local) > 0:
-                imp_global = a_idx[imp_local]
-                best_nlp[imp_global] = nlp[imp_local]
-                best_m[imp_global] = m_new[imp_local]
-                step_scale[imp_global] = 1.0
-
-            not_imp_local = np.where(~improved)[0]
-            if len(not_imp_local) > 0:
-                not_imp_global = a_idx[not_imp_local]
-                step_scale[not_imp_global] *= 0.5
-                m_new[not_imp_local] = (
-                    m_a[not_imp_local]
-                    + step_scale[not_imp_global, None]
-                    * (m_new[not_imp_local] - m_a[not_imp_local])
-                )
-                for j in range(n_params):
-                    if transforms[j] == TransformType.IDENTITY:
-                        m_new[not_imp_local, j] = np.clip(
-                            m_new[not_imp_local, j], bounds_lo[j], bounds_hi[j],
-                        )
-                exhausted = step_scale[not_imp_global] < 1e-4
-                if np.any(exhausted):
-                    active[not_imp_global[exhausted]] = False
-
-            # 10. Convergence: param change OR NLP plateau
-            if iteration > 0:
-                param_change = np.max(np.abs(m_new - m_a), axis=1)
-                param_conv = param_change < 1e-3
-
-                cur_prev = prev_nlp[a_idx]
-                nlp_near = (
-                    np.isfinite(cur_prev)
-                    & (np.abs(nlp - cur_prev) < 1e-4 * np.maximum(np.abs(cur_prev), 1.0))
-                )
-                nlp_plateau_count[a_idx] = np.where(
-                    nlp_near, nlp_plateau_count[a_idx] + 1, 0,
-                )
-                nlp_conv = nlp_plateau_count[a_idx] >= 2
-
-                newly_conv = param_conv | nlp_conv
-                if np.any(newly_conv):
-                    conv_global = a_idx[newly_conv]
-                    converged[conv_global] = True
-                    active[conv_global] = False
-
-            prev_nlp[a_idx] = nlp
-
-            # Update state for still-active voxels
-            still_active = active[a_idx]
-            if np.any(still_active):
-                sa_local = np.where(still_active)[0]
-                sa_global = a_idx[sa_local]
-                m[sa_global] = m_new[sa_local]
-
-        # Profile likelihood noise update
-        if sigma_iter < n_noise_iterations - 1:
-            best_nat = np.zeros_like(best_m)
-            for j in range(n_params):
-                best_nat[:, j] = from_transformed_batch(
-                    best_m[:, j], transforms[j], upper_bounds[j],
-                )
-            g_best = evaluate_fn(best_nat)
-            residuals = y - g_best
-            sigma_sq = np.sum(w[None, :] * residuals ** 2, axis=1) / n_eff
-            sigma_sq = np.maximum(sigma_sq, _EPSILON_NUMERICAL)
-            best_sigma_sq = sigma_sq.copy()
-
-            # Warm-start next outer iteration from best solution
-            m = best_m.copy()
-            converged[:] = False
-
-    # Final sigma from best solution
-    best_nat_final = np.zeros_like(best_m)
-    for j in range(n_params):
-        best_nat_final[:, j] = from_transformed_batch(
-            best_m[:, j], transforms[j], upper_bounds[j],
-        )
-    g_final = evaluate_fn(best_nat_final)
-    residuals_final = y - g_final
-    best_sigma_sq = np.sum(w[None, :] * residuals_final ** 2, axis=1) / n_eff
-    best_sigma_sq = np.maximum(best_sigma_sq, _EPSILON_NUMERICAL)
-
-    # Re-evaluate NLP at best solution with final sigma
-    weighted_rss_final = np.sum(w[None, :] * residuals_final ** 2, axis=1)
-    dm_final = best_m - prior_means_t[None, :]
-    prior_term_final = np.sum(dm_final * (dm_final @ prior_prec), axis=1)
-    best_nlp = 0.5 / best_sigma_sq * weighted_rss_final + 0.5 * prior_term_final
-
-    # Mark unconverged voxels that are at a good solution
-    good_fit = _compute_r_squared(y, g_final) > 0.0
-    converged |= good_fit
-
-    return best_m, best_nlp, best_sigma_sq, converged, last_iteration
-
-
-def batched_dsc_map_fit(
-    model_type: str,
-    tissue_curves: npt.NDArray[np.floating],
-    aif: npt.NDArray[np.floating],
-    time_points: npt.NDArray[np.floating],
-    prior_means_nat: npt.NDArray[np.floating],
-    prior_stds_nat: npt.NDArray[np.floating],
-    transforms: list[TransformType],
-    upper_bounds: list[float | None],
-    fitting_param_names: list[str],
-    fitting_bounds: list[tuple[float, float]],
-    mono_prec: Optional[npt.NDArray[np.floating]] = None,
-    mono_eta: Optional[npt.NDArray[np.floating]] = None,
-    nlls_seeds: Optional[npt.NDArray[np.floating]] = None,
-    prior_means_transformed: Optional[npt.NDArray[np.floating]] = None,
-    prior_stds_transformed: Optional[npt.NDArray[np.floating]] = None,
-    weights: Optional[npt.NDArray[np.floating]] = None,
-    n_iterations: int = 15,
-    n_noise_iterations: int = 3,
-    sloppy: bool = False,
-    save_fitted_curves: bool = False,
-    compute_uncertainties: bool = True,
-    nprocs: int = 1,
-    parallel_chunk_min: int = 5000,
-) -> DSCBatchedFitResult:
-    """Batched MAP fitting for DSC perfusion models.
-
-    Implements Gauss-Newton MAP optimization with profile likelihood noise
-    estimation, vectorized across all voxels. Uses the same forward models
-    and Jacobian infrastructure as batched VI.
-
-    Does not support spatial VB (SVB).
-
-    Parameters
-    ----------
-    model_type : str
-        Vascular model; VI also accepts the supplied adapter's identifier.
-    tissue_curves : npt.NDArray[np.floating]
-        Observed tissue curves, shape (N, T).
-    aif : npt.NDArray[np.floating]
-        Arterial input function, shape (T,).
-    time_points : npt.NDArray[np.floating]
-        Time points (seconds), shape (T,).
-    prior_means_nat : npt.NDArray[np.floating]
-        Prior means in natural space, shape (P,).
-    prior_stds_nat : npt.NDArray[np.floating]
-        Prior stds in natural space, shape (P,).
-    transforms : list[TransformType]
-        Per-parameter transform types, length P.
-    upper_bounds : list[float | None]
-        Per-parameter upper bounds for LOG_LOGIT, length P.
-    fitting_param_names : list[str]
-        Parameter names in fitting space, length P.
-    fitting_bounds : list[tuple[float, float]]
-        Per-parameter bounds in fitting space, length P.
-    mono_prec : npt.NDArray[np.floating], optional
-        Structural monotonicity precision matrix, shape (P, P) or None.
-    mono_eta : npt.NDArray[np.floating], optional
-        Structural monotonicity bias, shape (P,) or None.
-    nlls_seeds : npt.NDArray[np.floating], optional
-        NLLS seed parameters for multi-start init, shape (N, P)
-        or None. Used as second start point alongside prior means.
-    prior_means_transformed : npt.NDArray[np.floating], optional
-        Pre-computed prior means in transformed space,
-        shape (P,). Bypasses internal transform_prior() call.
-    prior_stds_transformed : npt.NDArray[np.floating], optional
-        Pre-computed prior stds in transformed space,
-        shape (P,). Must be provided alongside prior_means_transformed.
-    weights : npt.NDArray[np.floating], optional
-        Per-frame motion weights, shape (T,). None = uniform.
-    n_iterations : int, optional
-        Gauss-Newton iterations per noise loop (default 15).
-    n_noise_iterations : int, optional
-        Profile likelihood outer loops (default 3).
-    sloppy : bool, optional
-        Fast mode: 8 iters, 1 noise loop, no uncertainties.
-    save_fitted_curves : bool, optional
-        Whether to store fitted curves in result.
-    compute_uncertainties : bool, optional
-        Whether to compute Laplace uncertainties.
-    nprocs : int, optional
-        When > 1, split the voxel batch across worker processes.
-        Default 1. See ``batched_dsc_vi_fit`` for parallel-dispatch
-        semantics. MAP has no spatial-VB equivalent so no spatial
-        guard applies.
-    parallel_chunk_min : int, optional
-        Minimum voxel count to actually use the
-        parallel path. Default 5000. See ``batched_dsc_vi_fit``.
-
-    Returns
-    -------
-    DSCBatchedFitResult
-        DSCBatchedFitResult with fitted parameters, R², convergence,
-        and Laplace uncertainties.
-    """
-    if model_type != "vascular":
-        raise ValueError("Batched DSC MAP supports vascular only")
-
-    # ----- Multiprocess dispatch -----
-    # Same chunk + pool + concatenate workflow as batched_dsc_vi_fit.
-    # MAP has no spatial-VB equivalent, so no spatial guard is needed —
-    # `_run_chunked_in_pool` will simply chunk and merge.
-    if nprocs > 1 and tissue_curves.shape[0] >= parallel_chunk_min:
-        full_kwargs = dict(
-            model_type=model_type,
-            tissue_curves=tissue_curves,
-            aif=aif,
-            time_points=time_points,
-            prior_means_nat=prior_means_nat,
-            prior_stds_nat=prior_stds_nat,
-            transforms=transforms,
-            upper_bounds=upper_bounds,
-            fitting_param_names=fitting_param_names,
-            fitting_bounds=fitting_bounds,
-            mono_prec=mono_prec,
-            mono_eta=mono_eta,
-            nlls_seeds=nlls_seeds,
-            prior_means_transformed=prior_means_transformed,
-            prior_stds_transformed=prior_stds_transformed,
-            weights=weights,
-            n_iterations=n_iterations,
-            n_noise_iterations=n_noise_iterations,
-            sloppy=sloppy,
-            save_fitted_curves=save_fitted_curves,
-            compute_uncertainties=compute_uncertainties,
-        )
-        return _run_chunked_in_pool(full_kwargs, nprocs, _map_chunk_worker)
-
-    tissue_curves = np.nan_to_num(tissue_curves, nan=0.0, posinf=0.0, neginf=0.0)
-    n_voxels, n_obs = tissue_curves.shape
-    n_params = len(fitting_param_names)
-
-    if sloppy:
-        n_iterations = 8
-        n_noise_iterations = 1
-        compute_uncertainties = False
-
-    # Pre-filter: exclude voxels with negligible signal
-    voxel_max = np.max(np.abs(tissue_curves), axis=1)
-    valid_mask = voxel_max > EPSILON_CONCENTRATION
-    valid_idx = np.where(valid_mask)[0]
-    n_valid = len(valid_idx)
-
-    # Initialize output arrays
-    out_params = {name: np.zeros(n_voxels) for name in fitting_param_names}
-    out_r2 = np.full(n_voxels, -1.0)
-    out_converged = np.zeros(n_voxels, dtype=bool)
-    out_uncertainties: dict[str, npt.NDArray[np.floating]] = {
-        name: np.full(n_voxels, np.nan) for name in fitting_param_names
-    }
-    out_uncertainties["noise_std"] = np.full(n_voxels, np.nan)
-
-    if n_valid == 0:
-        return DSCBatchedFitResult(
-            params=out_params, r_squared=out_r2, converged=out_converged,
-            fitted_curves=None, n_iterations=0, model_name=model_type,
-            uncertainties=out_uncertainties,
-        )
-
-    y = tissue_curves[valid_idx]  # (n_valid, T)
-
-    # --- Prior setup ---
-    if prior_means_transformed is not None and prior_stds_transformed is not None:
-        prior_means_t = np.asarray(prior_means_transformed, dtype=np.float64)
-        prior_stds_t = np.asarray(prior_stds_transformed, dtype=np.float64)
-    else:
-        prior_means_t = np.zeros(n_params, dtype=np.float64)
-        prior_stds_t = np.zeros(n_params, dtype=np.float64)
-        for j in range(n_params):
-            prior_means_t[j], prior_stds_t[j] = transform_prior(
-                float(prior_means_nat[j]), float(prior_stds_nat[j]),
-                transforms[j], upper_bounds[j],
-            )
-    prior_prec_mat = np.diag(1.0 / (prior_stds_t ** 2))
-    if mono_prec is not None:
-        prior_prec_mat = prior_prec_mat + mono_prec
-
-    # --- Bounds ---
-    bounds_lo = np.array([b[0] for b in fitting_bounds])
-    bounds_hi = np.array([b[1] for b in fitting_bounds])
-
-    w = np.ones(n_obs, dtype=np.float64) if weights is None else np.asarray(weights, dtype=np.float64)
-    n_eff = float(np.sum(w)) if weights is not None else float(n_obs)
-
-    # CBF index for analytic Jacobian
-    cbf_idx = fitting_param_names.index("cbf")
-    if transforms[cbf_idx] not in (TransformType.LOG, TransformType.IDENTITY):
-        raise ValueError(
-            f"Analytic CBF Jacobian requires LOG or IDENTITY transform, "
-            f"got {transforms[cbf_idx]} for param '{fitting_param_names[cbf_idx]}'"
-        )
-
-    # --- Forward model dispatch ---
-    # Precompute the constant Volterra operator once (aif/dt are fixed across the
-    # fit) so the vascular forward does not rebuild it on every _evaluate call.
-    _vasc_volterra = (
-        build_volterra_matrix(aif, float(time_points[1] - time_points[0]))
-        if model_type == "vascular" and len(time_points) >= 2
-        else None
-    )
-
-    def _evaluate(params_fitting: npt.NDArray[np.floating]) -> npt.NDArray[np.floating]:
-        if model_type == "vascular":
-            cbf_v = params_fitting[:, 0]
-            mtt_v = params_fitting[:, 1]
-            alpha_v = params_fitting[:, 2]
-            delay_v = params_fitting[:, 3]
-            beta_v = mtt_v / np.maximum(alpha_v, 1e-10)
-            return batched_vascular_forward(
-                cbf_v, alpha_v, beta_v, delay_v, aif, time_points,
-                volterra_matrix=_vasc_volterra,
-            )
-        raise ValueError(f"Unsupported DSC model without an adapter: {model_type}")
-
-    # --- Multi-start initialization ---
-    # Start 0: prior means
-    m0_nat = np.tile(prior_means_nat, (n_valid, 1)).astype(np.float64)
-    for j in range(n_params):
-        m0_nat[:, j] = np.clip(m0_nat[:, j], bounds_lo[j], bounds_hi[j])
-    m0_t = np.zeros((n_valid, n_params), dtype=np.float64)
-    for j in range(n_params):
-        m0_t[:, j] = to_transformed_batch(m0_nat[:, j], transforms[j], upper_bounds[j])
-
-    # Initial noise from prior-mean residuals
-    try:
-        g0 = _evaluate(m0_nat)
-        sigma_sq_init = np.sum(w[None, :] * (y - g0) ** 2, axis=1) / n_eff
-        sigma_sq_init = np.maximum(sigma_sq_init, _EPSILON_NUMERICAL)
-    except (ValueError, RuntimeError):
-        sigma_sq_init = np.ones(n_valid, dtype=np.float64)
-
-    # Start 1: NLLS seeds (if available and different from prior)
-    has_second_start = False
-    if not sloppy and nlls_seeds is not None:
-        valid_seeds = nlls_seeds[valid_idx]
-        has_seed = np.any(np.abs(valid_seeds) > 0, axis=1)
-        if np.any(has_seed):
-            has_second_start = True
-            m1_nat = m0_nat.copy()
-            m1_nat[has_seed] = valid_seeds[has_seed]
-            for j in range(n_params):
-                m1_nat[:, j] = np.clip(m1_nat[:, j], bounds_lo[j], bounds_hi[j])
-            m1_t = np.zeros((n_valid, n_params), dtype=np.float64)
-            for j in range(n_params):
-                m1_t[:, j] = to_transformed_batch(m1_nat[:, j], transforms[j], upper_bounds[j])
-
-            # Noise from seed residuals
-            try:
-                g1 = _evaluate(m1_nat)
-                sigma_sq_seed = np.sum(w[None, :] * (y - g1) ** 2, axis=1) / n_eff
-                sigma_sq_seed = np.maximum(sigma_sq_seed, _EPSILON_NUMERICAL)
-            except (ValueError, RuntimeError):
-                sigma_sq_seed = sigma_sq_init.copy()
-
-    # For sloppy with NLLS seeds, use seeds as single start
-    if sloppy and nlls_seeds is not None:
-        valid_seeds = nlls_seeds[valid_idx]
-        has_seed = np.any(np.abs(valid_seeds) > 0, axis=1)
-        if np.any(has_seed):
-            m0_nat[has_seed] = valid_seeds[has_seed]
-            for j in range(n_params):
-                m0_nat[:, j] = np.clip(m0_nat[:, j], bounds_lo[j], bounds_hi[j])
-            for j in range(n_params):
-                m0_t[:, j] = to_transformed_batch(m0_nat[:, j], transforms[j], upper_bounds[j])
-            try:
-                g0 = _evaluate(m0_nat)
-                sigma_sq_init = np.sum(w[None, :] * (y - g0) ** 2, axis=1) / n_eff
-                sigma_sq_init = np.maximum(sigma_sq_init, _EPSILON_NUMERICAL)
-            except (ValueError, RuntimeError):
-                pass
-
-    logger.info("DSC batched MAP: fitting %s on %d voxels (multi-start=%s)",
-                model_type, n_valid, has_second_start)
-
-    # --- Run start 0 ---
-    best_m, best_nlp, best_sigma_sq, converged, total_iters = _run_map_gauss_newton(
-        y, m0_t, sigma_sq_init, prior_means_t, prior_prec_mat, mono_eta,
-        transforms, upper_bounds, bounds_lo, bounds_hi, cbf_idx, w, n_eff,
-        _evaluate, n_iterations, n_noise_iterations,
-        fitting_param_names=fitting_param_names,
-    )
-
-    # --- Run start 1 (if available) ---
-    if has_second_start:
-        m1_best, nlp1, sigma1, conv1, iters1 = _run_map_gauss_newton(
-            y, m1_t, sigma_sq_seed, prior_means_t, prior_prec_mat, mono_eta,
-            transforms, upper_bounds, bounds_lo, bounds_hi, cbf_idx, w, n_eff,
-            _evaluate, n_iterations, n_noise_iterations,
-        )
-        total_iters = max(total_iters, iters1)
-
-        # Select better start per voxel
-        start1_better = nlp1 < best_nlp
-        if np.any(start1_better):
-            best_m[start1_better] = m1_best[start1_better]
-            best_nlp[start1_better] = nlp1[start1_better]
-            best_sigma_sq[start1_better] = sigma1[start1_better]
-            converged[start1_better] |= conv1[start1_better]
-
-    # MAP `converged` combines NLP/param plateau with an R²>0 fallback
-    # (see _run_map_gauss_newton); it's a meaningful fit-stability flag,
-    # but final fit quality is gated downstream by R² in dsc_compute.py.
-    logger.info(
-        "DSC batched MAP finished (n=%d): %d at NLP/parameter plateau",
-        n_voxels, int(np.sum(converged)),
-    )
-
-    # --- Post-convergence: inverse-transform ---
-    fitted_nat = np.zeros((n_valid, n_params), dtype=np.float64)
-    for j in range(n_params):
-        fitted_nat[:, j] = from_transformed_batch(
-            best_m[:, j], transforms[j], upper_bounds[j],
-        )
-    for j in range(n_params):
-        fitted_nat[:, j] = np.clip(fitted_nat[:, j], bounds_lo[j], bounds_hi[j])
-
-    # --- Laplace uncertainties ---
-    out_ci_lower: dict[str, npt.NDArray[np.floating]] = {}
-    out_ci_upper: dict[str, npt.NDArray[np.floating]] = {}
-    if compute_uncertainties:
-        final_tau = 1.0 / np.maximum(best_sigma_sq, _EPSILON_NUMERICAL)
-        g_final_unc = _evaluate(fitted_nat)
-        J_final = _compute_jacobian_columns(
-            best_m, fitted_nat, g_final_unc, _evaluate,
-            transforms, upper_bounds, bounds_lo, bounds_hi, cbf_idx,
-            fitting_param_names=fitting_param_names,
-        )
-        JtWJ_final, _ = _assemble_JtWJ(J_final, y - g_final_unc, w)
-
-        H = prior_prec_mat[None, :, :] + final_tau[:, None, None] * JtWJ_final
-        cov = np.linalg.inv(H)
-        bad_cov = ~np.isfinite(cov).all(axis=(1, 2))
-        if np.any(bad_cov):
-            H[bad_cov] += 1e-6 * np.eye(n_params)
-            cov[bad_cov] = np.linalg.inv(H[bad_cov])
-
-        for j, name in enumerate(fitting_param_names):
-            std_t = np.sqrt(np.maximum(np.diagonal(cov, axis1=1, axis2=2)[:, j], 0.0))
-            jac = np.exp(log_jacobian_det(fitted_nat[:, j], transforms[j], upper_bounds[j]))
-            out_uncertainties[name][valid_idx] = std_t * jac
-            endpoint_a = from_transformed_batch(
-                best_m[:, j] - 1.96 * std_t, transforms[j], upper_bounds[j]
-            )
-            endpoint_b = from_transformed_batch(
-                best_m[:, j] + 1.96 * std_t, transforms[j], upper_bounds[j]
-            )
-            lower = np.zeros(n_voxels, dtype=np.float64)
-            upper = np.zeros(n_voxels, dtype=np.float64)
-            lower[valid_idx] = np.clip(
-                np.minimum(endpoint_a, endpoint_b), bounds_lo[j], bounds_hi[j]
-            )
-            upper[valid_idx] = np.clip(
-                np.maximum(endpoint_a, endpoint_b), bounds_lo[j], bounds_hi[j]
-            )
-            out_ci_lower[name] = lower
-            out_ci_upper[name] = upper
-
-    out_uncertainties["noise_std"][valid_idx] = np.sqrt(best_sigma_sq)
-
-    # --- R² and scatter results ---
-    final_pred = _evaluate(fitted_nat)
-    r2_valid = _compute_r_squared(y, final_pred)
-
-    for j, name in enumerate(fitting_param_names):
-        out_params[name][valid_idx] = fitted_nat[:, j]
-    out_r2[valid_idx] = r2_valid
-    out_converged[valid_idx] = converged
-
-    out_fitted = None
-    if save_fitted_curves:
-        out_fitted = np.zeros((n_voxels, n_obs), dtype=np.float64)
-        out_fitted[valid_idx] = final_pred
-
-    return DSCBatchedFitResult(
-        params=out_params, r_squared=out_r2, converged=out_converged,
-        fitted_curves=out_fitted, n_iterations=total_iters + 1,
-        model_name=model_type, uncertainties=out_uncertainties,
-        credible_interval_lower=out_ci_lower,
-        credible_interval_upper=out_ci_upper,
     )

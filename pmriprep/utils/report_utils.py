@@ -37,10 +37,6 @@ _DSC_DECONV_TEXT: dict[str, str] = {
         "selected by the Morozov discrepancy principle "
         "[@calamante_2003; @hansen_1998; @morozov_1966]"
     ),
-    "vascular": (
-        "the vascular model with gamma-variate transit time distribution "
-        "[@mouridsen_2006]"
-    ),
     "cpi": "control point interpolation [@mehndiratta_2013]",
 }
 
@@ -443,10 +439,10 @@ def _build_dsc_boilerplate(dsc_qc: dict[str, Any]) -> str:
     method_text = _DSC_DECONV_TEXT.get(method, _DSC_DECONV_TEXT.get("oSVD", ""))
     sentences.append(f"Perfusion parameter maps were quantified using {method_text}.")
 
-    # Inference engine (only for vascular/cpi parametric methods).
+    # Inference engine (only for cpi parametric methods).
     # Backward-compat: older sidecars may carry "bayesian"/"bayesian_inference"
     # keys; their values are already in canonical "vi"/"svb"/"map" naming.
-    if method.lower() in ("vascular", "cpi"):
+    if method.lower() == "cpi":
         inference = deconv.get(
             "inference",
             deconv.get("bayesian_inference", deconv.get("bayesian", "vi")),

@@ -117,7 +117,6 @@ def _run_writer(inputs: dict, qc_metrics: dict | None, tmp_path: Path | None = N
         bids_dir=inputs["bids_dir"],
         subject_id=inputs["subject_id"],
         session_id=inputs["session_id"],
-        inference="vi",
         deconvolution_method=deconvolution.get("method", "oSVD"),
         present_inputs=present,
         has_smoothing=has_smoothing,
@@ -208,38 +207,8 @@ def test_cbv_sidecars_report_statistics_from_their_own_images(
             assert reference["n_valid"] == int(np.count_nonzero(np.isfinite(image[nawm])))
 
 
-def test_vascular_mtt_sidecar_reports_bound_occupancy() -> None:
-    """Vascular MTT boundary contact is informational derivative metadata."""
-    sidecar = build_dsc_map_sidecar(
-        base={},
-        description="Vascular mean transit time",
-        map_key="mtt",
-        qc_metrics={
-            "deconvolution": {
-                "method": "vascular",
-                "mtt_at_bound_fraction": 0.125,
-            },
-        },
-        units="s",
-    )
-
-    assert sidecar["MTTMethod"] == "parametric_fitted_mtt"
-    assert sidecar["MTTAtBoundFraction"] == pytest.approx(0.125)
-    assert sidecar["MTTAtBoundFractionDenominator"] == "accepted vascular fits"
-
-    flat_sidecar = build_dsc_map_sidecar(
-        base={},
-        description="Vascular mean transit time",
-        map_key="mtt",
-        qc_metrics={
-            "method": "vascular",
-            "mtt_at_bound_fraction": 0.25,
-        },
-        units="s",
-    )
-    assert flat_sidecar["MTTMethod"] == "parametric_fitted_mtt"
-    assert flat_sidecar["MTTAtBoundFraction"] == pytest.approx(0.25)
-
+def test_cpi_mtt_sidecar_reports_residue_integral() -> None:
+    """CPI MTT provenance describes its fitted residue integral."""
     cpi_sidecar = build_dsc_map_sidecar(
         base={},
         description="CPI mean transit time",
@@ -255,7 +224,7 @@ def test_vascular_mtt_sidecar_reports_bound_occupancy() -> None:
 def test_tmax_sidecar_reports_fitted_delay_bound_occupancy(nested: bool) -> None:
     """Fitted-delay boundary contact supports flat and production QC layouts."""
     deconvolution = {
-        "method": "vascular",
+        "method": "cpi",
         "delay_at_bound_fraction": 0.125,
     }
     qc_metrics = (
@@ -263,7 +232,7 @@ def test_tmax_sidecar_reports_fitted_delay_bound_occupancy(nested: bool) -> None
     )
     sidecar = build_dsc_map_sidecar(
         base={},
-        description="Fitted vascular delay",
+        description="Fitted CPI delay",
         map_key="tmax",
         qc_metrics=qc_metrics,
         units="s",
@@ -411,7 +380,6 @@ def test_dsc_writer_recreates_deleted_cached_derivative(
         bids_dir=minimal_inputs["bids_dir"],
         subject_id=minimal_inputs["subject_id"],
         session_id=minimal_inputs["session_id"],
-        inference="vi",
         present_inputs={"mtt_map"},
     )
     wf.base_dir = str(tmp_path / "work-recreate")
@@ -437,8 +405,8 @@ def test_dsc_writer_recreates_deleted_cached_derivative(
     assert nii.exists() and sidecar.exists()
 
 
-def test_nlls_uncertainty_uses_frequentist_derivative_names(tmp_path: Path) -> None:
-    """DSC NLLS sinks distinguish standard errors from posterior uncertainty."""
+def test_cpi_uncertainty_uses_posterior_derivative_names(tmp_path: Path) -> None:
+    """CPI uncertainty sinks publish posterior SD with matching metadata."""
     from pmriprep.workflows.dsc.datasinks import init_dsc_datasinks_wf
 
     workflow = init_dsc_datasinks_wf(
@@ -446,10 +414,11 @@ def test_nlls_uncertainty_uses_frequentist_derivative_names(tmp_path: Path) -> N
         bids_dir=str(tmp_path / "bids"),
         subject_id="01",
         session_id=None,
-        inference="nlls",
+        deconvolution_method="cpi",
         present_inputs={"cbf_std_map"},
     )
-    assert workflow.get_node("cbf_std_map_sink").inputs.desc == "dscStandardError"
+    assert workflow.get_node("cbf_std_map_sink").inputs.desc == "dscPosteriorSD"
+    assert workflow.get_node("cbf_std_map_meta").inputs.description == "CBF posterior standard deviation"
 
 
 def test_parametric_provenance_carries_fit_health_denominators() -> None:
@@ -459,8 +428,8 @@ def test_parametric_provenance_carries_fit_health_denominators() -> None:
     extra = _build_parametric_extra(
         {
             "deconvolution": {
-                "method": "vascular",
-                "inference": "map",
+                "method": "cpi",
+                "inference": "vi",
                 "n_mask_voxels": 100,
                 "n_fit_admissible": 80,
                 "n_fit_inadmissible": 20,
@@ -483,26 +452,6 @@ def test_parametric_provenance_carries_fit_health_denominators() -> None:
     assert extra["FallbackSucceededFraction"] == pytest.approx(0.125)
     assert extra["FallbackMinimumRSquared"] == pytest.approx(0.0)
     assert extra["FallbackMinimumRSquaredInclusive"] is True
-
-
-def test_cbf_uncertainty_sidecar_carries_map_hessian_accounting() -> None:
-    """CBF posterior-SD metadata explains Hessian-unavailable NaNs."""
-    from pmriprep.workflows.dsc.datasinks import _build_map_meta
-
-    accounting = {
-        "n_evaluated": 80,
-        "n_uncertainty_unavailable": 4,
-        "uncertainty_unavailable_fraction": 0.05,
-    }
-    out = _build_map_meta(
-        {},
-        "CBF posterior standard deviation",
-        "cbf_std",
-        qc_metrics={"deconvolution": {"map_uncertainty": accounting}},
-        units="1/min",
-    )
-
-    assert out["MAPUncertaintyAccounting"] == accounting
 
 
 # =============================================================================
@@ -759,7 +708,6 @@ class TestWriterAifBlockPresentOnAllMaps:
             bids_dir=minimal_inputs["bids_dir"],
             subject_id=minimal_inputs["subject_id"],
             session_id=minimal_inputs["session_id"],
-            inference="nlls",
             present_inputs=set(),
         )
 
@@ -767,7 +715,6 @@ class TestWriterAifBlockPresentOnAllMaps:
 
     def test_map_units_match_computed_quantities(self, minimal_inputs, tmp_path) -> None:
         minimal_inputs.update({
-            "cth_map": _write_dummy_nifti(tmp_path / "cth.nii.gz"),
             "cbf_std_map": _write_dummy_nifti(tmp_path / "cbf_std.nii.gz"),
             "parametric_r2_map": _write_dummy_nifti(tmp_path / "parametric_r2.nii.gz"),
             "config_dict": {"inference": "svb"},
@@ -777,14 +724,12 @@ class TestWriterAifBlockPresentOnAllMaps:
             {
                 "deconvolution": {
                     "method": "oSVD",
-                    "cth_alpha_at_bound_fraction": 0.125,
                 },
             },
             tmp_path,
         )
 
         expected = {
-            "dscCth_stat": "s",
             "dscPosteriorSDCbf_stat": "1/min",
             "dscParametricRsquared_stat": "1",
         }
@@ -794,15 +739,6 @@ class TestWriterAifBlockPresentOnAllMaps:
         r2_meta = _load_sidecar(derivatives, "dscParametricRsquared_stat")
         assert r2_meta["AIFDependent"] is True
         assert r2_meta["TemplateAIFUsage"] == "qualitative_only"
-
-        cth_meta = _load_sidecar(derivatives, "dscCth_stat")
-        assert cth_meta["Formula"] == "beta * sqrt(alpha) = MTT / sqrt(alpha)"
-        assert "oSVD" in cth_meta["UndefinedValue"]
-        assert cth_meta["AlphaAtBoundFraction"] == pytest.approx(0.125)
-        assert (
-            cth_meta["AlphaAtBoundFractionDenominator"]
-            == "accepted vascular fits"
-        )
 
         uncertainty_meta = _load_sidecar(derivatives, "dscPosteriorSDCbf_stat")
         assert uncertainty_meta["EstimationMethod"] == "svb"
@@ -1011,7 +947,6 @@ class TestStructuralUnderlayDatatype:
             bids_dir=minimal_inputs["bids_dir"],
             subject_id=minimal_inputs["subject_id"],
             session_id=minimal_inputs["session_id"],
-            inference="vi",
             present_inputs=present,
         )
         wf.base_dir = str(tmp_path / work_subdir)
