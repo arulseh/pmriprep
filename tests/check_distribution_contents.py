@@ -11,6 +11,8 @@ from pathlib import Path
 REQUIRED_PACKAGE_FILES = {
     "pmriprep/models/dsc/signal_cpi/maps.py",
     "pmriprep/models/dsc/signal_cpi/execution.py",
+    "pmriprep/models/dsc/signal_cpi/progress.py",
+    "pmriprep/models/dsc/signal_cpi/spatial_readout.py",
     "pmriprep/models/dsc/signal_cpi/count.py",
     "pmriprep/models/dsc/signal_cpi/residue.py",
     "pmriprep/models/dsc/signal_cpi/precision.py",

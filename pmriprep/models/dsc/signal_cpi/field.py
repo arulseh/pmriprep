@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from functools import partial
 from typing import Any, Callable
 
@@ -16,19 +16,40 @@ from pmriprep.models.dsc.vi_adapter import DSCVIModelAdapter
 
 from .acquisition import CPIAcquisition, fit_selected_voxels
 from .batch import SignalBatchEvaluator
-from .connection import classify_result
+from .connection import GuidedVoxel
 from .geometry import Model
-from .leakage import BSWCenteredModel, BSWPrior, LeakageBatch, LeakageBatchEvaluator, readout_state
-from .policy import model_for, select_valid_restarts
+from .leakage import BSWCenteredModel, BSWPrior, LeakageBatchEvaluator
+from .policy import model_for
 from .probability import GaussianPrior
+from .progress import _CPIProgress
 from .residue import signal_evaluator
 from .signal import MovingLayoutSignalCPI
 from .spatial import RowPriorDispatcher, SpatialGuidedResult, _join_results
+from .spatial_readout import SpatialReadout
 from .execution import CPIExecutor
 
 
-def _fit_spatial_row(arguments: dict[str, Any]) -> tuple[DSCBatchedFitResult, GaussianPrior]:
+@dataclass(frozen=True)
+class _SpatialTask:
+    """One local update with optional final readout and factor retention."""
+
+    arguments: dict[str, Any]
+    readout: SpatialReadout | None
+    keep_full_posterior: bool
+
+
+@dataclass(frozen=True)
+class _SpatialUpdate:
+    """Marginal spatial state and an optional worker-computed output voxel."""
+
+    result: DSCBatchedFitResult
+    prior: GaussianPrior
+    voxel: GuidedVoxel | None
+
+
+def _fit_spatial_row(task: _SpatialTask) -> _SpatialUpdate:
     """Run one frozen-neighbor update with the unchanged shared row dispatcher."""
+    arguments = task.arguments
     arguments["model_adapter"].reset_transient_state()
     captured: list[tuple[DSCBatchedFitResult, GaussianPrior]] = []
 
@@ -38,7 +59,12 @@ def _fit_spatial_row(arguments: dict[str, Any]) -> tuple[DSCBatchedFitResult, Ga
     dispatch = RowPriorDispatcher(arguments["prior_means_transformed"][None],
                                   arguments["prior_stds_transformed"][None], consume)
     dispatch(**arguments)
-    return captured[0]
+    result, prior = captured[0]
+    voxel = (None if task.readout is None else task.readout(
+        result, prior, arguments["model_adapter"], arguments["tissue_curves"][0]))
+    if not task.keep_full_posterior:
+        result = replace(result, full_posterior=None)
+    return _SpatialUpdate(result, prior, voxel)
 
 
 class CommonCBFDispatcher:
@@ -50,10 +76,15 @@ class CommonCBFDispatcher:
         Per-row shared-VI arguments with one signal, prior, model and seed each.
         The first coordinate must be CBF in identity coordinates. Other
         coordinates may differ in number and meaning between rows.
-    on_result : callable
+    on_result : callable, optional
         Consume the complete local posterior and actual conditional prior.
     executor : CPIExecutor, optional
         Parallelize local updates, retaining one synchronous whole-field sweep.
+    readouts : list of SpatialReadout, optional
+        Final-pass output contexts. Use begin_pass with the fixed spatial
+        schedule to evaluate these only on its last pass.
+    on_readout : callable, optional
+        Consume a final worker-owned voxel without recalculating its factors.
 
     Notes
     -----
@@ -65,30 +96,48 @@ class CommonCBFDispatcher:
 
     def __init__(
         self, arguments: list[dict[str, Any]],
-        on_result: Callable[[int, DSCBatchedFitResult, GaussianPrior], None],
+        on_result: Callable[[int, DSCBatchedFitResult, GaussianPrior], None] | None = None,
         *, executor: CPIExecutor | None = None,
+        readouts: list[SpatialReadout] | None = None,
+        on_readout: Callable[[GuidedVoxel], None] | None = None,
     ) -> None:
         if not arguments:
             raise ValueError("at least one local model required")
         self.arguments = arguments
         self.executor = executor
+        if ((readouts is None) != (on_readout is None)
+                or (readouts is not None and len(readouts) != len(arguments))):
+            raise ValueError("one readout per row and a matching consumer required")
+        self.on_result = on_result
+        self.readouts, self.on_readout = readouts, on_readout
+        self.readout_enabled = False
+        self.progress: _CPIProgress | None = None
         self.dispatchers = []
-
-        def consume(index: int, _: int, result: DSCBatchedFitResult, prior: GaussianPrior) -> None:
-            on_result(index, result, prior)
-
-        for i, args in enumerate(arguments):
+        for args in arguments:
             p = len(args["fitting_param_names"])
             if (args["fitting_param_names"][0] != "cbf"
                     or args["transforms"] != [TransformType.IDENTITY] * p
                     or args["tissue_curves"].shape[0] != 1):
                 raise ValueError("one identity-coordinate row beginning with CBF required")
             self.dispatchers.append(RowPriorDispatcher(
-                args["prior_means_transformed"][None], args["prior_stds_transformed"][None],
-                partial(consume, i)))
+                args["prior_means_transformed"][None], args["prior_stds_transformed"][None]))
         self.states: list[dict[str, np.ndarray]] = []
         self.warm_means: np.ndarray | None = None
         self.calls = 0
+
+    def begin_pass(self, index: int, sweeps: int) -> None:
+        """Select final-pass readout and start a fresh voxel progress counter.
+
+        Parameters
+        ----------
+        index, sweeps : int
+            Zero denotes warm start, followed by sweeps one through sweeps.
+            Both zero denotes the independent-VI pass on a graph without edges.
+        """
+        self.readout_enabled = index == sweeps
+        label = (f"SVB sweep {index}/{sweeps}" if index else
+                 "SVB warm start" if sweeps else "SVB ordinary VI")
+        self.progress = _CPIProgress(len(self.arguments), label=label)
 
     def __call__(self, **kwargs: Any) -> DSCBatchedFitResult:
         """Run the shared local updater with this sweep's frozen CBF inputs."""
@@ -96,7 +145,7 @@ class CommonCBFDispatcher:
         if kwargs["fitting_param_names"] != ["cbf"] or len(kwargs["tissue_curves"]) != n:
             raise ValueError("spatial schedule must expose the common CBF field only")
         rows, next_states, tasks = [], [], []
-        for i, (local, dispatch) in enumerate(zip(self.arguments, self.dispatchers, strict=True)):
+        for i, local in enumerate(self.arguments):
             args = kwargs | local
             p = len(local["fitting_param_names"])
             for name in ("spatial_prec_diag", "spatial_eta"):
@@ -111,14 +160,24 @@ class CommonCBFDispatcher:
                 for name in ("initial_means_transformed", "initial_cov_diag"):
                     if not np.array_equal(args[name][:, :1], kwargs[name][i:i+1]):
                         raise ValueError("spatial and local CBF states are misaligned")
-            tasks.append(args)
-        results: Iterator[DSCBatchedFitResult]
-        if self.executor is None:
-            results = (self._fit_serial_row(dispatch, args) for dispatch, args
-                       in zip(self.dispatchers, tasks, strict=True))
-        else:
-            results = self._parallel_results(tasks)
-        for result in results:
+            readout = self.readouts[i] if self.readouts is not None and self.readout_enabled else None
+            tasks.append(_SpatialTask(args, readout, self.on_result is not None))
+        for i, update in enumerate(self._results(tasks)):
+            result, prior = update.result, update.prior
+            dispatch = self.dispatchers[i]
+            dispatch.last_prior_means[0] = prior.mean
+            dispatch.last_prior_variances[0] = np.diag(prior.covariance)
+            if self.on_result is not None:
+                self.on_result(i, result, prior)
+            if update.voxel is not None:
+                assert self.on_readout is not None
+                self.on_readout(update.voxel)
+            if dispatch.calls == 0:
+                assert result.posterior_means_transformed is not None
+                dispatch.warm_means = np.array(result.posterior_means_transformed, dtype=np.float64)
+            dispatch.calls += 1
+            if self.progress is not None:
+                self.progress.advance()
             mean, variance = result.posterior_means_transformed, result.posterior_cov_diag
             assert mean is not None and variance is not None
             noise = result.uncertainties["noise_std"]
@@ -139,38 +198,20 @@ class CommonCBFDispatcher:
         self.calls += 1
         return combined
 
-    @staticmethod
-    def _fit_serial_row(
-        dispatch: RowPriorDispatcher, arguments: dict[str, Any],
-    ) -> DSCBatchedFitResult:
-        """Reset shared evaluator state before one serial voxel update."""
-        arguments["model_adapter"].reset_transient_state()
-        return dispatch(**arguments)
-
-    def _parallel_results(self, tasks: list[dict[str, Any]]) -> Iterator[DSCBatchedFitResult]:
-        """Consume complete local posteriors in order in the parent process."""
-        assert self.executor is not None
-
-        def clean_tasks() -> Iterator[dict[str, Any]]:
-            for arguments in tasks:
+    def _results(self, tasks: list[_SpatialTask]) -> Iterator[_SpatialUpdate]:
+        """Consume local updates in spatial order with bounded worker payloads."""
+        def clean_tasks() -> Iterator[_SpatialTask]:
+            for task in tasks:
                 # The executor serializes lazily. Clear the shared evaluator
                 # immediately before each snapshot so caches never travel with
                 # a per-voxel task.
-                arguments["model_adapter"].reset_transient_state()
-                yield arguments
+                task.arguments["model_adapter"].reset_transient_state()
+                yield task
 
-        for dispatch, (result, prior) in zip(
-            self.dispatchers, self.executor.map(_fit_spatial_row, clean_tasks()), strict=True,
-        ):
-            dispatch.last_prior_means[0] = prior.mean
-            dispatch.last_prior_variances[0] = np.diag(prior.covariance)
-            if dispatch.on_result is not None:
-                dispatch.on_result(0, result, prior)
-            if dispatch.calls == 0:
-                assert result.posterior_means_transformed is not None
-                dispatch.warm_means = np.array(result.posterior_means_transformed, dtype=np.float64)
-            dispatch.calls += 1
-            yield replace(result, full_posterior=None)
+        if self.executor is None:
+            yield from map(_fit_spatial_row, clean_tasks())
+        else:
+            yield from self.executor.map(_fit_spatial_row, clean_tasks())
 
 
 def fit_selected_field(
@@ -202,7 +243,7 @@ def fit_selected_field(
         raise ValueError("complete field must explicitly request svb")
     a = acquisition.branches[0]
     branches = {b.family: b for b in acquisition.branches}
-    outputs, indices, arguments, models, evaluators = {}, [], [], [], []
+    outputs, indices, arguments, readouts = {}, [], [], []
     shared: dict[Model, tuple[BSWCenteredModel | MovingLayoutSignalCPI,
                              LeakageBatchEvaluator | SignalBatchEvaluator, DSCVIModelAdapter]] = {}
     selected = (
@@ -246,39 +287,21 @@ def fit_selected_field(
             fitting_bounds=list(zip(model.lower, model.upper, strict=True)),
             nlls_seeds=np.asarray([row.diagnostics.rows[0]["selected"].mean]), model_adapter=adapter))
         indices.append(i)
-        models.append(model)
-        evaluators.append(evaluator)
+        readouts.append(SpatialReadout(model, i, branch.decision.selected, float(a.k2[i]),
+            row.family, row.selection_scores, a.leakage_method, a.infer_delay,
+            a.weights, keep_diagnostics))
     index_array = np.asarray(indices, dtype=int)
     if not indices:
         return SpatialGuidedResult(tuple(outputs.values()), index_array, None, None, None, None, 0, 0,
                                    a.weights)
 
-    def consume(i: int, result: DSCBatchedFitResult, prior: GaussianPrior) -> None:
-        posterior, prediction = result.full_posterior, result.fitted_curves
-        assert posterior is not None and prediction is not None
-        previous = outputs[indices[i]]
-        assert previous.family is not None
-        branch = branches[previous.family]
-        assert branch.decision is not None
-        jacobian = evaluators[i].jacobians(posterior.mean)
-        fit, assessment, inferred = readout_state(models[i], a.signals[indices[i]], posterior.mean[0],
-            posterior.covariance[0], float(posterior.noise_shape[0]), float(posterior.noise_scale[0]),
-            prediction[0], jacobian[0], branch.decision.selected, 0, bool(result.converged[0]),
-            weights=a.weights, prior=prior)
-        arrays = dict(mean=posterior.mean, covariance=posterior.covariance,
-            noise_shape=posterior.noise_shape, noise_scale=posterior.noise_scale,
-            fitted_curves=prediction, jacobian=jacobian, prior_mean=prior.mean,
-            prior_covariance=prior.covariance)
-        if a.weights is not None:
-            arrays["weights"] = a.weights
-        diagnostic = LeakageBatch([fit], [assessment], select_valid_restarts([fit], [assessment], 1),
-            [inferred] if a.leakage_method == "bsw" else [], arrays, 0., result.n_iterations,
-            a.leakage_method, a.infer_delay)
-        row = replace(classify_result(indices[i], float(a.k2[indices[i]]), diagnostic),
-                      family=previous.family, selection_scores=previous.selection_scores)
-        outputs[indices[i]] = row if keep_diagnostics else replace(row, diagnostics=None)
+    final_outputs: dict[int, GuidedVoxel] = {}
 
-    dispatch = CommonCBFDispatcher(arguments, consume, executor=executor)
+    def consume(row: GuidedVoxel) -> None:
+        final_outputs[row.flat_index] = row
+
+    dispatch = CommonCBFDispatcher(arguments, executor=executor,
+                                   readouts=readouts, on_readout=consume)
     coordinates = np.unravel_index(index_array, a.spatial_shape)
     result = batched_dsc_spatial_vi_fit(model_type="signal_cpi", tissue_curves=a.signals[index_array],
         aif=a.aif, time_points=a.time, mask_coords=(coordinates[0], coordinates[1], coordinates[2]),
@@ -287,7 +310,11 @@ def fit_selected_field(
         prior_stds_nat=arguments[0]["prior_stds_nat"][:1],
         transforms=[TransformType.IDENTITY], upper_bounds=[None], fitting_param_names=["cbf"],
         fitting_bounds=arguments[0]["fitting_bounds"][:1], weights=a.weights,
-        save_fitted_curves=True, local_fit=dispatch, sloppy=a.sloppy)
+        save_fitted_curves=True, local_fit=dispatch, sloppy=a.sloppy,
+        on_pass_start=dispatch.begin_pass)
+    if set(final_outputs) != set(indices):
+        raise RuntimeError("spatial schedule did not produce every final voxel readout")
+    outputs.update(final_outputs)
     return SpatialGuidedResult(tuple(outputs[i] for i in sorted(outputs)), index_array,
         dispatch.warm_means, (None if result.posterior_means_transformed is None else
                              np.asarray(result.posterior_means_transformed, dtype=np.float64)),

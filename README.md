@@ -130,7 +130,9 @@ accepts a Nipype plugin YAML/JSON for cluster schedulers. `--clean-workdir`,
 follow the corresponding NiPreps conventions.
 
 CPI fitting uses single-threaded workers up to the process and node-memory
-limits; `--sloppy` reduces its fitting iterations for testing. HD-BET uses
+limits; `--sloppy` reduces its fitting iterations for testing. SVB reports voxel
+progress during its warm start and each spatial sweep, with elapsed time and
+estimated remaining time. HD-BET uses
 test-time augmentation on CUDA and MPS; CPU and sloppy execution
 disable it for speed.
 

@@ -5,6 +5,7 @@ neighboring voxels' parameters, reducing noise without explicit smoothing.
 """
 
 import logging
+from time import perf_counter
 from typing import Callable, Optional
 
 import numpy as np
@@ -222,6 +223,7 @@ def batched_dsc_spatial_vi_fit(
     model_adapter: DSCVIModelAdapter | None = None,
     return_full_posterior: bool = False,
     local_fit: Callable[..., DSCBatchedFitResult] | None = None,
+    on_pass_start: Callable[[int, int], None] | None = None,
 ) -> DSCBatchedFitResult:
     """Spatial VB wrapper around batched VI.
 
@@ -288,6 +290,10 @@ def batched_dsc_spatial_vi_fit(
         contract, for models with voxel-specific independent priors. It must
         preserve row order and synchronous sweep state. None uses the shared
         batched fitter directly; the spatial algorithm is identical.
+    on_pass_start : callable, optional
+        Receive (pass index, configured sweeps) before each local update.
+        Index zero denotes warm start; (0, 0) denotes the independent-VI pass
+        on a graph without edges. The observer does not change the schedule.
 
     Returns
     -------
@@ -318,6 +324,8 @@ def batched_dsc_spatial_vi_fit(
 
     if not has_any_neighbors:
         logger.info("SVB: no voxel neighbors found, falling back to standard VI")
+        if on_pass_start is not None:
+            on_pass_start(0, 0)
         return fit_local(
             model_type=model_type,
             tissue_curves=tissue_curves,
@@ -343,6 +351,9 @@ def batched_dsc_spatial_vi_fit(
 
     aK = np.zeros(n_params, dtype=np.float64)
     logger.info("SVB: ordinary-VI warm start")
+    if on_pass_start is not None:
+        on_pass_start(0, n_spatial_sweeps)
+    started = perf_counter()
     result = fit_local(
         model_type=model_type,
         tissue_curves=tissue_curves,
@@ -365,6 +376,7 @@ def batched_dsc_spatial_vi_fit(
         return_posteriors=True,
         model_adapter=model_adapter,
     )
+    logger.info("SVB warm start completed in %.1f s", perf_counter() - started)
     warm_means = result.posterior_means_transformed
     warm_cov_diag = result.posterior_cov_diag
     assert warm_means is not None and warm_cov_diag is not None
@@ -377,6 +389,7 @@ def batched_dsc_spatial_vi_fit(
         valid_noise = np.isfinite(noise_std) & (noise_std > 0)
         noise_precision[valid_noise] = 1.0 / noise_std[valid_noise] ** 2
 
+    sweep_seconds: list[float] = []
     for sweep in range(n_spatial_sweeps):
         aK_old = aK.copy()
         updated_aK = _update_aK_penny(posteriors, cov_diag, adj, degree)
@@ -385,13 +398,21 @@ def batched_dsc_spatial_vi_fit(
             posteriors, adj, degree, aK
         )
 
-        logger.info("SVB sweep %d/%d", sweep + 1, n_spatial_sweeps)
+        if sweep_seconds:
+            remaining = sum(sweep_seconds) / len(sweep_seconds) * (n_spatial_sweeps - sweep)
+            logger.info("SVB sweep %d/%d; estimated remaining %.1f s",
+                        sweep + 1, n_spatial_sweeps, remaining)
+        else:
+            logger.info("SVB sweep %d/%d", sweep + 1, n_spatial_sweeps)
         logger.debug(
             "SVB sweep %d/%d: aK = %s",
             sweep + 1, n_spatial_sweeps,
             np.array2string(aK, precision=3, separator=", "),
         )
 
+        if on_pass_start is not None:
+            on_pass_start(sweep + 1, n_spatial_sweeps)
+        started = perf_counter()
         result = fit_local(
             model_type=model_type,
             tissue_curves=tissue_curves,
@@ -422,6 +443,9 @@ def batched_dsc_spatial_vi_fit(
             model_adapter=model_adapter,
             return_full_posterior=return_full_posterior,
         )
+        sweep_seconds.append(perf_counter() - started)
+        logger.info("SVB sweep %d/%d completed in %.1f s",
+                    sweep + 1, n_spatial_sweeps, sweep_seconds[-1])
         result_means = result.posterior_means_transformed
         result_cov_diag = result.posterior_cov_diag
         assert result_means is not None and result_cov_diag is not None

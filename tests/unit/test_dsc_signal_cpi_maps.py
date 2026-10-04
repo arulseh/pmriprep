@@ -8,7 +8,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from pmriprep.models.dsc.signal_cpi import maps
+from pmriprep.models.dsc.signal_cpi import maps, progress
 from pmriprep.models.dsc.signal_cpi.acquisition import prepare_cpi_acquisition
 from pmriprep.models.dsc.signal_cpi.connection import GuidedVoxel
 from pmriprep.models.dsc.signal_cpi.policy import FitAssessment
@@ -23,8 +23,8 @@ def test_progress_reports_count_elapsed_and_remaining(
 ) -> None:
     """Long voxel fits report bounded controller-side progress and completion."""
     ticks = iter([0.0, 60.0, 300.0, 600.0])
-    monkeypatch.setattr(maps.time, "monotonic", lambda: next(ticks))
-    reporter = maps._CPIProgress(20, label=label)
+    monkeypatch.setattr(progress.time, "monotonic", lambda: next(ticks))
+    reporter = progress._CPIProgress(20, label=label)
     with caplog.at_level(logging.INFO, logger="nipype.interface"):
         reporter.advance()
         reporter.advance()
