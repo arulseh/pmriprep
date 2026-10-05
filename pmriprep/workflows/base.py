@@ -616,7 +616,7 @@ def _read_bids_sidecar(
     dict
         Dict with keys: te, volume_tr, pulse_tr, field_strength, flip_angle,
         r1_relaxivity, contrast_agent, scanning_sequence, sequence_variant,
-        echo_entity.
+        echo_entity, echo_time_array, echo_time_invalid.
 
         - volume_tr: Volume TR for temporal resolution (model selection, time vector)
         - pulse_tr: Pulse TR for SPGR signal equation
@@ -625,6 +625,8 @@ def _read_bids_sidecar(
         - scanning_sequence: frozenset of DICOM ScanningSequence tokens, or None
         - sequence_variant: frozenset of DICOM SequenceVariant tokens, or None
         - echo_entity: True if filename contains echo-<N> BIDS entity
+        - echo_time_array: True if EchoTime is an array
+        - echo_time_invalid: True if a supplied EchoTime is not a finite scalar
 
         Values are floats/str or None if not found in the sidecar.
     """
@@ -647,6 +649,8 @@ def _read_bids_sidecar(
         "scanning_sequence": None,   # frozenset from ScanningSequence
         "sequence_variant": None,    # frozenset from SequenceVariant
         "echo_entity": False,        # True if filename has echo-<N> entity
+        "echo_time_array": False,
+        "echo_time_invalid": False,
     }
 
     nifti = Path(nifti_path)
@@ -662,7 +666,15 @@ def _read_bids_sidecar(
         meta = json.load(f)
 
     if "EchoTime" in meta:
-        result["te"] = float(meta["EchoTime"])
+        echo_time = meta["EchoTime"]
+        result["echo_time_array"] = isinstance(echo_time, list)
+        try:
+            te = float(echo_time) if not isinstance(echo_time, bool) else math.nan
+        except (TypeError, ValueError, OverflowError):
+            te = math.nan
+        result["echo_time_invalid"] = not math.isfinite(te)
+        if not result["echo_time_invalid"]:
+            result["te"] = te
 
     # Volume TR: temporal resolution between 3D volume acquisitions
     # Used for: time vector, model auto-selection, AIF timing

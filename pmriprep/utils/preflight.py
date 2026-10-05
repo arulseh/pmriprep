@@ -7,6 +7,7 @@ diagnostic messages rather than cryptic failures deep in processing.
 
 import logging
 import math
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
@@ -180,7 +181,21 @@ def validate_dsc_metadata(
 
     # TE
     te = sidecar.get("te")
-    if te is None:
+    echo_time_array = sidecar.get("echo_time_array") or isinstance(te, (list, tuple))
+    if echo_time_array:
+        pass
+    elif sidecar.get("echo_time_invalid") or (
+        te is not None and (
+            isinstance(te, bool) or not isinstance(te, (int, float))
+            or not math.isfinite(te)
+        )
+    ):
+        msgs.append(PreflightMessage(
+            level="error",
+            code="DSC_INVALID_TE",
+            message="EchoTime must be a finite scalar number in seconds.",
+        ))
+    elif te is None:
         msgs.append(PreflightMessage(
             level="error",
             code="DSC_MISSING_TE",
@@ -250,13 +265,13 @@ def validate_dsc_metadata(
             ),
         ))
 
-    # Multi-echo detection (BIDS echo-<N> entity in filename)
-    if sidecar.get("echo_entity"):
+    # Multi-echo detection from filename or acquisition metadata.
+    if sidecar.get("echo_entity") or echo_time_array:
         msgs.append(PreflightMessage(
             level="error",
             code="DSC_MULTI_ECHO_UNSUPPORTED",
             message=(
-                "Multi-echo DSC detected (echo entity in filename). "
+                "Multi-echo DSC detected (echo entity or EchoTime array). "
                 "PMRIPrep supports single-echo GRE-EPI only."
             ),
         ))
@@ -526,6 +541,16 @@ def validate_dce_metadata(
     scanning_seq = sidecar.get("scanning_sequence")
     sequence_var = sidecar.get("sequence_variant")
     te = sidecar.get("te")
+    if sidecar.get("echo_time_array"):
+        msgs.append(PreflightMessage(
+            level="error", code="DCE_MULTI_ECHO_UNSUPPORTED",
+            message="Multi-echo DCE is unsupported; EchoTime must be a finite scalar.",
+        ))
+    elif sidecar.get("echo_time_invalid"):
+        msgs.append(PreflightMessage(
+            level="error", code="DCE_INVALID_TE",
+            message="EchoTime must be a finite scalar number in seconds.",
+        ))
 
     if scanning_seq is not None:
         has_se = "SE" in scanning_seq
@@ -1002,6 +1027,24 @@ def run_preflight(
         PreflightReport with all collected messages.
     """
     report = PreflightReport()
+
+    # DSC candidate validation precedes metadata checks and respects skip flags.
+    candidates = getattr(session_data.modalities, "dsc_candidates", [])
+    if decision.run_dsc and len(candidates) > 1:
+        multi_echo = any(re.search(r"_echo-\d+", path.name) for path in candidates)
+        code = "DSC_MULTI_ECHO_UNSUPPORTED" if multi_echo else "DSC_AMBIGUOUS_INPUT"
+        context = f"sub-{session_data.subject}"
+        if session_data.session:
+            context += f"/ses-{session_data.session}"
+        names = "\n".join(f"  {path}" for path in candidates)
+        detail = "Multi-echo DSC is unsupported. " if multi_echo else ""
+        report.messages.append(PreflightMessage(
+            level="error", code=code,
+            message=(
+                f"{detail}Multiple DSC candidates for {context}:\n{names}\n"
+                "Provide one single-echo GRE DSC acquisition per subject/session."
+            ),
+        ))
 
     # DSC validation
     if decision.run_dsc and session_data.modalities.dsc is not None:

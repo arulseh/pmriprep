@@ -37,6 +37,8 @@ class ModalityAvailability:
         Path to post-contrast FLAIR image, if available.
     dsc : Path, optional
         Path to DSC perfusion image, if available.
+    dsc_candidates : list of Path
+        DSC candidates retained for ambiguity validation when DSC is enabled.
     dce : Path, optional
         Path to DCE perfusion image, if available.
     vfa : list of Path
@@ -62,6 +64,7 @@ class ModalityAvailability:
     flair: Optional[Path] = None
     flair_postcon: Optional[Path] = None
     dsc: Optional[Path] = None
+    dsc_candidates: List[Path] = field(default_factory=list)
     dce: Optional[Path] = None
     vfa: List[Path] = field(default_factory=list)
     afi: List[Path] = field(default_factory=list)
@@ -620,12 +623,25 @@ def _find_flair_postcontrast(
     return None
 
 
-def _find_dsc(
+def _find_dsc_candidates(
     layout: "BIDSLayout",
     subject: str,
     session: Optional[str],
-) -> Optional[Path]:
-    """Find DSC perfusion image (datatype=perf, filename contains 'dsc')."""
+) -> List[Path]:
+    """Find DSC acquisitions for validation when DSC is enabled.
+
+    Parameters
+    ----------
+    layout : BIDSLayout
+        Indexed input dataset.
+    subject, session : str, optional
+        Participant and optional session labels without their prefixes.
+
+    Returns
+    -------
+    list of Path
+        DSC candidates, or legacy perfusion BOLD candidates when DSC is absent.
+    """
     perf_files = [
         Path(p) for p in layout.get(
             subject=subject,
@@ -635,16 +651,9 @@ def _find_dsc(
             return_type="filename",
         )
     ]
-    dsc = [f for f in perf_files if "dsc" in f.name.lower()]
-    if dsc:
-        for m in dsc:
-            if "_bold" in m.name.lower() or "perf" in m.name.lower():
-                return m
-        return dsc[0]
-    bold = [f for f in perf_files if "_bold" in f.name.lower()]
-    if bold:
-        return bold[0]
-    return None
+    dsc = sorted({f for f in perf_files if "dsc" in f.name.lower()})
+    candidates = dsc or sorted({f for f in perf_files if "_bold" in f.name.lower()})
+    return candidates
 
 
 def _find_dce(
@@ -956,7 +965,7 @@ def _determine_pipeline_availability(modalities: ModalityAvailability) -> Pipeli
         pipelines.tumor_seg_reason = f"Missing modalities: {', '.join(tumor_seg_missing)}"
 
     # DSC requires DSC data
-    if modalities.dsc:
+    if modalities.dsc or len(modalities.dsc_candidates) > 1:
         pipelines.dsc = True
     else:
         pipelines.dsc = False
@@ -1019,7 +1028,9 @@ def discover_session_data(
     )
     modalities.vfa = _find_vfa(layout, subject, session)
     modalities.afi = _find_b1_data(layout, subject, session)
-    modalities.dsc = _find_dsc(layout, subject, session)
+    modalities.dsc_candidates = _find_dsc_candidates(layout, subject, session)
+    if len(modalities.dsc_candidates) == 1:
+        modalities.dsc = modalities.dsc_candidates[0]
     modalities.dce = _find_dce(layout, subject, session)
 
     # Validate perfusion files are 4D timeseries

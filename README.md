@@ -259,6 +259,10 @@ pre-contrast T1w reference are unavailable. DSC and DCE run when corresponding
 4D `*_dsc.nii.gz` and `*_dce.nii.gz` images are present. HD-GLIO requires pre-
 and post-contrast T1w, T2w, and FLAIR.
 
+DSC requires one single-echo GRE time series per subject/session, with a finite
+scalar `EchoTime` in seconds. Multiple DSC candidates require selecting one
+acquisition in the input dataset; multi-echo DSC is unsupported.
+
 | Input | Required metadata |
 |---|---|
 | DSC | `RepetitionTime`, `EchoTime`, `MagneticFieldStrength` |
