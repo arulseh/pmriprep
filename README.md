@@ -274,11 +274,11 @@ spin-echo acquisitions are unsupported for both DSC and DCE.
 | VFA | `RepetitionTime`, `FlipAngle`; at least two distinct angles |
 | AFI | `RepetitionTime`, `FlipAngle` |
 
-For 3D-excitation DCE (MRAcquisitionType = 3D), RepetitionTime is 
-the volume TR and RepetitionTimeExcitation is the excitation TR 
-used in the SPGR signal equation. For 2D-excitation DCE 
-(MRAcquisitionType = 2D), supply RepetitionTimeExcitation as well, 
-unless each slice is excited once per volume (single-shot, e.g. EPI), 
+For 3D-excitation DCE (MRAcquisitionType = 3D), RepetitionTime is
+the volume TR and RepetitionTimeExcitation is the excitation TR
+used in the SPGR signal equation. For 2D-excitation DCE
+(MRAcquisitionType = 2D), supply RepetitionTimeExcitation as well,
+unless each slice is excited once per volume (single-shot, e.g. EPI),
 where RepetitionTime serves both.
 
 B1+ correction accepts AFI (`*_TB1AFI`), Siemens precomputed flip-angle maps
