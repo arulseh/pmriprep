@@ -294,13 +294,12 @@ def validate_dsc_metadata(
             ))
         elif has_se and has_gr:
             msgs.append(PreflightMessage(
-                level="warning",
+                level="error",
                 code="DSC_HYBRID_SEQUENCE",
                 message=(
-                    f"Hybrid GR+SE scanning sequence detected "
+                    f"Combined gradient- and spin-echo DSC detected "
                     f"(ScanningSequence={'/'.join(sorted(scanning_seq))}). "
-                    f"PMRIPrep uses single-echo T2*-weighted signal "
-                    f"conversion only."
+                    f"PMRIPrep supports single-echo gradient-echo DSC only."
                 ),
             ))
     else:
@@ -567,6 +566,17 @@ def validate_dce_metadata(
                     f"(ScanningSequence={'/'.join(sorted(scanning_seq))}). "
                     f"PMRIPrep uses the SPGR/Ernst signal equation, which "
                     f"requires spoiled gradient-echo acquisition."
+                ),
+            ))
+        elif has_se and has_gr:
+            msgs.append(PreflightMessage(
+                level="error",
+                code="DCE_HYBRID_SEQUENCE",
+                message=(
+                    f"Combined gradient- and spin-echo DCE detected "
+                    f"(ScanningSequence={'/'.join(sorted(scanning_seq))}). "
+                    f"PMRIPrep requires spoiled gradient-echo DCE for "
+                    f"the SPGR signal equation."
                 ),
             ))
 

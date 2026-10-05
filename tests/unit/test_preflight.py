@@ -266,13 +266,16 @@ class TestValidateDSCMetadata:
         msgs = validate_dsc_metadata(sc)
         assert any(m.code == "DSC_SPIN_ECHO_UNSUPPORTED" for m in msgs)
 
-    def test_hybrid_gr_se_warning(self):
+    @pytest.mark.parametrize("tokens", [{"GR", "SE"}, {"GR", "SE", "EP"}])
+    def test_hybrid_gr_se_error(self, tokens: set[str]) -> None:
         sc = _valid_dsc_sidecar()
-        sc["scanning_sequence"] = frozenset({"GR", "SE"})
+        sc["scanning_sequence"] = frozenset(tokens)
         msgs = validate_dsc_metadata(sc)
         assert any(m.code == "DSC_HYBRID_SEQUENCE" for m in msgs)
-        assert any(m.level == "warning" for m in msgs
+        assert any(m.level == "error" for m in msgs
                    if m.code == "DSC_HYBRID_SEQUENCE")
+        with pytest.raises(PreflightError, match="DSC_HYBRID_SEQUENCE"):
+            PreflightReport(messages=msgs).raise_if_errors()
 
     def test_missing_scanning_sequence_info(self):
         sc = _valid_dsc_sidecar()
@@ -366,7 +369,8 @@ class TestValidateDCEMetadata:
         msgs = validate_dce_metadata(sc, DCEConfig())
         seq_codes = {m.code for m in msgs if "SPIN" in m.code or "IR_" in m.code
                      or "BSSFP" in m.code or "UNSPOILED" in m.code
-                     or "EPI_READOUT" in m.code or "SEQUENCE_TYPE" in m.code}
+                     or "EPI_READOUT" in m.code or "SEQUENCE_TYPE" in m.code
+                     or "HYBRID" in m.code}
         assert len(seq_codes) == 0
 
     def test_dce_spin_echo_error(self):
@@ -382,6 +386,15 @@ class TestValidateDCEMetadata:
         sc["scanning_sequence"] = frozenset({"SE", "EP"})
         msgs = validate_dce_metadata(sc, DCEConfig())
         assert any(m.code == "DCE_SPIN_ECHO_UNSUPPORTED" for m in msgs)
+
+    @pytest.mark.parametrize("tokens", [{"GR", "SE"}, {"GR", "SE", "EP"}])
+    def test_dce_hybrid_gr_se_error(self, tokens: set[str]) -> None:
+        sc = _valid_dce_sidecar()
+        sc["scanning_sequence"] = frozenset(tokens)
+        msgs = validate_dce_metadata(sc, DCEConfig())
+        assert any(m.code == "DCE_HYBRID_SEQUENCE" and m.level == "error" for m in msgs)
+        with pytest.raises(PreflightError, match="DCE_HYBRID_SEQUENCE"):
+            PreflightReport(messages=msgs).raise_if_errors()
 
     def test_dce_ir_error(self):
         sc = _valid_dce_sidecar()

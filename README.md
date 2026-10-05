@@ -263,6 +263,9 @@ DSC requires one single-echo GRE time series per subject/session, with a finite
 scalar `EchoTime` in seconds. Multiple DSC candidates require selecting one
 acquisition in the input dataset; multi-echo DSC is unsupported.
 
+DCE requires a spoiled gradient-echo acquisition. Combined gradient- and
+spin-echo acquisitions are unsupported for both DSC and DCE.
+
 | Input | Required metadata |
 |---|---|
 | DSC | `RepetitionTime`, `EchoTime`, `MagneticFieldStrength` |
