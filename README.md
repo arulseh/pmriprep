@@ -78,8 +78,8 @@ and to FSL BET for DSC/DCE images, while missing HD-GLIO skips tumor
 segmentation.
 
 Runtime depends on image dimensions, time points, enabled pipelines, inference
-method, and available hardware. Recent validation runs using 32 CPU workers
-completed in approximately 5–15 minutes per session.
+method, and available hardware. With default settings, recent validation runs
+using 32 CPU workers completed in approximately 5–15 minutes per session.
 
 ## Usage
 
@@ -279,7 +279,8 @@ the volume TR and RepetitionTimeExcitation is the excitation TR
 used in the SPGR signal equation. For 2D-excitation DCE
 (MRAcquisitionType = 2D), supply RepetitionTimeExcitation as well,
 unless each slice is excited once per volume (single-shot, e.g. EPI),
-where RepetitionTime serves both.
+where RepetitionTime serves both. Supply the correct excitation TR explicitly
+whenever it differs from the volume TR.
 
 B1+ correction accepts AFI (`*_TB1AFI`), Siemens precomputed flip-angle maps
 (`*_TB1TFL`), and vendor-neutral maps (`*_TB1map`). The default
@@ -340,8 +341,8 @@ Normalized CBV (`ncbv`) is based on AUC-CBV.
 
 DCE parameter-uncertainty derivatives contain NLLS standard errors or Bayesian
 posterior standard deviations conditional on the fitted inputs and model.
-DSC parametric CBF uncertainty derivatives use the corresponding conditional
-standard error or posterior standard deviation.
+CPI CBF uncertainty derivatives contain posterior standard deviations
+conditional on the fitted inputs and model.
 
 Smoothed maps are additional derivatives. DCE kep is recomputed from smoothed
 Ktrans and ve; uncertainty, timing, categorical, and fit-quality maps remain at
