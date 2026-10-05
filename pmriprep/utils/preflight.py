@@ -540,10 +540,13 @@ def validate_dce_metadata(
     scanning_seq = sidecar.get("scanning_sequence")
     sequence_var = sidecar.get("sequence_variant")
     te = sidecar.get("te")
-    if sidecar.get("echo_time_array"):
+    if sidecar.get("echo_entity") or sidecar.get("echo_time_array"):
         msgs.append(PreflightMessage(
             level="error", code="DCE_MULTI_ECHO_UNSUPPORTED",
-            message="Multi-echo DCE is unsupported; EchoTime must be a finite scalar.",
+            message=(
+                "Multi-echo DCE detected (echo entity or EchoTime array). "
+                "PMRIPrep supports single-echo spoiled gradient-echo DCE only."
+            ),
         ))
     elif sidecar.get("echo_time_invalid"):
         msgs.append(PreflightMessage(
@@ -1038,21 +1041,26 @@ def run_preflight(
     """
     report = PreflightReport()
 
-    # DSC candidate validation precedes metadata checks and respects skip flags.
-    candidates = getattr(session_data.modalities, "dsc_candidates", [])
-    if decision.run_dsc and len(candidates) > 1:
+    # Candidate validation precedes metadata checks and respects skip flags.
+    for modality, enabled, requirement in (
+        ("DSC", decision.run_dsc, "single-echo GRE DSC"),
+        ("DCE", decision.run_dce, "single-echo spoiled gradient-echo DCE"),
+    ):
+        candidates = getattr(session_data.modalities, f"{modality.lower()}_candidates", [])
+        if not enabled or len(candidates) <= 1:
+            continue
         multi_echo = any(re.search(r"_echo-\d+", path.name) for path in candidates)
-        code = "DSC_MULTI_ECHO_UNSUPPORTED" if multi_echo else "DSC_AMBIGUOUS_INPUT"
+        code = f"{modality}_MULTI_ECHO_UNSUPPORTED" if multi_echo else f"{modality}_AMBIGUOUS_INPUT"
         context = f"sub-{session_data.subject}"
         if session_data.session:
             context += f"/ses-{session_data.session}"
         names = "\n".join(f"  {path}" for path in candidates)
-        detail = "Multi-echo DSC is unsupported. " if multi_echo else ""
+        detail = f"Multi-echo {modality} is unsupported. " if multi_echo else ""
         report.messages.append(PreflightMessage(
             level="error", code=code,
             message=(
-                f"{detail}Multiple DSC candidates for {context}:\n{names}\n"
-                "Provide one single-echo GRE DSC acquisition per subject/session."
+                f"{detail}Multiple {modality} candidates for {context}:\n{names}\n"
+                f"Provide one {requirement} acquisition per subject/session."
             ),
         ))
 

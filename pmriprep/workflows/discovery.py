@@ -41,6 +41,8 @@ class ModalityAvailability:
         DSC candidates retained for ambiguity validation when DSC is enabled.
     dce : Path, optional
         Path to DCE perfusion image, if available.
+    dce_candidates : list of Path
+        DCE candidates retained for ambiguity validation when DCE is enabled.
     vfa : list of Path
         List of paths to VFA (Variable Flip Angle) images for T1 mapping.
     afi : list of Path
@@ -66,6 +68,7 @@ class ModalityAvailability:
     dsc: Optional[Path] = None
     dsc_candidates: List[Path] = field(default_factory=list)
     dce: Optional[Path] = None
+    dce_candidates: List[Path] = field(default_factory=list)
     vfa: List[Path] = field(default_factory=list)
     afi: List[Path] = field(default_factory=list)
     afi_mode: Optional[str] = None  # "4d" or "precomputed"
@@ -656,15 +659,27 @@ def _find_dsc_candidates(
     return candidates
 
 
-def _find_dce(
+def _find_dce_candidates(
     layout: "BIDSLayout",
     subject: str,
     session: Optional[str],
-) -> Optional[Path]:
-    """Find DCE perfusion image (filename contains 'dce').
+) -> List[Path]:
+    """Find DCE acquisitions for validation when DCE is enabled.
 
     Searches both ``perf`` and ``anat`` datatypes because DCE series may be
     stored under either datatype.
+
+    Parameters
+    ----------
+    layout : BIDSLayout
+        Indexed input dataset.
+    subject, session : str, optional
+        Participant and optional session labels without their prefixes.
+
+    Returns
+    -------
+    list of Path
+        Sorted, unique DCE candidates in the selected subject/session.
     """
     candidates = [
         Path(p) for p in layout.get(
@@ -675,10 +690,7 @@ def _find_dce(
             return_type="filename",
         )
     ]
-    for f in candidates:
-        if "dce" in f.name.lower():
-            return f
-    return None
+    return sorted({f for f in candidates if "dce" in f.name.lower()})
 
 
 def _find_vfa(
@@ -972,7 +984,7 @@ def _determine_pipeline_availability(modalities: ModalityAvailability) -> Pipeli
         pipelines.dsc_reason = "No DSC perfusion data found"
 
     # DCE requires DCE data
-    if modalities.dce:
+    if modalities.dce or len(modalities.dce_candidates) > 1:
         pipelines.dce = True
     else:
         pipelines.dce = False
@@ -1031,7 +1043,9 @@ def discover_session_data(
     modalities.dsc_candidates = _find_dsc_candidates(layout, subject, session)
     if len(modalities.dsc_candidates) == 1:
         modalities.dsc = modalities.dsc_candidates[0]
-    modalities.dce = _find_dce(layout, subject, session)
+    modalities.dce_candidates = _find_dce_candidates(layout, subject, session)
+    if len(modalities.dce_candidates) == 1:
+        modalities.dce = modalities.dce_candidates[0]
 
     # Validate perfusion files are 4D timeseries
     import nibabel as nib

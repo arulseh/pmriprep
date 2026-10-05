@@ -259,11 +259,12 @@ pre-contrast T1w reference are unavailable. DSC and DCE run when corresponding
 4D `*_dsc.nii.gz` and `*_dce.nii.gz` images are present. HD-GLIO requires pre-
 and post-contrast T1w, T2w, and FLAIR.
 
-DSC requires one single-echo GRE time series per subject/session, with a finite
-scalar `EchoTime` in seconds. Multiple DSC candidates require selecting one
-acquisition in the input dataset; multi-echo DSC is unsupported.
-
-DCE requires a spoiled gradient-echo acquisition. Combined gradient- and
+DSC requires a single-echo gradient-echo time series; DCE requires a single-echo
+spoiled gradient-echo time series. Each enabled modality requires exactly one
+candidate per subject/session in the input dataset. Multiple candidates must be
+resolved in the input dataset before processing; `--skip-dsc` and `--skip-dce`
+bypass validation of the skipped modality. A supplied `EchoTime` must be a finite
+scalar in seconds; it is required for DSC. Multi-echo and combined gradient- and
 spin-echo acquisitions are unsupported for both DSC and DCE.
 
 | Input | Required metadata |
@@ -273,9 +274,12 @@ spin-echo acquisitions are unsupported for both DSC and DCE.
 | VFA | `RepetitionTime`, `FlipAngle`; at least two distinct angles |
 | AFI | `RepetitionTime`, `FlipAngle` |
 
-For 3D DCE, `RepetitionTime` is the volume TR and
-`RepetitionTimeExcitation` is the excitation TR. For 2D DCE,
-`RepetitionTime` may provide both.
+For 3D-excitation DCE (MRAcquisitionType = 3D), RepetitionTime is 
+the volume TR and RepetitionTimeExcitation is the excitation TR 
+used in the SPGR signal equation. For 2D-excitation DCE 
+(MRAcquisitionType = 2D), supply RepetitionTimeExcitation as well, 
+unless each slice is excited once per volume (single-shot, e.g. EPI), 
+where RepetitionTime serves both.
 
 B1+ correction accepts AFI (`*_TB1AFI`), Siemens precomputed flip-angle maps
 (`*_TB1TFL`), and vendor-neutral maps (`*_TB1map`). The default
