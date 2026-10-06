@@ -48,6 +48,11 @@ class DSCLesionStatsInputSpec(BaseInterfaceInputSpec):
     # Optional NAWM mask for reference values
     nawm_mask = traits.Str(desc="NAWM mask in DSC space for reference values")
 
+    # Optional CPI-to-oSVD replacement mask for regional provenance
+    fallback_mask = traits.Str(
+        desc="Binary mask identifying voxels replaced by oSVD after rejected CPI fits"
+    )
+
     # Core perfusion maps (all optional - stats computed for available maps)
     cbf_map = traits.Str(desc="CBF map path")
     cbv_map = traits.Str(desc="Deconvolution residue-integral CBV map path")
@@ -132,6 +137,7 @@ class DSCLesionStats(BaseInterface):
 
         # Load all available perfusion maps
         maps = self._load_maps()
+        fallback_mask = self._load_fallback_mask(lesion_data.shape)
 
         if self.inputs.force_binary:
             import logging
@@ -166,7 +172,8 @@ class DSCLesionStats(BaseInterface):
                     if np.sum(label_mask) == 0:
                         continue
                     region_stats = self._compute_region_stats(
-                        f"label_{label}", label_mask, maps, voxel_volume_mm3
+                        f"label_{label}", label_mask, maps, voxel_volume_mm3,
+                        fallback_mask,
                     )
                     if region_stats is not None:
                         result.regions[f"label_{label}"] = region_stats
@@ -185,7 +192,7 @@ class DSCLesionStats(BaseInterface):
                 )
                 binary_mask = lesion_data > 0
                 region_stats = self._compute_region_stats(
-                    "roi", binary_mask, maps, voxel_volume_mm3
+                    "roi", binary_mask, maps, voxel_volume_mm3, fallback_mask
                 )
                 if region_stats is not None:
                     result.regions["roi"] = region_stats
@@ -212,7 +219,8 @@ class DSCLesionStats(BaseInterface):
                         continue
 
                     region_stats = self._compute_region_stats(
-                        region_name, label_mask, maps, voxel_volume_mm3
+                        region_name, label_mask, maps, voxel_volume_mm3,
+                        fallback_mask,
                     )
                     if region_stats is not None:
                         result.regions[region_name] = region_stats
@@ -227,7 +235,7 @@ class DSCLesionStats(BaseInterface):
                 else:
                     region_name = "tumor"
                 region_stats = self._compute_region_stats(
-                    region_name, binary_mask, maps, voxel_volume_mm3
+                    region_name, binary_mask, maps, voxel_volume_mm3, fallback_mask
                 )
                 if region_stats is not None:
                     result.regions[region_name] = region_stats
@@ -243,6 +251,10 @@ class DSCLesionStats(BaseInterface):
             result.nawm_reference = compute_nawm_reference(
                 nawm_data, nawm_maps, voxel_volume_mm3,
             )
+            if result.nawm_reference and fallback_mask is not None:
+                result.nawm_reference["cpi_fallback"] = (
+                    self._compute_fallback_summary(nawm_data, fallback_mask)
+                )
 
         # Compute derived metrics for primary region
         primary_mask = lesion_data > 0
@@ -332,12 +344,49 @@ class DSCLesionStats(BaseInterface):
         from pmriprep.utils.outputs import has_input
         return has_input(self.inputs, attr)
 
+    def _load_fallback_mask(
+        self,
+        expected_shape: tuple[int, ...],
+    ) -> Optional[np.ndarray]:
+        """Load the optional CPI-to-oSVD replacement mask on the lesion grid."""
+        if not self._has_input("fallback_mask"):
+            return None
+        fallback_img: Any = nib.load(self.inputs.fallback_mask)
+        fallback_data: np.ndarray = np.asarray(fallback_img.dataobj)
+        if fallback_data.shape != expected_shape:
+            raise ValueError(
+                "CPI fallback mask shape "
+                f"{fallback_data.shape} does not match lesion mask shape "
+                f"{expected_shape}"
+            )
+        return np.asarray(fallback_data == 1, dtype=bool)
+
+    @staticmethod
+    def _compute_fallback_summary(
+        region_mask: np.ndarray,
+        fallback_mask: np.ndarray,
+    ) -> Dict[str, Any]:
+        """Count successful oSVD replacements over all voxels in a region."""
+        region = np.asarray(region_mask, dtype=bool)
+        if region.shape != fallback_mask.shape:
+            raise ValueError(
+                "CPI fallback and regional masks must share the same shape"
+            )
+        voxel_count = int(np.count_nonzero(region))
+        n_osvd = int(np.count_nonzero(region & fallback_mask))
+        return {
+            "n_osvd": n_osvd,
+            "fraction": n_osvd / voxel_count if voxel_count else 0.0,
+            "denominator": "region_voxels",
+        }
+
     def _compute_region_stats(
         self,
         region_name: str,
         mask: np.ndarray,
         maps: Dict[str, np.ndarray],
         voxel_volume_mm3: float,
+        fallback_mask: Optional[np.ndarray] = None,
     ) -> Optional[RegionStatistics]:
         """Compute statistics for a single region.
 
@@ -351,6 +400,8 @@ class DSCLesionStats(BaseInterface):
             Dictionary of perfusion maps.
         voxel_volume_mm3 : float
             Physical voxel-cell volume in cubic millimetres.
+        fallback_mask : np.ndarray, optional
+            Binary mask of successful CPI-to-oSVD replacements.
 
         Returns
         -------
@@ -369,6 +420,10 @@ class DSCLesionStats(BaseInterface):
             volume_mm3=volume_mm3,
             volume_ml=volume_ml,
         )
+        if fallback_mask is not None:
+            region.cpi_fallback = self._compute_fallback_summary(
+                mask, fallback_mask
+            )
 
         # Compute statistics for each available map. compute_advanced=True
         # turns on upper-tail and distribution-shape summaries.

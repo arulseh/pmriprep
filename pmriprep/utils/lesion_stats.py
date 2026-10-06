@@ -89,6 +89,7 @@ class RegionStatistics:
         volume_mm3: Volume in cubic millimeters.
         volume_ml: Volume in milliliters.
         perfusion_maps: Dictionary mapping map name to its statistics.
+        cpi_fallback: CPI-to-oSVD replacement count and fraction for the region.
     """
 
     region_name: str
@@ -96,15 +97,19 @@ class RegionStatistics:
     volume_mm3: float
     volume_ml: float
     perfusion_maps: Dict[str, MapStatistics] = field(default_factory=dict)
+    cpi_fallback: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
-        return {
+        result: Dict[str, Any] = {
             "voxel_count": self.voxel_count,
             "volume_mm3": round(self.volume_mm3, 2),
             "volume_ml": round(self.volume_ml, 3),
             "perfusion_maps": {k: v.to_dict() for k, v in self.perfusion_maps.items()},
         }
+        if self.cpi_fallback is not None:
+            result["cpi_fallback"] = self.cpi_fallback
+        return result
 
 
 @dataclass
@@ -942,6 +947,11 @@ def _slice_nawm_for_map(
         for k in ("voxel_count", "volume_ml"):
             if k in nawm_reference:
                 out[k] = nawm_reference[k]
+        if (
+            map_name in {"cbf", "cbv", "mtt", "ncbf"}
+            and isinstance(nawm_reference.get("cpi_fallback"), dict)
+        ):
+            out["cpi_fallback"] = nawm_reference["cpi_fallback"]
     # Per-map stats and per-map value QC verdict.
     for k in (
         "median", "std", "p25", "p75", "n_valid", "n_total",
@@ -1067,6 +1077,11 @@ def extract_per_map_lesion_stats(
             fragment["voxel_count"] = region_block["voxel_count"]
         if "volume_ml" in region_block:
             fragment["volume_ml"] = region_block["volume_ml"]
+        if (
+            map_name in {"cbf", "cbv", "mtt", "ncbf"}
+            and isinstance(region_block.get("cpi_fallback"), dict)
+        ):
+            fragment["cpi_fallback"] = region_block["cpi_fallback"]
         fragment["stats"] = stats
         out_regions[region_name] = fragment
 

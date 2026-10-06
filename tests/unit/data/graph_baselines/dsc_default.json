@@ -189,7 +189,25 @@
     [
       "compute_maps",
       "out_fallback_mask",
+      "lesion_stats",
+      "fallback_mask"
+    ],
+    [
+      "compute_maps",
+      "out_fallback_mask",
       "outputnode",
+      "fallback_mask"
+    ],
+    [
+      "compute_maps",
+      "out_fallback_mask",
+      "roi_stats",
+      "fallback_mask"
+    ],
+    [
+      "compute_maps",
+      "out_fallback_mask",
+      "user_lesion_stats",
       "fallback_mask"
     ],
     [

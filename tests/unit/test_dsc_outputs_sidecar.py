@@ -217,7 +217,23 @@ def test_cpi_mtt_sidecar_reports_residue_integral() -> None:
         units="s",
     )
     assert cpi_sidecar["MTTMethod"] == "fitted_residue_integral"
+    assert "FallbackMTTMethod" not in cpi_sidecar
     assert "MTTAtBoundFraction" not in cpi_sidecar
+
+    mixed_sidecar = build_dsc_map_sidecar(
+        base={},
+        description="CPI mean transit time",
+        map_key="mtt",
+        qc_metrics={
+            "deconvolution": {"method": "cpi", "n_fallback_osvd": 3}
+        },
+        units="s",
+    )
+    assert mixed_sidecar["MTTMethod"] == "fitted_residue_integral"
+    assert mixed_sidecar["FallbackMTTMethod"] == (
+        "osvd_residue_integral_over_osvd_cbf"
+    )
+    assert mixed_sidecar["FallbackMask"] == "desc-dscFallback_mask (value 1)"
 
 
 @pytest.mark.parametrize("nested", [False, True])

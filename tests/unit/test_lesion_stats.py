@@ -913,6 +913,78 @@ def test_dsc_load_maps_uses_configured_timing_name(tmp_path) -> None:
     assert "tmax" not in maps
 
 
+def test_dsc_regional_statistics_disclose_actual_osvd_fallback(tmp_path) -> None:
+    """CPI replacement fractions accompany only affected regional map slices."""
+    import json
+    from pathlib import Path
+
+    import nibabel as nib
+
+    from pmriprep.interfaces.dsc_lesion_stats import DSCLesionStats
+    from pmriprep.utils.lesion_stats import extract_per_map_lesion_stats
+
+    def save(name: str, data: np.ndarray) -> str:
+        path = tmp_path / f"{name}.nii.gz"
+        nib.save(
+            nib.Nifti1Image(np.asarray(data, dtype=np.float32), np.eye(4)),
+            path,
+        )
+        return str(path)
+
+    shape = (2, 2, 1)
+    iface = DSCLesionStats()
+    iface.inputs.subject_id = "01"
+    iface.inputs.session_id = "01"
+    iface.inputs.lesion_mask = save("lesion", np.ones(shape))
+    iface.inputs.nawm_mask = save(
+        "nawm", np.array([[[1], [1]], [[0], [0]]])
+    )
+    iface.inputs.fallback_mask = save(
+        "fallback", np.array([[[1], [0]], [[1], [0]]])
+    )
+    iface.inputs.cbf_map = save("cbf", np.arange(1, 5).reshape(shape))
+    iface.inputs.cbv_auc_map = save("cbv_auc", np.arange(5, 9).reshape(shape))
+
+    result = iface.run(cwd=tmp_path)
+    aggregate = json.loads(Path(result.outputs.stats_json).read_text())
+
+    expected_region = {
+        "n_osvd": 2,
+        "fraction": 0.5,
+        "denominator": "region_voxels",
+    }
+    expected_nawm = {
+        "n_osvd": 1,
+        "fraction": 0.5,
+        "denominator": "region_voxels",
+    }
+    assert aggregate["Regions"]["tumor"]["cpi_fallback"] == expected_region
+    assert aggregate["NAWMReference"]["cpi_fallback"] == expected_nawm
+
+    cbf_fragment = extract_per_map_lesion_stats(aggregate, "cbf")
+    assert cbf_fragment is not None
+    assert cbf_fragment["Regions"]["tumor"]["cpi_fallback"] == expected_region
+    assert cbf_fragment["NAWMReference"]["cpi_fallback"] == expected_nawm
+
+    auc_fragment = extract_per_map_lesion_stats(aggregate, "cbv_auc")
+    assert auc_fragment is not None
+    assert "cpi_fallback" not in auc_fragment["Regions"]["tumor"]
+    assert "cpi_fallback" not in auc_fragment["NAWMReference"]
+
+    no_fallback_dir = tmp_path / "without_fallback"
+    no_fallback_dir.mkdir()
+    no_fallback = DSCLesionStats()
+    no_fallback.inputs.subject_id = "01"
+    no_fallback.inputs.session_id = "01"
+    no_fallback.inputs.lesion_mask = iface.inputs.lesion_mask
+    no_fallback.inputs.cbf_map = iface.inputs.cbf_map
+    no_fallback_result = no_fallback.run(cwd=no_fallback_dir)
+    no_fallback_aggregate = json.loads(
+        Path(no_fallback_result.outputs.stats_json).read_text()
+    )
+    assert "cpi_fallback" not in no_fallback_aggregate["Regions"]["tumor"]
+
+
 class TestDCELesionStatsMapKeyCoverage:
     """Model-free DCE maps get LesionStats."""
 

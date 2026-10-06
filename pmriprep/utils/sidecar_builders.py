@@ -1148,6 +1148,11 @@ def build_dsc_map_sidecar(
             )
         elif method == "cpi":
             sidecar["MTTMethod"] = "fitted_residue_integral"
+            if (method_metrics.get("n_fallback_osvd") or 0) > 0:
+                sidecar["FallbackMTTMethod"] = (
+                    "osvd_residue_integral_over_osvd_cbf"
+                )
+                sidecar["FallbackMask"] = "desc-dscFallback_mask (value 1)"
     if map_key in {"tmax", "arrival_delay"} and isinstance(qc_metrics, dict):
         deconvolution = qc_metrics.get("deconvolution")
         method_metrics = (

@@ -1089,6 +1089,8 @@ def init_dsc_lesion_stats_wf(
         Normalized CBV / CBF maps.
     nawm_mask
         NAWM reference mask.
+    fallback_mask
+        Binary mask of successful CPI-to-oSVD replacements.
     aif_qc
         AIF QC-metrics dict (surfaced into the stats sidecars).
     tumor_lesion_mask, mask_origin
@@ -1123,6 +1125,7 @@ def init_dsc_lesion_stats_wf(
                 "ncbv_map",
                 "ncbf_map",
                 "nawm_mask",
+                "fallback_mask",
                 "aif_qc",
                 "tumor_lesion_mask",
                 "mask_origin",
@@ -1174,6 +1177,7 @@ def init_dsc_lesion_stats_wf(
         ("ncbv_map", "ncbv_map"),
         ("ncbf_map", "ncbf_map"),
         ("nawm_mask", "nawm_mask"),
+        ("fallback_mask", "fallback_mask"),
         ("aif_qc", "aif_qc"),
     ]
     workflow.connect([
@@ -2474,6 +2478,7 @@ def init_dsc_preproc_wf(
             ("outputnode.out_tmax", "inputnode.tmax_map"),
             ("outputnode.out_psr", "inputnode.psr_map"),
             ("outputnode.out_ttp", "inputnode.ttp_map"),
+            ("outputnode.out_fallback_mask", "inputnode.fallback_mask"),
         ]),
         (normalization_wf, lesion_stats_wf, [
             ("outputnode.ncbv_file", "inputnode.ncbv_map"),
