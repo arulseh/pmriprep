@@ -12,6 +12,8 @@ import json
 import re
 from pathlib import Path
 
+import pytest
+
 from pmriprep.data import get_boilerplate_bib
 from pmriprep.utils import report_utils as ru
 from pmriprep.utils.report_utils import generate_unified_report
@@ -121,7 +123,9 @@ def test_boilerplate_scientific_wording_matches_configurable_methods() -> None:
     synthetic = ru._build_dsc_boilerplate(
         {"config": {"aif_source": "synthetic"}, "deconvolution": {"method": "oSVD"}}
     )
-    assert "dose- and field-strength-scaled synthetic gamma-variate AIF" in synthetic
+    assert "dose- and field-strength-scaled synthetic gamma-variate DSC AIF" in synthetic
+    assert "DSC AUC-CBV was computed" in synthetic
+    assert "concentration curve and the synthetic AIF" in synthetic
     assert "@parker_2006" not in synthetic
     assert "@mouridsen_2006" not in synthetic
 
@@ -135,10 +139,11 @@ def test_boilerplate_scientific_wording_matches_configurable_methods() -> None:
     assert "Morozov discrepancy principle" in tikhonov
     assert "L-curve" not in tikhonov
     assert "@morozov_1966" in tikhonov
-    assert "@boxerman_1995" in tikhonov
+    assert "@rosen_1990" in tikhonov
     assert "@boxerman_2006" in tikhonov
     assert "@weisskoff_1994" not in tikhonov
     assert "@mouches_2019" in tikhonov
+    assert "concentration curve and the measured AIF" in tikhonov
 
     dce = ru._build_dce_boilerplate(
         {
@@ -149,7 +154,7 @@ def test_boilerplate_scientific_wording_matches_configurable_methods() -> None:
             },
         }
     )
-    assert "DCE images were motion-corrected" in dce
+    assert "DCE time-series data were motion-corrected" in dce
     assert "dose-aware candidate assessment" in dce
     assert ", and the extended Tofts model" not in dce
     assert "@mouches_2019" in dce
@@ -176,7 +181,7 @@ def test_dsc_boilerplate_reports_retained_aif_and_leakage_paths() -> None:
             },
         }
     )
-    assert "synthetic gamma-variate AIF was used as a fallback" in synthetic
+    assert "dose- and field-strength-scaled synthetic gamma-variate DSC AIF" in synthetic
     assert "automatically detected" not in synthetic
     assert "eligible reference curve could not be constructed" in synthetic
 
@@ -191,9 +196,103 @@ def test_dsc_boilerplate_reports_retained_aif_and_leakage_paths() -> None:
             "normalization_factor": 1.0,
         }
     )
-    assert "user-supplied arterial input function" in disabled
+    assert "user-supplied DSC arterial input function" in disabled
+    assert "concentration curve and the user-supplied AIF" in disabled
     assert "BSW leakage correction was disabled" in disabled
+    assert "without estimating or applying K2" not in disabled
     assert "automatically segmented" not in disabled
+
+
+def test_signal_cpi_boilerplate_distinguishes_auc_correction_from_joint_fit() -> None:
+    text = ru._build_dsc_boilerplate({
+        "preload": {"preload_correction_applied": True},
+        "deconvolution": {
+            "method": "cpi", "inference": "vi",
+            "cpi_leakage_method": "bsw", "cpi_gamma_fraction": 0.0,
+            "cpi_fallback": "none", "n_fallback_osvd": 0,
+        },
+    })
+    assert "BSW leakage correction was applied for AUC-CBV quantification" in text
+    assert "concentration curves used for oSVD fallback voxels" not in text
+    assert (
+        "control point interpolation fitted to the original DSC signal "
+        "[@mehndiratta_2013], jointly estimating signed leakage"
+    ) in text
+    assert "Gaussian priors on K2 centred on the BSW estimate" in text
+    assert "rather than fixing" not in text
+    assert "centred on the BSW estimate [@boxerman_2006; @rulseh_inprep]" in text
+    assert text.count("@mehndiratta_2013") == 1
+    assert "nonlinear variational Bayesian inference" in text
+    assert "@chappell_2009" in text
+    assert "@mehndiratta_2014" not in text
+
+
+def test_signal_cpi_without_leakage_does_not_claim_prior_guidance() -> None:
+    text = ru._build_dsc_boilerplate({
+        "config": {"aif_source": "external"},
+        "preload": {"leakage_correction_disabled": True},
+        "deconvolution": {
+            "method": "cpi", "inference": "svb",
+            "cpi_leakage_method": "none",
+        },
+    })
+    assert (
+        "control point interpolation fitted to the original DSC signal with a "
+        "perfusion-only signal model [@mehndiratta_2013]"
+    ) in text
+    assert text.count("@mehndiratta_2013") == 1
+    assert "centred on the BSW estimate" not in text
+    assert "@boxerman_2006" not in text
+    assert "@penny_2005" in text
+    assert "@groves_2009" in text
+    assert "@chappell_2009" in text
+    assert "CBF-only spatial M-prior" in text
+
+
+@pytest.mark.parametrize(
+    "policy, count, clause_expected",
+    [("osvd", 3, True), ("osvd", 0, False), ("none", 3, False)],
+)
+def test_signal_cpi_boilerplate_reports_actual_osvd_fallback(
+    policy: str, count: int, clause_expected: bool,
+) -> None:
+    text = ru._build_dsc_boilerplate({
+        "preload": {"preload_correction_applied": True},
+        "deconvolution": {
+            "method": "cpi", "inference": "vi",
+            "cpi_leakage_method": "bsw", "cpi_fallback": policy,
+            "n_fallback_osvd": count, "fallback_rate": 0.034,
+        },
+    })
+    assert ("concentration curves used for oSVD fallback voxels" in text) is clause_expected
+    assert ("were replaced by oSVD estimates [@wu_2003]" in text) is clause_expected
+    if clause_expected:
+        fallback_sentence = text.split("Voxels with a rejected CPI fit", 1)[1]
+        assert "%" not in fallback_sentence.split(".", 1)[0]
+    assert text.count("@mehndiratta_2013") == 1
+
+
+def test_dsc_boilerplate_follows_processing_dependency_order() -> None:
+    text = ru._build_dsc_boilerplate({"deconvolution": {"method": "oSVD"}})
+    assert text.index("rigid-body transform") < text.index("converted to concentration")
+
+
+@pytest.mark.parametrize(
+    "requested, retained_fraction, cited",
+    [("none", 0.0, False), ("gamma", 0.0, False), ("auto", 0.0, False),
+     ("auto", 0.25, True), ("gamma", 1.0, True), ("gamma", None, False)],
+)
+def test_cpi_dispersion_citation_requires_retained_fits(
+    requested: str, retained_fraction: float | None, cited: bool,
+) -> None:
+    text = ru._build_dsc_boilerplate({
+        "deconvolution": {
+            "method": "cpi",
+            "cpi_dispersion": requested, "cpi_gamma_fraction": retained_fraction,
+        },
+    })
+    assert ("@mehndiratta_2014" in text) is cited
+    assert ("retained dispersion-aware CPI fits" in text) is cited
 
 
 def test_dce_boilerplate_reports_t1_b1_plasma_and_retained_prior() -> None:
@@ -228,6 +327,8 @@ def test_dce_boilerplate_reports_t1_b1_plasma_and_retained_prior() -> None:
     assert "hematocrit of 0.42" in text
     assert "@sourbron_2013" in text
     assert "piecewise-linear plasma arterial input function" in text
+    assert "nonlinear variational Bayesian inference" in text
+    assert "@chappell_2009" in text
     assert "relative standard deviation of 60%" in text
     assert "used by retained Bayesian fits" in text
 

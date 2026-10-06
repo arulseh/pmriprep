@@ -51,11 +51,11 @@ _DCE_PK_MODEL_TEXT: dict[str, str] = {
 # Boilerplate text for T1 mapping methods
 _T1_METHOD_TEXT: dict[str, str] = {
     "wlls": (
-        "Baseline T1 was estimated from variable flip angle images using "
+        "DCE baseline T1 was estimated from variable flip angle images using "
         "linearized DESPOT1 fitting [@deoni_2003]"
     ),
     "nlls": (
-        "Baseline T1 was estimated from variable flip angle images using "
+        "DCE baseline T1 was estimated from variable flip angle images using "
         "WLLS-initialized nonlinear least squares fitting [@deoni_2003]"
     ),
     "external": "a user-supplied T1 map",
@@ -75,19 +75,20 @@ _B1_CORRECTION_TEXT: dict[str, str] = {
 # Boilerplate text for parametric-deconvolution inference methods
 _INFERENCE_TEXT: dict[str, str] = {
     "vi": (
-        "Parameter estimation used variational Bayesian inference "
+        "nonlinear variational Bayesian inference "
         "[@chappell_2009]."
     ),
     "svb": (
-        "Parameter estimation used spatial variational Bayes with the "
-        "M-prior [@penny_2005; @groves_2009]."
+        "nonlinear variational Bayesian inference "
+        "[@chappell_2009] with a CBF-only spatial M-prior "
+        "[@penny_2005; @groves_2009]."
     ),
     "map": (
-        "Parameter estimation used maximum a posteriori inference "
+        "maximum a posteriori inference "
         "with Laplace approximation for uncertainty quantification "
         "[@woolrich_2009]."
     ),
-    "nlls": "Parameter estimation used nonlinear least squares.",
+    "nlls": "nonlinear least squares.",
 }
 
 # Boilerplate text for brain extraction tools
@@ -225,10 +226,7 @@ def _generate_boilerplate_text(
     if ran_pipelines.get("tumor_seg"):
         sentences.append(
             "Automated glioma segmentation was performed using HD-GLIO "
-            "[@kickingereder_2019]. Tumor masks were used for regional analysis "
-            "and arterial input function candidate exclusion. When available, a "
-            "tumor-informed supratentorial normal-appearing white matter region "
-            "of interest was used for normalization."
+            "[@kickingereder_2019]."
         )
 
     # DSC perfusion
@@ -344,36 +342,44 @@ def _build_dsc_boilerplate(dsc_qc: dict[str, Any]) -> str:
     """
     sentences: list[str] = []
 
+    deconv = dsc_qc.get("deconvolution", {})
+    method = deconv.get("method", "oSVD")
+    is_cpi = method.lower() == "cpi"
+    fallback_used = (
+        is_cpi
+        and deconv.get("cpi_fallback") == "osvd"
+        and (deconv.get("n_fallback_osvd") or 0) > 0
+    )
+
     # Motion correction (conditional). Kept a separate sentence so concentration
     # conversion can follow the baseline (S0) detection it depends on.
     if _motion_was_applied(dsc_qc):
         sentences.append(
-            "DSC perfusion images were motion-corrected using MCFLIRT "
+            "DSC time-series data were motion-corrected using MCFLIRT "
             "[@jenkinson_2002]."
         )
     else:
         sentences.append(
-            "DSC perfusion images were assumed to be already motion-corrected, "
-            "so no additional motion correction was applied (residual motion "
-            "was assessed for quality control)."
+            "DSC motion correction was omitted; residual motion in the input "
+            "was assessed for quality control."
         )
-
-    # Baseline detection
-    sentences.append(
-        "Baseline frames were automatically identified using a "
-        "multi-phase detection algorithm."
-    )
-
-    # Concentration conversion (uses the S0 baseline)
-    sentences.append(
-        "The signal was converted to concentration-time curves via ΔR2* "
-        "estimation [@boxerman_1995]."
-    )
 
     # Registration
     sentences.append(
         "A rigid-body transform between DSC and T1-weighted space "
         "was computed using FLIRT [@jenkinson_2002]."
+    )
+
+    # Baseline detection
+    sentences.append(
+        "DSC baseline frames were identified by automated bolus-arrival "
+        "detection [@rulseh_inprep]."
+    )
+
+    # Concentration conversion (uses the S0 baseline)
+    sentences.append(
+        "DSC signal was converted to concentration-time curves via ΔR2* "
+        "estimation [@rosen_1990]."
     )
 
     # AIF detection
@@ -397,13 +403,12 @@ def _build_dsc_boilerplate(dsc_qc: dict[str, Any]) -> str:
         aif_source = detected_aif_source or configured_aif_source or "auto"
 
     if aif_source == "synthetic":
-        fallback = " as a fallback" if aif_info.get("synthetic_fallback_reason") else ""
         sentences.append(
-            "A dose- and field-strength-scaled synthetic gamma-variate AIF "
-            f"was used{fallback} [@rulseh_inprep]."
+            "A dose- and field-strength-scaled synthetic gamma-variate DSC AIF "
+            "was used [@rulseh_inprep]."
         )
     elif aif_source == "external":
-        sentences.append("A user-supplied arterial input function was used.")
+        sentences.append("A user-supplied DSC arterial input function was used.")
     else:
         sentences.append(
             "The DSC arterial input function was automatically "
@@ -411,18 +416,26 @@ def _build_dsc_boilerplate(dsc_qc: dict[str, Any]) -> str:
             "multi-level criteria cascade [@mouches_2019; @rulseh_inprep]."
         )
 
-    # Leakage correction is applied to the concentration curves BEFORE
-    # deconvolution, so it precedes the map-quantification sentence.
     preload = dsc_qc.get("preload", {})
     if preload.get("preload_correction_applied"):
-        sentences.append(
-            "Per-voxel BSW leakage correction was applied to account for "
-            "contrast extravasation [@boxerman_2006]."
-        )
+        if is_cpi:
+            fallback_clause = (
+                " and to the concentration curves used for oSVD fallback voxels"
+                if fallback_used else ""
+            )
+            sentences.append(
+                "Per-voxel BSW leakage correction was applied for AUC-CBV "
+                f"quantification{fallback_clause} [@boxerman_2006]."
+            )
+        else:
+            sentences.append(
+                "Per-voxel BSW leakage correction was applied to account for "
+                "contrast extravasation [@boxerman_2006]."
+            )
     elif preload.get("leakage_correction_disabled"):
         sentences.append(
             "BSW leakage correction was disabled; tissue concentration curves "
-            "were baseline-centered without estimating or applying K2."
+            "were baseline-centered."
         )
     elif preload.get("k2_method") == "bsw" or (
         preload.get("k2_reference_available") is False
@@ -433,29 +446,75 @@ def _build_dsc_boilerplate(dsc_qc: dict[str, Any]) -> str:
             "baseline-centered."
         )
 
-    # Deconvolution method (citation lives in the _DSC_DECONV_TEXT @key marker)
-    deconv = dsc_qc.get("deconvolution", {})
-    method = deconv.get("method", "oSVD")
-    method_text = _DSC_DECONV_TEXT.get(method, _DSC_DECONV_TEXT.get("oSVD", ""))
-    sentences.append(f"Perfusion parameter maps were quantified using {method_text}.")
+    auc_cbv_available = deconv.get("cbv_auc_measured_aif_missing") is not True
+    if auc_cbv_available:
+        tissue_curve = (
+            "BSW-corrected" if preload.get("preload_correction_applied")
+            else "baseline-centered"
+        )
+        if aif_source == "synthetic":
+            auc_aif = "synthetic AIF"
+        elif aif_source == "external":
+            auc_aif = "user-supplied AIF"
+        else:
+            auc_aif = "measured AIF"
+        sentences.append(
+            "DSC AUC-CBV was computed as the "
+            f"ratio of the post-arrival integrals of the {tissue_curve} tissue "
+            f"concentration curve and the {auc_aif}."
+        )
+
+    if is_cpi:
+        if deconv.get("cpi_leakage_method") == "bsw":
+            sentences.append(
+                "Other model-derived DSC parameter maps were estimated using "
+                "control point interpolation fitted to the original DSC signal "
+                "[@mehndiratta_2013], jointly estimating signed "
+                "leakage with voxel-specific Gaussian priors on K2 "
+                "centred on the BSW estimate "
+                "[@boxerman_2006; @rulseh_inprep]."
+            )
+        elif deconv.get("cpi_leakage_method") == "none":
+            sentences.append(
+                "Other model-derived DSC parameter maps were estimated using "
+                "control point interpolation fitted to the original DSC signal "
+                "with a perfusion-only signal model "
+                "[@mehndiratta_2013]."
+            )
+
+        if fallback_used:
+            sentences.append(
+                "Voxels with a rejected CPI fit were replaced by oSVD "
+                "estimates [@wu_2003]."
+            )
+    else:
+        method_text = _DSC_DECONV_TEXT.get(
+            method, _DSC_DECONV_TEXT.get("oSVD", ""),
+        )
+        sentences.append(
+            f"Other model-derived DSC parameter maps were produced using {method_text}."
+        )
+
+    if is_cpi and (deconv.get("cpi_gamma_fraction") or 0) > 0:
+        sentences.append(
+            "DSC arterial bolus dispersion was modelled with a gamma vascular "
+            "transport function in the retained dispersion-aware CPI fits "
+            "[@mehndiratta_2014]."
+        )
 
     # Inference engine (only for cpi parametric methods).
-    # Backward-compat: older sidecars may carry "bayesian"/"bayesian_inference"
-    # keys; their values are already in canonical "vi"/"svb"/"map" naming.
-    if method.lower() == "cpi":
-        inference = deconv.get(
-            "inference",
-            deconv.get("bayesian_inference", deconv.get("bayesian", "vi")),
-        )
+    if is_cpi:
+        inference = deconv.get("inference", "vi")
         if inference in _INFERENCE_TEXT:
-            sentences.append(_INFERENCE_TEXT[inference])
+            sentences.append(f"CPI parameter estimation used {_INFERENCE_TEXT[inference]}")
 
     # NAWM normalization
     norm_factor = dsc_qc.get("normalization_factor")
     if norm_factor is not None and norm_factor > 0:
         sentences.append(
-            "Hemodynamic maps (CBF and CBV) were normalized to contralateral "
-            "normal-appearing white matter."
+            "DSC nCBF and nCBV were obtained by dividing CBF and AUC-CBV by "
+            "their respective median values within the normal-appearing "
+            "white matter reference."
         )
 
     return " ".join(sentences)
@@ -480,15 +539,21 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> str:
     # conversion can follow the T1 mapping it depends on (strict pipeline order).
     if _motion_was_applied(dce_qc):
         sentences.append(
-            "DCE images were motion-corrected using MCFLIRT "
+            "DCE time-series data were motion-corrected using MCFLIRT "
             "[@jenkinson_2002]."
         )
     else:
         sentences.append(
-            "DCE images were assumed to be already "
-            "motion-corrected, so no additional motion correction was applied "
-            "(residual motion was assessed for quality control)."
+            "DCE motion correction was omitted; residual motion in the input "
+            "was assessed for quality control."
         )
+
+    # Registration to the anatomical reference is independent of the separate
+    # VFA-to-DCE and B1+-map registrations used to prepare quantitative inputs.
+    sentences.append(
+        "A rigid-body transform between DCE and T1-weighted space "
+        "was computed using FLIRT [@jenkinson_2002]."
+    )
 
     # T1 mapping
     t1_info = dce_qc.get("t1_mapping", {})
@@ -505,8 +570,8 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> str:
     b1_text = _B1_CORRECTION_TEXT.get(b1_method, "") if b1_applied else ""
 
     conc = (
-        "DCE signal was converted to gadolinium concentration with the "
-        "spoiled gradient echo signal model [@schabel_2008]"
+        "DCE signal was converted to gadolinium concentration by inversion of "
+        "the spoiled gradient-echo signal equation [@schabel_2008]"
     )
 
     if t1_method in ("external", "assumed"):
@@ -544,7 +609,7 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> str:
         corr_applied = t1_correction.get("correction_applied", "none")
         if corr_applied == "fallback":
             sentences.append(
-                "The measured variable flip angle T1 map did not satisfy "
+                "The measured DCE variable flip angle T1 map did not satisfy "
                 "the acceptance policy; a uniform field-strength literature "
                 "T1 value was used for concentration conversion."
             )
@@ -555,22 +620,16 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> str:
                 "The same B1+ correction was applied during DCE signal conversion."
             )
 
-    # Registration
-    sentences.append(
-        "A rigid-body transform between DCE and T1-weighted space "
-        "was computed using FLIRT [@jenkinson_2002]."
-    )
-
     # AIF detection
     aif_info = dce_qc.get("aif_detection", {})
     aif_source = aif_info.get("aif_source") or aif_info.get("detection_method", "auto")
 
     if aif_source == "population":
         sentences.append(
-            "The Parker population AIF was used [@parker_2006]."
+            "The Parker population AIF was used for DCE analysis [@parker_2006]."
         )
     elif aif_source == "external":
-        sentences.append("A user-supplied arterial input function was used.")
+        sentences.append("A user-supplied DCE arterial input function was used.")
     else:
         sentences.append(
             "The DCE arterial input function was automatically "
@@ -584,7 +643,7 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> str:
     if aif_source != "external":
         hct = aif_info.get("hematocrit", 0.42)
         sentences.append(
-            f"The arterial input function was corrected from whole-blood to "
+            f"The DCE arterial input function was corrected from whole-blood to "
             f"plasma concentration using a hematocrit of {hct} "
             f"[@tofts_1999]."
         )
@@ -605,34 +664,34 @@ def _build_dce_boilerplate(dce_qc: dict[str, Any]) -> str:
             else:
                 model_list = model_names[0] if model_names else "available models"
             sentences.append(
-                f"Pharmacokinetic analysis was performed using per-voxel "
+                f"DCE pharmacokinetic analysis used per-voxel "
                 f"model selection by the Bayesian information criterion "
                 f"[@schwarz_1978] "
                 f"among {model_list}."
             )
         else:
             sentences.append(
-                "Pharmacokinetic analysis was performed using per-voxel "
+                "DCE pharmacokinetic analysis used per-voxel "
                 "model selection by the Bayesian information criterion "
                 "[@schwarz_1978]."
             )
     else:
         model_text = _DCE_PK_MODEL_TEXT.get(model, model)
         sentences.append(
-            f"Pharmacokinetic analysis was performed using {model_text}."
+            f"DCE pharmacokinetic analysis used {model_text}."
         )
 
     sentences.append(
-        "Tissue concentration curves were calculated by product integration of "
-        "the piecewise-linear plasma arterial input function with each model's "
-        "impulse response [@sourbron_2007]."
+        "Model-predicted DCE tissue concentration curves were evaluated by product "
+        "integration of the piecewise-linear plasma arterial input function with "
+        "each model's impulse response [@sourbron_2007]."
     )
 
     # Inference engine
     inference = pk_info.get("inference", "nlls")
     inference_text = _INFERENCE_TEXT.get(inference, "")
     if inference_text:
-        sentences.append(inference_text)
+        sentences.append(f"DCE parameter estimation used {inference_text}")
 
     constraint = pk_info.get("dsc_cbv_constraint", {})
     n_constrained = pk_info.get("n_constrained", 0)

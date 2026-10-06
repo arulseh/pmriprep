@@ -344,8 +344,8 @@ class TestBoilerplateConditionalMoco:
 
         text = _build_dsc_boilerplate({"preprocessing": {"motion_applied": False}})
         assert "motion-corrected using MCFLIRT" not in text
-        assert "assumed to be already motion-corrected" in text
-        assert "no additional motion correction was applied" in text
+        assert "DSC motion correction was omitted" in text
+        assert "residual motion in the input was assessed for quality control" in text
 
     def test_dsc_default_absent_flag_claims_correction(self) -> None:
         # Absent flag (older sidecars / default runs) → assume applied.
@@ -366,9 +366,9 @@ class TestBoilerplateConditionalMoco:
 
         text = _build_dce_boilerplate({"preprocessing": {"motion_applied": False}})
         assert "motion-corrected using MCFLIRT" not in text
-        assert "DCE images were assumed" in text
+        assert "DCE motion correction was omitted" in text
         assert "DCE permeability images" not in text
-        assert "assumed" in text and "no additional motion correction" in text
+        assert "residual motion in the input was assessed for quality control" in text
 
 
 class TestMotionAppliedSurvivesPipelineQCFilter:
