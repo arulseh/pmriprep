@@ -2810,10 +2810,7 @@ def _connect_master_dce_t1_b1_inputs(
         )
     elif b1_method == "afi" and session_data.modalities.afi:
         # Only 4D AFI is supported.
-        if (
-            session_data.modalities.afi_mode == "4d"
-            and session_data.modalities.afi_4d_file
-        ):
+        if session_data.modalities.afi_4d_file:
             dce_wf.inputs.inputnode.afi_4d_file = str(
                 session_data.modalities.afi_4d_file
             )

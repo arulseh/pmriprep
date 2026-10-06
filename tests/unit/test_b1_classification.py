@@ -47,6 +47,28 @@ def test_afi_4d_detection(tmp_path: Path) -> None:
     assert result["afi_tr1_ms"] == pytest.approx(20.0)
     assert result["afi_tr2_ms"] == pytest.approx(100.0)
     assert result["afi_flip_angle"] == pytest.approx(60.0)
+    assert result["afi_4d_candidates"] == [afi]
+
+
+def test_repeated_4d_afi_candidates_are_retained(tmp_path: Path) -> None:
+    """Discovery preserves competing 4D AFI inputs for preflight rejection."""
+    candidates = [
+        tmp_path / "sub-01_run-1_TB1AFI.nii.gz",
+        tmp_path / "sub-01_run-2_TB1AFI.nii.gz",
+    ]
+    for path in candidates:
+        _write_nii(path, (4, 4, 4, 2))
+        path.with_name(path.name.replace(".nii.gz", ".json")).write_text(
+            json.dumps({
+                "RepetitionTimeExcitation": [0.020, 0.100],
+                "FlipAngle": 60,
+            })
+        )
+
+    result = _classify_b1_data(candidates, _MockLayout())
+
+    assert result["afi_4d_file"] == candidates[0]
+    assert result["afi_4d_candidates"] == candidates
 
 
 def test_two_separate_3d_files_no_longer_paired(tmp_path: Path) -> None:
@@ -86,6 +108,26 @@ def test_tfl_b1map_famp_detected(tmp_path: Path) -> None:
     assert result["b1_map_encoding"] == "actual_flip_deci_deg"
     assert result["b1_precomputed_file"] == famp
     assert result["b1_nominal_prep_fa"] == pytest.approx(80.0)
+    assert result["b1_precomputed_candidates"] == [famp]
+
+
+def test_competing_precomputed_maps_are_retained(tmp_path: Path) -> None:
+    """All eligible precomputed maps reach the ambiguity gate."""
+    famp = tmp_path / "sub-01_acq-famp_TB1TFL.nii.gz"
+    tb1map = tmp_path / "sub-01_TB1map.nii.gz"
+    for path in (famp, tb1map):
+        _write_nii(path, (4, 4, 4))
+    (tmp_path / "sub-01_acq-famp_TB1TFL.json").write_text(
+        json.dumps({"FlipAngle": 80})
+    )
+    (tmp_path / "sub-01_TB1map.json").write_text(
+        json.dumps({"Units": "p.u."})
+    )
+
+    result = _classify_b1_data([famp, tb1map], _MockLayout())
+
+    assert result["b1_precomputed_file"] == famp
+    assert result["b1_precomputed_candidates"] == [famp, tb1map]
 
 
 def test_tfl_b1map_low_flip_angle_raises(tmp_path: Path) -> None:

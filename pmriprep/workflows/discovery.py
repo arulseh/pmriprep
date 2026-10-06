@@ -49,6 +49,10 @@ class ModalityAvailability:
         List of paths to AFI (Actual Flip Angle Imaging) images for B1+ mapping.
     b1_precomputed_file : Path, optional
         Path to pre-computed B1+ flip angle map (e.g., tfl_b1map famp).
+    b1_precomputed_candidates : list of Path
+        Eligible pre-computed B1+ maps retained for ambiguity validation.
+    afi_4d_candidates : list of Path
+        Eligible 4D AFI acquisitions retained for ambiguity validation.
     b1_nominal_prep_fa : float, optional
         Nominal preparation flip angle (degrees) from famp JSON sidecar.
     b1_method_detected : str, optional
@@ -72,13 +76,15 @@ class ModalityAvailability:
     vfa: List[Path] = field(default_factory=list)
     afi: List[Path] = field(default_factory=list)
     afi_mode: Optional[str] = None  # "4d" or "precomputed"
-    afi_4d_file: Optional[Path] = None  # Set when afi_mode="4d"
+    afi_4d_file: Optional[Path] = None  # First eligible 4D AFI input
     afi_tr1_ms: Optional[float] = None  # TR1 in ms (from sidecar)
     afi_tr2_ms: Optional[float] = None  # TR2 in ms (from sidecar)
     afi_flip_angle: Optional[float] = None  # Nominal flip angle in degrees (from sidecar)
     dsc_n_volumes: Optional[int] = None
     dce_n_volumes: Optional[int] = None
     b1_precomputed_file: Optional[Path] = None  # Pre-computed B1+ map (TB1TFL famp or TB1map)
+    b1_precomputed_candidates: List[Path] = field(default_factory=list)
+    afi_4d_candidates: List[Path] = field(default_factory=list)
     b1_nominal_prep_fa: Optional[float] = None  # FlipAngle sidecar (actual-flip encodings)
     b1_method_detected: Optional[str] = None  # "afi" or "precomputed"
     b1_map_encoding: Optional[str] = None  # Pixel encoding hint for a precomputed map
@@ -743,7 +749,7 @@ def _find_b1_data(
 def _classify_b1_data(
     b1_files: List[Path],
     layout: "BIDSLayout",
-) -> dict[str, Optional[Union[str, Path, float]]]:
+) -> dict[str, Optional[Union[str, Path, float, List[Path]]]]:
     """Classify B1+ files as Siemens tfl_b1map (pre-computed) or 4D AFI.
 
     Sidecar reads use ``layout.get_metadata`` so BIDS inheritance is
@@ -762,11 +768,12 @@ def _classify_b1_data(
     dict
         Dict with keys: afi_mode ("precomputed", "4d", or None),
         b1_precomputed_file, b1_nominal_prep_fa, b1_method_detected,
-        afi_4d_file, afi_tr1_ms, afi_tr2_ms, afi_flip_angle.
+        afi_4d_file, afi_tr1_ms, afi_tr2_ms, afi_flip_angle, and the
+        eligible precomputed/4D-AFI candidate lists.
     """
     import nibabel as nib  # type: ignore[import-untyped]
 
-    result: dict[str, Optional[Union[str, Path, float]]] = {
+    result: dict[str, Optional[Union[str, Path, float, List[Path]]]] = {
         "afi_mode": None,
         "afi_4d_file": None,
         "afi_tr1_ms": None,
@@ -776,6 +783,8 @@ def _classify_b1_data(
         "b1_nominal_prep_fa": None,
         "b1_method_detected": None,
         "b1_map_encoding": None,
+        "b1_precomputed_candidates": [],
+        "afi_4d_candidates": [],
     }
 
     if not b1_files:
@@ -787,7 +796,8 @@ def _classify_b1_data(
         except Exception:
             return {}
 
-    # --- Phase 1: tfl_b1map pre-computed B1+ map (acq-famp) ---
+    # --- Phase 1: tfl_b1map pre-computed B1+ maps (acq-famp) ---
+    tfl_candidates: list[tuple[Path, Optional[float]]] = []
     for b1_path in b1_files:
         fname = b1_path.name.upper()
         if "TB1TFL" not in fname:
@@ -833,17 +843,7 @@ def _classify_b1_data(
                 f"(expected ≥20° for saturation pulse). Use the acq-famp file."
             )
 
-        logger.info(
-            "Found tfl_b1map pre-computed B1+ map: %s (FlipAngle=%s°)",
-            b1_path.name, nominal_prep_fa,
-        )
-        result["afi_mode"] = "precomputed"
-        result["b1_precomputed_file"] = b1_path
-        result["b1_nominal_prep_fa"] = nominal_prep_fa
-        result["b1_method_detected"] = "precomputed"
-        # Siemens tfl famp pixels are the actual flip in 0.1° units.
-        result["b1_map_encoding"] = "actual_flip_deci_deg"
-        return result
+        tfl_candidates.append((b1_path, nominal_prep_fa))
 
     # --- Phase 1b: vendor-neutral pre-computed TB1map (Units-driven) ---
     # BIDS TB1map is a preprocessed parametric map whose encoding is signaled by
@@ -854,6 +854,7 @@ def _classify_b1_data(
         "deg": "actual_flip_deg", "degree": "actual_flip_deg",
         "degrees": "actual_flip_deg",
     }
+    tb1map_candidates: list[tuple[Path, Optional[float], str]] = []
     for b1_path in b1_files:
         fname = b1_path.name.upper()
         if "TB1MAP" not in fname or "TB1TFL" in fname:
@@ -870,26 +871,18 @@ def _classify_b1_data(
                 fa = fa[0]
             nominal_prep_fa = float(fa)
 
-        logger.info(
-            "Found pre-computed TB1map B1+ map: %s (Units=%r → encoding=%s, "
-            "FlipAngle=%s°)",
-            b1_path.name, units or None, encoding, nominal_prep_fa,
-        )
-        result["afi_mode"] = "precomputed"
-        result["b1_precomputed_file"] = b1_path
-        result["b1_nominal_prep_fa"] = nominal_prep_fa
-        result["b1_method_detected"] = "precomputed"
-        result["b1_map_encoding"] = encoding
-        return result
+        tb1map_candidates.append((b1_path, nominal_prep_fa, encoding))
+
+    precomputed_paths = [path for path, _ in tfl_candidates]
+    precomputed_paths.extend(path for path, _, _ in tb1map_candidates)
+    result["b1_precomputed_candidates"] = precomputed_paths
 
     # --- Phase 2: 4D AFI (TB1AFI or non-canonical *AFI* with 2 volumes) ---
     afi_files = [
         f for f in b1_files
         if "TB1TFL" not in f.name.upper() and "TB1MAP" not in f.name.upper()
     ]
-    if not afi_files:
-        return result
-
+    afi_candidates: list[tuple[Path, Dict]] = []
     for afi_path in afi_files:
         try:
             img = nib.load(str(afi_path))
@@ -899,11 +892,44 @@ def _classify_b1_data(
         if not (len(shape) == 4 and shape[3] == 2):
             continue
 
+        metadata = _meta(afi_path)
+        afi_candidates.append((afi_path, metadata))
+
+    result["afi_4d_candidates"] = [path for path, _ in afi_candidates]
+
+    # Preserve the established automatic priority while retaining every
+    # eligible candidate so preflight can reject ambiguity before use.
+    if tfl_candidates:
+        path, nominal_prep_fa = tfl_candidates[0]
+        logger.info(
+            "Found tfl_b1map pre-computed B1+ map: %s (FlipAngle=%s°)",
+            path.name, nominal_prep_fa,
+        )
+        result["afi_mode"] = "precomputed"
+        result["b1_precomputed_file"] = path
+        result["b1_nominal_prep_fa"] = nominal_prep_fa
+        result["b1_method_detected"] = "precomputed"
+        result["b1_map_encoding"] = "actual_flip_deci_deg"
+    elif tb1map_candidates:
+        path, nominal_prep_fa, encoding = tb1map_candidates[0]
+        logger.info(
+            "Found pre-computed TB1map B1+ map: %s (encoding=%s, FlipAngle=%s°)",
+            path.name, encoding, nominal_prep_fa,
+        )
+        result["afi_mode"] = "precomputed"
+        result["b1_precomputed_file"] = path
+        result["b1_nominal_prep_fa"] = nominal_prep_fa
+        result["b1_method_detected"] = "precomputed"
+        result["b1_map_encoding"] = encoding
+    elif afi_candidates:
+        afi_path, metadata = afi_candidates[0]
         logger.info("Found 4D AFI volume (2 timepoints): %s", afi_path)
         result["afi_mode"] = "4d"
-        result["afi_4d_file"] = afi_path
+        result["b1_method_detected"] = "afi"
 
-        metadata = _meta(afi_path)
+    if afi_candidates:
+        afi_path, metadata = afi_candidates[0]
+        result["afi_4d_file"] = afi_path
         tr_exc = metadata.get("RepetitionTimeExcitation")
         if isinstance(tr_exc, list) and len(tr_exc) >= 2:
             trs = sorted([tr_exc[0] * 1000, tr_exc[1] * 1000])
@@ -922,10 +948,7 @@ def _classify_b1_data(
                 fa = fa[0]
             result["afi_flip_angle"] = float(fa)
 
-        result["b1_method_detected"] = "afi"
-        return result
-
-    if len(afi_files) >= 2:
+    elif len(afi_files) >= 2:
         logger.error(
             "Found %d separate AFI files but no 4D TB1AFI volume. "
             "Split-mode AFI is not supported; supply a 4D TB1AFI, a "
@@ -1091,6 +1114,16 @@ def discover_session_data(
         # Wire pre-computed-B1-map fields
         if b1_info.get("b1_precomputed_file") is not None:
             modalities.b1_precomputed_file = Path(str(b1_info["b1_precomputed_file"]))
+        precomputed_candidates = b1_info.get("b1_precomputed_candidates")
+        if isinstance(precomputed_candidates, list):
+            modalities.b1_precomputed_candidates = [
+                Path(str(path)) for path in precomputed_candidates
+            ]
+        afi_4d_candidates = b1_info.get("afi_4d_candidates")
+        if isinstance(afi_4d_candidates, list):
+            modalities.afi_4d_candidates = [
+                Path(str(path)) for path in afi_4d_candidates
+            ]
         if b1_info.get("b1_nominal_prep_fa") is not None:
             modalities.b1_nominal_prep_fa = float(b1_info["b1_nominal_prep_fa"])  # type: ignore[arg-type]
         if b1_info.get("b1_method_detected") is not None:

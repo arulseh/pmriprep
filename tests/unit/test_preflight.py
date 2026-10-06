@@ -70,6 +70,8 @@ def _make_modalities(**kwargs):
         "afi_4d_file": None,
         "b1_method_detected": None,
         "b1_precomputed_file": None,
+        "b1_precomputed_candidates": [],
+        "afi_4d_candidates": [],
         "dsc_n_volumes": None,
         "dce_n_volumes": None,
     }
@@ -561,6 +563,39 @@ class TestValidateVFAMetadata:
             m.code == "VFA_FEW_ANGLES" and m.level == "error" for m in msgs
         )
 
+    def test_repeated_angles_in_one_group_are_allowed(self):
+        msgs = validate_vfa_metadata(
+            [5.0, 5.0, 15.0],
+            [0.004, 0.004, 0.004],
+            [
+                Path("sub-01_run-1_flip-1_VFA.nii.gz"),
+                Path("sub-01_run-1_flip-2_VFA.nii.gz"),
+                Path("sub-01_run-1_flip-3_VFA.nii.gz"),
+            ],
+        )
+        assert not any(message.level == "error" for message in msgs)
+
+    @pytest.mark.parametrize("entity", ["acq", "run", "echo"])
+    def test_competing_acquisition_entities(self, entity):
+        files = [
+            Path(f"sub-01_{entity}-1_flip-1_VFA.nii.gz"),
+            Path(f"sub-01_{entity}-2_flip-2_VFA.nii.gz"),
+        ]
+        msgs = validate_vfa_metadata(
+            [5.0, 15.0], [0.004, 0.004], files
+        )
+        assert any(
+            m.code == "VFA_AMBIGUOUS_INPUT" and m.level == "error"
+            for m in msgs
+        )
+
+    def test_inconsistent_tr(self):
+        msgs = validate_vfa_metadata([5.0, 15.0], [0.004, 0.006])
+        assert any(
+            m.code == "VFA_INCONSISTENT_TR" and m.level == "error"
+            for m in msgs
+        )
+
     def test_missing_flip_angle(self):
         msgs = validate_vfa_metadata([5.0, None], [0.004, 0.004])
         assert any(
@@ -570,7 +605,9 @@ class TestValidateVFAMetadata:
 
     def test_missing_tr(self):
         msgs = validate_vfa_metadata([5.0, 15.0], [0.004, None])
-        assert any(m.code == "VFA_MISSING_TR" for m in msgs)
+        assert any(
+            m.code == "VFA_MISSING_TR" and m.level == "error" for m in msgs
+        )
 
     def test_poor_conditioning(self):
         msgs = validate_vfa_metadata([14.0, 15.0], [0.004, 0.004])
@@ -728,7 +765,7 @@ class TestRunPreflight:
         assert not any(message.code.startswith("VFA_") for message in report.messages)
 
     def test_afi_validation_included(self, tmp_path):
-        """AFI validation runs when AFI data is present."""
+        """AFI validation runs when AFI data is selected for use."""
         dce_file = tmp_path / "sub-01_dce.nii.gz"
         dce_file.touch()
         (tmp_path / "sub-01_dce.json").touch()
@@ -736,6 +773,8 @@ class TestRunPreflight:
         mods = _make_modalities(
             dce=dce_file,
             afi=[Path("/fake/afi1.nii.gz")],
+            afi_4d_file=Path("/fake/afi1.nii.gz"),
+            b1_method_detected="afi",
             afi_tr1_ms=None,  # missing
             afi_tr2_ms=100.0,
         )
@@ -750,6 +789,93 @@ class TestRunPreflight:
             dce_config=DCEConfig(),
         )
         assert any(m.code == "AFI_MISSING_TR" for m in report.messages)
+
+    def test_unused_afi_metadata_is_not_validated(self, tmp_path):
+        """AFI metadata cannot block a run with B1+ correction disabled."""
+        dce_file = tmp_path / "sub-01_dce.nii.gz"
+        dce_file.touch()
+        mods = _make_modalities(
+            dce=dce_file,
+            afi=[Path("/fake/afi1.nii.gz")],
+            afi_4d_file=Path("/fake/afi1.nii.gz"),
+            afi_tr1_ms=None,
+            afi_tr2_ms=100.0,
+        )
+
+        report = run_preflight(
+            session_data=_make_session_data(mods),
+            decision=_make_decision(run_dce=True),
+            dsc_sidecar=None,
+            dce_sidecar=_valid_dce_sidecar(),
+            dce_config=DCEConfig(b1_method="none"),
+        )
+
+        assert not any(message.code.startswith("AFI_") for message in report.messages)
+
+    @pytest.mark.parametrize(
+        ("method", "detected", "candidate_field"),
+        [
+            ("auto", "precomputed", "b1_precomputed_candidates"),
+            ("precomputed", "precomputed", "b1_precomputed_candidates"),
+            ("afi", "precomputed", "afi_4d_candidates"),
+        ],
+    )
+    def test_competing_effective_b1_inputs_fail_closed(
+        self, tmp_path, method, detected, candidate_field,
+    ):
+        """Only candidates for the effective B1 method are ambiguity-gated."""
+        dce_file = tmp_path / "sub-01_dce.nii.gz"
+        dce_file.touch()
+        first = tmp_path / "sub-01_run-1_TB1map.nii.gz"
+        second = tmp_path / "sub-01_run-2_TB1map.nii.gz"
+        values = {
+            "dce": dce_file,
+            "b1_method_detected": detected,
+            "b1_precomputed_file": first,
+            "afi": [first, second],
+            "afi_4d_file": first,
+            candidate_field: [first, second],
+        }
+
+        report = run_preflight(
+            session_data=_make_session_data(_make_modalities(**values)),
+            decision=_make_decision(run_dce=True),
+            dsc_sidecar=None,
+            dce_sidecar=_valid_dce_sidecar(),
+            dce_config=DCEConfig(b1_method=method),
+        )
+
+        assert any(
+            message.code == "DCE_B1_AMBIGUOUS_INPUT"
+            for message in report.messages
+        )
+        assert report.has_errors
+
+    def test_competing_b1_inputs_do_not_block_disabled_or_skipped_dce(
+        self, tmp_path,
+    ):
+        """Unused B1 candidates do not affect disabled or skipped DCE routes."""
+        dce_file = tmp_path / "sub-01_dce.nii.gz"
+        dce_file.touch()
+        candidates = [Path("/fake/b1a.nii.gz"), Path("/fake/b1b.nii.gz")]
+        mods = _make_modalities(
+            dce=dce_file,
+            b1_method_detected="precomputed",
+            b1_precomputed_file=candidates[0],
+            b1_precomputed_candidates=candidates,
+        )
+        for run_dce, method in ((True, "none"), (False, "auto")):
+            report = run_preflight(
+                session_data=_make_session_data(mods),
+                decision=_make_decision(run_dce=run_dce),
+                dsc_sidecar=None,
+                dce_sidecar=_valid_dce_sidecar(),
+                dce_config=DCEConfig(b1_method=method),
+            )
+            assert not any(
+                message.code == "DCE_B1_AMBIGUOUS_INPUT"
+                for message in report.messages
+            )
 
     @pytest.mark.parametrize(
         ("method", "modalities", "code"),

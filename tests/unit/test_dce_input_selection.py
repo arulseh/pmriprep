@@ -33,6 +33,18 @@ def _write_series(path: Path, *, dsc: bool = False) -> None:
     }))
 
 
+def _write_map(path: Path, metadata: dict[str, object]) -> None:
+    """Create a portable 3D quantitative-input image and sidecar."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    nib.save(
+        nib.Nifti1Image(np.zeros((2, 2, 2), dtype=np.float32), np.eye(4)),
+        path,
+    )
+    path.with_name(path.name.replace(".nii.gz", ".json")).write_text(
+        json.dumps(metadata)
+    )
+
+
 @pytest.mark.parametrize(
     "names, code",
     [
@@ -121,3 +133,71 @@ def test_dce_selection_isolated_by_subject_and_session(tmp_path: Path) -> None:
                 decision=decide_pipelines(data, PipelineSkipFlags(skip_tumor_seg=True)),
                 dsc_config=DSCConfig(), dce_config=DCEConfig(), user_specified=None,
             )
+
+
+def test_competing_b1_maps_fail_only_when_dce_uses_them(tmp_path: Path) -> None:
+    """Discovery retains repeated B1 maps and preflight respects DCE policy."""
+    (tmp_path / "dataset_description.json").write_text(json.dumps({
+        "Name": "Portable input", "BIDSVersion": "1.9.0",
+    }))
+    _write_series(tmp_path / "sub-01/perf/sub-01_dce.nii.gz")
+    for run in (1, 2):
+        _write_map(
+            tmp_path / f"sub-01/fmap/sub-01_run-{run}_TB1map.nii.gz",
+            {"Units": "p.u."},
+        )
+
+    session = discover_session_data(tmp_path, "01", None)
+    assert len(session.modalities.b1_precomputed_candidates) == 2
+
+    enabled = decide_pipelines(
+        session, PipelineSkipFlags(skip_tumor_seg=True)
+    )
+    with pytest.raises(PreflightError, match="DCE_B1_AMBIGUOUS_INPUT"):
+        _prepare_master_preflight_state(
+            session_data=session,
+            decision=enabled,
+            dsc_config=DSCConfig(),
+            dce_config=DCEConfig(),
+            user_specified=None,
+        )
+
+    disabled = decide_pipelines(
+        session,
+        PipelineSkipFlags(skip_dce=True, skip_tumor_seg=True),
+    )
+    _prepare_master_preflight_state(
+        session_data=session,
+        decision=disabled,
+        dsc_config=DSCConfig(),
+        dce_config=DCEConfig(),
+        user_specified=None,
+    )
+
+
+def test_competing_vfa_runs_fail_preflight(tmp_path: Path) -> None:
+    """VFA images from distinct run groups are not silently pooled."""
+    (tmp_path / "dataset_description.json").write_text(json.dumps({
+        "Name": "Portable input", "BIDSVersion": "1.9.0",
+    }))
+    _write_series(tmp_path / "sub-01/perf/sub-01_dce.nii.gz")
+    for run, flip_angle in ((1, 5.0), (2, 15.0)):
+        _write_map(
+            tmp_path
+            / f"sub-01/anat/sub-01_run-{run}_flip-{run}_VFA.nii.gz",
+            {"FlipAngle": flip_angle, "RepetitionTime": 0.004},
+        )
+
+    session = discover_session_data(tmp_path, "01", None)
+    decision = decide_pipelines(
+        session, PipelineSkipFlags(skip_tumor_seg=True)
+    )
+
+    with pytest.raises(PreflightError, match="VFA_AMBIGUOUS_INPUT"):
+        _prepare_master_preflight_state(
+            session_data=session,
+            decision=decision,
+            dsc_config=DSCConfig(),
+            dce_config=DCEConfig(),
+            user_specified=None,
+        )

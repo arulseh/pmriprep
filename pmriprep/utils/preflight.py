@@ -735,6 +735,7 @@ def validate_dce_metadata(
 def validate_vfa_metadata(
     vfa_flip_angles: list[Optional[float]],
     vfa_trs: list[Optional[float]],
+    vfa_files: Optional[list[Path]] = None,
 ) -> list[PreflightMessage]:
     """Validate VFA T1 mapping metadata.
 
@@ -746,6 +747,8 @@ def validate_vfa_metadata(
         Position-preserving flip angles extracted from VFA sidecars.
     vfa_trs : list of float
         TR values extracted from VFA sidecars.
+    vfa_files : list of Path, optional
+        Source files, used to reject competing BIDS acquisition groups.
 
     Returns
     -------
@@ -793,13 +796,61 @@ def validate_vfa_metadata(
             ),
         ))
 
+    ambiguity_reasons: list[str] = []
+    if vfa_files:
+        for entity in ("acq", "run", "echo"):
+            values: set[Optional[str]] = set()
+            for path in vfa_files:
+                match = re.search(
+                    rf"(?:^|_){entity}-([^_]+?)(?=_|\.nii(?:\.gz)?$)",
+                    path.name,
+                )
+                values.add(match.group(1) if match else None)
+            if len(values) > 1:
+                labels = sorted(value if value is not None else "<missing>"
+                                for value in values)
+                ambiguity_reasons.append(
+                    f"multiple {entity} entities {labels}"
+                )
+
+    if ambiguity_reasons:
+        names = "\n".join(f"  {path}" for path in (vfa_files or []))
+        file_detail = f"\n{names}" if names else ""
+        report_detail = "; ".join(ambiguity_reasons)
+        msgs.append(PreflightMessage(
+            level="error",
+            code="VFA_AMBIGUOUS_INPUT",
+            message=(
+                f"Competing VFA inputs were detected ({report_detail})."
+                f"{file_detail}\nProvide one VFA acquisition group with one "
+                "consistent set of acq/run/echo entities."
+            ),
+        ))
+
     if any(tr is None for tr in vfa_trs):
         msgs.append(PreflightMessage(
-            level="warning",
+            level="error",
             code="VFA_MISSING_TR",
             message=(
                 "RepetitionTime missing from one or more VFA sidecars. "
-                "T1 mapping requires TR for the linearized fit."
+                "Every image in a VFA T1 fit requires a common known TR."
+            ),
+        ))
+
+    valid_trs = [
+        float(tr) for tr in vfa_trs
+        if tr is not None and math.isfinite(float(tr))
+    ]
+    if valid_trs and any(
+        not math.isclose(tr, valid_trs[0], rel_tol=1e-6, abs_tol=1e-9)
+        for tr in valid_trs[1:]
+    ):
+        msgs.append(PreflightMessage(
+            level="error",
+            code="VFA_INCONSISTENT_TR",
+            message=(
+                "VFA RepetitionTime values differ across the selected images "
+                f"({valid_trs}). Provide one acquisition group with a common TR."
             ),
         ))
 
@@ -1085,6 +1136,15 @@ def run_preflight(
 
     # DCE validation
     if decision.run_dce and session_data.modalities.dce is not None:
+        requested_b1_method = (
+            dce_config.b1_method if dce_config is not None else "auto"
+        )
+        effective_b1_method = requested_b1_method
+        if requested_b1_method == "auto":
+            effective_b1_method = (
+                session_data.modalities.b1_method_detected or "none"
+            )
+
         report.messages.extend(
             validate_sidecar_exists(
                 Path(session_data.modalities.dce), "DCE",
@@ -1112,12 +1172,34 @@ def run_preflight(
                 and vfa_flip_angles is not None
                 and vfa_trs is not None):
             report.messages.extend(
-                validate_vfa_metadata(vfa_flip_angles, vfa_trs)
+                validate_vfa_metadata(
+                    vfa_flip_angles,
+                    vfa_trs,
+                    [Path(path) for path in session_data.modalities.vfa],
+                )
             )
 
-        # AFI validation (only if AFI data present and method is AFI, not precomputed)
-        if (session_data.modalities.afi
-                and session_data.modalities.b1_method_detected != "precomputed"):
+        candidate_attr = {
+            "precomputed": "b1_precomputed_candidates",
+            "afi": "afi_4d_candidates",
+        }.get(effective_b1_method)
+        if candidate_attr is not None:
+            candidates = getattr(session_data.modalities, candidate_attr, [])
+            if isinstance(candidates, (list, tuple)) and len(candidates) > 1:
+                names = "\n".join(f"  {path}" for path in candidates)
+                report.messages.append(PreflightMessage(
+                    level="error",
+                    code="DCE_B1_AMBIGUOUS_INPUT",
+                    message=(
+                        f"Multiple eligible {effective_b1_method} B1+ inputs "
+                        f"were found:\n{names}\nProvide one B1+ acquisition "
+                        "for the selected correction method by removing or "
+                        "excluding the other candidates from the input dataset."
+                    ),
+                ))
+
+        # AFI validation only applies when AFI will actually be used.
+        if session_data.modalities.afi and effective_b1_method == "afi":
             report.messages.extend(
                 validate_afi_metadata(
                     session_data.modalities.afi_tr1_ms,
@@ -1140,7 +1222,6 @@ def run_preflight(
         if dce_config is not None and dce_config.b1_method == "afi":
             if not (
                 session_data.modalities.afi
-                and session_data.modalities.afi_mode == "4d"
                 and session_data.modalities.afi_4d_file
             ):
                 report.messages.append(PreflightMessage(
