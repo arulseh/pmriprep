@@ -3,110 +3,74 @@ from __future__ import annotations
 
 import pytest
 
+from pmriprep.utils.aif_provenance import (
+    AIF_INDEPENDENT_MAPS,
+    DCE_AIF_INDEPENDENT_MAPS,
+    DCE_POPULATION_AIF_USAGE,
+    TEMPLATE_AIF_USAGE,
+    _derive_aif_source,
+    _derive_quality_flag,
+    _is_valid_detection_level,
+    apply_aif_sidecar,
+    stamp_aif_dependency,
+)
 
-class TestDeriveAifSource:
-    def test_dsc_synthetic(self) -> None:
-        from pmriprep.utils.aif_provenance import _derive_aif_source
-
-        assert _derive_aif_source({"detection_method": "synthetic"}, "DSC") == "synthetic"
-
-    def test_dsc_measured(self) -> None:
-        from pmriprep.utils.aif_provenance import _derive_aif_source
-
-        assert _derive_aif_source({"detection_method": "atlas_strict"}, "DSC") == "measured"
-
-    def test_dsc_gamma_fit(self) -> None:
-        from pmriprep.utils.aif_provenance import _derive_aif_source
-
-        qc = {"detection_method": "atlas_strict", "gamma_fit_applied": True}
-        assert _derive_aif_source(qc, "DSC") == "gamma_fit_measured"
-
-    def test_dsc_external(self) -> None:
-        from pmriprep.utils.aif_provenance import _derive_aif_source
-
-        assert _derive_aif_source({"detection_method": "external"}, "DSC") == "external"
-
-    def test_dce_population(self) -> None:
-        from pmriprep.utils.aif_provenance import _derive_aif_source
-
-        assert _derive_aif_source({"detection_method": "population"}, "DCE") == "population"
-
-    def test_dce_atlas(self) -> None:
-        from pmriprep.utils.aif_provenance import _derive_aif_source
-
-        assert _derive_aif_source({"detection_method": "atlas"}, "DCE") == "measured"
-
-    def test_dce_whole_brain(self) -> None:
-        from pmriprep.utils.aif_provenance import _derive_aif_source
-
-        assert _derive_aif_source({"detection_method": "whole_brain"}, "DCE") == "measured"
-
-    def test_dce_external(self) -> None:
-        from pmriprep.utils.aif_provenance import _derive_aif_source
-
-        assert _derive_aif_source({"detection_method": "external"}, "DCE") == "external"
-
-    def test_dce_ignores_gamma_fit(self) -> None:
-        from pmriprep.utils.aif_provenance import _derive_aif_source
-
-        qc = {"detection_method": "atlas", "gamma_fit_applied": True}
-        assert _derive_aif_source(qc, "DCE") == "measured"
+@pytest.mark.parametrize(
+    ("qc", "modality", "expected"),
+    [
+        pytest.param({"detection_method": "synthetic"}, "DSC", "synthetic", id="dsc-synthetic"),
+        pytest.param({"detection_method": "atlas_strict"}, "DSC", "measured", id="dsc-measured"),
+        pytest.param(
+            {"detection_method": "atlas_strict", "gamma_fit_applied": True},
+            "DSC", "gamma_fit_measured", id="dsc-gamma-fit",
+        ),
+        pytest.param({"detection_method": "external"}, "DSC", "external", id="dsc-external"),
+        pytest.param({"detection_method": "population"}, "DCE", "population", id="dce-population"),
+        pytest.param({"detection_method": "atlas"}, "DCE", "measured", id="dce-atlas"),
+        pytest.param({"detection_method": "whole_brain"}, "DCE", "measured", id="dce-whole-brain"),
+        pytest.param({"detection_method": "external"}, "DCE", "external", id="dce-external"),
+        pytest.param(
+            {"detection_method": "atlas", "gamma_fit_applied": True},
+            "DCE", "measured", id="dce-ignores-gamma-fit",
+        ),
+    ],
+)
+def test_derive_aif_source(qc: dict, modality: str, expected: str) -> None:
+    assert _derive_aif_source(qc, modality) == expected
 
 
-class TestDeriveQualityFlag:
-    def test_dsc_strict_passes_despite_ranking_score(self) -> None:
-        from pmriprep.utils.aif_provenance import _derive_quality_flag
-
-        qc = {"detection_method": "atlas_strict", "quality_score": 0.14}
-        assert _derive_quality_flag(qc, "measured") == "pass"
-
-    def test_dsc_relaxed_passes(self) -> None:
-        from pmriprep.utils.aif_provenance import _derive_quality_flag
-
-        assert _derive_quality_flag(
-            {"detection_method": "atlas_relaxed"}, "measured"
-        ) == "pass"
-
-    def test_dsc_permissive_warns(self) -> None:
-        from pmriprep.utils.aif_provenance import _derive_quality_flag
-
-        assert _derive_quality_flag(
-            {"detection_method": "atlas_permissive"}, "measured"
-        ) == "warn"
-
-    def test_dsc_compound_tier_uses_worst_tier(self) -> None:
-        from pmriprep.utils.aif_provenance import _derive_quality_flag
-
-        qc = {"detection_method": "atlas_relaxed+atlas_permissive"}
-        assert _derive_quality_flag(qc, "measured") == "warn"
-
-    def test_dce_score_fallback_thresholds(self) -> None:
-        from pmriprep.utils.aif_provenance import _derive_quality_flag
-
-        assert _derive_quality_flag({"quality_score": 0.70}, "measured", "DCE") == "pass"
-        assert _derive_quality_flag({"quality_score": 0.50}, "measured", "DCE") == "warn"
-        assert _derive_quality_flag({"quality_score": 0.49}, "measured", "DCE") == "poor"
-
-    def test_synthetic_forced_poor(self) -> None:
-        from pmriprep.utils.aif_provenance import _derive_quality_flag
-
-        assert _derive_quality_flag({"quality_score": 0.95}, "synthetic") == "poor"
-
-    def test_population_forced_poor(self) -> None:
-        from pmriprep.utils.aif_provenance import _derive_quality_flag
-
-        assert _derive_quality_flag({"quality_score": 0.80}, "population") == "poor"
-
-    def test_missing_score_warns(self) -> None:
-        from pmriprep.utils.aif_provenance import _derive_quality_flag
-
-        assert _derive_quality_flag({}, "measured") == "warn"
-
-    def test_dsc_external_warns(self) -> None:
-        from pmriprep.utils.aif_provenance import _derive_quality_flag
-
-        qc = {"detection_method": "external", "quality_score": 0.95}
-        assert _derive_quality_flag(qc, "external") == "warn"
+@pytest.mark.parametrize(
+    ("qc", "source", "modality", "expected"),
+    [
+        pytest.param(
+            {"detection_method": "atlas_strict", "quality_score": 0.14},
+            "measured", "DSC", "pass", id="dsc-strict-ignores-ranking-score",
+        ),
+        pytest.param({"detection_method": "atlas_relaxed"}, "measured", "DSC", "pass", id="dsc-relaxed"),
+        pytest.param({"detection_method": "atlas_permissive"}, "measured", "DSC", "warn", id="dsc-permissive"),
+        pytest.param(
+            {"detection_method": "atlas_relaxed+atlas_permissive"},
+            "measured", "DSC", "warn", id="dsc-compound-worst-tier",
+        ),
+        pytest.param({"quality_score": 0.70}, "measured", "DCE", "pass", id="dce-score-pass"),
+        pytest.param({"quality_score": 0.50}, "measured", "DCE", "warn", id="dce-score-warn"),
+        pytest.param({"quality_score": 0.49}, "measured", "DCE", "poor", id="dce-score-poor"),
+        pytest.param({"quality_score": 0.95}, "synthetic", "DSC", "poor", id="synthetic-forced-poor"),
+        pytest.param({"quality_score": 0.80}, "population", "DCE", "poor", id="population-forced-poor"),
+        pytest.param({}, "measured", "DSC", "warn", id="missing-score"),
+        pytest.param(
+            {"detection_method": "external", "quality_score": 0.95},
+            "external", "DSC", "warn", id="dsc-external",
+        ),
+    ],
+)
+def test_derive_quality_flag(
+    qc: dict,
+    source: str,
+    modality: str,
+    expected: str,
+) -> None:
+    assert _derive_quality_flag(qc, source, modality) == expected
 
 
 class TestBuildProvenanceBlockDSC:
@@ -279,20 +243,37 @@ class TestBuildProvenanceBlockDCE:
 
 
 class TestApplyAifSidecarDCE:
-    def test_pk_map_dependent(self) -> None:
-        from pmriprep.utils.aif_provenance import apply_aif_sidecar
-
+    @pytest.mark.parametrize(
+        ("map_key", "expected"),
+        [
+            pytest.param(
+                "ktrans", {"AIFDependent": True, "TemplateAIFUsage": "ratio_defensible"},
+                id="pk-map",
+            ),
+            pytest.param(
+                "iauc60", {"AIFDependent": False, "TemplateAIFUsage": "safe"},
+                id="iauc",
+            ),
+            pytest.param(
+                "ser", {"AIFDependent": False, "TemplateAIFUsage": "safe"},
+                id="model-free",
+            ),
+            pytest.param(
+                "ktrans_uncertainty",
+                {"AIFDependent": True, "TemplateAIFUsage": "ratio_defensible"},
+                id="absolute-uncertainty",
+            ),
+        ],
+    )
+    def test_map_dependency(self, map_key: str, expected: dict) -> None:
         sidecar: dict = {}
         qc = {"aif_detection": {"detection_method": "atlas", "quality_score": 0.8}}
-        apply_aif_sidecar(sidecar, "ktrans", qc, modality="DCE")
-        assert sidecar["AIFDependent"] is True
-        assert sidecar["TemplateAIFUsage"] == "ratio_defensible"
+        apply_aif_sidecar(sidecar, map_key, qc, modality="DCE")
+        assert expected.items() <= sidecar.items()
         assert "PerfusionProcessing" in sidecar
 
     def test_pk_map_carries_peak_scaling(self) -> None:
         """Quantitative-map sidecars retain the canonical scaling fragment."""
-        from pmriprep.utils.aif_provenance import apply_aif_sidecar
-
         sidecar: dict = {}
         qc = {
             "aif_detection": {
@@ -313,130 +294,58 @@ class TestApplyAifSidecarDCE:
         assert scaling["EmittedPeak"] == pytest.approx(8.0)
         assert scaling["Policy"] == "one_sided_lower_bound"
 
-    def test_iauc_independent(self) -> None:
-        from pmriprep.utils.aif_provenance import apply_aif_sidecar
-
-        sidecar: dict = {}
-        qc = {"aif_detection": {"detection_method": "atlas", "quality_score": 0.8}}
-        apply_aif_sidecar(sidecar, "iauc60", qc, modality="DCE")
-        assert sidecar["AIFDependent"] is False
-        assert sidecar["TemplateAIFUsage"] == "safe"
-
-    def test_model_free_independent(self) -> None:
-        from pmriprep.utils.aif_provenance import apply_aif_sidecar
-
-        sidecar: dict = {}
-        qc = {"aif_detection": {"detection_method": "atlas", "quality_score": 0.8}}
-        apply_aif_sidecar(sidecar, "ser", qc, modality="DCE")
-        assert sidecar["AIFDependent"] is False
-
-    def test_absolute_uncertainty_is_aif_dependent(self) -> None:
-        from pmriprep.utils.aif_provenance import apply_aif_sidecar
-
-        sidecar: dict = {}
-        qc = {"aif_detection": {"detection_method": "atlas", "quality_score": 0.8}}
-        apply_aif_sidecar(sidecar, "ktrans_uncertainty", qc, modality="DCE")
-        assert sidecar["TemplateAIFUsage"] == "ratio_defensible"
-
     def test_unknown_map_raises(self) -> None:
-        from pmriprep.utils.aif_provenance import apply_aif_sidecar
-
         with pytest.raises(KeyError, match="Unknown DCE map key"):
             apply_aif_sidecar({}, "nonexistent_map", {}, modality="DCE")
 
 
-class TestRegistryInvariants:
-    def test_dce_independent_subset_of_usage_registry(self) -> None:
-        from pmriprep.utils.aif_provenance import (
-            DCE_AIF_INDEPENDENT_MAPS,
-            DCE_POPULATION_AIF_USAGE,
-        )
-
-        assert DCE_AIF_INDEPENDENT_MAPS <= frozenset(DCE_POPULATION_AIF_USAGE)
-
-    def test_dsc_independent_subset_of_usage_registry(self) -> None:
-        from pmriprep.utils.aif_provenance import (
-            AIF_INDEPENDENT_MAPS,
-            TEMPLATE_AIF_USAGE,
-        )
-
-        assert AIF_INDEPENDENT_MAPS <= frozenset(TEMPLATE_AIF_USAGE)
-
-    def test_dce_independent_maps_all_safe(self) -> None:
-        from pmriprep.utils.aif_provenance import (
-            DCE_AIF_INDEPENDENT_MAPS,
-            DCE_POPULATION_AIF_USAGE,
-        )
-
-        for key in DCE_AIF_INDEPENDENT_MAPS:
-            assert DCE_POPULATION_AIF_USAGE[key] == "safe", (
-                f"{key} is independent but not 'safe'"
-            )
-
-    def test_dsc_independent_maps_all_safe(self) -> None:
-        from pmriprep.utils.aif_provenance import (
-            AIF_INDEPENDENT_MAPS,
-            TEMPLATE_AIF_USAGE,
-        )
-
-        for key in AIF_INDEPENDENT_MAPS:
-            assert TEMPLATE_AIF_USAGE[key] == "safe", (
-                f"{key} is independent but not 'safe'"
-            )
+@pytest.mark.parametrize(
+    ("independent", "usage"),
+    [
+        pytest.param(DCE_AIF_INDEPENDENT_MAPS, DCE_POPULATION_AIF_USAGE, id="dce"),
+        pytest.param(AIF_INDEPENDENT_MAPS, TEMPLATE_AIF_USAGE, id="dsc"),
+    ],
+)
+def test_independent_aif_maps_are_registered_safe(
+    independent: frozenset[str],
+    usage: dict[str, str],
+) -> None:
+    assert independent <= frozenset(usage)
+    assert all(usage[key] == "safe" for key in independent)
 
 
-class TestStampAifDependency:
-    def test_registered_key_stamps_both_tags(self) -> None:
-        from pmriprep.utils.aif_provenance import stamp_aif_dependency
-
-        sidecar: dict = {}
-        stamp_aif_dependency(sidecar, "ktrans", modality="DCE")
-        assert sidecar["AIFDependent"] is True
-        assert sidecar["TemplateAIFUsage"] == "ratio_defensible"
-
-    def test_independent_key_stamps_false(self) -> None:
-        from pmriprep.utils.aif_provenance import stamp_aif_dependency
-
-        sidecar: dict = {}
-        stamp_aif_dependency(sidecar, "ser", modality="DCE")
-        assert sidecar["AIFDependent"] is False
-        assert sidecar["TemplateAIFUsage"] == "safe"
-
-    def test_unregistered_key_skips(self) -> None:
-        from pmriprep.utils.aif_provenance import stamp_aif_dependency
-
-        sidecar: dict = {}
-        stamp_aif_dependency(sidecar, "nonexistent", modality="DCE")
-        assert "AIFDependent" not in sidecar
-
-    def test_empty_key_skips_silently(self) -> None:
-        from pmriprep.utils.aif_provenance import stamp_aif_dependency
-
-        sidecar: dict = {}
-        stamp_aif_dependency(sidecar, "", modality="DCE")
-        assert "AIFDependent" not in sidecar
+@pytest.mark.parametrize(
+    ("map_key", "expected"),
+    [
+        pytest.param(
+            "ktrans", {"AIFDependent": True, "TemplateAIFUsage": "ratio_defensible"},
+            id="dependent",
+        ),
+        pytest.param(
+            "ser", {"AIFDependent": False, "TemplateAIFUsage": "safe"},
+            id="independent",
+        ),
+        pytest.param("nonexistent", {}, id="unregistered"),
+        pytest.param("", {}, id="empty"),
+    ],
+)
+def test_stamp_aif_dependency(map_key: str, expected: dict) -> None:
+    sidecar: dict = {}
+    stamp_aif_dependency(sidecar, map_key, modality="DCE")
+    assert sidecar == expected
 
 
-class TestDetectionLevelValidation:
-    def test_dce_atlas_valid(self) -> None:
-        from pmriprep.utils.aif_provenance import _is_valid_detection_level
-
-        assert _is_valid_detection_level("atlas", "DCE") is True
-
-    def test_dce_population_valid(self) -> None:
-        from pmriprep.utils.aif_provenance import _is_valid_detection_level
-
-        assert _is_valid_detection_level("population", "DCE") is True
-
-    def test_dce_dsc_tier_invalid(self) -> None:
-        from pmriprep.utils.aif_provenance import _is_valid_detection_level
-
-        assert _is_valid_detection_level("atlas_strict", "DCE") is False
-
-    def test_dsc_compound_valid(self) -> None:
-        from pmriprep.utils.aif_provenance import _is_valid_detection_level
-
-        assert _is_valid_detection_level("atlas_strict+atlas_relaxed", "DSC") is True
+@pytest.mark.parametrize(
+    ("level", "modality", "expected"),
+    [
+        pytest.param("atlas", "DCE", True, id="dce-atlas"),
+        pytest.param("population", "DCE", True, id="dce-population"),
+        pytest.param("atlas_strict", "DCE", False, id="dce-rejects-dsc-tier"),
+        pytest.param("atlas_strict+atlas_relaxed", "DSC", True, id="dsc-compound"),
+    ],
+)
+def test_detection_level_validation(level: str, modality: str, expected: bool) -> None:
+    assert _is_valid_detection_level(level, modality) is expected
 
 
 class TestDSCRegression:
@@ -457,8 +366,6 @@ class TestDSCRegression:
         assert "PopulationModel" not in block
 
     def test_dsc_apply_sidecar_unchanged(self) -> None:
-        from pmriprep.utils.aif_provenance import apply_aif_sidecar
-
         sidecar: dict = {}
         qc = {"aif_detection": {"detection_method": "atlas_strict", "quality_score": 0.8}}
         apply_aif_sidecar(sidecar, "cbf", qc, modality="DSC")
@@ -543,7 +450,6 @@ class TestPublicArtifactSchema:
         assert "No spatial AIF voxels" in mask["EmptyMaskMeaning"]
 
     def test_curve_mask_and_map_use_identical_dsc_block(self, tmp_path) -> None:
-        from pmriprep.utils.aif_provenance import apply_aif_sidecar
         from pmriprep.utils.sidecar_builders import build_aif_timeseries_sidecar
         from pmriprep.workflows.dsc.datasinks import _build_aif_mask_meta
 

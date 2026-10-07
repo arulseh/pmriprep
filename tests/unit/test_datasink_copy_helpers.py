@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any, Callable
 
+import pytest
 from traits.trait_base import Undefined
 
 
@@ -331,20 +333,23 @@ def test_dce_mean_meta_identifies_all_volume_aggregation() -> None:
     assert out["BaselineFrames"] == 8
 
 
-def test_dsc_aif_mask_sink_skips_nonspatial_curve(tmp_path) -> None:
-    from pmriprep.workflows.dsc.datasinks import _copy_aif_mask
+def _aif_mask_copy(modality: str) -> Callable[..., str]:
+    if modality == "dsc":
+        from pmriprep.workflows.dsc.datasinks import _copy_aif_mask
+    else:
+        from pmriprep.workflows.dce.datasinks import _copy_aif_mask
+    return _copy_aif_mask
 
+
+@pytest.mark.parametrize("modality", ["dsc", "dce"])
+def test_aif_mask_sink_skips_nonspatial_curve(tmp_path: Path, modality: str) -> None:
     source = tmp_path / "empty_mask.nii.gz"
     source.write_bytes(b"placeholder")
     output_dir = tmp_path / "out"
 
-    out = _copy_aif_mask(
-        in_file=str(source),
-        output_dir=str(output_dir),
-        subject="X",
-        session="Y",
-        desc="dscAif",
-        suffix="",
+    out = _aif_mask_copy(modality)(
+        in_file=str(source), output_dir=str(output_dir), subject="X", session="Y",
+        desc=f"{modality}Aif", suffix="",
         meta_dict={"SpatialSupportAvailable": False},
     )
 
@@ -352,75 +357,22 @@ def test_dsc_aif_mask_sink_skips_nonspatial_curve(tmp_path) -> None:
     assert not output_dir.exists()
 
 
-def test_dsc_aif_mask_sink_writes_measured_support(tmp_path) -> None:
-    from pmriprep.workflows.dsc.datasinks import _copy_aif_mask
-
+@pytest.mark.parametrize("modality", ["dsc", "dce"])
+def test_aif_mask_sink_writes_measured_support(tmp_path: Path, modality: str) -> None:
     source = tmp_path / "aif_mask.nii.gz"
     source.write_bytes(b"measured support")
     output_dir = tmp_path / "out"
     metadata = {
-        "Sources": ["bids:raw:sub-X/ses-Y/perf/sub-X_ses-Y_dsc.nii.gz"],
+        "Sources": [f"bids:raw:sub-X/ses-Y/perf/sub-X_ses-Y_{modality}.nii.gz"],
         "SpatialSupportAvailable": True,
     }
 
-    out = _copy_aif_mask(
-        in_file=str(source),
-        output_dir=str(output_dir),
-        subject="X",
-        session="Y",
-        desc="dscAif",
-        suffix="",
-        meta_dict=metadata,
+    out = _aif_mask_copy(modality)(
+        in_file=str(source), output_dir=str(output_dir), subject="X", session="Y",
+        desc=f"{modality}Aif", suffix="", meta_dict=metadata,
     )
 
-    assert out.endswith("sub-X_ses-Y_desc-dscAif_mask.nii.gz")
-    assert Path(out).read_bytes() == b"measured support"
-    assert Path(out).with_suffix("").with_suffix(".json").is_file()
-
-
-def test_dce_aif_mask_sink_skips_nonspatial_curve(tmp_path) -> None:
-    from pmriprep.workflows.dce.datasinks import _copy_aif_mask
-
-    source = tmp_path / "empty_mask.nii.gz"
-    source.write_bytes(b"placeholder")
-    output_dir = tmp_path / "out"
-
-    out = _copy_aif_mask(
-        in_file=str(source),
-        output_dir=str(output_dir),
-        subject="X",
-        session="Y",
-        desc="dceAif",
-        suffix="",
-        meta_dict={"SpatialSupportAvailable": False},
-    )
-
-    assert out == ""
-    assert not output_dir.exists()
-
-
-def test_dce_aif_mask_sink_writes_measured_support(tmp_path) -> None:
-    from pmriprep.workflows.dce.datasinks import _copy_aif_mask
-
-    source = tmp_path / "aif_mask.nii.gz"
-    source.write_bytes(b"measured support")
-    output_dir = tmp_path / "out"
-    metadata = {
-        "Sources": ["bids:raw:sub-X/ses-Y/perf/sub-X_ses-Y_dce.nii.gz"],
-        "SpatialSupportAvailable": True,
-    }
-
-    out = _copy_aif_mask(
-        in_file=str(source),
-        output_dir=str(output_dir),
-        subject="X",
-        session="Y",
-        desc="dceAif",
-        suffix="",
-        meta_dict=metadata,
-    )
-
-    assert out.endswith("sub-X_ses-Y_desc-dceAif_mask.nii.gz")
+    assert out.endswith(f"sub-X_ses-Y_desc-{modality}Aif_mask.nii.gz")
     assert Path(out).read_bytes() == b"measured support"
     assert Path(out).with_suffix("").with_suffix(".json").is_file()
 
@@ -435,146 +387,62 @@ def test_perfusion_spatial_reference_preserves_source_entities() -> None:
     )
 
 
-class TestDCECopyPerfMap:
-    """DCE map copies accept real paths and the supported missing sentinels."""
-
-    def test_undefined_returns_empty_without_writing(self, tmp_path) -> None:
-        from pmriprep.workflows.dce.datasinks import _copy_perf_map
-
-        out = _copy_perf_map(
-            in_file=Undefined,
-            output_dir=str(tmp_path),
-            subject="X",
-            session="Y",
-            desc="dceKtrans",
-            suffix="Ktrans",
-            meta_dict={},
-        )
-        assert out == ""
-        assert not list(tmp_path.rglob("*.nii.gz"))
-        assert not list(tmp_path.rglob("*.json"))
-
-    def test_empty_string_returns_empty_without_writing(self, tmp_path) -> None:
-        from pmriprep.workflows.dce.datasinks import _copy_perf_map
-
-        out = _copy_perf_map(
-            in_file="",
-            output_dir=str(tmp_path),
-            subject="X",
-            session="Y",
-            desc="dceKtrans",
-            suffix="Ktrans",
-            meta_dict={},
-        )
-        assert out == ""
-        assert not list(tmp_path.rglob("*.nii.gz"))
-
-    def test_real_file_copies_with_sidecar(self, tmp_path) -> None:
-        from pmriprep.workflows.dce.datasinks import _copy_perf_map
-
-        src = tmp_path / "src.nii.gz"
-        src.write_bytes(b"fake nifti")
-        out = _copy_perf_map(
-            in_file=str(src),
-            output_dir=str(tmp_path / "out"),
-            subject="X",
-            session="Y",
-            desc="dceKtrans",
-            suffix="Ktrans",
-            meta_dict={"Description": "test"},
-        )
-        assert out.endswith("sub-X_ses-Y_desc-dceKtransKtrans_stat.nii.gz")
-        assert Path(out).is_file()
-        assert Path(out.replace(".nii.gz", ".json")).is_file()
-
-    def test_source_run_entity_prevents_collision(self, tmp_path) -> None:
-        from pmriprep.workflows.dce.datasinks import _copy_perf_map
-
-        src = tmp_path / "src.nii.gz"
-        src.write_bytes(b"fake nifti")
-        outputs = []
-        for run in (1, 2):
-            outputs.append(_copy_perf_map(
-                in_file=str(src), output_dir=str(tmp_path / "out"),
-                subject="X", session="Y", desc="dce", suffix="Ktrans",
-                meta_dict={
-                    "Sources": [
-                        f"bids:raw:sub-X/ses-Y/perf/sub-X_ses-Y_run-{run}_dce.nii.gz"
-                    ],
-                },
-            ))
-        assert outputs[0] != outputs[1]
-        assert "_run-1_" in outputs[0]
-        assert "_run-2_" in outputs[1]
-
-
-class TestDSCCopyPerfMap:
-    """DSC map copies accept real paths and the supported missing sentinels."""
-
-    def test_undefined_returns_empty_without_writing(self, tmp_path) -> None:
+def _perf_map_contract(modality: str) -> tuple[Callable[..., str], str, str, str]:
+    if modality == "dsc":
         from pmriprep.workflows.dsc.datasinks import _copy_perf_map
+        return _copy_perf_map, "dsc", "cbv", "sub-X_ses-Y_desc-dscCbv_stat.nii.gz"
+    from pmriprep.workflows.dce.datasinks import _copy_perf_map
+    return _copy_perf_map, "dceKtrans", "Ktrans", "sub-X_ses-Y_desc-dceKtransKtrans_stat.nii.gz"
 
-        out = _copy_perf_map(
-            in_file=Undefined,
-            output_dir=str(tmp_path),
-            subject="X",
-            session="Y",
-            desc="dsc",
-            suffix="cbv",
-            meta_dict={},
+
+@pytest.mark.parametrize("modality", ["dsc", "dce"])
+@pytest.mark.parametrize("missing", [Undefined, ""], ids=["undefined", "empty"])
+def test_perf_map_missing_input_writes_nothing(
+    tmp_path: Path,
+    modality: str,
+    missing: Any,
+) -> None:
+    copy_map, desc, suffix, _ = _perf_map_contract(modality)
+    out = copy_map(
+        in_file=missing, output_dir=str(tmp_path), subject="X", session="Y",
+        desc=desc, suffix=suffix, meta_dict={},
+    )
+    assert out == ""
+    assert not list(tmp_path.rglob("*.nii.gz"))
+    assert not list(tmp_path.rglob("*.json"))
+
+
+@pytest.mark.parametrize("modality", ["dsc", "dce"])
+def test_perf_map_copies_image_and_sidecar(tmp_path: Path, modality: str) -> None:
+    copy_map, desc, suffix, expected = _perf_map_contract(modality)
+    source = tmp_path / "src.nii.gz"
+    source.write_bytes(b"fake nifti")
+    out = copy_map(
+        in_file=str(source), output_dir=str(tmp_path / "out"), subject="X", session="Y",
+        desc=desc, suffix=suffix, meta_dict={"Description": "test"},
+    )
+    assert out.endswith(expected)
+    assert Path(out).is_file()
+    assert Path(out.replace(".nii.gz", ".json")).is_file()
+
+
+@pytest.mark.parametrize("modality", ["dsc", "dce"])
+def test_perf_map_source_run_entity_prevents_collision(tmp_path: Path, modality: str) -> None:
+    copy_map, _, suffix, _ = _perf_map_contract(modality)
+    source = tmp_path / "src.nii.gz"
+    source.write_bytes(b"fake nifti")
+    outputs = [
+        copy_map(
+            in_file=str(source), output_dir=str(tmp_path / "out"), subject="X", session="Y",
+            desc=modality, suffix=suffix,
+            meta_dict={
+                "Sources": [
+                    f"bids:raw:sub-X/ses-Y/perf/sub-X_ses-Y_run-{run}_{modality}.nii.gz"
+                ]
+            },
         )
-        assert out == ""
-        assert not list(tmp_path.rglob("*.nii.gz"))
-        assert not list(tmp_path.rglob("*.json"))
-
-    def test_empty_string_returns_empty_without_writing(self, tmp_path) -> None:
-        from pmriprep.workflows.dsc.datasinks import _copy_perf_map
-
-        out = _copy_perf_map(
-            in_file="",
-            output_dir=str(tmp_path),
-            subject="X",
-            session="Y",
-            desc="dsc",
-            suffix="cbv",
-            meta_dict={},
-        )
-        assert out == ""
-
-    def test_real_file_copies_with_sidecar(self, tmp_path) -> None:
-        from pmriprep.workflows.dsc.datasinks import _copy_perf_map
-
-        src = tmp_path / "src.nii.gz"
-        src.write_bytes(b"fake nifti")
-        out = _copy_perf_map(
-            in_file=str(src),
-            output_dir=str(tmp_path / "out"),
-            subject="X",
-            session="Y",
-            desc="dsc",
-            suffix="cbv",
-            meta_dict={"Description": "test"},
-        )
-        assert out.endswith("sub-X_ses-Y_desc-dscCbv_stat.nii.gz")
-        assert Path(out).is_file()
-        assert Path(out.replace(".nii.gz", ".json")).is_file()
-
-    def test_source_run_entity_prevents_collision(self, tmp_path) -> None:
-        from pmriprep.workflows.dsc.datasinks import _copy_perf_map
-
-        src = tmp_path / "src.nii.gz"
-        src.write_bytes(b"fake nifti")
-        outputs = []
-        for run in (1, 2):
-            outputs.append(_copy_perf_map(
-                in_file=str(src), output_dir=str(tmp_path / "out"),
-                subject="X", session="Y", desc="dsc", suffix="cbv",
-                meta_dict={
-                    "Sources": [
-                        f"bids:raw:sub-X/ses-Y/perf/sub-X_ses-Y_run-{run}_dsc.nii.gz"
-                    ],
-                },
-            ))
-        assert outputs[0] != outputs[1]
-        assert "_run-1_" in outputs[0]
-        assert "_run-2_" in outputs[1]
+        for run in (1, 2)
+    ]
+    assert outputs[0] != outputs[1]
+    assert "_run-1_" in outputs[0]
+    assert "_run-2_" in outputs[1]
