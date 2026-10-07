@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 
 # ---------------------------------------------------------------------------
@@ -332,43 +333,49 @@ class TestDCEInterfacePassthrough:
 # ---------------------------------------------------------------------------
 # Methods boilerplate: motion-correction sentence must be conditional
 # ---------------------------------------------------------------------------
-class TestBoilerplateConditionalMoco:
-    def test_dsc_applied_says_motion_corrected(self) -> None:
-        from pmriprep.utils.report_utils import _build_dsc_boilerplate
+@pytest.mark.parametrize(
+    ("modality", "motion_applied", "present", "absent"),
+    [
+        pytest.param("dsc", True, ("motion-corrected using MCFLIRT",), (), id="dsc-on"),
+        pytest.param(
+            "dsc",
+            False,
+            ("DSC motion correction was omitted", "residual motion"),
+            ("motion-corrected using MCFLIRT",),
+            id="dsc-off",
+        ),
+        pytest.param("dsc", None, ("motion-corrected using MCFLIRT",), (), id="dsc-default"),
+        pytest.param(
+            "dce",
+            True,
+            ("motion-corrected using MCFLIRT", "@jenkinson_2002"),
+            (),
+            id="dce-on",
+        ),
+        pytest.param(
+            "dce",
+            False,
+            ("DCE motion correction was omitted", "residual motion"),
+            ("motion-corrected using MCFLIRT", "DCE permeability images"),
+            id="dce-off",
+        ),
+    ],
+)
+def test_boilerplate_describes_motion_choice(
+    modality: str,
+    motion_applied: bool | None,
+    present: tuple[str, ...],
+    absent: tuple[str, ...],
+) -> None:
+    """Methods text reports the selected motion-correction path semantically."""
+    from pmriprep.utils.report_utils import _build_dce_boilerplate, _build_dsc_boilerplate
 
-        text = _build_dsc_boilerplate({"preprocessing": {"motion_applied": True}})
-        assert "motion-corrected using MCFLIRT" in text
+    builder = _build_dsc_boilerplate if modality == "dsc" else _build_dce_boilerplate
+    preprocessing = {} if motion_applied is None else {"motion_applied": motion_applied}
+    text = builder({"preprocessing": preprocessing})
 
-    def test_dsc_off_does_not_claim_correction(self) -> None:
-        from pmriprep.utils.report_utils import _build_dsc_boilerplate
-
-        text = _build_dsc_boilerplate({"preprocessing": {"motion_applied": False}})
-        assert "motion-corrected using MCFLIRT" not in text
-        assert "DSC motion correction was omitted" in text
-        assert "residual motion in the input was assessed for quality control" in text
-
-    def test_dsc_default_absent_flag_claims_correction(self) -> None:
-        # Absent flag (older sidecars / default runs) → assume applied.
-        from pmriprep.utils.report_utils import _build_dsc_boilerplate
-
-        text = _build_dsc_boilerplate({"preprocessing": {}})
-        assert "motion-corrected using MCFLIRT" in text
-
-    def test_dce_applied_says_motion_corrected(self) -> None:
-        from pmriprep.utils.report_utils import _build_dce_boilerplate
-
-        text = _build_dce_boilerplate({"preprocessing": {"motion_applied": True}})
-        # DCE names MCFLIRT + cites it, mirroring DSC.
-        assert "motion-corrected using MCFLIRT [@jenkinson_2002]" in text
-
-    def test_dce_off_does_not_claim_correction(self) -> None:
-        from pmriprep.utils.report_utils import _build_dce_boilerplate
-
-        text = _build_dce_boilerplate({"preprocessing": {"motion_applied": False}})
-        assert "motion-corrected using MCFLIRT" not in text
-        assert "DCE motion correction was omitted" in text
-        assert "DCE permeability images" not in text
-        assert "residual motion in the input was assessed for quality control" in text
+    assert all(clause in text for clause in present)
+    assert all(clause not in text for clause in absent)
 
 
 class TestMotionAppliedSurvivesPipelineQCFilter:

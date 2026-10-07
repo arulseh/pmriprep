@@ -3,6 +3,7 @@
 Tests for QC metric classification helpers used in HTML report generation.
 """
 
+import pytest
 
 from pmriprep.utils.report_utils import (
     _classify_b1,
@@ -11,107 +12,64 @@ from pmriprep.utils.report_utils import (
 )
 
 
-class TestClassifyMetric:
-    """Tests for _classify_metric helper function."""
-
-    def test_pass_above_warn_threshold(self) -> None:
-        """Values >= warn_threshold return 'pass'."""
-        assert _classify_metric(25.0, 20.0, 5.0) == "pass"
-
-    def test_pass_at_warn_threshold(self) -> None:
-        """Values exactly at warn_threshold return 'pass'."""
-        assert _classify_metric(20.0, 20.0, 5.0) == "pass"
-
-    def test_warn_between_thresholds(self) -> None:
-        """Values >= min_threshold but < warn_threshold return 'warn'."""
-        assert _classify_metric(10.0, 20.0, 5.0) == "warn"
-
-    def test_warn_at_min_threshold(self) -> None:
-        """Values exactly at min_threshold return 'warn'."""
-        assert _classify_metric(5.0, 20.0, 5.0) == "warn"
-
-    def test_poor_below_min_threshold(self) -> None:
-        """Values < min_threshold return 'poor'."""
-        assert _classify_metric(3.0, 20.0, 5.0) == "poor"
-
-    def test_none_returns_na(self) -> None:
-        """None values return 'na'."""
-        assert _classify_metric(None, 20.0, 5.0) == "na"
-
-    def test_nan_returns_na(self) -> None:
-        """NaN values return 'na'."""
-        assert _classify_metric(float("nan"), 20.0, 5.0) == "na"
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        pytest.param(25.0, "pass", id="above-warn"),
+        pytest.param(20.0, "pass", id="at-warn"),
+        pytest.param(10.0, "warn", id="between"),
+        pytest.param(5.0, "warn", id="at-minimum"),
+        pytest.param(3.0, "poor", id="below-minimum"),
+        pytest.param(None, "na", id="missing"),
+        pytest.param(float("nan"), "na", id="nan"),
+    ],
+)
+def test_classify_metric(value: float | None, expected: str) -> None:
+    """Higher-is-better metrics retain threshold and missing-value semantics."""
+    assert _classify_metric(value, 20.0, 5.0) == expected
 
 
-class TestClassifyB1:
-    """Tests for _classify_b1 helper function."""
-
-    def test_pass_within_range(self) -> None:
-        """Values within [low, high] return 'pass'."""
-        assert _classify_b1(1.0, 0.7, 1.3) == "pass"
-
-    def test_pass_at_low_boundary(self) -> None:
-        """Values exactly at low boundary return 'pass'."""
-        assert _classify_b1(0.7, 0.7, 1.3) == "pass"
-
-    def test_pass_at_high_boundary(self) -> None:
-        """Values exactly at high boundary return 'pass'."""
-        assert _classify_b1(1.3, 0.7, 1.3) == "pass"
-
-    def test_warn_below_low(self) -> None:
-        """Values below low boundary return 'warn'."""
-        assert _classify_b1(0.6, 0.7, 1.3) == "warn"
-
-    def test_warn_above_high(self) -> None:
-        """Values above high boundary return 'warn'."""
-        assert _classify_b1(1.4, 0.7, 1.3) == "warn"
-
-    def test_none_returns_na(self) -> None:
-        """None values return 'na'."""
-        assert _classify_b1(None, 0.7, 1.3) == "na"
-
-    def test_nan_returns_na(self) -> None:
-        """NaN values return 'na'."""
-        assert _classify_b1(float("nan"), 0.7, 1.3) == "na"
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        pytest.param(1.0, "pass", id="within-range"),
+        pytest.param(0.7, "pass", id="at-low"),
+        pytest.param(1.3, "pass", id="at-high"),
+        pytest.param(0.6, "warn", id="below-low"),
+        pytest.param(1.4, "warn", id="above-high"),
+        pytest.param(None, "na", id="missing"),
+        pytest.param(float("nan"), "na", id="nan"),
+    ],
+)
+def test_classify_b1(value: float | None, expected: str) -> None:
+    """B1 classification retains inclusive bounds and missing-value semantics."""
+    assert _classify_b1(value, 0.7, 1.3) == expected
 
 
-class TestClassifyMetricInverse:
-    """Tests for _classify_metric_inverse helper (lower is better)."""
-
-    def test_pass_below_warn_threshold(self) -> None:
-        """Values < warn_threshold return 'pass'."""
-        assert _classify_metric_inverse(3.0, 5, 10) == "pass"
-
-    def test_warn_at_warn_threshold(self) -> None:
-        """Values exactly at warn_threshold return 'warn'."""
-        assert _classify_metric_inverse(5.0, 5, 10) == "warn"
-
-    def test_warn_between_thresholds(self) -> None:
-        """Values >= warn but < poor return 'warn'."""
-        assert _classify_metric_inverse(7.0, 5, 10) == "warn"
-
-    def test_poor_at_poor_threshold(self) -> None:
-        """Values exactly at poor_threshold return 'poor'."""
-        assert _classify_metric_inverse(10.0, 5, 10) == "poor"
-
-    def test_poor_above_poor_threshold(self) -> None:
-        """Values >= poor_threshold return 'poor'."""
-        assert _classify_metric_inverse(15.0, 5, 10) == "poor"
-
-    def test_none_returns_na(self) -> None:
-        """None values return 'na'."""
-        assert _classify_metric_inverse(None, 5, 10) == "na"
-
-    def test_nan_returns_na(self) -> None:
-        """NaN values return 'na'."""
-        assert _classify_metric_inverse(float("nan"), 5, 10) == "na"
-
-    def test_warn_capped_never_poor(self) -> None:
-        """poor=inf warn-caps the class (baseline-SNR usage): never returns 'poor'."""
-        assert _classify_metric_inverse(0.05, 0.10, float("inf")) == "pass"
-        assert _classify_metric_inverse(0.50, 0.10, float("inf")) == "warn"
-        assert _classify_metric_inverse(1.00, 0.10, float("inf")) == "warn"
-        assert _classify_metric_inverse(float("nan"), 0.10, float("inf")) == "na"
+@pytest.mark.parametrize(
+    ("value", "warn", "poor", "expected"),
+    [
+        pytest.param(3.0, 5.0, 10.0, "pass", id="below-warn"),
+        pytest.param(5.0, 5.0, 10.0, "warn", id="at-warn"),
+        pytest.param(7.0, 5.0, 10.0, "warn", id="between"),
+        pytest.param(10.0, 5.0, 10.0, "poor", id="at-poor"),
+        pytest.param(15.0, 5.0, 10.0, "poor", id="above-poor"),
+        pytest.param(None, 5.0, 10.0, "na", id="missing"),
+        pytest.param(float("nan"), 5.0, 10.0, "na", id="nan"),
+        pytest.param(0.05, 0.10, float("inf"), "pass", id="warn-cap-pass"),
+        pytest.param(0.50, 0.10, float("inf"), "warn", id="warn-cap-warn"),
+        pytest.param(1.00, 0.10, float("inf"), "warn", id="warn-cap-high"),
+        pytest.param(float("nan"), 0.10, float("inf"), "na", id="warn-cap-nan"),
+    ],
+)
+def test_classify_metric_inverse(
+    value: float | None,
+    warn: float,
+    poor: float,
+    expected: str,
+) -> None:
+    """Lower-is-better metrics retain boundaries and the warning-only mode."""
+    assert _classify_metric_inverse(value, warn, poor) == expected
 
 
 # ---------------------------------------------------------------------------
