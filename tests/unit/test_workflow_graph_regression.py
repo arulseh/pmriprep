@@ -575,9 +575,8 @@ ANAT_MATRIX: list[tuple[str, Builder]] = [
         has_flair=True,
         has_flair_postcon=True,
     )),
-    ("anat_no_subtraction", lambda b: _anat(
-        b, has_t1w_postcon=True, create_subtraction=False,
-    )),
+    # ``anat_postcon`` also covers explicit ``create_subtraction=False`` because
+    # that value is the default and produces the identical config and graph.
     ("anat_sloppy", lambda b: _anat(b, sloppy=True)),
 ]
 
