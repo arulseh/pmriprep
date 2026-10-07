@@ -2204,350 +2204,191 @@ def test_apply_aif_scale_default_preserves_in_band_and_high_peaks(peak: float) -
     assert np.array_equal(out, curve)
 
 
-# ----- Per-gate basic tests -----------------------------------------------
+# ----- Gate decisions and boundaries --------------------------------------
 
-def test_g1_pass():
-    status, _ = _evaluate_gates(scale_factor=2.0, qc=_make_qc(),
-                                 atlas_tier="MCA_ACA_dce_strict",
-                                 n_voxels=10, hemisphere="bilateral",
-                                 n_slabs_spanned=3)
-    assert status == "PASS"
-
-
-def test_g1_fail_no_g6_escape():
-    """G1 fails, G6 sub-criteria fail too -> revert."""
-    status, _ = _evaluate_gates(scale_factor=4.0, qc=_make_qc(),
-                                 atlas_tier="MCA_ACA_dil_dce_strict",
-                                 n_voxels=2, hemisphere="unilateral_left",
-                                 n_slabs_spanned=1)
-    assert status.startswith("FAIL_G6")
+_DEFAULT_GATE_CONTEXT = {
+    "atlas_tier": "MCA_ACA_dce_strict",
+    "n_voxels": 10,
+    "hemisphere": "bilateral",
+    "n_slabs_spanned": 3,
+}
 
 
-def test_g2_hard_fail():
-    status, _ = _evaluate_gates(scale_factor=1.0,
-                                 qc=_make_qc(late_tail=0.50),
-                                 atlas_tier="MCA_ACA_dce_strict",
-                                 n_voxels=10, hemisphere="bilateral",
-                                 n_slabs_spanned=3)
-    assert status == "FAIL_G2"
-
-
-def test_g3_hard_fail():
-    status, _ = _evaluate_gates(scale_factor=1.0,
-                                 qc=_make_qc(fwhm=25.0),
-                                 atlas_tier="MCA_ACA_dce_strict",
-                                 n_voxels=10, hemisphere="bilateral",
-                                 n_slabs_spanned=3)
-    assert status == "FAIL_G3"
-
-
-def test_g4_hard_fail():
-    status, _ = _evaluate_gates(scale_factor=1.0,
-                                 qc=_make_qc(bumps=5),
-                                 atlas_tier="MCA_ACA_dce_strict",
-                                 n_voxels=10, hemisphere="bilateral",
-                                 n_slabs_spanned=3)
-    assert status == "FAIL_G4"
-
-
-def test_g5_warn():
-    status, dec = _evaluate_gates(scale_factor=1.0,
-                                   qc=_make_qc(ratio_30=0.45),
-                                   atlas_tier="MCA_ACA_dce_strict",
-                                   n_voxels=10, hemisphere="bilateral",
-                                   n_slabs_spanned=3)
-    assert status == "PASS_WARN"
-    assert "G5" in dec["warns"]
-
-
-def test_g5_hard_fail():
-    status, _ = _evaluate_gates(scale_factor=1.0,
-                                 qc=_make_qc(ratio_30=0.55),
-                                 atlas_tier="MCA_ACA_dce_strict",
-                                 n_voxels=10, hemisphere="bilateral",
-                                 n_slabs_spanned=3)
-    assert status == "FAIL_G5"
-
-
-def test_skip_g5_when_ratio_unevaluable():
-    """ratio_30 = None (short TR / scan) does not silently pass; recorded."""
-    status, dec = _evaluate_gates(scale_factor=1.0,
-                                   qc=_make_qc(ratio_30=None),
-                                   atlas_tier="MCA_ACA_dce_strict",
-                                   n_voxels=10, hemisphere="bilateral",
-                                   n_slabs_spanned=3)
-    assert status == "PASS"
-    assert dec["qc"]["ratio_30"] is None
-
-
-# ----- G6 admit / sub-criteria boundaries ---------------------------------
-
-def test_g6_admit_sub08_archetype():
-    """sub-08 case: scale 4.11, strict tier, bilateral n=10, all shape pass."""
-    status, dec = _evaluate_gates(scale_factor=4.11,
-                                   qc=_make_qc(fwhm=17.0, ratio_30=0.48,
-                                               late_tail=0.30, bumps=0),
-                                   atlas_tier="MCA_ACA_dce_strict",
-                                   n_voxels=10, hemisphere="bilateral",
-                                   n_slabs_spanned=3)
-    assert status == "G6_ADMIT"
-    assert "G1_via_G6" in dec["warns"]
-
-
-def test_g1_rejects_pooled_peak_above_dose_ceiling():
-    """A high pooled peak cannot pass after candidate rescue or averaging."""
+@pytest.mark.parametrize(
+    ("scale", "qc_overrides", "context_overrides", "expected", "warn"),
+    [
+        pytest.param(2.0, {}, {}, "PASS", None, id="g1-pass"),
+        pytest.param(
+            4.0,
+            {},
+            {"atlas_tier": "MCA_ACA_dil_dce_strict", "n_voxels": 2,
+             "hemisphere": "unilateral_left", "n_slabs_spanned": 1},
+            "FAIL_G6*",
+            None,
+            id="g1-fail-no-g6-escape",
+        ),
+        pytest.param(1.0, {"late_tail": 0.50}, {}, "FAIL_G2", None, id="g2-hard"),
+        pytest.param(1.0, {"fwhm": 25.0}, {}, "FAIL_G3", None, id="g3-hard"),
+        pytest.param(1.0, {"bumps": 5}, {}, "FAIL_G4", None, id="g4-hard"),
+        pytest.param(1.0, {"ratio_30": 0.45}, {}, "PASS_WARN", "G5", id="g5-warn"),
+        pytest.param(1.0, {"ratio_30": 0.55}, {}, "FAIL_G5", None, id="g5-hard"),
+        pytest.param(1.0, {"ratio_30": None}, {}, "PASS", None, id="g5-unevaluable"),
+        pytest.param(
+            4.11,
+            {"fwhm": 17.0, "ratio_30": 0.48, "late_tail": 0.30, "bumps": 0},
+            {},
+            "G6_ADMIT",
+            "G1_via_G6",
+            id="g6-sub08-archetype",
+        ),
+        pytest.param(
+            1.0, {"peak": 62.9}, {"peak_ceiling_mm": 29.5},
+            "FAIL_G1", None, id="g1-above-dose-ceiling",
+        ),
+        pytest.param(
+            1.0, {"peak": 29.5}, {"peak_ceiling_mm": 29.5},
+            "PASS", None, id="g1-at-dose-ceiling",
+        ),
+        pytest.param(
+            8.83,
+            {"ratio_30": 0.41},
+            {"atlas_tier": "MCA_ACA_dil_dce_strict", "n_voxels": 2,
+             "hemisphere": "unilateral_left", "n_slabs_spanned": 1},
+            "FAIL_G6*",
+            None,
+            id="g6-sparse-unilateral",
+        ),
+        pytest.param(4.0, {}, {"n_voxels": 4, "n_slabs_spanned": 2},
+                     "FAIL_G6_g", None, id="g6-bilateral-n4"),
+        pytest.param(4.0, {}, {"n_voxels": 5, "n_slabs_spanned": 2},
+                     "G6_ADMIT", None, id="g6-bilateral-n5"),
+        pytest.param(4.0, {}, {"n_voxels": 9, "hemisphere": "unilateral_right",
+                               "n_slabs_spanned": 2},
+                     "FAIL_G6_g", None, id="g6-unilateral-n9-two-slabs"),
+        pytest.param(4.0, {}, {"hemisphere": "unilateral_right", "n_slabs_spanned": 2},
+                     "G6_ADMIT", None, id="g6-unilateral-n10-two-slabs"),
+        pytest.param(4.0, {}, {"hemisphere": "unilateral_right", "n_slabs_spanned": 1},
+                     "FAIL_G6_g", None, id="g6-unilateral-n10-one-slab"),
+        pytest.param(5.99, {}, {}, "G6_ADMIT", None, id="g6-scale-5p99"),
+        pytest.param(6.01, {}, {}, "G6_ADMIT", None, id="g6-scale-6p01"),
+        pytest.param(7.5, {}, {}, "G6_ADMIT", None, id="g6-scale-7p5"),
+        pytest.param(8.0, {}, {}, "G6_ADMIT", None, id="g6-scale-ceiling"),
+        pytest.param(8.5, {}, {}, "FAIL_G6_a", None, id="g6-scale-above-ceiling"),
+        pytest.param(4.0, {}, {"atlas_tier": "MCA_ACA_dil_dce_strict"},
+                     "FAIL_G6_f", None, id="g6-dilated-tier"),
+        pytest.param(4.0, {}, {"atlas_tier": "MCA_ACA_dce_relaxed"},
+                     "G6_ADMIT", None, id="g6-relaxed-tier"),
+        pytest.param(4.0, {}, {"atlas_tier": "MCA_ACA_dce_permissive"},
+                     "G6_ADMIT", None, id="g6-permissive-tier"),
+        pytest.param(7.0, {}, {"atlas_tier": "MCA_ACA_dce_relaxed"},
+                     "G6_ADMIT", None, id="g6-relaxed-high-scale"),
+        pytest.param(1.0, {"fwhm": 22.0}, {}, "PASS", None, id="g3-at-fwhm-boundary"),
+        pytest.param(1.0, {"fwhm": 22.01}, {}, "FAIL_G3", None,
+                     id="g3-above-fwhm-boundary"),
+        pytest.param(1.0, {"bumps": 2}, {}, "PASS", None, id="g4-at-bump-boundary"),
+        pytest.param(1.0, {"bumps": 3}, {}, "FAIL_G4", None,
+                     id="g4-above-bump-boundary"),
+        pytest.param(1.0, {"ratio_30": 0.40}, {}, "PASS", None,
+                     id="g5-at-warning-floor"),
+        pytest.param(1.0, {"ratio_30": 0.50}, {}, "PASS_WARN", None,
+                     id="g5-at-hard-boundary"),
+        pytest.param(1.0, {"ratio_30": 0.501}, {}, "FAIL_G5", None,
+                     id="g5-above-hard-boundary"),
+    ],
+)
+def test_gate_decision_cases(
+    scale: float,
+    qc_overrides: dict[str, float | int | None],
+    context_overrides: dict[str, object],
+    expected: str,
+    warn: str | None,
+) -> None:
+    """Each physiological gate and equality boundary keeps its own named case."""
+    context = {**_DEFAULT_GATE_CONTEXT, **context_overrides}
     status, decision = _evaluate_gates(
-        scale_factor=1.0,
-        qc=_make_qc(peak=62.9),
-        atlas_tier="MCA_ACA_dce_strict",
-        n_voxels=10,
-        hemisphere="bilateral",
-        n_slabs_spanned=3,
-        peak_ceiling_mm=29.5,
+        scale_factor=scale,
+        qc=_make_qc(**qc_overrides),
+        **context,
     )
-    assert status == "FAIL_G1"
-    assert decision["failing_gate"] == "G1"
 
-
-def test_g1_accepts_pooled_peak_at_dose_ceiling():
-    """The physiological ceiling is inclusive."""
-    status, _ = _evaluate_gates(
-        scale_factor=1.0,
-        qc=_make_qc(peak=29.5),
-        atlas_tier="MCA_ACA_dce_strict",
-        n_voxels=10,
-        hemisphere="bilateral",
-        n_slabs_spanned=3,
-        peak_ceiling_mm=29.5,
-    )
-    assert status == "PASS"
-
-
-def test_g6_reject_sparse_unilateral_archetype():
-    """Reject a dilated-tier, two-voxel unilateral pool with excessive scale."""
-    status, _ = _evaluate_gates(scale_factor=8.83, qc=_make_qc(ratio_30=0.41),
-                                 atlas_tier="MCA_ACA_dil_dce_strict",
-                                 n_voxels=2, hemisphere="unilateral_left",
-                                 n_slabs_spanned=1)
-    assert status.startswith("FAIL_G6")
-
-
-def test_g6_g_bilateral_boundary_n4_reject():
-    status, _ = _evaluate_gates(scale_factor=4.0, qc=_make_qc(),
-                                 atlas_tier="MCA_ACA_dce_strict",
-                                 n_voxels=4, hemisphere="bilateral",
-                                 n_slabs_spanned=2)
-    assert status == "FAIL_G6_g"
-
-
-def test_g6_g_bilateral_boundary_n5_admit():
-    status, _ = _evaluate_gates(scale_factor=4.0, qc=_make_qc(),
-                                 atlas_tier="MCA_ACA_dce_strict",
-                                 n_voxels=5, hemisphere="bilateral",
-                                 n_slabs_spanned=2)
-    assert status == "G6_ADMIT"
-
-
-def test_g6_g_unilateral_n9_2slabs_reject():
-    status, _ = _evaluate_gates(scale_factor=4.0, qc=_make_qc(),
-                                 atlas_tier="MCA_ACA_dce_strict",
-                                 n_voxels=9, hemisphere="unilateral_right",
-                                 n_slabs_spanned=2)
-    assert status == "FAIL_G6_g"
-
-
-def test_g6_g_unilateral_n10_2slabs_admit():
-    status, _ = _evaluate_gates(scale_factor=4.0, qc=_make_qc(),
-                                 atlas_tier="MCA_ACA_dce_strict",
-                                 n_voxels=10, hemisphere="unilateral_right",
-                                 n_slabs_spanned=2)
-    assert status == "G6_ADMIT"
-
-
-def test_g6_g_unilateral_n10_1slab_reject():
-    """G6(g) unilateral path requires n>=10 AND >=2 distinct slabs."""
-    status, _ = _evaluate_gates(scale_factor=4.0, qc=_make_qc(),
-                                 atlas_tier="MCA_ACA_dce_strict",
-                                 n_voxels=10, hemisphere="unilateral_right",
-                                 n_slabs_spanned=1)
-    assert status == "FAIL_G6_g"
-
-
-def test_g6_a_boundary_scale_5p99_admit():
-    status, _ = _evaluate_gates(scale_factor=5.99, qc=_make_qc(),
-                                 atlas_tier="MCA_ACA_dce_strict",
-                                 n_voxels=10, hemisphere="bilateral",
-                                 n_slabs_spanned=3)
-    assert status == "G6_ADMIT"
-
-
-def test_g6_a_boundary_scale_6p01_admit():
-    """6.01 is below the 8.0 ceiling — admitted via G6."""
-    status, _ = _evaluate_gates(scale_factor=6.01, qc=_make_qc(),
-                                 atlas_tier="MCA_ACA_dce_strict",
-                                 n_voxels=10, hemisphere="bilateral",
-                                 n_slabs_spanned=3)
-    assert status == "G6_ADMIT"
-
-
-def test_g6_a_scale_7p5_admit():
-    status, _ = _evaluate_gates(scale_factor=7.5, qc=_make_qc(),
-                                 atlas_tier="MCA_ACA_dce_strict",
-                                 n_voxels=10, hemisphere="bilateral",
-                                 n_slabs_spanned=3)
-    assert status == "G6_ADMIT"
-
-
-def test_g6_a_boundary_scale_8p0_admit():
-    """Exact ceiling boundary — 8.0 passes via <=."""
-    status, _ = _evaluate_gates(scale_factor=8.0, qc=_make_qc(),
-                                 atlas_tier="MCA_ACA_dce_strict",
-                                 n_voxels=10, hemisphere="bilateral",
-                                 n_slabs_spanned=3)
-    assert status == "G6_ADMIT"
-
-
-def test_g6_a_scale_8p5_reject():
-    status, _ = _evaluate_gates(scale_factor=8.5, qc=_make_qc(),
-                                 atlas_tier="MCA_ACA_dce_strict",
-                                 n_voxels=10, hemisphere="bilateral",
-                                 n_slabs_spanned=3)
-    assert status == "FAIL_G6_a"
-
-
-def test_g6_f_wrong_tier_isolated_reject():
-    """Isolates G6(f) from (a)/(g): scale 4 OK, n=10 bilateral OK, but tier=dilated."""
-    status, _ = _evaluate_gates(scale_factor=4.0, qc=_make_qc(),
-                                 atlas_tier="MCA_ACA_dil_dce_strict",
-                                 n_voxels=10, hemisphere="bilateral",
-                                 n_slabs_spanned=3)
-    assert status == "FAIL_G6_f"
-
-
-def test_g6_f_relaxed_tier_admit():
-    status, _ = _evaluate_gates(scale_factor=4.0, qc=_make_qc(),
-                                 atlas_tier="MCA_ACA_dce_relaxed",
-                                 n_voxels=10, hemisphere="bilateral",
-                                 n_slabs_spanned=3)
-    assert status == "G6_ADMIT"
-
-
-def test_g6_f_permissive_tier_admit():
-    status, _ = _evaluate_gates(scale_factor=4.0, qc=_make_qc(),
-                                 atlas_tier="MCA_ACA_dce_permissive",
-                                 n_voxels=10, hemisphere="bilateral",
-                                 n_slabs_spanned=3)
-    assert status == "G6_ADMIT"
-
-
-def test_g6_relaxed_tier_high_scale_admit():
-    """Combined: relaxed tier at scale 7.0 — exercises both ceiling raise and tier extension."""
-    status, _ = _evaluate_gates(scale_factor=7.0, qc=_make_qc(),
-                                 atlas_tier="MCA_ACA_dce_relaxed",
-                                 n_voxels=10, hemisphere="bilateral",
-                                 n_slabs_spanned=3)
-    assert status == "G6_ADMIT"
-
-
-# ----- Threshold boundaries -----------------------------------------------
-
-def test_g3_fwhm_boundary_22p0_pass():
-    status, _ = _evaluate_gates(scale_factor=1.0, qc=_make_qc(fwhm=22.0),
-                                 atlas_tier="MCA_ACA_dce_strict",
-                                 n_voxels=10, hemisphere="bilateral",
-                                 n_slabs_spanned=3)
-    assert status == "PASS"
-
-
-def test_g3_fwhm_boundary_22p01_hard():
-    status, _ = _evaluate_gates(scale_factor=1.0, qc=_make_qc(fwhm=22.01),
-                                 atlas_tier="MCA_ACA_dce_strict",
-                                 n_voxels=10, hemisphere="bilateral",
-                                 n_slabs_spanned=3)
-    assert status == "FAIL_G3"
-
-
-def test_g4_bumps_boundary_2_pass():
-    status, _ = _evaluate_gates(scale_factor=1.0, qc=_make_qc(bumps=2),
-                                 atlas_tier="MCA_ACA_dce_strict",
-                                 n_voxels=10, hemisphere="bilateral",
-                                 n_slabs_spanned=3)
-    assert status == "PASS"
-
-
-def test_g4_bumps_boundary_3_hard():
-    status, _ = _evaluate_gates(scale_factor=1.0, qc=_make_qc(bumps=3),
-                                 atlas_tier="MCA_ACA_dce_strict",
-                                 n_voxels=10, hemisphere="bilateral",
-                                 n_slabs_spanned=3)
-    assert status == "FAIL_G4"
-
-
-def test_g5_boundary_0p40_pass():
-    """ratio_30 == 0.40 is at the WARN floor (strict ineq for WARN)."""
-    status, _ = _evaluate_gates(scale_factor=1.0, qc=_make_qc(ratio_30=0.40),
-                                 atlas_tier="MCA_ACA_dce_strict",
-                                 n_voxels=10, hemisphere="bilateral",
-                                 n_slabs_spanned=3)
-    assert status == "PASS"
-
-
-def test_g5_boundary_0p50_warn():
-    """ratio_30 == 0.50 still WARN (HARD requires strict >0.50)."""
-    status, _ = _evaluate_gates(scale_factor=1.0, qc=_make_qc(ratio_30=0.50),
-                                 atlas_tier="MCA_ACA_dce_strict",
-                                 n_voxels=10, hemisphere="bilateral",
-                                 n_slabs_spanned=3)
-    assert status == "PASS_WARN"
-
-
-def test_g5_boundary_0p501_hard():
-    status, _ = _evaluate_gates(scale_factor=1.0, qc=_make_qc(ratio_30=0.501),
-                                 atlas_tier="MCA_ACA_dce_strict",
-                                 n_voxels=10, hemisphere="bilateral",
-                                 n_slabs_spanned=3)
-    assert status == "FAIL_G5"
+    if expected.endswith("*"):
+        assert status.startswith(expected[:-1])
+    else:
+        assert status == expected
+    if warn is not None:
+        assert warn in decision["warns"]
+    if qc_overrides.get("ratio_30", ...) is None:
+        assert decision["qc"]["ratio_30"] is None
+    if expected == "FAIL_G1":
+        assert decision["failing_gate"] == "G1"
 
 
 # ----- Composite trim metric selection ------------------------------------
 
-def test_select_worst_for_trim_g1_drops_lowest_peak():
-    metrics = [{"peak_mm": 5.0, "washout": 0.9, "fwhm_seconds": 14.0},
-               {"peak_mm": 1.0, "washout": 0.9, "fwhm_seconds": 14.0},
-               {"peak_mm": 3.0, "washout": 0.9, "fwhm_seconds": 14.0}]
-    assert _select_worst_for_trim(metrics, [1.0, 1.0, 1.0], "G1") == 1
+def _trim_metric(
+    *,
+    peak: float = 5.0,
+    washout: float = 0.9,
+    fwhm: float = 14.0,
+) -> dict[str, float]:
+    return {"peak_mm": peak, "washout": washout, "fwhm_seconds": fwhm}
 
 
-def test_select_worst_for_trim_g2_drops_lowest_washout():
-    metrics = [{"peak_mm": 5.0, "washout": 0.9, "fwhm_seconds": 14.0},
-               {"peak_mm": 5.0, "washout": 0.3, "fwhm_seconds": 14.0},
-               {"peak_mm": 5.0, "washout": 0.8, "fwhm_seconds": 14.0}]
-    assert _select_worst_for_trim(metrics, [1.0, 1.0, 1.0], "G2") == 1
-
-
-def test_select_worst_for_trim_g3_drops_widest_fwhm():
-    metrics = [{"peak_mm": 5.0, "washout": 0.9, "fwhm_seconds": 14.0},
-               {"peak_mm": 5.0, "washout": 0.9, "fwhm_seconds": 25.0},
-               {"peak_mm": 5.0, "washout": 0.9, "fwhm_seconds": 18.0}]
-    assert _select_worst_for_trim(metrics, [1.0, 1.0, 1.0], "G3") == 1
-
-
-def test_select_worst_for_trim_g4_drops_lowest_washout():
-    metrics = [{"peak_mm": 5.0, "washout": 0.9},
-               {"peak_mm": 5.0, "washout": 0.2}]
-    assert _select_worst_for_trim(metrics, [1.0, 1.0], "G4") == 1
-
-
-def test_select_worst_for_trim_fallback_drops_lowest_score():
-    metrics = [{"peak_mm": 5.0, "washout": 0.9},
-               {"peak_mm": 5.0, "washout": 0.9}]
-    assert _select_worst_for_trim(metrics, [0.9, 0.3], "unknown") == 1
-
-
-def test_select_worst_tiebreak_lowest_index():
-    metrics = [{"peak_mm": 5.0, "washout": 0.9},
-               {"peak_mm": 5.0, "washout": 0.9}]
-    assert _select_worst_for_trim(metrics, [1.0, 1.0], "G1") == 0
+@pytest.mark.parametrize(
+    ("gate", "metrics", "scores", "expected"),
+    [
+        pytest.param(
+            "G1",
+            [_trim_metric(), _trim_metric(peak=1.0), _trim_metric(peak=3.0)],
+            [1.0, 1.0, 1.0],
+            1,
+            id="g1-lowest-peak",
+        ),
+        pytest.param(
+            "G2",
+            [_trim_metric(), _trim_metric(washout=0.3), _trim_metric(washout=0.8)],
+            [1.0, 1.0, 1.0],
+            1,
+            id="g2-lowest-washout",
+        ),
+        pytest.param(
+            "G3",
+            [_trim_metric(), _trim_metric(fwhm=25.0), _trim_metric(fwhm=18.0)],
+            [1.0, 1.0, 1.0],
+            1,
+            id="g3-widest-fwhm",
+        ),
+        pytest.param(
+            "G4",
+            [_trim_metric(), _trim_metric(washout=0.2)],
+            [1.0, 1.0],
+            1,
+            id="g4-lowest-washout",
+        ),
+        pytest.param(
+            "unknown",
+            [_trim_metric(), _trim_metric()],
+            [0.9, 0.3],
+            1,
+            id="fallback-lowest-score",
+        ),
+        pytest.param(
+            "G1",
+            [_trim_metric(), _trim_metric()],
+            [1.0, 1.0],
+            0,
+            id="tie-lowest-index",
+        ),
+    ],
+)
+def test_select_worst_for_trim_routes_metric(
+    gate: str,
+    metrics: list[dict[str, float]],
+    scores: list[float],
+    expected: int,
+) -> None:
+    """Trimming uses the gate-specific metric and deterministic tie-break."""
+    assert _select_worst_for_trim(metrics, scores, gate) == expected
 
 
 # ----- _count_slabs_spanned ----------------------------------------------
