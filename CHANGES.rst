@@ -1,3 +1,48 @@
+1.0.0rc3 (2026-10-07)
+=====================
+
+Numerical changes
+-----------------
+
+* CHG: Implement DSC CPI with joint signal-domain inference, including signed
+  BSW-guided leakage estimation, isolation of local-fit failures, and optional
+  oSVD fallback for rejected fits.
+* FIX: Enforce consistent DCE parameter domains and finite-rate bounds across
+  scalar, batched, and Bayesian fits; stabilize correlated bounded
+  updates and reject numerical contact with configured rate ceilings.
+* FIX: Prevent premature 2CXM convergence and Patlak uncertainty-frame
+  overflow while preserving model-specific zero-rate behavior.
+* FIX: Preserve DSC response tails for negative fitted delay and align
+  parametric residue-shape and MTT support across fitting paths.
+* FIX: Preserve supratentorial NAWM selection and exclude invalid NAWM support
+  from quantitative normalization.
+* FIX: Improve DCE reference selection, registration assessment, and AIF peak
+  plausibility checks, failing closed when required quantitative checks cannot
+  be completed.
+
+Input and output contracts
+--------------------------
+
+* CHG: Remove the experimental vascular DSC method and its CTH output.
+* ENH: Report fitted DSC delay and CPI spacing boundary contact without treating
+  contact alone as a quality failure.
+* FIX: Separate regional statistics for residue-integral CBV and AUC-CBV while
+  retaining AUC-CBV as the source of normalized CBV.
+* ENH: Disclose regional mixing caused by CPI-to-oSVD voxel fallback and align
+  the generated DSC and DCE methods descriptions with executed processing.
+* FIX: Emit interoperable affine-transform derivatives and record independent
+  registration-quality measurements.
+* FIX: Reject ambiguous, multi-echo, or hybrid DSC and DCE inputs and ambiguous
+  DCE VFA/B1 calibration inputs instead of selecting a candidate silently.
+
+Performance and maintenance
+---------------------------
+
+* ENH: Add CPI fitting progress and avoid repeated CPI spatial readout work
+  between spatial variational sweeps.
+* MNT: Consolidate duplicate and editorially coupled tests while preserving
+  scientific recovery, workflow, provenance, and output-contract coverage.
+
 1.0.0rc2 (2026-08-26)
 =====================
 
