@@ -185,64 +185,39 @@ class TestValidateDSCMetadata:
         # Should have no errors (may have no messages at all)
         assert not any(m.level == "error" for m in msgs)
 
-    def test_missing_te(self):
+    @pytest.mark.parametrize(
+        ("field", "value", "code", "level", "message_fragment"),
+        [
+            pytest.param("te", None, "DSC_MISSING_TE", "error", None, id="missing-te"),
+            pytest.param("te", -0.01, "DSC_INVALID_TE", "error", None, id="negative-te"),
+            pytest.param("te", 0.0, "DSC_INVALID_TE", "error", None, id="zero-te"),
+            pytest.param("te", 30.0, "DSC_TE_RANGE", "error", "seconds", id="te-in-ms"),
+            pytest.param("te", 0.001, "DSC_TE_RANGE", "error", None, id="te-too-short"),
+            pytest.param("volume_tr", None, "DSC_MISSING_TR", "error", None, id="missing-tr"),
+            pytest.param("volume_tr", -1.0, "DSC_INVALID_TR", "error", None, id="negative-tr"),
+            pytest.param("volume_tr", 4.0, "DSC_TR_COARSE", "warning", None, id="coarse-tr"),
+            pytest.param(
+                "field_strength", None, "DSC_MISSING_FIELD_STRENGTH", "error", None,
+                id="missing-field-strength",
+            ),
+        ],
+    )
+    def test_scalar_metadata_validation(
+        self,
+        field: str,
+        value: float | None,
+        code: str,
+        level: str,
+        message_fragment: str | None,
+    ) -> None:
         sc = _valid_dsc_sidecar()
-        sc["te"] = None
+        sc[field] = value
         msgs = validate_dsc_metadata(sc)
-        assert any(m.code == "DSC_MISSING_TE" for m in msgs)
-
-    def test_negative_te(self):
-        sc = _valid_dsc_sidecar()
-        sc["te"] = -0.01
-        msgs = validate_dsc_metadata(sc)
-        assert any(m.code == "DSC_INVALID_TE" for m in msgs)
-
-    def test_zero_te(self):
-        sc = _valid_dsc_sidecar()
-        sc["te"] = 0.0
-        msgs = validate_dsc_metadata(sc)
-        assert any(m.code == "DSC_INVALID_TE" for m in msgs)
-
-    def test_te_in_milliseconds(self):
-        """TE=30 (ms instead of s) should trigger range error."""
-        sc = _valid_dsc_sidecar()
-        sc["te"] = 30.0  # ms, not s
-        msgs = validate_dsc_metadata(sc)
-        assert any(m.code == "DSC_TE_RANGE" for m in msgs)
-        assert "seconds" in msgs[0].message.lower() or "BIDS" in msgs[0].message
-
-    def test_te_too_small(self):
-        sc = _valid_dsc_sidecar()
-        sc["te"] = 0.001  # 1ms — too short for DSC
-        msgs = validate_dsc_metadata(sc)
-        assert any(m.code == "DSC_TE_RANGE" for m in msgs)
-
-    def test_missing_tr(self):
-        sc = _valid_dsc_sidecar()
-        sc["volume_tr"] = None
-        msgs = validate_dsc_metadata(sc)
-        assert any(m.code == "DSC_MISSING_TR" for m in msgs)
-
-    def test_negative_tr(self):
-        sc = _valid_dsc_sidecar()
-        sc["volume_tr"] = -1.0
-        msgs = validate_dsc_metadata(sc)
-        assert any(m.code == "DSC_INVALID_TR" for m in msgs)
-
-    def test_coarse_tr_warning(self):
-        sc = _valid_dsc_sidecar()
-        sc["volume_tr"] = 4.0
-        msgs = validate_dsc_metadata(sc)
-        assert any(m.code == "DSC_TR_COARSE" for m in msgs)
-        assert all(m.level == "warning" for m in msgs if m.code == "DSC_TR_COARSE")
-
-    def test_missing_field_strength(self):
-        sc = _valid_dsc_sidecar()
-        sc["field_strength"] = None
-        msgs = validate_dsc_metadata(sc)
-        fs_msgs = [m for m in msgs if m.code == "DSC_MISSING_FIELD_STRENGTH"]
-        assert len(fs_msgs) == 1
-        assert fs_msgs[0].level == "error"
+        matching = [message for message in msgs if message.code == code]
+        assert len(matching) == 1
+        assert matching[0].level == level
+        if message_fragment is not None:
+            assert message_fragment in matching[0].message.lower()
 
     # --- Sequence type validation ---
 
@@ -254,19 +229,14 @@ class TestValidateDSCMetadata:
                      or "HYBRID" in m.code or "SEQUENCE_TYPE" in m.code}
         assert len(seq_codes) == 0
 
-    def test_spin_echo_error(self):
+    @pytest.mark.parametrize("tokens", [{"SE"}, {"SE", "EP"}])
+    def test_spin_echo_error(self, tokens: set[str]) -> None:
         sc = _valid_dsc_sidecar()
-        sc["scanning_sequence"] = frozenset({"SE", "EP"})
+        sc["scanning_sequence"] = frozenset(tokens)
         msgs = validate_dsc_metadata(sc)
         assert any(m.code == "DSC_SPIN_ECHO_UNSUPPORTED" for m in msgs)
         assert any(m.level == "error" for m in msgs
                    if m.code == "DSC_SPIN_ECHO_UNSUPPORTED")
-
-    def test_pure_spin_echo_error(self):
-        sc = _valid_dsc_sidecar()
-        sc["scanning_sequence"] = frozenset({"SE"})
-        msgs = validate_dsc_metadata(sc)
-        assert any(m.code == "DSC_SPIN_ECHO_UNSUPPORTED" for m in msgs)
 
     @pytest.mark.parametrize("tokens", [{"GR", "SE"}, {"GR", "SE", "EP"}])
     def test_hybrid_gr_se_error(self, tokens: set[str]) -> None:
@@ -313,54 +283,33 @@ class TestValidateDCEMetadata:
         msgs = validate_dce_metadata(sc, cfg)
         assert not any(m.level == "error" for m in msgs)
 
-    def test_missing_flip_angle(self):
+    @pytest.mark.parametrize(
+        ("updates", "code"),
+        [
+            pytest.param({"flip_angle": None}, "DCE_MISSING_FLIP_ANGLE", id="missing-flip-angle"),
+            pytest.param({"flip_angle": -5.0}, "DCE_INVALID_FLIP_ANGLE", id="negative-flip-angle"),
+            pytest.param({"flip_angle": 95.0}, "DCE_INVALID_FLIP_ANGLE", id="flip-angle-over-90"),
+            pytest.param(
+                {"volume_tr": None, "pulse_tr": None}, "DCE_MISSING_TR", id="missing-all-tr",
+            ),
+            pytest.param(
+                {"volume_tr": 0.003, "pulse_tr": 7.0}, "DCE_TR_SWAPPED", id="swapped-tr",
+            ),
+            pytest.param(
+                {"volume_tr": None, "pulse_tr": 0.004}, "DCE_NO_VOLUME_TR",
+                id="missing-volume-tr",
+            ),
+            pytest.param(
+                {"pulse_tr": None, "volume_tr": 7.0}, "DCE_NO_PULSE_TR",
+                id="missing-pulse-tr",
+            ),
+        ],
+    )
+    def test_scalar_metadata_validation(self, updates: dict, code: str) -> None:
         sc = _valid_dce_sidecar()
-        sc["flip_angle"] = None
+        sc.update(updates)
         msgs = validate_dce_metadata(sc, DCEConfig())
-        assert any(m.code == "DCE_MISSING_FLIP_ANGLE" for m in msgs)
-
-    def test_negative_flip_angle(self):
-        sc = _valid_dce_sidecar()
-        sc["flip_angle"] = -5.0
-        msgs = validate_dce_metadata(sc, DCEConfig())
-        assert any(m.code == "DCE_INVALID_FLIP_ANGLE" for m in msgs)
-
-    def test_flip_angle_in_radians(self):
-        """FlipAngle=0.26 (radians ~15deg) should trigger >90 or <=0 error."""
-        sc = _valid_dce_sidecar()
-        sc["flip_angle"] = 95.0  # invalid
-        msgs = validate_dce_metadata(sc, DCEConfig())
-        assert any(m.code == "DCE_INVALID_FLIP_ANGLE" for m in msgs)
-
-    def test_missing_all_tr(self):
-        sc = _valid_dce_sidecar()
-        sc["volume_tr"] = None
-        sc["pulse_tr"] = None
-        msgs = validate_dce_metadata(sc, DCEConfig())
-        assert any(m.code == "DCE_MISSING_TR" for m in msgs)
-
-    def test_tr_swapped(self):
-        sc = _valid_dce_sidecar()
-        sc["volume_tr"] = 0.003  # volume < pulse
-        sc["pulse_tr"] = 7.0
-        msgs = validate_dce_metadata(sc, DCEConfig())
-        assert any(m.code == "DCE_TR_SWAPPED" for m in msgs)
-
-    def test_no_volume_tr_3d_dce(self):
-        """Only pulse TR < 0.1s, no volume TR → error."""
-        sc = _valid_dce_sidecar()
-        sc["volume_tr"] = None
-        sc["pulse_tr"] = 0.004
-        msgs = validate_dce_metadata(sc, DCEConfig())
-        assert any(m.code == "DCE_NO_VOLUME_TR" for m in msgs)
-
-    def test_no_pulse_tr_long_volume(self):
-        """Only volume TR > 1.0s, no pulse TR → error."""
-        sc = _valid_dce_sidecar()
-        sc["pulse_tr"] = None
-        sc["volume_tr"] = 7.0
-        msgs = validate_dce_metadata(sc, DCEConfig())
-        assert any(m.code == "DCE_NO_PULSE_TR" for m in msgs)
+        assert any(message.code == code for message in msgs)
 
     # --- Sequence type validation ---
 
@@ -375,19 +324,14 @@ class TestValidateDCEMetadata:
                      or "HYBRID" in m.code}
         assert len(seq_codes) == 0
 
-    def test_dce_spin_echo_error(self):
+    @pytest.mark.parametrize("tokens", [{"SE"}, {"SE", "EP"}])
+    def test_dce_spin_echo_error(self, tokens: set[str]) -> None:
         sc = _valid_dce_sidecar()
-        sc["scanning_sequence"] = frozenset({"SE"})
+        sc["scanning_sequence"] = frozenset(tokens)
         msgs = validate_dce_metadata(sc, DCEConfig())
         assert any(m.code == "DCE_SPIN_ECHO_UNSUPPORTED" for m in msgs)
         assert any(m.level == "error" for m in msgs
                    if m.code == "DCE_SPIN_ECHO_UNSUPPORTED")
-
-    def test_dce_spin_echo_epi_error(self):
-        sc = _valid_dce_sidecar()
-        sc["scanning_sequence"] = frozenset({"SE", "EP"})
-        msgs = validate_dce_metadata(sc, DCEConfig())
-        assert any(m.code == "DCE_SPIN_ECHO_UNSUPPORTED" for m in msgs)
 
     @pytest.mark.parametrize("tokens", [{"GR", "SE"}, {"GR", "SE", "EP"}])
     def test_dce_hybrid_gr_se_error(self, tokens: set[str]) -> None:
@@ -492,21 +436,12 @@ class TestValidateDCEMetadata:
         msgs = validate_dce_metadata(sc, cfg)
         assert any(m.code == "DCE_R1_OUT_OF_RANGE" for m in msgs)
 
-    def test_missing_field_strength_with_agent(self):
+    @pytest.mark.parametrize("agent", ["Gadovist", None], ids=["known-agent", "no-agent"])
+    def test_missing_field_strength(self, agent: str | None) -> None:
         sc = _valid_dce_sidecar()
         sc["field_strength"] = None
         sc["r1_relaxivity"] = None
-        sc["contrast_agent"] = "Gadovist"
-        msgs = validate_dce_metadata(sc, DCEConfig())
-        fs_msgs = [m for m in msgs if m.code == "DCE_MISSING_FIELD_STRENGTH"]
-        assert len(fs_msgs) == 1
-        assert fs_msgs[0].level == "error"
-
-    def test_missing_field_strength_no_agent(self):
-        sc = _valid_dce_sidecar()
-        sc["field_strength"] = None
-        sc["r1_relaxivity"] = None
-        sc["contrast_agent"] = None
+        sc["contrast_agent"] = agent
         msgs = validate_dce_metadata(sc, DCEConfig())
         fs_msgs = [m for m in msgs if m.code == "DCE_MISSING_FIELD_STRENGTH"]
         assert len(fs_msgs) == 1
@@ -618,26 +553,23 @@ class TestValidateVFAMetadata:
 # validate_afi_metadata tests
 # ===========================================================================
 
-class TestValidateAFIMetadata:
-    def test_valid_afi(self):
-        msgs = validate_afi_metadata(20.0, 100.0)
-        assert len(msgs) == 0
-
-    def test_missing_tr1(self):
-        msgs = validate_afi_metadata(None, 100.0)
-        assert any(m.code == "AFI_MISSING_TR" for m in msgs)
-
-    def test_missing_tr2(self):
-        msgs = validate_afi_metadata(20.0, None)
-        assert any(m.code == "AFI_MISSING_TR" for m in msgs)
-
-    def test_tr_order_wrong(self):
-        msgs = validate_afi_metadata(100.0, 20.0)
-        assert any(m.code == "AFI_TR_ORDER" for m in msgs)
-
-    def test_tr_equal(self):
-        msgs = validate_afi_metadata(50.0, 50.0)
-        assert any(m.code == "AFI_TR_ORDER" for m in msgs)
+@pytest.mark.parametrize(
+    ("tr1", "tr2", "expected"),
+    [
+        pytest.param(20.0, 100.0, None, id="valid"),
+        pytest.param(None, 100.0, "AFI_MISSING_TR", id="missing-tr1"),
+        pytest.param(20.0, None, "AFI_MISSING_TR", id="missing-tr2"),
+        pytest.param(100.0, 20.0, "AFI_TR_ORDER", id="reversed"),
+        pytest.param(50.0, 50.0, "AFI_TR_ORDER", id="equal"),
+    ],
+)
+def test_validate_afi_metadata(
+    tr1: float | None,
+    tr2: float | None,
+    expected: str | None,
+) -> None:
+    codes = {message.code for message in validate_afi_metadata(tr1, tr2)}
+    assert (expected is None and not codes) or expected in codes
 
 
 # ===========================================================================
@@ -944,17 +876,17 @@ class TestRunPreflight:
 # ===========================================================================
 
 class TestDCEConfigR1:
-    def test_default_none(self):
-        cfg = DCEConfig()
-        assert cfg.r1_relaxivity is None
-
-    def test_set_float(self):
-        cfg = DCEConfig(r1_relaxivity=5.0)
-        assert cfg.r1_relaxivity == 5.0
-
-    def test_coerce_from_string(self):
-        cfg = DCEConfig(r1_relaxivity="4.5")  # type: ignore[arg-type]
-        assert cfg.r1_relaxivity == 4.5
+    @pytest.mark.parametrize(
+        ("kwargs", "expected"),
+        [
+            pytest.param({}, None, id="default"),
+            pytest.param({"r1_relaxivity": 5.0}, 5.0, id="float"),
+            pytest.param({"r1_relaxivity": "4.5"}, 4.5, id="numeric-string"),
+        ],
+    )
+    def test_valid_values(self, kwargs: dict, expected: float | None) -> None:
+        cfg = DCEConfig(**kwargs)
+        assert cfg.r1_relaxivity == expected
 
     def test_invalid_type_raises(self):
         with pytest.raises(TypeError, match="r1_relaxivity"):
