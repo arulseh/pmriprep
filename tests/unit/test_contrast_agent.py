@@ -24,168 +24,131 @@ from pmriprep.utils.contrast_agent import (
 )
 
 
-class TestParseContrastAgentString:
-    """Tests for parsing DICOM/BIDS contrast agent strings."""
-
-    def test_agent_with_european_volume(self) -> None:
-        """Parse 'gadovist 3,5 ml' with comma decimal and ml suffix."""
-        result = parse_contrast_agent_string("gadovist 3,5 ml")
-        assert result["agent_name"] == "gadovist"
-        assert result["volume_ml"] == pytest.approx(3.5)
-
-    def test_agent_with_integer_volume(self) -> None:
-        """Parse 'Magnevist 10ml' with integer volume."""
-        result = parse_contrast_agent_string("Magnevist 10ml")
-        assert result["agent_name"] == "Magnevist"
-        assert result["volume_ml"] == pytest.approx(10.0)
-
-    def test_agent_with_volume_no_ml_suffix(self) -> None:
-        """Parse 'Vueway 3,5' without ml suffix extracts volume."""
-        result = parse_contrast_agent_string("Vueway 3,5")
-        assert result["agent_name"] == "Vueway"
-        assert result["volume_ml"] == pytest.approx(3.5)
-
-    def test_agent_name_only(self) -> None:
-        """Parse 'gadobutrol' with no volume info."""
-        result = parse_contrast_agent_string("gadobutrol")
-        assert result["agent_name"] == "gadobutrol"
+@pytest.mark.parametrize(
+    ("raw", "agent", "volume"),
+    [
+        pytest.param("gadovist 3,5 ml", "gadovist", 3.5, id="comma-decimal-ml"),
+        pytest.param("Magnevist 10ml", "Magnevist", 10.0, id="integer-ml"),
+        pytest.param("Vueway 3,5", "Vueway", 3.5, id="volume-without-suffix"),
+        pytest.param("gadobutrol", "gadobutrol", None, id="name-only"),
+        pytest.param("", "", None, id="empty"),
+    ],
+)
+def test_parse_contrast_agent_string(
+    raw: str,
+    agent: str,
+    volume: float | None,
+) -> None:
+    """DICOM/BIDS agent strings retain names and optional volumes."""
+    result = parse_contrast_agent_string(raw)
+    assert result["agent_name"] == agent
+    if volume is None:
         assert result["volume_ml"] is None
-
-    def test_empty_string(self) -> None:
-        """Empty string returns empty agent name and None volume."""
-        result = parse_contrast_agent_string("")
-        assert result["agent_name"] == ""
-        assert result["volume_ml"] is None
+    else:
+        assert result["volume_ml"] == pytest.approx(volume)
 
 
-class TestNormalizeAgentName:
-    """Tests for agent name normalization and alias resolution."""
-
-    def test_brand_alias_resolves(self) -> None:
-        """'Gadavist' resolves to generic 'gadobutrol' via alias."""
-        assert normalize_agent_name("Gadavist") == "gadobutrol"
-
-    def test_generic_name_passthrough(self) -> None:
-        """Generic name 'gd-dtpa' passes through unchanged."""
-        assert normalize_agent_name("gd-dtpa") == "gd-dtpa"
-
-
-class TestLookupR1:
-    """Tests for R1 relaxivity lookup."""
-
-    def test_gadobutrol_3t(self) -> None:
-        """Gadobutrol at 3T returns Szomolanyi 2019 plasma value."""
-        assert lookup_r1("gadobutrol", 3.0) == pytest.approx(4.97)
-
-    def test_gd_dtpa_3t(self) -> None:
-        """Gd-DTPA at 3T returns 3.7 L/(mmol*s) (Rohrer 2005 plasma)."""
-        assert lookup_r1("gd-dtpa", 3.0) == pytest.approx(3.7)
-
-    def test_gd_dtpa_1_5t(self) -> None:
-        """Gd-DTPA at 1.5T returns 4.1 L/(mmol*s) (Rohrer 2005 plasma)."""
-        assert lookup_r1("gd-dtpa", 1.5) == pytest.approx(4.1)
-
-    def test_gd_dtpa_7t(self) -> None:
-        """Gd-DTPA at 7T returns Noebauer-Huhmann 2010 plasma value."""
-        assert lookup_r1("gd-dtpa", 7.0) == pytest.approx(3.3)
-
-    def test_gadobutrol_7t(self) -> None:
-        """Gadobutrol at 7T returns Szomolanyi 2019 plasma value."""
-        assert lookup_r1("gadobutrol", 7.0) == pytest.approx(3.83)
-
-    def test_field_strength_bin_low(self) -> None:
-        """B0 ≤ 2.25T snaps to 1.5T value (no interpolation)."""
-        # Two-bin selection: 2.25T midpoint snaps low.
-        assert lookup_r1("gd-dtpa", 2.25) == pytest.approx(4.1)
-
-    def test_field_strength_bin_mid(self) -> None:
-        """2.25 < B0 ≤ 5.0T uses 3T value."""
-        assert lookup_r1("gd-dtpa", 2.5) == pytest.approx(3.7)
-        assert lookup_r1("gd-dtpa", 5.0) == pytest.approx(3.7)
-
-    def test_unsupported_7t_agent_raises(self) -> None:
-        """Agent without peer-reviewed 7T value raises at B0 > 5.0T."""
-        with pytest.raises(ValueError, match="No peer-reviewed 7T r1"):
-            lookup_r1("gadoxetate", 7.0)
-
-    def test_brand_name_resolves(self) -> None:
-        """Brand name 'Gadavist' returns same r1 as 'gadobutrol'."""
-        assert lookup_r1("Gadavist", 3.0) == pytest.approx(
-            lookup_r1("gadobutrol", 3.0)
-        )
-
-    def test_gadoquatrane_3t(self) -> None:
-        """Gadoquatrane at 3T returns 10.5 L/(mmol*s)."""
-        assert lookup_r1("gadoquatrane", 3.0) == pytest.approx(10.5)
-
-    def test_gadoquatrane_1_5t(self) -> None:
-        """Gadoquatrane at 1.5T returns 11.8 L/(mmol*s)."""
-        assert lookup_r1("gadoquatrane", 1.5) == pytest.approx(11.8)
-
-    def test_ambelvist_alias_resolves(self) -> None:
-        """Brand name 'Ambelvist' resolves to gadoquatrane."""
-        assert lookup_r1("ambelvist", 3.0) == pytest.approx(
-            lookup_r1("gadoquatrane", 3.0)
-        )
-
-    def test_unknown_agent_raises(self) -> None:
-        """Unknown agent 'fakium' raises ValueError listing available agents."""
-        with pytest.raises(ValueError, match="Available agents"):
-            lookup_r1("fakium", 3.0)
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        pytest.param("Gadavist", "gadobutrol", id="brand-alias"),
+        pytest.param("gd-dtpa", "gd-dtpa", id="generic-passthrough"),
+    ],
+)
+def test_normalize_agent_name(raw: str, expected: str) -> None:
+    assert normalize_agent_name(raw) == expected
 
 
-class TestLookupR1Safe:
-    """Tests for the safe (non-raising) R1 lookup."""
-
-    def test_unknown_returns_none(self) -> None:
-        """Unknown agent returns None instead of raising."""
-        assert lookup_r1_safe("fakium", 3.0) is None
-
-    def test_known_returns_value(self) -> None:
-        """Known agent returns the same value as lookup_r1."""
-        assert lookup_r1_safe("gadobutrol", 3.0) == pytest.approx(4.97)
-
-
-class TestLookupStandardDose:
-    """Tests for standard clinical dose lookup."""
-
-    def test_gadobutrol_standard_dose(self) -> None:
-        """Gadobutrol standard dose is 0.1 mmol/kg."""
-        assert lookup_standard_dose("gadobutrol") == pytest.approx(0.1)
-
-    def test_gadopiclenol_half_dose(self) -> None:
-        """Gadopiclenol (Vueway/Elucirem) standard dose is 0.05 mmol/kg."""
-        assert lookup_standard_dose("gadopiclenol") == pytest.approx(0.05)
-
-    def test_gadoquatrane_dose(self) -> None:
-        """Gadoquatrane (Ambelvist) standard dose is 0.04 mmol/kg (tetrameric)."""
-        assert lookup_standard_dose("gadoquatrane") == pytest.approx(0.04)
-
-    def test_ambelvist_alias_dose(self) -> None:
-        """Brand name 'Ambelvist' resolves to gadoquatrane for dose lookup."""
-        assert lookup_standard_dose("ambelvist") == pytest.approx(0.04)
+@pytest.mark.parametrize(
+    ("agent", "field_strength", "expected"),
+    [
+        pytest.param("gadobutrol", 3.0, 4.97, id="gadobutrol-3t"),
+        pytest.param("gd-dtpa", 3.0, 3.7, id="gd-dtpa-3t"),
+        pytest.param("gd-dtpa", 1.5, 4.1, id="gd-dtpa-1p5t"),
+        pytest.param("gd-dtpa", 7.0, 3.3, id="gd-dtpa-7t"),
+        pytest.param("gadobutrol", 7.0, 3.83, id="gadobutrol-7t"),
+        pytest.param("gd-dtpa", 2.25, 4.1, id="low-bin-boundary"),
+        pytest.param("gd-dtpa", (2.5, 5.0), 3.7, id="mid-bin-range"),
+        pytest.param("gadoquatrane", 3.0, 10.5, id="gadoquatrane-3t"),
+        pytest.param("gadoquatrane", 1.5, 11.8, id="gadoquatrane-1p5t"),
+    ],
+)
+def test_lookup_r1_values(
+    agent: str,
+    field_strength: float | tuple[float, ...],
+    expected: float,
+) -> None:
+    """Published relaxivities and field-strength bin boundaries are preserved."""
+    fields = field_strength if isinstance(field_strength, tuple) else (field_strength,)
+    for value in fields:
+        assert lookup_r1(agent, value) == pytest.approx(expected)
 
 
-class TestLookupGdMultiplicity:
-    """Tests for Gd3+ ion count per molecule lookup."""
+@pytest.mark.parametrize(
+    ("alias", "generic"),
+    [
+        pytest.param("Gadavist", "gadobutrol", id="gadavist"),
+        pytest.param("ambelvist", "gadoquatrane", id="ambelvist"),
+    ],
+)
+def test_lookup_r1_aliases(alias: str, generic: str) -> None:
+    assert lookup_r1(alias, 3.0) == pytest.approx(lookup_r1(generic, 3.0))
 
-    def test_gadoquatrane_tetrameric(self) -> None:
-        """Gadoquatrane has 4 Gd3+ ions per molecule."""
-        assert lookup_gd_multiplicity("gadoquatrane") == 4
 
-    def test_ambelvist_alias(self) -> None:
-        """Brand name resolves to gadoquatrane multiplicity."""
-        assert lookup_gd_multiplicity("ambelvist") == 4
+@pytest.mark.parametrize(
+    ("agent", "field_strength", "message"),
+    [
+        pytest.param("gadoxetate", 7.0, "No peer-reviewed 7T r1", id="unsupported-7t"),
+        pytest.param("fakium", 3.0, "Available agents", id="unknown-agent"),
+    ],
+)
+def test_lookup_r1_errors(agent: str, field_strength: float, message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        lookup_r1(agent, field_strength)
 
-    def test_standard_agents_monomeric(self) -> None:
-        """Standard monomeric agents return 1."""
-        assert lookup_gd_multiplicity("gadobutrol") == 1
-        assert lookup_gd_multiplicity("gd-dtpa") == 1
-        assert lookup_gd_multiplicity("gadopiclenol") == 1
 
-    def test_unknown_agent_defaults_to_1(self) -> None:
-        """Unknown agent returns 1 (monomeric default)."""
-        assert lookup_gd_multiplicity("unknown_agent") == 1
+@pytest.mark.parametrize(
+    ("agent", "expected"),
+    [
+        pytest.param("fakium", None, id="unknown"),
+        pytest.param("gadobutrol", 4.97, id="known"),
+    ],
+)
+def test_lookup_r1_safe(agent: str, expected: float | None) -> None:
+    result = lookup_r1_safe(agent, 3.0)
+    if expected is None:
+        assert result is None
+    else:
+        assert result == pytest.approx(expected)
+
+
+@pytest.mark.parametrize(
+    ("agent", "expected"),
+    [
+        pytest.param("gadobutrol", 0.1, id="gadobutrol"),
+        pytest.param("gadopiclenol", 0.05, id="gadopiclenol"),
+        pytest.param("gadoquatrane", 0.04, id="gadoquatrane"),
+        pytest.param("ambelvist", 0.04, id="ambelvist-alias"),
+    ],
+)
+def test_lookup_standard_dose(agent: str, expected: float) -> None:
+    assert lookup_standard_dose(agent) == pytest.approx(expected)
+
+
+@pytest.mark.parametrize(
+    ("agents", "expected"),
+    [
+        pytest.param(("gadoquatrane",), 4, id="tetrameric"),
+        pytest.param(("ambelvist",), 4, id="tetrameric-alias"),
+        pytest.param(
+            ("gadobutrol", "gd-dtpa", "gadopiclenol"), 1, id="monomeric",
+        ),
+        pytest.param(("unknown_agent",), 1, id="unknown-default"),
+    ],
+)
+def test_lookup_gd_multiplicity(agents: tuple[str, ...], expected: int) -> None:
+    for agent in agents:
+        assert lookup_gd_multiplicity(agent) == expected
 
 
 class TestGetAvailableAgents:
@@ -211,64 +174,60 @@ class TestGetAgentInfo:
         assert info["concentration_mmol_per_ml"] == pytest.approx(1.0)
 
 
-class TestCalculateDoseFromVolume:
-    """Tests for dose calculation from injected volume."""
-
-    def test_gd_dtpa_standard(self) -> None:
-        """10 mL of 0.5M Gd-DTPA for 70 kg patient gives correct dose."""
-        # 10 mL * 0.5 mmol/mL = 5 mmol; 5 mmol / 70 kg = 0.07143 mmol/kg
-        dose = calculate_dose_from_volume(10.0, 70.0, "gd-dtpa")
-        assert dose == pytest.approx(5.0 / 70.0)
-
-    def test_gadobutrol_double_concentration(self) -> None:
-        """Gadobutrol (1M) half volume gives same dose as 0.5M agent."""
-        dose_dtpa = calculate_dose_from_volume(10.0, 70.0, "gd-dtpa")
-        dose_gado = calculate_dose_from_volume(5.0, 70.0, "gadobutrol")
-        assert dose_dtpa == pytest.approx(dose_gado)
-
-    def test_zero_volume_raises(self) -> None:
-        """Volume = 0 raises ValueError."""
-        with pytest.raises(ValueError, match="Volume must be positive"):
-            calculate_dose_from_volume(0.0, 70.0)
-
-    def test_negative_weight_raises(self) -> None:
-        """Negative weight raises ValueError."""
-        with pytest.raises(ValueError, match="Body weight must be positive"):
-            calculate_dose_from_volume(10.0, -1.0)
+@pytest.mark.parametrize(
+    ("volume", "weight", "agent", "expected"),
+    [
+        pytest.param(10.0, 70.0, "gd-dtpa", 5.0 / 70.0, id="gd-dtpa"),
+        pytest.param(5.0, 70.0, "gadobutrol", 5.0 / 70.0, id="gadobutrol"),
+    ],
+)
+def test_calculate_dose_from_volume(
+    volume: float,
+    weight: float,
+    agent: str,
+    expected: float,
+) -> None:
+    assert calculate_dose_from_volume(volume, weight, agent) == pytest.approx(expected)
 
 
-class TestCalculateVolumeForDose:
-    """Tests for volume calculation from target dose."""
+@pytest.mark.parametrize(
+    ("volume", "weight", "message"),
+    [
+        pytest.param(0.0, 70.0, "Volume must be positive", id="zero-volume"),
+        pytest.param(10.0, -1.0, "Body weight must be positive", id="negative-weight"),
+    ],
+)
+def test_calculate_dose_from_volume_rejects_invalid_input(
+    volume: float,
+    weight: float,
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        calculate_dose_from_volume(volume, weight)
 
-    def test_gd_dtpa_standard_dose(self) -> None:
-        """0.1 mmol/kg for 70 kg with Gd-DTPA (0.5M) = 14 mL."""
-        vol = calculate_volume_for_dose(0.1, 70.0, "gd-dtpa")
-        assert vol == pytest.approx(14.0)
 
-    def test_gadobutrol_half_volume(self) -> None:
-        """0.1 mmol/kg for 70 kg with gadobutrol (1M) = 7 mL."""
-        vol = calculate_volume_for_dose(0.1, 70.0, "gadobutrol")
-        assert vol == pytest.approx(7.0)
+@pytest.mark.parametrize(
+    ("agent", "expected"),
+    [
+        pytest.param("gd-dtpa", 14.0, id="gd-dtpa"),
+        pytest.param("gadobutrol", 7.0, id="gadobutrol"),
+    ],
+)
+def test_calculate_volume_for_dose(agent: str, expected: float) -> None:
+    assert calculate_volume_for_dose(0.1, 70.0, agent) == pytest.approx(expected)
 
 
-class TestClassifyDose:
-    """Tests for dose classification."""
-
-    def test_none_dose(self) -> None:
-        """Very low dose classified as 'none'."""
-        assert classify_dose(0.005) == "none"
-
-    def test_half_dose(self) -> None:
-        """0.05 mmol/kg classified as 'half'."""
-        assert classify_dose(0.05) == "half"
-
-    def test_full_dose(self) -> None:
-        """0.1 mmol/kg classified as 'full'."""
-        assert classify_dose(0.1) == "full"
-
-    def test_double_dose(self) -> None:
-        """0.2 mmol/kg classified as 'double'."""
-        assert classify_dose(0.2) == "double"
+@pytest.mark.parametrize(
+    ("dose", "expected"),
+    [
+        pytest.param(0.005, "none", id="none"),
+        pytest.param(0.05, "half", id="half"),
+        pytest.param(0.1, "full", id="full"),
+        pytest.param(0.2, "double", id="double"),
+    ],
+)
+def test_classify_dose(dose: float, expected: str) -> None:
+    assert classify_dose(dose) == expected
 
 
 class TestGetR1FromSidecarDict:
@@ -287,26 +246,28 @@ class TestGetR1FromSidecarDict:
         assert result["volume_ml"] == pytest.approx(3.5)
 
 
-class TestGetBrandName:
-    """Tests for get_brand_name reverse lookup."""
-
-    def test_known_generics(self) -> None:
-        """Known generic names return correct brand names."""
-        assert get_brand_name("gadobutrol") == "Gadavist"
-        assert get_brand_name("gadopiclenol") == "Vueway"
-        assert get_brand_name("gd-dtpa") == "Magnevist"
-        assert get_brand_name("gadoterate") == "Dotarem"
-        assert get_brand_name("gadoxetate") == "Eovist"
-
-    def test_unknown_generic(self) -> None:
-        """Unknown generic name returns None."""
-        assert get_brand_name("unknown_agent") is None
-        assert get_brand_name("ferumoxytol") is None
-
-    def test_case_insensitive(self) -> None:
-        """Lookup is case-insensitive."""
-        assert get_brand_name("Gadobutrol") == "Gadavist"
-        assert get_brand_name("GD-DTPA") == "Magnevist"
+@pytest.mark.parametrize(
+    "cases",
+    [
+        pytest.param(
+            (("gadobutrol", "Gadavist"), ("gadopiclenol", "Vueway"),
+             ("gd-dtpa", "Magnevist"), ("gadoterate", "Dotarem"),
+             ("gadoxetate", "Eovist")),
+            id="known-generics",
+        ),
+        pytest.param(
+            (("unknown_agent", None), ("ferumoxytol", None)),
+            id="unknown-generics",
+        ),
+        pytest.param(
+            (("Gadobutrol", "Gadavist"), ("GD-DTPA", "Magnevist")),
+            id="case-insensitive",
+        ),
+    ],
+)
+def test_get_brand_name(cases: tuple[tuple[str, str | None], ...]) -> None:
+    for agent, expected in cases:
+        assert get_brand_name(agent) == expected
 
 
 class TestBuildDceProvenance:
@@ -575,64 +536,68 @@ class TestCollectDefaultWarnings:
         assert not any("agent" in w.lower() and "dose" not in w.lower() for w in warnings)
 
 
-class TestCollectAifFallbackWarning:
-    """Tests for collect_aif_fallback_warning."""
-
-    def test_none_when_no_qc(self) -> None:
-        assert collect_aif_fallback_warning(None, "DSC") is None
-
-    def test_none_when_empty_dict(self) -> None:
-        assert collect_aif_fallback_warning({}, "DSC") is None
-        assert collect_aif_fallback_warning({}, "DCE") is None
-
-    def test_dsc_none_when_measured(self) -> None:
-        qc: dict = {"aif_detection": {"detection_method": "atlas_strict"}}
-        assert collect_aif_fallback_warning(qc, "DSC") is None
-
-    def test_dsc_warning_when_synthetic(self) -> None:
-        qc: dict = {"aif_detection": {"detection_method": "synthetic"}}
-        result = collect_aif_fallback_warning(qc, "DSC")
+@pytest.mark.parametrize(
+    ("qc", "modalities", "contains", "excludes"),
+    [
+        pytest.param(None, ("DSC",), (), (), id="no-qc"),
+        pytest.param({}, ("DSC", "DCE"), (), (), id="empty-qc"),
+        pytest.param(
+            {"aif_detection": {"detection_method": "atlas_strict"}},
+            ("DSC",), (), (), id="dsc-measured",
+        ),
+        pytest.param(
+            {"aif_detection": {"detection_method": "synthetic"}},
+            ("DSC",),
+            ("Parker population template",
+             "automatic detection found no acceptable arterial curve"),
+            (),
+            id="dsc-synthetic",
+        ),
+        pytest.param(
+            {"aif_detection": {"detection_method": "synthetic"},
+             "synthetic_fallback_reason": "no_candidates"},
+            ("DSC",),
+            ("no arterial candidates survived automatic detection",),
+            (),
+            id="dsc-fallback-reason",
+        ),
+        pytest.param({"preprocessing": {}}, ("DCE",), (), (),
+                     id="dce-no-detection"),
+        pytest.param({"aif_detection": {"aif_source": "atlas"}},
+                     ("DCE",), (), (), id="dce-atlas"),
+        pytest.param(
+            {"aif_detection": {"aif_source": "population"}},
+            ("DCE",), ("Parker population model", "user-selected"), (),
+            id="dce-population",
+        ),
+        pytest.param(
+            {"aif_detection": {"aif_source": "population",
+                               "auto_detection_attempted": True,
+                               "auto_fallback_reason":
+                                   "0/5 candidates scored >= 0.40"}},
+            ("DCE",),
+            ("automatic detection found no acceptable arterial curve",),
+            ("0/5 candidates",),
+            id="dce-auto-fallback",
+        ),
+        pytest.param(
+            {"aif_detection": {"detection_method": "synthetic"}},
+            ("UNKNOWN",), (), (), id="unknown-modality",
+        ),
+    ],
+)
+def test_collect_aif_fallback_warning(
+    qc: dict | None,
+    modalities: tuple[str, ...],
+    contains: tuple[str, ...],
+    excludes: tuple[str, ...],
+) -> None:
+    """Fallback disclosure follows the AIF source and modality."""
+    for modality in modalities:
+        result = collect_aif_fallback_warning(qc, modality)
+        if not contains:
+            assert result is None
+            continue
         assert result is not None
-        assert "Parker population template" in result
-        assert "automatic detection found no acceptable arterial curve" in result
-
-    def test_dsc_uses_fallback_reason(self) -> None:
-        qc: dict = {
-            "aif_detection": {"detection_method": "synthetic"},
-            "synthetic_fallback_reason": "no_candidates",
-        }
-        result = collect_aif_fallback_warning(qc, "DSC")
-        assert result is not None
-        assert "no arterial candidates survived automatic detection" in result
-
-    def test_dce_none_when_no_aif_detection(self) -> None:
-        qc: dict = {"preprocessing": {}}
-        assert collect_aif_fallback_warning(qc, "DCE") is None
-
-    def test_dce_none_when_atlas(self) -> None:
-        qc: dict = {"aif_detection": {"aif_source": "atlas"}}
-        assert collect_aif_fallback_warning(qc, "DCE") is None
-
-    def test_dce_warning_when_population(self) -> None:
-        qc: dict = {"aif_detection": {"aif_source": "population"}}
-        result = collect_aif_fallback_warning(qc, "DCE")
-        assert result is not None
-        assert "Parker population model" in result
-        assert "user-selected" in result
-
-    def test_dce_auto_fallback_includes_reason(self) -> None:
-        qc: dict = {
-            "aif_detection": {
-                "aif_source": "population",
-                "auto_detection_attempted": True,
-                "auto_fallback_reason": "0/5 candidates scored >= 0.40",
-            },
-        }
-        result = collect_aif_fallback_warning(qc, "DCE")
-        assert result is not None
-        assert "automatic detection found no acceptable arterial curve" in result
-        assert "0/5 candidates" not in result
-
-    def test_unknown_modality_returns_none(self) -> None:
-        qc: dict = {"aif_detection": {"detection_method": "synthetic"}}
-        assert collect_aif_fallback_warning(qc, "UNKNOWN") is None
+        assert all(text in result for text in contains)
+        assert all(text not in result for text in excludes)
