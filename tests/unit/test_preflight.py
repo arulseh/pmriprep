@@ -1245,86 +1245,82 @@ class TestDCEAgentGuardrails:
 # Temporal sufficiency tests
 # ===========================================================================
 
-class TestDSCTemporalSufficiency:
-    def test_too_few_volumes(self):
-        msgs = validate_dsc_temporal_sufficiency(20, tr=1.5)
-        assert any(m.code == "DSC_TOO_FEW_VOLUMES" for m in msgs)
-        assert any(m.level == "error" for m in msgs
-                   if m.code == "DSC_TOO_FEW_VOLUMES")
+@pytest.mark.parametrize(
+    ("modality", "n_volumes", "tr", "expected", "forbidden", "error"),
+    [
+        pytest.param(
+            "dsc", 20, 1.5, ("TOO_FEW_VOLUMES", "SHORT_DURATION"), (),
+            "TOO_FEW_VOLUMES", id="dsc-too-few-and-short",
+        ),
+        pytest.param(
+            "dsc", 30, 1.5, ("MARGINAL_VOLUMES", "MARGINAL_DURATION"),
+            ("TOO_FEW_VOLUMES",), None, id="dsc-threshold-marginal",
+        ),
+        pytest.param(
+            "dsc", 35, None, ("MARGINAL_VOLUMES",), ("DURATION",), None,
+            id="dsc-marginal-without-tr",
+        ),
+        pytest.param(
+            "dsc", 40, 1.5, (), ("VOLUME", "DURATION"), None,
+            id="dsc-exact-upper-boundaries",
+        ),
+        pytest.param(
+            "dsc", 20, 2.0, ("TOO_FEW_VOLUMES", "MARGINAL_DURATION"),
+            ("SHORT_DURATION",), "TOO_FEW_VOLUMES", id="dsc-exact-minimum-duration",
+        ),
+        pytest.param(
+            "dsc", 20, None, ("TOO_FEW_VOLUMES",), ("DURATION",),
+            "TOO_FEW_VOLUMES", id="dsc-too-few-without-tr",
+        ),
+        pytest.param(
+            "dce", 10, 7.0, ("TOO_FEW_VOLUMES",), (), "TOO_FEW_VOLUMES",
+            id="dce-too-few",
+        ),
+        pytest.param(
+            "dce", 15, 7.0, ("MARGINAL_VOLUMES", "MARGINAL_DURATION"),
+            ("TOO_FEW_VOLUMES",), None, id="dce-threshold-marginal",
+        ),
+        pytest.param(
+            "dce", 18, None, ("MARGINAL_VOLUMES",), ("DURATION",), None,
+            id="dce-marginal-without-tr",
+        ),
+        pytest.param(
+            "dce", 20, 6.0, (), ("VOLUME", "DURATION"), None,
+            id="dce-exact-upper-boundaries",
+        ),
+        pytest.param("dce", 5, 7.0, ("SHORT_DURATION",), (), None, id="dce-short"),
+        pytest.param(
+            "dce", 10, 6.0, ("TOO_FEW_VOLUMES", "MARGINAL_DURATION"),
+            ("SHORT_DURATION",), "TOO_FEW_VOLUMES", id="dce-exact-minimum-duration",
+        ),
+        pytest.param(
+            "dce", 10, None, ("TOO_FEW_VOLUMES",), ("DURATION",),
+            "TOO_FEW_VOLUMES", id="dce-too-few-without-tr",
+        ),
+    ],
+)
+def test_temporal_sufficiency_boundaries(
+    modality: str,
+    n_volumes: int,
+    tr: float | None,
+    expected: tuple[str, ...],
+    forbidden: tuple[str, ...],
+    error: str | None,
+) -> None:
+    """DSC and DCE retain their distinct volume and duration boundaries."""
+    if modality == "dsc":
+        messages = validate_dsc_temporal_sufficiency(n_volumes, tr=tr)
+    else:
+        messages = validate_dce_temporal_sufficiency(n_volumes, volume_tr=tr)
 
-    def test_at_threshold_no_error_but_marginal(self):
-        msgs = validate_dsc_temporal_sufficiency(30, tr=1.5)
-        assert not any(m.code == "DSC_TOO_FEW_VOLUMES" for m in msgs)
-        assert any(m.code == "DSC_MARGINAL_VOLUMES" for m in msgs)
-
-    def test_marginal_volumes(self):
-        msgs = validate_dsc_temporal_sufficiency(35, tr=None)
-        assert any(m.code == "DSC_MARGINAL_VOLUMES" for m in msgs)
-        assert not any("DURATION" in m.code for m in msgs)
-
-    def test_sufficient_volumes(self):
-        msgs = validate_dsc_temporal_sufficiency(60, tr=1.5)
-        vol_msgs = [m for m in msgs if "VOLUME" in m.code]
-        assert len(vol_msgs) == 0
-
-    def test_short_duration(self):
-        msgs = validate_dsc_temporal_sufficiency(20, tr=1.5)
-        assert any(m.code == "DSC_SHORT_DURATION" for m in msgs)
-
-    def test_marginal_duration(self):
-        msgs = validate_dsc_temporal_sufficiency(30, tr=1.5)
-        assert any(m.code == "DSC_MARGINAL_DURATION" for m in msgs)
-
-    def test_sufficient_duration(self):
-        msgs = validate_dsc_temporal_sufficiency(60, tr=1.5)
-        dur_msgs = [m for m in msgs if "DURATION" in m.code]
-        assert len(dur_msgs) == 0
-
-    def test_tr_none_skips_duration(self):
-        msgs = validate_dsc_temporal_sufficiency(20, tr=None)
-        assert any(m.code == "DSC_TOO_FEW_VOLUMES" for m in msgs)
-        assert not any("DURATION" in m.code for m in msgs)
-
-
-class TestDCETemporalSufficiency:
-    def test_too_few_volumes(self):
-        msgs = validate_dce_temporal_sufficiency(10, volume_tr=7.0)
-        assert any(m.code == "DCE_TOO_FEW_VOLUMES" for m in msgs)
-        assert any(m.level == "error" for m in msgs
-                   if m.code == "DCE_TOO_FEW_VOLUMES")
-
-    def test_at_threshold_no_error_but_marginal(self):
-        msgs = validate_dce_temporal_sufficiency(15, volume_tr=7.0)
-        assert not any(m.code == "DCE_TOO_FEW_VOLUMES" for m in msgs)
-        assert any(m.code == "DCE_MARGINAL_VOLUMES" for m in msgs)
-
-    def test_marginal_volumes(self):
-        msgs = validate_dce_temporal_sufficiency(18, volume_tr=None)
-        assert any(m.code == "DCE_MARGINAL_VOLUMES" for m in msgs)
-        assert not any("DURATION" in m.code for m in msgs)
-
-    def test_sufficient_volumes(self):
-        msgs = validate_dce_temporal_sufficiency(40, volume_tr=7.0)
-        vol_msgs = [m for m in msgs if "VOLUME" in m.code]
-        assert len(vol_msgs) == 0
-
-    def test_short_duration(self):
-        msgs = validate_dce_temporal_sufficiency(5, volume_tr=7.0)
-        assert any(m.code == "DCE_SHORT_DURATION" for m in msgs)
-
-    def test_marginal_duration(self):
-        msgs = validate_dce_temporal_sufficiency(12, volume_tr=7.0)
-        assert any(m.code == "DCE_MARGINAL_DURATION" for m in msgs)
-
-    def test_sufficient_duration(self):
-        msgs = validate_dce_temporal_sufficiency(40, volume_tr=7.0)
-        dur_msgs = [m for m in msgs if "DURATION" in m.code]
-        assert len(dur_msgs) == 0
-
-    def test_volume_tr_none_skips_duration(self):
-        msgs = validate_dce_temporal_sufficiency(10, volume_tr=None)
-        assert any(m.code == "DCE_TOO_FEW_VOLUMES" for m in msgs)
-        assert not any("DURATION" in m.code for m in msgs)
+    prefix = modality.upper()
+    codes = {message.code for message in messages}
+    assert {f"{prefix}_{suffix}" for suffix in expected} <= codes
+    assert not any(fragment in code for fragment in forbidden for code in codes)
+    if error is not None:
+        assert f"{prefix}_{error}" in {
+            message.code for message in messages if message.level == "error"
+        }
 
 
 class TestWarningStrings:
