@@ -58,199 +58,125 @@ def _create_nifti(
     nib.save(img, str(path))
 
 
-class TestBaseConfidence:
-    """Tests for _compute_base_confidence."""
-
-    def test_t1w_precon_high_res(self) -> None:
-        cand = _make_candidate(ImageType.T1W_PRECON, is_high_res=True)
-        assert _compute_base_confidence(cand) == pytest.approx(1.0)
-
-    def test_t1w_precon_low_res(self) -> None:
-        cand = _make_candidate(ImageType.T1W_PRECON, is_high_res=False)
-        assert _compute_base_confidence(cand) == pytest.approx(0.4)
-
-    def test_t1w_postcon_high_res(self) -> None:
-        cand = _make_candidate(ImageType.T1W_POSTCON, is_high_res=True)
-        assert _compute_base_confidence(cand) == pytest.approx(0.7)
-
-    def test_t1w_postcon_low_res(self) -> None:
-        cand = _make_candidate(ImageType.T1W_POSTCON, is_high_res=False)
-        assert _compute_base_confidence(cand) == pytest.approx(0.3)
-
-    def test_t2w_high_res(self) -> None:
-        cand = _make_candidate(ImageType.T2W, is_high_res=True)
-        assert _compute_base_confidence(cand) == pytest.approx(0.7)
-
-    def test_t2w_low_res(self) -> None:
-        cand = _make_candidate(ImageType.T2W, is_high_res=False)
-        assert _compute_base_confidence(cand) == pytest.approx(0.3)
-
-    def test_flair_precon_high_res(self) -> None:
-        cand = _make_candidate(ImageType.FLAIR_PRECON, is_high_res=True)
-        assert _compute_base_confidence(cand) == pytest.approx(0.65)
-
-    def test_flair_precon_low_res(self) -> None:
-        cand = _make_candidate(ImageType.FLAIR_PRECON, is_high_res=False)
-        assert _compute_base_confidence(cand) == pytest.approx(0.3)
-
-    def test_flair_postcon_high_res(self) -> None:
-        cand = _make_candidate(ImageType.FLAIR_POSTCON, is_high_res=True)
-        assert _compute_base_confidence(cand) == pytest.approx(0.55)
-
-    def test_flair_postcon_low_res(self) -> None:
-        cand = _make_candidate(ImageType.FLAIR_POSTCON, is_high_res=False)
-        assert _compute_base_confidence(cand) == pytest.approx(0.2)
+@pytest.mark.parametrize(
+    ("image_type", "high_res", "lesion_mask", "expected"),
+    [
+        pytest.param(ImageType.T1W_PRECON, True, False, 1.0, id="precon-t1-high-res"),
+        pytest.param(ImageType.T1W_PRECON, False, False, 0.4, id="precon-t1-low-res"),
+        pytest.param(ImageType.T1W_POSTCON, True, False, 0.7, id="postcon-t1-high-res"),
+        pytest.param(ImageType.T1W_POSTCON, False, False, 0.3, id="postcon-t1-low-res"),
+        pytest.param(ImageType.T2W, True, False, 0.7, id="t2-high-res"),
+        pytest.param(ImageType.T2W, False, False, 0.3, id="t2-low-res"),
+        pytest.param(ImageType.FLAIR_PRECON, True, False, 0.65,
+                     id="precon-flair-high-res"),
+        pytest.param(ImageType.FLAIR_PRECON, False, False, 0.3,
+                     id="precon-flair-low-res"),
+        pytest.param(ImageType.FLAIR_POSTCON, True, False, 0.55,
+                     id="postcon-flair-high-res"),
+        pytest.param(ImageType.FLAIR_POSTCON, False, False, 0.2,
+                     id="postcon-flair-low-res"),
+        pytest.param(ImageType.T1W_POSTCON, True, True, 0.9,
+                     id="postcon-t1-lesion-bonus"),
+        pytest.param(ImageType.FLAIR_POSTCON, True, True, 0.70,
+                     id="postcon-flair-lesion-bonus"),
+        pytest.param(ImageType.T1W_PRECON, True, True, 1.0,
+                     id="precon-t1-lesion-no-effect"),
+    ],
+)
+def test_base_confidence(
+    image_type: ImageType,
+    high_res: bool,
+    lesion_mask: bool,
+    expected: float,
+) -> None:
+    candidate = _make_candidate(
+        image_type,
+        is_high_res=high_res,
+        has_lesion_mask=lesion_mask,
+    )
+    assert _compute_base_confidence(candidate) == pytest.approx(expected)
 
 
-class TestLesionMaskBonus:
-    """Tests for lesion mask confidence overrides."""
-
-    def test_postcon_t1w_with_lesion_mask(self) -> None:
-        """Post-contrast T1w: 0.7 -> 0.9 with lesion mask."""
-        cand = _make_candidate(
-            ImageType.T1W_POSTCON, is_high_res=True, has_lesion_mask=True,
-        )
-        assert _compute_base_confidence(cand) == pytest.approx(0.9)
-
-    def test_postcon_t1w_without_lesion_mask(self) -> None:
-        cand = _make_candidate(
-            ImageType.T1W_POSTCON, is_high_res=True, has_lesion_mask=False,
-        )
-        assert _compute_base_confidence(cand) == pytest.approx(0.7)
-
-    def test_postcon_flair_with_lesion_mask(self) -> None:
-        """Post-contrast FLAIR: 0.55 -> 0.70 with lesion mask."""
-        cand = _make_candidate(
-            ImageType.FLAIR_POSTCON, is_high_res=True, has_lesion_mask=True,
-        )
-        assert _compute_base_confidence(cand) == pytest.approx(0.70)
-
-    def test_postcon_flair_without_lesion_mask(self) -> None:
-        cand = _make_candidate(
-            ImageType.FLAIR_POSTCON, is_high_res=True, has_lesion_mask=False,
-        )
-        assert _compute_base_confidence(cand) == pytest.approx(0.55)
-
-    def test_precon_t1w_lesion_mask_no_effect(self) -> None:
-        """Lesion mask has no effect on precon T1w confidence."""
-        cand = _make_candidate(
-            ImageType.T1W_PRECON, is_high_res=True, has_lesion_mask=True,
-        )
-        assert _compute_base_confidence(cand) == pytest.approx(1.0)
+@pytest.mark.parametrize(
+    ("confidence", "ratio", "expected"),
+    [
+        pytest.param(0.8, 1.0, 0.84, id="isotropic-bonus"),
+        pytest.param(0.8, 1.2, 0.8, id="bonus-boundary-neutral"),
+        pytest.param(0.8, 1.5, 0.8, id="neutral-range"),
+        pytest.param(0.8, 2.5, 0.8, id="penalty-boundary-neutral"),
+        pytest.param(0.8, 3.0, 0.72, id="anisotropic-penalty"),
+        pytest.param(1.0, 1.0, 1.0, id="upper-clamp"),
+        pytest.param(0.0, 3.0, 0.0, id="lower-clamp"),
+    ],
+)
+def test_isotropy_adjustment(
+    confidence: float,
+    ratio: float,
+    expected: float,
+) -> None:
+    assert _apply_isotropy_adjustment(confidence, ratio) == pytest.approx(expected)
 
 
-class TestIsotropyAdjustment:
-    """Tests for _apply_isotropy_adjustment."""
-
-    def test_isotropic_bonus(self) -> None:
-        """Nearly isotropic (ratio < 1.2) gets +5% bonus."""
-        result = _apply_isotropy_adjustment(0.8, isotropy_ratio=1.0)
-        assert result == pytest.approx(0.84)
-
-    def test_neutral_range(self) -> None:
-        """Ratio between 1.2 and 2.5: no adjustment."""
-        result = _apply_isotropy_adjustment(0.8, isotropy_ratio=1.5)
-        assert result == pytest.approx(0.8)
-
-    def test_anisotropic_penalty(self) -> None:
-        """Highly anisotropic (ratio > 2.5) gets -10% penalty."""
-        result = _apply_isotropy_adjustment(0.8, isotropy_ratio=3.0)
-        assert result == pytest.approx(0.72)
-
-    def test_clamp_to_1(self) -> None:
-        """Result clamped to maximum 1.0."""
-        result = _apply_isotropy_adjustment(1.0, isotropy_ratio=1.0)
-        assert result <= 1.0
-
-    def test_clamp_to_0(self) -> None:
-        """Result clamped to minimum 0.0."""
-        result = _apply_isotropy_adjustment(0.0, isotropy_ratio=3.0)
-        assert result >= 0.0
-
-
-class TestApplicationOverrides:
-    """Tests for _apply_application_overrides."""
-
-    def test_fast_excludes_postcon(self) -> None:
-        """FAST segmentation excludes post-contrast T1w (score 0.0)."""
-        cand = _make_candidate(ImageType.T1W_POSTCON)
-        result = _apply_application_overrides(0.7, cand, "fast_segmentation")
-        assert result == pytest.approx(0.0)
-
-    def test_fast_minimum_precon(self) -> None:
-        """FAST ensures precon T1w has minimum confidence 0.7."""
-        cand = _make_candidate(ImageType.T1W_PRECON)
-        result = _apply_application_overrides(0.4, cand, "fast_segmentation")
-        assert result == pytest.approx(0.7)
-
-    def test_fast_keeps_higher_precon(self) -> None:
-        """FAST keeps precon confidence when already > 0.7."""
-        cand = _make_candidate(ImageType.T1W_PRECON)
-        result = _apply_application_overrides(0.9, cand, "fast_segmentation")
-        assert result == pytest.approx(0.9)
-
-    def test_dce_postcon_bonus_preserves_quality_score(self) -> None:
-        """DCE registration adds a bounded bonus to postcon quality."""
-        cand = _make_candidate(ImageType.T1W_POSTCON)
-        result = _apply_application_overrides(0.7, cand, "dce_registration")
-        assert result == pytest.approx(0.875)
-
-        low_quality = _apply_application_overrides(
-            0.3, cand, "dce_registration",
-        )
-        assert low_quality == pytest.approx(0.375)
-
-    def test_dce_precon_penalized_when_postcon_available(self) -> None:
-        """DCE penalizes precon T1w by *0.8 when postcon is available."""
-        cand = _make_candidate(ImageType.T1W_PRECON)
+@pytest.mark.parametrize(
+    ("confidences", "image_type", "application", "has_postcon", "expected"),
+    [
+        pytest.param((0.7,), ImageType.T1W_POSTCON, "fast_segmentation", False,
+                     (0.0,),
+                     id="fast-excludes-postcon"),
+        pytest.param((0.4,), ImageType.T1W_PRECON, "fast_segmentation", False,
+                     (0.7,),
+                     id="fast-precon-floor"),
+        pytest.param((0.9,), ImageType.T1W_PRECON, "fast_segmentation", False,
+                     (0.9,),
+                     id="fast-keeps-higher-precon"),
+        pytest.param((0.7, 0.3), ImageType.T1W_POSTCON, "dce_registration", False,
+                     (0.875, 0.375), id="dce-postcon-bonus"),
+        pytest.param((1.0,), ImageType.T1W_PRECON, "dce_registration", True,
+                     (0.8,),
+                     id="dce-precon-penalty"),
+        pytest.param((1.0,), ImageType.T1W_PRECON, "dce_registration", False,
+                     (1.0,),
+                     id="dce-precon-no-penalty"),
+        pytest.param((0.8,), ImageType.T1W_PRECON, "dsc_registration", False,
+                     (0.8,),
+                     id="dsc-no-override"),
+        pytest.param((0.8,), ImageType.T1W_PRECON, "default", False, (0.8,),
+                     id="default-no-override"),
+    ],
+)
+def test_application_overrides(
+    confidences: tuple[float, ...],
+    image_type: ImageType,
+    application: str,
+    has_postcon: bool,
+    expected: tuple[float, ...],
+) -> None:
+    candidate = _make_candidate(image_type)
+    for confidence, result_expected in zip(confidences, expected, strict=True):
         result = _apply_application_overrides(
-            1.0, cand, "dce_registration", has_postcon_available=True,
+            confidence,
+            candidate,
+            application,
+            has_postcon_available=has_postcon,
         )
-        assert result == pytest.approx(0.8)
-
-    def test_dce_precon_no_penalty_when_no_postcon(self) -> None:
-        """DCE does not penalize precon when no postcon available."""
-        cand = _make_candidate(ImageType.T1W_PRECON)
-        result = _apply_application_overrides(
-            1.0, cand, "dce_registration", has_postcon_available=False,
-        )
-        assert result == pytest.approx(1.0)
-
-    def test_dsc_no_overrides(self) -> None:
-        """DSC registration applies no overrides."""
-        cand = _make_candidate(ImageType.T1W_PRECON)
-        result = _apply_application_overrides(0.8, cand, "dsc_registration")
-        assert result == pytest.approx(0.8)
-
-    def test_default_no_overrides(self) -> None:
-        """Default application applies no overrides."""
-        cand = _make_candidate(ImageType.T1W_PRECON)
-        result = _apply_application_overrides(0.8, cand, "default")
-        assert result == pytest.approx(0.8)
+        assert result == pytest.approx(result_expected)
 
 
-class TestClassifyImageType:
-    """Tests for classify_image_type."""
-
-    def test_t1w_precon(self) -> None:
-        path = Path("/data/sub-01_T1w.nii.gz")
-        assert classify_image_type(path) == ImageType.T1W_PRECON
-
-    def test_t1w_postcon(self) -> None:
-        path = Path("/data/sub-01_ce-GAD_T1w.nii.gz")
-        assert classify_image_type(path) == ImageType.T1W_POSTCON
-
-    def test_t2w(self) -> None:
-        path = Path("/data/sub-01_T2w.nii.gz")
-        assert classify_image_type(path) == ImageType.T2W
-
-    def test_flair_precon(self) -> None:
-        path = Path("/data/sub-01_FLAIR.nii.gz")
-        assert classify_image_type(path) == ImageType.FLAIR_PRECON
-
-    def test_flair_postcon(self) -> None:
-        path = Path("/data/sub-01_ce-GAD_FLAIR.nii.gz")
-        assert classify_image_type(path) == ImageType.FLAIR_POSTCON
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        pytest.param("sub-01_T1w.nii.gz", ImageType.T1W_PRECON, id="t1-precon"),
+        pytest.param("sub-01_ce-GAD_T1w.nii.gz", ImageType.T1W_POSTCON,
+                     id="t1-postcon"),
+        pytest.param("sub-01_T2w.nii.gz", ImageType.T2W, id="t2"),
+        pytest.param("sub-01_FLAIR.nii.gz", ImageType.FLAIR_PRECON,
+                     id="flair-precon"),
+        pytest.param("sub-01_ce-GAD_FLAIR.nii.gz", ImageType.FLAIR_POSTCON,
+                     id="flair-postcon"),
+    ],
+)
+def test_classify_image_type(name: str, expected: ImageType) -> None:
+    assert classify_image_type(Path("/data") / name) == expected
 
 
 class TestFOVCoverage:
@@ -501,49 +427,51 @@ class TestDetermineProcessingModeV2:
         assert "penalty=0.30" in caplog.text
 
 
-class TestMapSelectionToAnatOutput:
-    """Tests for _map_selection_to_anat_output."""
-
-    def test_precon_t1w(self) -> None:
-        assert _map_selection_to_anat_output(ImageType.T1W_PRECON) == "outputnode.t1w_preproc"
-
-    def test_postcon_t1w(self) -> None:
-        assert _map_selection_to_anat_output(ImageType.T1W_POSTCON) == "outputnode.t1w_postcon_coreg"
-
-    def test_t2w(self) -> None:
-        assert _map_selection_to_anat_output(ImageType.T2W) == "outputnode.t2w_coreg"
-
-    def test_flair_precon(self) -> None:
-        assert _map_selection_to_anat_output(ImageType.FLAIR_PRECON) == "outputnode.flair_coreg"
-
-    def test_flair_postcon(self) -> None:
-        assert _map_selection_to_anat_output(ImageType.FLAIR_POSTCON) == "outputnode.flair_postcon_coreg"
+@pytest.mark.parametrize(
+    ("image_type", "expected"),
+    [
+        pytest.param(ImageType.T1W_PRECON, "outputnode.t1w_preproc", id="t1-precon"),
+        pytest.param(ImageType.T1W_POSTCON, "outputnode.t1w_postcon_coreg",
+                     id="t1-postcon"),
+        pytest.param(ImageType.T2W, "outputnode.t2w_coreg", id="t2"),
+        pytest.param(ImageType.FLAIR_PRECON, "outputnode.flair_coreg",
+                     id="flair-precon"),
+        pytest.param(ImageType.FLAIR_POSTCON, "outputnode.flair_postcon_coreg",
+                     id="flair-postcon"),
+    ],
+)
+def test_map_selection_to_anat_output(image_type: ImageType, expected: str) -> None:
+    assert _map_selection_to_anat_output(image_type) == expected
 
 
-class TestScoreCandidate:
-    """Tests for the full scoring pipeline (_score_candidate)."""
-
-    def test_high_res_precon_default(self) -> None:
-        """1mm isotropic precon T1w scores ~1.0 for default application."""
-        cand = _make_candidate(ImageType.T1W_PRECON, is_high_res=True)
-        score = _score_candidate(cand, "default")
-        # base=1.0, isotropy bonus *1.05 → clamped to 1.0
-        assert score == pytest.approx(1.0)
-
-    def test_anisotropic_penalty_propagates(self) -> None:
-        """High anisotropy propagates through scoring pipeline."""
-        cand = _make_candidate(
-            ImageType.T1W_PRECON, is_high_res=True, isotropy_ratio=3.0,
-        )
-        score = _score_candidate(cand, "default")
-        # base=1.0, isotropy penalty *0.9 → 0.9
-        assert score == pytest.approx(0.9)
-
-    def test_dce_postcon_bonus_retains_prior_quality_adjustments(self) -> None:
-        """DCE contrast preference retains prior quality adjustments."""
-        cand = _make_candidate(ImageType.T1W_POSTCON, is_high_res=True)
-        score = _score_candidate(cand, "dce_registration", has_postcon_available=True)
-        assert score == pytest.approx(0.91875)
+@pytest.mark.parametrize(
+    ("image_type", "isotropy", "application", "has_postcon", "expected"),
+    [
+        pytest.param(ImageType.T1W_PRECON, 1.0, "default", False, 1.0,
+                     id="high-res-precon-default"),
+        pytest.param(ImageType.T1W_PRECON, 3.0, "default", False, 0.9,
+                     id="anisotropic-penalty"),
+        pytest.param(ImageType.T1W_POSTCON, 1.0, "dce_registration", True,
+                     0.91875, id="dce-postcon-bonus"),
+    ],
+)
+def test_score_candidate(
+    image_type: ImageType,
+    isotropy: float,
+    application: str,
+    has_postcon: bool,
+    expected: float,
+) -> None:
+    candidate = _make_candidate(
+        image_type,
+        is_high_res=True,
+        isotropy_ratio=isotropy,
+    )
+    assert _score_candidate(
+        candidate,
+        application,
+        has_postcon_available=has_postcon,
+    ) == pytest.approx(expected)
 
 
 class TestBuildCandidatesFromSession:
