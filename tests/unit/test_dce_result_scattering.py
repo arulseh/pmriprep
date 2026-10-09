@@ -757,7 +757,12 @@ def test_initialize_dce_qc_metrics_preserves_pre_fit_state() -> None:
     constraint_qc = {"mode": "soft"}
     bat_correction = {"applied": True}
     summary = _initialize_dce_qc_metrics(
-        prepared, "extended_tofts", constraint_qc, bat_correction, 3.0
+        prepared,
+        "extended_tofts",
+        constraint_qc,
+        bat_correction,
+        3.0,
+        1e-6,
     )
     assert summary == {
         "model": "auto",

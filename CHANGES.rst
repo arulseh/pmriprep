@@ -1,3 +1,14 @@
+1.0.0rc4.dev2
+==============
+
+Numerical changes
+-----------------
+
+* CHG: Keep Extended Tofts eligible during automatic DCE model selection at
+  all supported sampling intervals and restrict automatic 2CXM eligibility to
+  acquisitions sampled at 2 seconds or faster. Equivalent floating-point
+  representations of the 2-second boundary receive the same candidate set.
+
 1.0.0rc4.dev1
 =============
 

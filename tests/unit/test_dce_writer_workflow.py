@@ -1035,15 +1035,16 @@ def test_dce_both_flair_underlays(
 
 
 def test_2cxm_uncertainty_tr_gate_auto_short_tr() -> None:
-    """auto-mode + TR ≤ 3.0 s → 2CXM in candidates → emit Fp/PS std."""
+    """auto-mode + TR ≤ 2.0 s → 2CXM in candidates → emit Fp/PS std."""
     from pmriprep.workflows.base import _emit_2cxm_uncertainty
 
-    assert _emit_2cxm_uncertainty("auto", 2.5) is True
-    assert _emit_2cxm_uncertainty("auto", 3.0) is True
+    assert _emit_2cxm_uncertainty("auto", 1.99) is True
+    assert _emit_2cxm_uncertainty("auto", 2.0) is True
+    assert _emit_2cxm_uncertainty("auto", 2.0000000000000004) is True
 
 
 def test_2cxm_uncertainty_tr_gate_auto_long_tr() -> None:
-    """auto-mode + TR > 3.0 s → 2CXM excluded → don't emit Fp/PS std.
+    """auto-mode + TR > 2.0 s → 2CXM excluded → don't emit Fp/PS std.
 
     Reproduces the original crash scenario: current institutional cohort
     has volume_tr=4.06 s; the prior (auto, _) gate built the sink but the
@@ -1052,6 +1053,8 @@ def test_2cxm_uncertainty_tr_gate_auto_long_tr() -> None:
     """
     from pmriprep.workflows.base import _emit_2cxm_uncertainty
 
+    assert _emit_2cxm_uncertainty("auto", 2.00001) is False
+    assert _emit_2cxm_uncertainty("auto", 2.04) is False
     assert _emit_2cxm_uncertainty("auto", 4.06) is False
     assert _emit_2cxm_uncertainty("auto", 7.6) is False
 
@@ -1151,7 +1154,7 @@ def _has_fp_uncertainty_sink(wf) -> bool:
 
 
 def test_init_pmriprep_wf_auto_long_tr_no_fp_sink(tmp_path: Path) -> None:
-    """Regression for crash.txt: auto + Bayesian + TR>3.0 → no fp/ps sink built.
+    """Regression for auto + Bayesian + TR>2.0 omitting the Fp/PS sink.
 
     Reproduces the original ``NodeExecutionError: _copy_perf_map missing
     in_file`` failure mode: ``model="auto"``, ``inference="vi"``,
@@ -1161,7 +1164,7 @@ def test_init_pmriprep_wf_auto_long_tr_no_fp_sink(tmp_path: Path) -> None:
         tmp_path, volume_tr=4.06, model="auto", inference="vi",
     )
     assert not _has_fp_uncertainty_sink(wf), (
-        "auto + Bayesian + TR>3.0 must NOT build fp_uncertainty_sink "
+        "auto + Bayesian + TR>2.0 must NOT build fp_uncertainty_sink "
         "(producer doesn't include 2CXM in candidate set at this TR; "
         "sink without feed → runtime crash)"
     )
@@ -1170,10 +1173,10 @@ def test_init_pmriprep_wf_auto_long_tr_no_fp_sink(tmp_path: Path) -> None:
 def test_init_pmriprep_wf_auto_short_tr_builds_fp_sink(tmp_path: Path) -> None:
     """Auto Bayesian short-TR runs emit Fp absolute uncertainty."""
     wf = _build_dce_wf_for_tr_gate(
-        tmp_path, volume_tr=2.5, model="auto", inference="vi",
+        tmp_path, volume_tr=2.0, model="auto", inference="vi",
     )
     assert _has_fp_uncertainty_sink(wf), (
-        "auto + Bayesian + TR≤3.0 must build fp_uncertainty_sink "
+        "auto + Bayesian + TR≤2.0 must build fp_uncertainty_sink "
         "(producer includes 2CXM in candidate set; sink should consume it)"
     )
 

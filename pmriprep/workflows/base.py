@@ -918,11 +918,12 @@ def _find_previous_tumor_seg_outputs(
 
 
 # Must match ``ComputeDCEMaps._MAX_VOLUME_TR_2CXM`` in
-# ``pmriprep/interfaces/dce_compute.py:1365``. The constant lives on the
+# ``pmriprep/interfaces/dce_compute.py``. The constant lives on the
 # producer class as a private attribute; duplicating with a named source
 # reference avoids a new public-import boundary while keeping the gate
 # auditable.
-_MAX_VOLUME_TR_2CXM_BUILD = 3.0
+_MAX_VOLUME_TR_2CXM_BUILD = 2.0
+_VOLUME_TR_COMPARISON_TOLERANCE_BUILD = 1e-6
 
 
 def _emit_2cxm_uncertainty(
@@ -932,9 +933,10 @@ def _emit_2cxm_uncertainty(
 
     Mirrors the runtime gate in
     :func:`pmriprep.interfaces.dce_compute.ComputeDCEMaps._build_candidate_set`
-    (line 1388): 2CXM is in the auto-mode candidate set only when
-    ``volume_tr <= _MAX_VOLUME_TR_2CXM`` (3.0 s). The producer's
-    ``save_2cxm`` flag (``dce_compute.py:1822``) then gates whether
+    2CXM is in the auto-mode candidate set only when
+    the recorded ``volume_tr`` is at most 2.0 s, apart from the matching
+    numerical comparison tolerance. The producer's
+    ``save_2cxm`` flag then gates whether
     ``out_fp_std`` / ``out_ps_std`` are saved. Build-time gating must
     match — building a sink the producer never feeds raises
     ``NodeExecutionError: _copy_perf_map missing in_file`` at runtime.
@@ -959,7 +961,10 @@ def _emit_2cxm_uncertainty(
         return True
     if model == "auto" and volume_tr is not None:
         try:
-            return float(volume_tr) <= _MAX_VOLUME_TR_2CXM_BUILD
+            return float(volume_tr) <= (
+                _MAX_VOLUME_TR_2CXM_BUILD
+                + _VOLUME_TR_COMPARISON_TOLERANCE_BUILD
+            )
         except (TypeError, ValueError):
             return False
     return False

@@ -345,7 +345,7 @@ def test_auto_selection_uses_confirmed_exchange_fit(
         monkeypatch.setitem(batched_fitting._PARAM_BOUNDS, name.lower(), (0., ceiling))
     tissue, aif, time, weights = parker_exchange_case
     interface = dce_compute.ComputeDCEMaps()
-    candidates = interface._build_candidate_set(3.)
+    candidates = interface._build_candidate_set(2.)
     results = interface._fit_batched(
         conc_data=tissue[None, None, None, :],
         mask_coords=(np.array([0]), np.array([0]), np.array([0])),

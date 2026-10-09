@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 
 from pmriprep.interfaces.dce_compute import (
+    ComputeDCEMaps,
     _candidate_bic_for_selection,
     _compute_auto_bic,
     _select_auto_bic_winners,
@@ -292,44 +293,25 @@ class TestFitResultIsBetterThan:
 class TestBuildCandidateSet:
     """Candidate set depends on volume TR."""
 
-    def test_fast_tr_includes_all(self) -> None:
-        """TR=2s should include Patlak, Extended Tofts, and 2CXM."""
-        # Simulate _build_candidate_set logic (Standard Tofts excluded
-        # from auto: vp=0 assumption invalid in brain, Sourbron & Buckley
-        # MRM 2011)
-        volume_tr = 2.0
-        candidates = ["patlak"]
-        if volume_tr <= 10.0:
-            candidates.append("extended_tofts")
-        if volume_tr <= 3.0:
-            candidates.append("2cxm")
+    @pytest.mark.parametrize(
+        ("volume_tr", "expected"),
+        [
+            (2.0, ["patlak", "extended_tofts", "2cxm"]),
+            (2.0000000000000004, ["patlak", "extended_tofts", "2cxm"]),
+            (2.00001, ["patlak", "extended_tofts"]),
+            (2.04, ["patlak", "extended_tofts"]),
+            (2.01, ["patlak", "extended_tofts"]),
+            (7.6, ["patlak", "extended_tofts"]),
+            (15.0, ["patlak", "extended_tofts"]),
+        ],
+    )
+    def test_candidate_policy(
+        self, volume_tr: float, expected: list[str],
+    ) -> None:
+        """2CXM uses the 2 s boundary with numerical tolerance only."""
+        candidates = ComputeDCEMaps()._build_candidate_set(volume_tr)
 
-        assert candidates == ["patlak", "extended_tofts", "2cxm"]
-        assert "tofts" not in candidates
-
-    def test_moderate_tr_excludes_2cxm(self) -> None:
-        """TR=7.6s should exclude 2CXM but include ETofts."""
-        volume_tr = 7.6
-        candidates = ["patlak"]
-        if volume_tr <= 10.0:
-            candidates.append("extended_tofts")
-        if volume_tr <= 3.0:
-            candidates.append("2cxm")
-
-        assert "2cxm" not in candidates
-        assert "extended_tofts" in candidates
-        assert candidates == ["patlak", "extended_tofts"]
-
-    def test_coarse_tr_only_patlak(self) -> None:
-        """TR=15s should only have Patlak."""
-        volume_tr = 15.0
-        candidates = ["patlak"]
-        if volume_tr <= 10.0:
-            candidates.append("extended_tofts")
-        if volume_tr <= 3.0:
-            candidates.append("2cxm")
-
-        assert candidates == ["patlak"]
+        assert candidates == expected
         assert "tofts" not in candidates
 
 

@@ -1100,6 +1100,7 @@ def _initialize_dce_qc_metrics(
     constraint_qc: dict[str, Any],
     bat_correction: dict[str, Any],
     two_cxm_max_tr_seconds: float,
+    tr_comparison_tolerance_seconds: float,
 ) -> dict[str, Any]:
     """Assemble DCE QC state before fitting and result reduction."""
     return {
@@ -1112,7 +1113,8 @@ def _initialize_dce_qc_metrics(
             (prepared.n_timepoints - 1) * prepared.selection_tr_seconds
         ),
         "two_cxm_auto_sampling_eligible": (
-            prepared.selection_tr_seconds <= two_cxm_max_tr_seconds
+            prepared.selection_tr_seconds
+            <= two_cxm_max_tr_seconds + tr_comparison_tolerance_seconds
         ),
         "dsc_cbv_constraint": constraint_qc,
         "bat_correction": bat_correction,
@@ -2271,8 +2273,8 @@ class ComputeDCEMaps(BaseInterface):
 
     Auto-selection logic (when model='auto'):
     - Patlak is always included
-    - Extended Tofts included if TR <= 10s
-    - 2CXM included if TR <= 3s
+    - Extended Tofts is always included
+    - 2CXM included if the recorded TR is <= 2s, with numerical tolerance
     - Winner selected by BIC (Standard Tofts excluded; vp=0 invalid in brain)
 
     Output maps:
@@ -2518,9 +2520,10 @@ class ComputeDCEMaps(BaseInterface):
         """
         return model_name in ("tofts", "extended_tofts", "2cxm")
 
-    # Temporal resolution gates for BIC candidate set
-    _MAX_VOLUME_TR_2CXM = 3.0       # 2CXM temporal-resolution limit
-    _MAX_VOLUME_TR_ETOFTS = 10.0    # Conservative clinical limit
+    # 2CXM needs high temporal resolution to separate its fast components.
+    _MAX_VOLUME_TR_2CXM = 2.0
+    # Absorb only floating-point representation error at the sampling boundary.
+    _VOLUME_TR_COMPARISON_TOLERANCE = 1e-6
 
     def _build_candidate_set(self, volume_tr: float) -> list[str]:
         """Build BIC candidate model set gated by temporal resolution.
@@ -2543,10 +2546,10 @@ class ComputeDCEMaps(BaseInterface):
         list
             List of candidate model names, ordered by complexity.
         """
-        candidates = ["patlak"]
-        if volume_tr <= self._MAX_VOLUME_TR_ETOFTS:
-            candidates.append("extended_tofts")
-        if volume_tr <= self._MAX_VOLUME_TR_2CXM:
+        candidates = ["patlak", "extended_tofts"]
+        if volume_tr <= (
+            self._MAX_VOLUME_TR_2CXM + self._VOLUME_TR_COMPARISON_TOLERANCE
+        ):
             candidates.append("2cxm")
         return candidates
 
@@ -3267,6 +3270,7 @@ class ComputeDCEMaps(BaseInterface):
             constraint_qc,
             bat_correction,
             self._MAX_VOLUME_TR_2CXM,
+            self._VOLUME_TR_COMPARISON_TOLERANCE,
         )
         qc_metrics["iauc"] = model_free.iauc_qc
         qc_metrics["ser"] = model_free.ser_qc
