@@ -1,16 +1,5 @@
-1.0.0rc4.dev2
-==============
-
-Numerical changes
------------------
-
-* CHG: Keep Extended Tofts eligible during automatic DCE model selection at
-  all supported sampling intervals and restrict automatic 2CXM eligibility to
-  acquisitions sampled at 2 seconds or faster. Equivalent floating-point
-  representations of the 2-second boundary receive the same candidate set.
-
-1.0.0rc4.dev1
-=============
+1.0.0rc4 (2026-10-09)
+=====================
 
 Numerical changes
 -----------------
@@ -18,6 +7,10 @@ Numerical changes
 * FIX: Normalize DSC magnitude signals acquisition-wide before CPI inference
   so arbitrary scanner intensity scaling cannot alter fit availability or
   quantitative estimates.
+* CHG: Keep Extended Tofts eligible during automatic DCE model selection at
+  all supported sampling intervals and restrict automatic 2CXM eligibility to
+  acquisitions sampled at 2 seconds or faster. Equivalent floating-point
+  representations of the 2-second boundary receive the same candidate set.
 
 1.0.0rc3 (2026-10-07)
 =====================

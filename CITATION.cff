@@ -2,8 +2,8 @@ cff-version: 1.2.0
 message: "If you use PMRIPrep, please cite this software using this metadata."
 title: "PMRIPrep: automated preprocessing and quantification of DSC and DCE MRI"
 type: software
-version: 1.0.0rc3
-date-released: 2026-10-07
+version: 1.0.0rc4
+date-released: 2026-10-09
 authors:
   - family-names: Rulseh
     given-names: Aaron M.
