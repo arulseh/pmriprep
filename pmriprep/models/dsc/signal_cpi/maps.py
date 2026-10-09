@@ -13,6 +13,7 @@ from .fallback import resolve_fallbacks
 from .field import fit_selected_field
 from .execution import CPIExecutor, plan_resources
 from .progress import _CPIProgress
+from .signal import SIGNAL_BASELINE_PRIOR_MEAN
 
 logger = logging.getLogger("nipype.interface")
 
@@ -186,6 +187,14 @@ def _assemble_maps(
             for b in acquisition.branches
         },
         cpi_leakage_method=a.leakage_method,
+        cpi_signal_normalization={
+            "method": "acquisition_median_prebolus",
+            "reference_baseline": SIGNAL_BASELINE_PRIOR_MEAN,
+            "input_units_per_normalized_unit": a.signal_scale,
+            "baseline_frames": (
+                a.decision.baseline_frames if a.decision is not None else None
+            ),
+        },
         cpi_fallback=acquisition.options.fallback,
         n_mask_voxels=n_mask,
         n_fit_admissible=admissible,

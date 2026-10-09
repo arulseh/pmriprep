@@ -8,7 +8,7 @@ import numpy as np
 from pmriprep.models.dsc.batched_fitting import DSCBatchedFitResult
 from pmriprep.models.dsc.vi_adapter import DSCVIModelAdapter
 
-from .connection import GuidedVoxel, classify_result
+from .connection import GuidedVoxel, _restore_fitted_signal, classify_result
 from .geometry import Model
 from .leakage import BSWCenteredModel, LeakageBatch, readout_state
 from .policy import select_valid_restarts
@@ -34,6 +34,7 @@ class SpatialReadout:
     infer_delay: bool
     weights: np.ndarray | None
     keep_diagnostics: bool
+    signal_scale: float
 
     def __call__(
         self, result: DSCBatchedFitResult, prior: GaussianPrior,
@@ -48,7 +49,7 @@ class SpatialReadout:
         adapter : DSCVIModelAdapter
             Worker-local evaluator, with any final-mean derivative cache intact.
         signal : ndarray
-            Original measured signal for this voxel.
+            Internally normalized measured signal for this voxel.
 
         Returns
         -------
@@ -84,4 +85,5 @@ class SpatialReadout:
         )
         row = replace(classify_result(self.flat_index, self.bsw_k2, diagnostic),
                       family=self.family, selection_scores=self.selection_scores)
+        row = _restore_fitted_signal(row, self.signal_scale)
         return row if self.keep_diagnostics else replace(row, diagnostics=None)

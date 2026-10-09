@@ -79,6 +79,25 @@ def test_automatic_count_and_voxel_dispatch(acquisition: Any, family: Model, mon
                     (prepared.decision.selected, -.01, family)]
 
 
+def test_bsw_guided_preparation_uses_the_same_acquisition_scale(acquisition: Any) -> None:
+    """BSW guidance remains unchanged when arbitrary signal units are removed."""
+    signals, aif, time, te, guidance = acquisition
+    reference = connection.prepare_acquisition(*acquisition, control_points=5)
+    scaled = connection.prepare_acquisition(
+        signals * 1e8,
+        aif,
+        time,
+        te,
+        guidance,
+        control_points=5,
+    )
+    assert scaled.signal_scale == pytest.approx(reference.signal_scale * 1e8)
+    np.testing.assert_allclose(scaled.signals, reference.signals, rtol=2e-15, atol=0)
+    np.testing.assert_array_equal(scaled.k2, reference.k2)
+    np.testing.assert_array_equal(scaled.k2_sd, reference.k2_sd)
+    assert scaled.decision == reference.decision
+
+
 def test_local_factor_failure_requests_voxel_fallback(
     acquisition: Any, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

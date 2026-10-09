@@ -121,7 +121,7 @@ def test_actual_selected_cpi_field_matches_existing_single_family() -> None:
     time = np.arange(30.) * 3
     u = np.maximum(time - 9, 0)
     aif = 10 * u**2 * np.exp(-u/3)
-    signals = (100 * np.exp(-.03 * np.stack([.2*u**2*np.exp(-u/5), .21*u**2*np.exp(-u/5)])))[:, None, None]
+    signals = (1e10 * np.exp(-.03 * np.stack([.2*u**2*np.exp(-u/5), .21*u**2*np.exp(-u/5)])))[:, None, None]
     a = acquisition.prepare_cpi_acquisition(signals, aif, time, .03,
         leakage_method="none", inference_method="svb",
         options=CPIOptions(dispersion="none", infer_delay=False, control_points=5))
@@ -139,6 +139,9 @@ def test_actual_selected_cpi_field_matches_existing_single_family() -> None:
         assert after.family == "cpi" and len(after.selection_scores) == 1
         np.testing.assert_allclose([after.cbf, after.cbv, after.mtt],
                                    [before.cbf, before.cbv, before.mtt], rtol=1e-8, atol=1e-10)
+        assert after.fitted_signal is not None and before.fitted_signal is not None
+        np.testing.assert_allclose(after.fitted_signal, before.fitted_signal, rtol=1e-8)
+        assert float(np.median(after.fitted_signal[:3])) > 1e9
         assert after.diagnostics is not None and before.diagnostics is not None
         for name in ("mean", "covariance", "noise_shape", "noise_scale", "prior_mean", "prior_covariance"):
             np.testing.assert_allclose(after.diagnostics.arrays[name], before.diagnostics.arrays[name],

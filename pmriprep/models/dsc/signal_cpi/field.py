@@ -289,7 +289,7 @@ def fit_selected_field(
         indices.append(i)
         readouts.append(SpatialReadout(model, i, branch.decision.selected, float(a.k2[i]),
             row.family, row.selection_scores, a.leakage_method, a.infer_delay,
-            a.weights, keep_diagnostics))
+            a.weights, keep_diagnostics, a.signal_scale))
     index_array = np.asarray(indices, dtype=int)
     if not indices:
         return SpatialGuidedResult(tuple(outputs.values()), index_array, None, None, None, None, 0, 0,

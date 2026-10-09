@@ -119,17 +119,24 @@ def guidance_for(files: dict[str, Any]) -> BSWGuidance:
 
 
 @pytest.mark.parametrize(
-    "inference,infer_delay", [("vi", True), ("vi", False), ("svb", False)]
+    "inference,infer_delay,signal_scale",
+    [("vi", True, 1e8), ("vi", False, 1.0), ("svb", False, 1e8)],
 )
 def test_actual_interface_uses_signal_and_preserves_selected_fit(
     files: dict[str, Any],
     tmp_path: Path,
     inference: str,
     infer_delay: bool,
+    signal_scale: float,
     monkeypatch: pytest.MonkeyPatch,
     captured_maps: list[CPIMaps],
 ) -> None:
     monkeypatch.chdir(tmp_path)
+    files["signal"] *= signal_scale
+    nib.save(
+        nib.Nifti1Image(files["signal"], files["affine"]),
+        files["signal_file"],
+    )
     interface = interface_for(
         files, inference=inference, cpi_infer_delay=infer_delay, cpi_fallback="none"
     )
@@ -162,6 +169,11 @@ def test_actual_interface_uses_signal_and_preserves_selected_fit(
     voxel = tuple(qc["voxel"])
     np.testing.assert_array_equal(qc["model_prediction"], native.predictions[voxel])
     np.testing.assert_array_equal(qc["raw_signal"], files["signal"][voxel])
+    if signal_scale > 1:
+        assert float(np.median(native.predictions[voxel, :4])) > 1e9
+        assert native.qc["cpi_signal_normalization"][
+            "input_units_per_normalized_unit"
+        ] == pytest.approx(signal_scale)
     assert qc["r_squared"] == native.r_squared[voxel]
     timing = read_image(output.out_tmax)
     assert np.all(np.isfinite(timing)) if infer_delay else np.all(np.isnan(timing))

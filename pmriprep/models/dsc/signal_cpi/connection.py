@@ -19,6 +19,7 @@ from .policy import CountDecision, FitAssessment, automatic_count
 from .probability import Array, SharedFit
 from .weights import checked_weights
 from .settings import CPIOptions
+from .signal import SIGNAL_BASELINE_PRIOR_MEAN
 
 
 def _readonly(value: np.ndarray) -> np.ndarray:
@@ -33,6 +34,8 @@ class GuidedAcquisition:
     """Validated signal acquisition with one count and optional BSW priors.
 
     Arrays use flattened spatial order, matching a C-order image reshape.
+    Signals are divided by one acquisition-wide scale before inference;
+    ``signal_scale`` converts fitted signals back to the input magnitude units.
     Reference uncertainty is conditional on the selected BSW membership.
     This object does not hold corrected concentration or execute fallback.
     """
@@ -56,6 +59,7 @@ class GuidedAcquisition:
     support: np.ndarray | None = None
     infer_delay: bool = True
     sloppy: bool = False
+    signal_scale: float = 1.0
 
     @property
     def fit_support(self) -> np.ndarray:
@@ -79,7 +83,8 @@ class GuidedVoxel:
     The assessment uses the image's flat index; detailed restart diagnostics
     retain their single-voxel local ownership coordinates.
     CBF standard deviation uses the same native units as CBF. The owned signal
-    prediction is a lightweight readout of the selected state, not a new fit.
+    prediction is restored to the input magnitude units and is a lightweight
+    readout of the selected state, not a new fit.
     """
 
     flat_index: int
@@ -98,6 +103,38 @@ class GuidedVoxel:
     leakage_method: Literal["bsw", "none"] = "bsw"
     family: Model | None = None
     selection_scores: tuple[tuple[str, float | None], ...] = ()
+
+
+def _normalize_signals(
+    rows: Array,
+    pool: np.ndarray,
+    baseline_frames: int | None,
+) -> tuple[Array, float]:
+    """Put one acquisition on CPI's numerical signal scale.
+
+    The multiplier is common to every voxel and frame, so signal ratios,
+    delta-R2-star, tissue contrast and all perfusion measurements are
+    unchanged. The robust prebolus reference only adapts arbitrary scanner
+    magnitude units to the finite S0 prior used by signal-domain inference.
+    """
+    if baseline_frames is None or not np.any(pool):
+        return _readonly(rows), 1.0
+    baselines = np.mean(rows[pool, :baseline_frames], axis=1)
+    reference = float(np.median(baselines))
+    scale = reference / SIGNAL_BASELINE_PRIOR_MEAN
+    if not np.isfinite(scale) or scale <= 0:
+        raise ValueError("CPI signal normalization requires a positive finite baseline")
+    normalized = rows / scale
+    if np.any(np.isfinite(rows) & ~np.isfinite(normalized)):
+        raise ValueError("CPI signal normalization produced nonfinite values")
+    return _readonly(normalized), scale
+
+
+def _restore_fitted_signal(row: GuidedVoxel, signal_scale: float) -> GuidedVoxel:
+    """Restore a selected prediction to the acquisition's input units."""
+    if row.fitted_signal is None or signal_scale == 1.0:
+        return row
+    return replace(row, fitted_signal=_readonly(row.fitted_signal * signal_scale))
 
 
 def prepare_acquisition(
@@ -204,11 +241,14 @@ def prepare_acquisition(
         ) if np.any(pool) else None
         decision = requested_count(decision, control_points)
         missing = np.full(rows.shape[0], np.nan)
+        normalized, signal_scale = _normalize_signals(
+            rows, pool, None if decision is None else decision.baseline_frames,
+        )
         return GuidedAcquisition(
-            signals.shape[:-1], _readonly(rows), _readonly(aif), _readonly(time), float(te),
+            signals.shape[:-1], normalized, _readonly(aif), _readonly(time), float(te),
             _readonly(missing), _readonly(missing), None, _readonly(valid), None, None, decision,
             cast(Literal["vi", "svb"], inference_method), weights, family, "none",
-            _readonly(support.ravel()), infer_delay, sloppy,
+            _readonly(support.ravel()), infer_delay, sloppy, signal_scale=signal_scale,
         )
     if guidance is None:
         raise ValueError("BSW guidance required when leakage_method is bsw")
@@ -257,12 +297,15 @@ def prepare_acquisition(
                              baseline_frames=guidance.baseline_frames,
                              family=family) if np.any(pool) else None
     decision = requested_count(decision, control_points)
+    normalized, signal_scale = _normalize_signals(
+        rows, pool, None if decision is None else decision.baseline_frames,
+    )
     return GuidedAcquisition(
-        signals.shape[:-1], _readonly(rows), _readonly(aif), _readonly(time), float(te),
+        signals.shape[:-1], normalized, _readonly(aif), _readonly(time), float(te),
         _readonly(guidance.k2.ravel()), _readonly(guidance.k2_sd.ravel()),
         _readonly(status), _readonly(valid), reference, guidance.reference_reason, decision,
         cast(Literal["vi", "svb"], inference_method), weights, family, "bsw", _readonly(support),
-        infer_delay, sloppy,
+        infer_delay, sloppy, signal_scale=signal_scale,
     )
 
 
@@ -425,4 +468,4 @@ def fit_voxels(
             )
             continue
         row = classify_result(i, float(a.k2[i]), result)
-        yield replace(row, family=a.family)
+        yield replace(_restore_fitted_signal(row, a.signal_scale), family=a.family)

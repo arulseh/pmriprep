@@ -66,6 +66,75 @@ def test_none_has_independent_mask_count_and_no_bsw_inputs(inputs: Any, family: 
     np.testing.assert_array_equal(other.signals, prepared.signals)
 
 
+@pytest.mark.parametrize("scale", [1e-8, 1e8])
+def test_acquisition_wide_signal_scale_is_removed_before_inference(
+    inputs: Any,
+    scale: float,
+) -> None:
+    """Arbitrary magnitude units cannot change the CPI fitting problem."""
+    signals, aif, time, te, _ = inputs
+    reference = connection.prepare_acquisition(
+        signals,
+        aif,
+        time,
+        te,
+        leakage_method="none",
+        baseline_frames=4,
+        control_points=5,
+        infer_delay=False,
+    )
+    scaled = connection.prepare_acquisition(
+        signals * scale,
+        aif,
+        time,
+        te,
+        leakage_method="none",
+        baseline_frames=4,
+        control_points=5,
+        infer_delay=False,
+    )
+    assert reference.signal_scale == pytest.approx(1.0)
+    assert scaled.signal_scale == pytest.approx(scale)
+    assert scaled.decision == reference.decision
+    np.testing.assert_allclose(scaled.signals, reference.signals, rtol=2e-15, atol=0)
+
+
+def test_signal_scale_preserves_fit_and_restores_prediction_units(inputs: Any) -> None:
+    """Quantitative readouts are invariant while saved fits use input units."""
+    signals, aif, time, te, _ = inputs
+
+    def fit(values: np.ndarray) -> tuple[connection.GuidedAcquisition, connection.GuidedVoxel]:
+        prepared = connection.prepare_acquisition(
+            values,
+            aif,
+            time,
+            te,
+            leakage_method="none",
+            baseline_frames=4,
+            control_points=5,
+            infer_delay=False,
+        )
+        return prepared, list(connection.fit_voxels(prepared, [0]))[0]
+
+    reference_acquisition, reference = fit(signals)
+    scaled_acquisition, scaled = fit(signals * 1e8)
+    assert scaled.status == reference.status
+    np.testing.assert_allclose(
+        [scaled.cbf, scaled.cbv, scaled.mtt, scaled.cbf_std],
+        [reference.cbf, reference.cbv, reference.mtt, reference.cbf_std],
+        rtol=2e-10,
+        atol=1e-12,
+    )
+    assert reference.fitted_signal is not None and scaled.fitted_signal is not None
+    np.testing.assert_allclose(
+        scaled.fitted_signal / scaled_acquisition.signal_scale,
+        reference.fitted_signal / reference_acquisition.signal_scale,
+        rtol=2e-10,
+        atol=1e-10,
+    )
+    assert float(np.median(scaled.fitted_signal[:4])) > 1e9
+
+
 def test_bsw_still_requires_guidance(inputs: Any) -> None:
     """Missing guidance is not silently interpreted as leakage disabled."""
     with pytest.raises(ValueError, match="guidance"):

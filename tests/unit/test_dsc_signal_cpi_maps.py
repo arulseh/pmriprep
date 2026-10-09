@@ -122,3 +122,11 @@ def test_mixed_map_keeps_provisional_fit_and_only_marks_actual_replacement(
         assert np.isnan(result.delay[2, 0, 0])
         assert result.qc["n_fallback_attempted"] == 1 and result.qc["n_missing"] == 1
         assert result.qc["fallback_rate"] == 0.25
+
+    normalization = result.qc["cpi_signal_normalization"]
+    assert normalization == {
+        "method": "acquisition_median_prebolus",
+        "reference_baseline": 100.0,
+        "input_units_per_normalized_unit": pytest.approx(acquisition.branches[0].signal_scale),
+        "baseline_frames": acquisition.branches[0].decision.baseline_frames,
+    }

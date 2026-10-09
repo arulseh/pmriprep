@@ -1,3 +1,13 @@
+1.0.0rc4.dev1
+=============
+
+Numerical changes
+-----------------
+
+* FIX: Normalize DSC magnitude signals acquisition-wide before CPI inference
+  so arbitrary scanner intensity scaling cannot alter fit availability or
+  quantitative estimates.
+
 1.0.0rc3 (2026-10-07)
 =====================
 

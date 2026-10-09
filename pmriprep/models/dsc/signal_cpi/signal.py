@@ -15,6 +15,9 @@ from .geometry import Model, _gamma_vtf, _initial_coordinates, _spectral_seed, _
 from .probability import Array, GaussianPrior
 
 
+SIGNAL_BASELINE_PRIOR_MEAN = 100.0
+
+
 @dataclass(frozen=True)
 class LogSpacingDomain:
     """Free log intervals whose sum leaves room for a fixed final knot.
@@ -113,7 +116,12 @@ class FixedLayoutSignalCPI:
             observed, aif, time, dt, te
         )
         self.seed_baseline = float(np.max(observed))
-        mean = np.r_[0.0, 100.0, np.full(n_control_points - 1, np.log(0.5)), 0.0]
+        mean = np.r_[
+            0.0,
+            SIGNAL_BASELINE_PRIOR_MEAN,
+            np.full(n_control_points - 1, np.log(0.5)),
+            0.0,
+        ]
         variance = np.r_[1e6, 1e6, np.full(n_control_points - 1, 0.67), 10.0]
         if model == "cpi_vtf":
             mean, variance = np.r_[mean, np.log([2.0, 2.0])], np.r_[variance, 4.0, 4.0]

@@ -14,7 +14,13 @@ from pmriprep.models.dsc.batched_fitting import (
 from pmriprep.models.dsc.spatial_vb import batched_dsc_spatial_vi_fit
 from pmriprep.models.dsc.vi_adapter import DSCVIModelAdapter, DSCVIPosterior
 
-from .connection import GuidedAcquisition, GuidedVoxel, classify_result, fit_voxels
+from .connection import (
+    GuidedAcquisition,
+    GuidedVoxel,
+    _restore_fitted_signal,
+    classify_result,
+    fit_voxels,
+)
 from .batch import SignalBatchEvaluator
 from .residue import signal_evaluator
 from .leakage import BSWCenteredModel, BSWPrior, LeakageBatch, LeakageBatchEvaluator, readout_state
@@ -281,7 +287,8 @@ def fit_spatial_voxels(
         diagnostic = LeakageBatch([fit], [assessment], select_valid_restarts([fit], [assessment], 1),
                                    [leakage] if a.leakage_method == "bsw" else [], arrays, 0.,
                                    result.n_iterations, a.leakage_method, a.infer_delay)
-        row = replace(classify_result(indices[i], float(a.k2[indices[i]]), diagnostic), family=a.family)
+        row = classify_result(indices[i], float(a.k2[indices[i]]), diagnostic)
+        row = replace(_restore_fitted_signal(row, a.signal_scale), family=a.family)
         outputs[indices[i]] = row if keep_diagnostics else replace(row, diagnostics=None)
 
     dispatcher = RowPriorDispatcher(np.asarray(prior_means), np.asarray(prior_stds), consume)
